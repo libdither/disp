@@ -91,10 +91,15 @@ impl Topo {
 }
 
 /// A wire element in one cell: passes through the cell between two distinct faces.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Strand { pub a: He, pub b: He }
+/// `hot` is ψ, the demand bit: true once the wire this strand belongs to is known to end
+/// at a live consumer's principal. Deliberately EXCLUDED from equality: a strand's
+/// identity is its geometry; heat is state riding on it.
+#[derive(Clone, Copy, Debug)]
+pub struct Strand { pub a: He, pub b: He, pub hot: bool }
+impl PartialEq for Strand { fn eq(&self, o: &Strand) -> bool { self.a == o.a && self.b == o.b } }
+impl Eq for Strand {}
 impl Strand {
-    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct faces"); Strand { a, b } }
+    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct faces"); Strand { a, b, hot: false } }
     pub fn contains(self, h: He) -> bool { self.a == h || self.b == h }
     pub fn other(self, h: He) -> He { if self.a == h { self.b } else { self.a } }
     pub fn hes(self) -> [He; 2] { [self.a, self.b] }
@@ -193,10 +198,15 @@ pub struct Grid {
     /// the seed emits into it once it is empty.
     pub reserved: BTreeMap<Pos, Pos>,
     pub seed_count: usize,
+    /// χ, the pressure field: a sparse per-cell scalar (absent = 0) diffused and decayed
+    /// by `chi_step`, pumped by frustration (unfireable pairs, waiting seeds, squatted
+    /// reservations, blocked walkers). Rate-only: χ chooses among sound moves (SHOVE
+    /// direction, route bias), never results.
+    pub chi: BTreeMap<Pos, u8>,
 }
 
 impl Grid {
-    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo, reserved: BTreeMap::new(), seed_count: 0 } }
+    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo, reserved: BTreeMap::new(), seed_count: 0, chi: BTreeMap::new() } }
 
     pub fn agent(&self, p: Pos) -> Option<&AgentCell> {
         match self.cells.get(&p) { Some(Cell::Agent(a)) => Some(a), _ => None }
@@ -274,7 +284,10 @@ impl Grid {
     /// Follow the wire leaving `pos` through face `out` to the far agent port.
     /// Strands pass through; an agent port terminates. Returns None on anything a live
     /// unfold makes temporarily untraceable: a seed cell, a dangling half-edge, a missing
-    /// port. Callers that gate on the far end (reel, clear) PARK on None.
+    /// port. OBSERVER-ONLY: the dynamics never call this (the ψ hot bit replaced the
+    /// trace as reel's gate — reading a whole wire is not a neighbor-local operation);
+    /// it survives as the substrate for `trace`, i.e. the projection checker and
+    /// readback, which run at seed-free checkpoints.
     pub fn try_trace(&self, pos: Pos, out: He) -> Option<(Pos, usize)> {
         let (mut cur, mut h) = (pos, out);
         for _ in 0..1_000_000 {
@@ -292,6 +305,68 @@ impl Grid {
         }
         None
     }
+    /// ψ propagation, one sweep: a cold strand heats when an adjacent live consumer's
+    /// principal points into it, or when the strand continuing its wire in a neighbor
+    /// cell is already hot. Strictly neighbor-local (each decision reads self plus the
+    /// six adjacent cells); collect-then-apply so the sweep order cannot matter. Every
+    /// strand WRITE starts cold, and a source dies exactly when its wire is consumed, so
+    /// staleness cannot outlive its cause — the wire simply re-heats from the consumer
+    /// end at one cell per tick. Returns how many strands heated (monotone, so this
+    /// counts as progress and provably quiesces).
+    pub fn heat_step(&mut self) -> usize {
+        let mut newly: Vec<(Pos, Strand)> = vec![];
+        for (p, c) in &self.cells {
+            let Cell::Wire(w) = c else { continue };
+            for s in w.iter() {
+                if s.hot { continue; }
+                let mut heat = false;
+                for h in s.hes() {
+                    let q = step(*p, h);
+                    match self.cells.get(&q) {
+                        Some(Cell::Agent(a)) => {
+                            if !a.nascent && a.tag.is_consumer() && a.faces[0] == Some(h.opp()) { heat = true; }
+                        }
+                        Some(Cell::Wire(wq)) => {
+                            if let Some(t) = wq.with_he(h.opp()) { if t.hot { heat = true; } }
+                        }
+                        _ => {}
+                    }
+                    if heat { break; }
+                }
+                if heat { newly.push((*p, s)); }
+            }
+        }
+        let n = newly.len();
+        for (p, s) in newly {
+            if let Some(Cell::Wire(w)) = self.cells.get_mut(&p) {
+                if let Some(slot) = w.strands.iter_mut().flatten().find(|t| **t == s) { slot.hot = true; }
+            }
+        }
+        n
+    }
+
+    /// χ update, one Jacobi sweep over the active region: next(c) is a pure function of
+    /// this cell's and its six neighbors' current values (out-of-bounds reads as 0 — the
+    /// boundary is the infinite sink), followed by a unit leak and re-pumped sources.
+    /// The double-buffering makes the result independent of any evaluation order.
+    pub fn chi_step(&mut self, sources: &[Pos]) {
+        let mut active: std::collections::BTreeSet<Pos> = self.chi.keys().copied().collect();
+        for s in sources { active.insert(*s); }
+        let ring: Vec<Pos> = active.iter().flat_map(|p| DIRS.map(|d| step(*p, d))).collect();
+        for q in ring { active.insert(q); }
+        let mut next: BTreeMap<Pos, u8> = BTreeMap::new();
+        for p in active {
+            if !self.topo.in_bounds(p) { continue; }
+            let mut sum = 2u32 * self.chi.get(&p).copied().unwrap_or(0) as u32;
+            for d in DIRS { sum += self.chi.get(&step(p, d)).copied().unwrap_or(0) as u32; }
+            let v = (sum / 8).saturating_sub(1);
+            if v > 0 { next.insert(p, v.min(255) as u8); }
+        }
+        for s in sources { if self.topo.in_bounds(*s) { next.insert(*s, 250); } }
+        self.chi = next;
+    }
+    pub fn chi_at(&self, p: Pos) -> u8 { self.chi.get(&p).copied().unwrap_or(0) }
+
     /// Panicking form for the checker and readback, which only run at seed-free points.
     pub fn trace(&self, pos: Pos, out: He) -> (Pos, usize) {
         self.try_trace(pos, out)

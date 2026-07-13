@@ -34,18 +34,27 @@ fn check_pin(t: Term, topo: Topo, must_complete: bool) -> Outcome {
 
 #[test]
 fn pins_must_complete() {
-    // Verified to reach NF under the bare sequential schedule, per topology. Bilayer
-    // currently wedges at fire seams (splices + trails exhaust the single overflow plane;
-    // the measured residue the fields address), so its verified set is smaller.
+    // Verified to reach NF under the sequential schedule WITH the ψ/χ fields, per
+    // topology. Bilayer's verified set is smaller (no basement: fire seams still wedge
+    // its harder terms); every unlock earned by a field lever is pinned here so it can
+    // never silently regress.
     for topo in TOPOS {
         let out = check_pin(ap(s(Term::L), Term::L), topo, true); // stem application
         assert!(out.transport > 0, "reel-in should have happened");
+        check_pin(ap(f2(Term::L, Term::L), Term::L), topo, true); // fork dispatch → w (bilayer: walks-eat-slack unlock)
     }
     let t3 = Topo::Full3D;
-    check_pin(ap(f2(Term::L, Term::L), Term::L), t3, true); // fork dispatch → w
     check_pin(oracle::chain_k(1), t3, true);
     check_pin(ap(ap(oracle::k(), Term::L), s(Term::L)), t3, true); // K erases
     check_pin(ap(f2(s(Term::L), Term::L), Term::L), t3, true); // S-rule shares
+    // the field-rung unlocks: χ pressure (kargs), walks-eat-slack (the chain class),
+    // and their combination on the Sel fire-space class (selF, disp, deep-copy share)
+    check_pin(ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))), t3, true); // kargs
+    check_pin(oracle::chain_k(2), t3, true);
+    check_pin(oracle::chain_k(3), t3, true);
+    check_pin(ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)), t3, true); // selF end to end
+    check_pin(ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)), t3, true); // share: δ deep-copies a fork
+    check_pin(oracle::disp_t(), t3, true); // A → T1 → Sel end to end
 }
 
 #[test]
@@ -98,13 +107,17 @@ fn differential(topo: Topo) {
     }
     println!("stage2 [{}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
     println!("  ledger over passes: interactions={ints} transport={transport}");
-    assert_eq!(cap, 0, "tick budget should never bind on this corpus (monotone schedule)");
+    // The schedule is no longer monotone (χ shoves and decongestion slides keep ticks
+    // busy), but the stall detectors — the quiet streak plus the shadow-progress drought —
+    // must catch every non-completing run long before the budget binds.
+    assert_eq!(cap, 0, "tick budget should never bind on this corpus (stall detection covers churn)");
     // Liveness is a measurement; only catastrophic regressions fail the suite. The floors
-    // pin the measured baselines (bilayer 179/400, full3d 201/400 under the bare schedule).
+    // pin the measured baselines with slack (bilayer 206/400, full3d 280/400 under the
+    // sequential schedule with the ψ/χ fields).
     let denom = pass + stuck;
     let floor_ok = match topo {
-        Topo::Bilayer => pass * 5 >= denom * 2, // ≥40%
-        Topo::Full3D => pass * 2 >= denom,      // ≥50%
+        Topo::Bilayer => pass * 20 >= denom * 9, // ≥45%
+        Topo::Full3D => pass * 5 >= denom * 3,   // ≥60%
     };
     assert!(denom > 0 && floor_ok, "liveness collapsed on {}: {pass}/{denom}", topo.name());
 }
@@ -136,7 +149,7 @@ fn differential_fire_modes() {
                 } else if out.stuck { stuck += 1; } else { cap += 1; }
             }
             println!("stage2 [{} · {label}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
-            assert_eq!(cap, 0, "tick budget bound on {} ({label})", topo.name());
+            assert_eq!(cap, 0, "tick budget bound on {} ({label}) — stall detection should cover churn", topo.name());
             assert!(pass > 0, "no term completed on {} ({label})", topo.name());
         }
     }

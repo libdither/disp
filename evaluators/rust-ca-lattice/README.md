@@ -29,25 +29,42 @@ is a library plus tests.
 - `crate/src/transitions.rs` (rung 2 dynamics) — footprint-atomic transitions: `plan_*`
   reads a bounded neighborhood and returns a Plan carrying its exact footprint; `apply_*`
   machine-checks every write against it. FIRE (dying cells become splice hubs; bounded
-  in-board placement backtracking + wire router), REEL (walk one cell along the principal,
-  gated on "a fire awaits"; aux wires re-anchored by the same bounded router — the
-  straight-behind bend and the corner detour are its 1-cell and 3-cell routes; a walker
-  at a shared cell WAITS, never tucks), and the two POLYMER MOVES, both projecting to
-  identity: RETRACT (a width-1 U-turn annihilates, wire −2, the discrete curve-shortening
-  step) and SLIDE (a strand relocates out of a shared cell through the shortest empty-cell
-  route — the excluded-volume move; the kink-flip is its 1-cell case).
-- `crate/src/scheduler.rs` — the sequential deterministic schedule over the four
-  transitions: fire · clear (walker-demanded slides) · reel · retract-to-fixpoint. Rung 3
-  adds parallel and async-fuzz schedules over the SAME transitions.
+  in-board placement backtracking plus the wire router), REEL (walk one cell along the
+  principal, gated on the ψ hot bit, a single neighbor-local read; aux wires re-anchor
+  truncation-first, eating the walker's own drag, with the bounded router as the
+  extension fallback; a walker at a shared cell waits, never tucks), SHOVE (a χ-descent
+  step for parked agents; hot walkers, docked pairs, and Out are immune), and the two
+  polymer moves, both projecting to identity: RETRACT (a width-1 U-turn annihilates,
+  wire −2, the discrete curve-shortening step) and SLIDE (a strand relocates out of a
+  shared cell through the shortest empty-cell route, the excluded-volume move; the
+  kink-flip is its 1-cell case; a second relaxed pass may thread count-1 trail cells,
+  for walker-demanded clearings only).
+- `crate/src/lattice.rs` also carries the two fields, both strictly neighbor-local.
+  ψ (demand) is a per-strand `hot` bit pumped by adjacent live consumer principals and
+  propagated one cell per tick along wire continuations, monotone within a tick sweep
+  and cold-on-write; it replaced the only unbounded read in the dynamics (`try_trace`
+  is now observer-only). χ (pressure) is a sparse per-cell u8 under a Jacobi relax
+  `(2·self + Σnbrs)/8` with a unit leak, pumped at 250 by frustration sources (blocked
+  clears, hot-but-unplannable walkers, waiting seeds, squatted reservations).
+- `crate/src/scheduler.rs` — the sequential deterministic schedule over the transitions:
+  heat sweep, fire (or dock/grow), clear (walker-demanded slides, three fallbacks deep),
+  reel, shove, pressure decongestion and evaporation, retract to fixpoint, then one χ
+  step. Stall detection is two-tier: a zero-applied streak, plus a shadow-progress
+  drought (`PROGRESS_DROUGHT` ticks without a fire) because the field moves keep ticks
+  busy while a hopeless knot churns. Rung 3 adds parallel and async-fuzz schedules over
+  the same transitions.
 - `crate/tests/stage1.rs` — abstract net vs oracle: 4000 random terms, zero mismatches,
   full 26-rule coverage enforced.
 - `crate/tests/stage2.rs` — lattice vs oracle on BOTH topologies: correctness gated
   absolutely (zero wrong NFs, per-transition projection asserts, bit determinism);
   liveness measured, with per-topology floors pinning the baselines.
-- `crate/src/bin/debug-stuck.rs`, `scan-pins.rs` — stall analyzers (topology-aware).
+- `crate/src/bin/debug-stuck.rs`, `scan-pins.rs` — stall analyzers (topology-aware);
+  `probe-grow.rs` — event census plus radius-2 occupancy maps around blocked walkers;
+  `probe-cap.rs` — the budget-vs-churn classifier (re-runs tick-capped terms at five
+  times the budget and reports whether shadow ints moved).
 - `crate/src/bin/dump-run.rs` — the instrumentation face: runs a term and emits one JSON
   document (full grid snapshot + tick events per frame; v2 schema: [x,y,z] positions,
-  single-char faces, no tucks). The replay client is
+  single-char faces, a trailing `*` marks a ψ-hot strand, no tucks). The replay client is
   `research/interaction-combinator/lattice_player.html` (upper planes render offset and
   dimmer; embedded traces in `lattice_traces.js` cover both topologies; drop any dump-run
   output onto it to view others). The engine is the model; the visualization never
@@ -56,17 +73,21 @@ is a library plus tests.
 ## Status (measured)
 
 `cargo test --release`: all green. Stage 1: 3998+/0. Stage 2 corpus (400 random terms,
-depths 3–5): full3d 205 reach normal form, bilayer 179; ZERO wrong results, zero invariant
-violations, zero tick-cap hits, on both topologies and under every fire mode (the search
-planner, the precomputed stamp, the incremental grow, and the hybrids — grow+search
-matches search at 205 with 1-cell-footprint unfolds and abortable seeds). Must-complete pins: stem application
-on both topologies; fork dispatch, K erasure, chain1, and the sharing S-rule on full3d.
-Every stall is liveness, never correctness: the bare sequential schedule still ships no
-fields, and the stalls concentrate where fire seams knot — splices and reel trails exhaust
-local capacity around the hub, and on bilayer the single overflow plane makes this bite
-almost immediately (the same terms complete on full3d). That residue is
-LOCAL_CA_DESIGN.md §13's liveness question, now measurable per topology against a sound
-substrate; policies compete on top without being able to break correctness.
+depths 3 to 5), now with the ψ/χ fields in the sequential schedule: full3d 326 reach
+normal form (205 before the fields), bilayer 223 (was 179); zero wrong results, zero
+invariant violations, zero tick-cap hits, on both topologies and under every fire mode.
+Per mode: stamp+search reproduces search exactly (326/223; under pressure the stamp is
+no longer wedged by trails, it just ties the search), stamp-only reaches 216/198, and
+grow-only beats search on bilayer (238: on the congested topology the patient
+dock-and-extrude wins once the fields clear its squatters). Must-complete pins: stem
+application and fork dispatch on both topologies; on full3d additionally K erasure, the
+sharing S-rule, kargs, chain1 through chain3, the deep-copy share, disp, and selF end to
+end, which is every named pin. Every stall is liveness, never correctness. What remains
+stuck: on bilayer the no-basement seam class (the single overflow plane is that
+topology's geometric ceiling); on full3d 74 corpus terms of chain4-class deep spines and
+multi-walker seam knots. That residue is LOCAL_CA_DESIGN.md §13's liveness question, now
+measurable per topology against a sound substrate; policies compete on top without being
+able to break correctness.
 
 Liveness findings folded into the design (each found by measurement here):
 
@@ -121,3 +142,35 @@ Liveness findings folded into the design (each found by measurement here):
    geometry allows; the remaining mover is the pressure field (χ) that pushes agents and
    unslideable knots, i.e. the field rung, on top of a fire that can finally wait
    gracefully for it.
+10. ψ kills the trace at zero liveness cost: the reel gate "a fire awaits at the far end"
+   was the dynamics' one unbounded read (walking the whole wire). The per-strand hot bit
+   (pumped at consumer principals, spread one cell per tick, cold on write, sources dying
+   with their wires so staleness is structural) reproduces the gate exactly; the corpus
+   did not move by a single term when the trace died. Demand was always local information
+   arriving late, and the walker can afford to wait for it.
+11. χ needs precision pumping: pumping every frustrated pair and blocked walker measured
+   as a regression (churn drowned the signal). Pump only real frustration (clears whose
+   every fallback failed, hot walkers that cannot plan, waiting seeds, squatted
+   reservations) and shove only parked agents; hot walkers are immune, or the field
+   undoes the very deliveries it exists to enable. Decongestion under χ must stay
+   strictly decongesting; relaxed slides that thread count-1 trails are sound only when
+   walker-demanded (ambient relaxation shuffles strands forever, 15k to 272k slides
+   measured). With that discipline, pressure moves what no fire mechanism could: kargs
+   completed for the first time.
+12. Walks must eat slack, or they pave their own prison: extension-only aux re-anchoring
+   nets +1 strand per step per aux wire, so every long walk deposits a drag staircase,
+   and the staircases are the count-1 mats that block clears, evaporation, and fire
+   boards (invisible to crowding-based decongestion, since every cell holds just one
+   strand). The truncation re-anchor walks the aux chain up to three cells and, at the
+   first cell whose continuation already sits adjacent to the mover's new seat, deletes
+   the walked strands and repoints the surviving half: net −1 or better, zero new wire
+   needed exactly where the router has no room. This unlocked the chain class and selF,
+   and with it every full3d named pin completes. Its complement is χ evaporation: under
+   strong pressure (χ ≥ 3) count-1 cells slide their cold strand out through empty
+   trails strictly downhill in χ, so existing mats thin from the boundary inward.
+13. A field schedule needs a shadow-progress stall detector: shoves, decongestion, and
+   detour reels keep ticks busy while a hopeless knot churns, so "a full tick applied
+   nothing" no longer catches every stall; terms burned the whole tick budget, and the
+   probe measured the capped class 40/40 frozen (ints and transport bit-identical at 20k
+   and 100k ticks). Progress is shadow ints alone: docks, grow placements, and aborts
+   all cycle (dock, place, abort, redock), so none of them may reset the window.

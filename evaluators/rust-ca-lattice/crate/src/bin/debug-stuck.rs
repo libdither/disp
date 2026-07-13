@@ -18,13 +18,16 @@ fn main() {
         "share" => ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)),
         "share2" => ap(f2(s(Term::L), Term::L), Term::L),
         "ksimple" => ap(ap(oracle::k(), Term::L), s(Term::L)),
-        _ => panic!("k|chain|disp|share|share2|ksimple"),
+        "selF" => ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)),
+        _ => panic!("k|chain|disp|share|share2|ksimple|selF"),
     };
     let mut sim = Sim::load(&term, topo);
     let mut ticks = 0u64;
+    let mut zero = 0u32;
     loop {
         if sim.shadow.all_active_pairs().is_empty() { println!("DONE in {ticks} ticks"); return; }
-        if sim.tick(CheckLevel::Tick) == 0 { break; }
+        // one quiet tick is not a stall under the fields; autopsy the true fixpoint
+        if sim.tick(CheckLevel::Tick) == 0 { zero += 1; if zero > 60 { break; } } else { zero = 0; }
         ticks += 1;
         if ticks > 50_000 { println!("cap"); return; }
     }

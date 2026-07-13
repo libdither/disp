@@ -624,6 +624,11 @@ pub struct ReelPlan {
     pub new_faces: [Option<He>; 3],
     /// Strands written behind the mover: the vacated cell's aux bends and their detours.
     pub writes: Vec<(Pos, Strand)>,
+    /// Truncation re-anchors ("walks eat slack"): aux-wire strands REMOVED because the
+    /// wire's next chain cell already sits adjacent to the mover's new seat.
+    pub removes: Vec<(Pos, Strand)>,
+    /// (cell, from-face, to-face): the surviving neighbor half repointed at the mover.
+    pub repoints: Vec<(Pos, He, He)>,
     pub footprint: BTreeSet<Pos>,
 }
 
@@ -641,9 +646,15 @@ fn make_board(grid: &Grid, a: Pos, b: Pos) -> BTreeSet<Pos> {
 }
 
 /// Walk one cell along the principal wire (see the module doc for the polarity and the
-/// fire-awaits gate). Each aux wire is re-anchored by the SAME bounded router fire uses:
-/// from its arrival face at the vacated cell to any free face of the mover — the
-/// straight-behind bend and the corner detour are just its 1-cell and 3-cell routes.
+/// fire-awaits gate). Each aux wire is re-anchored TRUNCATION-FIRST ("walks eat slack"):
+/// when the wire's next chain cell already sits adjacent to the mover's new seat with the
+/// meeting edge free, the vacated-side strand is deleted and the neighbor half repointed
+/// straight at the mover — net wire length FALLS by one where the extension bend would
+/// grow it by one, so a walker consumes its own drag staircase instead of paving the
+/// lattice with trail mats (the measured mat source). Otherwise the SAME bounded router
+/// fire uses extends the wire: from its arrival face at the vacated cell to any free face
+/// of the mover — the straight-behind bend and the corner detour are its 1-cell and
+/// 3-cell routes.
 pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
     let ag = grid.agent(apos)?;
     if !ag.tag.is_producer() || ag.nascent { return None; }
@@ -651,10 +662,11 @@ pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
     let npos = step(apos, d);
     if grid.reserved.contains_key(&npos) { return None; } // a seed claimed it: park, the strand will be slid
     let w = grid.wire(npos)?; // agent-adjacent is fire's business; empty is impossible (parity)
-    let (far_pos, far_port) = grid.try_trace(apos, d)?; // untraceable (seed mid-unfold): park
-    let far = grid.agent(far_pos)?;
-    if far_port != 0 || !far.tag.is_consumer() || far.nascent { return None; } // no fire awaits: stay parked
     let mine = w.with_he(d.opp())?;
+    // ψ replaces the whole-wire trace: walk only when the adjacent strand of MY principal
+    // carries demand (heat pumped by the far consumer's principal, propagated one cell
+    // per tick). A single neighbor-local bit read.
+    if !mine.hot { return None; }
     let f = mine.other(d.opp());
     // No coexistence on the lifted lattice: a shared cell makes the walker WAIT (the old
     // tuck). The CLEAR phase (flip/bypass) moves the blocking strand out first.
@@ -697,8 +709,53 @@ pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
         dirs: match grid.topo { crate::lattice::Topo::Full3D => DIRS_DOWN_FIRST, _ => DIRS_STD },
     };
     let cells = [npos];
+    let mut removes: Vec<(Pos, Strand)> = vec![];
+    let mut repoints: Vec<(Pos, He, He)> = vec![];
     for port in 1..ag.tag.arity() {
         let g = ag.face_of(port);
+        // Truncation first: walk the aux chain apos —g— c1 —e1— c2 —e2— … a few cells; at
+        // the FIRST chain cell whose far continuation u sits adjacent to the new seat with
+        // both meeting faces free in PLAN state (earlier ports may have claimed them),
+        // drop every strand walked over and repoint u's half at the mover. Re-anchoring
+        // then needs ZERO new wire — which is exactly what survives in a matted board
+        // where the extension router has nowhere to lay a detour.
+        let trunc = (|| -> Option<(Vec<(Pos, Strand)>, Pos, He, He)> {
+            let mut chain: Vec<(Pos, Strand)> = vec![];
+            let (mut cell, mut face) = (apos, g);
+            for _ in 0..3 {
+                let t = step(cell, face);
+                if !board.contains(&t) || grid.reserved.contains_key(&t) { return None; }
+                let s_t = grid.wire(t)?.with_he(face.opp())?;
+                let e = s_t.other(face.opp());
+                let u = step(t, e);
+                // u == npos is impossible while npos holds only `mine` (parity);
+                // u == apos is a self-loop back into the mover — leave it alone.
+                if u == npos || u == apos { return None; }
+                chain.push((t, s_t));
+                let u_in_chain = chain.iter().any(|(c, _)| *c == u);
+                if !u_in_chain && !grid.reserved.contains_key(&u)
+                    && !matches!(grid.cells.get(&u), Some(Cell::Seed(_)))
+                    && grid.agent(u).is_none_or(|a| !a.nascent)
+                {
+                    if let Some(to) = dir_to(u, npos) {
+                        if st.face_free(0, to.opp()) && !st.hes_at(u).contains(&to) {
+                            return Some((chain, u, e.opp(), to));
+                        }
+                    }
+                }
+                (cell, face) = (t, e);
+            }
+            None
+        })();
+        if let Some((chain, u, from, to)) = trunc {
+            removes.extend(chain);
+            repoints.push((u, from, to));
+            st.faces[0][port] = Some(to.opp());
+            // publish the claimed u-face into the plan state so later ports see it
+            if let Some((_, base)) = st.wireable.get_mut(&u) { base.push(to); }
+            else if let Some(out) = st.outside.get_mut(&u) { out.push(to); }
+            continue;
+        }
         let (a_end, b_end) = (PEnd::Agent { k: 0, port }, PEnd::Half { cell: apos, he: g });
         let routed = route_wire(&mut st, &cells, a_end, b_end, &board) || {
             st.avoid_stacking = false;
@@ -713,8 +770,10 @@ pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
     for (p, v) in &st.added { for s in v { writes.push((*p, *s)); } }
     let mut footprint: BTreeSet<Pos> = [apos, npos].into_iter().collect();
     for (p, _) in &writes { footprint.insert(*p); }
+    for (p, _) in &removes { footprint.insert(*p); }
+    for (p, _, _) in &repoints { footprint.insert(*p); }
 
-    Some(ReelPlan { apos, npos, consumed: mine, new_faces: st.faces[0], writes, footprint })
+    Some(ReelPlan { apos, npos, consumed: mine, new_faces: st.faces[0], writes, removes, repoints, footprint })
 }
 
 pub fn apply_reel(grid: &mut Grid, plan: &ReelPlan) {
@@ -723,7 +782,9 @@ pub fn apply_reel(grid: &mut Grid, plan: &ReelPlan) {
 
     guard(plan.apos);
     grid.cells.remove(&plan.apos);
+    for (p, s) in &plan.removes { guard(*p); grid.remove_strand(*p, *s); }
     for (p, s) in &plan.writes { guard(*p); grid.add_strand(*p, *s); }
+    for (p, from, to) in &plan.repoints { guard(*p); rewire_face(grid, *p, *from, *to); }
     guard(plan.npos);
     grid.remove_strand(plan.npos, plan.consumed);
     grid.put_agent(plan.npos, AgentCell {
@@ -733,6 +794,120 @@ pub fn apply_reel(grid: &mut Grid, plan: &ReelPlan) {
         nascent: false,
     });
     grid.transport += 1;
+}
+
+// =========================================================================================
+// SHOVE: the χ-driven agent step — the mover for PARKED agents, which neither fires nor
+// reels nor slides can touch. An agent on high pressure steps to its lowest-pressure open
+// neighbor (steepest descent, fixed tie order, hysteresis so it cannot dither), and every
+// wire re-anchors through the same bounded router reel uses; nothing is consumed, so the
+// move projects to identity. Hot walkers are immune (they are delivering — demand
+// outranks pressure, and immunity kills the reel-forward/shove-back livelock). Docked
+// pairs are immune (never separate an enabled fire). Out is immune (the pad is fixed).
+// =========================================================================================
+
+#[derive(Debug)]
+pub struct ShovePlan {
+    pub apos: Pos,
+    pub npos: Pos,
+    pub new_faces: [Option<He>; 3],
+    pub writes: Vec<(Pos, Strand)>,
+    pub footprint: BTreeSet<Pos>,
+}
+
+pub fn plan_shove(grid: &Grid, apos: Pos) -> Option<ShovePlan> {
+    let ag = grid.agent(apos)?;
+    if ag.nascent || ag.tag == Tag::Out { return None; }
+    let here = grid.chi_at(apos);
+    if here < 4 { return None; }
+    if let Some(d0) = ag.faces[0] {
+        let q = step(apos, d0);
+        // docked pair: leave it to fire
+        if let Some(b) = grid.agent(q) {
+            if b.faces[0] == Some(d0.opp())
+                && (ag.tag.is_consumer() && b.tag.is_producer()
+                    || ag.tag.is_producer() && b.tag.is_consumer()) { return None; }
+        }
+        // hot walker: demand outranks pressure
+        if let Some(w) = grid.wire(q) {
+            if let Some(m) = w.with_he(d0.opp()) { if m.hot { return None; } }
+        }
+    }
+    // steepest descent into an open cell
+    let mut best: Option<(u8, Pos)> = None;
+    for d in DIRS {
+        let n = step(apos, d);
+        if !grid.is_open(n) { continue; }
+        let cn = grid.chi_at(n);
+        if best.is_none_or(|(bc, _)| cn < bc) { best = Some((cn, n)); }
+    }
+    let (cn, npos) = best?;
+    if here < cn.saturating_add(2) { return None; }
+
+    // Re-anchor EVERY port from its face at the vacated cell to the agent's new seat.
+    let board = make_board(grid, apos, npos);
+    let mut wireable: BTreeMap<Pos, (usize, Vec<He>)> = BTreeMap::new();
+    let mut outside: BTreeMap<Pos, Vec<He>> = BTreeMap::new();
+    for &p in &board {
+        if p == npos { continue; }
+        if p == apos { wireable.insert(p, (0, vec![])); continue; }
+        if grid.reserved.contains_key(&p) { outside.insert(p, grid.used_hes(p)); continue; }
+        match grid.cells.get(&p) {
+            None => { wireable.insert(p, (0, vec![])); }
+            Some(Cell::Wire(wc)) => { wireable.insert(p, (wc.count(), wc.used_hes())); }
+            Some(Cell::Agent(a)) => { outside.insert(p, a.used_hes()); }
+            Some(Cell::Seed(s)) => { outside.insert(p, s.faces.iter().flatten().copied().collect()); }
+        }
+    }
+    for &p in &board {
+        for dd in DIRS {
+            let q = step(p, dd);
+            if !board.contains(&q) && !outside.contains_key(&q) {
+                outside.insert(q, grid.used_hes(q));
+            }
+        }
+    }
+    let mut st = BoardState {
+        placeable: BTreeSet::new(),
+        wireable,
+        outside,
+        agent_at: [(npos, 0usize)].into_iter().collect(),
+        added: BTreeMap::new(),
+        faces: vec![[None; 3]],
+        avoid_stacking: true,
+        dirs: DIRS_STD,
+    };
+    let cells = [npos];
+    for port in 0..ag.tag.arity() {
+        let (a_end, b_end) = (PEnd::Agent { k: 0, port }, PEnd::Half { cell: apos, he: ag.face_of(port) });
+        let routed = route_wire(&mut st, &cells, a_end, b_end, &board) || {
+            st.avoid_stacking = false;
+            let r = route_wire(&mut st, &cells, a_end, b_end, &board);
+            st.avoid_stacking = true;
+            r
+        };
+        if !routed { return None; }
+    }
+    let mut writes: Vec<(Pos, Strand)> = vec![];
+    for (p, v) in &st.added { for s in v { writes.push((*p, *s)); } }
+    let mut footprint: BTreeSet<Pos> = [apos, npos].into_iter().collect();
+    for (p, _) in &writes { footprint.insert(*p); }
+    Some(ShovePlan { apos, npos, new_faces: st.faces[0], writes, footprint })
+}
+
+pub fn apply_shove(grid: &mut Grid, plan: &ShovePlan) {
+    let guard = |p: Pos| assert!(plan.footprint.contains(&p), "write outside footprint: {p:?}");
+    let Some(Cell::Agent(ag)) = grid.cells.get(&plan.apos).cloned() else { panic!("shove: no agent") };
+    guard(plan.apos);
+    grid.cells.remove(&plan.apos);
+    for (p, s) in &plan.writes { guard(*p); grid.add_strand(*p, *s); }
+    guard(plan.npos);
+    grid.put_agent(plan.npos, AgentCell {
+        tag: ag.tag,
+        faces: plan.new_faces,
+        sid: ag.sid,
+        nascent: false,
+    });
 }
 
 // =========================================================================================
@@ -843,6 +1018,13 @@ pub struct SlidePlan {
 ///                      ⇒     └ ─ ─ ─ ┘            next plane; p is free for the walker)
 /// ```
 pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: bool) -> Option<SlidePlan> {
+    plan_slide_ex(grid, p, s, avoid, from_seed, false)
+}
+
+/// `relax`: permits a SECOND pass threading count-1 wire cells (short trails only) when
+/// no empty route exists — for demanded clearings in wire mats. Ambient decongestion must
+/// NOT relax (measured: it shuffles strands forever).
+pub fn plan_slide_ex(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: bool, relax: bool) -> Option<SlidePlan> {
     let (na, nb) = (step(p, s.a), step(p, s.b));
     // Seed territory is untouchable from outside; the owning seed may slide SQUATTERS out
     // of its own reserved cells (pre-dock wires), whose parity is real.
@@ -852,44 +1034,68 @@ pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: bool
     if shielded(na) || shielded(nb) { return None; }
     let board = make_board(grid, p, p);
     let blocked = |c: Pos| c == p || c == na || c == nb || avoid.contains(&c);
-    // Trails run through EMPTY cells only. This is load-bearing for termination: a slide
-    // then always moves a strand out of a shared cell into fresh cells, so total excess
-    // occupancy (Σ max(0, strands−1)) strictly decreases and slide churn cannot cycle.
-    // A permissive variant (threading through occupied cells) was measured to let the
-    // scheduler shuffle strands between wire cells forever.
-    // BFS keyed by cell (each trail cell carries exactly one new strand): shortest reroute
-    // first, BTreeMap coordinate order as the deterministic tie-break.
-    let mut seen: BTreeMap<Pos, (He, Pos)> = BTreeMap::new(); // cell -> (entry face, parent)
-    let mut queue: std::collections::VecDeque<Pos> = Default::default();
-    for da in DIRS {
-        if grid.used_hes(na).contains(&da) { continue; }
-        let t0 = step(na, da);
-        if blocked(t0) || !board.contains(&t0) || !grid.is_open(t0) || seen.contains_key(&t0) { continue; }
-        seen.insert(t0, (da.opp(), t0)); // self-parent marks a root
-        queue.push_back(t0);
-    }
+    // Trails prefer EMPTY cells (strictly decongesting: total excess occupancy falls, so
+    // churn cannot cycle). When the region is a MAT of count-1 wire cells — no empty
+    // roots anywhere, the measured chain-knot class — a second RELAXED pass may thread
+    // through count-1 wire cells whose faces fit. Relaxation trades the monotone measure
+    // for reach; call sites are χ- or walker-demanded and the run-level stall grace
+    // bounds any residual ping-pong.
     let mut goal: Option<Pos> = None;
-    let mut depth = 0usize;
-    'bfs: while !queue.is_empty() && depth < 7 {
-        depth += 1;
-        for _ in 0..queue.len() {
-            let cur = queue.pop_front().unwrap();
-            let enter = seen[&cur].0;
-            // Terminate: connect to nb through a free face.
-            if let Some(out) = dir_to(cur, nb) {
-                if out != enter && !grid.used_hes(nb).contains(&out.opp()) {
-                    goal = Some(cur);
-                    break 'bfs;
+    let mut seen: BTreeMap<Pos, (He, Pos)> = BTreeMap::new(); // cell -> (entry face, parent)
+    for relaxed in [false, true] {
+        if relaxed && !relax { break; }
+        // May a trail occupy `c`, entering via face `f_in`?
+        let cell_ok = |c: Pos, f_in: He| -> bool {
+            if !grid.topo.in_bounds(c) || grid.reserved.contains_key(&c) { return false; }
+            match grid.cells.get(&c) {
+                None => true,
+                Some(Cell::Wire(w)) => relaxed && w.count() == 1 && !w.used_hes().contains(&f_in),
+                _ => false,
+            }
+        };
+        let exit_ok = |c: Pos, out: He| -> bool {
+            match grid.cells.get(&c) {
+                Some(Cell::Wire(w)) => !w.used_hes().contains(&out),
+                _ => true,
+            }
+        };
+        seen.clear();
+        let mut queue: std::collections::VecDeque<Pos> = Default::default();
+        for da in DIRS {
+            if grid.used_hes(na).contains(&da) { continue; }
+            let t0 = step(na, da);
+            if blocked(t0) || !board.contains(&t0) || !cell_ok(t0, da.opp()) || seen.contains_key(&t0) { continue; }
+            seen.insert(t0, (da.opp(), t0)); // self-parent marks a root
+            queue.push_back(t0);
+        }
+        let mut depth = 0usize;
+        // Both passes stay inside the radius-2 board; the relaxed cap governs how deep a
+        // DEMANDED clearing may thread a mat (measured on the selF knot: 4 dies one hop
+        // short of the empty plane above; ambient moves never take this pass).
+        let cap = if relaxed { 6 } else { 7 };
+        'bfs: while !queue.is_empty() && depth < cap {
+            depth += 1;
+            for _ in 0..queue.len() {
+                let cur = queue.pop_front().unwrap();
+                let enter = seen[&cur].0;
+                // Terminate: connect to nb through a free face.
+                if let Some(out) = dir_to(cur, nb) {
+                    if out != enter && exit_ok(cur, out) && !grid.used_hes(nb).contains(&out.opp()) {
+                        goal = Some(cur);
+                        break 'bfs;
+                    }
+                }
+                for d in DIRS {
+                    if d == enter { continue; }
+                    let n = step(cur, d);
+                    if blocked(n) || !board.contains(&n) || seen.contains_key(&n) { continue; }
+                    if !exit_ok(cur, d) || !cell_ok(n, d.opp()) { continue; }
+                    seen.insert(n, (d.opp(), cur));
+                    queue.push_back(n);
                 }
             }
-            for d in DIRS {
-                if d == enter { continue; }
-                let n = step(cur, d);
-                if blocked(n) || !board.contains(&n) || !grid.is_empty(n) || seen.contains_key(&n) { continue; }
-                seen.insert(n, (d.opp(), cur));
-                queue.push_back(n);
-            }
         }
+        if goal.is_some() { break; }
     }
     let mut cur = goal?;
     let mut trail: Vec<(Pos, He)> = vec![(cur, seen[&cur].0)];
@@ -928,10 +1134,8 @@ pub fn reel_blocked(grid: &Grid, apos: Pos) -> Option<(Pos, Vec<Strand>)> {
     if grid.reserved.contains_key(&npos) { return None; } // seed territory: park
     let w = grid.wire(npos)?;
     if w.count() <= 1 { return None; }
-    let (far_pos, far_port) = grid.try_trace(apos, d)?;
-    let far = grid.agent(far_pos)?;
-    if far_port != 0 || !far.tag.is_consumer() || far.nascent { return None; }
     let mine = w.with_he(d.opp())?;
+    if !mine.hot { return None; } // ψ: only demanded walkers ask for clearing
     Some((npos, w.iter().filter(|s| *s != mine).collect()))
 }
 
@@ -962,7 +1166,7 @@ pub struct DockPlan {
 /// deleted (it is shielded, so nothing external references it), the pair is restored, and
 /// other planners get their chance. Possible only because the shadow fires at COMPLETION,
 /// not at dock — mid-unfold products are pure geometry.
-const SEED_PATIENCE: u32 = 8;
+const SEED_PATIENCE: u32 = 24;
 
 /// Dockability: the same template the stamp uses, but the outside cells need only be
 /// UNCLAIMED and agent-free — occupied wire cells are acceptable squatters (the unfold
@@ -987,20 +1191,15 @@ pub fn plan_grow_dock(grid: &Grid, cpos: Pos) -> Option<DockPlan> {
     let mv = |p: Pos| (p.0 + off.0, p.1 + off.1, p.2 + off.2);
     let rule = find(cons.tag, prod.tag).unwrap();
 
-    // Outside cells: reservable iff in bounds, not reserved by anyone, not agent/seed-held,
-    // and any squatting WIRE cell must be slideable RIGHT NOW (else a dock could deadlock:
-    // the reservation parks walkers while the unslideable squatter never leaves).
+    // Outside cells: reservable iff in bounds and not claimed by another seed or a seed
+    // cell itself. Squatters of every kind are allowed: wires get slid by the unfold,
+    // agents get pushed by χ+SHOVE (the reservation itself is a pressure source while
+    // occupied), and the patience/abort valve bounds the worst case.
     let mut cells: Vec<Pos> = vec![];
     let mut outside_ok = |q: Pos| -> bool {
         if q == cpos || q == ppos { return true; }
         if !grid.topo.in_bounds(q) || grid.reserved.contains_key(&q) { return false; }
-        match grid.cells.get(&q) {
-            None => {}
-            Some(Cell::Wire(w)) => {
-                if !w.iter().any(|s| plan_slide(grid, q, s, &[], true).is_some()) { return false; }
-            }
-            _ => return false,
-        }
+        if matches!(grid.cells.get(&q), Some(Cell::Seed(_))) { return false; }
         if !cells.contains(&q) { cells.push(q); }
         true
     };
@@ -1060,7 +1259,7 @@ pub fn apply_grow_dock(grid: &mut Grid, plan: DockPlan) {
     grid.seed_count += 1;
 }
 
-pub enum GrowStep { Placed(Pos), Slid(Pos), Waiting, Aborted }
+pub enum GrowStep { Placed(Pos), Slid(Pos), Waiting(Pos), Aborted }
 
 /// One unfold step for the seed driven at `driver`. Emits the next item if its cell is
 /// open, slides a squatting strand out of the way if not, waits briefly, and ABORTS after
@@ -1164,5 +1363,5 @@ pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowS
         grid.seed_count -= 1;
         return Some(GrowStep::Aborted);
     }
-    Some(GrowStep::Waiting)
+    Some(GrowStep::Waiting(cell))
 }

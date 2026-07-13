@@ -40,12 +40,15 @@
     this page only draws). Cells live at (x,y,z): <b>bilayer</b> traces have two planes (the
     2.5D chip), <b>full3d</b> traces as many as the run used — upper planes draw offset
     up-right and dimmer. There are no vias and no tucks: a crossing is two wires at
-    different z. Each frame is one tick: <b>fire</b> every enabled adjacent facing pair,
-    <b>slide</b> one blocking strand out of each stuck walker's way (the excluded-volume
-    move), <b>reel</b> every eligible producer one cell, then <b>retract</b> U-turn slack to
-    fixpoint. Deterministic: the same term always produces this exact movie. Regenerate or
-    add traces with <b>cargo run --release --bin dump-run &lt;name&gt; [ticks] [bilayer|full3d]</b>
-    and drop the JSON here.</div>
+    different z. Each tick: a ψ heat sweep, then <b>fire</b> every enabled adjacent facing
+    pair, <b>slide</b> one blocking strand out of each stuck walker's way (the
+    excluded-volume move), <b>reel</b> every ψ-demanded producer one cell (eating its own
+    aux drag where it can), <b>shove</b> parked agents down the χ pressure gradient, thin
+    and evaporate crowded wire under χ, then <b>retract</b> U-turn slack to fixpoint.
+    Deterministic: the same term always produces this exact movie. Long traces are
+    stride-thinned (fire frames always kept, events merged). Regenerate or add traces
+    with <b>cargo run --release --bin dump-run &lt;name&gt; [ticks] [bilayer|full3d]
+    [stride]</b> and drop the JSON here.</div>
     <div style="margin:8px 0">
       <button id="play">&#9654; play</button>
       <button id="step">step</button>
@@ -77,16 +80,20 @@
     <div class="note">
       thick white stub = principal port; thin stubs = aux ports; diagonal stubs = up/down<br>
       <span style="color:#6f9fd8">z=0 strand</span> / <span style="color:#a97fd8">z=1 strand</span> (higher planes dimmer, offset up-right)<br>
+      <span style="color:#ffd866">gold strand</span> = hot (ψ demand: a consumer awaits along this wire; reels are gated on it)<br>
       gold flash = fire (rule shown); agents glide = reel; slack vanishing = retract/slide
     </div>
     <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
     <div class="note">Correctness is schedule-independent by construction: every transition
     declares its cell footprint (writes machine-checked inside it) and preserves the
-    projection onto the shadow interaction net. Liveness is measured, never assumed: the
-    bare sequential schedule still has no fields, and <b>bilayer</b> runs wedge at fire
-    seams where splices and trails exhaust the single overflow plane (several embedded
-    traces end STUCK — the honest LOCAL_CA_DESIGN.md §13 residue the pressure field
-    addresses next). <b>full3d</b> runs of the same terms complete.</div>
+    projection onto the shadow interaction net. Liveness is measured, never assumed. The
+    schedule now carries two strictly neighbor-local fields: ψ demand (the gold hot bit,
+    one cell per tick; it replaced the unbounded wire trace as reel's gate) and χ
+    pressure (Jacobi-relaxed, pumped only by real frustration; it shoves parked agents
+    and evaporates wire mats). With the fields plus truncation reels (walks eat their own
+    drag), every embedded trace reaches NF, including selF and chain3, the old
+    fire-space and trail-mat wedges. The corpus residue (bilayer seam knots, the deepest
+    full3d spines) is LOCAL_CA_DESIGN.md §13's remaining liveness question.</div>
   </div>
 </div>
 <script>
@@ -279,13 +286,16 @@ function draw() {
     const y0 = Math.floor(view.y - innerHeight / 2 / s), y1 = Math.ceil(view.y + innerHeight / 2 / s);
     if ((x1 - x0) * (y1 - y0) < 20000) for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const [a, b] = px(x, y, 0); ctx.fillRect(a - 1, b - 1, 2, 2); }
   }
-  // wires of the departing frame: [x, y, z, ["NS", ...]]
+  // wires of the departing frame: [x, y, z, ["NS", ...]]; a trailing "*" marks the
+  // strand HOT (ψ demand: a consumer awaits along this wire) — drawn gold and thicker
   const drawStrand = (x, y, z, sdesc) => {
     const [cx, cy] = px(x, y, z);
-    ctx.lineWidth = Math.max(1, s * 0.09);
+    const hot = sdesc.endsWith("*");
+    const faces = hot ? sdesc.slice(0, -1) : sdesc;
+    ctx.lineWidth = Math.max(1, s * (hot ? 0.14 : 0.09));
     ctx.globalAlpha = 0.9 * zalpha(z);
-    ctx.strokeStyle = planecol(z);
-    for (const dch of sdesc) {
+    ctx.strokeStyle = hot ? "#ffd866" : planecol(z);
+    for (const dch of faces) {
       const v = DIR[dch];
       ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + v[0] * s / 2, cy + v[1] * s / 2); ctx.stroke();
     }
@@ -339,7 +349,7 @@ function hud() {
   const last = FRAME === TR.frames.length - 1;
   const badge = !last ? '<span class="hot">running…</span>'
     : TR.status === "done" ? `<span class="ok">NORMAL FORM ✓ readback ${TR.readback}${TR.readback === TR.oracle ? " = oracle" : " ≠ oracle!"}</span>`
-    : `<span class="bad">STUCK — ${f.pairs} pair(s) remain, no transition enabled (liveness residue)</span>`;
+    : `<span class="bad">STUCK — ${f.pairs} pair(s) remain, no shadow progress (liveness residue)</span>`;
   document.getElementById("stat").innerHTML =
     `<div class="row"><span class="k">term</span><span>${TR.term.length > 30 ? TR.term.slice(0, 30) + "…" : TR.term}</span></div>` +
     `<div class="row"><span class="k">topology</span><span>${TR.topo || "bilayer"}</span></div>` +

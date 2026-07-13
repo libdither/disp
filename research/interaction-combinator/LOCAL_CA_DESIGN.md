@@ -395,13 +395,22 @@ Cheap-first, each rung gating the next:
    those mechanisms were simulating; a crossing is two wires at different z, and an agent
    cell holds only its agent. Two topologies run the same dynamics and the same
    differential: `Bilayer` (z ∈ {0,1}, the 2.5D chip, the honest worst case) and `Full3D`.
-   Transitions are FIRE, REEL, and two polymer moves projecting to identity: RETRACT (a
-   width-1 U-turn annihilates, the discrete curve-shortening step) and SLIDE (a strand
-   relocates out of a shared cell through the shortest empty-cell route — the
-   excluded-volume move, scheduled when a demanded walker is blocked; the kink-flip is its
-   1-cell case). Measured on the 400-term corpus: full3d 201 to NF, bilayer 179; pins
-   verified per topology (stem application everywhere; fork dispatch, K erasure, chain1,
-   and the sharing S-rule on full3d).
+   Transitions are FIRE (search, precomputed stamp, or incremental dock-and-grow), REEL,
+   SHOVE, and two polymer moves projecting to identity: RETRACT (a width-1 U-turn
+   annihilates, the discrete curve-shortening step) and SLIDE (a strand relocates out of
+   a shared cell through the shortest empty-cell route, the excluded-volume move; the
+   kink-flip is its 1-cell case). The field rung has landed on top, as two strictly
+   neighbor-local fields rather than §7's single potential (the unified potential stays
+   the theory target): ψ demand is a per-strand hot bit pumped at live consumer
+   principals and spread one cell per tick along wire continuations (it replaced the one
+   unbounded read, the whole-wire trace, at zero measured liveness cost), and χ
+   pressure is a per-cell scalar under a Jacobi relax with leak, pumped only by real
+   frustration (failed clears, hot-but-unplannable walkers, waiting seeds). Under χ,
+   parked agents shove downhill, crowded cells thin, and count-1 mats evaporate strictly
+   downhill. Measured on the 400-term corpus with the fields: full3d 326 to NF (201
+   before), bilayer 223 (179); every named pin completes on full3d, including selF,
+   disp, the chain class, and the deep-copy share; grow-only becomes bilayer's best mode
+   (238: patience wins on the congested topology once fields clear its squatters).
    Substrate lessons folded back into this doc, each found by measurement: walkers move
    only when a fire awaits (parked values on crossings otherwise deadlock the crossed
    wires); coexistence states were a symptom of the missing dimension (with real z,
@@ -411,12 +420,18 @@ Cheap-first, each rung gating the next:
    knot-loosening is; slides must be strictly decongesting (empty-cell trails only) or
    the scheduler shuffles strands forever and stall detection dies; in-footprint
    place-and-route needs backtracking with most-constrained-first wires, and reel's aux
-   re-anchoring wants that same router rather than bespoke bend shapes. The remaining
-   stalls concentrate where FIRE SEAMS knot: hub splices and reel trails exhaust local
-   capacity around the pair, and on bilayer the single overflow plane makes this bite
-   within a few interactions (the same terms complete on full3d). That is the §13
-   liveness residue in its current, sharpest form, and the pressure field (§7) plus the
-   geometric fire redesign are aimed exactly at it.
+   re-anchoring wants that same router rather than bespoke bend shapes. The field-rung
+   lessons on top: pressure needs precision pumping (pumping every frustrated pair
+   measured as a regression, churn drowning the signal); walks must eat slack (§8.2's
+   reel-in made real: extension-only aux re-anchoring nets +1 strand per step and paves
+   the count-1 trail mats that block everything downstream, while truncation-first
+   re-anchoring along the wire's own chain needs zero new wire exactly where the router
+   has no room, and was the lever that unlocked the chain class and selF); and a field
+   schedule needs a shadow-progress stall detector, because polymer churn keeps ticks
+   busy while a hopeless knot cycles (the old tick-capped class measured 40/40 frozen
+   over five times the budget). The remaining stalls are the bilayer seam class (the
+   single overflow plane is that topology's geometric ceiling) and, on full3d, the
+   deepest multi-walker spines: the §13 liveness residue in its current, sharpest form.
    The earlier JS prototype of this rung remains in `local_ca_field.html`, by a different
    route than the pure microcoded executor: the file co-maintains an abstract interaction net
    (authoritative for reduction, validated 3998/0 against an independent normalizer with full
