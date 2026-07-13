@@ -256,6 +256,46 @@ Morphism := {A, B, domR, codR} -> {
 
 make_morphism := {map, respect} -> { map := map; respect := respect }
 
+// ── Two-face licensing (delegation by construction) ──
+// two_face old new: the delegation glue for a licensed fast face. A neutral
+// argument delegates to the incumbent VERBATIM (checking-time behavior is the
+// same stuck tree), so the neutral face holds by construction and a license
+// proof owes only the concrete face. The glue is built by the GUARD below,
+// never by the proposal, so a rebind cannot forge or bypass the delegation.
+two_face := {old, new} -> {x} -> if (is_neutral x) then (old x) else (new x)
+
+// PositiveFnCoverage T RB old new: the concrete-face license obligations for
+// functions out of a concrete positive type T, one field per constructor,
+// generated from T's variant code (recognizer_params; the encode iso
+// reconstructs real constructor values, so shape-encoded types like Nat work
+// alongside plain inj-tagged sums). A direct `Rec` argument binds an
+// inductive hypothesis `RB (old k) (new k)`; RB relates results (for curried
+// functions, instantiate RB at the partial-application relation). The code
+// must be CONCRETE (the same one-generic-point boundary as the other metadata
+// generics). Known limit (ACTIVE_BUGS item 5): payloads and IHs are still
+// hyps, so a payload-face probe passes; obligations pin constructor ROOTS,
+// which is what kills the top-level-refl door (guard_faces.test.disp).
+let pos_ctor_value := {T, tag, args} -> (pair_snd ((type_meta T).functor)) (inj tag (build_payload args))
+let pos_fn_arg_type := {T, marker} ->
+  if (is_recunder_marker marker) then ((pair_snd marker) T)
+  else (if (or (is_param_marker marker) (is_recat_marker marker)) then InvalidType else marker)
+let pos_fn_obligation := fix ({self, T, RB, old, new, tag, argspec, args} ->
+  if (is_fork argspec)
+    then (if (tree_eq (pair_fst argspec) Rec)
+      then (Pi T ({a} -> Pi (RB (old a) (new a)) ({_ih} ->
+        self T RB old new tag (pair_snd argspec) (list_cat args (cons a nil)))))
+      else (Pi (pos_fn_arg_type T (pair_fst argspec)) ({a} ->
+        self T RB old new tag (pair_snd argspec) (list_cat args (cons a nil)))))
+    else (RB (old (pos_ctor_value T tag args)) (new (pos_ctor_value T tag args))))
+let pos_fn_fields := fix ({self, variants, T, RB, old, new} ->
+  if (is_fork variants) then {
+    let var := pair_fst variants
+    cons (pair (pair_fst var) (pos_fn_obligation T RB old new (pair_fst var) (pair_snd var) nil))
+      (self (pair_snd variants) T RB old new)
+  } else nil)
+PositiveFnCoverage := {T, RB, old, new} ->
+  Record (pos_fn_fields ((type_meta T).recognizer_params) T RB old new)
+
 // Declaration guards are relation-generic: a replacement carries `new` and a
 // proof of R old new.  They live here rather than in an equality-specific API.
 license_guard := {R} -> {old, req} ->
@@ -269,6 +309,26 @@ license_guard := {R} -> {old, req} ->
         Err _ => Err
       }
     })
+
+// The two-face guard: a rebind proposes parts `{ fast, proof }`, never a whole
+// replacement. The guard checks the concrete-face relation against the RAW
+// worker (obligations sit at constructor roots, where the glued form and the
+// worker agree exactly; checking the glued form instead would collapse every
+// IH, since the glue delegates at a hyp) and binds the guard-constructed
+// `two_face old fast`, so neutral-face delegation cannot be forged. Pair R
+// with PositiveFnCoverage for the induction family that closes the
+// top-level-refl door.
+two_face_guard := {R} -> {old, req} ->
+  if (is_stem (req.guard)) then Err
+  else (if (is_leaf old)
+    then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
+    else (if (is_stem (req.value)) then {
+      let u := stem_child (req.value)
+      match (param_apply (R (stem_child old) (u.fast)) (u.proof)) {
+        Ok b  => (if b then (Ok (Bind (two_face (stem_child old) (u.fast)))) else Err)
+        Err _ => Err
+      }
+    } else Err))
 
 // An immutable declaration guard.
 freeze := {old, req} -> Err

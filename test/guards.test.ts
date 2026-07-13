@@ -40,6 +40,16 @@ describe("guard layer rejections", () => {
       .not.toThrow()
   }, 120000)
 
+  it("two_face_guard: a worker that fails a constructor obligation is rejected", () => {
+    // The zero obligation demands Eq Nat 0 (succ 0); refl cannot close it, so the
+    // rebind fails the load (the shift-shaped attack that the pointwise license
+    // accepts — probe_license_sr — dies here at the concrete face).
+    expect(() => run(K + `let NatRB := {u, v} -> Eq Nat u v
+guard (two_face_guard (PositiveFnCoverage Nat NatRB)) f : Arrow Nat Nat := ({n} -> n)
+f := { fast := ({n} -> succ n) ; proof := { zero := refl; succ := ({k} -> {_ih} -> refl) } }
+`)).toThrow(/rejected by its guard/)
+  }, 120000)
+
   it("ownership is not surrendered (guard proposals refused)", () => {
     expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) p : Nat := 3\nguard freeze p : Nat := { new := 3; proof := refl }\n`))
       .toThrow(/rejected by its guard/)
