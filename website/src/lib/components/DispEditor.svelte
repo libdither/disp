@@ -56,18 +56,21 @@
     values: { label?: string; node: ValueNode }[] | undefined
     kind: string
     expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
+    onVisualize?: (tree: ValueNode) => void
     #mounted: object[] = []
     constructor(
       kind: string,
       text?: string,
       values?: { label?: string; node: ValueNode }[],
-      expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
+      expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>,
+      onVisualize?: (tree: ValueNode) => void
     ) {
       super()
       this.kind = kind
       this.text = text
       this.values = values
       this.expand = expand
+      this.onVisualize = onVisualize
     }
     override eq(other: OutBlockWidget): boolean {
       // values compare by reference: each run builds fresh mark objects, so
@@ -101,7 +104,8 @@
               props: {
                 node: v.node,
                 expand: this.expand,
-                onGrew: () => d.classList.add('open')
+                onGrew: () => d.classList.add('open'),
+                onVisualize: this.onVisualize
               }
             })
           )
@@ -129,6 +133,8 @@
     onRunToCursor?: () => void
     // subtree re-render for interactive value blocks (LineMark.values)
     expandValue?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
+    // hand a value's current fold-state tree to the reduction visualizer
+    onVisualizeValue?: (tree: ValueNode) => void
     api?: (a: EditorApi) => void
   }
 
@@ -140,7 +146,7 @@
     gotoLine(line: number): void
   }
 
-  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, api }: Props = $props()
+  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, api }: Props = $props()
 
   let host: HTMLDivElement
   let view: EditorView | undefined
@@ -188,7 +194,7 @@
               builder.push({
                 from: l.to,
                 deco: Decoration.widget({
-                  widget: new OutBlockWidget(m.kind, m.block, m.values, expandValue),
+                  widget: new OutBlockWidget(m.kind, m.block, m.values, expandValue, onVisualizeValue),
                   side: 2,
                   block: true
                 })

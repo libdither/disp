@@ -3,8 +3,11 @@
   // playground output (def blocks, failing-test got/want, the eval strip).
   // Recognized atoms (nats, strings, bound names) and budget cuts (…) are
   // clickable — a click re-renders that subtree via `expand` (raw for atoms,
-  // deeper for cuts) and splices it in; ↩ pops the unfold history, restoring
-  // the folded rendering. Without `expand` the tree renders inert.
+  // deeper for cuts) and splices it in. Every unfolded subterm wears its own
+  // − chip that re-folds exactly that subterm (nested unfolds fold away with
+  // their ancestor). Without `expand` the tree renders inert. `onVisualize`
+  // adds a trailing button that hands the CURRENT fold-state tree to the
+  // host (the playground's reduction-visualizer pop-out).
   import type { ValueNode } from '$lib/disp/protocol'
 
   interface Props {
@@ -12,15 +15,20 @@
     expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
     // an unfold grew the content — the host may want to un-collapse
     onGrew?: () => void
+    // pop the current fold-state tree out (folded atoms stay symbolic there)
+    onVisualize?: (tree: ValueNode) => void
   }
-  let { node, expand, onGrew }: Props = $props()
+  let { node, expand, onGrew, onVisualize }: Props = $props()
 
-  // local mutable copy: unfolds splice into it, history re-folds. The prop
-  // never changes for a mounted instance (hosts recreate on new results),
-  // so capturing its initial value is the intent.
+  // an unfolded splice remembers what it replaced, so it can re-fold in place
+  type UN = ValueNode & { _prev?: ValueNode }
+  const prevOf = (n: ValueNode): ValueNode | undefined => (n as UN)._prev
+
+  // local mutable copy: unfolds splice into it. The prop never changes for a
+  // mounted instance (hosts recreate on new results), so capturing its
+  // initial value is the intent.
   // svelte-ignore state_referenced_locally
   let tree = $state<ValueNode>(JSON.parse(JSON.stringify(node)))
-  let history = $state<{ path: number[]; prev: ValueNode }[]>([])
   let busyPath = $state<string | null>(null)
 
   function getAt(path: number[]): ValueNode {
@@ -44,8 +52,8 @@
     try {
       const fresh = await expand(handle, rawRoot)
       if (fresh) {
-        history.push({ path, prev: getAt(path) })
-        setAt(path, fresh)
+        const prev = $state.snapshot(getAt(path)) as ValueNode
+        setAt(path, { ...fresh, _prev: prev } as UN)
         onGrew?.()
       }
     } finally {
@@ -53,10 +61,15 @@
     }
   }
 
-  function back(e: Event) {
+  function refold(e: Event, path: number[]) {
     e.stopPropagation()
-    const u = history.pop()
-    if (u) setAt(u.path, u.prev)
+    const prev = prevOf(getAt(path))
+    if (prev) setAt(path, prev)
+  }
+
+  function visualize(e: Event) {
+    e.stopPropagation()
+    onVisualize?.($state.snapshot(tree) as ValueNode)
   }
 
   // the widget host toggles collapse on mousedown — interactive spans opt out
@@ -64,6 +77,12 @@
 </script>
 
 {#snippet render(n: ValueNode, path: number[], atom: boolean)}
+  {#if prevOf(n)}<button
+      type="button"
+      class="tv-fold"
+      onmousedown={eat}
+      onclick={(e) => refold(e, path)}
+      title="re-fold this subterm">−</button>{/if}
   {#if n.k === 'leaf'}<span class="tv-leaf">t</span>
   {:else if n.k === 'nat'}<button
       type="button"
@@ -99,12 +118,13 @@
 {/snippet}
 
 <span class="tv">
-  {@render render(tree, [], false)}{#if history.length > 0}{' '}<button
+  {@render render(tree, [], false)}{#if onVisualize}{' '}<button
       type="button"
-      class="tv-back"
+      class="tv-viz"
       onmousedown={eat}
-      onclick={back}
-      title="re-fold the last unfold">↩</button>{/if}
+      onclick={visualize}
+      title="visualize reduction (folded names stay symbolic)"
+      aria-label="visualize reduction"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5 4.8 10.5M8 4.5l3.2 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none" /><circle cx="8" cy="3.4" r="1.6" fill="currentColor" /><circle cx="4.8" cy="11.6" r="1.6" fill="currentColor" /><circle cx="11.2" cy="11.6" r="1.6" fill="currentColor" /></svg></button>{/if}
 </span>
 
 <style>
@@ -118,7 +138,8 @@
   }
   .tv-atom,
   .tv-more,
-  .tv-back {
+  .tv-fold,
+  .tv-viz {
     background: none;
     border: none;
     padding: 0;
@@ -151,13 +172,27 @@
   .tv-more:hover {
     background: rgba(74, 104, 82, 0.26);
   }
-  .tv-back {
-    padding: 0 0.35em;
-    color: #8ea08b;
+  .tv-fold {
+    padding: 0 0.4em;
+    margin-right: 0.15em;
+    background: rgba(168, 119, 15, 0.14);
+    color: #a8770f;
+    font-weight: 700;
   }
-  .tv-back:hover {
+  .tv-fold:hover {
+    background: rgba(168, 119, 15, 0.28);
+  }
+  .tv-viz {
+    padding: 0 0.25em;
+    color: #8ea08b;
+    vertical-align: -0.15em;
+  }
+  .tv-viz:hover {
     color: #2f9e6e;
-    background: rgba(74, 104, 82, 0.12);
+  }
+  .tv-viz svg {
+    width: 1.05em;
+    height: 1.05em;
   }
   .busy {
     opacity: 0.45;

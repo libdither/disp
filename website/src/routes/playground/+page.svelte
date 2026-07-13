@@ -11,6 +11,7 @@
   import { examples } from '$lib/disp/examples'
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
   import TreeValue from '$lib/components/TreeValue.svelte'
+  import TreeVis from '$lib/components/TreeVis.svelte'
 
   // approximate item count of a cold kernel elaboration (measured; only used
   // to shape the progress bar)
@@ -37,6 +38,57 @@
   // subtree re-render for every interactive value (blocks + eval strip):
   // raw for recognized atoms, deeper for budget cuts
   const expandValue = (handle: number, rawRoot: boolean) => disp.render(handle, 80, rawRoot)
+
+  // ---- reduction-visualizer pop-out -----------------------------------------
+  // A value's CURRENT fold state serializes into the pedagogical visualizer's
+  // expression syntax: concrete structure goes in as trees, folded atoms
+  // (names, strings, big nats, … cuts) become bare identifiers — which
+  // parseTree treats as free variables, i.e. named fruit with no shape of
+  // their own. Reduction around them is symbolic and nothing reduces INSIDE
+  // them; unfold more in the buffer first for a deeper reduction.
+  let viz = $state<{ expr: string } | null>(null)
+
+  function vizExpr(node: ValueNode): string {
+    let cuts = 0
+    // names parseTree would substitute with ITS OWN encodings (close cousins
+    // of the lib's, not tree-identical) get a bare prefix so they stay fruit
+    const RESERVED = new Set(['t', 'K', 'I', 'S', 'true', 'false', 'not', 'and', 'or', 'add'])
+    const mangle = (s: string) => {
+      let m = s.replace(/[^A-Za-z0-9_]/g, '_')
+      if (!/^[A-Za-z_]/.test(m)) m = '_' + m
+      if (RESERVED.has(m)) m = '_' + m
+      return m
+    }
+    const go = (n: ValueNode, atom: boolean): string => {
+      switch (n.k) {
+        case 'leaf':
+          return 't'
+        case 'nat':
+          // small nats go in concrete (the encodings agree); big ones would
+          // drown the drawing, so they stay fruit
+          return n.n <= 24 ? String(n.n) : mangle(`n_${n.n}`)
+        case 'str':
+          return mangle(n.s)
+        case 'name':
+          return mangle(n.name)
+        case 'more':
+          return `_${++cuts}`
+        case 'stem': {
+          const s = `t ${go(n.c[0], true)}`
+          return atom ? `(${s})` : s
+        }
+        case 'fork': {
+          const s = `t ${go(n.c[0], true)} ${go(n.c[1], true)}`
+          return atom ? `(${s})` : s
+        }
+      }
+    }
+    return go(node, false)
+  }
+
+  const onVisualizeValue = (tree: ValueNode) => {
+    viz = { expr: vizExpr(tree) }
+  }
 
   // ---- toasts (engine messages: kernel loaded, reset, interrupted…) ----
   let toasts = $state<{ id: number; text: string; kind: 'info' | 'warn' }[]>([])
@@ -549,7 +601,9 @@
             Results live in the buffer, notebook-style: every definition shows its reduced value,
             every test its verdict, and edits re-check live once the kernel is warm. Values are
             explorable — click a number, string, or name to unfold the tree it stands for, click
-            <em>…</em> to render deeper, <em>↩</em> to fold back.
+            <em>…</em> to render deeper, <em>−</em> to fold a subterm back, and the tree button to
+            pop the value into the reduction visualizer (folded names ride along as symbolic
+            fruit).
           </p>
           <p>
             The kernel arrives <em>precompiled</em> — a small snapshot of the checked module cache —
@@ -570,14 +624,32 @@
   </div>
 
   <div class="stage">
-    <DispEditor
-      doc={currentDoc || initialDoc}
-      onDocChange={onEdit}
-      onRunFile={runFile}
-      onRunToCursor={runToCursor}
-      {expandValue}
-      api={(a) => (editorApi = a)}
-    />
+    <div class="ed-wrap">
+      <DispEditor
+        doc={currentDoc || initialDoc}
+        onDocChange={onEdit}
+        onRunFile={runFile}
+        onRunToCursor={runToCursor}
+        {expandValue}
+        {onVisualizeValue}
+        api={(a) => (editorApi = a)}
+      />
+    </div>
+
+    {#if viz}
+      <aside class="viz-panel">
+        <div class="viz-head">
+          <span class="viz-title">reduction</span>
+          <span class="viz-sub">folded names are symbolic fruit — unfold more in the buffer for deeper reduction. Edit the expression to apply arguments.</span>
+          <button class="x" onclick={() => (viz = null)} aria-label="close visualizer">×</button>
+        </div>
+        {#key viz}
+          <div class="viz-body">
+            <TreeVis variant="lab" exprs={[viz.expr]} height={430} />
+          </div>
+        {/key}
+      </aside>
+    {/if}
 
     {#if stripError}
       <div class="errstrip" title={stripError}>⚠ {stripError}</div>
@@ -599,7 +671,7 @@
         <span class="ev">
           {#if evalOut.node}
             {#key evalOut}
-              <TreeValue node={evalOut.node} expand={expandValue} />
+              <TreeValue node={evalOut.node} expand={expandValue} onVisualize={onVisualizeValue} />
             {/key}
           {:else}
             {evalOut.value}
@@ -803,12 +875,76 @@
     font-size: 0.82em;
   }
 
-  /* ---- stage: the full-width buffer + overlays ---- */
+  /* ---- stage: the buffer (+ the on-demand visualizer panel) + overlays ---- */
   .stage {
     flex: 1;
     position: relative;
+    display: flex;
     min-height: 0;
     background: var(--bg-code);
+  }
+  .ed-wrap {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* ---- the reduction-visualizer pop-out ---- */
+  .viz-panel {
+    width: clamp(24rem, 42%, 46rem);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--border);
+    background: var(--bg);
+    overflow-y: auto;
+  }
+  .viz-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    padding: 0.55rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elev);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  .viz-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  .viz-sub {
+    font-size: 0.74rem;
+    color: var(--fg-faint);
+  }
+  .viz-head .x {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--fg-faint);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    align-self: center;
+  }
+  .viz-head .x:hover {
+    color: var(--fg);
+  }
+  .viz-body {
+    padding: 0.6rem;
+  }
+  @media (max-width: 900px) {
+    .stage {
+      flex-direction: column;
+    }
+    .viz-panel {
+      width: 100%;
+      max-height: 55%;
+      border-left: none;
+      border-top: 1px solid var(--border);
+    }
   }
 
   .errstrip {
