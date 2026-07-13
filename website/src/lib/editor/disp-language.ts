@@ -157,6 +157,13 @@ export const dispEditorTheme = EditorView.theme(
     },
     '.cm-line.disp-line-pass': { backgroundColor: 'rgba(58,157,99,0.1)' },
     '.cm-line.disp-line-fail': { backgroundColor: 'rgba(201,95,109,0.13)' },
+    // ctrl/cmd+hover on a clickable import string (VS Code's link affordance)
+    '.disp-link': {
+      textDecoration: 'underline',
+      textUnderlineOffset: '3px',
+      textDecorationColor: '#2f9e6e',
+      cursor: 'pointer'
+    },
     // errors underline the offending line (wavy red, IDE-style)
     '.disp-error-underline': {
       textDecoration: 'underline wavy #c95f6d',

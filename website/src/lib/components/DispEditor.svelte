@@ -166,6 +166,60 @@
 
   const setMarksEffect = StateEffect.define<LineMark[]>()
 
+  // ---- ctrl/cmd+hover link affordance (VS Code style) ----------------------
+  // While the modifier is held, the clickable "….disp" string under the
+  // pointer underlines and takes a pointer cursor.
+  const setLinkRange = StateEffect.define<{ from: number; to: number } | null>()
+  const linkField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(deco, tr) {
+      deco = deco.map(tr.changes)
+      for (const e of tr.effects)
+        if (e.is(setLinkRange))
+          deco = e.value
+            ? Decoration.set([Decoration.mark({ class: 'disp-link' }).range(e.value.from, e.value.to)])
+            : Decoration.none
+      return deco
+    },
+    provide: (f) => EditorView.decorations.from(f)
+  })
+
+  // the one link detector, shared by hover and click
+  function linkAt(v: EditorView, x: number, y: number): { from: number; to: number; path: string } | null {
+    const pos = v.posAtCoords({ x, y })
+    if (pos == null) return null
+    const line = v.state.doc.lineAt(pos)
+    const re = /"([^"]*)"/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(line.text))) {
+      const from = line.from + m.index
+      const to = from + m[0].length
+      if (pos >= from && pos <= to) return m[1].endsWith('.disp') ? { from, to, path: m[1] } : null
+    }
+    return null
+  }
+
+  let modHeld = false
+  let lastMouse: { x: number; y: number } | null = null
+  let shownLink: { from: number; to: number } | null = null
+  function refreshLink() {
+    if (!view || !onOpenPath) return
+    const l = modHeld && lastMouse ? linkAt(view, lastMouse.x, lastMouse.y) : null
+    const next = l ? { from: l.from, to: l.to } : null
+    if (next?.from === shownLink?.from && next?.to === shownLink?.to) return
+    shownLink = next
+    view.dispatch({ effects: setLinkRange.of(next) })
+  }
+  const onModKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Control' && e.key !== 'Meta') return
+    modHeld = e.type === 'keydown'
+    refreshLink()
+  }
+  const onWinBlur = () => {
+    modHeld = false
+    refreshLink()
+  }
+
   // Marks survive edits (mapped through changes) rather than clearing: the
   // host dims them via the `marks-stale` class until fresh results arrive, so
   // typing doesn't collapse the layout and re-run flicker stays gentle.
@@ -256,25 +310,27 @@
             ...historyKeymap,
             ...searchKeymap
           ]),
-          // ctrl/cmd-click a "….disp" string → jump to that file
+          // ctrl/cmd-click a "….disp" string → jump to that file; hovering
+          // with the modifier held shows the underline affordance
+          linkField,
           EditorView.domEventHandlers({
             mousedown: (e, v) => {
               if (!(e.ctrlKey || e.metaKey) || e.button !== 0 || !onOpenPath) return false
-              const pos = v.posAtCoords({ x: e.clientX, y: e.clientY })
-              if (pos == null) return false
-              const line = v.state.doc.lineAt(pos)
-              const re = /"([^"]*)"/g
-              let m: RegExpExecArray | null
-              while ((m = re.exec(line.text))) {
-                const from = line.from + m.index
-                const to = from + m[0].length
-                if (pos >= from && pos <= to) {
-                  if (!m[1].endsWith('.disp')) return false
-                  e.preventDefault()
-                  onOpenPath(m[1])
-                  return true
-                }
-              }
+              const l = linkAt(v, e.clientX, e.clientY)
+              if (!l) return false
+              e.preventDefault()
+              onOpenPath(l.path)
+              return true
+            },
+            mousemove: (e) => {
+              lastMouse = { x: e.clientX, y: e.clientY }
+              modHeld = e.ctrlKey || e.metaKey
+              refreshLink()
+              return false
+            },
+            mouseleave: () => {
+              lastMouse = null
+              refreshLink()
               return false
             }
           }),
@@ -315,6 +371,19 @@
         view!.focus()
       }
     })
+  })
+
+  onMount(() => {
+    // modifier press/release can happen while the pointer is already resting
+    // on a link — track it at the window level
+    window.addEventListener('keydown', onModKey)
+    window.addEventListener('keyup', onModKey)
+    window.addEventListener('blur', onWinBlur)
+    return () => {
+      window.removeEventListener('keydown', onModKey)
+      window.removeEventListener('keyup', onModKey)
+      window.removeEventListener('blur', onWinBlur)
+    }
   })
 
   onDestroy(() => view?.destroy())
