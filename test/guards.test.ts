@@ -40,6 +40,15 @@ describe("guard layer rejections", () => {
       .not.toThrow()
   }, 120000)
 
+  it("license_guard_deriv: a derivation with mismatched endpoints is rejected", () => {
+    // The rule relates id to succ; the rebind proposes succ∘succ, so check_deriv
+    // computes false (tree_eq at the rule instance's rhs) and the load fails.
+    expect(() => run(K + `open use "../std/deriv.disp"
+guard (license_guard_deriv (cons ({_} -> pair ({n} -> n) ({n} -> succ n)) nil) nil) g : Arrow Nat Nat := ({n} -> n)
+g := { new := ({n} -> succ (succ n)) ; deriv := (d_rule 0 t) }
+`)).toThrow(/rejected by its guard/)
+  }, 120000)
+
   it("two_face_guard: a worker that fails a constructor obligation is rejected", () => {
     // The zero obligation demands Eq Nat 0 (succ 0); refl cannot close it, so the
     // rebind fails the load (the shift-shaped attack that the pointwise license

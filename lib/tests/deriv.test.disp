@@ -1,0 +1,45 @@
+// Derivation certificates (std/deriv.disp). Pins: derivations are ordinary
+// positive data; check_deriv validates conv/rule/sym/trans/cong chains by
+// COMPUTATION (tree_eq at leaves, evaluation for rule instances and context
+// application — no walker obligations, so nothing observes a probe); the
+// staging fact the cong rule rests on: a context applied to an endpoint at
+// runtime is TREE-IDENTICAL to the same term elaborated literally (one
+// reducer + hash-consing); the guarded rebind binds the raw new on a checked
+// derivation. Junk tags and wrong endpoints answer false.
+open use "../kernel/prelude.disp"
+open use "../std/nat.disp"
+open use "../std/deriv.disp"
+
+// ── membership: derivations are ordinary positive data ──
+test param_apply Deriv d_conv = Ok true
+test param_apply Deriv (d_rule 0 t) = Ok true
+test param_apply Deriv (d_sym d_conv) = Ok true
+test param_apply Deriv (d_trans t d_conv d_conv) = Ok true
+test param_apply Deriv (inj "junk" t) = Ok false
+
+// ── a schematic rule: both sides are FUNCTION trees, so instances do not
+// evaluate away (the metavar is the point; OPTIMIZER.typ's rule shape) ──
+let comm_rule := {k} -> pair ({n} -> add n k) ({n} -> add k n)
+let rules := cons comm_rule nil
+test check_deriv rules nil ({n} -> add n 2) ({n} -> add 2 n) (d_rule 0 2) = true
+test check_deriv rules nil ({n} -> add n 2) ({n} -> add 3 n) (d_rule 0 2) = false
+test check_deriv rules nil ({n} -> add 2 n) ({n} -> add n 2) (d_sym (d_rule 0 2)) = true
+test check_deriv rules nil ({n} -> add n 2) ({n} -> add n 2) d_conv = true
+test check_deriv rules nil ({n} -> add n 2) ({n} -> add 2 n) (d_trans ({n} -> add n 2) d_conv (d_rule 0 2)) = true
+test check_deriv rules nil ({n} -> add n 2) ({n} -> add 2 n) (inj "junk" t) = false
+
+// ── cong: the staging pin first — runtime application ≡ literal elaboration ──
+let under_succ := {f} -> {n} -> succ (f n)
+test tree_eq (under_succ ({n} -> add n 2)) ({n} -> succ (add n 2)) = true
+let ctxs := cons under_succ nil
+test check_deriv rules ctxs ({n} -> succ (add n 2)) ({n} -> succ (add 2 n)) (d_cong 0 ({n} -> add n 2) ({n} -> add 2 n) (d_rule 0 2)) = true
+test check_deriv rules ctxs ({n} -> succ (add n 2)) ({n} -> succ (add 3 n)) (d_cong 0 ({n} -> add n 2) ({n} -> add 3 n) (d_rule 0 2)) = false
+
+// ── the guarded rebind: raw new bound on a computed verdict ──
+let double_spec := {n} -> nat_rec ({_} -> Nat) 0 ({_k, ih} -> succ (succ ih)) n
+let addself := {n} -> add n n
+let base_rules := cons ({_} -> pair double_spec addself) nil
+guard (license_guard_deriv base_rules nil) ddbl : Arrow Nat Nat := double_spec
+ddbl := { new := addself ; deriv := (d_rule 0 t) }
+test ddbl 3 = 6
+test tree_eq ddbl addself = true

@@ -1,0 +1,76 @@
+open use "../kernel/prelude.disp"
+
+// Derivation certificates: the first-order lane for licensed replacement.
+// A pointwise license is a Pi the walker checks at a minted hyp, which a
+// candidate can observe (ACTIVE_BUGS item 5); a derivation is concrete DATA
+// validated by a total checker, so there is no probe to detect. `~` here is
+// presented the way equational logic presents it (Birkhoff): the congruence
+// closure of a registered rule set, under registered congruent contexts, with
+// conversion (tree_eq of evaluated endpoints) as the base. Trust concentrates
+// in the two tables: a rule is a schematic (lhs, rhs) pair — OPTIMIZER.typ's
+// rule shape, a function from its metavariables to `pair lhs rhs` — licensed
+// on its own honest grounds (an induction family, guard_faces-style, or a
+// differential pin); a context is registered by the guard's owner as
+// congruent (a member of the arrow PER, relation.disp). check_deriv never
+// runs anything at a hyp: rule instantiation and context application are
+// ordinary evaluation, leaves are tree_eq of evaluated endpoints. A proven
+// equation IS a rule: registering it is how math proofs feed the optimizer,
+// and an optimizer's rewrite chain is already a derivation.
+
+// The derivation data. Payloads ride the positive right-nested pair spine
+// (build_payload): rule i σ; sym d; trans mid d1 d2; cong i a b d.
+Deriv : Type := Coproduct [
+  pair "conv" [],
+  pair "rule" [Nat, Tree],
+  pair "sym" [Rec],
+  pair "trans" [Tree, Rec, Rec],
+  pair "cong" [Nat, Tree, Tree, Rec]
+]
+d_conv := inj "conv" t
+d_rule := {i, s} -> inj "rule" (pair i s)
+d_sym := {d} -> inj "sym" d
+d_trans := {mid, d1, d2} -> inj "trans" (pair mid (pair d1 d2))
+d_cong := {i, a, b, d} -> inj "cong" (pair i (pair a (pair b d)))
+
+// check_deriv rules ctxs x y d: does d derive x ~ y? Total on junk (unknown
+// tags answer false). Deliberately a RAW structural fold: the checker is the
+// trust base, so it must not route through gated machinery it might itself be
+// used to license.
+check_deriv := fix ({self, rules, ctxs, x, y, d} -> {
+  let tag := pair_fst d
+  let body := pair_snd d
+  if (tree_eq tag "conv") then (tree_eq x y)
+  else (if (tree_eq tag "rule") then {
+    let inst := (list_nth rules (pair_fst body)) (pair_snd body)
+    and (tree_eq x (pair_fst inst)) (tree_eq y (pair_snd inst))
+  }
+  else (if (tree_eq tag "sym") then (self rules ctxs y x body)
+  else (if (tree_eq tag "trans") then {
+    let mid := pair_fst body
+    and (self rules ctxs x mid (pair_fst (pair_snd body)))
+      (self rules ctxs mid y (pair_snd (pair_snd body)))
+  }
+  else (if (tree_eq tag "cong") then {
+    let ctx := list_nth ctxs (pair_fst body)
+    let a := pair_fst (pair_snd body)
+    let b := pair_fst (pair_snd (pair_snd body))
+    and (and (tree_eq x (ctx a)) (tree_eq y (ctx b)))
+      (self rules ctxs a b (pair_snd (pair_snd (pair_snd body))))
+  }
+  else false))))
+})
+
+// The derivation guard: a rebind carries { new, deriv } and the verdict is
+// COMPUTED (check_deriv), never checked at a hyp, so there is no neutral face
+// to spoof. The owner fixes the rule/context tables at guard construction;
+// ownership is not surrendered (guard proposals refused). The bound tree is
+// the raw new: soundness is exactly the tables', so register only rules
+// licensed on honest grounds and contexts that are arrow-PER members.
+license_guard_deriv := {rules, ctxs} -> {old, req} ->
+  if (is_stem (req.guard)) then Err
+  else (if (is_leaf old)
+    then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
+    else (if (is_stem (req.value)) then {
+      let u := stem_child (req.value)
+      if (check_deriv rules ctxs (stem_child old) (u.new) (u.deriv)) then (Ok (Bind (u.new))) else Err
+    } else Err))
