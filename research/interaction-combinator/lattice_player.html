@@ -222,7 +222,8 @@ function hud() {
 
 // controls
 const scen = document.getElementById("scen");
-for (const n in window.TRACES) { const o = document.createElement("option"); o.value = n; o.textContent = `${n} (${window.TRACES[n].status})`; scen.appendChild(o); }
+const optLabel = t => `${t.status === "done" ? "✓" : "✗"} ${t.name} — ${t.topo || "bilayer"}, ${t.status === "done" ? "reaches NF" : t.status === "stuck" ? "STUCK (liveness residue)" : "tick-capped"}`;
+for (const n in window.TRACES) { const o = document.createElement("option"); o.value = n; o.textContent = optLabel(window.TRACES[n]); scen.appendChild(o); }
 scen.onchange = () => pick(scen.value);
 document.getElementById("play").onclick = () => {
   if (FRAME >= TR.frames.length - 1) { FRAME = 0; SUB = 0; }
@@ -238,7 +239,7 @@ document.getElementById("load").onchange = async e => {
   const file = e.target.files[0]; if (!file) return;
   const j = JSON.parse(await file.text());
   window.TRACES[j.name] = j;
-  const o = document.createElement("option"); o.value = j.name; o.textContent = `${j.name} (${j.status})`;
+  const o = document.createElement("option"); o.value = j.name; o.textContent = optLabel(j);
   scen.appendChild(o); scen.value = j.name; pick(j.name);
 };
 // pan / zoom

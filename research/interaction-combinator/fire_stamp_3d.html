@@ -1,0 +1,364 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>The geometric fire — stamp-above (proposal)</title>
+<style>
+  :root { --bg:#0b0e14; --fg:#c8d3e0; --accent:#56c8ff; --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.55 monospace; }
+  #wrap { display:flex; height:100vh; }
+  #cv { flex:1; display:block; cursor:grab; }
+  #side { width:400px; padding:12px 16px; overflow:auto; border-left:1px solid #1b2436; }
+  h3 { color:var(--accent); font-size:12px; letter-spacing:.06em; margin:14px 0 6px; }
+  .k { color:#8595ad; }
+  button { background:#16202f; color:var(--fg); border:1px solid #2a3a52; border-radius:5px; padding:4px 10px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  button.on { background:var(--accent); color:#04121c; border-color:var(--accent); }
+  .stagebtns { display:flex; flex-wrap:wrap; gap:5px; margin:8px 0; }
+  .stagebtns button { padding:3px 8px; font-size:12px; }
+  input[type=range] { width:150px; vertical-align:middle; }
+  .note { color:#8595ad; font-size:11.5px; }
+  .prose { font-size:12.5px; }
+  .prose b { color:var(--hot); }
+  .prose .ok { color:var(--ok); } .prose .bad { color:var(--warn); }
+  .row { display:flex; justify-content:space-between; margin:6px 0; align-items:center; }
+  .measured { border-left:3px solid #2a3a52; padding:4px 10px; margin:8px 0; color:#8595ad; font-size:11.5px; }
+</style></head>
+<body><div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="side">
+    <h3>THE GEOMETRIC FIRE — STAMP-ABOVE</h3>
+    <div class="note">A proposal (design stage; nothing here is implemented yet) for replacing
+    <b>plan_fire</b>'s in-plane placement search in <b>rust-ca-lattice</b> with a fixed
+    geometric template: the rule's product complex forms in the empty plane <b>above</b> the
+    dying pair, then settles. Drawn for the biggest rule, <b>T₁·S</b> (the S-rule: 5 fresh
+    agents, 6 template wires, 3 external anchors) — the rule whose hub is the measured
+    bilayer seam-wedge champion. Drag to orbit, or use the slider.</div>
+    <div class="row"><span class="k">stage</span>
+      <span><button id="prev">&#9664;</button> <button id="next">&#9654;</button></span></div>
+    <div class="stagebtns" id="pills"></div>
+    <div class="row"><span class="k">orbit</span><input type="range" id="yaw" min="-80" max="80" value="-18"></div>
+    <h3 id="stitle"></h3>
+    <div class="prose" id="prose"></div>
+    <h3>WHERE THIS COMES FROM</h3>
+    <div class="measured">Measured on the lifted lattice (rust-ca-lattice, 400-term corpus):
+    full3d reaches NF on 201 with fork/K/chain1/share pins green; bilayer reaches 179 and
+    wedges at fire seams within ~2 interactions — hub splices and reel trails exhaust the
+    plane around the pair. Zero wrong results anywhere: the whole gap is liveness, and it
+    concentrates exactly where this page's stage 1 shows. See
+    <b>LOCAL_CA_DESIGN.md</b> §12 and the crate README for the numbers.</div>
+    <div class="note">Legend: green = values, blue = consumers, teal = Pair, purple = δ,
+    cyan = Unp; gold ring = the docked active pair; red ring = a shared / crossed cell
+    (the wedge fuel); blue strands run on z=0, purple on z=1; vertical lines are
+    inter-plane strands.</div>
+  </div>
+</div>
+<script>
+"use strict";
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const COL = { L:"#3fbf7f", S:"#3fbf7f", F:"#3fbf7f", P:"#7ce38b", Pair:"#2fbfa8",
+  A:"#56c8ff", T1:"#56c8ff", Sel:"#56c8ff", Unp:"#4fd8e8", Dn:"#c792ea",
+  Eps:"#ff6b6b", Nrm:"#ffd866", Out:"#8595ad", ghost:"#3a4a6d" };
+const PLANECOL = ["#6f9fd8", "#a97fd8"];
+let YAW = -18 * Math.PI / 180, STAGE = 0, TW = 1, TW_FROM = 0;   // tween 0..1 from stage TW_FROM to STAGE
+
+// ------------------------------------------------------------------ scene data
+// Objects carry stable ids so stages tween into each other.
+// ag: {id, x,y,z, tag, glyph?, a?}   wr: {id, pts:[[x,y,z],..], plane?}   mk: {id, kind, x,y,z, text?}
+const A = (id,x,y,z,tag,glyph,a) => ({id,x,y,z,tag,glyph,a:a??1});
+const Wr = (id,pts,a) => ({id,pts,a:a??1});
+const M = (id,kind,x,y,z,text) => ({id,kind,x,y,z,text});
+
+// the standing environment (all stages): external wires + bystander
+const ENV_AG = [
+  A("pair",-3,0,0,"Pair","⟨⟩"), A("sval",3,0,0,"S","s"), A("res",0,-3,0,"Out","…"),
+  A("b1",-2,1.0,0,"ghost","·"), A("b2",3,1,0,"ghost","·"),
+];
+const W_ARGS_FULL = [[-3,0,0],[-2,0,0],[-1,0,0],[0,0,0]];
+const W_RES_FULL  = [[0,0,0],[0,-1,0],[0,-2,0],[0,-3,0]];
+const W_BY        = [[-2,1,0],[-1,1,0],[0,1,0],[1,1,0],[2,1,0],[3,1,0]];
+
+const STAGES = [
+{ // 0 ------------------------------------------------------------------
+  title: "0 · A fire is enabled",
+  prose: `The consumer <b>T₁</b> has reeled adjacent to the producer <b>S</b>, principal to
+    principal across one edge: the pair is docked, and the S-rule
+    <b>triage(S s, ⟨b,c⟩) = (b c)(s c)</b> is enabled. Three external wires anchor at the
+    dying cells: the <b>args pair ⟨b,c⟩</b> from the west, the <b>res</b> wire north, and
+    the child <b>s</b> east. A bystander wire (dim) passes one row south — it has nothing
+    to do with this fire, and a good fire mechanism leaves it alone. The plane above
+    (z=1) is empty, as it statistically is: agents live on their plane; only crossings
+    and slides visit upstairs.`,
+  ag: [...ENV_AG, A("t1",0,0,0,"T1","T₁"), A("sv",1,0,0,"S","S")],
+  wr: [Wr("args",W_ARGS_FULL), Wr("res",W_RES_FULL), Wr("child",[[1,0,0],[2,0,0],[3,0,0]]), Wr("by",W_BY)],
+  mk: [M("dock","pair",0.5,0,0), M("l1","label",1.6,-2.4,1,"z=1: empty")],
+},
+{ // 1 ------------------------------------------------------------------
+  title: "1 · Today: products fight for the plane",
+  prose: `The current <b>plan_fire</b> places all five fresh agents — <b>Unp</b>, <b>δ</b>,
+    and three <b>A</b>s — into the plane around the pair, and routes six template wires
+    plus three anchor splices through the same neighborhood, searching up to 96 layouts.
+    The dying cells become <b>hubs</b> that must stack splices, and new wires <span
+    class="bad">cross the wires that were already there</span> (red rings). Every strand
+    laid here is a future roadblock for walkers.<br><br>
+    <span class="bad">This is the measured failure:</span> on bilayer, runs wedge within
+    about two interactions — the seam knots before the computation even gets going. The
+    congestion is not an accident of tuning; it is fire's geometry spending the most
+    contested real estate on the lattice.`,
+  ag: [...ENV_AG,
+    A("t1",0,0,0,"Unp","⌄"),            // resident story: Unp takes T1's cell
+    A("sv",1,-1,0,"Dn","δ"),            // the rest scatter in-plane
+    A("a1",2,0,0,"A","A"), A("a2",-1,-1,0,"A","A"), A("a3",-1,1,0,"A","A")],
+  wr: [Wr("args",W_ARGS_FULL), Wr("res",[[0,-1,0],[0,-2,0],[0,-3,0]]),
+    Wr("child",[[2,0,0],[3,0,0]]), Wr("by",W_BY),
+    Wr("i1",[[0,0,0],[-1,0,0],[-1,-1,0]]),          // Unp.o1 -> A₂ (crosses args!)
+    Wr("i2",[[0,0,0],[1,0,0],[1,-1,0]]),            // Unp.o2 -> δ (through the hub)
+    Wr("i3",[[1,-1,0],[0,-1,0],[-1,-1,0]]),         // δ.c1 -> A₂.arg (crosses res!)
+    Wr("i4",[[1,-1,0],[2,-1,0],[2,0,0]]),           // δ.c2 -> A₁.arg
+    Wr("i5",[[-1,-1,0],[-2,-1,0],[-2,0,0],[-2,1,0],[-1,1,0]]),   // A₂.res -> A₃
+    Wr("i6",[[2,0,0],[2,1,0],[2,2,0],[1,2,0],[0,2,0],[-1,2,0],[-1,1,0]])], // A₁.res -> A₃.arg (crosses bystander!)
+  mk: [M("bad1","bad",-1,0,0), M("bad2","bad",0,-1,0), M("bad3","bad",2,1,0), M("bad4","bad",1,0,0),
+    M("l1","label",-3.4,-1.8,0.8,"search: ≤96 layouts"), M("l2","label",2.6,-2.2,0.9,"shared cells = wedge fuel")],
+},
+{ // 2 ------------------------------------------------------------------
+  title: "2 · Stamp-above: the product complex",
+  prose: `The proposal: each ROM rule carries a <b>canonical rigid layout</b> — a geometry
+    column next to its wiring permutation. The five fresh agents are stamped into the
+    half-shell <b>above</b> the dying pair at fixed offsets, template wires prewired
+    inside the complex, and the three anchors reconnect <b>vertically</b>: args rises at
+    the old T₁ cell into Unp, res takes one step north then rises into A₃, the child s
+    rises at the old S cell into A₁. Two hub anchors never share a face because their
+    verticals live in different cells.<br><br>
+    Enabling becomes a <b>pattern match</b> (8 in-plane symmetries), not a search: the
+    stamp fits almost always <span class="ok">because up is empty</span>, and when it does
+    not fit the fire waits and pumps pressure — space is a liveness concern, never a
+    soundness one. The bystander wire is untouched: <span class="ok">no in-plane crossing
+    is created at all</span>. Atomic, searchless, and the footprint is one fixed shell —
+    exactly the uniform claim rung 3's commutation wants.`,
+  ag: [...ENV_AG,
+    A("t1",0,0,1,"Unp","⌄"), A("sv",1,-1,1,"Dn","δ"),
+    A("a1",1,0,1,"A","A"), A("a2",1,1,1,"A","A"), A("a3",0,-1,1,"A","A")],
+  wr: [Wr("args",W_ARGS_FULL), Wr("res",[[0,-1,0],[0,-2,0],[0,-3,0]]),
+    Wr("child",[[1,0,0],[2,0,0],[3,0,0]]), Wr("by",W_BY),
+    Wr("v1",[[0,0,0],[0,0,1]]),                     // args ↑ into Unp
+    Wr("v2",[[0,-1,0],[0,-1,1]]),                   // res ↑ into A₃
+    Wr("v3",[[1,0,0],[1,0,1]]),                     // s ↑ into A₁
+    Wr("i1",[[0,0,1],[1,1,1]]),                     // Unp.o1 -> A₂
+    Wr("i2",[[0,0,1],[1,-1,1]]),                    // Unp.o2 -> δ
+    Wr("i3",[[1,-1,1],[1,1,1]]),                    // δ.c1 -> A₂.arg
+    Wr("i4",[[1,-1,1],[1,0,1]]),                    // δ.c2 -> A₁.arg
+    Wr("i5",[[1,1,1],[0,-1,1]]),                    // A₂.res -> A₃
+    Wr("i6",[[1,0,1],[0,-1,1]])],                   // A₁.res -> A₃.arg
+  mk: [M("ok1","ok",0.5,0,1), M("l1","label",-3.2,-1.6,1.4,"the reaction chamber"),
+    M("l2","label",2.8,1.9,0.4,"bystander: untouched")],
+},
+{ // 3 ------------------------------------------------------------------
+  title: "3 · Settle: the surface relaxes",
+  prose: `Products are not meant to live upstairs. A cheap <b>prefer-down bias</b> — the
+    front-bias term the design doc already asks of the field — plus the existing moves
+    (reel toward the next consumer, slide, retract) lets the complex <b>settle into the
+    plane</b> over the following ticks, and z=1 drains back to empty, ready for the next
+    fire. The chip picture is restored: computation lives on the surface, the plane above
+    is a transient reaction chamber.<br><br>
+    This is enzyme kinetics, literally: substrate binds in-plane, the product complex
+    forms out-of-plane, then relaxes into the milieu. And it is chemistry's answer to
+    placement: <b>empty space is a reagent</b> — fires consume vacuum from where vacuum
+    actually is.`,
+  ag: [...ENV_AG,
+    A("t1",0,0,0,"Unp","⌄"), A("sv",1,-1,0,"Dn","δ"),
+    A("a1",1,0,0,"A","A"), A("a2",2,-1,0,"A","A"), A("a3",0,-1,0,"A","A")],
+  wr: [Wr("args",W_ARGS_FULL), Wr("res",[[0,-1,0],[0,-2,0],[0,-3,0]]),
+    Wr("child",[[1,0,0],[2,0,0],[3,0,0]]), Wr("by",W_BY),
+    Wr("i1",[[0,0,0],[0,0.55,0],[1,0.55,0],[2,0.4,0],[2,-1,0]]),  // Unp.o1 -> A₂ (tidied)
+    Wr("i2",[[0,0,0],[0.6,-0.5,0],[1,-1,0]]),
+    Wr("i3",[[1,-1,0],[2,-1,0]]),
+    Wr("i4",[[1,-1,0],[1,0,0]]),
+    Wr("i5",[[2,-1,0],[1.2,-1.6,0],[0,-1,0]]),
+    Wr("i6",[[1,0,0],[0.5,-0.5,0],[0,-1,0]])],
+  mk: [M("l1","label",1.6,-2.4,1,"z=1: empty again"), M("ok1","ok",0.5,-0.5,0)],
+},
+{ // 4 ------------------------------------------------------------------
+  title: "4 · The endgame: extrusion",
+  prose: `The stamp is atomic and searchless, but its footprint is still a multi-cell
+    constellation. The hardware-grade endgame decomposes fire further: the docked pair
+    becomes a small machine that <b>extrudes</b> its products one 2-cell step at a time —
+    reserve, write, splice, release — like a ribosome emitting a nascent chain into
+    whatever space exists, stalling in place (soundly) when space runs out and resuming
+    when pressure delivers a hole. Every micro-step touches two cells; ordering-resilience
+    reduces to handshake non-interference, the discipline of delay-insensitive circuits;
+    the projection invariant gets a linearization point (before the commit micro-step the
+    complex projects to the old pair, after it to the new subnet).<br><br>
+    Stamp-above is the pragmatic middle: it buys the seam fix and the searchless planner
+    now, against today's crate, with the differential judging it against the in-plane
+    planner side by side. Extrusion is where the same geometry goes when the commit
+    protocol table (§13) gets written.`,
+  ag: [...ENV_AG, A("t1",0,0,0,"T1","T₁"), A("sv",1,0,0,"S","S"),
+    A("a1",0.5,-0.1,1.35,"ghost","1"), A("a2",0.5,-0.1,2.05,"ghost","2"), A("a3",0.5,-0.1,2.75,"ghost","3")],
+  wr: [Wr("args",W_ARGS_FULL), Wr("res",W_RES_FULL), Wr("child",[[1,0,0],[2,0,0],[3,0,0]]), Wr("by",W_BY)],
+  mk: [M("dock","pair",0.5,0,0), M("l1","label",2.9,-1.3,2.2,"…emitted one step at a time")],
+},
+];
+
+// ------------------------------------------------------------------ renderer
+let W = 0, H = 0;
+function proj(x, y, z) {
+  const c = Math.cos(YAW), s = Math.sin(YAW);
+  const xr = x * c - y * s, yr = x * s + y * c;
+  const sc = Math.min(W, H * 1.4) / 16;
+  return [W / 2 + (xr - yr) * sc * 0.92, H / 2 + 30 + (xr + yr) * sc * 0.48 - z * sc * 1.05, sc];
+}
+function depth(x, y, z) { const c = Math.cos(YAW), s = Math.sin(YAW); return (x * c - y * s) + (x * s + y * c) + z * 0.3; }
+
+function tile(x, y, z, fill, stroke, alpha) {
+  const p = [proj(x - .5, y - .5, z), proj(x + .5, y - .5, z), proj(x + .5, y + .5, z), proj(x - .5, y + .5, z)];
+  ctx.globalAlpha = alpha;
+  ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);
+  for (let i = 1; i < 4; i++) ctx.lineTo(p[i][0], p[i][1]);
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+  ctx.globalAlpha = 1;
+}
+function drawFloor(z, x0, x1, y0, y1, alpha) {
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
+    tile(x, y, z, null, "#1a2334", alpha);
+}
+function drawAgent(a) {
+  const h = 0.42, [bx, by, sc] = proj(a.x, a.y, a.z);
+  const col = COL[a.tag] || "#8595ad";
+  const top = [proj(a.x - .34, a.y - .34, a.z + h), proj(a.x + .34, a.y - .34, a.z + h), proj(a.x + .34, a.y + .34, a.z + h), proj(a.x - .34, a.y + .34, a.z + h)];
+  const bot = [proj(a.x - .34, a.y - .34, a.z), proj(a.x + .34, a.y - .34, a.z), proj(a.x + .34, a.y + .34, a.z), proj(a.x - .34, a.y + .34, a.z)];
+  ctx.globalAlpha = a.a * (a.tag === "ghost" ? 0.75 : 1);
+  // two visible side faces (pick by screen position: faces 1-2 and 2-3 face the camera in this projection)
+  const shade = (p1, p2, p3, p4, f) => { ctx.fillStyle = f; ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]); ctx.lineTo(p4[0], p4[1]); ctx.closePath(); ctx.fill(); };
+  const dark = c => { const n = parseInt(c.slice(1), 16); const f = x => Math.max(0, Math.round(x * 0.55)); return `rgb(${f(n >> 16 & 255)},${f(n >> 8 & 255)},${f(n & 255)})`; };
+  const mid = c => { const n = parseInt(c.slice(1), 16); const f = x => Math.max(0, Math.round(x * 0.72)); return `rgb(${f(n >> 16 & 255)},${f(n >> 8 & 255)},${f(n & 255)})`; };
+  shade(top[1], top[2], bot[2], bot[1], dark(col));
+  shade(top[2], top[3], bot[3], bot[2], mid(col));
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(top[0][0], top[0][1]); for (let i = 1; i < 4; i++) ctx.lineTo(top[i][0], top[i][1]); ctx.closePath(); ctx.fill();
+  if (a.glyph) {
+    ctx.fillStyle = "#04121c"; ctx.font = `bold ${Math.round(sc * 0.42)}px monospace`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const c0 = proj(a.x, a.y, a.z + h);
+    ctx.fillText(a.glyph, c0[0], c0[1]);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawWire(w) {
+  ctx.globalAlpha = 0.9 * (w.a ?? 1);
+  ctx.lineWidth = Math.max(1.4, proj(0,0,0)[2] * 0.1);
+  ctx.lineCap = "round";
+  for (let i = 0; i + 1 < w.pts.length; i++) {
+    const a = w.pts[i], b = w.pts[i + 1];
+    const zc = Math.max(a[2], b[2]);
+    ctx.strokeStyle = a[2] !== b[2] ? "#9fd8c8" : PLANECOL[Math.min(Math.round(zc), 1)];
+    const p1 = proj(a[0], a[1], a[2] + 0.12), p2 = proj(b[0], b[1], b[2] + 0.12);
+    ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawMark(m) {
+  const [x, y, sc] = proj(m.x, m.y, m.z + 0.12);
+  if (m.kind === "pair") { ctx.strokeStyle = "#ffd866"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, sc * 0.55, 0, 7); ctx.stroke(); }
+  if (m.kind === "bad") { ctx.strokeStyle = "#ff6b6b"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, sc * 0.42, 0, 7); ctx.stroke(); }
+  if (m.kind === "ok") { ctx.strokeStyle = "#3fbf7f"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, sc * 0.75, 0, 7); ctx.stroke(); }
+  if (m.kind === "label") {
+    ctx.fillStyle = "#8595ad"; ctx.font = `${Math.max(11, Math.round(sc * 0.36))}px monospace`;
+    ctx.textAlign = "center"; ctx.fillText(m.text, x, y);
+  }
+}
+
+// tween helper: match objects by id between two stages
+function lerp(a, b, t) { return a + (b - a) * t; }
+function blend(from, to, t) {
+  const out = { ag: [], wr: [], mk: [] };
+  const key = list => { const m = new Map(); for (const o of list) m.set(o.id, o); return m; };
+  const fa = key(from.ag), ta = key(to.ag);
+  for (const [id, o2] of ta) {
+    const o1 = fa.get(id);
+    if (o1) out.ag.push({ ...o2, x: lerp(o1.x, o2.x, t), y: lerp(o1.y, o2.y, t), z: lerp(o1.z, o2.z, t), a: lerp(o1.a ?? 1, o2.a ?? 1, t) });
+    else out.ag.push({ ...o2, a: (o2.a ?? 1) * t });
+  }
+  for (const [id, o1] of fa) if (!ta.has(id)) out.ag.push({ ...o1, a: (o1.a ?? 1) * (1 - t) });
+  const fw = key(from.wr), tw = key(to.wr);
+  for (const [id, o2] of tw) {
+    const o1 = fw.get(id);
+    if (o1 && o1.pts.length === o2.pts.length)
+      out.wr.push({ ...o2, pts: o2.pts.map((p, i) => [lerp(o1.pts[i][0], p[0], t), lerp(o1.pts[i][1], p[1], t), lerp(o1.pts[i][2], p[2], t)]) });
+    else if (o1) { out.wr.push({ ...o1, a: 1 - t }); out.wr.push({ ...o2, a: t }); }
+    else out.wr.push({ ...o2, a: t });
+  }
+  for (const [id, o1] of fw) if (!tw.has(id)) out.wr.push({ ...o1, a: 1 - t });
+  out.mk = t < 0.6 ? from.mk : to.mk;
+  return out;
+}
+
+function render() {
+  const dpr = devicePixelRatio;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const scene = TW >= 1 ? STAGES[STAGE] : blend(STAGES[TW_FROM], STAGES[STAGE], TW);
+  drawFloor(0, -5, 5, -4, 3, 0.9);
+  const hasUp = scene.ag.some(a => a.z > 0.4) || scene.wr.some(w => w.pts.some(p => p[2] > 0.4));
+  if (hasUp) drawFloor(1, -1, 3, -2, 2, 0.35);
+  // painter: wires then agents interleaved by depth
+  const items = [];
+  for (const w of scene.wr) items.push({ d: Math.max(...w.pts.map(p => depth(p[0], p[1], p[2]))) - 0.2, f: () => drawWire(w) });
+  for (const a of scene.ag) items.push({ d: depth(a.x, a.y, a.z), f: () => drawAgent(a) });
+  items.sort((u, v) => u.d - v.d);
+  for (const it of items) it.f();
+  for (const m of scene.mk) drawMark(m);
+}
+
+// ------------------------------------------------------------------ ui
+const pills = document.getElementById("pills");
+STAGES.forEach((s, i) => {
+  const b = document.createElement("button");
+  b.textContent = i;
+  b.onclick = () => go(i);
+  pills.appendChild(b);
+});
+function sidebar() {
+  document.getElementById("stitle").textContent = STAGES[STAGE].title;
+  document.getElementById("prose").innerHTML = STAGES[STAGE].prose;
+  [...pills.children].forEach((b, i) => b.classList.toggle("on", i === STAGE));
+}
+let animId = null;
+function go(i) {
+  if (i < 0 || i >= STAGES.length || i === STAGE) return;
+  TW_FROM = STAGE; STAGE = i; TW = 0;
+  sidebar();
+  if (animId) cancelAnimationFrame(animId);
+  const t0 = performance.now();
+  const stepA = now => {
+    TW = Math.min(1, (now - t0) / 550);
+    TW = TW * TW * (3 - 2 * TW); // smoothstep... applied to the clamped ratio
+    render();
+    if (TW < 1) animId = requestAnimationFrame(stepA); else animId = null;
+  };
+  animId = requestAnimationFrame(stepA);
+  render();
+}
+document.getElementById("prev").onclick = () => go(STAGE - 1);
+document.getElementById("next").onclick = () => go(STAGE + 1);
+document.getElementById("yaw").oninput = e => { YAW = e.target.value * Math.PI / 180; render(); };
+addEventListener("keydown", e => { if (e.key === "ArrowRight") go(STAGE + 1); if (e.key === "ArrowLeft") go(STAGE - 1); });
+// drag to orbit
+let dragging = false, dx0 = 0, yaw0 = 0;
+cv.addEventListener("mousedown", e => { dragging = true; dx0 = e.clientX; yaw0 = YAW; });
+addEventListener("mouseup", () => dragging = false);
+addEventListener("mousemove", e => {
+  if (!dragging) return;
+  YAW = Math.max(-1.4, Math.min(1.4, yaw0 + (e.clientX - dx0) * 0.004));
+  document.getElementById("yaw").value = YAW * 180 / Math.PI;
+  render();
+});
+
+function resize() {
+  W = innerWidth - 400; H = innerHeight;
+  cv.width = W * devicePixelRatio; cv.height = H * devicePixelRatio;
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  render();
+}
+addEventListener("resize", resize);
+resize(); sidebar(); render();
+</script>
+</body></html>
