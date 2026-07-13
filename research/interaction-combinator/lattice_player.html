@@ -19,6 +19,18 @@
   #events div { color:#8595ad; }
   #events div.f { color:var(--hot); }
   .lg { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+  .chip { display:inline-block; min-width:17px; text-align:center; border-radius:3px; padding:0 2px; color:#04121c; font-weight:bold; font-size:11px; }
+  .arow { display:flex; gap:6px; align-items:baseline; margin:3px 0 0; font-size:11.5px; }
+  .arow .k2 { color:#8595ad; }
+  .adesc { color:#5a6b86; font-size:10.5px; margin:0 0 2px 24px; }
+  .agrp { color:#8595ad; font-size:10.5px; letter-spacing:.05em; margin:7px 0 1px; }
+  #rules { position:relative; max-height:230px; overflow:auto; border:1px solid #1b2436; border-radius:5px; padding:3px 6px; }
+  .rrow { display:flex; gap:5px; align-items:baseline; padding:1.5px 3px; cursor:pointer; border-radius:3px; font-size:11.5px; }
+  .rrow:hover { background:#141c2b; }
+  .rrow.hot { background:#40350f; outline:1px solid var(--hot); }
+  .rrow.unused { opacity:.38; }
+  .rrow .note2 { color:#5a6b86; font-size:10.5px; }
+  .rrow .cnt { margin-left:auto; color:#5a6b86; font-size:10.5px; }
 </style></head>
 <body><div id="wrap">
   <canvas id="cv"></canvas>
@@ -48,10 +60,20 @@
     <div id="stat"></div>
     <h3>THIS TICK</h3>
     <div id="events" class="note"></div>
+    <h3>AGENTS &amp; PORTS</h3>
+    <div class="note" style="margin-bottom:2px">Port 0 is always the <b>principal</b> (▸): producers
+    emit their value there, consumers consume there, and a fire needs the two principals facing
+    across one edge. Aux ports carry everything else. In the canvas the principal is the thick
+    white stub.</div>
+    <div id="agents"></div>
+    <h3>REWRITE RULES <span class="k" id="rulehdr"></span></h3>
+    <div class="note" style="margin-bottom:4px">consumer·producer ⇒ fresh agents (the dying pair's
+    external wires resplice per the ROM's wiring permutation). <span class="hot">Gold</span> =
+    firing in the frame you are on; ×n = firings in this trace (dimmed = never fires here);
+    click a rule to jump to its next firing.</div>
+    <div id="rules"></div>
     <h3>LEGEND</h3>
     <div class="note">
-      <span class="lg" style="background:#3fbf7f"></span>value L/S/F &nbsp;<span class="lg" style="background:#7ce38b"></span>suspension P &nbsp;<span class="lg" style="background:#2fbfa8"></span>Pair<br>
-      <span class="lg" style="background:#56c8ff"></span>A/T&#8321;/Sel &nbsp;<span class="lg" style="background:#4fd8e8"></span>Unp &nbsp;<span class="lg" style="background:#c792ea"></span>&delta; Dn &nbsp;<span class="lg" style="background:#ff6b6b"></span>&epsilon; &nbsp;<span class="lg" style="background:#ffd866"></span>Nrm &nbsp;<span class="lg" style="background:#8595ad"></span>Out<br>
       thick white stub = principal port; thin stubs = aux ports; diagonal stubs = up/down<br>
       <span style="color:#6f9fd8">z=0 strand</span> / <span style="color:#a97fd8">z=1 strand</span> (higher planes dimmer, offset up-right)<br>
       gold flash = fire (rule shown); agents glide = reel; slack vanishing = retract/slide
@@ -82,12 +104,125 @@ const PLANECOL = ["#6f9fd8", "#a97fd8", "#d87fb0", "#d8a97f"];
 let TR = null, FRAME = 0, SUB = 0, RUNNING = false;
 let view = { x: 0, y: 0, scale: 26 };
 
+// ---------------------------------------------------------------- agents & rules panels
+// Port lists are principal-first, mirroring rules.rs; the ▸ marks the principal.
+const AGENTS = [
+  ["producers — emit their value at the principal"],
+  ["L",    ["▸out"],                 "leaf △ — the smallest value; applied to x it becomes S x"],
+  ["S",    ["▸out", "child"],        "stem (△ x) — applied to y it becomes F x y"],
+  ["F",    ["▸out", "left", "right"],"fork (△ x y) — applied to z it triages on x"],
+  ["P",    ["▸out", "fn", "arg"],    "suspension (f a) — inert until a consumer forces it"],
+  ["Pair", ["▸out", "fst", "snd"],   "dispatch-arm pair ⟨fst,snd⟩ — only ever met by Unp/Sel"],
+  ["consumers — consume a value at the principal, answer on res"],
+  ["A",    ["▸operator", "arg", "res"], "apply — forces the operator, then applies one argument"],
+  ["T1",   ["▸a", "args⟨b,c⟩", "res"],  "triage on a: leaf→K, stem→S-rule, fork→Sel"],
+  ["Sel",  ["▸z", "arms⟨w,⟨x,b⟩⟩", "res"], "second-level dispatch on z (the lowered T₂)"],
+  ["Unp",  ["▸pair", "o1", "o2"],    "unpair — the destructor; Unp·Pair is pure wire fusion"],
+  ["Dn",   ["▸value", "c1", "c2"],   "need-duplicator δ — forces once, then copies the value"],
+  ["Eps",  ["▸victim"],              "eraser ε — garbage collection, one subtree at a time"],
+  ["Nrm",  ["▸value", "res"],        "normalizer — forces the head, recurses into children"],
+  ["inert"],
+  ["Out",  ["▸in"],                  "result sink — holds the final normal form; appears in no rule"],
+];
+// The 26 ROM interactions: fresh agents (template order) + a one-line semantics note.
+// Fresh lists mirror rules.rs; when served next to rules.json the fetch below re-syncs them.
+const RULES = [
+  ["A","L",   ["S"],                       "apply(△, x) = S x"],
+  ["A","S",   ["F"],                       "apply(S a, x) = F a x"],
+  ["A","F",   ["T1","Pair"],               "apply(F a b, x) = triage(a, ⟨b,x⟩)"],
+  ["A","P",   ["A","A"],                   "force the suspension, then apply"],
+  ["T1","L",  ["Unp","Eps"],               "K: res ← b, ε erases c"],
+  ["T1","S",  ["Unp","Dn","A","A","A"],    "S-rule: (b c)(s c) — δ shares c"],
+  ["T1","F",  ["Unp","Sel","Pair","Pair"], "two-level: Sel on z, arms ⟨w,⟨x,b⟩⟩"],
+  ["T1","P",  ["A","T1"],                  "force, then re-dispatch"],
+  ["Sel","L", ["Unp","Eps"],               "z = △: res ← w, erase ⟨x,b⟩"],
+  ["Sel","S", ["Unp","Unp","Eps","Eps","A"],     "z = S u: (x u); erase w, b"],
+  ["Sel","F", ["Unp","Unp","Eps","Eps","A","A"], "z = F u v: (b u) v; erase w, x"],
+  ["Sel","P", ["A","Sel"],                 "force, then re-dispatch"],
+  ["Unp","Pair", [],                       "pure double fusion — zero fresh agents"],
+  ["Dn","L",  ["L","L"],                   "copy: two leaves"],
+  ["Dn","S",  ["Dn","S","S"],              "copy the stem, share its child"],
+  ["Dn","F",  ["Dn","Dn","F","F"],         "copy the fork, share both children"],
+  ["Dn","P",  ["A","Dn"],                  "force once, then copy the value"],
+  ["Eps","L", [],                          "vanish"],
+  ["Eps","S", ["Eps"],                     "erase the child"],
+  ["Eps","F", ["Eps","Eps"],               "erase both children"],
+  ["Eps","P", ["Eps","Eps"],               "erase fn and arg"],
+  ["Eps","Pair", ["Eps","Eps"],            "erase both arms"],
+  ["Nrm","L", ["L"],                       "△ is normal"],
+  ["Nrm","S", ["Nrm","S"],                 "normalize the child"],
+  ["Nrm","F", ["Nrm","Nrm","F"],           "normalize both children"],
+  ["Nrm","P", ["A","Nrm"],                 "force, keep normalizing"],
+];
+const chip = t => `<span class="chip" style="background:${COL[t] || "#8595ad"}">${GLYPH[t] || t}</span>`;
+function renderAgents() {
+  const el = document.getElementById("agents");
+  el.innerHTML = AGENTS.map(a => a.length === 1
+    ? `<div class="agrp">${a[0]}</div>`
+    : `<div class="arow">${chip(a[0])} <b>${a[0]}</b> <span class="k2">[${a[1].join(" · ")}]</span></div><div class="adesc">${a[2]}</div>`
+  ).join("");
+}
+const RULEROWS = {};
+function renderRules() {
+  const el = document.getElementById("rules");
+  el.innerHTML = "";
+  const counts = (TR && TR.ruleCounts) || {};
+  let used = 0;
+  for (const [c, p, fresh, note] of RULES) {
+    const key = `${c}·${p}`;
+    const n = counts[key] || 0;
+    if (n > 0) used++;
+    const row = document.createElement("div");
+    row.className = "rrow" + (TR && n === 0 ? " unused" : "");
+    row.title = "click: jump to this rule's next firing";
+    row.innerHTML = `${chip(c)}·${chip(p)} <span class="k">⇒</span> ` +
+      (fresh.length ? fresh.map(chip).join("") : `<span class="k">∅</span>`) +
+      ` <span class="note2">${note}</span><span class="cnt">${n ? "×" + n : ""}</span>`;
+    row.onclick = () => jumpToRule(key);
+    el.appendChild(row);
+    RULEROWS[key] = row;
+  }
+  document.getElementById("rulehdr").textContent = TR ? `(${used}/26 fire in this trace)` : "(26)";
+}
+function jumpToRule(key) {
+  if (!TR) return;
+  for (let i = 1; i <= TR.frames.length; i++) {
+    const j = (FRAME + i) % TR.frames.length;
+    if (TR.frames[j].events.some(e => e.t === "fire" && e.rule === key)) {
+      RUNNING = false; SUB = 0; FRAME = j;
+      document.getElementById("play").innerHTML = "&#9654; play";
+      document.getElementById("scrub").value = FRAME;
+      hud();
+      return;
+    }
+  }
+}
+function highlightRules(frame) {
+  for (const k in RULEROWS) RULEROWS[k].classList.remove("hot");
+  const fired = [...new Set(frame.events.filter(e => e.t === "fire").map(e => e.rule))];
+  for (const k of fired) if (RULEROWS[k]) RULEROWS[k].classList.add("hot");
+  if (fired.length && RULEROWS[fired[0]]) {
+    const box = document.getElementById("rules"), row = RULEROWS[fired[0]];
+    box.scrollTop = row.offsetTop - box.clientHeight / 2 + 12;
+  }
+}
+// keep fresh-lists authoritative when the generated ROM export is reachable
+fetch("rules.json").then(r => r.json()).then(j => {
+  const by = {}; for (const r of RULES) by[`${r[0]}·${r[1]}`] = r;
+  for (const r of j.rules) { const k = `${r.consumer}·${r.producer}`; if (by[k]) by[k][2] = r.fresh; }
+  renderRules(); if (TR) highlightRules(TR.frames[FRAME]);
+}).catch(() => {});
+
 function pick(name) {
   TR = window.TRACES[name];
   FRAME = 0; SUB = 0; RUNNING = false;
   document.getElementById("play").innerHTML = "&#9654; play";
   const sc = document.getElementById("scrub");
   sc.max = TR.frames.length - 1; sc.value = 0;
+  TR.ruleCounts = {};
+  for (const f of TR.frames) for (const e of f.events)
+    if (e.t === "fire") TR.ruleCounts[e.rule] = (TR.ruleCounts[e.rule] || 0) + 1;
+  renderRules();
   fit(); hud();
 }
 function fit() {
@@ -218,6 +353,7 @@ function hud() {
     : e.t === "slide" ? `<div>slide strand out of (${e.at.join(",")})</div>`
     : `<div>${e.t}</div>`;
   ev.innerHTML = f.events.length === 0 ? '<div>(no transitions this tick)</div>' : f.events.map(fmt).join("");
+  highlightRules(f);
 }
 
 // controls
@@ -251,6 +387,6 @@ cv.addEventListener("wheel", e => { e.preventDefault(); view.scale = Math.max(5,
 
 function resize() { const w = innerWidth - 360, h = innerHeight; cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio; cv.style.width = w + "px"; cv.style.height = h + "px"; }
 addEventListener("resize", resize);
-resize(); pick(Object.keys(window.TRACES)[0]); requestAnimationFrame(draw);
+renderAgents(); resize(); pick(Object.keys(window.TRACES)[0]); requestAnimationFrame(draw);
 </script>
 </body></html>
