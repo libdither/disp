@@ -37,6 +37,21 @@
     presets?: Preset[]
     stepMs?: number
     height?: number
+    // the dictionary names parse against (REPLACES the built-in toy defs —
+    // an embedding with real definitions must not let `add`-the-teaching-tree
+    // shadow `add`-the-library-value). Substituted defs enter as collapsed
+    // PODS: real structure, drawn folded until a reduction consumes them or
+    // they're clicked open.
+    defs?: Record<string, T>
+    // async fallback for names outside `defs` (the playground resolves them
+    // against its live elaboration session). A hit re-parses the input if no
+    // step has fired yet; a miss leaves the name a free variable (fruit).
+    resolveDef?: (name: string) => Promise<T | null>
+    // embedding chrome: hide the prev/next tree cycling (and shift+arrow)
+    minimal?: boolean
+    // replaces the edit box ⓘ's combinator list when the host brings its own
+    // name universe
+    namesHint?: string
   }
 
   // The tree-calculus pieces — the ONE source shared by the cassette (symbol
@@ -62,8 +77,20 @@
     exprs = PIECES.map((p) => (p.stepMs ? { expr: p.expr, stepMs: p.stepMs } : p.expr)),
     presets = [],
     stepMs = 1050,
-    height = 360
+    height = 360,
+    defs = undefined,
+    resolveDef = undefined,
+    minimal = false,
+    namesHint = undefined
   }: Props = $props()
+
+  // the live name dictionary: the host's defs (or the built-in toy set)
+  // plus whatever resolveDef has supplied since (read-once like the other
+  // posture props — hosts remount per pop-out)
+  // svelte-ignore state_referenced_locally
+  const baseDefs = defs ?? DEFS
+  let resolved = $state<Record<string, T>>({})
+  const activeDefs = $derived({ ...baseDefs, ...resolved })
 
   const exprOf = (e: ExprSpec) => (typeof e === 'string' ? e : e.expr)
   const speedOf = (e: ExprSpec) => (typeof e === 'string' ? undefined : e.stepMs)
@@ -199,7 +226,7 @@
     let t: T
     try {
       const lazyTop = PIECES.find((p) => p.expr === input)?.lazyTop ?? false
-      t = parseTree(input, undefined, { lazyTop })
+      t = parseTree(input, activeDefs, { lazyTop })
     } catch {
       editInvalid = true
       return
@@ -220,10 +247,118 @@
       ;(e.target as HTMLElement).blur()
     }
   }
-  let cur = $state<T | null>(null)
+  // RAW state on purpose: the whole animation pipeline (oldByRef, survivors,
+  // podNames, next-site marks) matches subtrees by OBJECT IDENTITY, and a
+  // deep $state proxy would wrap nodes on read — the same subtree seen once
+  // through `cur` and once from a fresh parse would no longer be ===. These
+  // are only ever reassigned wholesale, so raw loses nothing (and spares the
+  // proxy machinery a thousand-node tree per frame).
+  let cur = $state.raw<T | null>(null)
   let ruleMsg = $state('')
   let stepCount = $state(0)
   let err = $state('')
+
+  // ---- pods: subtrees drawn folded ---------------------------------------
+  // Display-only folding over the real tree (reduction always computes on
+  // full structure), keyed by object identity, mirroring the playground's
+  // inline unfolds: a click reveals ONE budgeted level (big children re-fold
+  // as new pods), and a reduction step never explodes a pod — data it newly
+  // exposes above the size threshold folds shut on arrival, named when the
+  // dictionary recognizes it, '…' otherwise. Only active with host defs
+  // (podMode); the built-in tour keeps drawing everything open. Not reactive
+  // state: every change is followed by show(cur), which relayouts.
+  // svelte-ignore state_referenced_locally
+  const podMode = !!(defs || resolveDef)
+  const AUTOFOLD_MIN = 9 // unseen non-apply data this big folds shut
+  const UNFOLD_BUDGET = 16 // nodes revealed per pod click
+  let folded = new Map<T, string | null>() // root -> label (null = anonymous)
+  let seen = new WeakSet<T>() // every node that has ever been drawn
+  const sizeMemo = new WeakMap<T, number>()
+  function sizeOf(t: T): number {
+    const hit = sizeMemo.get(t)
+    if (hit !== undefined) return hit
+    const n = 1 + childrenOf(t).reduce((s, c) => s + sizeOf(c), 0)
+    sizeMemo.set(t, n)
+    return n
+  }
+  // a folded region's label: numeral, dictionary match, or anonymous
+  function autoName(t: T): string | null {
+    const n = natValue(t)
+    if (n !== null && n >= 1) return String(n)
+    if (sizeOf(t) >= 3) {
+      for (const [name, d] of Object.entries(activeDefs)) if (treeEq(t, d)) return name
+    }
+    return null
+  }
+  // reveal one budgeted level from a pod root: children beyond the budget
+  // (or shared already-folded regions) stay pods
+  function reveal(root: T, budget: number) {
+    let left = budget
+    const visit = (t: T) => {
+      seen.add(t)
+      left--
+      for (const c of childrenOf(t)) {
+        if (seen.has(c) || folded.has(c)) continue
+        if (left > 0 || sizeOf(c) <= 3) visit(c)
+        else folded.set(c, autoName(c))
+      }
+    }
+    visit(root)
+  }
+  function openPod(t: T) {
+    if (!folded.delete(t) || !cur) return
+    reveal(t, UNFOLD_BUDGET)
+    show(cur)
+  }
+  // after a step: fold whatever big DATA the rewrite newly exposed (apply
+  // nodes — the computation's own machinery — always draw)
+  function refreshFolds(t: T) {
+    if (!podMode) return
+    const visit = (n: T) => {
+      if (folded.has(n)) return
+      if (!seen.has(n)) {
+        if (n.tag !== 'apply' && sizeOf(n) > AUTOFOLD_MIN) {
+          folded.set(n, autoName(n))
+          return
+        }
+        seen.add(n)
+      }
+      for (const c of childrenOf(n)) visit(c)
+    }
+    visit(t)
+  }
+
+  // names outside activeDefs, asked of the host once each; a hit swaps the
+  // fruit for the real definition — but only before any step has fired
+  // (swapping a tree mid-reduction under the viewer is worse than fruit)
+  const attempted = new Set<string>()
+  function maybeResolve(t: T) {
+    if (!resolveDef) return
+    const missing = new Set<string>()
+    const walk = (n: T): void => {
+      if (n.tag === 'var' && !(n.name in activeDefs) && !attempted.has(n.name)) missing.add(n.name)
+      for (const c of childrenOf(n)) walk(c)
+    }
+    walk(t)
+    for (const name of missing) {
+      attempted.add(name)
+      void resolveDef(name).then((tree) => {
+        if (!tree) return
+        resolved = { ...resolved, [name]: tree }
+        if (stepCount === 0 && cur) load(input)
+      })
+    }
+  }
+
+  // a normal form has no apply nodes left; a tree that still carries them is
+  // STUCK — waiting on a free variable's shape (an honest distinction the
+  // readout should make)
+  const hasApply = (t: T): boolean => t.tag === 'apply' || childrenOf(t).some(hasApply)
+  function restMsg(t: T): string {
+    return hasApply(t)
+      ? `stuck on free variables: ${pretty(t, { names: true, defs: activeDefs })}`
+      : `normal form: ${pretty(t, { names: true, defs: activeDefs })}`
+  }
 
   // ---- layout ---------------------------------------------------------------
 
@@ -240,6 +375,7 @@
     tilt: number
     label: string | null
     vname: string | null // a named leaf's name — always shown
+    pod: string | null // a folded defs splice: real structure, drawn shut
     fresh?: boolean // no prior position: genuinely new growth
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
@@ -283,8 +419,9 @@
     tilt: number
   }
 
-  let nodes = $state<VNode[]>([])
-  let edges = $state<VEdge[]>([])
+  // raw like `cur` (VNode.tree must stay ===-comparable across frames)
+  let nodes = $state.raw<VNode[]>([])
+  let edges = $state.raw<VEdge[]>([])
   let debris = $state<Debris[]>([])
   let ghosts = $state<GhostEdge[]>([])
   let vanishing = $state<Vanishing[]>([])
@@ -307,7 +444,7 @@
     const n = natValue(t)
     if (n !== null && n >= 1) return String(n)
     if (nodeCount(t) < 3) return null
-    for (const [name, d] of Object.entries(DEFS)) if (treeEq(t, d)) return name
+    for (const [name, d] of Object.entries(activeDefs)) if (treeEq(t, d)) return name
     return null
   }
 
@@ -315,7 +452,8 @@
     type Lay = { path: string; tree: T; x: number; depth: number }
     const out: Lay[] = []
     function go(t: T, path: string, depth: number): { rootX: number; width: number } {
-      const kids = childrenOf(t)
+      // a pod draws as a single closed node — its real children stay unshown
+      const kids = folded.has(t) ? [] : childrenOf(t)
       if (kids.length === 0) {
         out.push({ path, tree: t, x: 0, depth })
         return { rootX: 0, width: 1 }
@@ -345,20 +483,24 @@
     const px = (n: Lay) => ox + n.x * sx
     const py = (n: Lay) => height - GROUND - 14 - n.depth * sy
     const nextSite = parallel ? null : nextApplyToFire(tree)
-    const vnodes: VNode[] = out.map((n) => ({
-      path: n.path,
-      tree: n.tree,
-      tag: n.tree.tag,
-      x: px(n),
-      y: py(n),
-      depth: n.depth,
-      ready: readyRule(n.tree),
-      next: nextSite !== null && n.tree === nextSite,
-      tint: n.tree.tag === 'var' ? VAR_TINT : LEAF_TINTS[hash(n.path) % LEAF_TINTS.length],
-      tilt: (hash(n.path) % 70) - 35,
-      label: nameOf(n.tree),
-      vname: n.tree.tag === 'var' ? n.tree.name : null
-    }))
+    const vnodes: VNode[] = out.map((n) => {
+      const pod = folded.has(n.tree) ? (folded.get(n.tree) ?? '…') : null
+      return {
+        path: n.path,
+        tree: n.tree,
+        tag: n.tree.tag,
+        x: px(n),
+        y: py(n),
+        depth: n.depth,
+        ready: readyRule(n.tree),
+        next: nextSite !== null && n.tree === nextSite,
+        tint: n.tree.tag === 'var' ? VAR_TINT : LEAF_TINTS[hash(n.path) % LEAF_TINTS.length],
+        tilt: (hash(n.path) % 70) - 35,
+        label: pod ? null : nameOf(n.tree), // a pod already wears its name
+        vname: n.tree.tag === 'var' ? n.tree.name : null,
+        pod
+      }
+    })
     const byPath = new Map(out.map((n) => [n.path, n]))
     const vedges: VEdge[] = []
     for (const n of out) {
@@ -629,7 +771,23 @@
     try {
       // the stem/fork pieces parse lazily so their construction rule fires visibly
       const lazyTop = PIECES.find((p) => p.expr === src)?.lazyTop ?? false
-      cur = parseTree(src, undefined, { lazyTop })
+      folded = new Map()
+      seen = new WeakSet()
+      // pods are a HOST-defs behavior: the built-in tour's whole point is
+      // showing the toy combinators' structure, so it keeps drawing them open
+      cur = parseTree(src, activeDefs, {
+        lazyTop,
+        onDefSplice: podMode ? (node, name) => folded.set(node, name) : undefined
+      })
+      // everything visible at load is 'seen': later auto-folds only ever
+      // apply to data a reduction newly exposes
+      const markSeen = (t: T): void => {
+        if (folded.has(t)) return
+        seen.add(t)
+        childrenOf(t).forEach(markSeen)
+      }
+      markSeen(cur)
+      maybeResolve(cur)
       show(cur)
       if (running) schedule()
     } catch (e) {
@@ -663,13 +821,14 @@
     if (parallel) {
       const s = stepParallel(cur)
       if (!s) {
-        ruleMsg = `normal form: ${pretty(cur)}`
+        ruleMsg = restMsg(cur)
         atNormalForm = true
         return false
       }
       remember()
       cur = s.next
       stepCount++
+      refreshFolds(cur)
       ruleMsg =
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
@@ -679,13 +838,14 @@
     }
     const s = stepOnce(cur)
     if (!s) {
-      ruleMsg = `normal form: ${pretty(cur)}`
+      ruleMsg = restMsg(cur)
       atNormalForm = true
       return false
     }
     remember()
     cur = s.next
     stepCount++
+    refreshFolds(cur)
     ruleMsg = s.rule
     show(cur, { spine, sitePaths })
     return true
@@ -756,8 +916,9 @@
     const inEdit = (e.target as HTMLElement).tagName === 'INPUT'
     if (!inEdit && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault()
-      if (e.shiftKey) cyclePreset(e.key === 'ArrowRight' ? 1 : -1)
-      else if (e.key === 'ArrowLeft') back()
+      if (e.shiftKey) {
+        if (!minimal) cyclePreset(e.key === 'ArrowRight' ? 1 : -1)
+      } else if (e.key === 'ArrowLeft') back()
       else step()
       return
     }
@@ -898,7 +1059,30 @@
         {#each nodes as n (n.path)}
           <g class="node" style="transform: translate({n.x}px, {n.y}px)">
             <g class="inner" class:growing={motion && styled && n.fresh !== false} style="--gd: {n.depth * 55}ms">
-              {#if n.tag === 'apply'}
+              {#if n.pod != null}
+                <!-- a seed pod: a real subtree folded shut. Reduction computes
+                     THROUGH it (results re-fold on arrival); a click reveals
+                     one budgeted level, like the buffer's inline unfolds.
+                     Green (grown from real structure), unlike the orange
+                     fruit (free names with no insides at all). -->
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <g class="pod" onclick={() => openPod(n.tree)}>
+                  <title>unfold one level</title>
+                  {#if styled}<path class="fstalk" d="M0,-9 Q1,-13 3.5,-14.5" />{/if}
+                  <circle r="10" class="podbody" />
+                  <path class="podseam" d="M0,-6.5 Q2.8,0 0,6.5" />
+                  {#if n.pod.length <= 3}
+                    <text
+                      class="vname"
+                      y="0.5"
+                      style="font-size: {n.pod.length === 1 ? 10 : n.pod.length === 2 ? 8.5 : 7}px"
+                      >{n.pod}</text
+                    >
+                  {:else}
+                    <text class="vname above" y="-17">{n.pod}</text>
+                  {/if}
+                </g>
+              {:else if n.tag === 'apply'}
                 <circle r={styled ? 8.5 : 8} class="bud-ring" />
                 {#if !styled}<text class="at">@</text>{:else}<circle r="3" class="bud-core" />{/if}
               {:else if n.tag === 'leaf'}
@@ -964,7 +1148,7 @@
           <span class="count">{stepCount} step{stepCount === 1 ? '' : 's'}{parallel ? ' · parallel' : ''}</span>
         </div>
         {#if cur}
-          <div class="forms"><span class="flabel">named</span><code>{pretty(cur)}</code></div>
+          <div class="forms"><span class="flabel">named</span><code>{pretty(cur, { names: true, defs: activeDefs })}</code></div>
           <div class="forms"><span class="flabel">raw</span><code>{pretty(cur, { names: false })}</code></div>
         {/if}
       </div>
@@ -989,11 +1173,15 @@
     <span class="info">
       <button type="button" class="info-btn" aria-label="what can I type here?">i</button>
       <span class="info-pop" role="tooltip">
-        Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree. Combinators:
-        <code>t</code> (△), <code>K</code>, <code>S</code>, <code>not</code>, <code>and</code>,
-        <code>or</code>, <code>add</code>, and plain numbers. Any other name — <code>x</code>,
-        <code>y</code>, <code>f</code> … — is a free variable: a named leaf the reductions carry
-        along symbolically.
+        {#if namesHint}
+          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree. {namesHint}
+        {:else}
+          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree. Combinators:
+          <code>t</code> (△), <code>K</code>, <code>S</code>, <code>not</code>, <code>and</code>,
+          <code>or</code>, <code>add</code>, and plain numbers. Any other name — <code>x</code>,
+          <code>y</code>, <code>f</code> … — is a free variable: a named leaf the reductions carry
+          along symbolically.
+        {/if}
       </span>
     </span>
   </div>
@@ -1005,7 +1193,9 @@
        they never shift the centring -->
   <div class="bottombar">
     <div class="tside tleft">
-      <button class="tbtn" onclick={() => cyclePreset(-1)} title="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
+      {#if !minimal}
+        <button class="tbtn" onclick={() => cyclePreset(-1)} title="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
+      {/if}
       <button class="tbtn" onclick={back} disabled={historyLen === 0} title="step back (←)" aria-label="step back">{@render icoBack()}</button>
     </div>
 
@@ -1013,7 +1203,9 @@
 
     <div class="tside tright">
       <button class="tbtn" onclick={step} title="step forward (→)" aria-label="step forward">{@render icoFwd()}</button>
-      <button class="tbtn" onclick={() => cyclePreset(1)} title="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
+      {#if !minimal}
+        <button class="tbtn" onclick={() => cyclePreset(1)} title="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
+      {/if}
       <button class="tbtn" onclick={reset} title="reset to the start" aria-label="reset">{@render icoReset()}</button>
     </div>
 
@@ -1447,6 +1639,32 @@
   .vname.above {
     fill: var(--warn);
     font-size: 10px;
+  }
+
+  /* a folded defs splice is a POD: green (real structure grown inside, unlike
+     the orange fruit's opaque nothing), a seam hinting it opens. Click opens. */
+  .pod { cursor: pointer; }
+  .podbody {
+    fill: #79ae74;
+    stroke: color-mix(in oklab, #2e5e33 60%, transparent);
+    stroke-width: 0.9;
+  }
+  .pod:hover .podbody {
+    fill: #8abd85;
+  }
+  .plain .podbody { fill: #8fbb8a; stroke: var(--fg-faint); }
+  .podseam {
+    stroke: rgba(255, 255, 255, 0.55);
+    stroke-width: 1.1;
+    fill: none;
+    stroke-linecap: round;
+    pointer-events: none;
+  }
+  .pod .vname {
+    fill: #1c3a20;
+  }
+  .pod .vname.above {
+    fill: var(--g2);
   }
 
   /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ---- */

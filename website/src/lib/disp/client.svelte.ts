@@ -3,7 +3,7 @@
 // examples and the Playground share it.
 
 import { base } from '$app/paths'
-import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome, ValueNode } from './protocol.ts'
+import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome, ValueNode, RawTree } from './protocol.ts'
 
 export type DispStatus =
   | 'cold'
@@ -68,6 +68,7 @@ class DispClient {
         if (!msg.outcome.error && this.#moduleItems > 100) this.kernelLoaded = true
         p.resolve(msg.outcome)
       } else if (msg.type === 'rendered') p.resolve(msg.node)
+      else if (msg.type === 'raw') p.resolve(msg.tree)
       else p.resolve({ ok: true, defs: [], tests: [], elapsedMs: 0, steps: 0, memBytes: 0 })
     }
     w.onerror = (e) => {
@@ -189,6 +190,22 @@ class DispClient {
     try {
       const node = await this.#request<ValueNode>({ type: 'render', handle, budget, rawRoot })
       return gen === this.#gen ? node : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * The complete structure of a tree by handle or in-scope name, for the
+   * reduction visualizer. null when unbound, over maxNodes, or the session
+   * the handle belonged to is gone.
+   */
+  async raw(spec: { handle?: number; name?: string }, maxNodes: number): Promise<RawTree | null> {
+    const gen = this.#gen
+    if (!this.#worker) return null
+    try {
+      const tree = await this.#request<RawTree | null>({ type: 'raw', ...spec, maxNodes })
+      return gen === this.#gen ? tree : null
     } catch {
       return null
     }

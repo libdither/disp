@@ -15,6 +15,10 @@ export type ValueNode =
   | { k: 'fork'; c: [ValueNode, ValueNode]; h: number }
   | { k: 'more'; h: number }
 
+// A complete structural tree, compactly: 0 = leaf, [c] = stem, [l, r] = fork.
+// No decoding, no cuts — the visualizer's food (null when over budget).
+export type RawTree = 0 | [RawTree] | [RawTree, RawTree]
+
 export type WorkerRequest =
   | { id: number; type: 'init'; wasmUrl: string }
   // Restore the shipped precompiled kernel (static/kernel.snap) into the
@@ -36,6 +40,10 @@ export type WorkerRequest =
   // Re-render a subtree by session handle: raw (skip nat/string/name
   // decoding at the root) and/or deeper (fresh node budget from here).
   | { id: number; type: 'render'; handle: number; budget: number; rawRoot?: boolean }
+  // The COMPLETE structure of a tree, by handle or by in-scope name — the
+  // reduction visualizer's real-context feed. null when the tree exceeds
+  // maxNodes or the name isn't bound.
+  | { id: number; type: 'raw'; handle?: number; name?: string; maxNodes: number }
   | { id: number; type: 'reset' }
 
 // Streaming progress: one per elaborated item (defs, tests, opens — including
@@ -90,4 +98,5 @@ export type WorkerResponse =
   | ItemEvent
   | { type: 'result'; id: number; outcome: RunOutcome }
   | { type: 'rendered'; id: number; node: ValueNode }
+  | { type: 'raw'; id: number; tree: RawTree | null }
   | { type: 'fatal'; id: number; error: string }

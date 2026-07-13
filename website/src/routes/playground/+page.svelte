@@ -7,7 +7,8 @@
   // engine messages, and a one-line eval prompt at the bottom.
   import { onMount } from 'svelte'
   import { disp } from '$lib/disp/client.svelte'
-  import type { RunOutcome, ItemEvent, ValueNode } from '$lib/disp/protocol'
+  import type { RunOutcome, ItemEvent, ValueNode, RawTree } from '$lib/disp/protocol'
+  import type { T } from '$lib/treecalc/treecalc'
   import { examples } from '$lib/disp/examples'
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
   import TreeValue from '$lib/components/TreeValue.svelte'
@@ -41,22 +42,39 @@
 
   // ---- reduction-visualizer pop-out -----------------------------------------
   // A value's CURRENT fold state serializes into the pedagogical visualizer's
-  // expression syntax: concrete structure goes in as trees, folded atoms
-  // (names, strings, big nats, … cuts) become bare identifiers — which
-  // parseTree treats as free variables, i.e. named fruit with no shape of
-  // their own. Reduction around them is symbolic and nothing reduces INSIDE
-  // them; unfold more in the buffer first for a deeper reduction.
-  let viz = $state<{ expr: string } | null>(null)
+  // expression syntax: concrete structure goes in as trees; each folded atom
+  // (name, string, big nat, … cut) becomes an identifier whose REAL structure
+  // is pre-fetched into the panel's defs dictionary — so it enters as a green
+  // POD: folded in the drawing, but genuine structure that computes when a
+  // reduction consumes it (or when clicked open). Atoms too big to ship
+  // (> POD_MAX_NODES) get no dictionary entry and stay symbolic fruit.
+  let viz = $state<{ expr: string; defs: Record<string, T> } | null>(null)
+  // strings are unary codepoint chains ("leaf" alone is ~830 nodes), so the
+  // ceiling must be generous; a pod only draws its nodes once opened anyway
+  const POD_MAX_NODES = 3000
 
-  function vizExpr(node: ValueNode): string {
+  const rawToT = (r: RawTree): T =>
+    r === 0
+      ? { tag: 'leaf' }
+      : r.length === 1
+        ? { tag: 'stem', c: rawToT(r[0]) }
+        : { tag: 'fork', l: rawToT(r[0]), r: rawToT(r[1]) }
+
+  function serializeForViz(node: ValueNode): { expr: string; atoms: Map<string, number> } {
+    const atoms = new Map<string, number>()
     let cuts = 0
-    // names parseTree would substitute with ITS OWN encodings (close cousins
-    // of the lib's, not tree-identical) get a bare prefix so they stay fruit
-    const RESERVED = new Set(['t', 'K', 'I', 'S', 'true', 'false', 'not', 'and', 'or', 'add'])
     const mangle = (s: string) => {
       let m = s.replace(/[^A-Za-z0-9_]/g, '_')
       if (!/^[A-Za-z_]/.test(m)) m = '_' + m
-      if (RESERVED.has(m)) m = '_' + m
+      if (m === 't') m = '_t' // the leaf token
+      return m
+    }
+    // same ident, different tree (two strings mangling alike): suffix apart
+    const claim = (want: string, h: number): string => {
+      let m = want
+      let i = 2
+      while (atoms.has(m) && atoms.get(m) !== h) m = `${want}_${i++}`
+      atoms.set(m, h)
       return m
     }
     const go = (n: ValueNode, atom: boolean): string => {
@@ -64,15 +82,14 @@
         case 'leaf':
           return 't'
         case 'nat':
-          // small nats go in concrete (the encodings agree); big ones would
-          // drown the drawing, so they stay fruit
-          return n.n <= 24 ? String(n.n) : mangle(`n_${n.n}`)
+          // small nats go in concrete (the encodings agree); big ones pod
+          return n.n <= 24 ? String(n.n) : claim(mangle(`n_${n.n}`), n.h)
         case 'str':
-          return mangle(n.s)
+          return claim(mangle(n.s), n.h)
         case 'name':
-          return mangle(n.name)
+          return claim(mangle(n.name), n.h)
         case 'more':
-          return `_${++cuts}`
+          return claim(`_${++cuts}`, n.h)
         case 'stem': {
           const s = `t ${go(n.c[0], true)}`
           return atom ? `(${s})` : s
@@ -83,11 +100,27 @@
         }
       }
     }
-    return go(node, false)
+    const expr = go(node, false)
+    return { expr, atoms }
   }
 
-  const onVisualizeValue = (tree: ValueNode) => {
-    viz = { expr: vizExpr(tree) }
+  async function onVisualizeValue(tree: ValueNode) {
+    const { expr, atoms } = serializeForViz(tree)
+    const defs: Record<string, T> = {}
+    await Promise.all(
+      [...atoms].map(async ([ident, handle]) => {
+        const rt = await disp.raw({ handle }, POD_MAX_NODES)
+        if (rt !== null) defs[ident] = rawToT(rt)
+      })
+    )
+    viz = { expr, defs }
+  }
+
+  // names TYPED into the panel's edit box resolve against the live playground
+  // scope — the panel computes with the same definitions the buffer does
+  const resolveScopeDef = async (name: string): Promise<T | null> => {
+    const rt = await disp.raw({ name }, POD_MAX_NODES)
+    return rt === null ? null : rawToT(rt)
   }
 
   // ---- toasts (engine messages: kernel loaded, reset, interrupted…) ----
@@ -640,12 +673,20 @@
       <aside class="viz-panel">
         <div class="viz-head">
           <span class="viz-title">reduction</span>
-          <span class="viz-sub">folded names are symbolic fruit — unfold more in the buffer for deeper reduction. Edit the expression to apply arguments.</span>
+          <span class="viz-sub">green pods hold real structure, folded — they open when computed (or clicked). Orange fruit is a free name: purely symbolic. Edit the expression to apply arguments.</span>
           <button class="x" onclick={() => (viz = null)} aria-label="close visualizer">×</button>
         </div>
         {#key viz}
           <div class="viz-body">
-            <TreeVis variant="lab" exprs={[viz.expr]} height={430} />
+            <TreeVis
+              variant="lab"
+              exprs={[viz.expr]}
+              height={430}
+              defs={viz.defs}
+              resolveDef={resolveScopeDef}
+              minimal
+              namesHint="Names resolve against the playground's scope and arrive as green pods (real structure, folded shut). Unknown names are free variables: orange fruit the reductions carry symbolically."
+            />
           </div>
         {/key}
       </aside>

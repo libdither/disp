@@ -82,7 +82,7 @@
       class="tv-fold"
       onmousedown={eat}
       onclick={(e) => refold(e, path)}
-      title="re-fold this subterm">−</button>{/if}
+      title="re-fold this subterm">↺</button>{/if}
   {#if n.k === 'leaf'}<span class="tv-leaf">t</span>
   {:else if n.k === 'nat'}<button
       type="button"
@@ -173,11 +173,12 @@
     background: rgba(74, 104, 82, 0.26);
   }
   .tv-fold {
-    padding: 0 0.4em;
+    padding: 0 0.35em;
     margin-right: 0.15em;
     background: rgba(168, 119, 15, 0.14);
     color: #a8770f;
-    font-weight: 700;
+    font-weight: 600;
+    font-size: 0.95em;
   }
   .tv-fold:hover {
     background: rgba(168, 119, 15, 0.28);

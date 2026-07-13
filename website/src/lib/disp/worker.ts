@@ -67,6 +67,12 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'rendered', id: msg.id, node })
         break
       }
+      case 'raw': {
+        if (!runner) throw new Error('worker not initialized')
+        const tree = runner.rawTree({ handle: msg.handle, name: msg.name }, msg.maxNodes)
+        post({ type: 'raw', id: msg.id, tree })
+        break
+      }
       case 'reset': {
         runner?.reset()
         post({ type: 'ready', id: msg.id })

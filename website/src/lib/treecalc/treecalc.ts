@@ -388,7 +388,13 @@ const freshCopy = (t: T): T => {
 export function parseTree(
   input: string,
   defs: Record<string, T> = DEFS,
-  opts: { lazyTop?: boolean } = {}
+  opts: {
+    lazyTop?: boolean
+    // called once per defs substitution with the spliced (fresh) subtree —
+    // lets a host track "this region came in folded under `name`" (the
+    // visualizer's collapsed pods) by object identity
+    onDefSplice?: (node: T, name: string) => void
+  } = {}
 ): T {
   const tokens: string[] = []
   for (let i = 0; i < input.length; i++) {
@@ -439,7 +445,9 @@ export function parseTree(
     }
     if (Object.prototype.hasOwnProperty.call(defs, tok)) {
       p++
-      return freshCopy(defs[tok])
+      const copy = freshCopy(defs[tok])
+      opts.onDefSplice?.(copy, tok)
+      return copy
     }
     // any other name is a named leaf — a free variable to compute with
     // symbolically (K x y ▷ x, S f g x ▷ (f x)(g x))
@@ -488,17 +496,23 @@ export function nodeCount(t: T): number {
   return 1 + childrenOf(t).reduce((s, c) => s + nodeCount(c), 0)
 }
 
-export function pretty(t: T, opts: { names?: boolean } = { names: true }): string {
-  if (opts.names) {
+export function pretty(t: T, opts: { names?: boolean; defs?: Record<string, T> } = { names: true }): string {
+  const defs = Object.entries(opts.defs ?? DEFS)
+  // recursive naming: any SUBTREE that decodes as a numeral or matches a def
+  // prints by name — only substantial trees, tiny ones are ambiguous on
+  // purpose (today's encodings make false, K, and t t the SAME tree)
+  const nameFor = (t: T): string | null => {
+    if (!opts.names) return null
     const n = natValue(t)
     if (n !== null && n > 0) return String(n)
-    // only name substantial trees — tiny ones are ambiguous on purpose
-    // (today's encodings make false, K, and t t the SAME tree)
     if (nodeCount(t) >= 3) {
-      for (const [name, d] of Object.entries(DEFS)) if (treeEq(t, d)) return name
+      for (const [name, d] of defs) if (treeEq(t, d)) return name
     }
+    return null
   }
   const go = (t: T, atomPos: boolean): string => {
+    const nm = nameFor(t)
+    if (nm !== null) return nm
     if (t.tag === 'leaf') return 't'
     if (t.tag === 'var') return t.name
     const inner =

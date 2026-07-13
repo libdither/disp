@@ -10,7 +10,7 @@ import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
 import { restoreSnapshot, vfsHash, type RestoreStats } from './snapshot.ts'
 import { vfs } from './shims/fs.ts'
-import type { ItemEvent, RunOutcome, ValueNode } from './protocol.ts'
+import type { ItemEvent, RunOutcome, ValueNode, RawTree } from './protocol.ts'
 
 const PLAYGROUND_PATH = '/lib/tests/playground.disp'
 const PRETTY_DEPTH = 14
@@ -42,6 +42,9 @@ export class DispRunner {
   #wasmBytes: ArrayBuffer
   // handle -> name, accumulated across runs (first name wins, like run.ts)
   #names = new Map<number, string>()
+  // name -> handle, rebuilt per run (root defs first, then scope exports) —
+  // the reverse lookup behind by-name raw-tree requests
+  #byName = new Map<string, number>()
   // name -> handle for the most recent run's top-level defs
   #lastDefs = new Map<string, number>()
 
@@ -121,9 +124,14 @@ export class DispRunner {
     // Names before pretty (the printer is name-aware); `__`-prefixed
     // scaffolding (the REPL's __it) stays out of the name table. Root defs
     // register first (they win over module exports for shared handles),
-    // then everything the buffer's opens brought into scope.
-    for (const [name, d] of rootDefs)
-      if (!name.startsWith('__') && !this.#names.has(d.handle)) this.#names.set(d.handle, name)
+    // then everything the buffer's opens brought into scope. The reverse
+    // (name -> handle) table rebuilds per run — lookups see THIS run's scope.
+    this.#byName = new Map()
+    for (const [name, d] of rootDefs) {
+      if (name.startsWith('__')) continue
+      if (!this.#names.has(d.handle)) this.#names.set(d.handle, name)
+      if (!this.#byName.has(name)) this.#byName.set(name, d.handle)
+    }
     this.#registerScopeNames()
     this.#lastDefs = new Map([...rootDefs].map(([n, d]) => [n, d.handle]))
     for (const [name, d] of rootDefs)
@@ -198,7 +206,9 @@ export class DispRunner {
       for (let i = 0; i < entry.fields.length; i++) {
         const name = entry.fields[i]
         const h = entry.fieldTrees[i] as unknown as number
-        if (h == null || name.startsWith('__') || this.#names.has(h)) continue
+        if (h == null || name.startsWith('__')) continue
+        if (!this.#byName.has(name)) this.#byName.set(name, h)
+        if (this.#names.has(h)) continue
         if (this.#hasAtLeastNodes(h, 4)) this.#names.set(h, name)
       }
     }
@@ -292,6 +302,30 @@ export class DispRunner {
     counter.left--
     if (cls.tag === 'stem') return { k: 'stem', c: [this.#valueNode(cls.child, counter)], h }
     return { k: 'fork', c: [this.#valueNode(cls.left, counter), this.#valueNode(cls.right, counter)], h }
+  }
+
+  // The COMPLETE structure of a tree — the reduction visualizer's food. By
+  // handle or by in-scope name (this run's scope); null when unbound or when
+  // the tree exceeds maxNodes (an over-budget def stays symbolic fruit rather
+  // than drowning the drawing).
+  rawTree(spec: { handle?: number; name?: string }, maxNodes: number): RawTree | null {
+    const h = spec.handle ?? (spec.name != null ? this.#byName.get(spec.name) : undefined)
+    if (h == null) return null
+    const counter = { left: maxNodes }
+    const go = (x: number): RawTree | null => {
+      if (--counter.left < 0) return null
+      const c = this.#session.classify(x)
+      if (c.tag === 'leaf') return 0
+      if (c.tag === 'stem') {
+        const a = go(c.child)
+        return a === null ? null : [a]
+      }
+      const l = go(c.left)
+      if (l === null) return null
+      const r = go(c.right)
+      return r === null ? null : [l, r]
+    }
+    return go(h)
   }
 
   // Applicative-style pretty printer (t x (t y) …), name-aware, capped.

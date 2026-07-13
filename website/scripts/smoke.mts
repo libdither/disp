@@ -52,6 +52,18 @@ if (!quad?.pretty?.includes('double')) {
   console.error(`FAIL: quadruple should render via the scope name 'double', got: ${quad?.pretty}`)
   process.exit(1)
 }
+// the visualizer's full-structure feed: by in-scope name (THIS run's scope —
+// the table rebuilds per run) and the over-budget refusal (a partial tree
+// must never reach reduction)
+const rawDozen = runner.rawTree({ name: 'dozen' }, 50)
+if (JSON.stringify(rawDozen) !== JSON.stringify([0, [0, [0, [0, [0, [0, [0, [0, [0, [0, [0, [0, 0]]]]]]]]]]]])) {
+  console.error(`FAIL: rawTree(dozen) should be the 12-chain, got ${JSON.stringify(rawDozen)}`)
+  process.exit(1)
+}
+if (runner.rawTree({ name: 'dozen' }, 10) !== null) {
+  console.error('FAIL: rawTree over budget should refuse (null), never truncate')
+  process.exit(1)
+}
 
 console.log('--- run 2: warm rerun (module cache) ---')
 const t1 = Date.now()
@@ -85,6 +97,14 @@ if (out3.valueNode?.k !== 'nat' || out3.valueNode.n !== 12) {
 const raw12 = runner.renderValue(out3.valueNode.h, 50, true)
 if (raw12.k !== 'fork' || raw12.c[0].k !== 'leaf' || raw12.c[1].k !== 'nat' || raw12.c[1].n !== 11) {
   console.error(`FAIL: rawRoot unfold of 12 should be fork(leaf, 11), got ${JSON.stringify(raw12)}`)
+  process.exit(1)
+}
+// rawTree by module-export name, in the eval buffer's scope. succ = t t =
+// stem(leaf). Kernel-tier values (double, add…) are hash-consed DAGs whose
+// TREE expansion explodes exponentially — they refuse on budget and stay
+// symbolic fruit in the visualizer, by design.
+if (JSON.stringify(runner.rawTree({ name: 'succ' }, 100)) !== '[0]') {
+  console.error('FAIL: rawTree by scope name (succ) should be stem(leaf)')
   process.exit(1)
 }
 
