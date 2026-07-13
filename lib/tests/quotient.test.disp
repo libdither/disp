@@ -1,0 +1,39 @@
+// Quotients with respect at consumption (relation.disp). Pins: Quotient A R
+// recognizes A's members and is a Type; q_lift computes on concrete members
+// (unpoliced, like every concrete face — is_zero still splits closed classes,
+// the documented scope limit); the ABSTRACT face is the gate: a consumer of a
+// quotient hypothesis checks only when its map carries a real respect witness
+// (is_even and not∘is_even pass, is_zero with a fake witness is refused); a
+// coarse license on a quotient-typed name then lands invisibly for checked
+// consumers.
+open use "../kernel/prelude.disp"
+open use "../std/nat.disp"
+open use "../std/relation.disp"
+
+let is_even := {n} -> nat_rec ({_} -> Bool) true ({_p, ih} -> not ih) n
+let ParityR := pullback_on Nat is_even (eq_relation Bool)
+let ParityQ := Quotient Nat (ParityR.rel)
+
+// ── membership: the carrier's members, and a Type ──
+test typecheck Type ParityQ = Ok true
+test param_apply ParityQ 6 = Ok true
+test param_apply ParityQ false = Ok false
+
+// ── concrete elimination computes; concrete faces are unpoliced ──
+test q_lift Bool is_even ({q0, q1, rho} -> rho) 6 = true
+test q_lift Bool is_zero ({q0, q1, rho} -> refl) 6 = false
+
+// ── the abstract face is the gate: respect in, class-splitters out ──
+// (notb is bool_rec-based: raw `not` is a shape select, which on a stuck
+// is_even neutral is the extraction leak — consumer maps over a quotient must
+// observe through gated eliminators, the walker-safe-motive rule.)
+let notb := {b} -> bool_rec ({_} -> Bool) false true b
+test param_apply (Pi ParityQ ({_} -> Bool)) ({q} -> q_lift Bool is_even ({q0, q1, rho} -> rho) q) = Ok true
+test param_apply (Pi ParityQ ({_} -> Bool)) ({q} -> q_lift Bool ({n} -> notb (is_even n)) ({q0, q1, rho} -> eq_cong Bool Bool notb (is_even q0) (is_even q1) rho) q) = Ok true
+test param_apply (Pi ParityQ ({_} -> Bool)) ({q} -> q_lift Bool is_zero ({q0, q1, rho} -> refl) q) = Ok false
+
+// ── a coarse license lands; checked consumers cannot see it ──
+guard (license_guard (ParityR.rel)) qv : ParityQ := 2
+qv := { new := 4 ; proof := refl }
+test tree_eq qv 4 = true
+test q_lift Bool is_even ({q0, q1, rho} -> rho) qv = true

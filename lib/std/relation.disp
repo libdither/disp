@@ -242,6 +242,38 @@ pointwise_arrow := {A, T, f, g, w} -> {x0, x1, rho} ->
 // are members, with no per-pipeline proof.
 s_comp_rel := {f0, f1, g0, g1, rf, rg} -> {x0, x1, rho} -> rg (f0 x0) (f1 x1) (rf x0 x1 rho)
 
+// ── Quotients: respect demanded at consumption ──
+// A pullback/coarse relation supplies equivalence but no congruence, and no
+// gate can police observation of CONCRETE members (is_zero 2 and is_zero 4
+// are both closed; the quotient pin in probe_license_sr). What a quotient CAN
+// own is its abstract face: Quotient A R recognizes exactly A's members, and
+// its respond releases an elimination only against a morphism pair — the map
+// with its respect witness — so a CHECKED consumer of the quotient is
+// congruent by construction (the observational lineage's rule: consumption
+// demands respect; Lean's Quot.lift, NuPRL's quotient elimination). q_lift is
+// the eliminator: a concrete member computes map q directly (concrete faces
+// are unpoliced, as everywhere); a neutral member extends at the motive only
+// after the witness checks. The respect obligation types its codomain at the
+// x0 fiber, so constant motives state exactly Eq B (f x0) (f x1); dependent
+// motives over quotients need heterogeneous transport and are future work.
+let quot_respect := {A, R, motive, f} -> linked_rel A A R
+  ({x0, x1, _rho} -> Eq (motive x0) (f x0) (f x1))
+quot_respond := {params, self, frame} -> {
+  let f := field (field frame "cases") "map"
+  let w := field (field frame "cases") "resp"
+  match (param_apply (quot_respect (pair_fst params) (pair_snd params) (frame.motive) f) w) {
+    Ok v => (if v then (match (apply_policed (frame.motive) self) { Ok ty => Extend ty; Err _ => Extend InvalidType }) else (Extend InvalidType))
+    Err _ => (Extend InvalidType)
+  }
+}
+Quotient := {A, R} -> wait (make_recognizer ({_m, v} -> param_apply A v))
+  { recognizer_params := pair A R; functor := trivial_functor; respond := quot_respond; behavioral_specs := t }
+q_lift := {B, f, w, q} -> elim
+  ({motive, cases, target} -> (cases.map) target)
+  ({_} -> B)
+  { map := f; resp := w }
+  q
+
 // Experimental dependent record packaging.  The checker currently replaces
 // `map` by a record-field hypothesis while checking `respect`; for a coarse
 // relation this loses the concrete map and can reject a valid package.  Use
