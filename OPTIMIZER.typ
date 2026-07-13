@@ -397,11 +397,15 @@ independence:
   fall through to the spec and owe nothing. What codes cannot cover is the negative positions
   (arms, isos, continuations, any function-typed slot): functions have no constructor list to
   induct over. Those keep hyps, which is what the next layer polices.
-  *Partial implementation (2026-07-12):* `PositiveCaseArms` and
+  *Partial implementation (2026-07-12/13):* `PositiveCaseArms` and
   `PositiveCaseCoverage` now generate the typed case table and every constructor obligation from
   any concrete plain-`Coproduct` code, including arbitrary arities and direct recursive markers;
   the hand-written Nat/LicSum probes are gone. The representative guard code exercises arities
-  zero through three. A typed code universe and its ordinary list induction both prototype
+  zero through three. `PositiveFnCoverage` (`relation.disp`) generalizes the same generation to
+  plain functions out of any concrete positive type — viewed codes included via the encode iso —
+  with an inductive hypothesis at each direct `Rec` position (`guard_faces.test.disp`: the shift
+  attack fails its zero obligation; a genuine replacement discharges its succ case with the IH).
+  A typed code universe and its ordinary list induction both prototype
   successfully, but checking the high-level `case_value` equality while that code remains a
   hypothesis does not: its generated metadata/case application is the current one-generic-point
   boundary. Thus the full Pi-over-codes theorem in this bullet remains open, and the exact
@@ -425,10 +429,16 @@ independence:
   (a corollary of the core discipline): the elaborator relays guard answers; it never
   fabricates a bound tree, a proof, or glue. Every soundness-carrying tree is built by kernel
   or guard code in-language.
-  *Landed for `case_value` (2026-07-12):* `case_license_guard` accepts only a raw cut worker and
+  *Landed (2026-07-12/13):* `case_license_guard` accepts only a raw cut worker and
   binds `case_delegate old worker`; its proof contains only the concrete code-generated field.
   A test rebind confirms that a malicious worker cannot change Nat/non-cut behavior, while the
-  still-open fresh-cut-code attack above remains visible.
+  still-open fresh-cut-code attack above remains visible. The generic form is
+  `two_face`/`two_face_guard` (`relation.disp`): any owned function rebinds by `{ fast, proof }`
+  parts, the guard checks the RAW worker against the concrete-face relation — checking the glued
+  form instead would trivialize every inductive hypothesis, since the glue delegates at a hyp —
+  and binds its own `two_face old fast`. Paired with `PositiveFnCoverage` this closes the
+  top-level-refl door for any positive-domain license (`guard_faces.test.disp`; host rejection
+  pin in `test/guards.test.ts`).
 + *Quotients: respect is constitutive, not ambient.* A pullback supplies an equivalence,
   never congruence, and no operational gate can police observation of concrete quotient members
   (both sides of `is_zero 2` vs `is_zero 4` are concrete). The observational lineage's rule
@@ -439,13 +449,30 @@ independence:
   `rel_pi` PER lift
   (`∀ a₀ a₁. R_A(a₀, a₁) -> R_B(f a₀, g a₁)`) applies exactly where the domain setoid is
   coarser than the `Eq` base; at the base it is J-equivalent to the unary form, which stays.
-  `relation.disp` currently supports the witness as `respects`; packaging it as a checked
-  dependent record remains blocked by the checker issue noted above.
+  *Landed (2026-07-13):* the consumption gate — `Quotient A R` (`relation.disp`) recognizes the
+  carrier's members, and eliminating a quotient NEUTRAL releases the motive only after the
+  `q_lift` frame's respect witness checks against `linked_rel A A R` at the fiber
+  (`quotient.test.disp`: `is_even` and gated compositions pass, a class-splitter with a fake
+  witness is refused; constant motives only — dependent motives need heterogeneous transport).
+  Alongside it, the rich level landed as a PER universe (`s_arrow`/`s_member`/`s_prop`,
+  `strict_to_rich`, `pointwise_arrow`, `s_comp_rel`; membership = self-relatedness, so an
+  `s_arrow` member is exactly a congruent function; `setoid.test.disp`). Packaging map+respect
+  as a checked dependent record (`Morphism`) remains blocked by the checker issue noted above.
 
-The concrete-code generator and case-specific delegation layer have landed; full code
-quantification and the quotient carrier remain at the checker boundaries noted above. Layer two
-wants the §5.4 routing generalization. Until it lands, `license_guard` and the concrete part of
-`CaseRelation` remain trusted on their differential pins, not on reflective proof bodies.
+The concrete-code generator, the delegation layer (case-specific and generic), the quotient
+consumption gate, and a first-order certificate lane have landed; full code quantification and
+dependent-record packaging remain at the checker boundaries noted above. The certificate lane
+(`std/deriv.disp`) presents `~` as the congruence closure of a registered rule set under
+registered congruent contexts: `check_deriv` COMPUTES a rebind's verdict over first-order
+derivation data (rule instantiation and context application are ordinary evaluation, leaves are
+`tree_eq`), so nothing runs at a hyp and there is no face for a candidate to observe. Trust
+concentrates in the rule/context tables the guard owner fixes at construction, and a proven
+equation registered as a rule is exactly how math proofs feed the optimizer (`deriv.test.disp`
+pins the staging fact the congruence rule rests on: runtime context application is
+tree-identical to literal elaboration). Layer two wants the §5.4 routing generalization. Until
+it lands, walker-checked obligations (pointwise licenses, the residual-hyp positions of
+coverage families) remain trusted on their differential pins; derivation-checked and
+coverage-checked rebinds rest on their tables and constructor obligations instead.
 
 == What the observational lineage licenses (research pass, 2026-07-11)
 

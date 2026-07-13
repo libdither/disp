@@ -169,10 +169,16 @@ replacements (`guards.test`'s `ident`, `relation_tree_license`'s `fast`) prove t
 induction, whose cases instantiate at constructor-rooted values where the face bit reads
 false (an induction proof of `id ~ shift` is impossible: its zero case demands
 `Eq Nat 0 1`). The attack's doors are top-level refl at a bare hyp, and reflection
-through residual hyps of concrete-face obligations. The closing design (a strict
-certification walker mode, delegation by construction, first-order certificates for
-staged dispatchers, the PER lift for quotients) lives in OPTIMIZER.typ under
-"Certification is not yet observer-restricted".
+through residual hyps of concrete-face obligations. The closing design lives in
+OPTIMIZER.typ under "Certification is not yet observer-restricted"; its no-kernel-change
+layers have landed in `relation.disp` and `std/deriv.disp`. The top-level-refl door is
+closed for rebinds that use them: `two_face_guard` + `PositiveFnCoverage` bind guard-built
+delegation glue and demand per-constructor obligations (the shift pair fails its zero
+case), `license_guard_deriv` COMPUTES its verdict over first-order derivations (nothing
+runs at a hyp), and `Quotient`/`q_lift` demand the respect witness at a quotient neutral's
+elimination (pins: `guard_faces`, `deriv`, `quotient`, `setoid` test files). The
+residual-hyp door (payload/arm-face probes) remains open pending the strict certification
+walker mode, and plain pointwise `license_guard` remains fully spoofable.
 
 Forward constraint: the defense model rests on use-site re-checking, and `strip`/erasure
 (TYPE_THEORY §10) deletes exactly those checks — so item 5 upgrades from defended gap to
@@ -209,11 +215,13 @@ certificates for anything it strips.
 2. Item 4 is a minor rough edge.
 3. Item 5 is a design invariant (the price of polarized application), and it is already
    a blocker for proof-certified replacement, not only for §10 erasure: pointwise licenses are
-   neutral-face statements, and the two-face discipline (`CaseRelation`) is spoofable
-   through residual hyps (`probe_license_sr.test.disp`). Until certification gets the
-   strict observer-restricted mode (OPTIMIZER.typ, "Certification is not yet
-   observer-restricted"), `license_guard`/`CaseRelation` rebinds are trusted on
-   their differential pins, not on their proofs. Erasure additionally must not strip
-   use-site checks behind a neutral-face-only certificate.
+   neutral-face statements, and residual hyps of concrete-face obligations stay spoofable
+   (`probe_license_sr.test.disp`, `guard_faces.test.disp`). The landed no-kernel-change
+   layers (`two_face_guard`+`PositiveFnCoverage`, `license_guard_deriv`, `Quotient`) move
+   their rebinds onto constructor obligations, computed derivation verdicts, and
+   consumption-side respect; plain pointwise `license_guard` rebinds remain trusted on
+   their differential pins until the strict observer-restricted walker mode lands
+   (OPTIMIZER.typ, "Certification is not yet observer-restricted"). Erasure additionally
+   must not strip use-site checks behind a neutral-face-only certificate.
 4. Remaining from item 1: motive families for full mutual induction (the Coproduct_ctx
    gate is currently single-motive).
