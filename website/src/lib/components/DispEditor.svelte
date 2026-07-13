@@ -106,7 +106,26 @@
         // lazily as the viewport scrolls)
         if (cursorLine < this.lines.from || cursorLine > this.lines.to) d.classList.add('away')
       }
+      // background click = put the cursor in the item's line, at the clicked
+      // x — the block regains focus size without any layout surprise (the old
+      // behavior, toggling wrapped display, now lives on double-click)
       d.addEventListener('mousedown', (e) => {
+        if ((e.target as HTMLElement).closest('button')) return
+        e.preventDefault()
+        if (!this.lines || !view) return
+        const ln = Math.min(this.lines.to, view.state.doc.lines)
+        const line = view.state.doc.line(ln)
+        const rect = view.coordsAtPos(line.from)
+        const pos = rect
+          ? (view.posAtCoords({ x: e.clientX, y: (rect.top + rect.bottom) / 2 }) ?? line.to)
+          : line.to
+        view.dispatch({
+          selection: { anchor: Math.max(line.from, Math.min(pos, line.to)) },
+          scrollIntoView: true
+        })
+        view.focus()
+      })
+      d.addEventListener('dblclick', (e) => {
         if ((e.target as HTMLElement).closest('button')) return
         e.preventDefault()
         d.classList.toggle('open')
