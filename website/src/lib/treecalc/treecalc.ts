@@ -328,7 +328,9 @@ function cirToTree(e: Cir): T {
   if (e.tag === 'S') return S_TREE
   if (e.tag === 'tree') return e.tree
   if (e.tag === 'lam') return cirToTree(abs(e.param, e.body))
-  if (e.tag === 'var') throw new Error(`unbound variable in lam body: ${e.name}`)
+  // a var surviving abstraction is FREE in the lambda: it stays a named
+  // leaf, computed with symbolically (the visualizer's fruit)
+  if (e.tag === 'var') return varLeaf(e.name)
   // S(x)(y) / K(x)(y) short-circuit to their fork forms
   if (e.f.tag === 'app' && e.f.f.tag === 'S') return fork(stem(cirToTree(e.f.x)), cirToTree(e.x))
   if (e.f.tag === 'app' && e.f.f.tag === 'K') return cirToTree(e.f.x)
@@ -475,6 +477,20 @@ export function parseTree(
       i = j
       continue
     }
+    // binder syntax: {x, y} -> body
+    if (ch === '{' || ch === '}' || ch === ',') {
+      tokens.push(ch)
+      continue
+    }
+    if (ch === '-' && input[i + 1] === '>') {
+      tokens.push('->')
+      i++
+      continue
+    }
+    if (ch === '→') {
+      tokens.push('->')
+      continue
+    }
     if (/[A-Za-z_]/.test(ch)) {
       let j = i
       while (j < input.length && /[A-Za-z_0-9]/.test(input[j])) j++
@@ -492,8 +508,54 @@ export function parseTree(
     throw new Error('unexpected character: ' + ch)
   }
   let p = 0
+  // a parsed body back to Cir for abstraction: applications keep their
+  // structure (abs needs it), var-free regions stay opaque literals
+  function hasVarOrApply(t: T): boolean {
+    return t.tag === 'var' || t.tag === 'apply' || childrenOf(t).some(hasVarOrApply)
+  }
+  function tToCir(t: T): Cir {
+    if (!hasVarOrApply(t)) return { tag: 'tree', tree: t }
+    if (t.tag === 'var') return { tag: 'var', name: t.name }
+    if (t.tag === 'apply') return { tag: 'app', f: tToCir(t.f), x: tToCir(t.x) }
+    if (t.tag === 'stem') return { tag: 'app', f: { tag: 'tree', tree: leaf }, x: tToCir(t.c) }
+    if (t.tag === 'fork')
+      return {
+        tag: 'app',
+        f: { tag: 'app', f: { tag: 'tree', tree: leaf }, x: tToCir(t.l) },
+        x: tToCir(t.r)
+      }
+    return { tag: 'tree', tree: t }
+  }
   function atom(): T {
     const tok = tokens[p]
+    if (tok === '{') {
+      // binder: {x, y} -> body — not tree-calculus syntax but NOTATION for a
+      // tree: the body compiles away via bracket abstraction, the same
+      // translation the elaborator performs (abs mirrors elab/cir.ts's
+      // η-reduction + K-composition). Free names in the body survive as
+      // named leaves — symbolic fruit.
+      p++
+      const params: string[] = []
+      for (;;) {
+        const nm = tokens[p]
+        if (!nm || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(nm)) throw new Error('binder: expected a parameter name')
+        params.push(nm)
+        p++
+        if (tokens[p] === ',') {
+          p++
+          continue
+        }
+        break
+      }
+      if (tokens[p] !== '}') throw new Error("binder: expected '}'")
+      p++
+      if (tokens[p] !== '->') throw new Error("binder: expected '->'")
+      p++
+      const body = expr(false) // the binder swallows the rest of its group
+      return cirToTree(
+        params.reduceRight<Cir>((b, prm) => ({ tag: 'lam', param: prm, body: b }), tToCir(body))
+      )
+    }
     if (tok === '(') {
       p++
       const e = expr(false) // parenthesized groups always construct eagerly
