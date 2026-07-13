@@ -233,24 +233,30 @@ export function stepParallel(root: T): { next: T; fired: NonNullable<StepResult[
   return { next, fired }
 }
 
-// The first (leftmost-outermost) application spine stuck on a NAMED leaf
-// head with fully concrete arguments — the hook for handing a reduction the
-// local defs can't express to a real evaluator (the playground's engine
-// macro-step). Args must be var- and apply-free: symbolic or still-reducing
-// arguments can't cross into an engine that only knows concrete trees.
+// Is THIS application the head of a spine stuck on a NAMED leaf with fully
+// concrete arguments? Such a spine can be handed to a real evaluator (the
+// playground's engine macro-step). Args must be var- and apply-free:
+// symbolic or still-reducing arguments can't cross into an engine that only
+// knows concrete trees.
+export function spineAt(t: T): { site: T & { tag: 'apply' }; name: string; args: T[] } | null {
+  if (t.tag !== 'apply') return null
+  const isConcrete = (x: T): boolean =>
+    x.tag !== 'var' && x.tag !== 'apply' && childrenOf(x).every(isConcrete)
+  const args: T[] = []
+  let f: T = t
+  while (f.tag === 'apply') {
+    args.unshift(f.x)
+    f = f.f
+  }
+  if (f.tag === 'var' && args.every(isConcrete)) return { site: t as T & { tag: 'apply' }, name: f.name, args }
+  return null
+}
+
+// The first (leftmost-outermost) such spine anywhere in the tree.
 export function stuckSpine(root: T): { site: T & { tag: 'apply' }; name: string; args: T[] } | null {
-  const isConcrete = (t: T): boolean =>
-    t.tag !== 'var' && t.tag !== 'apply' && childrenOf(t).every(isConcrete)
   const go = (t: T): { site: T & { tag: 'apply' }; name: string; args: T[] } | null => {
     if (t.tag === 'apply') {
-      const args: T[] = []
-      let f: T = t
-      while (f.tag === 'apply') {
-        args.unshift(f.x)
-        f = f.f
-      }
-      if (f.tag === 'var' && args.every(isConcrete)) return { site: t, name: f.name, args }
-      return go(t.f) ?? go(t.x)
+      return spineAt(t) ?? go(t.f) ?? go(t.x)
     }
     for (const c of childrenOf(t)) {
       const r = go(c)

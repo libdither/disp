@@ -22,7 +22,9 @@
     treeEq,
     nodeCount,
     replaceNode,
+    reduceStep,
     stuckSpine,
+    spineAt,
     DEFS,
     type T
   } from '$lib/treecalc/treecalc'
@@ -421,6 +423,7 @@
     label: string | null
     vname: string | null // a named leaf's name — always shown
     pod: string | null // a folded defs splice: real structure, drawn shut
+    canFire: boolean // an apply the user can fire by clicking (ready, or an engine-able spine head)
     fresh?: boolean // no prior position: genuinely new growth
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
@@ -530,6 +533,9 @@
     const nextSite = parallel ? null : nextApplyToFire(tree)
     const vnodes: VNode[] = out.map((n) => {
       const pod = folded.has(n.tree) ? (folded.get(n.tree) ?? '…') : null
+      const canFire =
+        n.tree.tag === 'apply' &&
+        (readyRule(n.tree) !== null || (engineStep != null && spineAt(n.tree) !== null))
       return {
         path: n.path,
         tree: n.tree,
@@ -543,7 +549,8 @@
         tilt: (hash(n.path) % 70) - 35,
         label: pod ? null : nameOf(n.tree), // a pod already wears its name
         vname: n.tree.tag === 'var' ? n.tree.name : null,
-        pod
+        pod,
+        canFire
       }
     })
     const byPath = new Map(out.map((n) => [n.path, n]))
@@ -922,7 +929,46 @@
   async function tryEngine(): Promise<boolean> {
     if (!engineStep || !cur || engineBusy) return false
     const s = stuckSpine(cur)
-    if (!s) return false
+    return s ? engineAt(s) : false
+  }
+
+  // ---- user-directed reduction order: click a redex, fire THAT one --------
+  // Confluence makes every ready redex independent, so any firing order is a
+  // valid reduction — the click just overrides the leftmost-innermost /
+  // parallel defaults for one step. A stuck apply that heads a named spine
+  // fires its engine step instead.
+  function fireAt(site: T & { tag: 'apply' }) {
+    if (!cur || !readyRule(site)) return
+    running = false
+    autoCycle = false
+    clearTimeout(timer)
+    const spine = new Set(spineOf(site))
+    const sitePaths = nodes.filter((n) => n.tree === site).map((n) => n.path)
+    const { result, rule } = reduceStep(site.f, site.x)
+    remember()
+    cur = replaceNode(cur, site, result)
+    stepCount++
+    refreshFolds(cur)
+    atNormalForm = false
+    ruleMsg = rule
+    show(cur, { spine, sitePaths })
+  }
+  function clickApply(t: T) {
+    if (t.tag !== 'apply') return
+    if (readyRule(t)) {
+      fireAt(t as T & { tag: 'apply' })
+      return
+    }
+    const s = engineStep ? spineAt(t) : null
+    if (s) {
+      running = false
+      autoCycle = false
+      clearTimeout(timer)
+      void engineAt(s)
+    }
+  }
+  async function engineAt(s: { site: T & { tag: 'apply' }; name: string; args: T[] }): Promise<boolean> {
+    if (!engineStep || !cur || engineBusy) return false
     engineBusy = true
     ruleMsg = `${s.name} is opaque here — asking the engine…`
     try {
@@ -1156,7 +1202,19 @@
         {/each}
         {#each nodes as n (n.path)}
           <g class="node" style="transform: translate({n.x}px, {n.y}px)">
-            <g class="inner" class:growing={motion && styled && n.fresh !== false} style="--gd: {n.depth * 55}ms">
+            <!-- click a redex to fire IT — user-directed reduction order
+                 (confluence makes any ready redex a valid next step); stuck
+                 named spines fire their engine step instead. The handler
+                 rides the whole node group so the firemark badge on top of
+                 the ring is clickable too. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <g
+              class="inner"
+              class:growing={motion && styled && n.fresh !== false}
+              class:fireable={n.canFire}
+              style="--gd: {n.depth * 55}ms"
+              onclick={() => n.canFire && clickApply(n.tree)}
+            >
               {#if n.pod != null}
                 <!-- a seed pod: a real subtree folded shut. Reduction computes
                      THROUGH it (results re-fold on arrival); a click reveals
@@ -1181,6 +1239,7 @@
                   {/if}
                 </g>
               {:else if n.tag === 'apply'}
+                {#if n.canFire}<circle r="13" class="hitzone" />{/if}
                 <circle r={styled ? 8.5 : 8} class="bud-ring" />
                 {#if !styled}<text class="at">@</text>{:else}<circle r="3" class="bud-core" />{/if}
               {:else if n.tag === 'leaf'}
@@ -1739,6 +1798,19 @@
   .vname.above {
     fill: var(--warn);
     font-size: 10px;
+  }
+
+  /* clickable redexes: the pointer says "fire me"; hovering thickens the ring */
+  .inner.fireable { cursor: pointer; }
+  .hitzone {
+    fill: transparent;
+    stroke: none;
+  }
+  .inner.fireable:hover .bud-ring {
+    stroke-width: 2.6;
+  }
+  .inner.fireable:hover .bud-core {
+    r: 3.8;
   }
 
   /* a folded defs splice is a POD: green (real structure grown inside, unlike
