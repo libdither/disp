@@ -43,6 +43,45 @@ fn snapshot(grid: &Grid, out: &mut String) {
 
 fn pos_json(p: rust_ca_lattice::lattice::Pos) -> String { format!("[{},{},{}]", p.0, p.1, p.2) }
 
+/// The showcase terms: each isolates one reduction dynamic (mirroring the website tree
+/// view's examples), with a one-line note the player shows as `watch:`.
+fn named(which: &str) -> (Term, &'static str) {
+    match which {
+        "app" => (ap(Term::L, Term::L),
+            "the smallest fire: A·△ — apply(△,x) = S x. One interaction; the fresh S is a RESIDENT (takes over the dying apply cell, zero rewiring)."),
+        "stem" => (ap(s(Term::L), Term::L),
+            "A·S then normalization: the fresh F inherits one dying cell, the other becomes a splice hub."),
+        "fork" => (ap(f2(Term::L, Term::L), Term::L),
+            "fork dispatch: A·F packs the arms into a Pair, T1·△ takes the K branch — Unp splits ⟨b,c⟩, ε eats c. On full3d it completes; on bilayer this exact term WEDGES at the fire seam (the measured residue)."),
+        "chain1" => (oracle::chain_k(1),
+            "a K-redex spine: suspensions force (A·@), then values REEL cell by cell along their principal wires to the waiting consumers. Transport dominates work."),
+        "chain2" => (oracle::chain_k(2), "a deeper K spine (see chain1)."),
+        "chain3" => (oracle::chain_k(3), "a deeper K spine (see chain1)."),
+        "ksimple" => (ap(ap(oracle::k(), Term::L), s(Term::L)),
+            "K discards an argument: T1·△ answers with b and mints an ε; watch the value walk INTO the eraser (Eps·S, Eps·△) — GC one cell at a time."),
+        "kargs" => (ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
+            "K with bigger arguments (currently pockets on both topologies — residue)."),
+        "erase" => (ap(ap(oracle::k(), Term::L), f2(Term::L, Term::L)),
+            "ε eats a fork: Eps·F FORKS the death pulse into two erasers — the cascade is the GC. Erasers are the cheapest agents: one port, one cell."),
+        "forkarg" => (ap(f2(Term::L, Term::L), f2(Term::L, Term::L)),
+            "K discards a FORK: T1·△ answers with b, then the death pulse cascades — Eps·Pair splits into two erasers, Eps·F forks again. GC is cheap: every ε is one port, one cell."),
+        "share2" => (ap(f2(s(Term::L), Term::L), Term::L),
+            "THE S-rule (T1·S), the biggest routine complex: net +3 agents in one fire — Unp unpacks the args pair, δ shares c, three A's build (b c)(s c). The space question lives here."),
+        "share" => (ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)),
+            "the S-rule where the shared value is a FORK: δ deep-copies structure (Dn·F: two fresh forks, two child duplicators). This trace ends STUCK after the copy begins — live residue."),
+        "dup" => (ap(f2(s(Term::L), Term::L), s(Term::L)),
+            "need-duplication of a stem: after the S-rule shares c, δ meets S(△) — Dn·S copies the spine, sharing the child through a fresh δ. Ends STUCK after the copies land — live residue."),
+        "selL" => (ap(f2(f2(Term::L, Term::L), Term::L), Term::L),
+            "two-level dispatch, leaf arm: T1·F builds Sel with arms ⟨w,⟨x,b⟩⟩; z = △ picks w and ε erases the unused pair (Eps·Pair)."),
+        "selS" => (ap(f2(f2(Term::L, Term::L), Term::L), s(Term::L)),
+            "two-level dispatch, stem arm: Sel·S answers (x u) and erases w and b — two Unps, two ε, one A in a single template."),
+        "selF" => (ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)),
+            "two-level dispatch: T1·F mints the Sel complex (Sel + two Pairs + Unp), and on this trace that complex WEDGES before Sel ever meets z — the sharpest live exhibit of the fire-space problem the stamp proposal targets. Sel·F itself, when it fires, is the largest rule in the ROM: 6 fresh."),
+        "disp" => (oracle::disp_t(), "drives A → T1 → Sel end to end (currently pockets — residue)."),
+        other => panic!("unknown term {other}"),
+    }
+}
+
 fn main() {
     let which = std::env::args().nth(1).unwrap_or_else(|| "fork".into());
     let max_ticks: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(400);
@@ -50,26 +89,14 @@ fn main() {
         Some("full3d") => Topo::Full3D,
         _ => Topo::Bilayer,
     };
-    let term = match which.as_str() {
-        "fork" => ap(f2(Term::L, Term::L), Term::L),
-        "stem" => ap(s(Term::L), Term::L),
-        "chain1" => oracle::chain_k(1),
-        "chain2" => oracle::chain_k(2),
-        "chain3" => oracle::chain_k(3),
-        "ksimple" => ap(ap(oracle::k(), Term::L), s(Term::L)),
-        "kargs" => ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
-        "share2" => ap(f2(s(Term::L), Term::L), Term::L),
-        "share" => ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)),
-        "disp" => oracle::disp_t(),
-        other => panic!("unknown term {other}"),
-    };
+    let (term, note) = named(&which);
     let oracle_nf = oracle::nf(term.clone(), &mut Fuel(200_000))
         .map(|w| oracle::show(&w)).unwrap_or_else(|_| "(diverges)".into());
 
     let mut sim = Sim::load(&term, topo);
     let mut out = String::new();
     let name = if topo == Topo::Full3D { format!("{which}-3d") } else { which.clone() };
-    write!(out, "{{\"name\":\"{name}\",\"topo\":\"{}\",\"term\":\"{}\",\"oracle\":\"{oracle_nf}\",\"frames\":[",
+    write!(out, "{{\"name\":\"{name}\",\"topo\":\"{}\",\"note\":\"{note}\",\"term\":\"{}\",\"oracle\":\"{oracle_nf}\",\"frames\":[",
         topo.name(), oracle::show(&term)).unwrap();
 
     let mut status = "cap";

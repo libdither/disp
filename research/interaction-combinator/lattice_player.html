@@ -54,6 +54,7 @@
       <button onclick="document.getElementById('load').click()">load trace…</button>
     </div>
     <div class="row"><span class="k">trace</span><select id="scen"></select></div>
+    <div class="note" id="whatnote" style="margin:2px 0 6px"></div>
     <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="30" value="6"><span id="speedv" class="k"></span></div>
     <div class="row"><span class="k">frame</span><input type="range" id="scrub" min="0" max="0" value="0"><span id="framev" class="k"></span></div>
     <h3>STATUS</h3>
@@ -88,7 +89,11 @@
     addresses next). <b>full3d</b> runs of the same terms complete.</div>
   </div>
 </div>
-<script src="lattice_traces.js"></script>
+<script>
+// lattice_traces.js is regenerated constantly during development and browsers cache it
+// hard; load it with a timestamp so the embedded traces are always current.
+document.write('<script src="lattice_traces.js?t=' + Date.now() + '"><\/script>');
+</script>
 <script>
 "use strict";
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
@@ -223,6 +228,7 @@ function pick(name) {
   for (const f of TR.frames) for (const e of f.events)
     if (e.t === "fire") TR.ruleCounts[e.rule] = (TR.ruleCounts[e.rule] || 0) + 1;
   renderRules();
+  document.getElementById("whatnote").innerHTML = TR.note ? `<b style="color:#ffd866">watch:</b> ${TR.note}` : "";
   fit(); hud();
 }
 function fit() {
