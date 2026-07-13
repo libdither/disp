@@ -10,7 +10,7 @@
 
 use rust_ca_lattice::lattice::{Topo, TOPOS};
 use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Lcg, Term};
-use rust_ca_lattice::scheduler::{run_term, CheckLevel, Outcome, Sim};
+use rust_ca_lattice::scheduler::{run_term, run_term_with, CheckLevel, FireMode, Outcome, Sim};
 use rust_ca_lattice::transitions::plan_retract;
 
 fn oracle_nf(t: &Term) -> Option<String> {
@@ -114,6 +114,33 @@ fn differential_bilayer() { differential(Topo::Bilayer); }
 
 #[test]
 fn differential_full3d() { differential(Topo::Full3D); }
+
+/// The stamp planner (precomputed-workshop fire): correctness is gated absolutely on the
+/// same corpus; liveness per mode is measured and printed. No floor yet — the numbers ARE
+/// the experiment.
+#[test]
+fn differential_fire_modes() {
+    for topo in TOPOS {
+        for (mode, label) in [(FireMode::Stamp, "stamp"), (FireMode::StampThenSearch, "stamp+search")] {
+            let mut rng = Lcg(999);
+            let (mut pass, mut stuck, mut cap, mut skip) = (0u32, 0u32, 0u32, 0u32);
+            for i in 0..400 {
+                let term = rng.rand_term(3 + (i % 3));
+                let Some(want) = oracle_nf(&term) else { skip += 1; continue };
+                let check = if i % 8 == 0 { CheckLevel::Every } else { CheckLevel::Tick };
+                let out = run_term_with(&term, topo, mode, 20_000, check);
+                if out.done {
+                    assert_eq!(out.result.as_ref().map(oracle::show).as_deref(), Some(want.as_str()),
+                        "WRONG NF on {} ({}, {label})", oracle::show(&term), topo.name());
+                    pass += 1;
+                } else if out.stuck { stuck += 1; } else { cap += 1; }
+            }
+            println!("stage2 [{} · {label}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
+            assert_eq!(cap, 0, "tick budget bound on {} ({label})", topo.name());
+            assert!(pass > 0, "no term completed on {} ({label})", topo.name());
+        }
+    }
+}
 
 #[test]
 fn polymer_tidy() {

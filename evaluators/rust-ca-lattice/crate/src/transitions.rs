@@ -37,7 +37,7 @@
 
 use crate::lattice::{dir_to, manhattan, step, AgentCell, Cell, Dir, Grid, He, Pos, Strand, DIRS, WIRE_CAP};
 use crate::net::Net;
-use crate::rules::{find, End, Rule};
+use crate::rules::{find, End, Rule, Tag};
 use std::collections::{BTreeMap, BTreeSet};
 
 // =========================================================================================
@@ -77,7 +77,20 @@ struct BoardState {
     /// First pass refuses to stack strands (a shared cell is a future roadblock for
     /// walkers); second pass permits them. Face-uniqueness lives on as this preference.
     avoid_stacking: bool,
+    /// Direction order for the wire router. Fire uses the standard order; REEL puts the
+    /// vertical directions first so aux TRAILS ride the overflow plane instead of
+    /// cluttering the reaction plane (trails were measured to be what makes fixed fire
+    /// layouts unfittable and what forces search fires into stacking).
+    dirs: [Dir; 6],
 }
+
+const DIRS_STD: [Dir; 6] = [Dir::N, Dir::E, Dir::S, Dir::W, Dir::U, Dir::D];
+/// Trails sink into the basement: on full 3D, z<0 is uncontested space (fires spread
+/// in-plane and detours prefer upward), so reel trails routed downward stay out of
+/// everyone's way. Bilayer has no basement, so it keeps the standard order. A blanket
+/// up-first order was measured to HURT (trails then contend with the overflow plane that
+/// detours and fires need).
+const DIRS_DOWN_FIRST: [Dir; 6] = [Dir::D, Dir::N, Dir::E, Dir::S, Dir::W, Dir::U];
 
 impl BoardState {
     fn hes_at(&self, p: Pos) -> Vec<He> {
@@ -216,6 +229,7 @@ pub fn plan_fire(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
         added: BTreeMap::new(),
         faces: vec![[None; 3]; nf],
         avoid_stacking: true,
+        dirs: DIRS_STD,
     };
     let mut fresh_cells: Vec<Option<Pos>> = vec![None; nf];
     let mut done_wires: BTreeSet<usize> = BTreeSet::new();
@@ -394,7 +408,7 @@ fn route_wire(
         PEnd::Agent { k, port } => {
             let ca = cells[k];
             let mut v = vec![];
-            for d in DIRS {
+            for d in st.dirs {
                 let n = step(ca, d);
                 if !board.contains(&n) { continue; }
                 if !st.edge_free(ca, d) { continue; }
@@ -464,7 +478,7 @@ fn dfs_wire(
     }
     if trail.len() >= 6 { return false; }
     // Extend the trail.
-    for d in DIRS {
+    for d in st.dirs {
         let n = step(cur, d);
         if !board.contains(&n) { continue; }
         if trail.iter().any(|(p, _)| *p == n) { continue; }
@@ -478,6 +492,100 @@ fn dfs_wire(
         trail.pop();
     }
     false
+}
+
+// -----------------------------------------------------------------------------------------
+// STAMP FIRE: the same layout problem plan_fire solves, but solved ONCE per
+// (rule, dock axis, anchor faces, topology, plane) on an EMPTY synthetic neighborhood — a
+// Platonic workshop — with the anchors' far cells blocked (in reality the external wires
+// live there). The cached result is then applied to the live lattice as a FIXED PATTERN:
+// about a dozen freeness reads, no search, no router. Two structural consequences:
+// (a) fire enabledness becomes purely local (read the fixed cells, stamp or wait), and
+// (b) templates are always stack-free (pass-1 on an empty board never shares a cell), so
+// stamp fires cannot mint the shared-cell walker-blockers that search-mode fires create
+// when their router falls back to stacking. Ports make this possible: faces are dynamic
+// per agent, so the template is keyed by the ACTUAL anchor faces at dock time and needs
+// no rotation or adaptation at apply time.
+// -----------------------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct FireTemplate {
+    fresh_cells: Vec<Pos>,
+    fresh_faces: Vec<[Option<He>; 3]>,
+    strands: Vec<(Pos, Strand)>,
+}
+type StampKey = (Tag, Tag, Dir, [Option<He>; 3], [Option<He>; 3], i32, bool);
+static STAMPS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<StampKey, Option<FireTemplate>>>> =
+    std::sync::OnceLock::new();
+
+/// Solve the rule's layout in the empty workshop: the pair at the origin with its REAL
+/// faces, anchor far-cells blocked by inert markers, everything else free.
+fn synth_template(topo: crate::lattice::Topo, cons: &AgentCell, prod: &AgentCell, d0: Dir, zs: i32) -> Option<FireTemplate> {
+    let a = (0, 0, zs);
+    let b = step(a, d0);
+    let mut g = Grid::new(topo);
+    g.cells.insert(a, Cell::Agent(AgentCell { tag: cons.tag, faces: cons.faces, sid: 0 }));
+    g.cells.insert(b, Cell::Agent(AgentCell { tag: prod.tag, faces: prod.faces, sid: 1 }));
+    let mut blk = 10u32;
+    for (cell, ag) in [(a, cons), (b, prod)] {
+        for i in 1..ag.tag.arity() {
+            let far = step(cell, ag.face_of(i));
+            let mut faces = [None; 3];
+            faces[0] = Some(ag.face_of(i).opp());
+            g.cells.insert(far, Cell::Agent(AgentCell { tag: Tag::Out, faces, sid: blk }));
+            blk += 1;
+        }
+    }
+    let plan = plan_fire(&g, a)?;
+    Some(FireTemplate { fresh_cells: plan.fresh_cells, fresh_faces: plan.fresh_faces, strands: plan.strands })
+}
+
+/// The stamp planner. Same enabledness as `plan_fire`; the layout comes from the cached
+/// workshop template, offset to the live pair, and validated by freeness reads only.
+pub fn plan_fire_stamp(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
+    let cons = grid.agent(cpos)?;
+    if !cons.tag.is_consumer() { return None; }
+    let d0 = cons.faces[0]?;
+    let ppos = step(cpos, d0);
+    let prod = grid.agent(ppos)?;
+    if !prod.tag.is_producer() { return None; }
+    if prod.faces[0] != Some(d0.opp()) { return None; }
+    let bilayer = matches!(grid.topo, crate::lattice::Topo::Bilayer);
+    let zs = if bilayer { cpos.2 } else { 0 };
+    let key: StampKey = (cons.tag, prod.tag, d0, cons.faces, prod.faces, zs, bilayer);
+    let tpl = {
+        let m = STAMPS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+        let mut m = m.lock().unwrap();
+        m.entry(key).or_insert_with(|| synth_template(grid.topo, cons, prod, d0, zs)).clone()
+    }?;
+    let off = (cpos.0, cpos.1, cpos.2 - zs);
+    let mv = |p: Pos| (p.0 + off.0, p.1 + off.1, p.2 + off.2);
+
+    let rule = find(cons.tag, prod.tag).unwrap();
+    let mut footprint: BTreeSet<Pos> = [cpos, ppos].into_iter().collect();
+    let mut fresh_cells = Vec::with_capacity(tpl.fresh_cells.len());
+    for p in &tpl.fresh_cells {
+        let q = mv(*p);
+        if q != cpos && q != ppos && (!grid.topo.in_bounds(q) || !grid.is_empty(q)) { return None; }
+        footprint.insert(q);
+        fresh_cells.push(q);
+    }
+    let mut strands = Vec::with_capacity(tpl.strands.len());
+    for (p, s) in &tpl.strands {
+        let q = mv(*p);
+        if q != cpos && q != ppos && (!grid.topo.in_bounds(q) || !grid.is_empty(q)) { return None; }
+        footprint.insert(q);
+        strands.push((q, *s));
+    }
+    Some(FirePlan {
+        cpos, ppos,
+        csid: cons.sid, psid: prod.sid,
+        rule,
+        fresh_cells,
+        fresh_faces: tpl.fresh_faces.clone(),
+        strands,
+        footprint,
+    })
 }
 
 /// Execute a fire plan. The shadow fires the SAME rule; fresh sids sync in template order.
@@ -580,6 +688,7 @@ pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
         added: BTreeMap::new(),
         faces: vec![faces0],
         avoid_stacking: true,
+        dirs: match grid.topo { crate::lattice::Topo::Full3D => DIRS_DOWN_FIRST, _ => DIRS_STD },
     };
     let cells = [npos];
     for port in 1..ag.tag.arity() {
@@ -657,9 +766,11 @@ pub struct RetractPlan {
 /// holds the partner elbow (d.opp, e), and the flanks f1 = c1+e, f2 = c2+e reconnect
 /// across their (necessarily adjacent) shared edge. Wire length −2; projects to identity.
 ///
+/// ```text
 ///      f1  f2            f1─f2
 ///       │   │      ⇒
 ///      c1 ─ c2            ·  ·
+/// ```
 pub fn plan_retract(grid: &Grid, c1: Pos) -> Option<RetractPlan> {
     let w1 = grid.wire(c1)?;
     for s1 in w1.iter() {
@@ -710,8 +821,10 @@ pub struct SlidePlan {
 /// get whatever short route exists. Length changes by (route − 1), slack the RETRACT move
 /// reclaims later; projects to identity.
 ///
+/// ```text
 ///      na ─ p ─ nb          na   ·   nb          (side view: the strand now rides the
 ///                      ⇒     └ ─ ─ ─ ┘            next plane; p is free for the walker)
+/// ```
 pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos]) -> Option<SlidePlan> {
     let (na, nb) = (step(p, s.a), step(p, s.b));
     let board = make_board(grid, p, p);

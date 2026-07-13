@@ -9,8 +9,15 @@ use crate::net::Net;
 use crate::oracle::Term;
 use crate::transitions::{
     apply_fire, apply_reel, apply_retract, apply_slide,
-    plan_fire, plan_reel, plan_retract, plan_slide, reel_blocked,
+    plan_fire, plan_fire_stamp, plan_reel, plan_retract, plan_slide, reel_blocked,
 };
+
+/// Which fire planner the schedule uses. `Search` is the in-board backtracking planner;
+/// `Stamp` is the precomputed-workshop pattern (purely local at fire time: freeness reads
+/// only, waits when the pattern does not fit); `StampThenSearch` stamps when it fits and
+/// falls back to the search when it does not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FireMode { Search, Stamp, StampThenSearch }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
@@ -37,6 +44,7 @@ pub struct Sim {
     pub shadow: Net,
     /// Events of the most recent tick.
     pub events: Vec<Event>,
+    pub fire_mode: FireMode,
 }
 
 impl Sim {
@@ -45,7 +53,15 @@ impl Sim {
         let root = shadow.build(term);
         shadow.drive(root);
         let grid = embed(&shadow, topo);
-        Sim { grid, shadow, events: vec![] }
+        Sim { grid, shadow, events: vec![], fire_mode: FireMode::Search }
+    }
+
+    fn plan_fire_mode(&self, p: Pos) -> Option<crate::transitions::FirePlan> {
+        match self.fire_mode {
+            FireMode::Search => plan_fire(&self.grid, p),
+            FireMode::Stamp => plan_fire_stamp(&self.grid, p),
+            FireMode::StampThenSearch => plan_fire_stamp(&self.grid, p).or_else(|| plan_fire(&self.grid, p)),
+        }
     }
 
     /// One sequential tick: fire every enabled pair (rescanning after each, since a fire
@@ -61,7 +77,7 @@ impl Sim {
             let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
             let mut fired = false;
             for p in positions {
-                if let Some(plan) = plan_fire(&self.grid, p) {
+                if let Some(plan) = self.plan_fire_mode(p) {
                     self.events.push(Event::Fire {
                         cpos: plan.cpos, ppos: plan.ppos,
                         rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
@@ -155,7 +171,12 @@ pub struct Outcome {
 /// while pairs remain — the deterministic schedule can then never progress (the honest
 /// liveness residue, reported, never asserted away).
 pub fn run_term(term: &Term, topo: Topo, max_ticks: u64, check: CheckLevel) -> Outcome {
+    run_term_with(term, topo, FireMode::Search, max_ticks, check)
+}
+
+pub fn run_term_with(term: &Term, topo: Topo, mode: FireMode, max_ticks: u64, check: CheckLevel) -> Outcome {
     let mut sim = Sim::load(term, topo);
+    sim.fire_mode = mode;
     let mut peak = sim.grid.agent_count();
     let mut ticks = 0;
     let (done, stuck) = loop {

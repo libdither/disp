@@ -56,8 +56,9 @@ is a library plus tests.
 ## Status (measured)
 
 `cargo test --release`: all green. Stage 1: 3998+/0. Stage 2 corpus (400 random terms,
-depths 3–5): full3d 201 reach normal form, bilayer 179; ZERO wrong results, zero invariant
-violations, zero tick-cap hits, on both topologies. Must-complete pins: stem application
+depths 3–5): full3d 205 reach normal form, bilayer 179; ZERO wrong results, zero invariant
+violations, zero tick-cap hits, on both topologies and under every fire mode (the search
+planner, the precomputed stamp, and the hybrid). Must-complete pins: stem application
 on both topologies; fork dispatch, K erasure, chain1, and the sharing S-rule on full3d.
 Every stall is liveness, never correctness: the bare sequential schedule still ships no
 fields, and the stalls concentrate where fire seams knot — splices and reel trails exhaust
@@ -84,3 +85,18 @@ Liveness findings folded into the design (each found by measurement here):
 5. Reel's aux re-anchoring wants the router, not bespoke bend shapes: with exclusive faces
    the second aux always needs a detour, and the fixed L-shape detour dead-ends where the
    shared router finds five-cell routes.
+6. STAMP FIRE (`plan_fire_stamp` + `FireMode`): the fire layout solved once per (rule,
+   dock axis, anchor faces, topology) on an empty synthetic workshop, applied to the live
+   lattice as a fixed pattern — fire enabledness becomes purely local (freeness reads, no
+   search). Sound (zero mismatches under CheckLevel::Every) but measured NEUTRAL:
+   stamp+search is byte-identical to search alone, and stamp-only wedges after 1-2 fires.
+   The cause is diagnostic gold: fixed layouts are unfittable amid ambient REEL TRAILS,
+   which occupy the prime cells around every post-reel pair — exactly where the search
+   planner survives by routing around and stacking. The congestion is inherent to firing
+   amid trails, not to the planner's choices on clean boards; the fix must move the
+   trails or grow incrementally, not choose layouts better.
+7. Trail placement is a real lever: routing reel trails DOWN into full3d's uncontested
+   basement (z<0; nothing else routes there) lifted the corpus 201→205 with pins intact
+   and no cost elsewhere. A blanket up-first order was measured to HURT (trails then
+   contend with the overflow plane that detours and fires need). Bilayer has no basement
+   and keeps the standard order — its relief has to come from pressure, not geometry.
