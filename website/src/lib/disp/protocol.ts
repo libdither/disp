@@ -44,6 +44,12 @@ export type WorkerRequest =
   // reduction visualizer's real-context feed. null when the tree exceeds
   // maxNodes or the name isn't bound.
   | { id: number; type: 'raw'; handle?: number; name?: string; maxNodes: number }
+  // Apply an in-scope value (by handle or name) to concrete argument trees on
+  // the REAL evaluator and return the result's structure — the visualizer's
+  // engine macro-step for definitions too large to ship as pods. Responds
+  // with 'raw'; null when unbound, the apply diverges past its budget, or
+  // the RESULT exceeds maxNodes.
+  | { id: number; type: 'applySpine'; handle?: number; name?: string; args: RawTree[]; maxNodes: number }
   // the bundled library (the worker's virtual filesystem): list + read, for
   // the playground's file tabs and jump-to-import. write/rm mutate the vfs —
   // written files are immediately `use`-able (stale module-cache entries for

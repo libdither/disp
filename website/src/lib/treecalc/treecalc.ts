@@ -233,6 +233,34 @@ export function stepParallel(root: T): { next: T; fired: NonNullable<StepResult[
   return { next, fired }
 }
 
+// The first (leftmost-outermost) application spine stuck on a NAMED leaf
+// head with fully concrete arguments — the hook for handing a reduction the
+// local defs can't express to a real evaluator (the playground's engine
+// macro-step). Args must be var- and apply-free: symbolic or still-reducing
+// arguments can't cross into an engine that only knows concrete trees.
+export function stuckSpine(root: T): { site: T & { tag: 'apply' }; name: string; args: T[] } | null {
+  const isConcrete = (t: T): boolean =>
+    t.tag !== 'var' && t.tag !== 'apply' && childrenOf(t).every(isConcrete)
+  const go = (t: T): { site: T & { tag: 'apply' }; name: string; args: T[] } | null => {
+    if (t.tag === 'apply') {
+      const args: T[] = []
+      let f: T = t
+      while (f.tag === 'apply') {
+        args.unshift(f.x)
+        f = f.f
+      }
+      if (f.tag === 'var' && args.every(isConcrete)) return { site: t, name: f.name, args }
+      return go(t.f) ?? go(t.x)
+    }
+    for (const c of childrenOf(t)) {
+      const r = go(c)
+      if (r) return r
+    }
+    return null
+  }
+  return go(root)
+}
+
 export function normalize(root: T, limit = 2000): T {
   let cur = root
   for (let i = 0; i < limit; i++) {

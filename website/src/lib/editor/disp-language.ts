@@ -201,7 +201,8 @@ export const dispEditorTheme = EditorView.theme(
       whiteSpace: 'nowrap',
       overflow: 'hidden',
       textOverflow: 'ellipsis',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      transition: 'opacity 0.15s ease, font-size 0.15s ease, padding 0.15s ease'
     },
     '.disp-out.open': {
       whiteSpace: 'pre-wrap',
@@ -222,9 +223,17 @@ export const dispEditorTheme = EditorView.theme(
       fontSize: '0.92em',
       userSelect: 'none'
     },
-    '.disp-out::before': {
+    // text-mode blocks get their glyph from CSS; structured rows carry an
+    // inline .disp-out-glyph span instead (a block-level row after an inline
+    // ::before would break onto a second line)
+    '.disp-out:not(:has(.disp-out-row))::before': {
       content: "'⟵ '",
       opacity: '0.5',
+      userSelect: 'none'
+    },
+    '.disp-out-glyph': {
+      opacity: '0.5',
+      marginRight: '0.55em',
       userSelect: 'none'
     },
     '.disp-out-fail': {
@@ -232,13 +241,23 @@ export const dispEditorTheme = EditorView.theme(
       background: 'rgba(201, 95, 109, 0.07)',
       color: '#a44f5c'
     },
-    '.disp-out-fail::before': { content: "'✗ '" },
+    '.disp-out-fail:not(:has(.disp-out-row))::before': { content: "'✗ '" },
+    '.disp-out-error:not(:has(.disp-out-row))::before': { content: "'⚠ '" },
     '.disp-out-error': {
       borderLeftColor: 'rgba(201, 95, 109, 0.55)',
       background: 'rgba(201, 95, 109, 0.07)',
       color: '#a44f5c'
     },
-    '.disp-out-error::before': { content: "'⚠ '" }
+    // focus-collapse: a block whose def line the cursor is NOT on shrinks to
+    // a quiet sliver; landing the cursor there (or hovering) brings it back
+    '.disp-out.away': {
+      opacity: '0.4',
+      fontSize: '0.72em',
+      padding: '1px 12px'
+    },
+    '.disp-out.away:hover': {
+      opacity: '0.85'
+    }
   },
   { dark: false }
 )

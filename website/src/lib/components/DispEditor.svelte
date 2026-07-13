@@ -22,6 +22,10 @@
     // structured alternative to `block`: one row per entry, rendered as an
     // interactive TreeValue (click-to-unfold; needs the expandValue prop)
     values?: { label?: string; node: ValueNode }[]
+    // first line of the item this block belongs to (its anchor `line` is the
+    // last): the block stays full-size while the cursor is in [focusFrom,
+    // line] and collapses to a quiet sliver elsewhere
+    focusFrom?: number
   }
 
   class NoteWidget extends WidgetType {
@@ -55,6 +59,7 @@
     text: string | undefined
     values: { label?: string; node: ValueNode }[] | undefined
     kind: string
+    lines: { from: number; to: number } | undefined
     expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
     onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void
     onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
@@ -65,7 +70,8 @@
       values?: { label?: string; node: ValueNode }[],
       expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>,
       onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void,
-      onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
+      onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void,
+      lines?: { from: number; to: number }
     ) {
       super()
       this.kind = kind
@@ -74,11 +80,18 @@
       this.expand = expand
       this.onVisualize = onVisualize
       this.onFoldChange = onFoldChange
+      this.lines = lines
     }
     override eq(other: OutBlockWidget): boolean {
       // values compare by reference: each run builds fresh mark objects, so
       // fresh results recreate the widget (and reset its unfold history)
-      return other.kind === this.kind && other.text === this.text && other.values === this.values
+      return (
+        other.kind === this.kind &&
+        other.text === this.text &&
+        other.values === this.values &&
+        other.lines?.from === this.lines?.from &&
+        other.lines?.to === this.lines?.to
+      )
     }
     override get estimatedHeight(): number {
       return 26 * (this.values?.length ?? 1)
@@ -86,15 +99,32 @@
     override toDOM(): HTMLElement {
       const d = document.createElement('div')
       d.className = `disp-out disp-out-${this.kind}`
+      if (this.lines) {
+        d.dataset.from = String(this.lines.from)
+        d.dataset.to = String(this.lines.to)
+        // collapse immediately when born off-cursor (widgets materialize
+        // lazily as the viewport scrolls)
+        if (cursorLine < this.lines.from || cursorLine > this.lines.to) d.classList.add('away')
+      }
       d.addEventListener('mousedown', (e) => {
         if ((e.target as HTMLElement).closest('button')) return
         e.preventDefault()
         d.classList.toggle('open')
       })
       if (this.values) {
+        let first = true
         for (const v of this.values) {
           const row = document.createElement('div')
           row.className = 'disp-out-row'
+          if (first) {
+            // the kind glyph rides INSIDE the first row: an inline ::before
+            // followed by a block-level row would break onto its own line
+            const g = document.createElement('span')
+            g.className = 'disp-out-glyph'
+            g.textContent = this.kind === 'fail' ? '✗' : '⟵'
+            row.appendChild(g)
+            first = false
+          }
           if (v.label) {
             const l = document.createElement('span')
             l.className = 'disp-out-label'
@@ -168,6 +198,22 @@
   // marks describe a completed run; edits make them stale (dimmed) until the
   // next setMarks delivers fresh results
   let stale = $state(false)
+
+  // the cursor's current line: blocks outside their item's line range wear
+  // `.away` (collapsed sliver). Widgets read it at creation; selection moves
+  // sweep the live DOM.
+  let cursorLine = 1
+  function updateBlockFocus() {
+    if (!view) return
+    cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number
+    queueMicrotask(() => {
+      host?.querySelectorAll<HTMLElement>('.disp-out[data-from]').forEach((el) => {
+        const from = Number(el.dataset.from)
+        const to = Number(el.dataset.to)
+        el.classList.toggle('away', cursorLine < from || cursorLine > to)
+      })
+    })
+  }
 
   const setMarksEffect = StateEffect.define<LineMark[]>()
 
@@ -297,7 +343,15 @@
               builder.push({
                 from: l.to,
                 deco: Decoration.widget({
-                  widget: new OutBlockWidget(m.kind, m.block, m.values, expandValue, onVisualizeValue, onValueFoldChange),
+                  widget: new OutBlockWidget(
+                    m.kind,
+                    m.block,
+                    m.values,
+                    expandValue,
+                    onVisualizeValue,
+                    onValueFoldChange,
+                    { from: m.focusFrom ?? m.line, to: m.line }
+                  ),
                   side: 2,
                   block: true
                 })
@@ -387,6 +441,7 @@
               identKnown.clear() // resolvability follows the buffer's defs/opens
               onDocChange?.(u.state.doc.toString())
             }
+            if (u.selectionSet || u.docChanged) updateBlockFocus()
           })
         ]
       })
@@ -410,6 +465,7 @@
       setMarks: (marks) => {
         view!.dispatch({ effects: setMarksEffect.of(marks) })
         stale = false
+        updateBlockFocus()
       },
       gotoLine: (n: number) => {
         if (n < 1 || n > view!.state.doc.lines) return

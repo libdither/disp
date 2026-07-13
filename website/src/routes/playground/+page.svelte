@@ -381,6 +381,31 @@
     return rt === null ? null : rawToT(rt)
   }
 
+  // engine macro-step: the panel is stuck on a name whose definition never
+  // shipped (kernel-tier values explode as trees) — perform the application
+  // on the real evaluator and hand back the (usually small) result. Fruit
+  // born from the pop-out's own atoms carries its handle in the atoms table;
+  // typed names resolve by name against the current scope.
+  const tToRaw = (t: T): RawTree => {
+    if (t.tag === 'leaf') return 0
+    if (t.tag === 'stem') return [tToRaw(t.c)]
+    if (t.tag === 'fork') return [tToRaw(t.l), tToRaw(t.r)]
+    throw new Error('non-concrete argument') // stuckSpine guarantees concreteness
+  }
+  const engineStep = async (name: string, args: T[]): Promise<T | null> => {
+    try {
+      const handle = viz?.atoms.get(name)
+      const rt = await disp.applySpine(
+        handle != null ? { handle } : { name },
+        args.map(tToRaw),
+        POD_MAX_NODES
+      )
+      return rt === null ? null : rawToT(rt)
+    } catch {
+      return null
+    }
+  }
+
   // ---- toasts (engine messages: kernel loaded, reset, interrupted…) ----
   let toasts = $state<{ id: number; text: string; kind: 'info' | 'warn' }[]>([])
   let toastId = 0
@@ -408,8 +433,8 @@
     for (const d of out.defs) {
       const line = d.endLine ?? d.line
       if (!line) continue
-      if (d.value) marks.push({ line, kind: 'value', values: [{ node: d.value }] })
-      else if (d.pretty) marks.push({ line, kind: 'value', block: d.pretty })
+      if (d.value) marks.push({ line, focusFrom: d.line, kind: 'value', values: [{ node: d.value }] })
+      else if (d.pretty) marks.push({ line, focusFrom: d.line, kind: 'value', block: d.pretty })
     }
     for (const t of out.tests) {
       const line = t.endLine ?? t.line
@@ -418,6 +443,7 @@
       else if (t.lhsNode && t.rhsNode)
         marks.push({
           line,
+          focusFrom: t.line,
           kind: 'fail',
           note: '✗',
           values: [
@@ -425,7 +451,7 @@
             { label: 'want', node: t.rhsNode }
           ]
         })
-      else marks.push({ line, kind: 'fail', note: '✗', block: `got  ${t.lhs ?? '?'}\nwant ${t.rhs ?? '?'}` })
+      else marks.push({ line, focusFrom: t.line, kind: 'fail', note: '✗', block: `got  ${t.lhs ?? '?'}\nwant ${t.rhs ?? '?'}` })
     }
     if (out.error && out.errorLine) marks.push({ line: out.errorLine, kind: 'error', block: out.error })
     return marks
@@ -1125,8 +1151,9 @@
             resolveDef={resolveScopeDef}
             minimal
             {onPodOpen}
+            {engineStep}
             api={(a) => (vizApi = a)}
-            namesHint="Names resolve against the playground's scope and arrive as green pods (real structure, folded shut). Unknown names are free variables: orange fruit the reductions carry symbolically."
+            namesHint="Names resolve against the playground's scope and arrive as green pods (real structure, folded shut). Names too large to ship stay orange fruit — stepping hands their applications to the real evaluator and splices the result back."
           />
         </div>
       </aside>

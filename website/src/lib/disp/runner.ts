@@ -427,6 +427,34 @@ export class DispRunner {
     return go(h)
   }
 
+  // Engine macro-step: apply an in-scope value (by handle or name) to
+  // concrete argument trees on the REAL evaluator, returning the result's
+  // structure. The visualizer calls this when its own stepping is stuck on a
+  // definition too large to ship as a pod — the reduction the elaborator
+  // would perform happens here, and only the (usually small) RESULT crosses
+  // back. null when unbound, when the apply blows its budget, or when the
+  // result itself exceeds maxNodes.
+  applySpine(spec: { handle?: number; name?: string }, args: RawTree[], maxNodes: number): RawTree | null {
+    const h = spec.handle ?? (spec.name != null ? this.#byName.get(spec.name) : undefined)
+    if (h == null) return null
+    try {
+      let cur = h
+      for (const a of args) cur = this.#session.apply(cur, this.#internRaw(a))
+      return this.rawTree({ handle: cur }, maxNodes)
+    } catch {
+      return null // divergence budget, arena pressure — the panel stays stuck
+    }
+  }
+
+  // build a session tree from its structure via the construction rules:
+  // stem x = leaf · x, fork x y = leaf · x · y
+  #internRaw(r: RawTree): number {
+    const leaf = this.#session.leaf()
+    if (r === 0) return leaf
+    if (r.length === 1) return this.#session.apply(leaf, this.#internRaw(r[0]))
+    return this.#session.apply(this.#session.apply(leaf, this.#internRaw(r[0])), this.#internRaw(r[1]))
+  }
+
   // Applicative-style pretty printer (t x (t y) …), name-aware, capped.
   pretty(h: number, selfName?: string): string {
     const out = this.#render(h, PRETTY_DEPTH, false, selfName)

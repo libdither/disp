@@ -256,6 +256,26 @@ class DispClient {
   }
 
   /**
+   * Engine macro-step: apply an in-scope value to concrete argument trees on
+   * the real evaluator, returning the (budgeted) result structure — the
+   * visualizer's escape hatch for definitions too large to ship.
+   */
+  async applySpine(
+    spec: { handle?: number; name?: string },
+    args: RawTree[],
+    maxNodes: number
+  ): Promise<RawTree | null> {
+    const gen = this.#gen
+    if (!this.#worker) return null
+    try {
+      const tree = await this.#request<RawTree | null>({ type: 'applySpine', ...spec, args, maxNodes })
+      return gen === this.#gen ? tree : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Soft reset: fresh arena + session. By default the precompiled kernel is
    * re-installed into the fresh session; `fromSource: true` leaves it cold so
    * the next kernel load genuinely re-elaborates and self-verifies from

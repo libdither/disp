@@ -21,6 +21,8 @@
     strValue,
     treeEq,
     nodeCount,
+    replaceNode,
+    stuckSpine,
     DEFS,
     type T
   } from '$lib/treecalc/treecalc'
@@ -58,6 +60,12 @@
     // and re-seeds this panel). Return true = handled externally; false =
     // reveal locally as usual.
     onPodOpen?: (label: string) => boolean
+    // engine macro-step: when local stepping is stuck on a named head whose
+    // definition never shipped (too large for a pod), the host may perform
+    // the application on the REAL evaluator and return the result tree —
+    // the reduction the elaborator pre-applies, shown as one step. null =
+    // the engine couldn't (unbound name, divergent, or oversized result).
+    engineStep?: (name: string, args: T[]) => Promise<T | null>
     // imperative handle: re-seed the instrument IN PLACE (new program + defs)
     // — the tree animates from its current drawing instead of remounting
     api?: (a: { setProgram: (expr: string, newDefs?: Record<string, T>) => void }) => void
@@ -92,6 +100,7 @@
     minimal = false,
     namesHint = undefined,
     onPodOpen = undefined,
+    engineStep = undefined,
     api = undefined
   }: Props = $props()
 
@@ -883,18 +892,59 @@
     show(cur, { allShrink: true })
   }
 
+  // Engine macro-step: the local rules are stuck, but the head is a NAME the
+  // host's evaluator knows — hand it the spine, splice the result back, and
+  // show the whole thing as one step (the pattern dissolves, the result
+  // grows, folds apply to whatever arrives).
+  let engineBusy = false
+  async function tryEngine(): Promise<boolean> {
+    if (!engineStep || !cur || engineBusy) return false
+    const s = stuckSpine(cur)
+    if (!s) return false
+    engineBusy = true
+    ruleMsg = `${s.name} is opaque here — asking the engine…`
+    try {
+      const result = await engineStep(s.name, s.args)
+      if (!result || !cur) {
+        ruleMsg = `stuck: the engine couldn't reduce ${s.name} here (or the result is too large to draw)`
+        return false
+      }
+      remember()
+      // the spine (applies + the named head) is the consumed pattern
+      const spine = new Set<T>()
+      let f: T = s.site
+      while (f.tag === 'apply') {
+        spine.add(f)
+        f = f.f
+      }
+      spine.add(f)
+      const sitePaths = nodes.filter((n) => n.tree === s.site).map((n) => n.path)
+      cur = replaceNode(cur, s.site, result)
+      stepCount++
+      refreshFolds(cur)
+      atNormalForm = false
+      ruleMsg = `engine step: ${s.name} applied by the real evaluator`
+      show(cur, { spine, sitePaths })
+      return true
+    } finally {
+      engineBusy = false
+    }
+  }
+
   function schedule() {
     clearTimeout(timer)
     timer = setTimeout(() => {
       if (!running) return
-      const went = fire()
-      if (went) {
-        schedule()
-      } else if (autoCycle) {
-        timer = setTimeout(nextExpr, Math.max(curStepMs * 2.2, 2000))
-      } else {
-        running = false
-      }
+      void (async () => {
+        const went = fire() || (await tryEngine())
+        if (went) {
+          schedule()
+        } else if (autoCycle) {
+          timer = setTimeout(nextExpr, Math.max(curStepMs * 2.2, 2000))
+        } else {
+          running = false
+        }
+      })()
     }, curStepMs)
   }
 
@@ -909,7 +959,7 @@
     autoCycle = false
     clearTimeout(timer)
     if (!cur) load(input)
-    fire()
+    if (!fire()) void tryEngine()
   }
   const toggleRun = () => {
     autoCycle = false

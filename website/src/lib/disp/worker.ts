@@ -73,6 +73,12 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'raw', id: msg.id, tree })
         break
       }
+      case 'applySpine': {
+        if (!runner) throw new Error('worker not initialized')
+        const tree = runner.applySpine({ handle: msg.handle, name: msg.name }, msg.args, msg.maxNodes)
+        post({ type: 'raw', id: msg.id, tree })
+        break
+      }
       case 'ls': {
         if (!runner) throw new Error('worker not initialized')
         post({ type: 'ls', id: msg.id, paths: runner.listFiles() })
