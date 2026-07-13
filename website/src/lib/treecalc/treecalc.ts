@@ -301,16 +301,22 @@ export const cl = (params: string[], body: Cir): Cir =>
 const TRUE = leaf
 const FALSE = stem(leaf)
 
-// triage-built not: true(leaf) -> false; false(stem u) -> true
-const NOT = fork(fork(FALSE, fork(leaf, TRUE)), fork(leaf, fork(leaf, TRUE)))
+// The boolean operators are triage forks: t (t whenLeaf whenStem) whenFork,
+// dispatching on the argument's shape. Booleans are only ever leaf (true) or
+// stem (false), so the fork branch can never fire — it stays a BARE LEAF
+// rather than a dead handler, keeping the drawn trees honest and small.
+
+// not: true(leaf) -> false; false(stem u) -> K true u = true (K discards
+// false's junk child)
+const NOT = fork(fork(FALSE, fork(leaf, TRUE)), leaf)
 
 // K x as a tree (fork(leaf, x), by the fork-construction rule)
 const kOf = (x: T): T => fork(leaf, x)
 
-// and: triage on a — true(leaf) -> b (the identity), false(stem) -> false
-const AND = fork(fork(I_TREE, kOf(kOf(FALSE))), kOf(kOf(FALSE)))
-// or: true(leaf) -> true regardless, false(stem) -> b
-const OR = fork(fork(kOf(TRUE), kOf(I_TREE)), kOf(kOf(I_TREE)))
+// and a b: true -> I b = b; false(stem u) -> K (K false) u b = false
+const AND = fork(fork(I_TREE, kOf(kOf(FALSE))), leaf)
+// or a b: true -> K true b = true; false(stem u) -> K I u b = b
+const OR = fork(fork(kOf(TRUE), kOf(I_TREE)), leaf)
 
 // recursion the tree-calculus way (the walkthrough's construction):
 //   wait a b c = a b c, but wait a b does NOT evaluate a b
@@ -359,6 +365,20 @@ export const DEFS: Record<string, T> = {
 }
 
 // ---- parser: t, △, (), numbers, names ------------------------------------
+
+// Every syntactic position gets its OWN node objects. The definitions (and
+// the `leaf` constant) are heavily self-aliased, and the visualizer's
+// rewrite correspondence is by object identity — parse-time sharing would
+// let a discarded leaf "survive" through an aliased twin and pop off screen
+// instead of falling. Sharing CREATED by reduction (S duplicating its
+// argument) is real and stays: that is the split the animation shows.
+const freshCopy = (t: T): T => {
+  if (t.tag === 'leaf') return { tag: 'leaf' }
+  if (t.tag === 'var') return { tag: 'var', name: t.name }
+  if (t.tag === 'stem') return stem(freshCopy(t.c))
+  if (t.tag === 'fork') return fork(freshCopy(t.l), freshCopy(t.r))
+  return { tag: 'apply', f: freshCopy(t.f), x: freshCopy(t.x) }
+}
 
 // `lazyTop` keeps the OUTERMOST application from eager-constructing, so a bare
 // leaf- or stem-headed program shows its construction rule fire as a real step:
@@ -411,15 +431,15 @@ export function parseTree(
     if (tok === undefined || tok === ')') throw new Error('expected an atom, got ' + (tok ?? 'end of input'))
     if (tok === 't') {
       p++
-      return leaf
+      return { tag: 'leaf' }
     }
     if (/^[0-9]+$/.test(tok)) {
       p++
-      return nat(parseInt(tok, 10))
+      return freshCopy(nat(parseInt(tok, 10)))
     }
     if (Object.prototype.hasOwnProperty.call(defs, tok)) {
       p++
-      return structuredClone(defs[tok])
+      return freshCopy(defs[tok])
     }
     // any other name is a named leaf — a free variable to compute with
     // symbolically (K x y ▷ x, S f g x ▷ (f x)(g x))

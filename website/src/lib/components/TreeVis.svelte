@@ -6,8 +6,8 @@
   // ground, rest a while, and fade; surviving branches glide to their new
   // positions; ready redexes wear the letter of the rule about to fire.
   import { onMount, onDestroy } from 'svelte'
-  import { crossfade, fade, scale } from 'svelte/transition'
-  import { cubicOut, backOut } from 'svelte/easing'
+  import { fade, scale } from 'svelte/transition'
+  import { backOut } from 'svelte/easing'
   import {
     parseTree,
     stepOnce,
@@ -105,31 +105,35 @@
     if (i >= 0) selectedIdx = i
   })
   const clampIdx = (i: number) => Math.max(0, Math.min(PIECES.length - 1, i))
-  const CELLW = 34 // px per tape cell (and the selector's width)
+  const CELLW = 34 // tape cell width
+  const CELLH = 28 // tape cell height — the pieces stack VERTICALLY
   let cassetteOpen = $state(false) // chip ⇄ expanded tape
   let showSelectors = $state(false) // the ⚘ tree toggle reveals the view selectors
   let cassetteWrapEl: HTMLDivElement | undefined = $state()
   let selectorsWrapEl: HTMLDivElement | undefined = $state()
-  // the selector drag along the (stationary) tape. The selector is STICKY: it
-  // snaps cell-to-cell as you drag (each snap bounces, via CSS), and the tree
-  // changes to that piece live — frozen, not playing — as it passes.
+  // press anywhere on the (vertical) tape and the selector jumps there, then
+  // scrubs. Each landing snaps to a cell (sticky, bouncy via CSS) and previews
+  // that piece frozen — the tree changes as you drag, nothing plays.
+  let tapeEl: HTMLDivElement | undefined = $state()
   let selDragging = $state(false)
-  let selDX = 0 // pointer delta from the grab point, px
-  let selStartX = 0
-  let selBaseX = 0 // the selector's x when the drag began
-  let selMoved = false
-  // the selector always rests on a cell → sticky; the bouncy CSS animates snaps
-  const selX = $derived(selectedIdx * CELLW)
+  // the selector rides UP from the bottom cell (leaf △) → sticky; CSS bounces it
+  const selY = $derived(selectedIdx * CELLH)
+  // which cell the pointer is over — measured from the tape's bottom (3px pad)
+  const cellAtY = (clientY: number) => {
+    if (!tapeEl) return selectedIdx
+    const r = tapeEl.getBoundingClientRect()
+    return clampIdx(Math.floor((r.bottom - 3 - clientY) / CELLH))
+  }
 
-  // select a piece: load and RUN it (cell tap, prev/next, and drag-release land here)
+  // select a piece: load and RUN it (tape release and prev/next land here)
   function pickPalette(i: number) {
     const t = clampIdx(i)
     selectedIdx = t
     running = true
     load(PIECES[t].expr)
   }
-  // preview a piece WITHOUT playing — used live while dragging the selector, so
-  // the tree changes as you scrub but nothing runs. Cleared nodes = instant swap.
+  // preview a piece WITHOUT playing — used live while scrubbing, so the tree
+  // changes as you drag but nothing runs. Cleared nodes = instant swap.
   function loadFrozen(i: number) {
     selectedIdx = clampIdx(i)
     running = false
@@ -139,41 +143,34 @@
     edges = []
     load(PIECES[selectedIdx].expr)
   }
-  // the chip and the selector crossfade into each other: click the chip and it
-  // flies to the selector's slot as the tape unfurls (and back on close)
-  const [sendChip, recvChip] = crossfade({ duration: 300, easing: cubicOut })
+  // the selector rises out of the chip (y = 0) up to its cell as the tape unfurls
+  const selectorIn = (_n: Element, { duration = 300 } = {}) => ({
+    duration,
+    easing: backOut,
+    css: (t: number) => `opacity: ${t}; transform: translateY(${-selY * t}px)`
+  })
   // opening the tape freezes the ambient cycle so the selector holds still
-  // while you drag it (otherwise it auto-scrolls out from under the pointer)
   function openCassette() {
     cassetteOpen = true
     autoCycle = false
     running = false
     clearTimeout(timer)
   }
-  function selectorDown(e: PointerEvent) {
+  function tapeDown(e: PointerEvent) {
     selDragging = true
-    selMoved = false
-    selDX = 0
-    selStartX = e.clientX
-    selBaseX = selectedIdx * CELLW
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    tapeEl?.setPointerCapture(e.pointerId)
+    const li = cellAtY(e.clientY)
+    if (li !== selectedIdx) loadFrozen(li) // jump to the pressed cell
   }
-  function selectorMove(e: PointerEvent) {
+  function tapeMove(e: PointerEvent) {
     if (!selDragging) return
-    const lo = -selBaseX // keep the selector on the tape
-    const hi = (PIECES.length - 1) * CELLW - selBaseX
-    selDX = Math.max(lo, Math.min(hi, e.clientX - selStartX))
-    if (Math.abs(selDX) > 3) selMoved = true
-    // snap to the nearest cell and preview it (frozen) as we pass
-    const li = clampIdx(Math.round((selBaseX + selDX) / CELLW))
-    if (li !== selectedIdx) loadFrozen(li)
+    const li = cellAtY(e.clientY)
+    if (li !== selectedIdx) loadFrozen(li) // scrub
   }
-  function selectorUp() {
+  function tapeUp() {
     if (!selDragging) return
     selDragging = false
-    selDX = 0
-    // land on the piece we scrubbed to and play it
-    pickPalette(selectedIdx)
+    pickPalette(selectedIdx) // land + run
   }
 
   const matchIdx = () => exampleOptions.findIndex((o) => o.expr === input)
@@ -192,11 +189,33 @@
     running = false
     clearTimeout(timer)
   }
-  // the edit box is bare text: Enter loads it, Escape drops focus
+  // the edit box parses AS YOU TYPE: each keystroke that yields a valid
+  // expression swaps the tree in immediately (frozen, the cassette-scrub
+  // posture); mid-edit gibberish holds the last good tree and just tints the
+  // underline. Enter restarts the loaded tree and drops focus, so the arrow
+  // keys step it straight away; Escape only drops focus.
+  let editInvalid = $state(false)
+  function liveParse() {
+    let t: T
+    try {
+      const lazyTop = PIECES.find((p) => p.expr === input)?.lazyTop ?? false
+      t = parseTree(input, undefined, { lazyTop })
+    } catch {
+      editInvalid = true
+      return
+    }
+    editInvalid = false
+    if (cur && treeEq(t, cur)) return // cosmetic edit — same tree, keep it
+    nodes = []
+    edges = []
+    load(input)
+  }
   function onEditKey(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault()
       load(input)
+      // hand the keyboard to the instrument: arrows step, space runs
+      ;((e.target as HTMLElement).closest('.vis') as HTMLElement | null)?.focus()
     } else if (e.key === 'Escape') {
       ;(e.target as HTMLElement).blur()
     }
@@ -253,7 +272,8 @@
     d: string
     w: number
   }
-  // consumed pattern pieces dissolve while being drawn into the redex site
+  // consumed pattern pieces dissolve in place — the collapse marks the site;
+  // gliding them toward the joint read as clutter, so they stay put
   interface Vanishing {
     id: number
     x: number
@@ -261,15 +281,6 @@
     tag: T['tag']
     tint: string
     tilt: number
-    sx: number // glide-to-the-site delta while shrinking (0 = in place)
-    sy: number
-  }
-  // a fired redex occurrence on screen: where its consumed machinery sinks,
-  // and the region whose edges travel with their subtrees
-  interface SitePin {
-    path: string
-    x: number
-    y: number
   }
 
   let nodes = $state<VNode[]>([])
@@ -402,12 +413,20 @@
     const u = t - 1
     return 1 + (c + 1) * u * u * u + c * u * u
   }
-  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>, sitePaths: string[] = []) {
+  // returns the ids of the old edges the tween carries forward (as a same-id
+  // morph or as a moved child's travelling branch) — every other old edge is
+  // the caller's to fade out, so no branch ever pops off screen
+  function animateTo(
+    l: { nodes: VNode[]; edges: VEdge[] },
+    oldByRef: Map<T, VNode>,
+    sitePaths: string[] = []
+  ): Set<string> {
     cancelAnimationFrame(anim!)
+    const used = new Set<string>()
     if (!motion || nodes.length === 0) {
       nodes = l.nodes
       edges = l.edges
-      return
+      return used
     }
     const nFrom = new Map(nodes.map((n) => [n.path, n]))
     const eFrom = new Map(edges.map((e) => [e.id, e]))
@@ -434,6 +453,7 @@
       const pPath = te.trunk ? '' : te.id.split('>')[0]
       const child = newByPath.get(cPath)
       let f = eFrom.get(te.id)
+      let fId = f ? te.id : null
       if (f && !te.trunk) {
         const oldChild = nFrom.get(cPath)
         const sameChild = oldChild && child && oldChild.tree === child.tree
@@ -444,16 +464,22 @@
         // its child instead (triage's selected branch and S's shared
         // argument bring their branches along).
         const inResult = sitePaths.some((sp) => pPath.startsWith(sp))
-        if (!sameChild && inResult) f = undefined
+        if (!sameChild && inResult) {
+          f = undefined
+          fId = null
+        }
       }
       if (!f && !te.trunk && child) {
         // the child moved here from elsewhere: bring its old incoming
         // branch along instead of growing a new one
         const old = oldByRef.get(child.tree)
         if (old && old.path !== 'r') {
-          f = eFrom.get(`${old.path.slice(0, -1)}>${old.path.slice(-1)}`)
+          fId = `${old.path.slice(0, -1)}>${old.path.slice(-1)}`
+          f = eFrom.get(fId)
+          if (!f) fId = null
         }
       }
+      if (fId) used.add(fId)
       // otherwise a NEW branch grows out of its parent endpoint
       return { te, f: f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 } }
     })
@@ -477,6 +503,7 @@
       if (t < 1) anim = requestAnimationFrame(frame)
     }
     anim = requestAnimationFrame(frame)
+    return used
   }
 
   // The redex's own pattern (the apply node, the rule's matched spine, and
@@ -500,24 +527,17 @@
     return out
   }
 
-  function show(tree: T, opts: { spine?: Set<T>; allShrink?: boolean; sites?: SitePin[] } = {}) {
-    const { spine, allShrink = false, sites = [] } = opts
+  function show(tree: T, opts: { spine?: Set<T>; allShrink?: boolean; sitePaths?: string[] } = {}) {
+    const { spine, allShrink = false, sitePaths = [] } = opts
     const prevNodes = nodes
     const prevEdges = edges
     const l = layout(tree)
     const oldByRef = new Map<T, VNode>()
     for (const n of prevNodes) if (!oldByRef.has(n.tree)) oldByRef.set(n.tree, n)
-    // a consumed piece sinks into the innermost fired site containing it
-    const sinkFor = (path: string): SitePin | null => {
-      let best: SitePin | null = null
-      for (const s of sites)
-        if (path.startsWith(s.path) && (!best || s.path.length > best.path.length)) best = s
-      return best
-    }
+    const usedEdges = animateTo(l, oldByRef, sitePaths)
     if (motion && styled && prevNodes.length > 0) {
       const survivors = new Set(l.nodes.map((n) => n.tree))
       const removed = prevNodes.filter((n) => !survivors.has(n.tree))
-      const removedPaths = new Set(removed.map((n) => n.path))
       const fresh: Debris[] = []
       const shrunk: Vanishing[] = []
       for (const n of removed) {
@@ -536,18 +556,15 @@
             label: n.vname ?? undefined
           })
         } else {
-          // consumed machinery is drawn into the reduction point as it
-          // dissolves — knots merge down the branch into the new joint
-          const s = consumed && !allShrink ? sinkFor(n.path) : null
+          // consumed machinery dissolves where it stood — the shrinking ring
+          // and core mark the reduction point while the result takes its place
           shrunk.push({
             id: debrisId++,
             x: n.x,
             y: n.y,
             tag: n.tag,
             tint: n.tint,
-            tilt: n.tilt,
-            sx: s ? s.x - n.x : 0,
-            sy: s ? s.y - n.y : 0
+            tilt: n.tilt
           })
         }
       }
@@ -566,11 +583,10 @@
           vanishing = vanishing.filter((v) => !ids.includes(v.id))
         }, 460)
       }
-      // branches that lost their subtree fade out in place
-      const newIds = new Set(l.edges.map((e) => e.id))
-      const gone = prevEdges.filter(
-        (e) => !e.trunk && !newIds.has(e.id) && removedPaths.has(e.id.replace('>', ''))
-      )
+      // any branch the tween didn't carry forward dissolves where it stood —
+      // whether its subtree fell, its machinery was consumed, or its id was
+      // claimed by a re-wired edge travelling in with a different child
+      const gone = prevEdges.filter((e) => !e.trunk && !usedEdges.has(e.id))
       if (gone.length) {
         const fading: GhostEdge[] = gone.map((e) => ({ id: debrisId++, d: edgeD(e), w: e.w }))
         ghosts.push(...fading)
@@ -580,7 +596,6 @@
         }, 500)
       }
     }
-    animateTo(l, oldByRef, sites.map((s) => s.path))
   }
 
   // ---- the run loop ----------------------------------------------------------
@@ -600,6 +615,7 @@
     clearTimeout(timer)
     if (!opts.keepAuto) autoCycle = false
     err = ''
+    editInvalid = false
     ruleMsg = ''
     stepCount = 0
     atNormalForm = false
@@ -641,11 +657,9 @@
       tag: 'apply'
     })[]
     const spine = new Set(sites.flatMap((s) => spineOf(s)))
-    // every on-screen occurrence of a fired site: consumed machinery sinks
-    // there, and edges inside those regions re-wire with their subtrees
-    const sitePins: SitePin[] = nodes
-      .filter((n) => sites.some((s) => s === n.tree))
-      .map((n) => ({ path: n.path, x: n.x, y: n.y }))
+    // every on-screen occurrence of a fired site: edges inside those regions
+    // re-wire, travelling with their subtrees instead of holding their port
+    const sitePaths = nodes.filter((n) => sites.some((s) => s === n.tree)).map((n) => n.path)
     if (parallel) {
       const s = stepParallel(cur)
       if (!s) {
@@ -660,7 +674,7 @@
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
           : `${s.fired.length} redexes fired in parallel (${s.fired.join(' ')})`
-      show(cur, { spine, sites: sitePins })
+      show(cur, { spine, sitePaths })
       return true
     }
     const s = stepOnce(cur)
@@ -673,7 +687,7 @@
     cur = s.next
     stepCount++
     ruleMsg = s.rule
-    show(cur, { spine, sites: sitePins })
+    show(cur, { spine, sitePaths })
     return true
   }
 
@@ -810,49 +824,6 @@
     if ((e.target as HTMLElement).closest('button')) e.preventDefault()
   }}
 >
-  <div class="topbar">
-    <!-- media transport: circular buttons, centred at the top, always on
-         (greyed in ambient until the pointer enters the widget) -->
-    <div class="transport">
-      <button class="mpi" onclick={() => cyclePreset(-1)} title="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
-      <button class="mpi" onclick={back} disabled={historyLen === 0} title="step back (←)" aria-label="step back">{@render icoBack()}</button>
-      <button class="mpi play" onclick={toggleRun} title="run / pause (space)" aria-label={running ? 'pause' : 'play'}>{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button>
-      <button class="mpi" onclick={step} title="step forward (→)" aria-label="step forward">{@render icoFwd()}</button>
-      <button class="mpi" onclick={() => cyclePreset(1)} title="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
-      <button class="mpi" onclick={reset} title="reset to the start" aria-label="reset">{@render icoReset()}</button>
-    </div>
-
-    <!-- the edit box: bare editable text, centred under the transport, with an
-         (i) that explains what names you can type -->
-    <div class="editrow">
-      <input
-        class="editbox"
-        type="text"
-        bind:value={input}
-        onkeydown={onEditKey}
-        onfocus={pauseForEdit}
-        spellcheck="false"
-        autocomplete="off"
-        aria-label="tree-calculus expression — edit and press Enter"
-      />
-      <span class="info">
-        <button type="button" class="info-btn" aria-label="what can I type here?">i</button>
-        <span class="info-pop" role="tooltip">
-          Edit this and press <kbd>Enter</kbd>. Combinators: <code>t</code> (△), <code>K</code>,
-          <code>S</code>, <code>not</code>, <code>and</code>, <code>or</code>, <code>add</code>,
-          and plain numbers. Any other name — <code>x</code>, <code>y</code>, <code>f</code> … — is a
-          free variable: a named leaf the reductions carry along symbolically.
-        </span>
-      </span>
-    </div>
-    {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
-
-    {#if variant === 'lab'}
-      <!-- the lab keeps its view selectors inline (no floating ⚘ toggle) -->
-      <div class="selectors">{@render selectorButtons()}</div>
-    {/if}
-  </div>
-
   {#if err}
     <p class="err">{err}</p>
   {:else}
@@ -896,10 +867,10 @@
       {#each ghosts as g (g.id)}
         <path class="branch ghost" d={g.d} style="stroke-width:{g.w}" />
       {/each}
-      <!-- consumed pattern pieces dissolve into the reduction point -->
+      <!-- consumed pattern pieces dissolve in place at the reduction point -->
       {#each vanishing as v (v.id)}
         <g style="transform: translate({v.x}px, {v.y}px)">
-          <g class="vshrink" style="--sx: {v.sx}px; --sy: {v.sy}px">
+          <g class="vshrink">
             {#if v.tag === 'leaf'}
               <path
                 class="leafshape"
@@ -909,7 +880,10 @@
             {:else if v.tag === 'var'}
               <circle r="9" class="fruitbody" />
             {:else if v.tag === 'apply'}
-              <circle r="6" class="bud-ring" />
+              <!-- ring AND core, at live size — the whole apply marker
+                   collapses into the joint that replaces it -->
+              <circle r="8.5" class="bud-ring" />
+              <circle r="3" class="bud-core" />
             {:else}
               <circle r="3.6" class="knot" />
             {/if}
@@ -959,13 +933,15 @@
                 <circle r={styled ? 4 : 5.5} class="knot" />
               {/if}
               {#if n.ready}
-                <g class="firemark" class:next={n.next || parallel}>
+                <!-- eased: the mark settles onto its node after the glide
+                     lands, instead of standing pre-planted at the endpoint -->
+                <g class="firemark" class:eased={motion} class:next={n.next || parallel}>
                   <circle r="7.5" class="fire-ring" />
                   <text class="fire-letter" y="0.5">{RULE_GLYPH[n.ready]}</text>
                 </g>
               {/if}
               {#if n.next && styled}
-                <g class="blossom">
+                <g class="blossom" class:eased={motion}>
                   {#each [36, 108, 180, 252, 324] as a}
                     <circle r="2.6" cx={9.5 * Math.cos((a * Math.PI) / 180)} cy={9.5 * Math.sin((a * Math.PI) / 180)} />
                   {/each}
@@ -980,82 +956,133 @@
       </g>
     </svg>
 
-    <div class="readout">
-      <div class="rline">
-        <span class="expr">{input}</span>
-        <span class="rule" class:nf={atNormalForm}>{ruleMsg || (variant === 'lab' ? 'press ▶ (or →) to fire the next reduction' : '')}</span>
-        <span class="count">{stepCount} step{stepCount === 1 ? '' : 's'}{parallel ? ' · parallel' : ''}</span>
+    {#if variant === 'lab'}
+      <div class="readout">
+        <div class="rline">
+          <span class="expr">{input}</span>
+          <span class="rule" class:nf={atNormalForm}>{ruleMsg || 'press ▶ (or →) to fire the next reduction'}</span>
+          <span class="count">{stepCount} step{stepCount === 1 ? '' : 's'}{parallel ? ' · parallel' : ''}</span>
+        </div>
+        {#if cur}
+          <div class="forms"><span class="flabel">named</span><code>{pretty(cur)}</code></div>
+          <div class="forms"><span class="flabel">raw</span><code>{pretty(cur, { names: false })}</code></div>
+        {/if}
       </div>
-      {#if variant === 'lab' && cur}
-        <div class="forms"><span class="flabel">named</span><code>{pretty(cur)}</code></div>
-        <div class="forms"><span class="flabel">raw</span><code>{pretty(cur, { names: false })}</code></div>
-      {/if}
-    </div>
+    {/if}
   {/if}
 
-  {#if variant === 'ambient'}
-    <!-- cassette: a chip that toggles open into a stationary tape; a draggable
-         selector rides the tape and snaps to the nearest piece. Bottom-left. -->
-    <div class="cassette-wrap" bind:this={cassetteWrapEl}>
-      {#if cassetteOpen}
-        <div class="cassette-tape" out:fade={{ duration: 160 }}>
-          {#each PIECES as it, i}
-            <button
-              type="button"
-              class="tcell"
-              class:on={i === selectedIdx}
-              style="width: {CELLW}px; --ci: {i}"
-              title={it.tip}
-              aria-label={it.tip}
-              onclick={() => pickPalette(i)}
-            >{it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}</button>
-          {/each}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="selector"
-            class:grabbing={selDragging}
-            style="width: {CELLW}px; transform: translateX({selX}px)"
-            title="drag to choose a piece"
-            aria-hidden="true"
-            in:recvChip={{ key: 'cass' }}
-            onpointerdown={selectorDown}
-            onpointermove={selectorMove}
-            onpointerup={selectorUp}
-            onpointercancel={selectorUp}
-          ></div>
-        </div>
-      {:else}
+  <!-- the edit box, sitting on top of the transport (Enter loads it), with an
+       (i) that explains what names you can type -->
+  <div class="editrow">
+    <input
+      class="editbox"
+      class:invalid={editInvalid}
+      type="text"
+      bind:value={input}
+      oninput={liveParse}
+      onkeydown={onEditKey}
+      onfocus={pauseForEdit}
+      spellcheck="false"
+      autocomplete="off"
+      aria-label="tree-calculus expression — parses as you type"
+    />
+    <span class="info">
+      <button type="button" class="info-btn" aria-label="what can I type here?">i</button>
+      <span class="info-pop" role="tooltip">
+        Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree. Combinators:
+        <code>t</code> (△), <code>K</code>, <code>S</code>, <code>not</code>, <code>and</code>,
+        <code>or</code>, <code>add</code>, and plain numbers. Any other name — <code>x</code>,
+        <code>y</code>, <code>f</code> … — is a free variable: a named leaf the reductions carry
+        along symbolically.
+      </span>
+    </span>
+  </div>
+  {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
+
+  <!-- the bottom bar: play/pause dead-centre with prev/back and fwd/next/reset
+       clustered tight around it (thin buttons, no circles); the cassette sits
+       at the far left and the ⚘ view toggle at the far right, both absolute so
+       they never shift the centring -->
+  <div class="bottombar">
+    <div class="tside tleft">
+      <button class="tbtn" onclick={() => cyclePreset(-1)} title="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
+      <button class="tbtn" onclick={back} disabled={historyLen === 0} title="step back (←)" aria-label="step back">{@render icoBack()}</button>
+    </div>
+
+    <button class="tbtn play" onclick={toggleRun} title="run / pause (space)" aria-label={running ? 'pause' : 'play'}>{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button>
+
+    <div class="tside tright">
+      <button class="tbtn" onclick={step} title="step forward (→)" aria-label="step forward">{@render icoFwd()}</button>
+      <button class="tbtn" onclick={() => cyclePreset(1)} title="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
+      <button class="tbtn" onclick={reset} title="reset to the start" aria-label="reset">{@render icoReset()}</button>
+    </div>
+
+    {#if variant === 'ambient'}
+      <!-- cassette (far left): the chip toggles a VERTICAL tape that expands
+           upward — leaf △ at the bottom, + at the top. Press anywhere on it and
+           the selector jumps there, then scrubs. -->
+      <div class="cassette-wrap corner-left" bind:this={cassetteWrapEl}>
         <button
           type="button"
           class="cassette-chip"
-          onclick={openCassette}
+          class:open={cassetteOpen}
+          onclick={() => (cassetteOpen ? (cassetteOpen = false) : openCassette())}
           aria-haspopup="true"
-          aria-label={`tree pieces — now: ${PIECES[selectedIdx].tip}. Click to open the tape.`}
-          title={`${PIECES[selectedIdx].tip} — click to open the tape`}
-          in:fade={{ duration: 150 }}
-          out:sendChip={{ key: 'cass' }}
+          aria-expanded={cassetteOpen}
+          aria-label={`tree pieces — now: ${PIECES[selectedIdx].tip}`}
+          title={`${PIECES[selectedIdx].tip} — pick a piece`}
         >{PIECES[selectedIdx].sym}{#if PIECES[selectedIdx].sub}<sub>{PIECES[selectedIdx].sub}</sub>{/if}</button>
-      {/if}
-    </div>
+        {#if cassetteOpen}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="cassette-tape"
+            class:grabbing={selDragging}
+            bind:this={tapeEl}
+            role="slider"
+            aria-orientation="vertical"
+            tabindex="-1"
+            aria-label="tree pieces"
+            aria-valuemin="0"
+            aria-valuemax={PIECES.length - 1}
+            aria-valuenow={selectedIdx}
+            aria-valuetext={PIECES[selectedIdx].tip}
+            style="width: {CELLW + 6}px"
+            out:fade={{ duration: 150 }}
+            onpointerdown={tapeDown}
+            onpointermove={tapeMove}
+            onpointerup={tapeUp}
+            onpointercancel={tapeUp}
+          >
+            {#each PIECES as it, i}
+              <div class="tcell" class:on={i === selectedIdx} style="height: {CELLH}px; --ci: {i}" title={it.tip}>{it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}</div>
+            {/each}
+            <div
+              class="selector"
+              style="width: {CELLW}px; height: {CELLH}px; transform: translateY({-selY}px)"
+              aria-hidden="true"
+              in:selectorIn={{ duration: 300 }}
+            ></div>
+          </div>
+        {/if}
+      </div>
 
-    <!-- the tree toggle (⚘) that originally controlled the whole thing — now it
-         reveals the view selectors. Bottom-right. -->
-    <div class="selectors-wrap" bind:this={selectorsWrapEl}>
-      {#if showSelectors}
-        <div
-          class="selectors-pop"
-          transition:scale={{ duration: 200, start: 0.8, opacity: 0, easing: backOut }}
-        >{@render selectorButtons()}</div>
-      {/if}
-      <button
-        class="tree-toggle"
-        onclick={() => (showSelectors = !showSelectors)}
-        aria-expanded={showSelectors}
-        aria-label={showSelectors ? 'hide view options' : 'view options'}
-        title={showSelectors ? 'hide view options' : 'view options'}
-      >{showSelectors ? '×' : '⚘'}</button>
-    </div>
-  {/if}
+      <!-- the ⚘ view toggle (far right): reveals the selectors, popping upward -->
+      <div class="selectors-wrap corner-right" bind:this={selectorsWrapEl}>
+        {#if showSelectors}
+          <div class="selectors-pop" transition:scale={{ duration: 200, start: 0.8, opacity: 0, easing: backOut }}>{@render selectorButtons()}</div>
+        {/if}
+        <button
+          class="tree-toggle"
+          onclick={() => (showSelectors = !showSelectors)}
+          aria-expanded={showSelectors}
+          aria-label={showSelectors ? 'hide view options' : 'view options'}
+          title={showSelectors ? 'hide view options' : 'view options'}
+        >{showSelectors ? '×' : '⚘'}</button>
+      </div>
+    {:else}
+      <div class="selectors corner-right">{@render selectorButtons()}</div>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -1084,21 +1111,66 @@
     display: block;
   }
 
-  /* ---- controls: transport centred at the top, edit text centred below ---- */
-  .topbar {
-    display: flex;
-    flex-direction: column;
+  /* ---- controls: a bottom bar with the edit box on top of it ---- */
+  /* the grid keeps play/pause at the widget's exact centre (equal 1fr flanks);
+     the transport clusters tight around it, the cassette / ⚘ sit absolute in
+     the corners so they don't disturb the centring */
+  .bottombar {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    gap: 0.3rem;
-    margin-bottom: 0.4rem;
+    gap: 0.15rem;
+    margin-top: 0.3rem;
+    min-height: 30px;
   }
-  .transport {
+  .tside {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 0.3rem;
+    gap: 0.1rem;
   }
-  /* the edit box: bare editable text, centred directly under the transport */
+  .tleft { justify-self: end; } /* hug the right, next to play */
+  .tright { justify-self: start; } /* hug the left, next to play */
+  .corner-left {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .corner-right {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+  }
+  /* thin transport buttons — bare icons, no circle */
+  .tbtn {
+    flex: none;
+    border: none;
+    background: none;
+    color: var(--fg-muted);
+    display: inline-grid;
+    place-items: center;
+    padding: 0.18em;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: opacity 0.18s ease, color 0.18s ease, background 0.18s ease;
+  }
+  .vis:not(.lab) .tbtn { opacity: 0.5; }
+  .vis:not(.lab):hover .tbtn { opacity: 1; }
+  .tbtn:hover { color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+  .tbtn:disabled { opacity: 0.28; cursor: default; color: var(--fg-muted); background: none; }
+  .vis:not(.lab):hover .tbtn:disabled { opacity: 0.32; }
+  .tbtn .ico { width: 18px; height: 18px; display: block; fill: currentColor; }
+  .tbtn .ico.stroke { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  /* play/pause is the primary — larger and greener */
+  .tbtn.play { color: var(--g2); padding: 0.1em; }
+  .tbtn.play:hover { color: var(--accent); }
+  .tbtn.play .ico { width: 24px; height: 24px; }
+  /* the edit box: bare editable text, centred, sitting above the transport */
   .editrow {
     position: relative;
     display: flex;
@@ -1134,6 +1206,10 @@
     border-bottom: 1px solid var(--accent);
     background: color-mix(in oklab, var(--bg-code) 60%, transparent);
   }
+  /* mid-edit gibberish: the tree holds still, only the underline says so */
+  .editbox.invalid {
+    border-bottom-color: color-mix(in oklab, var(--err) 65%, transparent);
+  }
   .editbox::selection { background: color-mix(in oklab, var(--accent) 28%, transparent); }
   /* the (i) that explains what names you can type, at the row's right edge */
   .info {
@@ -1165,7 +1241,7 @@
   .info-btn:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
   .info-pop {
     position: absolute;
-    top: calc(100% + 9px);
+    bottom: calc(100% + 9px);
     right: -0.35rem;
     width: 250px;
     padding: 0.55rem 0.7rem;
@@ -1181,7 +1257,7 @@
     z-index: 50;
     opacity: 0;
     visibility: hidden;
-    transform: translateY(-4px);
+    transform: translateY(4px);
     transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
     pointer-events: none;
   }
@@ -1318,6 +1394,22 @@
     dominant-baseline: middle;
   }
   .firemark.next { animation: firepulse 1s ease-in-out infinite; transform-origin: 0 0; }
+  /* when the layout is animating, a newly-ready mark waits for its node to
+     land (the glide is ~settled by 0.3s) and then grows in on it — never
+     pre-planted at the endpoint while the tree is still travelling */
+  .firemark.eased,
+  .blossom.eased { animation: markin 0.26s ease-out 0.34s backwards; transform-origin: 0 0; }
+  .firemark.eased.next {
+    animation:
+      markin 0.26s ease-out 0.34s backwards,
+      firepulse 1s ease-in-out 0.75s infinite;
+  }
+  @keyframes markin {
+    from {
+      transform: scale(0.3);
+      opacity: 0;
+    }
+  }
   @keyframes firepulse {
     50% { transform: scale(1.25); }
   }
@@ -1389,14 +1481,14 @@
       opacity: 0;
     }
   }
-  /* consumed pattern pieces are drawn into the reduction point as they
-     dissolve — spine knots merge down the branch into the new joint */
+  /* consumed pattern pieces dissolve in place — collapsing where they stood
+     keeps the eye on the surviving trees, which carry all the real motion */
   .vshrink {
     animation: vshrink 0.42s ease-in forwards;
   }
   @keyframes vshrink {
     to {
-      transform: translate(var(--sx, 0px), var(--sy, 0px)) scale(0);
+      transform: scale(0);
       opacity: 0;
     }
   }
@@ -1448,12 +1540,11 @@
   .forms code { white-space: nowrap; background: none; border: none; padding: 0; }
   .err { color: var(--err); font-family: var(--font-mono); font-size: 0.82rem; }
 
-  /* ---- the cassette (ambient): chip ⇄ tape, bottom-left ---- */
+  /* ---- the cassette (ambient): a chip in the bar; the tape pops up above ---- */
+  /* position comes from .corner-left (absolute); being positioned makes it the
+     containing block for the upward tape pop-out */
   .cassette-wrap {
-    position: absolute;
-    left: 0.5rem;
-    bottom: 2.1rem;
-    z-index: 20;
+    display: inline-flex;
   }
   /* the collapsed chip wears the current piece's symbol */
   .cassette-chip {
@@ -1477,71 +1568,69 @@
   .vis:hover .cassette-chip { opacity: 1; }
   .cassette-chip:hover { border-color: var(--accent); color: var(--accent); transform: scale(1.06); }
   .cassette-chip sub { font-size: 0.6em; margin-left: 0.03em; }
-  /* the expanded tape: a stationary row of every piece + a draggable selector */
+  /* the expanded tape: a stationary VERTICAL column of every piece + a draggable
+     selector, floating just ABOVE the chip and expanding upward — leaf △ at the
+     bottom, + at the top. The whole tape is the slider track — press anywhere
+     and the selector jumps there. */
   .cassette-tape {
-    position: relative;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 30;
     display: flex;
-    align-items: center;
-    height: 34px;
-    padding: 0 3px;
+    flex-direction: column-reverse; /* index 0 (leaf △) at the bottom, + on top */
+    align-items: stretch;
+    box-sizing: border-box;
+    padding: 3px;
     border-radius: 10px;
     border: 1px solid var(--border-strong);
     background: var(--bg-elev);
-    box-shadow: 0 10px 24px -16px color-mix(in oklab, var(--fg) 45%, transparent);
-    animation: tapeReveal 0.22s ease;
+    box-shadow: 0 12px 26px -14px color-mix(in oklab, var(--fg) 48%, transparent);
+    animation: tapeReveal 0.2s ease;
+    cursor: pointer;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
   }
-  @keyframes tapeReveal { from { opacity: 0; } }
-  /* the cells stagger in left-to-right as the tape unfurls from the chip */
-  @keyframes cellIn { from { opacity: 0; transform: translateY(5px) scale(0.55); } }
+  .cassette-tape.grabbing { cursor: grabbing; }
+  @keyframes tapeReveal { from { opacity: 0; transform: translateY(8px); } }
+  /* the cells stagger in bottom-to-top as the tape unfurls up out of the chip */
+  @keyframes cellIn { from { opacity: 0; transform: translateY(6px) scale(0.6); } }
   .tcell {
     flex: none;
-    height: 28px;
-    border: none;
-    background: none;
+    width: 100%;
     color: var(--fg-muted);
     font-family: var(--font-mono);
     font-size: 0.85rem;
     line-height: 1;
-    display: inline-flex;
+    display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: color 0.12s ease;
-    animation: cellIn 0.34s calc(var(--ci, 0) * 24ms) both cubic-bezier(0.34, 1.6, 0.5, 1);
+    pointer-events: none; /* the tape handles all the pointer work */
+    animation: cellIn 0.3s calc(var(--ci, 0) * 24ms) both cubic-bezier(0.34, 1.6, 0.5, 1);
   }
   .tcell sub { font-size: 0.62em; margin-left: 0.02em; }
-  .tcell:hover { color: var(--accent); }
-  .tcell.on { color: var(--g2); font-weight: 650; }
-  /* the draggable selector — grab it and slide it across the stationary tape */
+  .tcell.on { color: var(--g2); font-weight: 650; transition: color 0.15s ease; }
+  /* the selector thumb — purely visual; the tape drives it. It rests on the
+     bottom cell and rides UP (translateY) to the selected piece. */
   .selector {
     position: absolute;
-    top: 3px;
     left: 3px;
-    height: 28px;
+    bottom: 3px;
     border-radius: 7px;
     border: 1.5px solid var(--g2);
     background: color-mix(in oklab, var(--g1) 16%, transparent);
     box-shadow: 0 1px 6px -2px color-mix(in oklab, var(--g2) 70%, transparent);
-    cursor: grab;
-    touch-action: none;
+    pointer-events: none;
+    /* sticky + bouncy: it snaps to a cell and rides there with an overshoot */
+    transition: transform 0.24s cubic-bezier(0.34, 1.7, 0.5, 1);
   }
-  .selector.grabbing { cursor: grabbing; }
-  /* sticky + bouncy: it always snaps to a cell, and rides there with an
-     overshoot so each step springs into place */
-  .selector { transition: transform 0.24s cubic-bezier(0.34, 1.7, 0.5, 1); }
 
-  /* ---- the tree toggle (⚘) + its view-selector pop-out, bottom-right ---- */
+  /* ---- the tree toggle (⚘) + its view-selector pop-out, in the bar ---- */
   /* the wrap holds only the toggle in flow (the pop floats above, absolute), so
      revealing the selectors never nudges the toggle sideways */
   .selectors-wrap {
-    position: absolute;
-    right: 0.5rem;
-    bottom: 2.1rem;
-    z-index: 20;
+    display: inline-flex;
   }
   .selectors-pop {
     position: absolute;
