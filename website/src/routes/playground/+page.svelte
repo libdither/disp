@@ -254,6 +254,10 @@
   let viz = $state<{ expr: string; defs: Record<string, T>; atoms: Map<string, number> } | null>(null)
   let vizCtl: TreeValueCtl | null = null
   let vizApi: { setProgram: (expr: string, newDefs?: Record<string, T>) => void } | null = null
+  // the panel is sized to FIT (no scrollbar): the drawing gets whatever the
+  // body height leaves after the instrument's own chrome (readout + edit +
+  // transport ≈ 235px)
+  let vizBodyH = $state(0)
 
   // seed the panel: in place when it's already open (the tree animates from
   // its current drawing — no remount flash), fresh mount otherwise
@@ -1137,24 +1141,23 @@
 
     {#if viz}
       <aside class="viz-panel">
-        <div class="viz-head">
-          <span class="viz-title">reduction</span>
-          <span class="viz-sub">green pods hold real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Orange fruit is a free name: purely symbolic. Edit the expression to apply arguments.</span>
-          <button class="x" onclick={() => { viz = null; vizApi = null }} aria-label="close visualizer">×</button>
-        </div>
-        <div class="viz-body">
-          <TreeVis
-            variant="lab"
-            exprs={[viz.expr]}
-            height={430}
-            defs={viz.defs}
-            resolveDef={resolveScopeDef}
-            minimal
-            {onPodOpen}
-            {engineStep}
-            api={(a) => (vizApi = a)}
-            namesHint="Names resolve against the playground's scope and arrive as green pods (real structure, folded shut). Names too large to ship stay orange fruit — stepping hands their applications to the real evaluator and splices the result back."
-          />
+        <button class="viz-x" onclick={() => { viz = null; vizApi = null }} aria-label="close visualizer">×</button>
+        <div class="viz-body" bind:clientHeight={vizBodyH}>
+          {#if vizBodyH > 0}
+            <TreeVis
+              variant="lab"
+              exprs={[viz.expr]}
+              height={Math.max(200, vizBodyH - 235)}
+              defs={viz.defs}
+              resolveDef={resolveScopeDef}
+              minimal
+              lazyParse
+              {onPodOpen}
+              {engineStep}
+              api={(a) => (vizApi = a)}
+              namesHint="Green pods are real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Names resolve against the playground's scope; ones too large to ship stay orange fruit, and stepping hands their applications to the real evaluator."
+            />
+          {/if}
         </div>
       </aside>
     {/if}
@@ -1617,50 +1620,42 @@
   }
 
   /* ---- the reduction-visualizer pop-out ---- */
+  /* no header, no scrollbar: the drawing is sized to what the body leaves
+     after the instrument's own chrome; the close button floats. The panel
+     explanation lives in the instrument's ⓘ (namesHint). */
   .viz-panel {
+    position: relative;
     width: clamp(24rem, 42%, 46rem);
     min-width: 0;
     display: flex;
     flex-direction: column;
     border-left: 1px solid var(--border);
     background: var(--bg);
-    overflow-y: auto;
+    overflow: hidden;
   }
-  .viz-head {
-    display: flex;
-    align-items: baseline;
-    gap: 0.6rem;
-    padding: 0.55rem 0.8rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-elev);
-    position: sticky;
-    top: 0;
-    z-index: 2;
-  }
-  .viz-title {
-    font-weight: 600;
-    font-size: 0.85rem;
-    white-space: nowrap;
-  }
-  .viz-sub {
-    font-size: 0.74rem;
-    color: var(--fg-faint);
-  }
-  .viz-head .x {
-    margin-left: auto;
+  .viz-x {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.5rem;
+    z-index: 5;
     background: none;
     border: none;
     color: var(--fg-faint);
-    font-size: 1.1rem;
+    font-size: 1.2rem;
     cursor: pointer;
-    padding: 0 0.2rem;
-    align-self: center;
+    padding: 0.1rem 0.3rem;
   }
-  .viz-head .x:hover {
+  .viz-x:hover {
     color: var(--fg);
   }
   .viz-body {
-    padding: 0.6rem;
+    flex: 1;
+    min-height: 0;
+    padding: 0.4rem 0.6rem;
+  }
+  /* the instrument's lab frame brings page margins the panel doesn't want */
+  .viz-body :global(.vis.lab) {
+    margin: 0;
   }
   @media (max-width: 900px) {
     .stage {

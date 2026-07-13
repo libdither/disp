@@ -66,6 +66,10 @@
     // the reduction the elaborator pre-applies, shown as one step. null =
     // the engine couldn't (unbound name, divergent, or oversized result).
     engineStep?: (name: string, args: T[]) => Promise<T | null>
+    // parse with EVERY application held as an apply node: expressions arrive
+    // carrying their construction work, so the reducer always has visible
+    // steps (the playground panel's posture) instead of a pre-built tree
+    lazyParse?: boolean
     // imperative handle: re-seed the instrument IN PLACE (new program + defs)
     // — the tree animates from its current drawing instead of remounting
     api?: (a: { setProgram: (expr: string, newDefs?: Record<string, T>) => void }) => void
@@ -101,6 +105,7 @@
     namesHint = undefined,
     onPodOpen = undefined,
     engineStep = undefined,
+    lazyParse = false,
     api = undefined
   }: Props = $props()
 
@@ -246,7 +251,7 @@
     let t: T
     try {
       const lazyTop = PIECES.find((p) => p.expr === input)?.lazyTop ?? false
-      t = parseTree(input, activeDefs, { lazyTop })
+      t = parseTree(input, activeDefs, { lazyTop, lazyAll: lazyParse })
     } catch {
       editInvalid = true
       return
@@ -803,6 +808,7 @@
       // showing the toy combinators' structure, so it keeps drawing them open
       cur = parseTree(src, activeDefs, {
         lazyTop,
+        lazyAll: lazyParse,
         onDefSplice: podMode ? (node, name) => folded.set(node, name) : undefined
       })
       // everything visible at load is 'seen': later auto-folds only ever

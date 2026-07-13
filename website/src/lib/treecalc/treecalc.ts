@@ -439,6 +439,10 @@ export function parseTree(
   defs: Record<string, T> = DEFS,
   opts: {
     lazyTop?: boolean
+    // EVERY application materializes as an apply node (not just the top):
+    // the construction rules fire as visible steps, so a parsed expression
+    // arrives with reduction work instead of a pre-built normal form
+    lazyAll?: boolean
     // called once per defs substitution with the spliced (fresh) subtree —
     // lets a host track "this region came in folded under `name`" (the
     // visualizer's collapsed pods) by object identity
@@ -540,9 +544,9 @@ export function parseTree(
       if (sPending) {
         e = stem(stem(arg))
         sPending = false
-      } else if (opts.lazyTop && isTop && isLast) {
-        // hold the last top-level application unreduced so its construction
-        // rule (leaf → stem, or stem → fork) fires as a visible step
+      } else if (opts.lazyAll || (opts.lazyTop && isTop && isLast)) {
+        // hold the application unreduced so its construction rule (leaf →
+        // stem, or stem → fork) fires as a visible step
         e = { tag: 'apply', f: e, x: arg }
       } else {
         e = app(e, arg)
