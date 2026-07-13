@@ -4,6 +4,7 @@
 // per-item progress).
 
 import { parseProgram, type Decl, type ParseItemStats } from '../../../../src/compile.ts'
+import { moduleCacheBySession } from '../../../../src/elab/state.ts'
 import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
@@ -118,9 +119,12 @@ export class DispRunner {
       else outcome.errorLine = guessErrorLine(outcome.error, source)
     }
     // Names before pretty (the printer is name-aware); `__`-prefixed
-    // scaffolding (the REPL's __it) stays out of the name table.
+    // scaffolding (the REPL's __it) stays out of the name table. Root defs
+    // register first (they win over module exports for shared handles),
+    // then everything the buffer's opens brought into scope.
     for (const [name, d] of rootDefs)
       if (!name.startsWith('__') && !this.#names.has(d.handle)) this.#names.set(d.handle, name)
+    this.#registerScopeNames()
     this.#lastDefs = new Map([...rootDefs].map(([n, d]) => [n, d.handle]))
     for (const [name, d] of rootDefs)
       outcome.defs.push({
@@ -176,6 +180,43 @@ export class DispRunner {
     }
     outcome.defs = outcome.defs.filter((d) => d.name !== '__it')
     return outcome
+  }
+
+  // Register every open'd module export in the handle→name table, so values
+  // render with the names actually in scope: `quadruple`'s body shows the
+  // NAME `double`, not its expansion — hash-consing makes a scope binding's
+  // tree and its embedded occurrences the same handle, and the module cache
+  // holds the exports whether the kernel was elaborated cold or restored
+  // from the snapshot. Tiny trees are skipped: the smallest constants
+  // collide across meanings (§2.6: one tree is true, zero, nil, K's head at
+  // once), so naming them would mislabel ordinary structural glue.
+  #registerScopeNames(): void {
+    const cache = moduleCacheBySession.get(this.#session as unknown as Session<Tree>)
+    if (!cache) return
+    for (const entry of cache.values()) {
+      if (!entry.fields || !entry.fieldTrees) continue
+      for (let i = 0; i < entry.fields.length; i++) {
+        const name = entry.fields[i]
+        const h = entry.fieldTrees[i] as unknown as number
+        if (h == null || name.startsWith('__') || this.#names.has(h)) continue
+        if (this.#hasAtLeastNodes(h, 4)) this.#names.set(h, name)
+      }
+    }
+  }
+
+  // early-exit node count: does the tree have at least `min` nodes?
+  #hasAtLeastNodes(h: number, min: number): boolean {
+    let count = 0
+    const stack = [h]
+    while (stack.length > 0) {
+      const cur = stack.pop()!
+      count++
+      if (count >= min) return true
+      const c = this.#session.classify(cur)
+      if (c.tag === 'stem') stack.push(c.child)
+      else if (c.tag === 'fork') stack.push(c.left, c.right)
+    }
+    return false
   }
 
   // ---- value decoding ----------------------------------------------------

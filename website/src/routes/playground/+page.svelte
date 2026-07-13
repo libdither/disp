@@ -103,7 +103,7 @@
     // A run that just paid the one-time kernel elaboration is exempt: its
     // slowness says nothing about the buffer.
     if (live && !opts?.coldLoad && out.elapsedMs > 2500) {
-      setLive(false)
+      setLive(false, { persist: false })
       toast(`live re-check paused — the last run took ${fmtMs(out.elapsedMs)}. Re-enable it in the toolbar.`)
     }
   }
@@ -162,11 +162,14 @@
     }, 350)
   }
 
-  function setLive(v: boolean) {
+  // `persist: false` = the auto-pause path: session-only, so a slow buffer
+  // today doesn't leave live mode silently off for every future visit
+  function setLive(v: boolean, opts?: { persist?: boolean }) {
     live = v
-    try {
-      localStorage.setItem(LS_LIVE, v ? '1' : '0')
-    } catch {}
+    if (opts?.persist !== false)
+      try {
+        localStorage.setItem(LS_LIVE, v ? '1' : '0')
+      } catch {}
     if (!v) clearTimeout(editTimer)
     else {
       const doc = editorApi?.getDoc() ?? currentDoc

@@ -44,6 +44,14 @@ if (!out1.defs.some(d => d.name === 'quadruple' && d.line === 3)) {
   console.error('FAIL: exported def missing line attribution')
   process.exit(1)
 }
+// scope names alias inside values: quadruple = the composition glue around
+// the NAME double (module exports registered from the module cache; the
+// embedded occurrences are hash-cons-identical to the scope binding)
+const quad = out1.defs.find(d => d.name === 'quadruple')
+if (!quad?.pretty?.includes('double')) {
+  console.error(`FAIL: quadruple should render via the scope name 'double', got: ${quad?.pretty}`)
+  process.exit(1)
+}
 
 console.log('--- run 2: warm rerun (module cache) ---')
 const t1 = Date.now()
