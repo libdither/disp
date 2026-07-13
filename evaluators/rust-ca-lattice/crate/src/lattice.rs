@@ -108,6 +108,10 @@ pub struct AgentCell {
     /// Shadow-net agent id. Observer state only: no transition's enabledness or effect
     /// reads it.
     pub sid: u32,
+    /// True while this agent belongs to a still-unfolding seed complex: some of its wires
+    /// dangle until siblings land, so fires and reels must leave it alone. Cleared when
+    /// the seed finalizes.
+    pub nascent: bool,
 }
 
 impl AgentCell {
@@ -138,17 +142,61 @@ impl WireCell {
     pub fn with_he(&self, h: He) -> Option<Strand> { self.iter().find(|s| s.contains(h)) }
 }
 
+/// One emission of a growing seed: a fresh agent, or one cell's worth of strands.
 #[derive(Clone, Debug)]
-pub enum Cell { Agent(AgentCell), Wire(WireCell) }
+pub enum GrowItem {
+    Agent { cell: Pos, k: usize },
+    Strands { cell: Pos, strands: Vec<Strand> },
+}
+
+/// The unfold script a docked pair executes: the stamp template cut into per-cell
+/// emissions (outside cells first, then the producer cell's final content, then the
+/// consumer cell's — the driver replaces itself last). Immutable; shared by the two
+/// seed cells via Rc.
+#[derive(Debug)]
+pub struct GrowPlan {
+    pub rule: &'static crate::rules::Rule,
+    pub a: Pos,
+    pub b: Pos,
+    pub items: Vec<GrowItem>,
+    pub fresh_tags: Vec<Tag>,
+    pub fresh_faces: Vec<[Option<He>; 3]>,
+    pub fresh_sids: Vec<u32>,
+    /// Every cell the plan will write outside the pair (the reservation set).
+    pub cells: Vec<Pos>,
+}
+
+/// A dying pair mid-unfold. The driver (consumer side) executes the plan; the partner
+/// (producer side) just holds its cell and anchors until its final content lands.
+/// `faces` keeps the dying agent's faces: the external anchors stay physically here.
+#[derive(Clone, Debug)]
+pub struct SeedCell {
+    pub plan: std::rc::Rc<GrowPlan>,
+    pub step: usize,
+    pub driver: bool,
+    pub faces: [Option<He>; 3],
+    /// The dying agent's tag, kept so an aborted seed can restore the pair verbatim.
+    pub tag: Tag,
+    /// Consecutive waiting ticks (driver only); past SEED_PATIENCE the seed aborts.
+    pub stall: u32,
+}
+
+#[derive(Clone, Debug)]
+pub enum Cell { Agent(AgentCell), Wire(WireCell), Seed(SeedCell) }
 
 pub struct Grid {
     pub cells: BTreeMap<Pos, Cell>,
     pub transport: u64, // reel count (the transport grade of the ledger)
     pub topo: Topo,
+    /// Cells claimed by growing seeds (cell -> driver). A reservation keeps everyone ELSE
+    /// out (fires, reel trails, slide destinations) so a claimed cell can only get freer;
+    /// the seed emits into it once it is empty.
+    pub reserved: BTreeMap<Pos, Pos>,
+    pub seed_count: usize,
 }
 
 impl Grid {
-    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo } }
+    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo, reserved: BTreeMap::new(), seed_count: 0 } }
 
     pub fn agent(&self, p: Pos) -> Option<&AgentCell> {
         match self.cells.get(&p) { Some(Cell::Agent(a)) => Some(a), _ => None }
@@ -158,13 +206,24 @@ impl Grid {
     }
     pub fn is_empty(&self, p: Pos) -> bool { !self.cells.contains_key(&p) }
 
-    /// All faces in use at a cell (agent ports or strand ends).
+    /// All faces in use at a cell (agent ports, strand ends, or a seed's held anchors).
     pub fn used_hes(&self, p: Pos) -> Vec<He> {
         match self.cells.get(&p) {
             None => vec![],
             Some(Cell::Agent(a)) => a.used_hes(),
             Some(Cell::Wire(w)) => w.used_hes(),
+            Some(Cell::Seed(s)) => s.faces.iter().flatten().copied().collect(),
         }
+    }
+    /// Empty, in bounds, and not claimed by a seed: the only cells anyone may grow into.
+    pub fn is_open(&self, p: Pos) -> bool {
+        self.topo.in_bounds(p) && self.is_empty(p) && !self.reserved.contains_key(&p)
+    }
+    pub fn has_seeds(&self) -> bool { self.seed_count > 0 }
+    pub fn seed_drivers(&self) -> Vec<Pos> {
+        self.cells.iter().filter_map(|(p, c)| match c {
+            Cell::Seed(s) if s.driver => Some(*p), _ => None,
+        }).collect()
     }
     pub fn strand_count(&self, p: Pos) -> usize {
         match self.cells.get(&p) { Some(Cell::Wire(w)) => w.count(), _ => 0 }
@@ -177,7 +236,8 @@ impl Grid {
             Some(Cell::Wire(w)) => {
                 w.count() < WIRE_CAP && !w.used_hes().iter().any(|h| s.contains(*h))
             }
-            Some(Cell::Agent(_)) => false, // no coexistence on the lifted lattice
+            // no coexistence on the lifted lattice; seeds hold their cells exclusively
+            Some(Cell::Agent(_)) | Some(Cell::Seed(_)) => false,
         }
     }
     pub fn add_strand(&mut self, p: Pos, s: Strand) {
@@ -187,7 +247,7 @@ impl Grid {
                 let slot = w.strands.iter_mut().find(|x| x.is_none()).unwrap();
                 *slot = Some(s);
             }
-            Cell::Agent(_) => unreachable!(),
+            Cell::Agent(_) | Cell::Seed(_) => unreachable!(),
         }
     }
     pub fn remove_strand(&mut self, p: Pos, s: Strand) {
@@ -212,27 +272,30 @@ impl Grid {
     }
 
     /// Follow the wire leaving `pos` through face `out` to the far agent port.
-    /// Strands pass through; an agent port terminates.
-    pub fn trace(&self, pos: Pos, out: He) -> (Pos, usize) {
+    /// Strands pass through; an agent port terminates. Returns None on anything a live
+    /// unfold makes temporarily untraceable: a seed cell, a dangling half-edge, a missing
+    /// port. Callers that gate on the far end (reel, clear) PARK on None.
+    pub fn try_trace(&self, pos: Pos, out: He) -> Option<(Pos, usize)> {
         let (mut cur, mut h) = (pos, out);
         for _ in 0..1_000_000 {
             let next = step(cur, h);
             let enter = he_opp(h);
             match self.cells.get(&next) {
-                Some(Cell::Agent(a)) => {
-                    let port = a.port_at(enter)
-                        .unwrap_or_else(|| panic!("wire enters {next:?} at {enter:?} but no port there"));
-                    return (next, port);
-                }
+                Some(Cell::Agent(a)) => return a.port_at(enter).map(|port| (next, port)),
                 Some(Cell::Wire(w)) => {
-                    let s = w.with_he(enter)
-                        .unwrap_or_else(|| panic!("wire enters {next:?} at {enter:?} but no strand there"));
+                    let s = w.with_he(enter)?;
                     cur = next; h = s.other(enter);
                 }
-                None => panic!("dangling wire: {cur:?} -> {next:?} is empty"),
+                Some(Cell::Seed(_)) => return None,
+                None => return None,
             }
         }
-        panic!("trace did not terminate (wire cycle?)");
+        None
+    }
+    /// Panicking form for the checker and readback, which only run at seed-free points.
+    pub fn trace(&self, pos: Pos, out: He) -> (Pos, usize) {
+        self.try_trace(pos, out)
+            .unwrap_or_else(|| panic!("broken wire tracing from {pos:?} out {out:?}"))
     }
 
     pub fn agents(&self) -> impl Iterator<Item = (Pos, &AgentCell)> {
@@ -253,6 +316,7 @@ impl Grid {
     /// Every lattice agent's every port, traced along strands, lands where the shadow says;
     /// agent multisets agree; every occupied face pairs with its neighbor's opposite face.
     pub fn check_projection(&self, shadow: &Net) {
+        assert!(self.seed_count == 0, "projection is only defined at seed-free points");
         // face parity
         for (p, _) in self.cells.iter() {
             for h in self.used_hes(*p) {
@@ -363,7 +427,7 @@ fn try_embed(shadow: &Net, topo: Topo, spacing: i32) -> Option<Grid> {
     let mut grid = Grid::new(topo);
     for (id, p) in &posn {
         let tag = shadow.get(*id).tag;
-        grid.cells.insert(*p, Cell::Agent(AgentCell { tag, faces: [None; 3], sid: *id }));
+        grid.cells.insert(*p, Cell::Agent(AgentCell { tag, faces: [None; 3], sid: *id, nascent: false }));
     }
 
     // Route each abstract link once (canonical endpoint order).

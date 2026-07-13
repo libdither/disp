@@ -35,7 +35,7 @@
 //! ordering-resilience story; the semantic half is strong confluence (tc-net.typ Thm 2)
 //! carried by the projection invariant, asserted per transition in checked runs.
 
-use crate::lattice::{dir_to, manhattan, step, AgentCell, Cell, Dir, Grid, He, Pos, Strand, DIRS, WIRE_CAP};
+use crate::lattice::{dir_to, manhattan, step, AgentCell, Cell, Dir, Grid, GrowItem, GrowPlan, He, Pos, SeedCell, Strand, DIRS, WIRE_CAP};
 use crate::net::Net;
 use crate::rules::{find, End, Rule, Tag};
 use std::collections::{BTreeMap, BTreeSet};
@@ -140,11 +140,11 @@ enum PEnd {
 /// (not adjacent-facing, or no feasible local layout — the pair waits).
 pub fn plan_fire(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
     let cons = grid.agent(cpos)?;
-    if !cons.tag.is_consumer() { return None; }
+    if !cons.tag.is_consumer() || cons.nascent { return None; }
     let d0 = cons.faces[0]?;
     let ppos = step(cpos, d0);
     let prod = grid.agent(ppos)?;
-    if !prod.tag.is_producer() { return None; }
+    if !prod.tag.is_producer() || prod.nascent { return None; }
     // The principal wire must be the direct edge between them.
     if prod.faces[0] != Some(d0.opp()) { return None; }
     let rule = find(cons.tag, prod.tag)
@@ -158,10 +158,12 @@ pub fn plan_fire(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
     let mut outside: BTreeMap<Pos, Vec<He>> = BTreeMap::new();
     for &p in &board {
         if p == cpos || p == ppos { continue; }
+        if grid.reserved.contains_key(&p) { outside.insert(p, grid.used_hes(p)); continue; }
         match grid.cells.get(&p) {
             None => { placeable.insert(p); wireable.insert(p, (0, vec![])); }
             Some(Cell::Wire(w)) => { wireable.insert(p, (w.count(), w.used_hes())); }
             Some(Cell::Agent(a)) => { outside.insert(p, a.used_hes()); }
+            Some(Cell::Seed(s)) => { outside.insert(p, s.faces.iter().flatten().copied().collect()); }
         }
     }
     // Ring-adjacent cells outside the board still bound edge capacity; collect their view.
@@ -524,15 +526,15 @@ fn synth_template(topo: crate::lattice::Topo, cons: &AgentCell, prod: &AgentCell
     let a = (0, 0, zs);
     let b = step(a, d0);
     let mut g = Grid::new(topo);
-    g.cells.insert(a, Cell::Agent(AgentCell { tag: cons.tag, faces: cons.faces, sid: 0 }));
-    g.cells.insert(b, Cell::Agent(AgentCell { tag: prod.tag, faces: prod.faces, sid: 1 }));
+    g.cells.insert(a, Cell::Agent(AgentCell { tag: cons.tag, faces: cons.faces, sid: 0, nascent: false }));
+    g.cells.insert(b, Cell::Agent(AgentCell { tag: prod.tag, faces: prod.faces, sid: 1, nascent: false }));
     let mut blk = 10u32;
     for (cell, ag) in [(a, cons), (b, prod)] {
         for i in 1..ag.tag.arity() {
             let far = step(cell, ag.face_of(i));
             let mut faces = [None; 3];
             faces[0] = Some(ag.face_of(i).opp());
-            g.cells.insert(far, Cell::Agent(AgentCell { tag: Tag::Out, faces, sid: blk }));
+            g.cells.insert(far, Cell::Agent(AgentCell { tag: Tag::Out, faces, sid: blk, nascent: false }));
             blk += 1;
         }
     }
@@ -544,11 +546,11 @@ fn synth_template(topo: crate::lattice::Topo, cons: &AgentCell, prod: &AgentCell
 /// workshop template, offset to the live pair, and validated by freeness reads only.
 pub fn plan_fire_stamp(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
     let cons = grid.agent(cpos)?;
-    if !cons.tag.is_consumer() { return None; }
+    if !cons.tag.is_consumer() || cons.nascent { return None; }
     let d0 = cons.faces[0]?;
     let ppos = step(cpos, d0);
     let prod = grid.agent(ppos)?;
-    if !prod.tag.is_producer() { return None; }
+    if !prod.tag.is_producer() || prod.nascent { return None; }
     if prod.faces[0] != Some(d0.opp()) { return None; }
     let bilayer = matches!(grid.topo, crate::lattice::Topo::Bilayer);
     let zs = if bilayer { cpos.2 } else { 0 };
@@ -566,14 +568,14 @@ pub fn plan_fire_stamp(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
     let mut fresh_cells = Vec::with_capacity(tpl.fresh_cells.len());
     for p in &tpl.fresh_cells {
         let q = mv(*p);
-        if q != cpos && q != ppos && (!grid.topo.in_bounds(q) || !grid.is_empty(q)) { return None; }
+        if q != cpos && q != ppos && !grid.is_open(q) { return None; }
         footprint.insert(q);
         fresh_cells.push(q);
     }
     let mut strands = Vec::with_capacity(tpl.strands.len());
     for (p, s) in &tpl.strands {
         let q = mv(*p);
-        if q != cpos && q != ppos && (!grid.topo.in_bounds(q) || !grid.is_empty(q)) { return None; }
+        if q != cpos && q != ppos && !grid.is_open(q) { return None; }
         footprint.insert(q);
         strands.push((q, *s));
     }
@@ -605,6 +607,7 @@ pub fn apply_fire(grid: &mut Grid, shadow: &mut Net, plan: &FirePlan) {
             tag: plan.rule.fresh[k],
             faces: plan.fresh_faces[k],
             sid: fresh_sids[k],
+            nascent: false,
         });
     }
 }
@@ -643,13 +646,14 @@ fn make_board(grid: &Grid, a: Pos, b: Pos) -> BTreeSet<Pos> {
 /// straight-behind bend and the corner detour are just its 1-cell and 3-cell routes.
 pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
     let ag = grid.agent(apos)?;
-    if !ag.tag.is_producer() { return None; }
+    if !ag.tag.is_producer() || ag.nascent { return None; }
     let d = ag.faces[0]?;
     let npos = step(apos, d);
+    if grid.reserved.contains_key(&npos) { return None; } // a seed claimed it: park, the strand will be slid
     let w = grid.wire(npos)?; // agent-adjacent is fire's business; empty is impossible (parity)
-    let (far_pos, far_port) = grid.trace(apos, d);
-    let far = grid.agent(far_pos).expect("trace ends at an agent");
-    if far_port != 0 || !far.tag.is_consumer() { return None; } // no fire awaits: stay parked
+    let (far_pos, far_port) = grid.try_trace(apos, d)?; // untraceable (seed mid-unfold): park
+    let far = grid.agent(far_pos)?;
+    if far_port != 0 || !far.tag.is_consumer() || far.nascent { return None; } // no fire awaits: stay parked
     let mine = w.with_he(d.opp())?;
     let f = mine.other(d.opp());
     // No coexistence on the lifted lattice: a shared cell makes the walker WAIT (the old
@@ -662,10 +666,12 @@ pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
     for &p in &board {
         if p == npos { continue; }
         if p == apos { wireable.insert(p, (0, vec![])); continue; } // vacated
+        if grid.reserved.contains_key(&p) { outside.insert(p, grid.used_hes(p)); continue; }
         match grid.cells.get(&p) {
             None => { wireable.insert(p, (0, vec![])); }
             Some(Cell::Wire(wc)) => { wireable.insert(p, (wc.count(), wc.used_hes())); }
             Some(Cell::Agent(a)) => { outside.insert(p, a.used_hes()); }
+            Some(Cell::Seed(s)) => { outside.insert(p, s.faces.iter().flatten().copied().collect()); }
         }
     }
     for &p in &board {
@@ -724,6 +730,7 @@ pub fn apply_reel(grid: &mut Grid, plan: &ReelPlan) {
         tag: ag.tag,
         faces: plan.new_faces,
         sid: ag.sid,
+        nascent: false,
     });
     grid.transport += 1;
 }
@@ -745,6 +752,7 @@ fn rewire_face(grid: &mut Grid, p: Pos, from: He, to: He) {
                 .unwrap_or_else(|| panic!("no strand half {from:?} at {p:?}"));
             *slot = if slot.a == from { Strand::new(to, slot.b) } else { Strand::new(slot.a, to) };
         }
+        Some(Cell::Seed(_)) => panic!("rewire on a seed cell {p:?}"),
         None => panic!("rewire on empty cell {p:?}"),
     }
 }
@@ -773,6 +781,11 @@ pub struct RetractPlan {
 /// ```
 pub fn plan_retract(grid: &Grid, c1: Pos) -> Option<RetractPlan> {
     let w1 = grid.wire(c1)?;
+    // Seed territory is untouchable: reserved cells hold half-wired template strands whose
+    // geometry LOOKS retractable but whose parity is pending.
+    let shielded = |p: Pos| grid.reserved.contains_key(&p)
+        || matches!(grid.cells.get(&p), Some(Cell::Seed(_)));
+    if shielded(c1) { return None; }
     for s1 in w1.iter() {
         for (e, d) in [(s1.a, s1.b), (s1.b, s1.a)] {
             if e == d.opp() { continue; }              // straight strand: no elbow
@@ -780,7 +793,11 @@ pub fn plan_retract(grid: &Grid, c1: Pos) -> Option<RetractPlan> {
             let Some(w2) = grid.wire(c2) else { continue };
             let Some(s2) = w2.with_he(d.opp()) else { continue };
             if s2.other(d.opp()) != e { continue; }    // partner elbow must exit the same side
+            if shielded(c2) { continue; }
             let (f1, f2) = (step(c1, e), step(c2, e));
+            // A seed's anchor faces are frozen and its territory shielded: never rewire a
+            // flank that is a seed cell or reserved.
+            if shielded(f1) || shielded(f2) { continue; }
             // The new direct edge f1—f2 must be free on both faces.
             if grid.used_hes(f1).contains(&d) || grid.used_hes(f2).contains(&d.opp()) { continue; }
             return Some(RetractPlan {
@@ -825,8 +842,14 @@ pub struct SlidePlan {
 ///      na ─ p ─ nb          na   ·   nb          (side view: the strand now rides the
 ///                      ⇒     └ ─ ─ ─ ┘            next plane; p is free for the walker)
 /// ```
-pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos]) -> Option<SlidePlan> {
+pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: bool) -> Option<SlidePlan> {
     let (na, nb) = (step(p, s.a), step(p, s.b));
+    // Seed territory is untouchable from outside; the owning seed may slide SQUATTERS out
+    // of its own reserved cells (pre-dock wires), whose parity is real.
+    if !from_seed && grid.reserved.contains_key(&p) { return None; }
+    let shielded = |q: Pos| grid.reserved.contains_key(&q)
+        || matches!(grid.cells.get(&q), Some(Cell::Seed(_)));
+    if shielded(na) || shielded(nb) { return None; }
     let board = make_board(grid, p, p);
     let blocked = |c: Pos| c == p || c == na || c == nb || avoid.contains(&c);
     // Trails run through EMPTY cells only. This is load-bearing for termination: a slide
@@ -841,7 +864,7 @@ pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos]) -> Option<Slide
     for da in DIRS {
         if grid.used_hes(na).contains(&da) { continue; }
         let t0 = step(na, da);
-        if blocked(t0) || !board.contains(&t0) || !grid.is_empty(t0) || seen.contains_key(&t0) { continue; }
+        if blocked(t0) || !board.contains(&t0) || !grid.is_open(t0) || seen.contains_key(&t0) { continue; }
         seen.insert(t0, (da.opp(), t0)); // self-parent marks a root
         queue.push_back(t0);
     }
@@ -899,14 +922,247 @@ pub fn apply_slide(grid: &mut Grid, plan: &SlidePlan) {
 /// Returns the blocked cell and the foreign strands there (the CLEAR phase's targets).
 pub fn reel_blocked(grid: &Grid, apos: Pos) -> Option<(Pos, Vec<Strand>)> {
     let ag = grid.agent(apos)?;
-    if !ag.tag.is_producer() { return None; }
+    if !ag.tag.is_producer() || ag.nascent { return None; }
     let d = ag.faces[0]?;
     let npos = step(apos, d);
+    if grid.reserved.contains_key(&npos) { return None; } // seed territory: park
     let w = grid.wire(npos)?;
     if w.count() <= 1 { return None; }
-    let (far_pos, far_port) = grid.trace(apos, d);
-    let far = grid.agent(far_pos).expect("trace ends at an agent");
-    if far_port != 0 || !far.tag.is_consumer() { return None; }
+    let (far_pos, far_port) = grid.try_trace(apos, d)?;
+    let far = grid.agent(far_pos)?;
+    if far_port != 0 || !far.tag.is_consumer() || far.nascent { return None; }
     let mine = w.with_he(d.opp())?;
     Some((npos, w.iter().filter(|s| *s != mine).collect()))
+}
+
+// =========================================================================================
+// GROW FIRE: dock-and-extrude. Where the atomic stamp requires its whole layout free NOW,
+// the grow dock RESERVES the layout's cells (free or not) and unfolds one cell per tick as
+// they open: reservations keep everyone else out (so claimed cells only get freer), squat-
+// ting wires are slid out on demand, and the two dying cells finalize last (the driver
+// replaces itself at the end). The shadow fires at DOCK — the linearization point — so
+// mid-unfold lattice states are checked at seed-free quiescence, and nascent products are
+// fenced (no fires, no reels) until their complex completes.
+// =========================================================================================
+
+#[derive(Debug)]
+pub struct DockPlan {
+    pub cpos: Pos,
+    pub ppos: Pos,
+    pub rule: &'static Rule,
+    pub cfaces: [Option<He>; 3],
+    pub pfaces: [Option<He>; 3],
+    pub items: Vec<GrowItem>,
+    pub fresh_tags: Vec<Tag>,
+    pub fresh_faces: Vec<[Option<He>; 3]>,
+    pub cells: Vec<Pos>,
+}
+
+/// How many consecutive ticks a seed may WAIT before it aborts: emitted geometry is
+/// deleted (it is shielded, so nothing external references it), the pair is restored, and
+/// other planners get their chance. Possible only because the shadow fires at COMPLETION,
+/// not at dock — mid-unfold products are pure geometry.
+const SEED_PATIENCE: u32 = 8;
+
+/// Dockability: the same template the stamp uses, but the outside cells need only be
+/// UNCLAIMED and agent-free — occupied wire cells are acceptable squatters (the unfold
+/// slides them out); agents are not (they only move by reeling, on their own schedule).
+pub fn plan_grow_dock(grid: &Grid, cpos: Pos) -> Option<DockPlan> {
+    let cons = grid.agent(cpos)?;
+    if !cons.tag.is_consumer() || cons.nascent { return None; }
+    let d0 = cons.faces[0]?;
+    let ppos = step(cpos, d0);
+    let prod = grid.agent(ppos)?;
+    if !prod.tag.is_producer() || prod.nascent { return None; }
+    if prod.faces[0] != Some(d0.opp()) { return None; }
+    let bilayer = matches!(grid.topo, crate::lattice::Topo::Bilayer);
+    let zs = if bilayer { cpos.2 } else { 0 };
+    let key: StampKey = (cons.tag, prod.tag, d0, cons.faces, prod.faces, zs, bilayer);
+    let tpl = {
+        let m = STAMPS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+        let mut m = m.lock().unwrap();
+        m.entry(key).or_insert_with(|| synth_template(grid.topo, cons, prod, d0, zs)).clone()
+    }?;
+    let off = (cpos.0, cpos.1, cpos.2 - zs);
+    let mv = |p: Pos| (p.0 + off.0, p.1 + off.1, p.2 + off.2);
+    let rule = find(cons.tag, prod.tag).unwrap();
+
+    // Outside cells: reservable iff in bounds, not reserved by anyone, not agent/seed-held,
+    // and any squatting WIRE cell must be slideable RIGHT NOW (else a dock could deadlock:
+    // the reservation parks walkers while the unslideable squatter never leaves).
+    let mut cells: Vec<Pos> = vec![];
+    let mut outside_ok = |q: Pos| -> bool {
+        if q == cpos || q == ppos { return true; }
+        if !grid.topo.in_bounds(q) || grid.reserved.contains_key(&q) { return false; }
+        match grid.cells.get(&q) {
+            None => {}
+            Some(Cell::Wire(w)) => {
+                if !w.iter().any(|s| plan_slide(grid, q, s, &[], true).is_some()) { return false; }
+            }
+            _ => return false,
+        }
+        if !cells.contains(&q) { cells.push(q); }
+        true
+    };
+    for p in &tpl.fresh_cells { if !outside_ok(mv(*p)) { return None; } }
+    for (p, _) in &tpl.strands { if !outside_ok(mv(*p)) { return None; } }
+
+    // Items: outside agents, outside strand-cells, then the pair's finals (B before A).
+    let mut items: Vec<GrowItem> = vec![];
+    let mut by_cell: BTreeMap<Pos, Vec<Strand>> = BTreeMap::new();
+    for (p, s) in &tpl.strands { by_cell.entry(mv(*p)).or_default().push(*s); }
+    for (k, p) in tpl.fresh_cells.iter().enumerate() {
+        let q = mv(*p);
+        if q != cpos && q != ppos { items.push(GrowItem::Agent { cell: q, k }); }
+    }
+    for (cell, strands) in &by_cell {
+        if *cell != cpos && *cell != ppos { items.push(GrowItem::Strands { cell: *cell, strands: strands.clone() }); }
+    }
+    for final_cell in [ppos, cpos] {
+        if let Some(k) = tpl.fresh_cells.iter().position(|p| mv(*p) == final_cell) {
+            items.push(GrowItem::Agent { cell: final_cell, k });
+        } else {
+            items.push(GrowItem::Strands {
+                cell: final_cell,
+                strands: by_cell.get(&final_cell).cloned().unwrap_or_default(),
+            });
+        }
+    }
+    Some(DockPlan {
+        cpos, ppos, rule,
+        cfaces: cons.faces, pfaces: prod.faces,
+        items,
+        fresh_tags: rule.fresh.to_vec(),
+        fresh_faces: tpl.fresh_faces.clone(),
+        cells,
+    })
+}
+
+/// Reserve the layout and become seeds. The shadow is NOT fired here: the linearization
+/// point is COMPLETION (the driver's final step), which is what makes seeds abortable.
+pub fn apply_grow_dock(grid: &mut Grid, plan: DockPlan) {
+    let ca = grid.agent(plan.cpos).unwrap();
+    let pa = grid.agent(plan.ppos).unwrap();
+    let (csid, psid) = (ca.sid, pa.sid);
+    let (ctag, ptag) = (ca.tag, pa.tag);
+    for c in &plan.cells { grid.reserved.insert(*c, plan.cpos); }
+    let gp = std::rc::Rc::new(GrowPlan {
+        rule: plan.rule,
+        a: plan.cpos, b: plan.ppos,
+        items: plan.items,
+        fresh_tags: plan.fresh_tags,
+        fresh_faces: plan.fresh_faces,
+        fresh_sids: vec![csid, psid],   // the PAIR's sids until completion assigns products
+        cells: plan.cells,
+    });
+    grid.cells.insert(plan.cpos, Cell::Seed(SeedCell { plan: gp.clone(), step: 0, driver: true, faces: plan.cfaces, tag: ctag, stall: 0 }));
+    grid.cells.insert(plan.ppos, Cell::Seed(SeedCell { plan: gp, step: 0, driver: false, faces: plan.pfaces, tag: ptag, stall: 0 }));
+    grid.seed_count += 1;
+}
+
+pub enum GrowStep { Placed(Pos), Slid(Pos), Waiting, Aborted }
+
+/// One unfold step for the seed driven at `driver`. Emits the next item if its cell is
+/// open, slides a squatting strand out of the way if not, waits briefly, and ABORTS after
+/// SEED_PATIENCE consecutive waits (delete the shielded emissions, restore the pair).
+/// The final step fires the shadow: the linearization point.
+pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowStep> {
+    let (plan, step) = match grid.cells.get(&driver) {
+        Some(Cell::Seed(s)) if s.driver => (s.plan.clone(), s.step),
+        _ => return None,
+    };
+    let item = plan.items.get(step).expect("driver outlived its plan");
+    let (csid, psid) = (plan.fresh_sids[0], plan.fresh_sids[1]);
+    let (cell, write): (Pos, Box<dyn FnOnce(&mut Grid)>) = match item {
+        GrowItem::Agent { cell, k } => {
+            let (cell, k) = (*cell, *k);
+            let (tag, faces) = (plan.fresh_tags[k], plan.fresh_faces[k]);
+            (cell, Box::new(move |g: &mut Grid| {
+                // sid is a placeholder until completion fires the shadow
+                g.put_agent(cell, AgentCell { tag, faces, sid: u32::MAX, nascent: true });
+            }))
+        }
+        GrowItem::Strands { cell, strands } => {
+            let (cell, strands) = (*cell, strands.clone());
+            (cell, Box::new(move |g: &mut Grid| {
+                for s in strands { g.add_strand(cell, s); }
+            }))
+        }
+    };
+    let is_final = cell == plan.a || cell == plan.b;
+    if is_final {
+        // our own seed cell: replace it with its final content
+        grid.cells.remove(&cell);
+        write(grid);
+        if cell == plan.a {
+            // the driver just replaced itself: the unfold is complete. Fire the shadow
+            // (the linearization point) and hand every product its real sid.
+            let (rule, fresh_sids) = shadow.fire(csid, psid);
+            assert!(std::ptr::eq(rule, plan.rule), "shadow fired a different rule");
+            for it in &plan.items {
+                if let GrowItem::Agent { cell, k } = it {
+                    if let Some(Cell::Agent(ag)) = grid.cells.get_mut(cell) {
+                        ag.sid = fresh_sids[*k];
+                        ag.nascent = false;
+                    }
+                }
+            }
+            for c in plan.cells.iter().chain([&plan.a, &plan.b]) {
+                grid.reserved.remove(c);
+            }
+            grid.seed_count -= 1;
+        } else if let Some(Cell::Seed(s)) = grid.cells.get_mut(&driver) {
+            s.step = step + 1;
+        }
+        return Some(GrowStep::Placed(cell));
+    }
+    if grid.is_empty(cell) {
+        write(grid);
+        // the reservation STAYS until finalize: it shields the emitted (still dangling)
+        // template content from retract/slide/clear until the whole complex is wired
+        if let Some(Cell::Seed(s)) = grid.cells.get_mut(&driver) { s.step = step + 1; s.stall = 0; }
+        return Some(GrowStep::Placed(cell));
+    }
+    // A squatter: wires get slid out (reservations stop new ones arriving); anything else
+    // waits (agents move only by reeling).
+    if let Some(w) = grid.wire(cell) {
+        for s in w.iter().collect::<Vec<_>>() {
+            if let Some(sl) = plan_slide(grid, cell, s, &[], true) {
+                apply_slide(grid, &sl);
+                if let Some(Cell::Seed(sc)) = grid.cells.get_mut(&driver) { sc.stall = 0; }
+                return Some(GrowStep::Slid(cell));
+            }
+        }
+    }
+    // Stall bookkeeping and the abort valve.
+    let stall = {
+        let Some(Cell::Seed(sc)) = grid.cells.get_mut(&driver) else { unreachable!() };
+        sc.stall += 1;
+        sc.stall
+    };
+    if stall > SEED_PATIENCE {
+        // Delete every emission so far (all shielded: nothing external references them),
+        // restore the original pair, release the claims. The pair is enabled again and
+        // other planners get their chance.
+        let (ctag, cfaces) = match grid.cells.get(&plan.a) {
+            Some(Cell::Seed(s)) => (s.tag, s.faces), _ => unreachable!(),
+        };
+        let (ptag, pfaces) = match grid.cells.get(&plan.b) {
+            Some(Cell::Seed(s)) => (s.tag, s.faces), _ => unreachable!(),
+        };
+        for it in &plan.items[..step] {
+            match it {
+                GrowItem::Agent { cell, .. } => { grid.cells.remove(cell); }
+                GrowItem::Strands { cell, strands } => {
+                    for s in strands { grid.remove_strand(*cell, *s); }
+                }
+            }
+        }
+        for c in plan.cells.iter().chain([&plan.a, &plan.b]) { grid.reserved.remove(c); }
+        grid.cells.insert(plan.a, Cell::Agent(AgentCell { tag: ctag, faces: cfaces, sid: csid, nascent: false }));
+        grid.cells.insert(plan.b, Cell::Agent(AgentCell { tag: ptag, faces: pfaces, sid: psid, nascent: false }));
+        grid.seed_count -= 1;
+        return Some(GrowStep::Aborted);
+    }
+    Some(GrowStep::Waiting)
 }

@@ -60,7 +60,7 @@ fn main() {
                 if let Some((npos, blockers)) = reel_blocked(&sim.grid, pq) {
                     for s in blockers {
                         println!("    CLEAR target {s:?} at {npos:?}:");
-                        println!("      slide -> {:?}", plan_slide(&sim.grid, npos, s, &[]).map(|p| p.strands.iter().map(|(c, _)| *c).collect::<Vec<_>>()));
+                        println!("      slide -> {:?}", plan_slide(&sim.grid, npos, s, &[], false).map(|p| p.strands.iter().map(|(c, _)| *c).collect::<Vec<_>>()));
                         for (lbl, c) in [("na", rust_ca_lattice::lattice::step(npos, s.a)), ("nb", rust_ca_lattice::lattice::step(npos, s.b))] {
                             println!("      {lbl} {c:?}: {:?}", sim.grid.cells.get(&c));
                         }

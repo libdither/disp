@@ -8,8 +8,9 @@ use crate::lattice::{embed, step, Grid, Pos, Topo};
 use crate::net::Net;
 use crate::oracle::Term;
 use crate::transitions::{
-    apply_fire, apply_reel, apply_retract, apply_slide,
-    plan_fire, plan_fire_stamp, plan_reel, plan_retract, plan_slide, reel_blocked,
+    apply_fire, apply_grow_dock, apply_reel, apply_retract, apply_slide,
+    grow_step, plan_fire, plan_fire_stamp, plan_grow_dock, plan_reel, plan_retract,
+    plan_slide, reel_blocked, DockPlan, FirePlan, GrowStep,
 };
 
 /// Which fire planner the schedule uses. `Search` is the in-board backtracking planner;
@@ -17,7 +18,7 @@ use crate::transitions::{
 /// only, waits when the pattern does not fit); `StampThenSearch` stamps when it fits and
 /// falls back to the search when it does not.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FireMode { Search, Stamp, StampThenSearch }
+pub enum FireMode { Search, Stamp, StampThenSearch, Grow, GrowThenSearch }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
@@ -31,12 +32,16 @@ pub enum CheckLevel {
 
 /// What happened during a tick — observer data for tracing/visualization; the dynamics
 /// never read it.
+enum FireAction { Atomic(FirePlan), Dock(DockPlan) }
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Fire { cpos: Pos, ppos: Pos, rule: (&'static str, &'static str), fresh: Vec<Pos> },
     Reel { from: Pos, to: Pos, sid: u32 },
     Retract { a: Pos, b: Pos },
     Slide { at: Pos },
+    Dock { cpos: Pos, ppos: Pos, rule: (&'static str, &'static str) },
+    Grow { at: Pos },
 }
 
 pub struct Sim {
@@ -56,11 +61,22 @@ impl Sim {
         Sim { grid, shadow, events: vec![], fire_mode: FireMode::Search }
     }
 
-    fn plan_fire_mode(&self, p: Pos) -> Option<crate::transitions::FirePlan> {
+    fn plan_fire_mode(&self, p: Pos) -> Option<FireAction> {
+        use FireAction::*;
         match self.fire_mode {
-            FireMode::Search => plan_fire(&self.grid, p),
-            FireMode::Stamp => plan_fire_stamp(&self.grid, p),
-            FireMode::StampThenSearch => plan_fire_stamp(&self.grid, p).or_else(|| plan_fire(&self.grid, p)),
+            FireMode::Search => plan_fire(&self.grid, p).map(Atomic),
+            FireMode::Stamp => plan_fire_stamp(&self.grid, p).map(Atomic),
+            FireMode::StampThenSearch => plan_fire_stamp(&self.grid, p).map(Atomic)
+                .or_else(|| plan_fire(&self.grid, p).map(Atomic)),
+            // Grow: stamp when the whole layout is already open (the atomic degenerate
+            // case of extrusion), else dock and unfold.
+            FireMode::Grow => plan_fire_stamp(&self.grid, p).map(Atomic)
+                .or_else(|| plan_grow_dock(&self.grid, p).map(Dock)),
+            // hybrid: stamp (clean), then the search (it copes with clutter atomically),
+            // then dock-and-grow as the patient last resort for what search cannot fit
+            FireMode::GrowThenSearch => plan_fire_stamp(&self.grid, p).map(Atomic)
+                .or_else(|| plan_fire(&self.grid, p).map(Atomic))
+                .or_else(|| plan_grow_dock(&self.grid, p).map(Dock)),
         }
     }
 
@@ -77,32 +93,60 @@ impl Sim {
             let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
             let mut fired = false;
             for p in positions {
-                if let Some(plan) = self.plan_fire_mode(p) {
-                    self.events.push(Event::Fire {
-                        cpos: plan.cpos, ppos: plan.ppos,
-                        rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
-                        fresh: plan.fresh_cells.clone(),
-                    });
-                    apply_fire(&mut self.grid, &mut self.shadow, &plan);
-                    applied += 1;
-                    fired = true;
-                    if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
-                    break;
+                match self.plan_fire_mode(p) {
+                    Some(FireAction::Atomic(plan)) => {
+                        self.events.push(Event::Fire {
+                            cpos: plan.cpos, ppos: plan.ppos,
+                            rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
+                            fresh: plan.fresh_cells.clone(),
+                        });
+                        apply_fire(&mut self.grid, &mut self.shadow, &plan);
+                        applied += 1;
+                        fired = true;
+                        if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
+                        break;
+                    }
+                    Some(FireAction::Dock(plan)) => {
+                        self.events.push(Event::Dock {
+                            cpos: plan.cpos, ppos: plan.ppos,
+                            rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
+                        });
+                        apply_grow_dock(&mut self.grid, plan);
+                        applied += 1;
+                        fired = true;
+                        break;
+                    }
+                    None => {}
                 }
             }
             if !fired { break; }
+        }
+        for d in self.grid.seed_drivers() {
+            match grow_step(&mut self.grid, &mut self.shadow, d) {
+                Some(GrowStep::Placed(at)) | Some(GrowStep::Slid(at)) => {
+                    self.events.push(Event::Grow { at });
+                    applied += 1;
+                    if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
+                }
+                Some(GrowStep::Aborted) => {
+                    self.events.push(Event::Grow { at: d });
+                    applied += 1;
+                    if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
+                }
+                _ => {}
+            }
         }
         let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
         for apos in &positions {
             let Some((npos, blockers)) = reel_blocked(&self.grid, *apos) else { continue };
             let mut cleared = false;
             for s in &blockers {
-                if let Some(plan) = plan_slide(&self.grid, npos, *s, &[]) {
+                if let Some(plan) = plan_slide(&self.grid, npos, *s, &[], false) {
                     self.events.push(Event::Slide { at: plan.p });
                     apply_slide(&mut self.grid, &plan);
                     applied += 1;
                     cleared = true;
-                    if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                    if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                     break;
                 }
             }
@@ -117,11 +161,11 @@ impl Sim {
                     let Some(wc) = self.grid.wire(c) else { continue };
                     if wc.count() < 2 { continue; }
                     for t in wc.iter().collect::<Vec<_>>() {
-                        if let Some(plan) = plan_slide(&self.grid, c, t, &[npos]) {
+                        if let Some(plan) = plan_slide(&self.grid, c, t, &[npos], false) {
                             self.events.push(Event::Slide { at: plan.p });
                             apply_slide(&mut self.grid, &plan);
                             applied += 1;
-                            if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                            if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                             break 'loosen;
                         }
                     }
@@ -134,7 +178,7 @@ impl Sim {
                 self.events.push(Event::Reel { from: plan.apos, to: plan.npos, sid });
                 apply_reel(&mut self.grid, &plan);
                 applied += 1;
-                if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
             }
         }
         loop {
@@ -145,7 +189,7 @@ impl Sim {
                     apply_retract(&mut self.grid, &plan);
                     applied += 1;
                     any = true;
-                    if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                    if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                     break; // the board changed: rescan
                 }
             }
@@ -181,14 +225,14 @@ pub fn run_term_with(term: &Term, topo: Topo, mode: FireMode, max_ticks: u64, ch
     let mut ticks = 0;
     let (done, stuck) = loop {
         if ticks >= max_ticks { break (false, false); }
-        if sim.shadow.all_active_pairs().is_empty() { break (true, false); }
+        if sim.shadow.all_active_pairs().is_empty() && !sim.grid.has_seeds() { break (true, false); }
         let n = sim.tick(check);
         ticks += 1;
         peak = peak.max(sim.grid.agent_count());
-        if check == CheckLevel::Tick { sim.grid.check_projection(&sim.shadow); }
+        if check == CheckLevel::Tick && !sim.grid.has_seeds() { sim.grid.check_projection(&sim.shadow); }
         if n == 0 { break (false, true); }
     };
-    if check != CheckLevel::Every || done { sim.grid.check_projection(&sim.shadow); }
+    if (check != CheckLevel::Every || done) && !sim.grid.has_seeds() { sim.grid.check_projection(&sim.shadow); }
     let result = if done {
         let lattice_rb = sim.grid.readback();
         // The lattice and shadow readbacks must agree exactly; both feed the differential.

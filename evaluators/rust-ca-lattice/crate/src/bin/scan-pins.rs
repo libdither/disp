@@ -3,7 +3,7 @@ use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Term};
 use rust_ca_lattice::scheduler::{run_term_with, CheckLevel, FireMode};
 fn main() {
     for topo in TOPOS {
-        for (mode, ml) in [(FireMode::Search, "search"), (FireMode::Stamp, "stamp"), (FireMode::StampThenSearch, "stamp+search")] {
+        for (mode, ml) in [(FireMode::Search, "search"), (FireMode::Grow, "grow"), (FireMode::GrowThenSearch, "grow+search")] {
             println!("== {} · {} ==", topo.name(), ml);
             let t = |name: &str, term: Term| {
                 let want = oracle::nf(term.clone(), &mut Fuel(100_000)).map(|w| oracle::show(&w)).unwrap_or("DIV".into());

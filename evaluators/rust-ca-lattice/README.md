@@ -58,7 +58,8 @@ is a library plus tests.
 `cargo test --release`: all green. Stage 1: 3998+/0. Stage 2 corpus (400 random terms,
 depths 3–5): full3d 205 reach normal form, bilayer 179; ZERO wrong results, zero invariant
 violations, zero tick-cap hits, on both topologies and under every fire mode (the search
-planner, the precomputed stamp, and the hybrid). Must-complete pins: stem application
+planner, the precomputed stamp, the incremental grow, and the hybrids — grow+search
+matches search at 205 with 1-cell-footprint unfolds and abortable seeds). Must-complete pins: stem application
 on both topologies; fork dispatch, K erasure, chain1, and the sharing S-rule on full3d.
 Every stall is liveness, never correctness: the bare sequential schedule still ships no
 fields, and the stalls concentrate where fire seams knot — splices and reel trails exhaust
@@ -100,3 +101,23 @@ Liveness findings folded into the design (each found by measurement here):
    and no cost elsewhere. A blanket up-first order was measured to HURT (trails then
    contend with the overflow plane that detours and fires need). Bilayer has no basement
    and keeps the standard order — its relief has to come from pressure, not geometry.
+8. GROW FIRE (`FireMode::{Grow, GrowThenSearch}`, the dock-and-extrude prototype): where
+   the stamp needs its whole layout open NOW, a dock RESERVES the template's cells
+   (squatting wire cells allowed if slideable right then), unfolds ONE cell per tick as
+   cells open, slides squatters out itself, and finalizes by replacing its own two cells
+   last. Reservations shield the half-wired emissions from retract/slide/clear and keep
+   claimed cells from refilling. The shadow fires at COMPLETION — the linearization point
+   — which is what makes seeds ABORTABLE: after 8 stalled ticks a seed deletes its
+   emissions (all shielded, so nothing references them), restores the pair verbatim, and
+   yields to the other planners. The first cut linearized at DOCK and taught the lesson
+   the hard way: an unabortable seed is a one-way door, and it deadlocks against the very
+   walkers its own reservation parks (measured: grow+search 200 < search 205). With
+   completion-linearization and the abort valve, grow+search returns to 205 — parity,
+   deadlock-free, and every step of the unfold has a 1-cell footprint.
+9. What is left standing in every mode's stuck set is the AGENT blocker: a parked walker
+   or value sitting on the cells a fire needs. Docks refuse agent squatters (agents move
+   only by reeling, on their own demand), the search cannot route through them, and no
+   fire mechanism — atomic, stamped, or grown — can move them. Fire is now as local as
+   geometry allows; the remaining mover is the pressure field (χ) that pushes agents and
+   unslideable knots, i.e. the field rung, on top of a fire that can finally wait
+   gracefully for it.

@@ -121,7 +121,7 @@ fn differential_full3d() { differential(Topo::Full3D); }
 #[test]
 fn differential_fire_modes() {
     for topo in TOPOS {
-        for (mode, label) in [(FireMode::Stamp, "stamp"), (FireMode::StampThenSearch, "stamp+search")] {
+        for (mode, label) in [(FireMode::Stamp, "stamp"), (FireMode::StampThenSearch, "stamp+search"), (FireMode::Grow, "grow"), (FireMode::GrowThenSearch, "grow+search")] {
             let mut rng = Lcg(999);
             let (mut pass, mut stuck, mut cap, mut skip) = (0u32, 0u32, 0u32, 0u32);
             for i in 0..400 {

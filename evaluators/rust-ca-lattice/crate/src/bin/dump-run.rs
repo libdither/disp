@@ -24,6 +24,14 @@ fn snapshot(grid: &Grid, out: &mut String) {
                 .map(|i| format!("\"{}\"", a.face_of(i).ch())).collect();
             write!(out, "[{},{},{},\"{}\",{},[{}]]", p.0, p.1, p.2, a.tag.name(), a.sid,
                 faces.join(",")).unwrap();
+        } else if let Cell::Seed(s) = c {
+            if !first { out.push(','); }
+            first = false;
+            let faces: Vec<String> = s.faces.iter().flatten()
+                .map(|f| format!("\"{}\"", f.ch())).collect();
+            write!(out, "[{},{},{},\"Seed\",{},[{}]]", p.0, p.1, p.2,
+                900_000 + (p.0.rem_euclid(97) * 97 + p.1.rem_euclid(97)) as u32,
+                faces.join(",")).unwrap();
         }
     }
     out.push_str("],\"wires\":[");
@@ -128,6 +136,13 @@ fn main() {
                 }
                 Event::Slide { at } => {
                     write!(ev, "{{\"t\":\"slide\",\"at\":{}}}", pos_json(*at)).unwrap();
+                }
+                Event::Dock { cpos, ppos, rule } => {
+                    write!(ev, "{{\"t\":\"dock\",\"c\":{},\"p\":{},\"rule\":\"{}·{}\"}}",
+                        pos_json(*cpos), pos_json(*ppos), rule.0, rule.1).unwrap();
+                }
+                Event::Grow { at } => {
+                    write!(ev, "{{\"t\":\"grow\",\"at\":{}}}", pos_json(*at)).unwrap();
                 }
             }
         }
