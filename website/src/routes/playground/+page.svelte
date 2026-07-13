@@ -54,6 +54,18 @@
   // the strip's VALUE doesn't correspond to the input expression's parts.
   let viz = $state<{ expr: string; defs: Record<string, T>; atoms: Map<string, number> } | null>(null)
   let vizCtl: TreeValueCtl | null = null
+  let vizApi: { setProgram: (expr: string, newDefs?: Record<string, T>) => void } | null = null
+
+  // seed the panel: in place when it's already open (the tree animates from
+  // its current drawing — no remount flash), fresh mount otherwise
+  function applySeed(expr: string, defs: Record<string, T>, atoms: Map<string, number>) {
+    if (viz && vizApi) {
+      viz = { expr, defs, atoms }
+      vizApi.setProgram(expr, defs)
+    } else {
+      viz = { expr, defs, atoms }
+    }
+  }
   // strings are unary codepoint chains ("leaf" alone is ~830 nodes), so the
   // ceiling must be generous; a pod only draws its nodes once opened anyway
   const POD_MAX_NODES = 3000
@@ -118,7 +130,7 @@
         if (rt !== null) defs[ident] = rawToT(rt)
       })
     )
-    viz = { expr, defs, atoms }
+    applySeed(expr, defs, atoms)
   }
 
   // value pop-out (def blocks, got/want rows): synced with its TreeValue
@@ -154,7 +166,7 @@
       try {
         parseTree(expr, {})
         vizCtl = null
-        viz = { expr, defs: {}, atoms: new Map() }
+        applySeed(expr, {}, new Map())
         return
       } catch {
         /* not treecalc-expressible — show the value instead */
@@ -722,22 +734,21 @@
         <div class="viz-head">
           <span class="viz-title">reduction</span>
           <span class="viz-sub">green pods hold real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Orange fruit is a free name: purely symbolic. Edit the expression to apply arguments.</span>
-          <button class="x" onclick={() => (viz = null)} aria-label="close visualizer">×</button>
+          <button class="x" onclick={() => { viz = null; vizApi = null }} aria-label="close visualizer">×</button>
         </div>
-        {#key viz}
-          <div class="viz-body">
-            <TreeVis
-              variant="lab"
-              exprs={[viz.expr]}
-              height={430}
-              defs={viz.defs}
-              resolveDef={resolveScopeDef}
-              minimal
-              {onPodOpen}
-              namesHint="Names resolve against the playground's scope and arrive as green pods (real structure, folded shut). Unknown names are free variables: orange fruit the reductions carry symbolically."
-            />
-          </div>
-        {/key}
+        <div class="viz-body">
+          <TreeVis
+            variant="lab"
+            exprs={[viz.expr]}
+            height={430}
+            defs={viz.defs}
+            resolveDef={resolveScopeDef}
+            minimal
+            {onPodOpen}
+            api={(a) => (vizApi = a)}
+            namesHint="Names resolve against the playground's scope and arrive as green pods (real structure, folded shut). Unknown names are free variables: orange fruit the reductions carry symbolically."
+          />
+        </div>
       </aside>
     {/if}
 
@@ -790,8 +801,10 @@
   .pg {
     display: flex;
     flex-direction: column;
-    height: calc(100dvh - var(--nav-h));
-    min-height: 480px;
+    /* the layout's app mode gives .content the exact space under the nav —
+       fill it (robust to the nav wrapping taller on narrow screens) */
+    flex: 1;
+    min-height: 0;
   }
 
   /* ---- toolbar ---- */

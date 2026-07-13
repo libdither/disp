@@ -58,6 +58,9 @@
     // and re-seeds this panel). Return true = handled externally; false =
     // reveal locally as usual.
     onPodOpen?: (label: string) => boolean
+    // imperative handle: re-seed the instrument IN PLACE (new program + defs)
+    // — the tree animates from its current drawing instead of remounting
+    api?: (a: { setProgram: (expr: string, newDefs?: Record<string, T>) => void }) => void
   }
 
   // The tree-calculus pieces — the ONE source shared by the cassette (symbol
@@ -88,16 +91,17 @@
     resolveDef = undefined,
     minimal = false,
     namesHint = undefined,
-    onPodOpen = undefined
+    onPodOpen = undefined,
+    api = undefined
   }: Props = $props()
 
-  // the live name dictionary: the host's defs (or the built-in toy set)
-  // plus whatever resolveDef has supplied since (read-once like the other
-  // posture props — hosts remount per pop-out)
+  // the live name dictionary: the host's defs (or the built-in toy set) —
+  // replaceable via api.setProgram — plus whatever resolveDef has supplied.
+  // Initial value read-once like the other posture props.
   // svelte-ignore state_referenced_locally
-  const baseDefs = defs ?? DEFS
+  let hostDefs = $state.raw<Record<string, T>>(defs ?? DEFS)
   let resolved = $state<Record<string, T>>({})
-  const activeDefs = $derived({ ...baseDefs, ...resolved })
+  const activeDefs = $derived({ ...hostDefs, ...resolved })
 
   const exprOf = (e: ExprSpec) => (typeof e === 'string' ? e : e.expr)
   const speedOf = (e: ExprSpec) => (typeof e === 'string' ? undefined : e.stepMs)
@@ -942,6 +946,15 @@
   }
 
   onMount(() => {
+    api?.({
+      setProgram: (expr, newDefs) => {
+        if (newDefs) hostDefs = newDefs
+        running = false
+        autoCycle = false
+        clearTimeout(timer)
+        load(expr)
+      }
+    })
     load(input, { keepAuto: autoCycle })
   })
   onDestroy(() => clearTimeout(timer))

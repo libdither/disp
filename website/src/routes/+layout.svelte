@@ -20,9 +20,13 @@
 
   const isActive = (href: string) =>
     !href.startsWith("http") && page.url.pathname === href;
+
+  // the playground is an APP surface: it owns the whole viewport below the
+  // nav — no footer, no page scroll
+  const isApp = $derived(page.url.pathname.startsWith(`${base}/playground`));
 </script>
 
-<div class="shell">
+<div class="shell" class:app={isApp}>
   <header class="nav">
     <nav class="container navbar">
       <a class="brand" href="{base}/" aria-label="disp home">
@@ -81,6 +85,7 @@
     {@render children()}
   </main>
 
+  {#if !isApp}
   <footer class="footer">
     <svg
       class="treeline"
@@ -121,6 +126,7 @@
       </div>
     </div>
   </footer>
+  {/if}
 </div>
 
 <style>
@@ -233,6 +239,16 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+  }
+
+  /* app pages (playground): the shell IS the viewport — content flexes to
+     the space under the nav, nothing scrolls at the page level */
+  .shell.app {
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .shell.app .content {
+    min-height: 0;
   }
 
   .footer {
