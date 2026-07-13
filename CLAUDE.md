@@ -25,7 +25,7 @@ Read the relevant doc before design changes. File headers in `lib/` and `src/` a
 - [`ACTIVE_BUGS.md`](ACTIVE_BUGS.md) — subject-reduction gap ledger; machine pins in `lib/tests/probe_*_sr.test.disp`.
 - [`READING_QUESTIONS.md`](READING_QUESTIONS.md) — open-questions scratchpad.
 - `archive/` — superseded docs (`STRICTTYPE.md`, `TYPE_NORMALIZATION.md`, older proposals). Removed docs live in git history (`git log --diff-filter=D -- <path>`): the legacy 7-primitive spec (`archive/TYPE_THEORY_LEGACY.typ`), `COMPILATION.typ` (pipeline spec; the pipeline's source of truth is `src/compile.ts` + `src/elab/`), `OPTIMIZER_DESIGN.md`.
-- `research/` — `interaction-combinator/` (tc-net.typ, RUST_IC_NET_DESIGN.md, SPATIAL_IC.md, EMBEDDING_THEOREM.md), `effects-and-coeffects.typ`; `one-offs/` holds unreferenced one-shot surveys.
+- `research/` — `interaction-combinator/` (tc-net.typ, RUST_IC_NET_DESIGN.md, SPATIAL_IC.md, EMBEDDING_THEOREM.md), `effects-and-coeffects.typ`, `sequent.typ` (the sequent-calculus reading of the kernel); `one-offs/` holds unreferenced one-shot surveys.
 
 ## Core discipline
 
