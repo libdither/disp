@@ -3,7 +3,7 @@
 // examples and the Playground share it.
 
 import { base } from '$app/paths'
-import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome } from './protocol.ts'
+import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome, ValueNode } from './protocol.ts'
 
 export type DispStatus =
   | 'cold'
@@ -18,8 +18,10 @@ export type DispStatus =
 // variants and loses their distinct payload keys)
 type RequestBody = WorkerRequest extends infer R ? (R extends WorkerRequest ? Omit<R, 'id'> : never) : never
 
+// pending requests resolve with whatever payload their response carries
+// (RunOutcome for run/eval, ValueNode for render, a dummy for ready-acks)
 type Pending = {
-  resolve: (o: RunOutcome) => void
+  resolve: (payload: unknown) => void
   reject: (e: Error) => void
 }
 
@@ -42,6 +44,12 @@ class DispClient {
   // a kernel's worth, the session module cache holds it — later runs are warm
   #moduleItems = 0
 
+  // session generation: tree HANDLES (in ValueNodes) die when the arena is
+  // recreated (reset/interrupt). Bumping this invalidates render() calls that
+  // captured an older generation, so a stale click can never poke the fresh
+  // arena with a dangling handle.
+  #gen = 0
+
   #spawn(): Worker {
     const w = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
     w.onmessage = (e: MessageEvent<WorkerResponse>) => {
@@ -59,7 +67,8 @@ class DispClient {
         this.memBytes = msg.outcome.memBytes
         if (!msg.outcome.error && this.#moduleItems > 100) this.kernelLoaded = true
         p.resolve(msg.outcome)
-      } else p.resolve({ ok: true, defs: [], tests: [], elapsedMs: 0, steps: 0, memBytes: 0 })
+      } else if (msg.type === 'rendered') p.resolve(msg.node)
+      else p.resolve({ ok: true, defs: [], tests: [], elapsedMs: 0, steps: 0, memBytes: 0 })
     }
     w.onerror = (e) => {
       for (const [, p] of this.#pending) p.reject(new Error(`worker error: ${e.message}`))
@@ -69,10 +78,10 @@ class DispClient {
     return w
   }
 
-  #request(msg: RequestBody): Promise<RunOutcome> {
+  #request<T = RunOutcome>(msg: RequestBody): Promise<T> {
     const id = this.#nextId++
-    return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject })
+    return new Promise<T>((resolve, reject) => {
+      this.#pending.set(id, { resolve: resolve as (p: unknown) => void, reject })
       this.#worker!.postMessage({ ...msg, id })
     })
   }
@@ -170,6 +179,22 @@ class DispClient {
   }
 
   /**
+   * Re-render a subtree by handle (click-to-unfold): `rawRoot` skips the
+   * nat/string/name decoding at the root, `budget` is a fresh node allowance.
+   * Returns null when the session the handle belonged to is gone.
+   */
+  async render(handle: number, budget: number, rawRoot: boolean): Promise<ValueNode | null> {
+    const gen = this.#gen
+    if (!this.#worker) return null
+    try {
+      const node = await this.#request<ValueNode>({ type: 'render', handle, budget, rawRoot })
+      return gen === this.#gen ? node : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Soft reset: fresh arena + session. By default the precompiled kernel is
    * re-installed into the fresh session; `fromSource: true` leaves it cold so
    * the next kernel load genuinely re-elaborates and self-verifies from
@@ -177,6 +202,7 @@ class DispClient {
    */
   async reset(opts?: { fromSource?: boolean }): Promise<void> {
     if (!this.#worker) return
+    this.#gen++ // all outstanding tree handles die with the arena
     this.#kernelPromise = null
     this.kernelLoaded = false
     this.#moduleItems = 0
@@ -187,6 +213,7 @@ class DispClient {
 
   /** Hard stop: kill the worker mid-run (runaway elaboration), respawn cold. */
   interrupt(): void {
+    this.#gen++ // all outstanding tree handles die with the worker
     this.#worker?.terminate()
     for (const [, p] of this.#pending) p.reject(new Error('interrupted'))
     this.#pending.clear()

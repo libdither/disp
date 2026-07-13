@@ -7,9 +7,10 @@
   // engine messages, and a one-line eval prompt at the bottom.
   import { onMount } from 'svelte'
   import { disp } from '$lib/disp/client.svelte'
-  import type { RunOutcome, ItemEvent } from '$lib/disp/protocol'
+  import type { RunOutcome, ItemEvent, ValueNode } from '$lib/disp/protocol'
   import { examples } from '$lib/disp/examples'
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
+  import TreeValue from '$lib/components/TreeValue.svelte'
 
   // approximate item count of a cold kernel elaboration (measured; only used
   // to shape the progress bar)
@@ -29,9 +30,13 @@
 
   // ---- repl ----
   let replInput = $state('')
-  let evalOut = $state<{ expr: string; value?: string; hint?: string; error?: string } | null>(null)
+  let evalOut = $state<{ expr: string; value?: string; node?: ValueNode; hint?: string; error?: string } | null>(null)
   let replHistory: string[] = []
   let replHistIdx = -1
+
+  // subtree re-render for every interactive value (blocks + eval strip):
+  // raw for recognized atoms, deeper for budget cuts
+  const expandValue = (handle: number, rawRoot: boolean) => disp.render(handle, 80, rawRoot)
 
   // ---- toasts (engine messages: kernel loaded, reset, interrupted…) ----
   let toasts = $state<{ id: number; text: string; kind: 'info' | 'warn' }[]>([])
@@ -53,21 +58,31 @@
   // ---- inline results -----------------------------------------------------
 
   // Notebook marks: value blocks anchor at a def's LAST line (a multi-line
-  // def's output belongs after its body), test verdicts likewise.
+  // def's output belongs after its body), test verdicts likewise. Values are
+  // structured (interactive unfold); plain text stays the fallback.
   function marksFromOutcome(out: RunOutcome): LineMark[] {
     const marks: LineMark[] = []
     for (const d of out.defs) {
       const line = d.endLine ?? d.line
-      if (line && d.pretty) marks.push({ line, kind: 'value', block: d.pretty })
+      if (!line) continue
+      if (d.value) marks.push({ line, kind: 'value', values: [{ node: d.value }] })
+      else if (d.pretty) marks.push({ line, kind: 'value', block: d.pretty })
     }
     for (const t of out.tests) {
       const line = t.endLine ?? t.line
       if (!line) continue
-      marks.push(
-        t.pass
-          ? { line, kind: 'pass', note: '✓' }
-          : { line, kind: 'fail', note: '✗', block: `got  ${t.lhs ?? '?'}\nwant ${t.rhs ?? '?'}` }
-      )
+      if (t.pass) marks.push({ line, kind: 'pass', note: '✓' })
+      else if (t.lhsNode && t.rhsNode)
+        marks.push({
+          line,
+          kind: 'fail',
+          note: '✗',
+          values: [
+            { label: 'got', node: t.lhsNode },
+            { label: 'want', node: t.rhsNode }
+          ]
+        })
+      else marks.push({ line, kind: 'fail', note: '✗', block: `got  ${t.lhs ?? '?'}\nwant ${t.rhs ?? '?'}` })
     }
     if (out.error && out.errorLine) marks.push({ line: out.errorLine, kind: 'error', block: out.error })
     return marks
@@ -84,7 +99,6 @@
       errorLine: out.errorLine
     }
     stripError = out.error && !out.errorLine ? out.error : null
-    if (showWelcome && !out.error) dismissWelcome()
     // a heavy buffer shouldn't re-run on every keystroke — pause live mode.
     // A run that just paid the one-time kernel elaboration is exempt: its
     // slowness says nothing about the buffer.
@@ -178,6 +192,7 @@
         evalOut = {
           expr,
           value: out.value ?? '(no value)',
+          node: out.valueNode,
           hint: out.valueHint && out.valueHint !== out.value ? out.valueHint : undefined
         }
       }
@@ -237,6 +252,10 @@
     busy = true
     try {
       await disp.reset({ fromSource: true })
+      // the reset swapped arenas — inline values hold dead handles
+      editorApi?.setMarks([])
+      evalOut = null
+      summary = null
       toast('precompiled kernel dropped — re-elaborating from source')
     } finally {
       busy = false
@@ -248,6 +267,10 @@
     disp.interrupt()
     progress = null
     busy = false
+    // handles inside the inline values died with the arena — drop them
+    editorApi?.setMarks([])
+    evalOut = null
+    summary = null
     toast('interrupted — engine reset, kernel cache cleared', 'warn')
   }
 
@@ -257,7 +280,7 @@
     summary = null
     evalOut = null
     stripError = null
-    editorApi?.setMarks([])
+    editorApi?.setMarks([]) // inline values hold handles from the old arena
     toast(
       disp.kernelLoaded
         ? 'session reset — fresh arena, precompiled kernel re-installed'
@@ -417,6 +440,14 @@
   <title>Playground · disp</title>
 </svelte:head>
 
+<!-- the first-visit info panel stays pinned until the visitor starts doing
+     something else (any pointer-down outside it) or dismisses it directly -->
+<svelte:window
+  onpointerdown={(e) => {
+    if (showWelcome && !(e.target as HTMLElement).closest('.info-wrap')) dismissWelcome()
+  }}
+/>
+
 <div class="pg">
   <div class="toolbar">
     <button class="btn primary tb" onclick={runFile} disabled={busy} title="Ctrl/⌘-Enter">
@@ -452,27 +483,84 @@
     <div class="spacer"></div>
     <div class="status" class:live={busy} class:dead={disp.status === 'dead'} class:bad={statusBad}>
       <span class="dot"></span>
-      {statusLabel}
-      {#if !disp.kernelLoaded && !busy && disp.status !== 'dead'}
-        <button class="linkbtn" onclick={preloadKernel}>load kernel</button>
-      {:else if disp.kernelLoaded && !busy && disp.status !== 'dead'}
-        <button
-          class="linkbtn"
-          onclick={verifyKernel}
-          title="drop the precompiled kernel and re-elaborate + self-verify it from source (~a minute)"
-        >
-          verify from source
-        </button>
+      {#if busy && progress}
+        <!-- the run-progress indicator lives right here in the toolbar: a
+             small bar + the item currently elaborating (full label in the
+             tooltip). The fade-in delay keeps millisecond reruns flicker-free. -->
+        <div class="mini-prog" title={progress.label}>
+          <div class="mp-bar">
+            <div class="mp-fill" style="width:{Math.min(99, (progress.count / KERNEL_ITEMS) * 100)}%"></div>
+          </div>
+          <span class="mp-txt">
+            {progress.count > 0 ? `${progress.count} · ${progress.current}` : progress.label}
+          </span>
+        </div>
+      {:else}
+        {statusLabel}
+        {#if !disp.kernelLoaded && !busy && disp.status !== 'dead'}
+          <button class="linkbtn" onclick={preloadKernel}>load kernel</button>
+        {:else if disp.kernelLoaded && !busy && disp.status !== 'dead'}
+          <button
+            class="linkbtn"
+            onclick={verifyKernel}
+            title="drop the precompiled kernel and re-elaborate + self-verify it from source (~a minute)"
+          >
+            verify from source
+          </button>
+        {/if}
       {/if}
     </div>
     {#if disp.memBytes > 0}
-      <div class="mem" title="WASM arena: {(disp.memBytes / 1e9).toFixed(2)}GB of 4GB">
-        <div class="mem-fill" class:hot={memPct > 85} style="width:{memPct}%"></div>
+      <div class="mem-wrap" title="WASM memory arena: {(disp.memBytes / 1e9).toFixed(2)}GB of the 4GB ceiling">
+        <svg class="mem-ico" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="1.5" y="4.5" width="13" height="7" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path d="M4 11.5v2M8 11.5v2M12 11.5v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          <rect x="4" y="6.5" width="3" height="3" rx="0.6" fill="currentColor" />
+          <rect x="9" y="6.5" width="3" height="3" rx="0.6" fill="currentColor" />
+        </svg>
+        <div class="mem">
+          <div class="mem-fill" class:hot={memPct > 85} style="width:{memPct}%"></div>
+        </div>
       </div>
     {/if}
-    <button class="btn tb subtle icon" onclick={() => (showWelcome = true)} title="about this playground" aria-label="about this playground">
-      ⓘ
-    </button>
+    <div class="info-wrap" class:pinned={showWelcome}>
+      <button
+        class="btn tb subtle icon"
+        onclick={() => (showWelcome ? dismissWelcome() : (showWelcome = true))}
+        title="about this playground"
+        aria-label="about this playground"
+      >
+        ⓘ
+      </button>
+      <div class="info-pop" role="note">
+        <div class="info-card">
+          {#if showWelcome}
+            <button class="x" onclick={dismissWelcome} aria-label="dismiss">×</button>
+          {/if}
+          <p class="w-title">The <span class="grad-text">real toolchain</span>, in your tab.</p>
+          <p>
+            This playground runs disp's actual elaborator and its Rust evaluator (compiled to
+            WebAssembly) — the same code that checks the test suite. Nothing is sent to a server.
+          </p>
+          <p>
+            Results live in the buffer, notebook-style: every definition shows its reduced value,
+            every test its verdict, and edits re-check live once the kernel is warm. Values are
+            explorable — click a number, string, or name to unfold the tree it stands for, click
+            <em>…</em> to render deeper, <em>↩</em> to fold back.
+          </p>
+          <p>
+            The kernel arrives <em>precompiled</em> — a small snapshot of the checked module cache —
+            so typed runs start in seconds. Don't trust it?
+            <button class="linkbtn" onclick={() => { dismissWelcome(); void verifyKernel() }}>Verify from source</button>:
+            about a minute of the type system genuinely re-checking itself, right here.
+          </p>
+          <p class="hint-row">
+            <kbd>⌘⏎</kbd> run file · <kbd>⇧⏎</kbd> run to cursor · the <kbd>▸</kbd> prompt below
+            evaluates expressions against the buffer
+          </p>
+        </div>
+      </div>
+    </div>
     <button class="btn tb subtle" onclick={resetSession} disabled={busy} title="Fresh session: clears the arena and the kernel cache">
       Reset
     </button>
@@ -484,48 +572,12 @@
       onDocChange={onEdit}
       onRunFile={runFile}
       onRunToCursor={runToCursor}
+      {expandValue}
       api={(a) => (editorApi = a)}
     />
 
-    {#if progress}
-      <div class="progress-overlay">
-        <div class="prog-label">{progress.label}</div>
-        <div class="prog-bar">
-          <div class="prog-fill" style="width:{Math.min(99, (progress.count / KERNEL_ITEMS) * 100)}%"></div>
-        </div>
-        <div class="prog-current">
-          {progress.count > 0 ? `${progress.count} items · ${progress.current}` : 'elaborating…'}
-        </div>
-      </div>
-    {/if}
-
     {#if stripError}
       <div class="errstrip" title={stripError}>⚠ {stripError}</div>
-    {/if}
-
-    {#if showWelcome}
-      <div class="welcome">
-        <button class="x" onclick={dismissWelcome} aria-label="dismiss">×</button>
-        <p class="w-title">The <span class="grad-text">real toolchain</span>, in your tab.</p>
-        <p>
-          This playground runs disp's actual elaborator and its Rust evaluator (compiled to
-          WebAssembly) — the same code that checks the test suite. Nothing is sent to a server.
-        </p>
-        <p>
-          Results live in the buffer, notebook-style: every definition shows its reduced value,
-          every test its verdict, and edits re-check live once the kernel is warm.
-        </p>
-        <p>
-          The kernel arrives <em>precompiled</em> — a small snapshot of the checked module cache —
-          so typed runs start in seconds. Don't trust it?
-          <button class="linkbtn" onclick={() => { dismissWelcome(); void verifyKernel() }}>Verify from source</button>:
-          about a minute of the type system genuinely re-checking itself, right here.
-        </p>
-        <p class="hint-row">
-          <kbd>⌘⏎</kbd> run file · <kbd>⇧⏎</kbd> run to cursor · the <kbd>▸</kbd> prompt below
-          evaluates expressions against the buffer
-        </p>
-      </div>
     {/if}
 
     <div class="toasts">
@@ -541,7 +593,15 @@
       {#if evalOut.error}
         <pre class="err">{evalOut.error}</pre>
       {:else}
-        <span class="ev">{evalOut.value}</span>
+        <span class="ev">
+          {#if evalOut.node}
+            {#key evalOut}
+              <TreeValue node={evalOut.node} expand={expandValue} />
+            {/key}
+          {:else}
+            {evalOut.value}
+          {/if}
+        </span>
         {#if evalOut.hint}<span class="hint">≈ {evalOut.hint}</span>{/if}
       {/if}
       <button class="x" onclick={() => (evalOut = null)} aria-label="dismiss result">×</button>
@@ -636,6 +696,45 @@
     text-decoration: underline;
     text-underline-offset: 3px;
   }
+  /* run progress, inline in the status chip: small bar + current item */
+  .mini-prog {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    min-width: 0;
+    animation: mp-in 0.15s ease 0.25s backwards; /* millisecond reruns never flash it */
+  }
+  @keyframes mp-in { from { opacity: 0; } }
+  .mp-bar {
+    width: 74px;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(74, 104, 82, 0.14);
+    overflow: hidden;
+    flex: none;
+  }
+  .mp-fill {
+    height: 100%;
+    background: var(--grad-brand);
+    transition: width 0.25s ease;
+  }
+  .mp-txt {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    color: var(--fg-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: min(340px, 30vw);
+  }
+
+  .mem-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    color: var(--fg-faint);
+  }
+  .mem-ico { width: 15px; height: 15px; flex: none; }
   .mem {
     width: 68px;
     height: 6px;
@@ -646,54 +745,67 @@
   .mem-fill { height: 100%; background: var(--grad-brand); transition: width 0.3s ease; }
   .mem-fill.hot { background: var(--err); }
 
+  /* ---- the ⓘ popover: hover/focus opens it, first visit pins it ---- */
+  .info-wrap { position: relative; }
+  .info-pop {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 30;
+    width: min(38rem, 92vw);
+    padding-top: 0.5rem; /* hover bridge between button and card */
+  }
+  .info-wrap:hover .info-pop,
+  .info-wrap:focus-within .info-pop,
+  .info-wrap.pinned .info-pop {
+    display: block;
+  }
+  .info-card {
+    position: relative;
+    color: var(--fg-muted);
+    font-size: 0.92rem;
+    padding: 1.1rem 1.3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--bg-elev) 97%, transparent);
+    backdrop-filter: blur(8px);
+    box-shadow: var(--shadow-lift);
+  }
+  .info-card .w-title {
+    font-size: 1.2rem;
+    font-family: var(--font-display);
+    color: var(--fg);
+    margin: 0 0 0.5rem;
+  }
+  .info-card p { margin: 0 0 0.55rem; }
+  .info-card .hint-row { margin-bottom: 0; }
+  .info-card .x {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.6rem;
+    background: none;
+    border: none;
+    color: var(--fg-faint);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0.2rem;
+  }
+  .info-card .x:hover { color: var(--fg); }
+  kbd {
+    background: rgba(74, 104, 82, 0.12);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0.05em 0.4em;
+    font-size: 0.82em;
+  }
+
   /* ---- stage: the full-width buffer + overlays ---- */
   .stage {
     flex: 1;
     position: relative;
     min-height: 0;
     background: var(--bg-code);
-  }
-
-  .progress-overlay {
-    position: absolute;
-    top: 0.6rem;
-    left: 50%;
-    transform: translateX(-50%);
-    width: min(34rem, calc(100% - 2rem));
-    z-index: 7;
-    padding: 0.55rem 0.8rem;
-    border: 1px solid var(--border-strong);
-    border-left: 3px solid var(--accent);
-    border-radius: 10px;
-    background: color-mix(in oklab, var(--bg-elev) 94%, transparent);
-    backdrop-filter: blur(6px);
-    box-shadow: var(--shadow-soft);
-    /* warm runs finish in milliseconds — only surface the overlay when a run
-       actually lasts (the delay keeps fast reruns flicker-free) */
-    animation: prog-in 0.18s ease 0.25s backwards;
-  }
-  @keyframes prog-in { from { opacity: 0; transform: translate(-50%, -4px); } }
-  .prog-label { font-weight: 550; margin-bottom: 0.4rem; font-size: 0.85rem; }
-  .prog-bar {
-    height: 7px;
-    border-radius: 4px;
-    background: rgba(74, 104, 82, 0.14);
-    overflow: hidden;
-    margin-bottom: 0.35rem;
-  }
-  .prog-fill {
-    height: 100%;
-    background: var(--grad-brand);
-    transition: width 0.25s ease;
-    box-shadow: 0 0 12px color-mix(in oklab, var(--g2) 50%, transparent);
-  }
-  .prog-current {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    color: var(--fg-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .errstrip {
@@ -711,51 +823,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  /* ---- welcome overlay ---- */
-  .welcome {
-    position: absolute;
-    left: 50%;
-    bottom: 1rem;
-    transform: translateX(-50%);
-    width: min(38rem, calc(100% - 2rem));
-    z-index: 6;
-    color: var(--fg-muted);
-    font-size: 0.92rem;
-    padding: 1.1rem 1.3rem;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: color-mix(in oklab, var(--bg-elev) 96%, transparent);
-    backdrop-filter: blur(8px);
-    box-shadow: var(--shadow-lift);
-  }
-  .welcome .w-title {
-    font-size: 1.2rem;
-    font-family: var(--font-display);
-    color: var(--fg);
-    margin: 0 0 0.5rem;
-  }
-  .welcome p { margin: 0 0 0.55rem; }
-  .welcome .hint-row { margin-bottom: 0; }
-  .welcome .x {
-    position: absolute;
-    top: 0.4rem;
-    right: 0.6rem;
-    background: none;
-    border: none;
-    color: var(--fg-faint);
-    font-size: 1.1rem;
-    cursor: pointer;
-    padding: 0.2rem;
-  }
-  .welcome .x:hover { color: var(--fg); }
-  kbd {
-    background: rgba(74, 104, 82, 0.12);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 0.05em 0.4em;
-    font-size: 0.82em;
   }
 
   /* ---- toasts ---- */
@@ -846,7 +913,4 @@
   }
   .repl input::placeholder { color: var(--fg-faint); }
 
-  @media (max-width: 860px) {
-    .welcome { bottom: 0.6rem; }
-  }
 </style>

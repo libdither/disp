@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, mount, unmount } from 'svelte'
+  import TreeValue from './TreeValue.svelte'
+  import type { ValueNode } from '$lib/disp/protocol'
   import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view'
   import { EditorState, StateEffect, StateField, Compartment } from '@codemirror/state'
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -17,6 +19,9 @@
     // block output rendered UNDER the line, notebook-style: a def's value,
     // a failing test's got/want, an error message. Click toggles wrapping.
     block?: string
+    // structured alternative to `block`: one row per entry, rendered as an
+    // interactive TreeValue (click-to-unfold; needs the expandValue prop)
+    values?: { label?: string; node: ValueNode }[]
   }
 
   class NoteWidget extends WidgetType {
@@ -42,31 +47,75 @@
   }
 
   // The notebook output cell: a block widget below its line. Collapsed to one
-  // ellipsized line; clicking toggles full wrapped text.
+  // ellipsized line per row; clicking the background toggles full wrapped
+  // text. Plain-text mode (`text`) or interactive mode (`values`: TreeValue
+  // rows — clicks on atoms/… unfold subterms and stopPropagation past the
+  // collapse toggle).
   class OutBlockWidget extends WidgetType {
-    text: string
+    text: string | undefined
+    values: { label?: string; node: ValueNode }[] | undefined
     kind: string
-    constructor(text: string, kind: string) {
+    expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
+    #mounted: object[] = []
+    constructor(
+      kind: string,
+      text?: string,
+      values?: { label?: string; node: ValueNode }[],
+      expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
+    ) {
       super()
-      this.text = text
       this.kind = kind
+      this.text = text
+      this.values = values
+      this.expand = expand
     }
     override eq(other: OutBlockWidget): boolean {
-      return other.text === this.text && other.kind === this.kind
+      // values compare by reference: each run builds fresh mark objects, so
+      // fresh results recreate the widget (and reset its unfold history)
+      return other.kind === this.kind && other.text === this.text && other.values === this.values
     }
     override get estimatedHeight(): number {
-      return 26
+      return 26 * (this.values?.length ?? 1)
     }
     override toDOM(): HTMLElement {
       const d = document.createElement('div')
       d.className = `disp-out disp-out-${this.kind}`
-      d.textContent = this.text
-      d.title = this.text
       d.addEventListener('mousedown', (e) => {
+        if ((e.target as HTMLElement).closest('button')) return
         e.preventDefault()
         d.classList.toggle('open')
       })
+      if (this.values) {
+        for (const v of this.values) {
+          const row = document.createElement('div')
+          row.className = 'disp-out-row'
+          if (v.label) {
+            const l = document.createElement('span')
+            l.className = 'disp-out-label'
+            l.textContent = v.label
+            row.appendChild(l)
+          }
+          this.#mounted.push(
+            mount(TreeValue, {
+              target: row,
+              props: {
+                node: v.node,
+                expand: this.expand,
+                onGrew: () => d.classList.add('open')
+              }
+            })
+          )
+          d.appendChild(row)
+        }
+      } else {
+        d.textContent = this.text ?? ''
+        d.title = this.text ?? ''
+      }
       return d
+    }
+    override destroy(): void {
+      for (const m of this.#mounted) void unmount(m)
+      this.#mounted = []
     }
     override ignoreEvent(): boolean {
       return true
@@ -78,6 +127,8 @@
     onDocChange?: (doc: string) => void
     onRunFile?: () => void
     onRunToCursor?: () => void
+    // subtree re-render for interactive value blocks (LineMark.values)
+    expandValue?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
     api?: (a: EditorApi) => void
   }
 
@@ -89,7 +140,7 @@
     gotoLine(line: number): void
   }
 
-  let { doc, onDocChange, onRunFile, onRunToCursor, api }: Props = $props()
+  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, api }: Props = $props()
 
   let host: HTMLDivElement
   let view: EditorView | undefined
@@ -133,11 +184,11 @@
                 from: l.to,
                 deco: Decoration.widget({ widget: new NoteWidget(m.note, m.kind), side: 1 })
               })
-            if (m.block)
+            if (m.block || m.values)
               builder.push({
                 from: l.to,
                 deco: Decoration.widget({
-                  widget: new OutBlockWidget(m.block, m.kind),
+                  widget: new OutBlockWidget(m.kind, m.block, m.values, expandValue),
                   side: 2,
                   block: true
                 })

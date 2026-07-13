@@ -200,6 +200,21 @@ export const dispEditorTheme = EditorView.theme(
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-all'
     },
+    // interactive mode: one row per value (a def's value; got/want pairs)
+    '.disp-out-row': {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    },
+    '.disp-out.open .disp-out-row': {
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-all'
+    },
+    '.disp-out-label': {
+      opacity: '0.55',
+      marginRight: '0.7em',
+      fontSize: '0.92em',
+      userSelect: 'none'
+    },
     '.disp-out::before': {
       content: "'⟵ '",
       opacity: '0.5',

@@ -63,9 +63,22 @@ const out3 = runner.evalExpr(
   `open use "../kernel/prelude.disp"\nopen use "../std/nat.disp"`,
   'double (double 3)',
   onItem,
-  PLAYGROUND
+  PLAYGROUND,
+  true
 )
-console.log(JSON.stringify({ ok: out3.ok, value: out3.value, hint: out3.valueHint, error: out3.error }))
+console.log(JSON.stringify({ ok: out3.ok, value: out3.value, hint: out3.valueHint, node: out3.valueNode, error: out3.error }))
+// structured value + click-to-unfold round trip: the eval value decodes as
+// the nat 12; re-rendering its handle rawRoot exposes the numeral's fork
+// (leaf successor-spine head) whose tail re-decodes as 11
+if (out3.valueNode?.k !== 'nat' || out3.valueNode.n !== 12) {
+  console.error('FAIL: eval valueNode should decode as nat 12')
+  process.exit(1)
+}
+const raw12 = runner.renderValue(out3.valueNode.h, 50, true)
+if (raw12.k !== 'fork' || raw12.c[0].k !== 'leaf' || raw12.c[1].k !== 'nat' || raw12.c[1].n !== 11) {
+  console.error(`FAIL: rawRoot unfold of 12 should be fork(leaf, 11), got ${JSON.stringify(raw12)}`)
+  process.exit(1)
+}
 
 console.log('--- run 4: failing test pretty ---')
 const out4 = runner.run(
@@ -75,6 +88,10 @@ const out4 = runner.run(
   onItem
 )
 console.log(JSON.stringify({ ok: out4.ok, tests: out4.tests }))
+if (out4.tests[0]?.lhsNode?.k !== 'nat' || out4.tests[0]?.rhsNode?.k !== 'leaf') {
+  console.error('FAIL: failing test should carry structured got/want (nat 1 vs leaf)')
+  process.exit(1)
+}
 
 console.log('--- run 5: parse error surface ---')
 const out5 = runner.run(`let x = 5\n`, PLAYGROUND, false, onItem)

@@ -61,6 +61,12 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'result', id: msg.id, outcome })
         break
       }
+      case 'render': {
+        if (!runner) throw new Error('worker not initialized')
+        const node = runner.renderValue(msg.handle, msg.budget, msg.rawRoot ?? false)
+        post({ type: 'rendered', id: msg.id, node })
+        break
+      }
       case 'reset': {
         runner?.reset()
         post({ type: 'ready', id: msg.id })

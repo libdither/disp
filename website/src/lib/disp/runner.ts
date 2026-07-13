@@ -9,11 +9,15 @@ import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
 import { restoreSnapshot, vfsHash, type RestoreStats } from './snapshot.ts'
 import { vfs } from './shims/fs.ts'
-import type { ItemEvent, RunOutcome } from './protocol.ts'
+import type { ItemEvent, RunOutcome, ValueNode } from './protocol.ts'
 
 const PLAYGROUND_PATH = '/lib/tests/playground.disp'
 const PRETTY_DEPTH = 14
 const PRETTY_LEN = 600
+// node budgets for structured values: enough to fill a line or two collapsed;
+// unfolding requests a fresh budget from the clicked subtree
+const VALUE_BUDGET = 100
+const FAIL_BUDGET = 60
 
 // Best-effort line attribution for elaboration errors that carry no `line N`
 // (parse errors do; unresolved-variable and per-name errors name the culprit
@@ -123,7 +127,8 @@ export class DispRunner {
         name,
         line: d.line,
         endLine: d.endLine,
-        pretty: wantDefPretty ? this.pretty(d.handle, name) : undefined
+        pretty: wantDefPretty ? this.pretty(d.handle, name) : undefined,
+        value: wantDefPretty ? this.renderValue(d.handle, VALUE_BUDGET, false, name) : undefined
       })
     let testIdx = 0
     for (const d of decls) {
@@ -138,7 +143,9 @@ export class DispRunner {
         endLine: d.endLine,
         pass,
         lhs: pass ? undefined : this.pretty(lhs),
-        rhs: pass ? undefined : this.pretty(rhs)
+        rhs: pass ? undefined : this.pretty(rhs),
+        lhsNode: pass ? undefined : this.renderValue(lhs, FAIL_BUDGET),
+        rhsNode: pass ? undefined : this.renderValue(rhs, FAIL_BUDGET)
       })
     }
     if (!outcome.error) outcome.ok = outcome.tests.every((t) => t.pass)
@@ -164,6 +171,7 @@ export class DispRunner {
     const h = this.#lastDefs.get('__it')
     if (h !== undefined) {
       outcome.value = this.pretty(h, '__it')
+      outcome.valueNode = this.renderValue(h, VALUE_BUDGET, false, '__it')
       outcome.valueHint = this.hint(h)
     }
     outcome.defs = outcome.defs.filter((d) => d.name !== '__it')
@@ -215,6 +223,34 @@ export class DispRunner {
     const s = this.decodeString(h)
     if (s !== null) return JSON.stringify(s)
     return undefined
+  }
+
+  // Structured, budget-capped rendering: same display priority as the string
+  // printer (leaf → nat → string → bound name → raw structure), but each
+  // decoded atom and each budget cut keeps its HANDLE, so the UI can ask for
+  // that subtree again raw (`rawRoot` — skip decoding at the root only; the
+  // click-to-unfold of a recognized atom) or deeper (a fresh budget).
+  // `skipName` suppresses the self-alias at a def's own root.
+  renderValue(h: number, budget = VALUE_BUDGET, rawRoot = false, skipName?: string): ValueNode {
+    const counter = { left: budget }
+    return this.#valueNode(h, counter, rawRoot, skipName)
+  }
+
+  #valueNode(h: number, counter: { left: number }, raw = false, skipName?: string): ValueNode {
+    const cls = this.#session.classify(h)
+    if (cls.tag === 'leaf') return { k: 'leaf' }
+    if (!raw) {
+      const n = this.decodeNat(h)
+      if (n !== null && n > 0) return { k: 'nat', n, h }
+      const s = this.decodeString(h)
+      if (s !== null) return { k: 'str', s, h }
+      const name = this.#names.get(h)
+      if (name && name !== skipName) return { k: 'name', name, h }
+    }
+    if (counter.left <= 0) return { k: 'more', h }
+    counter.left--
+    if (cls.tag === 'stem') return { k: 'stem', c: [this.#valueNode(cls.child, counter)], h }
+    return { k: 'fork', c: [this.#valueNode(cls.left, counter), this.#valueNode(cls.right, counter)], h }
   }
 
   // Applicative-style pretty printer (t x (t y) …), name-aware, capped.
