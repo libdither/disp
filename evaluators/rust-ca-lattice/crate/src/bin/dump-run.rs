@@ -3,7 +3,7 @@
 //! consumes (research/interaction-combinator/lattice_player.html): the engine is the
 //! model, the visualization is a replay client — never a second simulator.
 //!
-//! Usage: dump-run <fork|stem|chain1|chain2|chain3|ksimple|kargs|share2|share|disp> [max_ticks] [bilayer|full3d] [stride]
+//! Usage: dump-run <fork|stem|chain1..chain4|ksimple|kargs|share2|share|disp|selF|...> [max_ticks] [bilayer|full3d] [stride]
 //!
 //! Trace schema (v2, the topo lift): positions are [x,y,z]; faces are single direction
 //! chars N/E/S/W/U/D; strands are two-char face pairs (a trailing `*` marks ψ-hot); agents
@@ -49,6 +49,15 @@ fn snapshot(grid: &Grid, out: &mut String) {
             write!(out, "[{},{},{},[{}]]", p.0, p.1, p.2, ss.join(",")).unwrap();
         }
     }
+    // χ pressure, sparse: only cells the field currently touches
+    out.push_str("],\"chi\":[");
+    let mut first = true;
+    for (p, v) in &grid.chi {
+        if *v == 0 { continue; }
+        if !first { out.push(','); }
+        first = false;
+        write!(out, "[{},{},{},{}]", p.0, p.1, p.2, v).unwrap();
+    }
     out.push_str("]}");
 }
 
@@ -69,6 +78,8 @@ fn named(which: &str) -> (Term, &'static str) {
         "chain2" => (oracle::chain_k(2), "a deeper K spine (see chain1)."),
         "chain3" => (oracle::chain_k(3),
             "a deeper K spine: several concurrent walkers. Completes on full3d only once walks eat their own drag (truncation re-anchors); before that fix, the walkers paved the basement with trail mats and froze. The trail-economy exhibit."),
+        "chain4" => (oracle::chain_k(4),
+            "the residue frontier: a four-deep K spine. chain1 through chain3 complete on full3d; this one still pockets. Watch χ (red glow) build around the knot while slides and shoves churn without ever opening a fire; the shadow-progress drought calls the stall."),
         "ksimple" => (ap(ap(oracle::k(), Term::L), s(Term::L)),
             "K discards an argument: T1·△ answers with b and mints an ε; watch the value walk INTO the eraser (Eps·S, Eps·△) — GC one cell at a time."),
         "kargs" => (ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),

@@ -81,6 +81,7 @@
       thick white stub = principal port; thin stubs = aux ports; diagonal stubs = up/down<br>
       <span style="color:#6f9fd8">z=0 strand</span> / <span style="color:#a97fd8">z=1 strand</span> (higher planes dimmer, offset up-right)<br>
       <span style="color:#ffd866">gold strand</span> = hot (ψ demand: a consumer awaits along this wire; reels are gated on it)<br>
+      <span style="color:#ff5a30">red glow</span> = χ pressure (pumped by frustration: blocked clears, unplannable hot walkers; agents shove and mats evaporate downhill)<br>
       gold flash = fire (rule shown); agents glide = reel; slack vanishing = retract/slide
     </div>
     <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
@@ -285,6 +286,15 @@ function draw() {
     const x0 = Math.floor(view.x - (innerWidth - 360) / 2 / s), x1 = Math.ceil(view.x + (innerWidth - 360) / 2 / s);
     const y0 = Math.floor(view.y - innerHeight / 2 / s), y1 = Math.ceil(view.y + innerHeight / 2 / s);
     if ((x1 - x0) * (y1 - y0) < 20000) for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const [a, b] = px(x, y, 0); ctx.fillRect(a - 1, b - 1, 2, 2); }
+  }
+  // χ pressure of the departing frame: [x, y, z, v] with v in 1..250 — a warm glow
+  // under everything (pumped by frustration; agents shove and mats evaporate downhill)
+  for (const c of f0.grid.chi || []) {
+    const [cx, cy] = px(c[0], c[1], c[2]);
+    ctx.fillStyle = "#ff5a30";
+    ctx.globalAlpha = (0.08 + 0.4 * Math.min(1, c[3] / 250)) * zalpha(c[2]);
+    ctx.fillRect(cx - s * 0.48, cy - s * 0.48, s * 0.96, s * 0.96);
+    ctx.globalAlpha = 1;
   }
   // wires of the departing frame: [x, y, z, ["NS", ...]]; a trailing "*" marks the
   // strand HOT (ψ demand: a consumer awaits along this wire) — drawn gold and thicker

@@ -64,7 +64,8 @@ is a library plus tests.
   times the budget and reports whether shadow ints moved).
 - `crate/src/bin/dump-run.rs` — the instrumentation face: runs a term and emits one JSON
   document (full grid snapshot + tick events per frame; v2 schema: [x,y,z] positions,
-  single-char faces, a trailing `*` marks a ψ-hot strand, no tucks). The replay client is
+  single-char faces, a trailing `*` marks a ψ-hot strand, a sparse per-cell `chi` list
+  carries the pressure field, no tucks). The replay client is
   `research/interaction-combinator/lattice_player.html` (upper planes render offset and
   dimmer; embedded traces in `lattice_traces.js` cover both topologies; drop any dump-run
   output onto it to view others). The engine is the model; the visualization never
