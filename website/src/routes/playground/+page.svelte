@@ -8,10 +8,10 @@
   import { onMount } from 'svelte'
   import { disp } from '$lib/disp/client.svelte'
   import type { RunOutcome, ItemEvent, ValueNode, RawTree } from '$lib/disp/protocol'
-  import type { T } from '$lib/treecalc/treecalc'
+  import { parseTree, type T } from '$lib/treecalc/treecalc'
   import { examples } from '$lib/disp/examples'
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
-  import TreeValue from '$lib/components/TreeValue.svelte'
+  import TreeValue, { type TreeValueCtl } from '$lib/components/TreeValue.svelte'
   import TreeVis from '$lib/components/TreeVis.svelte'
 
   // approximate item count of a cold kernel elaboration (measured; only used
@@ -48,7 +48,12 @@
   // POD: folded in the drawing, but genuine structure that computes when a
   // reduction consumes it (or when clicked open). Atoms too big to ship
   // (> POD_MAX_NODES) get no dictionary entry and stay symbolic fruit.
-  let viz = $state<{ expr: string; defs: Record<string, T> } | null>(null)
+  // `atoms` (ident -> handle) is the sync bridge: a pod click in the panel
+  // maps back to the buffer subtree it stands for. `vizCtl` is the source
+  // TreeValue's controller — null in expression mode (eval pop-outs), where
+  // the strip's VALUE doesn't correspond to the input expression's parts.
+  let viz = $state<{ expr: string; defs: Record<string, T>; atoms: Map<string, number> } | null>(null)
+  let vizCtl: TreeValueCtl | null = null
   // strings are unary codepoint chains ("leaf" alone is ~830 nodes), so the
   // ceiling must be generous; a pod only draws its nodes once opened anyway
   const POD_MAX_NODES = 3000
@@ -104,7 +109,7 @@
     return { expr, atoms }
   }
 
-  async function onVisualizeValue(tree: ValueNode) {
+  async function seedViz(tree: ValueNode) {
     const { expr, atoms } = serializeForViz(tree)
     const defs: Record<string, T> = {}
     await Promise.all(
@@ -113,7 +118,49 @@
         if (rt !== null) defs[ident] = rawToT(rt)
       })
     )
-    viz = { expr, defs }
+    viz = { expr, defs, atoms }
+  }
+
+  // value pop-out (def blocks, got/want rows): synced with its TreeValue
+  const onVisualizeValue = (tree: ValueNode, ctl: TreeValueCtl) => {
+    vizCtl = ctl
+    void seedViz(tree)
+  }
+
+  // two-way sync, buffer -> panel: any fold change in the SOURCE value
+  // re-seeds the panel at its new fold state (a fresh step-0 tree)
+  const onValueFoldChange = (tree: ValueNode, ctl: TreeValueCtl) => {
+    if (viz && vizCtl === ctl && ctl.alive) void seedViz(tree)
+  }
+
+  // two-way sync, panel -> buffer: before any step, clicking a pod unfolds
+  // the corresponding subtree in the buffer instead — the fold-change above
+  // then re-seeds the panel. A dead controller (the buffer re-ran) falls
+  // back to the panel's local reveal.
+  const onPodOpen = (label: string): boolean => {
+    const handle = viz?.atoms.get(label)
+    if (handle == null || !vizCtl?.alive) return false
+    void vizCtl.unfoldByHandle(handle)
+    return true
+  }
+
+  // eval pop-out: seed with the EXPRESSION when the visualizer's grammar can
+  // hold it, so the panel replays the actual reduction the REPL performed
+  // (names resolve to pods on demand; strings parse to real cons trees).
+  // Expressions beyond that grammar (binders…) fall back to the value.
+  function onVisualizeEval(tree: ValueNode, ctl: TreeValueCtl) {
+    const expr = evalOut?.expr?.trim()
+    if (expr) {
+      try {
+        parseTree(expr, {})
+        vizCtl = null
+        viz = { expr, defs: {}, atoms: new Map() }
+        return
+      } catch {
+        /* not treecalc-expressible — show the value instead */
+      }
+    }
+    onVisualizeValue(tree, ctl)
   }
 
   // names TYPED into the panel's edit box resolve against the live playground
@@ -665,6 +712,7 @@
         onRunToCursor={runToCursor}
         {expandValue}
         {onVisualizeValue}
+        {onValueFoldChange}
         api={(a) => (editorApi = a)}
       />
     </div>
@@ -673,7 +721,7 @@
       <aside class="viz-panel">
         <div class="viz-head">
           <span class="viz-title">reduction</span>
-          <span class="viz-sub">green pods hold real structure, folded — they open when computed (or clicked). Orange fruit is a free name: purely symbolic. Edit the expression to apply arguments.</span>
+          <span class="viz-sub">green pods hold real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Orange fruit is a free name: purely symbolic. Edit the expression to apply arguments.</span>
           <button class="x" onclick={() => (viz = null)} aria-label="close visualizer">×</button>
         </div>
         {#key viz}
@@ -685,6 +733,7 @@
               defs={viz.defs}
               resolveDef={resolveScopeDef}
               minimal
+              {onPodOpen}
               namesHint="Names resolve against the playground's scope and arrive as green pods (real structure, folded shut). Unknown names are free variables: orange fruit the reductions carry symbolically."
             />
           </div>
@@ -712,7 +761,7 @@
         <span class="ev">
           {#if evalOut.node}
             {#key evalOut}
-              <TreeValue node={evalOut.node} expand={expandValue} onVisualize={onVisualizeValue} />
+              <TreeValue node={evalOut.node} expand={expandValue} onVisualize={onVisualizeEval} />
             {/key}
           {:else}
             {evalOut.value}

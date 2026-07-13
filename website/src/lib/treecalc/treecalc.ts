@@ -43,6 +43,27 @@ export function natValue(t: T): number | null {
   return cur.tag === 'leaf' ? n : null
 }
 
+// strings, the lib encoding: a cons chain fork(nat(codepoint), rest), nil = leaf
+export function strTree(s: string): T {
+  let cur: T = leaf
+  for (const ch of [...s].reverse()) cur = fork(nat(ch.codePointAt(0)!), cur)
+  return cur
+}
+
+export function strValue(t: T): string | null {
+  const codes: number[] = []
+  let cur = t
+  while (cur.tag === 'fork') {
+    const c = natValue(cur.l)
+    if (c === null || c < 32 || c > 0x10ffff) return null
+    codes.push(c)
+    cur = cur.r
+    if (codes.length > 4096) return null
+  }
+  if (cur.tag !== 'leaf' || codes.length === 0) return null
+  return String.fromCodePoint(...codes)
+}
+
 export const childrenOf = (t: T): T[] =>
   t.tag === 'stem' ? [t.c] : t.tag === 'fork' ? [t.l, t.r] : t.tag === 'apply' ? [t.f, t.x] : []
 
@@ -408,6 +429,14 @@ export function parseTree(
       tokens.push('t')
       continue
     }
+    // string literal → the lib's cons-of-codepoints tree (token keeps the quote)
+    if (ch === '"') {
+      const j = input.indexOf('"', i + 1)
+      if (j < 0) throw new Error('unterminated string')
+      tokens.push(input.slice(i, j + 1))
+      i = j
+      continue
+    }
     if (/[A-Za-z_]/.test(ch)) {
       let j = i
       while (j < input.length && /[A-Za-z_0-9]/.test(input[j])) j++
@@ -442,6 +471,14 @@ export function parseTree(
     if (/^[0-9]+$/.test(tok)) {
       p++
       return freshCopy(nat(parseInt(tok, 10)))
+    }
+    if (tok.startsWith('"')) {
+      p++
+      const node = strTree(tok.slice(1, -1))
+      // strings are unary-huge — hosts that fold (the playground panel) get
+      // to draw them shut, labeled with the literal itself
+      opts.onDefSplice?.(node, tok)
+      return node
     }
     if (Object.prototype.hasOwnProperty.call(defs, tok)) {
       p++
@@ -505,6 +542,8 @@ export function pretty(t: T, opts: { names?: boolean; defs?: Record<string, T> }
     if (!opts.names) return null
     const n = natValue(t)
     if (n !== null && n > 0) return String(n)
+    const s = strValue(t)
+    if (s !== null) return JSON.stringify(s)
     if (nodeCount(t) >= 3) {
       for (const [name, d] of defs) if (treeEq(t, d)) return name
     }

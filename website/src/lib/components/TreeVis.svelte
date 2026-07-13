@@ -18,6 +18,7 @@
     childrenOf,
     pretty,
     natValue,
+    strValue,
     treeEq,
     nodeCount,
     DEFS,
@@ -52,6 +53,11 @@
     // replaces the edit box ⓘ's combinator list when the host brings its own
     // name universe
     namesHint?: string
+    // two-way fold sync: BEFORE any step has fired, clicking a labeled pod
+    // offers the unfold to the host (the playground unfolds its buffer value
+    // and re-seeds this panel). Return true = handled externally; false =
+    // reveal locally as usual.
+    onPodOpen?: (label: string) => boolean
   }
 
   // The tree-calculus pieces — the ONE source shared by the cassette (symbol
@@ -81,7 +87,8 @@
     defs = undefined,
     resolveDef = undefined,
     minimal = false,
-    namesHint = undefined
+    namesHint = undefined,
+    onPodOpen = undefined
   }: Props = $props()
 
   // the live name dictionary: the host's defs (or the built-in toy set)
@@ -281,10 +288,12 @@
     sizeMemo.set(t, n)
     return n
   }
-  // a folded region's label: numeral, dictionary match, or anonymous
+  // a folded region's label: numeral, string, dictionary match, or anonymous
   function autoName(t: T): string | null {
     const n = natValue(t)
     if (n !== null && n >= 1) return String(n)
+    const s = strValue(t)
+    if (s !== null) return JSON.stringify(s)
     if (sizeOf(t) >= 3) {
       for (const [name, d] of Object.entries(activeDefs)) if (treeEq(t, d)) return name
     }
@@ -306,6 +315,10 @@
     visit(root)
   }
   function openPod(t: T) {
+    // before any step, a labeled pod is a host atom — the host may prefer to
+    // unfold its own value (and re-seed this panel) instead of a local reveal
+    const label = folded.get(t)
+    if (onPodOpen && stepCount === 0 && label && onPodOpen(label)) return
     if (!folded.delete(t) || !cur) return
     reveal(t, UNFOLD_BUDGET)
     show(cur)

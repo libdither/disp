@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, mount, unmount } from 'svelte'
-  import TreeValue from './TreeValue.svelte'
+  import TreeValue, { type TreeValueCtl } from './TreeValue.svelte'
   import type { ValueNode } from '$lib/disp/protocol'
   import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view'
   import { EditorState, StateEffect, StateField, Compartment } from '@codemirror/state'
@@ -56,14 +56,16 @@
     values: { label?: string; node: ValueNode }[] | undefined
     kind: string
     expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
-    onVisualize?: (tree: ValueNode) => void
+    onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void
+    onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
     #mounted: object[] = []
     constructor(
       kind: string,
       text?: string,
       values?: { label?: string; node: ValueNode }[],
       expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>,
-      onVisualize?: (tree: ValueNode) => void
+      onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void,
+      onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
     ) {
       super()
       this.kind = kind
@@ -71,6 +73,7 @@
       this.values = values
       this.expand = expand
       this.onVisualize = onVisualize
+      this.onFoldChange = onFoldChange
     }
     override eq(other: OutBlockWidget): boolean {
       // values compare by reference: each run builds fresh mark objects, so
@@ -105,7 +108,8 @@
                 node: v.node,
                 expand: this.expand,
                 onGrew: () => d.classList.add('open'),
-                onVisualize: this.onVisualize
+                onVisualize: this.onVisualize,
+                onFoldChange: this.onFoldChange
               }
             })
           )
@@ -133,8 +137,11 @@
     onRunToCursor?: () => void
     // subtree re-render for interactive value blocks (LineMark.values)
     expandValue?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
-    // hand a value's current fold-state tree to the reduction visualizer
-    onVisualizeValue?: (tree: ValueNode) => void
+    // hand a value's current fold-state tree (+ its controller) to the
+    // reduction visualizer
+    onVisualizeValue?: (tree: ValueNode, ctl: TreeValueCtl) => void
+    // fold-state changes stream out for two-way sync with the visualizer
+    onValueFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
     api?: (a: EditorApi) => void
   }
 
@@ -146,7 +153,7 @@
     gotoLine(line: number): void
   }
 
-  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, api }: Props = $props()
+  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, api }: Props = $props()
 
   let host: HTMLDivElement
   let view: EditorView | undefined
@@ -194,7 +201,7 @@
               builder.push({
                 from: l.to,
                 deco: Decoration.widget({
-                  widget: new OutBlockWidget(m.kind, m.block, m.values, expandValue, onVisualizeValue),
+                  widget: new OutBlockWidget(m.kind, m.block, m.values, expandValue, onVisualizeValue, onValueFoldChange),
                   side: 2,
                   block: true
                 })

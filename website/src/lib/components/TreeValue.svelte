@@ -4,11 +4,20 @@
   // Recognized atoms (nats, strings, bound names) and budget cuts (…) are
   // clickable — a click re-renders that subtree via `expand` (raw for atoms,
   // deeper for cuts) and splices it in. Every unfolded subterm wears its own
-  // − chip that re-folds exactly that subterm (nested unfolds fold away with
+  // ↺ chip that re-folds exactly that subterm (nested unfolds fold away with
   // their ancestor). Without `expand` the tree renders inert. `onVisualize`
   // adds a trailing button that hands the CURRENT fold-state tree to the
-  // host (the playground's reduction-visualizer pop-out).
+  // host (the playground's reduction-visualizer pop-out) along with a
+  // CONTROLLER — the host can drive unfolds programmatically (the panel's
+  // pod clicks) and hears every fold change back (two-way sync).
+  import { onDestroy } from 'svelte'
   import type { ValueNode } from '$lib/disp/protocol'
+
+  export interface TreeValueCtl {
+    alive: boolean
+    // unfold every occurrence of the subtree with this handle (one level)
+    unfoldByHandle: (handle: number) => Promise<void>
+  }
 
   interface Props {
     node: ValueNode
@@ -16,9 +25,11 @@
     // an unfold grew the content — the host may want to un-collapse
     onGrew?: () => void
     // pop the current fold-state tree out (folded atoms stay symbolic there)
-    onVisualize?: (tree: ValueNode) => void
+    onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void
+    // every fold/unfold (user click or controller) reports the new state
+    onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
   }
-  let { node, expand, onGrew, onVisualize }: Props = $props()
+  let { node, expand, onGrew, onVisualize, onFoldChange }: Props = $props()
 
   // an unfolded splice remembers what it replaced, so it can re-fold in place
   type UN = ValueNode & { _prev?: ValueNode }
@@ -45,6 +56,8 @@
     parent.c[path[path.length - 1]] = fresh
   }
 
+  const notify = () => onFoldChange?.($state.snapshot(tree) as ValueNode, ctl)
+
   async function unfold(e: Event, path: number[], handle: number, rawRoot: boolean) {
     e.stopPropagation()
     if (!expand || busyPath) return
@@ -55,6 +68,7 @@
         const prev = $state.snapshot(getAt(path)) as ValueNode
         setAt(path, { ...fresh, _prev: prev } as UN)
         onGrew?.()
+        notify()
       }
     } finally {
       busyPath = null
@@ -64,12 +78,43 @@
   function refold(e: Event, path: number[]) {
     e.stopPropagation()
     const prev = prevOf(getAt(path))
-    if (prev) setAt(path, prev)
+    if (prev) {
+      setAt(path, prev)
+      notify()
+    }
   }
+
+  // the host's handle on this instance: programmatic unfolds (the visualizer
+  // panel's pod clicks land here) and a liveness flag (a re-run replaces the
+  // widget; a dead controller means "reveal locally instead")
+  const ctl: TreeValueCtl = {
+    alive: true,
+    unfoldByHandle: async (handle: number) => {
+      if (!expand || !ctl.alive) return
+      const paths: { path: number[]; rawRoot: boolean }[] = []
+      const walk = (n: ValueNode, path: number[]) => {
+        if ((n.k === 'nat' || n.k === 'str' || n.k === 'name') && n.h === handle)
+          paths.push({ path, rawRoot: true })
+        else if (n.k === 'more' && n.h === handle) paths.push({ path, rawRoot: false })
+        else if (n.k === 'stem' || n.k === 'fork') n.c.forEach((c, i) => walk(c, [...path, i]))
+      }
+      walk(tree, [])
+      if (paths.length === 0) return
+      const fresh = await expand(handle, paths[0].rawRoot)
+      if (!fresh || !ctl.alive) return
+      for (const p of paths) {
+        const prev = $state.snapshot(getAt(p.path)) as ValueNode
+        setAt(p.path, { ...(JSON.parse(JSON.stringify(fresh)) as ValueNode), _prev: prev } as UN)
+      }
+      onGrew?.()
+      notify()
+    }
+  }
+  onDestroy(() => (ctl.alive = false))
 
   function visualize(e: Event) {
     e.stopPropagation()
-    onVisualize?.($state.snapshot(tree) as ValueNode)
+    onVisualize?.($state.snapshot(tree) as ValueNode, ctl)
   }
 
   // the widget host toggles collapse on mousedown — interactive spans opt out
