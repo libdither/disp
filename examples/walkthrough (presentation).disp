@@ -1,0 +1,96 @@
+// Build a type system from scratch — on nothing but the five rewrite rules.
+// This is the real kernel's design in miniature: types are programs,
+// functions are checked with promises, and ONE walker routes every check.
+// (Ctrl-click the path below to read the prelude in a new tab.)
+
+open use raw "../prelude.disp" {}
+// An opinionated walkthrough of the language.
+
+// here's the tree calculus, the syntax
+
+//<modifier> <identifier> : <type?> := thing
+
+// defining combinators as trees
+
+// bracket abstraction (see /learn)
+
+// no lambda terms here — binders compile away into combinators, so a lambda is just a way to write a tree
+
+// recursion!
+
+// fix f x = f (fix f) x — each application thaws one unfolding; f gets itself as `self`
+
+// a type is just a predicate
+
+// recursive types are just recursive predicates: zero = t, succ n = t t n
+
+// function types: evaluate the term under all possible inputs? maybe:
+//
+//   Arrow := {A, B} -> {f} -> {
+//       for input in enumerate_trees() {
+//           if (A input) and (not (B (f input))) { return false; }
+//       }
+//       return true;
+//   }
+//
+// unfortunately there are infinitely many trees. we need all inputs AT ONCE.
+
+// the idea: hand f ONE made-up input — a hypothesis, a tagged pair promising "some A"
+
+// and it works! ...for functions that ignore their argument:
+
+// but the simplest function there is fails the exam:
+
+// we need to somehow make sure that all types check for a hypothesis first, before checking concretely: make a wrapper!
+
+// Note: The following bits are AI-written, I haven't vetted them yet!
+
+// the promise is ordinary data: anything can triage it apart, read it, or forge one
+// so a function can DETECT the exam — real bools are leaf/stem, the promise is a fork:
+
+// and functions that inspect their argument are never really examined:
+
+// no encoding escapes this: checker and checked code play by the same five rules.
+// the kernel's answer: stop running f. interpret its tree ONE APPLICATION AT A TIME,
+// refusing any step that smashes, reads, or forges a promise — the walker.
+// refusal means verdicts need a third value:
+
+// a REAL hypothesis is a frozen call, wait(hyp_step)(meta) — applying it fires hyp_step instead of smashing it
+// a frozen call stores its payload two rights down, and its left branch is a constant SIGNATURE:
+
+// what does applying a promise mean? ask its TYPE: the meta's first slot says where applications land
+// so a promised function applied to x re-freezes at the codomain, remembering x — a stuck call, a NEUTRAL
+
+// a non-function type stores t there: misuse degrades to a promise of t, refused by everyone (a free InvalidType)
+
+// one more scout: did a promise leak into a result?
+
+// ─── the walker ───
+
+// walk f x: the five rules by hand — building AROUND a promise is fine, taking one APART is refused
+// two sanctioned exceptions: tree_eq (compares, nothing escapes) and the identity (rebuilds its fork)
+
+// forging is caught mid-build:
+
+// ─── real hypothesis walking ───
+
+// rebuild the H-rule types on this machinery: meta = (where-applications-land, recognizer-body)
+
+// the honest function type: mint a fresh promise of A, walk f on it, check B, demand no leaks
+// (a claim about an ARBITRARY input can't mention the input)
+
+// the payoff, higher-order: (g true) re-freezes at the codomain, and the H-rule accepts the stuck call
+
+// mint + walk + occurs-check = ∀-introduction, the kernel's second trusted op: bind_hyp
+
+// ─── the real kernel from here ───
+
+// this file is lib/kernel/engine.disp in miniature:
+//   promise / hyp_step   -> make_hyp / hyp_reduce (the meta slot holds a PROGRAM there: the respond)
+//   walk                 -> param_walker / param_apply, same carve-out list
+//   rec_wrap / make_type -> recognizer_wrap / make_recognizer, the same H-rule
+//   forall               -> bind_hyp, the second trusted operation
+//   ok / err / bind_ok   -> Ok / Err / bind (CheckerResult)
+//   sig_of / is_promise  -> checker_sig / is_neutral (O(1) by hash-consing)
+// there `not` and `double` aren't dead ends: types carry elimination protocols in their respond.
+// records, equality, dependent codomains, and Type itself are the same ingredients: frozen calls, signatures, one walker.

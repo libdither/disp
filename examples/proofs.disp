@@ -1,0 +1,18 @@
+open use "../kernel/prelude.disp"
+open use "../std/nat.disp"
+
+// A statement about every Nat is a Pi into a proposition. Checking it mints
+// one promise (a hypothesis) and runs the body on it:
+n_eq_n : {n : Nat} -> Eq Nat n n := {n} -> refl
+test param_apply (Pi Nat ({n} -> Eq Nat n n)) n_eq_n = Ok true
+
+// A false statement is rejected — the stuck ends differ:
+test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl) = Ok false
+
+// Watch a promise at work: mint one by hand and observe it.
+let hN := make_hyp Nat 0
+test param_apply Nat hN = Ok true            // a promise of a Nat counts as a Nat
+test is_neutral (nat_rec ({_} -> Bool) true ({n, rec} -> false) hN) = true
+
+// Reading a promise's raw shape is refused (either answer would leak):
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err

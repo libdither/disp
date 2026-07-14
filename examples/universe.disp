@@ -1,0 +1,18 @@
+open use "../kernel/prelude.disp"
+
+// Types are values with a recognizable shape, so the universe is a
+// predicate like any other — and it accepts itself:
+test param_apply Type Nat = Ok true
+test param_apply Type zero = Ok false
+test param_apply Type Type = Ok true
+
+// Build a type from scratch: a home-made Nat, zero and successor.
+let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]
+test param_apply Type MyNat = Ok true
+
+// The deeper check is behavioral: verify_good aims the promise machinery
+// at a type's own respond, and catches lies in both directions:
+let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
+test verify_good MyNat (resp_of MyNat) = Ok true
+test verify_good MyNat (inductive_respond unit_witness) = Ok false   // waves junk through
+test verify_good MyNat (inert_respond unit_witness) = Ok false       // refuses everything

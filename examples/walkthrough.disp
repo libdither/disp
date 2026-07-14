@@ -1,0 +1,275 @@
+// Build a type system from scratch — on nothing but the five rewrite rules.
+// This is the real kernel's design in miniature: types are programs,
+// functions are checked with promises, and ONE walker routes every check.
+// (Ctrl-click the path below to read the prelude in a new tab.)
+
+open use raw "../prelude.disp" {}
+// An opinionated walkthrough of the language.
+
+// here's the tree calculus, the syntax
+
+//<modifier> <identifier> : <type?> := thing
+
+// defining combinators as trees
+
+triage := {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
+K := t t // rule: t t y z = y — keep y, discard z
+I := triage t t t // triage rebuilds whatever it's handed: the identity
+test K true false = true
+test I false = false
+
+// bracket abstraction (see /learn)
+
+// no lambda terms here — binders compile away into combinators, so a lambda is just a way to write a tree
+K2 := {x, y} -> x
+test tree_eq K K2 = true // the binder compiled to the exact same tree
+S := {f, g, x} -> f x (g x)
+
+// recursion!
+wait := {a, b, c} -> t (t a) (t t c) b
+test wait and true false = false
+test tree_eq (wait and true) (and true) = false // frozen: not yet (and true)
+
+// fix f x = f (fix f) x — each application thaws one unfolding; f gets itself as `self`
+omega := {x} -> x x
+fix := {f} -> wait omega ({x} -> f (wait omega x))
+
+add := fix ({self, a, b} -> if (is_leaf a) then b else (succ (self (nat_pred a) b)))
+test add 2 3 = 5
+
+is_even := fix ({self, n} -> if (is_leaf n) then true else (not (self (nat_pred n))))
+test is_even 4 = true
+test is_even 3 = false // the smallest possible payload: one bool, flipped per step
+
+double := fix ({self, n} -> if (is_leaf n) then 0 else (succ (succ (self (nat_pred n)))))
+test double 3 = 6
+
+// a type is just a predicate
+
+true := t
+false := t t
+
+is_leaf := {s} -> triage true ({_} -> false) ({_, _} -> false) s
+test is_leaf t = true
+test is_leaf (t t) = false
+test is_leaf (t t t) = false
+BoolType := {v} -> triage true ({s} -> is_leaf s) ({_, _} -> false) v
+test BoolType true = true
+test BoolType false = true
+test BoolType 0 = true
+test BoolType (t t t) = false
+test BoolType (t (t t)) = false
+
+tree_eq := fix ({self, a, b} ->
+  triage
+    (triage true ({_} -> false) ({_l, _r} -> false) b)
+    ({ax} -> triage false (self ax) ({_l, _r} -> false) b)
+    ({ax, ay} -> triage false ({_} -> false) ({bx, by} -> and (self ax bx) (self ay by)) b)
+    a)
+
+BoolType2 := {v} -> or (tree_eq v true) (tree_eq v false)
+test BoolType2 true = true
+test BoolType2 false = true
+test BoolType2 0 = true // 0 and true are the SAME leaf — types are predicates, not brands
+test BoolType2 (t t t) = false
+test BoolType2 (t (t t)) = false
+
+// recursive types are just recursive predicates: zero = t, succ n = t t n
+
+NatType := fix ({self, v} ->
+  triage
+    true
+    ({_} -> false)
+    ({tag, n} -> and (is_leaf tag) (self n))
+    v)
+test NatType 0 = true
+test NatType 5 = true
+test NatType true = true // true IS zero — the smallest constants share one tree
+test NatType false = false
+test NatType (t (t t) t) = false
+
+// function types: evaluate the term under all possible inputs? maybe:
+//
+//   Arrow := {A, B} -> {f} -> {
+//       for input in enumerate_trees() {
+//           if (A input) and (not (B (f input))) { return false; }
+//       }
+//       return true;
+//   }
+//
+// unfortunately there are infinitely many trees. we need all inputs AT ONCE.
+
+// the idea: hand f ONE made-up input — a hypothesis, a tagged pair promising "some A"
+
+let hyp_tag := t (t t t) t
+let mk_hyp := {T} -> pair hyp_tag T
+let is_hyp := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_tag)
+let hyp_type := pair_snd
+
+Arrow := {A, B} -> {f} -> B (f (mk_hyp A))
+
+// and it works! ...for functions that ignore their argument:
+test Arrow BoolType BoolType ({b} -> true) = true
+
+// but the simplest function there is fails the exam:
+test Arrow BoolType BoolType ({b} -> b) = false // the identity is not Bool -> Bool??
+
+// we need to somehow make sure that all types check for a hypothesis first, before checking concretely: make a wrapper!
+
+h_wrap := fix ({wrap, body, v} ->
+  if (is_hyp v)
+    then (tree_eq (hyp_type v) (wait wrap body)) // the H-rule: wrap ≡ h_wrap, so this rebuilds me
+    else (body v))
+new_type := {body} -> wait h_wrap body
+
+Bool := new_type ({v} -> or (tree_eq v true) (tree_eq v false))
+test Bool true = true
+test Bool 2 = false
+test Bool (mk_hyp Bool) = true // a promise of a Bool is a Bool
+test Arrow Bool Bool ({b} -> b) = true // the identity checks now
+
+
+
+
+// Note: The following bits are AI-written, I haven't vetted them yet!
+
+// the issue: (the core part of the language) TRIAGE (dun dun dun).
+// another major issue: hypotheses are just trees, you can make your own and forge the output of a function that doesn't actually do anything.
+// a 3rd issue: how do we type-check boolean operations? (i.e. define a rec_bool?) they need to somehow act differently based on whether they are passed a neutral or a concrete value. (similarly to the type)
+
+// issue 1:
+exam_cheat := {b} -> triage 1 ({_} -> 1) ({_, _} -> true) b
+test exam_cheat true = 1 // on real bools it returns 1 — not a Bool -> Bool!
+test exam_cheat false = 1
+test Arrow Bool Bool exam_cheat = true // accepted anyway: it behaves only when watched. unsound.
+
+// and functions that inspect their argument are never really examined:
+test Arrow Bool Bool not = true // passes by luck — not's triage took the fork branch, the play exercised nothing
+
+// no encoding escapes this: checker and checked code play by the same five rules.
+// the kernel's answer: stop running f. interpret its tree ONE APPLICATION AT A TIME,
+// refusing any step that smashes, reads, or forges a promise — the walker.
+// refusal means verdicts need a third value:
+
+ok := {v} -> pair true v // the kernel spells these Ok / Err (CheckerResult)
+err := pair false false
+is_ok := {r} -> pair_fst r
+bind_ok := {r, k} -> if (is_ok r) then (k (pair_snd r)) else r
+
+// a REAL hypothesis is a frozen call, wait(hyp_step)(meta) — applying it fires hyp_step instead of smashing it
+// a frozen call stores its payload two rights down, and its left branch is a constant SIGNATURE:
+
+meta_of := {T} -> pair_snd (pair_snd T) // the kernel's type_meta
+sig_of := {checker} -> pair_fst (wait checker t) // the kernel's checker_sig
+
+// what does applying a promise mean? ask its TYPE: the meta's first slot says where applications land
+// so a promised function applied to x re-freezes at the codomain, remembering x — a stuck call, a NEUTRAL
+
+hyp_step := fix ({self, meta, arg} ->
+  wait self (pair (pair_fst (meta_of (pair_fst meta))) (pair (pair_snd meta) arg)))
+
+promise := {T, id} -> wait hyp_step (pair T id)
+promise_sig := sig_of hyp_step
+is_promise := {v} -> and (is_fork v) (tree_eq (pair_fst v) promise_sig)
+promise_type := {v} -> pair_fst (meta_of v)
+
+test is_promise (promise Bool 0) = true
+test promise_type (promise Bool 0) = Bool
+
+// a non-function type stores t there: misuse degrades to a promise of t, refused by everyone (a free InvalidType)
+
+// one more scout: did a promise leak into a result?
+occurs := fix ({self, h, v} ->
+  if (tree_eq h v) then true
+  else (triage false ({c} -> self h c) ({l, r} -> or (self h l) (self h r)) v))
+
+// ─── the walker ───
+
+// walk f x: the five rules by hand — building AROUND a promise is fine, taking one APART is refused
+// two sanctioned exceptions: tree_eq (compares, nothing escapes) and the identity (rebuilds its fork)
+
+teq_sig := sig_of tree_eq
+walk_stem := {a, x} -> if (is_promise (t a x)) then err else (ok (t a x)) // forge check
+walk_s := {self, c, b, x} -> bind_ok (self c x) ({cx} -> bind_ok (self b x) ({bx} -> self cx bx))
+walk_app3 := {self, b, l, r} -> bind_ok (self b l) ({bl} -> self bl r)
+walk_fork := {self, a, b, x} ->
+  triage
+    (ok b) // rule: t t b x = b
+    ({c} -> walk_s self c b x) // rule: t (t c) b x = (c x) (b x), both walked
+    ({tc, td} ->
+      (if (is_promise x)
+        then err // triage-on-a-promise: THE forbidden move
+        else (triage (ok tc) ({ci} -> self td ci) ({l, r} -> walk_app3 self b l r) x)))
+    a
+walk := fix ({self, f, x} ->
+  if (is_promise f) then (ok (f x)) // a promise applied: hyp_step decides (stays stuck)
+  else if (tree_eq f tree_eq) then (ok (wait tree_eq x)) // sanctioned: freeze half an equality
+  else if (and (is_fork f) (tree_eq (pair_fst f) teq_sig)) then (ok (f x)) // ...complete it
+  else if (tree_eq f ({y} -> y)) then (ok x) // sanctioned: the identity
+  else (triage (ok (t x)) ({a} -> walk_stem a x) ({a, b} -> walk_fork self a b x) f))
+
+test walk succ 3 = ok 4 // ordinary computation still computes
+test walk exam_cheat (promise Bool 0) = err // the cheat needs to LOOK. looking is illegal.
+test walk not (promise Bool 0) = err // so is honest looking — more on that below
+test walk ({y} -> y) (promise Bool 0) = ok (promise Bool 0)
+test tree_eq I ({y} -> y) = true // the sanctioned identity IS the I from the top of the file
+
+// forging is caught mid-build:
+test is_promise (pair promise_sig (pair t (pair Bool 0))) = true // raw code CAN counterfeit...
+test walk (t promise_sig) (pair t (pair Bool 0)) = err // ...the walker refuses the stem that builds it
+
+// ─── real hypothesis walking ───
+
+// rebuild the H-rule types on this machinery: meta = (where-applications-land, recognizer-body)
+
+rec_wrap := fix ({wrap, meta, v} ->
+  if (is_promise v)
+    then (ok (tree_eq (wait wrap meta) (promise_type v))) // the H-rule, by signature
+    else ((pair_snd meta) v))
+make_type := {extend_to, body} -> wait rec_wrap (pair extend_to body)
+
+Bool2 := make_type t ({v} -> ok (or (tree_eq v true) (tree_eq v false)))
+test Bool2 true = ok true
+test Bool2 2 = ok false
+test Bool2 (promise Bool2 0) = ok true
+
+// the honest function type: mint a fresh promise of A, walk f on it, check B, demand no leaks
+// (a claim about an ARBITRARY input can't mention the input)
+
+check_fn := {A, B, f, h} ->
+  (bind_ok (walk f h) ({r} ->
+    bind_ok (B r) ({ans} ->
+      (if (occurs h ans) then err else (ok ans)))))
+arrow := {A, B} -> make_type B ({f} -> check_fn A B f (promise A (pair A f)))
+
+test (arrow Bool2 Bool2) ({b} -> b) = ok true // the identity: walked to the promise, H-rule says yes
+test (arrow Bool2 Bool2) ({b} -> true) = ok true
+test (arrow Bool2 Bool2) ({b} -> pair b b) = ok false // checked and refuted
+test (arrow Bool2 Bool2) exam_cheat = err // REFUSED — the exam can't be sniffed anymore
+test (arrow Bool2 Bool2) not = err // refused too: raw triage. see below.
+test (arrow Bool2 (arrow Bool2 Bool2)) ({x} -> {y} -> x) = ok true // nested binders: fresh promise each
+
+// the payoff, higher-order: (g true) re-freezes at the codomain, and the H-rule accepts the stuck call
+test (arrow (arrow Bool2 Bool2) Bool2) ({g} -> g true) = ok true
+test (arrow (arrow Bool2 Bool2) Bool2) ({g} -> pair (g true) (g false)) = ok false
+test (arrow Bool2 Bool2) (promise (arrow Bool2 Bool2) 0) = ok true // H-rule at function type
+
+// mint + walk + occurs-check = ∀-introduction, the kernel's second trusted op: bind_hyp
+
+forall := {A, body} ->
+  (({h} -> bind_ok (walk body h) ({r} -> (if (occurs h r) then err else (ok r))))
+    (promise A (pair A body)))
+test forall Bool2 ({b} -> tree_eq b b) = ok true // "for arbitrary b, b = b" is a theorem
+test forall Bool2 ({b} -> b) = err // "for arbitrary b, b" is not — the conclusion IS the hypothesis
+
+// ─── the real kernel from here ───
+
+// this file is lib/kernel/engine.disp in miniature:
+//   promise / hyp_step   -> make_hyp / hyp_reduce (the meta slot holds a PROGRAM there: the respond)
+//   walk                 -> param_walker / param_apply, same carve-out list
+//   rec_wrap / make_type -> recognizer_wrap / make_recognizer, the same H-rule
+//   forall               -> bind_hyp, the second trusted operation
+//   ok / err / bind_ok   -> Ok / Err / bind (CheckerResult)
+//   sig_of / is_promise  -> checker_sig / is_neutral (O(1) by hash-consing)
+// there `not` and `double` aren't dead ends: types carry elimination protocols in their respond.
+// records, equality, dependent codomains, and Type itself are the same ingredients: frozen calls, signatures, one walker.

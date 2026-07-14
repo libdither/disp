@@ -1,0 +1,14 @@
+// Disp web editor recompiles as you type
+open use "../kernel/prelude.disp"
+open use "../std/nat.disp"
+
+quadruple : Nat -> Nat := {n} -> double (double n)
+
+test quadruple 3 = 12
+test double (quadruple 2) = 16
+
+// Types are predicates — apply one to check data:
+test Nat 5 = Ok true
+
+// Proofs run too: an equation's only inhabitant is the leaf.
+test (Eq Nat (double 2) 4) refl = Ok true

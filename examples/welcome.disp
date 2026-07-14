@@ -1,0 +1,35 @@
+// Welcome to the disp playground.
+// This is the real compiler — the same elaborator and kernel that run in CI —
+// compiled to WebAssembly, running entirely in your tab.
+//
+// ▶ Run file (Ctrl/⌘-Enter) runs everything; with "live" on, edits re-check
+//   as you type. The kernel arrives precompiled (restored in seconds);
+//   "Verify from source" re-elaborates and SELF-VERIFIES it (~a minute) —
+//   you are watching the type system check itself.
+// ▶ Run to cursor (Shift-Enter) elaborates the file up to the line you're on.
+
+open use "../kernel/prelude.disp"   // the type system (checked + cached)
+open use "../std/nat.disp"      // double, pred, is_zero
+
+// Results render inline, notebook-style: a definition shows its reduced
+// value under its line, a test shows its verdict.
+let answer := double 21
+
+// A test passes when both sides reduce to the identical tree:
+test double 2 = 4
+
+// Types are predicates — to check data, apply the type:
+test Nat 3 = Ok true
+test Nat (t (t t)) = Ok false   // not a numeral-shaped tree
+
+// Functions are checked by minting a hypothesis (a promise of a Nat),
+// running the body on it, and watching what comes out:
+quadruple : Nat -> Nat := {n} -> double (double n)
+test quadruple 3 = 12
+
+// Proving is running. An equation's only proof value is the leaf itself:
+test refl = t
+test (Eq Nat (double 2) 4) refl = Ok true
+
+// The universe passes its own checker:
+test param_apply Type Type = Ok true

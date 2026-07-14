@@ -1,0 +1,18 @@
+open use "../kernel/prelude.disp"
+open use "../std/nat.disp"
+
+// A record type with a DERIVED field: b's recipe runs during the check.
+let TDs := { a : Nat, b := double a }
+
+test TDs { a := 2; b := 4 } = Ok true
+test TDs { a := 2; b := 5 } = Ok false   // ran double 2, compared, rejected
+
+// Records project by name; projection is just application of an accessor:
+let p := { a := 3; b := 6 }
+test p.a = 3
+test tree_eq ({r} -> r.x) ({r} -> r (acc "x")) = true
+
+// Surface record-type literals ARE the library telescope former:
+let Point := { x : Nat, y : Nat }
+let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} -> t (proj_cell "y" Nat) ({_y} -> t)))
+test tree_eq Point PointCells = true

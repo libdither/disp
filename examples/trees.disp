@@ -1,0 +1,20 @@
+// Below the type system: the tree calculus itself. Five rewrite rules over
+// binary trees grown from a single leaf `t`. No kernel load needed — this
+// runs immediately.
+
+open use raw "../prelude.disp" {}
+
+// Three of the five rules dispatch on the SHAPE of a tree (leaf / stem /
+// fork), so case analysis over arbitrary data is a rewrite rule, not
+// library code:
+let shape_of := t (t "leaf" ({u} -> "stem")) ({u, v} -> "fork")
+test shape_of t = "leaf"
+test shape_of (t t) = "stem"
+test shape_of (t t t) = "fork"
+
+// Numbers are trees too — 3 is sugar for succ (succ (succ zero)):
+test tree_eq 3 (succ (succ (succ zero))) = true
+
+// Programs can take programs apart — this is the reflection the whole
+// language is built on (and the kernel exists to police):
+test shape_of shape_of = "fork"

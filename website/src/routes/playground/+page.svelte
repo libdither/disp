@@ -3,8 +3,8 @@
   // results render INLINE — every definition shows its reduced value under
   // its line, every test its verdict, errors their message — and, once the
   // kernel is warm, edits re-check live on a debounce. No output sidebar;
-  // the remaining chrome is a toolbar, a run-progress overlay, toasts for
-  // engine messages, and a one-line eval prompt at the bottom.
+  // the remaining chrome is a toolbar, a run-progress overlay, and toasts
+  // for engine messages.
   import { onMount } from 'svelte'
   import { disp } from '$lib/disp/client.svelte'
   import type { RunOutcome, ItemEvent, ValueNode, RawTree } from '$lib/disp/protocol'
@@ -20,7 +20,7 @@
 
   let editorApi: EditorApi | undefined
   let currentDoc = $state('')
-  let exampleId = $state('welcome')
+  let exampleId = $state('walkthrough')
 
   // ---- tabs -----------------------------------------------------------------
   // The scratch buffer (persistent, examples/share land here) plus any library
@@ -230,10 +230,6 @@
   let showWelcome = $state(false)
 
   // ---- repl ----
-  let replInput = $state('')
-  let evalOut = $state<{ expr: string; value?: string; node?: ValueNode; hint?: string; error?: string } | null>(null)
-  let replHistory: string[] = []
-  let replHistIdx = -1
 
   // subtree re-render for every interactive value (blocks + eval strip):
   // raw for recognized atoms, deeper for budget cuts
@@ -359,25 +355,6 @@
     return true
   }
 
-  // eval pop-out: seed with the EXPRESSION when the visualizer's grammar can
-  // hold it, so the panel replays the actual reduction the REPL performed
-  // (names resolve to pods on demand; strings parse to real cons trees).
-  // Expressions beyond that grammar (binders…) fall back to the value.
-  function onVisualizeEval(tree: ValueNode, ctl: TreeValueCtl) {
-    const expr = evalOut?.expr?.trim()
-    if (expr) {
-      try {
-        parseTree(expr, {})
-        vizCtl = null
-        applySeed(expr, {}, new Map())
-        return
-      } catch {
-        /* not treecalc-expressible — show the value instead */
-      }
-    }
-    onVisualizeValue(tree, ctl)
-  }
-
   // names TYPED into the panel's edit box resolve against the live playground
   // scope — the panel computes with the same definitions the buffer does
   const resolveScopeDef = async (name: string): Promise<T | null> => {
@@ -390,7 +367,11 @@
 
   // highlight an expression in the buffer → a floating tree button appears
   // when it fits the visualizer's grammar; pressing it seeds the panel with
-  // the SELECTION (names resolve to pods / engine steps as usual)
+  // the SELECTION. Free names resolve against the FILE's definitions at seed
+  // time (the last run's defs + everything its opens brought into scope), so
+  // they enter as green pods — real structure, folded. Numbers and string
+  // literals parse concrete (no definition needed); names too large to ship
+  // or not (yet) bound stay orange fruit and engine-step as before.
   const selectionAction = {
     validate: (text: string) => {
       if (text.length > 300) return false
@@ -403,9 +384,45 @@
     },
     run: (text: string) => {
       vizCtl = null
-      applySeed(text, {}, new Map())
+      void seedSelection(text)
     },
     title: 'visualize the reduction of this expression'
+  }
+
+  // free names of a treecalc term, first-appearance order (binder params are
+  // already compiled away by parse-time bracket abstraction)
+  function collectVarNames(t: T, out: string[] = [], seen = new Set<string>()): string[] {
+    if (t.tag === 'var') {
+      if (!seen.has(t.name)) {
+        seen.add(t.name)
+        out.push(t.name)
+      }
+    } else if (t.tag === 'stem') collectVarNames(t.c, out, seen)
+    else if (t.tag === 'fork') {
+      collectVarNames(t.l, out, seen)
+      collectVarNames(t.r, out, seen)
+    } else if (t.tag === 'apply') {
+      collectVarNames(t.f, out, seen)
+      collectVarNames(t.x, out, seen)
+    }
+    return out
+  }
+
+  async function seedSelection(text: string) {
+    let names: string[] = []
+    try {
+      names = collectVarNames(parseTree(text, {}))
+    } catch {
+      /* validate() vetted the text — a race just seeds without defs */
+    }
+    const defs: Record<string, T> = {}
+    await Promise.all(
+      names.map(async (name) => {
+        const rt = await disp.raw({ name }, POD_MAX_NODES)
+        if (rt !== null) defs[name] = rawToT(rt)
+      })
+    )
+    applySeed(text, defs, new Map())
   }
 
   // engine macro-step: the panel is stuck on a name whose definition never
@@ -590,57 +607,6 @@
     }
   }
 
-  async function runRepl() {
-    const expr = replInput.trim()
-    if (!expr || busy) return
-    replHistory.push(expr)
-    replHistIdx = replHistory.length
-    replInput = ''
-    busy = true
-    progress = { label: `▸ ${expr}`, count: 0, current: '' }
-    try {
-      const out = await disp.evalExpr(editorApi?.getDoc() ?? currentDoc, expr, {
-        wantDefPretty: true,
-        path: activeTab().path
-      })
-      if (out.error) {
-        evalOut = { expr, error: out.error }
-      } else {
-        // an eval elaborates the whole buffer too — refresh the inline marks
-        applyOutcome(out, { coldLoad: (progress?.count ?? 0) > 100 })
-        evalOut = {
-          expr,
-          value: out.value ?? '(no value)',
-          node: out.valueNode,
-          hint: out.valueHint && out.valueHint !== out.value ? out.valueHint : undefined
-        }
-      }
-    } catch (e) {
-      evalOut = { expr, error: e instanceof Error ? e.message : String(e) }
-    } finally {
-      progress = null
-      busy = false
-    }
-  }
-
-  function replKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      runFile()
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      void runRepl()
-    } else if (e.key === 'ArrowUp' && replHistIdx > 0) {
-      e.preventDefault()
-      replHistIdx--
-      replInput = replHistory[replHistIdx] ?? ''
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      replHistIdx = Math.min(replHistIdx + 1, replHistory.length)
-      replInput = replHistory[replHistIdx] ?? ''
-    }
-  }
-
   async function preloadKernel() {
     if (busy || disp.kernelLoaded) return
     busy = true
@@ -673,7 +639,6 @@
       await disp.reset({ fromSource: true })
       // the reset swapped arenas — inline values hold dead handles
       editorApi?.setMarks([])
-      evalOut = null
       summary = null
       toast('precompiled kernel dropped — re-elaborating from source')
     } finally {
@@ -688,7 +653,6 @@
     busy = false
     // handles inside the inline values died with the arena — drop them
     editorApi?.setMarks([])
-    evalOut = null
     summary = null
     // the fresh worker's vfs reverts to the bundle — replay user files
     void restoreUserFiles()
@@ -699,7 +663,6 @@
     if (busy) return
     await disp.reset()
     summary = null
-    evalOut = null
     stripError = null
     editorApi?.setMarks([]) // inline values hold handles from the old arena
     toast(
@@ -1049,8 +1012,7 @@
           </p>
           <p class="hint-row">
             <kbd>⌘⏎</kbd> run file · <kbd>⇧⏎</kbd> run to cursor · <kbd>⌥W</kbd> close tab
-            (<kbd>⌃W</kbd> too, where the browser allows) · the <kbd>▸</kbd> prompt below
-            evaluates expressions against the buffer
+            (<kbd>⌃W</kbd> too, where the browser allows)
           </p>
         </div>
       </div>
@@ -1197,38 +1159,6 @@
     </div>
   </div>
 
-  {#if evalOut}
-    <div class="eval-result" class:bad={!!evalOut.error}>
-      <span class="ee">▸ {evalOut.expr}</span>
-      {#if evalOut.error}
-        <pre class="err">{evalOut.error}</pre>
-      {:else}
-        <span class="ev">
-          {#if evalOut.node}
-            {#key evalOut}
-              <TreeValue node={evalOut.node} expand={expandValue} onVisualize={onVisualizeEval} />
-            {/key}
-          {:else}
-            {evalOut.value}
-          {/if}
-        </span>
-        {#if evalOut.hint}<span class="hint">≈ {evalOut.hint}</span>{/if}
-      {/if}
-      <button class="x" onclick={() => (evalOut = null)} aria-label="dismiss result">×</button>
-    </div>
-  {/if}
-  <div class="repl">
-    <span class="prompt" class:busy>▸</span>
-    <input
-      type="text"
-      bind:value={replInput}
-      onkeydown={replKeydown}
-      placeholder={busy ? 'running…' : 'evaluate an expression against the buffer, e.g.  double 21'}
-      disabled={busy}
-      spellcheck="false"
-      autocomplete="off"
-    />
-  </div>
 </div>
 
 <style>
@@ -1739,63 +1669,5 @@
     color: var(--err);
   }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-4px); } }
-
-  /* ---- eval result + repl ---- */
-  .eval-result {
-    display: flex;
-    align-items: baseline;
-    gap: 0.7rem;
-    border-top: 1px solid var(--border);
-    padding: 0.5rem 0.9rem;
-    background: var(--bg-panel);
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    max-height: 9rem;
-    overflow-y: auto;
-  }
-  .eval-result.bad { border-left: 3px solid var(--err); }
-  .eval-result .ee { color: var(--accent); font-size: 0.8rem; white-space: nowrap; }
-  .eval-result .ev { word-break: break-all; }
-  .eval-result .hint { color: var(--g1); }
-  .eval-result pre.err {
-    margin: 0;
-    color: var(--err);
-    font-size: 0.78rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    flex: 1;
-  }
-  .eval-result .x {
-    margin-left: auto;
-    background: none;
-    border: none;
-    color: var(--fg-faint);
-    cursor: pointer;
-    font-size: 1rem;
-    padding: 0 0.2rem;
-    align-self: flex-start;
-  }
-  .eval-result .x:hover { color: var(--fg); }
-
-  .repl {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    border-top: 1px solid var(--border);
-    padding: 0.55rem 0.9rem;
-    background: var(--bg-elev);
-  }
-  .prompt { color: var(--accent); font-weight: 700; }
-  .prompt.busy { animation: pulse 1.1s ease-in-out infinite; }
-  .repl input {
-    flex: 1;
-    background: none;
-    border: none;
-    outline: none;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.86rem;
-  }
-  .repl input::placeholder { color: var(--fg-faint); }
 
 </style>
