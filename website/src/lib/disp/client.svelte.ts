@@ -69,7 +69,6 @@ class DispClient {
         p.resolve(msg.outcome)
       } else if (msg.type === 'rendered') p.resolve(msg.node)
       else if (msg.type === 'raw') p.resolve(msg.tree)
-      else if (msg.type === 'bracketSeed') p.resolve(msg)
       else if (msg.type === 'ls') p.resolve(msg.paths)
       else if (msg.type === 'read') p.resolve(msg.text)
       else if (msg.type === 'def') p.resolve(msg.site)
@@ -274,29 +273,6 @@ class DispClient {
     } catch {
       return null
     }
-  }
-
-  /**
-   * The bracket-abstraction demo seed: the selection encoded as the Cir
-   * value lib/elab/bracket.disp consumes, plus a pod dictionary
-   * (bracket_compile and its stages, the kernel vocabulary they embed) —
-   * the visualizer reduces `bracket_compile <sel>` to SHOW the elaborator's
-   * binder-compilation stage. Throws with the worker's reason when the seed
-   * can't be built (parse failure, out-of-scope names, node budget).
-   */
-  async bracketSeed(
-    source: string,
-    maxNodes: number
-  ): Promise<{ sel: RawTree; defs: Record<string, RawTree> }> {
-    await this.init()
-    const res = await this.#request<{
-      sel: RawTree | null
-      defs: Record<string, RawTree> | null
-      error?: string
-    }>({ type: 'bracketSeed', source, maxNodes })
-    if (res.error != null || res.sel === null || res.defs === null)
-      throw new Error(res.error ?? 'bracket seed unavailable')
-    return { sel: res.sel, defs: res.defs }
   }
 
   /**

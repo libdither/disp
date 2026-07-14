@@ -1,13 +1,11 @@
 // CIR + bracket abstraction: the Expr-independent core that turns a lambda
 // IR into a tree. Bracket abstraction defines which tree a binder becomes —
 // i.e. it is part of definitional equality — so changes here change every
-// compiled program. lib/elab/bracket.disp is the in-language spec; change
-// only in lockstep with it (test/bracket.test.ts pins the bit-identity,
-// lib/tests/bracket.test.disp holds the golden equations).
+// compiled program (the deleted lib/elab/bracket.disp was the in-language
+// spec; recover via git when re-validating).
 
 import type { Tree } from "../eval/eager.js"
 import { elab, B } from "./state.js"
-import { stringToTree } from "./literals.js"
 
 // CIR: intermediate representation with explicit S/K/I sentinels.
 export type Cir =
@@ -95,26 +93,6 @@ export function eliminateLams(e: Cir): Cir {
     case "lit": case "var": case "S": case "K": case "I": return e
     case "app": return cap(eliminateLams(e.f), eliminateLams(e.x))
     case "lam": return abstractName(e.x, eliminateLams(e.body))
-  }
-}
-
-// Encode a Cir as the §2.6 coproduct VALUE that lib/elab/bracket.disp
-// consumes: inj tag pay = fork(stringToTree(tag), pay); pairs are forks.
-// This is data construction only (no reduction): the encoded term is what the
-// playground's visualize-the-selection seeds `bracket_compile` with, and what
-// test/bracket.test.ts feeds the in-language spec to cross-validate this
-// file's abstractName/eliminateLams/cirToTree.
-export function cirToAstTree(e: Cir): Tree {
-  const cs = elab.cs
-  const inj = (tag: string, pay: Tree): Tree => cs.fork(stringToTree(tag), pay)
-  switch (e.tag) {
-    case "lit": return inj("Lit", e.t)
-    case "var": return inj("Var", stringToTree(e.name))
-    case "app": return inj("App", cs.fork(cirToAstTree(e.f), cirToAstTree(e.x)))
-    case "lam": return inj("Lam", cs.fork(stringToTree(e.x), cirToAstTree(e.body)))
-    case "S": return inj("S", cs.leaf())
-    case "K": return inj("K", cs.leaf())
-    case "I": return inj("I", cs.leaf())
   }
 }
 

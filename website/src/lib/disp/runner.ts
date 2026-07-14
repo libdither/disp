@@ -3,10 +3,9 @@
 // REPL niceties (value pretty-printing, nat/string decoding, streamed
 // per-item progress).
 
-import { parseProgram, exprToCir, cirToAstTree, type Decl, type ParseItemStats } from '../../../../src/compile.ts'
-import { collectFreeVars } from '../../../../src/elab/cir.ts'
-import { parseItems, parseExpr, type RecMember, type Expr } from '../../../../src/parse.ts'
-import { moduleCacheBySession, verifiedModules, verifiedFilledBySession, elab, type ScopeEntry } from '../../../../src/elab/state.ts'
+import { parseProgram, type Decl, type ParseItemStats } from '../../../../src/compile.ts'
+import { parseItems, type RecMember, type Expr } from '../../../../src/parse.ts'
+import { moduleCacheBySession, verifiedModules, verifiedFilledBySession } from '../../../../src/elab/state.ts'
 import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
@@ -49,10 +48,6 @@ export class DispRunner {
   #byName = new Map<string, number>()
   // name -> handle for the most recent run's top-level defs
   #lastDefs = new Map<string, number>()
-  // bracket_compile's handle + the name table of everything bracket.disp
-  // binds, elaborated once per session (bracketSeed)
-  #bracketH: number | null = null
-  #bracketDefs = new Map<string, number>()
 
   constructor(wasmBytes: ArrayBuffer) {
     this.#wasmBytes = wasmBytes
@@ -63,8 +58,6 @@ export class DispRunner {
     this.#session.dispose()
     this.#session = new RustEagerBrowserSession(this.#wasmBytes)
     this.#names = new Map()
-    this.#bracketH = null
-    this.#bracketDefs = new Map()
   }
 
   // Install the shipped precompiled kernel: pre-populate the elaborator's
@@ -451,92 +444,6 @@ export class DispRunner {
     } catch {
       return null // divergence budget, arena pressure — the panel stays stuck
     }
-  }
-
-  // The bracket-abstraction demo seed. Parse `source` as an expression in the
-  // CURRENT run's scope (names resolve to their real trees, becoming Lit
-  // leaves of the Cir), STOP the elaborator pipeline at the pre-abstraction
-  // Cir — binders still intact — and encode that Cir as the §2.6 coproduct
-  // value lib/elab/bracket.disp consumes (cirToAstTree, the tested encoder).
-  // Shipped with it: a defs dictionary — bracket_compile plus every stage the
-  // reduction will expose (abstract_name, contains_free, the private shape
-  // helpers) and the kernel vocabulary compiled into them. The visualizer
-  // seeds `bracket_compile <sel>` and REDUCING it performs the elaborator's
-  // binder-compilation stage on screen — the stage as a tree program, not a
-  // host function; the dictionary is what lets each exposed stage fold shut
-  // under its NAME. Throws with a human-readable reason (the worker relays
-  // it as the response's `error`) when the selection doesn't parse,
-  // references names outside the run's scope, or a required tree exceeds
-  // maxNodes.
-  bracketSeed(source: string, maxNodes: number): { sel: RawTree; defs: Record<string, RawTree> } {
-    const session = this.#session as unknown as Session<Tree>
-    elab.cs = session // exprToCir/cirToAstTree intern into this arena
-    this.#bracketCompileHandle() // ensure #bracketDefs is populated
-    const expr = parseExpr(source)
-    const lookup = (name: string): ScopeEntry | undefined => {
-      const h = this.#byName.get(name)
-      return h == null ? undefined : { tree: h as unknown as Tree }
-    }
-    const rejectUse = (): never => {
-      throw new Error('use "…" cannot appear in a visualized selection')
-    }
-    const cir = exprToCir(expr, lookup, rejectUse)
-    const free: string[] = []
-    collectFreeVars(cir, new Set(), free, new Set())
-    if (free.length > 0) throw new Error(`not in scope: ${free.join(', ')} (run the buffer first?)`)
-    const selH = cirToAstTree(cir) as unknown as number
-    const sel = this.rawTree({ handle: selH }, maxNodes)
-    if (sel === null) throw new Error('the selection is too large to visualize')
-    const defs: Record<string, RawTree> = {}
-    for (const [name, h] of this.#bracketDefs) {
-      const rt = this.rawTree({ handle: h }, maxNodes)
-      if (rt !== null) defs[name] = rt
-    }
-    if (!defs['bracket_compile']) throw new Error('bracket_compile exceeds the visualizer node budget')
-    // kernel vocabulary embedded in the compiled stages (match/if machinery,
-    // the equality the name comparisons run on): readable pods when exposed.
-    // Resolved through the same module-cache table run() uses — populate it
-    // if no run has happened yet this session.
-    this.#registerScopeNames()
-    for (const name of ['tree_eq', 'prod', 'cond', 'and', 'or', 'not', 'pair_fst', 'pair_snd', 'is_stem', 'stem_child', 'inj', 'fix', 'wait', 'succ', 'zero']) {
-      if (defs[name]) continue
-      const h = this.#byName.get(name)
-      if (h == null) continue
-      const rt = this.rawTree({ handle: h }, maxNodes)
-      if (rt !== null) defs[name] = rt
-    }
-    return { sel, defs }
-  }
-
-  // Elaborate lib/elab/bracket.disp once per session, cache bracket_compile's
-  // handle and the name→handle table of everything the file binds — exports
-  // AND private `let` helpers (they stream as items; Decls carry only
-  // exports). `use raw` (annotations dropped, values identical — the file's
-  // tests pin them) skips its auto-verification: the kernel is
-  // snapshot-cached but seven Tree->Tree checks are still walker walks, and
-  // the first selection click shouldn't pay them.
-  #bracketCompileHandle(): number {
-    if (this.#bracketH != null) return this.#bracketH
-    const session = this.#session as unknown as Session<Tree>
-    const table = new Map<string, number>()
-    // browser sessions resolve opens against the bundled vfs ('/lib/…'); a
-    // node session (scripts/smoke.mts) resolves against the real repo lib/ —
-    // derive the driver's virtual path from this module's own URL there
-    const driverPath = vfs.has('/lib/elab/bracket.disp')
-      ? '/lib/tests/__viz_bracket.disp'
-      : new URL('../../../../lib/tests/__viz_bracket.disp', import.meta.url).pathname
-    parseProgram('open use raw "../elab/bracket.disp"', driverPath, {
-      session,
-      onItem: (item: ParseItemStats) => {
-        if ((item.kind === 'field' || item.kind === 'let') && item.name && item.tree != null && item.sourcePath?.endsWith('/elab/bracket.disp'))
-          table.set(item.name, item.tree as unknown as number)
-      }
-    })
-    const h = table.get('bracket_compile')
-    if (h == null) throw new Error('bracket_compile not found in lib/elab/bracket.disp')
-    this.#bracketDefs = table
-    this.#bracketH = h
-    return h
   }
 
   // build a session tree from its structure via the construction rules:

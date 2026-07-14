@@ -21,7 +21,7 @@ Read the relevant doc before design changes. File headers in `lib/` and `src/` a
 - [`EVALUATOR.md`](EVALUATOR.md) — reduction-backend map: the `Session` ABI, the five backends, the differential-oracle discipline. Detail in `EVALUATOR_PLAN.md`; net calculus in `research/interaction-combinator/tc-net.typ`. Read before touching `src/eval/` or a backend crate.
 - [`OPTIMIZER.typ`](OPTIMIZER.typ) — unified design for the verified self-improving optimizer (the GOALS.md endgame). Not built; the substrate (`rust-ic-net`) mostly exists.
 - [`FOUNDATIONS.md`](FOUNDATIONS.md) — lineage and precedent for every design piece, plus the falsifiable risk assessment. The general-reader companion.
-- Design notes (each carries its own status banner): [`TOWER.md`](TOWER.md) (structural checking), [`REFLECT.md`](REFLECT.md) (reflection as an effect), [`LOCAL_SYNTH.md`](LOCAL_SYNTH.md) (synthesis), [`ELABORATOR_PLAN.md`](ELABORATOR_PLAN.md) (self-hosting elaborator — stage 0 `lib/elab/bracket.disp` LIVE as the cir.ts oracle + the playground's compiler-on-screen seed; stages 1–3 deleted 2026-07-01, recover via git).
+- Design notes (each carries its own status banner): [`TOWER.md`](TOWER.md) (structural checking), [`REFLECT.md`](REFLECT.md) (reflection as an effect), [`LOCAL_SYNTH.md`](LOCAL_SYNTH.md) (synthesis), [`ELABORATOR_PLAN.md`](ELABORATOR_PLAN.md) (self-hosting elaborator — SHELVED; `lib/elab` deleted 2026-07-01, recover via git).
 - [`ACTIVE_BUGS.md`](ACTIVE_BUGS.md) — subject-reduction gap ledger; machine pins in `lib/tests/probe_*_sr.test.disp`.
 - [`READING_QUESTIONS.md`](READING_QUESTIONS.md) — open-questions scratchpad.
 - `archive/` — superseded docs (`STRICTTYPE.md`, `TYPE_NORMALIZATION.md`, older proposals). Removed docs live in git history (`git log --diff-filter=D -- <path>`): the legacy 7-primitive spec (`archive/TYPE_THEORY_LEGACY.typ`), `COMPILATION.typ` (pipeline spec; the pipeline's source of truth is `src/compile.ts` + `src/elab/`), `OPTIMIZER_DESIGN.md`.
@@ -40,7 +40,7 @@ Every component participating in checking, elaboration, or conversion must have 
 - `src/parse.ts` — tokenizer / parser. Implements the `SYNTAX.typ` grammar.
 - `src/compile.ts` — the elaborator's public surface, a re-export barrel over `src/elab/`:
   - `state.ts` — session/budget/caches. `APPLY_BUDGET` (400M) is a divergence bound calibrated to the heaviest cold-memo elaborator call; the rust backends floor per-call at 4G.
-  - `cir.ts` — CIR + bracket abstraction (η-reduction, K-composition) + `cirToAstTree` (a Cir as the coproduct value the in-language spec consumes). Part of definitional equality; the in-language oracle is `lib/elab/bracket.disp` — change only in lockstep with it (pins: `test/bracket.test.ts`, `lib/tests/bracket.test.disp`).
+  - `cir.ts` — CIR + bracket abstraction (η-reduction, K-composition). Part of definitional equality, and with `lib/elab` deleted there is currently no in-language oracle — change with extra care.
   - `sugar.ts` — surface rewrites: the S2 `select_lazy`→`if` auto-rewrite, named/default/reorderable args, `binderToPi`.
   - `literals.ts` — Nat/String/accessor encoding + record-header decoding.
   - `expr.ts` — `exprToCir` (the one fold over the surface AST) + `compileExpr`/`compileType`.
@@ -61,7 +61,7 @@ Every component participating in checking, elaboration, or conversion must have 
   - `universe.disp` — `Type = BehavioralType` (StrictType + GoodRespond merged; membership routes through `param_apply` so the §7A token flattens nested checks), the kernel's structural types (`Tree`/`Frame`/`MetaShape`/`Module`/`Action`/`Step`/`RespondShape`/…), Tree as floor AND inductive (`tree_rec`; frame-shape dispatch over-rejects but never unsounds), `Neutral`/`Spine` (an extended payload is never closed — membership goes through `param_apply`, not `typecheck`), `GuardAction`/`Request`, `meta_of : Type -> MetaShape`.
 - `std/` — stdlib on the kernel barrel: `nat/`, `list`, `set`, `fin`, `option`, `result`, `either`, `pair`, `build`, `hbin`, `stream`; `effect.disp` (§15 effects: free monad + deep handlers + rows; an effect IS a record type — `op`/`op0`/`ops`, `requests`/`handler_sig`, `x <- e` block binds); `kernel_spec.disp` (spec twins of the sealed kernel algorithms; its header is the SEALED ledger); `demand.disp` (the demand face of telescopes: `field_deps`/`field_pi`/`sub_record` + the module face); `relation.disp` (explicit heterogeneous relations, pointwise and binary Pi lifts, PER/equivalence/preorder law bundles, morphisms, and the relation-generic `license_guard`/`freeze` policies).
 - `tests/` — all `*.test.disp`; the runner globs recursively.
-- `elab/` — `bracket.disp` only: the in-language bracket-abstraction spec (the `cir.ts` oracle; the playground's visualize-the-selection seeds `bracket_compile <encoded Cir>` from it to run the compiler on screen). The rest of the self-hosted elaborator (ast/compile, stages 1–3) was removed 2026-07-01; recover via `git log --diff-filter=D -- lib/elab`.
+- `lib/elab/` — REMOVED 2026-07-01 (the self-hosting elaborator; recover via `git log --diff-filter=D -- lib/elab`).
 
 ### Host tests
 - `test/disp.test.ts` — vitest harness; recursively globs `lib/tests/**/*.test.disp`.

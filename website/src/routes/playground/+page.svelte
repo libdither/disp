@@ -9,7 +9,6 @@
   import { disp } from '$lib/disp/client.svelte'
   import type { RunOutcome, ItemEvent, ValueNode, RawTree } from '$lib/disp/protocol'
   import { parseTree, type T } from '$lib/treecalc/treecalc'
-  import { parseExpr } from '../../../../src/parse.ts'
   import { examples } from '$lib/disp/examples'
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
   import TreeValue, { type TreeValueCtl } from '$lib/components/TreeValue.svelte'
@@ -387,27 +386,14 @@
   }
 
   const VIZ_HINT =
-    "Green pods are real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Names resolve against the playground's scope; ones too large to ship stay orange fruit, and stepping hands their applications to the real evaluator. Binders compile away: {x} -> body is notation for a tree (bracket abstraction, the same translation the elaborator performs). Selecting a binder in the buffer seeds that translation itself: the panel reduces bracket_compile applied to your selection's encoded syntax (code), so stepping performs bracket abstraction on screen."
+    "Green pods are real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Names resolve against the playground's scope; ones too large to ship stay orange fruit, and stepping hands their applications to the real evaluator. Binders compile away: {x} -> body is notation for a tree (bracket abstraction, the same translation the elaborator performs)."
 
   // highlight an expression in the buffer → a floating tree button appears
-  // when the visualizer can hold it. A selection WITH a binder seeds the
-  // COMPILER itself — the panel reduces `bracket_compile code` (the selection
-  // encoded as a Cir value), performing bracket abstraction on screen — while
-  // plain tree expressions seed literally (names resolve to pods / engine
-  // steps as usual). Binder selections validate through the REAL parser, so
-  // shapes the panel grammar can't hold (nested binders) still get a button.
-  const BINDER_RE = /\{[^{}]*\}\s*->/
+  // when it fits the visualizer's grammar; pressing it seeds the panel with
+  // the SELECTION (names resolve to pods / engine steps as usual)
   const selectionAction = {
     validate: (text: string) => {
       if (text.length > 300) return false
-      if (BINDER_RE.test(text)) {
-        try {
-          parseExpr(text)
-          return true
-        } catch {
-          return false
-        }
-      }
       try {
         parseTree(text, {})
         return true
@@ -417,37 +403,9 @@
     },
     run: (text: string) => {
       vizCtl = null
-      if (BINDER_RE.test(text)) {
-        void seedBracketViz(text)
-        return
-      }
       applySeed(text, {}, new Map())
     },
     title: 'visualize the reduction of this expression'
-  }
-
-  // The compiler-on-screen seed: `bracket_compile code`, where `code` is the
-  // selection's PRE-abstraction Cir (binders intact, scope names embedded as
-  // Lit trees) and bracket_compile is the in-language spec of the
-  // elaborator's binder stage (lib/elab/bracket.disp). Stepping the panel
-  // performs bracket abstraction itself; the shipped defs name each stage
-  // the reduction exposes. Falls back to the literal parse (binders
-  // abstracted AT parse time) when the worker can't build the seed.
-  const BRACKET_SEED_MAX_NODES = 80000
-  async function seedBracketViz(text: string) {
-    try {
-      const seed = await disp.bracketSeed(text, BRACKET_SEED_MAX_NODES)
-      const defs: Record<string, T> = { code: rawToT(seed.sel) }
-      for (const [name, rt] of Object.entries(seed.defs)) defs[name] = rawToT(rt)
-      applySeed('bracket_compile code', defs, new Map())
-    } catch (e) {
-      try {
-        parseTree(text, {})
-        applySeed(text, {}, new Map())
-      } catch {
-        toast(`selection can't seed the visualizer: ${e instanceof Error ? e.message : String(e)}`, 'warn')
-      }
-    }
   }
 
   // engine macro-step: the panel is stuck on a name whose definition never

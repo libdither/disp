@@ -79,24 +79,6 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'raw', id: msg.id, tree })
         break
       }
-      case 'bracketSeed': {
-        if (!runner) throw new Error('worker not initialized')
-        // seed failures are expected UX (mid-edit selections, out-of-scope
-        // names) — relay the reason instead of tripping the fatal path
-        try {
-          const seed = runner.bracketSeed(msg.source, msg.maxNodes)
-          post({ type: 'bracketSeed', id: msg.id, sel: seed.sel, defs: seed.defs })
-        } catch (err) {
-          post({
-            type: 'bracketSeed',
-            id: msg.id,
-            sel: null,
-            defs: null,
-            error: err instanceof Error ? err.message : String(err)
-          })
-        }
-        break
-      }
       case 'ls': {
         if (!runner) throw new Error('worker not initialized')
         post({ type: 'ls', id: msg.id, paths: runner.listFiles() })

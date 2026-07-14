@@ -125,44 +125,4 @@ console.log('--- run 5: parse error surface ---')
 const out5 = runner.run(`let x = 5\n`, PLAYGROUND, false, onItem)
 console.log(JSON.stringify({ ok: out5.ok, error: out5.error?.slice(0, 200), line: out5.errorLine }))
 
-console.log('--- run 6: bracketSeed (the compiler-on-screen seed) ---')
-// A binder selection seeds `bracket_compile code`: the selection stops at its
-// PRE-abstraction Cir, encoded as the coproduct value lib/elab/bracket.disp
-// consumes, shipped with the compiler's stages as a pod dictionary.
-const t6 = Date.now()
-const seed = runner.bracketSeed('{x} -> succ x', 80000)
-type RT = 0 | [RT] | [RT, RT]
-const size = (r: RT): number => (r === 0 ? 1 : r.length === 1 ? 1 + size(r[0]) : 1 + size(r[0]) + size(r[1]))
-console.log(JSON.stringify({
-  sel: size(seed.sel as RT),
-  defs: Object.fromEntries(Object.entries(seed.defs).map(([n, r]) => [n, size(r as RT)])),
-  ms: Date.now() - t6
-}))
-for (const stage of ['bracket_compile', 'eliminate_lams', 'abstract_name', 'contains_free', 'cir_to_tree', 'tree_eq']) {
-  if (!seed.defs[stage]) {
-    console.error(`FAIL: bracketSeed defs should name the stage '${stage}'`)
-    process.exit(1)
-  }
-}
-// The seed genuinely computes: bracket_compile applied to the encoded
-// selection, on the real evaluator, yields the SAME tree the host elaborator
-// emits for the surface binder — `{x} -> succ x` is the η rule, so succ
-// itself (stem leaf).
-const compiled6 = runner.applySpine({ name: 'bracket_compile' }, [seed.sel], 100)
-if (JSON.stringify(compiled6) !== JSON.stringify(runner.rawTree({ name: 'succ' }, 100))) {
-  console.error(`FAIL: reducing the seed should yield succ (η), got ${JSON.stringify(compiled6)}`)
-  process.exit(1)
-}
-// out-of-scope names refuse with a reason (the UI's fallback path)
-try {
-  runner.bracketSeed('{x} -> definitely_unbound_name x', 80000)
-  console.error('FAIL: bracketSeed should refuse out-of-scope names')
-  process.exit(1)
-} catch (e) {
-  if (!(e instanceof Error) || !e.message.includes('not in scope')) {
-    console.error(`FAIL: expected a not-in-scope refusal, got: ${e}`)
-    process.exit(1)
-  }
-}
-
 console.log(`final mem: ${(runner.memoryBytes() / 1e6).toFixed(1)}MB`)

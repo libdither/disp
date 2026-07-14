@@ -50,13 +50,6 @@ export type WorkerRequest =
   // with 'raw'; null when unbound, the apply diverges past its budget, or
   // the RESULT exceeds maxNodes.
   | { id: number; type: 'applySpine'; handle?: number; name?: string; args: RawTree[]; maxNodes: number }
-  // The bracket-abstraction demo seed: parse `source` as an expression in the
-  // current run's scope, stop the elaborator at the PRE-abstraction Cir,
-  // encode it as the coproduct value lib/elab/bracket.disp consumes, and ship
-  // it with bracket_compile's own tree — the visualizer then REDUCES
-  // `bracket_compile <sel>`, performing the elaborator's binder-compilation
-  // stage on screen. Responds with 'bracketSeed'.
-  | { id: number; type: 'bracketSeed'; source: string; maxNodes: number }
   // the bundled library (the worker's virtual filesystem): list + read, for
   // the playground's file tabs and jump-to-import. write/rm mutate the vfs —
   // written files are immediately `use`-able (stale module-cache entries for
@@ -123,13 +116,6 @@ export type WorkerResponse =
   | { type: 'result'; id: number; outcome: RunOutcome }
   | { type: 'rendered'; id: number; node: ValueNode }
   | { type: 'raw'; id: number; tree: RawTree | null }
-  // sel = the encoded selection; defs = the panel's pod dictionary —
-  // bracket_compile itself plus its stages (abstract_name, eliminate_lams, …)
-  // and the kernel vocabulary they embed, so structure the reduction exposes
-  // folds shut under its NAME instead of drawing a 50k-node body open.
-  // error carries the reason a seed couldn't be built (parse failure, names
-  // not in scope, node budget) so the UI can fall back or explain.
-  | { type: 'bracketSeed'; id: number; sel: RawTree | null; defs: Record<string, RawTree> | null; error?: string }
   | { type: 'ls'; id: number; paths: string[] }
   | { type: 'read'; id: number; text: string | null }
   | { type: 'def'; id: number; site: { path: string; line: number } | null }

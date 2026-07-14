@@ -1,18 +1,19 @@
 # Elaborator-in-disp: the self-hosting plan
 
-**Status: Stage 0 LIVE, Stages 1–3 SHELVED. `lib/elab/bracket.disp` (Stage 0,
-revived 2026-07-13) is the in-language spec of `src/elab/cir.ts`, validated by
-`lib/tests/bracket.test.disp` (16 golden bit-identities) + `test/bracket.test.ts`
-(300 randomized), and has a live consumer: the playground's
-visualize-the-selection seeds `bracket_compile <encoded Cir>` (encoder
-`cirToAstTree` in cir.ts, worker method `bracketSeed`) so that REDUCING the
-seed performs bracket abstraction on screen. Stages 1–3 (`ast.disp`,
-`compile.disp` + their tests) remain deleted as unused scaffolding
-(2026-07-01), to be redone once the language is more mature; recover via
-`git log --diff-filter=D -- lib/elab`. Stages 4 (parser) and 5 (driver
-boundary) never started. This document remains the roadmap. Historical: Stages
-0–3 first landed 2026-06-11/12 (Stage 0: commit 4ae9e9f5) — the full AST→tree
-pipeline was in-language with host `compileExpr` the validated fast path.** Companion: `EVALUATOR_PLAN.md` (evaluator backends;
+**Status: SHELVED 2026-07-01 — the Stage 0–3 implementation (`lib/elab/` +
+its lib/tests and host cross-validation tests) was DELETED as unused
+scaffolding, to be redone properly once the language is more mature; recover
+via `git log --diff-filter=D -- lib/elab`. A working 2026-07-13 revival of
+Stage 0 is PARKED at commit 695105a7eeae (bracket.disp updated to current
+syntax with fix bodies named for pod folding, the `cirToAstTree` encoder +
+restored golden/randomized validation, and the playground compiler-on-screen
+seed: binder selections reduce `bracket_compile <encoded Cir>` in the
+visualizer) — reverted the same day because the panel drew too many nodes;
+cherry-pick that commit to restore the whole slice. This document remains the
+roadmap for that future attempt. Historical status: Stages 0–3 landed (Stage 0:
+2026-06-11, commit 4ae9e9f5; the match-desugar fix + Stages 1–3: 2026-06-12) —
+the full AST→tree pipeline was in-language with host `compileExpr` the
+validated fast path; Stages 4 (parser) and 5 (driver boundary) never started.** Companion: `EVALUATOR_PLAN.md` (evaluator backends;
 touches the same `src/` layering — see §7). Related: Appendix A (sharing-
 aware bracket abstraction, formerly `ABSTRACTION_SHARING.md`) — the
 S-duplication blow-up is the remaining member of the compile-time blow-up
@@ -47,9 +48,9 @@ the bit-identity check), plus a randomized host-vs-spec vitest.
 |---|---|---|---|
 | `src/tree.ts` substrate + evaluator | 582 | sanctioned host (see EVALUATOR_PLAN) | — |
 | driver (`run.ts` + use-resolution/cache/IO in `compile.ts`) | ~300 | impure driver | stays host |
-| **bracket abstraction** (`abstractName`/`eliminateLams`/`cirToTree`) | ~90 | semantic weight #1 | **LIVE: `lib/elab/bracket.disp`**, validated by `lib/tests/bracket.test.disp` (16 golden) + `test/bracket.test.ts` (300 randomized); consumed by the playground's compiler-on-screen seed |
-| type-position desugars (`binderToPi`; recType→Telescope fold — both `src/elab/sugar.ts`/`expr.ts`) | ~50 | semantic weight #2 | Stage 1 landed then DELETED 2026-07-01 (`lib/elab/ast.disp`, 12 golden + 130 randomized; recover via git) |
-| value desugars + scope resolution (match→cut, if→cond, literals, recValue sequential scope; `exprToCir`) | ~400 | syntax maps | Stages 2–3 landed then DELETED 2026-07-01 (`lib/elab/compile.disp`, 27 golden + 180 randomized; recover via git) |
+| **bracket abstraction** (`abstractName`/`eliminateLams`/`cirToTree`) | ~90 | semantic weight #1 | **DONE: `lib/elab/bracket.disp`**, validated by `lib/tests/bracket.test.disp` (16 golden) + `test/bracket.test.ts` (300 randomized) |
+| type-position desugars (`binderToPi` `compile.ts:595`; recType→Telescope fold `compile.ts:317`) | ~50 | semantic weight #2 | **DONE: `lib/elab/ast.disp`**, validated by `lib/tests/ast.test.disp` (12 golden) + `test/desugar.test.ts` (130 randomized) |
+| value desugars + scope resolution (match→cut, if→cond, literals, recValue sequential scope; `exprToCir`) | ~400 | syntax maps | **DONE: `lib/elab/compile.disp`** (one fold — the closures depend on resolution), validated by `lib/tests/compile.test.disp` (27 golden) + `test/compile.test.ts` (180 randomized end-to-end) |
 | parser (`parse.ts`) | 942 | syntax maps (pure) | Stage 4 |
 | `use`/verify orchestration (`resolveUse`) | ~80 | the ONE host-trusted soundness decision | Stage 5 |
 
