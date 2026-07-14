@@ -76,6 +76,18 @@ is a library plus tests.
   per-term stuck lists and a mode argument, about a minute for what the suite does in
   twenty (wrong normal forms still panic; the commit gate stays `cargo test --release`,
   with the mode differentials behind `-- --include-ignored`).
+- The cold APPROACH (`plan_approach` + the σ field): undemanded leaf values drift along
+  their own principal through pressure-free space, consuming wire as they go — the
+  attraction half of the two-field design. Every live consumer sources the standing
+  shell field σ (same relaxation as χ, its own map: the two mean different things and
+  are read by different movers), and approach refuses cells where either field is
+  nonzero, so values pre-stage two cells from every reaction room until demand carries
+  them through (the hot reel ignores both fields: precedence by rule, not force
+  arithmetic). Values approaching values meet no shell and pull fully together, so
+  idle subtrees self-compact. Stuck adjacent pairs climb a frustration LADDER: a quiet
+  grace (live corridors crossing the room drain on their own), then licensed
+  evictions, then damped dock retries — and an aborted seed that never placed a cell
+  marks its consumer near saturation so hopeless rooms stop re-docking.
 - `crate/src/bin/dump-run.rs` — the instrumentation face: runs a term and emits one JSON
   document (full grid snapshot + tick events per frame; v2 schema: [x,y,z] positions,
   single-char faces, a trailing `*` marks a ψ-hot strand, a sparse per-cell `chi` list
@@ -88,20 +100,19 @@ is a library plus tests.
 ## Status (measured)
 
 `cargo test --release`: all green. Stage 1: 3998+/0. Stage 2 corpus (400 random terms,
-depths 3 to 5), with the ψ/χ fields, the tension survey, and routing-free displacement
-in the sequential schedule: full3d 384 reach normal form (205 before the field rung,
-326 before tension, 366 before simultaneity, 378 before distance surveys), bilayer 261
-(179 bare; stamp-only nearly ties search there — the purely local fire planner has
-almost converged with the search planner); zero wrong results, zero invariant
-violations, zero tick-cap hits, on both topologies and under every fire mode. Wires
-finish at chord scale (the deep-spine stall that froze holding 774 strands completes
-holding 3), displacement never routes (shoves re-tie through their own footprint or do
-not happen; the pressure field hops bends downhill cell by cell), stuck fixpoints
-quiesce calmly instead of churning, and transport falls 30 to 55 percent across the
+depths 3 to 5), with the ψ/χ/σ fields, the tension survey, routing-free displacement,
+and the cold approach in the sequential schedule: full3d 394 reach normal form (205
+before the field rung, 326 before tension, 366 before simultaneity, 378 before
+distance surveys, 384 before the approach and its shells), bilayer 266 (179 bare; the
+no-approach ablation reads 279 there); zero wrong results, zero invariant violations,
+zero tick-cap hits, on both topologies and under every fire mode. Wires finish at
+chord scale (the deep-spine stall that froze holding 774 strands completes holding 3),
+displacement never routes, idle leaves pre-stage two cells out from the reaction rooms
+until demand carries them through, and transport falls 30 to 55 percent across the
 named set. Must-complete pins: stem application, fork dispatch on both topologies,
 chain2 on bilayer, and on full3d every named pin — K erasure, the sharing S-rule,
 kargs, chain1 through chain4, the deep-copy share, disp, and selF end to end. Every
-stall is liveness, never correctness. What remains stuck: 16 full3d corpus terms and
+stall is liveness, never correctness. What remains stuck: 6 full3d corpus terms and
 the bilayer residue, the deepest multi-walker seam knots. That
 residue is LOCAL_CA_DESIGN.md §13's liveness question, now measurable per topology
 against a sound substrate; policies compete on top without being able to break
@@ -255,3 +266,22 @@ Liveness findings folded into the design (each found by measurement here):
    board with trails that avoid the prime ring (Sel·F places six fresh agents; ring
    evictions alone starved it). Stuck fixpoints are now visibly calm instead of
    wiggling forever, and the corpus reads full3d 384, bilayer 261.
+17. The ENDS walk too, and the shell keeps them staged: the cold approach (leaf values
+   drifting along their own wire through field-free space) is the walk that was
+   measured deadly when unconditional — values squatted in reaction seams — and the
+   standing σ shell around every consumer is what was missing, not the walking. σ is
+   its own field: folding shells into χ was measured wrong both ways (shell halos
+   activated the spreaders into a rotor; value-thresholding around that cost the
+   spreaders their outer reach at real jams — ring 2 of a jam and ring 1 of a shell
+   are the same number). Stuck pairs climb a frustration ladder (grace for live
+   corridors to drain, then licensed evictions, then damped dock retries with
+   progress-aware abort verdicts: a seed that never placed a cell marks its room
+   hopeless), and the anonymous-move cooldown is eight ticks, not three — at three,
+   multi-mover conveyors merely slowed (6256 slides trading with 3489 cold flips at
+   one pair); at eight the room drains between moves and the same term completes in
+   428 ticks. Config sensitivity at the liveness margin is real and chaotic: selF and
+   share flipped stuck/done across five config variants while the aggregate barely
+   moved, the same lesson the JS prototype taught — the corpus and floors are the
+   gauge, and pins are for robust completions. Measured: full3d 394/400, bilayer 266
+   (the no-approach ablation reads 279 there — approach costs bilayer real terms and
+   is worth it as the feature; the switch is `APPROACH_ON`).

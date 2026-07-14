@@ -44,7 +44,10 @@
     enabled adjacent facing pair (blocked pairs evict one strand from their room — the
     fire's right of way), <b>slide</b> one blocking strand out of each stuck walker's way
     (the excluded-volume move), <b>reel</b> every ψ-demanded producer one cell (eating its
-    own aux drag where it can), <b>flip</b> bends one cell toward annihilating partners
+    own aux drag where it can) while undemanded LEAVES <b>approach</b> — drifting along
+    their own wire through field-free space until the standing σ shell around every
+    consumer parks them two cells out, pre-staged until demand carries them through —
+    then <b>flip</b> bends one cell toward annihilating partners
     the survey found (tension: cold wires tighten everywhere at once; demanded wires at
     a deliberate trickle, so contraction never fights the walk), <b>shove</b> parked
     agents one cell down the χ gradient — routing-free: the agent moves only when every
@@ -114,7 +117,7 @@ document.write('<script src="lattice_traces.js?t=' + Date.now() + '"><\/script>'
 // visit can come from Chrome's heuristic cache and silently show an old build). Fetch
 // our own source fresh and compare versions; on mismatch, reload once. The badge in the
 // header shows which build you are on.
-const PLAYER_VERSION = "2026-07-13 · distance-survey tension + convergent field";
+const PLAYER_VERSION = "2026-07-13 · cold approach + σ shells (full3d 394/400)";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -411,6 +414,7 @@ function hud() {
     : e.t === "retract" ? `<div>retract U-turn @ (${e.a.join(",")})·(${e.b.join(",")})</div>`
     : e.t === "slide" ? `<div>slide${e.why ? " (" + e.why + ")" : ""} out of (${e.at.join(",")})</div>`
     : e.t === "flip" ? `<div>flip bend (${e.from.join(",")}) → (${e.to.join(",")})</div>`
+    : e.t === "approach" ? `<div>approach: leaf drifts (${e.from.join(",")}) → (${e.to.join(",")})</div>`
     : e.t === "shove" ? `<div>shove agent (${e.from.join(",")}) → (${e.to.join(",")}) (pressure)</div>`
     : `<div>${e.t}</div>`;
   ev.innerHTML = f.events.length === 0 ? '<div>(no transitions this tick)</div>' : f.events.map(fmt).join("");

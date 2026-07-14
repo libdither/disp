@@ -526,15 +526,15 @@ fn synth_template(topo: crate::lattice::Topo, cons: &AgentCell, prod: &AgentCell
     let a = (0, 0, zs);
     let b = step(a, d0);
     let mut g = Grid::new(topo);
-    g.cells.insert(a, Cell::Agent(AgentCell { tag: cons.tag, faces: cons.faces, sid: 0, nascent: false }));
-    g.cells.insert(b, Cell::Agent(AgentCell { tag: prod.tag, faces: prod.faces, sid: 1, nascent: false }));
+    g.cells.insert(a, Cell::Agent(AgentCell { tag: cons.tag, faces: cons.faces, sid: 0, nascent: false, frustration: 0 }));
+    g.cells.insert(b, Cell::Agent(AgentCell { tag: prod.tag, faces: prod.faces, sid: 1, nascent: false, frustration: 0 }));
     let mut blk = 10u32;
     for (cell, ag) in [(a, cons), (b, prod)] {
         for i in 1..ag.tag.arity() {
             let far = step(cell, ag.face_of(i));
             let mut faces = [None; 3];
             faces[0] = Some(ag.face_of(i).opp());
-            g.cells.insert(far, Cell::Agent(AgentCell { tag: Tag::Out, faces, sid: blk, nascent: false }));
+            g.cells.insert(far, Cell::Agent(AgentCell { tag: Tag::Out, faces, sid: blk, nascent: false, frustration: 0 }));
             blk += 1;
         }
     }
@@ -608,6 +608,7 @@ pub fn apply_fire(grid: &mut Grid, shadow: &mut Net, plan: &FirePlan) {
             faces: plan.fresh_faces[k],
             sid: fresh_sids[k],
             nascent: false,
+            frustration: 0,
         });
     }
 }
@@ -656,6 +657,33 @@ fn make_board(grid: &Grid, a: Pos, b: Pos) -> BTreeSet<Pos> {
 /// of the mover — the straight-behind bend and the corner detour are its 1-cell and
 /// 3-cell routes.
 pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
+    plan_step(grid, apos, true)
+}
+
+/// The cold APPROACH: an undemanded value walks its own principal toward its partner —
+/// the attraction half of the two-field design — but only through pressure-free space,
+/// so the standing χ shell around every consumer parks it at the rim, pre-staged, until
+/// demand carries it through (the hot reel ignores χ entirely: precedence by rule, not
+/// by force arithmetic). Values approaching VALUES meet no shell and pull fully
+/// together, so idle subtrees self-compact. This is the walk that was measured deadly
+/// when unconditional (values squatted in the reaction seams); the shell is what was
+/// missing, not the walking.
+pub fn plan_approach(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
+    if grid.chi_at(apos) != 0 { return None; }
+    let ag = grid.agent(apos)?;
+    // Arity-1 only: a leaf's walk consumes one strand per step with no aux to drag, a
+    // strict wire win. Multi-port approach nets zero-to-positive wire per step (each
+    // aux pays a bend where truncation finds no bite), and on bilayer that drag wedged
+    // a pinned chain — subtree roots wait for demand, their leaves drift in.
+    if ag.tag.arity() != 1 { return None; }
+    let d = ag.faces[0]?;
+    let npos = step(apos, d);
+    // park at the rim: σ is the standing shell (reaction zones), χ marks live jams
+    if grid.chi_at(npos) != 0 || grid.sigma_at(npos) != 0 { return None; }
+    plan_step(grid, apos, false)
+}
+
+fn plan_step(grid: &Grid, apos: Pos, want_hot: bool) -> Option<ReelPlan> {
     let ag = grid.agent(apos)?;
     if !ag.tag.is_producer() || ag.nascent { return None; }
     let d = ag.faces[0]?;
@@ -663,10 +691,10 @@ pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
     if grid.reserved.contains_key(&npos) { return None; } // a seed claimed it: park, the strand will be slid
     let w = grid.wire(npos)?; // agent-adjacent is fire's business; empty is impossible (parity)
     let mine = w.with_he(d.opp())?;
-    // ψ replaces the whole-wire trace: walk only when the adjacent strand of MY principal
-    // carries demand (heat pumped by the far consumer's principal, propagated one cell
-    // per tick). A single neighbor-local bit read.
-    if !mine.hot { return None; }
+    // ψ replaces the whole-wire trace: the demanded reel walks exactly when the adjacent
+    // strand of MY principal carries demand (a single neighbor-local bit read); the cold
+    // approach walks exactly when it does not.
+    if mine.hot != want_hot { return None; }
     let f = mine.other(d.opp());
     // No coexistence on the lifted lattice: a shared cell makes the walker WAIT (the old
     // tuck). The CLEAR phase (flip/bypass) moves the blocking strand out first.
@@ -792,6 +820,7 @@ pub fn apply_reel(grid: &mut Grid, plan: &ReelPlan) {
         faces: plan.new_faces,
         sid: ag.sid,
         nascent: false,
+        frustration: 0,
     });
     grid.transport += 1;
 }
@@ -941,6 +970,7 @@ pub fn apply_shove(grid: &mut Grid, plan: &ShovePlan) {
         faces: plan.new_faces,
         sid: ag.sid,
         nascent: false,
+        frustration: 0,
     });
 }
 
@@ -1165,7 +1195,7 @@ pub fn apply_slide(grid: &mut Grid, plan: &SlidePlan) {
         guard(*c);
         let mut ns = *s;
         ns.hot = plan.s.hot;
-        ns.cooldown = 3;
+        ns.cooldown = 8;
         grid.add_strand(*c, ns);
     }
 }
@@ -1226,7 +1256,10 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     // 1:1, around one frustrated pair. Pressure IS the boundary: while χ marks a region
     // spoken for, tension never moves wire into it; when the jam resolves and the field
     // decays, tension reclaims the leftover detours. Moving OUT of a pressurized cell
-    // stays legal (that direction agrees with the field).
+    // stays legal (that direction agrees with the field). χ carries frustration ONLY —
+    // the standing shells live in their own field σ, which tension ignores entirely
+    // (folding them into χ either fenced tension out of every reaction room or, value-
+    // thresholded, cost the spreaders their outer reach; both measured).
     if grid.chi_at(npos) != 0 { return None; }
     // The target must take the strand (fit under the cap, both faces free, no hot
     // strand — an active walking corridor). Occupied targets stay allowed in CALM space
@@ -1375,7 +1408,7 @@ pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
     let mut ns = Strand::new(s.b.opp(), s.a.opp());
     ns.hot = s.hot;
     ns.survey = ns_survey;
-    ns.cooldown = 3;
+    ns.cooldown = 8;
     guard(plan.npos); grid.add_strand(plan.npos, ns);
 }
 
@@ -1533,7 +1566,7 @@ pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowS
             let (tag, faces) = (plan.fresh_tags[k], plan.fresh_faces[k]);
             (cell, Box::new(move |g: &mut Grid| {
                 // sid is a placeholder until completion fires the shadow
-                g.put_agent(cell, AgentCell { tag, faces, sid: u32::MAX, nascent: true });
+                g.put_agent(cell, AgentCell { tag, faces, sid: u32::MAX, nascent: true, frustration: 0 });
             }))
         }
         GrowItem::Strands { cell, strands } => {
@@ -1613,8 +1646,13 @@ pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowS
             }
         }
         for c in plan.cells.iter().chain([&plan.a, &plan.b]) { grid.reserved.remove(c); }
-        grid.cells.insert(plan.a, Cell::Agent(AgentCell { tag: ctag, faces: cfaces, sid: csid, nascent: false }));
-        grid.cells.insert(plan.b, Cell::Agent(AgentCell { tag: ptag, faces: pfaces, sid: psid, nascent: false }));
+        // Progress-aware verdict for the frustration ladder: a seed that never placed
+        // a single cell learned that this room does not yield to reservations either —
+        // restore the consumer near saturation so it stops re-docking (the drought is
+        // the honest end there); a seed that made progress retries much later.
+        let verdict = if step == 0 { 250 } else { 33 };
+        grid.cells.insert(plan.a, Cell::Agent(AgentCell { tag: ctag, faces: cfaces, sid: csid, nascent: false, frustration: verdict }));
+        grid.cells.insert(plan.b, Cell::Agent(AgentCell { tag: ptag, faces: pfaces, sid: psid, nascent: false, frustration: 0 }));
         grid.seed_count -= 1;
         return Some(GrowStep::Aborted);
     }

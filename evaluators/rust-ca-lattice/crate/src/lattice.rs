@@ -140,6 +140,14 @@ pub struct AgentCell {
     /// dangle until siblings land, so fires and reels must leave it alone. Cleared when
     /// the seed finalizes.
     pub nascent: bool,
+    /// Consecutive ticks this consumer has stood adjacent to its licensed producer with
+    /// no planner able to place the fire. Zeroed by any move (`put_agent` reconstructs).
+    /// Read by the scheduler's frustration LADDER: quiet grace first (a live corridor
+    /// crossing the room drains on its own as its walker passes), licensed evictions
+    /// after, damped dock retries last. An aborted seed restores this high when it never
+    /// placed a single cell, so hopeless rooms stop re-docking (measured: 235 docks,
+    /// zero cells placed, around one corridor-crossed pair).
+    pub frustration: u8,
 }
 
 impl AgentCell {
@@ -226,10 +234,19 @@ pub struct Grid {
     /// reservations, blocked walkers). Rate-only: χ chooses among sound moves (SHOVE
     /// direction, route bias), never results.
     pub chi: BTreeMap<Pos, u8>,
+    /// σ, the standing shell field: same relaxation as χ but sourced by every live
+    /// consumer, every tick, forever. A SEPARATE scalar because the two mean different
+    /// things and are read by different movers: χ marks contested rooms (spreaders act,
+    /// tension keeps out), σ marks reaction zones (approaching values park at the rim).
+    /// Folding shells into χ was measured twice as a mistake: shell halos activated the
+    /// spreaders (a rotor), and value-thresholding to avoid that cost the spreaders
+    /// their outer reach around real jams (ring 2 of a jam and ring 1 of a shell are
+    /// the same number).
+    pub sigma: BTreeMap<Pos, u8>,
 }
 
 impl Grid {
-    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo, reserved: BTreeMap::new(), seed_count: 0, chi: BTreeMap::new() } }
+    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo, reserved: BTreeMap::new(), seed_count: 0, chi: BTreeMap::new(), sigma: BTreeMap::new() } }
 
     pub fn agent(&self, p: Pos) -> Option<&AgentCell> {
         match self.cells.get(&p) { Some(Cell::Agent(a)) => Some(a), _ => None }
@@ -428,11 +445,12 @@ impl Grid {
 
     /// χ update, one Jacobi sweep over the active region: next(c) is a pure function of
     /// this cell's and its six neighbors' current values (out-of-bounds reads as 0 — the
-    /// boundary is the infinite sink), followed by a unit leak and re-pumped sources.
-    /// The double-buffering makes the result independent of any evaluation order.
-    pub fn chi_step(&mut self, sources: &[Pos]) {
+    /// boundary is the infinite sink), followed by a unit leak and re-imposed sources
+    /// (max semantics, so a standing shell and a frustration pump compose). The
+    /// double-buffering makes the result independent of any evaluation order.
+    pub fn chi_step(&mut self, sources: &[(Pos, u8)]) {
         let mut active: std::collections::BTreeSet<Pos> = self.chi.keys().copied().collect();
-        for s in sources { active.insert(*s); }
+        for (s, _) in sources { active.insert(*s); }
         let ring: Vec<Pos> = active.iter().flat_map(|p| DIRS.map(|d| step(*p, d))).collect();
         for q in ring { active.insert(q); }
         let mut next: BTreeMap<Pos, u8> = BTreeMap::new();
@@ -443,10 +461,39 @@ impl Grid {
             let v = (sum / 8).saturating_sub(1);
             if v > 0 { next.insert(p, v.min(255) as u8); }
         }
-        for s in sources { if self.topo.in_bounds(*s) { next.insert(*s, 250); } }
+        for (s, level) in sources {
+            if self.topo.in_bounds(*s) {
+                let e = next.entry(*s).or_insert(0);
+                *e = (*e).max(*level);
+            }
+        }
         self.chi = next;
     }
     pub fn chi_at(&self, p: Pos) -> u8 { self.chi.get(&p).copied().unwrap_or(0) }
+
+    /// σ update: identical relaxation to χ over its own map.
+    pub fn sigma_step(&mut self, sources: &[(Pos, u8)]) {
+        let mut active: std::collections::BTreeSet<Pos> = self.sigma.keys().copied().collect();
+        for (s, _) in sources { active.insert(*s); }
+        let ring: Vec<Pos> = active.iter().flat_map(|p| DIRS.map(|d| step(*p, d))).collect();
+        for q in ring { active.insert(q); }
+        let mut next: BTreeMap<Pos, u8> = BTreeMap::new();
+        for p in active {
+            if !self.topo.in_bounds(p) { continue; }
+            let mut sum = 2u32 * self.sigma.get(&p).copied().unwrap_or(0) as u32;
+            for d in DIRS { sum += self.sigma.get(&step(p, d)).copied().unwrap_or(0) as u32; }
+            let v = (sum / 8).saturating_sub(1);
+            if v > 0 { next.insert(p, v.min(255) as u8); }
+        }
+        for (s, level) in sources {
+            if self.topo.in_bounds(*s) {
+                let e = next.entry(*s).or_insert(0);
+                *e = (*e).max(*level);
+            }
+        }
+        self.sigma = next;
+    }
+    pub fn sigma_at(&self, p: Pos) -> u8 { self.sigma.get(&p).copied().unwrap_or(0) }
 
     /// Panicking form for the checker and readback, which only run at seed-free points.
     pub fn trace(&self, pos: Pos, out: He) -> (Pos, usize) {
@@ -583,7 +630,7 @@ fn try_embed(shadow: &Net, topo: Topo, spacing: i32) -> Option<Grid> {
     let mut grid = Grid::new(topo);
     for (id, p) in &posn {
         let tag = shadow.get(*id).tag;
-        grid.cells.insert(*p, Cell::Agent(AgentCell { tag, faces: [None; 3], sid: *id, nascent: false }));
+        grid.cells.insert(*p, Cell::Agent(AgentCell { tag, faces: [None; 3], sid: *id, nascent: false, frustration: 0 }));
     }
 
     // Route each abstract link once (canonical endpoint order).

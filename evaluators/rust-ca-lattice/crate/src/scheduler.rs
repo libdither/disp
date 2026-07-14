@@ -11,9 +11,9 @@ use crate::net::Net;
 use crate::oracle::Term;
 use crate::transitions::{
     apply_fire, apply_flip, apply_grow_dock, apply_reel, apply_retract, apply_shove,
-    apply_slide, grow_step, plan_chi_flip, plan_fire, plan_fire_stamp, plan_flip,
-    plan_grow_dock, plan_reel, plan_retract, plan_shove, plan_slide, plan_slide_ex,
-    reel_blocked, DockPlan, FirePlan, GrowStep,
+    apply_slide, grow_step, plan_approach, plan_chi_flip, plan_fire, plan_fire_stamp,
+    plan_flip, plan_grow_dock, plan_reel, plan_retract, plan_shove, plan_slide,
+    plan_slide_ex, reel_blocked, DockPlan, FirePlan, GrowStep,
 };
 
 /// Which fire planner the schedule uses. `Search` is the in-board backtracking planner;
@@ -26,12 +26,15 @@ pub enum FireMode { Search, Stamp, StampThenSearch, Grow, GrowThenSearch }
 /// Ablation switch for the SHOVE phase (measurement knob).
 pub const SHOVE_ON: bool = true;
 
-/// χ level at which a count-1 wire cell EVAPORATES: its cold strand relocates through a
-/// strictly-empty trail into strictly cooler cells. Crowded cells (count ≥ 2) decongest
-/// at χ ≥ 1 already; the walker-blocking MATS are count-1 — invisible to crowding, yet
-/// exactly what fire boards and relaxed clears die on — so under strong pressure they
-/// thin from the boundary inward.
-pub const CHI_EVAP: u8 = 3;
+/// Ablation switch for the cold APPROACH (measurement knob).
+pub const APPROACH_ON: bool = true;
+
+/// The standing χ level of every live consumer: the reaction-zone shell. Strong enough
+/// that its ring-1 halo reads nonzero (approaching values park two cells out and idle
+/// wire keeps seeping away from the rooms where fires happen), weak enough that
+/// frustration pumps (250) dominate everywhere they fire.
+pub const STANDING_CHI: u8 = 60;
+
 
 /// Stall window on SHADOW progress (fires, docks, grow steps). The field dynamics keep a
 /// tick busy — shoves, decongestion slides, detour reels — even when the computation is
@@ -66,6 +69,7 @@ pub enum Event {
     Abort { at: Pos },
     Shove { from: Pos, to: Pos },
     Flip { from: Pos, to: Pos, hot: bool },
+    Approach { from: Pos, to: Pos },
 }
 
 pub struct Sim {
@@ -121,7 +125,7 @@ impl Sim {
         // are still traveling long wires
         applied += self.grid.survey_step();
         // χ sources collected as the tick runs; the field updates at the end
-        let mut pumps: Vec<Pos> = vec![];
+        let mut pumps: Vec<(Pos, u8)> = vec![];
         loop {
             let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
             let mut fired = false;
@@ -170,8 +174,35 @@ impl Sim {
             let Some(b) = self.grid.agent(ppos) else { continue };
             if !b.tag.is_producer() || b.nascent || b.faces[0] != Some(d.opp()) { continue; }
             if self.plan_fire_mode(cpos).is_some() { continue; }
-            pumps.push(cpos);
-            pumps.push(ppos);
+            // the frustration LADDER. Age the consumer, then respond by how long the
+            // room has refused: a quiet grace first (a live corridor crossing the room
+            // drains on its own as its walker passes — fighting it was measured
+            // unwinnable, its licensed traffic re-lays wire as fast as evictions drain
+            // it), licensed evictions for what stays, and damped DOCK retries for
+            // rooms nothing clears (the dock reserves the layout and unfolds one cell
+            // per tick, sliding squatters itself, abortable throughout; undamped it
+            // re-docked a corridor-starved seed on every abort — 235 docks, zero cells
+            // ever placed).
+            let age = {
+                if let Some(crate::lattice::Cell::Agent(a)) = self.grid.cells.get_mut(&cpos) {
+                    a.frustration = a.frustration.saturating_add(1);
+                    a.frustration
+                } else { 0 }
+            };
+            pumps.push((cpos, 250));
+            pumps.push((ppos, 250));
+            if age < 8 { continue; }
+            if age >= 32 && age % 64 == 32 {
+                if let Some(plan) = plan_grow_dock(&self.grid, cpos) {
+                    self.events.push(Event::Dock {
+                        cpos: plan.cpos, ppos: plan.ppos,
+                        rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
+                    });
+                    apply_grow_dock(&mut self.grid, plan);
+                    applied += 1;
+                    continue;
+                }
+            }
             // candidates: every wire cell of the fire's own board (Chebyshev 2 of the
             // pair — a six-fresh rule like Sel·F genuinely needs that much room);
             // trails must avoid the prime ring (Chebyshev 1), or successive evictions
@@ -189,7 +220,11 @@ impl Sim {
             }
             'evict: for c in &board {
                 let Some(w) = self.grid.wire(*c) else { continue };
-                let avoid: Vec<Pos> = ring.iter().filter(|q| *q != c).copied().collect();
+                // the trail must leave the WHOLE room: avoiding only the prime ring let
+                // evictions relocate strands to other board cells, which the next tick
+                // evicted again — 5876 evictions around one pair, a conveyor entirely
+                // inside the eviction phase
+                let avoid: Vec<Pos> = board.iter().filter(|q| *q != c).copied().collect();
                 for s in w.iter().collect::<Vec<_>>() {
                     if let Some(plan) = plan_slide_ex(&self.grid, *c, s, &avoid, false, true) {
                         self.events.push(Event::Slide { at: plan.p, why: "evict" });
@@ -213,13 +248,13 @@ impl Sim {
                     applied += 1;
                     if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                 }
-                Some(GrowStep::Waiting(cell)) => { pumps.push(cell); }
+                Some(GrowStep::Waiting(cell)) => { pumps.push((cell, 250)); }
                 None => {}
             }
         }
         // squatted reservations pump wherever they stand
         for (c, _) in self.grid.reserved.clone() {
-            if !self.grid.is_empty(c) { pumps.push(c); }
+            if !self.grid.is_empty(c) { pumps.push((c, 250)); }
         }
         let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
         for apos in &positions {
@@ -278,7 +313,7 @@ impl Sim {
             }
             // a hopeless knot: nothing here can slide — this is exactly what pressure
             // exists for
-            pumps.push(npos);
+            pumps.push((npos, 250));
         }
         for p in positions {
             if let Some(plan) = plan_reel(&self.grid, p) {
@@ -287,16 +322,30 @@ impl Sim {
                 apply_reel(&mut self.grid, &plan);
                 applied += 1;
                 if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
-            } else if let Some(a) = self.grid.agent(p) {
-                // demanded (hot adjacent strand) but unable to move: congestion around the
-                // walker itself (aux re-anchoring failed or the shared cell would not
-                // clear) — pump so χ evicts the hemming bystanders
-                if a.tag.is_producer() && !a.nascent {
-                    if let Some(d) = a.faces[0] {
-                        let q = step(p, d);
-                        if !self.grid.reserved.contains_key(&q) {
-                            if let Some(w) = self.grid.wire(q) {
-                                if let Some(m) = w.with_he(d.opp()) { if m.hot { pumps.push(p); } }
+            } else {
+                // the cold APPROACH: undemanded values drift along their own principal
+                // through pressure-free space, consuming wire as they go; the standing
+                // consumer shells park them at the rim until demand carries them through
+                if APPROACH_ON {
+                    if let Some(plan) = plan_approach(&self.grid, p) {
+                        self.events.push(Event::Approach { from: plan.apos, to: plan.npos });
+                        apply_reel(&mut self.grid, &plan);
+                        applied += 1;
+                        if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
+                        continue;
+                    }
+                }
+                // demanded (hot adjacent strand) but unable to move: congestion around
+                // the walker itself (aux re-anchoring failed or the shared cell would
+                // not clear) — pump so χ evicts the hemming bystanders
+                if let Some(a) = self.grid.agent(p) {
+                    if a.tag.is_producer() && !a.nascent {
+                        if let Some(d) = a.faces[0] {
+                            let q = step(p, d);
+                            if !self.grid.reserved.contains_key(&q) {
+                                if let Some(w) = self.grid.wire(q) {
+                                    if let Some(m) = w.with_he(d.opp()) { if m.hot { pumps.push((p, 250)); } }
+                                }
                             }
                         }
                     }
@@ -329,12 +378,12 @@ impl Sim {
                 if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
             }
         }
-        // pressure-demanded DECONGESTION: under χ, crowded wire cells thin themselves —
-        // cold strands slide out into open space (hot strands are being walked: immune).
-        // Strictly decongesting (empty trails only), so it cannot churn; this is what
-        // dissolves the saturated pockets that block both walkers and slides. Under
-        // STRONG pressure (χ ≥ CHI_EVAP) count-1 cells evaporate too, gated strictly
-        // downhill in χ — without the gate the mat just circulates under the pump.
+        // pressure-demanded DECONGESTION and EVAPORATION: in frustration halos, crowded
+        // wire cells thin themselves and count-1 cells slide their cold strand out
+        // through strictly-downhill empty trails (hot strands, being walked, are
+        // immune). Jurisdiction is by FIELD, not by value: χ carries frustration only
+        // (spreaders act on it, tension keeps out of it), σ carries the standing shells
+        // (only approach reads it) — sharing one scalar was measured wrong both ways.
         if SHOVE_ON {
             for p in self.grid.wire_positions() {
                 let here = self.grid.chi_at(p);
@@ -357,7 +406,9 @@ impl Sim {
                     }
                 }
                 if moved { continue; }
-                if !crowded && (strands.len() != 1 || here < CHI_EVAP) { continue; }
+                // count-1 evaporation engages under STRONG pressure only (crowding
+                // decongests from χ ≥ 1)
+                if !crowded && (strands.len() != 1 || here < 3) { continue; }
                 for s in strands {
                     if s.hot || s.cooldown > 0 { continue; }
                     if let Some(plan) = plan_slide(&self.grid, p, s, &[], false) {
@@ -385,6 +436,12 @@ impl Sim {
             }
             if !any { break; }
         }
+        // the standing shells (σ, a separate field): every live consumer marks its
+        // reaction room, and approaching values park at the rim
+        let shells: Vec<(Pos, u8)> = self.grid.agents()
+            .filter(|(_, a)| a.tag.is_consumer() && !a.nascent)
+            .map(|(p, _)| (p, STANDING_CHI)).collect();
+        self.grid.sigma_step(&shells);
         self.grid.chi_step(&pumps);
         self.grid.cooldown_step();
         applied

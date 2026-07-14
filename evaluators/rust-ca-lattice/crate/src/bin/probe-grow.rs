@@ -11,6 +11,7 @@ fn main() {
         "kargs" => ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
         "selF" => ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)),
         "disp" => oracle::disp_t(),
+        "share" => ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)),
         _ => panic!(),
     };
     let topo = match std::env::args().nth(3).as_deref() {
@@ -26,6 +27,7 @@ fn main() {
     let (mut fires, mut docks, mut grows, mut shoves, mut slides, mut flips, mut retracts) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     let mut why_counts: std::collections::BTreeMap<&str, u32> = Default::default();
     let mut cold_flips = 0u32;
+    let mut approaches = 0u32;
     let mut zero = 0;
     for t in 0..6000 {
         if sim.shadow.all_active_pairs().is_empty() && !sim.grid.has_seeds() { println!("DONE tick {t}"); break; }
@@ -38,13 +40,14 @@ fn main() {
                 Event::Shove { .. } => shoves += 1,
                 Event::Slide { why, .. } => { slides += 1; *why_counts.entry(why).or_default() += 1; }
                 Event::Flip { hot, .. } => { flips += 1; if !hot { cold_flips += 1; } }
+                Event::Approach { .. } => approaches += 1,
                 Event::Retract { .. } => retracts += 1,
                 _ => {}
             }
         }
         if n == 0 { zero += 1; if zero > 60 { println!("STUCK tick {t}"); break; } } else { zero = 0; }
     }
-    println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides} flips={flips} (cold {cold_flips}) retracts={retracts}");
+    println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides} flips={flips} (cold {cold_flips}) retracts={retracts} approaches={approaches}");
     println!("total strands now = {}", sim.grid.total_strands());
     println!("slides by phase: {why_counts:?}");
     // slack ledger: arc (strand count) vs chord (Manhattan between endpoints) per wire,

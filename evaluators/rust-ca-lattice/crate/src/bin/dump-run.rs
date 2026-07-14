@@ -83,7 +83,7 @@ fn named(which: &str) -> (Term, &'static str) {
         "ksimple" => (ap(ap(oracle::k(), Term::L), s(Term::L)),
             "K discards an argument: T1·△ answers with b and mints an ε; watch the value walk INTO the eraser (Eps·S, Eps·△) — GC one cell at a time."),
         "kargs" => (ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
-            "K with bigger arguments — pressure's first conquest: watch χ (red glow) evaporate the mats and hop bends downhill around the jam. Completes on full3d; on bilayer it sits right at the liveness margin and pockets under the current tuning."),
+            "K with bigger arguments — pressure's first conquest: watch χ (red glow) evaporate the mats and hop bends downhill around the jam. Always completes on full3d; on bilayer it sits exactly at the liveness margin, flipping between done and stuck across tunings."),
         "erase" => (ap(ap(oracle::k(), Term::L), f2(Term::L, Term::L)),
             "ε eats a fork: Eps·F FORKS the death pulse into two erasers — the cascade is the GC. Erasers are the cheapest agents: one port, one cell."),
         "forkarg" => (ap(f2(Term::L, Term::L), f2(Term::L, Term::L)),
@@ -175,6 +175,9 @@ fn main() {
                 }
                 Event::Flip { from, to, hot } => {
                     write!(ev, "{{\"t\":\"flip\",\"from\":{},\"to\":{},\"hot\":{hot}}}", pos_json(*from), pos_json(*to)).unwrap();
+                }
+                Event::Approach { from, to } => {
+                    write!(ev, "{{\"t\":\"approach\",\"from\":{},\"to\":{}}}", pos_json(*from), pos_json(*to)).unwrap();
                 }
             }
         }
