@@ -89,19 +89,20 @@ is a library plus tests.
 
 `cargo test --release`: all green. Stage 1: 3998+/0. Stage 2 corpus (400 random terms,
 depths 3 to 5), with the ψ/χ fields, the tension survey, and routing-free displacement
-in the sequential schedule: full3d 378 reach normal form (205 before the field rung,
-326 before tension, 366 before simultaneity and the local movers), bilayer 263 (179
-bare; stamp-only reaches 259 there, nearly tying search — the purely local fire planner
-has almost converged with the search planner); zero wrong results, zero invariant
+in the sequential schedule: full3d 384 reach normal form (205 before the field rung,
+326 before tension, 366 before simultaneity, 378 before distance surveys), bilayer 261
+(179 bare; stamp-only nearly ties search there — the purely local fire planner has
+almost converged with the search planner); zero wrong results, zero invariant
 violations, zero tick-cap hits, on both topologies and under every fire mode. Wires
 finish at chord scale (the deep-spine stall that froze holding 774 strands completes
 holding 3), displacement never routes (shoves re-tie through their own footprint or do
-not happen; the pressure field hops bends downhill cell by cell), and transport falls
-30 to 55 percent across the named set. Must-complete pins: stem application, fork
-dispatch on both topologies, chain2 on bilayer, and on full3d every named pin — K
-erasure, the sharing S-rule, kargs, chain1 through chain4, the deep-copy share, disp,
-and selF end to end. Every stall is liveness, never correctness. What remains stuck: 22
-full3d corpus terms and the bilayer residue, the deepest multi-walker seam knots. That
+not happen; the pressure field hops bends downhill cell by cell), stuck fixpoints
+quiesce calmly instead of churning, and transport falls 30 to 55 percent across the
+named set. Must-complete pins: stem application, fork dispatch on both topologies,
+chain2 on bilayer, and on full3d every named pin — K erasure, the sharing S-rule,
+kargs, chain1 through chain4, the deep-copy share, disp, and selF end to end. Every
+stall is liveness, never correctness. What remains stuck: 16 full3d corpus terms and
+the bilayer residue, the deepest multi-walker seam knots. That
 residue is LOCAL_CA_DESIGN.md §13's liveness question, now measurable per topology
 against a sound substrate; policies compete on top without being able to break
 correctness.
@@ -236,3 +237,21 @@ Liveness findings folded into the design (each found by measurement here):
    636→396, kargs 333→292 and newly complete on bilayer), shoves nearly extinct (zero
    to three per run), and the slide census collapses to demanded clears plus a residue
    of decongestion.
+16. Presence bits freeze interior slack; DISTANCES unfreeze it, and the anonymous tier
+   needs three dampers to stay convergent. The exclusive-partner gate left any letter
+   with partners on both sides immobile — measured as 94 cells of removable slack
+   frozen at one stuck fixpoint (the visible "cold wires never contract"). The survey
+   now carries the hop distance to the nearest occurrence of each direction per side;
+   a letter migrates toward its strictly nearer partner, every allowed swap decreases
+   the sum of nearest-partner distances, and interior slack flows. That extra mobility
+   exposed a rotor: tension stacks strands into shared cells, decongestion spreads
+   them back out, and around a permanently pumped jam the pair traded thousands of
+   moves without ever quiescing (per-strand cooldowns only slow a multi-strand
+   conveyor). Three rules make the tier convergent: a move cooldown on every strand an
+   anonymous mover touches; stacking into occupied cells only where the target's whole
+   neighborhood is χ-free (in calm space dense contraction needs it — an empty-only
+   rule froze chain4 solid at 740 excess — but inside a halo a fresh stack is just
+   the spreader's next meal); and fire evictions drawing from the whole Chebyshev-2
+   board with trails that avoid the prime ring (Sel·F places six fresh agents; ring
+   evictions alone starved it). Stuck fixpoints are now visibly calm instead of
+   wiggling forever, and the corpus reads full3d 384, bilayer 261.

@@ -6,7 +6,7 @@
 //! chooses WHICH enabled transitions run and in what order; it can never affect what a
 //! transition does (footprints are the transition's own contract).
 
-use crate::lattice::{embed, step, Grid, Pos, Topo};
+use crate::lattice::{embed, manhattan, step, Grid, Pos, Topo};
 use crate::net::Net;
 use crate::oracle::Term;
 use crate::transitions::{
@@ -65,7 +65,7 @@ pub enum Event {
     Grow { at: Pos },
     Abort { at: Pos },
     Shove { from: Pos, to: Pos },
-    Flip { from: Pos, to: Pos },
+    Flip { from: Pos, to: Pos, hot: bool },
 }
 
 pub struct Sim {
@@ -172,19 +172,24 @@ impl Sim {
             if self.plan_fire_mode(cpos).is_some() { continue; }
             pumps.push(cpos);
             pumps.push(ppos);
+            // candidates: every wire cell of the fire's own board (Chebyshev 2 of the
+            // pair — a six-fresh rule like Sel·F genuinely needs that much room);
+            // trails must avoid the prime ring (Chebyshev 1), or successive evictions
+            // just shuffle strands between the cells the splices need most
             let mut ring: Vec<Pos> = vec![];
+            let mut board: Vec<Pos> = vec![];
             for base in [cpos, ppos] {
-                for dd in crate::lattice::DIRS {
-                    let c = step(base, dd);
-                    if c != cpos && c != ppos && !ring.contains(&c) { ring.push(c); }
-                }
+                for dx in -2i32..=2 { for dy in -2i32..=2 { for dz in -2i32..=2 {
+                    let c = (base.0 + dx, base.1 + dy, base.2 + dz);
+                    if c == cpos || c == ppos { continue; }
+                    let cheb = dx.abs().max(dy.abs()).max(dz.abs());
+                    if cheb <= 1 && manhattan(c, base) == 1 && !ring.contains(&c) { ring.push(c); }
+                    if !board.contains(&c) { board.push(c); }
+                }}}
             }
-            'evict: for (i, c) in ring.iter().enumerate() {
+            'evict: for c in &board {
                 let Some(w) = self.grid.wire(*c) else { continue };
-                // the trail must not land in the rest of the room, or successive
-                // evictions just shuffle strands between ring cells
-                let avoid: Vec<Pos> = ring.iter().enumerate()
-                    .filter(|(j, _)| *j != i).map(|(_, q)| *q).collect();
+                let avoid: Vec<Pos> = ring.iter().filter(|q| *q != c).copied().collect();
                 for s in w.iter().collect::<Vec<_>>() {
                     if let Some(plan) = plan_slide_ex(&self.grid, *c, s, &avoid, false, true) {
                         self.events.push(Event::Slide { at: plan.p, why: "evict" });
@@ -306,7 +311,7 @@ impl Sim {
             let Some(w) = self.grid.wire(p) else { continue };
             for s in w.iter().collect::<Vec<_>>() {
                 if let Some(plan) = plan_flip(&self.grid, p, s) {
-                    self.events.push(Event::Flip { from: plan.p, to: plan.npos });
+                    self.events.push(Event::Flip { from: plan.p, to: plan.npos, hot: plan.s.hot });
                     apply_flip(&mut self.grid, &plan);
                     applied += 1;
                     if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
@@ -343,7 +348,7 @@ impl Sim {
                 // its re-tie space)
                 for s in strands.iter().copied() {
                     if let Some(plan) = plan_chi_flip(&self.grid, p, s) {
-                        self.events.push(Event::Flip { from: plan.p, to: plan.npos });
+                        self.events.push(Event::Flip { from: plan.p, to: plan.npos, hot: plan.s.hot });
                         apply_flip(&mut self.grid, &plan);
                         applied += 1;
                         moved = true;
@@ -354,7 +359,7 @@ impl Sim {
                 if moved { continue; }
                 if !crowded && (strands.len() != 1 || here < CHI_EVAP) { continue; }
                 for s in strands {
-                    if s.hot { continue; }
+                    if s.hot || s.cooldown > 0 { continue; }
                     if let Some(plan) = plan_slide(&self.grid, p, s, &[], false) {
                         if !crowded && plan.strands.iter().any(|(c, _)| self.grid.chi_at(*c) >= here) { continue; }
                         self.events.push(Event::Slide { at: plan.p, why: "decongest" });
@@ -381,6 +386,7 @@ impl Sim {
             if !any { break; }
         }
         self.grid.chi_step(&pumps);
+        self.grid.cooldown_step();
         applied
     }
 }

@@ -1165,6 +1165,7 @@ pub fn apply_slide(grid: &mut Grid, plan: &SlidePlan) {
         guard(*c);
         let mut ns = *s;
         ns.hot = plan.s.hot;
+        ns.cooldown = 3;
         grid.add_strand(*c, ns);
     }
 }
@@ -1193,23 +1194,28 @@ pub struct FlipPlan {
 pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     // Re-read the live strand: the caller's copy may predate earlier flips this tick.
     let s = grid.wire(p)?.iter().find(|t| *t == s0)?;
+    if s.cooldown > 0 { return None; } // recently moved by the anonymous tier: settle first
     if s.b == s.a.opp() { return None; } // straight segment: nothing to shift
     // The gate. My two word-letters are X = opp(a) (earlier) and Y = b (later); the swap
-    // moves X later and Y earlier. A letter WANTS a side when its annihilating partner
-    // exists on that side EXCLUSIVELY (partners on both sides are ambiguous, and chasing
-    // them oscillates); the swap fires only when it strictly helps one letter and does
-    // not hurt the other (two letters wanting the same side would trade places forever —
-    // the trailing one waits, convoy-style). This makes each letter's motion one-way
-    // between cancellation events, so total flips are bounded and the dance cannot cycle.
-    // Orientation note: stored sides read outbound, so earlier-presence of canonical
-    // direction d appears in `ba` as opp(d); later-presence in `bb` as d itself.
-    let (ba, bb) = (s.survey[0]?, s.survey[1]?);
-    let bit = |d: He| 1u8 << (d as u8);
-    let x_later = bb & bit(s.a) != 0 && ba & bit(s.a.opp()) == 0;
-    let x_earlier = ba & bit(s.a.opp()) != 0 && bb & bit(s.a) == 0;
-    let y_earlier = ba & bit(s.b) != 0 && bb & bit(s.b.opp()) == 0;
-    let y_later = bb & bit(s.b.opp()) != 0 && ba & bit(s.b) == 0;
-    if !((x_later && !y_later) || (y_earlier && !x_earlier)) { return None; }
+    // moves X one slot later and Y one slot earlier. With nearest-partner DISTANCES per
+    // side, a letter strictly GAINS by moving toward its nearer partner, and the swap
+    // fires only when one letter strictly gains and the other does not strictly prefer
+    // the opposite direction. Every allowed swap decreases the sum of nearest-partner
+    // distances by at least one (a tied letter improves too: min(l-1, r+1) < min(l, r)),
+    // so the dance terminates without needing partner-exclusivity — which is what
+    // unfreezes interior slack (presence-only froze any letter with partners on both
+    // sides; measured as 94 cells of removable slack at one stuck fixpoint).
+    // Orientation note: stored sides read outbound, so canonical direction d at earlier
+    // positions appears in the a-side array under opp(d), and at later positions in the
+    // b-side array under d itself.
+    let (da, db) = (s.survey[0]?, s.survey[1]?);
+    let (xl, xr) = (da[s.a.opp() as usize], db[s.a as usize]);
+    let (yl, yr) = (da[s.b as usize], db[s.b.opp() as usize]);
+    let x_gain_r = xr > 0 && (xl == 0 || xr < xl);
+    let x_pref_l = xl > 0 && (xr == 0 || xl < xr);
+    let y_gain_l = yl > 0 && (yr == 0 || yl < yr);
+    let y_pref_r = yr > 0 && (yl == 0 || yr < yl);
+    if !((x_gain_r && !y_pref_r) || (y_gain_l && !x_pref_l)) { return None; }
     let (qa, qb) = (step(p, s.a), step(p, s.b));
     let npos = step(qa, s.b); // == step(qb, s.a): the rectangle's fourth corner
     if !grid.topo.in_bounds(npos) { return None; }
@@ -1222,11 +1228,15 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     // decays, tension reclaims the leftover detours. Moving OUT of a pressurized cell
     // stays legal (that direction agrees with the field).
     if grid.chi_at(npos) != 0 { return None; }
-    // The target cell must take the strand (both its faces free, room under the cap),
-    // and must hold no HOT strand: a hot strand marks an active walking corridor, and a
-    // flip landing there makes the cell shared, blocks the walk, gets evicted by the
-    // clear, and re-flips in — an endless trade (χ cannot fence it, because a
-    // SUCCEEDING clear never pumps).
+    // The target must take the strand (fit under the cap, both faces free, no hot
+    // strand — an active walking corridor). Occupied targets stay allowed in CALM space
+    // — an empty-only rule froze dense-region slack solid (chain4 went from done to
+    // stuck holding 740 excess cells) — but STACKING near pressure is banned: a stack
+    // inside a persistent halo becomes a count-2 cell that decongestion spreads back
+    // out, a multi-strand rotor that per-strand cooldowns only slow (measured at one
+    // bilayer jam: thousands of trade moves; the pump never dies because the
+    // frustration is permanent). Occupied targets therefore require the target and its
+    // whole neighborhood χ-free; empty targets need only the target itself.
     let (nf_a, nf_b) = (s.b.opp(), s.a.opp()); // npos faces toward qa and qb
     match grid.cells.get(&npos) {
         None => {}
@@ -1234,6 +1244,7 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
             if wn.count() >= WIRE_CAP || wn.iter().any(|t| t.hot) { return None; }
             let used = wn.used_hes();
             if used.contains(&nf_a) || used.contains(&nf_b) { return None; }
+            if DIRS.iter().any(|d| grid.chi_at(step(npos, *d)) != 0) { return None; }
         }
         _ => return None, // agent or seed sits on the corner
     }
@@ -1262,7 +1273,18 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
 /// (the first cut) blinded the neighborhood for a sweep per flip and serialized
 /// contraction to one bend at a time — wires visibly tightened sequentially instead of
 /// everywhere at once.
-fn repoint_for_flip(grid: &mut Grid, p: Pos, from: He, to: He, side: Option<u8>) {
+/// One step of the survey distance recurrence: the side value seen from one cell closer
+/// to us, through a strand whose outbound step is `h`.
+fn survey_advance(far: Option<[u8; 6]>, h: He) -> Option<[u8; 6]> {
+    far.map(|f| {
+        let mut d = [0u8; 6];
+        for k in 0..6 { d[k] = if f[k] == 0 { 0 } else { f[k].saturating_add(1) }; }
+        d[h as usize] = 1;
+        d
+    })
+}
+
+fn repoint_for_flip(grid: &mut Grid, p: Pos, from: He, to: He, side: Option<[u8; 6]>) {
     match grid.cells.get_mut(&p) {
         Some(Cell::Agent(a)) => {
             let i = a.port_at(from).unwrap_or_else(|| panic!("no port at {from:?} on {p:?}"));
@@ -1271,7 +1293,7 @@ fn repoint_for_flip(grid: &mut Grid, p: Pos, from: He, to: He, side: Option<u8>)
         Some(Cell::Wire(w)) => {
             let slot = w.strands.iter_mut().flatten().find(|s| s.contains(from))
                 .unwrap_or_else(|| panic!("no strand half {from:?} at {p:?}"));
-            let hot = slot.hot;
+            let (hot, cooldown) = (slot.hot, slot.cooldown);
             // the far side's letters are all beyond this strand: unchanged by the swap
             let keep = slot.survey[1 - slot.side_of(from)];
             let new = if slot.a == from { Strand::new(to, slot.b) } else { Strand::new(slot.a, to) };
@@ -1280,6 +1302,7 @@ fn repoint_for_flip(grid: &mut Grid, p: Pos, from: He, to: He, side: Option<u8>)
             survey[new.side_of(new.other(to))] = keep;
             *slot = new;
             slot.hot = hot;
+            slot.cooldown = cooldown;
             slot.survey = survey;
         }
         _ => panic!("repoint on non-attachment cell {p:?}"),
@@ -1294,7 +1317,7 @@ fn repoint_for_flip(grid: &mut Grid, p: Pos, from: He, to: He, side: Option<u8>)
 /// stay untouchable; the survey needs no say because χ-descent is its own gate.
 pub fn plan_chi_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     let s = grid.wire(p)?.iter().find(|t| *t == s0)?;
-    if s.hot || s.b == s.a.opp() { return None; }
+    if s.hot || s.cooldown > 0 || s.b == s.a.opp() { return None; }
     let here = grid.chi_at(p);
     if here < 2 { return None; }
     let (qa, qb) = (step(p, s.a), step(p, s.b));
@@ -1330,9 +1353,10 @@ pub fn plan_chi_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
 pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
     let guard = |c: Pos| assert!(plan.footprint.contains(&c), "write outside footprint: {c:?}");
     let s = plan.s;
-    let bit = |d: He| 1u8 << (d as u8);
-    // COLD wires keep exact surveys through the flip (a transposition changes no other
-    // strand's presence sets), so every eligible cold bend can fire every tick —
+    // COLD wires keep near-exact surveys through the flip (the moved pair keeps its
+    // word position, and the two neighbors re-derive by one recurrence step; strands
+    // further out drift by at most one hop until the sweep corrects them), so every
+    // eligible cold bend can fire every tick —
     // simultaneous contraction. HOT wires deliberately reset instead: the survey blind
     // is a natural rate limit, and it is load-bearing — simultaneous contraction of the
     // wire a walker is actively eating fights the walk machinery (clears, face
@@ -1341,8 +1365,8 @@ pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
     let (qa_side, qb_side, ns_survey) = if s.hot {
         (None, None, [None, None])
     } else {
-        (s.survey[1].map(|v| v | bit(s.a.opp())),
-         s.survey[0].map(|v| v | bit(s.b.opp())),
+        (survey_advance(s.survey[1], s.a.opp()),
+         survey_advance(s.survey[0], s.b.opp()),
          s.survey)
     };
     guard(plan.p); grid.remove_strand(plan.p, s);
@@ -1351,6 +1375,7 @@ pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
     let mut ns = Strand::new(s.b.opp(), s.a.opp());
     ns.hot = s.hot;
     ns.survey = ns_survey;
+    ns.cooldown = 3;
     guard(plan.npos); grid.add_strand(plan.npos, ns);
 }
 

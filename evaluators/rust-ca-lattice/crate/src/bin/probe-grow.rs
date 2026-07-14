@@ -10,9 +10,14 @@ fn main() {
         "chain4" => oracle::chain_k(4),
         "kargs" => ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
         "selF" => ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)),
+        "disp" => oracle::disp_t(),
         _ => panic!(),
     };
-    let mut sim = Sim::load(&term, Topo::Full3D);
+    let topo = match std::env::args().nth(3).as_deref() {
+        Some("bilayer") => Topo::Bilayer,
+        _ => Topo::Full3D,
+    };
+    let mut sim = Sim::load(&term, topo);
     sim.fire_mode = match std::env::args().nth(2).as_deref() {
         Some("search") => FireMode::Search,
         Some("grow") => FireMode::Grow,
@@ -20,6 +25,7 @@ fn main() {
     };
     let (mut fires, mut docks, mut grows, mut shoves, mut slides, mut flips, mut retracts) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     let mut why_counts: std::collections::BTreeMap<&str, u32> = Default::default();
+    let mut cold_flips = 0u32;
     let mut zero = 0;
     for t in 0..6000 {
         if sim.shadow.all_active_pairs().is_empty() && !sim.grid.has_seeds() { println!("DONE tick {t}"); break; }
@@ -31,16 +37,42 @@ fn main() {
                 Event::Grow { .. } => grows += 1,
                 Event::Shove { .. } => shoves += 1,
                 Event::Slide { why, .. } => { slides += 1; *why_counts.entry(why).or_default() += 1; }
-                Event::Flip { .. } => flips += 1,
+                Event::Flip { hot, .. } => { flips += 1; if !hot { cold_flips += 1; } }
                 Event::Retract { .. } => retracts += 1,
                 _ => {}
             }
         }
         if n == 0 { zero += 1; if zero > 60 { println!("STUCK tick {t}"); break; } } else { zero = 0; }
     }
-    println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides} flips={flips} retracts={retracts}");
+    println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides} flips={flips} (cold {cold_flips}) retracts={retracts}");
     println!("total strands now = {}", sim.grid.total_strands());
     println!("slides by phase: {why_counts:?}");
+    // slack ledger: arc (strand count) vs chord (Manhattan between endpoints) per wire,
+    // via the observer trace from each agent port (each wire counted from both ends)
+    let (mut arc2, mut chord2) = (0i64, 0i64);
+    for (p, a) in sim.grid.agents().map(|(p, a)| (p, a.clone())).collect::<Vec<_>>() {
+        for port in 0..a.tag.arity() {
+            let f = a.face_of(port);
+            let mut hops = 0i64;
+            let (mut cur, mut face) = (p, f);
+            for _ in 0..100_000 {
+                let q = rust_ca_lattice::lattice::step(cur, face);
+                match sim.grid.cells.get(&q) {
+                    Some(rust_ca_lattice::lattice::Cell::Agent(_)) => {
+                        arc2 += hops;
+                        chord2 += rust_ca_lattice::lattice::manhattan(p, q) as i64 - 1;
+                        break;
+                    }
+                    Some(rust_ca_lattice::lattice::Cell::Wire(w)) => match w.with_he(face.opp()) {
+                        Some(t) => { hops += 1; cur = q; face = t.other(face.opp()); }
+                        None => break,
+                    },
+                    _ => break,
+                }
+            }
+        }
+    }
+    println!("slack at exit: arc={} chord>={} (excess {})", arc2 / 2, chord2.max(0) / 2, (arc2 - chord2.max(0)) / 2);
     println!("chi cells={} max={:?} reserved={} seeds={}",
         sim.grid.chi.len(), sim.grid.chi.values().max(), sim.grid.reserved.len(), sim.grid.seed_count);
     // autopsy: every hot-blocked producer and its neighborhood

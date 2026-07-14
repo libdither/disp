@@ -23,10 +23,12 @@
 //! (EMBEDDING_THEOREM.md §4).
 //!
 //! State budget (§3-honest): agent = tag(4b) + 3 faces(3b each); strand = 6b faces +
-//! the signals riding on it — ψ hot (1b) and the tension survey (2 × 6b presence bits
-//! + 2 valid bits; the Option encodes validity here). No layer bits, no tuck slots.
-//! The survey is the fattest signal; its presence-bit form IS the compressed encoding
-//! (the rust prototype needs nothing richer).
+//! the signals riding on it — ψ hot (1b), the anonymous-move cooldown (2b), and the
+//! tension survey (per side, per direction, the hop distance to the nearest occurrence:
+//! 2 × 6 × u8 in the prototype, plus validity). The survey is the fattest signal by
+//! far; the CA-honest compression is log-scale distance buckets (2 to 3 bits per
+//! direction) — nearest-partner ORDERING is all the flip gate reads, never absolute
+//! hop counts.
 
 use crate::net::Net;
 use crate::rules::Tag;
@@ -96,17 +98,29 @@ impl Topo {
 /// A wire element in one cell: passes through the cell between two distinct faces.
 /// `hot` is ψ, the demand bit: true once the wire this strand belongs to is known to end
 /// at a live consumer's principal. `survey` is the tension census: for each side (index
-/// 0 = beyond face `a`, 1 = beyond face `b`), the SET of travel directions (one bit per
-/// Dir, outbound orientation) used by the rest of this wire on that side — None until the
-/// sweep from that side's endpoint has reached us, and reset by every geometric write
-/// (`Strand::new`), so staleness dies with its cause. Both signals are deliberately
-/// EXCLUDED from equality: a strand's identity is its geometry; signals ride on it.
+/// 0 = beyond face `a`, 1 = beyond face `b`), the hop distance to the NEAREST step in
+/// each of the six travel directions (outbound orientation; 0 = that direction never
+/// occurs on that side) — None until the sweep from that side's endpoint has reached us,
+/// and reset by every geometric write (`Strand::new`), so staleness dies with its cause.
+/// Distances rather than presence bits are what let a bend with annihilating partners on
+/// BOTH sides migrate toward the strictly nearer one (presence alone froze all interior
+/// slack: measured 94 cells of removable slack at one stuck fixpoint). Signals are
+/// deliberately EXCLUDED from equality: a strand's identity is its geometry.
 #[derive(Clone, Copy, Debug)]
-pub struct Strand { pub a: He, pub b: He, pub hot: bool, pub survey: [Option<u8>; 2] }
+pub struct Strand {
+    pub a: He, pub b: He, pub hot: bool, pub survey: [Option<[u8; 6]>; 2],
+    /// Anonymous-tier move cooldown: set when a flip or a decongestion slide moves this
+    /// strand, ticked down each sweep; while nonzero the anonymous movers (tension and
+    /// pressure flips, decongestion, evaporation) leave it alone. Demanded moves ignore
+    /// it. This is the general damper for A-undoes-B cycles between the contracting and
+    /// spreading movers (measured: 5938 decongestion slides trading against 5997 cold
+    /// flips around one bilayer jam).
+    pub cooldown: u8,
+}
 impl PartialEq for Strand { fn eq(&self, o: &Strand) -> bool { self.a == o.a && self.b == o.b } }
 impl Eq for Strand {}
 impl Strand {
-    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct faces"); Strand { a, b, hot: false, survey: [None; 2] } }
+    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct faces"); Strand { a, b, hot: false, survey: [None; 2], cooldown: 0 } }
     pub fn contains(self, h: He) -> bool { self.a == h || self.b == h }
     pub fn other(self, h: He) -> He { if self.a == h { self.b } else { self.a } }
     pub fn hes(self) -> [He; 2] { [self.a, self.b] }
@@ -365,7 +379,7 @@ impl Grid {
     /// geometric write resets the written strands (Strand::new) and corrections simply
     /// radiate outward on later sweeps.
     pub fn survey_step(&mut self) -> usize {
-        let mut next: Vec<(Pos, Strand, [Option<u8>; 2])> = vec![];
+        let mut next: Vec<(Pos, Strand, [Option<[u8; 6]>; 2])> = vec![];
         for (p, c) in &self.cells {
             let Cell::Wire(w) = c else { continue };
             for s in w.iter() {
@@ -373,10 +387,17 @@ impl Grid {
                 for (i, f) in [s.a, s.b].into_iter().enumerate() {
                     let q = step(*p, f);
                     sv[i] = match self.cells.get(&q) {
-                        Some(Cell::Agent(ag)) if ag.port_at(f.opp()).is_some() => Some(0),
+                        Some(Cell::Agent(ag)) if ag.port_at(f.opp()).is_some() => Some([0u8; 6]),
                         Some(Cell::Wire(wq)) => wq.with_he(f.opp()).and_then(|t| {
                             let h = t.other(f.opp());
-                            t.survey[t.side_of(h)].map(|bits| bits | (1u8 << (h as u8)))
+                            t.survey[t.side_of(h)].map(|far| {
+                                let mut d = [0u8; 6];
+                                for k in 0..6 {
+                                    d[k] = if far[k] == 0 { 0 } else { far[k].saturating_add(1) };
+                                }
+                                d[h as usize] = 1; // the first step beyond is the nearest by definition
+                                d
+                            })
                         }),
                         _ => None,
                     };
@@ -391,6 +412,18 @@ impl Grid {
             }
         }
         n
+    }
+
+    /// Tick down every strand's anonymous-move cooldown. Pure bookkeeping: never counts
+    /// as progress.
+    pub fn cooldown_step(&mut self) {
+        for c in self.cells.values_mut() {
+            if let Cell::Wire(w) = c {
+                for s in w.strands.iter_mut().flatten() {
+                    s.cooldown = s.cooldown.saturating_sub(1);
+                }
+            }
+        }
     }
 
     /// χ update, one Jacobi sweep over the active region: next(c) is a pure function of

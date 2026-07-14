@@ -189,20 +189,26 @@ fn survey_oracle() {
             }).flatten().collect();
             for (p, st) in strands {
                 for (i, f) in [st.a, st.b].into_iter().enumerate() {
-                    let (mut bits, mut cur, mut face) = (0u8, p, f);
+                    let (mut dist, mut cur, mut face) = ([0u8; 6], p, f);
+                    let mut hop = 0u32;
                     let mut ok = false;
                     for _ in 0..100_000 {
                         let q = step(cur, face);
                         match sim.grid.cells.get(&q) {
                             Some(Cell::Agent(ag)) => { ok = ag.port_at(face.opp()).is_some(); break; }
                             Some(Cell::Wire(w)) => match w.with_he(face.opp()) {
-                                Some(t) => { let h = t.other(face.opp()); bits |= 1 << (h as u8); cur = q; face = h; }
+                                Some(t) => {
+                                    let h = t.other(face.opp());
+                                    hop += 1;
+                                    if dist[h as usize] == 0 { dist[h as usize] = hop.min(255) as u8; }
+                                    cur = q; face = h;
+                                }
                                 None => break,
                             },
                             _ => break,
                         }
                     }
-                    let want = if ok { Some(bits) } else { None };
+                    let want = if ok { Some(dist) } else { None };
                     assert_eq!(st.survey[i], want,
                         "survey mismatch at {p:?} side {i} ({label}, {})", topo.name());
                 }
