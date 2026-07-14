@@ -110,6 +110,30 @@
 // lattice_traces.js is regenerated constantly during development and browsers cache it
 // hard; load it with a timestamp so the embedded traces are always current.
 document.write('<script src="lattice_traces.js?t=' + Date.now() + '"><\/script>');
+// The page ITSELF gets cached too (the dev server sends no cache headers, so a plain
+// visit can come from Chrome's heuristic cache and silently show an old build). Fetch
+// our own source fresh and compare versions; on mismatch, reload once. The badge in the
+// header shows which build you are on.
+const PLAYER_VERSION = "2026-07-13 · distance-survey tension + convergent field";
+fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
+  const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
+  if (m && m[1] !== PLAYER_VERSION) {
+    if (!sessionStorage.getItem("staleReload")) {
+      sessionStorage.setItem("staleReload", "1");
+      location.reload();
+    }
+  } else { sessionStorage.removeItem("staleReload"); }
+}).catch(() => {});
+window.addEventListener("DOMContentLoaded", () => {
+  const h = document.querySelector("#side h3");
+  if (h) {
+    const b = document.createElement("div");
+    b.className = "note";
+    b.style.opacity = "0.6";
+    b.textContent = "build: " + PLAYER_VERSION;
+    h.after(b);
+  }
+});
 </script>
 <script>
 "use strict";
