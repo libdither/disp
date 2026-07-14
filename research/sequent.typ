@@ -111,15 +111,18 @@ at the bottom. Here is one, drawn next to the disp value it warrants:
       content((1.82, -1.2), text(size: 8.5pt, fill: cG)[`△`])
     }),
   ),
-  caption: [The same picture drawn twice. Colors match rule applications to value
-    nodes: the #text(fill: cP)[$⊕$R step] is the `pair` root and its tag, the
+  caption: [The same picture drawn twice ($⊕$ is the sequent name for a sum type,
+    `Option ℕ` here; $⊕$R#sub[some] is the right rule for its `some` variant).
+    Colors match rule applications to value
+    nodes: the #text(fill: cP)[$⊕$R step] is the `pair` root and its tag (`inj`
+    builds exactly this pair: rule name left, premises right), the
     #text(fill: cB)[succR step] is the `fork(△,·)` node, the
     #text(fill: cG)[zeroR axiom] is the leaf. §3.1 turns this into an algorithm:
     to check the value, read the derivation off it.],
 ) <fig-twice>
 
-Now the two rules that belong to no connective, the bookkeeping pair every
-calculus carries:
+Now the two rules that belong to no connective, the bookkeeping pair nearly
+every presentation carries (the vocabulary note below says why only "nearly"):
 
 #ptrow(
   rule(name: [init], [$Γ, x : A ⊢ x : A$]),
@@ -129,8 +132,24 @@ calculus carries:
 *Init* draws on a credit: if the stock contains $x : A$, then $x : A$ is warranted.
 *Cut* splices two derivations: if $a : A$ is warranted, and $c : C$ is warranted on
 the credit $x : A$, then $c[a slash x] : C$ is warranted with that credit paid off.
-Cut is how lemmas work, how function calls work, how anything composes with
-anything.
+The letters follow a convention this document uses throughout: $a$, $b$, $c$, $v$
+stand for actual trees, each carrying its own derivation; $x$, $h$ stand for
+context entries, names for trees about which nothing is known but the type. The
+cut rule is the bridge between the two kinds: its left premise supplies a derived
+$a$, its right premise consumed an assumed $x$, and the conclusion swaps one for
+the other. (On paper $x$ is a formal symbol, and the calculus never asks which
+tree it names. Disp cannot leave it at that, because the substrate has no
+variables at all; bound ones compile away, §5.1. When the kernel needs an $x$ it
+must manufacture an actual tree to play the part, and that tree is §3.4's minted
+neutral. Until then, read $x$ as a name.)
+
+Cut is the one license to use a proved thing wherever an assumed thing was
+expected, and every act of composition instantiates it. A *lemma* is cut at
+declaration scope: prove $a : A$ once on the left, develop everything else
+assuming $x : A$ on the right, splice. A *function call* $f thin a$ is cut at
+the arrow: the left premise builds the function, the right premise uses a
+function held on credit, and the cut substitutes the built function for the
+credit (@fig-cut-beta draws it in full; eliminating that cut is β-reduction).
 
 #intuition[
   What exactly gets cut? The *formula*. Look at the cut rule: $A$ appears in both
@@ -144,6 +163,22 @@ anything.
   reduction.
 ]
 
+#note[Vocabulary, for readers arriving from natural deduction][
+  Sequent calculus has no intro or elim rules; that is natural-deduction
+  vocabulary. A *right rule* builds a formula to the right of $⊢$ and plays the
+  intro role; a *left rule* uses a formula on the left, the elim role relocated
+  to act on assumptions. Presentations conventionally carry three groups: the
+  identity group (init and cut, above), the structural group (weakening,
+  contraction, exchange, §5), and one left/right pair per connective. No group
+  is mandatory. A calculus is just an inductive definition of "derivable", and
+  the classical theorems are dispensability results about particular calculi:
+  the Hauptsatz shows cut can be dropped (§3.2), init at compound formulas
+  reduces to init at atoms (§3.4 takes the opposite bet), and the structural
+  rules can be absorbed into how contexts are read (§5). Which rules are
+  primitive is a design choice per calculus, and §3 through §5 walk through
+  disp's choices.
+]
+
 = Types are harvested sets
 
 Fix a rule set. It inductively generates $cal(D)$, the set of all derivable
@@ -152,7 +187,9 @@ and take the boring answer seriously:
 
 $ sans("ext")(A, Γ) = { v mid(|) (Γ ⊢ v : A) ∈ cal(D) } $
 
-A type is the set of terms judged at it. What a type can type is what the type is:
+A type is the set of terms judged at it. ($Γ$ is written only when it matters;
+bare $sans("ext")(A)$ means the empty context. The suppressed argument starts
+mattering in §3.4, when contexts acquire minted credits.) What a type can type is what the type is:
 the rules mentioning $A$ determine which associations are derivable, and that
 harvest of judgments *is* $A$'s meaning. Membership then has an honest, terrible
 algorithm:
@@ -163,33 +200,44 @@ algorithm:
     box(stroke: 0.7pt + luma(110), inset: (x: 7pt, y: 5pt), radius: 3pt)[the rule set],
     $⟶$,
     box(stroke: 0.7pt + luma(110), inset: (x: 7pt, y: 5pt), radius: 3pt)[
-      $cal(D)$: every derivable $Γ ⊢ w : T'$, \ dovetail all finite trees],
+      $cal(D)$: every derivable $Γ ⊢ w : T'$, \ all finite trees, smallest first],
     $⟶$,
     box(stroke: 0.7pt + luma(110), inset: (x: 7pt, y: 5pt), radius: 3pt)[keep $T' = A$],
     $⟶$,
     box(stroke: 0.7pt + luma(110), inset: (x: 7pt, y: 5pt), radius: 3pt)[
-      watch for $w = v$ \ #text(size: 8pt, fill: luma(120))[(may wait forever)]],
+      watch for $w = v$ \ #text(size: 8pt, fill: luma(120))[(a non-member never answers)]],
   )),
-  caption: [The naive filter: generate, filter, wait. Sound, complete on
-    yes-instances, and not an algorithm. Everything after §2 is a transformation
-    of this pipeline.],
+  caption: [The naive filter: generate, filter, wait. A member turns up in
+    finite time; a non-member waits forever. Sound, not an algorithm.
+    Everything after §2 is a transformation of this pipeline.],
 ) <fig-pipeline>
 
-This is a *specification*, not an algorithm: derivability is semi-decidable at
-best. Everything else in this document is the sequence of moves that turns the
-naive filter into the disp kernel, and the sequent calculus is where each move
-gets its license. Before the moves, three facts about the specification itself,
-each of which shapes what follows.
+This is a *specification*, not an algorithm, and its two failure modes are
+worth separating. If $v$ is in the harvest, the enumeration reaches its finite
+derivation in finite time (granting only that rules are finitely many and
+checking one application of a rule is decidable). If $v$ is not, the filter
+waits forever, and no choice of rule set changes that: a "no" would require
+having seen all of the infinite $cal(D)$. What a rule set *can* change is
+whether something smarter than the naive filter exists, and everything else in
+this document is the sequence of moves that turns the naive filter into the
+disp kernel, with the sequent calculus supplying each move's license. Before
+the moves, three facts about the specification itself, each of which shapes
+what follows.
 
 *The definition is circular, and the circularity has a direction.* The rules that
 generate $A$'s harvest mention other types, and not symmetrically. `Nat`'s rules
 mention only `Nat`: its harvest is a least fixed point, grown from below, and
 enumerating it means enumerating constructions. But $A → B$'s defining condition
-consults $A$'s harvest *negatively*: $f$ is in $sans("ext")(A → B)$ when for every
-$a$ in $sans("ext")(A)$, the judgment $f thin a : B$ is warranted. There is no
-growing that from below by constructions; the honest reading enumerates *uses*.
-Types split by which side of their definition is the generative one, and
-@fig-polarity (§3.5) draws the split and turns it into the polarity discipline.
+consults $A$'s harvest from the consuming side: $f$ is in $sans("ext")(A → B)$
+when for every $a$ in $sans("ext")(A)$, the judgment $f thin a : B$ is warranted.
+There is no growing that from below by constructions; the honest reading
+enumerates *uses*. (Note what kind of rule that is: it judges how $f$ *behaves*,
+not how it is spelled. All the rules here judge untyped trees, so the subject of
+a judgment can be any tree whatsoever, and $sans("ext")(A → B)$ holds every tree
+that maps members to members, λ-shaped or not.) This document calls a type
+*positive* when the construction side of its definition is the enumerable one,
+like `Nat`, and *negative* when the use side is, like $A → B$; @fig-polarity
+(§3.5) draws the split and turns it into a discipline.
 
 *Harvests overlap, and that is fine.* Sets defined by filtration are not
 partitions. One tree may lie in many harvests, and in disp the smallest constants
@@ -250,14 +298,22 @@ been made.
 == Move 1: check, don't search. The term is the derivation
 
 The naive filter searches all of $cal(D)$ for a sequent about $v$. But
-@fig-twice already showed the shortcut: the derivation tree and the positive
-value are the same picture, node for node. The tag names the last rule, the
-payload is the subtree, and so on down to the leaves. A positive value is not
+@fig-twice already showed the shortcut: for a value of positive type (§2's
+split: the kind whose definition enumerates constructions) the derivation tree
+and the value are the same picture, node for node. The tag names the last rule,
+the payload is the subtree, and so on down to the leaves. A positive value is not
 *evidence about* a derivation; it is the derivation, serialized. Constructor
 application `inj V e` stores the rule name in `pair_fst` and the premises in
 `pair_snd` (a k-ary constructor packs its premises as a right-nested pair). So
 for a concrete positive candidate the search collapses to *reading*: recover the
 last rule from the tag, recurse on the premises.
+
+Two debts, both paid later. Reading is only valid for a value with no pending
+computation: `(prod P) (inj V e)` is not constructor-rooted until it runs, and
+the theorem that a fully evaluated member of a positive type always ends up
+constructor-rooted, so the reader never meets an unreadable member, is move 2's.
+And reading is unambiguous, one derivation per value rather than a choice among
+many, by the discipline move 3 names.
 
 That is exactly disp's positive recognizer (`positive.disp`): `lookup_arm` maps
 the value's tag to the declared variant, `coproduct_walk` walks the payload
@@ -348,7 +404,10 @@ performed at runtime (§5 prices exactly this: in the net evaluator the deleted
 branch is what ε-cells erase).
 
 The same step at the arrow is β-reduction (@fig-cut-beta): $→$R meets $→$L, the
-argument's derivation in blue, the body's in green.
+argument's derivation in blue, the body's in green. Watch which formula is cut:
+the *arrow*, not the argument type. In §1's schema the spliced term is the whole
+λ, the $c$ is $f thin a$, and the $x$ is $f$; the argument $a$ only takes the
+spliced role one step later, in the residual cut.
 
 #figure(
   {
@@ -428,10 +487,19 @@ Checking $v$ against a negative type applies the invertible right rules
 exhaustively, and there is nothing to backtrack over: recognition can be a
 *predicate*. In disp the invertible phase is `tele_walk true` (spec §12.7),
 walking the type's cell inventory left to right, threading dependencies, no
-choice points, refutation as `Ok false`. The focused phases are where the
-remaining two moves live: committing to constructions (move 1 already did it:
-reading a tag *is* the committed choice, made by the value rather than the
-search) and running a hypothesis's uses forward (§4, the spine).
+choice points, refutation as `Ok false`. The focused phases are the other two
+kinds of step, and neither costs the filter a search either: committing to a
+construction (move 1 already made it a non-choice: the value's tag *is* the
+commitment, made by the value rather than the search) and running a
+hypothesis's uses forward (§4, the spine).
+
+Invertibility is also where §2's polarity split gets its standard definition: a
+connective is *negative* when its right rule is the invertible one, *positive*
+when its left rule is. The two formulations agree, and the filter cashes both
+directions: negative right rules being invertible is why recognition needs no
+backtracking (this move), and positive left rules being invertible is why a
+match loses nothing by inverting a concrete scrutinee (@fig-cut-match's deleted
+branch; §4's `elim` gate).
 
 == Move 4: one generic member stands for all. The mint
 
@@ -445,7 +513,7 @@ family collapses to a single premise plus a side condition (@fig-collapse):
 #figure(
   {
     pt(rule(
-      name: [$∀$R, read extensionally],
+      name: [the ω-rule ($∀$R read extensionally)],
       [$Γ ⊢ v : Π(x : A). thin B thin x$],
       [$Γ ⊢ v thin a_1 : B thin a_1$],
       [$Γ ⊢ v thin a_2 : B thin a_2$],
@@ -461,13 +529,15 @@ family collapses to a single premise plus a side condition (@fig-collapse):
       [$h ∉ sans("support")("result")$],
     ))
   },
-  caption: [Move 4. The extensional reading of $∀$R has one premise per member of
-    $A$'s harvest; genericity collapses the family to one minted credit plus the
-    freshness side condition.],
+  caption: [Move 4. Read extensionally, membership at $Π$ needs one premise per
+    member of $A$'s harvest (proof theory calls that infinitary rule the ω-rule;
+    it is not the real $∀$R). Genericity is the escape, and the finitary $∀$R
+    below is its license: one minted credit plus the freshness side condition.],
 ) <fig-collapse>
 
-Disp performs the move literally. `bind_hyp` mints the eigenvariable (a fresh
-neutral carrying `stored_type = A`; deterministic under hash-consing, fresh per
+Disp performs the move literally. `bind_hyp` mints the eigenvariable, proof
+theory's name for the one arbitrary member (concretely: a fresh neutral carrying
+`stored_type = A`; deterministic under hash-consing, fresh per
 binder, identical across re-checks), applies the candidate to it, and checks the
 result against the codomain:
 
@@ -543,9 +613,11 @@ accepted by the abstract $A$ in O(1).
 #note[Extensions with credit members separate types][
   Closed harvests can coincide: `Unit` and `Eq Nat zero zero` both have exactly
   the canonical inhabitant `t` (the collision doctrine at work, @fig-collision). But
-  the H-rule seeds every type's harvest with its own generic members, keyed by
-  tree identity of the stored type, and $h_A ∈ sans("ext")(B)$ holds exactly when
-  $A$ and $B$ are the same tree. So once judgments on credit are counted,
+  the H-rule seeds every type's harvest with its own generic members, and here
+  §2's suppressed context argument earns its keep: stock $Γ$ with the credit
+  $h_A : A$ and read the harvests in that open context. Membership of a credit
+  is keyed by tree identity of the stored type, so $h_A ∈ sans("ext")(B, Γ)$
+  holds exactly when $A$ and $B$ are the same tree. So once judgments on credit are counted,
   extensional identity of harvests collapses onto intensional identity of type
   trees. Deep init does not merely speed the filter up; it makes "same set" and
   "same tree" agree (see §6 for what this buys conversion).
@@ -600,7 +672,9 @@ For the carved kind the filter's job is *coverage*: $v$ is a member when every
 observation the type names lands well. If the observation inventory is finite,
 cover it by iteration; if a slot in it is infinite (an argument position), cover
 it by move 4's mint. Membership in a negative type is a finite walk of
-obligations, each either checked directly or checked generically:
+obligations, each either checked directly or checked generically. Sequent
+calculus writes record-like conjunction as $\&$ ("with"); its right rule, grown
+dependent, is the telescope's:
 
 #pt(rule(
   name: [dep-$\&$R],
@@ -635,6 +709,26 @@ abstraction, never at construction, so concrete data stays raw.
   caption: [Polarity as "which side of your definition can be enumerated." Atoms
     (`Bool`, `Nat`, `Ord`) are shape-encoded positives with view isos.],
 ) <tab-polarity>
+
+The split can look thinner than it is. Both makers take a list, so is a positive
+type not also a set of observations, read with "first match wins"? The
+difference is the quantifier over the list. A negative type's inventory is a
+conjunction of obligations: membership means surviving *all* of them, and a
+checker that skipped one would be unsound. A positive type's inventory is a
+disjunction of constructions: membership means having been built by *some*
+variant, the value's tag names which, and the checker verifies that one arm and
+rightly ignores the rest. Nor is "first match" really the mechanism:
+`lookup_arm` is keyed dispatch and variants are tag-disjoint, so first match
+and only match coincide; the tag is the existential witness made explicit,
+which is why nothing is searched or skipped. One quantifier puts the
+information in the type, which probes the value as a black box; the other puts
+it in the value, which is read against a lookup table. The objection is half
+right all the same: every positive type has a faithful observation reading,
+"whatever answers every handler record", its Church encoding, and that is a
+genuine negative type with the same content. Disp deliberately declines the
+identification, because taking it would make every datum a wait-form paying
+closure costs to drive its own elimination. Keeping the polarities apart is the
+decision to shift at abstraction and read raw data where it lies.
 
 The observation inventory is disp's `Telescope`, and it is worth saying what that
 object *is* in sequent terms: a reified context. De Bruijn's telescopes are
@@ -689,9 +783,11 @@ payload is
 Spine = Mint id | Ext parent frame        // universe.disp
 ```
 
-which is a left-focused derivation in Herbelin's sense, an init leaf (`Mint`)
-followed by the list of left-rule instances applied to it (`Ext`), the
-head-variable-with-spine normal form of LJT. Watch one grow in @fig-spine. Take
+which is a stored left-rule derivation: an init leaf (`Mint`) followed by the
+list of left-rule instances applied to it (`Ext`). (This head-plus-spine shape
+is the normal form of Herbelin's calculus LJT; LJT's *stoup*, the distinguished
+formula the left rules act on, is here the neutral's stored type.) Watch one
+grow in @fig-spine. Take
 $h : Π(x : ℕ). thin P$ with $P = {mono("fst") : ℕ, mono("snd") : ℕ}$:
 
 #figure(
@@ -763,7 +859,7 @@ $⟨n : A⟩$ for "the neutral $n$, stored type $A$, under focus":
     [$⊕$L / induction], [`{ motive; cases }`], [`Extend (motive n)` after the coherence gate; concrete targets take the surgery of @fig-cut-match instead],
     [$=$L (J)], [`{ motive; … }`], [`Extend (motive rhs)`: eliminating $p : mono("Eq") thin A thin x thin y$ lands the motive at the endpoint],
     [$0$L (ex falso)], [any], [`False` has no closed proof; a `False`-credit eliminates via its respond, and `Not A` is $A → mono("False")$],
-    [predicate init], [a candidate $v$], [`Type`-typed credit: `Return (tree_eq (neutral_type v) self)` (§3.4)],
+    [predicate init], [a candidate $v$], [`Type`-typed credit: `Reduce (Ok (tree_eq (neutral_type v) self))` (§3.4)],
     [the floor], [any tree], [`Tree`: application answers `Extend Tree` (a tree applied to a tree is a tree); a motive-shaped frame routes to gated elimination],
     [no rule applies], [-], [`Extend InvalidType`, the absorbing dead state],
   ),
@@ -904,7 +1000,8 @@ its five reduction rules *are* them; @fig-ks shows them firing on actual trees
 ) <fig-ks>
 
 This is the old combinatory-logic fact in new clothes: a combinator basis is a
-Hilbert system, K is the weakening axiom, S carries contraction, and *bracket
+Hilbert system (a proof format with axioms and application only, no contexts),
+K is the weakening axiom, S carries contraction, and *bracket
 abstraction is the deduction theorem run as a compiler*. The elaborator
 translates binder syntax into K/S trees, which is the classical proof that
 contexts can be eliminated, executed: every use of exchange, weakening, and
@@ -932,7 +1029,9 @@ for every $R ⊇ S$ definitionally, with no subtyping judgment and no coercion
 
 Values are cartesian; *bindings* are not. A declaration is a request mediated by
 the name's guard (`cut.disp`; SYNTAX.typ), and the guard policies are a
-substructural discipline on the ambient theory itself:
+substructural discipline on the ambient theory itself. The discipline governs
+how often a name may be *bound*, never how often it is used; the labels below
+are the usage words applied to binding:
 
 - `default_guard`: a name is owned once, an unguarded duplicate is a driver
   error. Contraction of *definitions* is forbidden by default (weakening is
@@ -941,7 +1040,8 @@ substructural discipline on the ambient theory itself:
   `proof : R old new` and the relation explicit. Replacing a lemma requires a
   proof relating old and new, and opens replay these licenses across module
   boundaries with driver-stamped certificates: contraction, licensed.
-- `freeze`: no rebind ever; a linear name.
+- `freeze`: no rebind ever, no credential accepted; bound exactly once, the
+  linear end of the scale.
 
 Disp is substructural precisely where proof engineering is sloppiest: not in
 terms, but in the theory. Redefining a lemma mid-development is the contraction
@@ -972,8 +1072,9 @@ not usage.
 = When "the same type" means the same set
 
 If a type is its harvest, type equality *ought* to mean same harvest. That
-relation is $Π^0_2$-flavored and undecidable, so the filter needs the same kind
-of move the membership problem needed, and disp makes a characteristically blunt
+relation quantifies over every term and every context at once and is hopelessly
+undecidable, so the filter needs the same kind of move the membership problem
+needed, and disp makes a characteristically blunt
 one: replace the extensional relation by an intensional proxy that move 2
 already paid for.
 
@@ -1004,10 +1105,14 @@ stuck $p : mono("Eq") thin A thin x thin y$ at a motive answers
 `Extend (motive rhs)`, the motive walked under the policed token. `sym`,
 `trans`, `cong`, `subst` (`base.disp`) are the admissible rules derived from J.
 
-*Observational equality is the honest relation, and it is frontier.* Negative
-values have no shape to compare; their true equality is agreement under every
-observation, the harvest-equality this section opened with. `lib/std/oeq.disp`
-implements the pointwise Pi form: agreement during a neutral-probe run, one
+*Observational equality is the honest relation, and it is frontier.* Note the
+change of subject: the two paragraphs above compared *types*, where credit
+members make the intensional proxy exact; this one compares *values* of
+negative type, and no seeding trick rescues the proxy there. Negative values
+have no shape to compare; their true equality is agreement under every
+observation, the same shape of relation this section opened with, one level
+down. `std/relation.disp` implements the pointwise Pi form (`pointwise`, and
+the license policies built on it): agreement during a neutral-probe run, one
 minted argument standing for all. But move 4's fine print bites back here. The
 mint is a sound test of *membership* because the walker forbids the checked body
 to inspect the credit; it is a weaker test of *equality between two given
@@ -1036,19 +1141,24 @@ readers) and behave differently on concrete input (@fig-probe):
     line((5.0, 1.98), (5.0, 2.4), mark: (start: ">", end: ">"), stroke: 0.8pt + cR)
     content((5.2, 2.2), anchor: "west", text(size: 8pt, fill: cR)[disagree on every concrete input])
   }),
-  caption: [The oeq gap, drawn. `shift` = `{n} -> if (is_neutral n) then n else
+  caption: [The observational-equality gap, drawn. `shift` = `{n} -> if (is_neutral n) then n else
     succ n` detects the probe and dips to meet `id` there; everywhere concrete
     they differ. Probe-agreement sampled the observation space where the
     specification demands covering it.],
 ) <fig-probe>
 
-The counterexample is live (`OEQ_INVESTIGATION.md`; `ACTIVE_BUGS.md` item 5):
-probe-agreement certified a `license_guard` rebind between functions that differ
+The counterexample is live (`ACTIVE_BUGS.md` item 5): probe-agreement certified
+a `license_guard` rebind between functions that differ
 on every concrete number. In this document's terms: the specification quantifies
 over all observations, the implementation *sampled* one, and sampling is only
-sound under a restriction on observers that the kernel does not yet enforce. The
-fix design (observer restriction: strict walker mode, first-order certificates,
-the PER lift) lives in `OPTIMIZER.typ`. The same drift, one level up, is what
+sound under a restriction on observers that the kernel does not enforce.
+Partial closures have landed (`relation.disp`, `std/deriv.disp`: guards that
+demand per-constructor obligations or compute their verdicts over first-order
+derivations are immune, and the probe-detecting pair above fails its zero case
+there), but a plain pointwise license stays spoofable and obligations that
+leave payload or arm credits in place stay probeable; the full design (observer
+restriction: strict walker mode, first-order certificates, the PER lift) lives
+in `OPTIMIZER.typ`. The same drift, one level up, is what
 the subject-reduction ledger tracks: the spec set is closed under cut by
 construction; the decided set may not be; `ACTIVE_BUGS.md` is the ledger of the
 difference, with machine pins in `lib/tests/probe_*_sr.test.disp`.
@@ -1070,9 +1180,10 @@ Collected honestly, the places where the story admits its limits:
   *run* breached the bookkeeping (inverted an eigenvariable, forged an init
   leaf, escaped a scope, posed an open judgment at the boundary). The calculus
   has no analogue because on paper nobody tries.
-- *Single succedent, one pole per type.* No $℘$, no classical dualization.
-  Curien and Herbelin's symmetric cut has a critical pair whose global
-  resolution is the CBV/CBN choice; disp resolves it per type, by polarity.
+- *Single succedent, one pole per type.* No $℘$ (linear logic's par), no
+  classical dualization. In the symmetric calculi (Curien and Herbelin) one cut
+  configuration can fire two ways, and choosing globally is the call-by-value
+  versus call-by-name decision; disp makes the choice per type, by polarity.
 - *Proofs are quotiented harder than derivations.* The calculus identifies
   derivations up to permutations; disp evaluates and interns, so all
   derivations of one cut-free form are one tree. What survives of proof
@@ -1138,14 +1249,14 @@ The story in compressed form. "Where" points into this document.
     [invertible (async) phase], [recognition: `tele_walk true`, syntax-directed, no backtracking], [§3.3],
     [eigenvariable + freshness], [`bind_hyp` + `occurs`; `Pub h R`; the walker as the validity condition], [§3.4],
     [focused (sync) phase / stoup], [a neutral's spine; `Spine = Mint | Ext` is a stored left-focused derivation], [§4],
-    [left rules], [`hyp_reduce` consulting the type's `respond`; `Extend` = stay in focus, `Reduce` = blur], [§4],
+    [left rules], [`hyp_reduce` consulting the type's `respond`; `Extend` = stay in focus, `Reduce` = end the focus with a value], [§4],
     [fixed rule set], [Σ routing: pinned sigs run the *registered* handler; rejections = attempted amendments], [§4],
     [deduction theorem], [bracket abstraction (terms); module functor readback (files)], [§5.1, §4],
     [weakening / contraction / exchange], [invariances of the harvest; K / S / bracket abstraction; priced as ε/δ in the net evaluator], [§5],
-    [substructural discipline], [`default_guard` (affine names), `license_guard` (licensed rebinds), `freeze` (linear)], [§5.2],
+    [substructural discipline (on bindings)], [`default_guard` (unguarded duplicates error), `license_guard` (rebind licensed), `freeze` (rebind never)], [§5.2],
     [conversion $A ≡ B$], [`tree_eq`, O(1); sound because credit members separate types], [§6],
     [identity type], [`Eq`: `refl` right rule, J left rule via respond], [§6],
-    [harvest equality (extensional)], [`oeq`, currently probe-sampled; observer restriction is the open design], [§6],
+    [observational equality of values], [`relation.disp` pointwise licenses, currently probe-sampled; observer restriction is the open design], [§6],
     [subject reduction], [spec-set vs decided-set drift; `ACTIVE_BUGS.md` is the ledger], [§6],
     [inhabitation / proof search], [synthesis; the query the checker refuses; `GOALS.md`, `LOCAL_SYNTH.md`], [§7],
   ),
