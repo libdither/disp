@@ -45,10 +45,13 @@
     fire's right of way), <b>slide</b> one blocking strand out of each stuck walker's way
     (the excluded-volume move), <b>reel</b> every ψ-demanded producer one cell (eating its
     own aux drag where it can), <b>flip</b> bends one cell toward annihilating partners
-    the survey found (tension: wires tighten as bend pairs migrate together), <b>shove</b>
-    parked agents down the χ pressure gradient, thin and evaporate crowded wire under χ,
-    then <b>retract</b> U-turn slack to fixpoint — the only step that destroys wire
-    length, fed by the flips. Deterministic: the same term always produces this exact
+    the survey found (tension: cold wires tighten everywhere at once; demanded wires at
+    a deliberate trickle, so contraction never fights the walk), <b>shove</b> parked
+    agents one cell down the χ gradient — routing-free: the agent moves only when every
+    wire re-ties through its own footprint, by eating its own chain or one bend — while
+    pressure also hops cold bends downhill and evaporates crowded wire (the field moves
+    wire cell by cell, no search), then <b>retract</b> U-turn slack to fixpoint — the
+    only step that destroys wire length, fed by the flips. Deterministic: the same term always produces this exact
     movie. Long traces are stride-thinned (fire frames always kept, events merged).
     Regenerate or add traces with <b>cargo run --release --bin dump-run &lt;name&gt;
     [ticks] [bilayer|full3d] [stride]</b> and drop the JSON here.</div>
@@ -382,8 +385,8 @@ function hud() {
     e.t === "fire" ? `<div class="f">fire ${e.rule} @ (${e.c.join(",")})·(${e.p.join(",")}) → ${e.fresh.length} fresh</div>`
     : e.t === "reel" ? `<div>reel sid ${e.sid}: (${e.from.join(",")}) → (${e.to.join(",")})</div>`
     : e.t === "retract" ? `<div>retract U-turn @ (${e.a.join(",")})·(${e.b.join(",")})</div>`
-    : e.t === "slide" ? `<div>slide strand out of (${e.at.join(",")})</div>`
-    : e.t === "flip" ? `<div>flip bend (${e.from.join(",")}) → (${e.to.join(",")}) (tension)</div>`
+    : e.t === "slide" ? `<div>slide${e.why ? " (" + e.why + ")" : ""} out of (${e.at.join(",")})</div>`
+    : e.t === "flip" ? `<div>flip bend (${e.from.join(",")}) → (${e.to.join(",")})</div>`
     : e.t === "shove" ? `<div>shove agent (${e.from.join(",")}) → (${e.to.join(",")}) (pressure)</div>`
     : `<div>${e.t}</div>`;
   ev.innerHTML = f.events.length === 0 ? '<div>(no transitions this tick)</div>' : f.events.map(fmt).join("");

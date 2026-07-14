@@ -19,6 +19,7 @@ fn main() {
         _ => FireMode::GrowThenSearch,
     };
     let (mut fires, mut docks, mut grows, mut shoves, mut slides, mut flips, mut retracts) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+    let mut why_counts: std::collections::BTreeMap<&str, u32> = Default::default();
     let mut zero = 0;
     for t in 0..6000 {
         if sim.shadow.all_active_pairs().is_empty() && !sim.grid.has_seeds() { println!("DONE tick {t}"); break; }
@@ -29,7 +30,7 @@ fn main() {
                 Event::Dock { .. } => docks += 1,
                 Event::Grow { .. } => grows += 1,
                 Event::Shove { .. } => shoves += 1,
-                Event::Slide { .. } => slides += 1,
+                Event::Slide { why, .. } => { slides += 1; *why_counts.entry(why).or_default() += 1; }
                 Event::Flip { .. } => flips += 1,
                 Event::Retract { .. } => retracts += 1,
                 _ => {}
@@ -39,6 +40,7 @@ fn main() {
     }
     println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides} flips={flips} retracts={retracts}");
     println!("total strands now = {}", sim.grid.total_strands());
+    println!("slides by phase: {why_counts:?}");
     println!("chi cells={} max={:?} reserved={} seeds={}",
         sim.grid.chi.len(), sim.grid.chi.values().max(), sim.grid.reserved.len(), sim.grid.seed_count);
     // autopsy: every hot-blocked producer and its neighborhood

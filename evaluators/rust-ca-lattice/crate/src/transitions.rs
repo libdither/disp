@@ -784,7 +784,7 @@ pub fn apply_reel(grid: &mut Grid, plan: &ReelPlan) {
     grid.cells.remove(&plan.apos);
     for (p, s) in &plan.removes { guard(*p); grid.remove_strand(*p, *s); }
     for (p, s) in &plan.writes { guard(*p); grid.add_strand(*p, *s); }
-    for (p, from, to) in &plan.repoints { guard(*p); rewire_face(grid, *p, *from, *to); }
+    for (p, from, to) in &plan.repoints { guard(*p); repoint_for_flip(grid, *p, *from, *to, None); }
     guard(plan.npos);
     grid.remove_strand(plan.npos, plan.consumed);
     grid.put_agent(plan.npos, AgentCell {
@@ -812,6 +812,8 @@ pub struct ShovePlan {
     pub npos: Pos,
     pub new_faces: [Option<He>; 3],
     pub writes: Vec<(Pos, Strand)>,
+    pub removes: Vec<(Pos, Strand)>,
+    pub repoints: Vec<(Pos, He, He)>,
     pub footprint: BTreeSet<Pos>,
 }
 
@@ -843,56 +845,86 @@ pub fn plan_shove(grid: &Grid, apos: Pos) -> Option<ShovePlan> {
     }
     let (cn, npos) = best?;
     if here < cn.saturating_add(2) { return None; }
+    let d = dir_to(apos, npos)?;
 
-    // Re-anchor EVERY port from its face at the vacated cell to the agent's new seat.
-    let board = make_board(grid, apos, npos);
-    let mut wireable: BTreeMap<Pos, (usize, Vec<He>)> = BTreeMap::new();
-    let mut outside: BTreeMap<Pos, Vec<He>> = BTreeMap::new();
-    for &p in &board {
-        if p == npos { continue; }
-        if p == apos { wireable.insert(p, (0, vec![])); continue; }
-        if grid.reserved.contains_key(&p) { outside.insert(p, grid.used_hes(p)); continue; }
-        match grid.cells.get(&p) {
-            None => { wireable.insert(p, (0, vec![])); }
-            Some(Cell::Wire(wc)) => { wireable.insert(p, (wc.count(), wc.used_hes())); }
-            Some(Cell::Agent(a)) => { outside.insert(p, a.used_hes()); }
-            Some(Cell::Seed(s)) => { outside.insert(p, s.faces.iter().flatten().copied().collect()); }
-        }
-    }
-    for &p in &board {
-        for dd in DIRS {
-            let q = step(p, dd);
-            if !board.contains(&q) && !outside.contains_key(&q) {
-                outside.insert(q, grid.used_hes(q));
-            }
-        }
-    }
-    let mut st = BoardState {
-        placeable: BTreeSet::new(),
-        wireable,
-        outside,
-        agent_at: [(npos, 0usize)].into_iter().collect(),
-        added: BTreeMap::new(),
-        faces: vec![[None; 3]],
-        avoid_stacking: true,
-        dirs: DIRS_STD,
-    };
-    let cells = [npos];
-    for port in 0..ag.tag.arity() {
-        let (a_end, b_end) = (PEnd::Agent { k: 0, port }, PEnd::Half { cell: apos, he: ag.face_of(port) });
-        let routed = route_wire(&mut st, &cells, a_end, b_end, &board) || {
-            st.avoid_stacking = false;
-            let r = route_wire(&mut st, &cells, a_end, b_end, &board);
-            st.avoid_stacking = true;
-            r
-        };
-        if !routed { return None; }
-    }
+    // LOCAL re-anchoring, no router: each port re-ties by TRUNCATION (walk its chain up
+    // to three cells; at the first continuation already adjacent to the new seat, delete
+    // the walked strands and repoint — net wire falls) or by the SINGLE BEND at the
+    // vacated cell (one strand connecting the new seat back to the old attachment; the
+    // apos↔npos edge carries one attachment, so at most one port may take it). An agent
+    // whose wires cannot re-tie through its own footprint does not move: the field keeps
+    // pumping, the wires around it seep first, and the agent goes when the geometry
+    // allows — displacement stops being a wire factory (the router version paid one to
+    // three fresh strands per port).
     let mut writes: Vec<(Pos, Strand)> = vec![];
-    for (p, v) in &st.added { for s in v { writes.push((*p, *s)); } }
+    let mut removes: Vec<(Pos, Strand)> = vec![];
+    let mut repoints: Vec<(Pos, He, He)> = vec![];
+    let mut new_faces: [Option<He>; 3] = [None; 3];
+    let mut bend_used = false;
+    // faces claimed at cells by earlier ports of this same plan
+    let mut claimed: Vec<(Pos, He)> = vec![];
+    let near = |c: Pos| (c.0 - apos.0).abs() <= 3 && (c.1 - apos.1).abs() <= 3 && (c.2 - apos.2).abs() <= 3;
+    for port in 0..ag.tag.arity() {
+        let f = ag.face_of(port);
+        // (i) truncation into my own chain
+        let trunc = (|| -> Option<(Vec<(Pos, Strand)>, Pos, He, He)> {
+            let mut chain: Vec<(Pos, Strand)> = vec![];
+            let (mut cell, mut face) = (apos, f);
+            for _ in 0..3 {
+                let t = step(cell, face);
+                if !near(t) || !grid.topo.in_bounds(t) || grid.reserved.contains_key(&t) { return None; }
+                let s_t = grid.wire(t)?.with_he(face.opp())?;
+                let e = s_t.other(face.opp());
+                let u = step(t, e);
+                if u == npos || u == apos { return None; }
+                chain.push((t, s_t));
+                let u_in_chain = chain.iter().any(|(c, _)| *c == u);
+                if !u_in_chain && !grid.reserved.contains_key(&u)
+                    && !matches!(grid.cells.get(&u), Some(Cell::Seed(_)))
+                    && grid.agent(u).is_none_or(|a| !a.nascent)
+                {
+                    if let Some(to) = dir_to(u, npos) {
+                        let pf = to.opp(); // my port's new face
+                        if !new_faces.iter().flatten().any(|x| *x == pf)
+                            && !grid.used_hes(u).contains(&to)
+                            && !claimed.contains(&(u, to))
+                        {
+                            return Some((chain, u, e.opp(), to));
+                        }
+                    }
+                }
+                (cell, face) = (t, e);
+            }
+            None
+        })();
+        if let Some((chain, u, from, to)) = trunc {
+            removes.extend(chain);
+            repoints.push((u, from, to));
+            claimed.push((u, to));
+            new_faces[port] = Some(to.opp());
+            continue;
+        }
+        // (ii) the single bend at the vacated cell
+        let pf = d.opp();
+        if !bend_used && !new_faces.iter().flatten().any(|x| *x == pf) {
+            // the old attachment at step(apos, f) stays put; the bend meets it across
+            // the same edge the port used, so no repoint is needed there
+            let q = step(apos, f);
+            let hot = grid.wire(q).and_then(|w| w.with_he(f.opp())).map(|t| t.hot).unwrap_or(false);
+            let mut bs = Strand::new(d, f);
+            bs.hot = hot;
+            writes.push((apos, bs));
+            bend_used = true;
+            new_faces[port] = Some(pf);
+            continue;
+        }
+        return None; // this port cannot re-tie locally: the agent waits
+    }
     let mut footprint: BTreeSet<Pos> = [apos, npos].into_iter().collect();
     for (p, _) in &writes { footprint.insert(*p); }
-    Some(ShovePlan { apos, npos, new_faces: st.faces[0], writes, footprint })
+    for (p, _) in &removes { footprint.insert(*p); }
+    for (p, _, _) in &repoints { footprint.insert(*p); }
+    Some(ShovePlan { apos, npos, new_faces, writes, removes, repoints, footprint })
 }
 
 pub fn apply_shove(grid: &mut Grid, plan: &ShovePlan) {
@@ -900,7 +932,9 @@ pub fn apply_shove(grid: &mut Grid, plan: &ShovePlan) {
     let Some(Cell::Agent(ag)) = grid.cells.get(&plan.apos).cloned() else { panic!("shove: no agent") };
     guard(plan.apos);
     grid.cells.remove(&plan.apos);
+    for (p, s) in &plan.removes { guard(*p); grid.remove_strand(*p, *s); }
     for (p, s) in &plan.writes { guard(*p); grid.add_strand(*p, *s); }
+    for (p, from, to) in &plan.repoints { guard(*p); repoint_for_flip(grid, *p, *from, *to, None); }
     guard(plan.npos);
     grid.put_agent(plan.npos, AgentCell {
         tag: ag.tag,
@@ -988,8 +1022,9 @@ pub fn apply_retract(grid: &mut Grid, plan: &RetractPlan) {
     let guard = |p: Pos| assert!(plan.footprint.contains(&p), "write outside footprint: {p:?}");
     guard(plan.c1); grid.remove_strand(plan.c1, plan.s1);
     guard(plan.c2); grid.remove_strand(plan.c2, plan.s2);
-    guard(plan.f1); rewire_face(grid, plan.f1, plan.e.opp(), plan.d);
-    guard(plan.f2); rewire_face(grid, plan.f2, plan.e.opp(), plan.d.opp());
+    // ψ preserved: annihilating a U-turn never changes whose wire this is
+    guard(plan.f1); repoint_for_flip(grid, plan.f1, plan.e.opp(), plan.d, None);
+    guard(plan.f2); repoint_for_flip(grid, plan.f2, plan.e.opp(), plan.d.opp(), None);
 }
 
 #[derive(Debug)]
@@ -1119,9 +1154,19 @@ pub fn plan_slide_ex(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: b
 pub fn apply_slide(grid: &mut Grid, plan: &SlidePlan) {
     let guard = |p: Pos| assert!(plan.footprint.contains(&p), "write outside footprint: {p:?}");
     guard(plan.p); grid.remove_strand(plan.p, plan.s);
-    guard(plan.na); rewire_face(grid, plan.na, plan.s.a.opp(), plan.na_to);
-    guard(plan.nb); rewire_face(grid, plan.nb, plan.s.b.opp(), plan.nb_to);
-    for (c, s) in &plan.strands { guard(*c); grid.add_strand(*c, *s); }
+    // ψ is preserved across every projection-identity move: the reroute never changes
+    // whose wire this is. Writing the trail cold opened a reheat window in which
+    // simultaneous cold tension contracted a demanded walker's own detour straight back
+    // into the shared cell it had just left — measured as 1341 of 1585 slides on chain3
+    // being that one walker's self-reroute, forever.
+    guard(plan.na); repoint_for_flip(grid, plan.na, plan.s.a.opp(), plan.na_to, None);
+    guard(plan.nb); repoint_for_flip(grid, plan.nb, plan.s.b.opp(), plan.nb_to, None);
+    for (c, s) in &plan.strands {
+        guard(*c);
+        let mut ns = *s;
+        ns.hot = plan.s.hot;
+        grid.add_strand(*c, ns);
+    }
 }
 
 /// TENSION bend-shift: the survey-guided kink-flip, the transposition step of discrete
@@ -1177,12 +1222,16 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     // decays, tension reclaims the leftover detours. Moving OUT of a pressurized cell
     // stays legal (that direction agrees with the field).
     if grid.chi_at(npos) != 0 { return None; }
-    // The target cell must take the strand (both its faces free, room under the cap).
+    // The target cell must take the strand (both its faces free, room under the cap),
+    // and must hold no HOT strand: a hot strand marks an active walking corridor, and a
+    // flip landing there makes the cell shared, blocks the walk, gets evicted by the
+    // clear, and re-flips in — an endless trade (χ cannot fence it, because a
+    // SUCCEEDING clear never pumps).
     let (nf_a, nf_b) = (s.b.opp(), s.a.opp()); // npos faces toward qa and qb
     match grid.cells.get(&npos) {
         None => {}
         Some(Cell::Wire(wn)) => {
-            if wn.count() >= WIRE_CAP { return None; }
+            if wn.count() >= WIRE_CAP || wn.iter().any(|t| t.hot) { return None; }
             let used = wn.used_hes();
             if used.contains(&nf_a) || used.contains(&nf_b) { return None; }
         }
@@ -1205,12 +1254,15 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     Some(FlipPlan { p, s, npos, qa, qb, footprint })
 }
 
-/// Repoint an attachment like `rewire_face`, but PRESERVE the ψ hot bit on a repointed
-/// strand (the survey still resets via Strand::new). Sound for moves that keep the
-/// wire's endpoints — a flip never changes whose wire this is, so cooling it would be a
-/// self-inflicted demand blackout: an oscillating bend on a demanded wire was measured
-/// to starve its own walker (fork-bilayer wedged) when flips reset heat.
-fn repoint_keep_hot(grid: &mut Grid, p: Pos, from: He, to: He) {
+/// Repoint an attachment for a FLIP: preserve the ψ hot bit (a flip never changes whose
+/// wire this is; cooling it starved the very walker the wire served — fork-bilayer
+/// wedged) and carry the EXACT post-flip survey for the repointed side. A flip is a
+/// transposition of two adjacent path letters, so no other strand's presence sets change
+/// at all, and the three affected values are computable in place. Resetting them instead
+/// (the first cut) blinded the neighborhood for a sweep per flip and serialized
+/// contraction to one bend at a time — wires visibly tightened sequentially instead of
+/// everywhere at once.
+fn repoint_for_flip(grid: &mut Grid, p: Pos, from: He, to: He, side: Option<u8>) {
     match grid.cells.get_mut(&p) {
         Some(Cell::Agent(a)) => {
             let i = a.port_at(from).unwrap_or_else(|| panic!("no port at {from:?} on {p:?}"));
@@ -1220,21 +1272,85 @@ fn repoint_keep_hot(grid: &mut Grid, p: Pos, from: He, to: He) {
             let slot = w.strands.iter_mut().flatten().find(|s| s.contains(from))
                 .unwrap_or_else(|| panic!("no strand half {from:?} at {p:?}"));
             let hot = slot.hot;
-            *slot = if slot.a == from { Strand::new(to, slot.b) } else { Strand::new(slot.a, to) };
+            // the far side's letters are all beyond this strand: unchanged by the swap
+            let keep = slot.survey[1 - slot.side_of(from)];
+            let new = if slot.a == from { Strand::new(to, slot.b) } else { Strand::new(slot.a, to) };
+            let mut survey = [None, None];
+            survey[new.side_of(to)] = side;
+            survey[new.side_of(new.other(to))] = keep;
+            *slot = new;
             slot.hot = hot;
+            slot.survey = survey;
         }
         _ => panic!("repoint on non-attachment cell {p:?}"),
     }
 }
 
+/// PRESSURE flip: the same corner-hop, directed by χ instead of the survey — a cold
+/// bend in a pressurized cell hops to the rectangle corner with strictly lower χ. This
+/// is how the field moves wire without a router: mats yield around frustration one cell
+/// per tick, which is what makes the routing-free local shove viable (the agent's
+/// re-ties need adjacent room, and this is what opens it). Hot wire and hot targets
+/// stay untouchable; the survey needs no say because χ-descent is its own gate.
+pub fn plan_chi_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
+    let s = grid.wire(p)?.iter().find(|t| *t == s0)?;
+    if s.hot || s.b == s.a.opp() { return None; }
+    let here = grid.chi_at(p);
+    if here < 2 { return None; }
+    let (qa, qb) = (step(p, s.a), step(p, s.b));
+    let npos = step(qa, s.b);
+    if grid.chi_at(npos) >= here { return None; }
+    if !grid.topo.in_bounds(npos) { return None; }
+    if [p, npos, qa, qb].iter().any(|c| grid.reserved.contains_key(c)) { return None; }
+    let (nf_a, nf_b) = (s.b.opp(), s.a.opp());
+    match grid.cells.get(&npos) {
+        None => {}
+        Some(Cell::Wire(wn)) => {
+            if wn.count() >= WIRE_CAP || wn.iter().any(|t| t.hot) { return None; }
+            let used = wn.used_hes();
+            if used.contains(&nf_a) || used.contains(&nf_b) { return None; }
+        }
+        _ => return None,
+    }
+    for (q, from, to) in [(qa, s.a.opp(), s.b), (qb, s.b.opp(), s.a)] {
+        match grid.cells.get(&q) {
+            None | Some(Cell::Seed(_)) => return None,
+            Some(Cell::Agent(ag)) => {
+                if ag.nascent || ag.port_at(from).is_none() || ag.used_hes().contains(&to) { return None; }
+            }
+            Some(Cell::Wire(wq)) => {
+                if wq.with_he(from).is_none() || wq.used_hes().contains(&to) { return None; }
+            }
+        }
+    }
+    let footprint = [p, npos, qa, qb].into_iter().collect();
+    Some(FlipPlan { p, s, npos, qa, qb, footprint })
+}
+
 pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
     let guard = |c: Pos| assert!(plan.footprint.contains(&c), "write outside footprint: {c:?}");
     let s = plan.s;
+    let bit = |d: He| 1u8 << (d as u8);
+    // COLD wires keep exact surveys through the flip (a transposition changes no other
+    // strand's presence sets), so every eligible cold bend can fire every tick —
+    // simultaneous contraction. HOT wires deliberately reset instead: the survey blind
+    // is a natural rate limit, and it is load-bearing — simultaneous contraction of the
+    // wire a walker is actively eating fights the walk machinery (clears, face
+    // rotations) tick for tick, measured as thousands of trade slides on the chain
+    // class, while the serialized trickle is exactly the regime that unlocked chain4.
+    let (qa_side, qb_side, ns_survey) = if s.hot {
+        (None, None, [None, None])
+    } else {
+        (s.survey[1].map(|v| v | bit(s.a.opp())),
+         s.survey[0].map(|v| v | bit(s.b.opp())),
+         s.survey)
+    };
     guard(plan.p); grid.remove_strand(plan.p, s);
-    guard(plan.qa); repoint_keep_hot(grid, plan.qa, s.a.opp(), s.b);
-    guard(plan.qb); repoint_keep_hot(grid, plan.qb, s.b.opp(), s.a);
+    guard(plan.qa); repoint_for_flip(grid, plan.qa, s.a.opp(), s.b, qa_side);
+    guard(plan.qb); repoint_for_flip(grid, plan.qb, s.b.opp(), s.a, qb_side);
     let mut ns = Strand::new(s.b.opp(), s.a.opp());
     ns.hot = s.hot;
+    ns.survey = ns_survey;
     guard(plan.npos); grid.add_strand(plan.npos, ns);
 }
 

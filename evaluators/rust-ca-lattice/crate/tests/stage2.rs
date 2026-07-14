@@ -135,8 +135,11 @@ fn differential_full3d() { differential(Topo::Full3D); }
 
 /// The stamp planner (precomputed-workshop fire): correctness is gated absolutely on the
 /// same corpus; liveness per mode is measured and printed. No floor yet — the numbers ARE
-/// the experiment.
+/// the experiment. Ignored by default (eight extra corpus runs ≈ most of the suite's
+/// wall-clock); the commit gate is `cargo test --release -- --include-ignored`, and the
+/// iteration loop is `probe-corpus`.
 #[test]
+#[ignore = "8 extra corpus runs; commit gate only (--include-ignored)"]
 fn differential_fire_modes() {
     for topo in TOPOS {
         for (mode, label) in [(FireMode::Stamp, "stamp"), (FireMode::StampThenSearch, "stamp+search"), (FireMode::Grow, "grow"), (FireMode::GrowThenSearch, "grow+search")] {

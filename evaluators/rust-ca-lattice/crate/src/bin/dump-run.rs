@@ -83,7 +83,7 @@ fn named(which: &str) -> (Term, &'static str) {
         "ksimple" => (ap(ap(oracle::k(), Term::L), s(Term::L)),
             "K discards an argument: T1·△ answers with b and mints an ε; watch the value walk INTO the eraser (Eps·S, Eps·△) — GC one cell at a time."),
         "kargs" => (ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
-            "K with bigger arguments — pressure's first conquest: watch χ shove parked agents and evaporate the mats around the jam (completes on full3d; bilayer still pockets)."),
+            "K with bigger arguments — pressure's first conquest, now complete on BOTH topologies: watch χ (red glow) evaporate the mats and hop bends downhill around the jam; the parked values barely move at all."),
         "erase" => (ap(ap(oracle::k(), Term::L), f2(Term::L, Term::L)),
             "ε eats a fork: Eps·F FORKS the death pulse into two erasers — the cascade is the GC. Erasers are the cheapest agents: one port, one cell."),
         "forkarg" => (ap(f2(Term::L, Term::L), f2(Term::L, Term::L)),
@@ -157,8 +157,8 @@ fn main() {
                 Event::Retract { a, b } => {
                     write!(ev, "{{\"t\":\"retract\",\"a\":{},\"b\":{}}}", pos_json(*a), pos_json(*b)).unwrap();
                 }
-                Event::Slide { at } => {
-                    write!(ev, "{{\"t\":\"slide\",\"at\":{}}}", pos_json(*at)).unwrap();
+                Event::Slide { at, why } => {
+                    write!(ev, "{{\"t\":\"slide\",\"at\":{},\"why\":\"{why}\"}}", pos_json(*at)).unwrap();
                 }
                 Event::Dock { cpos, ppos, rule } => {
                     write!(ev, "{{\"t\":\"dock\",\"c\":{},\"p\":{},\"rule\":\"{}·{}\"}}",

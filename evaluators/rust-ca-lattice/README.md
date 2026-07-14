@@ -33,7 +33,9 @@ is a library plus tests.
   principal, gated on the ψ hot bit, a single neighbor-local read; aux wires re-anchor
   truncation-first, eating the walker's own drag, with the bounded router as the
   extension fallback; a walker at a shared cell waits, never tucks), SHOVE (a χ-descent
-  step for parked agents; hot walkers, docked pairs, and Out are immune), and the
+  step for parked agents whose every wire re-ties through the shove's own footprint,
+  by truncation into its own chain or a single bend at the vacated cell — no router;
+  hot walkers, docked pairs, and Out are immune), and the
   polymer moves, all projecting to identity: RETRACT (a width-1 U-turn annihilates,
   wire −2, the only mover of length), FLIP (the survey-guided bend-shift: a corner hops
   to the rectangle's fourth cell, migrating its two path letters toward annihilating
@@ -67,9 +69,13 @@ is a library plus tests.
   absolutely (zero wrong NFs, per-transition projection asserts, bit determinism);
   liveness measured, with per-topology floors pinning the baselines.
 - `crate/src/bin/debug-stuck.rs`, `scan-pins.rs` — stall analyzers (topology-aware);
-  `probe-grow.rs` — event census plus radius-2 occupancy maps around blocked walkers;
-  `probe-cap.rs` — the budget-vs-churn classifier (re-runs tick-capped terms at five
-  times the budget and reports whether shadow ints moved).
+  `probe-grow.rs` — event census (slides tagged by phase) plus radius-2 occupancy maps
+  around blocked walkers; `probe-cap.rs` — the budget-vs-churn classifier (re-runs
+  tick-capped terms at five times the budget and reports whether shadow ints moved);
+  `probe-corpus.rs` — the iteration loop: both differentials parallel over terms with
+  per-term stuck lists and a mode argument, about a minute for what the suite does in
+  twenty (wrong normal forms still panic; the commit gate stays `cargo test --release`,
+  with the mode differentials behind `-- --include-ignored`).
 - `crate/src/bin/dump-run.rs` — the instrumentation face: runs a term and emits one JSON
   document (full grid snapshot + tick events per frame; v2 schema: [x,y,z] positions,
   single-char faces, a trailing `*` marks a ψ-hot strand, a sparse per-cell `chi` list
@@ -82,16 +88,19 @@ is a library plus tests.
 ## Status (measured)
 
 `cargo test --release`: all green. Stage 1: 3998+/0. Stage 2 corpus (400 random terms,
-depths 3 to 5), with the ψ/χ fields plus the tension survey in the sequential schedule:
-full3d 366 reach normal form (205 before the field rung, 326 before tension), bilayer
-271 (179, then 223); zero wrong results, zero invariant violations, zero tick-cap hits,
-on both topologies and under every fire mode. Wires now finish at chord scale: the
-deep-spine stall that froze holding 774 strands completes holding 5, and transport falls
-30 to 55 percent across the named set (selF 685→308, K-args 381→209). Must-complete
-pins: stem application, fork dispatch on both topologies, chain2 on bilayer (the first
-chain to complete on the no-basement topology), and on full3d every named pin — K
+depths 3 to 5), with the ψ/χ fields, the tension survey, and routing-free displacement
+in the sequential schedule: full3d 378 reach normal form (205 before the field rung,
+326 before tension, 366 before simultaneity and the local movers), bilayer 263 (179
+bare; stamp-only reaches 259 there, nearly tying search — the purely local fire planner
+has almost converged with the search planner); zero wrong results, zero invariant
+violations, zero tick-cap hits, on both topologies and under every fire mode. Wires
+finish at chord scale (the deep-spine stall that froze holding 774 strands completes
+holding 3), displacement never routes (shoves re-tie through their own footprint or do
+not happen; the pressure field hops bends downhill cell by cell), and transport falls
+30 to 55 percent across the named set. Must-complete pins: stem application, fork
+dispatch on both topologies, chain2 on bilayer, and on full3d every named pin — K
 erasure, the sharing S-rule, kargs, chain1 through chain4, the deep-copy share, disp,
-and selF end to end. Every stall is liveness, never correctness. What remains stuck: 34
+and selF end to end. Every stall is liveness, never correctness. What remains stuck: 22
 full3d corpus terms and the bilayer residue, the deepest multi-walker seam knots. That
 residue is LOCAL_CA_DESIGN.md §13's liveness question, now measurable per topology
 against a sound substrate; policies compete on top without being able to break
@@ -203,3 +212,27 @@ Liveness findings folded into the design (each found by measurement here):
    exhibit finishes holding 5 strands), chain2 completes on bilayer (the first chain
    on the no-basement topology), every named full3d pin holds, and transport falls 30
    to 55 percent across the named set (selF 685→308, K-args 381→209).
+15. Cold wires contract simultaneously, demanded wires deliberately do not, and ψ rides
+   every identity move. A flip is a transposition, so it changes no other strand's
+   presence sets: carrying the three affected survey values through the flip exactly
+   (instead of resetting them) lets every eligible cold bend fire every tick, where the
+   first cut's resets blinded each flip's neighborhood for a sweep and serialized
+   contraction to one bend at a time. The same simultaneity applied to hot wires
+   measured as a churn engine (thousands of trade slides on the chain class:
+   contraction fought the walk machinery tick for tick), so hot flips keep the survey
+   reset as a deliberate rate limit; the trickle regime is exactly what unlocked
+   chain4. The load-bearing lemma underneath: every projection-identity move must
+   preserve ψ, because it never changes whose wire it is. Slides written cold opened a
+   reheat window in which simultaneous cold tension contracted a demanded walker's own
+   detour straight back into the cell it had just left (measured: 1341 of 1585 slides
+   on chain3 were that one walker's self-reroute, forever); slides, retracts, and
+   shove re-ties now inherit heat like flips do. Displacement is also routing-free
+   now: a shove happens only when every wire re-ties through its own footprint
+   (truncation into its own chain, or one bend at the vacated cell), and the pressure
+   field gained the micro-flip, a cold bend hopping one cell strictly downhill in χ,
+   so mats yield around frustration cell by cell instead of by BFS reroutes. Net:
+   full3d 378 (366 before), bilayer 263 with stamp-only at 259 nearly tying search,
+   every named pin at or near its best (chain4 2811→1421, chain3 1795→1040, chain2
+   636→396, kargs 333→292 and newly complete on bilayer), shoves nearly extinct (zero
+   to three per run), and the slide census collapses to demanded clears plus a residue
+   of decongestion.

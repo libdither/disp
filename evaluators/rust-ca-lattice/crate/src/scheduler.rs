@@ -11,9 +11,9 @@ use crate::net::Net;
 use crate::oracle::Term;
 use crate::transitions::{
     apply_fire, apply_flip, apply_grow_dock, apply_reel, apply_retract, apply_shove,
-    apply_slide, grow_step, plan_fire, plan_fire_stamp, plan_flip, plan_grow_dock,
-    plan_reel, plan_retract, plan_shove, plan_slide, plan_slide_ex, reel_blocked,
-    DockPlan, FirePlan, GrowStep,
+    apply_slide, grow_step, plan_chi_flip, plan_fire, plan_fire_stamp, plan_flip,
+    plan_grow_dock, plan_reel, plan_retract, plan_shove, plan_slide, plan_slide_ex,
+    reel_blocked, DockPlan, FirePlan, GrowStep,
 };
 
 /// Which fire planner the schedule uses. `Search` is the in-board backtracking planner;
@@ -60,7 +60,7 @@ pub enum Event {
     Fire { cpos: Pos, ppos: Pos, rule: (&'static str, &'static str), fresh: Vec<Pos> },
     Reel { from: Pos, to: Pos, sid: u32 },
     Retract { a: Pos, b: Pos },
-    Slide { at: Pos },
+    Slide { at: Pos, why: &'static str },
     Dock { cpos: Pos, ppos: Pos, rule: (&'static str, &'static str) },
     Grow { at: Pos },
     Abort { at: Pos },
@@ -179,11 +179,15 @@ impl Sim {
                     if c != cpos && c != ppos && !ring.contains(&c) { ring.push(c); }
                 }
             }
-            'evict: for c in ring {
-                let Some(w) = self.grid.wire(c) else { continue };
+            'evict: for (i, c) in ring.iter().enumerate() {
+                let Some(w) = self.grid.wire(*c) else { continue };
+                // the trail must not land in the rest of the room, or successive
+                // evictions just shuffle strands between ring cells
+                let avoid: Vec<Pos> = ring.iter().enumerate()
+                    .filter(|(j, _)| *j != i).map(|(_, q)| *q).collect();
                 for s in w.iter().collect::<Vec<_>>() {
-                    if let Some(plan) = plan_slide_ex(&self.grid, c, s, &[], false, true) {
-                        self.events.push(Event::Slide { at: plan.p });
+                    if let Some(plan) = plan_slide_ex(&self.grid, *c, s, &avoid, false, true) {
+                        self.events.push(Event::Slide { at: plan.p, why: "evict" });
                         apply_slide(&mut self.grid, &plan);
                         applied += 1;
                         if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
@@ -218,7 +222,7 @@ impl Sim {
             let mut cleared = false;
             for s in &blockers {
                 if let Some(plan) = plan_slide_ex(&self.grid, npos, *s, &[], false, true) {
-                    self.events.push(Event::Slide { at: plan.p });
+                    self.events.push(Event::Slide { at: plan.p, why: "clear" });
                     apply_slide(&mut self.grid, &plan);
                     applied += 1;
                     cleared = true;
@@ -239,7 +243,7 @@ impl Sim {
                     if wc.count() < 2 { continue; }
                     for t in wc.iter().collect::<Vec<_>>() {
                         if let Some(plan) = plan_slide_ex(&self.grid, c, t, &[npos], false, true) {
-                            self.events.push(Event::Slide { at: plan.p });
+                            self.events.push(Event::Slide { at: plan.p, why: "loosen" });
                             apply_slide(&mut self.grid, &plan);
                             applied += 1;
                             loosened = true;
@@ -258,7 +262,7 @@ impl Sim {
                 if let Some(d) = a.faces[0] {
                     if let Some(mine) = self.grid.wire(npos).and_then(|w| w.with_he(d.opp())) {
                         if let Some(plan) = plan_slide_ex(&self.grid, npos, mine, &[], false, true) {
-                            self.events.push(Event::Slide { at: plan.p });
+                            self.events.push(Event::Slide { at: plan.p, why: "selfslide" });
                             apply_slide(&mut self.grid, &plan);
                             applied += 1;
                             if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
@@ -332,12 +336,28 @@ impl Sim {
                 if here < 1 { continue; }
                 let Some(w) = self.grid.wire(p) else { continue };
                 let crowded = w.count() >= 2;
-                if !crowded && (w.count() != 1 || here < CHI_EVAP) { continue; }
-                for s in w.iter().collect::<Vec<_>>() {
+                let strands: Vec<_> = w.iter().collect();
+                let mut moved = false;
+                // pressure micro-flip first: a cold bend hops one cell downhill — the
+                // router-free way the field opens room (and what feeds the local shove
+                // its re-tie space)
+                for s in strands.iter().copied() {
+                    if let Some(plan) = plan_chi_flip(&self.grid, p, s) {
+                        self.events.push(Event::Flip { from: plan.p, to: plan.npos });
+                        apply_flip(&mut self.grid, &plan);
+                        applied += 1;
+                        moved = true;
+                        if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
+                        break;
+                    }
+                }
+                if moved { continue; }
+                if !crowded && (strands.len() != 1 || here < CHI_EVAP) { continue; }
+                for s in strands {
                     if s.hot { continue; }
                     if let Some(plan) = plan_slide(&self.grid, p, s, &[], false) {
                         if !crowded && plan.strands.iter().any(|(c, _)| self.grid.chi_at(*c) >= here) { continue; }
-                        self.events.push(Event::Slide { at: plan.p });
+                        self.events.push(Event::Slide { at: plan.p, why: "decongest" });
                         apply_slide(&mut self.grid, &plan);
                         applied += 1;
                         if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
@@ -386,6 +406,13 @@ pub fn run_term(term: &Term, topo: Topo, max_ticks: u64, check: CheckLevel) -> O
 }
 
 pub fn run_term_with(term: &Term, topo: Topo, mode: FireMode, max_ticks: u64, check: CheckLevel) -> Outcome {
+    run_term_opts(term, topo, mode, max_ticks, check, PROGRESS_DROUGHT)
+}
+
+/// `run_term_with` with an explicit drought window. The suite always uses
+/// `PROGRESS_DROUGHT`; iteration probes may shorten it to trade a little stall-detection
+/// patience for wall-clock (a stuck term burns the whole window before it is called).
+pub fn run_term_opts(term: &Term, topo: Topo, mode: FireMode, max_ticks: u64, check: CheckLevel, drought: u64) -> Outcome {
     let mut sim = Sim::load(term, topo);
     sim.fire_mode = mode;
     let mut peak = sim.grid.agent_count();
@@ -408,7 +435,7 @@ pub fn run_term_with(term: &Term, topo: Topo, mode: FireMode, max_ticks: u64, ch
         // Docks, grow placements, and aborts are preparation that can cycle
         // (dock→place→abort→redock), so none of them may reset the window.
         if sim.shadow.ints > last_ints { last_ints = sim.shadow.ints; last_progress = ticks; }
-        if ticks - last_progress > PROGRESS_DROUGHT { break (false, true); }
+        if ticks - last_progress > drought { break (false, true); }
     };
     if (check != CheckLevel::Every || done) && !sim.grid.has_seeds() { sim.grid.check_projection(&sim.shadow); }
     let result = if done {
