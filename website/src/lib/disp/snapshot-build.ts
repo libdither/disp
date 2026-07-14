@@ -12,11 +12,13 @@
 // and run the landing-card example asserting it passes without re-elaborating
 // any module.
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { parseProgram } from '../../../../src/compile.ts'
 import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
-import { examples } from './examples.ts'
+import { manifest } from './examples.ts'
 import {
   dumpSnapshot,
   restoreSnapshot,
@@ -94,11 +96,17 @@ export async function buildSnapshot(
   }
   console.log(`  differential: ${pairs.length} roots structurally identical`)
 
-  const hero = examples.find((e) => e.id === 'hello')
-  if (!hero) throw new Error('snapshot self-check: landing example "hello" missing from examples.ts')
+  // Example sources are files in repo examples/ (the glob in examples.ts is
+  // Vite-only and inert here) — read the landing card's from disk.
+  const hero = manifest.find((m) => m.id === 'hello')
+  if (!hero) throw new Error('snapshot self-check: landing example "hello" missing from the examples manifest')
+  const heroSource = readFileSync(
+    fileURLToPath(new URL(`../../../../examples/${hero.file}`, import.meta.url)),
+    'utf-8'
+  )
   let moduleItems = 0
   const tHero = performance.now()
-  const decls = parseProgram(hero.source, rootPath, {
+  const decls = parseProgram(heroSource, rootPath, {
     session: asTree(sb),
     onItem: (i) => {
       if (i.depth > 0) moduleItems++
