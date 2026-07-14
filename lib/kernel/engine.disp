@@ -41,13 +41,14 @@ open given {
 // computes a value (Reduce); the respond receives (recognizer_params, self, frame). This
 // is the kernel's one trusted read of a neutral's metadata, which is why it is sealed.
 // (Spec: TYPE_THEORY §12.6.)
+// Q: Why do we need inj "Ext" pair old_meta arg here? Also, why can't this function be inline?
 let extend_neutral_meta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (inj "Ext" (pair old_meta arg)) } // payload : Spine (universe.disp)
 // SEALED(Σ-op): reads the neutral's raw metadata and reconstructs self, the one trusted elimination step.
 hyp_reduce := fix ({self, meta, frame} -> {
   let tmeta := type_meta meta.stored_type
-  let me := wait self meta // the reconstructed self-neutral
-  match (tmeta.respond tmeta.recognizer_params me frame) {
-    Extend new_type => wait self (extend_neutral_meta me new_type frame) // stuck: bare neutral (Option A, §7.5/§9)
+  let this := wait self meta // myself reconstructed into a wait-form.
+  match (tmeta.respond tmeta.recognizer_params this frame) {
+    Extend new_type => wait self (extend_neutral_meta this new_type frame) // stuck: bare neutral (Option A, §7.5/§9)
     Reduce v => v // computes: bare value (verdicts arrive as Reduce (Ok v))
   }
 })
