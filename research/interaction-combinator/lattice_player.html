@@ -1,17 +1,39 @@
 <!doctype html><html><head><meta charset="utf-8">
-<title>rust-ca-lattice player — rung 2 replay (topo lift)</title>
+<title>rust-ca-lattice — lifted lattice replay</title>
 <style>
   :root { --bg:#0b0e14; --fg:#c8d3e0; --accent:#56c8ff; --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.5 monospace; }
   #wrap { display:flex; height:100vh; }
-  #cv { flex:1; display:block; cursor:grab; }
-  #side { width:360px; padding:12px 14px; overflow:auto; border-left:1px solid #1b2436; }
+  #stage { position:relative; flex:1; min-width:0; height:100%; overflow:hidden; }
+  #cv { width:100%; height:100%; display:block; cursor:grab; }
+  #side { flex:0 0 360px; width:360px; padding:12px 14px; overflow:auto; border-left:1px solid #1b2436; }
   h3 { color:var(--accent); font-size:12px; letter-spacing:.06em; margin:14px 0 6px; }
   .row { display:flex; justify-content:space-between; margin:3px 0; align-items:center; }
   .k { color:#8595ad; }
   button, select { background:#16202f; color:var(--fg); border:1px solid #2a3a52; border-radius:5px; padding:4px 9px; cursor:pointer; font:inherit; }
   button:hover { border-color:var(--accent); }
   input[type=range] { width:150px; vertical-align:middle; }
+  #topbar { position:absolute; z-index:5; top:10px; left:50%; transform:translateX(-50%);
+    max-width:calc(100% - 20px); box-sizing:border-box; display:flex; align-items:center;
+    gap:8px; padding:6px 8px; border:1px solid #2a3a52; border-radius:11px;
+    background:rgba(11,14,20,.92); box-shadow:0 6px 24px rgba(0,0,0,.35); backdrop-filter:blur(8px); }
+  .transport { display:flex; gap:3px; align-items:center; }
+  .iconbtn { width:34px; height:32px; padding:0; display:grid; place-items:center;
+    font:18px/1 system-ui,sans-serif; }
+  .iconbtn.primary { width:40px; color:#04121c; background:var(--accent); border-color:#8bddff; }
+  .iconbtn.primary:hover { background:#8bddff; }
+  .iconbtn:disabled { opacity:.32; cursor:default; border-color:#2a3a52; }
+  .iconbtn:focus-visible, #topbar select:focus-visible, #topbar input:focus-visible {
+    outline:2px solid var(--accent); outline-offset:2px; }
+  .toolbar-sep { width:1px; height:24px; flex:0 0 1px; background:#2a3a52; }
+  #topbar select { max-width:210px; }
+  #topbar input[type=range] { width:110px; }
+  #topbar #scrub { width:min(190px,18vw); }
+  .topvalue { color:#8595ad; white-space:nowrap; font-size:11px; }
+  @media (max-width:1050px) {
+    #topbar { left:8px; right:8px; transform:none; flex-wrap:wrap; justify-content:center; }
+    #topbar #scrub { width:150px; }
+  }
   .note { color:#8595ad; font-size:11px; }
   .ok { color:var(--ok); } .bad { color:var(--warn); } .hot { color:var(--hot); }
   #stat b { color:var(--hot); }
@@ -31,53 +53,77 @@
   .rrow.unused { opacity:.38; }
   .rrow .note2 { color:#5a6b86; font-size:10.5px; }
   .rrow .cnt { margin-left:auto; color:#5a6b86; font-size:10.5px; }
+  details { margin:4px 0 8px; }
+  summary { color:#8595ad; cursor:pointer; font-size:11px; }
 </style></head>
 <body><div id="wrap">
-  <canvas id="cv"></canvas>
-  <div id="side">
-    <h3>RUNG 2 REPLAY — THE LIFTED LATTICE, FRAME BY FRAME</h3>
-    <div class="note">A replay client over <b>rust-ca-lattice</b> traces (the engine is the model;
-    this page only draws). Cells live at (x,y,z): <b>bilayer</b> traces have two planes (the
-    2.5D chip), <b>full3d</b> traces as many as the run used — upper planes draw offset
-    up-right and dimmer. There are no vias and no tucks: a crossing is two wires at
-    different z. Each tick: ψ heat and tension-survey sweeps, then <b>fire</b> every
-    enabled adjacent facing pair (blocked pairs evict one strand from their room — the
-    fire's right of way), <b>slide</b> one blocking strand out of each stuck walker's way
-    (the excluded-volume move), <b>reel</b> every ψ-demanded producer one cell (eating its
-    own aux drag where it can) while undemanded LEAVES <b>approach</b> — drifting along
-    their own wire through field-free space until the standing σ shell around every
-    consumer parks them two cells out, pre-staged until demand carries them through —
-    then <b>flip</b> bends one cell toward annihilating partners
-    the survey found (tension: cold wires tighten everywhere at once; demanded wires at
-    a deliberate trickle, so contraction never fights the walk), <b>shove</b> parked
-    agents one cell down the χ gradient — routing-free: the agent moves only when every
-    wire re-ties through its own footprint, by eating its own chain or one bend — while
-    pressure also hops cold bends downhill and evaporates crowded wire (the field moves
-    wire cell by cell, no search), then <b>retract</b> U-turn slack to fixpoint — the
-    only step that destroys wire length, fed by the flips. Deterministic: the same term always produces this exact
-    movie. Long traces are stride-thinned (fire frames always kept, events merged).
-    Regenerate or add traces with <b>cargo run --release --bin dump-run &lt;name&gt;
-    [ticks] [bilayer|full3d] [stride]</b> and drop the JSON here.</div>
-    <div style="margin:8px 0">
-      <button id="play">&#9654; play</button>
-      <button id="step">step</button>
-      <button id="reset">reset</button>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="topbar" role="group" aria-label="Trace playback controls">
+      <div class="transport">
+        <button id="prev" class="iconbtn" title="Previous tick (Left arrow)" aria-label="Previous tick" aria-keyshortcuts="ArrowLeft">←</button>
+        <button id="play" class="iconbtn primary" title="Play or pause (Space)" aria-label="Play" aria-keyshortcuts="Space" aria-pressed="false">▶</button>
+        <button id="step" class="iconbtn" title="Next tick (Right arrow)" aria-label="Next tick" aria-keyshortcuts="ArrowRight">→</button>
+      </div>
+      <div class="toolbar-sep"></div>
+      <select id="scen" title="Evaluation trace" aria-label="Evaluation trace"></select>
+      <input type="range" id="scrub" min="0" max="0" value="0" title="Evaluation tick" aria-label="Evaluation tick">
+      <span id="framev" class="topvalue"></span>
+      <div class="toolbar-sep"></div>
+      <input type="range" id="speed" min="1" max="30" value="8" title="Playback frames per second" aria-label="Playback frames per second">
+      <span id="speedv" class="topvalue"></span>
+      <button id="reset" class="iconbtn" title="Restart trace" aria-label="Restart trace">↺</button>
+      <button id="fitframe" class="iconbtn" title="Fit current tick" aria-label="Fit current tick">⊙</button>
+      <button id="fitall" class="iconbtn" title="Fit entire trace" aria-label="Fit entire trace">⛶</button>
       <input type="file" id="load" accept=".json" style="display:none">
-      <button onclick="document.getElementById('load').click()">load trace…</button>
+      <button id="loadbtn" class="iconbtn" title="Load trace JSON" aria-label="Load trace JSON">⇧</button>
     </div>
-    <div class="row"><span class="k">trace</span><select id="scen"></select></div>
+  </div>
+  <div id="side">
+    <h3>LIFTED LATTICE REPLAY — FRAME BY FRAME</h3>
+    <details><summary>model + trace semantics</summary><div class="note">A replay client over <b>rust-ca-lattice</b> traces (the engine is the model;
+    this page only draws). Cells live at (x,y,z): <b>bilayer</b> traces have two planes (the
+    2.5D chip), while <b>full3d</b> traces use signed depth as needed. Positive z draws
+    up-right, negative z down-left, and nonzero planes dim with depth. There are no vias or
+    tucks. Routed crossings can separate in z;
+    a switchbox cell may also hold up to three disjoint paired strands. The strict
+    local-motion kernel is a staged, radius-one handshake: a
+    cell reads itself and its six face-neighbors from one frozen local-motion snapshot, then writes only
+    itself. A calm, ψ-demanded, or χ-descending producer of arity 1–3 advances by a
+    <b>local star</b>: its principal enters the next cell. For arity 1 the vacated cell
+    clears; for arity 2 its auxiliary bends through that cell; for arity 3 one auxiliary
+    takes that back bend and the other locally extends or truncates through a swept square.
+    Roles commit only after
+    their neighboring roles agree. The endpoint agent and its intermediate forwarder
+    therefore commit as one translation: the agent occupies the forwarder's cell and the
+    principal edge loses that wire segment.
+    No wire or agent pushes a foreign wire.
+    Blockage pumps χ; <b>χ is the sole clearance license</b>, and even then each
+    occupant reshapes or moves only itself (including the local straight-wire bulge). A calm
+    shared principal switchbox waits through a bounded local persistence mark before emitting
+    low pressure, so a transient crossing does not immediately bloom.
+    ψ carries demand, the tension survey identifies removable bends, and <b>retract</b>
+    cashes those bends into shorter wire. Once the shadow net reaches semantic NF, the
+    trace may continue through a settling tail so geometric contraction remains visible.
+    Deterministic: the same term, topology, engine revision, and options produce the same
+    movie. The bundled traces contain one exact snapshot for every evaluator tick, including
+    the post-NF settling tail. Optional compact exports may use a stride greater than one;
+    those keep structural frames and merge skipped events into the next recorded state.
+    Playback advances recorded states at the selected visual frame rate; the HUD retains
+    each state's exact simulation tick and reports any sampled tick gap.
+    Regenerate or add traces with <b>cargo run --release --bin dump-run &lt;name&gt;
+    [ticks] [bilayer|full3d] [stride=1]</b> and drop the JSON here.</div></details>
     <div class="note" id="whatnote" style="margin:2px 0 6px"></div>
-    <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="30" value="6"><span id="speedv" class="k"></span></div>
-    <div class="row"><span class="k">frame</span><input type="range" id="scrub" min="0" max="0" value="0"><span id="framev" class="k"></span></div>
     <h3>STATUS</h3>
     <div id="stat"></div>
-    <h3>THIS TICK</h3>
+    <h3 id="eventhdr">THIS TICK</h3>
     <div id="events" class="note"></div>
     <h3>AGENTS &amp; PORTS</h3>
     <div class="note" style="margin-bottom:2px">Port 0 is always the <b>principal</b> (▸): producers
     emit their value there, consumers consume there, and a fire needs the two principals facing
-    across one edge. Aux ports carry everything else. In the canvas the principal is the thick
-    white stub.</div>
+    across one edge. Aux ports carry everything else. On the canvas a white triangle marks the
+    principal face, a hollow circle marks aux 1, and a diamond marks aux 2. Producers use
+    four-sided diamond bodies; consumers use six-sided faceted diamonds.</div>
     <div id="agents"></div>
     <h3>REWRITE RULES <span class="k" id="rulehdr"></span></h3>
     <div class="note" style="margin-bottom:4px">consumer·producer ⇒ fresh agents (the dying pair's
@@ -87,37 +133,37 @@
     <div id="rules"></div>
     <h3>LEGEND</h3>
     <div class="note">
-      thick white stub = principal port; thin stubs = aux ports; diagonal stubs = up/down<br>
-      <span style="color:#6f9fd8">z=0 strand</span> / <span style="color:#a97fd8">z=1 strand</span> (higher planes dimmer, offset up-right)<br>
-      <span style="color:#ffd866">gold strand</span> = hot (ψ demand: a consumer awaits along this wire; reels are gated on it)<br>
-      <span style="color:#ff5a30">red glow</span> = χ pressure (pumped by frustration: blocked clears, unplannable hot walkers; agents shove and mats evaporate downhill)<br>
-      gold flash = fire (rule shown); agents glide = reel; slack vanishing = retract/slide
+      white triangle = principal port; hollow circle = aux 1; diamond = aux 2; diagonal markers = up/down<br>
+      <span style="color:#6f9fd8">z=0 strand</span> / <span style="color:#a97fd8">nonzero-z strand</span> (signed depth offsets along the up-right/down-left axis and dims with |z|)<br>
+      <span style="color:#ffd866">gold strand</span> = hot (ψ demand: a consumer awaits along this wire; demand licenses a local star even away from calm)<br>
+      <span style="color:#ff5a30">red glow</span> = χ pressure (pumped by blockage; the sole clearance license, while each occupant moves or reshapes only itself)<br>
+      staged-role rings: amber source, cyan target, purple square, green endpoint, blue-gray back, magenta pressure-bulge family, red contested persistence, gray debt<br>
+      gold flash = fire (rule shown); agent positions jump at recorded commits; retract removes slack, while a pressure bulge adds two units of slack to route around blockage for later contraction to recover when possible
     </div>
     <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
-    <div class="note">Correctness is schedule-independent by construction: every transition
-    declares its cell footprint (writes machine-checked inside it) and preserves the
-    projection onto the shadow interaction net. Liveness is measured, never assumed. The
-    schedule carries three strictly neighbor-local signals: ψ demand (the gold hot bit,
-    one cell per tick; it replaced the unbounded wire trace as reel's gate), the tension
-    survey (each strand learns which directions its wire travels beyond each side; bends
-    flip toward annihilating partners and retract cashes them out, so wires finish near
-    chord length — the chain4 trace used to freeze holding 774 strands and now completes
-    holding 5), and χ pressure (Jacobi-relaxed, pumped only by real frustration; it
-    shoves parked agents, evaporates wire mats, and fences tension out of contested
-    rooms). Every embedded full3d trace reaches NF; the bilayer presets left STUCK on
-    purpose show the no-basement residue. The corpus residue is LOCAL_CA_DESIGN.md §13's
-    remaining liveness question.</div>
+    <div class="note">Projection preservation is checked against the shadow interaction
+    net. Each update in the strict local-motion kernel takes a frozen
+    center-plus-six-neighbor view and emits only the center's next state; those updates
+    neither inspect a diagonal nor mutate a neighbor atomically. Fire placement, demanded
+    reel, χ-licensed agent movement, flip, slide, retract, and grow are host-planned bounded-footprint parts of
+    this evaluator; they are not included in this locality claim.
+    Liveness is measured, never assumed. The local protocol reads bonded ψ demand and
+    Jacobi-relaxed χ pressure; the tension survey remains a separate host scheduler phase.
+    Star roles and pressure bulges are multi-tick
+    commitments because a diagonal swept square is not itself a neighbor; information
+    crosses it as two face-local messages. The L/C/S readout separates wire length
+    <b>L</b> from endpoint chord lower bound <b>C</b>; <b>S=L−C</b> is candidate geometric slack.
+    Semantic NF and geometric settling are deliberately separate: a correct normal form
+    can still have residual <b>S</b> to contract. STUCK or capped traces remain measurements of
+    liveness, not claims that liveness follows from projection preservation.</div>
   </div>
 </div>
 <script>
-// lattice_traces.js is regenerated constantly during development and browsers cache it
-// hard; load it with a timestamp so the embedded traces are always current.
-document.write('<script src="lattice_traces.js?t=' + Date.now() + '"><\/script>');
-// The page ITSELF gets cached too (the dev server sends no cache headers, so a plain
-// visit can come from Chrome's heuristic cache and silently show an old build). Fetch
-// our own source fresh and compare versions; on mismatch, reload once. The badge in the
-// header shows which build you are on.
-const PLAYER_VERSION = "2026-07-13 · cold approach + σ shells (full3d 394/400)";
+// A stable revision query lets browsers cache the generated bundle between reloads.
+document.write('<script src="lattice_traces.js?v=local-motion-2026-07-14-dense1"><\/script>');
+// Verify this page's version against a fresh source response and reload once if an
+// intermediary returned stale HTML. The header badge displays the active version.
+const PLAYER_VERSION = "2026-07-14 · every-tick replay + diamond port geometry";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -133,7 +179,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const b = document.createElement("div");
     b.className = "note";
     b.style.opacity = "0.6";
-    b.textContent = "build: " + PLAYER_VERSION;
+    b.textContent = "viewer: " + PLAYER_VERSION;
     h.after(b);
   }
 });
@@ -147,11 +193,47 @@ const DIR = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0], U: [ZOFF, -ZOFF], D:
 const COL = { L: "#3fbf7f", S: "#3fbf7f", F: "#3fbf7f", P: "#7ce38b", Pair: "#2fbfa8",
               A: "#56c8ff", T1: "#56c8ff", Sel: "#56c8ff", Unp: "#4fd8e8", Dn: "#c792ea",
               Eps: "#ff6b6b", Nrm: "#ffd866", Out: "#8595ad" };
-const GLYPH = { L: "△", S: "S", F: "F", P: "@", Pair: "⟨⟩", A: "A", T1: "T₁", Sel: "T₂", Unp: "⌄", Dn: "δ", Eps: "ε", Nrm: "N", Out: "☉" };
+const GLYPH = { L: "△", S: "S", F: "F", P: "@", Pair: "⋈", A: "A", T1: "T₁", Sel: "T₂", Unp: "⌄", Dn: "δ", Eps: "ε", Nrm: "N", Out: "☉" };
 const PLANECOL = ["#6f9fd8", "#a97fd8", "#d87fb0", "#d8a97f"];
+const PRODUCERS = new Set(["L", "S", "F", "P", "Pair"]);
 
-let TR = null, FRAME = 0, SUB = 0, RUNNING = false;
+let TR = null, FRAME = 0, SUB = 0, RUNNING = false, LAST_DRAW_MS = null;
+let DIRTY = true;
 let view = { x: 0, y: 0, scale: 26 };
+const invalidate = () => { DIRTY = true; };
+function syncPlayerUI() {
+  const button = document.getElementById("play");
+  button.textContent = RUNNING ? "Ⅱ" : "▶";
+  button.setAttribute("aria-label", RUNNING ? "Pause" : "Play");
+  button.setAttribute("aria-pressed", String(RUNNING));
+  button.title = RUNNING ? "Pause (Space)" : "Play (Space)";
+  if (TR) {
+    const unit = TR.everyTick ? "tick" : "recorded frame";
+    const previous = document.getElementById("prev"), next = document.getElementById("step");
+    previous.disabled = FRAME === 0;
+    previous.setAttribute("aria-label", `Previous ${unit}`);
+    previous.title = `Previous ${unit} (Left arrow)`;
+    next.disabled = FRAME === TR.frames.length - 1;
+    next.setAttribute("aria-label", `Next ${unit}`);
+    next.title = `Next ${unit} (Right arrow)`;
+    document.getElementById("scrub").value = FRAME;
+    document.getElementById("framev").textContent = `tick ${TR.frames[FRAME].tick} · ${FRAME}/${TR.frames.length - 1}`;
+  }
+}
+function setFrame(index, pause = true) {
+  if (!TR) return;
+  if (pause) RUNNING = false;
+  FRAME = Math.max(0, Math.min(TR.frames.length - 1, index));
+  SUB = 0; LAST_DRAW_MS = null;
+  hud(); syncPlayerUI(); invalidate();
+}
+function togglePlayback() {
+  if (!TR) return;
+  if (FRAME >= TR.frames.length - 1) setFrame(0, false);
+  RUNNING = !RUNNING;
+  LAST_DRAW_MS = null;
+  syncPlayerUI();
+}
 
 // ---------------------------------------------------------------- agents & rules panels
 // Port lists are principal-first, mirroring rules.rs; the ▸ marks the principal.
@@ -238,10 +320,7 @@ function jumpToRule(key) {
   for (let i = 1; i <= TR.frames.length; i++) {
     const j = (FRAME + i) % TR.frames.length;
     if (TR.frames[j].events.some(e => e.t === "fire" && e.rule === key)) {
-      RUNNING = false; SUB = 0; FRAME = j;
-      document.getElementById("play").innerHTML = "&#9654; play";
-      document.getElementById("scrub").value = FRAME;
-      hud();
+      setFrame(j);
       return;
     }
   }
@@ -263,9 +342,9 @@ fetch("rules.json").then(r => r.json()).then(j => {
 }).catch(() => {});
 
 function pick(name) {
-  TR = window.TRACES[name];
-  FRAME = 0; SUB = 0; RUNNING = false;
-  document.getElementById("play").innerHTML = "&#9654; play";
+  TR = validateTrace(window.TRACES[name], name);
+  document.getElementById("scen").value = name;
+  FRAME = 0; SUB = 0; RUNNING = false; LAST_DRAW_MS = null;
   const sc = document.getElementById("scrub");
   sc.max = TR.frames.length - 1; sc.value = 0;
   TR.ruleCounts = {};
@@ -273,66 +352,83 @@ function pick(name) {
     if (e.t === "fire") TR.ruleCounts[e.rule] = (TR.ruleCounts[e.rule] || 0) + 1;
   renderRules();
   document.getElementById("whatnote").innerHTML = TR.note ? `<b style="color:#ffd866">watch:</b> ${TR.note}` : "";
-  fit(); hud();
+  fit(); hud(); syncPlayerUI(); invalidate();
 }
-function fit() {
+function fitFrames(frames) {
   let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
-  for (const f of TR.frames) for (const ag of f.grid.agents) {
-    const x = ag[0] + ag[2] * ZOFF, y = ag[1] - ag[2] * ZOFF;
-    a = Math.min(a, x); b = Math.max(b, x); c = Math.min(c, y); d = Math.max(d, y);
+  const include = (x, y, z) => {
+    const sx = x + z * ZOFF, sy = y - z * ZOFF;
+    a = Math.min(a, sx); b = Math.max(b, sx); c = Math.min(c, sy); d = Math.max(d, sy);
+  };
+  for (const f of frames) {
+    for (const ag of f.grid.agents) include(ag[0], ag[1], ag[2]);
+    for (const w of f.grid.wires) include(w[0], w[1], w[2]);
   }
-  const w = innerWidth - 380, h = innerHeight - 40;
-  view.scale = Math.max(8, Math.min(34, Math.min(w / (b - a + 6), h / (d - c + 6))));
+  if (!Number.isFinite(a)) { a = c = -1; b = d = 1; }
+  const w = cv.clientWidth || innerWidth - 389, h = cv.clientHeight || innerHeight;
+  view.scale = Math.max(2, Math.min(34, Math.min(w / (b - a + 6), h / (d - c + 6))));
   view.x = (a + b) / 2; view.y = (c + d) / 2;
+  invalidate();
 }
-// project a lattice cell: z lifts up-right and dims
+function fit() { fitFrames(TR.frames); }
+function fitCurrent() { fitFrames([TR.frames[FRAME]]); }
+// Project signed z along the up-right/down-left axis and dim with depth.
 const px = (x, y, z) => [
-  (innerWidth - 360) / 2 + (x + z * ZOFF - view.x) * view.scale,
-  innerHeight / 2 + (y - z * ZOFF - view.y) * view.scale,
+  cv.clientWidth / 2 + (x + z * ZOFF - view.x) * view.scale,
+  cv.clientHeight / 2 + (y - z * ZOFF - view.y) * view.scale,
 ];
 const zalpha = z => Math.max(0.45, 1 - 0.3 * Math.abs(z));
 const planecol = z => PLANECOL[Math.min(Math.abs(z), PLANECOL.length - 1)];
 
-// index agents by sid for interpolation ([x,y,z,tag,sid,faces])
-function bySid(frame) { const m = new Map(); for (const a of frame.grid.agents) m.set(a[4], a); return m; }
-
-function draw() {
+function draw(now) {
   requestAnimationFrame(draw);
-  const dpr = devicePixelRatio;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, innerWidth - 360, innerHeight);
   if (!TR) return;
   if (RUNNING) {
-    SUB += (+document.getElementById("speed").value) / 60;
-    while (SUB >= 1) {
-      SUB -= 1; FRAME++;
-      if (FRAME >= TR.frames.length - 1) { FRAME = TR.frames.length - 1; SUB = 0; RUNNING = false; document.getElementById("play").innerHTML = "&#9654; play"; break; }
+    const before = FRAME;
+    let budget = LAST_DRAW_MS === null ? 0 : Math.min(0.25, (now - LAST_DRAW_MS) / 1000) * (+document.getElementById("speed").value);
+    while (budget > 0 && FRAME < TR.frames.length - 1) {
+      // Frames are exact discrete snapshots, so visual playback gives every recorded
+      // state one interval. The HUD reports the true tick gap between those snapshots.
+      const left = 1 - SUB;
+      if (budget < left) { SUB += budget; budget = 0; }
+      else { budget -= left; FRAME++; SUB = 0; }
     }
-    document.getElementById("scrub").value = FRAME;
-    hud();
+    if (FRAME >= TR.frames.length - 1) {
+      FRAME = TR.frames.length - 1; SUB = 0; RUNNING = false;
+      syncPlayerUI();
+    }
+    if (FRAME !== before) {
+      hud();
+      syncPlayerUI();
+      invalidate();
+    }
   }
+  LAST_DRAW_MS = now;
+  if (!DIRTY) return;
+  DIRTY = false;
+  const dpr = devicePixelRatio;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
   const s = view.scale;
   const f0 = TR.frames[FRAME];
-  const f1 = TR.frames[Math.min(FRAME + 1, TR.frames.length - 1)];
-  const interp = RUNNING || SUB > 0 ? SUB : 0;
 
   // faint lattice dots (z=0 plane)
   if (s > 10) {
     ctx.fillStyle = "#121a28";
-    const x0 = Math.floor(view.x - (innerWidth - 360) / 2 / s), x1 = Math.ceil(view.x + (innerWidth - 360) / 2 / s);
-    const y0 = Math.floor(view.y - innerHeight / 2 / s), y1 = Math.ceil(view.y + innerHeight / 2 / s);
+    const x0 = Math.floor(view.x - cv.clientWidth / 2 / s), x1 = Math.ceil(view.x + cv.clientWidth / 2 / s);
+    const y0 = Math.floor(view.y - cv.clientHeight / 2 / s), y1 = Math.ceil(view.y + cv.clientHeight / 2 / s);
     if ((x1 - x0) * (y1 - y0) < 20000) for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const [a, b] = px(x, y, 0); ctx.fillRect(a - 1, b - 1, 2, 2); }
   }
-  // χ pressure of the departing frame: [x, y, z, v] with v in 1..250 — a warm glow
-  // under everything (pumped by frustration; agents shove and mats evaporate downhill)
-  for (const c of f0.grid.chi || []) {
+  // χ pressure of the current exact frame: [x, y, z, v] with v in 1..250 — a warm glow
+  // under everything (pumped by blockage; occupants can move or reshape themselves downhill)
+  for (const c of f0.grid.chi) {
     const [cx, cy] = px(c[0], c[1], c[2]);
     ctx.fillStyle = "#ff5a30";
     ctx.globalAlpha = (0.08 + 0.4 * Math.min(1, c[3] / 250)) * zalpha(c[2]);
     ctx.fillRect(cx - s * 0.48, cy - s * 0.48, s * 0.96, s * 0.96);
     ctx.globalAlpha = 1;
   }
-  // wires of the departing frame: [x, y, z, ["NS", ...]]; a trailing "*" marks the
+  // wires of the current exact frame: [x, y, z, ["NS", ...]]; a trailing "*" marks the
   // strand HOT (ψ demand: a consumer awaits along this wire) — drawn gold and thicker
   const drawStrand = (x, y, z, sdesc) => {
     const [cx, cy] = px(x, y, z);
@@ -351,107 +447,294 @@ function draw() {
     for (const sd of w[3]) drawStrand(w[0], w[1], w[2], sd);
     if (w[3].length >= 2) { const [a, b] = px(w[0], w[1], w[2]); ctx.strokeStyle = "#8595ad"; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(a, b, Math.max(2.5, s * 0.12), 0, 7); ctx.stroke(); }
   }
-  // agents: interpolate f0 -> f1 by sid
-  const m0 = bySid(f0), m1 = bySid(f1);
-  const seen = new Set();
+  // Protocol instrumentation has the schema-v3 form [x,y,z,role,phase].
+  const motion = f0.grid.motion;
+  for (const raw of motion) {
+    const pos = raw.slice(0, 3);
+    if (!pos || pos.length < 3 || !pos.every(Number.isFinite)) continue;
+    const role = String(raw[3]);
+    const phase = String(raw[4]);
+    const roleColor = role.startsWith("bulge-source") ? "#ff7b54"
+      : role.startsWith("bulge-spine") ? "#ff4fa3"
+      : role.startsWith("bulge-corner") ? "#d96cff"
+      : role.startsWith("bulge-endpoint") ? "#ffd866"
+      : role === "source" ? "#ffb454"
+      : role === "target" ? "#56c8ff"
+      : role.startsWith("square") ? "#c792ea"
+      : role.startsWith("endpoint") ? "#82d173"
+      : role === "back" ? "#89a4c7"
+      : role === "contested" ? "#ff5a30" : "#5a6b86";
+    const [mx, my] = px(pos[0], pos[1], pos[2]);
+    ctx.strokeStyle = roleColor;
+    ctx.globalAlpha = 0.7 * zalpha(pos[2]);
+    ctx.lineWidth = Math.max(1, s * 0.045);
+    ctx.setLineDash([Math.max(2, s * 0.12), Math.max(2, s * 0.08)]);
+    ctx.beginPath(); ctx.arc(mx, my, s * 0.43, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    if (s > 20 && motion.length <= 20) {
+      ctx.fillStyle = roleColor; ctx.font = `${Math.round(s * 0.22)}px monospace`;
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText(`${role.slice(0, 8)}:${phase}`, mx, my + s * 0.46);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // A CA commit is a discrete state change. Keeping agents on the same recorded frame
+  // as wires avoids drawing an impossible halfway state during playback.
+  const polygon = (x, y, radius, sides, rotation = 0) => {
+    ctx.beginPath();
+    for (let i = 0; i < sides; i++) {
+      const a = rotation + i * Math.PI * 2 / sides;
+      const qx = x + Math.cos(a) * radius, qy = y + Math.sin(a) * radius;
+      if (i === 0) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy);
+    }
+    ctx.closePath();
+  };
+  const facetedDiamond = (x, y, radius) => {
+    const side = radius * 0.78, shoulder = radius * 0.32;
+    ctx.beginPath();
+    ctx.moveTo(x, y - radius);
+    ctx.lineTo(x + side, y - shoulder);
+    ctx.lineTo(x + side, y + shoulder);
+    ctx.lineTo(x, y + radius);
+    ctx.lineTo(x - side, y + shoulder);
+    ctx.lineTo(x - side, y - shoulder);
+    ctx.closePath();
+  };
   const drawAgent = (a, x, y, z, alpha) => {
     const [cx, cy] = px(x, y, z);
-    const tag = a[3], r = s * 0.34;
+    const tag = a[3], bodyRadius = s * 0.235;
+    const ports = a[5].map((face, index) => {
+      const v = DIR[face], vx = v[0] * s / 2, vy = v[1] * s / 2;
+      const length = Math.hypot(vx, vy) || 1;
+      const nx = vx / length, ny = vy / length;
+      return { index, mx: cx + vx, my: cy + vy, nx, ny, tx: -ny, ty: nx };
+    });
     ctx.globalAlpha = alpha * zalpha(z);
-    for (let i = 0; i < a[5].length; i++) {
-      const v = DIR[a[5][i]];
-      ctx.strokeStyle = i === 0 ? "#ffffff" : "#8595ad";
-      ctx.lineWidth = i === 0 ? Math.max(1.5, s * 0.10) : Math.max(1, s * 0.05);
+    // Connectors meet the exact projected face midpoint. The compact body covers their
+    // center ends; semantic markers are drawn above it, so U/D ports remain visible.
+    for (const p of ports) {
+      ctx.strokeStyle = p.index === 0 ? "#ffffff" : "#9baabd";
+      ctx.lineWidth = p.index === 0 ? Math.max(1.5, s * 0.085) : Math.max(1, s * 0.045);
       ctx.beginPath(); ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + v[0] * s / 2, cy + v[1] * s / 2); ctx.stroke();
+      ctx.lineTo(p.mx, p.my); ctx.stroke();
     }
+
+    // Body facets carry polarity: four-sided producer, six-sided consumer, inert Out ring.
     ctx.fillStyle = COL[tag] || "#8595ad";
-    ctx.beginPath(); ctx.roundRect(cx - r, cy - r, 2 * r, 2 * r, r * 0.3); ctx.fill();
-    if (s > 12) { ctx.fillStyle = "#04121c"; ctx.font = `bold ${Math.round(s * 0.32)}px monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(GLYPH[tag] || tag, cx, cy + 1); }
+    if (tag === "Out") { ctx.beginPath(); ctx.arc(cx, cy, bodyRadius, 0, Math.PI * 2); }
+    else if (PRODUCERS.has(tag)) polygon(cx, cy, bodyRadius, 4);
+    else facetedDiamond(cx, cy, bodyRadius);
+    ctx.fill();
+    ctx.strokeStyle = "#07101a"; ctx.lineWidth = Math.max(1, s * 0.035); ctx.stroke();
+    if (tag === "Out") {
+      ctx.beginPath(); ctx.arc(cx, cy, bodyRadius * 0.62, 0, Math.PI * 2);
+      ctx.strokeStyle = "#07101a"; ctx.lineWidth = Math.max(1, s * 0.045); ctx.stroke();
+    }
+    if (s > 12) {
+      const label = GLYPH[tag] || tag;
+      ctx.fillStyle = "#04121c";
+      ctx.font = `bold ${Math.round(s * (label.length > 1 ? 0.20 : 0.27))}px monospace`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, cx, cy + 0.5);
+    }
+
+    // Port identity is geometric, not color-only. Facing principal triangles meet tip
+    // to tip as a white bow-tie; aux 1 is a circle and aux 2 a diamond.
+    for (const p of ports) {
+      if (p.index === 0) {
+        const depth = Math.max(3, s * 0.13), half = Math.max(2, s * 0.075);
+        ctx.beginPath();
+        ctx.moveTo(p.mx, p.my);
+        ctx.lineTo(p.mx - p.nx * depth + p.tx * half, p.my - p.ny * depth + p.ty * half);
+        ctx.lineTo(p.mx - p.nx * depth - p.tx * half, p.my - p.ny * depth - p.ty * half);
+        ctx.closePath();
+        ctx.strokeStyle = "#07101a"; ctx.lineWidth = Math.max(2, s * 0.09); ctx.stroke();
+        ctx.fillStyle = "#ffffff"; ctx.fill();
+      } else if (p.index === 1) {
+        const radius = Math.max(1.8, s * 0.06);
+        ctx.beginPath(); ctx.arc(p.mx, p.my, radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#0b0e14"; ctx.fill();
+        ctx.strokeStyle = "#07101a"; ctx.lineWidth = Math.max(2.5, s * 0.10); ctx.stroke();
+        ctx.strokeStyle = "#c8d3e0"; ctx.lineWidth = Math.max(1, s * 0.045); ctx.stroke();
+      } else {
+        const radius = Math.max(2, s * 0.07);
+        ctx.beginPath();
+        ctx.moveTo(p.mx + p.nx * radius, p.my + p.ny * radius);
+        ctx.lineTo(p.mx + p.tx * radius, p.my + p.ty * radius);
+        ctx.lineTo(p.mx - p.nx * radius, p.my - p.ny * radius);
+        ctx.lineTo(p.mx - p.tx * radius, p.my - p.ty * radius);
+        ctx.closePath();
+        ctx.fillStyle = "#0b0e14"; ctx.fill();
+        ctx.strokeStyle = "#07101a"; ctx.lineWidth = Math.max(2.5, s * 0.10); ctx.stroke();
+        ctx.strokeStyle = "#c8d3e0"; ctx.lineWidth = Math.max(1, s * 0.045); ctx.stroke();
+      }
+    }
     ctx.globalAlpha = 1;
   };
-  for (const [sid, a0] of m0) {
-    seen.add(sid);
-    const a1 = m1.get(sid);
-    if (a1) drawAgent(interp < 0.5 ? a0 : a1,
-      a0[0] + (a1[0] - a0[0]) * interp, a0[1] + (a1[1] - a0[1]) * interp, a0[2] + (a1[2] - a0[2]) * interp, 1);
-    else drawAgent(a0, a0[0], a0[1], a0[2], 1 - interp);                 // dying in the next frame
-  }
-  for (const [sid, a1] of m1) if (!seen.has(sid)) drawAgent(a1, a1[0], a1[1], a1[2], interp);  // born next frame
-  // fire flashes from the arriving frame's events
-  if (interp > 0) for (const e of f1.events) {
+  const agents = [...f0.grid.agents].sort((a, b) => Math.abs(b[2]) - Math.abs(a[2]));
+  for (const a of agents) drawAgent(a, a[0], a[1], a[2], 1);
+  // Fire belongs to this exact recorded frame.
+  for (const e of f0.events) {
     if (e.t !== "fire") continue;
     const [ax, ay] = px((e.c[0] + e.p[0]) / 2, (e.c[1] + e.p[1]) / 2, (e.c[2] + e.p[2]) / 2);
-    ctx.strokeStyle = "#ffd866"; ctx.globalAlpha = 1 - interp;
+    ctx.strokeStyle = "#ffd866"; ctx.globalAlpha = 1;
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(ax, ay, s * (0.4 + interp * 1.4), 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(ax, ay, s * 0.7, 0, 7); ctx.stroke();
     ctx.globalAlpha = 1;
-    if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(e.rule, ax, ay - s * (0.8 + interp)); }
+    if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(e.rule, ax, ay - s * 0.8); }
   }
 }
+
+function wireStats(frame) {
+  return frame.wire ?? { length: null, chord: null, slack: null };
+}
+const shown = v => Number.isFinite(v) ? v : "—";
 
 function hud() {
   const f = TR.frames[FRAME];
   const last = FRAME === TR.frames.length - 1;
-  const badge = !last ? '<span class="hot">running…</span>'
-    : TR.status === "done" ? `<span class="ok">NORMAL FORM ✓ readback ${TR.readback}${TR.readback === TR.oracle ? " = oracle" : " ≠ oracle!"}</span>`
-    : `<span class="bad">STUCK — ${f.pairs} pair(s) remain, no shadow progress (liveness residue)</span>`;
+  const tickGap = FRAME === 0 ? 0 : f.tick - TR.frames[FRAME - 1].tick;
+  document.getElementById("eventhdr").textContent = FRAME === 0 || tickGap === 1
+    ? "THIS TICK"
+    : `SINCE PREVIOUS FRAME (+${tickGap} TICKS)`;
+  const nfTick = Number.isFinite(TR.nf_tick) ? TR.nf_tick : null;
+  const afterNf = nfTick !== null && f.tick >= nfTick;
+  const elapsedSettle = afterNf ? Math.max(0, f.tick - nfTick) : 0;
+  const settleTotal = Number.isFinite(TR.settle_ticks) ? TR.settle_ticks : elapsedSettle;
+  const nfFrame = nfTick === null ? null : TR.frames.find(frame => frame.tick >= nfTick);
+  const nfSlack = nfFrame ? wireStats(nfFrame).slack : null;
+  const readback = TR.readback;
+  const readbackBadge = `readback ${readback}${readback === TR.oracle ? " = oracle" : " ≠ oracle!"}`;
+  let badge, phase;
+  if (!last && afterNf) {
+    badge = `<span class="hot">SEMANTIC NF ✓ — settling geometry…</span>`;
+    phase = `settling · ${elapsedSettle} tick${elapsedSettle === 1 ? "" : "s"} after NF`;
+  } else if (!last) {
+    badge = '<span class="hot">evaluating…</span>';
+    phase = "semantic evaluation";
+  } else if (nfTick !== null && TR.settled === true) {
+    badge = `<span class="ok">NORMAL FORM ✓ ${readbackBadge}; GEOMETRY SETTLED ✓</span>`;
+    phase = `settled · ${settleTotal} post-NF tick${settleTotal === 1 ? "" : "s"}`;
+  } else if (nfTick !== null && TR.settled === false) {
+    badge = `<span class="bad">SEMANTIC NF ✓ ${readbackBadge}; SETTLING CAPPED</span>`;
+    phase = `settle cap · ${settleTotal} post-NF tick${settleTotal === 1 ? "" : "s"}`;
+  } else if (TR.status === "stuck") {
+    badge = `<span class="bad">STUCK — ${f.pairs} pair(s) remain, no shadow progress (liveness residue)</span>`;
+    phase = "stuck before semantic NF";
+  } else {
+    badge = `<span class="bad">TICK CAP — ${f.pairs} active pair(s) remain</span>`;
+    phase = "evaluation capped before semantic NF";
+  }
+  const wire = wireStats(f);
   document.getElementById("stat").innerHTML =
     `<div class="row"><span class="k">term</span><span>${TR.term.length > 30 ? TR.term.slice(0, 30) + "…" : TR.term}</span></div>` +
-    `<div class="row"><span class="k">topology</span><span>${TR.topo || "bilayer"}</span></div>` +
+    `<div class="row"><span class="k">topology</span><span>${TR.topo}</span></div>` +
+    `<div class="row"><span class="k">trace schema</span><span>${TR.schema_version} · ${TR.engine_revision}</span></div>` +
+    `<div class="row"><span class="k">capture</span><b>${TR.everyTick ? "every tick" : "sampled"}</b></div>` +
     `<div class="row"><span class="k">oracle NF</span><span>${TR.oracle}</span></div>` +
     `<div class="row"><span class="k">tick</span><b>${f.tick} / ${TR.ticks}</b></div>` +
+    `<div class="row"><span class="k">${TR.everyTick ? "tick step" : "sampled tick gap"}</span><b>${FRAME === 0 ? "initial" : "+" + tickGap}</b></div>` +
+    (nfTick === null ? "" : `<div class="row"><span class="k">semantic NF tick</span><b>${nfTick}</b></div>`) +
+    `<div class="row"><span class="k">phase</span><span>${phase}</span></div>` +
     `<div class="row"><span class="k">interactions (work)</span><b>${f.ints}</b></div>` +
-    `<div class="row"><span class="k">transport (reels)</span><b>${f.transport}</b></div>` +
+    `<div class="row"><span class="k">agent transport (stars + host reel)</span><b>${f.transport}</b></div>` +
     `<div class="row"><span class="k">live agents</span><b>${f.grid.agents.length}</b></div>` +
     `<div class="row"><span class="k">active pairs</span><b>${f.pairs}</b></div>` +
+    `<div class="row"><span class="k">wire L / chord C / slack S</span><b>${shown(wire.length)} / ${shown(wire.chord)} / ${shown(wire.slack)}</b></div>` +
+    (afterNf ? `<div class="row"><span class="k">S at NF → now</span><b>${shown(nfSlack)} → ${shown(wire.slack)}</b></div>` : "") +
     `<div class="row"><span class="k">state</span><span>${badge}</span></div>`;
-  document.getElementById("framev").textContent = `${FRAME}/${TR.frames.length - 1}`;
   const ev = document.getElementById("events");
+  const events = f.events;
   const fmt = e =>
     e.t === "fire" ? `<div class="f">fire ${e.rule} @ (${e.c.join(",")})·(${e.p.join(",")}) → ${e.fresh.length} fresh</div>`
-    : e.t === "reel" ? `<div>reel sid ${e.sid}: (${e.from.join(",")}) → (${e.to.join(",")})</div>`
+    : e.t === "reel" ? `<div>host-planned demanded reel sid ${e.sid}: (${e.from.join(",")}) → (${e.to.join(",")})</div>`
     : e.t === "retract" ? `<div>retract U-turn @ (${e.a.join(",")})·(${e.b.join(",")})</div>`
-    : e.t === "slide" ? `<div>slide${e.why ? " (" + e.why + ")" : ""} out of (${e.at.join(",")})</div>`
+    : e.t === "slide" ? `<div>${e.why === "bulge-local" ? "χ-licensed strand-owned bulge" : "χ-licensed strand-owned reshape"}${e.why ? " (" + e.why + ")" : ""} @ (${e.at.join(",")})</div>`
     : e.t === "flip" ? `<div>flip bend (${e.from.join(",")}) → (${e.to.join(",")})</div>`
-    : e.t === "approach" ? `<div>approach: leaf drifts (${e.from.join(",")}) → (${e.to.join(",")})</div>`
-    : e.t === "shove" ? `<div>shove agent (${e.from.join(",")}) → (${e.to.join(",")}) (pressure)</div>`
+    : e.t === "approach" ? `<div>local arity-1–3 star: (${e.from.join(",")}) → (${e.to.join(",")})</div>`
+    : e.t === "local-pressure" ? `<div>newly effective seven-site pressure source ${e.level} @ (${e.at.join(",")})</div>`
+    : e.t === "agent-step" ? `<div>χ-licensed agent-owned move: (${e.from.join(",")}) → (${e.to.join(",")})</div>`
     : `<div>${e.t}</div>`;
-  ev.innerHTML = f.events.length === 0 ? '<div>(no transitions this tick)</div>' : f.events.map(fmt).join("");
+  ev.innerHTML = events.length === 0
+    ? `<div>(${tickGap <= 1 ? "no transitions this tick" : "no transitions in the sampled interval"})</div>`
+    : events.map(fmt).join("");
   highlightRules(f);
 }
 
 // controls
 const scen = document.getElementById("scen");
-const optLabel = t => `${t.status === "done" ? "✓" : "✗"} ${t.name} — ${t.topo || "bilayer"}, ${t.status === "done" ? "reaches NF" : t.status === "stuck" ? "STUCK (liveness residue)" : "tick-capped"}`;
-for (const n in window.TRACES) { const o = document.createElement("option"); o.value = n; o.textContent = optLabel(window.TRACES[n]); scen.appendChild(o); }
-scen.onchange = () => pick(scen.value);
-document.getElementById("play").onclick = () => {
-  if (FRAME >= TR.frames.length - 1) { FRAME = 0; SUB = 0; }
-  RUNNING = !RUNNING;
-  document.getElementById("play").innerHTML = RUNNING ? "&#10074;&#10074; pause" : "&#9654; play";
+function validateTrace(t, name) {
+  if (!t || t.schema_version !== 3) throw new Error(`trace ${name} requires schema version 3`);
+  if (typeof t.engine_revision !== "string" || typeof t.topo !== "string" ||
+      typeof t.readback !== "string" || !Array.isArray(t.frames) || t.frames.length === 0)
+    throw new Error(`trace ${name} is missing required schema-v3 metadata`);
+  for (const [i, f] of t.frames.entries()) {
+    if (!f || !Array.isArray(f.events) || !f.grid ||
+        !Array.isArray(f.grid.agents) || !Array.isArray(f.grid.wires) ||
+        !Array.isArray(f.grid.chi) || !Array.isArray(f.grid.motion) || !("wire" in f) ||
+        !Number.isFinite(f.tick) || (i > 0 && f.tick <= t.frames[i - 1].tick))
+      throw new Error(`trace ${name} frame ${i} is not a complete schema-v3 frame`);
+  }
+  if (t.capture_stride !== undefined &&
+      (!Number.isInteger(t.capture_stride) || t.capture_stride < 1))
+    throw new Error(`trace ${name} has an invalid capture stride`);
+  t.everyTick = t.frames[0].tick === 0 && t.frames.at(-1).tick === t.ticks &&
+    t.frames.every((frame, i) => i === 0 || frame.tick === t.frames[i - 1].tick + 1);
+  if (t.capture_stride === 1 && !t.everyTick)
+    throw new Error(`trace ${name} declares every-tick capture but contains a gap`);
+  return t;
+}
+const optLabel = t => {
+  const topo = t.topo;
+  const capture = t.everyTick ? "every tick" : "sampled";
+  if (Number.isFinite(t.nf_tick) && t.settled === true) return `✓ ${t.name} — ${topo}, ${capture}, NF + settled`;
+  if (Number.isFinite(t.nf_tick) && t.settled === false) return `◐ ${t.name} — ${topo}, ${capture}, NF + settle-capped`;
+  return `${t.status === "done" ? "✓" : "✗"} ${t.name} — ${topo}, ${capture}, ${t.status === "done" ? "reaches NF" : t.status === "stuck" ? "STUCK (liveness residue)" : "tick-capped"}`;
 };
-document.getElementById("step").onclick = () => { RUNNING = false; SUB = 0; FRAME = Math.min(FRAME + 1, TR.frames.length - 1); document.getElementById("scrub").value = FRAME; hud(); };
+for (const n in window.TRACES) { const t = validateTrace(window.TRACES[n], n); const o = document.createElement("option"); o.value = n; o.textContent = optLabel(t); scen.appendChild(o); }
+scen.onchange = () => pick(scen.value);
+document.getElementById("play").onclick = () => togglePlayback();
+document.getElementById("prev").onclick = () => setFrame(FRAME - 1);
+document.getElementById("step").onclick = () => setFrame(FRAME + 1);
 document.getElementById("reset").onclick = () => pick(scen.value);
-document.getElementById("scrub").oninput = e => { RUNNING = false; SUB = 0; FRAME = +e.target.value; hud(); };
-document.getElementById("speed").oninput = e => document.getElementById("speedv").textContent = e.target.value + " t/s";
-document.getElementById("speedv").textContent = "6 t/s";
+document.getElementById("fitframe").onclick = () => fitCurrent();
+document.getElementById("fitall").onclick = () => fit();
+document.getElementById("scrub").oninput = e => setFrame(+e.target.value);
+document.getElementById("speed").oninput = e => document.getElementById("speedv").textContent = e.target.value + " fps";
+document.getElementById("speedv").textContent = "8 fps";
+document.getElementById("loadbtn").onclick = () => document.getElementById("load").click();
 document.getElementById("load").onchange = async e => {
   const file = e.target.files[0]; if (!file) return;
-  const j = JSON.parse(await file.text());
+  const j = validateTrace(JSON.parse(await file.text()), file.name);
   window.TRACES[j.name] = j;
-  const o = document.createElement("option"); o.value = j.name; o.textContent = optLabel(j);
-  scen.appendChild(o); scen.value = j.name; pick(j.name);
+  let o = [...scen.options].find(option => option.value === j.name);
+  if (!o) { o = document.createElement("option"); o.value = j.name; scen.appendChild(o); }
+  o.textContent = optLabel(j); scen.value = j.name; pick(j.name);
 };
+addEventListener("keydown", e => {
+  const target = e.target;
+  const interactive = target instanceof HTMLElement &&
+    (target.matches("button,input,select,textarea") || target.isContentEditable);
+  if (interactive) return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); setFrame(FRAME - 1); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); setFrame(FRAME + 1); }
+  else if (e.code === "Space" && !e.repeat) { e.preventDefault(); togglePlayback(); }
+});
 // pan / zoom
 let panning = false, px0 = 0, py0 = 0;
 cv.addEventListener("mousedown", e => { panning = true; px0 = e.clientX; py0 = e.clientY; });
 addEventListener("mouseup", () => panning = false);
-addEventListener("mousemove", e => { if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; } });
-cv.addEventListener("wheel", e => { e.preventDefault(); view.scale = Math.max(5, Math.min(60, view.scale * (e.deltaY < 0 ? 1.1 : 0.9))); }, { passive: false });
+addEventListener("mousemove", e => { if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; invalidate(); } });
+cv.addEventListener("wheel", e => { e.preventDefault(); view.scale = Math.max(2, Math.min(60, view.scale * (e.deltaY < 0 ? 1.1 : 0.9))); invalidate(); }, { passive: false });
 
-function resize() { const w = innerWidth - 360, h = innerHeight; cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio; cv.style.width = w + "px"; cv.style.height = h + "px"; }
-addEventListener("resize", resize);
+function resize() {
+  const stage = document.getElementById("stage");
+  const w = Math.max(1, stage.clientWidth), h = Math.max(1, stage.clientHeight);
+  cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio;
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  invalidate();
+}
+addEventListener("resize", () => { resize(); if (TR) fit(); });
 renderAgents(); resize(); pick(Object.keys(window.TRACES)[0]); requestAnimationFrame(draw);
 </script>
 </body></html>
