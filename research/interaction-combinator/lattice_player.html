@@ -30,6 +30,21 @@
   #topbar input[type=range] { width:110px; }
   #topbar #scrub { width:min(190px,18vw); }
   .topvalue { color:#8595ad; white-space:nowrap; font-size:11px; }
+  #celltip { position:absolute; z-index:7; min-width:250px; max-width:330px; max-height:420px;
+    overflow:auto; box-sizing:border-box; padding:9px 10px; border:1px solid #3a506f;
+    border-radius:8px; background:rgba(11,14,20,.97); box-shadow:0 8px 28px rgba(0,0,0,.55);
+    color:var(--fg); font-size:11px; line-height:1.4; pointer-events:none; }
+  #celltip[hidden] { display:none; }
+  #celltip.pinned { border-color:var(--accent); }
+  .tiphead { display:flex; align-items:center; justify-content:space-between; gap:8px;
+    color:var(--accent); font-weight:bold; margin-bottom:5px; }
+  #cellclose { display:none; width:24px; height:22px; padding:0; font:16px/1 system-ui,sans-serif; }
+  #celltip.pinned #cellclose { display:grid; place-items:center; pointer-events:auto; }
+  .tiprow { display:grid; grid-template-columns:78px minmax(0,1fr); gap:7px; margin:2px 0; }
+  .tipkey { color:#8595ad; }
+  .tipsection { color:#ffd866; margin:7px 0 2px; border-top:1px solid #1b2436; padding-top:5px; }
+  .tipfoot { color:#5a6b86; margin-top:7px; font-size:10px; }
+  #cv:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
   @media (max-width:1050px) {
     #topbar { left:8px; right:8px; transform:none; flex-wrap:wrap; justify-content:center; }
     #topbar #scrub { width:150px; }
@@ -58,7 +73,7 @@
 </style></head>
 <body><div id="wrap">
   <div id="stage">
-    <canvas id="cv"></canvas>
+    <canvas id="cv" tabindex="0" aria-label="Lattice trace. Hover a visible cell to preview it; click to pin or unpin its inspector."></canvas>
     <div id="topbar" role="group" aria-label="Trace playback controls">
       <div class="transport">
         <button id="prev" class="iconbtn" title="Previous tick (Left arrow)" aria-label="Previous tick" aria-keyshortcuts="ArrowLeft">←</button>
@@ -77,6 +92,10 @@
       <button id="fitall" class="iconbtn" title="Fit entire trace" aria-label="Fit entire trace">⛶</button>
       <input type="file" id="load" accept=".json" style="display:none">
       <button id="loadbtn" class="iconbtn" title="Load trace JSON" aria-label="Load trace JSON">⇧</button>
+    </div>
+    <div id="celltip" role="region" aria-label="Selected lattice cell" hidden>
+      <div class="tiphead"><span id="celltitle"></span><button id="cellclose" title="Unselect cell" aria-label="Unselect cell">×</button></div>
+      <div id="cellbody"></div>
     </div>
   </div>
   <div id="side">
@@ -114,6 +133,9 @@
     Regenerate or add traces with <b>cargo run --release --bin dump-run &lt;name&gt;
     [ticks] [bilayer|full3d] [stride=1]</b> and drop the JSON here.</div></details>
     <div class="note" id="whatnote" style="margin:2px 0 6px"></div>
+    <div class="note" style="margin:0 0 8px">Hover a visible cell to preview its trace state. Click to pin;
+    click the same cell, empty canvas, ×, or Escape to unselect. A pinned coordinate remains
+    selected while stepping, even if it becomes empty.</div>
     <h3>STATUS</h3>
     <div id="stat"></div>
     <h3 id="eventhdr">THIS TICK</h3>
@@ -134,11 +156,14 @@
     <h3>LEGEND</h3>
     <div class="note">
       white triangle = principal port; hollow circle = aux 1; diamond = aux 2; diagonal markers = up/down<br>
+      thin gray center ring = switchbox with multiple independent strands (a crossing, not a join)<br>
+      large dashed colored ring = staged local-motion role on that cell<br>
+      double gray circular body = inert Out result sink<br>
       <span style="color:#6f9fd8">z=0 strand</span> / <span style="color:#a97fd8">nonzero-z strand</span> (signed depth offsets along the up-right/down-left axis and dims with |z|)<br>
       <span style="color:#ffd866">gold strand</span> = hot (ψ demand: a consumer awaits along this wire; demand licenses a local star even away from calm)<br>
       <span style="color:#ff5a30">red glow</span> = χ pressure (pumped by blockage; the sole clearance license, while each occupant moves or reshapes only itself)<br>
       staged-role rings: amber source, cyan target, purple square, green endpoint, blue-gray back, magenta pressure-bulge family, red contested persistence, gray debt<br>
-      gold flash = fire (rule shown); agent positions jump at recorded commits; retract removes slack, while a pressure bulge adds two units of slack to route around blockage for later contraction to recover when possible
+      gold event ring = fire (rule shown); agent positions jump at recorded commits; retract removes slack, while a pressure bulge adds two units of slack to route around blockage for later contraction to recover when possible
     </div>
     <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
     <div class="note">Projection preservation is checked against the shadow interaction
@@ -163,7 +188,7 @@
 document.write('<script src="lattice_traces.js?v=local-motion-2026-07-14-dense1"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-14 · every-tick replay + diamond port geometry";
+const PLAYER_VERSION = "2026-07-15 · every-tick replay + cell inspector";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -196,11 +221,20 @@ const COL = { L: "#3fbf7f", S: "#3fbf7f", F: "#3fbf7f", P: "#7ce38b", Pair: "#2f
 const GLYPH = { L: "△", S: "S", F: "F", P: "@", Pair: "⋈", A: "A", T1: "T₁", Sel: "T₂", Unp: "⌄", Dn: "δ", Eps: "ε", Nrm: "N", Out: "☉" };
 const PLANECOL = ["#6f9fd8", "#a97fd8", "#d87fb0", "#d8a97f"];
 const PRODUCERS = new Set(["L", "S", "F", "P", "Pair"]);
+const STEP3 = { N: [0, -1, 0], E: [1, 0, 0], S: [0, 1, 0], W: [-1, 0, 0],
+                U: [0, 0, 1], D: [0, 0, -1] };
+const OPPOSITE = { N: "S", E: "W", S: "N", W: "E", U: "D", D: "U" };
+const FACE_ORDER = ["N", "E", "S", "W", "U", "D"];
 
 let TR = null, FRAME = 0, SUB = 0, RUNNING = false, LAST_DRAW_MS = null;
+let CELL_INDEX = new Map(), HOVER_CELL = null, PINNED_CELL = null;
 let DIRTY = true;
 let view = { x: 0, y: 0, scale: 26 };
-const invalidate = () => { DIRTY = true; };
+const invalidate = () => {
+  DIRTY = true;
+  const inspected = PINNED_CELL || HOVER_CELL;
+  if (TR && inspected) positionInspector(inspected);
+};
 function syncPlayerUI() {
   const button = document.getElementById("play");
   button.textContent = RUNNING ? "Ⅱ" : "▶";
@@ -225,7 +259,8 @@ function setFrame(index, pause = true) {
   if (pause) RUNNING = false;
   FRAME = Math.max(0, Math.min(TR.frames.length - 1, index));
   SUB = 0; LAST_DRAW_MS = null;
-  hud(); syncPlayerUI(); invalidate();
+  HOVER_CELL = null;
+  rebuildCellIndex(); hud(); syncPlayerUI(); renderInspector(); invalidate();
 }
 function togglePlayback() {
   if (!TR) return;
@@ -345,6 +380,7 @@ function pick(name) {
   TR = validateTrace(window.TRACES[name], name);
   document.getElementById("scen").value = name;
   FRAME = 0; SUB = 0; RUNNING = false; LAST_DRAW_MS = null;
+  HOVER_CELL = null; PINNED_CELL = null;
   const sc = document.getElementById("scrub");
   sc.max = TR.frames.length - 1; sc.value = 0;
   TR.ruleCounts = {};
@@ -352,7 +388,7 @@ function pick(name) {
     if (e.t === "fire") TR.ruleCounts[e.rule] = (TR.ruleCounts[e.rule] || 0) + 1;
   renderRules();
   document.getElementById("whatnote").innerHTML = TR.note ? `<b style="color:#ffd866">watch:</b> ${TR.note}` : "";
-  fit(); hud(); syncPlayerUI(); invalidate();
+  rebuildCellIndex(); fit(); hud(); syncPlayerUI(); renderInspector(); invalidate();
 }
 function fitFrames(frames) {
   let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
@@ -363,6 +399,8 @@ function fitFrames(frames) {
   for (const f of frames) {
     for (const ag of f.grid.agents) include(ag[0], ag[1], ag[2]);
     for (const w of f.grid.wires) include(w[0], w[1], w[2]);
+    for (const c0 of f.grid.chi) include(c0[0], c0[1], c0[2]);
+    for (const m of f.grid.motion) include(m[0], m[1], m[2]);
   }
   if (!Number.isFinite(a)) { a = c = -1; b = d = 1; }
   const w = cv.clientWidth || innerWidth - 389, h = cv.clientHeight || innerHeight;
@@ -379,6 +417,201 @@ const px = (x, y, z) => [
 ];
 const zalpha = z => Math.max(0.45, 1 - 0.3 * Math.abs(z));
 const planecol = z => PLANECOL[Math.min(Math.abs(z), PLANECOL.length - 1)];
+
+// ---------------------------------------------------------------- cell inspector
+const cellKey = p => `${p[0]},${p[1]},${p[2]}`;
+const sameCell = (a, b) => Array.isArray(a) && Array.isArray(b) &&
+  a.length >= 3 && b.length >= 3 && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+const cellLabel = p => `(${p[0]},${p[1]},${p[2]})`;
+const emptyCell = p => ({ pos: [p[0], p[1], p[2]], agent: null, wire: null, chi: 0, motion: [] });
+
+function indexedCell(pos) {
+  const key = cellKey(pos);
+  let cell = CELL_INDEX.get(key);
+  if (!cell) {
+    cell = emptyCell(pos);
+    CELL_INDEX.set(key, cell);
+  }
+  return cell;
+}
+
+function rebuildCellIndex() {
+  CELL_INDEX = new Map();
+  if (!TR) return;
+  const grid = TR.frames[FRAME].grid;
+  for (const a of grid.agents) indexedCell(a).agent = a;
+  for (const w of grid.wires) indexedCell(w).wire = w;
+  for (const c of grid.chi) indexedCell(c).chi = c[3];
+  for (const m of grid.motion) indexedCell(m).motion.push({ role: String(m[3]), phase: String(m[4]) });
+}
+
+function hitCell(clientX, clientY) {
+  if (!TR) return null;
+  const rect = cv.getBoundingClientRect();
+  const x = clientX - rect.left, y = clientY - rect.top;
+  const radius = Math.max(7, view.scale * 0.46);
+  const candidates = [];
+  for (const cell of CELL_INDEX.values()) {
+    const [cx, cy] = px(...cell.pos);
+    const d2 = (x - cx) ** 2 + (y - cy) ** 2;
+    if (d2 <= radius ** 2) {
+      const weight = (cell.agent ? 8 : 0) + (cell.wire ? 4 : 0) +
+        (cell.motion.length ? 2 : 0) + (cell.chi ? 1 : 0);
+      candidates.push({ cell, d2, weight });
+    }
+  }
+  candidates.sort((a, b) => a.d2 - b.d2 || b.weight - a.weight ||
+    Math.abs(a.cell.pos[2]) - Math.abs(b.cell.pos[2]));
+  return candidates.length ? [...candidates[0].cell.pos] : null;
+}
+
+function portName(tag, index) {
+  const spec = AGENTS.find(a => a.length > 1 && a[0] === tag);
+  const name = spec && spec[1][index] ? spec[1][index].replace("▸", "") : `port ${index}`;
+  return index === 0 ? `principal ${name}` : `aux ${index} ${name}`;
+}
+
+const strandFaces = strand => String(strand).replace(/\*$/, "").split("");
+const strandLabel = strand => {
+  const raw = String(strand), hot = raw.endsWith("*"), faces = strandFaces(raw);
+  return `${faces.join(" ↔ ")} · ${hot ? "hot ψ" : "cold"}`;
+};
+
+function usedFaces(cell) {
+  const used = new Map();
+  const add = (face, source) => {
+    if (!used.has(face)) used.set(face, []);
+    used.get(face).push(source);
+  };
+  if (cell.agent) cell.agent[5].forEach((face, i) => add(face, portName(cell.agent[3], i)));
+  if (cell.wire) for (const strand of cell.wire[3]) {
+    const label = `wire ${strandFaces(strand).join("↔")}`;
+    for (const face of strandFaces(strand)) add(face, label);
+  }
+  return used;
+}
+
+function cellSummary(cell) {
+  if (!cell) return "empty";
+  const parts = [];
+  if (cell.agent) parts.push(`${cell.agent[3]}#${cell.agent[4]}`);
+  if (cell.wire) parts.push(cell.wire[3].length > 1 ? `${cell.wire[3].length}-strand switchbox` : `wire ${strandFaces(cell.wire[3][0]).join("↔")}`);
+  if (!parts.length && cell.motion.length) parts.push("motion marker");
+  if (!parts.length && cell.chi) parts.push(`χ=${cell.chi}`);
+  return parts.join(" + ") || "empty";
+}
+
+function eventAtCell(event, pos) {
+  const fromTo = label => {
+    if (sameCell(event.from, pos)) return `${label} departed → ${cellLabel(event.to)}`;
+    if (sameCell(event.to, pos)) return `${label} arrived ← ${cellLabel(event.from)}`;
+    return null;
+  };
+  if (event.t === "approach") return fromTo("local star");
+  if (event.t === "reel") return fromTo(`host reel sid ${event.sid}`);
+  if (event.t === "agent-step") return fromTo("χ agent move");
+  if (event.t === "flip") return fromTo("bend flip");
+  if (event.t === "retract" && (sameCell(event.a, pos) || sameCell(event.b, pos))) {
+    const other = sameCell(event.a, pos) ? event.b : event.a;
+    return `U-turn retract with ${cellLabel(other)}`;
+  }
+  if (event.t === "fire") {
+    if (sameCell(event.c, pos)) return `fire ${event.rule} · consumer principal`;
+    if (sameCell(event.p, pos)) return `fire ${event.rule} · producer principal`;
+    const fresh = Array.isArray(event.fresh) ? event.fresh.findIndex(at => sameCell(at, pos)) : -1;
+    if (fresh >= 0) return `fire ${event.rule} · fresh placement ${fresh + 1}/${event.fresh.length}`;
+  }
+  if (event.t === "slide" && sameCell(event.at, pos)) return `χ strand reshape${event.why ? ` · ${event.why}` : ""}`;
+  if (event.t === "local-pressure" && sameCell(event.at, pos)) return `pressure source · level ${event.level}`;
+  for (const [field, value] of Object.entries(event)) {
+    if (sameCell(value, pos)) return `${event.t} · ${field}`;
+  }
+  return null;
+}
+
+function tipRow(parent, key, value) {
+  const row = document.createElement("div"), k = document.createElement("span"), v = document.createElement("span");
+  row.className = "tiprow"; k.className = "tipkey";
+  k.textContent = key; v.textContent = value;
+  row.append(k, v); parent.append(row);
+}
+
+function tipSection(parent, title) {
+  const section = document.createElement("div");
+  section.className = "tipsection"; section.textContent = title; parent.append(section);
+}
+
+function positionInspector(pos) {
+  const tip = document.getElementById("celltip");
+  if (tip.hidden) return;
+  const [cx, cy] = px(...pos), stage = document.getElementById("stage");
+  const gap = 14, margin = 8, width = tip.offsetWidth, height = tip.offsetHeight;
+  let left = cx + gap, top = cy + gap;
+  if (left + width > stage.clientWidth - margin) left = cx - width - gap;
+  if (top + height > stage.clientHeight - margin) top = cy - height - gap;
+  tip.style.left = `${Math.max(margin, Math.min(stage.clientWidth - width - margin, left))}px`;
+  tip.style.top = `${Math.max(margin, Math.min(stage.clientHeight - height - margin, top))}px`;
+}
+
+function renderInspector() {
+  const tip = document.getElementById("celltip"), body = document.getElementById("cellbody");
+  const pos = PINNED_CELL || HOVER_CELL;
+  if (!TR || !pos) {
+    tip.hidden = true; tip.classList.remove("pinned"); tip.removeAttribute("aria-live");
+    body.replaceChildren(); return;
+  }
+  const cell = CELL_INDEX.get(cellKey(pos)) || emptyCell(pos);
+  const pinned = Boolean(PINNED_CELL);
+  tip.hidden = false;
+  tip.classList.toggle("pinned", pinned);
+  tip.setAttribute("aria-label", `${pinned ? "Selected" : "Hovered"} lattice cell ${cellLabel(pos)}`);
+  document.getElementById("celltitle").textContent = `${cellLabel(pos)} · tick ${TR.frames[FRAME].tick}${pinned ? " · pinned" : ""}`;
+  body.replaceChildren();
+
+  const hasState = cell.agent || cell.wire || cell.chi || cell.motion.length;
+  tipRow(body, "cell", hasState ? "occupied in exported trace" : "empty at this tick");
+  if (cell.agent) {
+    const a = cell.agent, polarity = a[3] === "Out" ? "inert" : PRODUCERS.has(a[3]) ? "producer" : "consumer";
+    tipSection(body, "agent");
+    tipRow(body, "payload", `${a[3]} · sid ${a[4]} · ${polarity}`);
+    a[5].forEach((face, index) => tipRow(body, `port ${index}`, `${portName(a[3], index)} → ${face}`));
+  }
+  if (cell.wire) {
+    tipSection(body, cell.wire[3].length > 1 ? "wire switchbox" : "wire");
+    cell.wire[3].forEach((strand, i) => tipRow(body, `strand ${i + 1}`, strandLabel(strand)));
+    if (cell.wire[3].length > 1) tipRow(body, "center ring", "independent strands cross; they do not join");
+  }
+  tipSection(body, "fields + protocol");
+  tipRow(body, "χ pressure", cell.chi ? String(cell.chi) : "0 · calm");
+  if (cell.motion.length) {
+    cell.motion.forEach((motion, i) => tipRow(body, `motion ${i + 1}`, `${motion.role} · phase ${motion.phase}`));
+    tipRow(body, "dashed ring", "this cell has a staged motion role");
+  } else tipRow(body, "motion", "none exported");
+
+  const faces = usedFaces(cell);
+  if (faces.size) {
+    tipSection(body, "face-local neighborhood");
+    for (const face of FACE_ORDER) {
+      if (!faces.has(face)) continue;
+      const delta = STEP3[face], neighborPos = pos.map((n, i) => n + delta[i]);
+      const neighbor = CELL_INDEX.get(cellKey(neighborPos));
+      const reciprocal = neighbor && usedFaces(neighbor).has(OPPOSITE[face]);
+      tipRow(body, face, `${faces.get(face).join(" + ")} → ${cellLabel(neighborPos)} · ${OPPOSITE[face]} ${reciprocal ? "reciprocal ✓" : "missing"} · ${cellSummary(neighbor)}`);
+    }
+  }
+
+  const events = TR.frames[FRAME].events.map(event => eventAtCell(event, pos)).filter(Boolean);
+  if (events.length) {
+    tipSection(body, TR.everyTick ? "events committed in this tick" :
+      FRAME === 0 ? "events in initial frame" : "events since previous frame");
+    events.forEach((event, i) => tipRow(body, `${i + 1}`, event));
+  }
+  const foot = document.createElement("div");
+  foot.className = "tipfoot";
+  foot.textContent = "Trace-visible state only. σ, reservations, cooldowns, surveys, and uncommitted scheduler substeps are not exported.";
+  body.append(foot);
+  positionInspector(pos);
+}
 
 function draw(now) {
   requestAnimationFrame(draw);
@@ -398,8 +631,11 @@ function draw(now) {
       syncPlayerUI();
     }
     if (FRAME !== before) {
+      HOVER_CELL = null;
+      rebuildCellIndex();
       hud();
       syncPlayerUI();
+      renderInspector();
       invalidate();
     }
   }
@@ -583,6 +819,23 @@ function draw(now) {
     ctx.globalAlpha = 1;
     if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(e.rule, ax, ay - s * 0.8); }
   }
+
+  // A pinned coordinate remains visible even when its payload moves away on a later tick.
+  const inspected = PINNED_CELL || HOVER_CELL;
+  if (inspected) {
+    const [ix, iy] = px(...inspected), radius = s * 0.46, corner = Math.max(4, s * 0.16);
+    ctx.save();
+    ctx.strokeStyle = PINNED_CELL ? "#56c8ff" : "#9baabd";
+    ctx.lineWidth = Math.max(1.5, s * 0.055);
+    ctx.globalAlpha = PINNED_CELL ? 1 : 0.78;
+    ctx.beginPath();
+    ctx.moveTo(ix - radius + corner, iy - radius); ctx.lineTo(ix - radius, iy - radius); ctx.lineTo(ix - radius, iy - radius + corner);
+    ctx.moveTo(ix + radius - corner, iy - radius); ctx.lineTo(ix + radius, iy - radius); ctx.lineTo(ix + radius, iy - radius + corner);
+    ctx.moveTo(ix - radius, iy + radius - corner); ctx.lineTo(ix - radius, iy + radius); ctx.lineTo(ix - radius + corner, iy + radius);
+    ctx.moveTo(ix + radius - corner, iy + radius); ctx.lineTo(ix + radius, iy + radius); ctx.lineTo(ix + radius, iy + radius - corner);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function wireStats(frame) {
@@ -712,6 +965,13 @@ document.getElementById("load").onchange = async e => {
   o.textContent = optLabel(j); scen.value = j.name; pick(j.name);
 };
 addEventListener("keydown", e => {
+  if (e.key === "Escape" && (PINNED_CELL || HOVER_CELL)) {
+    e.preventDefault();
+    PINNED_CELL = null; HOVER_CELL = null;
+    renderInspector(); invalidate();
+    cv.focus({ preventScroll: true });
+    return;
+  }
   const target = e.target;
   const interactive = target instanceof HTMLElement &&
     (target.matches("button,input,select,textarea") || target.isContentEditable);
@@ -721,10 +981,54 @@ addEventListener("keydown", e => {
   else if (e.code === "Space" && !e.repeat) { e.preventDefault(); togglePlayback(); }
 });
 // pan / zoom
-let panning = false, px0 = 0, py0 = 0;
-cv.addEventListener("mousedown", e => { panning = true; px0 = e.clientX; py0 = e.clientY; });
+let panning = false, px0 = 0, py0 = 0, dragDistance = 0;
+cv.addEventListener("mousedown", e => {
+  if (e.button !== 0) return;
+  panning = true; dragDistance = 0; px0 = e.clientX; py0 = e.clientY;
+});
 addEventListener("mouseup", () => panning = false);
-addEventListener("mousemove", e => { if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; invalidate(); } });
+addEventListener("mousemove", e => {
+  if (panning) {
+    const dx = e.clientX - px0, dy = e.clientY - py0;
+    dragDistance += Math.hypot(dx, dy);
+    view.x -= dx / view.scale; view.y -= dy / view.scale;
+    px0 = e.clientX; py0 = e.clientY; invalidate();
+  } else if (e.target === cv && !PINNED_CELL) {
+    const hit = hitCell(e.clientX, e.clientY);
+    if ((hit === null) !== (HOVER_CELL === null) || (hit && !sameCell(hit, HOVER_CELL))) {
+      HOVER_CELL = hit; renderInspector(); invalidate();
+    }
+  }
+});
+cv.addEventListener("mouseleave", () => {
+  if (!PINNED_CELL && HOVER_CELL) { HOVER_CELL = null; renderInspector(); invalidate(); }
+});
+cv.addEventListener("click", e => {
+  if (dragDistance > 4) { dragDistance = 0; return; }
+  const hit = hitCell(e.clientX, e.clientY);
+  if (!hit || (PINNED_CELL && sameCell(PINNED_CELL, hit))) {
+    PINNED_CELL = null; HOVER_CELL = null;
+  } else {
+    PINNED_CELL = hit; HOVER_CELL = null; RUNNING = false; LAST_DRAW_MS = null;
+    syncPlayerUI();
+  }
+  dragDistance = 0;
+  renderInspector(); invalidate();
+  cv.focus({ preventScroll: true });
+});
+document.getElementById("cellclose").onclick = () => {
+  PINNED_CELL = null; HOVER_CELL = null;
+  renderInspector(); invalidate();
+  cv.focus({ preventScroll: true });
+};
+document.getElementById("stage").addEventListener("wheel", e => {
+  const tip = document.getElementById("celltip");
+  if (tip.hidden) return;
+  const rect = tip.getBoundingClientRect();
+  if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+  e.preventDefault(); e.stopPropagation();
+  tip.scrollTop += e.deltaY;
+}, { capture: true, passive: false });
 cv.addEventListener("wheel", e => { e.preventDefault(); view.scale = Math.max(2, Math.min(60, view.scale * (e.deltaY < 0 ? 1.1 : 0.9))); invalidate(); }, { passive: false });
 
 function resize() {
