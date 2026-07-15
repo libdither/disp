@@ -1534,7 +1534,7 @@ fn materialize_edit(grid: &Grid, p: Pos, edit: PayloadEdit) -> Option<Option<Cel
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub struct LocalMotionStep {
     /// Sites whose control or payload state changed.
     pub changes: usize,
@@ -1545,20 +1545,68 @@ pub struct LocalMotionStep {
     pub pressure_sources: Vec<(Pos, u8)>,
 }
 
-/// Evaluate the strict rule on a sparse active region.  Sparse enumeration is only an
+/// Advance the strict rule in canonical sparse-coordinate order. This wrapper is useful
+/// for focused protocol tests; the scheduler uses [`advance_local_motion_permuted`] to
+/// continuously check that frozen-snapshot evaluation does not depend on traversal order.
+pub fn advance_local_motion(grid: &mut Grid) -> LocalMotionStep {
+    advance_local_motion_ordered(grid, None)
+}
+
+/// Advance the same frozen-snapshot rule after a deterministic Fisher-Yates permutation
+/// of the active centers. `seed` selects a reproducible schedule and `sweep` selects one
+/// permutation within it. The permutation changes evaluation order only: all centers read
+/// the same old grid and all writes commit after evaluation, so a sound local rule must
+/// produce exactly the canonical result.
+pub fn advance_local_motion_permuted(
+    grid: &mut Grid,
+    seed: u64,
+    sweep: u64,
+) -> LocalMotionStep {
+    advance_local_motion_ordered(grid, Some((seed, sweep)))
+}
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+fn permute<T>(items: &mut [T], seed: u64, sweep: u64) {
+    let mut state = seed
+        ^ sweep.wrapping_mul(0xd1b5_4a32_d192_ed03)
+        ^ (items.len() as u64).wrapping_mul(0x94d0_49bb_1331_11eb);
+    for i in (1..items.len()).rev() {
+        let j = (splitmix64(&mut state) % (i as u64 + 1)) as usize;
+        items.swap(i, j);
+    }
+}
+
+/// Evaluate the strict rule on a sparse active region. Sparse enumeration is only an
 /// optimization: every occupied/control site and its one-cell halo is included, and an
 /// all-empty site outside that set would return the all-empty state.
-pub fn advance_local_motion(grid: &mut Grid) -> LocalMotionStep {
+fn advance_local_motion_ordered(
+    grid: &mut Grid,
+    order: Option<(u64, u64)>,
+) -> LocalMotionStep {
     let mut active: BTreeSet<Pos> = grid.cells.keys().copied().collect();
     active.extend(grid.motion.keys().copied());
     let halo: Vec<Pos> = active.iter().flat_map(|p| DIRS.map(|d| step(*p, d))).collect();
     active.extend(halo);
 
-    let computed: Vec<(Pos, SiteNext, Option<Option<Cell>>)> = active.into_iter().map(|p| {
+    let mut positions: Vec<Pos> = active.into_iter().collect();
+    if let Some((seed, sweep)) = order { permute(&mut positions, seed, sweep); }
+
+    let mut computed: Vec<(Pos, SiteNext, Option<Option<Cell>>)> = positions.into_iter().map(|p| {
         let next = next_site(&hood_at(grid, p));
         let payload = materialize_edit(grid, p, next.edit);
         (p, next, payload)
     }).collect();
+    // Observer vectors and sparse commits remain byte-for-byte stable across schedules.
+    // Sorting here is not needed for the dynamics; it makes order invariance directly
+    // testable and keeps trace event ordering deterministic.
+    computed.sort_by_key(|(p, _, _)| *p);
 
     let mut out = LocalMotionStep::default();
     for (p, next, payload) in &computed {

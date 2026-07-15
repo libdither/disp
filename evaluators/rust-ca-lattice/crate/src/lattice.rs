@@ -211,6 +211,7 @@ pub struct SeedCell {
 #[derive(Clone, Debug)]
 pub enum Cell { Agent(AgentCell), Wire(WireCell), Seed(SeedCell) }
 
+#[derive(Clone, Debug)]
 pub struct Grid {
     pub cells: BTreeMap<Pos, Cell>,
     pub transport: u64, // reel count (the transport grade of the ledger)

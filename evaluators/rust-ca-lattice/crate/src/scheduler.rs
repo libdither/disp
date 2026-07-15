@@ -5,8 +5,8 @@
 //! pressure; they never select or displace a foreign payload. The host-planned phases are
 //! explicitly nonlocal and remain outside the `next_site` cellular rule.
 
-use crate::lattice::{embed, step, Grid, Pos, Topo};
-use crate::local::advance_local_motion;
+use crate::lattice::{embed, step, Cell, Grid, Pos, Topo};
+use crate::local::advance_local_motion_permuted;
 use crate::net::Net;
 use crate::oracle::Term;
 use crate::transitions::{
@@ -15,6 +15,34 @@ use crate::transitions::{
     plan_agent_step, plan_flip, plan_grow_dock, plan_reel, plan_retract, plan_slide,
     reel_blocked, DockPlan, FirePlan, GrowStep,
 };
+use std::collections::BTreeSet;
+
+/// Reproducible default for traversal permutations. A caller can select another schedule
+/// with [`Sim::load_seeded`]; the seed changes activation order, never the local rule.
+pub const DEFAULT_SCHEDULE_SEED: u64 = 0x6c6f_6361_6c2d_6361;
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+fn permute<T>(items: &mut [T], seed: u64, tick: u64, phase: u64) {
+    let mut state = seed
+        ^ tick.wrapping_mul(0xd1b5_4a32_d192_ed03)
+        ^ phase.wrapping_mul(0xa24b_aed4_963e_e407)
+        ^ (items.len() as u64).wrapping_mul(0x94d0_49bb_1331_11eb);
+    for i in (1..items.len()).rev() {
+        let j = (splitmix64(&mut state) % (i as u64 + 1)) as usize;
+        items.swap(i, j);
+    }
+}
+
+fn overlaps(touched: &BTreeSet<Pos>, footprint: &BTreeSet<Pos>) -> bool {
+    footprint.iter().any(|p| touched.contains(p))
+}
 
 /// Which host fire planner gets the immediate attempt. `Search` performs in-board
 /// backtracking; `Stamp` checks one precomputed bounded footprint; `StampThenSearch`
@@ -52,7 +80,7 @@ pub enum CheckLevel {
 /// never read it.
 enum FireAction { Atomic(FirePlan), Dock(DockPlan) }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Event {
     Fire { cpos: Pos, ppos: Pos, rule: (&'static str, &'static str), fresh: Vec<Pos> },
     Reel { from: Pos, to: Pos, sid: u32 },
@@ -74,15 +102,30 @@ pub struct Sim {
     /// Events of the most recent tick.
     pub events: Vec<Event>,
     pub fire_mode: FireMode,
+    /// Seed for reproducible, pseudo-random activation order.
+    pub schedule_seed: u64,
+    /// Number of scheduler ticks already completed; mixed into every phase permutation.
+    pub schedule_tick: u64,
 }
 
 impl Sim {
     pub fn load(term: &Term, topo: Topo) -> Sim {
+        Self::load_seeded(term, topo, DEFAULT_SCHEDULE_SEED)
+    }
+
+    pub fn load_seeded(term: &Term, topo: Topo, schedule_seed: u64) -> Sim {
         let mut shadow = Net::new();
         let root = shadow.build(term);
         shadow.drive(root);
         let grid = embed(&shadow, topo);
-        Sim { grid, shadow, events: vec![], fire_mode: FireMode::Search }
+        Sim {
+            grid,
+            shadow,
+            events: vec![],
+            fire_mode: FireMode::Search,
+            schedule_seed,
+            schedule_tick: 0,
+        }
     }
 
     fn plan_fire_mode(&self, p: Pos) -> Option<FireAction> {
@@ -104,13 +147,15 @@ impl Sim {
         }
     }
 
-    /// One mixed sequential tick. Local kernels read frozen center-plus-six-neighbor
-    /// snapshots; host-planned bounded-footprint transitions execute in deterministic
-    /// coordinate order.
+    /// One mixed tick. Local kernels read frozen center-plus-six-neighbor snapshots in a
+    /// deterministically permuted order. Host-planned candidates use independent seeded
+    /// permutations, and a tick-wide write set prevents any payload cell from taking part
+    /// in two geometry transitions before the next tick.
     /// Blocked actors add χ sources only, and every clearance transition is initiated by
     /// the pressured occupant.  Returns the number of control or payload transitions.
     pub fn tick(&mut self, check: CheckLevel) -> usize {
         self.events.clear();
+        let schedule_tick = self.schedule_tick;
         let mut applied = 0;
         // ψ: one demand sweep (monotone, so heated strands count as progress and the
         // phase provably quiesces once every live wire is hot)
@@ -125,8 +170,15 @@ impl Sim {
         // consumes its principal forwarder; auxiliary rerouting changes total length by
         // zero or ±1 according to arity/mode. A pressured switchbox may add two units of
         // slack to move one of its own strands aside.
-        let local = advance_local_motion(&mut self.grid);
+        let local = advance_local_motion_permuted(
+            &mut self.grid,
+            self.schedule_seed,
+            schedule_tick,
+        );
         applied += local.changes;
+        // Payload edits are the local kernel's write footprint. Later host phases may
+        // inspect these cells, but cannot consume or rewrite them until the next tick.
+        let mut touched: BTreeSet<Pos> = local.edits.iter().map(|(p, _)| *p).collect();
         for &(at, level) in &local.pressure_sources {
             if self.grid.chi_at(at) < level {
                 self.events.push(Event::LocalPressure { at, level });
@@ -143,83 +195,112 @@ impl Sim {
         }
         // χ sources collected as the tick runs; the field updates at the end.
         let mut pumps = local.pressure_sources;
-        loop {
-            let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
-            let mut fired = false;
-            for p in positions {
-                match self.plan_fire_mode(p) {
-                    Some(FireAction::Atomic(plan)) => {
-                        self.events.push(Event::Fire {
-                            cpos: plan.cpos, ppos: plan.ppos,
-                            rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
-                            fresh: plan.fresh_cells.clone(),
-                        });
-                        apply_fire(&mut self.grid, &mut self.shadow, &plan);
-                        applied += 1;
-                        fired = true;
-                        if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
-                        break;
-                    }
-                    Some(FireAction::Dock(plan)) => {
-                        self.events.push(Event::Dock {
-                            cpos: plan.cpos, ppos: plan.ppos,
-                            rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
-                        });
-                        apply_grow_dock(&mut self.grid, plan);
-                        applied += 1;
-                        fired = true;
-                        break;
-                    }
-                    None => {}
+        // Fire only pairs present at the start of this phase. Disjoint pairs may commit
+        // together; products are never re-scanned and fired again in this tick.
+        let mut positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
+        permute(&mut positions, self.schedule_seed, schedule_tick, 1);
+        for p in positions {
+            match self.plan_fire_mode(p) {
+                Some(FireAction::Atomic(plan)) => {
+                    if overlaps(&touched, &plan.footprint) { continue; }
+                    self.events.push(Event::Fire {
+                        cpos: plan.cpos, ppos: plan.ppos,
+                        rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
+                        fresh: plan.fresh_cells.clone(),
+                    });
+                    apply_fire(&mut self.grid, &mut self.shadow, &plan);
+                    touched.extend(plan.footprint.iter().copied());
+                    applied += 1;
+                    if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                 }
-            }
-            if !fired { break; }
-        }
-        // An unfireable adjacent pair may request room, but it may not select or move a
-        // bystander.  It raises χ at its own two cells; each obstructing payload responds
-        // later through its own pressure transition. This ownership boundary excludes
-        // board scans that select a foreign wire for displacement.
-        for (cpos, a) in self.grid.agents().map(|(p, a)| (p, a.clone())).collect::<Vec<_>>() {
-            if !a.tag.is_consumer() || a.nascent { continue; }
-            let Some(d) = a.faces[0] else { continue };
-            let ppos = step(cpos, d);
-            let Some(b) = self.grid.agent(ppos) else { continue };
-            if !b.tag.is_producer() || b.nascent || b.faces[0] != Some(d.opp()) { continue; }
-            if self.plan_fire_mode(cpos).is_some() { continue; }
-            // Age only controls damped dock retries.  It grants no displacement right.
-            let age = {
-                if let Some(crate::lattice::Cell::Agent(a)) = self.grid.cells.get_mut(&cpos) {
-                    a.frustration = a.frustration.saturating_add(1);
-                    a.frustration
-                } else { 0 }
-            };
-            pumps.push((cpos, 250));
-            pumps.push((ppos, 250));
-            if age >= 32 && age % 64 == 32 {
-                if let Some(plan) = plan_grow_dock(&self.grid, cpos) {
+                Some(FireAction::Dock(plan)) => {
+                    let footprint: BTreeSet<Pos> = plan.cells.iter().copied()
+                        .chain([plan.cpos, plan.ppos]).collect();
+                    if overlaps(&touched, &footprint) { continue; }
                     self.events.push(Event::Dock {
                         cpos: plan.cpos, ppos: plan.ppos,
                         rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
                     });
                     apply_grow_dock(&mut self.grid, plan);
+                    touched.extend(footprint);
+                    applied += 1;
+                }
+                None => {}
+            }
+        }
+        // An unfireable adjacent pair may request room, but it may not select or move a
+        // bystander.  It raises χ at its own two cells; each obstructing payload responds
+        // later through its own pressure transition. This ownership boundary excludes
+        // board scans that select a foreign wire for displacement.
+        let mut pairs = self.grid.agents().map(|(p, a)| (p, a.clone())).collect::<Vec<_>>();
+        permute(&mut pairs, self.schedule_seed, schedule_tick, 2);
+        for (cpos, a) in pairs {
+            if !a.tag.is_consumer() || a.nascent { continue; }
+            let Some(d) = a.faces[0] else { continue };
+            let ppos = step(cpos, d);
+            if touched.contains(&cpos) || touched.contains(&ppos) { continue; }
+            let Some(b) = self.grid.agent(ppos) else { continue };
+            if !b.tag.is_producer() || b.nascent || b.faces[0] != Some(d.opp()) { continue; }
+            if self.plan_fire_mode(cpos).is_some() { continue; }
+            pumps.push((cpos, 250));
+            pumps.push((ppos, 250));
+            // A retry is decided from the state at phase entry. Reaching the threshold
+            // this tick schedules the retry for the next tick instead of aging and
+            // docking the same cell in one scheduler pass.
+            if a.frustration >= 32 && a.frustration % 64 == 32 {
+                if let Some(plan) = plan_grow_dock(&self.grid, cpos) {
+                    let footprint: BTreeSet<Pos> = plan.cells.iter().copied()
+                        .chain([plan.cpos, plan.ppos]).collect();
+                    if overlaps(&touched, &footprint) { continue; }
+                    self.events.push(Event::Dock {
+                        cpos: plan.cpos, ppos: plan.ppos,
+                        rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
+                    });
+                    apply_grow_dock(&mut self.grid, plan);
+                    touched.extend(footprint);
                     applied += 1;
                     continue;
                 }
             }
+            // Age only controls damped dock retries. It grants no displacement right.
+            if let Some(Cell::Agent(current)) = self.grid.cells.get_mut(&cpos) {
+                let next = current.frustration.saturating_add(1);
+                if next != current.frustration {
+                    current.frustration = next;
+                    touched.insert(cpos);
+                }
+            }
         }
-        for d in self.grid.seed_drivers() {
+        let mut drivers = self.grid.seed_drivers();
+        permute(&mut drivers, self.schedule_seed, schedule_tick, 3);
+        for d in drivers {
+            let Some(Cell::Seed(seed)) = self.grid.cells.get(&d) else { continue };
+            let seed_footprint: BTreeSet<Pos> = seed.plan.cells.iter().copied()
+                .chain([seed.plan.a, seed.plan.b]).collect();
+            // In particular, do not fill a reservation that a local owner vacated earlier
+            // in this tick. The empty cell becomes eligible on the following tick.
+            if overlaps(&touched, &seed_footprint) { continue; }
             match grow_step(&mut self.grid, &mut self.shadow, d) {
                 Some(GrowStep::Placed(at)) => {
                     self.events.push(Event::Grow { at });
+                    touched.insert(d);
+                    touched.insert(at);
+                    if !matches!(self.grid.cells.get(&d), Some(Cell::Seed(s)) if s.driver) {
+                        touched.extend(seed_footprint);
+                    }
                     applied += 1;
                     if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                 }
                 Some(GrowStep::Aborted) => {
                     self.events.push(Event::Abort { at: d });
+                    touched.extend(seed_footprint);
                     applied += 1;
                     if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                 }
-                Some(GrowStep::Waiting(cell)) => { pumps.push((cell, 250)); }
+                Some(GrowStep::Waiting(cell)) => {
+                    touched.insert(d);
+                    pumps.push((cell, 250));
+                }
                 None => {}
             }
         }
@@ -229,18 +310,23 @@ impl Sim {
         for (c, _) in self.grid.reserved.clone() {
             if !self.grid.is_empty(c) { pumps.push((c, 250)); }
         }
-        let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
+        let mut positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
+        permute(&mut positions, self.schedule_seed, schedule_tick, 4);
         for apos in &positions {
+            if touched.contains(apos) { continue; }
             // A blocked walker likewise emits only pressure.  In particular it never
             // chooses a blocker strand, a shared endpoint, or even an alternate route for
             // the blocker.  The target cell's occupants own every subsequent move.
             if let Some(npos) = reel_blocked(&self.grid, *apos) { pumps.push((npos, 250)); }
         }
         for p in positions {
+            if touched.contains(&p) { continue; }
             if let Some(plan) = plan_reel(&self.grid, p) {
+                if overlaps(&touched, &plan.footprint) { continue; }
                 let sid = self.grid.agent(plan.apos).map(|a| a.sid).unwrap_or(0);
                 self.events.push(Event::Reel { from: plan.apos, to: plan.npos, sid });
                 apply_reel(&mut self.grid, &plan);
+                touched.extend(plan.footprint.iter().copied());
                 applied += 1;
                 if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
             } else {
@@ -265,12 +351,17 @@ impl Sim {
         // anonymous field below and yields to everything demanded above. Every wire is
         // eligible, hot included: shortening the demanded wire is the most valuable
         // shortening there is, and the demand-licensed phases already ran this tick.
-        for p in self.grid.wire_positions() {
+        let mut wire_positions = self.grid.wire_positions();
+        permute(&mut wire_positions, self.schedule_seed, schedule_tick, 5);
+        for p in wire_positions {
+            if touched.contains(&p) { continue; }
             let Some(w) = self.grid.wire(p) else { continue };
             for s in w.iter().collect::<Vec<_>>() {
                 if let Some(plan) = plan_flip(&self.grid, p, s) {
+                    if overlaps(&touched, &plan.footprint) { continue; }
                     self.events.push(Event::Flip { from: plan.p, to: plan.npos, hot: plan.s.hot });
                     apply_flip(&mut self.grid, &plan);
+                    touched.extend(plan.footprint.iter().copied());
                     applied += 1;
                     if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                     break; // one shift per cell per tick
@@ -278,11 +369,15 @@ impl Sim {
             }
         }
         // AGENT STEP: χ-licensed occupant descent for parked agents (hot walkers and docked pairs immune)
-        let positions: Vec<Pos> = if AGENT_STEP_ON { self.grid.agents().map(|(p, _)| p).collect() } else { vec![] };
+        let mut positions: Vec<Pos> = if AGENT_STEP_ON { self.grid.agents().map(|(p, _)| p).collect() } else { vec![] };
+        permute(&mut positions, self.schedule_seed, schedule_tick, 6);
         for p in positions {
+            if touched.contains(&p) { continue; }
             if let Some(plan) = plan_agent_step(&self.grid, p) {
+                if overlaps(&touched, &plan.footprint) { continue; }
                 self.events.push(Event::AgentStep { from: plan.apos, to: plan.npos });
                 apply_agent_step(&mut self.grid, &plan);
+                touched.extend(plan.footprint.iter().copied());
                 applied += 1;
                 if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
             }
@@ -295,7 +390,10 @@ impl Sim {
         // out of it), while σ carries standing shells and is read only by approach.
         // Separate fields keep reaction-zone parking from authorizing clearance moves.
         if AGENT_STEP_ON {
-            for p in self.grid.wire_positions() {
+            let mut wire_positions = self.grid.wire_positions();
+            permute(&mut wire_positions, self.schedule_seed, schedule_tick, 7);
+            for p in wire_positions {
+                if touched.contains(&p) { continue; }
                 let here = self.grid.chi_at(p);
                 if here < 1 { continue; }
                 let Some(w) = self.grid.wire(p) else { continue };
@@ -306,8 +404,10 @@ impl Sim {
                 // supplying re-tie space for the host-planned agent step
                 for s in strands.iter().copied() {
                     if let Some(plan) = plan_chi_flip(&self.grid, p, s) {
+                        if overlaps(&touched, &plan.footprint) { continue; }
                         self.events.push(Event::Flip { from: plan.p, to: plan.npos, hot: plan.s.hot });
                         apply_flip(&mut self.grid, &plan);
+                        touched.extend(plan.footprint.iter().copied());
                         applied += 1;
                         moved = true;
                         if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
@@ -321,9 +421,11 @@ impl Sim {
                 for s in strands {
                     if s.cooldown > 0 { continue; }
                     if let Some(plan) = plan_slide(&self.grid, p, s, &[]) {
+                        if overlaps(&touched, &plan.footprint) { continue; }
                         if !crowded && plan.strands.iter().any(|(c, _)| self.grid.chi_at(*c) >= here) { continue; }
                         self.events.push(Event::Slide { at: plan.p, why: "decongest" });
                         apply_slide(&mut self.grid, &plan);
+                        touched.extend(plan.footprint.iter().copied());
                         applied += 1;
                         if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
                         break;
@@ -331,19 +433,20 @@ impl Sim {
                 }
             }
         }
-        loop {
-            let mut any = false;
-            for p in self.grid.wire_positions() {
-                if let Some(plan) = plan_retract(&self.grid, p) {
-                    self.events.push(Event::Retract { a: plan.c1, b: plan.c2 });
-                    apply_retract(&mut self.grid, &plan);
-                    applied += 1;
-                    any = true;
-                    if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
-                    break; // the board changed: rescan
-                }
+        // One phase-start scan only: a retraction exposed by another transition waits for
+        // the following tick. Disjoint U-turns may still contract in parallel.
+        let mut wire_positions = self.grid.wire_positions();
+        permute(&mut wire_positions, self.schedule_seed, schedule_tick, 8);
+        for p in wire_positions {
+            if touched.contains(&p) { continue; }
+            if let Some(plan) = plan_retract(&self.grid, p) {
+                if overlaps(&touched, &plan.footprint) { continue; }
+                self.events.push(Event::Retract { a: plan.c1, b: plan.c2 });
+                apply_retract(&mut self.grid, &plan);
+                touched.extend(plan.footprint.iter().copied());
+                applied += 1;
+                if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
             }
-            if !any { break; }
         }
         // the standing shells (σ, a separate field): every live consumer marks its
         // reaction room, and approaching values park at the rim
@@ -353,6 +456,7 @@ impl Sim {
         self.grid.sigma_step(&shells);
         self.grid.chi_step(&pumps);
         self.grid.cooldown_step();
+        self.schedule_tick = self.schedule_tick.wrapping_add(1);
         applied
     }
 }

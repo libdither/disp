@@ -5,9 +5,10 @@
 //! results. Liveness is measured for the generated corpus and required for the explicit
 //! must-complete pins.
 
-use rust_ca_lattice::lattice::{Topo, TOPOS};
+use rust_ca_lattice::lattice::{manhattan, Cell, Grid, Pos, Topo, TOPOS};
+use rust_ca_lattice::local::advance_local_motion_permuted;
 use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Lcg, Term};
-use rust_ca_lattice::scheduler::{run_term, run_term_with, CheckLevel, FireMode, Outcome, Sim};
+use rust_ca_lattice::scheduler::{run_term, run_term_with, CheckLevel, Event, FireMode, Outcome, Sim};
 use rust_ca_lattice::transitions::plan_retract;
 
 fn oracle_nf(t: &Term) -> Option<String> {
@@ -82,6 +83,143 @@ fn determinism() {
         assert_eq!((a.done, a.ticks, a.ints, a.transport, a.peak_agents),
                    (b.done, b.ticks, b.ints, b.transport, b.peak_agents),
             "sequential schedule must be bit-deterministic on {}", topo.name());
+    }
+}
+
+fn grid_fingerprint(grid: &Grid) -> String {
+    // Every dynamic plane participates. BTreeMap debug order is canonical, making this
+    // useful for exact scheduler conformance without adding observer equality to Grid.
+    format!("{:?}|{:?}|{}|{:?}|{:?}|{:?}|{}|{:?}",
+        grid.topo, grid.cells, grid.transport, grid.reserved, grid.chi, grid.sigma,
+        grid.seed_count, grid.motion)
+}
+
+fn sim_fingerprint(sim: &Sim) -> String {
+    format!("{}|{:?}|{}|{:?}", grid_fingerprint(&sim.grid), sim.shadow.agents,
+        sim.shadow.ints, sim.events)
+}
+
+#[test]
+fn shuffled_frozen_snapshot_is_scan_order_invariant() {
+    let term = ap(s(Term::L), Term::L);
+    let seeds = [0, 1, 0x9e37_79b9_7f4a_7c15, u64::MAX];
+    for topo in TOPOS {
+        let mut variants: Vec<Sim> = seeds.iter().map(|_| Sim::load(&term, topo)).collect();
+        // The local star is demand-gated. Seed each identical fixture with the same local
+        // demand bits so this test exercises a complete multi-site transaction rather
+        // than merely permuting a quiescent board.
+        for sim in &mut variants {
+            for cell in sim.grid.cells.values_mut() {
+                if let Cell::Wire(wire) = cell {
+                    for strand in wire.strands.iter_mut().flatten() { strand.hot = true; }
+                }
+            }
+        }
+
+        for sweep in 0..40 {
+            let mut expected: Option<(String, String)> = None;
+            for (seed, sim) in seeds.into_iter().zip(&mut variants) {
+                let step = advance_local_motion_permuted(&mut sim.grid, seed, sweep);
+                sim.grid.check_projection(&sim.shadow);
+                let got = (grid_fingerprint(&sim.grid), format!("{step:?}"));
+                if let Some(want) = &expected {
+                    assert_eq!(&got, want,
+                        "frozen local sweep {sweep} depended on traversal seed {seed:#x} ({})",
+                        topo.name());
+                } else {
+                    expected = Some(got);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn seeded_scheduler_repeats_exactly() {
+    let term = oracle::chain_k(2);
+    let seed = 0xd1b5_4a32_d192_ed03;
+    for topo in TOPOS {
+        let mut a = Sim::load_seeded(&term, topo, seed);
+        let mut b = Sim::load_seeded(&term, topo, seed);
+        assert_eq!(sim_fingerprint(&a), sim_fingerprint(&b));
+        for tick in 1..=2_000 {
+            let na = a.tick(CheckLevel::Every);
+            let nb = b.tick(CheckLevel::Every);
+            assert_eq!(a.schedule_tick, tick);
+            assert_eq!(b.schedule_tick, tick);
+            assert_eq!(na, nb, "same-seed applied count diverged at tick {tick} on {}", topo.name());
+            assert_eq!(sim_fingerprint(&a), sim_fingerprint(&b),
+                "same-seed state or observer trace diverged at tick {tick} on {}", topo.name());
+            if a.shadow.all_active_pairs().is_empty() && !a.grid.has_seeds() { break; }
+        }
+    }
+}
+
+#[test]
+fn seeded_schedule_preserves_projection_and_oracle_result() {
+    let seeds = [0, 1, 0x94d0_49bb_1331_11eb, u64::MAX];
+    for topo in TOPOS {
+        for (label, term) in [
+            ("stem", ap(s(Term::L), Term::L)),
+            ("chain1", oracle::chain_k(1)),
+        ] {
+            let want = oracle_nf(&term).expect("seeded pin diverged in oracle");
+            let mut completions = 0;
+            for seed in seeds {
+                let mut sim = Sim::load_seeded(&term, topo, seed);
+                for _ in 0..2_000 {
+                    if sim.shadow.all_active_pairs().is_empty() && !sim.grid.has_seeds() { break; }
+                    sim.tick(CheckLevel::Every);
+                }
+                if sim.shadow.all_active_pairs().is_empty() && !sim.grid.has_seeds() {
+                    completions += 1;
+                    sim.grid.check_projection(&sim.shadow);
+                    assert_eq!(sim.grid.readback().as_ref().map(oracle::show).as_deref(), Some(want.as_str()),
+                        "wrong seeded normal form for {label}, seed {seed:#x}, {}", topo.name());
+                }
+            }
+            assert!(completions > 0,
+                "every tested deterministic schedule stalled for {label} on {}", topo.name());
+        }
+    }
+}
+
+#[test]
+fn agents_cross_at_most_one_face_per_tick() {
+    // A local approach may finish at the start of a mixed scheduler tick. Host reel and
+    // pressure descent must see that destination as already touched: otherwise the same
+    // agent can traverse a second edge using state created earlier in this tick. Treat
+    // the ordered observer stream as a movement ledger and reject every such chain.
+    for topo in TOPOS {
+        for (label, term) in [
+            ("stem", ap(s(Term::L), Term::L)),
+            ("chain2", oracle::chain_k(2)),
+        ] {
+            let mut sim = Sim::load(&term, topo);
+            for tick in 1..=2_000 {
+                if sim.shadow.all_active_pairs().is_empty() { break; }
+                sim.tick(CheckLevel::Every);
+
+                let mut arrived: Vec<Pos> = vec![];
+                for event in &sim.events {
+                    let movement = match event {
+                        Event::Approach { from, to }
+                        | Event::Reel { from, to, .. }
+                        | Event::AgentStep { from, to } => Some((*from, *to)),
+                        _ => None,
+                    };
+                    let Some((from, to)) = movement else { continue };
+                    assert_eq!(manhattan(from, to), 1,
+                        "{label} used a nonlocal movement at tick {tick} on {}: {from:?} -> {to:?}",
+                        topo.name());
+                    assert!(!arrived.contains(&from),
+                        "{label} moved one agent more than one face at tick {tick} on {}: \
+                         a previous move arrived at {from:?}, then another departed for {to:?}; \
+                         events={:?}", topo.name(), sim.events);
+                    arrived.push(to);
+                }
+            }
+        }
     }
 }
 

@@ -83,11 +83,44 @@ A site contains only bounded, locally meaningful state:
   a star or bulge handshake; and
 - **bounded rewrite/reservation state** for the local fire executor.
 
-The exact packing remains an implementation choice, but the cardinality must be fixed before
-the net size is known. In particular, Rust observer ids, `Rc<GrowPlan>`, absolute positions,
-event logs, sparse-map keys, and whole-wire survey oracles do not cross the local-rule API.
-Tie-breaking must be derivable from bounded local state and face order; `hash(x,y,tick)` is
-not part of the normative dynamics.
+The canonical packed target is exact. The payload discriminator is included in every payload
+total below:
+
+| State component | Bits | Encoding |
+|---|---:|---|
+| empty payload | 2 | payload kind |
+| arity-1 / arity-2 / arity-3 agent | 18 / 20 / 22 | kind 2 + tag 4 + ordered distinct face tuple 3 / 5 / 7 + nascent 1 + frustration 8 |
+| one / two / three-strand wire | 116 / 223 / 330 | kind 2 + canonical six-face matching (including count) 7 + 107 per strand |
+| one strand's bonded signals | 107 | demand `ψ` 1 + cooldown 8 + two survey sides at 49 each |
+| fields and reservation | 17 | `χ` 8 + `σ` 8 + local reservation flag 1 |
+
+The protocol mark has a four-bit role tag included in these totals: none 4, source 25,
+target 25, square 32, endpoint 31, back 29, bulge-source 22, bulge-spine 21,
+bulge-corner 22, bulge-endpoint 27, debt 10, and shared-contest 245 bits. The
+shared-contest mark is largest because its unchanged-patch witness contributes a 231-bit
+seven-cell signature (`7 × 33`). Thus an ordinary three-strand cell with no active protocol
+uses `330 + 17 + 4 = 351` bits, and the largest seed-free local state uses
+`330 + 17 + 245 = 592` bits.
+
+The 592-bit number is the canonical local budget, not a claim about Rust object size. The
+current Rust wire representation preserves strand slot, order, and orientation; a fieldwise
+packing that preserves those distinctions has a 636-bit seed-free maximum. Canonicalizing a
+wire to its unordered disjoint face matching removes distinctions that cannot affect the
+local rule and reaches the 592-bit target. A 32-bit stable id may be displayed by an observer
+for an agent, but is excluded from both local totals.
+
+Two host representations are not yet finite local state. A reservation currently records an
+absolute owner position (97 bits including presence) where the target encoding permits only
+the one-bit locally witnessed reservation flag. A seed cell currently holds an
+`Rc<GrowPlan>` containing absolute positions and variable-length vectors, so it has no honest
+fixed local bit total. Local grow must replace that object with a bounded ROM template index
+and face-relative per-site roles before seed cells satisfy this section.
+
+Rust observer ids, absolute positions, event logs, sparse-map keys, and whole-wire survey
+oracles do not cross the local-rule API. Tie-breaking inside the rule is derived from bounded
+local state and face order; `hash(x,y,tick)` is not part of the dynamics. A host may use a
+seed and tick to permute evaluation order only as a conformance test, because frozen-snapshot
+evaluation must be invariant under that permutation.
 
 
 ## 4. The agent alphabet (uniformly lowered)
@@ -157,8 +190,17 @@ Priority is encoded in the finite local rule, not in a host loop. A useful order
 continue an already claimed protocol; propagate demand/survey/pressure; begin a demanded
 owner-initiated star; begin a χ-licensed occupant response; perform calm bond maintenance;
 otherwise stay.
-Any operation touching more than one payload is a protocol whose intermediate ticks change
-control state only and whose final tick consists of mutually verified center writes.
+One tick is one evaluation/commit barrier, not a container for mutable scheduler subphases.
+No returned state may become an input until the following tick. Consequently, an occupant
+can move at most from one cell to one face-neighbor in a tick, a claim or signal can advance
+at most one face, and a newly arrived occupant cannot reel, step, fire, or move again in that
+same tick. Many disjoint one-hop moves may commit in parallel.
+
+An operation touching more than one payload is a protocol whose phases occupy distinct
+ticks. Intermediate ticks change bounded control state, and a synchronous final tick consists
+of mutually verified center writes. This is not a multi-stage tick: taking several ticks is
+the necessary way for information to cross a multi-cell footprint while every individual
+tick remains one radius-one map.
 
 ### 5.1 The rewrite executor (microcoded, not hand-written)
 
@@ -187,6 +229,14 @@ incumbent remains free to depart.
 The semantic scheduler is the frozen radius-one map above. A block kernel may be a hardware
 optimization only when it implements that map exactly.
 
+The sparse runner deterministically shuffles the active-site enumeration using an explicit
+run seed and tick number. Every enumerated site still reads the same frozen snapshot, and all
+center outputs are committed only after evaluation finishes. Therefore every seed and every
+permutation must produce the same next lattice. This is an adversarial test for accidental
+scan-order dependence; it is not asynchronous execution, because no evaluation observes a
+write made earlier in the permutation. The seed and tick remain host scheduling metadata,
+not cell inputs.
+
 A multi-site move uses relative roles such as source, target, square, endpoint, or back. A
 claim advances one face per tick. Each role checks only reciprocal marks and unchanged local
 geometry; conflicts lose by a fixed face-order rule or fail closed. After every participant
@@ -199,6 +249,24 @@ changed, or timed-out roles clear their marks without touching geometry.
 This staged discipline gives atomicity in projection without an atomic memory transaction.
 Confluence still makes the choice among independently enabled interactions semantically
 irrelevant; locality determines which protocols make progress.
+
+True asynchronous activation is a stronger execution model: one center updates from live
+neighbors while other centers may still hold earlier states. Countdown phases and a final
+wave that must be observed on one exact tick are not delay-insensitive and therefore are not
+yet valid under that model. An asynchronous-safe handoff uses persistent, idempotent
+`request → acknowledge → commit → done` states on each face. A request remains until
+the receiver has reserved and acknowledged it; commit remains until every participant has
+acknowledged the transfer; done returns before the source releases its role. Abort and retry
+must use the same acknowledged discipline, so an arbitrarily delayed participant cannot miss
+a transient phase.
+
+During an asynchronous one-cell move, source and target use a bounded transit/ghost payload.
+The projection maps the connected handoff component to exactly one logical occupant, rather
+than counting independently activated source and target cells as a duplicate or a loss. Only
+after the done acknowledgement may the protocol forget that component. This extended
+projection, persistent phases, and fairness of center activation are required before a
+live-read shuffled runner can be called an asynchronous simulation. Each completed handoff
+still moves the projected occupant by exactly one face.
 
 
 ## 7. `χ` is the sole clearance license
@@ -369,9 +437,11 @@ projection invariant (§1 item 5) after each applicable transition: geometry pro
 identity and a fire to exactly one abstract interaction. Stage tests compare normal forms
 against the crate's independent recursive oracle. The proof obligation and the harness assert
 the same statement, which is why the invariant is worth stating precisely.
-The strict local kernel is deterministic from the frozen neighborhood. Host schedule
-variations are useful adversarial tests for the hybrid evaluator, but are not inputs to the
-local rule.
+The strict local kernel is deterministic from the frozen neighborhood. Deterministically
+shuffled frozen-snapshot evaluation must be scan-order invariant and is a useful adversarial
+test for the hybrid evaluator, but it is not true asynchronous execution and the permutation
+is not an input to the local rule. A separate live-read test requires the delay-insensitive
+handoff and extended projection described in §6.
 
 
 ## 11. Readouts
@@ -431,8 +501,8 @@ These active paths use host planning and therefore sit outside strict CA conform
 - **slide** searches a bounded empty-cell trail for a χ-licensed, strand-owned move;
 - **retract** detects and removes a U-turn as one multi-cell plan;
 - **grow** uses host `GrowPlan` state, reservations, and host-stepped placement or abort; and
-- **the scheduler** performs ordered whole-grid scans, fire rescans, and retract-to-fixpoint,
-  making one host `tick` a sequence of mutable substeps.
+- **the scheduler** performs deterministically permuted whole-grid scans and mutable host
+  subphases, so one host `tick` is not yet one uniform lattice update.
 
 Some bonded field and signal formulas are radius one but execute in host-ordered phases.
 Pressure diffusion and leak are radius one. Source injection for blocked fire, walker, grow,
@@ -446,14 +516,20 @@ because they observe or initialize the dynamics without feeding values into `nex
 
 ### 12.2 Conformance work plan
 
-1. Express fire, reel, agent step, flip, slide, retract, and grow as bounded face-message protocols
+1. Enforce one-hop consumption of the frozen snapshot: no newly produced payload or protocol
+   state may participate again until the following tick, including host-planned fallbacks.
+2. Express fire, reel, agent step, flip, slide, retract, and grow as bounded face-message protocols
    with reciprocal claims, abort propagation, and a second commit wave.
-2. Evaluate fields, bonded signals, protocol advancement, and payload decisions from one frozen
+3. Evaluate fields, bonded signals, protocol advancement, and payload decisions from one frozen
    seven-site snapshot with a single explicit local priority rule.
-3. Pack payloads, signals, fields, reservations, and protocol roles into a fixed finite-state
-   encoding independent of net size.
-4. Run the template ROM through the local reserve/write/splice executor described in §5.1.
-5. Gate conformance on locality, per-tick projection, differential normal-form, protocol-abort,
+4. Pack payloads, signals, fields, reservations, and protocol roles into the canonical fixed
+   592-bit seed-free encoding, replacing absolute reservation owners and `GrowPlan` objects
+   with local roles.
+5. Run the template ROM through the local reserve/write/splice executor described in §5.1.
+6. Replace exact-tick countdown assumptions with persistent request/acknowledge/commit/done
+   handoffs and extend projection over bounded transit states; then test fair live-read
+   activation separately from shuffled frozen-snapshot evaluation.
+7. Gate conformance on locality, per-tick projection, differential normal-form, protocol-abort,
    and post-normal-form settling tests in both `Bilayer` and `Full3D`.
 
 Scope for v1 is a single-threaded simulator, one root pad at a fixed boundary cell, and
