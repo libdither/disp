@@ -3,7 +3,7 @@
 //! consumes (research/interaction-combinator/lattice_player.html): the engine is the
 //! model, the visualization is a replay client — never a second simulator.
 //!
-//! Usage: dump-run <fork|stem|chain1..chain4|ksimple|kargs|share2|share|disp|selF|...> [max_ticks] [bilayer|full3d] [stride]
+//! Usage: dump-run <fork|stem|chain1..chain4|ksimple|kargs|share2|share|disp|selF|rules|...> [max_ticks] [bilayer|full3d] [stride]
 //!
 //! Trace schema (v3, local motion + settling): positions are [x,y,z]; faces are single
 //! direction chars N/E/S/W/U/D; strands are two-char face pairs (a trailing `*` marks
@@ -17,11 +17,13 @@
 //! thinned gap.
 
 use rust_ca_lattice::lattice::{manhattan, Cell, Grid, Topo};
+use rust_ca_lattice::fixtures::{rule_atlas, RuleAtlasEntry};
 use rust_ca_lattice::local::{
     BackPhase, EndpointPhase, MotionMark, SourcePhase, SquareMode, SquarePhase, TargetPhase,
 };
 use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Term};
 use rust_ca_lattice::scheduler::{CheckLevel, Event, Sim};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 fn snapshot(grid: &Grid, out: &mut String) {
@@ -283,7 +285,7 @@ fn named(which: &str) -> (Term, &'static str) {
         "forkarg" => (ap(f2(Term::L, Term::L), f2(Term::L, Term::L)),
             "K discards a FORK: T1·△ answers with b, then the death pulse cascades — Eps·Pair splits into two erasers, Eps·F forks again. GC is cheap: every ε is one port, one cell."),
         "share2" => (ap(f2(s(Term::L), Term::L), Term::L),
-            "THE S-rule (T1·S), the biggest routine complex: net +3 agents in one fire — Unp unpacks the args pair, δ shares c, three A's build (b c)(s c). The space question lives here."),
+            "THE S-rule (T1·S), the biggest routine complex: net +3 agents in one fire — Unp unpacks the args pair, δ shares c, three A's build (s c)(b c). The space question lives here."),
         "share" => (ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)),
             "the S-rule where the shared value is a FORK: δ deep-copies structure (Dn·F creates two forks and two child duplicators) while the fields manage the growing geometry."),
         "dup" => (ap(f2(s(Term::L), Term::L), s(Term::L)),
@@ -309,25 +311,48 @@ fn main() {
         Some("full3d") => Topo::Full3D,
         _ => Topo::Bilayer,
     };
-    let (term, note) = named(&which);
-    let oracle_nf = oracle::nf(term.clone(), &mut Fuel(200_000))
-        .map(|w| oracle::show(&w))
-        .unwrap_or_else(|_| "(diverges)".into());
-
-    let mut sim = Sim::load(&term, topo);
+    let is_rule_atlas = which == "rules";
+    let (mut sim, atlas_entries, note, term_text, oracle_nf) = if is_rule_atlas {
+        let (sim, entries) = rule_atlas(topo);
+        (
+            sim,
+            entries,
+            "all 26 interaction rules start as isolated active pairs; each principal edge has exactly one wire cell, and every auxiliary ends at a private inert Out pad".to_string(),
+            "complete 26-rule interaction ROM".to_string(),
+            "one spatial fire of every ROM rule".to_string(),
+        )
+    } else {
+        let (term, note) = named(&which);
+        let oracle_nf = oracle::nf(term.clone(), &mut Fuel(200_000))
+            .map(|w| oracle::show(&w))
+            .unwrap_or_else(|_| "(diverges)".into());
+        (
+            Sim::load(&term, topo),
+            Vec::<RuleAtlasEntry>::new(),
+            note.to_string(),
+            oracle::show(&term),
+            oracle_nf,
+        )
+    };
     let mut out = String::new();
     let name = if topo == Topo::Full3D {
         format!("{which}-3d")
     } else {
         which.clone()
     };
-    write!(out, "{{\"schema_version\":3,\"engine_revision\":\"local-motion-2026-07-14\",\"name\":\"{name}\",\"topo\":\"{}\",\"note\":\"{note}\",\"term\":\"{}\",\"oracle\":\"{oracle_nf}\",\"frames\":[",
-        topo.name(), oracle::show(&term)).unwrap();
+    let kind = if is_rule_atlas { "rule-atlas" } else { "evaluation" };
+    write!(out, "{{\"schema_version\":3,\"engine_revision\":\"local-motion-2026-07-15\",\"kind\":\"{kind}\",\"name\":\"{name}\",\"topo\":\"{}\",\"note\":\"{note}\",\"term\":\"{term_text}\",\"oracle\":\"{oracle_nf}\",\"frames\":[",
+        topo.name()).unwrap();
 
-    let stride: u64 = std::env::args()
+    let requested_stride: u64 = std::env::args()
         .nth(4)
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
+    // Atlas navigation names exact frame numbers, and the fixture is intentionally
+    // short, so retain every evaluator tick even if a thinning stride was supplied.
+    let stride = if is_rule_atlas { 1 } else { requested_stride };
+    let settle_cap = if is_rule_atlas { 1 } else { 1_000 };
+    let mut atlas_fire_ticks: BTreeMap<(&'static str, &'static str), u64> = BTreeMap::new();
     let mut nf_tick = sim.shadow.all_active_pairs().is_empty().then_some(0u64);
     let mut status = if nf_tick.is_some() { "done" } else { "cap" };
     let mut settled = false;
@@ -348,7 +373,7 @@ fn main() {
     let mut last_emit = 0u64;
     loop {
         let may_reduce = nf_tick.is_none() && tick < max_ticks;
-        let may_settle = nf_tick.is_some() && !settled && settle_ticks < 1_000;
+        let may_settle = nf_tick.is_some() && !settled && settle_ticks < settle_cap;
         if !may_reduce && !may_settle {
             break;
         }
@@ -372,6 +397,7 @@ fn main() {
                     rule,
                     fresh,
                 } => {
+                    atlas_fire_ticks.entry(*rule).or_insert(tick);
                     let fr: Vec<String> = fresh.iter().map(|p| pos_json(*p)).collect();
                     write!(
                         ev,
@@ -493,7 +519,7 @@ fn main() {
         };
 
         let reduction_cap = nf_tick.is_none() && tick == max_ticks;
-        let settlement_stop = nf_tick.is_some() && (settled || settle_ticks == 1_000);
+        let settlement_stop = nf_tick.is_some() && (settled || settle_ticks == settle_cap);
         let last_tick = reduction_cap || settlement_stop || stuck_now;
         if structural || tick - last_emit >= stride || last_tick {
             write!(out, ",{{\"tick\":{tick},\"events\":[{ev}],\"ints\":{},\"transport\":{},\"pairs\":{},\"wire\":",
@@ -513,12 +539,39 @@ fn main() {
     if nf_tick.is_some() {
         status = "done";
     }
-    let readback = sim
-        .grid
-        .readback()
-        .map(|t| oracle::show(&t))
-        .unwrap_or_else(|| "-".into());
+    let readback = if is_rule_atlas {
+        "-".into()
+    } else {
+        sim.grid
+            .readback()
+            .map(|t| oracle::show(&t))
+            .unwrap_or_else(|| "-".into())
+    };
     let nf_json = nf_tick.map_or_else(|| "null".into(), |at| at.to_string());
-    write!(out, "],\"status\":\"{status}\",\"readback\":\"{readback}\",\"ticks\":{tick},\"nf_tick\":{nf_json},\"settled\":{settled},\"settle_ticks\":{settle_ticks},\"capture_stride\":{stride}}}").unwrap();
+    out.push(']');
+    if is_rule_atlas {
+        out.push_str(",\"rule_atlas\":{\"principal_wire_cells\":1,\"entries\":[");
+        for (index, entry) in atlas_entries.iter().enumerate() {
+            if index > 0 { out.push(','); }
+            let fire = atlas_fire_ticks
+                .get(&(entry.consumer.name(), entry.producer.name()))
+                .copied();
+            let fire_json = fire.map_or_else(|| "null".into(), |at| at.to_string());
+            let end_json = fire
+                .map(|at| (at + 1).min(tick))
+                .map_or_else(|| "null".into(), |at| at.to_string());
+            let y = entry.consumer_pos.1;
+            write!(out,
+                "{{\"rule\":\"{}·{}\",\"label\":\"{}.p ↔ {}.p\",\"start\":0,\"fire\":{fire_json},\"end\":{end_json},\"start_frame\":0,\"fire_frame\":{fire_json},\"end_frame\":{end_json},\"start_tick\":0,\"fire_tick\":{fire_json},\"end_tick\":{end_json},\"focus\":[[-2,{},0],[4,{},0]],\"principal\":[{},{},{}],\"consumer_sid\":{},\"producer_sid\":{}}}",
+                entry.consumer.name(), entry.producer.name(),
+                entry.consumer.name(), entry.producer.name(),
+                y - 2, y + 2,
+                pos_json(entry.consumer_pos), pos_json(entry.principal_wire_pos),
+                pos_json(entry.producer_pos), entry.consumer_sid, entry.producer_sid,
+            ).unwrap();
+        }
+        out.push_str("]}");
+    }
+    write!(out, ",\"status\":\"{status}\",\"readback\":\"{readback}\",\"ticks\":{tick},\"nf_tick\":{nf_json},\"settled\":{settled},\"settle_ticks\":{settle_ticks},\"capture_stride\":{stride}}}").unwrap();
     println!("{out}");
 }

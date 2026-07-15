@@ -30,24 +30,42 @@
   #topbar input[type=range] { width:110px; }
   #topbar #scrub { width:min(190px,18vw); }
   .topvalue { color:#8595ad; white-space:nowrap; font-size:11px; }
-  #celltip { position:absolute; z-index:7; min-width:250px; max-width:330px; max-height:420px;
-    overflow:auto; box-sizing:border-box; padding:9px 10px; border:1px solid #3a506f;
+  #atlasbar { position:absolute; z-index:6; top:60px; left:50%; transform:translateX(-50%);
+    width:min(830px,calc(100% - 24px)); box-sizing:border-box; display:grid;
+    grid-template-columns:auto minmax(190px,1fr) auto auto auto auto auto;
+    align-items:center; gap:4px; padding:5px 7px; border:1px solid #3a506f; border-radius:9px;
+    background:rgba(11,14,20,.95); box-shadow:0 6px 24px rgba(0,0,0,.35); backdrop-filter:blur(8px); }
+  #atlasbar[hidden] { display:none; }
+  #atlasbar select { min-width:0; width:100%; }
+  .atlasstep { padding:3px 7px; font-size:10.5px; white-space:nowrap; }
+  .atlasstep.active { color:#04121c; background:var(--hot); border-color:#ffe6a3; }
+  .atlasdetail { grid-column:1/-1; min-width:0; padding:4px 2px 0; border-top:1px solid #2a3a52; line-height:1.3; }
+  #atlastrigger { color:var(--hot); font-size:11px; }
+  #atlasports { color:#8595ad; font-size:9.5px; }
+  #celltip { position:absolute; z-index:7; min-width:238px; max-width:310px; max-height:420px;
+    overflow:auto; box-sizing:border-box; padding:7px 8px; border:1px solid #3a506f;
     border-radius:8px; background:rgba(11,14,20,.97); box-shadow:0 8px 28px rgba(0,0,0,.55);
-    color:var(--fg); font-size:11px; line-height:1.4; pointer-events:none; }
+    color:var(--fg); font-size:10.5px; line-height:1.3; pointer-events:none; }
   #celltip[hidden] { display:none; }
   #celltip.pinned { border-color:var(--accent); }
   .tiphead { display:flex; align-items:center; justify-content:space-between; gap:8px;
-    color:var(--accent); font-weight:bold; margin-bottom:5px; }
+    color:var(--accent); font-weight:bold; margin-bottom:4px; }
   #cellclose { display:none; width:24px; height:22px; padding:0; font:16px/1 system-ui,sans-serif; }
   #celltip.pinned #cellclose { display:grid; place-items:center; pointer-events:auto; }
-  .tiprow { display:grid; grid-template-columns:78px minmax(0,1fr); gap:7px; margin:2px 0; }
+  .bitbar { padding:5px 6px; margin:0 0 5px; border-radius:5px; background:#111c2a;
+    border:1px solid #263b54; }
+  .bitmain { color:var(--hot); font-weight:bold; }
+  .bitparts { color:#8595ad; margin-top:1px; font-size:9.5px; }
+  .tiprow { display:grid; grid-template-columns:60px minmax(0,1fr); gap:6px; margin:1px 0; }
   .tipkey { color:#8595ad; }
-  .tipsection { color:#ffd866; margin:7px 0 2px; border-top:1px solid #1b2436; padding-top:5px; }
-  .tipfoot { color:#5a6b86; margin-top:7px; font-size:10px; }
+  .tipsection { color:#ffd866; margin:5px 0 2px; border-top:1px solid #1b2436; padding-top:4px; }
+  .tipfoot { color:#5a6b86; margin-top:5px; font-size:9.5px; }
   #cv:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
   @media (max-width:1050px) {
     #topbar { left:8px; right:8px; transform:none; flex-wrap:wrap; justify-content:center; }
     #topbar #scrub { width:150px; }
+    #atlasbar { top:103px; grid-template-columns:auto minmax(140px,1fr) auto auto auto auto auto; }
+    .atlasdetail { grid-column:1/-1; border-left:0; border-top:1px solid #2a3a52; padding:4px 2px 0; }
   }
   .note { color:#8595ad; font-size:11px; }
   .ok { color:var(--ok); } .bad { color:var(--warn); } .hot { color:var(--hot); }
@@ -92,6 +110,19 @@
       <button id="fitall" class="iconbtn" title="Fit entire trace" aria-label="Fit entire trace">⛶</button>
       <input type="file" id="load" accept=".json" style="display:none">
       <button id="loadbtn" class="iconbtn" title="Load trace JSON" aria-label="Load trace JSON">⇧</button>
+    </div>
+    <div id="atlasbar" role="group" aria-label="Reduction workshop controls" hidden>
+      <button id="atlasprev" class="iconbtn" title="Previous reduction workshop ([)" aria-label="Previous reduction workshop">‹</button>
+      <select id="atlasrule" title="Reduction workshop" aria-label="Reduction workshop"></select>
+      <button id="atlasnext" class="iconbtn" title="Next reduction workshop (])" aria-label="Next reduction workshop">›</button>
+      <button id="atlasbefore" class="atlasstep" title="Show the initial principal-port wire">before</button>
+      <button id="atlasfire" class="atlasstep" title="Jump to the rewrite commit">fire</button>
+      <button id="atlasafter" class="atlasstep" title="Show the first post-rewrite state">after</button>
+      <button id="atlasfit" class="iconbtn" title="Fit this reduction workshop" aria-label="Fit reduction workshop">⊙</button>
+      <div class="atlasdetail">
+        <div id="atlastrigger"></div>
+        <div id="atlasports"></div>
+      </div>
     </div>
     <div id="celltip" role="region" aria-label="Selected lattice cell" hidden>
       <div class="tiphead"><span id="celltitle"></span><button id="cellclose" title="Unselect cell" aria-label="Unselect cell">×</button></div>
@@ -148,7 +179,7 @@
     four-sided diamond bodies; consumers use six-sided faceted diamonds.</div>
     <div id="agents"></div>
     <h3>REWRITE RULES <span class="k" id="rulehdr"></span></h3>
-    <div class="note" style="margin-bottom:4px">consumer·producer ⇒ fresh agents (the dying pair's
+    <div class="note" style="margin-bottom:4px">consumer <b>principal ↔ principal</b> producer ⇒ fresh agents (the dying pair's
     external wires resplice per the ROM's wiring permutation). <span class="hot">Gold</span> =
     firing in the frame you are on; ×n = firings in this trace (dimmed = never fires here);
     click a rule to jump to its next firing.</div>
@@ -186,9 +217,10 @@
 <script>
 // A stable revision query lets browsers cache the generated bundle between reloads.
 document.write('<script src="lattice_traces.js?v=local-motion-2026-07-14-dense1"><\/script>');
+document.write('<script src="lattice_rule_atlas.js?v=local-motion-2026-07-15"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-15 · every-tick replay + cell inspector";
+const PLAYER_VERSION = "2026-07-15 · every-tick replay + rule atlas";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -225,8 +257,18 @@ const STEP3 = { N: [0, -1, 0], E: [1, 0, 0], S: [0, 1, 0], W: [-1, 0, 0],
                 U: [0, 0, 1], D: [0, 0, -1] };
 const OPPOSITE = { N: "S", E: "W", S: "N", W: "E", U: "D", D: "U" };
 const FACE_ORDER = ["N", "E", "S", "W", "U", "D"];
+const DEFAULT_BIT_LAYOUT = {
+  name: "canonical-local-v1",
+  payload: { empty: 2, agent: [18, 20, 22], wire_base: 9, strand_signals: 107 },
+  fields: { chi: 8, sigma: 8, reserved: 1 },
+  motion: { none: 4, source: 25, target: 25, square: 32, endpoint: 31, back: 29,
+    "bulge-source": 22, "bulge-spine": 21, "bulge-corner": 22,
+    "bulge-endpoint": 27, debt: 10, contested: 245 },
+  observer: { sid: 32 }, max_local: 592,
+};
 
 let TR = null, FRAME = 0, SUB = 0, RUNNING = false, LAST_DRAW_MS = null;
+let ATLAS_ENTRIES = [], ATLAS_INDEX = -1;
 let CELL_INDEX = new Map(), HOVER_CELL = null, PINNED_CELL = null;
 let DIRTY = true;
 let view = { x: 0, y: 0, scale: 26 };
@@ -253,6 +295,7 @@ function syncPlayerUI() {
     document.getElementById("scrub").value = FRAME;
     document.getElementById("framev").textContent = `tick ${TR.frames[FRAME].tick} · ${FRAME}/${TR.frames.length - 1}`;
   }
+  syncAtlasUI();
 }
 function setFrame(index, pause = true) {
   if (!TR) return;
@@ -283,7 +326,7 @@ const AGENTS = [
   ["A",    ["▸operator", "arg", "res"], "apply — forces the operator, then applies one argument"],
   ["T1",   ["▸a", "args⟨b,c⟩", "res"],  "triage on a: leaf→K, stem→S-rule, fork→Sel"],
   ["Sel",  ["▸z", "arms⟨w,⟨x,b⟩⟩", "res"], "second-level dispatch on z (the lowered T₂)"],
-  ["Unp",  ["▸pair", "o1", "o2"],    "unpair — the destructor; Unp·Pair is pure wire fusion"],
+  ["Unp",  ["▸pair", "o1", "o2"],    "unpair — the destructor; its principal meeting Pair's principal is pure wire fusion"],
   ["Dn",   ["▸value", "c1", "c2"],   "need-duplicator δ — forces once, then copies the value"],
   ["Eps",  ["▸victim"],              "eraser ε — garbage collection, one subtree at a time"],
   ["Nrm",  ["▸value", "res"],        "normalizer — forces the head, recurses into children"],
@@ -298,7 +341,7 @@ const RULES = [
   ["A","F",   ["T1","Pair"],               "apply(F a b, x) = triage(a, ⟨b,x⟩)"],
   ["A","P",   ["A","A"],                   "force the suspension, then apply"],
   ["T1","L",  ["Unp","Eps"],               "K: res ← b, ε erases c"],
-  ["T1","S",  ["Unp","Dn","A","A","A"],    "S-rule: (b c)(s c) — δ shares c"],
+  ["T1","S",  ["Unp","Dn","A","A","A"],    "S-rule: (s c)(b c) — δ shares c"],
   ["T1","F",  ["Unp","Sel","Pair","Pair"], "two-level: Sel on z, arms ⟨w,⟨x,b⟩⟩"],
   ["T1","P",  ["A","T1"],                  "force, then re-dispatch"],
   ["Sel","L", ["Unp","Eps"],               "z = △: res ← w, erase ⟨x,b⟩"],
@@ -321,6 +364,143 @@ const RULES = [
   ["Nrm","P", ["A","Nrm"],                 "force, keep normalizing"],
 ];
 const chip = t => `<span class="chip" style="background:${COL[t] || "#8595ad"}">${GLYPH[t] || t}</span>`;
+const displayRule = key => String(key).replace("·", ".p↔") + (String(key).includes("·") ? ".p" : "");
+const isRuleAtlas = trace => Boolean(trace &&
+  (trace.kind === "rule-atlas" || trace.trace_kind === "rule-atlas" || trace.rule_atlas || trace.atlas));
+
+function agentPortSpec(tag) {
+  const spec = AGENTS.find(a => a.length > 1 && a[0] === tag);
+  return spec ? spec[1].map(port => port.replace("▸", "")) : ["principal"];
+}
+
+function atlasFrameFor(entry, name, fallback) {
+  const clamp = index => Math.max(0, Math.min(TR.frames.length - 1, Math.trunc(index)));
+  const frameValue = entry[`${name}_frame`];
+  if (Number.isFinite(frameValue)) return clamp(frameValue);
+  const tickValue = entry[`${name}_tick`];
+  if (Number.isFinite(tickValue)) {
+    const index = TR.frames.findIndex(frame => frame.tick >= tickValue);
+    return index < 0 ? TR.frames.length - 1 : index;
+  }
+  const value = entry[name];
+  if (Number.isFinite(value)) return clamp(value);
+  if (value && Number.isFinite(value.frame)) return clamp(value.frame);
+  if (value && Number.isFinite(value.tick)) {
+    const index = TR.frames.findIndex(frame => frame.tick >= value.tick);
+    return index < 0 ? TR.frames.length - 1 : index;
+  }
+  return clamp(fallback);
+}
+
+function fireRecords() {
+  const records = [];
+  for (let frame = 0; frame < TR.frames.length; frame++) {
+    for (const event of TR.frames[frame].events) {
+      if (event.t === "fire") records.push({ frame, event });
+    }
+  }
+  return records;
+}
+
+function normalizeAtlasEntries() {
+  const metadata = TR.rule_atlas || TR.atlas;
+  const declared = Array.isArray(metadata) ? metadata : metadata &&
+    (metadata.entries || metadata.workshops || metadata.rules);
+  const isAtlas = isRuleAtlas(TR);
+  if (!isAtlas) return [];
+  const fires = fireRecords();
+  const raw = Array.isArray(declared) && declared.length ? declared : fires.map(record => ({
+    rule: record.event.rule, fire_frame: record.frame,
+  }));
+  return raw.map((source, index) => {
+    const entry = typeof source === "string" ? { rule: source } : source;
+    const eventRule = entry.event_rule || entry.rule;
+    const matching = fires.find(record => record.event.rule === eventRule &&
+      !raw.slice(0, index).some(previous => {
+        const prior = typeof previous === "string" ? previous : previous.event_rule || previous.rule;
+        return prior === eventRule;
+      })) ||
+      fires[index] || null;
+    const fire = atlasFrameFor(entry, "fire", matching ? matching.frame : index);
+    const start = atlasFrameFor(entry, "start", Math.max(0, fire - 1));
+    const end = atlasFrameFor(entry, "end", Math.min(TR.frames.length - 1, fire + 1));
+    const after = atlasFrameFor(entry, "after", Math.min(end, fire + 1));
+    const focus = (entry.focus || entry.cells || entry.focus_points || []).filter(point =>
+      Array.isArray(point) && point.length >= 3 && point.slice(0, 3).every(Number.isFinite));
+    return {
+      ...entry,
+      label: entry.rule,
+      rule: eventRule || (matching && matching.event.rule) || `workshop ${index + 1}`,
+      startFrame: Math.min(start, fire), fireFrame: fire,
+      endFrame: Math.max(end, fire), afterFrame: Math.max(fire, Math.min(end, after)),
+      focus: focus.map(point => point.slice(0, 3)),
+    };
+  });
+}
+
+function atlasFireEvent(entry) {
+  if (!entry) return null;
+  return TR.frames[entry.fireFrame].events.find(event =>
+    event.t === "fire" && event.rule === entry.rule) ||
+    TR.frames[entry.fireFrame].events.find(event => event.t === "fire") || null;
+}
+
+function atlasRuleText(entry) {
+  const spec = RULES.find(rule => `${rule[0]}·${rule[1]}` === entry.rule);
+  if (!spec) return { trigger: entry.rule, ports: entry.note || "principal-port workshop" };
+  const [consumer, producer, fresh, note] = spec;
+  const cp = agentPortSpec(consumer), pp = agentPortSpec(producer);
+  const freshText = fresh.length ? fresh.map(tag => {
+    const ports = agentPortSpec(tag);
+    return `${tag}[principal ${ports[0]}${ports.length > 1 ? `; aux ${ports.slice(1).join(", ")}` : ""}]`;
+  }).join(" + ") : "no fresh agents (wire fusion or deletion)";
+  return {
+    trigger: `${consumer} principal ${cp[0]}  — one wire cell —  ${producer} principal ${pp[0]}`,
+    ports: `before aux: ${consumer}[${cp.slice(1).join(", ") || "none"}] · ${producer}[${pp.slice(1).join(", ") || "none"}]  ⇒  ${freshText}${entry.note || note ? ` · ${entry.note || note}` : ""}`,
+  };
+}
+
+function syncAtlasUI() {
+  const bar = document.getElementById("atlasbar");
+  if (!bar) return;
+  if (!TR || !ATLAS_ENTRIES.length) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const selected = ATLAS_ENTRIES[ATLAS_INDEX];
+  if (!selected || FRAME < selected.startFrame || FRAME > selected.endFrame) {
+    const containing = ATLAS_ENTRIES.findIndex(entry =>
+      FRAME >= entry.startFrame && FRAME <= entry.endFrame);
+    if (containing >= 0) ATLAS_INDEX = containing;
+  }
+  ATLAS_INDEX = Math.max(0, Math.min(ATLAS_ENTRIES.length - 1, ATLAS_INDEX));
+  const entry = ATLAS_ENTRIES[ATLAS_INDEX], rule = document.getElementById("atlasrule");
+  rule.value = String(ATLAS_INDEX);
+  const phase = FRAME < entry.fireFrame ? "before" : FRAME === entry.fireFrame ? "fire" : "after";
+  for (const name of ["before", "fire", "after"]) {
+    const button = document.getElementById(`atlas${name}`);
+    button.classList.toggle("active", name === phase);
+    button.setAttribute("aria-pressed", String(name === phase));
+  }
+  document.getElementById("atlasprev").disabled = ATLAS_INDEX === 0;
+  document.getElementById("atlasnext").disabled = ATLAS_INDEX === ATLAS_ENTRIES.length - 1;
+  const text = atlasRuleText(entry);
+  document.getElementById("atlastrigger").textContent = `${ATLAS_INDEX + 1}/${ATLAS_ENTRIES.length} · ${phase.toUpperCase()} · ${text.trigger}`;
+  const ports = document.getElementById("atlasports");
+  ports.textContent = text.ports; ports.title = text.ports;
+}
+
+function configureAtlas() {
+  ATLAS_ENTRIES = normalizeAtlasEntries(); ATLAS_INDEX = ATLAS_ENTRIES.length ? 0 : -1;
+  const select = document.getElementById("atlasrule");
+  select.replaceChildren();
+  ATLAS_ENTRIES.forEach((entry, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    const spec = RULES.find(rule => `${rule[0]}·${rule[1]}` === entry.rule);
+    option.textContent = spec ? `${index + 1}. ${spec[0]} principal ↔ ${spec[1]} principal — ${spec[3]}` : `${index + 1}. ${entry.rule}`;
+    select.appendChild(option);
+  });
+  syncAtlasUI();
+}
 function renderAgents() {
   const el = document.getElementById("agents");
   el.innerHTML = AGENTS.map(a => a.length === 1
@@ -341,7 +521,7 @@ function renderRules() {
     const row = document.createElement("div");
     row.className = "rrow" + (TR && n === 0 ? " unused" : "");
     row.title = "click: jump to this rule's next firing";
-    row.innerHTML = `${chip(c)}·${chip(p)} <span class="k">⇒</span> ` +
+    row.innerHTML = `${chip(c)} <span class="k">principal ↔ principal</span> ${chip(p)} <span class="k">⇒</span> ` +
       (fresh.length ? fresh.map(chip).join("") : `<span class="k">∅</span>`) +
       ` <span class="note2">${note}</span><span class="cnt">${n ? "×" + n : ""}</span>`;
     row.onclick = () => jumpToRule(key);
@@ -352,6 +532,11 @@ function renderRules() {
 }
 function jumpToRule(key) {
   if (!TR) return;
+  const atlasIndex = ATLAS_ENTRIES.findIndex(entry => entry.rule === key);
+  if (atlasIndex >= 0) {
+    gotoAtlasEntry(atlasIndex, "before");
+    return;
+  }
   for (let i = 1; i <= TR.frames.length; i++) {
     const j = (FRAME + i) % TR.frames.length;
     if (TR.frames[j].events.some(e => e.t === "fire" && e.rule === key)) {
@@ -386,30 +571,64 @@ function pick(name) {
   TR.ruleCounts = {};
   for (const f of TR.frames) for (const e of f.events)
     if (e.t === "fire") TR.ruleCounts[e.rule] = (TR.ruleCounts[e.rule] || 0) + 1;
+  configureAtlas();
+  if (ATLAS_ENTRIES.length) FRAME = ATLAS_ENTRIES[0].startFrame;
   renderRules();
   document.getElementById("whatnote").innerHTML = TR.note ? `<b style="color:#ffd866">watch:</b> ${TR.note}` : "";
-  rebuildCellIndex(); fit(); hud(); syncPlayerUI(); renderInspector(); invalidate();
+  rebuildCellIndex();
+  if (ATLAS_ENTRIES.length) fitAtlasEntry(); else fit();
+  hud(); syncPlayerUI(); renderInspector(); invalidate();
 }
-function fitFrames(frames) {
+function fitPoints(points, padding = 6, maxScale = 34) {
   let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
   const include = (x, y, z) => {
     const sx = x + z * ZOFF, sy = y - z * ZOFF;
     a = Math.min(a, sx); b = Math.max(b, sx); c = Math.min(c, sy); d = Math.max(d, sy);
   };
-  for (const f of frames) {
-    for (const ag of f.grid.agents) include(ag[0], ag[1], ag[2]);
-    for (const w of f.grid.wires) include(w[0], w[1], w[2]);
-    for (const c0 of f.grid.chi) include(c0[0], c0[1], c0[2]);
-    for (const m of f.grid.motion) include(m[0], m[1], m[2]);
-  }
+  for (const point of points) include(point[0], point[1], point[2]);
   if (!Number.isFinite(a)) { a = c = -1; b = d = 1; }
   const w = cv.clientWidth || innerWidth - 389, h = cv.clientHeight || innerHeight;
-  view.scale = Math.max(2, Math.min(34, Math.min(w / (b - a + 6), h / (d - c + 6))));
+  view.scale = Math.max(2, Math.min(maxScale, Math.min(w / (b - a + padding), h / (d - c + padding))));
   view.x = (a + b) / 2; view.y = (c + d) / 2;
   invalidate();
 }
+function fitFrames(frames) {
+  const points = [];
+  for (const f of frames) {
+    for (const ag of f.grid.agents) points.push(ag);
+    for (const w of f.grid.wires) points.push(w);
+    for (const c0 of f.grid.chi) points.push(c0);
+    for (const m of f.grid.motion) points.push(m);
+  }
+  fitPoints(points);
+}
 function fit() { fitFrames(TR.frames); }
 function fitCurrent() { fitFrames([TR.frames[FRAME]]); }
+function fitAtlasEntry(entry = ATLAS_ENTRIES[ATLAS_INDEX]) {
+  if (!entry) { fitCurrent(); return; }
+  const points = [...entry.focus];
+  const event = atlasFireEvent(entry);
+  if (event) {
+    if (Array.isArray(event.c)) points.push(event.c);
+    if (Array.isArray(event.p)) points.push(event.p);
+    if (Array.isArray(event.fresh)) points.push(...event.fresh);
+  }
+  if (!points.length) {
+    const frames = [entry.startFrame, entry.fireFrame, entry.afterFrame]
+      .filter((frame, index, all) => all.indexOf(frame) === index)
+      .map(frame => TR.frames[frame]);
+    fitFrames(frames); return;
+  }
+  fitPoints(points, 5, 40);
+}
+function gotoAtlasEntry(index, landmark = "before") {
+  if (!ATLAS_ENTRIES.length) return;
+  ATLAS_INDEX = Math.max(0, Math.min(ATLAS_ENTRIES.length - 1, index));
+  const entry = ATLAS_ENTRIES[ATLAS_INDEX];
+  const frame = landmark === "fire" ? entry.fireFrame : landmark === "after" ? entry.afterFrame : entry.startFrame;
+  setFrame(frame);
+  fitAtlasEntry(entry);
+}
 // Project signed z along the up-right/down-left axis and dim with depth.
 const px = (x, y, z) => [
   cv.clientWidth / 2 + (x + z * ZOFF - view.x) * view.scale,
@@ -477,6 +696,54 @@ const strandLabel = strand => {
   return `${faces.join(" ↔ ")} · ${hot ? "hot ψ" : "cold"}`;
 };
 
+function motionBitKind(role) {
+  if (role.startsWith("square")) return "square";
+  if (role.startsWith("endpoint")) return "endpoint";
+  if (role.startsWith("bulge-corner")) return "bulge-corner";
+  if (role.startsWith("bulge-endpoint")) return "bulge-endpoint";
+  return role;
+}
+
+function bitLayout() {
+  const supplied = TR && TR.bit_layout ? TR.bit_layout : {};
+  return {
+    ...DEFAULT_BIT_LAYOUT, ...supplied,
+    payload: { ...DEFAULT_BIT_LAYOUT.payload, ...(supplied.payload || {}) },
+    fields: { ...DEFAULT_BIT_LAYOUT.fields, ...(supplied.fields || {}) },
+    motion: { ...DEFAULT_BIT_LAYOUT.motion, ...(supplied.motion || {}) },
+    observer: { ...DEFAULT_BIT_LAYOUT.observer, ...(supplied.observer || {}) },
+  };
+}
+
+function cellBitBudget(cell) {
+  const layout = bitLayout();
+  let payload = layout.payload.empty, observer = 0;
+  if (cell.agent) {
+    const arity = Math.max(1, Math.min(3, cell.agent[5].length));
+    payload = layout.payload.agent[arity - 1];
+    observer = layout.observer.sid;
+  } else if (cell.wire) {
+    payload = layout.payload.wire_base + layout.payload.strand_signals * cell.wire[3].length;
+  }
+  const fields = Object.values(layout.fields).reduce((sum, bits) =>
+    sum + (Number.isFinite(bits) ? bits : 0), 0);
+  const protocol = cell.motion.length
+    ? Math.max(...cell.motion.map(mark => layout.motion[motionBitKind(mark.role)] ?? layout.motion.none))
+    : layout.motion.none;
+  const local = payload + fields + protocol;
+  return { payload, fields, protocol, observer, local, total: local + observer, layout };
+}
+
+function bitBar(parent, bits) {
+  const bar = document.createElement("div"), total = document.createElement("div"), parts = document.createElement("div");
+  bar.className = "bitbar";
+  total.className = "bitmain"; total.textContent = `TOTAL ${bits.total} bits`;
+  parts.className = "bitparts";
+  parts.textContent = `local ${bits.local}/${bits.layout.max_local} · payload ${bits.payload} + fields ${bits.fields} + protocol ${bits.protocol} · observer +${bits.observer}`;
+  bar.title = `${bits.layout.name}: local ${bits.local}/${bits.layout.max_local} bits; observer state is excluded from CA dynamics`;
+  bar.append(total, parts); parent.append(bar);
+}
+
 function usedFaces(cell) {
   const used = new Map();
   const add = (face, source) => {
@@ -516,10 +783,10 @@ function eventAtCell(event, pos) {
     return `U-turn retract with ${cellLabel(other)}`;
   }
   if (event.t === "fire") {
-    if (sameCell(event.c, pos)) return `fire ${event.rule} · consumer principal`;
-    if (sameCell(event.p, pos)) return `fire ${event.rule} · producer principal`;
+    if (sameCell(event.c, pos)) return `fire ${displayRule(event.rule)} · consumer principal`;
+    if (sameCell(event.p, pos)) return `fire ${displayRule(event.rule)} · producer principal`;
     const fresh = Array.isArray(event.fresh) ? event.fresh.findIndex(at => sameCell(at, pos)) : -1;
-    if (fresh >= 0) return `fire ${event.rule} · fresh placement ${fresh + 1}/${event.fresh.length}`;
+    if (fresh >= 0) return `fire ${displayRule(event.rule)} · fresh placement ${fresh + 1}/${event.fresh.length}`;
   }
   if (event.t === "slide" && sameCell(event.at, pos)) return `χ strand reshape${event.why ? ` · ${event.why}` : ""}`;
   if (event.t === "local-pressure" && sameCell(event.at, pos)) return `pressure source · level ${event.level}`;
@@ -565,38 +832,44 @@ function renderInspector() {
   tip.hidden = false;
   tip.classList.toggle("pinned", pinned);
   tip.setAttribute("aria-label", `${pinned ? "Selected" : "Hovered"} lattice cell ${cellLabel(pos)}`);
-  document.getElementById("celltitle").textContent = `${cellLabel(pos)} · tick ${TR.frames[FRAME].tick}${pinned ? " · pinned" : ""}`;
+  document.getElementById("celltitle").textContent = `${cellLabel(pos)} · t${TR.frames[FRAME].tick}${pinned ? " · pinned" : ""}`;
   body.replaceChildren();
+  const bits = cellBitBudget(cell);
+  bitBar(body, bits);
 
   const hasState = cell.agent || cell.wire || cell.chi || cell.motion.length;
-  tipRow(body, "cell", hasState ? "occupied in exported trace" : "empty at this tick");
+  if (!hasState) tipRow(body, "state", "no trace-visible value");
   if (cell.agent) {
     const a = cell.agent, polarity = a[3] === "Out" ? "inert" : PRODUCERS.has(a[3]) ? "producer" : "consumer";
-    tipSection(body, "agent");
-    tipRow(body, "payload", `${a[3]} · sid ${a[4]} · ${polarity}`);
-    a[5].forEach((face, index) => tipRow(body, `port ${index}`, `${portName(a[3], index)} → ${face}`));
+    tipSection(body, `agent payload · ${bits.payload}b + ${bits.observer}b sid`);
+    tipRow(body, `${a[3]}#${a[4]}`, polarity);
+    a[5].forEach((face, index) => tipRow(body, `p${index}`, `${portName(a[3], index)} → ${face}`));
   }
   if (cell.wire) {
-    tipSection(body, cell.wire[3].length > 1 ? "wire switchbox" : "wire");
-    cell.wire[3].forEach((strand, i) => tipRow(body, `strand ${i + 1}`, strandLabel(strand)));
-    if (cell.wire[3].length > 1) tipRow(body, "center ring", "independent strands cross; they do not join");
+    const strands = cell.wire[3].length;
+    tipSection(body, `${strands > 1 ? `switchbox ×${strands}` : "wire payload"} · ${bits.payload}b = ${bits.layout.payload.wire_base} + ${strands}×${bits.layout.payload.strand_signals}`);
+    cell.wire[3].forEach((strand, i) => tipRow(body, `s${i + 1}`, strandLabel(strand)));
+    if (cell.wire[3].length > 1) tipRow(body, "ring", "independent crossing; no join");
   }
-  tipSection(body, "fields + protocol");
-  tipRow(body, "χ pressure", cell.chi ? String(cell.chi) : "0 · calm");
-  if (cell.motion.length) {
-    cell.motion.forEach((motion, i) => tipRow(body, `motion ${i + 1}`, `${motion.role} · phase ${motion.phase}`));
-    tipRow(body, "dashed ring", "this cell has a staged motion role");
-  } else tipRow(body, "motion", "none exported");
+  tipSection(body, `fields · ${bits.fields}b = χ${bits.layout.fields.chi} + σ${bits.layout.fields.sigma} + reserve${bits.layout.fields.reserved}`);
+  tipRow(body, "values", `χ=${cell.chi || "0 calm"} · σ/reserve hidden`);
+  if (cell.motion.length === 1) {
+    const motion = cell.motion[0];
+    tipSection(body, `protocol · ${bits.protocol}b · ${motion.role}:${motion.phase} · dashed ring`);
+  } else {
+    tipSection(body, `protocol · ${bits.protocol}b${cell.motion.length ? "" : " · none"}`);
+    cell.motion.forEach((motion, i) => tipRow(body, `role ${i + 1}`, `${motion.role}:${motion.phase} · dashed ring`));
+  }
 
   const faces = usedFaces(cell);
   if (faces.size) {
-    tipSection(body, "face-local neighborhood");
+    tipSection(body, "six-neighbor links");
     for (const face of FACE_ORDER) {
       if (!faces.has(face)) continue;
       const delta = STEP3[face], neighborPos = pos.map((n, i) => n + delta[i]);
       const neighbor = CELL_INDEX.get(cellKey(neighborPos));
       const reciprocal = neighbor && usedFaces(neighbor).has(OPPOSITE[face]);
-      tipRow(body, face, `${faces.get(face).join(" + ")} → ${cellLabel(neighborPos)} · ${OPPOSITE[face]} ${reciprocal ? "reciprocal ✓" : "missing"} · ${cellSummary(neighbor)}`);
+      tipRow(body, face, `${faces.get(face).join("+")} → ${cellLabel(neighborPos)} · ${OPPOSITE[face]}${reciprocal ? "✓" : "×"} · ${cellSummary(neighbor)}`);
     }
   }
 
@@ -608,7 +881,7 @@ function renderInspector() {
   }
   const foot = document.createElement("div");
   foot.className = "tipfoot";
-  foot.textContent = "Trace-visible state only. σ, reservations, cooldowns, surveys, and uncommitted scheduler substeps are not exported.";
+  foot.textContent = "Canonical packed CA target; sid is observer-only. Per-strand cooldown and survey bits are included although their values are hidden.";
   body.append(foot);
   positionInspector(pos);
 }
@@ -817,7 +1090,7 @@ function draw(now) {
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(ax, ay, s * 0.7, 0, 7); ctx.stroke();
     ctx.globalAlpha = 1;
-    if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(e.rule, ax, ay - s * 0.8); }
+    if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(displayRule(e.rule), ax, ay - s * 0.8); }
   }
 
   // A pinned coordinate remains visible even when its payload moves away on a later tick.
@@ -843,6 +1116,49 @@ function wireStats(frame) {
 }
 const shown = v => Number.isFinite(v) ? v : "—";
 
+function atlasHud(frame, tickGap) {
+  const entry = ATLAS_ENTRIES[ATLAS_INDEX];
+  const spec = entry && RULES.find(rule => `${rule[0]}·${rule[1]}` === entry.rule);
+  const selected = spec ? `${spec[0]} principal ↔ ${spec[1]} principal` : entry ? entry.rule : "—";
+  const landmark = !entry ? "—" : FRAME < entry.fireFrame ? "before · principals separated by one wire cell" :
+    FRAME === entry.fireFrame ? "fire · principal pair commits the rewrite" : "after · auxiliary interfaces respliced";
+  const firedSoFar = new Set(TR.frames.slice(0, FRAME + 1).flatMap(item =>
+    item.events.filter(event => event.t === "fire").map(event => event.rule)));
+  const covered = firedSoFar.size;
+  const target = ATLAS_ENTRIES.length || RULES.length;
+  const complete = FRAME === TR.frames.length - 1 && covered === target;
+  document.getElementById("stat").innerHTML =
+    `<div class="row"><span class="k">trace</span><span>${TR.name}</span></div>` +
+    `<div class="row"><span class="k">topology</span><span>${TR.topo}</span></div>` +
+    `<div class="row"><span class="k">ROM coverage</span><b>${covered} / ${RULES.length}</b></div>` +
+    `<div class="row"><span class="k">selected workshop</span><b>${ATLAS_INDEX + 1} / ${target}</b></div>` +
+    `<div class="row"><span class="k">principal pair</span><span>${selected}</span></div>` +
+    `<div class="row"><span class="k">landmark</span><span>${landmark}</span></div>` +
+    `<div class="row"><span class="k">tick</span><b>${frame.tick} / ${TR.ticks}</b></div>` +
+    `<div class="row"><span class="k">tick step</span><b>${FRAME === 0 ? "initial" : "+" + tickGap}</b></div>` +
+    `<div class="row"><span class="k">interactions (work)</span><b>${frame.ints}</b></div>` +
+    `<div class="row"><span class="k">agent transport</span><b>${frame.transport}</b></div>` +
+    `<div class="row"><span class="k">live agents</span><b>${frame.grid.agents.length}</b></div>` +
+    `<div class="row"><span class="k">active pairs</span><b>${frame.pairs}</b></div>` +
+    `<div class="row"><span class="k">state</span>${complete ?
+      `<span class="ok">ALL ${target} TARGET REDUCTIONS FIRED ✓</span>` :
+      `<span class="hot">reduction workshop atlas</span>`}</div>`;
+  const events = document.getElementById("events");
+  const fires = frame.events.filter(event => event.t === "fire");
+  const selectedFires = fires.filter(event => !entry || event.rule === entry.rule);
+  const otherFires = fires.length - selectedFires.length;
+  const eventLines = selectedFires.map(event => {
+    const rule = RULES.find(item => `${item[0]}·${item[1]}` === event.rule);
+    const pair = rule ? `${rule[0]} principal ↔ ${rule[1]} principal` : event.rule;
+    return `<div class="f">fire ${pair} → ${event.fresh.length} fresh agent${event.fresh.length === 1 ? "" : "s"}</div>`;
+  });
+  if (otherFires) eventLines.push(`<div>+${otherFires} other reduction workshop${otherFires === 1 ? "" : "s"} fired this tick</div>`);
+  for (const event of frame.events) if (event.t !== "fire") eventLines.push(`<div>${event.t}</div>`);
+  events.innerHTML = eventLines.length ? eventLines.join("") :
+    `<div>(${tickGap <= 1 ? "no transitions this tick" : "no transitions in the sampled interval"})</div>`;
+  highlightRules(frame);
+}
+
 function hud() {
   const f = TR.frames[FRAME];
   const last = FRAME === TR.frames.length - 1;
@@ -850,6 +1166,7 @@ function hud() {
   document.getElementById("eventhdr").textContent = FRAME === 0 || tickGap === 1
     ? "THIS TICK"
     : `SINCE PREVIOUS FRAME (+${tickGap} TICKS)`;
+  if (isRuleAtlas(TR)) { atlasHud(f, tickGap); return; }
   const nfTick = Number.isFinite(TR.nf_tick) ? TR.nf_tick : null;
   const afterNf = nfTick !== null && f.tick >= nfTick;
   const elapsedSettle = afterNf ? Math.max(0, f.tick - nfTick) : 0;
@@ -899,7 +1216,7 @@ function hud() {
   const ev = document.getElementById("events");
   const events = f.events;
   const fmt = e =>
-    e.t === "fire" ? `<div class="f">fire ${e.rule} @ (${e.c.join(",")})·(${e.p.join(",")}) → ${e.fresh.length} fresh</div>`
+    e.t === "fire" ? `<div class="f">fire ${displayRule(e.rule)} @ (${e.c.join(",")})↔(${e.p.join(",")}) → ${e.fresh.length} fresh</div>`
     : e.t === "reel" ? `<div>host-planned demanded reel sid ${e.sid}: (${e.from.join(",")}) → (${e.to.join(",")})</div>`
     : e.t === "retract" ? `<div>retract U-turn @ (${e.a.join(",")})·(${e.b.join(",")})</div>`
     : e.t === "slide" ? `<div>${e.why === "bulge-local" ? "χ-licensed strand-owned bulge" : "χ-licensed strand-owned reshape"}${e.why ? " (" + e.why + ")" : ""} @ (${e.at.join(",")})</div>`
@@ -940,6 +1257,8 @@ function validateTrace(t, name) {
 const optLabel = t => {
   const topo = t.topo;
   const capture = t.everyTick ? "every tick" : "sampled";
+  if (isRuleAtlas(t))
+    return `◈ ${t.name} — reduction workshops, ${capture}`;
   if (Number.isFinite(t.nf_tick) && t.settled === true) return `✓ ${t.name} — ${topo}, ${capture}, NF + settled`;
   if (Number.isFinite(t.nf_tick) && t.settled === false) return `◐ ${t.name} — ${topo}, ${capture}, NF + settle-capped`;
   return `${t.status === "done" ? "✓" : "✗"} ${t.name} — ${topo}, ${capture}, ${t.status === "done" ? "reaches NF" : t.status === "stuck" ? "STUCK (liveness residue)" : "tick-capped"}`;
@@ -952,6 +1271,13 @@ document.getElementById("step").onclick = () => setFrame(FRAME + 1);
 document.getElementById("reset").onclick = () => pick(scen.value);
 document.getElementById("fitframe").onclick = () => fitCurrent();
 document.getElementById("fitall").onclick = () => fit();
+document.getElementById("atlasprev").onclick = () => gotoAtlasEntry(ATLAS_INDEX - 1);
+document.getElementById("atlasnext").onclick = () => gotoAtlasEntry(ATLAS_INDEX + 1);
+document.getElementById("atlasrule").onchange = event => gotoAtlasEntry(+event.target.value);
+document.getElementById("atlasbefore").onclick = () => gotoAtlasEntry(ATLAS_INDEX, "before");
+document.getElementById("atlasfire").onclick = () => gotoAtlasEntry(ATLAS_INDEX, "fire");
+document.getElementById("atlasafter").onclick = () => gotoAtlasEntry(ATLAS_INDEX, "after");
+document.getElementById("atlasfit").onclick = () => fitAtlasEntry();
 document.getElementById("scrub").oninput = e => setFrame(+e.target.value);
 document.getElementById("speed").oninput = e => document.getElementById("speedv").textContent = e.target.value + " fps";
 document.getElementById("speedv").textContent = "8 fps";
@@ -978,6 +1304,8 @@ addEventListener("keydown", e => {
   if (interactive) return;
   if (e.key === "ArrowLeft") { e.preventDefault(); setFrame(FRAME - 1); }
   else if (e.key === "ArrowRight") { e.preventDefault(); setFrame(FRAME + 1); }
+  else if (e.key === "[" && ATLAS_ENTRIES.length) { e.preventDefault(); gotoAtlasEntry(ATLAS_INDEX - 1); }
+  else if (e.key === "]" && ATLAS_ENTRIES.length) { e.preventDefault(); gotoAtlasEntry(ATLAS_INDEX + 1); }
   else if (e.code === "Space" && !e.repeat) { e.preventDefault(); togglePlayback(); }
 });
 // pan / zoom
@@ -1038,7 +1366,10 @@ function resize() {
   cv.style.width = w + "px"; cv.style.height = h + "px";
   invalidate();
 }
-addEventListener("resize", () => { resize(); if (TR) fit(); });
+addEventListener("resize", () => {
+  resize();
+  if (TR) { if (ATLAS_ENTRIES.length) fitAtlasEntry(); else fit(); }
+});
 renderAgents(); resize(); pick(Object.keys(window.TRACES)[0]); requestAnimationFrame(draw);
 </script>
 </body></html>

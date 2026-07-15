@@ -11,8 +11,8 @@ motions.
 > meets that boundary for star translation, swept-square rewiring, pressure bulging, and
 > center-emitted contention pressure. Field diffusion is still applied later by the host
 > scheduler rather than as part of one unified state update. Fire,
-> reel, agent step, flip, slide, retract, grow, and the sequential scheduler
-> still use host plans or ordered scans. Passing the differential tests establishes semantic
+> reel, agent step, flip, slide, retract, grow, and the phased host scheduler
+> still use host plans or mutable scans. Passing the differential tests establishes semantic
 > soundness; it does not erase those locality departures.
 
 The normative design is
@@ -48,6 +48,38 @@ The crate supports the following bounded bonded state:
 occupant may move or reshape only itself; the shell stages calm approach/compression away from
 reaction rooms.
 
+### Canonical bit budget
+
+The fixed seed-free local target is at most **592 bits**. These are packed-state cardinality
+ceilings, not `size_of` measurements of the Rust structs:
+
+| Component | Bits |
+|---|---:|
+| empty payload | 2 |
+| arity-1 / arity-2 / arity-3 agent payload | 18 / 20 / 22 |
+| one / two / three-strand wire payload | 116 / 223 / 330 |
+| fields (`χ`, `σ`, local reservation) | 8 + 8 + 1 = 17 |
+| protocol mark | 4–245 |
+
+An agent payload comprises kind 2, tag 4, its ordered distinct face tuple (3, 5, or 7),
+nascent 1, and frustration 8. A wire comprises kind 2, a 7-bit canonical matching of up to
+three disjoint pairs among six faces, and 107 bits per strand: demand 1, cooldown 8, and two
+49-bit survey sides. Protocol widths, including their four-bit role tag, are: none 4,
+source/target 25, square 32, endpoint 31, back 29, bulge-source 22, bulge-spine 21,
+bulge-corner 22, bulge-endpoint 27, debt 10, and shared-contest 245. Therefore a three-strand
+cell with no protocol uses 351 bits, while `330 + 17 + 245 = 592` is the maximum.
+
+The current Rust wire fields retain strand slot, order, and orientation, giving a 636-bit
+seed-free fieldwise maximum when those distinctions are preserved. Canonicalizing to the
+unordered face matching reaches the 592-bit target. Stable agent ids add 32 observer-only
+bits when displayed and are not local dynamics.
+
+Reservations and seeds still mark the finite-state boundary. The reservation map records a
+97-bit present-plus-absolute-owner value where the local target has one locally witnessed
+flag. `SeedCell` holds an `Rc<GrowPlan>` with absolute positions and variable vectors, so it
+has no fixed local bit total. A conforming grow path replaces those host values with a bounded
+ROM index and face-relative roles.
+
 ## Strict local kernel
 
 `crate/src/local.rs` is the strict locality boundary. Its local decision receives no `Grid`,
@@ -56,9 +88,27 @@ the center plus exactly six `SiteView`s and returns one `SiteNext` for the cente
 
 The sparse runner may enumerate occupied sites and a one-cell halo, but it first gathers one
 frozen snapshot, evaluates all sites, and then materializes the returned center edits
-simultaneously. Sparse enumeration is therefore an optimization rather than extra dynamic
-information. Event collection and observer ids are materialized outside the local decision.
-The dynamic tension survey is still host-updated and remains an input to host-planned flip.
+simultaneously. It deterministically shuffles that enumeration from a run seed and tick; all
+seeds must produce the same next lattice because no evaluation sees an earlier evaluation's
+output. This tests scan-order invariance, not asynchronous execution. Sparse enumeration is
+therefore an optimization rather than extra dynamic information, and the shuffle seed is host
+test metadata rather than a cell input. Event collection and observer ids are materialized
+outside the local decision. The dynamic tension survey is still host-updated and remains an
+input to host-planned flip.
+
+One evaluator tick has exactly one read and one commit barrier. A payload may move only to a
+face-neighbor, and a claim or signal advances only one face. A newly produced or newly arrived
+state cannot participate in reel, step, fire, or another move until the following tick. A
+multi-cell protocol may require many ticks; this preserves locality and is distinct from
+putting several mutable mini-ticks inside one scheduler tick.
+
+True live-read asynchronous activation requires a stronger protocol than shuffled snapshot
+evaluation. Exact countdown moments and a synchronous final wave can be missed when centers
+activate independently. The delay-insensitive path is persistent, idempotent
+`request → acknowledge → commit → done`, with acknowledged abort/retry and a bounded
+transit/ghost payload. Projection must map the connected handoff component to one logical
+occupant while source and target activate at different times. Only then can a fair shuffled
+live-read runner test asynchronous resilience without transient duplication or loss.
 
 ### Star translation
 
@@ -173,6 +223,8 @@ host-planned and are listed in the conformance ledger below.
   pressure-bulge protocols, center-emitted pressure sources, and the frozen sparse runner.
 - `crate/src/transitions.rs` — host-planned footprint transitions and apply functions.
 - `crate/src/scheduler.rs` — the current deterministic hybrid schedule and event stream.
+- `crate/src/fixtures.rs` — closed pedagogical fixtures, including one isolated row for
+  every ROM interaction with exactly one wire cell between the two principal ports.
 - `crate/tests/stage1.rs` — abstract engine vs independent normalizer, with rule coverage.
 - `crate/tests/stage2.rs` — lattice vs oracle on both topologies, projection checks,
   determinism, liveness floors, and must-complete pins.
@@ -181,7 +233,8 @@ host-planned and are listed in the conformance ledger below.
 - `crate/src/bin/dump-run.rs` — JSON traces consumed by
   `research/interaction-combinator/lattice_player.html`; the viewer replays engine state and
   never simulates it. The default `stride=1` records every evaluator tick; a larger explicit
-  stride is an opt-in compact export with sampled states.
+  stride is an opt-in compact export with sampled states. `dump-run rules 120 bilayer 1`
+  emits the complete rule-atlas preset with exact before/fire/after navigation metadata.
 
 ## Honest conformance ledger
 
@@ -196,7 +249,7 @@ The following active paths still violate the final center-plus-six, center-write
 | slide | bounded empty-cell trail search | pressure/vacancy relay one face per tick |
 | retract | atomic multi-cell U-turn deletion | endpoint/corner acknowledgement protocol |
 | grow | host `GrowPlan`, reservations, host-stepped placement/abort | finite per-site template roles |
-| scheduler | ordered scans, mutable subphases, rescans, retract fixpoint | one frozen `next_site` over all state components |
+| scheduler | deterministically permuted host scans and mutable subphases | one frozen `next_site` over all state components |
 
 Some `ψ`, survey, `χ`, `σ`, and cooldown formulas are already neighbor-local. Pressure
 diffusion/leak is radius one, but most current source injection (blocked fire, walker, grow,
@@ -258,9 +311,14 @@ the locality property that remote state cannot affect a center decision.
 
 ## Path to full locality
 
-1. Convert flip and retract to staged square/corner roles, completing local calm contraction.
-2. Replace shortest-route slide and the host-planned agent step with pressure/vacancy relay protocols.
-3. Express fire reservation, template extrusion, splice, and abort as finite face messages.
-4. Fold bonded signals, fields, geometry, and rewrite state into one frozen `next_site` rule.
-5. Run the full differential and liveness corpus, then compare semantic time and settling time
+1. Enforce the one-hop rule across every host fallback: no state written in a tick can be read
+   or moved again in that tick.
+2. Convert flip and retract to staged square/corner roles, completing local calm contraction.
+3. Replace shortest-route slide and the host-planned agent step with pressure/vacancy relay protocols.
+4. Express fire reservation, template extrusion, splice, and abort as finite face messages.
+5. Fold bonded signals, fields, geometry, and rewrite state into one frozen `next_site` rule,
+   and replace absolute reservation owners and `GrowPlan` with bounded local roles.
+6. Make every transfer phase persistent through request/acknowledge/commit/done, extend
+   projection over transit states, and then add fair live-read activation tests.
+7. Run the full differential and liveness corpus, then compare semantic time and settling time
    with `L/C/S` rather than declaring conformance from final-value correctness alone.

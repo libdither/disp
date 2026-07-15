@@ -28,3 +28,4 @@ pub mod lattice;
 pub mod local;
 pub mod transitions;
 pub mod scheduler;
+pub mod fixtures;
