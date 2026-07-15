@@ -1,4 +1,4 @@
-//! Event-census probe: how often each mechanism engages on a stuck pin.
+//! Event-census probe for transport, fire, growth, pressure motion, and contraction.
 use rust_ca_lattice::lattice::Topo;
 use rust_ca_lattice::oracle::{self, ap, f2, s, Term};
 use rust_ca_lattice::scheduler::{CheckLevel, Event, FireMode, Sim};
@@ -24,7 +24,7 @@ fn main() {
         Some("grow") => FireMode::Grow,
         _ => FireMode::GrowThenSearch,
     };
-    let (mut fires, mut docks, mut grows, mut shoves, mut slides, mut flips, mut retracts) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+    let (mut fires, mut docks, mut grows, mut agent_steps, mut slides, mut flips, mut retracts) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     let mut why_counts: std::collections::BTreeMap<&str, u32> = Default::default();
     let mut cold_flips = 0u32;
     let mut approaches = 0u32;
@@ -37,7 +37,7 @@ fn main() {
                 Event::Fire { .. } => fires += 1,
                 Event::Dock { .. } => docks += 1,
                 Event::Grow { .. } => grows += 1,
-                Event::Shove { .. } => shoves += 1,
+                Event::AgentStep { .. } => agent_steps += 1,
                 Event::Slide { why, .. } => { slides += 1; *why_counts.entry(why).or_default() += 1; }
                 Event::Flip { hot, .. } => { flips += 1; if !hot { cold_flips += 1; } }
                 Event::Approach { .. } => approaches += 1,
@@ -47,8 +47,8 @@ fn main() {
         }
         if n == 0 { zero += 1; if zero > 60 { println!("STUCK tick {t}"); break; } } else { zero = 0; }
     }
-    println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides} flips={flips} (cold {cold_flips}) retracts={retracts} approaches={approaches}");
-    println!("total strands now = {}", sim.grid.total_strands());
+    println!("fires={fires} docks={docks} grow_steps={grows} agent_steps={agent_steps} slides={slides} flips={flips} (cold {cold_flips}) retracts={retracts} approaches={approaches}");
+    println!("total strands = {}", sim.grid.total_strands());
     println!("slides by phase: {why_counts:?}");
     // slack ledger: arc (strand count) vs chord (Manhattan between endpoints) per wire,
     // via the observer trace from each agent port (each wire counted from both ends)
@@ -93,7 +93,7 @@ fn main() {
             use rust_ca_lattice::transitions::plan_slide;
             for s in w.iter() {
                 let (na, nb) = (step(q, s.a), step(q, s.b));
-                println!("  strand {:?}: slide={:?}", s, plan_slide(&sim.grid, q, s, &[], false).map(|pl| pl.strands.len()));
+                println!("  strand {:?}: slide={:?}", s, plan_slide(&sim.grid, q, s, &[]).map(|pl| pl.strands.len()));
                 println!("    na {:?}: {:?}", na, sim.grid.cells.get(&na));
                 println!("    nb {:?}: {:?}", nb, sim.grid.cells.get(&nb));
             }

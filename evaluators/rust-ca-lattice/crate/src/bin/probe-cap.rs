@@ -1,4 +1,4 @@
-//! Probe the TICK-CAPPED class: terms where the tick never goes quiet (χ/SHOVE churn
+//! Probe the TICK-CAPPED class: terms where the tick never goes quiet (χ/agent-step churn
 //! defeats the zero-applied stall detector) so the 20k budget binds. For each, re-run at
 //! 100k to separate SLOW COMPLETERS (shadow ints keep growing; need budget) from CHURN
 //! LOOPS (shadow frozen; need a shadow-progress stall window).

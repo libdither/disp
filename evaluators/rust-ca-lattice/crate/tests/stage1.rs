@@ -1,6 +1,6 @@
-//! Stage-1 differential: the table-driven abstract net vs the independent oracle.
-//! Validates the lowered rule ROM before any geometry exists. Gate: zero mismatches,
-//! zero no-NF, and every ROM rule fired at least once across the corpus.
+//! Abstract differential: the table-driven rule ROM against the independent oracle.
+//! The gate requires zero mismatches, zero missing normal forms, and coverage of every ROM
+//! interaction across the corpus.
 
 use rust_ca_lattice::net;
 use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Lcg, Term};
@@ -64,7 +64,7 @@ fn differential_4000() {
         pass += 1;
     }
 
-    println!("stage1 differential: {pass} pass, {skip} skipped (diverge/fuel)");
+    println!("abstract differential: {pass} pass, {skip} skipped (diverge/fuel)");
     let mut hist: Vec<_> = coverage.iter().collect();
     hist.sort_by(|a, b| b.1.cmp(a.1));
     for ((c, p), n) in &hist {

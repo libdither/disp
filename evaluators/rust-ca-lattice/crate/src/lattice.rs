@@ -1,37 +1,31 @@
-//! Rung 2 state, after the TOPO LIFT: cells live at (x, y, z) with SIX faces.
+//! Lattice state: cells live at `(x, y, z)` and expose six exclusive faces.
 //!
-//! The 2D prototype carried per-face wire layers, via cells, and strands tucked behind
-//! agents — three mechanisms all simulating a z-coordinate the cells were denied. Lifting
-//! z into the position deletes all three: a crossing is two wires at different z, a walker
-//! passes a crossing through ordinary cells, and an agent cell holds ONLY its agent. One
-//! attachment per face (exclusive faces) suffices in 3D — six faces cover ≤3 ports or up
-//! to `WIRE_CAP` strands. The 2D finding that exclusive faces deadlock walkers (3 ports +
-//! 2 tuck faces exceed 4) was a symptom of the missing dimension, not a case for layers.
-//! Where the old model tucked a crossing behind a mover, the lifted model has the mover
-//! WAIT at a shared cell instead; kink-flips (transitions.rs) and later the fields are
-//! the decongestants.
+//! A crossing uses ordinary wire cells at different `z` coordinates, and an agent cell
+//! contains only its agent. Six exclusive faces cover at most three agent ports or up to
+//! `WIRE_CAP` strands. A mover waits at an occupied cell. Pressure requests clearance;
+//! occupants answer with projection-preserving bulges or reshapes, while calm tension only
+//! shortens an occupant's own bond.
 //!
-//! Two topologies, selectable per Grid and validated differentially (tests/stage2.rs):
+//! Two topologies are selectable per `Grid` and validated differentially:
 //! - `Bilayer` (z ∈ {0,1}) — the 2.5D chip: a compute plane plus one routing plane above.
-//!   The honest worst case that maps onto today's metal-stack silicon.
+//!   This is the constrained planar substrate.
 //! - `Full3D` (z unbounded) — the general substrate; crossings can always route around.
 //!
-//! Everything else keeps rung 2's contracts: NO ids in the dynamics (`sid` is observer
+//! The state contracts exclude ids from the dynamics (`sid` is observer
 //! state for the shadow projection and readback only), connectivity purely positional
 //! (follow half-edges cell to cell), the loader is host code (global routing allowed HERE
 //! and only here), and `check_projection` is the executable correctness spec
 //! (EMBEDDING_THEOREM.md §4).
 //!
-//! State budget (§3-honest): agent = tag(4b) + 3 faces(3b each); strand = 6b faces +
-//! the signals riding on it — ψ hot (1b), the anonymous-move cooldown (2b), and the
-//! tension survey (per side, per direction, the hop distance to the nearest occurrence:
-//! 2 × 6 × u8 in the prototype, plus validity). The survey is the fattest signal by
-//! far; the CA-honest compression is log-scale distance buckets (2 to 3 bits per
-//! direction) — nearest-partner ORDERING is all the flip gate reads, never absolute
-//! hop counts.
+//! State budget: agent = tag(4b) + 3 faces(3b each); strand = 6b faces plus ψ hot (1b),
+//! a bounded `u8` cooldown, and the tension survey (per side and direction, the `u8` hop
+//! distance to the nearest occurrence: 2 × 6 values plus validity). The survey is the
+//! largest signal. A packed CA representation can replace those distances with saturating
+//! buckets because the flip gate uses nearest-partner ordering rather than exact totals.
 
 use crate::net::Net;
 use crate::rules::Tag;
+use crate::local::MotionMark;
 use std::collections::BTreeMap;
 
 pub type Pos = (i32, i32, i32);
@@ -75,8 +69,8 @@ pub fn step(p: Pos, d: Dir) -> Pos { let (dx, dy, dz) = d.delta(); (p.0 + dx, p.
 pub fn dir_to(a: Pos, b: Pos) -> Option<Dir> { DIRS.into_iter().find(|d| step(a, *d) == b) }
 pub fn manhattan(a: Pos, b: Pos) -> i32 { (a.0 - b.0).abs() + (a.1 - b.1).abs() + (a.2 - b.2).abs() }
 
-/// A cell attachment point is simply a FACE. With six faces and no coexistence states,
-/// one attachment per face is enough; the wire-layer bit of the 2D model is gone.
+/// A cell attachment point is a face. With six faces and no payload coexistence,
+/// one attachment per face is sufficient.
 pub type He = Dir;
 pub fn he_opp(h: He) -> He { h.opp() }
 
@@ -100,21 +94,19 @@ impl Topo {
 /// at a live consumer's principal. `survey` is the tension census: for each side (index
 /// 0 = beyond face `a`, 1 = beyond face `b`), the hop distance to the NEAREST step in
 /// each of the six travel directions (outbound orientation; 0 = that direction never
-/// occurs on that side) — None until the sweep from that side's endpoint has reached us,
-/// and reset by every geometric write (`Strand::new`), so staleness dies with its cause.
-/// Distances rather than presence bits are what let a bend with annihilating partners on
-/// BOTH sides migrate toward the strictly nearer one (presence alone froze all interior
-/// slack: measured 94 cells of removable slack at one stuck fixpoint). Signals are
-/// deliberately EXCLUDED from equality: a strand's identity is its geometry.
+/// occurs on that side) — None until the sweep from that side's endpoint has reached us.
+/// Geometry writers either invalidate affected slots or explicitly transport/reorient a
+/// still-valid survey; subsequent local sweeps repair every changed neighborhood.
+/// Distances let a bend with annihilating partners on both sides migrate toward the
+/// strictly nearer one; presence alone cannot orient interior slack. Signals are
+/// deliberately excluded from equality: a strand's identity is its geometry.
 #[derive(Clone, Copy, Debug)]
 pub struct Strand {
     pub a: He, pub b: He, pub hot: bool, pub survey: [Option<[u8; 6]>; 2],
     /// Anonymous-tier move cooldown: set when a flip or a decongestion slide moves this
     /// strand, ticked down each sweep; while nonzero the anonymous movers (tension and
     /// pressure flips, decongestion, evaporation) leave it alone. Demanded moves ignore
-    /// it. This is the general damper for A-undoes-B cycles between the contracting and
-    /// spreading movers (measured: 5938 decongestion slides trading against 5997 cold
-    /// flips around one bilayer jam).
+    /// it. This damps inverse cycles between contracting and spreading moves.
     pub cooldown: u8,
 }
 impl PartialEq for Strand { fn eq(&self, o: &Strand) -> bool { self.a == o.a && self.b == o.b } }
@@ -142,11 +134,10 @@ pub struct AgentCell {
     pub nascent: bool,
     /// Consecutive ticks this consumer has stood adjacent to its licensed producer with
     /// no planner able to place the fire. Zeroed by any move (`put_agent` reconstructs).
-    /// Read by the scheduler's frustration LADDER: quiet grace first (a live corridor
-    /// crossing the room drains on its own as its walker passes), licensed evictions
-    /// after, damped dock retries last. An aborted seed restores this high when it never
-    /// placed a single cell, so hopeless rooms stop re-docking (measured: 235 docks,
-    /// zero cells placed, around one corridor-crossed pair).
+    /// Read only to damp retries of patient grow. Regardless of age, the
+    /// pair gains no displacement right: it emits χ, and every obstruction owns its own
+    /// response.  An aborted seed restores this high when it never placed a cell so a
+    /// hopeless room does not immediately re-dock.
     pub frustration: u8,
 }
 
@@ -231,22 +222,27 @@ pub struct Grid {
     pub seed_count: usize,
     /// χ, the pressure field: a sparse per-cell scalar (absent = 0) diffused and decayed
     /// by `chi_step`, pumped by frustration (unfireable pairs, waiting seeds, squatted
-    /// reservations, blocked walkers). Rate-only: χ chooses among sound moves (SHOVE
+    /// reservations, blocked walkers). Rate-only: χ chooses among sound moves (agent step,
     /// direction, route bias), never results.
     pub chi: BTreeMap<Pos, u8>,
     /// σ, the standing shell field: same relaxation as χ but sourced by every live
     /// consumer, every tick, forever. A SEPARATE scalar because the two mean different
     /// things and are read by different movers: χ marks contested rooms (spreaders act,
     /// tension keeps out), σ marks reaction zones (approaching values park at the rim).
-    /// Folding shells into χ was measured twice as a mistake: shell halos activated the
-    /// spreaders (a rotor), and value-thresholding to avoid that cost the spreaders
-    /// their outer reach around real jams (ring 2 of a jam and ring 1 of a shell are
-    /// the same number).
+    /// Keeping σ separate prevents reaction-zone shells from activating χ spreaders;
+    /// scalar magnitude alone cannot distinguish the outer ring of a jam from the inner
+    /// ring of a standing shell.
     pub sigma: BTreeMap<Pos, u8>,
+    /// Finite, per-site control state for radius-one geometry transactions.  This is a
+    /// sparse storage optimization for a cell-state plane, not a global reservation
+    /// oracle: `local::next_site` can see only the mark at its own site and the six
+    /// adjacent sites.  Payload geometry is left untouched until a locally synchronized
+    /// commit tick.
+    pub motion: BTreeMap<Pos, MotionMark>,
 }
 
 impl Grid {
-    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo, reserved: BTreeMap::new(), seed_count: 0, chi: BTreeMap::new(), sigma: BTreeMap::new() } }
+    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo, reserved: BTreeMap::new(), seed_count: 0, chi: BTreeMap::new(), sigma: BTreeMap::new(), motion: BTreeMap::new() } }
 
     pub fn agent(&self, p: Pos) -> Option<&AgentCell> {
         match self.cells.get(&p) { Some(Cell::Agent(a)) => Some(a), _ => None }
@@ -255,6 +251,12 @@ impl Grid {
         match self.cells.get(&p) { Some(Cell::Wire(w)) => Some(w), _ => None }
     }
     pub fn is_empty(&self, p: Pos) -> bool { !self.cells.contains_key(&p) }
+    /// True while a local transaction owns this site's payload. `Debt` and
+    /// `SharedContest` are nonlocking control marks: they gate a local offer but must not
+    /// obstruct demanded transport, field propagation, or host-planned owner motion.
+    pub fn motion_locked(&self, p: Pos) -> bool {
+        self.motion.get(&p).is_some_and(|m| m.is_locking())
+    }
 
     /// All faces in use at a cell (agent ports, strand ends, or a seed's held anchors).
     pub fn used_hes(&self, p: Pos) -> Vec<He> {
@@ -268,6 +270,7 @@ impl Grid {
     /// Empty, in bounds, and not claimed by a seed: the only cells anyone may grow into.
     pub fn is_open(&self, p: Pos) -> bool {
         self.topo.in_bounds(p) && self.is_empty(p) && !self.reserved.contains_key(&p)
+            && !self.motion_locked(p)
     }
     pub fn has_seeds(&self) -> bool { self.seed_count > 0 }
     pub fn seed_drivers(&self) -> Vec<Pos> {
@@ -324,10 +327,9 @@ impl Grid {
     /// Follow the wire leaving `pos` through face `out` to the far agent port.
     /// Strands pass through; an agent port terminates. Returns None on anything a live
     /// unfold makes temporarily untraceable: a seed cell, a dangling half-edge, a missing
-    /// port. OBSERVER-ONLY: the dynamics never call this (the ψ hot bit replaced the
-    /// trace as reel's gate — reading a whole wire is not a neighbor-local operation);
-    /// it survives as the substrate for `trace`, i.e. the projection checker and
-    /// readback, which run at seed-free checkpoints.
+    /// port. OBSERVER-ONLY: the dynamics never call this; the neighbor-local `ψ` hot bit
+    /// gates reel while whole-wire tracing is reserved for the projection checker and
+    /// readback at seed-free checkpoints.
     pub fn try_trace(&self, pos: Pos, out: He) -> Option<(Pos, usize)> {
         let (mut cur, mut h) = (pos, out);
         for _ in 0..1_000_000 {
@@ -348,15 +350,20 @@ impl Grid {
     /// ψ propagation, one sweep: a cold strand heats when an adjacent live consumer's
     /// principal points into it, or when the strand continuing its wire in a neighbor
     /// cell is already hot. Strictly neighbor-local (each decision reads self plus the
-    /// six adjacent cells); collect-then-apply so the sweep order cannot matter. Every
-    /// strand WRITE starts cold, and a source dies exactly when its wire is consumed, so
-    /// staleness cannot outlive its cause — the wire simply re-heats from the consumer
-    /// end at one cell per tick. Returns how many strands heated (monotone, so this
-    /// counts as progress and provably quiesces).
+    /// six adjacent cells); collect-then-apply so the sweep order cannot matter. Geometry
+    /// transitions preserve the demand bit for the same projected edge, and newly cold
+    /// segments heat from the consumer end at one cell per tick. Returns how many strands
+    /// heated; on static unlocked geometry the sweep is monotone and quiesces.
     pub fn heat_step(&mut self) -> usize {
         let mut newly: Vec<(Pos, Strand)> = vec![];
         for (p, c) in &self.cells {
             let Cell::Wire(w) = c else { continue };
+            // A staged geometry protocol freezes the payload it validated.  In
+            // particular, `BulgeSpec::hot` is copied into three new cells at commit;
+            // changing that bit under only the source role could make the distant
+            // corner roles commit after the source aborts.  The demand front resumes
+            // through the freshly written geometry as soon as the marks clear.
+            if self.motion_locked(*p) { continue; }
             for s in w.iter() {
                 if s.hot { continue; }
                 let mut heat = false;
@@ -385,16 +392,15 @@ impl Grid {
         n
     }
 
-    /// The tension SURVEY, one sweep: each strand re-derives, per side, the set of travel
-    /// directions the rest of its wire uses beyond that side (a bit per Dir, outbound
-    /// orientation). An adjacent agent port is the base case (empty set, valid); a chain
-    /// neighbor contributes its far-side survey plus its own outbound step; anything else
+    /// The tension survey, one sweep: each strand re-derives, per side and outbound
+    /// direction, the hop distance to the nearest occurrence on the rest of its wire.
+    /// An adjacent agent port is the base case (all-zero distances, valid); a chain
+    /// neighbor advances its far-side distances and records its own outbound step; anything else
     /// (seed, dangling half mid-unfold) is invalid and blocks propagation. Strictly
     /// neighbor-local, collect-then-apply, one cell per tick from each endpoint; on
     /// static geometry it converges in wire-length steps and then reports zero changes
-    /// (so counting it as progress cannot mask a stall). Non-monotone by design: any
-    /// geometric write resets the written strands (Strand::new) and corrections simply
-    /// radiate outward on later sweeps.
+    /// (so counting it as progress cannot mask a stall). Geometry changes invalidate or
+    /// reorient affected values, and corrections radiate outward on later sweeps.
     pub fn survey_step(&mut self) -> usize {
         let mut next: Vec<(Pos, Strand, [Option<[u8; 6]>; 2])> = vec![];
         for (p, c) in &self.cells {
@@ -445,9 +451,9 @@ impl Grid {
 
     /// χ update, one Jacobi sweep over the active region: next(c) is a pure function of
     /// this cell's and its six neighbors' current values (out-of-bounds reads as 0 — the
-    /// boundary is the infinite sink), followed by a unit leak and re-imposed sources
-    /// (max semantics, so a standing shell and a frustration pump compose). The
-    /// double-buffering makes the result independent of any evaluation order.
+    /// boundary is the infinite sink), followed by a unit leak and explicit frustration
+    /// sources combined by max. The standing shell is the separate `σ` field. The
+    /// double-buffering makes the result independent of evaluation order.
     pub fn chi_step(&mut self, sources: &[(Pos, u8)]) {
         let mut active: std::collections::BTreeSet<Pos> = self.chi.keys().copied().collect();
         for (s, _) in sources { active.insert(*s); }

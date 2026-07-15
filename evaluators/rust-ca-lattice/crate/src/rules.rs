@@ -1,18 +1,15 @@
-//! Rung 1: the tree-calculus interaction rules frozen as DATA (the §5.1 "template ROM").
+//! Tree-calculus interaction rules represented as the §5.1 template ROM.
 //!
-//! The alphabet is the LOWERED one: every agent has at most 3 ports (Lafont-standard,
-//! ≤2 aux + principal), per LOCAL_CA_DESIGN.md §4.3's recommendation. This is load-bearing
-//! three ways: (a) uniform cells for a microcoded executor, (b) an agent's step bends at
-//! most 2 wires, which is what makes the local move generically feasible (the measured
-//! liveness lever from the rung-2 HTML prototype), and (c) smaller conflict footprints
-//! under asynchronous schedules (rung 3).
+//! The uniformly lowered alphabet gives every agent at most three ports (principal plus at
+//! most two auxiliaries). This keeps cells uniform for the microcoded executor, bounds a
+//! moving agent's wire bends to the two auxiliaries handled by the local star, and keeps
+//! conflict footprints finite.
 //!
-//! Lowering: the legacy 4-port `T1` (triage a b c) carries its two arms as one nested pair
-//! `⟨b, c⟩`; the legacy 5-port `T2` becomes `Sel` facing the discriminant `z`, its three
-//! arms carried as `⟨w, ⟨x, b⟩⟩`. `Pair` is the (producer) constructor, `Unp` the one
-//! (consumer) destructor: `Unp·Pair` is a pure double wire-fusion. Projections are spelled
-//! `Unp` + an explicit `Eps` on the discarded output, so erasure stays uniform and the
-//! ledger counts it honestly.
+//! `T1` carries its two triage arms as one nested pair `⟨b, c⟩`. `T2` is represented by
+//! `Sel` facing the discriminant `z`, with its three arms carried as `⟨w, ⟨x, b⟩⟩`.
+//! `Pair` is the producer constructor and `Unp` the consumer destructor; `Unp·Pair` is a
+//! pure double wire-fusion. Projections use `Unp` plus an explicit `Eps` on the discarded
+//! output, so erasure stays uniform and the ledger counts it directly.
 //!
 //! A rule = the fresh agents it creates + a perfect matching (the wiring permutation) over
 //! {consumer aux ports} ∪ {producer aux ports} ∪ {fresh agent ports}. `validate()` checks
@@ -20,9 +17,8 @@
 //! lemma (EMBEDDING_THEOREM.md §6) is visible in the shape itself: no rule ever names a
 //! wire endpoint outside the dying pair's ports and O(1) fresh agents.
 //!
-//! Semantics source: the two-level triage tree calculus, validated in
-//! research/interaction-combinator/_engine_dev.mjs (3998/0 differential) and re-validated
-//! here by the stage-1 differential in tests/stage1.rs against an independent normalizer.
+//! The two-level triage semantics are checked by `tests/stage1.rs`, which compares the ROM
+//! engine with an independent recursive normalizer.
 
 /// Agent alphabet. Port 0 is ALWAYS the principal. `Out` is the inert result sink and
 /// appears in no rule.

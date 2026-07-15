@@ -1,8 +1,7 @@
 //! The abstract interaction-net engine, driven ENTIRELY by the rule ROM (rules.rs): one
-//! generic `fire` interprets templates; there is no per-rule code. This engine is
-//! (a) the stage-1 differential subject that validates the ROM against the oracle, and
-//! (b) the SHADOW net the lattice co-maintains for the per-transition projection check
-//! (LOCAL_CA_DESIGN.md §10: the proof and the harness are the same statement).
+//! generic `fire` interprets templates; there is no per-rule code. Tests validate this
+//! engine against the independent oracle, and the lattice co-maintains it as the shadow
+//! net for projection checks (LOCAL_CA_DESIGN.md §10).
 //!
 //! Thanks to the ≤3-port lowered alphabet, ports are a fixed `[Option<Ref>; 3]`.
 

@@ -1,39 +1,17 @@
-//! Rung 2 dynamics on the lifted lattice: the footprint-atomic transitions.
+//! Host-planned bounded-footprint transitions on the six-face lattice.
 //!
-//! Every transition is two phases with one contract:
-//!   `plan_*`  — reads ONLY cells inside a bounded neighborhood, decides feasibility, and
-//!               returns a Plan carrying its exact FOOTPRINT (the cell set it may write).
-//!   `apply_*` — executes the plan; every mutation is asserted to stay inside the footprint.
+//! These operations are explicitly outside the strict cellular interface: a `plan_*`
+//! may inspect a bounded board and an `apply_*` may atomically write several cells. The
+//! radius-one center-write interface lives in `local.rs`:
+//! `next_site(center, [N,E,S,W,U,D]) -> next(center)` over one frozen snapshot.
 //!
-//! Four transitions:
-//!
-//! FIRE (rule 1): an adjacent, mutually-facing consumer·producer pair rewrites by the ROM
-//! template. The two dying cells become splice hubs; fresh agents are placed and their
-//! template wires routed inside a bounded board with backtracking. (This in-board search is
-//! the one non-CA-shaped planner left; the geometric-fire redesign replaces it.)
-//!
-//! REEL (rule 2, Walk): a producer steps one cell along its principal wire, consuming one
-//! strand — only when the far end is a consumer's principal (a fire awaits). On the lifted
-//! lattice there is NO coexistence: a walker whose next cell carries any foreign strand
-//! WAITS there instead of tucking; kink-flips (and later the fields) are the decongestants.
-//! Aux wires bend through the vacated cell; when the departure edge is taken, the bend
-//! detours around it through any of the FOUR perpendicular directions (in bilayer that
-//! includes over-the-top through z=1, the chip picture).
-//!
-//! RETRACT (polymer move 1): a width-1 U-turn annihilates — two adjacent elbow strands
-//! drop out and their flank cells connect directly. Wire length −2. The discrete
-//! curve-shortening step; the only wire-length sink besides reel itself.
-//!
-//! SLIDE (polymer move 2): a strand relocates OUT of its cell — its chain neighbors
-//! reconnect through any short route avoiding it. The excluded-volume move, scheduled
-//! walker-demanded (a blocked walker asks the strand in its way to slide). The kink-flip
-//! of polymer dynamics is its 1-cell route; the over-the-top bulge its 3-cell route.
-//!
-//! RETRACT and SLIDE read and write only a small bounded cell set and project to
-//! IDENTITY: they move wire geometry, never connectivity, so `check_projection` holds
-//! verbatim across them. This is the machine-checked half of the rung-3
-//! ordering-resilience story; the semantic half is strong confluence (tc-net.typ Thm 2)
-//! carried by the projection invariant, asserted per transition in checked runs.
+//! This module contains fire layout/search/stamp/grow, demanded reel, χ-licensed occupant step,
+//! BFS slide, kink flip, and retract. Every plan declares its complete write footprint
+//! and refuses cells locked by a staged local protocol, preserving the projection
+//! invariant. A requester may only emit χ: agent step, χ-flip, and slide are initiated by
+//! the pressured payload they move; fire, walkers, and seeds never select or overwrite
+//! a foreign strand or agent. Star translation, swept-square aux routing, and straight
+//! χ-licensed strand bulging is a strict radius-one protocol in `local.rs`.
 
 use crate::lattice::{dir_to, manhattan, step, AgentCell, Cell, Dir, Grid, GrowItem, GrowPlan, He, Pos, SeedCell, Strand, DIRS, WIRE_CAP};
 use crate::net::Net;
@@ -78,18 +56,17 @@ struct BoardState {
     /// walkers); second pass permits them. Face-uniqueness lives on as this preference.
     avoid_stacking: bool,
     /// Direction order for the wire router. Fire uses the standard order; REEL puts the
-    /// vertical directions first so aux TRAILS ride the overflow plane instead of
-    /// cluttering the reaction plane (trails were measured to be what makes fixed fire
-    /// layouts unfittable and what forces search fires into stacking).
+    /// vertical directions first so aux trails ride the overflow plane instead of
+    /// cluttering the reaction plane or forcing fire layouts to stack.
     dirs: [Dir; 6],
 }
 
 const DIRS_STD: [Dir; 6] = [Dir::N, Dir::E, Dir::S, Dir::W, Dir::U, Dir::D];
 /// Trails sink into the basement: on full 3D, z<0 is uncontested space (fires spread
 /// in-plane and detours prefer upward), so reel trails routed downward stay out of
-/// everyone's way. Bilayer has no basement, so it keeps the standard order. A blanket
-/// up-first order was measured to HURT (trails then contend with the overflow plane that
-/// detours and fires need).
+/// everyone's way. Bilayer has no basement, so it keeps the standard order. Routing
+/// upward first would make trails contend with the overflow plane used by detours and
+/// fires.
 const DIRS_DOWN_FIRST: [Dir; 6] = [Dir::D, Dir::N, Dir::E, Dir::S, Dir::W, Dir::U];
 
 impl BoardState {
@@ -139,10 +116,14 @@ enum PEnd {
 /// Is the pair at (cpos → producer at ppos) an enabled fire? Returns the full plan or None
 /// (not adjacent-facing, or no feasible local layout — the pair waits).
 pub fn plan_fire(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
+    // A reaction may rewrite either dying seat, so it is not a departure-only move.
+    // Foreign seed territory therefore excludes the pair itself as well as its board.
+    if grid.reserved.contains_key(&cpos) { return None; }
     let cons = grid.agent(cpos)?;
     if !cons.tag.is_consumer() || cons.nascent { return None; }
     let d0 = cons.faces[0]?;
     let ppos = step(cpos, d0);
+    if grid.reserved.contains_key(&ppos) { return None; }
     let prod = grid.agent(ppos)?;
     if !prod.tag.is_producer() || prod.nascent { return None; }
     // The principal wire must be the direct edge between them.
@@ -251,9 +232,8 @@ pub fn plan_fire(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
         }
     }
 
-    // Place the remaining fresh agents (backtracking, deterministic) and route the wires
-    // most-constrained-first. See the rung-2 findings in the README: greedy first-fit
-    // seals its own hubs.
+    // Place the remaining fresh agents by deterministic backtracking, then route the wires
+    // most-constrained-first so an easy route cannot seal a shared hub needed by a tighter one.
     let partners_of = |k: usize| -> Vec<usize> {
         let mut v = vec![];
         for (a, b) in rule.wires {
@@ -329,8 +309,8 @@ pub fn plan_fire(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
         if cells[k].is_some() {
             return solve(st, cells, k + 1, nf, attempts, partners_of, hubs_of, pair, route_all);
         }
-        // Candidates sorted by total wire distance (a smooth gradient beats
-        // adjacency-or-nothing; see the rung-2 findings).
+        // Sort candidates by total wire distance, giving the search a smooth geometric
+        // gradient while retaining the full deterministic backtracking fallback.
         let mut cands: Vec<(i32, i32, Pos)> = st.placeable.iter().map(|&cand| {
             let mut wire_dist = 0i32;
             for m in partners_of(k) {
@@ -373,6 +353,7 @@ pub fn plan_fire(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
     footprint.insert(ppos);
     for (p, _) in &strands { footprint.insert(*p); }
     for p in &fresh_cells { footprint.insert(*p); }
+    if !grid.motion_footprint_free(&footprint) { return None; }
 
     Some(FirePlan {
         cpos, ppos,
@@ -497,17 +478,12 @@ fn dfs_wire(
 }
 
 // -----------------------------------------------------------------------------------------
-// STAMP FIRE: the same layout problem plan_fire solves, but solved ONCE per
-// (rule, dock axis, anchor faces, topology, plane) on an EMPTY synthetic neighborhood — a
-// Platonic workshop — with the anchors' far cells blocked (in reality the external wires
-// live there). The cached result is then applied to the live lattice as a FIXED PATTERN:
-// about a dozen freeness reads, no search, no router. Two structural consequences:
-// (a) fire enabledness becomes purely local (read the fixed cells, stamp or wait), and
-// (b) templates are always stack-free (pass-1 on an empty board never shares a cell), so
-// stamp fires cannot mint the shared-cell walker-blockers that search-mode fires create
-// when their router falls back to stacking. Ports make this possible: faces are dynamic
-// per agent, so the template is keyed by the ACTUAL anchor faces at dock time and needs
-// no rotation or adaptation at apply time.
+// STAMP FIRE: solve the layout once per (rule, dock axis, anchor faces, topology, plane)
+// on an empty synthetic neighborhood with the anchors' far cells blocked. The cached
+// fixed pattern needs a bounded set of freeness reads at fire time, but it is still a
+// host-planned multi-cell transition rather than a seven-site CA rule. Empty-workshop
+// templates are stack-free. Dynamic agent faces key the template to the actual dock
+// geometry, so no rotation or adaptation is needed when applying it.
 // -----------------------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -545,10 +521,12 @@ fn synth_template(topo: crate::lattice::Topo, cons: &AgentCell, prod: &AgentCell
 /// The stamp planner. Same enabledness as `plan_fire`; the layout comes from the cached
 /// workshop template, offset to the live pair, and validated by freeness reads only.
 pub fn plan_fire_stamp(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
+    if grid.reserved.contains_key(&cpos) { return None; }
     let cons = grid.agent(cpos)?;
     if !cons.tag.is_consumer() || cons.nascent { return None; }
     let d0 = cons.faces[0]?;
     let ppos = step(cpos, d0);
+    if grid.reserved.contains_key(&ppos) { return None; }
     let prod = grid.agent(ppos)?;
     if !prod.tag.is_producer() || prod.nascent { return None; }
     if prod.faces[0] != Some(d0.opp()) { return None; }
@@ -579,6 +557,7 @@ pub fn plan_fire_stamp(grid: &Grid, cpos: Pos) -> Option<FirePlan> {
         footprint.insert(q);
         strands.push((q, *s));
     }
+    if !grid.motion_footprint_free(&footprint) { return None; }
     Some(FirePlan {
         cpos, ppos,
         csid: cons.sid, psid: prod.sid,
@@ -652,52 +631,23 @@ fn make_board(grid: &Grid, a: Pos, b: Pos) -> BTreeSet<Pos> {
 /// meeting edge free, the vacated-side strand is deleted and the neighbor half repointed
 /// straight at the mover — net wire length FALLS by one where the extension bend would
 /// grow it by one, so a walker consumes its own drag staircase instead of paving the
-/// lattice with trail mats (the measured mat source). Otherwise the SAME bounded router
-/// fire uses extends the wire: from its arrival face at the vacated cell to any free face
+/// lattice with trail mats. Otherwise the bounded fire router extends the wire from its
+/// arrival face at the vacated cell to a free face
 /// of the mover — the straight-behind bend and the corner detour are its 1-cell and
 /// 3-cell routes.
 pub fn plan_reel(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
-    plan_step(grid, apos, true)
-}
-
-/// The cold APPROACH: an undemanded value walks its own principal toward its partner —
-/// the attraction half of the two-field design — but only through pressure-free space,
-/// so the standing χ shell around every consumer parks it at the rim, pre-staged, until
-/// demand carries it through (the hot reel ignores χ entirely: precedence by rule, not
-/// by force arithmetic). Values approaching VALUES meet no shell and pull fully
-/// together, so idle subtrees self-compact. This is the walk that was measured deadly
-/// when unconditional (values squatted in the reaction seams); the shell is what was
-/// missing, not the walking.
-pub fn plan_approach(grid: &Grid, apos: Pos) -> Option<ReelPlan> {
-    if grid.chi_at(apos) != 0 { return None; }
-    let ag = grid.agent(apos)?;
-    // Arity-1 only: a leaf's walk consumes one strand per step with no aux to drag, a
-    // strict wire win. Multi-port approach nets zero-to-positive wire per step (each
-    // aux pays a bend where truncation finds no bite), and on bilayer that drag wedged
-    // a pinned chain — subtree roots wait for demand, their leaves drift in.
-    if ag.tag.arity() != 1 { return None; }
-    let d = ag.faces[0]?;
-    let npos = step(apos, d);
-    // park at the rim: σ is the standing shell (reaction zones), χ marks live jams
-    if grid.chi_at(npos) != 0 || grid.sigma_at(npos) != 0 { return None; }
-    plan_step(grid, apos, false)
-}
-
-fn plan_step(grid: &Grid, apos: Pos, want_hot: bool) -> Option<ReelPlan> {
     let ag = grid.agent(apos)?;
     if !ag.tag.is_producer() || ag.nascent { return None; }
     let d = ag.faces[0]?;
     let npos = step(apos, d);
-    if grid.reserved.contains_key(&npos) { return None; } // a seed claimed it: park, the strand will be slid
+    if grid.reserved.contains_key(&npos) { return None; } // seed territory: park and let pressure resolve it
     let w = grid.wire(npos)?; // agent-adjacent is fire's business; empty is impossible (parity)
     let mine = w.with_he(d.opp())?;
-    // ψ replaces the whole-wire trace: the demanded reel walks exactly when the adjacent
-    // strand of MY principal carries demand (a single neighbor-local bit read); the cold
-    // approach walks exactly when it does not.
-    if mine.hot != want_hot { return None; }
+    // ψ licenses demanded reel through the adjacent principal strand.
+    if !mine.hot { return None; }
     let f = mine.other(d.opp());
-    // No coexistence on the lifted lattice: a shared cell makes the walker WAIT (the old
-    // tuck). The CLEAR phase (flip/bypass) moves the blocking strand out first.
+    // No coexistence on the lifted lattice: a shared cell makes the walker wait.  It
+    // emits χ; the switchbox and surrounding occupants own every clearance response.
     if w.count() > 1 { return None; }
 
     let board = make_board(grid, apos, npos);
@@ -800,6 +750,7 @@ fn plan_step(grid: &Grid, apos: Pos, want_hot: bool) -> Option<ReelPlan> {
     for (p, _) in &writes { footprint.insert(*p); }
     for (p, _) in &removes { footprint.insert(*p); }
     for (p, _, _) in &repoints { footprint.insert(*p); }
+    if !grid.motion_footprint_free(&footprint) { return None; }
 
     Some(ReelPlan { apos, npos, consumed: mine, new_faces: st.faces[0], writes, removes, repoints, footprint })
 }
@@ -826,17 +777,16 @@ pub fn apply_reel(grid: &mut Grid, plan: &ReelPlan) {
 }
 
 // =========================================================================================
-// SHOVE: the χ-driven agent step — the mover for PARKED agents, which neither fires nor
-// reels nor slides can touch. An agent on high pressure steps to its lowest-pressure open
-// neighbor (steepest descent, fixed tie order, hysteresis so it cannot dither), and every
-// wire re-anchors through the same bounded router reel uses; nothing is consumed, so the
-// move projects to identity. Hot walkers are immune (they are delivering — demand
-// outranks pressure, and immunity kills the reel-forward/shove-back livelock). Docked
+// AGENT STEP: a parked agent on high pressure steps to its
+// lowest-pressure open neighbor (steepest descent, fixed tie order, and hysteresis), and
+// each port re-anchors by a bounded host-planned truncation or one bend through the vacated cell;
+// nothing is consumed abstractly, so the move projects to identity. Hot walkers are immune (they are delivering — demand
+// outranks pressure, and immunity kills the reel-forward/step-back livelock). Docked
 // pairs are immune (never separate an enabled fire). Out is immune (the pad is fixed).
 // =========================================================================================
 
 #[derive(Debug)]
-pub struct ShovePlan {
+pub struct AgentStepPlan {
     pub apos: Pos,
     pub npos: Pos,
     pub new_faces: [Option<He>; 3],
@@ -846,7 +796,7 @@ pub struct ShovePlan {
     pub footprint: BTreeSet<Pos>,
 }
 
-pub fn plan_shove(grid: &Grid, apos: Pos) -> Option<ShovePlan> {
+pub fn plan_agent_step(grid: &Grid, apos: Pos) -> Option<AgentStepPlan> {
     let ag = grid.agent(apos)?;
     if ag.nascent || ag.tag == Tag::Out { return None; }
     let here = grid.chi_at(apos);
@@ -876,15 +826,14 @@ pub fn plan_shove(grid: &Grid, apos: Pos) -> Option<ShovePlan> {
     if here < cn.saturating_add(2) { return None; }
     let d = dir_to(apos, npos)?;
 
-    // LOCAL re-anchoring, no router: each port re-ties by TRUNCATION (walk its chain up
+    // Bounded host-planned re-anchoring, no router: each port re-ties by TRUNCATION (walk its chain up
     // to three cells; at the first continuation already adjacent to the new seat, delete
     // the walked strands and repoint — net wire falls) or by the SINGLE BEND at the
-    // vacated cell (one strand connecting the new seat back to the old attachment; the
+    // vacated cell (one strand connecting the new seat back to the source attachment; the
     // apos↔npos edge carries one attachment, so at most one port may take it). An agent
     // whose wires cannot re-tie through its own footprint does not move: the field keeps
     // pumping, the wires around it seep first, and the agent goes when the geometry
-    // allows — displacement stops being a wire factory (the router version paid one to
-    // three fresh strands per port).
+    // allows. This keeps the move from generating multi-cell trails per port.
     let mut writes: Vec<(Pos, Strand)> = vec![];
     let mut removes: Vec<(Pos, Strand)> = vec![];
     let mut repoints: Vec<(Pos, He, He)> = vec![];
@@ -936,7 +885,7 @@ pub fn plan_shove(grid: &Grid, apos: Pos) -> Option<ShovePlan> {
         // (ii) the single bend at the vacated cell
         let pf = d.opp();
         if !bend_used && !new_faces.iter().flatten().any(|x| *x == pf) {
-            // the old attachment at step(apos, f) stays put; the bend meets it across
+            // the source attachment at step(apos, f) stays put; the bend meets it across
             // the same edge the port used, so no repoint is needed there
             let q = step(apos, f);
             let hot = grid.wire(q).and_then(|w| w.with_he(f.opp())).map(|t| t.hot).unwrap_or(false);
@@ -953,12 +902,13 @@ pub fn plan_shove(grid: &Grid, apos: Pos) -> Option<ShovePlan> {
     for (p, _) in &writes { footprint.insert(*p); }
     for (p, _) in &removes { footprint.insert(*p); }
     for (p, _, _) in &repoints { footprint.insert(*p); }
-    Some(ShovePlan { apos, npos, new_faces, writes, removes, repoints, footprint })
+    if !grid.motion_footprint_free(&footprint) { return None; }
+    Some(AgentStepPlan { apos, npos, new_faces, writes, removes, repoints, footprint })
 }
 
-pub fn apply_shove(grid: &mut Grid, plan: &ShovePlan) {
+pub fn apply_agent_step(grid: &mut Grid, plan: &AgentStepPlan) {
     let guard = |p: Pos| assert!(plan.footprint.contains(&p), "write outside footprint: {p:?}");
-    let Some(Cell::Agent(ag)) = grid.cells.get(&plan.apos).cloned() else { panic!("shove: no agent") };
+    let Some(Cell::Agent(ag)) = grid.cells.get(&plan.apos).cloned() else { panic!("agent step: no agent") };
     guard(plan.apos);
     grid.cells.remove(&plan.apos);
     for (p, s) in &plan.removes { guard(*p); grid.remove_strand(*p, *s); }
@@ -977,24 +927,6 @@ pub fn apply_shove(grid: &mut Grid, plan: &ShovePlan) {
 // =========================================================================================
 // POLYMER MOVES: RETRACT + KINK-FLIP
 // =========================================================================================
-
-/// Repoint whichever attachment (agent port or strand half) occupies face `from` at `p`
-/// to face `to`. The caller has verified `to` is free at `p`.
-fn rewire_face(grid: &mut Grid, p: Pos, from: He, to: He) {
-    match grid.cells.get_mut(&p) {
-        Some(Cell::Agent(a)) => {
-            let i = a.port_at(from).unwrap_or_else(|| panic!("no port at {from:?} on {p:?}"));
-            a.faces[i] = Some(to);
-        }
-        Some(Cell::Wire(w)) => {
-            let slot = w.strands.iter_mut().flatten().find(|s| s.contains(from))
-                .unwrap_or_else(|| panic!("no strand half {from:?} at {p:?}"));
-            *slot = if slot.a == from { Strand::new(to, slot.b) } else { Strand::new(slot.a, to) };
-        }
-        Some(Cell::Seed(_)) => panic!("rewire on a seed cell {p:?}"),
-        None => panic!("rewire on empty cell {p:?}"),
-    }
-}
 
 #[derive(Debug)]
 pub struct RetractPlan {
@@ -1020,11 +952,11 @@ pub struct RetractPlan {
 /// ```
 pub fn plan_retract(grid: &Grid, c1: Pos) -> Option<RetractPlan> {
     let w1 = grid.wire(c1)?;
-    // Seed territory is untouchable: reserved cells hold half-wired template strands whose
-    // geometry LOOKS retractable but whose parity is pending.
-    let shielded = |p: Pos| grid.reserved.contains_key(&p)
-        || matches!(grid.cells.get(&p), Some(Cell::Seed(_)));
-    if shielded(c1) { return None; }
+    // A materialized seed is private protocol state. A mere reservation blocks new
+    // arrivals but may not freeze an incumbent U-turn that can remove itself.
+    let seeded = |p: Pos| matches!(grid.cells.get(&p), Some(Cell::Seed(_)));
+    let arrival_blocked = |p: Pos| grid.reserved.contains_key(&p) || seeded(p);
+    if seeded(c1) { return None; }
     for s1 in w1.iter() {
         for (e, d) in [(s1.a, s1.b), (s1.b, s1.a)] {
             if e == d.opp() { continue; }              // straight strand: no elbow
@@ -1032,17 +964,15 @@ pub fn plan_retract(grid: &Grid, c1: Pos) -> Option<RetractPlan> {
             let Some(w2) = grid.wire(c2) else { continue };
             let Some(s2) = w2.with_he(d.opp()) else { continue };
             if s2.other(d.opp()) != e { continue; }    // partner elbow must exit the same side
-            if shielded(c2) { continue; }
+            if seeded(c2) { continue; }
             let (f1, f2) = (step(c1, e), step(c2, e));
-            // A seed's anchor faces are frozen and its territory shielded: never rewire a
-            // flank that is a seed cell or reserved.
-            if shielded(f1) || shielded(f2) { continue; }
+            // Retraction clears the elbows, but it must not repoint a reserved flank.
+            if arrival_blocked(f1) || arrival_blocked(f2) { continue; }
             // The new direct edge f1—f2 must be free on both faces.
             if grid.used_hes(f1).contains(&d) || grid.used_hes(f2).contains(&d.opp()) { continue; }
-            return Some(RetractPlan {
-                c1, c2, f1, f2, s1, s2, d, e,
-                footprint: [c1, c2, f1, f2].into_iter().collect(),
-            });
+            let footprint = [c1, c2, f1, f2].into_iter().collect();
+            if !grid.motion_footprint_free(&footprint) { continue; }
+            return Some(RetractPlan { c1, c2, f1, f2, s1, s2, d, e, footprint });
         }
     }
     None
@@ -1069,98 +999,66 @@ pub struct SlidePlan {
     pub footprint: BTreeSet<Pos>,
 }
 
-/// SLIDE: reroute the strand `s` OUT of cell `p` — its wire's chain neighbors na = p+s.a
-/// and nb = p+s.b reconnect through the SHORTEST path (bounded BFS, deterministic
-/// tie-break) that avoids `p` and every cell in `avoid` (in bilayer, typically over the
-/// top through z=1). This is the excluded-volume move: two wires cannot share a cell
-/// forever, so the one in a walker's way slides around. The kink-flip of polymer dynamics
-/// is its 1-cell route and the straight bulge its 3-cell route; congested neighborhoods
-/// get whatever short route exists. Length changes by (route − 1), slack the RETRACT move
-/// reclaims later; projects to identity.
+/// Host-planned, χ-licensed, strand-owned SLIDE: the strand occupying `p` may reroute itself between its
+/// two chain neighbors through a bounded shortest path.  Callers cannot use this as a
+/// requester's write primitive: the public gate requires χ at `p`, and the strand
+/// remains the owner of the projection-identity response. The staged local bulge handles
+/// the straight, width-one case; this bounded BFS handles denser neighborhoods.
 ///
 /// ```text
 ///      na ─ p ─ nb          na   ·   nb          (side view: the strand now rides the
 ///                      ⇒     └ ─ ─ ─ ┘            next plane; p is free for the walker)
 /// ```
-pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: bool) -> Option<SlidePlan> {
-    plan_slide_ex(grid, p, s, avoid, from_seed, false)
-}
-
-/// `relax`: permits a SECOND pass threading count-1 wire cells (short trails only) when
-/// no empty route exists — for demanded clearings in wire mats. Ambient decongestion must
-/// NOT relax (measured: it shuffles strands forever).
-pub fn plan_slide_ex(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: bool, relax: bool) -> Option<SlidePlan> {
+pub fn plan_slide(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos]) -> Option<SlidePlan> {
+    if grid.chi_at(p) == 0 { return None; }
     let (na, nb) = (step(p, s.a), step(p, s.b));
-    // Seed territory is untouchable from outside; the owning seed may slide SQUATTERS out
-    // of its own reserved cells (pre-dock wires), whose parity is real.
-    if !from_seed && grid.reserved.contains_key(&p) { return None; }
+    // The reserved source may clear itself; endpoints and trail cells remain protected
+    // from arrivals and rewrites.
     let shielded = |q: Pos| grid.reserved.contains_key(&q)
         || matches!(grid.cells.get(&q), Some(Cell::Seed(_)));
     if shielded(na) || shielded(nb) { return None; }
     let board = make_board(grid, p, p);
     let blocked = |c: Pos| c == p || c == na || c == nb || avoid.contains(&c);
-    // Trails prefer EMPTY cells (strictly decongesting: total excess occupancy falls, so
-    // churn cannot cycle). When the region is a MAT of count-1 wire cells — no empty
-    // roots anywhere, the measured chain-knot class — a second RELAXED pass may thread
-    // through count-1 wire cells whose faces fit. Relaxation trades the monotone measure
-    // for reach; call sites are χ- or walker-demanded and the run-level stall grace
-    // bounds any residual ping-pong.
+    // Trails use empty cells only. The source occupancy disappears, so the move strictly
+    // lowers excess occupancy in its contested switchbox instead of threading another wire.
     let mut goal: Option<Pos> = None;
     let mut seen: BTreeMap<Pos, (He, Pos)> = BTreeMap::new(); // cell -> (entry face, parent)
-    for relaxed in [false, true] {
-        if relaxed && !relax { break; }
-        // May a trail occupy `c`, entering via face `f_in`?
-        let cell_ok = |c: Pos, f_in: He| -> bool {
-            if !grid.topo.in_bounds(c) || grid.reserved.contains_key(&c) { return false; }
-            match grid.cells.get(&c) {
-                None => true,
-                Some(Cell::Wire(w)) => relaxed && w.count() == 1 && !w.used_hes().contains(&f_in),
-                _ => false,
-            }
-        };
-        let exit_ok = |c: Pos, out: He| -> bool {
-            match grid.cells.get(&c) {
-                Some(Cell::Wire(w)) => !w.used_hes().contains(&out),
-                _ => true,
-            }
-        };
-        seen.clear();
-        let mut queue: std::collections::VecDeque<Pos> = Default::default();
-        for da in DIRS {
-            if grid.used_hes(na).contains(&da) { continue; }
-            let t0 = step(na, da);
-            if blocked(t0) || !board.contains(&t0) || !cell_ok(t0, da.opp()) || seen.contains_key(&t0) { continue; }
-            seen.insert(t0, (da.opp(), t0)); // self-parent marks a root
-            queue.push_back(t0);
+    let cell_ok = |c: Pos| {
+        grid.topo.in_bounds(c) && !grid.reserved.contains_key(&c) && grid.is_empty(c)
+    };
+    let mut queue: std::collections::VecDeque<Pos> = Default::default();
+    for da in DIRS {
+        if grid.used_hes(na).contains(&da) { continue; }
+        let t0 = step(na, da);
+        if blocked(t0) || !board.contains(&t0) || !cell_ok(t0) || seen.contains_key(&t0) {
+            continue;
         }
-        let mut depth = 0usize;
-        // Both passes stay inside the radius-2 board; the relaxed cap governs how deep a
-        // DEMANDED clearing may thread a mat (measured on the selF knot: 4 dies one hop
-        // short of the empty plane above; ambient moves never take this pass).
-        let cap = if relaxed { 6 } else { 7 };
-        'bfs: while !queue.is_empty() && depth < cap {
-            depth += 1;
-            for _ in 0..queue.len() {
-                let cur = queue.pop_front().unwrap();
-                let enter = seen[&cur].0;
-                // Terminate: connect to nb through a free face.
-                if let Some(out) = dir_to(cur, nb) {
-                    if out != enter && exit_ok(cur, out) && !grid.used_hes(nb).contains(&out.opp()) {
-                        goal = Some(cur);
-                        break 'bfs;
-                    }
-                }
-                for d in DIRS {
-                    if d == enter { continue; }
-                    let n = step(cur, d);
-                    if blocked(n) || !board.contains(&n) || seen.contains_key(&n) { continue; }
-                    if !exit_ok(cur, d) || !cell_ok(n, d.opp()) { continue; }
-                    seen.insert(n, (d.opp(), cur));
-                    queue.push_back(n);
+        seen.insert(t0, (da.opp(), t0)); // self-parent marks a root
+        queue.push_back(t0);
+    }
+    let mut depth = 0usize;
+    'bfs: while !queue.is_empty() && depth < 7 {
+        depth += 1;
+        for _ in 0..queue.len() {
+            let cur = queue.pop_front().unwrap();
+            let enter = seen[&cur].0;
+            // Terminate: connect to nb through a free face.
+            if let Some(out) = dir_to(cur, nb) {
+                if out != enter && !grid.used_hes(nb).contains(&out.opp()) {
+                    goal = Some(cur);
+                    break 'bfs;
                 }
             }
+            for d in DIRS {
+                if d == enter { continue; }
+                let n = step(cur, d);
+                if blocked(n) || !board.contains(&n) || seen.contains_key(&n) || !cell_ok(n) {
+                    continue;
+                }
+                seen.insert(n, (d.opp(), cur));
+                queue.push_back(n);
+            }
         }
-        if goal.is_some() { break; }
     }
     let mut cur = goal?;
     let mut trail: Vec<(Pos, He)> = vec![(cur, seen[&cur].0)];
@@ -1178,6 +1076,7 @@ pub fn plan_slide_ex(grid: &Grid, p: Pos, s: Strand, avoid: &[Pos], from_seed: b
     let nb_to = dir_to(nb, trail.last().unwrap().0).unwrap();
     let mut footprint: BTreeSet<Pos> = [p, na, nb].into_iter().collect();
     for (c, _) in &strands { footprint.insert(*c); }
+    if !grid.motion_footprint_free(&footprint) { return None; }
     Some(SlidePlan { p, s, na, nb, na_to, nb_to, strands, footprint })
 }
 
@@ -1185,10 +1084,8 @@ pub fn apply_slide(grid: &mut Grid, plan: &SlidePlan) {
     let guard = |p: Pos| assert!(plan.footprint.contains(&p), "write outside footprint: {p:?}");
     guard(plan.p); grid.remove_strand(plan.p, plan.s);
     // ψ is preserved across every projection-identity move: the reroute never changes
-    // whose wire this is. Writing the trail cold opened a reheat window in which
-    // simultaneous cold tension contracted a demanded walker's own detour straight back
-    // into the shared cell it had just left — measured as 1341 of 1585 slides on chain3
-    // being that one walker's self-reroute, forever.
+    // whose wire this is. Keeping the trail hot also prevents cold tension from
+    // immediately contracting a demanded walker's detour back into the contested cell.
     guard(plan.na); repoint_for_flip(grid, plan.na, plan.s.a.opp(), plan.na_to, None);
     guard(plan.nb); repoint_for_flip(grid, plan.nb, plan.s.b.opp(), plan.nb_to, None);
     for (c, s) in &plan.strands {
@@ -1203,14 +1100,13 @@ pub fn apply_slide(grid: &mut Grid, plan: &SlidePlan) {
 /// TENSION bend-shift: the survey-guided kink-flip, the transposition step of discrete
 /// curve shortening. A bend's two word-letters are opp(a) then b (reading across the
 /// cell); the flip relocates the corner to the rectangle's fourth cell, which swaps the
-/// letters — migrating each one cell toward an annihilating partner the survey shows
+/// letters — moving each one cell toward an annihilating partner the survey shows
 /// beyond one side. When opposite letters become adjacent they are a U-turn and RETRACT
-/// destroys them: flips are length-neutral and feed retract, which is the only mover of
-/// length. Applies to every wire, hot included (the demanded wire is where shortening
+/// destroys them: flips are length-neutral and expose a length-reducing retraction.
+/// Applies to every wire, hot included (the demanded wire is where shortening
 /// pays most); demand-licensed phases already ran this tick, so a flip never races a
-/// plan. Projects to identity. The moved strand and both repointed neighbors reset their
-/// surveys (Strand::new), which is the built-in cooldown: a fresh strand cannot flip
-/// until the sweeps re-reach it.
+/// plan. Projects to identity. Cold flips transport the survey through the transposition;
+/// hot/pressure moves may invalidate it. The explicit cooldown damps inverse motion.
 #[derive(Debug)]
 pub struct FlipPlan {
     pub p: Pos,
@@ -1232,9 +1128,8 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     // fires only when one letter strictly gains and the other does not strictly prefer
     // the opposite direction. Every allowed swap decreases the sum of nearest-partner
     // distances by at least one (a tied letter improves too: min(l-1, r+1) < min(l, r)),
-    // so the dance terminates without needing partner-exclusivity — which is what
-    // unfreezes interior slack (presence-only froze any letter with partners on both
-    // sides; measured as 94 cells of removable slack at one stuck fixpoint).
+    // so the dance terminates without needing partner-exclusivity. Distance ordering
+    // also orients a letter that has partners on both sides.
     // Orientation note: stored sides read outbound, so canonical direction d at earlier
     // positions appears in the a-side array under opp(d), and at later positions in the
     // b-side array under d itself.
@@ -1249,26 +1144,22 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     let (qa, qb) = (step(p, s.a), step(p, s.b));
     let npos = step(qa, s.b); // == step(qb, s.a): the rectangle's fourth corner
     if !grid.topo.in_bounds(npos) { return None; }
-    if [p, npos, qa, qb].iter().any(|c| grid.reserved.contains_key(c)) { return None; }
+    if [npos, qa, qb].iter().any(|c| grid.reserved.contains_key(c)) { return None; }
     // Jurisdiction: a slide and a flip are INVERSE operations (a demanded slide detours
     // wire around a contested cell, adding the very bend pair tension deletes), so
-    // without a boundary the two churn forever — measured: 17k flips vs 17k slides,
-    // 1:1, around one frustrated pair. Pressure IS the boundary: while χ marks a region
+    // without a boundary the two can continually undo each other. Pressure is the
+    // boundary: while χ marks a region
     // spoken for, tension never moves wire into it; when the jam resolves and the field
     // decays, tension reclaims the leftover detours. Moving OUT of a pressurized cell
     // stays legal (that direction agrees with the field). χ carries frustration ONLY —
-    // the standing shells live in their own field σ, which tension ignores entirely
-    // (folding them into χ either fenced tension out of every reaction room or, value-
-    // thresholded, cost the spreaders their outer reach; both measured).
+    // the standing shells live in their own field σ, which tension ignores entirely.
     if grid.chi_at(npos) != 0 { return None; }
     // The target must take the strand (fit under the cap, both faces free, no hot
-    // strand — an active walking corridor). Occupied targets stay allowed in CALM space
-    // — an empty-only rule froze dense-region slack solid (chain4 went from done to
-    // stuck holding 740 excess cells) — but STACKING near pressure is banned: a stack
+    // strand — an active walking corridor). Occupied targets stay allowed in calm space
+    // so dense-region slack can move, but stacking near pressure is banned: a stack
     // inside a persistent halo becomes a count-2 cell that decongestion spreads back
-    // out, a multi-strand rotor that per-strand cooldowns only slow (measured at one
-    // bilayer jam: thousands of trade moves; the pump never dies because the
-    // frustration is permanent). Occupied targets therefore require the target and its
+    // out, a multi-strand rotor that per-strand cooldowns only slow. Occupied targets
+    // therefore require the target and its
     // whole neighborhood χ-free; empty targets need only the target itself.
     let (nf_a, nf_b) = (s.b.opp(), s.a.opp()); // npos faces toward qa and qb
     match grid.cells.get(&npos) {
@@ -1282,7 +1173,7 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
         _ => return None, // agent or seed sits on the corner
     }
     // Both chain neighbors must accept the repoint: the new face free, no seeds, no
-    // half-built complexes, and (parity guard) the old attachment actually present.
+    // half-built complexes, and (parity guard) the `from` attachment actually present.
     for (q, from, to) in [(qa, s.a.opp(), s.b), (qb, s.b.opp(), s.a)] {
         match grid.cells.get(&q) {
             None | Some(Cell::Seed(_)) => return None,
@@ -1295,17 +1186,15 @@ pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
         }
     }
     let footprint = [p, npos, qa, qb].into_iter().collect();
+    if !grid.motion_footprint_free(&footprint) { return None; }
     Some(FlipPlan { p, s, npos, qa, qb, footprint })
 }
 
-/// Repoint an attachment for a FLIP: preserve the ψ hot bit (a flip never changes whose
-/// wire this is; cooling it starved the very walker the wire served — fork-bilayer
-/// wedged) and carry the EXACT post-flip survey for the repointed side. A flip is a
-/// transposition of two adjacent path letters, so no other strand's presence sets change
-/// at all, and the three affected values are computable in place. Resetting them instead
-/// (the first cut) blinded the neighborhood for a sweep per flip and serialized
-/// contraction to one bend at a time — wires visibly tightened sequentially instead of
-/// everywhere at once.
+/// Repoint an attachment for a FLIP: preserve the ψ hot bit because a flip never changes
+/// wire identity, and carry the exact post-flip survey for the repointed side. A flip is
+/// a transposition of two adjacent path letters, so no other strand's presence sets
+/// change and the three affected values are computable in place. Carrying these values
+/// lets independent bends contract without waiting for a complete survey sweep.
 /// One step of the survey distance recurrence: the side value seen from one cell closer
 /// to us, through a strand whose outbound step is `h`.
 fn survey_advance(far: Option<[u8; 6]>, h: He) -> Option<[u8; 6]> {
@@ -1342,27 +1231,28 @@ fn repoint_for_flip(grid: &mut Grid, p: Pos, from: He, to: He, side: Option<[u8;
     }
 }
 
-/// PRESSURE flip: the same corner-hop, directed by χ instead of the survey — a cold
+/// PRESSURE flip: the same corner-hop, directed by χ instead of the survey — a
 /// bend in a pressurized cell hops to the rectangle corner with strictly lower χ. This
-/// is how the field moves wire without a router: mats yield around frustration one cell
-/// per tick, which is what makes the routing-free local shove viable (the agent's
-/// re-ties need adjacent room, and this is what opens it). Hot wire and hot targets
-/// stay untouchable; the survey needs no say because χ-descent is its own gate.
+/// lets a pressured strand move itself without a router: mats yield around frustration one
+/// cell per tick, which supplies re-tie space for the host-planned agent step. Hot geometry is eligible
+/// under the same ownership rule: a requester cannot move it, but the strand's own
+/// pressured cell may move itself. Hotness changes urgency, not ownership.
+/// The survey needs no say because χ-descent is its own gate.
 pub fn plan_chi_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
     let s = grid.wire(p)?.iter().find(|t| *t == s0)?;
-    if s.hot || s.cooldown > 0 || s.b == s.a.opp() { return None; }
+    if s.cooldown > 0 || s.b == s.a.opp() { return None; }
     let here = grid.chi_at(p);
     if here < 2 { return None; }
     let (qa, qb) = (step(p, s.a), step(p, s.b));
     let npos = step(qa, s.b);
     if grid.chi_at(npos) >= here { return None; }
     if !grid.topo.in_bounds(npos) { return None; }
-    if [p, npos, qa, qb].iter().any(|c| grid.reserved.contains_key(c)) { return None; }
+    if [npos, qa, qb].iter().any(|c| grid.reserved.contains_key(c)) { return None; }
     let (nf_a, nf_b) = (s.b.opp(), s.a.opp());
     match grid.cells.get(&npos) {
         None => {}
         Some(Cell::Wire(wn)) => {
-            if wn.count() >= WIRE_CAP || wn.iter().any(|t| t.hot) { return None; }
+            if wn.count() >= WIRE_CAP { return None; }
             let used = wn.used_hes();
             if used.contains(&nf_a) || used.contains(&nf_b) { return None; }
         }
@@ -1380,6 +1270,7 @@ pub fn plan_chi_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
         }
     }
     let footprint = [p, npos, qa, qb].into_iter().collect();
+    if !grid.motion_footprint_free(&footprint) { return None; }
     Some(FlipPlan { p, s, npos, qa, qb, footprint })
 }
 
@@ -1391,10 +1282,9 @@ pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
     // further out drift by at most one hop until the sweep corrects them), so every
     // eligible cold bend can fire every tick —
     // simultaneous contraction. HOT wires deliberately reset instead: the survey blind
-    // is a natural rate limit, and it is load-bearing — simultaneous contraction of the
-    // wire a walker is actively eating fights the walk machinery (clears, face
-    // rotations) tick for tick, measured as thousands of trade slides on the chain
-    // class, while the serialized trickle is exactly the regime that unlocked chain4.
+    // is a natural rate limit: simultaneous contraction of the wire a walker is actively
+    // consuming would fight its clears and face rotations, while a serialized trickle
+    // allows both motions to progress.
     let (qa_side, qb_side, ns_survey) = if s.hot {
         (None, None, [None, None])
     } else {
@@ -1412,9 +1302,10 @@ pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
     guard(plan.npos); grid.add_strand(plan.npos, ns);
 }
 
-/// Is this producer a demanded walker blocked by a shared cell on its principal?
-/// Returns the blocked cell and the foreign strands there (the CLEAR phase's targets).
-pub fn reel_blocked(grid: &Grid, apos: Pos) -> Option<(Pos, Vec<Strand>)> {
+/// Is this producer a demanded walker blocked by a shared principal cell?  The return
+/// value is only the adjacent contested cell where the requester may pump pressure; it
+/// neither selects a foreign strand nor grants permission to move one.
+pub fn reel_blocked(grid: &Grid, apos: Pos) -> Option<Pos> {
     let ag = grid.agent(apos)?;
     if !ag.tag.is_producer() || ag.nascent { return None; }
     let d = ag.faces[0]?;
@@ -1424,15 +1315,15 @@ pub fn reel_blocked(grid: &Grid, apos: Pos) -> Option<(Pos, Vec<Strand>)> {
     if w.count() <= 1 { return None; }
     let mine = w.with_he(d.opp())?;
     if !mine.hot { return None; } // ψ: only demanded walkers ask for clearing
-    Some((npos, w.iter().filter(|s| *s != mine).collect()))
+    Some(npos)
 }
 
 // =========================================================================================
 // GROW FIRE: dock-and-extrude. Where the atomic stamp requires its whole layout free NOW,
 // the grow dock RESERVES the layout's cells (free or not) and unfolds one cell per tick as
-// they open: reservations keep everyone else out (so claimed cells only get freer), squat-
-// ting wires are slid out on demand, and the two dying cells finalize last (the driver
-// replaces itself at the end). The shadow fires at DOCK — the linearization point — so
+// they open: reservations keep new arrivals out while existing occupants receive pressure
+// and may yield under their own rules. The two dying cells finalize last (the driver
+// replaces itself at the end). The shadow fires at completion, so
 // mid-unfold lattice states are checked at seed-free quiescence, and nascent products are
 // fenced (no fires, no reels) until their complex completes.
 // =========================================================================================
@@ -1456,14 +1347,19 @@ pub struct DockPlan {
 /// not at dock — mid-unfold products are pure geometry.
 const SEED_PATIENCE: u32 = 24;
 
-/// Dockability: the same template the stamp uses, but the outside cells need only be
-/// UNCLAIMED and agent-free — occupied wire cells are acceptable squatters (the unfold
-/// slides them out); agents are not (they only move by reeling, on their own schedule).
+/// Dockability: the same template the stamp uses, but outside cells need only be
+/// unclaimed.  Existing occupants are tolerated as wait conditions, never as things the
+/// seed may move: a reservation pumps χ until each payload yields on its own or the seed
+/// reaches its bounded patience and aborts.
 pub fn plan_grow_dock(grid: &Grid, cpos: Pos) -> Option<DockPlan> {
+    // Dock replaces both agents with seeds and later writes final products onto their
+    // seats. It cannot be treated as the incumbent merely departing a reservation.
+    if grid.reserved.contains_key(&cpos) || grid.motion_locked(cpos) { return None; }
     let cons = grid.agent(cpos)?;
     if !cons.tag.is_consumer() || cons.nascent { return None; }
     let d0 = cons.faces[0]?;
     let ppos = step(cpos, d0);
+    if grid.reserved.contains_key(&ppos) || grid.motion_locked(ppos) { return None; }
     let prod = grid.agent(ppos)?;
     if !prod.tag.is_producer() || prod.nascent { return None; }
     if prod.faces[0] != Some(d0.opp()) { return None; }
@@ -1480,13 +1376,13 @@ pub fn plan_grow_dock(grid: &Grid, cpos: Pos) -> Option<DockPlan> {
     let rule = find(cons.tag, prod.tag).unwrap();
 
     // Outside cells: reservable iff in bounds and not claimed by another seed or a seed
-    // cell itself. Squatters of every kind are allowed: wires get slid by the unfold,
-    // agents get pushed by χ+SHOVE (the reservation itself is a pressure source while
-    // occupied), and the patience/abort valve bounds the worst case.
+    // cell itself.  Occupants remain untouched; the reservation is a pressure source,
+    // and the patience/abort valve bounds how long the seed may wait for owner-driven
+    // clearance.
     let mut cells: Vec<Pos> = vec![];
     let mut outside_ok = |q: Pos| -> bool {
         if q == cpos || q == ppos { return true; }
-        if !grid.topo.in_bounds(q) || grid.reserved.contains_key(&q) { return false; }
+        if !grid.topo.in_bounds(q) || grid.reserved.contains_key(&q) || grid.motion_locked(q) { return false; }
         if matches!(grid.cells.get(&q), Some(Cell::Seed(_))) { return false; }
         if !cells.contains(&q) { cells.push(q); }
         true
@@ -1547,11 +1443,18 @@ pub fn apply_grow_dock(grid: &mut Grid, plan: DockPlan) {
     grid.seed_count += 1;
 }
 
-pub enum GrowStep { Placed(Pos), Slid(Pos), Waiting(Pos), Aborted }
+pub enum GrowStep { Placed(Pos), Waiting(Pos), Aborted }
+
+fn release_owned_reservation(grid: &mut Grid, cell: Pos, owner: Pos) {
+    if grid.reserved.get(&cell) == Some(&owner) {
+        grid.reserved.remove(&cell);
+    }
+}
 
 /// One unfold step for the seed driven at `driver`. Emits the next item if its cell is
-/// open, slides a squatting strand out of the way if not, waits briefly, and ABORTS after
-/// SEED_PATIENCE consecutive waits (delete the shielded emissions, restore the pair).
+/// open, waits and pumps if not, and ABORTS after SEED_PATIENCE consecutive waits
+/// (delete the shielded emissions, restore the pair).  A seed never relocates a squatter:
+/// χ is the sole clearance license and the occupying cell owns its response.
 /// The final step fires the shadow: the linearization point.
 pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowStep> {
     let (plan, step) = match grid.cells.get(&driver) {
@@ -1595,7 +1498,7 @@ pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowS
                 }
             }
             for c in plan.cells.iter().chain([&plan.a, &plan.b]) {
-                grid.reserved.remove(c);
+                release_owned_reservation(grid, *c, plan.a);
             }
             grid.seed_count -= 1;
         } else if let Some(Cell::Seed(s)) = grid.cells.get_mut(&driver) {
@@ -1609,17 +1512,6 @@ pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowS
         // template content from retract/slide/clear until the whole complex is wired
         if let Some(Cell::Seed(s)) = grid.cells.get_mut(&driver) { s.step = step + 1; s.stall = 0; }
         return Some(GrowStep::Placed(cell));
-    }
-    // A squatter: wires get slid out (reservations stop new ones arriving); anything else
-    // waits (agents move only by reeling).
-    if let Some(w) = grid.wire(cell) {
-        for s in w.iter().collect::<Vec<_>>() {
-            if let Some(sl) = plan_slide(grid, cell, s, &[], true) {
-                apply_slide(grid, &sl);
-                if let Some(Cell::Seed(sc)) = grid.cells.get_mut(&driver) { sc.stall = 0; }
-                return Some(GrowStep::Slid(cell));
-            }
-        }
     }
     // Stall bookkeeping and the abort valve.
     let stall = {
@@ -1645,7 +1537,9 @@ pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowS
                 }
             }
         }
-        for c in plan.cells.iter().chain([&plan.a, &plan.b]) { grid.reserved.remove(c); }
+        for c in plan.cells.iter().chain([&plan.a, &plan.b]) {
+            release_owned_reservation(grid, *c, plan.a);
+        }
         // Progress-aware verdict for the frustration ladder: a seed that never placed
         // a single cell learned that this room does not yield to reservations either —
         // restore the consumer near saturation so it stops re-docking (the drought is
@@ -1657,4 +1551,51 @@ pub fn grow_step(grid: &mut Grid, shadow: &mut Net, driver: Pos) -> Option<GrowS
         return Some(GrowStep::Aborted);
     }
     Some(GrowStep::Waiting(cell))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lattice::Topo;
+
+    fn erasable_pair() -> Grid {
+        let mut grid = Grid::new(Topo::Full3D);
+        grid.put_agent((0, 0, 0), AgentCell {
+            tag: Tag::Eps,
+            faces: [Some(Dir::E), None, None],
+            sid: 0,
+            nascent: false,
+            frustration: 0,
+        });
+        grid.put_agent((1, 0, 0), AgentCell {
+            tag: Tag::L,
+            faces: [Some(Dir::W), None, None],
+            sid: 1,
+            nascent: false,
+            frustration: 0,
+        });
+        grid
+    }
+
+    #[test]
+    fn reserved_reaction_seats_reject_atomic_fire_and_grow() {
+        for reserved in [(0, 0, 0), (1, 0, 0)] {
+            let mut grid = erasable_pair();
+            grid.reserved.insert(reserved, (9, 9, 9));
+            assert!(plan_fire(&grid, (0, 0, 0)).is_none());
+            assert!(plan_fire_stamp(&grid, (0, 0, 0)).is_none());
+            assert!(plan_grow_dock(&grid, (0, 0, 0)).is_none());
+        }
+    }
+
+    #[test]
+    fn reservation_release_is_owner_checked() {
+        let mut grid = erasable_pair();
+        let cell = (2, 0, 0);
+        grid.reserved.insert(cell, (7, 7, 7));
+        release_owned_reservation(&mut grid, cell, (8, 8, 8));
+        assert_eq!(grid.reserved.get(&cell), Some(&(7, 7, 7)));
+        release_owned_reservation(&mut grid, cell, (7, 7, 7));
+        assert!(!grid.reserved.contains_key(&cell));
+    }
 }

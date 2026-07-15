@@ -1,12 +1,9 @@
-//! Stage-2 differential: reduction ON THE LATTICE vs the independent oracle, with the
-//! projection invariant asserted along the way — now run on BOTH topologies (bilayer and
-//! full 3D) with the polymer moves (retract, kink-flip) in the tick.
+//! Lattice differential against the independent oracle on both Bilayer and Full3D, with
+//! projection checks and all active geometry mechanisms enabled.
 //!
-//! The gate discipline (the project's differential-oracle discipline at substrate level):
-//! CORRECTNESS is absolute — zero wrong normal forms, zero invariant violations, bit
-//! determinism, on every topology. LIVENESS (reaching NF under the plain sequential
-//! schedule, still with no fields) is MEASURED and reported; only catastrophic regressions
-//! fail the suite.
+//! Correctness requires zero wrong normal forms, zero invariant violations, and deterministic
+//! results. Liveness is measured for the generated corpus and required for the explicit
+//! must-complete pins.
 
 use rust_ca_lattice::lattice::{Topo, TOPOS};
 use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Lcg, Term};
@@ -34,38 +31,34 @@ fn check_pin(t: Term, topo: Topo, must_complete: bool) -> Outcome {
 
 #[test]
 fn pins_must_complete() {
-    // Verified to reach NF under the sequential schedule WITH the ψ/χ fields, per
-    // topology. Bilayer's verified set is smaller (no basement: fire seams still wedge
-    // its harder terms); every unlock earned by a field lever is pinned here so it can
-    // never silently regress.
+    // Terms whose completion is part of the current liveness contract. Bilayer has the
+    // smaller set because its two planes provide less routing freedom.
     for topo in TOPOS {
         let out = check_pin(ap(s(Term::L), Term::L), topo, true); // stem application
         assert!(out.transport > 0, "reel-in should have happened");
-        check_pin(ap(f2(Term::L, Term::L), Term::L), topo, true); // fork dispatch → w (bilayer: walks-eat-slack unlock)
+        check_pin(ap(f2(Term::L, Term::L), Term::L), topo, true); // fork dispatch → w
     }
     let t3 = Topo::Full3D;
     check_pin(oracle::chain_k(1), t3, true);
     check_pin(ap(ap(oracle::k(), Term::L), s(Term::L)), t3, true); // K erases
     check_pin(ap(f2(s(Term::L), Term::L), Term::L), t3, true); // S-rule shares
-    // the field-rung unlocks: χ pressure (kargs), walks-eat-slack (the chain class),
-    // and their combination on the Sel fire-space class (selF, disp, deep-copy share)
+    // Pressure, chain transport, dispatch, and deep-copy coverage.
     check_pin(ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))), t3, true); // kargs
     check_pin(oracle::chain_k(2), t3, true);
     check_pin(oracle::chain_k(3), t3, true);
     check_pin(ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)), t3, true); // selF end to end
     check_pin(ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)), t3, true); // share: δ deep-copies a fork
     check_pin(oracle::disp_t(), t3, true); // A → T1 → Sel end to end
-    // the tension unlock: the deep-spine class (was the 774-strand frozen exhibit;
-    // finishes at chord scale once flips feed retract)
+    // Deep-spine tension and retraction coverage.
     check_pin(oracle::chain_k(4), t3, true);
-    // and chain2 on BILAYER, the first chain to complete on the no-basement topology
+    // Chain transport on the constrained Bilayer topology.
     check_pin(oracle::chain_k(2), Topo::Bilayer, true);
 }
 
 #[test]
 fn pins_status() {
-    // The rung-2 (2D) residue pins: correctness gated absolutely; completion printed so
-    // regressions and recoveries stay visible in the test log.
+    // Additional topology status cases: correctness remains mandatory; completion is
+    // reported without making these cases part of the liveness gate.
     for topo in TOPOS {
         for (name, t) in [
             ("kargs", ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L)))),
@@ -101,7 +94,13 @@ fn differential(topo: Topo) {
         let term = rng.rand_term(3 + (i % 3));
         let Some(want) = oracle_nf(&term) else { skip += 1; continue };
         let check = if i % 8 == 0 { CheckLevel::Every } else { CheckLevel::Tick };
-        let out = run_term(&term, topo, 20_000, check);
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_term(&term, topo, 20_000, check)
+        })).unwrap_or_else(|failure| {
+            eprintln!("stage2 run panicked on corpus term {i} ({}): {}",
+                topo.name(), oracle::show(&term));
+            std::panic::resume_unwind(failure)
+        });
         if out.done {
             assert_eq!(out.result.as_ref().map(oracle::show).as_deref(), Some(want.as_str()),
                 "WRONG NF on {} ({})", oracle::show(&term), topo.name());
@@ -110,11 +109,11 @@ fn differential(topo: Topo) {
             transport += out.transport;
         } else if out.stuck { stuck += 1; } else { cap += 1; }
     }
-    println!("stage2 [{}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
+    println!("lattice [{}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
     println!("  ledger over passes: interactions={ints} transport={transport}");
-    // The schedule is no longer monotone (χ shoves and decongestion slides keep ticks
-    // busy), but the stall detectors — the quiet streak plus the shadow-progress drought —
-    // must catch every non-completing run long before the budget binds.
+    // The schedule is nonmonotone: χ-licensed occupant steps and slides can keep ticks
+    // busy. The quiet streak plus shadow-progress drought must catch every non-completing
+    // run long before the budget binds.
     assert_eq!(cap, 0, "tick budget should never bind on this corpus (stall detection covers churn)");
     // Liveness is a measurement; only catastrophic regressions fail the suite. The floors
     // pin the measured baselines with slack (bilayer 271/400, full3d 366/400 under the
@@ -156,7 +155,7 @@ fn differential_fire_modes() {
                     pass += 1;
                 } else if out.stuck { stuck += 1; } else { cap += 1; }
             }
-            println!("stage2 [{} · {label}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
+            println!("lattice [{} · {label}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
             assert_eq!(cap, 0, "tick budget bound on {} ({label}) — stall detection should cover churn", topo.name());
             assert!(pass > 0, "no term completed on {} ({label})", topo.name());
         }
