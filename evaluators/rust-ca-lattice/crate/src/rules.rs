@@ -111,11 +111,11 @@ pub static RULES: &[Rule] = &[
     // a=L (K): res ← b = fst, erase c = snd.
     Rule { consumer: T1, producer: L, fresh: &[Unp, Eps],
         wires: &[(X(0, 0), C(1)), (X(0, 1), C(2)), (X(0, 2), X(1, 0))] },
-    // a=S s: (b c)(s c), sharing c through Dn. fresh: unp, dn, a2(b side), a1(s side), a3.
+    // a=S s: (s c)(b c), sharing c through Dn. fresh: unp, dn, a2(b side), a1(s side), a3.
     Rule { consumer: T1, producer: S, fresh: &[Unp, Dn, A, A, A],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 0)), (X(0, 2), X(1, 0)),
                  (X(1, 1), X(2, 1)), (X(1, 2), X(3, 1)), (X(3, 0), Px(1)),
-                 (X(2, 2), X(4, 0)), (X(3, 2), X(4, 1)), (X(4, 2), C(2))] },
+                 (X(2, 2), X(4, 1)), (X(3, 2), X(4, 0)), (X(4, 2), C(2))] },
     // a=F w x: dispatch Sel on c with arms ⟨w,⟨x,b⟩⟩. fresh: unp, sel, p1(outer), p2(inner).
     Rule { consumer: T1, producer: F, fresh: &[Unp, Sel, Pair, Pair],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 2)), (X(0, 2), X(1, 0)),

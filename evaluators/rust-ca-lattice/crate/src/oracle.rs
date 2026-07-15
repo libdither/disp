@@ -7,7 +7,7 @@
 //!   apply(S a, x)   = F a x
 //!   apply(F a b, x) = triage(a, b, x)
 //!   triage(L, b, c)      = b                                   (K)
-//!   triage(S s, b, c)    = (b c)(s c)                          (S-rule, shares c)
+//!   triage(S s, b, c)    = (s c)(b c)                          (S-rule, shares c)
 //!   triage(F w x, b, c)  = c=L → w | c=S u → x u | c=F u v → (b u) v   (T2)
 
 use std::rc::Rc;
@@ -49,7 +49,10 @@ fn triage(a: Rc<Term>, b: Rc<Term>, c: Rc<Term>, fuel: &mut Fuel) -> Result<Rc<T
     let av = whnf(a, fuel)?;
     match &*av {
         L => Ok(b),
-        S(s) => Ok(Rc::new(Ap(Rc::new(Ap(b, c.clone())), Rc::new(Ap(s.clone(), c))))),
+        S(s) => Ok(Rc::new(Ap(
+            Rc::new(Ap(s.clone(), c.clone())),
+            Rc::new(Ap(b, c)),
+        ))),
         F(w, x) => {
             let cv = whnf(c, fuel)?;
             match &*cv {
@@ -116,6 +119,10 @@ mod tests {
         // fork dispatch: (F w x) L → w
         let t = ap(f2(L, L), L);
         assert_eq!(show(&nf(t, &mut Fuel(1000)).unwrap()), "L");
+        // The S-rule is ordered: (s c) is the operator and (b c) is its argument.
+        // Choosing distinct s and b makes an accidental swap observable.
+        let t = ap(f2(s(L), s(L)), L);
+        assert_eq!(show(&nf(t, &mut Fuel(1000)).unwrap()), "F(L,F(L,L))");
         // chain of K-redexes collapses to L
         assert_eq!(show(&nf(chain_k(6), &mut Fuel(10_000)).unwrap()), "L");
     }

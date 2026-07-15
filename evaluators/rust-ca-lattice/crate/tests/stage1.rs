@@ -22,6 +22,8 @@ fn pins() {
     check(oracle::chain_k(6));
     // sharing: triage on a stem duplicates the argument through Dn
     check(ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)));
+    // Ordered S-rule: distinguish (s c)(b c) from the reversed application.
+    check(ap(f2(s(Term::L), s(Term::L)), Term::L));
 }
 
 fn check(t: Term) {
