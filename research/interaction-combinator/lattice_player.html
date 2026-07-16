@@ -103,7 +103,7 @@
       <input type="range" id="scrub" min="0" max="0" value="0" title="Evaluation tick" aria-label="Evaluation tick">
       <span id="framev" class="topvalue"></span>
       <div class="toolbar-sep"></div>
-      <input type="range" id="speed" min="1" max="30" value="8" title="Playback frames per second" aria-label="Playback frames per second">
+      <input type="range" id="speed" min="1" max="120" value="30" title="Playback activations per second" aria-label="Playback activations per second">
       <span id="speedv" class="topvalue"></span>
       <button id="reset" class="iconbtn" title="Restart trace" aria-label="Restart trace">↺</button>
       <button id="fitframe" class="iconbtn" title="Fit current tick" aria-label="Fit current tick">⊙</button>
@@ -130,39 +130,21 @@
     </div>
   </div>
   <div id="side">
-    <h3>LIFTED LATTICE REPLAY — FRAME BY FRAME</h3>
-    <details><summary>model + trace semantics</summary><div class="note">A replay client over <b>rust-ca-lattice</b> traces (the engine is the model;
-    this page only draws). Cells live at (x,y,z): <b>bilayer</b> traces have two planes (the
-    2.5D chip), while <b>full3d</b> traces use signed depth as needed. Positive z draws
-    up-right, negative z down-left, and nonzero planes dim with depth. There are no vias or
-    tucks. Routed crossings can separate in z;
-    a switchbox cell may also hold up to three disjoint paired strands. The strict
-    local-motion kernel is a staged, radius-one handshake: a
-    cell reads itself and its six face-neighbors from one frozen local-motion snapshot, then writes only
-    itself. A calm, ψ-demanded, or χ-descending producer of arity 1–3 advances by a
-    <b>local star</b>: its principal enters the next cell. For arity 1 the vacated cell
-    clears; for arity 2 its auxiliary bends through that cell; for arity 3 one auxiliary
-    takes that back bend and the other locally extends or truncates through a swept square.
-    Roles commit only after
-    their neighboring roles agree. The endpoint agent and its intermediate forwarder
-    therefore commit as one translation: the agent occupies the forwarder's cell and the
-    principal edge loses that wire segment.
-    No wire or agent pushes a foreign wire.
-    Blockage pumps χ; <b>χ is the sole clearance license</b>, and even then each
-    occupant reshapes or moves only itself (including the local straight-wire bulge). A calm
-    shared principal switchbox waits through a bounded local persistence mark before emitting
-    low pressure, so a transient crossing does not immediately bloom.
-    ψ carries demand, the tension survey identifies removable bends, and <b>retract</b>
-    cashes those bends into shorter wire. Once the shadow net reaches semantic NF, the
-    trace may continue through a settling tail so geometric contraction remains visible.
-    Deterministic: the same term, topology, engine revision, and options produce the same
-    movie. The bundled traces contain one exact snapshot for every evaluator tick, including
-    the post-NF settling tail. Optional compact exports may use a stride greater than one;
-    those keep structural frames and merge skipped events into the next recorded state.
-    Playback advances recorded states at the selected visual frame rate; the HUD retains
-    each state's exact simulation tick and reports any sampled tick gap.
-    Regenerate or add traces with <b>cargo run --release --bin dump-run &lt;name&gt;
-    [ticks] [bilayer|full3d] [stride=1]</b> and drop the JSON here.</div></details>
+    <h3>CELL64 ZIPPER LATTICE — ACTIVATION BY ACTIVATION</h3>
+    <details><summary>model + trace semantics</summary><div class="note">This page replays engine
+    state; it does not simulate it. Every lattice site is one 64-bit word containing
+    <b>matter 20 + control 28 + χ 8 + σ 8</b>. One activation passes an immutable view of
+    the six face-neighbors to the center rule and can replace only the center word. A fair
+    deterministic random permutation chooses activation order; later activations see earlier
+    writes. Arity-three agents carry both auxiliary ports in one ordered two-lane cable.
+    A square zipper cell is the only place that cable opens into two single branches.
+    A rewrite claims its workshop one adjacent cell at a time, acknowledges back to the
+    driver, propagates commit outward, then cleans control marks inward. Occupied cells decline
+    claims. Neither agents nor wires displace another occupant; blockage affects the pressure
+    field and each occupant chooses its own response. Schema-4 traces store one initial
+    keyframe followed by literal one-cell word deltas, while retaining every activation for
+    frame-by-frame inspection. Generate the bundled workshop with
+    <b>cargo run --release --bin dump-packed -- bilayer 0</b>.</div></details>
     <div class="note" id="whatnote" style="margin:2px 0 6px"></div>
     <div class="note" style="margin:0 0 8px">Hover a visible cell to preview its trace state. Click to pin;
     click the same cell, empty canvas, ×, or Escape to unselect. A pinned coordinate remains
@@ -175,8 +157,9 @@
     <div class="note" style="margin-bottom:2px">Port 0 is always the <b>principal</b> (▸): producers
     emit their value there, consumers consume there, and a fire needs the two principals facing
     across one edge. Aux ports carry everything else. On the canvas a white triangle marks the
-    principal face, a hollow circle marks aux 1, and a diamond marks aux 2. Producers use
-    four-sided diamond bodies; consumers use six-sided faceted diamonds.</div>
+    principal face, a hollow circle marks aux 1, and a diamond marks aux 2. When both
+    auxiliaries use one face, their markers sit side-by-side over the same cable. Producers
+    use four-sided diamonds; consumers use six-sided faceted diamonds.</div>
     <div id="agents"></div>
     <h3>REWRITE RULES <span class="k" id="rulehdr"></span></h3>
     <div class="note" style="margin-bottom:4px">consumer <b>principal ↔ principal</b> producer ⇒ fresh agents (the dying pair's
@@ -187,40 +170,35 @@
     <h3>LEGEND</h3>
     <div class="note">
       white triangle = principal port; hollow circle = aux 1; diamond = aux 2; diagonal markers = up/down<br>
-      thin gray center ring = switchbox with multiple independent strands (a crossing, not a join)<br>
-      large dashed colored ring = staged local-motion role on that cell<br>
+      paired blue strokes = one ordered two-lane auxiliary cable<br>
+      small square junction = zipper: double trunk opens into two single branches<br>
+      colored square outline = active local control role on that cell<br>
       double gray circular body = inert Out result sink<br>
       <span style="color:#6f9fd8">z=0 strand</span> / <span style="color:#a97fd8">nonzero-z strand</span> (signed depth offsets along the up-right/down-left axis and dims with |z|)<br>
       <span style="color:#ffd866">gold strand</span> = hot (ψ demand: a consumer awaits along this wire; demand licenses a local star even away from calm)<br>
       <span style="color:#ff5a30">red glow</span> = χ pressure (pumped by blockage; the sole clearance license, while each occupant moves or reshapes only itself)<br>
-      staged-role rings: amber source, cyan target, purple square, green endpoint, blue-gray back, magenta pressure-bulge family, red contested persistence, gray debt<br>
+      rewrite outlines: gold driver, cyan boundary, green fresh-agent seat, purple wire seat<br>
       gold event ring = fire (rule shown); agent positions jump at recorded commits; retract removes slack, while a pressure bulge adds two units of slack to route around blockage for later contraction to recover when possible
     </div>
     <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
-    <div class="note">Projection preservation is checked against the shadow interaction
-    net. Each update in the strict local-motion kernel takes a frozen
-    center-plus-six-neighbor view and emits only the center's next state; those updates
-    neither inspect a diagonal nor mutate a neighbor atomically. Fire placement, demanded
-    reel, χ-licensed agent movement, flip, slide, retract, and grow are host-planned bounded-footprint parts of
-    this evaluator; they are not included in this locality claim.
-    Liveness is measured, never assumed. The local protocol reads bonded ψ demand and
-    Jacobi-relaxed χ pressure; the tension survey remains a separate host scheduler phase.
-    Star roles and pressure bulges are multi-tick
-    commitments because a diagonal swept square is not itself a neighbor; information
-    crosses it as two face-local messages. The L/C/S readout separates wire length
-    <b>L</b> from endpoint chord lower bound <b>C</b>; <b>S=L−C</b> is candidate geometric slack.
-    Semantic NF and geometric settling are deliberately separate: a correct normal form
-    can still have residual <b>S</b> to contract. STUCK or capped traces remain measurements of
-    liveness, not claims that liveness follows from projection preservation.</div>
+    <div class="note">At control-free checkpoints, the packed lattice is projected to the
+    shadow interaction net and checked port-for-port. A local activation can project to the
+    same net or, at the rewrite driver's commit transition, exactly one semantic interaction.
+    The observer applies stable display ids and semantic event logging after the word update;
+    cells cannot read them. The bundled A·F workshop exercises the complete asynchronous
+    claim/ack/commit/done path. Translation is also local and cell-by-cell. Cable shifting,
+    pressure-owned clearance, and the remaining rule workshops are represented in the packed
+    control alphabet but are not yet complete execution paths.</div>
   </div>
 </div>
 <script>
 // A stable revision query lets browsers cache the generated bundle between reloads.
 document.write('<script src="lattice_traces.js?v=local-motion-2026-07-14-dense1"><\/script>');
 document.write('<script src="lattice_rule_atlas.js?v=local-motion-2026-07-15"><\/script>');
+document.write('<script src="lattice_packed_trace.js?v=cell64-zipper-1"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-15 · every-tick replay + rule atlas";
+const PLAYER_VERSION = "2026-07-15 · Cell64 zipper activation replay";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -258,13 +236,12 @@ const STEP3 = { N: [0, -1, 0], E: [1, 0, 0], S: [0, 1, 0], W: [-1, 0, 0],
 const OPPOSITE = { N: "S", E: "W", S: "N", W: "E", U: "D", D: "U" };
 const FACE_ORDER = ["N", "E", "S", "W", "U", "D"];
 const DEFAULT_BIT_LAYOUT = {
-  name: "canonical-local-v1",
-  payload: { empty: 2, agent: [18, 20, 22], wire_base: 9, strand_signals: 107 },
-  fields: { chi: 8, sigma: 8, reserved: 1 },
-  motion: { none: 4, source: 25, target: 25, square: 32, endpoint: 31, back: 29,
-    "bulge-source": 22, "bulge-spine": 21, "bulge-corner": 22,
-    "bulge-endpoint": 27, debt: 10, contested: 245 },
-  observer: { sid: 32 }, max_local: 592,
+  name: "cell64",
+  payload: { fixed: 20 },
+  fields: { chi: 8, sigma: 8 },
+  motion: { fixed: 28 },
+  observer: { sid: 32 },
+  max_local: 64,
 };
 
 let TR = null, FRAME = 0, SUB = 0, RUNNING = false, LAST_DRAW_MS = null;
@@ -597,10 +574,14 @@ function fitFrames(frames) {
   for (const f of frames) {
     for (const ag of f.grid.agents) points.push(ag);
     for (const w of f.grid.wires) points.push(w);
+    for (const cable of f.grid.cables || []) points.push(cable);
+    for (const zip of f.grid.zips || []) points.push(zip);
+    for (const cross of f.grid.crosses || []) points.push(cross);
     for (const c0 of f.grid.chi) points.push(c0);
+    for (const sigma of f.grid.sigma || []) points.push(sigma);
     for (const m of f.grid.motion) points.push(m);
   }
-  fitPoints(points);
+  fitPoints(points, 6, TR && TR.kind === "packed-workshop" ? 52 : 34);
 }
 function fit() { fitFrames(TR.frames); }
 function fitCurrent() { fitFrames([TR.frames[FRAME]]); }
@@ -642,7 +623,10 @@ const cellKey = p => `${p[0]},${p[1]},${p[2]}`;
 const sameCell = (a, b) => Array.isArray(a) && Array.isArray(b) &&
   a.length >= 3 && b.length >= 3 && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 const cellLabel = p => `(${p[0]},${p[1]},${p[2]})`;
-const emptyCell = p => ({ pos: [p[0], p[1], p[2]], agent: null, wire: null, chi: 0, motion: [] });
+const emptyCell = p => ({
+  pos: [p[0], p[1], p[2]], agent: null, wire: null, cable: null, zip: null,
+  cross: null, chi: 0, sigma: 0, word: null, motion: [],
+});
 
 function indexedCell(pos) {
   const key = cellKey(pos);
@@ -660,7 +644,12 @@ function rebuildCellIndex() {
   const grid = TR.frames[FRAME].grid;
   for (const a of grid.agents) indexedCell(a).agent = a;
   for (const w of grid.wires) indexedCell(w).wire = w;
+  for (const cable of grid.cables || []) indexedCell(cable).cable = cable;
+  for (const zip of grid.zips || []) indexedCell(zip).zip = zip;
+  for (const cross of grid.crosses || []) indexedCell(cross).cross = cross;
   for (const c of grid.chi) indexedCell(c).chi = c[3];
+  for (const sigma of grid.sigma || []) indexedCell(sigma).sigma = sigma[3];
+  for (const word of grid.words || []) indexedCell(word).word = word[3];
   for (const m of grid.motion) indexedCell(m).motion.push({ role: String(m[3]), phase: String(m[4]) });
 }
 
@@ -674,7 +663,7 @@ function hitCell(clientX, clientY) {
     const [cx, cy] = px(...cell.pos);
     const d2 = (x - cx) ** 2 + (y - cy) ** 2;
     if (d2 <= radius ** 2) {
-      const weight = (cell.agent ? 8 : 0) + (cell.wire ? 4 : 0) +
+      const weight = (cell.agent ? 8 : 0) + (cell.wire || cell.cable || cell.zip || cell.cross ? 4 : 0) +
         (cell.motion.length ? 2 : 0) + (cell.chi ? 1 : 0);
       candidates.push({ cell, d2, weight });
     }
@@ -696,16 +685,9 @@ const strandLabel = strand => {
   return `${faces.join(" ↔ ")} · ${hot ? "hot ψ" : "cold"}`;
 };
 
-function motionBitKind(role) {
-  if (role.startsWith("square")) return "square";
-  if (role.startsWith("endpoint")) return "endpoint";
-  if (role.startsWith("bulge-corner")) return "bulge-corner";
-  if (role.startsWith("bulge-endpoint")) return "bulge-endpoint";
-  return role;
-}
-
 function bitLayout() {
-  const supplied = TR && TR.bit_layout ? TR.bit_layout : {};
+  if (!TR || !TR.bit_layout) return null;
+  const supplied = TR.bit_layout;
   return {
     ...DEFAULT_BIT_LAYOUT, ...supplied,
     payload: { ...DEFAULT_BIT_LAYOUT.payload, ...(supplied.payload || {}) },
@@ -717,30 +699,28 @@ function bitLayout() {
 
 function cellBitBudget(cell) {
   const layout = bitLayout();
-  let payload = layout.payload.empty, observer = 0;
-  if (cell.agent) {
-    const arity = Math.max(1, Math.min(3, cell.agent[5].length));
-    payload = layout.payload.agent[arity - 1];
-    observer = layout.observer.sid;
-  } else if (cell.wire) {
-    payload = layout.payload.wire_base + layout.payload.strand_signals * cell.wire[3].length;
-  }
+  if (!layout) return null;
+  const payload = layout.payload.fixed;
+  const observer = cell.agent ? layout.observer.sid : 0;
   const fields = Object.values(layout.fields).reduce((sum, bits) =>
     sum + (Number.isFinite(bits) ? bits : 0), 0);
-  const protocol = cell.motion.length
-    ? Math.max(...cell.motion.map(mark => layout.motion[motionBitKind(mark.role)] ?? layout.motion.none))
-    : layout.motion.none;
+  const protocol = layout.motion.fixed;
   const local = payload + fields + protocol;
-  return { payload, fields, protocol, observer, local, total: local + observer, layout };
+  return { payload, fields, protocol, observer, local, total: local, layout };
 }
 
 function bitBar(parent, bits) {
   const bar = document.createElement("div"), total = document.createElement("div"), parts = document.createElement("div");
   bar.className = "bitbar";
-  total.className = "bitmain"; total.textContent = `TOTAL ${bits.total} bits`;
+  if (!bits) {
+    total.className = "bitmain"; total.textContent = "PACKED WIDTH NOT RECORDED";
+    parts.className = "bitparts"; parts.textContent = "Load a Cell64 trace to inspect exact state words.";
+    bar.append(total, parts); parent.append(bar); return;
+  }
+  total.className = "bitmain"; total.textContent = `CELL ${bits.total} bits`;
   parts.className = "bitparts";
-  parts.textContent = `local ${bits.local}/${bits.layout.max_local} · payload ${bits.payload} + fields ${bits.fields} + protocol ${bits.protocol} · observer +${bits.observer}`;
-  bar.title = `${bits.layout.name}: local ${bits.local}/${bits.layout.max_local} bits; observer state is excluded from CA dynamics`;
+  parts.textContent = `matter ${bits.payload} + control ${bits.protocol} + fields ${bits.fields} (χ8 + σ8)${bits.observer ? ` · observer sid +${bits.observer} outside cell` : ""}`;
+  bar.title = `${bits.layout.name}: every lattice site is exactly ${bits.local} bits; observer ids are not automaton state`;
   bar.append(total, parts); parent.append(bar);
 }
 
@@ -755,6 +735,14 @@ function usedFaces(cell) {
     const label = `wire ${strandFaces(strand).join("↔")}`;
     for (const face of strandFaces(strand)) add(face, label);
   }
+  if (cell.cable) for (const face of strandFaces(cell.cable[3])) add(face, "two-lane cable");
+  if (cell.zip) {
+    add(cell.zip[3], "zip trunk lanes 0+1");
+    add(cell.zip[4], "zip branch lane 0");
+    add(cell.zip[5], "zip branch lane 1");
+  }
+  if (cell.cross) for (const route of cell.cross[3])
+    for (const face of strandFaces(route)) add(face, `cross ${route}`);
   return used;
 }
 
@@ -763,6 +751,9 @@ function cellSummary(cell) {
   const parts = [];
   if (cell.agent) parts.push(`${cell.agent[3]}#${cell.agent[4]}`);
   if (cell.wire) parts.push(cell.wire[3].length > 1 ? `${cell.wire[3].length}-strand switchbox` : `wire ${strandFaces(cell.wire[3][0]).join("↔")}`);
+  if (cell.cable) parts.push(`cable ${strandFaces(cell.cable[3]).join("↔")} ×2`);
+  if (cell.zip) parts.push(`zip ${cell.zip[3]} ⇄ ${cell.zip[4]}+${cell.zip[5]}`);
+  if (cell.cross) parts.push(`fixed cross ${cell.cross[3].join(" / ")}`);
   if (!parts.length && cell.motion.length) parts.push("motion marker");
   if (!parts.length && cell.chi) parts.push(`χ=${cell.chi}`);
   return parts.join(" + ") || "empty";
@@ -774,6 +765,8 @@ function eventAtCell(event, pos) {
     if (sameCell(event.to, pos)) return `${label} arrived ← ${cellLabel(event.from)}`;
     return null;
   };
+  if (event.t === "activate" && sameCell(event.at, pos))
+    return `local activation · ${event.changed ? "u64 changed" : "no-op"}`;
   if (event.t === "approach") return fromTo("local star");
   if (event.t === "reel") return fromTo(`host reel sid ${event.sid}`);
   if (event.t === "agent-step") return fromTo("χ agent move");
@@ -837,27 +830,45 @@ function renderInspector() {
   const bits = cellBitBudget(cell);
   bitBar(body, bits);
 
-  const hasState = cell.agent || cell.wire || cell.chi || cell.motion.length;
+  const hasState = cell.agent || cell.wire || cell.cable || cell.zip || cell.cross ||
+    cell.chi || cell.sigma || cell.motion.length || cell.word;
   if (!hasState) tipRow(body, "state", "no trace-visible value");
   if (cell.agent) {
     const a = cell.agent, polarity = a[3] === "Out" ? "inert" : PRODUCERS.has(a[3]) ? "producer" : "consumer";
-    tipSection(body, `agent payload · ${bits.payload}b + ${bits.observer}b sid`);
+    tipSection(body, `agent matter${bits ? ` · ${bits.payload}b field` : ""}`);
     tipRow(body, `${a[3]}#${a[4]}`, polarity);
     a[5].forEach((face, index) => tipRow(body, `p${index}`, `${portName(a[3], index)} → ${face}`));
   }
   if (cell.wire) {
     const strands = cell.wire[3].length;
-    tipSection(body, `${strands > 1 ? `switchbox ×${strands}` : "wire payload"} · ${bits.payload}b = ${bits.layout.payload.wire_base} + ${strands}×${bits.layout.payload.strand_signals}`);
+    tipSection(body, strands > 1 ? `independent routes ×${strands}` : "single-lane link");
     cell.wire[3].forEach((strand, i) => tipRow(body, `s${i + 1}`, strandLabel(strand)));
     if (cell.wire[3].length > 1) tipRow(body, "ring", "independent crossing; no join");
   }
-  tipSection(body, `fields · ${bits.fields}b = χ${bits.layout.fields.chi} + σ${bits.layout.fields.sigma} + reserve${bits.layout.fields.reserved}`);
-  tipRow(body, "values", `χ=${cell.chi || "0 calm"} · σ/reserve hidden`);
+  if (cell.cable) {
+    tipSection(body, "overlapped auxiliary cable · two ordered lanes");
+    tipRow(body, "route", `${strandFaces(cell.cable[3]).join(" ↔ ")} · ${cell.cable[4] ? "twisted" : "lane order preserved"}`);
+    tipRow(body, "hot mask", String(cell.cable[5]));
+  }
+  if (cell.zip) {
+    tipSection(body, "zipper · double trunk to two branches");
+    tipRow(body, "trunk", `${cell.zip[3]} · lanes 0 + 1`);
+    tipRow(body, "branch 0", cell.zip[4]);
+    tipRow(body, "branch 1", cell.zip[5]);
+    tipRow(body, "lane map", cell.zip[6] ? "twisted" : "ordered");
+  }
+  if (cell.cross) {
+    tipSection(body, "fixed crossing · two independent routes");
+    cell.cross[3].forEach((route, index) => tipRow(body, `route ${index}`, strandFaces(route).join(" ↔ ")));
+  }
+  if (cell.word) tipRow(body, "u64 word", `0x${cell.word}`);
+  tipSection(body, bits ? `fields · ${bits.fields}b = χ8 + σ8` : "fields");
+  tipRow(body, "values", `χ=${cell.chi || "0 calm"} · σ=${cell.sigma || "0 calm"}`);
   if (cell.motion.length === 1) {
     const motion = cell.motion[0];
-    tipSection(body, `protocol · ${bits.protocol}b · ${motion.role}:${motion.phase} · dashed ring`);
+    tipSection(body, `control${bits ? ` · ${bits.protocol}b field` : ""} · ${motion.role}:${motion.phase}`);
   } else {
-    tipSection(body, `protocol · ${bits.protocol}b${cell.motion.length ? "" : " · none"}`);
+    tipSection(body, `control${bits ? ` · ${bits.protocol}b field` : ""}${cell.motion.length ? "" : " · idle"}`);
     cell.motion.forEach((motion, i) => tipRow(body, `role ${i + 1}`, `${motion.role}:${motion.phase} · dashed ring`));
   }
 
@@ -881,7 +892,7 @@ function renderInspector() {
   }
   const foot = document.createElement("div");
   foot.className = "tipfoot";
-  foot.textContent = "Canonical packed CA target; sid is observer-only. Per-strand cooldown and survey bits are included although their values are hidden.";
+  foot.textContent = "Cell state is one u64. Coordinates, stable ids, and trace events are observer-only.";
   body.append(foot);
   positionInspector(pos);
 }
@@ -956,7 +967,53 @@ function draw(now) {
     for (const sd of w[3]) drawStrand(w[0], w[1], w[2], sd);
     if (w[3].length >= 2) { const [a, b] = px(w[0], w[1], w[2]); ctx.strokeStyle = "#8595ad"; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(a, b, Math.max(2.5, s * 0.12), 0, 7); ctx.stroke(); }
   }
-  // Protocol instrumentation has the schema-v3 form [x,y,z,role,phase].
+  // A cable is one geometric route with two ordered lanes. Draw the lanes separately so
+  // their overlap is visible without pretending that they are two unrelated wires.
+  for (const cable of f0.grid.cables || []) {
+    const [cx, cy] = px(cable[0], cable[1], cable[2]);
+    const faces = strandFaces(cable[3]), hot = cable[5] || 0;
+    for (let lane = 0; lane < 2; lane++) for (const face of faces) {
+      const v = DIR[face], length = Math.hypot(v[0], v[1]) || 1;
+      const nx = -v[1] / length, ny = v[0] / length;
+      const offset = (lane ? 1 : -1) * s * 0.055;
+      ctx.strokeStyle = hot & (1 << lane) ? "#ffd866" : lane ? "#8bcfff" : planecol(cable[2]);
+      ctx.lineWidth = Math.max(1, s * 0.045); ctx.globalAlpha = 0.95 * zalpha(cable[2]);
+      ctx.beginPath(); ctx.moveTo(cx + nx * offset, cy + ny * offset);
+      ctx.lineTo(cx + v[0] * s / 2 + nx * offset, cy + v[1] * s / 2 + ny * offset); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  // A zipper is the only place where the double cable opens into two single branches.
+  for (const zip of f0.grid.zips || []) {
+    const [cx, cy] = px(zip[0], zip[1], zip[2]);
+    const trunk = DIR[zip[3]], branches = [DIR[zip[4]], DIR[zip[5]]];
+    const twist = zip[6] ? 1 : 0, hot = zip[7] || 0;
+    for (let lane = 0; lane < 2; lane++) {
+      const branch = branches[lane ^ twist];
+      const color = hot & (1 << lane) ? "#ffd866" : lane ? "#8bcfff" : planecol(zip[2]);
+      const offset = (lane ? 1 : -1) * s * 0.06;
+      const tl = Math.hypot(trunk[0], trunk[1]) || 1;
+      const tx = -trunk[1] / tl, ty = trunk[0] / tl;
+      ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, s * 0.05);
+      ctx.globalAlpha = 0.95 * zalpha(zip[2]);
+      ctx.beginPath();
+      ctx.moveTo(cx + trunk[0] * s / 2 + tx * offset, cy + trunk[1] * s / 2 + ty * offset);
+      ctx.lineTo(cx + tx * offset, cy + ty * offset);
+      ctx.lineTo(cx + branch[0] * s / 2, cy + branch[1] * s / 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#0b0e14"; ctx.strokeStyle = "#c8d3e0"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.rect(cx - s * 0.10, cy - s * 0.10, s * 0.20, s * 0.20); ctx.fill(); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  for (const cross of f0.grid.crosses || []) {
+    for (const route of cross[3]) drawStrand(cross[0], cross[1], cross[2], route);
+    const [cx, cy] = px(cross[0], cross[1], cross[2]);
+    ctx.strokeStyle = "#8595ad"; ctx.lineWidth = 1;
+    ctx.strokeRect(cx - s * 0.09, cy - s * 0.09, s * 0.18, s * 0.18);
+  }
+  // Protocol instrumentation is a cell-local control word. A solid square identifies the
+  // claimed cell; it is deliberately not drawn as another wire or agent.
   const motion = f0.grid.motion;
   for (const raw of motion) {
     const pos = raw.slice(0, 3);
@@ -972,15 +1029,17 @@ function draw(now) {
       : role.startsWith("square") ? "#c792ea"
       : role.startsWith("endpoint") ? "#82d173"
       : role === "back" ? "#89a4c7"
+      : role.startsWith("rewrite-driver") ? "#ffd866"
+      : role.startsWith("rewrite-boundary") ? "#56c8ff"
+      : role.startsWith("rewrite-seat") ? "#82d173"
+      : role.startsWith("rewrite-wire") ? "#c792ea"
       : role === "contested" ? "#ff5a30" : "#5a6b86";
     const [mx, my] = px(pos[0], pos[1], pos[2]);
     ctx.strokeStyle = roleColor;
     ctx.globalAlpha = 0.7 * zalpha(pos[2]);
     ctx.lineWidth = Math.max(1, s * 0.045);
-    ctx.setLineDash([Math.max(2, s * 0.12), Math.max(2, s * 0.08)]);
-    ctx.beginPath(); ctx.arc(mx, my, s * 0.43, 0, Math.PI * 2); ctx.stroke();
-    ctx.setLineDash([]);
-    if (s > 20 && motion.length <= 20) {
+    ctx.strokeRect(mx - s * 0.42, my - s * 0.42, s * 0.84, s * 0.84);
+    if (s > 24 && motion.length <= 8) {
       ctx.fillStyle = roleColor; ctx.font = `${Math.round(s * 0.22)}px monospace`;
       ctx.textAlign = "center"; ctx.textBaseline = "top";
       ctx.fillText(`${role.slice(0, 8)}:${phase}`, mx, my + s * 0.46);
@@ -1012,11 +1071,16 @@ function draw(now) {
   const drawAgent = (a, x, y, z, alpha) => {
     const [cx, cy] = px(x, y, z);
     const tag = a[3], bodyRadius = s * 0.235;
+    const faceCount = a[5].reduce((counts, face) => ({ ...counts, [face]: (counts[face] || 0) + 1 }), {});
+    const faceSeen = {};
     const ports = a[5].map((face, index) => {
       const v = DIR[face], vx = v[0] * s / 2, vy = v[1] * s / 2;
       const length = Math.hypot(vx, vy) || 1;
       const nx = vx / length, ny = vy / length;
-      return { index, mx: cx + vx, my: cy + vy, nx, ny, tx: -ny, ty: nx };
+      const tx = -ny, ty = nx, rank = faceSeen[face] || 0;
+      faceSeen[face] = rank + 1;
+      const spread = faceCount[face] > 1 ? (rank - (faceCount[face] - 1) / 2) * s * 0.13 : 0;
+      return { index, mx: cx + vx + tx * spread, my: cy + vy + ty * spread, nx, ny, tx, ty, spread };
     });
     ctx.globalAlpha = alpha * zalpha(z);
     // Connectors meet the exact projected face midpoint. The compact body covers their
@@ -1024,7 +1088,7 @@ function draw(now) {
     for (const p of ports) {
       ctx.strokeStyle = p.index === 0 ? "#ffffff" : "#9baabd";
       ctx.lineWidth = p.index === 0 ? Math.max(1.5, s * 0.085) : Math.max(1, s * 0.045);
-      ctx.beginPath(); ctx.moveTo(cx, cy);
+      ctx.beginPath(); ctx.moveTo(cx + p.tx * p.spread, cy + p.ty * p.spread);
       ctx.lineTo(p.mx, p.my); ctx.stroke();
     }
 
@@ -1159,6 +1223,34 @@ function atlasHud(frame, tickGap) {
   highlightRules(frame);
 }
 
+function packedHud(frame, tickGap) {
+  const activeControls = frame.grid.motion.length;
+  const activation = frame.events.find(event => event.t === "activate");
+  const committed = frame.ints > 0;
+  document.getElementById("stat").innerHTML =
+    `<div class="row"><span class="k">trace</span><span>${TR.name}</span></div>` +
+    `<div class="row"><span class="k">topology</span><span>${TR.topo}</span></div>` +
+    `<div class="row"><span class="k">cell state</span><b>64 bits exactly</b></div>` +
+    `<div class="row"><span class="k">activation</span><b>${frame.tick} / ${TR.ticks}</b></div>` +
+    `<div class="row"><span class="k">activated cell</span><span>${activation ? cellLabel(activation.at) : "initial keyframe"}</span></div>` +
+    `<div class="row"><span class="k">center changed</span><b>${activation ? (activation.changed ? "yes" : "no") : "—"}</b></div>` +
+    `<div class="row"><span class="k">active local controls</span><b>${activeControls}</b></div>` +
+    `<div class="row"><span class="k">semantic interactions</span><b>${frame.ints}</b></div>` +
+    `<div class="row"><span class="k">live agents</span><b>${frame.grid.agents.length}</b></div>` +
+    `<div class="row"><span class="k">active pairs</span><b>${frame.pairs}</b></div>` +
+    `<div class="row"><span class="k">state</span>${committed && activeControls === 0 ?
+      `<span class="ok">REWRITE COMMITTED + CLEANED ✓</span>` : committed ?
+      `<span class="hot">commit propagating / cleanup</span>` : activeControls ?
+      `<span class="hot">claim / acknowledgement</span>` : `<span>ready</span>`}</div>`;
+  const lines = frame.events.map(event => event.t === "fire"
+    ? `<div class="f">commit ${displayRule(event.rule)} — semantic fire becomes irrevocable</div>`
+    : event.t === "activate"
+      ? `<div>activate ${cellLabel(event.at)} · ${event.changed ? "u64 changed" : "no-op"}</div>`
+      : `<div>${event.t}</div>`);
+  document.getElementById("events").innerHTML = lines.length ? lines.join("") : "<div>(initial keyframe)</div>";
+  highlightRules(frame);
+}
+
 function hud() {
   const f = TR.frames[FRAME];
   const last = FRAME === TR.frames.length - 1;
@@ -1167,6 +1259,7 @@ function hud() {
     ? "THIS TICK"
     : `SINCE PREVIOUS FRAME (+${tickGap} TICKS)`;
   if (isRuleAtlas(TR)) { atlasHud(f, tickGap); return; }
+  if (TR.kind === "packed-workshop") { packedHud(f, tickGap); return; }
   const nfTick = Number.isFinite(TR.nf_tick) ? TR.nf_tick : null;
   const afterNf = nfTick !== null && f.tick >= nfTick;
   const elapsedSettle = afterNf ? Math.max(0, f.tick - nfTick) : 0;
@@ -1233,17 +1326,76 @@ function hud() {
 
 // controls
 const scen = document.getElementById("scen");
+function materializePackedCells(cells) {
+  const grid = { agents: [], wires: [], cables: [], zips: [], crosses: [], chi: [], sigma: [], motion: [], words: [] };
+  for (const [key, cell] of cells) {
+    const p = key.split(",").map(Number);
+    if (cell.agent) grid.agents.push([...p, cell.agent[0], cell.sid ?? 0xffffffff, cell.agent[1]]);
+    if (cell.wire) grid.wires.push([...p, cell.wire]);
+    if (cell.cable) grid.cables.push([...p, ...cell.cable]);
+    if (cell.zip) grid.zips.push([...p, ...cell.zip]);
+    if (cell.cross) grid.crosses.push([...p, ...cell.cross]);
+    if (cell.chi) grid.chi.push([...p, cell.chi]);
+    if (cell.sigma) grid.sigma.push([...p, cell.sigma]);
+    if (cell.motion) grid.motion.push([...p, ...cell.motion]);
+    if (cell.word) grid.words.push([...p, cell.word]);
+  }
+  return grid;
+}
+
+function inflatePackedTrace(trace) {
+  if (!trace || trace.schema_version !== 4 || trace._inflated) return trace;
+  const first = trace.frames[0] && trace.frames[0].grid;
+  if (!first) throw new Error(`trace ${trace.name || "packed"} has no initial keyframe`);
+  for (const field of ["cables", "zips", "crosses", "sigma", "words"])
+    if (!Array.isArray(first[field])) first[field] = [];
+
+  const cells = new Map();
+  const record = p => {
+    const key = cellKey(p);
+    if (!cells.has(key)) cells.set(key, {});
+    return cells.get(key);
+  };
+  for (const word of first.words) record(word).word = word[3];
+  for (const a of first.agents) Object.assign(record(a), { agent: [a[3], a[5]], sid: a[4] });
+  for (const w of first.wires) record(w).wire = w[3];
+  for (const cable of first.cables) record(cable).cable = cable.slice(3);
+  for (const zip of first.zips) record(zip).zip = zip.slice(3);
+  for (const cross of first.crosses) record(cross).cross = cross.slice(3);
+  for (const value of first.chi) record(value).chi = value[3];
+  for (const value of first.sigma) record(value).sigma = value[3];
+  for (const mark of first.motion) record(mark).motion = mark.slice(3);
+
+  for (let index = 1; index < trace.frames.length; index++) {
+    const frame = trace.frames[index];
+    if (!Array.isArray(frame.delta)) throw new Error(`packed frame ${index} has no cell delta`);
+    for (const change of frame.delta) {
+      const key = cellKey(change);
+      if (change[3] === null) cells.delete(key);
+      else cells.set(key, change[3]);
+    }
+    frame.grid = materializePackedCells(cells);
+  }
+  trace._inflated = true;
+  return trace;
+}
+
 function validateTrace(t, name) {
-  if (!t || t.schema_version !== 3) throw new Error(`trace ${name} requires schema version 3`);
+  t = inflatePackedTrace(t);
+  if (!t || (t.schema_version !== 3 && t.schema_version !== 4))
+    throw new Error(`trace ${name} requires schema version 3 or 4`);
   if (typeof t.engine_revision !== "string" || typeof t.topo !== "string" ||
       typeof t.readback !== "string" || !Array.isArray(t.frames) || t.frames.length === 0)
-    throw new Error(`trace ${name} is missing required schema-v3 metadata`);
+      throw new Error(`trace ${name} is missing required trace metadata`);
   for (const [i, f] of t.frames.entries()) {
-    if (!f || !Array.isArray(f.events) || !f.grid ||
+    if (!f || !f.grid) throw new Error(`trace ${name} frame ${i} has no grid`);
+    for (const field of ["cables", "zips", "crosses", "sigma", "words"])
+      if (!Array.isArray(f.grid[field])) f.grid[field] = [];
+    if (!Array.isArray(f.events) ||
         !Array.isArray(f.grid.agents) || !Array.isArray(f.grid.wires) ||
         !Array.isArray(f.grid.chi) || !Array.isArray(f.grid.motion) || !("wire" in f) ||
         !Number.isFinite(f.tick) || (i > 0 && f.tick <= t.frames[i - 1].tick))
-      throw new Error(`trace ${name} frame ${i} is not a complete schema-v3 frame`);
+      throw new Error(`trace ${name} frame ${i} is not a complete frame`);
   }
   if (t.capture_stride !== undefined &&
       (!Number.isInteger(t.capture_stride) || t.capture_stride < 1))
@@ -1259,6 +1411,8 @@ const optLabel = t => {
   const capture = t.everyTick ? "every tick" : "sampled";
   if (isRuleAtlas(t))
     return `◈ ${t.name} — reduction workshops, ${capture}`;
+  if (t.kind === "packed-workshop")
+    return `◆ ${t.name} — Cell64 zipper protocol, every activation`;
   if (Number.isFinite(t.nf_tick) && t.settled === true) return `✓ ${t.name} — ${topo}, ${capture}, NF + settled`;
   if (Number.isFinite(t.nf_tick) && t.settled === false) return `◐ ${t.name} — ${topo}, ${capture}, NF + settle-capped`;
   return `${t.status === "done" ? "✓" : "✗"} ${t.name} — ${topo}, ${capture}, ${t.status === "done" ? "reaches NF" : t.status === "stuck" ? "STUCK (liveness residue)" : "tick-capped"}`;
@@ -1279,8 +1433,8 @@ document.getElementById("atlasfire").onclick = () => gotoAtlasEntry(ATLAS_INDEX,
 document.getElementById("atlasafter").onclick = () => gotoAtlasEntry(ATLAS_INDEX, "after");
 document.getElementById("atlasfit").onclick = () => fitAtlasEntry();
 document.getElementById("scrub").oninput = e => setFrame(+e.target.value);
-document.getElementById("speed").oninput = e => document.getElementById("speedv").textContent = e.target.value + " fps";
-document.getElementById("speedv").textContent = "8 fps";
+document.getElementById("speed").oninput = e => document.getElementById("speedv").textContent = e.target.value + " states/s";
+document.getElementById("speedv").textContent = "30 states/s";
 document.getElementById("loadbtn").onclick = () => document.getElementById("load").click();
 document.getElementById("load").onchange = async e => {
   const file = e.target.files[0]; if (!file) return;
@@ -1370,6 +1524,8 @@ addEventListener("resize", () => {
   resize();
   if (TR) { if (ATLAS_ENTRIES.length) fitAtlasEntry(); else fit(); }
 });
-renderAgents(); resize(); pick(Object.keys(window.TRACES)[0]); requestAnimationFrame(draw);
+renderAgents(); resize();
+pick(window.TRACES["packed-apply-fork"] ? "packed-apply-fork" : Object.keys(window.TRACES)[0]);
+requestAnimationFrame(draw);
 </script>
 </body></html>

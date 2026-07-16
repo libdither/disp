@@ -1,324 +1,158 @@
 # rust-ca-lattice
 
-The lifted-lattice evaluator for disp's tree-calculus interaction nets. It combines a
-projection-checked spatial engine with a strict cellular geometry kernel for selected
-motions.
+The six-neighbor cellular substrate for disp's tree-calculus interaction net.
 
-> **Status: hybrid engine, not yet a conforming cellular automaton.**
->
-> The conformance target is one frozen, synchronous rule of the form
-> `next_site(center, [N,E,S,W,U,D]) -> next(center)`. `crate/src/local.rs::next_site`
-> meets that boundary for star translation, swept-square rewiring, pressure bulging, and
-> center-emitted contention pressure. Field diffusion is still applied later by the host
-> scheduler rather than as part of one unified state update. Fire,
-> reel, agent step, flip, slide, retract, grow, and the phased host scheduler
-> still use host plans or mutable scans. Passing the differential tests establishes semantic
-> soundness; it does not erase those locality departures.
+The dynamic boundary is one mutable 64-bit center word plus six immutable neighbor words:
 
-The normative design is
-`research/interaction-combinator/LOCAL_CA_DESIGN.md`. This crate is not yet a `Session`
-backend.
-
-## Lattice and state
-
-Cells occupy `(x,y,z)` positions and have six faces: N, E, S, W, U, D. `Full3D` permits
-unbounded depth; `Bilayer` restricts z to `{0,1}` while running the same strict local rule.
-Some host-planned routes and templates remain topology-specific. Agents,
-wires, and crossings are represented directly in the three-dimensional cell geometry.
-
-An occupied cell is either:
-
-- a lowered agent with at most three ports, one attachment per face; or
-- a wire switchbox with a fixed capacity of disjoint two-face strands.
-
-Connectivity is positional. Runtime ids exist only for projection, diagnostics, and stable
-visual coloring; they are excluded from the strict local view. The lowered alphabet keeps
-every moving agent at arity at most three: `T1` arms use `Pair`, `T2` becomes `Sel`
-over nested pairs, and `Unp·Pair` performs the corresponding fusion.
-
-The crate supports the following bounded bonded state:
-
-- `ψ`/`hot`, demand carried by each strand;
-- the per-side tension survey and cooldown;
-- `χ`, frustration pressure with local diffusion and leak;
-- `σ`, the separate standing shell around consumers; and
-- `MotionMark`, a finite relative role/phase for a strict local motion protocol.
-
-`χ` and `σ` deliberately mean different things. `χ` is the sole clearance license, and each
-occupant may move or reshape only itself; the shell stages calm approach/compression away from
-reaction rooms.
-
-### Canonical bit budget
-
-The fixed seed-free local target is at most **592 bits**. These are packed-state cardinality
-ceilings, not `size_of` measurements of the Rust structs:
-
-| Component | Bits |
-|---|---:|
-| empty payload | 2 |
-| arity-1 / arity-2 / arity-3 agent payload | 18 / 20 / 22 |
-| one / two / three-strand wire payload | 116 / 223 / 330 |
-| fields (`χ`, `σ`, local reservation) | 8 + 8 + 1 = 17 |
-| protocol mark | 4–245 |
-
-An agent payload comprises kind 2, tag 4, its ordered distinct face tuple (3, 5, or 7),
-nascent 1, and frustration 8. A wire comprises kind 2, a 7-bit canonical matching of up to
-three disjoint pairs among six faces, and 107 bits per strand: demand 1, cooldown 8, and two
-49-bit survey sides. Protocol widths, including their four-bit role tag, are: none 4,
-source/target 25, square 32, endpoint 31, back 29, bulge-source 22, bulge-spine 21,
-bulge-corner 22, bulge-endpoint 27, debt 10, and shared-contest 245. Therefore a three-strand
-cell with no protocol uses 351 bits, while `330 + 17 + 245 = 592` is the maximum.
-
-The current Rust wire fields retain strand slot, order, and orientation, giving a 636-bit
-seed-free fieldwise maximum when those distinctions are preserved. Canonicalizing to the
-unordered face matching reaches the 592-bit target. Stable agent ids add 32 observer-only
-bits when displayed and are not local dynamics.
-
-Reservations and seeds still mark the finite-state boundary. The reservation map records a
-97-bit present-plus-absolute-owner value where the local target has one locally witnessed
-flag. `SeedCell` holds an `Rc<GrowPlan>` with absolute positions and variable vectors, so it
-has no fixed local bit total. A conforming grow path replaces those host values with a bounded
-ROM index and face-relative roles.
-
-## Strict local kernel
-
-`crate/src/local.rs` is the strict locality boundary. Its local decision receives no `Grid`,
-position, clock, id, router, mutable neighbor, or distant endpoint. It sees a `Hood` containing
-the center plus exactly six `SiteView`s and returns one `SiteNext` for the center.
-
-The sparse runner may enumerate occupied sites and a one-cell halo, but it first gathers one
-frozen snapshot, evaluates all sites, and then materializes the returned center edits
-simultaneously. It deterministically shuffles that enumeration from a run seed and tick; all
-seeds must produce the same next lattice because no evaluation sees an earlier evaluation's
-output. This tests scan-order invariance, not asynchronous execution. Sparse enumeration is
-therefore an optimization rather than extra dynamic information, and the shuffle seed is host
-test metadata rather than a cell input. Event collection and observer ids are materialized
-outside the local decision. The dynamic tension survey is still host-updated and remains an
-input to host-planned flip.
-
-One evaluator tick has exactly one read and one commit barrier. A payload may move only to a
-face-neighbor, and a claim or signal advances only one face. A newly produced or newly arrived
-state cannot participate in reel, step, fire, or another move until the following tick. A
-multi-cell protocol may require many ticks; this preserves locality and is distinct from
-putting several mutable mini-ticks inside one scheduler tick.
-
-True live-read asynchronous activation requires a stronger protocol than shuffled snapshot
-evaluation. Exact countdown moments and a synchronous final wave can be missed when centers
-activate independently. The delay-insensitive path is persistent, idempotent
-`request → acknowledge → commit → done`, with acknowledged abort/retry and a bounded
-transit/ghost payload. Projection must map the connected handoff component to one logical
-occupant while source and target activate at different times. Only then can a fair shuffled
-live-read runner test asynchronous resilience without transient duplication or loss.
-
-### Star translation
-
-A producer at `p` may consume one exclusive principal strand cell at `q=p+d`. If that strand
-enters `q` on `-d` and exits on `e`, the producer moves to `q`, points its principal along
-`e`, and removes the intermediate forwarder:
-
-```text
-before: agent(p) --d--> q[-d,e] --> ...
-after:  p            agent(q) --e--> ...
+```rust
+pub fn update_cell(center: &mut CellWord, adjacent: &[CellWord; 6]) -> UpdateEffect
 ```
 
-This moves the endpoint agent through one intermediate wire forwarder, shortening its
-principal embedded edge by one instead of only straightening polymer between fixed endpoints.
-It can be licensed by local demand, calm cold compression, or a sufficiently downhill
-pressure gradient. The target must contain exactly the moving agent's principal strand, so
-the move cannot displace a crossing wire.
+An activation cannot read coordinates, stable ids, endpoint ids, routes, a clock, or any cell
+beyond those six neighbors. It can replace only `center`. The runner repeatedly activates a
+fair deterministic random permutation of the sparse lattice and its one-cell halo. Later
+activations observe earlier writes, so protocols must be delay-insensitive rather than rely on
+a global barrier.
 
-For an arity-two producer, the auxiliary bond bends through the vacated source cell. For an
-arity-three producer, one aux uses that back bend and the other uses a swept square. With
-`u=p+f` and `c=q+f` for the swept aux face `f`:
+## Cell word
 
-- **extend:** `c` is empty, so it gains the corner `(-f,-d)` and `u` repoints from `-f`
-  (the source cell) to `d` (the new corner);
-- **truncate:** `u` already contains the exact corner `(-f,d)`, so that redundant strand is
-  removed and `c` repoints from `-d` to `-f` directly toward the moved agent.
+Every site is exactly one `u64`:
 
-Counting all incident edges, an arity-one star lowers `L` by one, the back bend makes an
-arity-two star length-neutral, and an arity-three extend/truncate changes `L` by +1/-1.
-Thus the primitive always removes the principal forwarder, while auxiliary rerouting may
-temporarily spend length that later tension can recover.
+| Field | Bits | Purpose |
+|---|---:|---|
+| matter | 20 | empty, agent, link/cable, zipper, or fixed crossing |
+| control | 28 | translation, cable shift, pressure response, rewrite, or contest |
+| `χ` | 8 | obstruction pressure |
+| `σ` | 8 | standing consumer shell |
+| total | **64** | constant for every site and every phase |
 
-In calm space the arity-three source compares its two immediately adjacent aux endpoints.
-An endpoint that can neither repoint toward the swept square nor supply the exact truncate
-turn is forced onto the back route; the other aux becomes the square route. This is still a
-six-neighbor choice—the diagonal square itself is learned only through the target role—and it
-prevents a feasible contraction from repeatedly retrying an impossible aux orientation.
-Once the source publishes that choice, the relative faces are part of the claim. Later phases
-validate only those claimed faces and payloads; evolving `χ`, `σ`, or heat may license a new
-offer, but cannot reselect an auxiliary inside an active handshake.
+Stable display ids and semantic events are observer sidecars. They are updated from
+`UpdateEffect` after a cell activation and never enter the local rule.
 
-Source, target, square, endpoint, and unchanged back endpoint handshake using only reciprocal
-face-neighbor marks. The protocol has a readiness/countdown phase and a second explicit commit
-wave. Every role rechecks its adjacent phase on the final tick and writes only its own payload;
-an abort or timeout before that wave leaves geometry unchanged. A short local debt mark keeps
-a neutral degree-three parent from repeatedly outrunning both children. Incoming square,
-endpoint, back, or bulge-endpoint roles may borrow that nonlocking payload, but restore its
-debt afterward; the ratchet clears once neither stored adjacent reciprocal attachment remains.
-Every handshake role except Debt and contested persistence is locking: host plans cannot enter
-its footprint, reservations cannot arrive, and heat cannot change its payload before commit or
-abort. The synchronous final wave relies on this enforced substrate invariant.
+`cell64.rs` defines the field ADTs, validates their geometry, and packs/unpacks the word. Its
+tests exhaust every agent orientation, all 15 link face-pairs, all 120 zipper orientations,
+all 45 fixed crossing geometries, and every rewrite address.
 
-### Pressure bulge and relay
+## Matter geometry
 
-A straight strand has no movable corner. Under a strong downhill `χ` gradient, its owning
-switchbox may replace the straight strand at `p` by a width-one detour on perpendicular side
-`s`. For axis `±a` and `q=p+s`:
+An arity-three agent has one principal face and one tail face. Both auxiliary ports occupy
+ordered lanes of the tail cable:
 
 ```text
-before: (p-a) -- p -- (p+a)
-after:  (p-a) -- (q-a) -- q -- (q+a) -- (p+a)
+                 aux 1 ─ lane 0 ─┐
+agent tail ═══════════════════════╪═ two-lane cable
+                 aux 2 ─ lane 1 ─┘
 ```
 
-The source removes only its chosen strand (other crossing strands at `p` remain), the spine
-and two corners write themselves, and the two original endpoints repoint themselves.
-Embedded length rises by two while projection is unchanged. Ordinary strong pressure enables
-this mainly in shared switchboxes; a lone strand is rate-limited to saturated pressure
-(`χ >= 200`), which a local obstruction relay can produce. The endpoints do not move, so `C`
-is unchanged, while `L` and `S` both rise by two. This avoids polymer bloom across a broad
-halo.
+The matter variants are:
 
-The source cannot see either diagonal corner. The spine recruits the corners, each corner
-recruits its adjacent endpoint, and readiness returns along the same faces. If a prospective
-corner or endpoint is obstructed, that corner site locally pumps `χ`. A calm shared principal
-switchbox uses a nonlocking finite counter. It records the exact seven-site payload, bounds,
-and reservation signature. Detection stores age 0; after 64 completed unchanged updates have
-stored age 64, the following local evaluation emits low pressure (`χ=16`). Every strand in
-the patch must be cold: hot activity means the crossing is still in demanded transport, not
-a static compression barrier. This filters transient transport while
-ensuring a stable compression barrier eventually asks its own occupants to decongest. The
-requester never reads a diagonal, names the obstruction, or moves it.
+- `Agent`: tag, principal face, optional tail face, and auxiliary lane order;
+- `Link`: one exclusive face-pair with either one or two lanes;
+- `Zip`: one two-lane trunk mapped to two ordered single-lane branches;
+- `Cross`: exactly two independent single-lane routes using four distinct faces; and
+- `Empty`.
 
-## Clearance ownership
+A zipper is a real local cell, not metadata. A cable stays doubled while an agent moves along
+it and opens only where its two semantic wires need separate destinations. A crossing never
+joins, repoints, or displaces either route. No requester moves another occupant; unavailable
+space is represented by failed claims and pressure.
 
-`χ` is the sole license for clearing another occupant's space:
+## Translation
 
-- a blocked fire pumps pressure at the reaction room and waits;
-- a blocked hot walker pumps at itself/its target and waits;
-- a grow reservation keeps its occupied claimed room pressurized until completion or abort;
-  each incumbent remains free to depart, but no new occupant may arrive;
-- a fully cold shared principal switchbox locally pumps when exclusivity persists; and
-- an obstructed bulge corner relays pressure locally.
+A producer advances through one adjacent single-lane principal link. Translation uses three
+persistent roles—source, target, and tail—with
+`offer → acknowledge → commit → done` coordination. For an arity-three agent:
 
-The occupant later sees the gradient and chooses its own projection-preserving star, bulge,
-flip, slide, or agent-step response. Requesters do not select a foreign strand or route for it.
-Trace schema v3 records the rising edge of each newly effective local pressure source as
-observer-only evidence; the event is never an input to the dynamics.
+```text
+before:  zipper ══ source ─ target-link ─ …
+after:   zipper ══ double-link ══ source ─ …
+```
 
-Calm approach uses the strict local star. Some occupant-owned pressure responses are still
-host-planned and are listed in the conformance ledger below.
+The target becomes the agent. The vacated source becomes one two-lane link, so both auxiliary
+wires remain overlapped behind it. There is no diagonal swept cell and the agent moves by
+exactly one face-neighbor. The observer id moves only when the source commits.
 
-## What is here
+## Rewrite workshop
 
-- `crate/src/rules.rs` — the validated 13-tag, 26-interaction template ROM over the lowered
-  ≤3-port alphabet. Export it with `cargo run --bin export-rules`; a generated JSON copy lives
-  at `research/interaction-combinator/rules.json`.
-- `crate/src/oracle.rs` — an independent recursive normalizer.
-- `crate/src/net.rs` — the table-driven abstract engine and shadow net.
-- `crate/src/lattice.rs` — lifted cell state, topology, bonded fields/signals, loader, and
-  executable `check_projection` invariant.
-- `crate/src/local.rs` — strict seven-site views, center-only star/swept-square and
-  pressure-bulge protocols, center-emitted pressure sources, and the frozen sparse runner.
-- `crate/src/transitions.rs` — host-planned footprint transitions and apply functions.
-- `crate/src/scheduler.rs` — the current deterministic hybrid schedule and event stream.
-- `crate/src/fixtures.rs` — closed pedagogical fixtures, including one isolated row for
-  every ROM interaction with exactly one wire cell between the two principal ports.
-- `crate/tests/stage1.rs` — abstract engine vs independent normalizer, with rule coverage.
-- `crate/tests/stage2.rs` — lattice vs oracle on both topologies, projection checks,
-  determinism, liveness floors, and must-complete pins.
-- `crate/src/bin/debug-stuck.rs`, `scan-pins.rs`, `probe-grow.rs`, `probe-cap.rs`, and
-  `probe-corpus.rs` — liveness and geometry diagnostics.
-- `crate/src/bin/dump-run.rs` — JSON traces consumed by
-  `research/interaction-combinator/lattice_player.html`; the viewer replays engine state and
-  never simulates it. The default `stride=1` records every evaluator tick; a larger explicit
-  stride is an opt-in compact export with sampled states. `dump-run rules 120 bilayer 1`
-  emits the complete rule-atlas preset with exact before/fire/after navigation metadata.
+`rewrite64.rs` is a face-relative workshop ROM. The implemented `A·F` entry occupies 16 cells
+in a connected claim tree and creates `T1` and `Pair`. It uses the free side of the docked
+pair and one bilayer lift for the internal `T1.args—Pair.principal` connection:
 
-## Honest conformance ledger
+```text
+                    T1
+                     │
+        lifted link ─zip
+             │
+    cable ══ [A]─[F] ══ cable       before
+              │   │
+             zip──┘
+              │
+             Pair
+```
 
-The following active paths still violate the final center-plus-six, center-write-only model:
+The exact shape rotates with `(axis, side, lift)`. A local cell stores only the rule id,
+orientation, claim-tree slot, phase, and one epoch bit. It does not store the workshop origin
+or an absolute owner.
 
-| Path | Current departure | Local replacement needed |
-|---|---|---|
-| fire | board inspection, placement/routing, atomic multi-cell plan | local reservation, template write, splice, and release roles |
-| reel | aux-chain inspection and bounded-router extension fallback | star-like face protocols for every re-anchor case |
-| agent step | planned multi-cell downhill agent re-tie | occupant-owned staged star roles |
-| flip | diagonal fourth-corner inspection and atomic writes | corner claim relayed around the square |
-| slide | bounded empty-cell trail search | pressure/vacancy relay one face per tick |
-| retract | atomic multi-cell U-turn deletion | endpoint/corner acknowledgement protocol |
-| grow | host `GrowPlan`, reservations, host-stepped placement/abort | finite per-site template roles |
-| scheduler | deterministically permuted host scans and mutable subphases | one frozen `next_site` over all state components |
+The protocol is a distributed two-phase commit:
 
-Some `ψ`, survey, `χ`, `σ`, and cooldown formulas are already neighbor-local. Pressure
-diffusion/leak is radius one, but most current source injection (blocked fire, walker, grow,
-or reservation) is still host-scheduled. Cold shared-principal and bulge-corner
-pressure are emitted by `next_site`, but the χ diffusion update remains a later host phase.
-Until these pieces are composed into the same frozen update as
-geometry and rewrite state, the engine as a whole remains hybrid. Loader routing, projection,
-metrics, and trace rendering may remain global because they are observers/initialization, not
-cellular dynamics.
+1. The driver offers to its adjacent claim-tree children.
+2. Empty children claim themselves and relay offers by one face.
+3. Acknowledgements return from leaves to the driver.
+4. Any occupied or conflicting child propagates abort; matter is still unchanged.
+5. Once all acknowledgements arrive, the driver commits the semantic interaction.
+6. Commit propagates outward; each participant writes only its own final matter.
+7. Done propagates outward and controls clear inward.
 
-A mixed hot/cold shared switchbox deliberately does not start the cold persistence timer: the
-hot strand's owner retains demanded-motion priority. Proving that this always clears the cold
-requester, or adding a separate locally rate-limited mixed-contention state, remains part of
-the clearance-liveness work.
+Random activation-order tests use four adversarial seeds. At control-free checkpoints the
+lattice is traced port-by-port and checked against the shadow net. The static workshop
+compiler is also checked independently by materializing the same 16 final matter words and
+verifying the projection.
 
-## Geometry diagnostics and stopping
+## Source layout
 
-Normal form and compression are distinct. Traces should report:
+- `crate/src/cell64.rs` — exact word ADTs and codec.
+- `crate/src/substrate.rs` — sparse `Grid64`, zipper-aware tracing, projection, and loader.
+- `crate/src/packed_local.rs` — center-only update rule and fair live-read runner.
+- `crate/src/rewrite64.rs` — face-relative workshop ROM and local rewrite geometry.
+- `crate/src/rules.rs` — validated 26-rule semantic ROM.
+- `crate/src/net.rs` — abstract shadow net.
+- `crate/src/oracle.rs` — independent recursive normalizer.
+- `crate/src/bin/dump-packed.rs` — activation-by-activation packed trace generator.
 
-- `L`: total embedded strand-cell length;
-- `C`: the summed chord lower bound
-  `max(Manhattan(endpoint₁, endpoint₂) - 1, 0)` for each abstract edge;
-- `S = L - C`: excess embedded length above the chord lower bound (candidate slack).
+The broader semantic and geometry regression modules remain available while Cell64 workshop
+coverage is extended across the ROM.
 
-`L` says how much wire exists; `C` says how much its endpoint separation forces; `S` is the
-blue detour that contraction can plausibly remove. Per-edge maximum/quantiles are useful so a
-single loose bond is not hidden by a small total.
+## Trace format and viewer
 
-There are likewise two stopping points:
+Schema 4 records one complete keyframe and then one-cell deltas. Each changed cell carries its
+literal 16-hex-digit word. Unchanged activations are retained as frames without duplicating
+the grid. The bundled 1,501-frame `A·F` trace is about 340 KB rather than repeating a full
+snapshot 1,500 times.
 
-1. **semantic NF** — the shadow net has no active interaction pairs; and
-2. **geometric settling** — a later fixed point, or a documented bounded tail, in which
-   payloads, motion marks, relevant fields, and `L/C/S` no longer change.
+`research/interaction-combinator/lattice_player.html` decodes the deltas for replay. It draws
+two cable lanes separately, marks zippers as square split/join cells, shows fixed crossings as
+two independent routes, and displays active control roles as cell outlines. Selecting a cell
+shows its matter, control, fields, exact word, face reciprocity, and constant bit budget.
 
-The trace player should mark semantic NF but continue through the settling tail. Stopping the
-frame stream at NF makes an intermediate forwarder look like a permanent compression barrier even
-when strict stars or host-planned settling transitions could still reduce slack. A bounded tail must report why
-it stopped and the residual `S`/active marks; it is not equivalent to quiescence.
-
-## Correctness and validation
-
-Every completed geometry protocol must project to identity; a completed fire must project to
-exactly one shadow interaction. Under `CheckLevel::Every`, the engine checks projection after
-each applicable transition. `tests/stage1.rs` compares the abstract ROM engine with the
-independent normalizer. `tests/stage2.rs` checks lattice values, projection, determinism, and
-liveness on `Full3D` and `Bilayer`.
-
-Useful commands from `crate/`:
+Regenerate the bundled trace from `crate/`:
 
 ```sh
-cargo test --release local::tests -- --nocapture
-cargo test --release pins_must_complete -- --nocapture
-cargo test --release
+cargo run --release --bin dump-packed -- \
+  bilayer 0 10000 ../../../research/interaction-combinator/lattice_packed_trace.js
 ```
 
-The strict-kernel regression set should cover both swept-square modes on both topologies,
-shared-target exclusion, pressure bulge projection identity, abort-before-commit safety, and
-the locality property that remote state cannot affect a center decision.
+## Verification
 
-## Path to full locality
+From `crate/`:
 
-1. Enforce the one-hop rule across every host fallback: no state written in a tick can be read
-   or moved again in that tick.
-2. Convert flip and retract to staged square/corner roles, completing local calm contraction.
-3. Replace shortest-route slide and the host-planned agent step with pressure/vacancy relay protocols.
-4. Express fire reservation, template extrusion, splice, and abort as finite face messages.
-5. Fold bonded signals, fields, geometry, and rewrite state into one frozen `next_site` rule,
-   and replace absolute reservation owners and `GrowPlan` with bounded local roles.
-6. Make every transfer phase persistent through request/acknowledge/commit/done, extend
-   projection over transit states, and then add fair live-read activation tests.
-7. Run the full differential and liveness corpus, then compare semantic time and settling time
-   with `L/C/S` rather than declaring conformance from final-value correctness alone.
+```sh
+cargo test --release --lib
+cargo test --release rewrite64 --lib
+cargo test --release packed_local --lib
+```
+
+Current execution coverage includes packed loading/projection, live-read cell-by-cell
+translation, bonded heat/field relaxation, and the complete local `A·F` rewrite. Cable-shift
+and pressure-relief controls are packed but their transition tables are pending. The remaining
+25 semantic rules need face-relative workshops before Cell64 is a complete evaluator backend.
