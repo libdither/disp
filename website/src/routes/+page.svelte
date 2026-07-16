@@ -23,7 +23,9 @@
 
   function toggleTheatre(): void {
     const entering = !theatre;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
     // Scroll the WINDOW explicitly — never scrollIntoView: the hero section is
     // overflow:hidden, which makes it a programmatically-scrollable ancestor,
     // and scrollIntoView would scroll the hero's own content out of view with
@@ -32,14 +34,21 @@
       const el = entering ? cardEl : heroEl;
       if (!el) return;
       // entering leaves extra headroom for the face picker hanging above the card
-      const offset = (document.querySelector("header")?.clientHeight ?? 64) + (entering ? 62 : 12);
+      const offset =
+        (document.querySelector("header")?.clientHeight ?? 64) +
+        (entering ? 62 : 12);
       window.scrollTo({
-        top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - offset),
-        behavior
+        top: Math.max(
+          0,
+          el.getBoundingClientRect().top + window.scrollY - offset,
+        ),
+        behavior,
       });
     };
     const apply = () => flushSync(() => (theatre = entering));
-    const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+    const doc = document as Document & {
+      startViewTransition?: (cb: () => void) => unknown;
+    };
     if (doc.startViewTransition && !reduce) {
       // scroll inside the transition callback: snapshots are captured after
       // the jump, so the morph carries the camera move in one motion
@@ -179,23 +188,23 @@
         <span class="grad-text">disp</span>
       </h1>
       <p class="abbr">
-            <span class="abbr-label">abbr.</span>
-            <button
-              class="dterm"
-              onmouseenter={look("decentralized")}
-              onmouseleave={lookAway}
-              onfocus={look("decentralized")}
-              onclick={togglePin("decentralized")}
-              onblur={lookAway}>decentralized</button
-            >
-            <button
-              class="dterm"
-              onmouseenter={look("lisp")}
-              onmouseleave={lookAway}
-              onfocus={look("lisp")}
-              onclick={togglePin("lisp")}
-              onblur={lookAway}>lisp</button
-            >
+        <span class="abbr-label">abbr.</span>
+        <button
+          class="dterm"
+          onmouseenter={look("decentralized")}
+          onmouseleave={lookAway}
+          onfocus={look("decentralized")}
+          onclick={togglePin("decentralized")}
+          onblur={lookAway}>decentralized</button
+        >
+        <button
+          class="dterm"
+          onmouseenter={look("lisp")}
+          onmouseleave={lookAway}
+          onfocus={look("lisp")}
+          onclick={togglePin("lisp")}
+          onblur={lookAway}>lisp</button
+        >
       </p>
     </div>
     <!-- one definition box: hover a dotted term and its entry appears -->
@@ -431,65 +440,6 @@
 </section>
 
 <hr class="keyline container" />
-
-<!-- ============================== self-verify band ============================== -->
-<!-- <section class="selfcheck container">
-  <h2 class="sect-title">No pre-checked kernel ships</h2>
-  <p class="sect-sub">
-    When the playground boots the type system, your browser re-elaborates the
-    kernel's fragments in dependency order and re-verifies every typed export
-    through the kernel itself. The last thing checked is the universe, by the
-    universe.
-  </p>
-  <div
-    class="chain"
-    role="img"
-    aria-label="kernel bootstrap chain: {kernelChain.join(', ')}"
-  >
-    {#each kernelChain as frag, i}
-      <span class="chip" style="--d:{i}">{frag}</span>
-      {#if i < kernelChain.length - 1}<span class="chev">→</span>{/if}
-    {/each}
-    <span class="loop" title="Type : Type">⟲ Type checks Type</span>
-  </div>
-  <div class="cta-row center">
-    <a class="btn" href="{base}/playground/">Watch it happen</a>
-    <a class="btn" href="{base}/learn/#who-checks">How can that be sound?</a>
-  </div>
-</section>
-
-<hr class="keyline container" /> -->
-
-<!-- ============================== involvement ============================== -->
-<section class="involve container">
-  <h2 class="sect-title">Get involved</h2>
-  <div class="inv-grid">
-    <a class="card inv" href="{base}/learn/">
-      <h3>Learn the theory</h3>
-      <p>
-        A first-principles walkthrough: from five rewrite rules to a
-        self-verifying universe.
-      </p>
-      <span class="inv-cta">Start reading →</span>
-    </a>
-    <a class="card inv" href={REPO} target="_blank" rel="noopener">
-      <h3>Read the source</h3>
-      <p>
-        The kernel is ~1k lines of literate disp. The docs rate every file's
-        quality and origin, honestly.
-      </p>
-      <span class="inv-cta">github.com/libdither/disp ↗</span>
-    </a>
-    <a class="card inv" href="{base}/funding/">
-      <h3>Support the work</h3>
-      <p>
-        Independent research, public domain output. Every bit of support extends
-        the runway.
-      </p>
-      <span class="inv-cta">Funding →</span>
-    </a>
-  </div>
-</section>
 
 <style>
   /* ---------- hero ---------- */
