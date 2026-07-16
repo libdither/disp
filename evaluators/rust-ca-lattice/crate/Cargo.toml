@@ -2,11 +2,11 @@
 name = "rust-ca-lattice"
 version = "0.0.0"
 edition = "2021"
-description = "Hybrid lifted-lattice evaluator with a strict radius-one motion kernel for disp tree-calculus interaction nets"
+description = "64-bit six-neighbor cellular substrate for disp tree-calculus interaction nets"
 license = "MIT"
 
-# Native library and tests. A cdylib build and Session ABI wrapper are outside this crate's
-# current evaluator interface (see EVALUATOR.md for the backend registry contract).
+# Native library and tests. A Session ABI wrapper can be added after the packed runner covers
+# the complete interaction ROM.
 [lib]
 crate-type = ["rlib"]
 

@@ -26,44 +26,10 @@
 use crate::net::Net;
 use crate::rules::Tag;
 use crate::local::MotionMark;
+pub use crate::cell64::{Dir, DIRS};
 use std::collections::BTreeMap;
 
 pub type Pos = (i32, i32, i32);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
-pub enum Dir { N, E, S, W, U, D }
-pub const DIRS: [Dir; 6] = [Dir::N, Dir::E, Dir::S, Dir::W, Dir::U, Dir::D];
-
-impl Dir {
-    pub fn delta(self) -> (i32, i32, i32) {
-        match self {
-            Dir::N => (0, -1, 0),
-            Dir::E => (1, 0, 0),
-            Dir::S => (0, 1, 0),
-            Dir::W => (-1, 0, 0),
-            Dir::U => (0, 0, 1),
-            Dir::D => (0, 0, -1),
-        }
-    }
-    pub fn opp(self) -> Dir {
-        match self {
-            Dir::N => Dir::S, Dir::S => Dir::N,
-            Dir::E => Dir::W, Dir::W => Dir::E,
-            Dir::U => Dir::D, Dir::D => Dir::U,
-        }
-    }
-    /// The four directions orthogonal to this one.
-    pub fn perp(self) -> [Dir; 4] {
-        match self {
-            Dir::N | Dir::S => [Dir::E, Dir::W, Dir::U, Dir::D],
-            Dir::E | Dir::W => [Dir::N, Dir::S, Dir::U, Dir::D],
-            Dir::U | Dir::D => [Dir::N, Dir::E, Dir::S, Dir::W],
-        }
-    }
-    pub fn ch(self) -> char {
-        match self { Dir::N => 'N', Dir::E => 'E', Dir::S => 'S', Dir::W => 'W', Dir::U => 'U', Dir::D => 'D' }
-    }
-}
 
 pub fn step(p: Pos, d: Dir) -> Pos { let (dx, dy, dz) = d.delta(); (p.0 + dx, p.1 + dy, p.2 + dz) }
 pub fn dir_to(a: Pos, b: Pos) -> Option<Dir> { DIRS.into_iter().find(|d| step(a, *d) == b) }
