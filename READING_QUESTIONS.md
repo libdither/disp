@@ -13,3 +13,7 @@ Things to investigate / thoughts while reading other things. Only investigate th
    The cost is real and is the "annotations everywhere" the question senses: no ML-style principal-type inference, and generic code stays explicit. The pressure is deferred, not dissolved. It will resurface as (a) implicit inference for generic libraries (wanting `let y := map f xs` typed without writing the dependent instance), (b) typed holes for interactive work (the `_` stub already parses then errors), and (c) bidirectional checking to cut annotation burden.
 
    Likely disp-native answer: keep the kernel metavariable-free forever and add hole-filling above it as scored search rather than classical unification. The pieces already exist. Optimizer rewrite rules are schematic `metavars -> (lhs, rhs)` matched by `tree_eq`, not unification (`lib/tests/opt_q1_cert.test.disp:9`), and `std/demand.disp` already solves dependent constraints (`{x : Nat, y : Eq Nat x 1}` extracts exactly `{x := 1; y := refl}`) via marker instantiation + hash-consing + search. Unification is just the decidable, most-general, single-solution corner of the `GOALS.md` synthesis engine, which is a coherent reason it was never the priority.
+
+
+
+ - A type system I'm told should have two properties, "soundness" (if you put in two syntactically equal things, you get equal outputs), completeness (if they have the same normal form, they are syntactically equal), and round-trip (if you eval a normal-form, it should get back itself). And using these, you can decide equality.
