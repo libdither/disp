@@ -116,7 +116,7 @@
       <select id="atlasrule" title="Reduction workshop" aria-label="Reduction workshop"></select>
       <button id="atlasnext" class="iconbtn" title="Next reduction workshop (])" aria-label="Next reduction workshop">›</button>
       <button id="atlasbefore" class="atlasstep" title="Show the initial principal-port wire">before</button>
-      <button id="atlasfire" class="atlasstep" title="Jump to the rewrite commit">fire</button>
+      <button id="atlasfire" class="atlasstep" title="Jump to the semantic fire">fire</button>
       <button id="atlasafter" class="atlasstep" title="Show the first post-rewrite state">after</button>
       <button id="atlasfit" class="iconbtn" title="Fit this reduction workshop" aria-label="Fit reduction workshop">⊙</button>
       <div class="atlasdetail">
@@ -138,10 +138,11 @@
     deterministic random permutation chooses activation order; later activations see earlier
     writes. Arity-three agents carry both auxiliary ports in one ordered two-lane cable.
     A square zipper cell is the only place that cable opens into two single branches.
-    A rewrite claims its workshop one adjacent cell at a time, acknowledges back to the
-    driver, propagates commit outward, then cleans control marks inward. Occupied cells decline
-    claims. Neither agents nor wires displace another occupant; blockage affects the pressure
-    field and each occupant chooses its own response. Schema-4 traces store one initial
+    A rewrite requests its preferred lift one adjacent cell at a time. Ready or Blocked
+    responses return to the driver; a blocked preferred direction is cleared and retried in
+    the opposite lift. Once ready, one Place wave writes the fixed 16-cell result and Placed
+    responses confirm completion. Neither agents nor wires displace another occupant;
+    blockage affects the pressure field and each occupant chooses its own response. Schema-4 traces store one initial
     keyframe followed by literal one-cell word deltas, while retaining every activation for
     frame-by-frame inspection. Generate the bundled workshop with
     <b>cargo run --release --bin dump-packed -- bilayer 0</b>.</div></details>
@@ -178,15 +179,16 @@
       <span style="color:#ffd866">gold strand</span> = hot (ψ demand: a consumer awaits along this wire; demand licenses a local star even away from calm)<br>
       <span style="color:#ff5a30">red glow</span> = χ pressure (pumped by blockage; the sole clearance license, while each occupant moves or reshapes only itself)<br>
       rewrite outlines: gold driver, cyan boundary, green fresh-agent seat, purple wire seat<br>
-      gold event ring = fire (rule shown); agent positions jump at recorded commits; retract removes slack, while a pressure bulge adds two units of slack to route around blockage for later contraction to recover when possible
+      gold event ring = semantic fire (rule shown); packed agent motion occurs one face-neighbor activation at a time; retract removes slack, while a pressure bulge adds two units of slack to route around blockage for later contraction to recover when possible
     </div>
     <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
     <div class="note">At control-free checkpoints, the packed lattice is projected to the
     shadow interaction net and checked port-for-port. A local activation can project to the
-    same net or, at the rewrite driver's commit transition, exactly one semantic interaction.
+    same net or, when the rewrite driver begins placement, exactly one semantic interaction.
     The observer applies stable display ids and semantic event logging after the word update;
-    cells cannot read them. The bundled A·F workshop exercises the complete asynchronous
-    claim/ack/commit/done path. Translation is also local and cell-by-cell. Cable shifting,
+    cells cannot read them. The bundled A·F presets exercise preferred-direction request,
+    fallback, double blockage, placement, and completion. Translation is also local and
+    cell-by-cell. Cable shifting,
     pressure-owned clearance, and the remaining rule workshops are represented in the packed
     control alphabet but are not yet complete execution paths.</div>
   </div>
@@ -195,10 +197,12 @@
 // A stable revision query lets browsers cache the generated bundle between reloads.
 document.write('<script src="lattice_traces.js?v=local-motion-2026-07-14-dense1"><\/script>');
 document.write('<script src="lattice_rule_atlas.js?v=local-motion-2026-07-15"><\/script>');
-document.write('<script src="lattice_packed_trace.js?v=cell64-zipper-1"><\/script>');
+document.write('<script src="lattice_packed_trace.js?v=cell64-zipper-2"><\/script>');
+document.write('<script src="lattice_packed_fallback_trace.js?v=cell64-zipper-2"><\/script>');
+document.write('<script src="lattice_packed_blocked_trace.js?v=cell64-zipper-2"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-15 · Cell64 zipper activation replay";
+const PLAYER_VERSION = "2026-07-16 · Cell64 directional zipper replay";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -551,7 +555,10 @@ function pick(name) {
   configureAtlas();
   if (ATLAS_ENTRIES.length) FRAME = ATLAS_ENTRIES[0].startFrame;
   renderRules();
-  document.getElementById("whatnote").innerHTML = TR.note ? `<b style="color:#ffd866">watch:</b> ${TR.note}` : "";
+  const scope = TR.schema_version === 4 || isRuleAtlas(TR) ? "" :
+    `<b style="color:#ff6b6b">scope:</b> this evaluation corpus still awaits its Cell64 rule workshops.<br>`;
+  document.getElementById("whatnote").innerHTML =
+    scope + (TR.note ? `<b style="color:#ffd866">watch:</b> ${TR.note}` : "");
   rebuildCellIndex();
   if (ATLAS_ENTRIES.length) fitAtlasEntry(); else fit();
   hud(); syncPlayerUI(); renderInspector(); invalidate();
@@ -886,7 +893,7 @@ function renderInspector() {
 
   const events = TR.frames[FRAME].events.map(event => eventAtCell(event, pos)).filter(Boolean);
   if (events.length) {
-    tipSection(body, TR.everyTick ? "events committed in this tick" :
+    tipSection(body, TR.everyTick ? "events in this tick" :
       FRAME === 0 ? "events in initial frame" : "events since previous frame");
     events.forEach((event, i) => tipRow(body, `${i + 1}`, event));
   }
@@ -1012,8 +1019,8 @@ function draw(now) {
     ctx.strokeStyle = "#8595ad"; ctx.lineWidth = 1;
     ctx.strokeRect(cx - s * 0.09, cy - s * 0.09, s * 0.18, s * 0.18);
   }
-  // Protocol instrumentation is a cell-local control word. A solid square identifies the
-  // claimed cell; it is deliberately not drawn as another wire or agent.
+  // Protocol instrumentation is a cell-local control word. A solid square identifies one
+  // active participant; it is deliberately not drawn as another wire or agent.
   const motion = f0.grid.motion;
   for (const raw of motion) {
     const pos = raw.slice(0, 3);
@@ -1046,8 +1053,8 @@ function draw(now) {
     }
     ctx.globalAlpha = 1;
   }
-  // A CA commit is a discrete state change. Keeping agents on the same recorded frame
-  // as wires avoids drawing an impossible halfway state during playback.
+  // A CA activation is a discrete word change. Keeping agents on the same recorded frame as
+  // wires avoids drawing an impossible halfway state during playback.
   const polygon = (x, y, radius, sides, rotation = 0) => {
     ctx.beginPath();
     for (let i = 0; i < sides; i++) {
@@ -1185,7 +1192,7 @@ function atlasHud(frame, tickGap) {
   const spec = entry && RULES.find(rule => `${rule[0]}·${rule[1]}` === entry.rule);
   const selected = spec ? `${spec[0]} principal ↔ ${spec[1]} principal` : entry ? entry.rule : "—";
   const landmark = !entry ? "—" : FRAME < entry.fireFrame ? "before · principals separated by one wire cell" :
-    FRAME === entry.fireFrame ? "fire · principal pair commits the rewrite" : "after · auxiliary interfaces respliced";
+    FRAME === entry.fireFrame ? "fire · principal pair performs the rewrite" : "after · auxiliary interfaces respliced";
   const firedSoFar = new Set(TR.frames.slice(0, FRAME + 1).flatMap(item =>
     item.events.filter(event => event.t === "fire").map(event => event.rule)));
   const covered = firedSoFar.size;
@@ -1226,7 +1233,14 @@ function atlasHud(frame, tickGap) {
 function packedHud(frame, tickGap) {
   const activeControls = frame.grid.motion.length;
   const activation = frame.events.find(event => event.t === "activate");
-  const committed = frame.ints > 0;
+  const fired = frame.ints > 0;
+  const rewritePhases = frame.grid.motion
+    .filter(mark => String(mark[3]).startsWith("rewrite-"))
+    .map(mark => String(mark[4]).split(" · ")[0]);
+  const placing = rewritePhases.some(phase => phase === "place" || phase === "placed");
+  const blocked = rewritePhases.includes("blocked");
+  const declined = TR.rewrite_outcome === "blocked"
+    && FRAME === TR.frames.length - 1 && activeControls === 0;
   document.getElementById("stat").innerHTML =
     `<div class="row"><span class="k">trace</span><span>${TR.name}</span></div>` +
     `<div class="row"><span class="k">topology</span><span>${TR.topo}</span></div>` +
@@ -1238,12 +1252,15 @@ function packedHud(frame, tickGap) {
     `<div class="row"><span class="k">semantic interactions</span><b>${frame.ints}</b></div>` +
     `<div class="row"><span class="k">live agents</span><b>${frame.grid.agents.length}</b></div>` +
     `<div class="row"><span class="k">active pairs</span><b>${frame.pairs}</b></div>` +
-    `<div class="row"><span class="k">state</span>${committed && activeControls === 0 ?
-      `<span class="ok">REWRITE COMMITTED + CLEANED ✓</span>` : committed ?
-      `<span class="hot">commit propagating / cleanup</span>` : activeControls ?
-      `<span class="hot">claim / acknowledgement</span>` : `<span>ready</span>`}</div>`;
+    `<div class="row"><span class="k">state</span>${declined ?
+      `<span class="ok">BOTH LIFTS BLOCKED · MATTER UNCHANGED ✓</span>` :
+      fired && activeControls === 0 ?
+      `<span class="ok">PLACEMENT COMPLETE ✓</span>` : placing ?
+      `<span class="hot">placing / confirming 16 cells</span>` : blocked ?
+      `<span class="hot">direction blocked / clearing</span>` : activeControls ?
+      `<span class="hot">direction request / response</span>` : `<span>ready</span>`}</div>`;
   const lines = frame.events.map(event => event.t === "fire"
-    ? `<div class="f">commit ${displayRule(event.rule)} — semantic fire becomes irrevocable</div>`
+    ? `<div class="f">place ${displayRule(event.rule)} → ${event.fresh.length} fresh — semantic fire becomes irrevocable</div>`
     : event.t === "activate"
       ? `<div>activate ${cellLabel(event.at)} · ${event.changed ? "u64 changed" : "no-op"}</div>`
       : `<div>${event.t}</div>`);
@@ -1380,13 +1397,25 @@ function inflatePackedTrace(trace) {
   return trace;
 }
 
-function validateTrace(t, name) {
-  t = inflatePackedTrace(t);
+function validateTraceMetadata(t, name) {
   if (!t || (t.schema_version !== 3 && t.schema_version !== 4))
     throw new Error(`trace ${name} requires schema version 3 or 4`);
   if (typeof t.engine_revision !== "string" || typeof t.topo !== "string" ||
       typeof t.readback !== "string" || !Array.isArray(t.frames) || t.frames.length === 0)
-      throw new Error(`trace ${name} is missing required trace metadata`);
+    throw new Error(`trace ${name} is missing required trace metadata`);
+  t.everyTick = t.frames[0].tick === 0 && t.frames.at(-1).tick === t.ticks &&
+    t.frames.every((frame, i) => i === 0 || frame.tick === t.frames[i - 1].tick + 1);
+  if (t.capture_stride !== undefined &&
+      (!Number.isInteger(t.capture_stride) || t.capture_stride < 1))
+    throw new Error(`trace ${name} has an invalid capture stride`);
+  if (t.capture_stride === 1 && !t.everyTick)
+    throw new Error(`trace ${name} declares every-tick capture but contains a gap`);
+  return t;
+}
+
+function validateTrace(t, name) {
+  t = validateTraceMetadata(t, name);
+  t = inflatePackedTrace(t);
   for (const [i, f] of t.frames.entries()) {
     if (!f || !f.grid) throw new Error(`trace ${name} frame ${i} has no grid`);
     for (const field of ["cables", "zips", "crosses", "sigma", "words"])
@@ -1397,13 +1426,6 @@ function validateTrace(t, name) {
         !Number.isFinite(f.tick) || (i > 0 && f.tick <= t.frames[i - 1].tick))
       throw new Error(`trace ${name} frame ${i} is not a complete frame`);
   }
-  if (t.capture_stride !== undefined &&
-      (!Number.isInteger(t.capture_stride) || t.capture_stride < 1))
-    throw new Error(`trace ${name} has an invalid capture stride`);
-  t.everyTick = t.frames[0].tick === 0 && t.frames.at(-1).tick === t.ticks &&
-    t.frames.every((frame, i) => i === 0 || frame.tick === t.frames[i - 1].tick + 1);
-  if (t.capture_stride === 1 && !t.everyTick)
-    throw new Error(`trace ${name} declares every-tick capture but contains a gap`);
   return t;
 }
 const optLabel = t => {
@@ -1411,13 +1433,26 @@ const optLabel = t => {
   const capture = t.everyTick ? "every tick" : "sampled";
   if (isRuleAtlas(t))
     return `◈ ${t.name} — reduction workshops, ${capture}`;
-  if (t.kind === "packed-workshop")
-    return `◆ ${t.name} — Cell64 zipper protocol, every activation`;
+  if (t.kind === "packed-workshop") {
+    if (t.rewrite_outcome === "blocked")
+      return `◆ ${t.name} — both lifts blocked, every activation`;
+    if (t.name.endsWith("-fallback"))
+      return `◆ ${t.name} — U blocked → D fallback, every activation`;
+    return `◆ ${t.name} — preferred U placement, every activation`;
+  }
+  if (t.schema_version === 3)
+    return `○ ${t.name} — evaluation corpus, Cell64 workshops pending`;
   if (Number.isFinite(t.nf_tick) && t.settled === true) return `✓ ${t.name} — ${topo}, ${capture}, NF + settled`;
   if (Number.isFinite(t.nf_tick) && t.settled === false) return `◐ ${t.name} — ${topo}, ${capture}, NF + settle-capped`;
   return `${t.status === "done" ? "✓" : "✗"} ${t.name} — ${topo}, ${capture}, ${t.status === "done" ? "reaches NF" : t.status === "stuck" ? "STUCK (liveness residue)" : "tick-capped"}`;
 };
-for (const n in window.TRACES) { const t = validateTrace(window.TRACES[n], n); const o = document.createElement("option"); o.value = n; o.textContent = optLabel(t); scen.appendChild(o); }
+for (const n in window.TRACES) {
+  const t = validateTraceMetadata(window.TRACES[n], n);
+  const o = document.createElement("option");
+  o.value = n;
+  o.textContent = optLabel(t);
+  scen.appendChild(o);
+}
 scen.onchange = () => pick(scen.value);
 document.getElementById("play").onclick = () => togglePlayback();
 document.getElementById("prev").onclick = () => setFrame(FRAME - 1);

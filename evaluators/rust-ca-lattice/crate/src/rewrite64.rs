@@ -1,8 +1,8 @@
 //! Face-relative rewrite workshops for the packed cable substrate.
 //!
 //! The first compiled workshop is A·F. It is deliberately expressed as ordinary final
-//! matter rather than a host route search: the same sixteen relative roles will be claimed
-//! and committed by the local rewrite protocol.
+//! matter rather than a host route search: the same sixteen relative roles are requested
+//! and placed by the local rewrite protocol.
 
 use crate::cell64::{
     DecodedCell, Dir, FacePair, LaneCount, LaneMask, Matter, Pull, RewriteRole, U3,
@@ -22,9 +22,9 @@ pub struct WorkshopSlot64 {
     /// Offset from the consumer/driver cell.
     pub at: Pos,
     pub matter: Matter,
-    /// Face pointing from this slot toward its claim-tree parent.
+    /// Face pointing from this slot toward its request-tree parent.
     pub parent: Option<Dir>,
-    /// Faces pointing from this slot toward its claim-tree children.
+    /// Faces pointing from this slot toward its request-tree children.
     pub children: Vec<Dir>,
     pub role: RewriteRole,
     pub fresh: Option<u8>,
@@ -186,7 +186,7 @@ pub fn apply_fork_workshop(
     }
     if matter.len() != 16 { return None; }
 
-    // Give the connected workshop a deterministic rooted claim tree. Slot zero is always
+    // Give the connected workshop a deterministic rooted request tree. Slot zero is always
     // the driver. Trying `axis` first makes the docked producer slot one in every rotation.
     let mut order = vec![consumer];
     let mut parents = BTreeMap::new();
@@ -410,8 +410,93 @@ pub fn apply_fork_fixture64(topo: Topo) -> (Grid64, Net, Pos) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cell64::{CellWord, Control, Phase, RewriteRole, RuleId, U6};
+    use crate::cell64::{CellWord, Control};
     use crate::lattice::Topo;
+    use std::collections::BTreeSet;
+
+    fn positions(origin: Pos, workshop: &Workshop64) -> BTreeSet<Pos> {
+        workshop.slots.iter().map(|slot| add(origin, slot.at)).collect()
+    }
+
+    fn occupied_matter(grid: &Grid64) -> BTreeMap<Pos, Matter> {
+        grid.cells.iter().filter_map(|(&at, word)| {
+            let matter = matter_shape(word.unpack().unwrap().matter);
+            (matter != Matter::Empty).then_some((at, matter))
+        }).collect()
+    }
+
+    fn matter_shape(matter: Matter) -> Matter {
+        match matter {
+            Matter::Link { ends, lanes, twist, .. } => Matter::Link {
+                ends,
+                lanes,
+                twist,
+                hot: LaneMask::new(0).unwrap(),
+                cooldown: U3::new(0).unwrap(),
+                pull: [Pull::None; 2],
+            },
+            Matter::Zip { trunk, branches, twist, .. } => Matter::Zip {
+                trunk,
+                branches,
+                twist,
+                hot: LaneMask::new(0).unwrap(),
+                cooldown: U3::new(0).unwrap(),
+                pull: [Pull::None; 2],
+            },
+            Matter::Cross { routes, .. } => Matter::Cross {
+                routes,
+                hot: LaneMask::new(0).unwrap(),
+                cooldown: U3::new(0).unwrap(),
+                pull: [Pull::None; 2],
+            },
+            other => other,
+        }
+    }
+
+    fn run_local(
+        grid: &mut Grid64,
+        shadow: &mut Net,
+        seed: u64,
+    ) -> u8 {
+        let mut peak_chi = 0;
+        for round in 0..2_000 {
+            crate::packed_local::sweep_permuted(grid, shadow, seed, round);
+            peak_chi = peak_chi.max(
+                grid.cells.values().map(|word| word.unpack().unwrap().chi).max().unwrap_or(0),
+            );
+            if !grid.has_protocol() { return peak_chi; }
+        }
+        panic!("local request did not settle");
+    }
+
+    fn workshop_is_placed(
+        grid: &Grid64,
+        origin: Pos,
+        workshop: &Workshop64,
+    ) -> bool {
+        workshop.slots.iter().all(|slot| {
+            grid.matter(add(origin, slot.at)).map(matter_shape)
+                == Some(matter_shape(slot.matter))
+        })
+    }
+
+    fn run_until_placed(
+        grid: &mut Grid64,
+        shadow: &mut Net,
+        origin: Pos,
+        workshop: &Workshop64,
+        seed: u64,
+    ) {
+        for round in 0..2_000 {
+            for at in crate::packed_local::activation_order(grid, seed, round) {
+                crate::packed_local::activate_with_shadow(grid, shadow, at);
+                if grid.rewrites == 1 && workshop_is_placed(grid, origin, workshop) {
+                    return;
+                }
+            }
+        }
+        panic!("workshop never finished its placement wave");
+    }
 
     #[test]
     fn apply_fork_compiles_to_sixteen_cells_and_projects() {
@@ -446,14 +531,28 @@ mod tests {
     }
 
     #[test]
-    fn apply_fork_commits_by_local_random_order_activations() {
+    fn apply_fork_places_exactly_sixteen_cells_by_local_random_order_activations() {
         for seed in [0, 1, 0x9e37_79b9_7f4a_7c15, u64::MAX] {
-            let (mut grid, mut shadow, _) = apply_fork_fixture64(Topo::Bilayer);
-            for round in 0..2_000 {
-                crate::packed_local::sweep_permuted(&mut grid, &mut shadow, seed, round);
-                if grid.rewrites == 1 && !grid.has_protocol() { break; }
+            let (mut grid, mut shadow, c) = apply_fork_fixture64(Topo::Bilayer);
+            let workshop = apply_fork_workshop(
+                Dir::E,
+                Dir::N,
+                Dir::U,
+                false,
+                false,
+            ).unwrap();
+            run_until_placed(&mut grid, &mut shadow, c, &workshop, seed);
+            for slot in &workshop.slots {
+                assert_eq!(
+                    grid.matter(add(c, slot.at)).map(matter_shape),
+                    Some(matter_shape(slot.matter)),
+                    "seed {seed:#x} placed the wrong matter at slot {:?}",
+                    slot.at,
+                );
             }
-            assert_eq!(grid.rewrites, 1, "seed {seed:#x} did not commit exactly once");
+            assert_eq!(workshop.slots.len(), 16);
+            assert_eq!(grid.rewrites, 1, "seed {seed:#x} did not place exactly once");
+            run_local(&mut grid, &mut shadow, seed ^ 0xd1b5_4a32_d192_ed03);
             assert!(!grid.has_protocol(), "seed {seed:#x} left rewrite roles behind");
             grid.check_projection(&shadow);
             assert_eq!(shadow.ints, 1);
@@ -461,49 +560,97 @@ mod tests {
     }
 
     #[test]
-    fn blocked_local_workshop_aborts_without_changing_matter() {
-        let (mut grid, shadow, c) = apply_fork_fixture64(Topo::Bilayer);
-        let patch = plan_apply_fork(&grid, c).unwrap();
-        let (side, lift) = rewrite_orientation_code(patch.axis, patch.side, patch.lift).unwrap();
-        let workshop = apply_fork_workshop(patch.axis, patch.side, patch.lift, false, false).unwrap();
-        let blocked_slot = workshop.slots.iter().enumerate().rev().find(|(index, slot)| {
-            *index > 1 && slot.children.is_empty()
-        }).map(|(index, slot)| (index as u8, add(c, slot.at))).unwrap();
+    fn blocked_preferred_lift_retries_the_opposite_direction() {
+        for seed in [0, 1, 0x9e37_79b9_7f4a_7c15, u64::MAX] {
+            let (mut grid, mut shadow, c) = apply_fork_fixture64(Topo::Full3D);
+            let preferred = apply_fork_workshop(
+                Dir::E,
+                Dir::N,
+                Dir::U,
+                false,
+                false,
+            ).unwrap();
+            let fallback = apply_fork_workshop(
+                Dir::E,
+                Dir::N,
+                Dir::D,
+                false,
+                false,
+            ).unwrap();
+            let preferred_positions = positions(c, &preferred);
+            let fallback_positions = positions(c, &fallback);
+            let blocked = *preferred_positions.difference(&fallback_positions)
+                .find(|at| grid.is_empty(**at))
+                .expect("preferred lift needs a private probe cell");
+            let marker = Matter::Agent {
+                tag: Tag::Out,
+                principal: Dir::U,
+                tail: None,
+                aux_flip: false,
+            };
+            put_demo(&mut grid, blocked, marker);
+
+            run_until_placed(&mut grid, &mut shadow, c, &fallback, seed);
+
+            assert_eq!(grid.rewrites, 1, "seed {seed:#x} did not use its fallback");
+            assert_eq!(shadow.ints, 1);
+            assert_eq!(grid.matter(blocked), Some(marker));
+            for slot in &fallback.slots {
+                assert_eq!(
+                    grid.matter(add(c, slot.at)).map(matter_shape),
+                    Some(matter_shape(slot.matter)),
+                    "seed {seed:#x} did not place the down-lift workshop at {:?}",
+                    slot.at,
+                );
+            }
+            run_local(&mut grid, &mut shadow, seed ^ 0xd1b5_4a32_d192_ed03);
+            assert!(!grid.has_protocol());
+        }
+    }
+
+    #[test]
+    fn both_lifts_blocked_clear_the_request_without_changing_matter() {
+        let (mut grid, mut shadow, c) = apply_fork_fixture64(Topo::Full3D);
+        let preferred = apply_fork_workshop(
+            Dir::E,
+            Dir::N,
+            Dir::U,
+            false,
+            false,
+        ).unwrap();
+        let fallback = apply_fork_workshop(
+            Dir::E,
+            Dir::N,
+            Dir::D,
+            false,
+            false,
+        ).unwrap();
+        let preferred_positions = positions(c, &preferred);
+        let fallback_positions = positions(c, &fallback);
+        let block_preferred = *preferred_positions.difference(&fallback_positions)
+            .find(|at| grid.is_empty(**at))
+            .expect("preferred lift needs a private probe cell");
+        let block_fallback = *fallback_positions.difference(&preferred_positions)
+            .find(|at| grid.is_empty(**at))
+            .expect("fallback lift needs a private probe cell");
         let marker = Matter::Agent {
             tag: Tag::Out,
             principal: Dir::U,
             tail: None,
             aux_flip: false,
         };
-        put_demo(&mut grid, blocked_slot.1, marker);
+        put_demo(&mut grid, block_preferred, marker);
+        put_demo(&mut grid, block_fallback, marker);
+        let before = occupied_matter(&grid);
 
-        let mut driver = grid.decoded(c).unwrap();
-        driver.control = Control::Rewrite {
-            role: RewriteRole::Driver,
-            phase: Phase::Offer,
-            rule: RuleId::new(APPLY_FORK_RULE).unwrap(),
-            axis: patch.axis,
-            side,
-            lift,
-            slot: U6::new(0).unwrap(),
-            epoch: false,
-        };
-        grid.set(c, driver);
-        let sites = workshop.slots.iter().map(|slot| add(c, slot.at)).collect::<Vec<_>>();
-        let mut cleared = false;
-        for _ in 0..1_000 {
-            for at in &sites {
-                let result = crate::packed_local::activate(&mut grid, *at);
-                assert!(result.is_none_or(|(_, _, effect)| effect.rewrite_fire.is_none()));
-                if !grid.has_protocol() { cleared = true; break; }
-            }
-            if cleared { break; }
-        }
-        assert!(cleared, "blocked claim tree did not finish its abort wave");
-        assert_eq!(grid.matter(blocked_slot.1), Some(marker));
+        let peak_chi = run_local(&mut grid, &mut shadow, 0xfeed_face);
+
+        assert_eq!(occupied_matter(&grid), before);
         assert_eq!(grid.rewrites, 0);
         assert_eq!(shadow.ints, 0);
+        assert!(!grid.has_protocol());
+        assert!(peak_chi > 0, "declined requests did not emit local obstruction pressure");
         assert!(matches!(grid.matter(c), Some(Matter::Agent { tag: Tag::A, .. })));
-        assert!(matches!(grid.matter(step(c, patch.axis)), Some(Matter::Agent { tag: Tag::F, .. })));
+        assert!(matches!(grid.matter(step(c, Dir::E)), Some(Matter::Agent { tag: Tag::F, .. })));
     }
 }

@@ -55,7 +55,7 @@ The matter variants are:
 A zipper is a real local cell, not metadata. A cable stays doubled while an agent moves along
 it and opens only where its two semantic wires need separate destinations. A crossing never
 joins, repoints, or displaces either route. No requester moves another occupant; unavailable
-space is represented by failed claims and pressure.
+space is represented by a blocked response and pressure.
 
 ## Translation
 
@@ -74,9 +74,9 @@ exactly one face-neighbor. The observer id moves only when the source commits.
 
 ## Rewrite workshop
 
-`rewrite64.rs` is a face-relative workshop ROM. The implemented `A·F` entry occupies 16 cells
-in a connected claim tree and creates `T1` and `Pair`. It uses the free side of the docked
-pair and one bilayer lift for the internal `T1.args—Pair.principal` connection:
+`rewrite64.rs` is a face-relative workshop ROM. The implemented `A·F` entry occupies exactly
+16 cells in a connected request tree and creates `T1` and `Pair`. It uses the free side of the
+docked pair and one bilayer lift for the internal `T1.args—Pair.principal` connection:
 
 ```text
                     T1
@@ -91,23 +91,30 @@ pair and one bilayer lift for the internal `T1.args—Pair.principal` connection
 ```
 
 The exact shape rotates with `(axis, side, lift)`. A local cell stores only the rule id,
-orientation, claim-tree slot, phase, and one epoch bit. It does not store the workshop origin
-or an absolute owner.
+orientation, request-tree slot, phase, and whether this is the fallback direction. It does
+not store the workshop origin or an absolute owner. Every coordinate is reconstructed
+relative to the firing Apply/Fork cells.
 
-The protocol is a distributed two-phase commit:
+The rewrite is a directional request/response protocol:
 
-1. The driver offers to its adjacent claim-tree children.
-2. Empty children claim themselves and relay offers by one face.
-3. Acknowledgements return from leaves to the driver.
-4. Any occupied or conflicting child propagates abort; matter is still unchanged.
-5. Once all acknowledgements arrive, the driver commits the semantic interaction.
-6. Commit propagates outward; each participant writes only its own final matter.
-7. Done propagates outward and controls clear inward.
+1. The driver requests the preferred lift direction from its adjacent request-tree children.
+2. Empty children accept locally and relay the same request by one face.
+3. `Ready` responses return from leaves after the complete descendant region is available.
+4. Any occupied, conflicting, or out-of-bounds child returns `Blocked`; matter is unchanged.
+5. After a blocked request has cleared, the driver retries the opposite lift direction once.
+6. Once the selected direction is ready, the driver begins one outward `Place` wave and emits
+   the semantic interaction event.
+7. Every participant writes only its own final matter; `Placed` responses confirm completion
+   through the same tree before controls clear.
+
+The local transition from `Request` to `Blocked` emits an obstruction-pressure pulse. The
+requester still cannot modify the refusing cell; pressure is the only clearance signal.
 
 Random activation-order tests use four adversarial seeds. At control-free checkpoints the
 lattice is traced port-by-port and checked against the shadow net. The static workshop
 compiler is also checked independently by materializing the same 16 final matter words and
-verifying the projection.
+verifying the projection. Separate obstruction tests force preferred-up, fallback-down, and
+both-directions-blocked executions.
 
 ## Source layout
 
@@ -127,19 +134,23 @@ coverage is extended across the ROM.
 
 Schema 4 records one complete keyframe and then one-cell deltas. Each changed cell carries its
 literal 16-hex-digit word. Unchanged activations are retained as frames without duplicating
-the grid. The bundled 1,501-frame `A·F` trace is about 340 KB rather than repeating a full
-snapshot 1,500 times.
+the grid. Three bundled `A·F` traces expose preferred placement, forced opposite-lift
+fallback, and both lifts blocked without repeating a full snapshot for every activation.
 
 `research/interaction-combinator/lattice_player.html` decodes the deltas for replay. It draws
 two cable lanes separately, marks zippers as square split/join cells, shows fixed crossings as
 two independent routes, and displays active control roles as cell outlines. Selecting a cell
 shows its matter, control, fields, exact word, face reciprocity, and constant bit budget.
 
-Regenerate the bundled trace from `crate/`:
+Regenerate the bundled traces from `crate/`:
 
 ```sh
 cargo run --release --bin dump-packed -- \
-  bilayer 0 10000 ../../../research/interaction-combinator/lattice_packed_trace.js
+  bilayer 0 10000 ../../../research/interaction-combinator/lattice_packed_trace.js preferred
+cargo run --release --bin dump-packed -- \
+  full3d 0 10000 ../../../research/interaction-combinator/lattice_packed_fallback_trace.js fallback
+cargo run --release --bin dump-packed -- \
+  full3d 0 10000 ../../../research/interaction-combinator/lattice_packed_blocked_trace.js blocked
 ```
 
 ## Verification

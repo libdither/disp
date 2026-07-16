@@ -2,11 +2,11 @@
 //!
 //! `update_cell` mutates one word and receives immutable copies of its six current neighbors.
 //! There is no frozen global tick: the runner may activate sites in any fair order. Persistent
-//! offer/ack/commit/done roles make a translation insensitive to that order.
+//! persistent local handshakes make translation and rewrite insensitive to that order.
 
 use crate::cell64::{
     CellWord, Control, DecodedCell, Dir, FacePair, LaneCount, LaneMask, LineRole, Matter,
-    Phase, Pull, RewriteRole, RuleId, U3, U6, DIRS,
+    Phase, Pull, RewritePhase, RewriteRole, RuleId, U3, U6, DIRS,
 };
 use crate::lattice::{step, Pos};
 use crate::net::Net;
@@ -23,8 +23,9 @@ pub struct UpdateEffect {
     /// Set only when the old agent cell converts into its cable trail. Observer metadata
     /// follows this edge; the dynamics never reads the effect.
     pub observer_move: Option<Dir>,
-    /// A semantic interaction becomes irrevocable exactly when the rewrite driver enters
-    /// commit. The scheduler applies this observer event; cells never inspect it.
+    /// A semantic interaction becomes irrevocable exactly when the rewrite driver begins
+    /// the outward placement wave. The scheduler applies this observer event; cells never
+    /// inspect it.
     pub rewrite_fire: Option<RewriteFire>,
 }
 
@@ -50,7 +51,7 @@ struct RewriteSpec {
     axis: Dir,
     side: u8,
     lift: bool,
-    epoch: bool,
+    fallback: bool,
 }
 
 fn site(word: CellWord) -> Option<DecodedCell> {
@@ -407,7 +408,7 @@ fn tail_next(
 
 fn rewrite_control(
     role: RewriteRole,
-    phase: Phase,
+    phase: RewritePhase,
     slot: u8,
     spec: RewriteSpec,
 ) -> Control {
@@ -419,7 +420,7 @@ fn rewrite_control(
         side: spec.side,
         lift: spec.lift,
         slot: U6::new(slot).expect("workshop slot exceeds packed address"),
-        epoch: spec.epoch,
+        fallback: spec.fallback,
     }
 }
 
@@ -434,8 +435,10 @@ fn rewrite_phase(
     expected_role: RewriteRole,
     expected_slot: u8,
     spec: RewriteSpec,
-) -> Option<Phase> {
-    let Control::Rewrite { role, phase, rule, axis, side, lift, slot, epoch } = control else {
+) -> Option<RewritePhase> {
+    let Control::Rewrite {
+        role, phase, rule, axis, side, lift, slot, fallback,
+    } = control else {
         return None;
     };
     (role == expected_role
@@ -444,15 +447,15 @@ fn rewrite_phase(
         && axis == spec.axis
         && side == spec.side
         && lift == spec.lift
-        && epoch == spec.epoch)
+        && fallback == spec.fallback)
         .then_some(phase)
 }
 
-fn can_claim_rewrite(slot: u8, center: DecodedCell, spec: RewriteSpec) -> bool {
+fn can_accept_rewrite(slot: u8, center: DecodedCell, spec: RewriteSpec) -> bool {
     if center.control != Control::Idle { return false; }
     if spec.rule.get() != APPLY_FORK_RULE { return false; }
     match slot {
-        // Slot zero is the driver and is never claimed by a parent.
+        // Slot zero is the driver and is never requested by a parent.
         0 => false,
         // Trying the principal axis first in the workshop BFS makes the producer slot one.
         1 => matches!(center.matter, Matter::Agent {
@@ -469,14 +472,23 @@ fn incoming_rewrite(center: DecodedCell, adjacent: &[CellWord; 6]) -> Option<Con
     if center.control != Control::Idle { return None; }
     for to_parent in DIRS {
         let Some(parent) = neighbor(adjacent, to_parent) else { continue };
-        let Control::Rewrite { role: _, phase: Phase::Offer, rule, axis, side, lift, slot, epoch } =
-            parent.control else { continue };
-        let spec = RewriteSpec { rule, axis, side, lift, epoch };
+        let Control::Rewrite {
+            role,
+            phase: RewritePhase::Request,
+            rule,
+            axis,
+            side,
+            lift,
+            slot,
+            fallback,
+        } = parent.control else { continue };
+        let spec = RewriteSpec { rule, axis, side, lift, fallback };
         let Some(workshop) = workshop(spec) else { continue };
+        if workshop.slot(slot.get()).is_none_or(|layout| layout.role != role) { continue; }
         let Some(child_slot) = workshop.child(slot.get(), to_parent.opp()) else { continue };
-        if !can_claim_rewrite(child_slot, center, spec) { continue; }
-        let role = workshop.slot(child_slot).expect("claim-tree child slot").role;
-        return Some(rewrite_control(role, Phase::Offer, child_slot, spec));
+        if !can_accept_rewrite(child_slot, center, spec) { continue; }
+        let role = workshop.slot(child_slot).expect("request-tree child slot").role;
+        return Some(rewrite_control(role, RewritePhase::Request, child_slot, spec));
     }
     None
 }
@@ -502,58 +514,56 @@ fn start_rewrite(center: DecodedCell, adjacent: &[CellWord; 6]) -> Option<Contro
     }
 
     let rule = RuleId::new(APPLY_FORK_RULE).unwrap();
-    let epoch = (center.chi ^ center.sigma) & 1 != 0;
     for side in 0..4 {
-        for lift in [false, true] {
-            let spec = RewriteSpec { rule, axis, side, lift, epoch };
-            let workshop = workshop(spec)?;
-            let driver = workshop.slot(0)?;
-            let immediate_space = driver.children.iter().all(|face| {
-                let Some(child_slot) = workshop.child(0, *face) else { return false };
-                neighbor(adjacent, *face)
-                    .is_some_and(|child| can_claim_rewrite(child_slot, child, spec))
-            });
-            if immediate_space {
-                return Some(rewrite_control(RewriteRole::Driver, Phase::Offer, 0, spec));
-            }
-        }
+        let spec = RewriteSpec { rule, axis, side, lift: false, fallback: false };
+        workshop(spec)?;
+        return Some(rewrite_control(
+            RewriteRole::Driver,
+            RewritePhase::Request,
+            0,
+            spec,
+        ));
     }
     None
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ClaimState { Waiting, Ready, Blocked }
+enum ResponseState { Waiting, Ready, Blocked }
 
-fn child_claims(
+fn child_responses(
     workshop: &Workshop64,
     slot: u8,
     spec: RewriteSpec,
     adjacent: &[CellWord; 6],
-) -> ClaimState {
-    let mut state = ClaimState::Ready;
+) -> ResponseState {
+    let mut state = ResponseState::Ready;
     for face in &workshop.slot(slot).expect("valid workshop slot").children {
-        let child_slot = workshop.child(slot, *face).expect("claim tree child");
+        let child_slot = workshop.child(slot, *face).expect("request-tree child");
         let child_layout = workshop.slot(child_slot).unwrap();
-        let Some(child) = neighbor(adjacent, *face) else { return ClaimState::Blocked };
+        let Some(child) = neighbor(adjacent, *face) else { return ResponseState::Blocked };
         match rewrite_phase(child.control, child_layout.role, child_slot, spec) {
-            Some(Phase::Ack) => {}
-            Some(Phase::Offer) => state = ClaimState::Waiting,
-            Some(Phase::Abort) | Some(Phase::Commit) | Some(Phase::Done) => {
-                return ClaimState::Blocked;
+            Some(RewritePhase::Ready) => {}
+            Some(RewritePhase::Request) => state = ResponseState::Waiting,
+            Some(RewritePhase::Blocked)
+            | Some(RewritePhase::Place)
+            | Some(RewritePhase::Placed) => {
+                return ResponseState::Blocked;
             }
-            None if can_claim_rewrite(child_slot, child, spec) => state = ClaimState::Waiting,
-            None => return ClaimState::Blocked,
+            None if can_accept_rewrite(child_slot, child, spec) => {
+                state = ResponseState::Waiting;
+            }
+            None => return ResponseState::Blocked,
         }
     }
     state
 }
 
-fn children_at_phase(
+fn children_in_phase(
     workshop: &Workshop64,
     slot: u8,
     spec: RewriteSpec,
     adjacent: &[CellWord; 6],
-    phase: Phase,
+    phase: RewritePhase,
 ) -> bool {
     workshop.slot(slot).expect("valid workshop slot").children.iter().all(|face| {
         let child_slot = workshop.child(slot, *face).unwrap();
@@ -584,7 +594,7 @@ fn parent_phase(
     slot: u8,
     spec: RewriteSpec,
     adjacent: &[CellWord; 6],
-) -> Option<Phase> {
+) -> Option<RewritePhase> {
     let (parent_slot, face) = workshop.parent(slot)?;
     let parent_layout = workshop.slot(parent_slot)?;
     let parent = neighbor(adjacent, face)?;
@@ -595,7 +605,7 @@ fn final_rewrite_matter(center: DecodedCell, slot: u8, workshop: &Workshop64) ->
     let mut matter = workshop.slot(slot).expect("valid workshop slot").matter;
     if slot <= 1 {
         let Matter::Agent { aux_flip, .. } = center.matter else {
-            panic!("rewrite boundary lost its docked agent before commit")
+            panic!("rewrite boundary lost its docked agent before placement")
         };
         let Matter::Zip { twist, .. } = &mut matter else { unreachable!() };
         *twist = aux_flip;
@@ -607,7 +617,7 @@ fn rewrite_next(
     center: DecodedCell,
     adjacent: &[CellWord; 6],
     role: RewriteRole,
-    phase: Phase,
+    phase: RewritePhase,
     slot: u8,
     spec: RewriteSpec,
 ) -> (Matter, Control, UpdateEffect) {
@@ -623,20 +633,20 @@ fn rewrite_next(
 
     if role == RewriteRole::Driver {
         return match phase {
-            Phase::Offer => match child_claims(&workshop, slot, spec, adjacent) {
-                ClaimState::Waiting => (
+            RewritePhase::Request => match child_responses(&workshop, slot, spec, adjacent) {
+                ResponseState::Waiting => (
                     center.matter,
-                    rewrite_control(role, Phase::Offer, slot, spec),
+                    rewrite_control(role, RewritePhase::Request, slot, spec),
                     UpdateEffect::default(),
                 ),
-                ClaimState::Blocked => (
+                ResponseState::Blocked => (
                     center.matter,
-                    rewrite_control(role, Phase::Abort, slot, spec),
+                    rewrite_control(role, RewritePhase::Blocked, slot, spec),
                     UpdateEffect::default(),
                 ),
-                ClaimState::Ready => (
+                ResponseState::Ready => (
                     final_rewrite_matter(center, slot, &workshop),
-                    rewrite_control(role, Phase::Commit, slot, spec),
+                    rewrite_control(role, RewritePhase::Place, slot, spec),
                     UpdateEffect {
                         rewrite_fire: Some(RewriteFire {
                             rule: spec.rule,
@@ -648,113 +658,154 @@ fn rewrite_next(
                     },
                 ),
             },
-            Phase::Commit if children_at_phase(&workshop, slot, spec, adjacent, Phase::Commit) => (
+            RewritePhase::Blocked if !children_clear(&workshop, slot, spec, adjacent) => (
                 center.matter,
-                rewrite_control(role, Phase::Done, slot, spec),
+                rewrite_control(role, RewritePhase::Blocked, slot, spec),
                 UpdateEffect::default(),
             ),
-            Phase::Done if children_clear(&workshop, slot, spec, adjacent) => (
+            RewritePhase::Blocked if !spec.fallback => {
+                let retry = RewriteSpec {
+                    lift: !spec.lift,
+                    fallback: true,
+                    ..spec
+                };
+                (
+                    center.matter,
+                    rewrite_control(role, RewritePhase::Request, slot, retry),
+                    UpdateEffect::default(),
+                )
+            }
+            RewritePhase::Blocked => (
                 center.matter,
                 Control::Idle,
                 UpdateEffect::default(),
             ),
-            Phase::Abort if children_clear(&workshop, slot, spec, adjacent) => (
+            RewritePhase::Place
+                if children_in_phase(
+                    &workshop,
+                    slot,
+                    spec,
+                    adjacent,
+                    RewritePhase::Placed,
+                ) =>
+            {
+                (center.matter, Control::Idle, UpdateEffect::default())
+            }
+            RewritePhase::Place => (
                 center.matter,
-                Control::Idle,
+                rewrite_control(role, RewritePhase::Place, slot, spec),
                 UpdateEffect::default(),
             ),
-            Phase::Commit | Phase::Done | Phase::Abort => (
+            RewritePhase::Ready | RewritePhase::Placed => (
                 center.matter,
-                rewrite_control(role, phase, slot, spec),
-                UpdateEffect::default(),
-            ),
-            Phase::Ack => (
-                center.matter,
-                rewrite_control(role, Phase::Abort, slot, spec),
+                rewrite_control(role, RewritePhase::Blocked, slot, spec),
                 UpdateEffect::default(),
             ),
         };
     }
 
     match phase {
-        Phase::Offer => {
-            if parent_phase(&workshop, slot, spec, adjacent) == Some(Phase::Abort) {
+        RewritePhase::Request => {
+            let parent = parent_phase(&workshop, slot, spec, adjacent);
+            if parent == Some(RewritePhase::Blocked) {
                 return (
                     center.matter,
-                    rewrite_control(role, Phase::Abort, slot, spec),
+                    rewrite_control(role, RewritePhase::Blocked, slot, spec),
                     UpdateEffect::default(),
                 );
             }
-            match child_claims(&workshop, slot, spec, adjacent) {
-                ClaimState::Waiting => (
+            if !matches!(
+                parent,
+                Some(RewritePhase::Request | RewritePhase::Ready)
+            ) {
+                return (
                     center.matter,
-                    rewrite_control(role, Phase::Offer, slot, spec),
+                    rewrite_control(role, RewritePhase::Blocked, slot, spec),
+                    UpdateEffect::default(),
+                );
+            }
+            match child_responses(&workshop, slot, spec, adjacent) {
+                ResponseState::Waiting => (
+                    center.matter,
+                    rewrite_control(role, RewritePhase::Request, slot, spec),
                     UpdateEffect::default(),
                 ),
-                ClaimState::Ready => (
+                ResponseState::Ready => (
                     center.matter,
-                    rewrite_control(role, Phase::Ack, slot, spec),
+                    rewrite_control(role, RewritePhase::Ready, slot, spec),
                     UpdateEffect::default(),
                 ),
-                ClaimState::Blocked => (
+                ResponseState::Blocked => (
                     center.matter,
-                    rewrite_control(role, Phase::Abort, slot, spec),
+                    rewrite_control(role, RewritePhase::Blocked, slot, spec),
                     UpdateEffect::default(),
                 ),
             }
         }
-        Phase::Ack => match parent_phase(&workshop, slot, spec, adjacent) {
-            Some(Phase::Offer) | Some(Phase::Ack) => (
+        RewritePhase::Ready => match parent_phase(&workshop, slot, spec, adjacent) {
+            Some(RewritePhase::Request | RewritePhase::Ready) => (
                 center.matter,
-                rewrite_control(role, Phase::Ack, slot, spec),
+                rewrite_control(role, RewritePhase::Ready, slot, spec),
                 UpdateEffect::default(),
             ),
-            Some(Phase::Commit) => (
+            Some(RewritePhase::Place) => (
                 final_rewrite_matter(center, slot, &workshop),
-                rewrite_control(role, Phase::Commit, slot, spec),
+                rewrite_control(role, RewritePhase::Place, slot, spec),
                 UpdateEffect::default(),
             ),
-            Some(Phase::Abort) | None => (
+            Some(RewritePhase::Blocked) | None => (
                 center.matter,
-                rewrite_control(role, Phase::Abort, slot, spec),
+                rewrite_control(role, RewritePhase::Blocked, slot, spec),
                 UpdateEffect::default(),
             ),
-            Some(Phase::Done) => (
+            Some(RewritePhase::Placed) => (
                 center.matter,
-                rewrite_control(role, Phase::Abort, slot, spec),
+                rewrite_control(role, RewritePhase::Blocked, slot, spec),
                 UpdateEffect::default(),
             ),
         },
-        Phase::Commit => {
-            if parent_phase(&workshop, slot, spec, adjacent) == Some(Phase::Done)
-                && children_at_phase(&workshop, slot, spec, adjacent, Phase::Commit)
+        RewritePhase::Blocked => {
+            let parent = parent_phase(&workshop, slot, spec, adjacent);
+            if matches!(parent, Some(RewritePhase::Blocked) | None)
+                && children_clear(&workshop, slot, spec, adjacent)
             {
-                (
-                    center.matter,
-                    rewrite_control(role, Phase::Done, slot, spec),
-                    UpdateEffect::default(),
-                )
+                (center.matter, Control::Idle, UpdateEffect::default())
             } else {
                 (
                     center.matter,
-                    rewrite_control(role, Phase::Commit, slot, spec),
+                    rewrite_control(role, RewritePhase::Blocked, slot, spec),
                     UpdateEffect::default(),
                 )
             }
         }
-        Phase::Done => {
-            let control = if children_clear(&workshop, slot, spec, adjacent) {
-                Control::Idle
+        RewritePhase::Place => {
+            if children_in_phase(
+                &workshop,
+                slot,
+                spec,
+                adjacent,
+                RewritePhase::Placed,
+            ) {
+                (
+                    center.matter,
+                    rewrite_control(role, RewritePhase::Placed, slot, spec),
+                    UpdateEffect::default(),
+                )
             } else {
-                rewrite_control(role, Phase::Done, slot, spec)
-            };
-            (center.matter, control, UpdateEffect::default())
+                (
+                    center.matter,
+                    rewrite_control(role, RewritePhase::Place, slot, spec),
+                    UpdateEffect::default(),
+                )
+            }
         }
-        Phase::Abort => {
-            let control = if children_clear(&workshop, slot, spec, adjacent) {
-                Control::Idle
-            } else {
-                rewrite_control(role, Phase::Abort, slot, spec)
+        RewritePhase::Placed => {
+            let control = match parent_phase(&workshop, slot, spec, adjacent) {
+                Some(RewritePhase::Place) => {
+                    rewrite_control(role, RewritePhase::Placed, slot, spec)
+                }
+                Some(RewritePhase::Placed) | None => Control::Idle,
+                _ => rewrite_control(role, RewritePhase::Placed, slot, spec),
             };
             (center.matter, control, UpdateEffect::default())
         }
@@ -780,14 +831,14 @@ pub fn update_cell(center: &mut CellWord, adjacent: &[CellWord; 6]) -> UpdateEff
                 }
             }
         }
-        Control::Rewrite { role, phase, rule, axis, side, lift, slot, epoch } => {
+        Control::Rewrite { role, phase, rule, axis, side, lift, slot, fallback } => {
             rewrite_next(
                 current,
                 adjacent,
                 role,
                 phase,
                 slot.get(),
-                RewriteSpec { rule, axis, side, lift, epoch },
+                RewriteSpec { rule, axis, side, lift, fallback },
             )
         }
         Control::Idle => {
@@ -811,10 +862,22 @@ pub fn update_cell(center: &mut CellWord, adjacent: &[CellWord; 6]) -> UpdateEff
     let blocked_source = matches!(matter, Matter::Agent { tag, principal, .. } if tag.is_producer()
         && neighbor(adjacent, principal).is_some_and(|n| !matches!(n.matter, Matter::Link { lanes: LaneCount::One, .. } | Matter::Agent { .. })))
         .then_some(BLOCKED_PRESSURE).unwrap_or(0);
+    let rewrite_refusal_source = matches!(
+        current.control,
+        Control::Rewrite { phase: RewritePhase::Request, .. }
+    ) && matches!(
+        control,
+        Control::Rewrite { phase: RewritePhase::Blocked, .. }
+    );
     let next = DecodedCell {
         matter,
         control,
-        chi: relaxed_field(current.chi, adjacent, blocked_source, false),
+        chi: relaxed_field(
+            current.chi,
+            adjacent,
+            blocked_source.max(if rewrite_refusal_source { BLOCKED_PRESSURE } else { 0 }),
+            false,
+        ),
         sigma: relaxed_field(current.sigma, adjacent, sigma_source, true),
     };
     *center = CellWord::pack(next).expect("local rule emitted an invalid cell");
@@ -869,9 +932,9 @@ fn observe_rewrite(grid: &mut Grid64, shadow: &mut Net, driver: Pos, event: Rewr
     assert!(std::ptr::eq(rule, &crate::rules::RULES[event.rule.get() as usize]));
 
     let (side, lift) = rewrite_orientation(event.axis, event.side, event.lift)
-        .expect("committed rewrite has invalid orientation");
+        .expect("placed rewrite has invalid orientation");
     let workshop = apply_fork_workshop(event.axis, side, lift, false, false)
-        .expect("committed rewrite has invalid workshop");
+        .expect("placed rewrite has invalid workshop");
     assert_eq!(fresh_sids.len(), rule.fresh.len());
     for slot in &workshop.slots {
         let Some(fresh) = slot.fresh else { continue };

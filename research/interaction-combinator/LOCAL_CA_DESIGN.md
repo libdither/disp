@@ -78,7 +78,7 @@ The largest entry is rewrite control:
 
 ```text
 role 3 + phase 3 + rule 5 + axis 3 + side 2 + slot 6
-+ epoch 1 + lift 1 + kind 3 = 27 bits
++ fallback 1 + lift 1 + kind 3 = 27 bits
 ```
 
 One control bit remains unused. A rewrite address is entirely face-relative. It stores no
@@ -146,8 +146,8 @@ Pressure does not grant one occupant authority to edit another. The ownership ru
 3. That occupant may choose one of its own projection-preserving moves.
 4. The requester waits and retries; it never pushes, swaps, or reroutes the blocker.
 
-Claimed control state temporarily locks the participating cell's matter. A competing
-operation observes the control and declines the cell.
+Active request or placement control temporarily locks the participating cell's matter. A
+competing operation observes the control and declines the cell.
 
 ## 6. Cell-by-cell translation
 
@@ -191,7 +191,7 @@ cable-shift operation because it changes whether the cable is zipped or unzipped
 Each semantic rule has a finite face-relative workshop ROM. A workshop contains:
 
 - a connected set of slots;
-- one rooted claim tree over face adjacency;
+- one rooted request tree over face adjacency;
 - the final matter for every slot;
 - the fresh-agent index, if any, assigned to a slot; and
 - the control role used for rendering and validation.
@@ -199,34 +199,43 @@ Each semantic rule has a finite face-relative workshop ROM. A workshop contains:
 Every participant can reconstruct the same workshop from `(rule, axis, side, lift)`. Its slot
 number identifies its parent face, child faces, final matter, and fresh-agent index.
 
-### 7.1 Claim and acknowledgement
+### 7.1 Direction request and response
 
-The consumer is slot 0 and the driver. It first verifies the docked producer through its
-principal face, selects an orientation whose immediate children are claimable, and enters
-offer. An idle cell accepts an offer only when:
+The consumer is slot 0 and the driver. It verifies the docked producer through its principal
+face, chooses a side relative to that active pair, and requests the preferred lift direction.
+An idle cell accepts a request only when:
 
-- the offering neighbor's slot names this face as a claim-tree child;
+- the requesting neighbor's slot names this face as a request-tree child;
 - the child's expected slot is unique;
 - its matter is empty, except for the docked producer boundary slot; and
 - its control is idle.
 
-The child stores the same workshop address and its own slot, then offers to its children.
-Leaves acknowledge immediately. A parent acknowledges after all children acknowledge.
+The child stores the same face-relative workshop address and its own slot, then relays the
+request to its children. Leaves answer `Ready`; a parent answers `Ready` only after all its
+children do.
 
-If an expected child is occupied, outside the topology, or claimed under a conflicting
-address, the parent enters abort. Abort travels outward. Each aborting node clears only after
-its claimed children have cleared, so no descendant is orphaned.
+If an expected child is occupied, outside the topology, or participating in a conflicting
+request, the parent answers `Blocked`. The blocked response cancels that request outward.
+Each participant clears only after its descendants have cleared, so no request mark is
+orphaned. The driver then flips only the lift bit and requests the opposite direction. If that
+direction is also blocked, matter remains unchanged and the driver returns idle.
 
-### 7.2 Commit and cleanup
+Each local `Request → Blocked` transition also injects a `χ` pulse. This reports obstruction
+without granting the requester any right to move or rewrite the refusing cell. Repeated fair
+retries can reinforce the field; only the occupant may respond to its gradient.
 
-When every direct child acknowledges, the driver changes to commit and emits exactly one
-observer `RewriteFire`. This is the semantic linearization point. The observer fires the same
-rule in the shadow net and assigns stable ids to the workshop's fresh-agent seats.
+### 7.2 Placement and completion
 
-Commit travels outward. A participant writes only its own final matter when it observes its
-parent commit, while retaining commit control. Once commit reaches the leaves, the driver
-enters done. Done then travels outward, and idle cleanup returns inward. Projection is checked
-again only after all controls are idle.
+When the chosen direction is ready, the driver writes its own final matter, enters `Place`,
+and emits exactly one observer `RewriteFire`. This is the semantic linearization point. The
+observer fires the same rule in the shadow net and assigns stable ids to the workshop's
+fresh-agent seats.
+
+`Place` travels outward one face at a time. A participant writes only its own final matter
+when it observes its parent in `Place`, while retaining control. Leaves answer `Placed`; each
+parent answers `Placed` after all descendants have completed. The driver clears only after
+both of its subtrees report completion, and remaining controls then clear locally. Projection
+is checked again only after all controls are idle.
 
 The protocol requires no timeout. Fair activation is sufficient because every nonterminal
 phase remains visible until its dependent neighbor responds.
@@ -268,9 +277,9 @@ T1 zipper
 
 This is a one-layer overpass, not a back-crossing or a remote route search. Every step is a
 face adjacency fixed by the workshop ROM. The complete final patch contains 16 cells and no
-fixed crossing. Before commit, all new seats contain only control. After commit, the two dying
-agent cells become cable-boundary zippers, so the existing auxiliary cables are respliced
-without expanding into separate long wires.
+fixed crossing. Before placement, all new seats contain only control. During placement, the
+two dying agent cells become cable-boundary zippers, so the existing auxiliary cables are
+respliced without expanding into separate long wires.
 
 ## 9. Projection invariant
 
@@ -284,7 +293,7 @@ Tracing begins at each agent port as `(face, lane)`:
 
 At a control-free checkpoint, tracing every live port must produce exactly the corresponding
 shadow-net port. The live agent tags and count must also match. Geometry motion projects to
-identity. The driver commit event projects to exactly one rule-table interaction.
+identity. The driver's transition into `Place` projects to exactly one rule-table interaction.
 
 Observer state may inspect coordinates and ids to perform this check. The local transition
 function may not.
@@ -302,7 +311,8 @@ Packed trace schema 4 stores:
 Viewer reconstruction is replay-only and cannot affect the run. Selecting a cell displays its
 matter geometry, control role and phase, fields, exact word, neighboring reciprocity, and bit
 allocation. Two cable lanes, zipper mappings, and fixed crossing routes are drawn as distinct
-geometric structures.
+geometric structures. The bundled Apply–Fork presets show preferred-lift placement, a forced
+opposite-lift retry, and both directions blocked with matter unchanged.
 
 ## 11. Implementation status
 

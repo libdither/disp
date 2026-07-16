@@ -190,6 +190,34 @@ impl Phase {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
+pub enum RewritePhase {
+    /// Probe this relative workshop in the selected lift direction.
+    Request,
+    /// The complete descendant region is available.
+    Ready,
+    /// At least one descendant declined the request.
+    Blocked,
+    /// Materialize final matter outward from the firing pair.
+    Place,
+    /// This subtree has finished materializing.
+    Placed,
+}
+
+impl RewritePhase {
+    const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Request),
+            1 => Some(Self::Ready),
+            2 => Some(Self::Blocked),
+            3 => Some(Self::Place),
+            4 => Some(Self::Placed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum LineRole { Source, Target, Tail }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -206,7 +234,7 @@ pub enum ReliefRole { Driver, Spine, Corner, Endpoint }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum RewriteRole { Driver, Boundary, Probe, Seat, Wire, Cleanup, AbortRelay }
+pub enum RewriteRole { Driver, Boundary, Seat, Wire }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Control {
@@ -237,13 +265,14 @@ pub enum Control {
     },
     Rewrite {
         role: RewriteRole,
-        phase: Phase,
+        phase: RewritePhase,
         rule: RuleId,
         axis: Dir,
         side: u8, // 0..3: index into axis.perp()
         lift: bool,
         slot: U6,
-        epoch: bool,
+        /// False for the preferred lift; true after retrying the opposite lift.
+        fallback: bool,
     },
     Contest { source: Dir, stable: U4, epoch: bool },
 }
@@ -556,7 +585,7 @@ fn pack_control(control: Control) -> Result<u64, PackError> {
                 | bool_bit(epoch, 13);
             (3, data)
         }
-        Control::Rewrite { role, phase, rule, axis, side, lift, slot, epoch } => {
+        Control::Rewrite { role, phase, rule, axis, side, lift, slot, fallback } => {
             if side >= 4 { return Err(PackError::InvalidControlGeometry); }
             let data = role as u64
                 | ((phase as u64) << 3)
@@ -564,7 +593,7 @@ fn pack_control(control: Control) -> Result<u64, PackError> {
                 | ((axis.code() as u64) << 11)
                 | ((side as u64) << 14)
                 | ((slot.get() as u64) << 16)
-                | bool_bit(epoch, 22)
+                | bool_bit(fallback, 22)
                 | bool_bit(lift, 23);
             (4, data)
         }
@@ -588,6 +617,8 @@ fn unpack_control(word: u64) -> Result<Control, PackError> {
     let dir = |shift| Dir::from_code(((data >> shift) & 0b111u64) as u8)
         .ok_or(PackError::InvalidControlWord);
     let phase = |shift| Phase::from_code(((data >> shift) & 0b111u64) as u8)
+        .ok_or(PackError::InvalidControlWord);
+    let rewrite_phase = |shift| RewritePhase::from_code(((data >> shift) & 0b111u64) as u8)
         .ok_or(PackError::InvalidControlWord);
     match kind {
         0 if data == 0 => Ok(Control::Idle),
@@ -633,16 +664,15 @@ fn unpack_control(word: u64) -> Result<Control, PackError> {
             let side = ((data >> 14) & 0b11) as u8;
             Ok(Control::Rewrite {
                 role: decode_enum((data & 0b111) as u8, &[
-                    RewriteRole::Driver, RewriteRole::Boundary, RewriteRole::Probe,
-                    RewriteRole::Seat, RewriteRole::Wire, RewriteRole::Cleanup,
-                    RewriteRole::AbortRelay,
+                    RewriteRole::Driver, RewriteRole::Boundary,
+                    RewriteRole::Seat, RewriteRole::Wire,
                 ]).ok_or(PackError::InvalidControlWord)?,
-                phase: phase(3)?,
+                phase: rewrite_phase(3)?,
                 rule: RuleId::new(((data >> 6) & 0x1f) as u8).ok_or(PackError::InvalidControlWord)?,
                 axis: dir(11)?, side,
                 lift: (data >> 23) & 1 != 0,
                 slot: U6::new(((data >> 16) & 0x3f) as u8).unwrap(),
-                epoch: (data >> 22) & 1 != 0,
+                fallback: (data >> 22) & 1 != 0,
             })
         }
         5 => {
@@ -744,13 +774,13 @@ mod tests {
                     for slot in 0..64 {
                         roundtrip(Matter::Empty, Control::Rewrite {
                             role: RewriteRole::Seat,
-                            phase: Phase::Ack,
+                            phase: RewritePhase::Ready,
                             rule: RuleId::new(rule).unwrap(),
                             axis,
                             side,
                             lift: slot & 2 != 0,
                             slot: U6::new(slot).unwrap(),
-                            epoch: slot & 1 != 0,
+                            fallback: slot & 1 != 0,
                         });
                     }
                 }
