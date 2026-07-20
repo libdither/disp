@@ -1,0 +1,176 @@
+open use raw "prelude.disp" {}
+
+nil := t
+cons := {h, tl} -> t h tl
+
+wait_payload := {w} -> pair_snd (pair_snd w)
+
+make_hyp := {
+  let hyp_marker := {a, b} -> a
+  ({ty, history} -> wait hyp_marker (pair ty history))
+}
+is_neutral := {v} -> and (is_fork v) (tree_eq (pair_fst v) (pair_fst (make_hyp t t)))
+neutral_type := {v} -> pair_fst (wait_payload v)
+
+invalid := {
+  let invalid_marker := {a, b} -> b
+  ({reason} -> wait invalid_marker reason)
+}
+is_invalid := {v} -> and (is_fork v) (tree_eq (pair_fst v) (pair_fst (invalid t)))
+
+verify := {T, v} ->
+  if (is_invalid v)
+    then false
+    else (if (is_neutral v)
+      then (tree_eq (neutral_type v) T)
+      else (T v))
+
+make_type := {
+  let with_self := (fix ({wrap, recognize, payload, v} -> {
+    let self := wait (wait wrap recognize) payload
+    recognize self v
+  }))
+  ({recognize, gate, members} -> wait (wait with_self recognize) (pair gate members))
+}
+inert_gate := {cst, B, cases} -> false
+
+eliminate := {
+  let type_gate := {ty} -> pair_fst (wait_payload ty)
+  let derived_hyp := {ty, target, rule} -> make_hyp ty (pair target rule)
+  ({cst, B, cases, target} ->
+    if (tree_eq (neutral_type target) cst)
+      then (if ((type_gate cst) cst B cases)
+        then (derived_hyp (B target) target (pair B cases))
+        else (invalid (pair B cases)))
+      else (invalid target))
+}
+
+Enum_Pi := {
+  let is_nil := {xs} -> is_leaf xs
+  let head := {xs} -> pair_fst xs
+  let tail := {xs} -> pair_snd xs
+  let foldr := fix ({self, f, z, xs} -> if (is_nil xs) then z else (f (head xs) (self f z (tail xs))))
+  let list_all := {p, xs} -> foldr ({h, acc} -> and (p h) acc) true xs
+  let check_by_trials := {members, B, f} -> list_all ({a} -> (B a) (f a)) members
+  let type_members := {ty} -> pair_snd (wait_payload ty)
+  ({A, B} -> make_type
+    ({self, f} -> {
+      let members := type_members A
+      if (is_nil members) then false else (check_by_trials members B f)
+    })
+    inert_gate
+    nil)
+}
+
+Hyp_Pi := {
+  let check_by_hypothesis := ({A, B, f} -> {
+    let x := make_hyp A B
+    verify (B x) (f x)
+  })
+  ({A, B} -> make_type
+    ({self, f} -> check_by_hypothesis A B f)
+    inert_gate
+    nil)
+}
+Arrow := {X, Y} -> Hyp_Pi X ({_} -> Y)
+
+Point := {c} -> make_type ({self, v} -> tree_eq c v) inert_gate (cons c nil)
+
+Nat_type := make_type
+  ({self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (verify self r)) v)
+  ({cst, B, cases} -> and
+    (verify (B zero) (pair_fst cases))
+    (verify (Hyp_Pi cst ({k} -> Arrow (B k) (B (succ k)))) (pair_snd cases)))
+  nil
+
+nat_rec := fix ({self, B, base, step, n} ->
+  if (is_neutral n)
+    then (eliminate Nat_type B (pair base step) n)
+    else (if (is_invalid n)
+      then n
+      else (triage base ({_} -> base) ({_l, k} -> step k (self B base step k)) n)))
+add := {n, m} -> nat_rec ({_} -> Nat_type) m ({k, ih} -> succ ih) n
+
+Bool_type := make_type
+  ({self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v)
+  ({cst, B, cases} -> and
+    (verify (B true) (pair_fst cases))
+    (verify (B false) (pair_snd cases)))
+  (cons true (cons false nil))
+
+bool_rec := {B, true_case, false_case, b} ->
+  if (is_neutral b)
+    then (eliminate Bool_type B (pair true_case false_case) b)
+    else (if (is_invalid b)
+      then b
+      else (triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b))
+not_bool := {b} -> bool_rec ({_} -> Bool_type) false true b
+
+Five := Point 5
+Six := Point 6
+Nat_to_Nat := Hyp_Pi Nat_type ({_} -> Nat_type)
+Enum_Nat_to_Nat := Enum_Pi Nat_type ({_} -> Nat_type)
+Nat_to_Nat_to_Nat := Hyp_Pi Nat_type ({_} -> Nat_to_Nat)
+Nat_to_Bool := Hyp_Pi Nat_type ({_} -> Bool_type)
+Enum_Bool_to_Bool := Enum_Pi Bool_type ({_} -> Bool_type)
+Hyp_Bool_to_Bool := Hyp_Pi Bool_type ({_} -> Bool_type)
+Five_to_Nat := Enum_Pi Five ({_} -> Nat_type)
+Five_to_Six := Enum_Pi Five ({_} -> Six)
+
+elim_id := {n} -> nat_rec ({_} -> Nat_type) zero ({k, ih} -> succ ih) n
+stuck_result := elim_id (make_hyp Nat_type Nat_type)
+shift := {b} -> if (is_neutral b) then true else 5
+
+test tree_eq (pair_fst (make_hyp t t)) (pair_fst (invalid t)) = false
+test tree_eq (make_hyp Nat_type Nat_type) (make_hyp Nat_type Bool_type) = false
+
+test Nat_type zero = true
+test Nat_type (succ (succ zero)) = true
+test Nat_type (t t) = false
+test Nat_type (make_hyp Nat_type Nat_type) = false
+test verify Nat_type (make_hyp Nat_type Nat_type) = true
+test Nat_type (succ (make_hyp Nat_type Nat_type)) = true
+test verify Bool_type (make_hyp Nat_type Nat_type) = false
+
+test Five 5 = true
+test Five 6 = false
+test Five (make_hyp Five Five) = false
+test verify Five (make_hyp Five Five) = true
+
+test add 2 3 = 5
+test add 0 4 = 4
+
+test is_neutral stuck_result = true
+test neutral_type stuck_result = Nat_type
+test pair_fst (pair_snd (wait_payload stuck_result)) = make_hyp Nat_type Nat_type
+test Nat_type stuck_result = false
+test verify Nat_type stuck_result = true
+
+test Nat_to_Nat succ = true
+test Nat_to_Nat ({n} -> n) = true
+test Nat_to_Nat ({n} -> pair n n) = false
+test Nat_to_Nat_to_Nat add = true
+test Nat_to_Nat_to_Nat ({a} -> {b} -> a) = true
+test Nat_to_Nat_to_Nat ({a} -> {b} -> b) = true
+
+test Nat_to_Nat elim_id = true
+test Nat_to_Nat ({n} -> succ (elim_id n)) = true
+test Nat_to_Nat ({n} -> elim_id (elim_id n)) = true
+test Nat_to_Bool elim_id = false
+test Nat_to_Nat ({n} -> nat_rec ({_} -> Nat_type) false ({k, ih} -> false) n) = false
+
+test Enum_Bool_to_Bool not_bool = true
+test Hyp_Bool_to_Bool not_bool = true
+test Enum_Bool_to_Bool ({b} -> b) = true
+test Hyp_Bool_to_Bool ({b} -> b) = true
+test Enum_Bool_to_Bool ({b} -> bool_rec ({_} -> Bool_type) 5 true b) = false
+
+test Five_to_Nat succ = true
+test Five_to_Six succ = true
+test Enum_Nat_to_Nat succ = false
+
+test Enum_Bool_to_Bool ({b} -> elim_id b) = true
+test Hyp_Bool_to_Bool ({b} -> elim_id b) = false
+
+test Enum_Bool_to_Bool shift = false
+test Hyp_Bool_to_Bool shift = true
