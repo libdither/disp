@@ -647,14 +647,95 @@ const matchP: P<Expr> = (ts, i) => {
 //   lineIfP (line mode): bodies use lineApp/lineExpr — newline-terminated, so
 //           `let r = if x then a else b` ends at the line, leaving the block's
 //           trailing expression untouched. Reached via `lineSimple`.
-const makeIf = (condP: () => P<Expr>, bodyP: () => P<Expr>): P<Expr> => (ts, i) => {
+// Braced branches (Rust style): `if c { A } else { B }`, with `else if` chains.
+// Coexists with `then`/`else`. A branch is the ordinary brace primary — a block —
+// so `{ let x := …; e }` needs no extra parens. The else branch may chain
+// directly into another `if`/`if let` (selfP re-enters the mode's if parser).
+const braceAhead = (ts: Tok[], i: Pos): boolean => {
+  let p = i
+  while (ts[p] && ts[p].t === "nl") p++
+  return !!ts[p] && ts[p].t === "punct" && (ts[p] as { v?: string }).v === "{"
+}
+const ifAhead = (ts: Tok[], i: Pos): boolean => {
+  let p = i
+  while (ts[p] && ts[p].t === "nl") p++
+  return !!ts[p] && ts[p].t === "kw" && (ts[p] as { v?: string }).v === "if"
+}
+// A braced branch is a block, not an ambiguous primary: consume `{` and hand the
+// interior to the block parser (which supports `let` steps and a trailing expr,
+// and consumes the `}`). Routing past the primary classifier is essential — a
+// bare `{ x }` there reads as a one-field record TYPE, not the expression `x`.
+// Two interiors: a plain expression (`{ triage … }`), or a `let`-block handled by
+// unifiedBracedInner. Consuming `{` here (rather than deferring to bodyP as a
+// primary) is what avoids the `{ x }`-as-record-TYPE reading.
+const braceBlockP = (bodyP: () => P<Expr>): P<Expr> => (ts, i) => {
+  let p = i
+  while (ts[p] && ts[p].t === "nl") p++
+  if (!(ts[p] && ts[p].t === "punct" && (ts[p] as { v?: string }).v === "{"))
+    return err("if: branch must be '{ … }'", i)
+  const exprForm = seq(skipNl, lazy(bodyP), skipNl, punctP("}"))(ts, p + 1)
+  if (exprForm.ok) return ok(exprForm.v[1], exprForm.pos)
+  return unifiedBracedInner(ts, p + 1)
+}
+const bracedBranches = (bodyP: () => P<Expr>, selfP: () => P<Expr>) =>
+  (ts: Tok[], i: Pos): Res<{ thenBody: Expr; elseBody: Expr }> => {
+    const thenR = braceBlockP(bodyP)(ts, i)
+    if (!thenR.ok) return thenR
+    const elseKw = nl(kwP("else"))(ts, thenR.pos)
+    if (!elseKw.ok) return elseKw
+    const elseR = ifAhead(ts, elseKw.pos)
+      ? nl(lazy(selfP))(ts, elseKw.pos)
+      : braceAhead(ts, elseKw.pos)
+        ? braceBlockP(bodyP)(ts, elseKw.pos)
+        : err("if: else branch must be '{ … }' or a chained 'if'", elseKw.pos)
+    if (!elseR.ok) return elseR
+    return ok({ thenBody: thenR.v, elseBody: elseR.v }, elseR.pos)
+  }
+// If-cond application variants that refuse a brace-started atom, so in
+// `if f x { … }` the brace is the branch, not a block/record argument to the
+// cond (the Rust rule; parenthesize a named-arg call in cond position). The
+// braced attempt backtracks wholesale, so `then`-form conds keep full syntax.
+const stopBraceAtom = (p: P<Expr>): P<Expr> => (ts, i) => {
+  let q = i
+  while (ts[q] && ts[q].t === "nl") q++
+  if (ts[q] && ts[q].t === "punct" && (ts[q] as { v?: string }).v === "{")
+    return err("brace ends if-cond", i)
+  return p(ts, i)
+}
+const condApp: P<Expr> = map(
+  seq(stopBraceAtom(atom), many(stopBraceAtom(atom))),
+  ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
+)
+const lineCondApp: P<Expr> = (ts, i) => {
+  while (ts[i].t === "nl") i++
+  const head = stopBraceAtom(withProj(lineSimple))(ts, i)
+  if (!head.ok) return head
+  let result: Expr = head.v
+  let pos = head.pos
+  for (;;) {
+    const arg = stopBraceAtom(lineAtom)(ts, pos)
+    if (!arg.ok) break
+    result = { tag: "app", f: result, x: arg.v }
+    pos = arg.pos
+  }
+  return ok(result, pos)
+}
+const makeIf = (condP: () => P<Expr>, condStopP: () => P<Expr>, bodyP: () => P<Expr>, selfP: () => P<Expr>): P<Expr> => (ts, i) => {
+  const headB = seq(kwP("if"), skipNl, lazy(condStopP))(ts, i)
+  if (headB.ok && braceAhead(ts, headB.pos)) {
+    const br = bracedBranches(bodyP, selfP)(ts, headB.pos)
+    if (!br.ok) return br
+    return ok({ tag: "if" as const, cond: headB.v[2], thenBody: br.v.thenBody, elseBody: br.v.elseBody }, br.pos)
+  }
+  const head = seq(kwP("if"), skipNl, lazy(condP))(ts, i)
+  if (!head.ok) return head
+  const [, , cond] = head.v
   const r = seq(
-    kwP("if"), skipNl, lazy(condP),
     nl(kwP("then")), skipNl, lazy(bodyP),
     nl(kwP("else")), skipNl, lazy(bodyP),
-  )(ts, i)
+  )(ts, head.pos)
   if (!r.ok) return r
-  const [, , cond, , , thenBody, , , elseBody] = r.v
+  const [, , thenBody, , , elseBody] = r.v
   return ok({ tag: "if" as const, cond, thenBody, elseBody }, r.pos)
 }
 // `if let Tag b1 … bn = scrut then A else B` — variant test-and-bind (Rust style).
@@ -666,16 +747,30 @@ const makeIf = (condP: () => P<Expr>, bodyP: () => P<Expr>): P<Expr> => (ts, i) 
 // Routing through `if` keeps both branches closure-wrapped: only the taken
 // branch is forced, unlike a 2-arm match whose arm row distributes eagerly.
 let ifletFresh = 0
-const makeIfLet = (condP: () => P<Expr>, bodyP: () => P<Expr>): P<Expr> => (ts, i) => {
-  const r = seq(
+const makeIfLet = (condP: () => P<Expr>, condStopP: () => P<Expr>, bodyP: () => P<Expr>, selfP: () => P<Expr>): P<Expr> => (ts, i) => {
+  const headOf = (scrutP: () => P<Expr>) => seq(
     kwP("if"), idP, idP, many(idP),
-    punctP("="), skipNl, lazy(condP),
-    nl(kwP("then")), skipNl, lazy(bodyP),
-    nl(kwP("else")), skipNl, lazy(bodyP),
+    punctP("="), skipNl, lazy(scrutP),
   )(ts, i)
-  if (!r.ok) return r
-  const [, kw, tag, binders, , , scrut, , , thenBody, , , elseBody] = r.v
+  let head = headOf(condStopP)
+  let braced = head.ok && braceAhead(ts, head.pos)
+  if (!braced) head = headOf(condP)
+  if (!head.ok) return head
+  const [, kw, tag, binders, , , scrut] = head.v
   if (kw !== "let") return err("if let: expected 'let'", i)
+  let thenBody: Expr, elseBody: Expr, endPos: Pos
+  if (braced) {
+    const br = bracedBranches(bodyP, selfP)(ts, head.pos)
+    if (!br.ok) return br
+    thenBody = br.v.thenBody; elseBody = br.v.elseBody; endPos = br.pos
+  } else {
+    const r = seq(
+      nl(kwP("then")), skipNl, lazy(bodyP),
+      nl(kwP("else")), skipNl, lazy(bodyP),
+    )(ts, head.pos)
+    if (!r.ok) return r
+    thenBody = r.v[2]; elseBody = r.v[5]; endPos = r.pos
+  }
   const s = `__ifl${ifletFresh++}`
   const V = (name: string): Expr => ({ tag: "var", name })
   const A = (f: Expr, x: Expr): Expr => ({ tag: "app", f, x })
@@ -693,10 +788,10 @@ const makeIfLet = (condP: () => P<Expr>, bodyP: () => P<Expr>): P<Expr> => (ts, 
     thenB = appd
   }
   const ifNode: Expr = { tag: "if", cond, thenBody: thenB, elseBody }
-  return ok(A({ tag: "binder", params: [{ name: s, type: null }], body: ifNode }, scrut), r.pos)
+  return ok(A({ tag: "binder", params: [{ name: s, type: null }], body: ifNode }, scrut), endPos)
 }
-const ifP: P<Expr> = alt(makeIfLet(() => app, () => matchExpr), makeIf(() => app, () => matchExpr))
-const lineIfP: P<Expr> = alt(makeIfLet(() => lineApp, () => lineExpr), makeIf(() => lineApp, () => lineExpr))
+const ifP: P<Expr> = alt(makeIfLet(() => app, () => condApp, () => matchExpr, () => ifP), makeIf(() => app, () => condApp, () => matchExpr, () => ifP))
+const lineIfP: P<Expr> = alt(makeIfLet(() => lineApp, () => lineCondApp, () => lineExpr, () => lineIfP), makeIf(() => lineApp, () => lineCondApp, () => lineExpr, () => lineIfP))
 
 // Build the leaf-based cons-chain `t e1 (t e2 (... t))` — cons = `t a b` (fork),
 // nil = leaf — matching the library's cons/nil (§2.6 arrays).
