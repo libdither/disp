@@ -2,6 +2,8 @@ open use raw "prelude.disp" {}
 
 nil := t
 cons := {h, tl} -> t h tl
+list_const := {x} -> t t x
+make_record := {names, payload} -> pair names payload
 
 wait_payload := {w} -> pair_snd (pair_snd w)
 is_neutral := {v} -> and (is_fork v) (tree_eq (pair_fst v) (pair_fst (wait ({a, b} -> a) t)))
@@ -274,30 +276,48 @@ elim_id := {n} -> nat_rec n zero ({k, ih} -> succ ih)
 
 pi_suite := {pi} -> {
   let BB := pi Bool_type ({_} -> Bool_type)
-  cons (BB not_bool) (cons (BB ({b} -> b)) (cons (BB ({b} -> bool_rec b 5 true)) (cons (BB shift) nil)))
+  let negation := BB not_bool
+  let identity := BB ({b} -> b)
+  let junk_arm := BB ({b} -> bool_rec b 5 true)
+  let sniff := BB shift
+  ({ negation := negation, identity := identity, junk_arm := junk_arm, sniff := sniff })
 }
-pi_expected := cons true (cons true (cons false (cons false nil)))
+pi_expected := { negation := true, identity := true, junk_arm := false, sniff := false }
 
 fn_suite := {pi} -> {
   let NN := pi Nat_type ({_} -> Nat_type)
   let NNN := pi Nat_type ({_} -> NN)
-  cons (NN succ) (cons (NN ({n} -> n)) (cons (NN ({n} -> pair n n)) (cons (NNN add) (cons (NNN ({a} -> {b} -> a)) (cons (NNN ({a} -> {b} -> b)) nil)))))
+  let successor := NN succ
+  let identity := NN ({n} -> n)
+  let duplicate := NN ({n} -> pair n n)
+  let curried_add := NNN add
+  let const_first := NNN ({a} -> {b} -> a)
+  let const_second := NNN ({a} -> {b} -> b)
+  ({ successor := successor, identity := identity, duplicate := duplicate, curried_add := curried_add, const_first := const_first, const_second := const_second })
 }
-fn_expected := cons true (cons true (cons false (cons true (cons true (cons true nil)))))
+fn_expected := { successor := true, identity := true, duplicate := false, curried_add := true, const_first := true, const_second := true }
 
 elim_suite := {pi} -> {
   let NN := pi Nat_type ({_} -> Nat_type)
   let NB := pi Nat_type ({_} -> Bool_type)
-  cons (NN elim_id) (cons (NN ({n} -> succ (elim_id n))) (cons (NN ({n} -> elim_id (elim_id n))) (cons (NB elim_id) (cons (NN ({n} -> nat_rec n false ({k, ih} -> false))) nil))))
+  let fold := NN elim_id
+  let after_constructor := NN ({n} -> succ (elim_id n))
+  let composed := NN ({n} -> elim_id (elim_id n))
+  let wrong_motive := NB elim_id
+  let bad_base := NN ({n} -> nat_rec n false ({k, ih} -> false))
+  ({ fold := fold, after_constructor := after_constructor, composed := composed, wrong_motive := wrong_motive, bad_base := bad_base })
 }
-elim_expected := cons true (cons true (cons true (cons false (cons false nil))))
+elim_expected := { fold := true, after_constructor := true, composed := true, wrong_motive := false, bad_base := false }
 
 guard_suite := {pi} -> {
   let NB := pi Nat_type ({_} -> Bool_type)
   let BB := pi Bool_type ({_} -> Bool_type)
-  cons (NB ({n} -> unblessed_rec n true ({k, ih} -> true))) (cons (BB ({b} -> elim_id b)) (cons (NB ({n} -> forge_hyp Bool_type Bool_type)) nil))
+  let unblessed := NB ({n} -> unblessed_rec n true ({k, ih} -> true))
+  let cross_type := BB ({b} -> elim_id b)
+  let forged_return := NB ({n} -> forge_hyp Bool_type Bool_type)
+  ({ unblessed := unblessed, cross_type := cross_type, forged_return := forged_return })
 }
-guard_expected := cons false (cons false (cons false nil))
+guard_expected := { unblessed := false, cross_type := false, forged_return := false }
 
 test Nat_type zero = true
 test Nat_type (succ (succ zero)) = true
