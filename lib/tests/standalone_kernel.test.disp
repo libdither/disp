@@ -1,0 +1,52 @@
+open use raw "../prelude.disp" {}
+open use raw "../standalone_kernel.disp" {}
+
+test NatType zero = true
+test NatType (succ (succ zero)) = true
+test NatType (t t) = false
+test NatType (forge_hyp NatType NatType) = false
+test NatType (succ (forge_hyp NatType NatType)) = false
+test Five 5 = true
+test Five 6 = false
+test add 2 3 = 5
+test add 0 4 = 4
+test tree_eq (forge_hyp NatType NatType) (forge_hyp NatType BoolType) = false
+test is_neutral (forge_hyp NatType NatType) = true
+
+test pi_suite EnumPi = pi_expected
+test pi_suite MetaPi = pi_expected
+test pi_suite CertPi = pi_expected
+test fn_suite MetaPi = fn_expected
+test fn_suite CertPi = fn_expected
+test elim_suite MetaPi = elim_expected
+test elim_suite CertPi = elim_expected
+test guard_suite MetaPi = guard_expected
+test guard_suite CertPi = guard_expected
+
+test MetaNatToNat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = false
+test CertNatToNat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = true
+
+test EnumBoolToBool ({b} -> elim_id b) = true
+test EnumNatToNat succ = false
+test FiveToNat succ = true
+test FiveToSix succ = true
+
+test NatType (elim_id (succ (forge_hyp NatType NatType))) = true
+
+sig_child := stem_child hyp_sig
+smuggled := pair_snd (forge_hyp BoolType BoolType)
+assembled_forgery := {n} -> t (t (pair_snd (pair n sig_child))) smuggled
+test is_stem hyp_sig = true
+test tree_eq (assembled_forgery zero) (forge_hyp BoolType BoolType) = true
+test is_neutral (assembled_forgery zero) = true
+test MetaPi NatType ({_} -> BoolType) assembled_forgery = false
+test CertPi NatType ({_} -> BoolType) assembled_forgery = false
+
+nat_mint := forge_hyp NatType ({_} -> NatType)
+test CertNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair zero ({k, ih} -> succ ih))))) = true
+test CertNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair false ({k, ih} -> succ ih))))) = false
+
+sniff_motive := {k} -> if (is_neutral k) { BoolType } else { NatType }
+test EnumPi BoolType sniff_motive ({b} -> 5) = true
+test MetaPi BoolType sniff_motive ({b} -> 5) = false
+test CertPi BoolType sniff_motive ({b} -> 5) = false
