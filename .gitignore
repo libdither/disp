@@ -12,3 +12,4 @@ bench/e1/*.nf
 bench/e1/*.log
 bench/e1/*.rent
 bench/e1/*.json
+.disp-test-cache/
