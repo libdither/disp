@@ -657,8 +657,46 @@ const makeIf = (condP: () => P<Expr>, bodyP: () => P<Expr>): P<Expr> => (ts, i) 
   const [, , cond, , , thenBody, , , elseBody] = r.v
   return ok({ tag: "if" as const, cond, thenBody, elseBody }, r.pos)
 }
-const ifP: P<Expr> = makeIf(() => app, () => matchExpr)
-const lineIfP: P<Expr> = makeIf(() => lineApp, () => lineExpr)
+// `if let Tag b1 … bn = scrut then A else B` — variant test-and-bind (Rust style).
+// Pure parser desugar over existing nodes (no elaborator case):
+//   (λ__s. if (tree_eq (pair_fst __s) "Tag") then ((λb1…bn. A) proj…) else B) scrut
+// Tag lives at pair_fst (the §2.6 inj convention); binders destructure the
+// pair_snd payload with the same right-nested-pair chains as `match` arms
+// (binder k gets pair_fst (pair_snd^k …); the last takes the bare chain).
+// Routing through `if` keeps both branches closure-wrapped: only the taken
+// branch is forced, unlike a 2-arm match whose arm row distributes eagerly.
+let ifletFresh = 0
+const makeIfLet = (condP: () => P<Expr>, bodyP: () => P<Expr>): P<Expr> => (ts, i) => {
+  const r = seq(
+    kwP("if"), idP, idP, many(idP),
+    punctP("="), skipNl, lazy(condP),
+    nl(kwP("then")), skipNl, lazy(bodyP),
+    nl(kwP("else")), skipNl, lazy(bodyP),
+  )(ts, i)
+  if (!r.ok) return r
+  const [, kw, tag, binders, , , scrut, , , thenBody, , , elseBody] = r.v
+  if (kw !== "let") return err("if let: expected 'let'", i)
+  const s = `__ifl${ifletFresh++}`
+  const V = (name: string): Expr => ({ tag: "var", name })
+  const A = (f: Expr, x: Expr): Expr => ({ tag: "app", f, x })
+  const cond: Expr = A(A(V("tree_eq"), A(V("pair_fst"), V(s))), { tag: "str", value: tag })
+  const payload: Expr = A(V("pair_snd"), V(s))
+  const n = binders.length
+  let thenB: Expr = thenBody
+  if (n > 0) {
+    let appd: Expr = { tag: "binder", params: binders.map(b => ({ name: b, type: null })), body: thenBody }
+    for (let k = 0; k < n; k++) {
+      let acc: Expr = payload
+      for (let step = 0; step < k; step++) acc = A(V("pair_snd"), acc)
+      appd = A(appd, k < n - 1 ? A(V("pair_fst"), acc) : acc)
+    }
+    thenB = appd
+  }
+  const ifNode: Expr = { tag: "if", cond, thenBody: thenB, elseBody }
+  return ok(A({ tag: "binder", params: [{ name: s, type: null }], body: ifNode }, scrut), r.pos)
+}
+const ifP: P<Expr> = alt(makeIfLet(() => app, () => matchExpr), makeIf(() => app, () => matchExpr))
+const lineIfP: P<Expr> = alt(makeIfLet(() => lineApp, () => lineExpr), makeIf(() => lineApp, () => lineExpr))
 
 // Build the leaf-based cons-chain `t e1 (t e2 (... t))` — cons = `t a b` (fork),
 // nil = leaf — matching the library's cons/nil (§2.6 arrays).

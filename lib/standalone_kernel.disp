@@ -4,6 +4,9 @@ nil := t
 cons := {h, tl} -> t h tl
 list_const := {x} -> t t x
 make_record := {names, payload} -> pair names payload
+inj := {name, payload} -> pair name payload
+Coproduct := {variants} -> variants
+Tree := t
 prod := {table} -> (fix ({go, names, arms, v} ->
   if (is_leaf names)
     then (if (is_leaf arms) then t else ((pair_fst arms) (pair_snd v)))
@@ -30,19 +33,11 @@ elim_of := {
   ({Cst, B} -> wait elim_marker (pair (type_elim Cst) (pair Cst B)))
 }
 
+Value := < Conc : Tree, Neu : Tree, StemV : Tree, ForkV : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
+
 MetaPi := {
-  let vconc := {tr} -> pair "Conc" tr
-  let vneu := {meta} -> pair "Neu" meta
-  let vpoison := {r} -> pair "Poison" r
-  let vchain1 := {E, scr} -> pair "Chain1" (pair E scr)
-  let vchain2 := {E, scr, ca} -> pair "Chain2" (pair E (pair scr ca))
-  let is_conc := {V} -> tree_eq (pair_fst V) "Conc"
-  let is_neu := {V} -> tree_eq (pair_fst V) "Neu"
-  let is_poison := {V} -> tree_eq (pair_fst V) "Poison"
-  let conc_leaf := pair "Conc" t
-  let is_pi_stamp := {slot} -> and (is_fork slot) (tree_eq (pair_fst slot) "Pi")
-  let vstem := {V} -> if (is_conc V) then (vconc (t (pair_snd V))) else (pair "StemV" V)
-  let vfork := {L, R} -> if (and (is_conc L) (is_conc R)) then (vconc (t (pair_snd L) (pair_snd R))) else (pair "ForkV" (pair L R))
+  let vstem := {V} -> if let Conc c = V then (Conc (t c)) else (StemV V)
+  let vfork := {L, R} -> if let Conc lc = L then (if let Conc rc = R then (Conc (t lc rc)) else (ForkV (pair L R))) else (ForkV (pair L R))
   let elim_sig := pair_fst (elim_of t t)
   let is_elim_head := {f} -> and (is_fork f) (tree_eq (pair_fst f) elim_sig)
   let make_mark := {meta} -> wait ({a, b} -> a) meta
@@ -76,83 +71,81 @@ MetaPi := {
   let vcheck := ({chk, T, V} ->
     match V {
       Poison r => false
-      Neu m => (tree_eq (pair_fst m) T)
-      _ p => ({
-        let slot := type_elim T
-        if (is_pi_stamp slot)
-          then (chk (pair_fst (pair_snd slot)) (pair_snd (pair_snd slot)) V)
-          else (if (is_conc V)
-            then (T (pair_snd V))
-            else (verify_inband (collect V nil) T (readback V)))
-      })
+      Neu ty hist => (tree_eq ty T)
+      _ p => (if let Pi dom cod = (type_elim T)
+        then (chk dom cod V)
+        else (if let Conc tr = V
+          then (T tr)
+          else (verify_inband (collect V nil) T (readback V))))
     })
   let s_rule := ({self, chk, C, TB, X} -> self chk (self chk C X) (self chk TB X))
   let triage_case := ({self, chk, TC, TD, TB, X} ->
     match X {
-      Conc xt => (triage TC ({u} -> self chk TD (vconc u)) ({l, r} -> self chk (self chk TB (vconc l)) (vconc r)) xt)
-      Neu m => (if (and (tree_eq TC conc_leaf) (and (tree_eq TD conc_leaf) (tree_eq TB conc_leaf))) then (vneu m) else (vpoison (vneu m)))
+      Conc xt => (triage TC ({u} -> self chk TD (Conc u)) ({l, r} -> self chk (self chk TB (Conc l)) (Conc r)) xt)
+      Neu m => (if (and (tree_eq TC (Conc t)) (and (tree_eq TD (Conc t)) (tree_eq TB (Conc t)))) then (Neu m) else (Poison (Neu m)))
       StemV c => (self chk TD c)
       ForkV l r => (self chk (self chk TB l) r)
-      Poison r => (vpoison r)
-      Chain1 e scr => (vpoison (vchain1 e scr))
-      Chain2 e scr ca => (vpoison (vchain2 e scr ca))
+      Poison r => (Poison r)
+      Chain1 e scr => (Poison (Chain1 (pair e scr)))
+      Chain2 e scr ca => (Poison (Chain2 (pair e (pair scr ca))))
     })
   let apply_fork := ({self, chk, A, TB, X} ->
     match A {
       Conc at => (if (is_leaf at)
         then TB
         else (if (is_stem at)
-          then (s_rule self chk (vconc (pair_snd at)) TB X)
-          else (triage_case self chk (vconc (pair_fst at)) (vconc (pair_snd at)) TB X)))
+          then (s_rule self chk (Conc (pair_snd at)) TB X)
+          else (triage_case self chk (Conc (pair_fst at)) (Conc (pair_snd at)) TB X)))
       StemV c => (s_rule self chk c TB X)
       ForkV tc td => (triage_case self chk tc td TB X)
-      Neu m => (vpoison (vneu m))
-      Poison r => (vpoison r)
-      Chain1 e scr => (vpoison (vchain1 e scr))
-      Chain2 e scr ca => (vpoison (vchain2 e scr ca))
+      Neu m => (Poison (Neu m))
+      Poison r => (Poison r)
+      Chain1 e scr => (Poison (Chain1 (pair e scr)))
+      Chain2 e scr ca => (Poison (Chain2 (pair e (pair scr ca))))
     })
   let absorb_v := ({self, chk, E, scr, ca, cb} -> {
     let Cst := pair_fst (pair_snd (wait_payload E))
     let B := pair_snd (pair_snd (wait_payload E))
-    let GatePi := {A2, B2} -> make_type ({s2, f2} -> chk A2 B2 (vconc f2)) inert_gate nil (pair "Pi" (pair A2 B2))
+    let GatePi := {A2, B2} -> make_type ({s2, f2} -> chk A2 B2 (Conc f2)) inert_gate nil (inj "Pi" (pair A2 B2))
     let vch := ({T2, V2} -> vcheck chk T2 V2)
-    if (and (tree_eq (pair_fst (pair_snd scr)) Cst) (tree_eq (pair_fst (wait_payload E)) (type_elim Cst)))
-      then (if ((pair_fst (pair_snd (wait_payload Cst))) vch GatePi Cst B ca cb)
-        then (vneu (pair (B scr) (pair scr (pair B (pair ca cb)))))
-        else (vpoison E))
-      else (vpoison scr)
+    if let Neu sTy sHist = scr
+      then (if (and (tree_eq sTy Cst) (tree_eq (pair_fst (wait_payload E)) (type_elim Cst)))
+        then (if ((pair_fst (pair_snd (wait_payload Cst))) vch GatePi Cst B ca cb)
+          then (Neu (pair (B scr) (pair scr (pair B (pair ca cb)))))
+          else (Poison E))
+        else (Poison scr))
+      else (Poison scr)
   })
   let mwalk := (fix ({self, chk, F, X} ->
-    if (is_poison X)
+    if let Poison bad = X
       then X
       else (match F {
-        Conc tr => (if (is_conc X)
-          then (vconc (tr (pair_snd X)))
+        Conc tr => (if let Conc xt = X
+          then (Conc (tr xt))
           else (if (is_elim_head tr)
-            then (if (is_neu X) then (vchain1 tr X) else (self chk (vconc (pair_fst (wait_payload tr))) X))
-            else (triage (vstem X) ({a} -> vfork (vconc a) X) ({a, b} -> apply_fork self chk (vconc a) (vconc b) X) tr)))
-        Neu m => (vpoison (vneu m))
-        Poison r => (vpoison r)
-        Chain1 e scr => (vchain2 e scr X)
+            then (if let Neu m = X then (Chain1 (pair tr X)) else (self chk (Conc (pair_fst (wait_payload tr))) X))
+            else (triage (vstem X) ({a} -> vfork (Conc a) X) ({a, b} -> apply_fork self chk (Conc a) (Conc b) X) tr)))
+        Neu m => (Poison (Neu m))
+        Poison r => (Poison r)
+        Chain1 e scr => (Chain2 (pair e (pair scr X)))
         Chain2 e scr ca => (absorb_v self chk e scr ca X)
         StemV c => (vfork c X)
         ForkV a b => (apply_fork self chk a b X)
       })))
   let core := (fix ({chk, A, B, fV} -> {
-    let x := vneu (pair A B)
+    let x := Neu (pair A B)
     let r := mwalk chk fV x
     vcheck chk (B x) r
   }))
-  ({A, B} -> make_type ({self, f} -> core A B (vconc f)) inert_gate nil (pair "Pi" (pair A B)))
+  ({A, B} -> make_type ({self, f} -> core A B (Conc f)) inert_gate nil (inj "Pi" (pair A B)))
 }
 
 CertPi := {
-  let make_hyp := {Ty, history} -> wait ({a, b} -> a) (pair Ty history)
+  let make_hyp := {Ty2, history} -> wait ({a, b} -> a) (pair Ty2 history)
   let hyp_sig := pair_fst (make_hyp t t)
   let invalid := {reason} -> wait ({a, b} -> b) reason
   let elim_sig := pair_fst (elim_of t t)
   let is_elim_head := {f} -> and (is_fork f) (tree_eq (pair_fst f) elim_sig)
-  let is_pi_stamp := {slot} -> and (is_fork slot) (tree_eq (pair_fst slot) "Pi")
   let root_of := (fix ({ro, h} -> {
     let parent := pair_fst (pair_snd (wait_payload h))
     if (is_neutral parent) then (ro parent) else h
@@ -212,17 +205,14 @@ CertPi := {
         then false
         else (if (is_neutral v)
           then (tree_eq (pair_fst (wait_payload v)) T)
-          else ({
-            let slot := type_elim T
-            if (is_pi_stamp slot)
-              then (core2 legit2 (pair_fst (pair_snd slot)) (pair_snd (pair_snd slot)) v)
-              else ((pair_fst (wait_payload T)) (wait vf T) v)
-          }))))
-    let Pi := {A2, B2} -> make_type ({s2, f2} -> core2 legit2 A2 B2 f2) inert_gate nil (pair "Pi" (pair A2 B2))
+          else (if let Pi dom cod = (type_elim T)
+            then (core2 legit2 dom cod v)
+            else ((pair_fst (wait_payload T)) (wait vf T) v)))))
+    let Pi := {A2, B2} -> make_type ({s2, f2} -> core2 legit2 A2 B2 f2) inert_gate nil (inj "Pi" (pair A2 B2))
     let g := certify verify Pi legit2 f
     if (is_invalid g) then false else (verify (B x) (g x))
   }))
-  ({A, B} -> make_type ({self, f} -> core nil A B f) inert_gate nil (pair "Pi" (pair A B)))
+  ({A, B} -> make_type ({self, f} -> core nil A B f) inert_gate nil (inj "Pi" (pair A B)))
 }
 
 EnumPi := {
@@ -232,7 +222,7 @@ EnumPi := {
   let foldr := fix ({self, f, z, xs} -> if (is_nil xs) then z else (f (head xs) (self f z (tail xs))))
   let list_all := {p, xs} -> foldr ({h, acc} -> and (p h) acc) true xs
   let check_by_trials := {members, B, f} -> list_all ({a} -> (B a) (f a)) members
-  let type_members := {Ty} -> pair_fst (pair_snd (pair_snd (wait_payload Ty)))
+  let type_members := {Ty2} -> pair_fst (pair_snd (pair_snd (wait_payload Ty2)))
   ({A, B} -> make_type
     ({self, f} -> {
       let members := type_members A
@@ -278,7 +268,7 @@ EnumNatToNat := EnumPi NatType ({_} -> NatType)
 FiveToNat := EnumPi Five ({_} -> NatType)
 FiveToSix := EnumPi Five ({_} -> Six)
 
-forge_hyp := {Ty, history} -> wait ({a, b} -> a) (pair Ty history)
+forge_hyp := {Ty2, history} -> wait ({a, b} -> a) (pair Ty2 history)
 shift := {b} -> if (is_neutral b) then true else 5
 junk_raw := {n, base, step} -> base
 unblessed_rec := wait ({payload, x} -> (pair_fst payload) x) (pair junk_raw (pair NatType ({_} -> BoolType)))
