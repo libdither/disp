@@ -52,7 +52,16 @@ function findTestFiles(dir: string, rel = ""): string[] {
   }
   return out
 }
-const testFiles = findTestFiles(testsDir).sort()
+// DISP_TEST_SHARD=i/n (1-based): run the i-th round-robin slice of the sorted
+// file list. The suite is serial on one shared session, so CI splits it across
+// jobs; round-robin spreads the heavy alphabetical head instead of loading it
+// all onto shard 1. Each shard pays its own kernel elaboration once.
+const shardSpec = process.env.DISP_TEST_SHARD
+const shardMatch = shardSpec?.match(/^(\d+)\/(\d+)$/)
+if (shardSpec && !shardMatch) throw new Error(`DISP_TEST_SHARD must be i/n (got '${shardSpec}')`)
+const [shardIdx, shardCount] = shardMatch ? [Number(shardMatch[1]), Number(shardMatch[2])] : [1, 1]
+if (shardIdx < 1 || shardIdx > shardCount) throw new Error(`DISP_TEST_SHARD out of range: ${shardSpec}`)
+const testFiles = findTestFiles(testsDir).sort().filter((_, i) => i % shardCount === shardIdx - 1)
 
 describe("disp", () => {
   // Files share one session by default (see sharedSession above) so the kernel is

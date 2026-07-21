@@ -1,0 +1,106 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'test/**'
+      - 'evaluators/rust-eager/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vitest.config.ts'
+      - 'tsconfig.json'
+      - '.github/workflows/test.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'test/**'
+      - 'evaluators/rust-eager/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vitest.config.ts'
+      - 'tsconfig.json'
+      - '.github/workflows/test.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The evaluator artifacts are gitignored; build once here and hand them to the
+  # test jobs. Without the native addon the suite falls back to the eager TS
+  # oracle, which is far too slow for CI.
+  build-evaluator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: evaluators/rust-eager/crate
+      - name: Build native evaluator
+        run: ./evaluators/rust-eager/build-native.sh
+      - name: Build wasm evaluator
+        run: |
+          rustup target add wasm32-unknown-unknown
+          ./evaluators/rust-eager/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-eager-artifacts
+          path: evaluators/rust-eager/artifacts/
+          retention-days: 1
+
+  # Everything except the disp language suite: parser/tree/eval-backend
+  # conformance, driver, guards, modules — plus the typecheck.
+  unit:
+    needs: build-evaluator
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-eager-artifacts
+          path: evaluators/rust-eager/artifacts/
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm test -- --exclude 'test/disp.test.ts'
+
+  # The disp language suite: ~80 lib/tests files run serially on one shared
+  # session inside a single vitest file (~50 min total, several multi-minute
+  # files), so it shards round-robin across jobs via DISP_TEST_SHARD (i/n,
+  # implemented in test/disp.test.ts). Each shard pays its own kernel
+  # elaboration once, then runs its slice.
+  disp-suite:
+    needs: build-evaluator
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-eager-artifacts
+          path: evaluators/rust-eager/artifacts/
+      - name: Test (shard ${{ matrix.shard }})
+        env:
+          DISP_TEST_SHARD: ${{ matrix.shard }}
+        run: npm test -- test/disp.test.ts
