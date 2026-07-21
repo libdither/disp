@@ -240,6 +240,44 @@ is checked again only after all controls are idle.
 The protocol requires no timeout. Fair activation is sufficient because every nonterminal
 phase remains visible until its dependent neighbor responds.
 
+## 7.3 Cable shift via guest riders
+
+Moving an agent through a zipper or a two-lane trunk never displaces the foreign lane: the
+agent rides *with* it. Two matter kinds (fitting the same 20-bit matter field) host an agent
+and the underlying crossing geometry at once:
+
+- `GuestZip`: kind 3 + tag 4 + principal-lane 1 + zip geometry 7 + twist 1 = 16 bits. The
+  agent's principal is the trunk face on the recorded lane (`plane`); the entered branch is
+  derived as `branches[plane ^ twist]`. Any arity ≤ 2 may ride (arity three would need three
+  lanes through the cell).
+- `GuestLink`: kind 3 + tag 4 + principal face 3 + principal-lane 1 + ends 4 + twist 1 =
+  16 bits. The agent rides one trunk lane; the foreign lane passes on the other.
+
+Channel discipline: the guest exposes the underlying matter's channels with the agent's own
+wire channel intercepted as its port-0 endpoint (and, for arity two, the entered-branch or
+entry lane intercepted as its port-1 tail endpoint). Projection tracing follows the
+underlying zip/link semantics for every channel except the agent's, which terminates at the
+agent. Translation acquires a guest through the same offer/ack/commit roles, the target
+writing `GuestZip`/`GuestLink` instead of a plain agent. Guests are inert to every other
+protocol: rewrites reject them as occupied, and no second agent targets them.
+
+Reversion deletes the agent's consumed principal wire while preserving the foreign lane:
+
+- Arity one: the vacated guest reverts to a *one-lane elbow* — the foreign lane alone, on
+  lane 0 (`Zip{foreign branch, trunk}` → `Link`, `Link{ends, Two}` → `Link{ends, One}`). The
+  consumed lane vanishes cell by cell behind the agent. The live guest is the lane-index
+  adapter at the wavefront: its passthrough maps the elbow's lane 0 behind to the foreign
+  lane's original index ahead.
+- Arity two: the vacated guest reverts to the *original* zip or two-lane link. The lane the
+  agent's principal wire used becomes the agent's aux lane (the tail follows through the
+  same cell); the other lane stays foreign. Nothing dangles.
+- Arity three never acquires a guest (the offer declines): its two-lane tail would unzip at
+  the crossed cell and fuse with the foreign lane. Crossings by arity-three producers (e.g.
+  `Unp·Pair`) mark the current frontier.
+
+Fresh workshops place an arity-three agent's tail directly on its zipper, so redex chains
+involving only leaf/stem producers cross whole cables freely.
+
 ## 8. Apply–Fork workshop
 
 For `A·F → T1 + Pair`, let the Apply cell be the origin, `a` point from Apply to Fork, `s` be
@@ -311,8 +349,10 @@ Packed trace schema 4 stores:
 Viewer reconstruction is replay-only and cannot affect the run. Selecting a cell displays its
 matter geometry, control role and phase, fields, exact word, neighboring reciprocity, and bit
 allocation. Two cable lanes, zipper mappings, and fixed crossing routes are drawn as distinct
-geometric structures. The bundled Apply–Fork presets show preferred-lift placement, a forced
-opposite-lift retry, and both directions blocked with matter unchanged.
+geometric structures. The bundled Cell64 suite shows translation (straight and bent), the
+Apply–Fork workshop (preferred, fallback, blocked), one end-to-end reduction, and the
+embedded-term frontier; each activation records its sweep round and index so the fair random
+order is visible.
 
 ## 11. Implementation status
 
@@ -322,15 +362,26 @@ Implemented and projection-tested:
 - sparse packed grid and loader;
 - zipper/cable/crossing tracing;
 - bonded heat and local `χ`/`σ` relaxation;
-- cell-by-cell producer translation;
+- cell-by-cell producer translation (straight and bent);
 - the complete local Apply–Fork workshop;
-- deterministic random live-read activation tests; and
-- delta-compressed activation traces.
+- the complete 26-rule workshop ROM (searched canonical patches, projection-verified, cached
+  and rotated into every orientation);
+- guest-rider cable shift for arity-one and arity-two producers (zip and trunk crossings,
+  foreign lane projection-intact);
+- bent-pose firing (drivers rewrite with any tail face; boundary trunks adapt at placement);
+- one end-to-end reduction (translation, docking, fire, placement);
+- a multi-fire cascade across guest crossings (`A·F` then `T1·L`, stalling at the
+  arity-three `Unp·Pair` frontier);
+- the Cell64 scenario suite under deterministic random live-read activation tests; and
+- delta-compressed activation traces with sweep-round annotations.
+
+In progress:
+
+- pressure-owned link/cable relief and contraction;
+- embedder/layout traffic relief (producer–producer jams have no reroute mechanism yet);
+- conflict stress tests with overlapping workshops; and
+- end-to-end normalization through the packed runner across the full ROM.
 
 Remaining work:
 
-- cable shift at zipper boundaries;
-- pressure-owned link/cable relief and contraction;
-- face-relative workshops for the other 25 semantic rules;
-- conflict stress tests with overlapping workshops; and
-- end-to-end normalization through the packed runner.
+- cable shift for arity-three riders (the tail-unzip wave).
