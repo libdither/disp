@@ -7,7 +7,7 @@ on:
       - 'src/**'
       - 'lib/**'
       - 'test/**'
-      - 'evaluators/rust-eager/**'
+      - 'evaluators/**'
       - 'package.json'
       - 'package-lock.json'
       - 'vitest.config.ts'
@@ -18,7 +18,7 @@ on:
       - 'src/**'
       - 'lib/**'
       - 'test/**'
-      - 'evaluators/rust-eager/**'
+      - 'evaluators/**'
       - 'package.json'
       - 'package-lock.json'
       - 'vitest.config.ts'
@@ -31,33 +31,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The evaluator artifacts are gitignored; build once here and hand them to the
-  # test jobs. Without the native addon the suite falls back to the eager TS
-  # oracle, which is far too slow for CI.
-  build-evaluator:
+  # Evaluator artifacts are gitignored; build them once and hand them to the
+  # test jobs. Without rust_eager.node the suite falls back to the eager TS
+  # oracle (far too slow for CI); the wasm/ic-net/lambada artifacts unlock
+  # their differential-conformance test files (which skip when absent).
+  build-evaluators:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: evaluators/rust-eager/crate
-      - name: Build native evaluator
-        run: ./evaluators/rust-eager/build-native.sh
-      - name: Build wasm evaluator
+          workspaces: |
+            evaluators/rust-eager/crate
+            evaluators/rust-ic-net/crate
+      - name: Build rust-eager (native + wasm)
         run: |
           rustup target add wasm32-unknown-unknown
+          ./evaluators/rust-eager/build-native.sh
           ./evaluators/rust-eager/build.sh
+      - name: Build rust-ic-net (wasm)
+        run: ./evaluators/rust-ic-net/build.sh
+      - name: Build lambada (pinned upstream bundle)
+        run: ./evaluators/lambada/build.sh
+      # One artifact preserving evaluators/<name>/artifacts/ structure (paths
+      # are stored relative to the least common ancestor, evaluators/).
       - uses: actions/upload-artifact@v4
         with:
-          name: rust-eager-artifacts
-          path: evaluators/rust-eager/artifacts/
+          name: evaluator-artifacts
+          path: evaluators/*/artifacts/
           retention-days: 1
 
   # Everything except the disp language suite: parser/tree/eval-backend
   # conformance, driver, guards, modules — plus the typecheck.
   unit:
-    needs: build-evaluator
+    needs: build-evaluators
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -69,26 +80,25 @@ jobs:
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
-          name: rust-eager-artifacts
-          path: evaluators/rust-eager/artifacts/
+          name: evaluator-artifacts
+          path: evaluators/
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Test
         run: npm test -- --exclude 'test/disp.test.ts'
 
   # The disp language suite: ~80 lib/tests files run serially on one shared
-  # session inside a single vitest file (~50 min total, several multi-minute
-  # files), so it shards round-robin across jobs via DISP_TEST_SHARD (i/n,
-  # implemented in test/disp.test.ts). Each shard pays its own kernel
-  # elaboration once, then runs its slice.
+  # session inside a single vitest file, so it shards round-robin across jobs
+  # via DISP_TEST_SHARD (i/n, implemented in test/disp.test.ts). Each shard
+  # pays its own kernel elaboration once, then runs its slice.
   disp-suite:
-    needs: build-evaluator
+    needs: build-evaluators
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']
+        shard: ['1/3', '2/3', '3/3']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -98,8 +108,8 @@ jobs:
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
-          name: rust-eager-artifacts
-          path: evaluators/rust-eager/artifacts/
+          name: evaluator-artifacts
+          path: evaluators/
       - name: Test (shard ${{ matrix.shard }})
         env:
           DISP_TEST_SHARD: ${{ matrix.shard }}
