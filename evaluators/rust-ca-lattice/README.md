@@ -74,28 +74,15 @@ exactly one face-neighbor. The observer id moves only when the source commits.
 
 ## Rewrite workshop
 
-`rewrite64.rs` is a face-relative workshop ROM. The implemented `A·F` entry occupies exactly
-16 cells in a connected request tree and creates `T1` and `Pair`. It uses the free side of the
-docked pair and one bilayer lift for the internal `T1.args—Pair.principal` connection:
+`rewrite64.rs` holds the hand-crafted `A·F` workshop (16 cells, request tree, bilayer lift).
+`compile64.rs` compiles the workshops for the complete 26-rule ROM: a deterministic search
+(seat library, boundary branch candidates, per-net Dijkstra routing over z ∈ {0, ±1} with
+rip-up retries) whose candidates are accepted only when they pack, connect, fit the 63-slot
+budget, and — checked against the real fixture — project exactly onto the fired shadow net.
+One canonical patch per rule and handedness is cached and rotated into every `(axis, side,
+lift)` orientation; `A·F` keeps its hand workshop as ROM index 2.
 
-```text
-                    T1
-                     │
-        lifted link ─zip
-             │
-    cable ══ [A]─[F] ══ cable       before
-              │   │
-             zip──┘
-              │
-             Pair
-```
-
-The exact shape rotates with `(axis, side, lift)`. A local cell stores only the rule id,
-orientation, request-tree slot, phase, and whether this is the fallback direction. It does
-not store the workshop origin or an absolute owner. Every coordinate is reconstructed
-relative to the firing Apply/Fork cells.
-
-The rewrite is a directional request/response protocol:
+The rewrite is a directional request/response protocol (unchanged for the full ROM):
 
 1. The driver requests the preferred lift direction from its adjacent request-tree children.
 2. Empty children accept locally and relay the same request by one face.
@@ -110,48 +97,76 @@ The rewrite is a directional request/response protocol:
 The local transition from `Request` to `Blocked` emits an obstruction-pressure pulse. The
 requester still cannot modify the refusing cell; pressure is the only clearance signal.
 
-Random activation-order tests use four adversarial seeds. At control-free checkpoints the
-lattice is traced port-by-port and checked against the shadow net. The static workshop
-compiler is also checked independently by materializing the same 16 final matter words and
-verifying the projection. Separate obstruction tests force preferred-up, fallback-down, and
-both-directions-blocked executions.
+`compile64.rs` source layout: the ROM netlist is lowered to physical port endpoints (boundary
+zip/link branches for the dying pair, seat + zipper faces for fresh agents), a deterministic
+search places and routes the patch, `check_projection` against the fired shadow net is the
+acceptance oracle, and canonical patches rotate into all orientations. Compiled slot counts
+range from 2 (`Eps·L`) to 63 (`T1·S`, at the `U6` cap).
 
 ## Source layout
 
 - `crate/src/cell64.rs` — exact word ADTs and codec.
 - `crate/src/substrate.rs` — sparse `Grid64`, zipper-aware tracing, projection, and loader.
 - `crate/src/packed_local.rs` — center-only update rule and fair live-read runner.
-- `crate/src/rewrite64.rs` — face-relative workshop ROM and local rewrite geometry.
+- `crate/src/rewrite64.rs` — hand-crafted A·F workshop and local rewrite geometry.
+- `crate/src/compile64.rs` — searched, projection-verified workshops for the complete ROM.
+- `crate/src/suite.rs` — the Cell64 suite: scenario registry, fixtures, runner, expectations.
+- `crate/src/tracejs.rs` — schema-4 trace JSON serialization shared by the generators.
 - `crate/src/rules.rs` — validated 26-rule semantic ROM.
 - `crate/src/net.rs` — abstract shadow net.
 - `crate/src/oracle.rs` — independent recursive normalizer.
-- `crate/src/bin/dump-packed.rs` — activation-by-activation packed trace generator.
+- `crate/src/bin/dump-suite.rs` — suite runner and `lattice_suite.js` generator.
+- `crate/src/bin/dump-packed.rs` — single-scenario activation trace generator.
+- `crate/tests/cell64_suite.rs` — the suite gate: every scenario, four adversarial seeds.
+- `crate/tests/compile64.rs` — workshop structure, projection, live placement, rotation.
 
 The broader semantic and geometry regression modules remain available while Cell64 workshop
 coverage is extended across the ROM.
 
-## Trace format and viewer
+## The Cell64 suite and the viewer
 
-Schema 4 records one complete keyframe and then one-cell deltas. Each changed cell carries its
-literal 16-hex-digit word. Unchanged activations are retained as frames without duplicating
-the grid. Three bundled `A·F` traces expose preferred placement, forced opposite-lift
-fallback, and both lifts blocked without repeating a full snapshot for every activation.
+The suite is the smallest set of things the packed substrate must always do, plus example
+reductions at the current frontier:
 
-`research/interaction-combinator/lattice_player.html` decodes the deltas for replay. It draws
-two cable lanes separately, marks zippers as square split/join cells, shows fixed crossings as
-two independent routes, and displays active control roles as cell outlines. Selecting a cell
-shows its matter, control, fields, exact word, face reciprocity, and constant bit budget.
+- `translate-straight`, `translate-bend` (must) — an arity-three producer walks three
+  one-lane links, straight or around a bend, leaving one continuous two-lane cable.
+- `af-preferred`, `af-fallback`, `af-blocked` (must) — the docked A·F workshop: preferred
+  lift, forced opposite-lift retry, and both lifts declined with matter unchanged.
+- `rule-<c>-<p>` × 25 (must) — the rule atlas: every ROM interaction fires its compiled
+  workshop from a docked pair, places the fresh agents, and projects exactly onto the fired
+  shadow net.
+- `reduce-apply-fork` (example) — reduction end to end: F translates three faces to dock
+  with A, the workshop fires, T1 + Pair are placed.
+- `cascade-apply-fork` (example) — a multi-fire chain: A·F, then a leaf producer crosses
+  zipper and trunk cells as a guest rider to dock with T1, and T1·L fires; the chain then
+  stalls at Unp·Pair (arity-three riders are the open cable-shift frontier).
+- `cascade-eps-fork` (example) — the first complete multi-fire reduction to a normal form:
+  Eps·F places the two erasers, both leaves guest-ride across, Eps·L fires twice, and every
+  agent is erased (frontier 0).
+- `cascade-fork-stem` (example) — the S-rule end to end: A·F fires, the stem guest-rides
+  (arity-two crossing) to T1, and T1·S places its 63-cell workshop before the chain stalls
+  at the arity-three crossings.
+- `embed-term` (example) — the embedder lays out `@(F(L,L),L)` under Nrm; producers
+  translate, Nrm forces the suspension (Nrm·P fires once), and the run stalls on a
+  producer–producer traffic jam (no reroute mechanism yet).
+Schema 4 records one complete keyframe and then one-cell deltas. Each activation event
+carries its sweep round, its index within the round, and the round's activation-set size, so
+the fair random order is visible during replay.
 
-Regenerate the bundled traces from `crate/`:
+Run the suite (a fast pass/fail summary) and regenerate the viewer bundle from `crate/`:
 
 ```sh
-cargo run --release --bin dump-packed -- \
-  bilayer 0 10000 ../../../research/interaction-combinator/lattice_packed_trace.js preferred
-cargo run --release --bin dump-packed -- \
-  full3d 0 10000 ../../../research/interaction-combinator/lattice_packed_fallback_trace.js fallback
-cargo run --release --bin dump-packed -- \
-  full3d 0 10000 ../../../research/interaction-combinator/lattice_packed_blocked_trace.js blocked
+cargo test --release --test cell64_suite
+cargo run --release --bin dump-suite -- 0 ../../../research/interaction-combinator/lattice_suite.js
 ```
+
+`research/interaction-combinator/lattice_player.html` replays the bundle. It draws two cable
+lanes separately, marks zippers as square split/join cells, shows fixed crossings as two
+independent routes, outlines active control roles, and marks the currently and next
+activated cells so the no-clock order is visible. Selecting a cell shows its matter,
+control, fields, exact word, face reciprocity, and constant bit budget. The view is a
+rotatable orthographic 3D camera; keybinds pan, zoom, rotate, step, and jump between a
+selected cell's activations and word changes.
 
 ## Verification
 
@@ -159,11 +174,16 @@ From `crate/`:
 
 ```sh
 cargo test --release --lib
+cargo test --release --test cell64_suite
 cargo test --release rewrite64 --lib
 cargo test --release packed_local --lib
 ```
 
 Current execution coverage includes packed loading/projection, live-read cell-by-cell
-translation, bonded heat/field relaxation, and the complete local `A·F` rewrite. Cable-shift
-and pressure-relief controls are packed but their transition tables are pending. The remaining
-25 semantic rules need face-relative workshops before Cell64 is a complete evaluator backend.
+translation (straight and bent, three-face walks), bonded heat/field relaxation, the
+complete 26-rule workshop ROM (searched and projection-verified in `compile64.rs`), one
+end-to-end reduction (translation, docking, fire, placement), and a multi-fire cascade
+across guest-rider cable crossings — all gated by the Cell64 suite under four adversarial
+activation seeds. Cable shift for arity-three riders (the tail-unzip wave) and
+pressure-relief controls remain the open frontier before Cell64 is a complete evaluator
+backend; `embed-term` marks the embedder's bent-arrival pose issue.

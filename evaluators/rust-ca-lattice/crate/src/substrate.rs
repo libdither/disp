@@ -94,6 +94,7 @@ impl Grid64 {
     pub fn agents(&self) -> impl Iterator<Item = (Pos, Tag)> + '_ {
         self.cells.iter().filter_map(|(p, w)| match w.unpack().ok()?.matter {
             Matter::Agent { tag, .. } => Some((*p, tag)),
+            Matter::GuestZip { tag, .. } | Matter::GuestLink { tag, .. } => Some((*p, tag)),
             _ => None,
         })
     }
@@ -105,26 +106,79 @@ impl Grid64 {
     }
 
     pub fn channel_at_port(&self, pos: Pos, port: usize) -> Option<Channel> {
-        let Matter::Agent { tag, principal, tail, aux_flip } = self.matter(pos)? else { return None };
-        if port >= tag.arity() { return None; }
-        match port {
-            0 => Some(Channel { face: principal, lane: 0 }),
-            1 if tag.arity() == 2 => Some(Channel { face: tail?, lane: 0 }),
-            1 | 2 if tag.arity() == 3 => {
-                let semantic_lane = (port - 1) as u8;
-                Some(Channel { face: tail?, lane: semantic_lane ^ aux_flip as u8 })
+        match self.matter(pos)? {
+            Matter::Agent { tag, principal, tail, aux_flip } => {
+                if port >= tag.arity() { return None; }
+                match port {
+                    0 => Some(Channel { face: principal, lane: 0 }),
+                    1 if tag.arity() == 2 => Some(Channel { face: tail?, lane: 0 }),
+                    1 | 2 if tag.arity() == 3 => {
+                        let semantic_lane = (port - 1) as u8;
+                        Some(Channel { face: tail?, lane: semantic_lane ^ aux_flip as u8 })
+                    }
+                    _ => None,
+                }
+            }
+            Matter::GuestZip { tag, plane, trunk, branches, twist, deep } => {
+                if port >= tag.arity() { return None; }
+                let ridden = branches[(plane ^ twist as u8) as usize];
+                match (port, deep) {
+                    (0, false) => Some(Channel { face: trunk, lane: plane }),
+                    (0, true) => Some(Channel { face: ridden, lane: 0 }),
+                    (1, false) => Some(Channel { face: ridden, lane: 0 }),
+                    (1, true) => Some(Channel { face: trunk, lane: plane }),
+                    _ => None,
+                }
+            }
+            Matter::GuestLink { tag, principal, plane, ends, twist } => {
+                if port >= tag.arity() { return None; }
+                match port {
+                    0 => Some(Channel { face: principal, lane: plane }),
+                    1 => Some(Channel {
+                        face: ends.other(principal)?,
+                        lane: plane ^ twist as u8,
+                    }),
+                    _ => None,
+                }
             }
             _ => None,
         }
     }
 
     pub fn port_at_channel(&self, pos: Pos, channel: Channel) -> Option<usize> {
-        let Matter::Agent { tag, principal, tail, aux_flip } = self.matter(pos)? else { return None };
-        if channel.face == principal && channel.lane == 0 { return Some(0); }
-        if Some(channel.face) != tail { return None; }
-        match tag.arity() {
-            2 if channel.lane == 0 => Some(1),
-            3 if channel.lane < 2 => Some((channel.lane ^ aux_flip as u8) as usize + 1),
+        match self.matter(pos)? {
+            Matter::Agent { tag, principal, tail, aux_flip } => {
+                if channel.face == principal && channel.lane == 0 { return Some(0); }
+                if Some(channel.face) != tail { return None; }
+                match tag.arity() {
+                    2 if channel.lane == 0 => Some(1),
+                    3 if channel.lane < 2 => Some((channel.lane ^ aux_flip as u8) as usize + 1),
+                    _ => None,
+                }
+            }
+            Matter::GuestZip { tag, plane, trunk, branches, twist, deep } => {
+                let ridden = branches[(plane ^ twist as u8) as usize];
+                let principal = if deep {
+                    Channel { face: ridden, lane: 0 }
+                } else {
+                    Channel { face: trunk, lane: plane }
+                };
+                if channel == principal { return Some(0); }
+                if tag.arity() != 2 { return None; }
+                let tail = if deep {
+                    Channel { face: trunk, lane: plane }
+                } else {
+                    Channel { face: ridden, lane: 0 }
+                };
+                (channel == tail).then_some(1)
+            }
+            Matter::GuestLink { tag, principal, plane, ends, twist } => {
+                if channel.face == principal && channel.lane == plane { return Some(0); }
+                if tag.arity() != 2 { return None; }
+                (Some(channel.face) == ends.other(principal)
+                    && channel.lane == plane ^ twist as u8)
+                    .then_some(1)
+            }
             _ => None,
         }
     }
@@ -134,6 +188,26 @@ impl Grid64 {
             Some(Matter::Empty) | None => vec![],
             Some(Matter::Agent { tag, .. }) => (0..tag.arity())
                 .filter_map(|port| self.channel_at_port(p, port)).collect(),
+            // A guest exposes its agent ports plus the foreign through-channels; a channel
+            // an arity-one rider consumed vanishes outright (it is no port and no route).
+            Some(Matter::GuestZip { tag, plane, trunk, branches, twist, .. }) => {
+                let foreign = branches[(plane ^ twist as u8 ^ 1) as usize];
+                let mut channels: Vec<Channel> = (0..tag.arity())
+                    .filter_map(|port| self.channel_at_port(p, port))
+                    .collect();
+                channels.push(Channel { face: trunk, lane: plane ^ 1 });
+                channels.push(Channel { face: foreign, lane: 0 });
+                channels
+            }
+            Some(Matter::GuestLink { tag, principal, plane, ends, twist }) => {
+                let entry = ends.other(principal).expect("guest rides one end");
+                let mut channels: Vec<Channel> = (0..tag.arity())
+                    .filter_map(|port| self.channel_at_port(p, port))
+                    .collect();
+                channels.push(Channel { face: principal, lane: plane ^ 1 });
+                channels.push(Channel { face: entry, lane: plane ^ twist as u8 ^ 1 });
+                channels
+            }
             Some(Matter::Link { ends, lanes, .. }) => {
                 let n = if lanes == LaneCount::One { 1 } else { 2 };
                 [ends.a, ends.b].into_iter().flat_map(|face| {
@@ -154,6 +228,41 @@ impl Grid64 {
     fn through(&self, p: Pos, entered: Channel) -> Option<Channel> {
         match self.matter(p)? {
             Matter::Empty | Matter::Agent { .. } => None,
+            Matter::GuestZip { plane, trunk, branches, twist, deep, .. } => {
+                // Zip semantics on the underlying geometry, except the agent's own
+                // channels: principal and (arity two) entry are port endpoints, and an
+                // arity-one rider's entry channel is dead.
+                let ridden = branches[(plane ^ twist as u8) as usize];
+                let foreign = branches[(plane ^ twist as u8 ^ 1) as usize];
+                let agent_channels = if deep {
+                    [Channel { face: ridden, lane: 0 }, Channel { face: trunk, lane: plane }]
+                } else {
+                    [Channel { face: trunk, lane: plane }, Channel { face: ridden, lane: 0 }]
+                };
+                if agent_channels.contains(&entered) {
+                    return None;
+                }
+                if entered.face == trunk && entered.lane == plane ^ 1 {
+                    Some(Channel { face: foreign, lane: 0 })
+                } else if entered.face == foreign && entered.lane == 0 {
+                    Some(Channel { face: trunk, lane: plane ^ 1 })
+                } else {
+                    None
+                }
+            }
+            Matter::GuestLink { principal, plane, ends, twist, .. } => {
+                // Passthrough only: the foreign lane crosses; the principal channel and
+                // the agent's entry lane are endpoints (dead entry for arity one).
+                let entry = ends.other(principal)?;
+                let foreign_entry = plane ^ twist as u8 ^ 1;
+                if entered.face == entry && entered.lane == foreign_entry {
+                    Some(Channel { face: principal, lane: plane ^ 1 })
+                } else if entered.face == principal && entered.lane == plane ^ 1 {
+                    Some(Channel { face: entry, lane: foreign_entry })
+                } else {
+                    None
+                }
+            }
             Matter::Link { ends, lanes, twist, .. } => {
                 let max_lane = if lanes == LaneCount::One { 1 } else { 2 };
                 if entered.lane >= max_lane { return None; }

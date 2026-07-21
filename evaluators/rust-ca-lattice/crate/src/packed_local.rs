@@ -11,7 +11,7 @@ use crate::cell64::{
 use crate::lattice::{step, Pos};
 use crate::net::Net;
 use crate::rewrite64::{
-    apply_fork_workshop, rewrite_orientation, APPLY_FORK_RULE, Workshop64,
+    rewrite_orientation, Workshop64,
 };
 use crate::substrate::{Grid64, BOUNDARY};
 
@@ -91,6 +91,28 @@ fn matter_has_channel(matter: Matter, face: Dir, lane: u8) -> bool {
             (face == trunk && lane < 2) || (branches.contains(&face) && lane == 0)
         }
         Matter::Cross { routes, .. } => lane == 0 && routes.iter().any(|route| route.contains(face)),
+        // A guest exposes the same channels projection sees: its ports plus the live
+        // foreign through-channels (an arity-one rider's consumed lane exposes nothing).
+        Matter::GuestZip { tag, plane, trunk, branches, twist, deep } => {
+            let ridden = branches[(plane ^ twist as u8) as usize];
+            let foreign = branches[(plane ^ twist as u8 ^ 1) as usize];
+            (face == trunk && lane == plane ^ 1)
+                || (face == foreign && lane == 0)
+                || if deep {
+                    (face == ridden && lane == 0)
+                        || (face == trunk && lane == plane && tag.arity() == 2)
+                } else {
+                    (face == trunk && lane == plane)
+                        || (face == ridden && lane == 0 && tag.arity() == 2)
+                }
+        }
+        Matter::GuestLink { tag, principal, plane, ends, twist } => {
+            let entry = ends.other(principal).expect("guest rides one end");
+            (face == principal && (lane == plane || lane == plane ^ 1))
+                || (face == entry
+                    && (lane == plane ^ twist as u8 ^ 1
+                        || (lane == plane ^ twist as u8 && tag.arity() == 2)))
+        }
     }
 }
 
@@ -118,6 +140,8 @@ fn hot_at(matter: Matter, face: Dir, lane: u8) -> bool {
         Matter::Empty => false,
         Matter::Cross { routes, hot, .. } => routes.iter().position(|route| route.contains(face))
             .is_some_and(|route| lane == 0 && hot.get() & (1 << route) != 0),
+        // Guests are inert: they carry no heat of their own.
+        Matter::GuestZip { .. } | Matter::GuestLink { .. } => false,
     }
 }
 
@@ -190,18 +214,111 @@ fn target_link(matter: Matter, entered: Dir) -> Option<(Dir, bool)> {
     Some((ends.other(entered)?, hot.get() & 1 != 0))
 }
 
+/// A producer that may advance along its principal wire: a plain agent, or an agent
+/// already riding a zipper/cable as a guest. `exposed` is the lane its principal wire
+/// rides on its principal face (zero for a plain agent, `plane` for a guest).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Rider {
+    tag: crate::rules::Tag,
+    toward: Dir,
+    exposed: u8,
+    tail: Option<Dir>,
+}
+
+fn rider_of(matter: Matter) -> Option<Rider> {
+    match matter {
+        Matter::Agent { tag, principal, tail, .. } if tag.is_producer() => {
+            Some(Rider { tag, toward: principal, exposed: 0, tail })
+        }
+        Matter::GuestZip { tag, plane, trunk, branches, twist, deep } if tag.is_producer() => {
+            let ridden = branches[(plane ^ twist as u8) as usize];
+            // `deep` riders entered through the trunk and exit through the branch.
+            let (principal, entry) = if deep { (ridden, trunk) } else { (trunk, ridden) };
+            Some(Rider {
+                tag,
+                toward: principal,
+                exposed: plane,
+                tail: (tag.arity() == 2).then_some(entry),
+            })
+        }
+        Matter::GuestLink { tag, principal, plane, ends, .. } if tag.is_producer() => {
+            Some(Rider {
+                tag,
+                toward: principal,
+                exposed: plane,
+                tail: (tag.arity() == 2)
+                    .then(|| ends.other(principal).expect("guest rides one end")),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// A crossing target for the guest acquire: a zipper entered through a branch or through
+/// its trunk, or a two-lane trunk link. Returns the face the rider exits through (its new
+/// principal face). Arity-three riders are never offered one.
+fn crossing_target(matter: Matter, entered: Dir, exposed: u8) -> Option<Dir> {
+    match matter {
+        Matter::Zip { trunk, branches, twist, .. } => {
+            if branches.contains(&entered) {
+                Some(trunk)
+            } else if trunk == entered {
+                Some(branches[(exposed ^ twist as u8) as usize])
+            } else {
+                None
+            }
+        }
+        Matter::Link { ends, lanes: LaneCount::Two, .. } => ends.other(entered),
+        _ => None,
+    }
+}
+
+/// The demand hot bit for a crossing offer: the target's heat at the entered face on the
+/// lane the rider's wire rides there (zip branches are single-lane).
+fn crossing_hot(matter: Matter, entered: Dir, exposed: u8) -> bool {
+    let lane = match matter {
+        Matter::Zip { trunk, branches, .. } => {
+            if branches.contains(&entered) { 0 } else { debug_assert!(trunk == entered); exposed }
+        }
+        _ => exposed,
+    };
+    hot_at(matter, entered, lane)
+}
+
 fn source_offer(center: DecodedCell, adjacent: &[CellWord; 6]) -> Option<Control> {
-    let Matter::Agent { tag, principal: toward, tail, .. } = center.matter else { return None };
-    if !tag.is_producer() { return None; }
+    let rider = rider_of(center.matter)?;
+    let toward = rider.toward;
     let target = neighbor(adjacent, toward)?;
     if target.control != Control::Idle { return None; }
-    let (exit, hot) = target_link(target.matter, toward.opp())?;
-    let old_tail = tail.unwrap_or(toward); // equality is the arity-one sentinel
-    if let Some(tail) = tail {
+    let (exit, hot) = match target_link(target.matter, toward.opp()) {
+        Some((exit, hot)) => (exit, hot),
+        None => {
+            if rider.tag.arity() > 2 { return None; }
+            // Crossing targets: a zip entered through a branch or through its trunk, or a
+            // two-lane trunk link. An arity-one rider crosses cables and zip trunks only
+            // while riding lane one: the vacated cell reverts to a lane-zero elbow on the
+            // foreign lane and the live guest is the lane-index adapter, so a lane-zero
+            // rider would leave the elbow facing the wrong lane (LOCAL_CA_DESIGN §7.3).
+            let via_trunk = match target.matter {
+                Matter::Zip { trunk, branches, .. } => {
+                    if branches.contains(&toward.opp()) { false }
+                    else if trunk == toward.opp() { true }
+                    else { return None; }
+                }
+                Matter::Link { lanes: LaneCount::Two, .. } => true,
+                _ => return None,
+            };
+            if rider.tag.arity() == 1 && via_trunk && rider.exposed != 1 { return None; }
+            let exit = crossing_target(target.matter, toward.opp(), rider.exposed)?;
+            (exit, crossing_hot(target.matter, toward.opp(), rider.exposed))
+        }
+    };
+    let old_tail = rider.tail.unwrap_or(toward); // equality is the arity-one sentinel
+    if let Some(tail) = rider.tail {
         let rear = neighbor(adjacent, tail)?;
         if rear.control != Control::Idle
             || !matter_has_channel(rear.matter, tail.opp(), 0)
-            || (tag.arity() == 3 && !matter_has_channel(rear.matter, tail.opp(), 1))
+            || (rider.tag.arity() == 3 && !matter_has_channel(rear.matter, tail.opp(), 1))
         {
             return None;
         }
@@ -219,13 +336,16 @@ fn incoming_offer(center: DecodedCell, adjacent: &[CellWord; 6]) -> Option<Contr
     // Target claims outrank tail claims if an adversarial malformed patch offers both.
     for to_source in DIRS {
         let Some(source) = neighbor(adjacent, to_source) else { continue };
-        let Matter::Agent { principal, .. } = source.matter else { continue };
         let Control::Translate {
             role: LineRole::Source, phase: Phase::Offer,
             toward, exit, old_tail, epoch,
         } = source.control else { continue };
-        if toward != to_source.opp() || principal != toward { continue; }
-        if target_link(center.matter, to_source).is_some_and(|(actual_exit, _)| actual_exit == exit) {
+        let Some(rider) = rider_of(source.matter) else { continue };
+        if toward != to_source.opp() || rider.toward != toward { continue; }
+        let target_matches = target_link(center.matter, to_source)
+            .is_some_and(|(actual_exit, _)| actual_exit == exit)
+            || crossing_target(center.matter, to_source, rider.exposed) == Some(exit);
+        if target_matches {
             return Some(move_control(LineRole::Target, Phase::Ack, MoveSpec {
                 toward, exit, old_tail, epoch,
             }));
@@ -233,14 +353,15 @@ fn incoming_offer(center: DecodedCell, adjacent: &[CellWord; 6]) -> Option<Contr
     }
     for to_source in DIRS {
         let Some(source) = neighbor(adjacent, to_source) else { continue };
-        let Matter::Agent { tag, tail: Some(tail), .. } = source.matter else { continue };
         let Control::Translate {
             role: LineRole::Source, phase: Phase::Offer,
             toward, exit, old_tail, epoch,
         } = source.control else { continue };
+        let Some(rider) = rider_of(source.matter) else { continue };
+        let Some(tail) = rider.tail else { continue };
         if old_tail != to_source.opp() || tail != old_tail { continue; }
         if matter_has_channel(center.matter, to_source, 0)
-            && (tag.arity() != 3 || matter_has_channel(center.matter, to_source, 1))
+            && (rider.tag.arity() != 3 || matter_has_channel(center.matter, to_source, 1))
         {
             return Some(move_control(LineRole::Tail, Phase::Ack, MoveSpec {
                 toward, exit, old_tail, epoch,
@@ -258,20 +379,23 @@ fn source_next(
 ) -> (Matter, Control, UpdateEffect) {
     match phase {
         Phase::Offer => {
-            let Matter::Agent { tag, principal, tail, .. } = center.matter else {
+            let Some(rider) = rider_of(center.matter) else {
                 return (center.matter, move_control(LineRole::Source, Phase::Abort, spec), UpdateEffect::default());
             };
-            let geometry_valid = principal == spec.toward
-                && tail.unwrap_or(spec.toward) == spec.old_tail
+            let geometry_valid = rider.toward == spec.toward
+                && rider.tail.unwrap_or(spec.toward) == spec.old_tail
                 && neighbor(adjacent, spec.toward).is_some_and(|target| {
-                    target_link(target.matter, spec.toward.opp()).is_some_and(|(exit, _)| exit == spec.exit)
+                    target_link(target.matter, spec.toward.opp())
+                        .is_some_and(|(exit, _)| exit == spec.exit)
+                        || crossing_target(target.matter, spec.toward.opp(), rider.exposed)
+                            == Some(spec.exit)
                 });
             if !geometry_valid {
                 return (center.matter, move_control(LineRole::Source, Phase::Abort, spec), UpdateEffect::default());
             }
             let target_ready = neighbor(adjacent, spec.toward)
                 .is_some_and(|target| as_move(target.control, LineRole::Target, Phase::Ack, spec));
-            let tail_ready = tag.arity() == 1 || neighbor(adjacent, spec.old_tail)
+            let tail_ready = rider.tag.arity() == 1 || neighbor(adjacent, spec.old_tail)
                 .is_some_and(|tail| as_move(tail.control, LineRole::Tail, Phase::Ack, spec));
             if target_ready && tail_ready {
                 (center.matter, move_control(LineRole::Source, Phase::Commit, spec), UpdateEffect::default())
@@ -280,27 +404,76 @@ fn source_next(
             }
         }
         Phase::Commit => {
-            let Matter::Agent { tag, .. } = center.matter else {
+            let Some(rider) = rider_of(center.matter) else {
                 return (center.matter, move_control(LineRole::Source, Phase::Abort, spec), UpdateEffect::default());
             };
             let target_committed = neighbor(adjacent, spec.toward)
                 .is_some_and(|target| as_move(target.control, LineRole::Target, Phase::Commit, spec));
-            let tail_committed = tag.arity() == 1 || neighbor(adjacent, spec.old_tail)
+            let tail_committed = rider.tag.arity() == 1 || neighbor(adjacent, spec.old_tail)
                 .is_some_and(|tail| as_move(tail.control, LineRole::Tail, Phase::Commit, spec));
             if !(target_committed && tail_committed) {
                 return (center.matter, move_control(LineRole::Source, Phase::Commit, spec), UpdateEffect::default());
             }
-            let matter = match tag.arity() {
-                1 => Matter::Empty,
-                2 | 3 => Matter::Link {
-                    ends: FacePair::new(spec.old_tail, spec.toward).expect("agent faces are distinct"),
-                    lanes: if tag.arity() == 3 { LaneCount::Two } else { LaneCount::One },
-                    twist: false,
-                    hot: LaneMask::new(0).unwrap(),
-                    cooldown: U3::new(1).unwrap(),
-                    pull: [Pull::None; 2],
+            // The vacated cell: a plain agent leaves emptiness (arity one) or a trailing
+            // link; a vacated guest leaves a one-lane elbow on the foreign lane (arity
+            // one — the consumed principal wire vanishes cell by cell behind the rider)
+            // or the original zip/cable restored (arity two — the rider's principal lane
+            // becomes its aux lane and the foreign lane keeps its identity).
+            let matter = match center.matter {
+                Matter::Agent { tag, .. } => match tag.arity() {
+                    1 => Matter::Empty,
+                    2 | 3 => Matter::Link {
+                        ends: FacePair::new(spec.old_tail, spec.toward).expect("agent faces are distinct"),
+                        lanes: if tag.arity() == 3 { LaneCount::Two } else { LaneCount::One },
+                        twist: false,
+                        hot: LaneMask::new(0).unwrap(),
+                        cooldown: U3::new(1).unwrap(),
+                        pull: [Pull::None; 2],
+                    },
+                    _ => unreachable!(),
                 },
-                _ => unreachable!(),
+                Matter::GuestZip { tag, plane, trunk, branches, twist, .. } => {
+                    match tag.arity() {
+                        1 => Matter::Link {
+                            ends: FacePair::new(
+                                branches[(plane ^ twist as u8 ^ 1) as usize],
+                                trunk,
+                            ).expect("zipper faces are distinct"),
+                            lanes: LaneCount::One,
+                            twist: false,
+                            hot: LaneMask::new(0).unwrap(),
+                            cooldown: U3::new(1).unwrap(),
+                            pull: [Pull::None; 2],
+                        },
+                        _ => Matter::Zip {
+                            trunk,
+                            branches,
+                            twist,
+                            hot: LaneMask::new(0).unwrap(),
+                            cooldown: U3::new(1).unwrap(),
+                            pull: [Pull::None; 2],
+                        },
+                    }
+                }
+                Matter::GuestLink { tag, ends, twist, .. } => match tag.arity() {
+                    1 => Matter::Link {
+                        ends,
+                        lanes: LaneCount::One,
+                        twist: false,
+                        hot: LaneMask::new(0).unwrap(),
+                        cooldown: U3::new(1).unwrap(),
+                        pull: [Pull::None; 2],
+                    },
+                    _ => Matter::Link {
+                        ends,
+                        lanes: LaneCount::Two,
+                        twist,
+                        hot: LaneMask::new(0).unwrap(),
+                        cooldown: U3::new(1).unwrap(),
+                        pull: [Pull::None; 2],
+                    },
+                },
+                _ => unreachable!("rider matter is an agent or a guest"),
             };
             (matter, move_control(LineRole::Source, Phase::Done, spec), UpdateEffect {
                 observer_move: Some(spec.toward),
@@ -335,20 +508,72 @@ fn target_next(
                 return (center.matter, move_control(LineRole::Target, Phase::Ack, spec));
             }
             if let Some(source) = source.filter(|s| as_move(s.control, LineRole::Source, Phase::Commit, spec)) {
-                let Matter::Agent { tag, aux_flip, .. } = source.matter else {
+                let Some(rider) = rider_of(source.matter) else {
                     return (center.matter, move_control(LineRole::Target, Phase::Abort, spec));
                 };
-                if !target_link(center.matter, to_source).is_some_and(|(exit, _)| exit == spec.exit) {
-                    return (center.matter, move_control(LineRole::Target, Phase::Abort, spec));
+                let aux_flip = match source.matter {
+                    Matter::Agent { aux_flip, .. } => aux_flip,
+                    _ => false,
+                };
+                let commit = move_control(LineRole::Target, Phase::Commit, spec);
+                // One-lane link: the rider steps off its ride (or the wire) as a plain
+                // agent — the existing fast path.
+                if target_link(center.matter, to_source).is_some_and(|(exit, _)| exit == spec.exit) {
+                    return (Matter::Agent {
+                        tag: rider.tag,
+                        principal: spec.exit,
+                        tail: (rider.tag.arity() > 1).then_some(to_source),
+                        aux_flip,
+                    }, commit);
                 }
-                return (Matter::Agent {
-                    tag,
-                    principal: spec.exit,
-                    tail: (tag.arity() > 1).then_some(to_source),
-                    aux_flip,
-                }, move_control(LineRole::Target, Phase::Commit, spec));
+                // Crossing targets: the rider keeps riding — the cell becomes a guest
+                // hosting the agent and the underlying crossing geometry at once.
+                match center.matter {
+                    Matter::Zip { trunk, branches, twist, .. } => {
+                        if branches.contains(&to_source) && trunk == spec.exit {
+                            let branch = branches.iter()
+                                .position(|branch| *branch == to_source)
+                                .expect("entered branch") as u8;
+                            return (Matter::GuestZip {
+                                tag: rider.tag,
+                                plane: branch ^ twist as u8,
+                                trunk,
+                                branches,
+                                twist,
+                                deep: false,
+                            }, commit);
+                        }
+                        if trunk == to_source
+                            && branches[(rider.exposed ^ twist as u8) as usize] == spec.exit
+                        {
+                            return (Matter::GuestZip {
+                                tag: rider.tag,
+                                plane: rider.exposed,
+                                trunk,
+                                branches,
+                                twist,
+                                deep: true,
+                            }, commit);
+                        }
+                        (center.matter, move_control(LineRole::Target, Phase::Abort, spec))
+                    }
+                    Matter::Link { ends, lanes: LaneCount::Two, twist, .. } => {
+                        if ends.other(to_source) != Some(spec.exit) {
+                            return (center.matter, move_control(LineRole::Target, Phase::Abort, spec));
+                        }
+                        (Matter::GuestLink {
+                            tag: rider.tag,
+                            principal: spec.exit,
+                            plane: rider.exposed ^ twist as u8,
+                            ends,
+                            twist,
+                        }, commit)
+                    }
+                    _ => (center.matter, move_control(LineRole::Target, Phase::Abort, spec)),
+                }
+            } else {
+                (center.matter, move_control(LineRole::Target, Phase::Abort, spec))
             }
-            (center.matter, move_control(LineRole::Target, Phase::Abort, spec))
         }
         Phase::Commit => {
             if source.is_some_and(|s| as_move(s.control, LineRole::Source, Phase::Done, spec)) {
@@ -425,9 +650,8 @@ fn rewrite_control(
 }
 
 fn workshop(spec: RewriteSpec) -> Option<Workshop64> {
-    if spec.rule.get() != APPLY_FORK_RULE { return None; }
     let (side, lift) = rewrite_orientation(spec.axis, spec.side, spec.lift)?;
-    apply_fork_workshop(spec.axis, side, lift, false, false)
+    crate::compile64::workshop_for(spec.rule.get(), spec.axis, side, lift)
 }
 
 fn rewrite_phase(
@@ -451,19 +675,54 @@ fn rewrite_phase(
         .then_some(phase)
 }
 
+/// The faces of a boundary slot's final matter that carry the patch's internal routes.
+/// The trunk/outward face is excluded because placement adapts it to the dying agent's
+/// actual tail face; the route faces are fixed by the workshop and must not collide with it.
+fn boundary_route_faces(matter: &Matter, outward: Dir) -> Vec<Dir> {
+    match matter {
+        Matter::Zip { trunk, branches, .. } if *trunk == outward => branches.to_vec(),
+        Matter::Link { ends, .. } if ends.contains(outward) => {
+            ends.other(outward).into_iter().collect()
+        }
+        _ => vec![],
+    }
+}
+
+/// True when a dying agent with tail face `tail` can become the boundary of `slot_matter`:
+/// its tail face must not be one of the fixed route faces, and the cell holding its tail
+/// cable (`tail_offset` from the driver cell) must not be a workshop slot.
+fn boundary_compatible(
+    workshop: &Workshop64,
+    slot_matter: &Matter,
+    outward: Dir,
+    tail: Option<Dir>,
+    tail_offset: Pos,
+) -> bool {
+    let Some(tail) = tail else { return true };
+    if boundary_route_faces(slot_matter, outward).contains(&tail) { return false; }
+    !workshop.slots.iter().any(|slot| slot.at == tail_offset)
+}
+
 fn can_accept_rewrite(slot: u8, center: DecodedCell, spec: RewriteSpec) -> bool {
     if center.control != Control::Idle { return false; }
-    if spec.rule.get() != APPLY_FORK_RULE { return false; }
+    let Some(rule) = crate::rules::RULES.get(spec.rule.get() as usize) else { return false };
     match slot {
         // Slot zero is the driver and is never requested by a parent.
         0 => false,
         // Trying the principal axis first in the workshop BFS makes the producer slot one.
-        1 => matches!(center.matter, Matter::Agent {
-            tag: crate::rules::Tag::F,
-            principal,
-            tail: Some(tail),
-            ..
-        } if principal == spec.axis.opp() && tail == spec.axis),
+        1 => {
+            let producer = rule.producer;
+            let Matter::Agent { tag, principal, tail, .. } = center.matter else { return false };
+            if tag != producer || principal != spec.axis.opp() { return false; }
+            // Docked pose: a tail exactly when arity > 1, never pointing at the consumer.
+            if tail.is_some() != (producer.arity() > 1) || tail == Some(spec.axis.opp()) {
+                return false;
+            }
+            let Some(workshop) = workshop(spec) else { return false };
+            let Some(layout) = workshop.slot(1) else { return false };
+            let tail_offset = step(step((0, 0, 0), spec.axis), tail.unwrap_or(spec.axis));
+            boundary_compatible(&workshop, &layout.matter, spec.axis, tail, tail_offset)
+        }
         _ => center.matter == Matter::Empty,
     }
 }
@@ -494,35 +753,49 @@ fn incoming_rewrite(center: DecodedCell, adjacent: &[CellWord; 6]) -> Option<Con
 }
 
 fn start_rewrite(center: DecodedCell, adjacent: &[CellWord; 6]) -> Option<Control> {
-    let Matter::Agent {
-        tag: crate::rules::Tag::A,
-        principal: axis,
-        tail: Some(tail),
-        ..
-    } = center.matter else { return None };
-    if tail != axis.opp() { return None; }
-    let producer = neighbor(adjacent, axis)?;
-    if !matches!(producer.matter, Matter::Agent {
-        tag: crate::rules::Tag::F,
-        principal,
-        tail: Some(producer_tail),
-        ..
-    } if principal == axis.opp() && producer_tail == axis)
-        || producer.control != Control::Idle
-    {
+    let Matter::Agent { tag: consumer, principal: axis, tail, .. } = center.matter else {
+        return None;
+    };
+    if !consumer.is_consumer() { return None; }
+    // Docked pose: a tail exactly when arity > 1, never pointing at the producer. The tail
+    // need not exit opposite the principal — workshops adapt their boundary to it.
+    if tail.is_some() != (consumer.arity() > 1) || tail == Some(axis) { return None; }
+    let producer_cell = neighbor(adjacent, axis)?;
+    if producer_cell.control != Control::Idle { return None; }
+    let Matter::Agent { tag: producer, principal, tail: producer_tail, .. } =
+        producer_cell.matter else { return None };
+    if !producer.is_producer() || principal != axis.opp() { return None; }
+    if producer_tail.is_some() != (producer.arity() > 1) || producer_tail == Some(axis.opp()) {
         return None;
     }
-
-    let rule = RuleId::new(APPLY_FORK_RULE).unwrap();
+    let rule = RuleId::new(crate::rules::find_index(consumer, producer)? as u8)?;
+    // The first side whose boundaries are compatible with both tail cables wins; later
+    // lifts fall back through the usual decline path.
     for side in 0..4 {
         let spec = RewriteSpec { rule, axis, side, lift: false, fallback: false };
-        workshop(spec)?;
-        return Some(rewrite_control(
-            RewriteRole::Driver,
-            RewritePhase::Request,
-            0,
-            spec,
-        ));
+        let Some(workshop) = workshop(spec) else { continue };
+        let consumer_ok = boundary_compatible(
+            &workshop,
+            &workshop.slot(0)?.matter,
+            axis.opp(),
+            tail,
+            step((0, 0, 0), tail.unwrap_or(axis.opp())),
+        );
+        let producer_ok = boundary_compatible(
+            &workshop,
+            &workshop.slot(1)?.matter,
+            axis,
+            producer_tail,
+            step(step((0, 0, 0), axis), producer_tail.unwrap_or(axis)),
+        );
+        if consumer_ok && producer_ok {
+            return Some(rewrite_control(
+                RewriteRole::Driver,
+                RewritePhase::Request,
+                0,
+                spec,
+            ));
+        }
     }
     None
 }
@@ -583,7 +856,10 @@ fn children_clear(
     workshop.slot(slot).expect("valid workshop slot").children.iter().all(|face| {
         let child_slot = workshop.child(slot, *face).unwrap();
         let child_layout = workshop.slot(child_slot).unwrap();
-        neighbor(adjacent, *face).is_some_and(|child| {
+        // An out-of-topology face holds no cell: it can never accept, so it counts as
+        // clear rather than wedging the decline wave (its parent declines via
+        // `child_responses`, which treats the same face as Blocked).
+        neighbor(adjacent, *face).is_none_or(|child| {
             rewrite_phase(child.control, child_layout.role, child_slot, spec).is_none()
         })
     })
@@ -601,14 +877,32 @@ fn parent_phase(
     rewrite_phase(parent.control, parent_layout.role, parent_slot, spec)
 }
 
-fn final_rewrite_matter(center: DecodedCell, slot: u8, workshop: &Workshop64) -> Matter {
+fn final_rewrite_matter(center: DecodedCell, slot: u8, workshop: &Workshop64, axis: Dir) -> Matter {
     let mut matter = workshop.slot(slot).expect("valid workshop slot").matter;
     if slot <= 1 {
-        let Matter::Agent { aux_flip, .. } = center.matter else {
+        // The two dying agents' cells become lane-preserving boundary matter. The trunk or
+        // outward end adapts to the dying agent's actual tail face (straight or bent); the
+        // lane order follows its aux flip.
+        let Matter::Agent { aux_flip, tail, .. } = center.matter else {
             panic!("rewrite boundary lost its docked agent before placement")
         };
-        let Matter::Zip { twist, .. } = &mut matter else { unreachable!() };
-        *twist = aux_flip;
+        let outward = if slot == 0 { axis.opp() } else { axis };
+        match &mut matter {
+            Matter::Zip { trunk, twist, .. } => {
+                if *trunk == outward {
+                    if let Some(tail) = tail { *trunk = tail; }
+                    *twist = aux_flip;
+                }
+            }
+            Matter::Link { ends, lanes, twist, .. } if ends.contains(outward) => {
+                let branch = ends.other(outward).expect("boundary link outward end");
+                if let Some(tail) = tail {
+                    *ends = FacePair::new(tail, branch).expect("boundary link needs distinct faces");
+                }
+                if *lanes == LaneCount::Two { *twist = aux_flip; }
+            }
+            _ => {}
+        }
     }
     matter
 }
@@ -645,7 +939,7 @@ fn rewrite_next(
                     UpdateEffect::default(),
                 ),
                 ResponseState::Ready => (
-                    final_rewrite_matter(center, slot, &workshop),
+                    final_rewrite_matter(center, slot, &workshop, spec.axis),
                     rewrite_control(role, RewritePhase::Place, slot, spec),
                     UpdateEffect {
                         rewrite_fire: Some(RewriteFire {
@@ -749,7 +1043,7 @@ fn rewrite_next(
                 UpdateEffect::default(),
             ),
             Some(RewritePhase::Place) => (
-                final_rewrite_matter(center, slot, &workshop),
+                final_rewrite_matter(center, slot, &workshop, spec.axis),
                 rewrite_control(role, RewritePhase::Place, slot, spec),
                 UpdateEffect::default(),
             ),
@@ -922,7 +1216,6 @@ fn add(origin: Pos, relative: Pos) -> Pos {
 }
 
 fn observe_rewrite(grid: &mut Grid64, shadow: &mut Net, driver: Pos, event: RewriteFire) {
-    assert_eq!(event.rule.get(), APPLY_FORK_RULE, "unsupported packed rewrite event");
     let consumer_sid = grid.observer_sid.remove(&driver)
         .expect("rewrite driver has no observer sid");
     let producer_pos = step(driver, event.axis);
@@ -933,7 +1226,7 @@ fn observe_rewrite(grid: &mut Grid64, shadow: &mut Net, driver: Pos, event: Rewr
 
     let (side, lift) = rewrite_orientation(event.axis, event.side, event.lift)
         .expect("placed rewrite has invalid orientation");
-    let workshop = apply_fork_workshop(event.axis, side, lift, false, false)
+    let workshop = crate::compile64::workshop_for(event.rule.get(), event.axis, side, lift)
         .expect("placed rewrite has invalid workshop");
     assert_eq!(fresh_sids.len(), rule.fresh.len());
     for slot in &workshop.slots {

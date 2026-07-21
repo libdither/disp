@@ -172,6 +172,11 @@ pub fn find(consumer: Tag, producer: Tag) -> Option<&'static Rule> {
     RULES.iter().find(|r| r.consumer == consumer && r.producer == producer)
 }
 
+/// The ROM index of a consumer×producer pair (used as the packed `RuleId`).
+pub fn find_index(consumer: Tag, producer: Tag) -> Option<usize> {
+    RULES.iter().position(|r| r.consumer == consumer && r.producer == producer)
+}
+
 /// Mechanical well-formedness: for every rule, the wire endpoints form a PERFECT MATCHING
 /// over consumer aux ∪ producer aux ∪ all fresh ports — each appears exactly once.
 pub fn validate() -> Result<(), String> {

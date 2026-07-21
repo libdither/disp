@@ -173,6 +173,31 @@ pub enum Matter {
         cooldown: U3,
         pull: [Pull; 2],
     },
+    /// An arity ≤ 2 agent riding a zipper: the agent's principal wire shares the cell with
+    /// the foreign lane, which passes undisturbed. `plane` is the trunk lane the agent's
+    /// wire rides. With `deep = false` the agent entered through the branch
+    /// `branches[plane ^ twist]` and its principal is the trunk channel `(trunk, plane)`.
+    /// With `deep = true` the agent entered through the trunk on lane `plane` and its
+    /// principal is the exit-branch channel `(branches[plane ^ twist], 0)`; both zip
+    /// traversal directions keep the same foreign-lane and revert semantics.
+    GuestZip {
+        tag: Tag,
+        plane: u8,
+        trunk: Dir,
+        branches: [Dir; 2],
+        twist: bool,
+        deep: bool,
+    },
+    /// An arity ≤ 2 agent riding one lane of a two-lane trunk link: principal is
+    /// `(principal, plane)`, the entry end is `ends.other(principal)`, and the foreign
+    /// lane passes on `(plane ^ 1)`.
+    GuestLink {
+        tag: Tag,
+        principal: Dir,
+        plane: u8,
+        ends: FacePair,
+        twist: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -476,6 +501,28 @@ fn pack_matter(matter: Matter) -> Result<u64, PackError> {
                 | ((pull[1] as u64) << 13);
             (4, data)
         }
+        Matter::GuestZip { tag, plane, trunk, branches, twist, deep } => {
+            if tag.arity() > 2 || plane >= 2 { return Err(PackError::InvalidAgentGeometry); }
+            let geometry = encode_zip_geometry(trunk, branches)
+                .ok_or(PackError::InvalidZipperGeometry)?;
+            let data = tag_code(tag) as u64
+                | ((plane as u64) << 4)
+                | ((geometry as u64) << 5)
+                | ((twist as u64) << 12)
+                | ((deep as u64) << 13);
+            (5, data)
+        }
+        Matter::GuestLink { tag, principal, plane, ends, twist } => {
+            if tag.arity() > 2 || plane >= 2 || !ends.contains(principal) {
+                return Err(PackError::InvalidAgentGeometry);
+            }
+            let data = tag_code(tag) as u64
+                | ((principal.code() as u64) << 4)
+                | ((plane as u64) << 7)
+                | ((ends.code() as u64) << 8)
+                | ((twist as u64) << 12);
+            (6, data)
+        }
     };
     Ok(kind | (data << 3))
 }
@@ -545,6 +592,38 @@ fn unpack_matter(word: u64) -> Result<Matter, PackError> {
                     Pull::from_code(((data >> 11) & 0b11) as u8).unwrap(),
                     Pull::from_code(((data >> 13) & 0b11) as u8).unwrap(),
                 ],
+            })
+        }
+        5 => {
+            if data >> 14 != 0 { return Err(PackError::InvalidMatterWord); }
+            let tag = tag_from_code((data & 0xf) as u8).ok_or(PackError::InvalidMatterWord)?;
+            if tag.arity() > 2 { return Err(PackError::InvalidMatterWord); }
+            let (trunk, branches) = decode_zip_geometry(((data >> 5) & 0x7f) as u8)
+                .ok_or(PackError::InvalidMatterWord)?;
+            Ok(Matter::GuestZip {
+                tag,
+                plane: ((data >> 4) & 1) as u8,
+                trunk,
+                branches,
+                twist: (data >> 12) & 1 != 0,
+                deep: (data >> 13) & 1 != 0,
+            })
+        }
+        6 => {
+            if data >> 13 != 0 { return Err(PackError::InvalidMatterWord); }
+            let tag = tag_from_code((data & 0xf) as u8).ok_or(PackError::InvalidMatterWord)?;
+            if tag.arity() > 2 { return Err(PackError::InvalidMatterWord); }
+            let principal = Dir::from_code(((data >> 4) & 0b111) as u8)
+                .ok_or(PackError::InvalidMatterWord)?;
+            let ends = FacePair::from_code(((data >> 8) & 0xf) as u8)
+                .ok_or(PackError::InvalidMatterWord)?;
+            if !ends.contains(principal) { return Err(PackError::InvalidMatterWord); }
+            Ok(Matter::GuestLink {
+                tag,
+                principal,
+                plane: ((data >> 7) & 1) as u8,
+                ends,
+                twist: (data >> 12) & 1 != 0,
             })
         }
         _ => Err(PackError::InvalidMatterWord),
@@ -805,6 +884,72 @@ mod tests {
         roundtrip(Matter::Empty, Control::Contest {
             source: Dir::D, stable: U4::new(15).unwrap(), epoch: true,
         });
+    }
+
+    #[test]
+    fn every_guest_geometry_roundtrips() {
+        for tag in crate::rules::ALL_TAGS.into_iter().filter(|tag| tag.arity() <= 2) {
+            for a in DIRS {
+                for b in DIRS.into_iter().filter(|b| *b != a) {
+                    for c in DIRS.into_iter().filter(|c| *c != a && *c != b) {
+                        for plane in 0..2 {
+                            for twist in [false, true] {
+                                for deep in [false, true] {
+                                    roundtrip(Matter::GuestZip {
+                                        tag, plane, trunk: a, branches: [b, c], twist, deep,
+                                    }, Control::Idle);
+                                }
+                                roundtrip(Matter::GuestLink {
+                                    tag,
+                                    principal: a,
+                                    plane,
+                                    ends: FacePair::new(a, b).unwrap(),
+                                    twist,
+                                }, Control::Idle);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_guests_are_rejected() {
+        let zip = |tag: Tag, plane: u8| Matter::GuestZip {
+            tag, plane, trunk: Dir::E, branches: [Dir::N, Dir::S], twist: false, deep: false,
+        };
+        // Arity-three tags may not ride.
+        assert_eq!(CellWord::pack(DecodedCell {
+            matter: zip(Tag::F, 0), ..DecodedCell::default()
+        }), Err(PackError::InvalidAgentGeometry));
+        // Plane is one bit.
+        assert_eq!(CellWord::pack(DecodedCell {
+            matter: zip(Tag::L, 2), ..DecodedCell::default()
+        }), Err(PackError::InvalidAgentGeometry));
+        // Bad zipper geometry (branch equals trunk).
+        assert_eq!(CellWord::pack(DecodedCell {
+            matter: Matter::GuestZip {
+                tag: Tag::L, plane: 0, trunk: Dir::E, branches: [Dir::E, Dir::S],
+                twist: false, deep: false,
+            },
+            ..DecodedCell::default()
+        }), Err(PackError::InvalidZipperGeometry));
+        // The ridden end must be one of the link's ends.
+        assert_eq!(CellWord::pack(DecodedCell {
+            matter: Matter::GuestLink {
+                tag: Tag::L, principal: Dir::N, plane: 0,
+                ends: FacePair::new(Dir::E, Dir::W).unwrap(), twist: false,
+            },
+            ..DecodedCell::default()
+        }), Err(PackError::InvalidAgentGeometry));
+        assert_eq!(CellWord::pack(DecodedCell {
+            matter: Matter::GuestLink {
+                tag: Tag::Pair, principal: Dir::E, plane: 0,
+                ends: FacePair::new(Dir::E, Dir::W).unwrap(), twist: false,
+            },
+            ..DecodedCell::default()
+        }), Err(PackError::InvalidAgentGeometry));
     }
 
     #[test]

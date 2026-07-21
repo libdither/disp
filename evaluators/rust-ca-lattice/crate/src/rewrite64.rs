@@ -94,7 +94,7 @@ pub fn rewrite_orientation_code(axis: Dir, side: Dir, lift: Dir) -> Option<(u8, 
     Some((side_index, lift_index != 0))
 }
 
-fn cold_link(a: Dir, b: Dir) -> Matter {
+pub fn cold_link(a: Dir, b: Dir) -> Matter {
     Matter::Link {
         ends: FacePair::new(a, b).expect("rewrite link needs distinct faces"),
         lanes: LaneCount::One,
@@ -305,11 +305,11 @@ pub fn apply_compiled_patch(
     fresh_sids
 }
 
-fn put_demo(grid: &mut Grid64, p: Pos, matter: Matter) {
+pub fn put_demo(grid: &mut Grid64, p: Pos, matter: Matter) {
     grid.set(p, DecodedCell { matter, ..DecodedCell::default() });
 }
 
-fn attach_demo_out(
+pub fn attach_demo_out(
     shadow: &mut Net,
     grid: &mut Grid64,
     owner: u32,
@@ -343,68 +343,71 @@ fn attach_demo_out(
     grid.observer_sid.insert(out_pos, out);
 }
 
-/// Closed A·F fixture used by the activation trace and locality tests. Every auxiliary
-/// cable ends at a private inert pad, so projection can be checked at either protocol end.
-pub fn apply_fork_fixture64(topo: Topo) -> (Grid64, Net, Pos) {
+/// Closed docked-pair fixture for any ROM pair, used by workshop validation and the suite.
+/// Consumer at the origin facing E, producer adjacent facing W; every auxiliary cable ends
+/// at a private inert pad (two-lane cable plus zipper for arity three, one-lane link for
+/// arity two, nothing for arity one), so projection can be checked at either protocol end.
+pub fn docked_fixture64(consumer: Tag, producer: Tag, topo: Topo) -> (Grid64, Net, Pos) {
     let mut shadow = Net::new();
-    let consumer = shadow.mk(Tag::A);
-    let producer = shadow.mk(Tag::F);
-    shadow.link(consumer, 0, producer, 0);
+    let c_sid = shadow.mk(consumer);
+    let p_sid = shadow.mk(producer);
+    shadow.link(c_sid, 0, p_sid, 0);
     let c = (0, 0, 0);
     let p = (1, 0, 0);
     let mut grid = Grid64::new(topo);
     put_demo(&mut grid, c, Matter::Agent {
-        tag: Tag::A,
+        tag: consumer,
         principal: Dir::E,
-        tail: Some(Dir::W),
+        tail: (consumer.arity() > 1).then_some(Dir::W),
         aux_flip: false,
     });
     put_demo(&mut grid, p, Matter::Agent {
-        tag: Tag::F,
+        tag: producer,
         principal: Dir::W,
-        tail: Some(Dir::E),
+        tail: (producer.arity() > 1).then_some(Dir::E),
         aux_flip: false,
     });
-    grid.observer_sid.insert(c, consumer);
-    grid.observer_sid.insert(p, producer);
+    grid.observer_sid.insert(c, c_sid);
+    grid.observer_sid.insert(p, p_sid);
 
-    for (at, ends) in [
-        ((-1, 0, 0), FacePair::new(Dir::E, Dir::W).unwrap()),
-        ((2, 0, 0), FacePair::new(Dir::E, Dir::W).unwrap()),
-    ] {
-        put_demo(&mut grid, at, Matter::Link {
-            ends,
-            lanes: LaneCount::Two,
-            twist: false,
-            hot: LaneMask::new(0).unwrap(),
-            cooldown: U3::new(0).unwrap(),
-            pull: [Pull::None; 2],
-        });
-    }
-    let consumer_zip = (-2, 0, 0);
-    let producer_zip = (3, 0, 0);
-    put_demo(&mut grid, consumer_zip, Matter::Zip {
-        trunk: Dir::E,
-        branches: [Dir::N, Dir::S],
-        twist: false,
-        hot: LaneMask::new(0).unwrap(),
-        cooldown: U3::new(0).unwrap(),
-        pull: [Pull::None; 2],
-    });
-    put_demo(&mut grid, producer_zip, Matter::Zip {
-        trunk: Dir::W,
-        branches: [Dir::N, Dir::S],
-        twist: false,
-        hot: LaneMask::new(0).unwrap(),
-        cooldown: U3::new(0).unwrap(),
-        pull: [Pull::None; 2],
-    });
-    attach_demo_out(&mut shadow, &mut grid, consumer, 1, consumer_zip, Dir::N, 2);
-    attach_demo_out(&mut shadow, &mut grid, consumer, 2, consumer_zip, Dir::S, 2);
-    attach_demo_out(&mut shadow, &mut grid, producer, 1, producer_zip, Dir::N, 2);
-    attach_demo_out(&mut shadow, &mut grid, producer, 2, producer_zip, Dir::S, 2);
+    let aux = |shadow: &mut Net, grid: &mut Grid64, sid: u32, tag: Tag, home: Pos, back: Dir| {
+        if tag.arity() == 1 { return; }
+        let behind = step(home, back);
+        if tag.arity() == 3 {
+            put_demo(grid, behind, Matter::Link {
+                ends: FacePair::new(back, back.opp()).unwrap(),
+                lanes: LaneCount::Two,
+                twist: false,
+                hot: LaneMask::new(0).unwrap(),
+                cooldown: U3::new(0).unwrap(),
+                pull: [Pull::None; 2],
+            });
+            let zip_at = step(behind, back);
+            put_demo(grid, zip_at, Matter::Zip {
+                trunk: back.opp(),
+                branches: [Dir::N, Dir::S],
+                twist: false,
+                hot: LaneMask::new(0).unwrap(),
+                cooldown: U3::new(0).unwrap(),
+                pull: [Pull::None; 2],
+            });
+            attach_demo_out(shadow, grid, sid, 1, zip_at, Dir::N, 2);
+            attach_demo_out(shadow, grid, sid, 2, zip_at, Dir::S, 2);
+        } else {
+            put_demo(grid, behind, cold_link(back, back.opp()));
+            attach_demo_out(shadow, grid, sid, 1, behind, back, 2);
+        }
+    };
+    aux(&mut shadow, &mut grid, c_sid, consumer, c, Dir::W);
+    aux(&mut shadow, &mut grid, p_sid, producer, p, Dir::E);
     grid.check_projection(&shadow);
     (grid, shadow, c)
+}
+
+/// Closed A·F fixture used by the activation trace and locality tests. Every auxiliary
+/// cable ends at a private inert pad, so projection can be checked at either protocol end.
+pub fn apply_fork_fixture64(topo: Topo) -> (Grid64, Net, Pos) {
+    docked_fixture64(Tag::A, Tag::F, topo)
 }
 
 #[cfg(test)]
