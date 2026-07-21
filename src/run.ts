@@ -8,10 +8,11 @@ import { prettyTree, type Tree } from "./eval/eager.js"
 import type { Session, EvalStats } from "./eval/types.js"
 import { getBackend, defaultBackendName } from "./eval/registry.js"
 import { emitBlob } from "./format/export.js"
+import { printValue, nameKey } from "./format/print.js"
 import { driveMain, findMain } from "./driver.js"
 
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string; line?: number }[] }
-interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: Session<Tree>; onDecls?: (decls: Decl[]) => void }
+interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: Session<Tree>; onDecls?: (decls: Decl[]) => void; exposeLocals?: boolean }
 
 export function runFile(path: string, options: RunOptions = {}): RunResult {
   // One fresh session per file: isolates the apply memo / stats (replacing the
@@ -21,32 +22,22 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
   const session = options.session ?? (getBackend(defaultBackendName).createSession() as unknown as Session<Tree>)
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
-  const decls = parseProgram(src, abs, { onItem: options.onParseItem, session })
+  const decls = parseProgram(src, abs, { onItem: options.onParseItem, session, exposeLocals: options.exposeLocals })
   options.onDecls?.(decls)
-  // Name registry for prettyTree: map each definition's hash-consed tree id to its
-  // name (first definition wins on id collisions — many atoms share one leaf id).
+  // Name registry: map each definition's tree (hash-cons id / handle) to its
+  // name (first definition wins on collisions — many atoms share one leaf id).
   // Includes opened/imported names, which land in `decls` as Defs in legacy mode.
-  const names = new Map<number, string>()
+  const names = new Map<unknown, string>()
   for (const d of decls) {
-    if (d.kind === "Def" && !names.has(d.tree.id)) names.set(d.tree.id, d.name)
+    if (d.kind === "Def" && !names.has(nameKey(d.tree))) names.set(nameKey(d.tree), d.name)
   }
-  // Failure printer. prettyTree expects a JS Tree (eager backend); on a
-  // handle backend (e.g. rust-eager-native, where handles are numbers) it
-  // garbage-decodes — every side printed as the first def's name. Route by
-  // representation: JS trees keep the named pretty; handles decode
-  // structurally via the Session ABI's classify (depth-capped).
-  const prettyViaClassify = (h: Tree, depth: number): string => {
-    if (!session.classify) return `<handle ${String(h)}>`
-    if (depth <= 0) return "…"
-    const c = session.classify(h)
-    switch (c.tag) {
-      case "leaf": return "t"
-      case "stem": return `t(${prettyViaClassify(c.child, depth - 1)})`
-      case "fork": return `t(${prettyViaClassify(c.left, depth - 1)})(${prettyViaClassify(c.right, depth - 1)})`
-    }
-  }
+  // Failure printer. prettyTree expects a JS Tree (eager backend); handle
+  // backends (e.g. rust-eager-native) decode via the Session ABI's classify
+  // with nat/string/record/name sugar (format/print.ts).
   const pretty = (h: Tree): string =>
-    (h !== null && typeof h === "object" && "id" in (h as object)) ? prettyTree(h, names) : prettyViaClassify(h, 12)
+    (h !== null && typeof h === "object" && "id" in (h as object))
+      ? prettyTree(h, names as Map<number, string>)
+      : printValue(session, h, { names })
   const result: RunResult = { defs: 0, tests: 0, passed: 0, failed: [] }
   let testIdx = 0
   for (const d of decls) {
@@ -79,8 +70,12 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   }
   const backendName = valOf("evaluator") ?? defaultBackendName
   const emitName = valOf("emit")
+  const printSpec = valOf("print")
+  // Block-internal probing (Def__local bindings): always on under --print, and
+  // opt-in via --locals for plain runs of probe files that reference internals.
+  const exposeLocals = printSpec != null || args.includes("--locals")
   const file = args.find((arg: string) => !arg.startsWith("--"))
-  if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
+  if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--print=<name,glob*,Def__local>] [--locals] [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
   try {
     const session = getBackend(backendName).createSession() as unknown as Session<Tree>
     // --emit=<binding>: compile the file and print the binding's self-contained
@@ -93,9 +88,43 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       console.log(emitBlob(session, def.tree))
       process.exit(0)
     }
+    // --print=<specs>: decoded human output for bindings — comma-separated names,
+    // `*` globs, and `Def__local` block-internal probes (any `__` in the spec
+    // turns on exposeLocals; see ParseProgramOptions).
+    if (printSpec) {
+      const abs = resolve(file)
+      // Bindings come from the item stream (imported defs and private lets
+      // included — decls carries only the root file's exports), then decls-only
+      // extras (the exposeLocals pseudo-defs). Same order feeds the name map.
+      const defs: { name: string; tree: Tree }[] = []
+      const onParseItem = (item: ParseItemStats) => {
+        if ((item.kind === "field" || item.kind === "let") && item.name && item.tree !== undefined)
+          defs.push({ name: item.name, tree: item.tree })
+      }
+      const decls = parseProgram(readFileSync(abs, "utf-8"), abs, { session, exposeLocals, onItem: onParseItem })
+      for (const d of decls) {
+        if (d.kind === "Def" && !defs.some(x => x.name === d.name)) defs.push({ name: d.name, tree: d.tree })
+      }
+      const names = new Map<unknown, string>()
+      for (const d of defs) {
+        if (!names.has(nameKey(d.tree))) names.set(nameKey(d.tree), d.name)
+      }
+      let missing = false
+      const seen = new Set<string>()
+      for (const spec of printSpec.split(",").map(s => s.trim()).filter(Boolean)) {
+        const re = new RegExp(`^${spec.split("*").map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`)
+        const matches = defs.filter(d => re.test(d.name) && !seen.has(d.name))
+        if (matches.length === 0 && !spec.includes("*")) { console.error(`print: binding '${spec}' not found in ${file}`); missing = true }
+        for (const m of matches) {
+          seen.add(m.name)
+          console.log(`${m.name} = ${printValue(session, m.tree, { names, skipName: m.name })}`)
+        }
+      }
+      process.exit(missing ? 1 : 0)
+    }
     const itemStats: ParseItemStats[] = []
     let decls: Decl[] = []
-    const r = runFile(file, { session, onDecls: ds => { decls = ds }, onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
+    const r = runFile(file, { session, exposeLocals, onDecls: ds => { decls = ds }, onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
     console.log(`defs: ${r.defs}, tests: ${r.tests}, passed: ${r.passed}, failed: ${r.failed.length} [${backendName}]`)
     if (showStats) {
       const s = (session.stats?.() ?? { steps: 0 }) as EvalStats

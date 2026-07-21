@@ -216,6 +216,11 @@ export type ParseProgramOptions = {
   // The evaluator session to run elaboration + verification on (any backend).
   // Defaults to the eager defaultSession.
   session?: Session<Tree>
+  // Probe access to block internals: a def whose value is a `{ let … }` block
+  // desugars to a spine of single-param redexes; when set, each local also
+  // compiles standalone (its prefix lets re-wrapped) and binds as
+  // `Parent__local` — printable and referenceable, CLI probing only.
+  exposeLocals?: boolean
 }
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
@@ -866,6 +871,24 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // kernel's `CheckerResult : Type := < Ok : Tree, Err >` types the engine's
         // existing constructor values rather than rebinding them. Bound through the
         // ordinary declaration path, so constructors export like any field.
+        if (options.exposeLocals && r.pushDef && it.value != null) {
+          const prefix: { name: string; val: Expr }[] = []
+          let cur: Expr = it.value
+          while (cur.tag === "app" && cur.f.tag === "binder" && cur.f.params.length === 1 && cur.f.params[0].name != null && prefix.length < 64) {
+            const step = { name: cur.f.params[0].name, val: cur.x }
+            let e: Expr = step.val
+            for (let i = prefix.length - 1; i >= 0; i--)
+              e = { tag: "app", f: { tag: "binder", params: [{ name: prefix[i].name, type: null }], body: e }, x: prefix[i].val }
+            try {
+              const tree = compileExpr(e, lookupEntry, resolveUse, sinks)
+              const local = `${it.name}__${step.name}`
+              define(local, { tree, type: null })
+              target.push({ kind: "Def", name: local, tree, guard: null })
+            } catch { /* a local that doesn't compile standalone is skipped */ }
+            prefix.push(step)
+            cur = cur.f.body
+          }
+        }
         if (r.pushDef && it.value != null) {
           let body: Expr = it.value
           while (body.tag === "binder") body = body.body
