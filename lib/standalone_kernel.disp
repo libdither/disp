@@ -261,12 +261,6 @@ Five := Point 5
 Six := Point 6
 Meta_Nat_to_Nat := Meta_Pi Nat_type ({_} -> Nat_type)
 Cert_Nat_to_Nat := Cert_Pi Nat_type ({_} -> Nat_type)
-Meta_NNN := Meta_Pi Nat_type ({_} -> Meta_Nat_to_Nat)
-Cert_NNN := Cert_Pi Nat_type ({_} -> Cert_Nat_to_Nat)
-Meta_Nat_to_Bool := Meta_Pi Nat_type ({_} -> Bool_type)
-Cert_Nat_to_Bool := Cert_Pi Nat_type ({_} -> Bool_type)
-Meta_Bool_to_Bool := Meta_Pi Bool_type ({_} -> Bool_type)
-Cert_Bool_to_Bool := Cert_Pi Bool_type ({_} -> Bool_type)
 Enum_Bool_to_Bool := Enum_Pi Bool_type ({_} -> Bool_type)
 Enum_Nat_to_Nat := Enum_Pi Nat_type ({_} -> Nat_type)
 Five_to_Nat := Enum_Pi Five ({_} -> Nat_type)
@@ -278,6 +272,33 @@ junk_raw := {n, base, step} -> base
 unblessed_rec := wait ({payload, x} -> (pair_fst payload) x) (pair junk_raw (pair Nat_type ({_} -> Bool_type)))
 elim_id := {n} -> nat_rec n zero ({k, ih} -> succ ih)
 
+pi_suite := {pi} -> {
+  let BB := pi Bool_type ({_} -> Bool_type)
+  cons (BB not_bool) (cons (BB ({b} -> b)) (cons (BB ({b} -> bool_rec b 5 true)) (cons (BB shift) nil)))
+}
+pi_expected := cons true (cons true (cons false (cons false nil)))
+
+fn_suite := {pi} -> {
+  let NN := pi Nat_type ({_} -> Nat_type)
+  let NNN := pi Nat_type ({_} -> NN)
+  cons (NN succ) (cons (NN ({n} -> n)) (cons (NN ({n} -> pair n n)) (cons (NNN add) (cons (NNN ({a} -> {b} -> a)) (cons (NNN ({a} -> {b} -> b)) nil)))))
+}
+fn_expected := cons true (cons true (cons false (cons true (cons true (cons true nil)))))
+
+elim_suite := {pi} -> {
+  let NN := pi Nat_type ({_} -> Nat_type)
+  let NB := pi Nat_type ({_} -> Bool_type)
+  cons (NN elim_id) (cons (NN ({n} -> succ (elim_id n))) (cons (NN ({n} -> elim_id (elim_id n))) (cons (NB elim_id) (cons (NN ({n} -> nat_rec n false ({k, ih} -> false))) nil))))
+}
+elim_expected := cons true (cons true (cons true (cons false (cons false nil))))
+
+guard_suite := {pi} -> {
+  let NB := pi Nat_type ({_} -> Bool_type)
+  let BB := pi Bool_type ({_} -> Bool_type)
+  cons (NB ({n} -> unblessed_rec n true ({k, ih} -> true))) (cons (BB ({b} -> elim_id b)) (cons (NB ({n} -> forge_hyp Bool_type Bool_type)) nil))
+}
+guard_expected := cons false (cons false (cons false nil))
+
 test Nat_type zero = true
 test Nat_type (succ (succ zero)) = true
 test Nat_type (t t) = false
@@ -288,54 +309,23 @@ test Five 6 = false
 test add 2 3 = 5
 test add 0 4 = 4
 
-test Meta_Nat_to_Nat succ = true
-test Cert_Nat_to_Nat succ = true
-test Meta_Nat_to_Nat ({n} -> n) = true
-test Cert_Nat_to_Nat ({n} -> n) = true
-test Meta_Nat_to_Nat ({n} -> pair n n) = false
-test Cert_Nat_to_Nat ({n} -> pair n n) = false
-test Meta_NNN add = true
-test Cert_NNN add = true
-test Meta_NNN ({a} -> {b} -> a) = true
-test Cert_NNN ({a} -> {b} -> a) = true
-test Meta_NNN ({a} -> {b} -> b) = true
-test Cert_NNN ({a} -> {b} -> b) = true
+test tree_eq (forge_hyp Nat_type Nat_type) (forge_hyp Nat_type Bool_type) = false
+test is_neutral (forge_hyp Nat_type Nat_type) = true
 
-test Meta_Nat_to_Nat elim_id = true
-test Cert_Nat_to_Nat elim_id = true
-test Meta_Nat_to_Nat ({n} -> succ (elim_id n)) = true
-test Cert_Nat_to_Nat ({n} -> succ (elim_id n)) = true
-test Meta_Nat_to_Nat ({n} -> elim_id (elim_id n)) = true
-test Cert_Nat_to_Nat ({n} -> elim_id (elim_id n)) = true
-test Meta_Nat_to_Bool elim_id = false
-test Cert_Nat_to_Bool elim_id = false
-test Meta_Nat_to_Nat ({n} -> nat_rec n false ({k, ih} -> false)) = false
-test Cert_Nat_to_Nat ({n} -> nat_rec n false ({k, ih} -> false)) = false
-test Meta_Nat_to_Bool ({n} -> unblessed_rec n true ({k, ih} -> true)) = false
-test Cert_Nat_to_Bool ({n} -> unblessed_rec n true ({k, ih} -> true)) = false
-
-test Meta_Bool_to_Bool not_bool = true
-test Cert_Bool_to_Bool not_bool = true
-test Meta_Bool_to_Bool ({b} -> b) = true
-test Cert_Bool_to_Bool ({b} -> b) = true
-test Meta_Bool_to_Bool ({b} -> bool_rec b 5 true) = false
-test Cert_Bool_to_Bool ({b} -> bool_rec b 5 true) = false
-test Meta_Bool_to_Bool ({b} -> elim_id b) = false
-test Cert_Bool_to_Bool ({b} -> elim_id b) = false
-
-test Meta_Nat_to_Bool ({n} -> forge_hyp Bool_type Bool_type) = false
-test Cert_Nat_to_Bool ({n} -> forge_hyp Bool_type Bool_type) = false
-test Meta_Bool_to_Bool shift = false
-test Cert_Bool_to_Bool shift = false
+test pi_suite Enum_Pi = pi_expected
+test pi_suite Meta_Pi = pi_expected
+test pi_suite Cert_Pi = pi_expected
+test fn_suite Meta_Pi = fn_expected
+test fn_suite Cert_Pi = fn_expected
+test elim_suite Meta_Pi = elim_expected
+test elim_suite Cert_Pi = elim_expected
+test guard_suite Meta_Pi = guard_expected
+test guard_suite Cert_Pi = guard_expected
 
 test Meta_Nat_to_Nat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = false
 test Cert_Nat_to_Nat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = true
 
-test Enum_Bool_to_Bool not_bool = true
-test Enum_Bool_to_Bool ({b} -> b) = true
-test Enum_Bool_to_Bool ({b} -> bool_rec b 5 true) = false
 test Enum_Bool_to_Bool ({b} -> elim_id b) = true
-test Enum_Bool_to_Bool shift = false
 test Enum_Nat_to_Nat succ = false
 test Five_to_Nat succ = true
 test Five_to_Six succ = true
