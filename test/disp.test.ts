@@ -1,9 +1,9 @@
 // Disp language tests: runs all *.test.disp files through the parser/driver.
 
 import { afterAll, describe, it, expect } from "vitest"
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs"
 import { createHash } from "node:crypto"
-import { dirname, join, resolve } from "node:path"
+import { join } from "node:path"
 import { runFile } from "../src/run.js"
 import { collectSessionRoots } from "../src/compile.js"
 import { getBackend, defaultBackendName } from "../src/eval/registry.js"
@@ -64,89 +64,34 @@ const [shardIdx, shardCount] = shardMatch ? [Number(shardMatch[1]), Number(shard
 if (shardIdx < 1 || shardIdx > shardCount) throw new Error(`DISP_TEST_SHARD out of range: ${shardSpec}`)
 const testFiles = findTestFiles(testsDir).sort().filter((_, i) => i % shardCount === shardIdx - 1)
 
-// --- Incremental cache: skip a lib file when nothing it depends on changed. ---
-// A file's verdict is a pure function of (toolchain, its transitive `use`
-// closure): toolchain = every src/*.ts, this harness, the lockfile, the
-// evaluator artifacts, node major, backend + mode flags; the closure = the
-// file plus everything reachable through its static `use "path"` imports.
-// Only PASSES are recorded (failures always re-run), and a file whose imports
-// can't all be resolved is never cached. One caveat: skipping files changes
-// which run pays memo warm-up, so step counts can shift — APPLY_BUDGET keeps
-// ~2x headroom over the largest pin. DISP_TEST_CACHE=0 bypasses everything
-// (CI's weekly scheduled run does this to catch cache-key drift).
-const CACHE_ON = process.env.DISP_TEST_CACHE !== "0"
+// --- Persistent reduction cache (rust-eager-native snapshots). ---
+// Every test always RUNS; what persists across runs is the evaluator's arena +
+// apply memo. Memo entries are calculus-level facts (`apply(f,x) = r` under the
+// fixed tree-calculus rules), so kernel/library/elaborator changes never
+// invalidate them — they just stop being hit. Only an evaluator change matters,
+// which the stamp encodes (a hash of the addon binary): a stale or foreign
+// snapshot is refused and the run proceeds cold. Per-shard snapshot files (the
+// shards run disjoint suites); DISP_MEMO_CACHE=0 disables.
+const MEMO_ON = process.env.DISP_MEMO_CACHE !== "0"
 const cacheDir = join(import.meta.dirname, "..", ".disp-test-cache")
-const manifestPath = join(cacheDir, "results.json")
-const sha = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex")
-
-function walkFiles(dir: string, keep: (name: string) => boolean): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...walkFiles(p, keep))
-    else if (keep(e.name)) out.push(p)
-  }
-  return out
-}
-const toolchainKey = (() => {
-  if (!CACHE_ON) return "off"
-  const root = join(import.meta.dirname, "..")
-  const parts: string[] = [process.version.split(".")[0], backendName, String(SHARE_SESSIONS), String(USE_SCOPE)]
-  const inputs = [
-    ...walkFiles(join(root, "src"), n => n.endsWith(".ts")).sort(),
-    join(root, "test", "disp.test.ts"),
-    join(root, "package-lock.json"),
-    ...(existsSync(join(root, "evaluators")) ? walkFiles(join(root, "evaluators"), () => true).filter(p => p.includes("/artifacts/")).sort() : []),
-  ]
-  for (const p of inputs) parts.push(p, sha(readFileSync(p)))
-  return sha(parts.join("\0"))
+const memoPath = join(cacheDir, `memo-${shardIdx}of${shardCount}.bin`)
+const memoStamp = (() => {
+  if (!MEMO_ON || !sharedSession?.loadSnapshot) return null
+  const artifact = join(import.meta.dirname, "..", "evaluators", "rust-eager", "artifacts", "rust_eager.node")
+  try { return `v1:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}` } catch { return null }
 })()
-// Transitive `use "path"` closure hash. Comments are stripped before matching
-// (docs quote import lines verbatim); a remaining match that doesn't resolve
-// throws, making the file uncacheable — the driver resolves imports relative
-// to the importing file's dir exactly like this, so a real import either
-// resolves here too or the test itself fails (and failures are never cached).
-const closureMemo = new Map<string, string>()
-function closureHash(abs: string, seen = new Set<string>()): string {
-  if (seen.has(abs)) return ""
-  seen.add(abs)
-  const memoized = closureMemo.get(abs)
-  if (memoized !== undefined) return memoized
-  const src = readFileSync(abs, "utf-8")
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
-  const parts = [sha(src)]
-  for (const m of code.matchAll(/(?:^|\s)use(?:\s+raw)?\s*"([^"]+)"/g)) {
-    const dep = resolve(dirname(abs), m[1])
-    if (!existsSync(dep)) throw new Error(`unresolved use '${m[1]}'`)
-    parts.push(closureHash(dep, seen))
-  }
-  const h = sha(parts.join("\0"))
-  closureMemo.set(abs, h)
-  return h
+if (memoStamp && existsSync(memoPath)) {
+  const t0 = Date.now()
+  const ok = sharedSession!.loadSnapshot!(memoPath, memoStamp)
+  console.log(`[disp] reduction cache ${ok ? `warm (${Date.now() - t0}ms load)` : "stale — running cold"}: ${memoPath}`)
 }
-const fileKeys = new Map<string, string | null>() // null = uncacheable
-for (const file of testFiles) {
-  try { fileKeys.set(file, closureHash(join(testsDir, file))) } catch { fileKeys.set(file, null) }
-}
-const manifest: { toolchain?: string; files?: Record<string, string> } = (() => {
-  try { return JSON.parse(readFileSync(manifestPath, "utf-8")) } catch { return {} }
-})()
-const priorFiles = CACHE_ON && manifest.toolchain === toolchainKey ? manifest.files ?? {} : {}
-const isCached = (file: string): boolean => {
-  const k = fileKeys.get(file)
-  return k != null && priorFiles[file] === k
-}
-const passedKeys = new Map<string, string>()
 
 describe("disp", () => {
   // Files share one session by default (see sharedSession above) so the kernel is
   // elaborated once for the whole suite. Set DISP_INDEPENDENT_SESSIONS=1 to give
   // each file a fresh session (the prior behavior — clean per-file memo/stats).
-  const cachedCount = testFiles.filter(isCached).length
-  if (cachedCount > 0)
-    console.log(`[disp] ${cachedCount}/${testFiles.length} files unchanged since last green run (cached) — DISP_TEST_CACHE=0 to force`)
   for (const file of testFiles) {
-    it.skipIf(isCached(file))(file, () => {
+    it(file, () => {
       // Session 3: defense-in-depth temporarily disabled — the elaborator's assertTypeCheck
       // path applies the public guarded type to its tree, which now hits q_guard_fn's entry
       // scan; intermediate elaborator trees may contain certified-neutral hypotheses the scan
@@ -179,15 +124,13 @@ describe("disp", () => {
       }
       expect(r.passed).toBe(r.tests)
       expect(r.passed).toBeGreaterThan(0)
-      const k = fileKeys.get(file)
-      if (k != null) passedKeys.set(file, k)
     })
   }
 
   // Report the arena footprint: with scoping, per-file peak stays bounded (kernel + one
-  // file); without it, the grow-only arena accumulates the whole suite. Then fold this
-  // run's passes into the cache manifest (merge: other shards' entries survive; entries
-  // under a different toolchain are dropped wholesale).
+  // file); without it, the grow-only arena accumulates the whole suite. Then persist the
+  // reduction cache (frozen ∪ live union) — a quiet point: every scope is closed, so the
+  // memo is already pruned to the durable module-level facts.
   afterAll(() => {
     if (scoped?.stats) {
       const s = scoped.stats()
@@ -195,11 +138,11 @@ describe("disp", () => {
       const free = s.free ?? finalFree
       console.log(`[scope] peakLen=${peakNodes} finalLen=${len} finalLive=${len - free} finalHoles=${free} scoping=${USE_SCOPE} backend=${backendName}`)
     }
-    if (CACHE_ON && passedKeys.size > 0) {
-      const files = { ...priorFiles }
-      for (const [f, k] of passedKeys) files[f] = k
+    if (memoStamp && sharedSession?.saveSnapshot) {
       mkdirSync(cacheDir, { recursive: true })
-      writeFileSync(manifestPath, JSON.stringify({ toolchain: toolchainKey, files }, null, 1))
+      const t0 = Date.now()
+      const ok = sharedSession.saveSnapshot(memoPath, memoStamp)
+      if (ok) console.log(`[disp] reduction cache saved (${Date.now() - t0}ms): ${memoPath}`)
     }
   })
 })

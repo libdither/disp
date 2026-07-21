@@ -65,7 +65,7 @@ impl Arena {
                     }
                 }
                 Node::Fork(a, b) => {
-                    if let Some(r) = self.memo.get(cur_f, cur_x) {
+                    if let Some(r) = self.memo_lookup(cur_f, cur_x) {
                         r
                     } else if let Node::Susp(sf, sa) = self.node(a) {
                         let av = self.force(sf, sa, a, budget)?;

@@ -47,6 +47,8 @@ interface EagerSessionNative {
   recognizeTreeEq(handle: number): void
   setMemoLimit(n: number): void
   clearCaches(): void
+  loadSnapshot(path: string, stamp: string): boolean
+  saveSnapshot(path: string, stamp: string): boolean
 }
 interface RustEagerNativeAddon {
   EagerSession: new () => EagerSessionNative
@@ -86,6 +88,12 @@ class RustEagerNativeSession implements Session<number> {
   // Not part of the Session ABI: drop re-derivable caches to relieve memory pressure
   // mid-session (the shared-session test harness calls this per file); live trees untouched.
   clearCaches(): void { this.#s.clearCaches() }
+
+  // Persistent reduction cache: memo entries are calculus-level facts, so only an
+  // evaluator change invalidates — callers stamp with a hash of the addon binary.
+  // Load is refused (false) on a non-pristine session or stamp/format mismatch.
+  loadSnapshot(path: string, stamp: string): boolean { return this.#s.loadSnapshot(path, stamp) }
+  saveSnapshot(path: string, stamp: string): boolean { return this.#s.saveSnapshot(path, stamp) }
 
   leaf(): number { return this.#s.leaf() }
   stem(child: number): number { return this.#s.stem(child) }

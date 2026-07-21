@@ -82,6 +82,19 @@ impl EagerSession {
         self.arena.forced.shrink_to_fit();
     }
 
+    // ── persistent reduction cache (Session.loadSnapshot / saveSnapshot) ──
+    /// Adopt a snapshot file as the frozen base tier (pristine sessions only; `stamp`
+    /// mismatch — a different evaluator build — is a clean refusal). 1 = loaded.
+    #[napi]
+    pub fn load_snapshot(&mut self, path: String, stamp: String) -> bool {
+        self.arena.load_snapshot(&path, stamp.as_bytes()).is_ok()
+    }
+    /// Persist the arena + intern + apply-memo union (frozen ∪ live) atomically.
+    #[napi]
+    pub fn save_snapshot(&mut self, path: String, stamp: String) -> bool {
+        self.arena.save_snapshot(&path, stamp.as_bytes()).is_ok()
+    }
+
     // ── interchange (Session.loadTernary / dumpTernary) — native strings, no ptr/len
     //    marshalling: napi copies the JS string in and the result String out directly. ──
     #[napi]

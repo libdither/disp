@@ -25,10 +25,6 @@ on:
       - 'tsconfig.json'
       - '.github/workflows/test.yml'
   workflow_dispatch:
-  schedule:
-    # weekly full run with the incremental cache bypassed — catches cache-key
-    # drift (a dependency the closure hash misses would otherwise hide)
-    - cron: '43 5 * * 2'
 
 concurrency:
   group: tests-${{ github.ref }}
@@ -114,18 +110,12 @@ jobs:
         with:
           name: evaluator-artifacts
           path: evaluators/
-      # Incremental result cache (test/disp.test.ts): a lib file re-runs only
-      # when its toolchain or transitive `use` closure changed. Keyed per shard;
-      # the sha suffix makes every run save, restore-keys picks the latest.
-      - uses: actions/cache@v4
-        if: github.event_name != 'schedule'
-        with:
-          path: .disp-test-cache
-          key: disp-test-cache-${{ matrix.shard }}-${{ github.sha }}
-          restore-keys: |
-            disp-test-cache-${{ matrix.shard }}-
+      # The persistent reduction cache (test/disp.test.ts) is a LOCAL iteration
+      # accelerator: snapshots run ~1.2 GB per shard, so shipping them through
+      # actions/cache costs about what the warm run saves and would evict the
+      # cargo caches. CI runs cold by design.
       - name: Test (shard ${{ matrix.shard }})
         env:
           DISP_TEST_SHARD: ${{ matrix.shard }}
-          DISP_TEST_CACHE: ${{ github.event_name == 'schedule' && '0' || '1' }}
+          DISP_MEMO_CACHE: '0'
         run: npm test -- test/disp.test.ts

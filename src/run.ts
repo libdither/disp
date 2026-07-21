@@ -1,8 +1,10 @@
 // Driver: load a .disp file, parse + compile, run tests.
 // Tests pass iff lhs.id === rhs.id (hash-cons identity).
 
-import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { parseProgram, type Decl, type ParseItemStats } from "./compile.js"
 import { prettyTree, type Tree } from "./eval/eager.js"
 import type { Session, EvalStats } from "./eval/types.js"
@@ -78,6 +80,18 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--print=<name,glob*,Def__local>] [--locals] [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
   try {
     const session = getBackend(backendName).createSession() as unknown as Session<Tree>
+    // Warm start from the test harness's persistent reduction cache when present
+    // (memo entries are calculus-level facts; the stamp pins the evaluator build).
+    // Read-only here — probes load warmth, only the harness writes it.
+    if (process.env.DISP_MEMO_CACHE !== "0" && session.loadSnapshot) {
+      const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+      const memoBin = join(root, ".disp-test-cache", "memo-1of1.bin")
+      const artifact = join(root, "evaluators", "rust-eager", "artifacts", "rust_eager.node")
+      if (existsSync(memoBin) && existsSync(artifact)) {
+        const stamp = `v1:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}`
+        if (session.loadSnapshot(memoBin, stamp)) console.error(`[memo] warm: ${memoBin}`)
+      }
+    }
     // --emit=<binding>: compile the file and print the binding's self-contained
     // ternary blob (defs inline by construction — EVALUATOR_PLAN §3.1/§4), then exit.
     if (emitName) {

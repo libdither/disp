@@ -22,6 +22,7 @@
 
 mod arena;
 mod codec;
+mod snapshot;
 // The wasm Session C-ABI (`tc_*`, thread_local arena). wasm-only: a native `.node` is one
 // shared dylib per process, so a global arena would alias every session — the native
 // backend owns its arena per `#[napi]` object instead (see `native`).

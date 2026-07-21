@@ -110,6 +110,14 @@ export interface Session<H = unknown> {
   beginScope?(): void
   endScope?(keep: H[]): void
 
+  // OPTIONAL persistent reduction cache (rust-eager-native): adopt/write a snapshot of
+  // the arena + apply memo. Memo entries are calculus-level facts (`apply(f,x)=r` under
+  // the fixed rules), so only an evaluator change invalidates — `stamp` encodes that
+  // (callers pass a hash of the evaluator binary). loadSnapshot is only legal on a
+  // pristine session and returns false on any mismatch (caller proceeds cold).
+  loadSnapshot?(path: string, stamp: string): boolean
+  saveSnapshot?(path: string, stamp: string): boolean
+
   // True iff handles are canonical (a === b implies equal(a,b)). The engine may
   // use this ONLY as an optimization gate (e.g. the run.ts name registry).
   readonly canonicalHandles: boolean

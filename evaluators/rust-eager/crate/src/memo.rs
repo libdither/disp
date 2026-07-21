@@ -62,6 +62,11 @@ impl Memo {
         self.limit = if n == 0 { usize::MAX } else { n };
     }
 
+    /// Iterate entries (for snapshot persistence).
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (u32, u32, u32)> + '_ {
+        self.map.iter().map(|(&(f, x), &r)| (f, x, r))
+    }
+
     /// Keep only entries all of whose ids (`f`, `x`, AND the result `r`) are still live, per
     /// the caller's predicate — for `Arena::end_scope`, which frees nodes a stale memo entry
     /// would otherwise point at. Pure cache, so dropping a still-valid-but-now-uncached entry

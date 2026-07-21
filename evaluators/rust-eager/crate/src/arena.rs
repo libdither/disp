@@ -10,6 +10,7 @@
 use hashbrown::HashTable;
 use rustc_hash::{FxHashMap, FxHasher};
 use crate::memo::Memo;
+use crate::snapshot::{self, FrozenBase};
 use std::hash::{Hash, Hasher};
 
 /// A producer node (tc-net.typ §Agents). `Leaf`/`Stem`/`Fork` are constructors;
@@ -112,6 +113,13 @@ pub(crate) struct Arena {
     /// before bumping. Hash-consing stays consistent: a freed slot's intern entry is removed,
     /// and a freed id is never live (it survived no `keep`), so reuse can't alias a live node.
     free_list: Vec<u32>,
+    /// Frozen base tier from a loaded snapshot (persistent reduction cache): ids
+    /// `0..base_len` read from `base`; the live `nodes`/`intern`/`memo` are the overlay
+    /// above it. The base behaves like an outermost never-closed scope — `end_scope`
+    /// never touches it (scope watermarks are always ≥ `base_len`), so its intern/memo
+    /// entries are permanently valid. `base_len` is 0 with no snapshot (identity offsets).
+    base: Option<FrozenBase>,
+    base_len: u32,
 }
 
 impl Arena {
@@ -127,6 +135,8 @@ impl Arena {
             ff: 0,
             scopes: Vec::new(),
             free_list: Vec::new(),
+            base: None,
+            base_len: 0,
         };
         // index 0: reserved null sentinel (never interned, never returned) so no valid
         // handle is JS-falsy — see LEAF_ID.
@@ -152,34 +162,53 @@ impl Arena {
     fn mk(&mut self, n: Node) -> u32 {
         let w = pack(n);
         let h = word_hash(w);
-        let Arena { nodes, intern, free_list, .. } = self;
-        if let Some(&id) = intern.find(h, |&id| nodes[id as usize] == w) {
+        // The frozen base tier resolves first: a structurally-identical node keeps its
+        // snapshot id, which is what makes persisted memo keys re-arise as hits.
+        if let Some(b) = &self.base {
+            if let Some(id) = b.intern_find(w, h) {
+                return id;
+            }
+        }
+        let Arena { nodes, intern, free_list, base, base_len, .. } = self;
+        let bl = *base_len;
+        let word = |id: u32| -> u64 {
+            if id < bl { base.as_ref().unwrap().nodes[id as usize] } else { nodes[(id - bl) as usize] }
+        };
+        if let Some(&id) = intern.find(h, |&id| word(id) == w) {
             return id;
         }
         // Reuse a slot freed by `end_scope` before extending the arena (so a scoped
         // workload's peak — not its cumulative allocation — bounds `nodes.len()`).
         let id = if let Some(reused) = free_list.pop() {
-            nodes[reused as usize] = w;
+            nodes[(reused - bl) as usize] = w;
             reused
         } else {
-            let id = nodes.len() as u32;
+            let id = bl + nodes.len() as u32;
             debug_assert!(id < (1u32 << 31), "node id exceeds the 31-bit packing limit");
             nodes.push(w);
             id
         };
-        intern.insert_unique(h, id, |&id| word_hash(nodes[id as usize]));
+        let Arena { nodes, intern, base, base_len, .. } = self;
+        let bl = *base_len;
+        intern.insert_unique(h, id, |&id| {
+            word_hash(if id < bl { base.as_ref().unwrap().nodes[id as usize] } else { nodes[(id - bl) as usize] })
+        });
         id
     }
 
     // ── term algebra (Session.leaf / stem / fork + the lazy susp) ──
     #[inline]
     pub(crate) fn node(&self, id: u32) -> Node {
-        unpack(self.nodes[id as usize])
+        unpack(if id < self.base_len {
+            self.base.as_ref().unwrap().nodes[id as usize]
+        } else {
+            self.nodes[(id - self.base_len) as usize]
+        })
     }
     /// Current node high-water (interned count) — the watermark backend's baseline source.
     #[inline]
     pub(crate) fn node_count(&self) -> u32 {
-        self.nodes.len() as u32
+        self.base_len + self.nodes.len() as u32
     }
     /// Reusable holes freed by `end_scope` (live nodes = `node_count - free_count`). A
     /// non-moving collector can't lower `node_count` below a surviving top node, but these
@@ -205,7 +234,7 @@ impl Arena {
     /// Open a reclamation scope: remember the current node high-water. Everything allocated
     /// after this is reclaimable by the matching `end_scope` unless reachable from its `keep`.
     pub(crate) fn begin_scope(&mut self) {
-        self.scopes.push(self.nodes.len() as u32);
+        self.scopes.push(self.node_count());
     }
 
     /// Close the innermost scope: reclaim every node allocated in it that is NOT reachable
@@ -220,7 +249,7 @@ impl Arena {
             Some(b) => b,
             None => return,
         };
-        let top = self.nodes.len() as u32;
+        let top = self.node_count();
         if top <= base {
             return; // nothing allocated in the scope
         }
@@ -250,7 +279,8 @@ impl Arena {
             visit!(self.tree_eq_id);
         }
         while let Some(id) = work.pop() {
-            match unpack(self.nodes[id as usize]) {
+            // In-scope ids only (>= base >= base_len), so plain overlay reads.
+            match unpack(self.nodes[(id - self.base_len) as usize]) {
                 Node::Leaf => {}
                 Node::Stem(c) => visit!(c),
                 Node::Fork(l, r) => {
@@ -277,11 +307,72 @@ impl Arena {
                 self.free_list.push(id);
             }
         }
-        self.nodes.truncate(new_top as usize);
+        self.nodes.truncate((new_top - self.base_len) as usize);
         // A node id survives iff it is below base (permanent) or a marked survivor.
         let live = |id: u32| id < base || (id < new_top && marked[(id - base) as usize]);
         self.intern.retain(|id| live(*id));
         self.memo.retain(|id| live(id)); // drop only entries touching freed nodes
         self.forced.retain(|&k, v| live(k) && live(*v));
+    }
+
+    // ── persistent reduction cache (snapshot load/save) ──
+    /// Tiered memo lookup: the frozen tier's facts, then the live map.
+    #[inline]
+    pub(crate) fn memo_lookup(&mut self, f: u32, x: u32) -> Option<u32> {
+        if let Some(b) = &self.base {
+            if let Some(r) = b.memo_get(f, x) {
+                return Some(r);
+            }
+        }
+        self.memo.get(f, x)
+    }
+
+    /// Adopt a snapshot as the frozen base tier. Only legal on a pristine session
+    /// (bootstrap nodes only, no scopes/holes); the snapshot's bootstrap prefix is
+    /// verified so LEAF/tt/ff ids line up by construction. Returns (nodes, memo entries).
+    pub(crate) fn load_snapshot(&mut self, path: &str, stamp: &[u8]) -> Result<(u32, u32), String> {
+        if self.base.is_some() || !self.scopes.is_empty() || !self.free_list.is_empty() {
+            return Err("session is not pristine".into());
+        }
+        if self.nodes.len() != 3 || self.tree_eq_id != 0 {
+            return Err("session already has interned nodes".into());
+        }
+        let b = snapshot::load(path, stamp)?;
+        if b.nodes.len() < 3
+            || b.nodes[LEAF_ID as usize] != pack(Node::Leaf)
+            || b.nodes[self.ff as usize] != pack(Node::Stem(LEAF_ID))
+        {
+            return Err("snapshot bootstrap prefix mismatch".into());
+        }
+        let memo_n = b.memo_len();
+        self.base_len = b.node_len();
+        self.base = Some(b);
+        self.nodes.clear();
+        self.intern.clear();
+        Ok((self.base_len, memo_n))
+    }
+
+    /// Persist the whole arena (frozen base + overlay) with the union of frozen and
+    /// live intern/memo tables. Callers snapshot at a quiet point (post-endScope), so
+    /// the memo is already pruned to live facts. Returns (nodes, memo entries).
+    pub(crate) fn save_snapshot(&mut self, path: &str, stamp: &[u8]) -> Result<(u32, u32), String> {
+        let count = self.node_count();
+        let mut words: Vec<u64> = Vec::with_capacity(count as usize);
+        if let Some(b) = &self.base {
+            words.extend_from_slice(&b.nodes);
+        }
+        words.extend_from_slice(&self.nodes);
+        let frozen_intern: Vec<u32> = self.base.as_ref().map(|b| b.intern_iter().collect()).unwrap_or_default();
+        let live_intern: Vec<u32> = self.intern.iter().copied().collect();
+        let frozen_memo: Vec<(u32, u32, u32)> =
+            self.base.as_ref().map(|b| b.memo_iter().collect()).unwrap_or_default();
+        let live_memo: Vec<(u32, u32, u32)> = self.memo.iter().collect();
+        snapshot::save(
+            path,
+            stamp,
+            words,
+            frozen_intern.into_iter().chain(live_intern),
+            frozen_memo.into_iter().chain(live_memo),
+        )
     }
 }
