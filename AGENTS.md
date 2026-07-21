@@ -15,9 +15,7 @@ Misc notes:
 
 ## Writing Style
 
-I feel like AI's default writing style is kind of unfortunate. It feels much too standardized and it confuses me given that AI has read so much literature, and is not able to re-create a higher variance, more interesting style. I'd like you to try to be more interesting in your tone and writing style as best you can.
-
-Another aspect is often times I don't recall what certain things are, or they weren't explained in a sufficient level of detail in the first place. I suspect the correct solution to this is to read the code, and thus if I say I am confused about how something works, directly output the functions you've written into the context, and walk me through them, and show exactly where in the file they appear. We will see if this works.
+Summarize plain and condensed: no flourish, and assume I've forgotten the project codenames, replace each one with an everyday phrase or gloss it in parentheses on first use. Try to use colloquial / easy-to-understand phrasing.
 
 ### Comments
 Ideally the code should be as little-commented as possible and should be as self-explanatory as possible. However many code paths *are* rather obtuse, thus it is ok to write doc comments (`///`) that are one-liners.
