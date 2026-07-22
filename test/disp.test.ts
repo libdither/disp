@@ -111,10 +111,12 @@ describe("disp", () => {
       else scoped?.clearCaches?.()
       finalNodes = scoped?.stats?.().nodes ?? finalNodes
       finalFree = scoped?.stats?.().free ?? finalFree
-      // Live progress: vitest streams stdout as it arrives but prints its own
-      // per-FILE line only when this whole suite file ends — without this, a
-      // long run is indistinguishable from a hang.
-      console.log(`[disp] ${((Date.now() - t0) / 1000).toFixed(1)}s ${file} (${r.passed}/${r.tests})${r.failed.length > 0 ? " FAILED" : ""}`)
+      // Live progress. Vitest end-loads ALL worker console output in non-TTY runs
+      // (flushed when the whole suite FILE completes — and this one file wraps the
+      // ~80-file serial suite), so a long run is indistinguishable from a hang.
+      // Raw stderr writes bypass that: worker_threads forward the raw stream and
+      // vitest patches console, not the fd.
+      process.stderr.write(`[disp] ${((Date.now() - t0) / 1000).toFixed(1)}s ${file} (${r.passed}/${r.tests})${r.failed.length > 0 ? " FAILED" : ""}\n`)
       if (r.failed.length > 0) {
         // Each failure names its source line (stamped on the equation item by the
         // tokenizer's line tracking); file:line is clickable in most terminals.

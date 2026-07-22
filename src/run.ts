@@ -1,7 +1,7 @@
 // Driver: load a .disp file, parse + compile, run tests.
 // Tests pass iff lhs.id === rhs.id (hash-cons identity).
 
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -82,12 +82,18 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
     const session = getBackend(backendName).createSession() as unknown as Session<Tree>
     // Warm start from the test harness's persistent reduction cache when present
     // (memo entries are calculus-level facts; the stamp pins the evaluator build).
-    // Read-only here — probes load warmth, only the harness writes it.
+    // Read-only here — probes load warmth, only the harness writes it. Any shard's
+    // snapshot helps (each contains the kernel's facts); newest wins.
     if (process.env.DISP_MEMO_CACHE !== "0" && session.loadSnapshot) {
       const root = join(dirname(fileURLToPath(import.meta.url)), "..")
-      const memoBin = join(root, ".disp-test-cache", "memo-1of1.bin")
+      const cacheDir = join(root, ".disp-test-cache")
       const artifact = join(root, "evaluators", "rust-eager", "artifacts", "rust_eager.node")
-      if (existsSync(memoBin) && existsSync(artifact)) {
+      const memoBin = existsSync(cacheDir)
+        ? readdirSync(cacheDir).filter(f => /^memo-\d+of\d+\.bin$/.test(f))
+            .map(f => join(cacheDir, f))
+            .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0]
+        : undefined
+      if (memoBin && existsSync(artifact)) {
         const stamp = `v1:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}`
         if (session.loadSnapshot(memoBin, stamp)) console.error(`[memo] warm: ${memoBin}`)
       }
