@@ -71,8 +71,8 @@ sometimes an incomplete one.
 - `crate/src/oracle.rs` — the independent recursive normalizer.
 - `crate/src/lattice.rs` — positions, the six faces, topologies.
 - `crate/src/bin/dump-cascade.rs` — regenerates the player bundle.
-- `crate/src/bin/bench-cascade.rs`, `debug-cascade.rs`, `export-rules.rs` — timing
-  snapshot, parked-run census, `rules.json` export.
+- `crate/src/bin/bench-cascade.rs`, `debug-cascade.rs` — timing snapshot, parked-run
+  census.
 - `crate/tests/cascade_suite.rs` — the suite gate described above.
 - `crate/tests/stage1.rs` — the abstract net against the oracle: pins plus a 4000-term
   random differential with full ROM coverage.
