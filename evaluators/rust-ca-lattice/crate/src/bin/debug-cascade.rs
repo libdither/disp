@@ -3,9 +3,13 @@
 //! throwaway test files.
 //!
 //! Usage: cargo run --release --bin debug-cascade -- <preset|term>
-//!            [--discipline fifo|lifo|random|addr] [--budget N]
+//!            [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage]
 //! Presets: identity, fork, k, s-rule, k-chain, disp-t; or a term in the oracle's show()
 //! syntax, e.g. "@(F(L,L),L)".
+//!
+//! --why walks the relief decision tree for each blocked op and prints every refusing
+//! check; --kick re-wakes the whole parked run and continues; --triage combines them
+//! into one verdict per blocked op: genuine wedge, lost wake, or state-dependent.
 
 use rust_ca_lattice::blocklet::{layout, Op};
 use rust_ca_lattice::cascade::{rot_cell, rot_dir, Cell, EndPt, Grid2, Route, Site};
@@ -180,6 +184,7 @@ fn main() {
     let mut budget = 20_000_000u64;
     let mut why = false;
     let mut kick = false;
+    let mut triage = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -195,11 +200,12 @@ fn main() {
             "--budget" => budget = args.next().and_then(|v| v.parse().ok()).expect("--budget N"),
             "--why" => why = true,
             "--kick" => kick = true,
+            "--triage" => triage = true,
             _ => which = Some(a),
         }
     }
     let which = which.unwrap_or_else(|| {
-        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why]");
+        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage]");
         std::process::exit(2);
     });
     let term = preset(&which).or_else(|| parse_term(&which)).unwrap_or_else(|| {
@@ -232,8 +238,14 @@ fn main() {
         if complete { "COMPLETE" } else { "PARKED" }
     );
 
-    // --why probe requests collected during the census: (label, relief target, planned).
-    let mut probes: Vec<(String, Pos, Option<Cell>, Option<Pos>)> = vec![];
+    // --why probe requests collected during the census.
+    enum Probe {
+        /// Walk the relief decision tree at a target (with the requesting cursor as owner).
+        Evict { target: Pos, planned: Option<Cell>, owner: Option<Pos> },
+        /// Activate one parked cell (a declined dock, a gated walker) and see what it says.
+        Activate { at: Pos },
+    }
+    let mut probes: Vec<(String, Probe)> = vec![];
 
     let agents: Vec<(Pos, Site)> = r.grid.agents().collect();
     println!();
@@ -264,8 +276,42 @@ fn main() {
             for nd in DIRS {
                 println!("         nb {} {:?}: {}", nd.ch(), step(t, nd), full_site(&r.grid.site(step(t, nd))));
             }
-            probes.push((format!("walker {} self-relief at {p:?}", tag.name()), *p, None, None));
-            probes.push((format!("walker {} target relief at {t:?}", tag.name()), t, None, None));
+            probes.push((
+                format!("walker {} self-relief at {p:?}", tag.name()),
+                Probe::Evict { target: *p, planned: None, owner: None },
+            ));
+            probes.push((
+                format!("walker {} target relief at {t:?}", tag.name()),
+                Probe::Evict { target: t, planned: None, owner: None },
+            ));
+        }
+    }
+
+    // Facing principal pairs that have not docked: the dock declined (every roll ring
+    // blocked) or a gate refuses; probe by activating the producer.
+    for (p, site) in &agents {
+        let Cell::Agent { tag, principal, nursery: false, .. } = &site.cell else { continue };
+        if !tag.is_producer() {
+            continue;
+        }
+        let t = step(*p, principal.face);
+        let facing = r.grid.site(t);
+        if let Cell::Agent { tag: ctag, principal: cpr, nursery: false, .. } = &facing.cell {
+            if ctag.is_consumer()
+                && cpr.face == principal.face.opp()
+                && cpr.lane == principal.lane
+                && facing.cursor.is_none()
+            {
+                println!(
+                    "  facing pair ready to dock: {}·{} at {t:?}/{p:?} (declined or gated)",
+                    ctag.name(),
+                    tag.name()
+                );
+                probes.push((
+                    format!("declined dock {}·{} (activate producer at {p:?})", ctag.name(), tag.name()),
+                    Probe::Activate { at: *p },
+                ));
+            }
         }
     }
 
@@ -308,9 +354,11 @@ fn main() {
                 println!("      target:  {}", full_site(&r.grid.site(t)));
                 probes.push((
                     format!("place target at {t:?}"),
-                    t,
-                    Some(rot_cell(cell, c.axis, c.roll)),
-                    Some(*p),
+                    Probe::Evict {
+                        target: t,
+                        planned: Some(rot_cell(cell, c.axis, c.roll)),
+                        owner: Some(*p),
+                    },
                 ));
                 for nd in DIRS {
                     println!("      nb {} {:?}: {}", nd.ch(), step(t, nd), full_site(&r.grid.site(step(t, nd))));
@@ -398,14 +446,23 @@ fn main() {
     // SUCCEEDS on the parked state means relief is possible right now, which points at a
     // lost wake rather than a genuine wedge.
     if why {
-        for (label, target, planned, owner) in probes {
+        for (label, probe) in &probes {
             println!();
             println!("why-probe: {label}");
             let mut scratch = Runner::new(r.grid.clone(), Net::new(), Discipline::Fifo);
             scratch.explain = Some(vec![]);
-            scratch.relief_owner = owner;
-            scratch.relief_root = owner.map(|_| target);
-            let ok = scratch.try_evict(target, planned.as_ref(), 2);
+            let ok = match probe {
+                Probe::Evict { target, planned, owner } => {
+                    scratch.relief_owner = *owner;
+                    scratch.relief_root = owner.map(|_| *target);
+                    scratch.try_evict(*target, planned.as_ref(), 2)
+                }
+                Probe::Activate { at } => {
+                    let before = scratch.grid.cells.clone();
+                    scratch.activate(*at);
+                    scratch.grid.cells != before
+                }
+            };
             for line in scratch.explain.take().unwrap_or_default() {
                 println!("  {line}");
             }
@@ -420,6 +477,72 @@ fn main() {
         }
     } else if !probes.is_empty() {
         println!("({} blocked op(s); rerun with --why for the relief decision trace)", probes.len());
+    }
+
+    // --triage: probe each blocked op on a scratch copy (is relief possible at the
+    // parked state?), then kick the run once (does anything actually progress?), and
+    // cross the two into one verdict per op.
+    if triage {
+        let verdicts: Vec<bool> = probes
+            .iter()
+            .map(|(_, probe)| {
+                let mut scratch = Runner::new(r.grid.clone(), Net::new(), Discipline::Fifo);
+                match probe {
+                    Probe::Evict { target, planned, owner } => {
+                        scratch.relief_owner = *owner;
+                        scratch.relief_root = owner.map(|_| *target);
+                        scratch.try_evict(*target, planned.as_ref(), 2)
+                    }
+                    Probe::Activate { at } => {
+                        let before = scratch.grid.cells.clone();
+                        scratch.activate(*at);
+                        scratch.grid.cells != before
+                    }
+                }
+            })
+            .collect();
+        let before = (r.grid.rewrites, r.grid.transport, r.grid.cells.clone());
+        let live: Vec<Pos> = r.grid.cells.keys().copied().collect();
+        for p in live {
+            r.wake(p);
+        }
+        let quiet = r.run(budget);
+        // Semantic progress only; pure field churn (pressure decay) does not count.
+        let progressed = r.grid.rewrites > before.0 || r.grid.transport > before.1;
+        let churn = r.grid.cells != before.2;
+        println!();
+        if probes.is_empty() {
+            println!(
+                "triage: no blocked ops decoded; kick {}",
+                if progressed {
+                    "PROGRESSED (undecoded lost wake somewhere)"
+                } else if churn {
+                    "made no semantic progress (field churn only)"
+                } else {
+                    "made no progress"
+                }
+            );
+        }
+        for ((label, ..), possible) in probes.iter().zip(&verdicts) {
+            let verdict = match (possible, progressed) {
+                (false, false) => "GENUINE WEDGE (relief refused, kick inert)",
+                (true, true) => "LOST WAKE (relief possible, kick progressed)",
+                (true, false) => "STATE-DEPENDENT (relief possible in isolation; live path re-blocks)",
+                (false, true) => "STATE-DEPENDENT (this op refused, but others progressed)",
+            };
+            println!("triage: {label} -> {verdict}");
+        }
+        let read = r.shadow.readback(r.shadow.get(out).ports[0]);
+        let complete = read.is_some() && read == oracle_nf;
+        println!(
+            "triage: after kick: quiescent {} rewrites {} transport {} out {} [{}]",
+            if quiet { "yes" } else { "no" },
+            r.grid.rewrites,
+            r.grid.transport,
+            read.as_ref().map(show).unwrap_or_else(|| "unreadable".into()),
+            if complete { "COMPLETE" } else { "PARKED" }
+        );
+        return;
     }
 
     // --kick: wake every live cell of the parked run and keep going. Progress after a

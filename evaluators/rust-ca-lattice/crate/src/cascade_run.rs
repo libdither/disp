@@ -179,7 +179,8 @@ impl Runner {
 
     // ------------------------------------------------------------ transitions
 
-    fn activate(&mut self, p: Pos) {
+    /// One cell activation (public so the census can probe a parked cell directly).
+    pub fn activate(&mut self, p: Pos) {
         let site = self.grid.site(p);
         if site.claim {
             return;
