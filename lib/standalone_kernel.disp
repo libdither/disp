@@ -231,6 +231,7 @@ CertPi := {
   let shim_marker := fix ({sm, E, scr} ->
     if (is_neutral scr) { wait shim_collect (pair E scr) } else { (elim_raw E) (wait sm E) scr })
   let is_shim := {v} -> and (is_fork v) (or (tree_eq (pair_fst v) (sig_of shim_marker)) (or (tree_eq (pair_fst v) (sig_of shim_collect)) (tree_eq (pair_fst v) (sig_of shim_fire))))
+  let guarded_is_neutral := {_v} -> false
   let certify_children := ({cf, legit, node} ->
     triage
       node
@@ -247,6 +248,8 @@ CertPi := {
   let certify := (fix ({cf, legit, node} ->
     if (is_shim node) {
       node
+    } else if (tree_eq node is_neutral) {
+      guarded_is_neutral
     } else if (tree_eq node hyp_sig) {
       invalid node
     } else if (is_neutral node) {
@@ -333,3 +336,15 @@ guard_suite := {Pi} -> {
   ({ unblessed := NB ({n} -> unblessed_rec n true ({k, ih} -> true)), cross_type := BB ({b} -> elim_id b), forged_return := NB ({n} -> forge_hyp BoolType BoolType) })
 }
 guard_expected := { unblessed := false, cross_type := false, forged_return := false }
+
+reader_suite := {Pi} -> {
+  let BB := Pi BoolType ({_} -> BoolType)
+  ({ sniff_junk := BB ({b} -> if (is_neutral b) { b } else { 5 }), concrete_read := BB ({b} -> if (is_neutral zero) { 5 } else { not_bool b }) })
+}
+reader_expected := { sniff_junk := false, concrete_read := true }
+
+dep_suite := {Pi, D} -> {
+  let DP := Pi D ({n} -> Point (succ n))
+  ({ successor := DP succ, identity := DP ({n} -> n), doubled := DP ({n} -> succ (succ n)) })
+}
+dep_expected := { successor := true, identity := false, doubled := false }

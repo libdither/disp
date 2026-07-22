@@ -50,3 +50,27 @@ sniff_motive := {k} -> if (is_neutral k) { BoolType } else { NatType }
 test EnumPi BoolType sniff_motive ({b} -> 5) = true
 test MetaPi BoolType sniff_motive ({b} -> 5) = false
 test CertPi BoolType sniff_motive ({b} -> 5) = false
+
+test reader_suite EnumPi = reader_expected
+test reader_suite MetaPi = reader_expected
+test reader_suite CertPi = reader_expected
+
+honest_sniffer := {b} -> if (is_neutral b) { true } else { not_bool b }
+test EnumBoolToBool honest_sniffer = true
+test MetaPi BoolType ({_} -> BoolType) honest_sniffer = false
+test CertPi BoolType ({_} -> BoolType) honest_sniffer = true
+
+test CertPi BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
+
+rebuilt_sniffer := {b} -> if (tree_eq (pair_fst b) (t (pair_snd (pair b sig_child)))) { b } else { 5 }
+test EnumBoolToBool rebuilt_sniffer = false
+test MetaPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
+test CertPi BoolType ({_} -> BoolType) rebuilt_sniffer = true
+
+test dep_suite EnumPi Five = dep_expected
+test dep_suite MetaPi NatType = dep_expected
+test dep_suite CertPi NatType = dep_expected
+
+test EnumPi Five ({n} -> Point n) ({n} -> n) = true
+test MetaPi NatType ({n} -> Point n) ({n} -> n) = false
+test CertPi NatType ({n} -> Point n) ({n} -> n) = false
