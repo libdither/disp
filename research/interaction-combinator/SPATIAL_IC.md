@@ -807,7 +807,7 @@ at deep chains, and the router is §5.3's scheduler in miniature. Build order: C
 
 ## 13. E4 — the CA simulator, build spec
 
-Expanded into a concrete, buildable specification in `LOCAL_CA_DESIGN.md` (von Neumann
+Expanded into a concrete, buildable specification in `CASCADE_CELL_DESIGN.md` (von Neumann
 lattice with T₂ split, wires as ι-forwarder agents, typing and GC as one-cell-per-tick
 signals, Margolus scheduling, and tension and allocation-pressure unified into one potential
 whose descent is the candidate liveness function). The ten items below are its skeleton.

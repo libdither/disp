@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8">
-<title>rust-ca-lattice — Cell64 suite replay</title>
+<title>rust-ca-lattice — cascade replay</title>
 <style>
   :root { --bg:#0b0e14; --fg:#c8d3e0; --accent:#56c8ff; --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.5 monospace; }
@@ -107,7 +107,7 @@
     </div>
   </div>
   <div id="side">
-    <h3>CELL64 SUITE — ACTIVATION REPLAY</h3>
+    <h3>CASCADE SUBSTRATE — GENERATION REPLAY</h3>
     <details><summary>model + trace semantics</summary><div class="note">This page replays
     recorded engine state; it never simulates. Every lattice site is one 64-bit word —
     <b>matter 20 + control 28 + χ 8 + σ 8</b> — updated in place by the six-neighbor center
@@ -176,11 +176,12 @@
   </div>
 </div>
 <script>
-// A stable revision query lets browsers cache the generated bundle between reloads.
-document.write('<script src="lattice_suite.js?v=cell64-suite-1"><\/script>');
+// A stable revision query lets browsers cache the generated bundles between reloads.
+// The cascade bundle is the trace registry.
+document.write('<script src="lattice_cascade.js?v=cascade-1"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-21 · Cell64 suite replay";
+const PLAYER_VERSION = "2026-07-22 · cascade replay";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -568,7 +569,7 @@ function bitBar(parent, bits) {
   bar.className = "bitbar";
   if (!bits) {
     total.className = "bitmain"; total.textContent = "PACKED WIDTH NOT RECORDED";
-    parts.className = "bitparts"; parts.textContent = "Load a Cell64 trace to inspect exact state words.";
+    parts.className = "bitparts"; parts.textContent = "Load a cascade trace to inspect exact state words.";
     bar.append(total, parts); parent.append(bar); return;
   }
   total.className = "bitmain"; total.textContent = `CELL ${bits.total} bits`;
@@ -1221,7 +1222,7 @@ function inflatePackedTrace(trace) {
 
 function validateTraceMetadata(t, name) {
   if (!t || t.schema_version !== 4)
-    throw new Error(`trace ${name} requires schema version 4 (packed Cell64)`);
+    throw new Error(`trace ${name} requires schema version 4`);
   if (typeof t.engine_revision !== "string" || typeof t.topo !== "string" ||
       typeof t.readback !== "string" || !Array.isArray(t.frames) || t.frames.length === 0)
     throw new Error(`trace ${name} is missing required trace metadata`);
