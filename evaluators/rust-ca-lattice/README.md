@@ -25,10 +25,13 @@ Three drivers run the same transition rules:
   checks, and the corridor loader.
 - `cascade_par.rs`: N threads over one shared `AtomicU64` array. Mutual exclusion is the
   word's claim bit, compare-and-swapped in address order over a transition's write set, so
-  contention exists only where two wake fronts touch: measured at 0 conflicts for disjoint
-  cascades and about 0.5 percent of commits under deliberately crossing traffic at 8
-  threads, with bit-identical results. Movement, heat, swaps, and fusion docks run
-  parallel; blocklet growth stays serial for now.
+  contention exists only where two wake fronts touch: 0 conflicts for disjoint cascades,
+  low single-digit percent under deliberately crossing traffic at 8 threads, with
+  bit-identical results. Movement, heat, swaps, docks, and blocklet growth (place, hop,
+  resolve, finalize) all run parallel; the full atlas grows through the claim machinery
+  bit-identically across 1/2/4/8 threads. Retraction, seed arbitration, and congestion
+  relief stay serial: a blocked op waits, so congested runs park earlier here than on the
+  serial runner.
 - `cascade_gather.rs`: the GPU/shader lowering. A repeating six-phase domino schedule
   (axis times parity) partitions the lattice into disjoint pairs; each phase is one pure
   gather into a double buffer, deterministic and bit-identical run to run. It shares the
@@ -46,13 +49,19 @@ bundle, one frame per generation, so a displayed tick is the maximal simultaneou
 wavefront, and each trace's note reports its measured parallel width. `bench-cascade`
 prints the timing snapshot and `debug-cascade` dumps a parked run's census.
 
-The relief rung landed: growth-blocked cells evict cold routes (corner-cut, straight
-shift, out-of-plane bracket), demand looks and wakes through guests, hairpins collapse by
-truncation, and consumers can be swap partners. The remaining frontier, pinned by
-`frontier_deep_reductions` at 1 of 5 deep terms complete: parked runs wedge where an
-eviction is itself boxed into a crowded corner; the next levers are recursive room-making
-and proactive slack retraction. The substrate never computes a wrong answer, only
-sometimes an incomplete one.
+Two relief rungs have landed. The first: growth-blocked cells evict cold routes
+(corner-cut, straight shift, out-of-plane bracket), demand looks and wakes through
+guests, hairpins collapse by truncation, and consumers can be swap partners. The second:
+eviction recurses into its own blockers (full or lane-starved side cells, continuation
+cells, and agents shedding their own passthroughs; blocked walkers, docks, and detours
+relieve their own cells with the same primitive), U-turn folds splice out, cold shift
+detours retract straight, a last-resort pass may move hot routes with their heat, and
+colliding blocklets arbitrate by seed address (the loser retracts and re-docks).
+Cooldown stamps damp displacement ping-pong. The frontier, pinned by
+`frontier_deep_reductions` at 2 of 5 deep terms complete: the remaining parked runs are
+corridor knots where a walker sits over a doubled hot foreign cable, and a wedged
+growth chain behind it. The substrate never computes a wrong answer, only sometimes an
+incomplete one.
 
 ## Source layout
 

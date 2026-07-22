@@ -1,4 +1,4 @@
-//! The gather driver: the GPU/shader lowering of the cascade movement layer. Time is a
+//! The gather driver: the GPU/shader lowering of the cascade transition layer. Time is a
 //! repeating six-phase domino schedule: phase (axis, parity) partitions the lattice into
 //! disjoint adjacent pairs along that axis, and every pair (plus every single cell, for
 //! the heat wave) is rewritten by one pure function of its own words. No claim bits, no

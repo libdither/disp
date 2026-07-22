@@ -3,10 +3,12 @@
 //! address order over a transition's write set, so claims are deadlock-free and contention
 //! exists only where two wake fronts touch the same cells: two cascades meeting.
 //!
-//! Scope: the high-frequency transitions run fully parallel (heat waves, walks including
-//! truncation, swaps, and fusion docks whose write set is the pair). Blocklet growth is
-//! rare by comparison and stays on the serial runner; `run_movement` is the parallel
-//! phase a full evaluator would interleave between fires.
+//! Scope: heat waves, walks (including truncation), swaps, docks, and blocklet growth
+//! (place, hop, resolve, finalize) all run parallel; every growth step is a one- or
+//! two-cell claimed transaction like any other. Retraction, seed-vs-seed arbitration,
+//! and congestion relief (eviction, detours) stay on the serial runner: a blocked op
+//! waits silently, so a congested run parks earlier here than serially and the serial
+//! driver completes it.
 
 use crate::cascade::{Cell, EndPt, Route, Site, Word2};
 use crate::lattice::DIRS;
@@ -143,22 +145,215 @@ pub(crate) struct Tx {
 /// decision re-runs on the frozen set.
 fn plan(grid: &AtomicGrid, p: Pos, w: Word2) -> Option<Vec<Pos>> {
     let site = w.unpack().ok()?;
+    let _ = grid;
+    // Producer agents act first (their departure often unblocks a cursor).
+    if let Cell::Agent { tag, principal, nursery: false, cooldown: 0, .. } = &site.cell {
+        if tag.is_producer() {
+            return Some(vec![step(p, principal.face)]);
+        }
+    }
+    // Builder cursors: the partner is the current op's target. Forward growth only;
+    // retraction and congestion relief stay on the serial runner.
+    if let Some(c) = site.cursor {
+        if c.reverse {
+            return None;
+        }
+        let layout = crate::blocklet::layout(c.rule);
+        if c.pc == layout.resolve_pc {
+            if let Cell::Seed { partner, .. } = site.cell {
+                return Some(vec![step(p, partner)]);
+            }
+        }
+        if (c.pc as usize) >= layout.script.len() {
+            return Some(vec![]); // the finalize pass is done: the cursor evaporates
+        }
+        let dir = match &layout.script[c.pc as usize] {
+            crate::blocklet::Op::Place { dir, .. } | crate::blocklet::Op::Hop { dir, .. } => *dir,
+        };
+        return Some(vec![step(p, crate::cascade::rot_dir(dir, c.axis, c.roll))]);
+    }
     match &site.cell {
         Cell::Wire { .. } => Some(vec![]), // heat: single-cell
-        Cell::Agent { tag, principal, nursery: false, cooldown: 0, .. }
-            if tag.is_producer() =>
-        {
-            let _ = grid;
-            Some(vec![step(p, principal.face)])
-        }
         _ => None,
     }
 }
 
+/// One forward builder-cursor step on frozen words: place (reserve, then merge), hop,
+/// resolve on the seed pair, and the finalize hops. Mirrors the serial `step_cursor`
+/// minus retraction, arbitration, and eviction, which stay serial: a blocked op waits.
+fn decide_cursor(
+    p: Pos,
+    frozen: &[(Pos, Word2)],
+    site: &Site,
+    c: crate::cascade::Cursor,
+) -> Option<Tx> {
+    use crate::blocklet::Op;
+    use crate::cascade::Cursor;
+    let word_of = |q: Pos| frozen.iter().find(|(fp, _)| *fp == q).map(|(_, w)| *w);
+    let layout = crate::blocklet::layout(c.rule);
+    if c.pc == layout.resolve_pc {
+        if let Cell::Seed { rule, partner, .. } = &site.cell {
+            // Resolve: both seed cells become their patch-panel finals; the fire is the
+            // linearization point. The cursor stays for the finalize pass.
+            let t = step(p, *partner);
+            let ts = word_of(t)?.unpack().ok()?;
+            if !matches!(ts.cell, Cell::Seed { half: crate::cascade::Half::Producer, .. }) {
+                return None;
+            }
+            let (fc, fp) =
+                crate::blocklet::seed_finals(*rule, c.axis, c.roll, &site.cell, &ts.cell);
+            let keep = (c.pc as usize) < layout.script.len();
+            let pw = Word2::pack(&Site {
+                cell: fc,
+                cursor: keep.then_some(c),
+                chi: site.chi,
+                claim: false,
+            })
+            .ok()?;
+            let tw = Word2::pack(&Site { cell: fp, cursor: None, chi: ts.chi, claim: false }).ok()?;
+            return Some(Tx {
+                writes: vec![(p, pw), (t, tw)],
+                wake: wake_set(&[p, t]),
+                fired: true,
+                moved: false,
+            });
+        }
+    }
+    if (c.pc as usize) >= layout.script.len() {
+        let mut s = site.clone();
+        s.cursor = None;
+        let w = Word2::pack(&s).ok()?;
+        return Some(Tx { writes: vec![(p, w)], wake: wake_set(&[p]), fired: false, moved: false });
+    }
+    match &layout.script[c.pc as usize] {
+        Op::Place { dir, cell } => {
+            let d = crate::cascade::rot_dir(*dir, c.axis, c.roll);
+            let t = step(p, d);
+            let ts = word_of(t)?.unpack().ok()?;
+            if ts.cursor.is_some() {
+                return None; // foreign cursor: arbitration stays serial; wait
+            }
+            match &ts.cell {
+                Cell::Empty { reserved: None } => {
+                    let tw = Word2::pack(&Site {
+                        cell: Cell::Empty { reserved: Some(d.opp()) },
+                        cursor: None,
+                        chi: ts.chi,
+                        claim: false,
+                    })
+                    .ok()?;
+                    Some(Tx {
+                        writes: vec![(t, tw)],
+                        wake: wake_set(&[p, t]),
+                        fired: false,
+                        moved: false,
+                    })
+                }
+                Cell::Wire { reserved: None, routes, hot, cooldown } => {
+                    let tw = Word2::pack(&Site {
+                        cell: Cell::Wire {
+                            routes: routes.clone(),
+                            hot: *hot,
+                            cooldown: *cooldown,
+                            reserved: Some(d.opp()),
+                        },
+                        cursor: None,
+                        chi: ts.chi,
+                        claim: false,
+                    })
+                    .ok()?;
+                    Some(Tx {
+                        writes: vec![(t, tw)],
+                        wake: wake_set(&[p, t]),
+                        fired: false,
+                        moved: false,
+                    })
+                }
+                Cell::Empty { reserved: Some(r) } | Cell::Wire { reserved: Some(r), .. }
+                    if *r == d.opp() =>
+                {
+                    let planned = crate::cascade::rot_cell(cell, c.axis, c.roll);
+                    let existing: Vec<Route> = match &ts.cell {
+                        Cell::Wire { routes, .. } => routes.clone(),
+                        _ => vec![],
+                    };
+                    // A failed merge waits: eviction relief stays on the serial runner.
+                    let merged = crate::cascade_run::merge_matter(planned, &existing)?;
+                    let tw = Word2::pack(&Site {
+                        cell: merged,
+                        cursor: None,
+                        chi: ts.chi,
+                        claim: false,
+                    })
+                    .ok()?;
+                    let mut ps = site.clone();
+                    ps.cursor = Some(Cursor { pc: c.pc + 1, ..c });
+                    let pw = Word2::pack(&ps).ok()?;
+                    Some(Tx {
+                        writes: vec![(t, tw), (p, pw)],
+                        wake: wake_set(&[p, t]),
+                        fired: false,
+                        moved: false,
+                    })
+                }
+                _ => None, // occupied or foreign reservation: wait
+            }
+        }
+        Op::Hop { dir, finalize } => {
+            let d = crate::cascade::rot_dir(*dir, c.axis, c.roll);
+            let t = step(p, d);
+            let mut ts = word_of(t)?.unpack().ok()?;
+            if ts.cursor.is_some() {
+                return None;
+            }
+            let mut here = site.clone();
+            here.cursor = None;
+            if *finalize {
+                if let Cell::Agent { nursery, .. } = &mut here.cell {
+                    *nursery = false;
+                }
+            }
+            ts.cursor = Some(Cursor { pc: c.pc + 1, ..c });
+            let pw = Word2::pack(&here).ok()?;
+            let tw = Word2::pack(&ts).ok()?;
+            Some(Tx {
+                writes: vec![(p, pw), (t, tw)],
+                wake: wake_set(&[p, t]),
+                fired: false,
+                moved: false,
+            })
+        }
+    }
+}
+
 /// The frozen-set transition: given claimed words for `p` and (optionally) its partner,
-/// produce the replacement words. This mirrors the serial rules for heat, walk
-/// (straight/truncate), swap, and fusion docks (rules with no blocklet script).
+/// produce the replacement words. Mirrors the serial activation order: the agent acts
+/// first, then the builder cursor, then demand spread.
 pub(crate) fn decide(read: &dyn Fn(Pos) -> Word2, p: Pos, frozen: &[(Pos, Word2)]) -> Option<Tx> {
+    let word_of = |q: Pos| frozen.iter().find(|(fp, _)| *fp == q).map(|(_, w)| *w);
+    let me = word_of(p)?;
+    let site = me.unpack().ok()?;
+    let walker = matches!(&site.cell,
+        Cell::Agent { tag, nursery: false, cooldown: 0, .. } if tag.is_producer());
+    if walker {
+        if let Some(tx) = decide_movement(read, p, frozen) {
+            return Some(tx);
+        }
+    }
+    if let Some(c) = site.cursor {
+        if c.reverse {
+            return None; // retraction stays on the serial runner
+        }
+        return decide_cursor(p, frozen, &site, c);
+    }
+    if walker {
+        return None;
+    }
+    decide_movement(read, p, frozen)
+}
+
+/// The movement tier: heat, walk (straight/truncate), swap, and docks.
+fn decide_movement(read: &dyn Fn(Pos) -> Word2, p: Pos, frozen: &[(Pos, Word2)]) -> Option<Tx> {
     let word_of = |q: Pos| frozen.iter().find(|(fp, _)| *fp == q).map(|(_, w)| *w);
     let me = word_of(p)?;
     let site = me.unpack().ok()?;
@@ -233,41 +428,104 @@ pub(crate) fn decide(read: &dyn Fn(Pos) -> Word2, p: Pos, frozen: &[(Pos, Word2)
                     && target.cursor.is_none()
                 {
                     let rule = crate::rules::find_index(*ctag, *tag)? as u8;
-                    if !crate::blocklet::layout(rule).script.is_empty()
-                        || pass.len() > 1
-                        || cpass.len() > 1
-                    {
-                        return None; // growth stays on the serial runner
+                    if pass.len() > 1 || cpass.len() > 1 {
+                        return None; // passthrough shedding is relief and stays serial
                     }
-                    let seed_c = Cell::Seed {
-                        rule,
-                        half: crate::cascade::Half::Consumer,
-                        partner: m.opp(),
-                        roll: 0,
-                        stub: *caux,
-                        plane: principal.lane,
-                        pass: cpass.first().copied(),
+                    let layout = crate::blocklet::layout(rule);
+                    let axis = m.opp();
+                    let plane = principal.lane;
+                    let mk_seeds = |roll: u8| {
+                        (
+                            Cell::Seed {
+                                rule,
+                                half: crate::cascade::Half::Consumer,
+                                partner: axis,
+                                roll,
+                                stub: *caux,
+                                plane,
+                                pass: cpass.first().copied(),
+                            },
+                            Cell::Seed {
+                                rule,
+                                half: crate::cascade::Half::Producer,
+                                partner: m,
+                                roll,
+                                stub: *aux,
+                                plane,
+                                pass: pass.first().copied(),
+                            },
+                        )
                     };
-                    let seed_p = Cell::Seed {
-                        rule,
-                        half: crate::cascade::Half::Producer,
-                        partner: m,
-                        roll: 0,
-                        stub: *aux,
-                        plane: principal.lane,
-                        pass: pass.first().copied(),
+                    let stub_cells = [
+                        (ctag.arity() >= 2).then(|| step(t, caux[0].face)),
+                        (tag.arity() >= 2).then(|| step(p, aux[0].face)),
+                        (ctag.arity() >= 3).then(|| step(t, caux[1].face)),
+                        (tag.arity() >= 3).then(|| step(p, aux[1].face)),
+                    ];
+                    // Racy site reads are stale-safe here (the ladder is a heuristic);
+                    // topology bounds are enforced by the boundary word `load` returns,
+                    // which the ladder's claim guard rejects.
+                    let sread = |q: Pos| {
+                        read(q).unpack().unwrap_or(Site {
+                            cell: Cell::Empty { reserved: Some(crate::lattice::Dir::U) },
+                            cursor: None,
+                            chi: 0,
+                            claim: true,
+                        })
                     };
-                    let (fc, fp) =
-                        crate::blocklet::seed_finals(rule, m.opp(), 0, &seed_c, &seed_p);
+                    let roll = crate::cascade_run::choose_roll(
+                        &sread,
+                        Topo::Full3D,
+                        t,
+                        p,
+                        stub_cells,
+                        rule,
+                        axis,
+                        &mk_seeds,
+                    )?;
+                    let (seed_c, seed_p) = mk_seeds(roll);
+                    if layout.script.is_empty() {
+                        // No blocklet: resolve in the dock transaction itself.
+                        let (fc, fp) =
+                            crate::blocklet::seed_finals(rule, axis, roll, &seed_c, &seed_p);
+                        let cw = Word2::pack(&Site {
+                            cell: fc,
+                            cursor: target.cursor,
+                            chi: target.chi,
+                            claim: false,
+                        })
+                        .ok()?;
+                        let pw = Word2::pack(&Site {
+                            cell: fp,
+                            cursor: site.cursor,
+                            chi: site.chi,
+                            claim: false,
+                        })
+                        .ok()?;
+                        return Some(Tx {
+                            writes: vec![(t, cw), (p, pw)],
+                            wake: wake_set(&[p, t]),
+                            fired: true,
+                            moved: false,
+                        });
+                    }
+                    // Blocklet rule: dock into a seed pair; the consumer carries the
+                    // builder cursor and growth proceeds as ordinary claimed steps.
                     let cw = Word2::pack(&Site {
-                        cell: fc,
-                        cursor: target.cursor,
+                        cell: seed_c,
+                        cursor: Some(crate::cascade::Cursor {
+                            rule,
+                            axis,
+                            roll,
+                            pc: 0,
+                            reverse: false,
+                        }),
                         chi: target.chi,
                         claim: false,
                     })
                     .ok()?;
                     let pw = Word2::pack(&Site {
-                        cell: fp,
+                        cell: seed_p,
                         cursor: site.cursor,
                         chi: site.chi,
                         claim: false,
@@ -276,7 +534,7 @@ pub(crate) fn decide(read: &dyn Fn(Pos) -> Word2, p: Pos, frozen: &[(Pos, Word2)
                     return Some(Tx {
                         writes: vec![(t, cw), (p, pw)],
                         wake: wake_set(&[p, t]),
-                        fired: true,
+                        fired: false,
                         moved: false,
                     });
                 }
@@ -516,7 +774,16 @@ pub fn run_movement(grid: &AtomicGrid, seeds: Vec<Pos>, threads: usize) -> ParSt
                     // frozen words.
                     'attempt: {
                         let w = grid.load(p);
-                        if w.claimed() || w == Word2::EMPTY {
+                        if w == Word2::EMPTY {
+                            break 'attempt;
+                        }
+                        if w.claimed() {
+                            // Transiently frozen by a neighbor's transaction, which may
+                            // commit without changing this word (then nothing would
+                            // re-wake it): retry rather than drop the wake.
+                            stats.conflicts.fetch_add(1, Ordering::Relaxed);
+                            pending.fetch_add(1, Ordering::Relaxed);
+                            queues[shard(p)].lock().unwrap().push_back(p);
                             break 'attempt;
                         }
                         let Some(partners) = plan(grid, p, w) else { break 'attempt };
@@ -605,6 +872,59 @@ mod tests {
             lay_wire(&mut grid, &path);
         }
         (grid, shadow)
+    }
+
+    /// Every atlas rule grows, resolves, and finalizes its blocklet entirely through the
+    /// claim machinery, with bit-identical results across thread counts.
+    #[test]
+    fn parallel_growth_atlas() {
+        use crate::rules::RULES;
+        for (i, rule) in RULES.iter().enumerate() {
+            let mut reference: Option<Vec<(Pos, u64)>> = None;
+            for threads in [1usize, 2, 4, 8] {
+                let (grid, _shadow) = crate::cascade_run::dock_fixture(rule, 0, false);
+                let agrid = AtomicGrid::from_grid(&grid, 8);
+                let seeds: Vec<Pos> = grid.cells.keys().copied().collect();
+                let stats = run_movement(&agrid, seeds, threads);
+                if stats.fires.load(Ordering::Relaxed) != 1 {
+                    for (p, w) in &agrid.to_grid().cells {
+                        let s = w.unpack().unwrap();
+                        if !matches!(s.cell, Cell::Wire { .. }) || s.cursor.is_some() {
+                            eprintln!("  wedge census {p:?}: {:?} cursor={:?}", s.cell, s.cursor);
+                        }
+                    }
+                }
+                assert_eq!(
+                    stats.fires.load(Ordering::Relaxed),
+                    1,
+                    "rule {i} {}·{} fires once ({threads} threads)",
+                    rule.consumer.name(),
+                    rule.producer.name()
+                );
+                let final_grid = agrid.to_grid();
+                for (p, w) in &final_grid.cells {
+                    let s = w.unpack().unwrap();
+                    assert!(
+                        !matches!(s.cell, Cell::Seed { .. }),
+                        "rule {i}: seed left at {p:?}"
+                    );
+                    assert!(s.cursor.is_none(), "rule {i}: cursor left at {p:?}");
+                    if let Cell::Agent { nursery, .. } = &s.cell {
+                        assert!(!nursery, "rule {i}: nursery agent left at {p:?}");
+                    }
+                }
+                crate::cascade_run::check_reciprocity(&final_grid)
+                    .unwrap_or_else(|e| panic!("rule {i} ({threads} threads): {e}"));
+                let snapshot: Vec<(Pos, u64)> =
+                    final_grid.cells.iter().map(|(p, w)| (*p, w.0)).collect();
+                match &reference {
+                    None => reference = Some(snapshot),
+                    Some(r) => {
+                        assert_eq!(r, &snapshot, "rule {i}: thread-count divergence")
+                    }
+                }
+            }
+        }
     }
 
     #[test]

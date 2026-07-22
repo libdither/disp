@@ -782,20 +782,10 @@ impl Runner {
             (ctag.arity() >= 3).then(|| step(t, caux[1].face)),
             (tag.arity() >= 3).then(|| step(p, aux[1].face)),
         ];
-        // Roll preference ladder, most to least informed (all stale-safe heuristics):
-        // whole footprint merges cleanly, then the gate ring merges, then the gate ring
-        // is merely unclaimed wire or empty (growth waits per cell and evicts).
-        let candidate = |deep: bool, ring_merge: bool| {
-            (0..4u8).find(|roll| {
-                let (sc, sp) = mk_seeds(*roll);
-                self.roll_fits(t, p, stub_cells, rule, axis, *roll, ring_merge)
-                    && crate::blocklet::finals_fit(rule, axis, *roll, &sc, &sp)
-                    && (!deep || self.roll_merges_deep(t, rule, axis, *roll))
-            })
+        let roll = {
+            let read = |q: Pos| self.grid.site(q);
+            choose_roll(&read, self.grid.topo, t, p, stub_cells, rule, axis, &mk_seeds)
         };
-        let roll = candidate(true, true)
-            .or_else(|| candidate(false, true))
-            .or_else(|| candidate(false, false));
         let Some(roll) = roll else {
             // Every roll's first ring is blocked. The blocking cells are adjacent to the
             // pair, so their next change wakes it; wait silently until then.
@@ -833,78 +823,6 @@ impl Runner {
         }
         self.wake_around(p);
         self.wake_around(t);
-        true
-    }
-
-    /// Whether every footprint cell of this roll currently either is free or merges with
-    /// the planned matter. Stale-safe heuristic only: cells change after the dock, and
-    /// growth re-validates at each placement.
-    fn roll_merges_deep(&self, seed_c: Pos, rule: u8, axis: Dir, roll: u8) -> bool {
-        let layout = crate::blocklet::layout(rule);
-        for (off, cell) in &layout.extras {
-            let world = add(seed_c, crate::cascade::rot_pos(*off, axis, roll));
-            let ws = self.grid.site(world);
-            let ok = match &ws.cell {
-                Cell::Empty { reserved: None } => ws.cursor.is_none(),
-                Cell::Wire { reserved: None, routes, .. } => {
-                    let planned = crate::cascade::rot_cell(cell, axis, roll);
-                    merge_matter(planned, routes).is_some()
-                }
-                _ => false,
-            };
-            if !ok {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Whether a roll works locally: the whole footprint is inside the topology and
-    /// avoids the pair's stub cells (where aux cables and delivered values legally park),
-    /// and the blocklet cells adjacent to the pair are free or mergeable wire. Only the
-    /// first ring gates on occupancy: those cells' changes wake the pair, so a declined
-    /// dock retries without any global scan. Deeper cells are handled by growth's
-    /// per-cell waits and merges.
-    fn roll_fits(
-        &self,
-        seed_c: Pos,
-        seed_p: Pos,
-        stub_cells: [Option<Pos>; 4],
-        rule: u8,
-        axis: Dir,
-        roll: u8,
-        ring_merge: bool,
-    ) -> bool {
-        let layout = crate::blocklet::layout(rule);
-        for (off, cell) in &layout.extras {
-            let world = add(seed_c, crate::cascade::rot_pos(*off, axis, roll));
-            if !self.grid.topo.in_bounds(world) {
-                return false;
-            }
-            if stub_cells.iter().flatten().any(|s| *s == world) {
-                return false;
-            }
-            let near = DIRS.iter().any(|d| step(world, *d) == seed_c || step(world, *d) == seed_p);
-            if !near {
-                continue;
-            }
-            let ws = self.grid.site(world);
-            match &ws.cell {
-                Cell::Empty { reserved: None } if ws.cursor.is_none() => {}
-                Cell::Wire { reserved: None, routes, .. } if ws.cursor.is_none() => {
-                    // With ring_merge, a ring wire must actually accept the planned
-                    // matter; without it, growth handles collisions by waiting and
-                    // evicting.
-                    if ring_merge {
-                        let planned = crate::cascade::rot_cell(cell, axis, roll);
-                        if merge_matter(planned, routes).is_none() {
-                            return false;
-                        }
-                    }
-                }
-                _ => return false,
-            }
-        }
         true
     }
 
@@ -1895,7 +1813,7 @@ pub(crate) fn hot_beyond(
 
 /// Merge planned blocklet matter with the routes already occupying the target cell (the
 /// guest principle for growth). None when the merge does not fit or collides.
-fn merge_matter(planned: Cell, existing: &[Route]) -> Option<Cell> {
+pub(crate) fn merge_matter(planned: Cell, existing: &[Route]) -> Option<Cell> {
     let merged = match planned {
         Cell::Wire { mut routes, hot, cooldown, .. } => {
             routes.extend(existing.iter().copied());
@@ -1909,6 +1827,112 @@ fn merge_matter(planned: Cell, existing: &[Route]) -> Option<Cell> {
     };
     crate::cascade::Word2::pack(&Site::of(merged.clone())).ok()?;
     Some(merged)
+}
+
+/// Whether every footprint cell of this roll currently either is free or merges with
+/// the planned matter. Stale-safe heuristic only: cells change after the dock, and
+/// growth re-validates at each placement. Shared by the serial and parallel drivers,
+/// which supply their own site reads.
+pub(crate) fn roll_merges_deep(
+    read: &dyn Fn(Pos) -> Site,
+    seed_c: Pos,
+    rule: u8,
+    axis: Dir,
+    roll: u8,
+) -> bool {
+    let layout = crate::blocklet::layout(rule);
+    for (off, cell) in &layout.extras {
+        let world = add(seed_c, crate::cascade::rot_pos(*off, axis, roll));
+        // A transiently claimed cell still shows its matter; the ladder is stale-safe,
+        // so claims are ignored (the boundary word rejects via its reserved mark).
+        let ws = read(world);
+        let ok = match &ws.cell {
+            Cell::Empty { reserved: None } => ws.cursor.is_none(),
+            Cell::Wire { reserved: None, routes, .. } => {
+                let planned = crate::cascade::rot_cell(cell, axis, roll);
+                merge_matter(planned, routes).is_some()
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a roll works locally: the whole footprint is inside the topology and
+/// avoids the pair's stub cells (where aux cables and delivered values legally park),
+/// and the blocklet cells adjacent to the pair are free or mergeable wire. Only the
+/// first ring gates on occupancy: those cells' changes wake the pair, so a declined
+/// dock retries without any global scan. Deeper cells are handled by growth's
+/// per-cell waits and merges.
+pub(crate) fn roll_fits(
+    read: &dyn Fn(Pos) -> Site,
+    topo: Topo,
+    seed_c: Pos,
+    seed_p: Pos,
+    stub_cells: [Option<Pos>; 4],
+    rule: u8,
+    axis: Dir,
+    roll: u8,
+    ring_merge: bool,
+) -> bool {
+    let layout = crate::blocklet::layout(rule);
+    for (off, cell) in &layout.extras {
+        let world = add(seed_c, crate::cascade::rot_pos(*off, axis, roll));
+        if !topo.in_bounds(world) {
+            return false;
+        }
+        if stub_cells.iter().flatten().any(|s| *s == world) {
+            return false;
+        }
+        let near = DIRS.iter().any(|d| step(world, *d) == seed_c || step(world, *d) == seed_p);
+        if !near {
+            continue;
+        }
+        let ws = read(world);
+        match &ws.cell {
+            Cell::Empty { reserved: None } if ws.cursor.is_none() => {}
+            Cell::Wire { reserved: None, routes, .. } if ws.cursor.is_none() => {
+                // With ring_merge, a ring wire must actually accept the planned
+                // matter; without it, growth handles collisions by waiting and
+                // evicting.
+                if ring_merge {
+                    let planned = crate::cascade::rot_cell(cell, axis, roll);
+                    if merge_matter(planned, routes).is_none() {
+                        return false;
+                    }
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// The dock's roll preference ladder, most to least informed (all stale-safe
+/// heuristics): whole footprint merges cleanly, then the gate ring merges, then the
+/// gate ring is merely unclaimed wire or empty (growth waits per cell and evicts).
+pub(crate) fn choose_roll(
+    read: &dyn Fn(Pos) -> Site,
+    topo: Topo,
+    seed_c: Pos,
+    seed_p: Pos,
+    stub_cells: [Option<Pos>; 4],
+    rule: u8,
+    axis: Dir,
+    mk_seeds: &dyn Fn(u8) -> (Cell, Cell),
+) -> Option<u8> {
+    let candidate = |deep: bool, ring_merge: bool| {
+        (0..4u8).find(|roll| {
+            let (sc, sp) = mk_seeds(*roll);
+            roll_fits(read, topo, seed_c, seed_p, stub_cells, rule, axis, *roll, ring_merge)
+                && crate::blocklet::finals_fit(rule, axis, *roll, &sc, &sp)
+                && (!deep || roll_merges_deep(read, seed_c, rule, axis, *roll))
+        })
+    };
+    candidate(true, true).or_else(|| candidate(false, true)).or_else(|| candidate(false, false))
 }
 
 // ---------------------------------------------------------------- tracing / projection

@@ -446,6 +446,34 @@ What landed matches §1 to §12 with these deviations, each forced by a measured
     passthrough's far end and both slack segments vanish (two cells, one commit).
 13. The dock's roll ladder gained a middle tier: whole-footprint mergeable, then
     gate-ring mergeable, then gate-ring merely unclaimed (growth waits and evicts).
+14. Relief recurses (2026-07-22). When every eviction shape is boxed in, the blockers
+    themselves become depth-bounded eviction targets: full or lane-starved side cells,
+    the blocked route's continuation cells, and agents shedding their own passthroughs.
+    A blocked walker, dock, or detour relieves its own cell with the same primitive (an
+    arity-three walker over a doubled foreign cable cannot vacate otherwise, and a seed
+    inherits at most one passthrough). Two length-decreasing moves joined the set: the
+    U-turn splice (a wire folding back through one neighbor splices out there, even
+    under a reservation, since it strictly reduces occupancy) and the inverse shift (a
+    cold three-cell detour pulls straight when the bypassed cell is eligible). A second
+    eviction pass may move hot routes as the last resort in an all-hot pinch; heat rides
+    along. Receivers of displaced routes carry a cooldown stamp that holds off the next
+    few displacement attempts (attempt-count decay, not ticks, so parked pockets cannot
+    freeze it); this damps displacement ping-pong.
+15. Seed-vs-seed arbitration (2026-07-22). Colliding blocklets compare origins: a
+    cursor folds its consumer-seed address back through its script hops, so no word bits
+    are spent. The higher origin flips its cursor to reverse pre-resolve (the unwind
+    restores the docked pair, which re-docks later); post-resolve cursors never yield
+    because the fire is irrevocable. Pinned by a forced two-seed collision test and
+    exercised organically by the deep terms.
+16. Parallel growth (2026-07-22). Dock, place (reserve then merge), hop, resolve, and
+    finalize are one- or two-cell claimed transactions in the threaded driver, sharing
+    the dock's roll ladder with the serial runner through a read closure; the gather
+    driver inherits growth through the shared decision function. The full atlas grows,
+    resolves, and finalizes under claims, bit-identical across 1/2/4/8 threads.
+    Retraction, arbitration, and relief stay serial: a blocked op waits, so congested
+    runs park earlier in parallel than serially. Landing this exposed a latent executor
+    hole: popping a transiently claimed cell used to drop its wake (the claimant can
+    commit without changing the word, so nothing re-wakes it); such pops now requeue.
 
 Verified: the full 26-rule atlas fires and projects under four adversarial queue
 disciplines; `@(L,L)` normalizes end to end under all four (four chained fires) and
@@ -459,9 +487,12 @@ step; each trace reports its parallel width (the crossing demo runs at mean widt
 peak 18; small sequential terms sit near width 1 with peaks of 9 where heat waves and
 walks overlap).
 
-Open frontier, pinned by `frontier_deep_reductions` (floor: 1 of 5 deep terms complete):
-the remaining parked runs wedge where an eviction is itself boxed in, in corners crowded
-by earlier blocklets and prior evictions. The candidate levers are recursive room-making
-(evict the eviction's blockers) and proactive relaxation (retract cold slack before it
-crowds), both continuations of the same relief machinery. The substrate never computes a
-wrong answer; wedged runs park validly with the seed visible.
+Open frontier, pinned by `frontier_deep_reductions` (floor: 2 of 5 deep terms complete;
+fork-dispatch and the K combinator reach their normal forms, and every parked term runs
+several rewrites deeper than before the relief rungs). The remaining parked runs are
+corridor knots: a demanded arity-three walker sits over a doubled hot foreign cable
+whose relief chain bottoms out on cells nothing may touch (reserved targets, other
+walkers, all-hot neighborhoods), and a growth chain wedges behind it. The candidate
+levers are smarter trail-lane assignment during walks (avoid creating doubled cables
+under future walkers) and relief that can reroute through a walker's own cell. The
+substrate never computes a wrong answer; wedged runs park validly with the seed visible.
