@@ -181,6 +181,9 @@ impl Runner {
         if self.heat(p) {
             return;
         }
+        if self.try_retract(p) {
+            return;
+        }
         // A guest bridges its passthrough wires: a demand wave arriving on one side must
         // wake the other or it dies at the crossing (heat sees through guests, so wakes
         // must too). The relay is directional and stops once both sides agree, which
@@ -234,16 +237,22 @@ impl Runner {
                 }
             }
         }
-        if new_hot == *hot {
+        // Cooldown stamps decay opportunistically on activation; a cooldown-only change
+        // does not count as demand spread (return false so the rest of activate runs).
+        let new_cd = cooldown.saturating_sub(1);
+        if new_hot == *hot && new_cd == *cooldown {
             return false;
         }
         let cell = Cell::Wire {
             routes: routes.clone(),
             hot: new_hot,
-            cooldown: *cooldown,
+            cooldown: new_cd,
             reserved: *reserved,
         };
         self.grid.set(p, &Site { cell, cursor: site.cursor, chi: site.chi, claim: site.claim });
+        if new_hot == *hot {
+            return false;
+        }
         self.wake_around(p);
         true
     }
@@ -375,6 +384,9 @@ impl Runner {
         }
         let detours: Vec<usize> = (0..need).filter(|k| plans[*k] == Plan::Detour).collect();
         if detours.len() > 1 {
+            // Both auxiliaries need detours only when passthroughs crowd the vacated
+            // edge: shed one cold passthrough and replan on the next wake.
+            self.try_evict(p, None, 2);
             return false;
         }
 
@@ -396,6 +408,9 @@ impl Runner {
                 new_aux[1] = new_aux[0];
             }
             if vac_routes.len() > 3 {
+                // The vacated cell cannot hold trails plus passthroughs: shed one cold
+                // passthrough out of this cell first, then replan on the next wake.
+                self.try_evict(p, None, 2);
                 return false;
             }
             let moved = Cell::Agent {
@@ -437,6 +452,7 @@ impl Runner {
             }
             _ => false,
         };
+        let mut full_sides: Vec<Pos> = vec![];
         for q in m.perp() {
             if q == aux[dk].face
                 || !self.grid.topo.in_bounds(step(p, q))
@@ -449,6 +465,16 @@ impl Runner {
             let s_site = self.grid.site(s);
             let sq_site = self.grid.site(sq);
             if !usable(&s_site) || !usable(&sq_site) {
+                for (x, xs) in [(s, &s_site), (sq, &sq_site)] {
+                    if !usable(xs)
+                        && matches!(&xs.cell, Cell::Wire { reserved: None, routes, .. } if routes.len() >= 3)
+                        && xs.cursor.is_none()
+                        && !xs.claim
+                        && !full_sides.contains(&x)
+                    {
+                        full_sides.push(x);
+                    }
+                }
                 continue;
             }
             for l1 in 0..2u8 {
@@ -472,6 +498,7 @@ impl Runner {
                             }
                         }
                         if vac_routes.len() > 3 {
+                            self.try_evict(p, None, 2);
                             return false;
                         }
                         let side = |st: &Site, route: Route| -> Site {
@@ -537,6 +564,13 @@ impl Runner {
                         }
                     }
                 }
+            }
+        }
+        // Every detour side pair is blocked. Full side cells are relief candidates:
+        // shed one cold route from one of them and replan on the next wake.
+        for x in full_sides {
+            if self.try_evict(x, None, 1) {
+                break;
             }
         }
         false
@@ -699,8 +733,15 @@ impl Runner {
             );
             return false;
         }
-        // A seed inherits at most one passthrough route.
+        // A seed inherits at most one passthrough route: shed the excess (cold foreign
+        // lanes reroute around the cell) and dock on a later wake.
         if pass.len() > 1 || cpass.len() > 1 {
+            if pass.len() > 1 {
+                self.try_evict(p, None, 2);
+            }
+            if cpass.len() > 1 {
+                self.try_evict(t, None, 2);
+            }
             return false;
         }
         let rule = find_index(*ctag, *tag).unwrap_or_else(|| {
@@ -896,6 +937,36 @@ impl Runner {
 
     /// One builder-cursor step: place the next blocklet cell (reserving first), hop along
     /// the placed set, resolve back on the consumer seed, then finalize the nursery.
+    /// The consumer-seed cell a cursor grew from, folded back through its script's hops.
+    /// The origin is the blocklet's identity: in a footprint conflict the LOWER origin
+    /// wins and the higher one retracts, so every conflict set has a survivor.
+    fn cursor_origin(cursor: &Cursor, p: Pos) -> Pos {
+        let layout = crate::blocklet::layout(cursor.rule);
+        let mut at = p;
+        for op in &layout.script[..cursor.pc as usize] {
+            if let crate::blocklet::Op::Hop { dir, .. } = op {
+                at = step(at, crate::cascade::rot_dir(*dir, cursor.axis, cursor.roll).opp());
+            }
+        }
+        at
+    }
+
+    /// Seed-vs-seed arbitration: if this cursor's blocklet has the higher origin it flips
+    /// to reverse (retract, restore the pair, re-dock later); the winner waits silently
+    /// and is woken by the loser's unwind. Once the seed has resolved the fire is
+    /// irrevocable, so a post-resolve cursor never yields: it waits out the squatter.
+    fn yield_if_loser(&mut self, p: Pos, site: &Site, cursor: Cursor, their_origin: Pos) {
+        if cursor.pc >= crate::blocklet::layout(cursor.rule).resolve_pc {
+            return;
+        }
+        if Self::cursor_origin(&cursor, p) > their_origin {
+            let mut s = site.clone();
+            s.cursor = Some(Cursor { reverse: true, ..cursor });
+            self.grid.set(p, &s);
+            self.wake(p);
+        }
+    }
+
     fn step_cursor(&mut self, p: Pos, site: Site, cursor: Cursor) {
         use crate::blocklet::Op;
         let layout = crate::blocklet::layout(cursor.rule);
@@ -922,8 +993,21 @@ impl Runner {
                 let d = crate::cascade::rot_dir(*dir, cursor.axis, cursor.roll);
                 let t = step(p, d);
                 let target = self.grid.site(t);
-                if target.claim || target.cursor.is_some() {
+                if target.claim {
                     return; // wait silently; the target's next change wakes this cell
+                }
+                if let Some(fc) = target.cursor {
+                    self.yield_if_loser(p, &site, cursor, Self::cursor_origin(&fc, t));
+                    return;
+                }
+                if let Cell::Seed { half, partner, .. } = &target.cell {
+                    // Growing into a foreign docked pair: arbitrate against its origin.
+                    let their = match half {
+                        Half::Consumer => t,
+                        Half::Producer => step(t, *partner),
+                    };
+                    self.yield_if_loser(p, &site, cursor, their);
+                    return;
                 }
                 match &target.cell {
                     Cell::Empty { reserved: None } => {
@@ -977,7 +1061,7 @@ impl Runner {
                             if std::env::var_os("CASCADE_DBG").is_some() {
                                 eprintln!("merge-fail at {t:?}: planned {planned:?} vs {:?}", target.cell);
                             }
-                            if self.try_evict(t, &planned) {
+                            if self.try_evict(t, Some(&planned), 2) {
                                 self.wake(p);
                                 return;
                             }
@@ -1009,7 +1093,11 @@ impl Runner {
                 let d = crate::cascade::rot_dir(*dir, cursor.axis, cursor.roll);
                 let t = step(p, d);
                 let mut target = self.grid.site(t);
-                assert!(target.cursor.is_none(), "two cursors in one blocklet");
+                if let Some(fc) = target.cursor {
+                    // Overlapping blocklets: a foreign cursor stands on this hop's cell.
+                    self.yield_if_loser(p, &site, cursor, Self::cursor_origin(&fc, t));
+                    return;
+                }
                 let mut here = site;
                 here.cursor = None;
                 if *finalize {
@@ -1030,16 +1118,40 @@ impl Runner {
     /// is corner-cut through its diagonal cell (same length, frees the cell); a straight
     /// segment shifts sideways through three side cells (two cells longer). Only routes
     /// that are cold, unreserved, and continue into plain wire cells on both sides are
-    /// touched, and only when removing them lets the planned matter merge. The whole
-    /// rewrite commits in one serial activation; the parallel driver claims the same set
-    /// in address order. The blocked cell keeps its reservation so the cursor's retry
-    /// finds it still protected.
-    fn try_evict(&mut self, t: Pos, planned: &Cell) -> bool {
+    /// touched, and (with `planned` set) only when removing them lets the planned matter
+    /// merge; `planned: None` means any shed route is progress (capacity relief). When
+    /// every shape fails on a full-but-otherwise-eligible side cell, the eviction recurses
+    /// into that blocker (`depth` bounds the chain; one commit per activation, the
+    /// cursor's retry drives the rest). Cells that just received an evicted route carry a
+    /// cooldown stamp and refuse to shed again until it decays, which breaks
+    /// displacement ping-pong. The whole rewrite commits in one serial activation; the
+    /// parallel driver claims the same set in address order. The blocked cell keeps its
+    /// reservation so the cursor's retry finds it still protected.
+    fn try_evict(&mut self, t: Pos, planned: Option<&Cell>, depth: u8) -> bool {
         let target = self.grid.site(t);
-        let Cell::Wire { routes, hot, reserved, .. } = &target.cell else {
-            return false;
+        // The host is a wire cell, or an agent shedding one of its own passthroughs (a
+        // blocked walker relieving its own cell): the reroute shapes are identical, the
+        // host just loses the route.
+        let (routes, hot, reserved) = match &target.cell {
+            Cell::Wire { routes, hot, reserved, cooldown } => {
+                // Inner (blocker) evictions respect the stamp, but each refused attempt
+                // wears it down one notch: the stamp holds off the next N displacement
+                // attempts rather than N ticks, so a parked pocket cannot freeze it
+                // forever. The top level is the caller's own target and always proceeds.
+                if depth < 2 && *cooldown > 0 {
+                    let mut ns = target.clone();
+                    if let Cell::Wire { cooldown, .. } = &mut ns.cell {
+                        *cooldown -= 1;
+                    }
+                    self.grid.set(t, &ns);
+                    return true;
+                }
+                (routes.clone(), *hot, *reserved)
+            }
+            Cell::Agent { pass, .. } => (pass.clone(), 0u8, None),
+            _ => return false,
         };
-        let reserved = *reserved;
+        let routes = &routes;
         let plain = |s: &Site| {
             matches!(s.cell, Cell::Wire { reserved: None, .. }) && s.cursor.is_none() && !s.claim
         };
@@ -1050,17 +1162,39 @@ impl Runner {
             }
             _ => false,
         };
-        let side_add = |s: &Site, route: Route| -> Site {
+        // Receivers of a displaced route get the full cooldown stamp: they will not shed
+        // it again (nor be retracted) until the stamp decays. A displaced hot route
+        // carries its heat into the new cell.
+        let side_add = |s: &Site, route: Route, hot_flag: bool| -> Site {
             let mut ns = s.clone();
             match &mut ns.cell {
                 Cell::Empty { .. } => {
-                    ns.cell = Cell::Wire { routes: vec![route], hot: 0, cooldown: 0, reserved: None };
+                    ns.cell = Cell::Wire {
+                        routes: vec![route],
+                        hot: u8::from(hot_flag),
+                        cooldown: 3,
+                        reserved: None,
+                    };
                 }
-                Cell::Wire { routes, .. } => routes.push(route),
+                Cell::Wire { routes, hot, cooldown, .. } => {
+                    if hot_flag {
+                        *hot |= 1 << routes.len();
+                    }
+                    routes.push(route);
+                    *cooldown = 3;
+                }
                 _ => unreachable!(),
             }
             ns
         };
+        // A side cell that fails only on capacity is a recursion candidate: evicting one
+        // of its cold routes makes this eviction's shape viable next retry.
+        let recursable = |s: &Site| {
+            matches!(&s.cell, Cell::Wire { reserved: None, routes, .. } if routes.len() >= 3)
+                && s.cursor.is_none()
+                && !s.claim
+        };
+        let mut blockers: Vec<Pos> = vec![];
         let swing = |s: &Site, idx: usize, from: EndPt, to: EndPt| -> Site {
             let mut ns = s.clone();
             if let Cell::Wire { routes, .. } = &mut ns.cell {
@@ -1074,6 +1208,7 @@ impl Runner {
         // one route over budget, evict any evictable cold route (progress one at a time).
         let order: Vec<(usize, bool)> = {
             let unblocking = |i: usize| {
+                let Some(planned) = planned else { return true };
                 let rest: Vec<Route> = routes
                     .iter()
                     .enumerate()
@@ -1086,17 +1221,49 @@ impl Runner {
             v.sort_by_key(|(_, u)| std::cmp::Reverse(*u));
             v
         };
-        for (i, _unblocks) in order {
+        // Cold routes first; a second pass may move hot routes as the last resort in an
+        // all-hot pinch. Moving a demanded wire is sound: connectivity is preserved and
+        // its heat rides along; the cooldown stamp damps displacement wars all the same.
+        let passes: Vec<(bool, usize)> = order
+            .iter()
+            .map(|(i, _)| (false, *i))
+            .chain(order.iter().map(|(i, _)| (true, *i)))
+            .collect();
+        for (allow_hot, i) in passes {
             let r = &routes[i];
-            if (hot >> i) & 1 == 1 {
+            let moved_hot = (hot >> i) & 1 == 1;
+            if !allow_hot && moved_hot {
                 if std::env::var_os("CASCADE_DBG").is_some() { eprintln!("evict {t:?} r{i}: hot"); } continue;
             }
             let (d1, d2) = (r.a.face, r.b.face);
             let (n1, n2) = (step(t, d1), step(t, d2));
             let (n1s, n2s) = (self.grid.site(n1), self.grid.site(n2));
             let dbg = std::env::var_os("CASCADE_DBG").is_some();
-            if !plain(&n1s) || !plain(&n2s) {
-                if dbg { eprintln!("evict {t:?} r{i}: neighbor not plain wire"); }
+            // A blocked continuation cell may itself be relieved: a crowded wire or an
+            // agent hosting passthroughs can shed one route. The U-turn splice tolerates
+            // a reservation on its neighbor (it strictly reduces that cell's occupancy);
+            // every other shape needs plain wire on both sides.
+            let sheddable = |xs: &Site| {
+                xs.cursor.is_none()
+                    && !xs.claim
+                    && match &xs.cell {
+                        Cell::Wire { reserved: None, routes, .. } => routes.len() >= 2,
+                        Cell::Agent { pass, .. } => !pass.is_empty(),
+                        _ => false,
+                    }
+            };
+            let splice_host = |xs: &Site| {
+                matches!(xs.cell, Cell::Wire { .. }) && xs.cursor.is_none() && !xs.claim
+            };
+            let eligible =
+                if d1 == d2 { splice_host(&n1s) } else { plain(&n1s) && plain(&n2s) };
+            if !eligible {
+                if dbg { eprintln!("evict {t:?} r{i}: continuation not swingable"); }
+                for (x, xs) in [(n1, &n1s), (n2, &n2s)] {
+                    if sheddable(xs) && !blockers.contains(&x) {
+                        blockers.push(x);
+                    }
+                }
                 continue;
             }
             let (Cell::Wire { routes: r1s, hot: h1, .. }, Cell::Wire { routes: r2s, hot: h2, .. }) =
@@ -1114,7 +1281,7 @@ impl Runner {
                 if dbg { eprintln!("evict {t:?} r{i}: no continuation n2"); }
                 continue;
             };
-            if (h1 >> i1) & 1 == 1 || (h2 >> i2) & 1 == 1 {
+            if !allow_hot && ((h1 >> i1) & 1 == 1 || (h2 >> i2) & 1 == 1) {
                 if dbg { eprintln!("evict {t:?} r{i}: hot continuation"); }
                 continue;
             }
@@ -1122,20 +1289,26 @@ impl Runner {
             let t_new = {
                 let mut ns = target.clone();
                 let mut emptied = false;
-                if let Cell::Wire { routes, hot, .. } = &mut ns.cell {
-                    let mut nh = 0u8;
-                    let mut k = 0;
-                    for j in 0..routes.len() {
-                        if j != i {
-                            if (*hot >> j) & 1 == 1 {
-                                nh |= 1 << k;
+                match &mut ns.cell {
+                    Cell::Wire { routes, hot, .. } => {
+                        let mut nh = 0u8;
+                        let mut k = 0;
+                        for j in 0..routes.len() {
+                            if j != i {
+                                if (*hot >> j) & 1 == 1 {
+                                    nh |= 1 << k;
+                                }
+                                k += 1;
                             }
-                            k += 1;
                         }
+                        routes.remove(i);
+                        *hot = nh;
+                        emptied = routes.is_empty();
                     }
-                    routes.remove(i);
-                    *hot = nh;
-                    emptied = routes.is_empty();
+                    Cell::Agent { pass, .. } => {
+                        pass.remove(i);
+                    }
+                    _ => unreachable!(),
                 }
                 if emptied {
                     ns.cell = Cell::Empty { reserved };
@@ -1143,10 +1316,58 @@ impl Runner {
                 ns
             };
 
-            if d2 != d1.opp() {
+            if d1 == d2 {
+                // A U-turn cell: the wire folds back through one neighbor, pure slack.
+                // Splice the fold out at that neighbor (its two continuations become one
+                // route) and drop the fold here; a same-route continuation is a closed
+                // two-cell loop and vanishes entirely. Strictly length-decreasing.
+                let n_reserved = match &n1s.cell {
+                    Cell::Wire { reserved, .. } => *reserved,
+                    _ => None,
+                };
+                let n_new = {
+                    let mut nn = n1s.clone();
+                    let mut emptied = false;
+                    if let Cell::Wire { routes, hot, .. } = &mut nn.cell {
+                        let mut kept: Vec<(Route, bool)> = routes
+                            .iter()
+                            .enumerate()
+                            .filter(|(j, _)| *j != i1 && *j != i2)
+                            .map(|(j, x)| (*x, (*hot >> j) & 1 == 1))
+                            .collect();
+                        if i1 != i2 {
+                            let x = routes[i1].through(back1).expect("fold continuation");
+                            let y = routes[i2].through(back2).expect("fold continuation");
+                            let sp_hot = (*hot >> i1) & 1 == 1 || (*hot >> i2) & 1 == 1;
+                            kept.push((Route::new(x, y), sp_hot));
+                        }
+                        *routes = kept.iter().map(|(x, _)| *x).collect();
+                        *hot = kept.iter().enumerate().fold(0, |acc, (j, (_, h))| {
+                            acc | u8::from(*h) << j
+                        });
+                        emptied = routes.is_empty();
+                    }
+                    if emptied {
+                        nn.cell = Cell::Empty { reserved: n_reserved };
+                    }
+                    nn
+                };
+                if crate::cascade::Word2::pack(&t_new).is_ok()
+                    && crate::cascade::Word2::pack(&n_new).is_ok()
+                {
+                    self.grid.set(t, &t_new);
+                    self.grid.set(n1, &n_new);
+                    self.wake_around(t);
+                    self.wake_around(n1);
+                    return true;
+                }
+            } else if d2 != d1.opp() {
                 // Bent segment: corner-cut through the diagonal cell.
                 let u = step(n1, d2);
                 let us = self.grid.site(u);
+                if !side_ok(&us) && recursable(&us) && !blockers.contains(&u) {
+                    blockers.push(u);
+                }
                 if side_ok(&us) {
                     for l1 in 0..2u8 {
                         for l2 in 0..2u8 {
@@ -1155,7 +1376,7 @@ impl Runner {
                             let un = side_add(&us, Route::new(
                                 EndPt { face: d2.opp(), lane: l1 },
                                 EndPt { face: d1.opp(), lane: l2 },
-                            ));
+                            ), moved_hot);
                             if [&t_new, &n1n, &n2n, &un]
                                 .iter()
                                 .all(|w| crate::cascade::Word2::pack(w).is_ok())
@@ -1181,6 +1402,11 @@ impl Runner {
                     let (a, c, b) = (step(n1, w), step(u, w), step(n2, w));
                     let (a_s, c_s, b_s) = (self.grid.site(a), self.grid.site(c), self.grid.site(b));
                     if !side_ok(&a_s) || !side_ok(&c_s) || !side_ok(&b_s) {
+                        for (x, xs) in [(a, &a_s), (c, &c_s), (b, &b_s)] {
+                            if !side_ok(xs) && recursable(xs) && !blockers.contains(&x) {
+                                blockers.push(x);
+                            }
+                        }
                         continue;
                     }
                     'wlanes: for lanes in 0..16u8 {
@@ -1191,15 +1417,15 @@ impl Runner {
                         let an = side_add(&a_s, Route::new(
                             EndPt { face: w.opp(), lane: l1 },
                             EndPt { face: d2, lane: l2 },
-                        ));
+                        ), moved_hot);
                         let cn = side_add(&c_s, Route::new(
                             EndPt { face: d2.opp(), lane: l2 },
                             EndPt { face: d1.opp(), lane: l3 },
-                        ));
+                        ), moved_hot);
                         let bn = side_add(&b_s, Route::new(
                             EndPt { face: d1, lane: l3 },
                             EndPt { face: w.opp(), lane: l4 },
-                        ));
+                        ), moved_hot);
                         for x in [&t_new, &n1n, &n2n, &an, &cn, &bn] {
                             if crate::cascade::Word2::pack(x).is_err() {
                                 continue 'wlanes;
@@ -1217,6 +1443,9 @@ impl Runner {
                         return true;
                     }
                 }
+            } else if d1 == d2 {
+                // Both endpoints on one face (a U-turn cell): no shape moves it; the
+                // continuation cells are the only relief candidates.
             } else {
                 // Straight segment: parallel shift through three side cells.
                 for q in d1.perp() {
@@ -1224,6 +1453,11 @@ impl Runner {
                     let (u1s, u2s, u3s) =
                         (self.grid.site(u1), self.grid.site(u2), self.grid.site(u3));
                     if !side_ok(&u1s) || !side_ok(&u2s) || !side_ok(&u3s) {
+                        for (x, xs) in [(u1, &u1s), (u2, &u2s), (u3, &u3s)] {
+                            if !side_ok(xs) && recursable(xs) && !blockers.contains(&x) {
+                                blockers.push(x);
+                            }
+                        }
                         continue;
                     }
                     'lanes: for lanes in 0..16u8 {
@@ -1234,15 +1468,15 @@ impl Runner {
                         let u1n = side_add(&u1s, Route::new(
                             EndPt { face: q.opp(), lane: l1 },
                             EndPt { face: d1.opp(), lane: l2 },
-                        ));
+                        ), moved_hot);
                         let u2n = side_add(&u2s, Route::new(
                             EndPt { face: d1, lane: l2 },
                             EndPt { face: d1.opp(), lane: l3 },
-                        ));
+                        ), moved_hot);
                         let u3n = side_add(&u3s, Route::new(
                             EndPt { face: d1, lane: l3 },
                             EndPt { face: q.opp(), lane: l4 },
-                        ));
+                        ), moved_hot);
                         for w in [&t_new, &n1n, &n2n, &u1n, &u2n, &u3n] {
                             if crate::cascade::Word2::pack(w).is_err() {
                                 continue 'lanes;
@@ -1255,6 +1489,184 @@ impl Runner {
                         self.grid.set(u2, &u2n);
                         self.grid.set(u3, &u3n);
                         for c in [t, n1, n2, u1, u2, u3] {
+                            self.wake_around(c);
+                        }
+                        return true;
+                    }
+                }
+            }
+            // Every shape failed for this route. The continuation cells themselves may be
+            // the obstacle: when their swing faces have no free lane, shedding any cold
+            // route from them frees one. Reservations keep the cursor's own protected
+            // target out of reach of this relocation.
+            for (x, xs) in [(n1, &n1s), (n2, &n2s)] {
+                if sheddable(xs) && !blockers.contains(&x) {
+                    blockers.push(x);
+                }
+            }
+        }
+        // Recursive room-making: every shape was boxed in by a full side cell. Shed one
+        // cold route from one blocker; the cursor's retry re-attempts the outer eviction.
+        if depth > 0 {
+            for b in blockers {
+                if std::env::var_os("CASCADE_DBG").is_some() {
+                    eprintln!("evict {t:?} d{depth}: recurse into blocker {b:?}");
+                }
+                if self.try_evict(b, None, depth - 1) {
+                    return true;
+                }
+            }
+        } else if std::env::var_os("CASCADE_DBG").is_some() {
+            eprintln!("evict {t:?} d0: out of depth");
+        }
+        false
+    }
+
+    /// Proactive slack retraction: the inverse of the straight shift. When this cell is
+    /// the middle of a cold three-cell detour (straight here, bending back on both
+    /// sides toward the same face) and the bypassed cell can host the route, pull it
+    /// straight: two cells of wire vanish. Strictly length-decreasing, so it cannot
+    /// livelock; cooldown stamps keep it from immediately undoing a fresh eviction, and
+    /// reservations keep it out of cells a cursor is growing into.
+    fn try_retract(&mut self, p: Pos) -> bool {
+        let site = self.grid.site(p);
+        let Cell::Wire { routes, hot, cooldown: 0, reserved: None } = &site.cell else {
+            return false;
+        };
+        if site.cursor.is_some() || site.claim {
+            return false;
+        }
+        let plain_cold = |s: &Site| {
+            matches!(s.cell, Cell::Wire { reserved: None, cooldown: 0, .. })
+                && s.cursor.is_none()
+                && !s.claim
+        };
+        let eligible = |s: &Site| match &s.cell {
+            Cell::Empty { reserved: None } => s.cursor.is_none() && !s.claim,
+            Cell::Wire { reserved: None, cooldown: 0, routes, .. } => {
+                routes.len() < 3 && s.cursor.is_none() && !s.claim
+            }
+            _ => false,
+        };
+        // Remove route `idx` from a wire site, preserving the other routes' hot bits.
+        let shed = |s: &Site, idx: usize| -> Site {
+            let mut ns = s.clone();
+            let mut emptied = false;
+            if let Cell::Wire { routes, hot, .. } = &mut ns.cell {
+                let mut nh = 0u8;
+                let mut k = 0;
+                for j in 0..routes.len() {
+                    if j != idx {
+                        if (*hot >> j) & 1 == 1 {
+                            nh |= 1 << k;
+                        }
+                        k += 1;
+                    }
+                }
+                routes.remove(idx);
+                *hot = nh;
+                emptied = routes.is_empty();
+            }
+            if emptied {
+                ns.cell = Cell::Empty { reserved: None };
+            }
+            ns
+        };
+        for (i, r) in routes.iter().enumerate() {
+            if (hot >> i) & 1 == 1 {
+                continue;
+            }
+            let (d1, d2) = (r.a.face, r.b.face);
+            if d2 != d1.opp() {
+                continue; // only the straight middle of a detour retracts
+            }
+            let (u1, u3) = (step(p, d1), step(p, d2));
+            let (u1s, u3s) = (self.grid.site(u1), self.grid.site(u3));
+            if !plain_cold(&u1s) || !plain_cold(&u3s) {
+                continue;
+            }
+            let (Cell::Wire { routes: r1s, hot: h1, .. }, Cell::Wire { routes: r3s, hot: h3, .. }) =
+                (&u1s.cell, &u3s.cell)
+            else {
+                continue;
+            };
+            // Both legs must bend from this route toward the same perpendicular face q.
+            let back1 = EndPt { face: d1.opp(), lane: r.a.lane };
+            let back3 = EndPt { face: d2.opp(), lane: r.b.lane };
+            let Some(i1) = r1s.iter().position(|x| x.ends().contains(&back1)) else { continue };
+            let Some(i3) = r3s.iter().position(|x| x.ends().contains(&back3)) else { continue };
+            if (h1 >> i1) & 1 == 1 || (h3 >> i3) & 1 == 1 {
+                continue;
+            }
+            let e1 = r1s[i1].through(back1).unwrap();
+            let e3 = r3s[i3].through(back3).unwrap();
+            let q = e1.face;
+            if q == d1 || q == d2 || e3.face != q {
+                continue;
+            }
+            let t = step(p, q);
+            let (n1, n2) = (step(u1, q), step(u3, q));
+            let (ts, n1s, n2s) = (self.grid.site(t), self.grid.site(n1), self.grid.site(n2));
+            if !eligible(&ts) || !plain_cold(&n1s) || !plain_cold(&n2s) {
+                continue;
+            }
+            let (Cell::Wire { routes: a1s, hot: ha, .. }, Cell::Wire { routes: a2s, hot: hb, .. }) =
+                (&n1s.cell, &n2s.cell)
+            else {
+                continue;
+            };
+            // The anchors hold the detour's outer bends: swing them onto the bypassed cell.
+            let anchor1 = EndPt { face: q.opp(), lane: e1.lane };
+            let anchor2 = EndPt { face: q.opp(), lane: e3.lane };
+            let Some(j1) = a1s.iter().position(|x| x.ends().contains(&anchor1)) else { continue };
+            let Some(j2) = a2s.iter().position(|x| x.ends().contains(&anchor2)) else { continue };
+            if (ha >> j1) & 1 == 1 || (hb >> j2) & 1 == 1 {
+                continue;
+            }
+            let swing = |s: &Site, idx: usize, from: EndPt, to: EndPt| -> Site {
+                let mut ns = s.clone();
+                if let Cell::Wire { routes, .. } = &mut ns.cell {
+                    let far = routes[idx].through(from).expect("anchor endpoint");
+                    routes[idx] = Route::new(far, to);
+                }
+                ns
+            };
+            for l1 in 0..2u8 {
+                for l2 in 0..2u8 {
+                    let n1n = swing(&n1s, j1, anchor1, EndPt { face: d1.opp(), lane: l1 });
+                    let n2n = swing(&n2s, j2, anchor2, EndPt { face: d1, lane: l2 });
+                    let tn = {
+                        let mut ns = ts.clone();
+                        let route = Route::new(
+                            EndPt { face: d1, lane: l1 },
+                            EndPt { face: d2, lane: l2 },
+                        );
+                        match &mut ns.cell {
+                            Cell::Empty { .. } => {
+                                ns.cell = Cell::Wire {
+                                    routes: vec![route],
+                                    hot: 0,
+                                    cooldown: 0,
+                                    reserved: None,
+                                };
+                            }
+                            Cell::Wire { routes, .. } => routes.push(route),
+                            _ => unreachable!(),
+                        }
+                        ns
+                    };
+                    let (pn, u1n, u3n) = (shed(&site, i), shed(&u1s, i1), shed(&u3s, i3));
+                    if [&tn, &n1n, &n2n, &pn, &u1n, &u3n]
+                        .iter()
+                        .all(|w| crate::cascade::Word2::pack(w).is_ok())
+                    {
+                        self.grid.set(t, &tn);
+                        self.grid.set(n1, &n1n);
+                        self.grid.set(n2, &n2n);
+                        self.grid.set(p, &pn);
+                        self.grid.set(u1, &u1n);
+                        self.grid.set(u3, &u3n);
+                        for c in [t, n1, n2, p, u1, u3] {
                             self.wake_around(c);
                         }
                         return true;
@@ -1319,6 +1731,10 @@ impl Runner {
                     Cell::Wire { routes, .. } => routes.clone(),
                     _ => vec![],
                 };
+                // Known residual: if relief (eviction or retraction) displaced one of this
+                // blocklet's own placed routes, the filter cannot see it and the displaced
+                // slack survives the unwind. Connectivity is preserved either way; the
+                // quiescence gates (reciprocity, projection, oracle) surface any breakage.
                 let leftover: Vec<Route> = match &target.cell {
                     Cell::Wire { routes, .. } => {
                         routes.iter().copied().filter(|r| !planned_routes.contains(r)).collect()
@@ -1342,6 +1758,9 @@ impl Runner {
                 let d = crate::cascade::rot_dir(*dir, cursor.axis, cursor.roll);
                 let t = step(p, d.opp());
                 let mut target = self.grid.site(t);
+                if target.cursor.is_some() {
+                    return; // a foreign cursor squats the unwind path; its next step frees it
+                }
                 let mut here = site;
                 here.cursor = None;
                 if let Cell::Agent { nursery, .. } = &mut target.cell {
@@ -1717,10 +2136,27 @@ pub fn aux_pair(tag: Tag, tail: Dir) -> [EndPt; 2] {
 /// wire cells between the principals so the producer walks before docking; `bend` routes
 /// four wire cells through a dogleg instead. Host/fixture code: global layout allowed.
 pub fn dock_fixture(rule: &'static crate::rules::Rule, gap: i32, bend: bool) -> (Grid2, Net) {
-    use Dir::*;
     let mut grid = Grid2::new(Topo::Full3D);
     let mut shadow = Net::new();
+    dock_fixture_at(rule, gap, bend, (0, 0, 0), &mut grid, &mut shadow);
+    check_reciprocity(&grid).expect("fixture reciprocity");
+    check_projection(&grid, &shadow).expect("fixture projection");
+    (grid, shadow)
+}
+
+/// The docked-pair fixture translated to an origin, so tests can pit several pairs
+/// against each other in one grid.
+pub fn dock_fixture_at(
+    rule: &'static crate::rules::Rule,
+    gap: i32,
+    bend: bool,
+    origin: Pos,
+    grid: &mut Grid2,
+    shadow: &mut Net,
+) {
+    use Dir::*;
     let wire = |grid: &mut Grid2, p: Pos, routes: &[((Dir, u8), (Dir, u8))]| {
+        let p = add(origin, p);
         let routes = routes
             .iter()
             .map(|((fa, la), (fb, lb))| {
@@ -1732,35 +2168,35 @@ pub fn dock_fixture(rule: &'static crate::rules::Rule, gap: i32, bend: bool) -> 
 
     let px = if bend { 3 } else { 1 + gap };
     let c = place_agent(
-        &mut grid, &mut shadow, (0, 0, 0), rule.consumer, E,
+        grid, shadow, add(origin, (0, 0, 0)), rule.consumer, E,
         (rule.consumer.arity() >= 2).then_some(W),
     );
     let p = place_agent(
-        &mut grid, &mut shadow, (px, 0, 0), rule.producer, W,
+        grid, shadow, add(origin, (px, 0, 0)), rule.producer, W,
         (rule.producer.arity() >= 2).then_some(E),
     );
     shadow.link(c.id, 0, p.id, 0);
     if bend {
-        lay_wire(&mut grid, &[(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0), (2, 0, 0), (3, 0, 0)]);
+        lay_wire(grid, &[(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0), (2, 0, 0), (3, 0, 0)].map(|p| add(origin, p)));
     } else if gap > 0 {
-        let path: Vec<Pos> = (0..=px).map(|x| (x, 0, 0)).collect();
-        lay_wire(&mut grid, &path);
+        let path: Vec<Pos> = (0..=px).map(|x| add(origin, (x, 0, 0))).collect();
+        lay_wire(grid, &path);
     }
 
     match rule.consumer.arity() {
         1 => {}
         2 => {
-            wire(&mut grid, (-1, 0, 0), &[((E, 0), (W, 0))]);
-            let o = place_agent(&mut grid, &mut shadow, (-2, 0, 0), Tag::Out, E, None);
+            wire(grid, (-1, 0, 0), &[((E, 0), (W, 0))]);
+            let o = place_agent(grid, shadow, add(origin, (-2, 0, 0)), Tag::Out, E, None);
             shadow.link(c.id, 1, o.id, 0);
         }
         _ => {
-            wire(&mut grid, (-1, 0, 0), &[((E, 0), (W, 0)), ((E, 1), (W, 1))]);
-            wire(&mut grid, (-2, 0, 0), &[((E, 0), (N, 0)), ((E, 1), (S, 0))]);
-            wire(&mut grid, (-2, -1, 0), &[((S, 0), (N, 0))]);
-            wire(&mut grid, (-2, 1, 0), &[((N, 0), (S, 0))]);
-            let o1 = place_agent(&mut grid, &mut shadow, (-2, -2, 0), Tag::Out, S, None);
-            let o2 = place_agent(&mut grid, &mut shadow, (-2, 2, 0), Tag::Out, N, None);
+            wire(grid, (-1, 0, 0), &[((E, 0), (W, 0)), ((E, 1), (W, 1))]);
+            wire(grid, (-2, 0, 0), &[((E, 0), (N, 0)), ((E, 1), (S, 0))]);
+            wire(grid, (-2, -1, 0), &[((S, 0), (N, 0))]);
+            wire(grid, (-2, 1, 0), &[((N, 0), (S, 0))]);
+            let o1 = place_agent(grid, shadow, add(origin, (-2, -2, 0)), Tag::Out, S, None);
+            let o2 = place_agent(grid, shadow, add(origin, (-2, 2, 0)), Tag::Out, N, None);
             shadow.link(c.id, 1, o1.id, 0);
             shadow.link(c.id, 2, o2.id, 0);
         }
@@ -1768,26 +2204,23 @@ pub fn dock_fixture(rule: &'static crate::rules::Rule, gap: i32, bend: bool) -> 
     match rule.producer.arity() {
         1 => {}
         2 => {
-            wire(&mut grid, (px + 1, 0, 0), &[((W, 0), (E, 0))]);
-            let o = place_agent(&mut grid, &mut shadow, (px + 2, 0, 0), Tag::Out, W, None);
+            wire(grid, (px + 1, 0, 0), &[((W, 0), (E, 0))]);
+            let o = place_agent(grid, shadow, add(origin, (px + 2, 0, 0)), Tag::Out, W, None);
             shadow.link(p.id, 1, o.id, 0);
         }
         _ => {
             // Both producer stubs head east then split south and further east, keeping
             // the north half-space clear for the roll-0 blocklet.
-            wire(&mut grid, (px + 1, 0, 0), &[((W, 0), (E, 0)), ((W, 1), (E, 1))]);
-            wire(&mut grid, (px + 2, 0, 0), &[((W, 0), (E, 0)), ((W, 1), (S, 0))]);
-            wire(&mut grid, (px + 2, 1, 0), &[((N, 0), (S, 0))]);
-            wire(&mut grid, (px + 3, 0, 0), &[((W, 0), (E, 0))]);
-            let o1 = place_agent(&mut grid, &mut shadow, (px + 4, 0, 0), Tag::Out, W, None);
-            let o2 = place_agent(&mut grid, &mut shadow, (px + 2, 2, 0), Tag::Out, N, None);
+            wire(grid, (px + 1, 0, 0), &[((W, 0), (E, 0)), ((W, 1), (E, 1))]);
+            wire(grid, (px + 2, 0, 0), &[((W, 0), (E, 0)), ((W, 1), (S, 0))]);
+            wire(grid, (px + 2, 1, 0), &[((N, 0), (S, 0))]);
+            wire(grid, (px + 3, 0, 0), &[((W, 0), (E, 0))]);
+            let o1 = place_agent(grid, shadow, add(origin, (px + 4, 0, 0)), Tag::Out, W, None);
+            let o2 = place_agent(grid, shadow, add(origin, (px + 2, 2, 0)), Tag::Out, N, None);
             shadow.link(p.id, 1, o1.id, 0);
             shadow.link(p.id, 2, o2.id, 0);
         }
     }
-    check_reciprocity(&grid).expect("fixture reciprocity");
-    check_projection(&grid, &shadow).expect("fixture projection");
-    (grid, shadow)
 }
 
 /// An immovable inert obstruction: two Out agents facing each other. They belong to no
@@ -2020,6 +2453,85 @@ pub fn normalize_on_grid(
 mod tests {
     use super::*;
     use crate::cascade::Grid2;
+
+    /// The inverse shift: a cold three-cell detour with an eligible bypassed cell pulls
+    /// straight, shedding two cells of wire.
+    #[test]
+    fn retract_pulls_shift_detour_straight() {
+        use Dir::*;
+        let mut grid = Grid2::new(Topo::Full3D);
+        let w = |grid: &mut Grid2, p: Pos, a: (Dir, u8), b: (Dir, u8)| {
+            let routes = vec![Route::new(
+                EndPt { face: a.0, lane: a.1 },
+                EndPt { face: b.0, lane: b.1 },
+            )];
+            grid.set(p, &Site::of(Cell::Wire { routes, hot: 0, cooldown: 0, reserved: None }));
+        };
+        // A wire along y=0 whose middle segment was shifted through y=1; (2,0) is the
+        // bypassed cell.
+        w(&mut grid, (0, 0, 0), (E, 0), (W, 0));
+        w(&mut grid, (1, 0, 0), (W, 0), (S, 0));
+        w(&mut grid, (1, 1, 0), (N, 0), (E, 0));
+        w(&mut grid, (2, 1, 0), (E, 0), (W, 0));
+        w(&mut grid, (3, 1, 0), (W, 0), (N, 0));
+        w(&mut grid, (3, 0, 0), (S, 0), (E, 0));
+        w(&mut grid, (4, 0, 0), (E, 0), (W, 0));
+        let mut r = Runner::new(grid, Net::new(), Discipline::Fifo);
+        assert!(r.try_retract((2, 1, 0)), "the detour middle retracts");
+        let mid = r.grid.site((2, 0, 0));
+        assert!(
+            matches!(&mid.cell, Cell::Wire { routes, .. } if routes.len() == 1),
+            "the bypassed cell hosts the straightened route"
+        );
+        for p in [(1, 1, 0), (2, 1, 0), (3, 1, 0)] {
+            assert!(
+                matches!(r.grid.site(p).cell, Cell::Empty { .. }),
+                "detour cell {p:?} empties"
+            );
+        }
+    }
+
+    /// The U-turn splice: a wire folding back through one neighbor is pure slack; the
+    /// neighbor joins its two continuations and the fold vanishes.
+    #[test]
+    fn evict_splices_uturn_fold() {
+        use Dir::*;
+        let mut grid = Grid2::new(Topo::Full3D);
+        grid.set(
+            (0, 0, 0),
+            &Site::of(Cell::Wire {
+                routes: vec![Route::new(
+                    EndPt { face: E, lane: 0 },
+                    EndPt { face: E, lane: 1 },
+                )],
+                hot: 0,
+                cooldown: 0,
+                reserved: None,
+            }),
+        );
+        grid.set(
+            (1, 0, 0),
+            &Site::of(Cell::Wire {
+                routes: vec![
+                    Route::new(EndPt { face: W, lane: 0 }, EndPt { face: N, lane: 0 }),
+                    Route::new(EndPt { face: W, lane: 1 }, EndPt { face: S, lane: 0 }),
+                ],
+                hot: 0,
+                cooldown: 0,
+                reserved: None,
+            }),
+        );
+        let mut r = Runner::new(grid, Net::new(), Discipline::Fifo);
+        assert!(r.try_evict((0, 0, 0), None, 2), "the fold splices out");
+        assert!(matches!(r.grid.site((0, 0, 0)).cell, Cell::Empty { .. }));
+        let n = r.grid.site((1, 0, 0));
+        let Cell::Wire { routes, .. } = &n.cell else { panic!("spliced neighbor is wire") };
+        assert_eq!(routes.len(), 1);
+        assert_eq!(
+            routes[0],
+            Route::new(EndPt { face: N, lane: 0 }, EndPt { face: S, lane: 0 })
+        );
+    }
 
     /// L walks a straight three-cell wire into a parked Eps and docks (rule Eps·L fires,
     /// both vanish). The walk must advance exactly one cell per generation.

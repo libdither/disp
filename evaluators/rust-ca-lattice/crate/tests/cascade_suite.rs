@@ -194,8 +194,66 @@ fn frontier_deep_reductions() {
             }
         }
     }
-    // The pinned floor: identity-class terms complete today; deeper terms park validly at
-    // the growth-vs-traffic frontier. Raise this as the relief rung lands.
-    assert!(complete >= 0, "frontier floor");
+    // The pinned floor: fork-dispatch and k-combinator complete end to end; the deeper
+    // terms park validly in corridor knots (walkers over doubled foreign cables). Raise
+    // this as relief mechanisms land.
+    assert!(complete >= 2, "frontier floor");
     println!("frontier: {complete}/{} deep terms complete", terms.len());
+}
+
+/// Two apply-fork pairs docked in adjacent planes: their blocklets contest the shared
+/// space, arbitration picks a survivor by seed address, the loser retracts (or dodges by
+/// roll), and both interactions eventually fire with a clean projection.
+#[test]
+fn competing_seeds_both_fire() {
+    use rust_ca_lattice::cascade::Grid2;
+    use rust_ca_lattice::cascade_run::{dock_fixture_at, Event};
+    let mut grid = Grid2::new(Topo::Full3D);
+    let mut shadow = Net::new();
+    dock_fixture_at(af_rule(), 0, false, (0, 0, 0), &mut grid, &mut shadow);
+    dock_fixture_at(af_rule(), 0, false, (0, 0, 2), &mut grid, &mut shadow);
+    // Wall the outward escape planes: the dock rings stay clear, but the three-plane
+    // blocklets must share the space between the pairs.
+    place_obstruction(&mut grid, &mut shadow, (0, 0, -1), Dir::D);
+    place_obstruction(&mut grid, &mut shadow, (0, 0, 3), Dir::U);
+    check_reciprocity(&grid).expect("stacked fixtures are reciprocal");
+    check_projection(&grid, &shadow).expect("stacked fixtures project");
+    let mut r = Runner::new(grid, shadow, Discipline::Fifo);
+    assert!(r.run(8_000_000), "must quiesce");
+    assert_eq!(r.grid.rewrites, 2, "both docked pairs fire");
+    let retracts =
+        r.events.iter().filter(|e| matches!(e, Event::Retract(..))).count();
+    println!("competing seeds: {retracts} retraction(s) during arbitration");
+    assert!(retracts >= 1, "the losing seed must retract at least once");
+    check_reciprocity(&r.grid).expect("post-fire reciprocity");
+    check_projection(&r.grid, &r.shadow).expect("post-fire projection");
+}
+
+/// Sixteen random schedules over the two completing frontier terms: any schedule may
+/// park, none may answer wrongly, and a seed-free quiescent grid must project.
+#[test]
+fn schedule_fuzz_never_wrong() {
+    use rust_ca_lattice::cascade_run::load_net;
+    for seed in 0..16u64 {
+        for term in [ap(Term::L, Term::L), ap(f2(Term::L, Term::L), Term::L)] {
+            let want = oracle::show(
+                &oracle::nf(term.clone(), &mut oracle::Fuel(100_000)).expect("oracle nf"),
+            );
+            let mut shadow = Net::new();
+            let root = shadow.build(&term);
+            let (_nrm, out) = shadow.drive(root);
+            let grid = load_net(&shadow, Topo::Full3D).expect("loads");
+            let mut r = Runner::new(grid, shadow, Discipline::Random(seed));
+            assert!(r.run(8_000_000), "seed {seed}: did not quiesce");
+            if r.grid.seed_sids.is_empty() {
+                check_reciprocity(&r.grid)
+                    .unwrap_or_else(|e| panic!("seed {seed}: reciprocity: {e}"));
+                check_projection(&r.grid, &r.shadow)
+                    .unwrap_or_else(|e| panic!("seed {seed}: projection: {e}"));
+            }
+            if let Some(got) = r.shadow.readback(r.shadow.get(out).ports[0]) {
+                assert_eq!(oracle::show(&got), want, "seed {seed}: wrong answer");
+            }
+        }
+    }
 }

@@ -240,6 +240,24 @@ fn main() {
             "  {:<4} {:?} sid={sid} pr={} aux=[{}] nursery={nursery} pass={} | faces {}",
             tag.name(), p, ep(*principal), auxes.join(" "), pass.len(), brief(&facing.cell)
         );
+        // A demanded producer that is not moving is a walk wedge: dump its own cell and
+        // the principal target's neighborhood so the refusal is decodable.
+        let target_hot = match &facing.cell {
+            Cell::Wire { routes, hot, .. } => {
+                let enter = EndPt { face: principal.face.opp(), lane: principal.lane };
+                routes.iter().position(|r| r.through(enter).is_some())
+                    .is_some_and(|i| (hot >> i) & 1 == 1)
+            }
+            _ => false,
+        };
+        if tag.is_producer() && !nursery && target_hot {
+            let t = step(*p, principal.face);
+            println!("       walk-blocked: self {}", full_site(site));
+            println!("       target {:?}: {}", t, full_site(&facing));
+            for nd in DIRS {
+                println!("         nb {} {:?}: {}", nd.ch(), step(t, nd), full_site(&r.grid.site(step(t, nd))));
+            }
+        }
     }
 
     let sites: Vec<(Pos, Site)> = r.grid.cells.keys().map(|p| (*p, r.grid.site(*p))).collect();
@@ -281,6 +299,21 @@ fn main() {
                 println!("      target:  {}", full_site(&r.grid.site(t)));
                 for nd in DIRS {
                     println!("      nb {} {:?}: {}", nd.ch(), step(t, nd), full_site(&r.grid.site(step(t, nd))));
+                }
+                // The whole pocket: every non-empty cell within Chebyshev distance 2 of
+                // the blocked target, so eviction geometry is decodable from one dump.
+                println!("      pocket (d<=2 around {:?}):", t);
+                for dz in -2i32..=2 {
+                    for dy in -2i32..=2 {
+                        for dx in -2i32..=2 {
+                            let q = (t.0 + dx, t.1 + dy, t.2 + dz);
+                            let s = r.grid.site(q);
+                            if matches!(s.cell, Cell::Empty { reserved: None }) && s.cursor.is_none() {
+                                continue;
+                            }
+                            println!("        {:?}: {}", q, full_site(&s));
+                        }
+                    }
                 }
             }
             Op::Hop { dir, finalize } => {
