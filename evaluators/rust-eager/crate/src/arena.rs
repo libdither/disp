@@ -120,6 +120,14 @@ pub(crate) struct Arena {
     /// entries are permanently valid. `base_len` is 0 with no snapshot (identity offsets).
     base: Option<FrozenBase>,
     base_len: u32,
+    /// Frozen-memo hits this session (telemetry: the snapshot's realized value).
+    pub(crate) frozen_hits: u64,
+}
+
+/// `save_snapshot` outcome: written, or skipped because the run added nothing durable.
+pub(crate) enum SaveOutcome {
+    Saved(u32, u32),
+    Unchanged,
 }
 
 impl Arena {
@@ -137,6 +145,7 @@ impl Arena {
             free_list: Vec::new(),
             base: None,
             base_len: 0,
+            frozen_hits: 0,
         };
         // index 0: reserved null sentinel (never interned, never returned) so no valid
         // handle is JS-falsy — see LEAF_ID.
@@ -321,6 +330,7 @@ impl Arena {
     pub(crate) fn memo_lookup(&mut self, f: u32, x: u32) -> Option<u32> {
         if let Some(b) = &self.base {
             if let Some(r) = b.memo_get(f, x) {
+                self.frozen_hits += 1;
                 return Some(r);
             }
         }
@@ -352,27 +362,59 @@ impl Arena {
         Ok((self.base_len, memo_n))
     }
 
-    /// Persist the whole arena (frozen base + overlay) with the union of frozen and
-    /// live intern/memo tables. Callers snapshot at a quiet point (post-endScope), so
-    /// the memo is already pruned to live facts. Returns (nodes, memo entries).
-    pub(crate) fn save_snapshot(&mut self, path: &str, stamp: &[u8]) -> Result<(u32, u32), String> {
-        let count = self.node_count();
-        let mut words: Vec<u64> = Vec::with_capacity(count as usize);
-        if let Some(b) = &self.base {
-            words.extend_from_slice(&b.nodes);
+    /// Persist the arena (frozen base + overlay), COMPACTED: live ids (the interned
+    /// set — hash-consing guarantees an interned node's children are interned) remap
+    /// densely, dropping every hole, and only memo entries whose recomputation cost
+    /// is ≥ `min_cost` fork-dispatches persist (cheap facts are cheaper to recompute
+    /// than to store/load; the run's live memo keeps everything regardless). Callers
+    /// snapshot at a quiet point (post-endScope). Skips writing when the run added
+    /// nothing durable — the converged fixed point.
+    pub(crate) fn save_snapshot(&mut self, path: &str, stamp: &[u8], min_cost: u32) -> Result<SaveOutcome, String> {
+        let overlay_live = self.nodes.len() - self.free_list.len();
+        let new_facts = self.memo.iter().filter(|&(.., c)| c >= min_cost).count();
+        if self.base.is_some() && overlay_live == 0 && new_facts == 0 {
+            return Ok(SaveOutcome::Unchanged);
         }
-        words.extend_from_slice(&self.nodes);
-        let frozen_intern: Vec<u32> = self.base.as_ref().map(|b| b.intern_iter().collect()).unwrap_or_default();
-        let live_intern: Vec<u32> = self.intern.iter().copied().collect();
-        let frozen_memo: Vec<(u32, u32, u32)> =
+        // Live ids, ascending (keeps the bootstrap prefix 0/1/2 fixed): the reserved
+        // sentinel + frozen ∪ live intern. Frozen and overlay id ranges are disjoint.
+        let mut interned: Vec<u32> = self.base.as_ref().map(|b| b.intern_iter().collect()).unwrap_or_default();
+        interned.extend(self.intern.iter().copied());
+        interned.sort_unstable();
+        let mut live: Vec<u32> = Vec::with_capacity(interned.len() + 1);
+        live.push(0);
+        live.extend_from_slice(&interned);
+        let mut remap: Vec<u32> = vec![u32::MAX; self.node_count() as usize];
+        for (new_id, &old) in live.iter().enumerate() {
+            remap[old as usize] = new_id as u32;
+        }
+        let words: Vec<u64> = live
+            .iter()
+            .map(|&old| {
+                pack(match self.node(old) {
+                    Node::Leaf => Node::Leaf,
+                    Node::Stem(c) => Node::Stem(remap[c as usize]),
+                    Node::Fork(l, r) => Node::Fork(remap[l as usize], remap[r as usize]),
+                    Node::Susp(f, a) => Node::Susp(remap[f as usize], remap[a as usize]),
+                })
+            })
+            .collect();
+        let frozen_memo: Vec<(u32, u32, u32, u32)> =
             self.base.as_ref().map(|b| b.memo_iter().collect()).unwrap_or_default();
-        let live_memo: Vec<(u32, u32, u32)> = self.memo.iter().collect();
+        let live_memo: Vec<(u32, u32, u32, u32)> = self.memo.iter().collect();
+        let m = |id: u32| remap[id as usize];
         snapshot::save(
             path,
             stamp,
             words,
-            frozen_intern.into_iter().chain(live_intern),
-            frozen_memo.into_iter().chain(live_memo),
+            interned.iter().map(|&id| m(id)),
+            frozen_memo
+                .into_iter()
+                .chain(live_memo)
+                .filter(|&(f, x, r, c)| {
+                    c >= min_cost && m(f) != u32::MAX && m(x) != u32::MAX && m(r) != u32::MAX
+                })
+                .map(|(f, x, r, c)| (m(f), m(x), m(r), c)),
         )
+        .map(|(n, e)| SaveOutcome::Saved(n, e))
     }
 }

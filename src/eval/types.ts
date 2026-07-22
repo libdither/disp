@@ -115,8 +115,12 @@ export interface Session<H = unknown> {
   // the fixed rules), so only an evaluator change invalidates — `stamp` encodes that
   // (callers pass a hash of the evaluator binary). loadSnapshot is only legal on a
   // pristine session and returns false on any mismatch (caller proceeds cold).
+  // saveSnapshot compacts and keeps entries costing ≥ minCost reduction steps;
+  // returns 1 saved / 0 skipped (nothing durable added) / -1 error. frozenHits
+  // reports how many times the loaded snapshot's facts were used this session.
   loadSnapshot?(path: string, stamp: string): boolean
-  saveSnapshot?(path: string, stamp: string): boolean
+  saveSnapshot?(path: string, stamp: string, minCost?: number): number
+  frozenHits?(): number
 
   // True iff handles are canonical (a === b implies equal(a,b)). The engine may
   // use this ONLY as an optimization gate (e.g. the run.ts name registry).

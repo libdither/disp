@@ -142,9 +142,14 @@ describe("disp", () => {
     }
     if (memoStamp && sharedSession?.saveSnapshot) {
       mkdirSync(cacheDir, { recursive: true })
+      const hits = sharedSession.frozenHits?.() ?? 0
       const t0 = Date.now()
-      const ok = sharedSession.saveSnapshot(memoPath, memoStamp)
-      if (ok) console.log(`[disp] reduction cache saved (${Date.now() - t0}ms): ${memoPath}`)
+      // Persist only facts costing ≥ DISP_MEMO_MIN_COST reduction steps (default
+      // 1000): cheap facts are cheaper to recompute than to store and load.
+      const minCost = Number(process.env.DISP_MEMO_MIN_COST ?? 1000)
+      const outcome = sharedSession.saveSnapshot(memoPath, memoStamp, minCost)
+      const word = outcome === 1 ? `saved (${Date.now() - t0}ms)` : outcome === 0 ? "unchanged (save skipped)" : "SAVE FAILED"
+      console.log(`[disp] reduction cache ${word}, ${hits.toLocaleString()} frozen hits this run: ${memoPath}`)
     }
   })
 })

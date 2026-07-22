@@ -48,7 +48,8 @@ interface EagerSessionNative {
   setMemoLimit(n: number): void
   clearCaches(): void
   loadSnapshot(path: string, stamp: string): boolean
-  saveSnapshot(path: string, stamp: string): boolean
+  saveSnapshot(path: string, stamp: string, minCost: number): number  // 1 saved, 0 unchanged, -1 error
+  frozenHits(): number
 }
 interface RustEagerNativeAddon {
   EagerSession: new () => EagerSessionNative
@@ -91,9 +92,13 @@ class RustEagerNativeSession implements Session<number> {
 
   // Persistent reduction cache: memo entries are calculus-level facts, so only an
   // evaluator change invalidates — callers stamp with a hash of the addon binary.
-  // Load is refused (false) on a non-pristine session or stamp/format mismatch.
+  // Load is refused (false) on a non-pristine session or stamp/format/checksum
+  // mismatch. Save compacts (holes dropped), keeps entries costing ≥ minCost
+  // fork-dispatches, and returns 1 saved / 0 unchanged-skipped / -1 error.
   loadSnapshot(path: string, stamp: string): boolean { return this.#s.loadSnapshot(path, stamp) }
-  saveSnapshot(path: string, stamp: string): boolean { return this.#s.saveSnapshot(path, stamp) }
+  saveSnapshot(path: string, stamp: string, minCost = 0): number { return this.#s.saveSnapshot(path, stamp, minCost) }
+  // Frozen-memo hits this session — the snapshot's realized value.
+  frozenHits(): number { return this.#s.frozenHits() }
 
   leaf(): number { return this.#s.leaf() }
   stem(child: number): number { return this.#s.stem(child) }

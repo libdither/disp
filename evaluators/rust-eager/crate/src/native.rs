@@ -15,7 +15,7 @@
 //! the eager-apply exhaustion sentinel is `u32::MAX` = JS `4294967295` (NOT the wasm path's
 //! signed `-1`, since napi returns `u32` unsigned).
 
-use crate::arena::{Arena, Node, LEAF_ID};
+use crate::arena::{Arena, Node, SaveOutcome, LEAF_ID};
 use napi_derive::napi;
 
 /// One session = one owned hash-consed arena (the per-instance analogue of the wasm
@@ -89,10 +89,21 @@ impl EagerSession {
     pub fn load_snapshot(&mut self, path: String, stamp: String) -> bool {
         self.arena.load_snapshot(&path, stamp.as_bytes()).is_ok()
     }
-    /// Persist the arena + intern + apply-memo union (frozen ∪ live) atomically.
+    /// Persist the arena + memo (frozen ∪ live), compacted, keeping entries costing
+    /// ≥ `min_cost` fork-dispatches. 1 = saved, 0 = skipped (nothing durable added
+    /// — the converged fixed point), -1 = error.
     #[napi]
-    pub fn save_snapshot(&mut self, path: String, stamp: String) -> bool {
-        self.arena.save_snapshot(&path, stamp.as_bytes()).is_ok()
+    pub fn save_snapshot(&mut self, path: String, stamp: String, min_cost: u32) -> i32 {
+        match self.arena.save_snapshot(&path, stamp.as_bytes(), min_cost) {
+            Ok(SaveOutcome::Saved(..)) => 1,
+            Ok(SaveOutcome::Unchanged) => 0,
+            Err(_) => -1,
+        }
+    }
+    /// Frozen-memo hits this session (the snapshot's realized value; f64 for JS).
+    #[napi]
+    pub fn frozen_hits(&self) -> f64 {
+        self.arena.frozen_hits as f64
     }
 
     // ── interchange (Session.loadTernary / dumpTernary) — native strings, no ptr/len

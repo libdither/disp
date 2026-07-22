@@ -17,8 +17,9 @@ enum Cont {
     ApplyTo(u32),
     /// result → `apply(func, result)`
     ApplyResultTo(u32),
-    /// memoize `apply(f, x) = result`
-    Memo(u32, u32),
+    /// memoize `apply(f, x) = result`; carries the interaction counter at frame push so
+    /// the pop can record the entry's recomputation COST (cost-weighted persistence).
+    Memo(u32, u32, u64),
     /// S-rule tail: `result` is `c x`; carry `(b, orig_x)` to finish `(c x)(b x)`
     SAfterCx(u32, u32),
 }
@@ -80,14 +81,14 @@ impl Arena {
                             Node::Leaf => b,
                             // S: △ (△ c) b x → (c x)(b x). Compute c x first.
                             Node::Stem(c) => {
-                                stack.push(Cont::Memo(cur_f, cur_x));
+                                stack.push(Cont::Memo(cur_f, cur_x, self.interactions));
                                 stack.push(Cont::SAfterCx(b, cur_x));
                                 cur_f = c; // cur_x unchanged
                                 continue 'outer;
                             }
                             // triage: △ (△ w u) b x → dispatch on x (w=a.left, u=a.right)
                             Node::Fork(w, u) => {
-                                stack.push(Cont::Memo(cur_f, cur_x));
+                                stack.push(Cont::Memo(cur_f, cur_x, self.interactions));
                                 if let Node::Susp(sf, sa) = self.node(cur_x) {
                                     cur_x = self.force(sf, sa, cur_x, budget)?;
                                 }
@@ -129,8 +130,10 @@ impl Arena {
                         cur_x = res;
                         continue 'outer;
                     }
-                    Some(Cont::Memo(sf, sx)) => {
-                        self.memo.insert(sf, sx, res); // capacity/eviction handled by the backend (memo.rs)
+                    Some(Cont::Memo(sf, sx, start)) => {
+                        // cost = fork-dispatches spent below this frame (u32-clamped).
+                        let cost = (self.interactions - start).min(u32::MAX as u64) as u32;
+                        self.memo.insert(sf, sx, res, cost); // capacity/eviction handled by the backend (memo.rs)
                         // keep popping
                     }
                     Some(Cont::SAfterCx(sb, sox)) => {
