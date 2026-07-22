@@ -24,9 +24,26 @@
   // the playground is an APP surface: it owns the whole viewport below the
   // nav — no footer, no page scroll
   const isApp = $derived(page.url.pathname.startsWith(`${base}/playground`));
+
+  let warnDismissed = $state(false);
 </script>
 
 <div class="shell" class:app={isApp}>
+  {#if !warnDismissed}
+    <div class="warnbar" role="status">
+      <span>
+        disp is under heavy development and much of the codebase is
+        AI-written — explore this website at your peril :)
+      </span>
+      <button
+        class="warn-dismiss"
+        onclick={() => (warnDismissed = true)}
+        aria-label="Dismiss warning"
+      >
+        ✕
+      </button>
+    </div>
+  {/if}
   <header class="nav">
     <nav class="container navbar">
       <a class="brand" href="{base}/" aria-label="disp home">
@@ -134,6 +151,33 @@
     min-height: 100dvh;
     display: flex;
     flex-direction: column;
+  }
+
+  .warnbar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.3rem 0.9rem;
+    font-size: 0.82rem;
+    text-align: center;
+    color: color-mix(in oklab, var(--warn) 65%, var(--fg));
+    background: color-mix(in oklab, var(--warn) 12%, var(--bg-elev));
+    border-bottom: 1px solid color-mix(in oklab, var(--warn) 35%, transparent);
+  }
+  .warn-dismiss {
+    flex-shrink: 0;
+    border: none;
+    background: none;
+    padding: 0 0.2rem;
+    cursor: pointer;
+    font-size: 0.78rem;
+    line-height: 1;
+    color: inherit;
+    opacity: 0.65;
+  }
+  .warn-dismiss:hover {
+    opacity: 1;
   }
 
   .nav {
