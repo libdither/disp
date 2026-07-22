@@ -1,7 +1,7 @@
 //! The abstract interaction-net engine, driven ENTIRELY by the rule ROM (rules.rs): one
 //! generic `fire` interprets templates; there is no per-rule code. Tests validate this
 //! engine against the independent oracle, and the lattice co-maintains it as the shadow
-//! net for projection checks (LOCAL_CA_DESIGN.md §10).
+//! net for projection checks (CASCADE_CELL_DESIGN.md §9).
 //!
 //! Thanks to the ≤3-port lowered alphabet, ports are a fixed `[Option<Ref>; 3]`.
 

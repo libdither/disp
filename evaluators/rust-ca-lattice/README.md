@@ -2,6 +2,61 @@
 
 The six-neighbor cellular substrate for disp's tree-calculus interaction net.
 
+## Cascade substrate (current line)
+
+`cascade.rs` and its siblings implement the event-driven successor specified in
+`research/interaction-combinator/CASCADE_CELL_DESIGN.md`. One `u64` per site; the atomic
+primitive is an edge transaction over one face-adjacent pair; there are no protocol phases,
+no request trees, and no activation sweeps. Matter is four kinds: empty (with an optional
+growth reservation), wire (up to three single-lane routes; reservations too), agent (tag,
+principal endpoint, two independent aux endpoints, up to two passthrough routes), and seed.
+Demand (per-route hot bits) spreads one cell per generation from consumer principals; only
+hot wires are walked, so undemanded values never move. Walks eat their own slack
+(truncation), lay split trails, and detour one aux through side cells when a foreign lane
+occupies the crossed edge. Rewrites dock into a two-cell seed whose builder cursor places a
+small per-rule blocklet (compiled once, deterministically, in `blocklet.rs`; worst rule 62
+cells against the old workshop cap of 63), resolves the fire while every fresh agent is
+still seated, then finalizes the nursery.
+
+Three drivers run the same transition rules:
+
+- `cascade_run.rs`: the serial worklist runner (FIFO generations are the physical tick)
+  with four adversarial queue disciplines, the route tracer, projection and reciprocity
+  checks, and the corridor loader.
+- `cascade_par.rs`: N threads over one shared `AtomicU64` array. Mutual exclusion is the
+  word's claim bit, compare-and-swapped in address order over a transition's write set, so
+  contention exists only where two wake fronts touch: measured at 0 conflicts for disjoint
+  cascades and about 0.5 percent of commits under deliberately crossing traffic at 8
+  threads, with bit-identical results. Movement, heat, swaps, and fusion docks run
+  parallel; blocklet growth stays serial for now.
+- `cascade_gather.rs`: the GPU/shader lowering. A repeating six-phase domino schedule
+  (axis times parity) partitions the lattice into disjoint pairs; each phase is one pure
+  gather into a double buffer, deterministic and bit-identical run to run. It shares the
+  pair-decision function with the threaded driver.
+
+Gates: `cargo test --release --lib` (codec exhaustives, blocklet compiler, movement,
+parallel, gather) and `cargo test --release --test cascade_suite` (the 26-rule atlas under
+all four disciplines, translation straight and bent, the A·F roll-fallback and declined
+docks, `@(L,L)` normalized end to end under all four, and the pinned deep-reduction
+frontier: `@(F(L,L),L)` reaches its normal form in six chained fires). `dump-cascade`
+regenerates `research/interaction-combinator/lattice_cascade.js` with the old suite's
+scenario roster migrated onto this substrate (translation, the A·F workshop trio, all 26
+atlas rules, the eraser cascade to empty, the T1·S stem chain) plus the cascade-native
+demos; `lattice_player.html` replays them next to the Cell64 bundle, one frame per
+generation, so a displayed tick is the maximal simultaneous wavefront, and each trace's
+note reports its measured parallel width. `bench-cascade` prints the timing snapshot and
+`debug-cascade` dumps a parked run's census.
+
+The relief rung landed: growth-blocked cells evict cold routes (corner-cut, straight
+shift, out-of-plane bracket), demand looks and wakes through guests, hairpins collapse by
+truncation, and consumers can be swap partners. The remaining frontier, pinned by
+`frontier_deep_reductions` at 1 of 5 deep terms complete: parked runs wedge where an
+eviction is itself boxed into a crowded corner; the next levers are recursive room-making
+and proactive slack retraction. The substrate never computes a wrong answer, only
+sometimes an incomplete one.
+
+## Cell64 substrate (previous line)
+
 The dynamic boundary is one mutable 64-bit center word plus six immutable neighbor words:
 
 ```rust

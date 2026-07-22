@@ -1,26 +1,22 @@
-//! Six-neighbor cellular substrate for disp's tree-calculus interaction net.
+//! The cascade cellular substrate for disp's tree-calculus interaction net
+//! (research/interaction-combinator/CASCADE_CELL_DESIGN.md).
 //!
-//! The Cell64 path is [`cell64`] → [`substrate`] → [`packed_local`], with face-relative
-//! rewrite workshops in [`rewrite64`]. Its dynamic rule mutates one 64-bit center from six
-//! immutable neighbor words under a fair live-read activation order. Stable ids, coordinates,
-//! events, and the projection shadow do not cross that rule boundary.
-//!
-//! [`rules`], [`net`], and [`oracle`] define and independently check the semantic layer. The
-//! remaining modules provide the broader geometry regression harness used while packed
-//! workshop coverage is extended across the complete rule ROM.
+//! One `u64` per site; the atomic dynamic primitive is an edge transaction over one
+//! face-adjacent pair. [`cascade`] is the word codec, [`blocklet`] compiles the per-rule
+//! rewrite patches, and three drivers run the same transition rules: [`cascade_run`]
+//! (serial worklist, generations as physical ticks), [`cascade_par`] (N threads over one
+//! shared `AtomicU64` array, claims only where cascades meet), and [`cascade_gather`]
+//! (the deterministic six-phase GPU/shader lowering). [`rules`], [`net`], and [`oracle`]
+//! define and independently check the semantic layer; [`cascade_trace`] serializes
+//! player replays.
 
 pub mod rules;
 pub mod oracle;
 pub mod net;
-pub mod cell64;
-pub mod substrate;
-pub mod packed_local;
-pub mod rewrite64;
-pub mod compile64;
-pub mod suite;
-pub mod tracejs;
 pub mod lattice;
-pub mod local;
-pub mod transitions;
-pub mod scheduler;
-pub mod fixtures;
+pub mod cascade;
+pub mod cascade_run;
+pub mod blocklet;
+pub mod cascade_par;
+pub mod cascade_gather;
+pub mod cascade_trace;
