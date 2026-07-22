@@ -84,19 +84,19 @@
     <canvas id="cv" tabindex="0" aria-label="Lattice trace. Hover a visible cell to preview it; click to pin or unpin its inspector."></canvas>
     <div id="topbar" role="group" aria-label="Trace playback controls">
       <div class="transport">
-        <button id="prev" class="iconbtn" title="Previous tick (Left arrow)" aria-label="Previous tick" aria-keyshortcuts="ArrowLeft">←</button>
+        <button id="prev" class="iconbtn" title="Previous generation (Left arrow)" aria-label="Previous generation" aria-keyshortcuts="ArrowLeft">←</button>
         <button id="play" class="iconbtn primary" title="Play or pause (Space)" aria-label="Play" aria-keyshortcuts="Space" aria-pressed="false">▶</button>
-        <button id="step" class="iconbtn" title="Next tick (Right arrow)" aria-label="Next tick" aria-keyshortcuts="ArrowRight">→</button>
+        <button id="step" class="iconbtn" title="Next generation (Right arrow)" aria-label="Next generation" aria-keyshortcuts="ArrowRight">→</button>
       </div>
       <div class="toolbar-sep"></div>
       <select id="scen" title="Suite scenario ([ / ] to cycle)" aria-label="Suite scenario"></select>
-      <input type="range" id="scrub" min="0" max="0" value="0" title="Evaluation tick" aria-label="Evaluation tick">
+      <input type="range" id="scrub" min="0" max="0" value="0" title="Generation" aria-label="Generation">
       <span id="framev" class="topvalue"></span>
       <div class="toolbar-sep"></div>
       <input type="range" id="speed" min="1" max="120" value="30" title="Playback activations per second" aria-label="Playback activations per second">
       <span id="speedv" class="topvalue"></span>
       <button id="reset" class="iconbtn" title="Restart trace" aria-label="Restart trace">↺</button>
-      <button id="fitframe" class="iconbtn" title="Fit current tick (z)" aria-label="Fit current tick">⊙</button>
+      <button id="fitframe" class="iconbtn" title="Fit current generation (z)" aria-label="Fit current generation">⊙</button>
       <button id="fitall" class="iconbtn" title="Fit entire trace (x)" aria-label="Fit entire trace">⛶</button>
       <input type="file" id="load" accept=".json" style="display:none">
       <button id="loadbtn" class="iconbtn" title="Load trace JSON" aria-label="Load trace JSON">⇧</button>
@@ -110,17 +110,17 @@
     <h3>CASCADE SUBSTRATE — GENERATION REPLAY</h3>
     <details><summary>model + trace semantics</summary><div class="note">This page replays
     recorded engine state; it never simulates. Every lattice site is one 64-bit word —
-    <b>matter 20 + control 28 + χ 8 + σ 8</b> — updated in place by the six-neighbor center
-    rule. Each sweep activates its cells in a fair deterministic random permutation
-    (<b>live-read</b>: later activations see earlier writes from the same sweep), one
-    activation per recorded tick. Scenarios come from the Cell64 test suite; regenerate the
-    bundle with <b>cargo run --release --bin dump-suite</b> from
+    <b>kind 2 + matter 36 + cursor 21 + χ 4 + claim 1</b> — and the atomic step is an edge
+    transaction rewriting the two words across one face. Activity is a wake front: one
+    frame is one <b>generation</b> (every commit of the same wavefront merged), so a
+    displayed tick is the substrate's maximal simultaneous step. Regenerate the bundle
+    with <b>cargo run --release --bin dump-cascade</b> from
     <b>evaluators/rust-ca-lattice/crate/</b>.</div></details>
     <details><summary>keybinds</summary><div class="note">
-    <b>space</b> play/pause · <b>←</b>/<b>→</b> previous/next tick · wheel zoom<br>
+    <b>space</b> play/pause · <b>←</b>/<b>→</b> previous/next generation · wheel zoom<br>
     <b>h j k l</b> / <b>w a s d</b> pan · <b>=</b>/<b>-</b> zoom in/out<br>
     <b>q</b>/<b>e</b> yaw −15°/+15° · <b>r</b>/<b>f</b> pitch +15°/−15° (clamped ±80°) · <b>0</b> reset view<br>
-    <b>z</b> fit current tick · <b>x</b> fit whole trace<br>
+    <b>z</b> fit current generation · <b>x</b> fit whole trace<br>
     <b>[</b> / <b>]</b> previous / next suite scenario<br>
     <b>.</b> / <b>,</b> next / previous activation of the pinned cell (no pin: any word change or fire)<br>
     <b>n</b> / <b>p</b> next / previous word change at the pinned cell (no pin: same as . / ,)<br>
@@ -131,15 +131,15 @@
     selected while stepping, even if it becomes empty.</div>
     <h3>STATUS</h3>
     <div id="stat"></div>
-    <h3 id="eventhdr">THIS TICK</h3>
+    <h3 id="eventhdr">THIS GENERATION</h3>
     <div id="events" class="note"></div>
     <h3>AGENTS &amp; PORTS</h3>
     <div class="note" style="margin-bottom:2px">Port 0 is always the <b>principal</b> (▸): producers
     emit their value there, consumers consume there, and a fire needs the two principals facing
     across one edge. Aux ports carry everything else. On the canvas a white triangle marks the
     principal face, a hollow circle marks aux 1, and a diamond marks aux 2. When both
-    auxiliaries use one face, their markers sit side-by-side over the same cable. Producers
-    use four-sided diamonds; consumers use six-sided faceted diamonds.</div>
+    auxiliaries use one face, their markers sit side-by-side over that edge's two lanes.
+    Producers use four-sided diamonds; consumers use six-sided faceted diamonds.</div>
     <div id="agents"></div>
     <h3>REWRITE RULES <span class="k" id="rulehdr"></span></h3>
     <div class="note" style="margin-bottom:4px">consumer <b>principal ↔ principal</b> producer ⇒ fresh agents (the dying pair's
@@ -150,38 +150,35 @@
     <h3>LEGEND</h3>
     <div class="note">
       white triangle = principal port; hollow circle = aux 1; diamond = aux 2<br>
-      paired blue strokes = one ordered two-lane auxiliary cable<br>
-      small square junction = zipper: double trunk opens into two single branches<br>
-      colored square outline = active local control role — orange translate-source, cyan
-      translate-target, slate translate-tail; gold rewrite driver, cyan boundary, green
-      fresh-agent seat, purple wire seat<br>
       strand color keys on lattice |z| (<span style="color:#6f9fd8">z=0</span> /
       <span style="color:#a97fd8">±1</span> / <span style="color:#d87fb0">±2</span> /
-      <span style="color:#d8a97f">deeper</span>); <span style="color:#ffd866">gold strand</span> = hot lane<br>
+      <span style="color:#d8a97f">deeper</span>); <span style="color:#ffd866">gold strand</span> = hot (demanded) lane<br>
       <span style="color:#ff5a30">red glow</span> = χ pressure field<br>
-      <b>white ring + cross</b> = the cell this tick's fair random permutation activated;
-      <b>dashed white ring</b> = next tick's activation<br>
+      colored square outline = rewrite in progress — gold seed (docked pair), green
+      builder cursor, orange seed+cursor sharing a cell<br>
+      dashed cyan ring = nursery agent: placed by the cursor, inert until the seed resolves<br>
+      <b>white rings + cross</b> = this generation's wavefront (every cell that committed);
+      <b>dashed white rings</b> = the next generation's front<br>
       gold event ring = semantic fire (rule shown); far cells dim with camera depth
       (q/e yaw, r/f pitch)
     </div>
     <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
-    <div class="note">Each scenario records one suite run activation by activation: frame 0 is a
-    full keyframe, later frames are literal one-cell deltas plus their activation and fire
-    events. Must-tier scenarios assert invariants (transport bounds, control clearance, matter
-    preservation); example-tier scenarios record reductions such as the A·F rewrite — request
-    the preferred lift, fall back when blocked, then place the fixed 16-cell result. At
-    control-free checkpoints the lattice is projected to the shadow interaction net and checked
-    port-for-port. The viewer only replays; the white activation marker makes each sweep's fair
-    random order visible.</div>
+    <div class="note">Each scenario records one run generation by generation: frame 0 is a
+    full keyframe, later frames are literal one-cell deltas plus the front's commit and fire
+    events. Docked principal pairs become a two-cell seed; a builder cursor grows the rule's
+    blocklet as nursery matter, resolves the fire while every fresh agent is still seated,
+    then finalizes. At quiescence the lattice is projected onto the shadow interaction net
+    and checked port-for-port. A parked trace is incomplete, never wrong: the run wedged
+    with its seed still visible. The viewer only replays.</div>
   </div>
 </div>
 <script>
 // A stable revision query lets browsers cache the generated bundles between reloads.
 // The cascade bundle is the trace registry.
-document.write('<script src="lattice_cascade.js?v=cascade-1"><\/script>');
+document.write('<script src="lattice_cascade.js?v=cascade-2"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-22 · cascade replay";
+const PLAYER_VERSION = "2026-07-22 · cascade replay v2";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -216,10 +213,10 @@ const STEP3 = { N: [0, -1, 0], E: [1, 0, 0], S: [0, 1, 0], W: [-1, 0, 0],
 const OPPOSITE = { N: "S", E: "W", S: "N", W: "E", U: "D", D: "U" };
 const FACE_ORDER = ["N", "E", "S", "W", "U", "D"];
 const DEFAULT_BIT_LAYOUT = {
-  name: "cell64",
-  payload: { fixed: 20 },
-  fields: { chi: 8, sigma: 8 },
-  motion: { fixed: 28 },
+  name: "cascade",
+  payload: { fixed: 36 },
+  fields: { chi: 4 },
+  motion: { fixed: 21 },
   observer: { sid: 32 },
   max_local: 64,
 };
@@ -285,10 +282,10 @@ function syncPlayerUI() {
     previous.disabled = FRAME === 0;
     next.disabled = FRAME === TR.frames.length - 1;
     document.getElementById("scrub").value = FRAME;
-    document.getElementById("framev").textContent = `tick ${TR.frames[FRAME].tick} · ${FRAME}/${TR.frames.length - 1}`;
+    document.getElementById("framev").textContent = `gen ${TR.frames[FRAME].tick} · ${FRAME}/${TR.frames.length - 1}`;
   }
 }
-// Follow mode keeps the camera centered on the cell this tick's permutation activated.
+// Follow mode keeps the camera centered on the front's first commit each generation.
 function followActivation() {
   if (!FOLLOW || !TR) return;
   const activation = TR.frames[FRAME].events.find(event => event.t === "activate");
@@ -454,11 +451,7 @@ function fitFrames(frames) {
   for (const f of frames) {
     for (const ag of f.grid.agents) points.push(ag);
     for (const w of f.grid.wires) points.push(w);
-    for (const cable of f.grid.cables || []) points.push(cable);
-    for (const zip of f.grid.zips || []) points.push(zip);
-    for (const cross of f.grid.crosses || []) points.push(cross);
     for (const c0 of f.grid.chi) points.push(c0);
-    for (const sigma of f.grid.sigma || []) points.push(sigma);
     for (const m of f.grid.motion) points.push(m);
   }
   fitPoints(points, 6, 52);
@@ -478,8 +471,8 @@ const sameCell = (a, b) => Array.isArray(a) && Array.isArray(b) &&
   a.length >= 3 && b.length >= 3 && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 const cellLabel = p => `(${p[0]},${p[1]},${p[2]})`;
 const emptyCell = p => ({
-  pos: [p[0], p[1], p[2]], agent: null, wire: null, cable: null, zip: null,
-  cross: null, chi: 0, sigma: 0, word: null, motion: [], guest: null,
+  pos: [p[0], p[1], p[2]], agent: null, wire: null, chi: 0, word: null,
+  motion: [], nursery: false,
 });
 
 function indexedCell(pos) {
@@ -496,16 +489,15 @@ function rebuildCellIndex() {
   CELL_INDEX = new Map();
   if (!TR) return;
   const grid = TR.frames[FRAME].grid;
-  for (const a of grid.agents) indexedCell(a).agent = a;
+  for (const a of grid.agents) {
+    const cell = indexedCell(a);
+    cell.agent = a;
+    cell.nursery = a[6] === "nursery";
+  }
   for (const w of grid.wires) indexedCell(w).wire = w;
-  for (const cable of grid.cables || []) indexedCell(cable).cable = cable;
-  for (const zip of grid.zips || []) indexedCell(zip).zip = zip;
-  for (const cross of grid.crosses || []) indexedCell(cross).cross = cross;
   for (const c of grid.chi) indexedCell(c).chi = c[3];
-  for (const sigma of grid.sigma || []) indexedCell(sigma).sigma = sigma[3];
   for (const word of grid.words || []) indexedCell(word).word = word[3];
   for (const m of grid.motion) indexedCell(m).motion.push({ role: String(m[3]), phase: String(m[4]) });
-  for (const g of grid.guests || []) indexedCell(g).guest = g.slice(3);
 }
 
 function hitCell(clientX, clientY) {
@@ -518,7 +510,7 @@ function hitCell(clientX, clientY) {
     const [cx, cy] = px(...cell.pos);
     const d2 = (x - cx) ** 2 + (y - cy) ** 2;
     if (d2 <= radius ** 2) {
-      const weight = (cell.agent ? 8 : 0) + (cell.wire || cell.cable || cell.zip || cell.cross ? 4 : 0) +
+      const weight = (cell.agent ? 8 : 0) + (cell.wire ? 4 : 0) +
         (cell.motion.length ? 2 : 0) + (cell.chi ? 1 : 0);
       candidates.push({ cell, d2, weight });
     }
@@ -574,7 +566,10 @@ function bitBar(parent, bits) {
   }
   total.className = "bitmain"; total.textContent = `CELL ${bits.total} bits`;
   parts.className = "bitparts";
-  parts.textContent = `matter ${bits.payload} + control ${bits.protocol} + fields ${bits.fields} (χ8 + σ8)${bits.observer ? ` · observer sid +${bits.observer} outside cell` : ""}`;
+  const fieldNames = { chi: "χ", sigma: "σ" };
+  const fieldDesc = Object.entries(bits.layout.fields)
+    .map(([name, width]) => `${fieldNames[name] || name}${width}`).join(" + ");
+  parts.textContent = `matter ${bits.payload} + cursor ${bits.protocol} + ${fieldDesc}${bits.observer ? ` · observer sid +${bits.observer} outside cell` : ""}`;
   bar.title = `${bits.layout.name}: every lattice site is exactly ${bits.local} bits; observer ids are not automaton state`;
   bar.append(total, parts); parent.append(bar);
 }
@@ -590,14 +585,6 @@ function usedFaces(cell) {
     const label = `wire ${strandFaces(strand).join("↔")}`;
     for (const face of strandFaces(strand)) add(face, label);
   }
-  if (cell.cable) for (const face of strandFaces(cell.cable[3])) add(face, "two-lane cable");
-  if (cell.zip) {
-    add(cell.zip[3], "zip trunk lanes 0+1");
-    add(cell.zip[4], "zip branch lane 0");
-    add(cell.zip[5], "zip branch lane 1");
-  }
-  if (cell.cross) for (const route of cell.cross[3])
-    for (const face of strandFaces(route)) add(face, `cross ${route}`);
   return used;
 }
 
@@ -605,11 +592,8 @@ function cellSummary(cell) {
   if (!cell) return "empty";
   const parts = [];
   if (cell.agent) parts.push(`${cell.agent[3]}#${cell.agent[4]}`);
-  if (cell.wire) parts.push(cell.wire[3].length > 1 ? `${cell.wire[3].length}-strand switchbox` : `wire ${strandFaces(cell.wire[3][0]).join("↔")}`);
-  if (cell.cable) parts.push(`cable ${strandFaces(cell.cable[3]).join("↔")} ×2`);
-  if (cell.zip) parts.push(`zip ${cell.zip[3]} ⇄ ${cell.zip[4]}+${cell.zip[5]}`);
-  if (cell.cross) parts.push(`fixed cross ${cell.cross[3].join(" / ")}`);
-  if (!parts.length && cell.motion.length) parts.push("control marker");
+  if (cell.wire) parts.push(cell.wire[3].length > 1 ? `${cell.wire[3].length}-route cell` : `wire ${strandFaces(cell.wire[3][0]).join("↔")}`);
+  if (!parts.length && cell.motion.length) parts.push("seed / cursor");
   if (!parts.length && cell.chi) parts.push(`χ=${cell.chi}`);
   return parts.join(" + ") || "empty";
 }
@@ -667,47 +651,29 @@ function renderInspector() {
   const bits = cellBitBudget(cell);
   bitBar(body, bits);
 
-  const hasState = cell.agent || cell.wire || cell.cable || cell.zip || cell.cross ||
-    cell.chi || cell.sigma || cell.motion.length || cell.word;
+  const hasState = cell.agent || cell.wire || cell.chi || cell.motion.length || cell.word;
   if (!hasState) tipRow(body, "state", "no trace-visible value");
   if (cell.agent) {
     const a = cell.agent, polarity = a[3] === "Out" ? "inert" : PRODUCERS.has(a[3]) ? "producer" : "consumer";
     tipSection(body, `agent matter${bits ? ` · ${bits.payload}b field` : ""}`);
     tipRow(body, `${a[3]}#${a[4]}`, polarity);
     a[5].forEach((face, index) => tipRow(body, `p${index}`, `${portName(a[3], index)} → ${face}`));
-    if (cell.guest) tipRow(body, "guest", `rider crossing on lane ${cell.guest[1]} · foreign lane intact`);
+    if (cell.nursery) tipRow(body, "nursery", "placed by the cursor · inert until the seed resolves");
   }
   if (cell.wire) {
     const strands = cell.wire[3].length;
-    tipSection(body, strands > 1 ? `independent routes ×${strands}` : "single-lane link");
+    tipSection(body, strands > 1 ? `routes ×${strands} (independent lanes)` : "single-lane route");
     cell.wire[3].forEach((strand, i) => tipRow(body, `s${i + 1}`, strandLabel(strand)));
-    if (cell.wire[3].length > 1) tipRow(body, "ring", "independent crossing; no join");
-  }
-  if (cell.cable) {
-    tipSection(body, "overlapped auxiliary cable · two ordered lanes");
-    tipRow(body, "route", `${strandFaces(cell.cable[3]).join(" ↔ ")} · ${cell.cable[4] ? "twisted" : "lane order preserved"}`);
-    tipRow(body, "hot mask", String(cell.cable[5]));
-  }
-  if (cell.zip) {
-    tipSection(body, "zipper · double trunk to two branches");
-    tipRow(body, "trunk", `${cell.zip[3]} · lanes 0 + 1`);
-    tipRow(body, "branch 0", cell.zip[4]);
-    tipRow(body, "branch 1", cell.zip[5]);
-    tipRow(body, "lane map", cell.zip[6] ? "twisted" : "ordered");
-  }
-  if (cell.cross) {
-    tipSection(body, "fixed crossing · two independent routes");
-    cell.cross[3].forEach((route, index) => tipRow(body, `route ${index}`, strandFaces(route).join(" ↔ ")));
   }
   if (cell.word) tipRow(body, "u64 word", `0x${cell.word}`);
-  tipSection(body, bits ? `fields · ${bits.fields}b = χ8 + σ8` : "fields");
-  tipRow(body, "values", `χ=${cell.chi || 0} · σ=${cell.sigma || 0}`);
+  tipSection(body, bits ? `fields · ${bits.fields}b` : "fields");
+  tipRow(body, "values", `χ=${cell.chi || 0}`);
   if (cell.motion.length === 1) {
     const motion = cell.motion[0];
-    tipSection(body, `control${bits ? ` · ${bits.protocol}b field` : ""} · ${motion.role}:${motion.phase}`);
+    tipSection(body, `rewrite${bits ? ` · ${bits.protocol}b cursor` : ""} · ${motion.role}:${motion.phase}`);
   } else {
-    tipSection(body, `control${bits ? ` · ${bits.protocol}b field` : ""}${cell.motion.length ? "" : " · idle"}`);
-    cell.motion.forEach((motion, i) => tipRow(body, `role ${i + 1}`, `${motion.role}:${motion.phase} · dashed ring`));
+    tipSection(body, `rewrite${bits ? ` · ${bits.protocol}b cursor` : ""}${cell.motion.length ? "" : " · idle"}`);
+    cell.motion.forEach((motion, i) => tipRow(body, `role ${i + 1}`, `${motion.role}:${motion.phase}`));
   }
 
   const faces = usedFaces(cell);
@@ -724,7 +690,7 @@ function renderInspector() {
 
   const events = TR.frames[FRAME].events.map(event => eventAtCell(event, pos)).filter(Boolean);
   if (events.length) {
-    tipSection(body, "events in this tick");
+    tipSection(body, "events in this generation");
     events.forEach((event, i) => tipRow(body, `${i + 1}`, event));
   }
   const foot = document.createElement("div");
@@ -780,9 +746,8 @@ function draw(now) {
       if (d > dmax) dmax = d;
     }
   };
-  scanDepth(f0.grid.agents); scanDepth(f0.grid.wires); scanDepth(f0.grid.cables);
-  scanDepth(f0.grid.zips); scanDepth(f0.grid.crosses); scanDepth(f0.grid.chi);
-  scanDepth(f0.grid.sigma); scanDepth(f0.grid.motion); scanDepth(f0.grid.words);
+  scanDepth(f0.grid.agents); scanDepth(f0.grid.wires); scanDepth(f0.grid.chi);
+  scanDepth(f0.grid.motion); scanDepth(f0.grid.words);
   const dspan = dmax - dmin || 1;
   const dalpha = d => 0.45 + 0.55 * (Number.isFinite(dmin) ? (d - dmin) / dspan : 1);
 
@@ -833,67 +798,17 @@ function draw(now) {
     for (const sd of w[3]) drawStrand(w[0], w[1], w[2], sd);
     if (w[3].length >= 2) { const [a, b] = px(w[0], w[1], w[2]); ctx.strokeStyle = "#8595ad"; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(a, b, Math.max(2.5, s * 0.12), 0, 7); ctx.stroke(); }
   }
-  // A cable is one geometric route with two ordered lanes. Draw the lanes separately so
-  // their overlap is visible without pretending that they are two unrelated wires.
-  for (const cable of f0.grid.cables || []) {
-    const [cx, cy] = px(cable[0], cable[1], cable[2]);
-    const faces = strandFaces(cable[3]), hot = cable[5] || 0;
-    for (let lane = 0; lane < 2; lane++) for (const face of faces) {
-      const v = DIR[face], length = Math.hypot(v[0], v[1]) || 1;
-      const nx = -v[1] / length, ny = v[0] / length;
-      const offset = (lane ? 1 : -1) * s * 0.055;
-      ctx.strokeStyle = hot & (1 << lane) ? "#ffd866" : lane ? "#8bcfff" : planecol(cable[2]);
-      ctx.lineWidth = Math.max(1, s * 0.045); ctx.globalAlpha = 0.95 * dalpha(cellDepth(cable[0], cable[1], cable[2]));
-      ctx.beginPath(); ctx.moveTo(cx + nx * offset, cy + ny * offset);
-      ctx.lineTo(cx + v[0] * s / 2 + nx * offset, cy + v[1] * s / 2 + ny * offset); ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-  }
-  // A zipper is the only place where the double cable opens into two single branches.
-  for (const zip of f0.grid.zips || []) {
-    const [cx, cy] = px(zip[0], zip[1], zip[2]);
-    const trunk = DIR[zip[3]], branches = [DIR[zip[4]], DIR[zip[5]]];
-    const twist = zip[6] ? 1 : 0, hot = zip[7] || 0;
-    for (let lane = 0; lane < 2; lane++) {
-      const branch = branches[lane ^ twist];
-      const color = hot & (1 << lane) ? "#ffd866" : lane ? "#8bcfff" : planecol(zip[2]);
-      const offset = (lane ? 1 : -1) * s * 0.06;
-      const tl = Math.hypot(trunk[0], trunk[1]) || 1;
-      const tx = -trunk[1] / tl, ty = trunk[0] / tl;
-      ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, s * 0.05);
-      ctx.globalAlpha = 0.95 * dalpha(cellDepth(zip[0], zip[1], zip[2]));
-      ctx.beginPath();
-      ctx.moveTo(cx + trunk[0] * s / 2 + tx * offset, cy + trunk[1] * s / 2 + ty * offset);
-      ctx.lineTo(cx + tx * offset, cy + ty * offset);
-      ctx.lineTo(cx + branch[0] * s / 2, cy + branch[1] * s / 2);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "#0b0e14"; ctx.strokeStyle = "#c8d3e0"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.rect(cx - s * 0.10, cy - s * 0.10, s * 0.20, s * 0.20); ctx.fill(); ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
-  for (const cross of f0.grid.crosses || []) {
-    for (const route of cross[3]) drawStrand(cross[0], cross[1], cross[2], route);
-    const [cx, cy] = px(cross[0], cross[1], cross[2]);
-    ctx.strokeStyle = "#8595ad"; ctx.lineWidth = 1;
-    ctx.strokeRect(cx - s * 0.09, cy - s * 0.09, s * 0.18, s * 0.18);
-  }
-  // Protocol instrumentation is a cell-local control word. A solid square identifies one
-  // active participant; it is deliberately not drawn as another wire or agent.
+  // A rewrite in progress is a seed pair plus its builder cursor; the outline marks the
+  // cell so growth is visible without pretending the seed is an agent or a wire.
   const motion = [...f0.grid.motion].sort((a, b) => cellDepth(a[0], a[1], a[2]) - cellDepth(b[0], b[1], b[2]));
   for (const raw of motion) {
     const pos = raw.slice(0, 3);
     if (!pos || pos.length < 3 || !pos.every(Number.isFinite)) continue;
     const role = String(raw[3]);
     const phase = String(raw[4]);
-    const roleColor = role.startsWith("translate-source") ? "#ffb454"
-      : role.startsWith("translate-target") ? "#56c8ff"
-      : role.startsWith("translate-tail") ? "#89a4c7"
-      : role.startsWith("rewrite-driver") ? "#ffd866"
-      : role.startsWith("rewrite-boundary") ? "#56c8ff"
-      : role.startsWith("rewrite-seat") ? "#82d173"
-      : role.startsWith("rewrite-wire") ? "#c792ea"
-      : role === "contested" ? "#ff5a30" : "#5a6b86";
+    const roleColor = role === "seed" ? "#ffd866"
+      : role === "cursor" ? "#82d173"
+      : role === "seed+cursor" ? "#ffb454" : "#5a6b86";
     const [mx, my] = px(pos[0], pos[1], pos[2]);
     ctx.strokeStyle = roleColor;
     ctx.globalAlpha = 0.7 * dalpha(cellDepth(pos[0], pos[1], pos[2]));
@@ -1003,8 +918,8 @@ function draw(now) {
       }
     }
 
-    // A guest rider gets a dashed crossing ring: it is riding a cable or zipper cell.
-    if (a[6] === "guest") {
+    // A nursery agent gets a dashed ring: placed by the cursor, inert until the seed resolves.
+    if (a[6] === "nursery") {
       ctx.setLineDash([Math.max(3, s * 0.12), Math.max(2, s * 0.08)]);
       ctx.strokeStyle = "#8bddff"; ctx.lineWidth = Math.max(1.2, s * 0.05);
       ctx.globalAlpha = 0.95;
@@ -1026,12 +941,12 @@ function draw(now) {
     if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(displayRule(e.rule), ax, ay - s * 0.8); }
   }
 
-  // Activation order: the fair random permutation is the clock. A bright white ring and
-  // cross mark the cell this frame's activation ticked; a dim dashed ring previews the
-  // next tick's activation. Both survive scrubbing, making the no-clock asynchrony visible.
-  const activation = f0.events.find(e => e.t === "activate");
-  if (activation) {
-    const [ax, ay] = px(activation.at[0], activation.at[1], activation.at[2]);
+  // The wavefront is the clock. Every cell this generation committed gets a white ring
+  // and cross; the next generation's front previews as dim dashed rings. Both survive
+  // scrubbing, so the light-cone spread of activity is visible frame to frame.
+  for (const e of f0.events) {
+    if (e.t !== "activate") continue;
+    const [ax, ay] = px(e.at[0], e.at[1], e.at[2]);
     const ring = Math.max(6, s * 0.56), arm = Math.max(3.5, s * 0.17);
     ctx.strokeStyle = "#ffffff"; ctx.globalAlpha = 1;
     ctx.lineWidth = Math.max(1.5, s * 0.05);
@@ -1044,9 +959,9 @@ function draw(now) {
     ctx.globalAlpha = 1;
   }
   const nextFrame = FRAME + 1 < TR.frames.length ? TR.frames[FRAME + 1] : null;
-  const nextActivation = nextFrame && nextFrame.events.find(e => e.t === "activate");
-  if (nextActivation) {
-    const [nx, ny] = px(nextActivation.at[0], nextActivation.at[1], nextActivation.at[2]);
+  if (nextFrame) for (const e of nextFrame.events) {
+    if (e.t !== "activate") continue;
+    const [nx, ny] = px(e.at[0], e.at[1], e.at[2]);
     ctx.strokeStyle = "#ffffff"; ctx.globalAlpha = 0.45;
     ctx.lineWidth = Math.max(1, s * 0.04);
     ctx.setLineDash([4, 4]);
@@ -1074,12 +989,13 @@ function draw(now) {
 }
 
 const num = v => Number.isFinite(v) ? v : "—";
-// "k/N · sweep R" from an activate event's index/sweep/round, when the runner recorded them.
+// "k/W · gen G" from an activate event's index within the front, the front's width, and
+// the generation counter.
 function actOrderText(e) {
   if (!e) return "—";
   const parts = [];
-  if (Number.isFinite(e.index) && Number.isFinite(e.sweep)) parts.push(`${e.index}/${e.sweep}`);
-  if (Number.isFinite(e.round)) parts.push(`sweep ${e.round}`);
+  if (Number.isFinite(e.index) && Number.isFinite(e.width)) parts.push(`${e.index + 1}/${e.width}`);
+  if (Number.isFinite(e.gen)) parts.push(`gen ${e.gen}`);
   return parts.length ? parts.join(" · ") : "—";
 }
 
@@ -1087,26 +1003,21 @@ function hud() {
   const f = TR.frames[FRAME];
   const tickGap = FRAME === 0 ? 0 : f.tick - TR.frames[FRAME - 1].tick;
   document.getElementById("eventhdr").textContent = FRAME === 0 || tickGap === 1
-    ? "THIS TICK"
-    : `SINCE PREVIOUS FRAME (+${tickGap} TICKS)`;
+    ? "THIS GENERATION"
+    : `SINCE PREVIOUS FRAME (+${tickGap} GENERATIONS)`;
   const activeControls = f.grid.motion.length;
-  const activation = f.events.find(event => event.t === "activate");
-  const fired = f.ints > 0;
-  const rewritePhases = f.grid.motion
-    .filter(mark => String(mark[3]).startsWith("rewrite-"))
-    .map(mark => String(mark[4]).split(" · ")[0]);
-  const placing = rewritePhases.some(phase => phase === "place" || phase === "placed");
-  const blocked = rewritePhases.includes("blocked");
-  const declined = TR.rewrite_outcome === "blocked"
-    && FRAME === TR.frames.length - 1 && activeControls === 0;
+  const front = f.events.filter(event => event.t === "activate");
+  const activation = front[0];
+  const lastFrame = FRAME === TR.frames.length - 1;
   const r = TR.result;
+  // A cascade run never records a wrong answer; a non-quiescent result is a parked run.
   const badge = r
     ? r.pass === true
       ? `<div class="suitebadge pass">PASS</div>`
-      : `<div class="suitebadge fail">FAIL: ${esc(r.fail || "unspecified")}</div>`
+      : `<div class="suitebadge fail">PARKED — incomplete, seed visible</div>`
     : "";
   const resultRows = r
-    ? `<div class="row"><span class="k">sweeps</span><b>${num(r.sweeps)}</b></div>` +
+    ? `<div class="row"><span class="k">generations</span><b>${num(r.generations)}</b></div>` +
       `<div class="row"><span class="k">transport</span><b>${num(r.transport)}</b></div>` +
       `<div class="row"><span class="k">rewrites</span><b>${num(r.rewrites)}</b></div>` +
       `<div class="row"><span class="k">ints</span><b>${num(r.ints)}</b></div>`
@@ -1117,27 +1028,25 @@ function hud() {
     `<div class="row"><span class="k">topology</span><span>${esc(TR.topo)}</span></div>` +
     `<div class="row"><span class="k">cell state</span><b>64 bits exactly</b></div>` +
     resultRows +
-    `<div class="row"><span class="k">tick</span><b>${f.tick} / ${TR.ticks}</b></div>` +
-    `<div class="row"><span class="k">activated cell</span><span>${activation ? cellLabel(activation.at) : FRAME === 0 ? "initial keyframe" : "—"}</span></div>` +
-    `<div class="row"><span class="k">activation</span><b>${actOrderText(activation)}</b></div>` +
-    `<div class="row"><span class="k">center changed</span><b>${activation ? (activation.changed ? "yes" : "no") : "—"}</b></div>` +
-    `<div class="row"><span class="k">active local controls</span><b>${activeControls}</b></div>` +
+    `<div class="row"><span class="k">generation</span><b>${f.tick} / ${TR.ticks}</b></div>` +
+    `<div class="row"><span class="k">wavefront</span><span>${front.length === 0 ? (FRAME === 0 ? "initial keyframe" : "—")
+      : front.length === 1 ? cellLabel(front[0].at) : `${front.length} cells committed`}</span></div>` +
+    `<div class="row"><span class="k">front width</span><b>${activation && Number.isFinite(activation.width) ? activation.width : "—"}</b></div>` +
+    `<div class="row"><span class="k">seed / cursor cells</span><b>${activeControls}</b></div>` +
     `<div class="row"><span class="k">semantic interactions</span><b>${f.ints}</b></div>` +
     `<div class="row"><span class="k">live agents</span><b>${f.grid.agents.length}</b></div>` +
     `<div class="row"><span class="k">active pairs</span><b>${f.pairs}</b></div>` +
-    `<div class="row"><span class="k">state</span>${declined ?
-      `<span class="ok">BOTH LIFTS BLOCKED · MATTER UNCHANGED ✓</span>` :
-      fired && activeControls === 0 ?
-      `<span class="ok">PLACEMENT COMPLETE ✓</span>` : placing ?
-      `<span class="hot">placing / confirming 16 cells</span>` : blocked ?
-      `<span class="hot">direction blocked / clearing</span>` : activeControls ?
-      `<span class="hot">direction request / response</span>` : `<span>ready</span>`}</div>`;
+    `<div class="row"><span class="k">state</span>${activeControls ?
+      `<span class="hot">rewrite growing (${activeControls} seed/cursor cells)</span>` :
+      lastFrame && r && r.pass === true ? `<span class="ok">QUIESCENT ✓</span>` :
+      lastFrame && r && r.pass === false ? `<span class="hot">parked — wedged, incomplete</span>` :
+      `<span>front advancing</span>`}</div>`;
   const lines = f.events.map(event => {
     if (event.t === "fire")
-      return `<div class="f">place ${displayRule(event.rule)} → ${event.fresh.length} fresh — semantic fire becomes irrevocable</div>`;
+      return `<div class="f">fire ${displayRule(event.rule)} — the seed resolved; the rewrite is irrevocable</div>`;
     if (event.t === "activate") {
       const order = actOrderText(event);
-      return `<div>activate ${cellLabel(event.at)}${order === "—" ? "" : ` · ${order}`} · ${event.changed ? "u64 changed" : "no-op"}</div>`;
+      return `<div>commit ${cellLabel(event.at)}${order === "—" ? "" : ` · ${order}`}</div>`;
     }
     return `<div>${esc(event.t)}</div>`;
   });
@@ -1147,37 +1056,16 @@ function hud() {
 
 // controls
 const scen = document.getElementById("scen");
-function guestTail(cell, tag, plane, principal) {
-  // Only arity-two riders (S, Nrm) carry a tail through the crossing.
-  if (tag !== "S" && tag !== "Nrm") return null;
-  // GuestZip: tail is the entered branch, branches[plane ^ twist]; zip entry [trunk,b0,b1,twist,hot].
-  if (cell.zip) return cell.zip[1 + (plane ^ (cell.zip[3] ? 1 : 0))];
-  // GuestLink: tail is the non-principal end; cable entry ["EW",twist,hot].
-  if (cell.cable) { const ends = cell.cable[0]; return ends[0] === principal ? ends[1] : ends[0]; }
-  return null;
-}
-
 function materializePackedCells(cells) {
-  const grid = { agents: [], wires: [], cables: [], zips: [], crosses: [], chi: [], sigma: [], motion: [], words: [], guests: [] };
+  const grid = { agents: [], wires: [], chi: [], motion: [], words: [] };
   for (const [key, cell] of cells) {
     const p = key.split(",").map(Number);
-    if (cell.agent) grid.agents.push([...p, cell.agent[0], cell.sid ?? 0xffffffff, cell.agent[1]]);
+    if (cell.agent) grid.agents.push([...p, cell.agent[0], cell.sid ?? 0xffffffff, cell.agent[1],
+      ...(cell.nursery ? ["nursery"] : [])]);
     if (cell.wire) grid.wires.push([...p, cell.wire]);
-    if (cell.cable) grid.cables.push([...p, ...cell.cable]);
-    if (cell.zip) grid.zips.push([...p, ...cell.zip]);
-    if (cell.cross) grid.crosses.push([...p, ...cell.cross]);
     if (cell.chi) grid.chi.push([...p, cell.chi]);
-    if (cell.sigma) grid.sigma.push([...p, cell.sigma]);
     if (cell.motion) grid.motion.push([...p, ...cell.motion]);
     if (cell.word) grid.words.push([...p, cell.word]);
-    if (cell.guest) {
-      const [tag, plane, principal] = cell.guest;
-      const faces = [principal];
-      const tail = guestTail(cell, tag, plane, principal);
-      if (tail) faces.push(tail);
-      grid.agents.push([...p, tag, cell.sid ?? 0xffffffff, faces, "guest"]);
-      grid.guests.push([...p, ...cell.guest]);
-    }
   }
   return grid;
 }
@@ -1186,8 +1074,6 @@ function inflatePackedTrace(trace) {
   if (!trace || trace.schema_version !== 4 || trace._inflated) return trace;
   const first = trace.frames[0] && trace.frames[0].grid;
   if (!first) throw new Error(`trace ${trace.name || "packed"} has no initial keyframe`);
-  for (const field of ["cables", "zips", "crosses", "sigma", "words", "guests"])
-    if (!Array.isArray(first[field])) first[field] = [];
 
   const cells = new Map();
   const record = p => {
@@ -1195,16 +1081,11 @@ function inflatePackedTrace(trace) {
     if (!cells.has(key)) cells.set(key, {});
     return cells.get(key);
   };
-  for (const word of first.words) record(word).word = word[3];
-  for (const a of first.agents) Object.assign(record(a), { agent: [a[3], a[5]], sid: a[4] });
+  for (const word of first.words || []) record(word).word = word[3];
+  for (const a of first.agents) Object.assign(record(a), { agent: [a[3], a[5]], sid: a[4], nursery: a[6] === "nursery" });
   for (const w of first.wires) record(w).wire = w[3];
-  for (const cable of first.cables) record(cable).cable = cable.slice(3);
-  for (const zip of first.zips) record(zip).zip = zip.slice(3);
-  for (const cross of first.crosses) record(cross).cross = cross.slice(3);
   for (const value of first.chi) record(value).chi = value[3];
-  for (const value of first.sigma) record(value).sigma = value[3];
   for (const mark of first.motion) record(mark).motion = mark.slice(3);
-  for (const g of first.guests) record(g).guest = g.slice(3);
 
   for (let index = 1; index < trace.frames.length; index++) {
     const frame = trace.frames[index];
@@ -1243,8 +1124,7 @@ function validateTrace(t, name) {
   t = inflatePackedTrace(t);
   for (const [i, f] of t.frames.entries()) {
     if (!f || !f.grid) throw new Error(`trace ${name} frame ${i} has no grid`);
-    for (const field of ["cables", "zips", "crosses", "sigma", "words"])
-      if (!Array.isArray(f.grid[field])) f.grid[field] = [];
+    if (!Array.isArray(f.grid.words)) f.grid.words = [];
     if (!Array.isArray(f.events) ||
         !Array.isArray(f.grid.agents) || !Array.isArray(f.grid.wires) ||
         !Array.isArray(f.grid.chi) || !Array.isArray(f.grid.motion) || !("wire" in f) ||
@@ -1253,11 +1133,11 @@ function validateTrace(t, name) {
   }
   return t;
 }
-// ✓ pass / ✗ fail with reason when the suite recorded a result; ◆ while metadata is absent.
+// ✓ quiescent / ◧ parked (incomplete, never wrong); ◆ while metadata is absent.
 const optLabel = t => {
   const r = t.result;
   if (r && r.pass === true) return `✓ ${t.name}`;
-  if (r && r.pass === false) return `✗ ${t.name} — ${r.fail || "failed"}`;
+  if (r && r.pass === false) return `◧ ${t.name} — parked`;
   return `◆ ${t.name}`;
 };
 const TIER_GROUPS = [

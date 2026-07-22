@@ -1,7 +1,7 @@
-//! Schema-4 trace serialization for cascade grids, shaped so the existing
-//! `lattice_player.html` renders them unchanged: routes appear as wire strands (hot ones
-//! starred gold), agents with their port faces, and seeds plus builder cursors as control
-//! outlines. Loaded additively from `lattice_cascade.js` next to the Cell64 bundle.
+//! Schema-4 trace serialization for cascade grids: routes as wire strands (hot ones
+//! starred gold), agents with their port faces (nursery ones marked), and seeds plus
+//! builder cursors as control outlines. `dump-cascade` writes the bundle
+//! (`lattice_cascade.js`) that `lattice_player.html` replays.
 
 use crate::cascade::{Cell, Grid2, Word2};
 use crate::cascade_run::{Event, Runner};
@@ -47,12 +47,13 @@ pub fn snapshot(grid: &Grid2, out: &mut String) {
     out.push_str("{\"agents\":[");
     let mut first = true;
     for (p, site) in &decoded {
-        let Cell::Agent { tag, principal, aux, .. } = &site.cell else { continue };
+        let Cell::Agent { tag, principal, aux, nursery, .. } = &site.cell else { continue };
         if !first { out.push(','); }
         first = false;
         let sid = grid.sid.get(p).copied().unwrap_or(u32::MAX);
-        write!(out, "[{},{},{},\"{}\",{},[{}]]", p.0, p.1, p.2, tag.name(), sid,
-            agent_faces(*tag, principal, aux)).unwrap();
+        write!(out, "[{},{},{},\"{}\",{},[{}]{}]", p.0, p.1, p.2, tag.name(), sid,
+            agent_faces(*tag, principal, aux),
+            if *nursery { ",\"nursery\"" } else { "" }).unwrap();
     }
 
     out.push_str("],\"wires\":[");
@@ -82,17 +83,7 @@ pub fn snapshot(grid: &Grid2, out: &mut String) {
         write!(out, "[{},{},{},[{}]]", p.0, p.1, p.2, strands).unwrap();
     }
 
-    out.push_str("],\"cables\":[],\"guests\":[");
-    // Nursery agents get the dashed guest ring so growth is visible.
-    first = true;
-    for (p, site) in &decoded {
-        let Cell::Agent { tag, principal, nursery: true, .. } = &site.cell else { continue };
-        if !first { out.push(','); }
-        first = false;
-        write!(out, "[{},{},{},\"{}\",0,\"{}\"]", p.0, p.1, p.2, tag.name(), principal.face.ch()).unwrap();
-    }
-
-    out.push_str("],\"zips\":[],\"crosses\":[],\"chi\":[");
+    out.push_str("],\"chi\":[");
     first = true;
     for (p, site) in &decoded {
         if site.chi == 0 { continue; }
@@ -101,7 +92,7 @@ pub fn snapshot(grid: &Grid2, out: &mut String) {
         write!(out, "[{},{},{},{}]", p.0, p.1, p.2, site.chi as u32 * 16).unwrap();
     }
 
-    out.push_str("],\"sigma\":[],\"motion\":[");
+    out.push_str("],\"motion\":[");
     first = true;
     for (p, site) in &decoded {
         let Some((role, phase)) = motion_of(site) else { continue };
@@ -140,7 +131,7 @@ pub fn delta_cell(grid: &Grid2, p: Pos, out: &mut String) {
                 write!(out, ",\"wire\":[{}]", strands).unwrap();
             }
             if *nursery {
-                write!(out, ",\"guest\":[\"{}\",0,\"{}\"]", tag.name(), principal.face.ch()).unwrap();
+                out.push_str(",\"nursery\":true");
             }
         }
         Cell::Wire { routes, hot, .. } => {
@@ -168,7 +159,7 @@ fn frame(out: &mut String, r: &Runner, tick: u64, events: &str, delta: Option<&[
         .count();
     write!(
         out,
-        "{{\"tick\":{},\"events\":[{}],\"ints\":{},\"transport\":{},\"pairs\":{},\"wire\":{{\"length\":{},\"chord\":null,\"slack\":null}}",
+        "{{\"tick\":{},\"events\":[{}],\"ints\":{},\"transport\":{},\"pairs\":{},\"wire\":{{\"length\":{}}}",
         tick, events, r.shadow.ints, r.grid.transport, r.shadow.all_active_pairs().len(), length,
     ).unwrap();
     if let Some(delta) = delta {
@@ -258,7 +249,7 @@ pub fn trace_run(
             }
             write!(
                 events,
-                "{{\"t\":\"activate\",\"at\":[{},{},{}],\"changed\":true,\"index\":{},\"sweep\":{},\"round\":{}}}",
+                "{{\"t\":\"activate\",\"at\":[{},{},{}],\"changed\":true,\"index\":{},\"width\":{},\"gen\":{}}}",
                 at.0, at.1, at.2, idx, width, start_gen,
             ).unwrap();
             idx += 1;
@@ -305,7 +296,7 @@ pub fn trace_run(
     }
     write!(
         out,
-        "],\"ticks\":{},\"result\":{{\"pass\":{},\"sweeps\":{},\"transport\":{},\"rewrites\":{},\"ints\":{}}}}}",
+        "],\"ticks\":{},\"result\":{{\"pass\":{},\"generations\":{},\"transport\":{},\"rewrites\":{},\"ints\":{}}}}}",
         frames.len() - 1, quiet, runner.generation, runner.grid.transport, runner.grid.rewrites,
         runner.shadow.ints,
     ).unwrap();

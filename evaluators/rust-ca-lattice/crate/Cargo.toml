@@ -5,8 +5,8 @@ edition = "2021"
 description = "64-bit six-neighbor cellular substrate for disp tree-calculus interaction nets"
 license = "MIT"
 
-# Native library and tests. A Session ABI wrapper can be added after the packed runner covers
-# the complete interaction ROM.
+# Native library and tests. A Session ABI wrapper can be added once the cascade substrate
+# completes deep reductions (the frontier gate in tests/cascade_suite.rs).
 [lib]
 crate-type = ["rlib"]
 

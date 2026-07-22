@@ -1,7 +1,6 @@
-//! Generate `lattice_cascade.js`: cascade traces the existing player renders next to the
-//! Cell64 bundle. The roster migrates the old suite's scenarios onto the cascade
-//! substrate (translation, the A·F workshop trio, the full rule atlas, the cascade
-//! chains) plus the cascade-native demos. Usage:
+//! Generate `lattice_cascade.js`, the bundle `lattice_player.html` replays. The roster
+//! carries the historical suite scenarios (translation, the A·F trio, the full rule
+//! atlas, the reduction chains) plus the cascade-native demos. Usage:
 //! `cargo run --release --bin dump-cascade -- <out.js>`
 
 use rust_ca_lattice::cascade::Grid2;
