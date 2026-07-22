@@ -51,6 +51,16 @@ pub struct Runner {
     pub generation: u64,
     pub events: Vec<Event>,
     rng: u64,
+    /// When set, relief decisions append their refusal reasons here (the census bin's
+    /// --why probe reads them); CASCADE_DBG mirrors the same notes to stderr.
+    pub explain: Option<Vec<String>>,
+    /// The cell whose own cursor requested the current relief: that one cell is exempt
+    /// from the cursor-hosting prohibition (a cursor may swing ordinary wire in its own
+    /// cell; foreign relief still may not touch it).
+    pub relief_owner: Option<Pos>,
+    /// The reserved target the current relief is clearing: its own reservation does not
+    /// refuse the relief chain (the reserver asked for it).
+    pub relief_root: Option<Pos>,
 }
 
 fn splitmix(state: &mut u64) -> u64 {
@@ -73,6 +83,9 @@ impl Runner {
             generation: 0,
             events: Vec::new(),
             rng: match discipline { Discipline::Random(s) => s, _ => 0 },
+            explain: None,
+            relief_owner: None,
+            relief_root: None,
         };
         let live: Vec<Pos> = r.grid.cells.keys().copied().collect();
         for p in live {
@@ -147,6 +160,22 @@ impl Runner {
     }
 
     pub fn quiescent(&self) -> bool { self.queue.is_empty() }
+
+    /// One relief-decision note: appended to the explain log when probing, mirrored to
+    /// stderr under CASCADE_DBG. The message closure only runs when someone listens.
+    fn note(&mut self, msg: impl FnOnce() -> String) {
+        let dbg = std::env::var_os("CASCADE_DBG").is_some();
+        if self.explain.is_none() && !dbg {
+            return;
+        }
+        let m = msg();
+        if dbg {
+            eprintln!("{m}");
+        }
+        if let Some(log) = &mut self.explain {
+            log.push(m);
+        }
+    }
 
     // ------------------------------------------------------------ transitions
 
@@ -270,6 +299,13 @@ impl Runner {
     /// through a reserved side pair (at most one aux). Truncation is how walks eat their
     /// own slack; the detour is how an aux crosses an edge a foreign lane occupies.
     fn try_walk(&mut self, p: Pos, site: &Site) -> bool {
+        self.try_walk_gated(p, site, false)
+    }
+
+    /// The walk with an optional shove license: `forced` overrides the demand gate for
+    /// one attempt, used when a blocked hot walker's relief needs an undemanded guest to
+    /// move on (the blocked walker's demand is the demand).
+    fn try_walk_gated(&mut self, p: Pos, site: &Site, forced: bool) -> bool {
         let Cell::Agent { tag, principal, aux, pass, .. } = &site.cell else {
             return false;
         };
@@ -279,18 +315,48 @@ impl Runner {
         if target.claim {
             return false;
         }
+        // A guest agent parked at the head of my wire, with demand burning beyond it
+        // (read through any further guests; a stale-safe heuristic), is shoved onward.
+        // Its own walk or sidestep validates itself; this walker waits for the wake.
+        if !forced {
+            let mut shove_guest = false;
+            if let Cell::Agent { tag: gtag, pass: gpass, nursery: false, cooldown: 0, .. } =
+                &target.cell
+            {
+                if gtag.is_producer() && target.cursor.is_none() {
+                    let enter = EndPt { face: m.opp(), lane: principal.lane };
+                    if let Some(far) = gpass.iter().find_map(|r| r.through(enter)) {
+                        let read = |q: Pos| self.grid.word(q);
+                        shove_guest = hot_beyond(
+                            &read,
+                            step(t, far.face),
+                            EndPt { face: far.face.opp(), lane: far.lane },
+                        );
+                    }
+                }
+            }
+            if shove_guest {
+                self.note(|| format!("walk {p:?}: shoving guest at {t:?} off my hot wire"));
+                let ts = self.grid.site(t);
+                let _ = self.try_walk_gated(t, &ts, true) || self.try_sidestep(t, &ts);
+                return false;
+            }
+        }
         let Cell::Wire { routes, hot: whot, reserved: None, .. } = &target.cell else {
+            self.note(|| format!("walk {p:?}: principal target {t:?} is not plain wire"));
             return false; // blocked; the target's next change wakes this cell
         };
         let enter = EndPt { face: m.opp(), lane: principal.lane };
         let Some(my_index) = routes.iter().position(|r| r.through(enter).is_some()) else {
+            self.note(|| format!("walk {p:?}: no continuing route at {t:?}"));
             return false;
         };
         let exit = routes[my_index].through(enter).unwrap();
-        // Demand-gated motion: only walk a wire the consumer side has heated.
+        // Demand-gated motion: only walk a wire the consumer side has heated (or a
+        // one-shot shove license).
         let route_hot = (whot >> my_index) & 1 == 1;
         let downhill = site.chi >= 4 && target.chi.saturating_add(2) <= site.chi;
-        if !(route_hot || downhill) {
+        if !(route_hot || downhill || forced) {
             return false;
         }
         if exit.face == enter.face {
@@ -299,6 +365,7 @@ impl Runner {
             // route's far end, and both slack segments vanish. Two cells, one commit.
             let back = EndPt { face: m, lane: exit.lane };
             let Some(pi) = pass.iter().position(|r| r.through(back).is_some()) else {
+                self.note(|| format!("walk {p:?}: hairpin return lane goes elsewhere"));
                 return false; // the return lane goes elsewhere; wait
             };
             let new_principal = pass[pi].through(back).unwrap();
@@ -380,13 +447,20 @@ impl Runner {
             }
         }
         if foreign.len() > 2 {
+            self.note(|| format!("walk {p:?}: target carries too many foreign routes"));
             return false;
         }
+        // A shoved walk may still relieve its own cell, but at reduced depth so it can
+        // never shove in turn (two guests would otherwise shove each other forever).
+        let relief_depth = if forced { 1 } else { 2 };
         let detours: Vec<usize> = (0..need).filter(|k| plans[*k] == Plan::Detour).collect();
         if detours.len() > 1 {
             // Both auxiliaries need detours only when passthroughs crowd the vacated
             // edge: shed one cold passthrough and replan on the next wake.
-            self.try_evict(p, None, 2);
+            self.note(|| format!("walk {p:?}: both auxiliaries need detours; shedding a passthrough"));
+            if self.try_evict(p, None, relief_depth) {
+                self.wake(p);
+            }
             return false;
         }
 
@@ -410,7 +484,10 @@ impl Runner {
             if vac_routes.len() > 3 {
                 // The vacated cell cannot hold trails plus passthroughs: shed one cold
                 // passthrough out of this cell first, then replan on the next wake.
-                self.try_evict(p, None, 2);
+                self.note(|| format!("walk {p:?}: vacated cell over capacity; shedding a passthrough"));
+                if self.try_evict(p, None, relief_depth) {
+                    self.wake(p);
+                }
                 return false;
             }
             let moved = Cell::Agent {
@@ -498,7 +575,12 @@ impl Runner {
                             }
                         }
                         if vac_routes.len() > 3 {
-                            self.try_evict(p, None, 2);
+                            self.note(|| format!(
+                                "walk {p:?}: vacated cell over capacity on detour; shedding"
+                            ));
+                            if self.try_evict(p, None, relief_depth) {
+                                self.wake(p);
+                            }
                             return false;
                         }
                         let side = |st: &Site, route: Route| -> Site {
@@ -568,11 +650,83 @@ impl Runner {
         }
         // Every detour side pair is blocked. Full side cells are relief candidates:
         // shed one cold route from one of them and replan on the next wake.
+        self.note(|| format!("walk {p:?}: every detour side pair blocked"));
         for x in full_sides {
             if self.try_evict(x, None, 1) {
+                self.wake(p);
                 break;
             }
         }
+        false
+    }
+
+    /// The last resort of a shove: the agent steps to a free side cell, lengthening its
+    /// own wiring by one connector segment through the vacated cell (which also keeps
+    /// hosting the passthroughs it sat on). Adds slack, so it only ever runs under a
+    /// shove license; the retraction machinery pulls the slack back in later.
+    fn try_sidestep(&mut self, p: Pos, site: &Site) -> bool {
+        let Cell::Agent { tag, principal, aux, pass, nursery: false, .. } = &site.cell else {
+            return false;
+        };
+        let arity = tag.arity();
+        // The vacated cell must hold the passthroughs plus one connector per port, and
+        // all connectors leave through one face (two lanes), so only arity 1 and 2 fit.
+        if arity > 2 || pass.len() + arity > 3 {
+            self.note(|| format!("sidestep {p:?}: ports plus passthroughs do not fit"));
+            return false;
+        }
+        for f in DIRS {
+            if f == principal.face || (arity >= 2 && f == aux[0].face) {
+                continue;
+            }
+            let s = step(p, f);
+            if !self.grid.topo.in_bounds(s) {
+                continue;
+            }
+            let ss = self.grid.site(s);
+            if !matches!(ss.cell, Cell::Empty { reserved: None }) || ss.cursor.is_some() || ss.claim
+            {
+                continue;
+            }
+            for l1 in 0..2u8 {
+                for l2 in 0..2u8 {
+                    let mut vac_routes = pass.clone();
+                    vac_routes.push(Route::new(*principal, EndPt { face: f, lane: l1 }));
+                    let mut new_aux = [EndPt { face: f.opp(), lane: l1 }; 2];
+                    if arity >= 2 {
+                        if l2 == l1 {
+                            continue;
+                        }
+                        vac_routes.push(Route::new(aux[0], EndPt { face: f, lane: l2 }));
+                        new_aux[0] = EndPt { face: f.opp(), lane: l2 };
+                        new_aux[1] = new_aux[0];
+                    }
+                    let moved = Cell::Agent {
+                        tag: *tag,
+                        principal: EndPt { face: f.opp(), lane: l1 },
+                        aux: new_aux,
+                        pass: vec![],
+                        nursery: false,
+                        cooldown: 1,
+                    };
+                    let vacated =
+                        Cell::Wire { routes: vac_routes, hot: 0, cooldown: 0, reserved: None };
+                    let s_new = Site { cell: moved, cursor: ss.cursor, chi: ss.chi, claim: false };
+                    let p_new =
+                        Site { cell: vacated, cursor: site.cursor, chi: site.chi, claim: false };
+                    if crate::cascade::Word2::pack(&s_new).is_ok()
+                        && crate::cascade::Word2::pack(&p_new).is_ok()
+                    {
+                        self.note(|| format!("sidestep {p:?}: stepped aside to {s:?}"));
+                        self.grid.set(s, &s_new);
+                        self.grid.set(p, &p_new);
+                        self.commit_move(p, s);
+                        return true;
+                    }
+                }
+            }
+        }
+        self.note(|| format!("sidestep {p:?}: no free side cell"));
         false
     }
 
@@ -736,11 +890,15 @@ impl Runner {
         // A seed inherits at most one passthrough route: shed the excess (cold foreign
         // lanes reroute around the cell) and dock on a later wake.
         if pass.len() > 1 || cpass.len() > 1 {
+            let mut progressed = false;
             if pass.len() > 1 {
-                self.try_evict(p, None, 2);
+                progressed |= self.try_evict(p, None, 2);
             }
             if cpass.len() > 1 {
-                self.try_evict(t, None, 2);
+                progressed |= self.try_evict(t, None, 2);
+            }
+            if progressed {
+                self.wake(p);
             }
             return false;
         }
@@ -788,7 +946,10 @@ impl Runner {
         };
         let Some(roll) = roll else {
             // Every roll's first ring is blocked. The blocking cells are adjacent to the
-            // pair, so their next change wakes it; wait silently until then.
+            // pair, so their next change wakes it; wait silently until then. (Evicting
+            // ring wires from here livelocks: without an unblocking bound the relief
+            // shuffles cold routes around the ring forever; measured on k-chain.)
+            self.note(|| format!("dock {t:?}/{p:?}: every roll's first ring is blocked"));
             return false;
         };
 
@@ -976,10 +1137,19 @@ impl Runner {
                             // The merge cannot fit. Evict one cold occupying route out of
                             // the way (the relief rung); if nothing is evictable, release
                             // the reservation and wait for the occupant to change.
-                            if std::env::var_os("CASCADE_DBG").is_some() {
-                                eprintln!("merge-fail at {t:?}: planned {planned:?} vs {:?}", target.cell);
-                            }
-                            if self.try_evict(t, Some(&planned), 2) {
+                            self.note(|| format!(
+                                "merge-fail at {t:?}: planned {planned:?} vs {:?}",
+                                target.cell
+                            ));
+                            // This cursor's own cell is exempt from the cursor-hosting
+                            // prohibition while its relief runs, and the reserved target
+                            // does not refuse its own clearing.
+                            self.relief_owner = Some(p);
+                            self.relief_root = Some(t);
+                            let relieved = self.try_evict(t, Some(&planned), 2);
+                            self.relief_owner = None;
+                            self.relief_root = None;
+                            if relieved {
                                 self.wake(p);
                                 return;
                             }
@@ -1045,7 +1215,7 @@ impl Runner {
     /// displacement ping-pong. The whole rewrite commits in one serial activation; the
     /// parallel driver claims the same set in address order. The blocked cell keeps its
     /// reservation so the cursor's retry finds it still protected.
-    fn try_evict(&mut self, t: Pos, planned: Option<&Cell>, depth: u8) -> bool {
+    pub fn try_evict(&mut self, t: Pos, planned: Option<&Cell>, depth: u8) -> bool {
         let target = self.grid.site(t);
         // The host is a wire cell, or an agent shedding one of its own passthroughs (a
         // blocked walker relieving its own cell): the reroute shapes are identical, the
@@ -1057,26 +1227,47 @@ impl Runner {
                 // attempts rather than N ticks, so a parked pocket cannot freeze it
                 // forever. The top level is the caller's own target and always proceeds.
                 if depth < 2 && *cooldown > 0 {
+                    let cd = *cooldown;
+                    self.note(|| format!("evict {t:?} d{depth}: cooldown {cd}, wearing the stamp"));
                     let mut ns = target.clone();
                     if let Cell::Wire { cooldown, .. } = &mut ns.cell {
                         *cooldown -= 1;
                     }
                     self.grid.set(t, &ns);
+                    self.wake_around(t);
                     return true;
                 }
                 (routes.clone(), *hot, *reserved)
             }
             Cell::Agent { pass, .. } => (pass.clone(), 0u8, None),
-            _ => return false,
+            _ => {
+                self.note(|| format!("evict {t:?} d{depth}: host is not a wire or agent"));
+                return false;
+            }
         };
         let routes = &routes;
-        let plain = |s: &Site| {
-            matches!(s.cell, Cell::Wire { reserved: None, .. }) && s.cursor.is_none() && !s.claim
+        // The one cell whose own cursor requested this relief may be swung despite
+        // hosting that cursor, and the reserved target being cleared does not refuse its
+        // own relief; foreign cursor cells and reservations stay untouchable.
+        let owner = self.relief_owner;
+        let root = self.relief_root;
+        let cursor_ok = move |s: &Site, at: Pos| s.cursor.is_none() || owner == Some(at);
+        let reserved_of = |s: &Site| match &s.cell {
+            Cell::Wire { reserved, .. } | Cell::Empty { reserved } => *reserved,
+            _ => None,
         };
-        let side_ok = |s: &Site| match &s.cell {
-            Cell::Empty { reserved: None } => s.cursor.is_none() && !s.claim,
-            Cell::Wire { reserved: None, routes, .. } => {
-                routes.len() < 3 && s.cursor.is_none() && !s.claim
+        let unreserved_ok =
+            move |s: &Site, at: Pos| reserved_of(s).is_none() || root == Some(at);
+        let plain = |s: &Site, at: Pos| {
+            matches!(s.cell, Cell::Wire { .. })
+                && unreserved_ok(s, at)
+                && cursor_ok(s, at)
+                && !s.claim
+        };
+        let side_ok = |s: &Site, at: Pos| match &s.cell {
+            Cell::Empty { .. } => unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim,
+            Cell::Wire { routes, .. } => {
+                routes.len() < 3 && unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim
             }
             _ => false,
         };
@@ -1147,22 +1338,47 @@ impl Runner {
             .map(|(i, _)| (false, *i))
             .chain(order.iter().map(|(i, _)| (true, *i)))
             .collect();
+        // Compact cell description for relief notes.
+        let kind = |s: &Site| -> String {
+            let base = match &s.cell {
+                Cell::Empty { reserved: None } => "empty".into(),
+                Cell::Empty { reserved: Some(d) } => format!("empty rsv<-{}", d.ch()),
+                Cell::Wire { routes, reserved, cooldown, .. } => format!(
+                    "wire x{}{}{}",
+                    routes.len(),
+                    reserved.map(|d| format!(" rsv<-{}", d.ch())).unwrap_or_default(),
+                    if *cooldown > 0 { format!(" cd{cooldown}") } else { String::new() },
+                ),
+                Cell::Agent { tag, nursery, pass, .. } => format!(
+                    "agent {}{} pass{}",
+                    tag.name(),
+                    if *nursery { " nursery" } else { "" },
+                    pass.len()
+                ),
+                Cell::Seed { rule, .. } => format!("seed r{rule}"),
+            };
+            format!(
+                "{base}{}{}",
+                if s.cursor.is_some() { " +cursor" } else { "" },
+                if s.claim { " claim" } else { "" }
+            )
+        };
         for (allow_hot, i) in passes {
             let r = &routes[i];
             let moved_hot = (hot >> i) & 1 == 1;
             if !allow_hot && moved_hot {
-                if std::env::var_os("CASCADE_DBG").is_some() { eprintln!("evict {t:?} r{i}: hot"); } continue;
+                self.note(|| format!("evict {t:?} r{i}: hot (cold pass)"));
+                continue;
             }
             let (d1, d2) = (r.a.face, r.b.face);
             let (n1, n2) = (step(t, d1), step(t, d2));
             let (n1s, n2s) = (self.grid.site(n1), self.grid.site(n2));
-            let dbg = std::env::var_os("CASCADE_DBG").is_some();
             // A blocked continuation cell may itself be relieved: a crowded wire or an
             // agent hosting passthroughs can shed one route. The U-turn splice tolerates
             // a reservation on its neighbor (it strictly reduces that cell's occupancy);
             // every other shape needs plain wire on both sides.
-            let sheddable = |xs: &Site| {
-                xs.cursor.is_none()
+            let sheddable = |xs: &Site, at: Pos| {
+                cursor_ok(xs, at)
                     && !xs.claim
                     && match &xs.cell {
                         Cell::Wire { reserved: None, routes, .. } => routes.len() >= 2,
@@ -1170,15 +1386,37 @@ impl Runner {
                         _ => false,
                     }
             };
-            let splice_host = |xs: &Site| {
-                matches!(xs.cell, Cell::Wire { .. }) && xs.cursor.is_none() && !xs.claim
+            let splice_host = |xs: &Site, at: Pos| {
+                matches!(xs.cell, Cell::Wire { .. }) && cursor_ok(xs, at) && !xs.claim
             };
             let eligible =
-                if d1 == d2 { splice_host(&n1s) } else { plain(&n1s) && plain(&n2s) };
+                if d1 == d2 { splice_host(&n1s, n1) } else { plain(&n1s, n1) && plain(&n2s, n2) };
             if !eligible {
-                if dbg { eprintln!("evict {t:?} r{i}: continuation not swingable"); }
+                self.note(|| format!(
+                    "evict {t:?} r{i} ({}{}.{}-{}.{}): continuation not swingable; {n1:?} is {} and {n2:?} is {}",
+                    if moved_hot { "hot " } else { "" },
+                    d1.ch(), r.a.lane, d2.ch(), r.b.lane,
+                    kind(&n1s), kind(&n2s)
+                ));
+                // An undemanded producer squatting on a continuation is shoved: one walk
+                // with the demand gate overridden. Its departure turns the cell into
+                // swingable wire. Top level only, so shoves do not chain.
+                if depth == 2 {
+                    for (x, xs) in [(n1, &n1s), (n2, &n2s)] {
+                        let squatter = matches!(&xs.cell,
+                            Cell::Agent { tag, nursery: false, cooldown: 0, .. } if tag.is_producer())
+                            && xs.cursor.is_none()
+                            && !xs.claim;
+                        if squatter {
+                            self.note(|| format!("evict {t:?} r{i}: shoving squatter at {x:?}"));
+                            if self.try_walk_gated(x, xs, true) || self.try_sidestep(x, xs) {
+                                return true;
+                            }
+                        }
+                    }
+                }
                 for (x, xs) in [(n1, &n1s), (n2, &n2s)] {
-                    if sheddable(xs) && !blockers.contains(&x) {
+                    if sheddable(xs, x) && !blockers.contains(&x) {
                         blockers.push(x);
                     }
                 }
@@ -1192,15 +1430,15 @@ impl Runner {
             let back1 = EndPt { face: d1.opp(), lane: r.a.lane };
             let back2 = EndPt { face: d2.opp(), lane: r.b.lane };
             let Some(i1) = r1s.iter().position(|x| x.ends().contains(&back1)) else {
-                if dbg { eprintln!("evict {t:?} r{i}: no continuation n1"); }
+                self.note(|| format!("evict {t:?} r{i}: no continuation in {n1:?}"));
                 continue;
             };
             let Some(i2) = r2s.iter().position(|x| x.ends().contains(&back2)) else {
-                if dbg { eprintln!("evict {t:?} r{i}: no continuation n2"); }
+                self.note(|| format!("evict {t:?} r{i}: no continuation in {n2:?}"));
                 continue;
             };
             if !allow_hot && ((h1 >> i1) & 1 == 1 || (h2 >> i2) & 1 == 1) {
-                if dbg { eprintln!("evict {t:?} r{i}: hot continuation"); }
+                self.note(|| format!("evict {t:?} r{i}: hot continuation (cold pass)"));
                 continue;
             }
             // The blocked cell after removal, reservation intact.
@@ -1279,14 +1517,15 @@ impl Runner {
                     self.wake_around(n1);
                     return true;
                 }
+                self.note(|| format!("evict {t:?} r{i}: u-turn splice at {n1:?} does not pack"));
             } else if d2 != d1.opp() {
                 // Bent segment: corner-cut through the diagonal cell.
                 let u = step(n1, d2);
                 let us = self.grid.site(u);
-                if !side_ok(&us) && recursable(&us) && !blockers.contains(&u) {
+                if !side_ok(&us, u) && recursable(&us) && !blockers.contains(&u) {
                     blockers.push(u);
                 }
-                if side_ok(&us) {
+                if side_ok(&us, u) {
                     for l1 in 0..2u8 {
                         for l2 in 0..2u8 {
                             let n1n = swing(&n1s, i1, back1, EndPt { face: d2, lane: l1 });
@@ -1310,6 +1549,13 @@ impl Runner {
                             }
                         }
                     }
+                    self.note(|| format!(
+                        "evict {t:?} r{i}: corner-cut lanes exhausted at diagonal {u:?}"
+                    ));
+                } else {
+                    self.note(|| format!(
+                        "evict {t:?} r{i}: corner-cut diagonal {u:?} busy: {}", kind(&us)
+                    ));
                 }
                 // Fallback: the diagonal is taken, so bracket the bend out of plane
                 // through the two faces perpendicular to both bend directions.
@@ -1319,9 +1565,13 @@ impl Runner {
                     }
                     let (a, c, b) = (step(n1, w), step(u, w), step(n2, w));
                     let (a_s, c_s, b_s) = (self.grid.site(a), self.grid.site(c), self.grid.site(b));
-                    if !side_ok(&a_s) || !side_ok(&c_s) || !side_ok(&b_s) {
+                    if !side_ok(&a_s, a) || !side_ok(&c_s, c) || !side_ok(&b_s, b) {
+                        self.note(|| format!(
+                            "evict {t:?} r{i}: bracket {} blocked: {a:?} {}, {c:?} {}, {b:?} {}",
+                            w.ch(), kind(&a_s), kind(&c_s), kind(&b_s)
+                        ));
                         for (x, xs) in [(a, &a_s), (c, &c_s), (b, &b_s)] {
-                            if !side_ok(xs) && recursable(xs) && !blockers.contains(&x) {
+                            if !side_ok(xs, x) && recursable(xs) && !blockers.contains(&x) {
                                 blockers.push(x);
                             }
                         }
@@ -1361,18 +1611,19 @@ impl Runner {
                         return true;
                     }
                 }
-            } else if d1 == d2 {
-                // Both endpoints on one face (a U-turn cell): no shape moves it; the
-                // continuation cells are the only relief candidates.
             } else {
                 // Straight segment: parallel shift through three side cells.
                 for q in d1.perp() {
                     let (u1, u2, u3) = (step(n1, q), step(t, q), step(n2, q));
                     let (u1s, u2s, u3s) =
                         (self.grid.site(u1), self.grid.site(u2), self.grid.site(u3));
-                    if !side_ok(&u1s) || !side_ok(&u2s) || !side_ok(&u3s) {
+                    if !side_ok(&u1s, u1) || !side_ok(&u2s, u2) || !side_ok(&u3s, u3) {
+                        self.note(|| format!(
+                            "evict {t:?} r{i}: shift {} blocked: {u1:?} {}, {u2:?} {}, {u3:?} {}",
+                            q.ch(), kind(&u1s), kind(&u2s), kind(&u3s)
+                        ));
                         for (x, xs) in [(u1, &u1s), (u2, &u2s), (u3, &u3s)] {
-                            if !side_ok(xs) && recursable(xs) && !blockers.contains(&x) {
+                            if !side_ok(xs, x) && recursable(xs) && !blockers.contains(&x) {
                                 blockers.push(x);
                             }
                         }
@@ -1411,6 +1662,7 @@ impl Runner {
                         }
                         return true;
                     }
+                    self.note(|| format!("evict {t:?} r{i}: shift {} lanes exhausted", q.ch()));
                 }
             }
             // Every shape failed for this route. The continuation cells themselves may be
@@ -1418,7 +1670,7 @@ impl Runner {
             // route from them frees one. Reservations keep the cursor's own protected
             // target out of reach of this relocation.
             for (x, xs) in [(n1, &n1s), (n2, &n2s)] {
-                if sheddable(xs) && !blockers.contains(&x) {
+                if sheddable(xs, x) && !blockers.contains(&x) {
                     blockers.push(x);
                 }
             }
@@ -1427,15 +1679,13 @@ impl Runner {
         // cold route from one blocker; the cursor's retry re-attempts the outer eviction.
         if depth > 0 {
             for b in blockers {
-                if std::env::var_os("CASCADE_DBG").is_some() {
-                    eprintln!("evict {t:?} d{depth}: recurse into blocker {b:?}");
-                }
+                self.note(|| format!("evict {t:?} d{depth}: recurse into blocker {b:?}"));
                 if self.try_evict(b, None, depth - 1) {
                     return true;
                 }
             }
-        } else if std::env::var_os("CASCADE_DBG").is_some() {
-            eprintln!("evict {t:?} d0: out of depth");
+        } else {
+            self.note(|| format!("evict {t:?} d0: out of depth"));
         }
         false
     }

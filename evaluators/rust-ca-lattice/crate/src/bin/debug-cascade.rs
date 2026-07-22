@@ -178,6 +178,8 @@ fn main() {
     let mut which = None;
     let mut discipline = Discipline::Fifo;
     let mut budget = 20_000_000u64;
+    let mut why = false;
+    let mut kick = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -191,11 +193,13 @@ fn main() {
                 };
             }
             "--budget" => budget = args.next().and_then(|v| v.parse().ok()).expect("--budget N"),
+            "--why" => why = true,
+            "--kick" => kick = true,
             _ => which = Some(a),
         }
     }
     let which = which.unwrap_or_else(|| {
-        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N]");
+        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why]");
         std::process::exit(2);
     });
     let term = preset(&which).or_else(|| parse_term(&which)).unwrap_or_else(|| {
@@ -228,6 +232,9 @@ fn main() {
         if complete { "COMPLETE" } else { "PARKED" }
     );
 
+    // --why probe requests collected during the census: (label, relief target, planned).
+    let mut probes: Vec<(String, Pos, Option<Cell>, Option<Pos>)> = vec![];
+
     let agents: Vec<(Pos, Site)> = r.grid.agents().collect();
     println!();
     println!("agents ({}):", agents.len());
@@ -257,6 +264,8 @@ fn main() {
             for nd in DIRS {
                 println!("         nb {} {:?}: {}", nd.ch(), step(t, nd), full_site(&r.grid.site(step(t, nd))));
             }
+            probes.push((format!("walker {} self-relief at {p:?}", tag.name()), *p, None, None));
+            probes.push((format!("walker {} target relief at {t:?}", tag.name()), t, None, None));
         }
     }
 
@@ -297,6 +306,12 @@ fn main() {
                 println!("    op Place toward {} at {:?}", d.ch(), t);
                 println!("      planned: {}", full(&rot_cell(cell, c.axis, c.roll)));
                 println!("      target:  {}", full_site(&r.grid.site(t)));
+                probes.push((
+                    format!("place target at {t:?}"),
+                    t,
+                    Some(rot_cell(cell, c.axis, c.roll)),
+                    Some(*p),
+                ));
                 for nd in DIRS {
                     println!("      nb {} {:?}: {}", nd.ch(), step(t, nd), full_site(&r.grid.site(step(t, nd))));
                 }
@@ -377,4 +392,54 @@ fn main() {
     };
     println!();
     println!("hint: {hint}");
+
+    // --why: walk the relief decision tree read-only-ish for every blocked op, on a
+    // scratch copy of the parked grid, and print each refusing check. A probe that
+    // SUCCEEDS on the parked state means relief is possible right now, which points at a
+    // lost wake rather than a genuine wedge.
+    if why {
+        for (label, target, planned, owner) in probes {
+            println!();
+            println!("why-probe: {label}");
+            let mut scratch = Runner::new(r.grid.clone(), Net::new(), Discipline::Fifo);
+            scratch.explain = Some(vec![]);
+            scratch.relief_owner = owner;
+            scratch.relief_root = owner.map(|_| target);
+            let ok = scratch.try_evict(target, planned.as_ref(), 2);
+            for line in scratch.explain.take().unwrap_or_default() {
+                println!("  {line}");
+            }
+            println!(
+                "  verdict: {}",
+                if ok {
+                    "SUCCEEDED — relief is possible at this state; a park here means a lost wake"
+                } else {
+                    "refused (genuinely stuck at the current state)"
+                }
+            );
+        }
+    } else if !probes.is_empty() {
+        println!("({} blocked op(s); rerun with --why for the relief decision trace)", probes.len());
+    }
+
+    // --kick: wake every live cell of the parked run and keep going. Progress after a
+    // kick means the park was a lost wake, not a genuine wedge.
+    if kick {
+        let live: Vec<Pos> = r.grid.cells.keys().copied().collect();
+        for p in live {
+            r.wake(p);
+        }
+        let quiet = r.run(budget);
+        let read = r.shadow.readback(r.shadow.get(out).ports[0]);
+        let complete = read.is_some() && read == oracle_nf;
+        println!();
+        println!(
+            "after kick: quiescent {} rewrites {} generations {} out {} [{}]",
+            if quiet { "yes" } else { "no" },
+            r.grid.rewrites,
+            r.generation,
+            read.as_ref().map(show).unwrap_or_else(|| "unreadable".into()),
+            if complete { "COMPLETE" } else { "PARKED" }
+        );
+    }
 }

@@ -49,19 +49,27 @@ bundle, one frame per generation, so a displayed tick is the maximal simultaneou
 wavefront, and each trace's note reports its measured parallel width. `bench-cascade`
 prints the timing snapshot and `debug-cascade` dumps a parked run's census.
 
-Two relief rungs have landed. The first: growth-blocked cells evict cold routes
+Three relief rungs have landed. The first: growth-blocked cells evict cold routes
 (corner-cut, straight shift, out-of-plane bracket), demand looks and wakes through
 guests, hairpins collapse by truncation, and consumers can be swap partners. The second:
 eviction recurses into its own blockers (full or lane-starved side cells, continuation
 cells, and agents shedding their own passthroughs; blocked walkers, docks, and detours
 relieve their own cells with the same primitive), U-turn folds splice out, cold shift
 detours retract straight, a last-resort pass may move hot routes with their heat, and
-colliding blocklets arbitrate by seed address (the loser retracts and re-docks).
-Cooldown stamps damp displacement ping-pong. The frontier, pinned by
-`frontier_deep_reductions` at 2 of 5 deep terms complete: the remaining parked runs are
-corridor knots where a walker sits over a doubled hot foreign cable, and a wedged
-growth chain behind it. The substrate never computes a wrong answer, only sometimes an
-incomplete one.
+colliding blocklets arbitrate by seed address (the loser retracts and re-docks). The
+third: undemanded guests squatting on a demanded walker's wire or relief geometry are
+shoved (a one-shot walk license; a cornered endpoint sidesteps, lengthening its own wire
+by one retractable segment), relief is self-sustaining (every progress report wakes its
+requester), and a cursor's own cell and reserved target are exempt from the prohibitions
+protecting them from foreign relief. Cooldown stamps damp displacement ping-pong. The
+frontier, pinned by `frontier_deep_reductions` at 3 of 5 deep terms complete (the
+S-combinator sharing rule now normalizes end to end): k-chain and disp-t park in
+movement knots, docks whose every roll ring is crowded by hot corridor cables. The
+substrate never computes a wrong answer, only sometimes an incomplete one.
+`debug-cascade <term> --why` walks the relief decision tree for every blocked op and
+prints each refusing check; `--kick` re-wakes a parked run to distinguish lost wakes
+from genuine wedges; `validate_cascade_bundle.mjs` checks a regenerated player bundle
+against the player's data contract.
 
 ## Source layout
 

@@ -474,6 +474,23 @@ What landed matches §1 to §12 with these deviations, each forced by a measured
     runs park earlier in parallel than serially. Landing this exposed a latent executor
     hole: popping a transiently claimed cell used to drop its wake (the claimant can
     commit without changing the word, so nothing re-wakes it); such pops now requeue.
+17. Shoves, sidesteps, and self-relief exemptions (2026-07-22; found with the census's
+    --why/--kick relief tracer). An undemanded guest squatting where a demanded walker's
+    wire or relief geometry needs to swing is shoved: a one-shot walk license that
+    overrides the demand gate (walking is always sound; the gate is an anti-clog
+    heuristic, and the blocked walker's demand is the demand). A shoved walk cannot
+    shove in turn. A cornered wire-end agent sidesteps instead: it moves to a free side
+    cell and lengthens its own wiring by one retractable connector segment (arity one
+    and two only; never spontaneous). Relief became self-sustaining: every progress
+    report (including a worn cooldown stamp) wakes its requester, so retry chains no
+    longer stall between rounds. A cursor's own cell and its reserved growth target are
+    exempt from the cursor and reservation prohibitions during its own relief (foreign
+    relief still may not touch them): without this, a cursor's protection blocked the
+    very relief it requested. One negative result, kept as a comment: evicting ring
+    wires from a declined dock livelocks (no unblocking bound; cold routes shuffle
+    around the ring forever), so declined docks still wait silently. Net effect:
+    s-rule-sharing completes (13 rewrites), the floor is 3 of 5, and k-chain and disp-t
+    park as movement knots at crowded dock rings.
 
 Verified: the full 26-rule atlas fires and projects under four adversarial queue
 disciplines; `@(L,L)` normalizes end to end under all four (four chained fires) and
@@ -487,12 +504,12 @@ step; each trace reports its parallel width (the crossing demo runs at mean widt
 peak 18; small sequential terms sit near width 1 with peaks of 9 where heat waves and
 walks overlap).
 
-Open frontier, pinned by `frontier_deep_reductions` (floor: 2 of 5 deep terms complete;
-fork-dispatch and the K combinator reach their normal forms, and every parked term runs
-several rewrites deeper than before the relief rungs). The remaining parked runs are
-corridor knots: a demanded arity-three walker sits over a doubled hot foreign cable
-whose relief chain bottoms out on cells nothing may touch (reserved targets, other
-walkers, all-hot neighborhoods), and a growth chain wedges behind it. The candidate
-levers are smarter trail-lane assignment during walks (avoid creating doubled cables
-under future walkers) and relief that can reroute through a walker's own cell. The
-substrate never computes a wrong answer; wedged runs park validly with the seed visible.
+Open frontier, pinned by `frontier_deep_reductions` (floor: 3 of 5 deep terms complete;
+fork-dispatch, the K combinator, and the S sharing rule reach their normal forms). The
+two remaining parked runs are movement knots at crowded dock rings: a facing pair ready
+to dock whose every roll's first ring is occupied by hot corridor cables (the negative
+result in section 15.17 rules out blind ring eviction), plus walker convoys behind it.
+The candidate levers are an unblocking-bounded ring relief (evict only what provably
+makes a roll acceptable) and smarter trail-lane assignment during walks so doubled
+cables form less often. The substrate never computes a wrong answer; wedged runs park
+validly with the seed visible.

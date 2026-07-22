@@ -194,10 +194,10 @@ fn frontier_deep_reductions() {
             }
         }
     }
-    // The pinned floor: fork-dispatch and k-combinator complete end to end; the deeper
-    // terms park validly in corridor knots (walkers over doubled foreign cables). Raise
-    // this as relief mechanisms land.
-    assert!(complete >= 2, "frontier floor");
+    // The pinned floor: fork-dispatch, k-combinator, and s-rule-sharing complete end to
+    // end; k-chain and disp-t park validly in movement knots (docks whose every roll
+    // ring is crowded, and walker convoys). Raise this as relief mechanisms land.
+    assert!(complete >= 3, "frontier floor");
     println!("frontier: {complete}/{} deep terms complete", terms.len());
 }
 
