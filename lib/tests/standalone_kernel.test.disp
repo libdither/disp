@@ -46,6 +46,11 @@ nat_mint := forge_hyp NatType ({_} -> NatType)
 test CertNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair zero ({k, ih} -> succ ih))))) = true
 test CertNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair false ({k, ih} -> succ ih))))) = false
 
+mint_replay := {b} -> make_hyp BoolType ({_} -> BoolType)
+test EnumBoolToBool mint_replay = false
+test MetaPi BoolType ({_} -> BoolType) mint_replay = false
+test CertPi BoolType ({_} -> BoolType) mint_replay = true
+
 sniff_motive := {k} -> if (is_neutral k) { BoolType } else { NatType }
 test EnumPi BoolType sniff_motive ({b} -> 5) = true
 test MetaPi BoolType sniff_motive ({b} -> 5) = false
