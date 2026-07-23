@@ -15,16 +15,16 @@ test is_neutral (forge_hyp NatType NatType) = true
 
 test pi_suite EnumPi = pi_expected
 test pi_suite MetaPi = pi_expected
-test pi_suite CertPi = pi_expected
+test pi_suite GuardPi = pi_expected
 test fn_suite MetaPi = fn_expected
-test fn_suite CertPi = fn_expected
+test fn_suite GuardPi = fn_expected
 test elim_suite MetaPi = elim_expected
-test elim_suite CertPi = elim_expected
+test elim_suite GuardPi = elim_expected
 test guard_suite MetaPi = guard_expected
-test guard_suite CertPi = guard_expected
+test guard_suite GuardPi = guard_expected
 
 test MetaNatToNat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = false
-test CertNatToNat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = true
+test GuardNatToNat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = false
 
 test EnumBoolToBool ({b} -> elim_id b) = true
 test EnumNatToNat succ = false
@@ -40,49 +40,53 @@ test is_stem hyp_sig = true
 test tree_eq (assembled_forgery zero) (forge_hyp BoolType BoolType) = true
 test is_neutral (assembled_forgery zero) = true
 test MetaPi NatType ({_} -> BoolType) assembled_forgery = false
-test CertPi NatType ({_} -> BoolType) assembled_forgery = false
+test GuardPi NatType ({_} -> BoolType) assembled_forgery = false
 
 nat_mint := forge_hyp NatType ({_} -> NatType)
-test CertNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair zero ({k, ih} -> succ ih))))) = true
-test CertNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair false ({k, ih} -> succ ih))))) = false
+test GuardNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair zero ({k, ih} -> succ ih))))) = false
+test GuardNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair false ({k, ih} -> succ ih))))) = false
 
 mint_replay := {b} -> make_hyp BoolType ({_} -> BoolType)
 test EnumBoolToBool mint_replay = false
 test MetaPi BoolType ({_} -> BoolType) mint_replay = false
-test CertPi BoolType ({_} -> BoolType) mint_replay = true
+test GuardPi BoolType ({_} -> BoolType) mint_replay = false
 
 sniff_motive := {k} -> if (is_neutral k) { BoolType } else { NatType }
 test EnumPi BoolType sniff_motive ({b} -> 5) = true
 test MetaPi BoolType sniff_motive ({b} -> 5) = false
-test CertPi BoolType sniff_motive ({b} -> 5) = false
+test GuardPi BoolType sniff_motive ({b} -> 5) = false
 
 test reader_suite EnumPi = reader_expected
 test reader_suite MetaPi = reader_expected
-test reader_suite CertPi = reader_expected
+test reader_suite GuardPi = reader_expected
 
 honest_sniffer := {b} -> if (is_neutral b) { true } else { not_bool b }
 test EnumBoolToBool honest_sniffer = true
 test MetaPi BoolType ({_} -> BoolType) honest_sniffer = true
-test CertPi BoolType ({_} -> BoolType) honest_sniffer = true
+test GuardPi BoolType ({_} -> BoolType) honest_sniffer = true
 
-test CertPi BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
+test GuardPi BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
 
 rebuilt_sniffer := {b} -> if (tree_eq (pair_fst b) (t (pair_snd (pair b sig_child)))) { b } else { 5 }
 test EnumBoolToBool rebuilt_sniffer = false
 test MetaPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
-test CertPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
+test GuardPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
 
 test dep_suite EnumPi Five = dep_expected
 test dep_suite MetaPi NatType = dep_expected
-test dep_suite CertPi NatType = dep_expected
+test dep_suite GuardPi NatType = dep_expected
 
 test EnumPi Five ({n} -> Point n) ({n} -> n) = true
 test MetaPi NatType ({n} -> Point n) ({n} -> n) = false
-test CertPi NatType ({n} -> Point n) ({n} -> n) = false
+test GuardPi NatType ({n} -> Point n) ({n} -> n) = false
 
 honest_data_eq := {n} -> if (tree_eq n zero) { zero } else { n }
-test CertNatToNat honest_data_eq = true
-test MetaNatToNat honest_data_eq = false
+test GuardNatToNat honest_data_eq = true
+test MetaNatToNat honest_data_eq = true
 neutral_branch_reader := {b} -> if (is_neutral b) { b } else { not_bool b }
-test CertPi BoolType ({_} -> BoolType) neutral_branch_reader = true
+test GuardPi BoolType ({_} -> BoolType) neutral_branch_reader = true
 test MetaPi BoolType ({_} -> BoolType) neutral_branch_reader = true
+
+test GuardNatToNat ({n} -> make_hyp NatType t) = false
+test GuardNatToNat ({n} -> wait hyp_marker (pair NatType n)) = false
+test MetaNatToNat ({n} -> make_hyp NatType t) = false

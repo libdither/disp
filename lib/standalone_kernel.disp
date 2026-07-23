@@ -94,7 +94,7 @@ EnumPi := {
     t)
 }
 
-Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
+Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree, Teq1 : Tree >
 
 MetaPi := {
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
@@ -108,6 +108,7 @@ MetaPi := {
       Poison r => (invalid r)
       Chain1 e scr => (invalid (pair e scr))
       Chain2 e scr ca => (invalid (pair e (pair scr ca)))
+      Teq1 a => (tree_eq (rb a))
     }))
   let collect := (fix ({co, V, acc} ->
     match V {
@@ -118,6 +119,7 @@ MetaPi := {
       Poison r => acc
       Chain1 e scr => acc
       Chain2 e scr ca => acc
+      Teq1 a => (co a acc)
     }))
   let verify_inband := (fix ({vf, minted, T, v} ->
     if (is_invalid v) {
@@ -149,6 +151,7 @@ MetaPi := {
       Poison r => (Poison r)
       Chain1 e scr => (Poison (Chain1 (pair e scr)))
       Chain2 e scr ca => (Poison (Chain2 (pair e (pair scr ca))))
+      Teq1 a => (Poison (Teq1 a))
     })
   let apply_fork := ({self, chk, A, TB, X} ->
     match A {
@@ -165,6 +168,7 @@ MetaPi := {
       Poison r => (Poison r)
       Chain1 e scr => (Poison (Chain1 (pair e scr)))
       Chain2 e scr ca => (Poison (Chain2 (pair e (pair scr ca))))
+      Teq1 a => (Poison (Teq1 a))
     })
   let absorb_v := ({chk, E, scr, ca, cb} -> {
     let Ind := elim_ind E
@@ -192,6 +196,8 @@ MetaPi := {
       match F {
         Conc tr => (if (tree_eq tr is_neutral) {
           Conc false
+        } else if (tree_eq tr tree_eq) {
+          (if let Conc xt = X { Conc (tree_eq xt) } else { Teq1 X })
         } else if let Conc xt = X {
           Conc (tr xt)
         } else if (is_elim_head tr) {
@@ -203,6 +209,7 @@ MetaPi := {
         Poison r => (Poison r)
         Chain1 e scr => (Chain2 (pair e (pair scr X)))
         Chain2 e scr ca => (absorb_v chk e scr ca X)
+        Teq1 a => (Conc (tree_eq (readback a) (readback X)))
         Stem c => (vfork c X)
         Fork a b => (apply_fork self chk a b X)
       }
@@ -215,11 +222,7 @@ MetaPi := {
   ({A, B} -> make_type ({_self, f} -> core A B (Conc f)) inert_gate nil (inj "Pi" (pair A B)))
 }
 
-CertPi := {
-  let root_of := (fix ({ro, h} -> {
-    let parent := pair_fst (neutral_history h)
-    if (is_neutral parent) { ro parent } else { h }
-  }))
+GuardPi := {
   let cert_absorb := ({E, scr, ca, cb} -> {
     let Ind := elim_ind E
     let B := elim_motive E
@@ -242,37 +245,41 @@ CertPi := {
   })
   let shim_sig := sig_of shim
   let is_shim := {v} -> has_sig shim_sig v
-  let guarded_is_neutral := {_v} -> false
-  let guarded_tree_eq := {a, b} -> if (or (tree_eq a hyp_sig) (tree_eq b hyp_sig)) { invalid (pair a b) } else { tree_eq a b }
-  let certify_children := ({cf, legit, node} ->
-    triage
-      node
-      ({c} -> {
-        let cc := cf legit c
-        if (is_invalid cc) { cc } else { t cc }
-      })
-      ({l, r} -> {
-        let lc := cf legit l
-        let rc := cf legit r
-        if (is_invalid lc) { lc } else if (is_invalid rc) { rc } else { t lc rc }
-      })
-      node)
-  let certify := (fix ({cf, legit, node} ->
-    if (is_shim node) {
-      node
-    } else if (tree_eq node is_neutral) {
-      guarded_is_neutral
-    } else if (tree_eq node tree_eq) {
-      guarded_tree_eq
-    } else if (tree_eq node hyp_sig) {
-      invalid node
-    } else if (is_neutral node) {
-      if (member (root_of node) legit) { node } else { invalid node }
-    } else if (is_elim_head node) {
-      wait shim (pair node nil)
-    } else {
-      certify_children cf legit node
-    }))
+  let tree_eq_sig := sig_of tree_eq
+  let is_teq_partial := {v} -> has_sig tree_eq_sig v
+  let w_stem := {a, x} -> {
+    let r := t a x
+    if (is_neutral r) { invalid r } else { r }
+  }
+  let w_s := {self, c, b, x} -> {
+    let cx := self c x
+    if (is_invalid cx) { cx } else {
+      let bx := self b x
+      if (is_invalid bx) { bx } else { self cx bx }
+    }
+  }
+  let w_tfk := {self, b, l, r} -> {
+    let bl := self b l
+    if (is_invalid bl) { bl } else { self bl r }
+  }
+  let w_fork := {self, a, b, x} ->
+    (triage
+      b
+      ({c} -> w_s self c b x)
+      ({tc, td} ->
+        if (is_neutral x) { invalid x }
+        else { triage tc ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x })
+      a)
+  let walk := fix ({self, f, x} ->
+    if (is_invalid f) { f }
+    else if (tree_eq f tree_eq) { wait tree_eq x }
+    else if (is_teq_partial f) { f x }
+    else if (tree_eq f is_neutral) { false }
+    else if (is_neutral f) { f x }
+    else if (is_elim_head f) { (wait shim (pair f nil)) x }
+    else if (is_shim f) { f x }
+    else if (tree_eq f ({x} -> x)) { x }
+    else { triage (t x) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f })
   let hyp_ok := (fix ({ok, vch, Pi, legit, v} ->
     if (member v legit) {
       true
@@ -303,16 +310,18 @@ CertPi := {
       } else {
         (type_recognizer T) (wait vf T) v
       }))
-    let g := certify legit2 f
-    if (is_invalid g) { false } else { verify (B x) (g x) }
+    let r := walk f x
+    if (is_invalid r) { false } else { verify (B x) r }
   }))
-  ({A, B} -> make_type ({_self, f} -> core nil A B f) inert_gate nil (inj "Pi" (pair A B)))
+  let neutral_free := (fix ({self, v} ->
+    if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v }))
+  ({A, B} -> make_type ({_self, f} -> if (neutral_free f) { core nil A B f } else { false }) inert_gate nil (inj "Pi" (pair A B)))
 }
 
 Five := Point 5
 Six := Point 6
 MetaNatToNat := MetaPi NatType ({_} -> NatType)
-CertNatToNat := CertPi NatType ({_} -> NatType)
+GuardNatToNat := GuardPi NatType ({_} -> NatType)
 EnumBoolToBool := EnumPi BoolType ({_} -> BoolType)
 EnumNatToNat := EnumPi NatType ({_} -> NatType)
 FiveToNat := EnumPi Five ({_} -> NatType)
