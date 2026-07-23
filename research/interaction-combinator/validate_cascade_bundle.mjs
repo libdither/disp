@@ -1,9 +1,10 @@
 // Validate lattice_cascade.js against the player's data contract: run after
-// dump-cascade, before committing a regenerated bundle.
+// dump-cascade, before committing a regenerated bundle (regen.sh does both).
 //   node validate_cascade_bundle.mjs
 // Checks every trace: schema, result shape, keyframe arrays, no retired fields
 // (cables/zips/crosses/sigma/guests), delta applicability, activate-event keys, and
-// seed/cursor role names.
+// seed/cursor role names. Prints a per-scenario smoke table (name, frames, ticks,
+// result.pass) and fails loudly on anomalies: 0-frame scenarios, missing notes.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,13 +18,17 @@ const names = Object.keys(TRACES);
 const cellKey = p => `${p[0]},${p[1]},${p[2]}`;
 let parked = 0;
 let nursery = 0;
+const rows = [];
 for (const name of names) {
   const t = TRACES[name];
   if (t.schema_version !== 4) throw new Error(`${name}: schema`);
   if (!Array.isArray(t.frames) || !t.frames.length) throw new Error(`${name}: frames`);
+  if (typeof t.note !== "string" || !t.note.trim()) throw new Error(`${name}: missing note`);
+  if (!Number.isInteger(t.ticks) || t.ticks < 0) throw new Error(`${name}: ticks`);
   if (typeof t.result.pass !== "boolean" || !Number.isFinite(t.result.generations))
     throw new Error(`${name}: result shape ${JSON.stringify(t.result)}`);
   if (t.result.pass === false) parked++;
+  rows.push([name, t.frames.length, t.ticks, t.result.pass]);
   const first = t.frames[0].grid;
   for (const field of ["agents", "wires", "chi", "motion", "words"])
     if (!Array.isArray(first[field])) throw new Error(`${name}: keyframe missing ${field}`);
@@ -73,4 +78,8 @@ for (const name of names) {
     }
   }
 }
+const w = Math.max(...rows.map(r => r[0].length), "scenario".length);
+const line = r => `${r[0].padEnd(w)}  ${String(r[1]).padStart(6)}  ${String(r[2]).padStart(6)}  ${r[3]}`;
+console.log(line(["scenario", "frames", "ticks", "pass"]));
+for (const r of rows) console.log(line([r[0], r[1], r[2], r[3] ? "pass" : "PARKED"]));
 console.log(`${names.length} traces OK; ${parked} parked; ${nursery} nursery delta-cells`);

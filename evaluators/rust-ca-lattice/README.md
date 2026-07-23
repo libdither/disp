@@ -68,8 +68,10 @@ movement knots, docks whose every roll ring is crowded by hot corridor cables. T
 substrate never computes a wrong answer, only sometimes an incomplete one.
 `debug-cascade <term> --why` walks the relief decision tree for every blocked op and
 prints each refusing check; `--kick` re-wakes a parked run to distinguish lost wakes
-from genuine wedges; `validate_cascade_bundle.mjs` checks a regenerated player bundle
-against the player's data contract.
+from genuine wedges; `--trace <out.js>` records the run as a schema-4 trace the player's
+load button replays; `regen.sh` in `research/interaction-combinator/` regenerates the
+player bundle and revalidates it (`validate_cascade_bundle.mjs` checks it against the
+player's data contract).
 
 ## Source layout
 

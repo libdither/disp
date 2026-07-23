@@ -89,7 +89,7 @@
         <button id="step" class="iconbtn" title="Next generation (Right arrow)" aria-label="Next generation" aria-keyshortcuts="ArrowRight">→</button>
       </div>
       <div class="toolbar-sep"></div>
-      <select id="scen" title="Suite scenario ([ / ] to cycle)" aria-label="Suite scenario"></select>
+      <select id="scen" title="Suite scenario ([ / ] or shift+←/→ to cycle)" aria-label="Suite scenario"></select>
       <input type="range" id="scrub" min="0" max="0" value="0" title="Generation" aria-label="Generation">
       <span id="framev" class="topvalue"></span>
       <div class="toolbar-sep"></div>
@@ -114,8 +114,8 @@
     transaction rewriting the two words across one face. Activity is a wake front: one
     frame is one <b>generation</b> (every commit of the same wavefront merged), so a
     displayed tick is the substrate's maximal simultaneous step. Regenerate the bundle
-    with <b>cargo run --release --bin dump-cascade</b> from
-    <b>evaluators/rust-ca-lattice/crate/</b>.</div></details>
+    with <b>regen.sh</b> in this directory (it wraps <b>dump-cascade</b> from
+    <b>evaluators/rust-ca-lattice/crate/</b> and validates the result).</div></details>
     <details><summary>keybinds</summary><div class="note">
     <b>space</b> play/pause · <b>←</b>/<b>→</b> previous/next generation · wheel zoom<br>
     <b>h j k l</b> / <b>w a s d</b> pan · <b>=</b>/<b>-</b> zoom in/out<br>
@@ -178,7 +178,7 @@
 document.write('<script src="lattice_cascade.js?v=cascade-2"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-22 · cascade replay v2";
+const PLAYER_VERSION = "2026-07-23 · cascade replay v2";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -1236,7 +1236,9 @@ addEventListener("keydown", e => {
     (target.matches("button,input,select,textarea") || target.isContentEditable);
   if (interactive || e.ctrlKey || e.metaKey || e.altKey) return;
   const panStep = 48 / view.scale;
-  if (e.key === "ArrowLeft") { e.preventDefault(); setFrame(FRAME - 1); }
+  if (e.key === "ArrowLeft" && e.shiftKey) { e.preventDefault(); cycleScenario(-1); }
+  else if (e.key === "ArrowRight" && e.shiftKey) { e.preventDefault(); cycleScenario(1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); setFrame(FRAME - 1); }
   else if (e.key === "ArrowRight") { e.preventDefault(); setFrame(FRAME + 1); }
   else if (e.code === "Space" && !e.repeat) { e.preventDefault(); togglePlayback(); }
   else if (e.key === "h" || e.key === "a") { view.x -= panStep; invalidate(); }

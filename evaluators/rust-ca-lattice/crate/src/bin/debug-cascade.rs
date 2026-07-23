@@ -4,16 +4,21 @@
 //!
 //! Usage: cargo run --release --bin debug-cascade -- <preset|term>
 //!            [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage]
+//!            [--trace <out.js>]
 //! Presets: identity, fork, k, s-rule, k-chain, disp-t; or a term in the oracle's show()
 //! syntax, e.g. "@(F(L,L),L)".
 //!
 //! --why walks the relief decision tree for each blocked op and prints every refusing
 //! check; --kick re-wakes the whole parked run and continues; --triage combines them
 //! into one verdict per blocked op: genuine wedge, lost wake, or state-dependent.
+//! --trace records the run as a schema-4 trace file the lattice player's load button
+//! replays (the parked end state is exactly what one wants to see, so a non-passing
+//! result still writes).
 
 use rust_ca_lattice::blocklet::{layout, Op};
 use rust_ca_lattice::cascade::{rot_cell, rot_dir, Cell, EndPt, Grid2, Route, Site};
 use rust_ca_lattice::cascade_run::{load_net, Discipline, Runner};
+use rust_ca_lattice::cascade_trace::trace_run;
 use rust_ca_lattice::lattice::DIRS;
 use rust_ca_lattice::lattice::{step, Pos, Topo};
 use rust_ca_lattice::net::Net;
@@ -185,6 +190,7 @@ fn main() {
     let mut why = false;
     let mut kick = false;
     let mut triage = false;
+    let mut trace_path: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -201,11 +207,12 @@ fn main() {
             "--why" => why = true,
             "--kick" => kick = true,
             "--triage" => triage = true,
+            "--trace" => trace_path = Some(args.next().expect("--trace <out.js>")),
             _ => which = Some(a),
         }
     }
     let which = which.unwrap_or_else(|| {
-        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage]");
+        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage] [--trace <out.js>]");
         std::process::exit(2);
     });
     let term = preset(&which).or_else(|| parse_term(&which)).unwrap_or_else(|| {
@@ -237,6 +244,21 @@ fn main() {
         read.as_ref().map(show).unwrap_or_else(|| "unreadable".into()),
         if complete { "COMPLETE" } else { "PARKED" }
     );
+
+    // --trace: replay the same run on a second, identical runner, recording one keyframe
+    // plus per-generation deltas for the player.
+    if let Some(path) = &trace_path {
+        let mut shadow = Net::new();
+        let root = shadow.build(&term);
+        let (_nrm, _out) = shadow.drive(root);
+        let grid = load_net(&shadow, Topo::Full3D).expect("net embeds");
+        let tracer = Runner::new(grid, shadow, discipline);
+        let note = format!("ad-hoc debug-cascade run of {} under {discipline:?}", show(&term));
+        let mut buf = String::new();
+        trace_run(&which, &note, tracer, budget, &mut buf);
+        std::fs::write(path, &buf).expect("write trace");
+        println!("trace:      {path} ({} bytes)", buf.len());
+    }
 
     // --why probe requests collected during the census.
     enum Probe {
