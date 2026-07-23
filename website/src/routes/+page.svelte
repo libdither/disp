@@ -79,7 +79,7 @@
     decentralized: {
       term: "decentralized",
       pos: "adj.",
-      html: "Is your favorite programming language is being sensible and not including your new pet feature into the language? Well in disp you can implement that feature yourself! Just need to formally prove it plays nice with everything else ofc :)",
+      html: "Is your favorite programming language being sensible and not including your new pet feature into the language? Well in disp you can implement that feature yourself! Just need to formally prove it plays nice with everything else ofc :)",
     },
     lisp: {
       term: "lisp",
