@@ -146,8 +146,8 @@ fn reduce_identity_leaf() {
 /// and reciprocity green, at least the first fire): the substrate never computes a wrong
 /// answer, only sometimes an incomplete one. Terms that reach the oracle normal form are
 /// counted; the floor below pins the current frontier and must only move up. The open
-/// blocker is blocklet growth wedged against cold traffic near second-generation docks;
-/// the pressure-relief rung (wire eviction) is the designed fix.
+/// blocker is docks ringed by the graph's own live long-distance cables (measured: no
+/// dead slack in the parked grids); live-cable relief is the designed fix.
 #[test]
 fn frontier_deep_reductions() {
     let terms: Vec<(&str, Term)> = vec![
@@ -195,8 +195,10 @@ fn frontier_deep_reductions() {
         }
     }
     // The pinned floor: fork-dispatch, k-combinator, and s-rule-sharing complete end to
-    // end; k-chain and disp-t park validly in movement knots (docks whose every roll
-    // ring is crowded, and walker convoys). Raise this as relief mechanisms land.
+    // end; k-chain and disp-t park validly in movement knots. Census of the parked grids
+    // (2026-07): every dock-ring route is a LIVE long-distance cable between agent ports
+    // (2236/2894 routes, zero dead slack) — the knots are graph topology, not blocklet
+    // debris, so cold-slack contraction cannot clear them; live-cable relief can.
     assert!(complete >= 3, "frontier floor");
     println!("frontier: {complete}/{} deep terms complete", terms.len());
 }
@@ -227,6 +229,33 @@ fn competing_seeds_both_fire() {
     assert!(retracts >= 1, "the losing seed must retract at least once");
     check_reciprocity(&r.grid).expect("post-fire reciprocity");
     check_projection(&r.grid, &r.shadow).expect("post-fire projection");
+}
+
+/// The tidy-tree embedding: three terms load, run to quiescence validly, and answer
+/// exactly what the row embedding answers.
+#[test]
+fn tree_loader_reductions() {
+    use rust_ca_lattice::cascade_run::load_net_tree;
+    let terms: Vec<(&str, Term)> = vec![
+        ("identity", ap(Term::L, Term::L)),
+        ("k-combinator", ap(ap(oracle::k(), s(Term::L)), Term::L)),
+        ("s-rule", ap(f2(s(Term::L), s(Term::L)), Term::L)),
+    ];
+    for (name, term) in &terms {
+        let expect = oracle_nf(term);
+        let mut shadow = Net::new();
+        let root = shadow.build(term);
+        let (_nrm, out) = shadow.drive(root);
+        let grid = load_net_tree(&shadow, Topo::Full3D).unwrap();
+        let mut r = Runner::new(grid, shadow, Discipline::Fifo);
+        assert!(r.run(8_000_000), "tree {name}: did not quiesce");
+        check_reciprocity(&r.grid).unwrap_or_else(|e| panic!("tree {name}: reciprocity: {e}"));
+        check_projection(&r.grid, &r.shadow)
+            .unwrap_or_else(|e| panic!("tree {name}: projection: {e}"));
+        let got = r.shadow.readback(r.shadow.get(out).ports[0]).map(|t| oracle::show(&t));
+        assert_eq!(got.as_deref(), Some(expect.as_str()), "tree {name}: normal form");
+        println!("tree {name}: {} rewrites, {} generations", r.grid.rewrites, r.generation);
+    }
 }
 
 /// Sixteen random schedules over the two completing frontier terms: any schedule may

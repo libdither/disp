@@ -473,6 +473,33 @@ fn decide_movement(read: &dyn Fn(Pos) -> Word2, p: Pos, frozen: &[(Pos, Word2)])
                             claim: true,
                         })
                     };
+                    {
+                        let (seed_c, seed_p) = mk_seeds(0);
+                        if let Some((fc, fp)) =
+                            crate::blocklet::seated_finals(rule, axis, &seed_c, &seed_p)
+                        {
+                            let cw = Word2::pack(&Site {
+                                cell: fc,
+                                cursor: target.cursor,
+                                chi: target.chi,
+                                claim: false,
+                            })
+                            .ok()?;
+                            let pw = Word2::pack(&Site {
+                                cell: fp,
+                                cursor: site.cursor,
+                                chi: site.chi,
+                                claim: false,
+                            })
+                            .ok()?;
+                            return Some(Tx {
+                                writes: vec![(t, cw), (p, pw)],
+                                wake: wake_set(&[p, t]),
+                                fired: true,
+                                moved: false,
+                            });
+                        }
+                    }
                     let roll = crate::cascade_run::choose_roll(
                         &sread,
                         Topo::Full3D,

@@ -11,7 +11,7 @@
 //! |---|---|
 //! | 0..2 | kind: 0 Empty, 1 Wire, 2 Agent, 3 Seed |
 //! | 2..38 | per-kind payload (36) |
-//! | 38..59 | cursor overlay: present 1, rule 5, axis 3, roll 2, pc 9, reverse 1 |
+//! | 38..59 | cursor overlay: present 1, rule 5, axis 3, roll 3, pc 8, reverse 1 |
 //! | 59..63 | chi (obstruction pressure) |
 //! | 63 | claim (parallel drivers only) |
 //!
@@ -222,13 +222,13 @@ impl Word2 {
                 let mut p = *rule as u64;
                 p |= (matches!(half, Half::Producer) as u64) << 5;
                 p |= (partner.code() as u64) << 6;
-                p |= ((*roll as u64) & 0b11) << 9;
-                p |= stub[0].code() << 11;
-                p |= stub[1].code() << 15;
-                p |= (*plane as u64) << 19;
+                p |= ((*roll as u64) & 0b111) << 9;
+                p |= stub[0].code() << 12;
+                p |= stub[1].code() << 16;
+                p |= (*plane as u64) << 20;
                 if let Some(r) = pass {
-                    p |= 1 << 20;
-                    p |= r.code() << 21;
+                    p |= 1 << 21;
+                    p |= r.code() << 22;
                 }
                 KIND_SEED | (p << PAYLOAD_SHIFT)
             }
@@ -238,8 +238,8 @@ impl Word2 {
             let mut cw = 1u64;
             cw |= (c.rule as u64) << 1;
             cw |= (c.axis.code() as u64) << 6;
-            cw |= ((c.roll as u64) & 0b11) << 9;
-            cw |= ((c.pc as u64) & 0x1ff) << 11;
+            cw |= ((c.roll as u64) & 0b111) << 9;
+            cw |= ((c.pc as u64) & 0xff) << 12;
             cw |= (c.reverse as u64) << 20;
             w |= cw << CURSOR_SHIFT;
         }
@@ -300,14 +300,14 @@ impl Word2 {
                 if rule as usize >= RULES.len() { return Err(PackError("rule index")); }
                 let half = if (p >> 5) & 1 == 1 { Half::Producer } else { Half::Consumer };
                 let partner = Dir::from_code(((p >> 6) & 0b111) as u8).ok_or(PackError("partner"))?;
-                let roll = ((p >> 9) & 0b11) as u8;
+                let roll = ((p >> 9) & 0b111) as u8;
                 let stub = [
-                    EndPt::from_code((p >> 11) & 0xf).ok_or(PackError("stub1"))?,
-                    EndPt::from_code((p >> 15) & 0xf).ok_or(PackError("stub2"))?,
+                    EndPt::from_code((p >> 12) & 0xf).ok_or(PackError("stub1"))?,
+                    EndPt::from_code((p >> 16) & 0xf).ok_or(PackError("stub2"))?,
                 ];
-                let plane = ((p >> 19) & 1) as u8;
-                let pass = if (p >> 20) & 1 == 1 {
-                    Some(Route::from_code((p >> 21) & 0xff).ok_or(PackError("seed pass"))?)
+                let plane = ((p >> 20) & 1) as u8;
+                let pass = if (p >> 21) & 1 == 1 {
+                    Some(Route::from_code((p >> 22) & 0xff).ok_or(PackError("seed pass"))?)
                 } else {
                     None
                 };
@@ -320,8 +320,8 @@ impl Word2 {
             Some(Cursor {
                 rule: ((cw >> 1) & 0b11111) as u8,
                 axis: Dir::from_code(((cw >> 6) & 0b111) as u8).ok_or(PackError("cursor axis"))?,
-                roll: ((cw >> 9) & 0b11) as u8,
-                pc: ((cw >> 11) & 0x1ff) as u16,
+                roll: ((cw >> 9) & 0b111) as u8,
+                pc: ((cw >> 12) & 0xff) as u16,
                 reverse: (cw >> 20) & 1 == 1,
             })
         } else {
@@ -427,9 +427,22 @@ const fn perp_cycle(axis: Dir) -> [Dir; 4] {
     }
 }
 
+/// Rolls 4..7 mirror the canonical layout across the axis row (the comb side flips)
+/// before rotating, doubling the dock's orientation choices when stubs box the pair.
+const fn mirror_dir(d: Dir) -> Dir {
+    match d {
+        Dir::N => Dir::S,
+        Dir::S => Dir::N,
+        other => other,
+    }
+}
+
 /// Rotate a canonical-frame direction (blocklets are compiled with axis = E) into the
-/// world frame given the dock axis and roll.
+/// world frame given the dock axis and roll (0..7; 4..7 mirrored).
 pub fn rot_dir(d: Dir, axis: Dir, roll: u8) -> Dir {
+    if roll >= 4 {
+        return rot_dir(mirror_dir(d), axis, roll - 4);
+    }
     let cycle = perp_cycle(axis);
     let canon = perp_cycle(Dir::E);
     match d {
@@ -444,6 +457,9 @@ pub fn rot_dir(d: Dir, axis: Dir, roll: u8) -> Dir {
 
 /// Rotate a canonical offset (x along E, y along S, z along U) into the world frame.
 pub fn rot_pos(p: Pos, axis: Dir, roll: u8) -> Pos {
+    if roll >= 4 {
+        return rot_pos((p.0, -p.1, p.2), axis, roll - 4);
+    }
     let e = rot_dir(Dir::E, axis, roll).delta();
     let s = rot_dir(Dir::S, axis, roll).delta();
     let u = rot_dir(Dir::U, axis, roll).delta();
@@ -722,7 +738,7 @@ mod tests {
                 EndPt { face: Dir::W, lane: 1 },
             )),
         });
-        site.cursor = Some(Cursor { rule: 2, axis: Dir::E, roll: 1, pc: 317, reverse: true });
+        site.cursor = Some(Cursor { rule: 2, axis: Dir::E, roll: 1, pc: 217, reverse: true });
         site.chi = 13;
         roundtrip(site);
     }

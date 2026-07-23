@@ -61,6 +61,9 @@ pub struct Runner {
     /// The reserved target the current relief is clearing: its own reservation does not
     /// refuse the relief chain (the reserver asked for it).
     pub relief_root: Option<Pos>,
+    /// When set, a global contraction sweep wakes every wire cell every N generations,
+    /// so cold cables far from any activity still get their detours pulled straight.
+    pub sweep_every: Option<u64>,
 }
 
 fn splitmix(state: &mut u64) -> u64 {
@@ -86,6 +89,7 @@ impl Runner {
             explain: None,
             relief_owner: None,
             relief_root: None,
+            sweep_every: Some(5),
         };
         let live: Vec<Pos> = r.grid.cells.keys().copied().collect();
         for p in live {
@@ -141,6 +145,22 @@ impl Runner {
         self.queued.remove(&p);
         if self.gen_left == 0 {
             self.generation += 1;
+            if let Some(n) = self.sweep_every {
+                if self.generation % n == 0 {
+                    let wires: Vec<Pos> = self
+                        .grid
+                        .cells
+                        .iter()
+                        .filter_map(|(p, w)| {
+                            let site = w.unpack().ok()?;
+                            matches!(site.cell, Cell::Wire { .. }).then_some(*p)
+                        })
+                        .collect();
+                    for p in wires {
+                        self.wake(p);
+                    }
+                }
+            }
             self.gen_left = self.queue.len() + 1;
         }
         self.gen_left -= 1;
@@ -941,16 +961,46 @@ impl Runner {
             (ctag.arity() >= 3).then(|| step(t, caux[1].face)),
             (tag.arity() >= 3).then(|| step(p, aux[1].face)),
         ];
+        // Seated rules need no growth room: try the one-transaction resolution before
+        // the roll ladder, which gates on the scripted fallback's footprint.
+        {
+            let (seed_c, seed_p) = mk_seeds(0);
+            if let Some((fc, fp)) = crate::blocklet::seated_finals(rule, axis, &seed_c, &seed_p) {
+                let consumer_sid = self.grid.sid.get(&t).copied();
+                let producer_sid = self.grid.sid.get(&p).copied();
+                self.events.push(Event::Dock(t, p, rule));
+                self.grid.set(t, &Site { cell: fc, cursor: target.cursor, chi: target.chi, claim: false });
+                self.grid.set(p, &Site { cell: fp, cursor: site.cursor, chi: site.chi, claim: false });
+                self.grid.sid.remove(&t);
+                self.grid.sid.remove(&p);
+                let seats = crate::blocklet::seated_seats(rule);
+                self.observe_fire(t, rule, axis, 0, &seats, consumer_sid, producer_sid);
+                self.wake_around(p);
+                self.wake_around(t);
+                return true;
+            }
+        }
         let roll = {
             let read = |q: Pos| self.grid.site(q);
             choose_roll(&read, self.grid.topo, t, p, stub_cells, rule, axis, &mk_seeds)
         };
         let Some(roll) = roll else {
-            // Every roll's first ring is blocked. The blocking cells are adjacent to the
-            // pair, so their next change wakes it; wait silently until then. (Evicting
-            // ring wires from here livelocks: without an unblocking bound the relief
-            // shuffles cold routes around the ring forever; measured on k-chain.)
+            // Every roll's first ring is blocked, or no seed finals pack. A passthrough
+            // crossing either dying cell can occupy a dock-edge lane and make the fusion
+            // panels unpackable: shed it and retry on the wake (bounded, since each cell
+            // sheds at most its own passthroughs; ring eviction stays forbidden, it
+            // livelocks).
             self.note(|| format!("dock {t:?}/{p:?}: every roll's first ring is blocked"));
+            let mut progressed = false;
+            if !cpass.is_empty() {
+                progressed |= self.try_evict(t, None, 2);
+            }
+            if !pass.is_empty() {
+                progressed |= self.try_evict(p, None, 2);
+            }
+            if progressed {
+                self.wake(p);
+            }
             return false;
         };
 
@@ -965,7 +1015,7 @@ impl Runner {
             self.grid.set(p, &Site { cell: fp, cursor: site.cursor, chi: site.chi, claim: false });
             self.grid.sid.remove(&t);
             self.grid.sid.remove(&p);
-            self.observe_fire(t, p, rule, axis, roll, consumer_sid, producer_sid);
+            self.observe_fire(t, rule, axis, roll, &crate::blocklet::layout(rule).seats, consumer_sid, producer_sid);
         } else {
             self.grid.set(
                 t,
@@ -991,10 +1041,10 @@ impl Runner {
     fn observe_fire(
         &mut self,
         seed_c: Pos,
-        _seed_p: Pos,
         rule: u8,
         axis: Dir,
         roll: u8,
+        seats: &[(usize, Pos)],
         consumer_sid: Option<u32>,
         producer_sid: Option<u32>,
     ) {
@@ -1003,9 +1053,8 @@ impl Runner {
         if let (Some(cs), Some(ps)) = (consumer_sid, producer_sid) {
             let (r, fresh) = self.shadow.fire(cs, ps);
             assert!(std::ptr::eq(r, &RULES[rule as usize]));
-            let layout = crate::blocklet::layout(rule);
-            assert_eq!(fresh.len(), layout.seats.len());
-            for (fresh_idx, off) in &layout.seats {
+            assert_eq!(fresh.len(), seats.len());
+            for (fresh_idx, off) in seats {
                 let world = add(seed_c, crate::cascade::rot_pos(*off, axis, roll));
                 assert!(
                     self.grid.sid.insert(world, fresh[*fresh_idx]).is_none(),
@@ -1972,10 +2021,10 @@ impl Runner {
         let sids = self.grid.seed_sids.remove(&p);
         self.observe_fire(
             p,
-            t,
             rule,
             cursor.axis,
             cursor.roll,
+            &crate::blocklet::layout(rule).seats,
             sids.map(|s| s.0),
             sids.map(|s| s.1),
         );
@@ -2136,7 +2185,22 @@ pub(crate) fn roll_fits(
             return false;
         }
         if stub_cells.iter().flatten().any(|s| *s == world) {
-            return false;
+            // A stub cell is not off-limits when the blocklet can weave through it:
+            // the pair's aux cable keeps its routes as a guest of the planned matter.
+            // (An unmergeable stub cell is a hard lock: it is keyed on the port faces,
+            // so no eviction of its contents can ever lift it.)
+            let planned = crate::cascade::rot_cell(cell, axis, roll);
+            let ws = read(world);
+            let weaves = match &ws.cell {
+                Cell::Wire { reserved: None, routes, .. } if ws.cursor.is_none() => {
+                    merge_matter(planned, routes).is_some()
+                }
+                _ => false,
+            };
+            if !weaves {
+                return false;
+            }
+            continue;
         }
         let near = DIRS.iter().any(|d| step(world, *d) == seed_c || step(world, *d) == seed_p);
         if !near {
@@ -2696,6 +2760,204 @@ fn loader_lane_used(grid: &Grid2, p: Pos, e: EndPt) -> bool {
     let back = EndPt { face: e.face.opp(), lane: e.lane };
     own || (grid.topo.in_bounds(n)
         && crate::cascade::exposures(&grid.site(n).cell).contains(&back))
+}
+
+// ---------------------------------------------------------------- tree net loader (host code)
+
+/// Embed an abstract net as a tidy tree: the Nrm driver at the top, every agent
+/// centered over its BFS children, parent-child cables as short searched paths. Same
+/// host-side global-layout license as `load_net`; the dynamics never route.
+pub fn load_net_tree(shadow: &Net, topo: Topo) -> Result<Grid2, String> {
+    let live: Vec<u32> = shadow
+        .agents
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| a.as_ref().map(|_| i as u32))
+        .collect();
+    let Some(&first) = live.first() else { return Err("empty net".into()) };
+    let root = live
+        .iter()
+        .copied()
+        .find(|id| shadow.get(*id).tag == Tag::Nrm)
+        .unwrap_or(first);
+
+    // BFS parents over link adjacency; a node's children are ordered by its own port.
+    let mut parent: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut order: Vec<u32> = vec![];
+    let mut bfs: VecDeque<u32> = VecDeque::from([root]);
+    parent.insert(root, root);
+    while let Some(id) = bfs.pop_front() {
+        order.push(id);
+        for link in shadow.get(id).ports.iter().flatten() {
+            if parent.contains_key(&link.0) {
+                continue;
+            }
+            parent.insert(link.0, id);
+            bfs.push_back(link.0);
+        }
+    }
+    if order.len() != live.len() {
+        return Err("net is not connected".into());
+    }
+    let children_of = |id: u32| -> Vec<u32> {
+        let a = shadow.get(id);
+        let mut kids: Vec<(u8, u32)> = a
+            .ports
+            .iter()
+            .enumerate()
+            .filter_map(|(port, link)| {
+                link.filter(|l| parent.get(&l.0) == Some(&id)).map(|l| (port as u8, l.0))
+            })
+            .collect();
+        kids.sort_by_key(|(port, _)| *port);
+        kids.into_iter().map(|(_, id)| id).collect()
+    };
+
+    // In-order columns: leaves take successive columns, parents center over children.
+    const H: i32 = 8;
+    const V: i32 = 8;
+    let mut pos_of: BTreeMap<u32, Pos> = BTreeMap::new();
+    let mut next_col = 0i32;
+    fn assign(
+        id: u32,
+        depth: i32,
+        children_of: &dyn Fn(u32) -> Vec<u32>,
+        next_col: &mut i32,
+        pos_of: &mut BTreeMap<u32, Pos>,
+    ) -> i32 {
+        let kids = children_of(id);
+        let col = if kids.is_empty() {
+            let c = *next_col;
+            *next_col += 1;
+            c
+        } else {
+            let first = assign(kids[0], depth + 1, children_of, next_col, pos_of);
+            let mut last = first;
+            for k in &kids[1..] {
+                last = assign(*k, depth + 1, children_of, next_col, pos_of);
+            }
+            (first + last) / 2
+        };
+        pos_of.insert(id, (col * H, -depth * V, 0));
+        col
+    }
+    assign(root, 0, &children_of, &mut next_col, &mut pos_of);
+
+    let mut grid = Grid2::new(topo);
+    for id in &order {
+        let a = shadow.get(*id);
+        let p = pos_of[id];
+        let principal = a.ports[0]
+            .map(|(b, _)| dominant_dir(p, pos_of[&b]))
+            .unwrap_or(Dir::E);
+        let cell = Cell::Agent {
+            tag: a.tag,
+            principal: EndPt { face: principal, lane: 0 },
+            aux: aux_pair(a.tag, principal.opp()),
+            pass: vec![],
+            nursery: false,
+            cooldown: 0,
+        };
+        grid.set(p, &Site::of(cell));
+        grid.sid.insert(p, *id);
+    }
+    // Every link once, shortest paths through free space (the tree leaves it open).
+    let mut done: BTreeSet<(u32, u8)> = BTreeSet::new();
+    for id in &order {
+        let a = shadow.get(*id);
+        for port in 0..a.tag.arity() as u8 {
+            let Some((bid, bport)) = a.ports[port as usize] else {
+                return Err(format!("open port {id}:{port}"));
+            };
+            if !done.insert((*id, port)) || !done.insert((bid, bport)) {
+                done.insert((*id, port));
+                continue;
+            }
+            let ea = port_endpoint(&grid.site(pos_of[id]).cell, port).ok_or("missing endpoint a")?;
+            let eb =
+                port_endpoint(&grid.site(pos_of[&bid]).cell, bport).ok_or("missing endpoint b")?;
+            tree_route(&mut grid, pos_of[id], ea, pos_of[&bid], eb)?;
+        }
+    }
+    check_reciprocity(&grid)?;
+    Ok(grid)
+}
+
+/// One tree-loader link: BFS a shortest cell path through free space and install it.
+fn tree_route(grid: &mut Grid2, pa: Pos, ea: EndPt, pb: Pos, eb: EndPt) -> Result<(), String> {
+    let start = step(pa, ea.face);
+    let goal = step(pb, eb.face);
+    if start == pb && goal == pa {
+        if ea.face == eb.face.opp() && ea.lane == eb.lane {
+            return Ok(());
+        }
+        return Err("adjacent link with mismatched faces".into());
+    }
+    let mut prev: BTreeMap<Pos, Pos> = BTreeMap::new();
+    let mut queue: VecDeque<Pos> = VecDeque::from([start]);
+    prev.insert(start, start);
+    while let Some(cur) = queue.pop_front() {
+        if cur == goal {
+            break;
+        }
+        for d in DIRS {
+            let n = step(cur, d);
+            if prev.contains_key(&n) || !grid.topo.in_bounds(n) {
+                continue;
+            }
+            match &grid.site(n).cell {
+                Cell::Empty { .. } => {}
+                Cell::Wire { routes, .. } if routes.len() < 3 => {}
+                _ => continue,
+            }
+            if (0..2).all(|l| loader_lane_used(grid, cur, EndPt { face: d, lane: l })) {
+                continue;
+            }
+            prev.insert(n, cur);
+            queue.push_back(n);
+        }
+    }
+    if !prev.contains_key(&goal) {
+        return Err(format!("tree cable unroutable {pa:?} -> {pb:?}"));
+    }
+    let mut path = vec![goal];
+    let mut cur = goal;
+    while cur != start {
+        cur = prev[&cur];
+        path.push(cur);
+    }
+    path.reverse();
+    let mut enter = EndPt { face: ea.face.opp(), lane: ea.lane };
+    for i in 0..path.len() {
+        let here = path[i];
+        let exit = if i + 1 < path.len() {
+            let d = dir_to(here, path[i + 1]).ok_or("tree cable step")?;
+            let lane = (0..2)
+                .find(|l| !loader_lane_used(grid, here, EndPt { face: d, lane: *l }))
+                .ok_or_else(|| format!("no free lane at {here:?} toward {d:?}"))?;
+            EndPt { face: d, lane }
+        } else {
+            EndPt { face: eb.face.opp(), lane: eb.lane }
+        };
+        let mut site = grid.site(here);
+        match &mut site.cell {
+            Cell::Empty { .. } => {
+                site.cell = Cell::Wire {
+                    routes: vec![Route::new(enter, exit)],
+                    hot: 0,
+                    cooldown: 0,
+                    reserved: None,
+                };
+            }
+            Cell::Wire { routes, .. } => {
+                routes.push(Route::new(enter, exit));
+            }
+            _ => return Err(format!("tree cable through occupied {here:?}")),
+        }
+        grid.set(here, &site);
+        enter = EndPt { face: exit.face.opp(), lane: exit.lane };
+    }
+    Ok(())
 }
 
 
