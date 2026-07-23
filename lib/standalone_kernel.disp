@@ -1,5 +1,9 @@
 open use raw "prelude.disp" {}
 
+// No comments in this file beyond this one; the code is meant to be self-explanatory.
+// Unused-looking defs below may be compiler sugar targets looked up by name:
+// make_record + list_const (record literals), Coproduct (sum literals), prod (match).
+
 nil := t
 cons := {h, tl} -> t h tl
 list_const := {x} -> t t x
@@ -18,41 +22,38 @@ prod := {table} -> (fix ({go, names, arms, v} ->
 
 wait_payload := {w} -> pair_snd (pair_snd w)
 sig_of := {marker} -> pair_fst (wait marker t)
+has_sig := {sig, v} -> and (is_fork v) (tree_eq (pair_fst v) sig)
 
 hyp_marker := {a, b} -> a
 make_mark := {meta} -> wait hyp_marker meta
 make_hyp := {ty, history} -> make_mark (pair ty history)
 hyp_sig := sig_of hyp_marker
-is_neutral := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+is_neutral := {v} -> has_sig hyp_sig v
 neutral_type := {v} -> pair_fst (wait_payload v)
 neutral_history := {v} -> pair_snd (wait_payload v)
 
 invalid_marker := {a, b} -> b
 invalid := {reason} -> wait invalid_marker reason
-is_invalid := {v} -> and (is_fork v) (tree_eq (pair_fst v) (sig_of invalid_marker))
+invalid_sig := sig_of invalid_marker
+is_invalid := {v} -> has_sig invalid_sig v
 
 member := fix ({self, node, xs} ->
   if (is_leaf xs) { false } else if (tree_eq node (pair_fst xs)) { true } else { self node (pair_snd xs) })
 
-make_type := {
-  let with_self := (fix ({wrap, payload, v} -> (pair_fst payload) (wait wrap payload) v))
-  ({recognize, gate, members, elim} -> wait with_self (pair recognize (pair gate (pair members elim))))
-}
+resumable := fix ({self, payload, arg} -> (pair_fst payload) (wait self payload) arg)
+make_type := {recognize, gate, members, elim} -> wait resumable (pair recognize (pair gate (pair members elim)))
 type_recognizer := {T} -> pair_fst (wait_payload T)
 type_gate := {T} -> pair_fst (pair_snd (wait_payload T))
 type_members := {T} -> pair_fst (pair_snd (pair_snd (wait_payload T)))
 type_elim := {T} -> pair_snd (pair_snd (pair_snd (wait_payload T)))
 inert_gate := {_check, _Pi, _Ind, _B, _ca, _cb} -> false
 
-elim_of := {
-  let elim_marker := fix ({em, payload, x} -> (pair_fst payload) (wait em payload) x)
-  ({Ind, B} -> wait elim_marker (pair (type_elim Ind) (pair Ind B)))
-}
+elim_of := {Ind, B} -> wait resumable (pair (type_elim Ind) (pair Ind B))
 elim_raw := {E} -> pair_fst (wait_payload E)
 elim_ind := {E} -> pair_fst (pair_snd (wait_payload E))
 elim_motive := {E} -> pair_snd (pair_snd (wait_payload E))
-elim_sig := pair_fst (elim_of t t)
-is_elim_head := {f} -> and (is_fork f) (tree_eq (pair_fst f) elim_sig)
+elim_sig := sig_of resumable
+is_elim_head := {f} -> has_sig elim_sig f
 
 raw_nat_rec := {self, n, base, step} ->
   triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
@@ -189,7 +190,9 @@ MetaPi := {
       X
     } else {
       match F {
-        Conc tr => (if let Conc xt = X {
+        Conc tr => (if (tree_eq tr is_neutral) {
+          Conc false
+        } else if let Conc xt = X {
           Conc (tr xt)
         } else if (is_elim_head tr) {
           if let Neu m = X { Chain1 (pair tr X) } else { self chk (Conc ((elim_raw tr) tr)) X }
@@ -226,12 +229,21 @@ CertPi := {
       invalid scr
     }
   })
-  let shim_fire := ({q, cb} -> cert_absorb (pair_fst (pair_fst q)) (pair_snd (pair_fst q)) (pair_snd q) cb)
-  let shim_collect := ({q, ca} -> wait shim_fire (pair q ca))
-  let shim_marker := fix ({sm, E, scr} ->
-    if (is_neutral scr) { wait shim_collect (pair E scr) } else { (elim_raw E) (wait sm E) scr })
-  let is_shim := {v} -> and (is_fork v) (or (tree_eq (pair_fst v) (sig_of shim_marker)) (or (tree_eq (pair_fst v) (sig_of shim_collect)) (tree_eq (pair_fst v) (sig_of shim_fire))))
+  let shim := fix ({sm, payload, arg} -> {
+    let E := pair_fst payload
+    let acc := pair_snd payload
+    if (is_leaf acc) {
+      if (is_neutral arg) { wait sm (pair E (cons arg nil)) } else { (elim_raw E) (wait sm (pair E nil)) arg }
+    } else if (is_leaf (pair_snd acc)) {
+      wait sm (pair E (cons (pair_fst acc) (cons arg nil)))
+    } else {
+      cert_absorb E (pair_fst acc) (pair_fst (pair_snd acc)) arg
+    }
+  })
+  let shim_sig := sig_of shim
+  let is_shim := {v} -> has_sig shim_sig v
   let guarded_is_neutral := {_v} -> false
+  let guarded_tree_eq := {a, b} -> if (or (tree_eq a hyp_sig) (tree_eq b hyp_sig)) { invalid (pair a b) } else { tree_eq a b }
   let certify_children := ({cf, legit, node} ->
     triage
       node
@@ -250,12 +262,14 @@ CertPi := {
       node
     } else if (tree_eq node is_neutral) {
       guarded_is_neutral
+    } else if (tree_eq node tree_eq) {
+      guarded_tree_eq
     } else if (tree_eq node hyp_sig) {
       invalid node
     } else if (is_neutral node) {
       if (member (root_of node) legit) { node } else { invalid node }
     } else if (is_elim_head node) {
-      wait shim_marker node
+      wait shim (pair node nil)
     } else {
       certify_children cf legit node
     }))

@@ -62,7 +62,7 @@ test reader_suite CertPi = reader_expected
 
 honest_sniffer := {b} -> if (is_neutral b) { true } else { not_bool b }
 test EnumBoolToBool honest_sniffer = true
-test MetaPi BoolType ({_} -> BoolType) honest_sniffer = false
+test MetaPi BoolType ({_} -> BoolType) honest_sniffer = true
 test CertPi BoolType ({_} -> BoolType) honest_sniffer = true
 
 test CertPi BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
@@ -70,7 +70,7 @@ test CertPi BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig)
 rebuilt_sniffer := {b} -> if (tree_eq (pair_fst b) (t (pair_snd (pair b sig_child)))) { b } else { 5 }
 test EnumBoolToBool rebuilt_sniffer = false
 test MetaPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
-test CertPi BoolType ({_} -> BoolType) rebuilt_sniffer = true
+test CertPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
 
 test dep_suite EnumPi Five = dep_expected
 test dep_suite MetaPi NatType = dep_expected
@@ -79,3 +79,10 @@ test dep_suite CertPi NatType = dep_expected
 test EnumPi Five ({n} -> Point n) ({n} -> n) = true
 test MetaPi NatType ({n} -> Point n) ({n} -> n) = false
 test CertPi NatType ({n} -> Point n) ({n} -> n) = false
+
+honest_data_eq := {n} -> if (tree_eq n zero) { zero } else { n }
+test CertNatToNat honest_data_eq = true
+test MetaNatToNat honest_data_eq = false
+neutral_branch_reader := {b} -> if (is_neutral b) { b } else { not_bool b }
+test CertPi BoolType ({_} -> BoolType) neutral_branch_reader = true
+test MetaPi BoolType ({_} -> BoolType) neutral_branch_reader = true
