@@ -1,4 +1,4 @@
-// The evaluator Session ABI (EVALUATOR_PLAN.md §3).
+// The evaluator Session ABI. EVALUATOR.md is the architecture map.
 //
 // The engine (elaborator + verifier + test runner) talks to an evaluator only
 // through this interface, so `--evaluator=<backend>` can run the whole pipeline
@@ -11,8 +11,8 @@
 // engine that wants true backend-independence treats `H` as `unknown`. The eager
 // reference backend instantiates `H = Tree`.
 
-// A reduction budget: a DIVERGENCE bound, not a semantic gate (EVALUATOR_PLAN
-// decision 9). `remaining` is decremented per backend-defined unit (eager:
+// A reduction budget is a DIVERGENCE bound, not a semantic gate. `remaining`
+// is decremented per backend-defined unit (eager:
 // reduction steps; a net: interactions); BudgetExhausted fires at zero. A
 // generous budget admits every total program on every backend, so budget
 // CONSUMPTION is a non-portable observation and is never compared across
@@ -42,12 +42,11 @@ export interface EvalStats {
 }
 
 export interface SessionOpts {
-  // Per-call default budget, in the backend's own unit — never a shared constant
-  // (EVALUATOR_PLAN §8: budget-unit drift).
+  // Per-call default budget, in the backend's own unit — never a shared constant.
   defaultBudget?: number
   // Conformance mode: run standard natives (tree_eq) in-language instead of
   // intercepting them, so the native fast-path can be validated against the real
-  // compiled definition (EVALUATOR_PLAN §3.1).
+  // compiled definition.
   noNativeIntercept?: boolean
   // Replaces the module-global trace buffer.
   trace?: (event: unknown) => void
@@ -91,8 +90,8 @@ export interface Session<H = unknown> {
   // "tree_eq"), so it may intercept saturated applications with its native
   // fast-path. Idempotent; a no-op on backends without a fast path (they run the
   // in-language definition). This is the pragmatic registration hook; sourcing
-  // the identity from a committed hash registry instead (EVALUATOR_PLAN §3.1,
-  // recognition-not-registration) is the planned refinement.
+  // the identity from a committed hash registry instead remains an optional
+  // foreign/batch-tier refinement.
   recognizeNative?(name: string, handle: H): void
 
   // OPTIONAL scoped reclamation. beginScope() marks a reclamation point; endScope(keep)
@@ -134,7 +133,7 @@ export interface Session<H = unknown> {
 // A backend is a factory plus a static, build-time report of which standard
 // natives it recognizes (name -> content hashes of the canonical ternary
 // encoding). That report is an input to the engine-side compatibility assertion
-// (EVALUATOR_PLAN §3.1); it is never consulted during reduction.
+// it is never consulted during reduction.
 export interface EvalBackend<H = unknown> {
   readonly name: string
   natives(): ReadonlyMap<string, readonly string[]>

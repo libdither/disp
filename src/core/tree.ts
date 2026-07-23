@@ -8,12 +8,12 @@
 // (hash-consing) and the unique-node counter stay GLOBAL — trees built under
 // any session share one identity space, which is what lets the elaborator's
 // cross-session/cross-file invariants (verifiedModules, the run.ts name
-// registry) keep working. This is the Phase-1 "state-ize the evaluator" step of
-// EVALUATOR_PLAN.md: no module-global *evaluator state*, only a global arena.
+// registry) keep working. This is the stateful evaluator architecture described
+// in EVALUATOR.md: no module-global *evaluator state*, only a global arena.
 //
 // This is core/tree.ts: the PRIVATE internals of the eager backend. The engine
 // (compile.ts/run.ts) never imports it — it goes through the Session ABI; only
-// eval/eager.ts (the backend) consumes these internals (EVALUATOR_PLAN §5).
+// eval/eager.ts (the backend) consumes these internals.
 
 export type Tree = {
   readonly tag: "leaf"
@@ -798,7 +798,7 @@ export function prettyTree(tree: Tree, names?: Map<number, string>): string {
 // dump-comparison observation bridge both rely on that. dumpTernary forces
 // suspensions (it is a forcing op). NOTE: this is *a* preorder arity encoding;
 // reconciling its exact bytes with the lambada batch-tier convention is Phase 4
-// (EVALUATOR_PLAN §4.5), and a deep-tree iterative encoder is the §8 blowup hedge
+// and a deep-tree iterative encoder avoids recursive dump blowups
 // — the recursive form here is fine for the small terms dump is used on so far.
 export function encodeTernary(t: Tree): string {
   const parts: string[] = []

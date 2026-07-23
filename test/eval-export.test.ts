@@ -1,4 +1,4 @@
-// Export + batch-tier conformance (EVALUATOR_PLAN Phase 4).
+// Export + batch-tier conformance (EVALUATOR.md).
 //   - A binding's emitted ternary blob is self-contained: reloading it on ANY
 //     backend and normalizing yields the same result as the in-repo evaluation
 //     (defs inline by construction — §3.1, no native-substitution step).

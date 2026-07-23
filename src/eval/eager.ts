@@ -1,4 +1,4 @@
-// The eager reference backend (EVALUATOR_PLAN.md §4.1 / §5 eval/eager.ts).
+// The eager reference backend (EVALUATOR.md).
 //
 // EagerSession wraps one EagerState bag from core/tree.ts and swaps it in as the
 // active state (via setActive) for the duration of each call, so core's free

@@ -1,5 +1,5 @@
 // Real elaboration + verification on the NON-CANONICAL naive backend
-// (EVALUATOR_PLAN Phase 3) — the strongest proof the Session ABI is real:
+// (EVALUATOR.md) — the strongest proof the Session ABI is real:
 // compile.ts drives a full kernel module to its verdict on a backend with NO
 // hash-consing, fresh non-canonical handles, and structural equality, so nothing
 // in the elaborator secretly depends on canonical handles or O(1) id-equality.

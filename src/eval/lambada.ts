@@ -1,4 +1,4 @@
-// Lambada batch-tier peers (EVALUATOR_LAMBADA_PLAN.md / EVALUATOR_PLAN.md §4.5).
+// Lambada batch-tier peers (EVALUATOR.md).
 //
 // BatchRunners over the bundled lambda-llc/tree-calculus reducers — INDEPENDENT
 // implementations of the same 5-rule calculus, and disp's first external
@@ -7,8 +7,8 @@
 // app-rep × memory strategy); build.sh bundles a selectable CLI (cli.cjs) and we
 // register each as its own peer.
 //
-// Out-of-process and one-shot by design (EVALUATOR_PLAN §4.4 rejects a per-op
-// subprocess Session): each fold spawns `node cli.cjs -e <name> -ternary t0 t1 …`,
+// Out-of-process and one-shot by design: a per-operation subprocess Session is
+// too chatty for elaboration. Each fold spawns `node cli.cjs -e <name> -ternary t0 t1 …`,
 // which folds the terms by application from identity (≡ from t0, the same fold
 // sessionBatchRunner does in-process) and prints the ternary normal form. Ternary
 // is byte-identical to disp's (preorder 0/1/2, no separators), so no codec shim.
@@ -39,7 +39,7 @@ export function lambadaAvailable(): boolean { return existsSync(ARTIFACT) }
 
 // A BatchRunner over one lambada evaluator. `timeoutMs` is the ONLY budget that
 // crosses the boundary (the peer has its own internal limits; the step/interaction
-// unit is non-portable — EVALUATOR_PLAN §3/decision 9), so fold()'s Budget arg is
+// unit is non-portable, so fold()'s Budget arg is
 // accepted for interface conformance but not forwarded.
 export function lambadaRunner(evaluator: LambadaEvaluator | string = "lazy-stacks", timeoutMs = 60_000): BatchRunner {
   return {

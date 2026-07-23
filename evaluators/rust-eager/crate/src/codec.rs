@@ -1,5 +1,5 @@
 //! Ternary interchange codec (preorder arity: leaf `"0"`, stem `"1"`+child, fork
-//! `"2"`+l+r). The one string copy per term across the FFI (EVALUATOR_PLAN §4.2).
+//! `"2"`+l+r). This is the one string copy per term across the FFI (EVALUATOR.md).
 
 use crate::arena::{Arena, Exhausted, Node, LEAF_ID};
 

@@ -1,4 +1,4 @@
-// Binding-closure export (EVALUATOR_PLAN.md §4 / §5 format/export.ts).
+// Binding-closure export (EVALUATOR.md).
 //
 // In disp, elaboration INLINES everything: a compiled binding's tree is pure
 // tree calculus with no symbolic references — every definition it uses, tree_eq

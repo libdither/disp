@@ -1,4 +1,4 @@
-// rust-eager Session backend — the Rust hash-consed eager tree-calculus reducer (EVALUATOR_PLAN.md §4.2, Phase 6).
+// rust-eager Session backend — the Rust hash-consed eager tree-calculus reducer (EVALUATOR.md).
 //
 // **M0 + M1 landed** — a real hash-consed eager reducer (the fast Rust checker backend when
 // built). The seam — WASM instantiation, the u32-arena handle scheme, every Session method
@@ -81,7 +81,7 @@ class RustEagerSession implements Session<number> {
 
   // The host passes an eager-tuned per-call budget (compile.ts APPLY_BUDGET=40M
   // steps); budget is a non-portable per-backend divergence bound (decision 9 /
-  // EVALUATOR_PLAN §8), and rust-eager's interaction unit differs, so we floor it at a
+  // Backends use different budget units, so rust-eager floors it at a
   // generous interaction budget. The total conformance corpus terminates well
   // under this, so it never becomes a tight accept/reject boundary.
   #bud(budget?: Budget): number {
@@ -89,7 +89,7 @@ class RustEagerSession implements Session<number> {
   }
 
   // apply is EAGER: tc_apply fully normalizes apply(f,x) (the elaboration-
-  // conformance mode — EVALUATOR_PLAN decision 7; the elaborator is eager-normative,
+  // Conformance mode: the elaborator is eager-normative,
   // and the M1 lazy core `tc_apply_lazy` is NOT wired here). So it reduces and CAN
   // exhaust — the EXHAUSTED check is load-bearing, returning u32::MAX (−1 in JS).
   apply(f: number, x: number, budget?: Budget): number {

@@ -1,5 +1,5 @@
 // Conformance for the Session ABI surface on the eager reference backend
-// (EVALUATOR_PLAN §3): ternary round-trips, dump is canonical, classify matches
+// (EVALUATOR.md): ternary round-trips, dump is canonical, classify matches
 // construction, equal agrees with the canonical dump. When the Phase-3 naive
 // backend lands, the same checks run against it (differential conformance).
 

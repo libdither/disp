@@ -1,5 +1,5 @@
-// Reproducible cross-evaluator benchmark (EVALUATOR_PLAN.md §6 / Phase 5, scoped
-// to evaluator throughput). Runs the five lambada benchmark programs across every
+// Reproducible cross-evaluator throughput benchmark (see EVALUATOR.md). Runs the
+// five lambada benchmark programs across every
 // contestant and reports best-of-N reduction time:
 //
 //   contestants = disp-eager, disp-naive (via bench/disp-cli.ts)

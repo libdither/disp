@@ -1,5 +1,5 @@
-// Differential conformance for the naive "honesty" backend (EVALUATOR_PLAN
-// Phase 3): non-canonical handles, and the naive reducer agrees with the eager
+// Differential conformance for the naive "honesty" backend (EVALUATOR.md):
+// non-canonical handles, and the naive reducer agrees with the eager
 // reference on every reduction that terminates on both. This is the cheap proof
 // the Session ABI is real and that nothing depends on canonical handles / O(1)
 // id-equality.

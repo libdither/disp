@@ -7,13 +7,13 @@ relate. It's the entry point; the detailed plan, on-disk layout, and per-backend
 in the linked docs.
 
 > Status is the code, not this doc. For *what's landed*, read `git log`, `npm test`, and each
-> backend's source. This file is durable architecture; the milestone history is
-> [`EVALUATOR_PLAN.md`](EVALUATOR_PLAN.md) §6.
+> backend's source. This file is the durable architecture; completed milestone plans were
+> deleted once their decisions were reflected here and in code.
 
 ## The contract: the `Session` ABI
 
-Authoritative in [`src/eval/types.ts`](src/eval/types.ts); rationale in `EVALUATOR_PLAN.md`
-§3. A `Session<H>` over an opaque handle type `H`:
+Authoritative in [`src/eval/types.ts`](src/eval/types.ts). A `Session<H>` over an opaque
+handle type `H`:
 
 - **Term algebra:** `leaf()`, `stem(child)`, `fork(left, right)` — build tree-calculus nodes.
 - **Reduction:** `apply(f, x, budget?)` — may return a *suspended* handle on lazy backends;
@@ -36,7 +36,8 @@ build artifact exists, so `npm test` never needs a toolchain.
 |---|---|---|---|---|---|
 | **eager** (disp-eager) | TS in-process | the reference **oracle** | hash-consed eager tree reducer | `src/eval/eager.ts` + `src/core/tree.ts` | *is* the spec (canonical) |
 | **naive** | TS in-process | honesty backend (flushes canonical-handle assumptions) | structural, no hash-cons identity (`canonicalHandles=false`) | `src/eval/naive.ts` | differential vs eager |
-| **rust-eager** | Rust→wasm in-process | the **fast checker backend** (the default when built) | **strategy 1**: hash-consed reducer | `evaluators/rust-eager/` ↔ `src/eval/rust-eager.ts` | differential vs disp-eager |
+| **rust-eager** | Rust→wasm in-process | the portable **fast checker backend** and fallback when the native addon is absent | **strategy 1**: hash-consed reducer | `evaluators/rust-eager/` ↔ `src/eval/rust-eager.ts` | differential vs disp-eager |
+| **rust-eager-native** | Rust→N-API in-process | the default **fast checker backend** when built; host-memory alternative to wasm32 | the same hash-consed reducer as rust-eager | `evaluators/rust-eager/` ↔ `src/eval/rust-eager-native.ts` | the rust-eager conformance suite |
 | **rust-ic-net** | Rust→wasm in-process (+ native parallel) | the **optimizer substrate** — *not* a checker | **strategy 2**: materialized interaction net | `evaluators/rust-ic-net/` ↔ `src/eval/ic-net.ts` | differential vs rust-eager (= a race detector under threads) |
 | **lambada peers** (~11) | out-of-process **batch tier** | benchmark contestants + an *external* differential oracle | various lazy/memoizing λ-reducers | `evaluators/lambada/` ↔ `src/eval/lambada.ts` | ternary-ABI differential |
 
@@ -99,8 +100,9 @@ rust-ic-net is the literal materialization.
 - **A *project* is the build/vendoring unit; an *evaluator* is the registration unit.** One
   foreign project can ship several evaluators (lambada's `lambada-lazy`, `lambada-memo`, …).
 - **On disk:** `src/eval/` is the TS engine layer — `types.ts` (the ABI), `registry.ts`, and
-  one thin wrapper per backend (`eager.ts` / `naive.ts` / `rust-eager.ts` / `ic-net.ts` /
-  `lambada.ts`). `evaluators/` holds one self-contained folder per *foreign project*
+  one thin wrapper per backend (`eager.ts` / `naive.ts` / `rust-eager.ts` /
+  `rust-eager-native.ts` / `ic-net.ts` / `lambada.ts`). `evaluators/` holds one
+  self-contained folder per *foreign project*
   (`lambada/`, `rust-eager/`, `rust-ic-net/`) — each just a `build.sh` + gitignored
   `artifacts/` (+ a `vendor/` only for multi-file upstreams), **excluded from the TS build**.
   *(Deferred: an optional `src/eval/impl/` reshuffle grouping each evaluator's internals — a
@@ -119,9 +121,9 @@ rust-ic-net is the literal materialization.
 | You want… | Read |
 |---|---|
 | this overview + the backend map | **this doc** |
-| the ABI in detail / FFI classes / phase history / decisions | `EVALUATOR_PLAN.md` (§3 ABI, §4 FFI classes, §6 phases, §7 decisions) |
+| the exact ABI | `src/eval/types.ts` |
 | the on-disk layout / how to add a backend | this doc, **§ Layout & adding a backend** (above) |
-| the batch-tier (lambada) integration | `EVALUATOR_PLAN.md` §4.5 |
+| the batch-tier (lambada) integration | `src/eval/batch.ts`, `src/eval/lambada.ts`, and `bench/bench-evaluators.ts` |
 | the calculus spec | `research/interaction-combinator/tc-net.typ` |
 | the materialized net (strategy 2) design | `research/interaction-combinator/RUST_IC_NET_DESIGN.md` |
 | a native backend's internals | its crate `crate/src/lib.rs` module-map doc-comment |

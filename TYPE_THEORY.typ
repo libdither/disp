@@ -1,4 +1,4 @@
-#set document(title: "Disp Type Theory — Unified Spec (TYPE_THEORY_NEXT)")
+#set document(title: "Disp Type Theory — Unified Spec")
 #set page(margin: 2cm, numbering: "1")
 #set text(font: "New Computer Modern", size: 10.5pt)
 #set heading(numbering: "1.")
@@ -27,20 +27,18 @@
 
 #align(center, text(22pt, weight: "bold")[Disp Type Theory])
 #v(0.3em)
-#align(center, text(13pt)[Unified Specification (NEXT)])
+#align(center, text(13pt)[Unified Specification])
 #v(0.5em)
 #align(center)[
-  Type theory of disp via manifest contracts over a tree-calculus substrate,
+  Type theory of disp via a parametric walker over a tree-calculus substrate,
   with categorical foundations and cubical extensions integrated.
 ]
 #v(1em)
 
 #note[
-  *Status.* Active spec. Replaces the prior seven-primitive `TYPE_THEORY.typ`
-  and consolidates the category-theory and cubical proposals into one document.
-  The framing, the kernel surface, and every former are developed in full below
-  (§1 onward); this note is only a dated changelog. Open items are flagged
-  inline as `Open question:` notes.
+  *Status.* Active spec. The implementation in `lib/kernel/` is authoritative
+  where this document and code differ. Open items are flagged inline as
+  `Open question:` notes.
 
   *2026-06-01 — two-Σ-op kernel.* The kernel drops to *two* Σ-operations
   (`hyp_reduce`, `bind_hyp`) plus the two-argument dispatcher `param_apply` over
@@ -62,21 +60,26 @@
   structural types (`Tree`, `Frame`, `NeutralMeta`, `Action`, `RespondShape`,
   `MetaShape`) are first-class, so the kernel typechecks its own internals;
   `bind_hyp` runs inside the walker and modules auto-`verify` at elaboration.
+
+  *2026-07-22 — raw functions and direct checking.* Pi values are raw
+  bracket-abstracted functions. `Pi` checks them by applying them to a fresh
+  hypothesis under the walker; there is no manifest-contract wrapper or
+  `checked_apply` wait-form. `checked A B f x` is only the explicit-type-argument
+  spelling of `param_apply f x`. The proposed `strip` pass was never implemented
+  and has been removed from this specification.
 ]
 
 = Overview <sec:overview>
 
 == The framing in one paragraph
 
-Disp is a dependently-typed language whose type system is implemented as
-*manifest contracts* over a tree-calculus substrate. Every typed function
-value carries a runtime input-checker (a "contract"); every type is a predicate on programs implemented as a *wait-form* whose recognizer field judges inhabitants. The elaborator's only
-job is to transform syntax into trees and emit tests — no bidirectional
-inference, no judgments. Type validation is a `test` declaration that
-runs a library validator at elaboration time. Failures throw with the
-failing component identified. After elaboration succeeds, a *strip pass*
-elides validated contracts to give a runtime tree with no per-call
-checking overhead.
+Disp is a dependently-typed language whose type system is implemented by
+library recognizers over a tree-calculus substrate. A type is a wait-form whose
+recognizer judges inhabitants. A `Pi` recognizer mints a fresh domain
+hypothesis, runs the raw candidate function under the parametric walker, and
+checks the result against the codomain. The elaborator transforms syntax into
+trees and routes annotated module exports through these library checks; it does
+not maintain a second host-language typing judgment.
 
 The kernel is a *tree-calculus interpreter over a fixed dispatch set* Σ
 — the two Σ-operations `hyp_reduce` and `bind_hyp`, the only operations
@@ -108,8 +111,8 @@ and revisable:
     inset: 6pt,
     [*Section*], [*Covers*],
     [§2 Substrate], [Tree calculus, apply, hash-cons identity, glossary; record/array/coproduct sugar (§2)],
-    [§3 The `CheckerResult` monad],
-    [`Result E A`, `CheckerError` variants, Kleisli composition, the *verdict-vs-error principle*],
+    [§3 The `CheckerResult` gate],
+    [The concrete `Ok Tree | Err` result and its no-double-wrapping convention],
 
     [§4 The parametric walker and `Tree_p`],
     [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
@@ -121,9 +124,9 @@ and revisable:
     [Stuck forms from any pinned handler, the generalized H-rule, cascading-failure story],
 
     [§7 The kernel primitives], [Operational semantics of `hyp_reduce`, `bind_hyp`, `param_apply`],
-    [§8 Boundary operations and checked values], [`param_lift`, `typecheck`, `checked`, `strip_validated`],
+    [§8 Boundary operations and checked application], [`param_lift`, `typecheck`, `param_apply`, explicit `checked`],
     [§9 Elaboration and tests], [Syntactic transformation; tests as first-class; `: T` as test sugar],
-    [§10 Strip and erasure], [`strip` as a tree function; PCC story],
+    [§10 Runtime representation], [why there is currently no separate strip/erasure pass],
     [§11 Types and validators], [Types-as-wait-forms; MetaShape; validators-as-values],
     [§12 Library types], [Each library type under the framework, including `Type` itself],
     [§13 Cubical extensions], [`I`, `Path`, `comp`, `Glue`, `ua`],
@@ -413,7 +416,7 @@ The two faces differ by one knob — *do the fields read the payload?* A
 
 #note[
   *The `fork(LEAF, _)` shape is shared — by design.* A `const`-wrapped record
-  field (`const x = fork(LEAF, x)`) has the same shape as `Ok x` (§3.4) and
+  field (`const x = fork(LEAF, x)`) has the same shape as `Ok x` (§3) and
   `succ x` (§12) — the substrate's `fork(LEAF, _)` node is reused across all
   three, *intentionally*: reusing one minimal node keeps hash-cons sharing
   maximal and the eliminators uniform. A field thunk is therefore told apart from
@@ -426,7 +429,7 @@ The two faces differ by one knob — *do the fields read the payload?* A
   `nat_recognizer` accepts `Ok zero` (it *is* `succ zero` structurally), and
   `is_ok (succ n) = true`. This is harmless because the type discipline never feeds
   a `Result` where a `Nat` is expected — every value reaches a recognizer through
-  a typed position. The structural-recognition soundness claim (§8.7, §14) is
+  a typed position. The structural-recognition soundness claim (§8, §14) is
   therefore scoped to inputs that already respect the ambient typing, not to all
   trees; a recognizer is a decision procedure for its type *among well-typed
   candidates*, not a universal tree classifier.
@@ -462,9 +465,9 @@ where `F` is `r`'s field table. The field name is validated by the cut's type
 and fails as a verdict, never a host error. For a *literal* name the whole chain
 is a subterm closed in `r`, so it β-reduces — by ordinary `apply`, with no
 certificate — and `const x` constant-folds to `x`; hash-cons shares that normal
-form across every projection of the same field. `strip` (§10) removes the
-`prod`/`const` scaffolding on a validated program, leaving the bare positional
-path `pair_fst (pair_snd^idx payload)`. §12 gives the dependent type of
+form across every projection of the same field. The runtime keeps the
+`prod`/`const` scaffolding and name header; literal projections normally reduce
+through it to the same hash-consed result. §12 gives the dependent type of
 projection and the neutral case.
 
 #note[
@@ -547,7 +550,7 @@ subsumes `select` (the two-constructor Bool case), the per-type recursors of
   *Tags and O(1) discrimination.* A coproduct's tag sits in `pair_fst`, so the
   cut discriminates by one `tree_eq` (O(1), §2.2). Library and user coproducts
   tag by interned constructor name. The kernel enums the interpreter itself
-  returns — `Result` (`Ok` / `Err`, §3.4) and `Action` (`Extend` / `Reduce`,
+  returns — `CheckerResult` (`Ok` / `Err`, §3) and `Action` (`Extend` / `Reduce`,
   §7) — are declared the same way, by hand via `injN` with interned-name tags
   (`inj1 "Ok"`, `inj1 "Extend"`, …) rather than produced by `Coproduct`: only
   because they are needed during bootstrap, before `Coproduct` itself exists.
@@ -687,313 +690,40 @@ case table and apply it to the bool): a shape-encoded coproduct exactly like
 (One consequence to know: `true = △ = zero = nil = refl` — the smallest
 constants of different types share one tree, per the §2.6 collision doctrine.)
 
-= The `CheckerResult` monad <sec:result-monad>
+= The `CheckerResult` gate <sec:result-monad>
 
-== The general `Result` shape
-
-`Result` is the standard error-or-value sum, parameterized over the
-error type:
-
-```
-Result E A := Ok A | Err E
-```
-
-This is the same shape as Rust's `Result<T, E>`, OCaml's `('a, 'e) result`,
-Haskell's `Either E A`, and Lean's `Except E A`. For each fixed `E`,
-`Result E` is a monad: `η = Ok`, `μ` collapses nested `Ok (Ok x) → Ok x`
-and propagates `Err e` outward.
-
-== `CheckerError` — the kernel's failure vocabulary
-
-The kernel's failures are not undifferentiated — they carry distinct
-meanings that downstream code needs to react to differently. The
-failure type is a tagged enum:
+`CheckerResult` is the small result type used by recognizers and the parametric
+walker:
 
 ```disp
-// All errors carry a source span for diagnostics. `span` is the ambient
-// source span of the expression currently being reduced; the elaborator
-// threads it through the reduction context, so the handler bodies in this
-// spec write `span` without binding it explicitly.
-// A coproduct (§2): each variant is a constructor carrying a record payload.
-CheckerError :=
-    Parametricity { kind : ParamKind, where : Tree_p, span : Span }
-  | Escape        { hyp : Tree_p, body_result : Tree_p, span : Span }
-  | NotApplicable { type : Tree_p, span : Span }
-  | TypeMismatch  { expected : Type, actual : Tree_p, span : Span }
-  | Malformed     { handler : Symbol, meta : Tree_p, span : Span }
-
-ParamKind := StemForge | TriageReflect
+CheckerResult : Type := < Ok : Tree, Err >
+Ok  : Tree -> Tree := inj1 "Ok"
+Err : Tree := inj0 "Err"
 ```
 
-Each variant maps to a distinct kernel failure path:
+`Ok v` carries a tree. `Err` is deliberately nullary: the current kernel does
+not encode structured error variants or source spans in the result. An
+inhabitance query returns `Ok true` or `Ok false`; `Err` means the walker
+rejected a soundness-sensitive operation such as reflecting on or forging a
+hypothesis, or a nested check could not be completed safely.
 
-#figure(
-  table(
-    columns: 2,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*Variant*], [*Raised by*],
-    [`Parametricity StemForge`],
-    [walker, when applying a stem would produce a fork whose
-      `pair_fst` is a pinned kernel signature (would forge a neutral)],
-
-    [`Parametricity TriageReflect`],
-    [walker, when triage would split on a kernel-minted neutral
-      (would reflect on a hypothesis)],
-
-    [`Escape`],
-    [`bind_hyp`, when the body's result exposes the minted
-      hypothesis via a non-neutral path],
-
-    [`NotApplicable`],
-    [`hyp_reduce`, when the stored type isn't a recognized
-      type wait-form],
-
-    [`TypeMismatch`],
-    [contract boundaries (`checked` argument check, any typed-
-      function application), when a recognizer returns `Ok false` on
-      a value where true was contractually required],
-
-    [`Malformed`],
-    [any handler, when its meta doesn't fit the expected shape
-      (currently silent in some paths — see §15 for the planned
-      diagnostic story)],
-  ),
-  caption: [`CheckerError` variants and their kernel-handler origins.],
-)
-
-#note[
-  *Verdict vs error.* A recognizer's `Ok false` is *data*, not an
-  error — it means "this value is not an inhabitant of the queried
-  type," which is a legitimate answer to a query. Errors flow
-  through `Err` only when something is *broken*: parametricity
-  violated, hypothesis escaped, contract-mandated true received false,
-  meta malformed. Query-style callers (`typecheck`, `strip_validated`)
-  see `Ok true` / `Ok false` and pattern-match. Contract-style callers
-  (`checked` application) raise `TypeMismatch` because their callers
-  promised the value would fit.
-]
-
-#note[
-  *Most of this vocabulary is meant to disappear.* Of the five variants, only
-  `Parametricity` and `Escape` report a genuine soundness event — user code
-  tried to forge or reflect on a hypothesis, or let one escape its scope. The
-  other three describe a type that was *built* wrong, not a value that fails
-  to inhabit it: `Malformed` (meta off-shape), `NotApplicable` (stored type
-  not a function / not a type), and `TypeMismatch` (a contract promised `true`
-  and got `false`). Those are discharged earlier — by validating every type
-  annotation against `Type` at elaboration, and by the validate-then-strip
-  discipline (§10) under which a checked contract can only fire on the
-  un-validated path. On well-formed, validated input the checker never raises
-  them, so the steady-state recognizer is effectively `Tree -> Tree -> Bool`:
-  a verdict, with `Parametricity` / `Escape` the only residual error channel.
-
-  *Folding `Err` to `false` is conservative only for monotone recognizers.* When
-  a recognizer runs a sub-check under the walker and folds its `Parametricity`
-  failure to `Ok false` (the kernel does this — §6), it *rejects* the value,
-  which is sound. This stays sound exactly while recognizers are *monotone* in
-  their sub-verdicts: a sub-check turning `false` may only weaken the answer,
-  never strengthen it. A recognizer that negated a sub-verdict
-  (`{v} -> not (sub v)`) would turn a forgery's `false` into `true` and accept it.
-  The library recognizers do not negate (Pi, Sigma, Refinement are
-  conjunctive; `Not` is the type `Arrow A False`, not a verdict negation), so
-  the fold is sound today; a recognizer-monotonicity check belongs in §14.
-]
-
-== `CheckerResult` and the monad structure
-
-```
-CheckerResult A := Result CheckerError A
-```
-
-The unit `η : A → CheckerResult A` is `Ok`. The multiplication
-`μ : CheckerResult (CheckerResult A) → CheckerResult A` collapses
-nested wrappings (with the inner `Err` taking precedence over an
-outer `Ok` shell):
-
-#figure(
-  table(
-    columns: 2,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*Input*], [*Output*],
-    [`Ok (Ok v)`], [`Ok v`],
-    [`Ok (Err e)`], [`Err e`],
-    [`Err e`], [`Err e`],
-  ),
-  caption: [Multiplication μ for `CheckerResult`.],
-)
-
-Monad laws (unit-left, unit-right, associativity) check trivially.
-
-== Tree encoding (bootstrap layer)
-
-At the bootstrap layer, `Ok` and `Err` are concrete tree shapes
-chosen for O(1) discrimination:
+The library operation `bind` is the only result-composition primitive needed by
+the kernel:
 
 ```disp
-Ok  := {v} -> t t v            // Ok v  = fork(LEAF, v)
-Err := {e} -> t (t t) e         // Err e = fork(stem(LEAF), e)
+bind := {r, k} -> match r { Ok v => k v; Err _ => r }
 ```
 
-Because `pair_fst (Ok v) = LEAF` and `pair_fst (Err e) = stem(LEAF)`,
-`is_ok r = tree_eq (pair_fst r) LEAF` remains a single hash-cons
-comparison. The error payload `e` is itself a tree encoding a
-`CheckerError` variant — at bootstrap this is hand-encoded (a tag
-tree plus payload subtrees); once §11's library types are in scope,
-the same encoding is type-ascribed to `CheckerError`.
+It passes an `Ok` payload to the continuation and propagates `Err` unchanged.
+There is no parameterized `CheckerError`, `map_err`, or recoverable error
+payload in the current bootstrap layer. Diagnostics belong to the elaborator
+around the failed declaration or test.
 
-== Kleisli composition
-
-The Kleisli category `Kl(CheckerResult)` has trees as objects;
-morphisms `A → B` are functions `A → CheckerResult B`. Composition is
-
-$ g compose_K f = mu compose T(g) compose f $
-
-In disp source this is `{x} -> bind (f x) g`. The parametric walker
-of §4 is a Kleisli arrow `Tree × Tree → CheckerResult(Tree)` — the
-Kleisli lift of binary `apply`. Restricting it to `Tree_p × Tree_p
-→ CheckerResult(Tree_p)` (the subset of trees on which it never
-produces an `Err Parametricity`, defined in §4) gives the carrier
-on which the operation is closed under `Ok`.
-
-== General `Result E` operations
-
-The standard `Result` API — these work for any error type `E` and
-know nothing about `CheckerError`. Five primitives cover the entire
-space of error-handling patterns:
-
-```disp
-// Monadic bind. Propagates Ok payload into continuation; passes Err
-// through unchanged. Equivalent to >>= / flatMap.
-bind := {r, k} ->
-  match (is_ok r) {
-    true => k (ok_value r)
-    false => r
-  }
-
-// Functor map. Transforms the Ok payload; leaves Err alone.
-map := {r, f} ->
-  match (is_ok r) {
-    true => Ok (f (ok_value r))
-    false => r
-  }
-
-// Error transform. Leaves Ok alone; transforms the Err payload.
-// Useful for re-tagging errors as they cross layer boundaries.
-map_err := {r, f} ->
-  match (is_ok r) {
-    true => r
-    false => Err (f (err_value r))
-  }
-
-// Error handler. Ok passes through; Err is handed to the handler,
-// which can itself produce Ok (recovery) or another Err (rethrow).
-// Equivalent to orElse / try-catch / Lean's Except.tryCatch.
-catch := {r, handler} ->
-  match (is_ok r) {
-    true => r
-    false => handler (err_value r)
-  }
-
-// Assertion sugar. Lifts a bool into Result Unit, supplying the
-// error for the false case. Useful for inline pre-conditions inside
-// a bind chain.
-guard := {cond, err} ->
-  match cond {
-    true => Ok t                    // t = unit at this layer
-    false => Err err
-  }
-```
-
-`map` and `map_err` together form the bifunctor structure; `catch`
-is monadic recovery on the error side; `guard` is the standard
-boolean-to-Result lift. These five are the entire vocabulary —
-every higher-level error-handling pattern is a composition.
-
-== Why a monad
-
-Failures propagate uniformly via `bind`. No manual short-circuiting
-in handler code; Kleisli composition does it automatically. Tagged
-errors plus `catch` mean each layer decides what to recover from and
-what to re-raise, instead of pattern-matching on opaque `Err`
-trees. The general/specialized split keeps the kernel's failure
-vocabulary self-documenting: `grep catch` finds every error
-suppression; `grep 'Err ('` finds every error raise.
-
-== Using `CheckerResult` in practice
-
-There are no `CheckerResult`-specific helper combinators. The
-general `Result E` operations above are the entire vocabulary; the
-kernel just composes them with appropriate `CheckerError` variants.
-The two call-site patterns worth understanding:
-
-*Query patterns.* When the caller is asking the recognizer for a
-verdict — "is `v` an inhabitant of `T`?" — the answer is data, not
-an error. `Ok true` and `Ok false` are both successful runs; `Err _`
-signals something is broken (parametricity, escape, malformed
-input). Callers pattern-match on the verdict:
-
-```disp
-bind (typecheck T v) ({verdict} ->
-  match verdict {
-    true => /* it's an inhabitant; proceed */
-    false => /* it's not; do whatever the query API demands */
-  })
-```
-
-*Contract patterns.* When the caller has a contractual guarantee
-that the value fits — applying a `f : Pi A B` to an arg, where the
-type system says the arg must be in `A` — receiving `Ok false` from
-the recognizer means the program is broken, not that "we got a
-no." Here the receiving handler raises `TypeMismatch`:
-
-```disp
-bind (param_apply A arg) ({verdict} ->
-  match verdict {
-    true => /* arg fits A; proceed */
-    false => Err (TypeMismatch { expected = A, actual = arg, span })
-  })
-```
-
-This split is what keeps soundness errors visible. Folding any
-failure into `false` — the obvious shortcut — would silently mask a
-parametricity violation inside a recognizer body as "this isn't an
-inhabitant." Here, every recognizer is required to *be* a recognizer
-(returning a verdict, never absorbing soundness errors), and the
-lifting of `false → Err` happens only where it is contractually
-justified (`checked` and similar typed boundaries).
-
-We elevate this split to a *named design principle*, referenced
-elsewhere in the spec:
-
-#note[
-  *The verdict-vs-error principle.* `Ok true` / `Ok false` are *verdicts*
-  — legitimate data answers to "is `v` an inhabitant of `T`?". `Err _`
-  is reserved for *soundness-level breakage* — parametricity violation,
-  escape, malformed meta, broken-contract `TypeMismatch`. Recognizer
-  bodies must never fold the latter into the former. Contract
-  boundaries (and only contract boundaries) lift verdict-`false` into
-  `Err TypeMismatch` because at those sites the call was promised
-  to fit.
-]
-
-#note[
-  *`CheckerResult` is the kernel's monad; `Eff` is a separate library
-  monad.* `CheckerResult` is the return type of the two kernel handlers
-  (§5, §7) and of every recognizer — the *checking* monad. Effects are a
-  distinct library monad, the free monad `Eff R X` (§15), whose `bind`
-  sequences effect *values*; it does not flow through the kernel and is
-  not `CheckerResult`. The two only meet at the boundary: the effect
-  *driver* (§15.6) and the `is_closed` sanitizer it runs are the points
-  where a checked tree crosses into effect execution. So there is no
-  unified "one monad for everything" — checking and effecting are
-  deliberately separate, which is what keeps the substrate (and hence
-  the checker) pure.
-]
-
+The no-double-wrapping convention is load-bearing. A recognizer or routed kernel
+operation already returns a `CheckerResult`; the dispatcher returns it directly.
+Ordinary successful reduction returns a bare tree. Thus `param_apply T v` may
+produce `Ok true`, while `param_apply f x` for an ordinary function produces
+the bare result of `f x`, never `Ok (Ok _)`.
 = The parametric walker and `Tree_p` <sec:tree-p>
 
 == Motivating problem
@@ -1229,15 +959,15 @@ justified by the §4.3 litmus test, not by this passthrough argument.)
 
 `Tree_p(Σ)` is defined as the *largest* subset `S ⊆ Tree` such that
 the walker (in environment Σ) restricted to `S × S` is closed under
-`Ok` — i.e., the operation `S × S → CheckerResult(S)` never produces
-an `Err Parametricity`:
+`Ok` — i.e., the operation `S × S → CheckerResult` never produces
+`Err`:
 
 $ "Tree"_p (Sigma) = "greatest" S subset.eq "Tree" "such that" forall f\,x in S, w_Sigma (f, x) in {"Ok"(r) : r in S} $
 
 (modulo divergence — non-terminating reductions don't violate
-membership). The walker is the only source of `Err Parametricity`,
-and parametricity is the only kind of error it produces; other
-`CheckerError` variants are raised by handlers further out.
+membership). `Err` deliberately does not distinguish stem forgery,
+triage reflection, escape, or a rejected nested walk at this bootstrap
+layer.
 
 *Σ is fixed, so `Tree_p` is a single set.* Earlier drafts varied Σ per
 caller and noted a monotonicity law (`Σ ⊆ Σ'` ⇒ `Tree_p(Σ') ⊆ Tree_p(Σ)`)
@@ -1325,12 +1055,9 @@ narrower environment to drop into — effectful code is simply
 interpreted by a different *handler*, in-language, with no change to Σ
 or the walker.)
 
-`Tree_p(Σ)` is the largest carrier in `Kl(CheckerResult)` on which the
-walker — the Kleisli lift of the substrate's apply operation —
-restricts to a closed binary operation. Composition in
-`Kl(CheckerResult)` is the standard `g ∘_K f = μ ∘ T(g) ∘ f` of
-§3.5; the walker is the operation those Kleisli arrows compose with
-when reducing `apply` chains.
+`Tree_p(Σ)` is the largest carrier on which the walker restricts to a
+closed binary operation returning `Ok` results. `bind` composes the
+walker's nested checks and propagates the nullary `Err`.
 
 = The dispatcher <sec:dispatcher>
 
@@ -1565,7 +1292,7 @@ Library operations are *derived terms* built by composition of Σ
 generators. Examples:
 
 - `typecheck` is the Kleisli composition of `param_lift` and `param_apply T` (precomposed with the user-supplied type).
-- `checked A f` wraps a function with its input (domain) type `A`, contract-checking each argument against `A` before applying `f` (§8, §12.16).
+- `checked A B f x` is explicit typed application and reduces to `param_apply f x` (§8 and §12's typed-application subsection).
 - Library types (`Pi`, `Sigma`, `Bool`, etc.) are derived terms — wait-forms over library recognizers. Inductive types supply a `respond` field whose case-frame action mints stuck eliminations through `hyp_reduce`; the library `elim` (§12) handles the concrete/neutral gate.
 
 The library is "freely generated" from Σ in the algebraic-theory sense,
@@ -1814,7 +1541,7 @@ hypotheses of any type.
 
 == Stuck forms in tests
 
-A test `test typecheck T v = true` requires the computation to reduce
+A test `test typecheck T v = Ok true` requires the computation to reduce
 to literal `true`. Stuck forms (which represent unresolved computation)
 don't reduce to true — they're not true, they're symbolic terms
 representing "what true would be once we know the unknowns."
@@ -1829,21 +1556,12 @@ The `make_recognizer` discipline is therefore load-bearing for
 strict validation: without it, no recognizer passes its strict
 validation tests, because the body-check propagates stuck forms.
 
-== Stuck forms after strip
+== Stuck forms remain runtime values
 
-The `strip` pass (§10) removes `checked` wait-forms from a validated
-tree. It does NOT remove kernel-rooted stuck forms — those represent
-genuine unknown values, not type-checking artifacts. After strip,
-validated programs that compute over hypothesis-typed values (e.g.,
-polymorphic library functions instantiated lazily) still contain
-stuck forms in their reduction paths until the actual values are
-supplied at runtime.
-
-This is the proof-carrying-code pattern (§17 Necula 1997) for
-disp's setting: certificates assert "the stuck-form propagation is
-sound by construction"; strip elides the certificate but leaves the
-stuck-form machinery intact.
-
+There is no strip pass. Kernel-rooted stuck forms remain in a checked program
+because they represent genuine unknown values and deferred eliminations. They
+reduce when their arguments become concrete; the H-rule and each type's
+`respond` keep their stored types coherent while they are symbolic.
 = The kernel primitives <sec:primitives>
 
 Operational semantics for the two Σ-operations of §5 plus the
@@ -1992,15 +1710,11 @@ bind_hyp Nat ({x} -> Ok 0)                       // ✓ result doesn't depend on
 bind_hyp Nat ({x} -> Ok (apply x 0))             // ✗ apply x 0 is a stuck elim carrying x
 bind_hyp Nat ({x} -> Ok x)                       // ✗ x at public position
 bind_hyp Nat ({x} -> Ok (pair x 0))              // ✗ x in user-constructed pair
-bind_hyp Nat ({x} -> Ok (checked Nat x))         // ✗ x in checked wrapper
 bind_hyp Nat ({x} -> Ok (host_write_stdout (to_string x)))   // ✗ x in host payload
 ```
 
-*The `Pub` modality.* `Pub h R := Refinement R ({v} -> fresh_for h v)`
-— the sealing modality as an ordinary library refinement (§12). The
-runtime scan is the certificate for the typed claim; under the
-per-type-former `respond` discipline (§11.2) it is sound by
-construction and erasable at strip time.
+The runtime support scan is the enforcement mechanism. It is not erased after
+checking; `bind_hyp` performs it whenever a fresh hypothesis scope closes.
 
 #note[
   *Dependent hypotheses scan correctly.* When one hypothesis's type is
@@ -2120,15 +1834,14 @@ The two arms have different semantics:
 
 #note[
   *The wrapping invariant.* `param_apply f x` evaluates the application
-  `f x` to normal form and returns that normal form *directly*; the only
-  `CheckerError` it introduces itself is `Err Parametricity`, when a
-  reduction step trips a walker rejection. It never adds an `Ok` of its
-  own. Two consequences:
+  `f x` to normal form and returns that normal form *directly*; a rejected
+  walker step yields the nullary `Err`. It never adds an `Ok` of its own.
+  Two consequences:
   - A *pure* reduction returns its bare result tree —
     `param_apply (add 2 3) → 5`, not `Ok 5` (so arithmetic tests like
     `test (add 2 3) = 5` hold).
   - A reduction whose head is a `CheckerResult`-producer — a library
-    recognizer, a kernel handler, or `checked_apply` — returns that
+    recognizer or a kernel handler — returns that
     producer's `CheckerResult` as the normal form: `param_apply Bool true →
     Ok true`, *not* `Ok (Ok true)`.
 
@@ -2151,13 +1864,12 @@ is not wired in the current runtime (the only live native fast-path is
 bit-identical equivalence test against this in-language reference, which
 remains the spec.
 
-= Boundary operations and checked values <sec:boundary>
+= Boundary operations and checked application <sec:boundary>
 
-The boundary between untrusted user trees and the Kleisli world of
-`CheckerResult` rests on one scan (`occurs`) and one wrap
-(`checked`). `param_lift` and `typecheck` build on these to turn the
-boundary into the user-facing query API; `strip_validated` (§10) pairs
-the verdict with erasure.
+The boundary between untrusted user trees and `CheckerResult` rests on the
+support scan used by `occurs` and `is_closed`. `param_lift` and `typecheck`
+turn that boundary into the user-facing query API. `param_apply` is the
+implicit typed application; `checked` is its explicit-type-argument form.
 
 == `support`, `occurs`, and `fresh_for` — the dependency set
 
@@ -2249,7 +1961,7 @@ The boundary sanitizer, in terms of `is_closed`:
 param_lift := {v} ->
   match (is_closed v) {
     true => Ok v
-    false => Err (Malformed { handler = "param_lift", meta = v, span })
+    false => Err
   }
 ```
 
@@ -2271,10 +1983,9 @@ typecheck := {T, v} ->
     param_apply T sanitized_v)
 ```
 
-`Ok true` means inhabitant, `Ok false` means not, `Err _` means
-something soundness-level went wrong during the check (parametricity
-violation in the recognizer, malformed input, etc.). The verdict is
-data; the error channel carries only kernel-correctness failures.
+`Ok true` means inhabitant, `Ok false` means not, and `Err` means a
+soundness-sensitive operation was rejected while checking. The current
+bootstrap result does not carry a structured error payload.
 
 #note[
   *`typecheck` sanitizes; `param_apply` recognizes.* `param_lift`'s
@@ -2307,231 +2018,111 @@ checking — `param_apply` carries no host environment and `typecheck` is
 
 == Example traces
 
-*Trace 1: `typecheck Bool true`.*
-+ `param_lift true` → `Ok true` (true contains no neutrals).
-+ `param_apply Bool true` reduces `wait bool_recognizer bool_meta true` → `bool_recognizer bool_meta true` → `true` is a canonical Bool shape → returns `Ok true`.
-+ `typecheck` returns `Ok true` — the verdict.
+*Closed query: `typecheck Bool true`.*
 
-*Trace 2: `typecheck Bool (is_zero true)`.*
++ `param_lift true` returns `Ok true` because the value contains no neutral.
++ `param_apply Bool true` runs Bool's recognizer and returns `Ok true`.
++ `typecheck` returns that verdict unchanged.
 
-Here `is_zero` is a `checked Nat is_zero_raw` value (domain `Nat`).
+*Function query: `typecheck (Pi Nat ({_} -> Bool)) ({n} -> false)`.*
 
-+ Compile-time `applyTree (is_zero, true)`:
-  - Dispatcher routes `apply(checked-wait-form, true)` to the `checked` handler.
-  - Handler checks `param_apply Nat true`. Nat's recognizer rejects true structurally → `Ok false`.
-  - `checked` is a contract boundary: `Nat` was promised, `Ok false` means broken promise → raises `Err (TypeMismatch { expected = Nat, actual = true, span })`.
-  - So `is_zero true` reduces to that `Err`.
++ Pi's recognizer uses `bind_hyp Nat` to mint an arbitrary Nat.
++ It applies the raw candidate function to that hypothesis under the walker.
++ The result is `false`, which Bool recognizes, so the query returns `Ok true`.
++ A body that triages the hypothesis directly is rejected by the walker and
++  yields `Err`; a body returning the wrong concrete type yields `Ok false`.
 
-+ Now `typecheck Bool (Err ...)`:
-  - `param_lift` is called on an `Err` value. The wrapping monad propagates: `bind (Err e) k = Err e`.
-  - Returns the original `Err TypeMismatch`, payload pointing at the inner mismatch.
+== Explicit checked application <sec:checked-values>
 
-The error originates inside the reduction (at the `checked` handler's
-domain check, a contract boundary) and propagates outward unchanged.
-The user gets the inner failure's full payload — the expected type,
-the actual value, and the span — not an opaque outer "typecheck
-failed."
-
-Contrast: a *query* like `typecheck Bool zero` returns `Ok false`, not
-an error — `zero` simply isn't a Bool, which is a legitimate answer
-to a query. No `Err` is involved.
-
-== Checked values: manifest contracts <sec:checked-values>
-
-Every typed function value in disp is *contract-wrapped*: it carries
-its declared domain type, and applying it triggers a runtime input-
-check. The wrapping is via the library `checked` construction, whose
-full definition lives in §12; this subsection covers how checked
-values participate in the boundary.
-
-This is the manifest contracts discipline from the Findler-Felleisen
-contract semantics, refined by Greenberg-Pierce-Weirich to identify
-contracts with refinement types. See §17 for full citations.
-
-== The library constructor
-
-There is one constructor. `checked` pairs a function with its declared
-*input* (domain) type, building the wait-form of §5.4. Its full
-definition is in §12.16.
+Functions are raw bracket-abstracted values. The kernel exports two typed
+application interfaces over the same operation:
 
 ```disp
-checked A f  ≡  wait checked_apply { dom := A, fn := f }
+param_apply :
+  Intersection Type ({A} ->
+    Intersection (Pi A ({_} -> Type)) ({B} ->
+      Pi (Pi A B) ({f} -> Pi A ({x} -> B x))))
+
+checked :
+  {A : Type} -> {B : A -> Type} -> Pi A B -> {x : A} -> B x
+
+checked := {A, B, f, x} -> param_apply f x
 ```
 
-Applying it checks the argument against `A`, then runs `f` (§8.10).
-There is no separate `typed_lambda` — a lambda is wrapped directly with
-its domain — and no certificate wrapper. Whether `f` actually maps `A`
-into a particular codomain is *not* asserted at construction; that is
-decided when the value is recognized against a `Pi A B` (§12.9).
-Validation is therefore a *verdict*, not a wrapped certificate:
-`strip_validated` (§10) runs `typecheck` and, on `Ok true`, erases the
-now-redundant `checked` input-guards.
+`param_apply` leaves the domain and codomain implicit in its intersection
+type. `checked A B f x` exposes them as explicit arguments, which makes the
+dependent application type machine-checkable and documents the intended
+instantiation. Its body ignores those anchors and routes the actual application
+through `param_apply`.
 
-== Soundness: forged function contracts are caught by recognition
-
-`checked A f` does not assert at construction that `f` maps `A` into
-any particular codomain — the constructor only records the domain and
-defers the rest. A *false* contract — an `f` whose body does not land
-in the claimed codomain — is caught the moment the value is recognized
-against a `Pi A B`.
-
-Example: user writes `let bogus := checked Nat ({n} -> true)` and asserts
-`bogus : Pi Nat ({_} -> Nat)` (a lie — the body returns a `Bool`).
-- `typecheck (Pi Nat ({_} -> Nat)) bogus` runs Pi's recognizer (§12.9):
-  - `bogus` is a `checked` wait-form whose stored domain is `Nat` —
-    the structural checks pass.
-  - The body-check binds a fresh `Nat`-hypothesis, applies `bogus` to
-    it (yielding `true`), and checks `true` against the codomain `Nat`.
-    `Nat`'s recognizer rejects `true` → `Ok false`.
-- So the verdict is `Ok false`: the false contract is not an inhabitant.
-
-The user gets `Ok false` (verdict-as-data), not a thrown error — the body
-simply does not satisfy the codomain.
-
-If `bogus` instead reaches a *contract boundary* — a `checked`-wrapped
-function applied to it where its domain was promised — that function's
-input-check raises `Err (TypeMismatch { … })`, because at that boundary
-the type was promised rather than queried (§3, verdict-vs-error).
-
-== Composition
-
-Applying a `checked` value to an argument fires `checked_apply`:
-
-```
-(checked A f) x
-→ checked_apply { dom := A, fn := f } x   // wait-form reduction: checked_apply's
-                                          // sig is a library sig, not in Σ, so no
-                                          // special routing — wait reduces directly
-→ bind (param_apply A x) ({verdict} -> match verdict {
-    true => match (is_neutral f) {
-            true => param_apply f x        // f is a bind_hyp-wrapped neutral: its
-                                         //   application is already a CheckerResult
-                                         //   (§7.5) — pass through, do not re-wrap
-            false => Ok (param_apply f x)   // f is a raw function: its application is a
-          }                              //   bare reduct, so wrap with Ok
-    false => Err (TypeMismatch { expected = A, actual = x, span })
-  })
-→ on success:         Ok (f x)
-→ on domain mismatch: Err (TypeMismatch { expected = A, actual = x, span })
-```
-
-Chained applications work the same way. For curried functions returning
-functions, the result of one application may be another `checked` value,
-applied normally.
-
+There is no `checked_apply` signature, wait-form proxy, per-value stored
+domain, or runtime contract wrapper. Pi recognition checks a candidate by
+applying the raw function to a fresh domain hypothesis under the walker and
+checking the result at the instantiated codomain. This is the single source of
+function-typing semantics.
 = Elaboration and tests <sec:elaboration>
 
-The elaborator is a *purely syntactic transformation*. It parses,
-resolves references, and emits trees and tests. It performs no
-type-checking judgments itself — those happen via library validators
-invoked through tests.
+The elaborator parses, resolves references, lowers syntax to canonical trees,
+and assembles module metadata and declaration effects. It performs no separate
+host-language type judgment: annotated exports are accepted through the
+in-language module verification path.
 
 == What the elaborator does
 
-The elaboration steps:
+The current frontend:
 
-+ Parse syntax to AST.
-+ Resolve variable references against scope entries (which carry their
-  declared types).
-+ *Lambda wrapping.* At each lambda binder `{x : A} -> body` whose
-  surrounding type is known to be `Pi A B`, wrap the compiled body
-  with `checked A` (§8) — the function carries its *domain* as a
-  runtime input-contract.
++ Parses source into expression and declaration-member syntax.
++ Desugars binders, records, coproducts, recursion, matches, named arguments,
+  literals, and other surface forms.
++ Resolves names in an ordered, hermetic module scope.
++ Lowers expressions through the combinator IR, eliminates lambdas, and emits
+  canonical trees.
++ Records declared types in module metadata and queues verification through the
+  kernel's `verify` / `param_apply` path.
++ Implements the ordered declaration protocol for private `let`, `test`,
+  guards, reassignments, opens, givens, and fills.
 
-  *Record-field lambdas wrap the same way.* The surrounding type that
-  fixes a binder's `Pi` need not come from an outer `Pi` annotation — it
-  can come from a *record field's* declared type. When a record literal
-  `{ f := e, … }` is elaborated against a known record type
-  `Record [(f, Tf), …]` (e.g. an effect-handler value at its interface
-  type, §12/§15), each field's expected type `Tf` flows down to its
-  initializer: if `Tf` is a `Pi` and `e` is a lambda, `e` is wrapped as
-  `checked A e` (with `A` = `Tf`'s domain), exactly as a top-level
-  `Pi`-typed binder would be.
-  This is *required*, not cosmetic — `Pi`'s recognizer (§12) accepts only
-  `checked` wait-forms, so without the wrap a bare field lambda like
-  `mockConsole.print := {_} -> io_pure unit` would fail
-  `typecheck Console mockConsole`. The rule recurses through nested
-  records, so a field that is itself a record propagates field types one
-  level further. (A field whose initializer is already a `checked` value
-  needs no wrap.)
-+ Bracket-abstract the binder (standard combinator translation).
-+ *Test emission.* At each `let name : T = body`, emit two operations:
+A lambda always compiles to a raw combinator tree. An annotation does not alter
+that value by inserting a wrapper; it adds a verification obligation. The Pi
+recognizer later applies the raw value to a fresh hypothesis under the walker.
 
-```
-let name := body_tree
-test typecheck T name = true
-```
+There is no host-language inference or alternate type checker. Some surface
+features do inspect declarations and expected shapes for desugaring and named
+argument routing, but program acceptance comes from the typed library
+recognizers and module verification.
+== Test declarations and equality
 
-The first is the binding (no validation). The second is the test
-that the elaborator runs immediately.
+`=` is infix `tree_eq`: it compares the canonical normal-form trees produced
+by elaboration. It is not assignment.
 
-Type info flows *only top-down at binders*. There is no bottom-up type
-synthesis, no unification, no `infer`/`check` ping-pong.
+`test lhs = rhs` is declaration syntax. With the pristine built-in `test`
+binding, the driver records the two elaborated trees and the runner requires
+them to be equal. A bare `test expr` uses the directive's default truth
+expectation. Because `test` is an ordinary guard-owned value, shadowing it
+removes the pristine fast path and follows ordinary declaration/application
+semantics instead.
 
-== The `test` keyword and `=`
-
-`=` is *infix `tree_eq`*. So `expr1 = expr2` is `tree_eq expr1 expr2`,
-returning a Bool tree (true or false). It is *not* assignment — disp has
-no mutable state.
-
-`test` is an elaborator keyword, not a function. `test expr`
-*evaluates* `expr` — the substrate's `apply` reduction, with the
-dispatcher `param_apply` standing in for `apply` at
-every application step — and asserts the normal form equals `true`.
-Evaluation just *is* reduction: there is no separate "un-reduced
-expression" object, so `test` takes an expression to reduce, not a
-tree handed to a partially-applied dispatcher. (Tree calculus is
-Turing-complete, so reduction need not halt in general; tests are
-expected on terminating expressions.) If `expr` reduces to anything
-else (false, an `Err` value, a stuck form), the elaborator throws,
-reporting the failing expression and its actual reduction.
+Likewise, a type annotation records a type on a binding and causes module
+verification to check the export through the kernel. It is not implemented by
+rewriting the source to a manifest-contract wrapper or by emitting a hidden
+source-level test.
 
 ```disp
-test (add 2 3) = 5                // arithmetic check
-test typecheck Type Bool = true      // type validity check
-test param_apply Bool true = Ok true   // recognition test
+test (add 2 3) = 5
+test typecheck Type Bool = Ok true
+test param_apply Bool true = Ok true
 ```
+== Tests evaluate compiled trees; effects need a handler
 
-Common test idioms are sugar:
+Both sides of a pristine test are elaborated and normalized by the selected
+evaluator session, then compared by canonical equality. `param_apply` appears
+only when the test expression calls it explicitly; it is not a wrapper around
+every ordinary application.
 
-- `test expr` (no `=`) defaults to `test expr = true`. Useful when
-  `expr` already returns a Bool.
-- `test typecheck T v` is the standard "type-check test."
-
-The `: T` annotation is sugar for this last form. `let X : T = body`
-desugars to `let X := body; test typecheck T X`.
-
-== Tests reduce under `param_apply`; effects need a handler
-
-`test expr` reduces `expr` under `param_apply` (the fixed-Σ dispatcher,
-§7.5). Because effects are inert library values (§15), a test does *not*
-fire host primitives by merely mentioning one: `read_env_var "PATH"` is
-an `Eff String` *value*, not a performed read. To observe effectful
-behavior in a test, interpret it with a handler — typically a mock — and
-assert on the pure result:
-
-```disp
-test (handle mock_fs  (file_exists "lib/prelude.disp")) = true
-test (length (handle mock_env (read_env_var "PATH")))   > 0
-```
-
-Because checking and reduction never perform an effect, there is *no*
-separate "pure test" mode: the prior spec's `test_pure` (which ran under
-`safe_apply kernel_handlers` to exclude host influence) collapses into
-plain `test`. Foundational, conversion, and behavioral tests all use the
-one `test` directive; effectful tests differ only in supplying a handler
-rather than the real driver.
-
-#note[
-  *Two failure modes for a `test` declaration.* Under the default
-  environment, a `test` can fail either because the asserted equality
-  doesn't hold, or because reduction reached a stuck form rooted at a
-  Σ-pinned sig the test framework doesn't know how to advance (a
-  symbolic value with no concrete answer). The latter is a soundness-
-  relevant signal — the test caught the system in an underspecified
-  state — and is reported distinctly from value-mismatch failures.
-]
-
+Effects are inert library values (§15). Mentioning an effect request in a test
+does not perform host I/O. A behavioral test must interpret the request with a
+pure handler or mock and compare the resulting value. There is no separate
+`test_pure` mode because checking and reduction have no host-effect capability.
 == Tests run at elaboration time
 
 Disp currently has no notion of compiled output or runtime tests.
@@ -2550,8 +2141,8 @@ in source and runnable as a whole by re-elaborating the library.
 
 ```disp
 let Bool := wait bool_recognizer bool_meta
-test typecheck Type Bool             // Bool is a type
-test typecheck StrictType Bool       // Bool passes deep validation too
+test typecheck Type Bool = Ok true             // Bool is a type
+test typecheck StrictType Bool = Ok true       // Bool passes deep validation too
 test bool_recognizer unit true = Ok true // recognizer accepts true
 test bool_recognizer unit false = Ok true // recognizer accepts false
 test bool_recognizer unit zero = Ok false  // recognizer rejects non-bool
@@ -2574,36 +2165,31 @@ library ships with.
     inset: 6pt,
     [*Not needed*], [*Why*],
     [`infer` function], [Type info is given by annotations, not synthesized],
-    [Bidirectional `check`/`infer` ping-pong], [One `test typecheck T body` per annotated binding],
+    [Bidirectional `check`/`infer` ping-pong], [One kernel `verify` path for annotated module exports],
     [Unification], [No inference means no constraint solving],
     [Constraint generation/solving], [Same],
     [Coercion insertion], [Subtyping is not supported],
     [Higher-order pattern unification], [Same as above],
-    [A type-checker proper], [`typecheck` is a library validator; the elaborator just emits a test],
+    [A host type-checker], [`typecheck` and `verify` are typed library/kernel values],
   ),
   caption: [Things a standard elaborator does that disp does not.],
 )
 
-The elaborator's output is *trees + tests*. The tests are run as
-part of elaboration; the trees are the artifact.
+The elaborator's output is canonical trees, typed module metadata, and test
+declarations. Module verification and tests are run before a successful build
+is reported.
 
 == Restrictions on the source language
 
-The wrap-only design constrains what the source language can express:
-
-+ *Top-level `let`-bindings can omit `:` annotations.* Without `: T`,
-  no test is emitted; the user can write one explicitly if validation
-  is wanted.
-+ *Local lambdas in untyped contexts are accepted but unwrapped.* They
-  compile to bare functions; no `checked` wrapping fires. No tests
-  validate them either; bugs manifest at use.
-+ *No Hindley-Milner-style type variables.* Polymorphism is via
-  explicit `Pi Type ({A} -> ...)` annotations.
-
-In exchange: the elaborator is small, simple, and trivially audited.
-The type system's rigor comes from library validators, not from
-elaborator complexity.
-
++ Bindings may omit annotations, in which case they do not contribute a typed
+  export obligation.
++ Lambdas are always raw functions. Their safety at a declared Pi type is
+  established when the Pi recognizer walks them over a fresh hypothesis.
++ Polymorphism is explicit through `Pi Type ({A} -> ...)`; there is no
+  Hindley–Milner inference or implicit metavariable solver in the current
+  frontend.
++ Code that analyzes a typed hypothesis must use the type's gated eliminator.
+  Raw triage or shape reflection on the hypothesis is rejected by the walker.
 == Compared to standard dependent-type elaboration
 
 Lean and Coq use heavy elaboration — type-class search, implicit
@@ -2611,221 +2197,49 @@ argument inference, unification, tactic execution. The de Bruijn
 criterion (de Moura et al. 2015) says the *kernel* (the type-checker
 proper) is the trusted base; elaboration is auxiliary.
 
-Disp pushes this minimalism further. The elaborator does no type-
-checking judgments at all — it just transforms syntax and emits
-tests. The "type system" is the set of library validators and the
-tests that exercise them. The kernel only provides the dispatcher
-and a small set of privileged constructors.
-
-This is structurally analogous to property-based testing frameworks
-(QuickCheck, Hypothesis) lifted to the type-system level: the system
-is defined by what tests pass, not by what the elaborator decides.
+Disp pushes this minimalism further. The frontend transforms syntax and
+assembles typed module records, while the in-language validators and walker
+decide their acceptance. Tests exercise the same path but do not define it.
 
 == Concrete sketch
 
-For `let foo : Pi Nat ({_} -> Bool) = {x} -> is_zero x`:
+For `foo : Pi Nat ({_} -> Bool) := {x} -> is_zero x`:
 
-+ Outer expected type: `Pi Nat ({_} -> Bool)`.
-+ Extract domain `Nat` for the binder `{x}`.
-+ Body `is_zero x` compiles to `apply(is_zero_compiled, x)`.
-+ Wrap the binder: `checked Nat ({x} -> apply(is_zero_compiled, x))`.
-+ Bracket-abstract `{x}` over the body.
-+ Emit: `let foo := wrapped_tree` plus `test typecheck (Pi Nat ({_} -> Bool)) foo = true`.
++ The lambda lowers to a raw combinator tree.
++ The declaration stores `Pi Nat ({_} -> Bool)` as `foo`'s export type.
++ Module verification asks that Pi recognizer to check the raw value.
++ The recognizer mints a Nat hypothesis, applies `foo` under the walker, and
+  checks the result with Bool's recognizer.
++ `Ok true` accepts the export; `Ok false` or `Err` rejects it.
 
-The test reduces `typecheck (Pi Nat ({_} -> Bool)) foo` via the
-kernel dispatcher. Pi's recognizer fires the outer `checked` handler
-against a Nat-hypothesis, runs the body, checks result against `Bool`.
-Result `Ok true` → test passes. `Ok false` or `Err _` → elaborator throws
-with the failure context.
+No runtime wrapper is inserted around `foo`.
+= Runtime representation <sec:strip>
 
-= Strip and erasure <sec:strip>
+The current implementation has no separate `strip`, `strip_validated`, or
+certificate-gated erasure pass.
 
-== Motivation
+Raw lambdas already carry no contract wrapper. Record values retain their name
+headers and `prod`/`const` structure, and coproduct values retain their
+constructor tags. Literal projections and closed eliminations normally reduce
+through that structure during elaboration, with hash-consing sharing the
+canonical normal form. Dynamic names and tags remain runtime data because their
+lookup is semantically observable.
 
-Carrying type information at runtime is not free. A `checked` function pays an
-input-check on every application (one `param_apply` of the domain against the
-argument); a record carries a name header it resolves against; a coproduct
-carries named tags. For hot paths and release builds we want to drop everything
-the *type* already fixes, once the program has been validated.
+Representation improvements belong in readable definitions plus validated
+`.opt.disp` replacements or evaluator fast paths. They must preserve the
+canonical result required by `tree_eq`; a successful prior typecheck is not,
+by itself, an implemented license to rewrite an arbitrary value's
+representation.
 
-This is the *strip* pass — one type-directed erasure with a single rule: *drop
-the part of each value's descriptor the type already determines, keep the part
-only the value knows, and lower every eliminator to its positional form.* The
-result is a tree equivalent to what raw tree-calculus apply would compute,
-without type-checking or name-resolution overhead.
-
-== Definition
-
-A wait-wrapped value `wait k payload` splits its descriptor in two:
-
-- *type-determined* — a validated contract (`checked`'s domain `A`) or a
-  name schema (record field names, coproduct variant names). The type fixes it,
-  so it is redundant at runtime: names resolve to positions, a validated
-  contract drops.
-- *value-determined* — the payload, plus *which variant* a sum carries. Only the
-  value knows it, so it is retained.
-
-Strip drops the first and lowers the eliminator accordingly:
-
-#figure(
-  table(
-    columns: 4,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*kind*], [*type-determined → stripped*], [*value-determined → kept*], [*eliminator: before → after*],
-    [`checked`], [the domain `A`], [the function `fn`], [`cv x` → raw `fn x` (no rewrite)],
-    [record], [field names → positions], [field tuple], [`r.a` → `pair_fst (pair_snd^idx payload)`],
-    [coproduct], [variant names → positions], [variant *index* + payload], [`match`-by-name → dispatch-by-index],
-  ),
-  caption: [Strip = drop the type-determined descriptor, lower the eliminator.],
-)
-
-The `checked` row is the *degenerate, no-rewrite corner*: its descriptor is
-entirely type-determined (a pure contract), so it strips completely and apply of
-the inner value is already correct. That corner needs no binder types, so it is
-a plain structural walk — recognize `checked_apply` wait-forms by signature,
-replace each with its `value`, recurse:
-
-```disp
-strip_checked := fix ({self, t} ->
-  match (has_sig checked_apply t) {
-    true => self ((wait_meta t).fn)         // unwrap (read the `fn` field), recurse into inner
-    false => triage
-      t                                   // leaf: unchanged
-      ({c} -> t (self c))                 // stem: recurse
-      ({l, r} -> t (self l) (self r))     // fork: recurse on both children
-      t
-  })
-```
-
-The full pass `strip` extends that corner with the record and coproduct rows.
-Disp has no typing derivation (elaboration is wrap-only, §9), so `strip` is a
-tree-to-tree function that reads each value's schema from the value *itself* — a
-record's name header, a coproduct's tag — together with the type ascriptions
-embedded in the `checked` wait-forms it walks through. It drops every
-type-determined descriptor, lowers each eliminator, and leaves seal-rooted
-wait-forms (neutrals) untouched — effect values are ordinary `Eff`
-coproduct data (§15) and are simply recursed through:
-
-```disp
-strip := fix ({self, t} ->
-  match (is_neutral t) {                   // seal-rooted (a neutral): a genuine
-    true => t                                //   unknown — never a contract
-    false => match (has_sig checked_apply t) {
-      true => self ((wait_meta t).fn)        // checked: drop domain guard, recurse into fn
-      false => match (is_record_product t) {  // record VALUE (const-field product, §2.6)
-        true => strip_record self (wait_meta t)
-        false => triage                       // concrete data / code: structural recurse
-          t
-          ({c}    -> t (self c))
-          ({l, r} -> t (self l) (self r))
-          t
-      }}})
-
-// A record's field table is `pair names payload`, where `payload` is a Σ-chain
-// of `const`-wrapped thunks (§2.6). Drop the name header, unwrap each `const`
-// (its inner is `pair_snd`), strip it, and re-emit the bare positional Σ-tuple —
-// position is now the only index, so a literal `r.a` (already β-lowered to
-// `pair_fst (pair_snd^idx payload)`, §12.4) indexes straight into it.
-strip_record := {self, F} ->
-  map_chain ({field} -> self (pair_snd field)) (pair_snd F)
-```
-
-The `is_record_product` guard separates a record *value* (whose fields are
-`const`-wrapped, ignoring the payload, §2.6) from a `match`/`cases` *product*
-(whose fields are real handlers): only the former lowers to a positional tuple
-here. The latter is the one genuinely *type-directed* step, and the only place
-`strip` must consult a type rather than the value:
-
-#note[
-  *Coproduct lowering needs the variant order — the residual type-directed step.*
-  A coproduct value `inj Vi pay` carries its own tag `Vi` but not the *order* of
-  the full variant set, and a `match` requires the value and the branch table to
-  agree on an index. That order is fixed by the coproduct's *type*. So at a
-  `match` site, `strip` reads the variant list from the scrutinee's ascribed
-  `Coproduct [(Vi, Si)]`, rewrites each value's tag `Vi` to
-  `index_of [V1..Vn] Vi`, and lowers the `cases` product to a positional branch
-  tuple keyed by that same index — consistent because both sides use the one
-  variant order. A single-variant sum needs no index (one branch); `Bool`'s raw
-  shapes are already the bare index (`△` / `△ △`, §2.7) — no tag to rewrite. Everywhere else — `checked`, record — the value is self-describing and
-  `strip` needs no type. This is the no-typing-derivation analogue of
-  type-directed erasure (§17): the schema is threaded from the enclosing `checked`
-  ascription and the value's own headers, not from a typing tree.
-]
-
-*Strip leaves handler-rooted wait-forms intact.* Kernel-rooted stuck forms
-(hypotheses, stuck eliminations) and host-effect wait-forms survive strip — only
-type-determined descriptors are erased. Strip's role is to elide what the type
-fixes, not to remove effects. A stripped program retains all of its effect
-machinery and executes identically under `param_apply`, modulo
-the elided contract and name-resolution overhead.
-
-*What survives.* For a product, nothing — its content is fixed by its type
-(every field present, in order), so it lowers to a bare positional tuple. For a
-sum, one residue: the variant *index*, the genuinely dynamic "which one." It is
-no longer a name but a minimal positional tag (≈ `log₂` variants of structure;
-for `Bool`'s raw shapes not even a data field — the shape itself is the index
-(§2.7); a single-variant sum strips even that). That residue is the operational content
-of *polarity* (§17): a product is negative and fully static, a sum positive with
-one dynamic index.
-
-== Soundness
-
-Strip is *not* unconditionally sound. Applying strip to an arbitrary
-tree may remove checks that were necessary for soundness — e.g., if a
-`checked A f` whose body lies about its codomain was waiting to be
-caught by an outer `typecheck (Pi A B)`, stripping its input-guards
-would erase the only thing that would have flagged the lie at runtime.
-
-Strip is sound *exactly when* applied to a tree that has been validated.
-The standard usage pattern: pair strip with `typecheck`.
-
-```disp
-// Safe usage: validate first (typecheck = Ok true), then strip. There is
-// no certificate wrapper — the verdict *is* the certificate, so on
-// success we strip `v` directly.
-strip_validated := {T, v} ->
-  bind (typecheck T v) ({verdict} ->
-    match verdict {
-      true => Ok (strip v)
-      false => Err (TypeMismatch { expected = T, actual = v, span })
-    })
-```
-
-`typecheck T v = Ok true` is itself the certificate: it attests that every
-`checked` input-guard inside `v` was exercised against a fresh
-hypothesis and held. Stripping those guards from `v` is therefore sound
-— the contract they enforce has already been discharged.
-
-== Connection to proof-carrying code
-
-This is Necula's proof-carrying code pattern (Necula 1997). The
-elaborator/host plays the *certifier* role: it validates the program
-once by running `typecheck`. The certificate is the *verdict*
-`typecheck T v = Ok true` — the fact that validation succeeded, not a
-wrapper around `v`. The strip pass plays the *compiler optimization*
-role: once validated, runtime needn't re-check.
-
-See §17 for the literature.
-
-== Caching
-
-Hash-cons gives free caching of `strip`'s output: `strip t` for the
-same `t` produces the same tree id. Repeated stripping of the same
-tree is O(1) (a single hash-cons lookup).
-
-For repeated `typecheck T v` of the same `(T, v)`, a host-side
-evaluation memo on `applyTree` provides the same O(1) speedup. No
-specialized "validated tree" cache is needed; the generic
-infrastructure suffices.
-
+This section number is retained because later sections refer to the runtime
+representation boundary. The former manifest-contract erasure proposal was
+removed rather than kept as a normative design.
 = Types and validators <sec:typeformer>
 
-This section presents the type system as a library construction.
-Types are wait-forms; validators (including `Type` itself) are
-wait-forms whose recognizers judge whether other wait-forms count
-as types; validation is a `test` declaration (§9).
+This section presents the type system as a library construction. Types are
+wait-forms; validators (including `Type` itself) are wait-forms whose
+recognizers judge whether other wait-forms count as types. Annotated modules
+are validated by `verify`; tests can probe the same recognizers (§9).
 
 == The categorical observation
 
@@ -3026,9 +2440,9 @@ The relationship between a type and the validators it satisfies is
 expressed via tests:
 
 ```disp
-test typecheck Type Bool             // Bool is structurally a type
-test typecheck StrictType Bool       // Bool also passes deep validation
-test typecheck BehavioralType Bool   // Bool's recognizer behaves per its specs
+test typecheck Type Bool = Ok true    // Bool is structurally a type
+test typecheck StrictType Bool = Ok true    // Bool also passes deep validation
+test typecheck BehavioralType Bool = Ok true    // Bool's recognizer behaves per its specs
 ```
 
 Users can define their own validators (e.g., a "linear types"
@@ -3219,7 +2633,7 @@ see the earlier fields' values:
 t cell0 (λx0. t cell1 (λx1. … t cellN (λxN. t)))   // tail = t (nil)
 ```
 
-Each **cell is a wait-form** `wait op meta` — inspectable (`pair_fst` = the op's
+Each *cell is a wait-form* `wait op meta` — inspectable (`pair_fst` = the op's
 signature, `type_meta` = its data) AND runnable (applying it runs the op). The op
 is the cell's *observation*, and `meta` carries its `name`/`ty`/`recipe`. The four
 ops: `mint` (a fresh ∀-bound hyp — a function argument), `proj name` (observe a
@@ -3234,7 +2648,7 @@ Values of a telescope type are §2.6 *records* (`{ fst := a; snd := b }`),
 recognized and projected *by name* through the cut — there are no positional
 `pair_fst`/`pair_snd` projection selectors. ONE walker `at` serves both faces:
 recognition (`at true`, concrete `v`) and projection-response (`at false`, a neutral).
-`at` applies each cell op, which returns a **Step** — pure data — and interprets
+`at` applies each cell op, which returns a *Step* — pure data — and interprets
 it with the recursion and `bind_hyp` *inline*:
 
 ```disp
@@ -3289,7 +2703,7 @@ function codomain), or `deriv name recipe` (a derived/δ field). Then `Pi A B =
 Telescope [mint x:A ; apply out:(B x)]`; `Record`/`Sigma` are `proj` chains. So `Π`,
 `Σ`, records, and `⊤` are one *negative* former (a finite dependent limit), differing
 only in cell op — the dual of the *positive* `Coproduct` (a sum / colimit), which is
-therefore **not** a telescope (§12.2).
+therefore *not* a telescope (§12.2).
 
 The builder `mk T given` reads the telescope off the *type* `T`'s meta, fills
 derived fields from their recipes and opaque ones from `given`, and emits the
@@ -3304,7 +2718,7 @@ Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
   t (proj_cell "fst" A) ({a} ->
   t (proj_cell "snd" (B a)) ({_} -> t)))
 
-test typecheck Type Sigma            // Sigma is structurally a type
+test typecheck Type Sigma = Ok true    // Sigma is structurally a type
 ```
 
 A Sigma value is the record `{ fst := a; snd := b }`; a Sigma-*hypothesis*
@@ -3357,8 +2771,8 @@ let coproduct_meta_for := {variants} -> {
 let Coproduct := {variants} -> wait coproduct_recognizer (coproduct_meta_for variants)
 //   Coproduct [(Vi, Si)]  ≅  Sigma (Tags [V1..Vn]) ({t} -> arm_type variants t)
 
-test typecheck Type Coproduct
-test typecheck StrictType Coproduct
+test typecheck Type Coproduct = Ok true
+test typecheck StrictType Coproduct = Ok true
 test coproduct_recognizer (coproduct_meta_for [(V1, Unit)]) (inj V1 unit) = Ok true
 ```
 
@@ -3500,7 +2914,7 @@ inert_respond : RespondShape := {params, self, frame} -> Extend InvalidType
 InvalidType := wait (make_recognizer ({m, v} -> Ok false))
                     (make_meta unit_witness ({params, self, frame} -> Extend (neutral_type self)))
 
-test typecheck Type InvalidType
+test typecheck Type InvalidType = Ok true
 test param_apply InvalidType zero = Ok false       // genuinely empty
 ```
 
@@ -3690,31 +3104,21 @@ binder, not inferred). So names are read from the value's field table on
 concrete records and from the type on neutral ones; neither path trusts an
 elaborator computation.
 
-=== Strip and the fast path
+=== Projection and the fast path
 
-The reduction above needs no `strip` — it is plain β. `strip` (§10,
-type-directed and certificate-gated) enters only where a check or scaffolding is
-genuinely elided:
+Literal projection is ordinary reduction through the record's cut. The
+elaborator does not need a positional shortcut, and the runtime does not strip
+the record header or wrappers. Hash-consing makes repeated reduction of the
+same closed projection reuse its canonical result.
 
-- *Dynamic names.* `r (acc nameExpr)` with a non-literal name cannot β-collapse;
-  the cut keeps a runtime field lookup, and the name's validity is a real
-  contract. `strip` removes it given a validation certificate — the literal
-  `checked` story (§10).
-- *Scaffolding drop.* On a validated record with no surviving dynamic or
-  reflective projection, `strip` removes the `prod`/`const` wrappers and the name
-  header, lowering the value to a bare positional tuple and every literal
-  projection to `pair_fst (pair_snd^idx payload)`. This is the record row of the
-  §10 erasure table — a representation lowering, certificate-gated and opt-in.
-
-Reduction stays the unconditional optimizer (collapsing literal projection to a
-direct path); `strip` stays the certified eliminator (removing checks and the
-`prod`/`const`/header scaffolding, whose redundancy a certificate vouches for).
-
+A future positional record representation would be an optimization with a
+different encoding boundary. It must be introduced by an exact or narrowly
+licensed `.opt.disp` replacement, not assumed from a successful typecheck.
 Tests:
 
 ```disp
-test typecheck Type Record
-test typecheck StrictType Record
+test typecheck Type Record = Ok true
+test typecheck StrictType Record = Ok true
 ```
 
 == `Refinement`
@@ -3779,10 +3183,10 @@ which holds for the *parametric* responds (`inert_respond`,
 against these, checked by the auto-`verify` of each kernel fragment.
 
 ```disp
-test verify (use "lib/kernel/cut.disp")      // make_meta : Tree -> Tree -> MetaShape
-test verify (use "lib/kernel/engine.disp")   // inert_respond : RespondShape
-test typecheck Type MetaShape
-test typecheck Type RespondShape
+test verify (use "lib/kernel/cut.disp") = Ok true      // make_meta : Tree -> Tree -> MetaShape
+test verify (use "lib/kernel/engine.disp") = Ok true   // inert_respond : RespondShape
+test typecheck Type MetaShape = Ok true
+test typecheck Type RespondShape = Ok true
 ```
 
 #openq[
@@ -3801,91 +3205,27 @@ test typecheck Type RespondShape
   `metashape.test.disp`.)
 ]
 
-== Typed application: `checked` and `checked_apply`
+== Typed application: `param_apply` and `checked`
 
-`checked` is the library construction for typed function values — a
-manifest contract pairing a function with its declared *input* (domain)
-type. When applied to an argument, the wait-form's reduction fires
-`checked_apply`, which checks the argument against that domain before
-invoking the function.
+Function values are raw trees. `Pi A B` recognizes a candidate by minting an
+`A` hypothesis, applying the candidate under the walker, and recognizing the
+result at `B hyp`. The candidate does not carry `A` in a wrapper.
 
-Function application is the *intensional* cut (§2.6). A function is a `Π`-product
-over an *arbitrary* domain, so its graph is not a finite stored table: the
-component for an argument is *computed*, not selected by name. `checked_apply` is
-that computed cut — the same `Σ`-value-against-`Π`-consumer elimination as
-`match` and projection, specialized to a domain too large to tabulate. The
-contract check is the price of the arbitrary domain: there is no finite tag set
-to guarantee a hit, so the argument is validated against the stored domain `A`
-before the function runs.
+`param_apply f x` is the implicit typed-application operation. Its intersection
+annotation quantifies over the hidden `A` and `B`. The explicit helper:
 
 ```disp
-// `meta` is the headered record `{ dom, fn }` carried in the wait-form's
-// payload (recovered by the wait reduction), read by name — the same
-// one-record discipline type metas follow (§2.6, §11.2). `dom` is the
-// function's input (domain) type; `fn` is the underlying function.
-let checked_apply := {meta, arg} ->
-  let A  := meta.dom
-  let fn := meta.fn
-  bind (param_apply A arg) ({verdict} ->
-    match verdict {
-      // Domain holds. Apply `fn`, which is *always* one of two things:
-      // a raw function (its application is a bare reduct, so wrap with
-      // Ok) or a `bind_hyp`-wrapped neutral hypothesis (its application
-      // routes through `hyp_reduce` and is *already* a CheckerResult, so
-      // pass it through un-nested). The `is_neutral fn` split is what
-      // keeps the result from double-wrapping into `Ok (Ok …)` (§7.5).
-      true => match (is_neutral fn) {
-              true => param_apply fn arg
-              false => Ok (param_apply fn arg)
-            }
-      // Domain fails. A contract boundary promised the arg would fit, so
-      // this is breakage, not a verdict (§3, verdict-vs-error).
-      false => Err (TypeMismatch { expected = A, actual = arg, span })
-    })
-
-let checked := {A, f} -> wait checked_apply { dom := A, fn := f }
+checked : {A : Type} -> {B : A -> Type} -> Pi A B -> {x : A} -> B x :=
+  {A, B, f, x} -> param_apply f x
 ```
 
-`checked` stores only the *domain*: that is all the input-check needs,
-and it is what `Pi`'s recognizer reads to confirm a candidate's input
-type (§12.9). The codomain is the recognizer's own (the expected `B`),
-re-checked against the body and never read off the value, so a `checked`
-value carries no codomain. There is no `is_pi` / `NotApplicable` gate:
-`checked` only ever wraps a function, so the stored `dom` is the
-operative type and the question "is the ascription a Π?" does not arise.
-(`typed_lambda` and a certificate-issuing `validate` are gone — §8: a
-lambda is wrapped directly with its domain, and validation is a verdict,
-not a wrapper.)
+binds the type arguments so the fully dependent interface can itself be checked.
+At runtime it is exactly `param_apply f x`; there is no `checked_apply`
+wait-form, stored domain, or distinct dispatch signature.
 
-*Walker-safe body.* `checked_apply`'s operations — pair projections,
-`is_neutral`, `param_apply` — are all walker-safe (no stem-forge of
-pinned sigs, no triage on neutrals). The function lives in the library;
-no kernel privilege required.
-
-*Dispatcher behavior.* The wait-form
-`wait checked_apply { dom := A, fn := f }` has the sig
-`checker_sig checked_apply` — a library sig, not in `Σ`.
-So the dispatcher does not route it specially; walker reduction handles
-`(checked A f) arg` by reducing via wait's bracket-abstracted shape to
-`checked_apply { dom := A, fn := f } arg`. Internal
-`param_apply` calls then route through the dispatcher normally.
-
-*`is_applicable_type`* (a general reflection helper, no longer consulted
-by `checked_apply`):
-
-```disp
-is_applicable_type := {T} ->
-  match (safe_is_fork T) {
-    false => false
-    true => not (tree_eq (meta_get (safe_pair_snd T) "respond") inert_respond)
-  }
-```
-
-Returns true iff T's `respond` is not `inert_respond` (§12.3) — i.e., T
-accepts at least one elimination frame. (Every type now *has* a respond,
-so the test is "non-inert," not "present"; sharper Π-specific checks use
-`is_pi` / `pi_dom`.)
-
+Ordinary source application remains raw evaluator application. Typed library
+code uses `param_apply`, gated eliminators, and verified annotations at the
+places where hypothesis safety must be enforced.
 == `safe_*` helpers: wrapper reads vs value decomposition
 
 Two needs — *wrapper reads* and *value decomposition* — are easy to conflate
@@ -4119,8 +3459,8 @@ let bool_meta := {
 
 let Bool := wait bool_recognizer bool_meta
 
-test typecheck Type Bool
-test typecheck StrictType Bool
+test typecheck Type Bool = Ok true
+test typecheck StrictType Bool = Ok true
 test bool_recognizer bool_meta true = Ok true
 test bool_recognizer bool_meta false = Ok true
 test bool_recognizer bool_meta zero = Ok false
@@ -4154,8 +3494,8 @@ let nat_meta := {
 
 let Nat := wait nat_recognizer nat_meta
 
-test typecheck Type Nat
-test typecheck StrictType Nat
+test typecheck Type Nat = Ok true
+test typecheck StrictType Nat = Ok true
 test nat_recognizer nat_meta zero = Ok true
 test nat_recognizer nat_meta (succ zero) = Ok true
 test nat_recognizer nat_meta true = Ok false
@@ -4190,28 +3530,24 @@ Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 ```
 
 #note[
-  *No `checked` wrapper in the minimal kernel.* The `checked` / `checked_apply`
-  manifest-contract construction (§12.16) and the `is_pi` / `pi_dom` helpers it
-  used are *not* part of the current two-Σ-op kernel: a Pi-typed value need not
-  be a `checked` wait-form, and the recognizer applies the *raw* function under
-  the walker rather than gating on a stored domain. Recognition soundness comes
-  from the walker policing each user sub-term (§7.2), not from a contract
-  boundary. `checked` remains describable as a library ergonomics layer over
-  this, but the kernel does not require it.
+  *Raw function representation.* A Pi-typed value is not a wrapper. The
+  recognizer applies the raw function under the walker. Recognition soundness
+  comes from policing each use of the fresh hypothesis (§7.2). The exported
+  `checked A B f x` helper is only explicit typed application via
+  `param_apply`; it does not construct a value.
 ]
 
 ```disp
-test typecheck Type Pi
-test typecheck (Pi Nat ({_} -> Bool)) is_zero    // is_zero has this Pi type
+test typecheck Type Pi = Ok true
+test typecheck (Pi Nat ({_} -> Bool)) is_zero = Ok true    // is_zero has this Pi type
 ```
 
 The recognizer is soundness-preserving by the walker: minting the
 hypothesis (`bind_hyp A`) and applying the raw body under the walk means a
-body-type mismatch surfaces as a `TypeMismatch` and a hypothesis that escapes
-its binder as an `Escape` (§7.2, §8.1) — the kernel operations the walk routes
-through raise both. A `v` that raw-reflects on `hyp` (triage/`pair_snd` on the
-neutral) is rejected by the walker, so functions that quantify over functions
-validate without a `checked` wrapper.
+body-type mismatch produces `Ok false`, while reflection or escape produces
+the nullary `Err` (§7.2, §8.1). A `v` that raw-reflects on `hyp`
+(triage/`pair_snd` on the neutral) is rejected by the walker, so functions that
+quantify over functions validate without a wrapper.
 
 == `Unit`
 
@@ -4231,7 +3567,7 @@ let unit_meta := {
 
 let Unit := wait unit_recognizer unit_meta
 
-test typecheck Type Unit
+test typecheck Type Unit = Ok true
 test unit_recognizer unit_meta unit_witness = Ok true
 test unit_recognizer unit_meta true            = Ok false
 ```
@@ -4258,8 +3594,8 @@ Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer
    ({params, self, frame} ->
      match (param_walker frame.motive params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }))
 
-test typecheck Type Eq
-test typecheck (Eq Nat zero zero) refl
+test typecheck Type Eq = Ok true
+test typecheck (Eq Nat zero zero) refl = Ok true
 test param_apply (Eq Nat zero zero) refl = Ok true
 test param_apply (Eq Nat zero (succ zero)) refl = Ok false
 ```
@@ -4288,8 +3624,8 @@ let ord_meta := {
 
 let Ord := wait ord_recognizer ord_meta
 
-test typecheck Type Ord
-test typecheck StrictType Ord
+test typecheck Type Ord = Ok true
+test typecheck StrictType Ord = Ok true
 test ord_recognizer ord_meta zero_ord                       = Ok true
 test ord_recognizer ord_meta (succ_ord zero_ord)            = Ok true
 test ord_recognizer ord_meta (omega_plus zero_ord)          = Ok true
@@ -4315,7 +3651,7 @@ let string_meta := {
 
 let String := wait string_recognizer string_meta
 
-test typecheck Type String
+test typecheck Type String = Ok true
 test string_recognizer string_meta empty_string            = Ok true
 test string_recognizer string_meta (cons (char "a") empty_string) = Ok true
 ```
@@ -4353,7 +3689,7 @@ Type := wait (make_recognizer
   {m, v} -> if (is_fork v) then (Ok (has_metashape_layout (type_meta v))) else (Ok false)
 ) (make_meta unit_witness type_predicate_h_rule)   // Type takes no params; Type : Type (§ Type:Type)
 
-test typecheck Type Type         // Type is a type (lax)
+test typecheck Type Type = Ok true    // Type is a type (lax)
 
 // Predicate-side H-rule tests (the load-bearing case for polymorphism).
 let A_hyp  := make_hyp Type 0
@@ -4399,7 +3735,7 @@ or *arbitrary* (intensional, code) domain:
     [], [*finite domain — extensional (data, stored)*], [*arbitrary domain — intensional (code, computed)*],
     [*`Π` (product)*],
     [`Record` — graph stored as a `Σ`-tuple, accessed by lookup],
-    [`Pi` — graph computed; `f x` = `checked_apply`],
+    [`Pi` — graph computed; application is raw or routed through `param_apply`],
 
     [*`Σ` (sum)*], [`Coproduct` — finite tag + payload], [`Sigma` — arbitrary tag + dependent payload],
   ),
@@ -4416,16 +3752,15 @@ the neutral-aware `elim` (§12.3) is the cut lifted over hypotheses.
 The one axis that does *not* collapse is finite ↔ arbitrary. A finite product's
 graph is a `Σ`-tuple that can be stored and hash-cons-compared; an arbitrary
 `Pi`'s graph must be computed and is not a finite datum. That is the data/codata
-(positive/negative) boundary — the same residue `strip` (§10) bottoms out at, and
-the reason `Pi` shares records' shape and type-former (`Π`) without being a
-finite table. `Σ` and `Π`, finite or arbitrary, eliminated by the cut: that is
-the whole of the value layer.
+(positive/negative) boundary and the reason `Pi` shares records' type-former
+(`Π`) without being a finite table. `Σ` and `Π`, finite or arbitrary, are
+eliminated by the cut: that is the whole of the value layer.
 
 == The primitive floor
 
 The grid above places every value former on the `Σ`/`Π` axes, but two of its
 corners are also where the grid *bottoms out*. `Bool`, `Nat`, and `Unit` — with
-the interpreter's own `Result` (§3.4) and `Action` (§7) — are conceptually `Σ`/`Π`
+the interpreter's own `CheckerResult` (§3) and `Action` (§7) — are conceptually `Σ`/`Π`
 (`Bool` is `True | False`, `Nat` is `Zero | Succ`, `Unit` is a single-inhabitant
 type — the canonical empty *tuple* value `t t t`, *not* the empty record *type*
 `{}`, which is `⊤` = `Tree`, §12.7),
@@ -4482,8 +3817,8 @@ let mockConsole : Console := { print := {_} -> io_pure unit, readline := {_} -> 
 let greet : Pi Console ({_} -> Pi String ({_} -> Eff {IO} Unit)) :=
   checked Console ({c, name} -> c.print (concat "hello, " name))
 
-test typecheck Type Console
-test typecheck Console mockConsole
+test typecheck Type Console = Ok true
+test typecheck Console mockConsole = Ok true
 ```
 
 Bundling several capabilities is a product (`record { c : Console, f :
@@ -4569,7 +3904,7 @@ let I_meta := {
 
 let I := wait I_recognizer I_meta
 
-test typecheck Type I
+test typecheck Type I = Ok true
 ```
 
 A library `I_normalize` reduces formulas to canonical (DNF) form;
@@ -4616,7 +3951,7 @@ let IsOne := {i} -> wait isone_recognizer {
   behavioral_specs := none
 }
 
-test typecheck Type IsOne
+test typecheck Type IsOne = Ok true
 
 Partial := {phi, A} -> Pi (IsOne phi) ({_} -> A)
 
@@ -4750,7 +4085,7 @@ let Glue := {B, T, e} -> wait glue_recognizer {
   behavioral_specs := none
 }
 
-test typecheck Type Glue
+test typecheck Type Glue = Ok true
 
 // ua constructs a Path Type A B from an equivalence e : A ≃ B.
 // Notation `[(i = I_one) ↦ (A, e)]` is mathematical shorthand for the
@@ -4874,17 +4209,17 @@ test hyp_reduce_mints_stuck_elim_via_inductive_respond
 test param_apply_routes_kernel_handlers_raw
 
 // Type-system tests (lax)
-test typecheck Type Bool = true
-test typecheck Type Nat = true
-test typecheck Type Pi = true
-test typecheck Type Sigma = true
-test typecheck Type Eq = true
-test typecheck Type Type = true
+test typecheck Type Bool = Ok true
+test typecheck Type Nat = Ok true
+test typecheck Type Pi = Ok true
+test typecheck Type Sigma = Ok true
+test typecheck Type Eq = Ok true
+test typecheck Type Type = Ok true
 
 // Type-system tests (strict)
-test typecheck StrictType Bool = true
-test typecheck StrictType Pi = true
-test typecheck StrictType Type = true
+test typecheck StrictType Bool = Ok true
+test typecheck StrictType Pi = Ok true
+test typecheck StrictType Type = Ok true
 
 // Behavioral tests (sample)
 test bool_recognizer unit_witness true = Ok true
@@ -4917,7 +4252,7 @@ What's in the trusted base:
 
 What's *not* in the trusted base:
 
-- The elaborator (purely syntactic; emits trees and tests).
+- The elaborator and driver (syntax lowering, ordered declarations, modules, and verification requests).
 - Type-former definitions (validated by the standard validators
   through tests).
 - User code (validated at every typed function application via
@@ -5459,9 +4794,8 @@ What it gives up / leaves open:
 
 = What's genuinely disp-specific <sec:disp-specific>
 
-A short section identifying what disp contributes beyond standard
-machinery from category theory, contract theory, and dependent type
-theory.
+A short section identifying what disp contributes beyond standard machinery
+from category theory, parametricity, and dependent type theory.
 
 == Tree calculus as the substrate
 
@@ -5499,29 +4833,22 @@ to our knowledge, novel.
 
 == Elaboration as pure syntax + tests
 
-Standard contract-compilation does syntactic inference of contract-
-eligible positions; disp's elaborator goes further by doing zero
-type-checking judgments. It transforms syntax and emits trees + tests
-(§9). The "type system" is a set of library validators exercised by
-those tests, not something the elaborator decides.
+Disp's elaborator transforms syntax into canonical trees, module type metadata,
+and test declarations (§9). It does not implement a second host-language typing
+judgment: module verification invokes the same in-language recognizers and
+walker used everywhere else. This is more minimal than Lean/Coq elaboration,
+which performs substantial inference and type checking in the frontend.
 
-This is more minimal than Lean/Coq elaboration (substantial
-inference and type-checking) and more minimal than standard
-Findler-Felleisen contract compilation (inserts contracts at typed-
-untyped boundaries). The validator-as-value framing is novel.
+== Functions checked by symbolic application
 
-== Input-checked functions
+A function has no typed-value wrapper. To recognize `f : Pi A B`, the Pi
+recognizer applies raw `f` to a fresh `A` hypothesis under the parametric
+walker and checks the result at `B hyp`. This turns parametric use of the
+argument into the typing discipline: raw reflection is rejected, gated
+elimination is accepted, and a concrete codomain mismatch yields `Ok false`.
 
-`checked A f` is a function paired with its declared *input* (domain)
-type: applying it checks the argument against `A` before running `f`.
-This is the Findler-Felleisen higher-order contract, and it is the only
-typed-value wrapper disp needs — there is no separate certificate
-construct. "This value was validated against `T`" is recorded as the
-*verdict* `typecheck T v = Ok true`, not as a wrapper around `v`; `strip`
-(§10) then erases the `checked` input-guards a validated program no
-longer needs. (`checked` is a library function — its body is walker-safe,
-see §12.16.)
-
+`checked A B f x` is merely the explicit typed-application spelling of
+`param_apply f x`, not a constructor.
 == One cut for projection, match, and application
 
 Most languages give records, sums, and functions three distinct eliminators
@@ -5557,54 +4884,25 @@ and a native fast-path" — everything type-theoretic lives in `lib/`.
 Disp's design draws from multiple established research traditions. The
 literature provides precise vocabulary for each design move.
 
-== Manifest contracts and contract compilation
+== Symbolic checking and elaboration
 
-The wrapping semantics for typed function values follows
-Findler & Felleisen (2002), "Contracts for Higher-Order Functions"
-(ICFP). The identification of contracts with refinement types is
-Greenberg, Pierce & Weirich (2010), "Contracts Made Manifest" (POPL),
-which introduces the manifest calculus λH with refinement types and
-casts.
+Disp follows the de Bruijn-style separation between an untrusted elaborator and
+a small checking semantics, but its checker is itself a Disp program over the
+parametric walker. Function recognition by application to a fresh hypothesis is
+closer to logical-relations and parametricity techniques than to manifest
+contract compilation: no function proxy or cast is inserted into the value.
 
-Polymorphic extensions: Belo, Greenberg, Igarashi, Pierce (2011),
-"Polymorphic Contracts" (ESOP), and Sekiyama, Igarashi, Greenberg
-(2017), "Polymorphic Manifest Contracts, Revised and Resolved" (TOPLAS).
-
-The contract-as-projection formal semantics: Findler & Blume (2006),
-"Contracts as Pairs of Projections" (FLOPS).
-
-== Hybrid type checking
-
-Disp's unification of static and dynamic checking via the same
-contract mechanism follows Flanagan (2006), "Hybrid Type Checking"
-(POPL). Static checking is contract evaluation at elaboration time;
-dynamic checking is contract evaluation at runtime; strip is the
-erasure pass.
-
-== Proof-carrying code
-
-The strip-after-validation pattern is Necula (1997), "Proof-Carrying
-Code" (POPL). The certifier validates once; the consumer runs without
-re-checking; the proof obligation is discharged offline.
-
-== Erasure in dependent type theory
-
-The strip pass's formal soundness is type-theoretic erasure. Mishra-
-Linger & Sheard (2008), "Erasure and Polymorphism in Pure Type Systems"
-(FoSSaCS), gives the phase-distinction theorem. Tejiščák (2020), "A
-Dependently Typed Calculus with Pattern Matching and Erasure
-Inference" (ICFP), gives the inference algorithm.
-
-Earlier: Pfenning (2001), "Intensionality, Extensionality, and Proof
-Irrelevance" (LICS), and the Coq/Lean Prop sort.
-
+The frontend's elaborate-then-verify discipline should be compared with de
+Moura, Avigad, Kong & Roux (2015), while the self-hosting aim is related to
+Sozeau et al. (2020). The current system has no erasure theorem or
+proof-carrying-code strip phase.
 == Elaboration in dependent type theory
 
 The elaborate-then-check discipline is de Moura, Avigad, Kong & Roux
 (2015), "Elaboration in Dependent Type Theory" (ITP); Sozeau et al.
 (2020), "Coq Coq Correct! Verification of Type Checking and Erasure
-for Coq, in Coq" (POPL). Disp's wrap-only elaboration is at the
-minimal end of this design space.
+for Coq, in Coq" (POPL). Disp's syntax-to-tree elaboration followed by
+in-language module verification is at the minimal end of this design space.
 
 == Algebraic effects
 
@@ -5650,12 +4948,11 @@ Moerdijk, "Sheaves in Geometry and Logic" (1992).
 == Polarity, focusing, and data abstraction
 
 The one-cut picture (§2.6, §12) is the polarized / call-by-push-value reading of
-data. Coproducts are positive (value-determined, one dynamic index survives
-erasure), products negative (type-determined, fully static), and the cut is the
+data. Coproducts are positive (the constructor is value-determined), products
+negative (their behavior is selected by an observer), and the cut is the
 sequent-calculus cut — `Σ`-value against `Π`-consumer. This is Levy's
 call-by-push-value (2001) and the focusing tradition of Andreoli (1992),
-Zeilberger (2008), and Munch-Maccagnoni (2013); disp's `strip` residue (§10) is
-the operational content of that polarity. The two faces of a record — readable
+Zeilberger (2008), and Munch-Maccagnoni (2013). The two faces of a record — readable
 data and callable behavior — are Cook's ADT-vs-object duality (Cook 2009),
 itself a sharpening of Reynolds's "user-defined types and procedural data
 structures" (1975). Disp's contribution is to realize both faces in *one*
@@ -5664,27 +4961,18 @@ capability the descriptor grants.
 
 == The disp-specific paragraph
 
-Putting it together as it might appear in a paper:
-
 #note[
-  Disp's typed values are *manifest contracts* in the sense of Greenberg,
-  Pierce & Weirich (2010), implemented via the function-proxy wrapping
-  semantics of Findler & Felleisen (2002). The unification of static
-  and dynamic type-checking through the same contract mechanism is
-  Flanagan's *hybrid type checking* (2006). Elaboration is a *contract-
-  compilation by wrapping* (Findler & Blume 2006), kept minimal so the
-  kernel is the sole trusted checker, following the de Bruijn criterion
-  as articulated by de Moura et al. (2015). The strip pass is
-  type-theoretic erasure (Mishra-Linger & Sheard 2008; Tejiščák 2020);
-  its soundness is the proof-carrying-code pattern (Necula 1997).
-  Effects are a library free monad with deep handlers in the
-  Plotkin-Pretnar / Eff / Koka lineage (the kernel is not involved),
-  with capability records (Effekt, Brachthäuser et al. 2020) as an
-  optional dependency-injection layer. Cubical operations follow the
-  CCHM framework. The categorical foundations are standard topos
-  theory.
+  Disp represents types as in-language recognizers and checks functions by
+  applying raw candidates to fresh typed hypotheses under a parametric walker.
+  The walker rejects reflection and escape while per-type `respond` functions
+  type symbolic eliminations. Elaboration produces canonical trees and module
+  metadata, then invokes this same in-language checking path; it inserts no
+  manifest-contract proxy and performs no strip pass. Effects are a library
+  free monad with deep handlers in the Plotkin–Pretnar / Eff / Koka lineage,
+  with capability records as an optional dependency-injection layer. Cubical
+  operations follow the CCHM framework, and the categorical foundations are
+  standard topos theory.
 ]
-
 = Appendix A: open questions and conjectures <sec:open-questions>
 
 Inline `Open question:` blocks throughout the spec, collected here
@@ -5788,24 +5076,14 @@ inline tests are canonical.
 
 == Papers
 
-- Findler & Felleisen (2002). "Contracts for Higher-Order Functions." ICFP. DOI 10.1145/581478.581484.
-- Necula (1997). "Proof-Carrying Code." POPL. DOI 10.1145/263699.263712.
 - Plotkin & Power (2002). "Notions of computation determine monads." FoSSaCS.
 - Plotkin & Pretnar (2013). "Handlers of algebraic effects." LMCS 9(4).
-- Flanagan (2006). "Hybrid Type Checking." POPL. DOI 10.1145/1111037.1111059.
-- Findler & Blume (2006). "Contracts as Pairs of Projections." FLOPS.
-- Pfenning (2001). "Intensionality, Extensionality, and Proof Irrelevance in Modal Type Theory." LICS.
-- Greenberg, Pierce & Weirich (2010). "Contracts Made Manifest." POPL. DOI 10.1145/1706299.1706341.
-- Mishra-Linger & Sheard (2008). "Erasure and Polymorphism in Pure Type Systems." FoSSaCS. DOI 10.1007/978-3-540-78499-9_25.
-- Belo, Greenberg, Igarashi & Pierce (2011). "Polymorphic Contracts." ESOP.
 - de Moura, Avigad, Kong & Roux (2015). "Elaboration in Dependent Type Theory." ITP. arXiv 1505.04324.
 - Cohen, Coquand, Huber & Mörtberg (2015). "Cubical Type Theory."
 - Leijen (2014). "Koka: Programming with Row-Polymorphic Effect Types." MSFP. arXiv 1406.2061.
 - Leijen (2017). "Type Directed Compilation of Row-Typed Algebraic Effects." POPL.
 - Brachthäuser, Schuster, Ostermann (2020). "Effects as Capabilities: Effect Handlers and Lightweight Effect Polymorphism." OOPSLA. DOI 10.1145/3428194.
 - Brachthäuser, Schuster, Ostermann (2020). "Effekt: Capability-Passing Style for Type- and Effect-Safe, Extensible Effect Handlers in Scala." JFP 30.
-- Sekiyama, Igarashi & Greenberg (2017). "Polymorphic Manifest Contracts, Revised and Resolved." TOPLAS.
-- Tejiščák (2020). "A Dependently Typed Calculus with Pattern Matching and Erasure Inference." ICFP. DOI 10.1145/3408973.
 - Xie, Brachthäuser, Hillerström, Schuster & Leijen (2020). "Effect Handlers, Evidently." ICFP.
 - Sozeau et al. (2020). "Coq Coq Correct! Verification of Type Checking and Erasure for Coq, in Coq." POPL.
 - Reynolds (1975). "User-Defined Types and Procedural Data Structures as Complementary Approaches to Data Abstraction." In _New Directions in Algorithmic Languages_.

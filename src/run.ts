@@ -99,7 +99,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       }
     }
     // --emit=<binding>: compile the file and print the binding's self-contained
-    // ternary blob (defs inline by construction — EVALUATOR_PLAN §3.1/§4), then exit.
+    // ternary blob (definitions inline by construction; see EVALUATOR.md), then exit.
     if (emitName) {
       const abs = resolve(file)
       const decls = parseProgram(readFileSync(abs, "utf-8"), abs, { session })

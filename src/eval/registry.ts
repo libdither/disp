@@ -1,7 +1,6 @@
-// Backend registry: name -> EvalBackend, for `--evaluator=<name>` resolution
-// (EVALUATOR_PLAN §5). The eager reference backend is always registered; other
-// backends (the Phase-3 naive conformance backend, a future Rust/WASM net
-// runtime) register themselves here.
+// Backend registry: name -> EvalBackend, for `--evaluator=<name>` resolution.
+// The eager reference and naive conformance backends are always registered;
+// built foreign backends register conditionally (see EVALUATOR.md).
 
 import type { EvalBackend } from "./types.js"
 import { eagerBackend } from "./eager.js"

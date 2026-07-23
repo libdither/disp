@@ -1,4 +1,4 @@
-// The naive "honesty" backend (EVALUATOR_PLAN.md Phase 3).
+// The naive "honesty" backend (EVALUATOR.md).
 //
 // Deliberately the opposite of the eager reference where it could hide a latent
 // assumption: NO hash-consing (every leaf/stem/fork is a FRESH object, so two
@@ -199,7 +199,7 @@ export class NaiveSession implements Session<Tree> {
   dumpTernary(h: Tree, _budget?: Budget): string { return naiveEncode(h) }
 
   apply(f: Tree, x: Tree, budget?: Budget): Tree {
-    // Budgets are backend-declared and non-portable (EVALUATOR_PLAN §8/dec. 9):
+    // Budgets are backend-declared and non-portable:
     // naive steps are finer-grained, so a caller's eager-tuned budget would
     // spuriously reject — use our own generous divergence bound.
     const b: Budget = { remaining: Math.max(budget?.remaining ?? 0, DEFAULT_BUDGET) }

@@ -1,4 +1,4 @@
-// The batch tier (EVALUATOR_PLAN.md §4.5): a one-shot interface that takes
+// The batch tier (EVALUATOR.md): a one-shot interface that takes
 // ternary terms, left-folds application, and returns the ternary normal form —
 // the de-facto lambada benchmark interchange contract. Any in-process Session is
 // a contestant via sessionBatchRunner; external standalone CLIs implement the
