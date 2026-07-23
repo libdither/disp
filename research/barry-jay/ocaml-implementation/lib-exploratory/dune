@@ -1,0 +1,7 @@
+(library
+ (public_name combinatory_types_exploratory)
+ (name combinatory_types_exploratory)
+ (inline_tests)
+ (preprocess
+  (pps ppx_compare ppx_expect ppx_let ppx_sexp_conv ppx_sexp_value))
+ (libraries base core))

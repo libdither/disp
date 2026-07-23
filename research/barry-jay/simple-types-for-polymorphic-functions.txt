@@ -1,0 +1,1374 @@
+Simple Types for Polymorphic Functions
+
+arXiv:2604.12194v1 [cs.LO] 14 Apr 2026
+
+Barry Jay
+Barry.Jay8@gmail.com
+
+Johannes Bader (Jane Street)
+johannes-bader@outlook.com
+
+Abstract
+This paper introduces a simple type system for combinatory logic in which
+combinators have at most one type, whose polymorphism is revealed by application.
+The combinatory types exactly describe the structure of their values, which may
+be hidden by abstract types, such as list types and function types. Even without
+any quantified types, it supports polymorphism beyond that of the Hindley-Milner
+type system that underpins functional programming, and an effective type inference
+algorithm. Also, the simplicity of the formalism should make other static program
+analyses easier.
+
+1
+
+Introduction
+
+Combinatory logic was created by Schönfinkel [18] to eliminate the quantifiers from
+predicate calculus. In modern terms, the representation λx.x of a proof that p implies
+p can be replaced by the identity combinator I = SKK. However, the quantifiers
+reappear when the proposition above is represented by the quantified type ∀X.X →
+X. This paper introduces combinatory types, without type variables, their quantifiers,
+or even function types, in which I has type S2 K0 K0 . Every term has at most one
+type, whose polymorphism is instantiated on application to a term. This improves on
+System F, which specialises a term by applying it to a type. The combinatory type
+system supports polymorphism beyond that of the Hindley-Milner type system (HM)
+[15] while still being able to infer types. The simplicity of the combinatory types should
+provide a good basis for other static program analyses.
+While the core system can type polymorphic functions, polymorphic data requires
+something more. In HM, constants are introduced in an ad hoc manner. For example, a
+type declaration can be used to introduce a new type form List U of lists and new term
+constants nil and cons for constructing them. Here, too, type declarations will be used
+to introduce new type forms, namely the abstract types. However, their constructors
+and destructors will be represented by pre-existing combinators built from S and K.
+This is possible because combinatory logic can tag a function f by a label t. Although
+tagging does not change the functionality of a term, it allows typing to distinguish
+between isomorphic types.
+Surprisingly, there are also abstract types of functions and recursive functions. By
+abstracting away internal structure, recursive functions can preserve their type across
+iterations.
+1
+
+The simplicity of the abstract combinatory type system makes it especially convenient for static program analysis. For example, the layers of abstract types could be
+used to support different layers of abstract interpretation [1]. In particular, since the
+programs are already normal forms, which is possible in combinatory logic [11] but
+not in λ-calculus, there is no need to encode them as syntax trees before analysis. To
+illustrate the possibilities, we develop an effective type inference algorithm. That is,
+the algorithm finds the unique type if it has one, fails only if the combinator does not
+have a type, but may not terminate in pathological cases. This algorithm types all of
+the usual polymorphic programs that motivated the Damos-Milner algorithm [6]. The
+system also types structures containing polymorphic data that are beyond the traditional algorithm. Interestingly, it does this by evaluating the type application function,
+used to type applications of combinators, which is easier than type unification. Future
+work is expected to apply these techniques to typed tree calculus [14], where program
+analyses, such as self-interpretation, are internalised as first-class programs. Then the
+types themselves could be internalised.
+The paper develops type systems of increasing expressive power by adding abstract
+types. These developments are summarised in the abstract combinatory type system
+of Section 9. There are formal proofs, in Rocq [13], that
+• reduction preserves typing
+• every combinator has at most one type
+• there is an effective type inference algorithm.
+Also, the type inference algorithm has been implemented in OCaml and tested on
+examples from the paper [2].
+The structure of the paper is as follows. Section 1 is the introduction. Section 2
+discusses combinators. Section 3 adds combinatory types to the Hindley-Milner type
+system. Section 4 considers the combinatory types in isolation. Section 5 introduces
+the abstract types. Section 6 introduces function types and recursion types. Section 7
+shows Turing completeness. Section 8 introduces lists and folding. Section 9 presents
+the summary system and two main theorems. Section 10 develops type inference and
+its implementation in OCaml. Section 11 discusses related work. Section 12 considers
+future work. Section 13 draws conclusions.
+
+2
+
+Terms
+
+2.1
+
+Combinators
+
+The combinators are given by the BNF
+M, N := S | K | M N .
+Application is left-associative. Their reduction rules are
+SM N P
+
+−→ M P (N P )
+
+KM N
+
+−→ M .
+2
+
+Although the reduction rules can be applied in any order within a combinator (it
+is a rewriting system), fine control over reduction is also supported. For example, the
+combinatory form
+wait{M, N } = S(S(KM )(KN ))I
+keeps M and N apart until an argument P is given at which time wait{M, N }P
+reduces to M N P . Thus wait{M, N } is a normal form if M and N are. Similarly,
+wait2{M, N, P } = S(S(S(KM )(KN ))(KP ))I
+reduces to M N P Q on application to Q.
+Combinators will also represent the constructors for abstract types in Section 5.
+Such constructors must carry both the functionality required to eliminate a data structure, given by some combinator M and also some intensionality, i.e. type information.
+For example, a representation of the truth value tt must be able to project from a
+pair of branches to a conditional, and also determine that its type is Bool only. More
+generally, the combinator S(S(KK)M )N tags a combinator M by another combinator
+N while retaining the functionality of M since S(S(KK)M )N P reduces to M P by
+S(S(KK)M )N P
+
+−→ S(KK)M P (N P )
+−→ KKP (M P )(N P )
+−→ K(M P )(N P )
+−→ M P .
+
+This is good enough for reduction, but there are two challenges for typing. First, the
+reduction sequence above introduces the combinator N P which must be typed, even
+though it is to be soon discarded. This is easily handled by replacing N with KN .
+The second challenge is to ensure that combinators have unique types by separating
+these constructors from the λ-abstractions introduced in Section 2.2. This is achieved
+by making the tag incorporate a combinator that will not be a λ-abstraction, namely
+S(KK)(KK). Define
+tag = S(S(KK)(KK))
+tagged{f, t} = S(S(KK)f )(tag (Kt)) .
+Define the tagged terms to be those of the form tagged{f, t}. Their functionality is
+ensured by:
+Theorem 2.1 (tagged red). tagged{f, t} u −→ f u for all terms f, t and u.
+
+2.2
+
+Lambda Abstractions
+
+In order to define lambda-abstraction, the system needs term variables x, y, z, . . .. Define the terms by the BNF
+p, q, r, s, t, u, v ::= S | K | tu | x .
+3
+
+There are several ways to support lambda-abstraction on terms. The simplest approach
+is the bracket abstraction given by
+[x]t =
+match t with
+| y ⇒ if y = x then I else Ky
+| S ⇒ KS
+| K ⇒ KK
+| t1 t2 ⇒ S([x]t1 )([x]t2 ) .
+Bracket abstraction (and star-abstraction below) are presumed to bind as far to the
+right as possible. For example,
+[x]KSSx = S([x]KSS)[x]x
+= S(S([x]KS)([x]S))[x]x
+= S(S(S([x]K)([x]S))([x]S))[x]x
+= S(S(S(KK)(KS))(KS))I .
+This example illustrates two things about bracket abstractions: they are always
+normal forms; and they are quite verbose. Thus, since every computable function
+can be represented by a bracket abstraction, it follows that every computable function
+can be represented by a closed normal form [11]. For this reason, we can define the
+programs or values to be the combinators in normal form. We do not need to consider
+non-terminating computations as programs. This normality makes program analysis
+much more direct.
+On the other hand, the verbosity of bracket abstraction is a burden. Although
+there are many possible ways to optimise bracket abstraction, there is one which is
+most convenient for our purposes. Define star abstraction by
+λx.t =
+match t with
+| y ⇒ if y = x then I else Ky
+| S ⇒ KS
+| K ⇒ KK
+| t1 t2 ⇒ if x ∈ fv(t1 t2 ) then S(λx.t1 )(λx.t2 ) else K(t1 t2 ) .
+where fv(t) is defined to be the collection of free variables of t as usual. Now
+λx.KSSx = S(λx.KSS)(λx.x)
+= S(K(KSS))I
+which is much smaller than the bracket abstraction. It is tempting to go even further,
+but there are two difficulties. First, optimisations make proofs harder to follow. Second,
+it is important to maintain the separation of constructors and λ-abstractions alluded
+to in Section 4. In particular, if η-contraction is used to define λx.c x = c whenever x
+is not free in c then all constructors c would also be abstractions.
+4
+
+Theorem 2.2 (tagged not star). λx.u ̸= tagged{f, t} for all terms u, f and t and
+variables x.
+
+3
+
+Functional Combinatory Types
+
+Our first attempt at typing the combinators is a hybrid type system that adds combinatory types as subtypes of the monotypes of the Hindley-Milner type system. The
+terms are those of combinatory logic, with lambda-abstractions represented by bracket
+abstractions, of the form [x]t and a let-term of the form let x = u in t being represented
+by ([x]t)u. These representations support the expected type derivation rules from HM,
+so that HM can be viewed as a subsystem. There is also a subsystem which uses only
+the combinatory types. We show how a type derivation for a program p : T in the
+hybrid system can be transformed into a type derivation p : C in the combinatory subsystem followed by a subtyping C < T . In this sense, all typed programs of HM have
+principal combinatory types, without using any type schemes. This section presumes
+some familiarity with the mechanics of substitution, etc. which won’t be required in
+later sections.
+The hybrid type system has monotypes T and type schemes τ given by the BNFs
+T, U, V
+τ
+
+::= S0 | S1 U | S2 U V | K0 | K1 U | X | U → V
+::= T | ∀X.τ .
+
+The combinatory type forms are the forms S0 , S1 U, S2 U V, K0 , K1 U . A combinatory
+type is one built solely from combinatory forms; they are used to type the combinators
+in normal form. The type variables X and function types U → V and type schemes are
+as in HM.
+A type scheme τ = ∀X1 . . . . ∀Xn .U can be instantiated to a type T (written τ ≺ T )
+if T is a substitution {U1 /X1 , . . . Un /Xn }U of a monotype Ui for Xi in U , where
+substitution is defined in the obvious manner. Type contexts are sequences of type
+assignments x : τ of a type scheme τ to a term variable x. If all of the type schemes
+are combinatory types then the type context is combinatory. The free type variables
+of a type scheme τ = ∀X0 . . . . ∀Xn .T are the type variables in T that are not among
+X0 , . . . Xn . The closure Cl{Γ, U } of a monotype U in a type context Γ quantifies all
+type variables in U that are not free in Γ. For example, the closure of X → Y → X
+in the context y : Y is ∀X.X → Y → X. This can be instantiated to U → Y → U for
+any monotype U .
+To apply a combinator to an argument requires that it take a function type. This
+will be managed by a subtyping relation U < V defined in Figure 1. Most of the rules
+are structural, but those which convert K1 U and S2 (U → V → W )(U → V ) to function
+types align with the reduction rules of the operators. For example, the subtyping
+S2 K0 K0 < S2 (U → K1 U )(U → K1 U )
+< S2 (U → K1 U → U )(U → K1 U )
+< U →U
+5
+
+K0
+K0
+K1 U1
+K1 U
+S0
+S0
+S1 U1
+S1 U1
+S2 U1 V1
+S2 (U → V → W )(U → V )
+U1 → V1
+U
+
+<
+<
+<
+<
+<
+<
+<
+<
+<
+<
+<
+<
+
+K0
+U → K1 U
+K1 U2
+V →U
+S0
+U → S1 U
+S 1 U2
+U2 → S2 U1 U2
+S 2 U2 V 2
+U →W
+U2 → V2
+W
+
+if U1 < U2
+
+if U1 < U2
+if U1 < U2 and V1 < V2
+if U2 < U1 and V1 < V2
+if U < V and V < W
+
+Figure 1: Subtyping
+Γ⊢M :U →V
+Γ ⊢ S : S0
+
+Γ ⊢ MN : V
+
+Γ ⊢ K : K0
+Γ⊢t:T
+Γ ⊢ t : T′
+
+Γ⊢N :U
+
+Γ⊢x:T
+
+T < T′
+
+Γ⊢u:U
+
+x : τ ∈ Γ and τ ≺ T
+x : Cl{Γ, U }, Γ ⊢ t : T
+
+Γ ⊢ let x = u in t : T
+
+Figure 2: Type Derivation for Hybrid Terms
+yields the expected type of the identity SKK.
+The type derivation rules are given in Figure 2, on the understanding that the usual
+type derivation rule for λ-abstractions becomes a lemma about bracket-abstractions,
+and let x = u in t is syntactic sugar for ([x]t)u. Thus they support the usual rules of
+HM plus rules for typing the operators S and K and a subsumption rule for exploiting
+subtyping. For example, the identity combinator SKK can be typed by
+⊢ S : S0
+⊢ S : K0 → K0 → S2 K0 K0
+
+⊢ K : K0
+
+⊢ SK : K0 → S2 K0 K0
+
+⊢ K : K0
+
+⊢ SKK : S2 K0 K0
+⊢ SKK : U → U
+once the side-conditions on subtyping have been checked.
+The hybrid system supports polymorphism in two different ways, which can be
+illustrated by the self-application of the polymorphic identity let f = I in f f : U → U .
+6
+
+Using the Hindley-Milner approach, the combinator I has type X → X whose closure
+is ∀X.X → X and the body f f is typed by
+f : ∀X.X → X ⊢ f : (U → U ) → (U → U )
+
+f : ∀X.X → X ⊢ f : U → U
+
+f : ∀X.X → X ⊢ f f : U → U
+
+.
+
+Using combinatory types, we can replace the original let-term by (SII)I which is
+typed by
+⊢ I : I0 → I0 → I0
+
+⊢ I : I0 → I0
+
+⊢ SII : I0 → I0
+
+⊢ I : I0
+
+⊢ (SII)I : I0
+⊢ (SII)I : U → U
+
+I0 < U → U
+
+where I0 = S2 K0 K0 . This eliminates the type schemes, and delayed introduction of
+function types and type variables until the subtyping I0 < U → U . We believe this
+illustrates a general result, expressed as the following conjecture.
+Conjecture 3.1. If there is a type derivation Γ ⊢ t : T in the hybrid system where Γ
+is combinatory then there is a combinatory type C and a derivation Γ ⊢ t : C in the
+combinatory subsystem such that C < T .
+The case analyses for the proof have been written out, but we have yet to find the
+right induction principle to combine them.
+In particular, if t is a typed program of HM then it can be typed here in an
+empty context, which is automatically combinatory, suggesting that the program has
+a principal type in the combinatory subsystem.
+This approach eliminates the type variables and their quantification, but still relies
+on function types to apply combinators. For example, the application SK uses the
+subtyping S0 < K0 → S1 K0 . However, by replacing subtyping with type applications
+such as S0 (K0 ) = S1 K0 it will be enough to support the combinatory types alone.
+
+4
+
+Combinatory Types
+
+The simplest type system for the combinators is the combinatory type system that uses
+the combinatory types only. They are defined by the BNF
+T, U, V := S0 | S1 U | S2 U V | K0 | K1 U
+without type variables or function types. Instead of subtyping rules of the form T <
+U → V , applications will be typed by type applications T (U ) = V . This is a partial
+
+7
+
+M :T
+S : S0
+
+K : K0
+
+N :U
+
+MN : V
+
+T (U ) = V .
+
+Figure 3: Type Derivation for Combinators
+function, here defined by
+S0 (U ) = S1 U
+S1 U (V ) = S2 U V
+S2 T1 T2 (U ) = T1 (U )(T2 (U ))
+K0 (U ) = K1 U
+K1 U (V ) = U .
+The rules for applying S2 and K1 reflect the reduction rules for S and K. The other
+rules are structural. At a glance, type application may appear to be a total function,
+but the recursive call in S2 T1 T2 (U ) will terminate only if the corresponding reduction
+does. For example, (SII)(SII) reduces to itself, and so (S2 I0 I0 )(S2 I0 I0 ) does not have
+a value.
+The type derivation rules are given in Figure 3. Since type application is a functional
+relation, each combinator has at most one type, which is, perforce, its principal type,
+whose specialisation is triggered by its application. For example, if SKK of type
+I0 = S2 K0 K0 is applied to some combinator M : T then the type application is
+(S2 K0 K0 )(T ) = K0 (T )(K0 (T )) = T . For now, each type has exactly one value, which
+is not very interesting, but this will change once we add abstract types in Section 5.
+In anticipation of this, let us establish some notation.
+In this setting, each program p has its corresponding type |p| defined in the obvious
+manner, by
+|S| = S0
+|Sp| = S1 |p|
+|Spq| = S2 |p| |q|
+|K| = K0
+|Kp| = K1 |p| .
+Each tagged term tagged{f, t} where f : F and t : T has a corresponding tagged
+type. It is defined by
+tagged ty{F, T } = S2 (S2 (K1 K0 )F )(S2 (S2 (K1 K0 )(K1 K0 ))(K1 T ))
+which can be viewed as the result of a type application tagged tyl{F }(tag ty{T })
+where
+tagged tyl{F } = S1 (S2 (K1 K0 )F )
+tag ty{T } = S2 (S2 (K1 K0 )(K1 K0 ))(K1 T ) .
+8
+
+Γ⊢M :T
+
+Γ⊢N :U
+
+Γ ⊢ S : S0
+
+Γ ⊢ MN : V
+
+Γ ⊢ K : K0
+
+Γ⊢x:T
+
+T (U ) = V.
+
+x:T ∈Γ
+
+Figure 4: Type Derivation for Terms
+Later, this application will be reserved for producing abstract types.
+When term variables are admitted, then type derivation requires a context. Define
+a term context Γ to be a list of type assignments x : T of types T to variables x in the
+usual way. We may write x : T ∈ Γ if x : T is in Γ. The corresponding type derivation
+rules are given in Figure 4.
+
+5
+
+Abstract Types
+
+To be useful, the Hindley-Milner type system requires some data types as well as
+function types, as their representations in System F are not type schemes in HM. Commonly, these data types are algebraic. For example, list types have been traditionally
+introduced by a declaration that is something like
+List U = nil | cons of U ∗ List U .
+[This particular declaration will be modified slightly in Section 8, in ways that do
+not impact on this discussion.] The declaration introduces polymorphic constructors
+nil : List U and cons : U ∗ List U → List U which can be eliminated by patternmatching.
+Here, these declarations will be interpreted a little differently. First, the declared
+types and untyped terms will already be supported. For example,
+List U = Abs1 {S2 (S1 S0 )S0 }U where the type S2 (S1 S0 )S0 acts as a label for lists. The
+particular choice of label is immaterial as long as the various abstract types are kept
+apart. Also, the constructors and destructors will be represented by SK-combinators.
+The constructors are given by tagging their traditional representation as functions with
+a label that determines their abstract type. The destructors unpack the usual patternmatching. The actual impact of the declaration is to introduce new type application
+rules for introducing and eliminating the abstract types, which allow the constructors
+and destructors to be appropriately typed. For example, eliminating lists requires a
+pair of functions, to handle nil and cons, so we add
+(List U )(V ∗ T ) = V
+
+if T (U ∗ List U ) = V
+
+Although this machinery has not yet been automated, the development will rely on
+type declarations as much as possible, leaving the details to the summary type system
+of Section 9 which is formalised in the Rocq presentation [13].
+9
+
+In general, abstract types may take any number of type arguments but here, for
+convenience, there will be at most two. So the abstract combinatory types are given by
+T, U, V
+
+::= S0 | S1 U | S2 U V | K0 | K1 U |
+Abs0 {T } | Abs1 {T } U | Abs2 {T } U V
+
+where the type T in {T } serves to label the type. Note that function types are not
+primitive here, but may be introduced as abstract types in Section 6. When abstract
+types are supported then the result is an abstract combinatory type system. Such
+systems may also be called combinatory type systems if no confusion results.
+The values of abstract types will be tagged terms, as introduced in Section 4. Since
+type application is to be functional, it follows that tagged terms of abstract type cannot
+also be of combinatory type. The simplest resolution is to restrict the existing rule for
+applying types of the form S1 U to become
+S1 U (V ) = S2 U V
+
+if S2 U V is not a tagged type.
+
+It follows that tagged terms do not have a type unless a specific type application rule
+is introduced for them. In this way, new abstract types can be added without further
+modification to the rules for combinatory types.
+
+5.1
+
+Product Types
+
+Since product types will be used to create tuples of constructor arguments, they must
+be introduced directly. Define U ∗ V = Abs2 {S1 S0 } U V with pairing and projections
+given by
+pair = λx.λy.tagged{λf.f xy, product tag}
+fst = λp.p(λx.λy.x)
+snd = λp.p(λx.λy.y) .
+where product tag is some program that has been chosen to indicate a product type,
+namely SS. In turn, these definitions guide the choice of new type application rules
+tagged tyl{S2 (S2 I0 (K1 U ))(K1 V )} tag ty{|product tag|} = U ∗ V
+(U ∗ V )(T ) = T (U )(V ) .
+Thus, if u : U and v : V then
+pair u v
+
+:
+
+U ∗V
+
+fst (pair u v) −→ pair u v K −→ K u v −→ u
+snd (pair u v) −→ pair u v (KI) −→ KI u v −→ v
+as expected. Note how the reductions of pair u v K and pair u v (KI) are mirrored
+in the type application rule (U ∗ V )T = T (U )(V ).
+10
+
+5.2
+
+Booleans
+
+Booleans are declared by
+Bool = tt | ff .
+Detailed interpretations of this type and terms are in Section 9. It follows that
+cond tt u v −→ tt (pair u v) −→ fst (pair u v) −→ u
+cond ff u v −→ ff (pair u v) −→ snd (pair u v) −→ v
+as expected. The actual type of cond is quite complicated. To see this, unpack the
+definition of cond to get
+cond = λb.λx.λy.b(pair x y)
+= λb.λx.(S(Kb)(pair x))
+= λb.S(K(S(Kb))) (S(K pair)I)
+= S(S(KS)(S(KK)(S(KS)I)))(K(S(K pair)I) .
+The full expansion must then unpack pair and I but the point is made. The type of
+cond is thus
+S2 (S2 (K1 S0 )(S2 (K1 K0 )(S2 (K1 S0 )I0 )))(K1 (S2 (K1 |pair|)I0 )) .
+This combinatory type exactly describes the structure of cond but obscures its functionality, which might be annoying. However, for any terms b, x and y where b is of
+type Bool and x and y are of type U then cond b x y has type U . That is, we can
+deduce the following theorem about a triple type application
+Theorem 5.1 (app ty cond). |cond|(Bool)(U )(U ) = U for all types U .
+From this follows
+Theorem 5.2 (derive cond). There is an implied type derivation rule
+Γ ⊢ b : Bool
+
+Γ⊢u:U
+
+Γ⊢v:U
+
+Γ ⊢ cond b u v : U
+
+.
+
+When an abstract type of functions is introduced in Section 6, it will be possible to
+tag cond to get a combinator of type Bool → U → U → U .
+
+5.3
+
+Comparison to Traditional Approaches
+
+In traditional approaches, the introduction of types forces changes to the term language.
+Let us consider a type Bool of booleans in λ-calculus, with constructors tt and ff of
+type Bool and a conditional cond of type
+cond : Bool → U → U → U
+11
+
+for every type U . In pure λ-calculus we can represent tt by λx.λy.x and ff by λx.λy.y
+and cond by λb.b. However, the presence of types introduces complications.
+In simply-typed λ-calculus, all term variables are annotated with types, which
+changes the term language. Also, every term has a unique type, which forces us to
+introduce many types of booleans. For example, given a type U , we could define
+tt = λxU λy U .xU etc. but then each type U must support its own type BoolU of
+booleans, which is too much. So it is usual to introduce tt and ff and cond as constants.
+System HM uses even more machinery, including let-terms to handle polymorphism,
+and type unification to support type inference.
+In System F, the need for constants (and let-terms) is avoided, but term variables
+are still annotated with types. In addition, terms may be applied to types, or may be
+abstracted with respect to type variables. Now we have a unique type for cond namely
+cond : ∀X.Bool → X → X → X
+which can be instantiated to cond U : Bool → U → U → U but type inference is not
+supported. Further, System F types are not intensional, in that all two-values types
+are identified.
+Happily, combinatory logic can overcome all of these difficulties. The polymorphism
+of fst and snd extends to tt and ff and cond while tagging captures the intensionality.
+
+5.4
+
+Sum Types
+
+To represent sum types combinatorially presents a new challenge. The usual type
+declaration of sum U V uses constructors inl : U → sum U V and inr : V → sum U V
+but then inl u would be of type sum U V for any type V instead of having a unique
+type. Recall that System F eliminates the ambiguity by applying inl to type arguments
+U and V . Since we are not allowing any changes to the combinatory language, we must
+convey the type information through dummy terms dU : U and dV : V and use a boolean
+to decide which projection of the pair is important. The only disadvantage is that U
+and V must be inhabited, i.e. must be the types of some combinators. Although not a
+practical difficulty, this requirement complicates the theory. Now inl is to act on pairs
+of the form pair u d where u : U and d : V is a dummy value. Conversely, inr is to act
+on pairs of the form pair d v where v : V and d : U is a dummy value. So declare
+sum U V = mk sum of Bool ∗ U ∗ V
+and let U + V = sum U V and define
+inl = λp.mk sum(pair tt p)
+inr = λp.mk sum(pair ff p)
+case = λq.λc.fst c (pair (fst q (fst (snd c))) (snd q (snd (snd c)))) .
+
+12
+
+This becomes the usual interface since if p : U ∗ V and u : U and v : V then
+inl p
+
+:
+
+U +V
+
+inr p
+
+:
+
+U +V
+
+case (pair f g) (inl (pair u d)) −→ f u
+case (pair f g) (inr (pair d v) −→ g v
+as expected. Sum types illustrate the need for dummy values that arises in the definitions of function types and list types.
+
+6
+
+Recursive Function Types
+
+6.1
+
+Function Types
+
+Traditionally, function types play a central role in type theory, especially in typed λcalculus. Here, they are another form of abstract type, since their purpose is to hide
+implementation details, just as the type Bool hides the structure of tt and ff. Declare
+function types by
+Funty U V = mk fun of T ∗ U where T (U ) = V .
+The where-clause is new syntax that constrains the typing as follows. The construction
+mk fun (pair t d) is of type Funty U V only if the dummy value d is of type U and
+the function t has type T where T (U ) = V . Let U → V be new syntax for Funty U V .
+That is, the introduction rule for function types is conditional on T (U ) = V while the
+elimination rule is
+(U → V )(U ) = V .
+More naturally, we can combine star-abstraction and mk fun to get
+lam x t d = mk fun(pair (λx.t) d) .
+For example, given d : U we can define
+cond mono{d} = lam b (lam x (lam y (b (pair x y)) d) d) tt
+:
+
+Bool → U → U → U
+
+which makes the conditional be of function type, but no longer polymorphic.
+Theorem 6.1 (derive lam). There is an implied type derivation rule
+x : U, Γ ⊢ t : V
+
+Γ⊢d:U
+
+Γ ⊢ lam x t d : U → V
+
+.
+
+Although function types hide many details they also risk eliminating polymorphism,
+as when the polymorphic cond is replaced by the monomorphic cond mono. Similar
+trade-offs can be seen with function composition. Using combinators, the composition
+of a function f followed by a function g is S(Kg)f : S2 (K1 G)F if f : F and g : G. This
+has the potential to act on many types. Tagging it by some K1 d where d : U produces
+a term of type U → V provided that G(F (U )) = V but is now monomorphic.
+13
+
+6.2
+
+Recursive Functions
+
+Since the Y combinator defined by Y f −→ f (Y f ) will never have a normal form, we
+consider fixpoint functions specified by
+Z{f }x −→ f (Z{f })x
+where Z{f } waits for an argument, and so will be normal if f is. The functionality of
+recursion is given by defining Z tag to be K and defining
+ω = λw.λf.λx.f tagged{tagged{wait2{w, w, f }, Z tag}, Kx} x
+Z{f } = tagged{wait2{ω, ω, f }, Z tag} .
+The simplest way to understand this is perhaps to evaluate it, by
+Z{f }u
+
+=
+
+tagged{wait2{ω, ω, f }, Z tag} u
+
+−→ wait2{ω, ω, f } u
+−→ ω ω f u
+−→ f tagged{tagged{wait2{ω, ω, f }, Z tag}, Ku} u
+=
+
+f tagged{Z{f }, Ku} u .
+
+Reduction first eliminates the tag, and then the waiting. The next step simulates βreduction of ω, which reconstructs Z{f }. This reduction sequence proves the following
+theorem:
+Theorem 6.2 (Z red). Z{f } u −→ f tagged{Z{f }, Ku} u for all f and u.
+Although this is all legal, it may not yet be clear why there is so much tagging. So
+let us introduce the type applications for recursion types. First define
+wait2 ty{U, V, W } = S2 (S2 (S2 (K1 U )(K1 V ))(K1 W ))I0
+Zty{F } = wait2 ty{|ω|, |ω|, F } .
+Then the introduction rule is
+tagged tyl{Zty{F }} (tag ty{|Z tag|}) = Rec{F }
+and the elimination rule is
+F (V ∗ U → V )(V ∗ U ) = V
+Rec{F } (V ∗ U ) ⇒ V
+
+.
+
+This exposes another curiosity. Why does the elimination rule use V ∗ U instead of U ?
+As before, this is done to ensure that type application is functional, and may require
+a dummy argument to force the typing. Coming back to the terms, the tagging in
+Z{f } is used to produce something of recursion type. Since ω must recreate Z{f } it
+14
+
+requires the inner tagging. Its outer tagging is required because f Z{f } is ill-typed.
+Z{f } : Rec{F } must be tagged to produce something of type V ∗ U → V .
+Note that no type declaration has been provided for Rec{F }. There are two reasons
+for this. First, it is not clear how to represent a conditional elimination rule. Second,
+it is not clear how such a declaration might be understood without the explanations
+and calculations above.
+These fixpoint functions can be used to define the µ-recursive arithmetic functions
+and show Turing-completeness.
+
+7
+
+Arithmetic
+
+The natural number type is declared by
+Nat = zero | successor of Nat .
+Natural numbers can be applied to a pair of a U (for the zero-case) and a function Nat
+to U for the successor case. This is enough to type isZero and predecessor given by
+isZero = λn.n(pair tt (K ff ))
+predecessor = λn.n(pair zero I) .
+Now recursive arithmetic functions can be defined using Z. Define
+primrec0{g, h} = Z{λz.λp.snd p (pair g (λn.(h n (z (pair (fst p) n)))))}
+primrec{g, h, u} = primrec0{g u, h u}
+on the understanding that neither z nor p is free in either g or h. Then we have
+Theorem 7.1 (primrec red zero). For all g, h, u, v and n we have
+primrec{g, h, u} (pair v zero) −→ gu
+primrec{g, h, u} (pair v (successor n)) −→ hun primrec{g, h, u} (pair v n).
+Theorem 7.2 (derive primrec app). There is an implied type derivation rule
+Γ ⊢ g : G Γ ⊢ h : H Γ ⊢ u : U Γ ⊢ p : V ∗ Nat
+G(U ) = T H(U )(Nat)(T ) = T
+Γ ⊢ primrec{g, h, u} p : T
+For minimal solutions we have
+minrec{f, u} = Z{λz.λp.cond
+
+(f u (snd p)) (snd p)
+(z (pair (fst p) (successor (snd p))))}
+
+on the understanding that neither z nor p occurs in f . It follows that
+15
+
+Theorem 7.3 (minrec red). For all terms f, u and n , we have
+minrec{f, u} n −→ n
+minrec{f, u} n −→ minrec{f, u} (successor n)
+
+if f u n −→ tt
+if f u n −→ ff .
+
+Theorem 7.4 (derive minrec app). There is an implied type derivation rule
+Γ⊢f :F
+
+Γ⊢u:U
+
+Γ ⊢ n : Nat
+
+F (U )(Nat) = Bool
+
+Γ ⊢ minrec{f, u} n : Nat
+
+.
+
+Thus, there is an abstract combinatory type system which is Turing-complete.
+
+8
+
+Lists
+
+Like the inclusions of sum types, the nil list does not automatically determine the type
+of list being considered, and so must take a dummy parameter. So declare list types
+by
+List U = nil of U | cons of U ∗ List U .
+Note that the elimination rule for lists types is conditional, given by
+T (U ∗ List U ) = V
+(List U )(V ∗ T ) = V
+
+.
+
+Then we can define fold left{f } by
+Z{λz.λp.snd p (pair (fst p) (λq.z (pair (f (fst p) (fst q)) (snd q))))}
+on the understanding that z, p and q do not occur in f . It follows that
+Theorem 8.1 (fold left red). For all terms f, u, d we have
+fold left{f } (pair u (nil d)) −→ u
+fold left{f } (pair u (cons (pair h t))) −→ fold left{f } (pair (f u h) t) .
+Theorem 8.2 (derive fold left). There is an implied type derivation rule
+Γ⊢f :F
+
+Γ ⊢ p : U ∗ List V
+
+F (U )(V ) = U
+
+Γ ⊢ fold left{f } p : U
+
+16
+
+.
+
+9
+
+The Summary System
+
+For the sake of completeness, all of the abstract types of the paper are brought together
+in the system of Figure 5, that uses the following type definitions:
+U ∗V
+
+= Abs2 {S1 S0 }U V
+
+Bool = Abs0 {S1 K0 }
+Nat = Abs0 {S2 K0 K0 }
+U +V
+
+= Abs2 {S2 K0 S0 }U V
+
+U →V
+
+= Abs2 {K1 K0 }U V
+
+Rec{F } = Abs1 {K0 }F
+List{U } = Abs1 {S2 (S1 S0 )S0 }U .
+Theorem 9.1 (unique types). If Γ ⊢ M : T1 and Γ ⊢ M : T2 then T1 = T2 .
+Theorem 9.2 (reduction preserves typing). If there is a type derivation Γ ⊢ t : T and
+t reduces to t2 then there is a derivation Γ ⊢ t2 : T .
+
+10
+
+Type Inference
+
+Since types are unique, if they exist, it is routine to produce a type inference algorithm
+infer. This has been formalised in Rocq and implemented in OCaml to further assess
+the practicality of our approach. The cases relevant to combinatory types are given in
+Figure 6, with << ...>> used to indicate where the cases for abstract types have been
+elided. Function infer app implements type application. The algorithm is able to find
+types whenever they exist.
+Theorem 10.1. Γ ⊢ M : T if and only if infer Γ M = T .
+Also, it will usually fail if the term has no type. In some exceptional cases, the
+algorithm will not terminate. For example, consider the self-application of (SII). Although SII has type S2 I0 I0 the self-application of this type is not defined, and the
+inference algorithm goes into a loop. In practice, it is hard to induce such behaviour,
+since recursive functions defined by Z are handled using special cases. If required,
+non-termination can be avoided by imposing a bound on the number of calls to inference. Indeed, the Rocq implementation limits the depth of recursive calls to ensure
+termination.
+The OCaml implementation [2] instruments the function infer with a counter that
+can be used to either measure or limit the total number of type application steps, i.e.
+calls to infer app. If the limit is reached, inference fails artificially. Note that this is
+different from the Rocq approach of limiting recursion depth. Counting calls instead
+is a better proxy for the total running time of inference, which we assess here.
+Table 1 shows a set of concrete experiments that cover all the functions and data
+types introduced in this paper, a primitive recursive addition plus and more. The
+17
+
+Terms t, u ::= S | K | tu | x
+ω = λw.λf.λx.f tagged{tagged{wait2 {w, w, f }, Z tag}, Kx} x
+Types T, U, V ::= S0 | S1 U | S2 U V | K0 | K1 U | Abs0 {T } | Abs1 {T } U | Abs2 {T } U V
+tagged tyl{F }
+
+=
+
+S1 (S2 (K1 K0 )F )
+
+tag ty{T }
+
+=
+
+S2 (S2 (K1 K0 )(K1 K0 ))(K1 T )
+
+tagged ty{F, T }
+
+=
+
+S2 (S2 (K1 K0 )F ) (tag ty T )
+
+wait2 ty{U, V, W }
+
+=
+
+S2 (S2 (S2 (K1 U )(K1 V ))(K1 W ))I0
+
+Zty{F }
+
+=
+
+wait2 ty{|ω|, |ω|, F }
+
+Type Application
+T (V ) =
+match (T, V ) with
+| (K0 , V ) ⇒ K1 V
+| (K1 U, V ) ⇒ U
+| (S0 , V ) ⇒ S1 V
+| (S2 U W, V ) ⇒ U (V )(W (V ))
+| (S1 U, V ) ⇒ S2 U V if S2 U V is not some tagged ty{F, T }
+| (U1 ∗ U2 , V ) ⇒ V (U1 )(U2 )
+| (tagged tyl{S2 (S2 I0 (K1 U1 ))(K1 U2 )}, tag ty{|product tag|}) ⇒ U1 ∗ U2
+| (Bool, U ∗ U ) ⇒ U
+| (tagged tyl{|fst|}, tag ty{|bool tag|}) ⇒ Bool
+| (tagged tyl{|snd|}, tag ty{|bool tag|}) ⇒ Bool
+| (Nat, V1 ∗ V2 ) ⇒ V1 if V2 (Nat) = V1
+| (tagged tyl{|fst|}, tag ty{|nat tag|}) ⇒ Nat
+| (tagged tyl{S2 |snd| (K1 Nat)}, tag ty{|nat tag|}) ⇒ Nat
+| (U1 + U2 , V ) ⇒ (Bool ∗ (U1 ∗ U2 ))(V )
+| (tagged tyl{Bool ∗ (U1 ∗ U2 )}, tag ty{|sum tag|}) ⇒ U1 + U2
+| (tagged tyl{|snd|}, tag ty{|bool tag|}) ⇒ Bool
+| (V → U, V ) ⇒ U
+| (tagged tyl{U }, K1 V1 ) ⇒ V1 → W if U (V1 ) = W
+| (Rec{F }, V1 ∗ V2 ) ⇒ V1 if F (V1 ∗ V2 → V1 )(V1 ∗ V2 ) = V1
+| (tagged tyl{Zty{F }}, tag ty{|Z tag|}) ⇒ Rec{F }
+| (List{U }, V1 ∗ V2 ) ⇒ V1 if V2 (U ∗ List{U }) = V1
+| (tagged tyl{|fst|}, S2 (S1 S0 )U ) ⇒ List{U }
+| (tagged tyl{S2 (S2 (K1 |snd|)I0 )(K1 (U ∗ List{U })), S2 (S1 S0 )U ) ⇒ List{U }
+Type Derivation
+x:T ∈Γ
+
+Γ ⊢ S : S0
+
+Γ⊢x:T
+
+Γ ⊢ K : K0
+
+Γ⊢M :T Γ⊢N :U
+Γ ⊢ MN : V
+
+Figure 5: The Summary Type System
+18
+
+T (U ) = V.
+
+let rec infer_app ty vty =
+match ty with
+(* combinatory types *)
+| Kty → Some (K1ty vty)
+| K1ty uty → Some uty
+| Sty → Some (S1ty vty)
+| S1ty uty → (
+let rty = S2ty (uty, vty) in
+(* unpack_constructor rty = Some (fty, tty) if and only if
+tagged_ty{fty, tty} = rty *)
+match unpack_constructor rty with
+| None → Some rty (* not the form of a constructor *)
+| Some (fty, tty) → (* may be a constructor *)
+<< special cases for introducing abstract types have been elided >>
+)
+| S2ty (uty, wty) →
+let%bind.Option wvty = infer_app wty vty in
+let%bind.Option uvty = infer_app uty vty in
+infer_app uvty wvty
+<< special cases for eliminating abstract types have been elided >>
+| _ → None
+
+let rec infer gamma m =
+match m with
+| Ref x → get x gamma
+| Sop → Some Sty
+| Kop → Some Kty
+| App (m1, m2) → (
+match (infer gamma m1, infer gamma m2) with
+| Some ty, Some vty → infer_app ty vty
+| _, _ → None)
+
+Figure 6: Type Inference Cases for Combinatory Types in OCaml
+
+19
+
+measurements suggest that type inference terminates, for realistic programs and common type errors, after a number of infer app calls that is linear in the size of the term
+(number of operators). In particular, the ratio between calls and size stays below 2 for
+most, below 3 for all tested examples.
+A notable, albeit unrealistic, counterexample is the repeated application of S to itself. In this case we have |SSSSSS . . . | = S2 S1 (S2 S1 (S2 S1 . . .)), where term and type
+have the same size. Adding a single S requires computing infer app |SSSSSS . . . | |S|,
+which recursively descends into and rewrites S2 S1 (S2 S1 (S2 S1 . . .)) using the S2ty
+branch in Figure 6. Since this is linear in the size of the term, the total work for
+k operators is O(k 2 ). Apart from degenerate cases like this or (SII)(SII), the algorithm terminates quickly, regardless of whether the term has a type or not. For
+example, inference on both successor zero and successor tt has a ratio of about 1.3.
+We further tested inference against a small compiler for a toy language that uses
+recursion and a plethora of Scott-encoded data types (numbers, strings, option types,
+parser state, tokens, ASTs, etc) but is completely oblivious to our data types and
+tagging approach. As a result, infer app wrangles nothing but combinatory types,
+which we believe represents a realistic worst-case scenario. The ratio turns out to be
+merely 2.5, while the largest ratio across all subroutines of the compiler barely differs,
+at 2.52.
+We therefore recommend limiting the total number of calls to at least 3 times
+the input term’s size. Larger factors will be able to accommodate increasingly unlikely
+kinds of terms. It is worth noting that even at a factor of (say) 100, inference rejects the
+term (SII)(SII) swiftly. We conclude that inference on realistic programs is practical,
+as it even terminates on programs oblivious to our tagging in linear time, with some
+small factor.
+
+11
+
+Related Work
+
+The type system introduced in this paper diverges significantly from traditional approaches to polymorphism. There is very little literature on type systems for combinatory logic per se. Aside from being mentioned by Curry et al [5], almost all work has
+interpreted the combinators as λ-abstractions within a typed λ-calculus, to which we
+now turn.
+Unlike System HM [15] and System F [9], our framework avoids both type abstraction and application, which simplifies both the type syntax and inference algorithm.
+This simplification requires some use of dummy values as placeholders for types, but
+enhances transparency for static analysis.
+Intersection types, pioneered by Coppo et al [4], allow multiple types to be ascribed
+to the same term, supporting a refined analysis of program behaviour. However, such
+systems generally lack principal types and often require complex inference mechanisms
+[3]. Our system avoids these complications by ensuring that each combinator has at
+most one type, relying instead on the type structure to encode information otherwise
+captured by intersections.
+20
+
+term
+cond tt ff tt
+cond tt tt zero
+cond (cond tt ff tt) ff tt
+pair ff tt
+snd (pair ff tt)
+pair (pair ff tt) tt
+successor tt
+successor zero
+successor3 zero
+successor1000 zero
+predecessor zero
+isZero
+isZero zero
+isZero (successor zero)
+isZero tt
+case (pair isZero I) (inl (pair zero tt))
+case (pair isZero I) (inr (pair zero tt))
+case (pair I I) (inr (pair zero tt))
+lam x (isZero x) zero
+lam x x zero zero
+lam x x zero tt
+cond mono{zero}
+cond mono{zero} tt
+cond mono{zero} tt zero
+cond mono{zero} tt ff
+plus (successor zero)
+plus (successor zero) zero
+plus (successor zero) tt
+cons (pair ff (nil zero))
+cons (pair ff (nil tt))
+cons (pair ff (cons (pair tt (nil tt))))
+fold left{plus}
+compiler of a toy language
+compiler of a toy language (subroutine)
+S 4 (= S S S S)
+S 10
+S 100
+(SII)(SII)
+
+has type
+yes
+no
+yes
+yes
+yes
+yes
+no
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+no
+yes
+yes
+no
+yes
+yes
+no
+yes
+yes
+yes
+no
+yes
+yes
+no
+no
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+no
+
+size
+149
+147
+279
+97
+106
+172
+57
+58
+134
+38020
+104
+103
+123
+161
+122
+523
+526
+426
+140
+55
+54
+207
+226
+246
+248
+954
+974
+973
+188
+187
+321
+1638
+48016989
+22563
+5
+11
+101
+14
+
+#calls
+244
+242
+470
+147
+167
+273
+74
+75
+187
+56019
+164
+153
+180
+236
+178
+954
+957
+802
+204
+58
+57
+335
+354
+374
+376
+1130
+1367
+1311
+294
+293
+519
+1670
+119811071
+56888
+10
+70
+7450
+∞
+
+#calls / size
+1.64
+1.65
+1.68
+1.52
+1.58
+1.59
+1.30
+1.29
+1.40
+1.47
+1.58
+1.49
+1.46
+1.47
+1.46
+1.82
+1.82
+1.88
+1.46
+1.05
+1.06
+1.62
+1.57
+1.52
+1.52
+1.18
+1.40
+1.35
+1.56
+1.57
+1.62
+1.02
+2.50
+2.52
+2.00
+6.36
+73.76
+∞
+
+Table 1: Selection of Metrics about Calling infer on Various Terms
+
+21
+
+Semantic subtyping, as in the work of Frisch et al [8], supports a rich subtyping
+relation based on set-theoretic semantics of types. However, set-theoretic concepts, such
+as unions and complements, make both reasoning and implementation difficult. Here,
+information hiding is achieved by the transition from combinatory types to abstract
+types, which is much simpler because it is structural not semantic.
+Other systems, such as those based on refinement types [7, 17] enhance expressiveness by annotating types with logical predicates, often requiring SMT solvers for type
+checking. Our system is simpler because it is structural, not reliant on external logical
+mechanisms.
+
+12
+
+Future Work
+
+12.1
+
+Impredicativity
+
+Although type inference for System F is known to be undecidable [21], some impredicative types have been inferred. For example, Serrano et al [19] show how to
+type the composition of a function f : (∀a.List{a} → List{a}) → Nat and g :
+Bool → ∀a.List{a} → List{a} to get a function of type Bool → Nat. Using
+combinatory types, we could approach this challenge in two ways. One is to replace
+∀a.List{a} → List{a} by some abstract type of polymorphic functions. The other
+would be to develop an abstract type for quantification in general.
+
+12.2
+
+Typing Modules
+
+By module, we mean some useful collection of types and terms equipped with an
+interface that determines how it may be used, as in [10]. For example, a module for
+lists might include a polymorphic data type of lists, plus functions for folding over lists,
+etc. As long as the interface is respected, the implementation of the module’s contents
+can be maintained, re-implemented, etc. It seems plausible that modules can be given
+abstract types, and so become first-class terms of a combinatory calculus.
+
+12.3
+
+Static Analysis
+
+Although type inference is a small part of static program analysis, it suggests that
+combinatory type systems may be a simpler setting in which to work. Traditionally,
+the interesting recursive programs did not have normal forms, which makes analysis
+difficult or impractical. So static analysis works with syntax trees that represent these
+functions, which separates the syntax from the semantics. However, in the combinatory
+approach, all programs are normal forms so there is no need to separate syntax from
+semantics. The combinatory types take advantage of this, to support a refined program
+analysis that is able to reveal complete information about the program structure, while
+relying on abstract types to hide this information as necessary. That is, the general
+machinery need not obscure the structures that are central to the analysis, such as
+Miné’s numerical domains [16] or Sui’s inter-procedural analyses [20].
+
+22
+
+12.4
+
+Tree Calculus
+
+Tree calculus [12] goes beyond the extensionality of combinatory logic to support intensionality, including the ability to decide equality of programs, to reveal the label
+of a tagged term, and to support a self-interpreter that acts on itself directly, without
+encoding to a syntax tree. It supports all program analyses to the same extent that
+combinatory logic supports all numerical analyses. Recent work [14] has shown how to
+type tree calculus using combinations of quantified function types that are not found
+in HM. The combinatory type system is a stepping stone to combinational type system
+for tree calculus that will support type inference for typed program analyses. That
+done, it will be natural to internalise the types and type-level computations as terms
+and intensional programs, and then blend them in a system of dependent types.
+
+13
+
+Conclusions
+
+Combinatory logic provides better support for static program analysis than λ-calculus.
+The principal reason for this is that all Turing-computable functions can be represented
+by normal forms, so that we can identify these with the programs, and analyse them
+statically. There is no need to encode programs as syntax trees before analysing them.
+Unlike λ-calculus, there is no need to modify the term syntax to increase expressive
+power. For example, data type constructors can be represented by combinators that are
+not used to represent λ-abstractions. Then they can be typed by abstract types built
+upon combinatory types. Such types are simple, in that there are no type variables
+or quantification. Even function types can be represented as abstract types. Yet they
+support polymorphism which is revealed during application. This is enough to support
+the usual polymorphism of the Hindley-Milner type system, and more, such as tuples
+of polymorphic programs, and perhaps even program modules. It has an effective type
+inference algorithm. More generally, it provides a simple, yet powerful system in which
+to do static program analysis.
+
+References
+[1] S. Abramsky and C.L. Hankin, editors. Abstract Interpretation of Declarative
+Languages. Computers and their Applications. Ellis Horwood, 1987.
+[2] Johannes Bader.
+15338381
+
+Combinatory types.
+
+https://doi.org/10.5281/zenodo.
+
+[3] Hendrik Pieter Barendregt, Wil Dekkers, and Richard Statman. Lambda calculus
+with types. Cambridge University Press, 2013.
+[4] M. Coppo, M. Dezani, and B. Venneri. Principal type schemes and λ-calculus
+semantics. In R. Hindley and J. Seldin, editors, To H.B. Curry: essays in Combinarory Logic, lambda calculus and Formalisms. Academic Press, 1980.
+
+23
+
+[5] Haskell Brooks Curry, Robert Feys, and William Craig. Combinatory Logic. NorthHolland Amsterdam, 1972.
+[6] Luis Damas and Robin Milner. Principal type-schemes for functional programs.
+In Proceedings of the 9th ACM SIGPLAN-SIGACT Symposium on Principles of
+Programming Languages, POPL ’82, page 207–212, New York, NY, USA, 1982. Association for Computing Machinery. https://doi.org/10.1145/582153.582176.
+[7] Tim Freeman and Frank Pfenning. Refinement types for ml. In Proceedings of
+the ACM SIGPLAN 1991 conference on Programming language design and implementation, pages 268–277, 1991.
+[8] Alain Frisch, Giuseppe Castagna, and Véronique Benzaken. Semantic subtyping:
+Dealing set-theoretically with function, union, intersection, and negation types.
+Journal of the ACM (JACM), 55(4):1–64, 2008.
+[9] J-Y. Girard, Y. Lafont, and P. Taylor. Proofs and Types. Tracts in Theoretical
+Computer Science. Cambridge University Press, 1989.
+[10] Robert Harper and Mark Lillibridge. A type-theoretic approach to higher-order
+modules with sharing. In Proceedings of the 21st ACM SIGPLAN-SIGACT
+Symposium on Principles of Programming Languages, POPL ’94, page 123–137,
+New York, NY, USA, 1994. Association for Computing Machinery. https:
+//doi.org/10.1145/174675.176927.
+[11] Barry Jay. Recursive programs in normal form (short paper). In Proceedings of
+the ACM SIGPLAN Workshop on Partial Evaluation and Program Manipulation,
+PEPM ’18, pages 67–73. ACM, 2018.
+[12] Barry Jay. Reflective Programs in Tree Calculus. 2021. including an appendix with Jose Vergara. URL: https://github.com/barry-jay-personal/
+tree-calculus.
+[13] Barry Jay. Combinatory types: repository of proofs in Rocq, 2025. URL: https:
+//github.com/barry-jay-personal/combinatory-types.
+[14] Barry Jay. Typed program analysis without encodings. In Proceedings of the
+2025 ACM SIGPLAN International Workshop on Partial Evaluation and Program
+Manipulation, PEPM ’25, page 54–65, New York, NY, USA, 2025. Association for
+Computing Machinery. https://doi.org/10.1145/3704253.3706138.
+[15] R. Milner. A theory of type polymorphism in programming. Journal of Computer
+and Systems Sciences, 17:348–375, 1978.
+[16] Antoine Miné. The octagon abstract domain. Higher-order and symbolic computation, 19:31–100, 2006.
+
+24
+
+[17] Patrick M Rondon, Ming Kawaguci, and Ranjit Jhala. Liquid types. In Proceedings
+of the 29th ACM SIGPLAN Conference on Programming Language Design and
+Implementation, pages 159–169, 2008.
+[18] Moses Schönfinkel. Über die bausteine der mathematischen logik. Mathematische
+Annalen, 92:305–316, 1924.
+[19] Alejandro Serrano, Jurriaan Hage, Simon Peyton Jones, and Dimitrios Vytiniotis.
+A quick look at impredicativity. Proc. ACM Program. Lang., 4(ICFP), August
+2020. https://doi.org/10.1145/3408971 .
+[20] Yulei Sui and Jingling Xue. Svf: interprocedural static value-flow analysis in llvm.
+In Proceedings of the 25th international conference on compiler construction, pages
+265–266, 2016.
+[21] J B. Wells. Typability and type checking in the second-order λ-calculus are equivalent and undecidable. In Proceedings, Ninth Annual IEEE Symposium on Logic
+in Computer Science. IEEE Computer Society Press, 1994.
+
+25
+
+

@@ -1,0 +1,8 @@
+(library
+ (public_name combinatory_types)
+ (name combinatory_types)
+ (inline_tests
+  (deps iota.dag))
+ (preprocess
+  (pps ppx_compare ppx_expect ppx_let ppx_sexp_conv ppx_sexp_value))
+ (libraries base core))
