@@ -205,7 +205,9 @@ MetaPi := {
         } else {
           triage (vstem X) ({a} -> vfork (Conc a) X) ({a, b} -> apply_fork self chk (Conc a) (Conc b) X) tr
         })
-        Neu m => (Poison (Neu m))
+        Neu m => (if let Pi dom cod = (type_elim (pair_fst m)) {
+          if (vcheck chk dom X) { Neu (pair (cod (readback X)) (pair "Sp" (pair m X))) } else { Poison (Neu m) }
+        } else { Poison (Neu m) })
         Poison r => (Poison r)
         Chain1 e scr => (Chain2 (pair e (pair scr X)))
         Chain2 e scr ca => (absorb_v chk e scr ca X)
@@ -270,12 +272,18 @@ GuardPi := {
         if (is_neutral x) { invalid x }
         else { triage tc ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x })
       a)
+  let hyp_apply := {f, x} ->
+    if let Pi dom cod = (type_elim (neutral_type f)) {
+      make_hyp (cod x) (pair "Sp" (pair f x))
+    } else {
+      invalid f
+    }
   let walk := fix ({self, f, x} ->
     if (is_invalid f) { f }
     else if (tree_eq f tree_eq) { wait tree_eq x }
     else if (is_teq_partial f) { f x }
     else if (tree_eq f is_neutral) { false }
-    else if (is_neutral f) { f x }
+    else if (is_neutral f) { hyp_apply f x }
     else if (is_elim_head f) { (wait shim (pair f nil)) x }
     else if (is_shim f) { f x }
     else if (tree_eq f ({x} -> x)) { x }
@@ -285,15 +293,25 @@ GuardPi := {
       true
     } else {
       let hist := neutral_history v
-      let scr := pair_fst hist
-      let B := pair_fst (pair_snd hist)
-      let ca := pair_fst (pair_snd (pair_snd hist))
-      let cb := pair_snd (pair_snd (pair_snd hist))
-      if (is_neutral scr) {
-        let Ind := neutral_type scr
-        and (ok vch Pi legit scr) (and (tree_eq (neutral_type v) (B scr)) ((type_gate Ind) vch Pi Ind B ca cb))
+      if (tree_eq (pair_fst hist) "Sp") {
+        let parent := pair_fst (pair_snd hist)
+        let frame := pair_snd (pair_snd hist)
+        if let Pi dom cod = (type_elim (neutral_type parent)) {
+          and (ok vch Pi legit parent) (vch dom frame)
+        } else {
+          false
+        }
       } else {
-        false
+        let scr := pair_fst hist
+        let B := pair_fst (pair_snd hist)
+        let ca := pair_fst (pair_snd (pair_snd hist))
+        let cb := pair_snd (pair_snd (pair_snd hist))
+        if (is_neutral scr) {
+          let Ind := neutral_type scr
+          and (ok vch Pi legit scr) (and (tree_eq (neutral_type v) (B scr)) ((type_gate Ind) vch Pi Ind B ca cb))
+        } else {
+          false
+        }
       }
     }))
   let core := (fix ({self, legit, A, B, f} -> {
@@ -371,3 +389,22 @@ dep_suite := {Pi, D} -> {
   ({ successor := DP succ, identity := DP ({n} -> n), doubled := DP ({n} -> succ (succ n)) })
 }
 dep_expected := { successor := true, identity := false, doubled := false }
+
+ho_suite := {Pi} -> {
+  let NN := Pi NatType ({_} -> NatType)
+  let F := Pi NN ({_} -> NatType)
+  let FF := Pi NN ({_} -> NN)
+  ({
+    apply_zero := F ({g} -> g zero)
+    const_arg := F ({g} -> 5)
+    ill_typed_frame := F ({g} -> g false)
+    use_result := F ({g} -> succ (g zero))
+    elim_on_spine := F ({g} -> nat_rec (g zero) zero ({k, ih} -> succ ih))
+    bad_frame_under_elim := F ({g} -> nat_rec (g false) zero ({k, ih} -> succ ih))
+    eta_arg := FF ({g} -> g)
+    eta_expanded := FF ({g} -> {n} -> g n)
+    succ_frame := F ({g} -> g (succ zero))
+    neutral_in_frame := FF ({g} -> {n} -> g (succ n))
+  })
+}
+ho_expected := { apply_zero := true, const_arg := true, ill_typed_frame := false, use_result := true, elim_on_spine := true, bad_frame_under_elim := false, eta_arg := true, eta_expanded := true, succ_frame := true, neutral_in_frame := true }

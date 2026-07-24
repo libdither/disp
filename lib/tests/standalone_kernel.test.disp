@@ -90,3 +90,6 @@ test MetaPi BoolType ({_} -> BoolType) neutral_branch_reader = true
 test GuardNatToNat ({n} -> make_hyp NatType t) = false
 test GuardNatToNat ({n} -> wait hyp_marker (pair NatType n)) = false
 test MetaNatToNat ({n} -> make_hyp NatType t) = false
+
+test ho_suite MetaPi = ho_expected
+test ho_suite GuardPi = ho_expected
