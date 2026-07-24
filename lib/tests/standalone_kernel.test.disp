@@ -80,9 +80,26 @@ test EnumPi Five ({n} -> Point n) ({n} -> n) = true
 test MetaPi NatType ({n} -> Point n) ({n} -> n) = false
 test GuardPi NatType ({n} -> Point n) ({n} -> n) = false
 
+// tree_eq is banned on hyp-containing operands: it is the last reader that reconstructs
+// "am I the probe?" without touching a signature. Enum decides extensionally and keeps it.
+// The price is honest_data_eq, extensionally the identity but not separable from teq_dodge.
 honest_data_eq := {n} -> if (tree_eq n zero) { zero } else { n }
-test GuardNatToNat honest_data_eq = true
-test MetaNatToNat honest_data_eq = true
+test GuardNatToNat honest_data_eq = false
+test MetaNatToNat honest_data_eq = false
+teq_dodge := {n} -> if (tree_eq n zero) { pair 5 5 } else { n }
+test NatType (teq_dodge zero) = false
+test GuardNatToNat teq_dodge = false
+test MetaNatToNat teq_dodge = false
+teq_dodge_flip := {n} -> if (tree_eq zero n) { pair 5 5 } else { n }
+test GuardNatToNat teq_dodge_flip = false
+test MetaNatToNat teq_dodge_flip = false
+teq_shift := {n} -> if (tree_eq n zero) { succ zero } else { n }
+test GuardNatToNat teq_shift = false
+test MetaNatToNat teq_shift = false
+teq_replay := {n} -> if (tree_eq n (make_hyp NatType ({_} -> NatType))) { zero } else { pair 5 5 }
+test GuardNatToNat teq_replay = false
+test MetaNatToNat teq_replay = false
+test EnumPi Five ({_} -> NatType) ({n} -> if (tree_eq n 5) { zero } else { pair 5 5 }) = true
 neutral_branch_reader := {b} -> if (is_neutral b) { b } else { not_bool b }
 test GuardPi BoolType ({_} -> BoolType) neutral_branch_reader = true
 test MetaPi BoolType ({_} -> BoolType) neutral_branch_reader = true

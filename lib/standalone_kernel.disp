@@ -94,9 +94,10 @@ EnumPi := {
     t)
 }
 
-Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree, Teq1 : Tree >
+Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
 
 MetaPi := {
+  let teq_sig := sig_of tree_eq
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
   let vfork := {L, R} -> if let Conc lc = L { if let Conc rc = R { Conc (t lc rc) } else { Fork (pair L R) } } else { Fork (pair L R) }
   let readback := (fix ({rb, V} ->
@@ -108,7 +109,6 @@ MetaPi := {
       Poison r => (invalid r)
       Chain1 e scr => (invalid (pair e scr))
       Chain2 e scr ca => (invalid (pair e (pair scr ca)))
-      Teq1 a => (tree_eq (rb a))
     }))
   let collect := (fix ({co, V, acc} ->
     match V {
@@ -119,7 +119,6 @@ MetaPi := {
       Poison r => acc
       Chain1 e scr => acc
       Chain2 e scr ca => acc
-      Teq1 a => (co a acc)
     }))
   let verify_inband := (fix ({vf, minted, T, v} ->
     if (is_invalid v) {
@@ -151,7 +150,6 @@ MetaPi := {
       Poison r => (Poison r)
       Chain1 e scr => (Poison (Chain1 (pair e scr)))
       Chain2 e scr ca => (Poison (Chain2 (pair e (pair scr ca))))
-      Teq1 a => (Poison (Teq1 a))
     })
   let apply_fork := ({self, chk, A, TB, X} ->
     match A {
@@ -168,7 +166,6 @@ MetaPi := {
       Poison r => (Poison r)
       Chain1 e scr => (Poison (Chain1 (pair e scr)))
       Chain2 e scr ca => (Poison (Chain2 (pair e (pair scr ca))))
-      Teq1 a => (Poison (Teq1 a))
     })
   let absorb_v := ({chk, E, scr, ca, cb} -> {
     let Ind := elim_ind E
@@ -196,8 +193,8 @@ MetaPi := {
       match F {
         Conc tr => (if (tree_eq tr is_neutral) {
           Conc false
-        } else if (tree_eq tr tree_eq) {
-          (if let Conc xt = X { Conc (tree_eq xt) } else { Teq1 X })
+        } else if (or (tree_eq tr tree_eq) (has_sig teq_sig tr)) {
+          (if let Conc xt = X { Conc (tr xt) } else { Poison X })
         } else if let Conc xt = X {
           Conc (tr xt)
         } else if (is_elim_head tr) {
@@ -211,7 +208,6 @@ MetaPi := {
         Poison r => (Poison r)
         Chain1 e scr => (Chain2 (pair e (pair scr X)))
         Chain2 e scr ca => (absorb_v chk e scr ca X)
-        Teq1 a => (Conc (tree_eq (readback a) (readback X)))
         Stem c => (vfork c X)
         Fork a b => (apply_fork self chk a b X)
       }
@@ -249,6 +245,8 @@ GuardPi := {
   let is_shim := {v} -> has_sig shim_sig v
   let tree_eq_sig := sig_of tree_eq
   let is_teq_partial := {v} -> has_sig tree_eq_sig v
+  let neutral_free := (fix ({self, v} ->
+    if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v }))
   let w_stem := {a, x} -> {
     let r := t a x
     if (is_neutral r) { invalid r } else { r }
@@ -280,8 +278,8 @@ GuardPi := {
     }
   let walk := fix ({self, f, x} ->
     if (is_invalid f) { f }
-    else if (tree_eq f tree_eq) { wait tree_eq x }
-    else if (is_teq_partial f) { f x }
+    else if (tree_eq f tree_eq) { if (neutral_free x) { wait tree_eq x } else { invalid x } }
+    else if (is_teq_partial f) { if (neutral_free x) { f x } else { invalid x } }
     else if (tree_eq f is_neutral) { false }
     else if (is_neutral f) { hyp_apply f x }
     else if (is_elim_head f) { (wait shim (pair f nil)) x }
@@ -331,8 +329,6 @@ GuardPi := {
     let r := walk f x
     if (is_invalid r) { false } else { verify (B x) r }
   }))
-  let neutral_free := (fix ({self, v} ->
-    if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v }))
   ({A, B} -> make_type ({_self, f} -> if (neutral_free f) { core nil A B f } else { false }) inert_gate nil (inj "Pi" (pair A B)))
 }
 
