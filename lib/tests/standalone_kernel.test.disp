@@ -128,3 +128,19 @@ ambient_reader_expected := { sniff_junk := true, concrete_read := true }
 test reader_suite AmbientPi = ambient_reader_expected
 test AmbientPi NatType ({_} -> NatType) teq_dodge = true
 test AmbientPi NatType ({_} -> NatType) teq_shift = true
+
+// Row programs beyond Pi. Sigma is judge-only (fresh-free): no abstract point ever
+// exists, so it decides identically under the certify table and a table with an
+// EMPTY sample list -- a fresh-free telescope is a plain predicate under any handler.
+test GuardSigma NatType ({_} -> BoolType) (pair 2 true) = true
+test GuardSigma NatType ({_} -> BoolType) (pair 2 5) = false
+test GuardSigma NatType ({_} -> BoolType) zero = false
+test SampledSigma NatType ({_} -> BoolType) (pair 2 true) = true
+test SampledSigma NatType ({_} -> BoolType) (pair 2 5) = false
+test GuardSigma NatType ({n} -> Point (succ n)) (pair 2 3) = true
+test GuardSigma NatType ({n} -> Point (succ n)) (pair 2 4) = false
+
+// Intersection = Pi's fresh row with a self judge (the implicit forall). The
+// candidate itself, not its application, must inhabit P at the abstract point.
+test GuardIsect NatType ({n} -> GuardPi (Point n) ({_} -> NatType)) ({_p} -> zero) = true
+test GuardIsect NatType ({n} -> GuardPi (Point n) ({_} -> NatType)) ({p} -> p) = false
