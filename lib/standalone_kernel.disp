@@ -81,17 +81,29 @@ not_bool := {b} -> bool_rec b false true
 
 Point := {c} -> make_type ({_self, v} -> tree_eq c v) inert_gate (cons c nil) t
 
+list_all := fix ({self, p, xs} ->
+  if (is_leaf xs) { true } else { and (p (pair_fst xs)) (self p (pair_snd xs)) })
+list_map := fix ({self, f, xs} ->
+  if (is_leaf xs) { nil } else { cons (f (pair_fst xs)) (self f (pair_snd xs)) })
+
+PiAt := {admit, lift, fresh, apply, read, judge} -> {
+  let core := fix ({chk, st, A, B, fV} -> {
+    let points := fresh st A B
+    if (is_leaf points) { false } else {
+      list_all ({p} -> judge chk (pair_snd p) (B (read (pair_fst p))) (apply chk fV (pair_fst p))) points
+    }
+  })
+  ({A, B} -> make_type ({_self, f} -> if (admit f) { core t A B (lift f) } else { false }) inert_gate nil (inj "Pi" (pair A B)))
+}
+
 EnumPi := {
-  let list_all := fix ({self, p, xs} ->
-    if (is_leaf xs) { true } else { and (p (pair_fst xs)) (self p (pair_snd xs)) })
-  ({A, B} -> make_type
-    ({_self, f} -> {
-      let members := type_members A
-      if (is_leaf members) { false } else { list_all ({a} -> (B a) (f a)) members }
-    })
-    inert_gate
-    nil
-    t)
+  let admit := {_f} -> true
+  let lift := {f} -> f
+  let fresh := {st, A, _B} -> list_map ({a} -> pair a st) (type_members A)
+  let apply := {_chk, f, a} -> f a
+  let read := {a} -> a
+  let judge := {_chk, _st, T, r} -> T r
+  PiAt admit lift fresh apply read judge
 }
 
 Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
@@ -133,7 +145,7 @@ MetaPi := {
       Poison r => false
       Neu ty _ => (tree_eq ty T)
       _ => (if let Pi dom cod = (type_elim T) {
-        chk dom cod V
+        chk t dom cod V
       } else if let Conc tr = V {
         T tr
       } else {
@@ -170,7 +182,7 @@ MetaPi := {
   let absorb_v := ({chk, E, scr, ca, cb} -> {
     let Ind := elim_ind E
     let B := elim_motive E
-    let GatePi := {dom, cod} -> make_type ({_self, f} -> chk dom cod (Conc f)) inert_gate nil (inj "Pi" (pair dom cod))
+    let GatePi := {dom, cod} -> make_type ({_self, f} -> chk t dom cod (Conc f)) inert_gate nil (inj "Pi" (pair dom cod))
     let vch := vcheck chk
     if let Neu sTy _ = scr {
       if (and (tree_eq sTy Ind) (tree_eq (elim_raw E) (type_elim Ind))) {
@@ -212,12 +224,13 @@ MetaPi := {
         Fork a b => (apply_fork self chk a b X)
       }
     }))
-  let core := (fix ({chk, A, B, fV} -> {
-    let x := Neu (pair A B)
-    let r := mwalk chk fV x
-    vcheck chk (B (make_mark (pair A B))) r
-  }))
-  ({A, B} -> make_type ({_self, f} -> core A B (Conc f)) inert_gate nil (inj "Pi" (pair A B)))
+  let admit := {_f} -> true
+  let lift := {f} -> Conc f
+  let fresh := {st, A, B} -> cons (pair (Neu (pair A B)) st) nil
+  let apply := {chk, fV, x} -> mwalk chk fV x
+  let read := readback
+  let judge := {chk, _st, T, r} -> vcheck chk T r
+  PiAt admit lift fresh apply read judge
 }
 
 GuardPi := {
@@ -312,24 +325,28 @@ GuardPi := {
         }
       }
     }))
-  let core := (fix ({self, legit, A, B, f} -> {
+  let admit := neutral_free
+  let lift := {f} -> f
+  let fresh := {st, A, B} -> {
     let x := make_hyp A B
-    let legit2 := cons x legit
-    let Pi := {dom, cod} -> make_type ({_self, g} -> self legit2 dom cod g) inert_gate nil (inj "Pi" (pair dom cod))
-    let verify := (fix ({vf, T, v} ->
-      if (is_invalid v) {
+    cons (pair x (cons x st)) nil
+  }
+  let apply := {_chk, f, x} -> walk f x
+  let read := {x} -> x
+  let judge := {chk, st, T, v} -> {
+    let PiF := {dom, cod} -> make_type ({_self, g} -> chk st dom cod g) inert_gate nil (inj "Pi" (pair dom cod))
+    (fix ({vf, T2, v2} ->
+      if (is_invalid v2) {
         false
-      } else if (is_neutral v) {
-        and (tree_eq (neutral_type v) T) (hyp_ok vf Pi legit2 v)
-      } else if let Pi dom cod = (type_elim T) {
-        self legit2 dom cod v
+      } else if (is_neutral v2) {
+        and (tree_eq (neutral_type v2) T2) (hyp_ok vf PiF st v2)
+      } else if let Pi dom cod = (type_elim T2) {
+        chk st dom cod v2
       } else {
-        (type_recognizer T) (wait vf T) v
-      }))
-    let r := walk f x
-    if (is_invalid r) { false } else { verify (B x) r }
-  }))
-  ({A, B} -> make_type ({_self, f} -> if (neutral_free f) { core nil A B f } else { false }) inert_gate nil (inj "Pi" (pair A B)))
+        (type_recognizer T2) (wait vf T2) v2
+      })) T v
+  }
+  PiAt admit lift fresh apply read judge
 }
 
 Five := Point 5

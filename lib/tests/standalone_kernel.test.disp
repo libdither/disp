@@ -110,3 +110,17 @@ test MetaNatToNat ({n} -> make_hyp NatType t) = false
 
 test ho_suite MetaPi = ho_expected
 test ho_suite GuardPi = ho_expected
+
+// A fourth judgement from the same core: differential testing as a handler table.
+// Its verdict is only as strong as its sample list, pinned by the last test.
+SampledPi := {samples} -> PiAt
+  ({_f} -> true)
+  ({f} -> f)
+  ({st, _A, _B} -> list_map ({a} -> pair a st) samples)
+  ({_chk, f, a} -> f a)
+  ({a} -> a)
+  ({_chk, _st, T, r} -> T r)
+test SampledPi (cons zero (cons 2 nil)) NatType ({_} -> NatType) succ = true
+test SampledPi (cons zero (cons 2 nil)) NatType ({_} -> NatType) ({n} -> pair 5 5) = false
+test SampledPi nil NatType ({_} -> NatType) succ = false
+test SampledPi (cons 2 nil) NatType ({_} -> NatType) ({n} -> if (tree_eq n zero) { pair 5 5 } else { n }) = true
