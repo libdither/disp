@@ -96,15 +96,16 @@ PiAt := {admit, lift, fresh, apply, read, judge} -> {
   ({A, B} -> make_type ({_self, f} -> if (admit f) { core t A B (lift f) } else { false }) inert_gate nil (inj "Pi" (pair A B)))
 }
 
-EnumPi := {
+SampledPi := {samples} -> {
   let admit := {_f} -> true
   let lift := {f} -> f
-  let fresh := {st, A, _B} -> list_map ({a} -> pair a st) (type_members A)
+  let fresh := {st, _A, _B} -> list_map ({a} -> pair a st) samples
   let apply := {_chk, f, a} -> f a
   let read := {a} -> a
   let judge := {_chk, _st, T, r} -> T r
   PiAt admit lift fresh apply read judge
 }
+EnumPi := {A, B} -> SampledPi (type_members A) A B
 
 Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
 
@@ -233,7 +234,10 @@ MetaPi := {
   PiAt admit lift fresh apply read judge
 }
 
-GuardPi := {
+neutral_free := fix ({self, v} ->
+  if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v })
+
+GuardPiAt := {on_is_neutral, on_tree_eq} -> {
   let cert_absorb := ({E, scr, ca, cb} -> {
     let Ind := elim_ind E
     let B := elim_motive E
@@ -258,8 +262,6 @@ GuardPi := {
   let is_shim := {v} -> has_sig shim_sig v
   let tree_eq_sig := sig_of tree_eq
   let is_teq_partial := {v} -> has_sig tree_eq_sig v
-  let neutral_free := (fix ({self, v} ->
-    if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v }))
   let w_stem := {a, x} -> {
     let r := t a x
     if (is_neutral r) { invalid r } else { r }
@@ -291,9 +293,9 @@ GuardPi := {
     }
   let walk := fix ({self, f, x} ->
     if (is_invalid f) { f }
-    else if (tree_eq f tree_eq) { if (neutral_free x) { wait tree_eq x } else { invalid x } }
-    else if (is_teq_partial f) { if (neutral_free x) { f x } else { invalid x } }
-    else if (tree_eq f is_neutral) { false }
+    else if (tree_eq f tree_eq) { on_tree_eq ({_} -> wait tree_eq x) x }
+    else if (is_teq_partial f) { on_tree_eq ({_} -> f x) x }
+    else if (tree_eq f is_neutral) { on_is_neutral ({_} -> is_neutral x) x }
     else if (is_neutral f) { hyp_apply f x }
     else if (is_elim_head f) { (wait shim (pair f nil)) x }
     else if (is_shim f) { f x }
@@ -348,6 +350,12 @@ GuardPi := {
   }
   PiAt admit lift fresh apply read judge
 }
+GuardPi := GuardPiAt
+  ({_resume, _x} -> false)
+  ({resume, x} -> if (neutral_free x) { resume t } else { invalid x })
+AmbientPi := GuardPiAt
+  ({resume, _x} -> resume t)
+  ({resume, _x} -> resume t)
 
 Five := Point 5
 Six := Point 6

@@ -111,16 +111,20 @@ test MetaNatToNat ({n} -> make_hyp NatType t) = false
 test ho_suite MetaPi = ho_expected
 test ho_suite GuardPi = ho_expected
 
-// A fourth judgement from the same core: differential testing as a handler table.
-// Its verdict is only as strong as its sample list, pinned by the last test.
-SampledPi := {samples} -> PiAt
-  ({_f} -> true)
-  ({f} -> f)
-  ({st, _A, _B} -> list_map ({a} -> pair a st) samples)
-  ({_chk, f, a} -> f a)
-  ({a} -> a)
-  ({_chk, _st, T, r} -> T r)
+// SampledPi: differential testing as a handler table (lib). Only as strong as its
+// sample list, pinned by the last test.
 test SampledPi (cons zero (cons 2 nil)) NatType ({_} -> NatType) succ = true
 test SampledPi (cons zero (cons 2 nil)) NatType ({_} -> NatType) ({n} -> pair 5 5) = false
 test SampledPi nil NatType ({_} -> NatType) succ = false
 test SampledPi (cons 2 nil) NatType ({_} -> NatType) ({n} -> if (tree_eq n zero) { pair 5 5 } else { n }) = true
+
+// AmbientPi = the guard walk with the live kernel's reader policy (honest is_neutral,
+// unrestricted tree_eq). Two Observe rows are the ONLY difference from GuardPi, and they
+// readmit exactly the live kernel's certification gaps: the face-sniffing junk body
+// (ACTIVE_BUGS item 5) and the tree_eq probe-bit dodge.
+ambient_pi_expected := { negation := true, identity := true, junk_arm := false, sniff := true }
+test pi_suite AmbientPi = ambient_pi_expected
+ambient_reader_expected := { sniff_junk := true, concrete_read := true }
+test reader_suite AmbientPi = ambient_reader_expected
+test AmbientPi NatType ({_} -> NatType) teq_dodge = true
+test AmbientPi NatType ({_} -> NatType) teq_shift = true
