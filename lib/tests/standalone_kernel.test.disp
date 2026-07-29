@@ -144,3 +144,11 @@ test Sigma Guard NatType ({n} -> Point (succ n)) (pair 2 4) = false
 // candidate itself, not its application, must inhabit P at the abstract point.
 test Isect Guard NatType ({n} -> Pi Guard (Point n) ({_} -> NatType)) ({_p} -> zero) = true
 test Isect Guard NatType ({n} -> Pi Guard (Point n) ({_} -> NatType)) ({p} -> p) = false
+
+// Respond coverage today: a Pi-typed mint extends as a spine (hyp_apply) and a
+// blessed elim defers a cert; a Sigma-typed mint has NO projection respond, so
+// projecting it is a sound over-rejection until a consumer-side JProj reading lands.
+sig_dom := Sigma Guard NatType ({_} -> NatType)
+test Pi Guard sig_dom ({_} -> NatType) ({_p} -> zero) = true
+test Pi Guard sig_dom ({_} -> NatType) ({p} -> pair_fst p) = false
+test Pi Meta sig_dom ({_} -> NatType) ({p} -> pair_fst p) = false
