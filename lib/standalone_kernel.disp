@@ -60,6 +60,7 @@ type_gate := {T} -> field_or (wait_payload T) "gate" inert_gate
 type_members := {T} -> field (wait_payload T) "members"
 type_elim := {T} -> field (wait_payload T) "elim"
 type_descriptor := {T} -> field (wait_payload T) "descriptor"
+type_tele := {T} -> field (wait_payload T) "tele"
 
 elim_marker := fix ({self, payload, arg} -> (pair_fst payload) (wait self payload) arg)
 elim_of := {Ind, B} -> wait elim_marker (pair (type_elim Ind) (pair Ind B))
@@ -104,6 +105,27 @@ sigma_tele := {A, B} -> pair (JGuard is_fork) ({_} ->
   pair (JProj (pair pair_fst A)) ({a} ->
   pair (JProj (pair pair_snd (B a))) ({_} -> nil)))
 
+acc := {a} -> inj "Acc" a
+is_acc := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Acc")
+respond_face := {rows, frame, self} -> (fix ({go, rows2} ->
+  if (is_leaf rows2) { invalid frame } else {
+    let tail := pair_snd rows2
+    match (pair_fst rows2) {
+      Fresh ty => (if (is_acc frame) { invalid frame } else {
+        match (pair_fst (tail frame)) {
+          JApply cod => (pair (cons (pair ty frame) nil) cod)
+          _ => (invalid frame)
+        }
+      })
+      JProj a ty => (if (is_acc frame) {
+        if (tree_eq a (pair_snd frame)) { pair nil ty }
+        else { go (tail (make_hyp ty (pair "Ob" (pair (acc a) self)))) }
+      } else { invalid frame })
+      JGuard _p => (go (tail t))
+      _ => (invalid frame)
+    }
+  })) rows
+
 Tele := {table, tele, descriptor} -> {
   let admit := field_or table "admit" ({_f} -> true)
   let lift := field_or table "lift" ({v} -> v)
@@ -134,7 +156,7 @@ Tele := {table, tele, descriptor} -> {
         JGuard p => (if (p (read fV)) { chk st (tail (read fV)) fV prior } else { false })
       }
     })
-  make_type ({ recognize := {_self, f} -> if (admit f) { run t tele (lift f) t } else { false }, descriptor })
+  make_type ({ recognize := {_self, f} -> if (admit f) { run t tele (lift f) t } else { false }, tele, descriptor })
 }
 
 Pi := {table, A, B} -> Tele table (pi_tele A B) (inj "Pi" (pair A B))
@@ -181,13 +203,12 @@ Meta := {
     match V {
       Poison r => false
       Neu ty _ => (tree_eq ty T)
-      _ => (if let Pi dom cod = (type_descriptor T) {
-        chk t (pi_tele dom cod) V t
-      } else if let Conc tr = V {
-        T tr
-      } else {
-        verify_inband (collect V nil) T (readback V)
-      })
+      _ => {
+        let rows := type_tele T
+        if (is_fork rows) { chk t rows V t }
+        else if let Conc tr = V { T tr }
+        else { verify_inband (collect V nil) T (readback V) }
+      }
     })
   let s_rule := ({self, chk, C, TB, X} -> self chk (self chk C X) (self chk TB X))
   let triage_case := ({self, chk, TC, TD, TB, X} ->
@@ -219,7 +240,7 @@ Meta := {
   let absorb_v := ({chk, E, scr, ca, cb} -> {
     let Ind := elim_ind E
     let B := elim_motive E
-    let GatePi := {dom, cod} -> make_type ({ recognize := {_self, f} -> chk t (pi_tele dom cod) (Conc f) t, descriptor := inj "Pi" (pair dom cod) })
+    let GatePi := {dom, cod} -> make_type ({ recognize := {_self, f} -> chk t (pi_tele dom cod) (Conc f) t, tele := pi_tele dom cod, descriptor := inj "Pi" (pair dom cod) })
     let vch := vcheck chk
     if let Neu sTy _ = scr {
       if (and (tree_eq sTy Ind) (tree_eq (elim_raw E) (type_elim Ind))) {
@@ -246,14 +267,21 @@ Meta := {
           (if let Conc xt = X { Conc (tr xt) } else { Poison X })
         } else if let Conc xt = X {
           Conc (tr xt)
+        } else if (or (tree_eq tr pair_fst) (tree_eq tr pair_snd)) {
+          if let Neu m2 = X { self chk X (Conc (acc tr)) } else { Poison X }
         } else if (is_elim_head tr) {
           if let Neu m = X { Chain1 (pair tr X) } else { self chk (Conc ((elim_raw tr) tr)) X }
         } else {
           triage (vstem X) ({a} -> vfork (Conc a) X) ({a, b} -> apply_fork self chk (Conc a) (Conc b) X) tr
         })
-        Neu m => (if let Pi dom cod = (type_descriptor (pair_fst m)) {
-          if (vcheck chk dom X) { Neu (pair (cod (readback X)) (pair "Sp" (pair m X))) } else { Poison (Neu m) }
-        } else { Poison (Neu m) })
+        Neu m => {
+          let fr := readback X
+          let r := respond_face (type_tele (pair_fst m)) fr (make_mark m)
+          if (is_invalid r) { Poison (Neu m) }
+          else if (list_all ({ob} -> vcheck chk (pair_fst ob) X) (pair_fst r)) {
+            Neu (pair (pair_snd r) (pair "Ob" (pair fr (make_mark m))))
+          } else { Poison (Neu m) }
+        }
         Poison r => (Poison r)
         Chain1 e scr => (Chain2 (pair e (pair scr X)))
         Chain2 e scr ca => (absorb_v chk e scr ca X)
@@ -319,12 +347,10 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
         if (is_neutral x) { invalid x }
         else { triage tc ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x })
       a)
-  let hyp_apply := {f, x} ->
-    if let Pi dom cod = (type_descriptor (neutral_type f)) {
-      make_hyp (cod x) (pair "Sp" (pair f x))
-    } else {
-      invalid f
-    }
+  let hyp_apply := {f, x} -> {
+    let r := respond_face (type_tele (neutral_type f)) x f
+    if (is_invalid r) { invalid f } else { make_hyp (pair_snd r) (pair "Ob" (pair x f)) }
+  }
   let walk := fix ({self, f, x} ->
     if (is_invalid f) { f }
     else if (tree_eq f tree_eq) { on_tree_eq ({_} -> wait tree_eq x) x }
@@ -334,19 +360,22 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
     else if (is_elim_head f) { (wait shim (pair f nil)) x }
     else if (is_shim f) { f x }
     else if (tree_eq f ({x} -> x)) { x }
+    else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (acc f) }
     else { triage (t x) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f })
   let hyp_ok := (fix ({ok, vch, Pi, legit, v} ->
     if (member v legit) {
       true
     } else {
       let hist := neutral_history v
-      if (tree_eq (pair_fst hist) "Sp") {
-        let parent := pair_fst (pair_snd hist)
-        let frame := pair_snd (pair_snd hist)
-        if let Pi dom cod = (type_descriptor (neutral_type parent)) {
-          and (ok vch Pi legit parent) (vch dom frame)
-        } else {
-          false
+      if (tree_eq (pair_fst hist) "Ob") {
+        let frame := pair_fst (pair_snd hist)
+        let parent := pair_snd (pair_snd hist)
+        let r := respond_face (type_tele (neutral_type parent)) frame parent
+        if (is_invalid r) { false }
+        else {
+          and (ok vch Pi legit parent)
+          (and (tree_eq (neutral_type v) (pair_snd r))
+               (list_all ({ob} -> vch (pair_fst ob) (pair_snd ob)) (pair_fst r)))
         }
       } else {
         let scr := pair_fst hist
@@ -368,18 +397,15 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
   }
   let apply := {_chk, f, x} -> walk f x
   let judge := {chk, st, T, v} -> {
-    let PiF := {dom, cod} -> make_type ({ recognize := {_self, g} -> chk st (pi_tele dom cod) g t, descriptor := inj "Pi" (pair dom cod) })
+    let PiF := {dom, cod} -> make_type ({ recognize := {_self, g} -> chk st (pi_tele dom cod) g t, tele := pi_tele dom cod, descriptor := inj "Pi" (pair dom cod) })
     (fix ({vf, T2, v2} ->
       if (is_invalid v2) {
         false
       } else if (is_neutral v2) {
         and (tree_eq (neutral_type v2) T2) (hyp_ok vf PiF st v2)
-      } else if let Pi dom cod = (type_descriptor T2) {
-        chk st (pi_tele dom cod) v2 t
-      } else if let ISect dom pred = (type_descriptor T2) {
-        chk st (isect_tele dom pred) v2 t
       } else {
-        (type_recognizer T2) (wait vf T2) v2
+        let rows := type_tele T2
+        if (is_leaf rows) { (type_recognizer T2) (wait vf T2) v2 } else { chk st rows v2 t }
       })) T v
   }
   ({ fresh := fresh, admit, apply, judge })

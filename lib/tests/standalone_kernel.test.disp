@@ -145,13 +145,25 @@ test Sigma Guard NatType ({n} -> Point (succ n)) (pair 2 4) = false
 test Isect Guard NatType ({n} -> Pi Guard (Point n) ({_} -> NatType)) ({_p} -> zero) = true
 test Isect Guard NatType ({n} -> Pi Guard (Point n) ({_} -> NatType)) ({p} -> p) = false
 
-// Respond coverage today: a Pi-typed mint extends as a spine (hyp_apply) and a
-// blessed elim defers a cert; a Sigma-typed mint has NO projection respond, so
-// projecting it is a sound over-rejection until a consumer-side JProj reading lands.
+// Respond is ONE face: a mint applied to a frame answers via respond_face over its
+// type's rows. A value frame rolls a Pi mint (the frame obligation defers to the
+// audit); an accessor frame rolls a Sigma projection as a DERIVED mint --
+// deterministic, so dependent Sigma gets surjective-pairing eta for free, and the
+// swapped rebuild fails its fst slot. Projecting a mint whose type advertises no
+// rows stays refused (the sig-mining defense). Meta's readback/re-lift boundary
+// over-rejects the eta rebuild (a projected Neu re-enters as opaque Conc), pinned.
 sig_dom := Sigma Guard NatType ({_} -> NatType)
 test Pi Guard sig_dom ({_} -> NatType) ({_p} -> zero) = true
-test Pi Guard sig_dom ({_} -> NatType) ({p} -> pair_fst p) = false
-test Pi Meta sig_dom ({_} -> NatType) ({p} -> pair_fst p) = false
+test Pi Guard sig_dom ({_} -> NatType) ({p} -> pair_fst p) = true
+test Pi Guard sig_dom ({_} -> NatType) ({p} -> pair_snd p) = true
+test Pi Meta sig_dom ({_} -> NatType) ({p} -> pair_fst p) = true
+test Pi Meta sig_dom ({_} -> NatType) ({p} -> pair_snd p) = true
+test Pi Guard NatType ({_} -> NatType) ({n} -> pair_fst n) = false
+test Pi Meta NatType ({_} -> NatType) ({n} -> pair_fst n) = false
+sig_dep := Sigma Guard NatType ({n} -> Point (succ n))
+test Pi Guard sig_dep ({_} -> sig_dep) ({p} -> pair (pair_fst p) (pair_snd p)) = true
+test Pi Guard sig_dep ({_} -> sig_dep) ({p} -> pair (pair_snd p) (pair_fst p)) = false
+test Pi Meta sig_dep ({_} -> sig_dep) ({p} -> pair (pair_fst p) (pair_snd p)) = false
 
 // Tables are partial sets over the handler interface; every slot except fresh has
 // a default (admit/lift/read = identity, apply = raw application, judge = the type
