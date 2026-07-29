@@ -133,6 +133,8 @@ case_of := {T, B, arms} -> {
     {_scr} -> invalid arms
   }
 }
+RowType := sum_of Row
+ObsType := sum_of Obs
 
 Frame := < Acc : Tree, Elim : Tree >
 is_acc := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Acc")
@@ -143,14 +145,14 @@ respond_face := {T, frame, self} -> {
     (fix ({go, rows2} ->
       if (is_leaf rows2) { invalid frame } else {
         let tail := pair_snd rows2
-        match (pair_fst rows2) {
+        match (pair_fst rows2) : (case_of RowType ({_} -> AnyTree)) {
           Fresh ty => (if (is_acc frame) { invalid frame } else {
             match (pair_fst (tail frame)) {
               J ob cod => (match ob { App _ => (pair (cons (pair ty frame) nil) cod); _ => (invalid frame) })
               _ => (invalid frame)
             }
           })
-          J ob ty => (match ob {
+          J ob ty => (match ob : (case_of ObsType ({_} -> AnyTree)) {
             Prj a => (match frame {
               Acc fa => (if (tree_eq a fa) { pair nil ty } else { go (tail (make_hyp ty (pair "Ob" (pair (Acc a) self)))) })
               _ => (invalid frame)
@@ -210,14 +212,14 @@ Tele := {table, tele} -> {
   let run := fix ({chk, st, rows, fV, prior} ->
     if (is_leaf rows) { true } else {
       let tail := pair_snd rows
-      match (pair_fst rows) {
+      match (pair_fst rows) : (case_of RowType ({_} -> AnyTree)) {
         Fresh ty => {
           let points := fresh st ty tail
           if (is_leaf points) { false } else {
             list_all ({p} -> chk (pair_snd p) (tail (read (pair_fst p))) fV (pair_fst p)) points
           }
         }
-        J ob ty => (match ob {
+        J ob ty => (match ob : (case_of ObsType ({_} -> AnyTree)) {
           App _ => {
             let r := apply chk fV prior
             if (judge chk st ty r) { chk st (tail (read r)) fV prior } else { false }

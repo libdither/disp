@@ -182,7 +182,6 @@ test Pi ({}) NatType ({_} -> NatType) succ = false
 // function refuses certification: raw projection of the abstract scrutinee is
 // reflection. is_acc pins the sealed-core edge: a real kernel reader (raw
 // triage + tree_eq on its input) does not certify.
-RowType := sum_of Row
 row_rec := elim_of RowType ({_} -> BoolType)
 row_binds := {row} -> row_rec row ({_ty} -> true) ({_ob} -> false)
 row_binds_bad := {row} -> row_rec row ({_ty} -> true) ({_ob} -> 5)
@@ -201,7 +200,6 @@ test Pi Guard RowType ({_} -> BoolType) is_acc = false
 
 // n-ary sums: the collectors and gate derive the case arity from the gate's
 // obligation-type list, so sum_of is variant-count generic -- Obs has three.
-ObsType := sum_of Obs
 obs_rec := elim_of ObsType ({_} -> BoolType)
 obs_is_app := {ob} -> obs_rec ob ({_} -> true) ({_} -> false) ({_} -> false)
 test obs_is_app App = true
