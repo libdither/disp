@@ -65,6 +65,7 @@ export function exprMentions(e: Expr, name: string): boolean {
       return exprMentions(e.cond, name) || exprMentions(e.thenBody, name) || exprMentions(e.elseBody, name)
     case "match":
       return exprMentions(e.cond, name) ||
+        (e.matcher != null && exprMentions(e.matcher, name)) ||
         e.arms.some(a => !a.binders.includes(name) && exprMentions(a.body, name))
   }
 }
@@ -208,6 +209,7 @@ function substExpr(e: Expr, map: Map<string, Expr>): Expr {
         members: e.members, trailing: e.trailing ? substExpr(e.trailing, map) : e.trailing }
     case "match":
       return { tag: "match", cond: substExpr(e.cond, map),
+        matcher: e.matcher ? substExpr(e.matcher, map) : e.matcher,
         arms: e.arms.map(a => ({ pat: a.pat, binders: a.binders, body: substExpr(a.body, without(a.binders)) })) }
   }
 }

@@ -130,7 +130,7 @@ export type Expr =
   // cut) desugars in compile.ts, where arm bodies are closed over their free
   // vars the way `if` branches are.
   | { tag: "if"; cond: Expr; thenBody: Expr; elseBody: Expr }
-  | { tag: "match"; cond: Expr; arms: Arm[] }
+  | { tag: "match"; cond: Expr; arms: Arm[]; matcher?: Expr }
 
 // A binder parameter. `default` (a `:= expr` suffix) is the named-argument
 // fallback: when a function declared `{x : A, y : B := d} -> …` is *named-called*
@@ -613,12 +613,13 @@ const matchArmP: P<Arm> = nl((ts, i) => {
 const matchP: P<Expr> = (ts, i) => {
   const r = seq(
     kwP("match"), skipNl, lazy(() => app),
+    optional(seq(nl(punctP(":")), skipNl, lazy(() => simple))),
     nl(punctP("{")),
     sepBy1(matchArmP, semiP),
     nl(punctP("}")),
   )(ts, i)
   if (!r.ok) return r
-  const [, , cond, , arms] = r.v
+  const [, , cond, ann, , arms] = r.v
   const boolArms = (a: string, b: string) =>
     arms.some(x => x.pat === a) && arms.some(x => x.pat === b)
   const isBool = arms.length === 2 && !arms.some(a => a.binders.length > 0)
@@ -631,7 +632,9 @@ const matchP: P<Expr> = (ts, i) => {
     // Report at r.pos (past the arms) so this beats the generic idP error in `alt`.
     return err(`boolean 'match c { ${arms[0].pat} => …; ${arms[1].pat} => … }' was removed — use 'if c then … else …'`, r.pos)
   }
-  return ok({ tag: "match", cond, arms }, r.pos)
+  const node: Expr = { tag: "match", cond, arms }
+  if (ann) node.matcher = ann[2]
+  return ok(node, r.pos)
 }
 
 // `if c then a else b` — the boolean conditional (desugars to `cond` in

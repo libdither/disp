@@ -246,3 +246,15 @@ case_dflt := case_of ObsType ({_} -> BoolType) ({ App := {_} -> true, _ := {_} -
 test case_dflt App = true
 test case_dflt Self = false
 test Pi Guard ObsType ({_} -> BoolType) case_dflt = true
+
+// The annotated match: `match c : M { arms }` compiles to (M arms-record) c.
+// M is any matcher former taking (arms, scrutinee); with case_of the match is
+// typed and certifiable, while bare match stays the raw prod cut.
+match_is_app := {ob} -> match ob : (case_of ObsType ({_} -> BoolType)) { App _ => true; Self _ => false; Prj _ => false }
+test match_is_app App = true
+test match_is_app (Prj pair_fst) = false
+test Pi Guard ObsType ({_} -> BoolType) match_is_app = true
+test Pi Meta ObsType ({_} -> BoolType) match_is_app = true
+match_dflt := {ob} -> match ob : (case_of ObsType ({_} -> BoolType)) { App _ => true; _ => false }
+test match_dflt Self = false
+test Pi Guard ObsType ({_} -> BoolType) match_dflt = true

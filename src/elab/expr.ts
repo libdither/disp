@@ -421,6 +421,32 @@ export function exprToCir(
         return { tag: "lam", x: pn, body: appd }
       }
 
+      // Annotated match `match c : M { arms }` ⟶ (M arms-record) c: the arms
+      // become a NAMED record (make_record encoding, the wildcard arm as its
+      // "_" field) handed to the matcher former M — `case_of T B` gives the
+      // typed, certifiable match; bare match keeps the prod cut below. Same
+      // fv-closing as the prod path (the closed-prefix hazard).
+      if (e.matcher) {
+        const recordValEntry = lookupEntry("make_record")
+        const listConstEntry = lookupEntry("list_const")
+        if (!recordValEntry?.tree || !listConstEntry?.tree)
+          throw new Error("match ':' form: 'make_record' and 'list_const' must be in scope (open the kernel prelude)")
+        const matcherCir = exprToCir(e.matcher, lookupEntry, resolveUse, sinks)
+        let annNames: Tree = elab.cs.leaf()
+        for (let i = arms.length - 1; i >= 0; i--)
+          annNames = elab.cs.fork(stringToTree(arms[i].pat), annNames)
+        const listConst: Cir = { tag: "lit", t: listConstEntry.tree }
+        const consAnn = (h: Cir, tl: Cir): Cir => cap(cap({ tag: "lit", t: elab.cs.leaf() }, h), tl)
+        let armsCir: Cir = { tag: "lit", t: elab.cs.leaf() }
+        for (let i = arms.length - 1; i >= 0; i--)
+          armsCir = consAnn(cap(listConst, handlerCir(arms[i])), armsCir)
+        const recordCir = cap(cap({ tag: "lit", t: recordValEntry.tree }, { tag: "lit", t: annNames }), armsCir)
+        let annOut: Cir = cap(cap(matcherCir, recordCir), condCir)
+        for (let i = fvs.length - 1; i >= 0; i--) annOut = { tag: "lam", x: fvs[i], body: annOut }
+        for (const v of fvs) annOut = cap(annOut, { tag: "var", name: v })
+        return annOut
+      }
+
       // Wildcard handler is appended PAST the names so an unmatched tag's
       // index_of (= the name count) lands on it.
       const named = arms.filter(a => a.pat !== "_")
