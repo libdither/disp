@@ -172,3 +172,29 @@ test Pi Meta sig_dep ({_} -> sig_dep) ({p} -> pair (pair_fst p) (pair_snd p)) = 
 test Sigma ({}) NatType ({_} -> BoolType) (pair 2 true) = true
 test Sigma ({}) NatType ({_} -> BoolType) (pair 2 5) = false
 test Pi ({}) NatType ({_} -> NatType) succ = false
+
+// Self-typing experiment: a typed match over a declared 2-variant sum is just
+// elim_of at a code-derived sum type (sum2_of: recognizer, gate, and raw
+// dispatcher all derived from the variant list; a match is elim minus
+// recursion). The motive rides inertly through computation -- raw dispatch on
+// concrete rows is unchanged -- and is consumed only by certification, which
+// demands each arm at its motive instance. The raw (prod) spelling of the SAME
+// function refuses certification: raw projection of the abstract scrutinee is
+// reflection. is_acc pins the sealed-core edge: a real kernel reader (raw
+// triage + tree_eq on its input) does not certify.
+RowType := sum2_of Row
+row_rec := elim_of RowType ({_} -> BoolType)
+row_binds := {row} -> row_rec row ({_ty} -> true) ({_ob} -> false)
+row_binds_bad := {row} -> row_rec row ({_ty} -> true) ({_ob} -> 5)
+row_binds_raw := {row} -> match row { Fresh _ty => true; J _ob => false }
+test RowType (Fresh zero) = true
+test RowType (J (pair App NatType)) = true
+test RowType zero = false
+test row_binds (Fresh zero) = true
+test row_binds (J (pair App NatType)) = false
+test Pi Guard RowType ({_} -> BoolType) row_binds = true
+test Pi Meta RowType ({_} -> BoolType) row_binds = true
+test Pi Guard RowType ({_} -> BoolType) row_binds_bad = false
+test Pi Meta RowType ({_} -> BoolType) row_binds_bad = false
+test Pi Guard RowType ({_} -> BoolType) row_binds_raw = false
+test Pi Guard RowType ({_} -> BoolType) is_acc = false

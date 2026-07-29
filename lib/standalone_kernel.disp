@@ -1,6 +1,7 @@
 open use raw "prelude.disp" {}
 
-// No comments in this file beyond this one; the code is meant to be self-explanatory.
+// LLMs may not comment in this file beyond this one; the code is meant to be self-explanatory.
+// Comments are specifically only to be added, modified, and removed by human reviewers for their own understanding
 // Unused-looking defs below may be compiler sugar targets looked up by name:
 // make_record + list_const (record literals), Coproduct (sum literals), prod (match).
 
@@ -11,6 +12,7 @@ make_record := {names, payload} -> pair names payload
 inj := {name, payload} -> pair name payload
 Coproduct := {variants} -> variants
 Tree := t
+/// prod mismatcher
 prod := {table} -> (fix ({go, names, arms, v} ->
   if (is_leaf names) {
     if (is_leaf arms) { t } else { (pair_fst arms) (pair_snd v) }
@@ -81,6 +83,16 @@ sigma_tele := {A, B} -> pair (J (pair Self (pred_type is_fork))) ({_} ->
   pair (J (pair (Prj pair_fst) A)) ({a} ->
   pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil)))
 PiCode := {A, B} -> make_type ({ tele := pi_tele A B })
+AnyTree := pred_type ({_v} -> true)
+sum2_of := {variants} -> {
+  let tag1 := pair_fst (pair_fst variants)
+  let tag2 := pair_fst (pair_fst (pair_snd variants))
+  make_type ({
+    recognize := {_self, v} -> and (is_fork v) (or (tree_eq (pair_fst v) tag1) (tree_eq (pair_fst v) tag2))
+    gate := {_Ind, B, a1, a2} -> cons (pair (PiCode AnyTree ({p} -> B (inj tag1 p))) a1) (cons (pair (PiCode AnyTree ({p} -> B (inj tag2 p))) a2) nil)
+    elim := {_self, v, a1, a2} -> if (tree_eq (pair_fst v) tag1) { a1 (pair_snd v) } else { a2 (pair_snd v) }
+  })
+}
 
 Frame := < Acc : Tree, Elim : Tree >
 elim_frame := {E, ca, cb} -> Elim (pair E (pair ca cb))
