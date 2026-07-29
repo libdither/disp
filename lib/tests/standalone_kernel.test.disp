@@ -152,3 +152,11 @@ sig_dom := Sigma Guard NatType ({_} -> NatType)
 test Pi Guard sig_dom ({_} -> NatType) ({_p} -> zero) = true
 test Pi Guard sig_dom ({_} -> NatType) ({p} -> pair_fst p) = false
 test Pi Meta sig_dom ({_} -> NatType) ({p} -> pair_fst p) = false
+
+// Tables are partial sets over the handler interface; every slot except fresh has
+// a default (admit/lift/read = identity, apply = raw application, judge = the type
+// as a predicate). The EMPTY set is therefore a valid handler for fresh-free row
+// programs, and refuses any program that needs evidence.
+test Sigma ({}) NatType ({_} -> BoolType) (pair 2 true) = true
+test Sigma ({}) NatType ({_} -> BoolType) (pair 2 5) = false
+test Pi ({}) NatType ({_} -> NatType) succ = false

@@ -40,46 +40,57 @@ is_invalid := {v} -> has_sig invalid_sig v
 member := fix ({self, node, xs} ->
   if (is_leaf xs) { false } else if (tree_eq node (pair_fst xs)) { true } else { self node (pair_snd xs) })
 
-resumable := fix ({self, payload, arg} -> (pair_fst payload) (wait self payload) arg)
-make_type := {recognize, gate, members, elim} -> wait resumable (pair recognize (pair gate (pair members elim)))
-type_recognizer := {T} -> pair_fst (wait_payload T)
-type_gate := {T} -> pair_fst (pair_snd (wait_payload T))
-type_members := {T} -> pair_fst (pair_snd (pair_snd (wait_payload T)))
-type_elim := {T} -> pair_snd (pair_snd (pair_snd (wait_payload T)))
-inert_gate := {_check, _Pi, _Ind, _B, _ca, _cb} -> false
+field := fix ({self, r, name} -> {
+  let names := pair_fst r
+  let payloads := pair_snd r
+  if (is_leaf names) { t }
+  else if (tree_eq (pair_fst names) name) { pair_snd (pair_fst payloads) }
+  else { self (pair (pair_snd names) (pair_snd payloads)) name }
+})
+field_or := {r, name, dflt} -> {
+  let v := field r name
+  if (is_leaf v) { dflt } else { v }
+}
 
-elim_of := {Ind, B} -> wait resumable (pair (type_elim Ind) (pair Ind B))
+resumable := fix ({self, set, arg} -> (field set "recognize") (wait self set) arg)
+make_type := {set} -> wait resumable set
+inert_gate := {_check, _Pi, _Ind, _B, _ca, _cb} -> false
+type_recognizer := {T} -> field (wait_payload T) "recognize"
+type_gate := {T} -> field_or (wait_payload T) "gate" inert_gate
+type_members := {T} -> field (wait_payload T) "members"
+type_elim := {T} -> field (wait_payload T) "elim"
+type_descriptor := {T} -> field (wait_payload T) "descriptor"
+
+elim_marker := fix ({self, payload, arg} -> (pair_fst payload) (wait self payload) arg)
+elim_of := {Ind, B} -> wait elim_marker (pair (type_elim Ind) (pair Ind B))
 elim_raw := {E} -> pair_fst (wait_payload E)
 elim_ind := {E} -> pair_fst (pair_snd (wait_payload E))
 elim_motive := {E} -> pair_snd (pair_snd (wait_payload E))
-elim_sig := sig_of resumable
+elim_sig := sig_of elim_marker
 is_elim_head := {f} -> has_sig elim_sig f
 
 raw_nat_rec := {self, n, base, step} ->
   triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
-NatType := make_type
-  ({self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v)
-  ({check, Pi, Nat, B, base, step} -> and
-    (check (B zero) base)
-    (check (Pi Nat ({k} -> Pi (B k) ({_} -> B (succ k)))) step))
-  nil
-  raw_nat_rec
+NatType := make_type ({
+  recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
+  gate := {check, Pi, Nat, B, base, step} -> and (check (B zero) base) (check (Pi Nat ({k} -> Pi (B k) ({_} -> B (succ k)))) step)
+  elim := raw_nat_rec
+})
 nat_rec := elim_of NatType ({_} -> NatType)
 add := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
 
 raw_bool_rec := {_self, b, true_case, false_case} ->
   triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
-BoolType := make_type
-  ({_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v)
-  ({check, _Pi, _Bool, B, true_case, false_case} -> and
-    (check (B true) true_case)
-    (check (B false) false_case))
-  (cons true (cons false nil))
-  raw_bool_rec
+BoolType := make_type ({
+  recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
+  gate := {check, _Pi, _Bool, B, true_case, false_case} -> and (check (B true) true_case) (check (B false) false_case)
+  members := cons true (cons false nil)
+  elim := raw_bool_rec
+})
 bool_rec := elim_of BoolType ({_} -> BoolType)
 not_bool := {b} -> bool_rec b false true
 
-Point := {c} -> make_type ({_self, v} -> tree_eq c v) inert_gate (cons c nil) t
+Point := {c} -> make_type ({ recognize := {_self, v} -> tree_eq c v, members := cons c nil })
 
 list_all := fix ({self, p, xs} ->
   if (is_leaf xs) { true } else { and (p (pair_fst xs)) (self p (pair_snd xs)) })
@@ -93,22 +104,13 @@ sigma_tele := {A, B} -> pair (JGuard is_fork) ({_} ->
   pair (JProj (pair pair_fst A)) ({a} ->
   pair (JProj (pair pair_snd (B a))) ({_} -> nil)))
 
-make_table := {admit, lift, fresh, apply, read, judge} ->
-  pair admit (pair lift (pair fresh (pair apply (pair read judge))))
-table_admit := {table} -> pair_fst table
-table_lift := {table} -> pair_fst (pair_snd table)
-table_fresh := {table} -> pair_fst (pair_snd (pair_snd table))
-table_apply := {table} -> pair_fst (pair_snd (pair_snd (pair_snd table)))
-table_read := {table} -> pair_fst (pair_snd (pair_snd (pair_snd (pair_snd table))))
-table_judge := {table} -> pair_snd (pair_snd (pair_snd (pair_snd (pair_snd table))))
-
 Tele := {table, tele, descriptor} -> {
-  let admit := table_admit table
-  let lift := table_lift table
-  let fresh := table_fresh table
-  let apply := table_apply table
-  let read := table_read table
-  let judge := table_judge table
+  let admit := field_or table "admit" ({_f} -> true)
+  let lift := field_or table "lift" ({v} -> v)
+  let fresh := field table "fresh"
+  let apply := field_or table "apply" ({_chk, f, a} -> f a)
+  let read := field_or table "read" ({v} -> v)
+  let judge := field_or table "judge" ({_chk, _st, T, r} -> T r)
   let run := fix ({chk, st, rows, fV, prior} ->
     if (is_leaf rows) { true } else {
       let row := pair_fst rows
@@ -132,31 +134,15 @@ Tele := {table, tele, descriptor} -> {
         JGuard p => (if (p (read fV)) { chk st (tail (read fV)) fV prior } else { false })
       }
     })
-  make_type ({_self, f} -> if (admit f) { run t tele (lift f) t } else { false }) inert_gate nil descriptor
+  make_type ({ recognize := {_self, f} -> if (admit f) { run t tele (lift f) t } else { false }, descriptor })
 }
 
 Pi := {table, A, B} -> Tele table (pi_tele A B) (inj "Pi" (pair A B))
 Sigma := {table, A, B} -> Tele table (sigma_tele A B) t
 Isect := {table, A, P} -> Tele table (isect_tele A P) (inj "ISect" (pair A P))
 
-Enum := {
-  let admit := {_f} -> true
-  let lift := {f} -> f
-  let fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) (type_members ty)
-  let apply := {_chk, f, a} -> f a
-  let read := {a} -> a
-  let judge := {_chk, _st, T, r} -> T r
-  make_table admit lift fresh apply read judge
-}
-Sampled := {samples} -> {
-  let admit := {_f} -> true
-  let lift := {f} -> f
-  let fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples
-  let apply := {_chk, f, a} -> f a
-  let read := {a} -> a
-  let judge := {_chk, _st, T, r} -> T r
-  make_table admit lift fresh apply read judge
-}
+Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) (type_members ty) })
+Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
 
 Meta := {
   let Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
@@ -195,7 +181,7 @@ Meta := {
     match V {
       Poison r => false
       Neu ty _ => (tree_eq ty T)
-      _ => (if let Pi dom cod = (type_elim T) {
+      _ => (if let Pi dom cod = (type_descriptor T) {
         chk t (pi_tele dom cod) V t
       } else if let Conc tr = V {
         T tr
@@ -233,7 +219,7 @@ Meta := {
   let absorb_v := ({chk, E, scr, ca, cb} -> {
     let Ind := elim_ind E
     let B := elim_motive E
-    let GatePi := {dom, cod} -> make_type ({_self, f} -> chk t (pi_tele dom cod) (Conc f) t) inert_gate nil (inj "Pi" (pair dom cod))
+    let GatePi := {dom, cod} -> make_type ({ recognize := {_self, f} -> chk t (pi_tele dom cod) (Conc f) t, descriptor := inj "Pi" (pair dom cod) })
     let vch := vcheck chk
     if let Neu sTy _ = scr {
       if (and (tree_eq sTy Ind) (tree_eq (elim_raw E) (type_elim Ind))) {
@@ -265,7 +251,7 @@ Meta := {
         } else {
           triage (vstem X) ({a} -> vfork (Conc a) X) ({a, b} -> apply_fork self chk (Conc a) (Conc b) X) tr
         })
-        Neu m => (if let Pi dom cod = (type_elim (pair_fst m)) {
+        Neu m => (if let Pi dom cod = (type_descriptor (pair_fst m)) {
           if (vcheck chk dom X) { Neu (pair (cod (readback X)) (pair "Sp" (pair m X))) } else { Poison (Neu m) }
         } else { Poison (Neu m) })
         Poison r => (Poison r)
@@ -275,13 +261,11 @@ Meta := {
         Fork a b => (apply_fork self chk a b X)
       }
     }))
-  let admit := {_f} -> true
   let lift := {f} -> Conc f
   let fresh := {st, ty, tail} -> cons (pair (Neu (pair ty tail)) st) nil
   let apply := {chk, fV, x} -> mwalk chk fV x
-  let read := readback
   let judge := {chk, _st, T, r} -> vcheck chk T r
-  make_table admit lift fresh apply read judge
+  ({ fresh := fresh, lift, apply, read := readback, judge })
 }
 
 neutral_free := fix ({self, v} ->
@@ -336,7 +320,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
         else { triage tc ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x })
       a)
   let hyp_apply := {f, x} ->
-    if let Pi dom cod = (type_elim (neutral_type f)) {
+    if let Pi dom cod = (type_descriptor (neutral_type f)) {
       make_hyp (cod x) (pair "Sp" (pair f x))
     } else {
       invalid f
@@ -359,7 +343,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
       if (tree_eq (pair_fst hist) "Sp") {
         let parent := pair_fst (pair_snd hist)
         let frame := pair_snd (pair_snd hist)
-        if let Pi dom cod = (type_elim (neutral_type parent)) {
+        if let Pi dom cod = (type_descriptor (neutral_type parent)) {
           and (ok vch Pi legit parent) (vch dom frame)
         } else {
           false
@@ -378,29 +362,27 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
       }
     }))
   let admit := neutral_free
-  let lift := {f} -> f
   let fresh := {st, ty, tail} -> {
     let x := make_hyp ty tail
     cons (pair x (cons x st)) nil
   }
   let apply := {_chk, f, x} -> walk f x
-  let read := {x} -> x
   let judge := {chk, st, T, v} -> {
-    let PiF := {dom, cod} -> make_type ({_self, g} -> chk st (pi_tele dom cod) g t) inert_gate nil (inj "Pi" (pair dom cod))
+    let PiF := {dom, cod} -> make_type ({ recognize := {_self, g} -> chk st (pi_tele dom cod) g t, descriptor := inj "Pi" (pair dom cod) })
     (fix ({vf, T2, v2} ->
       if (is_invalid v2) {
         false
       } else if (is_neutral v2) {
         and (tree_eq (neutral_type v2) T2) (hyp_ok vf PiF st v2)
-      } else if let Pi dom cod = (type_elim T2) {
+      } else if let Pi dom cod = (type_descriptor T2) {
         chk st (pi_tele dom cod) v2 t
-      } else if let ISect dom pred = (type_elim T2) {
+      } else if let ISect dom pred = (type_descriptor T2) {
         chk st (isect_tele dom pred) v2 t
       } else {
         (type_recognizer T2) (wait vf T2) v2
       })) T v
   }
-  make_table admit lift fresh apply read judge
+  ({ fresh := fresh, admit, apply, judge })
 }
 Guard := GuardAt
   ({_resume, _x} -> false)
