@@ -93,11 +93,26 @@ sigma_tele := {A, B} -> pair (JGuard is_fork) ({_} ->
   pair (JProj (pair pair_fst A)) ({a} ->
   pair (JProj (pair pair_snd (B a))) ({_} -> nil)))
 
-TeleAt := {admit, lift, fresh, apply, read, judge} -> {
-  let run := fix ({chk, st, tele, fV, prior} ->
-    if (is_leaf tele) { true } else {
-      let row := pair_fst tele
-      let tail := pair_snd tele
+make_table := {admit, lift, fresh, apply, read, judge} ->
+  pair admit (pair lift (pair fresh (pair apply (pair read judge))))
+table_admit := {table} -> pair_fst table
+table_lift := {table} -> pair_fst (pair_snd table)
+table_fresh := {table} -> pair_fst (pair_snd (pair_snd table))
+table_apply := {table} -> pair_fst (pair_snd (pair_snd (pair_snd table)))
+table_read := {table} -> pair_fst (pair_snd (pair_snd (pair_snd (pair_snd table))))
+table_judge := {table} -> pair_snd (pair_snd (pair_snd (pair_snd (pair_snd table))))
+
+Tele := {table, tele, descriptor} -> {
+  let admit := table_admit table
+  let lift := table_lift table
+  let fresh := table_fresh table
+  let apply := table_apply table
+  let read := table_read table
+  let judge := table_judge table
+  let run := fix ({chk, st, rows, fV, prior} ->
+    if (is_leaf rows) { true } else {
+      let row := pair_fst rows
+      let tail := pair_snd rows
       match row {
         Fresh ty => {
           let points := fresh st ty tail
@@ -117,25 +132,40 @@ TeleAt := {admit, lift, fresh, apply, read, judge} -> {
         JGuard p => (if (p (read fV)) { chk st (tail (read fV)) fV prior } else { false })
       }
     })
-  ({tele, descriptor} -> make_type ({_self, f} -> if (admit f) { run t tele (lift f) t } else { false }) inert_gate nil descriptor)
+  make_type ({_self, f} -> if (admit f) { run t tele (lift f) t } else { false }) inert_gate nil descriptor
 }
 
-SampledTele := {samples} -> {
+Pi := {table, A, B} -> Tele table (pi_tele A B) (inj "Pi" (pair A B))
+Sigma := {table, A, B} -> Tele table (sigma_tele A B) t
+Isect := {table, A, P} -> Tele table (isect_tele A P) (inj "ISect" (pair A P))
+
+Enum := {
+  let admit := {_f} -> true
+  let lift := {f} -> f
+  let fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) (type_members ty)
+  let apply := {_chk, f, a} -> f a
+  let read := {a} -> a
+  let judge := {_chk, _st, T, r} -> T r
+  make_table admit lift fresh apply read judge
+}
+Sampled := {samples} -> {
   let admit := {_f} -> true
   let lift := {f} -> f
   let fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples
   let apply := {_chk, f, a} -> f a
   let read := {a} -> a
   let judge := {_chk, _st, T, r} -> T r
-  TeleAt admit lift fresh apply read judge
+  make_table admit lift fresh apply read judge
 }
-SampledPi := {samples, A, B} -> SampledTele samples (pi_tele A B) (inj "Pi" (pair A B))
-SampledSigma := {A, B} -> SampledTele nil (sigma_tele A B) t
-EnumPi := {A, B} -> SampledPi (type_members A) A B
 
-Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
-
-MetaTele := {
+Meta := {
+  let Conc := inj "Conc"
+  let Neu := inj "Neu"
+  let Stem := inj "Stem"
+  let Fork := inj "Fork"
+  let Poison := inj "Poison"
+  let Chain1 := inj "Chain1"
+  let Chain2 := inj "Chain2"
   let teq_sig := sig_of tree_eq
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
   let vfork := {L, R} -> if let Conc lc = L { if let Conc rc = R { Conc (t lc rc) } else { Fork (pair L R) } } else { Fork (pair L R) }
@@ -257,14 +287,13 @@ MetaTele := {
   let apply := {chk, fV, x} -> mwalk chk fV x
   let read := readback
   let judge := {chk, _st, T, r} -> vcheck chk T r
-  TeleAt admit lift fresh apply read judge
+  make_table admit lift fresh apply read judge
 }
-MetaPi := {A, B} -> MetaTele (pi_tele A B) (inj "Pi" (pair A B))
 
 neutral_free := fix ({self, v} ->
   if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v })
 
-GuardTeleAt := {on_is_neutral, on_tree_eq} -> {
+GuardAt := {on_is_neutral, on_tree_eq} -> {
   let cert_absorb := ({E, scr, ca, cb} -> {
     let Ind := elim_ind E
     let B := elim_motive E
@@ -377,27 +406,23 @@ GuardTeleAt := {on_is_neutral, on_tree_eq} -> {
         (type_recognizer T2) (wait vf T2) v2
       })) T v
   }
-  TeleAt admit lift fresh apply read judge
+  make_table admit lift fresh apply read judge
 }
-GuardTele := GuardTeleAt
+Guard := GuardAt
   ({_resume, _x} -> false)
   ({resume, x} -> if (neutral_free x) { resume t } else { invalid x })
-AmbientTele := GuardTeleAt
+Ambient := GuardAt
   ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)
-GuardPi := {A, B} -> GuardTele (pi_tele A B) (inj "Pi" (pair A B))
-GuardSigma := {A, B} -> GuardTele (sigma_tele A B) t
-GuardIsect := {A, P} -> GuardTele (isect_tele A P) (inj "ISect" (pair A P))
-AmbientPi := {A, B} -> AmbientTele (pi_tele A B) (inj "Pi" (pair A B))
 
 Five := Point 5
 Six := Point 6
-MetaNatToNat := MetaPi NatType ({_} -> NatType)
-GuardNatToNat := GuardPi NatType ({_} -> NatType)
-EnumBoolToBool := EnumPi BoolType ({_} -> BoolType)
-EnumNatToNat := EnumPi NatType ({_} -> NatType)
-FiveToNat := EnumPi Five ({_} -> NatType)
-FiveToSix := EnumPi Five ({_} -> Six)
+MetaNatToNat := Pi Meta NatType ({_} -> NatType)
+GuardNatToNat := Pi Guard NatType ({_} -> NatType)
+EnumBoolToBool := Pi Enum BoolType ({_} -> BoolType)
+EnumNatToNat := Pi Enum NatType ({_} -> NatType)
+FiveToNat := Pi Enum Five ({_} -> NatType)
+FiveToSix := Pi Enum Five ({_} -> Six)
 
 forge_hyp := make_hyp
 shift := {b} -> if (is_neutral b) { true } else { 5 }

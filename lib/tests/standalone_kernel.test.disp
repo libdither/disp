@@ -13,15 +13,15 @@ test add 0 4 = 4
 test tree_eq (forge_hyp NatType NatType) (forge_hyp NatType BoolType) = false
 test is_neutral (forge_hyp NatType NatType) = true
 
-test pi_suite EnumPi = pi_expected
-test pi_suite MetaPi = pi_expected
-test pi_suite GuardPi = pi_expected
-test fn_suite MetaPi = fn_expected
-test fn_suite GuardPi = fn_expected
-test elim_suite MetaPi = elim_expected
-test elim_suite GuardPi = elim_expected
-test guard_suite MetaPi = guard_expected
-test guard_suite GuardPi = guard_expected
+test pi_suite (Pi Enum) = pi_expected
+test pi_suite (Pi Meta) = pi_expected
+test pi_suite (Pi Guard) = pi_expected
+test fn_suite (Pi Meta) = fn_expected
+test fn_suite (Pi Guard) = fn_expected
+test elim_suite (Pi Meta) = elim_expected
+test elim_suite (Pi Guard) = elim_expected
+test guard_suite (Pi Meta) = guard_expected
+test guard_suite (Pi Guard) = guard_expected
 
 test MetaNatToNat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = false
 test GuardNatToNat ({n} -> triage zero ({_} -> zero) ({_l, _r} -> zero) n) = false
@@ -39,8 +39,8 @@ assembled_forgery := {n} -> t (t (pair_snd (pair n sig_child))) smuggled
 test is_stem hyp_sig = true
 test tree_eq (assembled_forgery zero) (forge_hyp BoolType BoolType) = true
 test is_neutral (assembled_forgery zero) = true
-test MetaPi NatType ({_} -> BoolType) assembled_forgery = false
-test GuardPi NatType ({_} -> BoolType) assembled_forgery = false
+test Pi Meta NatType ({_} -> BoolType) assembled_forgery = false
+test Pi Guard NatType ({_} -> BoolType) assembled_forgery = false
 
 nat_mint := forge_hyp NatType ({_} -> NatType)
 test GuardNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatType) (pair zero ({k, ih} -> succ ih))))) = false
@@ -48,37 +48,37 @@ test GuardNatToNat ({n} -> forge_hyp NatType (pair nat_mint (pair ({_} -> NatTyp
 
 mint_replay := {b} -> make_hyp BoolType ({_} -> BoolType)
 test EnumBoolToBool mint_replay = false
-test MetaPi BoolType ({_} -> BoolType) mint_replay = false
-test GuardPi BoolType ({_} -> BoolType) mint_replay = false
+test Pi Meta BoolType ({_} -> BoolType) mint_replay = false
+test Pi Guard BoolType ({_} -> BoolType) mint_replay = false
 
 sniff_motive := {k} -> if (is_neutral k) { BoolType } else { NatType }
-test EnumPi BoolType sniff_motive ({b} -> 5) = true
-test MetaPi BoolType sniff_motive ({b} -> 5) = false
-test GuardPi BoolType sniff_motive ({b} -> 5) = false
+test Pi Enum BoolType sniff_motive ({b} -> 5) = true
+test Pi Meta BoolType sniff_motive ({b} -> 5) = false
+test Pi Guard BoolType sniff_motive ({b} -> 5) = false
 
-test reader_suite EnumPi = reader_expected
-test reader_suite MetaPi = reader_expected
-test reader_suite GuardPi = reader_expected
+test reader_suite (Pi Enum) = reader_expected
+test reader_suite (Pi Meta) = reader_expected
+test reader_suite (Pi Guard) = reader_expected
 
 honest_sniffer := {b} -> if (is_neutral b) { true } else { not_bool b }
 test EnumBoolToBool honest_sniffer = true
-test MetaPi BoolType ({_} -> BoolType) honest_sniffer = true
-test GuardPi BoolType ({_} -> BoolType) honest_sniffer = true
+test Pi Meta BoolType ({_} -> BoolType) honest_sniffer = true
+test Pi Guard BoolType ({_} -> BoolType) honest_sniffer = true
 
-test GuardPi BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
+test Pi Guard BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
 
 rebuilt_sniffer := {b} -> if (tree_eq (pair_fst b) (t (pair_snd (pair b sig_child)))) { b } else { 5 }
 test EnumBoolToBool rebuilt_sniffer = false
-test MetaPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
-test GuardPi BoolType ({_} -> BoolType) rebuilt_sniffer = false
+test Pi Meta BoolType ({_} -> BoolType) rebuilt_sniffer = false
+test Pi Guard BoolType ({_} -> BoolType) rebuilt_sniffer = false
 
-test dep_suite EnumPi Five = dep_expected
-test dep_suite MetaPi NatType = dep_expected
-test dep_suite GuardPi NatType = dep_expected
+test dep_suite (Pi Enum) Five = dep_expected
+test dep_suite (Pi Meta) NatType = dep_expected
+test dep_suite (Pi Guard) NatType = dep_expected
 
-test EnumPi Five ({n} -> Point n) ({n} -> n) = true
-test MetaPi NatType ({n} -> Point n) ({n} -> n) = false
-test GuardPi NatType ({n} -> Point n) ({n} -> n) = false
+test Pi Enum Five ({n} -> Point n) ({n} -> n) = true
+test Pi Meta NatType ({n} -> Point n) ({n} -> n) = false
+test Pi Guard NatType ({n} -> Point n) ({n} -> n) = false
 
 // tree_eq is banned on hyp-containing operands: it is the last reader that reconstructs
 // "am I the probe?" without touching a signature. Enum decides extensionally and keeps it.
@@ -99,48 +99,48 @@ test MetaNatToNat teq_shift = false
 teq_replay := {n} -> if (tree_eq n (make_hyp NatType ({_} -> NatType))) { zero } else { pair 5 5 }
 test GuardNatToNat teq_replay = false
 test MetaNatToNat teq_replay = false
-test EnumPi Five ({_} -> NatType) ({n} -> if (tree_eq n 5) { zero } else { pair 5 5 }) = true
+test Pi Enum Five ({_} -> NatType) ({n} -> if (tree_eq n 5) { zero } else { pair 5 5 }) = true
 neutral_branch_reader := {b} -> if (is_neutral b) { b } else { not_bool b }
-test GuardPi BoolType ({_} -> BoolType) neutral_branch_reader = true
-test MetaPi BoolType ({_} -> BoolType) neutral_branch_reader = true
+test Pi Guard BoolType ({_} -> BoolType) neutral_branch_reader = true
+test Pi Meta BoolType ({_} -> BoolType) neutral_branch_reader = true
 
 test GuardNatToNat ({n} -> make_hyp NatType t) = false
 test GuardNatToNat ({n} -> wait hyp_marker (pair NatType n)) = false
 test MetaNatToNat ({n} -> make_hyp NatType t) = false
 
-test ho_suite MetaPi = ho_expected
-test ho_suite GuardPi = ho_expected
+test ho_suite (Pi Meta) = ho_expected
+test ho_suite (Pi Guard) = ho_expected
 
-// SampledPi: differential testing as a handler table (lib). Only as strong as its
+// Sampled: differential testing as a handler table. Only as strong as its
 // sample list, pinned by the last test.
-test SampledPi (cons zero (cons 2 nil)) NatType ({_} -> NatType) succ = true
-test SampledPi (cons zero (cons 2 nil)) NatType ({_} -> NatType) ({n} -> pair 5 5) = false
-test SampledPi nil NatType ({_} -> NatType) succ = false
-test SampledPi (cons 2 nil) NatType ({_} -> NatType) ({n} -> if (tree_eq n zero) { pair 5 5 } else { n }) = true
+test Pi (Sampled (cons zero (cons 2 nil))) NatType ({_} -> NatType) succ = true
+test Pi (Sampled (cons zero (cons 2 nil))) NatType ({_} -> NatType) ({n} -> pair 5 5) = false
+test Pi (Sampled nil) NatType ({_} -> NatType) succ = false
+test Pi (Sampled (cons 2 nil)) NatType ({_} -> NatType) ({n} -> if (tree_eq n zero) { pair 5 5 } else { n }) = true
 
-// AmbientPi = the guard walk with the live kernel's reader policy (honest is_neutral,
-// unrestricted tree_eq). Two Observe rows are the ONLY difference from GuardPi, and they
+// Ambient = the guard walk with the live kernel's reader policy (honest is_neutral,
+// unrestricted tree_eq). Two Observe rows are the ONLY difference from Guard, and they
 // readmit exactly the live kernel's certification gaps: the face-sniffing junk body
 // (ACTIVE_BUGS item 5) and the tree_eq probe-bit dodge.
 ambient_pi_expected := { negation := true, identity := true, junk_arm := false, sniff := true }
-test pi_suite AmbientPi = ambient_pi_expected
+test pi_suite (Pi Ambient) = ambient_pi_expected
 ambient_reader_expected := { sniff_junk := true, concrete_read := true }
-test reader_suite AmbientPi = ambient_reader_expected
-test AmbientPi NatType ({_} -> NatType) teq_dodge = true
-test AmbientPi NatType ({_} -> NatType) teq_shift = true
+test reader_suite (Pi Ambient) = ambient_reader_expected
+test Pi Ambient NatType ({_} -> NatType) teq_dodge = true
+test Pi Ambient NatType ({_} -> NatType) teq_shift = true
 
 // Row programs beyond Pi. Sigma is judge-only (fresh-free): no abstract point ever
 // exists, so it decides identically under the certify table and a table with an
 // EMPTY sample list -- a fresh-free telescope is a plain predicate under any handler.
-test GuardSigma NatType ({_} -> BoolType) (pair 2 true) = true
-test GuardSigma NatType ({_} -> BoolType) (pair 2 5) = false
-test GuardSigma NatType ({_} -> BoolType) zero = false
-test SampledSigma NatType ({_} -> BoolType) (pair 2 true) = true
-test SampledSigma NatType ({_} -> BoolType) (pair 2 5) = false
-test GuardSigma NatType ({n} -> Point (succ n)) (pair 2 3) = true
-test GuardSigma NatType ({n} -> Point (succ n)) (pair 2 4) = false
+test Sigma Guard NatType ({_} -> BoolType) (pair 2 true) = true
+test Sigma Guard NatType ({_} -> BoolType) (pair 2 5) = false
+test Sigma Guard NatType ({_} -> BoolType) zero = false
+test Sigma (Sampled nil) NatType ({_} -> BoolType) (pair 2 true) = true
+test Sigma (Sampled nil) NatType ({_} -> BoolType) (pair 2 5) = false
+test Sigma Guard NatType ({n} -> Point (succ n)) (pair 2 3) = true
+test Sigma Guard NatType ({n} -> Point (succ n)) (pair 2 4) = false
 
 // Intersection = Pi's fresh row with a self judge (the implicit forall). The
 // candidate itself, not its application, must inhabit P at the abstract point.
-test GuardIsect NatType ({n} -> GuardPi (Point n) ({_} -> NatType)) ({_p} -> zero) = true
-test GuardIsect NatType ({n} -> GuardPi (Point n) ({_} -> NatType)) ({p} -> p) = false
+test Isect Guard NatType ({n} -> Pi Guard (Point n) ({_} -> NatType)) ({_p} -> zero) = true
+test Isect Guard NatType ({n} -> Pi Guard (Point n) ({_} -> NatType)) ({p} -> p) = false
