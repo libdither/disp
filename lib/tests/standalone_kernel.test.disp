@@ -182,7 +182,7 @@ test Pi ({}) NatType ({_} -> NatType) succ = false
 // function refuses certification: raw projection of the abstract scrutinee is
 // reflection. is_acc pins the sealed-core edge: a real kernel reader (raw
 // triage + tree_eq on its input) does not certify.
-RowType := sum2_of Row
+RowType := sum_of Row
 row_rec := elim_of RowType ({_} -> BoolType)
 row_binds := {row} -> row_rec row ({_ty} -> true) ({_ob} -> false)
 row_binds_bad := {row} -> row_rec row ({_ty} -> true) ({_ob} -> 5)
@@ -198,3 +198,35 @@ test Pi Guard RowType ({_} -> BoolType) row_binds_bad = false
 test Pi Meta RowType ({_} -> BoolType) row_binds_bad = false
 test Pi Guard RowType ({_} -> BoolType) row_binds_raw = false
 test Pi Guard RowType ({_} -> BoolType) is_acc = false
+
+// n-ary sums: the collectors and gate derive the case arity from the gate's
+// obligation-type list, so sum_of is variant-count generic -- Obs has three.
+ObsType := sum_of Obs
+obs_rec := elim_of ObsType ({_} -> BoolType)
+obs_is_app := {ob} -> obs_rec ob ({_} -> true) ({_} -> false) ({_} -> false)
+test obs_is_app App = true
+test obs_is_app (Prj pair_fst) = false
+test Pi Guard ObsType ({_} -> BoolType) obs_is_app = true
+test Pi Meta ObsType ({_} -> BoolType) obs_is_app = true
+test Pi Guard ObsType ({_} -> BoolType) ({ob} -> obs_rec ob ({_} -> true) ({_} -> 5) ({_} -> false)) = false
+
+// Declared list spines: list_of A types the kernel's cons/nil lists, and its
+// step obligation carries the induction hypothesis (ih : B tl) -- the first
+// recursive typed elimination in the file. blessed_len is list_len in blessed
+// form; blessed_all is list_all with `and` replaced by bool_rec (raw `and`
+// triages its Bool argument, which is reflection on a rolled Bool mint).
+NatList := list_of NatType
+test NatList nil = true
+test NatList (cons 1 (cons 2 nil)) = true
+test NatList (cons (pair 5 5) nil) = false
+len_rec := elim_of NatList ({_} -> NatType)
+blessed_len := {xs} -> len_rec xs zero ({_h, _tl, ih} -> succ ih)
+test blessed_len (cons 7 (cons 7 nil)) = 2
+test Pi Guard NatList ({_} -> NatType) blessed_len = true
+test Pi Meta NatList ({_} -> NatType) blessed_len = true
+test Pi Guard NatList ({_} -> NatType) ({xs} -> len_rec xs false ({_h, _tl, ih} -> succ ih)) = false
+all_rec := elim_of NatList ({_} -> BoolType)
+blessed_all := {p, xs} -> all_rec xs true ({h, _tl, ih} -> bool_rec (p h) ih false)
+test blessed_all ({n} -> is_leaf n) (cons zero (cons zero nil)) = true
+test blessed_all ({n} -> is_leaf n) (cons zero (cons 2 nil)) = false
+test Pi Guard (Pi Guard NatType ({_} -> BoolType)) ({_p} -> Pi Guard NatList ({_} -> BoolType)) blessed_all = true
