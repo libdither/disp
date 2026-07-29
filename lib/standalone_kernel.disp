@@ -82,9 +82,9 @@ sigma_tele := {A, B} -> pair (J (pair Self (pred_type is_fork))) ({_} ->
   pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil)))
 PiCode := {A, B} -> make_type ({ tele := pi_tele A B })
 
-acc := {a} -> inj "Acc" a
+Frame := < Acc : Tree, Elim : Tree >
+elim_frame := {E, ca, cb} -> Elim (pair E (pair ca cb))
 is_acc := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Acc")
-elim_frame := {E, ca, cb} -> inj "Elim" (pair E (pair ca cb))
 is_elim_frame := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Elim")
 respond_face := {T, frame, self} -> {
   let rows := type_tele T
@@ -100,25 +100,27 @@ respond_face := {T, frame, self} -> {
             }
           })
           J ob ty => (match ob {
-            Prj a => (if (is_acc frame) {
-              if (tree_eq a (pair_snd frame)) { pair nil ty }
-              else { go (tail (make_hyp ty (pair "Ob" (pair (acc a) self)))) }
-            } else { invalid frame })
+            Prj a => (match frame {
+              Acc fa => (if (tree_eq a fa) { pair nil ty } else { go (tail (make_hyp ty (pair "Ob" (pair (Acc a) self)))) })
+              _ => (invalid frame)
+            })
             Self _ => (go (tail t))
             App _ => (invalid frame)
           })
         }
       })) rows
-  } else if (is_elim_frame frame) {
-    let E := pair_fst (pair_snd frame)
-    let ca := pair_fst (pair_snd (pair_snd frame))
-    let cb := pair_snd (pair_snd (pair_snd frame))
-    let g := type_gate T
-    if (is_leaf g) { invalid frame }
-    else if (and (tree_eq (elim_ind E) T) (tree_eq (elim_raw E) (type_elim T))) {
-      pair (g T (elim_motive E) ca cb) ((elim_motive E) self)
-    } else { invalid frame }
-  } else { invalid frame }
+  } else {
+    match frame {
+      Elim E ca cb => {
+        let g := type_gate T
+        if (is_leaf g) { invalid frame }
+        else if (and (tree_eq (elim_ind E) T) (tree_eq (elim_raw E) (type_elim T))) {
+          pair (g T (elim_motive E) ca cb) ((elim_motive E) self)
+        } else { invalid frame }
+      }
+      _ => (invalid frame)
+    }
+  }
 }
 
 raw_nat_rec := {self, n, base, step} ->
@@ -267,7 +269,7 @@ Meta := {
         } else if let Conc xt = X {
           Conc (tr xt)
         } else if (or (tree_eq tr pair_fst) (tree_eq tr pair_snd)) {
-          if let Neu m2 = X { self chk X (Conc (acc tr)) } else { Poison X }
+          if let Neu m2 = X { self chk X (Conc (Acc tr)) } else { Poison X }
         } else if (is_elim_head tr) {
           if let Neu m = X { Chain1 (pair tr X) } else { self chk (Conc ((elim_raw tr) tr)) X }
         } else {
@@ -351,7 +353,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
     else if (is_elim_head f) { (wait shim (pair f nil)) x }
     else if (is_shim f) { f x }
     else if (tree_eq f ({x} -> x)) { x }
-    else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (acc f) }
+    else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (Acc f) }
     else { triage (t x) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f })
   let hyp_ok := (fix ({ok, vch, legit, v} ->
     if (member v legit) {
