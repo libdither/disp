@@ -972,6 +972,30 @@ const bracedPunP: P<RecMember> = (ts, i) => {
 
 const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedOpenP, bracedBindP, bracedFieldMemberP, bracedEquationP, bracedPunP))
 
+// A lexical `let V := < Tag : T, … >` (possibly parameterized) also binds each
+// variant's constructor, as extra lets right after it: nullary `Tag := inj "Tag" t`,
+// payload `Tag := inj "Tag"`. Mirrors the item-level auto-declaration
+// (elab/driver.ts) except for scoping: a block let SHADOWS an outer name — the
+// item-level skip-if-in-scope rule exists to type pre-existing exported
+// constructors, which has no block-local analogue.
+const expandSumLetCtors = (members: RecMember[]): RecMember[] => {
+  if (!members.some(m => m.tag === "let")) return members
+  const out: RecMember[] = []
+  for (const m of members) {
+    out.push(m)
+    if (m.tag !== "let") continue
+    let body: Expr = m.body
+    while (body.tag === "binder") body = body.body
+    if (body.tag !== "sumType" || body.variants.length === 0) continue
+    for (const sv of body.variants) {
+      const injTag: Expr = { tag: "app", f: { tag: "var", name: "inj" }, x: { tag: "str", value: sv.name } }
+      out.push({ tag: "let", name: sv.name, type: null,
+        body: sv.type == null ? { tag: "app", f: injTag, x: { tag: "leaf" } } : injTag })
+    }
+  }
+  return out
+}
+
 // Unified braced body parser: handles blocks, recValues, and mixed members.
 // Parses members (let/test/open/field). Then:
 //   - If any `:=` field found → recValue (fields are exports, lets are private stmts)
@@ -980,7 +1004,7 @@ const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedOpenP, b
 const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   const membersR = many(bracedMemberP)(ts, startPos)
   if (!membersR.ok) return membersR
-  const members = membersR.v.slice()
+  const members = expandSumLetCtors(membersR.v.slice())
   let pos = membersR.pos
 
   // Field puns only make sense alongside a real `:=` field. In a field-less

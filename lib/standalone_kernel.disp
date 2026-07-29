@@ -159,13 +159,7 @@ Sampled := {samples} -> {
 }
 
 Meta := {
-  let Conc := inj "Conc"
-  let Neu := inj "Neu"
-  let Stem := inj "Stem"
-  let Fork := inj "Fork"
-  let Poison := inj "Poison"
-  let Chain1 := inj "Chain1"
-  let Chain2 := inj "Chain2"
+  let Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain1 : Tree, Chain2 : Tree >
   let teq_sig := sig_of tree_eq
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
   let vfork := {L, R} -> if let Conc lc = L { if let Conc rc = R { Conc (t lc rc) } else { Fork (pair L R) } } else { Fork (pair L R) }

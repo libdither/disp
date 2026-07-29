@@ -35,3 +35,22 @@ let ps := {n} -> inj "succ" n
 test typecheck PN pz              = Ok true
 test typecheck PN (ps (ps pz))    = Ok true
 test typecheck Type PN            = Ok true
+
+// ── block-local sum decl: constructors bind lexically inside the block ──
+// (Item-level decls keep the skip-if-in-scope rule; a block let SHADOWS, like
+// any let — pinned by block_shadow.)
+block_go := {
+  let Cmd := < Go : Nat, Stop >
+  match (Go 2) { Go n => succ n; Stop _ => zero }
+}
+test block_go = 3
+block_stop := {
+  let Cmd := < Go : Nat, Stop >
+  Stop
+}
+test tree_eq block_stop (inj "Stop" t) = true
+block_shadow := {
+  let W := < zero >
+  zero
+}
+test tree_eq block_shadow (inj "zero" t) = true
