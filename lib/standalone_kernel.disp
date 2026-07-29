@@ -12,7 +12,7 @@ make_record := {names, payload} -> pair names payload
 inj := {name, payload} -> pair name payload
 Coproduct := {variants} -> variants
 Tree := t
-/// prod mismatcher
+/// prod eliminator
 prod := {table} -> (fix ({go, names, arms, v} ->
   if (is_leaf names) {
     if (is_leaf arms) { t } else { (pair_fst arms) (pair_snd v) }
@@ -51,6 +51,8 @@ list_snoc := fix ({self, xs, x} ->
   if (is_leaf xs) { cons x nil } else { cons (pair_fst xs) (self (pair_snd xs) x) })
 list_zip := fix ({self, xs, ys} ->
   if (is_leaf xs) { nil } else { cons (pair (pair_fst xs) (pair_fst ys)) (self (pair_snd xs) (pair_snd ys)) })
+list_apply := fix ({self, f, xs} ->
+  if (is_leaf xs) { f } else { self (f (pair_fst xs)) (pair_snd xs) })
 
 field := fix ({self, r, name} -> {
   let names := pair_fst r
@@ -71,6 +73,7 @@ type_gate := {T} -> field (wait_payload T) "gate"
 type_members := {T} -> field (wait_payload T) "members"
 type_elim := {T} -> field (wait_payload T) "elim"
 type_tele := {T} -> field (wait_payload T) "tele"
+type_code := {T} -> field (wait_payload T) "code"
 
 elim_marker := fix ({self, payload, arg} -> (pair_fst payload) (wait self payload) arg)
 elim_of := {Ind, B} -> wait elim_marker (pair (type_elim Ind) (pair Ind B))
@@ -105,6 +108,7 @@ sum_of := {variants} -> {
     recognize := {_self, v} -> and (is_fork v) (member (pair_fst v) tags)
     gate := {_Ind, B} -> list_map ({v} -> PiCode AnyTree ({p} -> B (inj (pair_fst v) p))) variants
     elim := {_self, v} -> wait co (pair v nil)
+    code := variants
   })
 }
 raw_list_rec := {self, xs, base, step} ->
@@ -114,6 +118,21 @@ list_of := {A} -> make_type ({
   gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
   elim := raw_list_rec
 })
+case_of := {T, B, arms} -> {
+  let tags := list_map pair_fst (type_code T)
+  let dflt := field arms "_"
+  let pick := {tg} -> {
+    let a := field arms tg
+    if (is_leaf a) { dflt } else { a }
+  }
+  if (and (list_all ({tg} -> not (is_leaf (pick tg))) tags)
+          (list_all ({n} -> or (tree_eq n "_") (member n tags)) (pair_fst arms))) {
+    let ordered := list_map pick tags
+    {scr} -> list_apply ((elim_of T B) scr) ordered
+  } else {
+    {_scr} -> invalid arms
+  }
+}
 
 Frame := < Acc : Tree, Elim : Tree >
 is_acc := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Acc")
