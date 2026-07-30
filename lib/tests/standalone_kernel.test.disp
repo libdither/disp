@@ -378,13 +378,13 @@ test Pi Meta BoolEff ({_} -> Bool) ({m} -> beff_rec m ({x} -> x) ({_q, _k, _ih} 
 // opaque Conc at the readback boundary (the eta-rebuild precedent).
 test Pi Meta BoolEff ({_} -> SB) run_both = false
 
-// IsType = the shallow type of types (marker-sig recognizer). Types and Pi
-// values pass; raw sums (variant lists) and junk fail; IsType is self-membered.
-test IsType Nat = true
-test IsType GuardNatToNat = true
-test IsType IsType = true
-test IsType 5 = false
-test IsType EffCode = false
+// ShallowType = the shallow type of types (marker-sig recognizer). Types and Pi
+// values pass; raw sums (variant lists) and junk fail; ShallowType is self-membered.
+test ShallowType Nat = true
+test ShallowType GuardNatToNat = true
+test ShallowType ShallowType = true
+test ShallowType 5 = false
+test ShallowType EffCode = false
 
 // Tree: raw trees as a declared type, triage as the gate (leaf | stem c
 // with ih | fork l r with both ihs). The raw readers' typed twins certify
@@ -406,11 +406,28 @@ test Pi Guard Tree ({_} -> Bool) is_leaf = false
 // looks it up by name, and without it annotation checking silently stops.
 test tree_eq RecordType Record = true
 
-// Former typing: constructor-only formers certify at IsType signatures (List/
+// tree_rec twins of the raw list helpers. The RESTRUCTURING ones certify at
+// Tree-level types (annotations enforce Guard at import; Meta pinned here).
+// The COMPARING one (member) works concretely but refuses certification on
+// both walking tiers: tree_eq on an abstract element is the banned reader.
+// That split is the typed frontier of the kernel's helper layer.
+test list_len_t (cons 7 (cons 7 nil)) = 2
+test Pi Meta Tree ({_} -> Nat) list_len_t = true
+test list_map_t succ (cons 1 (cons 2 nil)) = cons 2 (cons 3 nil)
+test Pi Meta (Pi Meta Tree ({_} -> Tree)) ({_} -> Pi Meta Tree ({_} -> Tree)) list_map_t = true
+test list_all_t is_leaf (cons t (cons t nil)) = true
+test list_all_t is_leaf (cons t (cons 2 nil)) = false
+test list_snoc_t (cons 1 nil) 2 = cons 1 (cons 2 nil)
+member_t := {node, xs} -> tree_rec ({_} -> Bool) xs false ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (tree_eq node l) true ir)
+test member_t 2 (cons 1 (cons 2 nil)) = true
+test Pi Guard Tree ({_} -> Bool) (member_t zero) = false
+test Pi Meta Tree ({_} -> Bool) (member_t zero) = false
+
+// Former typing: constructor-only formers certify at ShallowType signatures (List/
 // Eff/Record carry them inline; Pred and PiCode are certifiable but
 // defined above Guard, pinned here instead). Sum scrutinizes its variant list
 // and Point's closure construction scrutinizes its captured point: both refuse.
-test Pi Guard AnyTree ({_} -> IsType) Pred = true
-test Pi Guard IsType ({_} -> Pi Guard AnyTree ({_} -> IsType)) PiCode = true
-test Pi Guard AnyTree ({_} -> IsType) Sum = false
-test Pi Guard AnyTree ({_} -> IsType) Point = false
+test Pi Guard AnyTree ({_} -> ShallowType) Pred = true
+test Pi Guard ShallowType ({_} -> Pi Guard AnyTree ({_} -> ShallowType)) PiCode = true
+test Pi Guard AnyTree ({_} -> ShallowType) Sum = false
+test Pi Guard AnyTree ({_} -> ShallowType) Point = false
