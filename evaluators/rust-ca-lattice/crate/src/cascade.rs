@@ -522,6 +522,8 @@ pub struct Grid2 {
     pub seed_sids: std::collections::BTreeMap<Pos, (u32, u32)>,
     pub transport: u64,
     pub rewrites: u64,
+    /// Bumped by every set(): the sweep re-arms on change and stops at a fixpoint.
+    pub mutations: u64,
 }
 
 impl Grid2 {
@@ -533,6 +535,7 @@ impl Grid2 {
             seed_sids: Default::default(),
             transport: 0,
             rewrites: 0,
+            mutations: 0,
         }
     }
 
@@ -558,6 +561,7 @@ impl Grid2 {
     pub fn set(&mut self, p: Pos, site: &Site) {
         assert!(self.topo.in_bounds(p), "write outside topology");
         let w = Word2::pack(site).expect("engine produced an invalid site");
+        self.mutations += 1;
         if w == Word2::EMPTY {
             self.cells.remove(&p);
         } else {

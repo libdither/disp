@@ -190,6 +190,7 @@ fn main() {
     let mut why = false;
     let mut kick = false;
     let mut triage = false;
+    let mut steady = 0u32;
     let mut trace_path: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -207,12 +208,13 @@ fn main() {
             "--why" => why = true,
             "--kick" => kick = true,
             "--triage" => triage = true,
+            "--steady" => steady = args.next().and_then(|v| v.parse().ok()).expect("--steady N"),
             "--trace" => trace_path = Some(args.next().expect("--trace <out.js>")),
             _ => which = Some(a),
         }
     }
     let which = which.unwrap_or_else(|| {
-        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage] [--trace <out.js>]");
+        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage] [--steady N] [--trace <out.js>]");
         std::process::exit(2);
     });
     let term = preset(&which).or_else(|| parse_term(&which)).unwrap_or_else(|| {
@@ -244,6 +246,40 @@ fn main() {
         read.as_ref().map(show).unwrap_or_else(|| "unreadable".into()),
         if complete { "COMPLETE" } else { "PARKED" }
     );
+
+    // --steady: single-step past the exhausted budget, printing every word change each
+    // activation commits. A livelock's engine shows as the repeating activation cycle;
+    // zero-change activations are pure refusals (wake churn without mutation).
+    if steady > 0 && !quiet {
+        println!();
+        for s in 0..steady {
+            let before: std::collections::BTreeMap<_, _> =
+                r.grid.cells.iter().map(|(p, w)| (*p, w.0)).collect();
+            let Some(p) = r.tick_traced() else {
+                println!("steady {s}: quiescent");
+                break;
+            };
+            let mut changes = vec![];
+            for (k, w) in &r.grid.cells {
+                match before.get(k) {
+                    Some(old) if old != &w.0 => changes.push(format!("{k:?} {old:016x} -> {:016x}", w.0)),
+                    None => changes.push(format!("{k:?} NEW {:016x}", w.0)),
+                    _ => {}
+                }
+            }
+            for (k, w) in &before {
+                if !r.grid.cells.contains_key(k) {
+                    changes.push(format!("{k:?} {w:016x} -> EMPTY"));
+                }
+            }
+            let what = if changes.is_empty() {
+                format!("refusal ({:?})", r.grid.site(p).cell)
+            } else {
+                changes.join("; ")
+            };
+            println!("steady {s}: {p:?}: {what}");
+        }
+    }
 
     // --trace: replay the same run on a second, identical runner, recording one keyframe
     // plus per-generation deltas for the player.

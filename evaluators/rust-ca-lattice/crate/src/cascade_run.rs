@@ -64,6 +64,8 @@ pub struct Runner {
     /// When set, a global contraction sweep wakes every wire cell every N generations,
     /// so cold cables far from any activity still get their detours pulled straight.
     pub sweep_every: Option<u64>,
+    /// Mutation count at the last sweep; an unchanged count skips the next one.
+    swept_mutations: u64,
 }
 
 fn splitmix(state: &mut u64) -> u64 {
@@ -90,6 +92,7 @@ impl Runner {
             relief_owner: None,
             relief_root: None,
             sweep_every: Some(5),
+            swept_mutations: u64::MAX,
         };
         let live: Vec<Pos> = r.grid.cells.keys().copied().collect();
         for p in live {
@@ -146,14 +149,27 @@ impl Runner {
         if self.gen_left == 0 {
             self.generation += 1;
             if let Some(n) = self.sweep_every {
-                if self.generation % n == 0 {
+                // The sweep stops at a fixpoint: a whole interval of pure refusals
+                // (no grid mutation) means re-waking the same wires would refuse the
+                // same way, and eternal re-waking of a parked pocket is a livelock
+                // (the wear/refuse pump the soak found). Any commit re-arms it.
+                if self.generation % n == 0 && self.grid.mutations != self.swept_mutations {
+                    self.swept_mutations = self.grid.mutations;
+                    // Cold, unstamped, unreserved wire only: hot cables cannot contract
+                    // and get their wakes from their own traffic; sweeping them turns
+                    // every armed generation into a wake storm of refusals that eats
+                    // whole activation budgets on knotty grids.
                     let wires: Vec<Pos> = self
                         .grid
                         .cells
                         .iter()
                         .filter_map(|(p, w)| {
                             let site = w.unpack().ok()?;
-                            matches!(site.cell, Cell::Wire { .. }).then_some(*p)
+                            matches!(
+                                site.cell,
+                                Cell::Wire { hot: 0, cooldown: 0, reserved: None, .. }
+                            )
+                            .then_some(*p)
                         })
                         .collect();
                     for p in wires {
@@ -236,8 +252,11 @@ impl Runner {
         }
         // A guest bridges its passthrough wires: a demand wave arriving on one side must
         // wake the other or it dies at the crossing (heat sees through guests, so wakes
-        // must too). The relay is directional and stops once both sides agree, which
-        // keeps adjacent guests from waking each other forever.
+        // must too). The relay targets WIRE only: a woken wire heats, agrees, and the
+        // relay stops. An agent end can never heat, so "until both sides agree" never
+        // terminates there — two guests whose pass routes face each other wake each
+        // other forever with zero mutations (the four-agent wake ring the soak found).
+        // Agents learn of demand from real commits via wake_around instead.
         let pass: Vec<Route> = match &site.cell {
             Cell::Agent { pass, .. } => pass.clone(),
             Cell::Seed { pass, .. } => pass.iter().copied().collect(),
@@ -249,10 +268,12 @@ impl Runner {
             let b = (step(p, r.b.face), EndPt { face: r.b.face.opp(), lane: r.b.lane });
             let a_hot = hot_beyond(&read, a.0, a.1);
             let b_hot = hot_beyond(&read, b.0, b.1);
-            if a_hot && !b_hot {
+            let a_wire = matches!(self.grid.site(a.0).cell, Cell::Wire { .. });
+            let b_wire = matches!(self.grid.site(b.0).cell, Cell::Wire { .. });
+            if a_hot && !b_hot && b_wire {
                 self.wake(b.0);
             }
-            if b_hot && !a_hot {
+            if b_hot && !a_hot && a_wire {
                 self.wake(a.0);
             }
         }
@@ -1383,11 +1404,19 @@ impl Runner {
         // Cold routes first; a second pass may move hot routes as the last resort in an
         // all-hot pinch. Moving a demanded wire is sound: connectivity is preserved and
         // its heat rides along; the cooldown stamp damps displacement wars all the same.
-        let passes: Vec<(bool, usize)> = order
+        // A worklist rather than a plain loop: a successful squatter shove re-queues its
+        // route for an immediate same-activation retry (fresh reads, bounded by the
+        // per-route shove budget), so the shove's window is consumed here instead of
+        // being raced for across activations.
+        let mut worklist: VecDeque<(bool, usize, u8)> = order
             .iter()
-            .map(|(i, _)| (false, *i))
-            .chain(order.iter().map(|(i, _)| (true, *i)))
+            .map(|(i, _)| (false, *i, 2u8))
+            .chain(order.iter().map(|(i, _)| (true, *i, 2u8)))
             .collect();
+        // A committed sidestep is caller-visible progress even when no route ultimately
+        // sheds: callers re-wake their initiator on progress, and a shove that moved
+        // matter without a wake is a lost dock (the --kick census class).
+        let mut shoved_any = false;
         // Compact cell description for relief notes.
         let kind = |s: &Site| -> String {
             let base = match &s.cell {
@@ -1413,7 +1442,7 @@ impl Runner {
                 if s.claim { " claim" } else { "" }
             )
         };
-        for (allow_hot, i) in passes {
+        while let Some((allow_hot, i, shoves_left)) = worklist.pop_front() {
             let r = &routes[i];
             let moved_hot = (hot >> i) & 1 == 1;
             if !allow_hot && moved_hot {
@@ -1448,21 +1477,47 @@ impl Runner {
                     d1.ch(), r.a.lane, d2.ch(), r.b.lane,
                     kind(&n1s), kind(&n2s)
                 ));
-                // An undemanded producer squatting on a continuation is shoved: one walk
-                // with the demand gate overridden. Its departure turns the cell into
-                // swingable wire. Top level only, so shoves do not chain.
-                if depth == 2 {
-                    for (x, xs) in [(n1, &n1s), (n2, &n2s)] {
+                // A producer squatting on a continuation is sidestepped away. Only when
+                // the shove COMPLETES eligibility (the opposite continuation is already
+                // swingable, or the route U-turns through the squatter alone), and the
+                // route then retries IMMEDIATELY (same activation, fresh reads).
+                // Anything looser is a pump: shoving beside a hopeless partner just
+                // cycles a demanded squatter out and back — the two-cell shuttle
+                // livelock the soak found. Sidestep ONLY, never the forced walk: the
+                // walk's failure paths run nested relief that can mutate t itself,
+                // and every commit below writes t from this call's entry snapshot.
+                // Top level only, so shoves do not chain.
+                if depth == 2 && shoves_left > 0 {
+                    // Never shove the route's own traffic: a walker whose principal is
+                    // this route's reciprocal endpoint must traverse t eventually, and
+                    // its demand marches it straight back after any sidestep (the
+                    // convoy livelock). A legitimate shove target carries the route as
+                    // a passthrough only.
+                    let own_traffic = |end: &EndPt, xs: &Site| {
+                        matches!(&xs.cell, Cell::Agent { principal, .. }
+                            if *principal == EndPt { face: end.face.opp(), lane: end.lane })
+                    };
+                    let mut shoved = false;
+                    for (x, xs, end, partner_plain) in [
+                        (n1, &n1s, &r.a, d1 == d2 || plain(&n2s, n2)),
+                        (n2, &n2s, &r.b, d1 == d2 || plain(&n1s, n1)),
+                    ] {
                         let squatter = matches!(&xs.cell,
                             Cell::Agent { tag, nursery: false, cooldown: 0, .. } if tag.is_producer())
                             && xs.cursor.is_none()
                             && !xs.claim;
-                        if squatter {
+                        if squatter && partner_plain && !own_traffic(end, xs) {
                             self.note(|| format!("evict {t:?} r{i}: shoving squatter at {x:?}"));
-                            if self.try_walk_gated(x, xs, true) || self.try_sidestep(x, xs) {
-                                return true;
+                            if self.try_sidestep(x, xs) {
+                                shoved = true;
+                                break;
                             }
                         }
+                    }
+                    if shoved {
+                        shoved_any = true;
+                        worklist.push_front((allow_hot, i, shoves_left - 1));
+                        continue;
                     }
                 }
                 for (x, xs) in [(n1, &n1s), (n2, &n2s)] {
@@ -1737,7 +1792,7 @@ impl Runner {
         } else {
             self.note(|| format!("evict {t:?} d0: out of depth"));
         }
-        false
+        shoved_any
     }
 
     /// Proactive slack retraction: the inverse of the straight shift. When this cell is
