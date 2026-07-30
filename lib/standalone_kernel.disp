@@ -111,12 +111,10 @@ sum_of := {variants} -> {
     code := variants
   })
 }
-raw_list_rec := {self, xs, base, step} ->
-  triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
 list_of := {A} -> make_type ({
   recognize := {self, v} -> triage true ({_} -> false) ({h, tl} -> and (A h) (self tl)) v
   gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
-  elim := raw_list_rec
+  elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
 })
 case_of := {T, B, arms} -> {
   let tags := list_map pair_fst (type_code T)
@@ -179,23 +177,19 @@ respond_face := {T, frame, self} -> {
   }
 }
 
-raw_nat_rec := {self, n, base, step} ->
-  triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
 NatType := make_type ({
   recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
   gate := {Ind, B} -> cons (B zero) (cons (PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))) nil)
-  elim := raw_nat_rec
+  elim := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
 })
 nat_rec := elim_of NatType ({_} -> NatType)
 add := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
 
-raw_bool_rec := {_self, b, true_case, false_case} ->
-  triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
 BoolType := make_type ({
   recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
   gate := {_Ind, B} -> cons (B true) (cons (B false) nil)
   members := cons true (cons false nil)
-  elim := raw_bool_rec
+  elim := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
 })
 bool_rec := elim_of BoolType ({_} -> BoolType)
 not_bool := {b} -> bool_rec b false true
