@@ -252,6 +252,11 @@ Sigma := {table, A, B} -> Tele table (pair (J (pair Self (PredType is_fork))) ({
   pair (J (pair (Prj pair_fst) A)) ({a} ->
   pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil))))
 Isect := {table, A, P} -> Tele table (pair (Fresh A) ({x} -> pair (J (pair Self (P x))) ({_} -> nil)))
+EffType := {Q, Ans, X} -> make_type ({
+  recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })
+  gate := {Ind, B} -> cons (PiCode X ({x} -> B (Pure x))) (cons (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) nil)
+  elim := {self, m, on_pure, on_op} -> (match m { Pure x => (on_pure x); Op q k => (on_op q k ({r} -> self (k r) on_pure on_op)) })
+})
 
 Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) (type_members ty) })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })

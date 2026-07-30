@@ -332,3 +332,48 @@ test Pi Meta ObsType ({_} -> BoolType) match_is_app = true
 match_dflt := {ob} -> match ob : (case_of ObsType ({_} -> BoolType)) { App _ => true; _ => false }
 test match_dflt Self = false
 test Pi Guard ObsType ({_} -> BoolType) match_dflt = true
+
+// Effects: EffType Q Ans X = the free monad as a declared recursive type (the
+// List pattern one rung up). The recognizer walks the op spine, probing each
+// continuation at leaf (straight-line, the shallow face); the gate types the
+// Op arm's ih as the RESUME (Pi r : Ans. B (k r)), so certified handlers get
+// multishot resume for free. Effect rows are just the request type Q. The
+// checker's own run loop and these user programs share ONE handle.
+BoolEff := EffType AnyTree BoolType BoolType
+flip_prog := Op (pair (pair "flip" t) ({r} -> Pure (not_bool r)))
+test BoolEff (Pure true) = true
+test BoolEff (Pure 5) = false
+test BoolEff flip_prog = true
+test BoolEff (Op (pair (pair "flip" t) ({r} -> Pure 5))) = false
+FlipOnly := EffType (PredType ({q} -> tree_eq (pair_fst q) "flip")) BoolType BoolType
+test FlipOnly flip_prog = true
+test FlipOnly (Op (pair (pair "other" t) ({r} -> Pure r))) = false
+
+truth_handler := { return := {x} -> x, op := {_q, resume} -> resume true }
+test handle truth_handler flip_prog = false
+test handle truth_handler (Pure true) = true
+
+beff_rec := elim_of BoolEff ({_} -> BoolType)
+run_true := {m} -> beff_rec m ({x} -> x) ({_q, _k, ih} -> ih true)
+test run_true (Pure false) = false
+test run_true flip_prog = false
+test Pi Guard BoolEff ({_} -> BoolType) run_true = true
+run_abort := {m} -> beff_rec m ({x} -> x) ({_q, _k, _ih} -> true)
+test Pi Guard BoolEff ({_} -> BoolType) run_abort = true
+test Pi Guard BoolEff ({_} -> BoolType) ({m} -> beff_rec m ({x} -> x) ({_q, _k, _ih} -> 5)) = false
+run_true_raw := fix ({self, m} -> match m { Pure x => x; Op _q k => (self (k true)); _ => t })
+test run_true_raw flip_prog = false
+test Pi Guard BoolEff ({_} -> BoolType) run_true_raw = false
+
+SB := Sigma Guard BoolType ({_} -> BoolType)
+fan_rec := elim_of BoolEff ({_} -> SB)
+run_both := {m} -> fan_rec m ({x} -> pair x x) ({_q, _k, ih} -> pair (pair_fst (ih true)) (pair_snd (ih false)))
+test run_both flip_prog = pair false true
+test Pi Guard BoolEff ({_} -> SB) run_both = true
+
+test Pi Meta BoolEff ({_} -> BoolType) run_true = true
+test Pi Meta BoolEff ({_} -> BoolType) run_abort = true
+test Pi Meta BoolEff ({_} -> BoolType) ({m} -> beff_rec m ({x} -> x) ({_q, _k, _ih} -> 5)) = false
+// Meta over-rejects the multishot Sigma handler: projected Neu re-enters as
+// opaque Conc at the readback boundary (the eta-rebuild precedent).
+test Pi Meta BoolEff ({_} -> SB) run_both = false
