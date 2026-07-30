@@ -473,7 +473,7 @@ List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> make_type ({
 })
 
 Record : Pi Guard AnyTree ({_} -> ShallowType) := {entries} -> make_type ({ recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
-RecordType := Record
+check_module := Record
 
 Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> make_type ({
   recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })

@@ -359,14 +359,15 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // gone: `let` marks the write private everywhere.)
     const hasFields = hasExportFields(items)
     const ctx: FileCtx = { isRoot: false, raw, abs, fills: supplied, givens, givenSeen: new Set(), abstract, givenHyps: abstract ? [] : undefined }
-    // Kernel formers needed to auto-verify this module, captured while its own scope
-    // is still on the stack (popped in `finally`). Null if the kernel isn't in scope
-    // (a file with no checkable annotations) — verification is then skipped.
-    let vFormers: { paramApply: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; ok: Tree; tt: Tree } | null = null
-    // Standalone-world twin: when the live kernel's param_apply is absent but the
-    // standalone kernel's RecordType is in scope, typed exports verify by PLAIN
-    // APPLICATION — types are predicates there, so the check is `typ record = true`.
-    let sFormers: { RecordType: Tree; mkRecord: Tree; listConst: Tree; tt: Tree } | null = null
+    // The module auto-verify hook, captured while the module's own scope is still on
+    // the stack (popped in `finally`). ONE convention for every world: a scope that
+    // binds `check_module` gets its annotated exports (and checked block-lets)
+    // batched into `check_module [(name, typ)…] (make_record names values)`, expected
+    // to reduce to the scope's bare `true`. The live kernel wraps its walker entry
+    // (`tree_eq (param_apply (Record typs) rec) (Ok true)`); the standalone world's
+    // types are predicates, so its hook is literally its Record former. Null when the
+    // name is absent — verification is then skipped (no checkable annotations).
+    let cmFormers: { checkModule: Tree; mkRecord: Tree; listConst: Tree; tt: Tree } | null = null
     // Formers for the functor face (abstract mode), captured from the MODULE's own
     // scope: the typ must be built by applying ITS Pi/Record (the surface route).
     // hyp_sig drives the extension-neutral decode in readback (null = skip it).
@@ -387,14 +388,13 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           throw new Error(`in ${abs}${name}: ${msg}`)
         }
       }
-      const pa = lookupEntry("param_apply")?.tree, rec = lookupEntry("Record")?.tree
+      const cm = lookupEntry("check_module")?.tree
       const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
-      const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("true")?.tree
-      if (pa && rec && mkr && lc && ok && tt) vFormers = { paramApply: pa, Record: rec, mkRecord: mkr, listConst: lc, ok, tt }
-      const srt = lookupEntry("RecordType")?.tree
-      if (!vFormers && srt && mkr && lc && tt) sFormers = { RecordType: srt, mkRecord: mkr, listConst: lc, tt }
+      const tt = lookupEntry("true")?.tree
+      if (cm && mkr && lc && tt) cmFormers = { checkModule: cm, mkRecord: mkr, listConst: lc, tt }
       if (abstract) {
         const pi = lookupEntry("Pi")?.tree
+        const rec = lookupEntry("Record")?.tree
         if (!pi || !rec || !mkr || !lc || !elab.cs.classify || !elab.cs.equal)
           throw new Error(`in ${abs}: the functor face needs Pi, Record, make_record, and list_const in the module's scope (open the kernel prelude)`)
         fFormers = { Pi: pi, Record: rec, mkRecord: mkr, listConst: lc, hypSig: lookupEntry("hyp_sig")?.tree ?? null }
@@ -429,6 +429,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         fieldCerts.push(d.cert ?? null)
       }
     }
+    // A module's inline tests run at its first NON-raw load: propagate its Test
+    // decls to the root program. Raw loads skip (probes stay cheap; raw = values
+    // only), and the module cache dedupes re-opens within a session.
+    if (!raw) for (const d of fileDecls) if (d.kind === "Test") decls.push(d)
     // The functor face (abstract mode): read the module lambda back off the
     // hyp-closed exports and return the tuple { record, typ }. No verification is
     // scheduled — the abstract check runs only when someone calls `verify` on the
@@ -460,8 +464,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       if (!s) { s = new Set(); verifiedFilledBySession.set(elab.cs, s) }
       verSet = s
     } else verSet = verifiedModules
-    const anyFormers = vFormers ?? sFormers
-    if (!raw && anyFormers && !verSet.has(verKey) && !scheduledForVerification.has(verKey)) {
+    if (!raw && cmFormers && !verSet.has(verKey) && !scheduledForVerification.has(verKey)) {
       const typEntries: Tree[] = []
       for (let i = 0; i < fieldNames.length; i++)
         if (fieldTypes[i]) typEntries.push(elab.cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
@@ -481,17 +484,15 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       }
       if (typEntries.length > 0) {
         const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => elab.cs.fork(h, acc), elab.cs.leaf())
-        const recordVal = elab.cs.apply(elab.cs.apply(anyFormers.mkRecord, consList(batchNames.map(stringToTree)), B()),
-                                   consList(batchTrees.map(v => elab.cs.apply(anyFormers.listConst, v, B()))), B())
+        const recordVal = elab.cs.apply(elab.cs.apply(cmFormers.mkRecord, consList(batchNames.map(stringToTree)), B()),
+                                   consList(batchTrees.map(v => elab.cs.apply(cmFormers.listConst, v, B()))), B())
         // Build the verdict (lazily by default — vApply); defer the force to the
         // single end-of-parse batch (see pendingVerifications). Keeps the elegant
         // whole-record form; the parallelism/laziness transfers to the final force.
         // Live kernel: `param_apply typ record = Ok true`. Standalone twin: types
         // are predicates, so the record type applies directly — `typ record = true`.
-        const verdict = vFormers
-          ? vApply(vApply(vFormers.paramApply, elab.cs.apply(vFormers.Record, consList(typEntries), B())), recordVal)
-          : vApply(elab.cs.apply(sFormers!.RecordType, consList(typEntries), B()), recordVal)
-        const okTT = vFormers ? elab.cs.apply(vFormers.ok, vFormers.tt, B()) : sFormers!.tt
+        const verdict = vApply(vApply(cmFormers.checkModule, consList(typEntries)), recordVal)
+        const okTT = cmFormers.tt
         pendingVerifications.push({ label: `module ${abs}`, verdict, okTT, markKey: verKey, markSet: verSet })
         scheduledForVerification.add(verKey)
       }

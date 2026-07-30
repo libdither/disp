@@ -1,0 +1,14 @@
+// The module auto-verify hook (ONE convention for every world): the driver
+// batches a module's annotated exports into `check_module [(name, typ)…]
+// (record of exports)` and expects bare `true`. Here that wraps the walker's
+// record check. Opened CHECKED-only by the barrel (no raw pass: the value
+// references its givens, and it contributes nothing to the fill environment).
+open use raw "../prelude.disp" {}
+open given {
+  Type : Type
+  Tree : Type
+  param_apply : Tree
+  Record : Tree
+  Ok : Tree
+}
+check_module := {typs, record} -> tree_eq (param_apply (Record typs) record) (Ok true)

@@ -402,9 +402,10 @@ test is_leaf_t (t t) = false
 test Pi Guard Tree ({_} -> Bool) is_leaf_t = true
 test Pi Guard Tree ({_} -> Bool) ({v} -> tree_rec_b v true ({_c, _ih} -> 5) ({_l, _r, _i, _j} -> false)) = false
 test Pi Guard Tree ({_} -> Bool) is_leaf = false
-// RecordType stays as an alias of Record: the driver's auto-verify vocabulary
-// looks it up by name, and without it annotation checking silently stops.
-test tree_eq RecordType Record = true
+// check_module is the driver's auto-verify hook (one convention for every
+// world); in the standalone world it is literally the Record former. Without
+// it in scope, annotation checking silently stops.
+test tree_eq check_module Record = true
 
 // tree_rec twins of the raw list helpers. The RESTRUCTURING ones certify at
 // Tree-level types (annotations enforce Guard at import; Meta pinned here).

@@ -688,7 +688,7 @@ describe("block expressions", () => {
     // — the ann carries the let's name so the elaborator can record the checked
     // annotation for the module verify batch.
     expect(parseExpr("{ let x : A := t; x }")).toEqual(
-      ap(binder([{ name: "x", type: null }], v("x")), { ...ann(leaf, v("A")), letName: "x" })
+      ap(binder([{ name: "x", type: null }], v("x")), { tag: "ann", expr: leaf, type: v("A"), letName: "x" } as Expr)
     )
   })
 

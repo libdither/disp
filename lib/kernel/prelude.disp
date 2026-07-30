@@ -43,3 +43,4 @@ open use "universe.disp" { Type := Type, RespondShape }
 // kernel. Values are identical to the raw pass above — the open-dedupe pins the
 // bootstrap fixpoint condition (raw ≡ checked per name).
 open use "../prelude.disp" { Type := Type, Tree, Bool, Nat, Pi, param_apply, Record, make_record, list_const, Ok }
+open use "verify.disp" { Type := Type, Tree, param_apply, Record, Ok }
