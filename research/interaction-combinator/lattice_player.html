@@ -1427,6 +1427,22 @@ recomputeBasis();
 renderAgents(); resize();
 // URL parameters pick the scenario and generation for scripted screenshots; with no
 // parameters the player behaves exactly as before (first scenario, fit whole trace).
+// ?load=name(,name...) fetches ad-hoc trace files (same origin, ".js" appended) before
+// booting, so debug-cascade recordings open headlessly without touching the bundle;
+// ?at=x,y recenters on lattice coordinates (pairs with zoom= for close-ups).
+(async () => {
+const qLoad = URLQ.get("load");
+if (qLoad) {
+  for (const name of qLoad.split(",")) {
+    try {
+      const r = await fetch(name + ".js");
+      const j = validateTrace(JSON.parse(await r.text()), name);
+      j.name = name; window.TRACES[name] = j; SCEN_KEYS.push(name);
+      const o = document.createElement("option");
+      o.value = name; o.textContent = name; scen.appendChild(o);
+    } catch (e) { console.warn("load=" + name + " failed:", e); }
+  }
+}
 let boot = SCEN_KEYS[0];
 const qTrace = URLQ.get("trace");
 if (qTrace) {
@@ -1438,9 +1454,18 @@ const qFrame = URLQ.get("frame");
 if (qFrame !== null && TR) setFrame(Number(qFrame) || 0);
 const qFit = URLQ.get("fit") || ((qTrace || qFrame) ? "frame" : "all");
 if (TR && qFit === "frame") fitCurrent();
+const qAt = URLQ.get("at");
+if (TR && qAt) {
+  const [ax, ay, az] = qAt.split(",").map(Number);
+  if (Number.isFinite(ax) && Number.isFinite(ay)) {
+    [view.x, view.y] = projectPlane(ax, ay, az || 0);
+    invalidate();
+  }
+}
 const qZoom = parseFloat(URLQ.get("zoom"));
 if (TR && qZoom > 0) { view.scale = clamp(view.scale * qZoom, 2, 400); invalidate(); }
-if (qTrace || qFrame || qZoom > 0) VIEW_LOCKED = true;
+if (qTrace || qFrame || qZoom > 0 || qAt) VIEW_LOCKED = true;
 requestAnimationFrame(draw);
+})();
 </script>
 </body></html>
