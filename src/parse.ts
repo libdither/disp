@@ -31,7 +31,7 @@ const KEYWORDS = new Set(["use", "open", "match", "if", "then", "else"])
 // `<`/`>` are the sum-type-literal delimiters (`< Tag : T, … >`). They are single
 // chars with no multi-char punctuation built on them, and `->`/`=>`/`→` are
 // matched first, so a bare `>` never steals an arrow's tail.
-const PUNCT = [":=", "::", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
+const PUNCT = [":=", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -146,7 +146,7 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
 export type RecMember =
-  | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr; checked?: boolean; line?: number; endLine?: number }
+  | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr; line?: number; endLine?: number }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "bind"; name: string; expr: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr; line?: number; endLine?: number }
@@ -371,7 +371,7 @@ function isFieldStart(ts: Tok[], i: number): boolean {
   if (ts[i].t !== "id") return false
   const next = ts[i + 1]
   if (next?.t === "punct" && (next as any).v === ":=") return true
-  if (!(next?.t === "punct" && ((next as any).v === ":" || (next as any).v === "::"))) return false
+  if (!(next?.t === "punct" && (next as any).v === ":")) return false
   let depth = 0, q = i + 2
   while (q < ts.length && ts[q].t !== "eof") {
     if (ts[q].t === "punct") {
@@ -404,7 +404,7 @@ function isDeclStart(ts: Tok[], i: number): boolean {
       const v = (t as any).v
       if (v === "(" || v === "{" || v === "[") depth++
       else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
-      else if (depth === 0 && (v === ":=" || v === ":" || v === "::")) return true
+      else if (depth === 0 && (v === ":=" || v === ":")) return true
       else if (depth === 0 && (v === "=" || v === ";" || v === "=>" || v === "->")) return false
     }
     q++
@@ -862,21 +862,19 @@ const sumTypeP: P<Expr> = (ts, i) => {
   return ok({ tag: "sumType" as const, variants: varsR.v }, close.pos)
 }
 
-// field = IDENT (":"|"::" expr)? ":=" valParser — `::` marks a CHECKED annotation
-// (the driver also emits `test T name = true`).
+// field = IDENT (":" expr)? ":=" valParser
 // Fields carry their 1-based source extent (line of the name token, line of
 // the last value token), so downstream tooling can attribute a declaration
 // to its source lines — like the equation items' `line`.
-const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; checked?: boolean; line?: number; endLine?: number }> =>
+const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; line?: number; endLine?: number }> =>
   nl((ts, i) => {
     const r = seq(idP,
-      optional(seq(nl(alt(punctP("::"), punctP(":"))), skipNl, lazy(() => expr))),
+      optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
       nl(punctP(":=")), skipNl, lazy(() => valParser))(ts, i)
     if (!r.ok) return r
     const [name, ann, , , value] = r.v
     return ok({
       tag: "field" as const, name, type: ann ? ann[2] : null, value,
-      checked: ann && (ann[0] as any).v === "::" ? true : undefined,
       line: tokLine(ts, i), endLine: endTokLine(ts, r.pos),
     }, r.pos)
   })
@@ -1389,14 +1387,13 @@ const headFieldP: P<RecMember> = (ts, i) => {
   if (last.tag !== "var") return err(`decorated declaration: the declared name must be a plain identifier`, pos)
   const head = atoms.slice(0, -1).reduce((f, x) => ({ tag: "app" as const, f, x }))
   let type: Expr | null = null
-  let checked: boolean | undefined
-  const ann = optional(seq(nl(alt(punctP("::"), punctP(":"))), skipNl, lazy(() => expr)))(ts, pos)
-  if (ann.ok && ann.v) { type = ann.v[2]; checked = (ann.v[0] as any).v === "::" ? true : undefined; pos = ann.pos }
+  const ann = optional(seq(nl(punctP(":")), skipNl, lazy(() => expr)))(ts, pos)
+  if (ann.ok && ann.v) { type = ann.v[2]; pos = ann.pos }
   let value: Expr | null = null
   const asn = optional(seq(nl(punctP(":=")), skipNl, lazy(() => expr)))(ts, pos)
   if (asn.ok && asn.v) { value = asn.v[2]; pos = asn.pos }
   if (type === null && value === null) return err(`decorated declaration: expected ':' or ':='`, pos)
-  return ok({ tag: "field" as const, name: last.name, type, value, head, checked, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
+  return ok({ tag: "field" as const, name: last.name, type, value, head, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
 }
 
 const itemP: P<RecMember | RecMember[]> = nl(alt<RecMember | RecMember[]>(openGivenItem, openItem, topFieldP, headFieldP, equationItem))

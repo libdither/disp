@@ -135,7 +135,7 @@ open use \"prelude.disp\"     // import",
 
 #rule(
   "field",
-  "field    ::= head? IDENT ((\":\" | \"::\") expr)? (\":=\" expr)?
+  "field    ::= head? IDENT (\":\" expr)? (\":=\" expr)?
 head     ::= expr        // top-level only; one decorator expression",
   "true := t
 id : {A : Type} -> A -> A
@@ -143,7 +143,7 @@ id : {A : Type} -> A -> A
 guard (license_guard SortRelation.rel) sort : T := impl // explicit relation contract
 guard (license_guard FastRelation.rel) fast : T := impl // another owned name
 guard g iface : T                                // interface entry (no value)",
-  note: [Exported record member — a *declaration request* (this note is normative; the protocol vocabulary lives in `lib/kernel/cut.disp`, idioms in KERNEL_DESIGN.md § Declarations and Guards). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:` or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win. The `::` variant is a *checked* annotation: the driver additionally emits `test T name = true` right after the binding, so the annotation is executed as the type-as-predicate applied to the definition (raw mode included, where a plain `:` annotation is discarded).],
+  note: [Exported record member — a *declaration request* (this note is normative; the protocol vocabulary lives in `lib/kernel/cut.disp`, idioms in KERNEL_DESIGN.md § Declarations and Guards). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:` or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
 )
 
 #rule(

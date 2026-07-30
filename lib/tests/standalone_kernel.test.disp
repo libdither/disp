@@ -1,10 +1,6 @@
 open use raw "../prelude.disp" {}
 open use raw "../standalone_kernel.disp" {}
 
-// `name :: T := v` is a checked annotation: it desugars to `test T name = true`.
-// Typed = certification under BOTH audit tables (Guard and Meta) in one annotation.
-Typed := {A, B} -> PredType ({f} -> and (Pi Guard A B f) (Pi Meta A B f))
-
 test NatType zero = true
 test NatType (succ (succ zero)) = true
 test NatType (t t) = false
@@ -64,8 +60,10 @@ test reader_suite (Pi Enum) = reader_expected
 test reader_suite (Pi Meta) = reader_expected
 test reader_suite (Pi Guard) = reader_expected
 
-honest_sniffer :: Typed BoolType ({_} -> BoolType) := {b} -> if (is_neutral b) { true } else { not_bool b }
+honest_sniffer := {b} -> if (is_neutral b) { true } else { not_bool b }
 test EnumBoolToBool honest_sniffer = true
+test Pi Meta BoolType ({_} -> BoolType) honest_sniffer = true
+test Pi Guard BoolType ({_} -> BoolType) honest_sniffer = true
 
 test Pi Guard BoolType ({_} -> BoolType) ({b} -> if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
 
@@ -102,7 +100,9 @@ teq_replay := {n} -> if (tree_eq n (make_hyp NatType ({_} -> NatType))) { zero }
 test GuardNatToNat teq_replay = false
 test MetaNatToNat teq_replay = false
 test Pi Enum Five ({_} -> NatType) ({n} -> if (tree_eq n 5) { zero } else { pair 5 5 }) = true
-neutral_branch_reader :: Typed BoolType ({_} -> BoolType) := {b} -> if (is_neutral b) { b } else { not_bool b }
+neutral_branch_reader := {b} -> if (is_neutral b) { b } else { not_bool b }
+test Pi Guard BoolType ({_} -> BoolType) neutral_branch_reader = true
+test Pi Meta BoolType ({_} -> BoolType) neutral_branch_reader = true
 
 test GuardNatToNat ({n} -> make_hyp NatType t) = false
 test GuardNatToNat ({n} -> wait hyp_marker (pair NatType n)) = false
@@ -183,7 +183,7 @@ test Pi ({}) NatType ({_} -> NatType) succ = false
 // reflection. is_acc pins the sealed-core edge: a real kernel reader (raw
 // triage + tree_eq on its input) does not certify.
 row_rec := elim_of RowType ({_} -> BoolType)
-row_binds :: Typed RowType ({_} -> BoolType) := {row} -> row_rec row ({_ty} -> true) ({_ob} -> false)
+row_binds := {row} -> row_rec row ({_ty} -> true) ({_ob} -> false)
 row_binds_bad := {row} -> row_rec row ({_ty} -> true) ({_ob} -> 5)
 row_binds_raw := {row} -> match row { Fresh _ty => true; J _ob => false }
 test RowType (Fresh zero) = true
@@ -191,6 +191,8 @@ test RowType (J (pair App NatType)) = true
 test RowType zero = false
 test row_binds (Fresh zero) = true
 test row_binds (J (pair App NatType)) = false
+test Pi Guard RowType ({_} -> BoolType) row_binds = true
+test Pi Meta RowType ({_} -> BoolType) row_binds = true
 test Pi Guard RowType ({_} -> BoolType) row_binds_bad = false
 test Pi Meta RowType ({_} -> BoolType) row_binds_bad = false
 test Pi Guard RowType ({_} -> BoolType) row_binds_raw = false
@@ -199,9 +201,11 @@ test Pi Guard RowType ({_} -> BoolType) is_acc = false
 // n-ary sums: the collectors and gate derive the case arity from the gate's
 // obligation-type list, so Sum is variant-count generic -- Obs has three.
 obs_rec := elim_of ObsType ({_} -> BoolType)
-obs_is_app :: Typed ObsType ({_} -> BoolType) := {ob} -> obs_rec ob ({_} -> true) ({_} -> false) ({_} -> false)
+obs_is_app := {ob} -> obs_rec ob ({_} -> true) ({_} -> false) ({_} -> false)
 test obs_is_app App = true
 test obs_is_app (Prj pair_fst) = false
+test Pi Guard ObsType ({_} -> BoolType) obs_is_app = true
+test Pi Meta ObsType ({_} -> BoolType) obs_is_app = true
 test Pi Guard ObsType ({_} -> BoolType) ({ob} -> obs_rec ob ({_} -> true) ({_} -> 5) ({_} -> false)) = false
 
 // Declared list spines: List A types the kernel's cons/nil lists, and its
@@ -214,32 +218,41 @@ test NatList nil = true
 test NatList (cons 1 (cons 2 nil)) = true
 test NatList (cons (pair 5 5) nil) = false
 len_rec := elim_of NatList ({_} -> NatType)
-blessed_len :: Typed NatList ({_} -> NatType) := {xs} -> len_rec xs zero ({_h, _tl, ih} -> succ ih)
+blessed_len := {xs} -> len_rec xs zero ({_h, _tl, ih} -> succ ih)
 test blessed_len (cons 7 (cons 7 nil)) = 2
+test Pi Guard NatList ({_} -> NatType) blessed_len = true
+test Pi Meta NatList ({_} -> NatType) blessed_len = true
 test Pi Guard NatList ({_} -> NatType) ({xs} -> len_rec xs false ({_h, _tl, ih} -> succ ih)) = false
 all_rec := elim_of NatList ({_} -> BoolType)
-blessed_all :: Pi Guard (Pi Guard NatType ({_} -> BoolType)) ({_p} -> Pi Guard NatList ({_} -> BoolType)) := {p, xs} -> all_rec xs true ({h, _tl, ih} -> bool_rec (p h) ih false)
+blessed_all := {p, xs} -> all_rec xs true ({h, _tl, ih} -> bool_rec (p h) ih false)
 test blessed_all ({n} -> is_leaf n) (cons zero (cons zero nil)) = true
 test blessed_all ({n} -> is_leaf n) (cons zero (cons 2 nil)) = false
+test Pi Guard (Pi Guard NatType ({_} -> BoolType)) ({_p} -> Pi Guard NatList ({_} -> BoolType)) blessed_all = true
 
 // case_of: the general match. Named arms (order-free, checked against the
 // type's code at construction) adapted onto the blessed eliminator; "_" is the
 // default arm, expanded against the code; bad arm records refuse by
 // construction (the built matcher returns invalid on any input).
-case_is_app :: Typed ObsType ({_} -> BoolType) := case_of ObsType ({_} -> BoolType) ({ Prj := {_} -> false, App := {_} -> true, Self := {_} -> false })
+case_is_app := case_of ObsType ({_} -> BoolType) ({ Prj := {_} -> false, App := {_} -> true, Self := {_} -> false })
 test case_is_app App = true
 test case_is_app (Prj pair_fst) = false
+test Pi Guard ObsType ({_} -> BoolType) case_is_app = true
+test Pi Meta ObsType ({_} -> BoolType) case_is_app = true
 test is_invalid (case_of ObsType ({_} -> BoolType) ({ App := {_} -> true }) Self) = true
 test is_invalid (case_of ObsType ({_} -> BoolType) ({ App := {_} -> true, Self := {_} -> false, Prj := {_} -> false, Junk := {_} -> true }) App) = true
-case_dflt :: Pi Guard ObsType ({_} -> BoolType) := case_of ObsType ({_} -> BoolType) ({ App := {_} -> true, _ := {_} -> false })
+case_dflt := case_of ObsType ({_} -> BoolType) ({ App := {_} -> true, _ := {_} -> false })
 test case_dflt App = true
 test case_dflt Self = false
+test Pi Guard ObsType ({_} -> BoolType) case_dflt = true
 
 // The annotated match: `match c : M { arms }` compiles to (M arms-record) c.
 // M is any matcher former taking (arms, scrutinee); with case_of the match is
 // typed and certifiable, while bare match stays the raw prod cut.
-match_is_app :: Typed ObsType ({_} -> BoolType) := {ob} -> match ob : (case_of ObsType ({_} -> BoolType)) { App _ => true; Self _ => false; Prj _ => false }
+match_is_app := {ob} -> match ob : (case_of ObsType ({_} -> BoolType)) { App _ => true; Self _ => false; Prj _ => false }
 test match_is_app App = true
 test match_is_app (Prj pair_fst) = false
-match_dflt :: Pi Guard ObsType ({_} -> BoolType) := {ob} -> match ob : (case_of ObsType ({_} -> BoolType)) { App _ => true; _ => false }
+test Pi Guard ObsType ({_} -> BoolType) match_is_app = true
+test Pi Meta ObsType ({_} -> BoolType) match_is_app = true
+match_dflt := {ob} -> match ob : (case_of ObsType ({_} -> BoolType)) { App _ => true; _ => false }
 test match_dflt Self = false
+test Pi Guard ObsType ({_} -> BoolType) match_dflt = true
