@@ -377,3 +377,37 @@ test Pi Meta BoolEff ({_} -> BoolType) ({m} -> beff_rec m ({x} -> x) ({_q, _k, _
 // Meta over-rejects the multishot Sigma handler: projected Neu re-enters as
 // opaque Conc at the readback boundary (the eta-rebuild precedent).
 test Pi Meta BoolEff ({_} -> SB) run_both = false
+
+// IsType = the shallow type of types (marker-sig recognizer). Types and Pi
+// values pass; raw sums (variant lists) and junk fail; IsType is self-membered.
+test IsType NatType = true
+test IsType GuardNatToNat = true
+test IsType IsType = true
+test IsType 5 = false
+test IsType Eff = false
+
+// TreeType: raw trees as a declared type, triage as the gate (leaf | stem c
+// with ih | fork l r with both ihs). The raw readers' typed twins certify
+// through it on both walking tiers; the raw reader itself stays refused (the
+// sealed-core edge), and a junk arm fails its obligation.
+tree_rec := elim_of TreeType ({_} -> NatType)
+leaf_count := {v} -> tree_rec v 1 ({_c, ih} -> ih) ({_l, _r, ihl, ihr} -> add ihl ihr)
+test leaf_count (t (t t) (t t t)) = 3
+test Pi Guard TreeType ({_} -> NatType) leaf_count = true
+test Pi Meta TreeType ({_} -> NatType) leaf_count = true
+tree_recb := elim_of TreeType ({_} -> BoolType)
+is_leaf_t := {v} -> tree_recb v true ({_c, _ih} -> false) ({_l, _r, _i, _j} -> false)
+test is_leaf_t t = true
+test is_leaf_t (t t) = false
+test Pi Guard TreeType ({_} -> BoolType) is_leaf_t = true
+test Pi Guard TreeType ({_} -> BoolType) ({v} -> tree_recb v true ({_c, _ih} -> 5) ({_l, _r, _i, _j} -> false)) = false
+test Pi Guard TreeType ({_} -> BoolType) is_leaf = false
+
+// Former typing: constructor-only formers certify at IsType signatures (List/
+// EffType/RecordType carry them inline; PredType and PiCode are certifiable but
+// defined above Guard, pinned here instead). Sum scrutinizes its variant list
+// and Point's closure construction scrutinizes its captured point: both refuse.
+test Pi Guard AnyTree ({_} -> IsType) PredType = true
+test Pi Guard IsType ({_} -> Pi Guard AnyTree ({_} -> IsType)) PiCode = true
+test Pi Guard AnyTree ({_} -> IsType) Sum = false
+test Pi Guard AnyTree ({_} -> IsType) Point = false

@@ -89,9 +89,9 @@ elim_arity := {E} -> list_len ((type_gate (elim_ind E)) (elim_ind E) (elim_motiv
 Obs := < App, Self, Prj : Tree >
 Row := < Fresh : Tree, J : Tree >
 PredType := {p} -> make_type ({ recognize := {_self, v} -> p v })
-RecordType := {entries} -> make_type ({ recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
+IsType := PredType (has_sig (sig_of resumable))
 PiCode := {A, B} -> make_type ({ tele := pair (Fresh A) ({x} -> pair (J (pair App (B x))) ({_} -> nil)) })
-AnyTree := PredType ({_v} -> true)
+AnyTree : IsType := PredType ({_v} -> true)
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
   let co := fix ({go, st, arg} -> {
@@ -105,11 +105,6 @@ Sum := {variants} -> {
     code := variants
   })
 }
-List := {A} -> make_type ({
-  recognize := {self, v} -> triage true ({_} -> false) ({h, tl} -> and (A h) (self tl)) v
-  gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
-  elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
-})
 case_of := {T, B, arms} -> {
   let tags := list_map pair_fst (type_code T)
   let dflt := field arms "_"
@@ -125,8 +120,8 @@ case_of := {T, B, arms} -> {
     {_scr} -> invalid arms
   }
 }
-RowType := Sum Row
-ObsType := Sum Obs
+RowType : IsType := Sum Row
+ObsType : IsType := Sum Obs
 
 Frame := < Acc : Tree, Elim : Tree >
 is_acc := has_sig "Acc"
@@ -170,23 +165,6 @@ respond_face := {T, frame, self} -> {
     }
   }
 }
-
-NatType := make_type ({
-  recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
-  gate := {Ind, B} -> cons (B zero) (cons (PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))) nil)
-  elim := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
-})
-nat_rec := elim_of NatType ({_} -> NatType)
-
-BoolType := make_type ({
-  recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
-  gate := {_Ind, B} -> cons (B true) (cons (B false) nil)
-  members := cons true (cons false nil)
-  elim := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
-})
-bool_rec := elim_of BoolType ({_} -> BoolType)
-
-Point := {c} -> make_type ({ recognize := {_self, v} -> tree_eq c v, members := cons c nil })
 
 Eff := < Pure : Tree, Op : Tree >
 perform := {q, k} -> Op (pair q k)
@@ -252,12 +230,6 @@ Sigma := {table, A, B} -> Tele table (pair (J (pair Self (PredType is_fork))) ({
   pair (J (pair (Prj pair_fst) A)) ({a} ->
   pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil))))
 Isect := {table, A, P} -> Tele table (pair (Fresh A) ({x} -> pair (J (pair Self (P x))) ({_} -> nil)))
-EffType := {Q, Ans, X} -> make_type ({
-  recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })
-  gate := {Ind, B} -> cons (PiCode X ({x} -> B (Pure x))) (cons (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) nil)
-  elim := {self, m, on_pure, on_op} -> (match m { Pure x => (on_pure x); Op q k => (on_op q k ({r} -> self (k r) on_pure on_op)) })
-})
-
 Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) (type_members ty) })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
 
@@ -465,7 +437,45 @@ Ambient := GuardAt
   ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)
 
-GuardNatToNat := Pi Guard NatType ({_} -> NatType)
+NatType : IsType := make_type ({
+  recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
+  gate := {Ind, B} -> cons (B zero) (cons (PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))) nil)
+  elim := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
+})
+nat_step_ty : IsType := pair_fst (pair_snd (type_gate NatType NatType ({_} -> NatType)))
+nat_rec : Pi Guard NatType ({_} -> Pi Guard NatType ({_} -> Pi Guard nat_step_ty ({_} -> NatType))) := elim_of NatType ({_} -> NatType)
+
+BoolType : IsType := make_type ({
+  recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
+  gate := {_Ind, B} -> cons (B true) (cons (B false) nil)
+  members := cons true (cons false nil)
+  elim := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
+})
+bool_rec : Pi Guard BoolType ({_} -> Pi Guard BoolType ({_} -> Pi Guard BoolType ({_} -> BoolType))) := elim_of BoolType ({_} -> BoolType)
+
+Point := {c} -> make_type ({ recognize := {_self, v} -> tree_eq c v, members := cons c nil })
+
+TreeType : IsType := make_type ({
+  recognize := {_self, _v} -> true
+  gate := {Ind, B} -> cons (B t) (cons (PiCode Ind ({c} -> PiCode (B c) ({_} -> B (t c)))) (cons (PiCode Ind ({l} -> PiCode Ind ({r} -> PiCode (B l) ({_} -> PiCode (B r) ({_} -> B (t l r)))))) nil))
+  elim := {self, v, on_leaf, on_stem, on_fork} -> triage on_leaf ({c} -> on_stem c (self c on_leaf on_stem on_fork)) ({l, r} -> on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
+})
+
+List : Pi Guard IsType ({_} -> IsType) := {A} -> make_type ({
+  recognize := {self, v} -> triage true ({_} -> false) ({h, tl} -> and (A h) (self tl)) v
+  gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
+  elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
+})
+
+RecordType : Pi Guard AnyTree ({_} -> IsType) := {entries} -> make_type ({ recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
+
+EffType : Pi Guard IsType ({_} -> Pi Guard IsType ({_} -> Pi Guard IsType ({_} -> IsType))) := {Q, Ans, X} -> make_type ({
+  recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })
+  gate := {Ind, B} -> cons (PiCode X ({x} -> B (Pure x))) (cons (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) nil)
+  elim := {self, m, on_pure, on_op} -> (match m { Pure x => (on_pure x); Op q k => (on_op q k ({r} -> self (k r) on_pure on_op)) })
+})
+
+GuardNatToNat : IsType := Pi Guard NatType ({_} -> NatType)
 
 add : Pi Guard NatType ({_} -> GuardNatToNat) := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
 not_bool : Pi Guard BoolType ({_} -> BoolType) := {b} -> bool_rec b false true
