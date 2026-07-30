@@ -25,19 +25,20 @@ prod := {table} -> (fix ({go, names, arms, v} ->
 wait_payload := {w} -> pair_snd (pair_snd w)
 sig_of := {marker} -> pair_fst (wait marker t)
 has_sig := {sig, v} -> and (is_fork v) (tree_eq (pair_fst v) sig)
+tree_eq_sig := sig_of tree_eq
 
 hyp_marker := {a, b} -> a
 make_mark := {meta} -> wait hyp_marker meta
 make_hyp := {ty, history} -> make_mark (pair ty history)
 hyp_sig := sig_of hyp_marker
-is_neutral := {v} -> has_sig hyp_sig v
+is_neutral := has_sig hyp_sig
 neutral_type := {v} -> pair_fst (wait_payload v)
 neutral_history := {v} -> pair_snd (wait_payload v)
 
 invalid_marker := {a, b} -> b
 invalid := {reason} -> wait invalid_marker reason
 invalid_sig := sig_of invalid_marker
-is_invalid := {v} -> has_sig invalid_sig v
+is_invalid := has_sig invalid_sig
 
 member := fix ({self, node, xs} ->
   if (is_leaf xs) { false } else if (tree_eq node (pair_fst xs)) { true } else { self node (pair_snd xs) })
@@ -81,7 +82,7 @@ elim_raw := {E} -> pair_fst (wait_payload E)
 elim_ind := {E} -> pair_fst (pair_snd (wait_payload E))
 elim_motive := {E} -> pair_snd (pair_snd (wait_payload E))
 elim_sig := sig_of elim_marker
-is_elim_head := {f} -> has_sig elim_sig f
+is_elim_head := has_sig elim_sig
 elim_arity := {E} -> list_len ((type_gate (elim_ind E)) (elim_ind E) (elim_motive E))
 
 Obs := < App, Self, Prj : Tree >
@@ -91,13 +92,9 @@ PiCode := {A, B} -> make_type ({ tele := pair (Fresh A) ({x} -> pair (J (pair Ap
 AnyTree := PredType ({_v} -> true)
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
-  let fire := fix ({sel, vs, args, v} ->
-    if (is_leaf vs) { t }
-    else if (tree_eq (pair_fst (pair_fst vs)) (pair_fst v)) { (pair_fst args) (pair_snd v) }
-    else { sel (pair_snd vs) (pair_snd args) v })
   let co := fix ({go, st, arg} -> {
     let args := list_snoc (pair_snd st) arg
-    if (tree_eq (list_len args) (list_len variants)) { fire variants args (pair_fst st) } else { wait go (pair (pair_fst st) args) }
+    if (tree_eq (list_len args) (list_len variants)) { prod (pair tags args) (pair_fst st) } else { wait go (pair (pair_fst st) args) }
   })
   make_type ({
     recognize := {_self, v} -> and (is_fork v) (member (pair_fst v) tags)
@@ -130,8 +127,8 @@ RowType := Sum Row
 ObsType := Sum Obs
 
 Frame := < Acc : Tree, Elim : Tree >
-is_acc := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Acc")
-is_elim_frame := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Elim")
+is_acc := has_sig "Acc"
+is_elim_frame := has_sig "Elim"
 respond_face := {T, frame, self} -> {
   let rows := type_tele T
   if (is_fork rows) {
@@ -235,7 +232,6 @@ Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a 
 
 Meta := {
   let Value := < Conc : Tree, Neu : Tree, Stem : Tree, Fork : Tree, Poison : Tree, Chain : Tree >
-  let teq_sig := sig_of tree_eq
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
   let vfork := {L, R} -> if let Conc lc = L { if let Conc rc = R { Conc (t lc rc) } else { Fork (pair L R) } } else { Fork (pair L R) }
   let readback := (fix ({rb, V} ->
@@ -307,7 +303,7 @@ Meta := {
       match F {
         Conc tr => (if (tree_eq tr is_neutral) {
           Conc false
-        } else if (or (tree_eq tr tree_eq) (has_sig teq_sig tr)) {
+        } else if (or (tree_eq tr tree_eq) (has_sig tree_eq_sig tr)) {
           (if let Conc xt = X { Conc (tr xt) } else { Poison X })
         } else if let Conc xt = X {
           Conc (tr xt)
@@ -338,11 +334,7 @@ Meta := {
         Fork a b => (apply_fork self chk a b X)
       }
     }))
-  let lift := {f} -> Conc f
-  let fresh := {st, ty, tail} -> cons (pair (Neu (pair ty tail)) st) nil
-  let apply := {chk, fV, x} -> mwalk chk fV x
-  let judge := {chk, _st, T, r} -> vcheck chk T r
-  ({ fresh := fresh, lift, apply, read := readback, judge })
+  ({ fresh := {st, ty, tail} -> cons (pair (Neu (pair ty tail)) st) nil, lift := {f} -> Conc f, apply := mwalk, read := readback, judge := {chk, _st, T, r} -> vcheck chk T r })
 }
 
 neutral_free := fix ({self, v} ->
@@ -368,9 +360,6 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
     }
   })
   let shim_sig := sig_of shim
-  let is_shim := {v} -> has_sig shim_sig v
-  let tree_eq_sig := sig_of tree_eq
-  let is_teq_partial := {v} -> has_sig tree_eq_sig v
   let w_stem := {a, x} -> {
     let r := t a x
     if (is_neutral r) { invalid r } else { r }
@@ -397,11 +386,11 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
   let walk := fix ({self, f, x} ->
     if (is_invalid f) { f }
     else if (tree_eq f tree_eq) { on_tree_eq ({_} -> wait tree_eq x) x }
-    else if (is_teq_partial f) { on_tree_eq ({_} -> f x) x }
+    else if (has_sig tree_eq_sig f) { on_tree_eq ({_} -> f x) x }
     else if (tree_eq f is_neutral) { on_is_neutral ({_} -> is_neutral x) x }
     else if (is_neutral f) { hyp_apply f x }
     else if (is_elim_head f) { (wait shim (pair f nil)) x }
-    else if (is_shim f) { f x }
+    else if (has_sig shim_sig f) { f x }
     else if (tree_eq f ({x} -> x)) { x }
     else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (Acc f) }
     else { triage (t x) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f })
@@ -422,12 +411,10 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
         }
       } else { false }
     }))
-  let admit := neutral_free
   let fresh := {st, ty, tail} -> {
     let x := make_hyp ty tail
     cons (pair x (cons x st)) nil
   }
-  let apply := {_chk, f, x} -> walk f x
   let judge := {chk, st, T, v} ->
     (fix ({vf, T2, v2} ->
       if (is_invalid v2) {
@@ -438,7 +425,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
         let rows := type_tele T2
         if (is_leaf rows) { (type_recognizer T2) (wait vf T2) v2 } else { chk st rows v2 t }
       })) T v
-  ({ fresh := fresh, admit, apply, judge })
+  ({ fresh := fresh, admit := neutral_free, apply := {_chk, f, x} -> walk f x, judge })
 }
 Guard := GuardAt
   ({_resume, _x} -> false)
