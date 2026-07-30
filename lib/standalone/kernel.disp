@@ -72,21 +72,16 @@ test is_leaf (field_cell ({ x := t }) "y") = true
 
 resumable := fix ({self, set, arg} -> (field set "recognize") (wait self set) arg)
 make_type := {set} -> wait resumable set
-type_recognizer := {T} -> field (wait_payload T) "recognize"
-type_gate := {T} -> field (wait_payload T) "gate"
-type_members := {T} -> field (wait_payload T) "members"
-type_elim := {T} -> field (wait_payload T) "elim"
-type_tele := {T} -> field (wait_payload T) "tele"
-type_code := {T} -> field (wait_payload T) "code"
+dot := {name, target} -> if (has_sig (sig_of resumable) target) { field (wait_payload target) name } else { field target name }
 
 elim_marker := fix ({self, payload, arg} -> (pair_fst payload) (wait self payload) arg)
-elim_of := {Ind, B} -> wait elim_marker (pair (type_elim Ind) (pair Ind B))
+elim_of := {Ind, B} -> wait elim_marker (pair Ind.elim (pair Ind B))
 elim_raw := {E} -> pair_fst (wait_payload E)
 elim_ind := {E} -> pair_fst (pair_snd (wait_payload E))
 elim_motive := {E} -> pair_snd (pair_snd (wait_payload E))
 elim_sig := sig_of elim_marker
 is_elim_head := has_sig elim_sig
-elim_arity := {E} -> list_len ((type_gate (elim_ind E)) (elim_ind E) (elim_motive E))
+elim_arity := {E} -> list_len ((elim_ind E).gate (elim_ind E) (elim_motive E))
 
 ObsCode := < App, Self, Prj : t >
 RowCode := < Fresh : t, J : t >
@@ -108,7 +103,7 @@ Sum := {variants} -> {
   })
 }
 case_of := {T, B, arms} -> {
-  let tags := list_map pair_fst (type_code T)
+  let tags := list_map pair_fst T.code
   let dflt := field arms "_"
   let pick := {tg} -> {
     let a := field arms tg
@@ -129,7 +124,7 @@ Frame := < Acc : t, Elim : t >
 is_acc := has_sig "Acc"
 is_elim_frame := has_sig "Elim"
 respond_face := {T, frame, self} -> {
-  let rows := type_tele T
+  let rows := T.tele
   if (is_fork rows) {
     (fix ({go, rows2} ->
       if (is_leaf rows2) { invalid frame } else {
@@ -154,9 +149,9 @@ respond_face := {T, frame, self} -> {
   } else {
     match frame {
       Elim E arms => {
-        let g := type_gate T
+        let g := T.gate
         if (is_leaf g) { invalid frame }
-        else if (and (tree_eq (elim_ind E) T) (tree_eq (elim_raw E) (type_elim T))) {
+        else if (and (tree_eq (elim_ind E) T) (tree_eq (elim_raw E) T.elim)) {
           let tys := g T (elim_motive E)
           if (tree_eq (list_len tys) (list_len arms)) {
             pair (list_zip tys arms) ((elim_motive E) self)
@@ -227,12 +222,12 @@ Tele := {table, tele} -> {
   make_type ({ recognize := {_self, f} -> if (admit f) { run t tele (lift f) t } else { false }, tele })
 }
 
-Pi := {table, A, B} -> Tele table (type_tele (PiCode A B))
+Pi := {table, A, B} -> Tele table (PiCode A B).tele
 Sigma := {table, A, B} -> Tele table (pair (J (pair Self (Pred is_fork))) ({_} ->
   pair (J (pair (Prj pair_fst) A)) ({a} ->
   pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil))))
 Isect := {table, A, P} -> Tele table (pair (Fresh A) ({x} -> pair (J (pair Self (P x))) ({_} -> nil)))
-Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) (type_members ty) })
+Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) ty.members })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
 
 Meta := {
@@ -263,14 +258,14 @@ Meta := {
     } else if (is_neutral v) {
       and (tree_eq (neutral_type v) T) (member v minted)
     } else {
-      (type_recognizer T) (wait (wait vf minted) T) v
+      T.recognize (wait (wait vf minted) T) v
     }))
   let vcheck := ({chk, T, V} ->
     match V {
       Poison r => false
       Neu ty _ => (tree_eq ty T)
       _ => {
-        let rows := type_tele T
+        let rows := T.tele
         if (is_fork rows) { chk t rows V t }
         else if let Conc tr = V { T tr }
         else { verify_inband (collect V nil) T (readback V) }
@@ -427,8 +422,8 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
       } else if (is_neutral v2) {
         and (tree_eq (neutral_type v2) T2) (hyp_ok vf st v2)
       } else {
-        let rows := type_tele T2
-        if (is_leaf rows) { (type_recognizer T2) (wait vf T2) v2 } else { chk st rows v2 t }
+        let rows := T2.tele
+        if (is_leaf rows) { T2.recognize (wait vf T2) v2 } else { chk st rows v2 t }
       })) T v
   ({ fresh := fresh, admit := neutral_free, apply := {_chk, f, x} -> walk f x, judge })
 }
@@ -444,7 +439,7 @@ Fn := Pi GenericWalker
 
 with_trials := {base} -> ({
   fresh := {st, ty, tail} -> {
-    let ms := type_members ty
+    let ms := ty.members
     if (is_leaf ms) { (field base "fresh") st ty tail } else { list_map ({a} -> pair a st) ms }
   }
   admit := field_or base "admit" ({_f} -> true)
@@ -462,10 +457,12 @@ Nat : ShallowType := make_type ({
 })
 test Nat zero = true
 test Nat (succ (succ zero)) = true
+test is_leaf Nat.tele = true
+test tree_eq Row.code RowCode = true
 test Nat (t t) = false
 test Nat (make_hyp Nat Nat) = false
 test Nat (succ (make_hyp Nat Nat)) = false
-nat_step_ty : ShallowType := pair_fst (pair_snd (type_gate Nat Nat ({_} -> Nat)))
+nat_step_ty : ShallowType := pair_fst (pair_snd (Nat.gate Nat ({_} -> Nat)))
 nat_rec : Fn Nat ({_} -> Fn Nat ({_} -> Fn nat_step_ty ({_} -> Nat))) := elim_of Nat ({_} -> Nat)
 
 Bool : ShallowType := make_type ({

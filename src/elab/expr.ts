@@ -334,6 +334,13 @@ export function exprToCir(
         if (idx >= 0) return { tag: "lit", t: record.fieldTrees[idx] }
       }
       const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
+      // Vocabulary hook (like `cond` for if, `prod` for match): a scope that
+      // binds `dot` owns projection — `r.x` compiles to `dot "x" r`, so a world
+      // can make its own values field-readable (e.g. the standalone kernel's
+      // wait-form-aware reader). Unbound, the §2.6 cut `r (acc x)` stands.
+      const dotEntry = lookupEntry("dot")
+      if (dotEntry?.tree)
+        return cap(cap({ tag: "lit", t: dotEntry.tree }, { tag: "lit", t: stringToTree(e.field) }), target)
       return cap(target, { tag: "lit", t: accTree(e.field) })
     }
     case "if": {
