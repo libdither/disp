@@ -1,6 +1,82 @@
 open use raw "../prelude.disp" {}
 open use "../standalone_kernel.disp" {}
 
+Five := Point 5
+Six := Point 6
+MetaNatToNat := Pi Meta NatType ({_} -> NatType)
+EnumBoolToBool := Pi Enum BoolType ({_} -> BoolType)
+EnumNatToNat := Pi Enum NatType ({_} -> NatType)
+FiveToNat := Pi Enum Five ({_} -> NatType)
+FiveToSix := Pi Enum Five ({_} -> Six)
+
+forge_hyp := make_hyp
+shift := {b} -> if (is_neutral b) { true } else { 5 }
+junk_raw := {_self, n, base, step} -> base
+unblessed_rec := wait (fix ({em, payload, x} -> (pair_fst payload) (wait em payload) x)) (pair junk_raw (pair NatType ({_} -> BoolType)))
+
+pi_suite := {Pi} -> {
+  let BB := Pi BoolType ({_} -> BoolType)
+  ({ negation := BB not_bool, identity := BB ({b} -> b), junk_arm := BB ({b} -> bool_rec b 5 true), sniff := BB shift })
+}
+pi_expected := { negation := true, identity := true, junk_arm := false, sniff := false }
+
+fn_suite := {Pi} -> {
+  let NN := Pi NatType ({_} -> NatType)
+  let NNN := Pi NatType ({_} -> NN)
+  ({ successor := NN succ, identity := NN ({n} -> n), duplicate := NN ({n} -> pair n n), curried_add := NNN add, const_first := NNN ({a} -> {b} -> a), const_second := NNN ({a} -> {b} -> b) })
+}
+fn_expected := { successor := true, identity := true, duplicate := false, curried_add := true, const_first := true, const_second := true }
+
+elim_suite := {Pi} -> {
+  let NN := Pi NatType ({_} -> NatType)
+  let NB := Pi NatType ({_} -> BoolType)
+  ({ fold := NN elim_id, after_constructor := NN ({n} -> succ (elim_id n)), on_constructor := NN ({n} -> elim_id (succ n)), step_discard := NN ({n} -> nat_rec (succ n) zero ({k, ih} -> zero)), composed := NN ({n} -> elim_id (elim_id n)), wrong_motive := NB elim_id, bad_base := NN ({n} -> nat_rec n false ({k, ih} -> false)), bad_step_on_constructor := NN ({n} -> nat_rec (succ n) zero ({k, ih} -> pair 5 5)) })
+}
+elim_expected := { fold := true, after_constructor := true, on_constructor := true, step_discard := true, composed := true, wrong_motive := false, bad_base := false, bad_step_on_constructor := false }
+
+guard_suite := {Pi} -> {
+  let NB := Pi NatType ({_} -> BoolType)
+  let BB := Pi BoolType ({_} -> BoolType)
+  ({ unblessed := NB ({n} -> unblessed_rec n true ({k, ih} -> true)), cross_type := BB ({b} -> elim_id b), forged_return := NB ({n} -> forge_hyp BoolType BoolType) })
+}
+guard_expected := { unblessed := false, cross_type := false, forged_return := false }
+
+reader_suite := {Pi} -> {
+  let BB := Pi BoolType ({_} -> BoolType)
+  ({ sniff_junk := BB ({b} -> if (is_neutral b) { b } else { 5 }), concrete_read := BB ({b} -> if (is_neutral zero) { 5 } else { not_bool b }) })
+}
+reader_expected := { sniff_junk := false, concrete_read := true }
+
+dep_suite := {Pi, D} -> {
+  let DP := Pi D ({n} -> Point (succ n))
+  ({ successor := DP succ, identity := DP ({n} -> n), doubled := DP ({n} -> succ (succ n)) })
+}
+dep_expected := { successor := true, identity := false, doubled := false }
+
+ho_suite := {Pi} -> {
+  let NN := Pi NatType ({_} -> NatType)
+  let F := Pi NN ({_} -> NatType)
+  let FF := Pi NN ({_} -> NN)
+  ({
+    apply_zero := F ({g} -> g zero)
+    const_arg := F ({g} -> 5)
+    ill_typed_frame := F ({g} -> g false)
+    use_result := F ({g} -> succ (g zero))
+    elim_on_spine := F ({g} -> nat_rec (g zero) zero ({k, ih} -> succ ih))
+    bad_frame_under_elim := F ({g} -> nat_rec (g false) zero ({k, ih} -> succ ih))
+    eta_arg := FF ({g} -> g)
+    eta_expanded := FF ({g} -> {n} -> g n)
+    succ_frame := F ({g} -> g (succ zero))
+    neutral_in_frame := FF ({g} -> {n} -> g (succ n))
+  })
+}
+ho_expected := { apply_zero := true, const_arg := true, ill_typed_frame := false, use_result := true, elim_on_spine := true, bad_frame_under_elim := false, eta_arg := true, eta_expanded := true, succ_frame := true, neutral_in_frame := true }
+
+// field_cell is the record's own Option: fork cell = present (even a stored leaf), leaf = absent.
+test field_or ({ x := t }) "x" 5 = t
+test field_or ({ x := t }) "y" 5 = 5
+test is_leaf (field_cell ({ x := t }) "y") = true
+
 test NatType zero = true
 test NatType (succ (succ zero)) = true
 test NatType (t t) = false
