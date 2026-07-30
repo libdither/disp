@@ -66,6 +66,9 @@ field_or := {r, name, dflt} -> {
   let c := field_cell r name
   if (is_leaf c) { dflt } else { pair_snd c }
 }
+test field_or ({ x := t }) "x" 5 = t
+test field_or ({ x := t }) "y" 5 = 5
+test is_leaf (field_cell ({ x := t }) "y") = true
 
 resumable := fix ({self, set, arg} -> (field set "recognize") (wait self set) arg)
 make_type := {set} -> wait resumable set
@@ -436,13 +439,34 @@ Ambient := GuardAt
   ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)
 
+given GenericWalker : AnyTree := Guard
+Fn := Pi GenericWalker
+
+with_trials := {base} -> ({
+  fresh := {st, ty, tail} -> {
+    let ms := type_members ty
+    if (is_leaf ms) { (field base "fresh") st ty tail } else { list_map ({a} -> pair a st) ms }
+  }
+  admit := field_or base "admit" ({_f} -> true)
+  lift := field_or base "lift" ({v} -> v)
+  apply := field_or base "apply" ({_chk, f, a} -> f a)
+  read := field_or base "read" ({v} -> v)
+  judge := field_or base "judge" ({_chk, _st, T, r} -> T r)
+})
+Trials := with_trials Guard
+
 Nat : ShallowType := make_type ({
   recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
   gate := {Ind, B} -> cons (B zero) (cons (PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))) nil)
   elim := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
 })
+test Nat zero = true
+test Nat (succ (succ zero)) = true
+test Nat (t t) = false
+test Nat (make_hyp Nat Nat) = false
+test Nat (succ (make_hyp Nat Nat)) = false
 nat_step_ty : ShallowType := pair_fst (pair_snd (type_gate Nat Nat ({_} -> Nat)))
-nat_rec : Pi Guard Nat ({_} -> Pi Guard Nat ({_} -> Pi Guard nat_step_ty ({_} -> Nat))) := elim_of Nat ({_} -> Nat)
+nat_rec : Fn Nat ({_} -> Fn Nat ({_} -> Fn nat_step_ty ({_} -> Nat))) := elim_of Nat ({_} -> Nat)
 
 Bool : ShallowType := make_type ({
   recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
@@ -450,7 +474,7 @@ Bool : ShallowType := make_type ({
   members := cons true (cons false nil)
   elim := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
 })
-bool_rec : Pi Guard Bool ({_} -> Pi Guard Bool ({_} -> Pi Guard Bool ({_} -> Bool))) := elim_of Bool ({_} -> Bool)
+bool_rec : Fn Bool ({_} -> Fn Bool ({_} -> Fn Bool ({_} -> Bool))) := elim_of Bool ({_} -> Bool)
 
 Point := {c} -> make_type ({ recognize := {_self, v} -> tree_eq c v, members := cons c nil })
 
@@ -461,21 +485,28 @@ Tree : ShallowType := make_type ({
 })
 tree_rec := {B} -> elim_of Tree B
 
-list_len_t : Pi Guard Tree ({_} -> Nat) := {xs} -> tree_rec ({_} -> Nat) xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
-list_snoc_t : Pi Guard Tree ({_} -> Pi Guard Tree ({_} -> Tree)) := {xs, x} -> tree_rec ({_} -> Tree) xs (cons x nil) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons l ir)
-list_map_t : Pi Guard (Pi Guard Tree ({_} -> Tree)) ({_} -> Pi Guard Tree ({_} -> Tree)) := {f, xs} -> tree_rec ({_} -> Tree) xs nil ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons (f l) ir)
-list_all_t : Pi Guard (Pi Guard Tree ({_} -> Bool)) ({_} -> Pi Guard Tree ({_} -> Bool)) := {p, xs} -> tree_rec ({_} -> Bool) xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (p l) ir false)
+list_len_t : Fn Tree ({_} -> Nat) := {xs} -> tree_rec ({_} -> Nat) xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
+list_snoc_t : Fn Tree ({_} -> Fn Tree ({_} -> Tree)) := {xs, x} -> tree_rec ({_} -> Tree) xs (cons x nil) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons l ir)
+list_map_t : Fn (Fn Tree ({_} -> Tree)) ({_} -> Fn Tree ({_} -> Tree)) := {f, xs} -> tree_rec ({_} -> Tree) xs nil ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons (f l) ir)
+list_all_t : Fn (Fn Tree ({_} -> Bool)) ({_} -> Fn Tree ({_} -> Bool)) := {p, xs} -> tree_rec ({_} -> Bool) xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (p l) ir false)
+test list_len_t (cons 7 (cons 7 nil)) = 2
+test list_snoc_t (cons 1 nil) 2 = cons 1 (cons 2 nil)
+test list_map_t succ (cons 1 (cons 2 nil)) = cons 2 (cons 3 nil)
+test list_all_t is_leaf (cons t (cons t nil)) = true
+test list_all_t is_leaf (cons t (cons 2 nil)) = false
+test Fn Tree ({_} -> Bool) is_leaf = false
 
-List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> make_type ({
+List : Fn ShallowType ({_} -> ShallowType) := {A} -> make_type ({
   recognize := {self, v} -> triage true ({_} -> false) ({h, tl} -> and (A h) (self tl)) v
   gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
   elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
 })
 
-Record : Pi Guard AnyTree ({_} -> ShallowType) := {entries} -> make_type ({ recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
+Record : Fn AnyTree ({_} -> ShallowType) := {entries} -> make_type ({ recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
 check_module := Record
+test tree_eq check_module Record = true
 
-Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> make_type ({
+Eff : Fn ShallowType ({_} -> Fn ShallowType ({_} -> Fn ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> make_type ({
   recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })
   gate := {Ind, B} -> cons (PiCode X ({x} -> B (Pure x))) (cons (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) nil)
   elim := {self, m, on_pure, on_op} -> (match m { Pure x => (on_pure x); Op q k => (on_op q k ({r} -> self (k r) on_pure on_op)) })
@@ -483,6 +514,13 @@ Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard Shallow
 
 GuardNatToNat : ShallowType := Pi Guard Nat ({_} -> Nat)
 
-add : Pi Guard Nat ({_} -> GuardNatToNat) := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
-not_bool : Pi Guard Bool ({_} -> Bool) := {b} -> bool_rec b false true
-elim_id : GuardNatToNat := {n} -> nat_rec n zero ({k, ih} -> succ ih)
+add : Fn Nat ({_} -> Fn Nat ({_} -> Nat)) := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
+not_bool : Fn Bool ({_} -> Bool) := {b} -> bool_rec b false true
+elim_id : Fn Nat ({_} -> Nat) := {n} -> nat_rec n zero ({k, ih} -> succ ih)
+test add 2 3 = 5
+test add 0 4 = 4
+test ShallowType Nat = true
+test ShallowType GuardNatToNat = true
+test ShallowType ShallowType = true
+test ShallowType 5 = false
+test ShallowType EffCode = false

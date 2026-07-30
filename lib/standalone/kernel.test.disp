@@ -72,20 +72,8 @@ ho_suite := {Pi} -> {
 }
 ho_expected := { apply_zero := true, const_arg := true, ill_typed_frame := false, use_result := true, elim_on_spine := true, bad_frame_under_elim := false, eta_arg := true, eta_expanded := true, succ_frame := true, neutral_in_frame := true }
 
-// field_cell is the record's own Option: fork cell = present (even a stored leaf), leaf = absent.
-test field_or ({ x := t }) "x" 5 = t
-test field_or ({ x := t }) "y" 5 = 5
-test is_leaf (field_cell ({ x := t }) "y") = true
-
-test Nat zero = true
-test Nat (succ (succ zero)) = true
-test Nat (t t) = false
-test Nat (forge_hyp Nat Nat) = false
-test Nat (succ (forge_hyp Nat Nat)) = false
 test Five 5 = true
 test Five 6 = false
-test add 2 3 = 5
-test add 0 4 = 4
 test tree_eq (forge_hyp Nat Nat) (forge_hyp Nat Bool) = false
 test is_neutral (forge_hyp Nat Nat) = true
 
@@ -378,13 +366,7 @@ test Pi Meta BoolEff ({_} -> Bool) ({m} -> beff_rec m ({x} -> x) ({_q, _k, _ih} 
 // opaque Conc at the readback boundary (the eta-rebuild precedent).
 test Pi Meta BoolEff ({_} -> SB) run_both = false
 
-// ShallowType = the shallow type of types (marker-sig recognizer). Types and Pi
-// values pass; raw sums (variant lists) and junk fail; ShallowType is self-membered.
-test ShallowType Nat = true
-test ShallowType GuardNatToNat = true
-test ShallowType ShallowType = true
-test ShallowType 5 = false
-test ShallowType EffCode = false
+// ShallowType behavior pins live inline in kernel.disp beside the defs.
 
 // Tree: raw trees as a declared type, triage as the gate (leaf | stem c
 // with ih | fork l r with both ihs). The raw readers' typed twins certify
@@ -401,24 +383,13 @@ test is_leaf_t t = true
 test is_leaf_t (t t) = false
 test Pi Guard Tree ({_} -> Bool) is_leaf_t = true
 test Pi Guard Tree ({_} -> Bool) ({v} -> tree_rec_b v true ({_c, _ih} -> 5) ({_l, _r, _i, _j} -> false)) = false
-test Pi Guard Tree ({_} -> Bool) is_leaf = false
-// check_module is the driver's auto-verify hook (one convention for every
-// world); in the standalone world it is literally the Record former. Without
-// it in scope, annotation checking silently stops.
-test tree_eq check_module Record = true
 
-// tree_rec twins of the raw list helpers. The RESTRUCTURING ones certify at
-// Tree-level types (annotations enforce Guard at import; Meta pinned here).
-// The COMPARING one (member) works concretely but refuses certification on
-// both walking tiers: tree_eq on an abstract element is the banned reader.
-// That split is the typed frontier of the kernel's helper layer.
-test list_len_t (cons 7 (cons 7 nil)) = 2
+// tree_rec twins: concrete pins live inline in kernel.disp; Meta certifications
+// pinned here. The COMPARING helper (member) works concretely but refuses
+// certification on both walking tiers: tree_eq on an abstract element is the
+// banned reader. That split is the typed frontier of the kernel's helper layer.
 test Pi Meta Tree ({_} -> Nat) list_len_t = true
-test list_map_t succ (cons 1 (cons 2 nil)) = cons 2 (cons 3 nil)
 test Pi Meta (Pi Meta Tree ({_} -> Tree)) ({_} -> Pi Meta Tree ({_} -> Tree)) list_map_t = true
-test list_all_t is_leaf (cons t (cons t nil)) = true
-test list_all_t is_leaf (cons t (cons 2 nil)) = false
-test list_snoc_t (cons 1 nil) 2 = cons 1 (cons 2 nil)
 member_t := {node, xs} -> tree_rec ({_} -> Bool) xs false ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (tree_eq node l) true ir)
 test member_t 2 (cons 1 (cons 2 nil)) = true
 test Pi Guard Tree ({_} -> Bool) (member_t zero) = false
@@ -432,3 +403,14 @@ test Pi Guard AnyTree ({_} -> ShallowType) Pred = true
 test Pi Guard ShallowType ({_} -> Pi Guard AnyTree ({_} -> ShallowType)) PiCode = true
 test Pi Guard AnyTree ({_} -> ShallowType) Sum = false
 test Pi Guard AnyTree ({_} -> ShallowType) Point = false
+
+// Trials = enumerate where the domain advertises members, certify (Guard)
+// elsewhere: extensional trials catch the sniffer at Bool, minting covers Nat.
+test pi_suite (Pi Trials) = pi_expected
+test fn_suite (Pi Trials) = fn_expected
+test dep_suite (Pi Trials) Five = dep_expected
+
+// One filled import re-verifies the ENTIRE annotated surface (and re-runs the
+// kernel's inline tests) under another walker: the differential check as a line.
+mMeta := use "kernel.disp" { GenericWalker := Meta }
+test mMeta.add 2 3 = 5
