@@ -11,7 +11,7 @@
 use crate::cascade::{exposures, rot_endpt, Cell, EndPt, Route, Site, Word2};
 use crate::lattice::{Dir, DIRS};
 use crate::lattice::{dir_to, step, Pos};
-use crate::rules::{End, RULES};
+use crate::rules::{End, RULES, Tag};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::OnceLock;
 
@@ -268,9 +268,178 @@ impl Compiler {
     }
 }
 
+/// Geometry sanity for a hand-packed layout: every exposure is met by the reciprocal
+/// endpoint of the cell it faces (an extra, or a seed's canonical exit), and every
+/// canonical exit is met by an exposure.
+fn check_blocklet_geometry(
+    name: &str,
+    extras: &[(Pos, Cell)],
+    c_exits: &[Option<EndPt>],
+    p_exits: &[Option<EndPt>],
+) {
+    let map: BTreeMap<Pos, &Cell> = extras.iter().map(|(p, c)| (*p, c)).collect();
+    for (p, cell) in extras {
+        for e in exposures(cell) {
+            let q = step(*p, e.face);
+            let back = EndPt { face: e.face.opp(), lane: e.lane };
+            let met = match q {
+                SEED_C => c_exits.contains(&Some(back)),
+                SEED_P => p_exits.contains(&Some(back)),
+                _ => map.get(&q).is_some_and(|c| exposures(c).contains(&back)),
+            };
+            assert!(met, "{name}: {p:?} {e:?} has no partner at {q:?}");
+        }
+    }
+    for (seed, exits) in [(SEED_C, c_exits), (SEED_P, p_exits)] {
+        for exit in exits.iter().flatten() {
+            let q = step(seed, exit.face);
+            let back = EndPt { face: exit.face.opp(), lane: exit.lane };
+            assert!(
+                map.get(&q).is_some_and(|c| exposures(c).contains(&back)),
+                "{name}: exit {exit:?} unmet by {q:?}"
+            );
+        }
+    }
+}
+
+/// A·F hand-packed: 10 cells where the comb grows 30. Both fresh agents sit on the ring
+/// north of the seed axis with their shared wire on the direct edge between them (Pair
+/// principal E0 into T1 args W0); T1.res climbs over the consumer seed to CAux(2)'s
+/// canonical U exit, Pair.fst dives under the producer seed and back up to PAux(2)'s S
+/// exit. The boundary stubs land on the same canonical seed exits the comb uses.
+fn hand_packed_af(rule: &crate::rules::Rule, name: &str) -> Layout {
+    let pt = |face: Dir, lane: u8| EndPt { face, lane };
+    let agent = |tag: Tag, principal: EndPt, aux: [EndPt; 2]| Cell::Agent {
+        tag,
+        principal,
+        aux,
+        pass: vec![],
+        nursery: true,
+        cooldown: 0,
+    };
+    let wire = |a: EndPt, b: EndPt| Cell::Wire {
+        routes: vec![Route::new(a, b)],
+        hot: 0,
+        cooldown: 0,
+        reserved: None,
+    };
+    let extras: Vec<(Pos, Cell)> = vec![
+        // fresh 0 = T1 [p, args, res]: p to PAux(1), args direct to Pair.p, res up.
+        ((1, -1, 0), agent(Tag::T1, pt(Dir::S, 0), [pt(Dir::W, 0), pt(Dir::U, 0)])),
+        // fresh 1 = Pair [p, fst, snd]: p direct to T1.args, fst down, snd to CAux(1).
+        ((0, -1, 0), agent(Tag::Pair, pt(Dir::E, 0), [pt(Dir::D, 0), pt(Dir::S, 0)])),
+        // T1.res: up, west, south, and down into the consumer seed's U face.
+        ((1, -1, 1), wire(pt(Dir::D, 0), pt(Dir::W, 0))),
+        ((0, -1, 1), wire(pt(Dir::E, 0), pt(Dir::S, 0))),
+        ((0, 0, 1), wire(pt(Dir::N, 0), pt(Dir::D, 0))),
+        // Pair.fst: down, east, and south under the producer, then up into its S face.
+        ((0, -1, -1), wire(pt(Dir::U, 0), pt(Dir::E, 0))),
+        ((1, -1, -1), wire(pt(Dir::W, 0), pt(Dir::S, 0))),
+        ((1, 0, -1), wire(pt(Dir::N, 0), pt(Dir::S, 0))),
+        ((1, 1, -1), wire(pt(Dir::N, 0), pt(Dir::U, 0))),
+        ((1, 1, 0), wire(pt(Dir::D, 0), pt(Dir::N, 0))),
+    ];
+    // Every blocklet cell must be a packable site on its own.
+    for (p, cell) in &extras {
+        Word2::pack(&Site::of(cell.clone()))
+            .unwrap_or_else(|e| panic!("{name}: invalid blocklet cell at {p:?}: {e:?}"));
+    }
+    let c_exits = vec![Some(pt(Dir::N, 0)), Some(pt(Dir::U, 0))];
+    let p_exits = vec![Some(pt(Dir::N, 0)), Some(pt(Dir::S, 0))];
+    check_blocklet_geometry(name, &extras, &c_exits, &p_exits);
+    // The fresh agents' shared edge is reciprocal on lane 0.
+    let map: BTreeMap<Pos, &Cell> = extras.iter().map(|(p, c)| (*p, c)).collect();
+    let Cell::Agent { principal: pair_p, .. } = map[&(0, -1, 0)] else { unreachable!() };
+    let Cell::Agent { aux: t1_aux, .. } = map[&(1, -1, 0)] else { unreachable!() };
+    assert_eq!((*pair_p, t1_aux[0]), (pt(Dir::E, 0), pt(Dir::W, 0)), "{name}: agent edge");
+
+    let (script, resolve_pc) = build_script(name, &extras);
+    assert!(script.len() <= 0x1ff, "{name}: script pc overflow");
+    Layout {
+        extras,
+        script,
+        resolve_pc,
+        seats: vec![(0, (1, -1, 0)), (1, (0, -1, 0))],
+        c_exits,
+        p_exits,
+        cp_wires: vec![],
+        seated: try_seat(rule),
+    }
+}
+
+/// T1·S hand-packed: 6 cells where the comb grows 53. All five fresh agents hug the
+/// seed ring: Unp faces the args stub straight south, the three A's chain north of the
+/// seeds, and only two passthroughs (Unp.o2->Dn.val through the b-side A, A3.res->A4.op
+/// through the Dn) plus one bridge wire carry the crossing wires. Because the whole
+/// footprint sits one cell off the seeds, the roll ladder gates every placement — the
+/// comb's far-flung routes are what wedged against parked agents downstream of A·F.
+/// The boundary stubs land on the same canonical seed exits the comb uses.
+fn hand_packed_t1s(rule: &crate::rules::Rule, name: &str) -> Layout {
+    let pt = |face: Dir, lane: u8| EndPt { face, lane };
+    let agent = |tag: Tag, principal: EndPt, aux: [EndPt; 2], pass: Vec<Route>| Cell::Agent {
+        tag,
+        principal,
+        aux,
+        pass,
+        nursery: true,
+        cooldown: 0,
+    };
+    let extras: Vec<(Pos, Cell)> = vec![
+        // fresh 0 = Unp [p, o1, o2]: p to CAux(1), o1/o2 straight up (o2 on lane 1).
+        ((0, -1, 0), agent(Tag::Unp, pt(Dir::S, 0), [pt(Dir::U, 0), pt(Dir::U, 1)], vec![])),
+        // fresh 2 = A (b side) [op, arg, res]: op to Unp.o1, arg to Dn.c1 (lane 1), res
+        // to A4.arg; the passthrough carries Unp.o2 -> Dn.val.
+        ((0, -1, 1), agent(Tag::A, pt(Dir::D, 0), [pt(Dir::E, 1), pt(Dir::S, 0)],
+            vec![Route::new(pt(Dir::E, 0), pt(Dir::D, 1))])),
+        // fresh 1 = Dn [val, c1, c2]: val to A2's passthrough, c1 to A2.arg (lane 1), c2
+        // down to A3.arg; the passthrough carries A3.res -> A4.op.
+        ((1, -1, 1), agent(Tag::Dn, pt(Dir::W, 0), [pt(Dir::W, 1), pt(Dir::D, 0)],
+            vec![Route::new(pt(Dir::D, 1), pt(Dir::S, 0))])),
+        // fresh 3 = A (s side) [op, arg, res]: op to PAux(1), arg/res straight up.
+        ((1, -1, 0), agent(Tag::A, pt(Dir::S, 0), [pt(Dir::U, 0), pt(Dir::U, 1)], vec![])),
+        // fresh 4 = A (outer) [op, arg, res]: op from A3.res via the bridge, arg from
+        // A2.res, res to CAux(2).
+        ((0, 0, 1), agent(Tag::A, pt(Dir::E, 0), [pt(Dir::N, 0), pt(Dir::D, 0)], vec![])),
+        // Bridge: Dn's passthrough exit S0 across to A4.op E0.
+        ((1, 0, 1), Cell::Wire {
+            routes: vec![Route::new(pt(Dir::N, 0), pt(Dir::W, 0))],
+            hot: 0,
+            cooldown: 0,
+            reserved: None,
+        }),
+    ];
+    // Every blocklet cell must be a packable site on its own.
+    for (p, cell) in &extras {
+        Word2::pack(&Site::of(cell.clone()))
+            .unwrap_or_else(|e| panic!("{name}: invalid blocklet cell at {p:?}: {e:?}"));
+    }
+    let c_exits = vec![Some(pt(Dir::N, 0)), Some(pt(Dir::U, 0))];
+    let p_exits = vec![Some(pt(Dir::N, 0))];
+    check_blocklet_geometry(name, &extras, &c_exits, &p_exits);
+
+    let (script, resolve_pc) = build_script(name, &extras);
+    assert!(script.len() <= 0x1ff, "{name}: script pc overflow");
+    Layout {
+        extras,
+        script,
+        resolve_pc,
+        seats: vec![(0, (0, -1, 0)), (1, (1, -1, 1)), (2, (0, -1, 1)), (3, (1, -1, 0)), (4, (0, 0, 1))],
+        c_exits,
+        p_exits,
+        cp_wires: vec![],
+        seated: try_seat(rule),
+    }
+}
+
 fn compile(rule_idx: u8) -> Layout {
     let rule = &RULES[rule_idx as usize];
     let name = format!("{}·{}", rule.consumer.name(), rule.producer.name());
+    if rule.consumer == Tag::A && rule.producer == Tag::F {
+        return hand_packed_af(rule, &name);
+    }
+    if rule.consumer == Tag::T1 && rule.producer == Tag::S {
+        return hand_packed_t1s(rule, &name);
+    }
     let mut c = Compiler { cells: BTreeMap::new(), edges: BTreeMap::new(), name };
 
     // Seats and tail fan-outs for every fresh agent.

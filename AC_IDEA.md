@@ -2,110 +2,186 @@
 
 Where the cascade substrate (the 3D lattice of 64-bit cells running interaction-net
 reduction) must end up to be siliconizable, and the path from today's shared-memory
-drivers to a chip of identical message-passing cells. Distilled from the 2026-07 design
-sessions; the physics below is validated by the current suite, the architecture is not
-yet built. Delete this file once the chip exists and the code reads better than it does.
+drivers to a chip of identical message-passing cells. Revised 2026-07 after the design
+review: the design is now organized around one invariant — every state change is either
+monotone (a fact that never un-becomes true) or a change of mind — with a passive fabric
+for the first and a tiny claimed-transaction machine for the second. The physics below is
+validated by the current suite; the architecture is not yet built. Delete this file once
+the chip exists and the code reads better than it does.
 
-## The premise that makes it possible
+## The one invariant: three planes
 
-Schedule-independence is already proven: any local execution order may park but never
-answers wrongly (schedule_fuzz). That is the license for races on a chip — first-come
-state changes are safe, arbitration order never affects the answer. Guard this property
-above everything; every mechanism below assumes it.
+- **Routing plane** — the road map: each cell's route table (12 half-edges = 6 faces × 2
+  lanes, ≤ 3 pairings). Written only inside claimed commits; read only by the signal
+  fixpoint. This is the bridge between the two worlds.
+- **Signal plane** — monotone facts (heat, wakes): a least fixpoint over routing plus
+  demand sources. No mutual exclusion anywhere, ever: raises commute. Platform contract:
+  raise-only (no `clear` — state only grows), queries may err stale-cold but never
+  stale-hot, invalidation by route-epoch death (signals die with their route; no sweeps).
+- **Dynamic plane** — the occupants (agents, cursors, claims). Computation is claimed
+  ≤2-cell commits, byte-identical on silicon/CPU/GPU; only the exclusion mechanism
+  differs (arbiter grant / address-ordered CAS / domino phase).
+
+The premise is unchanged and load-bearing: schedule-independence is proven
+(`schedule_fuzz_never_wrong` — any local execution order may park but never answers
+wrongly). That one property licenses races on chip, lazy signal evaluation on CPU, dense
+idempotent passes on GPU, and every timing difference between platforms. Guard it above
+everything.
 
 ## Constraints (the frozen contract)
 
-- **Words are 64 bits, layout frozen.** kind 2, payload 36, cursor 21 (roll 3, pc 8),
-  chi 4, claim 1. New mechanisms must fit the frozen word or explicitly renegotiate it —
-  the word is the chip.
-- **Transactions touch ≤ 2 adjacent cells.** Every dynamic is already a 1–2 cell commit.
-- **No combinational long reads.** Anything wider (the 5-hop demand lookahead, the ~60
-  cell dock-ring scan) must be re-expressed as a bounded wave protocol: a clocked token
-  with a hard hop bound, not a one-step reach. Enumerate every exception with its bound.
+- **Words are 64 bits, layout frozen.** On silicon the claim bit and the reservation
+  marks are *arbiter state*, not word bits. Know the bit classes before spending:
+  semantic core (kind, routes, agent endpoints, cursor pc) · correctness-of-mechanism
+  (nursery — keeps un-resolved growth inert; NOT optional) · capacity (3rd route, pc
+  width) · heuristics (χ, cooldown — a v0 chip may drop them; dropping parks more, never
+  answers wrongly).
+- **Commits touch ≤ 2 adjacent cells — as the target.** Current exceptions must be
+  re-expressed as bounded token chains before silicon: the aux-detour walk (4 cells) and
+  relief evictions (4–6 cells). Arity-1 teleport (below) is the one sanctioned amendment:
+  a worm, not a commit.
+- **No combinational long reads.** The enumerated exceptions and their dispositions: the
+  5-hop demand lookahead (DELETED by the signal plane — passthrough routes are just more
+  component edges; the signal arrives instead of being searched for), the ~60-cell
+  dock-roll scan (host-assist preferred; else a scout token, hard ≤64-hop bound), the
+  every-5-generations contraction sweep (DELETED — slack discovery is a monotone fact and
+  rides the fabric; the fold itself stays a claimed commit).
 - **Frozen op alphabet and transition templates.** No runtime search on chip; growth runs
-  a compiled microcode script (26 rules × ≤255 ops × ~12 bits) — the cursor is a program
-  counter, the layout table is ROM. Compile-time search stays host-side.
+  compiled microcode in a per-tile ROM (cursor = program counter). Compile-time search
+  stays host-side.
 - **Small arithmetic only.** Compares, increments, saturating adds on ≤ 8-bit fields.
-  No multipliers, no floating point. True today.
-- **Bounded fan-in/fan-out.** Each cell sees its own state plus the presented lines of
-  its 6 neighbors; every op forwards ≤ ~7 activations. No floods, no broadcast.
-- **Idle means dark.** Event-driven only; at equilibrium, zero switching. Signals are
-  monotone where possible (heat is one flip per cable per lifetime). Global maintenance
-  waves (the current every-5-generations contraction sweep) are a violation — scope them
-  or drop them before silicon.
-- **One outstanding transaction per cell, released by protocol.** A grant ends with a
-  `done` in the same transaction or a bounded hold timer. No permanent locks.
-- **Deadlock freedom by construction.** Address-ordered claiming (the parallel driver
-  already does this) or bounded hold-and-retry; pick one as the arbiter's contract.
-- **Bounded array.** Out-of-bounds is a permanent boundary cell (the parallel driver
-  already treats it so).
-- **Host machinery stays off-chip.** Shadow net, projection checks, traces, loaders,
-  BFS compilers, verification (finals_correct) — never in the silicon datapath.
-- **Metastability budget.** Async faces need 2-flop synchronizers before the arbiter;
-  account the latency in protocol timing. Per-tile-synchronous vs fully-async is an
-  early decision that changes the arbiter, not the API.
+- **Bounded fan-in/fan-out.** Own state + 6 neighbors' presented lines; ≤ ~7 wakes per
+  written cell. No floods, no broadcast.
+- **Idle means dark — now structural.** Wire cells are unclocked (config + pass gates +
+  hot latches); signals switch once per route lifetime.
+- **One outstanding transaction per cell**, released by `done` or a bounded hold timer.
+  Deadlock freedom: address-ordered claiming in software = a fixed cross-request
+  tie-break in silicon.
+- **Bounded array, host machinery off-chip, metastability budget** (2-flop synchronizers
+  before the arbiter; per-tile-sync vs fully-async is an early decision).
 
 ## The cell
 
-- 64-bit state + cursor latch; anonymous (no ids — sids are host-only).
-- A 6-input mutex arbiter: first request wins, the cell direction-locks ("listens only
-  to the granted face") until `done`; losers get busy. This is wormhole
-  circuit-switching — proven NoC idiom, 30 years of literature.
-- **Fast path (wire cells are fabric):** a route crossbar (3 × 8-bit entries). A heat
-  activation entering face/lane exits per the stored route, combinationally, no FSM,
-  and sets the route's hot latch on the way. Cables are wormhole circuits.
-- **Slow path (agent/seed/cursor cells):** an FSM of transition micro-ops (dock step,
-  walk step, place, hop, retract). On grant: run the op, write state, forward the next
-  activation or send `done`.
-- Idle = clock-gated: no toggling edges, zero dynamic power.
+- **~30-bit semantic core**; the 64-bit word is explained by co-residency (a cell hosting
+  a walker and a growth cursor at once: kind 2 + payload 36 + cursor 21 + χ 4 = 63).
+- **Wire cell = fabric:** 66 pass gates (one per half-edge pair), 24 config bits
+  selecting ≤ 3 pairings, 3 hot latches, decode. No clock, no FSM, no arbiter. A wire
+  cell is a configurable piece of metal with three one-bit memories. The same pass gates
+  are the data path for flits (teleport below).
+- **Agent/seed cell:** a 6-input first-come mutex arbiter (request latches + grant
+  register + metastability filter; direction-lock until `done`; losers get busy) and an
+  FSM of op-decode → combinational two-word transform → write → forward/`done`, plus a
+  ≤6-step sequencer for multi-commit ops. Sequencing lives in the cursor pc (growth) and
+  the handshake pipeline (movement), not in the FSM.
+- **The executor reads arity from live endpoints** (0/1/2 aux = arity 1/2/3); the tag is
+  consulted only at dock rule lookup. The walk datapath never reads the tag.
 
-## The edge API (per face, per direction; ~16 wires)
+## Reduction: three tiers (26 rules → 3 mechanisms + 2 generators + 9 scripts)
 
-- `req` + `op[3:0]` + `lane`: activate with this op on this lane. Op enum is frozen
-  (heat, probe, commit, place, hop, retract, wake — or similar).
-- `ack` + `status[1:0]`: granted / busy (backpressure: hold the token) / refuse.
-- `data[7:0]`: payload train, sized by the largest atom (one route entry); agent state
-  (~15 bits) moves as a 2–3 flit train.
-- `done`: transaction tail, releases the direction lock.
+The ROM is 7 structural rules (the apply + two-level-triage semantics) plus 19 instances
+of generic structural machinery (erasure = weakening, duplication = contraction, forcing
+= a modality, fusion = annihilation) that is uniform in the producer's *shape*. The
+generic half becomes mechanism:
 
-## Protocol mapping (current dynamics → messages)
+- **Tier 0, in the dock commit (no growth, no cursor):**
+  - *Fusion* (`Unp·Pair`, `Eps·L`): pure re-routing; already fires in the dock today.
+  - *Erasure* (`Eps·{S,F,P,Pair}`): emit one eraser flit per producer aux down its cable;
+    both cells die. With teleport the cascade runs at wire speed.
+  - *Forcing* (`×P`, five rules with byte-identical wiring): a 2-cell in-place relabel —
+    the producer cell becomes the fresh `A` (its aux cables are already on the right
+    faces), the consumer cell is re-presented facing it. Zero new area.
+- **Tier 1, two parameterized generators:** the Dn and Nrm traversals are the same loop
+  (walk producer arity, push the agent) with different payloads — 6 rules → 2 loop
+  programs.
+- **Tier 2, the real ROM:** `A·{L,S,F}`, `T1·{L,S,F}`, `Sel·{L,S,F}` ≈ 9 blocklet
+  scripts (the `T1·L` ≡ `Sel·L` shape is shared). Sel·F's 62-cell worst case stands:
+  area is conserved, so the only lever is *when* the footprint is claimed (prefetch
+  rung).
 
-- Heat wave: activation through the crossbar fast path. Trivial.
-- Walk: probe principal channel, accept, agent state across as a flit train, trail left
-  behind. A 4–6 flit wormhole.
-- Dock/growth: the cursor is a roaming packet (rule, pc); each place is a reserve→write
-  two-flit transaction with the target cell (already the current two-phase shape).
-- Roll scan: the hard one. A scout token circulating the footprint ring collecting merge
-  votes (bounded 64 hops) — or better, **host-assist**: roll diversity is a layout-time
-  concern; silicon only needs attempt / decline-and-wait. Preferred.
-- Relief/eviction: recursion becomes token chains with a hop bound (v2 protocol).
-- Verification: host-side, unchanged.
+## Movement
 
-## Migration strategy
+- **Arity ≥ 2 walks** as today: 2-cell commits, trails laid cold, one cell per tick.
+  Irreducible — the trails are the net's edges being re-anchored.
+- **Arity-1 teleport (L, Eps — most traffic).** An arity-1 walker's intermediate
+  positions project to nothing (the net edge is identity), so: source → empty, target →
+  agent, dead cable → lazy slack erasure. Silicon: a 2-flit worm down the cable's own
+  established route (the crossbar is the data path). CPU: a union-find far-end lookup +
+  two writes + a free-list push. GPU: decomposes back to walking — a timing difference,
+  licensed. Requires: an abort leg (the target may fire mid-flight) and the contract
+  amendment above.
 
-1. **cascade_msg**: a third driver with the same semantics but no shared-memory reads —
-   transactions communicate only via the message enum. Verified bit-exact against the
-   serial runner on the existing suite. This is the sufficiency test for the API before
-   any Verilog. The parallel driver is already the halfway point (claims ≈ locks,
-   transactions ≈ protocols, atomic words ≈ shared state).
-2. **Cycle-level simulator** of the message version: pins protocol timing, synchronizer
-   latency, arbiter behavior.
-3. **Per-tile ROM decision**: replicated-per-cell script ROM (~20 KB) is too fat; an
-   8×8-cell tile sharing one ROM + a slow read bus fits (growth is already 2–3
-   generations per placed cell).
-4. Then Verilog.
+## Demand as priority
 
-## What is left (open rungs, in rough order)
+- Heat is a **priority gradient, not a license**: demand owns the resource, speculation
+  rents slack. Shoves are preemption (existing); cooldown stamps are damping (existing).
+- **Classify every signal by monotonicity.** Identity (routes, heat, wakes, slack
+  discovery) rides the fabric. Revocable state (χ, reservations, bids) stays clocked and
+  local — a combinational revocable signal is a same-tick feedback loop (the pump-decay
+  livelock, removed 2026-07, is the standing witness).
 
-- **Lane remapping at resolve**: shift a handover path's lane assignment (exit route →
-  handover → corridor) to dodge an aux cable's immovable first segment. This is the
-  k-chain knot's live blocker: a circular stub-lock where the pair's own aux cables box
-  every orientation (2026-07 autopsy: every roll collides with a stub cell, and the
-  planned handover's fixed lanes collide with the aux cable's lanes). Alternative rung:
-  undock-and-reseat (break the pair, move one agent, re-dock) — bigger, livelock risk.
-- **disp-t knot**: walker convoys; less characterized than k-chain's.
-- **Sweep scope-or-drop** for the idle-means-dark contract.
-- **Roll-scan**: host-assist (preferred) or scout-token wave protocol.
-- **Relief as token chains**, with the depth bound as a synthesis constant.
-- **Word freeze**: no more bit spending without an explicit renegotiation.
-- **Chip-power audit** of every remaining multi-cell signal before tapeout.
+## Edge API (per face, per direction)
+
+- **Fast:** 2 lane lines (bidirectional heat — the crossbar conductors) + 1 wake pulse.
+- **Slow:** `req` + `op[3:0]` + `lane` · `ack` + `status[1:0]` · `data[7:0]` · `done` —
+  ~16 wires. Flit sized by the largest atom (one route entry); agent state = 2 flits.
+
+## Migration
+
+0. **Signal-plane trait in software** (serial driver first): raise-only, epoch-keyed,
+   three backends (worklist / union-find / dense bitmap); `decide()` generic over it.
+   Gate: bit-exact under all queue disciplines; `hot_beyond` and the sweep deleted.
+1. **Tier-0 mechanisms** (erasure emission, ×P relabel) in all drivers; ROM shrinks to 2
+   generators + 9 scripts. Gate: atlas + stage1 + cascade_suite.
+2. **cascade_msg**: the message-only driver, bit-exact against serial on the existing
+   suite. The sufficiency test for the API before any Verilog.
+3. **Arity-1 teleport**: CPU first (union-find makes it nearly free), then as a worm
+   protocol in the message driver.
+4. **Cycle-level simulator**: pins fabric cells-per-clock, synchronizer latency, arbiter
+   behavior.
+5. **Per-tile ROM** (now much smaller) **+ Verilog.**
+
+## Open rungs
+
+- **k-chain knot** (the stub-lock at crowded dock rings): lane remapping at resolve,
+  undock-and-reseat, **footprint prefetch** (claim the roll ring during approach — a new
+  claim type, speculative), or the **single-lane experiment** (deletes the lane-conflict
+  failure class at 2× cable width).
+- **disp-t knot**: walker convoys; less characterized.
+- **Relief as bounded token chains**, depth as a synthesis constant.
+- **Teleport abort leg.**
+- **Roll scan**: host-assist (preferred) or scout-token wave.
+- **Dock-time clump fusion** (see below).
+- **Chip-power audit** of every remaining multi-cell signal. **Word freeze stands.**
+
+## Clump rules (a calculus-level direction, gated on measurement)
+
+Today a rewrite locks exactly 2 cells and grows the result; a "clump rule" locks a larger
+assembled structure and rewrites it in one transaction. Two different things share the
+name; keep them separate:
+
+- **Spatial clump** = claiming a bigger footprint around the dock (the prefetch rung
+  generalized). Substrate-level, coherent, no semantics change.
+- **Semantic clump** = multi-agent rules. The triage path is the target: fusing
+  `A·F` + `T1·x` into one 3-agent rule recovers direct tree reduction
+  (`F(S s) b` applied to `x` ⇒ `(s x)(b x)`; `F(L) b` applied to `x` ⇒ `b`) and skips an
+  entire growth episode (the A·F blocklet) per triage — the congestion hot path. The
+  preferred first form is **opportunistic dock-time fusion**: when `A·F` is about to
+  fire, a 1-hop stale-safe check whether the discriminant's head is already docked on
+  `F`'s aux face; if so, claim the third cell (address-ordered) and fire the fused rule;
+  else fall back to the pair rule. Detection stays 1-hop; no waves. Full T1/Sel removal
+  (always-fused, lazy `A·F`) is a calculus change: new spec, an orthogonality/confluence
+  proof obligation (fused and pair rules overlap; the crown-jewel property is at stake),
+  and a termination-domain re-check. Sandbox it in the abstract net (`net.rs` +
+  `oracle.rs`) against the eager oracle before any lattice work; pursue only if the
+  tracer shows triage-path growth episodes are a top cost on the frontier terms.
+
+## Rejected (recorded so they stay rejected)
+
+- **Standing multi-cell agents**: corridors are one cell wide; movement becomes a wave;
+  worst-case sizing (Sel·F = 62 cells) is unaffordable at rest. (Footprint *prefetch*
+  keeps the benefit without the standing cost.)
+- **Tag-by-routing**: routing configuration is spatial accident, type is semantic;
+  log₂(12) bits must live somewhere and the 4-bit tag is already minimal. What survives:
+  arity from live endpoints; the tag read only at dock.
+- **χ/pressure pump waves**: livelocked as pump-decay cycles (2026-07). Revocable state
+  stays clocked or token-carried; only monotone facts ride the fabric.

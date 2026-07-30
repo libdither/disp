@@ -124,7 +124,7 @@
     <b>[</b> / <b>]</b> previous / next suite scenario<br>
     <b>.</b> / <b>,</b> next / previous activation of the pinned cell (no pin: any word change or fire)<br>
     <b>n</b> / <b>p</b> next / previous word change at the pinned cell (no pin: same as . / ,)<br>
-    <b>g</b> follow the activated cell · click pin/unpin · <b>Esc</b> unpin</div></details>
+    <b>g</b> follow the activated cell · <b>v</b> toggle canvas labels · click pin/unpin · <b>Esc</b> unpin</div></details>
     <div class="note" id="whatnote" style="margin:2px 0 6px"></div>
     <div class="note" style="margin:0 0 8px">Hover a visible cell to preview its trace state. Click to pin;
     click the same cell, empty canvas, ×, or Escape to unselect. A pinned coordinate remains
@@ -149,14 +149,18 @@
     <div id="rules"></div>
     <h3>LEGEND</h3>
     <div class="note">
-      white triangle = principal port; hollow circle = aux 1; diamond = aux 2<br>
-      strand color keys on lattice |z| (<span style="color:#6f9fd8">z=0</span> /
-      <span style="color:#a97fd8">±1</span> / <span style="color:#d87fb0">±2</span> /
-      <span style="color:#d8a97f">deeper</span>); <span style="color:#ffd866">gold strand</span> = hot (demanded) lane<br>
+      bold white stub + white triangle = principal port; hollow circle = aux 1; diamond =
+      aux 2; tag name sits beside the body (<b>v</b> toggles all canvas text)<br>
+      route color keys on its index inside the cell (<span style="color:#4fc3ff">route 1</span> /
+      <span style="color:#ffd166">2</span> / <span style="color:#ff7eb6">3</span>) — routes run
+      straight, or bend once around the cell corner between their two faces; overlapping
+      strands nest on parallel offset lanes; numbered labels match the inspector's
+      s1/s2/s3; <span style="color:#ffd866">gold halo</span> = hot (demanded) lane<br>
       <span style="color:#ff5a30">red glow</span> = χ pressure field<br>
       colored square outline = rewrite in progress — gold seed (docked pair), green
       builder cursor, orange seed+cursor sharing a cell<br>
-      dashed cyan ring = nursery agent: placed by the cursor, inert until the seed resolves<br>
+      dashed cyan ring + dimmed body = nursery agent: placed by the cursor, inert until
+      the seed resolves<br>
       <b>white rings + cross</b> = this generation's wavefront (every cell that committed);
       <b>dashed white rings</b> = the next generation's front<br>
       gold event ring = semantic fire (rule shown); far cells dim with camera depth
@@ -178,7 +182,7 @@
 document.write('<script src="lattice_cascade.js?v=cascade-2"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
-const PLAYER_VERSION = "2026-07-23 · cascade replay v2";
+const PLAYER_VERSION = "2026-07-24 · cascade replay v5";
 fetch(location.pathname, { cache: "no-store" }).then(r => r.text()).then(t => {
   const m = t.match(/PLAYER_VERSION = "([^"]+)"/);
   if (m && m[1] !== PLAYER_VERSION) {
@@ -206,7 +210,9 @@ const COL = { L: "#3fbf7f", S: "#3fbf7f", F: "#3fbf7f", P: "#7ce38b", Pair: "#2f
               A: "#56c8ff", T1: "#56c8ff", Sel: "#56c8ff", Unp: "#4fd8e8", Dn: "#c792ea",
               Eps: "#ff6b6b", Nrm: "#ffd866", Out: "#8595ad" };
 const GLYPH = { L: "△", S: "S", F: "F", P: "@", Pair: "⋈", A: "A", T1: "T₁", Sel: "T₂", Unp: "⌄", Dn: "δ", Eps: "ε", Nrm: "N", Out: "☉" };
-const PLANECOL = ["#6f9fd8", "#a97fd8", "#d87fb0", "#d8a97f"];
+// Fixed per-route-index palette: route i of a wire cell always draws in ROUTECOL[i], so
+// strands sharing a cell never merge into one color. Hot lanes get a gold halo instead.
+const ROUTECOL = ["#4fc3ff", "#ffd166", "#ff7eb6"];
 const PRODUCERS = new Set(["L", "S", "F", "P", "Pair"]);
 const STEP3 = { N: [0, -1, 0], E: [1, 0, 0], S: [0, 1, 0], W: [-1, 0, 0],
                 U: [0, 0, 1], D: [0, 0, -1] };
@@ -225,6 +231,12 @@ let TR = null, FRAME = 0, SUB = 0, RUNNING = false, LAST_DRAW_MS = null;
 let CELL_INDEX = new Map(), HOVER_CELL = null, PINNED_CELL = null;
 let DIRTY = true, FOLLOW = false, SCEN_KEYS = [];
 let view = { x: 0, y: 0, scale: 26, yaw: 25, pitch: -20 };
+// Scriptable entry for headless screenshots: ?trace=<name-or-index>&frame=<n>&labels=0
+// &fit=all jumps straight to a generation; window.__rendered / title "ready" flip once
+// that frame is actually drawn. LABELS gates every on-canvas text label (keybind v).
+const URLQ = new URLSearchParams(location.search);
+let LABELS = URLQ.get("labels") !== "0";
+let READY = false;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const esc = s => String(s).replace(/[&<>"]/g, ch =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
@@ -264,7 +276,6 @@ const px = (x, y, z) => {
     cv.clientHeight / 2 + (v - view.y) * view.scale,
   ];
 };
-const planecol = z => PLANECOL[Math.min(Math.abs(z), PLANECOL.length - 1)];
 
 const invalidate = () => {
   DIRTY = true;
@@ -751,9 +762,9 @@ function draw(now) {
   const dspan = dmax - dmin || 1;
   const dalpha = d => 0.45 + 0.55 * (Number.isFinite(dmin) ? (d - dmin) / dspan : 1);
 
-  // faint lattice dots on the z=0 plane, covering the visible projected rectangle
+  // Lattice grid on the z=0 plane: faint lines on cell boundaries across the visible
+  // projected rectangle, so cell positions read at a glance. Drawn under everything.
   if (s > 10) {
-    ctx.fillStyle = "#121a28";
     const det = BASIS.x[0] * BASIS.y[1] - BASIS.y[0] * BASIS.x[1];
     let x0 = -20, x1 = 20, y0 = -20, y1 = 20;
     if (Math.abs(det) > 1e-6) {
@@ -766,9 +777,24 @@ function draw(now) {
         x0 = Math.min(x0, lx); x1 = Math.max(x1, lx);
         y0 = Math.min(y0, ly); y1 = Math.max(y1, ly);
       }
-      x0 = Math.floor(x0); x1 = Math.ceil(x1); y0 = Math.floor(y0); y1 = Math.ceil(y1);
+      x0 = Math.floor(x0) - 1; x1 = Math.ceil(x1); y0 = Math.floor(y0) - 1; y1 = Math.ceil(y1);
     }
-    if ((x1 - x0) * (y1 - y0) < 20000) for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const [a, b] = px(x, y, 0); ctx.fillRect(a - 1, b - 1, 2, 2); }
+    if ((x1 - x0) * (y1 - y0) < 20000) {
+      ctx.strokeStyle = "#2a3c5c";
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = x0; x <= x1; x++) {
+        const [a, b] = px(x + 0.5, y0 + 0.5, 0), [c, d] = px(x + 0.5, y1 + 0.5, 0);
+        ctx.moveTo(a, b); ctx.lineTo(c, d);
+      }
+      for (let y = y0; y <= y1; y++) {
+        const [a, b] = px(x0 + 0.5, y + 0.5, 0), [c, d] = px(x1 + 0.5, y + 0.5, 0);
+        ctx.moveTo(a, b); ctx.lineTo(c, d);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
   // χ pressure of the current exact frame: [x, y, z, v] with v in 1..250 — a warm glow
   // under everything
@@ -780,24 +806,65 @@ function draw(now) {
     ctx.globalAlpha = 1;
   }
   // wires of the current exact frame: [x, y, z, ["NS", ...]]; a trailing "*" marks the
-  // strand HOT — drawn gold and thicker
-  const drawStrand = (x, y, z, sdesc) => {
+  // strand HOT — gold halo under its route color. Route i of a cell always draws in
+  // ROUTECOL[i] on its own layer: 0 runs base, 1/2 step one to each side; the layer is
+  // also its lane beside the midpoint of any shared face (solo faces stay centered so
+  // adjoining cells meet). Routes are angular, circuit-style: one straight segment for
+  // facing half-edges, otherwise a single bend hugging the cell corner shared by the
+  // two faces, each segment leaving its anchor along the edge line — layered routes
+  // nest around that corner. Route numbers match the inspector's s1/s2/s3.
+  const drawWireCell = w => {
+    const [x, y, z] = w, strands = w[3];
     const [cx, cy] = px(x, y, z);
-    const hot = sdesc.endsWith("*");
-    const faces = hot ? sdesc.slice(0, -1) : sdesc;
-    ctx.lineWidth = Math.max(1, s * (hot ? 0.14 : 0.09));
-    ctx.globalAlpha = 0.9 * dalpha(cellDepth(x, y, z));
-    ctx.strokeStyle = hot ? "#ffd866" : planecol(z);
-    for (const dch of faces) {
-      const v = DIR[dch];
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + v[0] * s / 2, cy + v[1] * s / 2); ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
+    const alpha = 0.92 * dalpha(cellDepth(x, y, z));
+    const faceUse = {};
+    for (const sd of strands) for (const f of strandFaces(sd)) faceUse[f] = (faceUse[f] || 0) + 1;
+    ctx.lineCap = "round";
+    strands.forEach((sdesc, i) => {
+      const hot = sdesc.endsWith("*");
+      const layer = (i === 0 ? 0 : i === 1 ? 1 : -1) * s * 0.14;
+      const faces = strandFaces(sdesc);
+      const uturn = faces.length === 2 && faces[0] === faces[1];
+      const anchors = faces.map((f, k) => {
+        const v = DIR[f], len = Math.hypot(v[0], v[1]) || 1;
+        let lane = faceUse[f] > 1 ? layer : 0;
+        // A U-turn on one face: spread the two stubs a little so both read.
+        if (uturn) lane += (k === 0 ? -1 : 1) * s * 0.09;
+        return { x: cx + v[0] * s / 2 - v[1] / len * lane, y: cy + v[1] * s / 2 + v[0] / len * lane,
+                 vx: v[0], vy: v[1] };
+      });
+      if (!anchors.length) return;
+      const a0 = anchors[0], a1 = anchors[1] || { x: cx, y: cy, vx: -anchors[0].vx, vy: -anchors[0].vy };
+      // The corner between the two faces sits at center + (v0+v1)·s/2; opposite faces
+      // (v0+v1 ≈ 0) and U-turns get a plain straight segment instead.
+      const sx = a0.vx + a1.vx, sy = a0.vy + a1.vy, sl = Math.hypot(sx, sy);
+      let pts = [[a0.x, a0.y], [a1.x, a1.y]];
+      if (!uturn && sl > 1e-6)
+        pts = [[a0.x, a0.y],
+               [cx + sx * s / 2 - sx / sl * layer, cy + sy * s / 2 - sy / sl * layer],
+               [a1.x, a1.y]];
+      const stroke = (style, width, a) => {
+        ctx.strokeStyle = style; ctx.lineWidth = width; ctx.globalAlpha = a;
+        ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+        ctx.stroke();
+      };
+      const col = ROUTECOL[i % ROUTECOL.length];
+      if (hot) stroke("#ffd866", Math.max(2.5, s * 0.17), alpha * 0.4);
+      stroke(col, Math.max(1.2, s * (hot ? 0.08 : 0.065)), alpha);
+      if (LABELS && strands.length > 1 && s > 24) {
+        const mid = pts.length === 3 ? pts[1] : [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2];
+        ctx.font = `bold ${Math.round(s * 0.18)}px monospace`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.globalAlpha = alpha;
+        ctx.strokeStyle = "#0b0e14"; ctx.lineWidth = 3;
+        ctx.strokeText(String(i + 1), mid[0], mid[1]);
+        ctx.fillStyle = col; ctx.fillText(String(i + 1), mid[0], mid[1]);
+      }
+      ctx.globalAlpha = 1;
+    });
+    ctx.lineCap = "butt";
   };
-  for (const w of f0.grid.wires) {
-    for (const sd of w[3]) drawStrand(w[0], w[1], w[2], sd);
-    if (w[3].length >= 2) { const [a, b] = px(w[0], w[1], w[2]); ctx.strokeStyle = "#8595ad"; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(a, b, Math.max(2.5, s * 0.12), 0, 7); ctx.stroke(); }
-  }
+  for (const w of f0.grid.wires) drawWireCell(w);
   // A rewrite in progress is a seed pair plus its builder cursor; the outline marks the
   // cell so growth is visible without pretending the seed is an agent or a wire.
   const motion = [...f0.grid.motion].sort((a, b) => cellDepth(a[0], a[1], a[2]) - cellDepth(b[0], b[1], b[2]));
@@ -814,7 +881,7 @@ function draw(now) {
     ctx.globalAlpha = 0.7 * dalpha(cellDepth(pos[0], pos[1], pos[2]));
     ctx.lineWidth = Math.max(1, s * 0.045);
     ctx.strokeRect(mx - s * 0.42, my - s * 0.42, s * 0.84, s * 0.84);
-    if (s > 24 && motion.length <= 8) {
+    if (LABELS && s > 24 && motion.length <= 8) {
       ctx.fillStyle = roleColor; ctx.font = `${Math.round(s * 0.22)}px monospace`;
       ctx.textAlign = "center"; ctx.textBaseline = "top";
       ctx.fillText(`${role.slice(0, 8)}:${phase}`, mx, my + s * 0.46);
@@ -846,6 +913,8 @@ function draw(now) {
   const drawAgent = (a, x, y, z, alpha) => {
     const [cx, cy] = px(x, y, z);
     const tag = a[3], bodyRadius = s * 0.235;
+    // Nursery matter is placed by the cursor and inert until the seed resolves: dim it.
+    const live = a[6] === "nursery" ? 0.45 : 1;
     const faceCount = a[5].reduce((counts, face) => ({ ...counts, [face]: (counts[face] || 0) + 1 }), {});
     const faceSeen = {};
     const ports = a[5].map((face, index) => {
@@ -857,10 +926,19 @@ function draw(now) {
       const spread = faceCount[face] > 1 ? (rank - (faceCount[face] - 1) / 2) * s * 0.13 : 0;
       return { index, mx: cx + vx + tx * spread, my: cy + vy + ty * spread, nx, ny, tx, ty, spread };
     });
-    ctx.globalAlpha = alpha * dalpha(cellDepth(x, y, z));
+    const depthA = alpha * dalpha(cellDepth(x, y, z));
+    ctx.globalAlpha = depthA * live;
     // Connectors meet the exact projected face midpoint. The compact body covers their
     // center ends; semantic markers are drawn above it, so U/D ports remain visible.
+    // The principal connector gets a bold translucent white underlay so it reads as the
+    // one "live" stub even where routes cross the cell.
     for (const p of ports) {
+      if (p.index === 0) {
+        ctx.strokeStyle = "rgba(255,255,255,0.30)";
+        ctx.lineWidth = Math.max(3, s * 0.17);
+        ctx.beginPath(); ctx.moveTo(cx + p.tx * p.spread, cy + p.ty * p.spread);
+        ctx.lineTo(p.mx, p.my); ctx.stroke();
+      }
       ctx.strokeStyle = p.index === 0 ? "#ffffff" : "#9baabd";
       ctx.lineWidth = p.index === 0 ? Math.max(1.5, s * 0.085) : Math.max(1, s * 0.045);
       ctx.beginPath(); ctx.moveTo(cx + p.tx * p.spread, cy + p.ty * p.spread);
@@ -884,6 +962,20 @@ function draw(now) {
       ctx.font = `bold ${Math.round(s * (label.length > 1 ? 0.20 : 0.27))}px monospace`;
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(label, cx, cy + 0.5);
+    }
+    // A readable tag name beside the body (diagonal, clear of the six face axes) — this
+    // is the label a human validates against the blocklet, the in-body glyph stays iconic.
+    // Drawn at full depth alpha: a nursery agent's name stays readable though its body dims.
+    if (LABELS && s > 12) {
+      ctx.font = `bold ${Math.round(s * 0.22)}px monospace`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const lx = cx + s * 0.37, ly = cy + s * 0.42;
+      ctx.globalAlpha = depthA;
+      ctx.strokeStyle = "#0b0e14"; ctx.lineWidth = 3.5;
+      ctx.strokeText(tag, lx, ly);
+      ctx.fillStyle = COL[tag] || "#c8d3e0";
+      ctx.fillText(tag, lx, ly);
+      ctx.globalAlpha = depthA * live;
     }
 
     // Port identity is geometric, not color-only. Facing principal triangles meet tip
@@ -938,7 +1030,7 @@ function draw(now) {
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(ax, ay, s * 0.7, 0, 7); ctx.stroke();
     ctx.globalAlpha = 1;
-    if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(displayRule(e.rule), ax, ay - s * 0.8); }
+    if (LABELS && s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(displayRule(e.rule), ax, ay - s * 0.8); }
   }
 
   // The wavefront is the clock. Every cell this generation committed gets a white ring
@@ -986,6 +1078,8 @@ function draw(now) {
     ctx.stroke();
     ctx.restore();
   }
+  // A full frame just hit the canvas: tell headless screenshot drivers they can shoot.
+  if (!READY) { READY = true; window.__rendered = true; document.title = "ready"; }
 }
 
 const num = v => Number.isFinite(v) ? v : "—";
@@ -1264,6 +1358,7 @@ addEventListener("keydown", e => {
     FOLLOW = !FOLLOW;
     if (FOLLOW) { followActivation(); invalidate(); }
   }
+  else if (e.key === "v") { LABELS = !LABELS; invalidate(); }
 });
 // pan / zoom
 let panning = false, px0 = 0, py0 = 0, dragDistance = 0;
@@ -1323,13 +1418,29 @@ function resize() {
   cv.style.width = w + "px"; cv.style.height = h + "px";
   invalidate();
 }
+let VIEW_LOCKED = false; // URL-driven view: resize must not re-fit and clobber it
 addEventListener("resize", () => {
   resize();
-  if (TR) fit();
+  if (TR && !VIEW_LOCKED) fit();
 });
 recomputeBasis();
 renderAgents(); resize();
-if (SCEN_KEYS.length) pick(SCEN_KEYS[0]);
+// URL parameters pick the scenario and generation for scripted screenshots; with no
+// parameters the player behaves exactly as before (first scenario, fit whole trace).
+let boot = SCEN_KEYS[0];
+const qTrace = URLQ.get("trace");
+if (qTrace) {
+  if (window.TRACES && window.TRACES[qTrace]) boot = qTrace;
+  else if (/^\d+$/.test(qTrace) && +qTrace < SCEN_KEYS.length) boot = SCEN_KEYS[+qTrace];
+}
+if (boot) pick(boot);
+const qFrame = URLQ.get("frame");
+if (qFrame !== null && TR) setFrame(Number(qFrame) || 0);
+const qFit = URLQ.get("fit") || ((qTrace || qFrame) ? "frame" : "all");
+if (TR && qFit === "frame") fitCurrent();
+const qZoom = parseFloat(URLQ.get("zoom"));
+if (TR && qZoom > 0) { view.scale = clamp(view.scale * qZoom, 2, 400); invalidate(); }
+if (qTrace || qFrame || qZoom > 0) VIEW_LOCKED = true;
 requestAnimationFrame(draw);
 </script>
 </body></html>
