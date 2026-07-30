@@ -108,6 +108,32 @@ pub fn k() -> Term { s(L) } // K a b → a
 pub fn chain_k(n: u32) -> Term { if n == 0 { L } else { ap(ap(k(), chain_k(n - 1)), L) } }
 pub fn disp_t() -> Term { ap(ap(f2(f2(L, s(L)), L), s(L)), f2(L, L)) } // drives A→T1→Sel
 
+// Size-knobbed families, one per congestion class of the lattice. The census bin turns
+// each into a completes-up-to-n curve; family_normal_forms pins what they must answer.
+
+/// A pure-constructor F-tree with 2^n leaves: matter with no redexes.
+pub fn full_tree(n: u32) -> Term {
+    if n == 0 { L } else { f2(full_tree(n - 1), full_tree(n - 1)) }
+}
+
+/// K discards a 2^n-leaf tree: area/load scaling plus whatever the substrate does with
+/// discarded matter (2026-07 census: it stands dead, zero eraser fires). nf = L.
+pub fn discard_tree(n: u32) -> Term { ap(ap(k(), L), full_tree(n)) }
+
+/// n stacked K-path triages, each level's survivor suspended inside the next F: the
+/// reduction is a convoy of A·F → T1·L episodes forced one at a time. nf = F(L,L).
+pub fn convoy(n: u32) -> Term {
+    if n == 0 { f2(L, L) } else { ap(f2(L, convoy(n - 1)), L) }
+}
+
+/// Each level Dn-shares the suspended sub-tower: the S-rule's first branch K-discards
+/// its copy (the eraser chases the duplicator) while the second branch normalizes its
+/// copy — dup/erase contention with one demanded stream. nf gains one S(F(L,·)) shell
+/// per level.
+pub fn share_tower(n: u32) -> Term {
+    if n == 0 { L } else { ap(f2(s(ap(k(), L)), s(L)), share_tower(n - 1)) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +151,22 @@ mod tests {
         assert_eq!(show(&nf(t, &mut Fuel(1000)).unwrap()), "F(L,F(L,L))");
         // chain of K-redexes collapses to L
         assert_eq!(show(&nf(chain_k(6), &mut Fuel(10_000)).unwrap()), "L");
+    }
+
+    #[test]
+    fn family_normal_forms() {
+        for n in 0..=6 {
+            let mut fuel = Fuel(100_000);
+            assert_eq!(show(&nf(chain_k(n), &mut fuel).unwrap()), "L");
+            assert_eq!(show(&nf(discard_tree(n), &mut fuel).unwrap()), "L");
+            assert_eq!(show(&nf(convoy(n), &mut fuel).unwrap()), "F(L,L)");
+            let mut want = String::from("L");
+            for _ in 0..n {
+                want = format!("S(F(L,{want}))");
+            }
+            assert_eq!(show(&nf(share_tower(n), &mut fuel).unwrap()), want);
+            let ft = full_tree(n);
+            assert_eq!(nf(ft.clone(), &mut fuel).unwrap(), ft, "constructor tree is normal");
+        }
     }
 }

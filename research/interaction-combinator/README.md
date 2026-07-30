@@ -3,6 +3,25 @@
 Notes and tooling for the interaction-net line of disp: the cascade cellular-automaton
 reducer (a 3D lattice of 64-bit cells; agents and wires) and its trace player.
 
+## The one gate
+
+```sh
+./check.sh
+```
+
+Crate tests, the model-cost census against `census-baseline.tsv`, and the bundle
+regen+validate, in that order. The census measures substrate costs (rewrites, transport,
+generations, peak live cells) on the corpus of pins plus size-knobbed term families
+(`k-chain`, `discard-tree`, `convoy`, `share-tower` in `oracle.rs`), Fifo only, and fails
+on a completion regression; cost drift prints but never gates. Wall-clock is deliberately
+absent: until the message driver exists it would measure the simulator, not the design.
+After an intentional improvement, re-pin with
+`cargo run --release --bin census-cascade -- --write-baseline`.
+
+The lattice-tier soak (`tests/soak.rs`, 160 seeded random terms against the oracle,
+rotating disciplines and embeddings) runs as part of `cargo test`; the abstract-net tier
+has its own 4000-term differential in `tests/stage1.rs`.
+
 ## Keeping the player bundle fresh
 
 `lattice_player.html` replays `lattice_cascade.js` (schema v4), which is generated, not
