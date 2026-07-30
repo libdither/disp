@@ -862,6 +862,20 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         if (it.name === "given" && r.tree != null && !pristineGiven.has(elab.cs))
           pristineGiven.set(elab.cs, r.tree)
         recordItem(isLetHead(it.head) ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined })
+        // A `::` annotation is a pinned test: `name :: T := v` also emits
+        // `test T name = true` right after the binding (raw mode included —
+        // there the plain `:` annotation is discarded, but `::` still runs).
+        if (it.checked && it.type != null && it.value != null && !ctx.abstract) {
+          compiledTestIndex++
+          target.push({
+            kind: "Test",
+            lhs: compileExpr({ tag: "app", f: it.type, x: { tag: "var", name: it.name } }, lookupEntry, resolveUse, sinks),
+            rhs: compileExpr({ tag: "var", name: "true" }, lookupEntry, resolveUse, sinks),
+            line: it.line,
+            endLine: it.endLine,
+          })
+          recordItem("test", undefined, compiledTestIndex, { line: it.line, endLine: it.endLine })
+        }
         // Constructor auto-declaration (SYNTAX.typ § sum types): a declaration whose
         // value is a sum-type literal — possibly under a binder chain, the
         // parameterized case (`{A} -> < some : A, none >`; constructors don't mention
