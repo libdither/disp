@@ -88,6 +88,7 @@ elim_arity := {E} -> list_len ((type_gate (elim_ind E)) (elim_ind E) (elim_motiv
 Obs := < App, Self, Prj : Tree >
 Row := < Fresh : Tree, J : Tree >
 PredType := {p} -> make_type ({ recognize := {_self, v} -> p v })
+RecordType := {entries} -> make_type ({ recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
 PiCode := {A, B} -> make_type ({ tele := pair (Fresh A) ({x} -> pair (J (pair App (B x))) ({_} -> nil)) })
 AnyTree := PredType ({_v} -> true)
 Sum := {variants} -> {
@@ -175,7 +176,6 @@ NatType := make_type ({
   elim := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
 })
 nat_rec := elim_of NatType ({_} -> NatType)
-add := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
 
 BoolType := make_type ({
   recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
@@ -184,7 +184,6 @@ BoolType := make_type ({
   elim := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
 })
 bool_rec := elim_of BoolType ({_} -> BoolType)
-not_bool := {b} -> bool_rec b false true
 
 Point := {c} -> make_type ({ recognize := {_self, v} -> tree_eq c v, members := cons c nil })
 
@@ -443,11 +442,14 @@ EnumNatToNat := Pi Enum NatType ({_} -> NatType)
 FiveToNat := Pi Enum Five ({_} -> NatType)
 FiveToSix := Pi Enum Five ({_} -> Six)
 
+add : Pi Guard NatType ({_} -> GuardNatToNat) := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
+not_bool : Pi Guard BoolType ({_} -> BoolType) := {b} -> bool_rec b false true
+elim_id : GuardNatToNat := {n} -> nat_rec n zero ({k, ih} -> succ ih)
+
 forge_hyp := make_hyp
 shift := {b} -> if (is_neutral b) { true } else { 5 }
 junk_raw := {_self, n, base, step} -> base
 unblessed_rec := wait (fix ({em, payload, x} -> (pair_fst payload) (wait em payload) x)) (pair junk_raw (pair NatType ({_} -> BoolType)))
-elim_id := {n} -> nat_rec n zero ({k, ih} -> succ ih)
 
 pi_suite := {Pi} -> {
   let BB := Pi BoolType ({_} -> BoolType)

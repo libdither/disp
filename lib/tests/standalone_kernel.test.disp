@@ -1,5 +1,5 @@
 open use raw "../prelude.disp" {}
-open use raw "../standalone_kernel.disp" {}
+open use "../standalone_kernel.disp" {}
 
 test NatType zero = true
 test NatType (succ (succ zero)) = true

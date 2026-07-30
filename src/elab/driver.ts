@@ -359,6 +359,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // is still on the stack (popped in `finally`). Null if the kernel isn't in scope
     // (a file with no checkable annotations) — verification is then skipped.
     let vFormers: { paramApply: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; ok: Tree; tt: Tree } | null = null
+    // Standalone-world twin: when the live kernel's param_apply is absent but the
+    // standalone kernel's RecordType is in scope, typed exports verify by PLAIN
+    // APPLICATION — types are predicates there, so the check is `typ record = true`.
+    let sFormers: { RecordType: Tree; mkRecord: Tree; listConst: Tree; tt: Tree } | null = null
     // Formers for the functor face (abstract mode), captured from the MODULE's own
     // scope: the typ must be built by applying ITS Pi/Record (the surface route).
     // hyp_sig drives the extension-neutral decode in readback (null = skip it).
@@ -380,6 +384,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
       const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("true")?.tree
       if (pa && rec && mkr && lc && ok && tt) vFormers = { paramApply: pa, Record: rec, mkRecord: mkr, listConst: lc, ok, tt }
+      const srt = lookupEntry("RecordType")?.tree
+      if (!vFormers && srt && mkr && lc && tt) sFormers = { RecordType: srt, mkRecord: mkr, listConst: lc, tt }
       if (abstract) {
         const pi = lookupEntry("Pi")?.tree
         if (!pi || !rec || !mkr || !lc || !elab.cs.classify || !elab.cs.equal)
@@ -445,20 +451,24 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       if (!s) { s = new Set(); verifiedFilledBySession.set(elab.cs, s) }
       verSet = s
     } else verSet = verifiedModules
-    if (!raw && vFormers && !verSet.has(verKey) && !scheduledForVerification.has(verKey)) {
+    const anyFormers = vFormers ?? sFormers
+    if (!raw && anyFormers && !verSet.has(verKey) && !scheduledForVerification.has(verKey)) {
       const typEntries: Tree[] = []
       for (let i = 0; i < fieldNames.length; i++)
         if (fieldTypes[i]) typEntries.push(elab.cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
       if (typEntries.length > 0) {
         const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => elab.cs.fork(h, acc), elab.cs.leaf())
-        const recordVal = elab.cs.apply(elab.cs.apply(vFormers.mkRecord, consList(fieldNames.map(stringToTree)), B()),
-                                   consList(fieldTrees.map(v => elab.cs.apply(vFormers!.listConst, v, B()))), B())
-        const typVal = elab.cs.apply(vFormers.Record, consList(typEntries), B())
+        const recordVal = elab.cs.apply(elab.cs.apply(anyFormers.mkRecord, consList(fieldNames.map(stringToTree)), B()),
+                                   consList(fieldTrees.map(v => elab.cs.apply(anyFormers.listConst, v, B()))), B())
         // Build the verdict (lazily by default — vApply); defer the force to the
         // single end-of-parse batch (see pendingVerifications). Keeps the elegant
         // whole-record form; the parallelism/laziness transfers to the final force.
-        const verdict = vApply(vApply(vFormers.paramApply, typVal), recordVal)
-        const okTT = elab.cs.apply(vFormers.ok, vFormers.tt, B())
+        // Live kernel: `param_apply typ record = Ok true`. Standalone twin: types
+        // are predicates, so the record type applies directly — `typ record = true`.
+        const verdict = vFormers
+          ? vApply(vApply(vFormers.paramApply, elab.cs.apply(vFormers.Record, consList(typEntries), B())), recordVal)
+          : vApply(elab.cs.apply(sFormers!.RecordType, consList(typEntries), B()), recordVal)
+        const okTT = vFormers ? elab.cs.apply(vFormers.ok, vFormers.tt, B()) : sFormers!.tt
         pendingVerifications.push({ label: `module ${abs}`, verdict, okTT, markKey: verKey, markSet: verSet })
         scheduledForVerification.add(verKey)
       }
@@ -1040,7 +1050,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // closed force, so the result equals eager's.
   for (const p of pendingVerifications) {
     if (!elab.cs.equal!(p.verdict, p.okTT))
-      throw new Error(`type check failed for ${p.label}: the value does not inhabit its declared type (returned non-(Ok true))`)
+      throw new Error(`type check failed for ${p.label}: the value does not inhabit its declared type (the verdict is not the accepting one)`)
     if (p.markKey && p.markSet) p.markSet.add(p.markKey)
   }
   return decls
