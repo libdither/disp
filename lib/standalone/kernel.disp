@@ -437,19 +437,6 @@ Ambient := GuardAt
 given GenericWalker : AnyTree := Guard
 Fn := Pi GenericWalker
 
-with_trials := {base} -> ({
-  fresh := {st, ty, tail} -> {
-    let ms := ty.members
-    if (is_leaf ms) { (field base "fresh") st ty tail } else { list_map ({a} -> pair a st) ms }
-  }
-  admit := field_or base "admit" ({_f} -> true)
-  lift := field_or base "lift" ({v} -> v)
-  apply := field_or base "apply" ({_chk, f, a} -> f a)
-  read := field_or base "read" ({v} -> v)
-  judge := field_or base "judge" ({_chk, _st, T, r} -> T r)
-})
-Trials := with_trials Guard
-
 Nat : ShallowType := make_type ({
   recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
   gate := {Ind, B} -> cons (B zero) (cons (PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))) nil)
@@ -502,6 +489,40 @@ List : Fn ShallowType ({_} -> ShallowType) := {A} -> make_type ({
 Record : Fn AnyTree ({_} -> ShallowType) := {entries} -> make_type ({ recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
 check_module := Record
 test tree_eq check_module Record = true
+
+Present : ShallowType := Pred ({v} -> not (is_leaf v))
+Recognizes : ShallowType := Record (cons (pair "recognize" Present) nil)
+Eliminates : ShallowType := Record (cons (pair "gate" Present) (cons (pair "elim" Present) nil))
+Enumerates : ShallowType := Record (cons (pair "members" Present) nil)
+Observes : ShallowType := Record (cons (pair "tele" Present) nil)
+implements := {T, cap} -> and (ShallowType T) (cap (wait_payload T))
+test implements Nat Eliminates = true
+test implements Nat Recognizes = true
+test implements Nat Observes = false
+test implements Nat Enumerates = false
+test implements Bool Enumerates = true
+test implements Row Eliminates = true
+test implements (PiCode AnyTree ({_} -> AnyTree)) Observes = true
+test implements (PiCode AnyTree ({_} -> AnyTree)) Recognizes = false
+test implements 5 Eliminates = false
+
+Eliminable : ShallowType := Pred ({T} -> implements T Eliminates)
+Enumerable : ShallowType := Pred ({T} -> implements T Enumerates)
+Observable : ShallowType := Pred ({T} -> implements T Observes)
+test Eliminable Nat = true
+test Eliminable (PiCode AnyTree ({_} -> AnyTree)) = false
+test Enumerable Bool = true
+test Observable (Fn Nat ({_} -> Nat)) = true
+
+with_trials := {base} -> ({
+  fresh := {st, ty, tail} -> if (Enumerable ty) { list_map ({a} -> pair a st) ty.members } else { (field base "fresh") st ty tail }
+  admit := field_or base "admit" ({_f} -> true)
+  lift := field_or base "lift" ({v} -> v)
+  apply := field_or base "apply" ({_chk, f, a} -> f a)
+  read := field_or base "read" ({v} -> v)
+  judge := field_or base "judge" ({_chk, _st, T, r} -> T r)
+})
+Trials := with_trials Guard
 
 Eff : Fn ShallowType ({_} -> Fn ShallowType ({_} -> Fn ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> make_type ({
   recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })
