@@ -174,7 +174,7 @@ test Sigma ({}) NatType ({_} -> BoolType) (pair 2 5) = false
 test Pi ({}) NatType ({_} -> NatType) succ = false
 
 // Self-typing experiment: a typed match over a declared 2-variant sum is just
-// elim_of at a code-derived sum type (sum2_of: recognizer, gate, and raw
+// elim_of at a code-derived sum type (Sum: recognizer, gate, and raw
 // dispatcher all derived from the variant list; a match is elim minus
 // recursion). The motive rides inertly through computation -- raw dispatch on
 // concrete rows is unchanged -- and is consumed only by certification, which
@@ -199,7 +199,7 @@ test Pi Guard RowType ({_} -> BoolType) row_binds_raw = false
 test Pi Guard RowType ({_} -> BoolType) is_acc = false
 
 // n-ary sums: the collectors and gate derive the case arity from the gate's
-// obligation-type list, so sum_of is variant-count generic -- Obs has three.
+// obligation-type list, so Sum is variant-count generic -- Obs has three.
 obs_rec := elim_of ObsType ({_} -> BoolType)
 obs_is_app := {ob} -> obs_rec ob ({_} -> true) ({_} -> false) ({_} -> false)
 test obs_is_app App = true
@@ -208,12 +208,12 @@ test Pi Guard ObsType ({_} -> BoolType) obs_is_app = true
 test Pi Meta ObsType ({_} -> BoolType) obs_is_app = true
 test Pi Guard ObsType ({_} -> BoolType) ({ob} -> obs_rec ob ({_} -> true) ({_} -> 5) ({_} -> false)) = false
 
-// Declared list spines: list_of A types the kernel's cons/nil lists, and its
+// Declared list spines: List A types the kernel's cons/nil lists, and its
 // step obligation carries the induction hypothesis (ih : B tl) -- the first
 // recursive typed elimination in the file. blessed_len is list_len in blessed
 // form; blessed_all is list_all with `and` replaced by bool_rec (raw `and`
 // triages its Bool argument, which is reflection on a rolled Bool mint).
-NatList := list_of NatType
+NatList := List NatType
 test NatList nil = true
 test NatList (cons 1 (cons 2 nil)) = true
 test NatList (cons (pair 5 5) nil) = false

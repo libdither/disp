@@ -86,15 +86,10 @@ elim_arity := {E} -> list_len ((type_gate (elim_ind E)) (elim_ind E) (elim_motiv
 
 Obs := < App, Self, Prj : Tree >
 Row := < Fresh : Tree, J : Tree >
-pred_type := {p} -> make_type ({ recognize := {_self, v} -> p v })
-pi_tele := {A, B} -> pair (Fresh A) ({x} -> pair (J (pair App (B x))) ({_} -> nil))
-isect_tele := {A, P} -> pair (Fresh A) ({x} -> pair (J (pair Self (P x))) ({_} -> nil))
-sigma_tele := {A, B} -> pair (J (pair Self (pred_type is_fork))) ({_} ->
-  pair (J (pair (Prj pair_fst) A)) ({a} ->
-  pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil)))
-PiCode := {A, B} -> make_type ({ tele := pi_tele A B })
-AnyTree := pred_type ({_v} -> true)
-sum_of := {variants} -> {
+PredType := {p} -> make_type ({ recognize := {_self, v} -> p v })
+PiCode := {A, B} -> make_type ({ tele := pair (Fresh A) ({x} -> pair (J (pair App (B x))) ({_} -> nil)) })
+AnyTree := PredType ({_v} -> true)
+Sum := {variants} -> {
   let tags := list_map pair_fst variants
   let fire := fix ({sel, vs, args, v} ->
     if (is_leaf vs) { t }
@@ -111,7 +106,7 @@ sum_of := {variants} -> {
     code := variants
   })
 }
-list_of := {A} -> make_type ({
+List := {A} -> make_type ({
   recognize := {self, v} -> triage true ({_} -> false) ({h, tl} -> and (A h) (self tl)) v
   gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
   elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
@@ -131,8 +126,8 @@ case_of := {T, B, arms} -> {
     {_scr} -> invalid arms
   }
 }
-RowType := sum_of Row
-ObsType := sum_of Obs
+RowType := Sum Row
+ObsType := Sum Obs
 
 Frame := < Acc : Tree, Elim : Tree >
 is_acc := {v} -> and (is_fork v) (tree_eq (pair_fst v) "Acc")
@@ -229,9 +224,11 @@ Tele := {table, tele} -> {
   make_type ({ recognize := {_self, f} -> if (admit f) { run t tele (lift f) t } else { false }, tele })
 }
 
-Pi := {table, A, B} -> Tele table (pi_tele A B)
-Sigma := {table, A, B} -> Tele table (sigma_tele A B)
-Isect := {table, A, P} -> Tele table (isect_tele A P)
+Pi := {table, A, B} -> Tele table (type_tele (PiCode A B))
+Sigma := {table, A, B} -> Tele table (pair (J (pair Self (PredType is_fork))) ({_} ->
+  pair (J (pair (Prj pair_fst) A)) ({a} ->
+  pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil))))
+Isect := {table, A, P} -> Tele table (pair (Fresh A) ({x} -> pair (J (pair Self (P x))) ({_} -> nil)))
 
 Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) (type_members ty) })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
