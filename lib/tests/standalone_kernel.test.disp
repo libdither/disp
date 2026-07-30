@@ -390,15 +390,17 @@ test IsType EffCode = false
 // with ih | fork l r with both ihs). The raw readers' typed twins certify
 // through it on both walking tiers; the raw reader itself stays refused (the
 // sealed-core edge), and a junk arm fails its obligation.
-leaf_count := {v} -> tree_rec ({_} -> Nat) v 1 ({_c, ih} -> ih) ({_l, _r, ihl, ihr} -> add ihl ihr)
+tree_rec_n := tree_rec ({_} -> Nat)
+tree_rec_b := tree_rec ({_} -> Bool)
+leaf_count := {v} -> tree_rec_n v 1 ({_c, ih} -> ih) ({_l, _r, ihl, ihr} -> add ihl ihr)
 test leaf_count (t (t t) (t t t)) = 3
 test Pi Guard Tree ({_} -> Nat) leaf_count = true
 test Pi Meta Tree ({_} -> Nat) leaf_count = true
-is_leaf_t := {v} -> tree_rec ({_} -> Bool) v true ({_c, _ih} -> false) ({_l, _r, _i, _j} -> false)
+is_leaf_t := {v} -> tree_rec_b v true ({_c, _ih} -> false) ({_l, _r, _i, _j} -> false)
 test is_leaf_t t = true
 test is_leaf_t (t t) = false
 test Pi Guard Tree ({_} -> Bool) is_leaf_t = true
-test Pi Guard Tree ({_} -> Bool) ({v} -> tree_rec ({_} -> Bool) v true ({_c, _ih} -> 5) ({_l, _r, _i, _j} -> false)) = false
+test Pi Guard Tree ({_} -> Bool) ({v} -> tree_rec_b v true ({_c, _ih} -> 5) ({_l, _r, _i, _j} -> false)) = false
 test Pi Guard Tree ({_} -> Bool) is_leaf = false
 // RecordType stays as an alias of Record: the driver's auto-verify vocabulary
 // looks it up by name, and without it annotation checking silently stops.
