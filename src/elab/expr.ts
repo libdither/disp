@@ -114,7 +114,26 @@ export function exprToCir(
         x: exprToCir(e.x, lookupEntry, resolveUse, sinks),
       }
     }
-    case "ann": return exprToCir(e.expr, lookupEntry, resolveUse, sinks) // erase type
+    case "ann": {
+      // Annotations erase — except a block-let's (`let x : T := v`, tagged with
+      // letName by the desugar): when value AND type both close (no enclosing
+      // binders), the pair is recorded for the module's deferred verify batch, so
+      // the annotation is a checked claim exactly like a field's. Open values
+      // stay documentation-only; raw loads provide no sink.
+      const inner = exprToCir(e.expr, lookupEntry, resolveUse, sinks)
+      if (e.letName && sinks?.recordAnn) {
+        const vfv: string[] = []
+        collectFreeVars(inner, new Set(), vfv, new Set())
+        if (vfv.length === 0) {
+          const tyCir = exprToCir(lookupEntry("Pi")?.tree ? binderToPi(e.type) : e.type, lookupEntry, resolveUse, sinks)
+          const tfv: string[] = []
+          collectFreeVars(tyCir, new Set(), tfv, new Set())
+          if (tfv.length === 0)
+            sinks.recordAnn(e.letName, cirToTree(eliminateLams(tyCir)), cirToTree(eliminateLams(inner)))
+        }
+      }
+      return inner
+    }
     case "binder": {
       // Shadow binder params so they don't resolve to scope entries.
       // (Projection on a bound variable is the runtime §2.6 cut — no

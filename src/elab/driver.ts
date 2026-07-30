@@ -266,6 +266,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // the instantiation cache already dedups them per fill).
   const pendingVerifications: { label: string; verdict: Tree; okTT: Tree; markKey?: string; markSet?: Set<string> }[] = []
   const scheduledForVerification = new Set<string>()
+  // Checked block-let annotations collected while the CURRENT file's items compile
+  // (expr.ts "ann" via sinks.recordAnn); folded into that file's verify batch as
+  // pseudo-entries. Stack-disciplined across nested loads (save/restore).
+  let currentLetAnns: { name: string; ty: Tree; val: Tree }[] | null = null
   // Lazy verification is OPT-IN (DISP_LAZY_VERIFY=1), eager by default. It is
   // acceptance-equivalent (the verdict is fully forced against `Ok true`, so confluence
   // gives eager's NF — see project_eager_normative_is_scaffolding), but EMPIRICALLY
@@ -367,6 +371,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // scope: the typ must be built by applying ITS Pi/Record (the surface route).
     // hyp_sig drives the extension-neutral decode in readback (null = skip it).
     let fFormers: { Pi: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; hypSig: Tree | null } | null = null
+    const savedLetAnns = currentLetAnns
+    currentLetAnns = []
+    let letAnns: { name: string; ty: Tree; val: Tree }[] = []
     try {
       for (const it of items) {
         try {
@@ -400,6 +407,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       const msg = err instanceof Error ? err.message : String(err)
       throw new Error(`use ${path}: cannot build the functor face (${msg}) — pass a context explicitly: use ${JSON.stringify(path)} { … } ({} passes the empty context)`)
     } finally {
+      letAnns = currentLetAnns ?? []
+      currentLetAnns = savedLetAnns
       stack.splice(0, stack.length, ...savedFrames)
       dirStack.pop()
       sourceStack.pop()
@@ -456,10 +465,24 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       const typEntries: Tree[] = []
       for (let i = 0; i < fieldNames.length; i++)
         if (fieldTypes[i]) typEntries.push(elab.cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
+      // Checked block-let annotations join the same batch as pseudo-entries
+      // (names uniquified against exports; the values are NOT exported).
+      const batchNames = fieldNames.slice(), batchTrees = fieldTrees.slice()
+      if (letAnns.length > 0) {
+        const used = new Set(batchNames)
+        for (const a of letAnns) {
+          let n = a.name
+          for (let k = 2; used.has(n); k++) n = `${a.name}__${k}`
+          used.add(n)
+          batchNames.push(n)
+          batchTrees.push(a.val)
+          typEntries.push(elab.cs.fork(stringToTree(n), a.ty))
+        }
+      }
       if (typEntries.length > 0) {
         const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => elab.cs.fork(h, acc), elab.cs.leaf())
-        const recordVal = elab.cs.apply(elab.cs.apply(anyFormers.mkRecord, consList(fieldNames.map(stringToTree)), B()),
-                                   consList(fieldTrees.map(v => elab.cs.apply(anyFormers.listConst, v, B()))), B())
+        const recordVal = elab.cs.apply(elab.cs.apply(anyFormers.mkRecord, consList(batchNames.map(stringToTree)), B()),
+                                   consList(batchTrees.map(v => elab.cs.apply(anyFormers.listConst, v, B()))), B())
         // Build the verdict (lazily by default — vApply); defer the force to the
         // single end-of-parse batch (see pendingVerifications). Keeps the elegant
         // whole-record form; the parallelism/laziness transfers to the final force.
@@ -753,7 +776,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // inline recValue blocks (`{ ... test x = y ... }`) flow through this
   // sink — they're pushed into the same `target` array as top-level tests
   // and reported via recordItem so --stats-detail sees them.
-  function makeSinks(target: Decl[]): CompileSinks {
+  function makeSinks(target: Decl[], raw?: boolean): CompileSinks {
     return {
       recordTest(lhs, rhs) {
         compiledTestIndex++
@@ -761,6 +784,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         recordItem("test", undefined, compiledTestIndex)
       },
       recordOpen() { recordItem("open") },
+      // Raw loads drop annotations by design, so no ann sink there.
+      ...(raw ? {} : { recordAnn(name: string, ty: Tree, val: Tree) { currentLetAnns?.push({ name, ty, val }) } }),
     }
   }
 
@@ -827,7 +852,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   }
 
   function runItem(it: RecMember, target: Decl[], isExport: boolean, ctx: FileCtx): void {
-    const sinks = makeSinks(target)
+    const sinks = makeSinks(target, ctx.raw)
     const raw = ctx.raw
     switch (it.tag) {
       case "field": {

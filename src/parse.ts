@@ -115,7 +115,7 @@ export type Expr =
   | { tag: "hole" }
   | { tag: "app"; f: Expr; x: Expr }
   | { tag: "binder"; params: Param[]; body: Expr }
-  | { tag: "ann"; expr: Expr; type: Expr }
+  | { tag: "ann"; expr: Expr; type: Expr; letName?: string }
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
   // `< Tag1 : T1, Tag2, … >` — the coproduct (sum) type literal; the DUAL of
@@ -1112,7 +1112,7 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
     const s = steps[i]
     if (s.k === "let") {
       const val: Expr = s.type
-        ? { tag: "ann", expr: s.body, type: s.type }
+        ? { tag: "ann", expr: s.body, type: s.type, letName: s.name }
         : s.body
       result = {
         tag: "app",

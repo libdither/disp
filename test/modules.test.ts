@@ -120,3 +120,21 @@ describe("module dependencies (given) rejections", () => {
       .toThrow(/dynamic givens are unsupported/)
   }, 120000)
 })
+
+describe("checked block-let annotations", () => {
+  // A block-let's `: T` is a checked claim when the value and type both close:
+  // it joins the module's deferred verify batch as a pseudo-entry. Open values
+  // (under enclosing binders) stay documentation-only, and raw loads drop
+  // annotations as always.
+  it("a well-typed block-let annotation loads; an ill-typed one fails the module batch", () => {
+    const good = tmpModule("letann_good.disp", `x := { let two : Nat := 2\n succ two }\n`)
+    expect(() => run(K + `m := use "${good}"\n`)).not.toThrow()
+    const bad = tmpModule("letann_bad.disp", `x := { let two : Bool := 2\n succ two }\n`)
+    expect(() => run(K + `m := use "${bad}"\n`)).toThrow(/does not inhabit/)
+  }, 300000)
+
+  it("an open block-let annotation (under enclosing binders) stays unchecked", () => {
+    const p = tmpModule("letann_open.disp", `f := {n} -> { let bad : Bool := succ n\n succ bad }\n`)
+    expect(() => run(K + `m := use "${p}"\n`)).not.toThrow()
+  }, 120000)
+})

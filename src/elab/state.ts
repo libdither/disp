@@ -119,6 +119,7 @@ export type SigParam = { name: string; default: Expr | null }
 export interface CompileSinks {
   recordTest?: (lhs: Tree, rhs: Tree) => void
   recordOpen?: () => void
+  recordAnn?: (name: string, ty: Tree, val: Tree) => void
 }
 
 // Collect every evaluator handle the session holds ACROSS .disp file boundaries — the module

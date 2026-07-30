@@ -684,9 +684,11 @@ describe("block expressions", () => {
   })
 
   it("let binding with type annotation", () => {
-    // { let x : A := t; x } → App(Binder([x], Var(x)), Ann(Leaf, Var(A)))
+    // { let x : A := t; x } → App(Binder([x], Var(x)), Ann(Leaf, Var(A), letName))
+    // — the ann carries the let's name so the elaborator can record the checked
+    // annotation for the module verify batch.
     expect(parseExpr("{ let x : A := t; x }")).toEqual(
-      ap(binder([{ name: "x", type: null }], v("x")), ann(leaf, v("A")))
+      ap(binder([{ name: "x", type: null }], v("x")), { ...ann(leaf, v("A")), letName: "x" })
     )
   })
 
