@@ -188,6 +188,41 @@ bool_rec := elim_of BoolType ({_} -> BoolType)
 
 Point := {c} -> make_type ({ recognize := {_self, v} -> tree_eq c v, members := cons c nil })
 
+Eff := < Pure : Tree, Op : Tree >
+perform := {q, k} -> Op (pair q k)
+handle := {h, m} -> {
+  let ret := field h "return"
+  let on_op := field h "op"
+  (fix ({go, m2} -> match m2 {
+    Pure x => (ret x)
+    Op q k => (on_op q ({x} -> go (k x)))
+    _ => (invalid m2)
+  })) m
+}
+
+Ask := < Mint : Tree, Call : Tree, Judge : Tree, Read : Tree, Lift : Tree >
+check := fix ({self, rows, f, prior} ->
+  if (is_leaf rows) { Pure true } else {
+    let tail := pair_snd rows
+    match (pair_fst rows) : (case_of RowType ({_} -> AnyTree)) {
+      Fresh ty => (perform (Mint (pair ty tail)) ({x} ->
+        perform (Read x) ({xr} -> self (tail xr) f x)))
+      J ob ty => (match ob : (case_of ObsType ({_} -> AnyTree)) {
+        App _ => (perform (Call (pair f prior)) ({r} ->
+          perform (Judge (pair ty r)) ({ok} ->
+            if ok { perform (Read r) ({rr} -> self (tail rr) f prior) } else { Pure false })))
+        Self _ => (perform (Judge (pair ty f)) ({ok} ->
+          if ok { perform (Read f) ({fr} -> self (tail fr) f prior) } else { Pure false }))
+        Prj a => (perform (Read f) ({fr} -> {
+          let o := a fr
+          perform (Lift o) ({lo} ->
+            perform (Judge (pair ty lo)) ({ok} ->
+              if ok { self (tail o) f prior } else { Pure false }))
+        }))
+      })
+    }
+  })
+
 Tele := {table, tele} -> {
   let admit := field_or table "admit" ({_f} -> true)
   let lift := field_or table "lift" ({v} -> v)
@@ -196,28 +231,19 @@ Tele := {table, tele} -> {
   let read := field_or table "read" ({v} -> v)
   let judge := field_or table "judge" ({_chk, _st, T, r} -> T r)
   let run := fix ({chk, st, rows, fV, prior} ->
-    if (is_leaf rows) { true } else {
-      let tail := pair_snd rows
-      match (pair_fst rows) : (case_of RowType ({_} -> AnyTree)) {
-        Fresh ty => {
-          let points := fresh st ty tail
-          if (is_leaf points) { false } else {
-            list_all ({p} -> chk (pair_snd p) (tail (read (pair_fst p))) fV (pair_fst p)) points
-          }
+    handle ({
+      return := {b} -> {_s} -> b
+      op := {q, resume} -> {s} -> (match q {
+        Mint ty tail => {
+          let points := fresh s ty tail
+          if (is_leaf points) { false } else { list_all ({p} -> resume (pair_fst p) (pair_snd p)) points }
         }
-        J ob ty => (match ob : (case_of ObsType ({_} -> AnyTree)) {
-          App _ => {
-            let r := apply chk fV prior
-            if (judge chk st ty r) { chk st (tail (read r)) fV prior } else { false }
-          }
-          Self _ => (if (judge chk st ty fV) { chk st (tail (read fV)) fV prior } else { false })
-          Prj a => {
-            let o := a (read fV)
-            if (judge chk st ty (lift o)) { chk st (tail o) fV prior } else { false }
-          }
-        })
-      }
-    })
+        Call g x => (resume (apply chk g x) s)
+        Judge ty v => (resume (judge chk s ty v) s)
+        Read v => (resume (read v) s)
+        Lift v => (resume (lift v) s)
+      })
+    }) (check rows fV prior) st)
   make_type ({ recognize := {_self, f} -> if (admit f) { run t tele (lift f) t } else { false }, tele })
 }
 
