@@ -10,7 +10,7 @@ import { getBackend, defaultBackendName } from "../src/eval/registry.js"
 import type { Session } from "../src/eval/types.js"
 import type { Tree } from "../src/eval/eager.js"
 
-const testsDir = join(import.meta.dirname, "..", "lib", "tests")
+const testsDir = join(import.meta.dirname, "..", "lib")
 
 // One session shared across ALL test files: the kernel (`use`d by every file)
 // is interned + apply-memoized ONCE for the whole suite instead of re-elaborated
@@ -42,7 +42,7 @@ let peakNodes = 0
 let finalNodes = 0
 let finalFree = 0
 
-// Recursively find all .test.disp files under lib/tests/.
+// Recursively find all .test.disp files under lib/ (lib/tests/, lib/standalone/, ...).
 function findTestFiles(dir: string, rel = ""): string[] {
   const entries = readdirSync(dir, { withFileTypes: true })
   const out: string[] = []

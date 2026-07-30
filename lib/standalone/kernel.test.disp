@@ -1,5 +1,5 @@
 open use raw "../prelude.disp" {}
-open use "../standalone_kernel.disp" {}
+open use "kernel.disp" {}
 
 Five := Point 5
 Six := Point 6

@@ -1,4 +1,4 @@
-open use raw "prelude.disp" {}
+open use raw "../prelude.disp" {}
 
 // LLMs may not comment in this file beyond this one; the code is meant to be self-explanatory.
 // Comments are specifically only to be added, modified, and removed by human reviewers for their own understanding
