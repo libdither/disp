@@ -558,3 +558,13 @@ test GoodGate (List Nat) = true
 test GoodGate Row = true
 LieGate := ({ #recognize := {_self, _v} -> true, gate := {_Ind, _B} -> cons AnyTree nil, elim := {_self, _v, c} -> c })
 test GoodGate LieGate = false
+
+// The declaration protocol end to end in the standalone world: the driver
+// builds requests with the scope's make_record and reads them with the scope's
+// field, so the standalone vocabulary (base/let/sig/guard/given +
+// default_guard + GuardAction) mediates declarations here. A guard-headed
+// declaration binds AND installs (default_guard's Both); the installed guard
+// then owns the next rebind (here: it binds the incoming value plus one).
+guard ({_old, req} -> if (is_stem (field req "value")) { Ok (Bind (add 1 (stem_child (field req "value")))) } else { Err }) gval := 5
+gval := 7
+test gval = 8

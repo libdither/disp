@@ -721,6 +721,30 @@ Record : Pi Guard AnyTree ({_} -> ShallowType) := {entries} -> ({ #recognize := 
 check_module := Record
 test tree_eq check_module Record = true
 
+GuardActionCode := < Bind : t, Install : t, Both : t >
+GuardAction := Sum GuardActionCode
+CheckerResultCode := < Ok : t, Err >
+CheckerResult := Sum CheckerResultCode
+Request : ShallowType := Record (cons (pair "value" AnyTree) (cons (pair "ty" AnyTree) (cons (pair "guard" AnyTree) (cons (pair "private" Bool) (cons (pair "param" Bool) nil)))))
+base := {v} -> ({ value := t v, ty := t, guard := t, private := false, param := false })
+let := {req} -> field_put req "private" true
+sig := {T} -> ({ value := t, ty := t T, guard := t, private := false, param := false })
+guard := {g, req} -> field_put req "guard" (t g)
+given := {req} -> field_put (field_put req "private" true) "param" true
+default_guard := {_old, req} ->
+  if (is_stem (field req "guard")) {
+    if (is_stem (field req "value")) { Ok (Both (pair (stem_child (field req "value")) (stem_child (field req "guard")))) }
+    else { Ok (Install (stem_child (field req "guard"))) }
+  } else if (is_stem (field req "value")) { Ok (Bind (stem_child (field req "value"))) } else { Err }
+test Request (base 5) = true
+test GuardAction (Bind 5) = true
+test CheckerResult Err = true
+test field (base 5) "value" = t 5
+test default_guard t (base 5) = Ok (Bind 5)
+test default_guard t (guard succ (base 5)) = Ok (Both (pair 5 succ))
+test default_guard t (guard succ (sig Nat)) = Ok (Install succ)
+test default_guard t (sig Nat) = Err
+
 Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> ({
   #recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })
   gate := {Ind, B} -> cons (PiCode X ({x} -> B (Pure x))) (cons (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) nil)

@@ -728,12 +728,17 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       request = S.apply(headTree, request, B())
     }
     // Privacy is declarer intent, so it is read off the FINAL request (a head like
-    // `let` may set it), not off the guard's answer.
-    const privTree = S.apply(request, accTree("private"), B())
+    // `let` may set it), not off the guard's answer. Read through the scope's own
+    // `field` so any kernel's record dialect works (the live kernel's field is the
+    // acc-application, so this is behavior-identical there); acc stays the fallback.
+    const fieldT = lookupEntry("field")?.tree
+    const readReq = (n: string): Tree =>
+      fieldT ? S.apply(S.apply(fieldT, request, B()), stringToTree(n), B()) : S.apply(request, accTree(n), B())
+    const privTree = readReq("private")
     const isPrivate = S.equal!(privTree, tt)
     // A param request arriving through a CUSTOM decorator: dynamic givens are
     // unsupported — fills resolve against the syntactic pre-scan (modscan.ts).
-    const paramTree = S.apply(request, accTree("param"), B())
+    const paramTree = readReq("param")
     if (S.equal!(paramTree, tt))
       throw new Error(`declaration of '${name}': the decorator produced a param (given) request — dynamic givens are unsupported; declare with a literal 'given' head`)
     const oldOpt = existing?.tree != null ? S.stem(existing.tree) : S.leaf()
