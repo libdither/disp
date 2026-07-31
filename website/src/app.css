@@ -2,6 +2,12 @@
    disp design system — "a grove at midmorning"
    light, soft pastel, nature-forward: sage paper, leaf greens,
    blossom pink and honey gold accents, deep forest ink.
+
+   Dark ("a grove at dusk") overrides the same tokens under
+   [data-theme='dark']; theme.svelte.ts always writes a concrete
+   light/dark value, so no prefers-color-scheme branch is needed
+   here. Every color below must be a token: the CodeMirror theme
+   in lib/editor/disp-language.ts reads these same vars.
    ============================================================ */
 
 :root {
@@ -53,7 +59,102 @@
   --shadow-soft: 0 2px 14px -4px rgba(47, 74, 55, 0.12);
   --shadow-lift: 0 10px 30px -10px rgba(47, 74, 55, 0.22);
 
+  /* the brightest surface: .btn:hover, inline glosses, QR paper */
+  --bg-hi: #ffffff;
+
+  /* disp syntax — pastel botanicals, shared by .hl-* and CodeMirror */
+  --hl-comment: #7c8b74;
+  --hl-string: #2b8a52;
+  --hl-number: #1d7f8a;
+  --hl-kw: #7c5cbf;
+  --hl-op: #66766b;
+  --hl-punct: #85937f;
+  --hl-atom: #bf5a92;
+  --hl-type: #0f766e;
+  --hl-fn: #a8770f;
+  --hl-var: #2e4034;
+
+  /* editor chrome (CodeMirror + output cells) */
+  --ed-gutter: #8ea08b;
+  --ed-line: rgba(74, 104, 82, 0.05);
+  --ed-line-gutter: rgba(74, 104, 82, 0.08);
+  --ed-sel: rgba(88, 179, 104, 0.22);
+  --ed-out-fg: #43584a;
+  --ed-out-bg: rgba(74, 104, 82, 0.07);
+  --ed-out-rule: rgba(74, 104, 82, 0.4);
+  --ed-out-fail-fg: #a44f5c;
+  --ed-out-fail-bg: rgba(201, 95, 109, 0.07);
+  --ed-out-fail-rule: rgba(201, 95, 109, 0.55);
+  --ed-chip: rgba(74, 104, 82, 0.08);
+  --ed-pass-line: rgba(58, 157, 99, 0.1);
+  --ed-fail-line: rgba(201, 95, 109, 0.13);
+
   color-scheme: light;
+}
+
+/* ============================================================
+   dark — "a grove at dusk": forest-ink surfaces, the canopy
+   gradient pushed brighter so it still reads against them.
+   ============================================================ */
+
+[data-theme='dark'] {
+  --bg: #11160f;
+  --bg-elev: #191f18;
+  --bg-panel: rgba(150, 205, 160, 0.055);
+  --bg-panel-hover: rgba(150, 205, 160, 0.11);
+  --bg-code: #151b14;
+  --border: rgba(163, 201, 170, 0.15);
+  --border-strong: rgba(163, 201, 170, 0.3);
+
+  --fg: #e2ebe0;
+  --fg-muted: #a3b7a6;
+  --fg-faint: #788c7b;
+
+  --g1: #6ecf7e;
+  --g2: #43c08a;
+  --g3: #45b3a5;
+  --g4: #edc264;
+  --grad-seasons: linear-gradient(90deg, #6ecf7e 0%, #43c08a 34%, #c8bd4f 62%, #edc264 80%, #e8916a 100%);
+
+  --accent: #56c78e;
+  --accent-2: #48bdae;
+  --ok: #5cc47f;
+  --err: #e8899a;
+  --warn: #e6b555;
+  --bark: #798a6b;
+  --blossom: #e8a7b6;
+
+  --shadow-soft: 0 2px 14px -4px rgba(0, 0, 0, 0.5);
+  --shadow-lift: 0 10px 30px -10px rgba(0, 0, 0, 0.66);
+
+  --bg-hi: #212a20;
+
+  --hl-comment: #7f9179;
+  --hl-string: #7fd39a;
+  --hl-number: #5fc8d8;
+  --hl-kw: #b79df0;
+  --hl-op: #92a596;
+  --hl-punct: #7b8d80;
+  --hl-atom: #f0a0c4;
+  --hl-type: #4fd0c0;
+  --hl-fn: #e8c06a;
+  --hl-var: #d6e2d4;
+
+  --ed-gutter: #6f8378;
+  --ed-line: rgba(150, 205, 160, 0.05);
+  --ed-line-gutter: rgba(150, 205, 160, 0.09);
+  --ed-sel: rgba(110, 207, 126, 0.26);
+  --ed-out-fg: #b7cbba;
+  --ed-out-bg: rgba(150, 205, 160, 0.07);
+  --ed-out-rule: rgba(150, 205, 160, 0.34);
+  --ed-out-fail-fg: #eda0ae;
+  --ed-out-fail-bg: rgba(232, 137, 154, 0.1);
+  --ed-out-fail-rule: rgba(232, 137, 154, 0.5);
+  --ed-chip: rgba(150, 205, 160, 0.09);
+  --ed-pass-line: rgba(92, 196, 127, 0.12);
+  --ed-fail-line: rgba(232, 137, 154, 0.14);
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -97,8 +198,8 @@ code, pre, kbd { font-family: var(--font-mono); }
 code { font-size: 0.88em; }
 
 :not(pre) > code {
-  background: rgba(74, 104, 82, 0.1);
-  border: 1px solid rgba(74, 104, 82, 0.12);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   padding: 0.08em 0.38em;
   border-radius: 6px;
   white-space: nowrap;
@@ -151,11 +252,11 @@ pre {
   text-decoration: none !important;
   box-shadow: var(--shadow-soft);
 }
-.btn:hover { background: #ffffff; border-color: var(--accent); transform: translateY(-1px); }
+.btn:hover { background: var(--bg-hi); border-color: var(--accent); transform: translateY(-1px); }
 
 .btn.primary {
   border: none;
-  background: linear-gradient(118deg, #4caf6d, #2f9e6e 60%, #2e8f83);
+  background: linear-gradient(118deg, var(--g1), var(--g2) 60%, var(--g3));
   color: #f7fcf5;
   font-weight: 650;
 }
@@ -182,16 +283,16 @@ pre {
 /* ---- static disp syntax highlighting (highlight.ts output) ----
    pastel botanicals: sage comments, leaf strings, teal numbers,
    wisteria keywords, honey call-sites, blossom atoms */
-.hl-comment { color: #7c8b74; font-style: italic; }
-.hl-string { color: #2b8a52; }
-.hl-number { color: #1d7f8a; }
-.hl-kw { color: #7c5cbf; }
-.hl-op { color: #66766b; }
-.hl-punct { color: #85937f; }
-.hl-atom { color: #bf5a92; }
-.hl-type { color: #0f766e; }
-.hl-fn { color: #a8770f; }
-.hl-var { color: #2e4034; }
+.hl-comment { color: var(--hl-comment); font-style: italic; }
+.hl-string { color: var(--hl-string); }
+.hl-number { color: var(--hl-number); }
+.hl-kw { color: var(--hl-kw); }
+.hl-op { color: var(--hl-op); }
+.hl-punct { color: var(--hl-punct); }
+.hl-atom { color: var(--hl-atom); }
+.hl-type { color: var(--hl-type); }
+.hl-fn { color: var(--hl-fn); }
+.hl-var { color: var(--hl-var); }
 
 /* phones: long inline code chips may wrap rather than widen the page */
 @media (max-width: 720px) {

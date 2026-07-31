@@ -683,7 +683,7 @@
     box-shadow: var(--shadow-soft);
   }
   .sel-action:hover {
-    background: #fff;
+    background: var(--bg-hi);
   }
   .sel-action svg {
     width: 0.95rem;

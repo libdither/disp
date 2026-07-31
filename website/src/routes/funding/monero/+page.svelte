@@ -196,6 +196,7 @@
   }
   .qr-slot.has-qr {
     border-style: solid;
+    /* literal white in both themes: a QR needs the light quiet zone to scan */
     background: #fff;
     overflow: hidden;
   }

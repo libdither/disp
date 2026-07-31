@@ -114,59 +114,60 @@ export const dispStream = StreamLanguage.define<S>({
   }
 })
 
-// pastel botanical palette (kept in step with app.css's .hl-* classes)
+/// Palette lives in app.css (the --hl-* tokens, shared with its .hl-* classes),
+/// so the editor follows the light/dark theme without rebuilding the extension.
 export const dispHighlight = HighlightStyle.define([
-  { tag: t.comment, color: '#7c8b74', fontStyle: 'italic' },
-  { tag: t.string, color: '#2b8a52' },
-  { tag: t.number, color: '#1d7f8a' },
-  { tag: t.keyword, color: '#7c5cbf' },
-  { tag: t.operator, color: '#66766b' },
-  { tag: t.punctuation, color: '#85937f' },
-  { tag: t.atom, color: '#bf5a92' },
-  { tag: t.typeName, color: '#0f766e' },
-  { tag: [t.function(t.variableName)], color: '#a8770f' },
-  { tag: t.variableName, color: '#2e4034' }
+  { tag: t.comment, color: 'var(--hl-comment)', fontStyle: 'italic' },
+  { tag: t.string, color: 'var(--hl-string)' },
+  { tag: t.number, color: 'var(--hl-number)' },
+  { tag: t.keyword, color: 'var(--hl-kw)' },
+  { tag: t.operator, color: 'var(--hl-op)' },
+  { tag: t.punctuation, color: 'var(--hl-punct)' },
+  { tag: t.atom, color: 'var(--hl-atom)' },
+  { tag: t.typeName, color: 'var(--hl-type)' },
+  { tag: [t.function(t.variableName)], color: 'var(--hl-fn)' },
+  { tag: t.variableName, color: 'var(--hl-var)' }
 ])
 
 export const dispEditorTheme = EditorView.theme(
   {
     '&': {
       backgroundColor: 'transparent',
-      color: '#2e4034',
+      color: 'var(--hl-var)',
       fontSize: '13.5px',
       height: '100%'
     },
     '.cm-content': {
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
       padding: '12px 0',
-      caretColor: '#2f9e6e'
+      caretColor: 'var(--accent)'
     },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#2f9e6e' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
     '&.cm-focused': { outline: 'none' },
     '.cm-gutters': {
       backgroundColor: 'transparent',
-      color: '#8ea08b',
+      color: 'var(--ed-gutter)',
       border: 'none',
       fontFamily: "'JetBrains Mono Variable', monospace",
       fontSize: '12px'
     },
-    '.cm-activeLineGutter': { backgroundColor: 'rgba(74,104,82,0.08)' },
-    '.cm-activeLine': { backgroundColor: 'rgba(74,104,82,0.05)' },
+    '.cm-activeLineGutter': { backgroundColor: 'var(--ed-line-gutter)' },
+    '.cm-activeLine': { backgroundColor: 'var(--ed-line)' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
-      backgroundColor: 'rgba(88,179,104,0.22) !important'
+      backgroundColor: 'var(--ed-sel) !important'
     },
-    '.cm-line.disp-line-pass': { backgroundColor: 'rgba(58,157,99,0.1)' },
-    '.cm-line.disp-line-fail': { backgroundColor: 'rgba(201,95,109,0.13)' },
+    '.cm-line.disp-line-pass': { backgroundColor: 'var(--ed-pass-line)' },
+    '.cm-line.disp-line-fail': { backgroundColor: 'var(--ed-fail-line)' },
     // ctrl/cmd+hover on a clickable import string (VS Code's link affordance)
     '.disp-link': {
       textDecoration: 'underline',
       textUnderlineOffset: '3px',
-      textDecorationColor: '#2f9e6e',
+      textDecorationColor: 'var(--accent)',
       cursor: 'pointer'
     },
     // errors underline the offending line (wavy red, IDE-style)
     '.disp-error-underline': {
-      textDecoration: 'underline wavy #c95f6d',
+      textDecoration: 'underline wavy var(--err)',
       textDecorationThickness: '1.2px',
       textUnderlineOffset: '4px'
     },
@@ -179,9 +180,9 @@ export const dispEditorTheme = EditorView.theme(
       userSelect: 'none',
       pointerEvents: 'none'
     },
-    '.disp-note-pass': { color: '#3a9d63' },
-    '.disp-note-fail': { color: '#c95f6d' },
-    '.disp-note-error': { color: '#c95f6d' },
+    '.disp-note-pass': { color: 'var(--ok)' },
+    '.disp-note-fail': { color: 'var(--err)' },
+    '.disp-note-error': { color: 'var(--err)' },
     // notebook output cells (LineMark.block): a block widget under the line.
     // Collapsed to one ellipsized line; `.open` (click) wraps the full text.
     // `contain: inline-size` zeroes the widget's intrinsic width so a long
@@ -191,13 +192,13 @@ export const dispEditorTheme = EditorView.theme(
       contain: 'inline-size',
       margin: '2px 14px 8px 2.2em',
       padding: '4px 12px',
-      borderLeft: '2px solid rgba(74, 104, 82, 0.4)',
+      borderLeft: '2px solid var(--ed-out-rule)',
       borderRadius: '0 8px 8px 0',
-      background: 'rgba(74, 104, 82, 0.07)',
+      background: 'var(--ed-out-bg)',
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
       fontSize: '0.85em',
       lineHeight: '1.55',
-      color: '#43584a',
+      color: 'var(--ed-out-fg)',
       whiteSpace: 'nowrap',
       overflow: 'hidden',
       textOverflow: 'ellipsis',
@@ -237,16 +238,16 @@ export const dispEditorTheme = EditorView.theme(
       userSelect: 'none'
     },
     '.disp-out-fail': {
-      borderLeftColor: 'rgba(201, 95, 109, 0.55)',
-      background: 'rgba(201, 95, 109, 0.07)',
-      color: '#a44f5c'
+      borderLeftColor: 'var(--ed-out-fail-rule)',
+      background: 'var(--ed-out-fail-bg)',
+      color: 'var(--ed-out-fail-fg)'
     },
     '.disp-out-fail:not(:has(.disp-out-row))::before': { content: "'✗ '" },
     '.disp-out-error:not(:has(.disp-out-row))::before': { content: "'⚠ '" },
     '.disp-out-error': {
-      borderLeftColor: 'rgba(201, 95, 109, 0.55)',
-      background: 'rgba(201, 95, 109, 0.07)',
-      color: '#a44f5c'
+      borderLeftColor: 'var(--ed-out-fail-rule)',
+      background: 'var(--ed-out-fail-bg)',
+      color: 'var(--ed-out-fail-fg)'
     },
     // a def's value ON its line: [tree] → value, capped and ellipsized
     '.disp-ival': {
@@ -259,10 +260,10 @@ export const dispEditorTheme = EditorView.theme(
       marginLeft: '1.1em',
       padding: '0 0.55em',
       borderRadius: '7px',
-      background: 'rgba(74, 104, 82, 0.08)',
+      background: 'var(--ed-chip)',
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
       fontSize: '0.85em',
-      color: '#43584a',
+      color: 'var(--ed-out-fg)',
       transition: 'opacity 0.15s ease, max-width 0.15s ease'
     },
     '.disp-ival-arrow': {
@@ -277,10 +278,10 @@ export const dispEditorTheme = EditorView.theme(
       margin: '0',
       font: 'inherit',
       cursor: 'pointer',
-      color: '#8ea08b',
+      color: 'var(--ed-gutter)',
       verticalAlign: '-0.15em'
     },
-    '.disp-ival-viz:hover': { color: '#2f9e6e' },
+    '.disp-ival-viz:hover': { color: 'var(--accent)' },
     '.disp-ival-viz svg': { width: '1.05em', height: '1.05em' },
     '.disp-ival.away': {
       opacity: '0.4',

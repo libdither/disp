@@ -370,7 +370,7 @@
       transform 0.12s ease;
   }
   .tbtn:hover:not(:disabled) {
-    background: #fff;
+    background: var(--bg-hi);
     border-color: var(--accent);
     transform: translateY(-1px);
   }

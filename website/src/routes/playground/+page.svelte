@@ -1251,7 +1251,7 @@
     width: 74px;
     height: 6px;
     border-radius: 3px;
-    background: rgba(74, 104, 82, 0.14);
+    background: var(--bg-panel-hover);
     overflow: hidden;
     flex: none;
   }
@@ -1281,7 +1281,7 @@
     width: 68px;
     height: 6px;
     border-radius: 3px;
-    background: rgba(74, 104, 82, 0.14);
+    background: var(--bg-panel-hover);
     overflow: hidden;
   }
   .mem-fill { height: 100%; background: var(--grad-brand); transition: width 0.3s ease; }
@@ -1335,7 +1335,7 @@
   }
   .info-card .x:hover { color: var(--fg); }
   kbd {
-    background: rgba(74, 104, 82, 0.12);
+    background: var(--bg-panel-hover);
     border: 1px solid var(--border);
     border-radius: 5px;
     padding: 0.05em 0.4em;
