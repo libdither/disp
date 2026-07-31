@@ -4,8 +4,22 @@
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="color-scheme" content="light" />
+		<meta name="color-scheme" content="light dark" />
 		<meta name="description" content="disp — a self-verifying dependently-typed language built on tree calculus. Types are programs; the checker checks itself." />
+		<script>
+			// resolve the theme before first paint, or the light palette flashes
+			// on a dark-mode load. Keep in step with lib/theme.svelte.ts.
+			(function () {
+				try {
+					var p = localStorage.getItem('disp-theme')
+					if (p !== 'light' && p !== 'dark')
+						p = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+					document.documentElement.dataset.theme = p
+				} catch (e) {
+					document.documentElement.dataset.theme = 'light'
+				}
+			})()
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

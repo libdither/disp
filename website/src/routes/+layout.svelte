@@ -5,8 +5,18 @@
   import "../app.css";
   import { base } from "$app/paths";
   import { page } from "$app/state";
+  import { theme } from "$lib/theme.svelte";
 
   let { children } = $props();
+
+  // adopt the stored preference once hydrated, then follow OS changes
+  $effect(() => theme.sync());
+
+  const THEME_LABEL = {
+    system: "Theme: follows your system",
+    light: "Theme: light",
+    dark: "Theme: dark",
+  };
 
   const REPO = "https://github.com/libdither/disp";
 
@@ -94,6 +104,34 @@
             </a>
           {/if}
         {/each}
+
+        <button
+          class="themetoggle"
+          class:auto={theme.pref === "system"}
+          onclick={() => theme.cycle()}
+          title={THEME_LABEL[theme.pref]}
+          aria-label={THEME_LABEL[theme.pref]}
+        >
+          {#if theme.resolved === "dark"}
+            <!-- dusk: a crescent moon -->
+            <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z"
+              />
+            </svg>
+          {:else}
+            <!-- midmorning: a sun -->
+            <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4.4" />
+              <g class="rays">
+                <path d="M12 1.8v2.6M12 19.6v2.6M1.8 12h2.6M19.6 12h2.6" />
+                <path
+                  d="M4.8 4.8l1.9 1.9M17.3 17.3l1.9 1.9M19.2 4.8l-1.9 1.9M6.7 17.3l-1.9 1.9"
+                />
+              </g>
+            </svg>
+          {/if}
+        </button>
       </div>
     </nav>
   </header>
@@ -246,6 +284,54 @@
   }
   .navlink.active {
     color: var(--fg);
+  }
+
+  /* sun/moon toggle; the dot marks "following your system" */
+  .themetoggle {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    margin-left: 0.15rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: none;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease,
+      border-color 0.15s ease;
+  }
+  .themetoggle:hover {
+    color: var(--fg);
+    background: var(--bg-panel-hover);
+    border-color: var(--border);
+  }
+  .themetoggle.auto::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .tglyph {
+    width: 17px;
+    height: 17px;
+    fill: currentColor;
+  }
+  .tglyph .rays {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
   }
 
   /* the active tab grows a little sprout */

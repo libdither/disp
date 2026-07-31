@@ -210,41 +210,41 @@
     border-bottom-color: currentColor;
   }
   .tv-nat {
-    color: #1d7f8a;
+    color: var(--hl-number);
   }
   .tv-str {
-    color: #2b8a52;
+    color: var(--hl-string);
   }
   .tv-name {
-    color: #a8770f;
+    color: var(--hl-fn);
   }
   .tv-more {
     padding: 0 0.45em;
-    background: rgba(74, 104, 82, 0.14);
-    color: #4a6852;
+    background: var(--bg-panel-hover);
+    color: var(--fg-muted);
     font-weight: 600;
   }
   .tv-more:hover {
-    background: rgba(74, 104, 82, 0.26);
+    background: color-mix(in oklab, var(--fg-faint) 30%, transparent);
   }
   .tv-fold {
     padding: 0 0.35em;
     margin-right: 0.15em;
-    background: rgba(168, 119, 15, 0.14);
-    color: #a8770f;
+    background: color-mix(in oklab, var(--hl-fn) 16%, transparent);
+    color: var(--hl-fn);
     font-weight: 600;
     font-size: 0.95em;
   }
   .tv-fold:hover {
-    background: rgba(168, 119, 15, 0.28);
+    background: color-mix(in oklab, var(--hl-fn) 30%, transparent);
   }
   .tv-viz {
     padding: 0 0.25em;
-    color: #8ea08b;
+    color: var(--ed-gutter);
     vertical-align: -0.15em;
   }
   .tv-viz:hover {
-    color: #2f9e6e;
+    color: var(--accent);
   }
   .tv-viz svg {
     width: 1.05em;
