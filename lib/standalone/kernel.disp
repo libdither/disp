@@ -473,6 +473,19 @@ Ambient := GuardAt
 given GenericWalker : AnyTree := Guard
 Fn := Pi GenericWalker
 
+Named := {name, T} -> ({ #recognize := {_self, v} -> T v, name := name, under := T })
+key_insert := fix ({self, k, ks} ->
+  if (is_leaf ks) { cons k nil }
+  else if (tree_eq k (pair_fst ks)) { ks }
+  else if (tree_lt k (pair_fst ks)) { cons k ks }
+  else { cons (pair_fst ks) (self k (pair_snd ks)) })
+key_sort := fix ({self, ks} -> if (is_leaf ks) { nil } else { key_insert (pair_fst ks) (self (pair_snd ks)) })
+Tuple := {keys} -> (fix ({self, ks} ->
+  if (is_leaf (pair_snd ks)) { pair_fst ks } else { Sigma GenericWalker (pair_fst ks) ({_} -> self (pair_snd ks)) })) (key_sort keys)
+at := {K, keys, s} -> (fix ({self, ks, v} ->
+  if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
+  else { self (pair_snd ks) (pair_snd v) })) (key_sort keys) s
+
 with_trials := {base} -> ({
   fresh := {st, ty, tail} -> {
     let ms := ty.members
@@ -503,6 +516,14 @@ nat_rec : Fn Nat ({_} -> Fn Nat ({_} -> Fn nat_step_ty ({_} -> Nat))) := elim_of
 
 bool_rec : Fn Bool ({_} -> Fn Bool ({_} -> Fn Bool ({_} -> Bool))) := elim_of Bool ({_} -> Bool)
 test ShallowType Bool = true
+test tree_eq (Tuple (cons Nat (cons Bool nil))) (Tuple (cons Bool (cons Nat nil))) = true
+test Tuple (cons Nat (cons Bool nil)) (pair true 2) = true
+test Tuple (cons Nat (cons Bool nil)) (pair 2 true) = false
+test (Named "cost" Nat) 3 = true
+test (Named "cost" Nat).name = "cost"
+test tree_eq (Named "cost" Nat).under Nat = true
+test tree_eq (Named "cost" Nat) (Named "price" Nat) = false
+test field (make_record (cons Nat nil) (cons (list_const 7) nil)) Nat = 7
 test Fn ShallowType ({_} -> Bool) ({T} -> T 5) = true
 test Fn ShallowType ({_} -> Bool) ({T} -> bool_rec (T 5) false true) = true
 test Fn ShallowType ({_} -> Nat) ({T} -> T 5) = false

@@ -414,3 +414,28 @@ test dep_suite (Pi Trials) Five = dep_expected
 // kernel's inline tests) under another walker: the differential check as a line.
 mMeta := use "kernel.disp" { GenericWalker := Meta }
 test mMeta.add 2 3 = 5
+
+// Ops as canonical type-indexed tuples: fields are referred to BY TYPE (at),
+// construction is order-free (tuple_of sorts), and names survive only as
+// brands where underlying types collide (param/result are both types). The
+// wrong-brand projection refusal is the collision case working under Guard.
+LabelK := Named "label" AnyTree
+ParamK := Named "param" ShallowType
+ResultK := Named "result" ShallowType
+OpSig := cons LabelK (cons ParamK (cons ResultK nil))
+OpTy := Tuple OpSig
+tuple_of := {entries} -> {
+  let ins := fix ({self, e, es} -> if (is_leaf es) { cons e nil } else if (tree_lt (pair_fst e) (pair_fst (pair_fst es))) { cons e es } else { cons (pair_fst es) (self e (pair_snd es)) })
+  let sorted := (fix ({self, es} -> if (is_leaf es) { nil } else { ins (pair_fst es) (self (pair_snd es)) })) entries
+  (fix ({self, es} -> if (is_leaf (pair_snd es)) { pair_snd (pair_fst es) } else { pair (pair_snd (pair_fst es)) (self (pair_snd es)) })) sorted
+}
+flip_sig := tuple_of (cons (pair ResultK Bool) (cons (pair LabelK "flip") (cons (pair ParamK Bool) nil)))
+flip_sig2 := tuple_of (cons (pair LabelK "flip") (cons (pair ParamK Bool) (cons (pair ResultK Bool) nil)))
+test tree_eq flip_sig flip_sig2 = true
+test OpTy flip_sig = true
+test tree_eq (at ParamK OpSig flip_sig) Bool = true
+test tree_eq (at LabelK OpSig flip_sig) "flip" = true
+test tree_eq ParamK ResultK = false
+test Fn OpTy ({_} -> ParamK) ({q} -> at ParamK OpSig q) = true
+test Fn OpTy ({_} -> LabelK) ({q} -> at LabelK OpSig q) = true
+test Fn OpTy ({_} -> ResultK) ({q} -> at ParamK OpSig q) = false
