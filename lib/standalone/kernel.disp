@@ -38,13 +38,6 @@ sig_of := {marker} -> pair_fst (wait marker t)
 has_sig := {sig, v} -> and (is_fork v) (tree_eq (pair_fst v) sig)
 tree_eq_sig := sig_of tree_eq
 
-hyp_marker := {a, b} -> a
-make_mark := {meta} -> wait hyp_marker meta
-make_hyp := {ty, history} -> make_mark (pair ty history)
-hyp_sig := sig_of hyp_marker
-is_neutral := has_sig hyp_sig
-neutral_type := {v} -> pair_fst (wait_payload v)
-
 invalid_marker := {a, b} -> b
 invalid := {reason} -> wait invalid_marker reason
 invalid_sig := sig_of invalid_marker
@@ -93,6 +86,13 @@ field_put := {r, name, v} -> {
 }
 test field (field_put ({ a := 1, b := 2 }) "b" 9) "b" = 9
 test tree_eq (field_put ({ a := 1 }) "b" 2) ({ a := 1, b := 2 }) = true
+
+hyp_marker := {a, b} -> a
+make_mark := {meta} -> wait hyp_marker meta
+make_hyp := {ty, history} -> make_mark ({ ty := ty, history := history })
+hyp_sig := sig_of hyp_marker
+is_neutral := has_sig hyp_sig
+neutral_type := {v} -> field (wait_payload v) "ty"
 
 tag := {meta, behavior} -> {
   let s := {a, b, c} -> (a c) (b c)
@@ -316,7 +316,7 @@ Meta : Table := ({
   let vcheck := ({chk, T, V} ->
     match V {
       Poison r => false
-      Neu ty _ => (tree_eq ty T)
+      Neu m => (tree_eq m.ty T)
       _ => {
         let rows := T.tele
         if (is_fork rows) { chk t rows V t }
@@ -373,7 +373,7 @@ Meta : Table := ({
           let r := respond_face fr (make_mark m)
           if (is_invalid r) { Poison (Neu m) }
           else if (list_all ({ob} -> vcheck chk (pair_fst ob) (if (is_elim_frame fr) { vlift (pair_snd ob) } else { X })) (pair_fst r)) {
-            Neu (pair (pair_snd r) (pair "Ob" (pair fr (make_mark m))))
+            Neu ({ ty := pair_snd r, history := pair "Ob" (pair fr (make_mark m)) })
           } else { Poison (Neu m) }
         }
         Poison r => (Poison r)
@@ -387,7 +387,7 @@ Meta : Table := ({
         Fork a b => (apply_fork self chk a b X)
       }
     }))
-  fresh := {st, ty, tail} -> cons (pair (Neu (pair ty tail)) st) nil
+  fresh := {st, ty, tail} -> cons (pair (Neu ({ ty := ty, history := tail })) st) nil
   lift := {f} -> Conc f
   apply := mwalk
   read := readback
@@ -455,7 +455,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
     if (member v legit) {
       true
     } else {
-      let hist := pair_snd (wait_payload v)
+      let hist := (wait_payload v).history
       if (tree_eq (pair_fst hist) "Ob") {
         let frame := pair_fst (pair_snd hist)
         let parent := pair_snd (pair_snd hist)
