@@ -62,6 +62,13 @@ pub struct Runner {
     /// The reserved target the current relief is clearing: its own reservation does not
     /// refuse the relief chain (the reserver asked for it).
     pub relief_root: Option<Pos>,
+    /// EXPERIMENT (default off): guest-continuation swings (bending routes threaded
+    /// through agents' passthrough lists) plus address-monotone displacement (receivers
+    /// strictly above the shed cell). Breaks the pass-threaded knot (s-rule reaches its
+    /// Dn·L dock) but the cell-level order starves multi-cell shift shapes, trading
+    /// other terms away; the open design is a ROUTE-level potential. Measured profiles
+    /// in AC_IDEA's k-chain rung entry.
+    pub relief_experiment: bool,
     /// Heuristic ablation: when false, cooldown stamps are never written (damping off).
     /// The bit-class claim under test: dropping a heuristic may park more, never wrong.
     pub cooldown_stamps: bool,
@@ -108,6 +115,7 @@ impl Runner {
             explain: None,
             relief_owner: None,
             relief_root: None,
+            relief_experiment: false,
             cooldown_stamps: true,
             nursery_discipline: true,
             grown_by_rule: BTreeMap::new(),
@@ -1107,6 +1115,7 @@ impl Runner {
                 })
                 .min_by_key(|bs| bs.len())
                 .map(|bs| bs.into_iter().next().expect("nonempty"));
+            let ring_relief_ran = candidate.is_some();
             if let Some((world, planned)) = candidate {
                 let ws = self.grid.site(world);
                 let progressed = match &ws.cell {
@@ -1114,8 +1123,12 @@ impl Runner {
                         self.note(|| format!(
                             "dock {t:?}/{p:?}: ring relief evicting the one blocker at {world:?}"
                         ));
+                        // Under the experiment, depth 1 (stamp-respecting) rather than
+                        // the stamp-bypassing top level: a just-displaced route must
+                        // wear its stamp down before moving again.
+                        let depth = if self.relief_experiment { 1 } else { 2 };
                         self.relief_root = Some(world);
-                        let ok = self.try_evict(world, Some(&planned), 2);
+                        let ok = self.try_evict(world, Some(&planned), depth);
                         self.relief_root = None;
                         ok
                     }
@@ -1136,6 +1149,12 @@ impl Runner {
                     self.wake(p);
                     return false;
                 }
+            }
+            // One relief primitive per activation: when ring relief ran (even to a
+            // refusal), the pass-shed fallback waits for the next wake, keeping every
+            // activation's write set at a single primitive's footprint.
+            if ring_relief_ran {
+                return false;
             }
         }
         let Some(roll) = roll else {
@@ -1474,12 +1493,22 @@ impl Runner {
                 && cursor_ok(s, at)
                 && !s.claim
         };
-        let side_ok = |s: &Site, at: Pos| match &s.cell {
-            Cell::Empty { .. } => unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim,
-            Cell::Wire { routes, .. } => {
-                routes.len() < 3 && unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim
-            }
-            _ => false,
+        // Under the experiment, displacement is ADDRESS-MONOTONE: receivers strictly
+        // above the shed cell in the global address order (the claim-deadlock order).
+        // Any displacement cycle would need a descent, so none exists — but the
+        // cell-level order also forbids every multi-cell shift whose span straddles
+        // the shed cell, which starves relief; the open design is a route-level
+        // potential. Off by default.
+        let unordered = !self.relief_experiment;
+        let side_ok = move |s: &Site, at: Pos| {
+            (unordered || at > t)
+                && match &s.cell {
+                    Cell::Empty { .. } => unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim,
+                    Cell::Wire { routes, .. } => {
+                        routes.len() < 3 && unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim
+                    }
+                    _ => false,
+                }
         };
         // Receivers of a displaced route get the full cooldown stamp: they will not shed
         // it again (nor be retracted) until the stamp decays. A displaced hot route
@@ -1515,11 +1544,24 @@ impl Runner {
                 && !s.claim
         };
         let mut blockers: Vec<Pos> = vec![];
-        let swing = |s: &Site, idx: usize, from: EndPt, to: EndPt| -> Site {
+        // Bending a continuation's near end is the same one-word rewrite whether the
+        // route lives in a wire cell or threads an agent's passthrough list. A bent
+        // guest gets the cooldown stamp: its pass may not be bent again until it
+        // decays (the same anti-ping-pong damping displaced wire routes carry).
+        let stamp1 = self.stamp(1);
+        let swing = move |s: &Site, idx: usize, from: EndPt, to: EndPt| -> Site {
             let mut ns = s.clone();
-            if let Cell::Wire { routes, .. } = &mut ns.cell {
-                let far = routes[idx].through(from).expect("continuation endpoint");
-                routes[idx] = Route::new(far, to);
+            match &mut ns.cell {
+                Cell::Wire { routes, .. } => {
+                    let far = routes[idx].through(from).expect("continuation endpoint");
+                    routes[idx] = Route::new(far, to);
+                }
+                Cell::Agent { pass, cooldown, .. } => {
+                    let far = pass[idx].through(from).expect("guest continuation endpoint");
+                    pass[idx] = Route::new(far, to);
+                    *cooldown = stamp1;
+                }
+                _ => {}
             }
             ns
         };
@@ -1608,8 +1650,27 @@ impl Runner {
             let splice_host = |xs: &Site, at: Pos| {
                 matches!(xs.cell, Cell::Wire { .. }) && cursor_ok(xs, at) && !xs.claim
             };
-            let eligible =
-                if d1 == d2 { splice_host(&n1s, n1) } else { plain(&n1s, n1) && plain(&n2s, n2) };
+            let back1 = EndPt { face: d1.opp(), lane: r.a.lane };
+            let back2 = EndPt { face: d2.opp(), lane: r.b.lane };
+            // A continuation swings when it is plain wire, or (under the experiment)
+            // when the route threads a live, unstamped agent's passthrough list (a
+            // guest continuation — the pass-threaded knot class; nursery guests are
+            // untouchable growth matter, and a stamped guest was bent recently: wait
+            // out the damping).
+            let experiment = self.relief_experiment;
+            let swingable = |s: &Site, at: Pos, back: EndPt| -> bool {
+                plain(s, at)
+                    || (experiment
+                        && matches!(&s.cell, Cell::Agent { pass, nursery: false, cooldown: 0, .. }
+                            if pass.iter().any(|x| x.ends().contains(&back)))
+                        && cursor_ok(s, at)
+                        && !s.claim)
+            };
+            let eligible = if d1 == d2 {
+                splice_host(&n1s, n1)
+            } else {
+                swingable(&n1s, n1, back1) && swingable(&n2s, n2, back2)
+            };
             if !eligible {
                 self.note(|| format!(
                     "evict {t:?} r{i} ({}{}.{}-{}.{}): continuation not swingable; {n1:?} is {} and {n2:?} is {}",
@@ -1639,8 +1700,8 @@ impl Runner {
                     };
                     let mut shoved = false;
                     for (x, xs, end, partner_plain) in [
-                        (n1, &n1s, &r.a, d1 == d2 || plain(&n2s, n2)),
-                        (n2, &n2s, &r.b, d1 == d2 || plain(&n1s, n1)),
+                        (n1, &n1s, &r.a, d1 == d2 || swingable(&n2s, n2, back2)),
+                        (n2, &n2s, &r.b, d1 == d2 || swingable(&n1s, n1, back1)),
                     ] {
                         let squatter = matches!(&xs.cell,
                             Cell::Agent { tag, nursery: false, cooldown: 0, .. } if tag.is_producer())
@@ -1667,13 +1728,16 @@ impl Runner {
                 }
                 continue;
             }
-            let (Cell::Wire { routes: r1s, .. }, Cell::Wire { routes: r2s, .. }) =
-                (&n1s.cell, &n2s.cell)
-            else {
+            let cont_of = |s: &Site| -> Option<Vec<Route>> {
+                match &s.cell {
+                    Cell::Wire { routes, .. } => Some(routes.clone()),
+                    Cell::Agent { pass, nursery: false, .. } => Some(pass.clone()),
+                    _ => None,
+                }
+            };
+            let (Some(r1s), Some(r2s)) = (cont_of(&n1s), cont_of(&n2s)) else {
                 continue;
             };
-            let back1 = EndPt { face: d1.opp(), lane: r.a.lane };
-            let back2 = EndPt { face: d2.opp(), lane: r.b.lane };
             let Some(i1) = r1s.iter().position(|x| x.ends().contains(&back1)) else {
                 self.note(|| format!("evict {t:?} r{i}: no continuation in {n1:?}"));
                 continue;

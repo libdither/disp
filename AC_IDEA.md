@@ -189,10 +189,19 @@ generic half becomes mechanism:
   k-chain 7→10) without regressing anything; unbounded ring clearing stays forbidden.
   The NEXT measured gap: routes threaded through AGENTS' passthrough lists refuse to
   swing (Dn·L declines on pass-shedding whose both continuations live inside adjacent
-  agents' pass entries — relief needs an agent-hosted continuation move, a 3-cell
-  claimed op, or the footprint-prefetch / single-lane levers). Still on the table:
-  footprint prefetch (claim the roll ring during approach), the single-lane experiment
-  (deletes the lane-conflict class at 2× cable width).
+  agents' pass entries). PROBED 2026-07-31 (`Runner.relief_experiment`, off by
+  default): guest-continuation swings DO break that wall (s-rule 5→6 fires, reaching
+  its Dn·L dock) but destabilize displacement — without a termination order the
+  relief/dock retry loop pumps (k-chain 1,969 → 2.4M generations), and every
+  cell-level order tried has a different sacrifice profile: per-dock forbidden rings
+  don't compose (two docks cross-shuttle one route: a genuine soak livelock under
+  AddressOrdered), universal beside-any-dock forbidding starves corridors (k-chain
+  10→2), and address-monotone receivers (the claim-deadlock order) kill every
+  multi-cell shift whose span straddles the shed cell (s-rule 5→2). The open design
+  is a ROUTE-level potential: an order on displaced routes as wholes, not receiver
+  cells — then swings + monotone displacement compose and terminate. Still on the
+  table: footprint prefetch (claim the roll ring during approach), the single-lane
+  experiment (deletes the lane-conflict class at 2× cable width).
 - **disp-t knot**: walker convoys; less characterized.
 - **Relief as bounded token chains**, depth as a synthesis constant.
 - **Teleport abort leg.**
