@@ -57,6 +57,8 @@ list_zip := fix ({self, xs, ys} ->
   if (is_leaf xs) { nil } else { cons (pair (pair_fst xs) (pair_fst ys)) (self (pair_snd xs) (pair_snd ys)) })
 list_apply := fix ({self, f, xs} ->
   if (is_leaf xs) { f } else { self (f (pair_fst xs)) (pair_snd xs) })
+list_cat := fix ({self, xs, ys} ->
+  if (is_leaf xs) { ys } else { cons (pair_fst xs) (self (pair_snd xs) ys) })
 
 field_cell := fix ({self, r, name} -> {
   let names := pair_fst r
@@ -147,6 +149,9 @@ is_neutral := has_sig hyp_sig
 neutral_type := {v} -> field (wait_payload v) ShallowType
 test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
 test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
+Unit := ({ #recognize := {_self, v} -> is_leaf v, members := cons t nil })
+test Unit t = true
+test Unit 5 = false
 Rec := inj "Rec" t
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
@@ -154,7 +159,7 @@ Sum := {variants} -> {
     if (is_leaf vs) { nil }
     else if (tree_eq (pair_fst (pair_fst vs)) tag) {
       let s := pair_snd (pair_fst vs)
-      if (is_leaf s) { cons t nil } else { s }
+      if (is_leaf s) { cons Unit nil } else { s }
     } else { self (pair_snd vs) tag })
   let payload_of := fix ({self, args} ->
     if (is_leaf (pair_snd args)) { pair_fst args } else { pair (pair_fst args) (self (pair_snd args)) })
@@ -202,11 +207,38 @@ Sum := {variants} -> {
         else { ihs (pair_snd spec2) (pair_snd args2) })) spec args)
     } else { wait go (pair (pair_fst st) cases) }
   })
+  let pos_members := {ty} -> if (is_leaf ty) { nil } else if (tree_eq ty Rec) { nil } else { ty.members }
+  let payloads := fix ({self, sp} -> {
+    let ms := pos_members (pair_fst sp)
+    if (is_leaf ms) { nil }
+    else if (is_leaf (pair_snd sp)) { ms }
+    else {
+      let rest := self (pair_snd sp)
+      if (is_leaf rest) { nil }
+      else { (fix ({go, l} -> if (is_leaf l) { nil } else { list_cat (list_map ({r} -> pair (pair_fst l) r) rest) (go (pair_snd l)) })) ms }
+    }
+  })
+  let mall := fix ({self, vs} ->
+    if (is_leaf vs) { nil }
+    else {
+      let tag := pair_fst (pair_fst vs)
+      let ps := payloads (spec_of variants tag)
+      if (is_leaf ps) { nil }
+      else {
+        let here := list_map ({p} -> inj tag p) ps
+        if (is_leaf (pair_snd vs)) { here }
+        else {
+          let rest := self (pair_snd vs)
+          if (is_leaf rest) { nil } else { list_cat here rest }
+        }
+      }
+    })
   ({
     #recognize := {self, v} -> accept ({ty, a} -> ty a) self v
     check := {jdg, T, v} -> accept jdg ({a} -> jdg T a) v
     gate := {Ind, B} -> list_map (gate_arm Ind B) variants
     elim := {_self, v} -> wait co (pair v nil)
+    members := mall variants
     code := variants
   })
 }
@@ -217,14 +249,34 @@ case_of := {T, B, arms} -> {
     let a := field arms tg
     if (is_leaf a) { dflt } else { a }
   }
+  let pad := {slot, arm} -> if (is_leaf slot) { arm } else {
+    (fix ({self, sp, f} ->
+      if (is_leaf sp) {
+        (fix ({ab, sp2, r} ->
+          if (is_leaf sp2) { r }
+          else if (tree_eq (pair_fst sp2) Rec) { ab (pair_snd sp2) (list_const r) }
+          else { ab (pair_snd sp2) r })) slot f
+      } else { {a} -> self (pair_snd sp) (f a) })) slot arm
+  }
   if (and (list_all ({tg} -> not (is_leaf (pick tg))) tags)
           (list_all ({n} -> or (tree_eq n "_") (member n tags)) (pair_fst arms))) {
-    let ordered := list_map pick tags
+    let ordered := list_map ({var} -> pad (pair_snd var) (pick (pair_fst var))) T.code
     {scr} -> list_apply ((elim_of T B) scr) ordered
   } else {
     {_scr} -> invalid arms
   }
 }
+children := {T, v} -> (fix ({self, sp, p} ->
+  if (is_leaf sp) { nil }
+  else {
+    let last := is_leaf (pair_snd sp)
+    let a := if last { p } else { pair_fst p }
+    let rest := if last { nil } else { self (pair_snd sp) (pair_snd p) }
+    if (tree_eq (pair_fst sp) Rec) { cons a rest } else { rest }
+  })) ((fix ({find, vs} ->
+    if (is_leaf vs) { nil }
+    else if (tree_eq (pair_fst (pair_fst vs)) (pair_fst v)) { pair_snd (pair_fst vs) }
+    else { find (pair_snd vs) })) T.code) (pair_snd v)
 Row : ShallowType := Sum RowCode
 Obs : ShallowType := Sum ObsCode
 

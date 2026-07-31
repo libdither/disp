@@ -512,3 +512,34 @@ sord_rec_n := elim_of SOrd ({_} -> Nat)
 osize := {o} -> sord_rec_n o ({_} -> 1) ({_a, _b, ia, ib} -> succ (add ia ib))
 test osize (op2 oz (op2 oz oz)) = 5
 test Pi Guard SOrd ({_} -> Nat) osize = true
+
+// Derived generics off the declaration. Nullary slots are strict ([] = one
+// Unit position), so finite sums derive members (cartesian across enumerable
+// positions) and run under the Enum/Trials tiers with no per-type code;
+// case_of arms are CASE-SHAPED (constructor args only, derived padding absorbs
+// the IHs -- the one-level match); children collects the Rec positions.
+SFinCode := < fa, fb >
+SFin := Sum SFinCode
+test SFin fa = true
+test SFin (inj "fa" 5) = false
+test SFin.members = cons fa (cons fb nil)
+test is_leaf SN.members = true
+test is_leaf Row.members = true
+test list_len (Sum [pair "mk" [Bool, Bool]]).members = 4
+sfin_not := {v} -> match v : (case_of SFin ({_} -> Bool)) { fa _ => false; fb _ => true }
+test sfin_not fa = false
+test sfin_not fb = true
+test Pi Enum SFin ({_} -> Bool) sfin_not = true
+test Pi Trials SFin ({_} -> Bool) sfin_not = true
+test Pi Enum SFin ({_} -> Bool) ({_v} -> 5) = false
+sn_is_z := {n} -> match n : (case_of SN ({_} -> Bool)) { sz _ => true; ss _ => false }
+test sn_is_z sz = true
+test sn_is_z (ss (ss sz)) = false
+test Fn SN ({_} -> Bool) sn_is_z = true
+sn_pred := {n} -> match n : (case_of SN ({_} -> SN)) { sz _ => sz; ss k => k }
+test sn_pred (ss (ss sz)) = ss sz
+test sn_pred sz = sz
+test Fn SN ({_} -> SN) sn_pred = true
+test children SN sz = nil
+test children SLN (scons 1 (scons 2 snil)) = cons (scons 2 snil) nil
+test children SOrd (op2 oz (op2 oz oz)) = cons oz (cons (op2 oz oz) nil)
