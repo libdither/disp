@@ -304,6 +304,19 @@ export function exprToCir(
       for (let i = e.fields.length - 1; i >= 0; i--)
         payloadCir = consCir(cap(listConst, { tag: "var", name: e.fields[i].name }), payloadCir)
       let result: Cir = cap(cap(recordVal, { tag: "lit", t: namesTree }), payloadCir)
+      // A `#`-marked field is the record's FACE: the literal compiles through the
+      // scope-bound `faced` former (`faced "name" record`), which builds a value
+      // that behaves as that field when applied while the whole record rides as
+      // readable metadata (the standalone kernel's tagged-tree construction).
+      const facedFields = e.fields.filter(f => f.faced)
+      if (facedFields.length > 1)
+        throw new Error(`record literal: at most one '#'-marked face field (got ${facedFields.map(f => f.name).join(", ")})`)
+      if (facedFields.length === 1) {
+        const facedEntry = lookupEntry("faced")
+        if (!facedEntry?.tree)
+          throw new Error("record literal '#field': 'faced' must be in scope")
+        result = cap(cap({ tag: "lit", t: facedEntry.tree }, { tag: "lit", t: stringToTree(facedFields[0].name) }), result)
+      }
       for (let i = e.fields.length - 1; i >= 0; i--) {
         const priorNames = new Set(e.fields.slice(0, i).map(f => f.name))
         const shadowedLookup = (n: string): ScopeEntry | undefined =>

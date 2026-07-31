@@ -31,7 +31,7 @@ const KEYWORDS = new Set(["use", "open", "match", "if", "then", "else"])
 // `<`/`>` are the sum-type-literal delimiters (`< Tag : T, … >`). They are single
 // chars with no multi-char punctuation built on them, and `->`/`=>`/`→` are
 // matched first, so a bare `>` never steals an arrow's tail.
-const PUNCT = [":=", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
+const PUNCT = ["#", ":=", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -141,7 +141,7 @@ export type Param = { name: string | null; type: Expr | null; default?: Expr | n
 export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
 // A coproduct variant: `Tag : T` (single-arg, `type` set) or `Tag` (nullary, null).
 export type SumVariant = { name: string; type: Expr | null }
-export type NamedField = { name: string; type: Expr | null; value: Expr }
+export type NamedField = { name: string; type: Expr | null; value: Expr; faced?: boolean }
 
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
@@ -866,15 +866,17 @@ const sumTypeP: P<Expr> = (ts, i) => {
 // Fields carry their 1-based source extent (line of the name token, line of
 // the last value token), so downstream tooling can attribute a declaration
 // to its source lines — like the equation items' `line`.
-const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; line?: number; endLine?: number }> =>
+const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; faced?: boolean; line?: number; endLine?: number }> =>
   nl((ts, i) => {
-    const r = seq(idP,
+    // `#name := v` marks the record's FACE field (compiled through the
+    // scope-bound `faced` former; see the recValue case in expr.ts).
+    const r = seq(optional(punctP("#")), idP,
       optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
       nl(punctP(":=")), skipNl, lazy(() => valParser))(ts, i)
     if (!r.ok) return r
-    const [name, ann, , , value] = r.v
+    const [hash, name, ann, , , value] = r.v
     return ok({
-      tag: "field" as const, name, type: ann ? ann[2] : null, value,
+      tag: "field" as const, name, type: ann ? ann[2] : null, value, faced: hash != null ? true : undefined,
       line: tokLine(ts, i), endLine: endTokLine(ts, r.pos),
     }, r.pos)
   })
@@ -1035,7 +1037,7 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
     if (m.tag === "field") {
       if (exportedFields.some(f => f.name === m.name))
         return err(`duplicate exported field '${m.name}'`, startPos)
-      exportedFields.push({ name: m.name, type: m.type, value: m.value! }) // braced fields always carry a value
+      exportedFields.push({ name: m.name, type: m.type, value: m.value!, faced: (m as any).faced }) // braced fields always carry a value
     }
     if (m.tag === "let") steps.push({ k: "let", name: m.name, type: m.type, body: m.body })
     if (m.tag === "bind") steps.push({ k: "bind", name: m.name, expr: m.expr })
@@ -1268,6 +1270,8 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
   if (scanForBareEq(ts, pos)) return "recValue" // an equation member → block/recValue body
   let p = pos
   while (ts[p].t === "nl") p++
+  // `#name := v` — a face-marked field can only head a record value.
+  if (ts[p].t === "punct" && (ts[p] as any).v === "#") return "recValue"
   if (ts[p].t === "id") {
     const name = (ts[p] as any).v as string
     p++
