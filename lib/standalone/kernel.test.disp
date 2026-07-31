@@ -489,6 +489,22 @@ test Pi Guard SLN ({_} -> Nat) sln_sum = true
 test Fn Nat ({_} -> Fn SLN ({_} -> SLN)) scons = true
 test Fn Nat ({_} -> Fn SLN ({_} -> SLN)) ({h, tl} -> scons h (scons (pair 5 5) tl)) = false
 
+// Eq + J: the land slot lets a type roll an elimination somewhere other than
+// the scrutinee -- Eq lands the motive at the RIGHT endpoint, which is J
+// (transport 2 : Point 2 to Point 3 through a proof of 2 = 3). Recognizers run
+// raw under the judge, so refl at one abstract endpoint certifies (tree_eq of
+// the same mint against itself) while distinct mints stay refused. Inline Eq
+// CONSTRUCTION in a walked body scrutinizes its captured endpoints (the Point
+// closure precedent), so eliminators over Eq bind top-level like every other.
+er23 := elim_of (Eq Nat 2 3) ({w} -> Point w)
+test Fn (Eq Nat 2 3) ({_} -> Point 3) ({p} -> er23 p 2) = true
+test Fn (Eq Nat 2 3) ({_} -> Point 3) ({p} -> er23 p 3) = false
+test Fn (Eq Nat 2 3) ({_} -> Point 3) ({p} -> 2) = false
+test Pi Meta (Eq Nat 2 3) ({_} -> Point 3) ({p} -> er23 p 2) = true
+test Fn Nat ({n} -> Fn (Eq Nat n n) ({_} -> Eq Nat n n)) ({n, p} -> refl) = true
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat n m))) ({n, m, p} -> refl) = false
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat n m))) ({n, m, p} -> p) = true
+
 SOrd := Sum [pair "oz" [], pair "op" [Rec, Rec]]
 oz := inj "oz" t
 op2 := {a, b} -> inj "op" (pair a b)
