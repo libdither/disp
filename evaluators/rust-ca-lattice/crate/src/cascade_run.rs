@@ -11,6 +11,7 @@ use crate::lattice::{Dir, DIRS};
 use crate::lattice::{dir_to, step, Pos, Topo};
 use crate::net::Net;
 use crate::rules::{find_index, Tag, RULES};
+use crate::signal::SignalBackend;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 // Pressure levels for the future relief rung. Blocked actors currently wait silently
@@ -61,11 +62,6 @@ pub struct Runner {
     /// The reserved target the current relief is clearing: its own reservation does not
     /// refuse the relief chain (the reserver asked for it).
     pub relief_root: Option<Pos>,
-    /// When set, a global contraction sweep wakes every wire cell every N generations,
-    /// so cold cables far from any activity still get their detours pulled straight.
-    pub sweep_every: Option<u64>,
-    /// Mutation count at the last sweep; an unchanged count skips the next one.
-    swept_mutations: u64,
     /// Heuristic ablation: when false, cooldown stamps are never written (damping off).
     /// The bit-class claim under test: dropping a heuristic may park more, never wrong.
     pub cooldown_stamps: bool,
@@ -77,6 +73,8 @@ pub struct Runner {
     /// When Some, every activation's write-set size and read radius are recorded per op
     /// class (the chip-power audit: the burn-down table for AC_IDEA's commit budget).
     pub audit: Option<BTreeMap<&'static str, OpAudit>>,
+    /// Where heat lives and how it converges; all backends reach the same fixpoint.
+    pub signals: SignalBackend,
 }
 
 /// Per-op-class audit accumulator: how big activations of this class get.
@@ -110,12 +108,11 @@ impl Runner {
             explain: None,
             relief_owner: None,
             relief_root: None,
-            sweep_every: Some(5),
-            swept_mutations: u64::MAX,
             cooldown_stamps: true,
             nursery_discipline: true,
             grown_by_rule: BTreeMap::new(),
             audit: None,
+            signals: SignalBackend::Worklist,
         };
         let live: Vec<Pos> = r.grid.cells.keys().copied().collect();
         for p in live {
@@ -166,40 +163,16 @@ impl Runner {
     }
 
     /// Like [`Self::tick_one`], reporting which cell was activated (for tracing).
+    /// (The every-N-generations contraction sweep that used to live here was DELETED
+    /// 2026-07-31 per AC_IDEA: slack discovery is a monotone fact — every commit that
+    /// frees matter already wakes its neighborhood, and the whole corpus completes
+    /// identically without the sweep's wake storms. The kick invariant stands guard:
+    /// if any contraction opportunity ever goes un-woken, kick-after-quiescence trips.)
     pub fn tick_traced(&mut self) -> Option<Pos> {
         let p = self.next_pos()?;
         self.queued.remove(&p);
         if self.gen_left == 0 {
             self.generation += 1;
-            if let Some(n) = self.sweep_every {
-                // The sweep stops at a fixpoint: a whole interval of pure refusals
-                // (no grid mutation) means re-waking the same wires would refuse the
-                // same way, and eternal re-waking of a parked pocket is a livelock
-                // (the wear/refuse pump the soak found). Any commit re-arms it.
-                if self.generation % n == 0 && self.grid.mutations != self.swept_mutations {
-                    self.swept_mutations = self.grid.mutations;
-                    // Cold, unstamped, unreserved wire only: hot cables cannot contract
-                    // and get their wakes from their own traffic; sweeping them turns
-                    // every armed generation into a wake storm of refusals that eats
-                    // whole activation budgets on knotty grids.
-                    let wires: Vec<Pos> = self
-                        .grid
-                        .cells
-                        .iter()
-                        .filter_map(|(p, w)| {
-                            let site = w.unpack().ok()?;
-                            matches!(
-                                site.cell,
-                                Cell::Wire { hot: 0, cooldown: 0, reserved: None, .. }
-                            )
-                            .then_some(*p)
-                        })
-                        .collect();
-                    for p in wires {
-                        self.wake(p);
-                    }
-                }
-            }
             self.gen_left = self.queue.len() + 1;
         }
         self.gen_left -= 1;
@@ -290,6 +263,16 @@ impl Runner {
         if site.claim {
             return;
         }
+        // Demand sources push: a live consumer heats the wire route touching its
+        // principal edge. Before the cooldown branch, so a damped consumer still
+        // demands (the old pull scan saw its principal regardless of its own state).
+        if let Cell::Agent { tag, principal, nursery: false, .. } = &site.cell {
+            if tag.is_consumer() {
+                let n = step(p, principal.face);
+                let back = EndPt { face: principal.face.opp(), lane: principal.lane };
+                self.raise_endpoint(n, back);
+            }
+        }
         // A cell can host a walker and a builder cursor at once. The agent acts first:
         // its departure is often exactly what unblocks the cursor's next placement.
         match &site.cell {
@@ -313,88 +296,103 @@ impl Runner {
             self.step_cursor(p, site, cursor);
             return;
         }
-        if self.heat(p) {
+        if self.pump_heat(p) {
             return;
         }
         if self.try_retract(p) {
             return;
         }
-        // A guest bridges its passthrough wires: a demand wave arriving on one side must
-        // wake the other or it dies at the crossing (heat sees through guests, so wakes
-        // must too). The relay targets WIRE only: a woken wire heats, agrees, and the
-        // relay stops. An agent end can never heat, so "until both sides agree" never
-        // terminates there — two guests whose pass routes face each other wake each
-        // other forever with zero mutations (the four-agent wake ring the soak found).
-        // Agents learn of demand from real commits via wake_around instead.
+        // A guest bridges its passthrough wires: demand arriving on one side must cross
+        // or it dies at the crossing. The relay re-raises the far WIRE side directly —
+        // an agent end can never hold heat, and wakes alone must never bounce between
+        // agents (the four-agent wake ring the soak found). Nursery guests stay opaque,
+        // as they were to the deleted scan; chains of adjacent guests relay one guest
+        // per generation, each hop through the wire between them.
         let pass: Vec<Route> = match &site.cell {
-            Cell::Agent { pass, .. } => pass.clone(),
+            Cell::Agent { pass, nursery: false, .. } => pass.clone(),
             Cell::Seed { pass, .. } => pass.iter().copied().collect(),
             _ => vec![],
         };
         for r in pass {
-            let read = |q: Pos| self.grid.word(q);
             let a = (step(p, r.a.face), EndPt { face: r.a.face.opp(), lane: r.a.lane });
             let b = (step(p, r.b.face), EndPt { face: r.b.face.opp(), lane: r.b.lane });
-            let a_hot = hot_beyond(&read, a.0, a.1);
-            let b_hot = hot_beyond(&read, b.0, b.1);
-            let a_wire = matches!(self.grid.site(a.0).cell, Cell::Wire { .. });
-            let b_wire = matches!(self.grid.site(b.0).cell, Cell::Wire { .. });
-            if a_hot && !b_hot && b_wire {
-                self.wake(b.0);
+            let a_hot = self.demand_at(a.0, a.1);
+            let b_hot = self.demand_at(b.0, b.1);
+            if a_hot && !b_hot {
+                self.raise_endpoint(b.0, b.1);
             }
-            if b_hot && !a_hot && a_wire {
-                self.wake(a.0);
+            if b_hot && !a_hot {
+                self.raise_endpoint(a.0, a.1);
             }
         }
         self.relax_chi(p);
     }
 
-    /// Demand propagation: a route heats when either end meets a live consumer's
-    /// principal or the hot continuation of the same wire, seen through any guests
-    /// squatting on it. The wave travels one cell per generation from consumers toward
-    /// producers; only hot wires are walked, so undemanded values stay parked and never
-    /// clog the fabric. Single-cell, stale-safe.
-    fn heat(&mut self, p: Pos) -> bool {
+    /// Demand visible at radius one beyond an edge: a live consumer's principal on it,
+    /// or a hot route ending on it. This is the only demand read left — the signal
+    /// arrives instead of being searched for.
+    fn demand_at(&self, n: Pos, back: EndPt) -> bool {
+        match &self.grid.site(n).cell {
+            Cell::Agent { tag, principal, nursery: false, .. } => {
+                tag.is_consumer() && *principal == back
+            }
+            Cell::Wire { routes, hot, .. } => routes
+                .iter()
+                .enumerate()
+                .any(|(j, r)| r.ends().contains(&back) && (hot >> j) & 1 == 1),
+            _ => false,
+        }
+    }
+
+    /// Raise the route at `n` whose end meets `back`; a fresh raise wakes the
+    /// neighborhood (the wake IS the propagation edge). No-op unless `n` is wire with
+    /// a live matching route: epoch death swallows late raises.
+    fn raise_endpoint(&mut self, n: Pos, back: EndPt) -> bool {
+        let slot = match &self.grid.site(n).cell {
+            Cell::Wire { routes, .. } => routes.iter().position(|r| r.ends().contains(&back)),
+            _ => None,
+        };
+        let Some(slot) = slot else { return false };
+        if self.signals.raise(&mut self.grid, n, slot) {
+            self.wake_around(n);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Demand propagation, push model: each hot route extends one cell along its cable
+    /// per activation, from consumers toward producers, so only demanded wires ever
+    /// heat and undemanded values never move. Adjacency raises only. Also the wire
+    /// cooldown stamp's opportunistic decay point (decay is not demand spread).
+    fn pump_heat(&mut self, p: Pos) -> bool {
         let site = self.grid.site(p);
         let Cell::Wire { routes, hot, cooldown, reserved } = &site.cell else {
             return false;
         };
-        let mut new_hot = *hot;
+        let (routes, hot) = (routes.clone(), *hot);
+        let new_cd = cooldown.saturating_sub(1);
+        if new_cd != *cooldown {
+            let cell = Cell::Wire {
+                routes: routes.clone(),
+                hot,
+                cooldown: new_cd,
+                reserved: *reserved,
+            };
+            self.grid.set(p, &Site { cell, cursor: site.cursor, chi: site.chi, claim: site.claim });
+        }
+        let mut spread = false;
         for (i, r) in routes.iter().enumerate() {
-            if (new_hot >> i) & 1 == 1 {
+            if (hot >> i) & 1 == 0 {
                 continue;
             }
             for e in r.ends() {
                 let n = step(p, e.face);
                 let back = EndPt { face: e.face.opp(), lane: e.lane };
-                let heats = {
-                    let read = |q: Pos| self.grid.word(q);
-                    hot_beyond(&read, n, back)
-                };
-                if heats {
-                    new_hot |= 1 << i;
-                    break;
-                }
+                spread |= self.raise_endpoint(n, back);
             }
         }
-        // Cooldown stamps decay opportunistically on activation; a cooldown-only change
-        // does not count as demand spread (return false so the rest of activate runs).
-        let new_cd = cooldown.saturating_sub(1);
-        if new_hot == *hot && new_cd == *cooldown {
-            return false;
-        }
-        let cell = Cell::Wire {
-            routes: routes.clone(),
-            hot: new_hot,
-            cooldown: new_cd,
-            reserved: *reserved,
-        };
-        self.grid.set(p, &Site { cell, cursor: site.cursor, chi: site.chi, claim: site.claim });
-        if new_hot == *hot {
-            return false;
-        }
-        self.wake_around(p);
-        true
+        spread
     }
 
     /// Producer advances one cell along its principal wire. One edge transaction: the
@@ -437,9 +435,7 @@ impl Runner {
                 if gtag.is_producer() && target.cursor.is_none() {
                     let enter = EndPt { face: m.opp(), lane: principal.lane };
                     if let Some(far) = gpass.iter().find_map(|r| r.through(enter)) {
-                        let read = |q: Pos| self.grid.word(q);
-                        shove_guest = hot_beyond(
-                            &read,
+                        shove_guest = self.demand_at(
                             step(t, far.face),
                             EndPt { face: far.face.opp(), lane: far.lane },
                         );
@@ -453,7 +449,7 @@ impl Runner {
                 return false;
             }
         }
-        let Cell::Wire { routes, hot: whot, reserved: None, .. } = &target.cell else {
+        let Cell::Wire { routes, reserved: None, .. } = &target.cell else {
             self.note(|| format!("walk {p:?}: principal target {t:?} is not plain wire"));
             return false; // blocked; the target's next change wakes this cell
         };
@@ -465,7 +461,7 @@ impl Runner {
         let exit = routes[my_index].through(enter).unwrap();
         // Demand-gated motion: only walk a wire the consumer side has heated (or a
         // one-shot shove license).
-        let route_hot = (whot >> my_index) & 1 == 1;
+        let route_hot = self.signals.hot(&self.grid, t, my_index);
         let downhill = site.chi >= 4 && target.chi.saturating_add(2) <= site.chi;
         if !(route_hot || downhill || forced) {
             return false;
@@ -2201,45 +2197,6 @@ impl Runner {
 
 fn add(origin: Pos, relative: Pos) -> Pos {
     (origin.0 + relative.0, origin.1 + relative.1, origin.2 + relative.2)
-}
-
-/// Whether demand exists just beyond a wire endpoint: a live consumer's principal, or a
-/// hot continuation of the same wire, looked at through any chain of guests (or a seed
-/// passthrough) squatting on it. Stale-safe read; the hop bound limits how far one
-/// activation sees, not correctness.
-pub(crate) fn hot_beyond(
-    read: &dyn Fn(Pos) -> crate::cascade::Word2,
-    mut n: Pos,
-    mut back: EndPt,
-) -> bool {
-    for _ in 0..5 {
-        let Ok(ns) = read(n).unpack() else { return false };
-        match &ns.cell {
-            Cell::Agent { tag, principal, nursery: false, pass, .. } => {
-                if tag.is_consumer() && *principal == back {
-                    return true;
-                }
-                let Some(exit) = pass.iter().find_map(|r| r.through(back)) else {
-                    return false;
-                };
-                n = step(n, exit.face);
-                back = EndPt { face: exit.face.opp(), lane: exit.lane };
-            }
-            Cell::Seed { pass, .. } => {
-                let Some(exit) = pass.and_then(|r| r.through(back)) else { return false };
-                n = step(n, exit.face);
-                back = EndPt { face: exit.face.opp(), lane: exit.lane };
-            }
-            Cell::Wire { routes, hot, .. } => {
-                return routes
-                    .iter()
-                    .enumerate()
-                    .any(|(j, r2)| r2.ends().contains(&back) && (hot >> j) & 1 == 1);
-            }
-            _ => return false,
-        }
-    }
-    false
 }
 
 /// Merge planned blocklet matter with the routes already occupying the target cell (the

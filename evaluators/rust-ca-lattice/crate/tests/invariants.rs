@@ -152,7 +152,8 @@ fn commit_footprints_and_read_radii_pinned() {
     // burn-down AC_IDEA's rungs must close (token-chain relief, signal-plane demand,
     // host-assisted roll scan). Raising any number is a regression toward less local.
     let ceiling: BTreeMap<&str, (u32, u32)> = [
-        ("refusal", (0, 3)),  // pure reads by construction; the radius is scan cost
+        ("refusal", (0, 2)),  // pure reads; r dropped 3 -> 2 when the signal plane
+                              // deleted the hot_beyond scans (rest = 1-deep shove read)
         ("fabric", (6, 2)),   // heat spread, contraction, relief route-swings
         ("move", (4, 2)),     // walk + detour reservation pair
         ("dock", (2, 11)),    // the dock write is small; r=11 IS the roll/footprint scan

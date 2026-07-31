@@ -48,13 +48,15 @@ progress counter — parked means genuinely wedged, never forgotten.
   a worm, not a commit. Measured per-activation write sets (2026-07-30, pinned as
   only-move-down ceilings in `tests/invariants.rs`): move 4 · growth 4 · fabric/relief 6
   · dock 2 · resolve 2 (the seated splice is already at the contract).
-- **No combinational long reads.** The enumerated exceptions and their dispositions: the
-  5-hop demand lookahead (DELETED by the signal plane — passthrough routes are just more
-  component edges; the signal arrives instead of being searched for), the ~60-cell
-  dock-roll scan (host-assist preferred; else a scout token, hard ≤64-hop bound), the
-  every-5-generations contraction sweep (DELETED — slack discovery is a monotone fact and
-  rides the fabric; the fold itself stays a claimed commit). Measured read radii
-  (Chebyshev, same pin): dock 11 — that IS the roll/footprint scan — everything else ≤ 3.
+- **No combinational long reads.** One exception left: the ~60-cell dock-roll scan
+  (host-assist preferred; else a scout token, hard ≤64-hop bound). The other two are
+  gone (2026-07-31): the 5-hop demand lookahead is deleted — consumers RAISE, hot wires
+  extend one cell per activation, guests relay one hop per generation, and the walk gate
+  just reads its own edge; the every-5-generations contraction sweep is deleted — every
+  matter-freeing commit already wakes its neighborhood, the whole corpus completes
+  identically without it, and the kick invariant trips if a contraction ever goes
+  un-woken. Measured read radii (Chebyshev, pinned): dock 11 — that IS the roll scan —
+  everything else ≤ 2.
 - **Frozen op alphabet and transition templates.** No runtime search on chip; growth runs
   compiled microcode in a per-tile ROM (cursor = program counter). Compile-time search
   stays host-side.
@@ -139,6 +141,14 @@ generic half becomes mechanism:
 0. **Signal-plane trait in software** (serial driver first): raise-only, epoch-keyed,
    three backends (worklist / union-find / dense bitmap); `decide()` generic over it.
    Gate: bit-exact under all queue disciplines; `hot_beyond` and the sweep deleted.
+   LANDED 2026-07-31 for the worklist backend (`signal.rs`: runtime-selectable like
+   disciplines, raise/hot only, commutation property-pinned; both scans deleted;
+   completion identical everywhere, soak wall-clock halved). Known modeling artifact
+   until the union-find backend lands: clocking the signal one hop per generation
+   lengthened the census critical path 13–35% — on the real fabric a cable heats in one
+   instant, which the component backend restores. Guest CHAINS also relay one guest per
+   generation and only through the wire between them (the in-word backend has nowhere
+   to store heat on an agent); components make chain demand exact.
 1. **Tier-0 mechanisms** (erasure emission, ×P relabel) in all drivers; ROM shrinks to 2
    generators + 9 scripts. Gate: atlas + stage1 + cascade_suite.
 2. **cascade_msg**: the message-only driver, bit-exact against serial on the existing

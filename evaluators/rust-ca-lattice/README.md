@@ -10,8 +10,12 @@ primitive is an edge transaction over one face-adjacent pair; there are no proto
 no request trees, and no activation sweeps. Matter is four kinds: empty (with an optional
 growth reservation), wire (up to three single-lane routes; reservations too), agent (tag,
 principal endpoint, two independent aux endpoints, up to two passthrough routes), and seed.
-Demand (per-route hot bits) spreads one cell per generation from consumer principals; only
-hot wires are walked, so undemanded values never move. Walks eat their own slack
+Demand is the signal plane (`signal.rs`, runtime-selectable backends like queue
+disciplines; raises commute and are property-pinned): consumers raise the wire route at
+their principal, hot routes extend one cell per activation, guests relay one hop per
+generation, and nothing scans — the old five-hop `hot_beyond` lookahead and the periodic
+contraction sweep are deleted. Only hot wires are walked, so undemanded values never
+move. Walks eat their own slack
 (truncation), lay split trails, and detour one aux through side cells when a foreign lane
 occupies the crossed edge. Rewrites dock into a two-cell seed whose builder cursor places a
 small per-rule blocklet (compiled once, deterministically, in `blocklet.rs`; worst rule 62

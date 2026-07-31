@@ -11,6 +11,7 @@
 //! player replays.
 
 pub mod rules;
+pub mod signal;
 pub mod oracle;
 pub mod net;
 pub mod lattice;
