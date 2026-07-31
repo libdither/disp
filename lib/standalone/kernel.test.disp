@@ -448,3 +448,51 @@ test tree_eq (Tele Guard (SigmaCode Nat ({_} -> Bool))) (Sigma Guard Nat ({_} ->
 test tree_eq (Tele Guard (PiCode Nat ({_} -> Nat)).tele) (Pi Guard Nat ({_} -> Nat)) = true
 test Table Meta = true
 test Table ({}) = false
+
+// Deepened Sum: a variant slot is a positional type list ([] and [t] both mean
+// the old single untyped slot, so every existing sum is unchanged); Rec marks a
+// recursive position, giving the derived gate an IH premise and the derived
+// elim real recursion. The check slot hands element judgments to the tier's
+// judge, so constructor spines over mints certify — the element-position
+// recognizer boundary is closed for declared sums.
+SNCode := < sz, ss : Rec >
+SN := Sum SNCode
+sn_rec := elim_of SN ({_} -> SN)
+sn_rec_n := elim_of SN ({_} -> Nat)
+test SN sz = true
+test SN (ss (ss sz)) = true
+test SN (ss true) = false
+test SN (inj "zz" t) = false
+test sn_rec (ss (ss sz)) ({_} -> sz) ({_k, ih} -> ss ih) = ss (ss sz)
+test sn_rec_n (ss (ss sz)) ({_} -> zero) ({_k, ih} -> succ ih) = 2
+sn_id := {n} -> sn_rec n ({_} -> sz) ({_k, ih} -> ss ih)
+test Pi Guard SN ({_} -> SN) sn_id = true
+test Pi Meta SN ({_} -> SN) sn_id = true
+test Pi Guard SN ({_} -> Nat) sn_id = false
+test Pi Guard SN ({_} -> SN) ({n} -> sn_rec n ({_} -> sz) ({_k, ih} -> pair 5 5)) = false
+
+SLN := Sum [pair "snil" [], pair "scons" [Nat, Rec]]
+snil := inj "snil" t
+scons := {h, tl} -> inj "scons" (pair h tl)
+sln_rec_n := elim_of SLN ({_} -> Nat)
+test SLN snil = true
+test SLN (scons 1 (scons 2 snil)) = true
+test SLN (scons (pair 5 5) snil) = false
+test SLN (scons 1 true) = false
+sln_len := {xs} -> sln_rec_n xs ({_} -> zero) ({_h, _tl, ih} -> succ ih)
+test sln_len (scons 7 (scons 9 snil)) = 2
+test Pi Guard SLN ({_} -> Nat) sln_len = true
+test Pi Meta SLN ({_} -> Nat) sln_len = true
+sln_sum := {xs} -> sln_rec_n xs ({_} -> zero) ({h, _tl, ih} -> add h ih)
+test sln_sum (scons 3 (scons 4 snil)) = 7
+test Pi Guard SLN ({_} -> Nat) sln_sum = true
+test Fn Nat ({_} -> Fn SLN ({_} -> SLN)) scons = true
+test Fn Nat ({_} -> Fn SLN ({_} -> SLN)) ({h, tl} -> scons h (scons (pair 5 5) tl)) = false
+
+SOrd := Sum [pair "oz" [], pair "op" [Rec, Rec]]
+oz := inj "oz" t
+op2 := {a, b} -> inj "op" (pair a b)
+sord_rec_n := elim_of SOrd ({_} -> Nat)
+osize := {o} -> sord_rec_n o ({_} -> 1) ({_a, _b, ia, ib} -> succ (add ia ib))
+test osize (op2 oz (op2 oz oz)) = 5
+test Pi Guard SOrd ({_} -> Nat) osize = true

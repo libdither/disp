@@ -147,15 +147,65 @@ is_neutral := has_sig hyp_sig
 neutral_type := {v} -> field (wait_payload v) ShallowType
 test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
 test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
+Rec := inj "Rec" t
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
+  let spec_of := fix ({self, vs, tag} ->
+    if (is_leaf vs) { nil }
+    else if (tree_eq (pair_fst (pair_fst vs)) tag) {
+      let s := pair_snd (pair_fst vs)
+      if (is_leaf s) { cons t nil } else { s }
+    } else { self (pair_snd vs) tag })
+  let payload_of := fix ({self, args} ->
+    if (is_leaf (pair_snd args)) { pair_fst args } else { pair (pair_fst args) (self (pair_snd args)) })
+  let args_of := fix ({self, spec, p} ->
+    if (is_leaf (pair_snd spec)) { cons p nil } else { cons (pair_fst p) (self (pair_snd spec) (pair_snd p)) })
+  let walk := {elemj, recj} -> fix ({self, spec, p} -> {
+    let last := is_leaf (pair_snd spec)
+    if (or last (is_fork p)) {
+      let a := if last { p } else { pair_fst p }
+      let ty := pair_fst spec
+      let ok := if (is_leaf ty) { true } else if (tree_eq ty Rec) { recj a } else { elemj ty a }
+      if ok { if last { true } else { self (pair_snd spec) (pair_snd p) } } else { false }
+    } else { false }
+  })
+  let accept := {elemj, recj, v} ->
+    and (is_fork v) (if (member (pair_fst v) tags) { walk elemj recj (spec_of variants (pair_fst v)) (pair_snd v) } else { false })
+  let gate_arm := {Ind, B, var} -> {
+    let spec0 := spec_of variants (pair_fst var)
+    (fix ({go, spec, args} ->
+      if (is_leaf spec) {
+        (fix ({ih, spec2, args2} ->
+          if (is_leaf spec2) { B (inj (pair_fst var) (payload_of args)) }
+          else if (tree_eq (pair_fst spec2) Rec) { PiCode (B (pair_fst args2)) ({_} -> ih (pair_snd spec2) (pair_snd args2)) }
+          else { ih (pair_snd spec2) (pair_snd args2) })) spec0 args
+      } else {
+        let ty := pair_fst spec
+        let dom := if (is_leaf ty) { AnyTree } else if (tree_eq ty Rec) { Ind } else { ty }
+        PiCode dom ({a} -> go (pair_snd spec) (list_snoc args a))
+      })) spec0 nil
+  }
   let co := fix ({go, st, arg} -> {
-    let args := list_snoc (pair_snd st) arg
-    if (tree_eq (list_len args) (list_len variants)) { prod (pair tags args) (pair_fst st) } else { wait go (pair (pair_fst st) args) }
+    let cases := list_snoc (pair_snd st) arg
+    if (tree_eq (list_len cases) (list_len variants)) {
+      let v := pair_fst st
+      let spec := spec_of variants (pair_fst v)
+      let case := (fix ({pick, vs, cs} ->
+        if (is_leaf vs) { t }
+        else if (tree_eq (pair_fst (pair_fst vs)) (pair_fst v)) { pair_fst cs }
+        else { pick (pair_snd vs) (pair_snd cs) })) variants cases
+      let args := args_of spec (pair_snd v)
+      let rec := {a} -> list_apply (wait go (pair a nil)) cases
+      list_apply (list_apply case args) ((fix ({ihs, spec2, args2} ->
+        if (is_leaf spec2) { nil }
+        else if (tree_eq (pair_fst spec2) Rec) { cons (rec (pair_fst args2)) (ihs (pair_snd spec2) (pair_snd args2)) }
+        else { ihs (pair_snd spec2) (pair_snd args2) })) spec args)
+    } else { wait go (pair (pair_fst st) cases) }
   })
   ({
-    #recognize := {_self, v} -> and (is_fork v) (member (pair_fst v) tags)
-    gate := {_Ind, B} -> list_map ({v} -> PiCode AnyTree ({p} -> B (inj (pair_fst v) p))) variants
+    #recognize := {self, v} -> accept ({ty, a} -> ty a) self v
+    check := {jdg, T, v} -> accept jdg ({a} -> jdg T a) v
+    gate := {Ind, B} -> list_map (gate_arm Ind B) variants
     elim := {_self, v} -> wait co (pair v nil)
     code := variants
   })
@@ -313,7 +363,8 @@ Meta : Table := ({
     } else if (is_neutral v) {
       and (tree_eq (neutral_type v) T) (member v minted)
     } else {
-      T.recognize (wait (wait vf minted) T) v
+      let ck := T.check
+      if (is_leaf ck) { T.recognize (wait (wait vf minted) T) v } else { ck (wait vf minted) T v }
     }))
   let vcheck := ({chk, T, V} ->
     match V {
@@ -482,7 +533,10 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
         and (tree_eq (neutral_type v2) T2) (hyp_ok vf st v2)
       } else {
         let rows := T2.tele
-        if (is_leaf rows) { T2.recognize (wait vf T2) v2 } else { chk st rows v2 t }
+        if (is_leaf rows) {
+          let ck := T2.check
+          if (is_leaf ck) { T2.recognize (wait vf T2) v2 } else { ck vf T2 v2 }
+        } else { chk st rows v2 t }
       })) T v
   ({ fresh := fresh, admit := neutral_free, apply := {_chk, f, x} -> walk f x, judge })
 }
