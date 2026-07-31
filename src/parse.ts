@@ -141,7 +141,7 @@ export type Param = { name: string | null; type: Expr | null; default?: Expr | n
 export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
 // A coproduct variant: `Tag : T` (single-arg, `type` set) or `Tag` (nullary, null).
 export type SumVariant = { name: string; type: Expr | null }
-export type NamedField = { name: string; type: Expr | null; value: Expr; faced?: boolean }
+export type NamedField = { name: string; type: Expr | null; value: Expr; faced?: boolean; keyExpr?: Expr }
 
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
@@ -866,17 +866,31 @@ const sumTypeP: P<Expr> = (ts, i) => {
 // Fields carry their 1-based source extent (line of the name token, line of
 // the last value token), so downstream tooling can attribute a declaration
 // to its source lines — like the equation items' `line`.
-const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; faced?: boolean; line?: number; endLine?: number }> =>
+const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; faced?: boolean; keyExpr?: Expr; line?: number; endLine?: number }> =>
   nl((ts, i) => {
     // `#name := v` marks the record's FACE field (compiled through the
     // scope-bound `faced` former; see the recValue case in expr.ts).
-    const r = seq(optional(punctP("#")), idP,
+    // `(K) := v` keys the field by the expression's VALUE (a tree, typically a
+    // type) instead of a name; such fields bind no name.
+    const keyP: P<{ name: string; keyExpr?: Expr }> = (ts2, j) => {
+      const id = idP(ts2, j)
+      if (id.ok) return ok({ name: id.v }, id.pos)
+      if (ts2[j].t === "punct" && (ts2[j] as any).v === "(") {
+        const e = lazy(() => expr)(ts2, j + 1)
+        if (!e.ok) return e
+        const close = nl(punctP(")"))(ts2, e.pos)
+        if (!close.ok) return close
+        return ok({ name: "", keyExpr: e.v }, close.pos)
+      }
+      return err("expected field name or (key)", j)
+    }
+    const r = seq(optional(punctP("#")), keyP,
       optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
       nl(punctP(":=")), skipNl, lazy(() => valParser))(ts, i)
     if (!r.ok) return r
-    const [hash, name, ann, , , value] = r.v
+    const [hash, key, ann, , , value] = r.v
     return ok({
-      tag: "field" as const, name, type: ann ? ann[2] : null, value, faced: hash != null ? true : undefined,
+      tag: "field" as const, name: key.name, keyExpr: key.keyExpr, type: ann ? ann[2] : null, value, faced: hash != null ? true : undefined,
       line: tokLine(ts, i), endLine: endTokLine(ts, r.pos),
     }, r.pos)
   })
@@ -1035,9 +1049,11 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   const steps: BlockStep[] = []
   for (const m of members) {
     if (m.tag === "field") {
-      if (exportedFields.some(f => f.name === m.name))
+      // Computed-key fields all share the empty name; their identity is the
+      // key expression, so the name-duplicate check skips them.
+      if (!(m as any).keyExpr && exportedFields.some(f => f.name === m.name && !f.keyExpr))
         return err(`duplicate exported field '${m.name}'`, startPos)
-      exportedFields.push({ name: m.name, type: m.type, value: m.value!, faced: (m as any).faced }) // braced fields always carry a value
+      exportedFields.push({ name: m.name, type: m.type, value: m.value!, faced: (m as any).faced, keyExpr: (m as any).keyExpr }) // braced fields always carry a value
     }
     if (m.tag === "let") steps.push({ k: "let", name: m.name, type: m.type, body: m.body })
     if (m.tag === "bind") steps.push({ k: "bind", name: m.name, expr: m.expr })
@@ -1272,6 +1288,8 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
   while (ts[p].t === "nl") p++
   // `#name := v` — a face-marked field can only head a record value.
   if (ts[p].t === "punct" && (ts[p] as any).v === "#") return "recValue"
+  // `(K) := v` — a computed-key field likewise (`:=` after the balanced key).
+  if (ts[p].t === "punct" && (ts[p] as any).v === "(" && scanForFieldAssign(ts, p, false)) return "recValue"
   if (ts[p].t === "id") {
     const name = (ts[p] as any).v as string
     p++

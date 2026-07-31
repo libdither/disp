@@ -538,6 +538,10 @@ test (Named "cost" Nat).name = "cost"
 test tree_eq (Named "cost" Nat).under Nat = true
 test tree_eq (Named "cost" Nat) (Named "price" Nat) = false
 test field (make_record (cons Nat nil) (cons (list_const 7) nil)) Nat = 7
+test field ({ (Nat) := 7, (Bool) := true }) Nat = 7
+test field ({ (Nat) := 7, (Bool) := true }) Bool = true
+test tree_eq ({ (Nat) := 7, (Bool) := true }) ({ (Bool) := true, (Nat) := 7 }) = true
+test field ({ label := "flip", ((Named "cost" Nat)) := 3 }) (Named "cost" Nat) = 3
 test Fn ShallowType ({_} -> Bool) ({T} -> T 5) = true
 test Fn ShallowType ({_} -> Bool) ({T} -> bool_rec (T 5) false true) = true
 test Fn ShallowType ({_} -> Nat) ({T} -> T 5) = false

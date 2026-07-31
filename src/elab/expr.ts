@@ -300,10 +300,29 @@ export function exprToCir(
       // compiles before its own name binds (`respond := respond` resolves
       // outward, field puns included).
       const consCir = (h: Cir, tl: Cir): Cir => cap(cap({ tag: "lit", t: elab.cs.leaf() }, h), tl)
+      // Computed keys (`(K) := v`) turn the name header into a Cir chain mixing
+      // string literals with compiled key expressions; such fields bind no name,
+      // so their values compile in place and skip the redex wrap below.
+      let namesCir: Cir = { tag: "lit", t: namesTree }
+      if (e.fields.some(f => f.keyExpr)) {
+        namesCir = { tag: "lit", t: elab.cs.leaf() }
+        for (let i = e.fields.length - 1; i >= 0; i--) {
+          const f = e.fields[i]
+          const keyCir: Cir = f.keyExpr
+            ? exprToCir(f.keyExpr, fieldLookup, resolveUse, sinks)
+            : { tag: "lit", t: stringToTree(f.name) }
+          namesCir = cap(cap({ tag: "lit", t: elab.cs.leaf() }, keyCir), namesCir)
+        }
+      }
       let payloadCir: Cir = { tag: "lit", t: elab.cs.leaf() }
-      for (let i = e.fields.length - 1; i >= 0; i--)
-        payloadCir = consCir(cap(listConst, { tag: "var", name: e.fields[i].name }), payloadCir)
-      let result: Cir = cap(cap(recordVal, { tag: "lit", t: namesTree }), payloadCir)
+      for (let i = e.fields.length - 1; i >= 0; i--) {
+        const f = e.fields[i]
+        const vCir: Cir = f.keyExpr
+          ? exprToCir(f.value, fieldLookup, resolveUse, sinks)
+          : { tag: "var", name: f.name }
+        payloadCir = consCir(cap(listConst, vCir), payloadCir)
+      }
+      let result: Cir = cap(cap(recordVal, namesCir), payloadCir)
       // A `#`-marked field is the record's FACE: the literal compiles through the
       // scope-bound `faced` former (`faced "name" record`), which builds a value
       // that behaves as that field when applied while the whole record rides as
@@ -315,9 +334,13 @@ export function exprToCir(
         const facedEntry = lookupEntry("faced")
         if (!facedEntry?.tree)
           throw new Error("record literal '#field': 'faced' must be in scope")
-        result = cap(cap({ tag: "lit", t: facedEntry.tree }, { tag: "lit", t: stringToTree(facedFields[0].name) }), result)
+        const fk: Cir = facedFields[0].keyExpr
+          ? exprToCir(facedFields[0].keyExpr, fieldLookup, resolveUse, sinks)
+          : { tag: "lit", t: stringToTree(facedFields[0].name) }
+        result = cap(cap({ tag: "lit", t: facedEntry.tree }, fk), result)
       }
       for (let i = e.fields.length - 1; i >= 0; i--) {
+        if (e.fields[i].keyExpr) continue
         const priorNames = new Set(e.fields.slice(0, i).map(f => f.name))
         const shadowedLookup = (n: string): ScopeEntry | undefined =>
           priorNames.has(n) ? {} : fieldLookup(n)
