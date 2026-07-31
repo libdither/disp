@@ -179,7 +179,8 @@ Obs : ShallowType := Sum ObsCode
 Frame := < Acc : t, Elim : t >
 is_acc := has_sig "Acc"
 is_elim_frame := has_sig "Elim"
-respond_face := {T, frame, self} -> {
+respond_face := {frame, self} -> {
+  let T := neutral_type self
   let rows := {
     let vrows := T.tele
     if (is_fork vrows) { vrows } else { T.obs }
@@ -369,7 +370,7 @@ Meta : Table := ({
         Neu m => {
           let fr := readback X
           let vlift := {tr} -> if (is_neutral tr) { Neu (wait_payload tr) } else { Conc tr }
-          let r := respond_face (pair_fst m) fr (make_mark m)
+          let r := respond_face fr (make_mark m)
           if (is_invalid r) { Poison (Neu m) }
           else if (list_all ({ob} -> vcheck chk (pair_fst ob) (if (is_elim_frame fr) { vlift (pair_snd ob) } else { X })) (pair_fst r)) {
             Neu (pair (pair_snd r) (pair "Ob" (pair fr (make_mark m))))
@@ -398,7 +399,7 @@ neutral_free := fix ({self, v} ->
 
 GuardAt := {on_is_neutral, on_tree_eq} -> {
   let hyp_apply := {f, x} -> {
-    let r := respond_face (neutral_type f) x f
+    let r := respond_face x f
     if (is_invalid r) { invalid f } else { make_hyp (pair_snd r) (pair "Ob" (pair x f)) }
   }
   let shim := fix ({sm, payload, arg} -> {
@@ -458,7 +459,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
       if (tree_eq (pair_fst hist) "Ob") {
         let frame := pair_fst (pair_snd hist)
         let parent := pair_snd (pair_snd hist)
-        let r := respond_face (neutral_type parent) frame parent
+        let r := respond_face frame parent
         if (is_invalid r) { false }
         else {
           and (ok vch legit parent)
