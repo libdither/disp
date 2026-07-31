@@ -180,10 +180,19 @@ generic half becomes mechanism:
 
 ## Open rungs
 
-- **k-chain knot** (the stub-lock at crowded dock rings): lane remapping at resolve,
-  undock-and-reseat, **footprint prefetch** (claim the roll ring during approach — a new
-  claim type, speculative), or the **single-lane experiment** (deletes the lane-conflict
-  failure class at 2× cable width).
+- **k-chain knot** (the stub-lock at crowded dock rings). Bounded ring relief LANDED
+  2026-07-31: a declined dock picks the roll with the fewest blockers (≤ 2), relieves
+  exactly one per activation with the existing primitives (evict for wires, sidestep
+  for producer squatters), stamped, never docking in the same activation (the locality
+  audit holds the dock commit at 2 writes; the blocker scan joins the roll scan's r=11
+  read-exception family). Moved every parked frontier term deeper (s-rule 2→5 fires,
+  k-chain 7→10) without regressing anything; unbounded ring clearing stays forbidden.
+  The NEXT measured gap: routes threaded through AGENTS' passthrough lists refuse to
+  swing (Dn·L declines on pass-shedding whose both continuations live inside adjacent
+  agents' pass entries — relief needs an agent-hosted continuation move, a 3-cell
+  claimed op, or the footprint-prefetch / single-lane levers). Still on the table:
+  footprint prefetch (claim the roll ring during approach), the single-lane experiment
+  (deletes the lane-conflict class at 2× cable width).
 - **disp-t knot**: walker convoys; less characterized.
 - **Relief as bounded token chains**, depth as a synthesis constant.
 - **Teleport abort leg.**

@@ -1091,12 +1091,59 @@ impl Runner {
             let read = |q: Pos| self.grid.site(q);
             choose_roll(&read, self.grid.topo, t, p, stub_cells, rule, axis, &mk_seeds)
         };
+        if roll.is_none() {
+            // Bounded ring relief (the shove precedent, stretched one notch): pick the
+            // roll with the FEWEST blockers (at most two — a crowded ring waits), and
+            // relieve exactly one blocker per activation with the existing primitives,
+            // damped by the existing stamps, then re-gate with fresh reads. Unbounded
+            // ring clearing stays forbidden — it livelocks; a near-complete roll is
+            // the case where each relief strictly shrinks the remaining work.
+            let candidate = (0..4u8)
+                .filter_map(|r| {
+                    let read = |q: Pos| self.grid.site(q);
+                    let bs =
+                        roll_blockers(&read, self.grid.topo, t, p, stub_cells, rule, axis, r)?;
+                    (!bs.is_empty() && bs.len() <= 2).then_some(bs)
+                })
+                .min_by_key(|bs| bs.len())
+                .map(|bs| bs.into_iter().next().expect("nonempty"));
+            if let Some((world, planned)) = candidate {
+                let ws = self.grid.site(world);
+                let progressed = match &ws.cell {
+                    Cell::Wire { .. } => {
+                        self.note(|| format!(
+                            "dock {t:?}/{p:?}: ring relief evicting the one blocker at {world:?}"
+                        ));
+                        self.relief_root = Some(world);
+                        let ok = self.try_evict(world, Some(&planned), 2);
+                        self.relief_root = None;
+                        ok
+                    }
+                    Cell::Agent { tag, nursery: false, cooldown: 0, .. }
+                        if tag.is_producer() && ws.cursor.is_none() && !ws.claim =>
+                    {
+                        self.note(|| format!(
+                            "dock {t:?}/{p:?}: ring relief sidestepping the squatter at {world:?}"
+                        ));
+                        self.try_sidestep(world, &ws)
+                    }
+                    _ => false,
+                };
+                if progressed {
+                    // Never dock in the same activation: the relief commit already
+                    // woke this pair, and splitting keeps the dock commit at its
+                    // two-cell budget (the locality audit holds the line).
+                    self.wake(p);
+                    return false;
+                }
+            }
+        }
         let Some(roll) = roll else {
             // Every roll's first ring is blocked, or no seed finals pack. A passthrough
             // crossing either dying cell can occupy a dock-edge lane and make the fusion
             // panels unpackable: shed it and retry on the wake (bounded, since each cell
-            // sheds at most its own passthroughs; ring eviction stays forbidden, it
-            // livelocks).
+            // sheds at most its own passthroughs; unbounded ring eviction stays
+            // forbidden, it livelocks).
             self.note(|| format!("dock {t:?}/{p:?}: every roll's first ring is blocked"));
             let mut progressed = false;
             if !cpass.is_empty() {
@@ -2335,6 +2382,57 @@ pub(crate) fn roll_fits(
         }
     }
     true
+}
+
+/// The cells that block one roll's first ring (the same walk as [`roll_fits`] with
+/// `ring_merge`, collecting instead of refusing), each with the blocklet matter planned
+/// there so relief can evict exactly what prevents the merge.
+pub fn roll_blockers(
+    read: &dyn Fn(Pos) -> Site,
+    topo: Topo,
+    seed_c: Pos,
+    seed_p: Pos,
+    stub_cells: [Option<Pos>; 4],
+    rule: u8,
+    axis: Dir,
+    roll: u8,
+) -> Option<Vec<(Pos, Cell)>> {
+    let layout = crate::blocklet::layout(rule);
+    let mut out = vec![];
+    for (off, cell) in &layout.extras {
+        let world = add(seed_c, crate::cascade::rot_pos(*off, axis, roll));
+        if !topo.in_bounds(world) {
+            return None; // the boundary never relieves
+        }
+        let planned = crate::cascade::rot_cell(cell, axis, roll);
+        let ws = read(world);
+        if stub_cells.iter().flatten().any(|s| *s == world) {
+            let weaves = match &ws.cell {
+                Cell::Wire { reserved: None, routes, .. } if ws.cursor.is_none() => {
+                    merge_matter(planned.clone(), routes).is_some()
+                }
+                _ => false,
+            };
+            if !weaves {
+                out.push((world, planned));
+            }
+            continue;
+        }
+        let near = DIRS.iter().any(|d| step(world, *d) == seed_c || step(world, *d) == seed_p);
+        if !near {
+            continue;
+        }
+        match &ws.cell {
+            Cell::Empty { reserved: None } if ws.cursor.is_none() => {}
+            Cell::Wire { reserved: None, routes, .. } if ws.cursor.is_none() => {
+                if merge_matter(planned.clone(), routes).is_none() {
+                    out.push((world, planned));
+                }
+            }
+            _ => out.push((world, planned)),
+        }
+    }
+    Some(out)
 }
 
 /// The dock's roll preference ladder, most to least informed (all stale-safe
