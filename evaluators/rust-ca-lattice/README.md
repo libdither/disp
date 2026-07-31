@@ -12,10 +12,21 @@ growth reservation), wire (up to three single-lane routes; reservations too), ag
 principal endpoint, two independent aux endpoints, up to two passthrough routes), and seed.
 Demand is the signal plane (`signal.rs`, runtime-selectable backends like queue
 disciplines; raises commute and are property-pinned): consumers raise the wire route at
-their principal, hot routes extend one cell per activation, guests relay one hop per
-generation, and nothing scans — the old five-hop `hot_beyond` lookahead and the periodic
-contraction sweep are deleted. Only hot wires are walked, so undemanded values never
-move. Walks eat their own slack
+their principal, and nothing scans — the old five-hop `hot_beyond` lookahead and the
+periodic contraction sweep are deleted. Only hot wires are walked, so undemanded values
+never move. Three backends reach the same fixpoint: `worklist` (heat in the wire words,
+extending one cell per activation, one guest-relay hop per generation; heat persists
+until its route is rewired, an over-approximation of demand), and two derivational
+backends that recompute the fixpoint from matter whenever the routing epoch moves —
+`components` (union-find over route reciprocity: a cable heats in one instant and guest
+chains are exact, the model of the unclocked fabric) and `dense` (the same fixpoint by
+iterative recompute, GPU-shaped, deliberately sharing no machinery). The cross-backend
+gate (`tests/signal_backends.rs`) holds each to the full substrate contract, including
+the kick invariant; measured 2026-07-31, completion is per-case identical across all
+three (28/54 on the gate corpus, zero verdict flips) even though exact-instant heat
+floods walkers the creeping wave staggered and cools cables the moment their consumer
+docks — the heat over-approximation is not load-bearing, and any future flips are
+reported, never pinned. Walks eat their own slack
 (truncation), lay split trails, and detour one aux through side cells when a foreign lane
 occupies the crossed edge. Rewrites dock into a two-cell seed whose builder cursor places a
 small per-rule blocklet (compiled once, deterministically, in `blocklet.rs`; worst rule 62

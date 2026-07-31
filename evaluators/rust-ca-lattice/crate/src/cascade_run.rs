@@ -259,6 +259,13 @@ impl Runner {
 
     /// One cell activation (public so the census can probe a parked cell directly).
     pub fn activate(&mut self, p: Pos) {
+        // Derivational signal backends refresh their fixpoint here (no-op on an
+        // unchanged routing epoch); newly hot cells get the wake the heat wave would
+        // have carried — a cold-gated walker learns its cable was demanded from this.
+        let newly_hot = self.signals.sync(&self.grid);
+        for w in newly_hot {
+            self.wake_around(w);
+        }
         let site = self.grid.site(p);
         if site.claim {
             return;
@@ -336,29 +343,30 @@ impl Runner {
             Cell::Agent { tag, principal, nursery: false, .. } => {
                 tag.is_consumer() && *principal == back
             }
-            Cell::Wire { routes, hot, .. } => routes
+            Cell::Wire { routes, .. } => routes
                 .iter()
                 .enumerate()
-                .any(|(j, r)| r.ends().contains(&back) && (hot >> j) & 1 == 1),
+                .any(|(j, r)| r.ends().contains(&back) && self.signals.hot(&self.grid, n, j)),
             _ => false,
         }
     }
 
     /// Raise the route at `n` whose end meets `back`; a fresh raise wakes the
     /// neighborhood (the wake IS the propagation edge). No-op unless `n` is wire with
-    /// a live matching route: epoch death swallows late raises.
+    /// a live matching route: epoch death swallows late raises. Derivational backends
+    /// return no wakes here — their heat is a function of matter and sync delivers it.
     fn raise_endpoint(&mut self, n: Pos, back: EndPt) -> bool {
         let slot = match &self.grid.site(n).cell {
             Cell::Wire { routes, .. } => routes.iter().position(|r| r.ends().contains(&back)),
             _ => None,
         };
         let Some(slot) = slot else { return false };
-        if self.signals.raise(&mut self.grid, n, slot) {
-            self.wake_around(n);
-            true
-        } else {
-            false
+        let wakes = self.signals.raise(&mut self.grid, n, slot);
+        let fresh = !wakes.is_empty();
+        for w in wakes {
+            self.wake_around(w);
         }
+        fresh
     }
 
     /// Demand propagation, push model: each hot route extends one cell along its cable
@@ -380,6 +388,9 @@ impl Runner {
                 reserved: *reserved,
             };
             self.grid.set(p, &Site { cell, cursor: site.cursor, chi: site.chi, claim: site.claim });
+        }
+        if !self.signals.extends_by_pump() {
+            return false; // derivational backends converge inside sync, not here
         }
         let mut spread = false;
         for (i, r) in routes.iter().enumerate() {
@@ -1516,7 +1527,7 @@ impl Runner {
         };
         while let Some((allow_hot, i, shoves_left)) = worklist.pop_front() {
             let r = &routes[i];
-            let moved_hot = (hot >> i) & 1 == 1;
+            let moved_hot = (hot >> i) & 1 == 1 || self.signals.hot(&self.grid, t, i);
             if !allow_hot && moved_hot {
                 self.note(|| format!("evict {t:?} r{i}: hot (cold pass)"));
                 continue;
@@ -1599,7 +1610,7 @@ impl Runner {
                 }
                 continue;
             }
-            let (Cell::Wire { routes: r1s, hot: h1, .. }, Cell::Wire { routes: r2s, hot: h2, .. }) =
+            let (Cell::Wire { routes: r1s, .. }, Cell::Wire { routes: r2s, .. }) =
                 (&n1s.cell, &n2s.cell)
             else {
                 continue;
@@ -1614,7 +1625,9 @@ impl Runner {
                 self.note(|| format!("evict {t:?} r{i}: no continuation in {n2:?}"));
                 continue;
             };
-            if !allow_hot && ((h1 >> i1) & 1 == 1 || (h2 >> i2) & 1 == 1) {
+            if !allow_hot
+                && (self.signals.hot(&self.grid, n1, i1) || self.signals.hot(&self.grid, n2, i2))
+            {
                 self.note(|| format!("evict {t:?} r{i}: hot continuation (cold pass)"));
                 continue;
             }
@@ -1918,7 +1931,7 @@ impl Runner {
             ns
         };
         for (i, r) in routes.iter().enumerate() {
-            if (hot >> i) & 1 == 1 {
+            if (hot >> i) & 1 == 1 || self.signals.hot(&self.grid, p, i) {
                 continue;
             }
             let (d1, d2) = (r.a.face, r.b.face);
@@ -1930,7 +1943,7 @@ impl Runner {
             if !plain_cold(&u1s) || !plain_cold(&u3s) {
                 continue;
             }
-            let (Cell::Wire { routes: r1s, hot: h1, .. }, Cell::Wire { routes: r3s, hot: h3, .. }) =
+            let (Cell::Wire { routes: r1s, .. }, Cell::Wire { routes: r3s, .. }) =
                 (&u1s.cell, &u3s.cell)
             else {
                 continue;
@@ -1940,7 +1953,7 @@ impl Runner {
             let back3 = EndPt { face: d2.opp(), lane: r.b.lane };
             let Some(i1) = r1s.iter().position(|x| x.ends().contains(&back1)) else { continue };
             let Some(i3) = r3s.iter().position(|x| x.ends().contains(&back3)) else { continue };
-            if (h1 >> i1) & 1 == 1 || (h3 >> i3) & 1 == 1 {
+            if self.signals.hot(&self.grid, u1, i1) || self.signals.hot(&self.grid, u3, i3) {
                 continue;
             }
             let e1 = r1s[i1].through(back1).unwrap();
@@ -1955,7 +1968,7 @@ impl Runner {
             if !eligible(&ts) || !plain_cold(&n1s) || !plain_cold(&n2s) {
                 continue;
             }
-            let (Cell::Wire { routes: a1s, hot: ha, .. }, Cell::Wire { routes: a2s, hot: hb, .. }) =
+            let (Cell::Wire { routes: a1s, .. }, Cell::Wire { routes: a2s, .. }) =
                 (&n1s.cell, &n2s.cell)
             else {
                 continue;
@@ -1965,7 +1978,7 @@ impl Runner {
             let anchor2 = EndPt { face: q.opp(), lane: e3.lane };
             let Some(j1) = a1s.iter().position(|x| x.ends().contains(&anchor1)) else { continue };
             let Some(j2) = a2s.iter().position(|x| x.ends().contains(&anchor2)) else { continue };
-            if (ha >> j1) & 1 == 1 || (hb >> j2) & 1 == 1 {
+            if self.signals.hot(&self.grid, n1, j1) || self.signals.hot(&self.grid, n2, j2) {
                 continue;
             }
             let swing = |s: &Site, idx: usize, from: EndPt, to: EndPt| -> Site {

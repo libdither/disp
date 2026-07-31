@@ -543,9 +543,27 @@ pub struct Grid2 {
     pub seed_sids: std::collections::BTreeMap<Pos, (u32, u32)>,
     pub transport: u64,
     pub rewrites: u64,
-    /// Bumped by every set(): the sweep re-arms on change and stops at a fixpoint.
+    /// Bumped by every set().
     pub mutations: u64,
+    /// Bumped only when a set() changes ROUTING structure (kind, routes, endpoints,
+    /// pass, nursery) — not heat, cooldown, chi, claims, cursors, or reservations.
+    /// The derivational signal backends recompute their fixpoint when this moves.
+    pub route_epoch: u64,
     pub probe: Option<Probe>,
+}
+
+/// The word's routing-structure bits: the part of a cell the signal fixpoint depends
+/// on. Wire: route count + routes. Agent: tag, principal, aux, pass, nursery. Seed:
+/// whole payload. Excluded everywhere: hot, cooldown, chi, claim, cursor, reservations.
+fn struct_sig(w: Word2) -> u64 {
+    let kind = w.0 & 0b11;
+    let payload_mask: u64 = match kind {
+        KIND_WIRE => (1 << 26) - 1,
+        KIND_AGENT => (1 << 35) - 1,
+        KIND_SEED => (1 << 36) - 1,
+        _ => 0, // Empty: reservations do not affect routing
+    };
+    kind | ((w.0 >> PAYLOAD_SHIFT) & payload_mask) << PAYLOAD_SHIFT
 }
 
 impl Grid2 {
@@ -558,6 +576,7 @@ impl Grid2 {
             transport: 0,
             rewrites: 0,
             mutations: 0,
+            route_epoch: 0,
             probe: None,
         }
     }
@@ -594,6 +613,10 @@ impl Grid2 {
             pr.writes.insert(p);
         }
         self.mutations += 1;
+        let old = self.cells.get(&p).copied().unwrap_or(Word2::EMPTY);
+        if struct_sig(old) != struct_sig(w) {
+            self.route_epoch += 1;
+        }
         if w == Word2::EMPTY {
             self.cells.remove(&p);
         } else {

@@ -141,14 +141,21 @@ generic half becomes mechanism:
 0. **Signal-plane trait in software** (serial driver first): raise-only, epoch-keyed,
    three backends (worklist / union-find / dense bitmap); `decide()` generic over it.
    Gate: bit-exact under all queue disciplines; `hot_beyond` and the sweep deleted.
-   LANDED 2026-07-31 for the worklist backend (`signal.rs`: runtime-selectable like
-   disciplines, raise/hot only, commutation property-pinned; both scans deleted;
-   completion identical everywhere, soak wall-clock halved). Known modeling artifact
-   until the union-find backend lands: clocking the signal one hop per generation
-   lengthened the census critical path 13–35% — on the real fabric a cable heats in one
-   instant, which the component backend restores. Guest CHAINS also relay one guest per
-   generation and only through the wire between them (the in-word backend has nowhere
-   to store heat on an agent); components make chain demand exact.
+   LANDED IN FULL 2026-07-31 (`signal.rs`): worklist (in-word wave, one hop per
+   activation, heat persists to route death — an over-approximation of demand),
+   components (union-find over route reciprocity: whole cables heat in one instant and
+   guest chains are exact — the model of the unclocked fabric, and the substrate for
+   teleport's far-end lookup), dense (the same fixpoint by a deliberately independent
+   iterative recompute). The derivational pair rebuild from matter whenever the grid's
+   routing epoch moves (a structural-signature counter: kind/routes/endpoints/pass/
+   nursery only); sync's diff delivers the wakes the wave used to carry, and the kick
+   invariant polices that chain. Both scans deleted; raises commute (property-pinned).
+   Cross-backend gate finding: completion is PER-CASE IDENTICAL across all three
+   (28/54 gate corpus, zero verdict flips) — completion robustness extends across
+   heat-persistence semantics, so the worklist's stale-hot bits are not load-bearing
+   and the chip's exact-instant fabric loses nothing. Worklist stays the software default (fastest
+   simulation, shortest rebuilds); clocking the signal costs it generations +13–35%
+   on the census critical path, which components removes.
 1. **Tier-0 mechanisms** (erasure emission, ×P relabel) in all drivers; ROM shrinks to 2
    generators + 9 scripts. Gate: atlas + stage1 + cascade_suite.
 2. **cascade_msg**: the message-only driver, bit-exact against serial on the existing
