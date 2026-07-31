@@ -8,7 +8,19 @@ open use raw "../prelude.disp" {}
 nil := t
 cons := {h, tl} -> t h tl
 list_const := {x} -> t t x
-make_record := {names, payload} -> pair names payload
+make_record := {names, payload} -> {
+  let ins := fix ({self, n, c, r} ->
+    if (is_leaf (pair_fst r)) { pair (cons n nil) (cons c nil) }
+    else if (tree_lt n (pair_fst (pair_fst r))) { pair (cons n (pair_fst r)) (cons c (pair_snd r)) }
+    else {
+      let rest := self n c (pair (pair_snd (pair_fst r)) (pair_snd (pair_snd r)))
+      pair (cons (pair_fst (pair_fst r)) (pair_fst rest)) (cons (pair_fst (pair_snd r)) (pair_snd rest))
+    })
+  (fix ({go, ns, cs} ->
+    if (is_leaf ns) { pair nil nil }
+    else { ins (pair_fst ns) (pair_fst cs) (go (pair_snd ns) (pair_snd cs)) })) names payload
+}
+test tree_eq ({ b := 2, a := 1 }) ({ a := 1, b := 2 }) = true
 inj := {name, payload} -> pair name payload
 Coproduct := {variants} -> variants
 /// prod eliminator
