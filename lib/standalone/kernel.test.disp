@@ -439,3 +439,12 @@ test tree_eq ParamK ResultK = false
 test Fn OpTy ({_} -> ParamK) ({q} -> at ParamK OpSig q) = true
 test Fn OpTy ({_} -> LabelK) ({q} -> at LabelK OpSig q) = true
 test Fn OpTy ({_} -> ResultK) ({q} -> at ParamK OpSig q) = false
+
+// The applied formers ARE Tele at a table: the Guard partial application on a
+// code (or its bare program) is tree-identical to Pi/Sigma, so the "G" form
+// needs no name of its own.
+test tree_eq (Tele Guard (PiCode Nat ({_} -> Nat))) (Pi Guard Nat ({_} -> Nat)) = true
+test tree_eq (Tele Guard (SigmaCode Nat ({_} -> Bool))) (Sigma Guard Nat ({_} -> Bool)) = true
+test tree_eq (Tele Guard (PiCode Nat ({_} -> Nat)).tele) (Pi Guard Nat ({_} -> Nat)) = true
+test Table Meta = true
+test Table ({}) = false

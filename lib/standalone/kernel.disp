@@ -81,6 +81,19 @@ field_or := {r, name, dflt} -> {
 test field_or ({ x := t }) "x" 5 = t
 test field_or ({ x := t }) "y" 5 = 5
 test is_leaf (field_cell ({ x := t }) "y") = true
+field_put := {r, name, v} -> {
+  let drop := fix ({self, ns, cs} ->
+    if (is_leaf ns) { pair nil nil }
+    else {
+      let rest := self (pair_snd ns) (pair_snd cs)
+      if (tree_eq (pair_fst ns) name) { rest }
+      else { pair (cons (pair_fst ns) (pair_fst rest)) (cons (pair_fst cs) (pair_snd rest)) }
+    })
+  let d := drop (pair_fst r) (pair_snd r)
+  make_record (cons name (pair_fst d)) (cons (list_const v) (pair_snd d))
+}
+test field (field_put ({ a := 1, b := 2 }) "b" 9) "b" = 9
+test tree_eq (field_put ({ a := 1 }) "b" 2) ({ a := 1, b := 2 }) = true
 
 tag := {meta, behavior} -> {
   let s := {a, b, c} -> (a c) (b c)
@@ -128,6 +141,10 @@ test ShallowType ({ #recognize := {_self, _v} -> true }) = true
 test ({ #recognize := {_self, v} -> is_leaf v }) zero = true
 test ({ #recognize := {_self, v} -> is_leaf v }) 5 = false
 PiCode := {A, B} -> make_type ({ tele := perform (Fresh A) ({x} -> perform (Observe (pair App (B x))) ({_} -> Pure t)) })
+SigmaCode := {A, B} -> make_type ({ tele := perform (Observe (pair Self (Pred is_fork))) ({_} ->
+  perform (Observe (pair (Prj pair_fst) A)) ({a} ->
+  perform (Observe (pair (Prj pair_snd) (B a))) ({_} -> Pure t))) })
+IsectCode := {A, P} -> make_type ({ tele := perform (Fresh A) ({x} -> perform (Observe (pair Self (P x))) ({_} -> Pure t)) })
 AnyTree : ShallowType := Pred ({_v} -> true)
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
@@ -260,14 +277,13 @@ Tele := {table, C} -> {
 }
 
 Pi := {table, A, B} -> Tele table (PiCode A B)
-Sigma := {table, A, B} -> Tele table (perform (Observe (pair Self (Pred is_fork))) ({_} ->
-  perform (Observe (pair (Prj pair_fst) A)) ({a} ->
-  perform (Observe (pair (Prj pair_snd) (B a))) ({_} -> Pure t))))
-Isect := {table, A, P} -> Tele table (perform (Fresh A) ({x} -> perform (Observe (pair Self (P x))) ({_} -> Pure t)))
-Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) ty.members })
+Sigma := {table, A, B} -> Tele table (SigmaCode A B)
+Isect := {table, A, P} -> Tele table (IsectCode A P)
+Table : ShallowType := Pred ({r} -> not (is_leaf (field_cell r "fresh")))
+Enum : Table := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) ty.members })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
 
-Meta := ({
+Meta : Table := ({
   let Value := < Conc : t, Neu : t, Stem : t, Fork : t, Poison : t, Chain : t >
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
   let vfork := {L, R} -> if let Conc lc = L { if let Conc rc = R { Conc (t lc rc) } else { Fork (pair L R) } } else { Fork (pair L R) }
@@ -468,10 +484,10 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
       })) T v
   ({ fresh := fresh, admit := neutral_free, apply := {_chk, f, x} -> walk f x, judge })
 }
-Guard := GuardAt
+Guard : Table := GuardAt
   ({_resume, _x} -> false)
   ({resume, x} -> if (neutral_free x) { resume t } else { invalid x })
-Ambient := GuardAt
+Ambient : Table := GuardAt
   ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)
 
@@ -491,18 +507,11 @@ at := {K, keys, s} -> (fix ({self, ks, v} ->
   if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
   else { self (pair_snd ks) (pair_snd v) })) (key_sort keys) s
 
-with_trials := {base} -> ({
-  fresh := {st, ty, tail} -> {
-    let ms := ty.members
-    if (is_leaf ms) { (field base "fresh") st ty tail } else { list_map ({a} -> pair a st) ms }
-  }
-  admit := field_or base "admit" ({_f} -> true)
-  lift := field_or base "lift" ({v} -> v)
-  apply := field_or base "apply" ({_chk, f, a} -> f a)
-  read := field_or base "read" ({v} -> v)
-  judge := field_or base "judge" ({_chk, _st, T, r} -> T r)
+with_trials := {base} -> field_put base "fresh" ({st, ty, tail} -> {
+  let ms := ty.members
+  if (is_leaf ms) { (field base "fresh") st ty tail } else { list_map ({a} -> pair a st) ms }
 })
-Trials := with_trials Guard
+Trials : Table := with_trials Guard
 
 Nat : ShallowType := ({
   #recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
