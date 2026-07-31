@@ -234,7 +234,8 @@ check := fix ({self, rows, f, prior} ->
     _ => (Pure false)
   })
 
-Tele := {table, tele} -> {
+Tele := {table, C} -> {
+  let tele := if (is_type C) { C.tele } else { C }
   let admit := field_or table "admit" ({_f} -> true)
   let lift := field_or table "lift" ({v} -> v)
   let fresh := field table "fresh"
@@ -258,7 +259,7 @@ Tele := {table, tele} -> {
   ({ #recognize := {_self, f} -> if (admit f) { run t tele (lift f) t } else { false }, tele })
 }
 
-Pi := {table, A, B} -> Tele table (PiCode A B).tele
+Pi := {table, A, B} -> Tele table (PiCode A B)
 Sigma := {table, A, B} -> Tele table (perform (Observe (pair Self (Pred is_fork))) ({_} ->
   perform (Observe (pair (Prj pair_fst) A)) ({a} ->
   perform (Observe (pair (Prj pair_snd) (B a))) ({_} -> Pure t))))
@@ -266,7 +267,7 @@ Isect := {table, A, P} -> Tele table (perform (Fresh A) ({x} -> perform (Observe
 Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) ty.members })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
 
-Meta := {
+Meta := ({
   let Value := < Conc : t, Neu : t, Stem : t, Fork : t, Poison : t, Chain : t >
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
   let vfork := {L, R} -> if let Conc lc = L { if let Conc rc = R { Conc (t lc rc) } else { Fork (pair L R) } } else { Fork (pair L R) }
@@ -370,8 +371,12 @@ Meta := {
         Fork a b => (apply_fork self chk a b X)
       }
     }))
-  ({ fresh := {st, ty, tail} -> cons (pair (Neu (pair ty tail)) st) nil, lift := {f} -> Conc f, apply := mwalk, read := readback, judge := {chk, _st, T, r} -> vcheck chk T r })
-}
+  fresh := {st, ty, tail} -> cons (pair (Neu (pair ty tail)) st) nil
+  lift := {f} -> Conc f
+  apply := mwalk
+  read := readback
+  judge := {chk, _st, T, r} -> vcheck chk T r
+})
 
 neutral_free := fix ({self, v} ->
   if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v })
