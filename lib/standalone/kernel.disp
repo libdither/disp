@@ -87,13 +87,6 @@ field_put := {r, name, v} -> {
 test field (field_put ({ a := 1, b := 2 }) "b" 9) "b" = 9
 test tree_eq (field_put ({ a := 1 }) "b" 2) ({ a := 1, b := 2 }) = true
 
-hyp_marker := {a, b} -> a
-make_mark := {meta} -> wait hyp_marker meta
-make_hyp := {ty, history} -> make_mark ({ ty := ty, history := history })
-hyp_sig := sig_of hyp_marker
-is_neutral := has_sig hyp_sig
-neutral_type := {v} -> field (wait_payload v) "ty"
-
 tag := {meta, behavior} -> {
   let s := {a, b, c} -> (a c) (b c)
   let k := {a, b} -> a
@@ -145,6 +138,15 @@ SigmaCode := {A, B} -> make_type ({ tele := perform (Observe (pair Self (Pred is
   perform (Observe (pair (Prj pair_snd) (B a))) ({_} -> Pure t))) })
 IsectCode := {A, P} -> make_type ({ tele := perform (Fresh A) ({x} -> perform (Observe (pair Self (P x))) ({_} -> Pure t)) })
 AnyTree : ShallowType := Pred ({_v} -> true)
+
+hyp_marker := {a, b} -> a
+make_mark := {meta} -> wait hyp_marker meta
+make_hyp := {ty, history} -> make_mark ({ (ShallowType) := ty, (AnyTree) := history })
+hyp_sig := sig_of hyp_marker
+is_neutral := has_sig hyp_sig
+neutral_type := {v} -> field (wait_payload v) ShallowType
+test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
+test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
   let co := fix ({go, st, arg} -> {
@@ -316,7 +318,7 @@ Meta : Table := ({
   let vcheck := ({chk, T, V} ->
     match V {
       Poison r => false
-      Neu m => (tree_eq m.ty T)
+      Neu m => (tree_eq (field m ShallowType) T)
       _ => {
         let rows := T.tele
         if (is_fork rows) { chk t rows V t }
@@ -373,7 +375,7 @@ Meta : Table := ({
           let r := respond_face fr (make_mark m)
           if (is_invalid r) { Poison (Neu m) }
           else if (list_all ({ob} -> vcheck chk (pair_fst ob) (if (is_elim_frame fr) { vlift (pair_snd ob) } else { X })) (pair_fst r)) {
-            Neu ({ ty := pair_snd r, history := pair "Ob" (pair fr (make_mark m)) })
+            Neu ({ (ShallowType) := pair_snd r, (AnyTree) := pair "Ob" (pair fr (make_mark m)) })
           } else { Poison (Neu m) }
         }
         Poison r => (Poison r)
@@ -387,7 +389,7 @@ Meta : Table := ({
         Fork a b => (apply_fork self chk a b X)
       }
     }))
-  fresh := {st, ty, tail} -> cons (pair (Neu ({ ty := ty, history := tail })) st) nil
+  fresh := {st, ty, tail} -> cons (pair (Neu ({ (ShallowType) := ty, (AnyTree) := tail })) st) nil
   lift := {f} -> Conc f
   apply := mwalk
   read := readback
@@ -455,7 +457,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
     if (member v legit) {
       true
     } else {
-      let hist := (wait_payload v).history
+      let hist := field (wait_payload v) AnyTree
       if (tree_eq (pair_fst hist) "Ob") {
         let frame := pair_fst (pair_snd hist)
         let parent := pair_snd (pair_snd hist)
