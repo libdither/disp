@@ -117,7 +117,9 @@ pub fn full_tree(n: u32) -> Term {
 }
 
 /// K discards a 2^n-leaf tree: area/load scaling plus whatever the substrate does with
-/// discarded matter (2026-07 census: it stands dead, zero eraser fires). nf = L.
+/// discarded matter. Stood dead until 2026-07-31: the eraser's cable could end in a
+/// terminal U-loop through its own cell, undockable; the reel (arity-1 consumers walk)
+/// fixed it, and erasure cost now scales with n. nf = L.
 pub fn discard_tree(n: u32) -> Term { ap(ap(k(), L), full_tree(n)) }
 
 /// n stacked K-path triages, each level's survivor suspended inside the next F: the

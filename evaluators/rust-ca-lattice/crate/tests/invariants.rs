@@ -267,10 +267,18 @@ fn nursery_is_load_bearing() {
         println!("nursery ablation violation — {v}");
     }
     println!("nursery ablation: {} violation(s) across {total} runs", violations.len());
-    assert!(
-        !violations.is_empty(),
-        "nursery removal broke NOTHING across {total} runs: the correctness-of-mechanism \
-         classification is unproven on this corpus — reclassify in AC_IDEA or build the \
-         adversarial witness (a grown producer docking mid-growth)"
+    // STATUS LEDGER, pinned so any drift trips. 2026-07-30: 4-6/80 violations
+    // (Lifo/tree no-quiescence witnesses) — load-bearing. 2026-07-31: the reel landed
+    // (arity-1 erasers walk) and the witnesses vanished (0/80) — those runaways were
+    // exactly the states erasure traffic now cleans up. The classification is
+    // currently UNPROVEN on this corpus: the nursery bit is a candidate capacity win
+    // pending a deliberate adversarial construction (a producer docking mid-growth
+    // against a half-wired seat). If violations reappear, restore load-bearing in
+    // AC_IDEA with the new witness; if the construction proves droppable, the bit
+    // goes to capacity. Either way, update the pin AND the doc together.
+    assert_eq!(
+        violations.len(),
+        0,
+        "nursery ablation violation count moved — re-litigate the bit-class in AC_IDEA"
     );
 }

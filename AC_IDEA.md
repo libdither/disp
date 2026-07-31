@@ -35,10 +35,13 @@ progress counter — parked means genuinely wedged, never forgotten.
 - **Words are 64 bits, layout frozen.** On silicon the claim bit and the reservation
   marks are *arbiter state*, not word bits. Know the bit classes before spending:
   semantic core (kind, routes, agent endpoints, cursor pc) · correctness-of-mechanism
-  (nursery — keeps un-resolved growth inert; measured load-bearing: without it Lifo/tree
-  runs stop quiescing; AND cooldown — measured 2026-07-30: dropping the stamps livelocks
-  21/48 random terms in displacement ping-pong, so it guards quiescence, not comfort;
-  answers stay right either way) · capacity (3rd route, pc width) · heuristics (χ only —
+  (nursery — keeps un-resolved growth inert; its 2026-07-30 witnesses (Lifo/tree
+  no-quiescence, 4-6/80) VANISHED once the reel landed, so the classification is
+  currently unproven and the bit is a candidate capacity win pending an adversarial
+  construction — the ablation pin tracks the count; AND cooldown — measured 2026-07-30:
+  dropping the stamps livelocks 21/48 random terms in displacement ping-pong, so it
+  guards quiescence, not comfort; answers stay right either way) · capacity (3rd route,
+  pc width) · heuristics (χ only —
   and χ is currently inert in the serial driver: nothing pumps it since the pressure-wave
   removal; it re-enters with the demand-priority rung or its bits go to capacity).
   `tests/invariants.rs` pins all of this (ablation lanes + the negative control).
@@ -119,7 +122,16 @@ generic half becomes mechanism:
   established route (the crossbar is the data path). CPU: a union-find far-end lookup +
   two writes + a free-list push. GPU: decomposes back to walking — a timing difference,
   licensed. Requires: an abort leg (the target may fire mid-flight) and the contract
-  amendment above.
+  amendment above. The step-wise CPU precursor LANDED 2026-07-31: the reel — arity-1
+  ERASERS walk their own hot cable, eating it cell by cell (no aux, no trail, so the
+  cable self-erases behind them). This closed the standing-dead-matter hole: an
+  eraser's cable could end in a terminal U-loop through its own cell, leaving the
+  arriving producer parked on an undockable face forever; census discard-tree flipped
+  from flat-cost dead matter to full erasure cascades (all seated, zero growth), and
+  convoy(1) completes as a side effect. Polarity keeps the reel chase-free (consumer
+  principals only ever face producer principals; a cable walked from both ends
+  strictly shortens). Teleport proper replaces the multi-step reel with the
+  components-backend far-end jump — same semantics, licensed timing.
 
 ## Demand as priority
 

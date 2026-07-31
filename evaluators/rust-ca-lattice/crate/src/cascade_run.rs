@@ -282,8 +282,18 @@ impl Runner {
         }
         // A cell can host a walker and a builder cursor at once. The agent acts first:
         // its departure is often exactly what unblocks the cursor's next placement.
+        // Producers walk toward their consumers; the arity-1 eraser walks too (the
+        // reel — the CPU form of AC_IDEA's arity-1 teleport): with no aux to drag it
+        // eats its own hot cable cell by cell, which is what dissolves terminal
+        // U-loops where the cable re-enters the eraser's own cell as a passthrough
+        // and the arriving producer would otherwise park on an undockable face (the
+        // discard-tree standing-dead-matter hole). Polarity keeps this chase-free: a
+        // consumer principal only ever faces a producer principal, and a cable walked
+        // from both ends strictly shortens.
         match &site.cell {
-            Cell::Agent { nursery: false, cooldown: 0, tag, .. } if tag.is_producer() => {
+            Cell::Agent { nursery: false, cooldown: 0, tag, .. }
+                if tag.is_producer() || *tag == Tag::Eps =>
+            {
                 if self.try_dock(p, &site) || self.try_walk(p, &site) || self.try_swap(p, &site) {
                     return;
                 }
