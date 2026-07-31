@@ -44,7 +44,6 @@ make_hyp := {ty, history} -> make_mark (pair ty history)
 hyp_sig := sig_of hyp_marker
 is_neutral := has_sig hyp_sig
 neutral_type := {v} -> pair_fst (wait_payload v)
-neutral_history := {v} -> pair_snd (wait_payload v)
 
 invalid_marker := {a, b} -> b
 invalid := {reason} -> wait invalid_marker reason
@@ -455,7 +454,7 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
     if (member v legit) {
       true
     } else {
-      let hist := neutral_history v
+      let hist := pair_snd (wait_payload v)
       if (tree_eq (pair_fst hist) "Ob") {
         let frame := pair_fst (pair_snd hist)
         let parent := pair_snd (pair_snd hist)
