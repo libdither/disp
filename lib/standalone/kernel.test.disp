@@ -249,12 +249,12 @@ test Pi ({}) Nat ({_} -> Nat) succ = false
 row_rec := elim_of Row ({_} -> Bool)
 row_binds := {row} -> row_rec row ({_ty} -> true) ({_ob} -> false)
 row_binds_bad := {row} -> row_rec row ({_ty} -> true) ({_ob} -> 5)
-row_binds_raw := {row} -> match row { Fresh _ty => true; J _ob => false }
+row_binds_raw := {row} -> match row { Fresh _ty => true; Observe _ob => false }
 test Row (Fresh zero) = true
-test Row (J (pair App Nat)) = true
+test Row (Observe (pair App Nat)) = true
 test Row zero = false
 test row_binds (Fresh zero) = true
-test row_binds (J (pair App Nat)) = false
+test row_binds (Observe (pair App Nat)) = false
 test Pi Guard Row ({_} -> Bool) row_binds = true
 test Pi Meta Row ({_} -> Bool) row_binds = true
 test Pi Guard Row ({_} -> Bool) row_binds_bad = false

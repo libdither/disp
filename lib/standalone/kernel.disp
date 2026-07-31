@@ -103,13 +103,19 @@ is_elim_head := has_sig elim_sig
 elim_arity := {E} -> list_len ((elim_ind E).gate (elim_ind E) (elim_motive E))
 
 ObsCode := < App, Self, Prj : t >
-RowCode := < Fresh : t, J : t >
+RowCode := < Fresh : t, Observe : t >
 Pred := {p} -> ({ #recognize := {_self, v} -> p v })
-ShallowType := Pred is_type
+Bool := ({
+  #recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
+  gate := {_Ind, B} -> cons (B true) (cons (B false) nil)
+  members := cons true (cons false nil)
+  elim := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
+})
+ShallowType := ({ #recognize := {_self, v} -> is_type v, obs := pair (Fresh (Pred ({_v} -> true))) ({_} -> pair (Observe (pair App Bool)) ({_} -> nil)) })
 test ShallowType ({ #recognize := {_self, _v} -> true }) = true
 test ({ #recognize := {_self, v} -> is_leaf v }) zero = true
 test ({ #recognize := {_self, v} -> is_leaf v }) 5 = false
-PiCode := {A, B} -> make_type ({ tele := pair (Fresh A) ({x} -> pair (J (pair App (B x))) ({_} -> nil)) })
+PiCode := {A, B} -> make_type ({ tele := pair (Fresh A) ({x} -> pair (Observe (pair App (B x))) ({_} -> nil)) })
 AnyTree : ShallowType := Pred ({_v} -> true)
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
@@ -146,19 +152,22 @@ Frame := < Acc : t, Elim : t >
 is_acc := has_sig "Acc"
 is_elim_frame := has_sig "Elim"
 respond_face := {T, frame, self} -> {
-  let rows := T.tele
+  let rows := {
+    let vrows := T.tele
+    if (is_fork vrows) { vrows } else { T.obs }
+  }
   if (is_fork rows) {
-    (fix ({go, rows2} ->
+    fix ({go, rows2} ->
       if (is_leaf rows2) { invalid frame } else {
         let tail := pair_snd rows2
         match (pair_fst rows2) : (case_of Row ({_} -> AnyTree)) {
           Fresh ty => (if (is_acc frame) { invalid frame } else {
             match (pair_fst (tail frame)) {
-              J ob cod => (match ob { App _ => (pair (cons (pair ty frame) nil) cod); _ => (invalid frame) })
+              Observe ob cod => (match ob { App _ => (pair (cons (pair ty frame) nil) cod); _ => (invalid frame) })
               _ => (invalid frame)
             }
           })
-          J ob ty => (match ob : (case_of Obs ({_} -> AnyTree)) {
+          Observe ob ty => (match ob : (case_of Obs ({_} -> AnyTree)) {
             Prj a => (match frame {
               Acc fa => (if (tree_eq a fa) { pair nil ty } else { go (tail (make_hyp ty (pair "Ob" (pair (Acc a) self)))) })
               _ => (invalid frame)
@@ -167,7 +176,7 @@ respond_face := {T, frame, self} -> {
             App _ => (invalid frame)
           })
         }
-      })) rows
+      }) rows
   } else {
     match frame {
       Elim E arms => {
@@ -204,7 +213,7 @@ check := fix ({self, rows, f, prior} ->
     match (pair_fst rows) : (case_of Row ({_} -> AnyTree)) {
       Fresh ty => (perform (Mint (pair ty tail)) ({x} ->
         perform (Read x) ({xr} -> self (tail xr) f x)))
-      J ob ty => (match ob : (case_of Obs ({_} -> AnyTree)) {
+      Observe ob ty => (match ob : (case_of Obs ({_} -> AnyTree)) {
         App _ => (perform (Call (pair f prior)) ({r} ->
           perform (Judge (pair ty r)) ({ok} ->
             if ok { perform (Read r) ({rr} -> self (tail rr) f prior) } else { Pure false })))
@@ -245,10 +254,10 @@ Tele := {table, tele} -> {
 }
 
 Pi := {table, A, B} -> Tele table (PiCode A B).tele
-Sigma := {table, A, B} -> Tele table (pair (J (pair Self (Pred is_fork))) ({_} ->
-  pair (J (pair (Prj pair_fst) A)) ({a} ->
-  pair (J (pair (Prj pair_snd) (B a))) ({_} -> nil))))
-Isect := {table, A, P} -> Tele table (pair (Fresh A) ({x} -> pair (J (pair Self (P x))) ({_} -> nil)))
+Sigma := {table, A, B} -> Tele table (pair (Observe (pair Self (Pred is_fork))) ({_} ->
+  pair (Observe (pair (Prj pair_fst) A)) ({a} ->
+  pair (Observe (pair (Prj pair_snd) (B a))) ({_} -> nil))))
+Isect := {table, A, P} -> Tele table (pair (Fresh A) ({x} -> pair (Observe (pair Self (P x))) ({_} -> nil)))
 Enum := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) ty.members })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
 
@@ -487,13 +496,11 @@ test Nat (succ (make_hyp Nat Nat)) = false
 nat_step_ty : ShallowType := pair_fst (pair_snd (Nat.gate Nat ({_} -> Nat)))
 nat_rec : Fn Nat ({_} -> Fn Nat ({_} -> Fn nat_step_ty ({_} -> Nat))) := elim_of Nat ({_} -> Nat)
 
-Bool : ShallowType := ({
-  #recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({l, r} -> false) v
-  gate := {_Ind, B} -> cons (B true) (cons (B false) nil)
-  members := cons true (cons false nil)
-  elim := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
-})
 bool_rec : Fn Bool ({_} -> Fn Bool ({_} -> Fn Bool ({_} -> Bool))) := elim_of Bool ({_} -> Bool)
+test ShallowType Bool = true
+test Fn ShallowType ({_} -> Bool) ({T} -> T 5) = true
+test Fn ShallowType ({_} -> Bool) ({T} -> bool_rec (T 5) false true) = true
+test Fn ShallowType ({_} -> Nat) ({T} -> T 5) = false
 
 Point := {c} -> ({ #recognize := {_self, v} -> tree_eq c v, members := cons c nil })
 
