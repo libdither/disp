@@ -568,3 +568,20 @@ test GoodGate LieGate = false
 guard ({_old, req} -> if (is_stem (field req "value")) { Ok (Bind (add 1 (stem_child (field req "value")))) } else { Err }) gval := 5
 gval := 7
 test gval = 8
+
+// False = the EMPTY SUM, and ex falso is the zero-obligation elimination: an
+// arity-0 gate fires the Elim frame immediately (both walkers), respond zips
+// nothing and rolls the motive -- from a False-hyp, any codomain certifies.
+// Not P = Fn P (_ -> False); Refine A p = the nominal refinement (membership =
+// A v AND p v; no subsumption into A under Guard, pinned).
+absurd_n := elim_of False ({_} -> Nat)
+test Fn False ({_} -> Nat) absurd_n = true
+test Pi Meta False ({_} -> Nat) absurd_n = true
+test Fn False ({_} -> Bool) (elim_of False ({_} -> Bool)) = true
+test Fn False ({_} -> Nat) ({p} -> p) = false
+test Not Nat ({n} -> n) = false
+R2 := Refine Nat ({n} -> tree_eq n 2)
+test R2 2 = true
+test R2 3 = false
+test R2 (pair 5 5) = false
+test Fn R2 ({_} -> Nat) ({x} -> x) = false

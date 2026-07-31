@@ -469,7 +469,9 @@ Meta : Table := ({
         } else if (or (tree_eq tr pair_fst) (tree_eq tr pair_snd)) {
           if let Neu m2 = X { self chk X (Conc (Acc tr)) } else { Poison X }
         } else if (is_elim_head tr) {
-          if let Neu m = X { Chain (pair tr (pair X nil)) } else { self chk (Conc ((elim_raw tr) tr)) X }
+          if let Neu m = X {
+            if (tree_eq (elim_arity tr) zero) { self chk X (Conc (Elim (pair tr nil))) } else { Chain (pair tr (pair X nil)) }
+          } else { self chk (Conc ((elim_raw tr) tr)) X }
         } else {
           triage (vstem X) ({a} -> vfork (Conc a) X) ({a, b} -> apply_fork self chk (Conc a) (Conc b) X) tr
         })
@@ -512,7 +514,9 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
     let E := pair_fst payload
     let seen := pair_snd payload
     if (is_leaf seen) {
-      if (is_neutral arg) { wait sm (pair E (cons arg nil)) } else { (elim_raw E) (wait sm (pair E nil)) arg }
+      if (is_neutral arg) {
+        if (tree_eq (elim_arity E) zero) { hyp_apply arg (Elim (pair E nil)) } else { wait sm (pair E (cons arg nil)) }
+      } else { (elim_raw E) (wait sm (pair E nil)) arg }
     } else {
       let args := list_snoc (pair_snd seen) arg
       if (tree_eq (list_len args) (elim_arity E)) {
@@ -602,6 +606,13 @@ Ambient : Table := GuardAt
 
 given GenericWalker : AnyTree := Guard
 Fn := Pi GenericWalker
+
+False := Sum nil
+Not := {P} -> Fn P ({_} -> False)
+Refine := {A, p} -> ({ #recognize := {_self, v} -> and (A v) (p v) })
+test False t = false
+test False 5 = false
+test Not False ({p} -> p) = true
 
 Named := {name, T} -> ({ #recognize := {_self, v} -> T v, name := name, under := T })
 key_insert := fix ({self, k, ks} ->
