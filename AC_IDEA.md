@@ -26,26 +26,35 @@ The premise is unchanged and load-bearing: schedule-independence is proven
 (`schedule_fuzz_never_wrong` — any local execution order may park but never answers
 wrongly). That one property licenses races on chip, lazy signal evaluation on CPU, dense
 idempotent passes on GPU, and every timing difference between platforms. Guard it above
-everything.
+everything. Its event-completeness dual is pinned beside it
+(`kick_after_quiescence_is_a_no_op`): re-waking the whole grid after quiescence moves no
+progress counter — parked means genuinely wedged, never forgotten.
 
 ## Constraints (the frozen contract)
 
 - **Words are 64 bits, layout frozen.** On silicon the claim bit and the reservation
   marks are *arbiter state*, not word bits. Know the bit classes before spending:
   semantic core (kind, routes, agent endpoints, cursor pc) · correctness-of-mechanism
-  (nursery — keeps un-resolved growth inert; NOT optional) · capacity (3rd route, pc
-  width) · heuristics (χ, cooldown — a v0 chip may drop them; dropping parks more, never
-  answers wrongly).
+  (nursery — keeps un-resolved growth inert; measured load-bearing: without it Lifo/tree
+  runs stop quiescing; AND cooldown — measured 2026-07-30: dropping the stamps livelocks
+  21/48 random terms in displacement ping-pong, so it guards quiescence, not comfort;
+  answers stay right either way) · capacity (3rd route, pc width) · heuristics (χ only —
+  and χ is currently inert in the serial driver: nothing pumps it since the pressure-wave
+  removal; it re-enters with the demand-priority rung or its bits go to capacity).
+  `tests/invariants.rs` pins all of this (ablation lanes + the negative control).
 - **Commits touch ≤ 2 adjacent cells — as the target.** Current exceptions must be
   re-expressed as bounded token chains before silicon: the aux-detour walk (4 cells) and
   relief evictions (4–6 cells). Arity-1 teleport (below) is the one sanctioned amendment:
-  a worm, not a commit.
+  a worm, not a commit. Measured per-activation write sets (2026-07-30, pinned as
+  only-move-down ceilings in `tests/invariants.rs`): move 4 · growth 4 · fabric/relief 6
+  · dock 2 · resolve 2 (the seated splice is already at the contract).
 - **No combinational long reads.** The enumerated exceptions and their dispositions: the
   5-hop demand lookahead (DELETED by the signal plane — passthrough routes are just more
   component edges; the signal arrives instead of being searched for), the ~60-cell
   dock-roll scan (host-assist preferred; else a scout token, hard ≤64-hop bound), the
   every-5-generations contraction sweep (DELETED — slack discovery is a monotone fact and
-  rides the fabric; the fold itself stays a claimed commit).
+  rides the fabric; the fold itself stays a claimed commit). Measured read radii
+  (Chebyshev, same pin): dock 11 — that IS the roll/footprint scan — everything else ≤ 3.
 - **Frozen op alphabet and transition templates.** No runtime search on chip; growth runs
   compiled microcode in a per-tile ROM (cursor = program counter). Compile-time search
   stays host-side.

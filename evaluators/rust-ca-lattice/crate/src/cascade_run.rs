@@ -66,6 +66,25 @@ pub struct Runner {
     pub sweep_every: Option<u64>,
     /// Mutation count at the last sweep; an unchanged count skips the next one.
     swept_mutations: u64,
+    /// Heuristic ablation: when false, cooldown stamps are never written (damping off).
+    /// The bit-class claim under test: dropping a heuristic may park more, never wrong.
+    pub cooldown_stamps: bool,
+    /// Mechanism ablation: when false, grown agents skip the nursery (negative control —
+    /// the nursery is classified correctness-of-mechanism, so this must break things).
+    pub nursery_discipline: bool,
+    /// Cells committed by growth, attributed to the growing rule (clump-rule evidence).
+    pub grown_by_rule: BTreeMap<u8, u64>,
+    /// When Some, every activation's write-set size and read radius are recorded per op
+    /// class (the chip-power audit: the burn-down table for AC_IDEA's commit budget).
+    pub audit: Option<BTreeMap<&'static str, OpAudit>>,
+}
+
+/// Per-op-class audit accumulator: how big activations of this class get.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OpAudit {
+    pub activations: u64,
+    pub max_writes: u32,
+    pub max_read_r: u32,
 }
 
 fn splitmix(state: &mut u64) -> u64 {
@@ -93,6 +112,10 @@ impl Runner {
             relief_root: None,
             sweep_every: Some(5),
             swept_mutations: u64::MAX,
+            cooldown_stamps: true,
+            nursery_discipline: true,
+            grown_by_rule: BTreeMap::new(),
+            audit: None,
         };
         let live: Vec<Pos> = r.grid.cells.keys().copied().collect();
         for p in live {
@@ -180,8 +203,49 @@ impl Runner {
             self.gen_left = self.queue.len() + 1;
         }
         self.gen_left -= 1;
+        if self.audit.is_none() {
+            self.activate(p);
+            return Some(p);
+        }
+        // Audited activation: record the write set and read radius, classify by what the
+        // activation did (its events; else its hosted cursor; else whether it committed
+        // anything — "fabric" is heat/relief/contraction, "refusal" is a pure read).
+        let had_cursor = self.grid.site(p).cursor.is_some();
+        let ev0 = self.events.len();
+        self.grid.probe = Some(crate::cascade::Probe::at(p));
         self.activate(p);
+        let probe = self.grid.probe.take().expect("probe survives the activation");
+        let mut class = if had_cursor {
+            "growth"
+        } else if probe.writes.is_empty() {
+            "refusal"
+        } else {
+            "fabric"
+        };
+        for e in &self.events[ev0..] {
+            class = match e {
+                Event::Fire(..) => "resolve",
+                Event::Dock(..) if class != "resolve" => "dock",
+                Event::Retract(..) if !matches!(class, "resolve" | "dock") => "retract",
+                Event::Move(..) if !matches!(class, "resolve" | "dock" | "retract") => "move",
+                _ => class,
+            };
+        }
+        let a = self.audit.as_mut().expect("audit on").entry(class).or_default();
+        a.activations += 1;
+        a.max_writes = a.max_writes.max(probe.writes.len() as u32);
+        a.max_read_r = a.max_read_r.max(probe.read_r.get());
         Some(p)
+    }
+
+    /// Wake every live cell once. After true quiescence this must be a no-op on the
+    /// progress counters: any post-kick rewrite, walk, dock, or retract means some cell
+    /// was willing to act but had been forgotten by the wake plumbing (a lost wake).
+    pub fn kick(&mut self) {
+        let live: Vec<Pos> = self.grid.cells.keys().copied().collect();
+        for p in live {
+            self.wake(p);
+        }
     }
 
     /// Run until quiescent or the activation budget is exhausted. Returns true when
@@ -196,6 +260,11 @@ impl Runner {
     }
 
     pub fn quiescent(&self) -> bool { self.queue.is_empty() }
+
+    /// The cooldown value a stamping write uses (0 under the ablation knob).
+    fn stamp(&self, v: u8) -> u8 {
+        if self.cooldown_stamps { v } else { 0 }
+    }
 
     /// One relief-decision note: appended to the explain log when probing, mirrored to
     /// stderr under CASCADE_DBG. The message closure only runs when someone listens.
@@ -749,7 +818,7 @@ impl Runner {
                         aux: new_aux,
                         pass: vec![],
                         nursery: false,
-                        cooldown: 1,
+                        cooldown: self.stamp(1),
                     };
                     let vacated =
                         Cell::Wire { routes: vac_routes, hot: 0, cooldown: 0, reserved: None };
@@ -1204,7 +1273,7 @@ impl Runner {
                             Cell::Wire { routes, .. } => routes.clone(),
                             _ => vec![],
                         };
-                        let Some(merged) = merge_matter(planned.clone(), &existing) else {
+                        let Some(mut merged) = merge_matter(planned.clone(), &existing) else {
                             // The merge cannot fit. Evict one cold occupying route out of
                             // the way (the relief rung); if nothing is evictable, release
                             // the reservation and wait for the occupant to change.
@@ -1232,6 +1301,12 @@ impl Runner {
                             self.wake(t);
                             return;
                         };
+                        if !self.nursery_discipline {
+                            if let Cell::Agent { nursery, .. } = &mut merged {
+                                *nursery = false;
+                            }
+                        }
+                        *self.grown_by_rule.entry(cursor.rule).or_insert(0) += 1;
                         self.grid.set(
                             t,
                             &Site { cell: merged, cursor: None, chi: target.chi, claim: false },
@@ -1345,14 +1420,15 @@ impl Runner {
         // Receivers of a displaced route get the full cooldown stamp: they will not shed
         // it again (nor be retracted) until the stamp decays. A displaced hot route
         // carries its heat into the new cell.
-        let side_add = |s: &Site, route: Route, hot_flag: bool| -> Site {
+        let stamp3 = self.stamp(3);
+        let side_add = move |s: &Site, route: Route, hot_flag: bool| -> Site {
             let mut ns = s.clone();
             match &mut ns.cell {
                 Cell::Empty { .. } => {
                     ns.cell = Cell::Wire {
                         routes: vec![route],
                         hot: u8::from(hot_flag),
-                        cooldown: 3,
+                        cooldown: stamp3,
                         reserved: None,
                     };
                 }
@@ -1361,7 +1437,7 @@ impl Runner {
                         *hot |= 1 << routes.len();
                     }
                     routes.push(route);
-                    *cooldown = 3;
+                    *cooldown = stamp3;
                 }
                 _ => unreachable!(),
             }
@@ -1970,7 +2046,7 @@ impl Runner {
                 aux: stub,
                 pass: cseed_pass.into_iter().collect(),
                 nursery: false,
-                cooldown: 1,
+                cooldown: self.stamp(1),
             };
             let producer = Cell::Agent {
                 tag: r.producer,
@@ -1978,7 +2054,7 @@ impl Runner {
                 aux: pstub,
                 pass: pseed_pass.into_iter().collect(),
                 nursery: false,
-                cooldown: 1,
+                cooldown: self.stamp(1),
             };
             self.grid.set(p, &Site { cell: consumer, cursor: None, chi: site.chi, claim: false });
             self.grid.set(t, &Site { cell: producer, cursor: None, chi: pseed.chi, claim: false });

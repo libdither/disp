@@ -99,8 +99,15 @@ impl Row {
 }
 
 type RuleFires = BTreeMap<(&'static str, &'static str), u64>;
+type RuleGrown = BTreeMap<(&'static str, &'static str), u64>;
 
-fn run_one(family: &str, n: u32, term: &Term, rule_fires: &mut RuleFires) -> Row {
+fn run_one(
+    family: &str,
+    n: u32,
+    term: &Term,
+    rule_fires: &mut RuleFires,
+    rule_grown: &mut RuleGrown,
+) -> Row {
     let want = oracle::show(
         &oracle::nf(term.clone(), &mut Fuel(1_000_000)).expect("corpus term must normalize"),
     );
@@ -123,6 +130,10 @@ fn run_one(family: &str, n: u32, term: &Term, rule_fires: &mut RuleFires) -> Row
     let got = r.shadow.readback(r.shadow.get(out).ports[0]).map(|t| oracle::show(&t));
     if let Some(got) = &got {
         assert_eq!(got, &want, "{family}({n}): WRONG ANSWER");
+    }
+    for (rule, cells) in &r.grown_by_rule {
+        let ru = &rust_ca_lattice::rules::RULES[*rule as usize];
+        *rule_grown.entry((ru.consumer.name(), ru.producer.name())).or_insert(0) += cells;
     }
     let (mut docks, mut retracts) = (0u64, 0u64);
     for e in &r.events {
@@ -155,11 +166,12 @@ fn main() {
 
     // Rows stream as they compute, so a mid-corpus panic still shows everything before it.
     let mut rule_fires = RuleFires::new();
+    let mut rule_grown = RuleGrown::new();
     println!("{HEADER}");
     let rows: Vec<Row> = corpus()
         .iter()
         .map(|(f, n, t)| {
-            let row = run_one(f, *n, t, &mut rule_fires);
+            let row = run_one(f, *n, t, &mut rule_fires, &mut rule_grown);
             println!("{}", row.tsv());
             row
         })
@@ -178,9 +190,10 @@ fn main() {
             println!("  {fam}: completes up to n={up_to} of {}", rs.len());
         }
     }
-    println!("\nrule fires across corpus:");
+    println!("\nrule fires across corpus (grown cells — the clump-rule cost evidence):");
     for ((c_name, p_name), c) in &rule_fires {
-        println!("  {c_name}·{p_name}: {c}");
+        let grown = rule_grown.get(&(*c_name, *p_name)).copied().unwrap_or(0);
+        println!("  {c_name}·{p_name}: {c} ({grown} cells grown)");
     }
 
     if write_baseline {

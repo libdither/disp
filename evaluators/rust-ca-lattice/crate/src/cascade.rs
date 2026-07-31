@@ -511,6 +511,27 @@ pub fn rot_cell(cell: &Cell, axis: Dir, roll: u8) -> Cell {
 
 // ---------------------------------------------------------------- grid
 
+/// Per-activation audit probe: an observer sidecar the runner installs around one
+/// activation to record its write set and how far its reads reached. `None` in normal
+/// runs; never consulted by transitions.
+#[derive(Clone, Debug)]
+pub struct Probe {
+    pub center: Pos,
+    /// Max Chebyshev distance of any word read from the activated cell.
+    pub read_r: std::cell::Cell<u32>,
+    pub writes: std::collections::BTreeSet<Pos>,
+}
+
+impl Probe {
+    pub fn at(center: Pos) -> Self {
+        Self { center, read_r: std::cell::Cell::new(0), writes: Default::default() }
+    }
+}
+
+fn chebyshev(a: Pos, b: Pos) -> u32 {
+    (a.0 - b.0).abs().max((a.1 - b.1).abs()).max((a.2 - b.2).abs()) as u32
+}
+
 /// Sparse cascade grid. Absent entries are the all-zero empty word. Observer sidecars
 /// (stable ids, counters) never enter transitions.
 #[derive(Clone, Debug)]
@@ -524,6 +545,7 @@ pub struct Grid2 {
     pub rewrites: u64,
     /// Bumped by every set(): the sweep re-arms on change and stops at a fixpoint.
     pub mutations: u64,
+    pub probe: Option<Probe>,
 }
 
 impl Grid2 {
@@ -536,10 +558,17 @@ impl Grid2 {
             transport: 0,
             rewrites: 0,
             mutations: 0,
+            probe: None,
         }
     }
 
     pub fn word(&self, p: Pos) -> Word2 {
+        if let Some(pr) = &self.probe {
+            let r = chebyshev(p, pr.center);
+            if r > pr.read_r.get() {
+                pr.read_r.set(r);
+            }
+        }
         if self.topo.in_bounds(p) {
             self.cells.get(&p).copied().unwrap_or(Word2::EMPTY)
         } else {
@@ -561,6 +590,9 @@ impl Grid2 {
     pub fn set(&mut self, p: Pos, site: &Site) {
         assert!(self.topo.in_bounds(p), "write outside topology");
         let w = Word2::pack(site).expect("engine produced an invalid site");
+        if let Some(pr) = &mut self.probe {
+            pr.writes.insert(p);
+        }
         self.mutations += 1;
         if w == Word2::EMPTY {
             self.cells.remove(&p);

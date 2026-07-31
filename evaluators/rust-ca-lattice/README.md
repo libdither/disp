@@ -38,10 +38,14 @@ Three drivers run the same transition rules:
   pair-decision function with the threaded driver.
 
 Gates: `cargo test --release --lib` (codec exhaustives, blocklet compiler, movement,
-parallel, gather) and `cargo test --release --test cascade_suite` (the 26-rule atlas under
+parallel, gather), `cargo test --release --test cascade_suite` (the 26-rule atlas under
 all four disciplines, translation straight and bent, the A·F roll-fallback and declined
 docks, `@(L,L)` normalized end to end under all four, and the pinned deep-reduction
-frontier: `@(F(L,L),L)` reaches its normal form in six chained fires). `dump-cascade`
+frontier: `@(F(L,L),L)` reaches its normal form in six chained fires), and
+`cargo test --release --test invariants` (mechanism invariants: the kick/lost-wake gate,
+per-op-class commit write-sets and read radii pinned as only-move-down ceilings, the
+cooldown ablation lane — never wrong, measured livelocks without damping — and the
+nursery negative control). `dump-cascade`
 regenerates `research/interaction-combinator/lattice_cascade.js` with the historical
 suite roster (translation, the A·F trio, all 26 atlas rules, the eraser cascade to empty,
 the T1·S stem chain) plus the cascade-native demos; `lattice_player.html` replays the
