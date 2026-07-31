@@ -62,13 +62,11 @@ pub struct Runner {
     /// The reserved target the current relief is clearing: its own reservation does not
     /// refuse the relief chain (the reserver asked for it).
     pub relief_root: Option<Pos>,
-    /// EXPERIMENT (default off): guest-continuation swings (bending routes threaded
-    /// through agents' passthrough lists) plus address-monotone displacement (receivers
-    /// strictly above the shed cell). Breaks the pass-threaded knot (s-rule reaches its
-    /// Dn·L dock) but the cell-level order starves multi-cell shift shapes, trading
-    /// other terms away; the open design is a ROUTE-level potential. Measured profiles
-    /// in AC_IDEA's k-chain rung entry.
-    pub relief_experiment: bool,
+    /// The displacement-order form (dot with a shape's primary direction must be
+    /// positive); components distinct powers of 3 so no face or diagonal sums to zero.
+    pub relief_g: (i32, i32, i32),
+    /// The requesting dock's ring during its relief (receivers here are refused).
+    relief_ring: Vec<Pos>,
     /// Heuristic ablation: when false, cooldown stamps are never written (damping off).
     /// The bit-class claim under test: dropping a heuristic may park more, never wrong.
     pub cooldown_stamps: bool,
@@ -115,7 +113,9 @@ impl Runner {
             explain: None,
             relief_owner: None,
             relief_root: None,
-            relief_experiment: false,
+
+            relief_g: (-1, -3, 9),
+            relief_ring: Vec::new(),
             cooldown_stamps: true,
             nursery_discipline: true,
             grown_by_rule: BTreeMap::new(),
@@ -1024,13 +1024,15 @@ impl Runner {
             return false;
         }
         // A seed inherits at most one passthrough route: shed the excess (cold foreign
-        // lanes reroute around the cell) and dock on a later wake.
+        // lanes reroute around the cell) and dock on a later wake. ONE eviction per
+        // activation — the second cell sheds on the next wake (the locality audit
+        // holds every activation to a single primitive's footprint).
         if pass.len() > 1 || cpass.len() > 1 {
             let mut progressed = false;
             if pass.len() > 1 {
                 progressed |= self.try_evict(p, None, 2);
             }
-            if cpass.len() > 1 {
+            if cpass.len() > 1 && !progressed {
                 progressed |= self.try_evict(t, None, 2);
             }
             if progressed {
@@ -1106,27 +1108,83 @@ impl Runner {
             // damped by the existing stamps, then re-gate with fresh reads. Unbounded
             // ring clearing stays forbidden — it livelocks; a near-complete roll is
             // the case where each relief strictly shrinks the remaining work.
-            let candidate = (0..4u8)
-                .filter_map(|r| {
-                    let read = |q: Pos| self.grid.site(q);
-                    let bs =
-                        roll_blockers(&read, self.grid.topo, t, p, stub_cells, rule, axis, r)?;
-                    (!bs.is_empty() && bs.len() <= 2).then_some(bs)
+            // Arbitration: only the address-LOWEST ready pair in the neighborhood may
+            // run ring relief. A displacement cycle between two docks needs both to
+            // push; this leaves one pusher, and when it fires or truly parks the next
+            // lowest inherits the baton. (The same fixed tie-break that already breaks
+            // claim deadlocks, applied to relief requesters.)
+            let my_addr = t.min(p);
+            let mut lowest = true;
+            'scan: for dx in -2i32..=2 {
+                for dy in -2i32..=2 {
+                    for dz in -2i32..=2 {
+                        let q = add(t, (dx, dy, dz));
+                        if q >= my_addr || q == p {
+                            continue;
+                        }
+                        let Ok(qs) = self.grid.word(q).unpack() else { continue };
+                        let Cell::Agent { tag: qt, principal: qp, nursery: false, .. } = &qs.cell
+                        else {
+                            continue;
+                        };
+                        if !qt.is_consumer() {
+                            continue;
+                        }
+                        let m = step(q, qp.face);
+                        let Ok(ms) = self.grid.word(m).unpack() else { continue };
+                        if matches!(&ms.cell, Cell::Agent { tag: mt, principal: mp, nursery: false, .. }
+                            if mt.is_producer() && mp.face == qp.face.opp() && mp.lane == qp.lane)
+                        {
+                            lowest = false;
+                            break 'scan;
+                        }
+                    }
+                }
+            }
+            let candidate = lowest
+                .then(|| {
+                    (0..4u8)
+                        .filter_map(|r| {
+                            let read = |q: Pos| self.grid.site(q);
+                            let bs = roll_blockers(
+                                &read, self.grid.topo, t, p, stub_cells, rule, axis, r,
+                            )?;
+                            (!bs.is_empty() && bs.len() <= 2).then_some(bs)
+                        })
+                        .min_by_key(|bs| bs.len())
+                        .map(|bs| bs.into_iter().next().expect("nonempty"))
                 })
-                .min_by_key(|bs| bs.len())
-                .map(|bs| bs.into_iter().next().expect("nonempty"));
+                .flatten();
             let ring_relief_ran = candidate.is_some();
             if let Some((world, planned)) = candidate {
+                // This dock's combined ring (every roll's near-seed footprint) is
+                // off-limits as a receiver while its relief runs: relief drains.
+                self.relief_ring = {
+                    let layout = crate::blocklet::layout(rule);
+                    let mut v = vec![];
+                    for rr in 0..4u8 {
+                        for (off, _) in &layout.extras {
+                            let world = add(t, crate::cascade::rot_pos(*off, axis, rr));
+                            let near = DIRS
+                                .iter()
+                                .any(|d| step(world, *d) == t || step(world, *d) == p);
+                            if near && !v.contains(&world) {
+                                v.push(world);
+                            }
+                        }
+                    }
+                    v
+                };
                 let ws = self.grid.site(world);
                 let progressed = match &ws.cell {
                     Cell::Wire { .. } => {
                         self.note(|| format!(
                             "dock {t:?}/{p:?}: ring relief evicting the one blocker at {world:?}"
                         ));
-                        // Under the experiment, depth 1 (stamp-respecting) rather than
+                        // Depth 1 (stamp-respecting) rather than
                         // the stamp-bypassing top level: a just-displaced route must
                         // wear its stamp down before moving again.
-                        let depth = if self.relief_experiment { 1 } else { 2 };
+                        let depth = 1;
                         self.relief_root = Some(world);
                         let ok = self.try_evict(world, Some(&planned), depth);
                         self.relief_root = None;
@@ -1142,6 +1200,7 @@ impl Runner {
                     }
                     _ => false,
                 };
+                self.relief_ring.clear();
                 if progressed {
                     // Never dock in the same activation: the relief commit already
                     // woke this pair, and splitting keeps the dock commit at its
@@ -1168,7 +1227,7 @@ impl Runner {
             if !cpass.is_empty() {
                 progressed |= self.try_evict(t, None, 2);
             }
-            if !pass.is_empty() {
+            if !pass.is_empty() && !progressed {
                 progressed |= self.try_evict(p, None, 2);
             }
             if progressed {
@@ -1493,15 +1552,12 @@ impl Runner {
                 && cursor_ok(s, at)
                 && !s.claim
         };
-        // Under the experiment, displacement is ADDRESS-MONOTONE: receivers strictly
-        // above the shed cell in the global address order (the claim-deadlock order).
-        // Any displacement cycle would need a descent, so none exists — but the
-        // cell-level order also forbids every multi-cell shift whose span straddles
-        // the shed cell, which starves relief; the open design is a route-level
-        // potential. Off by default.
-        let unordered = !self.relief_experiment;
+        // A requesting dock's own ring is forbidden as a displacement receiver: its
+        // relief strictly DRAINS the ring instead of shuffling within it (the potential
+        // function). Empty outside a dock's relief, so ordinary evictions are free.
+        let ring = self.relief_ring.clone();
         let side_ok = move |s: &Site, at: Pos| {
-            (unordered || at > t)
+            !ring.contains(&at)
                 && match &s.cell {
                     Cell::Empty { .. } => unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim,
                     Cell::Wire { routes, .. } => {
@@ -1542,6 +1598,19 @@ impl Runner {
             matches!(&s.cell, Cell::Wire { reserved: None, routes, .. } if routes.len() >= 3)
                 && s.cursor.is_none()
                 && !s.claim
+        };
+        // Route-level displacement order: every displacement
+        // shape's PRIMARY direction must ascend a fixed global form (g = (1,3,9) —
+        // no face or diagonal can sum to zero), so a displacement cycle, which needs
+        // net-zero total movement, is impossible for ANY pair of requesters. Move
+        // granularity: a whole shifted segment counts as one move in one direction,
+        // so nothing straddles the order the way cell-level receivers did. The
+        // strictly-shortening shapes (splice, truncation) stay exempt.
+        let ascends = {
+            let g = self.relief_g;
+            move |delta: (i32, i32, i32)| -> bool {
+                g.0 * delta.0 + g.1 * delta.1 + g.2 * delta.2 > 0
+            }
         };
         let mut blockers: Vec<Pos> = vec![];
         // Bending a continuation's near end is the same one-word rewrite whether the
@@ -1652,16 +1721,14 @@ impl Runner {
             };
             let back1 = EndPt { face: d1.opp(), lane: r.a.lane };
             let back2 = EndPt { face: d2.opp(), lane: r.b.lane };
-            // A continuation swings when it is plain wire, or (under the experiment)
+            // A continuation swings when it is plain wire, or
             // when the route threads a live, unstamped agent's passthrough list (a
             // guest continuation — the pass-threaded knot class; nursery guests are
             // untouchable growth matter, and a stamped guest was bent recently: wait
             // out the damping).
-            let experiment = self.relief_experiment;
             let swingable = |s: &Site, at: Pos, back: EndPt| -> bool {
                 plain(s, at)
-                    || (experiment
-                        && matches!(&s.cell, Cell::Agent { pass, nursery: false, cooldown: 0, .. }
+                    || (matches!(&s.cell, Cell::Agent { pass, nursery: false, cooldown: 0, .. }
                             if pass.iter().any(|x| x.ends().contains(&back)))
                         && cursor_ok(s, at)
                         && !s.claim)
@@ -1836,7 +1903,7 @@ impl Runner {
                 if !side_ok(&us, u) && recursable(&us) && !blockers.contains(&u) {
                     blockers.push(u);
                 }
-                if side_ok(&us, u) {
+                if side_ok(&us, u) && ascends((u.0 - t.0, u.1 - t.1, u.2 - t.2)) {
                     for l1 in 0..2u8 {
                         for l2 in 0..2u8 {
                             let n1n = swing(&n1s, i1, back1, EndPt { face: d2, lane: l1 });
@@ -1872,6 +1939,9 @@ impl Runner {
                 // through the two faces perpendicular to both bend directions.
                 for w in DIRS {
                     if w == d1 || w == d1.opp() || w == d2 || w == d2.opp() {
+                        continue;
+                    }
+                    if !ascends(w.delta()) {
                         continue;
                     }
                     let (a, c, b) = (step(n1, w), step(u, w), step(n2, w));
@@ -1925,6 +1995,9 @@ impl Runner {
             } else {
                 // Straight segment: parallel shift through three side cells.
                 for q in d1.perp() {
+                    if !ascends(q.delta()) {
+                        continue;
+                    }
                     let (u1, u2, u3) = (step(n1, q), step(t, q), step(n2, q));
                     let (u1s, u2s, u3s) =
                         (self.grid.site(u1), self.grid.site(u2), self.grid.site(u3));

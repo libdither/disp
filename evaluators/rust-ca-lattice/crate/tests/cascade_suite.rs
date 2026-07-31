@@ -194,19 +194,12 @@ fn frontier_deep_reductions() {
             }
         }
     }
-    // The pinned floor: fork-dispatch and k-combinator complete end to end; k-chain and
-    // disp-t park validly in movement knots. Census of the parked grids (2026-07): every
-    // dock-ring route is a LIVE long-distance cable between agent ports (2236/2894
-    // routes, zero dead slack) — the knots are graph topology, not blocklet debris, so
-    // cold-slack contraction cannot clear them; live-cable relief can.
-    // REGRESSION (hand-packed A·F): s-rule-sharing used to complete; the 10-cell A·F
-    // layout seats the fresh T1/Pair in the dock's near ring, and the follow-on T1·S
-    // dock then faces the Pair agent on its args stub plus live cables filling the
-    // child stub — every roll lands a footprint cell on an unweaveable stub occupant.
-    // (Before the 6-cell T1·S pack this was a mid-growth wedge against the parked Nrm;
-    // it is now a clean declined dock, same knot class as k-chain/disp-t.) Floor
-    // lowered 3 -> 2 until live-cable relief lands.
-    assert!(complete >= 2, "frontier floor");
+    // The pinned floor: fork-dispatch, k-combinator, and K-CHAIN complete end to end
+    // (k-chain first completed 2026-07-31 when live-cable relief composed: guest
+    // swings + ring-drain + dock arbitration + the route-level displacement order).
+    // s-rule parks at its Dn·L dock after 6 fires (deeper each rung: 2 -> 5 -> 6);
+    // disp-t parks in walker convoys. Both parks are valid (geometry green, kick-dead).
+    assert!(complete >= 3, "frontier floor");
     println!("frontier: {complete}/{} deep terms complete", terms.len());
 }
 

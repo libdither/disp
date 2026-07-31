@@ -187,21 +187,28 @@ generic half becomes mechanism:
   audit holds the dock commit at 2 writes; the blocker scan joins the roll scan's r=11
   read-exception family). Moved every parked frontier term deeper (s-rule 2→5 fires,
   k-chain 7→10) without regressing anything; unbounded ring clearing stays forbidden.
-  The NEXT measured gap: routes threaded through AGENTS' passthrough lists refuse to
-  swing (Dn·L declines on pass-shedding whose both continuations live inside adjacent
-  agents' pass entries). PROBED 2026-07-31 (`Runner.relief_experiment`, off by
-  default): guest-continuation swings DO break that wall (s-rule 5→6 fires, reaching
-  its Dn·L dock) but destabilize displacement — without a termination order the
-  relief/dock retry loop pumps (k-chain 1,969 → 2.4M generations), and every
-  cell-level order tried has a different sacrifice profile: per-dock forbidden rings
-  don't compose (two docks cross-shuttle one route: a genuine soak livelock under
-  AddressOrdered), universal beside-any-dock forbidding starves corridors (k-chain
-  10→2), and address-monotone receivers (the claim-deadlock order) kill every
-  multi-cell shift whose span straddles the shed cell (s-rule 5→2). The open design
-  is a ROUTE-level potential: an order on displaced routes as wholes, not receiver
-  cells — then swings + monotone displacement compose and terminate. Still on the
-  table: footprint prefetch (claim the roll ring during approach), the single-lane
-  experiment (deletes the lane-conflict class at 2× cable width).
+  RESOLVED 2026-07-31, k-chain COMPLETES (frontier 3/5): live-cable relief is the
+  COMPOSITION of four disciplines, each killing one measured pump class — (1)
+  guest-continuation swings (routes threaded through agents' passthrough lists bend
+  like wire, one-word rewrite + guest stamp; nursery guests opaque) break the
+  pass-threaded knot; (2) the requesting dock's ring is forbidden as a displacement
+  receiver (relief strictly DRAINS rings — kills single-dock ping-pong); (3) only the
+  address-lowest ready pair in the neighborhood runs ring relief (cycles need two
+  pushers; the claim-deadlock order leaves one); (4) the ROUTE-LEVEL displacement
+  order: every eviction shape's primary direction must ascend a fixed linear form
+  (`Runner.relief_g`, components distinct powers of 3 so no face or diagonal sums to
+  zero) — a cycle needs net-zero total displacement, so none exists for ANY pair of
+  requesters, at move granularity (whole shifted segments never straddle the order
+  the way cell-level receivers did; splice/truncation stay exempt as strictly
+  shortening). One relief primitive per activation throughout (locality audit holds
+  fabric at the single-bracket footprint). The form's sign choice trades terms
+  (chaotic margin); g=(−1,−3,9) chosen by aggregate: zero livelocks under every form
+  swept, soak 99/160 under all, cooldown-off livelocks 21→6 (the order independently
+  damps ping-pong). Cell-level orders measured and REJECTED on the way: per-dock
+  forbidding alone doesn't compose (cross-dock shuttle), universal beside-any-dock
+  starves corridors, per-receiver address-monotone kills straddling shifts. Still on
+  the table for s-rule/disp-t's remaining parks: footprint prefetch, the single-lane
+  experiment.
 - **disp-t knot**: walker convoys; less characterized.
 - **Relief as bounded token chains**, depth as a synthesis constant.
 - **Teleport abort leg.**
