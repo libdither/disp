@@ -683,6 +683,23 @@ Tree : ShallowType := ({
 })
 tree_rec := {B} -> elim_of Tree B
 
+GoodGate := {T} -> {
+  let g := T.gate
+  if (is_leaf g) { false } else {
+    let B := {_} -> inj "@GoodGate" T
+    let tys := g T B
+    let pis := fix ({self, l, end} -> if (is_leaf l) { end } else { Pi Guard (pair_fst l) ({_} -> self (pair_snd l) end) })
+    and (Pi Guard T ({x} -> pis tys (B x)) (elim_of T B))
+        (list_all ({ty} -> not (Pi Guard AnyTree ({_} -> ty) ({j} -> j))) tys)
+  }
+}
+test GoodGate Nat = true
+test GoodGate Bool = true
+test GoodGate Tree = true
+test GoodGate (Eq Nat 2 3) = true
+test GoodGate AnyTree = false
+test GoodGate ShallowType = false
+
 list_len_t : Fn Tree ({_} -> Nat) := {xs} -> tree_rec ({_} -> Nat) xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
 list_snoc_t : Fn Tree ({_} -> Fn Tree ({_} -> Tree)) := {xs, x} -> tree_rec ({_} -> Tree) xs (cons x nil) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons l ir)
 list_map_t : Fn (Fn Tree ({_} -> Tree)) ({_} -> Fn Tree ({_} -> Tree)) := {f, xs} -> tree_rec ({_} -> Tree) xs nil ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons (f l) ir)

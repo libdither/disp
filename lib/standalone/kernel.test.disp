@@ -543,3 +543,18 @@ test Fn SN ({_} -> SN) sn_pred = true
 test children SN sz = nil
 test children SLN (scons 1 (scons 2 snil)) = cons (scons 2 snil) nil
 test children SOrd (op2 oz (op2 oz oz)) = cons oz (cons (op2 oz oz) nil)
+
+// GoodGate: the behavioral certification of a declaration's elimination face.
+// Coherence probe = the type's OWN blessed eliminator must inhabit the
+// gate-derived obligation chain at an OPAQUE motive (a mint, so a gate that
+// fakes motive applications with fixed types can't ride along); junk probe =
+// no gate slot may admit a raw AnyTree-mint (a top-typed slot is a gate that
+// checks nothing, the lying-gate adversary).
+test GoodGate SN = true
+test GoodGate SLN = true
+test GoodGate SOrd = true
+test GoodGate SFin = true
+test GoodGate (List Nat) = true
+test GoodGate Row = true
+LieGate := ({ #recognize := {_self, _v} -> true, gate := {_Ind, _B} -> cons AnyTree nil, elim := {_self, _v, c} -> c })
+test GoodGate LieGate = false
