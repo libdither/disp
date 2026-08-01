@@ -309,6 +309,19 @@ chosen by distribution rather than by whichever term was looked at last. Today:
   cells, inside the move budget. It must carry the guard the session's three pumps all
   taught: only an UNDEMANDED guest may be displaced, or its own demand marches it back
   and the exchange becomes a shuttle.
+  Know its ceiling before building it. After the exchange, the walker's aux trails cross
+  the shared edge backwards and EVERY one of the guest's ports must cross it forwards
+  (the guest's cables all continue through the cell it left), and a face carries two
+  lanes. So the swap is representable only when `(arity(walker) − 1) + arity(guest) ≤ 2`:
+  an arity-1 walker past a guest of arity ≤ 2, or an arity-2 walker past an arity-1
+  guest, and never an arity-3 walker. The same two-lane budget is why the existing
+  symmetric swap quietly tops out at arity 2 on both sides. The census counts 21 of 31
+  blocked agents at arity 2+, so this rung is a real but PARTIAL cover, and the honest
+  expectation is single-digit terms rather than the whole class. The alternative for the
+  cases it cannot reach is to make the sidestep usable again in the shove path: it fails
+  today only because the guest's principal re-anchors into the contested cell and the
+  walker's own heat then marches it home, which is a one-bit damping problem
+  (`cooldown` stamps an agent for a single tick) rather than a representability one.
 - **13 declined docks** — see the ring-drain note in the disp-t entry: their traces are
   dominated by "in the requesting dock's ring", the per-roll relaxation unwedges 8 of
   them but they mostly re-park a step later and roll switching starts to oscillate. The
