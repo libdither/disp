@@ -111,9 +111,52 @@ Tearing down is sound only for constructor-headed terms, where trees are free, a
 for stuck applications of abstract functions. The distinction is easy to enforce because a
 stuck application is a hypothesis with an observation history, not a fork.
 
-What it unlocks is the capability the rest of the plan exists for: induction proofs of
-function equivalence. The flagship pin is a proof by induction that adding zero is the
-identity, whose step obligation reduces to one congruence step.
+What it unlocks is equations between constructor spines: from a proof that two values are
+equal, an equation between any shared constructor context around them follows. That part
+is done and pinned on both walking tiers.
+
+### The barrier this step uncovered
+
+The intended flagship, a proof by induction that adding zero is the identity, does not
+reach congruence at all. It is blocked earlier, by type formation.
+
+A dependent codomain or motive that computes on its bound variable is built by ordinary
+evaluation, and ordinary evaluation mishandles a hypothesis in two ways. Applying one
+saturates the hypothesis marker and yields its stored payload record, so `f n` and
+`f (succ m)` evaluate to the same tree and a codomain mentioning them collapses to
+something trivially true. Eliminating one destructures the hypothesis encoding, so
+`add k zero` becomes garbage rather than a stuck term. Both are measured, and both
+predate this plan: they are the documented raw-tier behaviors, one recorded as
+"raw application saturates the marker, inert" and the other as "the raw tier stays
+encoding-transparent by design".
+
+Individually they were harmless, because every motive used so far was constant or a bare
+constructor application. Together they mean two things. Every proof that needs computation
+in a motive is unreachable, which is most of what an equality layer is for. And worse, a
+type whose formation touches a hypothesis silently becomes a different type, so a
+certificate can look like it proves something it does not.
+
+Two fixes are on the table and both are architectural.
+
+The first makes evaluation itself hypothesis-aware: the eliminator marker and the
+hypothesis marker produce stuck values instead of garbage and payload-saturation. This is
+the normalization-by-evaluation architecture, where the evaluator produces neutrals and the
+checker never has to intervene, and it would likely subsume the per-tier machinery that
+exists to do this today (the guard tier's shim and the abstract interpreter's chain state).
+The risks are that it changes pinned raw-tier semantics, and that marker saturation is
+load-bearing elsewhere: the effect former's gate relies on applying a hypothesis
+continuation being inert.
+
+The second walks type formation: telescope continuations are instantiated through the
+tier's own application rather than raw, which is one new operation in the checking
+vocabulary. It is more local for the checking side, but it does not reach the shared
+respond face, which also applies motives raw and is deliberately tier-agnostic, and it puts
+type-forming code under interpretation, which is the cost the live kernel's token
+mechanism exists to bound.
+
+Choosing between them is the next decision, and it should be made deliberately rather than
+discovered, because it determines whether the equality layer is built on an evaluator that
+respects hypotheses or on a checker that compensates for one that does not.
 
 ## Step 2: quotients and set-level higher inductive types
 
