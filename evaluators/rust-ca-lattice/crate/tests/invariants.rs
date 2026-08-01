@@ -273,17 +273,16 @@ fn nursery_is_load_bearing() {
     }
     println!("nursery ablation: {} violation(s) across {total} runs", violations.len());
     // STATUS LEDGER, pinned so any drift trips. 2026-07-30: 4-6/80 violations
-    // (Lifo/tree no-quiescence witnesses) — load-bearing. 2026-07-31: the reel landed
-    // (arity-1 erasers walk) and the witnesses vanished (0/80) — those runaways were
-    // exactly the states erasure traffic now cleans up. The classification is
-    // currently UNPROVEN on this corpus: the nursery bit is a candidate capacity win
-    // pending a deliberate adversarial construction (a producer docking mid-growth
-    // against a half-wired seat). If violations reappear, restore load-bearing in
-    // AC_IDEA with the new witness; if the construction proves droppable, the bit
-    // goes to capacity. Either way, update the pin AND the doc together.
-    assert_eq!(
-        violations.len(),
-        0,
-        "nursery ablation violation count moved — re-litigate the bit-class in AC_IDEA"
+    // (Lifo/tree no-quiescence witnesses) — load-bearing. 2026-07-31 (reel): the
+    // witnesses vanished (0/80), bit provisionally UNPROVEN. 2026-07-31 (endpoint
+    // swings): witnesses RETURNED — disp-t [Fifo/tree] and [Lifo/tree] quiesce
+    // seed-free but no longer project (grid 9 live vs shadow 13). Mechanism: the
+    // swingable check trusts the nursery bit, so with the bit ablated a half-grown
+    // agent looks like fair relief matter and gets its ports re-anchored mid-growth.
+    // LOAD-BEARING; the corpus found its own witness, no adversarial construction
+    // needed. Pinned as a floor (the exact count is schedule-chaotic).
+    assert!(
+        !violations.is_empty(),
+        "nursery ablation found no witness — re-litigate the bit-class in AC_IDEA"
     );
 }

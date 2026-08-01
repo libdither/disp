@@ -75,9 +75,11 @@ fn soak_random_terms_never_wrong() {
         }
     }
     println!("soak: {complete} complete, {parked} parked, {skipped} skipped of {TERMS}");
-    // Aggregate floor, pinned conservatively below measured (99/160 on 2026-07-30 after
-    // the livelock fixes; chaotic-margin discipline: robust aggregates only, schedule
-    // jitter must not flap the pin). Raise it as relief rungs land; never hand-tune it
-    // down.
-    assert!(complete >= 85, "soak completion floor: {complete}");
+    // Aggregate floor, pinned conservatively below measured (107-109/160 across
+    // 2026-08-01 variants of the endpoint-swings landing: swings + consumer shove +
+    // refusal-only stamps + ordered contraction/sidesteps + the demanded-guest and
+    // futile-shed shove guards; was 99 before; chaotic-margin discipline: robust
+    // aggregates only, schedule jitter must not flap the pin). Raise it as relief
+    // rungs land; never hand-tune it down.
+    assert!(complete >= 100, "soak completion floor: {complete}");
 }

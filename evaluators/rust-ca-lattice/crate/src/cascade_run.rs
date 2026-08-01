@@ -73,9 +73,13 @@ pub struct Runner {
     /// Mechanism ablation: when false, grown agents skip the nursery (negative control —
     /// the nursery is classified correctness-of-mechanism, so this must break things).
     pub nursery_discipline: bool,
-    /// Mutation count at the last quiescence-edge sweep (fixpoint guard: an unchanged
-    /// count means re-waking the cold wires would refuse identically).
+    /// Routing epoch at the last quiescence-edge sweep (fixpoint guard: an unchanged
+    /// epoch means no structural change since, so re-waking the cold wires would
+    /// refuse identically; non-structural writes — stamp decay, χ — must not re-arm
+    /// the sweep or a decay chain at the edge costs a whole-grid pass per notch).
     edge_swept_at: u64,
+    /// Activation counter for the derivational-heat refresh throttle (sync every 64).
+    sync_tick: u32,
     /// Cells committed by growth, attributed to the growing rule (clump-rule evidence).
     pub grown_by_rule: BTreeMap<u8, u64>,
     /// When Some, every activation's write-set size and read radius are recorded per op
@@ -120,6 +124,7 @@ impl Runner {
             relief_g: (-1, -3, 9),
             relief_ring: Vec::new(),
             edge_swept_at: u64::MAX,
+            sync_tick: 0,
             cooldown_stamps: true,
             nursery_discipline: true,
             grown_by_rule: BTreeMap::new(),
@@ -185,13 +190,13 @@ impl Runner {
         let p = match self.next_pos() {
             Some(p) => p,
             None => {
-                if self.grid.mutations == self.edge_swept_at {
-                    return None; // genuinely quiescent: the last sweep changed nothing
+                if self.grid.route_epoch == self.edge_swept_at {
+                    return None; // genuinely quiescent: the last sweep moved no matter
                 }
-                self.edge_swept_at = self.grid.mutations;
+                self.edge_swept_at = self.grid.route_epoch;
                 // Wake EVERYTHING once: quiescence means a full re-examination
                 // changes nothing (which makes the kick invariant hold by
-                // construction). Re-armed only by real commits, so a run pays a
+                // construction). Re-armed only by structural commits, so a run pays a
                 // handful of these, each bounded by the fixpoint guard.
                 let live: Vec<Pos> = self.grid.cells.keys().copied().collect();
                 for p in live {
@@ -290,12 +295,22 @@ impl Runner {
     /// One cell activation (public so the census can probe a parked cell directly).
     pub fn activate(&mut self, p: Pos) {
         // Derivational signal backends refresh their fixpoint here (no-op on an
-        // unchanged routing epoch); newly hot cells get the wake the heat wave would
-        // have carried — a cold-gated walker learns its cable was demanded from this.
-        let newly_hot = self.signals.sync(&self.grid);
-        for w in newly_hot {
-            self.wake_around(w);
+        // unchanged routing epoch), throttled to one rebuild per max(64, cells/8)
+        // activations: the rebuild is O(grid) and deep runs bump the epoch on every
+        // transport commit, so unthrottled refresh made the gate corpus quadratic.
+        // The stale window is the same bounded demand over-approximation the
+        // worklist backend carries by design (heat persists until rewired); the
+        // interval is a function of grid state, so runs stay deterministic. Newly
+        // hot cells get the wake the heat wave would have carried — a cold-gated
+        // walker learns its cable was demanded from this.
+        if self.sync_tick == 0 {
+            let newly_hot = self.signals.sync(&self.grid);
+            for w in newly_hot {
+                self.wake_around(w);
+            }
         }
+        let interval = 64.max(self.grid.cells.len() as u32 / 8);
+        self.sync_tick = (self.sync_tick + 1) % interval;
         let site = self.grid.site(p);
         if site.claim {
             return;
@@ -487,25 +502,55 @@ impl Runner {
         // A guest agent parked at the head of my wire, with demand burning beyond it
         // (read through any further guests; a stale-safe heuristic), is shoved onward.
         // Its own walk or sidestep validates itself; this walker waits for the wake.
+        // Producer squatters may answer with their own forced walk; consumer squatters
+        // sidestep only (consumers never walk), which unhooks the terminal hairpin
+        // where a cable's final approach threads the destination-adjacent consumer.
         if !forced {
             let mut shove_guest = false;
-            if let Cell::Agent { tag: gtag, pass: gpass, nursery: false, cooldown: 0, .. } =
-                &target.cell
+            let mut guest_walks = false;
+            if let Cell::Agent {
+                tag: gtag, principal: gprin, pass: gpass, nursery: false, cooldown: 0, ..
+            } = &target.cell
             {
-                if gtag.is_producer() && target.cursor.is_none() {
+                if target.cursor.is_none() {
                     let enter = EndPt { face: m.opp(), lane: principal.lane };
                     if let Some(far) = gpass.iter().find_map(|r| r.through(enter)) {
-                        shove_guest = self.demand_at(
-                            step(t, far.face),
-                            EndPt { face: far.face.opp(), lane: far.lane },
-                        );
+                        // A walking guest with live demand of its OWN is traffic, not
+                        // a squatter: it will move itself, and shoving it only buys a
+                        // sidestep it walks straight back from — the net-zero shuttle
+                        // exact-instant heat sustains (the walk is order-exempt, so
+                        // the displacement order cannot bar it). Shove only guests
+                        // with nothing of their own to act on.
+                        let self_demanded = (gtag.is_producer() || *gtag == Tag::Eps)
+                            && self.demand_at(
+                                step(t, gprin.face),
+                                EndPt { face: gprin.face.opp(), lane: gprin.lane },
+                            );
+                        shove_guest = !self_demanded
+                            && self.demand_at(
+                                step(t, far.face),
+                                EndPt { face: far.face.opp(), lane: far.lane },
+                            );
+                        guest_walks = gtag.is_producer();
                     }
                 }
             }
             if shove_guest {
                 self.note(|| format!("walk {p:?}: shoving guest at {t:?} off my hot wire"));
                 let ts = self.grid.site(t);
-                let _ = self.try_walk_gated(t, &ts, true) || self.try_sidestep(t, &ts);
+                // Walk (producers), else sidestep, else shed the squatter's own
+                // passthrough — an over-full agent (three ports plus a guest route)
+                // cannot vacate a legal trail cell until the guest route is gone. The
+                // shed exists only to enable that vacating walk, so it fires only
+                // when the guest's principal target is plain wire (a guest that
+                // cannot walk at all sheds into a route the shortening moves pull
+                // straight back — a net-zero toggle exact-instant heat sustains).
+                let guest_could_walk = matches!(&ts.cell, Cell::Agent { principal, .. }
+                    if matches!(self.grid.site(step(t, principal.face)).cell,
+                        Cell::Wire { reserved: None, .. }));
+                let _ = (guest_walks && self.try_walk_gated(t, &ts, true))
+                    || self.try_sidestep(t, &ts)
+                    || (guest_could_walk && self.try_evict(t, None, 1));
                 return false;
             }
         }
@@ -1672,21 +1717,44 @@ impl Runner {
             }
         };
         let mut blockers: Vec<Pos> = vec![];
-        // Bending a continuation's near end is the same one-word rewrite whether the
-        // route lives in a wire cell or threads an agent's passthrough list. A bent
-        // guest gets the cooldown stamp: its pass may not be bent again until it
-        // decays (the same anti-ping-pong damping displaced wire routes carry).
+        // A continuation is either a ROUTE entry (wire, or threading an agent's
+        // passthrough list) or a terminal PORT attachment (the displaced route ends at
+        // an agent's own principal or aux). Bending either is one word rewrite; bent
+        // agents get the cooldown stamp (anti-ping-pong damping, as displaced wire
+        // routes carry theirs).
+        #[derive(Clone, Copy, PartialEq)]
+        enum Cont {
+            Route(usize),
+            Port,
+        }
         let stamp1 = self.stamp(1);
-        let swing = move |s: &Site, idx: usize, from: EndPt, to: EndPt| -> Site {
+        let swing = move |s: &Site, cont: Cont, from: EndPt, to: EndPt| -> Site {
             let mut ns = s.clone();
-            match &mut ns.cell {
-                Cell::Wire { routes, .. } => {
+            match (&mut ns.cell, cont) {
+                (Cell::Wire { routes, .. }, Cont::Route(idx)) => {
                     let far = routes[idx].through(from).expect("continuation endpoint");
                     routes[idx] = Route::new(far, to);
                 }
-                Cell::Agent { pass, cooldown, .. } => {
+                (Cell::Agent { pass, cooldown, .. }, Cont::Route(idx)) => {
                     let far = pass[idx].through(from).expect("guest continuation endpoint");
                     pass[idx] = Route::new(far, to);
+                    *cooldown = stamp1;
+                }
+                (Cell::Agent { tag, principal, aux, cooldown, .. }, Cont::Port) => {
+                    // Endpoint swing: re-anchor the agent's own port. Exposure
+                    // legality re-validates at pack, like every other commit.
+                    if *principal == from {
+                        *principal = to;
+                    } else {
+                        for k in 0..tag.arity().saturating_sub(1) {
+                            if aux[k] == from {
+                                aux[k] = to;
+                            }
+                        }
+                        if tag.arity() == 2 {
+                            aux[1] = aux[0]; // unused entry mirrors aux[0] by convention
+                        }
+                    }
                     *cooldown = stamp1;
                 }
                 _ => {}
@@ -1780,15 +1848,18 @@ impl Runner {
             };
             let back1 = EndPt { face: d1.opp(), lane: r.a.lane };
             let back2 = EndPt { face: d2.opp(), lane: r.b.lane };
-            // A continuation swings when it is plain wire, or
-            // when the route threads a live, unstamped agent's passthrough list (a
-            // guest continuation — the pass-threaded knot class; nursery guests are
-            // untouchable growth matter, and a stamped guest was bent recently: wait
-            // out the damping).
+            // A continuation swings when it is plain wire, or when it meets a live,
+            // unstamped agent — threading its passthrough list (guest continuation) or
+            // terminating on one of its own ports (endpoint swing). Nursery agents are
+            // untouchable growth matter; a stamped agent was bent recently: wait out
+            // the damping.
             let swingable = |s: &Site, at: Pos, back: EndPt| -> bool {
                 plain(s, at)
-                    || (matches!(&s.cell, Cell::Agent { pass, nursery: false, cooldown: 0, .. }
-                            if pass.iter().any(|x| x.ends().contains(&back)))
+                    || (matches!(&s.cell,
+                            Cell::Agent { tag, principal, aux, pass, nursery: false, cooldown: 0, .. }
+                            if pass.iter().any(|x| x.ends().contains(&back))
+                                || *principal == back
+                                || (0..tag.arity().saturating_sub(1)).any(|k| aux[k] == back))
                         && cursor_ok(s, at)
                         && !s.claim)
             };
@@ -1854,27 +1925,32 @@ impl Runner {
                 }
                 continue;
             }
-            let cont_of = |s: &Site| -> Option<Vec<Route>> {
+            let cont_at = |s: &Site, back: EndPt| -> Option<Cont> {
                 match &s.cell {
-                    Cell::Wire { routes, .. } => Some(routes.clone()),
-                    Cell::Agent { pass, nursery: false, .. } => Some(pass.clone()),
+                    Cell::Wire { routes, .. } => {
+                        routes.iter().position(|x| x.ends().contains(&back)).map(Cont::Route)
+                    }
+                    Cell::Agent { tag, principal, aux, pass, nursery: false, .. } => pass
+                        .iter()
+                        .position(|x| x.ends().contains(&back))
+                        .map(Cont::Route)
+                        .or_else(|| {
+                            (*principal == back
+                                || (0..tag.arity().saturating_sub(1)).any(|k| aux[k] == back))
+                                .then_some(Cont::Port)
+                        }),
                     _ => None,
                 }
             };
-            let (Some(r1s), Some(r2s)) = (cont_of(&n1s), cont_of(&n2s)) else {
+            let (Some(c1), Some(c2)) = (cont_at(&n1s, back1), cont_at(&n2s, back2)) else {
+                self.note(|| format!("evict {t:?} r{i}: no continuation at {n1:?}/{n2:?}"));
                 continue;
             };
-            let Some(i1) = r1s.iter().position(|x| x.ends().contains(&back1)) else {
-                self.note(|| format!("evict {t:?} r{i}: no continuation in {n1:?}"));
-                continue;
-            };
-            let Some(i2) = r2s.iter().position(|x| x.ends().contains(&back2)) else {
-                self.note(|| format!("evict {t:?} r{i}: no continuation in {n2:?}"));
-                continue;
-            };
-            if !allow_hot
-                && (self.signals.hot(&self.grid, n1, i1) || self.signals.hot(&self.grid, n2, i2))
-            {
+            // Terminal ports carry no slot heat; the t-side hot gate already vetted the
+            // cable itself.
+            let hot1 = matches!(c1, Cont::Route(k) if self.signals.hot(&self.grid, n1, k));
+            let hot2 = matches!(c2, Cont::Route(k) if self.signals.hot(&self.grid, n2, k));
+            if !allow_hot && (hot1 || hot2) {
                 self.note(|| format!("evict {t:?} r{i}: hot continuation (cold pass)"));
                 continue;
             }
@@ -1914,6 +1990,10 @@ impl Runner {
                 // Splice the fold out at that neighbor (its two continuations become one
                 // route) and drop the fold here; a same-route continuation is a closed
                 // two-cell loop and vanishes entirely. Strictly length-decreasing.
+                // splice_host guarantees a wire neighbor, so both conts are routes.
+                let (Cont::Route(i1), Cont::Route(i2)) = (c1, c2) else {
+                    continue;
+                };
                 let n_reserved = match &n1s.cell {
                     Cell::Wire { reserved, .. } => *reserved,
                     _ => None,
@@ -1965,8 +2045,8 @@ impl Runner {
                 if side_ok(&us, u) && ascends((u.0 - t.0, u.1 - t.1, u.2 - t.2)) {
                     for l1 in 0..2u8 {
                         for l2 in 0..2u8 {
-                            let n1n = swing(&n1s, i1, back1, EndPt { face: d2, lane: l1 });
-                            let n2n = swing(&n2s, i2, back2, EndPt { face: d1, lane: l2 });
+                            let n1n = swing(&n1s, c1, back1, EndPt { face: d2, lane: l1 });
+                            let n2n = swing(&n2s, c2, back2, EndPt { face: d1, lane: l2 });
                             let un = side_add(&us, Route::new(
                                 EndPt { face: d2.opp(), lane: l1 },
                                 EndPt { face: d1.opp(), lane: l2 },
@@ -2020,8 +2100,8 @@ impl Runner {
                     'wlanes: for lanes in 0..16u8 {
                         let (l1, l2, l3, l4) =
                             (lanes & 1, (lanes >> 1) & 1, (lanes >> 2) & 1, (lanes >> 3) & 1);
-                        let n1n = swing(&n1s, i1, back1, EndPt { face: w, lane: l1 });
-                        let n2n = swing(&n2s, i2, back2, EndPt { face: w, lane: l4 });
+                        let n1n = swing(&n1s, c1, back1, EndPt { face: w, lane: l1 });
+                        let n2n = swing(&n2s, c2, back2, EndPt { face: w, lane: l4 });
                         let an = side_add(&a_s, Route::new(
                             EndPt { face: w.opp(), lane: l1 },
                             EndPt { face: d2, lane: l2 },
@@ -2075,8 +2155,8 @@ impl Runner {
                     'lanes: for lanes in 0..16u8 {
                         let (l1, l2, l3, l4) =
                             (lanes & 1, (lanes >> 1) & 1, (lanes >> 2) & 1, (lanes >> 3) & 1);
-                        let n1n = swing(&n1s, i1, back1, EndPt { face: q, lane: l1 });
-                        let n2n = swing(&n2s, i2, back2, EndPt { face: q, lane: l4 });
+                        let n1n = swing(&n1s, c1, back1, EndPt { face: q, lane: l1 });
+                        let n2n = swing(&n2s, c2, back2, EndPt { face: q, lane: l4 });
                         let u1n = side_add(&u1s, Route::new(
                             EndPt { face: q.opp(), lane: l1 },
                             EndPt { face: d1.opp(), lane: l2 },

@@ -26,6 +26,7 @@ use rust_ca_lattice::cascade::{rot_cell, rot_dir, Cell, EndPt, Grid2, Route, Sit
 use rust_ca_lattice::cascade_run::{load_net, load_net_tree, Discipline, Runner};
 use rust_ca_lattice::cascade_trace::trace_run;
 use rust_ca_lattice::lattice::DIRS;
+use rust_ca_lattice::signal::SignalBackend;
 use rust_ca_lattice::lattice::{step, Pos, Topo};
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, ap, f2, nf, s, show, Fuel, Term};
@@ -221,6 +222,7 @@ fn main() {
     let mut churn = false;
     let mut tree = false;
     let mut steady = 0u32;
+    let mut backend = SignalBackend::worklist();
     let mut trace_path: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -241,6 +243,14 @@ fn main() {
             "--triage" => triage = true,
             "--churn" => churn = true,
             "--tree" => tree = true,
+            "--backend" => {
+                backend = match args.next().as_deref() {
+                    Some("worklist") => SignalBackend::worklist(),
+                    Some("components") => SignalBackend::components(),
+                    Some("dense") => SignalBackend::dense(),
+                    other => panic!("--backend worklist|components|dense, got {other:?}"),
+                };
+            }
             "--steady" => steady = args.next().and_then(|v| v.parse().ok()).expect("--steady N"),
             "--trace" => trace_path = Some(args.next().expect("--trace <out.js>")),
             _ => which = Some(a),
@@ -283,6 +293,7 @@ fn main() {
         load_net(&shadow, Topo::Full3D).expect("net embeds")
     };
     let mut r = Runner::new(grid, shadow, discipline);
+    r.signals = backend;
     // --churn replaces the plain run with the pump playbook: warm up, then count which
     // cells host mutating activations on the plateau, then capture the decision notes —
     // the exact loop otherwise hand-written per livelock hunt.

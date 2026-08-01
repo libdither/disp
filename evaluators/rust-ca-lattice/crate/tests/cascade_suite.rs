@@ -194,12 +194,13 @@ fn frontier_deep_reductions() {
             }
         }
     }
-    // The pinned floor: fork-dispatch, k-combinator, and K-CHAIN complete end to end
-    // (k-chain first completed 2026-07-31 when live-cable relief composed: guest
-    // swings + ring-drain + dock arbitration + the route-level displacement order).
-    // s-rule parks at its Dn·L dock after 6 fires (deeper each rung: 2 -> 5 -> 6);
-    // disp-t parks in walker convoys. Both parks are valid (geometry green, kick-dead).
-    assert!(complete >= 3, "frontier floor");
+    // The pinned floor: fork-dispatch, k-combinator, K-CHAIN (first completed
+    // 2026-07-31 when live-cable relief composed), and the S-SHARING RULE (first
+    // completed 2026-08-01 when endpoint swings landed and the futile-shed guard
+    // removed the churn squatting on its dock approach; 2 -> 5 -> 6 -> 9 fires, then
+    // through). disp-t parks in walker convoys at its T1·F comb dock — the valid park
+    // (geometry green, kick-dead) that footprint prefetch targets.
+    assert!(complete >= 4, "frontier floor");
     println!("frontier: {complete}/{} deep terms complete", terms.len());
 }
 

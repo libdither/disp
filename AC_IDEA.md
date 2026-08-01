@@ -35,13 +35,15 @@ progress counter — parked means genuinely wedged, never forgotten.
 - **Words are 64 bits, layout frozen.** On silicon the claim bit and the reservation
   marks are *arbiter state*, not word bits. Know the bit classes before spending:
   semantic core (kind, routes, agent endpoints, cursor pc) · correctness-of-mechanism
-  (nursery — keeps un-resolved growth inert; its 2026-07-30 witnesses (Lifo/tree
-  no-quiescence, 4-6/80) VANISHED once the reel landed, so the classification is
-  currently unproven and the bit is a candidate capacity win pending an adversarial
-  construction — the ablation pin tracks the count; AND cooldown — measured 2026-07-30:
-  dropping the stamps livelocks 21/48 random terms in displacement ping-pong, so it
-  guards quiescence, not comfort; answers stay right either way) · capacity (3rd route,
-  pc width) · heuristics (χ only —
+  (nursery — keeps un-resolved growth inert; LOAD-BEARING, re-proven 2026-07-31 when
+  endpoint swings landed: with the bit ablated a half-grown agent looks swingable and
+  relief re-anchors its ports mid-growth — disp-t quiesces seed-free but no longer
+  projects; the ablation pin holds the witness as a floor) · capacity (3rd route,
+  pc width) · heuristics (cooldown — reclassified 2026-07-31: with the route-level
+  displacement order + the quiescence-edge sweep + ordered contraction/sidesteps,
+  cooldown-off livelocks fell 21 → 6 → ZERO, so the stamps are a droppable pacing
+  heuristic again, termination carried by the order; answers stay right either way;
+  AND χ —
   and χ is currently inert in the serial driver: nothing pumps it since the pressure-wave
   removal; it re-enters with the demand-priority rung or its bits go to capacity).
   `tests/invariants.rs` pins all of this (ablation lanes + the negative control).
@@ -207,29 +209,40 @@ generic half becomes mechanism:
   damps ping-pong). Cell-level orders measured and REJECTED on the way: per-dock
   forbidding alone doesn't compose (cross-dock shuttle), universal beside-any-dock
   starves corridors, per-receiver address-monotone kills straddling shifts. Still on
-  the table for s-rule/disp-t's remaining parks: footprint prefetch, the single-lane
+  the table for disp-t's remaining park: footprint prefetch, the single-lane
   experiment.
 - **disp-t knot**: walker convoys; the declined dock is T1·F (the 56-cell comb) whose
   rings exceed decline-time relief's blocker bound — footprint prefetch's target case.
-- **Endpoint swings + stamp redesign (probed 2026-07-31, PARKED as
-  `relief_endpoint_swings.wip.patch` beside the player):** re-anchoring a cable's
-  terminal port attachment (the same one-word swing as guest passes) plus consumer
-  shove and the squatter pass-shed unlocked s-rule 6→9 fires and soak 99→109 — but
-  stabilizing it found, in order: the WEAR-branch of stamped evictions is a pump motor
-  (wear-as-progress + wake keeps any adjacent requester's retry loop alive; fix:
-  stamps refuse plainly and self-decay with a self-wake, expiry wakes the
-  neighborhood); with damping gone, cooldown-off livelocks measured ZERO (the
-  displacement order alone carries termination — the bit-class flips back to
-  heuristic); contraction must obey the displacement order too (pull only ascending g,
-  else relief-vs-contraction pumps — soak term 95), which then narrows slack
-  discovery below the wake fabric's radius-2 reach (kick trips on enablement at
-  anchor cells) and wants the sweep back as a QUIESCENCE-EDGE full re-examination to
-  mutation fixpoint (making the kick invariant true by construction); sidesteps are
-  displacement and need the order as well. Unresolved at park time: soak term 26
-  (AddressOrdered) still exhausts budget at the edge and the competing-seeds fixture
-  drops to one fire (the order's direction sacrifice may genuinely bar the loser's
-  re-fit on that walled geometry — decide whether the fixture's claim survives ordered
-  relief). Resume from the patch; every finding above is independently useful.
+- **Endpoint swings + termination redesign — LANDED 2026-08-01 (two commits):**
+  the S-SHARING RULE COMPLETES (frontier 4/5; 6→9 fires and then through once the
+  futile-shed guard landed), soak 99→107. The termination unit (stamps + sweep + order
+  extensions, measured mutually dependent so landed together): the WEAR branch of
+  stamped evictions was a pump motor (wear-as-progress + wake kept any adjacent
+  requester's retry loop alive) — stamps now refuse plainly, self-decay on the
+  stamped cell's own activations, and expiry wakes the neighborhood; contraction and
+  sidesteps are displacements and obey the g-order (pull/step only ascending, else
+  relief-vs-contraction and sidestep-duel pumps); slack enabled at radius 2 (anchor
+  cells) is found by the QUIESCENCE-EDGE sweep — when the worklist drains, wake
+  everything once, re-armed only by real commits, making the kick invariant true by
+  construction; and a hopeless growth merge never reserves (pre-check + relief,
+  mutation-free refusal), else the reserve/release retry re-arms the sweep forever
+  (soak term 26's 20M-activation "livelock" was this — a genuine wedge that couldn't
+  park). The capability unit: terminal-port re-anchoring (the same one-word swing as
+  guest passes, agents' own principal/aux ends), consumer squatters sidestep off hot
+  wires (consumers never walk), and an over-full squatter sheds its own passthrough
+  as the shove fallback. Both earlier reds resolved: term 26 parks in 52 generations,
+  competing-seeds fires both (the futile reserve cycle, not the order, was starving
+  the loser's re-fit). The derivational backends then found one more hole the
+  worklist's staggered heat had been masking: shoving a guest that has live demand of
+  its own composes a sidestep (ordered) with its walk back (demand-driven, order-
+  exempt) into a net-zero shuttle — under exact-instant heat the walk-back is always
+  licensed, so two head-on erasers pumped forever. Fix per the rung's own design
+  text: shove only guests with nothing of their own to act on; demanded guests are
+  traffic and move themselves. Derivational sync also throttled (one O(grid) rebuild
+  per max(64, cells/8) activations — the stale window is the worklist's own
+  over-approximation, the interval a function of grid state so runs stay
+  deterministic), and the components rebuild dropped its whole-grid re-unpacking;
+  the backends gate went from stuck-for-an-hour to minutes.
 - **Relief as bounded token chains**, depth as a synthesis constant.
 - **Teleport abort leg.**
 - **Roll scan**: host-assist (preferred) or scout-token wave.

@@ -98,9 +98,10 @@ impl SignalBackend {
         wakes
     }
 
-    /// May err stale-cold, never stale-hot (derivational backends: fresh as of the last
-    /// sync; within one activation's own writes they err on the pre-write topology,
-    /// the same stale-safe window every heuristic read already lives with).
+    /// Fresh as of the last sync; between syncs the cached bits are the same bounded
+    /// over-approximation of demand the worklist backend carries by design (heat
+    /// persists until its route is rewired), so a short stale window is semantically
+    /// precedented in both directions.
     pub fn hot(&self, grid: &Grid2, p: Pos, slot: usize) -> bool {
         match self {
             SignalBackend::Worklist => match grid.site(p).cell {
@@ -157,16 +158,21 @@ impl SignalBackend {
 /// pass, seed pass), edges join reciprocal endpoints across a face, and a component is
 /// hot iff any member endpoint meets a live consumer's principal.
 fn components_fixpoint(grid: &Grid2) -> BTreeMap<Pos, u8> {
+    // One pass builds the node list plus two small lookups; neighbor joins scan the
+    // neighbor's node range directly instead of re-unpacking its cell (the rebuild
+    // runs on every routing-epoch move, so its constant is the backend's whole cost).
     let mut idx: BTreeMap<(Pos, u8), u32> = BTreeMap::new();
     let mut nodes: Vec<(Pos, u8, Route)> = vec![];
-    let mut sites: BTreeMap<Pos, Cell> = BTreeMap::new();
+    let mut consumers: BTreeMap<Pos, EndPt> = BTreeMap::new();
     for (p, w) in &grid.cells {
         let site = w.unpack().expect("stored word must be canonical");
+        if let Some(pr) = consumer_principal(&site.cell) {
+            consumers.insert(*p, pr);
+        }
         for (i, r) in cell_routes(&site.cell).into_iter().enumerate() {
             idx.insert((*p, i as u8), nodes.len() as u32);
             nodes.push((*p, i as u8, r));
         }
-        sites.insert(*p, site.cell);
     }
     let mut parent: Vec<u32> = (0..nodes.len() as u32).collect();
     fn find(parent: &mut [u32], mut x: u32) -> u32 {
@@ -182,15 +188,13 @@ fn components_fixpoint(grid: &Grid2) -> BTreeMap<Pos, u8> {
         for e in r.ends() {
             let n = step(p, e.face);
             let back = EndPt { face: e.face.opp(), lane: e.lane };
-            let Some(ncell) = sites.get(&n) else { continue };
-            if consumer_principal(ncell) == Some(back) {
+            if consumers.get(&n) == Some(&back) {
                 source[k] = true;
                 continue;
             }
-            let joined = cell_routes(ncell)
-                .iter()
-                .position(|r2| r2.ends().contains(&back))
-                .and_then(|j| idx.get(&(n, j as u8)).copied());
+            let joined = idx
+                .range((n, 0)..=(n, u8::MAX))
+                .find_map(|(_, &m)| nodes[m as usize].2.ends().contains(&back).then_some(m));
             if let Some(m) = joined {
                 let (a, b) = (find(&mut parent, k as u32), find(&mut parent, m));
                 if a != b {

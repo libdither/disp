@@ -71,7 +71,7 @@ bundle, one frame per generation, so a displayed tick is the maximal simultaneou
 wavefront, and each trace's note reports its measured parallel width. `bench-cascade`
 prints the timing snapshot and `debug-cascade` dumps a parked run's census.
 
-Three relief rungs have landed. The first: growth-blocked cells evict cold routes
+Five relief rungs have landed. The first: growth-blocked cells evict cold routes
 (corner-cut, straight shift, out-of-plane bracket), demand looks and wakes through
 guests, hairpins collapse by truncation, and consumers can be swap partners. The second:
 eviction recurses into its own blockers (full or lane-starved side cells, continuation
@@ -83,18 +83,34 @@ third: undemanded guests squatting on a demanded walker's wire or relief geometr
 shoved (a one-shot walk license; a cornered endpoint sidesteps, lengthening its own wire
 by one retractable segment), relief is self-sustaining (every progress report wakes its
 requester), and a cursor's own cell and reserved target are exempt from the prohibitions
-protecting them from foreign relief. Cooldown stamps damp displacement ping-pong. The
-frontier, pinned by `frontier_deep_reductions` at 3 of 5 deep terms complete (the
-S-combinator sharing rule now normalizes end to end): k-chain and disp-t park in
-movement knots, docks whose every roll ring is crowded by hot corridor cables. The
-substrate never computes a wrong answer, only sometimes an incomplete one.
+protecting them from foreign relief. The fourth (live-cable relief, the composition that
+completed k-chain): routes threading agents' passthrough lists swing like wire, a
+requesting dock's ring is forbidden as a displacement receiver (relief drains rings),
+only the address-lowest ready pair runs ring relief, and every displacement's primary
+direction must ascend a fixed linear form (`Runner.relief_g`), so displacement cycles
+are impossible at move granularity. The fifth (endpoint swings + the termination
+redesign): a displaced route ending on an agent's own port re-anchors with the same
+one-word swing, consumer squatters sidestep off hot wires, an over-full squatter sheds
+its own passthrough, stamped evictions refuse plainly (stamps self-decay and their
+expiry wakes the neighborhood — cooldown is a pacing heuristic again, termination
+carried by the order), contraction and sidesteps obey the same order, a hopeless growth
+merge never reserves, and quiescence is re-checked by a full one-shot sweep at the
+worklist's edge (the kick invariant true by construction), and shoves fire only at
+guests with nothing of their own to act on (a demanded guest walks itself; shoving it
+buys a sidestep it walks straight back from). The frontier, pinned by
+`frontier_deep_reductions` at 4 of 5 deep terms complete (fork-dispatch, k-combinator,
+k-chain, and the S-sharing rule): disp-t parks in walker convoys at the T1·F comb
+dock, whose every roll ring is crowded by hot corridor cables. The substrate never
+computes a wrong answer, only sometimes an incomplete one.
 `debug-cascade <term> --why` walks the relief decision tree for every blocked op and
 prints each refusing check; `--kick` re-wakes a parked run to distinguish lost wakes
 from genuine wedges; `--churn` is the pump playbook in one flag (warm up, count which
 cells host mutating activations on the plateau, capture the decision notes filtered to
 the top cells); `soak:N` reproduces a soak failure line verbatim (its term plus the
 rotation's discipline and embedding, so "term 95 [AddressOrdered/tree]" is exactly
-`debug-cascade soak:95 --churn`); `--trace <out.js>` records the run as a schema-4
+`debug-cascade soak:95 --churn`); `--backend worklist|components|dense` runs the same
+diagnosis under a chosen signal backend (exact-instant heat surfaces pumps the
+staggered wave masks); `--trace <out.js>` records the run as a schema-4
 trace the player's load button replays; `regen.sh` in
 `research/interaction-combinator/` regenerates the player bundle and revalidates it
 (`validate_cascade_bundle.mjs` checks it against the player's data contract).
