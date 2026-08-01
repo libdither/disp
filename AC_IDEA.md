@@ -209,7 +209,27 @@ generic half becomes mechanism:
   starves corridors, per-receiver address-monotone kills straddling shifts. Still on
   the table for s-rule/disp-t's remaining parks: footprint prefetch, the single-lane
   experiment.
-- **disp-t knot**: walker convoys; less characterized.
+- **disp-t knot**: walker convoys; the declined dock is T1·F (the 56-cell comb) whose
+  rings exceed decline-time relief's blocker bound — footprint prefetch's target case.
+- **Endpoint swings + stamp redesign (probed 2026-07-31, PARKED as
+  `relief_endpoint_swings.wip.patch` beside the player):** re-anchoring a cable's
+  terminal port attachment (the same one-word swing as guest passes) plus consumer
+  shove and the squatter pass-shed unlocked s-rule 6→9 fires and soak 99→109 — but
+  stabilizing it found, in order: the WEAR-branch of stamped evictions is a pump motor
+  (wear-as-progress + wake keeps any adjacent requester's retry loop alive; fix:
+  stamps refuse plainly and self-decay with a self-wake, expiry wakes the
+  neighborhood); with damping gone, cooldown-off livelocks measured ZERO (the
+  displacement order alone carries termination — the bit-class flips back to
+  heuristic); contraction must obey the displacement order too (pull only ascending g,
+  else relief-vs-contraction pumps — soak term 95), which then narrows slack
+  discovery below the wake fabric's radius-2 reach (kick trips on enablement at
+  anchor cells) and wants the sweep back as a QUIESCENCE-EDGE full re-examination to
+  mutation fixpoint (making the kick invariant true by construction); sidesteps are
+  displacement and need the order as well. Unresolved at park time: soak term 26
+  (AddressOrdered) still exhausts budget at the edge and the competing-seeds fixture
+  drops to one fire (the order's direction sacrifice may genuinely bar the loser's
+  re-fit on that walled geometry — decide whether the fixture's claim survives ordered
+  relief). Resume from the patch; every finding above is independently useful.
 - **Relief as bounded token chains**, depth as a synthesis constant.
 - **Teleport abort leg.**
 - **Roll scan**: host-assist (preferred) or scout-token wave.

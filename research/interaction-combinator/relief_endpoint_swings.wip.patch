@@ -1,0 +1,408 @@
+diff --git a/evaluators/rust-ca-lattice/crate/src/cascade_run.rs b/evaluators/rust-ca-lattice/crate/src/cascade_run.rs
+index 1eb1e4648ad0..eb225fc4dd5d 100644
+--- a/evaluators/rust-ca-lattice/crate/src/cascade_run.rs
++++ b/evaluators/rust-ca-lattice/crate/src/cascade_run.rs
+@@ -73,6 +73,9 @@ pub struct Runner {
+     /// Mechanism ablation: when false, grown agents skip the nursery (negative control —
+     /// the nursery is classified correctness-of-mechanism, so this must break things).
+     pub nursery_discipline: bool,
++    /// Mutation count at the last quiescence-edge sweep (fixpoint guard: an unchanged
++    /// count means re-waking the cold wires would refuse identically).
++    edge_swept_at: u64,
+     /// Cells committed by growth, attributed to the growing rule (clump-rule evidence).
+     pub grown_by_rule: BTreeMap<u8, u64>,
+     /// When Some, every activation's write-set size and read radius are recorded per op
+@@ -116,6 +119,7 @@ impl Runner {
+ 
+             relief_g: (-1, -3, 9),
+             relief_ring: Vec::new(),
++            edge_swept_at: u64::MAX,
+             cooldown_stamps: true,
+             nursery_discipline: true,
+             grown_by_rule: BTreeMap::new(),
+@@ -171,13 +175,31 @@ impl Runner {
+     }
+ 
+     /// Like [`Self::tick_one`], reporting which cell was activated (for tracing).
+-    /// (The every-N-generations contraction sweep that used to live here was DELETED
+-    /// 2026-07-31 per AC_IDEA: slack discovery is a monotone fact — every commit that
+-    /// frees matter already wakes its neighborhood, and the whole corpus completes
+-    /// identically without the sweep's wake storms. The kick invariant stands guard:
+-    /// if any contraction opportunity ever goes un-woken, kick-after-quiescence trips.)
++    /// (The every-N-generations contraction sweep was deleted 2026-07-31; the
++    /// quiescence-EDGE sweep below took its place when the displacement order landed:
++    /// ordered contraction's enabling changes often sit at radius 2 — the anchor cells
++    /// — which wake_around never reaches, so slack discovery gets one sweep at each
++    /// would-be quiescence, re-armed only by real commits. No periodic storms, and the
++    /// order guarantees the sweep cannot fuel displacement pumps.)
+     pub fn tick_traced(&mut self) -> Option<Pos> {
+-        let p = self.next_pos()?;
++        let p = match self.next_pos() {
++            Some(p) => p,
++            None => {
++                if self.grid.mutations == self.edge_swept_at {
++                    return None; // genuinely quiescent: the last sweep changed nothing
++                }
++                self.edge_swept_at = self.grid.mutations;
++                // Wake EVERYTHING once: quiescence means a full re-examination
++                // changes nothing (which makes the kick invariant hold by
++                // construction). Re-armed only by real commits, so a run pays a
++                // handful of these, each bounded by the fixpoint guard.
++                let live: Vec<Pos> = self.grid.cells.keys().copied().collect();
++                for p in live {
++                    self.wake(p);
++                }
++                self.next_pos()?
++            }
++        };
+         self.queued.remove(&p);
+         if self.gen_left == 0 {
+             self.generation += 1;
+@@ -406,6 +428,15 @@ impl Runner {
+                 reserved: *reserved,
+             };
+             self.grid.set(p, &Site { cell, cursor: site.cursor, chi: site.chi, claim: site.claim });
++            if new_cd > 0 {
++                // Stamps self-decay to zero: the chain must not depend on a
++                // requester's retries (that dependency was the wear pump), and a
++                // quiescent grid must hold no live stamps (the kick invariant).
++                self.wake(p);
++            } else {
++                // Expiry is the event the refused requesters were waiting on.
++                self.wake_around(p);
++            }
+         }
+         if !self.signals.extends_by_pump() {
+             return false; // derivational backends converge inside sync, not here
+@@ -456,25 +487,35 @@ impl Runner {
+         // A guest agent parked at the head of my wire, with demand burning beyond it
+         // (read through any further guests; a stale-safe heuristic), is shoved onward.
+         // Its own walk or sidestep validates itself; this walker waits for the wake.
++        // Producer squatters may answer with their own forced walk; consumer squatters
++        // sidestep only (consumers never walk), which unhooks the terminal hairpin
++        // where a cable's final approach threads the destination-adjacent consumer.
+         if !forced {
+             let mut shove_guest = false;
++            let mut guest_walks = false;
+             if let Cell::Agent { tag: gtag, pass: gpass, nursery: false, cooldown: 0, .. } =
+                 &target.cell
+             {
+-                if gtag.is_producer() && target.cursor.is_none() {
++                if target.cursor.is_none() {
+                     let enter = EndPt { face: m.opp(), lane: principal.lane };
+                     if let Some(far) = gpass.iter().find_map(|r| r.through(enter)) {
+                         shove_guest = self.demand_at(
+                             step(t, far.face),
+                             EndPt { face: far.face.opp(), lane: far.lane },
+                         );
++                        guest_walks = gtag.is_producer();
+                     }
+                 }
+             }
+             if shove_guest {
+                 self.note(|| format!("walk {p:?}: shoving guest at {t:?} off my hot wire"));
+                 let ts = self.grid.site(t);
+-                let _ = self.try_walk_gated(t, &ts, true) || self.try_sidestep(t, &ts);
++                // Walk (producers), else sidestep, else shed the squatter's own
++                // passthrough — an over-full agent (three ports plus a guest route)
++                // cannot vacate a legal trail cell until the guest route is gone.
++                let _ = (guest_walks && self.try_walk_gated(t, &ts, true))
++                    || self.try_sidestep(t, &ts)
++                    || self.try_evict(t, None, 1);
+                 return false;
+             }
+         }
+@@ -815,6 +856,16 @@ impl Runner {
+             if f == principal.face || (arity >= 2 && f == aux[0].face) {
+                 continue;
+             }
++            // Sidesteps are displacement too (an agent is matter): the step must
++            // ascend the same order every route displacement obeys, or shove-driven
++            // sidesteps duel without end at the quiescence edge.
++            {
++                let g = self.relief_g;
++                let d = f.delta();
++                if g.0 * d.0 + g.1 * d.1 + g.2 * d.2 <= 0 {
++                    continue;
++                }
++            }
+             let s = step(p, f);
+             if !self.grid.topo.in_bounds(s) {
+                 continue;
+@@ -1510,20 +1561,17 @@ impl Runner {
+         // host just loses the route.
+         let (routes, hot, reserved) = match &target.cell {
+             Cell::Wire { routes, hot, reserved, cooldown } => {
+-                // Inner (blocker) evictions respect the stamp, but each refused attempt
+-                // wears it down one notch: the stamp holds off the next N displacement
+-                // attempts rather than N ticks, so a parked pocket cannot freeze it
+-                // forever. The top level is the caller's own target and always proceeds.
++                // Inner (blocker) evictions respect the stamp with a plain refusal —
++                // no wear, no wake, no progress report. Wear-as-progress was a pump
++                // motor three times over (the requester's retry loop kept itself
++                // alive); stamps now decay on the stamped cell's OWN activations
++                // (self-waking, see pump_heat), so a stamped refusal is a short pause
++                // that expires without anyone hammering. The top level is the caller's
++                // own target and always proceeds.
+                 if depth < 2 && *cooldown > 0 {
+                     let cd = *cooldown;
+-                    self.note(|| format!("evict {t:?} d{depth}: cooldown {cd}, wearing the stamp"));
+-                    let mut ns = target.clone();
+-                    if let Cell::Wire { cooldown, .. } = &mut ns.cell {
+-                        *cooldown -= 1;
+-                    }
+-                    self.grid.set(t, &ns);
+-                    self.wake_around(t);
+-                    return true;
++                    self.note(|| format!("evict {t:?} d{depth}: cooldown {cd}, refusing"));
++                    return false;
+                 }
+                 (routes.clone(), *hot, *reserved)
+             }
+@@ -1613,23 +1661,46 @@ impl Runner {
+             }
+         };
+         let mut blockers: Vec<Pos> = vec![];
+-        // Bending a continuation's near end is the same one-word rewrite whether the
+-        // route lives in a wire cell or threads an agent's passthrough list. A bent
+-        // guest gets the cooldown stamp: its pass may not be bent again until it
+-        // decays (the same anti-ping-pong damping displaced wire routes carry).
++        // A continuation is either a ROUTE entry (wire, or threading an agent's
++        // passthrough list) or a terminal PORT attachment (the displaced route ends at
++        // an agent's own principal or aux). Bending either is one word rewrite; bent
++        // agents get the cooldown stamp (anti-ping-pong damping, as displaced wire
++        // routes carry theirs).
++        #[derive(Clone, Copy, PartialEq)]
++        enum Cont {
++            Route(usize),
++            Port,
++        }
+         let stamp1 = self.stamp(1);
+-        let swing = move |s: &Site, idx: usize, from: EndPt, to: EndPt| -> Site {
++        let swing = move |s: &Site, cont: Cont, from: EndPt, to: EndPt| -> Site {
+             let mut ns = s.clone();
+-            match &mut ns.cell {
+-                Cell::Wire { routes, .. } => {
++            match (&mut ns.cell, cont) {
++                (Cell::Wire { routes, .. }, Cont::Route(idx)) => {
+                     let far = routes[idx].through(from).expect("continuation endpoint");
+                     routes[idx] = Route::new(far, to);
+                 }
+-                Cell::Agent { pass, cooldown, .. } => {
++                (Cell::Agent { pass, cooldown, .. }, Cont::Route(idx)) => {
+                     let far = pass[idx].through(from).expect("guest continuation endpoint");
+                     pass[idx] = Route::new(far, to);
+                     *cooldown = stamp1;
+                 }
++                (Cell::Agent { tag, principal, aux, cooldown, .. }, Cont::Port) => {
++                    // Endpoint swing: re-anchor the agent's own port. Exposure
++                    // legality re-validates at pack, like every other commit.
++                    if *principal == from {
++                        *principal = to;
++                    } else {
++                        for k in 0..tag.arity().saturating_sub(1) {
++                            if aux[k] == from {
++                                aux[k] = to;
++                            }
++                        }
++                        if tag.arity() == 2 {
++                            aux[1] = aux[0]; // unused entry mirrors aux[0] by convention
++                        }
++                    }
++                    *cooldown = stamp1;
++                }
+                 _ => {}
+             }
+             ns
+@@ -1721,15 +1792,18 @@ impl Runner {
+             };
+             let back1 = EndPt { face: d1.opp(), lane: r.a.lane };
+             let back2 = EndPt { face: d2.opp(), lane: r.b.lane };
+-            // A continuation swings when it is plain wire, or
+-            // when the route threads a live, unstamped agent's passthrough list (a
+-            // guest continuation — the pass-threaded knot class; nursery guests are
+-            // untouchable growth matter, and a stamped guest was bent recently: wait
+-            // out the damping).
++            // A continuation swings when it is plain wire, or when it meets a live,
++            // unstamped agent — threading its passthrough list (guest continuation) or
++            // terminating on one of its own ports (endpoint swing). Nursery agents are
++            // untouchable growth matter; a stamped agent was bent recently: wait out
++            // the damping.
+             let swingable = |s: &Site, at: Pos, back: EndPt| -> bool {
+                 plain(s, at)
+-                    || (matches!(&s.cell, Cell::Agent { pass, nursery: false, cooldown: 0, .. }
+-                            if pass.iter().any(|x| x.ends().contains(&back)))
++                    || (matches!(&s.cell,
++                            Cell::Agent { tag, principal, aux, pass, nursery: false, cooldown: 0, .. }
++                            if pass.iter().any(|x| x.ends().contains(&back))
++                                || *principal == back
++                                || (0..tag.arity().saturating_sub(1)).any(|k| aux[k] == back))
+                         && cursor_ok(s, at)
+                         && !s.claim)
+             };
+@@ -1795,27 +1869,32 @@ impl Runner {
+                 }
+                 continue;
+             }
+-            let cont_of = |s: &Site| -> Option<Vec<Route>> {
++            let cont_at = |s: &Site, back: EndPt| -> Option<Cont> {
+                 match &s.cell {
+-                    Cell::Wire { routes, .. } => Some(routes.clone()),
+-                    Cell::Agent { pass, nursery: false, .. } => Some(pass.clone()),
++                    Cell::Wire { routes, .. } => {
++                        routes.iter().position(|x| x.ends().contains(&back)).map(Cont::Route)
++                    }
++                    Cell::Agent { tag, principal, aux, pass, nursery: false, .. } => pass
++                        .iter()
++                        .position(|x| x.ends().contains(&back))
++                        .map(Cont::Route)
++                        .or_else(|| {
++                            (*principal == back
++                                || (0..tag.arity().saturating_sub(1)).any(|k| aux[k] == back))
++                                .then_some(Cont::Port)
++                        }),
+                     _ => None,
+                 }
+             };
+-            let (Some(r1s), Some(r2s)) = (cont_of(&n1s), cont_of(&n2s)) else {
+-                continue;
+-            };
+-            let Some(i1) = r1s.iter().position(|x| x.ends().contains(&back1)) else {
+-                self.note(|| format!("evict {t:?} r{i}: no continuation in {n1:?}"));
+-                continue;
+-            };
+-            let Some(i2) = r2s.iter().position(|x| x.ends().contains(&back2)) else {
+-                self.note(|| format!("evict {t:?} r{i}: no continuation in {n2:?}"));
++            let (Some(c1), Some(c2)) = (cont_at(&n1s, back1), cont_at(&n2s, back2)) else {
++                self.note(|| format!("evict {t:?} r{i}: no continuation at {n1:?}/{n2:?}"));
+                 continue;
+             };
+-            if !allow_hot
+-                && (self.signals.hot(&self.grid, n1, i1) || self.signals.hot(&self.grid, n2, i2))
+-            {
++            // Terminal ports carry no slot heat; the t-side hot gate already vetted the
++            // cable itself.
++            let hot1 = matches!(c1, Cont::Route(k) if self.signals.hot(&self.grid, n1, k));
++            let hot2 = matches!(c2, Cont::Route(k) if self.signals.hot(&self.grid, n2, k));
++            if !allow_hot && (hot1 || hot2) {
+                 self.note(|| format!("evict {t:?} r{i}: hot continuation (cold pass)"));
+                 continue;
+             }
+@@ -1855,6 +1934,10 @@ impl Runner {
+                 // Splice the fold out at that neighbor (its two continuations become one
+                 // route) and drop the fold here; a same-route continuation is a closed
+                 // two-cell loop and vanishes entirely. Strictly length-decreasing.
++                // splice_host guarantees a wire neighbor, so both conts are routes.
++                let (Cont::Route(i1), Cont::Route(i2)) = (c1, c2) else {
++                    continue;
++                };
+                 let n_reserved = match &n1s.cell {
+                     Cell::Wire { reserved, .. } => *reserved,
+                     _ => None,
+@@ -1906,8 +1989,8 @@ impl Runner {
+                 if side_ok(&us, u) && ascends((u.0 - t.0, u.1 - t.1, u.2 - t.2)) {
+                     for l1 in 0..2u8 {
+                         for l2 in 0..2u8 {
+-                            let n1n = swing(&n1s, i1, back1, EndPt { face: d2, lane: l1 });
+-                            let n2n = swing(&n2s, i2, back2, EndPt { face: d1, lane: l2 });
++                            let n1n = swing(&n1s, c1, back1, EndPt { face: d2, lane: l1 });
++                            let n2n = swing(&n2s, c2, back2, EndPt { face: d1, lane: l2 });
+                             let un = side_add(&us, Route::new(
+                                 EndPt { face: d2.opp(), lane: l1 },
+                                 EndPt { face: d1.opp(), lane: l2 },
+@@ -1961,8 +2044,8 @@ impl Runner {
+                     'wlanes: for lanes in 0..16u8 {
+                         let (l1, l2, l3, l4) =
+                             (lanes & 1, (lanes >> 1) & 1, (lanes >> 2) & 1, (lanes >> 3) & 1);
+-                        let n1n = swing(&n1s, i1, back1, EndPt { face: w, lane: l1 });
+-                        let n2n = swing(&n2s, i2, back2, EndPt { face: w, lane: l4 });
++                        let n1n = swing(&n1s, c1, back1, EndPt { face: w, lane: l1 });
++                        let n2n = swing(&n2s, c2, back2, EndPt { face: w, lane: l4 });
+                         let an = side_add(&a_s, Route::new(
+                             EndPt { face: w.opp(), lane: l1 },
+                             EndPt { face: d2, lane: l2 },
+@@ -2016,8 +2099,8 @@ impl Runner {
+                     'lanes: for lanes in 0..16u8 {
+                         let (l1, l2, l3, l4) =
+                             (lanes & 1, (lanes >> 1) & 1, (lanes >> 2) & 1, (lanes >> 3) & 1);
+-                        let n1n = swing(&n1s, i1, back1, EndPt { face: q, lane: l1 });
+-                        let n2n = swing(&n2s, i2, back2, EndPt { face: q, lane: l4 });
++                        let n1n = swing(&n1s, c1, back1, EndPt { face: q, lane: l1 });
++                        let n2n = swing(&n2s, c2, back2, EndPt { face: q, lane: l4 });
+                         let u1n = side_add(&u1s, Route::new(
+                             EndPt { face: q.opp(), lane: l1 },
+                             EndPt { face: d1.opp(), lane: l2 },
+@@ -2156,6 +2239,17 @@ impl Runner {
+             if q == d1 || q == d2 || e3.face != q {
+                 continue;
+             }
++            // Contraction is a route displacement too (the inverse of the shift), so it
++            // obeys the same order: pull only toward ascending g, never back the way
++            // relief pushed. A detour whose pull descends waits as slack (area, priced
++            // by the census) instead of fueling the relief-contraction pump.
++            {
++                let g = self.relief_g;
++                let d = q.delta();
++                if g.0 * d.0 + g.1 * d.1 + g.2 * d.2 <= 0 {
++                    continue;
++                }
++            }
+             let t = step(p, q);
+             let (n1, n2) = (step(u1, q), step(u3, q));
+             let (ts, n1s, n2s) = (self.grid.site(t), self.grid.site(n1), self.grid.site(n2));
+diff --git a/evaluators/rust-ca-lattice/crate/tests/invariants.rs b/evaluators/rust-ca-lattice/crate/tests/invariants.rs
+index f5c88746c5df..fa456e649e4b 100644
+--- a/evaluators/rust-ca-lattice/crate/tests/invariants.rs
++++ b/evaluators/rust-ca-lattice/crate/tests/invariants.rs
+@@ -184,11 +184,12 @@ fn commit_footprints_and_read_radii_pinned() {
+     }
+ }
+ 
+-/// AC_IDEA classified cooldown a droppable heuristic ("parks more, never wrong").
+-/// MEASURED 2026-07-30: dropping it LIVELOCKS (displacement ping-pong undamped — soak
+-/// term 0 never quiesces), so cooldown is load-bearing for QUIESCENCE, not merely a
+-/// damper; it stays correctness-of-mechanism until relief is token-bounded. What
+-/// remains true and is pinned here: even undamped, no answer is ever wrong.
++/// The cooldown bit-class ledger, both directions pinned. 2026-07-30: dropping the
++/// stamps livelocked 21/48 (displacement ping-pong undamped) — load-bearing for
++/// quiescence. 2026-07-31: the route-level displacement order landed and the count
++/// fell to ZERO — termination no longer needs the damping, so cooldown is a droppable
++/// pacing heuristic again (AC_IDEA's original classification, now with the order
++/// carrying the guarantee). Still pinned: no answer is ever wrong, damped or not.
+ #[test]
+ fn cooldown_ablation_never_wrongs_but_can_livelock() {
+     let (mut complete, mut livelocked, mut ran) = (0u32, 0u32, 0u32);
+@@ -211,10 +212,9 @@ fn cooldown_ablation_never_wrongs_but_can_livelock() {
+     println!(
+         "cooldown ablation: {complete}/{ran} complete, {livelocked} livelocked, zero wrong answers"
+     );
+-    // The livelock is the measured reason cooldown cannot be dropped today. If this
+-    // count ever reaches zero, the heuristic classification becomes defensible again —
+-    // update AC_IDEA's bit-class table in both directions.
+-    assert!(livelocked > 0, "cooldown-off no longer livelocks: reclassify it in AC_IDEA");
++    // Zero since the displacement order landed; if livelocks reappear, the order has a
++    // hole — reclassify in AC_IDEA and hunt it with the churn playbook.
++    assert_eq!(livelocked, 0, "cooldown-off livelocks returned: the order has a hole");
+ }
+ 
+ /// The nursery bit is classified correctness-of-mechanism: letting grown agents skip it
+diff --git a/evaluators/rust-ca-lattice/crate/tests/soak.rs b/evaluators/rust-ca-lattice/crate/tests/soak.rs
+index 16eecfb9eb7a..5e5dacdb5ac4 100644
+--- a/evaluators/rust-ca-lattice/crate/tests/soak.rs
++++ b/evaluators/rust-ca-lattice/crate/tests/soak.rs
+@@ -75,9 +75,10 @@ fn soak_random_terms_never_wrong() {
+         }
+     }
+     println!("soak: {complete} complete, {parked} parked, {skipped} skipped of {TERMS}");
+-    // Aggregate floor, pinned conservatively below measured (99/160 on 2026-07-30 after
+-    // the livelock fixes; chaotic-margin discipline: robust aggregates only, schedule
+-    // jitter must not flap the pin). Raise it as relief rungs land; never hand-tune it
+-    // down.
+-    assert!(complete >= 85, "soak completion floor: {complete}");
++    // Aggregate floor, pinned conservatively below measured (109/160 on 2026-07-31
++    // after endpoint swings + consumer shove + refusal-only stamps + ordered
++    // contraction; was 99 before; chaotic-margin discipline: robust aggregates only,
++    // schedule jitter must not flap the pin). Raise it as relief rungs land; never
++    // hand-tune it down.
++    assert!(complete >= 100, "soak completion floor: {complete}");
+ }
