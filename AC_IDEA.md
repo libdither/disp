@@ -183,6 +183,152 @@ generic half becomes mechanism:
    behavior.
 5. **Per-tile ROM** (now much smaller) **+ Verilog.**
 
+## The corridor is the claim (keystone; everything below is a consumer of it)
+
+### The problem this exists to solve
+
+Five mechanisms keep getting proposed and tried separately — agents premoving, wires
+shortening locally, different agents' wires separating, one agent's wires zipping taut,
+and reaction area being conserved. Three of them have now been built and reverted
+(2026-08-01), each for a reason that names one of the others: untangling had nowhere to
+put the cable *until cables are shorter*; freeing contraction fought relief, which
+*lengthens*; the asymmetric swap only reaches small arities because there is no room to
+route around. Read together, those are not three findings. They are one:
+
+> **Every mechanism in the substrate today moves congestion around. Nothing creates
+> space, and nothing owns space.**
+
+Relief displaces, contraction shortens locally, the swap trades two cells. Congestion is
+therefore always someone else's problem, resolved by ordering rules and damping stamps
+because there is no notion of territory to arbitrate over. Every pump chased this week
+was two parties disagreeing about who owns a cell.
+
+### The idea
+
+A hot cable between a producer and its consumer is *already a claim*. It is a contiguous
+run of cells that provably belongs to exactly one pending reaction: nothing else may
+legitimately occupy it, and both of its ends are the reacting pair. Today a walker eats
+that cable as it advances and the vacated cells fall back into the commons — and then
+the dock discovers it has no room and the whole relief apparatus starts up.
+
+So: **stop surrendering it.** A walker advancing along its principal cable retains the
+vacated cells as claimed area for the reaction it is walking toward, and does not dock
+until the claim is big enough to grow the blocklet. Walking stops being consumption and
+becomes conversion: cable length in, reaction area out. That is what "reaction area is
+conserved" means operationally, and reduction funds it naturally, because cables shorten
+as work proceeds.
+
+This subsumes the other four rather than competing with them. **Premoving** is a walker
+accumulating claim before it is needed, which is the only form of prefetch that helps a
+dock that cannot yet fit. **Zipping** is what makes a footprint claimable at all, since
+slack is what inflates the area a reaction needs. **Separation** keeps two reactions'
+corridors from overlapping, so claims can be granted independently. **Local shortening**
+becomes safe precisely because claimed space is off-limits to it — which is already
+proven: the one rule that killed a shortening/relief cycle this week was "a shortening
+move may not fill clearance a pending fire is waiting on," an accidental one-cell special
+case of exactly this.
+
+### Why it is affordable
+
+The two pieces of state it needs are already in the design and currently idle:
+
+- **Claim marks cost no word bits.** Empty and wire cells already carry a reservation
+  field, and the frozen contract states that reservation marks are *arbiter state, not
+  word bits*. The usual objection — the 64-bit word is full — does not apply.
+- **χ is inert and this is its rung.** Four bits per cell that nothing has pumped since
+  the pressure-wave removal, which the bit-class table says re-enter with a future rung
+  or get demoted to capacity. A saturating claimed-area count is what they are shaped
+  for. If the count needs more than 4 bits, that is a finding about χ, not a blocker:
+  claims can be compared against a saturating ceiling rather than an exact total.
+
+Footprint sizes are compile-time constants in the per-tile ROM, so "is the claim big
+enough" is a comparison against a known number — small arithmetic on a small field,
+inside the contract, no search.
+
+### Silicon compatibility
+
+A *centralized* allocator would be fatally incompatible: global free lists, manager
+cells, and "is this region free" queries all violate no-broadcast, bounded fan-in, and
+no-combinational-long-reads. None of that is required here, because the corridor form
+never acquires territory — it declines to release territory it already holds. That is
+the whole reason to prefer it over a claim-wave allocator.
+
+What it does need is already sanctioned: bounded token chains (the sanctioned
+re-expression of today's multi-cell relief), a hard hop bound (the scout-token
+alternative is already specified at ≤64 hops, and the largest footprint in the rule table
+is 62 cells), address-ordered acquisition as the deadlock-freedom rule, and bounded hold
+timers for release. Note the prize: the ~60-cell dock roll scan is the last
+combinational-long-read exception in the contract (it is why `dock` sits at read radius
+11 while everything else is ≤2). A reaction that already owns its corridor does not need
+to scan for room, so this rung is a candidate for *retiring* that exception rather than
+adding one.
+
+### The issues, and what to do about each
+
+1. **Short cables.** Adjacent agents have no corridor to convert, and some of them need
+   the largest footprints. Relief must remain as the fallback, unchanged, so the worst
+   case is today's behaviour. The interesting sub-question is whether a walker should
+   deliberately *stop one cell short* to preserve its corridor — an inversion of
+   everything the substrate currently optimizes for, and cheap to test.
+2. **Held claims starve everyone else.** Idle claimed area is area nobody can use, and a
+   parked walker holding a corridor forever is a new deadlock shape. Release policy is
+   where the first livelock will appear. Start with: a claim is released whenever its
+   walker parks (no progress and no pending dock), and additionally on a bounded hold
+   timer, which the contract already provides for outstanding transactions.
+3. **Mutual starvation between two reactions.** A holds what B needs and vice versa.
+   Address-ordered acquisition gives a fixed winner between two claims, the same
+   tie-break that already breaks claim deadlocks and dock arbitration. The loser
+   releases; it does not wait.
+4. **The producer does not know its rule yet.** Which rule fires depends on both tags and
+   it only learns its partner's on contact, so the budget must be its own tag's worst
+   case over all partners — a compile-time constant, but an over-claim. Accept the
+   conservatism; measure the wasted area in the census rather than guessing at it.
+5. **Who may enter a claimed cell.** Claimed cells must be off-limits to relief
+   receivers, contraction targets, and foreign growth — the generalization of the
+   clearance rule that already works. They must remain traversable by the claiming
+   reaction's own traffic, or the claim strangles its own dock.
+6. **Interaction with the demand plane.** Claims must not become a second, competing
+   notion of priority. Heat stays the priority gradient; a claim is a *reservation of
+   space*, not a license to act. Nothing about raise-only monotonicity changes.
+7. **Schedule independence must survive.** The load-bearing property is that any local
+   execution order may park but never answers wrongly. A failed or released claim must
+   only ever cause a park, never a different answer; `schedule_fuzz_never_wrong` is the
+   gate and it must stay green under every discipline.
+8. **The kick invariant must survive.** A claim that is released without waking its
+   neighbourhood is a lost wake by construction. `kick_after_quiescence_is_a_no_op` is
+   the gate; expect it to catch the first release-policy bug.
+9. **Locality ceilings.** Claiming is per-cell and incremental (one cell per walk step),
+   so per-activation write sets should not grow. If they do, the audit trips and the
+   design is wrong — that is a feature.
+10. **It may simply not pay.** If corridors are typically shorter than footprints, claims
+    will rarely be big enough and the mechanism is dead weight. This is measurable before
+    building anything: histogram cable length at dock time against the footprint the rule
+    would need.
+
+### Build order, each step measurable on existing gates
+
+0. **Measure first** (no code in the engine): at every dock, record corridor length
+   against the footprint the chosen rule needs. If corridors are systematically too
+   short, stop here — the idea is refuted cheaply.
+1. **Retain on walk.** Vacated cells stay claimed for the reaction. Success signal: peak
+   cells in the cost census stops rising, and declined docks fall in `park-census`.
+2. **Fund the dock.** Do not dock until the claim covers the footprint; fall back to
+   today's relief when it cannot. Success signal: the declined-dock class shrinks
+   sharply; watch the soak floor and the frontier for regressions.
+3. **Release policy.** Park-release plus hold timer. This is where livelocks will appear;
+   the cooldown ablation lane and the derivational backends are the detectors — the
+   backends caught two of this week's three pumps before the default one noticed.
+4. **Then the consumers**: zip (shorten toward the anchor so footprints fit smaller
+   claims), separate (keep corridors from overlapping), premove (walk early to accumulate
+   claim). Each measured separately, none of them load-bearing on its own.
+
+### What would falsify it
+
+Corridor lengths at dock time being systematically below footprint sizes (step 0). Or:
+claims held long enough that total progress falls even as declined docks drop — visible
+as soak completion falling while the park census improves, which would mean the mechanism
+converts one park class into another rather than removing it.
+
 ## Open rungs
 
 - **k-chain knot** (the stub-lock at crowded dock rings). Bounded ring relief LANDED
@@ -213,7 +359,8 @@ generic half becomes mechanism:
   forbidding alone doesn't compose (cross-dock shuttle), universal beside-any-dock
   starves corridors, per-receiver address-monotone kills straddling shifts. Still on
   the table for disp-t's remaining park: footprint prefetch, the single-lane
-  experiment.
+  experiment. (Prefetch's useful form is now the premoving consumer of corridor-as-claim
+  above — accumulating claim before the dock, rather than scanning for room at it.)
 - **disp-t knot — RESOLVED 2026-08-01. THE DEEP CORPUS IS COMPLETE: 5 of 5.** The
   declined dock is T1·F (the 56-cell comb); its best roll has 3 first-ring blockers
   against decline-time relief's bound of 2, which is why footprint prefetch was
@@ -334,7 +481,10 @@ chosen by distribution rather than by whichever term was looked at last. Today:
 - **13 declined docks** — see the ring-drain note in the disp-t entry: their traces are
   dominated by "in the requesting dock's ring", the per-roll relaxation unwedges 8 of
   them but they mostly re-park a step later and roll switching starts to oscillate. The
-  safe version needs a receiver rule that provably worsens no roll.
+  safe version needs a receiver rule that provably worsens no roll. This class is the
+  primary target of corridor-as-claim: every one of these pairs committed to reacting and
+  only then discovered it had no room, which is the failure mode that funding a dock
+  before it commits is meant to remove.
 - **1 growth wedge, 2 quiet parks** — tail, not worth aiming at yet.
 
 Note the two classes are the same shape at different scales: something free sits where
@@ -344,6 +494,10 @@ pays-for-itself exemption, and this — take the same form: permit the otherwise
 move exactly when it is the last one before progress that the reduction bounds.
 
 ## Untangling: measured, and it needs its other half first
+
+*(Consumer of the corridor-as-claim keystone above. Read that first: the reason both
+versions below failed is that neither had anywhere to put the cable, which is what
+claimed area provides.)*
 
 A cable threading an AGENT's cell is a tangle, and tangles are exactly what make a
 walker's path unwalkable — it crosses wire all day and stops dead at an agent. They are
