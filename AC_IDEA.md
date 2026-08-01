@@ -378,6 +378,26 @@ fight) instead of the global spatial direction whose sacrifices have cost the mo
 Build zip-up first, measure whether free space around docks actually grows, and only
 then re-try untangling on top of it.
 
+**Zip-up's first measurement, and what it costs today.** The cheapest form of zip-up is
+just to stop constraining the shortening we already do: contraction currently has to
+ascend `relief_g` like any displacement. Removing that gate (2026-08-01) keeps every deep
+term complete and makes them all about 10% faster — k-chain 4081 → 3717 generations,
+disp-t 4652 → 4226 — which is direct evidence that shortening is what reclaims clearance
+and that the direction rule is holding real slack in the fabric. It cannot go yet: soak
+term 3 stops quiescing, and the churn is a dock's ring relief pushing a cable out while
+free contraction pulls it straight back.
+
+Note what that failure does and does not implicate. Shortening ALONE cannot cycle: cable
+length is a decreasing potential, which is exactly the property that makes zip-up
+attractive as a discipline. The cycle needs the LENGTHENING half, and the only thing that
+lengthens is relief. So the price of freeing contraction is making every relief
+pays-for-itself, the way a blocked placement's and a dock's last blocker's already are —
+then each lengthening is followed by a fire the reduction bounds, contraction can be
+freed in every direction, and the clearance it reclaims is what untangling was missing.
+That is one specified change with three payoffs, and it is the most promising thread
+left: ~10% on every deep term, the direction rule's remaining sacrifices, and untangling
+becoming affordable.
+
 ## Clump rules (a calculus-level direction, gated on measurement)
 
 Today a rewrite locks exactly 2 cells and grows the result; a "clump rule" locks a larger

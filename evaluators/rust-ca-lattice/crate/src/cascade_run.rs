@@ -2626,6 +2626,18 @@ impl Runner {
             // obeys the same order: pull only toward ascending g, never back the way
             // relief pushed. A detour whose pull descends waits as slack (area, priced
             // by the census) instead of fueling the relief-contraction pump.
+            //
+            // This gate is expensive and its price is measured (2026-08-01): removing it
+            // leaves every deep term complete and makes them all ~10% faster (k-chain
+            // 4081 → 3717 generations, disp-t 4652 → 4226), because shortening is what
+            // reclaims clearance. It cannot go yet: soak term 3 stops quiescing, and the
+            // churn is a dock's ring relief pushing a cable out while free contraction
+            // pulls it straight back. Shortening alone cannot cycle — cable length is a
+            // decreasing potential — so the cycle needs the LENGTHENING half, which is
+            // relief. The way to earn the removal is therefore to make every relief
+            // pays-for-itself, as placements and a dock's last blocker already are: then
+            // each lengthening is followed by a fire the reduction bounds, and
+            // contraction can be freed to zip cables taut in any direction.
             {
                 let g = self.relief_g;
                 let d = q.delta();
