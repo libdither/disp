@@ -426,7 +426,18 @@ eq_reach := {pairs, a, x} -> (fix ({go, known, fuel} ->
       })) pairs known
     if (tree_eq (list_len next) (list_len known)) { false } else { go next (pair_snd fuel) }
   })) (cons a nil) pairs
-eq_holds := {st, a, x} -> teq_decide ({a2, x2} -> eq_reach (eq_pairs st) a2 x2) a x
+eq_congr := {pairs} -> fix ({self, a, x} ->
+  if (tree_eq a x) { true }
+  else if (eq_reach pairs a x) { true }
+  else if (or (is_neutral a) (is_neutral x)) { false }
+  else {
+    triage
+      false
+      ({ac} -> triage false ({xc} -> self ac xc) ({_l, _r} -> false) x)
+      ({al, ar} -> triage false ({_c} -> false) ({xl, xr} -> and (self al xl) (self ar xr)) x)
+      a
+  })
+eq_holds := {st, a, x} -> teq_decide ({a2, x2} -> eq_congr (eq_pairs st) a2 x2) a x
 test eq_holds t 2 2 = true
 test eq_holds t 2 3 = false
 
@@ -480,7 +491,7 @@ Meta : Table := ({
         if (is_fork rows) { chk t rows V t }
         else {
           let e := T.ends
-          if (is_fork e) { and (is_leaf (readback V)) (teq_decide ({a2, x2} -> eq_reach (meta_pairs st) a2 x2) (pair_fst e) (pair_snd e)) }
+          if (is_fork e) { and (is_leaf (readback V)) (teq_decide ({a2, x2} -> eq_congr (meta_pairs st) a2 x2) (pair_fst e) (pair_snd e)) }
           else if let Conc tr = V { T tr }
           else { verify_inband (collect V nil) T (readback V) }
         }
@@ -691,7 +702,7 @@ GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
 Guard : Table := GuardAt
   ({_resume, _x} -> false)
   ({resume, x} -> if (neutral_free x) { resume t } else { invalid x })
-  ({st, a, x} -> if (eq_reach (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) })
+  ({st, a, x} -> if (eq_congr (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) })
 Ambient : Table := GuardAt
   ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)

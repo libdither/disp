@@ -545,6 +545,19 @@ test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Nat))) psens = true
 test Fn Nat ({n} -> Fn Nat ({m} -> Fn AnyTree ({_} -> Nat))) psens = false
 test Pi Meta Nat ({n} -> Pi Meta Nat ({m} -> Pi Meta (Eq Nat n m) ({_} -> Eq Nat m n))) ({n, m, p} -> refl) = true
 
+// Congruence: the goal decomposes structurally before the ledger is consulted,
+// so an equation between CONSTRUCTOR SPINES holds when its components do. This
+// is building-up only, which is always sound; tearing a hypothesis apart would
+// need injectivity and never happens, because a hypothesis is opaque here (the
+// branch above bails on either side being one).
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat (succ n) (succ m)))) ({n, m, p} -> refl) = true
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat (succ (succ n)) (succ (succ m))))) ({n, m, p} -> refl) = true
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq AnyTree (pair n 5) (pair m 5)))) ({n, m, p} -> refl) = true
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat (succ n) (succ (succ m))))) ({n, m, p} -> refl) = false
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq AnyTree (pair n 5) (pair m 6)))) ({n, m, p} -> refl) = false
+test Fn Nat ({n} -> Fn Nat ({m} -> Eq Nat (succ n) (succ m))) ({n, m} -> refl) = false
+test Pi Meta Nat ({n} -> Pi Meta Nat ({m} -> Pi Meta (Eq Nat n m) ({_} -> Eq Nat (succ n) (succ m)))) ({n, m, p} -> refl) = true
+
 // Multi-slot variants declare through the sum sugar now: `Tag : [A, Rec]` is a
 // positional slot list, and the auto-declared constructor takes one binder per
 // slot and builds the right-nested payload the positional reader expects.
