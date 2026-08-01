@@ -158,6 +158,54 @@ Choosing between them is the next decision, and it should be made deliberately r
 discovered, because it determines whether the equality layer is built on an evaluator that
 respects hypotheses or on a checker that compensates for one that does not.
 
+### Measured, 2026-08-01
+
+Three experiments settled most of this.
+
+Poisoning raw application of a hypothesis leaves all pins passing, so nothing depends on
+that application being inert. The recorded worry about the effect former's gate does not
+bite, because that gate's motives are constant. The premise blocking the evaluator fix is
+false.
+
+Routing telescope binder instantiation through the tier's own application, the cheap form
+of walking type formation, fails twice: the abstract interpreter receives a raw
+continuation where it expects a value in its own domain, and the kernel's own annotated
+exports stop verifying because the walk refuses legitimate row-construction code. The
+cheap form of that fix is dead and the expensive form inherits the interpretation cost.
+
+The deferred, lazy form of the evaluator fix works. A hypothesis stops storing its type
+and becomes a record of what has been observed of it; applying one records the observation
+and the type is derived on demand by replaying that record through the respond face, which
+is the same replay the provenance audit already performs. This dissolves the definition
+order problem, because the marker needs nothing and only the reader needs the respond face,
+which can be tied mutually. Measured: applying a hypothesis now yields a genuine
+hypothesis, its derived type is correct, and two applications with different arguments are
+finally distinct rather than collapsing to the same tree. Every guard-tier check probed
+still behaves correctly.
+
+### The remaining conflict
+
+It collides with the abstract interpreter's architecture, in one specific shape: applying
+a function-hypothesis to a value bound inside an eliminator's arm. Applying one to an
+ordinary hypothesis is fine, and not applying it is fine.
+
+The cause is that when the interpreter rolls an elimination it reads its arguments back to
+raw trees, which converts its own out-of-band hypotheses into in-band marks. Those marks
+then sit inside otherwise concrete values. With lazy hypotheses such a mark becomes active
+when applied, and the interpreter's verifier cannot accept it, because it only recognizes
+marks it minted itself. Not being able to tell a legitimately derived mark from a forged
+one is precisely what the out-of-band design existed to avoid needing, so this is a real
+architectural interaction rather than an oversight.
+
+Four ways out, in rough order of principle. Teach the interpreter to keep eliminator
+arguments as values rather than reading them back, preserving out-of-band purity at the
+cost of surgery in its chain handling. Give it the same provenance audit the guard tier
+uses, which converges the two tiers on one verification story and is the most principled
+and the most work. Have it re-lift marks to its own representation on application, which is
+small but reopens the replay hole that the equality ban era closed unless paired with an
+audit. Or let the tiers diverge on the marker, which forks the hypothesis representation
+and should be rejected.
+
 ## Step 2: quotients and set-level higher inductive types
 
 A higher inductive type's inhabitants are still trees; its path constructors are equations
