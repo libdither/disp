@@ -496,9 +496,8 @@ test Pi Meta SN ({_} -> SN) sn_id = true
 test Pi Guard SN ({_} -> Nat) sn_id = false
 test Pi Guard SN ({_} -> SN) ({n} -> sn_rec n ({_} -> sz) ({_k, ih} -> pair 5 5)) = false
 
-SLN := Sum [pair "snil" [], pair "scons" [Nat, Rec]]
-snil := inj "snil" t
-scons := {h, tl} -> inj "scons" (pair h tl)
+SLNCode := < snil, scons : [Nat, Rec] >
+SLN := Sum SLNCode
 sln_rec_n := elim_of SLN ({_} -> Nat)
 test SLN snil = true
 test SLN (scons 1 (scons 2 snil)) = true
@@ -546,12 +545,16 @@ test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Nat))) psens = true
 test Fn Nat ({n} -> Fn Nat ({m} -> Fn AnyTree ({_} -> Nat))) psens = false
 test Pi Meta Nat ({n} -> Pi Meta Nat ({m} -> Pi Meta (Eq Nat n m) ({_} -> Eq Nat m n))) ({n, m, p} -> refl) = true
 
-SOrd := Sum [pair "oz" [], pair "op" [Rec, Rec]]
-oz := inj "oz" t
-op2 := {a, b} -> inj "op" (pair a b)
+// Multi-slot variants declare through the sum sugar now: `Tag : [A, Rec]` is a
+// positional slot list, and the auto-declared constructor takes one binder per
+// slot and builds the right-nested payload the positional reader expects.
+SOrdCode := < oz, op : [Rec, Rec] >
+SOrd := Sum SOrdCode
 sord_rec_n := elim_of SOrd ({_} -> Nat)
 osize := {o} -> sord_rec_n o ({_} -> 1) ({_a, _b, ia, ib} -> succ (add ia ib))
-test osize (op2 oz (op2 oz oz)) = 5
+test osize (op oz (op oz oz)) = 5
+test SOrd (op oz oz) = true
+test SOrd (op oz) = false
 test Pi Guard SOrd ({_} -> Nat) osize = true
 
 // Derived generics off the declaration. Nullary slots are strict ([] = one
@@ -583,7 +586,7 @@ test sn_pred sz = sz
 test Fn SN ({_} -> SN) sn_pred = true
 test children SN sz = nil
 test children SLN (scons 1 (scons 2 snil)) = cons (scons 2 snil) nil
-test children SOrd (op2 oz (op2 oz oz)) = cons oz (cons (op2 oz oz) nil)
+test children SOrd (op oz (op oz oz)) = cons oz (cons (op oz oz) nil)
 
 // GoodGate: the behavioral certification of a declaration's elimination face.
 // Coherence probe = the type's OWN blessed eliminator must inhabit the

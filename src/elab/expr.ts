@@ -206,12 +206,14 @@ export function exprToCir(
       for (let i = e.variants.length - 1; i >= 0; i--) {
         const v = e.variants[i]
         const nameCir: Cir = { tag: "lit", t: stringToTree(v.name) }
-        // arg list: single-element [T] when `Tag : T`, else nullary [].
-        const argsCir: Cir = v.type != null
-          ? consCir(
-              exprToCir(lookupEntry("Pi")?.tree ? binderToPi(v.type) : v.type, lookupEntry, resolveUse, sinks),
-              leafCir)
-          : leafCir
+        // arg list: `Tag : [A, B]` gives the positional slot list verbatim,
+        // `Tag : T` the single-element [T], bare `Tag` the nullary [].
+        const slots: Expr[] = v.types ?? (v.type != null ? [v.type] : [])
+        let argsCir: Cir = leafCir
+        for (let k = slots.length - 1; k >= 0; k--)
+          argsCir = consCir(
+            exprToCir(lookupEntry("Pi")?.tree ? binderToPi(slots[k]) : slots[k], lookupEntry, resolveUse, sinks),
+            argsCir)
         variantsCir = consCir(cap(cap(pairCir, nameCir), argsCir), variantsCir)
       }
       return cap({ tag: "lit", t: CoproductEntry.tree }, variantsCir)

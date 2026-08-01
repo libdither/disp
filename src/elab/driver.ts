@@ -5,7 +5,7 @@
 import { dirname, resolve as pathResolve } from "node:path"
 import { type Tree, defaultSession } from "../eval/eager.js"
 import type { Session, EvalStats } from "../eval/types.js"
-import { parseItems, type Expr, type RecMember } from "../parse.js"
+import { parseItems, sumCtorExpr, type Expr, type RecMember } from "../parse.js"
 import { elab, B, verifiedModules, moduleCacheBySession, pristineTest, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
 import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modscan.js"
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
@@ -936,9 +936,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           if (body.tag === "sumType" && body.variants.length > 0 && lookupEntry("inj")) {
             for (const sv of body.variants) {
               if (lookupEntry(sv.name)) continue
-              const injTag: Expr = { tag: "app", f: { tag: "var", name: "inj" }, x: { tag: "str", value: sv.name } }
-              const ctor: Expr = sv.type == null ? { tag: "app", f: injTag, x: { tag: "leaf" } } : injTag
-              const cr = declareBinding(sv.name, null, ctor, undefined, sinks, raw)
+              const cr = declareBinding(sv.name, null, sumCtorExpr(sv), undefined, sinks, raw)
               if (cr.pushDef && !cr.priv) target.push({ kind: "Def", name: sv.name, tree: cr.tree!, type: cr.type, guard: cr.guard ?? null })
               recordItem("field", sv.name, undefined, { tree: cr.tree ?? undefined })
             }

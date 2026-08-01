@@ -140,7 +140,10 @@ export type Expr =
 export type Param = { name: string | null; type: Expr | null; default?: Expr | null }
 export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
 // A coproduct variant: `Tag : T` (single-arg, `type` set) or `Tag` (nullary, null).
-export type SumVariant = { name: string; type: Expr | null }
+// `Tag : T` is one payload slot; `Tag : [A, B]` is a POSITIONAL slot list (types
+// carries them, type stays null); `Tag` is nullary. Multi-slot variants are what
+// recursive/parameterized declarations need (`cons : [A, Rec]`).
+export type SumVariant = { name: string; type: Expr | null; types?: Expr[] }
 export type NamedField = { name: string; type: Expr | null; value: Expr; faced?: boolean; keyExpr?: Expr }
 
 // Unified record body member — shared by file bodies and inline { ... } recValues.
@@ -832,10 +835,35 @@ const sumVariantP: P<SumVariant> = nl((ts, i) => {
   const name = r.v
   let pos = r.pos
   let type: Expr | null = null
-  const withType = seq(nl(punctP(":")), skipNl, lazy(() => expr))(ts, pos)
-  if (withType.ok) { type = withType.v[2] as Expr; pos = withType.pos }
+  const colon = nl(punctP(":"))(ts, pos)
+  if (colon.ok) {
+    let p2 = colon.pos
+    while (ts[p2].t === "nl") p2++
+    // `[A, B]` after the colon is a positional slot LIST, not one payload of list type.
+    const slots = slotListP(ts, p2)
+    if (slots.ok) return ok({ name, type: null, types: slots.v }, slots.pos)
+    const one = seq(skipNl, lazy(() => expr))(ts, colon.pos)
+    if (one.ok) { type = one.v[1] as Expr; pos = one.pos }
+  }
   return ok({ name, type }, pos)
 })
+
+// slotListP: `[ T1, T2, … ]` as a LIST of type expressions (the array literal parser
+// folds to a cons-chain immediately, which loses the element boundaries).
+const slotListP: P<Expr[]> = (ts, i) => {
+  const open = punctP("[")(ts, i)
+  if (!open.ok) return open
+  let pos = open.pos
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === "]") return ok([] as Expr[], pos + 1)
+  const elemsR = sepBy1(nl(lazy(() => expr)), commaP)(ts, pos)
+  if (!elemsR.ok) return elemsR
+  pos = elemsR.pos
+  while (ts[pos].t === "nl") pos++
+  const close = punctP("]")(ts, pos)
+  if (!close.ok) return close
+  return ok(elemsR.v as Expr[], close.pos)
+}
 
 // Sum-type literal: `< variant (COMMA variant)* COMMA? >` (COMMA = "," or NEWLINE,
 // like record fields). Empty `<>` is the empty sum (⊥). Desugars in compile.ts to
@@ -997,6 +1025,21 @@ const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedOpenP, b
 // (elab/driver.ts) except for scoping: a block let SHADOWS an outer name — the
 // item-level skip-if-in-scope rule exists to type pre-existing exported
 // constructors, which has no block-local analogue.
+// sumCtorExpr: a variant's constructor. Nullary `Tag := inj "Tag" t`; one slot the
+// η-form `inj "Tag"`; n slots a binder building the right-nested payload the
+// positional reader expects (`{a0,a1} -> inj "Tag" (pair a0 a1)`).
+export const sumCtorExpr = (v: SumVariant): Expr => {
+  const injTag: Expr = { tag: "app", f: { tag: "var", name: "inj" }, x: { tag: "str", value: v.name } }
+  const n = v.types ? v.types.length : (v.type != null ? 1 : 0)
+  if (n === 0) return { tag: "app", f: injTag, x: { tag: "leaf" } }
+  if (n === 1) return injTag
+  const names = Array.from({ length: n }, (_, k) => `a${k}`)
+  let payload: Expr = { tag: "var", name: names[n - 1] }
+  for (let k = n - 2; k >= 0; k--)
+    payload = { tag: "app", f: { tag: "app", f: { tag: "var", name: "pair" }, x: { tag: "var", name: names[k] } }, x: payload }
+  return { tag: "binder", params: names.map(nm => ({ name: nm, type: null })), body: { tag: "app", f: injTag, x: payload } }
+}
+
 const expandSumLetCtors = (members: RecMember[]): RecMember[] => {
   if (!members.some(m => m.tag === "let")) return members
   const out: RecMember[] = []
@@ -1006,11 +1049,8 @@ const expandSumLetCtors = (members: RecMember[]): RecMember[] => {
     let body: Expr = m.body
     while (body.tag === "binder") body = body.body
     if (body.tag !== "sumType" || body.variants.length === 0) continue
-    for (const sv of body.variants) {
-      const injTag: Expr = { tag: "app", f: { tag: "var", name: "inj" }, x: { tag: "str", value: sv.name } }
-      out.push({ tag: "let", name: sv.name, type: null,
-        body: sv.type == null ? { tag: "app", f: injTag, x: { tag: "leaf" } } : injTag })
-    }
+    for (const sv of body.variants)
+      out.push({ tag: "let", name: sv.name, type: null, body: sumCtorExpr(sv) })
   }
   return out
 }
