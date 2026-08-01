@@ -398,6 +398,21 @@ That is one specified change with three payoffs, and it is the most promising th
 left: ~10% on every deep term, the direction rule's remaining sacrifices, and untangling
 becoming affordable.
 
+**Second attempt, and it got halfway.** Freeing contraction and giving it the mirror of
+relief's ring rule — *a shortening move may not fill clearance a pending fire is waiting
+on* (a seed, a facing principal pair, or a cell a blocklet cursor is growing into) — is
+the right shape and it works: soak term 3's cycle is gone, the deep corpus stays complete
+and stays ~10% faster. A second, different cycle then surfaces at soak term 26, in open
+fabric with no dock involved, where relief attempts are all failing yet three cells churn
+tens of thousands of times. Two things are worth knowing before the next attempt: the
+churn counter counts stamp decay as a mutation, so a cell being repeatedly re-stamped
+looks identical to a cell being repeatedly rewritten and the two must be told apart
+first; and every cell contraction touches is already stamp-gated, so this is not a
+damping gap but a genuine second lengthener that has not been identified yet. Find what
+lengthens cable in that region — a walk laying an aux detour is the prime suspect, since
+walks are the one motion exempt from every order — and the pays-for-itself framing
+applies to it exactly as it did to relief.
+
 ## Clump rules (a calculus-level direction, gated on measurement)
 
 Today a rewrite locks exactly 2 cells and grows the result; a "clump rule" locks a larger
