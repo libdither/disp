@@ -63,7 +63,10 @@ cooldown ablation lane — never wrong, measured livelocks without damping — a
 nursery negative control). `dump-cascade`
 regenerates `research/interaction-combinator/lattice_cascade.js` with the historical
 suite roster (translation, the A·F trio, all 26 atlas rules, the eraser cascade to empty,
-the T1·S stem chain) plus the cascade-native demos; `lattice_player.html` replays the
+the T1·S stem chain) plus the cascade-native demos, AND `lattice_frontier.js` (gitignored,
+regenerated every run) carrying the live frontier corpus — the deep-reduction terms the
+suite floors pin, parked ones included, plus recently-moved census family members — so
+the player's picker never trails the suite; `lattice_player.html` replays the
 bundle, one frame per generation, so a displayed tick is the maximal simultaneous
 wavefront, and each trace's note reports its measured parallel width. `bench-cascade`
 prints the timing snapshot and `debug-cascade` dumps a parked run's census.

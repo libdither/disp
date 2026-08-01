@@ -10,9 +10,20 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "lattice_cascade.js"), "utf8");
 const window = {};
-new Function("window", src)(window);
+// The main bundle plus the regenerated-alongside frontier tier (gitignored, so a
+// fresh checkout may lack it until the first regen.sh — skip it then, loudly).
+for (const file of ["lattice_cascade.js", "lattice_frontier.js"]) {
+  try {
+    new Function("window", readFileSync(join(here, file), "utf8"))(window);
+  } catch (e) {
+    if (e.code === "ENOENT" && file === "lattice_frontier.js") {
+      console.warn("no lattice_frontier.js yet (run regen.sh); validating the bundle only");
+      continue;
+    }
+    throw e;
+  }
+}
 const TRACES = window.TRACES;
 const names = Object.keys(TRACES);
 const cellKey = p => `${p[0]},${p[1]},${p[2]}`;

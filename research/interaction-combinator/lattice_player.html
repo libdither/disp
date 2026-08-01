@@ -180,6 +180,9 @@
 // A stable revision query lets browsers cache the generated bundles between reloads.
 // The cascade bundle is the trace registry.
 document.write('<script src="lattice_cascade.js?v=cascade-2"><\/script>');
+// The frontier tier regenerates beside the bundle (regen.sh) and merges into the same
+// picker; it is gitignored, so a fresh checkout 404s here harmlessly until first regen.
+document.write('<script src="lattice_frontier.js?v=frontier-1"><\/script>');
 // Verify this page's version against a fresh source response and reload once if an
 // intermediary returned stale HTML. The header badge displays the active version.
 const PLAYER_VERSION = "2026-07-24 · cascade replay v5";

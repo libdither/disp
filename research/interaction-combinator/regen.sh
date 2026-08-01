@@ -9,4 +9,5 @@ CRATE="$HERE/../../evaluators/rust-ca-lattice/crate"
 
 (cd "$CRATE" && cargo run --release --bin dump-cascade -- "$HERE/lattice_cascade.js")
 node --check "$HERE/lattice_cascade.js"
+node --check "$HERE/lattice_frontier.js"
 node "$HERE/validate_cascade_bundle.mjs"

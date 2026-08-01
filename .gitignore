@@ -13,3 +13,4 @@ bench/e1/*.log
 bench/e1/*.rent
 bench/e1/*.json
 .disp-test-cache/
+research/interaction-combinator/lattice_frontier.js
