@@ -211,8 +211,24 @@ generic half becomes mechanism:
   starves corridors, per-receiver address-monotone kills straddling shifts. Still on
   the table for disp-t's remaining park: footprint prefetch, the single-lane
   experiment.
-- **disp-t knot**: walker convoys; the declined dock is T1·F (the 56-cell comb) whose
-  rings exceed decline-time relief's blocker bound — footprint prefetch's target case.
+- **disp-t knot — DIAGNOSED 2026-08-01, and it is NOT prefetch's case after all.** The
+  declined dock is T1·F (the 56-cell comb); its best roll has 3 first-ring blockers
+  against decline-time relief's bound of 2, which is why footprint prefetch was
+  nominated. But the bound turns out not to be the wall: sweeping it (2/3/4/6/
+  unbounded) shows every setting terminates — unbounded ring clearing no longer
+  livelocks, the displacement order took that job — with identical completion
+  everywhere (soak 107/160). Raised past 3 the dock DOES fire and the comb grows to
+  pc 112 of 202, and then wedges again on the ROUTE-LEVEL ORDER: the one free
+  receiver for the blocking route descends `relief_g`, so relief refuses a cell that
+  is otherwise empty (`debug-cascade --why` now says so in as many words, and prints
+  each roll's blocker list). So disp-t's real lever is the order's direction
+  sacrifice, not ring crowding, and the bound stays at 2 because raising it only
+  trades a clean parked pair for a half-grown blocklet the geometry checks skip.
+  What the order costs is the open question — a per-form sweep measured completion
+  trades but never a livelock, so candidates worth trying are a potential that is not
+  a fixed global direction (e.g. distance-to-requester, which is per-request acyclic)
+  or letting strictly-shortening exemptions cover more shapes. Prefetch itself is not
+  dead, just unmotivated: no frontier term currently parks for the reason it fixes.
 - **Endpoint swings + termination redesign — LANDED 2026-08-01 (two commits):**
   the S-SHARING RULE COMPLETES (frontier 4/5; 6→9 fires and then through once the
   futile-shed guard landed), soak 99→107. The termination unit (stamps + sweep + order

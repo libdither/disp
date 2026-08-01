@@ -103,7 +103,8 @@ k-chain, and the S-sharing rule): disp-t parks in walker convoys at the T1·F co
 dock, whose every roll ring is crowded by hot corridor cables. The substrate never
 computes a wrong answer, only sometimes an incomplete one.
 `debug-cascade <term> --why` walks the relief decision tree for every blocked op and
-prints each refusing check; `--kick` re-wakes a parked run to distinguish lost wakes
+prints each refusing check, and lists a declined dock's per-roll first-ring blockers
+(the counts say whether it is one nudge from firing or genuinely crowded); `--kick` re-wakes a parked run to distinguish lost wakes
 from genuine wedges; `--churn` is the pump playbook in one flag (warm up, count which
 cells host mutating activations on the plateau, capture the decision notes filtered to
 the top cells); `soak:N` reproduces a soak failure line verbatim (its term plus the

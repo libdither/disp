@@ -23,14 +23,14 @@
 
 use rust_ca_lattice::blocklet::{layout, Op};
 use rust_ca_lattice::cascade::{rot_cell, rot_dir, Cell, EndPt, Grid2, Route, Site};
-use rust_ca_lattice::cascade_run::{load_net, load_net_tree, Discipline, Runner};
+use rust_ca_lattice::cascade_run::{load_net, load_net_tree, roll_blockers, Discipline, Runner};
 use rust_ca_lattice::cascade_trace::trace_run;
 use rust_ca_lattice::lattice::DIRS;
 use rust_ca_lattice::signal::SignalBackend;
 use rust_ca_lattice::lattice::{step, Pos, Topo};
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, ap, f2, nf, s, show, Fuel, Term};
-use rust_ca_lattice::rules::RULES;
+use rust_ca_lattice::rules::{find_index, RULES};
 
 fn preset(name: &str) -> Option<Term> {
     Some(match name {
@@ -505,6 +505,36 @@ fn main() {
                     ctag.name(),
                     tag.name()
                 );
+                // Per-roll first-ring blockers: ring relief only fires at <= 2, so the
+                // counts say whether this dock is one nudge from firing or genuinely
+                // crowded (and the cells name what prefetch would have to clear).
+                if let Some(rule) = find_index(*ctag, *tag) {
+                    let axis = cpr.face;
+                    let (caux, aux) = match (&facing.cell, &site.cell) {
+                        (Cell::Agent { aux: ca, .. }, Cell::Agent { aux: a, .. }) => (*ca, *a),
+                        _ => continue,
+                    };
+                    let stub_cells = [
+                        (ctag.arity() >= 2).then(|| step(t, caux[0].face)),
+                        (tag.arity() >= 2).then(|| step(*p, aux[0].face)),
+                        (ctag.arity() >= 3).then(|| step(t, caux[1].face)),
+                        (tag.arity() >= 3).then(|| step(*p, aux[1].face)),
+                    ];
+                    let read = |q: Pos| r.grid.site(q);
+                    for roll in 0..4u8 {
+                        match roll_blockers(
+                            &read, r.grid.topo, t, *p, stub_cells, rule as u8, axis, roll,
+                        ) {
+                            None => println!("    roll {roll}: out of bounds"),
+                            Some(bs) => {
+                                println!("    roll {roll}: {} blocker(s)", bs.len());
+                                for (q, _) in bs.iter().take(6) {
+                                    println!("      {q:?}: {}", full_site(&r.grid.site(*q)));
+                                }
+                            }
+                        }
+                    }
+                }
                 probes.push((
                     format!("declined dock {}·{} (activate producer at {p:?})", ctag.name(), tag.name()),
                     Probe::Activate { at: *p },

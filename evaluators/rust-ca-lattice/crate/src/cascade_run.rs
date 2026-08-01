@@ -1191,9 +1191,13 @@ impl Runner {
             // Bounded ring relief (the shove precedent, stretched one notch): pick the
             // roll with the FEWEST blockers (at most two — a crowded ring waits), and
             // relieve exactly one blocker per activation with the existing primitives,
-            // damped by the existing stamps, then re-gate with fresh reads. Unbounded
-            // ring clearing stays forbidden — it livelocks; a near-complete roll is
-            // the case where each relief strictly shrinks the remaining work.
+            // damped by the existing stamps, then re-gate with fresh reads.
+            // The bound is no longer what makes this terminate: swept 2026-08-01 over
+            // 2/3/4/6/unbounded, every setting terminates (the displacement order took
+            // that job) with identical completion — soak 107/160 at every one. It is
+            // kept because raising it only trades disp-t's clean parked pair for a
+            // half-grown blocklet parked mid-script, which the geometry checks skip;
+            // relief that buys no fires should stay conservative.
             // Arbitration: only the address-LOWEST ready pair in the neighborhood may
             // run ring relief. A displacement cycle between two docks needs both to
             // push; this leaves one pusher, and when it fires or truly parks the next
@@ -2068,6 +2072,10 @@ impl Runner {
                     }
                     self.note(|| format!(
                         "evict {t:?} r{i}: corner-cut lanes exhausted at diagonal {u:?}"
+                    ));
+                } else if side_ok(&us, u) {
+                    self.note(|| format!(
+                        "evict {t:?} r{i}: corner-cut diagonal {u:?} is free but DESCENDS the order"
                     ));
                 } else {
                     self.note(|| format!(
