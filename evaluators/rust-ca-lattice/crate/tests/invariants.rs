@@ -184,11 +184,13 @@ fn commit_footprints_and_read_radii_pinned() {
     }
 }
 
-/// AC_IDEA classified cooldown a droppable heuristic ("parks more, never wrong").
-/// MEASURED 2026-07-30: dropping it LIVELOCKS (displacement ping-pong undamped — soak
-/// term 0 never quiesces), so cooldown is load-bearing for QUIESCENCE, not merely a
-/// damper; it stays correctness-of-mechanism until relief is token-bounded. What
-/// remains true and is pinned here: even undamped, no answer is ever wrong.
+/// The cooldown bit-class ledger, both directions pinned. 2026-07-30: dropping the
+/// stamps livelocked 21/48 (displacement ping-pong undamped) — load-bearing for
+/// quiescence. 2026-07-31: refusal-only stamps + the quiescence-edge sweep + ordered
+/// contraction/sidesteps landed and the count fell to ZERO — termination no longer
+/// needs the damping, so cooldown is a droppable pacing heuristic again (AC_IDEA's
+/// original classification, now with the displacement order carrying the guarantee).
+/// Still pinned: no answer is ever wrong, damped or not.
 #[test]
 fn cooldown_ablation_never_wrongs_but_can_livelock() {
     let (mut complete, mut livelocked, mut ran) = (0u32, 0u32, 0u32);
@@ -211,10 +213,9 @@ fn cooldown_ablation_never_wrongs_but_can_livelock() {
     println!(
         "cooldown ablation: {complete}/{ran} complete, {livelocked} livelocked, zero wrong answers"
     );
-    // The livelock is the measured reason cooldown cannot be dropped today. If this
-    // count ever reaches zero, the heuristic classification becomes defensible again —
-    // update AC_IDEA's bit-class table in both directions.
-    assert!(livelocked > 0, "cooldown-off no longer livelocks: reclassify it in AC_IDEA");
+    // Zero since the displacement order + edge sweep landed; if livelocks reappear,
+    // the order has a hole — reclassify in AC_IDEA and hunt it with the churn playbook.
+    assert_eq!(livelocked, 0, "cooldown-off livelocks returned: the order has a hole");
 }
 
 /// The nursery bit is classified correctness-of-mechanism: letting grown agents skip it

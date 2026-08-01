@@ -73,6 +73,9 @@ pub struct Runner {
     /// Mechanism ablation: when false, grown agents skip the nursery (negative control —
     /// the nursery is classified correctness-of-mechanism, so this must break things).
     pub nursery_discipline: bool,
+    /// Mutation count at the last quiescence-edge sweep (fixpoint guard: an unchanged
+    /// count means re-waking the cold wires would refuse identically).
+    edge_swept_at: u64,
     /// Cells committed by growth, attributed to the growing rule (clump-rule evidence).
     pub grown_by_rule: BTreeMap<u8, u64>,
     /// When Some, every activation's write-set size and read radius are recorded per op
@@ -116,6 +119,7 @@ impl Runner {
 
             relief_g: (-1, -3, 9),
             relief_ring: Vec::new(),
+            edge_swept_at: u64::MAX,
             cooldown_stamps: true,
             nursery_discipline: true,
             grown_by_rule: BTreeMap::new(),
@@ -171,13 +175,31 @@ impl Runner {
     }
 
     /// Like [`Self::tick_one`], reporting which cell was activated (for tracing).
-    /// (The every-N-generations contraction sweep that used to live here was DELETED
-    /// 2026-07-31 per AC_IDEA: slack discovery is a monotone fact — every commit that
-    /// frees matter already wakes its neighborhood, and the whole corpus completes
-    /// identically without the sweep's wake storms. The kick invariant stands guard:
-    /// if any contraction opportunity ever goes un-woken, kick-after-quiescence trips.)
+    /// (The every-N-generations contraction sweep was deleted 2026-07-31; the
+    /// quiescence-EDGE sweep below took its place when the displacement order landed:
+    /// ordered contraction's enabling changes often sit at radius 2 — the anchor cells
+    /// — which wake_around never reaches, so slack discovery gets one sweep at each
+    /// would-be quiescence, re-armed only by real commits. No periodic storms, and the
+    /// order guarantees the sweep cannot fuel displacement pumps.)
     pub fn tick_traced(&mut self) -> Option<Pos> {
-        let p = self.next_pos()?;
+        let p = match self.next_pos() {
+            Some(p) => p,
+            None => {
+                if self.grid.mutations == self.edge_swept_at {
+                    return None; // genuinely quiescent: the last sweep changed nothing
+                }
+                self.edge_swept_at = self.grid.mutations;
+                // Wake EVERYTHING once: quiescence means a full re-examination
+                // changes nothing (which makes the kick invariant hold by
+                // construction). Re-armed only by real commits, so a run pays a
+                // handful of these, each bounded by the fixpoint guard.
+                let live: Vec<Pos> = self.grid.cells.keys().copied().collect();
+                for p in live {
+                    self.wake(p);
+                }
+                self.next_pos()?
+            }
+        };
         self.queued.remove(&p);
         if self.gen_left == 0 {
             self.generation += 1;
@@ -406,6 +428,15 @@ impl Runner {
                 reserved: *reserved,
             };
             self.grid.set(p, &Site { cell, cursor: site.cursor, chi: site.chi, claim: site.claim });
+            if new_cd > 0 {
+                // Stamps self-decay to zero: the chain must not depend on a
+                // requester's retries (that dependency was the wear pump), and a
+                // quiescent grid must hold no live stamps (the kick invariant).
+                self.wake(p);
+            } else {
+                // Expiry is the event the refused requesters were waiting on.
+                self.wake_around(p);
+            }
         }
         if !self.signals.extends_by_pump() {
             return false; // derivational backends converge inside sync, not here
@@ -814,6 +845,16 @@ impl Runner {
         for f in DIRS {
             if f == principal.face || (arity >= 2 && f == aux[0].face) {
                 continue;
+            }
+            // Sidesteps are displacement too (an agent is matter): the step must
+            // ascend the same order every route displacement obeys, or shove-driven
+            // sidesteps duel without end at the quiescence edge.
+            {
+                let g = self.relief_g;
+                let d = f.delta();
+                if g.0 * d.0 + g.1 * d.1 + g.2 * d.2 <= 0 {
+                    continue;
+                }
             }
             let s = step(p, f);
             if !self.grid.topo.in_bounds(s) {
@@ -1386,6 +1427,27 @@ impl Runner {
                         self.wake(t);
                     }
                     Cell::Wire { reserved: None, routes, hot, cooldown } => {
+                        // A hopeless merge never reserves: with the quiescence-edge
+                        // sweep re-waking every parked op, a reserve/release retry
+                        // cycle would re-arm the sweep forever (soak term 26). The
+                        // pre-check keeps a refused Place mutation-free, so the grid
+                        // can actually reach the sweep's fixpoint and park.
+                        let planned = crate::cascade::rot_cell(cell, cursor.axis, cursor.roll);
+                        if merge_matter(planned.clone(), routes).is_none() {
+                            self.note(|| format!(
+                                "merge-fail (pre-reserve) at {t:?}: planned {planned:?} vs {:?}",
+                                target.cell
+                            ));
+                            self.relief_owner = Some(p);
+                            self.relief_root = Some(t);
+                            let relieved = self.try_evict(t, Some(&planned), 2);
+                            self.relief_owner = None;
+                            self.relief_root = None;
+                            if relieved {
+                                self.wake(p);
+                            }
+                            return;
+                        }
                         // First phase over existing wire: reserve it so nothing enters
                         // while the merge is pending.
                         self.grid.set(
@@ -1510,20 +1572,17 @@ impl Runner {
         // host just loses the route.
         let (routes, hot, reserved) = match &target.cell {
             Cell::Wire { routes, hot, reserved, cooldown } => {
-                // Inner (blocker) evictions respect the stamp, but each refused attempt
-                // wears it down one notch: the stamp holds off the next N displacement
-                // attempts rather than N ticks, so a parked pocket cannot freeze it
-                // forever. The top level is the caller's own target and always proceeds.
+                // Inner (blocker) evictions respect the stamp with a plain refusal —
+                // no wear, no wake, no progress report. Wear-as-progress was a pump
+                // motor three times over (the requester's retry loop kept itself
+                // alive); stamps now decay on the stamped cell's OWN activations
+                // (self-waking, see pump_heat), so a stamped refusal is a short pause
+                // that expires without anyone hammering. The top level is the caller's
+                // own target and always proceeds.
                 if depth < 2 && *cooldown > 0 {
                     let cd = *cooldown;
-                    self.note(|| format!("evict {t:?} d{depth}: cooldown {cd}, wearing the stamp"));
-                    let mut ns = target.clone();
-                    if let Cell::Wire { cooldown, .. } = &mut ns.cell {
-                        *cooldown -= 1;
-                    }
-                    self.grid.set(t, &ns);
-                    self.wake_around(t);
-                    return true;
+                    self.note(|| format!("evict {t:?} d{depth}: cooldown {cd}, refusing"));
+                    return false;
                 }
                 (routes.clone(), *hot, *reserved)
             }
@@ -2155,6 +2214,17 @@ impl Runner {
             let q = e1.face;
             if q == d1 || q == d2 || e3.face != q {
                 continue;
+            }
+            // Contraction is a route displacement too (the inverse of the shift), so it
+            // obeys the same order: pull only toward ascending g, never back the way
+            // relief pushed. A detour whose pull descends waits as slack (area, priced
+            // by the census) instead of fueling the relief-contraction pump.
+            {
+                let g = self.relief_g;
+                let d = q.delta();
+                if g.0 * d.0 + g.1 * d.1 + g.2 * d.2 <= 0 {
+                    continue;
+                }
             }
             let t = step(p, q);
             let (n1, n2) = (step(u1, q), step(u3, q));
