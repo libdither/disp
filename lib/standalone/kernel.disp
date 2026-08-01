@@ -361,7 +361,7 @@ Tele := {table, C} -> {
   let admit := field_or table "admit" ({_f} -> true)
   let lift := field_or table "lift" ({v} -> v)
   let fresh := field table "fresh"
-  let apply := field_or table "apply" ({_chk, f, a} -> f a)
+  let apply := field_or table "apply" ({_chk, _st, f, a} -> f a)
   let read := field_or table "read" ({v} -> v)
   let judge := field_or table "judge" ({_chk, _st, T, r} -> T r)
   let run := fix ({chk, st, rows, fV, prior} ->
@@ -372,7 +372,7 @@ Tele := {table, C} -> {
           let points := fresh s ty tail
           if (is_leaf points) { false } else { list_all ({p} -> resume (pair_fst p) (pair_snd p)) points }
         }
-        Call g x => (resume (apply chk g x) s)
+        Call g x => (resume (apply chk s g x) s)
         Judge ty v => (resume (judge chk s ty v) s)
         Read v => (resume (read v) s)
         Lift v => (resume (lift v) s)
@@ -404,6 +404,31 @@ teq_decide := {open2, a, x} ->
   else if (and (is_neutral a) (neutral_free x)) { teq_one open2 a x }
   else if (and (is_neutral x) (neutral_free a)) { teq_one open2 x a }
   else { open2 a x }
+eq_pairs := fix ({self, hs} ->
+  if (is_leaf hs) { nil }
+  else {
+    let e := (neutral_type (pair_fst hs)).ends
+    if (is_fork e) { cons e (self (pair_snd hs)) } else { self (pair_snd hs) }
+  })
+eq_reach := {pairs, a, x} -> (fix ({go, known, fuel} ->
+  if (member x known) { true }
+  else if (is_leaf fuel) { false }
+  else {
+    let next := (fix ({add, ps, acc} ->
+      if (is_leaf ps) { acc }
+      else {
+        let p := pair_fst ps
+        let acc2 :=
+          if (and (member (pair_fst p) acc) (not (member (pair_snd p) acc))) { cons (pair_snd p) acc }
+          else if (and (member (pair_snd p) acc) (not (member (pair_fst p) acc))) { cons (pair_fst p) acc }
+          else { acc }
+        add (pair_snd ps) acc2
+      })) pairs known
+    if (tree_eq (list_len next) (list_len known)) { false } else { go next (pair_snd fuel) }
+  })) (cons a nil) pairs
+eq_holds := {st, a, x} -> teq_decide ({a2, x2} -> eq_reach (eq_pairs st) a2 x2) a x
+test eq_holds t 2 2 = true
+test eq_holds t 2 3 = false
 
 Meta : Table := ({
   let Value := < Conc : t, Neu : t, Stem : t, Fork : t, Poison : t, Chain : t >
@@ -436,15 +461,29 @@ Meta : Table := ({
       let ck := T.check
       if (is_leaf ck) { T.recognize (wait (wait vf minted) T) v } else { ck (wait vf minted) T v }
     }))
-  let vcheck := ({chk, T, V} ->
+  let meta_pairs := fix ({self, hs} ->
+    if (is_leaf hs) { nil }
+    else {
+      let s := pair_fst hs
+      let rest := self (pair_snd hs)
+      if (tree_eq (pair_fst s) "Neu") {
+        let e := (field (pair_snd s) ShallowType).ends
+        if (is_fork e) { cons e rest } else { rest }
+      } else { rest }
+    })
+  let vcheck := ({chk, st, T, V} ->
     match V {
       Poison r => false
       Neu m => (tree_eq (field m ShallowType) T)
       _ => {
         let rows := T.tele
         if (is_fork rows) { chk t rows V t }
-        else if let Conc tr = V { T tr }
-        else { verify_inband (collect V nil) T (readback V) }
+        else {
+          let e := T.ends
+          if (is_fork e) { and (is_leaf (readback V)) (teq_decide ({a2, x2} -> eq_reach (meta_pairs st) a2 x2) (pair_fst e) (pair_snd e)) }
+          else if let Conc tr = V { T tr }
+          else { verify_inband (collect V nil) T (readback V) }
+        }
       }
     })
   let s_rule := ({self, chk, C, TB, X} -> self chk (self chk C X) (self chk TB X))
@@ -515,7 +554,7 @@ Meta : Table := ({
           let vlift := {tr} -> if (is_neutral tr) { Neu (wait_payload tr) } else { Conc tr }
           let r := respond_face fr (make_mark m)
           if (is_invalid r) { Poison (Neu m) }
-          else if (list_all ({ob} -> vcheck chk (pair_fst ob) (if (is_elim_frame fr) { vlift (pair_snd ob) } else { X })) (pair_fst r)) {
+          else if (list_all ({ob} -> vcheck chk t (pair_fst ob) (if (is_elim_frame fr) { vlift (pair_snd ob) } else { X })) (pair_fst r)) {
             Neu ({ (ShallowType) := pair_snd r, (AnyTree) := pair "Ob" (pair fr (make_mark m)) })
           } else { Poison (Neu m) }
         }
@@ -530,11 +569,14 @@ Meta : Table := ({
         Fork a b => (apply_fork self chk a b X)
       }
     }))
-  fresh := {st, ty, tail} -> cons (pair (Neu ({ (ShallowType) := ty, (AnyTree) := tail })) st) nil
+  fresh := {st, ty, tail} -> {
+    let x := Neu ({ (ShallowType) := ty, (AnyTree) := tail })
+    cons (pair x (cons x st)) nil
+  }
   lift := {f} -> Conc f
-  apply := mwalk
+  apply := {chk, _st, F, X} -> mwalk chk F X
   read := readback
-  judge := {chk, _st, T, r} -> vcheck chk T r
+  judge := {chk, st, T, r} -> vcheck chk st T r
 })
 
 GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
@@ -582,12 +624,12 @@ GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
         if (is_neutral x) { invalid x }
         else { triage tc ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x })
       a)
-  let walk := fix ({self, f, x} ->
+  let walk := {st} -> fix ({self, f, x} ->
     if (is_invalid f) { f }
     else if (tree_eq f tree_eq) { if (neutral_free x) { on_tree_eq ({_} -> wait tree_eq x) x } else { wait tree_eq x } }
     else if (has_sig tree_eq_sig f) {
       let a := wait_payload f
-      if (and (neutral_free a) (neutral_free x)) { on_tree_eq ({_} -> f x) x } else { teq_decide on_teq_open a x }
+      if (and (neutral_free a) (neutral_free x)) { on_tree_eq ({_} -> f x) x } else { teq_decide (on_teq_open st) a x }
     }
     else if (tree_eq f is_neutral) { on_is_neutral ({_} -> is_neutral x) x }
     else if (is_neutral f) { hyp_apply f x }
@@ -607,9 +649,15 @@ GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
         let r := respond_face frame parent
         if (is_invalid r) { false }
         else {
+          let obs := {
+            let phist := field (wait_payload parent) AnyTree
+            if (and (tree_eq (pair_fst phist) "Teq") (is_elim_frame frame)) {
+              if (eq_holds legit (pair_fst (pair_snd phist)) (pair_snd (pair_snd phist))) { cons (pair_fst (pair_fst r)) nil } else { pair_fst r }
+            } else { pair_fst r }
+          }
           and (ok vch legit parent)
           (and (tree_eq (neutral_type v) (pair_snd r))
-               (list_all ({ob} -> vch (pair_fst ob) (pair_snd ob)) (pair_fst r)))
+               (list_all ({ob} -> vch (pair_fst ob) (pair_snd ob)) obs))
         }
       } else if (tree_eq (pair_fst hist) "Teq") {
         (fix ({so, w} ->
@@ -630,20 +678,24 @@ GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
       } else {
         let rows := T2.tele
         if (is_leaf rows) {
-          let ck := T2.check
-          if (is_leaf ck) { T2.recognize (wait vf T2) v2 } else { ck vf T2 v2 }
+          let e := T2.ends
+          if (is_fork e) { and (is_leaf v2) (eq_holds st (pair_fst e) (pair_snd e)) }
+          else {
+            let ck := T2.check
+            if (is_leaf ck) { T2.recognize (wait vf T2) v2 } else { ck vf T2 v2 }
+          }
         } else { chk st rows v2 t }
       })) T v
-  ({ fresh := fresh, admit := neutral_free, apply := {_chk, f, x} -> walk f x, judge })
+  ({ fresh := fresh, admit := neutral_free, apply := {_chk, st, f, x} -> walk st f x, judge })
 }
 Guard : Table := GuardAt
   ({_resume, _x} -> false)
   ({resume, x} -> if (neutral_free x) { resume t } else { invalid x })
-  ({a, x} -> make_hyp Bool (pair "Teq" (pair a x)))
+  ({st, a, x} -> if (eq_reach (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) })
 Ambient : Table := GuardAt
   ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)
-  ({a, x} -> tree_eq a x)
+  ({_st, a, x} -> tree_eq a x)
 
 given GenericWalker : AnyTree := Guard
 Fn := Pi GenericWalker
@@ -715,6 +767,7 @@ Eq := {A, x, y} -> ({
   gate := {_Ind, B} -> cons (B x) nil
   elim := {_self, _p, base} -> base
   land := {B, _self} -> B y
+  ends := pair x y
 })
 eq_subst := {A, x, y, B, p, base} -> elim_of (Eq A x y) B p base
 eq_sym := {A, x, y, p} -> eq_subst A x y ({_} -> Eq A y x) p refl

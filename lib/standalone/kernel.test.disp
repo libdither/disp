@@ -527,8 +527,24 @@ test Fn (Eq Nat 2 3) ({_} -> Point 3) ({p} -> er23 p 3) = false
 test Fn (Eq Nat 2 3) ({_} -> Point 3) ({p} -> 2) = false
 test Pi Meta (Eq Nat 2 3) ({_} -> Point 3) ({p} -> er23 p 2) = true
 test Fn Nat ({n} -> Fn (Eq Nat n n) ({_} -> Eq Nat n n)) ({n, p} -> refl) = true
-test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat n m))) ({n, m, p} -> refl) = false
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat n m))) ({n, m, p} -> refl) = true
 test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat n m))) ({n, m, p} -> p) = true
+
+// The Eq bridge: an equation type declares its endpoints (ends, a TRUSTED
+// slot in the same class as gate/check -- a lying ends is a lying type, the
+// GoodGate policing family). Judges answer equation membership through the
+// three-valued equality PLUS the session ledger, and the walk discharges a
+// stuck equation when a hypothesis proves it: reachability over declared ends
+// gives symmetry and transitivity, so assumptions are USABLE -- a proof in
+// scope changes what certifies, including making an ill-typed arm unreachable
+// (path sensitivity through proofs).
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat m n))) ({n, m, p} -> refl) = true
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn Nat ({k} -> Fn (Eq Nat n m) ({_} -> Fn (Eq Nat m k) ({_} -> Eq Nat n k))))) ({n, m, k, p, q} -> refl) = true
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n zero) ({_} -> Eq Nat n m))) ({n, m, p} -> refl) = false
+psens := {n, m, p} -> bnat (tree_eq n m) zero (pair 5 5)
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Nat))) psens = true
+test Fn Nat ({n} -> Fn Nat ({m} -> Fn AnyTree ({_} -> Nat))) psens = false
+test Pi Meta Nat ({n} -> Pi Meta Nat ({m} -> Pi Meta (Eq Nat n m) ({_} -> Eq Nat m n))) ({n, m, p} -> refl) = true
 
 SOrd := Sum [pair "oz" [], pair "op" [Rec, Rec]]
 oz := inj "oz" t
