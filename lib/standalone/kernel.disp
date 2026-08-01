@@ -388,6 +388,23 @@ Table : ShallowType := Pred ({r} -> not (is_leaf (field_cell r "fresh")))
 Enum : Table := ({ fresh := {st, ty, _tail} -> list_map ({a} -> pair a st) ty.members })
 Sampled := {samples} -> ({ fresh := {st, _ty, _tail} -> list_map ({a} -> pair a st) samples })
 
+neutral_free := fix ({self, v} ->
+  if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v })
+teq_one := {open2, h, c} -> {
+  let T := neutral_type h
+  let ms := T.members
+  if (is_fork ms) {
+    let r := tree_eq (pair_fst ms) c
+    if (list_all ({m} -> tree_eq (tree_eq m c) r) ms) { r } else { open2 h c }
+  } else if (T c) { open2 h c } else { false }
+}
+teq_decide := {open2, a, x} ->
+  if (tree_eq a x) { true }
+  else if (and (neutral_free a) (neutral_free x)) { false }
+  else if (and (is_neutral a) (neutral_free x)) { teq_one open2 a x }
+  else if (and (is_neutral x) (neutral_free a)) { teq_one open2 x a }
+  else { open2 a x }
+
 Meta : Table := ({
   let Value := < Conc : t, Neu : t, Stem : t, Fork : t, Poison : t, Chain : t >
   let vstem := {V} -> if let Conc c = V { Conc (t c) } else { Stem V }
@@ -462,8 +479,26 @@ Meta : Table := ({
       match F {
         Conc tr => (if (tree_eq tr is_neutral) {
           Conc false
-        } else if (or (tree_eq tr tree_eq) (has_sig tree_eq_sig tr)) {
-          (if let Conc xt = X { Conc (tr xt) } else { Poison X })
+        } else if (tree_eq tr tree_eq) {
+          match X {
+            Poison r => (Poison r)
+            Chain e scr args => (Poison (Chain (pair e (pair scr args))))
+            _ => (Conc (wait tree_eq (if let Conc xt = X { xt } else { readback X })))
+          }
+        } else if (has_sig tree_eq_sig tr) {
+          match X {
+            Poison r => (Poison r)
+            Chain e scr args => (Poison (Chain (pair e (pair scr args))))
+            _ => {
+              let a := wait_payload tr
+              let xr := if let Conc xt = X { xt } else { readback X }
+              if (and (neutral_free a) (neutral_free xr)) { Conc (tr xr) }
+              else {
+                let d := teq_decide ({a2, x2} -> Neu ({ (ShallowType) := Bool, (AnyTree) := pair "Teq" (pair a2 x2) })) a xr
+                if (or (tree_eq d true) (tree_eq d false)) { Conc d } else { d }
+              }
+            }
+          }
         } else if let Conc xt = X {
           Conc (tr xt)
         } else if (or (tree_eq tr pair_fst) (tree_eq tr pair_snd)) {
@@ -502,10 +537,7 @@ Meta : Table := ({
   judge := {chk, _st, T, r} -> vcheck chk T r
 })
 
-neutral_free := fix ({self, v} ->
-  if (is_neutral v) { false } else { triage true ({c} -> self c) ({l, r} -> and (self l) (self r)) v })
-
-GuardAt := {on_is_neutral, on_tree_eq} -> {
+GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
   let hyp_apply := {f, x} -> {
     let r := respond_face x f
     if (is_invalid r) { invalid f } else { make_hyp (pair_snd r) (pair "Ob" (pair x f)) }
@@ -552,8 +584,11 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
       a)
   let walk := fix ({self, f, x} ->
     if (is_invalid f) { f }
-    else if (tree_eq f tree_eq) { on_tree_eq ({_} -> wait tree_eq x) x }
-    else if (has_sig tree_eq_sig f) { on_tree_eq ({_} -> f x) x }
+    else if (tree_eq f tree_eq) { if (neutral_free x) { on_tree_eq ({_} -> wait tree_eq x) x } else { wait tree_eq x } }
+    else if (has_sig tree_eq_sig f) {
+      let a := wait_payload f
+      if (and (neutral_free a) (neutral_free x)) { on_tree_eq ({_} -> f x) x } else { teq_decide on_teq_open a x }
+    }
     else if (tree_eq f is_neutral) { on_is_neutral ({_} -> is_neutral x) x }
     else if (is_neutral f) { hyp_apply f x }
     else if (is_elim_head f) { (wait shim (pair f nil)) x }
@@ -576,6 +611,10 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
           (and (tree_eq (neutral_type v) (pair_snd r))
                (list_all ({ob} -> vch (pair_fst ob) (pair_snd ob)) (pair_fst r)))
         }
+      } else if (tree_eq (pair_fst hist) "Teq") {
+        (fix ({so, w} ->
+          if (is_neutral w) { ok vch legit w }
+          else { triage true ({c} -> so c) ({l, r} -> and (so l) (so r)) w })) (pair_snd hist)
       } else { false }
     }))
   let fresh := {st, ty, tail} -> {
@@ -600,9 +639,11 @@ GuardAt := {on_is_neutral, on_tree_eq} -> {
 Guard : Table := GuardAt
   ({_resume, _x} -> false)
   ({resume, x} -> if (neutral_free x) { resume t } else { invalid x })
+  ({a, x} -> make_hyp Bool (pair "Teq" (pair a x)))
 Ambient : Table := GuardAt
   ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)
+  ({a, x} -> tree_eq a x)
 
 given GenericWalker : AnyTree := Guard
 Fn := Pi GenericWalker

@@ -144,9 +144,32 @@ test Pi Enum Five ({n} -> Point n) ({n} -> n) = true
 test Pi Meta Nat ({n} -> Point n) ({n} -> n) = false
 test Pi Guard Nat ({n} -> Point n) ({n} -> n) = false
 
-// tree_eq is banned on hyp-containing operands: it is the last reader that reconstructs
-// "am I the probe?" without touching a signature. Enum decides extensionally and keeps it.
-// The price is honest_data_eq, extensionally the identity but not separable from teq_dodge.
+// tree_eq on abstract operands is THREE-VALUED now: answer when the result is
+// UNIFORM over the operand's type (identical trees = reflexivity; a members
+// list where every member agrees, so Point decides and enum domains refuse
+// junk; non-membership = disjointness answers false), otherwise the comparison
+// goes STUCK as a Bool-typed equation-hyp. Its discharge protocol is Bool's
+// own gate: eliminating it demands BOTH arms, so no concrete bit ever leaks
+// (uniform answers cannot diverge from any concrete run; stuck answers carry
+// no bit). Raw if still triages the stuck bool and refuses -- the blessed
+// eliminator is the discipline line. Guard mints the equation in-band (Teq
+// history, audited operand-wise); Meta mints it out-of-band; Ambient keeps its
+// old native answer via the third GuardAt hook.
+bnat := elim_of Bool ({_} -> Nat)
+test GuardNatToNat ({n} -> bnat (tree_eq n zero) zero n) = true
+test MetaNatToNat ({n} -> bnat (tree_eq n zero) zero n) = true
+test GuardNatToNat ({n} -> bnat (tree_eq n (pair 5 5)) zero n) = true
+test GuardNatToNat ({n} -> bnat (tree_eq n zero) (pair 5 5) n) = false
+test MetaNatToNat ({n} -> bnat (tree_eq n zero) (pair 5 5) n) = false
+test Fn Nat ({_} -> Bool) ({n} -> tree_eq n zero) = true
+test Pi Meta Nat ({_} -> Bool) ({n} -> tree_eq n zero) = true
+test Fn Nat ({_} -> Bool) ({n} -> tree_eq (succ n) (succ zero)) = true
+test Fn Nat ({_} -> Fn Nat ({_} -> Bool)) ({n, m} -> tree_eq n m) = true
+test Fn Nat ({_} -> Nat) ({n} -> bnat (tree_eq n n) n (pair 5 5)) = true
+test Pi Guard Five ({_} -> Nat) ({x} -> bnat (tree_eq x 5) zero (pair 5 5)) = true
+test Fn Bool ({_} -> Bool) ({b} -> bool_rec (tree_eq b zero) true b) = true
+test Fn Bool ({_} -> Bool) ({b} -> bool_rec (tree_eq b zero) 5 b) = false
+test Fn (Eq Nat 2 3) ({_} -> Point 3) ({p} -> elim_of (Eq Nat 2 3) ({w} -> Point w) p 2) = true
 honest_data_eq := {n} -> if (tree_eq n zero) { zero } else { n }
 test GuardNatToNat honest_data_eq = false
 test MetaNatToNat honest_data_eq = false
@@ -402,7 +425,9 @@ test Pi Meta Tree ({_} -> Bool) (member_t zero) = false
 test Pi Guard AnyTree ({_} -> ShallowType) Pred = true
 test Pi Guard ShallowType ({_} -> Pi Guard AnyTree ({_} -> ShallowType)) PiCode = true
 test Pi Guard AnyTree ({_} -> ShallowType) Sum = false
-test Pi Guard AnyTree ({_} -> ShallowType) Point = false
+// Point's closure construction used to refuse; deferred partial tree_eq
+// (no verdict extracted) lets construction over a captured mint complete.
+test Pi Guard AnyTree ({_} -> ShallowType) Point = true
 
 // Trials = enumerate where the domain advertises members, certify (Guard)
 // elsewhere: extensional trials catch the sniffer at Bool, minting covers Nat.
