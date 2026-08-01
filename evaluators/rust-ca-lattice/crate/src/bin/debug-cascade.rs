@@ -467,6 +467,21 @@ fn main() {
             }
             _ => false,
         };
+        // A producer whose principal target is an AGENT carrying its cable: the park
+        // census's dominant class, and invisible to --why until now because the
+        // walk-blocked probe below only fires on a hot WIRE target.
+        if tag.is_producer() && !nursery && matches!(&facing.cell, Cell::Agent { pass, .. }
+            if pass.iter().any(|r| r.through(EndPt {
+                face: principal.face.opp(), lane: principal.lane }).is_some()))
+        {
+            let t = step(*p, principal.face);
+            println!("       blocked by a guest: self {}", full_site(site));
+            println!("       guest {:?}: {}", t, full_site(&facing));
+            probes.push((
+                format!("walker {} against the guest at {t:?} (activate at {p:?})", tag.name()),
+                Probe::Activate { at: *p },
+            ));
+        }
         if tag.is_producer() && !nursery && target_hot {
             let t = step(*p, principal.face);
             println!("       walk-blocked: self {}", full_site(site));

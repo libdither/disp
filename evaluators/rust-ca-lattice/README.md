@@ -107,7 +107,12 @@ cooldown stamps stay load-bearing. A declined dock's last blocker pays the same 
 (clearing it makes the ring whole), and with that in hand the ring-clearing bound had
 nothing left to protect and was removed. Shoves no longer sidestep a guest off a
 walker's wire: the guest leaves its trail in the contested cell and its principal
-re-anchors into it, so the demand it was shoved out of marches it straight back. As of 2026-08-01 the deep-reduction
+re-anchors into it, so the demand it was shoved out of marches it straight back. A
+walker blocked by a stationary guest that carries its cable exchanges places with it
+instead (`try_pass_guest`, the asymmetric counterpart of the head-on swap): cables
+crossing the shared face are sorted into paired deliveries, the walker's trails, and the
+guest's connectors, and the face's two lanes bound the sum — which is why an arity-3
+agent at rest cannot be moved at all, only walked forward. As of 2026-08-01 the deep-reduction
 frontier is complete: `frontier_deep_reductions` pins all five terms normalizing end
 to end, the last being disp-t at its T1·F comb dock. The random soak, a harder and
 much wider corpus, sits at 129 of 160. A run may still park, and a park is a valid

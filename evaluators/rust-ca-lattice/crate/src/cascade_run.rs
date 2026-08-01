@@ -343,7 +343,11 @@ impl Runner {
             Cell::Agent { nursery: false, cooldown: 0, tag, .. }
                 if tag.is_producer() || *tag == Tag::Eps =>
             {
-                if self.try_dock(p, &site) || self.try_walk(p, &site) || self.try_swap(p, &site) {
+                if self.try_dock(p, &site)
+                    || self.try_walk(p, &site)
+                    || self.try_swap(p, &site)
+                    || self.try_pass_guest(p, &site)
+                {
                     return;
                 }
             }
@@ -1065,6 +1069,211 @@ impl Runner {
             return false;
         }
         self.grid.set(p, &a_site);
+        self.grid.set(t, &t_site);
+        let sa = self.grid.sid.remove(&p);
+        let sb = self.grid.sid.remove(&t);
+        if let Some(id) = sa {
+            self.grid.sid.insert(t, id);
+        }
+        if let Some(id) = sb {
+            self.grid.sid.insert(p, id);
+        }
+        self.grid.transport += 2;
+        self.events.push(Event::Move(p, t));
+        self.events.push(Event::Move(t, p));
+        self.wake_around(p);
+        self.wake_around(t);
+        true
+    }
+
+    /// A demanded walker passes a STATIONARY guest whose cell hosts its cable: the two
+    /// exchange places, each one's cables becoming passthroughs of the other's new cell.
+    /// [`Self::try_swap`] handles two walkers meeting head-on; this handles what the park
+    /// census found to be the commonest stuck shape — the guest is going nowhere (its own
+    /// principal faces another agent, so its forced walk fails and nothing shoves it) and
+    /// the walker parks against it forever.
+    ///
+    /// Only an UNDEMANDED producer guest may be displaced: a demanded one marches
+    /// straight back and the exchange is a shuttle, which is the lesson three separate
+    /// pumps taught this substrate. Consumers never walk, so they are always safe.
+    ///
+    /// The shared face carries two lanes, and after the exchange the walker's aux trails
+    /// cross it backwards while every one of the guest's cables crosses it forwards, so
+    /// this is representable only for small arities. That ceiling is inherent, not a
+    /// tuning choice.
+    fn try_pass_guest(&mut self, p: Pos, site: &Site) -> bool {
+        let Cell::Agent { tag: atag, principal: apr, aux: aaux, pass: apass, .. } = &site.cell
+        else {
+            return false;
+        };
+        let m = apr.face;
+        let t = step(p, m);
+        let target = self.grid.site(t);
+        if target.claim || target.cursor.is_some() {
+            return false;
+        }
+        let Cell::Agent {
+            tag: btag, principal: bpr, aux: baux, pass: bpass, nursery: false, cooldown: 0,
+        } = &target.cell
+        else {
+            return false;
+        };
+        if bpr.face == m.opp() && bpr.lane == apr.lane {
+            return false; // true head-on: that is the symmetric swap's case
+        }
+        // The guest must actually be carrying my cable onward.
+        let a_enter = EndPt { face: m.opp(), lane: apr.lane };
+        let Some(a_route_idx) = bpass.iter().position(|r| r.through(a_enter).is_some()) else {
+            return false;
+        };
+        let a_exit = bpass[a_route_idx].through(a_enter).expect("just matched");
+        if a_exit.face == a_enter.face {
+            return false;
+        }
+        // Move only under demand, read through the guest exactly as the shove does.
+        if !self.demand_at(
+            step(t, a_exit.face),
+            EndPt { face: a_exit.face.opp(), lane: a_exit.lane },
+        ) {
+            return false;
+        }
+        // A guest with demand of its own will walk itself; displacing it is the shuttle.
+        if btag.is_producer() || *btag == Tag::Eps {
+            if self.demand_at(
+                step(t, bpr.face),
+                EndPt { face: bpr.face.opp(), lane: bpr.lane },
+            ) {
+                return false;
+            }
+        }
+        // Cables that cross the shared face fall into three kinds, and each costs one of
+        // its two lanes. PAIRED: one of my aux meets one of the guest's ports directly —
+        // the guest is an argument delivered to me, the commonest reason it is sitting in
+        // my way at all. Those just swap ends and need no passthrough. TRAIL: an aux of
+        // mine pointing elsewhere, which must reach back through the cell I am leaving.
+        // CONNECTOR: a port of the guest's pointing elsewhere, which must reach forward
+        // through the cell it is leaving. Anything else crossing that face (a cable of
+        // mine ending inside the guest's cell, or vice versa) is not something an
+        // exchange can re-express, so refuse.
+        let a_arity = atag.arity().saturating_sub(1);
+        let b_ports: Vec<EndPt> = std::iter::once(*bpr)
+            .chain((0..btag.arity().saturating_sub(1)).map(|k| baux[k]))
+            .collect();
+        let mut used: Vec<u8> = vec![];
+        let mut paired: Vec<(usize, usize, u8)> = vec![]; // (my aux, guest port, lane)
+        let mut trails: Vec<usize> = vec![];
+        let mut connectors: Vec<usize> = vec![];
+        for k in 0..a_arity {
+            if aaux[k].face != m {
+                trails.push(k);
+                continue;
+            }
+            let lane = aaux[k].lane;
+            match b_ports
+                .iter()
+                .position(|e| e.face == m.opp() && e.lane == lane)
+            {
+                Some(j) => {
+                    paired.push((k, j, lane));
+                    used.push(lane);
+                }
+                None => return false, // my aux ends somewhere inside the guest's cell
+            }
+        }
+        for (j, e) in b_ports.iter().enumerate() {
+            if e.face != m.opp() {
+                connectors.push(j);
+            } else if !paired.iter().any(|(_, pj, _)| *pj == j) {
+                return false; // the guest's cable ends somewhere inside my cell
+            }
+        }
+        if paired.len() + trails.len() + connectors.len() > 2 {
+            let (x, y, z) = (paired.len(), trails.len(), connectors.len());
+            self.note(|| format!(
+                "pass-guest {p:?}: {x} paired + {y} trail(s) + {z} connector(s) exceed the \
+                 shared face's 2 lanes"
+            ));
+            return false;
+        }
+        let mut free = (0..2u8).filter(|l| !used.contains(l));
+        let mut a_lanes = [0u8; 2];
+        for k in &trails {
+            a_lanes[*k] = free.next().expect("budget checked");
+        }
+        let mut b_lanes = [0u8; 3];
+        for j in &connectors {
+            b_lanes[*j] = free.next().expect("budget checked");
+        }
+        for (_, j, lane) in &paired {
+            b_lanes[*j] = *lane;
+        }
+
+        // The walker's new cell: it keeps travelling, and adopts the guest's cables plus
+        // whatever else was passing through.
+        let mut a_new_pass: Vec<Route> = bpass.clone();
+        a_new_pass.remove(a_route_idx);
+        for j in &connectors {
+            a_new_pass.push(Route::new(
+                EndPt { face: m.opp(), lane: b_lanes[*j] },
+                b_ports[*j],
+            ));
+        }
+        let mut a_new_aux = [EndPt { face: m.opp(), lane: 0 }; 2];
+        for k in 0..a_arity {
+            let lane = match paired.iter().find(|(pk, _, _)| *pk == k) {
+                Some((_, _, lane)) => *lane,
+                None => a_lanes[k],
+            };
+            a_new_aux[k] = EndPt { face: m.opp(), lane };
+        }
+        if atag.arity() == 2 {
+            a_new_aux[1] = a_new_aux[0];
+        }
+        // The guest's new cell: its ports all re-anchor onto the shared face, and it
+        // adopts the walker's aux trails.
+        let mut b_new_pass: Vec<Route> = apass.clone();
+        for k in &trails {
+            b_new_pass.push(Route::new(aaux[*k], EndPt { face: m, lane: a_lanes[*k] }));
+        }
+        if a_new_pass.len() > 2 || b_new_pass.len() > 2 {
+            let (x, y) = (a_new_pass.len(), b_new_pass.len());
+            self.note(|| format!(
+                "pass-guest {p:?}: exchanged cells would carry {x}/{y} passthroughs (max 2)"
+            ));
+            return false;
+        }
+        let mut b_new_aux = [EndPt { face: m, lane: 0 }; 2];
+        for k in 0..btag.arity().saturating_sub(1) {
+            b_new_aux[k] = EndPt { face: m, lane: b_lanes[k + 1] };
+        }
+        if btag.arity() == 2 {
+            b_new_aux[1] = b_new_aux[0];
+        }
+        let moved_a = Cell::Agent {
+            tag: *atag,
+            principal: a_exit,
+            aux: a_new_aux,
+            pass: a_new_pass,
+            nursery: false,
+            cooldown: 0,
+        };
+        let moved_b = Cell::Agent {
+            tag: *btag,
+            principal: EndPt { face: m, lane: b_lanes[0] },
+            aux: b_new_aux,
+            pass: b_new_pass,
+            nursery: false,
+            cooldown: self.stamp(1),
+        };
+        let p_site = Site { cell: moved_b, cursor: site.cursor, chi: site.chi, claim: false };
+        let t_site = Site { cell: moved_a, cursor: target.cursor, chi: target.chi, claim: false };
+        if crate::cascade::Word2::pack(&p_site).is_err()
+            || crate::cascade::Word2::pack(&t_site).is_err()
+        {
+            return false;
+        }
+        self.note(|| format!("pass-guest {p:?}: exchanged places with the guest at {t:?}"));
+        self.grid.set(p, &p_site);
         self.grid.set(t, &t_site);
         let sa = self.grid.sid.remove(&p);
         let sb = self.grid.sid.remove(&t);

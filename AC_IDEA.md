@@ -299,29 +299,31 @@ With every deep term complete, the capability frontier is the soak's 31 remainin
 runs, and `cargo run --release --bin park-census` classifies them so the next rung is
 chosen by distribution rather than by whichever term was looked at last. Today:
 
-- **15 walk wedges** — a demanded producer whose principal target is an AGENT that
-  carries its cable as a passthrough. It cannot walk (the cell is not wire), the guest
-  cannot be shoved (the guest's own principal target is likewise an agent, so its forced
-  walk fails), and the symmetric `try_swap` does not apply because the guest is not
-  walking back at us. This is the dominant class and the nominated next rung: an
-  ASYMMETRIC swap — a demanded walker exchanges cells with an undemanded stationary
-  guest that hosts its cable, each one's cables becoming passthroughs of the other. Two
-  cells, inside the move budget. It must carry the guard the session's three pumps all
-  taught: only an UNDEMANDED guest may be displaced, or its own demand marches it back
-  and the exchange becomes a shuttle.
-  Know its ceiling before building it. After the exchange, the walker's aux trails cross
-  the shared edge backwards and EVERY one of the guest's ports must cross it forwards
-  (the guest's cables all continue through the cell it left), and a face carries two
-  lanes. So the swap is representable only when `(arity(walker) − 1) + arity(guest) ≤ 2`:
-  an arity-1 walker past a guest of arity ≤ 2, or an arity-2 walker past an arity-1
-  guest, and never an arity-3 walker. The same two-lane budget is why the existing
-  symmetric swap quietly tops out at arity 2 on both sides. The census counts 21 of 31
-  blocked agents at arity 2+, so this rung is a real but PARTIAL cover, and the honest
-  expectation is single-digit terms rather than the whole class. The alternative for the
-  cases it cannot reach is to make the sidestep usable again in the shove path: it fails
-  today only because the guest's principal re-anchors into the contested cell and the
-  walker's own heat then marches it home, which is a one-bit damping problem
-  (`cooldown` stamps an agent for a single tick) rather than a representability one.
+- **Walk wedges 15 → 13, the ASYMMETRIC SWAP LANDED** (`try_pass_guest`): a demanded
+  walker exchanges cells with an undemanded stationary guest that hosts its cable, each
+  one's cables becoming passthroughs of the other's new cell. Two cells, inside the move
+  budget, carrying the guard all three of the session's pumps taught — only an
+  UNDEMANDED guest may be displaced, or its own demand marches it back and the exchange
+  is a shuttle. Measured: soak 129 → 130, blocked agents 31 → 24. Single digits, exactly
+  as the ceiling below predicts; the point was to take the class's cheap half.
+  The interesting correction came from the first draft's guards, which were too crude in
+  a way worth remembering: refusing whenever the guest's principal pointed back at the
+  walker excluded the commonest reason a guest is in the way at all — it is an argument
+  DELIVERED into the walker's own aux. Those cables need no passthrough: both agents stay
+  adjacent, so the paired ports simply swap ends. Cables crossing the shared face are now
+  sorted into paired (a delivery, one lane, no passthrough), trails (my aux reaching back
+  through the cell I left), and connectors (the guest's cables reaching forward through
+  the cell it left), and the budget is `paired + trails + connectors ≤ 2`.
+  **The residual is structural, not a gap in the rung.** An arity-3 agent has three
+  cables that must all cross one face to move one cell, and a face carries two lanes — so
+  it cannot be exchanged, and `try_sidestep` refuses it for the identical reason. An
+  arity-3 agent at rest is IMMOVABLE; the only motion available to it is walking forward
+  along its own principal, which consumes that cable and leaves only two trails to cross.
+  So the remaining wedges of this class need the walker's cable routed AROUND the guest
+  rather than the guest moved: an eviction of the specific passthrough carrying the
+  walker's cable. The machinery exists (agents shed their own passthroughs) but is gated
+  today by the futile-shed guard, which ties the shed's usefulness to the guest being
+  able to walk — the wrong test when the point is to move the CABLE, not the agent.
 - **13 declined docks** — see the ring-drain note in the disp-t entry: their traces are
   dominated by "in the requesting dock's ring", the per-roll relaxation unwedges 8 of
   them but they mostly re-park a step later and roll switching starts to oscillate. The
