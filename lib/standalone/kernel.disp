@@ -702,12 +702,20 @@ Fn := Pi GenericWalker
 
 False := Sum nil
 Not := {P} -> Fn P ({_} -> False)
-Refine := {A, p} -> ({ #recognize := {_self, v} -> and (A v) (p v) })
+Refine := {A, p} -> ({
+  #recognize := {_self, v} -> and (A v) (p v)
+  check := {jdg, _T, v} -> and (jdg A v) (p v)
+})
 test False t = false
 test False 5 = false
 test Not False ({p} -> p) = true
 
-Named := {name, T} -> ({ #recognize := {_self, v} -> T v, name := name, under := T })
+Named := {name, T} -> ({
+  #recognize := {_self, v} -> T v
+  check := {jdg, _T2, v} -> jdg T v
+  name := name
+  under := T
+})
 key_insert := fix ({self, k, ks} ->
   if (is_leaf ks) { cons k nil }
   else if (tree_eq k (pair_fst ks)) { ks }
@@ -805,6 +813,25 @@ test GoodGate (Eq Nat 2 3) = true
 test GoodGate AnyTree = false
 test GoodGate ShallowType = false
 
+probes := cons t (cons 5 (cons true (cons false (cons (pair 5 5) (cons (cons 1 nil) (cons (inj "zz" t) (cons (succ (succ zero)) nil)))))))
+Coherent := {T} -> {
+  let e := T.ends
+  let ck := T.check
+  and (and
+    (if (is_fork e) { or (tree_eq (pair_fst e) (pair_snd e)) (list_all ({v} -> not (T v)) probes) } else { true })
+    (if (is_leaf ck) { true } else { list_all ({v} -> tree_eq (T v) (ck ({ty, a} -> ty a) T v)) probes }))
+    (and (list_all T T.members)
+         (if (is_leaf T.gate) { true } else { GoodGate T }))
+}
+test Coherent Nat = true
+test Coherent Bool = true
+test Coherent Tree = true
+test Coherent Unit = true
+test Coherent AnyTree = true
+test Coherent (Point 5) = true
+test Coherent (Eq Nat 2 2) = true
+test Coherent (Eq Nat 2 3) = true
+
 list_len_t : Fn Tree ({_} -> Nat) := {xs} -> tree_rec ({_} -> Nat) xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
 list_snoc_t : Fn Tree ({_} -> Fn Tree ({_} -> Tree)) := {xs, x} -> tree_rec ({_} -> Tree) xs (cons x nil) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons l ir)
 list_map_t : Fn (Fn Tree ({_} -> Tree)) ({_} -> Fn Tree ({_} -> Tree)) := {f, xs} -> tree_rec ({_} -> Tree) xs nil ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons (f l) ir)
@@ -816,13 +843,19 @@ test list_all_t is_leaf (cons t (cons t nil)) = true
 test list_all_t is_leaf (cons t (cons 2 nil)) = false
 test Fn Tree ({_} -> Bool) is_leaf = false
 
+let list_mem := {ej, rj, A, v} -> triage true ({_} -> false) ({h, tl} -> and (ej A h) (rj tl)) v
 List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
-  #recognize := {self, v} -> triage true ({_} -> false) ({h, tl} -> and (A h) (self tl)) v
+  #recognize := {self, v} -> list_mem ({ty, a} -> ty a) self A v
+  check := {jdg, T, v} -> list_mem jdg ({a} -> jdg T a) A v
   gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
   elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
 })
 
-Record : Pi Guard AnyTree ({_} -> ShallowType) := {entries} -> ({ #recognize := {_self, r} -> list_all ({e} -> (pair_snd e) (field r (pair_fst e))) entries })
+let record_mem := {ej, entries, r} -> list_all ({e} -> ej (pair_snd e) (field r (pair_fst e))) entries
+Record : Pi Guard AnyTree ({_} -> ShallowType) := {entries} -> ({
+  #recognize := {_self, r} -> record_mem ({ty, a} -> ty a) entries r
+  check := {jdg, _T, r} -> record_mem jdg entries r
+})
 check_module := Record
 test tree_eq check_module Record = true
 
@@ -850,8 +883,10 @@ test default_guard t (guard succ (base 5)) = Ok (Both (pair 5 succ))
 test default_guard t (guard succ (sig Nat)) = Ok (Install succ)
 test default_guard t (sig Nat) = Err
 
+let eff_mem := {ej, rj, Q, X, v} -> (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
 Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> ({
-  #recognize := {self, v} -> (match v { Pure x => (X x); Op q k => (and (Q q) (self (k t))); _ => false })
+  #recognize := {self, v} -> eff_mem ({ty, a} -> ty a) self Q X v
+  check := {jdg, T, v} -> eff_mem jdg ({a} -> jdg T a) Q X v
   gate := {Ind, B} -> cons (PiCode X ({x} -> B (Pure x))) (cons (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) nil)
   elim := {self, m, on_pure, on_op} -> (match m { Pure x => (on_pure x); Op q k => (on_op q k ({r} -> self (k r) on_pure on_op)) })
 })

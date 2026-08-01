@@ -600,6 +600,42 @@ test GoodGate Row = true
 LieGate := ({ #recognize := {_self, _v} -> true, gate := {_Ind, _B} -> cons AnyTree nil, elim := {_self, _v, c} -> c })
 test GoodGate LieGate = false
 
+// Coherence: the declaration slots are TRUSTED, so each one gets a probe.
+// A type claiming distinct concrete endpoints must be empty (else an assumption
+// launders a false equation into the ledger); the judge-aware face must agree
+// with the raw face on concrete values (they are derived from one walk in every
+// kernel former, so this catches hand-written types); declared members must be
+// recognized; and a declared gate must still pass GoodGate.
+test Coherent (List Nat) = true
+test Coherent (Record (cons (pair "a" Nat) nil)) = true
+test Coherent (Eff Bool Bool Nat) = true
+test Coherent SN = true
+test Coherent SLN = true
+test Coherent SFin = true
+test Coherent (Named "cost" Nat) = true
+test Coherent (Refine Nat ({n} -> tree_eq n 2)) = true
+LieEnds := ({ #recognize := {_self, v} -> is_leaf v, ends := pair 2 3 })
+test Coherent LieEnds = false
+LieCheck := ({ #recognize := {_self, v} -> is_leaf v, check := {_jdg, _T, _v} -> true })
+test Coherent LieCheck = false
+LieMembers := ({ #recognize := {_self, v} -> is_leaf v, members := cons 5 nil })
+test Coherent LieMembers = false
+test Coherent LieGate = false
+
+// Element positions now judge through the tier for every container former, not
+// just declared sums: a constructor applied to abstract arguments certifies,
+// and a wrongly-typed component still refuses.
+NL := List Nat
+test Fn Nat ({_} -> Fn NL ({_} -> NL)) cons = true
+test Fn Nat ({_} -> Fn NL ({_} -> NL)) ({h, tl} -> cons h (cons (pair 5 5) tl)) = false
+RC := Record (cons (pair "a" Nat) (cons (pair "b" Bool) nil))
+test Fn Nat ({_} -> RC) ({n} -> ({ a := n, b := true })) = true
+test Fn Nat ({_} -> RC) ({n} -> ({ a := true, b := n })) = false
+BEf := Eff Bool Bool Nat
+test Fn Nat ({_} -> BEf) ({n} -> Pure n) = true
+test Fn Nat ({_} -> BEf) ({n} -> Op (pair true ({_} -> Pure n))) = true
+test Fn Nat ({_} -> BEf) ({n} -> Op (pair n ({_} -> Pure n))) = false
+
 // The declaration protocol end to end in the standalone world: the driver
 // builds requests with the scope's make_record and reads them with the scope's
 // field, so the standalone vocabulary (base/let/sig/guard/given +
