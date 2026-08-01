@@ -343,6 +343,41 @@ ring drain) is what forbids using it. Both loosenings that have worked so far �
 pays-for-itself exemption, and this — take the same form: permit the otherwise-forbidden
 move exactly when it is the last one before progress that the reduction bounds.
 
+## Untangling: measured, and it needs its other half first
+
+A cable threading an AGENT's cell is a tangle, and tangles are exactly what make a
+walker's path unwalkable — it crosses wire all day and stops dead at an agent. They are
+also rare and concentrated: counting parked grids, 2 or 3 agents host a foreign cable
+regardless of whether the grid holds 11 agents or 52, and every walk wedge is one of
+them. That makes "shed the cable instead of handling the collision" the obvious
+prevention, and it has the one thing the other loosenings lacked — a real potential
+function, since every eviction and contraction receiver is empty or wire (never an
+agent), so no relief move can put a cable back into an agent's cell and the tangle count
+falls monotonically, rising only when an agent walks onto a cable or growth places one.
+
+Both versions were built and measured 2026-08-01, and both are reverted:
+
+- **Untangle everywhere** (any agent sheds any foreign cable) is strictly WORSE: the
+  cable has to go somewhere, and the somewhere is the scarce clearance around docks,
+  which then decline. k-combinator and k-chain fell from complete to 3 rewrites.
+- **Untangle only when a demanded walker is blocked on that agent** keeps the deep
+  corpus complete (5/5) but revives soak term 95's pump — the SAME pump that the
+  walker-side version of this shed produced. Two different trigger sites, one failure,
+  which locates the problem in the move rather than in when it fires: the tangle count
+  does fall monotonically, but that argument only bounds how often untangling happens,
+  not what the freed cable does next, and in tight space a freed hot cable churns
+  between relief, contraction and the walk that re-absorbs it.
+
+The conclusion is about sequencing, and it rehabilitates the idea rather than killing
+it: **untangling has nowhere to put the cable until cables are shorter.** The companion
+half — zipping a cable taut from its agent anchor, so that slack is reclaimed rather
+than parked in the fabric — is what creates the clearance untangling needs, and it is
+also the half with the more interesting property, since shortening from an anchored end
+gives a per-cable sequencing (a cable has one front; two contractions on it cannot
+fight) instead of the global spatial direction whose sacrifices have cost the most.
+Build zip-up first, measure whether free space around docks actually grows, and only
+then re-try untangling on top of it.
+
 ## Clump rules (a calculus-level direction, gated on measurement)
 
 Today a rewrite locks exactly 2 cells and grows the result; a "clump rule" locks a larger
