@@ -92,12 +92,17 @@ are impossible at move granularity. The fifth (endpoint swings + the termination
 redesign): a displaced route ending on an agent's own port re-anchors with the same
 one-word swing, consumer squatters sidestep off hot wires, an over-full squatter sheds
 its own passthrough, stamped evictions refuse plainly (stamps self-decay and their
-expiry wakes the neighborhood — cooldown is a pacing heuristic again, termination
-carried by the order), contraction and sidesteps obey the same order, a hopeless growth
-merge never reserves, and quiescence is re-checked by a full one-shot sweep at the
-worklist's edge (the kick invariant true by construction), and shoves fire only at
-guests with nothing of their own to act on (a demanded guest walks itself; shoving it
-buys a sidestep it walks straight back from). The frontier, pinned by
+expiry wakes the neighborhood), contraction and sidesteps obey the same order, a
+hopeless growth merge never reserves, quiescence is re-checked by a full one-shot
+sweep at the worklist's edge (the kick invariant true by construction), and shoves
+fire only at guests with nothing of their own to act on (a demanded guest walks
+itself; shoving it buys a sidestep it walks straight back from). The sixth loosens
+the order where it can be paid for: a displacement may descend `relief_g` when the
+route it moves is exactly the one whose removal lets a blocked placement's matter
+merge, so every exception is the last move before progress that the reduction itself
+bounds. The payment is verified per route (assuming it per request re-arms cycles
+outright) and can still be stolen before the placement commits, which is why the
+cooldown stamps stay load-bearing. The frontier, pinned by
 `frontier_deep_reductions` at 4 of 5 deep terms complete (fork-dispatch, k-combinator,
 k-chain, and the S-sharing rule): disp-t parks in walker convoys at the T1·F comb
 dock, whose every roll ring is crowded by hot corridor cables. The substrate never

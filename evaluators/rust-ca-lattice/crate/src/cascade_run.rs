@@ -67,6 +67,9 @@ pub struct Runner {
     pub relief_g: (i32, i32, i32),
     /// The requesting dock's ring during its relief (receivers here are refused).
     relief_ring: Vec<Pos>,
+    /// Set while running a relief whose success directly commits a blocked placement:
+    /// such a displacement may descend the order (see `ascends`).
+    relief_pays: bool,
     /// Heuristic ablation: when false, cooldown stamps are never written (damping off).
     /// The bit-class claim under test: dropping a heuristic may park more, never wrong.
     pub cooldown_stamps: bool,
@@ -123,6 +126,7 @@ impl Runner {
 
             relief_g: (-1, -3, 9),
             relief_ring: Vec::new(),
+            relief_pays: false,
             edge_swept_at: u64::MAX,
             sync_tick: 0,
             cooldown_stamps: true,
@@ -1489,7 +1493,9 @@ impl Runner {
                             ));
                             self.relief_owner = Some(p);
                             self.relief_root = Some(t);
+                            self.relief_pays = true;
                             let relieved = self.try_evict(t, Some(&planned), 2);
+                            self.relief_pays = false;
                             self.relief_owner = None;
                             self.relief_root = None;
                             if relieved {
@@ -1539,7 +1545,9 @@ impl Runner {
                             // does not refuse its own clearing.
                             self.relief_owner = Some(p);
                             self.relief_root = Some(t);
+                            self.relief_pays = true;
                             let relieved = self.try_evict(t, Some(&planned), 2);
+                            self.relief_pays = false;
                             self.relief_owner = None;
                             self.relief_root = None;
                             if relieved {
@@ -1714,10 +1722,18 @@ impl Runner {
         // granularity: a whole shifted segment counts as one move in one direction,
         // so nothing straddles the order the way cell-level receivers did. The
         // strictly-shortening shapes (splice, truncation) stay exempt.
+        // A relief that PAYS FOR ITSELF may move against the order: this exact route is
+        // what blocks a placement, so moving it commits that placement next activation.
+        // Each violation is therefore the last move before real progress, and progress
+        // is monotone and bounded by the reduction itself, so violations cannot cycle.
+        // The payment must be VERIFIED per route, not assumed per request: exempting
+        // every eviction a blocked placement asks for (including the ones that shed
+        // some other cold route) re-armed displacement cycles — measured, the cooldown
+        // ablation went from 0 livelocks to 3.
         let ascends = {
             let g = self.relief_g;
-            move |delta: (i32, i32, i32)| -> bool {
-                g.0 * delta.0 + g.1 * delta.1 + g.2 * delta.2 > 0
+            move |delta: (i32, i32, i32), pays: bool| -> bool {
+                pays || g.0 * delta.0 + g.1 * delta.1 + g.2 * delta.2 > 0
             }
         };
         let mut blockers: Vec<Pos> = vec![];
@@ -1790,6 +1806,13 @@ impl Runner {
         // route for an immediate same-activation retry (fresh reads, bounded by the
         // per-route shove budget), so the shove's window is consumed here instead of
         // being raced for across activations.
+        let unblocks: Vec<bool> = {
+            let mut v = vec![false; routes.len()];
+            for (i, u) in &order {
+                v[*i] = *u;
+            }
+            v
+        };
         let mut worklist: VecDeque<(bool, usize, u8)> = order
             .iter()
             .map(|(i, _)| (false, *i, 2u8))
@@ -1826,6 +1849,9 @@ impl Runner {
         };
         while let Some((allow_hot, i, shoves_left)) = worklist.pop_front() {
             let r = &routes[i];
+            // Verified payment: the requester says a placement is waiting on this cell,
+            // and removing THIS route is what lets that placement's matter merge.
+            let pays = self.relief_pays && unblocks[i];
             let moved_hot = (hot >> i) & 1 == 1 || self.signals.hot(&self.grid, t, i);
             if !allow_hot && moved_hot {
                 self.note(|| format!("evict {t:?} r{i}: hot (cold pass)"));
@@ -2046,7 +2072,7 @@ impl Runner {
                 if !side_ok(&us, u) && recursable(&us) && !blockers.contains(&u) {
                     blockers.push(u);
                 }
-                if side_ok(&us, u) && ascends((u.0 - t.0, u.1 - t.1, u.2 - t.2)) {
+                if side_ok(&us, u) && ascends((u.0 - t.0, u.1 - t.1, u.2 - t.2), pays) {
                     for l1 in 0..2u8 {
                         for l2 in 0..2u8 {
                             let n1n = swing(&n1s, c1, back1, EndPt { face: d2, lane: l1 });
@@ -2088,7 +2114,7 @@ impl Runner {
                     if w == d1 || w == d1.opp() || w == d2 || w == d2.opp() {
                         continue;
                     }
-                    if !ascends(w.delta()) {
+                    if !ascends(w.delta(), pays) {
                         continue;
                     }
                     let (a, c, b) = (step(n1, w), step(u, w), step(n2, w));
@@ -2142,7 +2168,7 @@ impl Runner {
             } else {
                 // Straight segment: parallel shift through three side cells.
                 for q in d1.perp() {
-                    if !ascends(q.delta()) {
+                    if !ascends(q.delta(), pays) {
                         continue;
                     }
                     let (u1, u2, u3) = (step(n1, q), step(t, q), step(n2, q));

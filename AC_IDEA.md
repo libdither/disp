@@ -39,11 +39,14 @@ progress counter — parked means genuinely wedged, never forgotten.
   endpoint swings landed: with the bit ablated a half-grown agent looks swingable and
   relief re-anchors its ports mid-growth — disp-t quiesces seed-free but no longer
   projects; the ablation pin holds the witness as a floor) · capacity (3rd route,
-  pc width) · heuristics (cooldown — reclassified 2026-07-31: with the route-level
-  displacement order + the quiescence-edge sweep + ordered contraction/sidesteps,
-  cooldown-off livelocks fell 21 → 6 → ZERO, so the stamps are a droppable pacing
-  heuristic again, termination carried by the order; answers stay right either way;
-  AND χ —
+  pc width) · correctness-of-mechanism again (cooldown — its 2026-07-31 demotion to
+  heuristic lasted a day: the order + edge sweep took undamped livelocks 21 → 6 → 0,
+  and then the pays-for-itself order exemption put them at 3, because an exempted
+  move's payment can be stolen before the placement it bought commits. The stamps
+  carry that residue, so the bits stay spent. Answers stay right either way, which is
+  all the ablation lane asserts now — the count is a ledger, printed not pinned, since
+  it moved three times in one day and a control that needs hand re-pinning per
+  mechanism change is measuring the mechanism) · heuristics (χ —
   and χ is currently inert in the serial driver: nothing pumps it since the pressure-wave
   removal; it re-enters with the demand-priority rung or its bits go to capacity).
   `tests/invariants.rs` pins all of this (ablation lanes + the negative control).
@@ -224,11 +227,23 @@ generic half becomes mechanism:
   each roll's blocker list). So disp-t's real lever is the order's direction
   sacrifice, not ring crowding, and the bound stays at 2 because raising it only
   trades a clean parked pair for a half-grown blocklet the geometry checks skip.
-  What the order costs is the open question — a per-form sweep measured completion
-  trades but never a livelock, so candidates worth trying are a potential that is not
-  a fixed global direction (e.g. distance-to-requester, which is per-request acyclic)
-  or letting strictly-shortening exemptions cover more shapes. Prefetch itself is not
-  dead, just unmotivated: no frontier term currently parks for the reason it fixes.
+  Loosening the order got its first rung the same day. What does NOT work: a
+  per-request potential (push matter away from the requester) is acyclic for one
+  requester and fails for two — precisely the cross-dock shuttle measured and rejected
+  above, and relief requesters include un-arbitrated walkers and cursors, so the dock
+  arbitration does not cover it. What DOES work, LANDED: a displacement may violate
+  the order when it PAYS FOR ITSELF — the route being moved is the one whose removal
+  lets a blocked placement's matter merge, so the violating move is the last one
+  before real progress, and progress is monotone and bounded by the reduction. Payment
+  must be verified per ROUTE, not assumed per request: exempting every eviction a
+  blocked placement asks for (including ones shedding some other cold route) re-armed
+  cycles outright. Even verified, the payment can be STOLEN — relief and placement sit
+  in separate activations for the write budget, so the cell can be re-crowded in
+  between — which is why the exemption costs the cooldown bit-class its brief
+  demotion: undamped livelocks go 0 → 3, the stamps carry that residue. Worth it at
+  +5 soak completions (107 → 112) for two stamp bits already spent in the frozen word.
+  Prefetch itself is not dead, just unmotivated: no frontier term now parks for the
+  reason it fixes.
 - **Endpoint swings + termination redesign — LANDED 2026-08-01 (two commits):**
   the S-SHARING RULE COMPLETES (frontier 4/5; 6→9 fires and then through once the
   futile-shed guard landed), soak 99→107. The termination unit (stamps + sweep + order
