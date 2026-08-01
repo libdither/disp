@@ -69,7 +69,13 @@ regenerated every run) carrying the live frontier corpus — the deep-reduction 
 suite floors pin, parked ones included, plus recently-moved census family members — so
 the player's picker never trails the suite; `lattice_player.html` replays the
 bundle, one frame per generation, so a displayed tick is the maximal simultaneous
-wavefront, and each trace's note reports its measured parallel width. `bench-cascade`
+wavefront. Every trace's note opens with a verdict MEASURED from the run just recorded —
+WORKING with its fire count, or STUCK with where it stopped — never a hand-written
+claim, because hand-written outcomes go stale the moment the engine moves (two frontier
+captions still said "parks" for terms that had started completing). The frontier tier
+carries one exhibit per stuck class the park census still finds, named for the shape of
+the stuck state rather than a term index, so a class that gets fixed flips its own
+exhibit to WORKING and the next census says what to put there instead. `bench-cascade`
 prints the timing snapshot and `debug-cascade` dumps a parked run's census.
 
 Five relief rungs have landed. The first: growth-blocked cells evict cold routes

@@ -283,9 +283,29 @@ pub fn trace_run(
     } else {
         widths.iter().sum::<usize>() as f64 / widths.len() as f64
     };
+    // The verdict is MEASURED from the run that was just recorded, never written by
+    // hand. Hand-written outcomes in the roster went stale the moment the engine moved
+    // (two of the frontier captions still said "parks" for terms that now complete),
+    // which is the same failure the auto-regenerating tier was built to end — one level
+    // up, in the prose. Every trace now states what actually happened.
+    // Seed-free quiescence alone cannot tell a finished run from a stuck one — a valid
+    // park looks identical — so the verdict asks whether the answer actually arrived.
+    let answered = runner
+        .readback_port
+        .map(|out| runner.shadow.readback(runner.shadow.get(out).ports[0]).is_some());
+    let fires = runner.grid.rewrites;
+    let verdict = match (spent < budget, runner.grid.seed_sids.is_empty(), answered) {
+        (false, _, _) => format!("STILL RUNNING: {fires} fires and no end in sight"),
+        (true, false, _) => format!("STUCK: {fires} fires, then a half-built rewrite wedges"),
+        (true, true, Some(false)) => {
+            format!("STUCK: {fires} fires, then everything stops short of an answer")
+        }
+        (true, true, Some(true)) => format!("WORKING: normalizes in {fires} fires"),
+        (true, true, None) => format!("settles after {fires} fires"),
+    };
     write!(
         out,
-        "{{\"schema_version\":4,\"engine_revision\":\"cascade\",\"topo\":\"{}\",\"readback\":\"\",\"kind\":\"cascade-suite\",\"name\":\"{}\",\"suite_tier\":\"example\",\"note\":\"{} [one frame per generation; parallel width peak {} mean {:.1}]\",\"bit_layout\":{{\"name\":\"cascade\",\"payload\":{{\"fixed\":36}},\"fields\":{{\"chi\":4}},\"motion\":{{\"fixed\":21}},\"observer\":{{\"sid\":32}},\"max_local\":64}},\"frames\":[",
+        "{{\"schema_version\":4,\"engine_revision\":\"cascade\",\"topo\":\"{}\",\"readback\":\"\",\"kind\":\"cascade-suite\",\"name\":\"{}\",\"suite_tier\":\"example\",\"note\":\"{verdict} — {} [one frame per generation; parallel width peak {} mean {:.1}]\",\"bit_layout\":{{\"name\":\"cascade\",\"payload\":{{\"fixed\":36}},\"fields\":{{\"chi\":4}},\"motion\":{{\"fixed\":21}},\"observer\":{{\"sid\":32}},\"max_local\":64}},\"frames\":[",
         runner.grid.topo.name(), name, note, max_w, mean_w,
     ).unwrap();
     for (i, f) in frames.iter().enumerate() {

@@ -18,9 +18,11 @@ use rust_ca_lattice::rules::{find_index, Tag, RULES};
 fn term_runner(term: &Term) -> Runner {
     let mut shadow = Net::new();
     let root = shadow.build(term);
-    let (_nrm, _out) = shadow.drive(root);
+    let (_nrm, out) = shadow.drive(root);
     let grid = load_net(&shadow, Topo::Full3D).expect("loads");
-    Runner::new(grid, shadow, Discipline::Fifo)
+    let mut r = Runner::new(grid, shadow, Discipline::Fifo);
+    r.readback_port = Some(out);
+    r
 }
 
 /// Same, on the tidy-tree embedding: the term reads as an actual syntax tree.
@@ -221,24 +223,24 @@ fn main() {
     let frontier: Vec<(String, String, Runner, u64)> = vec![
         (
             "frontier-k-chain".into(),
-            "chain_k(2), the frontier's oldest knot: completes since live-cable relief \
-             (guest swings + ring drain + arbitration + the route-level displacement order)"
+            "chain_k(2), the frontier's oldest knot: nested K-triage whose docks all \
+             compete for the same corridor"
                 .into(),
             term_runner(&rust_ca_lattice::oracle::chain_k(2)),
             20_000_000,
         ),
         (
             "frontier-s-rule".into(),
-            "@(F(S(L),S(L)),L): six fires deep, then PARKS at its Dn\u{b7}L dock — the \
-             frontier's live edge (geometry green, kick-dead)"
+            "@(F(S(L),S(L)),L): the S-combinator sharing rule, which duplicates its \
+             argument and must route both copies out"
                 .into(),
             term_runner(&ap(f2(s(Term::L), s(Term::L)), Term::L)),
             20_000_000,
         ),
         (
             "frontier-disp-t".into(),
-            "disp_t, the walker-convoy park: three fires then facing docks crowd each \
-             other out"
+            "disp_t: two-level triage over a 56-cell comb dock, the densest \
+             footprint in the rule table"
                 .into(),
             term_runner(&rust_ca_lattice::oracle::disp_t()),
             20_000_000,
@@ -253,16 +255,44 @@ fn main() {
         ),
         (
             "census-discard-tree".into(),
-            "K discards a 4-leaf tree: the reel walks the erasers and the dead matter \
-             actually dies (stood untouched before 2026-07-31)"
+            "K discards a 4-leaf tree: erasure traffic has to clean up an entire \
+             discarded subtree"
                 .into(),
             term_runner(&rust_ca_lattice::oracle::discard_tree(2)),
             20_000_000,
         ),
+        // One exhibit per class the park census still finds stuck, so the picker always
+        // carries the failures beside the successes. Named by the shape of the stuck
+        // state rather than by term index: when a class is fixed its exhibit flips to
+        // WORKING on its own, and the next census tells us what to put here instead.
+        (
+            "stuck-walk-wedge".into(),
+            "soak term 5, the commonest stuck shape: a demanded walker whose path runs \
+             through a three-cable agent that cannot move aside (three cables, one face, \
+             two lanes) and cannot be exchanged with"
+                .into(),
+            term_runner(&ap(
+                ap(ap(Term::L, ap(Term::L, Term::L)), ap(ap(Term::L, Term::L), Term::L)),
+                Term::L,
+            )),
+            20_000_000,
+        ),
+        (
+            "stuck-declined-dock".into(),
+            "soak term 3, the other stuck shape: a facing pair whose every orientation \
+             is crowded, and whose relief keeps being refused because the only free \
+             cells are the clearance the dock itself needs"
+                .into(),
+            term_runner(&ap(
+                ap(ap(ap(ap(Term::L, Term::L), Term::L), Term::L), Term::L),
+                Term::L,
+            )),
+            20_000_000,
+        ),
         (
             "census-convoy".into(),
-            "convoy(1), stacked K-path triages: completes since the reel cleans its \
-             erasure traffic"
+            "convoy(1), stacked K-path triages: walkers queue behind each other \
+             down one corridor"
                 .into(),
             term_runner(&rust_ca_lattice::oracle::convoy(1)),
             20_000_000,

@@ -83,6 +83,10 @@ pub struct Runner {
     edge_swept_at: u64,
     /// Activation counter for the derivational-heat refresh throttle (sync every 64).
     sync_tick: u32,
+    /// The net port a finished reduction should be readable from. Reporting only:
+    /// it lets a recorded trace state whether the run actually produced its answer,
+    /// which seed-free quiescence alone cannot say (a valid park looks identical).
+    pub readback_port: Option<u32>,
     /// Cells committed by growth, attributed to the growing rule (clump-rule evidence).
     pub grown_by_rule: BTreeMap<u8, u64>,
     /// When Some, every activation's write-set size and read radius are recorded per op
@@ -131,6 +135,7 @@ impl Runner {
             sync_tick: 0,
             cooldown_stamps: true,
             nursery_discipline: true,
+            readback_port: None,
             grown_by_rule: BTreeMap::new(),
             audit: None,
             signals: SignalBackend::Worklist,
