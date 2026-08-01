@@ -3,10 +3,16 @@
 //! throwaway test files.
 //!
 //! Usage: cargo run --release --bin debug-cascade -- <preset|term>
-//!            [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage]
-//!            [--trace <out.js>]
-//! Presets: identity, fork, k, s-rule, k-chain, disp-t; or a term in the oracle's show()
-//! syntax, e.g. "@(F(L,L),L)".
+//!            [--discipline fifo|lifo|random|addr] [--tree] [--budget N] [--why] [--kick]
+//!            [--triage] [--churn] [--trace <out.js>]
+//! Presets: identity, fork, k, s-rule, k-chain, disp-t; `soak:N` reproduces soak term N
+//! verbatim (its LCG term plus the rotation's discipline and embedding — a failure line
+//! like "term 95 [AddressOrdered/tree]" is exactly `soak:95`); or a term in the
+//! oracle's show() syntax, e.g. "@(F(L,L),L)".
+//!
+//! --churn is the pump playbook in one flag: warm up for half the budget, count which
+//! cells host mutating activations on the plateau, then capture the decision notes
+//! filtered to the top cells — the diagnosis loop every livelock hunt starts with.
 //!
 //! --why walks the relief decision tree for each blocked op and prints every refusing
 //! check; --kick re-wakes the whole parked run and continues; --triage combines them
@@ -17,7 +23,7 @@
 
 use rust_ca_lattice::blocklet::{layout, Op};
 use rust_ca_lattice::cascade::{rot_cell, rot_dir, Cell, EndPt, Grid2, Route, Site};
-use rust_ca_lattice::cascade_run::{load_net, Discipline, Runner};
+use rust_ca_lattice::cascade_run::{load_net, load_net_tree, Discipline, Runner};
 use rust_ca_lattice::cascade_trace::trace_run;
 use rust_ca_lattice::lattice::DIRS;
 use rust_ca_lattice::lattice::{step, Pos, Topo};
@@ -183,13 +189,37 @@ fn heat_front(grid: &Grid2, p: Pos, start: EndPt) -> String {
     format!("{hot_cells}+ hot cells, no terminus within 200")
 }
 
+/// The soak's exact reproduction: term i of its LCG stream plus the stratified
+/// rotation's discipline and embedding, so "term 95 [AddressOrdered/tree]" in a test
+/// failure is `debug-cascade soak:95`, verbatim.
+fn soak_case(i: u32) -> (Term, Discipline, bool) {
+    let mut rng = rust_ca_lattice::oracle::Lcg(20260730);
+    let mut term = None;
+    for j in 0..=i {
+        let t = rng.rand_term(3 + (j % 4));
+        if j == i {
+            term = Some(t);
+        }
+    }
+    let disciplines = [
+        Discipline::Fifo,
+        Discipline::Lifo,
+        Discipline::Random(0x9e37_79b9_7f4a_7c15),
+        Discipline::AddressOrdered,
+    ];
+    (term.expect("soak term"), disciplines[((i / 8) % 4) as usize], (i / 4) % 2 == 1)
+}
+
 fn main() {
     let mut which = None;
     let mut discipline = Discipline::Fifo;
+    let mut discipline_set = false;
     let mut budget = 20_000_000u64;
     let mut why = false;
     let mut kick = false;
     let mut triage = false;
+    let mut churn = false;
+    let mut tree = false;
     let mut steady = 0u32;
     let mut trace_path: Option<String> = None;
     let mut args = std::env::args().skip(1);
@@ -203,21 +233,38 @@ fn main() {
                     Some("addr") => Discipline::AddressOrdered,
                     other => panic!("--discipline fifo|lifo|random|addr, got {other:?}"),
                 };
+                discipline_set = true;
             }
             "--budget" => budget = args.next().and_then(|v| v.parse().ok()).expect("--budget N"),
             "--why" => why = true,
             "--kick" => kick = true,
             "--triage" => triage = true,
+            "--churn" => churn = true,
+            "--tree" => tree = true,
             "--steady" => steady = args.next().and_then(|v| v.parse().ok()).expect("--steady N"),
             "--trace" => trace_path = Some(args.next().expect("--trace <out.js>")),
             _ => which = Some(a),
         }
     }
     let which = which.unwrap_or_else(|| {
-        eprintln!("usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|term> [--discipline fifo|lifo|random|addr] [--budget N] [--why] [--kick] [--triage] [--steady N] [--trace <out.js>]");
+        eprintln!(
+            "usage: debug-cascade <identity|fork|k|s-rule|k-chain|disp-t|soak:N|term> \
+             [--discipline fifo|lifo|random|addr] [--tree] [--budget N] [--why] [--kick] \
+             [--triage] [--churn] [--steady N] [--trace <out.js>]"
+        );
         std::process::exit(2);
     });
-    let term = preset(&which).or_else(|| parse_term(&which)).unwrap_or_else(|| {
+    let term = if let Some(n) = which.strip_prefix("soak:").and_then(|n| n.parse().ok()) {
+        let (t, d, e) = soak_case(n);
+        if !discipline_set {
+            discipline = d;
+        }
+        tree |= e;
+        Some(t)
+    } else {
+        preset(&which).or_else(|| parse_term(&which))
+    };
+    let term = term.unwrap_or_else(|| {
         eprintln!("unknown preset / unparsable term {which:?}");
         std::process::exit(2);
     });
@@ -230,9 +277,87 @@ fn main() {
     let mut shadow = Net::new();
     let root = shadow.build(&term);
     let (_nrm, out) = shadow.drive(root);
-    let grid = load_net(&shadow, Topo::Full3D).expect("net embeds");
+    let grid = if tree {
+        load_net_tree(&shadow, Topo::Full3D).expect("net embeds (tree)")
+    } else {
+        load_net(&shadow, Topo::Full3D).expect("net embeds")
+    };
     let mut r = Runner::new(grid, shadow, discipline);
-    let quiet = r.run(budget);
+    // --churn replaces the plain run with the pump playbook: warm up, then count which
+    // cells host mutating activations on the plateau, then capture the decision notes —
+    // the exact loop otherwise hand-written per livelock hunt.
+    let mut churn_out = String::new();
+    let quiet = if churn {
+        use std::collections::BTreeMap;
+        use std::fmt::Write as _;
+        let warmup = budget / 2;
+        let window = (budget / 4).min(500_000);
+        let mut spent = 0u64;
+        let mut early = false;
+        while spent < warmup {
+            if !r.tick_one() {
+                early = true;
+                break;
+            }
+            spent += 1;
+        }
+        if early {
+            writeln!(churn_out, "churn: quiesced during warmup ({spent} activations) — no plateau").unwrap();
+            true
+        } else {
+            let mut muts: BTreeMap<Pos, u64> = BTreeMap::new();
+            let mut windowed = 0u64;
+            let mut q = false;
+            while windowed < window {
+                let m0 = r.grid.mutations;
+                let Some(p) = r.tick_traced() else {
+                    q = true;
+                    break;
+                };
+                windowed += 1;
+                if r.grid.mutations != m0 {
+                    *muts.entry(p).or_insert(0) += 1;
+                }
+            }
+            let mut top: Vec<_> = muts.into_iter().collect();
+            top.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+            writeln!(churn_out, "churn plateau ({windowed} activations after {warmup} warmup):").unwrap();
+            for (p, n) in top.iter().take(8) {
+                writeln!(churn_out, "  {p:?}: {n} mutating activations  {}", full_site(&r.grid.site(*p))).unwrap();
+            }
+            if !q {
+                r.explain = Some(vec![]);
+                for _ in 0..2_000u64 {
+                    if !r.tick_one() {
+                        q = true;
+                        break;
+                    }
+                }
+                let log = r.explain.take().unwrap_or_default();
+                let hot: Vec<String> = top.iter().take(3).map(|(p, _)| format!("{:?}", p).replace(' ', "")).collect();
+                let mut shown = 0;
+                writeln!(churn_out, "plateau decision notes (filtered to the top cells):").unwrap();
+                for l in &log {
+                    let key = l.replace(' ', "");
+                    if hot.iter().any(|h| key.contains(h.as_str())) {
+                        writeln!(churn_out, "  {l}").unwrap();
+                        shown += 1;
+                        if shown >= 15 {
+                            break;
+                        }
+                    }
+                }
+                if shown == 0 {
+                    for l in log.iter().take(10) {
+                        writeln!(churn_out, "  {l}").unwrap();
+                    }
+                }
+            }
+            q
+        }
+    } else {
+        r.run(budget)
+    };
     let read = r.shadow.readback(r.shadow.get(out).ports[0]);
     let complete = read.is_some() && read == oracle_nf;
     println!();
@@ -241,6 +366,10 @@ fn main() {
         "rewrites:   {}   transport: {}   generations: {}   shadow ints: {}",
         r.grid.rewrites, r.grid.transport, r.generation, r.shadow.ints
     );
+    if churn {
+        println!();
+        print!("{churn_out}");
+    }
     println!(
         "out port:   {}  [{}]",
         read.as_ref().map(show).unwrap_or_else(|| "unreadable".into()),
