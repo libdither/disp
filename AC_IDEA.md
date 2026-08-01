@@ -214,20 +214,22 @@ generic half becomes mechanism:
   starves corridors, per-receiver address-monotone kills straddling shifts. Still on
   the table for disp-t's remaining park: footprint prefetch, the single-lane
   experiment.
-- **disp-t knot — DIAGNOSED 2026-08-01, and it is NOT prefetch's case after all.** The
+- **disp-t knot — RESOLVED 2026-08-01. THE DEEP CORPUS IS COMPLETE: 5 of 5.** The
   declined dock is T1·F (the 56-cell comb); its best roll has 3 first-ring blockers
   against decline-time relief's bound of 2, which is why footprint prefetch was
-  nominated. But the bound turns out not to be the wall: sweeping it (2/3/4/6/
-  unbounded) shows every setting terminates — unbounded ring clearing no longer
-  livelocks, the displacement order took that job — with identical completion
-  everywhere (soak 107/160). Raised past 3 the dock DOES fire and the comb grows to
-  pc 112 of 202, and then wedges again on the ROUTE-LEVEL ORDER: the one free
-  receiver for the blocking route descends `relief_g`, so relief refuses a cell that
-  is otherwise empty (`debug-cascade --why` now says so in as many words, and prints
-  each roll's blocker list). So disp-t's real lever is the order's direction
-  sacrifice, not ring crowding, and the bound stays at 2 because raising it only
-  trades a clean parked pair for a half-grown blocklet the geometry checks skip.
-  Loosening the order got its first rung the same day. What does NOT work: a
+  nominated. The bound was never the wall on its own: sweeping it showed every setting
+  terminates — unbounded ring clearing no longer livelocks, the displacement order took
+  that job — and, at the time, with identical completion everywhere. Raised past 3 the
+  dock fired and the comb grew to pc 112 of 202, then wedged on the ROUTE-LEVEL ORDER:
+  the one free receiver for the blocking route descends `relief_g`, so relief refused a
+  cell that was otherwise empty (`debug-cascade --why` now says so in as many words,
+  and prints each roll's blocker list; reporting that refusal as "diagonal busy" is
+  what hid this for a session). So the wall was the order, and the bound was what kept
+  the term from ever reaching it. Both had to go, in that order: once the last-blocker
+  relief could pay its way past the order (below), the bound was the only thing left
+  holding the comb dock shut, and 3/4/8/unbounded became indistinguishable — soak
+  129-130/160, every deep term complete — so no constant is kept at all.
+  What does NOT work: a
   per-request potential (push matter away from the requester) is acyclic for one
   requester and fails for two — precisely the cross-dock shuttle measured and rejected
   above, and relief requesters include un-arbitrated walkers and cursors, so the dock
@@ -242,8 +244,19 @@ generic half becomes mechanism:
   between — which is why the exemption costs the cooldown bit-class its brief
   demotion: undamped livelocks go 0 → 3, the stamps carry that residue. Worth it at
   +5 soak completions (107 → 112) for two stamp bits already spent in the frozen word.
-  Prefetch itself is not dead, just unmotivated: no frontier term now parks for the
-  reason it fixes.
+  The same argument then applied to a declined dock's LAST blocker (clearing it makes
+  the ring whole, so the fire it buys is next) and that was the big one: soak 112 →
+  129-130, and with the bound gone, disp-t through. Prefetch is not dead, just unmotivated:
+  no term parks for the reason it fixes.
+  One pump surfaced on the way, again by the exact-instant heat backend and not the
+  default one: shoving a guest off a walker's hot wire by SIDESTEP is self-defeating by
+  construction — the guest leaves its trail in the very cell being contested and its
+  principal re-anchors to point back into it, so the demand it was shoved out of is
+  what marches it home (soak term 8, forever). The sidestep is gone from that one
+  caller; it keeps the callers where the cleared cell is not the cell pulling the guest
+  back. Measured cost: one soak term. Worth recording for the chip: an agent's
+  cooldown is ONE bit, so "stamp it harder" is not available as a damper for agents —
+  a stamp of 3 silently fails to pack and refuses the move instead.
 - **Endpoint swings + termination redesign — LANDED 2026-08-01 (two commits):**
   the S-SHARING RULE COMPLETES (frontier 4/5; 6→9 fires and then through once the
   futile-shed guard landed), soak 99→107. The termination unit (stamps + sweep + order

@@ -194,13 +194,13 @@ fn frontier_deep_reductions() {
             }
         }
     }
-    // The pinned floor: fork-dispatch, k-combinator, K-CHAIN (first completed
-    // 2026-07-31 when live-cable relief composed), and the S-SHARING RULE (first
-    // completed 2026-08-01 when endpoint swings landed and the futile-shed guard
-    // removed the churn squatting on its dock approach; 2 -> 5 -> 6 -> 9 fires, then
-    // through). disp-t parks in walker convoys at its T1·F comb dock — the valid park
-    // (geometry green, kick-dead) that footprint prefetch targets.
-    assert!(complete >= 4, "frontier floor");
+    // EVERY deep term now normalizes end to end (2026-08-01). The order they fell:
+    // fork-dispatch and k-combinator, then k-chain when live-cable relief composed,
+    // then the S-sharing rule when endpoint swings landed, and finally disp-t — the
+    // 56-cell comb dock — once relief could pay its way past the displacement order
+    // and the ring-clearing bound came off. A term may still park validly (geometry
+    // green, kick-dead); what may never happen is a wrong answer.
+    assert!(complete >= 5, "frontier floor");
     println!("frontier: {complete}/{} deep terms complete", terms.len());
 }
 

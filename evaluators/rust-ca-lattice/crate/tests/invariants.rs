@@ -158,10 +158,14 @@ fn commit_footprints_and_read_radii_pinned() {
                               // on a declined dock whose relief then commits
         ("move", (4, 2)),     // walk + detour reservation pair
         ("dock", (2, 11)),    // the dock write is small; r=11 IS the roll/footprint scan
-        ("growth", (6, 2)),   // reserve + merge + cursor advance; 6 = the merge-fail
-                              // relief primitive (the same bracket footprint fabric
-                              // hosts — the 4 was under-measurement before guest
-                              // swings let those evictions succeed from growth)
+        ("growth", (6, 3)),   // reserve + merge + cursor advance; the 6 and the 3 are
+                              // both the merge-fail relief primitive, whose bracket
+                              // reaches two cells past its own target — fabric hosts
+                              // the identical primitive at r=11. Each number was an
+                              // under-measurement until a rung let growth-hosted
+                              // evictions actually reach that far: the writes when
+                              // guest swings landed, the radius when the ring bound
+                              // rose to 3 and the comb dock finally fired.
         ("resolve", (2, 1)),  // the seated splice: already at the chip contract
         ("retract", (7, 3)),  // unwind + pair restore (not exercised by this corpus yet)
     ]

@@ -552,8 +552,14 @@ impl Runner {
                 let guest_could_walk = matches!(&ts.cell, Cell::Agent { principal, .. }
                     if matches!(self.grid.site(step(t, principal.face)).cell,
                         Cell::Wire { reserved: None, .. }));
+                // NOT a sidestep. Stepping aside is self-defeating here by
+                // construction: the guest leaves its trail in the very cell being
+                // contested AND its principal re-anchors to point back into it, so the
+                // demand it was shoved out of is exactly what marches it home. The
+                // shove then repeats forever (soak term 8 under exact-instant heat).
+                // Sidesteps keep their other callers, where the cell being cleared is
+                // not the one pulling the guest back.
                 let _ = (guest_walks && self.try_walk_gated(t, &ts, true))
-                    || self.try_sidestep(t, &ts)
                     || (guest_could_walk && self.try_evict(t, None, 1));
                 return false;
             }
@@ -1192,16 +1198,19 @@ impl Runner {
             choose_roll(&read, self.grid.topo, t, p, stub_cells, rule, axis, &mk_seeds)
         };
         if roll.is_none() {
-            // Bounded ring relief (the shove precedent, stretched one notch): pick the
-            // roll with the FEWEST blockers (at most two — a crowded ring waits), and
-            // relieve exactly one blocker per activation with the existing primitives,
-            // damped by the existing stamps, then re-gate with fresh reads.
-            // The bound is no longer what makes this terminate: swept 2026-08-01 over
-            // 2/3/4/6/unbounded, every setting terminates (the displacement order took
-            // that job) with identical completion — soak 107/160 at every one. It is
-            // kept because raising it only trades disp-t's clean parked pair for a
-            // half-grown blocklet parked mid-script, which the geometry checks skip;
-            // relief that buys no fires should stay conservative.
+            // Ring relief: pick the roll with the FEWEST blockers and clear exactly one
+            // per activation with the existing primitives, damped by the existing
+            // stamps, then re-gate with fresh reads. Clearing the LAST blocker pays for
+            // itself (the ring is then whole and the dock fires next), so that one move
+            // may descend the displacement order.
+            // The rung landed with a bound of two blockers because unbounded clearing
+            // livelocked. Both halves of that are now obsolete: the displacement order
+            // took over termination, and once the last-blocker relief could pay its way
+            // past the order, the bound was the only thing left holding the 56-cell comb
+            // dock shut. Swept 2026-08-01: 3, 4, 8 and unbounded are indistinguishable
+            // (soak 130/160, every deep term complete), so there is no constant to tune
+            // and none is kept — a crowded ring simply works itself down one cell at a
+            // time, and the geometry bounds the count.
             // Arbitration: only the address-LOWEST ready pair in the neighborhood may
             // run ring relief. A displacement cycle between two docks needs both to
             // push; this leaves one pusher, and when it fires or truly parks the next
@@ -1243,14 +1252,22 @@ impl Runner {
                             let bs = roll_blockers(
                                 &read, self.grid.topo, t, p, stub_cells, rule, axis, r,
                             )?;
-                            (!bs.is_empty() && bs.len() <= 2).then_some(bs)
+                            (!bs.is_empty()).then_some(bs)
                         })
                         .min_by_key(|bs| bs.len())
-                        .map(|bs| bs.into_iter().next().expect("nonempty"))
+                        .map(|bs| {
+                            // A roll down to its last blocker: clearing this one cell
+                            // completes the ring, so the relief pays for itself and may
+                            // descend the displacement order (same argument as a
+                            // blocked placement's — the fire it buys is next).
+                            let last = bs.len() == 1;
+                            let (world, planned) = bs.into_iter().next().expect("nonempty");
+                            (world, planned, last)
+                        })
                 })
                 .flatten();
             let ring_relief_ran = candidate.is_some();
-            if let Some((world, planned)) = candidate {
+            if let Some((world, planned, pays)) = candidate {
                 // This dock's combined ring (every roll's near-seed footprint) is
                 // off-limits as a receiver while its relief runs: relief drains.
                 self.relief_ring = {
@@ -1280,7 +1297,9 @@ impl Runner {
                         // wear its stamp down before moving again.
                         let depth = 1;
                         self.relief_root = Some(world);
+                        self.relief_pays = pays;
                         let ok = self.try_evict(world, Some(&planned), depth);
+                        self.relief_pays = false;
                         self.relief_root = None;
                         ok
                     }

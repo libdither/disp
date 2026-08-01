@@ -75,9 +75,11 @@ fn soak_random_terms_never_wrong() {
         }
     }
     println!("soak: {complete} complete, {parked} parked, {skipped} skipped of {TERMS}");
-    // Aggregate floor, pinned conservatively below measured (112/160 on 2026-08-01
-    // after the pays-for-itself order exemption; 107 before it, 99 before endpoint
-    // swings; chaotic-margin discipline: robust aggregates only, schedule jitter must
-    // not flap the pin). Raise it as relief rungs land; never hand-tune it down.
-    assert!(complete >= 105, "soak completion floor: {complete}");
+    // Aggregate floor, pinned conservatively below measured (129-130/160 on 2026-08-01
+    // once a declined dock's last-blocker relief could pay its way past the
+    // displacement order and the ring-clearing bound came off; 112 with the exemption
+    // on placements alone, 107 before it, 99 before endpoint swings; chaotic-margin
+    // discipline: robust aggregates only, schedule jitter must not flap the pin).
+    // Raise it as relief rungs land; never hand-tune it down.
+    assert!(complete >= 122, "soak completion floor: {complete}");
 }

@@ -55,11 +55,12 @@ Three drivers run the same transition rules:
 Gates: `cargo test --release --lib` (codec exhaustives, blocklet compiler, movement,
 parallel, gather), `cargo test --release --test cascade_suite` (the 26-rule atlas under
 all four disciplines, translation straight and bent, the A·F roll-fallback and declined
-docks, `@(L,L)` normalized end to end under all four, and the pinned deep-reduction
-frontier: `@(F(L,L),L)` reaches its normal form in six chained fires), and
+docks, `@(L,L)` normalized end to end under all four, and the deep-reduction frontier,
+all five terms pinned to their normal forms — the deepest, disp-t, in 18 chained
+fires), and
 `cargo test --release --test invariants` (mechanism invariants: the kick/lost-wake gate,
 per-op-class commit write-sets and read radii pinned as only-move-down ceilings, the
-cooldown ablation lane — never wrong, measured livelocks without damping — and the
+cooldown ablation lane — undamped, parks more and never answers wrong — and the
 nursery negative control). `dump-cascade`
 regenerates `research/interaction-combinator/lattice_cascade.js` with the historical
 suite roster (translation, the A·F trio, all 26 atlas rules, the eraser cascade to empty,
@@ -102,11 +103,16 @@ route it moves is exactly the one whose removal lets a blocked placement's matte
 merge, so every exception is the last move before progress that the reduction itself
 bounds. The payment is verified per route (assuming it per request re-arms cycles
 outright) and can still be stolen before the placement commits, which is why the
-cooldown stamps stay load-bearing. The frontier, pinned by
-`frontier_deep_reductions` at 4 of 5 deep terms complete (fork-dispatch, k-combinator,
-k-chain, and the S-sharing rule): disp-t parks in walker convoys at the T1·F comb
-dock, whose every roll ring is crowded by hot corridor cables. The substrate never
-computes a wrong answer, only sometimes an incomplete one.
+cooldown stamps stay load-bearing. A declined dock's last blocker pays the same way
+(clearing it makes the ring whole), and with that in hand the ring-clearing bound had
+nothing left to protect and was removed. Shoves no longer sidestep a guest off a
+walker's wire: the guest leaves its trail in the contested cell and its principal
+re-anchors into it, so the demand it was shoved out of marches it straight back. As of 2026-08-01 the deep-reduction
+frontier is complete: `frontier_deep_reductions` pins all five terms normalizing end
+to end, the last being disp-t at its T1·F comb dock. The random soak, a harder and
+much wider corpus, sits at 129 of 160. A run may still park, and a park is a valid
+outcome the geometry checks hold to account; what the substrate never does is compute
+a wrong answer.
 `debug-cascade <term> --why` walks the relief decision tree for every blocked op and
 prints each refusing check, and lists a declined dock's per-roll first-ring blockers
 (the counts say whether it is one nudge from firing or genuinely crowded); `--kick` re-wakes a parked run to distinguish lost wakes
