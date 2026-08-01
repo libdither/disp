@@ -293,6 +293,34 @@ generic half becomes mechanism:
 - **Dock-time clump fusion** (see below).
 - **Chip-power audit** of every remaining multi-cell signal. **Word freeze stands.**
 
+## What is left, by measurement (`park-census`, 2026-08-01)
+
+With every deep term complete, the capability frontier is the soak's 31 remaining parked
+runs, and `cargo run --release --bin park-census` classifies them so the next rung is
+chosen by distribution rather than by whichever term was looked at last. Today:
+
+- **15 walk wedges** — a demanded producer whose principal target is an AGENT that
+  carries its cable as a passthrough. It cannot walk (the cell is not wire), the guest
+  cannot be shoved (the guest's own principal target is likewise an agent, so its forced
+  walk fails), and the symmetric `try_swap` does not apply because the guest is not
+  walking back at us. This is the dominant class and the nominated next rung: an
+  ASYMMETRIC swap — a demanded walker exchanges cells with an undemanded stationary
+  guest that hosts its cable, each one's cables becoming passthroughs of the other. Two
+  cells, inside the move budget. It must carry the guard the session's three pumps all
+  taught: only an UNDEMANDED guest may be displaced, or its own demand marches it back
+  and the exchange becomes a shuttle.
+- **13 declined docks** — see the ring-drain note in the disp-t entry: their traces are
+  dominated by "in the requesting dock's ring", the per-roll relaxation unwedges 8 of
+  them but they mostly re-park a step later and roll switching starts to oscillate. The
+  safe version needs a receiver rule that provably worsens no roll.
+- **1 growth wedge, 2 quiet parks** — tail, not worth aiming at yet.
+
+Note the two classes are the same shape at different scales: something free sits where
+matter needs to be, and the rule that keeps relief honest (the displacement order, the
+ring drain) is what forbids using it. Both loosenings that have worked so far — the
+pays-for-itself exemption, and this — take the same form: permit the otherwise-forbidden
+move exactly when it is the last one before progress that the reduction bounds.
+
 ## Clump rules (a calculus-level direction, gated on measurement)
 
 Today a rewrite locks exactly 2 cells and grows the result; a "clump rule" locks a larger

@@ -1252,24 +1252,36 @@ impl Runner {
                             let bs = roll_blockers(
                                 &read, self.grid.topo, t, p, stub_cells, rule, axis, r,
                             )?;
-                            (!bs.is_empty()).then_some(bs)
+                            (!bs.is_empty()).then_some((r, bs))
                         })
-                        .min_by_key(|bs| bs.len())
-                        .map(|bs| {
+                        .min_by_key(|(_, bs)| bs.len())
+                        .map(|(roll, bs)| {
                             // A roll down to its last blocker: clearing this one cell
                             // completes the ring, so the relief pays for itself and may
                             // descend the displacement order (same argument as a
                             // blocked placement's — the fire it buys is next).
                             let last = bs.len() == 1;
                             let (world, planned) = bs.into_iter().next().expect("nonempty");
-                            (world, planned, last)
+                            (world, planned, last, roll)
                         })
                 })
                 .flatten();
             let ring_relief_ran = candidate.is_some();
-            if let Some((world, planned, pays)) = candidate {
+            if let Some((world, planned, pays, roll)) = candidate {
                 // This dock's combined ring (every roll's near-seed footprint) is
                 // off-limits as a receiver while its relief runs: relief drains.
+                // Narrowing this to the ring of the roll being cleared was tried
+                // 2026-08-01 and reverted: it does unwedge docks (the declined-dock park
+                // class fell 13 → 5, and "in the requesting dock's ring" is far and away
+                // the most common refusal in their traces) but the freed terms mostly
+                // re-park one step later, net completion moved by 2, and roll switching
+                // began to oscillate — clearing one roll crowds another, which then
+                // becomes the cheapest roll (soak term 47 stopped quiescing). Making it
+                // safe needs a receiver rule that provably worsens NO roll, i.e. a
+                // per-cell map of what each roll wants to place there, so every relief
+                // strictly lowers the total blocker count. Worth doing when docks are
+                // the dominant park class again; today they are not.
+                let _ = roll;
                 self.relief_ring = {
                     let layout = crate::blocklet::layout(rule);
                     let mut v = vec![];
@@ -1700,6 +1712,33 @@ impl Runner {
                     }
                     _ => false,
                 }
+        };
+        // Why a receiver was refused, for the relief notes. Reporting a refused-but-free
+        // cell as "blocked" alongside its contents reads as an occupancy problem and
+        // sends diagnosis down the wrong path (twice now: the corner-cut diagonal, then
+        // shifts and brackets into wholly empty space).
+        let ring_note = self.relief_ring.clone();
+        let side_why = move |s: &Site, at: Pos| -> &'static str {
+            if ring_note.contains(&at) {
+                return "in the requesting dock's ring";
+            }
+            if !cursor_ok(s, at) {
+                return "hosts a cursor";
+            }
+            if s.claim {
+                return "claimed";
+            }
+            if !unreserved_ok(s, at) {
+                return "reserved";
+            }
+            match &s.cell {
+                // Empty always has room, so an Empty reaching here is a passing cell
+                // listed beside the one that actually refused.
+                Cell::Empty { .. } => "ok",
+                Cell::Wire { routes, .. } if routes.len() < 3 => "ok",
+                Cell::Wire { .. } => "full",
+                _ => "occupied",
+            }
         };
         // Receivers of a displaced route get the full cooldown stamp: they will not shed
         // it again (nor be retracted) until the stamp decays. A displaced hot route
@@ -2134,14 +2173,21 @@ impl Runner {
                         continue;
                     }
                     if !ascends(w.delta(), pays) {
+                        self.note(|| format!(
+                            "evict {t:?} r{i}: bracket {} DESCENDS the order", w.ch()
+                        ));
                         continue;
                     }
                     let (a, c, b) = (step(n1, w), step(u, w), step(n2, w));
                     let (a_s, c_s, b_s) = (self.grid.site(a), self.grid.site(c), self.grid.site(b));
                     if !side_ok(&a_s, a) || !side_ok(&c_s, c) || !side_ok(&b_s, b) {
                         self.note(|| format!(
-                            "evict {t:?} r{i}: bracket {} blocked: {a:?} {}, {c:?} {}, {b:?} {}",
-                            w.ch(), kind(&a_s), kind(&c_s), kind(&b_s)
+                            "evict {t:?} r{i}: bracket {} blocked: {a:?} {} ({}), {c:?} {} ({}), \
+                             {b:?} {} ({})",
+                            w.ch(),
+                            kind(&a_s), side_why(&a_s, a),
+                            kind(&c_s), side_why(&c_s, c),
+                            kind(&b_s), side_why(&b_s, b)
                         ));
                         for (x, xs) in [(a, &a_s), (c, &c_s), (b, &b_s)] {
                             if !side_ok(xs, x) && recursable(xs) && !blockers.contains(&x) {
@@ -2188,6 +2234,9 @@ impl Runner {
                 // Straight segment: parallel shift through three side cells.
                 for q in d1.perp() {
                     if !ascends(q.delta(), pays) {
+                        self.note(|| format!(
+                            "evict {t:?} r{i}: shift {} DESCENDS the order", q.ch()
+                        ));
                         continue;
                     }
                     let (u1, u2, u3) = (step(n1, q), step(t, q), step(n2, q));
@@ -2195,8 +2244,12 @@ impl Runner {
                         (self.grid.site(u1), self.grid.site(u2), self.grid.site(u3));
                     if !side_ok(&u1s, u1) || !side_ok(&u2s, u2) || !side_ok(&u3s, u3) {
                         self.note(|| format!(
-                            "evict {t:?} r{i}: shift {} blocked: {u1:?} {}, {u2:?} {}, {u3:?} {}",
-                            q.ch(), kind(&u1s), kind(&u2s), kind(&u3s)
+                            "evict {t:?} r{i}: shift {} blocked: {u1:?} {} ({}), {u2:?} {} ({}), \
+                             {u3:?} {} ({})",
+                            q.ch(),
+                            kind(&u1s), side_why(&u1s, u1),
+                            kind(&u2s), side_why(&u2s, u2),
+                            kind(&u3s), side_why(&u3s, u3)
                         ));
                         for (x, xs) in [(u1, &u1s), (u2, &u2s), (u3, &u3s)] {
                             if !side_ok(xs, x) && recursable(xs) && !blockers.contains(&x) {
