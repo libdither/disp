@@ -556,6 +556,18 @@ impl Runner {
                 let guest_could_walk = matches!(&ts.cell, Cell::Agent { principal, .. }
                     if matches!(self.grid.site(step(t, principal.face)).cell,
                         Cell::Wire { reserved: None, .. }));
+                // An arity-3 guest that cannot walk is IMMOVABLE (three cables, one
+                // face, two lanes: neither sidestep nor exchange can express its move),
+                // so the only way through is to reroute the CABLE around it. Letting
+                // the shed fire for that case was tried 2026-08-01 and reverted: it
+                // brings back soak term 95's pump. The argument that it would be safe —
+                // an ordered shed and the ordered contraction that would undo it point
+                // opposite ways, so neither can cycle — is wrong, because walks and
+                // truncation are order-EXEMPT and restore the geometry the shed just
+                // changed. Rerouting past an immovable guest therefore needs a shed
+                // that PAYS FOR ITSELF the way relief past the displacement order does:
+                // permitted only when the walker consumes the rerouted slack in the
+                // same breath, not merely permitted when nothing else can move.
                 // NOT a sidestep. Stepping aside is self-defeating here by
                 // construction: the guest leaves its trail in the very cell being
                 // contested AND its principal re-anchors to point back into it, so the

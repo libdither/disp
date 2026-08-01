@@ -320,10 +320,17 @@ chosen by distribution rather than by whichever term was looked at last. Today:
   arity-3 agent at rest is IMMOVABLE; the only motion available to it is walking forward
   along its own principal, which consumes that cable and leaves only two trails to cross.
   So the remaining wedges of this class need the walker's cable routed AROUND the guest
-  rather than the guest moved: an eviction of the specific passthrough carrying the
-  walker's cable. The machinery exists (agents shed their own passthroughs) but is gated
-  today by the futile-shed guard, which ties the shed's usefulness to the guest being
-  able to walk — the wrong test when the point is to move the CABLE, not the agent.
+  rather than the guest moved. That was tried the same day and REVERTED: simply letting
+  the shed fire when the guest is immovable brings back soak term 95's pump. The
+  plausible-sounding safety argument — an ordered shed and the ordered contraction that
+  would undo it point opposite ways, so neither can cycle — is wrong, because walks and
+  truncation are order-EXEMPT and cheerfully restore the geometry the shed just changed.
+  The lesson generalizes past this rung: **an ordered move is only safe against a cycle
+  if every move that could undo it is also ordered**, and this substrate deliberately
+  exempts the shortening ones. So rerouting past an immovable guest needs the same shape
+  as every loosening that has worked here — the shed must PAY FOR ITSELF, permitted only
+  when the walker consumes the rerouted slack in the same breath, rather than permitted
+  whenever nothing else can move.
 - **13 declined docks** — see the ring-drain note in the disp-t entry: their traces are
   dominated by "in the requesting dock's ring", the per-roll relaxation unwedges 8 of
   them but they mostly re-park a step later and roll switching starts to oscillate. The
