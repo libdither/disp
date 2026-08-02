@@ -1,0 +1,60 @@
+diff --git a/evaluators/rust-ca-lattice/crate/src/cascade_run.rs b/evaluators/rust-ca-lattice/crate/src/cascade_run.rs
+index 2c5dea84b815..680396fdb390 100644
+--- a/evaluators/rust-ca-lattice/crate/src/cascade_run.rs
++++ b/evaluators/rust-ca-lattice/crate/src/cascade_run.rs
+@@ -70,6 +70,9 @@ pub struct Runner {
+     /// "yet" is delivered, by the blocker itself, instead of hoping a neighbour wake
+     /// happens to reach far enough.
+     declined_on: BTreeMap<Pos, Vec<Pos>>,
++    /// The dock whose ring relief is running: a receiver inside that ring is legal only
++    /// when it carries matter strictly further from this cell.
++    relief_dock: Option<Pos>,
+     /// The requesting dock's ring during its relief (receivers here are refused).
+     relief_ring: Vec<Pos>,
+     /// Set while running a relief whose success directly commits a blocked placement:
+@@ -135,6 +138,7 @@ impl Runner {
+ 
+             relief_g: (-1, -3, 9),
+             declined_on: BTreeMap::new(),
++            relief_dock: None,
+             relief_ring: Vec::new(),
+             relief_pays: false,
+             edge_swept_at: u64::MAX,
+@@ -1554,6 +1558,7 @@ impl Runner {
+                 // strictly lowers the total blocker count. Worth doing when docks are
+                 // the dominant park class again; today they are not.
+                 let _ = roll;
++                self.relief_dock = Some(t);
+                 self.relief_ring = {
+                     let layout = crate::blocklet::layout(rule);
+                     let mut v = vec![];
+@@ -1598,6 +1603,7 @@ impl Runner {
+                     _ => false,
+                 };
+                 self.relief_ring.clear();
++                self.relief_dock = None;
+                 if progressed {
+                     // Never dock in the same activation: the relief commit already
+                     // woke this pair, and splitting keeps the dock commit at its
+@@ -2019,8 +2025,11 @@ impl Runner {
+         // relief strictly DRAINS the ring instead of shuffling within it (the potential
+         // function). Empty outside a dock's relief, so ordinary evictions are free.
+         let ring = self.relief_ring.clone();
++        let dock = self.relief_dock;
++        let from_dock = dock.map(|c| chebyshev(t, c));
+         let side_ok = move |s: &Site, at: Pos| {
+-            !ring.contains(&at)
++            (!ring.contains(&at)
++                || matches!((dock, from_dock), (Some(c), Some(d0)) if chebyshev(at, c) > d0))
+                 && match &s.cell {
+                     Cell::Empty { .. } => unreserved_ok(s, at) && cursor_ok(s, at) && !s.claim,
+                     Cell::Wire { routes, .. } => {
+@@ -4094,3 +4103,8 @@ mod tests {
+         );
+     }
+ }
++
++/// Chebyshev distance: the lattice's own step metric (a diagonal is one move).
++fn chebyshev(a: Pos, b: Pos) -> i32 {
++    (a.0 - b.0).abs().max((a.1 - b.1).abs()).max((a.2 - b.2).abs())
++}
