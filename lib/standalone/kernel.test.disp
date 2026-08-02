@@ -12,9 +12,13 @@ FiveToSix := Pi Enum Five ({_} -> Six)
 forge_hyp := make_hyp
 shift := {b} -> if (is_neutral b) { true } else { 5 }
 junk_raw := {_self, n, base, step} -> base
-unblessed_rec := wait (fix ({em, payload, x} ->
-  if (is_neutral x) { wait elim_stuck (pair (wait em payload) (pair x nil)) }
-  else { (pair_fst payload) (wait em payload) x })) (pair junk_raw (pair Nat ({_} -> Bool)))
+// An eliminator carrying a junk recursor instead of the type's blessed one.
+// Built with the REAL marker, so its signature is correct by construction and
+// the pin exercises the actual defense (the respond face compares the stored
+// recursor against the type's own). Previously this was a hand-copy of the
+// marker, which had to be re-copied on every marker edit and silently stopped
+// testing anything the moment it drifted.
+unblessed_rec := wait elim_marker (pair junk_raw (pair Nat ({_} -> Bool)))
 
 pi_suite := {Pi} -> {
   let BB := Pi Bool ({_} -> Bool)
@@ -592,6 +596,25 @@ test Eq Parity 3 1 refl = true
 test Eq Parity 2 1 refl = false
 test Eq Nat 2 0 refl = false
 test Coherent Parity = true
+
+// A record type checks PRESENCE, not just the type of whatever a lookup
+// returns. A missing field reads back as the leaf sentinel, and the leaf
+// inhabits most types, so reading with the plain accessor made the empty
+// record inhabit every record type (the live kernel carries a dedicated
+// honest lookup for exactly this reason; this port had not).
+test Request ({}) = false
+test Request ({ value := t 5 }) = false
+test Request (base 5) = true
+test Record (cons (pair "a" Nat) nil) ({ a := 5 }) = true
+test Record (cons (pair "a" Nat) nil) ({ b := 5 }) = false
+test Record (cons (pair "a" Nat) nil) ({ a := true, b := 5 }) = true
+
+// Ex falso at the RAW tier: an elimination with zero obligations has to fire
+// on arrival, since the collector would otherwise wait forever for an argument
+// that never comes and leak a partial collector as if it were a value. The
+// walk always had this case; the marker did not until now.
+test is_neutral ((elim_of False ({_} -> Nat)) (make_hyp False "bad")) = true
+test tree_eq (neutral_type ((elim_of False ({_} -> Nat)) (make_hyp False "bad"))) Nat = true
 test tree_eq (Quotient Nat parity).under Nat = true
 BadNorm := Quotient Nat ({n} -> succ n)
 test Coherent BadNorm = false

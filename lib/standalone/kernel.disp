@@ -155,8 +155,10 @@ elim_stuck := fix ({sm, st, arg} -> {
   else { wait sm (pair E (pair scr args)) }
 })
 elim_marker := fix ({self, payload, arg} ->
-  if (is_neutral arg) { wait elim_stuck (pair (wait self payload) (pair arg nil)) }
-  else { (pair_fst payload) (wait self payload) arg })
+  if (is_neutral arg) {
+    let E := wait self payload
+    if (tree_eq (elim_arity E) zero) { arg (Elim (pair E nil)) } else { wait elim_stuck (pair E (pair arg nil)) }
+  } else { (pair_fst payload) (wait self payload) arg })
 elim_of := {Ind, B} -> wait elim_marker (pair Ind.elim (pair Ind B))
 elim_sig := sig_of elim_marker
 is_elim_head := has_sig elim_sig
@@ -918,7 +920,10 @@ List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
   elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
 })
 
-let record_mem := {ej, entries, r} -> list_all ({e} -> ej (pair_snd e) (field r (pair_fst e))) entries
+let record_mem := {ej, entries, r} -> list_all ({e} -> {
+  let c := field_cell r (pair_fst e)
+  if (is_leaf c) { false } else { ej (pair_snd e) (pair_snd c) }
+}) entries
 Record : Pi Guard AnyTree ({_} -> ShallowType) := {entries} -> ({
   #recognize := {_self, r} -> record_mem ({ty, a} -> ty a) entries r
   check := {jdg, _T, r} -> record_mem jdg entries r
