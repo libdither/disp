@@ -112,14 +112,9 @@ handle := {h, m} -> {
   })) m
 }
 
-elim_marker := fix ({self, payload, arg} -> (pair_fst payload) (wait self payload) arg)
-elim_of := {Ind, B} -> wait elim_marker (pair Ind.elim (pair Ind B))
-elim_raw := {E} -> pair_fst (wait_payload E)
-elim_ind := {E} -> pair_fst (pair_snd (wait_payload E))
-elim_motive := {E} -> pair_snd (pair_snd (wait_payload E))
-elim_sig := sig_of elim_marker
-is_elim_head := has_sig elim_sig
-elim_arity := {E} -> list_len ((elim_ind E).gate (elim_ind E) (elim_motive E))
+Frame := < Acc : t, Elim : t >
+is_acc := has_sig "Acc"
+is_elim_frame := has_sig "Elim"
 
 ObsCode := < App, Self, Prj : t >
 RowCode := < Fresh : t, Observe : t >
@@ -148,6 +143,24 @@ make_hyp := {ty, history} -> make_mark ({ (ShallowType) := ty, (AnyTree) := hist
 hyp_sig := sig_of hyp_marker
 is_neutral := has_sig hyp_sig
 neutral_history := {v} -> field (wait_payload v) AnyTree
+elim_raw := {E} -> pair_fst (wait_payload E)
+elim_ind := {E} -> pair_fst (pair_snd (wait_payload E))
+elim_motive := {E} -> pair_snd (pair_snd (wait_payload E))
+elim_arity := {E} -> list_len ((elim_ind E).gate (elim_ind E) (elim_motive E))
+elim_stuck := fix ({sm, st, arg} -> {
+  let E := pair_fst st
+  let scr := pair_fst (pair_snd st)
+  let args := list_snoc (pair_snd (pair_snd st)) arg
+  if (tree_eq (list_len args) (elim_arity E)) { scr (Elim (pair E args)) }
+  else { wait sm (pair E (pair scr args)) }
+})
+elim_marker := fix ({self, payload, arg} ->
+  if (is_neutral arg) { wait elim_stuck (pair (wait self payload) (pair arg nil)) }
+  else { (pair_fst payload) (wait self payload) arg })
+elim_of := {Ind, B} -> wait elim_marker (pair Ind.elim (pair Ind B))
+elim_sig := sig_of elim_marker
+is_elim_head := has_sig elim_sig
+elim_stuck_sig := sig_of elim_stuck
 test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
 Unit := ({ #recognize := {_self, v} -> is_leaf v, members := cons t nil })
 test Unit t = true
@@ -280,9 +293,6 @@ children := {T, v} -> (fix ({self, sp, p} ->
 Row : ShallowType := Sum RowCode
 Obs : ShallowType := Sum ObsCode
 
-Frame := < Acc : t, Elim : t >
-is_acc := has_sig "Acc"
-is_elim_frame := has_sig "Elim"
 respond_face_at := {nt, frame, self} -> {
   let T := nt self
   let rows := {

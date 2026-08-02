@@ -12,7 +12,9 @@ FiveToSix := Pi Enum Five ({_} -> Six)
 forge_hyp := make_hyp
 shift := {b} -> if (is_neutral b) { true } else { 5 }
 junk_raw := {_self, n, base, step} -> base
-unblessed_rec := wait (fix ({em, payload, x} -> (pair_fst payload) (wait em payload) x)) (pair junk_raw (pair Nat ({_} -> Bool)))
+unblessed_rec := wait (fix ({em, payload, x} ->
+  if (is_neutral x) { wait elim_stuck (pair (wait em payload) (pair x nil)) }
+  else { (pair_fst payload) (wait em payload) x })) (pair junk_raw (pair Nat ({_} -> Bool)))
 
 pi_suite := {Pi} -> {
   let BB := Pi Bool ({_} -> Bool)
@@ -95,7 +97,13 @@ test EnumNatToNat succ = false
 test FiveToNat succ = true
 test FiveToSix succ = true
 
-test Nat (elim_id (succ (forge_hyp Nat Nat))) = true
+// The raw tier is no longer encoding-transparent for eliminations: recursing
+// onto a hypothesis produces a STUCK elimination rather than walking the
+// hypothesis's encoding, so a raw recognizer (which has no rule for stuck
+// terms; judges are what handle those) refuses it.
+test Nat (elim_id (succ (forge_hyp Nat Nat))) = false
+test is_neutral (elim_id (forge_hyp Nat Nat)) = true
+test tree_eq (neutral_type (elim_id (forge_hyp Nat Nat))) Nat = true
 
 sig_child := stem_child hyp_sig
 smuggled := pair_snd (forge_hyp Bool Bool)
@@ -544,6 +552,26 @@ psens := {n, m, p} -> bnat (tree_eq n m) zero (pair 5 5)
 test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Nat))) psens = true
 test Fn Nat ({n} -> Fn Nat ({m} -> Fn AnyTree ({_} -> Nat))) psens = false
 test Pi Meta Nat ({n} -> Pi Meta Nat ({m} -> Pi Meta (Eq Nat n m) ({_} -> Eq Nat m n))) ({n, m, p} -> refl) = true
+
+// PROOF BY INDUCTION, machine-checked in-kernel on both tiers: adding zero is
+// the identity. Every piece of the arc is load-bearing here. Eliminating an
+// abstract natural keeps the motive's left endpoint a STUCK term rather than
+// garbage (the lazy eliminator), so the step obligation is the equation that
+// was written; the step's own reduction turns it into a shared constructor
+// context around the induction hypothesis (congruence); and the hypothesis
+// itself is what discharges the remaining equation (the ledger). The false
+// statement, the attempt without induction, and a junk step are all refused,
+// so this is not vacuous.
+add_zero_motive := {n} -> Eq Nat (add n zero) n
+add_zero_rec := elim_of Nat add_zero_motive
+test Fn Nat add_zero_motive ({n} -> add_zero_rec n refl ({p, ih} -> refl)) = true
+test Pi Meta Nat add_zero_motive ({n} -> add_zero_rec n refl ({p, ih} -> refl)) = true
+test Fn Nat add_zero_motive ({n} -> refl) = false
+test Fn Nat add_zero_motive ({n} -> add_zero_rec n refl ({p, ih} -> pair 5 5)) = false
+false_motive := {n} -> Eq Nat (add n zero) (succ n)
+test Fn Nat false_motive ({n} -> (elim_of Nat false_motive) n refl ({p, ih} -> refl)) = false
+test is_neutral (add (make_hyp Nat "k") zero) = true
+test tree_eq (neutral_type (add (make_hyp Nat "k") zero)) Nat = true
 
 // Hypotheses are LAZY: applying one records the observation instead of
 // collapsing, and the result's type is derived on demand by replaying that
