@@ -1,13 +1,19 @@
-# Active bugs: subject-reduction gaps
+# Active bugs
 
-This tracks known subject-reduction (preservation) gaps in the kernel and standard
-library. A subject-reduction gap is a function accepted at type `A -> B` whose
-application can reduce to a value outside `B`. In Disp these are not, so far, logical
-inconsistencies: they are all defended by use-site re-checking. This file records what is
-broken, why it stays contained, and how each item is closed.
+This file covers two checkers, which have different defense models and should not be read
+as one list.
 
-Items 1 and 2 are now fixed (see "Closed" below). Items 3-5 remain open (3 and 5 are
-recorded as design mechanisms rather than defects).
+The first part tracks subject-reduction (preservation) gaps in the **live kernel**
+(`lib/kernel/`) and standard library. A subject-reduction gap is a function accepted at
+type `A -> B` whose application can reduce to a value outside `B`. In Disp these are not,
+so far, logical inconsistencies: they are all defended by use-site re-checking. Items 1
+and 2 are fixed (see "Closed"); items 3-5 remain open (3 and 5 are recorded as design
+mechanisms rather than defects).
+
+The second part, at the end, tracks the **standalone kernel** (`lib/standalone/`), whose
+defense model is different: hypotheses are ordinary trees rather than sealed values, and
+legitimacy is established by provenance (a session ledger plus history replay) instead of
+by unforgeable representation. Its roadmap is `OEQ_PLAN.md`.
 
 ## The defense model (why these are gaps, not inconsistencies)
 
@@ -93,9 +99,9 @@ direction (relevant to `fmap`/`fold`) is not checked.
 ### 3. Neutral application skips the domain check
 
 Checking `v : T` runs `T`'s recognizer on the final result only. The Pi respond
-(`cells.disp:171`) extends a function-typed neutral at its codomain without checking that
-the argument inhabits the domain. So argument-position type errors inside a body are not
-caught.
+(`tele_walk`'s `SMint` branch on the respond face, `cells.disp`) extends a function-typed
+neutral at its codomain without checking that the argument inhabits the domain. So
+argument-position type errors inside a body are not caught.
 
 ```
 // [probe_argcheck_sr]
@@ -125,8 +131,8 @@ non-function motive cleanly would close the rough edge.
 
 `is_neutral` is an O(1) root-signature read (`pair_fst` against `hyp_sig`), and `pair_fst`
 is a sanctioned reader on every value including hyps (`engine.disp`). So a body can
-observe which face it is on. Certification walks the body at a minted hyp — the checker's
-only spelling of "arbitrary input" IS the neutral face — so it only ever sees the
+observe which face it is on. Certification walks the body at a minted hyp, and the
+checker's only spelling of "arbitrary input" IS the neutral face, so it only ever sees the
 `is_neutral = true` branch:
 
 ```
@@ -139,8 +145,8 @@ param_apply Nat (evil 3) = Ok false                 // defense: use-site re-chec
 
 A Pi certificate is therefore a NEUTRAL-FACE statement, not a semantic forall over
 members. This is not `is_neutral`-specific (any root-signature comparison reconstructs
-the bit) and it is not removable: polarized application — `elim`, `case_value`, the
-H-rule, every licensed `.opt` fast path — dispatches on exactly this bit. Unsanctioning
+the bit) and it is not removable: polarized application (`elim`, `case_value`, the
+H-rule, every licensed `.opt` fast path) dispatches on exactly this bit. Unsanctioning
 root-sig reads on hyps would take the eliminator architecture with it. The reverse attack
 (a concrete value FORGING the signature to look neutral) is separately pinned
 (`soundness.test.disp`, `forged_stem`).
@@ -181,7 +187,7 @@ residual-hyp door (payload/arm-face probes) remains open pending the strict cert
 walker mode, and plain pointwise `license_guard` remains fully spoofable.
 
 Forward constraint: the defense model rests on use-site re-checking, and `strip`/erasure
-(TYPE_THEORY §10) deletes exactly those checks — so item 5 upgrades from defended gap to
+(TYPE_THEORY §10) deletes exactly those checks, so item 5 upgrades from defended gap to
 real unsoundness under naive erasure. Erasure must demand two-face (canonicity-backed)
 certificates for anything it strips.
 
@@ -225,3 +231,123 @@ certificates for anything it strips.
    must not strip use-site checks behind a neutral-face-only certificate.
 4. Remaining from item 1: motive families for full mutual induction (the Coproduct_ctx
    gate is currently single-motive).
+
+# Standalone kernel (`lib/standalone/`)
+
+A different checker with a different defense model, so the live kernel's items above do
+not transfer. Here hypotheses are ordinary trees that anything can construct, and
+legitimacy comes from provenance: a session ledger of root hypotheses, plus replaying a
+derived hypothesis's recorded history through the shared respond face. Forgery and replay
+are refused because a fabricated hypothesis roots nowhere, and that is pinned on both
+walking tiers.
+
+Everything below was found by review on 2026-08-01, after hypotheses became lazy records
+of their own observation history. Pins live in `lib/standalone/kernel.test.disp`.
+
+| # | Gap | Severity |
+|---|-----|----------|
+| S1 | One stuck term has two tree representations, depending on whether it was built under the walk or raw | Highest: a future edit turns into a silent wrong answer |
+| S2 | A function type over a quotient does not mean the function respects the quotient | Latent; the semantic gap step 3 exists to close |
+| S3 | Type-indexed projection loops forever on a key that is not in the tuple | Hang rather than error |
+| S4 | Eliminator arity and construction read declaration slots unguarded | Garbage arity, and one defense goes vacuous |
+| S5 | A declared member list is trusted as exhaustive but only checked for soundness | False disequality and false universal |
+| S6 | The abstract tier reads a hypothesis's stored type directly rather than deriving it | Over-rejection only |
+| S7 | Tuple keys deduplicate, so a pair of the same type collapses to a scalar | Surprising, arguably intended |
+| S8 | One guard-family hook is vestigial after the three-valued equality change | Confusing, no behavior change |
+
+### S1. Two representations of the same stuck term
+
+Applying or eliminating a hypothesis produces different trees on different paths. Under
+the walk it goes through the guard tier's eager helper, which computes the result type
+immediately and stores it; there are three such producers (that helper, its collecting
+shim, and the projection branch of the respond face). Raw, it goes through the marker,
+which records the observation and leaves the type to be derived.
+
+Both are correct and both report the same type, but this kernel compares by tree identity
+nearly everywhere: ledger membership, type comparison in the judge, and congruence. Nothing
+fails today only because every exercised path compares terms built the same way; the
+induction proof works because its motive and its obligation are both built raw. That is a
+property of the current call graph, not an invariant.
+
+Measured: a walked and a raw elimination of the same hypothesis are not tree-equal, and
+neither are a walked and a raw application.
+
+The fix is a simplification rather than an addition. With lazy hypotheses the eager helper
+duplicates the marker, and the collecting shim duplicates the marker's collector. The only
+thing the helper still adds is early refusal when the respond face rejects, which under a
+lazy discipline belongs at the point the type is demanded. Do this before building further
+on the equality layer.
+
+### S2. A function type over a quotient does not enforce respect
+
+Membership at `Fn Q B` checks that results inhabit `B`. It does not check that the function
+maps quotient-equal inputs to equal outputs. Measured: a function that compares its argument
+structurally certifies at a parity-quotient function type while returning different results
+for two values the quotient identifies, and the quotient itself agrees they are equal.
+
+Not exploitable into a false equation today. Proofs erase to a single canonical value and
+the equality type still checks its endpoints, so transport produces that value but no type
+accepts it wrongly. Nothing consumes function-type membership as respect evidence either.
+
+This is the setoid-respect gap the archived investigation described, reproduced here by the
+quotient feature. Closing it is exactly what `OEQ_PLAN.md` step 4 (the cross-related
+relation, where membership is self-relatedness) and step 3 (the capability that makes the
+guarantee real) are for.
+
+### S3. Type-indexed projection loops forever on an unknown key
+
+`at` walks its key list without a base case. When the list runs out, the comparison keeps
+failing and the recursion continues on the exhausted pair, so projecting with a key that is
+not in the tuple hangs the checker instead of erroring. Reached only by a caller that passes
+a key outside the tuple's key list, which the type system does not currently prevent.
+
+### S4. Unguarded declaration reads in the eliminator layer
+
+`elim_arity` reads a type's gate and `elim_of` reads its recursor without checking either is
+present. For a type declaring neither, the arity computation returns an arbitrary count, and
+worse, the respond face's defense that an eliminator carries the type's own recursor compares
+two absent slots and passes. The defense is therefore vacuous exactly for the types that
+declare nothing. Not currently reachable through any pinned path, because eliminators are
+built by `elim_of` over declared inductives.
+
+### S5. Member lists are trusted as exhaustive
+
+Two consumers treat a declared member list as the complete domain: the three-valued equality
+rule decides a disequality from it, and the enumerating tiers quantify over it. The coherence
+suite only checks soundness, that every declared member is recognized, never the converse. A
+type shipping a partial member list therefore yields both a false disequality and a false
+universal. This is the one trusted declaration with no probe, and the probe is not obviously
+constructible, since exhaustiveness is the half a finite battery cannot witness.
+
+### S6. The abstract tier reads a stored type instead of deriving it
+
+Its value checker compares a hypothesis's stored type key directly rather than going through
+the derived accessor. A derived hypothesis carries no such key, so a re-lifted one would
+compare a sentinel against the target type and be rejected. Unreached today, because that
+tier builds its own derived values with the key present, and nested application is pinned
+green on both tiers. Over-rejection only, but the read should go through the accessor.
+
+### S7. Tuple keys deduplicate
+
+Key insertion drops duplicates, so a tuple of two identical types collapses to that type
+alone: a two-element tuple silently becomes a scalar. Defensible, since the keys are meant to
+be distinct types and brands exist for when they are not, but it is silent.
+
+### S8. A vestigial hook
+
+Both call sites of the guard family's equality hook already test the predicate the hook
+re-tests, so its rejection branch is unreachable and the two tiers that appear to differ
+there are identical. Introduced when equality became three-valued and the real decision moved
+to a different hook. No behavior change, but a reader will assume it is load-bearing.
+
+## Closed here (2026-08-01)
+
+- **A record type did not check field presence.** Membership read each declared field with
+  the plain accessor, which answers the leaf sentinel when the key is absent, and that
+  sentinel inhabits most types, so the empty record inhabited every record type. Fixed by
+  reading the cell and rejecting an absent field, which is what the live kernel's honest
+  lookup does and why it exists.
+- **Ex falso leaked at the raw tier.** An elimination with zero obligations must fire on
+  arrival; the collector otherwise waited for an argument that never comes and returned a
+  partially applied collector as if it were a value. The walk had this case, the marker did
+  not.
