@@ -70,6 +70,11 @@ pub struct Runner {
     /// "yet" is delivered, by the blocker itself, instead of hoping a neighbour wake
     /// happens to reach far enough.
     declined_on: BTreeMap<Pos, Vec<Pos>>,
+    /// One footprint scout per docking pair, keyed by the producer cell that sent it.
+    /// Walking while `at` is set, a report once the token is home again.
+    scouts: BTreeMap<Pos, Scout>,
+    /// Which pairs' scouts stand on a cell, so that cell's activation steps them.
+    scout_at: BTreeMap<Pos, Vec<Pos>>,
     /// The requesting dock's ring during its relief (receivers here are refused).
     relief_ring: Vec<Pos>,
     /// Set while running a relief whose success directly commits a blocked placement:
@@ -99,6 +104,41 @@ pub struct Runner {
     pub audit: Option<BTreeMap<&'static str, OpAudit>>,
     /// Where heat lives and how it converges; all backends reach the same fixpoint.
     pub signals: SignalBackend,
+}
+
+/// A dock's footprint check, walked instead of scanned. A scripted rule grows well past
+/// its own ring, and reading that whole footprint from the dock cell was the contract's
+/// last combinational long read; instead the pair sends a token that re-walks the rule's
+/// growth script one cell per activation, seeing only the cell it stands on and that
+/// cell's neighbours. One trip covers one roll; the pair sends the token out again for
+/// the next roll when one comes back unusable, and the trip home is the by-name wake the
+/// declined-dock subscriptions already deliver.
+#[derive(Clone, Debug)]
+struct Scout {
+    rule: u8,
+    axis: Dir,
+    /// The consumer cell the walk starts from (the blocklet's would-be origin).
+    start: Pos,
+    /// The ring situation the sweep was asked about: a different one is a different
+    /// question, so the sweep is thrown away and re-asked.
+    ladder: Vec<u8>,
+    /// Rolls this sweep has not walked yet, most preferred first.
+    rest: Vec<u8>,
+    /// The roll being walked, where the token stands (`None` once it is home), and how
+    /// far into the script it has walked.
+    roll: u8,
+    at: Option<Pos>,
+    pc: u16,
+    /// Whether every cell of this walk accepts the matter planned there.
+    merges: bool,
+    /// A foreign blocklet met on this walk, the sweep's best merely-unblocked roll (the
+    /// old ladder's lower rungs), and the last foreign origin seen — whom the pair waits
+    /// on when no roll is usable.
+    blocked_by: Option<Pos>,
+    fallback: Option<u8>,
+    blocker: Option<Pos>,
+    /// Set when a walk finished on a footprint that is both unblocked and mergeable.
+    clean: bool,
 }
 
 /// Per-op-class audit accumulator: how big activations of this class get.
@@ -135,6 +175,8 @@ impl Runner {
 
             relief_g: (-1, -3, 9),
             declined_on: BTreeMap::new(),
+            scouts: BTreeMap::new(),
+            scout_at: BTreeMap::new(),
             relief_ring: Vec::new(),
             relief_pays: false,
             edge_swept_at: u64::MAX,
@@ -175,11 +217,32 @@ impl Runner {
         // adjacency never could.
         if let Some(waiters) = self.declined_on.remove(&p) {
             for w in waiters {
+                self.forget_scout_report(w);
                 self.wake(w);
                 for d in DIRS {
                     self.wake(step(w, d));
                 }
             }
+        }
+    }
+
+    /// Drop a pair's finished scout report so its next attempt asks again. Called
+    /// wherever a blocker the pair was waiting on has changed: the report described a
+    /// footprint that no longer exists. A token still walking is left alone.
+    fn forget_scout_report(&mut self, p: Pos) {
+        if self.scouts.get(&p).is_some_and(|sc| sc.at.is_none()) {
+            self.scouts.remove(&p);
+        }
+    }
+
+    /// Recall a pair's scout entirely, walking token included.
+    fn abandon_scout(&mut self, p: Pos) {
+        let Some(sc) = self.scouts.remove(&p) else { return };
+        if let Some(at) = sc.at {
+            if let Some(v) = self.scout_at.get_mut(&at) {
+                v.retain(|h| *h != p);
+            }
+            self.scout_at.retain(|_, v| !v.is_empty());
         }
     }
 
@@ -221,6 +284,11 @@ impl Runner {
                     return None; // genuinely quiescent: the last sweep moved no matter
                 }
                 self.edge_swept_at = self.grid.route_epoch;
+                // Scout reports go stale here too: a report describes a footprint as it
+                // was walked, and this is the moment the engine re-asks every parked
+                // question. Without it a pair told "blocked" would hold that answer
+                // until its blocker happened to wake it by name.
+                self.scouts.retain(|_, sc| sc.at.is_some());
                 // Wake EVERYTHING once: quiescence means a full re-examination
                 // changes nothing (which makes the kick invariant hold by
                 // construction). Re-armed only by structural commits, so a run pays a
@@ -338,6 +406,11 @@ impl Runner {
         }
         let interval = 64.max(self.grid.cells.len() as u32 / 8);
         self.sync_tick = (self.sync_tick + 1) % interval;
+        // A docking pair's scout steps on the cell it stands on, before that cell's own
+        // transition: the token is a passer-by, not an occupant.
+        if self.scout_at.contains_key(&p) {
+            self.step_scouts(p);
+        }
         let site = self.grid.site(p);
         if site.claim {
             return;
@@ -1437,39 +1510,11 @@ impl Runner {
                 return true;
             }
         }
-        // A blocklet growing anywhere in this pair's footprint will never yield it, and
-        // the old fit test looked only at the first ring, so the pair could commit and
-        // then wedge mid-script against it. Refuse instead — and record the refusal
-        // against that blocklet, so its completion wakes this pair by name. Without the
-        // second half this is not a "not yet" but a "never".
-        {
-            let layout = crate::blocklet::layout(rule);
-            let mut blocker = None;
-            'find: for roll in 0..4u8 {
-                for (off, _) in &layout.extras {
-                    let world = add(t, crate::cascade::rot_pos(*off, axis, roll));
-                    if let Some(c) = self.grid.site(world).cursor {
-                        let origin = Self::cursor_origin(&c, world);
-                        if origin != p && origin != t {
-                            blocker = Some(origin);
-                            break 'find;
-                        }
-                    }
-                }
-            }
-            if let Some(origin) = blocker {
-                self.note(|| format!(
-                    "dock {t:?}/{p:?}: a blocklet at {origin:?} holds our footprint; waiting on it"
-                ));
-                self.declined_on.entry(origin).or_default().push(p);
-                return false;
-            }
-        }
-        let roll = {
+        let ladder = {
             let read = |q: Pos| self.grid.site(q);
-            choose_roll(&read, self.grid.topo, t, p, stub_cells, rule, axis, &mk_seeds)
+            roll_ladder(&read, self.grid.topo, t, p, stub_cells, rule, axis, &mk_seeds)
         };
-        if roll.is_none() {
+        if ladder.is_empty() {
             // Ring relief: pick the roll with the FEWEST blockers and clear exactly one
             // per activation with the existing primitives, damped by the existing
             // stamps, then re-gate with fresh reads. Clearing the LAST blocker pays for
@@ -1612,8 +1657,6 @@ impl Runner {
             if ring_relief_ran {
                 return false;
             }
-        }
-        let Some(roll) = roll else {
             // Every roll's first ring is blocked, or no seed finals pack. A passthrough
             // crossing either dying cell can occupy a dock-edge lane and make the fusion
             // panels unpackable: shed it and retry on the wake (bounded, since each cell
@@ -1658,7 +1701,22 @@ impl Runner {
                 self.wake(p);
             }
             return false;
+        }
+
+        // A scripted rule grows well past its own ring, so ring evidence alone can wedge
+        // the blocklet halfway through against matter growth cannot clear. The pair asks
+        // a scout instead: it walks the script and comes back with a roll to grow, or
+        // with the blocklet to wait on. Reading that footprint from here was the last
+        // combinational long read in the contract.
+        let roll = if layout.script.is_empty() {
+            ladder[0]
+        } else {
+            match self.consult_scout(p, t, rule, axis, &ladder) {
+                Some(roll) => roll,
+                None => return false,
+            }
         };
+        self.abandon_scout(p);
 
         let consumer_sid = self.grid.sid.get(&t).copied();
         let producer_sid = self.grid.sid.get(&p).copied();
@@ -1692,6 +1750,162 @@ impl Runner {
         self.wake_around(p);
         self.wake_around(t);
         true
+    }
+
+    /// The dock's side of the scout protocol: read the report if one is home, send the
+    /// token out otherwise. `Some(roll)` means grow that roll now; `None` means wait —
+    /// either for the token, or (once the sweep has walked every candidate roll) for the
+    /// foreign blocklet the token found, which wakes this pair by name when it finishes.
+    fn consult_scout(&mut self, p: Pos, t: Pos, rule: u8, axis: Dir, ladder: &[u8]) -> Option<u8> {
+        // A sweep answers the question it was sent with, and a pair whose ring situation
+        // has changed since is asking a different one.
+        let asks_again = self
+            .scouts
+            .get(&p)
+            .is_some_and(|sc| sc.rule == rule && sc.ladder == ladder && sc.start == t);
+        if !asks_again {
+            self.abandon_scout(p);
+        }
+        let sweep = self.scouts.get(&p).cloned().unwrap_or(Scout {
+            rule,
+            axis,
+            start: t,
+            ladder: ladder.to_vec(),
+            rest: ladder.to_vec(),
+            roll: 0,
+            at: None,
+            pc: 0,
+            merges: true,
+            blocked_by: None,
+            fallback: None,
+            blocker: None,
+            clean: false,
+        });
+        if sweep.at.is_some() {
+            return None; // still out there; its last step wakes this pair
+        }
+        if sweep.clean {
+            return Some(sweep.roll);
+        }
+        let mut sweep = sweep;
+        if sweep.rest.is_empty() {
+            // Every candidate roll walked. A roll that was merely unmergeable still
+            // docks (growth waits and evicts per cell, as it always has); one whose
+            // footprint a foreign blocklet is growing through does not.
+            if let Some(roll) = sweep.fallback {
+                return Some(roll);
+            }
+            if let Some(origin) = sweep.blocker {
+                self.note(|| format!(
+                    "dock {t:?}/{p:?}: a blocklet at {origin:?} holds our footprint; waiting on it"
+                ));
+                let waiters = self.declined_on.entry(origin).or_default();
+                if !waiters.contains(&p) {
+                    waiters.push(p);
+                }
+            }
+            self.scouts.insert(p, sweep);
+            return None;
+        }
+        sweep.roll = sweep.rest.remove(0);
+        sweep.at = Some(t);
+        sweep.pc = 0;
+        sweep.merges = true;
+        sweep.blocked_by = None;
+        self.scouts.insert(p, sweep);
+        self.scout_at.entry(t).or_default().push(p);
+        self.wake(t);
+        None
+    }
+
+    /// One scout step: the token checks the cells its script places from where it
+    /// stands, then hops onto the next one, so its reads never leave its own
+    /// neighbourhood. Walking one roll ends the trip either way — a clean footprint is
+    /// the answer, and anything else sends the pair's next question out fresh.
+    fn step_scouts(&mut self, p: Pos) {
+        use crate::blocklet::Op;
+        let Some(homes) = self.scout_at.get(&p).cloned() else { return };
+        for home in homes {
+            let Some(mut sc) = self.scouts.remove(&home) else { continue };
+            if sc.at != Some(p) {
+                self.scouts.insert(home, sc);
+                continue;
+            }
+            let layout = crate::blocklet::layout(sc.rule);
+            let mut at = p;
+            while sc.blocked_by.is_none() && sc.pc < layout.resolve_pc {
+                match &layout.script[sc.pc as usize] {
+                    Op::Place { dir, cell } => {
+                        let q = step(at, crate::cascade::rot_dir(*dir, sc.axis, sc.roll));
+                        let qs = self.grid.site(q);
+                        let foreign = match (&qs.cursor, &qs.cell) {
+                            (Some(c), _) => Some(Self::cursor_origin(c, q)),
+                            (_, Cell::Seed { half, partner, .. }) => Some(match half {
+                                Half::Consumer => q,
+                                Half::Producer => step(q, *partner),
+                            }),
+                            _ => None,
+                        };
+                        match foreign {
+                            Some(origin) if origin != home && origin != sc.start => {
+                                sc.blocked_by = Some(origin);
+                            }
+                            _ => {
+                                let planned = crate::cascade::rot_cell(cell, sc.axis, sc.roll);
+                                let fits = match &qs.cell {
+                                    Cell::Empty { reserved: None } => qs.cursor.is_none(),
+                                    Cell::Wire { reserved: None, routes, .. } => {
+                                        merge_matter(planned, routes).is_some()
+                                    }
+                                    _ => false,
+                                };
+                                sc.merges &= fits;
+                            }
+                        }
+                        sc.pc += 1;
+                    }
+                    Op::Hop { dir, .. } => {
+                        let q = step(at, crate::cascade::rot_dir(*dir, sc.axis, sc.roll));
+                        sc.pc += 1;
+                        if !self.grid.topo.in_bounds(q) {
+                            sc.merges = false;
+                            break;
+                        }
+                        at = q;
+                        break;
+                    }
+                }
+            }
+            let arrived = sc.blocked_by.is_none() && sc.pc < layout.resolve_pc && at != p;
+            if arrived {
+                sc.at = Some(at);
+                if let Some(v) = self.scout_at.get_mut(&p) {
+                    v.retain(|h| *h != home);
+                }
+                self.scout_at.entry(at).or_default().push(home);
+                self.scouts.insert(home, sc);
+                self.wake(at);
+                continue;
+            }
+            // The trip is over: home by name, the same delivery a declined dock's
+            // subscription already uses.
+            sc.at = None;
+            if sc.blocked_by.is_none() {
+                if sc.merges {
+                    sc.clean = true;
+                } else if sc.fallback.is_none() {
+                    sc.fallback = Some(sc.roll);
+                }
+            } else {
+                sc.blocker = sc.blocked_by;
+            }
+            if let Some(v) = self.scout_at.get_mut(&p) {
+                v.retain(|h| *h != home);
+            }
+            self.scouts.insert(home, sc);
+            self.wake(home);
+        }
+        self.scout_at.retain(|_, v| !v.is_empty());
     }
 
     fn observe_fire(
@@ -1783,6 +1997,7 @@ impl Runner {
             // their way are woken by name, which proximity could never guarantee.
             if let Some(waiters) = self.declined_on.remove(&p) {
                 for w in waiters {
+                    self.forget_scout_report(w);
                     self.wake(w);
                     self.wake_around(w);
                 }
@@ -3019,38 +3234,6 @@ pub(crate) fn merge_matter(planned: Cell, existing: &[Route]) -> Option<Cell> {
     Some(merged)
 }
 
-/// Whether every footprint cell of this roll currently either is free or merges with
-/// the planned matter. Stale-safe heuristic only: cells change after the dock, and
-/// growth re-validates at each placement. Shared by the serial and parallel drivers,
-/// which supply their own site reads.
-pub(crate) fn roll_merges_deep(
-    read: &dyn Fn(Pos) -> Site,
-    seed_c: Pos,
-    rule: u8,
-    axis: Dir,
-    roll: u8,
-) -> bool {
-    let layout = crate::blocklet::layout(rule);
-    for (off, cell) in &layout.extras {
-        let world = add(seed_c, crate::cascade::rot_pos(*off, axis, roll));
-        // A transiently claimed cell still shows its matter; the ladder is stale-safe,
-        // so claims are ignored (the boundary word rejects via its reserved mark).
-        let ws = read(world);
-        let ok = match &ws.cell {
-            Cell::Empty { reserved: None } => ws.cursor.is_none(),
-            Cell::Wire { reserved: None, routes, .. } => {
-                let planned = crate::cascade::rot_cell(cell, axis, roll);
-                merge_matter(planned, routes).is_some()
-            }
-            _ => false,
-        };
-        if !ok {
-            return false;
-        }
-    }
-    true
-}
-
 /// Whether a roll works locally: the whole footprint is inside the topology and
 /// avoids the pair's stub cells (where aux cables and delivered values legally park),
 /// and the blocklet cells adjacent to the pair are free or mergeable wire. Only the
@@ -3136,9 +3319,14 @@ pub fn roll_blockers(
         if !topo.in_bounds(world) {
             return None; // the boundary never relieves
         }
+        let is_stub = stub_cells.iter().flatten().any(|s| *s == world);
+        let near = DIRS.iter().any(|d| step(world, *d) == seed_c || step(world, *d) == seed_p);
+        if !is_stub && !near {
+            continue; // only the first ring is relieved, and only it is read
+        }
         let planned = crate::cascade::rot_cell(cell, axis, roll);
         let ws = read(world);
-        if stub_cells.iter().flatten().any(|s| *s == world) {
+        if is_stub {
             let weaves = match &ws.cell {
                 Cell::Wire { reserved: None, routes, .. } if ws.cursor.is_none() => {
                     merge_matter(planned.clone(), routes).is_some()
@@ -3148,10 +3336,6 @@ pub fn roll_blockers(
             if !weaves {
                 out.push((world, planned));
             }
-            continue;
-        }
-        let near = DIRS.iter().any(|d| step(world, *d) == seed_c || step(world, *d) == seed_p);
-        if !near {
             continue;
         }
         match &ws.cell {
@@ -3167,9 +3351,38 @@ pub fn roll_blockers(
     Some(out)
 }
 
-/// The dock's roll preference ladder, most to least informed (all stale-safe
-/// heuristics): whole footprint merges cleanly, then the gate ring merges, then the
-/// gate ring is merely unclaimed wire or empty (growth waits per cell and evicts).
+/// The dock's roll preference ladder: rolls whose gate ring merges with the matter
+/// planned there, then rolls whose gate ring is merely unclaimed wire or empty (growth
+/// waits per cell and evicts). Every read is the first ring's, so the ladder is local;
+/// what the footprint looks like deeper in is the scout's question, not this one's.
+pub(crate) fn roll_ladder(
+    read: &dyn Fn(Pos) -> Site,
+    topo: Topo,
+    seed_c: Pos,
+    seed_p: Pos,
+    stub_cells: [Option<Pos>; 4],
+    rule: u8,
+    axis: Dir,
+    mk_seeds: &dyn Fn(u8) -> (Cell, Cell),
+) -> Vec<u8> {
+    let mut out = vec![];
+    for ring_merge in [true, false] {
+        for roll in 0..4u8 {
+            let (sc, sp) = mk_seeds(roll);
+            if !out.contains(&roll)
+                && roll_fits(read, topo, seed_c, seed_p, stub_cells, rule, axis, roll, ring_merge)
+                && crate::blocklet::finals_fit(rule, axis, roll, &sc, &sp)
+            {
+                out.push(roll);
+            }
+        }
+    }
+    out
+}
+
+/// The parallel driver's roll pick: the ladder's first choice. It docks on ring
+/// evidence alone (its tile is frozen and it has no worklist to walk a scout on), so
+/// deep conflicts fall to growth's own arbitration there.
 pub(crate) fn choose_roll(
     read: &dyn Fn(Pos) -> Site,
     topo: Topo,
@@ -3180,15 +3393,7 @@ pub(crate) fn choose_roll(
     axis: Dir,
     mk_seeds: &dyn Fn(u8) -> (Cell, Cell),
 ) -> Option<u8> {
-    let candidate = |deep: bool, ring_merge: bool| {
-        (0..4u8).find(|roll| {
-            let (sc, sp) = mk_seeds(*roll);
-            roll_fits(read, topo, seed_c, seed_p, stub_cells, rule, axis, *roll, ring_merge)
-                && crate::blocklet::finals_fit(rule, axis, *roll, &sc, &sp)
-                && (!deep || roll_merges_deep(read, seed_c, rule, axis, *roll))
-        })
-    };
-    candidate(true, true).or_else(|| candidate(false, true)).or_else(|| candidate(false, false))
+    roll_ladder(read, topo, seed_c, seed_p, stub_cells, rule, axis, mk_seeds).into_iter().next()
 }
 
 // ---------------------------------------------------------------- tracing / projection

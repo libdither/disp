@@ -56,15 +56,18 @@ progress counter — parked means genuinely wedged, never forgotten.
   a worm, not a commit. Measured per-activation write sets (2026-07-30, pinned as
   only-move-down ceilings in `tests/invariants.rs`): move 4 · growth 4 · fabric/relief 6
   · dock 2 · resolve 2 (the seated splice is already at the contract).
-- **No combinational long reads.** One exception left: the ~60-cell dock-roll scan
-  (host-assist preferred; else a scout token, hard ≤64-hop bound). The other two are
-  gone (2026-07-31): the 5-hop demand lookahead is deleted — consumers RAISE, hot wires
-  extend one cell per activation, guests relay one hop per generation, and the walk gate
-  just reads its own edge; the every-5-generations contraction sweep is deleted — every
-  matter-freeing commit already wakes its neighborhood, the whole corpus completes
-  identically without it, and the kick invariant trips if a contraction ever goes
-  un-woken. Measured read radii (Chebyshev, pinned): dock 11 — that IS the roll scan —
-  everything else ≤ 2.
+- **No combinational long reads.** None left (2026-08-02). The ~60-cell dock-roll scan
+  was the last one, and it is now a scout: the pair sends a token that re-walks the
+  rule's own growth script one cell per activation, sees only the cell it stands on and
+  that cell's neighbours, and comes home with a roll to grow or the blocklet to wait on
+  (`Scout` in `cascade_run.rs`; one trip per roll, so the hop bound is the script's
+  length). The two before it went 2026-07-31: the 5-hop demand lookahead is deleted
+  (consumers RAISE, hot wires extend one cell per activation, guests relay one hop per
+  generation, and the walk gate just reads its own edge); the every-5-generations
+  contraction sweep is deleted (every matter-freeing commit already wakes its
+  neighborhood, the whole corpus completes identically without it, and the kick
+  invariant trips if a contraction ever goes un-woken). Measured read radii (Chebyshev,
+  pinned): everything at 3 or less, dock at 1, which is the pair itself.
 - **Frozen op alphabet and transition templates.** No runtime search on chip; growth runs
   compiled microcode in a per-tile ROM (cursor = program counter). Compile-time search
   stays host-side.
@@ -252,10 +255,34 @@ rather than its first ring. That is the surviving, useful half of "fund the dock
 commits" from the refuted plan above — not funding it with claimed area, which it does not
 need, but refusing to start a reaction whose full shape does not fit. It should also make
 the ring relaxation safe, since the wedges it produced are exactly the doomed docks a
-full-footprint test would have refused. Note the cost to watch: the roll scan is already
-the contract's last long read at radius 11, and checking the whole footprint reads
-further, so this rung must land as a walked claim or a host-assisted check rather than a
-wider combinational scan.
+full-footprint test would have refused. The constraint that shaped the rung: the roll scan
+was the contract's last long read at radius 11, and checking the whole footprint reads
+further still, so it had to land as a walked check rather than a wider combinational
+scan, which is what the scout below is.
+
+**The walk landed 2026-08-02, and the deep check it carries is measurably inert.** The
+dock's footprint question is now asked by a scout token (`Scout`): one trip per candidate
+roll, one cell per activation, reads never past the token's own neighbours, and the answer
+delivered home by the same by-name wake a declined dock already subscribes with. That
+closed the contract's last long read (dock 11 to 1, and the refusal and fabric classes
+that hosted the same scan family went 11 to 2 and 11 to 3). What it also measured is that
+the deep check itself decides nothing today. Disabling both deep reads outright, the
+foreign-blocklet scan and the deep-merge roll preference together, leaves the whole gate
+corpus identical (suite green, frontier 5/5, soak 130 to 131), and the old scan's refusal
+fires zero times across 40 soak terms. It fires once per run only in a hand-built
+two-fixture race, and even there it changes no outcome, because the blocklet it looks for
+is a single cursor cell that has to be standing in the footprint exactly when the check
+runs. The scout is therefore narrower on purpose: it declines only when every roll the
+ring gate offers is blocked, where the old scan declined if any of the four was. The
+branch is pinned by `scout_waits_out_a_blocklet_in_the_footprint`, which plants the
+cursors rather than racing for them.
+
+The honest reading is that this rung bought locality, not throughput. Footprint-complete
+gating in the strong sense, refusing on deep matter that growth cannot clear rather than
+only on foreign blocklets, is still open, and the scout is now the vehicle for it: the
+walk already visits every footprint cell and already knows whether the matter there
+merges. The cost to weigh when picking it up is 5 to 8% more generations on the three
+deepest census families.
 
 **Footprint-complete gating, first attempt, reverted.** Extending `roll_fits` past the
 first ring is a three-line change and both strengths fail the same fixture. Refusing on
@@ -351,11 +378,10 @@ What it does need is already sanctioned: bounded token chains (the sanctioned
 re-expression of today's multi-cell relief), a hard hop bound (the scout-token
 alternative is already specified at ≤64 hops, and the largest footprint in the rule table
 is 62 cells), address-ordered acquisition as the deadlock-freedom rule, and bounded hold
-timers for release. Note the prize: the ~60-cell dock roll scan is the last
-combinational-long-read exception in the contract (it is why `dock` sits at read radius
-11 while everything else is ≤2). A reaction that already owns its corridor does not need
-to scan for room, so this rung is a candidate for *retiring* that exception rather than
-adding one.
+timers for release. The prize this section named, retiring the ~60-cell dock roll scan as
+the contract's last combinational-long-read exception, has since been collected without
+corridors: the scan became a walked scout token (2026-08-02), so `dock` reads at radius 1
+like everything else.
 
 ### The issues, and what to do about each
 
@@ -429,8 +455,9 @@ converts one park class into another rather than removing it.
   2026-07-31: a declined dock picks the roll with the fewest blockers (≤ 2), relieves
   exactly one per activation with the existing primitives (evict for wires, sidestep
   for producer squatters), stamped, never docking in the same activation (the locality
-  audit holds the dock commit at 2 writes; the blocker scan joins the roll scan's r=11
-  read-exception family). Moved every parked frontier term deeper (s-rule 2→5 fires,
+  audit holds the dock commit at 2 writes; the blocker scan then joined the roll scan's
+  r=11 read-exception family, and both left it when the scout landed, since the blocker
+  scan reads only the ring it relieves). Moved every parked frontier term deeper (s-rule 2→5 fires,
   k-chain 7→10) without regressing anything; unbounded ring clearing stays forbidden.
   RESOLVED 2026-07-31, k-chain COMPLETES (frontier 3/5): live-cable relief is the
   COMPOSITION of four disciplines, each killing one measured pump class — (1)
@@ -530,7 +557,6 @@ converts one park class into another rather than removing it.
   the backends gate went from stuck-for-an-hour to minutes.
 - **Relief as bounded token chains**, depth as a synthesis constant.
 - **Teleport abort leg.**
-- **Roll scan**: host-assist (preferred) or scout-token wave.
 - **Dock-time clump fusion** (see below).
 - **Chip-power audit** of every remaining multi-cell signal. **Word freeze stands.**
 

@@ -204,6 +204,71 @@ fn frontier_deep_reductions() {
     println!("frontier: {complete}/{} deep terms complete", terms.len());
 }
 
+/// The dock's footprint check is a token that walks the rule's script (`Scout`), and
+/// this is the case it exists for: a pair whose blocklet would grow through one already
+/// growing there must wait rather than commit and wedge halfway. Foreign cursors are
+/// planted directly, one deep in every roll's footprint and none in any ring, because
+/// the racing-fixtures version of this is a coincidence of schedule — a blocklet has one
+/// cursor cell, and it has to be standing in the footprint exactly when the token walks
+/// past. Clearing them lifts the wait.
+#[test]
+fn scout_waits_out_a_blocklet_in_the_footprint() {
+    use rust_ca_lattice::blocklet::layout;
+    use rust_ca_lattice::cascade::{rot_pos, Cell, Cursor, Site};
+    use rust_ca_lattice::lattice::{step, DIRS};
+    let rule_idx = find_index(Tag::T1, Tag::F).expect("T1·F in the ROM") as u8;
+    let (mut grid, shadow) = dock_fixture(&RULES[rule_idx as usize], 0, false);
+    check_projection(&grid, &shadow).unwrap();
+    let seed_c = (0, 0, 0);
+    let seed_p = (1, 0, 0);
+    let mut planted: Vec<(i32, i32, i32)> = vec![];
+    for roll in 0..4u8 {
+        let deep = layout(rule_idx)
+            .extras
+            .iter()
+            .map(|(off, _)| {
+                let w = rot_pos(*off, Dir::E, roll);
+                (seed_c.0 + w.0, seed_c.1 + w.1, seed_c.2 + w.2)
+            })
+            .find(|w| {
+                !planted.contains(w)
+                    && matches!(grid.site(*w).cell, Cell::Empty { .. })
+                    && DIRS.iter().all(|d| step(*w, *d) != seed_c && step(*w, *d) != seed_p)
+            })
+            .expect("every roll has a footprint cell past its own ring");
+        // Claimed, so the planted cursor is inert matter: it blocks, it does not grow.
+        grid.set(
+            deep,
+            &Site {
+                cell: Cell::Empty { reserved: None },
+                cursor: Some(Cursor { rule: rule_idx, axis: Dir::E, roll, pc: 0, reverse: false }),
+                chi: 0,
+                claim: true,
+            },
+        );
+        planted.push(deep);
+    }
+    let mut r = Runner::new(grid, shadow, Discipline::Fifo);
+    r.explain = Some(vec![]);
+    assert!(r.run(2_000_000), "must quiesce while blocked");
+    let waited = r.explain.iter().flatten().filter(|n| n.contains("holds our footprint")).count();
+    println!("scout: {waited} decline(s) on a blocklet in the footprint");
+    assert!(waited > 0, "the scout never reported the blocklet in the footprint");
+    assert_eq!(r.grid.rewrites, 0, "the dock must wait, not wedge");
+    // Clear them: the pair re-asks and fires. Planted cursors are inert matter, so
+    // removing them moves no routing counter — a real blocklet's completion does, which
+    // is what re-arms the sweep that expires the pair's report.
+    for w in planted {
+        r.grid.set(w, &Site::of(Cell::Empty { reserved: None }));
+    }
+    r.grid.route_epoch += 1;
+    r.kick();
+    assert!(r.run(2_000_000), "must quiesce once clear");
+    assert_eq!(r.grid.rewrites, 1, "the wait lifts and the pair fires");
+    check_reciprocity(&r.grid).expect("post-fire reciprocity");
+    check_projection(&r.grid, &r.shadow).expect("post-fire projection");
+}
+
 /// Two fork-triage pairs docked in adjacent planes: their blocklets contest the shared
 /// space, arbitration picks a survivor by seed address, the loser retracts (or dodges by
 /// roll), and both interactions eventually fire with a clean projection. The contest is

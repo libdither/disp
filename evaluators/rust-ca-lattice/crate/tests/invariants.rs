@@ -116,8 +116,8 @@ fn kick_after_quiescence_is_a_no_op() {
 /// Measure every activation's write set and read radius, grouped by op class, over the
 /// full rule atlas and the frontier terms. The ceilings pin today's worst cases; the
 /// chip contract is write ≤ 2 and reads at adjacency, so these numbers may only move
-/// DOWN as AC_IDEA rungs land (token-chain relief, signal-plane demand, host-assisted
-/// roll scan). A new op class fails the test by design: classify it here.
+/// DOWN as AC_IDEA rungs land (token-chain relief, signal-plane demand). A new op class
+/// fails the test by design: classify it here.
 #[test]
 fn commit_footprints_and_read_radii_pinned() {
     use rust_ca_lattice::cascade_run::{dock_fixture, OpAudit};
@@ -147,22 +147,25 @@ fn commit_footprints_and_read_radii_pinned() {
     for (k, v) in &total {
         println!("{k:<16}  {:>11}  {:>10}  {:>10}", v.activations, v.max_writes, v.max_read_r);
     }
-    // The pinned ceilings (max_writes, max_read_r), measured 2026-07-30 over this
-    // corpus. Chip contract: writes ≤ 2, reads at adjacency (r 1) — the gap is the
-    // burn-down AC_IDEA's rungs must close (token-chain relief, signal-plane demand,
-    // host-assisted roll scan). Raising any number is a regression toward less local.
+    // The pinned ceilings (max_writes, max_read_r), measured over this corpus. Chip
+    // contract: writes ≤ 2, reads at adjacency (r 1) — the gap is the burn-down
+    // AC_IDEA's rungs must close (token-chain relief, signal-plane demand). Raising any
+    // number is a regression toward less local. The read column closed 2026-08-02 when
+    // the dock's footprint check became a walked scout: every long read in the
+    // roll/footprint family went with it (dock 11 → 1, refusal 11 → 2, fabric 11 → 3),
+    // and no combinational long reads are left.
     let ceiling: BTreeMap<&str, (u32, u32)> = [
-        ("refusal", (0, 11)), // pure reads; r=11 = the dock-decline blocker scan (the
-                              // roll/footprint scan family: host-assist is the lever)
-        ("fabric", (6, 11)),  // heat, contraction, relief; r=11 = the same blocker scan
-                              // on a declined dock whose relief then commits
+        ("refusal", (0, 2)),  // pure reads: the ring gate and the scout's own steps
+        ("fabric", (6, 3)),   // heat, contraction, relief; r=3 is the merge-fail relief
+                              // bracket, the same primitive growth hosts below
         ("move", (4, 2)),     // walk + detour reservation pair
-        ("dock", (2, 11)),    // the dock write is small; r=11 IS the roll/footprint scan
+        ("dock", (2, 1)),     // both the write and the read are now the pair itself: the
+                              // footprint question is asked by a token that walks it
         ("growth", (6, 3)),   // reserve + merge + cursor advance; the 6 and the 3 are
                               // both the merge-fail relief primitive, whose bracket
                               // reaches two cells past its own target — fabric hosts
-                              // the identical primitive at r=11. Each number was an
-                              // under-measurement until a rung let growth-hosted
+                              // the identical primitive at the same radius. Each number
+                              // was an under-measurement until a rung let growth-hosted
                               // evictions actually reach that far: the writes when
                               // guest swings landed, the radius when the ring bound
                               // rose to 3 and the comb dock finally fired.
