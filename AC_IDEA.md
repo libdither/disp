@@ -257,6 +257,26 @@ the contract's last long read at radius 11, and checking the whole footprint rea
 further, so this rung must land as a walked claim or a host-assisted check rather than a
 wider combinational scan.
 
+**Footprint-complete gating, first attempt, reverted.** Extending `roll_fits` past the
+first ring is a three-line change and both strengths fail the same fixture. Refusing on
+any agent in the deep footprint breaks `competing_seeds_both_fire` (only one of the two
+pairs ever fires); narrowing it to refuse only a seed or a foreign cursor — the matter
+growth genuinely cannot clear — fails identically. The fixture is two docks whose
+footprints overlap on purpose, so the second sees the first's seed and refuses, and the
+refusal never lifts.
+
+That is the real constraint on this rung, and it is a scheduling constraint rather than a
+geometric one: **a dock decline must mean "not yet", but a footprint test makes it mean
+"not while you are there", and nothing re-examines the loser when the winner finishes.**
+So footprint gating cannot land as a pure test. It needs the decline to carry a reason
+and a wake — the loser must be re-woken by the completion of whatever blocked it, which
+is the same lost-wake discipline the kick invariant already polices. Build the wake
+first, then the test; alone, the test converts a temporary crowd into a permanent one.
+
+This also explains why the ring relaxation above produced a mid-growth wedge instead of a
+decline: without a re-examination path, the engine's only options are commit now or
+refuse forever, and it has been tuned for decades of small decisions toward commit.
+
 ## The corridor is the claim (REFUTED at step 0 — see above; kept for the reasoning)
 
 ### The problem this exists to solve
