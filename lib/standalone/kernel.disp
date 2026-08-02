@@ -141,13 +141,13 @@ SigmaCode := {A, B} -> make_type ({ tele := perform (Observe (pair Self (Pred is
 IsectCode := {A, P} -> make_type ({ tele := perform (Fresh A) ({x} -> perform (Observe (pair Self (P x))) ({_} -> Pure t)) })
 AnyTree : ShallowType := Pred ({_v} -> true)
 
-hyp_marker := {a, b} -> a
+hyp_marker := fix ({self, payload, frame} ->
+  wait self ({ (AnyTree) := pair "Ob" (pair frame (wait self payload)) }))
 make_mark := {meta} -> wait hyp_marker meta
 make_hyp := {ty, history} -> make_mark ({ (ShallowType) := ty, (AnyTree) := history })
 hyp_sig := sig_of hyp_marker
 is_neutral := has_sig hyp_sig
-neutral_type := {v} -> field (wait_payload v) ShallowType
-test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
+neutral_history := {v} -> field (wait_payload v) AnyTree
 test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
 Unit := ({ #recognize := {_self, v} -> is_leaf v, members := cons t nil })
 test Unit t = true
@@ -283,8 +283,8 @@ Obs : ShallowType := Sum ObsCode
 Frame := < Acc : t, Elim : t >
 is_acc := has_sig "Acc"
 is_elim_frame := has_sig "Elim"
-respond_face := {frame, self} -> {
-  let T := neutral_type self
+respond_face_at := {nt, frame, self} -> {
+  let T := nt self
   let rows := {
     let vrows := T.tele
     if (is_fork vrows) { vrows } else { T.obs }
@@ -330,7 +330,16 @@ respond_face := {frame, self} -> {
     }
   }
 }
-
+neutral_type := fix ({self, v} -> {
+  let c := field_cell (wait_payload v) ShallowType
+  if (is_leaf c) {
+    let hist := neutral_history v
+    let r := respond_face_at self (pair_fst (pair_snd hist)) (pair_snd (pair_snd hist))
+    if (is_invalid r) { r } else { pair_snd r }
+  } else { pair_snd c }
+})
+respond_face := respond_face_at neutral_type
+test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
 
 Ask := < Mint : t, Call : t, Judge : t, Read : t, Lift : t >
 check := fix ({self, rows, f, prior} ->
@@ -429,6 +438,14 @@ eq_reach := {pairs, a, x} -> (fix ({go, known, fuel} ->
 eq_congr := {pairs} -> fix ({self, a, x} ->
   if (tree_eq a x) { true }
   else if (eq_reach pairs a x) { true }
+  else if (and (is_neutral a) (is_neutral x)) {
+    let ha := neutral_history a
+    let hx := neutral_history x
+    if (and (tree_eq (pair_fst ha) "Ob") (tree_eq (pair_fst hx) "Ob")) {
+      and (self (pair_snd (pair_snd ha)) (pair_snd (pair_snd hx)))
+          (self (pair_fst (pair_snd ha)) (pair_fst (pair_snd hx)))
+    } else { false }
+  }
   else if (or (is_neutral a) (is_neutral x)) { false }
   else {
     triage
@@ -467,7 +484,13 @@ Meta : Table := ({
     if (is_invalid v) {
       false
     } else if (is_neutral v) {
-      and (tree_eq (neutral_type v) T) (member v minted)
+      and (tree_eq (neutral_type v) T)
+          ((fix ({rooted, w} ->
+             if (member w minted) { true }
+             else {
+               let h := neutral_history w
+               if (tree_eq (pair_fst h) "Ob") { rooted (pair_snd (pair_snd h)) } else { false }
+             })) v)
     } else {
       let ck := T.check
       if (is_leaf ck) { T.recognize (wait (wait vf minted) T) v } else { ck (wait vf minted) T v }
@@ -488,12 +511,12 @@ Meta : Table := ({
       Neu m => (tree_eq (field m ShallowType) T)
       _ => {
         let rows := T.tele
-        if (is_fork rows) { chk t rows V t }
+        if (is_fork rows) { chk st rows V t }
         else {
           let e := T.ends
           if (is_fork e) { and (is_leaf (readback V)) (teq_decide ({a2, x2} -> eq_congr (meta_pairs st) a2 x2) (pair_fst e) (pair_snd e)) }
           else if let Conc tr = V { T tr }
-          else { verify_inband (collect V nil) T (readback V) }
+          else { verify_inband (list_cat (collect V nil) (list_map readback st)) T (readback V) }
         }
       }
     })
@@ -522,7 +545,7 @@ Meta : Table := ({
       Poison r => (Poison r)
       Chain e scr args => (Poison (Chain (pair e (pair scr args))))
     })
-  let mwalk := (fix ({self, chk, F, X} ->
+  let mwalk := {st} -> (fix ({self, chk, F, X} ->
     if let Poison _ = X {
       X
     } else {
@@ -549,6 +572,13 @@ Meta : Table := ({
               }
             }
           }
+        } else if (is_neutral tr) {
+          if ((fix ({rt, w} ->
+                if (member w (list_map readback st)) { true }
+                else {
+                  let h := field (wait_payload w) AnyTree
+                  if (tree_eq (pair_fst h) "Ob") { rt (pair_snd (pair_snd h)) } else { false }
+                })) tr) { self chk (Neu (wait_payload tr)) X } else { Poison X }
         } else if let Conc xt = X {
           Conc (tr xt)
         } else if (or (tree_eq tr pair_fst) (tree_eq tr pair_snd)) {
@@ -565,7 +595,7 @@ Meta : Table := ({
           let vlift := {tr} -> if (is_neutral tr) { Neu (wait_payload tr) } else { Conc tr }
           let r := respond_face fr (make_mark m)
           if (is_invalid r) { Poison (Neu m) }
-          else if (list_all ({ob} -> vcheck chk t (pair_fst ob) (if (is_elim_frame fr) { vlift (pair_snd ob) } else { X })) (pair_fst r)) {
+          else if (list_all ({ob} -> vcheck chk st (pair_fst ob) (if (is_elim_frame fr) { vlift (pair_snd ob) } else { X })) (pair_fst r)) {
             Neu ({ (ShallowType) := pair_snd r, (AnyTree) := pair "Ob" (pair fr (make_mark m)) })
           } else { Poison (Neu m) }
         }
@@ -585,7 +615,7 @@ Meta : Table := ({
     cons (pair x (cons x st)) nil
   }
   lift := {f} -> Conc f
-  apply := {chk, _st, F, X} -> mwalk chk F X
+  apply := {chk, st, F, X} -> mwalk st chk F X
   read := readback
   judge := {chk, st, T, r} -> vcheck chk st T r
 })

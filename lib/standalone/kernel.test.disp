@@ -545,6 +545,31 @@ test Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Nat))) psens = true
 test Fn Nat ({n} -> Fn Nat ({m} -> Fn AnyTree ({_} -> Nat))) psens = false
 test Pi Meta Nat ({n} -> Pi Meta Nat ({m} -> Pi Meta (Eq Nat n m) ({_} -> Eq Nat m n))) ({n, m, p} -> refl) = true
 
+// Hypotheses are LAZY: applying one records the observation instead of
+// collapsing, and the result's type is derived on demand by replaying that
+// record through the respond face. So a codomain mentioning an applied
+// hypothesis is now the type that was written -- two applications with
+// different arguments are distinct, which is what makes function congruence
+// mean something (the parent-and-frame rule) and what makes its false form
+// refuse. Before this, both sides collapsed to the same tree and the false
+// form certified.
+NNf := Pi Guard Nat ({_} -> Nat)
+test Fn NNf ({f} -> Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat (f n) (f m))))) ({f, n, m, p} -> refl) = true
+test Fn NNf ({f} -> Fn Nat ({n} -> Fn Nat ({m} -> Fn (Eq Nat n m) ({_} -> Eq Nat (f n) (f (succ m)))))) ({f, n, m, p} -> refl) = false
+test Fn NNf ({f} -> Fn Nat ({n} -> Eq Nat (f n) (f n))) ({f, n} -> refl) = true
+
+// Both walking tiers now trust a hypothesis by PROVENANCE rather than by
+// representation: the abstract interpreter re-lifts an in-band mark into its
+// own domain only when the mark roots in the session ledger, so applying a
+// function-hypothesis to a value bound inside an eliminator arm works there
+// too, while a forged or replayed mark still roots nowhere and is refused.
+mnrec := elim_of Nat ({_} -> Nat)
+test Pi Meta NNf ({_} -> Pi Meta Nat ({_} -> Nat)) ({f, n} -> mnrec n zero ({k, ih} -> f k)) = true
+test Pi Meta NNf ({_} -> Pi Meta Nat ({_} -> Nat)) ({f, n} -> mnrec n zero ({k, ih} -> f ih)) = true
+test Pi Meta NNf ({_} -> Pi Meta Nat ({_} -> Nat)) ({f, n} -> mnrec n (f zero) ({k, ih} -> ih)) = true
+test Pi Meta NNf ({_} -> Pi Meta Nat ({_} -> Nat)) ({f, n} -> mnrec n zero ({k, ih} -> pair 5 5)) = false
+test Pi Meta Nat ({_} -> Nat) ({n} -> make_hyp Nat "n") = false
+
 // Congruence: the goal decomposes structurally before the ledger is consulted,
 // so an equation between CONSTRUCTOR SPINES holds when its components do. This
 // is building-up only, which is always sound; tearing a hypothesis apart would
