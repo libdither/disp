@@ -183,7 +183,7 @@ hypothesis, its derived type is correct, and two applications with different arg
 finally distinct rather than collapsing to the same tree. Every guard-tier check probed
 still behaves correctly.
 
-### Landed
+### Landed (steps 1 and 2 complete)
 
 The lazy form landed, along with the resolution of the conflict described below. Both
 tiers now trust a hypothesis by provenance rather than by representation. The abstract
@@ -197,9 +197,33 @@ refused.
 
 Applying a hypothesis therefore records rather than collapses, codomains mentioning applied
 hypotheses are the types that were written, and real function congruence works while its
-false form refuses. What remains open is the eliminator marker: raw elimination of a
-hypothesis still destructures it, so induction with a computed motive is still out of reach.
-That is the same fix one level over, and it now has a proven template.
+false form refuses.
+
+The eliminator marker then got the same treatment: on an abstract scrutinee it collects the
+case arms to the eliminator's arity and applies the scrutinee to an elimination frame,
+needing no access to the respond face because the application records and the type is
+derived later. Eliminating an abstract natural now yields a properly typed stuck term
+rather than garbage.
+
+With that, the flagship landed on both tiers: a machine-checked proof by induction that
+adding zero is the identity. All three pieces of the arc are load-bearing in that one
+result. Lazy elimination keeps the motive's endpoint stuck, so the step obligation is the
+equation that was written; the step's own reduction turns it into a shared constructor
+context around the induction hypothesis, which congruence closes; and the hypothesis in the
+ledger discharges the remainder. It is not vacuous: the false statement with the same proof
+shape, the attempt without induction, and a junk step are all refused. Cold time fell rather
+than rose, because the eliminator no longer walks a hypothesis encoding before failing.
+
+Step 2 followed on the same foundation. A type declares a normalizer and equations over it
+compare normal forms, with the endpoints canonicalized once at formation so that the judge,
+the ledger and congruence need no quotient awareness of their own. Abstract endpoints are
+left alone, since a normalizer that inspects its argument would destructure a hypothesis,
+which is the same discipline motives follow. The coherence suite gained the matching
+obligation, that a normalizer be idempotent and preserve membership.
+
+What steps 1 and 2 did not include: parameterized path constructors, whose general form
+needs matching against the term universe and is a solver, and induction over a quotient,
+since the wrapper carries no gate. Both are separable rungs. Steps 3 and 4 are untouched.
 
 ### The conflict this resolved
 
