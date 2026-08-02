@@ -6,7 +6,7 @@ import { dirname, resolve as pathResolve } from "node:path"
 import { type Tree, defaultSession } from "../eval/eager.js"
 import type { Session, EvalStats } from "../eval/types.js"
 import { parseItems, sumCtorExpr, type Expr, type RecMember } from "../parse.js"
-import { elab, B, verifiedModules, moduleCacheBySession, pristineTest, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
+import { elab, B, verifiedModules, moduleCacheBySession, registerVocab, isPristineVocab, VOCAB_NAMES, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
 import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modscan.js"
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
 import { extractSignature } from "./sugar.js"
@@ -19,23 +19,21 @@ export type Decl =
   // emitted by inline recValue blocks, which have no surface line of their own).
   | { kind: "Test"; lhs: Tree; rhs: Tree; line?: number; endLine?: number }
 
-// The pristine `default_guard` tree per session, captured at its first definition
-// (cut.disp). The declaration fast path applies only while the ambient default is
-// pristine; a scope that shadows `default_guard` opts its unguarded names into the
-// consulting path. (The fast path mirrors the disp definition's semantics exactly —
-// the tree_eq native-fast-path discipline: the in-language definition is normative.)
-const pristineDefaultGuard = new WeakMap<Session<Tree>, Tree>()
-// Likewise the pristine `let` decorator (cut.disp): a `let`-headed declaration takes
-// the fast private path while `let` is unbound (bootstrap: files before/without the
-// kernel — the host fallback of identical semantics) or pristine; a scope that
-// shadows `let` routes its lets through the shadowing decorator.
-const pristineLet = new WeakMap<Session<Tree>, Tree>()
-// And the pristine `given` decorator (cut.disp): a `given`-headed declaration is a
-// MODULE DEPENDENCY (MODULES.md) handled by the driver directly while `given` is
-// unbound or pristine; a shadowed `given` routes the slow path, where a request
-// arriving with `param := true` is rejected (dynamic givens are unsupported — fills
-// resolve against the syntactic pre-scan).
-const pristineGiven = new WeakMap<Session<Tree>, Tree>()
+// The declaration protocol's vocabulary (`default_guard`, `let`, `test`, `given`) is
+// registered and tested through state.ts's per-session vocabulary sets. Each name is
+// an ordinary library value a kernel defines, and each check below fast-paths only
+// while the name still means a kernel's own value:
+//   default_guard — the fast path applies while the ambient default is pristine; a
+//     scope that shadows it opts its unguarded names into the consulting path. (The
+//     fast path mirrors the disp definition exactly, the tree_eq native-fast-path
+//     discipline: the in-language definition is normative.)
+//   let — a `let`-headed declaration takes the fast private path while `let` is
+//     unbound (bootstrap: files before/without a kernel, the host fallback of
+//     identical semantics) or pristine.
+//   given — a `given`-headed declaration is a MODULE DEPENDENCY (MODULES.md) handled
+//     by the driver directly while `given` is unbound or pristine; a shadowed one
+//     routes the slow path, where a request arriving with `param := true` is rejected
+//     (dynamic givens are unsupported — fills resolve against the syntactic pre-scan).
 
 // A `let x := e` declaration is an ordinary decorated declaration whose head is the
 // single identifier `let` (the private-write request decorator).
@@ -679,15 +677,13 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const existing = lookupEntry(name)
     const letHeaded = isLetHead(headE)
     const dg = lookupEntry("default_guard")?.tree
-    const pristine = pristineDefaultGuard.get(S)
-    const ambientShadowed = dg != null && !(pristine != null && S.equal!(dg, pristine))
-    // A `let` head fast-paths while it means the library decorator verbatim: unbound
-    // (bootstrap fallback of identical semantics) or tree-identical to the pristine
-    // capture. A shadowed `let` falls through to the slow path, where the head
-    // compiles to the shadowing decorator and actually runs.
+    const ambientShadowed = dg != null && !isPristineVocab(S, "default_guard", dg)
+    // A `let` head fast-paths while it means a library decorator verbatim: unbound
+    // (bootstrap fallback of identical semantics) or tree-identical to some kernel's
+    // registered `let`. A shadowed `let` falls through to the slow path, where the
+    // head compiles to the shadowing decorator and actually runs.
     const letTree = letHeaded ? lookupEntry("let")?.tree : undefined
-    const pLet = pristineLet.get(S)
-    const letPristine = letHeaded && (letTree == null || (pLet != null && S.equal!(letTree, pLet)))
+    const letPristine = letHeaded && (letTree == null || isPristineVocab(S, "let", letTree))
     if ((raw || ((!headE || letPristine) && !existing?.guard && !ambientShadowed)) && valueE != null) {
       // Fast path. (The parser guarantees headless declarations carry a value;
       // a valueless decorated declaration always consults, below.)
@@ -867,8 +863,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // through to the request machinery, where a param request is rejected.
         if (isGivenHead(it.head)) {
           const g = lookupEntry("given")?.tree
-          const pg = pristineGiven.get(elab.cs)
-          if (g == null || (pg != null && elab.cs.equal!(g, pg))) {
+          if (g == null || isPristineVocab(elab.cs, "given", g)) {
             handleGiven(it, sinks, ctx)
             recordItem("given", it.name)
             return
@@ -894,14 +889,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // Register the canonical tree_eq tree id with the runtime fast-path on first
         // definition (also when bound privately via `let`).
         if (it.name === "tree_eq" && r.pushDef && r.tree != null) elab.cs.recognizeNative?.("tree_eq", r.tree)
-        if (it.name === "default_guard" && r.tree != null && !pristineDefaultGuard.has(elab.cs))
-          pristineDefaultGuard.set(elab.cs, r.tree)
-        if (it.name === "let" && r.tree != null && !pristineLet.has(elab.cs))
-          pristineLet.set(elab.cs, r.tree)
-        if (it.name === "test" && r.tree != null && !pristineTest.has(elab.cs))
-          pristineTest.set(elab.cs, r.tree)
-        if (it.name === "given" && r.tree != null && !pristineGiven.has(elab.cs))
-          pristineGiven.set(elab.cs, r.tree)
+        // The declaration protocol's vocabulary, registered per MODULE (state.ts):
+        // a session can hold several kernels, so each one's definition is pristine
+        // and only a ROOT-file binding of these names counts as a shadow.
+        if (!ctx.isRoot && r.tree != null && VOCAB_NAMES.has(it.name)) registerVocab(elab.cs, it.name, r.tree)
         recordItem(isLetHead(it.head) ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined })
         // Constructor auto-declaration (SYNTAX.typ § sum types): a declaration whose
         // value is a sum-type literal — possibly under a binder chain, the

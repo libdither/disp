@@ -12,6 +12,8 @@ Misc notes:
  - Tests should be automatically profiled to get a sense of how much time is being spent on each test, and this should be reported back if there are any tests that are taking a long time to evaluate. Testing iteration speed is one of the most important things for disp and should be minimized when possible.
  - Additionally, we must make sure whenever running tests to run with max memory constraints in order to avoid out of memory errors with the system or the terminal crashes / is killed.
  - If you feel that you are doing things too manually and there might be a faster / less-context-consuming way of doing something, let me know in a dedicated section towards the end of your response `*Automation Opportunity:*`.
+ - Multi-line commit messages go through `git commit -F-` with a heredoc, never `-m` with a quoted string: zsh eats backticks and parentheses, so a message loses its code spans silently.
+ - Python is `python`, not `python3`. Node works too for scripted file edits.
 
 ## Writing Style
 

@@ -119,6 +119,28 @@ describe("module dependencies (given) rejections", () => {
       + `given x : Nat := zero\n`))
       .toThrow(/dynamic givens are unsupported/)
   }, 120000)
+
+  // TWO KERNELS, ONE SESSION. The declaration protocol's vocabulary (default_guard,
+  // let, test, given) is defined by whichever kernel a module opens, and the live
+  // kernel and the standalone one both ship a full protocol. The driver's "is this
+  // name still its kernel's value, or has a scope shadowed it?" check therefore has
+  // to hold a SET per name, not one winner per session: with a single winner the
+  // second kernel to load looked shadowed, its `given` items fell through to the
+  // request path, and `Type : Type` compiled its annotation against an absent
+  // binding. That made every live-kernel file that followed the standalone kernel in
+  // a shared session die on `unresolved free variable Type` — the whole first CI
+  // shard, since the standalone test file sorts ahead of lib/tests/.
+  it("a second kernel in the same session does not shadow the first's vocabulary", () => {
+    // A FRESH session, and the standalone kernel loads FIRST: the shared session
+    // above has already loaded the live kernel, which would hide the ordering.
+    const fresh = getBackend(process.env.DISP_EVALUATOR ?? defaultBackendName)
+      .createSession() as unknown as Session<Tree>
+    const runFresh = (src: string) => parseProgram(src, HERE, { session: fresh })
+    expect(() => runFresh(
+      `open use raw "${LIB}/prelude.disp" {}\nopen use "${LIB}/standalone/kernel.disp" {}\ncheck := Nat 2\n`))
+      .not.toThrow()
+    expect(() => runFresh(K + `check := succ zero\n`)).not.toThrow()
+  }, 180000)
 })
 
 describe("checked block-let annotations", () => {

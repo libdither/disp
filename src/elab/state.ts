@@ -53,13 +53,33 @@ export const verifiedModules = new Set<string>()
 // and can yield a different tree than `use`).
 export const moduleCacheBySession = new WeakMap<Session<Tree>, Map<string, ScopeEntry>>()
 
-// The pristine `test` marker per session (the prelude identity), captured at its
-// first definition. An equation lhs `test e1 e2 …` strips the marker while `test`
-// is unbound or pristine — identical semantics (identity), and it restores the real
-// application head so elaboration-time features keyed on it (named-argument calls)
-// see through the marker. A scope that shadows `test` keeps the marker: the
-// shadowing value actually runs on its equations' lhs.
-export const pristineTest = new WeakMap<Session<Tree>, Tree>()
+// The declaration protocol's VOCABULARY per session: `default_guard`, `let`, `test`,
+// `given`. Each is an ordinary library value that a kernel defines, and the driver
+// fast-paths a declaration only while the name still means its kernel's value — a
+// scope that SHADOWS one opts into the slow path, where the shadowing decorator
+// actually runs. (For `test`: an equation lhs strips the marker while `test` is
+// unbound or pristine, which also restores the real application head so head-keyed
+// elaboration like named-argument calls sees through it.)
+//
+// A session can hold MORE THAN ONE kernel — the live kernel and the standalone one
+// both ship a full protocol, and a suite that loads both shares one session. So this
+// is a SET per name, not a single winner: every kernel's definition is pristine, and
+// the second one to load is not a shadow of the first. Only definitions made by a
+// MODULE register; a root file defining one of these names is exactly the override
+// the check exists to detect, so it stays a shadow.
+const vocabBySession = new WeakMap<Session<Tree>, Map<string, Set<number>>>()
+export const VOCAB_NAMES = new Set(["default_guard", "let", "test", "given"])
+export function registerVocab(s: Session<Tree>, name: string, t: Tree): void {
+  let m = vocabBySession.get(s)
+  if (!m) { m = new Map(); vocabBySession.set(s, m) }
+  let ids = m.get(name)
+  if (!ids) { ids = new Set(); m.set(name, ids) }
+  ids.add(internTreeId(s, t))
+}
+/// Is this in-scope binding one of the kernels' own definitions of `name`?
+export function isPristineVocab(s: Session<Tree>, name: string, t: Tree): boolean {
+  return vocabBySession.get(s)?.get(name)?.has(internTreeId(s, t)) ?? false
+}
 
 // Session-scoped tree intern ids: a stable small key per distinct handle, used to
 // key module instantiations by their fills (MODULES.md § Hermetic scoping).

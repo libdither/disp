@@ -5,7 +5,7 @@
 
 import type { Tree } from "../eval/eager.js"
 import type { Expr } from "../parse.js"
-import { elab, B, pristineTest, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
+import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
@@ -580,10 +580,7 @@ export function compileExpr(
 // sees `f`, not `(test f)`. A shadowed `test` keeps the marker and runs.
 export function equationLhs(lhs: Expr, lookupEntry: (name: string) => ScopeEntry | undefined): Expr {
   const bound = lookupEntry("test")?.tree
-  if (bound != null) {
-    const pt = pristineTest.get(elab.cs)
-    if (!(pt != null && elab.cs.equal!(bound, pt))) return lhs // shadowed: marker runs
-  }
+  if (bound != null && !isPristineVocab(elab.cs, "test", bound)) return lhs // shadowed: marker runs
   return peelTestMarker(lhs)
 }
 
