@@ -65,6 +65,11 @@ pub struct Runner {
     /// The displacement-order form (dot with a shape's primary direction must be
     /// positive); components distinct powers of 3 so no face or diagonal sums to zero.
     pub relief_g: (i32, i32, i32),
+    /// Pairs that declined to dock because a blocklet was growing in their footprint,
+    /// keyed by that blocklet's cursor cell. A decline means "not yet"; this is how the
+    /// "yet" is delivered, by the blocker itself, instead of hoping a neighbour wake
+    /// happens to reach far enough.
+    declined_on: BTreeMap<Pos, Vec<Pos>>,
     /// The requesting dock's ring during its relief (receivers here are refused).
     relief_ring: Vec<Pos>,
     /// Set while running a relief whose success directly commits a blocked placement:
@@ -129,6 +134,7 @@ impl Runner {
             relief_root: None,
 
             relief_g: (-1, -3, 9),
+            declined_on: BTreeMap::new(),
             relief_ring: Vec::new(),
             relief_pays: false,
             edge_swept_at: u64::MAX,
@@ -1419,6 +1425,34 @@ impl Runner {
                 return true;
             }
         }
+        // A blocklet growing anywhere in this pair's footprint will never yield it, and
+        // the old fit test looked only at the first ring, so the pair could commit and
+        // then wedge mid-script against it. Refuse instead — and record the refusal
+        // against that blocklet, so its completion wakes this pair by name. Without the
+        // second half this is not a "not yet" but a "never".
+        {
+            let layout = crate::blocklet::layout(rule);
+            let mut blocker = None;
+            'find: for roll in 0..4u8 {
+                for (off, _) in &layout.extras {
+                    let world = add(t, crate::cascade::rot_pos(*off, axis, roll));
+                    if let Some(c) = self.grid.site(world).cursor {
+                        let origin = Self::cursor_origin(&c, world);
+                        if origin != p && origin != t {
+                            blocker = Some(origin);
+                            break 'find;
+                        }
+                    }
+                }
+            }
+            if let Some(origin) = blocker {
+                self.note(|| format!(
+                    "dock {t:?}/{p:?}: a blocklet at {origin:?} holds our footprint; waiting on it"
+                ));
+                self.declined_on.entry(origin).or_default().push(p);
+                return false;
+            }
+        }
         let roll = {
             let read = |q: Pos| self.grid.site(q);
             choose_roll(&read, self.grid.topo, t, p, stub_cells, rule, axis, &mk_seeds)
@@ -1705,6 +1739,14 @@ impl Runner {
             // is what makes the "yet" arrive.
             for (off, _) in &layout.extras {
                 self.wake_around(add(p, crate::cascade::rot_pos(*off, cursor.axis, cursor.roll)));
+            }
+            // And the pairs that declined specifically because THIS blocklet was in
+            // their way are woken by name, which proximity could never guarantee.
+            if let Some(waiters) = self.declined_on.remove(&p) {
+                for w in waiters {
+                    self.wake(w);
+                    self.wake_around(w);
+                }
             }
             return;
         }
