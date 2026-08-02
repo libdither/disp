@@ -223,7 +223,28 @@ obligation, that a normalizer be idempotent and preserve membership.
 
 What steps 1 and 2 did not include: parameterized path constructors, whose general form
 needs matching against the term universe and is a solver, and induction over a quotient,
-since the wrapper carries no gate. Both are separable rungs. Steps 3 and 4 are untouched.
+since the wrapper carries no gate. Both are separable rungs.
+
+### One hazard left behind, worth fixing before building further
+
+Applying or eliminating a hypothesis now produces two different trees depending on the path.
+Under the walk it goes through the guard tier's own application helper, which computes the
+result type eagerly and stores it. Raw, it goes through the marker, which records and leaves
+the type to be derived. Both are correct and both answer the same type, but they are not the
+same tree, and this kernel compares by tree identity nearly everywhere: ledger membership,
+type comparison in the judge, and congruence.
+
+Nothing fails today, because in every path exercised so far both sides of a comparison come
+from the same route. The induction proof works because the motive and the obligation are both
+built raw. That is a coincidence of the current call graph rather than a property, so it will
+break silently the first time a walked term is compared with a raw one.
+
+The fix is a simplification rather than an addition: with lazy hypotheses, the guard tier's
+application helper is doing work the marker now does, so it should reduce to plain
+application and one representation should remain. The only thing it still adds is early
+refusal when the respond face rejects, which under a lazy discipline belongs at the point the
+type is demanded anyway. The same applies to the collecting shim, which now duplicates the
+marker's collector.
 
 ### The conflict this resolved
 
@@ -270,48 +291,146 @@ the kind step 0 item 3 establishes.
 The risk is that a wrong normalizer silently identifies distinct things, which is why the
 coherence suite comes first.
 
+## Step 4: relatedness from declared interfaces
+
+Written before step 3 even though it is built after, because step 3's whole job is to
+protect this relation, so the relation's shape decides what step 3 must forbid.
+
+### The relation, corrected
+
+An earlier draft of this section said relatedness at a function type is agreement on all
+applications. That is the pointwise form and it is wrong. The correct form relates inputs
+too:
+
+    R(A → B)(f, g)  =  for all a0, a1.  R(A)(a0, a1)  implies  R(B)(f a0, g a1)
+
+The pointwise version does not force a function to respect its domain's equality, and the
+archived investigation measured the consequence: a type quotiented by "is it a leaf"
+admitted a licensed replacement of a stem by a fork, which a well-typed observer could
+distinguish. Standard setoid and partial-equivalence-relation systems all use the
+cross-related form for exactly this reason.
+
+Membership is then self-relatedness: `v : A` means `R(A)(v, v)`. That is worth taking
+seriously rather than treating as a curiosity, because it collapses the membership face and
+the relation face into one, and it is what makes respect automatic: an inhabitant of a
+function type is by definition something that maps related inputs to related outputs.
+
+### How the relation reaches a type
+
+By a `rel` slot receiving the tier's relatedness judge, mirroring the judge-aware membership
+face exactly:
+
+    rel := {jrel, T, x, y} -> ...
+
+It has to be a dictionary rather than a plain predicate for the same two reasons membership
+did. Only the tier knows how to relate hypotheses, and only the tier holds the ledger.
+
+### Where the two related hypotheses come from
+
+The natural construction reuses what the equality bridge already built. At a function type,
+mint two hypotheses and record their relatedness as a ledger assumption. The ledger already
+holds equations and discharges them, and congruence already propagates them, so a
+relatedness assumption is an ordinary ledger entry rather than new machinery. This is the
+main reason to expect step 4 to be smaller than it looks.
+
+### Termination
+
+Relatedness follows the type's declared observation program, so it terminates wherever
+membership already does. Codata and other infinite structures need a guard; version one
+should refuse them explicitly rather than loop, and say so in the refusal.
+
+### What subsumes what
+
+Three existing slots become presentations of this one relation. The canonical form from step
+2 is the decidable presentation, `R(x, y) := norm x = norm y`. The judge-aware membership
+face is the diagonal. The endpoint slot is a stored relatedness claim. The endpoint of the
+design is a single relation slot with those as special cases, and the migration is mechanical
+once `rel` exists, but it should be done deliberately and not as a side effect.
+
+### Equivalence of representations
+
+`Equiv A B` is two translations plus round-trip obligations stated up to the two relations,
+not up to structural identity. Since a translation between observation vocabularies is a
+handler, this is the handler pair the plan's opening section describes. Its obligations are
+that each translation respects the relations, and that both composites are related to the
+identity. That is the structure identity principle in the form this kernel can state.
+
+### Cost and risk
+
+Relating at a function type needs two mints per binder rather than one, so checking cost
+grows in the binder count. The bigger risk is that self-relatedness as membership is a
+genuine reinterpretation of every existing type, so it should arrive as an additional slot
+that coexists with the membership face, with the unification done later and separately.
+
 ## Step 3: reflection as a tracked capability
 
-Reflection policy currently lives in three hooks of the guard-family walker and is selected
-from outside by which table a check runs at. The target is that the policy belongs to the
-function type, so a term either lives in the fragment where structural inspection is
-available or in the fragment where it is not.
+### The reframe
 
-Mechanically the walker's inspection carve-outs stop answering inline and perform an
-operation; the tables become handlers for it, and the existing tiers are already three
-distinct policies for exactly this (refuse, answer honestly, answer uniformly); the
-function formers gain a row so annotations can name their fragment.
+An earlier draft said the goal is to move the reflection policy from the checking site into
+the type. That is already half true and the draft was aimed at the wrong gap: the tier is
+already a parameter of the type, since `Pi Guard A B` names its policy and the general
+function former is that partially applied. Three things are actually missing.
 
-The kernel can enforce the discipline but cannot prove the payoff about itself. That
-inspection-free code respects every declared equality is a meta-theorem, proved externally
-by step-indexed logical relations; the project's sealing note already identifies the
-framework (dependency-category noninterference) and the reference. What the kernel
-delivers is enforcement, which is the difference between hoping nothing inspects and making
-inspection unavailable, and that difference is what makes the extensional principles safe
-to add rather than contradictory.
+First, the guarantee is unstated and unexploited. Nothing anywhere says that an inhabitant
+of the strict form respects declared equalities, so no consumer can rely on it.
 
-This formalizes a convention the kernel already follows informally, where machinery sits
-above the trust line and certified surface below it. Machinery is exactly the code that
-must keep inspecting. The migration cost is real: every current annotation implicitly
-means "checked at the guard tier", and afterwards it would mean "inspection-free".
+Second, there is no composition rule. If a strict function is applied to the result of a
+permissive one, or a permissive function appears inside a strict one's body, nothing says
+what the composite is.
 
-## Step 4: equality from declared interfaces
+Third, the exemption for kernel machinery is a convention about definition order rather than
+anything checkable. Machinery must keep inspecting; that is what makes it machinery.
 
-Define relatedness at a type by running that type's observation program on both values and
-comparing answers. For function types the declared observation is application at a fresh
-point, so agreement on all applications is the definition and function extensionality
-becomes a consequence rather than an axiom. Products go componentwise, sums require the
-same tag and related payloads, quotients use the declared relation.
+### The forbidden set, precisely
 
-Equality is then derived: the equality type accepts its canonical proof exactly when the
-values are related. Type equivalence is a pair of interface translations agreeing on
-observations, which is to say a handler pair.
+The guarantee is exactly the absence of these, so the list has to be exact:
 
-Most of the machinery exists. Relatedness on functions quantifies over arguments, which is
-the mint operation, so the relation is itself an effect program run at a table, the same
-shape as the judge-aware membership face. This step is largely a new judge route and a
-redefinition, and it is close to worthless before step 3, because in a fragment that can
-inspect trees, observationally equal values remain distinguishable.
+- structural comparison with a hypothesis operand, beyond the uniform fragment that the
+  three-valued rule already decides
+- the neutrality reader applied to a hypothesis
+- raw shape inspection of a hypothesis, which is the one non-parametric substrate rule
+- forging a hypothesis, which the stem-forge check catches
+- in the abstract tier, recognizing a mark, which is now ledger-gated
+
+Deliberately not on the list, because they route rather than inspect: applying a hypothesis,
+projecting one, and eliminating one. The existing tiers differ only on the first two entries,
+which is why they are three hooks today rather than five.
+
+### A bit or a grade
+
+Version one wants a bit. But the rule dispatch that would carry it is the same site where
+discarding and duplicating an argument could be counted, and those are the two rules a
+substructural discipline cares about. So the annotation should be designed as a monoid from
+the start even if version one only ever uses two elements, because that is the difference
+between this step paying for linear types later and blocking them.
+
+### What the kernel can and cannot establish
+
+Enforcement is in-kernel and is the deliverable. The payoff, that inspection-free code
+respects every declared equality, is a meta-theorem proved externally by step-indexed
+logical relations; the project's sealing note already carries the framework and the
+references.
+
+There is a partial in-kernel check available in this kernel's own idiom, and it should be
+built alongside: behaviorally probe that a function respects a declared relation on a battery
+of related pairs, the trials-style analogue of the gate certification. That is a lie
+detector rather than a proof and must be labelled as one, but it is what would catch the
+hole below in practice.
+
+### The hole this closes, measured
+
+A function type over a quotient does not currently mean what it appears to mean. Measured
+2026-08-01: a function that compares its argument structurally certifies at
+`Fn Quotient B` while distinguishing two values the quotient identifies. Nothing consumes
+that as respect evidence today, so it is a latent gap rather than a live unsoundness, but it
+is exactly what a licensing consumer would misread, and closing it is this step's concrete
+justification.
+
+### Migration
+
+Every current annotation means "checked at the guard tier" and would come to mean
+"inspection-free", so the whole annotated surface changes meaning at once. Machinery needs
+an explicit permissive marking rather than an implicit one.
 
 ## What this does not include
 
