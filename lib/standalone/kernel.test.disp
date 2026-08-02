@@ -573,6 +573,29 @@ test Fn Nat false_motive ({n} -> (elim_of Nat false_motive) n refl ({p, ih} -> r
 test is_neutral (add (make_hyp Nat "k") zero) = true
 test tree_eq (neutral_type (add (make_hyp Nat "k") zero)) Nat = true
 
+// QUOTIENTS by canonical form (set-level higher inductive types, the cheap
+// branch): a type declares a normalizer, and an equation over it compares
+// NORMAL FORMS. The endpoints are canonicalized once at formation, so the
+// judge, the ledger and congruence all keep working on them unchanged and
+// need no quotient awareness of their own. Abstract endpoints are left alone,
+// since a normalizer that inspects its argument would destructure a
+// hypothesis (the same discipline motives follow). The coherence suite gained
+// the matching obligation: a normalizer must be idempotent and must map
+// members to members.
+parity := {n} -> nat_rec n zero ({k, ih} -> nat_rec ih (succ zero) ({_a, _b} -> zero))
+Parity := Quotient Nat parity
+test parity 4 = 0
+test parity 5 = 1
+test Parity 4 = true
+test Eq Parity 2 0 refl = true
+test Eq Parity 3 1 refl = true
+test Eq Parity 2 1 refl = false
+test Eq Nat 2 0 refl = false
+test Coherent Parity = true
+test tree_eq (Quotient Nat parity).under Nat = true
+BadNorm := Quotient Nat ({n} -> succ n)
+test Coherent BadNorm = false
+
 // Hypotheses are LAZY: applying one records the observation instead of
 // collapsing, and the result's type is derived on demand by replaying that
 // record through the respond face. So a codomain mentioning an applied

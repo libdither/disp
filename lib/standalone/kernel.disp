@@ -761,6 +761,16 @@ test False t = false
 test False 5 = false
 test Not False ({p} -> p) = true
 
+Quotient := {A, nf} -> ({
+  #recognize := {_self, v} -> A v
+  check := {jdg, _T, v} -> jdg A v
+  norm := nf
+  under := A
+})
+canon := {A, v} -> {
+  let nf := A.norm
+  if (or (is_leaf nf) (not (neutral_free v))) { v } else { nf v }
+}
 Named := {name, T} -> ({
   #recognize := {_self, v} -> T v
   check := {jdg, _T2, v} -> jdg T v
@@ -821,13 +831,17 @@ test Fn ShallowType ({_} -> Nat) ({T} -> T 5) = false
 Point := {c} -> ({ #recognize := {_self, v} -> tree_eq c v, members := cons c nil })
 
 refl := t
-Eq := {A, x, y} -> ({
-  #recognize := {_self, v} -> and (is_leaf v) (tree_eq x y)
-  gate := {_Ind, B} -> cons (B x) nil
-  elim := {_self, _p, base} -> base
-  land := {B, _self} -> B y
-  ends := pair x y
-})
+Eq := {A, x, y} -> {
+  let nx := canon A x
+  let ny := canon A y
+  ({
+    #recognize := {_self, v} -> and (is_leaf v) (tree_eq nx ny)
+    gate := {_Ind, B} -> cons (B nx) nil
+    elim := {_self, _p, base} -> base
+    land := {B, _self} -> B ny
+    ends := pair nx ny
+  })
+}
 eq_subst := {A, x, y, B, p, base} -> elim_of (Eq A x y) B p base
 eq_sym := {A, x, y, p} -> eq_subst A x y ({_} -> Eq A y x) p refl
 eq_trans := {A, x, y, z, p, q} -> eq_subst A y z ({_} -> Eq A x z) q p
@@ -871,8 +885,11 @@ Coherent := {T} -> {
   and (and
     (if (is_fork e) { or (tree_eq (pair_fst e) (pair_snd e)) (list_all ({v} -> not (T v)) probes) } else { true })
     (if (is_leaf ck) { true } else { list_all ({v} -> tree_eq (T v) (ck ({ty, a} -> ty a) T v)) probes }))
-    (and (list_all T T.members)
-         (if (is_leaf T.gate) { true } else { GoodGate T }))
+    (and (and (list_all T T.members)
+              (if (is_leaf T.gate) { true } else { GoodGate T }))
+         (if (is_leaf T.norm) { true } else {
+           list_all ({v} -> if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
+         }))
 }
 test Coherent Nat = true
 test Coherent Bool = true
