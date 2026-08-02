@@ -160,7 +160,6 @@ elim_marker := fix ({self, payload, arg} ->
 elim_of := {Ind, B} -> wait elim_marker (pair Ind.elim (pair Ind B))
 elim_sig := sig_of elim_marker
 is_elim_head := has_sig elim_sig
-elim_stuck_sig := sig_of elim_stuck
 test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
 Unit := ({ #recognize := {_self, v} -> is_leaf v, members := cons t nil })
 test Unit t = true
