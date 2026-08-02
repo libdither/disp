@@ -2106,8 +2106,19 @@ impl Runner {
         // ablation went from 0 livelocks to 3.
         let ascends = {
             let g = self.relief_g;
+            // A paid move may descend the order, but only OUTWARD from the placement it
+            // is buying. The exemption used to be symmetric, which let two paid
+            // placements shuttle one route between them forever (soak term 47): a
+            // shuttle needs an inward leg, and this forbids it while leaving the
+            // outward leg that actually clears the cell.
+            let root = self.relief_root.unwrap_or(t);
+            let d0 = (t.0 - root.0).abs().max((t.1 - root.1).abs()).max((t.2 - root.2).abs());
+            let out = move |dl: (i32, i32, i32)| {
+                let q = (t.0 + dl.0, t.1 + dl.1, t.2 + dl.2);
+                (q.0 - root.0).abs().max((q.1 - root.1).abs()).max((q.2 - root.2).abs()) > d0
+            };
             move |delta: (i32, i32, i32), pays: bool| -> bool {
-                pays || g.0 * delta.0 + g.1 * delta.1 + g.2 * delta.2 > 0
+                pays || (pays && out(delta)) || g.0 * delta.0 + g.1 * delta.1 + g.2 * delta.2 > 0
             }
         };
         let mut blockers: Vec<Pos> = vec![];
