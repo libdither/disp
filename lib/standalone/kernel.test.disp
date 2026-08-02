@@ -109,6 +109,24 @@ test Nat (elim_id (succ (forge_hyp Nat Nat))) = false
 test is_neutral (elim_id (forge_hyp Nat Nat)) = true
 test tree_eq (neutral_type (elim_id (forge_hyp Nat Nat))) Nat = true
 
+// ONE representation per stuck term. The guard tier's walk no longer builds its
+// own eager hypothesis when a hypothesis is applied or eliminated; it defers to
+// the same marker the raw tier uses and only checks that the observation has a
+// type at all. Since this kernel compares by tree identity nearly everywhere
+// (ledger membership, the judge's type comparison, congruence), a walked term
+// and a raw one must be the SAME tree, not merely agree on their type.
+walk_apply := field Guard "apply"
+fn_hyp := make_hyp (PiCode Nat ({_} -> Nat)) t
+nat_hyp := make_hyp Nat t
+nat_elim := elim_of Nat ({_} -> Nat)
+test tree_eq (walk_apply t nil fn_hyp zero) (fn_hyp zero) = true
+test tree_eq (walk_apply t nil nat_elim nat_hyp) (nat_elim nat_hyp) = true
+test tree_eq (walk_apply t nil (walk_apply t nil nat_elim nat_hyp) zero) ((nat_elim nat_hyp) zero) = true
+// An observation the type does not declare is not a stuck term, it is an error,
+// and the lazy record has no way to say "no type" -- so the walk refuses at the
+// point the observation is made rather than when the type is demanded.
+test is_invalid (walk_apply t nil pair_fst (make_hyp Bool t)) = true
+
 sig_child := stem_child hyp_sig
 smuggled := pair_snd (forge_hyp Bool Bool)
 assembled_forgery := {n} -> t (t (pair_snd (pair n sig_child))) smuggled

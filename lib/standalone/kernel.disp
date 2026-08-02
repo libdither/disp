@@ -154,6 +154,7 @@ elim_stuck := fix ({sm, st, arg} -> {
   if (tree_eq (list_len args) (elim_arity E)) { scr (Elim (pair E args)) }
   else { wait sm (pair E (pair scr args)) }
 })
+elim_stuck_sig := sig_of elim_stuck
 elim_marker := fix ({self, payload, arg} ->
   if (is_neutral arg) {
     let E := wait self payload
@@ -315,7 +316,7 @@ respond_face_at := {nt, frame, self} -> {
           })
           Observe ob ty => (match ob : (case_of Obs ({_} -> AnyTree)) {
             Prj a => (match frame {
-              Acc fa => (if (tree_eq a fa) { pair nil ty } else { go (tail (make_hyp ty (pair "Ob" (pair (Acc a) self)))) })
+              Acc fa => (if (tree_eq a fa) { pair nil ty } else { go (tail (self (Acc a))) })
               _ => (invalid frame)
             })
             Self _ => (go (tail t))
@@ -632,27 +633,6 @@ Meta : Table := ({
 })
 
 GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
-  let hyp_apply := {f, x} -> {
-    let r := respond_face x f
-    if (is_invalid r) { invalid f } else { make_hyp (pair_snd r) (pair "Ob" (pair x f)) }
-  }
-  let shim := fix ({sm, payload, arg} -> {
-    let E := pair_fst payload
-    let seen := pair_snd payload
-    if (is_leaf seen) {
-      if (is_neutral arg) {
-        if (tree_eq (elim_arity E) zero) { hyp_apply arg (Elim (pair E nil)) } else { wait sm (pair E (cons arg nil)) }
-      } else { (elim_raw E) (wait sm (pair E nil)) arg }
-    } else {
-      let args := list_snoc (pair_snd seen) arg
-      if (tree_eq (list_len args) (elim_arity E)) {
-        hyp_apply (pair_fst seen) (Elim (pair E args))
-      } else {
-        wait sm (pair E (cons (pair_fst seen) args))
-      }
-    }
-  })
-  let shim_sig := sig_of shim
   let w_stem := {a, x} -> {
     let r := t a x
     if (is_neutral r) { invalid r } else { r }
@@ -684,9 +664,8 @@ GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
       if (and (neutral_free a) (neutral_free x)) { on_tree_eq ({_} -> f x) x } else { teq_decide (on_teq_open st) a x }
     }
     else if (tree_eq f is_neutral) { on_is_neutral ({_} -> is_neutral x) x }
-    else if (is_neutral f) { hyp_apply f x }
-    else if (is_elim_head f) { (wait shim (pair f nil)) x }
-    else if (has_sig shim_sig f) { f x }
+    else if (is_neutral f) { let r := f x; if (is_invalid (neutral_type r)) { invalid f } else { r } }
+    else if (or (is_elim_head f) (has_sig elim_stuck_sig f)) { f x }
     else if (tree_eq f ({x} -> x)) { x }
     else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (Acc f) }
     else { triage (t x) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f })
