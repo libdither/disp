@@ -146,7 +146,11 @@ neutral_history := {v} -> field (wait_payload v) AnyTree
 elim_raw := {E} -> pair_fst (wait_payload E)
 elim_ind := {E} -> pair_fst (pair_snd (wait_payload E))
 elim_motive := {E} -> pair_snd (pair_snd (wait_payload E))
-elim_arity := {E} -> list_len ((elim_ind E).gate (elim_ind E) (elim_motive E))
+elim_arity := {E} -> {
+  let Ind := elim_ind E
+  let g := Ind.gate
+  if (is_leaf g) { invalid E } else { list_len (g Ind (elim_motive E)) }
+}
 elim_stuck := fix ({sm, st, arg} -> {
   let E := pair_fst st
   let scr := pair_fst (pair_snd st)
@@ -160,7 +164,9 @@ elim_marker := fix ({self, payload, arg} ->
     let E := wait self payload
     if (tree_eq (elim_arity E) zero) { arg (Elim (pair E nil)) } else { wait elim_stuck (pair E (pair arg nil)) }
   } else { (pair_fst payload) (wait self payload) arg })
-elim_of := {Ind, B} -> wait elim_marker (pair Ind.elim (pair Ind B))
+elim_of := {Ind, B} ->
+  if (or (is_leaf Ind.elim) (is_leaf Ind.gate)) { invalid Ind }
+  else { wait elim_marker (pair Ind.elim (pair Ind B)) }
 elim_sig := sig_of elim_marker
 is_elim_head := has_sig elim_sig
 test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
@@ -329,8 +335,9 @@ respond_face_at := {nt, frame, self} -> {
     match frame {
       Elim E arms => {
         let g := T.gate
-        if (is_leaf g) { invalid frame }
-        else if (and (tree_eq (elim_ind E) T) (tree_eq (elim_raw E) T.elim)) {
+        let raw := T.elim
+        if (or (is_leaf g) (is_leaf raw)) { invalid frame }
+        else if (and (tree_eq (elim_ind E) T) (tree_eq (elim_raw E) raw)) {
           let tys := g T (elim_motive E)
           if (tree_eq (list_len tys) (list_len arms)) {
             let land := T.land
@@ -520,7 +527,7 @@ Meta : Table := ({
   let vcheck := ({chk, st, T, V} ->
     match V {
       Poison r => false
-      Neu m => (tree_eq (field m ShallowType) T)
+      Neu m => (tree_eq (neutral_type (make_mark m)) T)
       _ => {
         let rows := T.tele
         if (is_fork rows) { chk st rows V t }
@@ -632,7 +639,7 @@ Meta : Table := ({
   judge := {chk, st, T, r} -> vcheck chk st T r
 })
 
-GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
+GuardAt := {on_is_neutral, on_teq_open} -> {
   let w_stem := {a, x} -> {
     let r := t a x
     if (is_neutral r) { invalid r } else { r }
@@ -658,10 +665,10 @@ GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
       a)
   let walk := {st} -> fix ({self, f, x} ->
     if (is_invalid f) { f }
-    else if (tree_eq f tree_eq) { if (neutral_free x) { on_tree_eq ({_} -> wait tree_eq x) x } else { wait tree_eq x } }
+    else if (tree_eq f tree_eq) { wait tree_eq x }
     else if (has_sig tree_eq_sig f) {
       let a := wait_payload f
-      if (and (neutral_free a) (neutral_free x)) { on_tree_eq ({_} -> f x) x } else { teq_decide (on_teq_open st) a x }
+      if (and (neutral_free a) (neutral_free x)) { f x } else { teq_decide (on_teq_open st) a x }
     }
     else if (tree_eq f is_neutral) { on_is_neutral ({_} -> is_neutral x) x }
     else if (is_neutral f) { let r := f x; if (is_invalid (neutral_type r)) { invalid f } else { r } }
@@ -721,10 +728,8 @@ GuardAt := {on_is_neutral, on_tree_eq, on_teq_open} -> {
 }
 Guard : Table := GuardAt
   ({_resume, _x} -> false)
-  ({resume, x} -> if (neutral_free x) { resume t } else { invalid x })
   ({st, a, x} -> if (eq_congr (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) })
 Ambient : Table := GuardAt
-  ({resume, _x} -> resume t)
   ({resume, _x} -> resume t)
   ({_st, a, x} -> tree_eq a x)
 
@@ -763,10 +768,15 @@ key_insert := fix ({self, k, ks} ->
   else if (tree_lt k (pair_fst ks)) { cons k ks }
   else { cons (pair_fst ks) (self k (pair_snd ks)) })
 key_sort := fix ({self, ks} -> if (is_leaf ks) { nil } else { key_insert (pair_fst ks) (self (pair_snd ks)) })
-Tuple := {keys} -> (fix ({self, ks} ->
-  if (is_leaf (pair_snd ks)) { pair_fst ks } else { Sigma GenericWalker (pair_fst ks) ({_} -> self (pair_snd ks)) })) (key_sort keys)
+Tuple := {keys} -> {
+  let ks := key_sort keys
+  if (not (tree_eq (list_len ks) (list_len keys))) { invalid keys }
+  else { (fix ({self, ks2} ->
+    if (is_leaf (pair_snd ks2)) { pair_fst ks2 } else { Sigma GenericWalker (pair_fst ks2) ({_} -> self (pair_snd ks2)) })) ks }
+}
 at := {K, keys, s} -> (fix ({self, ks, v} ->
-  if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
+  if (is_leaf ks) { invalid K }
+  else if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
   else { self (pair_snd ks) (pair_snd v) })) (key_sort keys) s
 
 with_trials := {base} -> field_put base "fresh" ({st, ty, tail} -> {
@@ -865,7 +875,8 @@ Coherent := {T} -> {
   and (and
     (if (is_fork e) { or (tree_eq (pair_fst e) (pair_snd e)) (list_all ({v} -> not (T v)) probes) } else { true })
     (if (is_leaf ck) { true } else { list_all ({v} -> tree_eq (T v) (ck ({ty, a} -> ty a) T v)) probes }))
-    (and (and (list_all T T.members)
+    (and (and (and (list_all T T.members)
+                   (if (is_leaf T.members) { true } else { list_all ({v} -> or (not (T v)) (member v T.members)) probes }))
               (if (is_leaf T.gate) { true } else { GoodGate T }))
          (if (is_leaf T.norm) { true } else {
            list_all ({v} -> if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes

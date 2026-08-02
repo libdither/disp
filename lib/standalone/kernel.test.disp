@@ -494,6 +494,14 @@ test tree_eq ParamK ResultK = false
 test Fn OpTy ({_} -> ParamK) ({q} -> at ParamK OpSig q) = true
 test Fn OpTy ({_} -> LabelK) ({q} -> at LabelK OpSig q) = true
 test Fn OpTy ({_} -> ResultK) ({q} -> at ParamK OpSig q) = false
+// A key outside the tuple's key list used to walk off the end of the list and
+// recur forever on the exhausted pair, hanging the checker. It errors now.
+test is_invalid (at (Named "missing" AnyTree) OpSig flip_sig) = true
+// Keys are meant to be DISTINCT types (brands exist for when the underlying
+// types collide), and the sorted insert drops duplicates -- so a repeated key
+// used to make a two-element tuple silently collapse into a scalar.
+test is_invalid (Tuple (cons Nat (cons Nat nil))) = true
+test Tuple (cons Nat (cons (Named "other" Nat) nil)) (pair 2 3) = true
 
 // The applied formers ARE Tele at a table: the Guard partial application on a
 // code (or its bare program) is tree-identical to Pi/Sigma, so the "G" form
@@ -754,6 +762,27 @@ test Coherent LieCheck = false
 LieMembers := ({ #recognize := {_self, v} -> is_leaf v, members := cons 5 nil })
 test Coherent LieMembers = false
 test Coherent LieGate = false
+// The member list is the one trusted declaration that was only checked for
+// SOUNDNESS (every declared member is recognized). Two consumers read it as the
+// complete domain -- the three-valued equality decides a disequality from it,
+// and the enumerating tiers quantify over it -- so a PARTIAL list yields a false
+// disequality and a false universal. Exhaustiveness is the half a finite battery
+// cannot witness in general, but the battery does catch a member the recognizer
+// accepts and the list omits, which is what a truncated list looks like. Lie
+// detector, not a proof.
+PartialMembers := ({ #recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({_l, _r} -> false) v, members := cons true nil })
+test PartialMembers false = true
+test member false PartialMembers.members = false
+test Coherent PartialMembers = false
+
+// Eliminator construction and arity used to read the .elim and .gate slots
+// without checking either was there. A type declaring neither got an arbitrary
+// arity, and worse, the respond face's defense that an eliminator carries the
+// type's OWN recursor compared two absent slots and passed -- vacuous for
+// exactly the types that declare nothing.
+test is_invalid (elim_of AnyTree ({_} -> Nat)) = true
+test is_invalid (elim_of Unit ({_} -> Nat)) = true
+test is_invalid (elim_arity (wait elim_marker (pair t (pair AnyTree ({_} -> Nat))))) = true
 
 // Element positions now judge through the tier for every container former, not
 // just declared sums: a constructor applied to abstract arguments certifies,
