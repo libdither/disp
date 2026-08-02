@@ -183,7 +183,25 @@ hypothesis, its derived type is correct, and two applications with different arg
 finally distinct rather than collapsing to the same tree. Every guard-tier check probed
 still behaves correctly.
 
-### The remaining conflict
+### Landed
+
+The lazy form landed, along with the resolution of the conflict described below. Both
+tiers now trust a hypothesis by provenance rather than by representation. The abstract
+interpreter cannot simulate a marker that does work over an abstract argument, so instead
+of simulating it, it recognizes it, the same way it already refuses to simulate equality,
+the neutrality reader, projections and eliminator heads. An in-band mark is re-lifted into
+its own domain exactly when the mark roots in the session ledger, which is the guard tier's
+audit rule. That closes the forgery hole the out-of-band representation was protecting
+against, by provenance instead of by construction, and forged and replayed marks stay
+refused.
+
+Applying a hypothesis therefore records rather than collapses, codomains mentioning applied
+hypotheses are the types that were written, and real function congruence works while its
+false form refuses. What remains open is the eliminator marker: raw elimination of a
+hypothesis still destructures it, so induction with a computed motive is still out of reach.
+That is the same fix one level over, and it now has a proven template.
+
+### The conflict this resolved
 
 It collides with the abstract interpreter's architecture, in one specific shape: applying
 a function-hypothesis to a value bound inside an eliminator's arm. Applying one to an
