@@ -58,3 +58,28 @@ index 2c5dea84b815..680396fdb390 100644
 +fn chebyshev(a: Pos, b: Pos) -> i32 {
 +    (a.0 - b.0).abs().max((a.1 - b.1).abs()).max((a.2 - b.2).abs())
 +}
+
+# ---------------------------------------------------------------------------
+# CAUSE OF THE TERM 47 LIVELOCK, isolated 2026-08-01 (churn + components backend):
+#
+# A growing blocklet (Dn, nursery, cursor pc 6) fails a placement merge, and its
+# relief's shift is blocked by the cursor's OWN cell. Two nearby cells then churn
+# 22k times while ending EMPTY: a route is pushed out and pulled back forever.
+#
+# The culprit is not this patch, it is relief_pays. The pays-for-itself exemption
+# lets a paid relief DESCEND the displacement order -- but it does so in BOTH
+# directions, so two paid placements (or one alternating between attempts) can
+# shuttle a single route between them indefinitely. The order was the only thing
+# preventing that, and "pays for itself" removes it symmetrically.
+#
+# Opening the ring does not cause the cycle; it supplies the room for one that the
+# exemption already permitted. That is why term 47 fails here and nowhere else, and
+# why the doomed-dock fix (named declines) did not touch it.
+#
+# THE FIX TO TRY FIRST: make the exemption ASYMMETRIC. A paid relief may descend the
+# order only when the receiver is strictly further from the requesting placement
+# than the source -- the same "drain is a direction" shape this patch applies to the
+# ring, applied to the exemption itself. A shuttle needs one leg inward; forbid the
+# inward leg and the pair cannot cycle, while the outward leg that actually buys the
+# fire stays legal.
+# ---------------------------------------------------------------------------
