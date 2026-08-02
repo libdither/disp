@@ -59,6 +59,10 @@ list_apply := fix ({self, f, xs} ->
   if (is_leaf xs) { f } else { self (f (pair_fst xs)) (pair_snd xs) })
 list_cat := fix ({self, xs, ys} ->
   if (is_leaf xs) { ys } else { cons (pair_fst xs) (self (pair_snd xs) ys) })
+list_filter := fix ({self, p, xs} ->
+  if (is_leaf xs) { nil }
+  else if (p (pair_fst xs)) { cons (pair_fst xs) (self p (pair_snd xs)) }
+  else { self p (pair_snd xs) })
 
 field_cell := fix ({self, r, name} -> {
   let names := pair_fst r
@@ -779,11 +783,15 @@ at := {K, keys, s} -> (fix ({self, ks, v} ->
   else if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
   else { self (pair_snd ks) (pair_snd v) })) (key_sort keys) s
 
+probes := cons t (cons 5 (cons true (cons false (cons (pair 5 5) (cons (cons 1 nil) (cons (inj "zz" t) (cons (succ (succ zero)) nil)))))))
 with_trials := {base} -> field_put base "fresh" ({st, ty, tail} -> {
   let ms := ty.members
   if (is_leaf ms) { (field base "fresh") st ty tail } else { list_map ({a} -> pair a st) ms }
 })
 Trials : Table := with_trials Guard
+with_probes := {base} -> field_put base "fresh" ({st, ty, tail} ->
+  list_cat ((field base "fresh") st ty tail) (list_map ({a} -> pair a st) (list_filter ty probes)))
+TwoFace : Table := with_probes Guard
 
 Nat : ShallowType := ({
   #recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
@@ -868,7 +876,6 @@ test GoodGate (Eq Nat 2 3) = true
 test GoodGate AnyTree = false
 test GoodGate ShallowType = false
 
-probes := cons t (cons 5 (cons true (cons false (cons (pair 5 5) (cons (cons 1 nil) (cons (inj "zz" t) (cons (succ (succ zero)) nil)))))))
 Coherent := {T} -> {
   let e := T.ends
   let ck := T.check

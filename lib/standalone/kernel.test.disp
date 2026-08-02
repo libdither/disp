@@ -465,6 +465,44 @@ test pi_suite (Pi Trials) = pi_expected
 test fn_suite (Pi Trials) = fn_expected
 test dep_suite (Pi Trials) Five = dep_expected
 
+// A DEPENDENT CODOMAIN DOES NOT MEAN WHAT IT SAYS under the abstract face
+// alone. Codomains and motives are instantiated by RAW application, and raw
+// tree_eq is the native structural primitive -- it answers `false` on a
+// hypothesis rather than going three-valued the way the walk's does, and raw
+// is_neutral answers `true` honestly. So a codomain that inspects its bound
+// variable is formed at ONE branch for the certificate and the other branch
+// everywhere else, and the Pi certificate is a lie at every concrete point.
+// This is the residue of the step-1 barrier: the lazy marker made raw
+// APPLICATION and raw ELIMINATION of a hypothesis go stuck, which is why an
+// honest dependent codomain works; structural INSPECTION is the piece it did
+// not reach, and it is the first entry in the forbidden set of OEQ_PLAN step 3.
+lying_cod := {n} -> (elim_of Bool ({_} -> ShallowType)) (tree_eq n zero) False Nat
+sniff_cod := {n} -> if (is_neutral n) { Nat } else { False }
+test tree_eq (lying_cod (make_hyp Nat "h")) Nat = true
+test tree_eq (lying_cod zero) False = true
+test Pi Guard Nat lying_cod ({n} -> n) = true
+test (lying_cod zero) (({n} -> n) zero) = false
+test Pi Guard Nat sniff_cod ({n} -> n) = true
+test Pi Guard Nat sniff_cod ({n} -> zero) = true
+// The eliminator route is already honest, because a gate instantiates the
+// motive at CONCRETE constructor points. A Pi codomain is only ever
+// instantiated at the abstract point, which is the whole difference.
+test Fn Nat ({_} -> Nat) ({n} -> (elim_of Nat lying_cod) n zero ({k, ih} -> ih)) = false
+
+// TwoFace gives Pi the same treatment: it conjoins a CONCRETE face onto the
+// abstract one, minting the probe battery filtered by the domain alongside the
+// hypothesis. It only ever adds obligations, so it can refuse but never admit
+// more, and it catches the lie where a gate would have. A lie detector in the
+// gate-certification idiom, not a proof -- the battery is finite.
+test Pi TwoFace Nat lying_cod ({n} -> n) = false
+test Pi TwoFace Nat sniff_cod ({n} -> n) = false
+test Pi TwoFace Nat sniff_cod ({n} -> zero) = false
+test pi_suite (Pi TwoFace) = pi_expected
+test fn_suite (Pi TwoFace) = fn_expected
+test Pi TwoFace Nat ({n} -> Point (succ n)) succ = true
+test Pi TwoFace Nat ({n} -> Point (succ n)) ({n} -> n) = false
+test Pi TwoFace Nat ({_} -> Bool) ({n} -> tree_eq n zero) = true
+
 // One filled import re-verifies the ENTIRE annotated surface (and re-runs the
 // kernel's inline tests) under another walker: the differential check as a line.
 mMeta := use "kernel.disp" { GenericWalker := Meta }
@@ -644,6 +682,59 @@ test tree_eq (neutral_type ((elim_of False ({_} -> Nat)) (make_hyp False "bad"))
 test tree_eq (Quotient Nat parity).under Nat = true
 BadNorm := Quotient Nat ({n} -> succ n)
 test Coherent BadNorm = false
+
+// A FUNCTION TYPE OVER A QUOTIENT DOES NOT MEAN THE FUNCTION RESPECTS IT
+// (OEQ_PLAN steps 3 and 4). Membership at Fn Q B checks that results inhabit B,
+// never that quotient-equal inputs give equal outputs.
+qbnat := elim_of Bool ({_} -> Nat)
+disrespect := {n} -> qbnat (tree_eq n 2) zero (succ zero)
+test disrespect 2 = 0
+test disrespect 0 = 1
+test Eq Parity 2 0 refl = true
+test Fn Parity ({_} -> Nat) disrespect = true
+
+// Stating respect as a TYPE does not work, and the reason is the codomain lie
+// above: `Eq B (f a) (f b)` is formed raw, so for an INSPECTING f both sides
+// reduce to the same concrete value and the obligation becomes Eq Nat 1 1 --
+// vacuous for exactly the class of function it exists to catch. So relatedness
+// has to be a judgment the tier COMPUTES, not a proposition stated in types.
+respect_ty := {A, B, f} -> Fn A ({a} -> Fn A ({b} -> Fn (Eq A a b) ({_} -> Eq B (f a) (f b))))
+test tree_eq (Eq Nat (disrespect (make_hyp Parity "h")) (disrespect (make_hyp Parity "k"))) (Eq Nat 1 1) = true
+test respect_ty Parity Nat disrespect ({a, b, p} -> refl) = true
+test respect_ty Parity Nat parity ({a, b, p} -> refl) = true
+
+// The judgment form: mint the pair jointly with its relatedness as a ledger
+// assumption, apply both candidates through the tier's OWN walk, then ask the
+// tier's equality. Test-only -- this is NOT kernel surface, for the reason
+// pinned below it.
+rel_probe := {A, f, g} -> {
+  let ap := field Guard "apply"
+  let a := make_hyp A "rel_l"
+  let b := make_hyp A "rel_r"
+  let st := cons (make_hyp (Eq A a b) "rel_eq") (cons b (cons a nil))
+  eq_holds st (ap t st f a) (ap t st g b)
+}
+test rel_probe Parity parity parity = true
+test rel_probe Parity disrespect disrespect = false
+test rel_probe Nat succ succ = true
+test rel_probe Nat succ ({n} -> succ (succ n)) = false
+// It also refuses a structural comparator where one is harmless, because two
+// stuck comparisons over two distinct hypotheses are not relatable. The
+// forbidden set of step 3 is not a separate annotation -- it falls out of the
+// relation.
+test Fn Nat ({_} -> Bool) ({n} -> tree_eq n zero) = true
+test rel_probe Nat ({n} -> tree_eq n zero) ({n} -> tree_eq n zero) = false
+
+// WHY IT CANNOT SHIP: the ledger stores UNTYPED equations. The assumption is
+// recorded at Parity and then reused at Nat, so the identity certifies as a
+// Parity-respecting map into Nat even though 2 and 0 are Parity-equal and
+// Nat-distinct. Typing the ledger entries, and making reachability refuse an
+// equation whose type is coarser than the goal's, is the concrete prerequisite
+// for step 4 -- a change to eq_pairs/eq_reach/eq_holds, not a new former.
+test Eq Nat 2 0 refl = false
+test rel_probe Parity ({n} -> n) ({n} -> n) = true
+test rel_probe Parity ({n} -> succ n) ({n} -> succ n) = true
+test Eq Nat (succ 2) (succ 0) refl = false
 
 // Hypotheses are LAZY: applying one records the observation instead of
 // collapsing, and the result's type is derived on demand by replaying that
