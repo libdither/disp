@@ -1697,6 +1697,15 @@ impl Runner {
             s.cursor = None;
             self.grid.set(p, &s);
             self.wake_around(p);
+            // A blocklet occupies its whole footprint while it grows, and anything that
+            // wanted that space was refused on its account. Waking only this cell tells
+            // the near neighbours and no one else, so a pair refused three cells out
+            // waits forever for an event that already happened. Completion therefore
+            // re-wakes the footprint it is vacating: a decline means "not yet", and this
+            // is what makes the "yet" arrive.
+            for (off, _) in &layout.extras {
+                self.wake_around(add(p, crate::cascade::rot_pos(*off, cursor.axis, cursor.roll)));
+            }
             return;
         }
         let op = &layout.script[cursor.pc as usize];
