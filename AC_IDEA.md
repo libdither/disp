@@ -227,6 +227,36 @@ accumulate claim, but to carry a pair to where a roll already fits.
 Everything from here to the end of this section is kept as the record of a well-formed
 idea killed cheaply by its own falsification test. Do not build it.
 
+### Following the redirect: the ring ban, and what it uncovered
+
+The ban was replaced with a DIRECTION (2026-08-01, tried and reverted). Relief only ever
+moves a route to an adjacent cell and the ring is a shell around the pair, so escaping
+the shell needs one step through it — precisely the step the ban forbade, which is the
+mechanism behind "declines beside 299 empty cells". Drain is a direction, not a place: a
+ring cell is a legal receiver when the route lands strictly further from the dock than it
+started, which is a per-request potential the move strictly increases, so shuffling
+inside the shell stays impossible. Deep corpus stayed 5/5 under it. Narrowing it further
+so the shell opens only for a relief that pays for itself (the last blocker, whose
+clearing fires the dock next) did not change the outcome either way.
+
+What it exposed is more useful than the change itself. Soak term 47 stops quiescing, and
+the churn is not in the ring at all: a blocklet is stuck mid-script (nursery agent, cursor
+at pc 6) while relief thrashes around it. The docks the relaxation newly allows are firing
+into space that is clear at the ring and blocked deeper in, because **`roll_blockers` only
+ever examines cells ADJACENT to the seed pair** — the first ring — never the rest of the
+footprint. A dock is therefore permitted on evidence about its first shell alone, and the
+62-cell rules can wedge halfway through growth having passed that test.
+
+So the next rung is footprint-complete gating: decide a dock against the whole footprint
+rather than its first ring. That is the surviving, useful half of "fund the dock before it
+commits" from the refuted plan above — not funding it with claimed area, which it does not
+need, but refusing to start a reaction whose full shape does not fit. It should also make
+the ring relaxation safe, since the wedges it produced are exactly the doomed docks a
+full-footprint test would have refused. Note the cost to watch: the roll scan is already
+the contract's last long read at radius 11, and checking the whole footprint reads
+further, so this rung must land as a walked claim or a host-assisted check rather than a
+wider combinational scan.
+
 ## The corridor is the claim (REFUTED at step 0 — see above; kept for the reasoning)
 
 ### The problem this exists to solve
