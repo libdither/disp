@@ -93,7 +93,11 @@ and step 2 adds a fourth.
    the failure mode rather than detecting it.
 3. Grow the gate certification into a coherence suite: endpoints that are concrete and
    unequal must recognize nothing; the two membership faces must agree on a battery of
-   concrete values; every declared member must be recognized.
+   concrete values; every declared member must be recognized, and no value on the battery
+   may be recognized without being declared. That last clause is the only guard on
+   exhaustiveness, which two consumers rely on and which a finite battery cannot witness in
+   general; it catches truncation, which is what a partial list looks like in practice.
+   A normalizer must be idempotent and preserve membership.
 4. Extend the sum sugar to multi-slot variants, so declarations with several payload
    positions stop being written as explicit variant lists.
 
@@ -225,26 +229,20 @@ What steps 1 and 2 did not include: parameterized path constructors, whose gener
 needs matching against the term universe and is a solver, and induction over a quotient,
 since the wrapper carries no gate. Both are separable rungs.
 
-### One hazard left behind, worth fixing before building further
+### The two-representation hazard, closed
 
-Applying or eliminating a hypothesis now produces two different trees depending on the path.
-Under the walk it goes through the guard tier's own application helper, which computes the
-result type eagerly and stores it. Raw, it goes through the marker, which records and leaves
-the type to be derived. Both are correct and both answer the same type, but they are not the
-same tree, and this kernel compares by tree identity nearly everywhere: ledger membership,
-type comparison in the judge, and congruence.
+Applying or eliminating a hypothesis used to produce two different trees depending on the
+path: eagerly under the walk, lazily raw. Both were correct and both answered the same type,
+but this kernel compares by tree identity nearly everywhere, so nothing failed only because
+every exercised path happened to compare same-route terms.
 
-Nothing fails today, because in every path exercised so far both sides of a comparison come
-from the same route. The induction proof works because the motive and the obligation are both
-built raw. That is a coincidence of the current call graph rather than a property, so it will
-break silently the first time a walked term is compared with a raw one.
-
-The fix is a simplification rather than an addition: with lazy hypotheses, the guard tier's
-application helper is doing work the marker now does, so it should reduce to plain
-application and one representation should remain. The only thing it still adds is early
-refusal when the respond face rejects, which under a lazy discipline belongs at the point the
-type is demanded anyway. The same applies to the collecting shim, which now duplicates the
-marker's collector.
+The fix was deletion, as predicted. The guard tier's application helper and its collecting
+shim were doing work the marker already does, and both are gone; the projection branch of the
+respond face likewise applies the mark to its frame instead of minting its own. One thing the
+helper added turned out to be real and was kept: an observation the type does not declare is
+not a stuck term but an error, and a lazy record has no way to represent "no type", so the
+walk still refuses at the point the observation is made. It just demands the type through the
+single derivation path rather than calling the respond face itself.
 
 ### The conflict this resolved
 
@@ -293,8 +291,11 @@ coherence suite comes first.
 
 ## Step 4: relatedness from declared interfaces
 
-Written before step 3 even though it is built after, because step 3's whole job is to
-protect this relation, so the relation's shape decides what step 3 must forbid.
+Written before step 3, and now known to be built before it too. An earlier draft said step
+3's whole job is to protect this relation. Measurement reversed that: the relation enforces
+step 3's forbidden set by itself, so step 3 is a way of stating and exploiting a guarantee
+the relation already produces, not a precondition for it. See "What the measurements
+changed" below.
 
 ### The relation, corrected
 
@@ -362,14 +363,61 @@ grows in the binder count. The bigger risk is that self-relatedness as membershi
 genuine reinterpretation of every existing type, so it should arrive as an additional slot
 that coexists with the membership face, with the unification done later and separately.
 
+### What the measurements changed, 2026-08-01
+
+Three things, all pinned in `kernel.test.disp`.
+
+**The relation cannot be a type; it has to be a judgment.** The obvious spelling of respect
+is a proposition, `Fn A (a -> Fn A (b -> Fn (Eq A a b) (_ -> Eq B (f a) (f b))))`, and it
+does not work. Codomains are instantiated by raw application, and raw structural comparison
+answers natively rather than going stuck, so for an inspecting `f` both endpoints reduce to
+the same concrete value and the obligation becomes `Eq Nat 1 1`. It is vacuous for exactly
+the class of function it exists to catch. This is the same defect as the dependent-codomain
+item below, and it is the measured reason the relation needs the tier's dictionary rather
+than an argument from taste.
+
+The judgment form works and is small: mint the pair jointly with its relatedness as a ledger
+assumption, apply both candidates through the tier's own walk, then ask the tier's equality.
+It decides the quotient case in both directions.
+
+**Step 3 falls out of step 4 rather than preceding it.** The judgment refuses a structural
+comparator on its own, with no annotation and no forbidden-set check: comparing a hypothesis
+produces a stuck comparison whose operand is that hypothesis, and two such comparisons over
+two distinct related hypotheses are not relatable by congruence. So the relation already
+declines every function that inspects. It is conservative, since it also declines comparators
+that would be harmless at a non-quotient type, but conservative in the direction step 3 wants.
+
+**The blocker is that the ledger stores untyped equations.** An assumption recorded at a
+quotient gets reused at the carrier, so the identity certifies as a parity-respecting map
+into the naturals even though 2 and 0 are parity-equal and distinct as naturals. Relatedness
+varies with the type and the ledger does not record which type an equation was assumed at.
+So the concrete prerequisite for step 4 is to type the ledger entries and make reachability
+refuse an equation whose type is coarser than the goal's. That is a change to `eq_pairs`,
+`eq_reach` and `eq_holds`, not a new former, and it should be done first.
+
+Two intermediate spellings were tried and both fail, which is worth recording so they are
+not retried. Minting all three binders abstractly leaves the obligation vacuous, per the
+first point. Minting them concretely lands on pairs where the equation type is empty, and
+the tier mints there anyway because it has no ex falso rule for a concretely refuted
+equation, so honest functions get refused. Mixing one concrete point with one abstract needs
+real computation with the equation, which congruence closure cannot do.
+
 ## Step 3: reflection as a tracked capability
 
-### The reframe
+### The reframe, twice
 
 An earlier draft said the goal is to move the reflection policy from the checking site into
 the type. That is already half true and the draft was aimed at the wrong gap: the tier is
 already a parameter of the type, since `Pi Guard A B` names its policy and the general
 function former is that partially applied. Three things are actually missing.
+
+The second reframe is from measurement. Step 3 was written as insurance for a future
+licensing consumer, with the quotient hole as its justification. It is not insurance. The
+first entry in the forbidden set below is already load-bearing for type formation today,
+with a live exploit, and that is the part of this step that has to happen regardless of
+whether anything ever consumes a respect guarantee. Meanwhile the enforcement half of the
+step turns out to be produced by step 4's relation for free, so what remains genuinely
+distinct to step 3 is stating the guarantee, composing it, and marking machinery exempt.
 
 First, the guarantee is unstated and unexploited. Nothing anywhere says that an inhabitant
 of the strict form respects declared equalities, so no consumer can rely on it.
@@ -411,26 +459,65 @@ respects every declared equality, is a meta-theorem proved externally by step-in
 logical relations; the project's sealing note already carries the framework and the
 references.
 
-There is a partial in-kernel check available in this kernel's own idiom, and it should be
-built alongside: behaviorally probe that a function respects a declared relation on a battery
-of related pairs, the trials-style analogue of the gate certification. That is a lie
-detector rather than a proof and must be labelled as one, but it is what would catch the
-hole below in practice.
+There is a partial in-kernel check available in this kernel's own idiom, and part of it is
+now built: behaviorally probe on a battery, the trials-style analogue of the gate
+certification. It is a lie detector rather than a proof and is labelled as one.
 
-### The hole this closes, measured
+### The two holes this closes, both measured
 
-A function type over a quotient does not currently mean what it appears to mean. Measured
-2026-08-01: a function that compares its argument structurally certifies at
-`Fn Quotient B` while distinguishing two values the quotient identifies. Nothing consumes
-that as respect evidence today, so it is a latent gap rather than a live unsoundness, but it
-is exactly what a licensing consumer would misread, and closing it is this step's concrete
-justification.
+**A dependent codomain does not mean what it says, and this one is live.** Codomains and
+motives are instantiated by raw application, and the raw tier's structural comparison is the
+native primitive, so it answers `false` on a hypothesis rather than going three-valued the
+way the walk's does; the neutrality reader answers honestly for the same reason. A codomain
+that inspects its bound variable is therefore formed at one branch for the certificate and
+the other branch everywhere else. Measured: a codomain reading `Nat` at the hypothesis and
+`False` at zero certifies the identity function, whose value at zero does not inhabit the
+type that codomain declares there. The neutrality spelling certifies everything at all.
+
+This is the residue of the barrier step 1 hit. Lazy hypotheses made raw application and raw
+elimination go stuck, which is why an honest dependent codomain works today; inspection is
+the piece that was never reached, and it is the first two entries of the forbidden set
+above. So those entries are not insurance for a future consumer. They are what makes a
+dependent function type mean its own statement.
+
+Half of it is closed, cheaply, by noticing where the asymmetry actually lives: the
+eliminator route was already honest, because a gate instantiates its motive at concrete
+constructor points, while a Pi codomain is only ever instantiated at the abstract point. So
+give Pi the same treatment. `TwoFace` conjoins a concrete face onto the abstract one,
+minting the probe battery filtered by the domain alongside the hypothesis. It only ever adds
+obligations, so it can refuse but never admit more, and it catches both lying codomains
+while the existing suites pass unchanged under it. It is opt-in, so no existing surface
+changes meaning; making it the default is the migration below. It is a finite battery, so it
+remains a detector, and the real closure is still the forbidden set.
+
+**A function type over a quotient does not enforce respect.** A function that compares its
+argument structurally certifies at `Fn Quotient B` while distinguishing two values the
+quotient identifies. Nothing consumes that as respect evidence today, so it is latent rather
+than a live unsoundness, but it is exactly what a licensing consumer would misread. Step 4's
+relation decides it correctly in both directions once the ledger is typed; this step does
+not have to close it separately.
 
 ### Migration
 
 Every current annotation means "checked at the guard tier" and would come to mean
 "inspection-free", so the whole annotated surface changes meaning at once. Machinery needs
 an explicit permissive marking rather than an implicit one.
+
+The concrete face has the same shape of migration in miniature, and it is available now as a
+rehearsal: making `TwoFace` the default table changes what every annotated export in the
+kernel is asserting, from the abstract face alone to both faces. The cost is the binder-count
+blowup, since the battery multiplies per binder, so it wants the filter to be sharper than
+"every probe the domain recognizes" before it becomes the default.
+
+### Order of work
+
+1. Type the ledger entries, so an equation carries the type it was assumed at and
+   reachability refuses one whose type is coarser than the goal's. Everything below needs it
+   and nothing else is blocked on anything.
+2. Build the relatedness judgment on the typed ledger. This decides quotient respect and, as
+   a side effect, declines every inspecting function.
+3. Then state the guarantee, the composition rule, and the machinery exemption, which is what
+   is genuinely left of this step once the relation is doing the enforcing.
 
 ## What this does not include
 

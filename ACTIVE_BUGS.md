@@ -241,42 +241,39 @@ derived hypothesis's recorded history through the shared respond face. Forgery a
 are refused because a fabricated hypothesis roots nowhere, and that is pinned on both
 walking tiers.
 
-Everything below was found by review on 2026-08-01, after hypotheses became lazy records
-of their own observation history. Pins live in `lib/standalone/kernel.test.disp`.
+Pins live in `lib/standalone/kernel.test.disp`. The 2026-08-01 review list is closed apart
+from the two semantic items below, which are the same item seen from two sides and are what
+`OEQ_PLAN.md` steps 3 and 4 exist to close.
 
 | # | Gap | Severity |
 |---|-----|----------|
-| S1 | One stuck term has two tree representations, depending on whether it was built under the walk or raw | Highest: a future edit turns into a silent wrong answer |
-| S2 | A function type over a quotient does not mean the function respects the quotient | Latent; the semantic gap step 3 exists to close |
-| S3 | Type-indexed projection loops forever on a key that is not in the tuple | Hang rather than error |
-| S4 | Eliminator arity and construction read declaration slots unguarded | Garbage arity, and one defense goes vacuous |
-| S5 | A declared member list is trusted as exhaustive but only checked for soundness | False disequality and false universal |
-| S6 | The abstract tier reads a hypothesis's stored type directly rather than deriving it | Over-rejection only |
-| S7 | Tuple keys deduplicate, so a pair of the same type collapses to a scalar | Surprising, arguably intended |
-| S8 | One guard-family hook is vestigial after the three-valued equality change | Confusing, no behavior change |
+| S9 | A dependent codomain that inspects its bound variable is not the type that was written | Live: the certificate is a lie at every concrete point |
+| S2 | A function type over a quotient does not mean the function respects the quotient | Latent, and blocked on the ledger being untyped |
 
-### S1. Two representations of the same stuck term
+### S9. A dependent codomain does not mean what it says
 
-Applying or eliminating a hypothesis produces different trees on different paths. Under
-the walk it goes through the guard tier's eager helper, which computes the result type
-immediately and stores it; there are three such producers (that helper, its collecting
-shim, and the projection branch of the respond face). Raw, it goes through the marker,
-which records the observation and leaves the type to be derived.
+Codomains and motives are instantiated by raw application, and the raw tier's structural
+comparison is the native primitive: it answers `false` on a hypothesis instead of going
+three-valued the way the walk's does, and the neutrality reader answers honestly for the
+same reason. So a codomain that inspects its bound variable is formed at one branch for the
+certificate and at the other branch everywhere else.
 
-Both are correct and both report the same type, but this kernel compares by tree identity
-nearly everywhere: ledger membership, type comparison in the judge, and congruence. Nothing
-fails today only because every exercised path compares terms built the same way; the
-induction proof works because its motive and its obligation are both built raw. That is a
-property of the current call graph, not an invariant.
+Measured: a codomain answering `Nat` at the hypothesis and `False` at zero certifies the
+identity function, whose value at zero does not inhabit the type that codomain declares
+there. The neutrality spelling certifies everything, including candidates of the wrong type.
 
-Measured: a walked and a raw elimination of the same hypothesis are not tree-equal, and
-neither are a walked and a raw application.
+This is the residue of the barrier step 1 hit. Lazy hypotheses made raw application and raw
+elimination of a hypothesis go stuck, which is why an honest dependent codomain works today;
+inspection is the piece that was never reached. It is not a new class of defect, it is the
+live consequence of the first two entries in step 3's forbidden set, and it means those
+entries are load-bearing for type formation now rather than insurance for a future consumer.
 
-The fix is a simplification rather than an addition. With lazy hypotheses the eager helper
-duplicates the marker, and the collecting shim duplicates the marker's collector. The only
-thing the helper still adds is early refusal when the respond face rejects, which under a
-lazy discipline belongs at the point the type is demanded. Do this before building further
-on the equality layer.
+The asymmetry that makes it cheap to detect: the eliminator route is already honest, because
+a gate instantiates its motive at concrete constructor points, while a Pi codomain is only
+ever instantiated at the abstract point. `TwoFace` gives Pi the same treatment, conjoining a
+concrete face onto the abstract one; it only ever adds obligations, so it can refuse but
+never admit more, and it catches both lying codomains. It is opt-in and it is a finite
+battery, so it is a lie detector, not the closure. The closure is the forbidden set.
 
 ### S2. A function type over a quotient does not enforce respect
 
@@ -290,58 +287,47 @@ the equality type still checks its endpoints, so transport produces that value b
 accepts it wrongly. Nothing consumes function-type membership as respect evidence either.
 
 This is the setoid-respect gap the archived investigation described, reproduced here by the
-quotient feature. Closing it is exactly what `OEQ_PLAN.md` step 4 (the cross-related
-relation, where membership is self-relatedness) and step 3 (the capability that makes the
-guarantee real) are for.
+quotient feature. Stating respect as a type does not work, and the reason is S9: the
+obligation `Eq B (f a) (f b)` is formed raw, so for an inspecting `f` both endpoints reduce
+to the same concrete value and the obligation becomes `Eq Nat 1 1`, vacuous for exactly the
+class of function it targets. Relatedness therefore has to be a judgment the tier computes.
+That judgment is measured working, and it declines structural comparators on its own, but it
+cannot ship yet because the ledger stores untyped equations: an assumption recorded at a
+quotient is reused at the carrier, so the identity certifies as a parity-respecting map into
+the naturals. Typing the ledger entries is the prerequisite. All of it is pinned, including
+the unsoundness, so the next attempt starts from the measurement.
 
-### S3. Type-indexed projection loops forever on an unknown key
+## Closed here
 
-`at` walks its key list without a base case. When the list runs out, the comparison keeps
-failing and the recursion continues on the exhausted pair, so projecting with a key that is
-not in the tuple hangs the checker instead of erroring. Reached only by a caller that passes
-a key outside the tuple's key list, which the type system does not currently prevent.
-
-### S4. Unguarded declaration reads in the eliminator layer
-
-`elim_arity` reads a type's gate and `elim_of` reads its recursor without checking either is
-present. For a type declaring neither, the arity computation returns an arbitrary count, and
-worse, the respond face's defense that an eliminator carries the type's own recursor compares
-two absent slots and passes. The defense is therefore vacuous exactly for the types that
-declare nothing. Not currently reachable through any pinned path, because eliminators are
-built by `elim_of` over declared inductives.
-
-### S5. Member lists are trusted as exhaustive
-
-Two consumers treat a declared member list as the complete domain: the three-valued equality
-rule decides a disequality from it, and the enumerating tiers quantify over it. The coherence
-suite only checks soundness, that every declared member is recognized, never the converse. A
-type shipping a partial member list therefore yields both a false disequality and a false
-universal. This is the one trusted declaration with no probe, and the probe is not obviously
-constructible, since exhaustiveness is the half a finite battery cannot witness.
-
-### S6. The abstract tier reads a stored type instead of deriving it
-
-Its value checker compares a hypothesis's stored type key directly rather than going through
-the derived accessor. A derived hypothesis carries no such key, so a re-lifted one would
-compare a sentinel against the target type and be rejected. Unreached today, because that
-tier builds its own derived values with the key present, and nested application is pinned
-green on both tiers. Over-rejection only, but the read should go through the accessor.
-
-### S7. Tuple keys deduplicate
-
-Key insertion drops duplicates, so a tuple of two identical types collapses to that type
-alone: a two-element tuple silently becomes a scalar. Defensible, since the keys are meant to
-be distinct types and brands exist for when they are not, but it is silent.
-
-### S8. A vestigial hook
-
-Both call sites of the guard family's equality hook already test the predicate the hook
-re-tests, so its rejection branch is unreachable and the two tiers that appear to differ
-there are identical. Introduced when equality became three-valued and the real decision moved
-to a different hook. No behavior change, but a reader will assume it is load-bearing.
-
-## Closed here (2026-08-01)
-
+- **One stuck term had two representations.** Applying or eliminating a hypothesis built a
+  different tree under the walk than raw, and this kernel compares by tree identity nearly
+  everywhere, so it held only because every exercised path compared same-route terms. The
+  guard tier's eager helper and its collecting shim are deleted, and the respond face's
+  projection branch applies the mark instead of minting its own. The one thing the helper
+  really added was kept: an observation the type does not declare is an error, not a stuck
+  term, and a lazy record cannot represent "no type", so the walk still refuses where the
+  observation is made.
+- **Type-indexed projection hung on an unknown key.** `at` walked its key list with no base
+  case and recurred forever on the exhausted pair. It errors now.
+- **Tuple keys deduplicated silently**, so a tuple of two identical types collapsed into a
+  scalar. Keys are meant to be distinct, and brands exist for when the underlying types
+  collide, so a repeated key is refused at formation.
+- **The eliminator layer read declaration slots unguarded.** A type declaring neither a gate
+  nor a recursor got an arbitrary arity, and the respond face's defense that an eliminator
+  carries the type's own recursor compared two absent slots and passed, so it was vacuous
+  for exactly the types with nothing to defend. Guarded at construction, at the arity read,
+  and at the respond face.
+- **Member lists were only checked for soundness.** Two consumers read the list as the
+  complete domain, so a partial one bought a false disequality and a false universal. Full
+  exhaustiveness is what a finite battery cannot witness, but the battery catches a probe the
+  recognizer accepts and the list omits, which is what truncation looks like. Added to the
+  coherence suite as a lie detector, labelled as one.
+- **The abstract tier read a stored type key** rather than the derived accessor, which would
+  have rejected a re-lifted derived hypothesis. Over-rejection only and unreached, but the
+  accessor is the only honest reader after the lazy change.
+- **A vestigial hook, deleted.** The guard family's equality hook was left behind when the
+  real decision moved elsewhere; both call sites already tested what it re-tested, so its
+  rejection branch was unreachable and one site read "if p then X else X".
 - **A record type did not check field presence.** Membership read each declared field with
   the plain accessor, which answers the leaf sentinel when the key is absent, and that
   sentinel inhabits most types, so the empty record inhabited every record type. Fixed by
