@@ -169,6 +169,18 @@ impl Runner {
         for d in DIRS {
             self.wake(step(p, d));
         }
+        // Anyone who declined BECAUSE of this cell is owed a re-examination now that it
+        // has changed. Every commit that frees matter already wakes its neighbourhood,
+        // so this is the one place that sees them all, and it reaches waiters that
+        // adjacency never could.
+        if let Some(waiters) = self.declined_on.remove(&p) {
+            for w in waiters {
+                self.wake(w);
+                for d in DIRS {
+                    self.wake(step(w, d));
+                }
+            }
+        }
     }
 
     fn next_pos(&mut self) -> Option<Pos> {
@@ -1608,6 +1620,33 @@ impl Runner {
             // sheds at most its own passthroughs; unbounded ring eviction stays
             // forbidden, it livelocks).
             self.note(|| format!("dock {t:?}/{p:?}: every roll's first ring is blocked"));
+            // Wait ON the cells that are blocking, by name. A geometric decline is as
+            // temporary as the matter causing it, but until now it produced no
+            // subscription at all: the pair simply hoped some neighbouring commit would
+            // happen to wake it. Registering here means the next change to any blocking
+            // cell re-examines this pair, which is what makes "not yet" true rather
+            // than aspirational.
+            {
+                let read = |q: Pos| self.grid.site(q);
+                let mut blockers: Vec<Pos> = vec![];
+                for r in 0..4u8 {
+                    if let Some(bs) =
+                        roll_blockers(&read, self.grid.topo, t, p, stub_cells, rule, axis, r)
+                    {
+                        for (world, _) in bs {
+                            if !blockers.contains(&world) {
+                                blockers.push(world);
+                            }
+                        }
+                    }
+                }
+                for b in blockers {
+                    let waiters = self.declined_on.entry(b).or_default();
+                    if !waiters.contains(&p) {
+                        waiters.push(p);
+                    }
+                }
+            }
             let mut progressed = false;
             if !cpass.is_empty() {
                 progressed |= self.try_evict(t, None, 2);
