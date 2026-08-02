@@ -183,7 +183,51 @@ generic half becomes mechanism:
    behavior.
 5. **Per-tile ROM** (now much smaller) **+ Verilog.**
 
-## The corridor is the claim (keystone; everything below is a consumer of it)
+## STEP 0 RESULT: the keystone below is REFUTED, and the premise was wrong
+
+`cargo run --release --bin corridor-census` (2026-08-01) ran the falsification test the
+plan called for, before any engine code. Two numbers, and the second one matters more:
+
+- Corridors are not too short. They are enormous. Of the reactions that need growth, 92%
+  vacated more cells on the way in than their blocklet needs (median corridor 161 cells
+  against footprints of 6–24), and for the DECLINED docks — the 13-park class the whole
+  rung was aimed at — it is **13 of 13 funded, median corridor 399 cells against
+  footprints of 6–10**. Corridors are roughly forty times bigger than needed.
+- **And they do not need the corridor at all: every stuck dock already sits in a
+  neighbourhood that is 87% empty.** Median 299 free cells within radius 3, needing 6–10.
+  All 13 have room for their footprint right now, without retaining anything.
+
+So the premise underneath corridor-as-claim — and underneath "conserve reaction area",
+and much of "make space" generally — is false. **Space is not scarce. It is abundant and
+unusable.** A dock declines while several hundred empty cells sit within three steps of
+it, because the handful of cells its footprint specifically requires are crossed by
+cable, and because the rules that keep relief from cycling forbid relief from using the
+empty cells that would clear them. The traces say this outright: term 11's refusals read
+`shift D blocked: empty (ok), empty (ok), empty (in the requesting dock's ring)` — three
+empty cells, refused, one of them purely because the ring rule reserves it.
+
+The real constraint is therefore **rigidity plus self-imposed refusal**, not area:
+
+1. A blocklet may only be placed in one of four rolls about a fixed dock axis. Four rigid
+   shapes, and if a couple of cables cross all four, the dock declines with an ocean of
+   free space beside it.
+2. Relief could clear those cables into the free space, but the anti-cycle disciplines —
+   the ring rule, the displacement order, the stamps — refuse exactly those receivers.
+   Each was added to kill a measured pump and each is individually justified; together
+   they have made abundant space unreachable.
+
+That reframes the whole backlog and it is good news, because the cheapest fix is already
+measured: narrowing the ring rule to the roll actually being cleared unwedged 8 of the 13
+declined docks (see the untangling section), failing only because roll-switching then
+oscillated. The specified safe version — a receiver rule that provably worsens no roll —
+is a far smaller change than any allocator, and it attacks the constraint that actually
+binds. Premoving keeps a role too, but a different one from the plan below: not to
+accumulate claim, but to carry a pair to where a roll already fits.
+
+Everything from here to the end of this section is kept as the record of a well-formed
+idea killed cheaply by its own falsification test. Do not build it.
+
+## The corridor is the claim (REFUTED at step 0 — see above; kept for the reasoning)
 
 ### The problem this exists to solve
 

@@ -157,6 +157,8 @@ trace the player's load button replays; `regen.sh` in
 - `crate/src/bin/dump-cascade.rs` — regenerates the player bundle.
 - `crate/src/bin/bench-cascade.rs`, `debug-cascade.rs` — timing snapshot, parked-run
   census.
+- `crate/src/bin/corridor-census.rs` — corridor length and free space at every dock,
+  fired and declined: the measurement that refuted corridor-as-claim.
 - `crate/src/bin/park-census.rs` — classifies every parked soak run by the shape of its
   stuck state, so capability work is aimed by distribution rather than by anecdote.
 - `crate/tests/cascade_suite.rs` — the suite gate described above.
