@@ -8,17 +8,38 @@ open use raw "../prelude.disp" {}
 nil := t
 cons := {h, tl} -> t h tl
 list_const := {x} -> t t x
+member := fix ({self, node, xs} ->
+  if (is_leaf xs) { false } else if (tree_eq node (pair_fst xs)) { true } else { self node (pair_snd xs) })
+list_all := fix ({self, p, xs} ->
+  if (is_leaf xs) { true } else { and (p (pair_fst xs)) (self p (pair_snd xs)) })
+list_map := fix ({self, f, xs} ->
+  if (is_leaf xs) { nil } else { cons (f (pair_fst xs)) (self f (pair_snd xs)) })
+list_len := fix ({self, xs} ->
+  if (is_leaf xs) { zero } else { succ (self (pair_snd xs)) })
+list_snoc := fix ({self, xs, x} ->
+  if (is_leaf xs) { cons x nil } else { cons (pair_fst xs) (self (pair_snd xs) x) })
+list_zip := fix ({self, xs, ys} ->
+  if (is_leaf xs) { nil } else { cons (pair (pair_fst xs) (pair_fst ys)) (self (pair_snd xs) (pair_snd ys)) })
+list_apply := fix ({self, f, xs} ->
+  if (is_leaf xs) { f } else { self (f (pair_fst xs)) (pair_snd xs) })
+list_cat := fix ({self, xs, ys} ->
+  if (is_leaf xs) { ys } else { cons (pair_fst xs) (self (pair_snd xs) ys) })
+list_filter := fix ({self, p, xs} ->
+  if (is_leaf xs) { nil }
+  else if (p (pair_fst xs)) { cons (pair_fst xs) (self p (pair_snd xs)) }
+  else { self p (pair_snd xs) })
+list_assoc := fix ({self, k, xs} ->
+  if (is_leaf xs) { nil }
+  else if (tree_eq k (pair_fst (pair_fst xs))) { pair_snd (pair_fst xs) }
+  else { self k (pair_snd xs) })
 make_record := {names, payload} -> {
-  let ins := fix ({self, n, c, r} ->
-    if (is_leaf (pair_fst r)) { pair (cons n nil) (cons c nil) }
-    else if (tree_lt n (pair_fst (pair_fst r))) { pair (cons n (pair_fst r)) (cons c (pair_snd r)) }
-    else {
-      let rest := self n c (pair (pair_snd (pair_fst r)) (pair_snd (pair_snd r)))
-      pair (cons (pair_fst (pair_fst r)) (pair_fst rest)) (cons (pair_fst (pair_snd r)) (pair_snd rest))
-    })
-  (fix ({go, ns, cs} ->
-    if (is_leaf ns) { pair nil nil }
-    else { ins (pair_fst ns) (pair_fst cs) (go (pair_snd ns) (pair_snd cs)) })) names payload
+  let ins := fix ({self, e, es} ->
+    if (is_leaf es) { cons e nil }
+    else if (tree_lt (pair_fst e) (pair_fst (pair_fst es))) { cons e es }
+    else { cons (pair_fst es) (self e (pair_snd es)) })
+  let sorted := (fix ({go, es} ->
+    if (is_leaf es) { nil } else { ins (pair_fst es) (go (pair_snd es)) })) (list_zip names payload)
+  pair (list_map pair_fst sorted) (list_map pair_snd sorted)
 }
 test tree_eq ({ b := 2, a := 1 }) ({ a := 1, b := 2 }) = true
 inj := {name, payload} -> pair name payload
@@ -43,27 +64,6 @@ invalid := {reason} -> wait invalid_marker reason
 invalid_sig := sig_of invalid_marker
 is_invalid := has_sig invalid_sig
 
-member := fix ({self, node, xs} ->
-  if (is_leaf xs) { false } else if (tree_eq node (pair_fst xs)) { true } else { self node (pair_snd xs) })
-list_all := fix ({self, p, xs} ->
-  if (is_leaf xs) { true } else { and (p (pair_fst xs)) (self p (pair_snd xs)) })
-list_map := fix ({self, f, xs} ->
-  if (is_leaf xs) { nil } else { cons (f (pair_fst xs)) (self f (pair_snd xs)) })
-list_len := fix ({self, xs} ->
-  if (is_leaf xs) { zero } else { succ (self (pair_snd xs)) })
-list_snoc := fix ({self, xs, x} ->
-  if (is_leaf xs) { cons x nil } else { cons (pair_fst xs) (self (pair_snd xs) x) })
-list_zip := fix ({self, xs, ys} ->
-  if (is_leaf xs) { nil } else { cons (pair (pair_fst xs) (pair_fst ys)) (self (pair_snd xs) (pair_snd ys)) })
-list_apply := fix ({self, f, xs} ->
-  if (is_leaf xs) { f } else { self (f (pair_fst xs)) (pair_snd xs) })
-list_cat := fix ({self, xs, ys} ->
-  if (is_leaf xs) { ys } else { cons (pair_fst xs) (self (pair_snd xs) ys) })
-list_filter := fix ({self, p, xs} ->
-  if (is_leaf xs) { nil }
-  else if (p (pair_fst xs)) { cons (pair_fst xs) (self p (pair_snd xs)) }
-  else { self p (pair_snd xs) })
-
 field_cell := fix ({self, r, name} -> {
   let names := pair_fst r
   let payloads := pair_snd r
@@ -80,15 +80,8 @@ test field_or ({ x := t }) "x" 5 = t
 test field_or ({ x := t }) "y" 5 = 5
 test is_leaf (field_cell ({ x := t }) "y") = true
 field_put := {r, name, v} -> {
-  let drop := fix ({self, ns, cs} ->
-    if (is_leaf ns) { pair nil nil }
-    else {
-      let rest := self (pair_snd ns) (pair_snd cs)
-      if (tree_eq (pair_fst ns) name) { rest }
-      else { pair (cons (pair_fst ns) (pair_fst rest)) (cons (pair_fst cs) (pair_snd rest)) }
-    })
-  let d := drop (pair_fst r) (pair_snd r)
-  make_record (cons name (pair_fst d)) (cons (list_const v) (pair_snd d))
+  let kept := list_filter ({e} -> not (tree_eq (pair_fst e) name)) (list_zip (pair_fst r) (pair_snd r))
+  make_record (cons name (list_map pair_fst kept)) (cons (list_const v) (list_map pair_snd kept))
 }
 test field (field_put ({ a := 1, b := 2 }) "b" 9) "b" = 9
 test tree_eq (field_put ({ a := 1 }) "b" 2) ({ a := 1, b := 2 }) = true
@@ -180,12 +173,10 @@ test Unit 5 = false
 Rec := inj "Rec" t
 Sum := {variants} -> {
   let tags := list_map pair_fst variants
-  let spec_of := fix ({self, vs, tag} ->
-    if (is_leaf vs) { nil }
-    else if (tree_eq (pair_fst (pair_fst vs)) tag) {
-      let s := pair_snd (pair_fst vs)
-      if (is_leaf s) { cons Unit nil } else { s }
-    } else { self (pair_snd vs) tag })
+  let spec_of := {vs, tag} -> {
+    let s := list_assoc tag vs
+    if (is_leaf s) { cons Unit nil } else { s }
+  }
   let payload_of := fix ({self, args} ->
     if (is_leaf (pair_snd args)) { pair_fst args } else { pair (pair_fst args) (self (pair_snd args)) })
   let args_of := fix ({self, spec, p} ->
@@ -220,10 +211,7 @@ Sum := {variants} -> {
     if (tree_eq (list_len cases) (list_len variants)) {
       let v := pair_fst st
       let spec := spec_of variants (pair_fst v)
-      let case := (fix ({pick, vs, cs} ->
-        if (is_leaf vs) { t }
-        else if (tree_eq (pair_fst (pair_fst vs)) (pair_fst v)) { pair_fst cs }
-        else { pick (pair_snd vs) (pair_snd cs) })) variants cases
+      let case := list_assoc (pair_fst v) (list_zip tags cases)
       let args := args_of spec (pair_snd v)
       let rec := {a} -> list_apply (wait go (pair a nil)) cases
       list_apply (list_apply case args) ((fix ({ihs, spec2, args2} ->
@@ -235,29 +223,19 @@ Sum := {variants} -> {
   let pos_members := {ty} -> if (is_leaf ty) { nil } else if (tree_eq ty Rec) { nil } else { ty.members }
   let payloads := fix ({self, sp} -> {
     let ms := pos_members (pair_fst sp)
-    if (is_leaf ms) { nil }
-    else if (is_leaf (pair_snd sp)) { ms }
+    if (is_leaf (pair_snd sp)) { ms }
     else {
       let rest := self (pair_snd sp)
-      if (is_leaf rest) { nil }
-      else { (fix ({go, l} -> if (is_leaf l) { nil } else { list_cat (list_map ({r} -> pair (pair_fst l) r) rest) (go (pair_snd l)) })) ms }
+      (fix ({go, l} -> if (is_leaf l) { nil } else { list_cat (list_map ({r} -> pair (pair_fst l) r) rest) (go (pair_snd l)) })) ms
     }
   })
-  let mall := fix ({self, vs} ->
-    if (is_leaf vs) { nil }
-    else {
-      let tag := pair_fst (pair_fst vs)
-      let ps := payloads (spec_of variants tag)
-      if (is_leaf ps) { nil }
-      else {
-        let here := list_map ({p} -> inj tag p) ps
-        if (is_leaf (pair_snd vs)) { here }
-        else {
-          let rest := self (pair_snd vs)
-          if (is_leaf rest) { nil } else { list_cat here rest }
-        }
-      }
-    })
+  let variant_payloads := {var} -> payloads (spec_of variants (pair_fst var))
+  let mall := {vs} ->
+    if (list_all ({var} -> not (is_leaf (variant_payloads var))) vs) {
+      (fix ({go, vs2} ->
+        if (is_leaf vs2) { nil }
+        else { list_cat (list_map ({p} -> inj (pair_fst (pair_fst vs2)) p) (variant_payloads (pair_fst vs2))) (go (pair_snd vs2)) })) vs
+    } else { nil }
   ({
     #recognize := {self, v} -> accept ({ty, a} -> ty a) self v
     check := {jdg, T, v} -> accept jdg ({a} -> jdg T a) v
@@ -298,10 +276,7 @@ children := {T, v} -> (fix ({self, sp, p} ->
     let a := if last { p } else { pair_fst p }
     let rest := if last { nil } else { self (pair_snd sp) (pair_snd p) }
     if (tree_eq (pair_fst sp) Rec) { cons a rest } else { rest }
-  })) ((fix ({find, vs} ->
-    if (is_leaf vs) { nil }
-    else if (tree_eq (pair_fst (pair_fst vs)) (pair_fst v)) { pair_snd (pair_fst vs) }
-    else { find (pair_snd vs) })) T.code) (pair_snd v)
+  })) (list_assoc (pair_fst v) T.code) (pair_snd v)
 Row : ShallowType := Sum RowCode
 Obs : ShallowType := Sum ObsCode
 
@@ -442,9 +417,8 @@ eq_pairs := fix ({self, hs} ->
     let e := (neutral_type (pair_fst hs)).ends
     if (is_fork e) { cons e (self (pair_snd hs)) } else { self (pair_snd hs) }
   })
-eq_reach := {pairs, a, x} -> (fix ({go, known, fuel} ->
+eq_reach := {pairs, a, x} -> (fix ({go, known} ->
   if (member x known) { true }
-  else if (is_leaf fuel) { false }
   else {
     let next := (fix ({add, ps, acc} ->
       if (is_leaf ps) { acc }
@@ -456,8 +430,8 @@ eq_reach := {pairs, a, x} -> (fix ({go, known, fuel} ->
           else { acc }
         add (pair_snd ps) acc2
       })) pairs known
-    if (tree_eq (list_len next) (list_len known)) { false } else { go next (pair_snd fuel) }
-  })) (cons a nil) pairs
+    if (tree_eq (list_len next) (list_len known)) { false } else { go next }
+  })) (cons a nil)
 eq_congr := {pairs} -> fix ({self, a, x} ->
   if (tree_eq a x) { true }
   else if (eq_reach pairs a x) { true }
@@ -477,7 +451,7 @@ eq_congr := {pairs} -> fix ({self, a, x} ->
       ({al, ar} -> triage false ({_c} -> false) ({xl, xr} -> and (self al xl) (self ar xr)) x)
       a
   })
-eq_holds := {st, a, x} -> teq_decide ({a2, x2} -> eq_congr (eq_pairs st) a2 x2) a x
+eq_holds := {st, a, x} -> teq_decide (eq_congr (eq_pairs st)) a x
 test eq_holds t 2 2 = true
 test eq_holds t 2 3 = false
 
@@ -503,31 +477,22 @@ Meta : Table := ({
       Poison r => acc
       Chain e scr args => acc
     }))
+  let rooted := {minted} -> fix ({self, w} ->
+    if (member w minted) { true }
+    else {
+      let h := neutral_history w
+      if (tree_eq (pair_fst h) "Ob") { self (pair_snd (pair_snd h)) } else { false }
+    })
   let verify_inband := (fix ({vf, minted, T, v} ->
     if (is_invalid v) {
       false
     } else if (is_neutral v) {
-      and (tree_eq (neutral_type v) T)
-          ((fix ({rooted, w} ->
-             if (member w minted) { true }
-             else {
-               let h := neutral_history w
-               if (tree_eq (pair_fst h) "Ob") { rooted (pair_snd (pair_snd h)) } else { false }
-             })) v)
+      and (tree_eq (neutral_type v) T) (rooted minted v)
     } else {
       let ck := T.check
       if (is_leaf ck) { T.recognize (wait (wait vf minted) T) v } else { ck (wait vf minted) T v }
     }))
-  let meta_pairs := fix ({self, hs} ->
-    if (is_leaf hs) { nil }
-    else {
-      let s := pair_fst hs
-      let rest := self (pair_snd hs)
-      if (tree_eq (pair_fst s) "Neu") {
-        let e := (field (pair_snd s) ShallowType).ends
-        if (is_fork e) { cons e rest } else { rest }
-      } else { rest }
-    })
+  let meta_pairs := {st} -> eq_pairs (list_map ({s} -> make_mark (pair_snd s)) (list_filter (has_sig "Neu") st))
   let vcheck := ({chk, st, T, V} ->
     match V {
       Poison r => false
@@ -537,7 +502,7 @@ Meta : Table := ({
         if (is_fork rows) { chk st rows V t }
         else {
           let e := T.ends
-          if (is_fork e) { and (is_leaf (readback V)) (teq_decide ({a2, x2} -> eq_congr (meta_pairs st) a2 x2) (pair_fst e) (pair_snd e)) }
+          if (is_fork e) { and (is_leaf (readback V)) (teq_decide (eq_congr (meta_pairs st)) (pair_fst e) (pair_snd e)) }
           else if let Conc tr = V { T tr }
           else { verify_inband (list_cat (collect V nil) (list_map readback st)) T (readback V) }
         }
@@ -547,11 +512,11 @@ Meta : Table := ({
   let triage_case := ({self, chk, TC, TD, TB, X} ->
     match X {
       Conc xt => (triage TC ({u} -> self chk TD (Conc u)) ({l, r} -> self chk (self chk TB (Conc l)) (Conc r)) xt)
-      Neu m => (if (and (tree_eq TC (Conc t)) (and (tree_eq TD (Conc t)) (tree_eq TB (Conc t)))) { Neu m } else { Poison (Neu m) })
+      Neu _m => (if (and (tree_eq TC (Conc t)) (and (tree_eq TD (Conc t)) (tree_eq TB (Conc t)))) { X } else { Poison X })
       Stem c => (self chk TD c)
       Fork l r => (self chk (self chk TB l) r)
-      Poison r => (Poison r)
-      Chain e scr args => (Poison (Chain (pair e (pair scr args))))
+      Poison _r => X
+      Chain _e _scr _args => (Poison X)
     })
   let apply_fork := ({self, chk, A, TB, X} ->
     match A {
@@ -564,9 +529,9 @@ Meta : Table := ({
       })
       Stem c => (s_rule self chk c TB X)
       Fork tc td => (triage_case self chk tc td TB X)
-      Neu m => (Poison (Neu m))
-      Poison r => (Poison r)
-      Chain e scr args => (Poison (Chain (pair e (pair scr args))))
+      Neu _m => (Poison A)
+      Poison _r => A
+      Chain _e _scr _args => (Poison A)
     })
   let mwalk := {st} -> (fix ({self, chk, F, X} ->
     if let Poison _ = X {
@@ -576,32 +541,21 @@ Meta : Table := ({
         Conc tr => (if (tree_eq tr is_neutral) {
           Conc false
         } else if (tree_eq tr tree_eq) {
-          match X {
-            Poison r => (Poison r)
-            Chain e scr args => (Poison (Chain (pair e (pair scr args))))
-            _ => (Conc (wait tree_eq (if let Conc xt = X { xt } else { readback X })))
-          }
+          if (has_sig "Chain" X) { Poison X }
+          else { Conc (wait tree_eq (if let Conc xt = X { xt } else { readback X })) }
         } else if (has_sig tree_eq_sig tr) {
-          match X {
-            Poison r => (Poison r)
-            Chain e scr args => (Poison (Chain (pair e (pair scr args))))
-            _ => {
-              let a := wait_payload tr
-              let xr := if let Conc xt = X { xt } else { readback X }
-              if (and (neutral_free a) (neutral_free xr)) { Conc (tr xr) }
-              else {
-                let d := teq_decide ({a2, x2} -> Neu ({ (ShallowType) := Bool, (AnyTree) := pair "Teq" (pair a2 x2) })) a xr
-                if (or (tree_eq d true) (tree_eq d false)) { Conc d } else { d }
-              }
+          if (has_sig "Chain" X) { Poison X }
+          else {
+            let a := wait_payload tr
+            let xr := if let Conc xt = X { xt } else { readback X }
+            if (and (neutral_free a) (neutral_free xr)) { Conc (tr xr) }
+            else {
+              let d := teq_decide ({a2, x2} -> Neu ({ (ShallowType) := Bool, (AnyTree) := pair "Teq" (pair a2 x2) })) a xr
+              if (or (tree_eq d true) (tree_eq d false)) { Conc d } else { d }
             }
           }
         } else if (is_neutral tr) {
-          if ((fix ({rt, w} ->
-                if (member w (list_map readback st)) { true }
-                else {
-                  let h := field (wait_payload w) AnyTree
-                  if (tree_eq (pair_fst h) "Ob") { rt (pair_snd (pair_snd h)) } else { false }
-                })) tr) { self chk (Neu (wait_payload tr)) X } else { Poison X }
+          if (rooted (list_map readback st) tr) { self chk (Neu (wait_payload tr)) X } else { Poison X }
         } else if let Conc xt = X {
           Conc (tr xt)
         } else if (or (tree_eq tr pair_fst) (tree_eq tr pair_snd)) {
@@ -622,7 +576,7 @@ Meta : Table := ({
             Neu ({ (ShallowType) := pair_snd r, (AnyTree) := pair "Ob" (pair fr (make_mark m)) })
           } else { Poison (Neu m) }
         }
-        Poison r => (Poison r)
+        Poison _r => F
         Chain e scr args => {
           let args2 := list_snoc args X
           if (tree_eq (list_len args2) (elim_arity e)) {
@@ -879,15 +833,14 @@ test GoodGate ShallowType = false
 Coherent := {T} -> {
   let e := T.ends
   let ck := T.check
-  and (and
-    (if (is_fork e) { or (tree_eq (pair_fst e) (pair_snd e)) (list_all ({v} -> not (T v)) probes) } else { true })
-    (if (is_leaf ck) { true } else { list_all ({v} -> tree_eq (T v) (ck ({ty, a} -> ty a) T v)) probes }))
-    (and (and (and (list_all T T.members)
-                   (if (is_leaf T.members) { true } else { list_all ({v} -> or (not (T v)) (member v T.members)) probes }))
-              (if (is_leaf T.gate) { true } else { GoodGate T }))
-         (if (is_leaf T.norm) { true } else {
-           list_all ({v} -> if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
-         }))
+  let ends_ok := if (is_fork e) { or (tree_eq (pair_fst e) (pair_snd e)) (list_all ({v} -> not (T v)) probes) } else { true }
+  let check_ok := if (is_leaf ck) { true } else { list_all ({v} -> tree_eq (T v) (ck ({ty, a} -> ty a) T v)) probes }
+  let members_ok := and (list_all T T.members) (if (is_leaf T.members) { true } else { list_all ({v} -> or (not (T v)) (member v T.members)) probes })
+  let gate_ok := if (is_leaf T.gate) { true } else { GoodGate T }
+  let norm_ok := if (is_leaf T.norm) { true } else {
+    list_all ({v} -> if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
+  }
+  and ends_ok (and check_ok (and members_ok (and gate_ok norm_ok)))
 }
 test Coherent Nat = true
 test Coherent Bool = true
