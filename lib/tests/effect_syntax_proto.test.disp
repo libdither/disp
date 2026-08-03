@@ -81,6 +81,9 @@ test smart_bind fake ({x} -> succ x) = 10
 // meaning naming; a block without arrows is unchanged:
 test tree_eq ({ n <- getE; io_pure (add n n) }) (eff_bind getE ({n} -> io_pure (add n n))) = true
 test tree_eq ({ n <- getE; u <- putE (succ n); io_pure (add n n) }) progE = true
+// `_ <- e` is the discard bind, allowed even as the block's first member
+// (the classifier used to read a leading `_` as a {_} binder):
+test tree_eq ({ _ <- getE; io_pure 5 }) (eff_bind getE ({_} -> io_pure 5)) = true
 // lets and arrows interleave in order (behavioral pin — the lexical redex
 // compiles through bracket abstraction, so tree forms differ):
 let mixed := { n <- getE; let m := succ n; u <- putE m; io_pure (add n n) }

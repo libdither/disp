@@ -1181,7 +1181,7 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
       result = {
         tag: "app",
         f: { tag: "app", f: { tag: "var", name: "eff_bind" }, x: s.expr },
-        x: { tag: "binder", params: [{ name: s.name, type: null }], body: result },
+        x: { tag: "binder", params: [{ name: s.name === "_" ? null : s.name, type: null }], body: result },
       }
     }
   }
@@ -1336,6 +1336,7 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
     let crossedNl = false
     while (ts[p].t === "nl") { crossedNl = true; p++ }
     if (name === "_") {
+      if (ts[p].t === "punct" && (ts[p] as any).v === "<-") return "recValue" // `_ <- e` discard bind
       if (ts[p].t === "punct" && (ts[p] as any).v === ":") return "recTypeOrBinder"
       return "binder"
     }
