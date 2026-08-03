@@ -137,7 +137,7 @@ describe("module dependencies (given) rejections", () => {
       .createSession() as unknown as Session<Tree>
     const runFresh = (src: string) => parseProgram(src, HERE, { session: fresh })
     expect(() => runFresh(
-      `open use raw "${LIB}/prelude.disp" {}\nopen use "${LIB}/standalone/kernel.disp" {}\nopen use "${LIB}/standalone/types.disp" {}\ncheck := Nat 2\n`))
+      `open use raw "${LIB}/prelude.disp" {}\nopen use "${LIB}/standalone/prelude.disp"\ncheck := Nat 2\n`))
       .not.toThrow()
     expect(() => runFresh(K + `check := succ zero\n`)).not.toThrow()
   }, 180000)

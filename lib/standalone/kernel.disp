@@ -1,5 +1,7 @@
 open use raw "../prelude.disp" {}
 
+open given { AnyTree : AnyTree, Fn : AnyTree, List : AnyTree }
+
 // LLMs may not comment in this file beyond this one; the code is meant to be self-explanatory.
 // Comments are specifically only to be added, modified, and removed by human reviewers for their own understanding
 // Unused-looking defs below may be compiler sugar targets looked up by name:
@@ -7,7 +9,7 @@ open use raw "../prelude.disp" {}
 
 nil := t
 cons := {h, tl} -> t h tl
-list_const := {x} -> t t x
+list_const : Fn AnyTree ({_} -> AnyTree) := {x} -> t t x
 member := fix ({self, node, xs} ->
   if (is_leaf xs) { false } else if (tree_eq node (pair_fst xs)) { true } else { self node (pair_snd xs) })
 list_all := fix ({self, p, xs} ->
@@ -692,7 +694,7 @@ Ambient : Table := GuardAt
   ({resume, _x} -> resume t)
   ({_st, a, x} -> tree_eq a x)
 
-probes := cons t (cons 5 (cons true (cons false (cons (pair 5 5) (cons (cons 1 nil) (cons (inj "zz" t) (cons (succ (succ zero)) nil)))))))
+probes : List AnyTree := cons t (cons 5 (cons true (cons false (cons (pair 5 5) (cons (cons 1 nil) (cons (inj "zz" t) (cons (succ (succ zero)) nil)))))))
 with_trials := {base} -> field_put base "fresh" ({st, ty, tail} -> {
   let ms := ty.members
   if (is_leaf ms) { (field base "fresh") st ty tail } else { list_map ({a} -> pair a st) ms }

@@ -4,5 +4,5 @@
 open use raw "../prelude.disp" {}
 open use raw "kernel.disp" {}
 open use raw "types.disp" {}
-open use "kernel.disp" {}
+open use "kernel.disp" { AnyTree := AnyTree, Fn, List }
 open use "types.disp" {}
