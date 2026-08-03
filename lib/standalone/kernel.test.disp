@@ -1,5 +1,6 @@
 open use raw "../prelude.disp" {}
 open use "kernel.disp" {}
+open use "types.disp" {}
 
 Five := Point 5
 Six := Point 6
@@ -505,7 +506,7 @@ test Pi TwoFace Nat ({_} -> Bool) ({n} -> tree_eq n zero) = true
 
 // One filled import re-verifies the ENTIRE annotated surface (and re-runs the
 // kernel's inline tests) under another walker: the differential check as a line.
-mMeta := use "kernel.disp" { GenericWalker := Meta }
+mMeta := use "types.disp" { GenericWalker := Meta }
 test mMeta.add 2 3 = 5
 
 // Ops as canonical type-indexed tuples: fields are referred to BY TYPE (at),
