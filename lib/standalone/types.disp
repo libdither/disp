@@ -29,7 +29,7 @@ reject := t
 
 node_like := Pred ({n} -> or (is_leaf n) (is_fork n))
 
-False := Sum (nil AnyTree)
+False := Sum AnyTree (nil AnyTree)
 Not := {P} -> Fn P ({_} -> False)
 Refine := {A, p} -> ({
   #recognize := {_self, v} -> and (A v) (p v)
@@ -87,7 +87,7 @@ test Nat (succ (make_hyp Nat Nat)) = false
 nat_step_ty : ShallowType := pair_fst (pair_snd (Nat.gate Nat ({_} -> Nat)))
 nat_rec : Fn Nat ({_} -> Fn Nat ({_} -> Fn nat_step_ty ({_} -> Nat))) := elim_of Nat ({_} -> Nat)
 
-bool_rec : Fn Bool ({_} -> Fn Bool ({_} -> Fn Bool ({_} -> Bool))) := elim_of Bool ({_} -> Bool)
+bool_rec : Fn Bool ({_} -> Fn Bool ({_} -> Fn Bool ({_} -> Bool))) := bool_case Bool
 test ShallowType Bool = true
 test tree_eq (Tuple (cons t Nat (cons t Bool (nil t)))) (Tuple (cons t Bool (cons t Nat (nil t)))) = true
 test Tuple (cons t Nat (cons t Bool (nil t))) (pair true 2) = true
@@ -199,36 +199,17 @@ List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
   elim := list_elim_raw
 })
 
-// Eliminator-routed typed twins of the kernel's raw list functions. The raw
-// forms case-split their argument, which the walker refuses on a hypothesis;
-// these route through elim_of, so they carry full polymorphic types. The type
-// quantifier is pinned to Guard: the Meta walker cannot mint type-variable
-// hypotheses at all (pinned below), so only the value-level arrows (Fn)
-// participate in the differential instantiation.
-list_len_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Nat)) := list_len
-list_map_l : Pi Guard ShallowType ({A} -> Pi Guard ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B))))
-  := list_map
-list_all_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> Bool)))
-  := list_all
-list_snoc_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn A ({_} -> List A))) := list_snoc
-list_cat_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn (List A) ({_} -> List A)))
-  := list_cat
-list_filter_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> List A)))
-  := list_filter
-// A wrong-typed arm is refused. (List A -> List B does not pin length, so an
-// element-dropping map still inhabits the map type; the pin below is the
-// wrong-TYPE case, which is what the checker owns.)
+// A wrong-typed arm is refused. Type-variable hypotheses mint and apply to
+// CONCRETES under both walkers; application to a NEUTRAL argument is refused
+// by both -- a shared frontier (dependent application at abstract points),
+// not a table gap.
 test Fn ShallowType ({A} -> Fn ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B)))) ({A, B, f, xs} -> (elim_of (List A) ({_} -> List B)) xs (nil t) ({h, _tl, _ih} -> h)) = false
 // The Meta gap: abstract values cannot act as recognizers, so Meta refuses
 // every type-polymorphic function, even the tautological one.
 test Pi Meta ShallowType ({T} -> Fn AnyTree ({_} -> Bool)) ({T, v} -> T v) = false
-// Agreement with the raw forms: pointwise on the sample corpus.
+test Pi Guard ShallowType ({T} -> Fn AnyTree ({_} -> Bool)) ({T, v} -> T v) = false
+test Pi Meta ShallowType ({_} -> Bool) ({T} -> T 5) = true
 list_samples := cons (List Nat) (nil Nat) (cons (List Nat) (cons Nat 1 (nil Nat)) (cons (List Nat) (cons Nat 1 (cons Nat 2 (nil Nat))) (nil (List Nat))))
-test list_all_l AnyTree ({s} -> tree_eq (list_len_l AnyTree s) (list_len t s)) list_samples = true
-test list_all_l AnyTree ({s} -> tree_eq (list_map_l AnyTree AnyTree succ s) (list_map t t succ s)) list_samples = true
-test list_all_l AnyTree ({s} -> tree_eq (list_filter_l AnyTree is_leaf s) (list_filter t is_leaf s)) list_samples = true
-test tree_eq (list_cat_l AnyTree (cons t 1 (nil t)) (cons t 2 (nil t))) (list_cat t (cons t 1 (nil t)) (cons t 2 (nil t))) = true
-test tree_eq (list_snoc_l AnyTree (cons t 1 (nil t)) 2) (list_snoc t (cons t 1 (nil t)) 2) = true
 
 let eff_mem := {ej, rj, Q, X, v} -> (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
 Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType)))

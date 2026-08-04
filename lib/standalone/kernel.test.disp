@@ -557,7 +557,7 @@ test Table ({}) = false
 // judge, so constructor spines over mints certify — the element-position
 // recognizer boundary is closed for declared sums.
 SNCode := < sz, ss : Rec >
-SN := Sum SNCode
+SN := Sum AnyTree SNCode
 sn_rec := elim_of SN ({_} -> SN)
 sn_rec_n := elim_of SN ({_} -> Nat)
 test SN sz = true
@@ -573,7 +573,7 @@ test Pi Guard SN ({_} -> Nat) sn_id = false
 test Pi Guard SN ({_} -> SN) ({n} -> sn_rec n ({_} -> sz) ({_k, ih} -> pair 5 5)) = false
 
 SLNCode := < snil, scons : [Nat, Rec] >
-SLN := Sum SLNCode
+SLN := Sum AnyTree SLNCode
 sln_rec_n := elim_of SLN ({_} -> Nat)
 test SLN snil = true
 test SLN (scons 1 (scons 2 snil)) = true
@@ -778,7 +778,7 @@ test Pi Meta Nat ({n} -> Pi Meta Nat ({m} -> Pi Meta (Eq Nat n m) ({_} -> Eq Nat
 // positional slot list, and the auto-declared constructor takes one binder per
 // slot and builds the right-nested payload the positional reader expects.
 SOrdCode := < oz, op : [Rec, Rec] >
-SOrd := Sum SOrdCode
+SOrd := Sum AnyTree SOrdCode
 sord_rec_n := elim_of SOrd ({_} -> Nat)
 osize := {o} -> sord_rec_n o ({_} -> 1) ({_a, _b, ia, ib} -> succ (add ia ib))
 test osize (op oz (op oz oz)) = 5
@@ -792,13 +792,13 @@ test Pi Guard SOrd ({_} -> Nat) osize = true
 // case_of arms are CASE-SHAPED (constructor args only, derived padding absorbs
 // the IHs -- the one-level match); children collects the Rec positions.
 SFinCode := < fa, fb >
-SFin := Sum SFinCode
+SFin := Sum AnyTree SFinCode
 test SFin fa = true
 test SFin (inj "fa" 5) = false
 test SFin.members = cons t fa (cons t fb (nil t))
 test is_leaf SN.members = true
 test is_leaf Row.members = true
-test list_len t (Sum [pair "mk" [Bool, Bool]]).members = 4
+test list_len t (Sum AnyTree [pair "mk" [Bool, Bool]]).members = 4
 sfin_not := {v} -> match v : (case_of SFin ({_} -> Bool)) { fa _ => false; fb _ => true }
 test sfin_not fa = false
 test sfin_not fb = true

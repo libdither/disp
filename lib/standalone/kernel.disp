@@ -205,8 +205,9 @@ Unit : ShallowType := ({ #recognize := {_self, v} -> is_leaf v, members := cons 
 test Unit t = true
 test Unit 5 = false
 Rec := inj "Rec" t
-Sum : Pi (Sampled (cons AnyTree RowCode (cons AnyTree ObsCode (nil AnyTree)))) AnyTree ({_} -> ShallowType) := {variants} -> {
-  let tags := list_map AnyTree AnyTree pair_fst variants
+Sum : Pi (Sampled (cons ShallowType AnyTree (nil ShallowType))) ShallowType ({_} -> Pi (Sampled (cons AnyTree RowCode (cons AnyTree ObsCode (nil AnyTree)))) AnyTree ({_} -> ShallowType))
+  := {V, variants} -> {
+  let tags := list_map V AnyTree pair_fst variants
   let spec_of := {vs, tag} -> {
     let s := list_assoc tag vs
     if (is_leaf s) { cons AnyTree Unit (nil AnyTree) } else { s }
@@ -265,7 +266,7 @@ Sum : Pi (Sampled (cons AnyTree RowCode (cons AnyTree ObsCode (nil AnyTree)))) A
   })
   let variant_payloads := {var} -> payloads (spec_of variants (pair_fst var))
   let mall := {vs} ->
-    if (list_all AnyTree ({var} -> not (is_leaf (variant_payloads var))) vs) {
+    if (list_all V ({var} -> not (is_leaf (variant_payloads var))) vs) {
       (fix ({go, vs2} ->
         if (is_leaf vs2) { (nil AnyTree) }
         else { list_cat AnyTree (list_map AnyTree AnyTree ({p} -> inj (pair_fst (pair_fst vs2)) p) (variant_payloads (pair_fst vs2))) (go (pair_snd vs2)) })) vs
@@ -273,7 +274,7 @@ Sum : Pi (Sampled (cons AnyTree RowCode (cons AnyTree ObsCode (nil AnyTree)))) A
   ({
     #recognize := {self, v} -> accept ({ty, a} -> ty a) self v
     check := {jdg, T, v} -> accept jdg ({a} -> jdg T a) v
-    gate := {Ind, B} -> list_map AnyTree AnyTree (gate_arm Ind B) variants
+    gate := {Ind, B} -> list_map V AnyTree (gate_arm Ind B) variants
     elim := {_self, v} -> wait co (pair v (nil AnyTree))
     members := mall variants
     code := variants
@@ -313,8 +314,8 @@ children : Pi (Sampled (cons AnyTree Row (nil AnyTree))) ShallowType ({_} -> Pi 
     let rest := if last { (nil AnyTree) } else { self (pair_snd sp) (pair_snd p) }
     if (tree_eq (pair_fst sp) Rec) { cons AnyTree a rest } else { rest }
   })) (list_assoc (pair_fst v) T.code) (pair_snd v)
-Row : ShallowType := Sum RowCode
-Obs : ShallowType := Sum ObsCode
+Row : ShallowType := Sum AnyTree RowCode
+Obs : ShallowType := Sum AnyTree ObsCode
 test tree_eq Row.code RowCode = true
 
 respond_face_at : Pi (Sampled (cons AnyTree neutral_type (nil AnyTree))) AnyTree ({_} -> Pi (Sampled (cons AnyTree (Acc pair_fst) (nil AnyTree))) AnyTree ({_} -> Pi (Sampled (cons AnyTree (make_hyp (Sigma Guard Nat ({_} -> Bool)) t) (nil AnyTree))) AnyTree ({_} -> AnyTree)))
@@ -539,6 +540,15 @@ Meta : Table := ({
       let h := neutral_history w
       if (tree_eq (pair_fst h) "Ob") { self (pair_snd (pair_snd h)) } else { false }
     })
+  let rooted_teq := {minted} -> fix ({lg, w} ->
+    if (member AnyTree w minted) { true }
+    else {
+      let h := neutral_history w
+      if (tree_eq (pair_fst h) "Ob") { lg (pair_snd (pair_snd h)) }
+      else if (tree_eq (pair_fst h) "Teq") {
+        (fix ({so, u} -> if (is_neutral u) { lg u } else { triage true ({c} -> so c) ({l, r} -> and (so l) (so r)) u })) (pair_snd h)
+      } else { false }
+    })
   let verify_inband := (fix ({vf, minted, T, v} ->
     if (is_invalid v) {
       false
@@ -549,10 +559,35 @@ Meta : Table := ({
       if (is_leaf ck) { T.recognize (wait (wait vf minted) T) v } else { ck (wait vf minted) T v }
     }))
   let meta_pairs := {st} -> eq_pairs (list_map AnyTree AnyTree ({s} -> make_mark (pair_snd s)) (list_filter AnyTree (has_sig "Neu") st))
-  let vcheck := ({chk, st, T, V} ->
+  let vcheck := fix ({vch, chk, st, T, V} ->
     match V {
       Poison r => false
       Neu m => (tree_eq (neutral_type (make_mark m)) T)
+      Chain e2 scr args => {
+        let go := {_u} ->
+          if let Neu m2 = scr {
+            let smark := make_mark m2
+            let Ind := neutral_type smark
+            if (is_invalid Ind) { false }
+            else if (or (is_leaf Ind.gate) (is_leaf Ind.elim)) { false }
+            else if (not (is_leaf Ind.land)) { false }
+            else if (not (tree_eq e2 Ind.elim)) { false }
+            else if (not (rooted_teq (list_map AnyTree AnyTree readback st) smark)) { false }
+            else {
+              let tys := Ind.gate Ind (b_abs smark T)
+              if (tree_eq (list_len ShallowType tys) (list_len AnyTree args)) {
+                list_all AnyTree ({ob} -> vch chk st (pair_fst ob) (pair_snd ob)) (list_zip tys args)
+              } else { false }
+            }
+          } else { false }
+        if (is_neutral T) { if (is_elim_head e2) { false } else { go t } }
+        else {
+          let rows := T.tele
+          if (is_fork rows) { chk st rows V t }
+          else if (is_elim_head e2) { false }
+          else { go t }
+        }
+      }
       _ => {
         let rows := T.tele
         if (is_fork rows) { chk st rows V t }
@@ -620,6 +655,11 @@ Meta : Table := ({
           if let Neu m = X {
             if (tree_eq (elim_arity tr) zero) { self chk X (Conc (Elim (pair tr (nil AnyTree)))) } else { Chain (pair tr (pair X (nil AnyTree))) }
           } else { self chk (Conc ((elim_raw tr) tr)) X }
+        } else if let Neu mx = X {
+          let Tx := neutral_type (make_mark mx)
+          let ex := if (is_invalid Tx) { t } else { Tx.elim }
+          if (and (not (is_leaf ex)) (tree_eq tr (fix ex))) { Chain (pair ex (pair X (nil AnyTree))) }
+          else { triage (vstem X) ({a} -> vfork (Conc a) X) ({a, b} -> apply_fork self chk (Conc a) (Conc b) X) tr }
         } else {
           triage (vstem X) ({a} -> vfork (Conc a) X) ({a, b} -> apply_fork self chk (Conc a) (Conc b) X) tr
         })
@@ -635,7 +675,7 @@ Meta : Table := ({
         Poison _r => F
         Chain e scr args => {
           let args2 := list_snoc AnyTree args X
-          if (tree_eq (list_len AnyTree args2) (elim_arity e)) {
+          if (and (is_elim_head e) (tree_eq (list_len AnyTree args2) (elim_arity e))) {
             self chk scr (Conc (Elim (pair e (list_map AnyTree AnyTree readback args2))))
           } else { Chain (pair e (pair scr args2)) }
         }
@@ -805,9 +845,9 @@ check_module := Record
 test tree_eq check_module Record = true
 
 GuardActionCode : List AnyTree := < Bind : t, Install : t, Both : t >
-GuardAction : ShallowType := Sum GuardActionCode
+GuardAction : ShallowType := Sum AnyTree GuardActionCode
 CheckerResultCode : List AnyTree := < Ok : t, Err >
-CheckerResult : ShallowType := Sum CheckerResultCode
+CheckerResult : ShallowType := Sum AnyTree CheckerResultCode
 Request : ShallowType
   := Record (cons AnyTree (pair "value" AnyTree) (cons AnyTree (pair "ty" AnyTree) (cons AnyTree (pair "guard" AnyTree) (cons AnyTree (pair "private" Bool) (cons AnyTree (pair "param" Bool) (nil AnyTree))))))
 base : Fn AnyTree ({_} -> Request)
