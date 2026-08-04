@@ -176,10 +176,14 @@ test Coherent (Point 5) = true
 test Coherent (Eq Nat 2 2) = true
 test Coherent (Eq Nat 2 3) = true
 
-list_len_t : Fn Tree ({_} -> Nat) := {xs} -> tree_rec ({_} -> Nat) xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
-list_snoc_t : Fn Tree ({_} -> Fn Tree ({_} -> Tree)) := {xs, x} -> tree_rec ({_} -> Tree) xs (cons x nil) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons l ir)
-list_map_t : Fn (Fn Tree ({_} -> Tree)) ({_} -> Fn Tree ({_} -> Tree)) := {f, xs} -> tree_rec ({_} -> Tree) xs nil ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons (f l) ir)
-list_all_t : Fn (Fn Tree ({_} -> Bool)) ({_} -> Fn Tree ({_} -> Bool)) := {p, xs} -> tree_rec ({_} -> Bool) xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (p l) ir false)
+list_len_t : Fn Tree ({_} -> Nat)
+  := {xs} -> tree_rec ({_} -> Nat) xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
+list_snoc_t : Fn Tree ({_} -> Fn Tree ({_} -> Tree))
+  := {xs, x} -> tree_rec ({_} -> Tree) xs (cons x nil) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons l ir)
+list_map_t : Fn (Fn Tree ({_} -> Tree)) ({_} -> Fn Tree ({_} -> Tree))
+  := {f, xs} -> tree_rec ({_} -> Tree) xs nil ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons (f l) ir)
+list_all_t : Fn (Fn Tree ({_} -> Bool)) ({_} -> Fn Tree ({_} -> Bool))
+  := {p, xs} -> tree_rec ({_} -> Bool) xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (p l) ir false)
 test list_len_t (cons 7 (cons 7 nil)) = 2
 test list_snoc_t (cons 1 nil) 2 = cons 1 (cons 2 nil)
 test list_map_t succ (cons 1 (cons 2 nil)) = cons 2 (cons 3 nil)
@@ -202,11 +206,15 @@ List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
 // hypotheses at all (pinned below), so only the value-level arrows (Fn)
 // participate in the differential instantiation.
 list_len_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Nat)) := list_len_p
-list_map_l : Pi Guard ShallowType ({A} -> Pi Guard ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B)))) := list_map_p
-list_all_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> Bool))) := list_all_p
+list_map_l : Pi Guard ShallowType ({A} -> Pi Guard ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B))))
+  := list_map_p
+list_all_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> Bool)))
+  := list_all_p
 list_snoc_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn A ({_} -> List A))) := list_snoc_p
-list_cat_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn (List A) ({_} -> List A))) := list_cat_p
-list_filter_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> List A))) := list_filter_p
+list_cat_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn (List A) ({_} -> List A)))
+  := list_cat_p
+list_filter_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> List A)))
+  := list_filter_p
 // A wrong-typed arm is refused. (List A -> List B does not pin length, so an
 // element-dropping map still inhabits the map type; the pin below is the
 // wrong-TYPE case, which is what the checker owns.)
@@ -223,7 +231,8 @@ test tree_eq (list_cat_l AnyTree (cons 1 nil) (cons 2 nil)) (list_cat (cons 1 ni
 test tree_eq (list_snoc_l AnyTree (cons 1 nil) 2) (list_snoc (cons 1 nil) 2) = true
 
 let eff_mem := {ej, rj, Q, X, v} -> (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
-Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> ({
+Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType)))
+  := {Q, Ans, X} -> ({
   #recognize := {self, v} -> eff_mem ({ty, a} -> ty a) self Q X v
   check := {jdg, T, v} -> eff_mem jdg ({a} -> jdg T a) Q X v
   gate := {Ind, B} -> cons (PiCode X ({x} -> B (Pure x))) (cons (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) nil)
