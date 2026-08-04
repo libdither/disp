@@ -1,6 +1,6 @@
 open use raw "../prelude.disp" {}
 
-open given { AnyTree : AnyTree, Fn : AnyTree, List : AnyTree }
+open given { AnyTree : AnyTree, Fn : AnyTree, List : AnyTree, ListLenSpec : AnyTree, ListMapSpec : AnyTree, ListAllSpec : AnyTree }
 
 // LLMs may not comment in this file beyond this one; the code is meant to be self-explanatory.
 // Comments are specifically only to be added, modified, and removed by human reviewers for their own understanding
@@ -12,11 +12,11 @@ cons := {h, tl} -> t h tl
 list_const : Fn AnyTree ({_} -> AnyTree) := {x} -> t t x
 member := fix ({self, node, xs} ->
   if (is_leaf xs) { false } else if (tree_eq node (pair_fst xs)) { true } else { self node (pair_snd xs) })
-list_all := fix ({self, p, xs} ->
+list_all : ListAllSpec := fix ({self, p, xs} ->
   if (is_leaf xs) { true } else { and (p (pair_fst xs)) (self p (pair_snd xs)) })
-list_map := fix ({self, f, xs} ->
+list_map : ListMapSpec := fix ({self, f, xs} ->
   if (is_leaf xs) { nil } else { cons (f (pair_fst xs)) (self f (pair_snd xs)) })
-list_len := fix ({self, xs} ->
+list_len : ListLenSpec := fix ({self, xs} ->
   if (is_leaf xs) { zero } else { succ (self (pair_snd xs)) })
 list_snoc := fix ({self, xs, x} ->
   if (is_leaf xs) { cons x nil } else { cons (pair_fst xs) (self (pair_snd xs) x) })
