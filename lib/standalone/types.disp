@@ -192,7 +192,7 @@ List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
   #recognize := {self, v} -> list_mem ({ty, a} -> ty a) self A v
   check := {jdg, T, v} -> list_mem jdg ({a} -> jdg T a) A v
   gate := {Ind, B} -> cons (B nil) (cons (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons h tl))))) nil)
-  elim := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
+  elim := list_elim_raw
 })
 
 // Eliminator-routed typed twins of the kernel's raw list functions. The raw
@@ -201,18 +201,12 @@ List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
 // quantifier is pinned to Guard: the Meta walker cannot mint type-variable
 // hypotheses at all (pinned below), so only the value-level arrows (Fn)
 // participate in the differential instantiation.
-list_len_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Nat)) :=
-  {A, xs} -> (elim_of (List A) ({_} -> Nat)) xs zero ({_h, _tl, ih} -> succ ih)
-list_map_l : Pi Guard ShallowType ({A} -> Pi Guard ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B)))) :=
-  {A, B, f, xs} -> (elim_of (List A) ({_} -> List B)) xs nil ({h, _tl, ih} -> cons (f h) ih)
-list_all_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> Bool))) :=
-  {A, p, xs} -> (elim_of (List A) ({_} -> Bool)) xs true ({h, _tl, ih} -> bool_rec (p h) ih false)
-list_snoc_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn A ({_} -> List A))) :=
-  {A, xs, x} -> (elim_of (List A) ({_} -> List A)) xs (cons x nil) ({h, _tl, ih} -> cons h ih)
-list_cat_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn (List A) ({_} -> List A))) :=
-  {A, xs, ys} -> (elim_of (List A) ({_} -> List A)) xs ys ({h, _tl, ih} -> cons h ih)
-list_filter_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> List A))) :=
-  {A, p, xs} -> (elim_of (List A) ({_} -> List A)) xs nil ({h, _tl, ih} -> (elim_of Bool ({_} -> List A)) (p h) (cons h ih) ih)
+list_len_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Nat)) := list_len_p
+list_map_l : Pi Guard ShallowType ({A} -> Pi Guard ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B)))) := list_map_p
+list_all_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> Bool))) := list_all_p
+list_snoc_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn A ({_} -> List A))) := list_snoc_p
+list_cat_l : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn (List A) ({_} -> List A))) := list_cat_p
+list_filter_l : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> List A))) := list_filter_p
 // A wrong-typed arm is refused. (List A -> List B does not pin length, so an
 // element-dropping map still inhabits the map type; the pin below is the
 // wrong-TYPE case, which is what the checker owns.)
@@ -227,11 +221,6 @@ test list_all_l AnyTree ({s} -> tree_eq (list_map_l AnyTree AnyTree succ s) (lis
 test list_all_l AnyTree ({s} -> tree_eq (list_filter_l AnyTree is_leaf s) (list_filter is_leaf s)) list_samples = true
 test tree_eq (list_cat_l AnyTree (cons 1 nil) (cons 2 nil)) (list_cat (cons 1 nil) (cons 2 nil)) = true
 test tree_eq (list_snoc_l AnyTree (cons 1 nil) 2) (list_snoc (cons 1 nil) 2) = true
-// Sample-tier specs for the RAW kernel list functions, given-imported by
-// kernel.disp: the honest maximum for raw case-splitting bodies.
-ListLenSpec := Pi (Sampled list_samples) (List AnyTree) ({_} -> Nat)
-ListMapSpec := Pi (Sampled (cons succ (cons ({x} -> x) nil))) (Fn AnyTree ({_} -> AnyTree)) ({_} -> Pi (Sampled list_samples) (List AnyTree) ({_} -> List AnyTree))
-ListAllSpec := Pi (Sampled (cons is_leaf (cons ({_x} -> true) nil))) (Fn AnyTree ({_} -> Bool)) ({_} -> Pi (Sampled list_samples) (List AnyTree) ({_} -> Bool))
 
 let eff_mem := {ej, rj, Q, X, v} -> (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
 Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType))) := {Q, Ans, X} -> ({
@@ -372,7 +361,7 @@ test TreeOf Unit (pair (pair t t) t) = true
 test TreeOf Unit (pair (t t) t) = false
 
 // 8. Trees with different kinds of sub-objects at tagged nodes.
-MixedCode := < Leaf : t, Node : t >
+MixedCode : List AnyTree := < Leaf : t, Node : t >
 mixed_rows := fix ({self, get} -> {
   node <- see get (Pred is_fork)
   if (tree_eq (pair_fst node) "Leaf") {
