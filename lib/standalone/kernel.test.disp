@@ -22,7 +22,7 @@ unblessed_rec := wait elim_marker (pair junk_raw (pair Nat ({_} -> Bool)))
 
 pi_suite := {Pi} -> {
   let BB := Pi Bool ({_} -> Bool)
-  ({ negation := BB not_bool, identity := BB ({b} -> b), junk_arm := BB ({b} -> bool_rec b 5 true), sniff := BB shift })
+  ({ negation := BB not_bool, identity := BB ({b} -> b), junk_arm := BB ({b} -> bool_case t b 5 true), sniff := BB shift })
 }
 pi_expected := { negation := true, identity := true, junk_arm := false, sniff := false }
 
@@ -36,7 +36,7 @@ fn_expected := { successor := true, identity := true, duplicate := false, currie
 elim_suite := {Pi} -> {
   let NN := Pi Nat ({_} -> Nat)
   let NB := Pi Nat ({_} -> Bool)
-  ({ fold := NN elim_id, after_constructor := NN ({n} -> succ (elim_id n)), on_constructor := NN ({n} -> elim_id (succ n)), step_discard := NN ({n} -> nat_rec (succ n) zero ({k, ih} -> zero)), composed := NN ({n} -> elim_id (elim_id n)), wrong_motive := NB elim_id, bad_base := NN ({n} -> nat_rec n false ({k, ih} -> false)), bad_step_on_constructor := NN ({n} -> nat_rec (succ n) zero ({k, ih} -> pair 5 5)) })
+  ({ fold := NN elim_id, after_constructor := NN ({n} -> succ (elim_id n)), on_constructor := NN ({n} -> elim_id (succ n)), step_discard := NN ({n} -> nat_rec t (succ n) zero ({k, ih} -> zero)), composed := NN ({n} -> elim_id (elim_id n)), wrong_motive := NB elim_id, bad_base := NN ({n} -> nat_rec t n false ({k, ih} -> false)), bad_step_on_constructor := NN ({n} -> nat_rec t (succ n) zero ({k, ih} -> pair 5 5)) })
 }
 elim_expected := { fold := true, after_constructor := true, on_constructor := true, step_discard := true, composed := true, wrong_motive := false, bad_base := false, bad_step_on_constructor := false }
 
@@ -68,8 +68,8 @@ ho_suite := {Pi} -> {
     const_arg := F ({g} -> 5)
     ill_typed_frame := F ({g} -> g false)
     use_result := F ({g} -> succ (g zero))
-    elim_on_spine := F ({g} -> nat_rec (g zero) zero ({k, ih} -> succ ih))
-    bad_frame_under_elim := F ({g} -> nat_rec (g false) zero ({k, ih} -> succ ih))
+    elim_on_spine := F ({g} -> nat_rec t (g zero) zero ({k, ih} -> succ ih))
+    bad_frame_under_elim := F ({g} -> nat_rec t (g false) zero ({k, ih} -> succ ih))
     eta_arg := FF ({g} -> g)
     eta_expanded := FF ({g} -> {n} -> g n)
     succ_frame := F ({g} -> g (succ zero))
@@ -197,8 +197,8 @@ test Fn Nat ({_} -> Bool) ({n} -> tree_eq (succ n) (succ zero)) = true
 test Fn Nat ({_} -> Fn Nat ({_} -> Bool)) ({n, m} -> tree_eq n m) = true
 test Fn Nat ({_} -> Nat) ({n} -> bnat (tree_eq n n) n (pair 5 5)) = true
 test Pi Guard Five ({_} -> Nat) ({x} -> bnat (tree_eq x 5) zero (pair 5 5)) = true
-test Fn Bool ({_} -> Bool) ({b} -> bool_rec (tree_eq b zero) true b) = true
-test Fn Bool ({_} -> Bool) ({b} -> bool_rec (tree_eq b zero) 5 b) = false
+test Fn Bool ({_} -> Bool) ({b} -> bool_case t (tree_eq b zero) true b) = true
+test Fn Bool ({_} -> Bool) ({b} -> bool_case t (tree_eq b zero) 5 b) = false
 test Fn (Eq Nat 2 3) ({_} -> Point 3) ({p} -> elim_of (Eq Nat 2 3) ({w} -> Point w) p 2) = true
 honest_data_eq := {n} -> if (tree_eq n zero) { zero } else { n }
 test GuardNatToNat honest_data_eq = false
@@ -328,7 +328,7 @@ test Pi Guard Obs ({_} -> Bool) ({ob} -> obs_rec ob ({_} -> true) ({_} -> 5) ({_
 // Declared list spines: List A types the kernel's cons/nil lists, and its
 // step obligation carries the induction hypothesis (ih : B tl) -- the first
 // recursive typed elimination in the file. blessed_len is list_len in blessed
-// form; blessed_all is list_all with `and` replaced by bool_rec (raw `and`
+// form; blessed_all is list_all with `and` replaced by bool_case (raw `and`
 // triages its Bool argument, which is reflection on a rolled Bool mint).
 NatList := List Nat
 test NatList (nil t) = true
@@ -341,7 +341,7 @@ test Pi Guard NatList ({_} -> Nat) blessed_len = true
 test Pi Meta NatList ({_} -> Nat) blessed_len = true
 test Pi Guard NatList ({_} -> Nat) ({xs} -> len_rec xs false ({_h, _tl, ih} -> succ ih)) = false
 all_rec := elim_of NatList ({_} -> Bool)
-blessed_all := {p, xs} -> all_rec xs true ({h, _tl, ih} -> bool_rec (p h) ih false)
+blessed_all := {p, xs} -> all_rec xs true ({h, _tl, ih} -> bool_case t (p h) ih false)
 test blessed_all ({n} -> is_leaf n) (cons t zero (cons t zero (nil t))) = true
 test blessed_all ({n} -> is_leaf n) (cons t zero (cons t 2 (nil t))) = false
 test Pi Guard (Pi Guard Nat ({_} -> Bool)) ({_p} -> Pi Guard NatList ({_} -> Bool)) blessed_all = true
@@ -443,7 +443,7 @@ test Pi Guard Tree ({_} -> Bool) ({v} -> tree_rec_b v true ({_c, _ih} -> 5) ({_l
 // banned reader. That split is the typed frontier of the kernel's helper layer.
 test Pi Meta Tree ({_} -> Nat) list_len_t = true
 test Pi Meta (Pi Meta Tree ({_} -> Tree)) ({_} -> Pi Meta Tree ({_} -> Tree)) list_map_t = true
-member_t := {node, xs} -> tree_rec ({_} -> Bool) xs false ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (tree_eq node l) true ir)
+member_t := {node, xs} -> tree_rec ({_} -> Bool) xs false ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_case t (tree_eq node l) true ir)
 test member_t 2 (cons t 1 (cons t 2 (nil t))) = true
 test Pi Guard Tree ({_} -> Bool) (member_t zero) = false
 test Pi Meta Tree ({_} -> Bool) (member_t zero) = false
@@ -650,7 +650,7 @@ test tree_eq (neutral_type (add (make_hyp Nat "k") zero)) Nat = true
 // hypothesis (the same discipline motives follow). The coherence suite gained
 // the matching obligation: a normalizer must be idempotent and must map
 // members to members.
-parity := {n} -> nat_rec n zero ({k, ih} -> nat_rec ih (succ zero) ({_a, _b} -> zero))
+parity := {n} -> nat_rec t n zero ({k, ih} -> nat_rec t ih (succ zero) ({_a, _b} -> zero))
 Parity := Quotient Nat parity
 test parity 4 = 0
 test parity 5 = 1

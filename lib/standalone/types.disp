@@ -73,10 +73,11 @@ at := {K, keys, s} -> (fix ({self, ks, v} ->
   else if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
   else { self (pair_snd ks) (pair_snd v) })) (key_sort ShallowType keys) s
 
+nat_elim_raw := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
 Nat : ShallowType := ({
   #recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
   gate := {Ind, B} -> cons ShallowType (B zero) (cons ShallowType (PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))) (nil ShallowType))
-  elim := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
+  elim := nat_elim_raw
 })
 test Nat zero = true
 test Nat (succ (succ zero)) = true
@@ -85,9 +86,9 @@ test Nat (t t) = false
 test Nat (make_hyp Nat Nat) = false
 test Nat (succ (make_hyp Nat Nat)) = false
 nat_step_ty : ShallowType := pair_fst (pair_snd (Nat.gate Nat ({_} -> Nat)))
-nat_rec : Fn Nat ({_} -> Fn Nat ({_} -> Fn nat_step_ty ({_} -> Nat))) := elim_of Nat ({_} -> Nat)
+nat_rec : Pi Guard ShallowType ({C} -> Fn Nat ({_} -> Fn C ({_} -> Fn (pair_fst (pair_snd (Nat.gate Nat (b_abs (inj "@absent" t) C)))) ({_} -> C))))
+  := {_C} -> fix nat_elim_raw
 
-bool_rec : Fn Bool ({_} -> Fn Bool ({_} -> Fn Bool ({_} -> Bool))) := bool_case Bool
 test ShallowType Bool = true
 test tree_eq (Tuple (cons t Nat (cons t Bool (nil t)))) (Tuple (cons t Bool (cons t Nat (nil t)))) = true
 test Tuple (cons t Nat (cons t Bool (nil t))) (pair true 2) = true
@@ -102,7 +103,7 @@ test field ({ (Nat) := 7, (Bool) := true }) Bool = true
 test tree_eq ({ (Nat) := 7, (Bool) := true }) ({ (Bool) := true, (Nat) := 7 }) = true
 test field ({ label := "flip", ((Named "cost" Nat)) := 3 }) (Named "cost" Nat) = 3
 test Fn ShallowType ({_} -> Bool) ({T} -> T 5) = true
-test Fn ShallowType ({_} -> Bool) ({T} -> bool_rec (T 5) false true) = true
+test Fn ShallowType ({_} -> Bool) ({T} -> bool_case Bool (T 5) false true) = true
 test Fn ShallowType ({_} -> Nat) ({T} -> T 5) = false
 
 Point := {c} -> ({ #recognize := {_self, v} -> tree_eq c v, members := cons AnyTree c (nil AnyTree) })
@@ -131,12 +132,14 @@ test eq_sym Nat 2 2 refl = refl
 test eq_trans Nat 2 2 2 refl refl = refl
 test eq_cong Nat succ 2 2 refl = refl
 
+tree_elim_raw := {self, v, on_leaf, on_stem, on_fork} -> triage on_leaf ({c} -> on_stem c (self c on_leaf on_stem on_fork)) ({l, r} -> on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
 Tree : ShallowType := ({
   #recognize := {_self, _v} -> true
   gate := {Ind, B} -> cons ShallowType (B t) (cons ShallowType (PiCode Ind ({c} -> PiCode (B c) ({_} -> B (t c)))) (cons ShallowType (PiCode Ind ({l} -> PiCode Ind ({r} -> PiCode (B l) ({_} -> PiCode (B r) ({_} -> B (t l r)))))) (nil ShallowType)))
-  elim := {self, v, on_leaf, on_stem, on_fork} -> triage on_leaf ({c} -> on_stem c (self c on_leaf on_stem on_fork)) ({l, r} -> on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
+  elim := tree_elim_raw
 })
-tree_rec := {B} -> elim_of Tree B
+tree_rec : Pi Guard ShallowType ({C} -> Fn Tree ({_} -> Fn (pair_fst (Tree.gate Tree (b_abs (inj "@absent" t) C))) ({_} -> Fn (pair_fst (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C)))) ({_} -> Fn (pair_fst (pair_snd (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C))))) ({_} -> C)))))
+  := {_C} -> fix tree_elim_raw
 
 GoodGate := {T} -> {
   let g := T.gate
@@ -183,7 +186,7 @@ list_snoc_t : Fn Tree ({_} -> Fn Tree ({_} -> Tree))
 list_map_t : Fn (Fn Tree ({_} -> Tree)) ({_} -> Fn Tree ({_} -> Tree))
   := {f, xs} -> tree_rec ({_} -> Tree) xs (nil AnyTree) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons AnyTree (f l) ir)
 list_all_t : Fn (Fn Tree ({_} -> Bool)) ({_} -> Fn Tree ({_} -> Bool))
-  := {p, xs} -> tree_rec ({_} -> Bool) xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_rec (p l) ir false)
+  := {p, xs} -> tree_rec ({_} -> Bool) xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_case Bool (p l) ir false)
 test list_len_t (cons t 7 (cons t 7 (nil t))) = 2
 test list_snoc_t (cons t 1 (nil t)) 2 = cons t 1 (cons t 2 (nil t))
 test list_map_t succ (cons t 1 (cons t 2 (nil t))) = cons t 2 (cons t 3 (nil t))
@@ -226,9 +229,9 @@ test Eff Row AnyTree AnyTree 5 = false
 
 GuardNatToNat : ShallowType := Pi Guard Nat ({_} -> Nat)
 
-add : Fn Nat ({_} -> Fn Nat ({_} -> Nat)) := {n, m} -> nat_rec n m ({k, ih} -> succ ih)
-not_bool : Fn Bool ({_} -> Bool) := {b} -> bool_rec b false true
-elim_id : Fn Nat ({_} -> Nat) := {n} -> nat_rec n zero ({k, ih} -> succ ih)
+add : Fn Nat ({_} -> Fn Nat ({_} -> Nat)) := {n, m} -> nat_rec Nat n m ({k, ih} -> succ ih)
+not_bool : Fn Bool ({_} -> Bool) := {b} -> bool_case Bool b false true
+elim_id : Fn Nat ({_} -> Nat) := {n} -> nat_rec Nat n zero ({k, ih} -> succ ih)
 test add 2 3 = 5
 test add 0 4 = 4
 test ShallowType Nat = true
