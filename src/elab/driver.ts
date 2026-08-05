@@ -11,6 +11,7 @@ import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modsc
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
 import { extractSignature } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
+import { sugarTree } from "./vocab.js"
 import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree, equationLhs } from "./expr.js"
 
 export type Decl =
@@ -551,8 +552,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // file is still defining — at the cost of the module's `typ`.
     // recType annotations participate once `Telescope` exists (they compile to
     // telescope types); without it they keep the legacy fields-metadata-only role.
-    const isTypeAlias = type?.tag === "var" && type.name === "Type" && !!lookupEntry("Pi")?.tree
-    if (!raw && type != null && (type.tag !== "recType" || lookupEntry("Telescope")?.tree) && (Type || lookupEntry("Pi")?.tree)) {
+    const isTypeAlias = type?.tag === "var" && type.name === "Type" && !!sugarTree(lookupEntry, "Pi")
+    if (!raw && type != null && (type.tag !== "recType" || sugarTree(lookupEntry, "Telescope")) && (Type || sugarTree(lookupEntry, "Pi"))) {
       // Build the annotation's type tree (binder → Pi, else plain compile). If the
       // annotation is the universe `Type`, the BODY itself denotes a type, so
       // compile it the same way; otherwise the body is a value (plain bracket

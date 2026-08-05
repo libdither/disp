@@ -9,6 +9,7 @@ import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type Lice
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
+import { sugarTree } from "./vocab.js"
 
 // moduleTupleCir: a resolved file's module tuple { record, typ } (§2.6 records):
 //   record = a product of the file's exported values, keyed by name;
@@ -25,9 +26,9 @@ import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 // the file's annotations (no `typ`); it falls through to the bare value record
 // since `entry.fieldTypes` are all null.
 function moduleTupleCir(entry: ScopeEntry, lookupEntry: (name: string) => ScopeEntry | undefined): Cir {
-  const make_record = lookupEntry("make_record")?.tree
-  const list_const = lookupEntry("list_const")?.tree
-  const Record = lookupEntry("Record")?.tree
+  const make_record = sugarTree(lookupEntry, "make_record")
+  const list_const = sugarTree(lookupEntry, "list_const")
+  const Record = sugarTree(lookupEntry, "Record")
   if (!make_record || !list_const || !Record || !entry.fields || !entry.fieldTrees)
     return { tag: "lit", t: entry.tree! }
   const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => elab.cs.fork(h, acc), elab.cs.leaf())
@@ -70,12 +71,11 @@ export function exprToCir(
   resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
   sinks?: CompileSinks,
 ): Cir {
-  const lookup = (name: string) => lookupEntry(name)?.tree
   switch (e.tag) {
     case "leaf": return { tag: "lit", t: elab.cs.leaf() }
     case "num": {
-      const zero = lookup("zero")
-      const succ = lookup("succ")
+      const zero = sugarTree(lookupEntry, "zero")
+      const succ = sugarTree(lookupEntry, "succ")
       if (!zero || !succ) throw new Error(`numeric literal ${e.value}: zero and succ must be in scope`)
       let result = zero
       for (let i = 0; i < e.value; i++) {
@@ -125,7 +125,7 @@ export function exprToCir(
         const vfv: string[] = []
         collectFreeVars(inner, new Set(), vfv, new Set())
         if (vfv.length === 0) {
-          const tyCir = exprToCir(lookupEntry("Pi")?.tree ? binderToPi(e.type) : e.type, lookupEntry, resolveUse, sinks)
+          const tyCir = exprToCir(sugarTree(lookupEntry, "Pi") ? binderToPi(e.type) : e.type, lookupEntry, resolveUse, sinks)
           const tfv: string[] = []
           collectFreeVars(tyCir, new Set(), tfv, new Set())
           if (tfv.length === 0)
@@ -158,10 +158,10 @@ export function exprToCir(
       // `Telescope`. Later fields' types and derived recipes compile under lams
       // binding the PRIOR field names, so `{ a : Nat, b := double a }` scopes
       // naturally. (Pi/Sigma emit the same cells, so surface and manual agree.)
-      const TelescopeEntry = lookupEntry("Telescope")
-      const projCellEntry = lookupEntry("proj_cell")
-      const derivCellEntry = lookupEntry("derive_cell")
-      if (!TelescopeEntry?.tree || !projCellEntry?.tree || !derivCellEntry?.tree)
+      const TelescopeTree = sugarTree(lookupEntry, "Telescope")
+      const projCellTree = sugarTree(lookupEntry, "proj_cell")
+      const derivCellTree = sugarTree(lookupEntry, "derive_cell")
+      if (!TelescopeTree || !projCellTree || !derivCellTree)
         throw new Error("record type literal '{ name : T }': 'Telescope', 'proj_cell', and 'derive_cell' must be in scope (open the kernel prelude)")
       const leafCir: Cir = { tag: "lit", t: elab.cs.leaf() }
       let teleCir: Cir = leafCir
@@ -175,15 +175,15 @@ export function exprToCir(
         // A field's type is a TYPE position: desugar binders to `Pi` (so `s : T -> T`
         // is a `Pi`, not a value-lambda), exactly as a binding annotation does.
         const entryCir: Cir = f.value != null
-          ? cap(cap({ tag: "lit", t: derivCellEntry.tree }, nameCir),
+          ? cap(cap({ tag: "lit", t: derivCellTree }, nameCir),
                 exprToCir(f.value, shadowed, resolveUse, sinks))
-          : cap(cap({ tag: "lit", t: projCellEntry.tree }, nameCir),
+          : cap(cap({ tag: "lit", t: projCellTree }, nameCir),
                 exprToCir(
-                  lookupEntry("Pi")?.tree ? binderToPi(f.type ?? { tag: "var", name: "Tree" }) : (f.type ?? { tag: "var", name: "Tree" }),
+                  sugarTree(lookupEntry, "Pi") ? binderToPi(f.type ?? { tag: "var", name: "Tree" }) : (f.type ?? { tag: "var", name: "Tree" }),
                   shadowed, resolveUse, sinks))
         teleCir = cap(cap(leafCir, entryCir), { tag: "lam", x: f.name, body: teleCir })
       }
-      return cap({ tag: "lit", t: TelescopeEntry.tree }, teleCir)
+      return cap({ tag: "lit", t: TelescopeTree }, teleCir)
     }
     case "sumType": {
       // A sum-type literal `< Tag : T, … >` IS a `Coproduct` over a list of
@@ -195,13 +195,13 @@ export function exprToCir(
       // `Coproduct [pair "Tag" […]]`. A payload type compiles in TYPE position
       // (binderToPi), exactly like a recType field type. (Coproduct/pair must be
       // in scope, like recType needs Telescope.)
-      const CoproductEntry = lookupEntry("Coproduct")
-      const pairEntry = lookupEntry("pair")
-      if (!CoproductEntry?.tree || !pairEntry?.tree)
+      const CoproductTree = sugarTree(lookupEntry, "Coproduct")
+      const pairTree = sugarTree(lookupEntry, "pair")
+      if (!CoproductTree || !pairTree)
         throw new Error("sum type literal '< Tag : T >': 'Coproduct' and 'pair' must be in scope (open the kernel prelude)")
       const leafCir: Cir = { tag: "lit", t: elab.cs.leaf() }
       const consCir = (h: Cir, tl: Cir): Cir => cap(cap(leafCir, h), tl)
-      const pairCir: Cir = { tag: "lit", t: pairEntry.tree }
+      const pairCir: Cir = { tag: "lit", t: pairTree }
       let variantsCir: Cir = leafCir
       for (let i = e.variants.length - 1; i >= 0; i--) {
         const v = e.variants[i]
@@ -212,11 +212,11 @@ export function exprToCir(
         let argsCir: Cir = leafCir
         for (let k = slots.length - 1; k >= 0; k--)
           argsCir = consCir(
-            exprToCir(lookupEntry("Pi")?.tree ? binderToPi(slots[k]) : slots[k], lookupEntry, resolveUse, sinks),
+            exprToCir(sugarTree(lookupEntry, "Pi") ? binderToPi(slots[k]) : slots[k], lookupEntry, resolveUse, sinks),
             argsCir)
         variantsCir = consCir(cap(cap(pairCir, nameCir), argsCir), variantsCir)
       }
-      return cap({ tag: "lit", t: CoproductEntry.tree }, variantsCir)
+      return cap({ tag: "lit", t: CoproductTree }, variantsCir)
     }
     case "recValue": {
       // If this recValue has members (let/test/open alongside fields),
@@ -285,12 +285,12 @@ export function exprToCir(
       // §2.6 record: {x := a; y := b} → make_record ["x","y"] [list_const a, list_const b]
       // — a `prod` over a string-interned name header, read by name through the
       // cut. (make_record/list_const must be in scope, like `match` needs `prod`.)
-      const recordValEntry = lookupEntry("make_record")
-      const listConstEntry = lookupEntry("list_const")
-      if (!recordValEntry?.tree || !listConstEntry?.tree)
+      const recordValTree = sugarTree(lookupEntry, "make_record")
+      const listConstTree = sugarTree(lookupEntry, "list_const")
+      if (!recordValTree || !listConstTree)
         throw new Error("record literal '{ := }': 'make_record' and 'list_const' must be in scope (open the kernel prelude)")
-      const recordVal: Cir = { tag: "lit", t: recordValEntry.tree }
-      const listConst: Cir = { tag: "lit", t: listConstEntry.tree }
+      const recordVal: Cir = { tag: "lit", t: recordValTree }
+      const listConst: Cir = { tag: "lit", t: listConstTree }
       // names header: a closed cons-chain of string tags.
       let namesTree: Tree = elab.cs.leaf()
       for (let i = e.fields.length - 1; i >= 0; i--)
@@ -333,13 +333,13 @@ export function exprToCir(
       if (facedFields.length > 1)
         throw new Error(`record literal: at most one '#'-marked face field (got ${facedFields.map(f => f.name).join(", ")})`)
       if (facedFields.length === 1) {
-        const facedEntry = lookupEntry("faced")
-        if (!facedEntry?.tree)
+        const facedTree = sugarTree(lookupEntry, "faced")
+        if (!facedTree)
           throw new Error("record literal '#field': 'faced' must be in scope")
         const fk: Cir = facedFields[0].keyExpr
           ? exprToCir(facedFields[0].keyExpr, fieldLookup, resolveUse, sinks)
           : { tag: "lit", t: stringToTree(facedFields[0].name) }
-        result = cap(cap({ tag: "lit", t: facedEntry.tree }, fk), result)
+        result = cap(cap({ tag: "lit", t: facedTree }, fk), result)
       }
       for (let i = e.fields.length - 1; i >= 0; i--) {
         if (e.fields[i].keyExpr) continue
@@ -376,9 +376,9 @@ export function exprToCir(
       // binds `dot` owns projection — `r.x` compiles to `dot "x" r`, so a world
       // can make its own values field-readable (e.g. the standalone kernel's
       // wait-form-aware reader). Unbound, the §2.6 cut `r (acc x)` stands.
-      const dotEntry = lookupEntry("dot")
-      if (dotEntry?.tree)
-        return cap(cap({ tag: "lit", t: dotEntry.tree }, { tag: "lit", t: stringToTree(e.field) }), target)
+      const dotTree = sugarTree(lookupEntry, "dot")
+      if (dotTree)
+        return cap(cap({ tag: "lit", t: dotTree }, { tag: "lit", t: stringToTree(e.field) }), target)
       return cap(target, { tag: "lit", t: accTree(e.field) })
     }
     case "if": {
@@ -390,8 +390,8 @@ export function exprToCir(
       // closure over its free vars defers evaluation (only the taken branch is
       // forced) AND keeps recursive bodies out of cirToTree's eager K-body
       // reduction (see tryRewriteSelectLazy / CLAUDE.md compiler workarounds).
-      const condEntry = lookupEntry("cond")
-      if (!condEntry?.tree)
+      const condTree = sugarTree(lookupEntry, "cond")
+      if (!condTree)
         throw new Error("if: 'cond' must be in scope (import prelude)")
 
       const condCir = exprToCir(e.cond, lookupEntry, resolveUse, sinks)
@@ -413,7 +413,7 @@ export function exprToCir(
 
       // cond c branchThen branchElse fv1 ... fvn — the Scott Bool picks a branch
       // closure, the trailing fvs re-supply the free vars it abstracted over.
-      let out: Cir = cap(cap(cap({ tag: "lit", t: condEntry.tree }, condCir), branchThen), branchElse)
+      let out: Cir = cap(cap(cap({ tag: "lit", t: condTree }, condCir), branchThen), branchElse)
       for (const v of fvs) out = cap(out, { tag: "var", name: v })
       return out
     }
@@ -431,7 +431,7 @@ export function exprToCir(
       // Extend/Reduce match) staying INERT — extra args applied to that junk
       // can re-enter recursion. Arm binders shadow the wrapper lams naturally.
       // With no free vars this is the plain cut, unchanged.
-      if (!lookupEntry("prod")?.tree)
+      if (!sugarTree(lookupEntry, "prod"))
         throw new Error("match: 'prod' must be in scope (open the kernel prelude)")
       const condCir = exprToCir(e.cond, lookupEntry, resolveUse, sinks)
       const leafCir: Cir = { tag: "lit", t: elab.cs.leaf() }
@@ -491,20 +491,20 @@ export function exprToCir(
       // typed, certifiable match; bare match keeps the prod cut below. Same
       // fv-closing as the prod path (the closed-prefix hazard).
       if (e.matcher) {
-        const recordValEntry = lookupEntry("make_record")
-        const listConstEntry = lookupEntry("list_const")
-        if (!recordValEntry?.tree || !listConstEntry?.tree)
+        const recordValTree = sugarTree(lookupEntry, "make_record")
+        const listConstTree = sugarTree(lookupEntry, "list_const")
+        if (!recordValTree || !listConstTree)
           throw new Error("match ':' form: 'make_record' and 'list_const' must be in scope (open the kernel prelude)")
         const matcherCir = exprToCir(e.matcher, lookupEntry, resolveUse, sinks)
         let annNames: Tree = elab.cs.leaf()
         for (let i = arms.length - 1; i >= 0; i--)
           annNames = elab.cs.fork(stringToTree(arms[i].pat), annNames)
-        const listConst: Cir = { tag: "lit", t: listConstEntry.tree }
+        const listConst: Cir = { tag: "lit", t: listConstTree }
         const consAnn = (h: Cir, tl: Cir): Cir => cap(cap({ tag: "lit", t: elab.cs.leaf() }, h), tl)
         let armsCir: Cir = { tag: "lit", t: elab.cs.leaf() }
         for (let i = arms.length - 1; i >= 0; i--)
           armsCir = consAnn(cap(listConst, handlerCir(arms[i])), armsCir)
-        const recordCir = cap(cap({ tag: "lit", t: recordValEntry.tree }, { tag: "lit", t: annNames }), armsCir)
+        const recordCir = cap(cap({ tag: "lit", t: recordValTree }, { tag: "lit", t: annNames }), armsCir)
         let annOut: Cir = cap(cap(matcherCir, recordCir), condCir)
         for (let i = fvs.length - 1; i >= 0; i--) annOut = { tag: "lam", x: fvs[i], body: annOut }
         for (const v of fvs) annOut = cap(annOut, { tag: "var", name: v })
@@ -604,6 +604,6 @@ export function compileType(
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
 ): Tree {
-  const desugared = lookupEntry("Pi")?.tree ? binderToPi(e) : e
+  const desugared = sugarTree(lookupEntry, "Pi") ? binderToPi(e) : e
   return compileExpr(desugared, lookupEntry, resolveUse)
 }
