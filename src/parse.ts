@@ -1180,7 +1180,7 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
     } else {
       result = {
         tag: "app",
-        f: { tag: "app", f: { tag: "var", name: "eff_bind" }, x: s.expr },
+        f: { tag: "app", f: { tag: "var", name: "@sugar:eff_bind" }, x: s.expr },
         x: { tag: "binder", params: [{ name: s.name === "_" ? null : s.name, type: null }], body: result },
       }
     }

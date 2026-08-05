@@ -9,7 +9,7 @@ import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type Lice
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
-import { sugarTree } from "./vocab.js"
+import { sugarTree, sugarVarName, SUGAR_PREFIX, type SugarName } from "./vocab.js"
 
 // moduleTupleCir: a resolved file's module tuple { record, typ } (§2.6 records):
 //   record = a product of the file's exported values, keyed by name;
@@ -85,6 +85,13 @@ export function exprToCir(
     }
     case "str": return { tag: "lit", t: stringToTree(e.value) }
     case "var": {
+      // A desugar-emitted var (SUGAR_PREFIX mark) resolves through the settings
+      // funnel; unresolved, it degrades to the bare name (the legacy free var).
+      if (e.name.startsWith(SUGAR_PREFIX)) {
+        const bare = e.name.slice(SUGAR_PREFIX.length) as SugarName
+        const target = sugarTree(lookupEntry, bare)
+        return target ? { tag: "lit", t: target } : { tag: "var", name: bare }
+      }
       const entry = lookupEntry(e.name)
       return entry?.tree ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
     }
@@ -525,7 +532,7 @@ export function exprToCir(
         handlersCir = cap(cap(leafCir, handlerList[i]), handlersCir)
 
       const table = cap(cap(leafCir, { tag: "lit", t: namesTree }), handlersCir)
-      const prodCir = exprToCir({ tag: "var", name: "prod" }, lookupEntry, resolveUse, sinks)
+      const prodCir = exprToCir({ tag: "var", name: sugarVarName("prod") }, lookupEntry, resolveUse, sinks)
       let out: Cir = cap(cap(prodCir, table), condCir)
       for (let i = fvs.length - 1; i >= 0; i--) out = { tag: "lam", x: fvs[i], body: out }
       for (const v of fvs) out = cap(out, { tag: "var", name: v })

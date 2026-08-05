@@ -3,6 +3,7 @@
 // binder->Pi desugar. Pure AST work — no session, no trees.
 
 import type { Expr, Param } from "../parse.js"
+import { sugarVarName } from "./vocab.js"
 import type { ScopeEntry, SigParam } from "./state.js"
 
 // Detect `{_} -> body` / `{x} -> body` thunks where the parameter is unused.
@@ -292,5 +293,5 @@ export function binderToPi(e: Expr): Expr {
     ? { tag: "binder", params: e.params.slice(1), body: e.body }
     : e.body
   const cod: Expr = { tag: "binder", params: [{ name: p.name, type: null }], body: binderToPi(rest) }
-  return { tag: "app", f: { tag: "app", f: { tag: "var", name: "Pi" }, x: dom }, x: cod }
+  return { tag: "app", f: { tag: "app", f: { tag: "var", name: sugarVarName("Pi") }, x: dom }, x: cod }
 }
