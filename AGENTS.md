@@ -8,6 +8,7 @@ Note about the goal: we should generally prioritize writing easy to read code th
 
 Misc notes:
  - Work on `main` directly (no new branching) unless otherwise told.
+ - Never go ahead with feature implementation (new definitions, syntax, files, or commits of such) without an explicit go-ahead in the current conversation. Investigation, probes, and design analysis are fine; landing changes is not.
  - Understand the guard mechanisms that handles `let` module-local assignments, `test`, and of course `guard` for reassignment.
  - Tests should be automatically profiled to get a sense of how much time is being spent on each test, and this should be reported back if there are any tests that are taking a long time to evaluate. Testing iteration speed is one of the most important things for disp and should be minimized when possible.
  - Additionally, we must make sure whenever running tests to run with max memory constraints in order to avoid out of memory errors with the system or the terminal crashes / is killed.
