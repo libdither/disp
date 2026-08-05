@@ -119,13 +119,13 @@ walk_apply := field Guard "apply"
 fn_hyp := make_hyp (PiCode Nat ({_} -> Nat)) t
 nat_hyp := make_hyp Nat t
 nat_elim := elim_of Nat ({_} -> Nat)
-test tree_eq (walk_apply t (nil t) fn_hyp zero) (fn_hyp zero) = true
-test tree_eq (walk_apply t (nil t) nat_elim nat_hyp) (nat_elim nat_hyp) = true
-test tree_eq (walk_apply t (nil t) (walk_apply t (nil t) nat_elim nat_hyp) zero) ((nat_elim nat_hyp) zero) = true
+test tree_eq (walk_apply t [] fn_hyp zero) (fn_hyp zero) = true
+test tree_eq (walk_apply t [] nat_elim nat_hyp) (nat_elim nat_hyp) = true
+test tree_eq (walk_apply t [] (walk_apply t [] nat_elim nat_hyp) zero) ((nat_elim nat_hyp) zero) = true
 // An observation the type does not declare is not a stuck term, it is an error,
 // and the lazy record has no way to say "no type" -- so the walk refuses at the
 // point the observation is made rather than when the type is demanded.
-test is_invalid (walk_apply t (nil t) pair_fst (make_hyp Bool t)) = true
+test is_invalid (walk_apply t [] pair_fst (make_hyp Bool t)) = true
 
 sig_child := stem_child hyp_sig
 smuggled := pair_snd (forge_hyp Bool Bool)
@@ -230,10 +230,10 @@ test ho_suite (Pi Guard) = ho_expected
 
 // Sampled: differential testing as a handler table. Only as strong as its
 // sample list, pinned by the last test.
-test Pi (Sampled (cons t zero (cons t 2 (nil t)))) Nat ({_} -> Nat) succ = true
-test Pi (Sampled (cons t zero (cons t 2 (nil t)))) Nat ({_} -> Nat) ({n} -> pair 5 5) = false
-test Pi (Sampled (nil t)) Nat ({_} -> Nat) succ = false
-test Pi (Sampled (cons t 2 (nil t))) Nat ({_} -> Nat) ({n} -> if (tree_eq n zero) { pair 5 5 } else { n }) = true
+test Pi (Sampled [zero, 2]) Nat ({_} -> Nat) succ = true
+test Pi (Sampled [zero, 2]) Nat ({_} -> Nat) ({n} -> pair 5 5) = false
+test Pi (Sampled []) Nat ({_} -> Nat) succ = false
+test Pi (Sampled [2]) Nat ({_} -> Nat) ({n} -> if (tree_eq n zero) { pair 5 5 } else { n }) = true
 
 // Ambient = the guard walk with the live kernel's reader policy (honest is_neutral,
 // unrestricted tree_eq). Two Observe rows are the ONLY difference from Guard, and they
@@ -252,8 +252,8 @@ test Pi Ambient Nat ({_} -> Nat) teq_shift = true
 test Sigma Guard Nat ({_} -> Bool) (pair 2 true) = true
 test Sigma Guard Nat ({_} -> Bool) (pair 2 5) = false
 test Sigma Guard Nat ({_} -> Bool) zero = false
-test Sigma (Sampled (nil t)) Nat ({_} -> Bool) (pair 2 true) = true
-test Sigma (Sampled (nil t)) Nat ({_} -> Bool) (pair 2 5) = false
+test Sigma (Sampled []) Nat ({_} -> Bool) (pair 2 true) = true
+test Sigma (Sampled []) Nat ({_} -> Bool) (pair 2 5) = false
 test Sigma Guard Nat ({n} -> Point (succ n)) (pair 2 3) = true
 test Sigma Guard Nat ({n} -> Point (succ n)) (pair 2 4) = false
 
@@ -331,19 +331,19 @@ test Pi Guard Obs ({_} -> Bool) ({ob} -> obs_rec ob ({_} -> true) ({_} -> 5) ({_
 // form; blessed_all is list_all with `and` replaced by bool_case (raw `and`
 // triages its Bool argument, which is reflection on a rolled Bool mint).
 NatList := List Nat
-test NatList (nil t) = true
-test NatList (cons t 1 (cons t 2 (nil t))) = true
-test NatList (cons t (pair 5 5) (nil t)) = false
+test NatList [] = true
+test NatList [1, 2] = true
+test NatList [pair 5 5] = false
 len_rec := elim_of NatList ({_} -> Nat)
 blessed_len := {xs} -> len_rec xs zero ({_h, _tl, ih} -> succ ih)
-test blessed_len (cons t 7 (cons t 7 (nil t))) = 2
+test blessed_len [7, 7] = 2
 test Pi Guard NatList ({_} -> Nat) blessed_len = true
 test Pi Meta NatList ({_} -> Nat) blessed_len = true
 test Pi Guard NatList ({_} -> Nat) ({xs} -> len_rec xs false ({_h, _tl, ih} -> succ ih)) = false
 all_rec := elim_of NatList ({_} -> Bool)
 blessed_all := {p, xs} -> all_rec xs true ({h, _tl, ih} -> bool_case t (p h) ih false)
-test blessed_all ({n} -> is_leaf n) (cons t zero (cons t zero (nil t))) = true
-test blessed_all ({n} -> is_leaf n) (cons t zero (cons t 2 (nil t))) = false
+test blessed_all ({n} -> is_leaf n) [zero, zero] = true
+test blessed_all ({n} -> is_leaf n) [zero, 2] = false
 test Pi Guard (Pi Guard Nat ({_} -> Bool)) ({_p} -> Pi Guard NatList ({_} -> Bool)) blessed_all = true
 
 // case_of: the general match. Named arms (order-free, checked against the
@@ -444,7 +444,7 @@ test Pi Guard Tree ({_} -> Bool) ({v} -> tree_rec_b v true ({_c, _ih} -> 5) ({_l
 test Pi Meta Tree ({_} -> Nat) list_len_t = true
 test Pi Meta (Pi Meta Tree ({_} -> Tree)) ({_} -> Pi Meta Tree ({_} -> Tree)) list_map_t = true
 member_t := {node, xs} -> tree_rec Bool xs false ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_case t (tree_eq node l) true ir)
-test member_t 2 (cons t 1 (cons t 2 (nil t))) = true
+test member_t 2 [1, 2] = true
 test Pi Guard Tree ({_} -> Bool) (member_t zero) = false
 test Pi Meta Tree ({_} -> Bool) (member_t zero) = false
 
@@ -515,15 +515,15 @@ test mMeta.add 2 3 = 5
 LabelK := Named "label" AnyTree
 ParamK := Named "param" ShallowType
 ResultK := Named "result" ShallowType
-OpSig := cons t LabelK (cons t ParamK (cons t ResultK (nil t)))
+OpSig := [LabelK, ParamK, ResultK]
 OpTy := Tuple OpSig
 tuple_of := {entries} -> {
-  let ins := fix ({self, e, es} -> if (is_leaf es) { cons t e (nil t) } else if (tree_lt (pair_fst e) (pair_fst (pair_fst es))) { cons t e es } else { cons t (pair_fst es) (self e (pair_snd es)) })
-  let sorted := (fix ({self, es} -> if (is_leaf es) { (nil t) } else { ins (pair_fst es) (self (pair_snd es)) })) entries
+  let ins := fix ({self, e, es} -> if (is_leaf es) { [e] } else if (tree_lt (pair_fst e) (pair_fst (pair_fst es))) { cons t e es } else { cons t (pair_fst es) (self e (pair_snd es)) })
+  let sorted := (fix ({self, es} -> if (is_leaf es) { [] } else { ins (pair_fst es) (self (pair_snd es)) })) entries
   (fix ({self, es} -> if (is_leaf (pair_snd es)) { pair_snd (pair_fst es) } else { pair (pair_snd (pair_fst es)) (self (pair_snd es)) })) sorted
 }
-flip_sig := tuple_of (cons t (pair ResultK Bool) (cons t (pair LabelK "flip") (cons t (pair ParamK Bool) (nil t))))
-flip_sig2 := tuple_of (cons t (pair LabelK "flip") (cons t (pair ParamK Bool) (cons t (pair ResultK Bool) (nil t))))
+flip_sig := tuple_of [pair ResultK Bool, pair LabelK "flip", pair ParamK Bool]
+flip_sig2 := tuple_of [pair LabelK "flip", pair ParamK Bool, pair ResultK Bool]
 test tree_eq flip_sig flip_sig2 = true
 test OpTy flip_sig = true
 test tree_eq (at ParamK OpSig flip_sig) Bool = true
@@ -538,8 +538,8 @@ test is_invalid (at (Named "missing" AnyTree) OpSig flip_sig) = true
 // Keys are meant to be DISTINCT types (brands exist for when the underlying
 // types collide), and the sorted insert drops duplicates -- so a repeated key
 // used to make a two-element tuple silently collapse into a scalar.
-test is_invalid (Tuple (cons t Nat (cons t Nat (nil t)))) = true
-test Tuple (cons t Nat (cons t (Named "other" Nat) (nil t))) (pair 2 3) = true
+test is_invalid (Tuple [Nat, Nat]) = true
+test Tuple [Nat, Named "other" Nat] (pair 2 3) = true
 
 // The applied formers ARE Tele at a table: the Guard partial application on a
 // code (or its bare program) is tree-identical to Pi/Sigma, so the "G" form
@@ -669,9 +669,9 @@ test Coherent Parity = true
 test Request ({}) = false
 test Request ({ value := t 5 }) = false
 test Request (base 5) = true
-test Record (cons t (pair "a" Nat) (nil t)) ({ a := 5 }) = true
-test Record (cons t (pair "a" Nat) (nil t)) ({ b := 5 }) = false
-test Record (cons t (pair "a" Nat) (nil t)) ({ a := true, b := 5 }) = true
+test Record [pair "a" Nat] ({ a := 5 }) = true
+test Record [pair "a" Nat] ({ b := 5 }) = false
+test Record [pair "a" Nat] ({ a := true, b := 5 }) = true
 
 // Ex falso at the RAW tier: an elimination with zero obligations has to fire
 // on arrival, since the collector would otherwise wait forever for an argument
@@ -711,7 +711,7 @@ rel_probe := {A, f, g} -> {
   let ap := field Guard "apply"
   let a := make_hyp A "rel_l"
   let b := make_hyp A "rel_r"
-  let st := cons t (make_hyp (Eq A a b) "rel_eq") (cons t b (cons t a (nil t)))
+  let st := [make_hyp (Eq A a b) "rel_eq", b, a]
   eq_holds st (ap t st f a) (ap t st g b)
 }
 test rel_probe Parity parity parity = true
@@ -795,7 +795,7 @@ SFinCode := < fa, fb >
 SFin := Sum AnyTree SFinCode
 test SFin fa = true
 test SFin (inj "fa" 5) = false
-test SFin.members = cons t fa (cons t fb (nil t))
+test SFin.members = [fa, fb]
 test is_leaf SN.members = true
 test is_leaf Row.members = true
 test list_len t (Sum AnyTree [pair "mk" [Bool, Bool]]).members = 4
@@ -813,9 +813,9 @@ sn_pred := {n} -> match n : (case_of SN ({_} -> SN)) { sz _ => sz; ss k => k }
 test sn_pred (ss (ss sz)) = ss sz
 test sn_pred sz = sz
 test Fn SN ({_} -> SN) sn_pred = true
-test children SN sz = (nil t)
-test children SLN (scons 1 (scons 2 snil)) = cons t (scons 2 snil) (nil t)
-test children SOrd (op oz (op oz oz)) = cons t oz (cons t (op oz oz) (nil t))
+test children SN sz = []
+test children SLN (scons 1 (scons 2 snil)) = [scons 2 snil]
+test children SOrd (op oz (op oz oz)) = [oz, op oz oz]
 
 // GoodGate: the behavioral certification of a declaration's elimination face.
 // Coherence probe = the type's OWN blessed eliminator must inhabit the
@@ -829,7 +829,7 @@ test GoodGate SOrd = true
 test GoodGate SFin = true
 test GoodGate (List Nat) = true
 test GoodGate Row = true
-LieGate := ({ #recognize := {_self, _v} -> true, gate := {_Ind, _B} -> cons t AnyTree (nil t), elim := {_self, _v, c} -> c })
+LieGate := ({ #recognize := {_self, _v} -> true, gate := {_Ind, _B} -> [AnyTree], elim := {_self, _v, c} -> c })
 test GoodGate LieGate = false
 
 // Coherence: the declaration slots are TRUSTED, so each one gets a probe.
@@ -839,7 +839,7 @@ test GoodGate LieGate = false
 // kernel former, so this catches hand-written types); declared members must be
 // recognized; and a declared gate must still pass GoodGate.
 test Coherent (List Nat) = true
-test Coherent (Record (cons t (pair "a" Nat) (nil t))) = true
+test Coherent (Record [pair "a" Nat]) = true
 test Coherent (Eff Bool Bool Nat) = true
 test Coherent SN = true
 test Coherent SLN = true
@@ -850,7 +850,7 @@ LieEnds := ({ #recognize := {_self, v} -> is_leaf v, ends := pair 2 3 })
 test Coherent LieEnds = false
 LieCheck := ({ #recognize := {_self, v} -> is_leaf v, check := {_jdg, _T, _v} -> true })
 test Coherent LieCheck = false
-LieMembers := ({ #recognize := {_self, v} -> is_leaf v, members := cons t 5 (nil t) })
+LieMembers := ({ #recognize := {_self, v} -> is_leaf v, members := [5] })
 test Coherent LieMembers = false
 test Coherent LieGate = false
 // The member list is the one trusted declaration that was only checked for
@@ -861,7 +861,7 @@ test Coherent LieGate = false
 // cannot witness in general, but the battery does catch a member the recognizer
 // accepts and the list omits, which is what a truncated list looks like. Lie
 // detector, not a proof.
-PartialMembers := ({ #recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({_l, _r} -> false) v, members := cons t true (nil t) })
+PartialMembers := ({ #recognize := {_self, v} -> triage true ({c} -> tree_eq c t) ({_l, _r} -> false) v, members := [true] })
 test PartialMembers false = true
 test member t false PartialMembers.members = false
 test Coherent PartialMembers = false
@@ -881,7 +881,7 @@ test is_invalid (elim_arity (wait elim_marker (pair t (pair AnyTree ({_} -> Nat)
 NL := List Nat
 test Fn Nat ({_} -> Fn NL ({_} -> NL)) (cons Nat) = true
 test Fn Nat ({_} -> Fn NL ({_} -> NL)) ({h, tl} -> cons t h (cons t (pair 5 5) tl)) = false
-RC := Record (cons t (pair "a" Nat) (cons t (pair "b" Bool) (nil t)))
+RC := Record [pair "a" Nat, pair "b" Bool]
 test Fn Nat ({_} -> RC) ({n} -> ({ a := n, b := true })) = true
 test Fn Nat ({_} -> RC) ({n} -> ({ a := true, b := n })) = false
 BEf := Eff Bool Bool Nat

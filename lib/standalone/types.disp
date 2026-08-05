@@ -32,7 +32,7 @@ reject := t
 
 node_like := Pred ({n} -> or (is_leaf n) (is_fork n))
 
-False := Sum AnyTree (nil AnyTree)
+False := Sum AnyTree []
 Not := {P} -> Fn P ({_} -> False)
 Refine := {A, p} -> ({
   #recognize := {_self, v} -> and (A v) (p v)
@@ -60,11 +60,11 @@ Named := {name, T} -> ({
 })
 
 key_insert := {K} -> fix ({self, k, ks} ->
-  if (is_leaf ks) { cons K k (nil K) }
+  if (is_leaf ks) { [k] }
   else if (tree_eq k (pair_fst ks)) { ks }
   else if (tree_lt k (pair_fst ks)) { cons K k ks }
   else { cons K (pair_fst ks) (self k (pair_snd ks)) })
-key_sort := {K} -> fix ({self, ks} -> if (is_leaf ks) { (nil K) } else { key_insert K (pair_fst ks) (self (pair_snd ks)) })
+key_sort := {K} -> fix ({self, ks} -> if (is_leaf ks) { [] } else { key_insert K (pair_fst ks) (self (pair_snd ks)) })
 Tuple := {keys} -> {
   let ks := key_sort ShallowType keys
   if (not (tree_eq (list_len AnyTree ks) (list_len AnyTree keys))) { invalid keys }
@@ -79,7 +79,7 @@ at := {K, keys, s} -> (fix ({self, ks, v} ->
 nat_elim_raw := {self, n, base, step} -> triage base ({_} -> base) ({_l, k} -> step k (self k base step)) n
 Nat : ShallowType := ({
   #recognize := {self, v} -> triage true ({_} -> false) ({l, r} -> and (tree_eq l t) (self r)) v
-  gate := {Ind, B} -> cons ShallowType (B zero) (cons ShallowType (PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))) (nil ShallowType))
+  gate := {Ind, B} -> [B zero, PiCode Ind ({k} -> PiCode (B k) ({_} -> B (succ k)))]
   elim := nat_elim_raw
 })
 test Nat zero = true
@@ -93,14 +93,14 @@ nat_rec : Pi Guard ShallowType ({C} -> Fn Nat ({_} -> Fn C ({_} -> Fn (pair_fst 
   := {C} -> elim_of Nat ({_} -> C)
 
 test ShallowType Bool = true
-test tree_eq (Tuple (cons t Nat (cons t Bool (nil t)))) (Tuple (cons t Bool (cons t Nat (nil t)))) = true
-test Tuple (cons t Nat (cons t Bool (nil t))) (pair true 2) = true
-test Tuple (cons t Nat (cons t Bool (nil t))) (pair 2 true) = false
+test tree_eq (Tuple [Nat, Bool]) (Tuple [Bool, Nat]) = true
+test Tuple [Nat, Bool] (pair true 2) = true
+test Tuple [Nat, Bool] (pair 2 true) = false
 test (Named "cost" Nat) 3 = true
 test (Named "cost" Nat).name = "cost"
 test tree_eq (Named "cost" Nat).under Nat = true
 test tree_eq (Named "cost" Nat) (Named "price" Nat) = false
-test field (make_record (cons t Nat (nil t)) (cons t (list_const 7) (nil t))) Nat = 7
+test field (make_record [Nat] [list_const 7]) Nat = 7
 test field ({ (Nat) := 7, (Bool) := true }) Nat = 7
 test field ({ (Nat) := 7, (Bool) := true }) Bool = true
 test tree_eq ({ (Nat) := 7, (Bool) := true }) ({ (Bool) := true, (Nat) := 7 }) = true
@@ -109,7 +109,7 @@ test Fn ShallowType ({_} -> Bool) ({T} -> T 5) = true
 test Fn ShallowType ({_} -> Bool) ({T} -> bool_case Bool (T 5) false true) = true
 test Fn ShallowType ({_} -> Nat) ({T} -> T 5) = false
 
-Point := {c} -> ({ #recognize := {_self, v} -> tree_eq c v, members := cons AnyTree c (nil AnyTree) })
+Point := {c} -> ({ #recognize := {_self, v} -> tree_eq c v, members := [c] })
 
 refl := t
 Eq := {A, x, y} -> {
@@ -117,7 +117,7 @@ Eq := {A, x, y} -> {
   let ny := canon A y
   ({
     #recognize := {_self, v} -> and (is_leaf v) (tree_eq nx ny)
-    gate := {_Ind, B} -> cons ShallowType (B nx) (nil ShallowType)
+    gate := {_Ind, B} -> [B nx]
     elim := {_self, _p, base} -> base
     land := {B, _self} -> B ny
     ends := pair nx ny
@@ -138,7 +138,7 @@ test eq_cong Nat succ 2 2 refl = refl
 tree_elim_raw := {self, v, on_leaf, on_stem, on_fork} -> triage on_leaf ({c} -> on_stem c (self c on_leaf on_stem on_fork)) ({l, r} -> on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
 Tree : ShallowType := ({
   #recognize := {_self, _v} -> true
-  gate := {Ind, B} -> cons ShallowType (B t) (cons ShallowType (PiCode Ind ({c} -> PiCode (B c) ({_} -> B (t c)))) (cons ShallowType (PiCode Ind ({l} -> PiCode Ind ({r} -> PiCode (B l) ({_} -> PiCode (B r) ({_} -> B (t l r)))))) (nil ShallowType)))
+  gate := {Ind, B} -> [B t, PiCode Ind ({c} -> PiCode (B c) ({_} -> B (t c))), PiCode Ind ({l} -> PiCode Ind ({r} -> PiCode (B l) ({_} -> PiCode (B r) ({_} -> B (t l r)))))]
   elim := tree_elim_raw
 })
 tree_rec : Pi Guard ShallowType ({C} -> Fn Tree ({_} -> Fn (pair_fst (Tree.gate Tree (b_abs (inj "@absent" t) C))) ({_} -> Fn (pair_fst (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C)))) ({_} -> Fn (pair_fst (pair_snd (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C))))) ({_} -> C)))))
@@ -185,23 +185,23 @@ test Coherent (Eq Nat 2 3) = true
 list_len_t : Tree -> Nat
   := {xs} -> tree_rec Nat xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
 list_snoc_t : Tree -> Tree -> Tree
-  := {xs, x} -> tree_rec Tree xs (cons AnyTree x (nil AnyTree)) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons AnyTree l ir)
+  := {xs, x} -> tree_rec Tree xs [x] ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons AnyTree l ir)
 list_map_t : (Tree -> Tree) -> Tree -> Tree
-  := {f, xs} -> tree_rec Tree xs (nil AnyTree) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons AnyTree (f l) ir)
+  := {f, xs} -> tree_rec Tree xs [] ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons AnyTree (f l) ir)
 list_all_t : (Tree -> Bool) -> Tree -> Bool
   := {p, xs} -> tree_rec Bool xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_case Bool (p l) ir false)
-test list_len_t (cons t 7 (cons t 7 (nil t))) = 2
-test list_snoc_t (cons t 1 (nil t)) 2 = cons t 1 (cons t 2 (nil t))
-test list_map_t succ (cons t 1 (cons t 2 (nil t))) = cons t 2 (cons t 3 (nil t))
-test list_all_t is_leaf (cons t t (cons t t (nil t))) = true
-test list_all_t is_leaf (cons t t (cons t 2 (nil t))) = false
+test list_len_t [7, 7] = 2
+test list_snoc_t [1] 2 = [1, 2]
+test list_map_t succ [1, 2] = [2, 3]
+test list_all_t is_leaf [t, t] = true
+test list_all_t is_leaf [t, 2] = false
 test Fn Tree ({_} -> Bool) is_leaf = false
 
 let list_mem := {ej, rj, A, v} -> triage true ({_} -> false) ({h, tl} -> and (ej A h) (rj tl)) v
 List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
   #recognize := {self, v} -> list_mem ({ty, a} -> ty a) self A v
   check := {jdg, T, v} -> list_mem jdg ({a} -> jdg T a) A v
-  gate := {Ind, B} -> cons ShallowType (B (nil A)) (cons ShallowType (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons A h tl))))) (nil ShallowType))
+  gate := {Ind, B} -> [B [], PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons A h tl))))]
   elim := list_elim_raw
 })
 
@@ -209,20 +209,20 @@ List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
 // CONCRETES under both walkers; application to a NEUTRAL argument is refused
 // by both -- a shared frontier (dependent application at abstract points),
 // not a table gap.
-test Fn ShallowType ({A} -> Fn ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B)))) ({A, B, f, xs} -> (elim_of (List A) ({_} -> List B)) xs (nil t) ({h, _tl, _ih} -> h)) = false
+test Fn ShallowType ({A} -> Fn ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B)))) ({A, B, f, xs} -> (elim_of (List A) ({_} -> List B)) xs [] ({h, _tl, _ih} -> h)) = false
 // The Meta gap: abstract values cannot act as recognizers, so Meta refuses
 // every type-polymorphic function, even the tautological one.
 test Pi Meta ShallowType ({T} -> Fn AnyTree ({_} -> Bool)) ({T, v} -> T v) = false
 test Pi Guard ShallowType ({T} -> Fn AnyTree ({_} -> Bool)) ({T, v} -> T v) = false
 test Pi Meta ShallowType ({_} -> Bool) ({T} -> T 5) = true
-list_samples := cons (List Nat) (nil Nat) (cons (List Nat) (cons Nat 1 (nil Nat)) (cons (List Nat) (cons Nat 1 (cons Nat 2 (nil Nat))) (nil (List Nat))))
+list_samples := [[], [1], [1, 2]]
 
 let eff_mem := {ej, rj, Q, X, v} -> (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
 Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType)))
   := {Q, Ans, X} -> ({
   #recognize := {self, v} -> eff_mem ({ty, a} -> ty a) self Q X v
   check := {jdg, T, v} -> eff_mem jdg ({a} -> jdg T a) Q X v
-  gate := {Ind, B} -> cons ShallowType (PiCode X ({x} -> B (Pure x))) (cons ShallowType (PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))) (nil ShallowType))
+  gate := {Ind, B} -> [PiCode X ({x} -> B (Pure x)), PiCode Q ({q} -> PiCode (PiCode Ans ({_} -> Ind)) ({k} -> PiCode (PiCode Ans ({r} -> B (k r))) ({_} -> B (Op (pair q k)))))]
   elim := {self, m, on_pure, on_op} -> (match m { Pure x => (on_pure x); Op q k => (on_op q k ({r} -> self (k r) on_pure on_op)) })
 })
 test Eff Row AnyTree AnyTree (PiCode AnyTree ({_} -> AnyTree)).tele = true
@@ -250,16 +250,16 @@ list_rows := {A} -> (fix ({self, get} -> {
   }
 }))
 ListR := {A} -> Tele Guard (list_rows A ({v} -> v))
-test ListR Nat (nil t) = true
-test ListR Nat (cons t 1 (cons t 2 (nil t))) = true
-test ListR Nat (cons t 1 (cons t (t t) (nil t))) = false
+test ListR Nat [] = true
+test ListR Nat [1, 2] = true
+test ListR Nat [1, t t] = false
 test ListR Nat (t t) = false
 // Structural pun, shared with the kernel's List: succ n = cons zero n, so a
 // nat IS a list of zeros. Shallow types see trees, not intent.
 test ListR Nat 5 = true
 test List Nat 5 = true
-test ListR (ListR Bool) (cons t (cons t true (nil t)) (cons t (nil t) (nil t))) = true
-test ListR (ListR Bool) (cons t (cons t 5 (nil t)) (nil t)) = false
+test ListR (ListR Bool) [[true], []] = true
+test ListR (ListR Bool) [[5]] = false
 
 // 2. Vectors: same list, but the length is a parameter driving row generation.
 vec_rows := {A} -> fix ({self, n, get} ->
@@ -270,10 +270,10 @@ vec_rows := {A} -> fix ({self, n, get} ->
     self (pair_snd n) ({v} -> pair_snd (get v))
   })
 Vec := {n, A} -> Tele Guard (vec_rows A n ({v} -> v))
-test Vec 2 Bool (cons t true (cons t false (nil t))) = true
-test Vec 2 Bool (cons t true (nil t)) = false
-test Vec 2 Bool (cons t true (cons t false (cons t true (nil t)))) = false
-test Vec 0 Bool (nil t) = true
+test Vec 2 Bool [true, false] = true
+test Vec 2 Bool [true] = false
+test Vec 2 Bool [true, false, true] = false
+test Vec 0 Bool [] = true
 
 // 3. Records with names: entries data -> one presence row + one field row each.
 record_rows := fix ({self, entries} ->
@@ -285,18 +285,18 @@ record_rows := fix ({self, entries} ->
     self (pair_snd entries)
   })
 NamedRec := {entries} -> Tele Guard (record_rows entries)
-xy := cons AnyTree (pair "x" Nat) (cons AnyTree (pair "y" Bool) (nil AnyTree))
+xy := [pair "x" Nat, pair "y" Bool]
 test NamedRec xy ({ x := 2, y := false }) = true
 test NamedRec xy ({ x := 2 }) = false
 test NamedRec xy ({ x := 2, y := 5 }) = false
 test NamedRec xy ({ x := 2, y := false, z := 9 }) = true
-test NamedRec (cons t (pair "step" GuardNatToNat) (nil t)) ({ step := succ }) = true
-test NamedRec (cons t (pair "step" GuardNatToNat) (nil t)) ({ step := not_bool }) = false
+test NamedRec [pair "step" GuardNatToNat] ({ step := succ }) = true
+test NamedRec [pair "step" GuardNatToNat] ({ step := not_bool }) = false
 
 // 4. Type-keyed records: keys are trees, so a type can be its own key.
 TypeRec := {tys} -> NamedRec (list_map AnyTree AnyTree ({T} -> pair T T) tys)
-test TypeRec (cons t Nat (cons t Bool (nil t))) ({ (Nat) := 7, (Bool) := false }) = true
-test TypeRec (cons t Nat (cons t Bool (nil t))) ({ (Nat) := false, (Bool) := false }) = false
+test TypeRec [Nat, Bool] ({ (Nat) := 7, (Bool) := false }) = true
+test TypeRec [Nat, Bool] ({ (Nat) := false, (Bool) := false }) = false
 
 // 5. Intersection: a list of predicates, all applied to the subject itself.
 all_rows := fix ({self, tys} ->
@@ -306,26 +306,26 @@ all_rows := fix ({self, tys} ->
     self (pair_snd tys)
   })
 AllOf := {tys} -> Tele Guard (all_rows tys)
-test AllOf (cons t Nat (cons t (Point 5) (nil t))) 5 = true
-test AllOf (cons t Nat (cons t (Point 5) (nil t))) 6 = false
-test AllOf (nil t) 5 = true
+test AllOf [Nat, Point 5] 5 = true
+test AllOf [Nat, Point 5] 6 = false
+test AllOf [] 5 = true
 
 // 6. Unique application: each predicate must claim a distinct list element.
 // The continuation searches for a bijection (untrusted), then emits one row
 // per matched pair so every claim is re-judged by the checker.
 splits := fix ({self, xs} ->
-  if (is_leaf xs) { (nil AnyTree) }
+  if (is_leaf xs) { [] }
   else { cons AnyTree (pair (pair_fst xs) (pair_snd xs))
               (list_map AnyTree AnyTree ({p} -> pair (pair_fst p) (cons AnyTree (pair_fst xs) (pair_snd p))) (self (pair_snd xs))) })
 bijection := fix ({self, tys, xs} ->
-  if (is_leaf tys) { if (is_leaf xs) { cons AnyTree (nil AnyTree) (nil AnyTree) } else { (nil AnyTree) } }
+  if (is_leaf tys) { if (is_leaf xs) { [[]] } else { [] } }
   else { (fix ({try, cands} ->
-    if (is_leaf cands) { (nil AnyTree) }
+    if (is_leaf cands) { [] }
     else {
       let c := pair_fst cands
-      let rest := if ((pair_fst tys) (pair_fst c)) { self (pair_snd tys) (pair_snd c) } else { (nil AnyTree) }
+      let rest := if ((pair_fst tys) (pair_fst c)) { self (pair_snd tys) (pair_snd c) } else { [] }
       if (is_leaf rest) { try (pair_snd cands) }
-      else { cons AnyTree (cons AnyTree (pair (pair_fst tys) (pair_fst c)) (pair_fst rest)) (nil AnyTree) }
+      else { [cons AnyTree (pair (pair_fst tys) (pair_fst c)) (pair_fst rest)] }
     })) (splits xs) })
 unique_rows := {tys} -> {
   v <- self_is (List AnyTree)
@@ -339,10 +339,10 @@ unique_rows := {tys} -> {
     })) (pair_fst m) }
 }
 UniqueOf := {tys} -> Tele Guard (unique_rows tys)
-test UniqueOf (cons t (Point 5) (cons t (Point 6) (nil t))) (cons t 6 (cons t 5 (nil t))) = true
-test UniqueOf (cons t (Point 5) (cons t (Point 6) (nil t))) (cons t 5 (cons t 5 (nil t))) = false
-test UniqueOf (cons t AnyTree (cons t (Point 5) (nil t))) (cons t 5 (cons t 7 (nil t))) = true
-test UniqueOf (cons t AnyTree (cons t AnyTree (nil t))) (cons t 5 (nil t)) = false
+test UniqueOf [Point 5, Point 6] [6, 5] = true
+test UniqueOf [Point 5, Point 6] [5, 5] = false
+test UniqueOf [AnyTree, Point 5] [5, 7] = true
+test UniqueOf [AnyTree, AnyTree] [5] = false
 
 // 7. Tree checkers: branch at each node, sequence the two child programs.
 tree_rows := {LeafTy} -> (fix ({self, get} -> {
@@ -419,7 +419,7 @@ len_xs_rows := {
   vec_rows Bool n ({r} -> field r "xs")
 }
 LenXs := Tele Guard len_xs_rows
-test LenXs ({ len := 2, xs := cons t true (cons t false (nil t)) }) = true
-test LenXs ({ len := 1, xs := cons t true (cons t false (nil t)) }) = false
-test LenXs ({ len := 3, xs := cons t true (cons t false (nil t)) }) = false
-test LenXs ({ xs := cons t true (nil t) }) = false
+test LenXs ({ len := 2, xs := [true, false] }) = true
+test LenXs ({ len := 1, xs := [true, false] }) = false
+test LenXs ({ len := 3, xs := [true, false] }) = false
+test LenXs ({ xs := [true] }) = false
