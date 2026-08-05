@@ -11,6 +11,9 @@ open use raw "kernel.disp" {}
 // re-verifies every Fn-annotated definition below under that walker.
 given GenericWalker : AnyTree := Guard
 Fn := Pi GenericWalker
+// Re-point the binder sugar at Fn here: the raw kernel open exports a
+// neutral-Fn settings entry (givens unfilled), so the real one must rebind.
+elab_settings := [t "Pi" Fn]
 
 // A telescope is just data: a free-monad program over Fresh/Observe rows.
 // eff_bind is what the `x <- e` block sugar desugars to: graft k onto the
@@ -86,7 +89,7 @@ test Nat (t t) = false
 test Nat (make_hyp Nat Nat) = false
 test Nat (succ (make_hyp Nat Nat)) = false
 nat_step_ty : ShallowType := pair_fst (pair_snd (Nat.gate Nat ({_} -> Nat)))
-nat_rec : Pi Guard ShallowType ({C} -> Fn Nat ({_} -> Fn C ({_} -> Fn (pair_fst (pair_snd (Nat.gate Nat (b_abs (inj "@absent" t) C)))) ({_} -> C))))
+nat_rec : {C : ShallowType} -> Nat -> C -> (pair_fst (pair_snd (Nat.gate Nat (b_abs (inj "@absent" t) C)))) -> C
   := {_C} -> fix nat_elim_raw
 
 test ShallowType Bool = true
@@ -138,7 +141,7 @@ Tree : ShallowType := ({
   gate := {Ind, B} -> cons ShallowType (B t) (cons ShallowType (PiCode Ind ({c} -> PiCode (B c) ({_} -> B (t c)))) (cons ShallowType (PiCode Ind ({l} -> PiCode Ind ({r} -> PiCode (B l) ({_} -> PiCode (B r) ({_} -> B (t l r)))))) (nil ShallowType)))
   elim := tree_elim_raw
 })
-tree_rec : Pi Guard ShallowType ({C} -> Fn Tree ({_} -> Fn (pair_fst (Tree.gate Tree (b_abs (inj "@absent" t) C))) ({_} -> Fn (pair_fst (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C)))) ({_} -> Fn (pair_fst (pair_snd (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C))))) ({_} -> C)))))
+tree_rec : {C : ShallowType} -> Tree -> (pair_fst (Tree.gate Tree (b_abs (inj "@absent" t) C))) -> (pair_fst (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C)))) -> (pair_fst (pair_snd (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C))))) -> C
   := {_C} -> fix tree_elim_raw
 
 GoodGate := {T} -> {
@@ -179,13 +182,13 @@ test Coherent (Point 5) = true
 test Coherent (Eq Nat 2 2) = true
 test Coherent (Eq Nat 2 3) = true
 
-list_len_t : Fn Tree ({_} -> Nat)
+list_len_t : Tree -> Nat
   := {xs} -> tree_rec ({_} -> Nat) xs zero ({_c, _ih} -> zero) ({_l, _r, _il, ir} -> succ ir)
-list_snoc_t : Fn Tree ({_} -> Fn Tree ({_} -> Tree))
+list_snoc_t : Tree -> Tree -> Tree
   := {xs, x} -> tree_rec ({_} -> Tree) xs (cons AnyTree x (nil AnyTree)) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons AnyTree l ir)
-list_map_t : Fn (Fn Tree ({_} -> Tree)) ({_} -> Fn Tree ({_} -> Tree))
+list_map_t : (Tree -> Tree) -> Tree -> Tree
   := {f, xs} -> tree_rec ({_} -> Tree) xs (nil AnyTree) ({_c, _ih} -> t) ({l, _r, _il, ir} -> cons AnyTree (f l) ir)
-list_all_t : Fn (Fn Tree ({_} -> Bool)) ({_} -> Fn Tree ({_} -> Bool))
+list_all_t : (Tree -> Bool) -> Tree -> Bool
   := {p, xs} -> tree_rec ({_} -> Bool) xs true ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_case Bool (p l) ir false)
 test list_len_t (cons t 7 (cons t 7 (nil t))) = 2
 test list_snoc_t (cons t 1 (nil t)) 2 = cons t 1 (cons t 2 (nil t))
@@ -195,7 +198,7 @@ test list_all_t is_leaf (cons t t (cons t 2 (nil t))) = false
 test Fn Tree ({_} -> Bool) is_leaf = false
 
 let list_mem := {ej, rj, A, v} -> triage true ({_} -> false) ({h, tl} -> and (ej A h) (rj tl)) v
-List : Pi Guard ShallowType ({_} -> ShallowType) := {A} -> ({
+List : ShallowType -> ShallowType := {A} -> ({
   #recognize := {self, v} -> list_mem ({ty, a} -> ty a) self A v
   check := {jdg, T, v} -> list_mem jdg ({a} -> jdg T a) A v
   gate := {Ind, B} -> cons ShallowType (B (nil A)) (cons ShallowType (PiCode A ({h} -> PiCode Ind ({tl} -> PiCode (B tl) ({_} -> B (cons A h tl))))) (nil ShallowType))
@@ -215,7 +218,7 @@ test Pi Meta ShallowType ({_} -> Bool) ({T} -> T 5) = true
 list_samples := cons (List Nat) (nil Nat) (cons (List Nat) (cons Nat 1 (nil Nat)) (cons (List Nat) (cons Nat 1 (cons Nat 2 (nil Nat))) (nil (List Nat))))
 
 let eff_mem := {ej, rj, Q, X, v} -> (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
-Eff : Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> Pi Guard ShallowType ({_} -> ShallowType)))
+Eff : ShallowType -> ShallowType -> ShallowType -> ShallowType
   := {Q, Ans, X} -> ({
   #recognize := {self, v} -> eff_mem ({ty, a} -> ty a) self Q X v
   check := {jdg, T, v} -> eff_mem jdg ({a} -> jdg T a) Q X v
@@ -229,9 +232,9 @@ test Eff Row AnyTree AnyTree 5 = false
 
 GuardNatToNat : ShallowType := Pi Guard Nat ({_} -> Nat)
 
-add : Fn Nat ({_} -> Fn Nat ({_} -> Nat)) := {n, m} -> nat_rec Nat n m ({k, ih} -> succ ih)
-not_bool : Fn Bool ({_} -> Bool) := {b} -> bool_case Bool b false true
-elim_id : Fn Nat ({_} -> Nat) := {n} -> nat_rec Nat n zero ({k, ih} -> succ ih)
+add : Nat -> Nat -> Nat := {n, m} -> nat_rec Nat n m ({k, ih} -> succ ih)
+not_bool : Bool -> Bool := {b} -> bool_case Bool b false true
+elim_id : Nat -> Nat := {n} -> nat_rec Nat n zero ({k, ih} -> succ ih)
 test add 2 3 = 5
 test add 0 4 = 4
 test ShallowType Nat = true
