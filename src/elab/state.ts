@@ -67,18 +67,23 @@ export const moduleCacheBySession = new WeakMap<Session<Tree>, Map<string, Scope
 // the second one to load is not a shadow of the first. Only definitions made by a
 // MODULE register; a root file defining one of these names is exactly the override
 // the check exists to detect, so it stays a shadow.
-const vocabBySession = new WeakMap<Session<Tree>, Map<string, Set<number>>>()
+const vocabBySession = new WeakMap<Session<Tree>, Map<string, Map<number, Tree>>>()
 export const VOCAB_NAMES = new Set(["default_guard", "let", "test", "given"])
 export function registerVocab(s: Session<Tree>, name: string, t: Tree): void {
   let m = vocabBySession.get(s)
   if (!m) { m = new Map(); vocabBySession.set(s, m) }
   let ids = m.get(name)
-  if (!ids) { ids = new Set(); m.set(name, ids) }
-  ids.add(internTreeId(s, t))
+  if (!ids) { ids = new Map(); m.set(name, ids) }
+  ids.set(internTreeId(s, t), t)
 }
 /// Is this in-scope binding one of the kernels' own definitions of `name`?
 export function isPristineVocab(s: Session<Tree>, name: string, t: Tree): boolean {
   return vocabBySession.get(s)?.get(name)?.has(internTreeId(s, t)) ?? false
+}
+/// The registered kernel definitions per vocabulary name (for snapshotting).
+export function vocabRoots(s: Session<Tree>): Array<[string, Tree[]]> {
+  const m = vocabBySession.get(s)
+  return m ? [...m].map(([name, ids]) => [name, [...ids.values()]] as [string, Tree[]]) : []
 }
 
 // Session-scoped tree intern ids: a stable small key per distinct handle, used to

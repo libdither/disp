@@ -24,13 +24,14 @@ import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
 import {
   moduleCacheBySession,
-  pristineTest,
+  registerVocab,
+  vocabRoots,
   type ScopeEntry,
   type LicenseCert
 } from '../../../../src/elab/state.ts'
 
 const MAGIC = 0x504e5344 // "DSNP" LE
-const VERSION = 1
+const VERSION = 2
 
 // The wire shape of one module-cache entry: tree fields become node indices.
 interface JEntry {
@@ -50,7 +51,7 @@ interface Header {
   v: number
   hash: string // vfs content hash the snapshot was built against
   n: number // node count
-  pt?: number // pristineTest root
+  vb?: Array<[string, number[]]> // declaration-protocol vocabulary roots per name
   entries: JEntry[]
 }
 
@@ -235,9 +236,11 @@ export function dumpSnapshot(
     entries.push(j)
   }
 
-  const pt = pristineTest.get(asTreeSession(session))
+  const vb = vocabRoots(asTreeSession(session)).map(
+    ([name, trees]) => [name, trees.map((t) => emit(asHandle(t)))] as [string, number[]]
+  )
   const header: Header = { v: VERSION, hash, n: count, entries }
-  if (pt != null) header.pt = emit(asHandle(pt))
+  if (vb.some(([, xs]) => xs.length > 0)) header.vb = vb
 
   const json = new TextEncoder().encode(JSON.stringify(header))
   const out = new ByteWriter()
@@ -313,7 +316,7 @@ export function restoreSnapshot(
     map.set(mapKey(j.k), e)
   }
   moduleCacheBySession.set(asTreeSession(session), map)
-  if (header.pt !== undefined) pristineTest.set(asTreeSession(session), at(header.pt))
+  for (const [name, idxs] of header.vb ?? []) for (const i of idxs) registerVocab(asTreeSession(session), name, at(i))
 
   // Re-register the native tree_eq fast-path: normally fired when the binding
   // elaborates, which a restore skips. Hash-consing means every entry that
