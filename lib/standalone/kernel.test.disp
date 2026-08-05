@@ -36,7 +36,7 @@ fn_expected := { successor := true, identity := true, duplicate := false, currie
 elim_suite := {Pi} -> {
   let NN := Pi Nat ({_} -> Nat)
   let NB := Pi Nat ({_} -> Bool)
-  ({ fold := NN elim_id, after_constructor := NN ({n} -> succ (elim_id n)), on_constructor := NN ({n} -> elim_id (succ n)), step_discard := NN ({n} -> nat_rec t (succ n) zero ({k, ih} -> zero)), composed := NN ({n} -> elim_id (elim_id n)), wrong_motive := NB elim_id, bad_base := NN ({n} -> nat_rec t n false ({k, ih} -> false)), bad_step_on_constructor := NN ({n} -> nat_rec t (succ n) zero ({k, ih} -> pair 5 5)) })
+  ({ fold := NN elim_id, after_constructor := NN ({n} -> succ (elim_id n)), on_constructor := NN ({n} -> elim_id (succ n)), step_discard := NN ({n} -> nat_rec Nat (succ n) zero ({k, ih} -> zero)), composed := NN ({n} -> elim_id (elim_id n)), wrong_motive := NB elim_id, bad_base := NN ({n} -> nat_rec Nat n false ({k, ih} -> false)), bad_step_on_constructor := NN ({n} -> nat_rec Nat (succ n) zero ({k, ih} -> pair 5 5)) })
 }
 elim_expected := { fold := true, after_constructor := true, on_constructor := true, step_discard := true, composed := true, wrong_motive := false, bad_base := false, bad_step_on_constructor := false }
 
@@ -68,8 +68,8 @@ ho_suite := {Pi} -> {
     const_arg := F ({g} -> 5)
     ill_typed_frame := F ({g} -> g false)
     use_result := F ({g} -> succ (g zero))
-    elim_on_spine := F ({g} -> nat_rec t (g zero) zero ({k, ih} -> succ ih))
-    bad_frame_under_elim := F ({g} -> nat_rec t (g false) zero ({k, ih} -> succ ih))
+    elim_on_spine := F ({g} -> nat_rec Nat (g zero) zero ({k, ih} -> succ ih))
+    bad_frame_under_elim := F ({g} -> nat_rec Nat (g false) zero ({k, ih} -> succ ih))
     eta_arg := FF ({g} -> g)
     eta_expanded := FF ({g} -> {n} -> g n)
     succ_frame := F ({g} -> g (succ zero))
@@ -425,8 +425,8 @@ test Pi Meta BoolEff ({_} -> SB) run_both = false
 // with ih | fork l r with both ihs). The raw readers' typed twins certify
 // through it on both walking tiers; the raw reader itself stays refused (the
 // sealed-core edge), and a junk arm fails its obligation.
-tree_rec_n := tree_rec ({_} -> Nat)
-tree_rec_b := tree_rec ({_} -> Bool)
+tree_rec_n := tree_rec Nat
+tree_rec_b := tree_rec Bool
 leaf_count := {v} -> tree_rec_n v 1 ({_c, ih} -> ih) ({_l, _r, ihl, ihr} -> add ihl ihr)
 test leaf_count (t (t t) (t t t)) = 3
 test Pi Guard Tree ({_} -> Nat) leaf_count = true
@@ -443,7 +443,7 @@ test Pi Guard Tree ({_} -> Bool) ({v} -> tree_rec_b v true ({_c, _ih} -> 5) ({_l
 // banned reader. That split is the typed frontier of the kernel's helper layer.
 test Pi Meta Tree ({_} -> Nat) list_len_t = true
 test Pi Meta (Pi Meta Tree ({_} -> Tree)) ({_} -> Pi Meta Tree ({_} -> Tree)) list_map_t = true
-member_t := {node, xs} -> tree_rec ({_} -> Bool) xs false ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_case t (tree_eq node l) true ir)
+member_t := {node, xs} -> tree_rec Bool xs false ({_c, _ih} -> false) ({l, _r, _il, ir} -> bool_case t (tree_eq node l) true ir)
 test member_t 2 (cons t 1 (cons t 2 (nil t))) = true
 test Pi Guard Tree ({_} -> Bool) (member_t zero) = false
 test Pi Meta Tree ({_} -> Bool) (member_t zero) = false
@@ -650,7 +650,7 @@ test tree_eq (neutral_type (add (make_hyp Nat "k") zero)) Nat = true
 // hypothesis (the same discipline motives follow). The coherence suite gained
 // the matching obligation: a normalizer must be idempotent and must map
 // members to members.
-parity := {n} -> nat_rec t n zero ({k, ih} -> nat_rec t ih (succ zero) ({_a, _b} -> zero))
+parity := {n} -> nat_rec Nat n zero ({k, ih} -> nat_rec Nat ih (succ zero) ({_a, _b} -> zero))
 Parity := Quotient Nat parity
 test parity 4 = 0
 test parity 5 = 1

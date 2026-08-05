@@ -8,25 +8,25 @@ open given { AnyTree : AnyTree, RawRecord : AnyTree, Fn : AnyTree, elab_settings
 // make_record + list_const (record literals), Coproduct (sum literals), prod (match).
 
 inj := {name, payload} -> pair name payload
-nil : {A : ShallowType} -> List A := {_A} -> t
-cons : {A : ShallowType} -> A -> List A -> List A
+nil : Pi Guard ShallowType ({A} -> List A) := {_A} -> t
+cons : Pi Guard ShallowType ({A} -> Fn A ({_} -> Fn (List A) ({_} -> List A)))
   := {_A, h, tl} -> t h tl
 list_const : AnyTree -> AnyTree := {x} -> t t x
 bool_elim_raw := {_self, b, true_case, false_case} -> triage true_case ({_} -> false_case) ({_l, _r} -> true_case) b
 list_elim_raw := {self, xs, base, step} -> triage base ({_} -> base) ({h, tl} -> step h tl (self tl base step)) xs
-bool_case : {C : ShallowType} -> Bool -> C -> C -> C
+bool_case : Pi Guard ShallowType ({C} -> Fn Bool ({_} -> Fn C ({_} -> Fn C ({_} -> C))))
   := {_C} -> fix bool_elim_raw
-list_rec : {A : ShallowType, C : ShallowType} -> List A -> C -> (pair_fst (pair_snd ((List A).gate (List A) (b_abs (inj "@absent" t) C)))) -> C
+list_rec : Pi Guard ShallowType ({A} -> Pi Guard ShallowType ({C} -> Fn (List A) ({_} -> Fn C ({_} -> Fn (pair_fst (pair_snd ((List A).gate (List A) (b_abs (inj "@absent" t) C)))) ({_} -> C)))))
   := {_A, _C} -> fix list_elim_raw
-member : {A : ShallowType} -> AnyTree -> List A -> Bool
+member : Pi Guard ShallowType ({A} -> Fn AnyTree ({_} -> Fn (List A) ({_} -> Bool)))
   := {A, node, xs} -> list_rec A t xs false ({h, _tl, ih} -> bool_case t (tree_eq node h) true ih)
-list_all : {A : ShallowType} -> (A -> Bool) -> List A -> Bool
+list_all : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> Bool)))
   := {A, p, xs} -> list_rec A t xs true ({h, _tl, ih} -> bool_case t (p h) ih false)
-list_map : {A : ShallowType, B : ShallowType} -> (A -> B) -> List A -> List B
+list_map : Pi Guard ShallowType ({A} -> Pi Guard ShallowType ({B} -> Fn (Fn A ({_} -> B)) ({_} -> Fn (List A) ({_} -> List B))))
   := {A, B, f, xs} -> list_rec A t xs (nil B) ({h, _tl, ih} -> cons B (f h) ih)
-list_len : {A : ShallowType} -> List A -> Nat
+list_len : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Nat))
   := {A, xs} -> list_rec A t xs zero ({_h, _tl, ih} -> succ ih)
-list_snoc : {A : ShallowType} -> List A -> A -> List A
+list_snoc : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn A ({_} -> List A)))
   := {A, xs, x} -> list_rec A t xs (cons A x (nil A)) ({h, _tl, ih} -> cons A h ih)
 list_zip : Pi (Sampled (cons t (cons t 1 (cons t 2 (nil t))) (nil t))) (List AnyTree) ({_} -> Pi (Sampled (cons t (cons t true (cons t false (nil t))) (nil t))) (List AnyTree) ({_} -> List AnyTree))
   := fix ({self, xs, ys} ->
@@ -34,9 +34,9 @@ list_zip : Pi (Sampled (cons t (cons t 1 (cons t 2 (nil t))) (nil t))) (List Any
 list_apply : Pi (Sampled (cons t pair (nil t))) AnyTree ({_} -> Pi (Sampled (cons t (cons t 1 (cons t 2 (nil t))) (nil t))) (List AnyTree) ({_} -> AnyTree))
   := fix ({self, f, xs} ->
   if (is_leaf xs) { f } else { self (f (pair_fst xs)) (pair_snd xs) })
-list_cat : {A : ShallowType} -> List A -> List A -> List A
+list_cat : Pi Guard ShallowType ({A} -> Fn (List A) ({_} -> Fn (List A) ({_} -> List A)))
   := {A, xs, ys} -> list_rec A t xs ys ({h, _tl, ih} -> cons A h ih)
-list_filter : {A : ShallowType} -> (A -> Bool) -> List A -> List A
+list_filter : Pi Guard ShallowType ({A} -> Fn (Fn A ({_} -> Bool)) ({_} -> Fn (List A) ({_} -> List A)))
   := {A, p, xs} -> list_rec A t xs (nil A) ({h, _tl, ih} -> bool_case t (p h) (cons A h ih) ih)
 list_assoc : Pi (Sampled (cons t "k" (nil t))) AnyTree ({_} -> Pi (Sampled (cons t (cons t (pair "k" 7) (nil t)) (nil t))) (List AnyTree) ({_} -> AnyTree))
   := fix ({self, k, xs} ->
@@ -837,7 +837,7 @@ let record_mem := {ej, entries, r} -> list_all AnyTree ({e} -> {
   let c := field_cell r (pair_fst e)
   if (is_leaf c) { false } else { ej (pair_snd e) (pair_snd c) }
 }) entries
-Record : AnyTree -> ShallowType := {entries} -> ({
+Record : Pi Guard AnyTree ({_} -> ShallowType) := {entries} -> ({
   #recognize := {_self, r} -> record_mem ({ty, a} -> ty a) entries r
   check := {jdg, _T, r} -> record_mem jdg entries r
 })
