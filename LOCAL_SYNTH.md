@@ -267,7 +267,7 @@ different type, cost-grading, and guide — and the kernel's `check` certifies e
   function's residual domain telescope. Today it's hardcoded host TS; under this design it's one
   handler.
 - **`OPTIMIZER.typ`** — the optimizer is the heaviest `synth` guide (cost-graded, `~_A`-refined type).
-- **`NATIVE_BOOSTRAP_PLAN.typ`** — the native elaborator is where the in-language `synth` lives and is
+- **`NATIVE_BOOTSTRAP_PLAN.typ`** — the native elaborator is where the in-language `synth` lives and is
   invoked; the typed item transducer and dependency log provide its reflective dispatcher boundary.
 - **`GOALS.md` / `FOUNDATIONS.md`** — synthesis (optimizer) + reflection (in-language elaborator) +
   certificate-checking, self-applied, is the unoccupied bet; `synth`/`check` is its elaboration-shaped
