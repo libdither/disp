@@ -89,7 +89,7 @@ test Nat (t t) = false
 test Nat (make_hyp Nat Nat) = false
 test Nat (succ (make_hyp Nat Nat)) = false
 nat_step_ty : ShallowType := pair_fst (pair_snd (Nat.gate Nat ({_} => Nat)))
-nat_rec : Pi Guard ShallowType ({C} => Fn Nat ({_} => Fn C ({_} => Fn (pair_fst (pair_snd (Nat.gate Nat (b_abs (inj "@absent" t) C)))) ({_} => C))))
+nat_rec : Pi Guard ShallowType ({C} => Nat -> C -> (pair_fst (pair_snd (Nat.gate Nat (b_abs (inj "@absent" t) C)))) -> C)
   := {C} => elim_of Nat ({_} => C)
 
 test ShallowType Bool = true
@@ -141,7 +141,7 @@ Tree : ShallowType := ({
   gate := {Ind, B} => [B t, PiCode Ind ({c} => PiCode (B c) ({_} => B (t c))), PiCode Ind ({l} => PiCode Ind ({r} => PiCode (B l) ({_} => PiCode (B r) ({_} => B (t l r)))))]
   elim := tree_elim_raw
 })
-tree_rec : Pi Guard ShallowType ({C} => Fn Tree ({_} => Fn (pair_fst (Tree.gate Tree (b_abs (inj "@absent" t) C))) ({_} => Fn (pair_fst (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C)))) ({_} => Fn (pair_fst (pair_snd (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C))))) ({_} => C)))))
+tree_rec : Pi Guard ShallowType ({C} => Tree -> (pair_fst (Tree.gate Tree (b_abs (inj "@absent" t) C))) -> (pair_fst (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C)))) -> (pair_fst (pair_snd (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C))))) -> C)
   := {C} => elim_of Tree ({_} => C)
 
 GoodGate := {T} => {
