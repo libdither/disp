@@ -27,7 +27,7 @@ test f { x := 2, y := 1 } = 4         // 2 + 2*1 — distinct from the above (or
 
 // ── Defaults (value-binder `:=`): an omitted arg falls back to its default,
 //    tree-identical to the explicit positional fill; supplying it overrides. ──
-let g := {x} => {y := 10} -> add x y
+let g := {x} => {y := 10} => add x y
 test tree_eq (g { x := 5 }) (g 5 10) = true       // default-fill tree identity
 test g { x := 5 } = 15
 test g { x := 5, y := 2 } = 7                    // override the default
@@ -41,7 +41,7 @@ test h { x := 1, y := 1 } = 2
 
 // ── A default that references a PRIOR parameter (telescope discipline): the
 //    prior's resolved argument is substituted into the default recipe. ──
-let q := {a} => {b := double a} -> add a b
+let q := {a} => {b := double a} => add a b
 test tree_eq (q { a := 3 }) (q 3 (double 3)) = true
 test q { a := 3 } = 9                            // 3 + double 3
 test q { a := 3, b := 1 } = 4                    // override

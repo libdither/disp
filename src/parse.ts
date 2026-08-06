@@ -1283,7 +1283,7 @@ function bracedFollowedByArrow(ts: Tok[], pos: number): boolean {
         if (depth === 0) { // this is our matching "}"
           let r = q + 1
           while (ts[r]?.t === "nl") r++
-          return ts[r]?.t === "punct" && ((ts[r] as any).v === "->" || (ts[r] as any).v === "→")
+          return ts[r]?.t === "punct" && ((ts[r] as any).v === "->" || (ts[r] as any).v === "→" || (ts[r] as any).v === "=>")
         }
         depth--
       }
