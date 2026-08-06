@@ -14,47 +14,47 @@ open use "../kernel/prelude.disp"
 open use "../std/nat.disp"
 open use "../std/relation.disp"
 
-let NatRB := {u, v} -> Eq Nat u v
-let id_fn := {n} -> n
-let refl_cases := { zero := refl; succ := ({k} -> {_ih} -> refl) }
+let NatRB := {u, v} => Eq Nat u v
+let id_fn := {n} => n
+let refl_cases := { zero := refl; succ := ({k} => {_ih} => refl) }
 
 // ── the family shape: identity licenses against itself by refl ──
 test param_apply (PositiveFnCoverage Nat NatRB id_fn id_fn) refl_cases = Ok true
 
 // ── the top-level-refl door closes: shift fails its zero obligation ──
 // (probe_license_sr pins this same pair PASSING the pointwise license)
-let shift := {n} -> if (is_neutral n) then n else (succ n)
+let shift := {n} => if (is_neutral n) then n else (succ n)
 test param_apply (PositiveFnCoverage Nat NatRB id_fn shift) refl_cases = Ok false
 
 // ── a delegating fast face: refl closes every case (trees converge) ──
-let double_spec := {n} -> nat_rec ({_} -> Nat) 0 ({_k, ih} -> succ (succ ih)) n
-let double_cut := {n} -> (fix ({go, k} ->
+let double_spec := {n} => nat_rec ({_} => Nat) 0 ({_k, ih} => succ (succ ih)) n
+let double_cut := {n} => (fix ({go, k} =>
   if (is_neutral k)
     then (double_spec k)
-    else (triage 0 ({_} -> 0) ({_l, kk} -> succ (succ (go kk))) k))) n
+    else (triage 0 ({_} => 0) ({_l, kk} => succ (succ (go kk))) k))) n
 test double_spec 3 = 6
 test double_cut 3 = 6
 test param_apply (PositiveFnCoverage Nat NatRB double_spec double_cut) refl_cases = Ok true
 
 // ── a genuine replacement: the succ case uses its inductive hypothesis ──
-let addself := {n} -> add n n
-let add_succ_r := {k, m} -> nat_rec
-  ({k_} -> Eq Nat (add k_ (succ m)) (succ (add k_ m)))
+let addself := {n} => add n n
+let add_succ_r := {k, m} => nat_rec
+  ({k_} => Eq Nat (add k_ (succ m)) (succ (add k_ m)))
   refl
-  ({k2, ih} -> eq_cong Nat Nat succ (add k2 (succ m)) (succ (add k2 m)) ih)
+  ({k2, ih} => eq_cong Nat Nat succ (add k2 (succ m)) (succ (add k2 m)) ih)
   k
 test add_succ_r 2 3 = refl
-let addself_succ_case := {k} -> {ih} -> eq_trans Nat
+let addself_succ_case := {k} => {ih} => eq_trans Nat
   (double_spec (succ k))
   (succ (succ (add k k)))
   (addself (succ k))
-  (eq_cong Nat Nat ({x} -> succ (succ x)) (double_spec k) (add k k) ih)
+  (eq_cong Nat Nat ({x} => succ (succ x)) (double_spec k) (add k k) ih)
   (eq_sym Nat (succ (add k (succ k))) (succ (succ (add k k)))
     (eq_cong Nat Nat succ (add k (succ k)) (succ (add k k)) (add_succ_r k k)))
 test param_apply (PositiveFnCoverage Nat NatRB double_spec addself) { zero := refl; succ := addself_succ_case } = Ok true
 
 // ── the residual-hyp door, honestly: a payload-face probe still passes ──
-let deep_probe := {n} -> if (is_neutral n) then n else (if (is_neutral (pair_snd n)) then n else 0)
+let deep_probe := {n} => if (is_neutral n) then n else (if (is_neutral (pair_snd n)) then n else 0)
 test param_apply (PositiveFnCoverage Nat NatRB id_fn deep_probe) refl_cases = Ok true
 test deep_probe 4 = 0
 

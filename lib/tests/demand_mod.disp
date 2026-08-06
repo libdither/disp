@@ -4,5 +4,5 @@
 open use "../kernel/prelude.disp"
 open given { A : Type, B : Type }
 
-just_a : A -> A := {x} -> x
-both : A -> B -> B := {x, y} -> y
+just_a : A -> A := {x} => x
+both : A -> B -> B := {x, y} => y

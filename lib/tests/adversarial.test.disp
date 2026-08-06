@@ -7,37 +7,37 @@
 open use "../kernel/prelude.disp"
 
 let hN := make_hyp Nat 0
-let reflects := {n} -> select_lazy ({_} -> Nat) ({_} -> Bool) (is_fork n)   // non-parametric: branches on n's shape
+let reflects := {n} => select_lazy ({_} => Nat) ({_} => Bool) (is_fork n)   // non-parametric: branches on n's shape
 
 // ================================================================
 // GAP-2 regression: a USER sub-term that reflects on a hyp/neutral is caught
 // (codomain B, Intersection predicate P, Sigma family, recursor step)
 // ================================================================
-test param_apply (Pi Nat reflects) ({n} -> n)        = Err                 // codomain family reflects
+test param_apply (Pi Nat reflects) ({n} => n)        = Err                 // codomain family reflects
 test param_apply (Intersection Nat reflects) zero    = Err                 // predicate reflects
 test neutral_type (param_apply (make_hyp (Sigma Nat reflects) 0) (acc "snd")) = InvalidType   // Sigma family reflects
-test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := true; succ := ({p, ih} -> is_fork p) } }) = InvalidType  // succ reflects
+test neutral_type (param_apply hN { motive := ({_} => Bool); cases := { zero := true; succ := ({p, ih} => is_fork p) } }) = InvalidType  // succ reflects
 // valid analogues still pass (the policing only rejects reflection)
-test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n)            = Ok true
-test param_apply (Pi Nat ({n} -> Eq Nat n n)) ({n} -> refl)  = Ok true
-test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := true; succ := ({p, ih} -> ih) } }) = Bool
+test param_apply (Pi Nat ({_} => Nat)) ({n} => n)            = Ok true
+test param_apply (Pi Nat ({n} => Eq Nat n n)) ({n} => refl)  = Ok true
+test neutral_type (param_apply hN { motive := ({_} => Bool); cases := { zero := true; succ := ({p, ih} => ih) } }) = Bool
 
 // ================================================================
 // A typed function cannot reflect on / extract from its argument (the walker
 // rejects triage-on-neutral and raw decomposition)
 // ================================================================
-test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x)   = Err
-test param_apply (Pi Nat ({_} -> Nat))  ({x} -> pair_snd x)  = Err
-test param_apply (Pi Nat ({_} -> Nat))  ({x} -> type_meta x) = Err
-test param_apply (Pi Nat ({_} -> Pi Nat ({_} -> Bool))) ({x} -> {y} -> is_fork x) = Err
+test param_apply (Pi Nat ({_} => Bool)) ({x} => is_fork x)   = Err
+test param_apply (Pi Nat ({_} => Nat))  ({x} => pair_snd x)  = Err
+test param_apply (Pi Nat ({_} => Nat))  ({x} => type_meta x) = Err
+test param_apply (Pi Nat ({_} => Pi Nat ({_} => Bool))) ({x} => {y} => is_fork x) = Err
 
 // ================================================================
 // bind_hyp escape check catches the hyp when it appears as a NEUTRAL.
 // (bind_hyp is the bare op-tag; routed into the walker from this raw test context
 //  via `param_apply (bind_hyp A) body`.)
 // ================================================================
-test param_apply (bind_hyp Nat) ({x} -> Ok x)             = Err
-test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err
+test param_apply (bind_hyp Nat) ({x} => Ok x)             = Err
+test param_apply (bind_hyp Nat) ({x} => Ok (pair x zero)) = Err
 
 // ================================================================
 // SEALING GAP CLOSED (was pinned): bind_hyp now runs its body UNDER the walker
@@ -46,12 +46,12 @@ test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err
 // the neutral, which the walker rejects — so no bare meta escapes and there is
 // nothing to reconstruct a hypothesis from. (These were the LEAK lines; they now
 // assert the sound `Err`.)
-test param_apply (bind_hyp Nat) ({x} -> Ok (type_meta x)) = Err   // launder closed (was the leak)
-test param_apply (bind_hyp Nat) ({x} -> Ok (pair_snd x))  = Err   // raw decomposition closed
-test param_apply (bind_hyp Nat) ({x} -> Ok (is_fork x))   = Err   // raw reflection closed
+test param_apply (bind_hyp Nat) ({x} => Ok (type_meta x)) = Err   // launder closed (was the leak)
+test param_apply (bind_hyp Nat) ({x} => Ok (pair_snd x))  = Err   // raw decomposition closed
+test param_apply (bind_hyp Nat) ({x} => Ok (is_fork x))   = Err   // raw reflection closed
 // Returning an INDEPENDENT value/neutral (not the bound hyp) is still allowed —
 // the escape check rejects only the hypothesis itself, not unrelated data:
-test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero
+test param_apply (bind_hyp Nat) ({x} => Ok zero) = Ok zero
 
 // ================================================================
 // No CLOSED inhabitant of False (the empty type). False accepts only
@@ -61,4 +61,4 @@ test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero
 // ================================================================
 test param_apply False zero  = Ok false
 test typecheck False (make_hyp False 0) = Err   // a False-neutral is open -> not closed
-test typecheck False (pair_snd (param_apply (bind_hyp False) ({x} -> Ok (make_hyp False 0)))) = Err
+test typecheck False (pair_snd (param_apply (bind_hyp False) ({x} => Ok (make_hyp False 0)))) = Err

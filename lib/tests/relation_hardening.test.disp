@@ -23,33 +23,33 @@ test typecheck Equivalence bogus_equivalence = Ok false
 // These are checker-validated law fields, not yet semantic quantification.  A
 // reflective relation can agree at every minted neutral and disagree on real
 // members; observer-restricted certification is what will close this gap.
-let face_relation := {x, _y} -> if (is_neutral x) then Unit else False
+let face_relation := {x, _y} => if (is_neutral x) then Unit else False
 let face_equivalence := make_equivalence Nat face_relation
-  ({_x} -> unit_val)
-  ({_x, _y, _p} -> unit_val)
-  ({_x, _y, _z, _p, _q} -> unit_val)
+  ({_x} => unit_val)
+  ({_x, _y, _p} => unit_val)
+  ({_x, _y, _z, _p, _q} => unit_val)
 test typecheck Equivalence face_equivalence = Ok true
 test tree_eq (face_relation 0 0) False = true
 test typecheck (face_relation 0 0) (face_equivalence.refl 0) = Ok false
 
 // Parity is a coarse relation defined entirely outside Nat's metadata.
-let parity_obs := {n} ->
-  nat_rec ({_} -> Bool) true ({_pred, ih} -> not ih) n
-let is_zero_r := {n} ->
-  nat_rec ({_} -> Bool) true ({_pred, _ih} -> false) n
+let parity_obs := {n} =>
+  nat_rec ({_} => Bool) true ({_pred, ih} => not ih) n
+let is_zero_r := {n} =>
+  nat_rec ({_} => Bool) true ({_pred, _ih} => false) n
 let BoolEqR := eq_relation Bool
 let ParityR := pullback_on Nat parity_obs BoolEqR
 
 // The binary Pi lift accepts a congruent observer and rejects a class-splitting
 // one.  These are independently chosen related inputs, not a pointwise probe.
-let parity_to_bool := rel_pi ParityR ({_} -> Bool) ({_} -> Bool)
-  ({_x0, _x1, _rho} -> BoolEqR)
-test param_apply (parity_to_bool.rel parity_obs parity_obs) ({x0, x1, rho} -> rho) = Ok true
-test param_apply (parity_to_bool.rel is_zero_r is_zero_r) ({x0, x1, rho} -> refl) = Ok false
+let parity_to_bool := rel_pi ParityR ({_} => Bool) ({_} => Bool)
+  ({_x0, _x1, _rho} => BoolEqR)
+test param_apply (parity_to_bool.rel parity_obs parity_obs) ({x0, x1, rho} => rho) = Ok true
+test param_apply (parity_to_bool.rel is_zero_r is_zero_r) ({x0, x1, rho} => refl) = Ok false
 
 // `respects` is the supported checker-facing preservation obligation.
-test param_apply (respects ParityR BoolEqR parity_obs) ({x0, x1, rho} -> rho) = Ok true
-test param_apply (respects ParityR BoolEqR is_zero_r) ({x0, x1, rho} -> refl) = Ok false
+test param_apply (respects ParityR BoolEqR parity_obs) ({x0, x1, rho} => rho) = Ok true
+test param_apply (respects ParityR BoolEqR is_zero_r) ({x0, x1, rho} => refl) = Ok false
 
 // Pullback constructs checked equivalence laws for the coarse relation.
 let ParityE := pullback_equivalence Nat parity_obs (eq_equivalence Bool)
@@ -60,5 +60,5 @@ test tree_eq (ParityE.trans 2 4 6 refl refl) refl = true
 // Current limitation: dependent Record checking replaces `map` with a field
 // hypothesis before checking `respect`, so this valid coarse Morphism package
 // is rejected even though the direct `respects` obligation above succeeds.
-let parity_morphism := make_morphism parity_obs ({x0, x1, rho} -> rho)
+let parity_morphism := make_morphism parity_obs ({x0, x1, rho} => rho)
 test param_apply (Morphism Nat Bool ParityR BoolEqR) parity_morphism = Ok false

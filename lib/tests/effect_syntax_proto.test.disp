@@ -35,55 +35,55 @@ let putE := op StateE "put"
 let S := ops StateE
 test tree_eq ((S.get) unit_val) getE = true
 test tree_eq (op0 StateE "get") getE = true
-let progE := eff_bind getE ({n} -> eff_bind (putE (succ n)) ({u} -> io_pure (add n n)))
+let progE := eff_bind getE ({n} => eff_bind (putE (succ n)) ({u} => io_pure (add n n)))
 // the deep recognizer is unchanged: rows of TYPE identities, checked deep:
 test param_apply (Eff (row1 StateE) Nat) progE = Ok true
 test param_apply (Eff (row1 Nat) Nat) progE = Ok false
-test param_apply (Eff (row1 StateE) Nat) (eff_bind getE ({n} -> io_pure false)) = Ok false
+test param_apply (Eff (row1 StateE) Nat) (eff_bind getE ({n} => io_pure false)) = Ok false
 
 // ── Q2: the handler's dispatch is a MATCH over the retagged request ──
-let state_on := {o} -> {arg, resume} -> (
+let state_on := {o} => {arg, resume} => (
   match (inj (op_name o) (pair arg resume)) {
-    get a k => ({s} -> (k s) s)
-    put a k => ({s_old} -> (k t) a)
+    get a k => ({s} => (k s) s)
+    put a k => ({s_old} => (k t) a)
   })
 let state_hE := {
-  covers := {o} -> tree_eq (effect_of o) StateE
-  return := {x} -> {s} -> io_pure (pair x s)
+  covers := {o} => tree_eq (effect_of o) StateE
+  return := {x} => {s} => io_pure (pair x s)
   on := state_on
-  forward := {o, arg, resumek} -> {s} -> io_op o arg ({r} -> (resumek r) s)
+  forward := {o, arg, resumek} => {s} => io_op o arg ({r} => (resumek r) s)
 }
 test pair_fst (run_pure ((handle state_hE progE) 3)) = 6
 test pair_snd (run_pure ((handle state_hE progE) 3)) = 4
 
 // ── Q3: let-as-bind — the win and the hole ──
-let smart_bind := fix ({self, e, f} -> match e {
+let smart_bind := fix ({self, e, f} => match e {
   Pure x => (f x)
-  Op o arg k => (io_op o arg ({r} -> self (k r) f))
+  Op o arg k => (io_op o arg ({r} => self (k r) f))
   _ => (f e)
 })
 // the win: ONE binder covers plain values, finished computations, and ops:
-test smart_bind 5 ({x} -> succ x) = 6
-test tree_eq (smart_bind (io_pure 7) ({x} -> io_pure (succ x))) (io_pure 8) = true
-test pair_fst (run_pure ((handle state_hE (smart_bind getE ({n} -> io_pure (add n n)))) 3)) = 6
+test smart_bind 5 ({x} => succ x) = 6
+test tree_eq (smart_bind (io_pure 7) ({x} => io_pure (succ x))) (io_pure 8) = true
+test pair_fst (run_pure ((handle state_hE (smart_bind getE ({n} => io_pure (add n n)))) 3)) = 6
 // THE HOLE, pinned as documentation. (1) naming a program as DATA is
 // impossible under value-directed bind — p receives get's ANSWER (the state,
 // 3), proving the binder sequenced the program instead of naming it:
-test pair_fst (run_pure ((handle state_hE (smart_bind getE ({p} -> io_pure p))) 3)) = 3
-test tree_eq (smart_bind getE ({p} -> io_pure p)) (io_pure getE) = false
+test pair_fst (run_pure ((handle state_hE (smart_bind getE ({p} => io_pure p))) 3)) = 3
+test tree_eq (smart_bind getE ({p} => io_pure p)) (io_pure getE) = false
 // (2) the collision hole: any value merely WEARING the Pure shape is
 // unwrapped — shape-sniffing semantics cannot be abstract:
 let fake := inj1 "Pure" 9
-test smart_bind fake ({x} -> succ x) = 10
+test smart_bind fake ({x} => succ x) = 10
 
 // ── the ARROW MEMBER (landed 2026-07-08): `x <- e` in a block is the bind ──
 // A block with arrows IS the eff_bind pyramid, tree-identically; `let` keeps
 // meaning naming; a block without arrows is unchanged:
-test tree_eq ({ n <- getE; io_pure (add n n) }) (eff_bind getE ({n} -> io_pure (add n n))) = true
+test tree_eq ({ n <- getE; io_pure (add n n) }) (eff_bind getE ({n} => io_pure (add n n))) = true
 test tree_eq ({ n <- getE; u <- putE (succ n); io_pure (add n n) }) progE = true
 // `_ <- e` is the discard bind, allowed even as the block's first member
 // (the classifier used to read a leading `_` as a {_} binder):
-test tree_eq ({ _ <- getE; io_pure 5 }) (eff_bind getE ({_} -> io_pure 5)) = true
+test tree_eq ({ _ <- getE; io_pure 5 }) (eff_bind getE ({_} => io_pure 5)) = true
 // lets and arrows interleave in order (behavioral pin — the lexical redex
 // compiles through bracket abstraction, so tree forms differ):
 let mixed := { n <- getE; let m := succ n; u <- putE m; io_pure (add n n) }
@@ -102,15 +102,15 @@ test param_apply ReqS (inj1 "oops" 3) = Ok false
 // handler_sig StateE M is the DERIVED handler type: each clause
 // Π arg. (result -> M) -> M with the resume typed per op, and the case
 // record is checked by the same gate as every eliminator's:
-let count_h := { get := {a} -> {k} -> succ (k 0); put := {a} -> {k} -> succ (k unit_val) }
+let count_h := { get := {a} => {k} => succ (k 0); put := {a} => {k} => succ (k unit_val) }
 test param_apply (handler_sig StateE Nat) count_h = Ok true
-let missing_h := { get := {a} -> {k} -> succ (k 0) }
+let missing_h := { get := {a} => {k} => succ (k 0) }
 test param_apply (handler_sig StateE Nat) missing_h = Ok false
-let bad_h := { get := {a} -> {k} -> succ (k 0); put := {a} -> {k} -> false }
+let bad_h := { get := {a} => {k} => succ (k 0); put := {a} => {k} => false }
 test param_apply (handler_sig StateE Nat) bad_h = Ok false
 // handle_via runs the case-record handler deep: counting the ops of progE,
 // and the state semantics through the case-record form:
-test handle_via StateE ({x} -> 0) count_h progE = 2
-let state_cases := { get := {a} -> {k} -> {s} -> (k s) s; put := {a} -> {k} -> {s_old} -> (k unit_val) a }
-test pair_fst (run_pure ((handle_via StateE ({x} -> {s} -> io_pure (pair x s)) state_cases progE) 3)) = 6
-test pair_snd (run_pure ((handle_via StateE ({x} -> {s} -> io_pure (pair x s)) state_cases progE) 3)) = 4
+test handle_via StateE ({x} => 0) count_h progE = 2
+let state_cases := { get := {a} => {k} => {s} => (k s) s; put := {a} => {k} => {s_old} => (k unit_val) a }
+test pair_fst (run_pure ((handle_via StateE ({x} => {s} => io_pure (pair x s)) state_cases progE) 3)) = 6
+test pair_snd (run_pure ((handle_via StateE ({x} => {s} => io_pure (pair x s)) state_cases progE) 3)) = 4

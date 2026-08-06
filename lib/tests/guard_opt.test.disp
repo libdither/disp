@@ -31,23 +31,23 @@ open use "../std/nat.disp"
 // ── (d) the overlay landed: the in-scope names are the fast trees
 test tree_eq nat_rec nat_rec_fast = true
 test tree_eq nat_rec nat_rec_gen = false
-test tree_eq add ({n, m} -> nat_rec_fast ({_} -> Nat) m ({pred, ih} -> succ ih) n) = true
+test tree_eq add ({n, m} => nat_rec_fast ({_} => Nat) m ({pred, ih} => succ ih) n) = true
 
 // ── (a) the license, exactly as the guard checked it at nat.opt load
-test param_apply (NatRecRelation.rel nat_rec_gen nat_rec_fast) ({P} -> {z} -> {s} -> {n} -> refl) = Ok true
+test param_apply (NatRecRelation.rel nat_rec_gen nat_rec_fast) ({P} => {z} => {s} => {n} => refl) = Ok true
 // a lying replacement (ignores the target; different abstract path) is refused
-test tree_eq (param_apply (NatRecRelation.rel nat_rec_gen ({motive, base, step, target} -> base)) ({P} -> {z} -> {s} -> {n} -> refl)) (Ok true) = false
+test tree_eq (param_apply (NatRecRelation.rel nat_rec_gen ({motive, base, step, target} => base)) ({P} => {z} => {s} => {n} => refl)) (Ok true) = false
 
 // ── (b) differential: the fast path agrees with the generic route on concretes
-let add_gen := {n, m} -> nat_rec_gen ({_} -> Nat) m ({pred, ih} -> succ ih) n
+let add_gen := {n, m} => nat_rec_gen ({_} => Nat) m ({pred, ih} => succ ih) n
 test add 0 0 = 0
 test add 0 7 = 7
 test add 7 0 = 7
 test add 3 4 = add_gen 3 4
 test add 25 17 = add_gen 25 17
 test tree_eq (add 2 2) 4 = true
-let dbl_fast := {n} -> nat_rec_fast ({_} -> Nat) zero ({k, ih} -> succ (succ ih)) n
-let dbl_gen  := {n} -> nat_rec_gen ({_} -> Nat) zero ({k, ih} -> succ (succ ih)) n
+let dbl_fast := {n} => nat_rec_fast ({_} => Nat) zero ({k, ih} => succ (succ ih)) n
+let dbl_gen  := {n} => nat_rec_gen ({_} => Nat) zero ({k, ih} => succ (succ ih)) n
 test dbl_fast 0 = dbl_gen 0
 test dbl_fast 9 = dbl_gen 9
 // scale headroom on the concrete path
@@ -55,11 +55,11 @@ test add 3000 3000 = 6000
 
 // ── (c) the succ frontier: refl-provable = tree-identical under a binder
 succ_frontier : {n : Nat} -> (Eq Nat
-    (nat_rec_fast ({_} -> Nat) 0 ({k, ih} -> succ ih) (succ n))
-    (succ (nat_rec_fast ({_} -> Nat) 0 ({k, ih} -> succ ih) n))) := {n} -> refl
+    (nat_rec_fast ({_} => Nat) 0 ({k, ih} => succ ih) (succ n))
+    (succ (nat_rec_fast ({_} => Nat) 0 ({k, ih} => succ ih) n))) := {n} => refl
 routes_agree : {n : Nat} -> (Eq Nat
-    (nat_rec_fast ({_} -> Nat) 0 ({k, ih} -> succ ih) n)
-    (nat_rec_gen ({_} -> Nat) 0 ({k, ih} -> succ ih) n)) := {n} -> refl
+    (nat_rec_fast ({_} => Nat) 0 ({k, ih} => succ ih) n)
+    (nat_rec_gen ({_} => Nat) 0 ({k, ih} => succ ih) n)) := {n} => refl
 
 // ── (d) ops rides the fast trees (its proofs re-verify at load; spot checks here)
 test pred 5 = 4

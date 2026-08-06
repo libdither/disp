@@ -24,7 +24,7 @@ test param_apply Wrap empty = Ok true
 test (match (box 4) { box n => (double n); empty => 0 }) = 8
 
 // ---- parameterized: constructors bind from under the binder chain ----
-MyOpt : Type -> Type := {A} -> < mysome : A, mynone >
+MyOpt : Type -> Type := {A} => < mysome : A, mynone >
 test tree_eq (mysome 5) (inj "mysome" 5) = true
 test param_apply (MyOpt Nat) (mysome 3) = Ok true
 test param_apply (MyOpt Nat) mynone = Ok true
@@ -37,4 +37,4 @@ test param_apply Weird (inj "zero" t) = Ok true // the VARIANT still exists in t
 test param_apply Weird wonly = Ok true      // fresh names still bind
 
 // ---- the eliminator face: a hyp of an auto-ctor sum eliminates via its respond ----
-test param_apply (Pi Color ({_} -> Nat)) ({c} -> c { motive := ({_} -> Nat); cases := { red := 1; green := 2; blue := 3 } }) = Ok true
+test param_apply (Pi Color ({_} => Nat)) ({c} => c { motive := ({_} => Nat); cases := { red := 1; green := 2; blue := 3 } }) = Ok true

@@ -27,14 +27,14 @@ open use "../kernel/prelude.disp"
 // recursor, establishes shape). Untyped here: the contract lands on the rebound
 // nat_rec Def below (inherited from the kernel annotation) and is re-verified
 // against this tree at this file's load.
-nat_rec_fast := {motive, base, step, target} ->
-  (fix ({go, k} ->
+nat_rec_fast := {motive, base, step, target} =>
+  (fix ({go, k} =>
     if (is_neutral k)
       then (nat_rec motive base step k)
       else (triage
         base
-        ({_} -> base)
-        ({_l, kk} -> step kk (go kk))
+        ({_} => base)
+        ({_l, kk} => step kk (go kk))
         k))) target
 
 // ── The licensed rebinds. nat_rec first: after it, the spec name IS the fast
@@ -43,5 +43,5 @@ nat_rec_fast := {motive, base, step, target} ->
 // delegate verbatim on the neutral path (the abstract paths are untouched);
 // the concrete paths are
 // pinned differentially in lib/tests/guard_opt.test.disp.
-nat_rec := { new := nat_rec_fast ; proof := {P} -> {z} -> {s} -> {n} -> refl }
-add := { new := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n ; proof := {n} -> {m} -> refl }
+nat_rec := { new := nat_rec_fast ; proof := {P} => {z} => {s} => {n} => refl }
+add := { new := {n, m} => nat_rec ({_} => Nat) m ({pred, ih} => succ ih) n ; proof := {n} => {m} => refl }

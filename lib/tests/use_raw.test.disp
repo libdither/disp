@@ -20,7 +20,7 @@ open use "../kernel/universe.disp" { Type := Type, RespondShape }
 
 // kernel names are in scope and usable
 test param_apply Type Nat = Ok true
-test typecheck Type (Pi Nat ({_} -> Bool)) = Ok true
+test typecheck Type (Pi Nat ({_} => Bool)) = Ok true
 
 // Deferred self-check: with the raw layer in scope, a fragment's CHECKED module tuple
 // { record, typ } carries its annotated exports, resolved against the raw snapshot.

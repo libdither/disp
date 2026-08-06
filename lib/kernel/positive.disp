@@ -16,7 +16,7 @@ open given { Type : Type, Tree : Type, Ord : Type }
 
 // lookup_arm: resolve an inj tag to its variant arg-list (exported: the generic fold/recursor/
 // traversal in generic.disp dispatch through it too).
-lookup_arm := fix ({self, variants, tag} ->
+lookup_arm := fix ({self, variants, tag} =>
   if (is_fork variants) then {
     let arm := pair_fst variants
     if (tree_eq (pair_fst arm) tag) then (Ok (pair_snd arm)) else (self (pair_snd variants) tag)
@@ -25,21 +25,21 @@ lookup_arm := fix ({self, variants, tag} ->
 // A positive constructor's args form a POSITIONAL telescope over its raw payload (POSITIVE_TYPES §2):
 // the k-ary `inj tag (a0,(a1,…))` is a right-nested pair, so arg j is `pair_fst (pair_snd^j)` (or
 // `pair_snd^j` for the last). `pos_tele` lifts an arg-type list to that telescope; EMPTY list -> ⊤.
-let snd_n := fix ({self, n, x} -> if (tree_eq n zero) then x else (self (nat_pred n) (pair_snd x)))
+let snd_n := fix ({self, n, x} => if (tree_eq n zero) then x else (self (nat_pred n) (pair_snd x)))
 // pos_tele_go: one impl for the plain AND parameterized lift. A `Param i` arg is RESOLVED here to
 // `pos_cell acc (params i)` (recognition byte-identical, params baked in); the marker stays for `fmap`.
-let pos_tele_go := fix ({self, params, types, depth} ->
+let pos_tele_go := fix ({self, params, types, depth} =>
   if (is_fork types) then {
-    let acc := if (is_fork (pair_snd types)) then ({x} -> pair_fst (snd_n depth x)) else ({x} -> snd_n depth x) // last arg -> identity
+    let acc := if (is_fork (pair_snd types)) then ({x} => pair_fst (snd_n depth x)) else ({x} => snd_n depth x) // last arg -> identity
     let ty := pair_fst types
     let cell := (if (is_param_marker ty) then (pos_cell acc (list_nth params (pair_snd ty)))    // Param i -> check params i
                 else (if (is_recunder_marker ty) then (rec_cell rec_self (pair_snd ty) acc)     // RecUnder F / Rec -> direct rec cell (self key)
                 else (if (is_recat_marker ty) then (rec_cell (pair_snd ty) Id acc)             // RecAt i -> mutual rec cell (sibling key i, functor Id)
                 else (pos_cell acc ty))))                                                      // a type -> a data cell
-    t cell ({_} -> self params (pair_snd types) (succ depth))
+    t cell ({_} => self params (pair_snd types) (succ depth))
   } else t)
-pos_tele   := {types}         -> pos_tele_go t types zero        // plain (no Param markers)
-pos_tele_p := {params, types} -> pos_tele_go params types zero   // CELL_OPTICS: Param i resolved against params
+pos_tele   := {types}         => pos_tele_go t types zero        // plain (no Param markers)
+pos_tele_p := {params, types} => pos_tele_go params types zero   // CELL_OPTICS: Param i resolved against params
 
 // A coproduct value is `inj tag (a0,a1,…)`; it inhabits the sum iff its tag names a
 // variant and its args inhabit that variant's positional telescope (the same tele_walk
@@ -47,7 +47,7 @@ pos_tele_p := {params, types} -> pos_tele_go params types zero   // CELL_OPTICS:
 // cells recursing via rs = self, so the former ties its own knot via make_rec_recognizer.
 // coproduct_walk is the shared dispatch: look up the inj-tag's arg list, walk the args.
 // `params` resolves `Param i` arg markers; pass `t` for non-parameterized sums.
-let coproduct_walk := {params, rs, variants, v} ->
+let coproduct_walk := {params, rs, variants, v} =>
   match (lookup_arm variants (pair_fst v)) {
     Ok argspec => (tele_walk rs true (pos_tele_p params argspec) (pair_snd v) t t)
     Err _ => (Ok false) // unknown tag
@@ -58,29 +58,29 @@ let coproduct_walk := {params, rs, variants, v} ->
 // tree to inj-tagged form (else `Err`) and `encode` rebuilds the shape. The iso is stored in
 // `functor` (what generic `fmap`/`fold_value` read); an inj-tagged sum passes the identity iso,
 // so every other Coproduct_* below is a one-line specialization of this maker.
-iso_id := pair ({v} -> Ok v) ({x} -> x)   // decode = Ok, encode = id
-Coproduct_viewed_respond := {params, respond, iso, variants} -> wait (make_rec_recognizer
-  {self, meta, v} -> (match ((pair_fst iso) v) { Ok tg => (coproduct_walk params self meta.recognizer_params tg); Err _ => (Ok false) })
+iso_id := pair ({v} => Ok v) ({x} => x)   // decode = Ok, encode = id
+Coproduct_viewed_respond := {params, respond, iso, variants} => wait (make_rec_recognizer
+  {self, meta, v} => (match ((pair_fst iso) v) { Ok tg => (coproduct_walk params self meta.recognizer_params tg); Err _ => (Ok false) })
 ) { recognizer_params := variants; functor := iso; respond; behavioral_specs := t }
-Coproduct_respond := {respond, variants} -> Coproduct_viewed_respond t respond iso_id variants
+Coproduct_respond := {respond, variants} => Coproduct_viewed_respond t respond iso_id variants
 
 // ── The coherence gate (POSITIVE_TYPES §3c), shared by every gated inductive.
 // Case-TYPES form a telescope (`case_types_go` below); `coh_check` verifies the cases against it via the η-readback
 // `eta_check`. `build_payload` reconstructs a constructor's `inj` payload from its args.
-build_payload := fix ({self, args} ->                          // [a1..ak] -> the right-nested payload
+build_payload := fix ({self, args} =>                          // [a1..ak] -> the right-nested payload
   if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
 // case_types_go T P: the case-telescope's field list `[(tag, Π args. (P aj ->)* P (c args))]` — one Pi cell per
 // arg, one IH premise per recursive position, conclusion at the reconstructed constructor value.
 // mutual_ctx T: the sort-context fn a mutual type (Coproduct_ctx) stores in behavioral_specs; a
 // `RecAt i` arg has type `ctx i`. Read only for rec_at cells (mutual types), so non-mutual types
 // (behavioral_specs = t, no rec_at cells) never evaluate it.
-let mutual_ctx := {T} -> field ((type_meta T).behavioral_specs) "ctx"
-let rec_at_argty := {cell, T} -> (mutual_ctx T) ((type_meta cell).key)   // the sibling key resolved against the group ctx
-let cell_argty := {cell, T} -> if (is_self_rec cell) then T else (if (is_rec_cell cell) then (rec_at_argty cell T) else ((type_meta cell).ty))  // direct rec -> T; sibling -> ctx key
+let mutual_ctx := {T} => field ((type_meta T).behavioral_specs) "ctx"
+let rec_at_argty := {cell, T} => (mutual_ctx T) ((type_meta cell).key)   // the sibling key resolved against the group ctx
+let cell_argty := {cell, T} => if (is_self_rec cell) then T else (if (is_rec_cell cell) then (rec_at_argty cell T) else ((type_meta cell).ty))  // direct rec -> T; sibling -> ctx key
 // wrap_ihs: one `P aj ->` premise per recursive position, around concl. A direct `rec` arg always gets
 // an IH; a mutual `rec_at i` arg gets one only when it points at THIS sort (ctx i = T) — a single-motive
 // recursor treats cross-sort children as opaque data (no IH). (Full mutual induction = motive families, future work.)
-let wrap_ihs := fix ({self, cells, args, P, concl, T} ->
+let wrap_ihs := fix ({self, cells, args, P, concl, T} =>
   if (is_fork cells) then {
     let c := pair_fst cells
     let rest := self ((pair_snd cells) t) (pair_snd args) P concl T
@@ -94,11 +94,11 @@ let wrap_ihs := fix ({self, cells, args, P, concl, T} ->
 // premises and concludes at the REAL constructor value `P (encode (inj tag payload))`.
 // The encode iso is identity for inj-tagged types, inj-form -> shape for shape-encoded
 // ones (Nat/Bool/Ord/List), so one gate covers both.
-let case_type_go := fix ({self, cells, orig, tag, T, P, args} ->
+let case_type_go := fix ({self, cells, orig, tag, T, P, args} =>
   if (is_fork cells)
-    then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (list_cat args (cons a nil))))
+    then (Pi (cell_argty (pair_fst cells) T) ({a} => self ((pair_snd cells) t) orig tag T P (list_cat args (cons a nil))))
     else (wrap_ihs orig args P (P ((pair_snd (type_meta T).functor) (inj tag (build_payload args)))) T))
-let case_types_go := fix ({self, params, variants, T, P} ->
+let case_types_go := fix ({self, params, variants, T, P} =>
   if (is_fork variants) then {
     let var := pair_fst variants
     let cells := pos_tele_p params (pair_snd var)   // `Param i` args resolved against the type's params
@@ -107,19 +107,19 @@ let case_types_go := fix ({self, params, variants, T, P} ->
 // eta_check v T: η-readback (bidirectional Π-introduction). Π-headed T -> mint the domain, check (v h) against
 // the codomain; neutral/base T -> recognize RAW `T v`. Each Π mint is SEALED (apply_policed) + unwrapped;
 // the RAW base (a neutral routes via its respond, never a concrete recognizer on a hyp) self-types AND reproduces the gate.
-let cells_of := {T} -> (type_meta T).recognizer_params
-let pi_dom := {T} -> (type_meta (pair_fst (cells_of T))).ty
-let pi_cod := {T, h} -> (type_meta (pair_fst ((pair_snd (cells_of T)) h))).ty
-eta_check := fix ({self, v, T} ->
+let cells_of := {T} => (type_meta T).recognizer_params
+let pi_dom := {T} => (type_meta (pair_fst (cells_of T))).ty
+let pi_cod := {T, h} => (type_meta (pair_fst ((pair_snd (cells_of T)) h))).ty
+eta_check := fix ({self, v, T} =>
   if (is_neutral T) then (T v)
   else (if (and (is_fork (cells_of T)) (is_mint_cell (pair_fst (cells_of T))))
-    then (match (apply_policed (bind_hyp (pi_dom T)) ({h} -> self (v h) (pi_cod T h))) { Ok r => r; Err _ => Err })
+    then (match (apply_policed (bind_hyp (pi_dom T)) ({h} => self (v h) (pi_cod T h))) { Ok r => r; Err _ => Err })
     else (T v)))
 // (exported 2026-07-08: std/effect.disp's handler gate consumes it — the
 // second consumer, so the private-until-needed clone there is retired)
-check_fields := fix ({self, fields, cases} ->
+check_fields := fix ({self, fields, cases} =>
   if (is_fork fields)
-    then (bind (eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok false)))
+    then (bind (eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} => if ok then (self (pair_snd fields) cases) else (Ok false)))
     else (Ok true))
 // iso_faithful T: the type's view/encode pair round-trips on every variant —
 // `view (encode (inj tag placeholders)) = Ok (inj tag placeholders)`. The gate reconstructs each
@@ -127,17 +127,17 @@ check_fields := fix ({self, fields, cases} ->
 // value (probe_gate_sr, BadNat). Anchoring on `view` (the sound recognizer side) with opaque placeholder
 // args catches it; one direction suffices for the gate (the encode∘view direction matters for fmap, not
 // SR). Payload-agnostic isos only (the kernel's Nat/Bool/Ord/Tree and every iso_id sum qualify).
-let ph_payload := fix ({self, argspec, i} ->   // one opaque `@ph i` marker per constructor arg (distinct + inert)
+let ph_payload := fix ({self, argspec, i} =>   // one opaque `@ph i` marker per constructor arg (distinct + inert)
   if (is_fork argspec) then (cons (inj "@ph" i) (self (pair_snd argspec) (succ i))) else nil)
-let variant_faithful := {view, encode, var} -> {
+let variant_faithful := {view, encode, var} => {
   let form := inj (pair_fst var) (build_payload (ph_payload (pair_snd var) zero))
   tree_eq (view (encode form)) (Ok form)
 }
-let all_variants_faithful := fix ({self, view, encode, variants} ->
+let all_variants_faithful := fix ({self, view, encode, variants} =>
   if (is_fork variants)
     then (if (variant_faithful view encode (pair_fst variants)) then (self view encode (pair_snd variants)) else false)
     else true)
-iso_faithful := {T} -> {
+iso_faithful := {T} => {
   let iso := (type_meta T).functor
   all_variants_faithful (pair_fst iso) (pair_snd iso) ((type_meta T).recognizer_params)
 }
@@ -146,9 +146,9 @@ iso_faithful := {T} -> {
 // fields (`params` resolves `Param i` args). Replaces coh_nat/coh_ord/coh_list and self-types (unlike the
 // recognition-form `param_apply (case-tele) cases`, coh_gate_proto.test). Guarded by iso_faithful so a
 // bogus view/encode can't hand the gate a mis-reconstructed constructor value (probe_gate_sr).
-coh_check := {params} -> {T, motive, cases} -> if (iso_faithful T) then (check_fields (case_types_go params (cells_of T) T motive) cases) else (Ok false)
+coh_check := {params} => {T, motive, cases} => if (iso_faithful T) then (check_fields (case_types_go params (cells_of T) T motive) cases) else (Ok false)
 
-Coproduct_p := {params, variants} -> Coproduct_viewed_respond params (gated_inductive_respond (coh_check params)) iso_id variants
+Coproduct_p := {params, variants} => Coproduct_viewed_respond params (gated_inductive_respond (coh_check params)) iso_id variants
 Coproduct : Tree -> Type := Coproduct_p t   // the common case: gated, no params, inj-tagged
 
 // (`Mu`/`Mu_resp` RETIRED (Path B): recursion is a `RecUnder F` cell, the self-aware sum ties its own
@@ -156,7 +156,7 @@ Coproduct : Tree -> Type := Coproduct_p t   // the common case: gated, no params
 
 // Coproduct_viewed params iso variants: the common shape-encoded sum (Nat/Bool/Ord/List) —
 // the maker with the standard gated respond filled in.
-Coproduct_viewed := {params, iso, variants} -> Coproduct_viewed_respond params (gated_inductive_respond (coh_check params)) iso variants
+Coproduct_viewed := {params, iso, variants} => Coproduct_viewed_respond params (gated_inductive_respond (coh_check params)) iso variants
 
 // Coproduct_ctx ctx variants: a sum for MUTUAL recursion (Path B). Threads rs = `ctx`, a CONTEXT FUNCTION
 // (i -> recognizer); `RecAt i` cells recurse into `ctx i`. The context is a `fix` FUNCTION whose entries
@@ -165,8 +165,8 @@ Coproduct_viewed := {params, iso, variants} -> Coproduct_viewed_respond params (
 // (`coh_check`, single-motive): `ctx` is stored in `behavioral_specs.ctx` so the gate can type a
 // `RecAt i` arg at `ctx i` and give it a self-sort IH (cross-sort children stay opaque data). This
 // closes probe_mutual_sr; full mutual induction (motive families) remains future work.
-Coproduct_ctx := {ctx, variants} -> wait (make_recognizer
-  {meta, v} -> (coproduct_walk t ctx meta.recognizer_params v)
+Coproduct_ctx := {ctx, variants} => wait (make_recognizer
+  {meta, v} => (coproduct_walk t ctx meta.recognizer_params v)
 ) { recognizer_params := variants; functor := iso_id; respond := (gated_inductive_respond (coh_check t)); behavioral_specs := { ctx := ctx } }
 
 // ── The kernel's shape-encoded inductives: Ord, Bool, Nat. Each is a Coproduct_viewed
@@ -174,38 +174,38 @@ Coproduct_ctx := {ctx, variants} -> wait (make_recognizer
 // `encode` rebuilds the shape. Constructors first; the values are raw tree shapes, and
 // their `: Ord` annotations resolve against the types below via raw-load.
 zero_ord : Ord := t
-omega_plus : Ord -> Ord -> Ord := {a, b} -> t (t a) b // fork(stem a, b)
+omega_plus : Ord -> Ord -> Ord := {a, b} => t (t a) b // fork(stem a, b)
 
 // Ord: zero_ord = leaf, omega_plus a b = fork(stem a, b); the two Rec children tie the knot.
-let view_ord := {v} -> triage
+let view_ord := {v} => triage
   (Ok (inj "zero_ord" t))                                                 // leaf -> zero_ord
-  ({_} -> Err)                                                            // bare stem -> not an ord
-  ({l, r} -> if (is_stem l) then (Ok (inj "omega_plus" (pair (stem_child l) r))) else Err) // fork(stem a, b)
+  ({_} => Err)                                                            // bare stem -> not an ord
+  ({l, r} => if (is_stem l) then (Ok (inj "omega_plus" (pair (stem_child l) r))) else Err) // fork(stem a, b)
   v
 // encode_ord: inj-form -> shape (the inverse of view_ord). zero_ord -> leaf; omega_plus (a,b) -> fork(stem a, b).
-let encode_ord := {x} -> if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair_fst (pair_snd x))) (pair_snd (pair_snd x))) else t
+let encode_ord := {x} => if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair_fst (pair_snd x))) (pair_snd (pair_snd x))) else t
 // Ord (recursive, 2 rec args): the generic `coh_check` derives `omega_plus`'s case-type
 // `Π a b. P a -> P b -> P (omega_plus a b)` from the [Rec, Rec] argspec (via the encode iso).
 Ord : Type := Coproduct_viewed t (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
 
 // Bool: true/false are opaque combinators, so view_bool decodes by tree_eq comparison. Both
 // constructors nullary, so the gate reduces to `cases.true : P true`, `cases.false : P false`.
-let view_bool := {v} ->
+let view_bool := {v} =>
   if (tree_eq v true) then (Ok (inj "true" t)) else (if (tree_eq v false) then (Ok (inj "false" t)) else Err)
 // encode_bool: inj-form -> shape combinator. true -> true; false -> false. (Bool has no param: fmap = id.)
-let encode_bool := {x} -> if (tree_eq (pair_fst x) "true") then true else false
+let encode_bool := {x} => if (tree_eq (pair_fst x) "true") then true else false
 Bool : Type := Coproduct_viewed t (pair view_bool encode_bool) [pair "true" [], pair "false" []]
 
 // Nat: zero = leaf, succ r = fork(t, r); the succ case-type derives as `Π n. P n -> P (succ n)`.
-let view_nat := {v} -> triage
+let view_nat := {v} => triage
   (Ok (inj "zero" t))                                              // leaf -> zero
-  ({_} -> Err)                                                     // bare stem -> not a Nat
-  ({l, r} -> if (tree_eq l t) then (Ok (inj "succ" r)) else Err)   // fork(t, r) -> succ r
+  ({_} => Err)                                                     // bare stem -> not a Nat
+  ({l, r} => if (tree_eq l t) then (Ok (inj "succ" r)) else Err)   // fork(t, r) -> succ r
   v
 // encode_nat: inj-form -> shape. zero -> leaf; succ r -> fork(t, r). (Nat has no param: fmap = id.)
-let encode_nat := {x} -> if (tree_eq (pair_fst x) "succ") then (t t (pair_snd x)) else t
+let encode_nat := {x} => if (tree_eq (pair_fst x) "succ") then (t t (pair_snd x)) else t
 Nat : Type := Coproduct_viewed t (pair view_nat encode_nat) [pair "zero" [], pair "succ" [Rec]]
 
 // derive_case_telescope T P: the recursor's case-record TYPE (`rec_value : {P} -> derive_case_telescope T P
 // -> {x:T} -> P x`). Wraps `case_types_go` (the same case-types the coherence gate consumes) in a Record.
-derive_case_telescope := {T, P} -> Record (case_types_go t (type_meta T).recognizer_params T P)
+derive_case_telescope := {T, P} => Record (case_types_go t (type_meta T).recognizer_params T P)

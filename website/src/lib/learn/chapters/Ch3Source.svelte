@@ -14,8 +14,8 @@
   </p>
 
   <h3 id="binders">3.1 · Binders and application</h3>
-  <pre>{`{x} -> body                // λx. body
-{x, y} -> body             // λx. λy. body  (curried)
+  <pre>{`{x} => body                // λx. body
+{x, y} => body             // λx. λy. body  (curried)
 {x : A, y : B} -> body     // annotated binders`}</pre>
   <p>
     The elaborator lowers binders via bracket abstraction (§2.4). Application is juxtaposition

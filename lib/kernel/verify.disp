@@ -11,4 +11,4 @@ open given {
   Record : Tree
   Ok : Tree
 }
-check_module := {typs, record} -> tree_eq (param_apply (Record typs) record) (Ok true)
+check_module := {typs, record} => tree_eq (param_apply (Record typs) record) (Ok true)

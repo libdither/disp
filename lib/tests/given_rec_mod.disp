@@ -7,5 +7,5 @@ open use "../kernel/prelude.disp"
 open given { ctx : { add : Nat -> Nat -> Nat, start : Nat } }
 open ctx
 
-double : Nat -> Nat := {x} -> add x x
-from_start : Nat -> Nat := {x} -> add start x
+double : Nat -> Nat := {x} => add x x
+from_start : Nat -> Nat := {x} => add start x

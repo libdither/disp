@@ -55,45 +55,45 @@ test tree_eq (mk_row nil) row_nil = true
 test label_in_row "State" (mk_row (cons "IO" (cons "State" nil))) = true
 test label_in_row "Exn" (mk_row (cons "IO" (cons "State" nil))) = false
 let p_get := (mk_op "State" "get" Unit Nat) t
-let p1 := eff_bind p_get ({n} -> io_pure n)
+let p1 := eff_bind p_get ({n} => io_pure n)
 test eff_check (mk_row (cons "IO" (cons "State" nil))) p1 = true
 test eff_check (mk_row (cons "IO" nil)) p1 = false
 
 // ── (2) the response vocabulary as a REAL Coproduct ──
 ShapeC : Type := Coproduct [pair "SLeaf" [], pair "SStem" [Tree], pair "SFork" [Tree, Tree], pair "SHyp" [Type]]
-let shape_cases := { SLeaf := 1; SStem := {c} -> 2; SFork := {l, r} -> 3; SHyp := {ty} -> 4 }
+let shape_cases := { SLeaf := 1; SStem := {c} => 2; SFork := {l, r} => 3; SHyp := {ty} => 4 }
 
 // (a) the certified idiom, production face: rec_value (elim inside) serves
 // BOTH faces, and the annotation below is machine-verified at load exactly
 // like nat_rec's (the crux: a branchy continuation with a real certificate).
-shape_size : {s : ShapeC} -> Nat := {s} -> rec_value ShapeC ({_} -> Nat) shape_cases s
+shape_size : {s : ShapeC} -> Nat := {s} => rec_value ShapeC ({_} => Nat) shape_cases s
 test shape_size (inj0 "SLeaf") = 1
 test shape_size (inj1 "SStem" (t t)) = 2
 test shape_size (inj2 "SFork" t (t t)) = 3
 test shape_size (inj1 "SHyp" Nat) = 4
-test param_apply (Pi ShapeC ({_} -> Nat)) shape_size = Ok true
+test param_apply (Pi ShapeC ({_} => Nat)) shape_size = Ok true
 // the frame applied directly (what elim does on the neutral face):
-test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> s { motive := ({_} -> Nat); cases := shape_cases }) = Ok true
+test param_apply (Pi ShapeC ({_} => Nat)) ({s} => s { motive := ({_} => Nat); cases := shape_cases }) = Ok true
 
 // (b) the FLIP: one arm ill-typed (SStem lands false, which is no Nat) — the
 // gate rejects, the elimination extends at InvalidType, the H-rule says no:
-let bad_cases := { SLeaf := 1; SStem := {c} -> false; SFork := {l, r} -> 3; SHyp := {ty} -> 4 }
-test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> s { motive := ({_} -> Nat); cases := bad_cases }) = Ok false
+let bad_cases := { SLeaf := 1; SStem := {c} => false; SFork := {l, r} => 3; SHyp := {ty} => 4 }
+test param_apply (Pi ShapeC ({_} => Nat)) ({s} => s { motive := ({_} => Nat); cases := bad_cases }) = Ok false
 
 // (c) a MISSING arm fails too:
-let partial_cases := { SLeaf := 1; SStem := {c} -> 2; SFork := {l, r} -> 3 }
-test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> s { motive := ({_} -> Nat); cases := partial_cases }) = Ok false
+let partial_cases := { SLeaf := 1; SStem := {c} => 2; SFork := {l, r} => 3 }
+test param_apply (Pi ShapeC ({_} => Nat)) ({s} => s { motive := ({_} => Nat); cases := partial_cases }) = Ok false
 
 // (d) the match twin: correct concretely, fails CLOSED abstractly:
-let k_match := {s} -> match s { SLeaf => 1; SStem c => 2; SFork l r => 3; SHyp ty => 4 }
+let k_match := {s} => match s { SLeaf => 1; SStem c => 2; SFork l r => 3; SHyp ty => 4 }
 test k_match (inj1 "SStem" t) = 2
-test param_apply (Pi ShapeC ({_} -> Nat)) k_match = Err
+test param_apply (Pi ShapeC ({_} => Nat)) k_match = Err
 
 // (e) the standing limit, pinned: an if-chain tag test one-paths SILENTLY —
 // the untaken branch is ill-typed (false is no Nat) and the certificate does
 // not notice. Certified branchy code must use the elim idiom above.
-let k_if := {s} -> if (tree_eq (pair_fst s) "SStem") then false else 1
-test param_apply (Pi ShapeC ({_} -> Nat)) k_if = Ok true
+let k_if := {s} => if (tree_eq (pair_fst s) "SStem") then false else 1
+test param_apply (Pi ShapeC ({_} => Nat)) k_if = Ok true
 
 // ── (3) the deep `Eff R X` recognizer (stage 0) ──
 let rowS := row1 "State"
@@ -117,13 +117,13 @@ test param_apply (Eff (row1 "IO") Unit) (st_put 3) = Ok false   // wrong row rej
 // a composed program (effect_proto's prog1: get, put the successor, return
 // the double — the continuation computes over the minted answer via the
 // elim-routed std arithmetic, which is what keeps it walkable):
-let prog1 := eff_bind st_get ({n} -> eff_bind (st_put (succ n)) ({u} -> io_pure (double n)))
+let prog1 := eff_bind st_get ({n} => eff_bind (st_put (succ n)) ({u} => io_pure (double n)))
 test param_apply (Eff rowS Nat) prog1 = Ok true
 test param_apply (Eff (row1 "IO") Nat) prog1 = Ok false
 test param_apply (Eff rowSIO Nat) prog1 = Ok true               // weakening still free
 test eff_check rowS prog1 = true                                 // agrees with the shallow form
 // a bad continuation RESULT rejects (k's landing type is checked):
-test param_apply (Eff rowS Nat) (eff_bind st_get ({n} -> io_pure false)) = Ok false
+test param_apply (Eff rowS Nat) (eff_bind st_get ({n} => io_pure false)) = Ok false
 // H-rule: an Eff-typed hypothesis inhabits by its stored type:
 test param_apply (Eff rowS Nat) (make_hyp (Eff rowS Nat) 0) = Ok true
 
@@ -135,17 +135,17 @@ test param_apply (Eff rowS Nat) (make_hyp (Eff rowS Nat) 0) = Ok true
 let cls := mk_op "Shape" "classify" Tree ShapeC
 let rowShape := row1 "Shape"
 let EffS := Eff rowShape Nat
-let good_arms := { SLeaf := io_pure 1; SStem := {c} -> io_pure 2; SFork := {l, r} -> io_pure 3; SHyp := {ty} -> io_pure 4 }
-let branchy := eff_bind (cls t) ({s} -> rec_value ShapeC ({_} -> EffS) good_arms s)
+let good_arms := { SLeaf := io_pure 1; SStem := {c} => io_pure 2; SFork := {l, r} => io_pure 3; SHyp := {ty} => io_pure 4 }
+let branchy := eff_bind (cls t) ({s} => rec_value ShapeC ({_} => EffS) good_arms s)
 test param_apply EffS branchy = Ok true
 // flip one arm to land the wrong type and the deep certificate flips —
 // the arms are visited THROUGH the recognizer:
-let bad_arms := { SLeaf := io_pure 1; SStem := {c} -> io_pure false; SFork := {l, r} -> io_pure 3; SHyp := {ty} -> io_pure 4 }
-let branchy_bad := eff_bind (cls t) ({s} -> rec_value ShapeC ({_} -> EffS) bad_arms s)
+let bad_arms := { SLeaf := io_pure 1; SStem := {c} => io_pure false; SFork := {l, r} => io_pure 3; SHyp := {ty} => io_pure 4 }
+let branchy_bad := eff_bind (cls t) ({s} => rec_value ShapeC ({_} => EffS) bad_arms s)
 test param_apply EffS branchy_bad = Ok false
 // and the SAME certified value runs: answer the op concretely, the recursor
 // dispatches, the handler folds (one value, checked and executed):
-let shape_h := mk_handler (covers_eff "Shape") io_pure ({op} -> {v, resume} -> resume (inj2 "SFork" v v))
+let shape_h := mk_handler (covers_eff "Shape") io_pure ({op} => {v, resume} => resume (inj2 "SFork" v v))
 test run_pure (handle shape_h branchy) = 3
 
 // ── (5) OPEN rows (landed 2026-07-08): a Row-typed hyp as improper tail ──
@@ -171,4 +171,4 @@ test label_in_row "IO" (row_insert "State" rho) = false
 test eff_check (row_insert "State" rho) p1 = true
 // row polymorphism is ordinary Pi Row — the effect-safety type is FORMED
 // from the abstract row and the check runs concretely against its prefix:
-test param_apply (Pi Row ({p} -> EffAt (row_insert "State" p))) ({p} -> p1) = Ok true
+test param_apply (Pi Row ({p} => EffAt (row_insert "State" p))) ({p} => p1) = Ok true

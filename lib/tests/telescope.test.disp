@@ -10,19 +10,19 @@ open use "../std/build.disp"
 
 // entry builders: a telescope cell is now a wait-form (`proj_cell name ty` /
 // `derive_cell name recipe`) — the same trees the surface recType desugar emits.
-let ent := {name, ty} -> proj_cell name ty
-let dent := {name, e} -> derive_cell name e
+let ent := {name, ty} => proj_cell name ty
+let dent := {name, e} => derive_cell name e
 
 // ---- empty telescope = ⊤ (the empty meet of obligations = Top, = Tree). Guard-free:
 // a non-empty record telescope still rejects non-records via the proj cell's lookup_field,
 // but the EMPTY telescope imposes no obligations, so everything inhabits it. ----
 test typecheck (Telescope t) {} = Ok true             // a record inhabits {}
 test param_apply (Telescope t) zero = Ok true         // ...and so does a non-record (⊤, not "any record")
-test param_apply (Telescope t) ({x} -> x) = Ok true   // ...and a function
+test param_apply (Telescope t) ({x} => x) = Ok true   // ...and a function
 test tree_eq (param_apply (Telescope t) zero) (param_apply Tree zero) = true  // {} agrees with Tree
 
 // ---- non-dependent 2-entry telescope ----
-let T2 := Telescope (t (ent "a" Nat) ({_a} -> t (ent "b" Bool) ({_b} -> t)))
+let T2 := Telescope (t (ent "a" Nat) ({_a} => t (ent "b" Bool) ({_b} => t)))
 test typecheck T2 { a := 2; b := true } = Ok true
 test param_apply T2 { a := 2; b := 2 } = Ok false // b not a Bool
 test param_apply T2 { b := true } = Ok false // missing field
@@ -34,7 +34,7 @@ test typecheck T2 { a := 2; b := true; c := 9 } = Ok true // width subtyping: ex
 // the `at` walk observes a proj cell with the honest `lookup_field` (Ok value | Err),
 // not the total `field`, so absent fields are rejected regardless of the field's type
 // (the soundness fix the wait-form unification preserves). ----
-let TTop := Telescope (t (ent "a" Tree) ({_a} -> t (ent "b" Bool) ({_b} -> t)))
+let TTop := Telescope (t (ent "a" Tree) ({_a} => t (ent "b" Bool) ({_b} => t)))
 test param_apply TTop { b := true } = Ok false          // missing a:Tree -> rejected (was Ok true)
 test typecheck TTop { a := zero; b := true } = Ok true // present -> accepted
 test lookup_field { a := zero; b := true } "a" = Ok zero
@@ -50,21 +50,21 @@ test param_apply T2 (make_hyp T2 0) = Ok true
 test typecheck Type T2 = Ok true
 
 // ---- dependent: { T : Type, x : T } (n-ary Sigma) ----
-let TDep := Telescope (t (ent "T" Type) ({T} -> t (ent "x" T) ({_x} -> t)))
+let TDep := Telescope (t (ent "T" Type) ({T} => t (ent "x" T) ({_x} => t)))
 test typecheck TDep { T := Nat; x := 3 } = Ok true
 test typecheck TDep { T := Bool; x := false } = Ok true
 test param_apply TDep { T := Nat; x := false } = Ok false // x not a Nat
 
 // ---- derived field: { a : Nat, b := double a } ----
-let TD := Telescope (t (ent "a" Nat) ({a} -> t (dent "b" (double a)) ({_b} -> t)))
+let TD := Telescope (t (ent "a" Nat) ({a} => t (dent "b" (double a)) ({_b} => t)))
 test typecheck TD { a := 2; b := 4 } = Ok true
 test param_apply TD { a := 2; b := 5 } = Ok false // lying derived field rejected (tree_eq pin)
 test param_apply TD { a := 3; b := 6 } = Ok true
 
 // later OPAQUE type over a derived prior: { a : Nat, b := succ a, c : Eq Nat b (succ a) }
-let TDC := Telescope (t (ent "a" Nat) ({a} ->
-  t (dent "b" (succ a)) ({b} ->
-  t (ent "c" (Eq Nat b (succ a))) ({_c} -> t))))
+let TDC := Telescope (t (ent "a" Nat) ({a} =>
+  t (dent "b" (succ a)) ({b} =>
+  t (ent "c" (Eq Nat b (succ a))) ({_c} => t))))
 test typecheck TDC { a := 1; b := 2; c := refl } = Ok true
 test param_apply TDC { a := 1; b := 3; c := refl } = Ok false // b pinned
 
@@ -84,7 +84,7 @@ test tree_eq (neutral_type (param_apply hDep (acc "x"))) hT = true
 
 // ---- derived projection on a hyp: δ-transparency (Reduce, not Extend) ----
 // constructor-only recipe (succ) is walker-safe: r.b unfolds to succ <a-neutral>
-let TS := Telescope (t (ent "a" Nat) ({a} -> t (dent "b" (succ a)) ({_b} -> t)))
+let TS := Telescope (t (ent "a" Nat) ({a} => t (dent "b" (succ a)) ({_b} => t)))
 let hTS := make_hyp TS 0
 let vsa := param_apply hTS (acc "a")
 test tree_eq (param_apply hTS (acc "b")) (succ vsa) = true
@@ -100,15 +100,15 @@ test neutral_type pdb = Nat
 
 // a RAW-TRIAGING recipe (pair_snd is unsanctioned) is policed into the dead
 // state when fed a neutral prior: same GAP-2 regime as a triaging Pi codomain.
-let TR := Telescope (t (ent "a" Nat) ({a} -> t (dent "b" (pair_snd a)) ({_b} -> t)))
+let TR := Telescope (t (ent "a" Nat) ({a} => t (dent "b" (pair_snd a)) ({_b} => t)))
 test neutral_type (param_apply (make_hyp TR 0) (acc "b")) = InvalidType
 
 // an opaque entry whose TYPE raw-triages the prior-neutral: policed the same way
-let TBad := Telescope (t (ent "a" Nat) ({a} -> t (ent "b" (pair_snd a)) ({_b} -> t)))
+let TBad := Telescope (t (ent "a" Nat) ({a} => t (ent "b" (pair_snd a)) ({_b} => t)))
 test neutral_type (param_apply (make_hyp TBad 0) (acc "b")) = InvalidType
 // while a computed type over a CONCRETE record works fine
-let TIf := Telescope (t (ent "a" Nat) ({a} ->
-  t (ent "b" (if (is_zero a) then Nat else Bool)) ({_b} -> t)))
+let TIf := Telescope (t (ent "a" Nat) ({a} =>
+  t (ent "b" (if (is_zero a) then Nat else Bool)) ({_b} => t)))
 test typecheck TIf { a := 0; b := 3 } = Ok true
 
 // ---- build: fill derived fields from the recipe, take opaque ones from `given` ----
@@ -120,10 +120,10 @@ test typecheck TDC (build TDC { a := 1; c := refl }) = Ok true
 test build T2 { a := 1; b := false } = { a := 1; b := false }
 
 // ---- a function over a telescope record: Pi (Telescope ...) — named args ----
-f : Arrow T2 Nat := {r} -> succ (r.a)
+f : Arrow T2 Nat := {r} => succ (r.a)
 test f { a := 2; b := true } = 3
 // dependent domain end-to-end
-g : Arrow TDep Nat := {_r} -> 0
+g : Arrow TDep Nat := {_r} => 0
 test g { T := Bool; x := true } = 0
 
 // ==== surface syntax: a recType literal IS a telescope type ====
@@ -154,10 +154,10 @@ let TDCs := { a : Nat, b : Nat := succ a, c : Eq Nat b (succ a) }
 test typecheck TDCs (build TDCs { a := 1; c := refl }) = Ok true
 
 // the headline: named-argument calls over a dependent record domain
-add_fields : Arrow { a : Nat, b : Nat } Nat := {r} -> add r.a r.b
+add_fields : Arrow { a : Nat, b : Nat } Nat := {r} => add r.a r.b
 test add_fields { a := 1; b := 2 } = 3
 // with a derived field filled by build
-scale : Arrow { n : Nat, twice := double n } Nat := {r} -> r.twice
+scale : Arrow { n : Nat, twice := double n } Nat := {r} => r.twice
 test scale (build { n : Nat, twice := double n } { n := 5 }) = 10
 
 // binder-param recType annotation gives projections AND the real type

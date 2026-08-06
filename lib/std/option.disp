@@ -12,17 +12,17 @@ open use "../kernel/prelude.disp"
 none_tag : String := "none"
 some_tag : String := "some"
 
-Option : Type -> Type := {A} -> Coproduct_p (cons A nil) [pair some_tag [Param zero], pair none_tag [Unit]]
+Option : Type -> Type := {A} => Coproduct_p (cons A nil) [pair some_tag [Param zero], pair none_tag [Unit]]
 
 // none/some are payload-only constructors, so they carry the loose Tree type rather
 // than the dependent `{A} -> A -> Option A` (which would need an extra A binder).
 none : Tree := inj none_tag unit_val
-some : Tree -> Tree := {v} -> inj some_tag v
+some : Tree -> Tree := {v} => inj some_tag v
 
 // is_none/is_some read only the tag via the sanctioned `pair_fst` reader, so they
 // type even on an abstract Option hypothesis.
-is_none : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) none_tag
-is_some : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) some_tag
+is_none : Tree -> Bool := {opt} => tree_eq (pair_fst opt) none_tag
+is_some : Tree -> Bool := {opt} => tree_eq (pair_fst opt) some_tag
 
 // option_rec — the PARAMETRIC dependent eliminator, routed through `elim` (the
 // shared polarized application): a neutral hypothesis gets the `{motive; cases}`
@@ -31,20 +31,20 @@ is_some : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) some_tag
 // concrete value runs the tag-keyed field-record cut. ONE cases record serves
 // both faces (the frame/gate reads it by field — coh_check's `field cases tag`
 // — and the dispatcher unwraps the field and applies it to the payload).
-let option_dispatcher := {motive, cases, opt} -> (field cases (pair_fst opt)) (pair_snd opt)
-option_rec := {motive, on_none, on_some, opt} ->
-  elim option_dispatcher motive (make_record [some_tag, none_tag] [list_const on_some, list_const ({_} -> on_none)]) opt
+let option_dispatcher := {motive, cases, opt} => (field cases (pair_fst opt)) (pair_snd opt)
+option_rec := {motive, on_none, on_some, opt} =>
+  elim option_dispatcher motive (make_record [some_tag, none_tag] [list_const on_some, list_const ({_} => on_none)]) opt
 
 // Concrete-only conveniences (built on the cut; they carry no motive, so they do
 // not lift to a hypothesis — use option_rec with an explicit motive for that).
-option_map := {f, opt} ->
-  make_record [some_tag, none_tag] [{v} -> some (f v), {_} -> none] opt
+option_map := {f, opt} =>
+  make_record [some_tag, none_tag] [{v} => some (f v), {_} => none] opt
 
-option_and_then := {opt, k} ->
-  make_record [some_tag, none_tag] [{v} -> k v, {_} -> none] opt
+option_and_then := {opt, k} =>
+  make_record [some_tag, none_tag] [{v} => k v, {_} => none] opt
 
-option_unwrap_or := {default, opt} ->
-  make_record [some_tag, none_tag] [{v} -> v, {_} -> default] opt
+option_unwrap_or := {default, opt} =>
+  make_record [some_tag, none_tag] [{v} => v, {_} => default] opt
 
-option_or := {opt_a, opt_b} ->
-  make_record [some_tag, none_tag] [{_} -> opt_a, {_} -> opt_b] opt_a
+option_or := {opt_a, opt_b} =>
+  make_record [some_tag, none_tag] [{_} => opt_a, {_} => opt_b] opt_a

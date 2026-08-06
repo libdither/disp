@@ -21,18 +21,18 @@
 open use "../kernel/prelude.disp"
 
 // honest on the checker's question, junk on real data:
-let evil := {n} -> if (is_neutral n) then n else false
+let evil := {n} => if (is_neutral n) then n else false
 
-test param_apply (Pi Nat ({_} -> Nat)) evil = Ok true   // the certificate (the gap)
+test param_apply (Pi Nat ({_} => Nat)) evil = Ok true   // the certificate (the gap)
 test tree_eq (evil 3) false = true                      // the behavior: 3 -> false (a stem, not a Nat)
 test param_apply Nat (evil 3) = Ok false                // defense 1: use-site re-check catches the junk
 
 // the type-preserving variant also certifies — a simple-type certificate never
 // pinned WHICH function it is (expected; shown as the benign end of the family):
-let sneaky := {n} -> if (is_neutral n) then n else (succ n)
-test param_apply (Pi Nat ({_} -> Nat)) sneaky = Ok true
+let sneaky := {n} => if (is_neutral n) then n else (succ n)
+test param_apply (Pi Nat ({_} => Nat)) sneaky = Ok true
 test sneaky 3 = 4
 
 // defense 2: theorems at the abstract point cannot be faked this way — the
 // neutral branch must produce a real inhabitant of the dependent codomain:
-test tree_eq (param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> if (is_neutral n) then refl else refl)) (Ok true) = false
+test tree_eq (param_apply (Pi Nat ({n} => Eq Nat n (succ n))) ({n} => if (is_neutral n) then refl else refl)) (Ok true) = false

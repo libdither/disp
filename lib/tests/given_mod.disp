@@ -9,5 +9,5 @@ open given {
   start : Nat := 0
 }
 
-double : Nat -> Nat := {x} -> add x x
-from_start : Nat -> Nat := {x} -> add start x
+double : Nat -> Nat := {x} => add x x
+from_start : Nat -> Nat := {x} => add start x

@@ -41,45 +41,45 @@ open use "../kernel/prelude.disp"
 open use "../std/effect.disp"
 
 // control: inline continuations, nested binders — the safe shape:
-test param_apply (bind_hyp Tree) ({a} -> param_apply (bind_hyp Tree) ({b} -> Ok (is_fork (t a b)))) = Ok true
+test param_apply (bind_hyp Tree) ({a} => param_apply (bind_hyp Tree) ({b} => Ok (is_fork (t a b)))) = Ok true
 
 // the helper parameter pass (unapplied):
-let mint_via := {ty, kont} -> param_apply (bind_hyp ty) kont
-test mint_via Tree ({a} -> Ok (is_fork (t t a))) = Ok true
-test mint_via Tree ({a} -> mint_via Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
+let mint_via := {ty, kont} => param_apply (bind_hyp ty) kont
+test mint_via Tree ({a} => Ok (is_fork (t t a))) = Ok true
+test mint_via Tree ({a} => mint_via Tree ({b} => Ok (is_fork (t a b)))) = Ok true
 
 // the eta-trap wrapper (collapses to the bare parameter):
-let mint_naive := {ty, kont} -> param_apply (bind_hyp ty) ({h} -> kont h)
-test mint_naive Tree ({a} -> mint_naive Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
+let mint_naive := {ty, kont} => param_apply (bind_hyp ty) ({h} => kont h)
+test mint_naive Tree ({a} => mint_naive Tree ({b} => Ok (is_fork (t a b)))) = Ok true
 
 // the mid-body let-bound continuation over the outer hyp:
-test param_apply (bind_hyp Tree) ({a} -> {
-  let go := {b} -> Ok (is_fork (t a b))
+test param_apply (bind_hyp Tree) ({a} => {
+  let go := {b} => Ok (is_fork (t a b))
   param_apply (bind_hyp Tree) go
 }) = Ok true
 
 // the keep trick (the stage-1 mint clause shape):
-let keep := {x} -> x
-let mint_keep := {ty, kont} -> param_apply (bind_hyp ty) ({h} -> kont (keep h))
-test mint_keep Tree ({a} -> Ok (is_fork (t t a))) = Ok true
-test mint_keep Tree ({a} -> mint_keep Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
-test param_apply (bind_hyp Tree) ({a} -> {
-  let go := {b} -> Ok (is_fork (t a b))
-  param_apply (bind_hyp Tree) ({h} -> go (keep h))
+let keep := {x} => x
+let mint_keep := {ty, kont} => param_apply (bind_hyp ty) ({h} => kont (keep h))
+test mint_keep Tree ({a} => Ok (is_fork (t t a))) = Ok true
+test mint_keep Tree ({a} => mint_keep Tree ({b} => Ok (is_fork (t a b)))) = Ok true
+test param_apply (bind_hyp Tree) ({a} => {
+  let go := {b} => Ok (is_fork (t a b))
+  param_apply (bind_hyp Tree) ({h} => go (keep h))
 }) = Ok true
 
 // the clause as a record field (how the stage-1 floor handler will carry it):
-let floor_rec := { on_mint := {ty, kont} -> param_apply (bind_hyp ty) ({h} -> kont (keep h)) }
-test (floor_rec.on_mint) Tree ({a} -> (floor_rec.on_mint) Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
+let floor_rec := { on_mint := {ty, kont} => param_apply (bind_hyp ty) ({h} => kont (keep h)) }
+test (floor_rec.on_mint) Tree ({a} => (floor_rec.on_mint) Tree ({b} => Ok (is_fork (t a b)))) = Ok true
 
 // the closest repro of the HISTORICAL context: the continuation references a
 // fix `self` (the walker's shape — "a continuation {h} -> self ... h passed
 // THROUGH a function") and reaches the route through the helper. This is the
 // exact dataflow the stage-1 handler has (handle's fold hands the clause a
 // resume that closes over the fold's self):
-let mint_loop := fix ({self, n, acc} ->
+let mint_loop := fix ({self, n, acc} =>
   if (tree_eq n zero) then (Ok acc)
-  else (mint_via Tree ({h} -> self (nat_pred n) (is_fork (t acc h)))))
+  else (mint_via Tree ({h} => self (nat_pred n) (is_fork (t acc h)))))
 test mint_loop 2 t = Ok true
 
 // ═══ STAGE 1: the kernel signature and the floor handler ═══
@@ -117,23 +117,23 @@ test mint_loop 2 t = Ok true
 ShapeR : Type := Coproduct [pair "leaf" [], pair "stem" [Tree], pair "fork" [Tree, Tree], pair "hyp" [Type]]
 
 let k_classify := mk_op "Reflect" "classify" Tree ShapeR
-let k_mint := {ty} -> io_op { label := pair "Mint" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
-let k_check := {ty, v} -> (mk_op "Check" "check" Tree CheckerResult) (pair ty v)
-let k_extend := {n, ty, frame} -> io_op { label := pair "Extend" "extend"; param := Tree; result := ty } (pair n (pair ty frame)) ({r} -> io_pure r)
+let k_mint := {ty} => io_op { label := pair "Mint" "mint"; param := Type; result := ty } ty ({r} => io_pure r)
+let k_check := {ty, v} => (mk_op "Check" "check" Tree CheckerResult) (pair ty v)
+let k_extend := {n, ty, frame} => io_op { label := pair "Extend" "extend"; param := Tree; result := ty } (pair n (pair ty frame)) ({r} => io_pure r)
 let kernel_row := mk_row (cons "Reflect" (cons "Mint" (cons "Check" (cons "Extend" nil))))
 
 // the floor handler: THE enumerated place that looks. return is bare (the
 // carrier is CheckerResult or a kernel answer, never re-wrapped) so the mint
 // clause can feed the handled tail straight into the escape check.
-let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
-let classify_answer := {v} -> if (is_hyp_fork_l v) then (inj1 "hyp" (neutral_type v)) else (triage (inj0 "leaf") ({c} -> inj1 "stem" c) ({l, r} -> inj2 "fork" l r) v)
-let extend_build := {n, ty, frame} -> wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
-let floor_on := {op} -> {arg, resume} ->
+let is_hyp_fork_l := {v} => and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let classify_answer := {v} => if (is_hyp_fork_l v) then (inj1 "hyp" (neutral_type v)) else (triage (inj0 "leaf") ({c} => inj1 "stem" c) ({l, r} => inj2 "fork" l r) v)
+let extend_build := {n, ty, frame} => wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
+let floor_on := {op} => {arg, resume} =>
   if (tree_eq (op_name op) "classify") then (resume (classify_answer arg))
   else (if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
   else (if (tree_eq (op_name op) "check") then (resume (param_apply (pair_fst arg) (pair_snd arg)))
   else (resume (extend_build (pair_fst arg) (pair_fst (pair_snd arg)) (pair_snd (pair_snd arg))))))
-let floor_h := { covers := {op} -> label_in_row (effect_of op) kernel_row; return := {x} -> x; on := floor_on; forward := default_forward }
+let floor_h := { covers := {op} => label_in_row (effect_of op) kernel_row; return := {x} => x; on := floor_on; forward := default_forward }
 let run_floor := handle floor_h
 
 // requests are typed VALUES at their rows (asking is typed), including over
@@ -158,9 +158,9 @@ test run_floor (k_check Nat false) = param_apply Nat false
 // extend builds the SAME tree the walker's hyp_reduce Extend builds:
 test run_floor (k_extend hf Nat 3) = param_apply hf 3
 // mint: freshness, use, and the inherited escape discipline:
-test run_floor (eff_bind (k_mint Nat) ({h} -> io_pure (Ok (is_neutral h)))) = Ok true
-test run_floor (eff_bind (k_mint Nat) ({a} -> eff_bind (k_mint Nat) ({b} -> io_pure (Ok (tree_eq a b))))) = Ok false
-test run_floor (eff_bind (k_mint Nat) ({h} -> io_pure (Ok h))) = Err
+test run_floor (eff_bind (k_mint Nat) ({h} => io_pure (Ok (is_neutral h)))) = Ok true
+test run_floor (eff_bind (k_mint Nat) ({a} => eff_bind (k_mint Nat) ({b} => io_pure (Ok (tree_eq a b))))) = Ok false
+test run_floor (eff_bind (k_mint Nat) ({h} => io_pure (Ok h))) = Err
 // a bare mint request violates the carrier contract (its tail is the hyp,
 // not a CheckerResult): the escape bind becomes a mis-tagged cut and the
 // result is inert junk — not Err, and not the hyp:

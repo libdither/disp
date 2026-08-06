@@ -27,9 +27,9 @@ open use "relation.disp"
 
 // Glue for a raw cut worker.  This is deliberately owned by the guard module:
 // a rebind cannot replace or bypass the neutral/non-cut delegation branches.
-case_delegate := {old, fast, T} -> {
+case_delegate := {old, fast, T} => {
   let cut_class := tree_eq ((type_meta T).functor) iso_id
-  {motive, cases, target} ->
+  {motive, cases, target} =>
     if (is_neutral target) then (old T motive cases target)
     else (if cut_class
       then (fast T motive cases target)
@@ -59,44 +59,44 @@ case_delegate := {old, fast, T} -> {
 // Plain Coproduct codes may contain ordinary argument types and Rec/RecUnder
 // markers. Param and RecAt need an ambient parameter/mutual context and are not
 // part of this cut-class license combinator.
-let positive_arg_type := {T, marker} ->
+let positive_arg_type := {T, marker} =>
   if (is_recunder_marker marker) then ((pair_snd marker) T)
   else (if (or (is_param_marker marker) (is_recat_marker marker)) then InvalidType else marker)
 
-let positive_arm_type := fix ({self, T, B, argspec} ->
+let positive_arm_type := fix ({self, T, B, argspec} =>
   if (is_fork argspec)
-    then (Pi (positive_arg_type T (pair_fst argspec)) ({_arg} -> self T B (pair_snd argspec)))
+    then (Pi (positive_arg_type T (pair_fst argspec)) ({_arg} => self T B (pair_snd argspec)))
     else B)
 
-let positive_arm_fields := fix ({self, T, B, variants} ->
+let positive_arm_fields := fix ({self, T, B, variants} =>
   if (is_fork variants) then {
     let variant := pair_fst variants
     cons (pair (pair_fst variant) (positive_arm_type T B (pair_snd variant)))
       (self T B (pair_snd variants))
   } else nil)
 
-PositiveCaseArms := {variants, B} -> {
+PositiveCaseArms := {variants, B} => {
   let T := Coproduct variants
   Record (positive_arm_fields T B variants)
 }
 
-let positive_constructor_obligation := fix ({self, T, B, old, new, tag, argspec, cases, args} ->
+let positive_constructor_obligation := fix ({self, T, B, old, new, tag, argspec, cases, args} =>
   if (is_fork argspec)
-    then (Pi (positive_arg_type T (pair_fst argspec)) ({arg} ->
+    then (Pi (positive_arg_type T (pair_fst argspec)) ({arg} =>
       self T B old new tag (pair_snd argspec) cases (list_cat args (cons arg nil))))
     else ((eq_relation B).rel
-      (old T ({_} -> B) cases (inj tag (build_payload args)))
-      (new T ({_} -> B) cases (inj tag (build_payload args)))))
+      (old T ({_} => B) cases (inj tag (build_payload args)))
+      (new T ({_} => B) cases (inj tag (build_payload args)))))
 
-let positive_coverage_fields := fix ({self, variants, T, B, old, new, Arms} ->
+let positive_coverage_fields := fix ({self, variants, T, B, old, new, Arms} =>
   if (is_fork variants) then {
     let variant := pair_fst variants
-    cons (pair (pair_fst variant) (Pi Arms ({cases} ->
+    cons (pair (pair_fst variant) (Pi Arms ({cases} =>
       positive_constructor_obligation T B old new (pair_fst variant) (pair_snd variant) cases nil)))
       (self (pair_snd variants) T B old new Arms)
   } else nil)
 
-PositiveCaseCoverage := {variants, B, old, new} -> {
+PositiveCaseCoverage := {variants, B, old, new} => {
   let T := Coproduct variants
   let Arms := PositiveCaseArms variants B
   Record (positive_coverage_fields variants T B old new Arms)
@@ -117,7 +117,7 @@ CaseLicenseType : Type := Coproduct CaseLicenseCode
 // The ownership relation covers only the concrete cut face. The guard-built
 // `case_delegate` owns neutral and non-cut behavior. Proof shape: an at_cut
 // record whose fields mirror CaseLicenseCode.
-CaseRelation := relation_on Tree ({old, new} -> {
+CaseRelation := relation_on Tree ({old, new} => {
   at_cut : PositiveCaseCoverage CaseLicenseCode Nat old new
 })
 
@@ -125,7 +125,7 @@ CaseRelation := relation_on Tree ({old, new} -> {
 // later `{ fast, proof }` proposal is never bound directly: the guard builds
 // the delegated whole function, checks the concrete relation, and binds only
 // that guard-constructed tree.
-case_license_guard := {old, req} ->
+case_license_guard := {old, req} =>
   if (is_stem (req.guard)) then Err
   else (if (is_leaf old)
     then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)

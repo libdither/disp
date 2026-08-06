@@ -11,32 +11,32 @@ open use "../kernel/prelude.disp"
 ok_tag  : String := "ok"
 err_tag : String := "err"
 
-Result : Type -> Type -> Type := {E, A} -> Coproduct_p (cons E (cons A nil)) [pair ok_tag [Param (succ zero)], pair err_tag [Param zero]]
+Result : Type -> Type -> Type := {E, A} => Coproduct_p (cons E (cons A nil)) [pair ok_tag [Param (succ zero)], pair err_tag [Param zero]]
 
 // payload-only constructors -> loose Tree type (see option.disp none/some).
-ok  : Tree -> Tree := {v} -> inj ok_tag v
-err : Tree -> Tree := {e} -> inj err_tag e
+ok  : Tree -> Tree := {v} => inj ok_tag v
+err : Tree -> Tree := {e} => inj err_tag e
 
 // tag-only reads via the sanctioned pair_fst reader -> type on abstract Results too.
-is_ok_result  : Tree -> Bool := {r} -> tree_eq (pair_fst r) ok_tag
-is_err_result : Tree -> Bool := {r} -> tree_eq (pair_fst r) err_tag
+is_ok_result  : Tree -> Bool := {r} => tree_eq (pair_fst r) ok_tag
+is_err_result : Tree -> Bool := {r} => tree_eq (pair_fst r) err_tag
 
 // result_rec — the PARAMETRIC dependent eliminator, routed through `elim` (see
 // option_rec for the idiom): neutral -> the frame through the respond; concrete
 // -> the tag-keyed field-record cut. One cases record serves both faces.
-let result_dispatcher := {motive, cases, r} -> (field cases (pair_fst r)) (pair_snd r)
-result_rec := {motive, on_ok, on_err, r} ->
+let result_dispatcher := {motive, cases, r} => (field cases (pair_fst r)) (pair_snd r)
+result_rec := {motive, on_ok, on_err, r} =>
   elim result_dispatcher motive (make_record [ok_tag, err_tag] [list_const on_ok, list_const on_err]) r
 
 // Concrete-only conveniences (no motive, so they do not lift to a hypothesis).
-result_map := {f, r} ->
-  make_record [ok_tag, err_tag] [{v} -> ok (f v), {e} -> err e] r
+result_map := {f, r} =>
+  make_record [ok_tag, err_tag] [{v} => ok (f v), {e} => err e] r
 
-result_map_err := {g, r} ->
-  make_record [ok_tag, err_tag] [{v} -> ok v, {e} -> err (g e)] r
+result_map_err := {g, r} =>
+  make_record [ok_tag, err_tag] [{v} => ok v, {e} => err (g e)] r
 
-result_and_then := {r, k} ->
-  make_record [ok_tag, err_tag] [{v} -> k v, {e} -> err e] r
+result_and_then := {r, k} =>
+  make_record [ok_tag, err_tag] [{v} => k v, {e} => err e] r
 
-result_unwrap_or := {default, r} ->
-  make_record [ok_tag, err_tag] [{v} -> v, {_} -> default] r
+result_unwrap_or := {default, r} =>
+  make_record [ok_tag, err_tag] [{v} => v, {_} => default] r

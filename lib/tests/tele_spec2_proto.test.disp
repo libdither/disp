@@ -52,13 +52,13 @@ open use "../std/tele_spec.disp"
 let pi_nn_cells := (type_meta (Arrow Nat Nat)).recognizer_params
 test rec_spec pi_nn_cells succ = Ok true
 test param_apply (Arrow Nat Nat) succ = Ok true
-test rec_spec pi_nn_cells ({n} -> false) = Ok false
-test param_apply (Arrow Nat Nat) ({n} -> false) = Ok false
+test rec_spec pi_nn_cells ({n} => false) = Ok false
+test param_apply (Arrow Nat Nat) ({n} => false) = Ok false
 // Pi, dependent codomain:
-let pi_dep := Pi Nat ({n} -> Eq Nat n n)
+let pi_dep := Pi Nat ({n} => Eq Nat n n)
 let pi_dep_cells := (type_meta pi_dep).recognizer_params
-test rec_spec pi_dep_cells ({n} -> refl) = Ok true
-test param_apply pi_dep ({n} -> refl) = Ok true
+test rec_spec pi_dep_cells ({n} => refl) = Ok true
+test param_apply pi_dep ({n} => refl) = Ok true
 // Record: present / ill-typed / missing field (cells built with the exported
 // constructors; Record's meta stores the flat list and lifts lazily):
 let rcells := t (proj_cell "a" Nat) (const_tail (t (proj_cell "b" Bool) (const_tail t)))
@@ -76,9 +76,9 @@ test param_apply refi 0 = Ok true
 test rec_spec refi_cells 3 = Ok false
 test param_apply refi 3 = Ok false
 // Intersection: the id-at-forall classic, and a concretely-decidable reject:
-let inter_id := Intersection Type ({A} -> Arrow A A)
-test rec_spec ((type_meta inter_id).recognizer_params) ({x} -> x) = Ok true
-test param_apply inter_id ({x} -> x) = Ok true
+let inter_id := Intersection Type ({A} => Arrow A A)
+test rec_spec ((type_meta inter_id).recognizer_params) ({x} => x) = Ok true
+test param_apply inter_id ({x} => x) = Ok true
 let inter_sing := Intersection Nat Singleton
 test rec_spec ((type_meta inter_sing).recognizer_params) zero = Ok false
 test param_apply (Intersection Nat Singleton) zero = Ok false
@@ -91,9 +91,9 @@ test param_apply (Intersection Nat Singleton) zero = Ok false
 // (Ok false) because the substrate reduces the stem application before the
 // walk sees it. The acceptance sets agree everywhere; the REJECTION FORM
 // (Err vs Ok false) varies by where the rejection surfaces, pinned as-is:
-let pi_tb_cells := (type_meta (Pi Tree ({_} -> Bool))).recognizer_params
+let pi_tb_cells := (type_meta (Pi Tree ({_} => Bool))).recognizer_params
 test rec_spec pi_tb_cells is_fork = Err
-test param_apply (Pi Tree ({_} -> Bool)) is_fork = Err
+test param_apply (Pi Tree ({_} => Bool)) is_fork = Err
 let pi_tt_cells := (type_meta (Arrow Tree Tree)).recognizer_params
 test rec_spec pi_tt_cells (t hyp_sig) = Err
 test param_apply (Arrow Tree Tree) (t hyp_sig) = Ok false
@@ -106,7 +106,7 @@ test resp_spec 3 pi_dep_cells hdep = Extend (Eq Nat 3 3)
 let hr := make_hyp RecT 23
 test resp_spec (acc "b") rcells hr = Extend Bool
 // the spec's Extend + stage 1's extend op = the live elimination tree:
-let extend_build := {n, ty, frame} -> wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
+let extend_build := {n, ty, frame} => wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
 test extend_build hf Nat 3 = param_apply hf 3
 
 // ── THE HEADLINE: one program value, two interpreters, two faces ──

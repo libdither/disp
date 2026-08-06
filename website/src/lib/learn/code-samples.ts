@@ -25,8 +25,8 @@ s(
   'decl-basics',
   RAW,
   `// untyped definitions — plain combinators
-i := {x} -> x
-k := {x, y} -> x
+i := {x} => x
+k := {x, y} => x
 
 // a test is a compile-time obligation: reduce both sides,
 // demand the identical tree
@@ -39,7 +39,7 @@ s(
   KERNEL_OPS,
   `// a typed definition: the annotation is an expression too, and the
 // compiler VERIFIES it through the kernel when the module loads
-quadruple : Nat -> Nat := {n} -> double (double n)
+quadruple : Nat -> Nat := {n} => double (double n)
 test quadruple 3 = 12`
 )
 
@@ -104,7 +104,7 @@ s(
   KERNEL,
   `// under the dispatcher, a type that peeks at its argument's raw shape
 // is refused — either answer would leak what the promise doesn't contain
-test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err`
+test param_apply (Pi Nat ({_} => Bool)) ({x} => is_fork x) = Err`
 )
 
 s(
@@ -113,11 +113,11 @@ s(
   `// neutral evaluation: an eliminator reaching a promise parks as a
 // stuck elimination, TYPED by its motive
 let hN := make_hyp Nat 0
-test is_neutral (nat_rec ({_} -> Bool) true ({n, rec} -> false) hN) = true
+test is_neutral (nat_rec ({_} => Bool) true ({n, rec} => false) hN) = true
 
 // observations route through the stored type's respond: apply a
 // function-promise and the result is stuck AT THE CODOMAIN TYPE
-let hPi := make_hyp (Pi Nat ({_} -> Bool)) 0
+let hPi := make_hyp (Pi Nat ({_} => Bool)) 0
 test neutral_type (param_apply hPi zero) = Bool`
 )
 
@@ -139,11 +139,11 @@ s(
   KERNEL,
   `// the surface record literal IS the library telescope former
 let Point := { x : Nat, y : Nat }
-let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} -> t (proj_cell "y" Nat) ({_y} -> t)))
+let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} => t (proj_cell "y" Nat) ({_y} => t)))
 test tree_eq Point PointCells = true
 
 // and Pi is a two-cell telescope: mint the domain, check the codomain
-test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n) = Ok true`
+test param_apply (Pi Nat ({_} => Nat)) ({n} => n) = Ok true`
 )
 
 s(
@@ -176,9 +176,9 @@ test (Eq Nat (double 2) 4) refl = Ok true
 test (Eq Nat 3 4) refl = Ok false
 
 // a theorem about every Nat: a Pi into a proposition
-n_eq_n : {n : Nat} -> Eq Nat n n := {n} -> refl
-test param_apply (Pi Nat ({n} -> Eq Nat n n)) n_eq_n = Ok true
-test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl) = Ok false`
+n_eq_n : {n : Nat} -> Eq Nat n n := {n} => refl
+test param_apply (Pi Nat ({n} => Eq Nat n n)) n_eq_n = Ok true
+test param_apply (Pi Nat ({n} => Eq Nat n (succ n))) ({n} => refl) = Ok false`
 )
 
 s(
@@ -195,7 +195,7 @@ s(
   `// the behavioral check: aim the promise machinery at a type's own
 // respond, and catch lies in both directions
 let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]
-let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
+let resp_of := {T} => (type_meta T).respond (type_meta T).recognizer_params
 test verify_good MyNat (resp_of MyNat) = Ok true
 test verify_good MyNat (inductive_respond unit_witness) = Ok false
 test verify_good MyNat (inert_respond unit_witness) = Ok false`

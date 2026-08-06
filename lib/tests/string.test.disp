@@ -21,6 +21,6 @@ test field r "y" = true
 
 // And as coproduct tags through the cut (make_record takes the names as a list of
 // string terms; match-arm *patterns* are still identifiers, a separate feature).
-let handle := make_record ["inc", "id"] [{n} -> succ n, {x} -> x]
+let handle := make_record ["inc", "id"] [{n} => succ n, {x} => x]
 test handle (inj "inc" zero) = succ zero
 test handle (inj "id" true) = true

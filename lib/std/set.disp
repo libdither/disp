@@ -5,29 +5,29 @@ open use "../kernel/prelude.disp"
 NatSet : Type := Nat -> Bool
 
 empty_set : NatSet :=
-  {_} -> false
+  {_} => false
 
 full_set : NatSet :=
-  {_} -> true
+  {_} => true
 
 singleton_set : Nat -> NatSet :=
-  {needle} -> {x} -> tree_eq needle x
+  {needle} => {x} => tree_eq needle x
 
 set_member : NatSet -> Nat -> Bool :=
-  {set} -> {x} -> set x
+  {set} => {x} => set x
 
 set_union : NatSet -> NatSet -> NatSet :=
-  {a} -> {b} -> {x} ->
-    bool_rec ({_} -> Bool) true (b x) (a x)
+  {a} => {b} => {x} =>
+    bool_rec ({_} => Bool) true (b x) (a x)
 
 set_inter : NatSet -> NatSet -> NatSet :=
-  {a} -> {b} -> {x} ->
-    bool_rec ({_} -> Bool) (b x) false (a x)
+  {a} => {b} => {x} =>
+    bool_rec ({_} => Bool) (b x) false (a x)
 
 set_complement : NatSet -> NatSet :=
-  {a} -> {x} ->
-    bool_rec ({_} -> Bool) false true (a x)
+  {a} => {x} =>
+    bool_rec ({_} => Bool) false true (a x)
 
 set_insert : Nat -> NatSet -> NatSet :=
-  {x} -> {set} -> set_union (singleton_set x) set
+  {x} => {set} => set_union (singleton_set x) set
 

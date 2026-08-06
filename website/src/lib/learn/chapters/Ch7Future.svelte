@@ -30,11 +30,11 @@
     walker's parametricity is exactly the discipline paths require (one cannot triage on an
     abstract <span class="math">i : I</span>):
   </p>
-  <pre>{`Path A x y  :=  Pi I ({_} -> A)
+  <pre>{`Path A x y  :=  Pi I ({_} => A)
 
-refl   := {A, x, i} -> x
-sym    := {A, p, i} -> p (I_inv i)
-funext := {A, B, h, i, a} -> h a i`}</pre>
+refl   := {A, x, i} => x
+sym    := {A, p, i} => p (I_inv i)
+funext := {A, B, h, i, a} => h a i`}</pre>
   <p>
     Function extensionality, an axiom in intensional MLTT, drops out as a one-line definition.
     Transport dispatches through each type's <code>functor</code> metadata field — the same

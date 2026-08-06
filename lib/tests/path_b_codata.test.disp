@@ -5,7 +5,7 @@ open use "../std/nat.disp"
 open use "../std/stream.disp"
 
 // ── the infinite "count up from 0" stream — observe a few steps; it never loops ──
-let nats := unfold ({n} -> { head := n; tail := succ n }) zero
+let nats := unfold ({n} => { head := n; tail := succ n }) zero
 test (field (out nats) "head")                                  = zero
 test (field (out (field (out nats) "tail")) "head")             = succ zero
 test (field (out (field (out (field (out nats) "tail")) "tail")) "head") = succ (succ zero)
@@ -14,11 +14,11 @@ test stream_take (succ (succ (succ zero))) nats = cons zero (cons (succ zero) (c
 // ── recognition TERMINATES on the infinite stream (checks the generator, not the stream) ──
 test typecheck (Stream Nat) nats   = Ok true
 test typecheck Type (Stream Nat)   = Ok true                       // Stream A is a real Type
-test param_apply (Stream Nat) (unfold ({n} -> { head := false; tail := n }) zero) = Ok false  // bad head
+test param_apply (Stream Nat) (unfold ({n} => { head := false; tail := n }) zero) = Ok false  // bad head
 test param_apply (Stream Nat) zero = Ok false                       // not a generator at all
 
 // ── Fibonacci stream (seed = (a,b); head = a; tail = (b, a+b)) ──
-let fib := unfold ({s} -> { head := (pair_fst s); tail := (pair (pair_snd s) (add (pair_fst s) (pair_snd s))) }) (pair zero (succ zero))
+let fib := unfold ({s} => { head := (pair_fst s); tail := (pair (pair_snd s) (add (pair_fst s) (pair_snd s))) }) (pair zero (succ zero))
 test stream_take (succ (succ (succ (succ (succ zero))))) fib = cons zero (cons (succ zero) (cons (succ zero) (cons (succ (succ zero)) (cons (succ (succ (succ zero))) nil))))  // 0,1,1,2,3
 
 // ── stream_map (the ν functorial action on head): increment every element ──
@@ -31,7 +31,7 @@ test tree_eq (neutral_type ((make_hyp (Stream Nat) 0) (acc "tail"))) (Stream Nat
 
 // ── B2: the TYPED corecursor `stream_unfold : {A}{S} -> (S -> {head:A;tail:S}) -> S -> Stream A`.
 // (stream.disp loading with this annotation IS the verify; here we use it to build a stream.) ──
-let nats2 := stream_unfold Nat Nat ({n} -> { head := n; tail := succ n }) zero
+let nats2 := stream_unfold Nat Nat ({n} => { head := n; tail := succ n }) zero
 test (field (out nats2) "head")    = zero
 test (field (out (field (out nats2) "tail")) "head") = succ zero
 test typecheck (Stream Nat) nats2  = Ok true

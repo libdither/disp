@@ -12,58 +12,58 @@ open use "../std/nat.disp"
 // A. OPERATOR-POSITION NESTING AT DEPTH (the fix's core) — all Ok true
 // ================================================================
 let appT  := Arrow (Arrow Nat Nat) (Arrow Nat Nat)
-test param_apply appT ({f} -> {x} -> f x)             = Ok true
-test param_apply appT ({f} -> {x} -> f (f x))         = Ok true // double
-test param_apply appT ({f} -> {x} -> f (f (f x)))     = Ok true // triple
+test param_apply appT ({f} => {x} => f x)             = Ok true
+test param_apply appT ({f} => {x} => f (f x))         = Ok true // double
+test param_apply appT ({f} => {x} => f (f (f x)))     = Ok true // triple
 
 // flip / reverse-args (stuck neutral in operator position)
 let flip2T := Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat (Arrow Nat Nat))
-test param_apply flip2T ({f} -> {x} -> {y} -> f y x)  = Ok true
+test param_apply flip2T ({f} => {x} => {y} => f y x)  = Ok true
 let flip3T := Arrow (Arrow Nat (Arrow Nat (Arrow Nat Nat))) (Arrow Nat (Arrow Nat (Arrow Nat Nat)))
-test param_apply flip3T ({f} -> {a} -> {b} -> {c} -> f c b a) = Ok true // reverse 3 args
+test param_apply flip3T ({f} => {a} => {b} => {c} => f c b a) = Ok true // reverse 3 args
 
 // stuck-applied-to-itself: (f x) x  — operator-position stuck re-applied
 let selfappT := Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat)
-test param_apply selfappT ({f} -> {x} -> f x x)       = Ok true
+test param_apply selfappT ({f} => {x} => f x x)       = Ok true
 
 // f x used in BOTH argument slots of a binary g (nesting in arg AND operator chains)
 let g2T := Arrow (Arrow Nat Nat) (Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat))
-test param_apply g2T ({f} -> {g} -> {x} -> g (f x) (f x)) = Ok true
+test param_apply g2T ({f} => {g} => {x} => g (f x) (f x)) = Ok true
 
 // deep compose: f (g (h x))
 let compose3T := Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow Nat Nat)))
-test param_apply compose3T ({f} -> {g} -> {h} -> {x} -> f (g (h x))) = Ok true
+test param_apply compose3T ({f} => {g} => {h} => {x} => f (g (h x))) = Ok true
 
 // ================================================================
 // B. ILL-TYPED — must be a CLEAN Ok false (genuine type mismatch), reliably
 // ================================================================
-test param_apply (Arrow Nat Bool) ({n} -> n)          = Ok false // Nat body for Bool codomain
-test param_apply (Arrow Nat Nat) ({n} -> false)         = Ok false // Bool body for Nat codomain (false = △ △; true = △ = zero would pass)
-test param_apply appT ({f} -> {x} -> f x x)           = Ok false // f:Nat->Nat applied to 2 args
-test param_apply flip2T ({f} -> {x} -> {y} -> f x y)  = Ok true // η: {x}{y}->f x y = f, inhabits
-test param_apply (Arrow Nat Nat) ({f} -> {x} -> f x)  = Ok true // η: {f}{x}->f x = identity
-test param_apply (Arrow Nat Nat) ({f} -> {x} -> x)    = Ok false // {f}->I : returns a function, not Nat
+test param_apply (Arrow Nat Bool) ({n} => n)          = Ok false // Nat body for Bool codomain
+test param_apply (Arrow Nat Nat) ({n} => false)         = Ok false // Bool body for Nat codomain (false = △ △; true = △ = zero would pass)
+test param_apply appT ({f} => {x} => f x x)           = Ok false // f:Nat->Nat applied to 2 args
+test param_apply flip2T ({f} => {x} => {y} => f x y)  = Ok true // η: {x}{y}->f x y = f, inhabits
+test param_apply (Arrow Nat Nat) ({f} => {x} => f x)  = Ok true // η: {f}{x}->f x = identity
+test param_apply (Arrow Nat Nat) ({f} => {x} => x)    = Ok false // {f}->I : returns a function, not Nat
 
 // ================================================================
 // C. PARAMETRICITY VIOLATIONS — must be a CLEAN Err, reliably
 // ================================================================
 let hN := make_hyp Nat 0
-test param_apply ({x} -> is_fork x) hN                = Err // triage on hyp
-test param_apply (Arrow Nat Nat) ({n} -> is_fork n)   = Err // body triages its hyp
-let forge := {x} -> t hyp_sig x
+test param_apply ({x} => is_fork x) hN                = Err // triage on hyp
+test param_apply (Arrow Nat Nat) ({n} => is_fork n)   = Err // body triages its hyp
+let forge := {x} => t hyp_sig x
 test param_apply forge zero                           = Err // stem-forge
 
 // ================================================================
 // D. EQ-TYPE UNIFORMITY (the §5 uniformity trap canary)
 // ================================================================
 // refl inhabits Eq Nat n n with n a stuck hyp — both sides bare-uniform, so tree_eq matches
-test param_apply (Pi Nat ({n} -> Eq Nat n n)) ({n} -> refl)            = Ok true
+test param_apply (Pi Nat ({n} => Eq Nat n n)) ({n} => refl)            = Ok true
 // n vs succ n: distinct, must reject
-test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl)     = Ok false
+test param_apply (Pi Nat ({n} => Eq Nat n (succ n))) ({n} => refl)     = Ok false
 // add zero n = n by computation (zero is concrete) -> refl proves it
-test param_apply (Pi Nat ({n} -> Eq Nat (add zero n) n)) ({n} -> refl) = Ok true
+test param_apply (Pi Nat ({n} => Eq Nat (add zero n) n)) ({n} => refl) = Ok true
 // add n zero needs INDUCTION (n stuck): naive refl must be REJECTED
-test param_apply (Pi Nat ({n} -> Eq Nat (add n zero) n)) ({n} -> refl) = Ok false
+test param_apply (Pi Nat ({n} => Eq Nat (add n zero) n)) ({n} => refl) = Ok false
 
 // ================================================================
 // E. BARE-STUCK INVARIANT under multi-step spine extension
@@ -81,7 +81,7 @@ test neutral_type s2 = Nat
 // ================================================================
 // F. POLYMORPHIC / higher-rank (predicate H-rule path) — Ok true/false
 // ================================================================
-test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) ({A} -> {x} -> x)    = Ok true // poly id
-test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) ({A} -> {x} -> zero) = Ok false // can't make A from nothing
-test param_apply (Pi Type ({A} -> Pi A ({_} -> Pi A ({_} -> A)))) ({A} -> {x} -> {y} -> x) = Ok true // K
-test param_apply (Pi Type ({A} -> Pi A ({_} -> Pi A ({_} -> A)))) ({A} -> {x} -> {y} -> y) = Ok true // K*
+test param_apply (Pi Type ({A} => Pi A ({_} => A))) ({A} => {x} => x)    = Ok true // poly id
+test param_apply (Pi Type ({A} => Pi A ({_} => A))) ({A} => {x} => zero) = Ok false // can't make A from nothing
+test param_apply (Pi Type ({A} => Pi A ({_} => Pi A ({_} => A)))) ({A} => {x} => {y} => x) = Ok true // K
+test param_apply (Pi Type ({A} => Pi A ({_} => Pi A ({_} => A)))) ({A} => {x} => {y} => y) = Ok true // K*

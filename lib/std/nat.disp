@@ -26,10 +26,10 @@ open use "relation.disp"
 // the recursor type's metadata or needing a special rule for the neutral type P n.
 NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
 NatRecRelation :=
-  pointwise (Pi Nat ({_} -> Type)) ({P} ->
-    pointwise (P zero) ({_z} ->
-      pointwise (Pi Nat ({n} -> Pi (P n) ({_} -> P (succ n)))) ({_step} ->
-        pointwise Nat ({n} -> eq_relation (P n)))))
+  pointwise (Pi Nat ({_} => Type)) ({P} =>
+    pointwise (P zero) ({_z} =>
+      pointwise (Pi Nat ({n} => Pi (P n) ({_} => P (succ n)))) ({_step} =>
+        pointwise Nat ({n} => eq_relation (P n)))))
 
 // Own the kernel recursor at its honest dependent type. The overlay's rebind
 // inherits this Def type, while the guard checks NatRecRelation.rel old new.
@@ -42,11 +42,11 @@ guard (license_guard NatRecRelation.rel) nat_rec : NatRecT := nat_rec
 // `succ ih` is `succ (add pred m)`. The explicit contract says that old and new
 // return Eq Nat results at the same n and m.
 AddRelation :=
-  pointwise Nat ({_n} ->
-    pointwise Nat ({_m} -> eq_relation Nat))
+  pointwise Nat ({_n} =>
+    pointwise Nat ({_m} => eq_relation Nat))
 
 guard (license_guard AddRelation.rel) add : Nat -> Nat -> Nat :=
-  {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
+  {n, m} => nat_rec ({_} => Nat) m ({pred, ih} => succ ih) n
 
 // ── derived ops ──
 // pred/is_zero are ONE-LEVEL branches, so they ride case_value, not nat_rec:
@@ -54,32 +54,32 @@ guard (license_guard AddRelation.rel) add : Nat -> Nat -> Nat :=
 // gated respond), but the discarded IH is never computed — O(1) instead of the
 // recursor's O(n). Arms are CASE-shaped: raw args only, no phantom-IH binder.
 pred : Nat -> Nat :=
-  {n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> k } n
+  {n} => case_value Nat ({_} => Nat) { zero := 0; succ := {k} => k } n
 
 is_zero : Nat -> Bool :=
-  {n} -> case_value Nat ({_} -> Bool) { zero := true; succ := {_k} -> false } n
+  {n} => case_value Nat ({_} => Bool) { zero := true; succ := {_k} => false } n
 
 double : Nat -> Nat :=
-  {n} -> add n n
+  {n} => add n n
 
 // ── proof terms ──
 add_zero_l : {n : Nat} -> Eq Nat (add 0 n) n :=
-  {n} -> refl
+  {n} => refl
 
 add_zero_r : {n : Nat} -> Eq Nat (add n 0) n :=
-  {n} ->
+  {n} =>
     nat_rec
-      ({k} -> Eq Nat (add k 0) k)
+      ({k} => Eq Nat (add k 0) k)
       refl
-      ({k, ih} -> eq_cong Nat Nat succ (add k 0) k ih)
+      ({k, ih} => eq_cong Nat Nat succ (add k 0) k ih)
       n
 
 add_succ_r : {n : Nat} -> Eq Nat (add n 1) (succ n) :=
-  {n} ->
+  {n} =>
     nat_rec
-      ({k} -> Eq Nat (add k 1) (succ k))
+      ({k} => Eq Nat (add k 1) (succ k))
       refl
-      ({k, ih} -> eq_cong Nat Nat succ (add k 1) (succ k) ih) // succ both sides of ih
+      ({k, ih} => eq_cong Nat Nat succ (add k 1) (succ k) ih) // succ both sides of ih
       n
 
 // add_comm is intentionally omitted: a `{m} -> refl` base would claim

@@ -15,10 +15,10 @@ test (build_curried Td 3).b                                    = (succ 3)  // de
 test param_apply (constructor_type Td) (build_curried Td)      = Ok true  // build_curried Td : Nat -> Td
 
 // ── dependent pair Sigma Nat (_ -> Bool) ──────────────────────────────────────
-SP := Sigma Nat ({_} -> Bool)
+SP := Sigma Nat ({_} => Bool)
 test param_apply SP (build_curried SP 2 true)                    = Ok true  // (x:Nat)(y:Bool) curried, full
 test param_apply (constructor_type SP) (build_curried SP)      = Ok true  // build_curried SP : Nat -> Bool -> SP
-test param_apply (Pi Bool ({_} -> SP)) (build_curried SP 2)    = Ok true  // PARTIAL: residual (shrunk) type Bool -> SP
+test param_apply (Pi Bool ({_} => SP)) (build_curried SP 2)    = Ok true  // PARTIAL: residual (shrunk) type Bool -> SP
 
 // ── a type-class / module signature, as a telescope ───────────────────────────
 // `{ T : Type; z : T; s : T -> T }` — a pointed type with an endo. The field

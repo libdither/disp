@@ -41,23 +41,23 @@ test param_apply Nat hB = Ok false
 // hyp_reduce's Extend is BARE, so `stuck` is the neutral itself, not Ok(neutral).
 // The respond now gates the cases against the motive (§B), so the cases must be
 // COHERENT: with motive Bool, base : Bool and step : Π n. Bool -> Bool.
-let motive := {n} -> Bool
-let cases := { zero := true; succ := ({pred, ih} -> ih) } // cases keyed by variant tag; zero true : Bool ; succ returns ih : Bool
+let motive := {n} => Bool
+let cases := { zero := true; succ := ({pred, ih} => ih) } // cases keyed by variant tag; zero true : Bool ; succ returns ih : Bool
 let stuck := param_apply hN { motive := motive; cases := cases }
 test is_neutral stuck = true // bare stuck neutral (Option A)
 test (tree_eq (pair_fst stuck) "Ok") = false // ...NOT Ok-wrapped
 test neutral_type stuck = Bool // motive applied to the reconstructed self
 
 // elim drives the same: concrete target runs the dispatcher, neutral routes here
-let nat_dispatcher := {motive, cases, target} -> cases.zero // toy: returns the zero case
+let nat_dispatcher := {motive, cases, target} => cases.zero // toy: returns the zero case
 test elim nat_dispatcher motive cases zero = true // concrete branch -> base (true)
 test is_neutral (elim nat_dispatcher motive cases hN) = true // neutral branch
 
 // ---- bind_hyp (Σ-op): mint, run body, escape-check ----
 // bind_hyp is the bare op-tag; from a raw context (a test) route it into the walker
 // with `param_apply (bind_hyp A) body` so the interception (w_bind_hyp) fires.
-test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero // result independent of x
-test param_apply (bind_hyp Nat) ({x} -> Ok x) = Err // x at public position -> escape
+test param_apply (bind_hyp Nat) ({x} => Ok zero) = Ok zero // result independent of x
+test param_apply (bind_hyp Nat) ({x} => Ok x) = Err // x at public position -> escape
 // (escape-through-a-structure is pinned in soundness.test + adversarial.test — the home of the escape family)
 
 // ---- raw functions + Pi (monomorphic dependent function) ----
@@ -69,44 +69,44 @@ test param_apply (bind_hyp Nat) ({x} -> Ok x) = Err // x at public position -> e
 // through the eliminator, which gates its cases against the motive (§B).
 // (`false` is the canonical wrong-type value below: true = △ = zero collides
 // with Nat, false = △ △ is no Nat shape — TYPE_THEORY §2.7 collision doctrine.)
-let id_nat := {n} -> n
-let const_false := {n} -> false
-test param_apply (Pi Nat ({_} -> Nat)) id_nat = Ok true // id : Nat -> Nat
+let id_nat := {n} => n
+let const_false := {n} => false
+test param_apply (Pi Nat ({_} => Nat)) id_nat = Ok true // id : Nat -> Nat
 test typecheck (Arrow Nat Nat) id_nat = Ok true // same via Arrow + typecheck
-test param_apply (Pi Nat ({_} -> Bool)) const_false = Ok true // const false : Nat -> Bool
-test param_apply (Pi Nat ({_} -> Nat)) const_false = Ok false // body returns Bool, not Nat
-test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok false // domain mismatch -> clean verdict
+test param_apply (Pi Nat ({_} => Bool)) const_false = Ok true // const false : Nat -> Bool
+test param_apply (Pi Nat ({_} => Nat)) const_false = Ok false // body returns Bool, not Nat
+test param_apply (Pi Bool ({_} => Nat)) id_nat = Ok false // domain mismatch -> clean verdict
 
 // (§A) constructor-over-the-argument now checks: the recogniser re-applies the
 // H-rule on the neutral predecessor in `succ hyp` instead of triaging it.
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> succ y) = Ok true
+test param_apply (Pi Nat ({_} => Nat)) ({y} => succ y) = Ok true
 
 // (§B) the eliminator's cases must inhabit the motive. Enforced in the TYPE's
 // respond (keyed off the neutral's stored type), so it is UNBYPASSABLE: the kernel
 // recursor, a hand-rolled recursor, and raw neutral application are all gated.
-let lying  := {y} -> nat_rec ({_} -> Nat) false ({p, ih} -> false) y // base/step Bool, motive says Nat
-let lying2 := {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> false) y // correct base, lying step
-let honest := {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y
-test param_apply (Pi Nat ({_} -> Nat)) lying  = Ok false // incoherent cases -> rejected
-test param_apply (Pi Nat ({_} -> Nat)) lying2 = Ok false // step lie also caught
-test param_apply (Pi Nat ({_} -> Nat)) honest = Ok true // coherent -> accepted
+let lying  := {y} => nat_rec ({_} => Nat) false ({p, ih} => false) y // base/step Bool, motive says Nat
+let lying2 := {y} => nat_rec ({_} => Nat) zero ({p, ih} => false) y // correct base, lying step
+let honest := {y} => nat_rec ({_} => Nat) zero ({p, ih} => succ ih) y
+test param_apply (Pi Nat ({_} => Nat)) lying  = Ok false // incoherent cases -> rejected
+test param_apply (Pi Nat ({_} => Nat)) lying2 = Ok false // step lie also caught
+test param_apply (Pi Nat ({_} => Nat)) honest = Ok true // coherent -> accepted
 test honest (succ (succ zero)) = succ (succ zero) // value-transparent on concrete targets
 
 // adversarial: a USER's OWN recursor (own dispatcher, via elim) is gated identically,
 // because on a neutral target elim applies the neutral -> the type's respond -> gate.
-let my_dispatcher := fix ({self, motive, cases, target} ->
+let my_dispatcher := fix ({self, motive, cases, target} =>
   if (tree_eq target zero) then cases.zero else (cases.succ (pair_snd target) (self motive cases (pair_snd target))))
-let my_rec := {motive, base, step, target} -> elim my_dispatcher motive { zero := base; succ := step } target
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) false ({p, ih} -> false) y)        = Ok false
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok true
+let my_rec := {motive, base, step, target} => elim my_dispatcher motive { zero := base; succ := step } target
+test param_apply (Pi Nat ({_} => Nat)) ({y} => my_rec ({_} => Nat) false ({p, ih} => false) y)        = Ok false
+test param_apply (Pi Nat ({_} => Nat)) ({y} => my_rec ({_} => Nat) zero ({p, ih} => succ ih) y) = Ok true
 // applying the neutral to a hand-built frame directly is also gated (Option A:
 // `y frame` is already a bare stuck neutral, so no must_ok_or_self to unwrap):
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> y { motive := ({_} -> Nat); cases := { zero := false; succ := ({p, ih} -> false) } }) = Ok false
+test param_apply (Pi Nat ({_} => Nat)) ({y} => y { motive := ({_} => Nat); cases := { zero := false; succ := ({p, ih} => false) } }) = Ok false
 // and you cannot bypass by DESTRUCTURING the neutral -- triage on a hyp is rejected:
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> pair_snd y) = Err
+test param_apply (Pi Nat ({_} => Nat)) ({y} => pair_snd y) = Err
 // the gate is general: Bool's recursor is gated the same way (no recursive args).
-test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) false false b)            = Ok false
-test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) zero (succ zero) b)  = Ok true
+test param_apply (Pi Bool ({_} => Nat)) ({b} => bool_rec ({_} => Nat) false false b)            = Ok false
+test param_apply (Pi Bool ({_} => Nat)) ({b} => bool_rec ({_} => Nat) zero (succ zero) b)  = Ok true
 
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----
 // make_meta builds a `prod`; fields are read by name with the §2.6 cut (.field),
@@ -125,15 +125,15 @@ test m.recognizer_params = zero
 test m.respond = false
 // meta layout: an cut-rooted record with the canonical header (pinned here; the
 // kernel-side has_metashape_layout helper was retired, nothing in the kernel consumed it)
-let has_meta_layout := {mm} -> and (tree_eq (pair_fst mm) cut_sig) (tree_eq (pair_fst (type_meta mm)) ["recognizer_params", "functor", "respond", "behavioral_specs"])
+let has_meta_layout := {mm} => and (tree_eq (pair_fst mm) cut_sig) (tree_eq (pair_fst (type_meta mm)) ["recognizer_params", "functor", "respond", "behavioral_specs"])
 test has_meta_layout m = true
 test has_meta_layout (pair zero (pair true (pair false unit_val))) = false // old positional shape is no longer a meta
 // recognizer_params is now Pi's [ mint x:A ; apply out:(B x) ] telescope; each cell is
 // a WAIT-FORM `wait op meta`. The lead cell is the minted domain (a mint_cell, ty A),
 // read by signature (the cell IS a mint_cell) and meta (its ty).
-test tree_eq (pair_fst (pair_fst ((type_meta (Pi Nat ({_} -> Bool))).recognizer_params))) (pair_fst (mint_cell zero)) = true
-test (type_meta (pair_fst ((type_meta (Pi Nat ({_} -> Bool))).recognizer_params))).ty = Nat
+test tree_eq (pair_fst (pair_fst ((type_meta (Pi Nat ({_} => Bool))).recognizer_params))) (pair_fst (mint_cell zero)) = true
+test (type_meta (pair_fst ((type_meta (Pi Nat ({_} => Bool))).recognizer_params))).ty = Nat
 // Sigma's params are its telescope: first cell is the named "fst" proj_cell
-test tree_eq (pair_fst (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params))) (pair_fst (proj_cell t t)) = true
-test (type_meta (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params))).name = "fst"
-test (type_meta (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params))).ty = Nat
+test tree_eq (pair_fst (pair_fst ((type_meta (Sigma Nat ({_} => Bool))).recognizer_params))) (pair_fst (proj_cell t t)) = true
+test (type_meta (pair_fst ((type_meta (Sigma Nat ({_} => Bool))).recognizer_params))).name = "fst"
+test (type_meta (pair_fst ((type_meta (Sigma Nat ({_} => Bool))).recognizer_params))).ty = Nat

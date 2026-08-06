@@ -6,29 +6,29 @@ open use "list.disp"
 
 // Fin/VecNat are raw type-predicates (limit/length, then candidate -> CheckerResult),
 // so they take the loose `Tree -> Tree -> Tree` rather than a wait-form `-> Type`.
-Fin : Tree -> Tree -> Tree := {limit, value} ->
+Fin : Tree -> Tree -> Tree := {limit, value} =>
   select_lazy
-    ({_} -> Ok true)
-    ({_} -> bind (Nat value) ({b} -> if b then (Ok (nat_lt value limit)) else (Ok false)))
+    ({_} => Ok true)
+    ({_} => bind (Nat value) ({b} => if b then (Ok (nat_lt value limit)) else (Ok false)))
     (is_neutral value)
 
 fin0 : {n : Nat} -> Fin (succ n) :=
-  {_n} -> 0
+  {_n} => 0
 
 fin_one_of_three : Fin 3 := 1
 fin_two_of_three : Fin 3 := 2
 
-VecNat : Tree -> Tree -> Tree := {length, xs} ->
+VecNat : Tree -> Tree -> Tree := {length, xs} =>
   select_lazy
-    ({_} -> Ok true)
-    ({_} -> bind (NatList xs) ({b} -> if b then (Ok (tree_eq (list_length xs) length)) else (Ok false)))
+    ({_} => Ok true)
+    ({_} => bind (NatList xs) ({b} => if b then (Ok (tree_eq (list_length xs) length)) else (Ok false)))
     (is_neutral xs)
 
 vnil : VecNat 0 := nil
 
 vsingleton : Nat -> VecNat 1 :=
-  {x} -> singleton x
+  {x} => singleton x
 
 vappend :=
-  {n} -> {m} -> {xs} -> {ys} -> list_append Nat xs ys
+  {n} => {m} => {xs} => {ys} => list_append Nat xs ys
 

@@ -25,15 +25,15 @@ test TDs { a := 2; b := 5 } = Ok false`
   },
   {
     id: 'kernel',
-    preamble: KERNEL_OPEN + 'let NatToNat := Pi Nat ({_} -> Nat)\n',
+    preamble: KERNEL_OPEN + 'let NatToNat := Pi Nat ({_} => Nat)\n',
     body: `// checking a function mints a promise
 // (bind_hyp), runs the body on it, and
 // watches what comes out (hyp_reduce)
 quadruple : Nat -> Nat :=
-  {n} -> double (double n)
+  {n} => double (double n)
 
 test param_apply NatToNat quadruple = Ok true
-test param_apply NatToNat ({n} -> "hi") = Ok false`
+test param_apply NatToNat ({n} => "hi") = Ok false`
   },
   {
     id: 'eq',
@@ -51,7 +51,7 @@ test (Eq Nat (double 2) 4) refl = Ok true`
     preamble:
       KERNEL_OPEN +
       'let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]\n' +
-      'let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params\n',
+      'let resp_of := {T} => (type_meta T).respond (type_meta T).recognizer_params\n',
     body: `// the universe is a predicate like any
 // other, and it accepts itself
 test param_apply Type Nat  = Ok true

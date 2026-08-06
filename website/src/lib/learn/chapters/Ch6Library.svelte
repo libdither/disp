@@ -9,7 +9,7 @@
   const traceFrames = [
     {
       title: 'Goal.',
-      html: 'The annotation <code>quadruple : Nat -> Nat</code> compiles to the check <code>param_apply (Pi Nat ({_} -> Nat)) quadruple</code>, expected verdict <code>Ok true</code>.'
+      html: 'The annotation <code>quadruple : Nat -> Nat</code> compiles to the check <code>param_apply (Pi Nat ({_} => Nat)) quadruple</code>, expected verdict <code>Ok true</code>.'
     },
     {
       title: 'Route.',
@@ -21,7 +21,7 @@
     },
     {
       title: 'Mint.',
-      html: 'The <code>mint</code> cell requests a fresh hypothesis: <code>bind_hyp Nat ({h} -> …)</code> mints <code>h</code> — an unforgeable tree carrying "type Nat, id 0" and nothing else. The rest of the check runs under this binder.'
+      html: 'The <code>mint</code> cell requests a fresh hypothesis: <code>bind_hyp Nat ({h} => …)</code> mints <code>h</code> — an unforgeable tree carrying "type Nat, id 0" and nothing else. The rest of the check runs under this binder.'
     },
     {
       title: 'Observe.',

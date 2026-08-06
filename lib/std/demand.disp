@@ -27,18 +27,18 @@
 open use "../kernel/prelude.disp"
 open use "list.disp"   // list_length; the substrate folds come from the barrel
 
-let in_list := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then true else (self (pair_snd l2))) else false)) l
-let filter_ne := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then (self (pair_snd l2)) else (cons (pair_fst l2) (self (pair_snd l2)))) else nil)) l
+let in_list := {x, l} => (fix ({self, l2} => if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then true else (self (pair_snd l2))) else false)) l
+let filter_ne := {x, l} => (fix ({self, l2} => if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then (self (pair_snd l2)) else (cons (pair_fst l2) (self (pair_snd l2)))) else nil)) l
 
 // the oracle's opaque markers (the floor forge, used at type-analysis time
 // on concrete telescopes — never under a check):
 let mk0 := make_hyp Tree 90
 let mk1 := make_hyp Tree 91
 let mk2 := make_hyp Tree 92
-let cells_of_t := {T} -> (type_meta T).recognizer_params
-let names_go := fix ({self, cells} ->
+let cells_of_t := {T} => (type_meta T).recognizer_params
+let names_go := fix ({self, cells} =>
   if (is_fork cells) then (cons ((type_meta (pair_fst cells)).name) (self ((pair_snd cells) mk0))) else nil)
-let ty_under := fix ({self, cells, fname, i, mk, pos} ->
+let ty_under := fix ({self, cells, fname, i, mk, pos} =>
   if (is_fork cells) then {
     let m := type_meta (pair_fst cells)
     if (tree_eq (m.name) fname) then (m.ty)
@@ -46,9 +46,9 @@ let ty_under := fix ({self, cells, fname, i, mk, pos} ->
   } else t)
 // depends_on: the header's oracle in one line — f's type with binder i := mk1
 // vs := mk2; hash-consing makes the two trees differ iff f's type USES binder i.
-let depends_on := {T, fname, i} -> not (tree_eq (ty_under (cells_of_t T) fname i mk1 0) (ty_under (cells_of_t T) fname i mk2 0))
-let any_dep := {T, set, i} -> (fix ({self, l} -> if (is_fork l) then (if (depends_on T (pair_fst l) i) then true else (self (pair_snd l))) else false)) set
-let closure_go := fix ({self, T, names, set, pos} ->
+let depends_on := {T, fname, i} => not (tree_eq (ty_under (cells_of_t T) fname i mk1 0) (ty_under (cells_of_t T) fname i mk2 0))
+let any_dep := {T, set, i} => (fix ({self, l} => if (is_fork l) then (if (depends_on T (pair_fst l) i) then true else (self (pair_snd l))) else false)) set
+let closure_go := fix ({self, T, names, set, pos} =>
   if (tree_eq pos 0) then set
   else {
     let i := nat_pred pos
@@ -58,35 +58,35 @@ let closure_go := fix ({self, T, names, set, pos} ->
 
 // closure_of T targets: the demanded field names (targets included), in
 // field order. field_deps: one target's context names.
-closure_of := {T, targets} -> {
+closure_of := {T, targets} => {
   let names := names_go (cells_of_t T)
   closure_go T names targets (list_length names)
 }
-field_deps := {T, fname} -> filter_ne fname (closure_of T (cons fname nil))
+field_deps := {T, fname} => filter_ne fname (closure_of T (cons fname nil))
 
 // field_pi T f: the demanded context as a REAL Pi chain landing in f's type.
-let field_pi_go := fix ({self, cells, fname, set} ->
+let field_pi_go := fix ({self, cells, fname, set} =>
   if (is_fork cells) then {
     let m := type_meta (pair_fst cells)
     if (tree_eq (m.name) fname) then (m.ty)
     else (if (in_list (m.name) set)
-      then (Pi (m.ty) ({x} -> self ((pair_snd cells) x) fname set))
+      then (Pi (m.ty) ({x} => self ((pair_snd cells) x) fname set))
       else (self ((pair_snd cells) t) fname set))
   } else InvalidType)
-field_pi := {T, fname} -> field_pi_go (cells_of_t T) fname (closure_of T (cons fname nil))
+field_pi := {T, fname} => field_pi_go (cells_of_t T) fname (closure_of T (cons fname nil))
 
 // sub_record T targets: the record type on the closure — width subtyping
 // COMPUTED (skipped tails instantiate safely: the closure guarantees no kept
 // type uses a skipped binder). project_sub: the lens's view half.
-let sub_cells_go := fix ({self, cells, set} ->
+let sub_cells_go := fix ({self, cells, set} =>
   if (is_fork cells) then {
     let m := type_meta (pair_fst cells)
     if (in_list (m.name) set)
-      then (t (proj_cell (m.name) (m.ty)) ({x} -> self ((pair_snd cells) x) set))
+      then (t (proj_cell (m.name) (m.ty)) ({x} => self ((pair_snd cells) x) set))
       else (self ((pair_snd cells) t) set)
   } else t)
-sub_record := {T, targets} -> Telescope (sub_cells_go (cells_of_t T) (closure_of T targets))
-project_sub := {v, names} -> make_record names ((fix ({self, l} -> if (is_fork l) then (cons (list_const (field v (pair_fst l))) (self (pair_snd l))) else nil)) names)
+sub_record := {T, targets} => Telescope (sub_cells_go (cells_of_t T) (closure_of T targets))
+project_sub := {v, names} => make_record names ((fix ({self, l} => if (is_fork l) then (cons (list_const (field v (pair_fst l))) (self (pair_snd l))) else nil)) names)
 
 // field_ty / pi_dom / pi_cod: the direct readers — one exported family
 // (effect.disp's op/requests/result_for consume these). field_ty is the
@@ -95,32 +95,32 @@ project_sub := {v, names} -> make_record names ((fix ({self, l} -> if (is_fork l
 // general — instantiate at t for the constant-codomain Arrow case). The
 // names and signatures match the kernel's internal pi_dom/pi_cod
 // (positive.disp's eta_check walker).
-field_ty := fix ({self, cells, name} ->
+field_ty := fix ({self, cells, name} =>
   if (is_fork cells) then {
     let m := type_meta (pair_fst cells)
     if (tree_eq (m.name) name) then (m.ty) else (self ((pair_snd cells) t) name)
   } else t)
-pi_dom := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
-pi_cod := {T, x} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) x))).ty
+pi_dom := {T} => (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
+pi_cod := {T, x} => (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) x))).ty
 
 // map_fields g T: a record built from T's fields, one entry per field with
 // value `g name ty` — the shared fold under fields_of here and `ops` in
 // effect.disp. (Def/inline: the fold is opaque and has three consumers, so
 // it earns the definition; the derived forms are one-liners.)
-let map_fields_go := fix ({self, g, cells} ->
+let map_fields_go := fix ({self, g, cells} =>
   if (is_fork cells) then {
     let m := type_meta (pair_fst cells)
     let rest := self g ((pair_snd cells) t)
     pair (cons (m.name) (pair_fst rest)) (cons (list_const (g (m.name) (m.ty))) (pair_snd rest))
   } else (pair nil nil))
-map_fields := {g, T} -> {
+map_fields := {g, T} => {
   let nv := map_fields_go g (cells_of_t T)
   make_record (pair_fst nv) (pair_snd nv)
 }
 // fields_of T: the flat field table AS a record (dotted access after one
 // derivation). Honest only on independent prefixes — a dependent field's
 // entry comes back instantiated; field_pi is the general face.
-fields_of := {T} -> map_fields ({n, ty} -> ty) T
+fields_of := {T} => map_fields ({n, ty} => ty) T
 
 // ── the MODULE face ──
 // A given-bearing module's functor typ is a Pi chain over its givens landing
@@ -129,33 +129,33 @@ fields_of := {T} -> map_fields ({n, ty} -> ty) T
 // Direct dependencies (given types are usually mutually independent; the
 // record face above carries the full closure story). Positions, not names —
 // Pi binders are anonymous.
-let is_pi_head := {T} -> {
+let is_pi_head := {T} => {
   let cs := (type_meta T).recognizer_params
   and (is_fork cs) (is_mint_cell (pair_fst cs))
 }
-let pi_dom_of := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
-let pi_cod_at := {T, x} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) x))).ty
-let flat_ty := fix ({self, fields, name} ->
+let pi_dom_of := {T} => (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
+let pi_cod_at := {T, x} => (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) x))).ty
+let flat_ty := fix ({self, fields, name} =>
   if (is_fork fields) then {
     let arm := pair_fst fields
     if (tree_eq (pair_fst arm) name) then (pair_snd arm) else (self (pair_snd fields) name)
   } else t)
-let mod_ty_under := fix ({self, T, name, i, mk, pos} ->
+let mod_ty_under := fix ({self, T, name, i, mk, pos} =>
   if (is_pi_head T) then (self (pi_cod_at T (if (tree_eq pos i) then mk else mk0)) name i mk (succ pos))
   else (flat_ty ((type_meta T).recognizer_params) name))
-let pi_depth := fix ({self, T} -> if (is_pi_head T) then (succ (self (pi_cod_at T mk0))) else 0)
-mod_export_deps := {ftyp, name} -> (fix ({self, i} ->
+let pi_depth := fix ({self, T} => if (is_pi_head T) then (succ (self (pi_cod_at T mk0))) else 0)
+mod_export_deps := {ftyp, name} => (fix ({self, i} =>
   if (tree_eq i (pi_depth ftyp)) then nil
   else (if (not (tree_eq (mod_ty_under ftyp name i mk1 0) (mod_ty_under ftyp name i mk2 0)))
     then (cons i (self (succ i)))
     else (self (succ i))))) 0
-let mod_pi_go := fix ({self, T, name, deps, pos} ->
+let mod_pi_go := fix ({self, T, name, deps, pos} =>
   if (is_pi_head T) then (
     if (in_list pos deps)
-      then (Pi (pi_dom_of T) ({x} -> self (pi_cod_at T x) name deps (succ pos)))
+      then (Pi (pi_dom_of T) ({x} => self (pi_cod_at T x) name deps (succ pos)))
       else (self (pi_cod_at T t) name deps (succ pos)))
   else (flat_ty ((type_meta T).recognizer_params) name))
-mod_export_pi := {ftyp, name} -> mod_pi_go ftyp name (mod_export_deps ftyp name) 0
+mod_export_pi := {ftyp, name} => mod_pi_go ftyp name (mod_export_deps ftyp name) 0
 
 // mod_extract: PARTIAL USE, in-language. Extract one export from a functor
 // tuple supplying fills ONLY for the positions the export demands
@@ -165,11 +165,11 @@ mod_export_pi := {ftyp, name} -> mod_pi_go ftyp name (mod_export_deps ftyp name)
 // partial extraction is TREE-IDENTICAL to the full instantiation's export).
 // The host half (a partial `use "f" {…}` yielding a RESIDUAL functor over
 // the remaining givens) is the ergonomic sibling — MODULES.md slice 3.
-let apply_list := fix ({self, f, l} -> if (is_fork l) then (self (f (pair_fst l)) (pair_snd l)) else f)
-mod_extract := {fx, name, fills} -> {
+let apply_list := fix ({self, f, l} => if (is_fork l) then (self (f (pair_fst l)) (pair_snd l)) else f)
+mod_extract := {fx, name, fills} => {
   let ftyp := fx.typ
   let deps := mod_export_deps ftyp name
-  let args := (fix ({self, pos, fl} ->
+  let args := (fix ({self, pos, fl} =>
     if (tree_eq pos (pi_depth ftyp)) then nil
     else (if (in_list pos deps)
       then (cons (pair_fst fl) (self (succ pos) (pair_snd fl)))

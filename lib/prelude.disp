@@ -64,14 +64,14 @@ false : Bool := t t
 // lhs in its scope; while unbound or pristine the elaborator peels the marker
 // (identical semantics, and it restores the lhs's true application head so
 // named-argument calls resolve — src/elab/expr.ts equationLhs).
-test : Tree -> Tree := {x} -> x
+test : Tree -> Tree := {x} => x
 
 // triage(on_leaf, on_stem, on_fork) x:
 //   x=leaf -> on_leaf, x=stem(u) -> on_stem u, x=fork(u,v) -> on_fork u v
 // Typed as the case-table BUILDER (it just constructs the dispatch tree); the
 // DISPATCH itself (the 4th application) is the untyped substrate eliminator —
 // its typed face is a Tree recursor (dispatch is elimination), not this shallow type.
-triage : Tree -> Tree -> Tree -> Tree := {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
+triage : Tree -> Tree -> Tree -> Tree := {on_leaf, on_stem, on_fork} => t (t on_leaf on_stem) on_fork
 
 // select(then_v, else_v, c): triage-driven branch — build the case table and
 // apply it to the bool (the consumer drives; the bool is raw data, §2.7).
@@ -82,31 +82,31 @@ triage : Tree -> Tree -> Tree -> Tree := {on_leaf, on_stem, on_fork} -> t (t on_
 // Dispatch consumes exactly the bool; supplying further args after dispatch
 // applies them to the chosen branch. (The fork arm is dead for well-typed
 // bools; it answers else_v so garbage stays deterministic.)
-select := {then_v, else_v, c} -> triage then_v ({_} -> else_v) ({_l, _r} -> else_v) c
+select := {then_v, else_v, c} => triage then_v ({_} => else_v) ({_l, _r} => else_v) c
 
 // select_lazy(then_thunk, else_thunk, c): DEFERRED — branches are
 // {_}->value thunks. Only the chosen branch is forced (by applying
 // the trailing `t`); the discarded branch is built but not invoked.
-select_lazy := {then_thunk, else_thunk, c} -> triage then_thunk ({_} -> else_thunk) ({_l, _r} -> else_thunk) c t
+select_lazy := {then_thunk, else_thunk, c} => triage then_thunk ({_} => else_thunk) ({_l, _r} => else_thunk) c t
 
 // cond(c, then_v, else_v): condition-first conditional — the desugar target
 // for `if c then a else b`. `select` with the condition moved to the front.
 // Supports select-then-apply: trailing args after the three apply to the
 // chosen branch, which is how the `if` desugar restores the free vars it
 // abstracted over each arm (compile.ts).
-cond := {c, then_v, else_v} -> triage then_v ({_} -> else_v) ({_l, _r} -> else_v) c
+cond := {c, then_v, else_v} => triage then_v ({_} => else_v) ({_l, _r} => else_v) c
 
 // pair = fork(l, r). The constructor is typed (it just builds a fork); pair_fst/
 // pair_snd extract via triage's fork branch and stay UNtyped (they raw-triage their
 // argument, which the walker rejects on an abstract hypothesis). The leaf and stem
 // branches of the projections are dead code (pairs are always forks).
-pair : Tree -> Tree -> Tree := {a, b} -> t a b
-pair_fst := {p} -> triage t ({x} -> x) ({l, r} -> l) p
-pair_snd := {p} -> triage t ({x} -> x) ({l, r} -> r) p
+pair : Tree -> Tree -> Tree := {a, b} => t a b
+pair_fst := {p} => triage t ({x} => x) ({l, r} => l) p
+pair_snd := {p} => triage t ({x} => x) ({l, r} => r) p
 
-and := {a, b} -> select b false a
-or  := {a, b} -> select true b a
-not := {a} -> select false true a
+and := {a, b} => select b false a
+or  := {a, b} => select true b a
+not := {a} => select false true a
 
 // ================================================================
 // wait + fix: tree-calculus recursion
@@ -116,37 +116,37 @@ not := {a} -> select false true a
 // Typed via Tree's APPLICATION face (the tree_rec rung): saturated wait applies
 // an abstract Tree, and a non-elimination frame now answers a stuck extension AT
 // Tree (a tree applied to a tree is a tree), which the H-rule accepts.
-wait : Tree -> Tree -> Tree -> Tree := {a, b, c} -> t (t a) (t t c) b
+wait : Tree -> Tree -> Tree -> Tree := {a, b, c} => t (t a) (t t c) b
 
 // Self-applicator and fixed-point combinator. omega rides the same application
 // face (x x extends at Tree); fix's body only CONSTRUCTS (partial waits). The
 // honest FUNCTION-space type for fix still needs the totality story (wf_fix /
 // Total) — Tree -> Tree is the substrate-stratum truth, not the recursion scheme.
-omega : Tree -> Tree := {x} -> x x
-fix : Tree -> Tree := {f} -> wait omega ({x} -> f (wait omega x))
+omega : Tree -> Tree := {x} => x x
+fix : Tree -> Tree := {f} => wait omega ({x} => f (wait omega x))
 
 // ================================================================
 // Tree / Nat helpers
 // ================================================================
 
-is_fork := {v} -> triage false ({_} -> false) ({l, r} -> true) v
-is_stem := {v} -> triage false ({_} -> true) ({l, r} -> false) v
-is_leaf := {v} -> triage true ({_} -> false) ({l, r} -> false) v
+is_fork := {v} => triage false ({_} => false) ({l, r} => true) v
+is_stem := {v} => triage false ({_} => true) ({l, r} => false) v
+is_leaf := {v} => triage true ({_} => false) ({l, r} => false) v
 
 // stem_child: extract the inner of a stem. Caller must check is_stem first;
 // behavior on leaf/fork is unspecified (returns garbage).
-stem_child := {v} -> triage t ({c} -> c) ({l, r} -> l) v
+stem_child := {v} => triage t ({c} => c) ({l, r} => l) v
 
 // tree_eq: structural equality on trees.
 // Recursion: leaf=leaf, stem(ax)=stem(bx) iff ax=bx, fork(ax,ay)=fork(bx,by)
 // iff ax=bx and ay=by; otherwise false.
 //
 // the following tree_eq implementation is valid in tree calculus but in the host language it can be implemented in O(1) just via hash-cons comparison, so there is an optimization carve-out in the host language for this exact definition that suspends the partial application `(tree_eq a)` and waits for either a triage (forcing the real computation) or a second operand (an O(1) hash-cons compare) to reduce to true or false.
-tree_eq : Tree -> Tree -> Bool := fix ({self, a, b} ->
+tree_eq : Tree -> Tree -> Bool := fix ({self, a, b} =>
   triage
-    (triage true ({_} -> false) ({_l, _r} -> false) b)
-    ({ax} -> triage false (self ax) ({_l, _r} -> false) b)
-    ({ax, ay} -> triage false ({_} -> false) ({bx, by} -> and (self ax bx) (self ay by)) b)
+    (triage true ({_} => false) ({_l, _r} => false) b)
+    ({ax} => triage false (self ax) ({_l, _r} => false) b)
+    ({ax, ay} => triage false ({_} => false) ({bx, by} => and (self ax bx) (self ay by)) b)
     a)
 
 // tree_lt: a STRICT structural total order on trees — leaf < stem < fork, then
@@ -158,24 +158,24 @@ tree_eq : Tree -> Tree -> Bool := fix ({self, a, b} ->
 // (Unannotated like `nat_le`/`tree_eq`'s siblings: it triages its arg, and a Pi
 // annotation would mint a neutral and trip the walker's triage-on-neutral guard —
 // only `tree_eq` is a sanctioned carve-out for that pattern.)
-tree_lt := fix ({self, a, b} ->
+tree_lt := fix ({self, a, b} =>
   triage
-    (triage false ({_} -> true) ({_l, _r} -> true) b)                  // a leaf: < stem, < fork
-    ({ax} -> triage false ({bx} -> self ax bx) ({_l, _r} -> true) b) // a stem: child cmp; < fork
-    ({ax, ay} -> triage false ({_} -> false)                          // a fork: not < leaf/stem
-        ({bx, by} -> or (self ax bx) (and (tree_eq ax bx) (self ay by))) b)
+    (triage false ({_} => true) ({_l, _r} => true) b)                  // a leaf: < stem, < fork
+    ({ax} => triage false ({bx} => self ax bx) ({_l, _r} => true) b) // a stem: child cmp; < fork
+    ({ax, ay} => triage false ({_} => false)                          // a fork: not < leaf/stem
+        ({bx, by} => or (self ax bx) (and (tree_eq ax bx) (self ay by))) b)
     a)
 
 // nat_le(a, b): true if natural number a <= b (zero <= anything; succ steps both sides).
-nat_le := fix ({self, a, b} ->
+nat_le := fix ({self, a, b} =>
   if (is_leaf a) then true
   else (if (and (is_fork a) (is_fork b)) then (self (pair_snd a) (pair_snd b)) else false))
 
-nat_lt := {a, b} -> nat_le (t t a) b
+nat_lt := {a, b} => nat_le (t t a) b
 
 // Nat data constructors (also used by parser for numeric literals)
 zero : Nat := t
-succ : Nat -> Nat := {n} -> t t n
+succ : Nat -> Nat := {n} => t t n
 // nat_pred reads succ's payload (succ n = t t n). A raw pair_snd read: stays untyped like
 // the projections above (a Pi annotation would mint a hyp the projection then triages).
-nat_pred := {n} -> pair_snd n
+nat_pred := {n} => pair_snd n

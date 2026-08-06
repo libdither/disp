@@ -15,7 +15,7 @@ open use "../std/nat.disp"     // double
 
 // An order-SENSITIVE 2-arg function: f x y = x + 2y. (A wrong arg→param mapping
 // would compute a different Nat, so the compute-correctness tests are real.)
-let f := {x} -> {y} -> add x (double y)
+let f := {x} => {y} => add x (double y)
 
 // ── Reorderable: field order is irrelevant; all equal the positional call. ──
 test tree_eq (f { x := 1, y := 2 }) (f { y := 2, x := 1 }) = true
@@ -27,21 +27,21 @@ test f { x := 2, y := 1 } = 4         // 2 + 2*1 — distinct from the above (or
 
 // ── Defaults (value-binder `:=`): an omitted arg falls back to its default,
 //    tree-identical to the explicit positional fill; supplying it overrides. ──
-let g := {x} -> {y := 10} -> add x y
+let g := {x} => {y := 10} -> add x y
 test tree_eq (g { x := 5 }) (g 5 10) = true       // default-fill tree identity
 test g { x := 5 } = 15
 test g { x := 5, y := 2 } = 7                    // override the default
 test tree_eq (g { x := 5, y := 2 }) (g 5 2) = true
 
 // ── Defaults declared in the TYPE annotation (the design-doc style). ──
-let h : { x : Nat } -> { y : Nat := 30 } -> Nat := {x} -> {y} -> add x y
+let h : { x : Nat } -> { y : Nat := 30 } -> Nat := {x} => {y} => add x y
 test tree_eq (h { x := 1 }) (h 1 30) = true
 test h { x := 1 } = 31
 test h { x := 1, y := 1 } = 2
 
 // ── A default that references a PRIOR parameter (telescope discipline): the
 //    prior's resolved argument is substituted into the default recipe. ──
-let q := {a} -> {b := double a} -> add a b
+let q := {a} => {b := double a} -> add a b
 test tree_eq (q { a := 3 }) (q 3 (double 3)) = true
 test q { a := 3 } = 9                            // 3 + double 3
 test q { a := 3, b := 1 } = 4                    // override
@@ -63,6 +63,6 @@ test tree_eq (pb 2) (f 2 5) = true
 // ── Ordinary record application is unaffected: a record whose field names do
 //    NOT match the parameter names is passed as a value (record-domain
 //    function), never resolved as named args. ──
-let getx := {r} -> r.x
+let getx := {r} => r.x
 test getx { x := 42 } = 42
 test getx { x := 7 } = 7

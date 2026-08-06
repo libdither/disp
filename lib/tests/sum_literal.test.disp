@@ -31,7 +31,7 @@ test typecheck Type Event                   = Ok true   // Event is a real Type
 // ── a recursive sum (Peano) recognizes exactly like the hand form ──
 let PN := < zero, succ : Rec >
 let pz := inj "zero" t
-let ps := {n} -> inj "succ" n
+let ps := {n} => inj "succ" n
 test typecheck PN pz              = Ok true
 test typecheck PN (ps (ps pz))    = Ok true
 test typecheck Type PN            = Ok true

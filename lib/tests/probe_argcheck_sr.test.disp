@@ -6,12 +6,12 @@ open use "../kernel/prelude.disp"
 open use "../std/nat.disp"
 
 // g claims (Nat -> Nat) -> Nat, but applies its argument k to `false` (not a Nat).
-let g := {k} -> succ (k false)
+let g := {k} => succ (k false)
 test param_apply (Arrow (Arrow Nat Nat) Nat) g = Ok true      // accepted: k false's arg is unchecked
 
 // concrete CLOSED witness of the preservation failure it enables:
 // g : (Nat->Nat)->Nat and k0 : Nat->Nat, yet g k0 reduces to `succ false` (NOT a Nat).
-let k0 := {n} -> n
+let k0 := {n} => n
 test param_apply (Arrow Nat Nat) k0 = Ok true
 test typecheck Nat (g k0) = Ok false      // g k0 escapes its result type Nat (use-site re-check catches it)
 
@@ -19,4 +19,4 @@ test typecheck Nat (g k0) = Ok false      // g k0 escapes its result type Nat (u
 test param_apply Nat false = Ok false
 
 // and the same under-check via an abstract higher-order hyp (matches the effects agent's finding):
-test param_apply (Arrow (Arrow Nat Nat) Nat) ({k} -> succ (k (succ false))) = Ok true
+test param_apply (Arrow (Arrow Nat Nat) Nat) ({k} => succ (k (succ false))) = Ok true

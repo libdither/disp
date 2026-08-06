@@ -24,27 +24,27 @@ open use "../std/relation.disp"
 open use "../std/case.disp"
 
 // ── the decisive counterexample: a licensed rebind that changes behavior ──
-let id_fn := {n} -> n
-let shift := {n} -> if (is_neutral n) then n else (succ n)   // probe_intensional's `sneaky`
+let id_fn := {n} => n
+let shift := {n} => if (is_neutral n) then n else (succ n)   // probe_intensional's `sneaky`
 
 test id_fn 0 = 0
 test shift 0 = 1                                             // type-preserving divergence
 
 // the license core accepts refl (the codomain collapses at the hyp)...
-let NatFnRelation := pointwise Nat ({_n} -> eq_relation Nat)
-test param_apply (NatFnRelation.rel id_fn shift) ({n} -> refl) = Ok true
+let NatFnRelation := pointwise Nat ({_n} => eq_relation Nat)
+test param_apply (NatFnRelation.rel id_fn shift) ({n} => refl) = Ok true
 // ...and it is the is_neutral collapse specifically, not a vacuous relation:
-test param_apply (NatFnRelation.rel id_fn ({n} -> succ n)) ({n} -> refl) = Ok false
+test param_apply (NatFnRelation.rel id_fn ({n} => succ n)) ({n} => refl) = Ok false
 
 // the guarded rebind lands; the owned name now computes differently:
-guard (license_guard NatFnRelation.rel) my_id := ({n} -> n)
-my_id := { new := shift ; proof := ({n} -> refl) }
+guard (license_guard NatFnRelation.rel) my_id := ({n} => n)
+my_id := { new := shift ; proof := ({n} => refl) }
 test my_id 0 = 1
 
 // ── quotients: the license relates values a well-typed observer separates ──
 // A coarse relation alone supplies equivalence but no congruence obligation for
 // consumers: this pullback relates a stem to a fork while is_fork separates them.
-let TreeQ := wait (make_recognizer ({m, v} -> Ok true))
+let TreeQ := wait (make_recognizer ({m, v} => Ok true))
   { recognizer_params := unit_witness; functor := trivial_functor; respond := inert_respond;
     behavioral_specs := t }
 let TreeQRelation := pullback_on TreeQ is_leaf (eq_relation Bool)
@@ -57,16 +57,16 @@ test is_fork (t t t) = true
 // is_neutral is an ambient carve-out, not an op, so a row-empty computation
 // observes the face bit freely; a Reflect op only helps once raw reflection is
 // unavailable in the certified fragment.
-let covert := {n} -> io_pure (if (is_neutral n) then true else false)
-test param_apply (Pi Nat ({_} -> Eff row_nil Bool)) covert = Ok true
+let covert := {n} => io_pure (if (is_neutral n) then true else false)
+test param_apply (Pi Nat ({_} => Eff row_nil Bool)) covert = Ok true
 
 // ── CaseRelation: instance obligations cannot pin a polymorphic candidate ──
 let refls := {
   at_cut := {
-    L0 := {cases} -> refl;
-    L1 := {cases} -> {c} -> refl;
-    L2 := {cases} -> {l} -> {r} -> refl;
-    L3 := {cases} -> {a} -> {b} -> {c} -> refl
+    L0 := {cases} => refl;
+    L1 := {cases} => {c} => refl;
+    L2 := {cases} => {l} => {r} => refl;
+    L3 := {cases} => {a} => {b} => {c} => refl
   }
 }
 
@@ -75,29 +75,29 @@ let refls := {
 // specialized guard no longer binds such a whole candidate (it accepts only a
 // raw worker and builds neutral/non-cut delegation), but code quantification is
 // still needed to close this cut-code identity gap.
-let evil2 := {T} -> {P} -> {cases} -> {v} -> (if (tree_eq T CaseLicenseType) then (case_value T P cases v) else 0)
+let evil2 := {T} => {P} => {cases} => {v} => (if (tree_eq T CaseLicenseType) then (case_value T P cases v) else 0)
 test param_apply (CaseRelation.rel case_value evil2) refls = Ok true
 let Fresh := Coproduct [pair "A" [Tree]]
-test case_value Fresh ({_} -> Nat) { A := ({x} -> 5) } (inj1 "A" t) = 5
-test evil2 Fresh ({_} -> Nat) { A := ({x} -> 5) } (inj1 "A" t) = 0
+test case_value Fresh ({_} => Nat) { A := ({x} => 5) } (inj1 "A" t) = 5
+test evil2 Fresh ({_} => Nat) { A := ({x} => 5) } (inj1 "A" t) = 0
 
 // evil1 probes an arm's face: every obligation binds arms as hyps, so the
 // candidate detects the certification environment itself and delegates exactly
 // there, junking at every real concrete-armed call site.
-let first_arm_name := {T} -> pair_fst (pair_fst ((type_meta T).recognizer_params))
-let evil1 := {T} -> {P} -> {cases} -> {v} -> (if (is_neutral (field cases (first_arm_name T))) then (case_value T P cases v) else 0)
+let first_arm_name := {T} => pair_fst (pair_fst ((type_meta T).recognizer_params))
+let evil1 := {T} => {P} => {cases} => {v} => (if (is_neutral (field cases (first_arm_name T))) then (case_value T P cases v) else 0)
 test param_apply (CaseRelation.rel case_value evil1) refls = Ok true
 let three := 3
 let seven := 7
-test case_value Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = three
-test evil1 Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = 0
+test case_value Nat ({_} => Nat) { zero := three; succ := ({k} => seven) } 0 = three
+test evil1 Nat ({_} => Nat) { zero := three; succ := ({k} => seven) } 0 = 0
 
 // The specialized guard materially narrows the attack. It accepts this worker
 // because the representative cut code delegates, but it constructs the whole
 // replacement itself: Nat/non-cut calls remain the incumbent spec. A fresh cut
 // code still reaches the worker, pinning the exact code-quantification gap.
-let cut_code_spoof := {T} -> {P} -> {cases} -> {v} ->
+let cut_code_spoof := {T} => {P} => {cases} => {v} =>
   if (tree_eq T CaseLicenseType) then (case_value T P cases v) else 0
 case_value := { fast := cut_code_spoof; proof := refls }
-test case_value Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = three
-test case_value Fresh ({_} -> Nat) { A := ({x} -> 5) } (inj1 "A" t) = 0
+test case_value Nat ({_} => Nat) { zero := three; succ := ({k} => seven) } 0 = three
+test case_value Fresh ({_} => Nat) { A := ({x} => 5) } (inj1 "A" t) = 0

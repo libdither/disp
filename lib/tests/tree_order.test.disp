@@ -54,4 +54,4 @@ test is_const_tail (t t) = false             // stem
 // S-shaped (false) even when the codomain ignores `fst` — only the exact occurs/support
 // analysis distinguishes that case. Both are correct; they answer different questions.
 test is_const_tail (pair_snd ((type_meta { a : Nat, b : Bool }).recognizer_params)) = true
-test is_const_tail (pair_snd ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params)) = false
+test is_const_tail (pair_snd ((type_meta (Sigma Nat ({_} => Bool))).recognizer_params)) = false

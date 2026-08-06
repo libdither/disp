@@ -339,7 +339,7 @@ function cirToTree(e: Cir): T {
   return normalize(app(cirToTree(e.f), cirToTree(e.x)))
 }
 
-/** Compile `{params} -> body` where body is built from vars/apps/trees. */
+/** Compile `{params} => body` where body is built from vars/apps/trees. */
 export function lam(params: string[], body: Cir): T {
   let cur = body
   for (let i = params.length - 1; i >= 0; i--) cur = { tag: 'lam', param: params[i], body: cur }

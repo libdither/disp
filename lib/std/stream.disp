@@ -14,13 +14,13 @@ open use "../kernel/prelude.disp"
 // This is the dual of `List`: List is recognized by DESCENDING a finite value (`Rec` cell recurses);
 // Stream is recognized by GUARDING a finite generator (`gen` cell stops). Same self-aware `tele_walk`.
 
-stream_head := {r} -> field r "head"
-stream_tail := {r} -> field r "tail"
+stream_head := {r} => field r "head"
+stream_tail := {r} => field r "tail"
 
 // unfold: the coalgebra constructor. out: run one step (step seed : { head ; tail }) and RE-SUSPEND
 // the tail as the next generator — so observing never forces more than one level.
-unfold := {step, seed} -> inj gen_tag (pair step seed)
-out := {v} -> {
+unfold := {step, seed} => inj gen_tag (pair step seed)
+out := {v} => {
   let sp := pair_snd v
   let step := pair_fst sp
   let one := step (pair_snd sp)
@@ -30,7 +30,7 @@ out := {v} -> {
 // stream_respond: eliminating a Stream-neutral observes ONE level — delegate to the observation
 // Record [head:A; tail:Stream A]'s projection respond (self = the neutral, so tail lands Stream A).
 // `params.elem` is the element type A (see the recognizer_params wrapping below).
-let stream_respond := {params, self, frame} -> {
+let stream_respond := {params, self, frame} => {
   let obs := Record [pair "head" (params.elem), pair "tail" (neutral_type self)]
   ((type_meta obs).respond (type_meta obs).recognizer_params self frame)
 }
@@ -42,22 +42,22 @@ let stream_respond := {params, self, frame} -> {
 // rejects a BARE abstract type (a Type-typed neutral's stored type is Type, not Tree -> Ok false). A
 // concrete record wrapper is a fine Tree regardless of A, so `Stream : Type -> Type` verifies. (This
 // is why every parameterized former — Eq's `{type,lhs,rhs}`, List's variants list — wraps its params.)
-Stream : Type -> Type := {A} -> wait (make_recognizer
-  {meta, v} -> (if (is_gen v)
-    then (tele_walk t true (t (pos_cell stream_head ((meta.recognizer_params).elem)) ({_} -> t (gen_cell stream_tail) ({_} -> t))) (out v) t t)
+Stream : Type -> Type := {A} => wait (make_recognizer
+  {meta, v} => (if (is_gen v)
+    then (tele_walk t true (t (pos_cell stream_head ((meta.recognizer_params).elem)) ({_} => t (gen_cell stream_tail) ({_} => t))) (out v) t t)
     else (Ok false))
 ) (make_meta { elem := A } stream_respond)
 
 // stream_take n s : a List of the first n observed heads. The finite eliminator for an infinite value.
-stream_take := fix ({self, n, s} ->
+stream_take := fix ({self, n, s} =>
   if (tree_eq n zero) then nil else (cons (field (out s) "head") (self (nat_pred n) (field (out s) "tail"))))
 
 // stream_map f s : a new Stream whose heads are f-mapped (the ν functorial action on `head`).
-stream_map := {f, s} -> unfold ({s2} -> { head := (f (field (out s2) "head")); tail := (field (out s2) "tail") }) s
+stream_map := {f, s} => unfold ({s2} => { head := (f (field (out s2) "head")); tail := (field (out s2) "tail") }) s
 
 // stream_unfold: the typed CORECURSOR (anamorphism) — the ν dual of `rec_value`. A coalgebra
 // `step : S -> { head : A ; tail : S }` plus a seed produces a `Stream A`; `unfold` is the raw builder.
 // Productivity is correct-by-construction: a Stream-recognized value can only be built from a typed
 // coalgebra (the type IS the soundness — you cannot write a non-productive stream).
 stream_unfold : {A : Type} -> {S : Type} -> (S -> { head : A, tail : S }) -> S -> Stream A :=
-  {A, S, step, seed} -> unfold step seed
+  {A, S, step, seed} => unfold step seed

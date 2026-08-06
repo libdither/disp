@@ -7,9 +7,9 @@ open use "../std/nat.disp"
 
 // ── pos_cell (kernel): walk a RAW inj-pair positionally, no boxing. Name-lookup can't (it needs
 // a record header); positional reads pair_fst/pair_snd directly — same `at`, new op.
-let ByName := Telescope (t (proj_cell "fst" Nat) ({_} -> t (proj_cell "snd" Bool) ({_} -> t)))
+let ByName := Telescope (t (proj_cell "fst" Nat) ({_} => t (proj_cell "snd" Bool) ({_} => t)))
 test typecheck ByName (pair 2 true) = Ok false                            // proj-by-name fails on a raw pair
-let ByPos := Telescope (t (pos_cell pair_fst Nat) ({_} -> t (pos_cell pair_snd Bool) ({_} -> t)))
+let ByPos := Telescope (t (pos_cell pair_fst Nat) ({_} => t (pos_cell pair_snd Bool) ({_} => t)))
 test typecheck ByPos (pair 2 true)  = Ok true                            // positional: raw pair recognized
 test typecheck ByPos (pair 2 (succ zero)) = Ok false                    // snd not a Bool (zero = △ = true)
 test typecheck ByPos (pair false true) = Ok false                           // fst not a Nat
@@ -20,7 +20,7 @@ test typecheck ByPos (pair false true) = Ok false                           // f
 // recursive position is just `Rec` in the arg-list and the former ties its own knot. Raw inj values.
 let NatList := Coproduct [pair "nil" [], pair "cons" [Nat, Rec]]
 let nl_nil := inj "nil" t
-let nl_cons := {h, tl} -> inj "cons" (pair h tl)
+let nl_cons := {h, tl} => inj "cons" (pair h tl)
 
 test typecheck NatList nl_nil                              = Ok true   // base case (nullary, empty arg telescope)
 test typecheck NatList (nl_cons 2 nl_nil)                  = Ok true   // one element
@@ -37,7 +37,7 @@ test typecheck Type NatList                               = Ok true   // the sel
 //      BinTree = leaf | node (left : BinTree) (val : Nat) (right : BinTree)
 let BinTree := Coproduct [pair "leaf" [], pair "node" [Rec, Nat, Rec]]
 let bt_leaf := inj "leaf" t
-let bt_node := {l, x, r} -> inj "node" (pair l (pair x r))            // inj3 layout
+let bt_node := {l, x, r} => inj "node" (pair l (pair x r))            // inj3 layout
 test typecheck BinTree bt_leaf                                              = Ok true
 test typecheck BinTree (bt_node bt_leaf 5 bt_leaf)                          = Ok true
 test typecheck BinTree (bt_node (bt_node bt_leaf 1 bt_leaf) 2 bt_leaf)      = Ok true  // nested left
@@ -45,7 +45,7 @@ test typecheck BinTree (bt_node bt_leaf false bt_leaf)                        = 
 test typecheck BinTree (bt_node bt_leaf 5 zero)                             = Ok false  // right arg not a BinTree
 
 // ── eliminator = the §2.6 cut (surface `match`): project the case, spread args, recurse on REC.
-let nl_sum := fix ({self, target} ->
+let nl_sum := fix ({self, target} =>
   match target { nil => zero; cons h tl => add h (self tl) })
 test nl_sum nl_nil                                   = zero
 test nl_sum (nl_cons 2 (nl_cons 3 (nl_cons 4 nl_nil))) = 9

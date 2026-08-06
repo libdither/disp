@@ -10,50 +10,50 @@ open use "../kernel/prelude.disp"
 // former ties its OWN knot (no `Mu` wrapper). `List A : Type` is recognized by the same `at` as every
 // other type — head : A then tail : List A — with neutrals handled by the H-rule (so `List A` still
 // appears under Pi binders). The hand-rolled fix + bracket-abstraction caveats are gone.
-let view_list := {v} -> triage
+let view_list := {v} => triage
   (Ok (inj "nil" t))                         // leaf            -> nil
-  ({_} -> Err)                               // bare stem       -> not a list
-  ({h, tl} -> Ok (inj "cons" (pair h tl)))   // fork(head,tail) -> cons
+  ({_} => Err)                               // bare stem       -> not a list
+  ({h, tl} => Ok (inj "cons" (pair h tl)))   // fork(head,tail) -> cons
   v
 // encode_list: inj-form -> shape (inverse of view_list). nil -> leaf; cons (h,tl) -> fork(h,tl).
-let encode_list := {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
+let encode_list := {x} => if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
 // List is gated by the GENERIC kernel gate `coh_check`. params = `[A]` (`cons A nil`) resolves cons's
 // head `Param 0` to the element type A; from the `[Param 0, Rec]` argspec (+ the encode iso) `coh_check`
 // derives the cons case-type `Π h:A. Π tl:List A. P tl -> P (cons h tl)`. cons's head being `Param 0`
 // also lets the generic `fmap (List A) f` map it.
-List : Type -> Type := {A} ->
+List : Type -> Type := {A} =>
   Coproduct_viewed (cons A nil) (pair view_list encode_list) [pair "nil" [], pair "cons" [Param zero, Rec]]
 
 NatList : Type := List Nat
 
 nil : NatList := t
 
-cons : Tree -> Tree -> Tree := {head, tail} -> t head tail
+cons : Tree -> Tree -> Tree := {head, tail} => t head tail
 
 list_cons : Nat -> NatList -> NatList :=
-  {head} -> {tail} -> cons head tail
+  {head} => {tail} => cons head tail
 
-singleton : Tree -> Tree := {x} -> cons x nil
+singleton : Tree -> Tree := {x} => cons x nil
 
 // list_rec: the dependent eliminator, elim-ROUTED like nat_rec — a neutral target becomes a
 // stuck elimination via the stored type's respond, running List's coherence gate (the old
 // version forged `make_hyp (motive xs) xs` raw, BYPASSING the gate). cases keyed by VARIANT
 // TAG (nil/cons) so the gate's `field cases tag` and the dispatcher agree.
-let list_dispatcher := fix ({self, motive, cases, target} ->
+let list_dispatcher := fix ({self, motive, cases, target} =>
   if (is_leaf target)
     then cases.nil
     else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
 // The IMPLICIT-∀ dependent recursor type: Intersection mints the element type A abstractly,
 // then the nat_rec-shaped dependent chain. Spelled with explicit Pi/Arrow — binder sugar does
 // not desugar inside application arguments (only annotation-position binders become Pis).
-list_rec : Intersection Type ({A} ->
-  Pi (Arrow (List A) Type) ({P} ->
+list_rec : Intersection Type ({A} =>
+  Pi (Arrow (List A) Type) ({P} =>
     Arrow (P nil)
-      (Arrow (Pi A ({h} -> Pi (List A) ({tl} -> Arrow (P tl) (P (cons h tl)))))
-        (Pi (List A) ({xs} -> P xs))))) := {motive, nil_case, cons_case, xs} -> elim list_dispatcher motive { nil := nil_case; cons := cons_case } xs
+      (Arrow (Pi A ({h} => Pi (List A) ({tl} => Arrow (P tl) (P (cons h tl)))))
+        (Pi (List A) ({xs} => P xs))))) := {motive, nil_case, cons_case, xs} => elim list_dispatcher motive { nil := nil_case; cons := cons_case } xs
 
-list_length : Intersection Type ({A} -> Arrow (List A) Nat) :=
-  {xs} -> list_rec ({_} -> Nat) 0 ({h, tl, ih} -> succ ih) xs
+list_length : Intersection Type ({A} => Arrow (List A) Nat) :=
+  {xs} => list_rec ({_} => Nat) 0 ({h, tl, ih} => succ ih) xs
 
 // ── the annotated toolkit ──
 // Every function below is ANNOTATED and eliminator-routed (list_rec for real
@@ -71,48 +71,48 @@ list_length : Intersection Type ({A} -> Arrow (List A) Nat) :=
 open use "option.disp"
 
 // list_append A xs ys — the typed face of the kernel cut's list_cat.
-list_append : Pi Type ({A} -> Arrow (List A) (Arrow (List A) (List A))) :=
-  {A, xs, ys} -> list_rec ({_} -> List A) ys ({h, tl, ih} -> cons h ih) xs
+list_append : Pi Type ({A} => Arrow (List A) (Arrow (List A) (List A))) :=
+  {A, xs, ys} => list_rec ({_} => List A) ys ({h, tl, ih} => cons h ih) xs
 
 // list_map B f xs: A is erased (never in a motive); B is real (the motive is
 // ({_} -> List B)).
-list_map : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow A B) (Arrow (List A) (List B)))) :=
-  {B, f, xs} -> list_rec ({_} -> List B) nil ({h, tl, ih} -> cons (f h) ih) xs
+list_map : Intersection Type ({A} => Pi Type ({B} => Arrow (Arrow A B) (Arrow (List A) (List B)))) :=
+  {B, f, xs} => list_rec ({_} => List B) nil ({h, tl, ih} => cons (f h) ih) xs
 
 // concat_map B f xs: map then flatten — the multishot fold's workhorse (the
 // nondeterminism handler's resume-per-candidate shape). Appends via the typed
 // list_append so the cons arm stays walker-safe.
-concat_map : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow A (List B)) (Arrow (List A) (List B)))) :=
-  {B, f, xs} -> list_rec ({_} -> List B) nil ({h, tl, ih} -> list_append B (f h) ih) xs
+concat_map : Intersection Type ({A} => Pi Type ({B} => Arrow (Arrow A (List B)) (Arrow (List A) (List B)))) :=
+  {B, f, xs} => list_rec ({_} => List B) nil ({h, tl, ih} => list_append B (f h) ih) xs
 
 // Folds: the accumulator type B is real. foldl threads the accumulator through
 // the motive (Arrow B B — the standard accumulator-through-motive form).
-list_foldl : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow B (Arrow A B)) (Arrow B (Arrow (List A) B)))) :=
-  {B, f, acc, xs} -> list_rec ({_} -> Arrow B B) ({a} -> a) ({h, tl, ih} -> {a} -> ih (f a h)) xs acc
+list_foldl : Intersection Type ({A} => Pi Type ({B} => Arrow (Arrow B (Arrow A B)) (Arrow B (Arrow (List A) B)))) :=
+  {B, f, acc, xs} => list_rec ({_} => Arrow B B) ({a} => a) ({h, tl, ih} => {a} => ih (f a h)) xs acc
 
-list_foldr : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow A (Arrow B B)) (Arrow B (Arrow (List A) B)))) :=
-  {B, f, init, xs} -> list_rec ({_} -> B) init ({h, tl, ih} -> f h ih) xs
+list_foldr : Intersection Type ({A} => Pi Type ({B} => Arrow (Arrow A (Arrow B B)) (Arrow B (Arrow (List A) B)))) :=
+  {B, f, init, xs} => list_rec ({_} => B) init ({h, tl, ih} => f h ih) xs
 
 // One-level accessors: case_value (no recursion, no IH — the raw sub-structure
 // in O(1)); the element type A is real (it is the motive).
-list_head_or : Pi Type ({A} -> Arrow A (Arrow (List A) A)) :=
-  {A, default, xs} -> case_value (List A) ({_} -> A) { nil := default; cons := {h, _tl} -> h } xs
+list_head_or : Pi Type ({A} => Arrow A (Arrow (List A) A)) :=
+  {A, default, xs} => case_value (List A) ({_} => A) { nil := default; cons := {h, _tl} => h } xs
 
-list_tail_or : Pi Type ({A} -> Arrow (List A) (Arrow (List A) (List A))) :=
-  {A, default, xs} -> case_value (List A) ({_} -> List A) { nil := default; cons := {_h, tl} -> tl } xs
+list_tail_or : Pi Type ({A} => Arrow (List A) (Arrow (List A) (List A))) :=
+  {A, default, xs} => case_value (List A) ({_} => List A) { nil := default; cons := {_h, tl} => tl } xs
 
-list_is_nil : Pi Type ({A} -> Arrow (List A) Bool) :=
-  {A, xs} -> case_value (List A) ({_} -> Bool) { nil := true; cons := {_h, _tl} -> false } xs
+list_is_nil : Pi Type ({A} => Arrow (List A) Bool) :=
+  {A, xs} => case_value (List A) ({_} => Bool) { nil := true; cons := {_h, _tl} => false } xs
 
 // list_find A pred xs: first element satisfying pred, at the honest type
 // Option A (the former element-or-nil answer conflated "found nil" with
 // "absent"). The per-element branch goes through bool_rec so a stuck predicate
 // stays a stuck elimination.
-list_find : Pi Type ({A} -> Arrow (Arrow A Bool) (Arrow (List A) (Option A))) :=
-  {A, pred, xs} -> list_rec ({_} -> Option A) none ({h, tl, ih} -> bool_rec ({_} -> Option A) (some h) ih (pred h)) xs
+list_find : Pi Type ({A} => Arrow (Arrow A Bool) (Arrow (List A) (Option A))) :=
+  {A, pred, xs} => list_rec ({_} => Option A) none ({h, tl, ih} => bool_rec ({_} => Option A) (some h) ih (pred h)) xs
 
 // Partial substrate accessors: caller must ensure xs is a non-nil list (on
 // nil these answer `t`; on a stem, unspecified). Unannotatable BY NATURE
 // (partial), not by omission — the typed faces are list_head_or/list_tail_or.
-list_head := {xs} -> pair_fst xs
-list_tail := {xs} -> pair_snd xs
+list_head := {xs} => pair_fst xs
+list_tail := {xs} => pair_snd xs

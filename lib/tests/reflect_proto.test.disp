@@ -44,31 +44,31 @@ open use "../std/effect.disp"
 let classify := mk_op "Reflect" "classify" Tree Tree
 let reflect_row := row1 "Reflect"
 let sh_leaf := inj0 "leaf"
-let sh_stem := {c} -> inj1 "stem" c
-let sh_fork := {l, r} -> inj2 "fork" l r
-let sh_hyp  := {ty} -> inj1 "hyp" ty
-let sh_tag  := {s} -> pair_fst s
+let sh_stem := {c} => inj1 "stem" c
+let sh_fork := {l, r} => inj2 "fork" l r
+let sh_hyp  := {ty} => inj1 "hyp" ty
+let sh_tag  := {s} => pair_fst s
 
 // ── the floor handler: THE one clause that looks. A genuine neutral is never
 // triaged (is_hyp_fork first); everything else is raw shape triage. This runs
 // at handle time on values-as-data — the walker's prohibition is about
 // checks, not about the floor.
-let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
-let classify_clause := {op} -> {v, resume} -> resume
+let is_hyp_fork_l := {v} => and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let classify_clause := {op} => {v, resume} => resume
   (if (is_hyp_fork_l v)
     then (sh_hyp (neutral_type v))
     else (triage sh_leaf sh_stem sh_fork v))
 let reflect_h := mk_handler (covers_eff "Reflect") io_pure classify_clause
-let run_reflect := {m} -> run_pure (handle reflect_h m)
+let run_reflect := {m} => run_pure (handle reflect_h m)
 
 // ── (a) effectful twins ──
-let is_fork_eff := {v} -> eff_bind (classify v) ({s} -> io_pure (tree_eq (sh_tag s) "fork"))
-let stem_child_eff := {v} -> eff_bind (classify v) ({s} ->
+let is_fork_eff := {v} => eff_bind (classify v) ({s} => io_pure (tree_eq (sh_tag s) "fork"))
+let stem_child_eff := {v} => eff_bind (classify v) ({s} =>
   if (tree_eq (sh_tag s) "stem") then (io_pure (pair_snd s)) else (io_pure t))
-let tsize_eff := fix ({self, v} -> eff_bind (classify v) ({s} ->
-  if (tree_eq (sh_tag s) "stem") then (eff_bind (self (pair_snd s)) ({n} -> io_pure (succ n)))
+let tsize_eff := fix ({self, v} => eff_bind (classify v) ({s} =>
+  if (tree_eq (sh_tag s) "stem") then (eff_bind (self (pair_snd s)) ({n} => io_pure (succ n)))
   else (if (tree_eq (sh_tag s) "fork")
-    then (eff_bind (self (pair_fst (pair_snd s))) ({nl} -> eff_bind (self (pair_snd (pair_snd s))) ({nr} -> io_pure (succ (add nl nr)))))
+    then (eff_bind (self (pair_fst (pair_snd s))) ({nl} => eff_bind (self (pair_snd (pair_snd s))) ({nr} => io_pure (succ (add nl nr)))))
     else (io_pure 1))))
 
 test run_reflect (is_fork_eff t) = is_fork t
@@ -79,7 +79,7 @@ test run_reflect (tsize_eff (t (t t) (t t t))) = 6
 
 // ── (b) the modality demo ──
 // looking is untyped (the standing K0 floor pin, restated for contrast):
-test param_apply (Pi Tree ({_} -> Bool)) is_fork = Err
+test param_apply (Pi Tree ({_} => Bool)) is_fork = Err
 // asking is typed — the same query, as an effect value, carries a real type:
 test param_apply (Arrow Tree (EffAt reflect_row)) is_fork_eff = Ok true
 // and a request about an ABSTRACT tree is itself a well-typed value:
@@ -90,12 +90,12 @@ let teq_sig := checker_sig tree_eq
 let bh_sig  := pair_fst (bind_hyp Tree)      // constant across A
 let pw_sig  := checker_sig param_walker      // = the §7A token's signature
 // CheckerResult-bind lifted into Eff (the walker's `bind`, effectfully)
-let eff_bind_cr := {m, g} -> eff_bind m ({cr} ->
+let eff_bind_cr := {m, g} => eff_bind m ({cr} =>
   if (tree_eq (pair_fst cr) "Ok") then (g (pair_snd cr)) else (io_pure Err))
 // the S rule and the two fork sub-rules (w_s / w_tfk / the triage rule)
-let w_s_spec := {self, c, b, x} -> eff_bind_cr (self c x) ({cx} -> eff_bind_cr (self b x) ({bx} -> self cx bx))
-let w_tfk_spec := {self, b, l2, r2} -> eff_bind_cr (self b l2) ({bl} -> self bl r2)
-let w_tri_spec := {self, b, tc, td, x} -> eff_bind (classify x) ({sx} ->
+let w_s_spec := {self, c, b, x} => eff_bind_cr (self c x) ({cx} => eff_bind_cr (self b x) ({bx} => self cx bx))
+let w_tfk_spec := {self, b, l2, r2} => eff_bind_cr (self b l2) ({bl} => self bl r2)
+let w_tri_spec := {self, b, tc, td, x} => eff_bind (classify x) ({sx} =>
   if (tree_eq (sh_tag sx) "hyp") then (io_pure Err)                     // triage-on-neutral rejection
   else (if (tree_eq (sh_tag sx) "leaf") then (io_pure (Ok tc))
   else (if (tree_eq (sh_tag sx) "stem") then (self td (pair_snd sx))
@@ -103,32 +103,32 @@ let w_tri_spec := {self, b, tc, td, x} -> eff_bind (classify x) ({sx} ->
   else (io_pure Err)))))
 // the stem rule: build fork(a, x), then ASK whether what we built wears the
 // hyp shape — a forged fork answers hyp, exactly w_stem's rejection
-let w_stem_spec := {self, a, x} -> {
+let w_stem_spec := {self, a, x} => {
   let r := t a x
-  eff_bind (classify r) ({sr} ->
+  eff_bind (classify r) ({sr} =>
     if (tree_eq (sh_tag sr) "hyp") then (io_pure Err) else (io_pure (Ok r)))
 }
-let walk_fork := {self, f, l, r, x} -> (
+let walk_fork := {self, f, l, r, x} => (
   if (tree_eq l teq_sig) then (io_pure (Ok (f x)))                      // complete a suspended tree_eq (host O(1))
   else (if (tree_eq l bh_sig) then (io_pure (param_walker f x))         // DELEGATED: minting is its own floor op
   else (if (tree_eq l pw_sig) then (io_pure (param_walker f x))         // DELEGATED: the §7A policed route
-  else (eff_bind (classify l) ({sl} ->
+  else (eff_bind (classify l) ({sl} =>
     if (tree_eq (sh_tag sl) "leaf") then (io_pure (Ok r))               // K rule
     else (if (tree_eq (sh_tag sl) "stem") then (w_s_spec self (pair_snd sl) r x)
     else (if (tree_eq (sh_tag sl) "fork") then (w_tri_spec self r (pair_fst (pair_snd sl)) (pair_snd (pair_snd sl)) x)
     else (io_pure Err))))))))
-let walk_spec := fix ({self, f, x} ->
+let walk_spec := fix ({self, f, x} =>
   if (tree_eq f tree_eq) then (io_pure (Ok (wait tree_eq x)))
   else (if (tree_eq f pair_fst) then (io_pure (Ok (pair_fst x)))
   else (if (tree_eq f neutral_type) then (io_pure (Ok (neutral_type x)))
-  else (if (tree_eq f ({y} -> y)) then (io_pure (Ok x))
-  else (eff_bind (classify f) ({s} ->
+  else (if (tree_eq f ({y} => y)) then (io_pure (Ok x))
+  else (eff_bind (classify f) ({s} =>
     if (tree_eq (sh_tag s) "hyp") then (io_pure (Ok (f x)))             // the hyp route: extend the spine
     else (if (tree_eq (sh_tag s) "leaf") then (io_pure (Ok (t x)))
     else (if (tree_eq (sh_tag s) "stem") then (w_stem_spec self (pair_snd s) x)
     else (if (tree_eq (sh_tag s) "fork") then (walk_fork self f (pair_fst (pair_snd s)) (pair_snd (pair_snd s)) x)
     else (io_pure Err))))))))))
-let step := {f, x} -> run_reflect (walk_spec f x)
+let step := {f, x} => run_reflect (walk_spec f x)
 
 // dispatch rules agree with the live walker
 test step t zero = param_walker t zero

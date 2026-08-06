@@ -13,8 +13,8 @@ test param_apply MetaShape (type_meta Bool)      = Ok true     // meta-face: its
 // StrictType recognizes the kernel's real types via BOTH faces at once
 test param_apply StrictType Bool = Ok true
 test param_apply StrictType Nat  = Ok true
-test param_apply StrictType (Pi Nat ({_} -> Bool))    = Ok true
-test param_apply StrictType (Sigma Nat ({_} -> Bool)) = Ok true
+test param_apply StrictType (Pi Nat ({_} => Bool))    = Ok true
+test param_apply StrictType (Sigma Nat ({_} => Bool)) = Ok true
 test param_apply StrictType (Eq Nat zero zero)        = Ok true
 test param_apply StrictType Action     = Ok true              // a coproduct type
 test param_apply StrictType Type       = Ok true              // recognizes the legacy universe
@@ -23,15 +23,15 @@ test param_apply StrictType MetaShape  = Ok true
 // (Tree -> Type), not a type — StrictType correctly tells them apart.
 test param_apply StrictType zero = Ok false
 test param_apply StrictType Coproduct = Ok false              // a constructor, not a type
-test param_apply StrictType ({n} -> n) = Ok false            // a bare function is not a type
+test param_apply StrictType ({n} => n) = Ok false            // a bare function is not a type
 
 // ===== a real UNIVERSE, not just a recognizer: the H-rule respond =====
 // StrictType's respond is now type_predicate_h_rule (not the §4b placeholder), so a
 // StrictType-hyp works as the domain of a polymorphic Pi — `∀(A : StrictType). A -> A`
 // recognizes the polymorphic identity (the H-rule accepts a hyp's own neutrals). This is
 // what lets StrictType replace the legacy `Type`.
-let polyid := {A} -> {x} -> x
-test param_apply (Pi StrictType ({A} -> Arrow A A)) polyid = Ok true
+let polyid := {A} => {x} => x
+test param_apply (Pi StrictType ({A} => Arrow A A)) polyid = Ok true
 
 // ===== the fixed point: the universe inhabits itself =====
 test param_apply StrictType StrictType = Ok true

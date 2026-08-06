@@ -47,21 +47,21 @@ open use "effect.disp"
 // ── the response vocabulary and the kernel signature (stage 1) ──
 ShapeR : Type := Coproduct [pair "leaf" [], pair "stem" [Tree], pair "fork" [Tree, Tree], pair "hyp" [Type]]
 k_classify := mk_op "Reflect" "classify" Tree ShapeR
-k_mint := {ty} -> io_op { label := pair "Mint" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
-k_check := {ty, v} -> (mk_op "Check" "check" Tree CheckerResult) (pair ty v)
-k_extend := {n, ty, frame} -> io_op { label := pair "Extend" "extend"; param := Tree; result := ty } (pair n (pair ty frame)) ({r} -> io_pure r)
+k_mint := {ty} => io_op { label := pair "Mint" "mint"; param := Type; result := ty } ty ({r} => io_pure r)
+k_check := {ty, v} => (mk_op "Check" "check" Tree CheckerResult) (pair ty v)
+k_extend := {n, ty, frame} => io_op { label := pair "Extend" "extend"; param := Tree; result := ty } (pair n (pair ty frame)) ({r} => io_pure r)
 kernel_row := mk_row (cons "Reflect" (cons "Mint" (cons "Check" (cons "Extend" nil))))
 
 // ── the floor handler: THE enumerated place that looks ──
-let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
-classify_answer := {v} -> if (is_hyp_fork_l v) then (inj1 "hyp" (neutral_type v)) else (triage (inj0 "leaf") ({c} -> inj1 "stem" c) ({l, r} -> inj2 "fork" l r) v)
-extend_build := {n, ty, frame} -> wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
-let floor_on := {op} -> {arg, resume} -> (
+let is_hyp_fork_l := {v} => and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+classify_answer := {v} => if (is_hyp_fork_l v) then (inj1 "hyp" (neutral_type v)) else (triage (inj0 "leaf") ({c} => inj1 "stem" c) ({l, r} => inj2 "fork" l r) v)
+extend_build := {n, ty, frame} => wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
+let floor_on := {op} => {arg, resume} => (
   if (tree_eq (op_name op) "classify") then (resume (classify_answer arg))
   else (if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
   else (if (tree_eq (op_name op) "check") then (resume (param_apply (pair_fst arg) (pair_snd arg)))
   else (resume (extend_build (pair_fst arg) (pair_fst (pair_snd arg)) (pair_snd (pair_snd arg)))))))
-floor_h := mk_handler ({op} -> label_in_row (effect_of op) kernel_row) ({x} -> x) floor_on
+floor_h := mk_handler ({op} => label_in_row (effect_of op) kernel_row) ({x} => x) floor_on
 run_kernel := handle floor_h
 
 // ── hyp_reduce_spec: one elimination step, through the front door ──
@@ -70,7 +70,7 @@ run_kernel := handle floor_h
 // Action either extends the spine (the extend op) or computes; a concrete
 // head is plain application (also the shallow probe's junk-tolerant default).
 hr_row := mk_row (cons "Reflect" (cons "Extend" nil))
-hyp_reduce_spec : Tree -> Tree -> EffAt hr_row := {n, frame} -> eff_bind (k_classify n) ({s} ->
+hyp_reduce_spec : Tree -> Tree -> EffAt hr_row := {n, frame} => eff_bind (k_classify n) ({s} =>
   if (tree_eq (pair_fst s) "hyp") then {
     let m := meta_of (pair_snd s)
     match ((m.respond) (m.recognizer_params) n frame) {
@@ -87,37 +87,37 @@ hyp_reduce_spec : Tree -> Tree -> EffAt hr_row := {n, frame} -> eff_bind (k_clas
 let teq_sig := checker_sig tree_eq
 let bh_sig := pair_fst (bind_hyp Tree)
 let pw_sig := checker_sig param_walker
-let eff_bind_cr := {m, g} -> eff_bind m ({cr} ->
+let eff_bind_cr := {m, g} => eff_bind m ({cr} =>
   if (tree_eq (pair_fst cr) "Ok") then (g (pair_snd cr)) else (io_pure Err))
-let w_s_spec := {self, c, b, x} -> eff_bind_cr (self c x) ({cx} -> eff_bind_cr (self b x) ({bx} -> self cx bx))
-let w_tfk_spec := {self, b, l2, r2} -> eff_bind_cr (self b l2) ({bl} -> self bl r2)
-let w_tri_spec := {self, b, tc, td, x} -> eff_bind (k_classify x) ({sx} ->
+let w_s_spec := {self, c, b, x} => eff_bind_cr (self c x) ({cx} => eff_bind_cr (self b x) ({bx} => self cx bx))
+let w_tfk_spec := {self, b, l2, r2} => eff_bind_cr (self b l2) ({bl} => self bl r2)
+let w_tri_spec := {self, b, tc, td, x} => eff_bind (k_classify x) ({sx} =>
   if (tree_eq (pair_fst sx) "hyp") then (io_pure Err)
   else (if (tree_eq (pair_fst sx) "leaf") then (io_pure (Ok tc))
   else (if (tree_eq (pair_fst sx) "stem") then (self td (pair_snd sx))
   else (if (tree_eq (pair_fst sx) "fork") then (w_tfk_spec self b (pair_fst (pair_snd sx)) (pair_snd (pair_snd sx)))
   else (io_pure Err)))))
-let w_stem_spec := {self, a, x} -> {
+let w_stem_spec := {self, a, x} => {
   let r := t a x
-  eff_bind (k_classify r) ({sr} ->
+  eff_bind (k_classify r) ({sr} =>
     if (tree_eq (pair_fst sr) "hyp") then (io_pure Err) else (io_pure (Ok r)))
 }
-let walk_fork := {self, f, l, r, x} -> (
+let walk_fork := {self, f, l, r, x} => (
   if (tree_eq l teq_sig) then (io_pure (Ok (f x)))
-  else (if (tree_eq l bh_sig) then (eff_bind (k_mint (type_meta f)) ({h} -> eff_bind_cr (self x h) ({reduct} -> io_pure (Ok reduct))))
-  else (if (tree_eq l pw_sig) then (eff_bind (k_check (type_meta f) x) ({v} -> io_pure (Ok (Ok v))))
-  else (eff_bind (k_classify l) ({sl} ->
+  else (if (tree_eq l bh_sig) then (eff_bind (k_mint (type_meta f)) ({h} => eff_bind_cr (self x h) ({reduct} => io_pure (Ok reduct))))
+  else (if (tree_eq l pw_sig) then (eff_bind (k_check (type_meta f) x) ({v} => io_pure (Ok (Ok v))))
+  else (eff_bind (k_classify l) ({sl} =>
     if (tree_eq (pair_fst sl) "leaf") then (io_pure (Ok r))
     else (if (tree_eq (pair_fst sl) "stem") then (w_s_spec self (pair_snd sl) r x)
     else (if (tree_eq (pair_fst sl) "fork") then (w_tri_spec self r (pair_fst (pair_snd sl)) (pair_snd (pair_snd sl)) x)
     else (io_pure Err))))))))
 ws_row := mk_row (cons "Reflect" (cons "Mint" (cons "Check" nil)))
-walk_spec2 : Tree -> Tree -> EffAt ws_row := fix ({self, f, x} ->
+walk_spec2 : Tree -> Tree -> EffAt ws_row := fix ({self, f, x} =>
   if (tree_eq f tree_eq) then (io_pure (Ok (wait tree_eq x)))
   else (if (tree_eq f pair_fst) then (io_pure (Ok (pair_fst x)))
   else (if (tree_eq f neutral_type) then (io_pure (Ok (neutral_type x)))
-  else (if (tree_eq f ({y} -> y)) then (io_pure (Ok x))
-  else (eff_bind (k_classify f) ({s} ->
+  else (if (tree_eq f ({y} => y)) then (io_pure (Ok x))
+  else (eff_bind (k_classify f) ({s} =>
     if (tree_eq (pair_fst s) "hyp") then (io_pure (Ok (f x)))
     else (if (tree_eq (pair_fst s) "leaf") then (io_pure (Ok (t x)))
     else (if (tree_eq (pair_fst s) "stem") then (w_stem_spec self (pair_snd s) x)

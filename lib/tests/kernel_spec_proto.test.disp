@@ -26,7 +26,7 @@ let RecT := Record [pair "a" Nat, pair "b" Bool]
 let hr := make_hyp RecT 32
 test run_kernel (hyp_reduce_spec hr (acc "b")) = param_apply hr (acc "b")
 let hn := make_hyp Nat 33
-let nat_frame := { motive := ({_} -> Nat); cases := { zero := 0; succ := {k, ih} -> succ ih } }
+let nat_frame := { motive := ({_} => Nat); cases := { zero := 0; succ := {k, ih} => succ ih } }
 test run_kernel (hyp_reduce_spec hn nat_frame) = param_apply hn nat_frame
 // the Reduce arm: a neutral stored at a TYPE-hyp answers the predicate-side
 // H-rule as a computed verdict:
@@ -38,7 +38,7 @@ test run_kernel (hyp_reduce_spec hT hv) = Ok true
 test run_kernel (hyp_reduce_spec succ 3) = 4
 
 // ── walk_spec2 vs the live walker ──
-let step2 := {f, x} -> run_kernel (walk_spec2 f x)
+let step2 := {f, x} => run_kernel (walk_spec2 f x)
 test step2 t zero = param_walker t zero
 test step2 (t t) zero = param_walker (t t) zero
 test step2 (t t t) 5 = param_walker (t t t) 5
@@ -56,13 +56,13 @@ test step2 is_fork hTr = param_walker is_fork hTr
 test step2 (t hyp_sig) 7 = param_walker (t hyp_sig) 7
 test step2 (t t) hTr = param_walker (t t) hTr
 // the two formerly-delegated routes, now THROUGH the ops:
-test step2 (bind_hyp Tree) ({h} -> Ok zero) = param_walker (bind_hyp Tree) ({h} -> Ok zero)
+test step2 (bind_hyp Tree) ({h} => Ok zero) = param_walker (bind_hyp Tree) ({h} => Ok zero)
 // the escape case: both REJECT, one wrapper apart — the mint clause routes
 // through param_apply, whose unwrap collapses the walker-Err/verdict-Err
 // distinction (live w_bind_hyp answers Ok(Err), the op route answers Err):
-test step2 (bind_hyp Tree) ({h} -> Ok h) = Err
-test param_walker (bind_hyp Tree) ({h} -> Ok h) = Ok Err
-test step2 (bind_hyp Tree) ({a} -> param_apply (bind_hyp Tree) ({b} -> Ok (is_fork (t a b)))) = param_walker (bind_hyp Tree) ({a} -> param_apply (bind_hyp Tree) ({b} -> Ok (is_fork (t a b))))
+test step2 (bind_hyp Tree) ({h} => Ok h) = Err
+test param_walker (bind_hyp Tree) ({h} => Ok h) = Ok Err
+test step2 (bind_hyp Tree) ({a} => param_apply (bind_hyp Tree) ({b} => Ok (is_fork (t a b)))) = param_walker (bind_hyp Tree) ({a} => param_apply (bind_hyp Tree) ({b} => Ok (is_fork (t a b))))
 test step2 (apply_policed Nat) 3 = param_walker (apply_policed Nat) 3
 test step2 (apply_policed Nat) false = param_walker (apply_policed Nat) false
 
@@ -71,8 +71,8 @@ test step2 (apply_policed Nat) false = param_walker (apply_policed Nat) false
 // fragment is where free theorems live. polyid is certified at the implicit
 // forall, and its free theorem (it can only be the identity) is witnessed
 // empirically on instances, including naturality against succ:
-let polyid := {x} -> x
-test param_apply (Intersection Type ({A} -> Arrow A A)) polyid = Ok true
+let polyid := {x} => x
+test param_apply (Intersection Type ({A} => Arrow A A)) polyid = Ok true
 test polyid 3 = 3
 test polyid true = true
 test polyid (succ 2) = succ (polyid 2)

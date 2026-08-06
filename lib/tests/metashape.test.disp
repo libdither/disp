@@ -26,7 +26,7 @@ test param_apply Neutral zero = Ok false
 // Spine: the payload's honest type — a mint (freshness id) or an extension (the PARENT
 // NEUTRAL + the frame; storing the parent neutral is how occurs sees through spines)
 test typecheck Spine ((type_meta (make_hyp Nat 0)).payload) = Ok true   // a minted payload is closed
-let stuckB := (make_hyp Nat 1) { motive := ({_} -> Bool); cases := { zero := true; succ := ({p, ih} -> ih) } }
+let stuckB := (make_hyp Nat 1) { motive := ({_} => Bool); cases := { zero := true; succ := ({p, ih} => ih) } }
 // an extended payload CONTAINS the parent neutral, so it is not closed (typecheck Errs at
 // the boundary by design); param_apply checks membership directly
 test param_apply Spine ((type_meta stuckB).payload) = Ok true
@@ -50,7 +50,7 @@ test typecheck NeutralMeta (type_meta (make_hyp Nat 0))          = Ok true
 // ---- the kernel's metadata records inhabit MetaShape ----
 test typecheck MetaShape (make_meta unit_witness inert_respond)  = Ok true
 test typecheck MetaShape (type_meta Bool)                        = Ok true // a live type's actual metadata
-test typecheck MetaShape (type_meta (Pi Nat ({_} -> Bool)))      = Ok true
+test typecheck MetaShape (type_meta (Pi Nat ({_} => Bool)))      = Ok true
 test param_apply MetaShape zero                                  = Ok false // a non-record is not a MetaShape
 
 // RespondShape is defined `Tree -> Tree -> Frame -> Action` (the `->` sugar), in a
@@ -97,12 +97,12 @@ test param_apply ProjectingRespondShape ((type_meta Nat).respond (type_meta Nat)
 // inhabits `Self -> A -> Action` — the elimination frame IS the argument (: the domain A), and the
 // walk lands `Extend (B arg)`. So for `Pi Nat ({_} -> Bool)` the per-former shape is
 // `Tree -> Nat -> Action`. This is §7B self-typing the spine, validated in-tree for the Pi face.
-test param_apply (Arrow Tree (Arrow Nat Action)) ((type_meta (Pi Nat ({_} -> Bool))).respond (type_meta (Pi Nat ({_} -> Bool))).recognizer_params) = Ok true
+test param_apply (Arrow Tree (Arrow Nat Action)) ((type_meta (Pi Nat ({_} => Bool))).respond (type_meta (Pi Nat ({_} => Bool))).recognizer_params) = Ok true
 // NEGATIVE formers Sigma/Record (PROJECTION-lead): params PINNED, frame : Frame (Tree). Unlike Pi
 // (which APPLIES its codomain to the frame, so frame : A), a projection respond only READS
 // `pair_fst frame` and threads `source (acc name)` — no application — so the frame stays abstract
 // Tree and the field-name branch doesn't block. Shape `Self -> Frame -> Action`.
-test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Sigma Nat ({_} -> Bool))).respond (type_meta (Sigma Nat ({_} -> Bool))).recognizer_params) = Ok true
+test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Sigma Nat ({_} => Bool))).respond (type_meta (Sigma Nat ({_} => Bool))).recognizer_params) = Ok true
 test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Record (cons (pair "a" Nat) t))).respond (type_meta (Record (cons (pair "a" Nat) t))).recognizer_params) = Ok true
 // - Pi's / Nat's responds now TERMINATE (archive/STRICTTYPE.md step 1): with InvalidType a
 //   real empty type, eliminating an InvalidType-neutral runs a well-defined inert
@@ -111,7 +111,7 @@ test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Record (cons (pa
 //   Tree, so projecting off them under abstract inputs is ill-formed) — a stuck
 //   non-verdict (≠ Ok true) under the single-walk `at`.
 test tree_eq (param_apply RespondShape ((type_meta Nat).respond)) (Ok true) = false
-test tree_eq (param_apply RespondShape ((type_meta (Pi Nat ({_} -> Bool))).respond)) (Ok true) = false
+test tree_eq (param_apply RespondShape ((type_meta (Pi Nat ({_} => Bool))).respond)) (Ok true) = false
 
 // ---- meta_of: typed meta access (the @meta arm of the universe respond) ----
 // meta_of : Type -> MetaShape is annotated in universe.disp (auto-verified); re-pinned here:
@@ -128,8 +128,8 @@ test neutral_type (mTA.respond) = Tree
 // field's declared type, so the projecting lambda inhabits Type -> Tree. (This is the
 // property the former meta_params/meta_respond accessor exports pinned; deleted
 // 2026-07-07 — spell the projection at the use site.)
-test param_apply (Arrow Type Tree) ({T} -> (meta_of T).recognizer_params) = Ok true
-test param_apply (Arrow Type Tree) ({T} -> (meta_of T).respond)           = Ok true
+test param_apply (Arrow Type Tree) ({T} => (meta_of T).recognizer_params) = Ok true
+test param_apply (Arrow Type Tree) ({T} => (meta_of T).respond)           = Ok true
 // collision pin: the one candidate literally shaped like the meta frame goes STUCK under
 // an abstract predicate (incompleteness for that tree, not unsoundness; a walked
 // membership check maps the non-verdict to rejection)...

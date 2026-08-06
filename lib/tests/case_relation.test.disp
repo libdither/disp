@@ -21,20 +21,20 @@ ArmsA : Type := PositiveCaseArms CodeA Nat
 
 let arms_a := {
   A0 := 0;
-  A1 := {_x} -> 1;
-  A3 := {_x, _b, n} -> n
+  A1 := {_x} => 1;
+  A3 := {_x, _b, n} => n
 }
 test param_apply ArmsA arms_a = Ok true
 test param_apply ArmsA {
   A0 := 0;
-  A1 := {_x} -> 1;
-  A3 := {_x, _b, _n} -> false
+  A1 := {_x} => 1;
+  A3 := {_x, _b, _n} => false
 } = Ok false
 
 let refl_a := {
-  A0 := {cases} -> refl;
-  A1 := {cases} -> {x} -> refl;
-  A3 := {cases} -> {x} -> {b} -> {n} -> refl
+  A0 := {cases} => refl;
+  A1 := {cases} => {x} => refl;
+  A3 := {cases} => {x} => {b} => {n} => refl
 }
 test typecheck Type (PositiveCaseCoverage CodeA Nat case_value case_value) = Ok true
 test param_apply (PositiveCaseCoverage CodeA Nat case_value case_value) refl_a = Ok true
@@ -52,25 +52,25 @@ ArmsB : Type := PositiveCaseArms CodeB Nat
 
 let arms_b := {
   Stop := 0;
-  Wide := {n, _x, _b, _y} -> n;
-  Next := {n, _tail} -> n
+  Wide := {n, _x, _b, _y} => n;
+  Next := {n, _tail} => n
 }
 test param_apply ArmsB arms_b = Ok true
 test param_apply ArmsB {
   Stop := 0;
-  Wide := {n, _x, _b, _y} -> n;
-  Next := {_n, _tail} -> false
+  Wide := {n, _x, _b, _y} => n;
+  Next := {_n, _tail} => false
 } = Ok false
 
 let refl_b := {
-  Stop := {cases} -> refl;
-  Wide := {cases} -> {n} -> {x} -> {b} -> {y} -> refl;
-  Next := {cases} -> {n} -> {tail} -> refl
+  Stop := {cases} => refl;
+  Wide := {cases} => {n} => {x} => {b} => {y} => refl;
+  Next := {cases} => {n} => {tail} => refl
 }
 test param_apply (PositiveCaseCoverage CodeB Nat case_value case_value) refl_b = Ok true
 
 let stop_b := inj0 "Stop"
-let next_b := {n, tail} -> inj2 "Next" n tail
-let wide_b := {n, x, b, y} -> inj "Wide" (pair n (pair x (pair b y)))
-test case_value TypeB ({_} -> Nat) arms_b (next_b 4 stop_b) = 4
-test case_value TypeB ({_} -> Nat) arms_b (wide_b 7 t true (t t)) = 7
+let next_b := {n, tail} => inj2 "Next" n tail
+let wide_b := {n, x, b, y} => inj "Wide" (pair n (pair x (pair b y)))
+test case_value TypeB ({_} => Nat) arms_b (next_b 4 stop_b) = 4
+test case_value TypeB ({_} => Nat) arms_b (wide_b 7 t true (t t)) = 7

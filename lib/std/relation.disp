@@ -5,84 +5,84 @@ open use "../kernel/prelude.disp"
 // inspects a carrier's metadata or tries to choose a privileged equality for it.
 Relation := { left : Type, right : Type, rel : left -> right -> Type }
 
-make_relation := {left, right, rel} ->
+make_relation := {left, right, rel} =>
   { left := left; right := right; rel := rel }
 
 // A homogeneous relation is still represented by the same (possibly
 // heterogeneous) Relation record.  Keeping the general representation makes
 // converse, pullback, and heterogeneous function relations compose directly.
-relation_on := {A, rel} -> make_relation A A rel
+relation_on := {A, rel} => make_relation A A rel
 
-eq_relation := {A} -> relation_on A (Eq A)
+eq_relation := {A} => relation_on A (Eq A)
 
 // Same-input dependent pointwise relation.  `codR a` supplies the relation for
 // the two result fibers at a.  This is the right contract for comparing two
 // implementations on precisely the same input.
-pointwise := {A, codR} -> make_relation
-  (Pi A ({a} -> (codR a).left))
-  (Pi A ({a} -> (codR a).right))
-  ({f, g} -> Pi A ({a} -> (codR a).rel (f a) (g a)))
+pointwise := {A, codR} => make_relation
+  (Pi A ({a} => (codR a).left))
+  (Pi A ({a} => (codR a).right))
+  ({f, g} => Pi A ({a} => (codR a).rel (f a) (g a)))
 
 // Bind a related pair. `linked_rel` exposes the raw-family form while
 // `linked_pi` accepts a first-class Relation.  Both forms certify coarse
 // relations directly; unlike the legacy metadata-derived path, neither needs
 // the carrier to advertise a privileged equality.
-linked_rel := {left, right, rel, B} ->
-  Pi left ({x0} ->
-    Pi right ({x1} ->
-      Pi (rel x0 x1) ({rho} -> B x0 x1 rho)))
+linked_rel := {left, right, rel, B} =>
+  Pi left ({x0} =>
+    Pi right ({x1} =>
+      Pi (rel x0 x1) ({rho} => B x0 x1 rho)))
 
-linked_pi := {R, B} -> linked_rel (R.left) (R.right) (R.rel) B
+linked_pi := {R, B} => linked_rel (R.left) (R.right) (R.rel) B
 
 // The full binary, dependent function relation.  Unlike pointwise, the two
 // functions receive independently chosen related arguments.  `codR` may use
 // both arguments and their relation witness to relate the result fibers.
-rel_pi_family := {left, right, dom_rel, left_cod, right_cod, cod_rel} -> make_relation
+rel_pi_family := {left, right, dom_rel, left_cod, right_cod, cod_rel} => make_relation
   (Pi left left_cod)
   (Pi right right_cod)
-  ({f, g} -> linked_rel left right dom_rel ({x0, x1, rho} ->
+  ({f, g} => linked_rel left right dom_rel ({x0, x1, rho} =>
     cod_rel x0 x1 rho (f x0) (g x1)))
 
-rel_pi := {domR, left_cod, right_cod, codR} -> rel_pi_family
+rel_pi := {domR, left_cod, right_cod, codR} => rel_pi_family
   (domR.left)
   (domR.right)
   (domR.rel)
   left_cod
   right_cod
-  ({x0, x1, rho, y0, y1} -> (codR x0 x1 rho).rel y0 y1)
+  ({x0, x1, rho, y0, y1} => (codR x0 x1 rho).rel y0 y1)
 
 // Homogeneous preservation.  For a coarse domR this is stronger than
 // same-input pointwise equality: f must map every related pair to a related
 // pair.  The caller supplies homogeneous relation objects.
-respects := {domR, codR, f} ->
-  linked_pi domR ({x0, x1, _rho} -> codR.rel (f x0) (f x1))
+respects := {domR, codR, f} =>
+  linked_pi domR ({x0, x1, _rho} => codR.rel (f x0) (f x1))
 
-respects_family := {left, right, dom_rel, cod_rel, f} ->
-  linked_rel left right dom_rel ({x0, x1, _rho} ->
+respects_family := {left, right, dom_rel, cod_rel, f} =>
+  linked_rel left right dom_rel ({x0, x1, _rho} =>
     cod_rel (f x0) (f x1))
 
 // Re-index a relation along a left and a right observation.
-pullback_family := {left_obs, right_obs, rel} ->
-  {x, y} -> rel (left_obs x) (right_obs y)
+pullback_family := {left_obs, right_obs, rel} =>
+  {x, y} => rel (left_obs x) (right_obs y)
 
-pullback := {left, right, left_obs, right_obs, R} -> make_relation
+pullback := {left, right, left_obs, right_obs, R} => make_relation
   left
   right
   (pullback_family left_obs right_obs (R.rel))
 
-pullback_on := {A, obs, R} -> pullback A A obs obs R
+pullback_on := {A, obs, R} => pullback A A obs obs R
 
-converse := {R} -> make_relation
+converse := {R} => make_relation
   (R.right)
   (R.left)
-  ({y, x} -> R.rel x y)
+  ({y, x} => R.rel x y)
 
 // Intersection of two relations on the same carriers.  A witness contains one
 // witness for each constituent relation.
-meet := {R, S} -> make_relation
+meet := {R, S} => make_relation
   (R.left)
   (R.right)
-  ({x, y} -> { first : (R.rel x y), second : (S.rel x y) })
+  ({x, y} => { first : (R.rel x y), second : (S.rel x y) })
 
 // Homogeneous relation laws.  Keeping the carrier and relation as indices is
 // important: these are checker-facing predicates, not merely records whose law
@@ -91,15 +91,15 @@ meet := {R, S} -> make_relation
 // concrete members; these packages become semantic laws only in the planned
 // observer-restricted certification mode.  General Relation stays
 // heterogeneous; symmetry/transitivity packages deliberately do not.
-Reflexive : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} ->
-  Pi A ({x} -> rel x x)
+Reflexive : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} =>
+  Pi A ({x} => rel x x)
 
-Symmetric : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} ->
-  Pi A ({x} -> Pi A ({y} -> Pi (rel x y) ({_p} -> rel y x)))
+Symmetric : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} =>
+  Pi A ({x} => Pi A ({y} => Pi (rel x y) ({_p} => rel y x)))
 
-Transitive : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} ->
-  Pi A ({x} -> Pi A ({y} -> Pi A ({z} ->
-    Pi (rel x y) ({_p} -> Pi (rel y z) ({_q} -> rel x z)))))
+Transitive : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} =>
+  Pi A ({x} => Pi A ({y} => Pi A ({z} =>
+    Pi (rel x y) ({_p} => Pi (rel y z) ({_q} => rel x z)))))
 
 PER : Type := {
   carrier : Type,
@@ -125,65 +125,65 @@ Preorder : Type := {
 
 // Checked bridges preserve abstraction: a package received merely at its
 // public law type can always be recovered as an ordinary Relation.
-per_relation : PER -> Relation := {P} -> relation_on P.carrier P.rel
-equivalence_relation : Equivalence -> Relation := {E} -> relation_on E.carrier E.rel
-preorder_relation : Preorder -> Relation := {P} -> relation_on P.carrier P.rel
+per_relation : PER -> Relation := {P} => relation_on P.carrier P.rel
+equivalence_relation : Equivalence -> Relation := {E} => relation_on E.carrier E.rel
+preorder_relation : Preorder -> Relation := {P} => relation_on P.carrier P.rel
 
 // Smart-constructor results also retain Relation-shaped projections as a
 // concrete-value convenience; abstract consumers should use the bridges above.
 make_per : {A : Type} -> {rel : A -> A -> Type} ->
-  Symmetric A rel -> Transitive A rel -> PER := {A, rel, sym, trans} ->
+  Symmetric A rel -> Transitive A rel -> PER := {A, rel, sym, trans} =>
   { carrier := A; left := A; right := A; rel := rel;
     relation := relation_on A rel; sym := sym; trans := trans }
 
 make_equivalence : {A : Type} -> {rel : A -> A -> Type} ->
   Reflexive A rel -> Symmetric A rel -> Transitive A rel -> Equivalence :=
-  {A, rel, refl_, sym, trans} ->
+  {A, rel, refl_, sym, trans} =>
     { carrier := A; left := A; right := A; rel := rel;
       relation := relation_on A rel; refl := refl_; sym := sym; trans := trans }
 
 make_preorder : {A : Type} -> {rel : A -> A -> Type} ->
   Reflexive A rel -> Transitive A rel -> Preorder :=
-  {A, rel, refl_, trans} ->
+  {A, rel, refl_, trans} =>
     { carrier := A; left := A; right := A; rel := rel;
       relation := relation_on A rel; refl := refl_; trans := trans }
 
-eq_per := {A} -> make_per
+eq_per := {A} => make_per
   A
   (Eq A)
   (eq_sym A)
   (eq_trans A)
 
-eq_equivalence := {A} -> make_equivalence
+eq_equivalence := {A} => make_equivalence
   A
   (Eq A)
-  ({x} -> refl)
+  ({x} => refl)
   (eq_sym A)
   (eq_trans A)
 
-eq_preorder := {A} -> make_preorder
+eq_preorder := {A} => make_preorder
   A
   (Eq A)
-  ({x} -> refl)
+  ({x} => refl)
   (eq_trans A)
 
 // Pointwise and pullback preserve all equivalence laws componentwise.
-pointwise_equivalence := {A, codE} -> {
-  let C := Pi A ({a} -> (codE a).carrier)
-  let rel := {f, g} -> Pi A ({a} -> (codE a).rel (f a) (g a))
+pointwise_equivalence := {A, codE} => {
+  let C := Pi A ({a} => (codE a).carrier)
+  let rel := {f, g} => Pi A ({a} => (codE a).rel (f a) (g a))
   make_equivalence C rel
-    ({f} -> {a} -> (codE a).refl (f a))
-    ({f, g, p} -> {a} -> (codE a).sym (f a) (g a) (p a))
-    ({f, g, h, p, q} -> {a} ->
+    ({f} => {a} => (codE a).refl (f a))
+    ({f, g, p} => {a} => (codE a).sym (f a) (g a) (p a))
+    ({f, g, h, p, q} => {a} =>
       (codE a).trans (f a) (g a) (h a) (p a) (q a))
 }
 
-pullback_equivalence := {A, obs, E} -> make_equivalence
+pullback_equivalence := {A, obs, E} => make_equivalence
   A
-  ({x, y} -> E.rel (obs x) (obs y))
-  ({x} -> E.refl (obs x))
-  ({x, y, p} -> E.sym (obs x) (obs y) p)
-  ({x, y, z, p, q} -> E.trans (obs x) (obs y) (obs z) p q)
+  ({x, y} => E.rel (obs x) (obs y))
+  ({x} => E.refl (obs x))
+  ({x, y, p} => E.sym (obs x) (obs y) p)
+  ({x, y, z, p, q} => E.trans (obs x) (obs y) (obs z) p q)
 
 // ── The rich level (the PER universe) ──
 // The 2LTT reading (OPTIMIZER.typ): strict equality is Eq, conversion's
@@ -203,44 +203,44 @@ pullback_equivalence := {A, obs, E} -> make_equivalence
 // below.
 
 // Rich membership: fibrancy = self-relatedness.
-s_member := {S, f} -> S.rel f f
+s_member := {S, f} => S.rel f f
 
 // s_arrow: the Reynolds arrow (the binary function lift as a PER). Unlike
 // pointwise, the two functions receive independently chosen related inputs,
 // so a MEMBER of s_arrow S T is exactly a congruent function. sym flips the
 // input link with S.sym; trans self-relates x1 by the PER zig-zag.
-s_arrow := {S, T} -> make_per
+s_arrow := {S, T} => make_per
   (Arrow (S.carrier) (T.carrier))
-  ({f, g} -> linked_rel (S.carrier) (S.carrier) (S.rel) ({x0, x1, _rho} -> T.rel (f x0) (g x1)))
-  ({f, g, p} -> {x0, x1, rho} -> T.sym (f x1) (g x0) (p x1 x0 (S.sym x0 x1 rho)))
-  ({f, g, h, p, q} -> {x0, x1, rho} -> (T.trans (f x0) (g x1) (h x1)
+  ({f, g} => linked_rel (S.carrier) (S.carrier) (S.rel) ({x0, x1, _rho} => T.rel (f x0) (g x1)))
+  ({f, g, p} => {x0, x1, rho} => T.sym (f x1) (g x0) (p x1 x0 (S.sym x0 x1 rho)))
+  ({f, g, h, p, q} => {x0, x1, rho} => (T.trans (f x0) (g x1) (h x1)
     (p x0 x1 rho)
     (q x1 x1 (S.trans x1 x0 x1 (S.sym x0 x1 rho) rho))))
 
 // s_prop: the proof-irrelevant rich type (every two inhabitants related).
 // Respect witnesses into s_prop are trivially unique; irrelevance is what
 // keeps the respect bookkeeping from becoming setoid bureaucracy.
-s_prop := {A} -> make_per A ({_x, _y} -> Unit)
-  ({_x, _y, _p} -> unit_val)
-  ({_x, _y, _z, _p, _q} -> unit_val)
+s_prop := {A} => make_per A ({_x, _y} => Unit)
+  ({_x, _y, _p} => unit_val)
+  ({_x, _y, _z, _p, _q} => unit_val)
 
 // Strict equality embeds into every rich relation along a self-relatedness
 // witness. The converse never holds: rich facts descend to Eq only at
 // discrete carriers (adequacy), never in general.
-strict_to_rich := {S, x, y, p, sx} -> eq_subst (S.carrier) x y ({z} -> S.rel x z) p sx
+strict_to_rich := {S, x, y, p, sx} => eq_subst (S.carrier) x y ({z} => S.rel x z) p sx
 
 // Over a DISCRETE domain a same-input pointwise witness lifts to the arrow
 // witness by transporting along the strict input link, so licenses for
 // functions out of ordinary data stay pointwise and bridge up on demand. Over
 // a coarse domain no such lift exists; that gap is the congruence obligation.
-pointwise_arrow := {A, T, f, g, w} -> {x0, x1, rho} ->
-  eq_subst A x0 x1 ({z} -> T.rel (f x0) (g z)) rho (w x0)
+pointwise_arrow := {A, T, f, g, w} => {x0, x1, rho} =>
+  eq_subst A x0 x1 ({z} => T.rel (f x0) (g z)) rho (w x0)
 
 // Compositionality: a rel_pi witness IS its own application rule, so the
 // respect of a composition is two nested applications. This is the
 // fundamental-theorem move for the constructed fragment: pipelines of members
 // are members, with no per-pipeline proof.
-s_comp_rel := {f0, f1, g0, g1, rf, rg} -> {x0, x1, rho} -> rg (f0 x0) (f1 x1) (rf x0 x1 rho)
+s_comp_rel := {f0, f1, g0, g1, rf, rg} => {x0, x1, rho} => rg (f0 x0) (f1 x1) (rf x0 x1 rho)
 
 // ── Quotients: respect demanded at consumption ──
 // A pullback/coarse relation supplies equivalence but no congruence, and no
@@ -256,9 +256,9 @@ s_comp_rel := {f0, f1, g0, g1, rf, rg} -> {x0, x1, rho} -> rg (f0 x0) (f1 x1) (r
 // after the witness checks. The respect obligation types its codomain at the
 // x0 fiber, so constant motives state exactly Eq B (f x0) (f x1); dependent
 // motives over quotients need heterogeneous transport and are future work.
-let quot_respect := {A, R, motive, f} -> linked_rel A A R
-  ({x0, x1, _rho} -> Eq (motive x0) (f x0) (f x1))
-quot_respond := {params, self, frame} -> {
+let quot_respect := {A, R, motive, f} => linked_rel A A R
+  ({x0, x1, _rho} => Eq (motive x0) (f x0) (f x1))
+quot_respond := {params, self, frame} => {
   let f := field (field frame "cases") "map"
   let w := field (field frame "cases") "resp"
   match (param_apply (quot_respect (pair_fst params) (pair_snd params) (frame.motive) f) w) {
@@ -266,11 +266,11 @@ quot_respond := {params, self, frame} -> {
     Err _ => (Extend InvalidType)
   }
 }
-Quotient := {A, R} -> wait (make_recognizer ({_m, v} -> param_apply A v))
+Quotient := {A, R} => wait (make_recognizer ({_m, v} => param_apply A v))
   { recognizer_params := pair A R; functor := trivial_functor; respond := quot_respond; behavioral_specs := t }
-q_lift := {B, f, w, q} -> elim
-  ({motive, cases, target} -> (cases.map) target)
-  ({_} -> B)
+q_lift := {B, f, w, q} => elim
+  ({motive, cases, target} => (cases.map) target)
+  ({_} => B)
   { map := f; resp := w }
   q
 
@@ -280,13 +280,13 @@ q_lift := {B, f, w, q} -> elim
 // `respects domR codR f` as the checked preservation obligation.  Morphism is
 // retained only as an Eq-domain compatibility prototype until dependent record
 // checking can preserve the earlier field's concrete identity.
-Morphism := {A, B, domR, codR} -> {
+Morphism := {A, B, domR, codR} => {
   map : A -> B,
-  respect : (linked_pi domR ({x0} -> {x1} -> {_rho} ->
+  respect : (linked_pi domR ({x0} => {x1} => {_rho} =>
     codR.rel (map x0) (map x1)))
 }
 
-make_morphism := {map, respect} -> { map := map; respect := respect }
+make_morphism := {map, respect} => { map := map; respect := respect }
 
 // ── Two-face licensing (delegation by construction) ──
 // two_face old new: the delegation glue for a licensed fast face. A neutral
@@ -294,7 +294,7 @@ make_morphism := {map, respect} -> { map := map; respect := respect }
 // same stuck tree), so the neutral face holds by construction and a license
 // proof owes only the concrete face. The glue is built by the GUARD below,
 // never by the proposal, so a rebind cannot forge or bypass the delegation.
-two_face := {old, new} -> {x} -> if (is_neutral x) then (old x) else (new x)
+two_face := {old, new} => {x} => if (is_neutral x) then (old x) else (new x)
 
 // PositiveFnCoverage T RB old new: the concrete-face license obligations for
 // functions out of a concrete positive type T, one field per constructor,
@@ -307,30 +307,30 @@ two_face := {old, new} -> {x} -> if (is_neutral x) then (old x) else (new x)
 // generics). Known limit (ACTIVE_BUGS item 5): payloads and IHs are still
 // hyps, so a payload-face probe passes; obligations pin constructor ROOTS,
 // which is what kills the top-level-refl door (guard_faces.test.disp).
-let pos_ctor_value := {T, tag, args} -> (pair_snd ((type_meta T).functor)) (inj tag (build_payload args))
-let pos_fn_arg_type := {T, marker} ->
+let pos_ctor_value := {T, tag, args} => (pair_snd ((type_meta T).functor)) (inj tag (build_payload args))
+let pos_fn_arg_type := {T, marker} =>
   if (is_recunder_marker marker) then ((pair_snd marker) T)
   else (if (or (is_param_marker marker) (is_recat_marker marker)) then InvalidType else marker)
-let pos_fn_obligation := fix ({self, T, RB, old, new, tag, argspec, args} ->
+let pos_fn_obligation := fix ({self, T, RB, old, new, tag, argspec, args} =>
   if (is_fork argspec)
     then (if (tree_eq (pair_fst argspec) Rec)
-      then (Pi T ({a} -> Pi (RB (old a) (new a)) ({_ih} ->
+      then (Pi T ({a} => Pi (RB (old a) (new a)) ({_ih} =>
         self T RB old new tag (pair_snd argspec) (list_cat args (cons a nil)))))
-      else (Pi (pos_fn_arg_type T (pair_fst argspec)) ({a} ->
+      else (Pi (pos_fn_arg_type T (pair_fst argspec)) ({a} =>
         self T RB old new tag (pair_snd argspec) (list_cat args (cons a nil)))))
     else (RB (old (pos_ctor_value T tag args)) (new (pos_ctor_value T tag args))))
-let pos_fn_fields := fix ({self, variants, T, RB, old, new} ->
+let pos_fn_fields := fix ({self, variants, T, RB, old, new} =>
   if (is_fork variants) then {
     let var := pair_fst variants
     cons (pair (pair_fst var) (pos_fn_obligation T RB old new (pair_fst var) (pair_snd var) nil))
       (self (pair_snd variants) T RB old new)
   } else nil)
-PositiveFnCoverage := {T, RB, old, new} ->
+PositiveFnCoverage := {T, RB, old, new} =>
   Record (pos_fn_fields ((type_meta T).recognizer_params) T RB old new)
 
 // Declaration guards are relation-generic: a replacement carries `new` and a
 // proof of R old new.  They live here rather than in an equality-specific API.
-license_guard := {R} -> {old, req} ->
+license_guard := {R} => {old, req} =>
   if (is_stem (req.guard)) then Err
   else (if (is_leaf old)
     then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
@@ -350,7 +350,7 @@ license_guard := {R} -> {old, req} ->
 // `two_face old fast`, so neutral-face delegation cannot be forged. Pair R
 // with PositiveFnCoverage for the induction family that closes the
 // top-level-refl door.
-two_face_guard := {R} -> {old, req} ->
+two_face_guard := {R} => {old, req} =>
   if (is_stem (req.guard)) then Err
   else (if (is_leaf old)
     then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
@@ -363,4 +363,4 @@ two_face_guard := {R} -> {old, req} ->
     } else Err))
 
 // An immutable declaration guard.
-freeze := {old, req} -> Err
+freeze := {old, req} => Err

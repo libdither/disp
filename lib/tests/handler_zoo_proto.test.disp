@@ -34,58 +34,58 @@ open use "../std/tele_spec.disp"
 // std/tele_spec.disp — the promotion this file's header once deferred)
 
 // ── the cost handler: counts = make_pair mints checks ──
-let bump_fst := {c} -> make_pair (succ (c.fst)) (c.snd)
-let bump_snd := {c} -> make_pair (c.fst) (succ (c.snd))
-let cost_obs := {ty, getr, resume} -> {c} -> (
+let bump_fst := {c} => make_pair (succ (c.fst)) (c.snd)
+let bump_snd := {c} => make_pair (c.fst) (succ (c.snd))
+let cost_obs := {ty, getr, resume} => {c} => (
   match (apply_policed getr t) {
     Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then ((resume part) (bump_snd c)) else (make_pair (Ok false) (bump_snd c))); Err _ => (make_pair Err (bump_snd c)) }); Err _ => (make_pair Err (bump_snd c)) })
     Err _ => (make_pair Err (bump_snd c))
   })
-let cost_on := {op} -> {arg, resume} -> (
-  if (tree_eq (op_name op) "mint") then ({c} -> (resume (make_hyp arg (pair arg (c.fst)))) (bump_fst c))
+let cost_on := {op} => {arg, resume} => (
+  if (tree_eq (op_name op) "mint") then ({c} => (resume (make_hyp arg (pair arg (c.fst)))) (bump_fst c))
   else (if (tree_eq (op_name op) "obs") then (cost_obs (pair_fst arg) (pair_snd arg) resume)
-  else (if (tree_eq (op_name op) "guard") then ({c} -> (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then ((resume (pair_snd arg)) (bump_snd c)) else (make_pair (Ok false) (bump_snd c))); Err _ => (make_pair Err (bump_snd c)) }))
+  else (if (tree_eq (op_name op) "guard") then ({c} => (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then ((resume (pair_snd arg)) (bump_snd c)) else (make_pair (Ok false) (bump_snd c))); Err _ => (make_pair Err (bump_snd c)) }))
   else (cost_obs (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
-let cost_h := mk_handler (covers_eff "Tele") ({x} -> {c} -> make_pair x c) cost_on
-let run_cost := {prog} -> (handle cost_h prog) (make_pair 0 0)
+let cost_h := mk_handler (covers_eff "Tele") ({x} => {c} => make_pair x c) cost_on
+let run_cost := {prog} => (handle cost_h prog) (make_pair 0 0)
 
 // ── the explanation handler: the trace is the error report ──
-let expl_obs := {label, ty, getr, resume} -> {tr} -> (
+let expl_obs := {label, ty, getr, resume} => {tr} => (
   match (apply_policed getr t) {
     Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then ((resume part) (cons label tr)) else (make_pair (Ok false) (cons (pair "rejected" label) tr))); Err _ => (make_pair Err (cons (pair "rejected" label) tr)) }); Err _ => (make_pair Err (cons (pair "rejected" label) tr)) })
     Err _ => (make_pair Err (cons (pair "rejected" label) tr))
   })
-let expl_on := {op} -> {arg, resume} -> (
-  if (tree_eq (op_name op) "mint") then ({tr} -> (resume (make_hyp arg (pair arg tr))) (cons "mint" tr))
+let expl_on := {op} => {arg, resume} => (
+  if (tree_eq (op_name op) "mint") then ({tr} => (resume (make_hyp arg (pair arg tr))) (cons "mint" tr))
   else (if (tree_eq (op_name op) "obs") then (expl_obs "obs" (pair_fst arg) (pair_snd arg) resume)
-  else (if (tree_eq (op_name op) "guard") then ({tr} -> (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then ((resume (pair_snd arg)) (cons "guard" tr)) else (make_pair (Ok false) (cons (pair "rejected" "guard") tr))); Err _ => (make_pair Err (cons (pair "rejected" "guard") tr)) }))
+  else (if (tree_eq (op_name op) "guard") then ({tr} => (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then ((resume (pair_snd arg)) (cons "guard" tr)) else (make_pair (Ok false) (cons (pair "rejected" "guard") tr))); Err _ => (make_pair Err (cons (pair "rejected" "guard") tr)) }))
   else (expl_obs (pair_fst arg) (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
-let expl_h := mk_handler (covers_eff "Tele") ({x} -> {tr} -> make_pair x tr) expl_on
-let run_expl := {prog} -> (handle expl_h prog) nil
+let expl_h := mk_handler (covers_eff "Tele") ({x} => {tr} => make_pair x tr) expl_on
+let run_expl := {prog} => (handle expl_h prog) nil
 
 // ── the synthesis handler: mint = enumerate (multishot), obs/guard = filter ──
-let enum_of := {ty} -> (if (tree_eq ty Bool) then (cons true (cons false nil)) else (if (tree_eq ty Nat) then (cons 0 (cons 1 (cons 2 nil))) else nil))
+let enum_of := {ty} => (if (tree_eq ty Bool) then (cons true (cons false nil)) else (if (tree_eq ty Nat) then (cons 0 (cons 1 (cons 2 nil))) else nil))
 // (concat_map comes from std/list.disp)
-let synth_obs := {ty, getr, resume} -> (
+let synth_obs := {ty, getr, resume} => (
   match (apply_policed getr t) {
     Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else nil); Err _ => nil }); Err _ => nil })
     Err _ => nil
   })
-let synth_on := {op} -> {arg, resume} -> (
+let synth_on := {op} => {arg, resume} => (
   if (tree_eq (op_name op) "mint") then (concat_map Tree resume (enum_of arg))
   else (if (tree_eq (op_name op) "obs") then (synth_obs (pair_fst arg) (pair_snd arg) resume)
   else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else nil); Err _ => nil })
   else (synth_obs (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
-let synth_h := mk_handler (covers_eff "Tele") ({x} -> cons x nil) synth_on
+let synth_h := mk_handler (covers_eff "Tele") ({x} => cons x nil) synth_on
 
 // ── synthesis: four inhabitants of Pair Bool Bool, each re-checked live ──
-let syn_pair := {A, B} -> eff_bind (t_mint A) ({a} -> eff_bind (t_mint B) ({b} -> io_pure (make_pair a b)))
+let syn_pair := {A, B} => eff_bind (t_mint A) ({a} => eff_bind (t_mint B) ({b} => io_pure (make_pair a b)))
 let syn_bb := handle synth_h (syn_pair Bool Bool)
 test tree_eq syn_bb (cons (make_pair true true) (cons (make_pair true false) (cons (make_pair false true) (cons (make_pair false false) nil)))) = true
-let all_pairs_ok := fix ({self, l} -> if (is_fork l) then (if (tree_eq (param_apply (Pair Bool Bool) (pair_fst l)) (Ok true)) then (self (pair_snd l)) else false) else true)
+let all_pairs_ok := fix ({self, l} => if (is_fork l) then (if (tree_eq (param_apply (Pair Bool Bool) (pair_fst l)) (Ok true)) then (self (pair_snd l)) else false) else true)
 test all_pairs_ok syn_bb = true
 // propose-and-check in one program: synthesize a Nat, a guard keeps the zeros:
-let syn_zero := eff_bind (t_mint Nat) ({n} -> eff_bind (t_guard is_zero n) ({m} -> io_pure m))
+let syn_zero := eff_bind (t_mint Nat) ({n} => eff_bind (t_guard is_zero n) ({m} => io_pure m))
 test tree_eq (handle synth_h syn_zero) (cons 0 nil) = true
 
 // ── one program, several interpreters, side by side ──
@@ -102,4 +102,4 @@ test run_expl good_rec = make_pair (Ok true) (cons "b" (cons "a" nil))
 test handle spec_recognize bad_rec = Ok false
 test run_cost bad_rec = make_pair (Ok false) (make_pair 0 2)
 test run_expl bad_rec = make_pair (Ok false) (cons (pair "rejected" "b") (cons "a" nil))
-test run_cost (tele_prog ((type_meta (Intersection Type ({A} -> Arrow A A))).recognizer_params) ({x} -> x) t) = make_pair (Ok true) (make_pair 1 1)
+test run_cost (tele_prog ((type_meta (Intersection Type ({A} => Arrow A A))).recognizer_params) ({x} => x) t) = make_pair (Ok true) (make_pair 1 1)

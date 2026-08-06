@@ -43,25 +43,25 @@ open given { Type : Type, RespondShape : Type }
 // fact that Extend-at-Tree is semantically correct for EVERY frame, so routing a
 // motive-shaped frame to elimination can over-reject but never unsound. Pinned in
 // tree_rec_proto.test.
-let view_tree := {v} -> triage (Ok (inj "leaf" t)) ({c} -> Ok (inj "stem" c)) ({l, r} -> Ok (inj "fork" (pair l r))) v
-let encode_tree := {x} ->
+let view_tree := {v} => triage (Ok (inj "leaf" t)) ({c} => Ok (inj "stem" c)) ({l, r} => Ok (inj "fork" (pair l r))) v
+let encode_tree := {x} =>
   if (tree_eq (pair_fst x) "stem") then (t (pair_snd x))
   else (if (tree_eq (pair_fst x) "fork") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t)
 let tree_variants := [pair "leaf" [], pair "stem" [Rec], pair "fork" [Rec, Rec]]
-let tree_app_or_elim := {params, self, frame} -> {
+let tree_app_or_elim := {params, self, frame} => {
   let r := lookup_field frame "motive"
   if (tree_eq (pair_fst r) "Ok")
     then (gated_inductive_respond (coh_check t) params self frame)
     else (Extend (neutral_type self))
 }
 /// The type of all trees
-Tree : Type := wait (make_recognizer ({m, v} -> Ok true)) { recognizer_params := tree_variants; functor := (pair view_tree encode_tree); respond := tree_app_or_elim; behavioral_specs := t }
+Tree : Type := wait (make_recognizer ({m, v} => Ok true)) { recognizer_params := tree_variants; functor := (pair view_tree encode_tree); respond := tree_app_or_elim; behavioral_specs := t }
 // tree_rec: the dependent Tree recursor, read off the cells like nat_rec — the
 // typed face of shape dispatch. Concrete targets fold through the view; abstract
 // targets become stuck eliminations gated by coh_check (the same machinery as
 // every inductive; POSITIVE_TYPES §3c).
 tree_rec : {P : Tree -> Type} -> P t -> ({c : Tree} -> P c -> P (t c)) -> ({l : Tree} -> {r : Tree} -> P l -> P r -> P (t l r)) -> {v : Tree} -> P v :=
-  {motive, on_leaf, on_stem, on_fork, target} -> rec_value Tree motive { leaf := on_leaf; stem := on_stem; fork := on_fork } target
+  {motive, on_leaf, on_stem, on_fork, target} => rec_value Tree motive { leaf := on_leaf; stem := on_stem; fork := on_fork } target
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
 Frame : Type := Tree
 // NeutralMeta / Action / RespondShape + the per-former RespondShapes use `Type`/`Action` in VALUE
@@ -85,7 +85,7 @@ meta_frame := inj "@meta" t
 // goes stuck under an abstract predicate: incompleteness for that one tree, not
 // unsoundness (a walked membership check maps the non-verdict to rejection; pinned
 // in metashape.test).
-type_predicate_h_rule : RespondShape := {params, self, frame} ->
+type_predicate_h_rule : RespondShape := {params, self, frame} =>
   if (tree_eq frame meta_frame) then (Extend MetaShape)
   else (if (is_neutral frame)
     then (Reduce (Ok (tree_eq (neutral_type frame) self)))
@@ -103,7 +103,7 @@ type_predicate_h_rule : RespondShape := {params, self, frame} ->
 // types even on an abstract T, so `{T} -> (meta_of T).respond : Type -> Tree` checks
 // — pinned in metashape.test. The former per-field accessor exports are deleted;
 // spell the projection at the use site.)
-meta_of : Type -> MetaShape := {T} -> if (is_neutral T) then (T meta_frame) else (type_meta T)
+meta_of : Type -> MetaShape := {T} => if (is_neutral T) then (T meta_frame) else (type_meta T)
 
 // ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
 // A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the recognizer ->
@@ -118,11 +118,11 @@ CheckerResult : Type := < Ok : Tree, Err >
 
 // qid_meta: observe type_meta v, check it : meta.ty — but THREAD v (not the meta), so it stays separate.
 // (qid_op/qid_cell — the plain self optic — moved up to the cell-ops block; qid_meta needs MetaShape.)
-let qid_meta_op := {meta, mode, source, prior, frame, rs} -> // observe type_meta v, check it : meta.ty
+let qid_meta_op := {meta, mode, source, prior, frame, rs} => // observe type_meta v, check it : meta.ty
   if mode
     then (match (param_apply (meta.ty) (type_meta source)) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
     else (SDone (Extend (meta.ty)))
-qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
+qid_meta_cell := {ty} => wait qid_meta_op { ty := ty }
 
 // StrictType: v is a type iff v is a recognizer (Tree -> CheckerResult) AND type_meta v : MetaShape.
 // A `tele_with` HYBRID (like Eq/Refinement/Intersection): the telescope RECOGNIZER (`tele_walk true` over the two
@@ -131,8 +131,8 @@ qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
 // accepts neutrals of stored type A (predicate-side H-rule). So StrictType is a real universe (not just
 // a recognizer) and can replace legacy `Type` (recognizer = Telescope's; only respond differs).
 StrictType : Type := tele_with (
-  t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
-  t (qid_meta_cell MetaShape) ({_} -> t)))
+  t (qid_cell (Arrow Tree CheckerResult)) ({_} =>
+  t (qid_meta_cell MetaShape) ({_} => t)))
   type_predicate_h_rule
 
 // ── BehavioralType (R6): the universe that checks the RESPOND FACE behaviorally — GoodRespond's
@@ -141,39 +141,39 @@ StrictType : Type := tele_with (
 // token flattens nested checks to fresh native walks — the former every-backend OOM is gone).
 // probe cell: apply meta.apply to (source=v, prior=the just-minted cases), check the resulting
 // Action : Singleton(outcome) — the CONV x = MEM (Singleton x) collapse. (Shared with GoodRespond below.)
-let probe_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
-let probe_cell := {ap, out} -> wait probe_op { apply := ap; outcome := out }
-let ctele_fields := {T, M} -> (type_meta (derive_case_telescope T M)).recognizer_params
+let probe_op := {meta, mode, source, prior, frame, rs} => do_check mode ({_} => Ok (meta.apply source prior)) (Singleton (meta.outcome))
+let probe_cell := {ap, out} => wait probe_op { apply := ap; outcome := out }
+let ctele_fields := {T, M} => (type_meta (derive_case_telescope T M)).recognizer_params
 // respond-KIND dispatch: gated inductives carry a real shape↔inj iso in `functor` (Coproduct family);
 // negative/hybrid formers carry trivial_functor = t. Only the former get the behavioral tail — and only
 // with CONCRETE variants: a former applied to a variants-HYP (`Coproduct x : Type` under `x : Tree`) has
 // no declaration to derive obligations from, so it takes the structural branch (the ground instances
 // built from it are behaviorally checked when THEY are certified).
-let is_gated := {v} -> and (is_fork ((type_meta v).functor)) (not (is_neutral ((type_meta v).recognizer_params)))
+let is_gated := {v} => and (is_fork ((type_meta v).functor)) (not (is_neutral ((type_meta v).recognizer_params)))
 // claims_gate: DECLARED-ungated inductives (respond ≡ inductive_respond exactly — Coproduct_ctx/mutual,
 // plain Coproduct_viewed) skip the junk dims: they visibly make no gating claim, and their eliminations
 // stay defended by use-site re-checking (the R0 status quo). Everything else that gates must gate WELL.
-let claims_gate := {v} -> not (tree_eq ((type_meta v).respond) inductive_respond)
-let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
+let claims_gate := {v} => not (tree_eq ((type_meta v).respond) inductive_respond)
+let resp_of := {T} => (type_meta T).respond (type_meta T).recognizer_params
 // per-variant junk dims (the over-permissive/R5 adversary catch): for each case slot i, mint a
 // cases-record with slot i junked to Tree and probe that the respond REJECTS (Extend InvalidType).
 // `get_R` maps the walked SOURCE to the respond under test: `resp_of` for the universe (source =
 // the candidate type), `Id` for the standalone GoodRespond (source = the respond itself).
-let bt_junk := fix ({self, get_R, M, s, fields, fs, i} ->
+let bt_junk := fix ({self, get_R, M, s, fields, fs, i} =>
   if (is_fork fs)
-    then (t (mint_cell (Record (list_update i ({f} -> pair (pair_fst f) Tree) fields))) ({junk} ->
-          t (probe_cell ({src, _} -> (get_R src) s { motive := M; cases := junk }) (Extend InvalidType)) ({_} ->
+    then (t (mint_cell (Record (list_update i ({f} => pair (pair_fst f) Tree) fields))) ({junk} =>
+          t (probe_cell ({src, _} => (get_R src) s { motive := M; cases := junk }) (Extend InvalidType)) ({_} =>
           self get_R M s fields (pair_snd fs) (succ i))))
     else t)
 // behavioral_cells: THE GoodRespond obligation chain, shared by the universe's tail and the
 // standalone checker — mint an abstract motive M (at StrictType: the probes only need its H-rule
 // respond), an abstract self s, the coherent cases; probe coh (-> Extend (M s)); optionally the
 // per-variant junk dims. Universality of the obligations = parametricity of the managed mints.
-let behavioral_cells := {get_R, T, junk_dims} ->
-  t (mint_cell (Arrow T StrictType)) ({M} ->
-  t (mint_cell T) ({s} ->
-  t (mint_cell (derive_case_telescope T M)) ({cases} ->
-  t (probe_cell ({src, _} -> (get_R src) s { motive := M; cases := cases }) (Extend (M s))) ({_} ->
+let behavioral_cells := {get_R, T, junk_dims} =>
+  t (mint_cell (Arrow T StrictType)) ({M} =>
+  t (mint_cell T) ({s} =>
+  t (mint_cell (derive_case_telescope T M)) ({cases} =>
+  t (probe_cell ({src, _} => (get_R src) s { motive := M; cases := cases }) (Extend (M s))) ({_} =>
   (if junk_dims
     then (bt_junk get_R M s (ctele_fields T M) (ctele_fields T M) zero)
     else t)))))
@@ -183,8 +183,8 @@ let behavioral_cells := {get_R, T, junk_dims} ->
 // STRUCTURAL universe — all the probes need is its H-rule respond, and referencing the still-unbound
 // Type here would be circular).
 BehavioralType := tele_with (
-  t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
-  t (qid_meta_cell MetaShape) ({v} ->
+  t (qid_cell (Arrow Tree CheckerResult)) ({_} =>
+  t (qid_meta_cell MetaShape) ({v} =>
     if (is_gated v)
       then (behavioral_cells resp_of v (claims_gate v))
       else t)))
@@ -199,7 +199,7 @@ Type := BehavioralType
 // recognizer, deliberately NOT built with make_recognizer: its H-rule shortcut compares
 // stored types nominally and would reject every foreign neutral. is_neutral is
 // carve-out clean (a root-sig read + tree_eq), so this checker is walker-safe.
-let neutral_check := {m, v} -> Ok (is_neutral v)
+let neutral_check := {m, v} => Ok (is_neutral v)
 Neutral : Type := wait neutral_check (make_meta unit_witness inert_respond)
 
 // Spine: what a neutral's payload IS — a mint (the freshness id) or an extension: the
@@ -266,8 +266,8 @@ ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
 // All hyps are MANAGED mints (telescope cells -> bind_hyp): the old raw make_hyp'd gr_M/gr_s forges
 // are RETIRED — they read as stem-forgery when GoodRespond's own code was distributed by an
 // enclosing walker (the original R6 nested-abort culprit).
-GoodRespond := {T} -> Telescope (behavioral_cells Id T true)
+GoodRespond := {T} => Telescope (behavioral_cells Id T true)
 // verify_good : run the telescope recognizer under the walker — composes (the prize).
-verify_good := {T, R} -> param_apply (GoodRespond T) R
+verify_good := {T, R} => param_apply (GoodRespond T) R
 // Reflection (the 3rd soundness dimension) needs no separate probe: a check-based respond polices its own
 // mints, so an unpoliced/reflecting respond makes `verify_good` Err (walker abort) — caught for free (FUSION).

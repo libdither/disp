@@ -8,18 +8,18 @@ open use "prelude.disp"
 PiT := Pi
 elab_settings := [t "Pi" (PiT Guard), t "Pi" (PiT Meta)]
 
-sugar_id : {A : ShallowType} -> {_ : A} -> A := {_A, x} -> x
+sugar_id : {A : ShallowType} -> {_ : A} -> A := {_A, x} => x
 
 // Tree identity: a sum variant's payload type compiles through the sugar, so
 // the explicit Guard spelling must build the identical coproduct (and the
 // shadowed Meta entry must not).
 SugarSum := < F : {_ : Nat} -> Nat >
-ExplicitSum := < F : PiT Guard Nat ({_} -> Nat) >
-MetaSum := < F : PiT Meta Nat ({_} -> Nat) >
+ExplicitSum := < F : PiT Guard Nat ({_} => Nat) >
+MetaSum := < F : PiT Meta Nat ({_} => Nat) >
 test tree_eq SugarSum ExplicitSum = true
 test tree_eq SugarSum MetaSum = false
 
 // The sugar-built type enforces: identity inhabits, the leaking constant does not.
-IdType := PiT Guard ShallowType ({A} -> PiT Guard A ({_} -> A))
-test IdType ({_A, x} -> x) = true
-test IdType ({_A, _x} -> 5) = false
+IdType := PiT Guard ShallowType ({A} => PiT Guard A ({_} => A))
+test IdType ({_A, x} => x) = true
+test IdType ({_A, _x} => 5) = false

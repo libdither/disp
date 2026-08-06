@@ -363,7 +363,7 @@
   }
 
   const VIZ_HINT =
-    "Green pods are real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Names resolve against the playground's scope; ones too large to ship stay orange fruit, and stepping hands their applications to the real evaluator. Binders compile away: {x} -> body is notation for a tree (bracket abstraction, the same translation the elaborator performs)."
+    "Green pods are real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Names resolve against the playground's scope; ones too large to ship stay orange fruit, and stepping hands their applications to the real evaluator. Binders compile away: {x} => body is notation for a tree (bracket abstraction, the same translation the elaborator performs)."
 
   // highlight an expression in the buffer → a floating tree button appears
   // when it fits the visualizer's grammar; pressing it seeds the panel with

@@ -15,8 +15,8 @@ open given { Type : Type, Tree : Type, Unit : Type, Bool : Type, Eq : Tree }
 
 // eq_J: concrete refl -> base; neutral proof -> stuck elim. The A,x,y binders (the
 // equality endpoints) only fix the dependent type; the body ignores them.
-eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> Eq A x y -> motive y := {A, x, y, motive, base, proof} -> elim
-  ({motive, cases, target} -> cases.base)
+eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> Eq A x y -> motive y := {A, x, y, motive, base, proof} => elim
+  ({motive, cases, target} => cases.base)
   motive { base := base }
   proof
 
@@ -27,14 +27,14 @@ unit_val : Unit := t t t
 // `motive unit_val`, else a hand-rolled elim with a lying case forges the motive (probe_eq_unit_sr).
 // Keyed by the constructor tag "unit" (the Nat/Bool convention: a case record over tags). Unit is
 // not is_gated (functor = t), so this gate is exercised only when a Unit-neutral is eliminated.
-let coh_unit := {T, motive, cases} -> param_apply (motive unit_val) (field cases "unit")
-Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness (gated_inductive_respond coh_unit))
+let coh_unit := {T, motive, cases} => param_apply (motive unit_val) (field cases "unit")
+Unit : Type := wait (make_recognizer ({m, v} => Ok (tree_eq v unit_val))) (make_meta unit_witness (gated_inductive_respond coh_unit))
 
 // String = ⊤ conceptually (= the nullary telescope), but kept lean: the trivial `Ok true` recognizer
 // avoids the telescope walker's per-check reduction cost (which inflates the suite's memo footprint).
-String : Type := wait (make_recognizer ({m, v} -> Ok true)) (make_meta unit_witness inert_respond)
-False : Type := wait (make_recognizer ({m, v} -> Ok false)) (make_meta unit_witness inert_respond)  // ⊥ (= the empty sum), kept lean
-Not : Type -> Type := {P} -> Pi P ({_} -> False)
+String : Type := wait (make_recognizer ({m, v} => Ok true)) (make_meta unit_witness inert_respond)
+False : Type := wait (make_recognizer ({m, v} => Ok false)) (make_meta unit_witness inert_respond)  // ⊥ (= the empty sum), kept lean
+Not : Type -> Type := {P} => Pi P ({_} => False)
 
 // refl: the canonical proof VALUE `t` (proofs erase to one value; eq_body checks a candidate
 // IS it). Bare — typing it `{A}->{x:A}->Eq A x x` forces a function vs. this value idiom.
@@ -47,31 +47,31 @@ refl := t
 // forges `motive y` (probe_eq_unit_sr). The safe eq_J API always passes base : motive x, so it
 // self-verifies unchanged (the gate re-confirms it via the H-rule); only the raw-elim bypass is
 // caught. x/y are the endpoints, closed over per (A,x,y).
-let eq_respond := {x, y} -> {params, self, frame} -> {
+let eq_respond := {x, y} => {params, self, frame} => {
   let base := field (field frame "cases") "base"
   match (param_apply (frame.motive x) base) {
     Ok v => (if v then (match (apply_policed frame.motive y) { Ok ty => Extend ty; Err _ => Extend InvalidType }) else (Extend InvalidType))
     Err _ => (Extend InvalidType)
   }
 }
-Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> tele_with (
-  t (qid_cell (Singleton refl)) ({_} ->
-  t (eqends_cell A x y) ({_} -> t)))
+Eq : {A : Type} -> A -> A -> Type := {A, x, y} => tele_with (
+  t (qid_cell (Singleton refl)) ({_} =>
+  t (eqends_cell A x y) ({_} => t)))
   (eq_respond x y)
 
 // Equality lemmas via eq_J (compute on refl, stay stuck on a neutral proof).
-eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} -> eq_J A x y motive base p
-eq_sym : {A : Type} -> {x : A} -> {y : A} -> Eq A x y -> Eq A y x := {A, x, y, p} -> eq_J A x y ({y_} -> Eq A y_ x) refl p
-eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A x y -> Eq B (f x) (f y) := {A, B, f, x, y, p} -> eq_J A x y ({y_} -> Eq B (f x) (f y_)) refl p
-eq_trans : {A : Type} -> {x : A} -> {y : A} -> {z : A} -> Eq A x y -> Eq A y z -> Eq A x z := {A, x, y, z, p, q} -> eq_subst A y z ({w} -> Eq A x w) q p
+eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} => eq_J A x y motive base p
+eq_sym : {A : Type} -> {x : A} -> {y : A} -> Eq A x y -> Eq A y x := {A, x, y, p} => eq_J A x y ({y_} => Eq A y_ x) refl p
+eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A x y -> Eq B (f x) (f y) := {A, B, f, x, y, p} => eq_J A x y ({y_} => Eq B (f x) (f y_)) refl p
+eq_trans : {A : Type} -> {x : A} -> {y : A} -> {z : A} -> Eq A x y -> Eq A y z -> Eq A x z := {A, x, y, z, p, q} => eq_subst A y z ({w} => Eq A x w) q p
 
 // Refinement A P (P : A -> Bool): { v : A | P v }. A 2-cell telescope [ qid A ; refine P ] — a HYBRID
 // wait-form (telescope recognizer + inert respond), recognize-equivalent to the old hand-written form.
-Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> tele_with (
-  t (qid_cell A) ({_} -> t (refine_cell P) ({_} -> t))) inert_respond
+Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} => tele_with (
+  t (qid_cell A) ({_} => t (refine_cell P) ({_} => t))) inert_respond
 
 // Intersection A P (P : A -> Type): mint a fresh A-hyp, check v : (P hyp) — the dependent intersection
 // (the walk polices P's use of the hyp). A 2-cell telescope [ mint A ; imeet P ] (HYBRID, inert respond).
-Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> tele_with (
-  t (mint_cell A) ({_} -> t (imeet_cell P) ({_} -> t))) inert_respond
+Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} => tele_with (
+  t (mint_cell A) ({_} => t (imeet_cell P) ({_} => t))) inert_respond
 

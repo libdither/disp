@@ -27,16 +27,16 @@ Deriv : Type := Coproduct [
   pair "cong" [Nat, Tree, Tree, Rec]
 ]
 d_conv := inj "conv" t
-d_rule := {i, s} -> inj "rule" (pair i s)
-d_sym := {d} -> inj "sym" d
-d_trans := {mid, d1, d2} -> inj "trans" (pair mid (pair d1 d2))
-d_cong := {i, a, b, d} -> inj "cong" (pair i (pair a (pair b d)))
+d_rule := {i, s} => inj "rule" (pair i s)
+d_sym := {d} => inj "sym" d
+d_trans := {mid, d1, d2} => inj "trans" (pair mid (pair d1 d2))
+d_cong := {i, a, b, d} => inj "cong" (pair i (pair a (pair b d)))
 
 // check_deriv rules ctxs x y d: does d derive x ~ y? Total on junk (unknown
 // tags answer false). Deliberately a RAW structural fold: the checker is the
 // trust base, so it must not route through gated machinery it might itself be
 // used to license.
-check_deriv := fix ({self, rules, ctxs, x, y, d} -> {
+check_deriv := fix ({self, rules, ctxs, x, y, d} => {
   let tag := pair_fst d
   let body := pair_snd d
   if (tree_eq tag "conv") then (tree_eq x y)
@@ -66,7 +66,7 @@ check_deriv := fix ({self, rules, ctxs, x, y, d} -> {
 // ownership is not surrendered (guard proposals refused). The bound tree is
 // the raw new: soundness is exactly the tables', so register only rules
 // licensed on honest grounds and contexts that are arrow-PER members.
-license_guard_deriv := {rules, ctxs} -> {old, req} ->
+license_guard_deriv := {rules, ctxs} => {old, req} =>
   if (is_stem (req.guard)) then Err
   else (if (is_leaf old)
     then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
