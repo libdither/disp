@@ -161,5 +161,5 @@ scale : Arrow { n : Nat, twice := double n } Nat := {r} => r.twice
 test scale (build { n : Nat, twice := double n } { n := 5 }) = 10
 
 // binder-param recType annotation gives projections AND the real type
-let getb := {r : { a : Nat, b : Bool }} -> r.b
+let getb := {r : { a : Nat, b : Bool }} => r.b
 test getb { a := 1; b := true } = true
