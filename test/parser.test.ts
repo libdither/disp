@@ -24,6 +24,9 @@ const hole: Expr = { tag: "hole" }
 const ap  = (f: Expr, x: Expr): Expr => ({ tag: "app", f, x })
 const binder = (params: { name: string | null; type: Expr | null }[], body: Expr): Expr =>
   ({ tag: "binder", params, body })
+// A desugar-emitted value lambda (block lets, eff binds): fat by construction.
+const lam = (params: { name: string | null; type: Expr | null }[], body: Expr): Expr =>
+  ({ tag: "binder", fat: true, params, body })
 const ann = (expr: Expr, type: Expr): Expr => ({ tag: "ann", expr, type })
 const proj = (target: Expr, field: string): Expr => ({ tag: "proj", target, field })
 const recType = (fields: { name: string; type: Expr | null }[]): Expr => ({ tag: "recType", fields })
@@ -668,7 +671,7 @@ describe("block expressions", () => {
   it("single let binding", () => {
     // { let x := t; x } → App(Binder([x], Var(x)), Leaf)
     expect(parseExpr("{ let x := t; x }")).toEqual(
-      ap(binder([{ name: "x", type: null }], v("x")), leaf)
+      ap(lam([{ name: "x", type: null }], v("x")), leaf)
     )
   })
 
@@ -676,8 +679,8 @@ describe("block expressions", () => {
     // { let x := t; let y := t t; y } → App(Binder([x], App(Binder([y], Var(y)), App(Leaf, Leaf))), Leaf)
     expect(parseExpr("{ let x := t; let y := t t; y }")).toEqual(
       ap(
-        binder([{ name: "x", type: null }],
-          ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
+        lam([{ name: "x", type: null }],
+          ap(lam([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
         leaf,
       )
     )
@@ -688,7 +691,7 @@ describe("block expressions", () => {
     // — the ann carries the let's name so the elaborator can record the checked
     // annotation for the module verify batch.
     expect(parseExpr("{ let x : A := t; x }")).toEqual(
-      ap(binder([{ name: "x", type: null }], v("x")), { tag: "ann", expr: leaf, type: v("A"), letName: "x" } as Expr)
+      ap(lam([{ name: "x", type: null }], v("x")), { tag: "ann", expr: leaf, type: v("A"), letName: "x" } as Expr)
     )
   })
 
@@ -696,7 +699,7 @@ describe("block expressions", () => {
     // { let f := {x} -> x; f t } → App(Binder([f], App(Var(f), Leaf)), Binder([x], Var(x)))
     expect(parseExpr("{ let f := {x} -> x; f t }")).toEqual(
       ap(
-        binder([{ name: "f", type: null }], ap(v("f"), leaf)),
+        lam([{ name: "f", type: null }], ap(v("f"), leaf)),
         binder([{ name: "x", type: null }], v("x")),
       )
     )
@@ -711,8 +714,8 @@ describe("block expressions", () => {
     }`
     expect(parseExpr(src)).toEqual(
       ap(
-        binder([{ name: "x", type: null }],
-          ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
+        lam([{ name: "x", type: null }],
+          ap(lam([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
         leaf,
       )
     )
@@ -727,7 +730,7 @@ describe("block expressions", () => {
     }`
     expect(parseExpr(src)).toEqual(
       binder([{ name: "x", type: null }],
-        ap(binder([{ name: "y", type: null }], v("y")), v("x")))
+        ap(lam([{ name: "y", type: null }], v("y")), v("x")))
     )
   })
 
@@ -741,7 +744,7 @@ describe("block expressions", () => {
     expect(parseExpr(src)).toEqual(
       binder([{ name: "x", type: null }],
         ap(
-          binder([{ name: "f", type: null }], ap(v("f"), v("x"))),
+          lam([{ name: "f", type: null }], ap(v("f"), v("x"))),
           binder([{ name: "z", type: null }], v("z"))))
     )
   })
@@ -757,9 +760,9 @@ describe("block expressions", () => {
     expect(parseExpr(src)).toEqual(
       binder([{ name: "x", type: null }],
         ap(
-          binder([{ name: "y", type: null }], ap(v("y"), v("x"))),
+          lam([{ name: "y", type: null }], ap(v("y"), v("x"))),
           binder([{ name: "z", type: null }],
-            ap(binder([{ name: "w", type: null }], v("w")), v("z")))))
+            ap(lam([{ name: "w", type: null }], v("w")), v("z")))))
     )
   })
 
@@ -771,7 +774,7 @@ describe("block expressions", () => {
     }`
     expect(parseExpr(src)).toEqual(
       binder([{ name: "x", type: null }, { name: "y", type: null }],
-        ap(binder([{ name: "z", type: null }], v("z")), ap(v("x"), v("y"))))
+        ap(lam([{ name: "z", type: null }], v("z")), ap(v("x"), v("y"))))
     )
   })
 })

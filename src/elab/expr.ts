@@ -142,6 +142,14 @@ export function exprToCir(
       return inner
     }
     case "binder": {
+      // A thin (->) binder IS a Pi type wherever it appears once the sugar
+      // target resolves; value lambdas are fat (=>). Kernel-less scopes keep
+      // the legacy lambda reading of thin binders.
+      if (!e.fat && sugarTree(lookupEntry, "Pi")) {
+        if (e.params.every(p => p.type != null))
+          return exprToCir(binderToPi(e), lookupEntry, resolveUse, sinks)
+        throw new Error("a '->' binder is a Pi type (every parameter needs ': T'); write value lambdas as '{x} => body'")
+      }
       // Shadow binder params so they don't resolve to scope entries.
       // (Projection on a bound variable is the runtime §2.6 cut — no
       // compile-time field metadata is needed.)

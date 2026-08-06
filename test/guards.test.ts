@@ -44,8 +44,8 @@ describe("guard layer rejections", () => {
     // The rule relates id to succ; the rebind proposes succ∘succ, so check_deriv
     // computes false (tree_eq at the rule instance's rhs) and the load fails.
     expect(() => run(K + `open use "../std/deriv.disp"
-guard (license_guard_deriv (cons ({_} -> pair ({n} -> n) ({n} -> succ n)) nil) nil) g : Arrow Nat Nat := ({n} -> n)
-g := { new := ({n} -> succ (succ n)) ; deriv := (d_rule 0 t) }
+guard (license_guard_deriv (cons ({_} => pair ({n} => n) ({n} => succ n)) nil) nil) g : Arrow Nat Nat := ({n} => n)
+g := { new := ({n} => succ (succ n)) ; deriv := (d_rule 0 t) }
 `)).toThrow(/rejected by its guard/)
   }, 120000)
 
@@ -53,9 +53,9 @@ g := { new := ({n} -> succ (succ n)) ; deriv := (d_rule 0 t) }
     // The zero obligation demands Eq Nat 0 (succ 0); refl cannot close it, so the
     // rebind fails the load (the shift-shaped attack that the pointwise license
     // accepts — probe_license_sr — dies here at the concrete face).
-    expect(() => run(K + `let NatRB := {u, v} -> Eq Nat u v
-guard (two_face_guard (PositiveFnCoverage Nat NatRB)) f : Arrow Nat Nat := ({n} -> n)
-f := { fast := ({n} -> succ n) ; proof := { zero := refl; succ := ({k} -> {_ih} -> refl) } }
+    expect(() => run(K + `let NatRB := {u, v} => Eq Nat u v
+guard (two_face_guard (PositiveFnCoverage Nat NatRB)) f : Arrow Nat Nat := ({n} => n)
+f := { fast := ({n} => succ n) ; proof := { zero := refl; succ := ({k} => {_ih} => refl) } }
 `)).toThrow(/rejected by its guard/)
   }, 120000)
 
@@ -79,7 +79,7 @@ f := { fast := ({n} -> succ n) ; proof := { zero := refl; succ := ({k} -> {_ih} 
     // request public, and subsequent `let`s in the scope EXPORT. (The pristine
     // fast path only applies while `let` is tree-identical to the cut.disp value.)
     const decls = run(K
-      + `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := false }\n`
+      + `let := {req} => { value := req.value; ty := req.ty; guard := req.guard; private := false }\n`
       + `let vis : Nat := 7\ntest vis = 7\n`)
     expect(decls.some(d => d.kind === "Def" && d.name === "vis")).toBe(true)
   }, 120000)

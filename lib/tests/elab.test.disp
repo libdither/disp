@@ -45,7 +45,7 @@ test pi_id 0 = 0
 
 // annotated lambda domain must match the expected Pi domain — exercises the
 // host's piDomain (reads the {dom,cod} params record by name, not positionally)
-let annotated_dom : Nat -> Nat := {x : Nat} -> x
+let annotated_dom : Nat -> Nat := {x : Nat} => x
 test annotated_dom 4 = 4
 
 // Arrow and explicit Pi produce identical types

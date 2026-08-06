@@ -24,7 +24,7 @@ test Nat (t (t t)) = Ok false   // not a numeral-shaped tree
 
 // Functions are checked by minting a hypothesis (a promise of a Nat),
 // running the body on it, and watching what comes out:
-quadruple : Nat -> Nat := {n} -> double (double n)
+quadruple : Nat -> Nat := {n} => double (double n)
 test quadruple 3 = 12
 
 // Proving is running. An equation's only proof value is the leaf itself:

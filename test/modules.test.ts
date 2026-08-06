@@ -55,7 +55,7 @@ describe("module dependencies (given) rejections", () => {
   }, 120000)
 
   it("an unknown fill name is rejected", () => {
-    expect(() => run(K + `m := use "given_mod.disp" { add := ({x} -> {y} -> x), bogus := t }\n`))
+    expect(() => run(K + `m := use "given_mod.disp" { add := ({x} => {y} => x), bogus := t }\n`))
       .toThrow(/unknown fill 'bogus'/)
   }, 120000)
 
@@ -105,7 +105,7 @@ describe("module dependencies (given) rejections", () => {
 
   it("hermetic: policy shadowing is file-local (a shadowed `let` does not leak into used modules)", () => {
     const p = tmpModule("polmod.disp", `let hidden := t\nvisible := t t\n`)
-    const shadow = `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := false; param := false }\n`
+    const shadow = `let := {req} => { value := req.value; ty := req.ty; guard := req.guard; private := false; param := false }\n`
     // The module elaborates under its OWN pristine `let`: hidden stays private
     // even though the use site shadowed `let` into an exporting decorator.
     expect(() => run(K + shadow + `m := use "${p}"\nopen m\ncheck := visible\n`)).not.toThrow()
@@ -115,7 +115,7 @@ describe("module dependencies (given) rejections", () => {
 
   it("a shadowed `given` producing a param request is rejected (dynamic givens)", () => {
     expect(() => run(K
-      + `given := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := false; param := true }\n`
+      + `given := {req} => { value := req.value; ty := req.ty; guard := req.guard; private := false; param := true }\n`
       + `given x : Nat := zero\n`))
       .toThrow(/dynamic givens are unsupported/)
   }, 120000)
@@ -156,7 +156,7 @@ describe("checked block-let annotations", () => {
   }, 300000)
 
   it("an open block-let annotation (under enclosing binders) stays unchecked", () => {
-    const p = tmpModule("letann_open.disp", `f := {n} -> { let bad : Bool := succ n\n succ bad }\n`)
+    const p = tmpModule("letann_open.disp", `f := {n} => { let bad : Bool := succ n\n succ bad }\n`)
     expect(() => run(K + `m := use "${p}"\n`)).not.toThrow()
   }, 120000)
 })

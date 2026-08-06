@@ -7,7 +7,7 @@ open use raw "../prelude.disp" {}
 // Three of the five rules dispatch on the SHAPE of a tree (leaf / stem /
 // fork), so case analysis over arbitrary data is a rewrite rule, not
 // library code:
-let shape_of := t (t "leaf" ({u} -> "stem")) ({u, v} -> "fork")
+let shape_of := t (t "leaf" ({u} => "stem")) ({u, v} => "fork")
 test shape_of t = "leaf"
 test shape_of (t t) = "stem"
 test shape_of (t t t) = "fork"
