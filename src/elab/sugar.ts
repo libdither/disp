@@ -189,7 +189,7 @@ function substExpr(e: Expr, map: Map<string, Expr>): Expr {
     case "if": return { tag: "if", cond: substExpr(e.cond, map), thenBody: substExpr(e.thenBody, map), elseBody: substExpr(e.elseBody, map) }
     case "binder": {
       const inner = without(e.params.map(p => p.name))
-      return { tag: "binder",
+      return { tag: "binder", ...(e.fat ? { fat: true } : {}),
         params: e.params.map(p => ({ name: p.name, type: p.type ? substExpr(p.type, inner) : null,
           default: p.default ? substExpr(p.default, inner) : p.default })),
         body: substExpr(e.body, inner) }
@@ -248,7 +248,7 @@ function resolveNamedCall(headExpr: Expr, rec: Extract<Expr, { tag: "recValue" }
   let body: Expr = headExpr
   for (const a of argExprs) body = { tag: "app", f: body, x: a }
   if (missing.length > 0)
-    body = { tag: "binder", params: missing.map(p => ({ name: p.name, type: null })), body }
+    body = { tag: "binder", fat: true, params: missing.map(p => ({ name: p.name, type: null })), body }
   return body
 }
 
@@ -285,13 +285,13 @@ export function tryNamedCall(e: Expr, lookupEntry: (name: string) => ScopeEntry 
 // `Pi A ({n} -> B)` are the same type); a binding's body is verified against its
 // type by the in-language kernel, never here.
 export function binderToPi(e: Expr): Expr {
-  if (e.tag !== "binder") return e
+  if (e.tag !== "binder" || e.fat) return e
   const p = e.params[0]
   if (!p.type) throw new Error("Pi domain requires a type annotation")
   const dom = binderToPi(p.type)
   const rest: Expr = e.params.length > 1
     ? { tag: "binder", params: e.params.slice(1), body: e.body }
     : e.body
-  const cod: Expr = { tag: "binder", params: [{ name: p.name, type: null }], body: binderToPi(rest) }
+  const cod: Expr = { tag: "binder", fat: true, params: [{ name: p.name, type: null }], body: binderToPi(rest) }
   return { tag: "app", f: { tag: "app", f: { tag: "var", name: sugarVarName("Pi") }, x: dom }, x: cod }
 }

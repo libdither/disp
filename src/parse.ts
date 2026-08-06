@@ -114,7 +114,7 @@ export type Expr =
   | { tag: "var"; name: string }
   | { tag: "hole" }
   | { tag: "app"; f: Expr; x: Expr }
-  | { tag: "binder"; params: Param[]; body: Expr }
+  | { tag: "binder"; params: Param[]; body: Expr; fat?: boolean } // fat: {x} => body (value lambda); thin -> is the Pi/type form
   | { tag: "ann"; expr: Expr; type: Expr; letName?: string }
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
@@ -557,8 +557,8 @@ const binderParam: P<Param> = nl(map(
 
 // Parse binder: params "}" ARROW body. Parameterized by bodyParser.
 const makeBinderInner = (bodyParser: P<Expr>): P<Expr> => map(
-  seq(sepBy1(binderParam, commaP), nl(punctP("}")), nl(arrowP), skipNl, lazy(() => bodyParser)),
-  ([params, , , , body]) => ({ tag: "binder" as const, params, body }),
+  seq(sepBy1(binderParam, commaP), nl(punctP("}")), nl(alt(arrowP, punctP("=>"))), skipNl, lazy(() => bodyParser)),
+  ([params, , arr, , body]) => ({ tag: "binder" as const, params, body, ...((arr as any).v === "=>" ? { fat: true } : {}) }),
 )
 const binderInner: P<Expr> = makeBinderInner(lazy(() => expr))
 const lineBinderInner: P<Expr> = makeBinderInner(lazy(() => lineExpr))
@@ -785,7 +785,7 @@ const makeIfLet = (condP: () => P<Expr>, condStopP: () => P<Expr>, bodyP: () => 
   const n = binders.length
   let thenB: Expr = thenBody
   if (n > 0) {
-    let appd: Expr = { tag: "binder", params: binders.map(b => ({ name: b, type: null })), body: thenBody }
+    let appd: Expr = { tag: "binder", fat: true, params: binders.map(b => ({ name: b, type: null })), body: thenBody }
     for (let k = 0; k < n; k++) {
       let acc: Expr = payload
       for (let step = 0; step < k; step++) acc = A(V("pair_snd"), acc)
@@ -794,7 +794,7 @@ const makeIfLet = (condP: () => P<Expr>, condStopP: () => P<Expr>, bodyP: () => 
     thenB = appd
   }
   const ifNode: Expr = { tag: "if", cond, thenBody: thenB, elseBody }
-  return ok(A({ tag: "binder", params: [{ name: s, type: null }], body: ifNode }, scrut), endPos)
+  return ok(A({ tag: "binder", fat: true, params: [{ name: s, type: null }], body: ifNode }, scrut), endPos)
 }
 const ifP: P<Expr> = alt(makeIfLet(() => app, () => condApp, () => matchExpr, () => ifP), makeIf(() => app, () => condApp, () => matchExpr, () => ifP))
 const lineIfP: P<Expr> = alt(makeIfLet(() => lineApp, () => lineCondApp, () => lineExpr, () => lineIfP), makeIf(() => lineApp, () => lineCondApp, () => lineExpr, () => lineIfP))
@@ -1037,7 +1037,7 @@ export const sumCtorExpr = (v: SumVariant): Expr => {
   let payload: Expr = { tag: "var", name: names[n - 1] }
   for (let k = n - 2; k >= 0; k--)
     payload = { tag: "app", f: { tag: "app", f: { tag: "var", name: "pair" }, x: { tag: "var", name: names[k] } }, x: payload }
-  return { tag: "binder", params: names.map(nm => ({ name: nm, type: null })), body: { tag: "app", f: injTag, x: payload } }
+  return { tag: "binder", fat: true, params: names.map(nm => ({ name: nm, type: null })), body: { tag: "app", f: injTag, x: payload } }
 }
 
 const expandSumLetCtors = (members: RecMember[]): RecMember[] => {
@@ -1174,14 +1174,14 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
         : s.body
       result = {
         tag: "app",
-        f: { tag: "binder", params: [{ name: s.name, type: null }], body: result },
+        f: { tag: "binder", fat: true, params: [{ name: s.name, type: null }], body: result },
         x: val,
       }
     } else {
       result = {
         tag: "app",
         f: { tag: "app", f: { tag: "var", name: "@sugar:eff_bind" }, x: s.expr },
-        x: { tag: "binder", params: [{ name: s.name === "_" ? null : s.name, type: null }], body: result },
+        x: { tag: "binder", fat: true, params: [{ name: s.name === "_" ? null : s.name, type: null }], body: result },
       }
     }
   }

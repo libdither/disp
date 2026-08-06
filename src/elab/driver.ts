@@ -911,7 +911,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             const step = { name: cur.f.params[0].name, val: cur.x }
             let e: Expr = step.val
             for (let i = prefix.length - 1; i >= 0; i--)
-              e = { tag: "app", f: { tag: "binder", params: [{ name: prefix[i].name, type: null }], body: e }, x: prefix[i].val }
+              e = { tag: "app", f: { tag: "binder", fat: true, params: [{ name: prefix[i].name, type: null }], body: e }, x: prefix[i].val }
             try {
               const tree = compileExpr(e, lookupEntry, resolveUse, sinks)
               const local = `${it.name}__${step.name}`
