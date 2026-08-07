@@ -202,7 +202,7 @@ List : Pi Guard ShallowType ({_} => ShallowType) := {A} => ({
   #recognize := {self, v} => list_mem ({ty, a} => ty a) self A v
   check := {jdg, T, v} => list_mem jdg ({a} => jdg T a) A v
   gate := {Ind, B} => [B [], PiCode A ({h} => PiCode Ind ({tl} => PiCode (B tl) ({_} => B (cons A h tl))))]
-  elim := list_elim_raw
+  elim := {self, xs, base, step} => triage base ({_} => base) ({h, tl} => step h tl (self tl base step)) xs
 })
 
 // A wrong-typed arm is refused. Type-variable hypotheses mint and apply to
@@ -210,6 +210,11 @@ List : Pi Guard ShallowType ({_} => ShallowType) := {A} => ({
 // by both -- a shared frontier (dependent application at abstract points),
 // not a table gap.
 test Fn ShallowType ({A} => Fn ShallowType ({B} => Fn (Fn A ({_} => B)) ({_} => Fn (List A) ({_} => List B)))) ({A, B, f, xs} => (elim_of (List A) ({_} => List B)) xs [] ({h, _tl, _ih} => h)) = false
+
+// The public face: blessed over List's own eliminator, so application to a
+// hypothesis stays inert (the kernel-internal list_rec stays raw for speed).
+list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C -> (pair_fst (pair_snd ((List A).gate (List A) (b_abs (inj "@absent" t) C)))) -> C))
+  := {A, C} => elim_of (List A) ({_} => C)
 // The Meta gap: abstract values cannot act as recognizers, so Meta refuses
 // every type-polymorphic function, even the tautological one.
 test Pi Meta ShallowType ({T} => Fn AnyTree ({_} => Bool)) ({T, v} => T v) = false

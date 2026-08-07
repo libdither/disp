@@ -13,11 +13,10 @@ cons : Pi Guard ShallowType ({A} => A -> List A -> List A)
   := {_A, h, tl} => t h tl
 list_const : AnyTree -> AnyTree := {x} => t t x
 bool_elim_raw := {_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b
-list_elim_raw := {self, xs, base, step} => triage base ({_} => base) ({h, tl} => step h tl (self tl base step)) xs
 bool_case : Pi Guard ShallowType ({C} => Bool -> C -> C -> C)
   := {_C} => fix bool_elim_raw
-list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C -> (pair_fst (pair_snd ((List A).gate (List A) (b_abs (inj "@absent" t) C)))) -> C))
-  := {_A, _C} => fix list_elim_raw
+let list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C -> (A -> List A -> C -> C) -> C))
+  := {_A, _C} => fix ({self, xs, base, step} => triage base ({_} => base) ({h, tl} => step h tl (self tl base step)) xs)
 member : Pi Guard ShallowType ({A} => AnyTree -> List A -> Bool)
   := {A, node, xs} => list_rec A t xs false ({h, _tl, ih} => bool_case t (tree_eq node h) true ih)
 list_all : Pi Guard ShallowType ({A} => (A -> Bool) -> List A -> Bool)
