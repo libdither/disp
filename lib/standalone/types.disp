@@ -23,8 +23,8 @@ arm := idx
 // Pure leaf. Junk (any non-Pure/non-Op tree) propagates unchanged, which is
 // what makes `reject` abort a script from inside a computed branch.
 eff_bind := fix ({self, m, k} =>
-  if (has_sig "Pure" m) { k (pair_snd m) }
-  else if (has_sig "Op" m) { Op (pair (pair_fst (pair_snd m)) ({r} => self ((pair_snd (pair_snd m)) r) k)) }
+  if (has_sig "Pure" m) { k m.snd }
+  else if (has_sig "Op" m) { Op (pair m.snd.fst ({r} => self (m.snd.snd r) k)) }
   else { m })
 // One-observation program: project the subject with acc, judge against T,
 // return the raw projection. `x <- see acc T` reads "observe it, call it x".
@@ -64,20 +64,20 @@ Named := {name, T} => ({
 
 key_insert := {K} => fix ({self, k, ks} =>
   if (is_leaf ks) { [k] }
-  else if (tree_eq k (pair_fst ks)) { ks }
-  else if (tree_lt k (pair_fst ks)) { cons K k ks }
-  else { cons K (pair_fst ks) (self k (pair_snd ks)) })
-key_sort := {K} => fix ({self, ks} => if (is_leaf ks) { [] } else { key_insert K (pair_fst ks) (self (pair_snd ks)) })
+  else if (tree_eq k ks.fst) { ks }
+  else if (tree_lt k ks.fst) { cons K k ks }
+  else { cons K ks.fst (self k ks.snd) })
+key_sort := {K} => fix ({self, ks} => if (is_leaf ks) { [] } else { key_insert K ks.fst (self ks.snd) })
 Tuple := {keys} => {
   let ks := key_sort ShallowType keys
   if (not (tree_eq (list_len AnyTree ks) (list_len AnyTree keys))) { invalid keys }
   else { (fix ({self, ks2} =>
-    if (is_leaf (pair_snd ks2)) { pair_fst ks2 } else { Sigma GenericWalker (pair_fst ks2) ({_} => self (pair_snd ks2)) })) ks }
+    if (is_leaf ks2.snd) { ks2.fst } else { Sigma GenericWalker ks2.fst ({_} => self ks2.snd) })) ks }
 }
 at := {K, keys, s} => (fix ({self, ks, v} =>
   if (is_leaf ks) { invalid K }
-  else if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
-  else { self (pair_snd ks) (pair_snd v) })) (key_sort ShallowType keys) s
+  else if (tree_eq K ks.fst) { if (is_leaf ks.snd) { v } else { v.fst } }
+  else { self ks.snd v.snd })) (key_sort ShallowType keys) s
 
 Nat : ShallowType := ({
   #recognize := {self, v} => triage true ({_} => false) ({l, r} => and (tree_eq l t) (self r)) v
@@ -150,7 +150,7 @@ GoodGate := {T} => {
   if (is_leaf g) { false } else {
     let B := {_} => inj "@GoodGate" T
     let tys := g T B
-    let pis := fix ({self, l, end} => if (is_leaf l) { end } else { Pi Guard (pair_fst l) ({_} => self (pair_snd l) end) })
+    let pis := fix ({self, l, end} => if (is_leaf l) { end } else { Pi Guard l.fst ({_} => self l.snd end) })
     and (Pi Guard T ({x} => pis tys (B x)) (elim_of T B))
         (list_all ShallowType ({ty} => not (Pi Guard AnyTree ({_} => ty) ({j} => j))) tys)
   }
@@ -165,7 +165,7 @@ test GoodGate ShallowType = false
 Coherent := {T} => {
   let e := T.ends
   let ck := T.check
-  let ends_ok := if (is_fork e) { or (tree_eq (pair_fst e) (pair_snd e)) (list_all AnyTree ({v} => not (T v)) probes) } else { true }
+  let ends_ok := if (is_fork e) { or (tree_eq e.fst e.snd) (list_all AnyTree ({v} => not (T v)) probes) } else { true }
   let check_ok := if (is_leaf ck) { true } else { list_all AnyTree ({v} => tree_eq (T v) (ck ({ty, a} => ty a) T v)) probes }
   let members_ok := and (list_all T T T.members) (if (is_leaf T.members) { true } else { list_all AnyTree ({v} => or (not (T v)) (member T v T.members)) probes })
   let gate_ok := if (is_leaf T.gate) { true } else { GoodGate T }
@@ -251,8 +251,8 @@ list_rows := {A} => (fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
   else {
-    _ <- see ({v} => pair_fst (get v)) A
-    self ({v} => pair_snd (get v))
+    _ <- see ({v} => (get v).fst) A
+    self ({v} => (get v).snd)
   }
 }))
 ListR := {A} => Tele Guard (list_rows A ({v} => v))
@@ -272,8 +272,8 @@ vec_rows := {A} => fix ({self, n, get} =>
   if (is_leaf n) { see get Unit }
   else {
     _ <- see get (Pred is_fork)
-    _ <- see ({v} => pair_fst (get v)) A
-    self (pair_snd n) ({v} => pair_snd (get v))
+    _ <- see ({v} => (get v).fst) A
+    self n.snd ({v} => (get v).snd)
   })
 Vec := {n, A} => Tele Guard (vec_rows A n ({v} => v))
 test Vec 2 Bool [true, false] = true
@@ -285,10 +285,10 @@ test Vec 0 Bool [] = true
 record_rows := fix ({self, entries} =>
   if (is_leaf entries) { done }
   else {
-    let name := pair_fst (pair_fst entries)
+    let name := entries.fst.fst
     _ <- see ({r} => field_cell r name) (Pred is_fork)
-    _ <- see ({r} => field r name) (pair_snd (pair_fst entries))
-    self (pair_snd entries)
+    _ <- see ({r} => field r name) entries.fst.snd
+    self entries.snd
   })
 NamedRec := {entries} => Tele Guard (record_rows entries)
 xy := [pair "x" Nat, pair "y" Bool]
@@ -308,8 +308,8 @@ test TypeRec [Nat, Bool] ({ (Nat) := false, (Bool) := false }) = false
 all_rows := fix ({self, tys} =>
   if (is_leaf tys) { done }
   else {
-    _ <- self_is (pair_fst tys)
-    self (pair_snd tys)
+    _ <- self_is tys.fst
+    self tys.snd
   })
 AllOf := {tys} => Tele Guard (all_rows tys)
 test AllOf [Nat, Point 5] 5 = true
@@ -321,17 +321,17 @@ test AllOf [] 5 = true
 // per matched pair so every claim is re-judged by the checker.
 splits := fix ({self, xs} =>
   if (is_leaf xs) { [] }
-  else { cons AnyTree (pair (pair_fst xs) (pair_snd xs))
-              (list_map AnyTree AnyTree ({p} => pair (pair_fst p) (cons AnyTree (pair_fst xs) (pair_snd p))) (self (pair_snd xs))) })
+  else { cons AnyTree (pair xs.fst xs.snd)
+              (list_map AnyTree AnyTree ({p} => pair p.fst (cons AnyTree xs.fst p.snd)) (self xs.snd)) })
 bijection := fix ({self, tys, xs} =>
   if (is_leaf tys) { if (is_leaf xs) { [[]] } else { [] } }
   else { (fix ({try, cands} =>
     if (is_leaf cands) { [] }
     else {
-      let c := pair_fst cands
-      let rest := if ((pair_fst tys) (pair_fst c)) { self (pair_snd tys) (pair_snd c) } else { [] }
-      if (is_leaf rest) { try (pair_snd cands) }
-      else { [cons AnyTree (pair (pair_fst tys) (pair_fst c)) (pair_fst rest)] }
+      let c := cands.fst
+      let rest := if (tys.fst c.fst) { self tys.snd c.snd } else { [] }
+      if (is_leaf rest) { try cands.snd }
+      else { [cons AnyTree (pair tys.fst c.fst) rest.fst] }
     })) (splits xs) })
 unique_rows := {tys} => {
   v <- self_is (List AnyTree)
@@ -340,9 +340,9 @@ unique_rows := {tys} => {
   else { (fix ({go, asg} =>
     if (is_leaf asg) { done }
     else {
-      _ <- see ({_} => pair_snd (pair_fst asg)) (pair_fst (pair_fst asg))
-      go (pair_snd asg)
-    })) (pair_fst m) }
+      _ <- see ({_} => asg.fst.snd) asg.fst.fst
+      go asg.snd
+    })) m.fst }
 }
 UniqueOf := {tys} => Tele Guard (unique_rows tys)
 test UniqueOf [Point 5, Point 6] [6, 5] = true
@@ -354,8 +354,8 @@ test UniqueOf [AnyTree, AnyTree] [5] = false
 tree_rows := {LeafTy} => (fix ({self, get} => {
   node <- see get node_like
   if (is_fork node) {
-    _ <- self ({v} => pair_fst (get v))
-    self ({v} => pair_snd (get v))
+    _ <- self ({v} => (get v).fst)
+    self ({v} => (get v).snd)
   } else { see get LeafTy }
 }))
 TreeOf := {LeafTy} => Tele Guard (tree_rows LeafTy ({v} => v))
@@ -366,12 +366,12 @@ test TreeOf Unit (pair (t t) t) = false
 MixedCode : List AnyTree := < Leaf : t, Node : t >
 mixed_rows := fix ({self, get} => {
   node <- see get (Pred is_fork)
-  if (tree_eq (pair_fst node) "Leaf") {
-    see ({v} => pair_snd (get v)) Bool
-  } else if (tree_eq (pair_fst node) "Node") {
-    _ <- see ({v} => pair_fst (pair_snd (get v))) Nat
-    _ <- self ({v} => pair_fst (pair_snd (pair_snd (get v))))
-    self ({v} => pair_snd (pair_snd (pair_snd (get v))))
+  if (tree_eq node.fst "Leaf") {
+    see ({v} => (get v).snd) Bool
+  } else if (tree_eq node.fst "Node") {
+    _ <- see ({v} => ((get v).snd).fst) Nat
+    _ <- self ({v} => (((get v).snd).snd).fst)
+    self ({v} => (((get v).snd).snd).snd)
   } else { reject }
 })
 MixedTree := Tele Guard (mixed_rows ({v} => v))
@@ -386,8 +386,8 @@ perfect_rows := fix ({self, n, get} =>
   if (is_leaf n) { see get Unit }
   else {
     _ <- see get (Pred is_fork)
-    _ <- self (pair_snd n) ({v} => pair_fst (get v))
-    self (pair_snd n) ({v} => pair_snd (get v))
+    _ <- self n.snd ({v} => (get v).fst)
+    self n.snd ({v} => (get v).snd)
   })
 Perfect := {n} => Tele Guard (perfect_rows n ({v} => v))
 test Perfect 1 (pair t t) = true
@@ -397,18 +397,18 @@ test Perfect 2 (pair (pair t t) t) = false
 // 10. Balanced trees: observe a computed measure, constrain it with a type.
 height := fix ({self, v} =>
   if (is_fork v) {
-    let hl := self (pair_fst v)
-    let hr := self (pair_snd v)
+    let hl := self v.fst
+    let hr := self v.snd
     succ (if (nat_le hl hr) { hr } else { hl })
   } else { zero })
-near := Pred ({p} => and (nat_le (pair_fst p) (succ (pair_snd p))) (nat_le (pair_snd p) (succ (pair_fst p))))
+near := Pred ({p} => and (nat_le p.fst (succ p.snd)) (nat_le p.snd (succ p.fst)))
 bal_rows := fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
   else {
-    _ <- see ({v} => pair (height (pair_fst (get v))) (height (pair_snd (get v)))) near
-    _ <- self ({v} => pair_fst (get v))
-    self ({v} => pair_snd (get v))
+    _ <- see ({v} => pair (height ((get v).fst)) (height ((get v).snd))) near
+    _ <- self ({v} => (get v).fst)
+    self ({v} => (get v).snd)
   }
 })
 Balanced := Tele Guard (bal_rows ({v} => v))

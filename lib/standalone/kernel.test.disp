@@ -128,8 +128,8 @@ test tree_eq (walk_apply t [] (walk_apply t [] nat_elim nat_hyp) zero) ((nat_eli
 test is_invalid (walk_apply t [] pair_fst (make_hyp Bool t)) = true
 
 sig_child := stem_child hyp_sig
-smuggled := pair_snd (forge_hyp Bool Bool)
-assembled_forgery := {n} => t (t (pair_snd (pair n sig_child))) smuggled
+smuggled := (forge_hyp Bool Bool).snd
+assembled_forgery := {n} => t (t ((pair n sig_child).snd)) smuggled
 test is_stem hyp_sig = true
 test tree_eq (assembled_forgery zero) (forge_hyp Bool Bool) = true
 test is_neutral (assembled_forgery zero) = true
@@ -159,9 +159,9 @@ test EnumBoolToBool honest_sniffer = true
 test Pi Meta Bool ({_} => Bool) honest_sniffer = true
 test Pi Guard Bool ({_} => Bool) honest_sniffer = true
 
-test Pi Guard Bool ({_} => Bool) ({b} => if (tree_eq (pair_fst b) hyp_sig) { b } else { 5 }) = false
+test Pi Guard Bool ({_} => Bool) ({b} => if (tree_eq b.fst hyp_sig) { b } else { 5 }) = false
 
-rebuilt_sniffer := {b} => if (tree_eq (pair_fst b) (t (pair_snd (pair b sig_child)))) { b } else { 5 }
+rebuilt_sniffer := {b} => if (tree_eq b.fst (t ((pair b sig_child).snd))) { b } else { 5 }
 test EnumBoolToBool rebuilt_sniffer = false
 test Pi Meta Bool ({_} => Bool) rebuilt_sniffer = false
 test Pi Guard Bool ({_} => Bool) rebuilt_sniffer = false
@@ -271,16 +271,16 @@ test Isect Guard Nat ({n} => Pi Guard (Point n) ({_} => Nat)) ({p} => p) = false
 // over-rejects the eta rebuild (a projected Neu re-enters as opaque Conc), pinned.
 sig_dom := Sigma Guard Nat ({_} => Nat)
 test Pi Guard sig_dom ({_} => Nat) ({_p} => zero) = true
-test Pi Guard sig_dom ({_} => Nat) ({p} => pair_fst p) = true
-test Pi Guard sig_dom ({_} => Nat) ({p} => pair_snd p) = true
-test Pi Meta sig_dom ({_} => Nat) ({p} => pair_fst p) = true
-test Pi Meta sig_dom ({_} => Nat) ({p} => pair_snd p) = true
-test Pi Guard Nat ({_} => Nat) ({n} => pair_fst n) = false
-test Pi Meta Nat ({_} => Nat) ({n} => pair_fst n) = false
+test Pi Guard sig_dom ({_} => Nat) ({p} => p.fst) = true
+test Pi Guard sig_dom ({_} => Nat) ({p} => p.snd) = true
+test Pi Meta sig_dom ({_} => Nat) ({p} => p.fst) = true
+test Pi Meta sig_dom ({_} => Nat) ({p} => p.snd) = true
+test Pi Guard Nat ({_} => Nat) ({n} => n.fst) = false
+test Pi Meta Nat ({_} => Nat) ({n} => n.fst) = false
 sig_dep := Sigma Guard Nat ({n} => Point (succ n))
-test Pi Guard sig_dep ({_} => sig_dep) ({p} => pair (pair_fst p) (pair_snd p)) = true
-test Pi Guard sig_dep ({_} => sig_dep) ({p} => pair (pair_snd p) (pair_fst p)) = false
-test Pi Meta sig_dep ({_} => sig_dep) ({p} => pair (pair_fst p) (pair_snd p)) = false
+test Pi Guard sig_dep ({_} => sig_dep) ({p} => pair p.fst p.snd) = true
+test Pi Guard sig_dep ({_} => sig_dep) ({p} => pair p.snd p.fst) = false
+test Pi Meta sig_dep ({_} => sig_dep) ({p} => pair p.fst p.snd) = false
 
 // Tables are partial sets over the handler interface; every slot except fresh has
 // a default (admit/lift/read = identity, apply = raw application, judge = the type
@@ -386,7 +386,7 @@ test BoolEff (Pure true) = true
 test BoolEff (Pure 5) = false
 test BoolEff flip_prog = true
 test BoolEff (Op (pair (pair "flip" t) ({r} => Pure 5))) = false
-FlipOnly := Eff (Pred ({q} => tree_eq (pair_fst q) "flip")) Bool Bool
+FlipOnly := Eff (Pred ({q} => tree_eq q.fst "flip")) Bool Bool
 test FlipOnly flip_prog = true
 test FlipOnly (Op (pair (pair "other" t) ({r} => Pure r))) = false
 
@@ -408,7 +408,7 @@ test Pi Guard BoolEff ({_} => Bool) run_true_raw = false
 
 SB := Sigma Guard Bool ({_} => Bool)
 fan_rec := elim_of BoolEff ({_} => SB)
-run_both := {m} => fan_rec m ({x} => pair x x) ({_q, _k, ih} => pair (pair_fst (ih true)) (pair_snd (ih false)))
+run_both := {m} => fan_rec m ({x} => pair x x) ({_q, _k, ih} => pair ((ih true).fst) ((ih false).snd))
 test run_both flip_prog = pair false true
 test Pi Guard BoolEff ({_} => SB) run_both = true
 
@@ -518,9 +518,9 @@ ResultK := Named "result" ShallowType
 OpSig := [LabelK, ParamK, ResultK]
 OpTy := Tuple OpSig
 tuple_of := {entries} => {
-  let ins := fix ({self, e, es} => if (is_leaf es) { [e] } else if (tree_lt (pair_fst e) (pair_fst (pair_fst es))) { cons t e es } else { cons t (pair_fst es) (self e (pair_snd es)) })
-  let sorted := (fix ({self, es} => if (is_leaf es) { [] } else { ins (pair_fst es) (self (pair_snd es)) })) entries
-  (fix ({self, es} => if (is_leaf (pair_snd es)) { pair_snd (pair_fst es) } else { pair (pair_snd (pair_fst es)) (self (pair_snd es)) })) sorted
+  let ins := fix ({self, e, es} => if (is_leaf es) { [e] } else if (tree_lt e.fst es.fst.fst) { cons t e es } else { cons t es.fst (self e es.snd) })
+  let sorted := (fix ({self, es} => if (is_leaf es) { [] } else { ins es.fst (self es.snd) })) entries
+  (fix ({self, es} => if (is_leaf es.snd) { es.fst.snd } else { pair es.fst.snd (self es.snd) })) sorted
 }
 flip_sig := tuple_of [pair ResultK Bool, pair LabelK "flip", pair ParamK Bool]
 flip_sig2 := tuple_of [pair LabelK "flip", pair ParamK Bool, pair ResultK Bool]
