@@ -16,7 +16,7 @@ Fn := Pi GenericWalker
 elab_settings := [t "Pi" Fn]
 
 // arm k g: the k-th eliminator arm of a gate's list (head/tail spine indexing).
-arm := {k, g} => (fix ({self, k2, ys} => if (is_leaf k2) { pair_fst ys } else { self (pair_snd k2) (pair_snd ys) })) k g
+arm := idx
 
 // A telescope is just data: a free-monad program over Fresh/Observe rows.
 // eff_bind is what the `x <- e` block sugar desugars to: graft k onto the

@@ -29,6 +29,7 @@ export function exprMentions(e: Expr, name: string): boolean {
     case "app": return exprMentions(e.f, name) || exprMentions(e.x, name)
     case "ann": return exprMentions(e.expr, name) || exprMentions(e.type, name)
     case "proj": return exprMentions(e.target, name)
+    case "index": return exprMentions(e.target, name) || exprMentions(e.index, name)
     case "binder": {
       // Shadowed if any param has this name.
       if (e.params.some(p => p.name === name)) {
@@ -186,6 +187,7 @@ function substExpr(e: Expr, map: Map<string, Expr>): Expr {
     case "app": return { tag: "app", f: substExpr(e.f, map), x: substExpr(e.x, map) }
     case "ann": return { tag: "ann", expr: substExpr(e.expr, map), type: substExpr(e.type, map) }
     case "proj": return { tag: "proj", target: substExpr(e.target, map), field: e.field }
+    case "index": return { tag: "index", target: substExpr(e.target, map), index: substExpr(e.index, map) }
     case "if": return { tag: "if", cond: substExpr(e.cond, map), thenBody: substExpr(e.thenBody, map), elseBody: substExpr(e.elseBody, map) }
     case "binder": {
       const inner = without(e.params.map(p => p.name))

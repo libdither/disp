@@ -23,6 +23,9 @@ export type SugarName =
   | "Record"        // module tuple typ former
   | "Telescope" | "proj_cell" | "derive_cell" // record type literals
   | "Coproduct" | "pair" // sum type literals
+  | "pair_fst" | "pair_snd" // xs[k] constant-index unrolling
+  | "idx"           // xs[i] computed-index runtime accessor
+  | "fst" | "snd"   // .fst/.snd pair accessors (settings-scoped)
 
 // Desugars that emit a var (binder->Pi, match's prod, the parser's eff_bind)
 // mark it with this prefix; exprToCir resolves the mark through sugarTree so
@@ -55,4 +58,17 @@ export function sugarTree(
     if (hit != null) return hit
   }
   return lookupEntry(name)?.tree
+}
+
+// .fst/.snd are pair projections ONLY in scopes that carry elab_settings (the
+// new-syntax worlds); legacy scopes keep the record-cut reading of those field
+// names (lib/std/pair.disp's records). A settings entry can re-point them;
+// otherwise they resolve to the scope's pair_fst/pair_snd.
+export function pairAccessor(
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+  which: "fst" | "snd",
+): Tree | undefined {
+  const settings = lookupEntry("elab_settings")?.tree
+  if (settings == null) return undefined
+  return settingsTarget(settings, which) ?? lookupEntry(which === "fst" ? "pair_fst" : "pair_snd")?.tree
 }

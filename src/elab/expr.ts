@@ -9,7 +9,7 @@ import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type Lice
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
-import { sugarTree, sugarVarName, SUGAR_PREFIX, type SugarName } from "./vocab.js"
+import { sugarTree, sugarVarName, pairAccessor, SUGAR_PREFIX, type SugarName } from "./vocab.js"
 
 // moduleTupleCir: a resolved file's module tuple { record, typ } (§2.6 records):
 //   record = a product of the file's exported values, keyed by name;
@@ -375,6 +375,11 @@ export function exprToCir(
       return moduleTupleCir(entry, lookupEntry)
     }
     case "proj": {
+      // .fst/.snd: pair projections in settings-bearing scopes (see pairAccessor).
+      if (e.field === "fst" || e.field === "snd") {
+        const acc = pairAccessor(lookupEntry, e.field)
+        if (acc) return cap({ tag: "lit", t: acc }, exprToCir(e.target, lookupEntry, resolveUse, sinks))
+      }
       // r.x is the §2.6 cut `r (acc x)`. When the target is a statically-known
       // record with the field, keep the compile-time collapse (return the field
       // tree); otherwise emit the runtime cut, so projection works on any product
@@ -395,6 +400,21 @@ export function exprToCir(
       if (dotTree)
         return cap(cap({ tag: "lit", t: dotTree }, { tag: "lit", t: stringToTree(e.field) }), target)
       return cap(target, { tag: "lit", t: accTree(e.field) })
+    }
+    case "index": {
+      // xs[k]: a constant index unrolls to the projection chain (bit-identical
+      // to the longhand spelling); a computed index runs the scope's idx.
+      const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
+      if (e.index.tag === "num") {
+        const fst = sugarTree(lookupEntry, "pair_fst"), snd = sugarTree(lookupEntry, "pair_snd")
+        if (!fst || !snd) throw new Error("index syntax: pair_fst and pair_snd must be in scope")
+        let out = target
+        for (let k = 0; k < e.index.value; k++) out = cap({ tag: "lit", t: snd }, out)
+        return cap({ tag: "lit", t: fst }, out)
+      }
+      const idxTree = sugarTree(lookupEntry, "idx")
+      if (!idxTree) throw new Error("index syntax with a computed index: 'idx' must be in scope")
+      return cap(cap({ tag: "lit", t: idxTree }, exprToCir(e.index, lookupEntry, resolveUse, sinks)), target)
     }
     case "if": {
       // Desugar to closed-branch select-then-apply over `cond` (prelude):

@@ -1,0 +1,17 @@
+open use raw "../prelude.disp" {}
+open use "prelude.disp"
+
+// Postfix accessors. In settings-bearing scopes .fst/.snd are pair projections
+// (legacy scopes keep the record-cut reading of those field names); xs[k] is
+// list indexing — a constant index unrolls to the projection chain
+// bit-identically, a computed index runs the scope's idx.
+test (pair 1 2).fst = 1
+test (pair 1 2).snd = 2
+test tree_eq ({p} => p.fst) ({p} => pair_fst p) = true
+test tree_eq ({p} => p.snd.fst) ({p} => pair_fst (pair_snd p)) = true
+test [5, 6, 7][0] = 5
+test [5, 6, 7][2] = 7
+test tree_eq ({xs} => xs[1]) ({xs} => pair_fst (pair_snd xs)) = true
+test ({i} => [5, 6, 7][i]) 2 = 7
+test idx 1 [5, 6] = 6
+test (pair (pair 1 2) 3).fst.snd = 2

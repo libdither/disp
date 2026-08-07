@@ -8,6 +8,7 @@ open given { AnyTree : AnyTree, RawRecord : AnyTree, Fn : AnyTree, elab_settings
 // make_record + list_const (record literals), Coproduct (sum literals), prod (match).
 
 inj := {name, payload} => pair name payload
+idx := fix ({self, k, xs} => if (is_leaf k) { pair_fst xs } else { self (pair_snd k) (pair_snd xs) })
 nil : Pi Guard ShallowType ({A} => List A) := {_A} => t
 cons : Pi Guard ShallowType ({A} => A -> List A -> List A)
   := {_A, h, tl} => t h tl

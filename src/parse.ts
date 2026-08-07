@@ -76,6 +76,9 @@ export function tokenize(src: string): Tok[] {
       push({ t: "num", v: Number(src.slice(i, j)) })
       i = j; continue
     }
+    // A '[' glued to an identifier/close-delimiter is postfix INDEXING, not an
+    // array literal ('xs[2]' vs 'f [1, 2]' — whitespace decides).
+    if (c === "[" && i > 0 && /[A-Za-z0-9_')\]"]/.test(src[i - 1])) { push({ t: "punct", v: "idx[" }); i++; continue }
     const p = PUNCT.find(p => src.startsWith(p, i))
     if (p) { push({ t: "punct", v: p }); i += p.length; continue }
     if (IDENT_HEAD.test(c)) {
@@ -115,6 +118,7 @@ export type Expr =
   | { tag: "hole" }
   | { tag: "app"; f: Expr; x: Expr }
   | { tag: "binder"; params: Param[]; body: Expr; fat?: boolean } // fat: {x} => body (value lambda); thin -> is the Pi/type form
+  | { tag: "index"; target: Expr; index: Expr } // xs[k] — list indexing (fst∘snd^k; computed k runs idx)
   | { tag: "ann"; expr: Expr; type: Expr; letName?: string }
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
@@ -336,7 +340,17 @@ const withProj = (base: P<Expr>): P<Expr> => (ts, i) => {
   const r = base(ts, i)
   if (!r.ok) return r
   let result = r.v, pos = r.pos
-  while (ts[pos].t === "punct" && (ts[pos] as any).v === ".") {
+  while (ts[pos].t === "punct" && ((ts[pos] as any).v === "." || (ts[pos] as any).v === "idx[")) {
+    if ((ts[pos] as any).v === "idx[") {
+      const idxE = lazy(() => expr)(ts, pos + 1)
+      if (!idxE.ok) return idxE
+      let q = idxE.pos
+      while (ts[q].t === "nl") q++
+      if (!(ts[q].t === "punct" && (ts[q] as any).v === "]")) return err("']' to close index", q)
+      result = { tag: "index", target: result, index: idxE.v }
+      pos = q + 1
+      continue
+    }
     pos++
     const field = idP(ts, pos)
     if (!field.ok) return field
@@ -405,7 +419,7 @@ function isDeclStart(ts: Tok[], i: number): boolean {
     if (t.t === "kw" && depth === 0) return false
     if (t.t === "punct") {
       const v = (t as any).v
-      if (v === "(" || v === "{" || v === "[") depth++
+      if (v === "(" || v === "{" || (v === "[" || v === "idx[")) depth++
       else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
       else if (depth === 0 && (v === ":=" || v === ":")) return true
       else if (depth === 0 && (v === "=" || v === ";" || v === "=>" || v === "->")) return false
@@ -431,7 +445,7 @@ function isEquationStart(ts: Tok[], i: number): boolean {
     if (t.t === "kw" && depth === 0) return false
     if (t.t === "punct") {
       const v = (t as any).v
-      if (v === "(" || v === "{" || v === "[") depth++
+      if (v === "(" || v === "{" || (v === "[" || v === "idx[")) depth++
       else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
       else if (depth === 0 && v === "=") return true
       else if (depth === 0 && (v === ":=" || v === ":" || v === ";" || v === "=>" || v === "->")) return false
@@ -1278,7 +1292,7 @@ function bracedFollowedByArrow(ts: Tok[], pos: number): boolean {
   while (q < ts.length && ts[q].t !== "eof") {
     if (ts[q].t === "punct") {
       const v = (ts[q] as any).v
-      if (v === "{" || v === "(" || v === "[") depth++
+      if (v === "{" || v === "(" || (v === "[" || v === "idx[")) depth++
       else if (v === "}" || v === ")" || v === "]") {
         if (depth === 0) { // this is our matching "}"
           let r = q + 1
@@ -1304,7 +1318,7 @@ function scanForBareEq(ts: Tok[], q: number): boolean {
   while (q < ts.length && ts[q].t !== "eof") {
     if (ts[q].t === "punct") {
       const v = (ts[q] as any).v
-      if (v === "(" || v === "{" || v === "[") depth++
+      if (v === "(" || v === "{" || (v === "[" || v === "idx[")) depth++
       else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
       else if (depth === 0 && v === "=") return true
     }
