@@ -15,6 +15,9 @@ Fn := Pi GenericWalker
 // neutral-Fn settings entry (givens unfilled), so the real one must rebind.
 elab_settings := [t "Pi" Fn]
 
+// arm k g: the k-th eliminator arm of a gate's list (head/tail spine indexing).
+arm := {k, g} => (fix ({self, k2, ys} => if (is_leaf k2) { pair_fst ys } else { self (pair_snd k2) (pair_snd ys) })) k g
+
 // A telescope is just data: a free-monad program over Fresh/Observe rows.
 // eff_bind is what the `x <- e` block sugar desugars to: graft k onto the
 // Pure leaf. Junk (any non-Pure/non-Op tree) propagates unchanged, which is
@@ -76,11 +79,10 @@ at := {K, keys, s} => (fix ({self, ks, v} =>
   else if (tree_eq K (pair_fst ks)) { if (is_leaf (pair_snd ks)) { v } else { pair_fst v } }
   else { self (pair_snd ks) (pair_snd v) })) (key_sort ShallowType keys) s
 
-nat_elim_raw := {self, n, base, step} => triage base ({_} => base) ({_l, k} => step k (self k base step)) n
 Nat : ShallowType := ({
   #recognize := {self, v} => triage true ({_} => false) ({l, r} => and (tree_eq l t) (self r)) v
   gate := {Ind, B} => [B zero, PiCode Ind ({k} => PiCode (B k) ({_} => B (succ k)))]
-  elim := nat_elim_raw
+  elim := {self, n, base, step} => triage base ({_} => base) ({_l, k} => step k (self k base step)) n
 })
 test Nat zero = true
 test Nat (succ (succ zero)) = true
@@ -88,8 +90,8 @@ test is_leaf Nat.tele = true
 test Nat (t t) = false
 test Nat (make_hyp Nat Nat) = false
 test Nat (succ (make_hyp Nat Nat)) = false
-nat_step_ty : ShallowType := pair_fst (pair_snd (Nat.gate Nat ({_} => Nat)))
-nat_rec : Pi Guard ShallowType ({C} => Nat -> C -> (pair_fst (pair_snd (Nat.gate Nat (b_abs (inj "@absent" t) C)))) -> C)
+nat_step_ty : ShallowType := arm 1 (Nat.gate Nat ({_} => Nat))
+nat_rec : Pi Guard ShallowType ({C} => Nat -> C -> (arm 1 (Nat.gate Nat (const_fn C))) -> C)
   := {C} => elim_of Nat ({_} => C)
 
 test ShallowType Bool = true
@@ -135,13 +137,12 @@ test eq_sym Nat 2 2 refl = refl
 test eq_trans Nat 2 2 2 refl refl = refl
 test eq_cong Nat succ 2 2 refl = refl
 
-tree_elim_raw := {self, v, on_leaf, on_stem, on_fork} => triage on_leaf ({c} => on_stem c (self c on_leaf on_stem on_fork)) ({l, r} => on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
 Tree : ShallowType := ({
   #recognize := {_self, _v} => true
   gate := {Ind, B} => [B t, PiCode Ind ({c} => PiCode (B c) ({_} => B (t c))), PiCode Ind ({l} => PiCode Ind ({r} => PiCode (B l) ({_} => PiCode (B r) ({_} => B (t l r)))))]
-  elim := tree_elim_raw
+  elim := {self, v, on_leaf, on_stem, on_fork} => triage on_leaf ({c} => on_stem c (self c on_leaf on_stem on_fork)) ({l, r} => on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
 })
-tree_rec : Pi Guard ShallowType ({C} => Tree -> (pair_fst (Tree.gate Tree (b_abs (inj "@absent" t) C))) -> (pair_fst (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C)))) -> (pair_fst (pair_snd (pair_snd (Tree.gate Tree (b_abs (inj "@absent" t) C))))) -> C)
+tree_rec : Pi Guard ShallowType ({C} => Tree -> C -> (arm 1 (Tree.gate Tree (const_fn C))) -> (arm 2 (Tree.gate Tree (const_fn C))) -> C)
   := {C} => elim_of Tree ({_} => C)
 
 GoodGate := {T} => {
@@ -213,7 +214,7 @@ test Fn ShallowType ({A} => Fn ShallowType ({B} => Fn (Fn A ({_} => B)) ({_} => 
 
 // The public face: blessed over List's own eliminator, so application to a
 // hypothesis stays inert (the kernel-internal list_rec stays raw for speed).
-list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C -> (pair_fst (pair_snd ((List A).gate (List A) (b_abs (inj "@absent" t) C)))) -> C))
+list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C -> (arm 1 ((List A).gate (List A) (const_fn C))) -> C))
   := {A, C} => elim_of (List A) ({_} => C)
 // The Meta gap: abstract values cannot act as recognizers, so Meta refuses
 // every type-polymorphic function, even the tautological one.

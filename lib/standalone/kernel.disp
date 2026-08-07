@@ -12,9 +12,8 @@ nil : Pi Guard ShallowType ({A} => List A) := {_A} => t
 cons : Pi Guard ShallowType ({A} => A -> List A -> List A)
   := {_A, h, tl} => t h tl
 list_const : AnyTree -> AnyTree := {x} => t t x
-bool_elim_raw := {_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b
 bool_case : Pi Guard ShallowType ({C} => Bool -> C -> C -> C)
-  := {_C} => fix bool_elim_raw
+  := {_C} => fix ({_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b)
 let list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C -> (A -> List A -> C -> C) -> C))
   := {_A, _C} => fix ({self, xs, base, step} => triage base ({_} => base) ({h, tl} => step h tl (self tl base step)) xs)
 member : Pi Guard ShallowType ({A} => AnyTree -> List A -> Bool)
@@ -140,7 +139,7 @@ Bool : ShallowType := ({
   #recognize := {_self, v} => triage true ({c} => tree_eq c t) ({l, r} => false) v
   gate := {_Ind, B} => [B true, B false]
   members := [true, false]
-  elim := bool_elim_raw
+  elim := {_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b
 })
 ShallowType := ({ #recognize := {_self, v} => is_type v, obs := perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t)) })
 test ShallowType ({ #recognize := {_self, _v} => true }) = true
