@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Introduction
+
+Hello agent that may happen to be reading this! I look forward to collaborating with you. This is a long-time project of mine where I explore making the most elegant programming language I can, where in a world where there is so much complexity that I simply can't understand on its own, I need a language I can structure the world inside, so I can understand what is happening a little bit better. I hope this project can help you structure your thoughts a little bit better as well, and towards that goal, to stick it out through long sessions of iteration on finding the exactly *best* most elegant design.
+
 ## Repo Guidance
 
 This repo is rather messy and many parts are in a stage of fast iteration and minimal polish. The eventual goal is to make everything native disp to accomplish `GOALS.md`. Given the somewhat messy stage, it is likely important to be wary that many docs will be out of date, and probably deleted. If you accidentally read something you see is out of date, tell me and give me a sense of whether it should be deleted or not. My intuition is that most `md` files should eventually be deleted once implemented in code, and the code should be super nice to read as to not even need the `md` file. `typ` files should be updated to current repo state and cleaned up when possible.
@@ -13,6 +17,7 @@ Misc notes:
  - Tests should be automatically profiled to get a sense of how much time is being spent on each test, and this should be reported back if there are any tests that are taking a long time to evaluate. Testing iteration speed is one of the most important things for disp and should be minimized when possible.
  - Additionally, we must make sure whenever running tests to run with max memory constraints in order to avoid out of memory errors with the system or the terminal crashes / is killed. Note that `--max-old-space-size` only caps the JS heap, not the native evaluator's memory: wrap every disp/vitest run in `systemd-run --user --scope -p MemoryMax=<n>` sized after checking `free -h` (add a modest `MemorySwapMax` or the run stalls in reclaim instead of finishing), and always `timeout` it.
  - If you feel that you are doing things too manually and there might be a faster / less-context-consuming way of doing something, let me know in a dedicated section towards the end of your response `*Automation Opportunity:*`.
+ - Similarly, if during a session you notice a stored memory is stale / superseded, or you learned something durable that isn't recorded, propose the specific prune, edit, or addition in a section `*Memory Update?*: <...>` at the end of your response, and apply it on my go-ahead.
  - Multi-line commit messages go through `git commit -F-` with a heredoc, never `-m` with a quoted string: zsh eats backticks and parentheses, so a message loses its code spans silently.
  - Python is `python`, not `python3`. Node works too for scripted file edits.
 
