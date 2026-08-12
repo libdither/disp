@@ -9,8 +9,9 @@
   <h3 id="what-is-disp">1.1 · What is disp?</h3>
   <p>
     Disp is a dependently typed programming language based on the computational model of the
-    <em>tree calculus</em>, rather than the λ-calculus, where the type system is a first-class
-    object. Type-checking is one equation:
+    <em>tree calculus</em>, rather than the λ-calculus. Its types are programs you can run:
+    apply a type to a value, and it computes the verdict of its own type-check. Type-checking
+    is one equation:
   </p>
   <p class="math-block">T (v) = Ok true &nbsp;⟺&nbsp; v : T</p>
   <p>
@@ -19,8 +20,9 @@
     Traditional type theory maintains a separate judgment <span class="math">Γ ⊢ v : T</span>,
     derived by inference rules that live outside the language. Disp has no such separate
     machinery. Types are themselves tree-calculus programs: predicates that, run against a
-    candidate tree, return a verdict. Type-checking is, then, just function application on those
-    predicates. (The verdict is a <code>CheckerResult</code> — <code>Ok</code> or
+    candidate tree, return a verdict (§4 gives this principle its traditional name,
+    <em>types as predicates</em>, and places it in the family tree). Type-checking is, then,
+    just function application on those predicates. (The verdict is a <code>CheckerResult</code> — <code>Ok</code> or
     <code>Err</code> — so failure is an ordinary value too, not an exception in some
     meta-language.)
   </p>

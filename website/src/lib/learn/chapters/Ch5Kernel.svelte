@@ -17,7 +17,7 @@
 
   <h3 id="hypothesis-problem">5.1 · The hypothesis problem</h3>
   <p>
-    Does <code>quadruple := &#123;n&#125; -> double (double n)</code> have type
+    Does <code>quadruple := &#123;n&#125; => double (double n)</code> have type
     <code>Nat -> Nat</code>? The annotation claims something about <em>infinitely many</em>
     inputs. No amount of running visits them all. Martin-Löf type theory answers with a context
     variable — "assume <span class="math">n : Nat</span>" — managed by judgment rules outside

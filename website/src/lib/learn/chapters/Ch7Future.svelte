@@ -18,9 +18,12 @@
     session ABI and must agree byte-for-byte, including the Rust engine this website runs in
     your tab. And the first end-to-end optimizer slice exists: equality witnesses licensing real
     rewrites (map fusion among them) past syntactic equality, with zero kernel changes.
+    Effects landed too: a free-monad library (<code>std/effect.disp</code>) whose computations
+    are pure values, monadic bind syntax (<code>x &lt;- e</code>) in blocks, and one impure
+    driver at the program boundary interpreting the IO vocabulary.
   </p>
-  <p>Still design-stage: effects as a free-monad library with one impure driver at the program
-    boundary (TYPE_THEORY.typ §15), cost as a typing-level resource, and the items below.</p>
+  <p>Still design-stage: scoped and higher-order effect operations (TYPE_THEORY.typ §15),
+    cost as a typing-level resource, and the items below.</p>
 
   <h3 id="cubical">7.2 · Cubical type theory</h3>
   <p>

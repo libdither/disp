@@ -14,12 +14,15 @@
   </p>
 
   <h3 id="binders">3.1 · Binders and application</h3>
-  <pre>{`{x} => body                // λx. body
+  <pre>{`{x} => body                // λx. body — the value lambda
 {x, y} => body             // λx. λy. body  (curried)
-{x : A, y : B} -> body     // annotated binders`}</pre>
+{x : A} -> B               // the Pi type: for all x : A, B
+A -> B                     // sugar for {_ : A} -> B`}</pre>
   <p>
-    The elaborator lowers binders via bracket abstraction (§2.4). Application is juxtaposition
-    and associates left. The literal <code>t</code> denotes the leaf — the only "literal" the
+    The two arrows divide the work: a fat <code>=&gt;</code> binder is a value lambda, lowered
+    via bracket abstraction (§2.4); a thin <code>-&gt;</code> binder is a <em>type</em> — it
+    desugars to an application of the library <code>Pi</code> former, and every parameter needs
+    its <code>: T</code>. Application is juxtaposition and associates left. The literal <code>t</code> denotes the leaf — the only "literal" the
     language truly has; numbers and strings are sugar for particular trees built by application.
   </p>
 
@@ -67,8 +70,9 @@
   <Deep title="The compiler pipeline (parse → elaborate → bracket-abstract → emit)">
     <p>
       Four passes. <strong>Parse</strong> builds the surface AST. <strong>Elaborate</strong>
-      resolves names and dispatches binder modes — <code>&#123;x&#125; -> e</code> in term
-      position becomes a lambda; in type position it participates in a <code>Pi</code>.
+      resolves names and reads the arrows — <code>&#123;x&#125; => e</code> is a value lambda;
+      <code>&#123;x : A&#125; -> B</code> desugars to an application of the library
+      <code>Pi</code> former.
       <strong>Bracket-abstract</strong> lowers binders with the §2.4 optimizations.
       <strong>Emit</strong> produces a closed tree. The punchline: the elaborator never
       <em>checks</em> types; it produces tree programs, and the kernel checks those programs by

@@ -360,15 +360,14 @@
     </div>
     <div class="card feat">
       <h3>
-        <span class="feat-dot" aria-hidden="true"></span>Type-as-predicates
+        <span class="feat-dot" aria-hidden="true"></span>Types you can run
       </h3>
       <p>
-        A type is a function that takes a tree and returns `true`, `false`, or
-        `Err`. You can trivially implement new type theories by just writing new
-        functions, but the best part is that you don't have to think about type
-        systems in terms of confusing sequence calculus diagrams, <i
-          >they're just programs</i
-        >.
+        A type is a predicate: a function that takes a tree and returns a
+        verdict, and applying it <i>is</i> the type check. You can implement new
+        type theories by just writing new functions, and you don't have to
+        think about type systems in terms of confusing sequent calculus
+        diagrams, <i>they're just programs</i>.
       </p>
     </div>
     <div class="card feat">

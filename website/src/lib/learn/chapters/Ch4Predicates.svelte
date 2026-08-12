@@ -7,6 +7,17 @@
 
 <section>
   <h2 id="predicates"><span class="secnum">Section 4</span>Types as predicates</h2>
+  <p>
+    Section 1 stated the principle plainly: a type is a program you run. Its traditional name
+    is <em>types as predicates</em>, and its full form is a two-word positioning statement:
+    disp's types are <strong>executable, reflective predicates</strong>. Each adjective marks a
+    boundary with a neighboring tradition. <em>Executable</em> separates disp from refinement
+    types (PVS, Liquid Haskell), where a type also carries a predicate but an SMT solver
+    reasons about it; here the predicate is not reasoned about, it is applied. <em>Reflective</em>
+    separates disp from its closest ancestor, NuPRL, whose types are likewise predicates over
+    untyped terms; but those are λ-terms, observable only through their behavior, while disp's
+    predicates run on trees whose shape they can read (§4.2 shows one doing exactly that).
+  </p>
 
   <h3 id="traditions">4.1 · Four traditions</h3>
   <table>

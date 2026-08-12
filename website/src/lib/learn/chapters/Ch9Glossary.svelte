@@ -4,7 +4,7 @@
     ['Triage', 'The F rule: a function of shape t (t c d) b dispatches on the shape of its argument (leaf, stem, or fork). The primitive reflection mechanism.'],
     ['Hash-consing', 'Storing each distinct tree exactly once and identifying trees by integer ID. Makes structural equality — and therefore conversion checking — an O(1) identity check.'],
     ['Bracket abstraction', 'The algorithm [x].M that removes a free variable, leaving a closed combinator expression in I, K, S. Bridges the surface λ-syntax to tree calculus.'],
-    ['Types-as-predicates', 'The design principle: a type is a tree program, and v : T iff T v = Ok true.'],
+    ['Types-as-predicates', 'The design principle: a type is a tree program run on candidate values, and v : T iff T v = Ok true. In full, types are executable, reflective predicates. Executable: the predicate is applied, not handed to a solver (contrast refinement types). Reflective: it runs on trees whose shape it can read (contrast NuPRL, whose predicates observe only behavior).'],
     ['CheckerResult', 'The verdict coproduct Ok | Err. Failure is a value, not an exception in a meta-language.'],
     ['Hypothesis / neutral', 'A kernel-minted tree of shape wait (hyp_reduce) (meta), standing for "an unknown value of stored type T". How disp checks under binders. Unforgeable and uninspectable by construction.'],
     ['Signature', 'The identity of the function at a tree’s head, read by the sanctioned pair_fst projection. The kernel’s routing key.'],

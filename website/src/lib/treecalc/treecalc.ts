@@ -318,7 +318,7 @@ function abs(name: string, body: Cir): Cir {
 const K_TREE: T = stem(leaf) // K x y = x  (fires the K rule when saturated)
 const I_TREE: T = fork(stem(K_TREE), K_TREE) // = S K K: I x → (K x)(K x) → x
 // S = t (t (t t t)) t: S a → t (t a), S a b → t (t a) b, S a b c → (a c)(b c).
-// (bracket-abstracting {a,b} -> t (t a) b by hand: η-reduce b, then [a](t (t a))
+// (bracket-abstracting {a,b} => t (t a) b by hand: η-reduce b, then [a](t (t a))
 // = S (K t) t, whose fork form is exactly this literal.)
 const S_TREE: T = fork(stem(fork(leaf, leaf)), leaf)
 
@@ -477,12 +477,12 @@ export function parseTree(
       i = j
       continue
     }
-    // binder syntax: {x, y} -> body
+    // binder syntax: {x, y} => body (the legacy thin -> is accepted too)
     if (ch === '{' || ch === '}' || ch === ',') {
       tokens.push(ch)
       continue
     }
-    if (ch === '-' && input[i + 1] === '>') {
+    if ((ch === '-' || ch === '=') && input[i + 1] === '>') {
       tokens.push('->')
       i++
       continue
@@ -529,7 +529,7 @@ export function parseTree(
   function atom(): T {
     const tok = tokens[p]
     if (tok === '{') {
-      // binder: {x, y} -> body — not tree-calculus syntax but NOTATION for a
+      // binder: {x, y} => body — not tree-calculus syntax but NOTATION for a
       // tree: the body compiles away via bracket abstraction, the same
       // translation the elaborator performs (abs mirrors elab/cir.ts's
       // η-reduction + K-composition). Free names in the body survive as

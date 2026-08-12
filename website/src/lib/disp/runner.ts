@@ -464,7 +464,7 @@ export class DispRunner {
   #render(h: number, depth: number, atom: boolean, selfName?: string): string {
     // Display priority: the leaf is always 't' (the atom everyone knows);
     // then numeral/string decodings (many REPL names alias small trees —
-    // `succ zero` and a compiled `{n} -> refl` are literally the same
+    // `succ zero` and a compiled `{n} => refl` are literally the same
     // hash-consed fork, and "1" reads better than a stale binding); then a
     // bound name; then raw structure.
     const cls = this.#session.classify(h)
