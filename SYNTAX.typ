@@ -67,7 +67,7 @@ let x := t   // trailing comments work too
   [Identifier],  [`[A-Za-z_][A-Za-z0-9_']*`, excluding keywords and the bare leaf `t`], [`foo_bar`, `x'`, `_priv`],
   [Leaf],        [`t` (not followed by an identifier char) or `△`],       [`t`, `△`],
   [String],      [`"..."` (no escape sequences). A `use` argument, or a term: a string literal is the `List` of its codepoint `Nat`s (so `"A"` ≡ `[65]`), giving a deterministic, distinct tree per spelling — used as record/coproduct field-name tags.], [`"lib/foo.disp"`, `"respond"`],
-  [Punctuation], [`(`  `)`  `{`  `}`  `,`  `.`  `=`  `:`  `:=`  `;`  `->`  `→`], [`{x : A} -> x`],
+  [Punctuation], [`(`  `)`  `{`  `}`  `[`  `]`  `<`  `>`  `,`  `.`  `=`  `:`  `:=`  `;`  `=>`  `->`  `→`  `<-`  `#`], [`{x} => x`, `{x : A} -> B`],
 )
 
 A `t` adjacent to identifier characters is lexed as part of the identifier
@@ -98,7 +98,8 @@ shorthands are used below:
 ```ebnf
 COMMA ::= "," | NEWLINE
 SEMI  ::= ";" | NEWLINE
-ARROW ::= "->" | "→"
+ARROW ::= "->" | "→"    (* the type arrow: a thin binder is a Pi type *)
+FAT   ::= "=>"          (* the value-lambda arrow *)
 ```
 
 Trailing separators are always allowed.
@@ -117,7 +118,7 @@ dependency header).
   "program",
   "program  ::= recBody",
   "open use \"lib/prelude.disp\"
-id := {A} -> {x} -> x
+id := {A} => {x} => x
 test id t = t",
   note: [A file body is a `recBody`. When loaded via `use`, the file's exported fields become the record's fields. `let`-headed declarations are private; equations and `open` are side-effects.],
 )
@@ -126,8 +127,8 @@ test id t = t",
   "recBody",
   "recBody  ::= (recMember SEMI)* recMember? SEMI?
 recMember ::= field | let | equation | \"open\" expr | givenBlock   // givenBlock: file level only",
-  "let helper := {x} -> x x    // private (a `let`-decorated declaration)
-add := fix ({self, n, m} -> ...) // exported
+  "let helper := {x} => x x    // private (a `let`-decorated declaration)
+add := fix ({self, n, m} => ...) // exported
 test add 2 3 = 5              // equation (the `test` marker is the prelude identity)
 open use \"prelude.disp\"     // import",
   note: [Shared by file bodies and inline `{ ... }` record values. Members are processed in order; later members can reference earlier ones.],
@@ -139,7 +140,7 @@ open use \"prelude.disp\"     // import",
 head     ::= expr        // top-level only; one decorator expression",
   "true := t
 id : {A : Type} -> A -> A
-   := {A} -> {x} -> x
+   := {A} => {x} => x
 guard (license_guard SortRelation.rel) sort : T := impl // explicit relation contract
 guard (license_guard FastRelation.rel) fast : T := impl // another owned name
 guard g iface : T                                // interface entry (no value)",
@@ -149,18 +150,18 @@ guard g iface : T                                // interface entry (no value)",
 #rule(
   "let",
   "let      ::= \"let\" IDENT (\":\" expr)? \":=\" expr    // = field with head `let`",
-  "let K := {x} -> {y} -> x
+  "let K := {x} => {y} => x
 let id : {A : Type} -> A -> A
-       := {A} -> {x} -> x",
-  note: [Private name binding; visible to subsequent members but NOT exported. At the top level this is *not its own production*: `let` is an ordinary identifier, so `let x := e` parses by the `field` rule as a decorated declaration whose head is `let` — the private-write request decorator defined in `kernel/cut.disp` (`{req} -> req with private := true`). The elaborator's fast path mirrors that value while `let` is unbound (bootstrap files before the kernel) or pristine; *shadowing `let` changes what the shadowing scope's `let`s mean* (the shadowing decorator runs on each request). Inside braces, `let` remains a lexical binding form recognized structurally (a value cannot introduce a lexical binder): in a block it desugars to `App(Binder, body)`. The legacy `let x = e` spelling was removed (a targeted parse error points to `:=`; `=` is the equation operator).],
+       := {A} => {x} => x",
+  note: [Private name binding; visible to subsequent members but NOT exported. At the top level this is *not its own production*: `let` is an ordinary identifier, so `let x := e` parses by the `field` rule as a decorated declaration whose head is `let` — the private-write request decorator defined in `kernel/cut.disp` (`{req} => req with private := true`). The elaborator's fast path mirrors that value while `let` is unbound (bootstrap files before the kernel) or pristine; *shadowing `let` changes what the shadowing scope's `let`s mean* (the shadowing decorator runs on each request). Inside braces, `let` remains a lexical binding form recognized structurally (a value cannot introduce a lexical binder): in a block it desugars to `App(Binder, body)`. The legacy `let x = e` spelling was removed (a targeted parse error points to `:=`; `=` is the equation operator).],
 )
 
 #rule(
   "equation (tests)",
   "equation ::= expr \"=\" expr",
-  "test ({x} -> x) t = t
+  "test ({x} => x) t = t
 test pred two = one",
-  note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees. There is no `test` keyword — the conventional `test` prefix is the *prelude identity* (`test : Tree -> Tree := {x} -> x`), so `test lhs` ≡ `lhs` and the marker is style, not syntax. While `test` is unbound or pristine the elaborator peels the marker before compiling (identical semantics, and it restores the true application head so named-argument calls in the lhs resolve); a scope that shadows `test` has its marker-written equations preprocessed by the shadowing value. The lhs must be a *compound* expression (application, projection, …): a bare-name lhs like `x = 5` is rejected as an almost-certain `:=` typo, which in practice keeps every equation marker-led. The `=` must be reachable on the lhs's opening line for the next-item lookahead (`isEquationStart`) — bracketed sub-expressions may span lines freely; keyword-led lhs (`if`/`match` at depth 0) must be parenthesized.],
+  note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees. There is no `test` keyword — the conventional `test` prefix is the *prelude identity* (`test : Tree -> Tree := {x} => x`), so `test lhs` ≡ `lhs` and the marker is style, not syntax. While `test` is unbound or pristine the elaborator peels the marker before compiling (identical semantics, and it restores the true application head so named-argument calls in the lhs resolve); a scope that shadows `test` has its marker-written equations preprocessed by the shadowing value. The lhs must be a *compound* expression (application, projection, …): a bare-name lhs like `x = 5` is rejected as an almost-certain `:=` typo, which in practice keeps every equation marker-led. The `=` must be reachable on the lhs's opening line for the next-item lookahead (`isEquationStart`) — bracketed sub-expressions may span lines freely; keyword-led lhs (`if`/`match` at depth 0) must be parenthesized.],
 )
 
 #rule(
@@ -179,7 +180,7 @@ givenEntry ::= IDENT \":\" lineExpr (\":=\" lineExpr)?",
 #rule(
   "expr",
   "expr     ::= binder | app (ARROW expr)?",
-  "{x : A} -> x
+  "{x : A} -> B
 A -> B
 f x",
   note: [An `app` followed by `ARROW` is sugar for a single-param `binder` with an anonymous param: `A -> B` parses to `Binder([{name: null, type: A}], B)`.],
@@ -187,14 +188,14 @@ f x",
 
 #rule(
   "binder",
-  "binder      ::= \"{\" binderParam (COMMA binderParam)* COMMA? \"}\" ARROW expr
+  "binder      ::= \"{\" binderParam (COMMA binderParam)* COMMA? \"}\" (ARROW | FAT) expr
 binderParam ::= (IDENT | \"_\") (\":\" expr)? (\":=\" expr)?",
-  "{x} -> x                       // inferred type
-{x : Nat} -> x                 // annotated
-{A : Type, x : A} -> x         // multi-param sugar (right-assoc)
-{x : Nat, t : Nat := 30} -> x  // named-arg default on `t`
-{_ : Nat} -> t                 // anonymous (same as Nat -> t)",
-  note: [Lambda or Pi depending on expected type (`Type` ⇒ Pi, else lambda). A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn} -> body` desugars right-associatively to `{p1} -> ... -> {pn} -> body`. Example: `{A : Type, x : A} -> x` means `{A : Type} -> ({x : A} -> x)`, not `({A : Type, x : A}) -> x` — each additional param wraps the remainder on the right. A param's optional `:= expr` is a *named-argument default* (see § Calling convention): pure caller-side metadata, dropped from the binder itself (`{y := d} -> b` compiles as `{y} -> b`). Because `:=` otherwise classifies a brace as a recValue, a brace whose params carry defaults is recognised as a binder by its trailing `ARROW` (`{ y : B := d } -> body`).],
+  "{x} => x                       // value lambda
+{A : Type, x : A} => x         // multi-param sugar (right-assoc)
+{x : Nat, t : Nat := 30} => x  // named-arg default on `t`
+{x : Nat} -> Vec x             // Pi type: thin arrow, annotated params
+{_ : Nat} -> B                 // anonymous domain (same as Nat -> B)",
+  note: [The arrow decides the reading. A fat `=>` binder is a *value lambda*. A thin `->` binder is a *Pi type* wherever it appears: it desugars to an application of the library `Pi` former (`{x : A} -> B` compiles to the same tree as `Pi A ({x} => B)`), so every parameter needs its `: T` — a missing annotation is an elaboration error pointing at `=>`. Scopes where no `Pi` former is bound (bootstrap files before the kernel) keep the legacy lambda reading of thin binders. A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn}` desugars right-associatively to `{p1} => ... => {pn} => body` (same for `->`). Example: `{A : Type, x : A} => x` means `{A : Type} => ({x : A} => x)`, not `({A : Type, x : A}) => x` — each additional param wraps the remainder on the right. A param's optional `:= expr` is a *named-argument default* (see § Calling convention): pure caller-side metadata, dropped from the binder itself (`{y := d} => b` compiles as `{y} => b`). Because `:=` otherwise classifies a brace as a recValue, a brace whose params carry defaults is recognised as a binder by its trailing arrow (`{ y : B := d } => body`).],
 )
 
 #rule(
@@ -206,7 +207,7 @@ f { x := a, y := b }           // named call (any order; == f a b)
 f { x := a }                   // omitted args default / partial-apply",
   note: [Left-associative juxtaposition; no separator between function and argument. After crossing a newline, `IDENT \":=\"` is _not_ consumed as an atom (it starts a field definition).
 
-  *Calling convention (named / default / reorderable arguments).* A juxtaposition `f r` where `r` is a `recValue` is a *named call* when `f` has a tracked parameter signature (it is bound to a leading lambda — the rewrite lives in `src/elab/sugar.ts`) AND every field of `r` names one of `f`'s parameters. Then `r`'s fields are matched to parameters *by name* (any order), omitted parameters fall back to their `:= default`, and a missing-without-default parameter makes the call a *partial application* (the result is a function awaiting it). The whole thing rewrites at elaboration time to the canonical positional call, so `f { x := a, y := b }`, `f { y := b, x := a }` and `f a b` are the *same tree* (conversion is O(1) hash-cons identity). Otherwise — `f`'s untracked, or `r`'s field names are not all parameters (e.g. a record-domain function `{r} -> r.x` applied to `{ x := … }`) — `f r` is *ordinary* application with `r` passed as a record value.],
+  *Calling convention (named / default / reorderable arguments).* A juxtaposition `f r` where `r` is a `recValue` is a *named call* when `f` has a tracked parameter signature (it is bound to a leading lambda — the rewrite lives in `src/elab/sugar.ts`) AND every field of `r` names one of `f`'s parameters. Then `r`'s fields are matched to parameters *by name* (any order), omitted parameters fall back to their `:= default`, and a missing-without-default parameter makes the call a *partial application* (the result is a function awaiting it). The whole thing rewrites at elaboration time to the canonical positional call, so `f { x := a, y := b }`, `f { y := b, x := a }` and `f a b` are the *same tree* (conversion is O(1) hash-cons identity). Otherwise — `f`'s untracked, or `r`'s field names are not all parameters (e.g. a record-domain function `{r} => r.x` applied to `{ x := … }`) — `f r` is *ordinary* application with `r` passed as a record value.],
 )
 
 #rule(
@@ -257,16 +258,16 @@ on structure: a leading `let` followed by an identifier, a depth-0 `:=`,
 a leading `IDENT <-`, or a depth-0 bare `=` each mark a recValue/block
 body — none of these can occur in binder or recType content.) The
 `bind` member `x <- e` is monadic sequencing: the block desugars it to
-`eff_bind e ({x} -> rest)` (`eff_bind` resolves in the ambient scope,
+`eff_bind e ({x} => rest)` (`eff_bind` resolves in the ambient scope,
 like `prod` for `match`), interleaving with lexical `let`s in member
 order; a block with a `bind` requires a trailing expression, and `bind`
 members are rejected in record literals and (for now) in blocks that
 also carry equation/`open` members. `let` keeps meaning naming — the
 arrow declares sequencing intent, so effects-as-values stays intact
 (the value-directed alternative has two pinned holes; see
-`lib/tests/effect_syntax_proto.test.disp`). A `braced` followed by `ARROW` is
-reparsed as a `binder`: `{x : A}` alone is a recType;
-`{x : A} -> e` is a binder. The empty `{}` is a 0-field recValue
+`lib/tests/effect_syntax_proto.test.disp`). A `braced` followed by an
+arrow (`->` or `=>`) is reparsed as a `binder`: `{x : A}` alone is a
+recType; `{x : A} -> B` and `{x} => e` are binders. The empty `{}` is a 0-field recValue
 (Church unit; the record encoding lives in `src/elab/`). Duplicate
 field names in recValues and recTypes are rejected.
 
@@ -283,11 +284,11 @@ so a variant's `expr` type (e.g. `A -> B`) stops cleanly at the closing
 
 *Constructor auto-declaration.* A top-level declaration whose value is a
 coproduct literal — directly (`Color := < red, green, blue >`) or under a
-binder chain (`Option := {A} -> < some : A, none >`; constructors never
+binder chain (`Option := {A} => < some : A, none >`; constructors never
 mention the params) — also binds each variant's constructor through the
 ordinary declaration path (so they export): a nullary variant binds
 `Tag := inj "Tag" t`, a single-arg variant `Tag := inj "Tag"` (the η-form
-of `{a} -> inj "Tag" a`). A variant whose name is already in scope is
+of `{a} => inj "Tag" a`). A variant whose name is already in scope is
 *skipped* — the kernel's `CheckerResult : Type := < Ok : Tree, Err >`
 types the engine's existing constructor values rather than rebinding
 them. Pinned in `lib/tests/sum_ctors.test.disp`.
@@ -320,7 +321,7 @@ are written `Arrow { a : Nat, b : Nat } R`.
 - `app`: left-associative juxtaposition, looser than `.`.
 - The `->` suffix in `expr` and the `binder` form: right-associative.
   `a -> b -> c` parses as `a -> (b -> c)`.
-- The binder body (after `->`) is a full `expr`, so
+- The binder body (after either arrow) is a full `expr`, so
   `{x : A} -> A -> B` parses as `{x : A} -> (A -> B)`.
 
 = Abstract syntax tree
@@ -336,7 +337,7 @@ Num      { value: number }
 Hole     { }
 App      { f: Expr, x: Expr }
 Proj     { target: Expr, field: string }
-Binder   { params: Param[], body: Expr }
+Binder   { params: Param[], body: Expr, fat?: boolean }  -- fat ⇒ {x} => body (value lambda); thin -> is the Pi/type form
 RecType  { fields: TypedField[] }
 RecValue { fields: NamedField[], members?: RecMember[] }
 Ann      { expr: Expr, type: Expr }
