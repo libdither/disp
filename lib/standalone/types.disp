@@ -113,6 +113,57 @@ test Fn ShallowType ({_} => Nat) ({T} => T 5) = false
 
 Point := {c} => ({ #recognize := {_self, v} => tree_eq c v, members := [c] })
 
+// One shape under wait and tag: a suspended S-redex fork(stem f, K x), the
+// stored tree at .snd.snd. Sus is the shared super-type; Tagged keys identity
+// on the head (wait: the sig is a fixed stem of the marker), Faced on the
+// meta slot (tag: the head embeds behavior, so no constant sig exists).
+Sus := Pred ({v} =>
+  if (is_fork v) {
+    if (is_stem (pair_fst v)) {
+      if (is_fork (pair_snd v)) { is_leaf (pair_fst (pair_snd v)) } else { false }
+    } else { false }
+  } else { false })
+Tagged := {S, P} => ({ #recognize := {_self, v} =>
+  if (Sus v) { if (has_sig S v) { P (wait_payload v) } else { false } } else { false } })
+Faced := {name, P} => ({ #recognize := {_self, v} =>
+  if (Sus v) {
+    let m := wait_payload v
+    if (is_fork m) { if (tree_eq (pair_fst m) name) { P (pair_snd m) } else { false } } else { false }
+  } else { false } })
+// Shape, not trust: sig-valid forgeries are members. Blessing is the
+// walker's judgment (hyp_ok, the elim_raw-vs-T.elim comparison), never a
+// tree predicate. Payloads sharpen past AnyTree in a later stage.
+Hyp := Tagged hyp_sig AnyTree
+ElimHead := Tagged elim_sig AnyTree
+Invalid := Tagged invalid_sig AnyTree
+OpenChain := Tagged open_sig AnyTree
+StuckElim := Tagged elim_stuck_sig AnyTree
+TeqPartial := Tagged tree_eq_sig AnyTree
+TypeFace := Faced "recognize" AnyTree
+test Sus (make_hyp Nat t) = true
+test Sus Nat = true
+test Sus (pair 1 2) = false
+test Sus (Acc pair_fst) = false
+test Sus (list_const 5) = false
+test Hyp (make_hyp Nat t) = true
+test Hyp (make_hyp Bool Bool) = true
+test Hyp (elim_of Nat ({_} => Nat)) = false
+test Hyp (inj hyp_sig t) = false
+test Hyp Nat = false
+test ElimHead (elim_of Nat ({_} => Nat)) = true
+test ElimHead (wait elim_marker (pair t (pair Nat ({_} => Bool)))) = true
+test Invalid (invalid 5) = true
+test Invalid (make_hyp Nat t) = false
+test OpenChain (wait open_chain (pair t (pair t []))) = true
+test StuckElim (wait elim_stuck (pair t (pair t []))) = true
+test TeqPartial (wait tree_eq 5) = true
+test TypeFace Nat = true
+test TypeFace Bool = true
+test TypeFace (make_hyp Nat t) = false
+test TypeFace (pair "recognize" 5) = false
+test ShallowType Hyp = true
+test ShallowType TypeFace = true
+
 refl := t
 Eq := {A, x, y} => {
   let nx := canon A x
