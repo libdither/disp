@@ -143,23 +143,38 @@ Gate: annotation batch green; per-def pins for anything that surprised.
 
 ## Stage A3: observation rows for tagged hypotheses (checker-facing)
 
-Status: not started. Shared prerequisite with the Cases-record design (which
-has no doc yet; write it first or fold it in here).
+Status: probed 2026-08-11, split into A3a (near-free, ready) and A3b (the
+real mechanism). Probe findings, all first-run:
 
-Give `Tagged S P` declared rows so hypotheses of tagged types are usable
-under Guard. Two corrections to the original spelling:
+A3a: the wait form IS a nested Sigma (`fork(stem sig, fork(leaf, payload))`),
+so `Sigma Guard (Point S) ({_} => Sigma Guard (Point t) ({_} => P))` gives
+Tagged types working rows with ZERO walker changes: a checked function over
+an abstract tagged argument projects sig and payload legally (`h.fst`,
+`h.snd.snd` certify), undeclared observations refuse (application, too-deep
+projection both pinned false), and the kernel's existing readers certify at
+these types AS-IS (wait_payload, elim_raw, elim_ind : ElimHead -> TypeFace,
+elim_motive — no respelling; composite accessor bodies decompose into the
+mediated pair projections). To land: decide whether Tagged's instances gain
+a tele beside #recognize or ship as parallel rows-variants (a tele changes
+judge routing for these types everywhere), add S9/TwoFace pins for the new
+rows, and pins scoping sig-projection legality to Tagged domains.
 
-- The walker mediates only the literal pair_fst/pair_snd trees into Acc
-  frames, so a `Prj wait_payload` row can never match. Either spell the rows
-  as nested `.snd` projections (works today, hard-codes the encoding), or
-  build the missing mechanism: walker-side declared-accessor mediation (the
-  walk consults the subject type's rows to decide whether an applied function
-  is a sanctioned accessor). The mechanism is the real work and also what
-  records-as-hypotheses and case_of/Tele arguments need.
-- The sig check is a `Prj pair_fst` observation, not Self, and declaring it
-  legalizes sig-reading for Hyp-typed arguments. The sig-mining pins survive
-  today only because they sit at Bool/Nat domains; add pins that scope the
-  new legality to Tagged domains explicitly.
+Hyp caveat, now concrete: a hyp-marked value IS the checker's own mint.
+Guard's admit gate refuses subjects containing neutrals and its judge routes
+is_neutral values to the stored-type comparison, so Guard-judged membership
+of concrete hyp specimens is impossible by design; Hyp supports raw
+membership pins and abstract conduct only. The neutral-free families
+(ElimHead, Invalid, OpenChain, StuckElim, TeqPartial) get the full story.
+
+A3b, the genuinely new mechanism, now precisely scoped: walker-side
+mediation for NAME-KEYED reads only (field/field_cell on abstract records),
+needed by records-as-hypotheses (Cases, still no doc), the hypothesis
+payload keyed record, and case_of/Tele table arguments. The walk's accessor
+whitelist is literally pair_fst/pair_snd; respond_face already matches
+arbitrary accessor trees, so only the walk-side conversion is missing.
+Design options: rows scan at application time (hot-path perf risk),
+a precompiled accessor slot on type records, or shape-recognition of
+`field _ name` partials. Meta needs parity with whichever lands.
 
 Constraints to respect: eager-refusal invariant (undeclared observation is an
 error, not a stuck term) and the S9 discipline (rows instantiate at concrete
@@ -171,14 +186,16 @@ refuse; the sig-mining pin family extended, not just kept green.
 
 ## Stage A4: sharpen payloads, retype the readers
 
-Status: not started. Rides behind A1/A3.
-
-Replace the AnyTree payloads with real shapes: eliminator payload as a Sigma
-chain (raw x ind : ShallowType x motive), hypothesis payload as the keyed
-record (Tuple/at machinery), history as declared inductive data. Then the
-readers (wait_payload, neutral_history, elim_raw/ind/motive, elim_arity,
-neutral_type) get spelled annotations at whatever tier each supports, which
-without A3's mediation means Sampled for most; record the tier honestly.
+Status: eliminator half unblocked by the A3a probe (2026-08-11): the
+sharpened payload `Sigma AnyTree ({_} => Sigma TypeFace ({_} => AnyTree))`
+recognizes real blessed eliminators, refuses hyps, and the readers certify
+against it unchanged. Remaining for that half: def-order plumbing (kernel
+annotations naming ElimHead/TypeFace need those as declared givens with
+barrel fills, since the types live below the kernel; the alternative is
+annotated re-exports in types.disp, but re-annotating an exported name is a
+rebind and rides the guard mechanism). The hypothesis-payload half (keyed
+record, history as inductive data, neutral_history/neutral_type readers)
+stays Sampled until A3b lands name-keyed reads.
 
 Known tension, decide before starting: Guard-tier reader types via
 nested-Sigma spelling bake the encoding into the types, which fights A6's
