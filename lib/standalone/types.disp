@@ -18,26 +18,12 @@ elab_settings := [t "Pi" Fn]
 // arm k g: the k-th eliminator arm of a gate's list (head/tail spine indexing).
 arm := idx
 
-// A telescope is just data: a free-monad program over Fresh/Observe rows.
-// eff_bind is what the `x <- e` block sugar desugars to: graft k onto the
-// Pure leaf. Junk (any non-Pure/non-Op tree) propagates unchanged, which is
-// what makes `reject` abort a script from inside a computed branch.
-eff_bind := fix ({self, m, k} =>
-  if (has_sig "Pure" m) { k m.snd }
-  else if (has_sig "Op" m) { Op (pair m.snd.fst ({r} => self (m.snd.snd r) k)) }
-  else { m })
-// One-observation program: project the subject with acc, judge against T,
-// return the raw projection. `x <- see acc T` reads "observe it, call it x".
-see := {acc, T} => perform (Observe (pair (Prj acc) T)) Pure
-self_is := {T} => perform (Observe (pair Self T)) Pure
-done := Pure t
-reject := t
+node_like : ShallowType := Pred ({n} => or (is_leaf n) (is_fork n))
 
-node_like := Pred ({n} => or (is_leaf n) (is_fork n))
-
-False := Sum AnyTree []
-Not := {P} => Fn P ({_} => False)
-Refine := {A, p} => ({
+False : ShallowType := Sum AnyTree []
+Not : Pi Guard ShallowType ({_} => ShallowType) := {P} => Fn P ({_} => False)
+Refine : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => ShallowType))
+  := {A, p} => ({
   #recognize := {_self, v} => and (A v) (p v)
   check := {jdg, _T, v} => and (jdg A v) (p v)
 })
@@ -45,7 +31,8 @@ test False t = false
 test False 5 = false
 test Not False ({p} => p) = true
 
-Quotient := {A, nf} => ({
+Quotient : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => ShallowType))
+  := {A, nf} => ({
   #recognize := {_self, v} => A v
   check := {jdg, _T, v} => jdg A v
   norm := nf
@@ -55,7 +42,8 @@ canon := {A, v} => {
   let nf := A.norm
   if (or (is_leaf nf) (not (neutral_free v))) { v } else { nf v }
 }
-Named := {name, T} => ({
+Named : Pi Guard AnyTree ({_} => Pi Guard ShallowType ({_} => ShallowType))
+  := {name, T} => ({
   #recognize := {_self, v} => T v
   check := {jdg, _T2, v} => jdg T v
   name := name
@@ -111,7 +99,8 @@ test Fn ShallowType ({_} => Bool) ({T} => T 5) = true
 test Fn ShallowType ({_} => Bool) ({T} => bool_case Bool (T 5) false true) = true
 test Fn ShallowType ({_} => Nat) ({T} => T 5) = false
 
-Point := {c} => ({ #recognize := {_self, v} => tree_eq c v, members := [c] })
+Point : Pi Guard AnyTree ({_} => ShallowType)
+  := {c} => ({ #recognize := {_self, v} => tree_eq c v, members := [c] })
 
 // One shape under wait and tag: a suspended S-redex fork(stem f, K x), the
 // stored tree at .snd.snd. Sus is the shared super-type; Tagged keys identity
@@ -272,7 +261,7 @@ list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C
 test Pi Meta ShallowType ({T} => Fn AnyTree ({_} => Bool)) ({T, v} => T v) = false
 test Pi Guard ShallowType ({T} => Fn AnyTree ({_} => Bool)) ({T, v} => T v) = false
 test Pi Meta ShallowType ({_} => Bool) ({T} => T 5) = true
-list_samples := [[], [1], [1, 2]]
+list_samples : List AnyTree := [[], [1], [1, 2]]
 
 let eff_mem := {ej, rj, Q, X, v} => (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
 Eff : Pi Guard ShallowType ({_} => Pi Guard ShallowType ({_} => Pi Guard ShallowType ({_} => ShallowType)))
@@ -287,6 +276,23 @@ test Eff Row AnyTree AnyTree (Sigma Guard Nat ({_} => Bool)).tele = true
 test Eff Row AnyTree AnyTree ShallowType.obs = true
 test Eff Row AnyTree AnyTree 5 = false
 
+// A telescope is just data: a free-monad program over Fresh/Observe rows.
+// eff_bind is what the `x <- e` block sugar desugars to: graft k onto the
+// Pure leaf. Junk (any non-Pure/non-Op tree) propagates unchanged, which is
+// what makes `reject` abort a script from inside a computed branch.
+eff_bind := fix ({self, m, k} =>
+  if (has_sig "Pure" m) { k m.snd }
+  else if (has_sig "Op" m) { Op (pair m.snd.fst ({r} => self (m.snd.snd r) k)) }
+  else { m })
+// One-observation program: project the subject with acc, judge against T,
+// return the raw projection. `x <- see acc T` reads "observe it, call it x".
+see : Pi Guard AnyTree ({_} => Pi Guard ShallowType ({_} => Eff Row AnyTree AnyTree))
+  := {acc, T} => perform (Observe (pair (Prj acc) T)) Pure
+self_is : Pi Guard ShallowType ({_} => Eff Row AnyTree AnyTree)
+  := {T} => perform (Observe (pair Self T)) Pure
+done : Eff Row AnyTree AnyTree := Pure t
+reject := t
+
 GuardNatToNat : ShallowType := Pi Guard Nat ({_} => Nat)
 
 add : Nat -> Nat -> Nat := {n, m} => nat_rec Nat n m ({k, ih} => succ ih)
@@ -298,7 +304,8 @@ test ShallowType Nat = true
 test ShallowType GuardNatToNat = true
 
 // 1. Lists: recursion at row-generation time, branching on the observed node.
-list_rows := {A} => (fix ({self, get} => {
+list_rows : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => Eff Row AnyTree AnyTree))
+  := {A} => (fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
   else {
@@ -306,7 +313,8 @@ list_rows := {A} => (fix ({self, get} => {
     self ({v} => (get v).snd)
   }
 }))
-ListR := {A} => Tele Guard (list_rows A ({v} => v))
+ListR : Pi Guard ShallowType ({_} => ShallowType)
+  := {A} => Tele Guard (list_rows A ({v} => v))
 test ListR Nat [] = true
 test ListR Nat [1, 2] = true
 test ListR Nat [1, t t] = false
@@ -342,7 +350,7 @@ record_rows := fix ({self, entries} =>
     self entries.snd
   })
 NamedRec := {entries} => Tele Guard (record_rows entries)
-xy := [pair "x" Nat, pair "y" Bool]
+xy : List AnyTree := [pair "x" Nat, pair "y" Bool]
 test NamedRec xy ({ x := 2, y := false }) = true
 test NamedRec xy ({ x := 2 }) = false
 test NamedRec xy ({ x := 2, y := 5 }) = false
@@ -402,14 +410,16 @@ test UniqueOf [AnyTree, Point 5] [5, 7] = true
 test UniqueOf [AnyTree, AnyTree] [5] = false
 
 // 7. Tree checkers: branch at each node, sequence the two child programs.
-tree_rows := {LeafTy} => (fix ({self, get} => {
+tree_rows : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => Eff Row AnyTree AnyTree))
+  := {LeafTy} => (fix ({self, get} => {
   node <- see get node_like
   if (is_fork node) {
     _ <- self ({v} => (get v).fst)
     self ({v} => (get v).snd)
   } else { see get LeafTy }
 }))
-TreeOf := {LeafTy} => Tele Guard (tree_rows LeafTy ({v} => v))
+TreeOf : Pi Guard ShallowType ({_} => ShallowType)
+  := {LeafTy} => Tele Guard (tree_rows LeafTy ({v} => v))
 test TreeOf Unit (pair (pair t t) t) = true
 test TreeOf Unit (pair (t t) t) = false
 
@@ -425,7 +435,7 @@ mixed_rows := fix ({self, get} => {
     self ({v} => (((get v).snd).snd).snd)
   } else { reject }
 })
-MixedTree := Tele Guard (mixed_rows ({v} => v))
+MixedTree : ShallowType := Tele Guard (mixed_rows ({v} => v))
 test MixedTree (Leaf false) = true
 test MixedTree (Node (pair 2 (pair (Leaf false) (Leaf false)))) = true
 test MixedTree (Node (pair false (pair (Leaf false) (Leaf false)))) = false
@@ -452,8 +462,9 @@ height := fix ({self, v} =>
     let hr := self v.snd
     succ (if (nat_le hl hr) { hr } else { hl })
   } else { zero })
-near := Pred ({p} => and (nat_le p.fst (succ p.snd)) (nat_le p.snd (succ p.fst)))
-bal_rows := fix ({self, get} => {
+near : ShallowType := Pred ({p} => and (nat_le p.fst (succ p.snd)) (nat_le p.snd (succ p.fst)))
+bal_rows : Pi Guard AnyTree ({_} => Eff Row AnyTree AnyTree)
+  := fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
   else {
@@ -462,7 +473,7 @@ bal_rows := fix ({self, get} => {
     self ({v} => (get v).snd)
   }
 })
-Balanced := Tele Guard (bal_rows ({v} => v))
+Balanced : ShallowType := Tele Guard (bal_rows ({v} => v))
 test Balanced t = true
 test Balanced (pair t t) = true
 test Balanced (pair (pair t t) t) = true
@@ -475,7 +486,7 @@ len_xs_rows := {
   n <- see ({r} => field r "len") Nat
   vec_rows Bool n ({r} => field r "xs")
 }
-LenXs := Tele Guard len_xs_rows
+LenXs : ShallowType := Tele Guard len_xs_rows
 test LenXs ({ len := 2, xs := [true, false] }) = true
 test LenXs ({ len := 1, xs := [true, false] }) = false
 test LenXs ({ len := 3, xs := [true, false] }) = false
