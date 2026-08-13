@@ -106,9 +106,15 @@ membership for node_like, False, near, MixedTree, Balanced, LenXs, xy,
 list_samples. The eff_bind/see block moved below Eff for def-order
 (tree-neutral). Annotation liveness verified by deliberate wrong-type flip.
 
-Remaining candidates: kernel.disp's inj/const_fn/perform (probed green,
-deferred because kernel.disp carries an unrelated uncommitted local change),
-id_fn/stem_fn/fork_fn/Pred/PiCode/Coproduct (unprobed), and the refused
+Second slice LANDED (89ef76c8, 2026-08-12): the kernel.disp maximization
+pass. Every kernel def now carries the strongest annotation reachable with
+existing machinery (~35 additions/upgrades; see the commit). Notable: inj
+and list_const carry exact Point-codomain specs (unique inhabitant up to
+extensionality), the formers' codomains are TypeFace, Sum's is Refine
+ShallowType Coherent, and the ElimHead readers landed at Guard tier via the
+rows types and eight new given fills.
+
+Remaining candidates: the refused
 set with diagnosed causes: all_rows/vec_rows-class (builder branches on its
 parameter at construction, unlike list_rows whose branching hides in the
 stored continuation; rewritable via list_rec/nat_rec = A5 candidates),
@@ -159,12 +165,14 @@ a tele beside #recognize or ship as parallel rows-variants (a tele changes
 judge routing for these types everywhere), add S9/TwoFace pins for the new
 rows, and pins scoping sig-projection legality to Tagged domains.
 
-Hyp caveat, now concrete: a hyp-marked value IS the checker's own mint.
-Guard's admit gate refuses subjects containing neutrals and its judge routes
-is_neutral values to the stored-type comparison, so Guard-judged membership
-of concrete hyp specimens is impossible by design; Hyp supports raw
-membership pins and abstract conduct only. The neutral-free families
-(ElimHead, Invalid, OpenChain, StuckElim, TeqPartial) get the full story.
+Control-marker caveat, completed by the maximization pass (2026-08-12): the
+checker has exactly three control markers its judge claims before rows can
+run, and all three refuse rows spellings categorically. Hyp marks are its
+mints (admit + the is_neutral branch), invalid marks are its error
+propagation (the is_invalid branch refuses them as values), open chains are
+its pending completions (the is_open_chain branch routes them to complete).
+Hyp, Invalid, OpenChain keep recognize spellings; ElimHead, StuckElim,
+TeqPartial are rows-based (landed 89ef76c8) with conduct pins.
 
 A3b, the genuinely new mechanism, now precisely scoped: walker-side
 mediation for NAME-KEYED reads only (field/field_cell on abstract records),
