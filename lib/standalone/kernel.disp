@@ -444,7 +444,9 @@ Sigma : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} =
 Isect : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_v} => Nat]) AnyTree ({_} => AnyTree)))
   := {table, A, P} => Tele table (IsectCode A P)
 Table : ShallowType := Pred ({r} => not (is_leaf (field_cell r "fresh")))
-Enum : Table := ({ fresh := {st, ty, _tail} => list_map AnyTree AnyTree ({a} => pair a st) ty.members })
+Enum : Table := ({
+  fresh := {st, ty, _tail} => list_map AnyTree AnyTree ({a} => pair a st) ty.members
+})
 Sampled : Pi (Sampled [[1]]) (List AnyTree) ({_} => Table)
   := {samples} => ({ fresh := {st, _ty, _tail} => list_map AnyTree AnyTree ({a} => pair a st) samples })
 
