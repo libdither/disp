@@ -112,23 +112,37 @@ Sus := Pred ({v} =>
       if (is_fork (pair_snd v)) { is_leaf (pair_fst (pair_snd v)) } else { false }
     } else { false }
   } else { false })
-Tagged := {S, P} => ({ #recognize := {_self, v} =>
+Tagged : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => ShallowType))
+  := {S, P} => ({ #recognize := {_self, v} =>
   if (Sus v) { if (has_sig S v) { P (wait_payload v) } else { false } } else { false } })
-Faced := {name, P} => ({ #recognize := {_self, v} =>
+Faced : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => ShallowType))
+  := {name, P} => ({ #recognize := {_self, v} =>
   if (Sus v) {
     let m := wait_payload v
     if (is_fork m) { if (tree_eq (pair_fst m) name) { P (pair_snd m) } else { false } } else { false }
   } else { false } })
 // Shape, not trust: sig-valid forgeries are members. Blessing is the
 // walker's judgment (hyp_ok, the elim_raw-vs-T.elim comparison), never a
-// tree predicate. Payloads sharpen past AnyTree in a later stage.
-Hyp := Tagged hyp_sig AnyTree
-ElimHead := Tagged elim_sig AnyTree
-Invalid := Tagged invalid_sig AnyTree
-OpenChain := Tagged open_sig AnyTree
-StuckElim := Tagged elim_stuck_sig AnyTree
-TeqPartial := Tagged tree_eq_sig AnyTree
-TypeFace := Faced "recognize" AnyTree
+// tree predicate.
+Hyp : ShallowType := Tagged hyp_sig AnyTree
+Invalid : ShallowType := Tagged invalid_sig AnyTree
+OpenChain : ShallowType := Tagged open_sig AnyTree
+TypeFace : ShallowType := Faced "recognize" AnyTree
+// Rows spelling of the same shape: a wait form IS a nested Sigma, so these
+// carry a tele and hypotheses of them support payload projection under
+// Guard. The checker's three CONTROL markers cannot ride it and keep the
+// recognize spellings above: hyp marks are its mints (admit + the
+// is_neutral judge branch claim them), invalid marks are its error
+// propagation (the is_invalid branch refuses them as values), open chains
+// are its pending completions (the is_open_chain branch routes them to
+// complete). Rows work for the data-shaped rest.
+TaggedRows : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => ShallowType))
+  := {S, P} => Sigma Guard (Point S) ({_} => Sigma Guard (Point t) ({_} => P))
+SusRows : ShallowType := Sigma Guard (Pred is_stem) ({_} => Sigma Guard (Point t) ({_} => AnyTree))
+ElimPayload : ShallowType := Sigma Guard AnyTree ({_} => Sigma Guard TypeFace ({_} => AnyTree))
+ElimHead : ShallowType := TaggedRows elim_sig ElimPayload
+StuckElim : ShallowType := TaggedRows elim_stuck_sig AnyTree
+TeqPartial : ShallowType := TaggedRows tree_eq_sig AnyTree
 test Sus (make_hyp Nat t) = true
 test Sus Nat = true
 test Sus (pair 1 2) = false
@@ -152,6 +166,12 @@ test TypeFace (make_hyp Nat t) = false
 test TypeFace (pair "recognize" 5) = false
 test ShallowType Hyp = true
 test ShallowType TypeFace = true
+// Conduct: hypotheses of rows-spelled tagged types project sig and payload
+// legally; undeclared observations refuse.
+test (Pi Guard SusRows ({_} => AnyTree)) ({h} => (h.snd).snd) = true
+test (Pi Guard SusRows ({_} => AnyTree)) ({h} => h 5) = false
+test (Pi Guard ElimHead ({_} => TypeFace)) ({E} => (((E.snd).snd).snd).fst) = true
+test (Pi Guard ElimHead ({_} => AnyTree)) ({E} => ((E.snd).snd).fst) = true
 
 refl := t
 Eq := {A, x, y} => {
