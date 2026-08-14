@@ -186,6 +186,11 @@ test Invalid (invalid 5) = true
 test Invalid (make_hyp Nat t) = false
 test OpenChain (wait open_chain (pair t (pair t []))) = true
 test StuckElim (wait elim_stuck (pair t (pair t []))) = true
+// Boundary: rows membership refuses any payload embedding a live mint (the
+// judge claims neutrals at their recorded type), so a real stuck collector
+// carrying a hypothesis scrutinee is not a member; rows spellings describe
+// the neutral-free shape only.
+test StuckElim (wait elim_stuck (pair (elim_of Nat ({_} => Nat)) (pair (make_hyp Nat t) []))) = false
 test TeqPartial (wait tree_eq 5) = true
 test TypeFace Nat = true
 test TypeFace Bool = true
@@ -362,6 +367,25 @@ test Vec 2 Bool [true, false] = true
 test Vec 2 Bool [true] = false
 test Vec 2 Bool [true, false, true] = false
 test Vec 0 Bool [] = true
+
+// Rows twin of RawRecord: observe the names list, then the payload spine at
+// the observed length (vec_rows over a dependent parameter). Stricter than
+// RawRecord on junk spines. Hypotheses answer the names projection only; the
+// payload rows branch on the observed length, which stops at a mint. Conduct
+// pins are Pi-Guard-literal: consuming a branching row program at a mint
+// under Meta is the TreeOf simulator pathology.
+raw_record_rows := {
+  names <- see pair_fst (List AnyTree)
+  vec_rows AnyTree (list_len AnyTree names) pair_snd
+}
+RawRecordRows : ShallowType := Tele Guard raw_record_rows
+test RawRecordRows ({ a := 1 }) = true
+test RawRecordRows ({ a := 1, b := 2 }) = true
+test RawRecordRows ({}) = true
+test RawRecordRows (pair ["a"] t) = false
+test RawRecordRows 5 = false
+test (Pi Guard RawRecordRows ({_} => List AnyTree)) ({r} => r.fst) = true
+test (Pi Guard RawRecordRows ({_} => AnyTree)) ({r} => r.snd) = false
 
 // 3. Records with names: entries data -> one presence row + one field row each.
 record_rows := fix ({self, entries} =>
