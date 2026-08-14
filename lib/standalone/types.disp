@@ -8,9 +8,12 @@ open use raw "kernel.disp" {}
 // prelude.disp is the double-pass barrel that loads both raw, then checked.
 // The ambient-walker parameter lives here with the annotated surface it
 // governs (givens do not cross opens); filling it with another table
-// re-verifies every Fn-annotated definition below under that walker.
-given GenericWalker : AnyTree := Guard
-Fn := Pi GenericWalker
+// re-verifies every arrow-spelled definition below under that walker.
+// Pi-Guard-literal annotations are the deliberate opt-out: their bodies
+// build tag/record structure over mints, which Meta's simulator refuses
+// (the embedded-mark boundary), so they certify under Guard only.
+given DefaultWalker : AnyTree := Guard
+Fn := Pi DefaultWalker
 // Re-point the binder sugar at Fn here: the raw kernel open exports a
 // neutral-Fn settings entry (givens unfilled), so the real one must rebind.
 elab_settings := [t "Pi" Fn]
@@ -60,7 +63,7 @@ Tuple := {keys} => {
   let ks := key_sort ShallowType keys
   if (not (tree_eq (list_len AnyTree ks) (list_len AnyTree keys))) { invalid keys }
   else { (fix ({self, ks2} =>
-    if (is_leaf ks2.snd) { ks2.fst } else { Sigma GenericWalker ks2.fst ({_} => self ks2.snd) })) ks }
+    if (is_leaf ks2.snd) { ks2.fst } else { Sigma DefaultWalker ks2.fst ({_} => self ks2.snd) })) ks }
 }
 at := {K, keys, s} => (fix ({self, ks, v} =>
   if (is_leaf ks) { invalid K }
@@ -168,10 +171,10 @@ test ShallowType Hyp = true
 test ShallowType TypeFace = true
 // Conduct: hypotheses of rows-spelled tagged types project sig and payload
 // legally; undeclared observations refuse.
-test (Pi Guard SusRows ({_} => AnyTree)) ({h} => (h.snd).snd) = true
-test (Pi Guard SusRows ({_} => AnyTree)) ({h} => h 5) = false
-test (Pi Guard ElimHead ({_} => TypeFace)) ({E} => (((E.snd).snd).snd).fst) = true
-test (Pi Guard ElimHead ({_} => AnyTree)) ({E} => ((E.snd).snd).fst) = true
+test (SusRows -> AnyTree) ({h} => (h.snd).snd) = true
+test (SusRows -> AnyTree) ({h} => h 5) = false
+test (ElimHead -> TypeFace) ({E} => (((E.snd).snd).snd).fst) = true
+test (ElimHead -> AnyTree) ({E} => ((E.snd).snd).fst) = true
 
 refl := t
 Eq := {A, x, y} => {
@@ -306,9 +309,9 @@ eff_bind := fix ({self, m, k} =>
   else { m })
 // One-observation program: project the subject with acc, judge against T,
 // return the raw projection. `x <- see acc T` reads "observe it, call it x".
-see : Pi Guard AnyTree ({_} => Pi Guard ShallowType ({_} => Eff Row AnyTree AnyTree))
+see : AnyTree -> ShallowType -> Eff Row AnyTree AnyTree
   := {acc, T} => perform (Observe (pair (Prj acc) T)) Pure
-self_is : Pi Guard ShallowType ({_} => Eff Row AnyTree AnyTree)
+self_is : ShallowType -> Eff Row AnyTree AnyTree
   := {T} => perform (Observe (pair Self T)) Pure
 done : Eff Row AnyTree AnyTree := Pure t
 reject := t

@@ -7,27 +7,27 @@ open given { AnyTree : AnyTree, RawRecord : AnyTree, Fn : AnyTree, elab_settings
 // Unused-looking defs below may be compiler sugar targets looked up by name:
 // make_record + list_const (record literals), Coproduct (sum literals), prod (match).
 
-inj : Pi Guard AnyTree ({n} => Pi Guard AnyTree ({p} => Point (pair n p)))
+inj : {n : AnyTree} -> {p : AnyTree} -> Point (pair n p)
   := {name, payload} => pair name payload
 idx : Pi (Sampled [1]) AnyTree ({_} => Pi (Sampled [[7, 8]]) AnyTree ({_} => AnyTree))
   := fix ({self, k, xs} => if (is_leaf k) { pair_fst xs } else { self (pair_snd k) (pair_snd xs) })
-nil : Pi Guard ShallowType ({A} => List A) := {_A} => t
-cons : Pi Guard ShallowType ({A} => A -> List A -> List A)
+nil : {A : ShallowType} -> List A := {_A} => t
+cons : {A : ShallowType} -> A -> List A -> List A
   := {_A, h, tl} => t h tl
-list_const : Pi Guard AnyTree ({x} => Point (t t x)) := {x} => t t x
-bool_case : Pi Guard ShallowType ({C} => Bool -> C -> C -> C)
+list_const : {x : AnyTree} -> Point (t t x) := {x} => t t x
+bool_case : {C : ShallowType} -> Bool -> C -> C -> C
   := {_C} => fix ({_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b)
-let list_rec : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({C} => List A -> C -> (A -> List A -> C -> C) -> C))
+let list_rec : {A : ShallowType} -> {C : ShallowType} -> List A -> C -> (A -> List A -> C -> C) -> C
   := {_A, _C} => fix ({self, xs, base, step} => triage base ({_} => base) ({h, tl} => step h tl (self tl base step)) xs)
-member : Pi Guard ShallowType ({A} => AnyTree -> List A -> Bool)
+member : {A : ShallowType} -> AnyTree -> List A -> Bool
   := {A, node, xs} => list_rec A t xs false ({h, _tl, ih} => bool_case t (tree_eq node h) true ih)
-list_all : Pi Guard ShallowType ({A} => (A -> Bool) -> List A -> Bool)
+list_all : {A : ShallowType} -> (A -> Bool) -> List A -> Bool
   := {A, p, xs} => list_rec A t xs true ({h, _tl, ih} => bool_case t (p h) ih false)
-list_map : Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => (A -> B) -> List A -> List B))
+list_map : {A : ShallowType} -> {B : ShallowType} -> (A -> B) -> List A -> List B
   := {A, B, f, xs} => list_rec A t xs [] ({h, _tl, ih} => cons B (f h) ih)
-list_len : Pi Guard ShallowType ({A} => List A -> Nat)
+list_len : {A : ShallowType} -> List A -> Nat
   := {A, xs} => list_rec A t xs zero ({_h, _tl, ih} => succ ih)
-list_snoc : Pi Guard ShallowType ({A} => List A -> A -> List A)
+list_snoc : {A : ShallowType} -> List A -> A -> List A
   := {A, xs, x} => list_rec A t xs [x] ({h, _tl, ih} => cons A h ih)
 list_zip : Pi (Sampled [[1, 2]]) (List AnyTree) ({_} => Pi (Sampled [[true, false]]) (List AnyTree) ({_} => List AnyTree))
   := fix ({self, xs, ys} =>
@@ -35,9 +35,9 @@ list_zip : Pi (Sampled [[1, 2]]) (List AnyTree) ({_} => Pi (Sampled [[true, fals
 list_apply : Pi (Sampled [pair]) AnyTree ({_} => Pi (Sampled [[1, 2]]) (List AnyTree) ({_} => AnyTree))
   := fix ({self, f, xs} =>
   if (is_leaf xs) { f } else { self (f (pair_fst xs)) (pair_snd xs) })
-list_cat : Pi Guard ShallowType ({A} => List A -> List A -> List A)
+list_cat : {A : ShallowType} -> List A -> List A -> List A
   := {A, xs, ys} => list_rec A t xs ys ({h, _tl, ih} => cons A h ih)
-list_filter : Pi Guard ShallowType ({A} => (A -> Bool) -> List A -> List A)
+list_filter : {A : ShallowType} -> (A -> Bool) -> List A -> List A
   := {A, p, xs} => list_rec A t xs [] ({h, _tl, ih} => bool_case t (p h) (cons A h ih) ih)
 list_assoc : Pi (Sampled ["k"]) AnyTree ({_} => Pi (Sampled [[pair "k" 7]]) (List AnyTree) ({_} => AnyTree))
   := fix ({self, k, xs} =>
@@ -55,7 +55,7 @@ make_record : Pi (Sampled [["a", "b"]]) (List AnyTree) ({_} => Pi (Sampled [[lis
   pair (list_map t t pair_fst sorted) (list_map t t pair_snd sorted)
 }
 test tree_eq ({ b := 2, a := 1 }) ({ a := 1, b := 2 }) = true
-Coproduct : Pi Guard AnyTree ({_} => AnyTree) := {variants} => variants
+Coproduct : AnyTree -> AnyTree := {variants} => variants
 /// prod eliminator
 prod : Pi (Sampled [pair ["Some"] [({p} => p)]]) AnyTree ({_} => Pi (Sampled [inj "Some" 7]) AnyTree ({_} => AnyTree))
   := {table} => (fix ({go, names, arms, v} =>
@@ -67,13 +67,13 @@ prod : Pi (Sampled [pair ["Some"] [({p} => p)]]) AnyTree ({_} => Pi (Sampled [in
     go (pair_snd names) (pair_snd arms) v
   })) (pair_fst table) (pair_snd table)
 
-wait_payload : Pi Guard SusRows ({_} => AnyTree) := {w} => pair_snd (pair_snd w)
-sig_of : Pi Guard AnyTree ({_} => AnyTree) := {marker} => pair_fst (wait marker t)
+wait_payload : SusRows -> AnyTree := {w} => pair_snd (pair_snd w)
+sig_of : AnyTree -> AnyTree := {marker} => pair_fst (wait marker t)
 has_sig : Pi (Sampled [sig_of tree_eq]) AnyTree ({_} => Pi (Sampled [wait tree_eq 5, 5]) AnyTree ({_} => Bool))
   := {sig, v} => and (is_fork v) (tree_eq (pair_fst v) sig)
 tree_eq_sig := sig_of tree_eq
 
-invalid_marker : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => AnyTree)) := {a, b} => b
+invalid_marker : AnyTree -> AnyTree -> AnyTree := {a, b} => b
 invalid : Pi (Sampled [5]) AnyTree ({_} => Invalid) := {reason} => wait invalid_marker reason
 invalid_sig := sig_of invalid_marker
 is_invalid : Pi (Sampled [invalid 5, 5]) AnyTree ({_} => Bool) := has_sig invalid_sig
@@ -81,11 +81,11 @@ is_invalid : Pi (Sampled [invalid 5, 5]) AnyTree ({_} => Bool) := has_sig invali
 open_chain := fix ({self, st, arg} => wait self (pair (pair_fst st) (pair (pair_fst (pair_snd st)) (list_snoc t (pair_snd (pair_snd st)) arg))))
 open_sig := sig_of open_chain
 is_open_chain : Pi (Sampled [wait open_chain (pair t (pair t [])), 5]) AnyTree ({_} => Bool) := has_sig open_sig
-const_fn : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => AnyTree)) := {v, _x} => v
-id_fn : Pi Guard AnyTree ({_} => AnyTree) := {x} => x
-stem_fn : Pi Guard (Pi Guard AnyTree ({_} => AnyTree)) ({_} => Pi Guard AnyTree ({_} => AnyTree))
+const_fn : AnyTree -> AnyTree -> AnyTree := {v, _x} => v
+id_fn : AnyTree -> AnyTree := {x} => x
+stem_fn : (AnyTree -> AnyTree) -> AnyTree -> AnyTree
   := {cf, x} => t (cf x)
-fork_fn : Pi Guard (Pi Guard AnyTree ({_} => AnyTree)) ({_} => Pi Guard (Pi Guard AnyTree ({_} => AnyTree)) ({_} => Pi Guard AnyTree ({_} => AnyTree)))
+fork_fn : (AnyTree -> AnyTree) -> (AnyTree -> AnyTree) -> AnyTree -> AnyTree
   := {lf, rf, x} => t (lf x) (rf x)
 
 field_cell : Pi (Sampled [make_record ["a"] [list_const 1]]) RawRecord ({_} => Pi (Sampled ["a", "zz"]) AnyTree ({_} => AnyTree))
@@ -114,13 +114,13 @@ field_put : Pi (Sampled [{ a := 1 }]) RawRecord ({_} => Pi (Sampled ["b"]) AnyTr
 test field (field_put ({ a := 1, b := 2 }) "b" 9) "b" = 9
 test tree_eq (field_put ({ a := 1 }) "b" 2) ({ a := 1, b := 2 }) = true
 
-tag : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => Sus))
+tag : AnyTree -> AnyTree -> Sus
   := {meta, behavior} => {
   let s := {a, b, c} => (a c) (b c)
   let k := {a, b} => a
   s (s (k k) behavior) (k meta)
 }
-tagged_meta : Pi Guard SusRows ({_} => AnyTree) := {v} => pair_snd (pair_snd v)
+tagged_meta : SusRows -> AnyTree := {v} => pair_snd (pair_snd v)
 faced : Pi (Sampled ["recognize"]) AnyTree ({_} => Pi (Sampled [make_record ["recognize"] [list_const ({_s, _v} => true)]]) RawRecord ({_} => Sus))
   := {name, r} => tag (pair name r) (fix (field r name))
 is_type : Pi (Sampled [Bool, 5]) AnyTree ({_} => Bool)
@@ -131,7 +131,7 @@ make_type : Pi (Sampled [make_record ["tele"] [list_const t]]) RawRecord ({_} =>
 RawRecord : ShallowType := ({ #recognize := {_self, r} => and (is_fork r) (tree_eq (list_len t (pair_fst r)) (list_len t (pair_snd r))) })
 
 EffCode : List AnyTree := < Pure : t, Op : t >
-perform : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => AnyTree)) := {q, k} => Op (pair q k)
+perform : AnyTree -> AnyTree -> AnyTree := {q, k} => Op (pair q k)
 handle : Pi (Sampled [({ return := {x} => x, op := {q, resume} => resume q })]) AnyTree ({_} => Pi (Sampled [Pure 5, perform 3 Pure]) AnyTree ({_} => AnyTree))
   := {h, m} => {
   let ret := field h "return"
@@ -149,7 +149,7 @@ is_elim_frame : Pi (Sampled [Elim (pair t t), 5]) AnyTree ({_} => Bool) := has_s
 
 ObsCode : List AnyTree := < App, Self, Prj : t >
 RowCode : List AnyTree := < Fresh : t, Observe : t >
-Pred : Pi Guard AnyTree ({_} => ShallowType) := {p} => ({ #recognize := {_self, v} => p v })
+Pred : AnyTree -> ShallowType := {p} => ({ #recognize := {_self, v} => p v })
 Bool : Refine ShallowType Coherent := ({
   #recognize := {_self, v} => triage true ({c} => tree_eq c t) ({l, r} => false) v
   gate := {_Ind, B} => [B true, B false]
@@ -160,13 +160,13 @@ ShallowType : ShallowType := ({ #recognize := {_self, v} => is_type v, obs := pe
 test ShallowType ({ #recognize := {_self, _v} => true }) = true
 test ({ #recognize := {_self, v} => is_leaf v }) zero = true
 test ({ #recognize := {_self, v} => is_leaf v }) 5 = false
-PiCode : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => TypeFace))
+PiCode : ShallowType -> AnyTree -> TypeFace
   := {A, B} => make_type ({ tele := perform (Fresh A) ({x} => perform (Observe (pair App (B x))) ({_} => Pure t)) })
-SigmaCode : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => TypeFace))
+SigmaCode : ShallowType -> AnyTree -> TypeFace
   := {A, B} => make_type ({ tele := perform (Observe (pair Self (Pred is_fork))) ({_} =>
   perform (Observe (pair (Prj pair_fst) A)) ({a} =>
   perform (Observe (pair (Prj pair_snd) (B a))) ({_} => Pure t))) })
-IsectCode : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => TypeFace))
+IsectCode : ShallowType -> AnyTree -> TypeFace
   := {A, P} => make_type ({ tele := perform (Fresh A) ({x} => perform (Observe (pair Self (P x))) ({_} => Pure t)) })
 AnyTree : Refine ShallowType Coherent := Pred ({_v} => true)
 
@@ -190,9 +190,9 @@ b_abs : Pi (Sampled [make_hyp Nat t]) AnyTree ({_} => Pi (Sampled [5]) AnyTree (
     else { triage (const_fn v) ({c} => stem_fn (ab c)) ({l, r} => fork_fn (ab l) (ab r)) v }
   )) C
 }
-elim_raw : Pi Guard ElimHead ({_} => AnyTree) := {E} => pair_fst (wait_payload E)
-elim_ind : Pi Guard ElimHead ({_} => TypeFace) := {E} => pair_fst (pair_snd (wait_payload E))
-elim_motive : Pi Guard ElimHead ({_} => AnyTree) := {E} => pair_snd (pair_snd (wait_payload E))
+elim_raw : ElimHead -> AnyTree := {E} => pair_fst (wait_payload E)
+elim_ind : ElimHead -> TypeFace := {E} => pair_fst (pair_snd (wait_payload E))
+elim_motive : ElimHead -> AnyTree := {E} => pair_snd (pair_snd (wait_payload E))
 elim_arity : Pi (Sampled [elim_of Nat ({_} => Nat)]) AnyTree ({_} => Nat) := {E} => {
   let Ind := elim_ind E
   let g := Ind.gate
@@ -857,7 +857,7 @@ let record_mem := {ej, entries, r} => list_all AnyTree ({e} => {
   let c := field_cell r (pair_fst e)
   if (is_leaf c) { false } else { ej (pair_snd e) (pair_snd c) }
 }) entries
-Record : Pi Guard (List AnyTree) ({_} => ShallowType) := {entries} => ({
+Record : List AnyTree -> ShallowType := {entries} => ({
   #recognize := {_self, r} => record_mem ({ty, a} => ty a) entries r
   check := {jdg, _T, r} => record_mem jdg entries r
 })
