@@ -133,13 +133,33 @@ Fork value answers its own component, raw reduction verbatim, no
 readback) unlocked the whole family. Fourteen annotations flipped to
 arrows and now ride the Meta differential: Not, Refine, Quotient, Named,
 Point, List, Eff, Tagged, Faced, TaggedRows, ListR, list_rows, tree_rows,
-bal_rows. The literal opt-out list is now three stated reasons: the
-blessed-eliminator trio (nat_rec/tree_rec/list_rec) refuses under Meta,
-TreeOf's branching row program blows up the simulation (timeout at 9G;
-linear ListR is fine), and GuardNatToNat is the literal fixture. Known
-residue beyond those: the multishot/Sigma-fan readback boundary (pinned)
-and the shared dependent-application frontier. The deep alternative stays
-recorded: converge Meta onto Guard's in-band provenance design.
+bal_rows. GuardNatToNat retired to test scaffolding (6c2f3162); the
+literal opt-out list is now two entries, both diagnosed (2026-08-14):
+
+- The blessed-eliminator trio (nat_rec/tree_rec/list_rec): a motive that
+  embeds a mint makes the eliminator head a composite VALUE, and Meta's
+  elim-head recognition matches concrete heads only, so applying a
+  composite head to a neutral scrutinee falls into raw marker-code
+  simulation where is_neutral is (deliberately) answered false and the
+  recursor destructures the mint into Poison. Probe triangulation:
+  composite heads construct fine and apply to concretes fine; the
+  all-Meta saturated spellings refuse. Fix shape, second rule of the
+  projection family but more delicate: special-form recognition on
+  composite values (sig check via the Fork value's components) routing
+  into the existing Chain machinery with a readback'd head, gated by the
+  rooted/verify_inband discipline because readback puts marks in-band.
+- TreeOf: the blowup is in simulating the Tele APPLICATION over a
+  branching row program (isolated with a trivial AnyTree codomain; the
+  linear list_rows version at the same shape completes instantly).
+  Suspected missing sharing: raw reduction gets hash-cons memoization,
+  interpretive simulation re-does identical subproblems and branching
+  doubles them per level. Needs a step-count profiling pass
+  (DISP_MEMO_CACHE=0) before any fix.
+
+Known residue beyond those: the multishot/Sigma-fan readback boundary
+(pinned) and the shared dependent-application frontier. The deep
+alternative stays recorded: converge Meta onto Guard's in-band provenance
+design.
 
 Annotate everything data-shaped that today has nothing, at the strongest tier
 that verifies:
