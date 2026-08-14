@@ -114,6 +114,14 @@ extensionality), the formers' codomains are TypeFace, Sum's is Refine
 ShallowType Coherent, and the ElimHead readers landed at Guard tier via the
 rows types and eight new given fills.
 
+Third slice LANDED (980fb937, 2026-08-14): GoodGate and Coherent moved
+above Nat and carry Sampled annotations over kernel-provided samples; Nat
+and Tree upgraded from membership to Refine ShallowType Coherent (facts the
+pins already proved, now claimed by the annotations). Probed refusal
+recorded: the List/Eff codomains cannot carry the Coherent refinement,
+because Coherent runs its battery through raw membership, which is junk at
+an abstract element type.
+
 Remaining candidates: the refused
 set with diagnosed causes: all_rows/vec_rows-class (builder branches on its
 parameter at construction, unlike list_rows whose branching hides in the
@@ -161,6 +169,21 @@ Known residue beyond those: the multishot/Sigma-fan readback boundary
 alternative stays recorded: converge Meta onto Guard's in-band provenance
 design.
 
+S9 differential (a479c478, 2026-08-14): with_probes conjoins the probe
+battery only at neutral_free types now. Unguarded, a Fresh row at an
+abstract type binder filtered probes through a mint-embedding type by raw
+application; K-saturation junk read as present, bogus probes were kept, and
+their obligations refused honest polymorphic bodies (cons, bool_case,
+list_map, list_filter, and the blessed-eliminator trio all probed red,
+all green with the guard). With the surface TwoFace-clean, kernel.test
+carries `use "types.disp" { DefaultWalker := TwoFace }` beside the Meta
+line: the whole arrow surface re-verifies under the concrete face, and the
+lying-codomain pins stay refused (lies live at concrete domains, which keep
+their battery). Flipping the default was measured and rejected: ~12x on
+every load for a lie detector the differential already runs. S9 stays fully
+open only at the barrier (raw type formation); the differential is the
+probe-strength close.
+
 Annotate everything data-shaped that today has nothing, at the strongest tier
 that verifies:
 
@@ -174,7 +197,6 @@ that verifies:
 - kernel.disp combinators and injectors: inj, idx, const_fn, id_fn, stem_fn,
   fork_fn, perform, handle, Pred, PiCode, SigmaCode, IsectCode, record_mem,
   Rec, Coproduct.
-- GoodGate and Coherent as membership predicates over ShallowType.
 
 Some of these will cap at Sampled (inspectors); record the tier reached next
 to each. Type values that are membership-only today (`: ShallowType`) should
@@ -209,6 +231,19 @@ propagation (the is_invalid branch refuses them as values), open chains are
 its pending completions (the is_open_chain branch routes them to complete).
 Hyp, Invalid, OpenChain keep recognize spellings; ElimHead, StuckElim,
 TeqPartial are rows-based (landed 89ef76c8) with conduct pins.
+
+Payload-sharpening boundary, measured 2026-08-14 (9c1dcea1): rows
+membership refuses any payload that embeds a live mint, because the judge
+claims every neutral at its recorded type (a hyp of Nat inhabits no
+AnyTree or Hyp slot). Real stuck collectors always carry a hypothesis
+scrutinee, so StuckElim/TeqPartial describe the neutral-free shape only
+(pinned at StuckElim); sharpening their payloads past the head slot is
+dead until the judge grows a subsumption or shape route for neutrals.
+RawRecordRows landed beside the rows family (9c1dcea1): the record pair
+shape as a dependent row program (names observed, payload spine at the
+observed length), fst-conduct certified, dependent side refusing; its
+conduct pins are Pi-Guard-literal to keep the Meta differential off
+branching-program consumption at a mint (the TreeOf pathology).
 
 A3b, the genuinely new mechanism, now precisely scoped: walker-side
 mediation for NAME-KEYED reads only (field/field_cell on abstract records),
@@ -255,7 +290,17 @@ move only where annotations were added.
 
 ## Stage A5: eliminator rewrites of raw fix helpers
 
-Status: not started. Independent of A3/A4; needs interleaved perf runs.
+Status: first rewrite LANDED (0ac738f4, 2026-08-14): list_assoc folds with
+the kernel list_rec (tree-identical to List.elim, so the open chain blesses
+it) and branches through bool_case over three-valued tree_eq; annotation
+upgraded Sampled -> Guard tier at the dependent-pair element domain
+List (Sigma Guard AnyTree AnyTree); liveness probed (wrong bodies at the
+same type refuse), junk-tailed spines now fall to the base case, cold
+barrel timing unchanged. Walls hit probing the rest: an accumulator/CPS
+respelling (list_apply-class) puts a function-typed carrier at an AnyTree
+codomain, which refuses by nominal type identity (no subsumption; analyzed,
+not landed); idx-class projection into an untyped spine has no rows at
+abstract points. Remaining candidates below.
 
 The one existing typed door for recursion is open-chain blessing: a fix body
 tree-identical to some type's own elim slot certifies. Rewrite the
