@@ -704,7 +704,15 @@ Meta : Table := ({
           } else { Chain (pair e (pair scr args2)) }
         }
         Stem c => (vfork c X)
-        Fork a b => (apply_fork self chk a b X)
+        Fork a b => {
+          let asig := if let Conc ac = a { ac } else { t }
+          if (tree_eq asig elim_sig) {
+            let hr := readback F
+            if let Neu _mx = X {
+              if (tree_eq (elim_arity hr) zero) { self chk X (Conc (Elim (pair hr []))) } else { Chain (pair hr (pair X [])) }
+            } else { apply_fork self chk a b X }
+          } else { apply_fork self chk a b X }
+        }
       }
     }))
   fresh := {st, ty, tail} => {
