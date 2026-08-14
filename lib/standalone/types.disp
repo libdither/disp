@@ -69,7 +69,32 @@ at := {K, keys, s} => (fix ({self, ks, v} =>
   else if (tree_eq K ks.fst) { if (is_leaf ks.snd) { v } else { v.fst } }
   else { self ks.snd v.snd })) (key_sort ShallowType keys) s
 
-Nat : ShallowType := ({
+GoodGate : Pi (Sampled [Bool, Unit, Row]) ShallowType ({_} => Bool)
+  := {T} => {
+  let g := T.gate
+  if (is_leaf g) { false } else {
+    let B := {_} => inj "@GoodGate" T
+    let tys := g T B
+    let pis := fix ({self, l, end} => if (is_leaf l) { end } else { Pi Guard l.fst ({_} => self l.snd end) })
+    and (Pi Guard T ({x} => pis tys (B x)) (elim_of T B))
+        (list_all ShallowType ({ty} => not (Pi Guard AnyTree ({_} => ty) ({j} => j))) tys)
+  }
+}
+Coherent : Pi (Sampled [Bool, Unit, Row, AnyTree]) ShallowType ({_} => Bool)
+  := {T} => {
+  let e := T.ends
+  let ck := T.check
+  let ends_ok := if (is_fork e) { or (tree_eq e.fst e.snd) (list_all AnyTree ({v} => not (T v)) probes) } else { true }
+  let check_ok := if (is_leaf ck) { true } else { list_all AnyTree ({v} => tree_eq (T v) (ck ({ty, a} => ty a) T v)) probes }
+  let members_ok := and (list_all T T T.members) (if (is_leaf T.members) { true } else { list_all AnyTree ({v} => or (not (T v)) (member T v T.members)) probes })
+  let gate_ok := if (is_leaf T.gate) { true } else { GoodGate T }
+  let norm_ok := if (is_leaf T.norm) { true } else {
+    list_all AnyTree ({v} => if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
+  }
+  and ends_ok (and check_ok (and members_ok (and gate_ok norm_ok)))
+}
+
+Nat : Refine ShallowType Coherent := ({
   #recognize := {self, v} => triage true ({_} => false) ({l, r} => and (tree_eq l t) (self r)) v
   gate := {Ind, B} => [B zero, PiCode Ind ({k} => PiCode (B k) ({_} => B (succ k)))]
   elim := {self, n, base, step} => triage base ({_} => base) ({_l, k} => step k (self k base step)) n
@@ -199,7 +224,7 @@ test eq_sym Nat 2 2 refl = refl
 test eq_trans Nat 2 2 2 refl refl = refl
 test eq_cong Nat succ 2 2 refl = refl
 
-Tree : ShallowType := ({
+Tree : Refine ShallowType Coherent := ({
   #recognize := {_self, _v} => true
   gate := {Ind, B} => [B t, PiCode Ind ({c} => PiCode (B c) ({_} => B (t c))), PiCode Ind ({l} => PiCode Ind ({r} => PiCode (B l) ({_} => PiCode (B r) ({_} => B (t l r)))))]
   elim := {self, v, on_leaf, on_stem, on_fork} => triage on_leaf ({c} => on_stem c (self c on_leaf on_stem on_fork)) ({l, r} => on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
@@ -207,16 +232,6 @@ Tree : ShallowType := ({
 tree_rec : {C : ShallowType} -> Tree -> C -> (arm 1 (Tree.gate Tree (const_fn C))) -> (arm 2 (Tree.gate Tree (const_fn C))) -> C
   := {C} => elim_of Tree ({_} => C)
 
-GoodGate := {T} => {
-  let g := T.gate
-  if (is_leaf g) { false } else {
-    let B := {_} => inj "@GoodGate" T
-    let tys := g T B
-    let pis := fix ({self, l, end} => if (is_leaf l) { end } else { Pi Guard l.fst ({_} => self l.snd end) })
-    and (Pi Guard T ({x} => pis tys (B x)) (elim_of T B))
-        (list_all ShallowType ({ty} => not (Pi Guard AnyTree ({_} => ty) ({j} => j))) tys)
-  }
-}
 test GoodGate Nat = true
 test GoodGate Bool = true
 test GoodGate Tree = true
@@ -224,18 +239,6 @@ test GoodGate (Eq Nat 2 3) = true
 test GoodGate AnyTree = false
 test GoodGate ShallowType = false
 
-Coherent := {T} => {
-  let e := T.ends
-  let ck := T.check
-  let ends_ok := if (is_fork e) { or (tree_eq e.fst e.snd) (list_all AnyTree ({v} => not (T v)) probes) } else { true }
-  let check_ok := if (is_leaf ck) { true } else { list_all AnyTree ({v} => tree_eq (T v) (ck ({ty, a} => ty a) T v)) probes }
-  let members_ok := and (list_all T T T.members) (if (is_leaf T.members) { true } else { list_all AnyTree ({v} => or (not (T v)) (member T v T.members)) probes })
-  let gate_ok := if (is_leaf T.gate) { true } else { GoodGate T }
-  let norm_ok := if (is_leaf T.norm) { true } else {
-    list_all AnyTree ({v} => if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
-  }
-  and ends_ok (and check_ok (and members_ok (and gate_ok norm_ok)))
-}
 test Coherent Nat = true
 test Coherent Bool = true
 test Coherent Tree = true
