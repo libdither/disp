@@ -125,6 +125,23 @@ wall), mixed_rows (its reject arm fires under the Eff recognizer's leaf
 probe, so the row-program type is honestly not its codomain). Refused defs
 cap at Sampled until their named blocker moves.
 
+Meta parity, probed 2026-08-13: the entire embedded-mark refusal family
+(the Pi-Guard-literal type formers and row builders) bottoms out in ONE
+missing simulator rule. Meta handles construction over its out-of-band
+mints (pair/list_const/inj certify) and triage on composites (is_fork of a
+mint-bearing pair certifies), but pair_fst/pair_snd on a composite value
+poisons: the projection special-case accepts only bare mints. Everything
+downstream (has_sig, field_cell, faced, eff_bind) fails through that gap.
+The candidate fix is a structural-projection arm in the simulator's
+application walk (a Fork value answers its own component; no readback, no
+marks enter in-band, and the triage rule already exposes the components,
+so it is a completeness fix, not a new information channel). If it lands
+and the family re-probes green, the literal spellings flip to arrows and
+the Meta differential covers the formers. The deep alternative stays
+recorded: converge Meta onto Guard's in-band provenance design (most
+principled, most work). Known residue either way: the multishot/Sigma-fan
+readback boundary (pinned) and the shared dependent-application frontier.
+
 Annotate everything data-shaped that today has nothing, at the strongest tier
 that verifies:
 
