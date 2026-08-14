@@ -125,22 +125,21 @@ wall), mixed_rows (its reject arm fires under the Eff recognizer's leaf
 probe, so the row-program type is honestly not its codomain). Refused defs
 cap at Sampled until their named blocker moves.
 
-Meta parity, probed 2026-08-13: the entire embedded-mark refusal family
-(the Pi-Guard-literal type formers and row builders) bottoms out in ONE
-missing simulator rule. Meta handles construction over its out-of-band
-mints (pair/list_const/inj certify) and triage on composites (is_fork of a
-mint-bearing pair certifies), but pair_fst/pair_snd on a composite value
-poisons: the projection special-case accepts only bare mints. Everything
-downstream (has_sig, field_cell, faced, eff_bind) fails through that gap.
-The candidate fix is a structural-projection arm in the simulator's
-application walk (a Fork value answers its own component; no readback, no
-marks enter in-band, and the triage rule already exposes the components,
-so it is a completeness fix, not a new information channel). If it lands
-and the family re-probes green, the literal spellings flip to arrows and
-the Meta differential covers the formers. The deep alternative stays
-recorded: converge Meta onto Guard's in-band provenance design (most
-principled, most work). Known residue either way: the multishot/Sigma-fan
-readback boundary (pinned) and the shared dependent-application frontier.
+Meta parity: LANDED 57bead57 (2026-08-13). The probe had localized the
+entire embedded-mark refusal family to one missing simulator rule
+(pair_fst/pair_snd on a composite value poisoned; only bare mints were
+special-cased), and the fix held: a Fork arm in the projection case (a
+Fork value answers its own component, raw reduction verbatim, no
+readback) unlocked the whole family. Fourteen annotations flipped to
+arrows and now ride the Meta differential: Not, Refine, Quotient, Named,
+Point, List, Eff, Tagged, Faced, TaggedRows, ListR, list_rows, tree_rows,
+bal_rows. The literal opt-out list is now three stated reasons: the
+blessed-eliminator trio (nat_rec/tree_rec/list_rec) refuses under Meta,
+TreeOf's branching row program blows up the simulation (timeout at 9G;
+linear ListR is fine), and GuardNatToNat is the literal fixture. Known
+residue beyond those: the multishot/Sigma-fan readback boundary (pinned)
+and the shared dependent-application frontier. The deep alternative stays
+recorded: converge Meta onto Guard's in-band provenance design.
 
 Annotate everything data-shaped that today has nothing, at the strongest tier
 that verifies:
