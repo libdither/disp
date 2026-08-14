@@ -4,6 +4,7 @@ open use "prelude.disp"
 Five := Point 5
 Six := Point 6
 MetaNatToNat := Pi Meta Nat ({_} => Nat)
+GuardNatToNat := Pi Guard Nat ({_} => Nat)
 EnumBoolToBool := Pi Enum Bool ({_} => Bool)
 EnumNatToNat := Pi Enum Nat ({_} => Nat)
 FiveToNat := Pi Enum Five ({_} => Nat)

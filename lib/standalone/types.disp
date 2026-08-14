@@ -11,8 +11,8 @@ open use raw "kernel.disp" {}
 // re-verifies every arrow-spelled definition below under that walker.
 // Pi-Guard-literal annotations are the deliberate opt-out, each for a
 // stated reason: the blessed-eliminator trio (nat_rec/tree_rec/list_rec)
-// refuses under Meta, TreeOf's branching row program blows up Meta's
-// simulation, and GuardNatToNat is the literal-spelling fixture.
+// refuses under Meta and TreeOf's branching row program blows up Meta's
+// simulation.
 given DefaultWalker : AnyTree := Guard
 Fn := Pi DefaultWalker
 // Re-point the binder sugar at Fn here: the raw kernel open exports a
@@ -317,15 +317,13 @@ self_is : ShallowType -> Eff Row AnyTree AnyTree
 done : Eff Row AnyTree AnyTree := Pure t
 reject := t
 
-GuardNatToNat : ShallowType := Pi Guard Nat ({_} => Nat)
-
 add : Nat -> Nat -> Nat := {n, m} => nat_rec Nat n m ({k, ih} => succ ih)
 not_bool : Bool -> Bool := {b} => bool_case Bool b false true
 elim_id : Nat -> Nat := {n} => nat_rec Nat n zero ({k, ih} => succ ih)
 test add 2 3 = 5
 test add 0 4 = 4
 test ShallowType Nat = true
-test ShallowType GuardNatToNat = true
+test ShallowType (Nat -> Nat) = true
 
 // 1. Lists: recursion at row-generation time, branching on the observed node.
 list_rows : ShallowType -> AnyTree -> Eff Row AnyTree AnyTree
@@ -379,8 +377,8 @@ test NamedRec xy ({ x := 2, y := false }) = true
 test NamedRec xy ({ x := 2 }) = false
 test NamedRec xy ({ x := 2, y := 5 }) = false
 test NamedRec xy ({ x := 2, y := false, z := 9 }) = true
-test NamedRec [pair "step" GuardNatToNat] ({ step := succ }) = true
-test NamedRec [pair "step" GuardNatToNat] ({ step := not_bool }) = false
+test NamedRec [pair "step" (Nat -> Nat)] ({ step := succ }) = true
+test NamedRec [pair "step" (Nat -> Nat)] ({ step := not_bool }) = false
 
 // 4. Type-keyed records: keys are trees, so a type can be its own key.
 TypeRec := {tys} => NamedRec (list_map AnyTree AnyTree ({T} => pair T T) tys)
