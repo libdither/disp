@@ -857,7 +857,8 @@ with_trials : Pi (Sampled [Guard]) Table ({_} => Table)
 Trials : Table := with_trials Guard
 with_probes : Pi (Sampled [Guard]) Table ({_} => Table)
   := {base} => field_put base "fresh" ({st, ty, tail} =>
-  list_cat AnyTree ((field base "fresh") st ty tail) (list_map AnyTree AnyTree ({a} => pair a st) (list_filter AnyTree ty probes)))
+  list_cat AnyTree ((field base "fresh") st ty tail)
+    (if (neutral_free ty) { list_map AnyTree AnyTree ({a} => pair a st) (list_filter AnyTree ty probes) } else { [] }))
 TwoFace : Table := with_probes Guard
 
 test tree_eq Row.code RowCode = true

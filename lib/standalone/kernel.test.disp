@@ -509,6 +509,15 @@ test Pi TwoFace Nat ({_} => Bool) ({n} => tree_eq n zero) = true
 mMeta := use "types.disp" { DefaultWalker := Meta }
 test mMeta.add 2 3 = 5
 
+// The S9 differential: the same surface under the concrete face. Sound
+// because with_probes conjoins probes only at neutral_free types (a type
+// embedding the checker's own mint cannot answer membership raw; unguarded,
+// junk-kept probes refused every Fresh at an abstract type binder). The
+// lying-codomain pins above stay refused: lies live at concrete domains,
+// which keep their battery.
+mTwoFace := use "types.disp" { DefaultWalker := TwoFace }
+test mTwoFace.add 2 3 = 5
+
 // Ops as canonical type-indexed tuples: fields are referred to BY TYPE (at),
 // construction is order-free (tuple_of sorts), and names survive only as
 // brands where underlying types collide (param/result are both types). The
