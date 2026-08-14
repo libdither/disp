@@ -136,25 +136,25 @@ Point, List, Eff, Tagged, Faced, TaggedRows, ListR, list_rows, tree_rows,
 bal_rows. GuardNatToNat retired to test scaffolding (6c2f3162); the
 literal opt-out list is now two entries, both diagnosed (2026-08-14):
 
-- The blessed-eliminator trio (nat_rec/tree_rec/list_rec): a motive that
-  embeds a mint makes the eliminator head a composite VALUE, and Meta's
-  elim-head recognition matches concrete heads only, so applying a
-  composite head to a neutral scrutinee falls into raw marker-code
-  simulation where is_neutral is (deliberately) answered false and the
-  recursor destructures the mint into Poison. Probe triangulation:
-  composite heads construct fine and apply to concretes fine; the
-  all-Meta saturated spellings refuse. Fix shape, second rule of the
-  projection family but more delicate: special-form recognition on
-  composite values (sig check via the Fork value's components) routing
-  into the existing Chain machinery with a readback'd head, gated by the
-  rooted/verify_inband discipline because readback puts marks in-band.
-- TreeOf: the blowup is in simulating the Tele APPLICATION over a
-  branching row program (isolated with a trivial AnyTree codomain; the
-  linear list_rows version at the same shape completes instantly).
-  Suspected missing sharing: raw reduction gets hash-cons memoization,
-  interpretive simulation re-does identical subproblems and branching
-  doubles them per level. Needs a step-count profiling pass
-  (DISP_MEMO_CACHE=0) before any fix.
+- The blessed-eliminator trio: FIXED (6aadc810). The composite-head rule
+  landed (a Fork value carrying elim_sig applied to a mint reads back and
+  routes into Chain collection, gated by the rooting audit); all three
+  certify all-Meta and ride arrows under the differential.
+- TreeOf, the one literal left: an OPEN simulator pathology, not a design
+  boundary. Bisection ledger (2026-08-14): building the mint-bearing
+  branching program is instant (pair P 5 green), its RowProg membership
+  is green (judged via readback + raw run), Tele over the LINEAR
+  list_rows program is green, Tele over a CONCRETE branching program
+  (bal_rows) is green; but CONSUMING the branching+mint program's value
+  in simulation diverges, all the way down to direct
+  `pair_snd (pair_snd P)` (so the composite-projection rule is not the
+  culprit; it never gets a normal Fork value to answer on). Prime
+  suspect: fix-unfolding during decomposition (the stored continuation
+  embeds wait-omega self references that unfold when the surrounding
+  expression is interpretively decomposed). Black-box probing is
+  exhausted; next tool is host-side step/trace profiling of the
+  simulator (the DISP_DEBUG_BATCH-style diagnostic the review notes
+  wanted rebuilt).
 
 Known residue beyond those: the multishot/Sigma-fan readback boundary
 (pinned) and the shared dependent-application frontier. The deep
