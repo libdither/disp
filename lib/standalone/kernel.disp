@@ -39,11 +39,8 @@ list_cat : {A : ShallowType} -> List A -> List A -> List A
   := {A, xs, ys} => list_rec A t xs ys ({h, _tl, ih} => cons A h ih)
 list_filter : {A : ShallowType} -> (A -> Bool) -> List A -> List A
   := {A, p, xs} => list_rec A t xs [] ({h, _tl, ih} => bool_case t (p h) (cons A h ih) ih)
-list_assoc : Pi (Sampled ["k"]) AnyTree ({_} => Pi (Sampled [[pair "k" 7]]) (List AnyTree) ({_} => AnyTree))
-  := fix ({self, k, xs} =>
-  if (is_leaf xs) { [] }
-  else if (tree_eq k (pair_fst (pair_fst xs))) { pair_snd (pair_fst xs) }
-  else { self k (pair_snd xs) })
+list_assoc : AnyTree -> List (Sigma Guard AnyTree ({_} => AnyTree)) -> AnyTree
+  := {k, xs} => list_rec t t xs [] ({h, _tl, ih} => bool_case t (tree_eq k (pair_fst h)) (pair_snd h) ih)
 make_record : Pi (Sampled [["a", "b"]]) (List AnyTree) ({_} => Pi (Sampled [[list_const 1, list_const 2]]) (List AnyTree) ({_} => RawRecord))
   := {names, payload} => {
   let ins := fix ({self, e, es} =>
