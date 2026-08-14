@@ -670,7 +670,11 @@ Meta : Table := ({
         } else if let Conc xt = X {
           Conc (tr xt)
         } else if (or (tree_eq tr pair_fst) (tree_eq tr pair_snd)) {
-          if let Neu m2 = X { self chk X (Conc (Acc tr)) } else { Poison X }
+          match X {
+            Neu _m2 => (self chk X (Conc (Acc tr)))
+            Fork l r => (if (tree_eq tr pair_fst) { l } else { r })
+            _ => (Poison X)
+          }
         } else if (is_elim_head tr) {
           if let Neu m = X {
             if (tree_eq (elim_arity tr) zero) { self chk X (Conc (Elim (pair tr []))) } else { Chain (pair tr (pair X [])) }

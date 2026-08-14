@@ -9,9 +9,10 @@ open use raw "kernel.disp" {}
 // The ambient-walker parameter lives here with the annotated surface it
 // governs (givens do not cross opens); filling it with another table
 // re-verifies every arrow-spelled definition below under that walker.
-// Pi-Guard-literal annotations are the deliberate opt-out: their bodies
-// build tag/record structure over mints, which Meta's simulator refuses
-// (the embedded-mark boundary), so they certify under Guard only.
+// Pi-Guard-literal annotations are the deliberate opt-out, each for a
+// stated reason: the blessed-eliminator trio (nat_rec/tree_rec/list_rec)
+// refuses under Meta, TreeOf's branching row program blows up Meta's
+// simulation, and GuardNatToNat is the literal-spelling fixture.
 given DefaultWalker : AnyTree := Guard
 Fn := Pi DefaultWalker
 // Re-point the binder sugar at Fn here: the raw kernel open exports a
@@ -24,8 +25,8 @@ arm := idx
 node_like : ShallowType := Pred ({n} => or (is_leaf n) (is_fork n))
 
 False : ShallowType := Sum AnyTree []
-Not : Pi Guard ShallowType ({_} => ShallowType) := {P} => Fn P ({_} => False)
-Refine : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => ShallowType))
+Not : ShallowType -> ShallowType := {P} => Fn P ({_} => False)
+Refine : ShallowType -> AnyTree -> ShallowType
   := {A, p} => ({
   #recognize := {_self, v} => and (A v) (p v)
   check := {jdg, _T, v} => and (jdg A v) (p v)
@@ -34,7 +35,7 @@ test False t = false
 test False 5 = false
 test Not False ({p} => p) = true
 
-Quotient : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => ShallowType))
+Quotient : ShallowType -> AnyTree -> ShallowType
   := {A, nf} => ({
   #recognize := {_self, v} => A v
   check := {jdg, _T, v} => jdg A v
@@ -45,7 +46,7 @@ canon := {A, v} => {
   let nf := A.norm
   if (or (is_leaf nf) (not (neutral_free v))) { v } else { nf v }
 }
-Named : Pi Guard AnyTree ({_} => Pi Guard ShallowType ({_} => ShallowType))
+Named : AnyTree -> ShallowType -> ShallowType
   := {name, T} => ({
   #recognize := {_self, v} => T v
   check := {jdg, _T2, v} => jdg T v
@@ -102,7 +103,7 @@ test Fn ShallowType ({_} => Bool) ({T} => T 5) = true
 test Fn ShallowType ({_} => Bool) ({T} => bool_case Bool (T 5) false true) = true
 test Fn ShallowType ({_} => Nat) ({T} => T 5) = false
 
-Point : Pi Guard AnyTree ({_} => ShallowType)
+Point : AnyTree -> ShallowType
   := {c} => ({ #recognize := {_self, v} => tree_eq c v, members := [c] })
 
 // One shape under wait and tag: a suspended S-redex fork(stem f, K x), the
@@ -115,10 +116,10 @@ Sus := Pred ({v} =>
       if (is_fork (pair_snd v)) { is_leaf (pair_fst (pair_snd v)) } else { false }
     } else { false }
   } else { false })
-Tagged : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => ShallowType))
+Tagged : AnyTree -> AnyTree -> ShallowType
   := {S, P} => ({ #recognize := {_self, v} =>
   if (Sus v) { if (has_sig S v) { P (wait_payload v) } else { false } } else { false } })
-Faced : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => ShallowType))
+Faced : AnyTree -> AnyTree -> ShallowType
   := {name, P} => ({ #recognize := {_self, v} =>
   if (Sus v) {
     let m := wait_payload v
@@ -139,7 +140,7 @@ TypeFace : ShallowType := Faced "recognize" AnyTree
 // propagation (the is_invalid branch refuses them as values), open chains
 // are its pending completions (the is_open_chain branch routes them to
 // complete). Rows work for the data-shaped rest.
-TaggedRows : Pi Guard AnyTree ({_} => Pi Guard AnyTree ({_} => ShallowType))
+TaggedRows : AnyTree -> AnyTree -> ShallowType
   := {S, P} => Sigma Guard (Point S) ({_} => Sigma Guard (Point t) ({_} => P))
 SusRows : ShallowType := Sigma Guard (Pred is_stem) ({_} => Sigma Guard (Point t) ({_} => AnyTree))
 ElimPayload : ShallowType := Sigma Guard AnyTree ({_} => Sigma Guard TypeFace ({_} => AnyTree))
@@ -262,7 +263,7 @@ test list_all_t is_leaf [t, 2] = false
 test Fn Tree ({_} => Bool) is_leaf = false
 
 let list_mem := {ej, rj, A, v} => triage true ({_} => false) ({h, tl} => and (ej A h) (rj tl)) v
-List : Pi Guard ShallowType ({_} => ShallowType) := {A} => ({
+List : ShallowType -> ShallowType := {A} => ({
   #recognize := {self, v} => list_mem ({ty, a} => ty a) self A v
   check := {jdg, T, v} => list_mem jdg ({a} => jdg T a) A v
   gate := {Ind, B} => [B [], PiCode A ({h} => PiCode Ind ({tl} => PiCode (B tl) ({_} => B (cons A h tl))))]
@@ -287,7 +288,7 @@ test Pi Meta ShallowType ({_} => Bool) ({T} => T 5) = true
 list_samples : List AnyTree := [[], [1], [1, 2]]
 
 let eff_mem := {ej, rj, Q, X, v} => (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
-Eff : Pi Guard ShallowType ({_} => Pi Guard ShallowType ({_} => Pi Guard ShallowType ({_} => ShallowType)))
+Eff : ShallowType -> ShallowType -> ShallowType -> ShallowType
   := {Q, Ans, X} => ({
   #recognize := {self, v} => eff_mem ({ty, a} => ty a) self Q X v
   check := {jdg, T, v} => eff_mem jdg ({a} => jdg T a) Q X v
@@ -327,7 +328,7 @@ test ShallowType Nat = true
 test ShallowType GuardNatToNat = true
 
 // 1. Lists: recursion at row-generation time, branching on the observed node.
-list_rows : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => Eff Row AnyTree AnyTree))
+list_rows : ShallowType -> AnyTree -> Eff Row AnyTree AnyTree
   := {A} => (fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
@@ -336,7 +337,7 @@ list_rows : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => Eff Row AnyTre
     self ({v} => (get v).snd)
   }
 }))
-ListR : Pi Guard ShallowType ({_} => ShallowType)
+ListR : ShallowType -> ShallowType
   := {A} => Tele Guard (list_rows A ({v} => v))
 test ListR Nat [] = true
 test ListR Nat [1, 2] = true
@@ -433,7 +434,7 @@ test UniqueOf [AnyTree, Point 5] [5, 7] = true
 test UniqueOf [AnyTree, AnyTree] [5] = false
 
 // 7. Tree checkers: branch at each node, sequence the two child programs.
-tree_rows : Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => Eff Row AnyTree AnyTree))
+tree_rows : ShallowType -> AnyTree -> Eff Row AnyTree AnyTree
   := {LeafTy} => (fix ({self, get} => {
   node <- see get node_like
   if (is_fork node) {
@@ -486,7 +487,7 @@ height := fix ({self, v} =>
     succ (if (nat_le hl hr) { hr } else { hl })
   } else { zero })
 near : ShallowType := Pred ({p} => and (nat_le p.fst (succ p.snd)) (nat_le p.snd (succ p.fst)))
-bal_rows : Pi Guard AnyTree ({_} => Eff Row AnyTree AnyTree)
+bal_rows : AnyTree -> Eff Row AnyTree AnyTree
   := fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
