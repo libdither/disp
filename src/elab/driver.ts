@@ -263,7 +263,14 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // Entries are module-export checks (marked verified in markSet on success) and
   // given-fill checks (`param_apply T fill`, the well-typed-linking half — no memo:
   // the instantiation cache already dedups them per fill).
-  const pendingVerifications: { label: string; verdict: Tree; okTT: Tree; markKey?: string; markSet?: Set<string> }[] = []
+  // `entries`/`formers` power the failure diagnostic: on a red batch verdict the
+  // force loop re-verifies each typed export individually and names the failers
+  // (zero cost on the green path — the refs are already alive).
+  const pendingVerifications: {
+    label: string; verdict: Tree; okTT: Tree; markKey?: string; markSet?: Set<string>
+    entries?: { name: string; ty: Tree; val: Tree }[]
+    formers?: { checkModule: Tree; mkRecord: Tree; listConst: Tree; tt: Tree }
+  }[] = []
   const scheduledForVerification = new Set<string>()
   // Checked block-let annotations collected while the CURRENT file's items compile
   // (expr.ts "ann" via sinks.recordAnn); folded into that file's verify batch as
@@ -465,8 +472,12 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     } else verSet = verifiedModules
     if (!raw && cmFormers && !verSet.has(verKey) && !scheduledForVerification.has(verKey)) {
       const typEntries: Tree[] = []
+      const checkedEntries: { name: string; ty: Tree; val: Tree }[] = []
       for (let i = 0; i < fieldNames.length; i++)
-        if (fieldTypes[i]) typEntries.push(elab.cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
+        if (fieldTypes[i]) {
+          typEntries.push(elab.cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
+          checkedEntries.push({ name: fieldNames[i], ty: fieldTypes[i]!, val: fieldTrees[i] })
+        }
       // Checked block-let annotations join the same batch as pseudo-entries
       // (names uniquified against exports; the values are NOT exported).
       const batchNames = fieldNames.slice(), batchTrees = fieldTrees.slice()
@@ -479,6 +490,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           batchNames.push(n)
           batchTrees.push(a.val)
           typEntries.push(elab.cs.fork(stringToTree(n), a.ty))
+          checkedEntries.push({ name: n, ty: a.ty, val: a.val })
         }
       }
       if (typEntries.length > 0) {
@@ -492,7 +504,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // are predicates, so the record type applies directly — `typ record = true`.
         const verdict = vApply(vApply(cmFormers.checkModule, consList(typEntries)), recordVal)
         const okTT = cmFormers.tt
-        pendingVerifications.push({ label: `module ${abs}`, verdict, okTT, markKey: verKey, markSet: verSet })
+        pendingVerifications.push({ label: `module ${abs}`, verdict, okTT, markKey: verKey, markSet: verSet, entries: checkedEntries, formers: cmFormers })
         scheduledForVerification.add(verKey)
       }
     }
@@ -1070,8 +1082,26 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // verdicts out). `equal` forces each verdict to NF and compares to `Ok true` — a
   // closed force, so the result equals eager's.
   for (const p of pendingVerifications) {
-    if (!elab.cs.equal!(p.verdict, p.okTT))
-      throw new Error(`type check failed for ${p.label}: the value does not inhabit its declared type (the verdict is not the accepting one)`)
+    if (!elab.cs.equal!(p.verdict, p.okTT)) {
+      // Name the failers: re-verify each typed export as its own single-entry
+      // batch (same construction as the whole-record verdict, so the same judge
+      // runs). Only reached on failure, so the cost is free on green loads.
+      let detail = ""
+      if (p.entries && p.formers) {
+        const bad: string[] = []
+        for (const e of p.entries) {
+          const typ = elab.cs.fork(elab.cs.fork(stringToTree(e.name), e.ty), elab.cs.leaf())
+          const rec = elab.cs.apply(elab.cs.apply(p.formers.mkRecord, elab.cs.fork(stringToTree(e.name), elab.cs.leaf()), B()),
+            elab.cs.fork(elab.cs.apply(p.formers.listConst, e.val, B()), elab.cs.leaf()), B())
+          const v = elab.cs.apply(elab.cs.apply(p.formers.checkModule, typ, B()), rec, B())
+          if (!elab.cs.equal!(v, p.okTT)) bad.push(e.name)
+        }
+        detail = bad.length > 0
+          ? ` — failing entr${bad.length === 1 ? "y" : "ies"}: ${bad.join(", ")}`
+          : " — every entry passes individually (cross-entry interaction)"
+      }
+      throw new Error(`type check failed for ${p.label}: the value does not inhabit its declared type (the verdict is not the accepting one)${detail}`)
+    }
     if (p.markKey && p.markSet) p.markSet.add(p.markKey)
   }
   return decls
