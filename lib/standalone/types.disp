@@ -246,6 +246,17 @@ test tree_eq (ask Nat GateP) (inj "Some" Nat.gate) = true
 test tree_eq (ask (Eq Nat 2 2) UnderP) (inj "Some" Nat) = true
 test tree_eq (ask (Eq Nat 2 2) EndsP) (inj "Some" (pair 2 2)) = true
 
+// Judge-level transport: when tree identity fails, the judge consults the
+// typed ledger at the finest grade, so an assumed Eq ShallowType A B
+// converts A-hypotheses to B, including through constructor contexts by
+// spine decomposition. Quotient-carried equations stay refused for
+// conversion (the A7 grading). Pi-Guard-literal: Meta's judge has no
+// conversion route yet.
+test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard (Eq ShallowType A B) ({_} => Pi Guard A ({a} => B))))) ({_A, _B, _p, a} => a) = true
+test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard A ({a} => B)))) ({_A, _B, a} => a) = false
+test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard (Eq ShallowType A B) ({_} => Pi Guard (Pi Guard A ({_} => Bool)) ({f} => Pi Guard B ({_} => Bool)))))) ({_A, _B, _p, f} => f) = true
+test (Pi Guard Nat ({n} => Pi Guard Nat ({m} => Pi Guard (Eq (Quotient Nat succ) n m) ({_} => Pi Guard (Point n) ({v} => Point m))))) ({_n, _m, _p, v} => v) = false
+
 Tree : Refine ShallowType Coherent := ({
   #recognize := {_self, _v} => true
   gate := {Ind, B} => [B t, PiCode Ind ({c} => PiCode (B c) ({_} => B (t c))), PiCode Ind ({l} => PiCode Ind ({r} => PiCode (B l) ({_} => PiCode (B r) ({_} => B (t l r)))))]

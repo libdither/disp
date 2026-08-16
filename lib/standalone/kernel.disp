@@ -869,7 +869,8 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) AnyTree ({_} => Pi (Sampled [{_s
       if (is_invalid v2) {
         false
       } else if (is_neutral v2) {
-        and (tree_eq (neutral_type v2) T2) (hyp_ok vf st v2)
+        let nt2 := neutral_type v2
+        and (or (tree_eq nt2 T2) (eq_holds st t nt2 T2)) (hyp_ok vf st v2)
       } else if (is_neutral T2) {
         if (is_open_chain v2) { complete vf st T2 v2 } else { false }
       } else {
