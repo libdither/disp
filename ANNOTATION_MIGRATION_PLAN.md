@@ -344,15 +344,30 @@ depend on A6.
 
 ## Stage A7: type the equation ledger
 
-Status: not started. The audit's known hard stop, independent of everything
-above; prerequisite for honest types on the equality machinery.
-
-The ledger (eq_pairs output) stores untyped endpoint pairs; an equation
-assumed at a coarse type is reusable at a fine one (rel_probe unsoundness,
-pinned test-side). Change eq_pairs/eq_reach/eq_holds to carry and respect
-the equation's type, then annotate them and teq_one/teq_decide/eq_congr at
-the tier that verifies. This is a semantic change with its own pin sweep,
-not an annotation pass; plan it as its own session.
+Status: LANDED (2026-08-15). Eq gained an `under := A` carrier slot;
+eq_pairs harvests pair (carrier, ends) from the Eq-typed mints in scope
+(no carrier = not harvested); the new eq_usable G E := tree_eq E G or
+is_leaf E.norm decides whether an equation may serve a goal (same carrier,
+or identity-fine: no norm slot means its equality is tree identity, which
+implies every coarser one). eq_congr takes the goal and consults it ONCE,
+at top-level reachability; every recursive position (spine decomposition,
+derived-mark congruence, frames) runs at the finest grade, because
+congruence through constructors or applications under a quotient goal
+requires respect evidence no structural rule can supply. eq_holds takes
+the goal; the judge's ends route passes T.under, Meta's vcheck likewise;
+the Teq audit discharge and the open-comparison hook pass the finest
+sentinel t (they answer tree-identity questions). Consequences, all
+probed: the non-quotient world is behavior-identical (identity-carrier
+equations are usable at every grade: direct, spine, function congruence,
+and they discharge coarser goals soundly); a Parity assumption no longer
+discharges a Nat goal or a raw tree_eq branch (the rel_probe reuse
+unsoundness is closed and its pins flipped, rel_probe gaining the codomain
+parameter); the parity normalizer's respect flips from the untyped
+ledger's lucky true to an honest false, which is exactly the respect
+evidence step 4's licenses will carry. Cold barrel timing unchanged.
+rel_probe stays test-side pending the step-4 licensing design; the next
+equality rungs this unblocks are the respect judgment as kernel surface
+and a ledger route for type-level conversion.
 
 ## Stage A8: op-indexed effects, then annotate the interpreter
 
