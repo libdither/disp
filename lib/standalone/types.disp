@@ -215,6 +215,7 @@ Eq := {A, x, y} => {
     elim := {_self, _p, base} => base
     land := {B, _self} => B ny
     ends := pair nx ny
+    under := A
   })
 }
 eq_subst := {A, x, y, B, p, base} => elim_of (Eq A x y) B p base

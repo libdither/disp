@@ -486,9 +486,11 @@ teq_decide := {open2, a, x} =>
 eq_pairs : Pi (Sampled [[]]) (List AnyTree) ({_} => List AnyTree) := fix ({self, hs} =>
   if (is_leaf hs) { [] }
   else {
-    let e := (neutral_type (pair_fst hs)).ends
-    if (is_fork e) { cons AnyTree e (self (pair_snd hs)) } else { self (pair_snd hs) }
+    let T := neutral_type (pair_fst hs)
+    let e := T.ends
+    if (and (is_fork e) (not (is_leaf T.under))) { cons AnyTree (pair T.under e) (self (pair_snd hs)) } else { self (pair_snd hs) }
   })
+eq_usable := {G, E} => or (tree_eq E G) (is_leaf E.norm)
 eq_reach : Pi (Sampled [[pair 1 2]]) (List AnyTree) ({_} => Pi (Sampled [1]) AnyTree ({_} => Pi (Sampled [2]) AnyTree ({_} => Bool)))
   := {pairs, a, x} => (fix ({go, known} =>
   if (member AnyTree x known) { true }
@@ -505,29 +507,34 @@ eq_reach : Pi (Sampled [[pair 1 2]]) (List AnyTree) ({_} => Pi (Sampled [1]) Any
       })) pairs known
     if (tree_eq (list_len AnyTree next) (list_len AnyTree known)) { false } else { go next }
   })) [a]
-eq_congr := {pairs} => fix ({self, a, x} =>
-  if (tree_eq a x) { true }
-  else if (eq_reach pairs a x) { true }
-  else if (and (is_neutral a) (is_neutral x)) {
-    let ha := neutral_history a
-    let hx := neutral_history x
-    if (and (tree_eq (pair_fst ha) "Ob") (tree_eq (pair_fst hx) "Ob")) {
-      and (self (pair_snd (pair_snd ha)) (pair_snd (pair_snd hx)))
-          (self (pair_fst (pair_snd ha)) (pair_fst (pair_snd hx)))
-    } else { false }
-  }
-  else if (or (is_neutral a) (is_neutral x)) { false }
-  else {
-    triage
-      false
-      ({ac} => triage false ({xc} => self ac xc) ({_l, _r} => false) x)
-      ({al, ar} => triage false ({_c} => false) ({xl, xr} => and (self al xl) (self ar xr)) x)
-      a
-  })
-eq_holds : Pi (Sampled [[]]) (List AnyTree) ({_} => Pi (Sampled [2]) AnyTree ({_} => Pi (Sampled [2]) AnyTree ({_} => Bool)))
-  := {st, a, x} => teq_decide (eq_congr (eq_pairs st)) a x
-test eq_holds t 2 2 = true
-test eq_holds t 2 3 = false
+eq_congr := {G, pairs} => {
+  let graded := {gr} => list_map AnyTree AnyTree pair_snd (list_filter AnyTree ({p} => eq_usable gr (pair_fst p)) pairs)
+  let fine_ps := graded t
+  let fine := fix ({self, a, x} =>
+    if (tree_eq a x) { true }
+    else if (eq_reach fine_ps a x) { true }
+    else if (and (is_neutral a) (is_neutral x)) {
+      let ha := neutral_history a
+      let hx := neutral_history x
+      if (and (tree_eq (pair_fst ha) "Ob") (tree_eq (pair_fst hx) "Ob")) {
+        and (self (pair_snd (pair_snd ha)) (pair_snd (pair_snd hx)))
+            (self (pair_fst (pair_snd ha)) (pair_fst (pair_snd hx)))
+      } else { false }
+    }
+    else if (or (is_neutral a) (is_neutral x)) { false }
+    else {
+      triage
+        false
+        ({ac} => triage false ({xc} => self ac xc) ({_l, _r} => false) x)
+        ({al, ar} => triage false ({_c} => false) ({xl, xr} => and (self al xl) (self ar xr)) x)
+        a
+    })
+  {a, x} => if (eq_reach (graded G) a x) { true } else { fine a x }
+}
+eq_holds : Pi (Sampled [[]]) (List AnyTree) ({_} => Pi (Sampled [t]) AnyTree ({_} => Pi (Sampled [2]) AnyTree ({_} => Pi (Sampled [2]) AnyTree ({_} => Bool))))
+  := {st, G, a, x} => teq_decide (eq_congr G (eq_pairs st)) a x
+test eq_holds t t 2 2 = true
+test eq_holds t t 2 3 = false
 
 Meta : Table := ({
   let Value := < Conc : t, Neu : t, Stem : t, Fork : t, Poison : t, Chain : t >
@@ -610,7 +617,7 @@ Meta : Table := ({
         if (is_fork rows) { chk st rows V t }
         else {
           let e := T.ends
-          if (is_fork e) { and (is_leaf (readback V)) (teq_decide (eq_congr (meta_pairs st)) (pair_fst e) (pair_snd e)) }
+          if (is_fork e) { and (is_leaf (readback V)) (teq_decide (eq_congr T.under (meta_pairs st)) (pair_fst e) (pair_snd e)) }
           else if let Conc tr = V { T tr }
           else { verify_inband (list_cat AnyTree (collect V []) (list_map AnyTree AnyTree readback st)) T (readback V) }
         }
@@ -779,7 +786,7 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) AnyTree ({_} => Pi (Sampled [{_s
           let obs := {
             let phist := field (wait_payload parent) AnyTree
             if (and (tree_eq (pair_fst phist) "Teq") (is_elim_frame frame)) {
-              if (eq_holds legit (pair_fst (pair_snd phist)) (pair_snd (pair_snd phist))) { [pair_fst (pair_fst r)] } else { pair_fst r }
+              if (eq_holds legit t (pair_fst (pair_snd phist)) (pair_snd (pair_snd phist))) { [pair_fst (pair_fst r)] } else { pair_fst r }
             } else { pair_fst r }
           }
           and (ok vch legit parent)
@@ -830,7 +837,7 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) AnyTree ({_} => Pi (Sampled [{_s
           if (is_open_chain v2) { complete vf st T2 v2 }
           else {
           let e := T2.ends
-          if (is_fork e) { and (is_leaf v2) (eq_holds st (pair_fst e) (pair_snd e)) }
+          if (is_fork e) { and (is_leaf v2) (eq_holds st T2.under (pair_fst e) (pair_snd e)) }
           else {
             let ck := T2.check
             if (is_leaf ck) { T2.recognize (wait vf T2) v2 } else { ck vf T2 v2 }
@@ -842,7 +849,7 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) AnyTree ({_} => Pi (Sampled [{_s
 }
 Guard : Table := GuardAt
   ({_resume, _x} => false)
-  ({st, a, x} => if (eq_congr (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) })
+  ({st, a, x} => if (eq_congr t (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) })
 Ambient : Table := GuardAt
   ({resume, _x} => resume t)
   ({_st, a, x} => tree_eq a x)
