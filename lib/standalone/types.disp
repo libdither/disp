@@ -383,12 +383,13 @@ test ListR (ListR Bool) [[true], []] = true
 test ListR (ListR Bool) [[5]] = false
 
 // 2. Vectors: same list, but the length is a parameter driving row generation.
-vec_rows := {A} => fix ({self, n, get} =>
-  if (is_leaf n) { see get Unit }
-  else {
+vec_rows : ShallowType -> Nat -> AnyTree -> Eff Row AnyTree AnyTree
+  := {A, n} => nat_rec (Fn AnyTree ({_} => Eff Row AnyTree AnyTree)) n
+  ({get} => see get Unit)
+  ({_k, ih, get} => {
     _ <- see get (Pred is_fork)
     _ <- see ({v} => (get v).fst) A
-    self n.snd ({v} => (get v).snd)
+    ih ({v} => (get v).snd)
   })
 Vec := {n, A} => Tele Guard (vec_rows A n ({v} => v))
 test Vec 2 Bool [true, false] = true
@@ -518,6 +519,9 @@ test MixedTree (Node (pair 2 (pair (Leaf 5) (Leaf false)))) = false
 test MixedTree 5 = false
 
 // 9. Perfect trees of depth n: no data branching at all, pure parameter recursion.
+// Stays raw: the left child's program is sequenced mid-program, and eff_bind
+// inspects its subject, so a neutral IH refuses there (the eff_bind class);
+// only tail-position recursion certifies (vec_rows above).
 perfect_rows := fix ({self, n, get} =>
   if (is_leaf n) { see get Unit }
   else {
