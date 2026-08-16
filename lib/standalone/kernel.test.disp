@@ -708,10 +708,14 @@ test Fn Parity ({_} => Nat) disrespect = true
 // reduce to the same concrete value and the obligation becomes Eq Nat 1 1 --
 // vacuous for exactly the class of function it exists to catch. So relatedness
 // has to be a judgment the tier COMPUTES, not a proposition stated in types.
+// (The non-inspecting normalizer's spelling used to certify TOO, through the
+// untyped ledger: its stuck obligation discharged the Parity assumption at a
+// Nat goal. The typed ledger (A7) refuses that reuse, so it flips to false;
+// only the S9 vacuity route remains, which is the pin above.)
 respect_ty := {A, B, f} => Fn A ({a} => Fn A ({b} => Fn (Eq A a b) ({_} => Eq B (f a) (f b))))
 test tree_eq (Eq Nat (disrespect (make_hyp Parity "h")) (disrespect (make_hyp Parity "k"))) (Eq Nat 1 1) = true
 test respect_ty Parity Nat disrespect ({a, b, p} => refl) = true
-test respect_ty Parity Nat parity ({a, b, p} => refl) = true
+test respect_ty Parity Nat parity ({a, b, p} => refl) = false
 
 // The judgment form: mint the pair jointly with its relatedness as a ledger
 // assumption, apply both candidates through the tier's OWN walk, then ask the
