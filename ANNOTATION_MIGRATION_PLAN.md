@@ -255,6 +255,25 @@ Design options: rows scan at application time (hot-path perf risk),
 a precompiled accessor slot on type records, or shape-recognition of
 `field _ name` partials. Meta needs parity with whichever lands.
 
+First form LANDED for TYPES (b7ed2239, 2026-08-15), Guard-only: the ask
+head. Seven property formers (RecognizeP/GateP/ElimP/MembersP/NormP/EndsP/
+UnderP, constructor-only kernel values), Cell (the record Option as a
+declared sum), and one uniform op: ask dispatches to the named slot on
+concrete types (agreement pinned) and is a licensed observation on type
+hypotheses (walk grows the tree_eq-style partial pair; respond_face grows
+an Ask branch answering pair [] (Cell (P self)) for ShallowType-typed
+parents and licensed formers). The witness is a mint, so certificates hold
+for every dictionary; unlicensed formers, non-type subjects, and
+wrong-property claims refuse (pinned). Boundaries, both pinned: Meta has
+no Ask rule (conduct pins are Pi-Guard-literal); and CONSUMING a witness
+(case/projection/application) requires constructing the Sum-built answer
+type inside the walked body, where scrutinizing formers refuse over an
+embedded mint -- the unlock is walked type formation or a dedicated case
+head. Kernel-local signatures keep GateP/MembersP AnyTree-weak (List and
+TypeFace live above the kernel); identical weak signatures collide as
+trees in the dispatch, so every former must be shaped distinctly. General
+name-keyed reads on RECORD hypotheses remain open as scoped above.
+
 Constraints to respect: eager-refusal invariant (undeclared observation is an
 error, not a stuck term) and the S9 discipline (rows instantiate at concrete
 constructors; codomains at abstract points lie).
@@ -301,6 +320,16 @@ respelling (list_apply-class) puts a function-typed carrier at an AnyTree
 codomain, which refuses by nominal type identity (no subsumption; analyzed,
 not landed); idx-class projection into an untyped spine has no rows at
 abstract points. Remaining candidates below.
+
+Second wave (f80750a1, 2026-08-15): vec_rows rides nat_rec at the
+function-space motive (accessor to row program) and upgrades from nothing
+to the full arrow annotation -- tail-position IH results are typed
+neutrals the Eff check knot judges through the tier. perfect_rows stays
+raw with its blocker named: its left-child program is sequenced
+mid-program, and eff_bind inspects its subject, so a neutral IH refuses
+there (the eff_bind class); only tail recursion certifies. height stays
+raw too: its fork arm compares IHs with raw nat_le, which needs a blessed
+comparison before the tree_rec spelling certifies.
 
 The one existing typed door for recursion is open-chain blessing: a fix body
 tree-identical to some type's own elim slot certifies. Rewrite the
@@ -368,6 +397,22 @@ evidence step 4's licenses will carry. Cold barrel timing unchanged.
 rel_probe stays test-side pending the step-4 licensing design; the next
 equality rungs this unblocks are the respect judgment as kernel surface
 and a ledger route for type-level conversion.
+
+Transport consumer LANDED (2933e84f, 2026-08-15): when tree identity of a
+neutral's derived type against the expected type fails, Guard's judge asks
+eq_holds at the finest grade before refusing. An assumed Eq ShallowType A B
+converts A-hypotheses to B, including through constructor contexts by
+spine decomposition (pinned: direct, symmetric, congruence through a Pi
+context, refusal without the proof, and quotient-carried equations refused
+for conversion -- the A7 grading protecting exactly this). Free on the
+common path: two neutral-free distinct types answer false in teq_decide
+before any ledger walk. Meta's judge keeps the nominal comparison; the
+conversion pins are Pi-Guard-literal.
+
+Tooling (ba6bedc0, 2026-08-15): a red module verification batch now names
+its failing entries (the driver re-verifies each typed export as its own
+single-entry batch on the failure path only); scripts/annotation_census.py
+buckets every definition by annotation tier for re-audits.
 
 ## Stage A8: op-indexed effects, then annotate the interpreter
 
