@@ -166,6 +166,13 @@ SigmaCode : ShallowType -> AnyTree -> TypeFace
 IsectCode : ShallowType -> AnyTree -> TypeFace
   := {A, P} => make_type ({ tele := perform (Fresh A) ({x} => perform (Observe (pair Self (P x))) ({_} => Pure t)) })
 AnyTree : Refine ShallowType Coherent := Pred ({_v} => true)
+RecognizeP := {_T} => PiCode AnyTree ({_} => Bool)
+GateP := {T} => PiCode ShallowType ({_} => PiCode (PiCode T ({_} => ShallowType)) ({_} => AnyTree))
+ElimP := {T} => PiCode T ({_} => AnyTree)
+MembersP := {_T} => AnyTree
+NormP := {T} => PiCode T ({_} => T)
+EndsP := {T} => SigmaCode T ({_} => T)
+UnderP := {_T} => ShallowType
 
 hyp_marker := fix ({self, payload, frame} =>
   wait self ({ (AnyTree) := pair "Ob" (pair frame (wait self payload)) }))
@@ -332,9 +339,35 @@ Row : Refine ShallowType Coherent := Sum AnyTree RowCode
 Obs : Refine ShallowType Coherent := Sum AnyTree ObsCode
 test tree_eq Row.code RowCode = true
 
+Cell : Pi (Sampled [Nat]) ShallowType ({_} => Refine ShallowType Coherent)
+  := {P} => Sum AnyTree [pair "None" t, pair "Some" [P]]
+prop_formers : List AnyTree := [RecognizeP, GateP, ElimP, MembersP, NormP, EndsP, UnderP]
+prop_slot := {P} =>
+  if (tree_eq P RecognizeP) { "recognize" }
+  else if (tree_eq P GateP) { "gate" }
+  else if (tree_eq P ElimP) { "elim" }
+  else if (tree_eq P MembersP) { "members" }
+  else if (tree_eq P NormP) { "norm" }
+  else if (tree_eq P EndsP) { "ends" }
+  else if (tree_eq P UnderP) { "under" }
+  else { t }
+ask : Pi (Sampled [Bool]) ShallowType ({_} => Pi (Sampled [MembersP, NormP]) AnyTree ({_} => AnyTree))
+  := {T, P} => {
+  let c := if (is_type T) { field_cell (pair_snd (tagged_meta T)) (prop_slot P) } else { field_cell T (prop_slot P) }
+  if (is_leaf c) { inj "None" t } else { inj "Some" (pair_snd c) }
+}
+ask_sig := sig_of ask
+test tree_eq (ask Bool MembersP) (inj "Some" [true, false]) = true
+test tree_eq (ask Bool NormP) (inj "None" t) = true
+
 respond_face_at : Pi (Sampled [neutral_type]) AnyTree ({_} => Pi (Sampled [Acc pair_fst]) AnyTree ({_} => Pi (Sampled [make_hyp (Sigma Guard Nat ({_} => Bool)) t]) AnyTree ({_} => AnyTree)))
   := {nt, frame, self} => {
   let T := nt self
+  if (has_sig "Ask" frame) {
+    if (and (tree_eq T ShallowType) (member AnyTree (pair_snd frame) prop_formers)) {
+      pair [] (Cell ((pair_snd frame) self))
+    } else { invalid frame }
+  } else {
   let rows := {
     let vrows := T.tele
     if (is_fork vrows) { vrows } else { T.obs }
@@ -379,6 +412,7 @@ respond_face_at : Pi (Sampled [neutral_type]) AnyTree ({_} => Pi (Sampled [Acc p
       }
       _ => (invalid frame)
     }
+  }
   }
 }
 neutral_type : Pi (Sampled [make_hyp Bool t]) AnyTree ({_} => AnyTree)
@@ -765,6 +799,13 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) AnyTree ({_} => Pi (Sampled [{_s
     else if (is_neutral f) { let r := f x; if (is_invalid (neutral_type r)) { invalid f } else { r } }
     else if (or (is_elim_head f) (has_sig elim_stuck_sig f)) { f x }
     else if (is_open_chain f) { f x }
+    else if (tree_eq f ask) { wait ask x }
+    else if (has_sig ask_sig f) {
+      let T2 := wait_payload f
+      if (is_neutral T2) {
+        if (member AnyTree x prop_formers) { self T2 (inj "Ask" x) } else { invalid x }
+      } else { f x }
+    }
     else if (tree_eq f ({x} => x)) { x }
     else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (Acc f) }
     else if (is_neutral x) {

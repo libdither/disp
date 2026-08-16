@@ -230,6 +230,22 @@ test eq_sym Nat 2 2 refl = refl
 test eq_trans Nat 2 2 2 refl refl = refl
 test eq_cong Nat succ 2 2 refl = refl
 
+// The ask face: a property query on an abstract type answers as a witness
+// typed Cell (P T) -- nobody answers, the witness is a mint, so certificates
+// hold for every dictionary. Pi-Guard-literal: Meta has no Ask rule yet.
+// Consuming a witness (case, projection, application) is the documented
+// boundary: the answer type is Sum-built, and scrutinizing formers refuse to
+// CONSTRUCT over an embedded mint inside a walked body (last pin), so
+// witness elimination waits on walked type formation or a dedicated head.
+test (Pi Guard ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
+test (Pi Guard ShallowType ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
+test (Pi Guard ShallowType ({T} => AnyTree)) ({T} => ask T ({X} => X)) = false
+test (Pi Guard Nat ({n} => AnyTree)) ({n} => ask n MembersP) = false
+test (Pi Guard ShallowType ({T} => ShallowType)) ({T} => Cell (NormP T)) = false
+test tree_eq (ask Nat GateP) (inj "Some" Nat.gate) = true
+test tree_eq (ask (Eq Nat 2 2) UnderP) (inj "Some" Nat) = true
+test tree_eq (ask (Eq Nat 2 2) EndsP) (inj "Some" (pair 2 2)) = true
+
 Tree : Refine ShallowType Coherent := ({
   #recognize := {_self, _v} => true
   gate := {Ind, B} => [B t, PiCode Ind ({c} => PiCode (B c) ({_} => B (t c))), PiCode Ind ({l} => PiCode Ind ({r} => PiCode (B l) ({_} => PiCode (B r) ({_} => B (t l r)))))]
