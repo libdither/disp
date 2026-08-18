@@ -2,7 +2,8 @@
 
 Languages and systems surveyed against **disp**'s goals, August 2026.
 Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
-the full argument. All activity dates verified via the GitHub API on 2026-08-03.
+the full argument. All activity dates verified via the GitHub API on 2026-08-03
+(Mojo: 2026-08-18, the day its compiler went open source).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -44,6 +45,7 @@ search on itself.
 | [**Dafny**](dafny.md) | ✗ | ◐ | ✗ | ◐ | ✗ | **✅** | calibration: what AI writes best |
 | [**NanoLang**](nanolang.md) | ✗ | ✗ | ◐ | ✗ | ✅ | ◐ | mechanized metatheory, solo |
 | [**Rust cluster**](rust-verification-cluster.md) | ✗ | ◐–✅ | ◐ | ◐ | **✅** | ◐ | the competition, and the fallback |
+| [**Mojo**](mojo.md) | ◐ | ◐ | ✗ | ✗ | **✅** | ◐ᶠ | one language at every stage, at industrial scale |
 | [**LogosLang**](logoslang.md) | ◐ | ◐ᵈ | ✗ | ✗ | ✅ | ✗ | nearest indie statement of disp's thesis |
 | [**Acorn**](acorn.md) | ✗ | ◐ | ◐ | ✗ | ✗ | **✅** | *local* neural proposer in the loop |
 | [**Salt**](salt.md) | ✗ | ◐ | ✗ | ✗ | ◐ᶜ | ✗ | proof-coverage as a continuous signal |
@@ -51,7 +53,7 @@ search on itself.
 | [**Adjacent substrates**](adjacent-substrates.md) | — | — | — | **✅**ᵉ | — | — | egg/e-graphs ≈ disp's `~_T` machinery |
 | [**Graveyard**](graveyard.md) | — | — | — | — | — | — | what happens when this is attempted |
 
-ᵈ designed, not built · ᶜ claimed, unverified provenance · ᵉ egg specifically
+ᵈ designed, not built · ᶜ claimed, unverified provenance · ᵉ egg specifically · ᶠ cost-only parameter sweeps, not program search
 
 ---
 
@@ -73,13 +75,14 @@ itself, and no one else's can.**
 ### Closest by axis
 
 - **A1 (reflection):** disp leads. Native intensionality with no quotation layer is
-  unique here; everyone else quotes (Lean `Expr`, Agda `Term`, Meta-F*).
+  unique here; everyone else quotes (Lean `Expr`, Agda `Term`, Meta-F*) or, like
+  Mojo, stages the same language without ever making terms data.
 - **A2 (spec power):** disp trails badly. Lean, Agda, F*, Nova, Blight all have more.
 - **A3 (kernel):** MM0 ahead; Nova and Blight match the architecture.
 - **A4 (equality):** **disp is last.** Nova (extensional + certificates), Agda
   (cubical), and egg (e-graphs with replayable certificates) all have answers.
   This is disp's own Q1 and the survey confirms it as the weakest point.
-- **A5 (performance):** Verus/Rust ≈ ATS ≈ Soma ≈ CakeML ahead; disp is an
+- **A5 (performance):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ CakeML ahead; disp is an
   interpreted tree-walker with a measured 4,000–67,000× ic-net penalty.
 - **A6 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
   and CryptOpt (randomized, certified) are all ahead of disp, which has this
