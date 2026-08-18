@@ -45,15 +45,16 @@ open use "../../archive/live-kernel/std/nat.disp" // `double`
 // grown from a single leaf `t`. Numbers, lambdas, types, proofs, and the type
 // checker itself are all such trees. Some of them are small:
 
-// from the prelude:  true : Bool := {m, ct, cf} -> ct
-test true = t t (t t)                             // the four-leaf tree behind the name
+// from the prelude:  true : Bool := t  (booleans are raw shapes)
+test true = t                                     // the leaf itself
+test false = t t                                  // the stem: one branch up
 test tree_eq 3 (succ (succ (succ zero))) = true   // 3 is sugar, and the trees are identical
 
 // Three of the five rules dispatch on the shape of a tree (leaf, stem, or
 // fork), so case analysis over arbitrary data is a rewrite rule, not library
 // code. This is the self-reflection everything else builds on:
 
-let shape_of := t (t "leaf" ({u} -> "stem")) ({u, v} -> "fork")
+let shape_of := t (t "leaf" ({u} => "stem")) ({u, v} => "fork")
 test shape_of t = "leaf"
 test shape_of (t t) = "stem"
 test shape_of (t t t) = "fork"
@@ -70,15 +71,15 @@ test shape_of (t t t) = "fork"
 ```rust
 // Surface constructs expand to library calls. Expansions are trees, so pin them:
 
-test tree_eq ({r} -> r.x) ({r} -> r (acc "x")) = true   // projection is application
+test tree_eq ({r} => r.x) ({r} => r (acc "x")) = true   // projection is application
 
 let Point := { x : Nat, y : Nat }
-let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} -> t (proj_cell "y" Nat) ({_y} -> t)))
+let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} => t (proj_cell "y" Nat) ({_y} => t)))
 test tree_eq Point PointCells = true                    // the literal is exactly the library call
 
 // Telescope is the one former behind functions, pairs, records, and unit;
 // sums are its dual; recursion is one more cell kind. A new type former is
-// library code, not kernel surgery (NEGATIVE_TYPES.md).
+// library code, not kernel surgery (archive/live-kernel/NEGATIVE_TYPES.md).
 ```
 
 ### Checking is running
@@ -88,7 +89,7 @@ test tree_eq Point PointCells = true                    // the literal is exactl
 // no checker in sight:
 
 test Nat 3 = Ok true
-test Nat true = Ok false
+test Nat "hi" = Ok false
 
 // Structure runs too: b's recipe is evaluated during the check.
 
@@ -102,16 +103,16 @@ test TDs { a := 2; b := 5 } = Ok false   // ran double 2, compared, rejected
 ```rust
 // This annotation claims something about infinitely many inputs:
 
-quadruple : Nat -> Nat := {n} -> double (double n)
+quadruple : Nat -> Nat := {n} => double (double n)
 test quadruple 3 = 12
 
 // No amount of running visits them all, and raw application, which worked
 // for data above, yields no verdict:
 
-let NatToNat := Pi Nat ({_} -> Nat)                // the annotation above, desugared
+let NatToNat := Pi Nat ({_} => Nat)                // the annotation above, desugared
 test tree_eq (NatToNat quadruple) (Ok true) = false    // raw: no verdict comes back
 test param_apply NatToNat quadruple = Ok true       // the dispatcher: yes
-test param_apply NatToNat ({n} -> true) = Ok false     // wrong codomain: no
+test param_apply NatToNat ({n} => "hi") = Ok false     // wrong codomain: no
 
 // The difference: checking a function requires minting a hypothesis, a fresh
 // opaque tree carrying a type and nothing else: a promise that a Nat will be
@@ -135,7 +136,7 @@ test param_apply NatToNat ({n} -> true) = Ok false     // wrong codomain: no
 let hN := make_hyp Nat 0                           // mint one by hand (the 0 is a fresh id)
 test param_apply Nat hN = Ok true                   // a promise of a Nat counts as a Nat
 
-let hPi := make_hyp (Pi Nat ({_} -> Bool)) 0
+let hPi := make_hyp (Pi Nat ({_} => Bool)) 0
 test neutral_type (param_apply hPi zero) = Bool   // Extend: stuck, at the codomain type
 
 let Pt := { a : Nat, b := succ a }
@@ -149,13 +150,13 @@ test tree_eq (param_apply hPt (acc "b")) (succ (param_apply hPt (acc "a"))) = tr
 // of type Nat, the codomain matched, and the definition was accepted. This
 // technique is called neutral evaluation.
 
-test is_neutral (nat_rec ({_} -> Bool) true ({n, rec} -> false) hN) = true
+test is_neutral (nat_rec ({_} => Bool) true ({n, rec} => false) hN) = true
 
 // Reading the promise's raw shape is missing from that list on purpose. The
 // walker refuses the question instead of answering it, since either answer
 // would leak information the promise does not contain:
 
-test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err   // illegal question
+test param_apply (Pi Nat ({_} => Bool)) ({x} => is_fork x) = Err   // illegal question
 
 // Everything above hangs on promises staying unforgeable and uninspectable.
 // bind_hyp, hyp_reduce, and the dispatcher enforce that, and they are the
@@ -181,9 +182,9 @@ test (Eq Nat 3 4) refl = Ok false
 // takes one promise. Here is a theorem in surface form, the kernel's verdict
 // on it, and a false statement refl cannot prove (the stuck ends differ):
 
-n_eq_n : {n : Nat} -> Eq Nat n n := {n} -> refl
-test param_apply (Pi Nat ({n} -> Eq Nat n n)) n_eq_n = Ok true
-test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl) = Ok false
+n_eq_n : {n : Nat} -> Eq Nat n n := {n} => refl
+test param_apply (Pi Nat ({n} => Eq Nat n n)) n_eq_n = Ok true
+test param_apply (Pi Nat ({n} => Eq Nat n (succ n))) ({n} => refl) = Ok false
 ```
 
 ### Who checks the types?
@@ -207,7 +208,7 @@ let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]   // a home-made Nat: zero 
 test param_apply Type MyNat = Ok true
 
 // read a type's respond out of its metadata:
-let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
+let resp_of := {T} => (type_meta T).respond (type_meta T).recognizer_params
 test verify_good MyNat (resp_of MyNat) = Ok true                    // its real respond: honest
 test verify_good MyNat (inductive_respond unit_witness) = Ok false   // waves junk through
 test verify_good MyNat (inert_respond unit_witness) = Ok false       // refuses everything
@@ -265,7 +266,7 @@ The 🧑/🤖 column estimates who typed the words; git does not record the spli
 | [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. *Interesting Read* | 🤖 | 7/10 |
 | [`TYPE_THEORY.typ`](TYPE_THEORY.typ) | Authoritative type-theory spec: the two-op kernel, manifest contracts, library types, validators. *Long* | 🤖 | 5/10 |
 | [`EVALUATOR.md`](EVALUATOR.md) | The reduction-backend subsystem: the `Session` ABI, the five backends, the differential-oracle discipline. | 🤖 | 6/10 |
-| [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) | Tree-calculus implementation idioms: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 6/10 |
+| [`archive/live-kernel/KERNEL_DESIGN.md`](archive/live-kernel/KERNEL_DESIGN.md) | Tree-calculus implementation idioms for the archived kernel: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 6/10 |
 | [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. | 🤖 | 7/10 |
 
 The kernel is source code written to be read: the type system is a library, so these files are the type theory's implementation and its documentation at once.

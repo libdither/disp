@@ -882,7 +882,7 @@ lib/frontend/
   frontend.disp            # public FrontState / FrontStep API
 
 lib/frontend/*.opt.disp    # only measured, validated replacements
-lib/tests/frontend/        # golden, random, module, edit, bootstrap tests
+archive/live-kernel/tests/frontend/        # golden, random, module, edit, bootstrap tests
 ```
 
 The final exact names can follow repository conventions, but the semantic boundaries should

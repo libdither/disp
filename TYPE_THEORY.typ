@@ -28,6 +28,14 @@
 #align(center, text(22pt, weight: "bold")[Disp Type Theory])
 #v(0.3em)
 #align(center, text(13pt)[Unified Specification])
+
+#note[
+  *Status (2026-08-17).* This spec documents the kernel now archived at
+  `archive/live-kernel/` (the two-op trusted core: `bind_hyp`, `hyp_reduce`,
+  `param_apply`). It was retired from `lib/kernel/` when the provenance-based
+  checker was promoted there; a successor spec for the promoted kernel is
+  pending. Everything here still loads and passes from the archive.
+]
 #v(0.5em)
 #align(center)[
   Type theory of disp via a parametric walker over a tree-calculus substrate,
@@ -36,7 +44,7 @@
 #v(1em)
 
 #note[
-  *Status.* Active spec. The implementation in `lib/kernel/` is authoritative
+  *Status.* Active spec. The implementation in `archive/live-kernel/kernel/` is authoritative
   where this document and code differ. Open items are flagged inline as
   `Open question:` notes.
 
@@ -1935,7 +1943,7 @@ roots would stop *before* reaching the hypothesis embedded in its
 spine — precisely the values that carry a hypothesis out of scope. This
 is verified in the implementation: `bind_hyp (Pi Nat ({_} -> Bool))
 ({h} -> h 0)` returns `Err`, because `h 0` is a stuck elimination
-whose spine holds `h` (`lib/tests/bind_hyp.test.disp`); the prior
+whose spine holds `h` (`archive/live-kernel/tests/bind_hyp.test.disp`); the prior
 seal-stopping scan returned the leaked neutral instead.
 
 `support v` is a pure function of `v`'s structure, so the runtime
@@ -2830,7 +2838,7 @@ Each inductive type's meta therefore carries `respond := inductive_respond`
   `nat_rec ({_}->Nat) true ({p,ih}->true)` elaborates to a stuck neutral *typed* `Nat`,
   so `{y} -> nat_rec ({_}->Nat) true ({p,ih}->true) y` is accepted at `Nat -> Nat` even
   though it returns `true ∉ Nat` on every input (witnessed in
-  `lib/tests/kernel.test.disp`).
+  `archive/live-kernel/tests/kernel.test.disp`).
 
   The dependent eliminator typing rule closes it: at a *use*, the cases must
   inhabit the motive — `base : motive zero`, `step : Π n. motive n -> motive (succ
@@ -3183,8 +3191,8 @@ which holds for the *parametric* responds (`inert_respond`,
 against these, checked by the auto-`verify` of each kernel fragment.
 
 ```disp
-test verify (use "lib/kernel/cut.disp") = Ok true      // make_meta : Tree -> Tree -> MetaShape
-test verify (use "lib/kernel/engine.disp") = Ok true   // inert_respond : RespondShape
+test verify (use "archive/live-kernel/kernel/cut.disp") = Ok true      // make_meta : Tree -> Tree -> MetaShape
+test verify (use "archive/live-kernel/kernel/engine.disp") = Ok true   // inert_respond : RespondShape
 test typecheck Type MetaShape = Ok true
 test typecheck Type RespondShape = Ok true
 ```
@@ -3656,7 +3664,7 @@ test string_recognizer string_meta empty_string            = Ok true
 test string_recognizer string_meta (cons (char "a") empty_string) = Ok true
 ```
 
-(Full definitions live across the kernel fragments in `lib/kernel/` —
+(Full definitions live across the kernel fragments in `archive/live-kernel/kernel/` —
 String in `base.disp`; the spec mandates the recognizer / meta shape
 above and the tests below.)
 
@@ -3833,7 +3841,7 @@ the effect system proper.
 = Cubical extensions <sec:cubical>
 
 *(Status note, 2026-07-11: the set-level fragment of this section's
-motivation landed as explicit library structure in `lib/std/relation.disp`:
+motivation landed as explicit library structure in `archive/live-kernel/std/relation.disp`:
 heterogeneous relation objects, same-input pointwise and binary dependent
 Pi lifts, checker-validated homogeneous PER/equivalence/preorder laws with
 explicit relation bridges, pullbacks, linked binders, and direct respect
@@ -5063,10 +5071,10 @@ of them, and a failing test halts elaboration at the failing
 component.
 
 The on-disk source of truth is the recursive set
-`lib/tests/**/*.test.disp`, runnable as a whole via `npm test` (see
+`archive/live-kernel/tests/**/*.test.disp`, runnable as a whole via `npm test` (see
 `test/disp.test.ts`). Effect tests (`Eff` recognizer + row checks,
 handler folds, `catch`-as-handler scoping, mock-handler runs) land in
-`lib/tests/effects/`.
+`archive/live-kernel/tests/effects/`.
 
 This appendix exists to point at that organization; it does not
 maintain a parallel test catalog. Any duplication would rot — the
@@ -5104,7 +5112,7 @@ inline tests are canonical.
 == Disp-internal documents
 
 - `GOALS.md` — north star and metacircular discipline.
-- `KERNEL_DESIGN.md` — host-side implementation idioms.
+- `archive/live-kernel/KERNEL_DESIGN.md` — host-side implementation idioms.
 - `SYNTAX.typ` — surface grammar.
 - `archive/RECORDS_PROPOSAL.md` — records and projection (archived; record
   *theory* now in §2.6/§12, the file retains the forward-looking design for

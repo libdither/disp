@@ -1,7 +1,7 @@
 open use raw "../prelude.disp" {}
 open use raw "kernel.disp" {}
 
-// The standalone library types, split out of kernel.disp: everything the
+// The kernel's library types, split out of kernel.disp: everything the
 // checker itself does not need to exist. kernel.disp keeps the machinery and
 // its constitutive types (Bool, Unit, AnyTree, Pred, ShallowType, Row/Obs,
 // Sum, the Pi/Tele formers, the tables, Record + the declaration protocol).

@@ -61,7 +61,7 @@ export const moduleCacheBySession = new WeakMap<Session<Tree>, Map<string, Scope
 // unbound or pristine, which also restores the real application head so head-keyed
 // elaboration like named-argument calls sees through it.)
 //
-// A session can hold MORE THAN ONE kernel — the live kernel and the standalone one
+// A session can hold MORE THAN ONE kernel — the promoted kernel and the archived live one
 // both ship a full protocol, and a suite that loads both shares one session. So this
 // is a SET per name, not a single winner: every kernel's definition is pristine, and
 // the second one to load is not a shadow of the first. Only definitions made by a

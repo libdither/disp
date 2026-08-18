@@ -914,9 +914,9 @@ test Fn Nat ({_} => BEf) ({n} => Pure n) = true
 test Fn Nat ({_} => BEf) ({n} => Op (pair true ({_} => Pure n))) = true
 test Fn Nat ({_} => BEf) ({n} => Op (pair n ({_} => Pure n))) = false
 
-// The declaration protocol end to end in the standalone world: the driver
+// The declaration protocol end to end in this kernel: the driver
 // builds requests with the scope's make_record and reads them with the scope's
-// field, so the standalone vocabulary (base/let/sig/guard/given +
+// field, so this kernel's vocabulary (base/let/sig/guard/given +
 // default_guard + GuardAction) mediates declarations here. A guard-headed
 // declaration binds AND installs (default_guard's Both); the installed guard
 // then owns the next rebind (here: it binds the incoming value plus one).

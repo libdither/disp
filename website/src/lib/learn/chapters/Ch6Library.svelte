@@ -147,7 +147,7 @@
   </p>
   <TraceWidget
     title="Trace: checking quadruple : Nat -> Nat"
-    intro="The whole machine, end to end — dispatcher, telescope cells, both kernel operations, the H-rule, and the escape check. (Schematic; lib/kernel/engine.disp is ground truth.)"
+    intro="The whole machine, end to end — dispatcher, telescope cells, both kernel operations, the H-rule, and the escape check. (Schematic; archive/live-kernel/kernel/engine.disp is ground truth.)"
     frames={traceFrames}
   />
 </section>

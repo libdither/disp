@@ -27,7 +27,10 @@
 #v(1em)
 
 #note[
-  *Status.* Active design proposal. This document *consolidates* the prior optimizer stack
+  *Status.* Active design proposal. (2026-08-17: the landed licensing layers this
+  document cites — relation objects, `license_guard` variants, the opt_q1 slice —
+  ride the kernel now archived at `archive/live-kernel/`; they have not yet been
+  re-landed on the promoted kernel at `lib/kernel/`.) This document *consolidates* the prior optimizer stack
   into one coherent design and works out the connections between its layers. It folds and
   replaces, in full:
   `research/OPTIMIZER.md` (the reading-map + staging-axis framing),
@@ -251,11 +254,11 @@ rejects `triage`/structural inspection of kernel-minted neutrals, but it sanctio
 reads (`pair_fst`, hence `is_neutral`) on every value including hyps, because polarized
 application (`elim`, `case_value`, the H-rule, every `.opt` fast path) dispatches on exactly that
 bit (ACTIVE_BUGS item 5). A certificate produced under the live walker is a neutral-face
-statement, and `lib/tests/probe_license_sr.test.disp` pins the consequence for licensing:
+statement, and `archive/live-kernel/tests/probe_license_sr.test.disp` pins the consequence for licensing:
 `{n} -> if (is_neutral n) then n else (succ n)` is licensed against the identity by `{n} -> refl`,
 and the `license_guard` rebind is accepted while the two functions differ at every concrete
 point. The observer class that defines `~_T` is the de-carved walker (the `ext_walker` prototype
-in `lib/tests/ext_gate_proto.test.disp`, where observation must factor through application);
+in `archive/live-kernel/tests/ext_gate_proto.test.disp`, where observation must factor through application);
 certification does not run under it today. See "Certification is not yet observer-restricted"
 below for the gap and the closing design.
 
@@ -325,7 +328,7 @@ the semantic relation that licenses rewrites):
   needs it.)
 
 *Landed (reworked 2026-07-11).* (A) and (C) have first implementations in
-`lib/std/relation.disp`: relation objects are explicit and compositional rather than derived as
+`archive/live-kernel/std/relation.disp`: relation objects are explicit and compositional rather than derived as
 one privileged equality from a type's metadata. The library supplies same-input pointwise and
 binary dependent Π lifts, checker-validated homogeneous PER/equivalence/preorder packages,
 explicit package-to-relation bridges, pullbacks,
@@ -339,18 +342,18 @@ correction below). The law packages have the same qualification: their fields ar
 so reflective bodies can agree at minted hypotheses and disagree on concrete members until the
 observer-restricted certification mode lands. The
 motive-extensionality obligation is operational: the `ext_walker` probe
-(`lib/tests/ext_gate_proto.test.disp`), a `param_walker` variant whose intensional carve-outs
+(`archive/live-kernel/tests/ext_gate_proto.test.disp`), a `param_walker` variant whose intensional carve-outs
 refuse neutrals — the per-motive residue of the fundamental lemma. The licensed-*replacement*
-mechanism exists as the elaborator's guard layer (the declaration protocol: SYNTAX.typ, `lib/kernel/cut.disp`):
+mechanism exists as the elaborator's guard layer (the declaration protocol: SYNTAX.typ, `archive/live-kernel/kernel/cut.disp`):
 `license_guard R` makes redefinition of an owned name demand `proof : R old new`, re-verified at
-every load. End-to-end walkthrough pinned in `lib/tests/relation_tree_license.test.disp` (the
+every load. End-to-end walkthrough pinned in `archive/live-kernel/tests/relation_tree_license.test.disp` (the
 deep-recognizer-to-`Ok true` rewrite, licensed by tree induction). Still open here: (B) `φ` as a
 term-level cast (replacement is definition-level today), cost-aware `⊵~ₛ`, dependent-family
 transport (the §13 coe rung), and the strict certification mode below.
 
 == Certification is not yet observer-restricted (the gap, and the fix)
 
-*The gap (2026-07-10, pinned in `lib/tests/probe_license_sr.test.disp`).* License obligations are
+*The gap (2026-07-10, pinned in `archive/live-kernel/tests/probe_license_sr.test.disp`).* License obligations are
 checked under the live walker, whose sanctioned root-signature reads let a candidate observe
 which face it is on. Four pinned consequences. (1) `{n} -> if (is_neutral n) then n else (succ n)`
 is licensed against `id` at an explicit pointwise Nat relation by `{n} -> refl`, because instantiating the

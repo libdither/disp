@@ -1,7 +1,7 @@
 # Annotation migration plan
 
-Goal: total annotation of the standalone kernel. Every definition in
-lib/standalone/ either carries a checked annotation at the strongest tier it
+Goal: total annotation of the kernel (lib/kernel/, the promoted standalone checker). Every definition in
+lib/kernel/ either carries a checked annotation at the strongest tier it
 supports, or appears in the "never annotated" list with its stated reason.
 This file is a living plan: update stage statuses in place, delete the file
 when the work is done.

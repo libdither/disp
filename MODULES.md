@@ -3,9 +3,9 @@
 Status: slice 1 LANDED (2026-07-06): the given layer (explicit fills,
 instantiation cache, well-typed linking) plus hermetic per-file scoping and
 the kernel fragment headers. The type-theory half was validated first by
-`lib/tests/functor_module_proto.test.disp` (commit 5449c59, 15 pins, zero
+`archive/live-kernel/tests/functor_module_proto.test.disp` (commit 5449c59, 15 pins, zero
 kernel changes; the proto was deleted 2026-07-08 once the landed pins
-covered it); slice 1 pins live in `lib/tests/given.test.disp` and
+covered it); slice 1 pins live in `archive/live-kernel/tests/given.test.disp` and
 `test/modules.test.ts`. Slice 2 LANDED (2026-07-06): bare `use "f"` on a
 given-bearing module denotes the functor tuple (record = the readback
 lambda, typ = the Pi-into-Record over the given telescope), `verify` of the
@@ -315,7 +315,7 @@ pre-reduces the closed cell. Two answers:
   ensures same type, same tree"). This is sufficient for the module arc and
   is pinned (`tree_eq FlatPiT SimpleModT = false` documents the hazard).
 - Later, yes: normalization at formation would resolve it, and it is exactly
-  the NbE ideal NEGATIVE_TYPES.md already names as the telescope's frontier.
+  the NbE ideal archive/live-kernel/NEGATIVE_TYPES.md already names as the telescope's frontier.
   Mechanism: when a telescope is formed, apply each continuation to a fresh
   hyp, reduce, and read the binder back (mint plus readback, both existing
   idioms). Constant families normalize to the K form, so the two spellings
@@ -477,11 +477,11 @@ spec spells the recursor type and its explicit relation locally. Rebinds without
 inherit the incumbent's type (request + Def), which is what keeps the
 overlay's fast exports typed and re-verified at the spec contracts. The in-language Module-carries-requests form (and
 `Module` growing a guards field) remains the slice-3 destination; certs are
-host metadata exactly like `fieldGuards`. Pins: `lib/tests/guard_opt.test.disp`.
+host metadata exactly like `fieldGuards`. Pins: `archive/live-kernel/tests/guard_opt.test.disp`.
 
 Docs per slice: this file states the module theory (module = telescope-typed
 function, instantiation, the barrel staging made explicit, given/sig polarity);
-SYNTAX.typ notes `given` and use-application; KERNEL_DESIGN.md the fragment
+SYNTAX.typ notes `given` and use-application; archive/live-kernel/KERNEL_DESIGN.md the fragment
 header discipline; CLAUDE.md operating notes.
 
 ## Test plan

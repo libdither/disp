@@ -11,7 +11,7 @@
   <p>
     Everything else about the type system — <code>Pi</code>, records, <code>Bool</code>,
     <code>Nat</code>, <code>Eq</code>, the universe <code>Type</code> — is library code you can
-    read in <code>lib/kernel/</code>. The kernel proper is <em>two</em> operations and a
+    read in <code>archive/live-kernel/kernel/</code>. The kernel proper is <em>two</em> operations and a
     dispatcher. This section is about why those two, and why they must be trusted.
   </p>
 
@@ -57,7 +57,7 @@
       type <em>family</em> that inspects its argument could read as <code>Nat</code> during
       checking and as <code>Eq Nat 0 1</code> at a concrete use site — smuggling a false proof
       through an honest check. (These are pinned as attacks 3–5 in
-      <code>lib/tests/soundness.test.disp</code>.)
+      <code>archive/live-kernel/tests/soundness.test.disp</code>.)
     </p>
   </Aside>
 
@@ -174,7 +174,7 @@
     </tbody>
   </table>
   <p>
-    These carve-outs are <em>pinned</em>: <code>lib/tests/soundness.test.disp</code> asserts
+    These carve-outs are <em>pinned</em>: <code>archive/live-kernel/tests/soundness.test.disp</code> asserts
     both what must pass and what must be refused, so a kernel change that widens the walker
     fails the suite.
   </p>

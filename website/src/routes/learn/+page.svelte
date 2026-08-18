@@ -104,7 +104,7 @@
       <p class="provenance">
         Updated for the current two-operation kernel. This walkthrough is pedagogical commentary;
         <a href="https://github.com/libdither/disp/blob/main/TYPE_THEORY.typ">TYPE_THEORY.typ</a>
-        and the <code>lib/kernel/*.disp</code> sources are the ground truth.
+        and the <code>archive/live-kernel/kernel/*.disp</code> sources are the ground truth.
       </p>
     </header>
 

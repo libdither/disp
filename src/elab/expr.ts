@@ -343,7 +343,7 @@ export function exprToCir(
       // A `#`-marked field is the record's FACE: the literal compiles through the
       // scope-bound `faced` former (`faced "name" record`), which builds a value
       // that behaves as that field when applied while the whole record rides as
-      // readable metadata (the standalone kernel's tagged-tree construction).
+      // readable metadata (the kernel's tagged-tree construction).
       const facedFields = e.fields.filter(f => f.faced)
       if (facedFields.length > 1)
         throw new Error(`record literal: at most one '#'-marked face field (got ${facedFields.map(f => f.name).join(", ")})`)
@@ -394,7 +394,7 @@ export function exprToCir(
       const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
       // Vocabulary hook (like `cond` for if, `prod` for match): a scope that
       // binds `dot` owns projection — `r.x` compiles to `dot "x" r`, so a world
-      // can make its own values field-readable (e.g. the standalone kernel's
+      // can make its own values field-readable (e.g. the kernel's
       // wait-form-aware reader). Unbound, the §2.6 cut `r (acc x)` stands.
       const dotTree = sugarTree(lookupEntry, "dot")
       if (dotTree)

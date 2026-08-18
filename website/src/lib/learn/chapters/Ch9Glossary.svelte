@@ -39,7 +39,7 @@
     This walkthrough is pedagogical commentary. The repository's
     <a href="https://github.com/libdither/disp/blob/main/TYPE_THEORY.typ">TYPE_THEORY.typ</a>,
     <a href="https://github.com/libdither/disp/blob/main/SYNTAX.typ">SYNTAX.typ</a>, and the
-    <code>lib/kernel/*.disp</code> sources are the ground truth — and unlike most language
+    <code>archive/live-kernel/kernel/*.disp</code> sources are the ground truth — and unlike most language
     documentation, the kernel sources are the theory.
   </p>
 </section>

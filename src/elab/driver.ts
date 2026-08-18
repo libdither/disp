@@ -370,7 +370,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // binds `check_module` gets its annotated exports (and checked block-lets)
     // batched into `check_module [(name, typ)…] (make_record names values)`, expected
     // to reduce to the scope's bare `true`. The live kernel wraps its walker entry
-    // (`tree_eq (param_apply (Record typs) rec) (Ok true)`); the standalone world's
+    // (`tree_eq (param_apply (Record typs) rec) (Ok true)`); the promoted kernel's
     // types are predicates, so its hook is literally its Record former. Null when the
     // name is absent — verification is then skipped (no checkable annotations).
     let cmFormers: { checkModule: Tree; mkRecord: Tree; listConst: Tree; tt: Tree } | null = null
