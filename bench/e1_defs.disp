@@ -3,8 +3,8 @@
 // ic-net CLI left-folds a term file back into an application and reduces it. Values only —
 // the runner picks argument sizes.
 
-open use "../lib/kernel/prelude.disp"
-open use "../lib/std/nat/arith.disp"
+open use "../archive/live-kernel/kernel/prelude.disp"
+open use "../archive/live-kernel/std/nat/arith.disp"
 
 e1_add := add
 e1_param_apply := param_apply

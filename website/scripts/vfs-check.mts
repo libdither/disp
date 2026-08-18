@@ -24,8 +24,9 @@ try {
   const expected = [
     '/lib/prelude.disp',
     '/lib/kernel/prelude.disp',
-    '/lib/kernel/engine.disp',
-    '/lib/std/nat.disp'
+    '/lib/kernel/kernel.disp',
+    '/archive/live-kernel/kernel/engine.disp',
+    '/archive/live-kernel/std/nat.disp'
   ]
   let bad = 0
   for (const p of expected) {
@@ -40,7 +41,8 @@ try {
   const dir = path.dirname(path.resolve('/lib/tests/playground.disp'))
   const cases: [string, string][] = [
     ['../kernel/prelude.disp', '/lib/kernel/prelude.disp'],
-    ['../std/nat.disp', '/lib/std/nat.disp'],
+    ['../../archive/live-kernel/kernel/prelude.disp', '/archive/live-kernel/kernel/prelude.disp'],
+    ['../../archive/live-kernel/std/nat.disp', '/archive/live-kernel/std/nat.disp'],
     ['../prelude.disp', '/lib/prelude.disp']
   ]
   for (const [rel, want] of cases) {
@@ -50,11 +52,16 @@ try {
     if (!ok) bad++
   }
 
-  // the kernel fragments raw-open siblings + the parent prelude; simulate one
-  const kdir = path.dirname('/lib/kernel/cells.disp')
+  // the kernel opens the parent prelude; the archived fragments reach it via
+  // the rewritten ../../../lib escape; simulate both
+  const kdir = path.dirname('/lib/kernel/kernel.disp')
   const g1 = path.resolve(kdir, '../prelude.disp')
-  console.log(`${g1 === '/lib/prelude.disp' && fs.vfs.has(g1) ? 'OK  ' : 'FAIL'} kernel sibling -> ${g1}`)
+  console.log(`${g1 === '/lib/prelude.disp' && fs.vfs.has(g1) ? 'OK  ' : 'FAIL'} kernel parent -> ${g1}`)
   if (g1 !== '/lib/prelude.disp') bad++
+  const adir = path.dirname('/archive/live-kernel/kernel/cells.disp')
+  const g2 = path.resolve(adir, '../../../lib/prelude.disp')
+  console.log(`${g2 === '/lib/prelude.disp' && fs.vfs.has(g2) ? 'OK  ' : 'FAIL'} archived-kernel escape -> ${g2}`)
+  if (g2 !== '/lib/prelude.disp') bad++
 
   process.exit(bad ? 1 : 0)
 } finally {

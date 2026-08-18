@@ -26,7 +26,7 @@ describe("naive backend elaboration", () => {
   // canonical backend (test/disp.test.ts, 42/42), and the fast naive reducer differential
   // (eval-naive.test.ts) still passes. Re-enable with the "lighter memoized variant" noted above.
   it.skip("elaborates + verifies a real kernel module (nat.test.disp)", { timeout: 300_000 }, () => {
-    const abs = join(import.meta.dirname, "..", "lib", "tests", "nat.test.disp")
+    const abs = join(import.meta.dirname, "..", "archive", "live-kernel", "tests", "nat.test.disp")
     const session = naiveBackend.createSession()
     const decls: Decl[] = parseProgram(readFileSync(abs, "utf-8"), abs, { session })
     const tests = decls.filter((d): d is Extract<Decl, { kind: "Test" }> => d.kind === "Test")

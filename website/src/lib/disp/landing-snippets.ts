@@ -8,7 +8,8 @@ export interface Snippet {
   preamble: string
 }
 
-const KERNEL_OPEN = 'open use "../kernel/prelude.disp"\nopen use "../std/nat.disp"\n'
+const KERNEL_OPEN =
+  'open use "../../archive/live-kernel/kernel/prelude.disp"\nopen use "../../archive/live-kernel/std/nat.disp"\n'
 
 export const snippets: Snippet[] = [
   {

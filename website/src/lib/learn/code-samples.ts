@@ -9,8 +9,8 @@ export interface Sample {
   code: string
 }
 
-const KERNEL = 'open use "../kernel/prelude.disp"\n'
-const KERNEL_OPS = KERNEL + 'open use "../std/nat.disp"\n'
+const KERNEL = 'open use "../../archive/live-kernel/kernel/prelude.disp"\n'
+const KERNEL_OPS = KERNEL + 'open use "../../archive/live-kernel/std/nat.disp"\n'
 const RAW = 'open use raw "../prelude.disp" {}\n'
 
 export const samples: Record<string, Sample> = {}

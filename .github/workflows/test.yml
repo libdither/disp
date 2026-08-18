@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'lib/**'
+      - 'archive/live-kernel/**'
       - 'test/**'
       - 'evaluators/**'
       - 'package.json'
@@ -17,6 +18,7 @@ on:
     paths:
       - 'src/**'
       - 'lib/**'
+      - 'archive/live-kernel/**'
       - 'test/**'
       - 'evaluators/**'
       - 'package.json'
@@ -87,10 +89,11 @@ jobs:
       - name: Test
         run: npm test -- --exclude 'test/disp.test.ts'
 
-  # The disp language suite: ~80 lib/tests files run serially on one shared
-  # session inside a single vitest file, so it shards round-robin across jobs
-  # via DISP_TEST_SHARD (i/n, implemented in test/disp.test.ts). Each shard
-  # pays its own kernel elaboration once, then runs its slice.
+  # The disp language suite: the kernel corpus under lib/ (lib/kernel/ plus
+  # lib/tests/) runs serially on one shared session inside a single vitest
+  # file, sharded round-robin across jobs via DISP_TEST_SHARD (i/n,
+  # implemented in test/disp.test.ts). Each shard pays its own kernel
+  # elaboration once, then runs its slice.
   disp-suite:
     needs: build-evaluators
     runs-on: ubuntu-latest

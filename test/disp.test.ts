@@ -42,7 +42,7 @@ let peakNodes = 0
 let finalNodes = 0
 let finalFree = 0
 
-// Recursively find all .test.disp files under lib/ (lib/tests/, lib/standalone/, ...).
+// Recursively find all .test.disp files under lib/ (lib/kernel/, lib/tests/, ...).
 function findTestFiles(dir: string, rel = ""): string[] {
   const entries = readdirSync(dir, { withFileTypes: true })
   const out: string[] = []

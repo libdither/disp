@@ -1,9 +1,11 @@
 // node:fs shim for the in-browser disp compiler: a read-only virtual
-// filesystem preloaded with the entire disp library (lib/**/*.disp), bundled
-// as raw strings at build time. The elaborator's module loader (modscan.ts)
-// only ever calls readFileSync on `use`d module paths, which resolve to
-// '/lib/...' under the virtual root (the playground buffer itself is passed
-// to parseProgram as source text, never read from disk).
+// filesystem preloaded with the entire disp library (lib/**/*.disp) plus the
+// archived live kernel (archive/live-kernel/**/*.disp — the site's examples
+// and learn-page snippets still teach it), bundled as raw strings at build
+// time. The elaborator's module loader (modscan.ts) only ever calls
+// readFileSync on `use`d module paths, which resolve to '/lib/...' or
+// '/archive/...' under the virtual root (the playground buffer itself is
+// passed to parseProgram as source text, never read from disk).
 
 // (__site_example_* are transient files validate-examples.mts writes into
 // lib/tests/ while it runs — never part of the library, and letting them into
@@ -17,18 +19,22 @@
 // elaborator reads the real repo lib/ while the vfs just stays empty.
 let modules: Record<string, string> = {}
 try {
-  modules = import.meta.glob(['../../../../../lib/**/*.disp', '!**/__site_example_*'], {
-    query: '?raw',
-    import: 'default',
-    eager: true
-  }) as Record<string, string>
+  modules = import.meta.glob(
+    ['../../../../../lib/**/*.disp', '../../../../../archive/live-kernel/**/*.disp', '!**/__site_example_*'],
+    {
+      query: '?raw',
+      import: 'default',
+      eager: true
+    }
+  ) as Record<string, string>
 } catch {
   /* not under Vite */
 }
 
 export const vfs = new Map<string, string>()
 for (const [key, text] of Object.entries(modules)) {
-  // '../../../../../lib/kernel/prelude.disp' -> '/lib/kernel/prelude.disp'
+  // '../../../../../lib/kernel/prelude.disp'          -> '/lib/kernel/prelude.disp'
+  // '../../../../../archive/live-kernel/std/nat.disp' -> '/archive/live-kernel/std/nat.disp'
   const rooted = key.replace(/^(\.\.\/)+/, '/')
   vfs.set(rooted, text)
 }

@@ -28,9 +28,14 @@ This section is one file, top to bottom, and it loads and passes as-is. A `test 
        awk '/^```rust$/{f=1;next} /^```$/{f=0;next} f' README.md > lib/tests/readme_check_tmp.disp
        npm run disp -- lib/tests/readme_check_tmp.disp && rm lib/tests/readme_check_tmp.disp -->
 
+> The example below teaches the previous ("live") kernel, now retired to
+> `archive/live-kernel/` after the provenance-based kernel took over `lib/kernel/`
+> (see Status). Its machinery still loads and passes from the archive; a rewrite of
+> this section against the new kernel's surface is pending.
+
 ```rust
-open use "../kernel/prelude.disp" // common operations
-open use "../std/nat/ops.disp" // `double`
+open use "../../archive/live-kernel/kernel/prelude.disp" // common operations
+open use "../../archive/live-kernel/std/nat.disp" // `double`
 ```
 
 ### Everything is a tree
@@ -154,8 +159,8 @@ test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err   // illegal qu
 
 // Everything above hangs on promises staying unforgeable and uninspectable.
 // bind_hyp, hyp_reduce, and the dispatcher enforce that, and they are the
-// entire trusted core of disp (lib/kernel/engine.disp). Pi,
-// records, Nat, and equality are library code consuming them.
+// entire trusted core of this kernel (archive/live-kernel/kernel/engine.disp).
+// Pi, records, Nat, and equality are library code consuming them.
 ```
 
 ### Proving is running
@@ -219,11 +224,10 @@ The TypeScript and Rust hosts only accelerate these in-language definitions and 
 Working today:
 
 - The full pipeline: parser, elaborator, and tree-calculus evaluation (`src/`), with the surface grammar specified in [`SYNTAX.typ`](SYNTAX.typ).
-- The two-op kernel and the library type system on top of it (`lib/kernel/`), including the self-inhabiting strict universe and automatic verification of typed module exports through the kernel.
-- A standard library (`lib/std/`): naturals, lists, options, results, pairs, sets, and streams, with generic derived operations (folds, recursors, functorial maps) read off type structure rather than hand-written per type.
-- About 1,000 object-language tests across 50 files (`lib/tests/`), including soundness tests that pin what the checker must reject, plus host-level parser and runtime unit tests (`test/`).
+- The kernel (`lib/kernel/`): a self-contained checker where hypotheses are ordinary trees and legitimacy comes from provenance (a session ledger plus history replay), with three interchangeable checking tiers (static certification, a value-level walk simulator, extensional trials) behind one table interface, quotients, a typed equation ledger, and machine-checked induction proofs. Roughly 1,300 pins across `lib/kernel/*.test.disp` and `lib/tests/`.
+- The previous kernel and its world, retired intact to `archive/live-kernel/` (`kernel/` two-op trusted core, `std/`, and its ~1,200-pin test corpus): still loadable from the archive, no longer part of the maintained surface. The example section above teaches it pending a rewrite.
 - Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, about twice as fast as the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests.
-- A first end-to-end slice of the optimizer: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (`lib/tests/opt_q1_*.test.disp`).
+- A first end-to-end slice of the optimizer: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (archived at `archive/live-kernel/tests/opt_q1_*.test.disp`).
 
 Designed but not built: the optimizer itself ([`OPTIMIZER.typ`](OPTIMIZER.typ)), effects as a library, cost as a typing-level resource, cubical path types, and the neural proposer. The open research risks, most sharply whether a decidable fragment of behavioral equivalence is rich enough to license the rewrites an optimizer needs, are catalogued as falsifiable questions in [`FOUNDATIONS.md`](FOUNDATIONS.md) §V.
 
@@ -234,8 +238,8 @@ Requires Node.js. The Rust backends are optional; the test suite runs without a 
 ```shell
 npm install
 npm test                                  # host + object-language suites (vitest)
-npm run disp -- lib/tests/nat.test.disp   # run a single .disp file
-npm run disp -- --evaluator=rust-eager lib/tests/nat.test.disp   # pick a backend (if built)
+npm run disp -- lib/kernel/accessors.test.disp   # run a single .disp file
+npm run disp -- --evaluator=rust-eager lib/kernel/accessors.test.disp   # pick a backend (if built)
 ```
 
 A `.disp` file is a sequence of definitions and `test` declarations. Running a file elaborates it and reports test results; a test passes when both sides reduce to the identical tree.
@@ -244,9 +248,9 @@ Suggested reading order:
 
 1. [`FOUNDATIONS.md`](FOUNDATIONS.md): what disp is attempting, the lineage of every design piece, and the risk assessment. Written for a general reader.
 2. [`GOALS.md`](GOALS.md): the original goal statement.
-3. `lib/tests/`: the language, demonstrated. `nat.test.disp`, `record.test.disp`, and `telescope.test.disp` are good first files.
-4. [`SYNTAX.typ`](SYNTAX.typ) and [`TYPE_THEORY.typ`](TYPE_THEORY.typ): the formal surface grammar and type-theory spec.
-5. `lib/kernel/`: the type system's source. Reading order: `cut`, `engine`, `cells`, `base`, `positive`, `generic`, `universe`.
+3. `lib/kernel/kernel.test.disp` and `lib/tests/`: the language, demonstrated (the archived corpus under `archive/live-kernel/tests/` is a larger museum of the previous surface).
+4. [`SYNTAX.typ`](SYNTAX.typ) and [`TYPE_THEORY.typ`](TYPE_THEORY.typ): the formal surface grammar and the type-theory spec (the latter documents the archived kernel; a successor for the current one is pending).
+5. `lib/kernel/`: the type system's source. Reading order: `kernel.disp` (the checker), then `types.disp` (the library types split out of it), with `prelude.disp` as the barrel.
 
 <a id="documentation"></a>
 
@@ -269,13 +273,11 @@ The kernel is source code written to be read: the type system is a library, so t
 | Source file | What it is | 🧑/🤖? | Quality |
 |---|---|---|---|
 | [`lib/prelude.disp`](lib/prelude.disp) | The raw substrate below the type system: booleans, pairs, triage, wait/fix, tree_eq. | 🤖 | 8/10 |
-| [`lib/kernel/cut.disp`](lib/kernel/cut.disp) | Products, records, lists; the `Action`/`CheckerResult` coproducts; the declaration protocol. | 🤖 | 7/10 |
-| [`lib/kernel/engine.disp`](lib/kernel/engine.disp) | The trusted core: `bind_hyp`, `hyp_reduce`, and the `param_apply` dispatcher. | 🤖 | 5/10 |
-| [`lib/kernel/cells.disp`](lib/kernel/cells.disp) | Wait-form cells, the one telescope walker, the negative formers (`Pi`, `Sigma`, `Record`, `⊤`). | 🤖 | 5/10 |
-| [`lib/kernel/base.disp`](lib/kernel/base.disp) | First-order types: `Unit`, `String`, `False`, `Eq`, `Refinement`, `Intersection`. | 🤖 | 5/10 |
-| [`lib/kernel/positive.disp`](lib/kernel/positive.disp) | Sums and recursion cells, the coherence gate, `Bool`, `Nat`, `Ord`. | 🤖 | 5/10 |
-| [`lib/kernel/generic.disp`](lib/kernel/generic.disp) | Recursors, folds, and functor maps read off type structure: one implementation for every inductive. | 🤖 | 5/10 |
-| [`lib/kernel/universe.disp`](lib/kernel/universe.disp) | The universe: `Type` as a behavioral check, the kernel's structural types, `GoodRespond`. | 🤖 | 6/10 |
+| [`lib/kernel/kernel.disp`](lib/kernel/kernel.disp) | The checker: lazy hypotheses with provenance, the respond face, the tier tables (Guard/Meta/Enum/Trials/TwoFace), quotients, the typed equation ledger. | 🤖 | 7/10 |
+| [`lib/kernel/types.disp`](lib/kernel/types.disp) | The library types split out of the checker: everything the checker itself does not need to exist. | 🤖 | 7/10 |
+| [`lib/kernel/prelude.disp`](lib/kernel/prelude.disp) | The barrel: raw pass, then the checked re-open of the kernel surface. | 🤖 | 7/10 |
+
+The previous kernel's fragments (`cut`, `engine`, `cells`, `base`, `positive`, `generic`, `universe` — the two-op trusted core the example section teaches) live intact under [`archive/live-kernel/kernel/`](archive/live-kernel/kernel/).
 
 `.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`TYPE_THEORY.pdf`, `SYNTAX.pdf`) sit alongside them.
 
@@ -291,17 +293,15 @@ src/                        -- the host implementation (TypeScript; an accelerat
 
 lib/                        -- the language, written in itself
   prelude.disp              --   the raw substrate: booleans, pairs, wait/fix, triage, tree_eq
-  kernel/                   --   the type system: seven fragments + a bootstrap barrel, around a 2-op trusted core
-  std/                      --   standard library (nat, list, option, result, pair, set, stream, relation, effect, ...)
-  tests/                    --   ~1,200 object-language tests across ~60 files
+  kernel/                   --   the type system: checker + library types + barrel, and its test pins
+  tests/                    --   substrate-level tests (prelude, tree_eq)
 
 evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers)
 test/                       -- vitest harness + host unit tests
 bench/                      -- evaluator benchmarks
 research/                   -- research notes and designs
-archive/                    -- superseded proposals, kept for the record
+archive/                    -- retired work kept loadable: live-kernel/ (the previous kernel, its std/ and tests/), superseded proposals
 editors/                    -- editor support (vscode-disp)
-perf_logs/                  -- checked-in benchmark logs
 *.md, *.typ                 -- design docs and working notes (rated in the Documentation table above)
 ```
 

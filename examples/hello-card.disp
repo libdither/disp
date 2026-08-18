@@ -1,6 +1,6 @@
 // Disp web editor recompiles as you type
-open use "../kernel/prelude.disp"
-open use "../std/nat.disp"
+open use "../../archive/live-kernel/kernel/prelude.disp"
+open use "../../archive/live-kernel/std/nat.disp"
 
 quadruple : Nat -> Nat := {n} => double (double n)
 

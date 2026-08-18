@@ -43,7 +43,7 @@ test r.y = succ (succ (succ zero))
 // ================================================================
 
 let r2 := {
-  open use raw "../prelude.disp" {}
+  open use raw "../../../lib/prelude.disp" {}
   let x := succ zero
   test pair_fst (t x t) = x
   x

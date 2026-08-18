@@ -3,7 +3,7 @@
 // (record of exports)` and expects bare `true`. Here that wraps the walker's
 // record check. Opened CHECKED-only by the barrel (no raw pass: the value
 // references its givens, and it contributes nothing to the fill environment).
-open use raw "../prelude.disp" {}
+open use raw "../../../lib/prelude.disp" {}
 open given {
   Type : Type
   Tree : Type

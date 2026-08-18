@@ -1,7 +1,9 @@
 // Host-side pins for the given layer's REJECTIONS (a bad instantiation is a
 // load failure, so it can only be asserted from outside the module). The
-// positive lifecycle lives in lib/tests/given.test.disp; the design is
-// MODULES.md (slice 1).
+// positive lifecycle lives in archive/live-kernel/tests/given.test.disp; the
+// design is MODULES.md (slice 1). These cases pin DRIVER machinery and run
+// against the archived live kernel, whose protocol they grew up with; the
+// promoted kernel's own protocol is pinned in lib/kernel/*.test.disp.
 
 import { describe, it, expect } from "vitest"
 import { join } from "node:path"
@@ -13,7 +15,7 @@ import type { Session } from "../src/eval/types.js"
 import type { Tree } from "../src/eval/eager.js"
 
 const HERE = join(process.cwd(), "lib/tests/_modules_host.disp")
-const K = `open use "../kernel/prelude.disp"
+const K = `open use "../../archive/live-kernel/kernel/prelude.disp"
 `
 // One shared native-backend session (the guards.test.ts pattern): the kernel is
 // elaborated once for all cases.
@@ -24,10 +26,11 @@ const run = (src: string) => parseProgram(src, HERE, { session })
 // A tmp fixture next to nothing: it must open the kernel itself (hermetic-ready),
 // via absolute-ish paths back into the repo's lib/.
 const LIB = join(process.cwd(), "lib")
+const ARCHIVE = join(process.cwd(), "archive/live-kernel")
 function tmpModule(name: string, body: string): string {
   const dir = mkdtempSync(join(tmpdir(), "disp-mod-"))
   const path = join(dir, name)
-  writeFileSync(path, `open use "${LIB}/kernel/prelude.disp"\n` + body)
+  writeFileSync(path, `open use "${ARCHIVE}/kernel/prelude.disp"\n` + body)
   return path
 }
 
@@ -36,8 +39,8 @@ describe("module dependencies (given) rejections", () => {
     // Slice 2: `use "f"` on a given-bearing module is the module-as-function
     // tuple (positive pins in given.test.disp). Raw has no typ and no hyp to
     // mint, so its context stays explicit (`use raw "f" {}`).
-    expect(() => run(K + `m := use "given_mod.disp"\nx := m.typ\n`)).not.toThrow()
-    expect(() => run(K + `open use raw "given_mod.disp"\n`))
+    expect(() => run(K + `m := use "../../archive/live-kernel/tests/given_mod.disp"\nx := m.typ\n`)).not.toThrow()
+    expect(() => run(K + `open use raw "../../archive/live-kernel/tests/given_mod.disp"\n`))
       .toThrow(/declares given\(s\) add.*pass a context explicitly/)
   }, 300000)
 
@@ -50,17 +53,17 @@ describe("module dependencies (given) rejections", () => {
   }, 120000)
 
   it("an empty fill record still misses the required given", () => {
-    expect(() => run(K + `m := use "given_mod.disp" {}\n`))
+    expect(() => run(K + `m := use "../../archive/live-kernel/tests/given_mod.disp" {}\n`))
       .toThrow(/unfilled given\(s\) add/)
   }, 120000)
 
   it("an unknown fill name is rejected", () => {
-    expect(() => run(K + `m := use "given_mod.disp" { add := ({x} => {y} => x), bogus := t }\n`))
+    expect(() => run(K + `m := use "../../archive/live-kernel/tests/given_mod.disp" { add := ({x} => {y} => x), bogus := t }\n`))
       .toThrow(/unknown fill 'bogus'/)
   }, 120000)
 
   it("an ill-typed fill fails the deferred linking check", () => {
-    expect(() => run(K + `m := use "given_mod.disp" { add := t }\n`))
+    expect(() => run(K + `m := use "../../archive/live-kernel/tests/given_mod.disp" { add := t }\n`))
       .toThrow(/given 'add'/)
   }, 120000)
 
@@ -121,23 +124,23 @@ describe("module dependencies (given) rejections", () => {
   }, 120000)
 
   // TWO KERNELS, ONE SESSION. The declaration protocol's vocabulary (default_guard,
-  // let, test, given) is defined by whichever kernel a module opens, and the live
-  // kernel and the standalone one both ship a full protocol. The driver's "is this
-  // name still its kernel's value, or has a scope shadowed it?" check therefore has
-  // to hold a SET per name, not one winner per session: with a single winner the
+  // let, test, given) is defined by whichever kernel a module opens, and the main
+  // kernel and the archived live kernel both ship a full protocol. The driver's "is
+  // this name still its kernel's value, or has a scope shadowed it?" check therefore
+  // has to hold a SET per name, not one winner per session: with a single winner the
   // second kernel to load looked shadowed, its `given` items fell through to the
   // request path, and `Type : Type` compiled its annotation against an absent
-  // binding. That made every live-kernel file that followed the standalone kernel in
-  // a shared session die on `unresolved free variable Type` — the whole first CI
-  // shard, since the standalone test file sorts ahead of lib/tests/.
+  // binding. That once made every live-kernel file that followed the (then-)standalone
+  // kernel in a shared session die on `unresolved free variable Type` — a whole CI
+  // shard.
   it("a second kernel in the same session does not shadow the first's vocabulary", () => {
-    // A FRESH session, and the standalone kernel loads FIRST: the shared session
-    // above has already loaded the live kernel, which would hide the ordering.
+    // A FRESH session, and the main kernel loads FIRST: the shared session above
+    // has already loaded the archived kernel, which would hide the ordering.
     const fresh = getBackend(process.env.DISP_EVALUATOR ?? defaultBackendName)
       .createSession() as unknown as Session<Tree>
     const runFresh = (src: string) => parseProgram(src, HERE, { session: fresh })
     expect(() => runFresh(
-      `open use raw "${LIB}/prelude.disp" {}\nopen use "${LIB}/standalone/prelude.disp"\ncheck := Nat 2\n`))
+      `open use raw "${LIB}/prelude.disp" {}\nopen use "${LIB}/kernel/prelude.disp"\ncheck := Nat 2\n`))
       .not.toThrow()
     expect(() => runFresh(K + `check := succ zero\n`)).not.toThrow()
   }, 180000)

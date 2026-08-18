@@ -1,6 +1,8 @@
 // Host-side pins for the guard layer's REJECTIONS (a guard refusal is a load
 // failure, so it can only be asserted from outside the module). The positive
-// lifecycle lives in lib/tests/guards.test.disp.
+// lifecycle lives in archive/live-kernel/tests/guards.test.disp. These cases
+// pin DRIVER machinery against the archived live kernel's relation/license
+// library; the promoted kernel's guard protocol is pinned in lib/kernel/.
 
 import { describe, it, expect } from "vitest"
 import { join } from "node:path"
@@ -10,8 +12,8 @@ import type { Session } from "../src/eval/types.js"
 import type { Tree } from "../src/eval/eager.js"
 
 const HERE = join(process.cwd(), "lib/tests/_guards_host.disp")
-const K = `open use "../kernel/prelude.disp"
-open use "../std/relation.disp"
+const K = `open use "../../archive/live-kernel/kernel/prelude.disp"
+open use "../../archive/live-kernel/std/relation.disp"
 `
 // One shared native-backend session (the disp.test.ts pattern): the kernel is
 // elaborated once for all cases; the eager TS session would blow the worker heap.
@@ -43,7 +45,7 @@ describe("guard layer rejections", () => {
   it("license_guard_deriv: a derivation with mismatched endpoints is rejected", () => {
     // The rule relates id to succ; the rebind proposes succ∘succ, so check_deriv
     // computes false (tree_eq at the rule instance's rhs) and the load fails.
-    expect(() => run(K + `open use "../std/deriv.disp"
+    expect(() => run(K + `open use "../../archive/live-kernel/std/deriv.disp"
 guard (license_guard_deriv (cons ({_} => pair ({n} => n) ({n} => succ n)) nil) nil) g : Arrow Nat Nat := ({n} => n)
 g := { new := ({n} => succ (succ n)) ; deriv := (d_rule 0 t) }
 `)).toThrow(/rejected by its guard/)

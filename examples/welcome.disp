@@ -8,8 +8,8 @@
 //   you are watching the type system check itself.
 // ▶ Run to cursor (Shift-Enter) elaborates the file up to the line you're on.
 
-open use "../kernel/prelude.disp"   // the type system (checked + cached)
-open use "../std/nat.disp"      // double, pred, is_zero
+open use "../../archive/live-kernel/kernel/prelude.disp"   // the type system (checked + cached)
+open use "../../archive/live-kernel/std/nat.disp"      // double, pred, is_zero
 
 // Results render inline, notebook-style: a definition shows its reduced
 // value under its line, a test shows its verdict.

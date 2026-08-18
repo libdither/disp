@@ -2,7 +2,7 @@ import { defineConfig, configDefaults } from "vitest/config";
 
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, "**/.claude/**"],
+    exclude: [...configDefaults.exclude, "**/.claude/**", "**/archive/**"],
     // NOTE: the heap bump for the strict universe (Type := StrictType) lives in the
     // package.json "test" script as NODE_OPTIONS=--max-old-space-size=8192 — it propagates
     // to the worker processes, whereas poolOptions.execArgv did not take effect here.

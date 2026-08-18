@@ -9,8 +9,8 @@
 // Measure with:  npx tsx src/run.ts --stats-detail --stats-all bench/micro_coproduct.disp
 
 open use "../lib/prelude.disp"
-open use "../lib/kernel/prelude.disp"
-open use "../lib/std/nat/arith.disp"
+open use "../archive/live-kernel/kernel/prelude.disp"
+open use "../archive/live-kernel/std/nat/arith.disp"
 
 let N := 100
 

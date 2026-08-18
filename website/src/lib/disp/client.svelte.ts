@@ -25,7 +25,10 @@ type Pending = {
   reject: (e: Error) => void
 }
 
-const KERNEL_PRELUDE = 'open use "../kernel/prelude.disp"\n'
+// The site's examples and learn snippets still teach the archived live
+// kernel, so that is the barrel the UI warms; the promoted kernel
+// (../kernel/prelude.disp) is also in the shipped snapshot and warm.
+const KERNEL_PRELUDE = 'open use "../../archive/live-kernel/kernel/prelude.disp"\n'
 
 class DispClient {
   #worker: Worker | null = null

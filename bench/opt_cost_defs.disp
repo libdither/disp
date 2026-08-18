@@ -5,9 +5,9 @@
 // (opt_q1_main / opt_q1_cert) — so the cost measured is the cost of the licensed rewrite.
 
 open use "../lib/prelude.disp"
-open use "../lib/kernel/prelude.disp"
-open use "../lib/std/list.disp"
-open use "../lib/std/nat/arith.disp"
+open use "../archive/live-kernel/kernel/prelude.disp"
+open use "../archive/live-kernel/std/list.disp"
+open use "../archive/live-kernel/std/nat/arith.disp"
 
 my_list_disp := fix ({self, motive, cases, target} =>
   if (is_leaf target) then cases.nil

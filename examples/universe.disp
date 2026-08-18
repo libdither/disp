@@ -1,4 +1,4 @@
-open use "../kernel/prelude.disp"
+open use "../../archive/live-kernel/kernel/prelude.disp"
 
 // Types are values with a recognizable shape, so the universe is a
 // predicate like any other — and it accepts itself:

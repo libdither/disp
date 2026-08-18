@@ -19,7 +19,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-DEFAULT_FILES = ["lib/standalone/kernel.disp", "lib/standalone/types.disp"]
+DEFAULT_FILES = ["lib/kernel/kernel.disp", "lib/kernel/types.disp"]
 WEAK_TOKENS = {"AnyTree", "Pi", "Fn", "Sampled", "Guard", "Meta", "TwoFace", "Trials", "Enum", "t"}
 DEF_RE = re.compile(r"^(let\s+|given\s+)?([A-Za-z_][A-Za-z0-9_']*)\s*(:=|:)")
 

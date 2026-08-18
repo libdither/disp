@@ -29,33 +29,43 @@ import {
 
 // One parseProgram call per module (separate root programs sidestep any
 // open-collision semantics between them; the session's module cache is what
-// accumulates). The kernel barrel is the ~1-minute self-verification; the
-// rest cache-hit their way through in seconds.
+// accumulates). The two kernel barrels are the self-verification cost; the
+// rest cache-hit their way through in seconds. The main kernel is
+// lib/kernel/ (warm so playground users get it instantly); the archived live
+// kernel plus its std/nat stay warm because the site's examples and learn
+// snippets still teach that surface.
 const WARMUP = [
   'open use "../kernel/prelude.disp"\n',
-  'open use "../std/nat.disp"\n',
+  'open use "../../archive/live-kernel/kernel/prelude.disp"\n',
+  'open use "../../archive/live-kernel/std/nat.disp"\n',
   'open use raw "../prelude.disp" {}\n'
 ]
 
 const asTree = (s: RustEagerBrowserSession): Session<Tree> => s as unknown as Session<Tree>
 
-// libRoot: real absolute path of the repo's lib/ directory (no trailing slash).
-// vfs: path -> contents in the browser namespace ('/lib/...'), for the hash.
+// repoRoot: real absolute path of the repo checkout (no trailing slash).
+// vfs: path -> contents in the browser namespace ('/lib/...', '/archive/...'),
+// for the hash.
 export async function buildSnapshot(
   wasmBytes: Uint8Array,
-  libRoot: string,
+  repoRoot: string,
   vfs: Map<string, string>
 ): Promise<Uint8Array> {
-  const rootPath = `${libRoot}/tests/playground.disp`
+  const rootPath = `${repoRoot}/lib/tests/playground.disp`
+  const virtualRoots = ['/lib/', '/archive/live-kernel/']
   const toVirtual = (key: string): string => {
     const [abs, ...rest] = key.split('\0')
-    if (!abs.startsWith(libRoot + '/')) throw new Error(`snapshot: cache key outside lib/: ${abs}`)
-    return ['/lib' + abs.slice(libRoot.length), ...rest].join('\0')
+    if (!abs.startsWith(repoRoot + '/')) throw new Error(`snapshot: cache key outside the repo: ${abs}`)
+    const rel = abs.slice(repoRoot.length)
+    if (!virtualRoots.some((r) => rel.startsWith(r)))
+      throw new Error(`snapshot: cache key outside the bundled library roots: ${abs}`)
+    return [rel, ...rest].join('\0')
   }
   const toReal = (key: string): string => {
     const [abs, ...rest] = key.split('\0')
-    if (!abs.startsWith('/lib/')) throw new Error(`snapshot: unexpected virtual key ${abs}`)
-    return [libRoot + abs.slice(4), ...rest].join('\0')
+    if (!virtualRoots.some((r) => abs.startsWith(r)))
+      throw new Error(`snapshot: unexpected virtual key ${abs}`)
+    return [repoRoot + abs, ...rest].join('\0')
   }
 
   const t0 = performance.now()

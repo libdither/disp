@@ -3,11 +3,13 @@ name: Deploy website to GitHub Pages
 on:
   push:
     branches: [main]
-    # the site bundles the compiler (src/) and the whole library (lib/) into
-    # the playground worker, so changes there redeploy too
+    # the site bundles the compiler (src/), the library (lib/), and the
+    # archived live kernel (archive/live-kernel/, still taught by the site's
+    # examples) into the playground worker, so changes there redeploy too
     paths:
       - 'website/**'
       - 'lib/**'
+      - 'archive/live-kernel/**'
       - 'src/**'
       - '.github/workflows/pages.yml'
   schedule:

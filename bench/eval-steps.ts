@@ -13,11 +13,11 @@ import { runFile } from "../src/run.js"
 import { clearApplyCache, getApplyStats, resetApplyStats, resetCacheStats } from "../src/core/tree.js"
 
 const CORPUS = [
-  "lib/tests/types.test.disp",   // every type former, polymorphic Pi, neutrals
-  "lib/tests/kernel.test.disp",  // param_apply / hyp_reduce / bind_hyp / checked
-  "lib/tests/match.test.disp",   // coproduct match / cut
-  "lib/tests/nat.test.disp",
-  "lib/tests/list.test.disp",
+  "archive/live-kernel/tests/types.test.disp",   // every type former, polymorphic Pi, neutrals
+  "archive/live-kernel/tests/kernel.test.disp",  // param_apply / hyp_reduce / bind_hyp / checked
+  "archive/live-kernel/tests/match.test.disp",   // coproduct match / cut
+  "archive/live-kernel/tests/nat.test.disp",
+  "archive/live-kernel/tests/list.test.disp",
 ]
 
 function measure(path: string) {

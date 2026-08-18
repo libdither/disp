@@ -1,5 +1,5 @@
-open use "../kernel/prelude.disp"
-open use "../std/nat.disp"
+open use "../../archive/live-kernel/kernel/prelude.disp"
+open use "../../archive/live-kernel/std/nat.disp"
 
 // A record type with a DERIVED field: b's recipe runs during the check.
 let TDs := { a : Nat, b := double a }

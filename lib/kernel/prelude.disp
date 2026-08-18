@@ -1,46 +1,8 @@
-// Kernel entry point: `open use "../kernel/prelude.disp"` brings substrate combinators
-// (../prelude.disp) + the kernel's 7 fragments, in value-dependency order:
-//   cut      — records/sums + the cut, control coproducts, the list toolkit, make_meta,
-//              and the declaration protocol (GuardAction constructors, request decorators, default_guard)
-//   engine   — the walker + Σ-ops (hyp_reduce/bind_hyp/param_apply) + the boundary
-//   cells    — wait-form cells + the tele_walk walker + the negative formers (Telescope/Pi/Sigma/Record)
-//   base     — first-order library types (Unit/String/Eq/Refinement/Intersection)
-//   positive — Coproduct + the coherence gate + Bool/Nat/Ord (types and constructors)
-//   generic  — the cell-derived generics (fold_value/rec_value/fmap/…) + nat_rec/bool_rec/ord_rec
-//   universe — StrictType/Type + the kernel's structural types + GoodRespond
-
-// The prelude is fragment -1: a given-bearing module. The raw open binds its
-// VALUES (givens absent, safe: no prelude value references one); the checked
-// re-import at the BOTTOM of this file fills the givens with the kernel's own
-// types, which activates and auto-verifies the prelude's annotations.
+// The double-pass barrel: first pass raw (bind every definition, no checks),
+// second pass checked (annotations verify and tests run with everything bound).
+// Run this file to check the whole standalone kernel + library.
 open use raw "../prelude.disp" {}
-
-// Deferred-typecheck bootstrap: `use raw` loads each fragment's VALUES without processing
-// annotations, so forward/mutual annotation refs resolve. Raw-load ALL before checking ANY
-// (so every fragment's forward refs see the full raw surface); checked re-imports then auto-verify.
-open use raw "cut.disp" {}
-open use raw "engine.disp" {}
-open use raw "cells.disp" {}
-open use raw "base.disp" {}
-open use raw "positive.disp" {}
-open use raw "generic.disp" {}
-open use raw "universe.disp" {}
-// The checked pass INSTANTIATES each fragment: the raw pass above built the fill
-// environment (raw binds NO fill for a given: the name is absent from scope, which is
-// safe because kernel givens are annotation-only and raw drops annotations), and each
-// fill record below supplies the annotation-forward type names from this frame — the
-// mutual-recursion staging, now explicit (MODULES.md).
-open use "cut.disp" { Type := Type, Tree, Pi, Action, MetaShape, GuardAction, Request }
-open use "engine.disp" { Type := Type, Tree, Pi, Bool, CheckerResult, Intersection, MetaShape, Module, RespondShape, InductiveRespondShape }
-open use "cells.disp" { Type := Type, Tree, Pi, Action, Step }
-open use "base.disp" { Type := Type, Tree, Unit, Bool, Eq }
-open use "positive.disp" { Type := Type, Tree, Ord }
-open use "generic.disp" { Type := Type }
-open use "universe.disp" { Type := Type, RespondShape }
-// Fragment -1's checked instantiation: fill the prelude's givens (its annotation
-// type names + the auto-verification formers the driver reads in-scope), so its
-// annotations compile for real and the annotated exports verify through the
-// kernel. Values are identical to the raw pass above — the open-dedupe pins the
-// bootstrap fixpoint condition (raw ≡ checked per name).
-open use "../prelude.disp" { Type := Type, Tree, Bool, Nat, Pi, param_apply, Record, make_record, list_const, Ok }
-open use "verify.disp" { Type := Type, Tree, param_apply, Record, Ok }
+open use raw "kernel.disp" {}
+open use raw "types.disp" {}
+open use "kernel.disp" { AnyTree := AnyTree, RawRecord, Fn, elab_settings, List, Nat, Bool, Pi, Guard, ShallowType, Sampled, Table, Row, Sigma, dot, neutral_type, elim_of, b_abs, Point, Sus, TypeFace, ElimHead, SusRows, Invalid, Refine, Coherent }
+open use "types.disp" {}

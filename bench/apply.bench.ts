@@ -17,12 +17,11 @@ import {
   clearApplyCache, resetApplyStats, resetCacheStats,
 } from "../src/core/tree.js"
 
-// Synthetic source: opens kernel/prelude + std/nat/arith so we have
-// tree_eq, nat_rec, add, succ in scope; binds them to bench_* names so
-// they survive as Defs. Numeric literals pre-compile to closed Nat trees.
+// Synthetic source: opens the kernel barrel so we have tree_eq, add, succ
+// in scope; binds them to bench_* names so they survive as Defs. Numeric
+// literals pre-compile to closed Nat trees.
 const WORKLOAD = `
 open use "kernel/prelude.disp"
-open use "std/nat/arith.disp"
 
 bench_tree_eq := tree_eq
 bench_add := add
