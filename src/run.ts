@@ -129,11 +129,16 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       for (const d of defs) {
         if (!names.has(nameKey(d.tree))) names.set(nameKey(d.tree), d.name)
       }
+      // Globs match only the probe file's own bindings (its defs and, under
+      // exposeLocals, its block internals); exact names still reach imports.
+      const rootNames = new Set<string>()
+      for (const d of decls) if (d.kind === "Def") rootNames.add(d.name)
       let missing = false
       const seen = new Set<string>()
       for (const spec of printSpec.split(",").map(s => s.trim()).filter(Boolean)) {
         const re = new RegExp(`^${spec.split("*").map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`)
-        const matches = defs.filter(d => re.test(d.name) && !seen.has(d.name))
+        const pool = spec.includes("*") ? defs.filter(d => rootNames.has(d.name)) : defs
+        const matches = pool.filter(d => re.test(d.name) && !seen.has(d.name))
         if (matches.length === 0 && !spec.includes("*")) { console.error(`print: binding '${spec}' not found in ${file}`); missing = true }
         for (const m of matches) {
           seen.add(m.name)
