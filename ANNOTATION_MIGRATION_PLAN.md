@@ -21,9 +21,11 @@ Annotation tiers, strongest first:
   Coherent refinement adds probe-strength laws on top.
 - None.
 
-Census (scripts/annotation_census.py, 2026-08-19, 234 defs): 50 none, 50
-membership, 63 sampled, 8 guard-tier tree-weak, 63 guard-tier shape-precise;
-exact/dependent content at inj, list_const, nat_rec, tree_rec, list_rec.
+Census (scripts/annotation_census.py, 2026-08-19 post-Tree, 233 defs): 49
+none, 49 membership, 64 sampled, 71 guard-tier shape-precise (the tree-weak
+bucket dissolved with AnyTree); exact/dependent content at inj, list_const,
+nat_rec, tree_rec, list_rec. The full classification of what remains and
+why is the "Remaining surface" section below.
 
 Three encodings underlie the special structures: wait forms (sig at `.fst`,
 payload at `.snd.snd`; markers, collectors, invalids, tree_eq partials), tag
@@ -111,6 +113,19 @@ Trust facts that shape everything:
   UniqueOf, Perfect, height, given, default_guard; Point and False at the
   audited tier. Probed refusal: Coherent cannot run GoodGate at a
   mint-parameterized gate, so List/Eff keep plain Space codomains.
+- Tree absorbs AnyTree (52770c11): the bare universal predicate retires;
+  Tree (identical membership, presents the fold) moves into kernel.disp
+  and every reference follows, hypothesis-history keys included. Tree
+  hypotheses license exactly the fold beyond what bare ones did;
+  projections still refuse, so no certificate flipped except the two
+  gateless-refusal pins (re-spelled at ShallowType) and three
+  bare-predicate subject pins (re-spelled at Pred). Downstream: MembersP
+  in Space, prop_formers as List (ShallowType -> Space), Cell/Sum at
+  Space subjects, prop_slot annotated; Refine ShallowType Coherent has
+  zero remaining sites. Probed refusals: tag cannot land at a rows
+  codomain (S/K output puts mints at row decision spots); Sus keeps its
+  recognize spelling (SusRows refuses neutrals at the admit gate while
+  Sus deliberately covers hypothesis marks).
 
 ## Probe-confirmed boundaries (canonical list; each caps a tier somewhere)
 
@@ -151,6 +166,84 @@ Trust facts that shape everything:
     top-level `let`). The blessing payload stays a bare pair: the record
     spelling measured +330ms on the cold barrel, dominated by the walker's
     elim_ind/elim_motive reads during stuck-elim checks.
+
+## Remaining surface (census 2026-08-19, post-Tree)
+
+The 49 unannotated, by reason:
+
+- Sig constants (8): tree_eq_sig, invalid_sig, open_sig, hyp_sig,
+  elim_sig, elim_stuck_sig, ask_sig, Rec. Value atoms; a stem-shape
+  membership type would cover them and say almost nothing.
+- Checker machinery behind the inspector wall (14): hyp_marker,
+  make_mark, make_hyp, open_chain, elim_stuck, elim_marker,
+  neutral_free, structured, tag_form, steady, teq_decide, eq_usable,
+  eq_congr, canon. Bodies read structure off arguments; Guard refuses by
+  design (the sealed-core refusal); Sampled would only re-run
+  constructions. Unblocked by A9 only.
+- Protocol and sugar targets (5): check_module (pinned := Record),
+  elab_settings, eff_bind, reject, `let`. Trees are consumed by name or
+  by the elaborator; annotations add nothing the pins do not.
+- Trivia (3): arm (alias of idx), Sus (writable `: ShallowType`), refl
+  (its honest type is every reflexive Eq at once; no single annotation).
+- Eq lemma family (4): eq_subst, eq_sym, eq_trans, eq_cong.
+  Sampled-writable today; the honest dependent tier is the J rule, which
+  waits on walked type formation.
+- Row-program builders (9): raw_record_rows, record_rows, all_rows,
+  splits, bijection, unique_rows, mixed_rows, perfect_rows, len_xs_rows.
+  Probed blocker: Eff membership walks continuations at junk leaves, so
+  any builder with a reject branch or computed dispatch is not an Eff
+  member on samples. Needs an Eff membership that treats the abort
+  convention as in-family, or per-builder sample values that avoid every
+  branch.
+- Private lets (list_mem, eff_mem, record_mem and friends): not
+  exported, deliberately bare.
+
+The 64 Sampled, by reason:
+
+- Inspector wall (the bulk): field/record readers, sig testers, dot,
+  make_type, faced, handle, prod, the elim machinery accessors, ask,
+  Sum, Cell, case_of, children, respond_face/neutral_type, check, Tele,
+  the formers, the tables, teq/eq internals, with_trials/with_probes.
+  Capped until A9. The escape that already works is the A5 recursor
+  route: respell a body over a blessed recursor and the arrow tier
+  opens (list_assoc precedent); list_zip, list_apply, and idx are the
+  standing candidates.
+- Honest partiality: Tuple (invalid branch), elim_arity (invalid
+  escape), guard/given/default_guard/sig/base (record protocol),
+  GoodGate/Coherent (audit predicates over any type), Eq (canon reads
+  A.norm), Fn (a partial application), Vec/NamedRec/TypeRec/AllOf/
+  UniqueOf/Perfect/height (row or fix bodies that inspect).
+
+## Stage R: ask retires into dependent observation rows
+
+The one missing mechanism is small: rows whose observation TYPE is a
+family of the subject. Everything else is relocation.
+
+- R1: Row/Obs grow a dependent observation (ObserveAt: payload = pair
+  accessor family, family : Tree -> ShallowType); respond_face's rows
+  walk answers a matching Acc frame with `pair [] (family self)`. One
+  sum-code variant plus one respond arm; pin a dependent projection on a
+  rows-typed hypothesis.
+- R2: both universes' obs rows gain seven ObserveAt entries: accessor =
+  the flipped ask partial `{T} => ask T P`, family = `{self} => Cell (P
+  self)`. The hardcoded Ask respond branch and the `inj "Ask"` frame
+  become redundant data-wise.
+- R3: the walk's ask case shrinks to frame formation (the
+  pair_fst/pair_snd precedent): an ask partial applied to a neutral
+  routes `self T2 (Acc <flipped partial>)`; the property whitelist
+  leaves the walk (rows carry it).
+- R4: delete the Ask respond branch; hyp_ok replays Acc frames with no
+  ask knowledge; adding a property = adding a row entry plus a slot
+  case (until P3 positional identity re-keys both).
+- R5: Meta parity nearly free: mwalk already consults respond_face at
+  Neu; it needs one Conc arm routing ask partials to Acc frames (mirror
+  of its pair_fst arm). The ask conduct pins then lift from
+  Pi-Guard-literal to arrows under the differential, shrinking stage MP
+  to conversion plus TreeOf.
+- Does NOT retire: witness consumption (case, projection, application
+  of a Cell (P T) witness) still waits on walked type formation or a
+  dedicated case head; stage R only moves licensing out of checker
+  branches into row data.
 
 ## Stage P: the property system (the current arc)
 
