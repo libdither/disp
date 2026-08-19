@@ -153,7 +153,7 @@ Bool : Refine Space Coherent := ({
   members := [true, false]
   elim := {_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b
 })
-ShallowType : ShallowType := ({ #recognize := {_self, v} => is_type v, obs := perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t)) })
+ShallowType : Space := ({ #recognize := {_self, v} => is_type v, obs := perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t)) })
 test ShallowType ({ #recognize := {_self, _v} => true }) = true
 test ({ #recognize := {_self, v} => is_leaf v }) zero = true
 test ({ #recognize := {_self, v} => is_leaf v }) 5 = false
@@ -166,13 +166,13 @@ SigmaCode : ShallowType -> AnyTree -> Space
 IsectCode : ShallowType -> AnyTree -> Space
   := {A, P} => make_type ({ tele := perform (Fresh A) ({x} => perform (Observe (pair Self (P x))) ({_} => Pure t)) })
 AnyTree : Refine ShallowType Coherent := Pred ({_v} => true)
-RecognizeP := {_T} => PiCode AnyTree ({_} => Bool)
-GateP := {T} => PiCode ShallowType ({_} => PiCode (PiCode T ({_} => ShallowType)) ({_} => AnyTree))
-ElimP := {T} => PiCode T ({_} => AnyTree)
-MembersP := {_T} => AnyTree
-NormP := {T} => PiCode T ({_} => T)
-EndsP := {T} => SigmaCode T ({_} => T)
-UnderP := {_T} => ShallowType
+RecognizeP : ShallowType -> Space := {_T} => PiCode AnyTree ({_} => Bool)
+GateP : ShallowType -> Space := {T} => PiCode ShallowType ({_} => PiCode (PiCode T ({_} => ShallowType)) ({_} => AnyTree))
+ElimP : ShallowType -> Space := {T} => PiCode T ({_} => AnyTree)
+MembersP : ShallowType -> ShallowType := {_T} => AnyTree
+NormP : ShallowType -> Space := {T} => PiCode T ({_} => T)
+EndsP : ShallowType -> Space := {T} => SigmaCode T ({_} => T)
+UnderP : ShallowType -> Space := {_T} => ShallowType
 
 hyp_marker := fix ({self, payload, frame} =>
   wait self ({ (AnyTree) := pair "Ob" (pair frame (wait self payload)) }))
@@ -208,13 +208,14 @@ let steady := fix ({self, r} =>
   else if (neutral_free (pair_fst ns)) { self (pair (pair_snd ns) (pair_snd ps)) }
   else { false }
   })
-Space : ShallowType := ({
+Space : Space := ({
   #recognize := {_self, v} => if (tag_form v) { structured v } else { false }
   check := {_jdg, _T, v} => if (tag_form v) { and (steady (pair_snd (tagged_meta v))) (structured v) } else { false }
+  obs := perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t))
 })
 test Space Bool = true
 elim_raw : ElimHead -> AnyTree := {E} => pair_fst (wait_payload E)
-elim_ind : ElimHead -> TypeFace := {E} => pair_fst (pair_snd (wait_payload E))
+elim_ind : ElimHead -> Space := {E} => pair_fst (pair_snd (wait_payload E))
 elim_motive : ElimHead -> AnyTree := {E} => pair_snd (pair_snd (wait_payload E))
 elim_arity : Pi (Sampled [elim_of Nat ({_} => Nat)]) AnyTree ({_} => Nat) := {E} => {
   let Ind := elim_ind E
@@ -234,7 +235,7 @@ elim_marker := fix ({self, payload, arg} =>
     let E := wait self payload
     if (tree_eq (elim_arity E) zero) { arg (Elim (pair E [])) } else { wait elim_stuck (pair E (pair arg [])) }
   } else { (pair_fst payload) (wait self payload) arg })
-elim_of : Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_} => Nat]) AnyTree ({_} => ElimHead))
+elim_of : Pi (Sampled [Nat]) Space ({_} => Pi (Sampled [{_} => Nat]) AnyTree ({_} => ElimHead))
   := {Ind, B} =>
   if (or (is_leaf Ind.elim) (is_leaf Ind.gate)) { invalid Ind }
   else { wait elim_marker (pair Ind.elim (pair Ind B)) }
@@ -320,7 +321,7 @@ Sum : Pi (Sampled [AnyTree]) ShallowType ({_} => Pi (Sampled [RowCode, ObsCode])
     code := variants
   })
 }
-case_of : Pi (Sampled [Row]) ShallowType ({_} => Pi (Sampled [{_v} => AnyTree]) AnyTree ({_} => Pi (Sampled [{ ("_") := {x} => x }]) AnyTree ({_} => AnyTree)))
+case_of : Pi (Sampled [Row]) Space ({_} => Pi (Sampled [{_v} => AnyTree]) AnyTree ({_} => Pi (Sampled [{ ("_") := {x} => x }]) AnyTree ({_} => AnyTree)))
   := {T, B, arms} => {
   let tags := list_map AnyTree AnyTree pair_fst T.code
   let dflt := field arms "_"
@@ -345,7 +346,7 @@ case_of : Pi (Sampled [Row]) ShallowType ({_} => Pi (Sampled [{_v} => AnyTree]) 
     {_scr} => invalid arms
   }
 }
-children : Pi (Sampled [Row]) ShallowType ({_} => Pi (Sampled [Fresh 5]) AnyTree ({_} => List AnyTree))
+children : Pi (Sampled [Row]) Space ({_} => Pi (Sampled [Fresh 5]) AnyTree ({_} => List AnyTree))
   := {T, v} => (fix ({self, sp, p} =>
   if (is_leaf sp) { [] }
   else {
@@ -360,7 +361,7 @@ test tree_eq Row.code RowCode = true
 
 Cell : Pi (Sampled [Nat]) ShallowType ({_} => Refine Space Coherent)
   := {P} => Sum AnyTree [pair "None" t, pair "Some" [P]]
-prop_formers : List AnyTree := [RecognizeP, GateP, ElimP, MembersP, NormP, EndsP, UnderP]
+prop_formers : List (ShallowType -> ShallowType) := [RecognizeP, GateP, ElimP, MembersP, NormP, EndsP, UnderP]
 prop_slot := {P} =>
   if (tree_eq P RecognizeP) { "recognize" }
   else if (tree_eq P GateP) { "gate" }
@@ -933,7 +934,7 @@ let record_mem := {ej, entries, r} => list_all AnyTree ({e} => {
   let c := field_cell r (pair_fst e)
   if (is_leaf c) { false } else { ej (pair_snd e) (pair_snd c) }
 }) entries
-Record : List AnyTree -> ShallowType := {entries} => ({
+Record : List (Sigma Guard AnyTree ({_} => ShallowType)) -> ShallowType := {entries} => ({
   #recognize := {_self, r} => record_mem ({ty, a} => ty a) entries r
   check := {jdg, _T, r} => record_mem jdg entries r
 })
@@ -953,8 +954,10 @@ sig : AnyTree -> Request
   := {T} => ({ value := t, ty := t T, guard := t, private := false, param := false })
 guard : Pi (Sampled [succ]) AnyTree ({_} => Pi (Sampled [base 5]) Request ({_} => Request))
   := {g, req} => field_put req "guard" (t g)
-given := {req} => field_put (field_put req "private" true) "param" true
-default_guard := {_old, req} =>
+given : Pi (Sampled [base 5]) Request ({_} => Request)
+  := {req} => field_put (field_put req "private" true) "param" true
+default_guard : Pi (Sampled [t]) AnyTree ({_} => Pi (Sampled [base 5, guard succ (base 5), sig Bool]) Request ({_} => CheckerResult))
+  := {_old, req} =>
   if (is_stem (field req "guard")) {
     if (is_stem (field req "value")) { Ok (Both (pair (stem_child (field req "value")) (stem_child (field req "guard")))) }
     else { Ok (Install (stem_child (field req "guard"))) }

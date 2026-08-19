@@ -13,7 +13,7 @@ open use raw "kernel.disp" {}
 // Pi-Guard-literal annotations are the deliberate opt-out; the one entry
 // left is TreeOf, whose branching row program blows up Meta's simulation.
 given DefaultWalker : AnyTree := Guard
-Fn := Pi DefaultWalker
+Fn : Pi (Sampled [Bool]) ShallowType ({_} => Pi (Sampled [{_v} => Bool]) AnyTree ({_} => Space)) := Pi DefaultWalker
 // Re-point the binder sugar at Fn here: the raw kernel open exports a
 // neutral-Fn settings entry (givens unfilled), so the real one must rebind.
 elab_settings := [t "Pi" Fn]
@@ -23,17 +23,11 @@ arm := idx
 
 node_like : ShallowType := Pred ({n} => or (is_leaf n) (is_fork n))
 
-False : Space := Sum AnyTree []
-Not : ShallowType -> Space := {P} => Fn P ({_} => False)
 Refine : ShallowType -> AnyTree -> ShallowType
   := {A, p} => ({
   #recognize := {_self, v} => and (A v) (p v)
   check := {jdg, _T, v} => and (jdg A v) (p v)
 })
-test False t = false
-test False 5 = false
-test Not False ({p} => p) = true
-
 Quotient : ShallowType -> AnyTree -> ShallowType
   := {A, nf} => ({
   #recognize := {_self, v} => A v
@@ -59,7 +53,8 @@ key_insert := {K} => fix ({self, k, ks} =>
   else if (tree_lt k ks.fst) { cons K k ks }
   else { cons K ks.fst (self k ks.snd) })
 key_sort := {K} => fix ({self, ks} => if (is_leaf ks) { [] } else { key_insert K ks.fst (self ks.snd) })
-Tuple := {keys} => {
+Tuple : Pi (Sampled [[Bool, Unit]]) AnyTree ({_} => Space)
+  := {keys} => {
   let ks := key_sort ShallowType keys
   if (not (tree_eq (list_len AnyTree ks) (list_len AnyTree keys))) { invalid keys }
   else { (fix ({self, ks2} =>
@@ -95,6 +90,12 @@ Coherent : Pi (Sampled [Bool, Unit, Row, AnyTree]) ShallowType ({_} => Bool)
   and ends_ok (and check_ok (and members_ok (and gate_ok norm_ok)))
 }
 
+False : Refine Space Coherent := Sum AnyTree []
+Not : ShallowType -> Space := {P} => Fn P ({_} => False)
+test False t = false
+test False 5 = false
+test Not False ({p} => p) = true
+
 Nat : Refine Space Coherent := ({
   #recognize := {self, v} => triage true ({_} => false) ({l, r} => and (tree_eq l t) (self r)) v
   gate := {Ind, B} => [B zero, PiCode Ind ({k} => PiCode (B k) ({_} => B (succ k)))]
@@ -127,7 +128,7 @@ test Fn ShallowType ({_} => Bool) ({T} => T 5) = true
 test Fn ShallowType ({_} => Bool) ({T} => bool_case Bool (T 5) false true) = true
 test Fn ShallowType ({_} => Nat) ({T} => T 5) = false
 
-Point : AnyTree -> Space
+Point : AnyTree -> Refine Space Coherent
   := {c} => ({ #recognize := {_self, v} => tree_eq c v, members := [c] })
 
 // One shape under wait and tag: a suspended S-redex fork(stem f, K x), the
@@ -167,7 +168,7 @@ TypeFace : ShallowType := Faced "recognize" AnyTree
 TaggedRows : AnyTree -> AnyTree -> Space
   := {S, P} => Sigma Guard (Point S) ({_} => Sigma Guard (Point t) ({_} => P))
 SusRows : Space := Sigma Guard (Pred is_stem) ({_} => Sigma Guard (Point t) ({_} => AnyTree))
-ElimPayload : Space := Sigma Guard AnyTree ({_} => Sigma Guard TypeFace ({_} => AnyTree))
+ElimPayload : Space := Sigma Guard AnyTree ({_} => Sigma Guard Space ({_} => AnyTree))
 ElimHead : Space := TaggedRows elim_sig ElimPayload
 StuckElim : Space := TaggedRows elim_stuck_sig AnyTree
 TeqPartial : Space := TaggedRows tree_eq_sig AnyTree
@@ -203,11 +204,12 @@ test ShallowType TypeFace = true
 // legally; undeclared observations refuse.
 test (SusRows -> AnyTree) ({h} => (h.snd).snd) = true
 test (SusRows -> AnyTree) ({h} => h 5) = false
-test (ElimHead -> TypeFace) ({E} => (((E.snd).snd).snd).fst) = true
+test (ElimHead -> Space) ({E} => (((E.snd).snd).snd).fst) = true
 test (ElimHead -> AnyTree) ({E} => ((E.snd).snd).fst) = true
 
 refl := t
-Eq := {A, x, y} => {
+Eq : Pi (Sampled [Nat]) ShallowType ({A} => Pi (Sampled [2]) A ({x} => Pi (Sampled [2]) A ({y} => Space)))
+  := {A, x, y} => {
   let nx := canon A x
   let ny := canon A y
   ({
@@ -300,14 +302,14 @@ test Coherent (Eq Nat 2 3) = true
 // and tag shape TypeFace keys on, so Space refines TypeFace) presenting
 // declared structure: tele or obs rows, a registered eliminator, or a
 // members enumeration. Bare predicates stay ShallowType-only. Shape, not
-// provenance, like every recognizer here. The open universe is itself one
-// structured type (its obs row: apply to anything, land at Bool), so the
-// universes form the pinned cycle Space ShallowType = ShallowType Space =
-// true. What keeps the cycle inert is that neither universe carries gate or
-// elim: nothing can eliminate a universe hypothesis. Space Space = false is
-// a shape fact (Space presents no structure of its own), not the soundness
-// barrier; if a universe ever gains an eliminator, the cycle is the door to
-// re-examine.
+// provenance, like every recognizer here. Both universes carry the
+// predicate obs row (apply to anything, land at Bool), so each is a member
+// of itself and of the other, the same position ShallowType : ShallowType
+// always held. Self-membership at recognizer strength is inert: neither
+// universe carries gate or elim, so nothing can eliminate a universe
+// hypothesis. Universe hierarchies become necessary exactly when a
+// universe gains an eliminator; that is the door to re-examine, not the
+// membership pins.
 test Space Nat = true
 test Space (Eq Nat 2 2) = true
 test Space (Fn Nat ({_} => Bool)) = true
@@ -315,7 +317,7 @@ test Space (Sigma Guard Nat ({_} => Bool)) = true
 test Space (Point 5) = true
 test Space (Cell Nat) = true
 test Space ShallowType = true
-test Space Space = false
+test Space Space = true
 test Space AnyTree = false
 test Space RawRecord = false
 test Space Table = false
@@ -325,6 +327,9 @@ test Space (Named "cost" Nat) = false
 test Space 5 = false
 test Space (pair 5 (pair 1 (pair "recognize" ({ members := [t] })))) = false
 test ShallowType Space = true
+// Space-typed hypotheses ride the obs row as predicates, like ShallowType's.
+test Fn Space ({_} => Bool) ({T} => T 5) = true
+test Fn Space ({_} => Nat) ({T} => T 5) = false
 // Space's check face refuses structure decided at a mint (a neutral name,
 // spine node, or slot head in the meta record): a certificate must survive
 // every instantiation, and only a literal skeleton makes the field reads
@@ -444,7 +449,8 @@ vec_rows : ShallowType -> Nat -> AnyTree -> Eff Row AnyTree AnyTree
     _ <- see ({v} => (get v).fst) A
     ih ({v} => (get v).snd)
   })
-Vec := {n, A} => Tele Guard (vec_rows A n ({v} => v))
+Vec : Pi (Sampled [1]) Nat ({_} => Pi (Sampled [Bool]) ShallowType ({_} => Space))
+  := {n, A} => Tele Guard (vec_rows A n ({v} => v))
 test Vec 2 Bool [true, false] = true
 test Vec 2 Bool [true] = false
 test Vec 2 Bool [true, false, true] = false
@@ -478,7 +484,8 @@ record_rows := fix ({self, entries} =>
     _ <- see ({r} => field r name) entries.fst.snd
     self entries.snd
   })
-NamedRec := {entries} => Tele Guard (record_rows entries)
+NamedRec : Pi (Sampled [[pair "x" Nat]]) (List AnyTree) ({_} => Space)
+  := {entries} => Tele Guard (record_rows entries)
 xy : List AnyTree := [pair "x" Nat, pair "y" Bool]
 test NamedRec xy ({ x := 2, y := false }) = true
 test NamedRec xy ({ x := 2 }) = false
@@ -488,7 +495,8 @@ test NamedRec [pair "step" (Nat -> Nat)] ({ step := succ }) = true
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := not_bool }) = false
 
 // 4. Type-keyed records: keys are trees, so a type can be its own key.
-TypeRec := {tys} => NamedRec (list_map AnyTree AnyTree ({T} => pair T T) tys)
+TypeRec : Pi (Sampled [[Nat]]) (List AnyTree) ({_} => Space)
+  := {tys} => NamedRec (list_map AnyTree AnyTree ({T} => pair T T) tys)
 test TypeRec [Nat, Bool] ({ (Nat) := 7, (Bool) := false }) = true
 test TypeRec [Nat, Bool] ({ (Nat) := false, (Bool) := false }) = false
 
@@ -499,7 +507,8 @@ all_rows := fix ({self, tys} =>
     _ <- self_is tys.fst
     self tys.snd
   })
-AllOf := {tys} => Tele Guard (all_rows tys)
+AllOf : Pi (Sampled [[Nat]]) (List AnyTree) ({_} => Space)
+  := {tys} => Tele Guard (all_rows tys)
 test AllOf [Nat, Point 5] 5 = true
 test AllOf [Nat, Point 5] 6 = false
 test AllOf [] 5 = true
@@ -532,7 +541,8 @@ unique_rows := {tys} => {
       go asg.snd
     })) m.fst }
 }
-UniqueOf := {tys} => Tele Guard (unique_rows tys)
+UniqueOf : Pi (Sampled [[Point 5]]) (List AnyTree) ({_} => Space)
+  := {tys} => Tele Guard (unique_rows tys)
 test UniqueOf [Point 5, Point 6] [6, 5] = true
 test UniqueOf [Point 5, Point 6] [5, 5] = false
 test UniqueOf [AnyTree, Point 5] [5, 7] = true
@@ -582,13 +592,15 @@ perfect_rows := fix ({self, n, get} =>
     _ <- self n.snd ({v} => (get v).fst)
     self n.snd ({v} => (get v).snd)
   })
-Perfect := {n} => Tele Guard (perfect_rows n ({v} => v))
+Perfect : Pi (Sampled [1]) Nat ({_} => Space)
+  := {n} => Tele Guard (perfect_rows n ({v} => v))
 test Perfect 1 (pair t t) = true
 test Perfect 2 (pair (pair t t) (pair t t)) = true
 test Perfect 2 (pair (pair t t) t) = false
 
 // 10. Balanced trees: observe a computed measure, constrain it with a type.
-height := fix ({self, v} =>
+height : Pi (Sampled [pair t t]) Tree ({_} => Nat)
+  := fix ({self, v} =>
   if (is_fork v) {
     let hl := self v.fst
     let hr := self v.snd
