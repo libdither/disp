@@ -381,7 +381,7 @@ test Pi Guard Obs ({_} => Bool) match_dflt = true
 // Op arm's ih as the RESUME (Pi r : Ans. B (k r)), so certified handlers get
 // multishot resume for free. Effect rows are just the request type Q. The
 // checker's own run loop and these user programs share ONE handle.
-BoolEff := Eff AnyTree Bool Bool
+BoolEff := Eff Tree Bool Bool
 flip_prog := Op (pair (pair "flip" t) ({r} => Pure (not_bool r)))
 test BoolEff (Pure true) = true
 test BoolEff (Pure 5) = false
@@ -453,12 +453,12 @@ test Pi Meta Tree ({_} => Bool) (member_t zero) = false
 // Eff/Record carry them inline; Pred and PiCode are certifiable but
 // defined above Guard, pinned here instead). Sum scrutinizes its variant list
 // and Point's closure construction scrutinizes its captured point: both refuse.
-test Pi Guard AnyTree ({_} => ShallowType) Pred = true
-test Pi Guard ShallowType ({_} => Pi Guard AnyTree ({_} => ShallowType)) PiCode = true
-test Pi Guard AnyTree ({_} => ShallowType) Sum = false
+test Pi Guard Tree ({_} => ShallowType) Pred = true
+test Pi Guard ShallowType ({_} => Pi Guard Tree ({_} => ShallowType)) PiCode = true
+test Pi Guard Tree ({_} => ShallowType) Sum = false
 // Point's closure construction used to refuse; deferred partial tree_eq
 // (no verdict extracted) lets construction over a captured mint complete.
-test Pi Guard AnyTree ({_} => ShallowType) Point = true
+test Pi Guard Tree ({_} => ShallowType) Point = true
 
 // Trials = enumerate where the domain advertises members, certify (Guard)
 // elsewhere: extensional trials catch the sniffer at Bool, minting covers Nat.
@@ -522,7 +522,7 @@ test mTwoFace.add 2 3 = 5
 // construction is order-free (tuple_of sorts), and names survive only as
 // brands where underlying types collide (param/result are both types). The
 // wrong-brand projection refusal is the collision case working under Guard.
-LabelK := Named "label" AnyTree
+LabelK := Named "label" Tree
 ParamK := Named "param" ShallowType
 ResultK := Named "result" ShallowType
 OpSig := [LabelK, ParamK, ResultK]
@@ -544,7 +544,7 @@ test Fn OpTy ({_} => LabelK) ({q} => at LabelK OpSig q) = true
 test Fn OpTy ({_} => ResultK) ({q} => at ParamK OpSig q) = false
 // A key outside the tuple's key list used to walk off the end of the list and
 // recur forever on the exhausted pair, hanging the checker. It errors now.
-test is_invalid (at (Named "missing" AnyTree) OpSig flip_sig) = true
+test is_invalid (at (Named "missing" Tree) OpSig flip_sig) = true
 // Keys are meant to be DISTINCT types (brands exist for when the underlying
 // types collide), and the sorted insert drops duplicates -- so a repeated key
 // used to make a two-element tuple silently collapse into a scalar.
@@ -567,7 +567,7 @@ test Table ({}) = false
 // judge, so constructor spines over mints certify — the element-position
 // recognizer boundary is closed for declared sums.
 SNCode := < sz, ss : Rec >
-SN := Sum AnyTree SNCode
+SN := Sum Tree SNCode
 sn_rec := elim_of SN ({_} => SN)
 sn_rec_n := elim_of SN ({_} => Nat)
 test SN sz = true
@@ -583,7 +583,7 @@ test Pi Guard SN ({_} => Nat) sn_id = false
 test Pi Guard SN ({_} => SN) ({n} => sn_rec n ({_} => sz) ({_k, ih} => pair 5 5)) = false
 
 SLNCode := < snil, scons : [Nat, Rec] >
-SLN := Sum AnyTree SLNCode
+SLN := Sum Tree SLNCode
 sln_rec_n := elim_of SLN ({_} => Nat)
 test SLN snil = true
 test SLN (scons 1 (scons 2 snil)) = true
@@ -628,7 +628,7 @@ test Fn Nat ({n} => Fn Nat ({m} => Fn Nat ({k} => Fn (Eq Nat n m) ({_} => Fn (Eq
 test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n zero) ({_} => Eq Nat n m))) ({n, m, p} => refl) = false
 psens := {n, m, p} => bnat (tree_eq n m) zero (pair 5 5)
 test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Nat))) psens = true
-test Fn Nat ({n} => Fn Nat ({m} => Fn AnyTree ({_} => Nat))) psens = false
+test Fn Nat ({n} => Fn Nat ({m} => Fn Tree ({_} => Nat))) psens = false
 test Pi Meta Nat ({n} => Pi Meta Nat ({m} => Pi Meta (Eq Nat n m) ({_} => Eq Nat m n))) ({n, m, p} => refl) = true
 
 // PROOF BY INDUCTION, machine-checked in-kernel on both tiers: adding zero is
@@ -793,9 +793,9 @@ test Pi Meta Nat ({_} => Nat) ({n} => make_hyp Nat "n") = false
 // branch above bails on either side being one).
 test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Eq Nat (succ n) (succ m)))) ({n, m, p} => refl) = true
 test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Eq Nat (succ (succ n)) (succ (succ m))))) ({n, m, p} => refl) = true
-test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Eq AnyTree (pair n 5) (pair m 5)))) ({n, m, p} => refl) = true
+test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Eq Tree (pair n 5) (pair m 5)))) ({n, m, p} => refl) = true
 test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Eq Nat (succ n) (succ (succ m))))) ({n, m, p} => refl) = false
-test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Eq AnyTree (pair n 5) (pair m 6)))) ({n, m, p} => refl) = false
+test Fn Nat ({n} => Fn Nat ({m} => Fn (Eq Nat n m) ({_} => Eq Tree (pair n 5) (pair m 6)))) ({n, m, p} => refl) = false
 test Fn Nat ({n} => Fn Nat ({m} => Eq Nat (succ n) (succ m))) ({n, m} => refl) = false
 test Pi Meta Nat ({n} => Pi Meta Nat ({m} => Pi Meta (Eq Nat n m) ({_} => Eq Nat (succ n) (succ m)))) ({n, m, p} => refl) = true
 
@@ -803,7 +803,7 @@ test Pi Meta Nat ({n} => Pi Meta Nat ({m} => Pi Meta (Eq Nat n m) ({_} => Eq Nat
 // positional slot list, and the auto-declared constructor takes one binder per
 // slot and builds the right-nested payload the positional reader expects.
 SOrdCode := < oz, op : [Rec, Rec] >
-SOrd := Sum AnyTree SOrdCode
+SOrd := Sum Tree SOrdCode
 sord_rec_n := elim_of SOrd ({_} => Nat)
 osize := {o} => sord_rec_n o ({_} => 1) ({_a, _b, ia, ib} => succ (add ia ib))
 test osize (op oz (op oz oz)) = 5
@@ -817,13 +817,13 @@ test Pi Guard SOrd ({_} => Nat) osize = true
 // case_of arms are CASE-SHAPED (constructor args only, derived padding absorbs
 // the IHs -- the one-level match); children collects the Rec positions.
 SFinCode := < fa, fb >
-SFin := Sum AnyTree SFinCode
+SFin := Sum Tree SFinCode
 test SFin fa = true
 test SFin (inj "fa" 5) = false
 test SFin.members = [fa, fb]
 test is_leaf SN.members = true
 test is_leaf Row.members = true
-test list_len t (Sum AnyTree [pair "mk" [Bool, Bool]]).members = 4
+test list_len t (Sum Tree [pair "mk" [Bool, Bool]]).members = 4
 sfin_not := {v} => match v : (case_of SFin ({_} => Bool)) { fa _ => false; fb _ => true }
 test sfin_not fa = false
 test sfin_not fb = true
@@ -846,7 +846,7 @@ test children SOrd (op oz (op oz oz)) = [oz, op oz oz]
 // Coherence probe = the type's OWN blessed eliminator must inhabit the
 // gate-derived obligation chain at an OPAQUE motive (a mint, so a gate that
 // fakes motive applications with fixed types can't ride along); junk probe =
-// no gate slot may admit a raw AnyTree-mint (a top-typed slot is a gate that
+// no gate slot may admit a raw Tree-mint (a top-typed slot is a gate that
 // checks nothing, the lying-gate adversary).
 test GoodGate SN = true
 test GoodGate SLN = true
@@ -854,7 +854,7 @@ test GoodGate SOrd = true
 test GoodGate SFin = true
 test GoodGate (List Nat) = true
 test GoodGate Row = true
-LieGate := ({ #recognize := {_self, _v} => true, gate := {_Ind, _B} => [AnyTree], elim := {_self, _v, c} => c })
+LieGate := ({ #recognize := {_self, _v} => true, gate := {_Ind, _B} => [Tree], elim := {_self, _v, c} => c })
 test GoodGate LieGate = false
 
 // Coherence: the declaration slots are TRUSTED, so each one gets a probe.
@@ -896,9 +896,9 @@ test Coherent PartialMembers = false
 // arity, and worse, the respond face's defense that an eliminator carries the
 // type's OWN recursor compared two absent slots and passed -- vacuous for
 // exactly the types that declare nothing.
-test is_invalid (elim_of AnyTree ({_} => Nat)) = true
+test is_invalid (elim_of ShallowType ({_} => Nat)) = true
 test is_invalid (elim_of Unit ({_} => Nat)) = true
-test is_invalid (elim_arity (wait elim_marker (pair t (pair AnyTree ({_} => Nat))))) = true
+test is_invalid (elim_arity (wait elim_marker (pair t (pair ShallowType ({_} => Nat))))) = true
 
 // Element positions now judge through the tier for every container former, not
 // just declared sums: a constructor applied to abstract arguments certifies,

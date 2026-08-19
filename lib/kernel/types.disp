@@ -3,7 +3,7 @@ open use raw "kernel.disp" {}
 
 // The kernel's library types, split out of kernel.disp: everything the
 // checker itself does not need to exist. kernel.disp keeps the machinery and
-// its constitutive types (Bool, Unit, AnyTree, Pred, ShallowType, Space,
+// its constitutive types (Bool, Unit, Tree, Pred, ShallowType, Space,
 // Row/Obs, Sum, the Pi/Tele formers, the tables, Record + the declaration
 // protocol).
 // prelude.disp is the double-pass barrel that loads both raw, then checked.
@@ -12,8 +12,8 @@ open use raw "kernel.disp" {}
 // re-verifies every arrow-spelled definition below under that walker.
 // Pi-Guard-literal annotations are the deliberate opt-out; the one entry
 // left is TreeOf, whose branching row program blows up Meta's simulation.
-given DefaultWalker : AnyTree := Guard
-Fn : Pi (Sampled [Bool]) ShallowType ({_} => Pi (Sampled [{_v} => Bool]) AnyTree ({_} => Space)) := Pi DefaultWalker
+given DefaultWalker : Tree := Guard
+Fn : Pi (Sampled [Bool]) ShallowType ({_} => Pi (Sampled [{_v} => Bool]) Tree ({_} => Space)) := Pi DefaultWalker
 // Re-point the binder sugar at Fn here: the raw kernel open exports a
 // neutral-Fn settings entry (givens unfilled), so the real one must rebind.
 elab_settings := [t "Pi" Fn]
@@ -23,12 +23,12 @@ arm := idx
 
 node_like : ShallowType := Pred ({n} => or (is_leaf n) (is_fork n))
 
-Refine : ShallowType -> AnyTree -> ShallowType
+Refine : ShallowType -> Tree -> ShallowType
   := {A, p} => ({
   #recognize := {_self, v} => and (A v) (p v)
   check := {jdg, _T, v} => and (jdg A v) (p v)
 })
-Quotient : ShallowType -> AnyTree -> ShallowType
+Quotient : ShallowType -> Tree -> ShallowType
   := {A, nf} => ({
   #recognize := {_self, v} => A v
   check := {jdg, _T, v} => jdg A v
@@ -39,7 +39,7 @@ canon := {A, v} => {
   let nf := A.norm
   if (or (is_leaf nf) (not (neutral_free v))) { v } else { nf v }
 }
-Named : AnyTree -> ShallowType -> ShallowType
+Named : Tree -> ShallowType -> ShallowType
   := {name, T} => ({
   #recognize := {_self, v} => T v
   check := {jdg, _T2, v} => jdg T v
@@ -53,10 +53,10 @@ key_insert := {K} => fix ({self, k, ks} =>
   else if (tree_lt k ks.fst) { cons K k ks }
   else { cons K ks.fst (self k ks.snd) })
 key_sort := {K} => fix ({self, ks} => if (is_leaf ks) { [] } else { key_insert K ks.fst (self ks.snd) })
-Tuple : Pi (Sampled [[Bool, Unit]]) AnyTree ({_} => Space)
+Tuple : Pi (Sampled [[Bool, Unit]]) Tree ({_} => Space)
   := {keys} => {
   let ks := key_sort ShallowType keys
-  if (not (tree_eq (list_len AnyTree ks) (list_len AnyTree keys))) { invalid keys }
+  if (not (tree_eq (list_len Tree ks) (list_len Tree keys))) { invalid keys }
   else { (fix ({self, ks2} =>
     if (is_leaf ks2.snd) { ks2.fst } else { Sigma DefaultWalker ks2.fst ({_} => self ks2.snd) })) ks }
 }
@@ -73,24 +73,24 @@ GoodGate : Pi (Sampled [Bool, Unit, Row]) ShallowType ({_} => Bool)
     let tys := g T B
     let pis := fix ({self, l, end} => if (is_leaf l) { end } else { Pi Guard l.fst ({_} => self l.snd end) })
     and (Pi Guard T ({x} => pis tys (B x)) (elim_of T B))
-        (list_all ShallowType ({ty} => not (Pi Guard AnyTree ({_} => ty) ({j} => j))) tys)
+        (list_all ShallowType ({ty} => not (Pi Guard Tree ({_} => ty) ({j} => j))) tys)
   }
 }
-Coherent : Pi (Sampled [Bool, Unit, Row, AnyTree]) ShallowType ({_} => Bool)
+Coherent : Pi (Sampled [Bool, Unit, Row, Tree]) ShallowType ({_} => Bool)
   := {T} => {
   let e := T.ends
   let ck := T.check
-  let ends_ok := if (is_fork e) { or (tree_eq e.fst e.snd) (list_all AnyTree ({v} => not (T v)) probes) } else { true }
-  let check_ok := if (is_leaf ck) { true } else { list_all AnyTree ({v} => tree_eq (T v) (ck ({ty, a} => ty a) T v)) probes }
-  let members_ok := and (list_all T T T.members) (if (is_leaf T.members) { true } else { list_all AnyTree ({v} => or (not (T v)) (member T v T.members)) probes })
+  let ends_ok := if (is_fork e) { or (tree_eq e.fst e.snd) (list_all Tree ({v} => not (T v)) probes) } else { true }
+  let check_ok := if (is_leaf ck) { true } else { list_all Tree ({v} => tree_eq (T v) (ck ({ty, a} => ty a) T v)) probes }
+  let members_ok := and (list_all T T T.members) (if (is_leaf T.members) { true } else { list_all Tree ({v} => or (not (T v)) (member T v T.members)) probes })
   let gate_ok := if (is_leaf T.gate) { true } else { GoodGate T }
   let norm_ok := if (is_leaf T.norm) { true } else {
-    list_all AnyTree ({v} => if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
+    list_all Tree ({v} => if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
   }
   and ends_ok (and check_ok (and members_ok (and gate_ok norm_ok)))
 }
 
-False : Refine Space Coherent := Sum AnyTree []
+False : Refine Space Coherent := Sum Tree []
 Not : ShallowType -> Space := {P} => Fn P ({_} => False)
 test False t = false
 test False 5 = false
@@ -128,7 +128,7 @@ test Fn ShallowType ({_} => Bool) ({T} => T 5) = true
 test Fn ShallowType ({_} => Bool) ({T} => bool_case Bool (T 5) false true) = true
 test Fn ShallowType ({_} => Nat) ({T} => T 5) = false
 
-Point : AnyTree -> Refine Space Coherent
+Point : Tree -> Refine Space Coherent
   := {c} => ({ #recognize := {_self, v} => tree_eq c v, members := [c] })
 
 // One shape under wait and tag: a suspended S-redex fork(stem f, K x), the
@@ -141,10 +141,10 @@ Sus := Pred ({v} =>
       if (is_fork (pair_snd v)) { is_leaf (pair_fst (pair_snd v)) } else { false }
     } else { false }
   } else { false })
-Tagged : AnyTree -> AnyTree -> ShallowType
+Tagged : Tree -> Tree -> ShallowType
   := {S, P} => ({ #recognize := {_self, v} =>
   if (Sus v) { if (has_sig S v) { P (wait_payload v) } else { false } } else { false } })
-Faced : AnyTree -> AnyTree -> ShallowType
+Faced : Tree -> Tree -> ShallowType
   := {name, P} => ({ #recognize := {_self, v} =>
   if (Sus v) {
     let m := wait_payload v
@@ -153,10 +153,10 @@ Faced : AnyTree -> AnyTree -> ShallowType
 // Shape, not trust: sig-valid forgeries are members. Blessing is the
 // walker's judgment (hyp_ok, the elim_raw-vs-T.elim comparison), never a
 // tree predicate.
-Hyp : ShallowType := Tagged hyp_sig AnyTree
-Invalid : ShallowType := Tagged invalid_sig AnyTree
-OpenChain : ShallowType := Tagged open_sig AnyTree
-TypeFace : ShallowType := Faced "recognize" AnyTree
+Hyp : ShallowType := Tagged hyp_sig Tree
+Invalid : ShallowType := Tagged invalid_sig Tree
+OpenChain : ShallowType := Tagged open_sig Tree
+TypeFace : ShallowType := Faced "recognize" Tree
 // Rows spelling of the same shape: a wait form IS a nested Sigma, so these
 // carry a tele and hypotheses of them support payload projection under
 // Guard. The checker's three CONTROL markers cannot ride it and keep the
@@ -165,13 +165,13 @@ TypeFace : ShallowType := Faced "recognize" AnyTree
 // propagation (the is_invalid branch refuses them as values), open chains
 // are its pending completions (the is_open_chain branch routes them to
 // complete). Rows work for the data-shaped rest.
-TaggedRows : AnyTree -> AnyTree -> Space
+TaggedRows : Tree -> Tree -> Space
   := {S, P} => Sigma Guard (Point S) ({_} => Sigma Guard (Point t) ({_} => P))
-SusRows : Space := Sigma Guard (Pred is_stem) ({_} => Sigma Guard (Point t) ({_} => AnyTree))
-ElimPayload : Space := Sigma Guard AnyTree ({_} => Sigma Guard Space ({_} => AnyTree))
+SusRows : Space := Sigma Guard (Pred is_stem) ({_} => Sigma Guard (Point t) ({_} => Tree))
+ElimPayload : Space := Sigma Guard Tree ({_} => Sigma Guard Space ({_} => Tree))
 ElimHead : Space := TaggedRows elim_sig ElimPayload
-StuckElim : Space := TaggedRows elim_stuck_sig AnyTree
-TeqPartial : Space := TaggedRows tree_eq_sig AnyTree
+StuckElim : Space := TaggedRows elim_stuck_sig Tree
+TeqPartial : Space := TaggedRows tree_eq_sig Tree
 test Sus (make_hyp Nat t) = true
 test Sus Nat = true
 test Sus (pair 1 2) = false
@@ -202,10 +202,10 @@ test ShallowType Hyp = true
 test ShallowType TypeFace = true
 // Conduct: hypotheses of rows-spelled tagged types project sig and payload
 // legally; undeclared observations refuse.
-test (SusRows -> AnyTree) ({h} => (h.snd).snd) = true
-test (SusRows -> AnyTree) ({h} => h 5) = false
+test (SusRows -> Tree) ({h} => (h.snd).snd) = true
+test (SusRows -> Tree) ({h} => h 5) = false
 test (ElimHead -> Space) ({E} => (((E.snd).snd).snd).fst) = true
-test (ElimHead -> AnyTree) ({E} => ((E.snd).snd).fst) = true
+test (ElimHead -> Tree) ({E} => ((E.snd).snd).fst) = true
 
 refl := t
 Eq : Pi (Sampled [Nat]) ShallowType ({A} => Pi (Sampled [2]) A ({x} => Pi (Sampled [2]) A ({y} => Space)))
@@ -242,8 +242,8 @@ test eq_cong Nat succ 2 2 refl = refl
 // witness elimination waits on walked type formation or a dedicated head.
 test (Pi Guard ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
 test (Pi Guard ShallowType ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
-test (Pi Guard ShallowType ({T} => AnyTree)) ({T} => ask T ({X} => X)) = false
-test (Pi Guard Nat ({n} => AnyTree)) ({n} => ask n MembersP) = false
+test (Pi Guard ShallowType ({T} => Tree)) ({T} => ask T ({X} => X)) = false
+test (Pi Guard Nat ({n} => Tree)) ({n} => ask n MembersP) = false
 test (Pi Guard ShallowType ({T} => ShallowType)) ({T} => Cell (NormP T)) = false
 test tree_eq (ask Nat GateP) (inj "Some" Nat.gate) = true
 test tree_eq (ask (Eq Nat 2 2) UnderP) (inj "Some" Nat) = true
@@ -274,11 +274,6 @@ test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard A ({a} 
 test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard (Eq ShallowType A B) ({_} => Pi Guard (Pi Guard A ({_} => Bool)) ({f} => Pi Guard B ({_} => Bool)))))) ({_A, _B, _p, f} => f) = true
 test (Pi Guard Nat ({n} => Pi Guard Nat ({m} => Pi Guard (Eq (Quotient Nat succ) n m) ({_} => Pi Guard (Point n) ({v} => Point m))))) ({_n, _m, _p, v} => v) = false
 
-Tree : Refine Space Coherent := ({
-  #recognize := {_self, _v} => true
-  gate := {Ind, B} => [B t, PiCode Ind ({c} => PiCode (B c) ({_} => B (t c))), PiCode Ind ({l} => PiCode Ind ({r} => PiCode (B l) ({_} => PiCode (B r) ({_} => B (t l r)))))]
-  elim := {self, v, on_leaf, on_stem, on_fork} => triage on_leaf ({c} => on_stem c (self c on_leaf on_stem on_fork)) ({l, r} => on_fork l r (self l on_leaf on_stem on_fork) (self r on_leaf on_stem on_fork)) v
-})
 tree_rec : {C : ShallowType} -> Tree -> C -> (arm 1 (Tree.gate Tree (const_fn C))) -> (arm 2 (Tree.gate Tree (const_fn C))) -> C
   := {C} => elim_of Tree ({_} => C)
 
@@ -286,14 +281,14 @@ test GoodGate Nat = true
 test GoodGate Bool = true
 test GoodGate Tree = true
 test GoodGate (Eq Nat 2 3) = true
-test GoodGate AnyTree = false
+test GoodGate (Pred ({_v} => true)) = false
 test GoodGate ShallowType = false
 
 test Coherent Nat = true
 test Coherent Bool = true
 test Coherent Tree = true
 test Coherent Unit = true
-test Coherent AnyTree = true
+test Coherent (Pred ({_v} => true)) = true
 test Coherent (Point 5) = true
 test Coherent (Eq Nat 2 2) = true
 test Coherent (Eq Nat 2 3) = true
@@ -318,7 +313,7 @@ test Space (Point 5) = true
 test Space (Cell Nat) = true
 test Space ShallowType = true
 test Space Space = true
-test Space AnyTree = false
+test Space (Pred ({_v} => true)) = false
 test Space RawRecord = false
 test Space Table = false
 test Space node_like = false
@@ -335,15 +330,15 @@ test Fn Space ({_} => Nat) ({T} => T 5) = false
 // every instantiation, and only a literal skeleton makes the field reads
 // stable. Mints below a literal slot head stay licensed (the formation
 // certificates in the ask block ride exactly that).
-test (Pi Guard AnyTree ({x} => Space)) ({x} => make_type ({ tele := x })) = false
-test (Pi Guard AnyTree ({x} => Space)) ({x} => tag (pair "recognize" (pair [x, "tele"] [list_const t, list_const (pair 1 2)])) t) = false
+test (Pi Guard Tree ({x} => Space)) ({x} => make_type ({ tele := x })) = false
+test (Pi Guard Tree ({x} => Space)) ({x} => tag (pair "recognize" (pair [x, "tele"] [list_const t, list_const (pair 1 2)])) t) = false
 
 list_len_t : Tree -> Nat
   := {xs} => tree_rec Nat xs zero ({_c, _ih} => zero) ({_l, _r, _il, ir} => succ ir)
 list_snoc_t : Tree -> Tree -> Tree
-  := {xs, x} => tree_rec Tree xs [x] ({_c, _ih} => t) ({l, _r, _il, ir} => cons AnyTree l ir)
+  := {xs, x} => tree_rec Tree xs [x] ({_c, _ih} => t) ({l, _r, _il, ir} => cons Tree l ir)
 list_map_t : (Tree -> Tree) -> Tree -> Tree
-  := {f, xs} => tree_rec Tree xs [] ({_c, _ih} => t) ({l, _r, _il, ir} => cons AnyTree (f l) ir)
+  := {f, xs} => tree_rec Tree xs [] ({_c, _ih} => t) ({l, _r, _il, ir} => cons Tree (f l) ir)
 list_all_t : (Tree -> Bool) -> Tree -> Bool
   := {p, xs} => tree_rec Bool xs true ({_c, _ih} => false) ({l, _r, _il, ir} => bool_case Bool (p l) ir false)
 test list_len_t [7, 7] = 2
@@ -374,10 +369,10 @@ list_rec : {A : ShallowType} -> {C : ShallowType} -> List A -> C -> (arm 1 ((Lis
   := {A, C} => elim_of (List A) ({_} => C)
 // The Meta gap: abstract values cannot act as recognizers, so Meta refuses
 // every type-polymorphic function, even the tautological one.
-test Pi Meta ShallowType ({T} => Fn AnyTree ({_} => Bool)) ({T, v} => T v) = false
-test Pi Guard ShallowType ({T} => Fn AnyTree ({_} => Bool)) ({T, v} => T v) = false
+test Pi Meta ShallowType ({T} => Fn Tree ({_} => Bool)) ({T, v} => T v) = false
+test Pi Guard ShallowType ({T} => Fn Tree ({_} => Bool)) ({T, v} => T v) = false
 test Pi Meta ShallowType ({_} => Bool) ({T} => T 5) = true
-list_samples : List AnyTree := [[], [1], [1, 2]]
+list_samples : List Tree := [[], [1], [1, 2]]
 
 let eff_mem := {ej, rj, Q, X, v} => (match v { Pure x => (ej X x); Op q k => (and (ej Q q) (rj (k t))); _ => false })
 Eff : ShallowType -> ShallowType -> ShallowType -> Space
@@ -387,10 +382,10 @@ Eff : ShallowType -> ShallowType -> ShallowType -> Space
   gate := {Ind, B} => [PiCode X ({x} => B (Pure x)), PiCode Q ({q} => PiCode (PiCode Ans ({_} => Ind)) ({k} => PiCode (PiCode Ans ({r} => B (k r))) ({_} => B (Op (pair q k)))))]
   elim := {self, m, on_pure, on_op} => (match m { Pure x => (on_pure x); Op q k => (on_op q k ({r} => self (k r) on_pure on_op)) })
 })
-test Eff Row AnyTree AnyTree (PiCode AnyTree ({_} => AnyTree)).tele = true
-test Eff Row AnyTree AnyTree (Sigma Guard Nat ({_} => Bool)).tele = true
-test Eff Row AnyTree AnyTree ShallowType.obs = true
-test Eff Row AnyTree AnyTree 5 = false
+test Eff Row Tree Tree (PiCode Tree ({_} => Tree)).tele = true
+test Eff Row Tree Tree (Sigma Guard Nat ({_} => Bool)).tele = true
+test Eff Row Tree Tree ShallowType.obs = true
+test Eff Row Tree Tree 5 = false
 
 // A telescope is just data: a free-monad program over Fresh/Observe rows.
 // eff_bind is what the `x <- e` block sugar desugars to: graft k onto the
@@ -402,11 +397,11 @@ eff_bind := fix ({self, m, k} =>
   else { m })
 // One-observation program: project the subject with acc, judge against T,
 // return the raw projection. `x <- see acc T` reads "observe it, call it x".
-see : AnyTree -> ShallowType -> Eff Row AnyTree AnyTree
+see : Tree -> ShallowType -> Eff Row Tree Tree
   := {acc, T} => perform (Observe (pair (Prj acc) T)) Pure
-self_is : ShallowType -> Eff Row AnyTree AnyTree
+self_is : ShallowType -> Eff Row Tree Tree
   := {T} => perform (Observe (pair Self T)) Pure
-done : Eff Row AnyTree AnyTree := Pure t
+done : Eff Row Tree Tree := Pure t
 reject := t
 
 add : Nat -> Nat -> Nat := {n, m} => nat_rec Nat n m ({k, ih} => succ ih)
@@ -418,7 +413,7 @@ test ShallowType Nat = true
 test ShallowType (Nat -> Nat) = true
 
 // 1. Lists: recursion at row-generation time, branching on the observed node.
-list_rows : ShallowType -> AnyTree -> Eff Row AnyTree AnyTree
+list_rows : ShallowType -> Tree -> Eff Row Tree Tree
   := {A} => (fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
@@ -441,8 +436,8 @@ test ListR (ListR Bool) [[true], []] = true
 test ListR (ListR Bool) [[5]] = false
 
 // 2. Vectors: same list, but the length is a parameter driving row generation.
-vec_rows : ShallowType -> Nat -> AnyTree -> Eff Row AnyTree AnyTree
-  := {A, n} => nat_rec (Fn AnyTree ({_} => Eff Row AnyTree AnyTree)) n
+vec_rows : ShallowType -> Nat -> Tree -> Eff Row Tree Tree
+  := {A, n} => nat_rec (Fn Tree ({_} => Eff Row Tree Tree)) n
   ({get} => see get Unit)
   ({_k, ih, get} => {
     _ <- see get (Pred is_fork)
@@ -463,8 +458,8 @@ test Vec 0 Bool [] = true
 // pins are Pi-Guard-literal: consuming a branching row program at a mint
 // under Meta is the TreeOf simulator pathology.
 raw_record_rows := {
-  names <- see pair_fst (List AnyTree)
-  vec_rows AnyTree (list_len AnyTree names) pair_snd
+  names <- see pair_fst (List Tree)
+  vec_rows Tree (list_len Tree names) pair_snd
 }
 RawRecordRows : Space := Tele Guard raw_record_rows
 test RawRecordRows ({ a := 1 }) = true
@@ -472,8 +467,8 @@ test RawRecordRows ({ a := 1, b := 2 }) = true
 test RawRecordRows ({}) = true
 test RawRecordRows (pair ["a"] t) = false
 test RawRecordRows 5 = false
-test (Pi Guard RawRecordRows ({_} => List AnyTree)) ({r} => r.fst) = true
-test (Pi Guard RawRecordRows ({_} => AnyTree)) ({r} => r.snd) = false
+test (Pi Guard RawRecordRows ({_} => List Tree)) ({r} => r.fst) = true
+test (Pi Guard RawRecordRows ({_} => Tree)) ({r} => r.snd) = false
 
 // 3. Records with names: entries data -> one presence row + one field row each.
 record_rows := fix ({self, entries} =>
@@ -484,9 +479,9 @@ record_rows := fix ({self, entries} =>
     _ <- see ({r} => field r name) entries.fst.snd
     self entries.snd
   })
-NamedRec : Pi (Sampled [[pair "x" Nat]]) (List AnyTree) ({_} => Space)
+NamedRec : Pi (Sampled [[pair "x" Nat]]) (List Tree) ({_} => Space)
   := {entries} => Tele Guard (record_rows entries)
-xy : List AnyTree := [pair "x" Nat, pair "y" Bool]
+xy : List Tree := [pair "x" Nat, pair "y" Bool]
 test NamedRec xy ({ x := 2, y := false }) = true
 test NamedRec xy ({ x := 2 }) = false
 test NamedRec xy ({ x := 2, y := 5 }) = false
@@ -495,8 +490,8 @@ test NamedRec [pair "step" (Nat -> Nat)] ({ step := succ }) = true
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := not_bool }) = false
 
 // 4. Type-keyed records: keys are trees, so a type can be its own key.
-TypeRec : Pi (Sampled [[Nat]]) (List AnyTree) ({_} => Space)
-  := {tys} => NamedRec (list_map AnyTree AnyTree ({T} => pair T T) tys)
+TypeRec : Pi (Sampled [[Nat]]) (List Tree) ({_} => Space)
+  := {tys} => NamedRec (list_map Tree Tree ({T} => pair T T) tys)
 test TypeRec [Nat, Bool] ({ (Nat) := 7, (Bool) := false }) = true
 test TypeRec [Nat, Bool] ({ (Nat) := false, (Bool) := false }) = false
 
@@ -507,7 +502,7 @@ all_rows := fix ({self, tys} =>
     _ <- self_is tys.fst
     self tys.snd
   })
-AllOf : Pi (Sampled [[Nat]]) (List AnyTree) ({_} => Space)
+AllOf : Pi (Sampled [[Nat]]) (List Tree) ({_} => Space)
   := {tys} => Tele Guard (all_rows tys)
 test AllOf [Nat, Point 5] 5 = true
 test AllOf [Nat, Point 5] 6 = false
@@ -518,8 +513,8 @@ test AllOf [] 5 = true
 // per matched pair so every claim is re-judged by the checker.
 splits := fix ({self, xs} =>
   if (is_leaf xs) { [] }
-  else { cons AnyTree (pair xs.fst xs.snd)
-              (list_map AnyTree AnyTree ({p} => pair p.fst (cons AnyTree xs.fst p.snd)) (self xs.snd)) })
+  else { cons Tree (pair xs.fst xs.snd)
+              (list_map Tree Tree ({p} => pair p.fst (cons Tree xs.fst p.snd)) (self xs.snd)) })
 bijection := fix ({self, tys, xs} =>
   if (is_leaf tys) { if (is_leaf xs) { [[]] } else { [] } }
   else { (fix ({try, cands} =>
@@ -528,10 +523,10 @@ bijection := fix ({self, tys, xs} =>
       let c := cands.fst
       let rest := if (tys.fst c.fst) { self tys.snd c.snd } else { [] }
       if (is_leaf rest) { try cands.snd }
-      else { [cons AnyTree (pair tys.fst c.fst) rest.fst] }
+      else { [cons Tree (pair tys.fst c.fst) rest.fst] }
     })) (splits xs) })
 unique_rows := {tys} => {
-  v <- self_is (List AnyTree)
+  v <- self_is (List Tree)
   let m := bijection tys v
   if (is_leaf m) { reject }
   else { (fix ({go, asg} =>
@@ -541,15 +536,15 @@ unique_rows := {tys} => {
       go asg.snd
     })) m.fst }
 }
-UniqueOf : Pi (Sampled [[Point 5]]) (List AnyTree) ({_} => Space)
+UniqueOf : Pi (Sampled [[Point 5]]) (List Tree) ({_} => Space)
   := {tys} => Tele Guard (unique_rows tys)
 test UniqueOf [Point 5, Point 6] [6, 5] = true
 test UniqueOf [Point 5, Point 6] [5, 5] = false
-test UniqueOf [AnyTree, Point 5] [5, 7] = true
-test UniqueOf [AnyTree, AnyTree] [5] = false
+test UniqueOf [Tree, Point 5] [5, 7] = true
+test UniqueOf [Tree, Tree] [5] = false
 
 // 7. Tree checkers: branch at each node, sequence the two child programs.
-tree_rows : ShallowType -> AnyTree -> Eff Row AnyTree AnyTree
+tree_rows : ShallowType -> Tree -> Eff Row Tree Tree
   := {LeafTy} => (fix ({self, get} => {
   node <- see get node_like
   if (is_fork node) {
@@ -563,7 +558,7 @@ test TreeOf Unit (pair (pair t t) t) = true
 test TreeOf Unit (pair (t t) t) = false
 
 // 8. Trees with different kinds of sub-objects at tagged nodes.
-MixedCode : List AnyTree := < Leaf : t, Node : t >
+MixedCode : List Tree := < Leaf : t, Node : t >
 mixed_rows := fix ({self, get} => {
   node <- see get (Pred is_fork)
   if (tree_eq node.fst "Leaf") {
@@ -607,7 +602,7 @@ height : Pi (Sampled [pair t t]) Tree ({_} => Nat)
     succ (if (nat_le hl hr) { hr } else { hl })
   } else { zero })
 near : ShallowType := Pred ({p} => and (nat_le p.fst (succ p.snd)) (nat_le p.snd (succ p.fst)))
-bal_rows : AnyTree -> Eff Row AnyTree AnyTree
+bal_rows : Tree -> Eff Row Tree Tree
   := fix ({self, get} => {
   node <- see get node_like
   if (is_leaf node) { done }
