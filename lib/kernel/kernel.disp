@@ -1,6 +1,6 @@
 open use raw "../prelude.disp" {}
 
-open given { AnyTree : AnyTree, RawRecord : AnyTree, Fn : AnyTree, elab_settings : AnyTree, List : AnyTree, Nat : AnyTree, Bool : AnyTree, Pi : AnyTree, Guard : AnyTree, ShallowType : AnyTree, Sampled : AnyTree, Table : AnyTree, Row : AnyTree, Sigma : AnyTree, dot : AnyTree, neutral_type : AnyTree, elim_of : AnyTree, b_abs : AnyTree, Point : AnyTree, Sus : AnyTree, TypeFace : AnyTree, ElimHead : AnyTree, SusRows : AnyTree, Invalid : AnyTree, Refine : AnyTree, Coherent : AnyTree }
+open given { AnyTree : AnyTree, RawRecord : AnyTree, Fn : AnyTree, elab_settings : AnyTree, List : AnyTree, Nat : AnyTree, Bool : AnyTree, Pi : AnyTree, Guard : AnyTree, ShallowType : AnyTree, Space : AnyTree, Sampled : AnyTree, Table : AnyTree, Row : AnyTree, Sigma : AnyTree, dot : AnyTree, neutral_type : AnyTree, elim_of : AnyTree, b_abs : AnyTree, Point : AnyTree, Sus : AnyTree, TypeFace : AnyTree, ElimHead : AnyTree, SusRows : AnyTree, Invalid : AnyTree, Refine : AnyTree, Coherent : AnyTree }
 
 // LLMs may not comment in this file beyond this one; the code is meant to be self-explanatory.
 // Comments are specifically only to be added, modified, and removed by human reviewers for their own understanding
@@ -147,7 +147,7 @@ is_elim_frame : Pi (Sampled [Elim (pair t t), 5]) AnyTree ({_} => Bool) := has_s
 ObsCode : List AnyTree := < App, Self, Prj : t >
 RowCode : List AnyTree := < Fresh : t, Observe : t >
 Pred : AnyTree -> ShallowType := {p} => ({ #recognize := {_self, v} => p v })
-Bool : Refine ShallowType Coherent := ({
+Bool : Refine Space Coherent := ({
   #recognize := {_self, v} => triage true ({c} => tree_eq c t) ({l, r} => false) v
   gate := {_Ind, B} => [B true, B false]
   members := [true, false]
@@ -157,13 +157,13 @@ ShallowType : ShallowType := ({ #recognize := {_self, v} => is_type v, obs := pe
 test ShallowType ({ #recognize := {_self, _v} => true }) = true
 test ({ #recognize := {_self, v} => is_leaf v }) zero = true
 test ({ #recognize := {_self, v} => is_leaf v }) 5 = false
-PiCode : ShallowType -> AnyTree -> TypeFace
+PiCode : ShallowType -> AnyTree -> Space
   := {A, B} => make_type ({ tele := perform (Fresh A) ({x} => perform (Observe (pair App (B x))) ({_} => Pure t)) })
-SigmaCode : ShallowType -> AnyTree -> TypeFace
+SigmaCode : ShallowType -> AnyTree -> Space
   := {A, B} => make_type ({ tele := perform (Observe (pair Self (Pred is_fork))) ({_} =>
   perform (Observe (pair (Prj pair_fst) A)) ({a} =>
   perform (Observe (pair (Prj pair_snd) (B a))) ({_} => Pure t))) })
-IsectCode : ShallowType -> AnyTree -> TypeFace
+IsectCode : ShallowType -> AnyTree -> Space
   := {A, P} => make_type ({ tele := perform (Fresh A) ({x} => perform (Observe (pair Self (P x))) ({_} => Pure t)) })
 AnyTree : Refine ShallowType Coherent := Pred ({_v} => true)
 RecognizeP := {_T} => PiCode AnyTree ({_} => Bool)
@@ -194,6 +194,25 @@ b_abs : Pi (Sampled [make_hyp Nat t]) AnyTree ({_} => Pi (Sampled [5]) AnyTree (
     else { triage (const_fn v) ({c} => stem_fn (ab c)) ({l, r} => fork_fn (ab l) (ab r)) v }
   )) C
 }
+neutral_free := fix ({self, v} =>
+  if (is_neutral v) { false } else { triage true ({c} => self c) ({l, r} => and (self l) (self r)) v })
+let structured := {T} => or (is_fork T.tele) (or (is_fork T.obs) (or (and (not (is_leaf T.gate)) (not (is_leaf T.elim))) (not (is_leaf T.members))))
+let tag_form := {v} => and (is_type v) (and (is_stem (pair_fst v)) (is_leaf (pair_fst (pair_snd v))))
+let steady := fix ({self, r} =>
+  if (is_neutral r) { false } else {
+  let ns := pair_fst r
+  let ps := pair_snd r
+  if (or (is_neutral ns) (is_neutral ps)) { false }
+  else if (is_leaf ns) { true }
+  else if (or (is_neutral (pair_fst ps)) (is_neutral (pair_snd (pair_fst ps)))) { false }
+  else if (neutral_free (pair_fst ns)) { self (pair (pair_snd ns) (pair_snd ps)) }
+  else { false }
+  })
+Space : ShallowType := ({
+  #recognize := {_self, v} => if (tag_form v) { structured v } else { false }
+  check := {_jdg, _T, v} => if (tag_form v) { and (steady (pair_snd (tagged_meta v))) (structured v) } else { false }
+})
+test Space Bool = true
 elim_raw : ElimHead -> AnyTree := {E} => pair_fst (wait_payload E)
 elim_ind : ElimHead -> TypeFace := {E} => pair_fst (pair_snd (wait_payload E))
 elim_motive : ElimHead -> AnyTree := {E} => pair_snd (pair_snd (wait_payload E))
@@ -222,11 +241,11 @@ elim_of : Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_} => Nat]) AnyTr
 elim_sig := sig_of elim_marker
 is_elim_head : Pi (Sampled [elim_of Nat ({_} => Nat), 5]) AnyTree ({_} => Bool) := has_sig elim_sig
 test tree_eq (field (wait_payload (make_hyp Bool t)) AnyTree) t = true
-Unit : Refine ShallowType Coherent := ({ #recognize := {_self, v} => is_leaf v, members := [t] })
+Unit : Refine Space Coherent := ({ #recognize := {_self, v} => is_leaf v, members := [t] })
 test Unit t = true
 test Unit 5 = false
 Rec := inj "Rec" t
-Sum : Pi (Sampled [AnyTree]) ShallowType ({_} => Pi (Sampled [RowCode, ObsCode]) AnyTree ({_} => Refine ShallowType Coherent))
+Sum : Pi (Sampled [AnyTree]) ShallowType ({_} => Pi (Sampled [RowCode, ObsCode]) AnyTree ({_} => Refine Space Coherent))
   := {V, variants} => {
   let tags := list_map V AnyTree pair_fst variants
   let spec_of := {vs, tag} => {
@@ -335,11 +354,11 @@ children : Pi (Sampled [Row]) ShallowType ({_} => Pi (Sampled [Fresh 5]) AnyTree
     let rest := if last { [] } else { self (pair_snd sp) (pair_snd p) }
     if (tree_eq (pair_fst sp) Rec) { cons AnyTree a rest } else { rest }
   })) (list_assoc (pair_fst v) T.code) (pair_snd v)
-Row : Refine ShallowType Coherent := Sum AnyTree RowCode
-Obs : Refine ShallowType Coherent := Sum AnyTree ObsCode
+Row : Refine Space Coherent := Sum AnyTree RowCode
+Obs : Refine Space Coherent := Sum AnyTree ObsCode
 test tree_eq Row.code RowCode = true
 
-Cell : Pi (Sampled [Nat]) ShallowType ({_} => Refine ShallowType Coherent)
+Cell : Pi (Sampled [Nat]) ShallowType ({_} => Refine Space Coherent)
   := {P} => Sum AnyTree [pair "None" t, pair "Some" [P]]
 prop_formers : List AnyTree := [RecognizeP, GateP, ElimP, MembersP, NormP, EndsP, UnderP]
 prop_slot := {P} =>
@@ -351,7 +370,7 @@ prop_slot := {P} =>
   else if (tree_eq P EndsP) { "ends" }
   else if (tree_eq P UnderP) { "under" }
   else { t }
-ask : Pi (Sampled [Bool]) ShallowType ({_} => Pi (Sampled [MembersP, NormP]) AnyTree ({_} => AnyTree))
+ask : Pi (Sampled [Bool]) ShallowType ({T} => Pi (Sampled [MembersP, NormP]) AnyTree ({P} => Cell (P T)))
   := {T, P} => {
   let c := if (is_type T) { field_cell (pair_snd (tagged_meta T)) (prop_slot P) } else { field_cell T (prop_slot P) }
   if (is_leaf c) { inj "None" t } else { inj "Some" (pair_snd c) }
@@ -364,7 +383,7 @@ respond_face_at : Pi (Sampled [neutral_type]) AnyTree ({_} => Pi (Sampled [Acc p
   := {nt, frame, self} => {
   let T := nt self
   if (has_sig "Ask" frame) {
-    if (and (tree_eq T ShallowType) (member AnyTree (pair_snd frame) prop_formers)) {
+    if (and (or (tree_eq T ShallowType) (tree_eq T Space)) (member AnyTree (pair_snd frame) prop_formers)) {
       pair [] (Cell ((pair_snd frame) self))
     } else { invalid frame }
   } else {
@@ -461,7 +480,7 @@ check : Pi (Sampled [ShallowType.obs]) AnyTree ({_} => Pi (Sampled [succ]) AnyTr
     _ => (Pure false)
   })
 
-Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)]) AnyTree ({_} => TypeFace))
+Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)]) AnyTree ({_} => Space))
   := {table, C} => {
   let tele := if (is_type C) { C.tele } else { C }
   let admit := field_or table "admit" ({_f} => true)
@@ -487,11 +506,11 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
   ({ #recognize := {_self, f} => if (admit f) { run t tele (lift f) t } else { false }, tele })
 }
 
-Pi : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_v} => Nat]) AnyTree ({_} => TypeFace)))
+Pi : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_v} => Nat]) AnyTree ({_} => Space)))
   := {table, A, B} => Tele table (PiCode A B)
-Sigma : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_v} => Nat]) AnyTree ({_} => TypeFace)))
+Sigma : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_v} => Nat]) AnyTree ({_} => Space)))
   := {table, A, B} => Tele table (SigmaCode A B)
-Isect : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_v} => Nat]) AnyTree ({_} => TypeFace)))
+Isect : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [Nat]) ShallowType ({_} => Pi (Sampled [{_v} => Nat]) AnyTree ({_} => Space)))
   := {table, A, P} => Tele table (IsectCode A P)
 Table : ShallowType := Pred ({r} => not (is_leaf (field_cell r "fresh")))
 Enum : Table := ({
@@ -500,8 +519,6 @@ Enum : Table := ({
 Sampled : Pi (Sampled [[1]]) (List AnyTree) ({_} => Table)
   := {samples} => ({ fresh := {st, _ty, _tail} => list_map AnyTree AnyTree ({a} => pair a st) samples })
 
-neutral_free := fix ({self, v} =>
-  if (is_neutral v) { false } else { triage true ({c} => self c) ({l, r} => and (self l) (self r)) v })
 teq_one : Pi (Sampled [{_a, _b} => false]) AnyTree ({_} => Pi (Sampled [make_hyp Bool t]) AnyTree ({_} => Pi (Sampled [true]) AnyTree ({_} => Bool)))
   := {open2, h, c} => {
   let T := neutral_type h
@@ -924,9 +941,9 @@ check_module := Record
 test tree_eq check_module Record = true
 
 GuardActionCode : List AnyTree := < Bind : t, Install : t, Both : t >
-GuardAction : ShallowType := Sum AnyTree GuardActionCode
+GuardAction : Refine Space Coherent := Sum AnyTree GuardActionCode
 CheckerResultCode : List AnyTree := < Ok : t, Err >
-CheckerResult : ShallowType := Sum AnyTree CheckerResultCode
+CheckerResult : Refine Space Coherent := Sum AnyTree CheckerResultCode
 Request : ShallowType
   := Record [pair "value" AnyTree, pair "ty" AnyTree, pair "guard" AnyTree, pair "private" Bool, pair "param" Bool]
 base : AnyTree -> Request

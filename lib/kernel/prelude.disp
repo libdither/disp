@@ -4,5 +4,5 @@
 open use raw "../prelude.disp" {}
 open use raw "kernel.disp" {}
 open use raw "types.disp" {}
-open use "kernel.disp" { AnyTree := AnyTree, RawRecord, Fn, elab_settings, List, Nat, Bool, Pi, Guard, ShallowType, Sampled, Table, Row, Sigma, dot, neutral_type, elim_of, b_abs, Point, Sus, TypeFace, ElimHead, SusRows, Invalid, Refine, Coherent }
+open use "kernel.disp" { AnyTree := AnyTree, RawRecord, Fn, elab_settings, List, Nat, Bool, Pi, Guard, ShallowType, Space, Sampled, Table, Row, Sigma, dot, neutral_type, elim_of, b_abs, Point, Sus, TypeFace, ElimHead, SusRows, Invalid, Refine, Coherent }
 open use "types.disp" {}
