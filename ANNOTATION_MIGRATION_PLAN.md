@@ -21,8 +21,8 @@ Annotation tiers, strongest first:
   Coherent refinement adds probe-strength laws on top.
 - None.
 
-Census (scripts/annotation_census.py, 2026-08-16, 230 defs): 66 none, 50
-membership, 51 sampled, 8 guard-tier tree-weak, 55 guard-tier shape-precise;
+Census (scripts/annotation_census.py, 2026-08-19, 234 defs): 50 none, 50
+membership, 63 sampled, 8 guard-tier tree-weak, 63 guard-tier shape-precise;
 exact/dependent content at inj, list_const, nat_rec, tree_rec, list_rec.
 
 Three encodings underlie the special structures: wait forms (sig at `.fst`,
@@ -100,6 +100,17 @@ Trust facts that shape everything:
   abstract type land in Space from both universes' binders; consumption
   stays boundary 2. The universe cycle Space ShallowType = ShallowType
   Space = true is pinned and inert while no universe carries gate/elim.
+- Space maximization (f474c437): Space carries the predicate obs row, so
+  Space hypotheses apply as membership tests and both universes
+  self-member (Space : Space, ShallowType : Space; hierarchies deferred
+  until a universe gains an eliminator). Property formers signed (six in
+  Space, MembersP in ShallowType), prop_formers as a Guard-checked
+  function list, ElimPayload/elim_ind in Space with the conduct pin,
+  Space subjects for elim_of/case_of/children, Record entries shaped,
+  annotations added across Eq, Fn, Tuple, Vec, NamedRec, TypeRec, AllOf,
+  UniqueOf, Perfect, height, given, default_guard; Point and False at the
+  audited tier. Probed refusal: Coherent cannot run GoodGate at a
+  mint-parameterized gate, so List/Eff keep plain Space codomains.
 
 ## Probe-confirmed boundaries (canonical list; each caps a tier somewhere)
 
@@ -133,6 +144,13 @@ Trust facts that shape everything:
    still diverges consuming branching row programs at a mint (TreeOf, the
    one Pi-Guard-literal annotation left on the old surface; the new ask and
    transport pin families are Pi-Guard-literal for the same reason).
+10. Blessing compares by tree identity end to end: a blessed eliminator
+    face refuses spelled-arrow step domains (Tele-wrapped arrows are not
+    gate codes; only the raw face accepts the doc spelling), and a
+    same-name public rebind collides at the barrel open (privacy via
+    top-level `let`). The blessing payload stays a bare pair: the record
+    spelling measured +330ms on the cold barrel, dominated by the walker's
+    elim_ind/elim_motive reads during stuck-elim checks.
 
 ## Stage P: the property system (the current arc)
 
