@@ -14,8 +14,11 @@ Annotation tiers, strongest first:
   the body parametrically. `->` rides DefaultWalker (Guard); the Meta and
   TwoFace differentials re-verify the arrow surface under other walkers.
 - Sampled tier (`Pi (Sampled [..])`): spot-checked at the listed samples.
-- Membership (`: ShallowType`, `: Table`, `: Refine ShallowType Coherent`):
-  classifies the value; the Coherent refinement adds probe-strength laws.
+- Membership (`: ShallowType`, `: Space`, `: Table`, `: Refine Space
+  Coherent`): classifies the value. Space is the structured sub-universe
+  (tag form plus declared structure: rows, gate+elim, or members); it
+  refines TypeFace, so it is the strongest shape-membership tier. The
+  Coherent refinement adds probe-strength laws on top.
 - None.
 
 Census (scripts/annotation_census.py, 2026-08-16, 230 defs): 66 none, 50
@@ -42,8 +45,12 @@ Trust facts that shape everything:
   defer what is natural-but-undetermined (stuck Bools, chains), refuse
   inspection; quarantine deliberate non-naturality in Ambient. Every place a
   mint reaches RAW evaluation is a potential hole; the known classes are
-  codomain/motive instantiation (S9), recognizers under the judge, and the
-  probe filter (neutral_free-guarded).
+  codomain/motive instantiation (S9), recognizers under the judge, the
+  probe filter (neutral_free-guarded), and structure-probing check faces:
+  a field read decided AT a mint (name, spine node, or slot head) is not
+  instantiation-stable. Space's check face refuses those via its steady
+  skeleton guard; Record's field reads are the pre-existing unguarded
+  sibling of the same class.
 - Laws attached to types must be INERT boolean batteries until they are
   proof-carrying. Now that judge-level transport is live, a ledger equation
   ACTS (it converts types); a false probe-passing law stated as an equation
@@ -82,6 +89,17 @@ Trust facts that shape everything:
   function-space motive.
 - Tooling (ba6bedc0 + census): red verification batches name their failing
   entries; the census script.
+- Space (28a47b49): the structured sub-universe as a kernel type (tag form
+  plus rows, gate+elim, or members; steady guard on the check face refuses
+  mint-decided field reads, two forge certificates pinned false). The ask
+  face admits Space hypotheses beside ShallowType; ask's codomain is the
+  dependent Cell (P T). Membership shifts: the Refine ShallowType Coherent
+  nine (minus AnyTree) to Refine Space Coherent, code formers and
+  Tele/Pi/Sigma/Isect returns to Space, eighteen library surfaces from
+  ShallowType to Space. Formation certifies: PiCode/SigmaCode/Pi at an
+  abstract type land in Space from both universes' binders; consumption
+  stays boundary 2. The universe cycle Space ShallowType = ShallowType
+  Space = true is pinned and inert while no universe carries gate/elim.
 
 ## Probe-confirmed boundaries (canonical list; each caps a tier somewhere)
 
@@ -181,7 +199,7 @@ Sub-stages:
   serve annotations above Nat while honest signatures need List/Eff from
   below it -- split registry (below) from the fold's Nat-serving half, or
   keep the monolith for bootstrap annotations.
-- P4: swap the Refine ShallowType Coherent consumers to the registry fold
+- P4: swap the Refine Space Coherent consumers to the registry fold
   via given-fill (zero kernel text edits), gated on P2's agreement pins
   holding across the Meta and TwoFace differentials plus cold timing;
   retire the monolith after.
