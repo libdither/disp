@@ -3,7 +3,7 @@
 Languages and systems surveyed against **disp**'s goals, August 2026.
 Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source).
+(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -38,6 +38,7 @@ search on itself.
 | [**fiat-crypto + CryptOpt + Jasmin**](fiat-crypto-cryptopt-jasmin.md) | ◐ | ✅ | ✅ | ◐ | **✅** | **✅** | the *whole endgame*, at 1/1000th scope |
 | [**Velvet / Loom / WybeCoder**](velvet-loom-wybecoder.md) | ◐ | ✅ | ✅ | ◐ | ✗ | **✅** | the *agentic proof loop*, with numbers |
 | [**Agda / Cubical**](agda-cubical.md) | ◐ | **✅** | ◐ | **✅** | ✗ | ✗ | cubical equality; reflection-by-quotation contrast |
+| [**Narya**](narya.md) | ✗ | **✅** | ✗ | **◐** | ✗ | ✗ | the *interval-free* equality answer, shaped like disp's per-type metadata |
 | [**Idris 2 / QTT**](idris2-qtt.md) | ◐ | ✅ | ✗ | ✗ | ◐ | ✗ | the *grading* formalism disp's cost ledger uses |
 | [**CakeML + Pancake**](cakeml-pancake.md) | ✗ | ◐ | ✅ | ◐ | **✅** | ✗ | verified *all the way to the binary* |
 | [**ATS3 / Xanadu**](ats-xanadu.md) | ✗ | ✅ | ✗ | ✗ | **✅** | ✗ | the 25-year prior attempt at A2+A5 |
@@ -80,7 +81,8 @@ itself, and no one else's can.**
 - **A2 (spec power):** disp trails badly. Lean, Agda, F*, Nova, Blight all have more.
 - **A3 (kernel):** MM0 ahead; Nova and Blight match the architecture.
 - **A4 (equality):** **disp is last.** Nova (extensional + certificates), Agda
-  (cubical), and egg (e-graphs with replayable certificates) all have answers.
+  (cubical), Narya (observational, partially computing), and egg (e-graphs with
+  replayable certificates) all have answers.
   This is disp's own Q1 and the survey confirms it as the weakest point.
 - **A5 (performance):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ CakeML ahead; disp is an
   interpreted tree-walker with a measured 4,000–67,000× ic-net penalty.
