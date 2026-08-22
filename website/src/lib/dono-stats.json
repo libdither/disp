@@ -1,8 +1,8 @@
 {
-  "updatedAt": "2026-08-15T05:59:48.259Z",
+  "updatedAt": "2026-08-22T06:00:30.394Z",
   "xmr": {
     "ok": true,
-    "scannedToHeight": 3740474,
+    "scannedToHeight": 3745515,
     "txs": [
       {
         "hash": "da6e8b71d41345b8c476a7c98e024e6ea685adef76294d8b2010634626c9a136",
@@ -11,25 +11,25 @@
         "height": 3715387
       }
     ],
-    "note": "scanned to 3740474 via xmr-node.cakewallet.com:18081"
+    "note": "scanned to 3745515 via xmr-node.cakewallet.com:18081"
   },
   "github": {
     "ok": true,
     "sponsorCount": 0,
     "monthlyUsd": 0,
     "lifetimeUsdEstimate": 0,
-    "lastAccrualAt": "2026-08-15T05:59:48.259Z",
+    "lastAccrualAt": "2026-08-22T06:00:30.394Z",
     "note": "recurring pledges; lifetime is an accrued estimate"
   },
-  "xmrUsd": 404.52,
+  "xmrUsd": 437.92,
   "repo": {
-    "commits": 1208,
+    "commits": 1234,
     "firstCommitAt": "2021-11-25T11:46:18-05:00"
   },
   "totals": {
     "last30Usd": 0,
-    "lifetimeUsd": 4.99,
+    "lifetimeUsd": 5.41,
     "perCommitUsd": 0,
-    "avgMonthlyUsd": 0.09
+    "avgMonthlyUsd": 0.1
   }
 }
