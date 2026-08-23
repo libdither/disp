@@ -26,7 +26,7 @@ open use raw "../prelude.disp" {}
 
 // function types: evaluate the term under all possible inputs? maybe:
 //
-//   Arrow := {A, B} -> {f} -> {
+//   Arrow := {A, B} => {f} => {
 //       for input in enumerate_trees() {
 //           if (A input) and (not (B (f input))) { return false; }
 //       }

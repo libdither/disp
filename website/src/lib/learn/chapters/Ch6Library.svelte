@@ -141,7 +141,7 @@
   <p>
     So the checker checks the checkers, with the same two kernel operations it uses on
     everything else — the "self-verified" in disp's first sentence. As for Girard-style
-    paradoxes: a Russell definition like <code>R := &#123;T&#125; -> not (T T)</code> is
+    paradoxes: a Russell definition like <code>R := &#123;T&#125; => not (T T)</code> is
     syntactically legal and simply diverges when run; the reduction budget reports failure, and
     failure proves nothing. Soundness by divergence-as-failure, not by hierarchy.
   </p>
