@@ -9,7 +9,12 @@
     "e6cf097d491f78f5a8443436c43b54985a0c5a0702e683f2515a57ff29942306"; // view-only, published for transparency
   // the committed JSON currently has an empty tx array, which TS infers as
   // never[] — give it the schema the stats script writes
-  const XMR_TXS = stats.xmr.txs as { hash: string; xmr: number; ts: string; height: number }[];
+  const XMR_TXS = stats.xmr.txs as {
+    hash: string;
+    xmr: number;
+    ts: string;
+    height: number;
+  }[];
   // the explorer's per-transaction decode page takes the address + view key IN
   // THE PATH and shows which outputs are ours, with amounts (verified live on
   // xmrchain; an address-wide scan page doesn't exist publicly — the API caps
@@ -27,7 +32,10 @@
   // the runway, measured — by scripts/build-dono-stats.mts at every deploy
   // (GitHub Sponsors recurring + XMR received in the last 30 days, in USD)
   const GH_MONTHLY = Math.round(stats.github.monthlyUsd);
-  const XMR_MONTHLY = Math.max(0, Math.round(stats.totals.last30Usd - stats.github.monthlyUsd));
+  const XMR_MONTHLY = Math.max(
+    0,
+    Math.round(stats.totals.last30Usd - stats.github.monthlyUsd),
+  );
   const CURRENT_MONTHLY = GH_MONTHLY + XMR_MONTHLY;
   const GOALS = [
     { label: "claude code", amount: 200 },
@@ -55,27 +63,21 @@
 <div class="container page">
   <h1>Funding</h1>
   <p class="lede">
-    Hello!!! Disp is a personal project, and I'm slowly running out of money on
-    rent and my 200$/month claude code subscription... can hav monez plz? 🥺
+    Hello! Disp is a personal project. If you want to support this work, feel
+    free to donate below!
   </p>
 
   <div class="grid">
     <div class="card">
       <h3>Support for free!</h3>
-      <p>
-        Star, watch, use, open issues, contribute, talk about disp in my dms:
-        these are are all Very Cool™ things to do.
-      </p>
+      <p>Star, watch, use, open issues, contribute, or dm me your thoughts.</p>
       <a class="btn" href={REPO} target="_blank" rel="noopener"
         >Star on GitHub</a
       >
     </div>
     <div class="card">
       <h3>GitHub Sponsors</h3>
-      <p>
-        Monthly or one-time, card-payment easy. Recurring pledges water the
-        runway garden below directly.
-      </p>
+      <p>Monthly or one-time, card-payment easy.</p>
       <a class="btn primary" href={SPONSOR} target="_blank" rel="noopener"
         >Sponsor on GitHub</a
       >
@@ -83,208 +85,226 @@
 
     <div class="card">
       <h3>Monero</h3>
-      <p>For Very Cool People who Like Privacy: fund this work with Monero!</p>
+      <p>If you want to support anonymously: donate with Monero.</p>
       <a class="btn" href="{base}/funding/monero/">Donate XMR</a>
     </div>
   </div>
 
-  <!-- ================= the runway, as a garden ================= -->
+  <!-- ================= the runway ================= -->
   <section class="runway">
-    <h2>Donation goals</h2>
+    <h2>Distance to self-sufficiency</h2>
     <p class="runway-sub">
       Monthly support so far: <strong>{fmt(CURRENT_MONTHLY)}</strong>
-      (<a href={SPONSOR} target="_blank" rel="noopener">{fmt(GH_MONTHLY)} GitHub</a>
-      + <a href={XMR_EXPLORER} target="_blank" rel="noopener">{fmt(XMR_MONTHLY)} XMR</a>)
-      of {fmt(MAX)}.
+      (<a href={SPONSOR} target="_blank" rel="noopener"
+        >{fmt(GH_MONTHLY)} GitHub</a
+      >
+      +
+      <a href={XMR_EXPLORER} target="_blank" rel="noopener"
+        >{fmt(XMR_MONTHLY)} XMR</a
+      >) of {fmt(MAX)}.
     </p>
     <div class="runway-scroll">
-    <svg
-      viewBox="0 0 {BW} 150"
-      class="gardenbar"
-      role="img"
-      aria-label="funding progress: {fmt(
-        CURRENT_MONTHLY,
-      )} per month toward milestones at {GOALS.map(
-        (g) => `${g.label} ${fmt(g.amount)}`,
-      ).join(', ')}"
-    >
-      <defs>
-        <!-- the infill: a hedge of little leaves -->
-        <pattern
-          id="leafpat"
-          width="26"
-          height="26"
-          patternUnits="userSpaceOnUse"
-        >
-          <rect width="26" height="26" fill="#bfe0c4" />
-          <path
-            d="M6,13 C10,9 10,4 6,1 C2,4 2,9 6,13 Z"
-            fill="#58b368"
-            transform="rotate(18 6 7)"
-          />
-          <path
-            d="M19,25 C23,21 23,16 19,13 C15,16 15,21 19,25 Z"
-            fill="#2f9e6e"
-            transform="rotate(-14 19 19)"
-          />
-          <path d="M20,8 C23,5 23,2 20,0 C17,2 17,5 20,8 Z" fill="#8fce9d" />
-          <path d="M4,24 C7,21 7,18 4,16 C1,18 1,21 4,24 Z" fill="#3d9b74" />
-        </pattern>
-        <clipPath id="trackclip">
-          <rect x={BX} y={TY} width={TW} height={TH} rx={TH / 2} />
-        </clipPath>
-      </defs>
-
-      <!-- track -->
-      <rect x={BX} y={TY} width={TW} height={TH} rx={TH / 2} class="track" />
-      <!-- leafy fill -->
-      {#if pct > 0}
-        <g clip-path="url(#trackclip)">
-          <rect
-            x={BX}
-            y={TY}
-            width={pct * TW}
-            height={TH}
-            fill="url(#leafpat)"
-          />
-        </g>
-      {/if}
-
-      <!-- the seed/sprout at the current mark -->
-      <g style="transform: translate({xOf(CURRENT_MONTHLY)}px, {TY - 4}px)">
-        <path d="M0,0 C0,-6 0,-8 0,-11" class="sproutstem" />
-        <path
-          d="M0,-8 C-4,-9 -6,-12 -6.5,-15 C-3,-14.5 -0.5,-11.5 0,-8 Z"
-          class="sproutleaf a"
-        />
-        <path
-          d="M0,-9.5 C3.5,-10.5 5.5,-13 6,-16 C2.5,-15.5 0.5,-12.5 0,-9.5 Z"
-          class="sproutleaf b"
-        />
-      </g>
-
-      <!-- milestones: little signposts along the path -->
-      {#each GOALS as g, i}
-        {@const x = xOf(g.amount)}
-        {@const above = i % 2 === 0}
-        {@const reached = CURRENT_MONTHLY >= g.amount}
-        <g class="milestone" class:reached>
-          <line
-            x1={x}
-            y1={above ? TY - 14 : TY + TH + 2}
-            x2={x}
-            y2={above ? TY : TY + TH + 14}
-            class="post"
-          />
-          {#if reached}
-            <!-- a bloom for every goal reached -->
-            <g
-              style="transform: translate({x}px, {above
-                ? TY - 18
-                : TY + TH + 18}px)"
-            >
-              {#each [0, 72, 144, 216, 288] as a}
-                <circle
-                  r="2.4"
-                  cx={5 * Math.cos((a * Math.PI) / 180)}
-                  cy={5 * Math.sin((a * Math.PI) / 180)}
-                  class="petal"
-                />
-              {/each}
-              <circle r="2" class="pollen" />
-            </g>
-          {:else}
-            <circle
-              cx={x}
-              cy={above ? TY - 17 : TY + TH + 17}
-              r="3"
-              class="bud"
+      <svg
+        viewBox="0 0 {BW} 150"
+        class="gardenbar"
+        role="img"
+        aria-label="funding progress: {fmt(
+          CURRENT_MONTHLY,
+        )} per month toward milestones at {GOALS.map(
+          (g) => `${g.label} ${fmt(g.amount)}`,
+        ).join(', ')}"
+      >
+        <defs>
+          <!-- the infill: a hedge of little leaves -->
+          <pattern
+            id="leafpat"
+            width="26"
+            height="26"
+            patternUnits="userSpaceOnUse"
+          >
+            <rect width="26" height="26" fill="#bfe0c4" />
+            <path
+              d="M6,13 C10,9 10,4 6,1 C2,4 2,9 6,13 Z"
+              fill="#58b368"
+              transform="rotate(18 6 7)"
             />
-          {/if}
-          <text
-            {x}
-            y={above ? TY - 28 : TY + TH + 34}
-            class="mlabel"
-            text-anchor={g.amount / MAX > 0.9
-              ? "end"
-              : g.amount / MAX < 0.1
-                ? "start"
-                : "middle"}>{g.label}</text
-          >
-          <text
-            {x}
-            y={above ? TY - 41 : TY + TH + 47}
-            class="mamount"
-            text-anchor={g.amount / MAX > 0.9
-              ? "end"
-              : g.amount / MAX < 0.1
-                ? "start"
-                : "middle"}>{fmt(g.amount)}/mo</text
-          >
-        </g>
-      {/each}
+            <path
+              d="M19,25 C23,21 23,16 19,13 C15,16 15,21 19,25 Z"
+              fill="#2f9e6e"
+              transform="rotate(-14 19 19)"
+            />
+            <path d="M20,8 C23,5 23,2 20,0 C17,2 17,5 20,8 Z" fill="#8fce9d" />
+            <path d="M4,24 C7,21 7,18 4,16 C1,18 1,21 4,24 Z" fill="#3d9b74" />
+          </pattern>
+          <clipPath id="trackclip">
+            <rect x={BX} y={TY} width={TW} height={TH} rx={TH / 2} />
+          </clipPath>
+        </defs>
 
-      <!-- ground dressing -->
-      <g class="grass">
-        <path
-          d="M {BX + 40} {TY + TH + 8} q 2 -9 6 -12 M {BX + 46} {TY +
-            TH +
-            8} q 3 -6 7 -8"
-        />
-        <path
-          d="M {BX + TW * 0.38} {TY + TH + 10} q 2 -9 6 -12 M {BX +
-            TW * 0.38 +
-            6} {TY + TH + 10} q 3 -6 7 -8"
-        />
-        <path d="M {BX + TW * 0.68} {TY + TH + 8} q 2 -9 6 -12" />
-      </g>
-      <circle cx={BX + TW * 0.3} cy={TY + TH + 6} r="2" class="daisy" />
-      <circle cx={BX + TW * 0.86} cy={TY + TH + 8} r="2" class="daisy alt" />
-    </svg>
+        <!-- track -->
+        <rect x={BX} y={TY} width={TW} height={TH} rx={TH / 2} class="track" />
+        <!-- leafy fill -->
+        {#if pct > 0}
+          <g clip-path="url(#trackclip)">
+            <rect
+              x={BX}
+              y={TY}
+              width={pct * TW}
+              height={TH}
+              fill="url(#leafpat)"
+            />
+          </g>
+        {/if}
+
+        <!-- the seed/sprout at the current mark -->
+        <g style="transform: translate({xOf(CURRENT_MONTHLY)}px, {TY - 4}px)">
+          <path d="M0,0 C0,-6 0,-8 0,-11" class="sproutstem" />
+          <path
+            d="M0,-8 C-4,-9 -6,-12 -6.5,-15 C-3,-14.5 -0.5,-11.5 0,-8 Z"
+            class="sproutleaf a"
+          />
+          <path
+            d="M0,-9.5 C3.5,-10.5 5.5,-13 6,-16 C2.5,-15.5 0.5,-12.5 0,-9.5 Z"
+            class="sproutleaf b"
+          />
+        </g>
+
+        <!-- milestones: little signposts along the path -->
+        {#each GOALS as g, i}
+          {@const x = xOf(g.amount)}
+          {@const above = i % 2 === 0}
+          {@const reached = CURRENT_MONTHLY >= g.amount}
+          <g class="milestone" class:reached>
+            <line
+              x1={x}
+              y1={above ? TY - 14 : TY + TH + 2}
+              x2={x}
+              y2={above ? TY : TY + TH + 14}
+              class="post"
+            />
+            {#if reached}
+              <!-- a bloom for every goal reached -->
+              <g
+                style="transform: translate({x}px, {above
+                  ? TY - 18
+                  : TY + TH + 18}px)"
+              >
+                {#each [0, 72, 144, 216, 288] as a}
+                  <circle
+                    r="2.4"
+                    cx={5 * Math.cos((a * Math.PI) / 180)}
+                    cy={5 * Math.sin((a * Math.PI) / 180)}
+                    class="petal"
+                  />
+                {/each}
+                <circle r="2" class="pollen" />
+              </g>
+            {:else}
+              <circle
+                cx={x}
+                cy={above ? TY - 17 : TY + TH + 17}
+                r="3"
+                class="bud"
+              />
+            {/if}
+            <text
+              {x}
+              y={above ? TY - 28 : TY + TH + 34}
+              class="mlabel"
+              text-anchor={g.amount / MAX > 0.9
+                ? "end"
+                : g.amount / MAX < 0.1
+                  ? "start"
+                  : "middle"}>{g.label}</text
+            >
+            <text
+              {x}
+              y={above ? TY - 41 : TY + TH + 47}
+              class="mamount"
+              text-anchor={g.amount / MAX > 0.9
+                ? "end"
+                : g.amount / MAX < 0.1
+                  ? "start"
+                  : "middle"}>{fmt(g.amount)}/mo</text
+            >
+          </g>
+        {/each}
+
+        <!-- ground dressing -->
+        <g class="grass">
+          <path
+            d="M {BX + 40} {TY + TH + 8} q 2 -9 6 -12 M {BX + 46} {TY +
+              TH +
+              8} q 3 -6 7 -8"
+          />
+          <path
+            d="M {BX + TW * 0.38} {TY + TH + 10} q 2 -9 6 -12 M {BX +
+              TW * 0.38 +
+              6} {TY + TH + 10} q 3 -6 7 -8"
+          />
+          <path d="M {BX + TW * 0.68} {TY + TH + 8} q 2 -9 6 -12" />
+        </g>
+        <circle cx={BX + TW * 0.3} cy={TY + TH + 6} r="2" class="daisy" />
+        <circle cx={BX + TW * 0.86} cy={TY + TH + 8} r="2" class="daisy alt" />
+      </svg>
     </div>
-    <p class="runway-note">
-      The last post is the U.S. median individual income, at which point disp
-      becomes a real job!
-    </p>
   </section>
 
   <!-- ================= the books ================= -->
   <section class="books">
-    <h2>The books</h2>
+    <h2>Financial figures</h2>
     <div class="stat-grid">
       <div class="stat">
-        <span class="stat-num">${stats.totals.last30Usd.toLocaleString("en-US")}</span>
+        <span class="stat-num"
+          >${stats.totals.last30Usd.toLocaleString("en-US")}</span
+        >
         <span class="stat-label">last 30 days</span>
       </div>
       <div class="stat">
-        <span class="stat-num">${stats.totals.lifetimeUsd.toLocaleString("en-US")}</span>
+        <span class="stat-num"
+          >${stats.totals.lifetimeUsd.toLocaleString("en-US")}</span
+        >
         <span class="stat-label">lifetime</span>
       </div>
       <div class="stat">
-        <span class="stat-num">${stats.totals.avgMonthlyUsd.toLocaleString("en-US")}</span>
-        <span class="stat-label">per month, amortized over the project's life</span>
+        <span class="stat-num"
+          >${stats.totals.avgMonthlyUsd.toLocaleString("en-US")}</span
+        >
+        <span class="stat-label"
+          >per month, amortized over the project's life</span
+        >
       </div>
       <div class="stat">
-        <span class="stat-num">${stats.totals.perCommitUsd.toLocaleString("en-US")}</span>
-        <span class="stat-label">per commit ({stats.repo.commits.toLocaleString("en-US")} commits)</span>
+        <span class="stat-num"
+          >${stats.totals.perCommitUsd.toLocaleString("en-US")}</span
+        >
+        <span class="stat-label"
+          >per commit ({stats.repo.commits.toLocaleString("en-US")} commits)</span
+        >
       </div>
     </div>
     <p class="books-note">
       Computed at every deploy by
-      <a href="{REPO}/blob/main/website/scripts/build-dono-stats.mts" target="_blank" rel="noopener"
-        >a build script</a
-      >: GitHub Sponsors ({stats.github.sponsorCount} sponsor{stats.github.sponsorCount === 1
+      <a
+        href="{REPO}/blob/main/website/scripts/build-dono-stats.mts"
+        target="_blank"
+        rel="noopener">a build script</a
+      >: GitHub Sponsors ({stats.github.sponsorCount} sponsor{stats.github
+        .sponsorCount === 1
         ? ""
-        : "s"}, ${stats.github.monthlyUsd}/mo recurring; lifetime accrued as an estimate) plus a
-      view-only scan of the
+        : "s"}, ${stats.github.monthlyUsd}/mo recurring; lifetime accrued as an
+      estimate) plus a view-only scan of the
       <a href="{base}/funding/monero/">Monero wallet</a>
-      ({stats.xmr.txs.length} donation{stats.xmr.txs.length === 1 ? "" : "s"} on-chain, converted at
-      ${stats.xmrUsd.toLocaleString("en-US")}/XMR). The wallet's view key is
-      <a href="{base}/funding/monero/">published</a>, so you can audit that number yourself on the
-      <a href={XMR_EXPLORER} target="_blank" rel="noopener">block explorer</a> — the link carries
-      the address and view key, and every donation decodes on its own explorer page in
-      <a href="{base}/funding/monero/#ledger">the full ledger</a> — or by importing them as a
-      view-only wallet. Last refreshed
+      ({stats.xmr.txs.length} donation{stats.xmr.txs.length === 1 ? "" : "s"} on-chain,
+      converted at ${stats.xmrUsd.toLocaleString("en-US")}/XMR). The wallet's
+      view key is
+      <a href="{base}/funding/monero/">published</a>, so you can audit that
+      number yourself on the
+      <a href={XMR_EXPLORER} target="_blank" rel="noopener">block explorer</a> —
+      the link carries the address and view key, and every donation decodes on
+      its own explorer page in
+      <a href="{base}/funding/monero/#ledger">the full ledger</a> — or by
+      importing them as a view-only wallet. Last refreshed
       {new Date(stats.updatedAt).toISOString().slice(0, 10)}.
     </p>
     {#if XMR_TXS.length > 0}
@@ -292,8 +312,14 @@
         On-chain donations:
         {#each XMR_TXS.slice(-8).reverse() as t, i}
           {#if i > 0}·{/if}
-          <a href={XMR_MYOUTPUTS(t.hash)} target="_blank" rel="noopener" title={t.hash}
-            >{t.xmr.toLocaleString("en-US", { maximumFractionDigits: 4 })} XMR ({new Date(t.ts)
+          <a
+            href={XMR_MYOUTPUTS(t.hash)}
+            target="_blank"
+            rel="noopener"
+            title={t.hash}
+            >{t.xmr.toLocaleString("en-US", { maximumFractionDigits: 4 })} XMR ({new Date(
+              t.ts,
+            )
               .toISOString()
               .slice(0, 10)})</a
           >
