@@ -549,7 +549,7 @@ export function parseTree(
       }
       if (tokens[p] !== '}') throw new Error("binder: expected '}'")
       p++
-      if (tokens[p] !== '->') throw new Error("binder: expected '->'")
+      if (tokens[p] !== '->') throw new Error("binder: expected '=>'")
       p++
       const body = expr(false) // the binder swallows the rest of its group
       return cirToTree(
