@@ -777,7 +777,7 @@ Meta : Table := ({
       }
     }))
   fresh := {st, ty, tail} => {
-    let x := Neu ({ (ShallowType) := ty, (Tree) := tail })
+    let x := Neu ({ (ShallowType) := ty, (Tree) := pair tail st })
     [pair x (cons Tree x st)]
   }
   lift := {f} => Conc f
@@ -863,8 +863,9 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) Tree ({_} => Pi (Sampled [{_st2,
           else { triage true ({c} => so c) ({l, r} => and (so l) (so r)) w })) (pair_snd hist)
       } else { false }
     }))
+  /// mint provenance includes prior mints (st), else same-typed binders with the same remaining telescope alias into one hypothesis
   let fresh := {st, ty, tail} => {
-    let x := make_hyp ty tail
+    let x := make_hyp ty (pair tail st)
     [pair x (cons Tree x st)]
   }
   let complete := {vch, st2, T2, v2} => {
