@@ -820,7 +820,11 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) Tree ({_} => Pi (Sampled [{_st2,
     }
     else if (tree_eq f is_neutral) { on_is_neutral ({_} => is_neutral x) x }
     else if (is_neutral f) { let r := f x; if (is_invalid (neutral_type r)) { invalid f } else { r } }
-    else if (or (is_elim_head f) (has_sig elim_stuck_sig f)) { f x }
+    else if (is_elim_head f) {
+      if (is_neutral x) { if (tree_eq (elim_arity f) zero) { x (Elim (pair f [])) } else { wait elim_stuck (pair f (pair x [])) } }
+      else { self (self (elim_raw f) f) x }
+    }
+    else if (has_sig elim_stuck_sig f) { f x }
     else if (is_open_chain f) { f x }
     else if (tree_eq f ask) { wait ask x }
     else if (has_sig ask_sig f) {
