@@ -18,8 +18,8 @@
 // they raw-triage or Scott-eliminate their argument, which the parametric walker
 // rejects on an abstract hypothesis. Their typeable faces are eliminator-routed
 // twins licensed against these raw payloads (the nat_rec_fast pattern,
-// lib/std/nat.disp) — dispatch IS elimination; the raw form is the fused
-// compiled shape.
+// archive/live-kernel/std/nat.opt.disp) — dispatch IS elimination; the raw
+// form is the fused compiled shape.
 
 open given {
   Type : Type
