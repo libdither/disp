@@ -38,13 +38,18 @@ printf 'open use "%s/module.disp"\n' "$DIR" > "$DIR/root.disp"
 
 UNIT="disp-probe-$$-$RANDOM"
 START=$(date +%s)
-OUT="$(cd "$REPO" && timeout "$TIMEOUT" systemd-run --user --scope -q --unit="$UNIT" \
+OUT="$(cd "$REPO" && python scripts/rss_run.py timeout "$TIMEOUT" systemd-run --user --scope -q --unit="$UNIT" \
   -p MemoryMax="$MEM" -p MemorySwapMax=1G \
   npx tsx src/run.ts "$DIR/root.disp" 2>&1)"
 CODE=$?
 SECS=$(( $(date +%s) - START ))
+# `[memo] warm:` = the run adopted .disp-test-cache's reduction snapshot (src/run.ts);
+# without it (or after a kernel edit, which changes every tree embedding the edited
+# definition) the run is cold: ~5x slower and ~2.5x the memory.
+CACHE=$(grep -q '^\[memo\] warm' <<<"$OUT" && echo warm || echo cold)
+RSS=$(grep '^\[rss\]' <<<"$OUT" | sed 's/^\[rss\] //; s/ exit=.*//')
 
-grep -v '^\[memo\]' <<<"$OUT" | tail -6
+grep -v '^\[memo\]\|^\[rss\]' <<<"$OUT" | tail -6
 if [ $CODE -eq 0 ]; then
   VERDICT="ACCEPTED"
 elif grep -q 'failing entry' <<<"$OUT"; then
@@ -58,5 +63,5 @@ elif journalctl --user -u "$UNIT.scope" --no-pager 2>/dev/null | grep -qi 'oom';
 else
   VERDICT="KILLED (no verdict, exit $CODE)"
 fi
-echo "== $VERDICT  (${SECS}s, exit $CODE, mem cap $MEM)"
+echo "== $VERDICT  (${SECS}s, exit $CODE, mem cap $MEM, cache $CACHE, $RSS)"
 [ $CODE -eq 0 ] || exit $CODE
