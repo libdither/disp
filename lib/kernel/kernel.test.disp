@@ -151,6 +151,15 @@ test Pi Enum Bool sniff_motive ({b} => 5) = true
 test Pi Meta Bool sniff_motive ({b} => 5) = false
 test Pi Guard Bool sniff_motive ({b} => 5) = false
 
+// Formation is a tier operation: a type's continuation runs on a mint through the
+// honest walker (Guard), so a family that INSPECTS its argument is refused rather
+// than instantiated at the hypothesis's encoding -- and replay derives a
+// hypothesis's type the same way. (Meta still forms raw on the read-back mark.)
+inspecting_cod := {n} => if (is_leaf n) { Bool } else { Nat }
+test Pi Guard Nat inspecting_cod ({n} => n) = false
+bad_fn_hyp := make_hyp (PiCode Nat inspecting_cod) t
+test is_invalid (neutral_type (bad_fn_hyp (make_hyp Nat t))) = true
+
 test reader_suite (Pi Enum) = reader_expected
 test reader_suite (Pi Meta) = reader_expected
 test reader_suite (Pi Guard) = reader_expected

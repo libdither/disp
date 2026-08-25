@@ -77,6 +77,7 @@ is_invalid : Pi (Sampled [invalid 5, 5]) Tree ({_} => Bool) := has_sig invalid_s
 
 open_chain := fix ({self, st, arg} => wait self (pair (pair_fst st) (pair (pair_fst (pair_snd st)) (list_snoc t (pair_snd (pair_snd st)) arg))))
 open_sig := sig_of open_chain
+fix_sig := sig_of omega
 is_open_chain : Pi (Sampled [wait open_chain (pair t (pair t [])), 5]) Tree ({_} => Bool) := has_sig open_sig
 const_fn : Tree -> Tree -> Tree := {v, _x} => v
 id_fn : Tree -> Tree := {x} => x
@@ -401,7 +402,7 @@ teq_decide_at := {nt, open2, a, x} =>
   else if (and (is_neutral x) (neutral_free a)) { teq_one nt open2 x a }
   else { open2 a x }
 open_elim_start_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [list_rec t t]) Tree ({_} => Pi (Sampled [make_hyp (List Tree) t]) Tree ({_} => Tree)))
-  := {nt, f, x} => {
+  := {nt, f, x} => if (not (has_sig fix_sig f)) { t } else {
   let T := nt x
   if (is_invalid T) { t } else {
     let e := T.elim
@@ -453,6 +454,7 @@ walk_with : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [honest_is_neut
     else if (has_sig elim_stuck_sig f) { f x }
     else if (is_open_chain f) { f x }
     else if (tree_eq f ask) { wait ask x }
+    else if (and (neutral_free f) (neutral_free x)) { f x }
     else if (has_sig ask_sig f) {
       let T2 := wait_payload f
       if (is_neutral T2) {
@@ -470,6 +472,7 @@ walk_with : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [honest_is_neut
 walk_open_at := {nt} => walk_with nt honest_is_neutral native_teq t
 respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair_fst]) Tree ({_} => Pi (Sampled [make_hyp (Sigma Guard Nat ({_} => Bool)) t]) Tree ({_} => Tree)))
   := {nt, frame, self} => {
+  let form := walk_open_at nt
   let T := nt self
   if (has_sig "Ask" frame) {
     if (and (or (tree_eq T ShallowType) (tree_eq T Space)) (member Tree (pair_snd frame) prop_formers)) {
@@ -485,7 +488,7 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
       match rows2 {
         Op row tail => (match row : (case_of Row ({_} => Tree)) {
           Fresh ty => (if (is_acc frame) { invalid frame } else {
-            match (tail frame) {
+            match (form tail frame) {
               Op peeked _k => (match peeked {
                 Observe ob cod => (match ob { App _ => (pair [pair ty frame] cod); _ => (invalid frame) })
                 _ => (invalid frame)
@@ -495,7 +498,7 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
           })
           Observe ob ty => (match ob : (case_of Obs ({_} => Tree)) {
             Prj a => (match frame {
-              Acc fa => (if (tree_eq a fa) { pair [] ty } else { go (tail (self (Acc a))) })
+              Acc fa => (if (tree_eq a fa) { pair [] ty } else { go (form tail (self (Acc a))) })
               _ => (invalid frame)
             })
             Self _ => (go (tail t))
@@ -511,10 +514,11 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
         let raw := T.elim
         if (or (is_leaf g) (is_leaf raw)) { invalid frame }
         else if (and (tree_eq (elim_ind E) T) (tree_eq (elim_raw E) raw)) {
-          let tys := g T (elim_motive E)
-          if (tree_eq (list_len Tree tys) (list_len Tree arms)) {
+          let tys := form (g T) (elim_motive E)
+          if (is_invalid tys) { invalid frame }
+          else if (tree_eq (list_len Tree tys) (list_len Tree arms)) {
             let land := T.land
-            pair (list_zip tys arms) (if (is_leaf land) { (elim_motive E) self } else { land (elim_motive E) self })
+            pair (list_zip tys arms) (if (is_leaf land) { form (elim_motive E) self } else { form (land (elim_motive E)) self })
           } else { invalid frame }
         } else { invalid frame }
       }
@@ -538,7 +542,7 @@ teq_decide := teq_decide_at neutral_type
 walk_open : Pi (Sampled [succ]) Tree ({_} => Pi (Sampled [zero, make_hyp Nat t]) Tree ({_} => Tree)) := walk_open_at neutral_type
 test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
 
-Ask : List Tree := < Mint : t, Call : t, Judge : t, Read : t, Lift : t >
+Ask : List Tree := < Mint : t, Call : t, Judge : t, Form : t, Lift : t >
 Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)]) Tree ({_} => Space))
   := {table, C} => {
   let tele := if (is_type C) { C.tele } else { C }
@@ -546,26 +550,24 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
   let lift := field_or table "lift" ({v} => v)
   let fresh := field table "fresh"
   let apply := field_or table "apply" ({_chk, _st, f, a} => f a)
-  let read := field_or table "read" ({v} => v)
+  let form := field_or table "form" ({g, v} => g v)
   let judge := field_or table "judge" ({_chk, _st, T, r} => T r)
   let check := fix ({self, rows, f, prior} =>
     match rows {
       Pure _ => (Pure true)
       Op row tail => (match row : (case_of Row ({_} => Tree)) {
         Fresh ty => (perform (Mint (pair ty tail)) ({x} =>
-          perform (Read x) ({xr} => self (tail xr) f x)))
+          perform (Form (pair tail x)) ({next} => self next f x)))
         Observe ob ty => (match ob : (case_of Obs ({_} => Tree)) {
           App _ => (perform (Call (pair f prior)) ({r} =>
             perform (Judge (pair ty r)) ({ok} =>
-              if ok { perform (Read r) ({rr} => self (tail rr) f prior) } else { Pure false })))
+              if ok { perform (Form (pair tail r)) ({next} => self next f prior) } else { Pure false })))
           Self _ => (perform (Judge (pair ty f)) ({ok} =>
-            if ok { perform (Read f) ({fr} => self (tail fr) f prior) } else { Pure false }))
-          Prj a => (perform (Read f) ({fr} => {
-            let o := a fr
+            if ok { perform (Form (pair tail f)) ({next} => self next f prior) } else { Pure false }))
+          Prj a => (perform (Form (pair a f)) ({o} =>
             perform (Lift o) ({lo} =>
               perform (Judge (pair ty lo)) ({ok} =>
-                if ok { self (tail o) f prior } else { Pure false }))
-          }))
+                if ok { perform (Form (pair tail lo)) ({next} => self next f prior) } else { Pure false }))))
         })
       })
       _ => (Pure false)
@@ -580,7 +582,7 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
         }
         Call g x => (resume (apply chk s g x) s)
         Judge ty v => (resume (judge chk s ty v) s)
-        Read v => (resume (read v) s)
+        Form g v => (resume (form g v) s)
         Lift v => (resume (lift v) s)
       })
     }) (check rows fV prior) st)
@@ -842,7 +844,7 @@ Meta : Table := ({
   }
   lift := {f} => Conc f
   apply := {chk, st, F, X} => mwalk st chk F X
-  read := readback
+  form := {g, V} => g (readback V)
   judge := {chk, st, T, r} => vcheck chk st T r
 })
 
@@ -926,7 +928,7 @@ GuardAt : Pi (Sampled [lying_is_neutral]) Tree ({_} => Pi (Sampled [native_teq])
           }
         } else { chk st rows v2 t }
       })) T v
-  ({ fresh := fresh, admit := neutral_free, apply := {_chk, st, f, x} => walk st f x, judge })
+  ({ fresh := fresh, admit := neutral_free, apply := {_chk, st, f, x} => walk st f x, form := walk_open, judge })
 }
 Guard : Table := GuardAt lying_is_neutral minting_teq
 Ambient : Table := GuardAt honest_is_neutral native_teq
