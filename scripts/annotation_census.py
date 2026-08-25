@@ -60,7 +60,7 @@ def classify(item: str):
 
 
 def main() -> None:
-    files = sys.argv[1:] or DEFAULT_FILES
+    files = [a for a in sys.argv[1:] if not a.startswith("-")] or DEFAULT_FILES
     grand = Counter()
     for f in files:
         text = Path(f).read_text()
