@@ -369,12 +369,14 @@ design instead of accreting parity rules.
 
 Asked witnesses type, pass, and return; consuming one inside a checked body
 (case, projection, application) was boundary 2 while formation was raw.
-Formation is walked since 2026-08-25, so the general exit is open: probe
-elimination and application of a Cell-typed witness directly. The
-dedicated case head (walker-recognized elimination of Cell-typed witnesses
-against the respond_face-computed type) stays the fallback only if the
-Sum-built answer type still refuses construction over the mint inside the
-candidate's walk.
+Probed 2026-08-25 now that formation is walked: APPLYING a plain function
+hypothesis inside a checked body works, but case_of on an asked Cell (P T)
+witness still refuses (even with constant arms over a NormP witness) --
+eliminating a Sum-typed mint whose payload type embeds the mint is the
+remaining wall, not formation. So WC is NOT unblocked by walked formation
+alone; the dedicated case head (walker-recognized elimination of Cell-typed
+witnesses against the respond_face-computed type) is back to the likely
+route. Decide after the P-stage lands the property registry.
 
 ## Stage A3b-general: name-keyed reads on record hypotheses
 
@@ -471,7 +473,8 @@ defs, recorded per-def.
 P0 first: it is cheap and selects the identity scheme and the law story for
 everything in P. MP and P1-P2 next, in either order (P1-P2 are additive
 library work; MP lifts three pin families to the differential surface). WC
-now, by direct probe (formation is walked); the case head only if it refuses. P3-P4 once P0-P2 hold; P5 measured,
+via the case head (direct probe 2026-08-25: case_of on an asked witness
+still refuses; walked formation did not unblock it). P3-P4 once P0-P2 hold; P5 measured,
 never scheduled. EQ's step-4 after P1 (it wants the registry and laws in
 place). A5 opportunistic per function. A3b-general when the Cases doc is
 written; A4's remainder behind it. A6 optional and measured. A8
