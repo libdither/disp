@@ -21,11 +21,13 @@ Annotation tiers, strongest first:
   Coherent refinement adds probe-strength laws on top.
 - None.
 
-Census (scripts/annotation_census.py, 2026-08-19 post-Tree, 233 defs): 49
-none, 49 membership, 64 sampled, 71 guard-tier shape-precise (the tree-weak
-bucket dissolved with AnyTree); exact/dependent content at inj, list_const,
-nat_rec, tree_rec, list_rec. The full classification of what remains and
-why is the "Remaining surface" section below.
+Census (scripts/annotation_census.py, 2026-08-25 post-formation, 241 defs):
+56 none, 49 membership, 65 sampled, 71 guard-tier shape-precise;
+exact/dependent content at inj, list_const, nat_rec, tree_rec, list_rec.
+The seven new unannotated are the walker refactor's atoms (fix_sig,
+teq_decide_at, walk_open_at, the four handler constants). The full
+classification of what remains and why is the "Remaining surface" section
+below.
 
 Three encodings underlie the special structures: wait forms (sig at `.fst`,
 payload at `.snd.snd`; markers, collectors, invalids, tree_eq partials), tag
@@ -47,8 +49,9 @@ Trust facts that shape everything:
   defer what is natural-but-undetermined (stuck Bools, chains), refuse
   inspection; quarantine deliberate non-naturality in Ambient. Every place a
   mint reaches RAW evaluation is a potential hole; the known classes are
-  codomain/motive instantiation (S9), recognizers under the judge, the
-  probe filter (neutral_free-guarded), and structure-probing check faces:
+  recognizers under the judge, the probe filter (neutral_free-guarded), and
+  structure-probing check faces (codomain/motive instantiation left this
+  list on 2026-08-25: formation is walked):
   a field read decided AT a mint (name, spine node, or slot head) is not
   instantiation-stable. Space's check face refuses those via its steady
   skeleton guard; Record's field reads are the pre-existing unguarded
@@ -127,6 +130,30 @@ Trust facts that shape everything:
   recognize spelling (SusRows refuses neutrals at the admit gate while
   Sus deliberately covers hypothesis marks).
 
+- Walked formation (4d8ad9f8, 7d45331b, d73450de, f904574b; the barrier
+  decision, taken): the Guard walker detects eliminator-on-hypothesis
+  itself; the walker is a top-level walk_with tied through neutral_type,
+  its handler pairs named (honest_is_neutral/native_teq = walk_open, the
+  checker's own walker; lying_is_neutral/minting_teq = what a candidate may
+  learn); Read becomes Form, the tier applying checker-side code to its
+  values -- raw by default, walk_open on Guard and Meta, the replay
+  included; a closed application inside the walk is plain evaluation,
+  which pays for it (cold suite 29.4 s vs 28.4 s); open_elim_start asks a
+  neutral's type only at fix-shaped heads (formation and replay recurse
+  through neutral_type -- a new intercept that asks it can loop). The
+  eliminator marker's is_neutral branch goes: raw programs pay nothing
+  (elim_id 3000: +65,769 steps vs +65,599 bare), the raw tier is pure tree
+  calculus again, and the stuckness pins assert it of the walker.
+  Boundary 8 narrows to equations inside families. Meta forms on the
+  read-back mark through walk_open, so MP's formation half is done.
+- Mint identity (bb6c7ffa): a hypothesis is keyed on (type, remaining
+  telescope, prior mints) -- the in-context provenance A9 listed as
+  needed; same-typed binders stop aliasing (the ih-is-m collapse that
+  certified a non-Nat arrow is pinned false).
+- Tooling: scripts/experiment.sh (a kernel edit tried cold, capped,
+  restored on any exit), probe.sh reports cache and RSS, the census
+  accepts -v.
+
 ## Probe-confirmed boundaries (canonical list; each caps a tier somewhere)
 
 1. Raw structural inspection of a mint refuses (the naturality floor).
@@ -152,13 +179,18 @@ Trust facts that shape everything:
    GoodGate AND Coherent while eliminating wrongly. teq_one additionally
    trusts members-completeness beyond what any battery checks. The
    adversary is not yet pinned in-repo; pin it with the beta work (P1).
-8. S9 residue: dependent codomains instantiate raw; the differential
-   detects at probe strength; Eq's land slot is the hand-patch; full close
-   needs the barrier (below).
+8. S9 residue, narrowed 2026-08-25: formation is walked, so a codomain or
+   motive computing on a mint forms as the type that was written, and a
+   family that INSPECTS its argument is refused (pinned on both tiers).
+   What remains: an open tree_eq inside a family answers natively
+   (walk_open runs native_teq at an empty ledger), so a family branching on
+   an equation of mints still collapses -- the S9 vacuity pin stays true.
 9. The Meta simulator lacks rules for the new heads (ask, conversion) and
    still diverges consuming branching row programs at a mint (TreeOf, the
    one Pi-Guard-literal annotation left on the old surface; the new ask and
    transport pin families are Pi-Guard-literal for the same reason).
+   Formation and provenance are shared since 2026-08-25 (Meta forms
+   through walk_open on the read-back mark and keys mints like Guard).
 10. Blessing compares by tree identity end to end: a blessed eliminator
     face refuses spelled-arrow step domains (Tele-wrapped arrows are not
     gate codes; only the raw face accepts the doc spelling), and a
@@ -167,19 +199,24 @@ Trust facts that shape everything:
     spelling measured +330ms on the cold barrel, dominated by the walker's
     elim_ind/elim_motive reads during stuck-elim checks.
 
-## Remaining surface (census 2026-08-19, post-Tree)
+## Remaining surface (census 2026-08-25, post-formation)
 
-The 49 unannotated, by reason:
+The 56 unannotated, by reason:
 
-- Sig constants (8): tree_eq_sig, invalid_sig, open_sig, hyp_sig,
+- Sig constants (9): tree_eq_sig, invalid_sig, open_sig, fix_sig, hyp_sig,
   elim_sig, elim_stuck_sig, ask_sig, Rec. Value atoms; a stem-shape
   membership type would cover them and say almost nothing.
+- Handler constants (4): honest_is_neutral, native_teq, lying_is_neutral,
+  minting_teq. The walker's named handler pairs; the same class.
 - Checker machinery behind the inspector wall (14): hyp_marker,
-  make_mark, make_hyp, open_chain, elim_stuck, elim_marker,
-  neutral_free, structured, tag_form, steady, teq_decide, eq_usable,
-  eq_congr, canon. Bodies read structure off arguments; Guard refuses by
-  design (the sealed-core refusal); Sampled would only re-run
-  constructions. Unblocked by A9 only.
+  make_mark, make_hyp, open_chain, neutral_free, structured, tag_form,
+  steady, teq_decide, teq_decide_at, walk_open_at, eq_usable, eq_congr,
+  canon. Bodies read structure off arguments; Guard refuses by design (the
+  sealed-core refusal); Sampled would only re-run constructions. Unblocked
+  by A9 only.
+- Re-tiered 2026-08-25 (2): elim_marker no longer inspects (projections on
+  a concrete payload plus application) and elim_stuck only applies a
+  hypothesis, which walk_open licenses; both are Sampled-writable now.
 - Protocol and sugar targets (5): check_module (pinned := Record),
   elab_settings, eff_bind, reject, `let`. Trees are consumed by name or
   by the elaborator; annotations add nothing the pins do not.
@@ -187,7 +224,9 @@ The 49 unannotated, by reason:
   (its honest type is every reflexive Eq at once; no single annotation).
 - Eq lemma family (4): eq_subst, eq_sym, eq_trans, eq_cong.
   Sampled-writable today; the honest dependent tier is the J rule, which
-  waits on walked type formation.
+  walked formation unblocked (2026-08-25). The current bodies use constant
+  motives and pass only at concrete endpoints; the honest ones compute
+  the motive on the bound endpoint.
 - Row-program builders (9): raw_record_rows, record_rows, all_rows,
   splits, bijection, unique_rows, mixed_rows, perfect_rows, len_xs_rows.
   Probed blocker: Eff membership walks continuations at junk leaves, so
@@ -328,12 +367,14 @@ design instead of accreting parity rules.
 
 ## Stage WC: witness consumption
 
-Asked witnesses type, pass, and return, but cannot be eliminated, projected,
-or applied inside checked bodies (boundary 2). Two exits: a dedicated case
-head (walker-recognized elimination of Cell-typed witnesses against the
-respond_face-computed type -- new walker surface, contained) or walked type
-formation (the barrier, below -- general, expensive). Decide after MP;
-the case head is the cheap probe.
+Asked witnesses type, pass, and return; consuming one inside a checked body
+(case, projection, application) was boundary 2 while formation was raw.
+Formation is walked since 2026-08-25, so the general exit is open: probe
+elimination and application of a Cell-typed witness directly. The
+dedicated case head (walker-recognized elimination of Cell-typed witnesses
+against the respond_face-computed type) stays the fallback only if the
+Sum-built answer type still refuses construction over the mint inside the
+candidate's walk.
 
 ## Stage A3b-general: name-keyed reads on record hypotheses
 
@@ -389,7 +430,8 @@ the walk's rules are natural GIVEN honest rows (a fixed meta-theorem,
 provable once, externally, by the standard gluing method -- unwritten), and
 each type's rows keep their promises (per-type, in-language: Coherent now,
 registry laws in P). Internal self-typing still needs one of: types-as-
-effects (A8 ramp), in-context hypothesis provenance, the legacy kernel's
+effects (A8 ramp), in-context hypothesis provenance (landed 2026-08-25,
+bb6c7ffa), the legacy kernel's
 licensed-fast-face moves, or the wf_fix/Total totality story. Honest
 ceiling until then: Sampled plus behavioral certification for ~30 core
 defs, recorded per-def.
@@ -400,22 +442,25 @@ defs, recorded per-def.
   itself a mint; `.gate`/`.tele` on abstract types beyond the ask
   vocabulary; polymorphic eliminator arms; Eq at abstract carriers (which
   is what type-quantified laws need).
-- Walked type formation / the marker-aware evaluator (the barrier
-  decision): the one change that would close S9 fully, unlock witness
-  consumption (WC), Eq formation inside checked bodies, and computed
-  motives at once. Candidate B (walk the instantiation) measured dead in
-  its cheap form; candidate A (evaluator treats marks as stuck) flips
-  pinned raw-tier semantics. The plug-square rule until then: a mint may
-  enter raw evaluation only where the result is discarded-if-junk or
-  provably plug-invariant.
+- Walked type formation (the barrier): DECIDED and landed 2026-08-25 as
+  candidate B in its honest form -- the tier forms through walk_open, the
+  walker with the honest handlers. The 2024 cheap form failed because it
+  used the CANDIDATE walker, which lies about is_neutral; type-forming code
+  is checker vocabulary and must see hypotheses. Candidate A (marks stuck
+  in the evaluator) is retired: the raw tier is pure tree calculus and the
+  checker no longer needs it. Left of this wall: equations inside families
+  (boundary 8) and the abstract-type item above. The plug-square rule
+  still governs the raw sites that remain (recognizers under the judge,
+  the probe filter, check faces).
 
 ## Never annotated (by principle, with reasons)
 
 - make_hyp / make_mark: a checked annotation would certify hypothesis
   forgery; the ledger refuses it and the refusal is pinned.
-- Marker construction internals (hyp_marker, elim_marker, elim_stuck,
-  open_chain, invalid_marker bodies): the substrate implementing what the
-  descriptive types describe; their spec is the walker's audit.
+- Marker construction internals (hyp_marker, open_chain, invalid_marker
+  bodies; elim_marker and elim_stuck re-tiered 2026-08-25, see the
+  census): the substrate implementing what the descriptive types describe;
+  their spec is the walker's audit.
 - Protocol vocabulary (let, given, default_guard, check_module,
   elab_settings): driver registration points with fixed-arity contracts.
 - The raw prelude: the primitive tier cannot use givens in values,
@@ -426,7 +471,7 @@ defs, recorded per-def.
 P0 first: it is cheap and selects the identity scheme and the law story for
 everything in P. MP and P1-P2 next, in either order (P1-P2 are additive
 library work; MP lifts three pin families to the differential surface). WC
-after MP via the case-head probe. P3-P4 once P0-P2 hold; P5 measured,
+now, by direct probe (formation is walked); the case head only if it refuses. P3-P4 once P0-P2 hold; P5 measured,
 never scheduled. EQ's step-4 after P1 (it wants the registry and laws in
 place). A5 opportunistic per function. A3b-general when the Cases doc is
 written; A4's remainder behind it. A6 optional and measured. A8
