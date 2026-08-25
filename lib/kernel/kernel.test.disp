@@ -662,6 +662,21 @@ test Fn Nat add_zero_motive ({n} => refl) = false
 test Fn Nat add_zero_motive ({n} => add_zero_rec n refl ({p, ih} => pair 5 5)) = false
 false_motive := {n} => Eq Nat (add n zero) (succ n)
 test Fn Nat false_motive ({n} => (elim_of Nat false_motive) n refl ({p, ih} => refl)) = false
+// Computed motives beyond add_zero: mul_zero's motive ELIMINATES the bound
+// variable (mul recurses on n), and add_succ's motive eliminates n under a
+// second binder m -- obligations that only form because formation is walked
+// (raw formation destructured the mint). Both tiers certify; the attempts
+// without induction and with a junk step are refused.
+mul := {n, m} => nat_rec Nat n zero ({_k, ih} => add m ih)
+mul_zero_motive := {n} => Eq Nat (mul n zero) zero
+test Fn Nat mul_zero_motive ({n} => elim_of Nat mul_zero_motive n refl ({p, ih} => refl)) = true
+test Pi Meta Nat mul_zero_motive ({n} => elim_of Nat mul_zero_motive n refl ({p, ih} => refl)) = true
+test Fn Nat mul_zero_motive ({n} => refl) = false
+add_succ_motive := {m} => {n} => Eq Nat (add n (succ m)) (succ (add n m))
+test Fn Nat ({m} => Fn Nat (add_succ_motive m)) ({m, n} => elim_of Nat (add_succ_motive m) n refl ({p, ih} => refl)) = true
+test Pi Meta Nat ({m} => Pi Meta Nat (add_succ_motive m)) ({m, n} => elim_of Nat (add_succ_motive m) n refl ({p, ih} => refl)) = true
+test Fn Nat ({m} => Fn Nat (add_succ_motive m)) ({m, n} => refl) = false
+test Fn Nat ({m} => Fn Nat (add_succ_motive m)) ({m, n} => elim_of Nat (add_succ_motive m) n refl ({p, ih} => pair 5 5)) = false
 test is_neutral (walk_open ({k} => add k zero) (make_hyp Nat "k")) = true
 test tree_eq (neutral_type (walk_open ({k} => add k zero) (make_hyp Nat "k"))) Nat = true
 
