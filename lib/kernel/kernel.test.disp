@@ -102,27 +102,30 @@ test EnumNatToNat succ = false
 test FiveToNat succ = true
 test FiveToSix succ = true
 
-// The raw tier is no longer encoding-transparent for eliminations: recursing
-// onto a hypothesis produces a STUCK elimination rather than walking the
-// hypothesis's encoding, so a raw recognizer (which has no rule for stuck
-// terms; judges are what handle those) refuses it.
-test Nat (elim_id (succ (forge_hyp Nat Nat))) = false
-test is_neutral (elim_id (forge_hyp Nat Nat)) = true
-test tree_eq (neutral_type (elim_id (forge_hyp Nat Nat))) Nat = true
+// The raw tier is pure tree calculus: an eliminator meeting a hypothesis raw
+// walks its encoding like any other fork. Hypotheses are the walker's business
+// alone -- eliminating one there produces a STUCK elimination, which a raw
+// recognizer (no rule for stuck terms; judges handle those) refuses.
+test Nat (walk_open elim_id (succ (forge_hyp Nat Nat))) = false
+test is_neutral (walk_open elim_id (forge_hyp Nat Nat)) = true
+test tree_eq (neutral_type (walk_open elim_id (forge_hyp Nat Nat))) Nat = true
 
-// ONE representation per stuck term. The guard tier's walk no longer builds its
-// own eager hypothesis when a hypothesis is applied or eliminated; it defers to
-// the same marker the raw tier uses and only checks that the observation has a
-// type at all. Since this kernel compares by tree identity nearly everywhere
-// (ledger membership, the judge's type comparison, congruence), a walked term
-// and a raw one must be the SAME tree, not merely agree on their type.
+// ONE representation per stuck term. Applying a hypothesis records the
+// observation in the hypothesis itself, raw or walked (the same tree); the walk
+// only checks that the observation has a type at all. Eliminating one is the
+// walker's rule, and the collector it builds (elim_stuck) is the one the judge
+// and the replay recognize. Since this kernel compares by tree identity nearly
+// everywhere (ledger membership, the judge's type comparison, congruence), the
+// walked term is pinned against that collector, and the collector's own
+// argument-taking is plain application.
 walk_apply := field Guard "apply"
 fn_hyp := make_hyp (PiCode Nat ({_} => Nat)) t
 nat_hyp := make_hyp Nat t
 nat_elim := elim_of Nat ({_} => Nat)
+stuck_nat_elim := wait elim_stuck (pair nat_elim (pair nat_hyp []))
 test tree_eq (walk_apply t [] fn_hyp zero) (fn_hyp zero) = true
-test tree_eq (walk_apply t [] nat_elim nat_hyp) (nat_elim nat_hyp) = true
-test tree_eq (walk_apply t [] (walk_apply t [] nat_elim nat_hyp) zero) ((nat_elim nat_hyp) zero) = true
+test tree_eq (walk_apply t [] nat_elim nat_hyp) stuck_nat_elim = true
+test tree_eq (walk_apply t [] stuck_nat_elim zero) (stuck_nat_elim zero) = true
 // An observation the type does not declare is not a stuck term, it is an error,
 // and the lazy record has no way to say "no type" -- so the walk refuses at the
 // point the observation is made rather than when the type is demanded.
@@ -154,9 +157,11 @@ test Pi Guard Bool sniff_motive ({b} => 5) = false
 // Formation is a tier operation: a type's continuation runs on a mint through the
 // honest walker (Guard), so a family that INSPECTS its argument is refused rather
 // than instantiated at the hypothesis's encoding -- and replay derives a
-// hypothesis's type the same way. (Meta still forms raw on the read-back mark.)
+// hypothesis's type the same way; Meta forms on the read-back mark through the
+// same walker.
 inspecting_cod := {n} => if (is_leaf n) { Bool } else { Nat }
 test Pi Guard Nat inspecting_cod ({n} => n) = false
+test Pi Meta Nat inspecting_cod ({n} => n) = false
 bad_fn_hyp := make_hyp (PiCode Nat inspecting_cod) t
 test is_invalid (neutral_type (bad_fn_hyp (make_hyp Nat t))) = true
 
@@ -643,7 +648,7 @@ test Pi Meta Nat ({n} => Pi Meta Nat ({m} => Pi Meta (Eq Nat n m) ({_} => Eq Nat
 // PROOF BY INDUCTION, machine-checked in-kernel on both tiers: adding zero is
 // the identity. Every piece of the arc is load-bearing here. Eliminating an
 // abstract natural keeps the motive's left endpoint a STUCK term rather than
-// garbage (the lazy eliminator), so the step obligation is the equation that
+// garbage (formation is walked), so the step obligation is the equation that
 // was written; the step's own reduction turns it into a shared constructor
 // context around the induction hypothesis (congruence); and the hypothesis
 // itself is what discharges the remaining equation (the ledger). The false
@@ -657,8 +662,8 @@ test Fn Nat add_zero_motive ({n} => refl) = false
 test Fn Nat add_zero_motive ({n} => add_zero_rec n refl ({p, ih} => pair 5 5)) = false
 false_motive := {n} => Eq Nat (add n zero) (succ n)
 test Fn Nat false_motive ({n} => (elim_of Nat false_motive) n refl ({p, ih} => refl)) = false
-test is_neutral (add (make_hyp Nat "k") zero) = true
-test tree_eq (neutral_type (add (make_hyp Nat "k") zero)) Nat = true
+test is_neutral (walk_open ({k} => add k zero) (make_hyp Nat "k")) = true
+test tree_eq (neutral_type (walk_open ({k} => add k zero) (make_hyp Nat "k"))) Nat = true
 
 // QUOTIENTS by canonical form (set-level higher inductive types, the cheap
 // branch): a type declares a normalizer, and an equation over it compares
@@ -692,12 +697,11 @@ test Record [pair "a" Nat] ({ a := 5 }) = true
 test Record [pair "a" Nat] ({ b := 5 }) = false
 test Record [pair "a" Nat] ({ a := true, b := 5 }) = true
 
-// Ex falso at the RAW tier: an elimination with zero obligations has to fire
-// on arrival, since the collector would otherwise wait forever for an argument
-// that never comes and leak a partial collector as if it were a value. The
-// walk always had this case; the marker did not until now.
-test is_neutral ((elim_of False ({_} => Nat)) (make_hyp False "bad")) = true
-test tree_eq (neutral_type ((elim_of False ({_} => Nat)) (make_hyp False "bad"))) Nat = true
+// Ex falso: an elimination with zero obligations has to fire on arrival, since
+// the collector would otherwise wait forever for an argument that never comes
+// and leak a partial collector as if it were a value.
+test is_neutral (walk_open (elim_of False ({_} => Nat)) (make_hyp False "bad")) = true
+test tree_eq (neutral_type (walk_open (elim_of False ({_} => Nat)) (make_hyp False "bad"))) Nat = true
 test tree_eq (Quotient Nat parity).under Nat = true
 BadNorm := Quotient Nat ({n} => succ n)
 test Coherent BadNorm = false

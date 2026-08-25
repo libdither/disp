@@ -235,11 +235,7 @@ elim_stuck := fix ({sm, st, arg} => {
   else { wait sm (pair E (pair scr args)) }
 })
 elim_stuck_sig := sig_of elim_stuck
-elim_marker := fix ({self, payload, arg} =>
-  if (is_neutral arg) {
-    let E := wait self payload
-    if (tree_eq (elim_arity E) zero) { arg (Elim (pair E [])) } else { wait elim_stuck (pair E (pair arg [])) }
-  } else { (pair_fst payload) (wait self payload) arg })
+elim_marker := fix ({self, payload, arg} => (pair_fst payload) (wait self payload) arg)
 elim_of : Pi (Sampled [Nat]) Space ({_} => Pi (Sampled [{_} => Nat]) Tree ({_} => ElimHead))
   := {Ind, B} =>
   if (or (is_leaf Ind.elim) (is_leaf Ind.gate)) { invalid Ind }
@@ -844,7 +840,7 @@ Meta : Table := ({
   }
   lift := {f} => Conc f
   apply := {chk, st, F, X} => mwalk st chk F X
-  form := {g, V} => g (readback V)
+  form := {g, V} => walk_open g (readback V)
   judge := {chk, st, T, r} => vcheck chk st T r
 })
 
