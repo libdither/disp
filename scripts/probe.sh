@@ -49,11 +49,15 @@ SECS=$(( $(date +%s) - START ))
 CACHE=$(grep -q '^\[memo\] warm' <<<"$OUT" && echo warm || echo cold)
 RSS=$(grep '^\[rss\]' <<<"$OUT" | sed 's/^\[rss\] //; s/ exit=.*//')
 
-grep -v '^\[memo\]\|^\[rss\]' <<<"$OUT" | tail -6
+grep -v '^\[memo\]\|^\[rss\]' <<<"$OUT" | grep -v -E 'mismatch:|^\s+(lhs|rhs) =' | tail -4
+# every failing equation, with the module line (snippet line + 1) and both sides
+grep -A2 -E '^\s*\[[^]]*:[0-9]+\] mismatch:' <<<"$OUT" | grep -v '^--$' | cut -c1-200 | sed 's/^/   /'
 if [ $CODE -eq 0 ]; then
   VERDICT="ACCEPTED"
 elif grep -q 'failing entry' <<<"$OUT"; then
   VERDICT="REJECTED"
+elif grep -q 'failed: [1-9]' <<<"$OUT"; then
+  VERDICT="FAILED (tests)"
 elif grep -q '^error:' <<<"$OUT"; then
   VERDICT="ERROR"
 elif [ $CODE -eq 124 ]; then
