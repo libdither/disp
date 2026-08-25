@@ -462,30 +462,6 @@ open_elim_start : Pi (Sampled [list_rec t t]) Tree ({_} => Pi (Sampled [make_hyp
 test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
 
 Ask : List Tree := < Mint : t, Call : t, Judge : t, Read : t, Lift : t >
-check : Pi (Sampled [ShallowType.obs]) Tree ({_} => Pi (Sampled [succ]) Tree ({_} => Pi (Sampled [t]) Tree ({_} => Tree)))
-  := fix ({self, rows, f, prior} =>
-  match rows {
-    Pure _ => (Pure true)
-    Op row tail => (match row : (case_of Row ({_} => Tree)) {
-      Fresh ty => (perform (Mint (pair ty tail)) ({x} =>
-        perform (Read x) ({xr} => self (tail xr) f x)))
-      Observe ob ty => (match ob : (case_of Obs ({_} => Tree)) {
-        App _ => (perform (Call (pair f prior)) ({r} =>
-          perform (Judge (pair ty r)) ({ok} =>
-            if ok { perform (Read r) ({rr} => self (tail rr) f prior) } else { Pure false })))
-        Self _ => (perform (Judge (pair ty f)) ({ok} =>
-          if ok { perform (Read f) ({fr} => self (tail fr) f prior) } else { Pure false }))
-        Prj a => (perform (Read f) ({fr} => {
-          let o := a fr
-          perform (Lift o) ({lo} =>
-            perform (Judge (pair ty lo)) ({ok} =>
-              if ok { self (tail o) f prior } else { Pure false }))
-        }))
-      })
-    })
-    _ => (Pure false)
-  })
-
 Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)]) Tree ({_} => Space))
   := {table, C} => {
   let tele := if (is_type C) { C.tele } else { C }
@@ -495,6 +471,28 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
   let apply := field_or table "apply" ({_chk, _st, f, a} => f a)
   let read := field_or table "read" ({v} => v)
   let judge := field_or table "judge" ({_chk, _st, T, r} => T r)
+  let check := fix ({self, rows, f, prior} =>
+    match rows {
+      Pure _ => (Pure true)
+      Op row tail => (match row : (case_of Row ({_} => Tree)) {
+        Fresh ty => (perform (Mint (pair ty tail)) ({x} =>
+          perform (Read x) ({xr} => self (tail xr) f x)))
+        Observe ob ty => (match ob : (case_of Obs ({_} => Tree)) {
+          App _ => (perform (Call (pair f prior)) ({r} =>
+            perform (Judge (pair ty r)) ({ok} =>
+              if ok { perform (Read r) ({rr} => self (tail rr) f prior) } else { Pure false })))
+          Self _ => (perform (Judge (pair ty f)) ({ok} =>
+            if ok { perform (Read f) ({fr} => self (tail fr) f prior) } else { Pure false }))
+          Prj a => (perform (Read f) ({fr} => {
+            let o := a fr
+            perform (Lift o) ({lo} =>
+              perform (Judge (pair ty lo)) ({ok} =>
+                if ok { self (tail o) f prior } else { Pure false }))
+          }))
+        })
+      })
+      _ => (Pure false)
+    })
   let run := fix ({chk, st, rows, fV, prior} =>
     handle ({
       return := {b} => {_s} => b
