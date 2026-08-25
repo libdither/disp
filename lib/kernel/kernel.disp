@@ -385,6 +385,89 @@ ask_sig := sig_of ask
 test tree_eq (ask Bool MembersP) (inj "Some" [true, false]) = true
 test tree_eq (ask Bool NormP) (inj "None" t) = true
 
+teq_one : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [{_a, _b} => false]) Tree ({_} => Pi (Sampled [make_hyp Bool t]) Tree ({_} => Pi (Sampled [true]) Tree ({_} => Bool))))
+  := {nt, open2, h, c} => {
+  let T := nt h
+  let ms := T.members
+  if (is_fork ms) {
+    let r := tree_eq (pair_fst ms) c
+    if (list_all T ({m} => tree_eq (tree_eq m c) r) ms) { r } else { open2 h c }
+  } else if (T c) { open2 h c } else { false }
+}
+teq_decide_at := {nt, open2, a, x} =>
+  if (tree_eq a x) { true }
+  else if (and (neutral_free a) (neutral_free x)) { false }
+  else if (and (is_neutral a) (neutral_free x)) { teq_one nt open2 a x }
+  else if (and (is_neutral x) (neutral_free a)) { teq_one nt open2 x a }
+  else { open2 a x }
+open_elim_start_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [list_rec t t]) Tree ({_} => Pi (Sampled [make_hyp (List Tree) t]) Tree ({_} => Tree)))
+  := {nt, f, x} => {
+  let T := nt x
+  if (is_invalid T) { t } else {
+    let e := T.elim
+    if (is_leaf e) { t } else if (tree_eq f (fix e)) { wait open_chain (pair e (pair x [])) } else { t }
+  }
+}
+honest_is_neutral := {resume, _x} => resume t
+native_teq := {_st, a, x} => tree_eq a x
+walk_with : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [honest_is_neutral]) Tree ({_} => Pi (Sampled [native_teq]) Tree ({_} => Pi (Sampled [t]) Tree ({_} => Pi (Sampled [succ]) Tree ({_} => Pi (Sampled [zero]) Tree ({_} => Tree))))))
+  := {nt, on_is_neutral, on_teq_open} => {
+  let teq_open := teq_decide_at nt
+  let elim_start := open_elim_start_at nt
+  let w_stem := {a, x} => {
+    let r := t a x
+    if (is_neutral r) { invalid r } else { r }
+  }
+  let w_s := {self, c, b, x} => {
+    let cx := self c x
+    if (is_invalid cx) { cx } else {
+      let bx := self b x
+      if (is_invalid bx) { bx } else { self cx bx }
+    }
+  }
+  let w_tfk := {self, b, l, r} => {
+    let bl := self b l
+    if (is_invalid bl) { bl } else { self bl r }
+  }
+  let w_fork := {self, a, b, x} =>
+    (triage
+      b
+      ({c} => w_s self c b x)
+      ({tc, td} =>
+        if (is_neutral x) { invalid x }
+        else { triage tc ({ci} => self td ci) ({l, r} => w_tfk self b l r) x })
+      a)
+  {st} => fix ({self, f, x} =>
+    if (is_invalid f) { f }
+    else if (tree_eq f tree_eq) { wait tree_eq x }
+    else if (has_sig tree_eq_sig f) {
+      let a := wait_payload f
+      if (and (neutral_free a) (neutral_free x)) { f x } else { teq_open (on_teq_open st) a x }
+    }
+    else if (tree_eq f is_neutral) { on_is_neutral ({_} => is_neutral x) x }
+    else if (is_neutral f) { let r := f x; if (is_invalid (nt r)) { invalid f } else { r } }
+    else if (is_elim_head f) {
+      if (is_neutral x) { if (tree_eq (elim_arity f) zero) { x (Elim (pair f [])) } else { wait elim_stuck (pair f (pair x [])) } }
+      else { self (self (elim_raw f) f) x }
+    }
+    else if (has_sig elim_stuck_sig f) { f x }
+    else if (is_open_chain f) { f x }
+    else if (tree_eq f ask) { wait ask x }
+    else if (has_sig ask_sig f) {
+      let T2 := wait_payload f
+      if (is_neutral T2) {
+        if (member Tree x prop_formers) { self T2 (inj "Ask" x) } else { invalid x }
+      } else { f x }
+    }
+    else if (tree_eq f ({x} => x)) { x }
+    else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (Acc f) }
+    else if (is_neutral x) {
+      let oc := elim_start f x
+      if (is_fork oc) { oc } else { triage (t x) ({a} => w_stem a x) ({a, b} => w_fork self a b x) f }
+    }
+    else { triage (t x) ({a} => w_stem a x) ({a, b} => w_fork self a b x) f })
+}
+walk_open_at := {nt} => walk_with nt honest_is_neutral native_teq t
 respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair_fst]) Tree ({_} => Pi (Sampled [make_hyp (Sigma Guard Nat ({_} => Bool)) t]) Tree ({_} => Tree)))
   := {nt, frame, self} => {
   let T := nt self
@@ -451,14 +534,8 @@ neutral_type : Pi (Sampled [make_hyp Bool t]) Tree ({_} => Tree)
 })
 respond_face : Pi (Sampled [Acc pair_fst]) Tree ({_} => Pi (Sampled [make_hyp (Sigma Guard Nat ({_} => Bool)) t]) Tree ({_} => Tree))
   := respond_face_at neutral_type
-open_elim_start : Pi (Sampled [list_rec t t]) Tree ({_} => Pi (Sampled [make_hyp (List Tree) t]) Tree ({_} => Tree))
-  := {f, x} => {
-  let T := neutral_type x
-  if (is_invalid T) { t } else {
-    let e := T.elim
-    if (is_leaf e) { t } else if (tree_eq f (fix e)) { wait open_chain (pair e (pair x [])) } else { t }
-  }
-}
+teq_decide := teq_decide_at neutral_type
+walk_open : Pi (Sampled [succ]) Tree ({_} => Pi (Sampled [zero, make_hyp Nat t]) Tree ({_} => Tree)) := walk_open_at neutral_type
 test tree_eq (neutral_type (make_hyp Bool t)) Bool = true
 
 Ask : List Tree := < Mint : t, Call : t, Judge : t, Read : t, Lift : t >
@@ -523,21 +600,6 @@ Enum : Table := ({
 Sampled : Pi (Sampled [[1]]) (List Tree) ({_} => Table)
   := {samples} => ({ fresh := {st, _ty, _tail} => list_map Tree Tree ({a} => pair a st) samples })
 
-teq_one : Pi (Sampled [{_a, _b} => false]) Tree ({_} => Pi (Sampled [make_hyp Bool t]) Tree ({_} => Pi (Sampled [true]) Tree ({_} => Bool)))
-  := {open2, h, c} => {
-  let T := neutral_type h
-  let ms := T.members
-  if (is_fork ms) {
-    let r := tree_eq (pair_fst ms) c
-    if (list_all T ({m} => tree_eq (tree_eq m c) r) ms) { r } else { open2 h c }
-  } else if (T c) { open2 h c } else { false }
-}
-teq_decide := {open2, a, x} =>
-  if (tree_eq a x) { true }
-  else if (and (neutral_free a) (neutral_free x)) { false }
-  else if (and (is_neutral a) (neutral_free x)) { teq_one open2 a x }
-  else if (and (is_neutral x) (neutral_free a)) { teq_one open2 x a }
-  else { open2 a x }
 eq_pairs : Pi (Sampled [[]]) (List Tree) ({_} => List Tree) := fix ({self, hs} =>
   if (is_leaf hs) { [] }
   else {
@@ -784,60 +846,11 @@ Meta : Table := ({
   judge := {chk, st, T, r} => vcheck chk st T r
 })
 
-GuardAt : Pi (Sampled [{_resume, _x} => false]) Tree ({_} => Pi (Sampled [{_st2, a, x} => tree_eq a x]) Tree ({_} => Table))
+lying_is_neutral := {_resume, _x} => false
+minting_teq := {st, a, x} => if (eq_congr t (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) }
+GuardAt : Pi (Sampled [lying_is_neutral]) Tree ({_} => Pi (Sampled [native_teq]) Tree ({_} => Table))
   := {on_is_neutral, on_teq_open} => {
-  let w_stem := {a, x} => {
-    let r := t a x
-    if (is_neutral r) { invalid r } else { r }
-  }
-  let w_s := {self, c, b, x} => {
-    let cx := self c x
-    if (is_invalid cx) { cx } else {
-      let bx := self b x
-      if (is_invalid bx) { bx } else { self cx bx }
-    }
-  }
-  let w_tfk := {self, b, l, r} => {
-    let bl := self b l
-    if (is_invalid bl) { bl } else { self bl r }
-  }
-  let w_fork := {self, a, b, x} =>
-    (triage
-      b
-      ({c} => w_s self c b x)
-      ({tc, td} =>
-        if (is_neutral x) { invalid x }
-        else { triage tc ({ci} => self td ci) ({l, r} => w_tfk self b l r) x })
-      a)
-  let walk := {st} => fix ({self, f, x} =>
-    if (is_invalid f) { f }
-    else if (tree_eq f tree_eq) { wait tree_eq x }
-    else if (has_sig tree_eq_sig f) {
-      let a := wait_payload f
-      if (and (neutral_free a) (neutral_free x)) { f x } else { teq_decide (on_teq_open st) a x }
-    }
-    else if (tree_eq f is_neutral) { on_is_neutral ({_} => is_neutral x) x }
-    else if (is_neutral f) { let r := f x; if (is_invalid (neutral_type r)) { invalid f } else { r } }
-    else if (is_elim_head f) {
-      if (is_neutral x) { if (tree_eq (elim_arity f) zero) { x (Elim (pair f [])) } else { wait elim_stuck (pair f (pair x [])) } }
-      else { self (self (elim_raw f) f) x }
-    }
-    else if (has_sig elim_stuck_sig f) { f x }
-    else if (is_open_chain f) { f x }
-    else if (tree_eq f ask) { wait ask x }
-    else if (has_sig ask_sig f) {
-      let T2 := wait_payload f
-      if (is_neutral T2) {
-        if (member Tree x prop_formers) { self T2 (inj "Ask" x) } else { invalid x }
-      } else { f x }
-    }
-    else if (tree_eq f ({x} => x)) { x }
-    else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (Acc f) }
-    else if (is_neutral x) {
-      let oc := open_elim_start f x
-      if (is_fork oc) { oc } else { triage (t x) ({a} => w_stem a x) ({a, b} => w_fork self a b x) f }
-    }
-    else { triage (t x) ({a} => w_stem a x) ({a, b} => w_fork self a b x) f })
+  let walk := walk_with neutral_type on_is_neutral on_teq_open
   let hyp_ok := (fix ({ok, vch, legit, v} =>
     if (member Tree v legit) {
       true
@@ -915,12 +928,8 @@ GuardAt : Pi (Sampled [{_resume, _x} => false]) Tree ({_} => Pi (Sampled [{_st2,
       })) T v
   ({ fresh := fresh, admit := neutral_free, apply := {_chk, st, f, x} => walk st f x, judge })
 }
-Guard : Table := GuardAt
-  ({_resume, _x} => false)
-  ({st, a, x} => if (eq_congr t (eq_pairs st) a x) { true } else { make_hyp Bool (pair "Teq" (pair a x)) })
-Ambient : Table := GuardAt
-  ({resume, _x} => resume t)
-  ({_st, a, x} => tree_eq a x)
+Guard : Table := GuardAt lying_is_neutral minting_teq
+Ambient : Table := GuardAt honest_is_neutral native_teq
 
 probes : List Tree
   := [t, 5, true, false, pair 5 5, [1], inj "zz" t, succ (succ zero)]
