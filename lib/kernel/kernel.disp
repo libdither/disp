@@ -235,7 +235,7 @@ elim_stuck := fix ({sm, st, arg} => {
   else { wait sm (pair E (pair scr args)) }
 })
 elim_stuck_sig := sig_of elim_stuck
-elim_marker := fix ({self, payload, arg} => (pair_fst payload) (wait self payload) arg)
+elim_marker := {payload, arg} => (fix (pair_fst payload)) arg
 elim_of : Pi (Sampled [Nat]) Space ({_} => Pi (Sampled [{_} => Nat]) Tree ({_} => ElimHead))
   := {Ind, B} =>
   if (or (is_leaf Ind.elim) (is_leaf Ind.gate)) { invalid Ind }
