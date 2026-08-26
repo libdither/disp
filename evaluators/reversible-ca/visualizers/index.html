@@ -1,0 +1,364 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reversible-ca — bijective Margolus blocks, 1D toy</title>
+<!-- Toy model of reversible erasure for the TC-Net substrate: every block update is a
+     permutation, annihilation deposits its bits as heat codewords instead of deleting,
+     and reverse execution is exact. Companion to research/interaction-combinator/SPATIAL_IC.md. -->
+<style>
+  :root {
+    --bg:#0b0e14; --panel:#0e1420; --cell:#111927; --fg:#c8d3e0; --dim:#8595ad;
+    --accent:#56c8ff; --border:#1b2436; --border2:#2a3a52;
+    --leaf:#3987e5; --eraser:#e66767; --heat:#d95926; --ink:#e8eef6;
+    --good:#0ca30c; --bad:#d03b3b; --hot:#ffd866;
+  }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.5 monospace; }
+  #wrap { display:flex; height:100vh; }
+  #stage { flex:1; min-width:0; display:flex; flex-direction:column; padding:14px; gap:10px; }
+  #strip { width:100%; flex:0 0 auto; }
+  #spacetime { width:100%; flex:1; min-height:0; border-top:1px solid var(--border); }
+  #side { flex:0 0 350px; width:350px; padding:12px 14px; overflow-y:auto; border-left:1px solid var(--border); background:var(--panel); }
+  h2 { font-size:13px; color:var(--accent); letter-spacing:.05em; margin:2px 0 8px; }
+  h3 { color:var(--accent); font-size:11px; letter-spacing:.06em; margin:14px 0 5px; text-transform:uppercase; }
+  .row { display:flex; justify-content:space-between; margin:3px 0; align-items:center; gap:8px; }
+  .k { color:var(--dim); }
+  button, select, input[type=number] { background:#16202f; color:var(--fg); border:1px solid var(--border2); border-radius:5px; padding:4px 9px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  button:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  button.primary { color:#04121c; background:var(--accent); border-color:#8bddff; font-weight:bold; }
+  button:disabled { opacity:.35; cursor:default; }
+  input[type=range] { width:120px; vertical-align:middle; }
+  input[type=number] { width:70px; }
+  .transport { display:flex; gap:5px; margin:6px 0; }
+  .badge { display:inline-block; padding:1px 7px; border-radius:9px; font-size:11px; font-weight:bold; }
+  .badge.ok { background:rgba(12,163,12,.16); color:#4ed14e; border:1px solid rgba(12,163,12,.5); }
+  .badge.fail { background:rgba(208,59,59,.16); color:#f07272; border:1px solid rgba(208,59,59,.5); }
+  #legend { display:flex; flex-wrap:wrap; gap:10px 14px; margin:4px 0; align-items:center; }
+  .lg { display:flex; align-items:center; gap:5px; color:var(--dim); font-size:11px; }
+  .lg svg { flex:0 0 auto; }
+  #events { max-height:170px; overflow-y:auto; font-size:11px; }
+  #events div { padding:1px 0; border-bottom:1px dotted #17202f; }
+  .ev-a { color:var(--dim); } .ev-m { color:var(--hot); } .ev-s { color:#9fb0c8; }
+  .note { color:var(--dim); font-size:11px; line-height:1.45; }
+  .note b { color:var(--fg); }
+  details { margin:6px 0; } summary { cursor:pointer; color:var(--accent); font-size:11px; }
+  #dump { font-size:10px; white-space:pre; color:var(--dim); overflow-x:auto; }
+  #tip { position:fixed; z-index:9; padding:6px 8px; border:1px solid var(--border2); border-radius:6px;
+    background:rgba(11,14,20,.97); font-size:11px; pointer-events:none; box-shadow:0 6px 20px rgba(0,0,0,.5); }
+  #tip[hidden] { display:none; }
+  .val { color:var(--hot); }
+</style></head><body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="strip" aria-label="current state of the ring"></canvas>
+    <canvas id="spacetime" aria-label="spacetime diagram, time flowing downward"></canvas>
+  </div>
+  <div id="side">
+    <h2>reversible-ca · bijective block updates</h2>
+    <div class="note">1D Margolus toy: erasure that deletes nothing. Every paired-cell update is a
+      permutation of 2,304 block states, so the whole run is invertible, tick for tick.</div>
+
+    <h3>self-test</h3>
+    <div class="row"><span class="k">block map is a permutation</span><span id="t-perm" class="badge">…</span></div>
+    <div class="row"><span class="k">512-tick round trip exact</span><span id="t-round" class="badge">…</span></div>
+
+    <h3>scenario</h3>
+    <div class="row"><select id="scenario" aria-label="scenario"></select></div>
+    <div class="row"><span class="k">seed (hot vacuum)</span><input id="seed" type="number" value="7"></div>
+    <div class="row"><span class="k">cold trap at cell 0</span><input id="trap" type="checkbox"></div>
+
+    <h3>transport</h3>
+    <div class="transport">
+      <button id="b-back" title="step back (←)">⏮ step</button>
+      <button id="b-play" class="primary" title="play/pause (space)">▶ play</button>
+      <button id="b-fwd" title="step forward (→)">step ⏭</button>
+      <button id="b-rev" title="reverse direction (r)">⇄ fwd</button>
+    </div>
+    <div class="row"><span class="k">speed</span><span><input id="speed" type="range" min="1" max="120" value="16"> <span id="speedv" class="k">16/s</span></span></div>
+    <div class="row"><button id="b-reset">reset scenario</button></div>
+
+    <h3>ledger</h3>
+    <div class="row"><span class="k">tick</span><b id="l-tick" class="val">0</b></div>
+    <div class="row"><span class="k">direction</span><span id="l-dir">forward</span></div>
+    <div class="row"><span class="k">matter (ε / L)</span><span id="l-matter">0 / 0</span></div>
+    <div class="row"><span class="k">heat in field</span><span id="l-heat">0 bits</span></div>
+    <div class="row"><span class="k">radiated to trap</span><span id="l-rad">0 bits</span></div>
+    <div class="row"><span class="k">annihilations</span><span id="l-ann">0</span></div>
+    <div class="row"><span class="k">rebirths (fluctuations)</span><span id="l-mat">0</span></div>
+
+    <h3>legend</h3>
+    <div id="legend">
+      <span class="lg"><svg width="14" height="12"><polygon points="7,1 13,11 1,11" fill="#e66767"/></svg> ε eraser</span>
+      <span class="lg"><svg width="14" height="12"><circle cx="7" cy="6" r="5" fill="#3987e5"/></svg> L leaf</span>
+      <span class="lg"><svg width="14" height="12"><rect x="0" y="3" width="14" height="7" fill="#d95926" opacity=".7"/></svg> heat (noise bits)</span>
+      <span class="lg"><svg width="14" height="12"><polygon points="7,1 12,6 7,11 2,6" fill="none" stroke="#e8eef6"/></svg> codeword nibble</span>
+      <span class="lg">❄ trap cell</span>
+    </div>
+
+    <h3>events</h3>
+    <div id="events"></div>
+
+    <h3>how it works</h3>
+    <div class="note">
+      A tick pairs adjacent cells into blocks (bracket marks above the strip; the pairing shifts
+      by one every tick) and applies one table <b>f = mix ∘ react</b> per block.
+      <b>react</b> is a set of disjoint swaps: a lone ε swaps with an empty neighbour (transport);
+      ε meeting L with both noise nibbles cold (0000) swaps with two empties carrying the codeword
+      pair <b>1011·1101</b> — the annihilation's bits become heat instead of vanishing.
+      <b>mix</b> swaps the two noise nibbles, so heat drifts ballistically.
+      Swaps are their own inverse, so f is a permutation and stepping backward
+      (f⁻¹, pairings in reverse order) reconstructs history exactly.
+      Consequences you can watch: a <b>hot</b> annihilation site stalls and the ε bounces off;
+      on a closed ring the two codeword nibbles refocus and the pair is <b>reborn</b>
+      (Poincaré recurrence); the cold trap exports heat to a recorded bath tape, which
+      kills the recurrence but keeps even the open system exactly reversible.
+    </div>
+    <details><summary>state dump (table view)</summary><div id="dump"></div></details>
+  </div>
+</div>
+<div id="tip" hidden></div>
+<script>
+'use strict';
+// ---------- core (mirrors /tmp prototype; verified by the self-test below) ----------
+const E=0, EPS=1, LF=2, NSTATES=3*3*16*16, CA1=11, CA2=13, N=64;
+const enc=(a,b,x,y)=>((a*3+b)*16+x)*16+y;
+const pop=n=>{n=n-((n>>1)&5);n=(n&3)+((n>>2)&3);return n;};
+
+function buildTables(){
+  const R=new Int16Array(NSTATES);
+  for(let s=0;s<NSTATES;s++)R[s]=s;
+  const swap=(u,v)=>{ if(R[u]!==u||R[v]!==v||u===v) throw new Error('rule collision'); R[u]=v; R[v]=u; };
+  for(let x=0;x<16;x++)for(let y=0;y<16;y++) swap(enc(EPS,E,x,y),enc(E,EPS,x,y));
+  swap(enc(EPS,LF,0,0),enc(E,E,CA1,CA2));
+  swap(enc(LF,EPS,0,0),enc(E,E,CA2,CA1));
+  const F=new Int16Array(NSTATES),Finv=new Int16Array(NSTATES),seen=new Uint8Array(NSTATES);
+  for(let s=0;s<NSTATES;s++){const r=R[s];F[s]=((r>>8)*16+(r&15))*16+((r>>4)&15);}
+  let perm=true;
+  for(let s=0;s<NSTATES;s++){ if(seen[F[s]])perm=false; seen[F[s]]=1; Finv[F[s]]=s; }
+  return {F,Finv,perm};
+}
+const {F,Finv,perm}=buildTables();
+
+function makeWorld(){ return {mat:new Uint8Array(N),noi:new Uint8Array(N),t:0,tape:[],trap:false,events:[],hist:[]}; }
+
+function blockPass(w,table,parity,logEvents){
+  const {mat,noi}=w;
+  for(let i=parity;i<N;i+=2){
+    const j=(i+1)%N;
+    const s=enc(mat[i],mat[j],noi[i],noi[j]), s2=table[s];
+    const mb=mat[i]*3+mat[j];
+    if(s2!==s){
+      const ma=s2>>8;
+      if(logEvents){
+        if((mb===EPS*3+LF||mb===LF*3+EPS)&&ma===0) w.events.push({t:w.t,kind:'annihilate',at:i});
+        if(mb===0&&(ma===EPS*3+LF||ma===LF*3+EPS)) w.events.push({t:w.t,kind:'materialize',at:i});
+      }
+      mat[i]=(ma/3)|0; mat[j]=ma%3; noi[i]=(s2>>4)&15; noi[j]=s2&15;
+    } else if(logEvents&&(mb===EPS*3+LF||mb===LF*3+EPS)&&(noi[i]||noi[j])){
+      w.events.push({t:w.t,kind:'stall',at:i});
+    }
+  }
+}
+function stepF(w,log=true){
+  blockPass(w,F,w.t&1,log);
+  if(w.trap){ w.tape.push(w.noi[0]); w.noi[0]=0; }
+  w.t++;
+}
+function stepB(w){
+  if(w.t===0)return false;
+  w.t--;
+  if(w.trap) w.noi[0]=w.tape.pop();
+  blockPass(w,Finv,w.t&1,false);
+  while(w.events.length&&w.events[w.events.length-1].t>=w.t) w.events.pop();
+  return true;
+}
+const snap=w=>w.mat.join()+'|'+w.noi.join();
+
+// ---------- self-test ----------
+function selfTest(){
+  const w=makeWorld(); w.trap=true;
+  let seed=999; const rnd=()=>(seed=(seed*1103515245+12345)&0x7fffffff)/0x80000000;
+  for(let i=0;i<N;i++){ w.mat[i]=(rnd()*3)|0; w.noi[i]=(rnd()*16)|0; }
+  const s0=snap(w);
+  for(let k=0;k<512;k++)stepF(w,false);
+  for(let k=0;k<512;k++)stepB(w);
+  return snap(w)===s0&&w.tape.length===0;
+}
+const roundOk=selfTest();
+const setBadge=(id,ok,txt)=>{const el=document.getElementById(id);el.textContent=txt||(ok?'PASS':'FAIL');el.className='badge '+(ok?'ok':'fail');};
+setBadge('t-perm',perm,perm?NSTATES+' ✓':'FAIL');
+setBadge('t-round',roundOk);
+
+// ---------- scenarios ----------
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const SCEN={
+  recur:{label:'annihilation → Poincaré rebirth (closed ring)',setup(w){w.mat[4]=EPS;w.mat[33]=LF;}},
+  trap:{label:'cold trap: heat radiated, no rebirth',trap:true,setup(w){w.mat[4]=EPS;w.mat[33]=LF;}},
+  stall:{label:'hot sink: stall, bounce, retry',setup(w){w.mat[4]=EPS;w.mat[33]=LF;w.noi[61]=5;}},
+  vacuum:{label:'hot vacuum: spontaneous pair creation',setup(w,rnd){
+    for(let i=0;i<N;i++)w.noi[i]=rnd()<0.5?(rnd()*16)|0:0;
+    w.noi[10]=CA1;w.noi[21]=CA2;}},
+  many:{label:'many pairs',setup(w){[4,16,44].forEach(i=>w.mat[i]=EPS);[27,33,55].forEach(i=>w.mat[i]=LF);}},
+};
+const selScen=document.getElementById('scenario');
+for(const k in SCEN){const o=document.createElement('option');o.value=k;o.textContent=SCEN[k].label;selScen.appendChild(o);}
+
+let world, playing=false, dir=1;
+function reset(){
+  world=makeWorld();
+  const sc=SCEN[selScen.value];
+  world.trap=document.getElementById('trap').checked;
+  sc.setup(world,mulberry32(+document.getElementById('seed').value||1));
+  world.hist=[{mat:world.mat.slice(),noi:world.noi.slice()}];
+  playing=false; dir=1; syncButtons(); draw();
+}
+selScen.addEventListener('change',()=>{const sc=SCEN[selScen.value];document.getElementById('trap').checked=!!sc.trap;reset();});
+document.getElementById('trap').addEventListener('change',reset);
+document.getElementById('seed').addEventListener('change',reset);
+document.getElementById('b-reset').addEventListener('click',reset);
+
+// ---------- stepping with history ----------
+function doStepF(){ if(world.t>=50000)return; stepF(world); world.hist.push({mat:world.mat.slice(),noi:world.noi.slice()}); }
+function doStepB(){ if(stepB(world)) world.hist.pop(); }
+
+// ---------- rendering ----------
+const strip=document.getElementById('strip'), st=document.getElementById('spacetime');
+const CW=17, STRIPH=84, dpr=window.devicePixelRatio||1;
+function sizeCanvases(){
+  const w=strip.clientWidth||N*CW;
+  strip.width=N*CW*dpr; strip.height=STRIPH*dpr; strip.style.height=(STRIPH*w/(N*CW))+'px';
+  const h=Math.max(120,Math.min(1200,st.clientHeight||300));
+  st.width=N*CW*dpr; st.height=Math.min(4096,Math.round(h*dpr*(N*CW)/w));
+}
+const heatFill=(ctx,pc,x,y,w,h)=>{ if(!pc)return; ctx.globalAlpha=0.22+0.18*pc; ctx.fillStyle='#d95926'; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1; };
+
+function drawStrip(){
+  const ctx=strip.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#0b0e14'; ctx.fillRect(0,0,N*CW,STRIPH);
+  const p=world.t&1;
+  // block-pairing brackets for the *next* reaction
+  ctx.strokeStyle='#2a3a52'; ctx.lineWidth=1;
+  for(let i=p;i<N;i+=2){
+    const j=(i+1)%N, x0=i*CW+2, x1=j*CW+CW-3;
+    ctx.beginPath();
+    if(j>i){ ctx.moveTo(x0,6); ctx.lineTo(x0,2); ctx.lineTo(x1,2); ctx.lineTo(x1,6); }
+    else { ctx.moveTo(x0,6); ctx.lineTo(x0,2); ctx.lineTo(N*CW-1,2); ctx.moveTo(0,2); ctx.lineTo(x1,2); ctx.lineTo(x1,6); }
+    ctx.stroke();
+  }
+  for(let i=0;i<N;i++){
+    const x=i*CW+1;
+    ctx.fillStyle='#111927'; ctx.fillRect(x,8,CW-2,48);
+    heatFill(ctx,pop(world.noi[i]),x,58,CW-2,10);
+    if(world.noi[i]===CA1||world.noi[i]===CA2){
+      ctx.strokeStyle='#e8eef6'; ctx.lineWidth=1.2; ctx.beginPath();
+      const cx=x+(CW-2)/2, cy=63;
+      ctx.moveTo(cx,cy-4);ctx.lineTo(cx+4,cy);ctx.lineTo(cx,cy+4);ctx.lineTo(cx-4,cy);ctx.closePath();ctx.stroke();
+    }
+    const m=world.mat[i], cx=x+(CW-2)/2, cy=32;
+    if(m===EPS){ ctx.fillStyle='#e66767'; ctx.beginPath(); ctx.moveTo(cx,cy-9); ctx.lineTo(cx+8,cy+7); ctx.lineTo(cx-8,cy+7); ctx.closePath(); ctx.fill(); }
+    else if(m===LF){ ctx.fillStyle='#3987e5'; ctx.beginPath(); ctx.arc(cx,cy,8,0,7); ctx.fill(); }
+    if(i===0&&world.trap){ ctx.strokeStyle='#56c8ff'; ctx.setLineDash([3,2]); ctx.strokeRect(x-.5,7.5,CW-1,49); ctx.setLineDash([]);
+      ctx.fillStyle='#56c8ff'; ctx.font='10px monospace'; ctx.fillText('❄',x+3,80); }
+    if(i%8===0){ ctx.fillStyle='#5a6b86'; ctx.font='9px monospace'; ctx.fillText(i,x+2,STRIPH-2); }
+  }
+}
+function drawSpacetime(){
+  const ctx=st.getContext('2d'); const W=st.width/dpr;
+  const scale=W/(N*CW); ctx.setTransform(dpr,0,0,dpr,0,0);
+  const H=st.height/dpr, rowH=3, rows=Math.floor(H/rowH);
+  ctx.fillStyle='#0b0e14'; ctx.fillRect(0,0,W,H);
+  const h=world.hist, start=Math.max(0,h.length-rows);
+  if(world.trap){ ctx.fillStyle='rgba(86,200,255,.08)'; ctx.fillRect(0,0,CW*scale,H); }
+  for(let r=start;r<h.length;r++){
+    const y=(r-start)*rowH, row=h[r];
+    for(let i=0;i<N;i++){
+      const pc=pop(row.noi[i]);
+      if(pc){ ctx.globalAlpha=0.16+0.17*pc; ctx.fillStyle='#d95926'; ctx.fillRect(i*CW*scale,y,CW*scale,rowH); ctx.globalAlpha=1; }
+      const m=row.mat[i];
+      if(m){ ctx.fillStyle=m===EPS?'#e66767':'#3987e5'; ctx.fillRect(i*CW*scale+1,y,CW*scale-2,rowH); }
+    }
+  }
+  // event ticks in the visible window
+  ctx.font='9px monospace';
+  for(const e of world.events){
+    if(e.t<start||e.t>=h.length)continue;
+    const y=(e.t-start)*rowH;
+    if(e.kind==='materialize'){ ctx.fillStyle='#ffd866'; ctx.fillText('◀ rebirth',Math.min(e.at*CW*scale+14,W-60),y+3); }
+    if(e.kind==='stall'){ ctx.fillStyle='#9fb0c8'; ctx.fillText('◀ stall',Math.min(e.at*CW*scale+14,W-50),y+3); }
+  }
+}
+function drawPanel(){
+  const $=id=>document.getElementById(id);
+  $('l-tick').textContent=world.t;
+  $('l-dir').textContent=dir>0?'forward':'REVERSE';
+  $('l-dir').style.color=dir>0?'':'#ffd866';
+  let ne=0,nl=0,heat=0;
+  for(let i=0;i<N;i++){ if(world.mat[i]===EPS)ne++; if(world.mat[i]===LF)nl++; heat+=pop(world.noi[i]); }
+  $('l-matter').textContent=ne+' / '+nl;
+  $('l-heat').textContent=heat+' bits';
+  $('l-rad').textContent=world.tape.reduce((a,n)=>a+pop(n),0)+' bits ('+world.tape.length+' exchanges)';
+  $('l-ann').textContent=world.events.filter(e=>e.kind==='annihilate').length;
+  $('l-mat').textContent=world.events.filter(e=>e.kind==='materialize').length;
+  const ev=$('events'); ev.innerHTML='';
+  world.events.slice(-30).reverse().forEach(e=>{
+    const d=document.createElement('div');
+    d.className=e.kind==='materialize'?'ev-m':e.kind==='stall'?'ev-s':'ev-a';
+    d.textContent='t='+e.t+'  '+(e.kind==='materialize'?'⚡ pair reborn':e.kind==='stall'?'stall: sink hot, ε bounces':'annihilate ε+L → heat')+' @ '+e.at;
+    ev.appendChild(d);
+  });
+  $('dump').textContent='cell : '+[...Array(N).keys()].map(i=>String(i).padStart(2)).join(' ')+'\n'
+    +'matter: '+[...world.mat].map(m=>' '+('.εL'[m]||'.')).join(' ')+'\n'
+    +'noise : '+[...world.noi].map(n=>n.toString(16).padStart(2)).join(' ');
+}
+function draw(){ drawStrip(); drawSpacetime(); drawPanel(); }
+
+// ---------- transport ----------
+const bPlay=document.getElementById('b-play'), bRev=document.getElementById('b-rev');
+function syncButtons(){ bPlay.textContent=playing?'⏸ pause':'▶ play'; bRev.textContent=dir>0?'⇄ fwd':'⇄ REV'; }
+bPlay.addEventListener('click',()=>{playing=!playing;syncButtons();});
+bRev.addEventListener('click',()=>{dir=-dir;syncButtons();draw();});
+document.getElementById('b-fwd').addEventListener('click',()=>{doStepF();draw();});
+document.getElementById('b-back').addEventListener('click',()=>{doStepB();draw();});
+const speedEl=document.getElementById('speed');
+speedEl.addEventListener('input',()=>document.getElementById('speedv').textContent=speedEl.value+'/s');
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+  if(e.key===' '){e.preventDefault();playing=!playing;syncButtons();}
+  if(e.key==='ArrowRight'){doStepF();draw();}
+  if(e.key==='ArrowLeft'){doStepB();draw();}
+  if(e.key==='r'){dir=-dir;syncButtons();draw();}
+});
+let acc=0,last=performance.now();
+function loop(now){
+  const dt=(now-last)/1000; last=now;
+  if(playing){
+    acc+=dt*(+speedEl.value);
+    let n=Math.floor(acc); acc-=n;
+    for(;n>0;n--){ if(dir>0)doStepF(); else if(!stepBWrap())break; }
+    draw();
+  }
+  requestAnimationFrame(loop);
+}
+function stepBWrap(){ if(world.t===0){playing=false;syncButtons();return false;} doStepB(); return true; }
+
+// ---------- tooltip ----------
+const tip=document.getElementById('tip');
+strip.addEventListener('mousemove',e=>{
+  const r=strip.getBoundingClientRect(), i=Math.floor((e.clientX-r.left)/r.width*N);
+  if(i<0||i>=N){tip.hidden=true;return;}
+  const m=world.mat[i],n=world.noi[i];
+  tip.innerHTML='cell <b>'+i+'</b> · matter: <b>'+(m===EPS?'ε eraser':m===LF?'L leaf':'empty')+'</b>'
+    +'<br>noise: <b>'+n.toString(2).padStart(4,'0')+'</b> ('+pop(n)+' bits)'
+    +(n===CA1||n===CA2?' · <span style="color:#ffd866">codeword</span>':'')
+    +(i===0&&world.trap?'<br><span style="color:#56c8ff">❄ cold trap: nibble exchanged with bath each tick</span>':'');
+  tip.style.left=Math.min(e.clientX+14,window.innerWidth-200)+'px'; tip.style.top=(e.clientY+14)+'px';
+  tip.hidden=false;
+});
+strip.addEventListener('mouseleave',()=>tip.hidden=true);
+
+// scripted access for tests: window.sim.run(n) etc.
+window.sim={ get world(){return world;}, run(n){for(;n>0;n--)doStepF();draw();}, back(n){for(;n>0;n--)doStepB();draw();}, reset, snap:()=>snap(world) };
+
+window.addEventListener('resize',()=>{sizeCanvases();draw();});
+sizeCanvases(); reset(); requestAnimationFrame(loop);
+</script>
+</body></html>
