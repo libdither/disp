@@ -6,7 +6,7 @@ I want to be able to synthesize the best possible programs given a specification
 To do this we basically need a universal self-improving optimizer, but to bootstrap this we first need:
  - A simple calculus with:
    - Programs are data (to enable defining type checkers in the language itself)
-   - Must have a primitive that enables outsourcing execution to an external faster language, using an encoding of that language in the base calculus, where it takes as input calculus-encoded data and outputs calculus-encoded data. The results of primitive language execution (including time spent, memory usage, etc.) should be returned along with the host-calculus encoded outputs. *(Long-term vision. The current kernel has no such primitive; its surface is the two Σ-ops (`hyp_reduce`, `bind_hyp`) plus the `param_apply` dispatcher.)*
+   - Must have a primitive that enables outsourcing execution to an external faster language, using an encoding of that language in the base calculus, where it takes as input calculus-encoded data and outputs calculus-encoded data. The results of primitive language execution (including time spent, memory usage, etc.) should be returned along with the host-calculus encoded outputs.
  - A type system written in the host calculus that:
    - Is a dependently typed system or strictly more powerful (i.e. HoTT).
    - Provides either basic axiomatic assertions of equivalence between a sufficient family of structures in the external language and the host calculus, or an deterministic model of the external language in the host calculus that can be fully reasoned about.
@@ -14,8 +14,6 @@ To do this we basically need a universal self-improving optimizer, but to bootst
  - An external optimizer that can run the host calculus evaluator and take a scoring function and generate a term in the host calculus that satisfies it as best as it can when run.
    - Must handle combinatorial search over programs
    - Must be able to self-play, continually improve by generating score functions itself to then satisfy.
-
-*(Status 2026-07-11: the licensing half of the loop exists in miniature — explicit compositional relation objects (`archive/live-kernel/std/relation.disp`), machine-checked rewrite licenses proven by induction, and guard-owned names whose redefinition demands relation evidence re-verified at every load (the declaration protocol: SYNTAX.typ § record members, `archive/live-kernel/kernel/cut.disp`). Nat and `case_value` state their optimizer contracts directly; observer-restricted certification remains open. The search/scoring half — the external optimizer — remains.)*
 
 Once I have this baseline, and the external optimizer works well enough for a wide variety of programs. It should be able to bootstrap itself and be used to redesign the whole process from the ground up. The following should happen gradually to different parts.
  - We should be able to figure out the best host calculus base formulation and evolve it alongside the relevant type systems to improve type checking and execution speed. Type checking functions should be optimizable for improved speed of iteration for satisfying a given type.
