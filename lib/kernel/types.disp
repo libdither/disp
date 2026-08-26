@@ -37,7 +37,7 @@ Quotient : ShallowType -> Tree -> ShallowType
 })
 canon := {A, v} => {
   let nf := A.norm
-  if (or (is_leaf nf) (not (neutral_free v))) { v } else { nf v }
+  if (is_leaf nf) { v } else if (neutral_free v) { nf v } else { v }
 }
 Named : Tree -> ShallowType -> ShallowType
   := {name, T} => ({
@@ -213,7 +213,7 @@ Eq : Pi (Sampled [Nat]) ShallowType ({A} => Pi (Sampled [2]) A ({x} => Pi (Sampl
   let nx := canon A x
   let ny := canon A y
   ({
-    #recognize := {_self, v} => and (is_leaf v) (tree_eq nx ny)
+    #recognize := {_self, v} => tree_eq (pair nx v) (pair ny refl)
     gate := {_Ind, B} => [B nx]
     elim := {_self, _p, base} => base
     land := {B, _self} => B ny
@@ -221,17 +221,27 @@ Eq : Pi (Sampled [Nat]) ShallowType ({A} => Pi (Sampled [2]) A ({x} => Pi (Sampl
     under := A
   })
 }
-eq_subst := {A, x, y, B, p, base} => elim_of (Eq A x y) B p base
-eq_sym := {A, x, y, p} => eq_subst A x y ({_} => Eq A y x) p refl
-eq_trans := {A, x, y, z, p, q} => eq_subst A y z ({_} => Eq A x z) q p
-eq_cong := {A, f, x, y, p} => eq_subst A x y ({_} => Eq A (f x) (f y)) p refl
+// J at the dependent tier: each lemma's motive computes on the bound
+// endpoint, so it is an honest transport (the old constant motives assumed
+// their conclusion and only passed at concrete endpoints). Carriers are
+// sampled; endpoints, families, proofs and bases are hypotheses.
+// Pi-Guard-literal: under the TwoFace differential the probe expansion over
+// six binders is unaffordable (measured past 6.5 GB on the kernel suite).
+eq_subst : Pi (Sampled [Nat]) ShallowType ({A} => Pi Guard A ({x} => Pi Guard A ({y} => Pi Guard (Pi Guard A ({_} => ShallowType)) ({B} => Pi Guard (Eq A x y) ({_} => Pi Guard (B x) ({_} => B y))))))
+  := {A, x, y, B, p, base} => elim_of (Eq A x y) B p base
+eq_sym : Pi (Sampled [Nat]) ShallowType ({A} => Pi Guard A ({x} => Pi Guard A ({y} => Pi Guard (Eq A x y) ({_} => Eq A y x))))
+  := {A, x, y, p} => eq_subst A x y ({z} => Eq A z x) p refl
+eq_trans : Pi (Sampled [Nat]) ShallowType ({A} => Pi Guard A ({x} => Pi Guard A ({y} => Pi Guard A ({z} => Pi Guard (Eq A x y) ({_} => Pi Guard (Eq A y z) ({_} => Eq A x z))))))
+  := {A, x, y, z, p, q} => eq_subst A y z ({w} => Eq A x w) q p
+eq_cong : Pi (Sampled [Nat]) ShallowType ({A} => Pi (Sampled [Nat]) ShallowType ({A2} => Pi Guard (Pi Guard A ({_} => A2)) ({f} => Pi Guard A ({x} => Pi Guard A ({y} => Pi Guard (Eq A x y) ({_} => Eq A2 (f x) (f y)))))))
+  := {A, A2, f, x, y, p} => eq_subst A x y ({z} => Eq A2 (f x) (f z)) p refl
 test Eq Nat 2 2 refl = true
 test Eq Nat 2 3 refl = false
 test Eq Nat 2 2 (t t) = false
 test eq_subst Nat 2 2 ({_} => Nat) refl 7 = 7
 test eq_sym Nat 2 2 refl = refl
 test eq_trans Nat 2 2 2 refl refl = refl
-test eq_cong Nat succ 2 2 refl = refl
+test eq_cong Nat Nat succ 2 2 refl = refl
 
 // The ask face: a property query on an abstract type answers as a witness
 // typed Cell (P T) -- nobody answers, the witness is a mint, so certificates
