@@ -271,35 +271,36 @@ The 69 Sampled, by reason:
 
 ## Stage R: ask retires into dependent observation rows
 
-The one missing mechanism is small: rows whose observation TYPE is a
-family of the subject. Everything else is relocation.
+LANDED (R1 5bc6f3d6 2026-08-25; R2-R5 089d73055c63 2026-08-26). What shipped, and
+where it differs from the sketch it replaced:
 
-- R1 (landed 5bc6f3d6, 2026-08-25): Row grew ObserveAt (payload = pair
-  accessor family, family : Tree -> ShallowType). check judges the
-  accessor's result at `family f`, the replay answers a matching Acc frame
-  with `family self`, both formed through the tier. Pinned on both tiers:
-  a dependent pair whose second component's type is a family of the whole
-  subject. Obs is untouched (ObserveAt is a row kind).
-- R2: both universes' obs rows gain seven ObserveAt entries: accessor =
-  the flipped ask partial `{T} => ask T P`, family = `{self} => Cell (P
-  self)`. The hardcoded Ask respond branch and the `inj "Ask"` frame
-  become redundant data-wise.
-- R3: the walk's ask case shrinks to frame formation (the
-  pair_fst/pair_snd precedent): an ask partial applied to a neutral
-  routes `self T2 (Acc <flipped partial>)`; the property whitelist
-  leaves the walk (rows carry it).
-- R4: delete the Ask respond branch; hyp_ok replays Acc frames with no
-  ask knowledge; adding a property = adding a row entry plus a slot
-  case (until P3 positional identity re-keys both).
-- R5: Meta parity nearly free: mwalk already consults respond_face at
-  Neu; it needs one Conc arm routing ask partials to Acc frames (mirror
-  of its pair_fst arm). The ask conduct pins then lift from
-  Pi-Guard-literal to arrows under the differential, shrinking stage MP
-  to conversion plus TreeOf.
-- Does NOT retire: witness consumption (case, projection, application
-  of a Cell (P T) witness) still waits on walked type formation or a
-  dedicated case head; stage R only moves licensing out of checker
-  branches into row data.
+- R1: Row grew ObserveAt (payload = pair accessor family); check judges
+  the accessor's result at `family f`, the replay answers a matching Acc
+  frame with `family self`, both formed through the tier.
+- R2 landed as KEYED data, not closures: the definition-order and
+  self-reference wall (GateP/UnderP mention the universe; Cell and ask
+  live 200 lines below ShallowType) is closed by a fourth row kind,
+  `Property k` -- both universes' obs carry seven Property rows, and
+  check/respond resolve k late through the one kernel table `properties`
+  (name x former; prop_slot and fiber read the same table). Property rows
+  are transparent to non-matching frames (T 5 skips them to Fresh);
+  generalizing that skip to Prj/ObserveAt DIVERGES (measured past 8 GB),
+  so telescope semantics stay everywhere else -- a standing landmine.
+- R3 landed stronger than sketched: the walk lost its whole accessor
+  vocabulary, not just the ask case. A parametric refusal on a hypothesis
+  retries once as an Acc frame against the rows; pair_fst/pair_snd and
+  the reduced ask partial (`ask T P = slot_ask (prop_slot P) T`,
+  S/K-walked down to the row's accessor) license identically.
+- R4: Ask frame, respond branch, universe check, prop_formers -- deleted.
+  A new property = one row per universe + one `properties` entry.
+- R5: Meta retries a Poison from closure-applied-to-Neu as the same Acc
+  replay; Fn/Meta/TwoFace ask spellings pinned in kernel.test. The
+  types.disp ask pins keep their Pi-Guard-literal spelling (respelling to
+  arrows is optional polish, not a blocker).
+- Cost: kernel.test cold 198.6M -> 194.3M steps (-2.2%); the rows are
+  ~free, the deleted whitelist pays for them. Measured cold-vs-cold; the
+  warm cold_equiv protocol (AGENTS.md) replaces cold A/Bs going forward.
+- Still does NOT retire: witness consumption (stage WC unchanged).
 
 ## Stage P: the property system (the current arc)
 
@@ -361,7 +362,7 @@ Sub-stages:
 - P2: TypeOf + membership pins (stock types true; junk and hypotheses
   false) + registry-fold-vs-Coherent agreement pins.
 - P3: positional identity: kernel fiber table, ask/licensing re-keyed,
-  surface name-to-index at elaboration, Ask frames carry indices. Gated on
+  surface name-to-index at elaboration, the slot accessors carry indices. Gated on
   P0 fixpoint stability. Def-order landmine to plan around: the fold must
   serve annotations above Nat while honest signatures need List/Eff from
   below it -- split registry (below) from the fold's Nat-serving half, or
@@ -375,10 +376,11 @@ Sub-stages:
 
 ## Stage MP: Meta parity for the new heads
 
-An Ask rule and a conversion route in Meta (mwalk/vcheck), plus the TreeOf
-branching-program divergence (needs host-side step tracing of the
-simulator). Lifts the Guard-literal pin families (ask conduct, transport,
-RawRecordRows conduct) to arrows under the differential. The deep
+Stage R landed the ask route (the Poison-to-Acc retry), so MP is down to a
+conversion route in Meta (mwalk/vcheck) plus the TreeOf branching-program
+divergence (needs host-side step tracing of the simulator). Lifts the
+remaining Guard-literal pin families (transport, RawRecordRows conduct) to
+arrows under the differential. The deep
 alternative stays recorded: converge Meta onto Guard's in-band provenance
 design instead of accreting parity rules.
 
@@ -489,7 +491,7 @@ defs, recorded per-def.
 
 P0 first: it is cheap and selects the identity scheme and the law story for
 everything in P. MP and P1-P2 next, in either order (P1-P2 are additive
-library work; MP lifts three pin families to the differential surface). WC
+library work; MP lifts two pin families to the differential surface). WC
 via the case head (direct probe 2026-08-25: case_of on an asked witness
 still refuses; walked formation did not unblock it). P3-P4 once P0-P2 hold; P5 measured,
 never scheduled. EQ's step-4 after P1 (it wants the registry and laws in
