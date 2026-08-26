@@ -1,0 +1,296 @@
+open use raw "../prelude.disp" {}
+open use raw "kernel.disp" {}
+open use "prelude.disp"
+
+// Abram Demski's "Coherent Care" (lesswrong.com/posts/CDkbYSFTwggGE8mWp), formalized.
+// Vocabulary map (post term = name here):
+//   subjective state   = Outlook   (what seems likely + how much each world matters)
+//   decision-point     = Moment    (an outlook plus a menu of options)
+//   decision procedure = Chooser   (Moment -> Option)
+//   decision problem   = Trial     (Chooser -> Lottery of (payoff, world)); the
+//                        transparent, auditable subclass is a Script
+//   observation calibration      = fair_to
+//   subjective-state calibration = strictly_fair_to
+//   anti-conflict / single-agent = united (Pareto across the trial's moments)
+//   geometric-UDT moral partition = coherent_care (Pareto across moral labels)
+
+mul : Nat -> Nat -> Nat := {n, m} => nat_rec Nat n zero ({_k, ih} => add m ih)
+test mul 3 4 = 12
+test mul 0 5 = 0
+
+// A score is a fraction (numerator, denominator) so expected values need no
+// division; compare by cross-multiplying. (0, 0) is "no opinion" and compares
+// equal to everything.
+frac_le := {a, b} => nat_le (mul (pair_fst a) (pair_snd b)) (mul (pair_fst b) (pair_snd a))
+frac_lt := {a, b} => not (frac_le b a)
+test frac_le (pair 1 2) (pair 2 3) = true
+test frac_lt (pair 2 3) (pair 1 2) = false
+test frac_le (pair 0 0) (pair 5 1) = true
+test frac_le (pair 5 1) (pair 0 0) = true
+
+/// One weighted possibility: a relative weight paired with a result.
+Weighted := {A} => Sigma Guard Nat ({_} => A)
+/// A lottery: finitely many possible results, each with its relative odds.
+Lottery := {A} => List (Weighted A)
+test Lottery Nat [pair 1 7, pair 3 9] = true
+// (Note: a bare nat also passes, since succ and pair share a tree shape; the
+// structural pun is the same one ListR documents in types.disp.)
+test Lottery Nat [t] = false
+
+/// All the weight in a lottery.
+total := {L} => list_rec Tree Nat L zero ({c, _tl, ih} => add (pair_fst c) ih)
+/// How much weight a lottery puts on one exact result.
+mass := {L, x} => list_rec Tree Nat L zero ({c, _tl, ih} => if (tree_eq (pair_snd c) x) { add (pair_fst c) ih } else { ih })
+/// Keep only the possibilities where an event holds (conditioning, unnormalized).
+assuming := {ev, L} => list_filter Tree ({c} => ev (pair_snd c)) L
+/// Expected value of f over a lottery, as a fraction (weighted sum, total weight).
+mean := {f, L} => pair (list_rec Tree Nat L zero ({c, _tl, ih} => add (mul (pair_fst c) (f (pair_snd c))) ih)) (total L)
+/// Two lotteries agree: the same results in the same proportions.
+same_odds := {L1, L2} => {
+  let t1 := total L1
+  let t2 := total L2
+  if (or (tree_eq t1 0) (tree_eq t2 0)) { and (tree_eq t1 0) (tree_eq t2 0) }
+  else { list_all Tree ({c} => tree_eq (mul (mass L1 (pair_snd c)) t2) (mul (mass L2 (pair_snd c)) t1)) (list_cat Tree L1 L2) }
+}
+test total [pair 1 "a", pair 3 "b"] = 4
+test mass [pair 1 "a", pair 3 "b", pair 2 "a"] "a" = 3
+test mean ({_} => 10) [pair 1 "a", pair 3 "b"] = pair 40 4
+test same_odds [pair 1 "a", pair 1 "b"] [pair 3 "b", pair 3 "a"] = true
+test same_odds [pair 1 "a", pair 1 "b"] [pair 1 "a", pair 3 "b"] = false
+test same_odds [] [pair 1 "a"] = false
+
+// A World is any tree naming a way everything could turn out. An Option (the
+// things on a menu) is Jeffrey-Bolker style: the event that you take it, as a
+// predicate picking out the worlds where you did.
+
+/// A subjective state: `odds` is a lottery over worlds, `care` scores each world.
+Outlook := NamedRec [pair "odds" (Lottery Tree), pair "care" Tree]
+/// A decision-point: the mind you are handed, and the menu you choose from.
+Moment := NamedRec [pair "mind" Outlook, pair "menu" (List Tree)]
+// A Chooser (decision procedure) is a function Moment -> Option. A Trial
+// (the post's decision problem) is a function Chooser -> Lottery of
+// (payoff, world): it may call the chooser at any moments it likes and cannot
+// read its source, only its answers.
+
+/// The auditable trials: a one-shot memoryless pomdp, laid out as data.
+/// `sights` lists every observation the trial may ask about, `shows` hands over
+/// the moment at each sight, `seen` says which sight really happens in each
+/// world, `score` is the objective payoff, and `play` gives the objective
+/// lottery over worlds once the agent's whole policy (Sight -> Option) is fixed.
+Script := NamedRec [pair "sights" (List Tree), pair "shows" Tree, pair "seen" Tree, pair "score" Tree, pair "play" Tree]
+
+/// Put a chooser into a script: ask it at every sight, then let the world unfold.
+run := {S, D} => S.play ({s} => D (S.shows s))
+/// How well a chooser fares on a script: expected score, as a fraction.
+payout := {S, D} => mean S.score (run S D)
+/// A script viewed as a bare Trial: the chooser goes in, (payoff, world) pairs come out.
+to_trial := {S, D} => list_map Tree Tree ({c} => pair (pair_fst c) (pair (S.score (pair_snd c)) (pair_snd c))) (run S D)
+
+/// The runs in which a given sight is what you actually saw.
+runs_at := {S, D, s} => assuming ({w} => tree_eq (S.seen w) s) (run S D)
+/// A sight tells the truth: the outlook handed over there matches the real
+/// conditional odds among runs where it is seen, and its care matches the score.
+truthful_at := {S, D, s} => {
+  let mind := (S.shows s).mind
+  let real := runs_at S D s
+  and (same_odds mind.odds real)
+      (list_all Tree ({c} => tree_eq (mind.care (pair_snd c)) (S.score (pair_snd c))) real)
+}
+/// Observation calibration: every sight that ever really happens tells the
+/// truth. Sights that never happen are exempt; that exemption is the loophole
+/// updateless problems live in (Omega may ask about a sight that never comes).
+fair_to := {S, D} => list_all Tree ({s} => or (tree_eq (total (runs_at S D s)) 0) (truthful_at S D s)) S.sights
+/// Subjective-state calibration: no imaginary interviews. Every sight the
+/// script can ask about must really happen sometimes, and tell the truth.
+strictly_fair_to := {S, D} => list_all Tree (truthful_at S D) S.sights
+
+/// The list entry whose fraction-valued score is highest; earlier entries win ties.
+best_by := {score_of, xs} => {
+  let found := list_rec Tree Tree xs t ({h, _tl, ih} =>
+    if (is_leaf ih) { list_const h }
+    else if (frac_lt (score_of h) (score_of (pair_snd ih))) { ih }
+    else { list_const h })
+  if (is_leaf found) { t } else { pair_snd found }
+}
+test best_by ({n} => pair n 1) [2, 9, 5] = 9
+
+/// Evidential decision theory as advice at one moment: take the option that
+/// would be the best news to learn you took. An option your outlook gives zero
+/// odds scores (0, 0), indifferent to everything: EDT's probability-zero-action
+/// problem, unresolved here as in the post (trembling hands are one way out).
+best_news := {m} => {
+  let mind := m.mind
+  best_by ({opt} => mean mind.care (assuming opt mind.odds)) m.menu
+}
+
+/// Every full policy for a script, one menu pick per sight, as (sight, option) pairs.
+plans := {S} => list_rec Tree Tree S.sights [[]] ({s, _tl, rest} =>
+  list_rec Tree Tree (S.shows s).menu [] ({opt, _t2, acc} =>
+    list_cat Tree (list_map Tree Tree ({pl} => cons Tree (pair s opt) pl) rest) acc))
+/// Turn a plan back into a policy.
+follow := {pl, s} => list_assoc s pl
+/// Updateless decision theory: the plan with the best expected score over the
+/// whole script. Note it takes the entire script, not a moment: UDT cannot be
+/// written as a bare Chooser, the prior must be handed to it. That extra input
+/// is the honest cost of UDT the post ends the Design section on.
+best_plan := {S} => best_by ({pl} => mean S.score (S.play (follow pl))) (plans S)
+
+/// A run-lottery is a Pareto improvement in the eyes of a list of judges
+/// (each judge scores a run as a fraction): nobody worse off, somebody better off.
+pareto_beats := {judges, L2, L1} =>
+  and (list_all Tree ({j} => frac_le (j L1) (j L2)) judges)
+      (not (list_all Tree ({j} => frac_le (j L2) (j L1)) judges))
+
+/// One moment's opinion of a run: expected care by its own lights, among the
+/// worlds where its sight happens. A moment that never happens has no opinion.
+opinion := {S, s, L} => {
+  let mind := (S.shows s).mind
+  mean mind.care (assuming ({w} => tree_eq (S.seen w) s) L)
+}
+/// The trial's moments, as judges of runs.
+voices := {S} => list_map Tree Tree ({s} => {L} => opinion S s L) S.sights
+/// D2 outvotes D1 when switching is a Pareto improvement for the moments
+/// themselves: infighting, the trial's decision-points do not act as one agent.
+outvotes := {S, D2, D1} => pareto_beats (voices S) (run S D2) (run S D1)
+/// Single-agent-ness, relative to a finite field of rivals: no rival outvotes D.
+united := {S, D, rivals} => list_all Tree ({r} => not (outvotes S r D)) rivals
+
+/// Geometric-UDT sketch: `lab` sorts worlds into moral possibilities ("what we
+/// might care about"); each label judges runs by expected score within it.
+stakes := {S, lab, labels} => list_map Tree Tree ({k} => {L} => mean S.score (assuming ({w} => tree_eq (lab w) k) L)) labels
+/// Coherent care: no rival's run Pareto-beats D's across the moral labels.
+/// One coarse label = vanilla updateless care; one label per sight = updateful.
+coherent_care := {S, lab, labels, D, rivals} => list_all Tree ({r} => not (pareto_beats (stakes S lab labels) (run S r) (run S D))) rivals
+
+// ---- Example 1: Transparent Newcomb. Worlds are (sight, act) pairs; Omega
+// fills the large box exactly when your policy at the full-box sight is to
+// leave the small one.
+take_both := {w} => tree_eq (pair_snd w) "both"
+take_large := {w} => tree_eq (pair_snd w) "large"
+newcomb_score := {w} =>
+  if (tree_eq (pair_fst w) "full") { if (tree_eq (pair_snd w) "both") { 101 } else { 100 } }
+  else { if (tree_eq (pair_snd w) "both") { 1 } else { 0 } }
+newcomb_menu := [take_both, take_large]
+newcomb_shows := {s} =>
+  if (tree_eq s "full") { ({ mind := ({ odds := [pair 1 (pair "full" "large")], care := newcomb_score }), menu := newcomb_menu }) }
+  else { ({ mind := ({ odds := [pair 1 (pair "empty" "both")], care := newcomb_score }), menu := newcomb_menu }) }
+newcomb := ({
+  sights := ["full", "empty"]
+  shows := newcomb_shows
+  seen := pair_fst
+  score := newcomb_score
+  play := {pol} =>
+    if (tree_eq (pol "full") take_large) { [pair 1 (pair "full" "large")] }
+    else { [pair 1 (pair "empty" (if (tree_eq (pol "empty") take_both) { "both" } else { "large" }))] }
+})
+one_boxer := {_m} => take_large
+two_boxer := {_m} => take_both
+test Script newcomb = true
+test Moment (newcomb_shows "full") = true
+test run newcomb one_boxer = [pair 1 (pair "full" "large")]
+test payout newcomb one_boxer = pair 100 1
+test payout newcomb two_boxer = pair 1 1
+test to_trial newcomb two_boxer = [pair 1 (pair 1 (pair "empty" "both"))]
+// The post's claim: any chooser can be mechanically put into Transparent
+// Newcomb; the sight it would refute simply never happens, so both are exempt.
+test fair_to newcomb one_boxer = true
+test fair_to newcomb two_boxer = true
+// But the stricter notion refuses it: some asked-about sight never really
+// happens for either chooser, so Omega's interview is partly imaginary.
+test strictly_fair_to newcomb one_boxer = false
+test strictly_fair_to newcomb two_boxer = false
+// The one-boxer earns more; UDT's plan leaves the small box at the full sight.
+test frac_lt (payout newcomb two_boxer) (payout newcomb one_boxer) = true
+test tree_eq (follow (best_plan newcomb) "full") take_large = true
+// Vanilla updateless care: one moral possibility, only one-boxing survives.
+test coherent_care newcomb ({_w} => t) [t] one_boxer [two_boxer] = true
+test coherent_care newcomb ({_w} => t) [t] two_boxer [one_boxer] = false
+// Fine-grained moral uncertainty (one label per sight) excuses the updateful
+// two-boxer: in the moral possibility it forecloses, it has nothing at stake.
+test coherent_care newcomb pair_fst ["full", "empty"] two_boxer [one_boxer] = true
+
+// ---- Example 2: Smoking Lesion. Worlds are (lesion, act) pairs; the lesion,
+// not the act, brings cancer. The handed outlook carries the population
+// statistics (smoking correlated with the lesion), but any deterministic
+// chooser breaks that correlation, so nobody can be put into this trial:
+// the problem, not the procedure, is defective.
+smoke := {w} => tree_eq (pair_snd w) "smoke"
+abstain := {w} => tree_eq (pair_snd w) "abstain"
+lesion_score := {w} => add (if (tree_eq (pair_fst w) "lesion") { 0 } else { 100 }) (if (smoke w) { 10 } else { 0 })
+lesion_moment := ({
+  mind := ({
+    odds := [pair 4 (pair "lesion" "smoke"), pair 1 (pair "lesion" "abstain"), pair 1 (pair "clean" "smoke"), pair 4 (pair "clean" "abstain")]
+    care := lesion_score
+  })
+  menu := [smoke, abstain]
+})
+lesion := ({
+  sights := ["urge"]
+  shows := {_s} => lesion_moment
+  seen := {_w} => "urge"
+  score := lesion_score
+  play := {pol} => {
+    let act := if (tree_eq (pol "urge") smoke) { "smoke" } else { "abstain" }
+    [pair 1 (pair "lesion" act), pair 1 (pair "clean" act)]
+  }
+})
+smoker := {_m} => smoke
+abstainer := {_m} => abstain
+test Script lesion = true
+test fair_to lesion smoker = false
+test fair_to lesion abstainer = false
+// At the decision-point itself, EDT reads the correlation as bad news.
+test tree_eq (best_news lesion_moment) abstain = true
+
+// ---- Example 3: a plain forecast, calibrated and fully real: rain 1 part in
+// 4, sun 3 parts; carry an umbrella or go bare. Both sights really happen, so
+// even the strict notion is satisfied by the chooser the outlooks describe.
+carry := {w} => tree_eq (pair_snd w) "carry"
+bare := {w} => tree_eq (pair_snd w) "bare"
+forecast_score := {w} =>
+  if (tree_eq (pair_fst w) "rain") { if (carry w) { 3 } else { 0 } }
+  else { if (carry w) { 1 } else { 2 } }
+forecast_shows := {s} =>
+  if (tree_eq s "rain") { ({ mind := ({ odds := [pair 1 (pair "rain" "carry")], care := forecast_score }), menu := [carry, bare] }) }
+  else { ({ mind := ({ odds := [pair 1 (pair "sun" "bare")], care := forecast_score }), menu := [bare, carry] }) }
+forecast := ({
+  sights := ["rain", "sun"]
+  shows := forecast_shows
+  seen := pair_fst
+  score := forecast_score
+  play := {pol} => [
+    pair 1 (pair "rain" (if (tree_eq (pol "rain") carry) { "carry" } else { "bare" })),
+    pair 3 (pair "sun" (if (tree_eq (pol "sun") carry) { "carry" } else { "bare" }))
+  ]
+})
+/// Does whatever the trial's outlooks predicted (the first menu entry).
+prudent := {m} => pair_fst m.menu
+/// Carries the umbrella come rain or shine.
+grump := {_m} => carry
+test strictly_fair_to forecast prudent = true
+test fair_to forecast grump = false
+// Infighting made visible: prudent outvotes grump because grump's sunny-day
+// moment would strictly prefer the switch and no moment objects.
+test outvotes forecast prudent grump = true
+test united forecast grump [prudent] = false
+test united forecast prudent [grump, one_boxer, two_boxer] = true
+test tree_eq (follow (best_plan forecast) "rain") carry = true
+
+// Missing formalisms the post leaves open (and how this file stands in):
+//  - "Stochastic function" is never fixed; here it is finite Nat-weighted lotteries.
+//  - CDT's counterfactual structure: an Outlook has no causal part, so CDT is
+//    only present as an opaque chooser (smoker), never derived.
+//  - The call trace: a bare Trial cannot be audited for which moments it
+//    queried, so both calibration notions are only checkable on Scripts, and
+//    strictly_fair_to over-approximates "queried" by "askable" (S.sights).
+//  - Memoryless pomdp: Script is the one-shot case; multi-step runs (histories
+//    of subjective states) and SSA/SIA anthropics are not modeled.
+//  - Zero-probability actions: best_news inherits the (0, 0) indifference; the
+//    post's trembling hand is not formalized.
+//  - Superconditioning (the bridge between the two calibrations) is asserted
+//    in the post, never defined, and absent here.
+//  - Pareto over all choosers is undecidable; united and coherent_care take a
+//    finite field of rivals as a parameter instead.
+//  - Geometric UDT's aggregation (the geometric mean itself) and the partition-
+//    as-random-variable generalization are sketched in the post, not defined;
+//    stakes keeps only the partition-as-labelling part.
