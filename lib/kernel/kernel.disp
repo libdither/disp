@@ -146,7 +146,7 @@ is_acc : Pi (Sampled [Acc pair_fst, 5]) Tree ({_} => Bool) := has_sig "Acc"
 is_elim_frame : Pi (Sampled [Elim (pair t t), 5]) Tree ({_} => Bool) := has_sig "Elim"
 
 ObsCode : List Tree := < App, Self, Prj : t >
-RowCode : List Tree := < Fresh : t, Observe : t >
+RowCode : List Tree := < Fresh : t, Observe : t, ObserveAt : t >
 Pred : Tree -> ShallowType := {p} => ({ #recognize := {_self, v} => p v })
 Bool : Refine Space Coherent := ({
   #recognize := {_self, v} => triage true ({c} => tree_eq c t) ({l, r} => false) v
@@ -500,6 +500,10 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
             Self _ => (go (tail t))
             App _ => (invalid frame)
           })
+          ObserveAt af => (match frame {
+            Acc fa => (if (tree_eq (pair_fst af) fa) { pair [] (form (pair_snd af) self) } else { go (form tail (self (Acc (pair_fst af)))) })
+            _ => (invalid frame)
+          })
         })
         _ => (invalid frame)
       }) rows
@@ -565,6 +569,11 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
               perform (Judge (pair ty lo)) ({ok} =>
                 if ok { perform (Form (pair tail lo)) ({next} => self next f prior) } else { Pure false }))))
         })
+        ObserveAt af => (perform (Form (pair (pair_fst af) f)) ({o} =>
+          perform (Form (pair (pair_snd af) f)) ({ty} =>
+            perform (Lift o) ({lo} =>
+              perform (Judge (pair ty lo)) ({ok} =>
+                if ok { perform (Form (pair tail lo)) ({next} => self next f prior) } else { Pure false })))))
       })
       _ => (Pure false)
     })

@@ -315,8 +315,8 @@ test Pi ({}) Nat ({_} => Nat) succ = false
 // reflection. is_acc pins the sealed-core edge: a real kernel reader (raw
 // triage + tree_eq on its input) does not certify.
 row_rec := elim_of Row ({_} => Bool)
-row_binds := {row} => row_rec row ({_ty} => true) ({_ob} => false)
-row_binds_bad := {row} => row_rec row ({_ty} => true) ({_ob} => 5)
+row_binds := {row} => row_rec row ({_ty} => true) ({_ob} => false) ({_af} => false)
+row_binds_bad := {row} => row_rec row ({_ty} => true) ({_ob} => 5) ({_af} => false)
 row_binds_raw := {row} => match row { Fresh _ty => true; Observe _ob => false }
 test Row (Fresh zero) = true
 test Row (Observe (pair App Nat)) = true
@@ -329,6 +329,26 @@ test Pi Guard Row ({_} => Bool) row_binds_bad = false
 test Pi Meta Row ({_} => Bool) row_binds_bad = false
 test Pi Guard Row ({_} => Bool) row_binds_raw = false
 test Pi Guard Row ({_} => Bool) is_acc = false
+// A dependent observation row (ObserveAt): the observation's TYPE is a family
+// of the subject. Forward, the accessor's result is judged at family f;
+// in replay, a hypothesis's matching Acc frame answers family self -- so a
+// projection out of a rows-typed hypothesis lands at the family at that
+// hypothesis (the shape the ask face will ride once its rows are data).
+DepRows := make_type ({ tele := perform (Observe (pair Self (Pred is_fork))) ({_} =>
+  perform (Observe (pair (Prj pair_fst) Nat)) ({_} =>
+  perform (ObserveAt (pair pair_snd ({s} => Point (pair_fst s)))) ({_} => Pure t))) })
+DepPair := Tele Guard DepRows
+test Row (ObserveAt (pair pair_snd ({_s} => Nat))) = true
+test row_binds (ObserveAt (pair pair_snd ({_s} => Nat))) = false
+test DepPair (pair 3 3) = true
+test DepPair (pair 3 4) = false
+test DepPair 5 = false
+test (Pi Guard Nat ({_} => DepPair)) ({_n} => pair 3 3) = true
+test (Pi Guard Nat ({_} => DepPair)) ({_n} => pair 3 4) = false
+test (Pi Guard DepPair ({h} => Nat)) ({h} => pair_fst h) = true
+test (Pi Guard DepPair ({h} => Point (pair_fst h))) ({h} => pair_snd h) = true
+test (Pi Guard DepPair ({h} => Point (pair_fst h))) ({h} => pair_fst h) = false
+test (Pi Meta DepPair ({h} => Point (pair_fst h))) ({h} => pair_snd h) = true
 
 // n-ary sums: the collectors and gate derive the case arity from the gate's
 // obligation-type list, so Sum is variant-count generic -- Obs has three.
