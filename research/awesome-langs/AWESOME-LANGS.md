@@ -3,7 +3,7 @@
 Languages and systems surveyed against **disp**'s goals, August 2026.
 Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19).
+(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -50,11 +50,12 @@ search on itself.
 | [**LogosLang**](logoslang.md) | ◐ | ◐ᵈ | ✗ | ✗ | ✅ | ✗ | nearest indie statement of disp's thesis |
 | [**Acorn**](acorn.md) | ✗ | ◐ | ◐ | ✗ | ✗ | **✅** | *local* neural proposer in the loop |
 | [**Salt**](salt.md) | ✗ | ◐ | ✗ | ✗ | ◐ᶜ | ✗ | proof-coverage as a continuous signal |
+| [**Telomare** (Stand-In Language)](telomare.md) | ✗ | ◐ | ✗ | ✗ | ◐ᵗ | ✗ | the *static cost bound*: totality by inferred iteration counts, `--certificate`/`--meter` |
 | [**Indie AI-first cluster**](indie-ai-first-cluster.md) | ✗ | ◐ | ✗ | ✗ | mostly ✗ | ◐ | LSTS shares the library-not-kernel thesis |
 | [**Adjacent substrates**](adjacent-substrates.md) | — | — | — | **✅**ᵉ | — | — | egg/e-graphs ≈ disp's `~_T` machinery |
 | [**Graveyard**](graveyard.md) | — | — | — | — | — | — | what happens when this is attempted |
 
-ᵈ designed, not built · ᶜ claimed, unverified provenance · ᵉ egg specifically · ᶠ cost-only parameter sweeps, not program search
+ᵈ designed, not built · ᶜ claimed, unverified provenance · ᵉ egg specifically · ᶠ cost-only parameter sweeps, not program search · ᵗ static iteration bounds, no native speed
 
 ---
 
@@ -85,7 +86,9 @@ itself, and no one else's can.**
   replayable certificates) all have answers.
   This is disp's own Q1 and the survey confirms it as the weakest point.
 - **A5 (performance):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ CakeML ahead; disp is an
-  interpreted tree-walker with a measured 4,000–67,000× ic-net penalty.
+  interpreted tree-walker with a measured 4,000–67,000× ic-net penalty. Telomare is the
+  only entry with a *static* cost bound (inferred per-site iteration counts): the coeffect
+  half of §9, which disp has not built.
 - **A6 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
   and CryptOpt (randomized, certified) are all ahead of disp, which has this
   designed but unbuilt.
@@ -136,6 +139,9 @@ itself, and no one else's can.**
 10. **Mechanized metatheory for the two-op kernel** as the external anchor Q5 needs.
     NanoLang shows a solo dev can produce an `Admitted`-free development.
     → `nanolang.md`
+11. **Inferred iteration bounds as a static cost certificate**, with the two failure kinds
+    named (budget exhausted vs. input nothing bounds) and the analysis cached in a
+    compile-once artifact. → `telomare.md`
 
 ---
 
