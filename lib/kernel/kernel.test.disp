@@ -697,6 +697,22 @@ test Fn Nat ({m} => Fn Nat (add_succ_motive m)) ({m, n} => elim_of Nat (add_succ
 test Pi Meta Nat ({m} => Pi Meta Nat (add_succ_motive m)) ({m, n} => elim_of Nat (add_succ_motive m) n refl ({p, ih} => refl)) = true
 test Fn Nat ({m} => Fn Nat (add_succ_motive m)) ({m, n} => refl) = false
 test Fn Nat ({m} => Fn Nat (add_succ_motive m)) ({m, n} => elim_of Nat (add_succ_motive m) n refl ({p, ih} => pair 5 5)) = false
+// Commutativity of addition, in-kernel: the J instances (eq_sym, eq_trans,
+// eq_cong at the dependent tier) chain the add_zero and add_succ inductions
+// into the step obligation. The attempt without induction and the step that
+// hands back the induction hypothesis at the wrong type are refused. Guard
+// only: the lemmas are Pi-Guard-literal and Meta refuses the chained proof.
+add_zero_pf := {m} => elim_of Nat ({n} => Eq Nat (add n zero) n) m refl ({p, ih} => refl)
+add_succ_pf := {m, n} => elim_of Nat (add_succ_motive m) n refl ({p, ih} => refl)
+add_comm_motive := {m} => {n} => Eq Nat (add n m) (add m n)
+add_comm_pf := {m, n} => elim_of Nat (add_comm_motive m) n
+  (eq_sym Nat (add m zero) m (add_zero_pf m))
+  ({p, ih} => eq_trans Nat (succ (add p m)) (succ (add m p)) (add m (succ p))
+                (eq_cong Nat Nat succ (add p m) (add m p) ih)
+                (eq_sym Nat (add m (succ p)) (succ (add m p)) (add_succ_pf p m)))
+test Fn Nat ({m} => Fn Nat (add_comm_motive m)) add_comm_pf = true
+test Fn Nat ({m} => Fn Nat (add_comm_motive m)) ({m, n} => refl) = false
+test Fn Nat ({m} => Fn Nat (add_comm_motive m)) ({m, n} => elim_of Nat (add_comm_motive m) n (eq_sym Nat (add m zero) m (add_zero_pf m)) ({p, ih} => ih)) = false
 test is_neutral (walk_open ({k} => add k zero) (make_hyp Nat "k")) = true
 test tree_eq (neutral_type (walk_open ({k} => add k zero) (make_hyp Nat "k"))) Nat = true
 
