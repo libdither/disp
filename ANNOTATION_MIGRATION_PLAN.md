@@ -22,8 +22,9 @@ Annotation tiers, strongest first:
 - None.
 
 Census (scripts/annotation_census.py, 2026-08-25 post-formation, 241 defs):
-56 none, 49 membership, 65 sampled, 71 guard-tier shape-precise;
-exact/dependent content at inj, list_const, nat_rec, tree_rec, list_rec.
+52 none, 49 membership, 69 sampled, 71 guard-tier shape-precise;
+exact/dependent content at inj, list_const, nat_rec, tree_rec, list_rec,
+and the four Eq lemmas at the J tier (carrier sampled).
 The seven new unannotated are the walker refactor's atoms (fix_sig,
 teq_decide_at, walk_open_at, the four handler constants). The full
 classification of what remains and why is the "Remaining surface" section
@@ -154,6 +155,21 @@ Trust facts that shape everything:
   restored on any exit), probe.sh reports cache and RSS, the census
   accepts -v.
 
+- Harvest after walked formation (2026-08-25): computed motives beyond
+  add_zero (a48aaae3: mul_zero, add_succ, both tiers); the Eq lemmas as J
+  instances at the dependent tier (8e3cf5b8) behind two enabling changes
+  -- canon tests neutral_free lazily (strict `or` ran it under the
+  candidate walker, which refuses inspection), and Eq's recognizer keeps
+  the endpoint comparison under the binder (`tree_eq (pair nx v) (pair ny
+  refl)`: the hoisted `tree_eq nx ny` was baked with the constructing
+  walker's answer, so the candidate's Eq and the hypothesis's type
+  diverged by tree identity); commutativity of addition proved in-kernel
+  (f32e55ef, Guard). elim_marker drops its self-threading (86395f6a): the
+  walker supplies the marked head as self. Probed and refused: the
+  open_chain family is live (the private list_rec is a bare fix identical
+  to List's elim -- neutering it breaks nine combinators); merging check
+  and respond_face_at (opposite jobs under different protocols).
+
 ## Probe-confirmed boundaries (canonical list; each caps a tier somewhere)
 
 1. Raw structural inspection of a mint refuses (the naturality floor).
@@ -201,7 +217,7 @@ Trust facts that shape everything:
 
 ## Remaining surface (census 2026-08-25, post-formation)
 
-The 56 unannotated, by reason:
+The 52 unannotated, by reason:
 
 - Sig constants (9): tree_eq_sig, invalid_sig, open_sig, fix_sig, hyp_sig,
   elim_sig, elim_stuck_sig, ask_sig, Rec. Value atoms; a stem-shape
@@ -222,11 +238,6 @@ The 56 unannotated, by reason:
   by the elaborator; annotations add nothing the pins do not.
 - Trivia (3): arm (alias of idx), Sus (writable `: ShallowType`), refl
   (its honest type is every reflexive Eq at once; no single annotation).
-- Eq lemma family (4): eq_subst, eq_sym, eq_trans, eq_cong.
-  Sampled-writable today; the honest dependent tier is the J rule, which
-  walked formation unblocked (2026-08-25). The current bodies use constant
-  motives and pass only at concrete endpoints; the honest ones compute
-  the motive on the bound endpoint.
 - Row-program builders (9): raw_record_rows, record_rows, all_rows,
   splits, bijection, unique_rows, mixed_rows, perfect_rows, len_xs_rows.
   Probed blocker: Eff membership walks continuations at junk leaves, so
@@ -237,7 +248,12 @@ The 56 unannotated, by reason:
 - Private lets (list_mem, eff_mem, record_mem and friends): not
   exported, deliberately bare.
 
-The 64 Sampled, by reason:
+The 69 Sampled, by reason:
+
+- The Eq lemmas (4, 2026-08-25): J instances at the dependent tier --
+  sampled carrier (Nat), hypotheses for endpoints, families, proofs and
+  bases; Pi-Guard-literal because the TwoFace differential's probe
+  expansion over six binders measured past 6.5 GB.
 
 - Inspector wall (the bulk): field/record readers, sig testers, dot,
   make_type, faced, handle, prod, the elim machinery accessors, ask,
@@ -258,11 +274,12 @@ The 64 Sampled, by reason:
 The one missing mechanism is small: rows whose observation TYPE is a
 family of the subject. Everything else is relocation.
 
-- R1: Row/Obs grow a dependent observation (ObserveAt: payload = pair
-  accessor family, family : Tree -> ShallowType); respond_face's rows
-  walk answers a matching Acc frame with `pair [] (family self)`. One
-  sum-code variant plus one respond arm; pin a dependent projection on a
-  rows-typed hypothesis.
+- R1 (landed 5bc6f3d6, 2026-08-25): Row grew ObserveAt (payload = pair
+  accessor family, family : Tree -> ShallowType). check judges the
+  accessor's result at `family f`, the replay answers a matching Acc frame
+  with `family self`, both formed through the tier. Pinned on both tiers:
+  a dependent pair whose second component's type is a family of the whole
+  subject. Obs is untouched (ObserveAt is a row kind).
 - R2: both universes' obs rows gain seven ObserveAt entries: accessor =
   the flipped ask partial `{T} => ask T P`, family = `{self} => Cell (P
   self)`. The hardcoded Ask respond branch and the `inj "Ask"` frame
