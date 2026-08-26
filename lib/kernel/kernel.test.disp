@@ -315,8 +315,8 @@ test Pi ({}) Nat ({_} => Nat) succ = false
 // reflection. is_acc pins the sealed-core edge: a real kernel reader (raw
 // triage + tree_eq on its input) does not certify.
 row_rec := elim_of Row ({_} => Bool)
-row_binds := {row} => row_rec row ({_ty} => true) ({_ob} => false) ({_af} => false)
-row_binds_bad := {row} => row_rec row ({_ty} => true) ({_ob} => 5) ({_af} => false)
+row_binds := {row} => row_rec row ({_ty} => true) ({_ob} => false) ({_af} => false) ({_k} => false)
+row_binds_bad := {row} => row_rec row ({_ty} => true) ({_ob} => 5) ({_af} => false) ({_k} => false)
 row_binds_raw := {row} => match row { Fresh _ty => true; Observe _ob => false }
 test Row (Fresh zero) = true
 test Row (Observe (pair App Nat)) = true
@@ -349,6 +349,27 @@ test (Pi Guard DepPair ({h} => Nat)) ({h} => pair_fst h) = true
 test (Pi Guard DepPair ({h} => Point (pair_fst h))) ({h} => pair_snd h) = true
 test (Pi Guard DepPair ({h} => Point (pair_fst h))) ({h} => pair_fst h) = false
 test (Pi Meta DepPair ({h} => Point (pair_fst h))) ({h} => pair_snd h) = true
+
+// Stage R: the universes' property queries are rows (Property k, one per
+// slot, resolved late through the kernel fiber table), the walk has no
+// accessor vocabulary (a parametric refusal on a hypothesis retries as an
+// Acc frame the rows may license), and Meta mirrors the same rule -- so the
+// ask conduct lifts to arrows and the differentials.
+test Row (Property "gate") = true
+test row_binds (Property "gate") = false
+test (Pi Guard ShallowType ({T} => Cell (GateP T))) ({T} => ask T GateP) = true
+test (Pi Guard ShallowType ({T} => Cell (UnderP T))) ({T} => ask T UnderP) = true
+test (Pi Guard ShallowType ({T} => Cell (EndsP T))) ({T} => ask T EndsP) = true
+test (Pi Guard ShallowType ({T} => Cell (MembersP T))) ({T} => slot_ask "members" T) = true
+test (Pi Guard ShallowType ({T} => Tree)) ({T} => slot_ask "bogus" T) = false
+test (Fn ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
+test (Pi TwoFace ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
+test (Pi Meta ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
+test (Pi Meta ShallowType ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
+test (Pi Meta ShallowType ({T} => Cell (GateP T))) ({T} => ask T GateP) = true
+test (Pi Meta ShallowType ({T} => Tree)) ({T} => ask T ({X} => X)) = false
+test (Pi Meta Space ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
+test (Pi Meta ShallowType ({_} => Bool)) ({T} => T 5) = true
 
 // n-ary sums: the collectors and gate derive the case arity from the gate's
 // obligation-type list, so Sum is variant-count generic -- Obs has three.

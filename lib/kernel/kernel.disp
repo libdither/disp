@@ -146,7 +146,7 @@ is_acc : Pi (Sampled [Acc pair_fst, 5]) Tree ({_} => Bool) := has_sig "Acc"
 is_elim_frame : Pi (Sampled [Elim (pair t t), 5]) Tree ({_} => Bool) := has_sig "Elim"
 
 ObsCode : List Tree := < App, Self, Prj : t >
-RowCode : List Tree := < Fresh : t, Observe : t, ObserveAt : t >
+RowCode : List Tree := < Fresh : t, Observe : t, ObserveAt : t, Property : t >
 Pred : Tree -> ShallowType := {p} => ({ #recognize := {_self, v} => p v })
 Bool : Refine Space Coherent := ({
   #recognize := {_self, v} => triage true ({c} => tree_eq c t) ({l, r} => false) v
@@ -154,7 +154,11 @@ Bool : Refine Space Coherent := ({
   members := [true, false]
   elim := {_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b
 })
-ShallowType : Space := ({ #recognize := {_self, v} => is_type v, obs := perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t)) })
+property_names : List Tree := ["recognize", "gate", "elim", "members", "norm", "ends", "under"]
+property_rows : Pi (Sampled [["members"]]) (List Tree) ({_} => Pi (Sampled [Pure t]) Tree ({_} => Tree))
+  := {names, tail} => list_rec t t names tail ({k, _tl, rest} => perform (Property k) ({_} => rest))
+universe_obs := property_rows property_names (perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t)))
+ShallowType : Space := ({ #recognize := {_self, v} => is_type v, obs := universe_obs })
 test ShallowType ({ #recognize := {_self, _v} => true }) = true
 test ({ #recognize := {_self, v} => is_leaf v }) zero = true
 test ({ #recognize := {_self, v} => is_leaf v }) 5 = false
@@ -216,7 +220,7 @@ let steady := fix ({self, r} =>
 Space : Space := ({
   #recognize := {_self, v} => if (tag_form v) { structured v } else { false }
   check := {_jdg, _T, v} => if (tag_form v) { and (steady (pair_snd (tagged_meta v))) (structured v) } else { false }
-  obs := perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t))
+  obs := universe_obs
 })
 test Space Bool = true
 elim_raw : ElimHead -> Tree := {E} => pair_fst (wait_payload E)
@@ -362,23 +366,23 @@ test tree_eq Row.code RowCode = true
 
 Cell : Pi (Sampled [Nat]) Space ({_} => Refine Space Coherent)
   := {P} => Sum Tree [pair "None" t, pair "Some" [P]]
-prop_formers : List (ShallowType -> Space) := [RecognizeP, GateP, ElimP, MembersP, NormP, EndsP, UnderP]
+properties : List Tree := list_zip property_names [RecognizeP, GateP, ElimP, MembersP, NormP, EndsP, UnderP]
 prop_slot : Pi (Sampled [MembersP]) (ShallowType -> Space) ({_} => Tree)
-  := {P} =>
-  if (tree_eq P RecognizeP) { "recognize" }
-  else if (tree_eq P GateP) { "gate" }
-  else if (tree_eq P ElimP) { "elim" }
-  else if (tree_eq P MembersP) { "members" }
-  else if (tree_eq P NormP) { "norm" }
-  else if (tree_eq P EndsP) { "ends" }
-  else if (tree_eq P UnderP) { "under" }
-  else { t }
-ask : Pi (Sampled [Bool]) ShallowType ({T} => Pi (Sampled [MembersP, NormP]) Tree ({P} => Cell (P T)))
-  := {T, P} => {
-  let c := if (is_type T) { field_cell (pair_snd (tagged_meta T)) (prop_slot P) } else { field_cell T (prop_slot P) }
+  := {P} => list_rec Tree Tree properties t ({e, _tl, ih} => if (tree_eq (pair_snd e) P) { pair_fst e } else { ih })
+fiber : Pi (Sampled ["members"]) Tree ({_} => Pi (Sampled [Bool]) Tree ({_} => Space))
+  := {name, s} => {
+  let P := list_assoc name properties
+  if (is_leaf P) { invalid name } else { Cell (P s) }
+}
+slot_ask : Pi (Sampled ["members", "zz"]) Tree ({_} => Pi (Sampled [Bool]) Tree ({_} => Tree))
+  := {name, T} => {
+  let c := if (is_type T) { field_cell (pair_snd (tagged_meta T)) name } else { field_cell T name }
   if (is_leaf c) { inj "None" t } else { inj "Some" (pair_snd c) }
 }
-ask_sig := sig_of ask
+property_at : Pi (Sampled ["members"]) Tree ({_} => Tree)
+  := {k} => pair (slot_ask k) ({s} => fiber k s)
+ask : Pi (Sampled [Bool]) ShallowType ({T} => Pi (Sampled [MembersP, NormP]) Tree ({P} => Cell (P T)))
+  := {T, P} => slot_ask (prop_slot P) T
 test tree_eq (ask Bool MembersP) (inj "Some" [true, false]) = true
 test tree_eq (ask Bool NormP) (inj "None" t) = true
 
@@ -449,19 +453,14 @@ walk_with : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [honest_is_neut
     }
     else if (has_sig elim_stuck_sig f) { f x }
     else if (is_open_chain f) { f x }
-    else if (tree_eq f ask) { wait ask x }
     else if (and (neutral_free f) (neutral_free x)) { f x }
-    else if (has_sig ask_sig f) {
-      let T2 := wait_payload f
-      if (is_neutral T2) {
-        if (member Tree x prop_formers) { self T2 (inj "Ask" x) } else { invalid x }
-      } else { f x }
-    }
     else if (tree_eq f ({x} => x)) { x }
-    else if (and (is_neutral x) (or (tree_eq f pair_fst) (tree_eq f pair_snd))) { self x (Acc f) }
     else if (is_neutral x) {
       let oc := elim_start f x
-      if (is_fork oc) { oc } else { triage (t x) ({a} => w_stem a x) ({a, b} => w_fork self a b x) f }
+      if (is_fork oc) { oc } else {
+        let r := triage (t x) ({a} => w_stem a x) ({a, b} => w_fork self a b x) f
+        if (is_invalid r) { self x (Acc f) } else { r }
+      }
     }
     else { triage (t x) ({a} => w_stem a x) ({a, b} => w_fork self a b x) f })
 }
@@ -470,11 +469,6 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
   := {nt, frame, self} => {
   let form := walk_open_at nt
   let T := nt self
-  if (has_sig "Ask" frame) {
-    if (and (or (tree_eq T ShallowType) (tree_eq T Space)) (member Tree (pair_snd frame) prop_formers)) {
-      pair [] (Cell ((pair_snd frame) self))
-    } else { invalid frame }
-  } else {
   let rows := {
     let vrows := T.tele
     if (is_fork vrows) { vrows } else { T.obs }
@@ -482,29 +476,33 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
   if (is_fork rows) {
     fix ({go, rows2} =>
       match rows2 {
-        Op row tail => (match row : (case_of Row ({_} => Tree)) {
-          Fresh ty => (if (is_acc frame) { invalid frame } else {
-            match (form tail frame) {
-              Op peeked _k => (match peeked {
-                Observe ob cod => (match ob { App _ => (pair [pair ty frame] cod); _ => (invalid frame) })
+        Op row tail => {
+          let at := {skip, af} => (match frame {
+            Acc fa => (if (tree_eq (pair_fst af) fa) { pair [] (form (pair_snd af) self) } else { go (form tail (self (Acc (pair_fst af)))) })
+            _ => (if skip { go (form tail (self (Acc (pair_fst af)))) } else { invalid frame })
+          })
+          match row : (case_of Row ({_} => Tree)) {
+            Fresh ty => (if (is_acc frame) { invalid frame } else {
+              match (form tail frame) {
+                Op peeked _k => (match peeked {
+                  Observe ob cod => (match ob { App _ => (pair [pair ty frame] cod); _ => (invalid frame) })
+                  _ => (invalid frame)
+                })
+                _ => (invalid frame)
+              }
+            })
+            Observe ob ty => (match ob : (case_of Obs ({_} => Tree)) {
+              Prj a => (match frame {
+                Acc fa => (if (tree_eq a fa) { pair [] ty } else { go (form tail (self (Acc a))) })
                 _ => (invalid frame)
               })
-              _ => (invalid frame)
-            }
-          })
-          Observe ob ty => (match ob : (case_of Obs ({_} => Tree)) {
-            Prj a => (match frame {
-              Acc fa => (if (tree_eq a fa) { pair [] ty } else { go (form tail (self (Acc a))) })
-              _ => (invalid frame)
+              Self _ => (go (tail t))
+              App _ => (invalid frame)
             })
-            Self _ => (go (tail t))
-            App _ => (invalid frame)
-          })
-          ObserveAt af => (match frame {
-            Acc fa => (if (tree_eq (pair_fst af) fa) { pair [] (form (pair_snd af) self) } else { go (form tail (self (Acc (pair_fst af)))) })
-            _ => (invalid frame)
-          })
-        })
+            ObserveAt af => (at false af)
+            Property k => (at true (property_at k))
+          }
+        }
         _ => (invalid frame)
       }) rows
   } else {
@@ -524,7 +522,6 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
       }
       _ => (invalid frame)
     }
-  }
   }
 }
 neutral_type : Pi (Sampled [make_hyp Bool t]) Tree ({_} => Tree)
@@ -555,7 +552,13 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
   let check := fix ({self, rows, f, prior} =>
     match rows {
       Pure _ => (Pure true)
-      Op row tail => (match row : (case_of Row ({_} => Tree)) {
+      Op row tail => {
+        let at := {af} => perform (Form (pair (pair_fst af) f)) ({o} =>
+          perform (Form (pair (pair_snd af) f)) ({ty} =>
+            perform (Lift o) ({lo} =>
+              perform (Judge (pair ty lo)) ({ok} =>
+                if ok { perform (Form (pair tail lo)) ({next} => self next f prior) } else { Pure false }))))
+        match row : (case_of Row ({_} => Tree)) {
         Fresh ty => (perform (Mint (pair ty tail)) ({x} =>
           perform (Form (pair tail x)) ({next} => self next f x)))
         Observe ob ty => (match ob : (case_of Obs ({_} => Tree)) {
@@ -569,12 +572,10 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
               perform (Judge (pair ty lo)) ({ok} =>
                 if ok { perform (Form (pair tail lo)) ({next} => self next f prior) } else { Pure false }))))
         })
-        ObserveAt af => (perform (Form (pair (pair_fst af) f)) ({o} =>
-          perform (Form (pair (pair_snd af) f)) ({ty} =>
-            perform (Lift o) ({lo} =>
-              perform (Judge (pair ty lo)) ({ok} =>
-                if ok { perform (Form (pair tail lo)) ({next} => self next f prior) } else { Pure false })))))
-      })
+        ObserveAt af => (at af)
+        Property k => (at (property_at k))
+        }
+      }
       _ => (Pure false)
     })
   let run := fix ({chk, st, rows, fV, prior} =>
@@ -811,7 +812,10 @@ Meta : Table := ({
           let Tx := neutral_type (make_mark mx)
           let ex := if (is_invalid Tx) { t } else { Tx.elim }
           if (and (not (is_leaf ex)) (tree_eq tr (fix ex))) { Chain (pair ex (pair X [])) }
-          else { triage (vstem X) ({a} => vfork (Conc a) X) ({a, b} => apply_fork self chk (Conc a) (Conc b) X) tr }
+          else {
+            let r := triage (vstem X) ({a} => vfork (Conc a) X) ({a, b} => apply_fork self chk (Conc a) (Conc b) X) tr
+            if let Poison _ = r { self chk X (Conc (Acc tr)) } else { r }
+          }
         } else {
           triage (vstem X) ({a} => vfork (Conc a) X) ({a, b} => apply_fork self chk (Conc a) (Conc b) X) tr
         })

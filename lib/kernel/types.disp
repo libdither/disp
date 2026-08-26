@@ -91,6 +91,7 @@ Coherent : Pi (Sampled [Bool, Unit, Row, Tree]) ShallowType ({_} => Bool)
 }
 
 False : Refine Space Coherent := Sum Tree []
+
 Not : ShallowType -> Space := {P} => Fn P ({_} => False)
 test False t = false
 test False 5 = false
@@ -245,11 +246,15 @@ test eq_cong Nat Nat succ 2 2 refl = refl
 
 // The ask face: a property query on an abstract type answers as a witness
 // typed Cell (P T) -- nobody answers, the witness is a mint, so certificates
-// hold for every dictionary. Pi-Guard-literal: Meta has no Ask rule yet.
+// hold for every dictionary. Since stage R the license is row data: the
+// universes' obs carry one Property row per slot, the walk retries a
+// parametric refusal as an Acc frame against the rows, and Meta answers
+// through the same replay (the Fn/Meta/TwoFace spellings are pinned in
+// kernel.test; the pins here keep the original Pi-Guard-literal spelling).
 // Consuming a witness (case, projection, application) is the documented
 // boundary: the answer type is Sum-built, and scrutinizing formers refuse to
 // CONSTRUCT over an embedded mint inside a walked body (last pin), so
-// witness elimination waits on walked type formation or a dedicated head.
+// witness elimination waits on a dedicated case head.
 test (Pi Guard ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
 test (Pi Guard ShallowType ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
 test (Pi Guard ShallowType ({T} => Tree)) ({T} => ask T ({X} => X)) = false
