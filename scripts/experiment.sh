@@ -3,12 +3,15 @@
 #
 # Patches a definition and/or literal substrings IN PLACE, runs each suite file
 # memory-capped and timed, classifies the outcomes, and restores the file on any
-# exit (trap on EXIT/INT/TERM). Editing a kernel definition changes the structural
-# identity of every tree that embeds it, so the persisted reduction cache stops
-# hitting for most of the kernel: runs are cold by default (loading the snapshot
-# anyway costs its ~0.9 GB frozen arena for little gain). A cold
-# lib/kernel/kernel.test.disp needs ~4 GB / 30 s; the cap is sized from `free`
-# (available − headroom) and a cap below that is reported up front, never hidden.
+# exit (trap on EXIT/INT/TERM). Runs load the persisted reduction cache (warm) and
+# report cold_equiv: the run's steps plus the cold cost charged for every cache
+# hit — what the run would have cost with no snapshot. Compare cold_equiv between
+# the edit and the baseline, never raw steps or wall time: an edited kernel hits
+# the cache less, so warm timings are not comparable, cold_equiv is. -c forces a
+# truly cold run (DISP_MEMO_CACHE=0) when the estimate itself is in question. A
+# cold lib/kernel/kernel.test.disp needs ~4 GB / 30 s; the cap is sized from
+# `free` (available − headroom) and a cap below that is reported up front, never
+# hidden.
 #
 # usage: scripts/experiment.sh [opts] FILE [NAME] < replacement.disp
 #        scripts/experiment.sh --restore FILE
@@ -19,7 +22,7 @@
 #               repeatable, for edits inside a body (e.g. one walker branch)
 #   -f SUITE    suite to run (repeatable; default lib/kernel/prelude.disp, the
 #               checked barrel, then lib/kernel/kernel.test.disp)
-#   -w          load the reduction snapshot anyway (default: DISP_MEMO_CACHE=0)
+#   -c          run cold (DISP_MEMO_CACHE=0; default: warm, reporting cold_equiv)
 #   -t SECONDS  per-suite timeout (default 300)
 #   -m MEMORYMAX  cap override (default: min(`free` available − 1500M, 5G), floor 1G;
 #               the ceiling keeps a runaway edit from taking the whole machine)
@@ -28,17 +31,17 @@
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BAKDIR=/tmp/disp-experiment-backups
-COLD=1 TIMEOUT=300 MEM="" SUITES=() OLDS=() NEWS=() RESTORE=""
+COLD=0 TIMEOUT=300 MEM="" SUITES=() OLDS=() NEWS=() RESTORE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -s) OLDS+=("$2"); shift 2 ;;
     -r) NEWS+=("$2"); shift 2 ;;
     -f) SUITES+=("$2"); shift 2 ;;
-    -w) COLD=0; shift ;;
+    -c) COLD=1; shift ;;
     -t) TIMEOUT="$2"; shift 2 ;;
     -m) MEM="$2"; shift 2 ;;
     --restore) RESTORE="$2"; shift 2 ;;
-    -h|--help) sed -n 2,27p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,30p "$0"; exit 0 ;;
     --) shift; break ;;
     -*) echo "unknown option $1" >&2; exit 2 ;;
     *) break ;;
@@ -112,7 +115,7 @@ for SUITE in "${SUITES[@]}"; do
   UNIT="disp-exp-$$-$RANDOM"; LOG="$(mktemp "/tmp/disp-experiment.$(basename "$SUITE").XXXXXX.log")"
   ENV=(); [ "$COLD" = 1 ] && ENV=(-E DISP_MEMO_CACHE=0)
   (cd "$REPO" && python scripts/rss_run.py timeout "$TIMEOUT" systemd-run --user --scope -q --unit="$UNIT" \
-    -p MemoryMax="$MEM" -p MemorySwapMax=512M "${ENV[@]}" npx tsx src/run.ts "$SUITE") >"$LOG" 2>&1
+    -p MemoryMax="$MEM" -p MemorySwapMax=512M "${ENV[@]}" npx tsx src/run.ts --stats "$SUITE") >"$LOG" 2>&1
   CODE=$?
   if [ $CODE -eq 0 ]; then VERDICT="PASSED"
   elif grep -q 'failing entries' "$LOG"; then VERDICT="REJECTED (annotation check)"
@@ -121,9 +124,10 @@ for SUITE in "${SUITES[@]}"; do
   elif [ $CODE -eq 124 ]; then VERDICT="TIMEOUT (no verdict)"
   elif journalctl --user -u "$UNIT.scope" --no-pager 2>/dev/null | grep -qi 'oom'; then VERDICT="OOM-KILLED (no verdict)"
   else VERDICT="KILLED (no verdict, exit $CODE)"; fi
-  CACHE=$(grep -q '^\[memo\] warm' "$LOG" && echo "snapshot loaded" || echo cold)
-  echo "== $SUITE: $VERDICT  [$(grep '^\[rss\]' "$LOG" | sed 's/^\[rss\] //'), $CACHE]  log: $LOG"
-  grep -v '^\[memo\]\|^\[rss\]' "$LOG" | tail -3 | cut -c1-300 | sed 's/^/   /'
+  CACHE=$(grep -q '^\[memo\] warm' "$LOG" && echo "warm" || echo cold)
+  COST=$(grep -o 'steps=[0-9]*, cold_equiv=[0-9]*' "$LOG" | head -1)
+  echo "== $SUITE: $VERDICT  [$(grep '^\[rss\]' "$LOG" | sed 's/^\[rss\] //'), $CACHE${COST:+, $COST}]  log: $LOG"
+  grep -v '^\[memo\]\|^\[rss\]\|^stats:\|^rules:\|^memo:' "$LOG" | tail -3 | cut -c1-300 | sed 's/^/   /'
   grep -E '^\s*\[[^]]*:[0-9]+\] mismatch' "$LOG" | cut -c1-120 | head -12 | sed 's/^/   /'
   [ $CODE -eq 0 ] || STATUS=1
 done

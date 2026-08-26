@@ -8,14 +8,19 @@
 //! COMPACT before calling `save` (arena.rs remaps live ids densely), so a stored
 //! file has no holes.
 //!
-//! Layout v2 (little-endian, sections 8-byte-aligned):
+//! Layout v3 (little-endian, sections 8-byte-aligned):
 //!   magic u64 | version u64 | checksum u64 | stamp_len u64 | node_len u64 |
 //!   intern_cap u64 | memo_cap u64 | stamp (padded to 8) | nodes u64×node_len |
 //!   intern u32×intern_cap | memo_f u32×memo_cap | memo_x u32×memo_cap |
-//!   memo_r u32×memo_cap | memo_c u32×memo_cap
+//!   memo_r u32×memo_cap | memo_c u32×memo_cap | memo_p u32×memo_cap
 //! Intern slots hold id+1 (0 = empty); memo slots are empty when f = 0 (id 0 is
-//! the reserved null sentinel, never a valid key); memo_c is the entry's
-//! recomputation cost in fork-dispatches (drives save-time thresholds). Both
+//! the reserved null sentinel, never a valid key); memo_c is the entry's COLD
+//! cost in fork-dispatches (its own dispatch + everything executed below it),
+//! and memo_p is the slot of the entry's FRESH-FOREST PARENT — the fact whose
+//! fresh computation this one ran inside (u32::MAX = a root). The parent slots
+//! let a warm run price its hits EXACTLY: a hit fact contributes its cold cost
+//! only when no ancestor is also hit (else the ancestor's cost already covers
+//! it), so the cold-equivalent step count has no double-count. Both
 //! tables are power-of-two capacity at ≤ 0.5 load, linear probing. The checksum
 //! is FxHash over every section's bytes (stamp + nodes + tables) — a flipped bit
 //! in a "fact" would otherwise be trusted.
@@ -26,7 +31,9 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufWriter, Read, Write};
 
 pub(crate) const MAGIC: u64 = 0x4f4d454d50534944; // "DISPMEMO" (LE)
-pub(crate) const VERSION: u64 = 2;
+pub(crate) const VERSION: u64 = 3;
+/// Sentinel parent slot: this fact is a fresh-forest root (no enclosing memoized fact).
+pub(crate) const NO_PARENT: u32 = u32::MAX;
 
 #[inline]
 pub(crate) fn pair_hash(f: u32, x: u32) -> u64 {
@@ -51,6 +58,7 @@ pub(crate) struct FrozenBase {
     memo_x: Vec<u32>,
     memo_r: Vec<u32>,
     memo_c: Vec<u32>,
+    memo_p: Vec<u32>,
 }
 
 impl FrozenBase {
@@ -78,8 +86,9 @@ impl FrozenBase {
             i = (i + 1) & mask;
         }
     }
+    /// Frozen lookup: the fact's result, its cold cost, and its slot (the charge bit's index).
     #[inline]
-    pub(crate) fn memo_get(&self, f: u32, x: u32) -> Option<u32> {
+    pub(crate) fn memo_get(&self, f: u32, x: u32) -> Option<(u32, u32, usize)> {
         if self.memo_f.is_empty() {
             return None;
         }
@@ -91,19 +100,38 @@ impl FrozenBase {
                 return None;
             }
             if sf == f && self.memo_x[i] == x {
-                return Some(self.memo_r[i]);
+                return Some((self.memo_r[i], self.memo_c[i], i));
             }
             i = (i + 1) & mask;
         }
     }
+    pub(crate) fn memo_cap(&self) -> usize {
+        self.memo_f.len()
+    }
+    /// The entry at `slot`'s cold cost (fork-dispatches, inclusive of its fresh subtree).
+    #[inline]
+    pub(crate) fn memo_cost(&self, slot: usize) -> u32 {
+        self.memo_c[slot]
+    }
+    /// The entry at `slot`'s fresh-forest parent slot, or `NO_PARENT` if it is a root.
+    #[inline]
+    pub(crate) fn memo_parent(&self, slot: usize) -> u32 {
+        self.memo_p[slot]
+    }
     pub(crate) fn memo_len(&self) -> u32 {
         self.memo_f.iter().filter(|&&f| f != 0).count() as u32
     }
-    /// Iterate frozen memo entries as (f, x, r, cost) — for re-saving.
-    pub(crate) fn memo_iter(&self) -> impl Iterator<Item = (u32, u32, u32, u32)> + '_ {
+    /// Iterate frozen memo entries as (f, x, r, cost, parent_f, parent_x) — for re-saving
+    /// (the parent is re-emitted as an id pair so `save` can re-resolve it to a slot in the
+    /// rebuilt table; a root re-emits (0, 0)).
+    pub(crate) fn memo_iter(&self) -> impl Iterator<Item = (u32, u32, u32, u32, u32, u32)> + '_ {
         (0..self.memo_f.len()).filter_map(move |i| {
             let f = self.memo_f[i];
-            (f != 0).then(|| (f, self.memo_x[i], self.memo_r[i], self.memo_c[i]))
+            let (pf, px) = match self.memo_p[i] {
+                NO_PARENT => (0, 0),
+                j => (self.memo_f[j as usize], self.memo_x[j as usize]),
+            };
+            (f != 0).then(|| (f, self.memo_x[i], self.memo_r[i], self.memo_c[i], pf, px))
         })
     }
     /// Iterate frozen interned ids — for re-saving.
@@ -151,6 +179,7 @@ pub(crate) fn load(path: &str, stamp: &[u8]) -> Result<FrozenBase, String> {
     let memo_x = read_u32s(&mut f, memo_cap).map_err(|e| e.to_string())?;
     let memo_r = read_u32s(&mut f, memo_cap).map_err(|e| e.to_string())?;
     let memo_c = read_u32s(&mut f, memo_cap).map_err(|e| e.to_string())?;
+    let memo_p = read_u32s(&mut f, memo_cap).map_err(|e| e.to_string())?;
     let mut h = FxHasher::default();
     sbuf.hash(&mut h);
     bytes_of_u64s(&nodes).hash(&mut h);
@@ -159,10 +188,11 @@ pub(crate) fn load(path: &str, stamp: &[u8]) -> Result<FrozenBase, String> {
     bytes_of_u32s(&memo_x).hash(&mut h);
     bytes_of_u32s(&memo_r).hash(&mut h);
     bytes_of_u32s(&memo_c).hash(&mut h);
+    bytes_of_u32s(&memo_p).hash(&mut h);
     if h.finish() != checksum {
         return Err("checksum mismatch (corrupt snapshot)".into());
     }
-    Ok(FrozenBase { nodes, intern, memo_f, memo_x, memo_r, memo_c })
+    Ok(FrozenBase { nodes, intern, memo_f, memo_x, memo_r, memo_c, memo_p })
 }
 
 fn table_cap(n: usize) -> usize {
@@ -176,7 +206,7 @@ pub(crate) fn save(
     stamp: &[u8],
     nodes: Vec<u64>,
     intern_ids: impl Iterator<Item = u32>,
-    memo_entries: impl Iterator<Item = (u32, u32, u32, u32)>,
+    memo_entries: impl Iterator<Item = (u32, u32, u32, u32, u32, u32)>,
 ) -> Result<(u32, u32), String> {
     let word_hash = |w: u64| {
         let mut h = FxHasher::default();
@@ -197,13 +227,28 @@ pub(crate) fn save(
     }
     // Frozen memo: first writer wins (frozen entries precede live ones; `apply`
     // is pure, so a duplicate key always carries the same result).
-    let entries: Vec<(u32, u32, u32, u32)> = memo_entries.collect();
+    let entries: Vec<(u32, u32, u32, u32, u32, u32)> = memo_entries.collect();
     let mcap = table_cap(entries.len());
     let mmask = mcap - 1;
     let (mut mf, mut mx, mut mr, mut mc) =
         (vec![0u32; mcap], vec![0u32; mcap], vec![0u32; mcap], vec![0u32; mcap]);
+    // Parent ids of each slot's FIRST writer, kept until every slot exists so they can be
+    // resolved to slots in a second pass (a child may be written before its parent).
+    let (mut mpf, mut mpx) = (vec![0u32; mcap], vec![0u32; mcap]);
     let mut memo_count = 0u32;
-    for (f, x, r, c) in entries {
+    let probe = |mf: &[u32], mx: &[u32], f: u32, x: u32| -> Option<usize> {
+        let mut i = (pair_hash(f, x) as usize) & mmask;
+        loop {
+            if mf[i] == 0 {
+                return None;
+            }
+            if mf[i] == f && mx[i] == x {
+                return Some(i);
+            }
+            i = (i + 1) & mmask;
+        }
+    };
+    for (f, x, r, c, pf, px) in entries {
         let mut i = (pair_hash(f, x) as usize) & mmask;
         loop {
             if mf[i] == 0 {
@@ -211,6 +256,8 @@ pub(crate) fn save(
                 mx[i] = x;
                 mr[i] = r;
                 mc[i] = c;
+                mpf[i] = pf;
+                mpx[i] = px;
                 memo_count += 1;
                 break;
             }
@@ -218,6 +265,15 @@ pub(crate) fn save(
                 break;
             }
             i = (i + 1) & mmask;
+        }
+    }
+    // Resolve each entry's parent id pair to its slot (a dropped/absent parent -> root).
+    let mut mp = vec![NO_PARENT; mcap];
+    for i in 0..mcap {
+        if mf[i] != 0 && mpf[i] != 0 {
+            if let Some(j) = probe(&mf, &mx, mpf[i], mpx[i]) {
+                mp[i] = j as u32;
+            }
         }
     }
     let padded = stamp.len().div_ceil(8) * 8;
@@ -231,6 +287,7 @@ pub(crate) fn save(
     bytes_of_u32s(&mx).hash(&mut h);
     bytes_of_u32s(&mr).hash(&mut h);
     bytes_of_u32s(&mc).hash(&mut h);
+    bytes_of_u32s(&mp).hash(&mut h);
     let checksum = h.finish();
     let tmp = format!("{path}.tmp");
     {
@@ -245,6 +302,7 @@ pub(crate) fn save(
         wr(&mut w, bytes_of_u32s(&mx))?;
         wr(&mut w, bytes_of_u32s(&mr))?;
         wr(&mut w, bytes_of_u32s(&mc))?;
+        wr(&mut w, bytes_of_u32s(&mp))?;
         w.flush().map_err(|e| e.to_string())?;
     }
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;

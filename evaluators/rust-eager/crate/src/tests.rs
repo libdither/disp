@@ -149,3 +149,70 @@ fn eager_lazy_agree() {
         assert_eq!(eager, lazy, "eager vs lazy NF disagree");
     }
 }
+
+// Cold-equivalent accounting is EXACT for persisted facts: a warm run charges a hit
+// fact's cold cost only when no ANCESTOR is also hit (the ancestor's inclusive cost
+// already covers its fresh subtree), so `interactions + predicted_cold_add` equals the
+// cold `interactions` with no double-count — including for a nested fact later applied
+// on its own (the residual the parentless scheme over-counted).
+#[test]
+fn snapshot_cold_equivalent_steps() {
+    let path = std::env::temp_dir().join(format!("rust-eager-cold-equiv-{}.bin", std::process::id()));
+    let path = path.to_str().unwrap().to_string();
+    let stamp = b"test";
+    // cold: `S not not false` = (not false)(not false); `not false` is a nested fact,
+    // computed fresh once inside the outer S fact, then live-hit.
+    let mut a = Arena::new();
+    let not = build_not(&mut a);
+    let s_not_not = {
+        let sn = a.stem(not);
+        a.fork(sn, not)
+    };
+    let mut budget = 1_000_000i64;
+    let r_cold = a.reduce(s_not_not, LEAF_ID, &mut budget).ok().unwrap();
+    let cold = a.interactions;
+    // the cold cost of `not false` on its own (strictly less than the whole)
+    let mut a2 = Arena::new();
+    let not2 = build_not(&mut a2);
+    let mut budget2 = 1_000_000i64;
+    a2.reduce(not2, LEAF_ID, &mut budget2).ok().unwrap();
+    let cold_not_false = a2.interactions;
+    assert!(cold > cold_not_false && cold_not_false > 0);
+    a.save_snapshot(&path, stamp, 0).expect("save"); // min_cost 0: persist even the tiny facts
+    // warm: the whole apply is one frozen hit.
+    let mut b = Arena::new();
+    b.load_snapshot(&path, stamp).expect("load");
+    let not_b = build_not(&mut b);
+    let s_b = {
+        let sn = b.stem(not_b);
+        b.fork(sn, not_b)
+    };
+    assert_eq!(s_b, s_not_not, "hash-consing resolves to the frozen ids");
+    let mut budget3 = 1_000_000i64;
+    let r_warm = b.reduce(s_b, LEAF_ID, &mut budget3).ok().unwrap();
+    assert_eq!(r_warm, r_cold);
+    assert_eq!(b.interactions, 0, "no fresh dispatch: the top-level fact is frozen");
+    assert_eq!(b.first_hits, 1, "one distinct frozen fact hit (the outer fact short-circuits)");
+    assert_eq!(b.interactions + b.predicted_cold_add(), cold, "cold-equivalent = cold steps");
+    // a repeat hit adds nothing
+    let mut budget4 = 1_000_000i64;
+    b.reduce(s_b, LEAF_ID, &mut budget4).ok().unwrap();
+    assert_eq!(b.interactions + b.predicted_cold_add(), cold);
+    // the former residual: applying the NESTED fact on its own now hits it, but it is
+    // dominated by the already-hit outer fact (its ancestor), so it is NOT re-charged.
+    let mut budget5 = 1_000_000i64;
+    b.reduce(not_b, LEAF_ID, &mut budget5).ok().unwrap();
+    assert_eq!(
+        b.interactions + b.predicted_cold_add(),
+        cold,
+        "nested fact dominated by its hit ancestor -> no double-count"
+    );
+    // and if instead ONLY the nested fact is hit (fresh session), it is charged its own cost.
+    let mut c = Arena::new();
+    c.load_snapshot(&path, stamp).expect("load");
+    let not_c = build_not(&mut c);
+    let mut budget6 = 1_000_000i64;
+    c.reduce(not_c, LEAF_ID, &mut budget6).ok().unwrap();
+    assert_eq!(c.interactions + c.predicted_cold_add(), cold_not_false, "lone nested hit charges its own cold cost");
+    let _ = std::fs::remove_file(&path);
+}

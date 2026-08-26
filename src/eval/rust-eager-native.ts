@@ -50,6 +50,9 @@ interface EagerSessionNative {
   loadSnapshot(path: string, stamp: string): boolean
   saveSnapshot(path: string, stamp: string, minCost: number): number  // 1 saved, 0 unchanged, -1 error
   frozenHits(): number
+  firstHits(): number
+  hitCost(): number
+  predictedColdAdd(): number
 }
 interface RustEagerNativeAddon {
   EagerSession: new () => EagerSessionNative
@@ -99,6 +102,9 @@ class RustEagerNativeSession implements Session<number> {
   saveSnapshot(path: string, stamp: string, minCost = 0): number { return this.#s.saveSnapshot(path, stamp, minCost) }
   // Frozen-memo hits this session — the snapshot's realized value.
   frozenHits(): number { return this.#s.frozenHits() }
+  // Predicted-cold step count: warm steps + the EXACT cold cost of this run's frozen hits
+  // (maximal-hit accounting — one on-demand walk over the parent forest; see arena.rs).
+  coldEquiv(): number { return this.#s.interactions() + this.#s.predictedColdAdd() }
 
   leaf(): number { return this.#s.leaf() }
   stem(child: number): number { return this.#s.stem(child) }
@@ -146,7 +152,16 @@ class RustEagerNativeSession implements Session<number> {
 
   // Interaction count (the backend-declared unit, never compared to eager's steps).
   // `nodes` exposes the live arena high-water (for observing scoped reclamation).
-  stats(): EvalStats { return { steps: this.#s.interactions(), nodes: this.#s.nodeCount(), free: this.#s.freeCount() } }
+  // `coldEquiv` adds the cold cost charged for frozen-snapshot hits: the steps the run
+  // would have spent with no snapshot (an upper bound; see types.ts).
+  // Per-item/summary stats are O(1); the predicted-cold walk is deliberately NOT here (it is
+  // whole-run) — call coldEquiv() for that. `steps` is this run's actual (warm) work.
+  stats(): EvalStats {
+    return {
+      steps: this.#s.interactions(), nodes: this.#s.nodeCount(), free: this.#s.freeCount(),
+      frozenHits: this.#s.frozenHits(), firstHits: this.#s.firstHits(), hitCost: this.#s.hitCost(),
+    }
+  }
 
   // Scoped reclamation: beginScope() marks a point; endScope(keep) frees everything
   // allocated since, except nodes reachable from `keep`. See types.ts / src/native.rs.

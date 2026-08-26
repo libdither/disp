@@ -94,7 +94,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
             .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0]
         : undefined
       if (memoBin && existsSync(artifact)) {
-        const stamp = `v1:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}`
+        const stamp = `v3:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}`
         if (session.loadSnapshot(memoBin, stamp)) console.error(`[memo] warm: ${memoBin}`)
       }
     }
@@ -153,15 +153,21 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
     console.log(`defs: ${r.defs}, tests: ${r.tests}, passed: ${r.passed}, failed: ${r.failed.length} [${backendName}]`)
     if (showStats) {
       const s = (session.stats?.() ?? { steps: 0 }) as EvalStats
+      // steps = this run's actual (warm) fork-dispatches; cold_equiv = the PREDICTED-COLD
+      // count (steps + the exact cold cost of the run's reduction-cache hits), equal to steps
+      // with no snapshot. Compare cold_equiv across kernel edits — warm steps drop as an edit
+      // reuses more of the cache, so they are not comparable; cold_equiv is.
+      const coldEquiv = session.coldEquiv?.() ?? s.steps
       console.log(
-        `stats: steps=${s.steps}, calls=${s.calls}, maxStack=${s.maxStack}, ` +
+        `stats: steps=${s.steps}, cold_equiv=${coldEquiv}, calls=${s.calls}, maxStack=${s.maxStack}, ` +
         `uniqueNodes=${s.uniqueNodes}, memoEntries=${s.cacheEntries}`,
       )
       console.log(
         `rules: K=${s.kRules}, S=${s.sRules}, triage=${s.triageLeafRules + s.triageStemRules + s.triageForkRules}, ` +
         `treeEq=${s.treeEqRules}, leaf=${s.leafRules}, stem=${s.stemRules}`,
       )
-      console.log(`memo: hits=${s.memoHits}, misses=${s.memoMisses}, writes=${s.memoWrites}`)
+      console.log(`memo: hits=${s.memoHits}, misses=${s.memoMisses}, writes=${s.memoWrites}, ` +
+        `frozen_hits=${s.frozenHits}, first_hits=${s.firstHits}`)
     }
     if (showStatsDetail) {
       let prev: EvalStats = {

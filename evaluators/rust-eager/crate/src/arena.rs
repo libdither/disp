@@ -122,6 +122,21 @@ pub(crate) struct Arena {
     base_len: u32,
     /// Frozen-memo hits this session (telemetry: the snapshot's realized value).
     pub(crate) frozen_hits: u64,
+    /// One bit per frozen memo slot: set on the fact's FIRST hit this session. Read by
+    /// `predicted_cold_add` (which frozen facts the run needed) and by the generation-time
+    /// fold below (first-hit costs fold into the enclosing fresh fact's stored cost).
+    hit: Vec<u64>,
+    /// Distinct frozen facts hit this session (telemetry).
+    pub(crate) first_hits: u64,
+    /// Running sum of first-hit frozen costs. Feeds the generation-time cost fold (a fresh
+    /// fact computed warm folds in the cold cost of the frozen facts it hit, so its stored
+    /// cost stays inclusive); also the INCLUSIVE cold add-on (every hit fact counted),
+    /// whose refinement to the exact figure is `predicted_cold_add`.
+    pub(crate) hit_cost: u64,
+    /// The fresh-forest spine during a `reduce`: the (f,x) key of each currently-open
+    /// memoized computation, innermost last. A fact's parent is `open_memo.last()` at the
+    /// moment its own frame is popped (see reduce.rs). Cleared at each top-level `reduce`.
+    pub(crate) open_memo: Vec<(u32, u32)>,
 }
 
 /// `save_snapshot` outcome: written, or skipped because the run added nothing durable.
@@ -146,6 +161,10 @@ impl Arena {
             base: None,
             base_len: 0,
             frozen_hits: 0,
+            hit: Vec::new(),
+            first_hits: 0,
+            hit_cost: 0,
+            open_memo: Vec::new(),
         };
         // index 0: reserved null sentinel (never interned, never returned) so no valid
         // handle is JS-falsy — see LEAF_ID.
@@ -325,16 +344,74 @@ impl Arena {
     }
 
     // ── persistent reduction cache (snapshot load/save) ──
-    /// Tiered memo lookup: the frozen tier's facts, then the live map.
+    /// Tiered memo lookup: the frozen tier's facts (charging a first hit's cold cost),
+    /// then the live map (never charged: a cold run hits its live memo the same way).
     #[inline]
     pub(crate) fn memo_lookup(&mut self, f: u32, x: u32) -> Option<u32> {
         if let Some(b) = &self.base {
-            if let Some(r) = b.memo_get(f, x) {
+            if let Some((r, c, slot)) = b.memo_get(f, x) {
                 self.frozen_hits += 1;
+                let (w, bit) = (slot >> 6, 1u64 << (slot & 63));
+                if self.hit[w] & bit == 0 {
+                    self.hit[w] |= bit;
+                    self.first_hits += 1;
+                    self.hit_cost += c as u64;
+                }
                 return Some(r);
             }
         }
         self.memo.get(f, x)
+    }
+
+    /// Cold-equivalent add-on: the fork-dispatches a run with NO snapshot would have spent
+    /// on the facts this warm run got as frozen hits. EXACT for persisted facts — a hit fact
+    /// contributes its (inclusive) cold cost only when NO ancestor is also hit, since an
+    /// ancestor hit already accounts for its whole fresh subtree, so nothing double-counts.
+    /// `interactions + predicted_cold_add()` is the predicted cold step count. One memoized
+    /// up-walk per hit fact over the parent forest; computed on demand, not on the hot path.
+    pub(crate) fn predicted_cold_add(&self) -> u64 {
+        let b = match &self.base {
+            Some(b) => b,
+            None => return 0,
+        };
+        let cap = b.memo_cap();
+        // dom[s]: 0 unknown, 1 = no hit strict-ancestor (s is maximal), 2 = has a hit ancestor.
+        let mut dom = vec![0u8; cap];
+        let hit_at = |s: usize| self.hit[s >> 6] & (1u64 << (s & 63)) != 0;
+        let mut add: u64 = 0;
+        let mut path: Vec<usize> = Vec::new();
+        for word in 0..self.hit.len() {
+            let mut bits = self.hit[word];
+            while bits != 0 {
+                let s = word * 64 + bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                path.clear();
+                let mut cur = s;
+                let verdict = loop {
+                    let p = b.memo_parent(cur);
+                    if p == snapshot::NO_PARENT {
+                        break 1u8;
+                    }
+                    let pj = p as usize;
+                    if hit_at(pj) {
+                        break 2u8;
+                    }
+                    if dom[pj] != 0 {
+                        break dom[pj];
+                    }
+                    path.push(cur);
+                    cur = pj;
+                };
+                dom[cur] = verdict;
+                for &n in &path {
+                    dom[n] = verdict;
+                }
+                if verdict == 1 {
+                    add += b.memo_cost(s) as u64;
+                }
+            }
+        }
+        add
     }
 
     /// Adopt a snapshot as the frozen base tier. Only legal on a pristine session
@@ -356,6 +433,7 @@ impl Arena {
         }
         let memo_n = b.memo_len();
         self.base_len = b.node_len();
+        self.hit = vec![0u64; b.memo_cap().div_ceil(64)];
         self.base = Some(b);
         self.nodes.clear();
         self.intern.clear();
@@ -371,7 +449,7 @@ impl Arena {
     /// nothing durable — the converged fixed point.
     pub(crate) fn save_snapshot(&mut self, path: &str, stamp: &[u8], min_cost: u32) -> Result<SaveOutcome, String> {
         let overlay_live = self.nodes.len() - self.free_list.len();
-        let new_facts = self.memo.iter().filter(|&(.., c)| c >= min_cost).count();
+        let new_facts = self.memo.iter().filter(|&(_, _, _, c, _, _)| c >= min_cost).count();
         if self.base.is_some() && overlay_live == 0 && new_facts == 0 {
             return Ok(SaveOutcome::Unchanged);
         }
@@ -398,10 +476,24 @@ impl Arena {
                 })
             })
             .collect();
-        let frozen_memo: Vec<(u32, u32, u32, u32)> =
+        let frozen_memo: Vec<(u32, u32, u32, u32, u32, u32)> =
             self.base.as_ref().map(|b| b.memo_iter().collect()).unwrap_or_default();
-        let live_memo: Vec<(u32, u32, u32, u32)> = self.memo.iter().collect();
+        let live_memo: Vec<(u32, u32, u32, u32, u32, u32)> = self.memo.iter().collect();
         let m = |id: u32| remap[id as usize];
+        // Parent id, remapped; 0 (root) stays 0, and a parent whose node did not survive
+        // compaction degrades to a root (its cost is then re-attributed by the walk).
+        let mp = |id: u32| {
+            if id == 0 || (id as usize) >= remap.len() {
+                0
+            } else {
+                let r = remap[id as usize];
+                if r == u32::MAX {
+                    0
+                } else {
+                    r
+                }
+            }
+        };
         snapshot::save(
             path,
             stamp,
@@ -410,10 +502,10 @@ impl Arena {
             frozen_memo
                 .into_iter()
                 .chain(live_memo)
-                .filter(|&(f, x, r, c)| {
+                .filter(|&(f, x, r, c, _, _)| {
                     c >= min_cost && m(f) != u32::MAX && m(x) != u32::MAX && m(r) != u32::MAX
                 })
-                .map(|(f, x, r, c)| (m(f), m(x), m(r), c)),
+                .map(|(f, x, r, c, pf, px)| (m(f), m(x), m(r), c, mp(pf), mp(px))),
         )
         .map(|(n, e)| SaveOutcome::Saved(n, e))
     }

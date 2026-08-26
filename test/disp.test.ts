@@ -36,7 +36,7 @@ const sharedSession = SHARE_SESSIONS
 // A/B measurement). The scope methods are absent on wasm, which keeps using clearCaches.
 const USE_SCOPE = process.env.DISP_NO_SCOPE !== "1"
 const scoped = sharedSession as unknown as
-  | { beginScope?(): void; endScope?(keep: Tree[]): void; clearCaches?(): void; stats?(): { nodes?: number; free?: number } }
+  | { beginScope?(): void; endScope?(keep: Tree[]): void; clearCaches?(): void; stats?(): { nodes?: number; free?: number; steps?: number; firstHits?: number }; coldEquiv?(): number }
   | undefined
 let peakNodes = 0
 let finalNodes = 0
@@ -78,7 +78,7 @@ const memoPath = join(cacheDir, `memo-${shardIdx}of${shardCount}.bin`)
 const memoStamp = (() => {
   if (!MEMO_ON || !sharedSession?.loadSnapshot) return null
   const artifact = join(import.meta.dirname, "..", "evaluators", "rust-eager", "artifacts", "rust_eager.node")
-  try { return `v1:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}` } catch { return null }
+  try { return `v3:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}` } catch { return null }
 })()
 if (memoStamp && existsSync(memoPath)) {
   const t0 = Date.now()
@@ -149,7 +149,13 @@ describe("disp", () => {
       const minCost = Number(process.env.DISP_MEMO_MIN_COST ?? 1000)
       const outcome = sharedSession.saveSnapshot(memoPath, memoStamp, minCost)
       const word = outcome === 1 ? `saved (${Date.now() - t0}ms)` : outcome === 0 ? "unchanged (save skipped)" : "SAVE FAILED"
-      console.log(`[disp] reduction cache ${word}, ${hits.toLocaleString()} frozen hits this run: ${memoPath}`)
+      const st = scoped?.stats?.()
+      console.log(`[disp] reduction cache ${word}, ${hits.toLocaleString()} frozen hits this run (${(st?.firstHits ?? 0).toLocaleString()} distinct): ${memoPath}`)
     }
+    // Always, cache or not: this run's warm steps and its predicted-cold equivalent
+    // (steps + the exact cold cost of the run's hits; equal on a cold run). Compare
+    // cold_equiv across kernel edits, never warm steps.
+    const st = scoped?.stats?.()
+    if (st?.steps !== undefined) console.log(`[disp] steps=${st.steps} cold_equiv=${scoped?.coldEquiv?.() ?? st.steps}`)
   })
 })

@@ -18,7 +18,7 @@
 use rustc_hash::FxHashMap;
 
 pub(crate) struct Memo {
-    map: FxHashMap<(u32, u32), (u32, u32)>, // (f,x) -> (result, recompute cost in fork-dispatches)
+    map: FxHashMap<(u32, u32), (u32, u32, u32, u32)>, // (f,x) -> (result, cold cost in fork-dispatches, parent f, parent x)
     /// Node high-water captured at the first `clear` (after the kernel is interned). Keys
     /// entirely below it are the shared base; `0` = not yet captured.
     baseline: u32,
@@ -34,12 +34,12 @@ impl Memo {
 
     #[inline]
     pub(crate) fn get(&mut self, f: u32, x: u32) -> Option<u32> {
-        self.map.get(&(f, x)).map(|&(r, _)| r)
+        self.map.get(&(f, x)).map(|&(r, ..)| r)
     }
 
     #[inline]
-    pub(crate) fn insert(&mut self, f: u32, x: u32, r: u32, cost: u32) {
-        self.map.insert((f, x), (r, cost));
+    pub(crate) fn insert(&mut self, f: u32, x: u32, r: u32, cost: u32, pf: u32, px: u32) {
+        self.map.insert((f, x), (r, cost, pf, px));
         if self.map.len() > self.limit {
             self.shed();
         }
@@ -63,8 +63,8 @@ impl Memo {
     }
 
     /// Iterate entries as (f, x, result, cost) — snapshot persistence.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (u32, u32, u32, u32)> + '_ {
-        self.map.iter().map(|(&(f, x), &(r, c))| (f, x, r, c))
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (u32, u32, u32, u32, u32, u32)> + '_ {
+        self.map.iter().map(|(&(f, x), &(r, c, pf, px))| (f, x, r, c, pf, px))
     }
 
     /// Keep only entries all of whose ids (`f`, `x`, AND the result `r`) are still live, per
@@ -72,7 +72,18 @@ impl Memo {
     /// would otherwise point at. Pure cache, so dropping a still-valid-but-now-uncached entry
     /// only costs a re-reduction.
     pub(crate) fn retain(&mut self, live: impl Fn(u32) -> bool) {
-        self.map.retain(|&(f, x), &mut (r, _)| live(f) && live(x) && live(r));
+        self.map.retain(|&(f, x), &mut (r, _, ref mut pf, ref mut px)| {
+            if !(live(f) && live(x) && live(r)) {
+                return false;
+            }
+            // A parent whose node was reclaimed is no longer a persisted fact; demote the
+            // child to a fresh-forest root so its slot-parent never dangles at save.
+            if *pf != 0 && !(live(*pf) && live(*px)) {
+                *pf = 0;
+                *px = 0;
+            }
+            true
+        });
         self.map.shrink_to_fit();
     }
 

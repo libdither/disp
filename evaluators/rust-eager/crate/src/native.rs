@@ -105,6 +105,23 @@ impl EagerSession {
     pub fn frozen_hits(&self) -> f64 {
         self.arena.frozen_hits as f64
     }
+    /// Distinct frozen facts hit this session (telemetry).
+    #[napi]
+    pub fn first_hits(&self) -> f64 {
+        self.arena.first_hits as f64
+    }
+    /// INCLUSIVE cold add-on: every hit fact's cost summed (double-counts nested facts).
+    /// Kept for telemetry; `predicted_cold_add` is the exact figure.
+    #[napi]
+    pub fn hit_cost(&self) -> f64 {
+        self.arena.hit_cost as f64
+    }
+    /// EXACT cold add-on: `interactions() + predicted_cold_add()` is what this warm run
+    /// would have cost with no snapshot (maximal-hit accounting; see arena.rs).
+    #[napi]
+    pub fn predicted_cold_add(&self) -> f64 {
+        self.arena.predicted_cold_add() as f64
+    }
 
     // ── interchange (Session.loadTernary / dumpTernary) — native strings, no ptr/len
     //    marshalling: napi copies the JS string in and the result String out directly. ──

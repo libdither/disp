@@ -17,9 +17,12 @@ enum Cont {
     ApplyTo(u32),
     /// result → `apply(func, result)`
     ApplyResultTo(u32),
-    /// memoize `apply(f, x) = result`; carries the interaction counter at frame push so
-    /// the pop can record the entry's recomputation COST (cost-weighted persistence).
-    Memo(u32, u32, u64),
+    /// memoize `apply(f, x) = result`; carries the interaction counter and the charged
+    /// hit-cost counter at frame push so the pop can record the entry's COLD cost: its own
+    /// dispatch, everything executed below it, and the cold cost of every frozen fact hit
+    /// inside it — what a run with no snapshot would spend on it (cost-weighted persistence
+    /// and the warm run's cold-equivalent step count both read it).
+    Memo(u32, u32, u64, u64),
     /// S-rule tail: `result` is `c x`; carry `(b, orig_x)` to finish `(c x)(b x)`
     SAfterCx(u32, u32),
 }
@@ -28,6 +31,7 @@ impl Arena {
     // ── M0 — eager: `reduce(f, a)` fully normalizes `apply(f, a)`. In pure tree
     // calculus every Leaf/Stem/Fork is already a value, so this maps (NF, NF) → NF.
     pub(crate) fn reduce(&mut self, f0: u32, x0: u32, budget: &mut i64) -> R {
+        self.open_memo.clear();
         let mut stack: Vec<Cont> = Vec::new();
         let mut cur_f = f0;
         let mut cur_x = x0;
@@ -81,14 +85,16 @@ impl Arena {
                             Node::Leaf => b,
                             // S: △ (△ c) b x → (c x)(b x). Compute c x first.
                             Node::Stem(c) => {
-                                stack.push(Cont::Memo(cur_f, cur_x, self.interactions));
+                                stack.push(Cont::Memo(cur_f, cur_x, self.interactions - 1, self.hit_cost));
+                                self.open_memo.push((cur_f, cur_x));
                                 stack.push(Cont::SAfterCx(b, cur_x));
                                 cur_f = c; // cur_x unchanged
                                 continue 'outer;
                             }
                             // triage: △ (△ w u) b x → dispatch on x (w=a.left, u=a.right)
                             Node::Fork(w, u) => {
-                                stack.push(Cont::Memo(cur_f, cur_x, self.interactions));
+                                stack.push(Cont::Memo(cur_f, cur_x, self.interactions - 1, self.hit_cost));
+                                self.open_memo.push((cur_f, cur_x));
                                 if let Node::Susp(sf, sa) = self.node(cur_x) {
                                     cur_x = self.force(sf, sa, cur_x, budget)?;
                                 }
@@ -130,10 +136,15 @@ impl Arena {
                         cur_x = res;
                         continue 'outer;
                     }
-                    Some(Cont::Memo(sf, sx, start)) => {
-                        // cost = fork-dispatches spent below this frame (u32-clamped).
-                        let cost = (self.interactions - start).min(u32::MAX as u64) as u32;
-                        self.memo.insert(sf, sx, res, cost); // capacity/eviction handled by the backend (memo.rs)
+                    Some(Cont::Memo(sf, sx, start, charged_at)) => {
+                        // cold cost = dispatches at and below this frame + the cold cost
+                        // charged for frozen hits inside it (u32-clamped). The fresh-forest
+                        // PARENT is the memo frame directly enclosing this one — the fact
+                        // whose fresh computation this one ran inside (0/0 = a root).
+                        let cost = ((self.interactions - start) + (self.hit_cost - charged_at)).min(u32::MAX as u64) as u32;
+                        self.open_memo.pop();
+                        let (pf, px) = self.open_memo.last().copied().unwrap_or((0, 0));
+                        self.memo.insert(sf, sx, res, cost, pf, px); // capacity/eviction handled by the backend (memo.rs)
                         // keep popping
                     }
                     Some(Cont::SAfterCx(sb, sox)) => {

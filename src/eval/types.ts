@@ -120,6 +120,14 @@ export interface Session<H = unknown> {
   loadSnapshot?(path: string, stamp: string): boolean
   saveSnapshot?(path: string, stamp: string, minCost?: number): number
   frozenHits?(): number
+  // coldEquiv: this warm run's PREDICTED-COLD step count = steps + the cold cost of the
+  // facts it got as frozen hits, priced EXACTLY (a hit fact counts only when no ancestor is
+  // also hit; see evaluators/rust-eager/crate/src/arena.rs predicted_cold_add). Equals steps
+  // with no snapshot. Report both steps (warm) and coldEquiv (predicted cold); COMPARE
+  // coldEquiv across kernel edits, since warm steps drop as an edit reuses the cache. The
+  // end-of-run walk is done here (not in per-item stats()), so call it once for a summary.
+  coldEquiv?(): number
+  firstHits?(): number
 
   // True iff handles are canonical (a === b implies equal(a,b)). The engine may
   // use this ONLY as an optimization gate (e.g. the run.ts name registry).
