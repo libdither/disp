@@ -56,7 +56,8 @@
 
 #note[Status][
   Reading companion (2026-07). Nothing here is normative: `TYPE_THEORY.typ` owns the
-  type theory, `KERNEL_DESIGN.md` the implementation idioms, `NEGATIVE_TYPES.md` the
+  type theory, `archive/live-kernel/KERNEL_DESIGN.md` the implementation idioms,
+  `archive/live-kernel/NEGATIVE_TYPES.md` the
   telescope rationale, `MODULES.md` the module system. The document is a story: it
   starts from the naive definition of a type as a set of judgments and derives the
   kernel as the sequence of moves that makes membership decidable, with the sequent
@@ -1111,7 +1112,7 @@ members make the intensional proxy exact; this one compares *values* of
 negative type, and no seeding trick rescues the proxy there. Negative values
 have no shape to compare; their true equality is agreement under every
 observation, the same shape of relation this section opened with, one level
-down. `std/relation.disp` implements the pointwise Pi form (`pointwise`, and
+down. `archive/live-kernel/std/relation.disp` implements the pointwise Pi form (`pointwise`, and
 the license policies built on it): agreement during a neutral-probe run, one
 minted argument standing for all. But move 4's fine print bites back here. The
 mint is a sound test of *membership* because the walker forbids the checked body
@@ -1152,7 +1153,7 @@ a `license_guard` rebind between functions that differ
 on every concrete number. In this document's terms: the specification quantifies
 over all observations, the implementation *sampled* one, and sampling is only
 sound under a restriction on observers that the kernel does not enforce.
-Partial closures have landed (`relation.disp`, `std/deriv.disp`: guards that
+Partial closures have landed (`relation.disp`, `archive/live-kernel/std/deriv.disp`: guards that
 demand per-constructor obligations or compute their verdicts over first-order
 derivations are immune, and the probe-detecting pair above fails its zero case
 there), but a plain pointwise license stays spoofable and obligations that
@@ -1311,7 +1312,8 @@ the Sequent Calculus" (ICFP 2024) as the readable entry. Levy (2001) for
 call-by-push-value and the shifts. Abel, Pientka, Thibodeau, Setzer (2013) for
 copatterns (a `respond` is a copattern table over frames). In-repo:
 `TYPE_THEORY.typ` §2.6, §2.7, §5 through §7, §12 (especially §12.7 and §12.19),
-§17; `NEGATIVE_TYPES.md`; `KERNEL_DESIGN.md` § Telescopes; `MODULES.md`;
+§17; `archive/live-kernel/NEGATIVE_TYPES.md`;
+`archive/live-kernel/KERNEL_DESIGN.md` § Telescopes; `MODULES.md`;
 `GOALS.md` and `LOCAL_SYNTH.md`;
 `research/interaction-combinator/EMBEDDING_THEOREM.md`;
 `research/effects-and-coeffects.typ`.

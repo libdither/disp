@@ -206,8 +206,8 @@ elaborate_synth_site(typeExpr):
     Err     -> error("no synth for <typeExpr> at <site>")
 ```
 
-The integration surface is one new entry point in `src/compile.ts` (and the self-hosting
-`lib/elab/compile.disp`): at a completion site, reify the type, run `synth`, check, splice.
+The integration surface is one new entry point in `src/compile.ts` (and in whatever
+self-hosted elaborator replaces it; the old `lib/elab/` was deleted 2026-07): at a completion site, reify the type, run `synth`, check, splice.
 
 ---
 

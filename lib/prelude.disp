@@ -41,7 +41,7 @@ open given {
 // ================================================================
 //
 // Bool is raw shape data (TYPE_THEORY §2.7, the polarity discipline): the two
-// smallest trees, branded Bool by the view iso in positive.disp exactly like
+// smallest trees, branded Bool by the view iso in archive/live-kernel/kernel/positive.disp exactly like
 // Nat's zero/succ. A bool does not drive its own elimination — branching is
 // triage-driven (`cond`/`select` below build the case table and apply it to
 // the bool), the consumer-drives direction the substrate's rule 3 fixes.

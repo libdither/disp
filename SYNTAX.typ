@@ -63,7 +63,7 @@ let x := t   // trailing comments work too
   align: (left, left, left),
   stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
   table.header[*Category*][*Pattern / members*][*Example*],
-  [Keyword],     [`use`, `open`, `match`, `if`, `then`, `else` — NOTE: `let` and `test` are *not* keywords; they are ordinary library identifiers (the private-write request decorator in `kernel/cut.disp` and the prelude identity marking equations)],     [`use`],
+  [Keyword],     [`use`, `open`, `match`, `if`, `then`, `else` — NOTE: `let` and `test` are *not* keywords; they are ordinary library identifiers (the private-write request decorator in `archive/live-kernel/kernel/cut.disp` and the prelude identity marking equations)],     [`use`],
   [Identifier],  [`[A-Za-z_][A-Za-z0-9_']*`, excluding keywords and the bare leaf `t`], [`foo_bar`, `x'`, `_priv`],
   [Leaf],        [`t` (not followed by an identifier char) or `△`],       [`t`, `△`],
   [String],      [`"..."` (no escape sequences). A `use` argument, or a term: a string literal is the `List` of its codepoint `Nat`s (so `"A"` ≡ `[65]`), giving a deterministic, distinct tree per spelling — used as record/coproduct field-name tags.], [`"lib/foo.disp"`, `"respond"`],
@@ -153,7 +153,7 @@ guard g iface : T                                // interface entry (no value)",
   "let K := {x} => {y} => x
 let id : {A : Type} -> A -> A
        := {A} => {x} => x",
-  note: [Private name binding; visible to subsequent members but NOT exported. At the top level this is *not its own production*: `let` is an ordinary identifier, so `let x := e` parses by the `field` rule as a decorated declaration whose head is `let` — the private-write request decorator defined in `kernel/cut.disp` (`{req} => req with private := true`). The elaborator's fast path mirrors that value while `let` is unbound (bootstrap files before the kernel) or pristine; *shadowing `let` changes what the shadowing scope's `let`s mean* (the shadowing decorator runs on each request). Inside braces, `let` remains a lexical binding form recognized structurally (a value cannot introduce a lexical binder): in a block it desugars to `App(Binder, body)`. The legacy `let x = e` spelling was removed (a targeted parse error points to `:=`; `=` is the equation operator).],
+  note: [Private name binding; visible to subsequent members but NOT exported. At the top level this is *not its own production*: `let` is an ordinary identifier, so `let x := e` parses by the `field` rule as a decorated declaration whose head is `let` — the private-write request decorator defined in `archive/live-kernel/kernel/cut.disp` (`{req} => req with private := true`). The elaborator's fast path mirrors that value while `let` is unbound (bootstrap files before the kernel) or pristine; *shadowing `let` changes what the shadowing scope's `let`s mean* (the shadowing decorator runs on each request). Inside braces, `let` remains a lexical binding form recognized structurally (a value cannot introduce a lexical binder): in a block it desugars to `App(Binder, body)`. The legacy `let x = e` spelling was removed (a targeted parse error points to `:=`; `=` is the equation operator).],
 )
 
 #rule(
@@ -172,7 +172,7 @@ givenEntry ::= IDENT \":\" lineExpr (\":=\" lineExpr)?",
   add : Nat -> Nat -> Nat
   start : Nat := 0
 }",
-  note: [The module-dependency header (MODULES.md). Pure sugar: each entry desugars to the line form `given add : Nat -> Nat -> Nat`, a `field` whose head is the library value `given` (the param-request decorator in `kernel/cut.disp`), so ordering, fills, and driver semantics are those of the per-name declarations. `given` is not a keyword: after `open` it is matched structurally, and `open given` without a following `{` parses as a plain `open` of the expression `given`; once the `{` is seen the form is committed and a malformed entry is a parse error. Entry types and defaults are line-local expressions (parenthesize to span lines). A dependency needs a type annotation; `:= d` supplies an optional default fill. Fills come from the use site (`use \"f\" { add := my_add }`); the line form still parses and remains the substrate.],
+  note: [The module-dependency header (MODULES.md). Pure sugar: each entry desugars to the line form `given add : Nat -> Nat -> Nat`, a `field` whose head is the library value `given` (the param-request decorator in `archive/live-kernel/kernel/cut.disp`), so ordering, fills, and driver semantics are those of the per-name declarations. `given` is not a keyword: after `open` it is matched structurally, and `open given` without a following `{` parses as a plain `open` of the expression `given`; once the `{` is seen the form is committed and a malformed entry is a parse error. Entry types and defaults are line-local expressions (parenthesize to span lines). A dependency needs a type annotation; `:= d` supplies an optional default fill. Fills come from the use site (`use \"f\" { add := my_add }`); the line form still parses and remains the substrate.],
 )
 
 == Expressions

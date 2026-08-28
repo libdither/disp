@@ -55,7 +55,7 @@ against everything in scope at its first use site. Three concrete costs:
 ## Surface
 
 One new word, zero new grammar (DECIDED: the word is `given`). `given` is a
-request decorator (an ordinary library value in `cut.disp`, host-fallback
+request decorator (an ordinary library value in `archive/live-kernel/kernel/cut.disp`, host-fallback
 while unbound, exactly the `let` discipline), and the rest is existing
 syntax.
 
@@ -428,7 +428,7 @@ same Module shape work. Record spread joins whenever the synth work lands,
 independent of this arc.
 
 **Partial fills, the semantic half (landed 2026-07-08, in-language)** —
-`std/demand.disp`'s module face answers the per-export question this slice
+`archive/live-kernel/std/demand.disp`'s module face answers the per-export question this slice
 needs: `mod_export_deps ftyp name` computes which given POSITIONS one export
 actually uses (marker instantiation over the functor typ's Pi layers, the
 same oracle as the record face), `mod_export_pi` presents that as the
@@ -462,12 +462,12 @@ order), and barrel re-exports carry guard+cert, so ownership and stamps
 survive re-export.
 
 This is what makes optimization a PARALLEL LIBRARY LAYER rather than an edit
-to the spec: `nat.disp` = pure spec (explicit `NatRecRelation` and
+to the spec: `archive/live-kernel/std/nat.disp` = pure spec (explicit `NatRecRelation` and
 `AddRelation` guards), `nat.opt.disp` opens the spec — the guards and contracts
 ride the names, so it needs no givens —
 and rebinds both names under those licenses (each `{ new, proof }` checked at
 the overlay's own load; dependent bodies re-emitted, OPTIMIZER.typ's
-`(e', cert)` at the definition boundary); `std/prelude.opt.disp` is the
+`(e', cert)` at the definition boundary); `archive/live-kernel/std/prelude.opt.disp` is the
 optimized barrel (kernel surface ⊕ overlays, one open per overlay). Consumers
 pick a face — the spec modules or the `.opt` layer — and mixed scopes
 reconcile via the stamps. One found edge: the kernel BARREL's re-exports are
