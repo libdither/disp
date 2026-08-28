@@ -87,7 +87,12 @@ Coherent : Pi (Sampled [Bool, Unit, Row, Tree]) ShallowType ({_} => Bool)
   let norm_ok := if (is_leaf T.norm) { true } else {
     list_all Tree ({v} => if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
   }
-  and ends_ok (and check_ok (and members_ok (and gate_ok norm_ok)))
+  // The strength of a rows slot, stated as a law rather than left to the slot name:
+  // tele rows are DEFINITIONAL (the judge runs them and they override the recognizer,
+  // pinned below), so a type carrying them must recognize exactly what they accept.
+  // obs rows are descriptive and carry no such duty -- they only license observations.
+  let rows_ok := if (is_leaf T.tele) { true } else { list_all Tree ({v} => tree_eq (T v) ((Tele Guard T) v)) probes }
+  and ends_ok (and check_ok (and members_ok (and gate_ok (and norm_ok rows_ok))))
 }
 
 False : Refine Space Coherent := Sum Tree []
@@ -307,6 +312,22 @@ test Coherent (Pred ({_v} => true)) = true
 test Coherent (Point 5) = true
 test Coherent (Eq Nat 2 2) = true
 test Coherent (Eq Nat 2 3) = true
+test Coherent (Pi Guard Nat ({_} => Nat)) = true
+test Coherent (Sigma Guard Nat ({_} => Bool)) = true
+// The two rows slots differ in JUDGE semantics, not just in name: a type whose
+// recognizer admits everything while its tele demands a Bool is refused at 5 by the
+// judge and accepted by direct application. Coherent's rows_ok is what forbids
+// stating such a type; the same rows under obs are descriptive and stay coherent.
+liar_rows := perform (Observe (pair Self Bool)) ({_} => Pure t)
+LiarTele := ({ #recognize := {_self, _v} => true, tele := liar_rows })
+LiarObs := ({ #recognize := {_self, _v} => true, obs := const_fn liar_rows })
+test LiarTele 5 = true
+test Pi Guard Unit ({_} => LiarTele) ({_u} => 5) = false
+test Pi Meta Unit ({_} => LiarTele) ({_u} => 5) = false
+test Pi Guard Unit ({_} => LiarTele) ({_u} => true) = true
+test Pi Guard Unit ({_} => LiarObs) ({_u} => 5) = true
+test Coherent LiarTele = false
+test Coherent LiarObs = true
 
 // Space, the structured sub-universe: a member is a tag-form type (the wait
 // and tag shape TypeFace keys on, so Space refines TypeFace) presenting
