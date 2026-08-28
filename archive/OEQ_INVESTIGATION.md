@@ -41,9 +41,9 @@
 
   That route cannot decide Disp’s intended oeq:
 
-  - Tree calculus is Turing-complete, so normalization need not terminate (TYPE_THEORY.typ:191).
+  - Tree calculus is Turing-complete, so normalization need not terminate (archive/live-kernel/TYPE_THEORY.typ:191).
   - The optimizer specifically wants to relate different normal forms, such as an inductive implementation and its constant-time replacement.
-  - Unrestricted Disp contexts can distinguish any distinct trees with tree_eq; as already observed in OPTIMIZER.typ:231, unrestricted contextual equivalence collapses to structural identity.
+  - Unrestricted Disp contexts can distinguish any distinct trees with tree_eq; as already observed in research/OPTIMIZER.typ:231, unrestricted contextual equivalence collapses to structural identity.
 
   So the desired equality must be observer-restricted. That observer restriction is currently described but not enforced.
 

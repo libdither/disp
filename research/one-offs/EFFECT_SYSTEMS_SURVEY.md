@@ -4,7 +4,7 @@ A landscape review of algebraic effect systems in modern PL research and practic
 oriented toward a concrete design decision for `disp`: a dependently-typed language
 built on a hash-consed tree-calculus substrate that already performs
 signature-based dispatch on wait-forms. The current closed-handler kernel
-(§5–§7 of `TYPE_THEORY.typ`) is structurally a closed Plotkin-Pretnar
+(§5–§7 of `archive/live-kernel/TYPE_THEORY.typ`) is structurally a closed Plotkin-Pretnar
 algebra; §15 sketches "open it up" to user-installable effects without
 committing to a specific design. This document is the comparison §15 defers.
 

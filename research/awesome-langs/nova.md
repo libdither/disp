@@ -56,7 +56,7 @@ it looks like when applied to the whole type theory.
 ## What disp could steal
 
 - **The four-document discipline** (Foundation / Pipeline / Elaboration / Kernel as
-  separate specs). disp's docs table shows TYPE_THEORY.typ at 5/10 quality and
+  separate specs). disp's docs table shows archive/live-kernel/TYPE_THEORY.typ at 5/10 quality and
   several kernel files at 5/10; Nova's split is a model for what "the kernel is
   source code written to be read" wants to become.
 - **The certificate-carrying-artifact shape as a general answer to A4.** Worth

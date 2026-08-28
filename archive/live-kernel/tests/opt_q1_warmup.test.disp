@@ -1,5 +1,5 @@
 // Q1 micro-experiment — WARM-UP. Can a real rewrite be LICENSED past `tree_eq` by a genuine,
-// machine-checked witness? (OPTIMIZER.typ §6; FOUNDATIONS.md Q1.)
+// machine-checked witness? (research/OPTIMIZER.typ §6; FOUNDATIONS.md Q1.)
 //
 // The substrate's native equality is `tree_eq` — the FLOOR. By Wand-collapse it licenses NOTHING:
 // every non-trivial rewrite is between two *distinct* trees, so it needs a COARSER, PROVED equality.

@@ -57,7 +57,7 @@ funext := {A, B, h, i, a} => h a i`}</pre>
     The pieces now in place: a reflective substrate (§2), a kernel small enough to trust (§5), a
     universe that can check its own citizens (§6.4), and licensing machinery that can say
     "these two programs are interchangeable, and here is the certificate". What remains is the
-    optimizer itself — <a href="https://github.com/libdither/disp/blob/main/OPTIMIZER.typ">OPTIMIZER.typ</a>
+    optimizer itself — <a href="https://github.com/libdither/disp/blob/main/research/OPTIMIZER.typ">OPTIMIZER.typ</a>
     designs it as verified gradient descent on a graded cost over a materialized reduction
     net — and the neural proposer that searches where brute force cannot. An external generator
     proposes candidate trees; the type checker, itself a tree, scores them; and the loop

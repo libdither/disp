@@ -18,7 +18,7 @@ test param_apply Deriv (d_trans t d_conv d_conv) = Ok true
 test param_apply Deriv (inj "junk" t) = Ok false
 
 // ── a schematic rule: both sides are FUNCTION trees, so instances do not
-// evaluate away (the metavar is the point; OPTIMIZER.typ's rule shape) ──
+// evaluate away (the metavar is the point; research/OPTIMIZER.typ's rule shape) ──
 let comm_rule := {k} => pair ({n} => add n k) ({n} => add k n)
 let rules := cons comm_rule nil
 test check_deriv rules nil ({n} => add n 2) ({n} => add 2 n) (d_rule 0 2) = true

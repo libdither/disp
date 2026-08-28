@@ -466,7 +466,7 @@ to the spec: `archive/live-kernel/std/nat.disp` = pure spec (explicit `NatRecRel
 `AddRelation` guards), `nat.opt.disp` opens the spec — the guards and contracts
 ride the names, so it needs no givens —
 and rebinds both names under those licenses (each `{ new, proof }` checked at
-the overlay's own load; dependent bodies re-emitted, OPTIMIZER.typ's
+the overlay's own load; dependent bodies re-emitted, research/OPTIMIZER.typ's
 `(e', cert)` at the definition boundary); `archive/live-kernel/std/prelude.opt.disp` is the
 optimized barrel (kernel surface ⊕ overlays, one open per overlay). Consumers
 pick a face — the spec modules or the `.opt` layer — and mixed scopes

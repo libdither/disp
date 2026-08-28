@@ -12,7 +12,7 @@ specialized ones (kernel self-check ~8M→16M steps), so `APPLY_BUDGET` was rais
 projection); the genuinely-unified single-walk respond for *mixed/callable* records
 (§10.1, `Neg` over a sum index) remains future work. Original proposal below.
 
-Companion reading: `TYPE_THEORY.typ`
+Companion reading: `archive/live-kernel/TYPE_THEORY.typ`
 (§2.6 "one cut for projection, match, and application"; §12 Telescope/Pi/Record/
 Sigma), `KERNEL_DESIGN.md` (§ Telescopes), and the `mk_curried`/`constructor_type`
 work (commit `7e1a11eb`).
@@ -407,7 +407,7 @@ but each step is mechanical once Phase 0 confirms the respond.
   smaller migration, same unity in code); (c) document the unification as the
   organizing principle and keep the current formers (zero migration). (b) is
   likely the sweet spot.
-- **Relation to the spec.** `TYPE_THEORY.typ` §2.6 already states "one cut for
+- **Relation to the spec.** `archive/live-kernel/TYPE_THEORY.typ` §2.6 already states "one cut for
   projection, match, and application," and §12 frames `Record ≅ finite Pi`. This
   proposal is the *operational* realization of that slogan at the former level;
   the spec should reference it.

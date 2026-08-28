@@ -745,7 +745,7 @@ essentially "make this principled by adding `transp_fn` slots."]
 
 #a[
 - `CUBICAL_PROPOSAL.typ` (this repo) — the Disp-specific design.
-- `TYPE_THEORY.typ` (this repo) — the underlying seven-handler design
+- `archive/live-kernel/TYPE_THEORY.typ` (this repo) — the underlying seven-handler design
   the proposal builds on.
 - #link("https://arxiv.org/abs/1611.02108")[Cohen, Coquand, Huber, Mörtberg — "Cubical Type Theory: a constructive interpretation of the univalence axiom"] (CCHM) — the foundational paper.
 - #link("https://arxiv.org/abs/1802.01170")[Angiuli, Brunerie, Coquand, Favonia, Harper, Licata — "Cartesian Cubical Computational Type Theory"] (ABCFHL) — alternative formulation without De Morgan.

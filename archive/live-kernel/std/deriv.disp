@@ -7,7 +7,7 @@ open use "../kernel/prelude.disp"
 // presented the way equational logic presents it (Birkhoff): the congruence
 // closure of a registered rule set, under registered congruent contexts, with
 // conversion (tree_eq of evaluated endpoints) as the base. Trust concentrates
-// in the two tables: a rule is a schematic (lhs, rhs) pair — OPTIMIZER.typ's
+// in the two tables: a rule is a schematic (lhs, rhs) pair — research/OPTIMIZER.typ's
 // rule shape, a function from its metavariables to `pair lhs rhs` — licensed
 // on its own honest grounds (an induction family, guard_faces-style, or a
 // differential pin); a context is registered by the guard's owner as

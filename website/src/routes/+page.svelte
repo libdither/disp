@@ -394,7 +394,7 @@
       </h3>
       <p>
         Idea: have tree programs compile to <a
-          href="{REPO}/blob/main/OPTIMIZER.typ"
+          href="{REPO}/blob/main/research/OPTIMIZER.typ"
           target="_blank"
           rel="noopener">interaction nets</a
         >, and have another interaction net search the original interaction nets

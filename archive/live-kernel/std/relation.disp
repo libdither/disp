@@ -186,7 +186,7 @@ pullback_equivalence := {A, obs, E} => make_equivalence
   ({x, y, z, p, q} => E.trans (obs x) (obs y) (obs z) p q)
 
 // ── The rich level (the PER universe) ──
-// The 2LTT reading (OPTIMIZER.typ): strict equality is Eq, conversion's
+// The 2LTT reading (research/OPTIMIZER.typ): strict equality is Eq, conversion's
 // propositional face, and never coarsens; every coarser observational equality
 // is a PER whose relation a former computes from its parts' relations. A rich
 // type is a PER over a raw carrier, and rich membership is self-relatedness

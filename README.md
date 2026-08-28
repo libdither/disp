@@ -230,7 +230,7 @@ Working today:
 - Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, about twice as fast as the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests.
 - A first end-to-end slice of the optimizer: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (archived at `archive/live-kernel/tests/opt_q1_*.test.disp`).
 
-Designed but not built: the optimizer itself ([`OPTIMIZER.typ`](OPTIMIZER.typ)), effects as a library, cost as a typing-level resource, cubical path types, and the neural proposer. The open research risks, most sharply whether a decidable fragment of behavioral equivalence is rich enough to license the rewrites an optimizer needs, are catalogued as falsifiable questions in [`FOUNDATIONS.md`](FOUNDATIONS.md) §V.
+Designed but not built: the optimizer itself ([`research/OPTIMIZER.typ`](research/OPTIMIZER.typ)), effects as a library, cost as a typing-level resource, cubical path types, and the neural proposer. The open research risks, most sharply whether a decidable fragment of behavioral equivalence is rich enough to license the rewrites an optimizer needs, are catalogued as falsifiable questions in [`FOUNDATIONS.md`](FOUNDATIONS.md) §V.
 
 ## Getting Started 🤖
 
@@ -250,7 +250,7 @@ Suggested reading order:
 1. [`FOUNDATIONS.md`](FOUNDATIONS.md): what disp is attempting, the lineage of every design piece, and the risk assessment. Written for a general reader.
 2. [`GOALS.md`](GOALS.md): the original goal statement.
 3. `lib/kernel/kernel.test.disp` and `lib/tests/`: the language, demonstrated (the archived corpus under `archive/live-kernel/tests/` is a larger museum of the previous surface).
-4. [`SYNTAX.typ`](SYNTAX.typ) and [`TYPE_THEORY.typ`](TYPE_THEORY.typ): the formal surface grammar and the type-theory spec (the latter documents the archived kernel; a successor for the current one is pending).
+4. [`SYNTAX.typ`](SYNTAX.typ) and [`archive/live-kernel/TYPE_THEORY.typ`](archive/live-kernel/TYPE_THEORY.typ): the formal surface grammar and the type-theory spec (the latter documents the archived kernel; a successor for the current one is pending).
 5. `lib/kernel/`: the type system's source. Reading order: `kernel.disp` (the checker), then `types.disp` (the library types split out of it), with `prelude.disp` as the barrel.
 
 <a id="documentation"></a>
@@ -264,7 +264,7 @@ The 🧑/🤖 column estimates who typed the words; git does not record the spli
 | [`README.md`](README.md) | This file. The example section is machine-checked literate code. | 🧑 25% · 🤖 75% | 9/10 |
 | [`GOALS.md`](GOALS.md) | The long-term vision: neural-guided synthesis, self-improving optimizer. | 🧑 85% · 🤖 15% | 8/10 |
 | [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. *Interesting Read* | 🤖 | 7/10 |
-| [`TYPE_THEORY.typ`](TYPE_THEORY.typ) | Authoritative type-theory spec: the two-op kernel, manifest contracts, library types, validators. *Long* | 🤖 | 5/10 |
+| [`archive/live-kernel/TYPE_THEORY.typ`](archive/live-kernel/TYPE_THEORY.typ) | Type-theory spec for the *archived* kernel: the two-op core, manifest contracts, library types, validators. Still the fullest statement of the polarity discipline; a successor for `lib/kernel/` is pending. *Long* | 🤖 | 5/10 |
 | [`EVALUATOR.md`](EVALUATOR.md) | The reduction-backend subsystem: the `Session` ABI, the five backends, the differential-oracle discipline. | 🤖 | 6/10 |
 | [`archive/live-kernel/KERNEL_DESIGN.md`](archive/live-kernel/KERNEL_DESIGN.md) | Tree-calculus implementation idioms for the archived kernel: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 6/10 |
 | [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. | 🤖 | 7/10 |
@@ -280,7 +280,7 @@ The kernel is source code written to be read: the type system is a library, so t
 
 The previous kernel's fragments (`cut`, `engine`, `cells`, `base`, `positive`, `generic`, `universe` — the two-op trusted core the example section teaches) live intact under [`archive/live-kernel/kernel/`](archive/live-kernel/kernel/).
 
-`.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`TYPE_THEORY.pdf`, `SYNTAX.pdf`) sit alongside them.
+`.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`archive/live-kernel/TYPE_THEORY.pdf`, `SYNTAX.pdf`) sit alongside them.
 
 ## Repository Layout 🤖
 
@@ -300,10 +300,10 @@ lib/                        -- the language, written in itself
 evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers)
 test/                       -- vitest harness + host unit tests
 bench/                      -- evaluator benchmarks
-research/                   -- research notes and designs
-archive/                    -- retired work kept loadable: live-kernel/ (the previous kernel, its std/ and tests/), superseded proposals
+research/                   -- research notes and unbuilt designs (OPTIMIZER.typ, LOCAL_SYNTH.md, AC_IDEA.md, NATIVE_BOOTSTRAP_PLAN.typ)
+archive/                    -- retired work kept loadable: live-kernel/ (the previous kernel, its std/, tests/ and TYPE_THEORY.typ), superseded proposals
 editors/                    -- editor support (vscode-disp)
-*.md, *.typ                 -- design docs and working notes (rated in the Documentation table above)
+*.md, *.typ                 -- docs for what runs today: the kernel, the host pipeline, the evaluator (rated in the Documentation table above)
 ```
 
 ## Acknowledgments

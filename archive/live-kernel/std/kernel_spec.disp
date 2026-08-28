@@ -39,7 +39,7 @@
 // spec-to-fused relation stays differential in this prototype. The target is
 //   guard (license_guard WalkerRelation.rel) param_walker
 // with proof a real equivalence certificate relating walk_spec2 to the fused
-// walker; the license machinery is the OPTIMIZER.typ arc. The pins here are
+// walker; the license machinery is the research/OPTIMIZER.typ arc. The pins here are
 // not that proof, and pretending otherwise would poison the ledger.
 open use "../kernel/prelude.disp"
 open use "effect.disp"

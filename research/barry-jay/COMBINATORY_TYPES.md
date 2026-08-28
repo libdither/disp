@@ -453,4 +453,4 @@ austerity benchmark for kernel complexity.
 - disp side: `lib/kernel/engine.disp` (walker, `param_apply`), `lib/kernel/cells.disp`
   (Pi/telescope recognizers), `lib/kernel/universe.disp` (Type tiers),
   `lib/standalone_kernel.disp` (Pi-checking experiments), `ACTIVE_BUGS.md`,
-  `KERNEL_DESIGN.md`, `TYPE_THEORY.typ`.
+  `KERNEL_DESIGN.md`, `archive/live-kernel/TYPE_THEORY.typ`.

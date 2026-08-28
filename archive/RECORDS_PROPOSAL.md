@@ -340,9 +340,9 @@ The internal handler-body uses inside the recq record (`ks.guard`, `ks.predicate
 - `selectorTree`/`buildSelector` (`compile.ts:134, 143`): delete once walker-based emission is the only path.
 
 ### Step 9 — Spec doc updates
-- `TYPE_THEORY.typ` §5.X: add Refinement (move from §5.8 sketch).
-- `TYPE_THEORY.typ` §5.Y: add Unit.
-- `TYPE_THEORY.typ` §5.Z: add Record (predicate_frame wrapper + ValidField refinement pattern).
+- `archive/live-kernel/TYPE_THEORY.typ` §5.X: add Refinement (move from §5.8 sketch).
+- `archive/live-kernel/TYPE_THEORY.typ` §5.Y: add Unit.
+- `archive/live-kernel/TYPE_THEORY.typ` §5.Z: add Record (predicate_frame wrapper + ValidField refinement pattern).
 - `COMPILATION.typ` §"Record encoding": rewrite for Option B + `rec {…}`.
 - `SYNTAX.typ` §"Programs, record bodies, and items": add `rec` keyword.
 
@@ -375,7 +375,7 @@ The current plan tracks recursion at the *value* level (`rec` is `fix`-wrapped v
 1. **Divergence can't be checked at type-check time.** Ill-formed recursive definitions (e.g., a non-functional sibling cycle) diverge at use. The proposal's Step 3 static check catches the common case but doesn't have kernel-level backing.
 2. **The type system can't distinguish recursion-bearing records from plain ones.** A function that requires its argument to be a fixed-point produced by `rec` has no way to express that constraint.
 
-Both gaps require kernel-side totality machinery (`wf_fix` / `Total` / `TotalWith` per `TYPE_THEORY.typ`). Once those land, a `RecRecord fields` type-former becomes viable:
+Both gaps require kernel-side totality machinery (`wf_fix` / `Total` / `TotalWith` per `archive/live-kernel/TYPE_THEORY.typ`). Once those land, a `RecRecord fields` type-former becomes viable:
 
 ```disp
 RecRecord fields := Refinement (Record fields) ({v} -> well_formed_fix v fields)

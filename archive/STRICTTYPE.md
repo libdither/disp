@@ -5,7 +5,7 @@
 notes below). The coherence rung landed 2026-07-01 as `Type := BehavioralType`
 via GoodRespond probe telescopes, without cubical (contra the validator table in
 §0). The open remainder is the structural `respond : RespondShape` ascription in
-MetaShape, tracked in TYPE_THEORY.typ §11-§12 and pinned in `metashape.test.disp`.
+MetaShape, tracked in archive/live-kernel/TYPE_THEORY.typ §11-§12 and pinned in `metashape.test.disp`.
 Kept for the Part B/C structured-Frame buildout sketches. (File references such as
 `lib/kernel/core.disp` predate the seven-fragment kernel split.)
 
@@ -400,6 +400,6 @@ to §13/`BehavioralType` if you want the spine type designed once against the st
 - Tests: `lib/tests/metashape.test.disp` (the respond-inhabitation wall) and
   `lib/tests/strict_type.test.disp` (the landed recognize-side metacircle, `StrictType :
   StrictType`).
-- Spec: `TYPE_THEORY.typ` §11.2 (MetaShape convention), §11.4 (the three validators),
+- Spec: `archive/live-kernel/TYPE_THEORY.typ` §11.2 (MetaShape convention), §11.4 (the three validators),
   §12.3 (InvalidType / the dead state), §12.6 (RespondShape / RecognizerShape).
 - Memory: `project_kernel_self_typing_metashape`.

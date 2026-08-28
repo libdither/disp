@@ -91,7 +91,7 @@ build artifact exists, so `npm test` never needs a toolchain.
 All backends realize the same semantics, specced once in
 [`research/interaction-combinator/tc-net.typ`](research/interaction-combinator/tc-net.typ) —
 the Rooted TC-Net interaction-net calculus (agents, rules, the `δⁿ` need-duplicator, strong
-confluence). It is the evaluator's authoritative spec, the way `TYPE_THEORY.typ` is the type
+confluence). It is the evaluator's authoritative spec, the way `archive/live-kernel/TYPE_THEORY.typ` is the type
 system's. The hash-consed backends are "just" the standard graph-reduction realization of it;
 rust-ic-net is the literal materialization.
 
@@ -127,4 +127,4 @@ rust-ic-net is the literal materialization.
 | the calculus spec | `research/interaction-combinator/tc-net.typ` |
 | the materialized net (strategy 2) design | `research/interaction-combinator/RUST_IC_NET_DESIGN.md` |
 | a native backend's internals | its crate `crate/src/lib.rs` module-map doc-comment |
-| why this exists (the optimizer it feeds) | [`OPTIMIZER.typ`](OPTIMIZER.typ) |
+| why this exists (the optimizer it feeds) | [`research/OPTIMIZER.typ`](research/OPTIMIZER.typ) |

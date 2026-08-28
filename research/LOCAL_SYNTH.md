@@ -243,7 +243,7 @@ different type, cost-grading, and guide — and the kernel's `check` certifies e
 - **Type construction in the elaborator** — residual telescopes, `Γ →`, refinement/coeffect wrapping.
   Mostly telescope manipulation; tractable.
 - **The `~_A` refinement and cost-coeffect formers** — needed for optimizer-grade types (`A ∧ ~e ∧
-  cost≤k`). The same unbuilt substrate the optimizer needs (`OPTIMIZER.typ`; the equality-licensing and
+  cost≤k`). The same unbuilt substrate the optimizer needs (`research/OPTIMIZER.typ`; the equality-licensing and
   cost-coeffect work). The elaboration handlers (§5) need *none* of it.
 - **The `SY` cell mode** — optional kernel touch to make record/Σ synthesis literal `at` reuse; without
   it `synth_record` is a standalone walk. `mint`'s synth-meaning (produce a binder) differs from
@@ -266,8 +266,8 @@ different type, cost-grading, and guide — and the kernel's `check` certifies e
 - **Named + default + reorderable args** (landed, commit `ee3e25d`) — a special case: `synth` over a
   function's residual domain telescope. Today it's hardcoded host TS; under this design it's one
   handler.
-- **`OPTIMIZER.typ`** — the optimizer is the heaviest `synth` guide (cost-graded, `~_A`-refined type).
-- **`NATIVE_BOOTSTRAP_PLAN.typ`** — the native elaborator is where the in-language `synth` lives and is
+- **`research/OPTIMIZER.typ`** — the optimizer is the heaviest `synth` guide (cost-graded, `~_A`-refined type).
+- **`research/NATIVE_BOOTSTRAP_PLAN.typ`** — the native elaborator is where the in-language `synth` lives and is
   invoked; the typed item transducer and dependency log provide its reflective dispatcher boundary.
 - **`GOALS.md` / `FOUNDATIONS.md`** — synthesis (optimizer) + reflection (in-language elaborator) +
   certificate-checking, self-applied, is the unoccupied bet; `synth`/`check` is its elaboration-shaped

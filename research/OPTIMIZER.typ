@@ -43,7 +43,7 @@
   reverse-mode, the per-test superposition results — remain recoverable in git history and are
   cited inline where this design compresses them. The *substrate* (the interaction-net
   reducer) keeps its own spec: `research/interaction-combinator/{tc-net.typ, RUST_IC_NET_DESIGN.md}`.
-  Type-theory foundations stay in `TYPE_THEORY.typ` and `research/effects-and-coeffects.typ`.
+  Type-theory foundations stay in `archive/live-kernel/TYPE_THEORY.typ` and `research/effects-and-coeffects.typ`.
   Open items are flagged inline and collected in §11.
 
   *None of this is built.* Most of the *substrate* exists (§3, §10); the optimizer is research.
@@ -710,7 +710,7 @@ as a graded coeffect, §4), and *one derivative* (search as differentiation, §8
 
 == Effects are values, which makes effectful programs optimizable
 
-`TYPE_THEORY.typ` §15: `postulate` is removed; effects are a library *free monad `Eff R X`*
+`archive/live-kernel/TYPE_THEORY.typ` §15: `postulate` is removed; effects are a library *free monad `Eff R X`*
 interpreted by *deep handlers*, with *one impure driver at the program boundary*; the substrate's
 purity forces effects to be *values, never dispatch targets.* Consequences for the optimizer, all
 from "effects are inspectable data":
@@ -889,7 +889,7 @@ The genuinely unresolved core, ordered roughly by how load-bearing.
   *`~_T` concretely, and is it the Type:Type consistency relation?* Define the licensing logical
   relation over stripped trees so it (a) meshes with the walker's neutral/escape discipline, (b) is
   sound for the applicative observer class, (c) composes with the explicit relation rule library. The
-  sealing-framework / step-indexed-LR conjecture (`TYPE_THEORY.typ` §11.6) suggests `~_T` and the
+  sealing-framework / step-indexed-LR conjecture (`archive/live-kernel/TYPE_THEORY.typ` §11.6) suggests `~_T` and the
   Type:Type consistency argument may be *the same* logical relation — if so, soundness of the
   optimizer and consistency of the (semantic) kernel are one proof. *Direction:* build it as a
   step-indexed logical relation over the walker's observer class (the sealing recipe) — likely the

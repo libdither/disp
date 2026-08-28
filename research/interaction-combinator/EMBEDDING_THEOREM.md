@@ -230,7 +230,7 @@ so eliminations ≤ insertions + I(initial), and insertions ≤ (rules)·O(1) + 
 Hence transport = eliminations + moves = O(interactions + moves + I(initial)), where I(initial)
 = Σ initial path lengths is the cost already present in the starting embedding. The ledger
 closes: transport is bounded by the two quantities the machine actually counts (interactions
-and moves) plus the fixed initial layout, and no term is uncharged. In `OPTIMIZER.typ` §4
+and moves) plus the fixed initial layout, and no term is uncharged. In `research/OPTIMIZER.typ` §4
 terms this is the fourth grade (bit-meters) sitting beside work, space, and span, with its
 coeffect face a worst-case over admissible schedules and its effect face the measured ι+move
 tally.

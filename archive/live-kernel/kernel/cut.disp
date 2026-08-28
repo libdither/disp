@@ -163,7 +163,7 @@ make_meta : Tree -> Tree -> MetaShape := {params, respond} =>
 // request, runs the guard, and binds exactly the tree the guard's action carries; it
 // never fabricates a bound tree, a proof, or glue. Every soundness-carrying tree is
 // built by kernel or guard code in-language (e.g. a licensed fast face's delegation
-// glue is the guard's own construction, never the driver's; OPTIMIZER.typ,
+// glue is the guard's own construction, never the driver's; research/OPTIMIZER.typ,
 // "Certification is not yet observer-restricted").
 Bind    : Tree -> GuardAction := inj1 "Bind"          // bind this value
 Install : Tree -> GuardAction := inj1 "Install"       // set the name's guard; value untouched

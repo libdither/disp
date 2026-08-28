@@ -1,4 +1,4 @@
-// Q1 micro-experiment — CERTIFICATE SLICE (the M0→M1 seam, OPTIMIZER.typ §7).
+// Q1 micro-experiment — CERTIFICATE SLICE (the M0→M1 seam, research/OPTIMIZER.typ §7).
 //
 // The witness experiments (opt_q1_warmup/main) proved a rewrite is LICENSED (a gate-checked Eq proof
 // exists). This file builds the other half: the ~30-line in-language CERTIFICATE CHECKER that CARRIES
@@ -48,7 +48,7 @@ let law_fusion := Pi (Pi Nat ({_} => Nat)) ({f} => Pi (Pi Nat ({_} => Nat)) ({g}
 let book := { map_fusion := { name := "map_fusion"; rule := map_fusion_rule; arity := (succ (succ (succ zero))); kind := "CostEq"; witness := map_fusion_proof } }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// 3. The trusted checker (~30 lines, in-language, itself type-checkable). OPTIMIZER.typ §7.
+// 3. The trusted checker (~30 lines, in-language, itself type-checkable). research/OPTIMIZER.typ §7.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // check_step: instantiate the named rule on the step's subst; if the redex at `path` matches lhs,
 // splice rhs; else reject. check_cert folds it; verify_rewrite re-checks the final tree == e'.

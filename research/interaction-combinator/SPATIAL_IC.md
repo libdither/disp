@@ -1,7 +1,7 @@
 # Spatial IC — interaction combinators on a distance-aware substrate, and resident machines
 
 Research note, 2026-07-07. Companion to `tc-net.typ` (the calculus), `RUST_IC_NET_DESIGN.md`
-(the pointer-machine implementation), and `/OPTIMIZER.typ` (the cost ledger this note
+(the pointer-machine implementation), and `research/OPTIMIZER.typ` (the cost ledger this note
 extends). Status: design investigation, nothing built. Three literature sweeps ground the
 prior-art claims; references in §15.
 
@@ -18,7 +18,7 @@ consume and produce agents, entered by a certified equivalence rewrite.
 **Verdict.** Coherent, with one near-miss precedent (interaction automata / ia2d, FSCD 2016,
 §15.1) whose two most interesting ingredients are unclaimed: attraction-driven migration and
 distance as a first-class cost grade. Not competitive as a simulated runtime on today's
-CPUs/GPUs; strong as (a) the honest hardware-cost model `OPTIMIZER.typ` §4/§9 explicitly
+CPUs/GPUs; strong as (a) the honest hardware-cost model `research/OPTIMIZER.typ` §4/§9 explicitly
 leaves open, (b) a scheduler insight (tiling + migration) applicable to `rust-ic-net` and
 HVM2-class GPU reducers now, and (c) a long-range hardware thesis whose substrate class has
 shipped silicon precedent (Cerebras-scale meshes). The whole bet hangs on one number, the
@@ -66,7 +66,7 @@ uses both, at different layers, and rejects one specific corner.
 ### 2.1 Rules stay distance-blind (the rejected corner)
 
 If rewrite rules can observe distance (branch on near versus far, race, time out), the system
-contains `amb` and strong confluence is destroyed, which `OPTIMIZER.typ` §3 correctly marks as
+contains `amb` and strong confluence is destroyed, which `research/OPTIMIZER.typ` §3 correctly marks as
 sacred: it is what makes parallelism free, results schedule-independent, and the
 differential-oracle backend discipline possible. Rule *outcomes* never depend on geometry.
 
@@ -126,7 +126,7 @@ Four points in the proof need actual care:
   an existing long wire. Worth stating as a lemma, because it is why tension has a chance:
   geometry degrades only through identifiable, chargeable events.
 
-In ledger terms (`OPTIMIZER.typ` §4): the graded semiring gains a **transport grade**
+In ledger terms (`research/OPTIMIZER.typ` §4): the graded semiring gains a **transport grade**
 (bit-meters, the standard VLSI/energy metric) alongside interactions (work), peak live nodes
 (space), and span. This lands squarely on the §3 note that interaction count is "a reasonable
 but space-biased proxy, provably not wall-clock" and that faithful hardware cost is a separate
@@ -276,7 +276,7 @@ remaining empirical exposure concentrates; report per-workload stays the rule.
 
 None of this is a defect. Every physical machine pays these costs; this design is the one
 where the optimizer can *see* them. The no-memo substrate already gives per-decision cost
-attribution (`OPTIMIZER.typ` §3); a spatial substrate extends attribution to data movement,
+attribution (`research/OPTIMIZER.typ` §3); a spatial substrate extends attribution to data movement,
 which is where the energy actually goes. Endgame reading: on hardware of this shape,
 per-candidate cost becomes per-region power draw, and `GOALS.md`'s measurement primitive
 becomes an energy meter.
@@ -340,11 +340,11 @@ lives instead is already built, in pieces, in this repo:
 
 - **Machine-equivalence is a type.** Types are predicates here; so
   `Machine_M := { t : Tree | t ~ spec_M }` where `spec_M` is the machine's specification as a
-  tree program (`OPTIMIZER.typ` §9: a hardware model is a tree program; `Refines spec asm`).
+  tree program (`research/OPTIMIZER.typ` §9: a hardware model is a tree program; `Refines spec asm`).
   Recognition is membership checking through the walker; the membership witness is the
   certificate. Residence on dedicated hardware is a privilege granted by proving membership.
 - **The swap is φ.** Replacing the subnet by a reference to the machine is exactly the
-  `OPTIMIZER.typ` §5/§7 verified rewrite at the codegen corner of the staging axis, executed
+  `research/OPTIMIZER.typ` §5/§7 verified rewrite at the codegen corner of the staging axis, executed
   at a stage boundary (region quiescence / JIT pause), licensed by the certificate, checked
   by the trusted checker. The guard layer's licensed rebind (`license_guard` payload
   `{ new := machine_ref; proof := relation_witness }`) is the module-level rehearsal of the same
@@ -381,7 +381,7 @@ contention), never the machine. Three layers of representation, none needing new
   by usage, wait by queue times service time) compose semiring-fashion, with real queueing
   behavior left to the measured rung. A 1-graded machine ref licenses pinning/dedication;
   ω-graded means pool, replicate, or accept queuing. This also connects to the
-  `OPTIMIZER.typ` open question on the affine fragment as a decidable search island: hardware
+  `research/OPTIMIZER.typ` open question on the affine fragment as a decidable search island: hardware
   linearity and type linearity meet in the same fragment.
 - *Physically: as area*, priced by the fixed-cost side of §5.4's amortization inequality.
 
@@ -435,7 +435,7 @@ amortized corner of the staging axis.
 
 ## 6. Machines and effect systems
 
-`TYPE_THEORY.typ` §15: effects are a free monad `Eff R X` over an operation-signature row R,
+`archive/live-kernel/TYPE_THEORY.typ` §15: effects are a free monad `Eff R X` over an operation-signature row R,
 interpreted by deep handlers, one impure driver at the boundary. Machines connect to this at
 every level.
 
@@ -486,7 +486,7 @@ whose row is the ambient capability set.
   forward clause of a hardened handler is a wire — routing for ops this machine does not
   serve, onward to machines or driver that do.
 - `GOALS.md`'s measurement primitive ("outsource execution, get output + time + memory
-  back") is an effect op whose handler is the driver; incurred cost (`OPTIMIZER.typ` §4's
+  back") is an effect op whose handler is the driver; incurred cost (`research/OPTIMIZER.typ` §4's
   effect face) flows back through the same row plumbing that routes the call. The coeffect
   face (the bound) rides the type; the effect face (the bill) rides the row.
 
@@ -568,7 +568,7 @@ the hot `Ref`; the driver invokes the hardened optimizer; φ swaps the definitio
 ### 8.4 Cost introspection, in-language
 
 The inner loop needs candidate costs without leaving the calculus. The rung ladder
-(`OPTIMIZER.typ` §9 note) instantiates as: rung 0, static grades (already type-level); rung
+(`research/OPTIMIZER.typ` §9 note) instantiates as: rung 0, static grades (already type-level); rung
 1, a **cost-instrumented self-interpreter** `eval_costed : Tree -> Tree -> (Tree, Nat)`
 (instrument Jay's self-evaluator to thread a counter: pure, in-language, slow, and itself a
 prime hardening target); rung 2, the spatial model `run_spatial : NetDesc -> (Result,
@@ -585,7 +585,7 @@ semantics-preservation obligation. v1 suffices to start.
 
 ### 8.6 The holy-grail shape is unchanged
 
-Untrusted proposer + trusted checker + φ, per `OPTIMIZER.typ`; the spatial substrate changes
+Untrusted proposer + trusted checker + φ, per `research/OPTIMIZER.typ`; the spatial substrate changes
 what "cheaper" means (transport in the ledger) and what "native" means (the optimizer as a
 largely self-hardened region of fabric taking suspensions in and emitting suspensions plus
 certificates out). Certificates and specs are staging-time artifacts: the fabric carries only
@@ -742,7 +742,7 @@ Findings:
 
 The content is §2.2 (the embedding theorem defines the grade as an interaction count); the
 task is integration: write the fourth grade (work, span, space, transport/bit-meters) into
-`OPTIMIZER.typ` §4's semiring, with the bound/incurred split resolved as the ledger already
+`research/OPTIMIZER.typ` §4's semiring, with the bound/incurred split resolved as the ledger already
 patterns it — the coeffect face is a worst-case over admissible schedules (composable, loose
 under annealing), the effect face is the simulated or measured sample. Days of design
 writing; makes §5.4's machine placement expressible at all.
@@ -882,7 +882,7 @@ pad, trees being planar-embeddable).
 - The **jamming threshold** and the weight/temperature schedules (§13 items 3, 8).
 - **Representation costs**: unary Nat is transport poison; HBin/word representations via
   licensed rep-change (the arith.opt overlay pattern), which is a real coercion with real
-  cost, not a φ-identity (the HEq caveat in `OPTIMIZER.typ`).
+  cost, not a φ-identity (the HEq caveat in `research/OPTIMIZER.typ`).
 - Area vs fragmentation slack (usable area < free area).
 
 ### 14.4 Research risks
@@ -906,7 +906,7 @@ theorem written carefully. §12 (tiled) has no conceptual blocker; policy knobs 
 §13 (CA sim) is the design-complete gate: it needs §14.1 and §14.2's first three items, and
 writing its full rule table is a bounded task about the size of `tc-net.typ`'s rules section
 that will force every remaining hand-wave. Machines (even simulated) need the five-tuple,
-sealed refs, and the M1 rulebook/checker completion from `OPTIMIZER.typ`'s build order; the
+sealed refs, and the M1 rulebook/checker completion from `research/OPTIMIZER.typ`'s build order; the
 recognition search can start as hand-picked subnets. The self-hosting loop (§8) needs the
 costed self-interpreter, the codomain decision, and M1. No conceptual blocker stands
 anywhere; what remains is one theorem, one protocol table, one interface definition, one
@@ -1026,7 +1026,7 @@ Neumann substrate) and Vericert (certified circuits, no recognition).
 
 ## 16. Relation to the repo's roadmap
 
-- `OPTIMIZER.typ` §4: transport is the missing fourth grade; §9: the CA is the minimal honest
+- `research/OPTIMIZER.typ` §4: transport is the missing fourth grade; §9: the CA is the minimal honest
   `run_model`, and §7 here makes every machine model the same calculus under a grade profile;
   §3: per-region attribution extends to data movement and, on real hardware, to energy
   metering.
@@ -1035,7 +1035,7 @@ Neumann substrate) and Vericert (certified circuits, no recognition).
   A/C instrumentation lives in that crate (`src/trace.rs`, `src/bin/rent.rs`, drivers in
   `bench/e1-*`): opt-in, sequential-only, one never-taken branch in normal runs; wire-RC
   (its §5) is now also what unblocks the kernel-tier Rent measurement.
-- `TYPE_THEORY.typ` §15: effectful machines stay at the driver boundary; pure machines are
+- `archive/live-kernel/TYPE_THEORY.typ` §15: effectful machines stay at the driver boundary; pure machines are
   agents; §6 here reads the whole effects arc as the machine economy's source-level face.
 - `GOALS.md`: §8 here is its optimizer loop verbatim; §7 here is its "deterministic models of
   the base hardware" item given a uniform construction.

@@ -55,14 +55,14 @@
 #line(length: 100%, stroke: 0.5pt + luma(180))
 
 #note[Status][
-  Reading companion (2026-07). Nothing here is normative: `TYPE_THEORY.typ` owns the
+  Reading companion (2026-07). Nothing here is normative: `archive/live-kernel/TYPE_THEORY.typ` owns the
   type theory, `archive/live-kernel/KERNEL_DESIGN.md` the implementation idioms,
   `archive/live-kernel/NEGATIVE_TYPES.md` the
   telescope rationale, `MODULES.md` the module system. The document is a story: it
   starts from the naive definition of a type as a set of judgments and derives the
   kernel as the sequence of moves that makes membership decidable, with the sequent
   calculus supplying the name and the license for each move. Bare §N references point
-  within this document; "spec §N" points into `TYPE_THEORY.typ`. The dictionary table
+  within this document; "spec §N" points into `archive/live-kernel/TYPE_THEORY.typ`. The dictionary table
   and a fully traced example sit in the appendices for reference.
 ]
 
@@ -1159,7 +1159,7 @@ derivations are immune, and the probe-detecting pair above fails its zero case
 there), but a plain pointwise license stays spoofable and obligations that
 leave payload or arm credits in place stay probeable; the full design (observer
 restriction: strict walker mode, first-order certificates, the PER lift) lives
-in `OPTIMIZER.typ`. The same drift, one level up, is what
+in `research/OPTIMIZER.typ`. The same drift, one level up, is what
 the subject-reduction ledger tracks: the spec set is closed under cut by
 construction; the decided set may not be; `ACTIVE_BUGS.md` is the ledger of the
 difference, with machine pins in `lib/tests/probe_*_sr.test.disp`.
@@ -1226,7 +1226,7 @@ meet, and spines are exactly the partial proof objects a search extends. The
 missing ingredient is guidance about which branch to grow, and that is the
 `GOALS.md` endgame in one line: neural-guided synthesis is a learned heuristic
 for enumerating the harvest, the half of the naive filter that no theorem makes
-cheap (`LOCAL_SYNTH.md` for the design). Checking and synthesis are one set,
+cheap (`research/LOCAL_SYNTH.md` for the design). Checking and synthesis are one set,
 queried from opposite ends.
 
 = Appendix: the dictionary
@@ -1259,7 +1259,7 @@ The story in compressed form. "Where" points into this document.
     [identity type], [`Eq`: `refl` right rule, J left rule via respond], [§6],
     [observational equality of values], [`relation.disp` pointwise licenses, currently probe-sampled; observer restriction is the open design], [§6],
     [subject reduction], [spec-set vs decided-set drift; `ACTIVE_BUGS.md` is the ledger], [§6],
-    [inhabitation / proof search], [synthesis; the query the checker refuses; `GOALS.md`, `LOCAL_SYNTH.md`], [§7],
+    [inhabitation / proof search], [synthesis; the query the checker refuses; `GOALS.md`, `research/LOCAL_SYNTH.md`], [§7],
   ),
   caption: [The dictionary.],
 ) <tab-dictionary>
@@ -1311,9 +1311,9 @@ testing. Curien and Herbelin (2000), "The duality of computation," and "Grokking
 the Sequent Calculus" (ICFP 2024) as the readable entry. Levy (2001) for
 call-by-push-value and the shifts. Abel, Pientka, Thibodeau, Setzer (2013) for
 copatterns (a `respond` is a copattern table over frames). In-repo:
-`TYPE_THEORY.typ` §2.6, §2.7, §5 through §7, §12 (especially §12.7 and §12.19),
+`archive/live-kernel/TYPE_THEORY.typ` §2.6, §2.7, §5 through §7, §12 (especially §12.7 and §12.19),
 §17; `archive/live-kernel/NEGATIVE_TYPES.md`;
 `archive/live-kernel/KERNEL_DESIGN.md` § Telescopes; `MODULES.md`;
-`GOALS.md` and `LOCAL_SYNTH.md`;
+`GOALS.md` and `research/LOCAL_SYNTH.md`;
 `research/interaction-combinator/EMBEDDING_THEOREM.md`;
 `research/effects-and-coeffects.typ`.

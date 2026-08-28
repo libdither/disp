@@ -165,7 +165,7 @@ induction, whose cases instantiate at constructor-rooted values where the face b
 false (an induction proof of `id ~ shift` is impossible: its zero case demands
 `Eq Nat 0 1`). The attack's doors are top-level refl at a bare hyp, and reflection
 through residual hyps of concrete-face obligations. The closing design lives in
-OPTIMIZER.typ under "Certification is not yet observer-restricted"; its no-kernel-change
+research/OPTIMIZER.typ under "Certification is not yet observer-restricted"; its no-kernel-change
 layers have landed in `relation.disp` and `std/deriv.disp`. The top-level-refl door is
 closed for rebinds that use them: `two_face_guard` + `PositiveFnCoverage` bind guard-built
 delegation glue and demand per-constructor obligations (the shift pair fails its zero
@@ -216,7 +216,7 @@ certificates for anything it strips.
    their rebinds onto constructor obligations, computed derivation verdicts, and
    consumption-side respect; plain pointwise `license_guard` rebinds remain trusted on
    their differential pins until the strict observer-restricted walker mode lands
-   (OPTIMIZER.typ, "Certification is not yet observer-restricted"). Erasure additionally
+   (research/OPTIMIZER.typ, "Certification is not yet observer-restricted"). Erasure additionally
    must not strip use-site checks behind a neutral-face-only certificate.
 4. Remaining from item 1: motive families for full mutual induction (the Coproduct_ctx
    gate is currently single-motive).

@@ -2,7 +2,7 @@
 
 > Archived 2026-08-17 alongside the kernel it documents (archive/live-kernel/). The promoted kernel lives at lib/kernel/.
 
-Practical notes for the current implementation. `TYPE_THEORY.typ`
+Practical notes for the current implementation. `archive/live-kernel/TYPE_THEORY.typ`
 owns the semantic story; this file records the engineering details
 that are easy to forget when editing the kernel, parser, or runtime.
 

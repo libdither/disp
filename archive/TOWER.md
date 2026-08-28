@@ -4,7 +4,7 @@
 
 Status: design note, 2026-07-07. Nothing in this file is built beyond stage 0 (the
 inventory below). Companion piece: [`REFLECT.md`](REFLECT.md), which supplies two of
-the tools stage 1 needs. The verified-optimizer connection is `OPTIMIZER.typ`.
+the tools stage 1 needs. The verified-optimizer connection is `research/OPTIMIZER.typ`.
 
 The tower is the plan for the strongest self-checking this system can honestly
 reach: a structural, syntactic checker for kernel text, written as ordinary typed
@@ -185,7 +185,7 @@ Stage 2, a structural checker for one class. Write `accepts : Term -> Bool` (or 
 richer verdict) for a first syntactic class, as ordinary annotated disp, verified
 behaviorally at load like any other library. Candidate classes, in rough order of
 consumer pull: the certificate formats of the licensing layer (the verified
-optimizer's `(e', cert)` needs exactly a structural cert checker, so OPTIMIZER.typ
+optimizer's `(e', cert)` needs exactly a structural cert checker, so research/OPTIMIZER.typ
 is the first real customer); bracket abstraction and CIR equivalence (reviving the
 deleted `lib/elab`, which was this checker's ancestor and is recoverable from git);
 recognizer-body wellformedness (`RecognizerShape`, the §11 deferred item).

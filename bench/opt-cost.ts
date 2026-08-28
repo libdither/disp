@@ -1,4 +1,4 @@
-// Q1 cost experiment — the "cheapness" half of score = typechecks × cheapness (OPTIMIZER.typ §4,
+// Q1 cost experiment — the "cheapness" half of score = typechecks × cheapness (research/OPTIMIZER.typ §4,
 // OPTIMIZER_DESIGN.md §5). For each LICENSED rewrite (proven sound in opt_q1_main/cert), measure that
 // the rhs is actually CHEAPER: reduction-step count (the §4 intrinsic cost) on inputs of growing size.
 //
@@ -64,7 +64,7 @@ rewrites.forEach((rw, ri) => {
 
 // ── §3 confound, demonstrated: map-fusion rhs on a FRESH list vs on the SAME list lhs just built.
 //    The memo makes the same-list rhs near-free (lhs prepaid the shared result) — the exact reason
-//    OPTIMIZER.typ §3 wants no-memo ic-net for honest, attributable per-candidate cost.
+//    research/OPTIMIZER.typ §3 wants no-memo ic-net for honest, attributable per-candidate cost.
 const shared = mkList(32, 77), fresh = mkList(32, 88)
 const freshCost = cost(g("fusion_rhs"), fresh)
 const b = session.stats().steps; session.classify(session.apply(g("fusion_lhs"), shared))

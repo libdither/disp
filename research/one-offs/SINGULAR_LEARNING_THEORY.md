@@ -4,7 +4,7 @@
 > in the genre of `FOUNDATIONS.md` / `research/one-offs/EFFECT_SYSTEMS_SURVEY.md`. Part I is settled
 > mathematics (Watanabe); Parts III–V are *proposed* connections, tagged **[load-bearing]** /
 > **[speculative]** / **[breaks]** with the same discipline `FOUNDATIONS.md` uses. Nothing here is
-> built. Companion reading: `OPTIMIZER.typ` (§2 objective, §4 cost coeffect, §6 equality, §8
+> built. Companion reading: `research/OPTIMIZER.typ` (§2 objective, §4 cost coeffect, §6 equality, §8
 > search-as-differentiation), `research/effects-and-coeffects.typ`.
 
 > **Thesis in one paragraph.** Singular Learning Theory (SLT) is the asymptotic theory of Bayesian
@@ -228,7 +228,7 @@ Murfet & Troiani, *Programs as Singularities* ([arXiv 2504.08075](https://arxiv.
   "simplicity" is a property of the singularity, not of the input/output map.
 
 That headline is the disp insight (§15), and the *mechanism* — the Ehrhard–Regnier derivative — is
-the **same differential-linear-logic object `OPTIMIZER.typ` §8 already invokes** (`δ` = exponential
+the **same differential-linear-logic object `research/OPTIMIZER.typ` §8 already invokes** (`δ` = exponential
 bang `!`, the backward pass = its derivative `∂`). disp's optimizer and SLT's program-geometry are
 reaching for one structure from opposite ends (§20).
 
@@ -244,7 +244,7 @@ quantization/factorization on the Pythia suite). So:
 > `λ` = effective description length = compressibility. The thing SLT computes is the thing a good
 > compressor finds.
 
-disp's `cheapness(e)` is *already* a description-length / cost term (`OPTIMIZER.typ` §2, §4) — but the
+disp's `cheapness(e)` is *already* a description-length / cost term (`research/OPTIMIZER.typ` §2, §4) — but the
 *naive* (raw-size / raw-interaction-count) version. SLT says the *right* one is degeneracy-aware
 (§16).
 
@@ -281,7 +281,7 @@ The crucial subtlety, and *why disp specifically needs SLT and not just AIT*:
 | SLT (continuous, analytic) | disp (discrete, reflective) |
 |---|---|
 | parameter `w ∈ ℝ^d` | candidate tree `e` |
-| prior `φ(w)` | `prior e` — tree size / library frequency / an LLM's logits (`OPTIMIZER.typ` §8) |
+| prior `φ(w)` | `prior e` — tree size / library frequency / an LLM's logits (`research/OPTIMIZER.typ` §8) |
 | model / truth `q` | the specification `T` (a predicate / dependent type) |
 | KL loss `K(w) ≥ 0`, `= 0` on truth | hard gate + smooth cost: `Err ⇒ ∞`, `Ok ⇒ cost e` |
 | optimal set `W_0 = {K=0}` (a *variety*) | the solution variety `{ e : param_apply T e == Ok TT }` |
@@ -297,7 +297,7 @@ The crucial subtlety, and *why disp specifically needs SLT and not just AIT*:
 
 ## 14. disp's objective is already a free energy
 
-Start from `OPTIMIZER.typ` §2 — the objective is a hard correctness gate times a smooth cost:
+Start from `research/OPTIMIZER.typ` §2 — the objective is a hard correctness gate times a smooth cost:
 
 ```disp
 // the 0/1 correctness filter and the score, in disp.
@@ -323,7 +323,7 @@ real; `equiv_T` is the walker's `~_T`, schematic here):
 // SLT's W_0 = {K=0}  is disp's solution VARIETY — huge and structured:
 Solutions := {T}    -> Refinement Tree ({e} -> param_apply T e == Ok TT)
 
-// non-identifiable: quotient by the walker-defined licensing relation ~_T (OPTIMIZER.typ §6).
+// non-identifiable: quotient by the walker-defined licensing relation ~_T (research/OPTIMIZER.typ §6).
 // the FIBRE over one behaviour b — the "~_T-class", the locus of degeneracy SLT scores:
 class_T   := {T, b} -> Refinement (Solutions T) ({e} -> equiv_T b e)
 ```
@@ -334,7 +334,7 @@ disp currently carries **two** equivalences on trees:
 
 1. `tree_eq` — the **finest**, syntactic/intensional; the substrate's O(1) conversion (`KERNEL_DESIGN.md`).
 2. `~_T` — the **coarsest**, extensional/functional; the walker-defined licensing relation that makes
-   rewrites sound (`OPTIMIZER.typ` §6; `FOUNDATIONS.md` §7).
+   rewrites sound (`research/OPTIMIZER.typ` §6; `FOUNDATIONS.md` §7).
 
 `Programs as Singularities` (§10) exhibits a **third, intermediate** equivalence: the singularity
 geometry — captured by `λ` — **distinguishes algorithmically-distinct-but-functionally-equal
@@ -343,7 +343,7 @@ strictly finer than `~_T` (it *does* see the difference between two implementati
 function). It is a *graded, real-valued* refinement where disp has only a binary one.
 
 This is not an analogy bolted on — it is the **measure-theoretic justification for disp's whole
-no-memo / provenance argument** (`OPTIMIZER.typ` §3). disp insists, *operationally*, that
+no-memo / provenance argument** (`research/OPTIMIZER.typ` §3). disp insists, *operationally*, that
 functionally-equal-but-distinct candidates be kept distinct (drop hash-consing) so cost is
 attributable per candidate. SLT supplies the *invariant* (`λ`, a birational quantity) that says those
 candidates are *genuinely geometrically different objects*, and a Bayesian observer can tell them
@@ -359,7 +359,7 @@ Each tagged by how much weight it can bear, `FOUNDATIONS.md`-style.
 
 ## 16. A degeneracy-aware `cheapness` — the *right* Occam term **[load-bearing if pursued]**
 
-disp ranks surviving candidates by raw cost/size (`OPTIMIZER.typ` §2, §4). §11 says the quantity that
+disp ranks surviving candidates by raw cost/size (`research/OPTIMIZER.typ` §2, §4). §11 says the quantity that
 actually governs generalization and posterior mass is `λ` — the effective description length, ≤ raw
 size, *smaller* for degenerate (heavily-shared, symmetric, reused) programs. A raw-size prior
 therefore **systematically mis-prices exactly the programs disp most wants** (compressible, reuse-heavy
@@ -394,14 +394,14 @@ below.
 
 SLT's stagewise development (§8) — the posterior moving through singularities of *decreasing* `λ` as
 evidence accumulates — resonates with two disp constructs: the **superposition search collapsing**
-across `~_T`-classes (`OPTIMIZER.typ` §8), and the **§5 staging axis** (memo→PE→JIT→AOT as one rewrite
+across `~_T`-classes (`research/OPTIMIZER.typ` §8), and the **§5 staging axis** (memo→PE→JIT→AOT as one rewrite
 at increasing "input fixed"). A "developmental" view of synthesis would watch the search move through
 plateaus (fat, low-`λ`, easy-to-reach regions) toward sharp solutions, and could *schedule* the
 collapse / the staging by an estimated `λ̂` gradient. Evocative; unproven; would need §18 working first.
 
 ## 20. The shared differential structure, and self-improvement **[speculative, but structurally real]**
 
-The Ehrhard–Regnier derivative is in *both* `OPTIMIZER.typ` §8 (`δ` = bang, backward = `∂`,
+The Ehrhard–Regnier derivative is in *both* `research/OPTIMIZER.typ` §8 (`δ` = bang, backward = `∂`,
 "search is differentiating the cost over the net") and `Programs as Singularities` (the bridge from
 program structure to singularity geometry). This **elevates §11's open comonoid-laws question** from
 "low-stakes metaphor" to "possibly the same derivative": if disp's `δ` satisfies the differential-
@@ -445,7 +445,7 @@ the objective (§14); tempered-posterior *estimation* without resolution (§7, �
 3. *Does the §18 λ-proxy correlate with anything disp cares about* — generalization of a synthesized
    program to held-out tests? search difficulty? If yes, §16/§17 are real; if no, this whole note is a
    pretty analogy.
-4. *Does disp's `δ` satisfy the differential-category comonoid laws* (§20, = `OPTIMIZER.typ` §11)? If
+4. *Does disp's `δ` satisfy the differential-category comonoid laws* (§20, = `research/OPTIMIZER.typ` §11)? If
    so, the SLT differential structure and disp's search-differential are one object.
 
 ## A first experiment — the λ-proxy probe (buildable now, zero kernel change)
@@ -521,7 +521,7 @@ This is a one-afternoon probe and it is the smallest falsifiable version of the 
   probability, Levin's Coding Theorem `−log m(x) = K(x) + O(1)`.
 
 **disp-internal cross-references.**
-- `OPTIMIZER.typ` — §2 (objective), §3 (no-memo / provenance), §4 (cost as graded coeffect), §6
+- `research/OPTIMIZER.typ` — §2 (objective), §3 (no-memo / provenance), §4 (cost as graded coeffect), §6
   (equality / `~_T`), §8 (search as differentiation / `δ` = bang), §11 (comonoid-laws open question).
 - `FOUNDATIONS.md` — §7 (the equality crux), the load-bearing/decorative discipline this note mirrors.
 - `research/effects-and-coeffects.typ` — the graded-ledger frame §16 plugs into.

@@ -5,7 +5,7 @@
 **Status: design note (2026-06).** Why the telescope (one negative former for
 `Pi`/`Sigma`/`Record`/`⊤`) is shaped the way it is, the ideal it approximates, and
 the concrete improvements that remain. Companion to `KERNEL_DESIGN.md` § Telescopes
-(implementation idioms) and `TYPE_THEORY.typ` §12.7 (spec). Landed history:
+(implementation idioms) and `archive/live-kernel/TYPE_THEORY.typ` §12.7 (spec). Landed history:
 `archive/UNIFIED_FORMER_PROPOSAL.md` (the partial-cut unification + dead-ends).
 
 ## TL;DR
@@ -79,7 +79,7 @@ observation, meta = its data) AND runnable. The op is the observation
 (`mint`/`proj name`/`apply`/`deriv name recipe`) and returns a *Step* (`SMint`,
 `SThread`, `SReject`, `SDone`) that `tele_walk` interprets, recursion + `bind_hyp` inline.
 New observation modes plug in as new ops with no walker edit. `{} = Telescope t = ⊤ =
-Tree`. See `KERNEL_DESIGN.md` § Telescopes and `TYPE_THEORY.typ` §12.7.
+Tree`. See `KERNEL_DESIGN.md` § Telescopes and `archive/live-kernel/TYPE_THEORY.typ` §12.7.
 
 ## 4. The distance from local to global
 

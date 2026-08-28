@@ -76,7 +76,7 @@ not proof.
 **3. Superposition, aimed at analysis instead of search.** `Telomare.Size` is a superposition
 evaluator: an unknown at a gate becomes `EitherPF n doLeft doRight`, both branches proceed
 sharing the environment, results merge by shallow equality. That is the mechanism of disp's §13
-optimizer (`sup_λ`, `OPTIMIZER.typ` §8) and HVM4's `SUP` nodes, used to *prove a bound* rather
+optimizer (`sup_λ`, `research/OPTIMIZER.typ` §8) and HVM4's `SUP` nodes, used to *prove a bound* rather
 than to *enumerate candidates*. Same tool, opposite direction: disp collapses a superposition to
 find the cheapest candidate; Telomare collapses one to find the deepest recursion.
 
