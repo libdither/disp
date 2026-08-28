@@ -387,6 +387,23 @@ UAt := ({ #recognize := {_self, v} => is_type v, obs := {_U} =>
 test (Pi Guard UOffer ({_h} => Bool)) ({h} => h 5) = true
 test (Pi Guard UAt ({_h} => Bool)) ({h} => h 5) = false
 test (Pi Guard UOffer ({h} => Cell Tree)) ({h} => slot_ask "members" h) = true
+// A property's IDENTITY is its accessor tree, not a name: the replay matches the
+// frame's accessor against the row's by tree identity, so a positional accessor
+// licenses exactly as a name-keyed one does, with no kernel change. Whatever P3
+// settles about ordering, re-keying is a spelling choice inside offer_rows.
+idx_ask := {i, T} => {
+  let r := if (is_type T) { pair_snd (tagged_meta T) } else { T }
+  let c := idx i (pair_snd r)
+  if (is_leaf c) { inj "None" t } else { inj "Some" (pair_snd c) }
+}
+PosU := ({ #recognize := {_self, v} => is_type v, obs := {_U} =>
+  perform (Offer (pair (idx_ask 0) ({_T} => Cell Tree))) ({_} =>
+  perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t))) })
+test (Pi Guard PosU ({_T} => Cell Tree)) ({T} => idx_ask 0 T) = true
+test (Pi Guard PosU ({_T} => Cell Nat)) ({T} => idx_ask 0 T) = false
+test (Pi Guard PosU ({_T} => Cell Tree)) ({T} => idx_ask 1 T) = false
+test (Pi Guard PosU ({_} => Bool)) ({T} => T 5) = true
+test (Pi Meta PosU ({_T} => Cell Tree)) ({T} => idx_ask 0 T) = true
 // The capability the self-argument unlocks for ORDINARY types: an interface whose
 // field type mentions the type being defined. Unwritable while obs was bare data.
 chain_obs := {Self} =>

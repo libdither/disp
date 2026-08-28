@@ -325,10 +325,13 @@ and the probes above:
   conceding nominal atoms; the reflection agent's recommendation.)
 - The registry is library DATA (types.disp): per property -- index, honest
   signature former (List/TypeFace/Eff exist up there), law battery. The
-  kernel keeps only the fiber table (positional list; respond_face computes
-  `Cell (idx table i self)`) and the licensing check. The registry is on
-  the certification side; the judge never reads it, and anything that would
-  make the judge read it must move into kernel.disp at that moment.
+  kernel now keeps NO table at all: obs is a function of the type, so each
+  row carries its own accessor and family (the fiber table and its decoder
+  deleted 2026-08-28). What the replay matches on is the ACCESSOR TREE, by
+  tree identity -- pinned with a positional accessor that licenses exactly
+  as the name-keyed ones do. The registry is on the certification side; the
+  judge never reads it, and anything that would make the judge read it must
+  move into kernel.disp at that moment.
 - TypeOf is the stated normal form: the dependency-ordered telescope of
   Cell-wrapped fibers, written as rows over ask-projections, equal to a
   fold of the registry. It is honestly a LIMIT, not a unification: data
@@ -342,10 +345,15 @@ and the probes above:
   storage; a dense positional layout is a measured experiment, and the
   linear order is storage convenience -- the semantic content is only the
   DAG).
-- tele/obs are one property (rows) at two strengths; the strength is a law
-  (definitional: the recognizer agrees with running the rows, probe-
-  checkable). The judge still routes on the slot name; that is a stated
-  veneer. Judge-routes-on-law is its own hot-path stage, not scheduled.
+- tele/obs are one property (rows) at two strengths, and the strength is now
+  a stated law: Coherent's rows_ok says a type carrying tele must recognize
+  exactly what running those rows accepts (2026-08-28). The judge still
+  routes on the slot name, and that is NOT merely a veneer -- probed: the
+  same rows under tele are definitional (the judge runs them, overriding the
+  recognizer) and under obs are descriptive (the recognizer decides). So
+  merging the two slots needs either a strength flag -- the same bit, moved
+  -- or judge-routes-on-law, which stays its own hot-path stage, not
+  scheduled. The law is the part that was worth having early.
 
 Sub-stages:
 
@@ -361,9 +369,12 @@ Sub-stages:
   pinned as the adversary.
 - P2: TypeOf + membership pins (stock types true; junk and hypotheses
   false) + registry-fold-vs-Coherent agreement pins.
-- P3: positional identity: kernel fiber table, ask/licensing re-keyed,
-  surface name-to-index at elaboration, the slot accessors carry indices. Gated on
-  P0 fixpoint stability. Def-order landmine to plan around: the fold must
+- P3: positional identity. The re-keying half is DONE and was never an
+  identity question: a property is identified by its ACCESSOR TREE, so
+  swapping `slot_ask name` for a positional accessor is a spelling change
+  inside offer_rows with no kernel edit (pinned). What remains is the
+  ORDER -- deriving it, pinning the fixpoint, resolving surface names to it
+  at elaboration. Gated on P0 fixpoint stability. Def-order landmine to plan around: the fold must
   serve annotations above Nat while honest signatures need List/Eff from
   below it -- split registry (below) from the fold's Nat-serving half, or
   keep the monolith for bootstrap annotations.
