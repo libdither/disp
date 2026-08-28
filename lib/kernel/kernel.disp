@@ -146,7 +146,7 @@ is_acc : Pi (Sampled [Acc pair_fst, 5]) Tree ({_} => Bool) := has_sig "Acc"
 is_elim_frame : Pi (Sampled [Elim (pair t t), 5]) Tree ({_} => Bool) := has_sig "Elim"
 
 ObsCode : List Tree := < App, Self, Prj : t >
-RowCode : List Tree := < Fresh : t, Observe : t, ObserveAt : t, Property : t >
+RowCode : List Tree := < Fresh : t, Observe : t, ObserveAt : t, Offer : t >
 Pred : Tree -> ShallowType := {p} => ({ #recognize := {_self, v} => p v })
 Bool : Refine Space Coherent := ({
   #recognize := {_self, v} => triage true ({c} => tree_eq c t) ({l, r} => false) v
@@ -258,13 +258,33 @@ slot_ask : Pi (Sampled ["members", "zz"]) Tree ({_} => Pi (Sampled [Bool]) Tree 
   if (is_leaf c) { inj "None" t } else { inj "Some" (pair_snd c) }
 }
 property_names : List Tree := ["recognize", "gate", "elim", "members", "norm", "ends", "under"]
-property_rows : Pi (Sampled [["members"]]) (List Tree) ({_} => Pi (Sampled [Pure t]) Tree ({_} => Tree))
-  := {names, tail} => list_rec t t names tail ({k, _tl, rest} => perform (Property k) ({_} => rest))
-universe_obs := property_rows property_names (perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t)))
+/// Rows a type OFFERS rather than demands: transparent to a frame that does not
+/// match, so a subject stays applicable and observable past them. `entries` pairs
+/// a slot name with a family of the subject.
+offer_rows : Pi (Sampled [[pair "members" ({_T} => Tree)]]) (List Tree) ({_} => Pi (Sampled [Pure t]) Tree ({_} => Tree))
+  := {entries, tail} => list_rec t t entries tail ({e, _tl, rest} => perform (Offer (pair (slot_ask (pair_fst e)) (pair_snd e))) ({_} => rest))
+/// The universes' interface, as a function of the universe of types. obs joins the
+/// convention every other applicable slot already follows (gate takes Ind, elim and
+/// recognize take self, check takes the type), and that argument is what lets these
+/// families be honest closures: gate and under mention the universe, which no tree
+/// can embed in itself.
+universe_obs := {U} => offer_rows (list_zip property_names [
+  ({_T} => Cell (PiCode Tree ({_} => Bool))),
+  ({T} => Cell (PiCode U ({_} => PiCode (PiCode T ({_} => U)) ({_} => Tree)))),
+  ({T} => Cell (PiCode T ({_} => Tree))),
+  ({_T} => Cell Tree),
+  ({T} => Cell (PiCode T ({_} => T))),
+  ({T} => Cell (SigmaCode T ({_} => T))),
+  ({_T} => Cell U)
+]) (perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t)))
 ShallowType : Space := ({ #recognize := {_self, v} => is_type v, obs := universe_obs })
 test ShallowType ({ #recognize := {_self, _v} => true }) = true
 test ({ #recognize := {_self, v} => is_leaf v }) zero = true
 test ({ #recognize := {_self, v} => is_leaf v }) 5 = false
+/// Self-application is the cycle-breaker, and only the self-referential universe
+/// needs it: a Space member's gate and under still land in ShallowType, so Space
+/// passes ShallowType explicitly and shares this one rows tree.
+universe_rows := universe_obs ShallowType
 RecognizeP : ShallowType -> Space := {_T} => PiCode Tree ({_} => Bool)
 GateP : ShallowType -> Space := {T} => PiCode ShallowType ({_} => PiCode (PiCode T ({_} => ShallowType)) ({_} => Tree))
 ElimP : ShallowType -> Space := {T} => PiCode T ({_} => Tree)
@@ -310,7 +330,7 @@ let steady := fix ({self, r} =>
 Space : Space := ({
   #recognize := {_self, v} => if (tag_form v) { structured v } else { false }
   check := {_jdg, _T, v} => if (tag_form v) { and (steady (pair_snd (tagged_meta v))) (structured v) } else { false }
-  obs := universe_obs
+  obs := const_fn universe_rows
 })
 test Space Bool = true
 elim_raw : ElimHead -> Tree := {E} => pair_fst (wait_payload E)
@@ -378,13 +398,6 @@ test tree_eq Row.code RowCode = true
 properties : List Tree := list_zip property_names [RecognizeP, GateP, ElimP, MembersP, NormP, EndsP, UnderP]
 prop_slot : Pi (Sampled [MembersP]) (ShallowType -> Space) ({_} => Tree)
   := {P} => list_rec Tree Tree properties t ({e, _tl, ih} => if (tree_eq (pair_snd e) P) { pair_fst e } else { ih })
-fiber : Pi (Sampled ["members"]) Tree ({_} => Pi (Sampled [Bool]) Tree ({_} => Space))
-  := {name, s} => {
-  let P := list_assoc name properties
-  if (is_leaf P) { invalid name } else { Cell (P s) }
-}
-property_at : Pi (Sampled ["members"]) Tree ({_} => Tree)
-  := {k} => pair (slot_ask k) ({s} => fiber k s)
 ask : Pi (Sampled [Bool]) ShallowType ({T} => Pi (Sampled [MembersP, NormP]) Tree ({P} => Cell (P T)))
   := {T, P} => slot_ask (prop_slot P) T
 test tree_eq (ask Bool MembersP) (inj "Some" [true, false]) = true
@@ -475,7 +488,10 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
   let T := nt self
   let rows := {
     let vrows := T.tele
-    if (is_fork vrows) { vrows } else { T.obs }
+    if (is_fork vrows) { vrows } else {
+      let o := T.obs
+      if (is_leaf o) { o } else { form o T }
+    }
   }
   if (is_fork rows) {
     fix ({go, rows2} =>
@@ -504,7 +520,7 @@ respond_face_at : Pi (Sampled [neutral_type]) Tree ({_} => Pi (Sampled [Acc pair
               App _ => (invalid frame)
             })
             ObserveAt af => (at false af)
-            Property k => (at true (property_at k))
+            Offer af => (at true af)
           }
         }
         _ => (invalid frame)
@@ -577,7 +593,7 @@ Tele : Pi (Sampled [Guard]) Table ({_} => Pi (Sampled [PiCode Nat ({_} => Nat)])
                 if ok { perform (Form (pair tail lo)) ({next} => self next f prior) } else { Pure false }))))
         })
         ObserveAt af => (at af)
-        Property k => (at (property_at k))
+        Offer af => (at af)
         }
       }
       _ => (Pure false)

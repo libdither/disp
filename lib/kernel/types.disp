@@ -399,7 +399,7 @@ Eff : ShallowType -> ShallowType -> ShallowType -> Space
 })
 test Eff Row Tree Tree (PiCode Tree ({_} => Tree)).tele = true
 test Eff Row Tree Tree (Sigma Guard Nat ({_} => Bool)).tele = true
-test Eff Row Tree Tree ShallowType.obs = true
+test Eff Row Tree Tree (ShallowType.obs ShallowType) = true
 test Eff Row Tree Tree 5 = false
 
 // A telescope is just data: a free-monad program over Fresh/Observe rows.

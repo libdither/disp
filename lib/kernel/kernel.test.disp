@@ -355,8 +355,8 @@ test (Pi Meta DepPair ({h} => Point (pair_fst h))) ({h} => pair_snd h) = true
 // accessor vocabulary (a parametric refusal on a hypothesis retries as an
 // Acc frame the rows may license), and Meta mirrors the same rule -- so the
 // ask conduct lifts to arrows and the differentials.
-test Row (Property "gate") = true
-test row_binds (Property "gate") = false
+test Row (Offer (pair (slot_ask "gate") ({_T} => Tree))) = true
+test row_binds (Offer (pair (slot_ask "gate") ({_T} => Tree))) = false
 test (Pi Guard ShallowType ({T} => Cell (GateP T))) ({T} => ask T GateP) = true
 test (Pi Guard ShallowType ({T} => Cell (UnderP T))) ({T} => ask T UnderP) = true
 test (Pi Guard ShallowType ({T} => Cell (EndsP T))) ({T} => ask T EndsP) = true
@@ -370,6 +370,33 @@ test (Pi Meta ShallowType ({T} => Cell (GateP T))) ({T} => ask T GateP) = true
 test (Pi Meta ShallowType ({T} => Tree)) ({T} => ask T ({X} => X)) = false
 test (Pi Meta Space ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
 test (Pi Meta ShallowType ({_} => Bool)) ({T} => T 5) = true
+// obs is a function of the universe now, so both universes share ONE rows tree:
+// ShallowType gets it by self-application, Space by passing ShallowType.
+test tree_eq (ShallowType.obs ShallowType) universe_rows = true
+test tree_eq (Space.obs Space) universe_rows = true
+// Why Offer is its own row kind, and not just ObserveAt: an Offer is transparent
+// to a frame it does not match (the subject stays applicable), ObserveAt blocks.
+// Offers must precede Fresh, which refuses Acc frames outright, so this cannot be
+// had by reordering -- and generalizing the skip to Prj/ObserveAt diverges.
+UOffer := ({ #recognize := {_self, v} => is_type v, obs := {_U} =>
+  perform (Offer (pair (slot_ask "members") ({_T} => Cell Tree))) ({_} =>
+  perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t))) })
+UAt := ({ #recognize := {_self, v} => is_type v, obs := {_U} =>
+  perform (ObserveAt (pair (slot_ask "members") ({_T} => Cell Tree))) ({_} =>
+  perform (Fresh (Pred ({_v} => true))) ({_} => perform (Observe (pair App Bool)) ({_} => Pure t))) })
+test (Pi Guard UOffer ({_h} => Bool)) ({h} => h 5) = true
+test (Pi Guard UAt ({_h} => Bool)) ({h} => h 5) = false
+test (Pi Guard UOffer ({h} => Cell Tree)) ({h} => slot_ask "members" h) = true
+// The capability the self-argument unlocks for ORDINARY types: an interface whose
+// field type mentions the type being defined. Unwritable while obs was bare data.
+chain_obs := {Self} =>
+  perform (ObserveAt (pair (dot "head") ({_c} => Nat))) ({_} =>
+  perform (ObserveAt (pair (dot "rest") ({_c} => Cell Self))) ({_} => Pure t))
+Chain := ({ #recognize := {_self, c} => is_fork c, obs := chain_obs })
+test (Pi Guard Chain ({_c} => Nat)) ({c} => c.head) = true
+test (Pi Guard Chain ({_c} => Cell Chain)) ({c} => c.rest) = true
+test (Pi Guard Chain ({_c} => Cell Nat)) ({c} => c.rest) = false
+test (Pi Meta Chain ({_c} => Cell Chain)) ({c} => c.rest) = true
 
 // n-ary sums: the collectors and gate derive the case arity from the gate's
 // obligation-type list, so Sum is variant-count generic -- Obs has three.
