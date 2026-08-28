@@ -7,18 +7,27 @@
 #   ACCEPTED | REJECTED | ERROR | TIMEOUT | OOM-KILLED | KILLED
 # The last three mean "died without a verdict" — never acceptance.
 #
-# usage: scripts/probe.sh [-r] [-t SECONDS] [-m MEMORYMAX] '<disp snippet>'
+# Failing equations are reported in SNIPPET line numbers, and disp's booleans are
+# spelled out: `t` is TRUE (it is also the leaf) and `t(t)` is FALSE, an asymmetry
+# the printer hides (false has a name and renders as `false`; true renders as `t`).
+#
+# usage: scripts/probe.sh [-r] [-p SPEC] [-t SECONDS] [-m MEMORYMAX] '<disp snippet>'
 #        scripts/probe.sh [-r] ... < snippet.disp
 #   -r  open only the raw substrate prelude (fast; no kernel, no checking —
 #       for reduction probes, not type probes)
+#   -p  PRINT mode: skip the tests and print these bindings decoded, comma-separated
+#       names or `*` globs (e.g. -p 'r_*'). Ask several questions at once by binding
+#       each to a name — `r_a := <expr>` — instead of writing `test`s whose failures
+#       you then have to tell apart. Answers are labelled, so nothing is ambiguous.
 #   -t  timeout in seconds (default 120)
 #   -m  systemd MemoryMax (default 6G; swap capped at 1G)
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-RAW=0 TIMEOUT=120 MEM=6G
-while getopts "rt:m:" o; do
+RAW=0 TIMEOUT=120 MEM=6G PRINT=""
+while getopts "rp:t:m:" o; do
   case "$o" in
     r) RAW=1 ;;
+    p) PRINT="$OPTARG" ;;
     t) TIMEOUT="$OPTARG" ;;
     m) MEM="$OPTARG" ;;
     *) exit 2 ;;
@@ -38,9 +47,10 @@ printf 'open use "%s/module.disp"\n' "$DIR" > "$DIR/root.disp"
 
 UNIT="disp-probe-$$-$RANDOM"
 START=$(date +%s)
+PRINT_ARG=(); [ -n "$PRINT" ] && PRINT_ARG=("--print=$PRINT")
 OUT="$(cd "$REPO" && python scripts/rss_run.py timeout "$TIMEOUT" systemd-run --user --scope -q --unit="$UNIT" \
   -p MemoryMax="$MEM" -p MemorySwapMax=1G \
-  npx tsx src/run.ts "$DIR/root.disp" 2>&1)"
+  npx tsx src/run.ts "${PRINT_ARG[@]}" "$DIR/root.disp" 2>&1)"
 CODE=$?
 SECS=$(( $(date +%s) - START ))
 # `[memo] warm:` = the run adopted .disp-test-cache's reduction snapshot (src/run.ts);
@@ -49,10 +59,32 @@ SECS=$(( $(date +%s) - START ))
 CACHE=$(grep -q '^\[memo\] warm' <<<"$OUT" && echo warm || echo cold)
 RSS=$(grep '^\[rss\]' <<<"$OUT" | sed 's/^\[rss\] //; s/ exit=.*//')
 
-grep -v '^\[memo\]\|^\[rss\]' <<<"$OUT" | grep -v -E 'mismatch:|^\s+(lhs|rhs) =' | tail -4
-# every failing equation, with the module line (snippet line + 1) and both sides
-grep -A2 -E '^\s*\[[^]]*:[0-9]+\] mismatch:' <<<"$OUT" | grep -v '^--$' | cut -c1-200 | sed 's/^/   /'
-if [ $CODE -eq 0 ]; then
+# The module prepends one `open use` line, so a reported line is the snippet's + 1;
+# `annotate` puts it back and names the two boolean trees.
+annotate() {
+  python -c '
+import re, sys
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    m = re.match(r"^(\s*)\[[^]]*:(\d+)\] (.*)$", line)
+    if m:
+        line = "%s[snippet:%d] %s" % (m.group(1), int(m.group(2)) - 1, m.group(3))
+    else:
+        line = re.sub(r"= t$", "= t   (true)", line)
+        line = re.sub(r"= t\(t\)$", "= t(t)   (false)", line)
+    print(line)
+'
+}
+if [ -n "$PRINT" ]; then
+  grep -v '^\[memo\]\|^\[rss\]' <<<"$OUT" | annotate
+else
+  grep -v '^\[memo\]\|^\[rss\]' <<<"$OUT" | grep -v -E 'mismatch:|^\s+(lhs|rhs) =' | tail -4
+  # every failing equation, in snippet coordinates, with both sides
+  grep -A2 -E '^\s*\[[^]]*:[0-9]+\] mismatch:' <<<"$OUT" | grep -v '^--$' | cut -c1-200 | annotate | sed 's/^/   /'
+fi
+if [ $CODE -eq 0 ] && [ -n "$PRINT" ]; then
+  VERDICT="PRINTED (no checking: --print skips the tests)"
+elif [ $CODE -eq 0 ]; then
   VERDICT="ACCEPTED"
 elif grep -q 'failing entry' <<<"$OUT"; then
   VERDICT="REJECTED"
