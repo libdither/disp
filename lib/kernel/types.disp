@@ -512,7 +512,7 @@ record_rows := fix ({self, entries} =>
   else {
     let name := entries.fst.fst
     _ <- see ({r} => field_cell r name) (Pred is_fork)
-    _ <- see ({r} => field r name) entries.fst.snd
+    _ <- see (dot name) entries.fst.snd
     self entries.snd
   })
 NamedRec : Pi (Sampled [[pair "x" Nat]]) (List Tree) ({_} => Space)
@@ -524,12 +524,23 @@ test NamedRec xy ({ x := 2, y := 5 }) = false
 test NamedRec xy ({ x := 2, y := false, z := 9 }) = true
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := succ }) = true
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := not_bool }) = false
+// The field accessor is the subject-last `dot name` partial, which is exactly the
+// tree `r.x` reduces to -- so a record HYPOTHESIS can project its declared fields,
+// at the declared type, and nothing else. Field access on abstract records needed
+// its own walker mediation before this; now it rides the ordinary Prj replay.
+test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.x) = true
+test (Pi Guard (NamedRec xy) ({_r} => Bool)) ({r} => r.y) = true
+test (Pi Guard (NamedRec xy) ({_r} => Bool)) ({r} => r.x) = false
+test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.z) = false
+test (Pi Meta (NamedRec xy) ({_r} => Nat)) ({r} => r.x) = true
+
 
 // 4. Type-keyed records: keys are trees, so a type can be its own key.
 TypeRec : Pi (Sampled [[Nat]]) (List Tree) ({_} => Space)
   := {tys} => NamedRec (list_map Tree Tree ({T} => pair T T) tys)
 test TypeRec [Nat, Bool] ({ (Nat) := 7, (Bool) := false }) = true
 test TypeRec [Nat, Bool] ({ (Nat) := false, (Bool) := false }) = false
+test (Pi Guard (TypeRec [Nat, Bool]) ({_r} => Nat)) ({r} => dot Nat r) = true
 
 // 5. Intersection: a list of predicates, all applied to the subject itself.
 all_rows := fix ({self, tys} =>
