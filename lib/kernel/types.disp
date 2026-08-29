@@ -1,24 +1,10 @@
 open use raw "../prelude.disp" {}
 open use raw "kernel.disp" {}
 
-// The kernel's library types, split out of kernel.disp: everything the
-// checker itself does not need to exist. kernel.disp keeps the machinery and
-// its constitutive types (Bool, Unit, Tree, Pred, ShallowType, Space,
-// Row/Obs, Sum, the Pi/Tele formers, the tables, Record + the declaration
-// protocol).
-// prelude.disp is the double-pass barrel that loads both raw, then checked.
-// The ambient-walker parameter lives here with the annotated surface it
-// governs (givens do not cross opens); filling it with another table
-// re-verifies every arrow-spelled definition below under that walker.
-// Pi-Guard-literal annotations are the deliberate opt-out; the one entry
-// left is TreeOf, whose branching row program blows up Meta's simulation.
 given DefaultWalker : Tree := Guard
 Fn : Pi (Sampled [Bool]) ShallowType ({_} => Pi (Sampled [{_v} => Bool]) Tree ({_} => Space)) := Pi DefaultWalker
-// Re-point the binder sugar at Fn here: the raw kernel open exports a
-// neutral-Fn settings entry (givens unfilled), so the real one must rebind.
 elab_settings := [t "Pi" Fn]
 
-// arm k g: the k-th eliminator arm of a gate's list (head/tail spine indexing).
 arm := idx
 
 node_like : ShallowType := Pred ({n} => or (is_leaf n) (is_fork n))
@@ -87,10 +73,6 @@ Coherent : Pi (Sampled [Bool, Unit, Row, Tree]) ShallowType ({_} => Bool)
   let norm_ok := if (is_leaf T.norm) { true } else {
     list_all Tree ({v} => if (T v) { and (T (T.norm v)) (tree_eq (T.norm (T.norm v)) (T.norm v)) } else { true }) probes
   }
-  // The strength of a rows slot, stated as a law rather than left to the slot name:
-  // tele rows are DEFINITIONAL (the judge runs them and they override the recognizer,
-  // pinned below), so a type carrying them must recognize exactly what they accept.
-  // obs rows are descriptive and carry no such duty -- they only license observations.
   let rows_ok := if (is_leaf T.tele) { true } else { list_all Tree ({v} => tree_eq (T v) ((Tele Guard T) v)) probes }
   and ends_ok (and check_ok (and members_ok (and gate_ok (and norm_ok rows_ok))))
 }
@@ -137,10 +119,6 @@ test Fn ShallowType ({_} => Nat) ({T} => T 5) = false
 Point : Tree -> Refine Space Coherent
   := {c} => ({ #recognize := {_self, v} => tree_eq c v, members := [c] })
 
-// One shape under wait and tag: a suspended S-redex fork(stem f, K x), the
-// stored tree at .snd.snd. Sus is the shared super-type; Tagged keys identity
-// on the head (wait: the sig is a fixed stem of the marker), Faced on the
-// meta slot (tag: the head embeds behavior, so no constant sig exists).
 Sus := Pred ({v} =>
   if (is_fork v) {
     if (is_stem (pair_fst v)) {
@@ -156,21 +134,10 @@ Faced : Tree -> Tree -> ShallowType
     let m := wait_payload v
     if (is_fork m) { if (tree_eq (pair_fst m) name) { P (pair_snd m) } else { false } } else { false }
   } else { false } })
-// Shape, not trust: sig-valid forgeries are members. Blessing is the
-// walker's judgment (hyp_ok, the elim_raw-vs-T.elim comparison), never a
-// tree predicate.
 Hyp : ShallowType := Tagged hyp_sig Tree
 Invalid : ShallowType := Tagged invalid_sig Tree
 OpenChain : ShallowType := Tagged open_sig Tree
 TypeFace : ShallowType := Faced "recognize" Tree
-// Rows spelling of the same shape: a wait form IS a nested Sigma, so these
-// carry a tele and hypotheses of them support payload projection under
-// Guard. The checker's three CONTROL markers cannot ride it and keep the
-// recognize spellings above: hyp marks are its mints (admit + the
-// is_neutral judge branch claim them), invalid marks are its error
-// propagation (the is_invalid branch refuses them as values), open chains
-// are its pending completions (the is_open_chain branch routes them to
-// complete). Rows work for the data-shaped rest.
 TaggedRows : Tree -> Tree -> Space
   := {S, P} => Sigma Guard (Point S) ({_} => Sigma Guard (Point t) ({_} => P))
 SusRows : Space := Sigma Guard (Pred is_stem) ({_} => Sigma Guard (Point t) ({_} => Tree))
@@ -194,10 +161,6 @@ test Invalid (invalid 5) = true
 test Invalid (make_hyp Nat t) = false
 test OpenChain (wait open_chain (pair t (pair t []))) = true
 test StuckElim (wait elim_stuck (pair t (pair t []))) = true
-// Boundary: rows membership refuses any payload embedding a live mint (the
-// judge claims neutrals at their recorded type), so a real stuck collector
-// carrying a hypothesis scrutinee is not a member; rows spellings describe
-// the neutral-free shape only.
 test StuckElim (wait elim_stuck (pair (elim_of Nat ({_} => Nat)) (pair (make_hyp Nat t) []))) = false
 test TeqPartial (wait tree_eq 5) = true
 test TypeFace Nat = true
@@ -206,8 +169,6 @@ test TypeFace (make_hyp Nat t) = false
 test TypeFace (pair "recognize" 5) = false
 test ShallowType Hyp = true
 test ShallowType TypeFace = true
-// Conduct: hypotheses of rows-spelled tagged types project sig and payload
-// legally; undeclared observations refuse.
 test (SusRows -> Tree) ({h} => (h.snd).snd) = true
 test (SusRows -> Tree) ({h} => h 5) = false
 test (ElimHead -> Space) ({E} => (((E.snd).snd).snd).fst) = true
@@ -227,12 +188,6 @@ Eq : Pi (Sampled [Nat]) ShallowType ({A} => Pi (Sampled [2]) A ({x} => Pi (Sampl
     under := A
   })
 }
-// J at the dependent tier: each lemma's motive computes on the bound
-// endpoint, so it is an honest transport (the old constant motives assumed
-// their conclusion and only passed at concrete endpoints). Carriers are
-// sampled; endpoints, families, proofs and bases are hypotheses.
-// Pi-Guard-literal: under the TwoFace differential the probe expansion over
-// six binders is unaffordable (measured past 6.5 GB on the kernel suite).
 eq_subst : Pi (Sampled [Nat]) ShallowType ({A} => Pi Guard A ({x} => Pi Guard A ({y} => Pi Guard (Pi Guard A ({_} => ShallowType)) ({B} => Pi Guard (Eq A x y) ({_} => Pi Guard (B x) ({_} => B y))))))
   := {A, x, y, B, p, base} => elim_of (Eq A x y) B p base
 eq_sym : Pi (Sampled [Nat]) ShallowType ({A} => Pi Guard A ({x} => Pi Guard A ({y} => Pi Guard (Eq A x y) ({_} => Eq A y x))))
@@ -249,17 +204,6 @@ test eq_sym Nat 2 2 refl = refl
 test eq_trans Nat 2 2 2 refl refl = refl
 test eq_cong Nat Nat succ 2 2 refl = refl
 
-// The ask face: a property query on an abstract type answers as a witness
-// typed Cell (P T) -- nobody answers, the witness is a mint, so certificates
-// hold for every dictionary. Since stage R the license is row data: the
-// universes' obs carry one Property row per slot, the walk retries a
-// parametric refusal as an Acc frame against the rows, and Meta answers
-// through the same replay (the Fn/Meta/TwoFace spellings are pinned in
-// kernel.test; the pins here keep the original Pi-Guard-literal spelling).
-// Consuming a witness (case, projection, application) is the documented
-// boundary: the answer type is Sum-built, and scrutinizing formers refuse to
-// CONSTRUCT over an embedded mint inside a walked body (last pin), so
-// witness elimination waits on a dedicated case head.
 test (Pi Guard ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
 test (Pi Guard ShallowType ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
 test (Pi Guard ShallowType ({T} => Tree)) ({T} => ask T ({X} => X)) = false
@@ -269,12 +213,6 @@ test tree_eq (ask Nat GateP) (inj "Some" Nat.gate) = true
 test tree_eq (ask (Eq Nat 2 2) UnderP) (inj "Some" Nat) = true
 test tree_eq (ask (Eq Nat 2 2) EndsP) (inj "Some" (pair 2 2)) = true
 
-// Space-typed hypotheses license the same property queries (the ask face
-// admits both universes); the judge grants no subsumption between the
-// universes (nominal, like Refine). Formation certifies today: the
-// structure-building formers applied to an abstract type land in Space,
-// from Space and ShallowType binders alike. Consuming a witness stays the
-// boundary documented above.
 test (Pi Guard Space ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
 test (Pi Guard Space ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
 test (Pi Guard Space ({T} => ShallowType)) ({T} => T) = false
@@ -283,12 +221,6 @@ test (Pi Guard Space ({T} => Space)) ({T} => SigmaCode T ({_} => T)) = true
 test (Pi Guard Space ({T} => Space)) ({T} => Pi Guard T ({_} => Bool)) = true
 test (Pi Guard ShallowType ({T} => Space)) ({T} => PiCode T ({_} => Bool)) = true
 
-// Judge-level transport: when tree identity fails, the judge consults the
-// typed ledger at the finest grade, so an assumed Eq ShallowType A B
-// converts A-hypotheses to B, including through constructor contexts by
-// spine decomposition. Quotient-carried equations stay refused for
-// conversion (the A7 grading). Pi-Guard-literal: Meta's judge has no
-// conversion route yet.
 test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard (Eq ShallowType A B) ({_} => Pi Guard A ({a} => B))))) ({_A, _B, _p, a} => a) = true
 test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard A ({a} => B)))) ({_A, _B, a} => a) = false
 test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard (Eq ShallowType A B) ({_} => Pi Guard (Pi Guard A ({_} => Bool)) ({f} => Pi Guard B ({_} => Bool)))))) ({_A, _B, _p, f} => f) = true
@@ -314,10 +246,6 @@ test Coherent (Eq Nat 2 2) = true
 test Coherent (Eq Nat 2 3) = true
 test Coherent (Pi Guard Nat ({_} => Nat)) = true
 test Coherent (Sigma Guard Nat ({_} => Bool)) = true
-// The two rows slots differ in JUDGE semantics, not just in name: a type whose
-// recognizer admits everything while its tele demands a Bool is refused at 5 by the
-// judge and accepted by direct application. Coherent's rows_ok is what forbids
-// stating such a type; the same rows under obs are descriptive and stay coherent.
 liar_rows := perform (Observe (pair Self Bool)) ({_} => Pure t)
 LiarTele := ({ #recognize := {_self, _v} => true, tele := liar_rows })
 LiarObs := ({ #recognize := {_self, _v} => true, obs := const_fn liar_rows })
@@ -329,18 +257,6 @@ test Pi Guard Unit ({_} => LiarObs) ({_u} => 5) = true
 test Coherent LiarTele = false
 test Coherent LiarObs = true
 
-// Space, the structured sub-universe: a member is a tag-form type (the wait
-// and tag shape TypeFace keys on, so Space refines TypeFace) presenting
-// declared structure: tele or obs rows, a registered eliminator, or a
-// members enumeration. Bare predicates stay ShallowType-only. Shape, not
-// provenance, like every recognizer here. Both universes carry the
-// predicate obs row (apply to anything, land at Bool), so each is a member
-// of itself and of the other, the same position ShallowType : ShallowType
-// always held. Self-membership at recognizer strength is inert: neither
-// universe carries gate or elim, so nothing can eliminate a universe
-// hypothesis. Universe hierarchies become necessary exactly when a
-// universe gains an eliminator; that is the door to re-examine, not the
-// membership pins.
 test Space Nat = true
 test Space (Eq Nat 2 2) = true
 test Space (Fn Nat ({_} => Bool)) = true
@@ -358,14 +274,8 @@ test Space (Named "cost" Nat) = false
 test Space 5 = false
 test Space (pair 5 (pair 1 (pair "recognize" ({ members := [t] })))) = false
 test ShallowType Space = true
-// Space-typed hypotheses ride the obs row as predicates, like ShallowType's.
 test Fn Space ({_} => Bool) ({T} => T 5) = true
 test Fn Space ({_} => Nat) ({T} => T 5) = false
-// Space's check face refuses structure decided at a mint (a neutral name,
-// spine node, or slot head in the meta record): a certificate must survive
-// every instantiation, and only a literal skeleton makes the field reads
-// stable. Mints below a literal slot head stay licensed (the formation
-// certificates in the ask block ride exactly that).
 test (Pi Guard Tree ({x} => Space)) ({x} => make_type ({ tele := x })) = false
 test (Pi Guard Tree ({x} => Space)) ({x} => tag (pair "recognize" (pair [x, "tele"] [list_const t, list_const (pair 1 2)])) t) = false
 
@@ -393,18 +303,10 @@ List : ShallowType -> Space := {A} => ({
 })
 test Space (List Nat) = true
 
-// A wrong-typed arm is refused. Type-variable hypotheses mint and apply to
-// CONCRETES under both walkers; application to a NEUTRAL argument is refused
-// by both -- a shared frontier (dependent application at abstract points),
-// not a table gap.
 test Fn ShallowType ({A} => Fn ShallowType ({B} => Fn (Fn A ({_} => B)) ({_} => Fn (List A) ({_} => List B)))) ({A, B, f, xs} => (elim_of (List A) ({_} => List B)) xs [] ({h, _tl, _ih} => h)) = false
 
-// The public face: blessed over List's own eliminator, so application to a
-// hypothesis stays inert (the kernel-internal list_rec stays raw for speed).
 list_rec : {A : ShallowType} -> {C : ShallowType} -> List A -> C -> (arm 1 ((List A).gate (List A) (const_fn C))) -> C
   := {A, C} => elim_of (List A) ({_} => C)
-// The Meta gap: abstract values cannot act as recognizers, so Meta refuses
-// every type-polymorphic function, even the tautological one.
 test Pi Meta ShallowType ({T} => Fn Tree ({_} => Bool)) ({T, v} => T v) = false
 test Pi Guard ShallowType ({T} => Fn Tree ({_} => Bool)) ({T, v} => T v) = false
 test Pi Meta ShallowType ({_} => Bool) ({T} => T 5) = true
@@ -423,16 +325,10 @@ test Eff Row Tree Tree (Sigma Guard Nat ({_} => Bool)).tele = true
 test Eff Row Tree Tree (ShallowType.obs ShallowType) = true
 test Eff Row Tree Tree 5 = false
 
-// A telescope is just data: a free-monad program over Fresh/Observe rows.
-// eff_bind is what the `x <- e` block sugar desugars to: graft k onto the
-// Pure leaf. Junk (any non-Pure/non-Op tree) propagates unchanged, which is
-// what makes `reject` abort a script from inside a computed branch.
 eff_bind := fix ({self, m, k} =>
   if (has_sig "Pure" m) { k m.snd }
   else if (has_sig "Op" m) { Op (pair m.snd.fst ({r} => self (m.snd.snd r) k)) }
   else { m })
-// One-observation program: project the subject with acc, judge against T,
-// return the raw projection. `x <- see acc T` reads "observe it, call it x".
 see : Tree -> ShallowType -> Eff Row Tree Tree
   := {acc, T} => perform (Observe (pair (Prj acc) T)) Pure
 self_is : ShallowType -> Eff Row Tree Tree
@@ -448,7 +344,6 @@ test add 0 4 = 4
 test ShallowType Nat = true
 test ShallowType (Nat -> Nat) = true
 
-// 1. Lists: recursion at row-generation time, branching on the observed node.
 list_rows : ShallowType -> Tree -> Eff Row Tree Tree
   := {A} => (fix ({self, get} => {
   node <- see get node_like
@@ -464,14 +359,11 @@ test ListR Nat [] = true
 test ListR Nat [1, 2] = true
 test ListR Nat [1, t t] = false
 test ListR Nat (t t) = false
-// Structural pun, shared with the kernel's List: succ n = cons zero n, so a
-// nat IS a list of zeros. Shallow types see trees, not intent.
 test ListR Nat 5 = true
 test List Nat 5 = true
 test ListR (ListR Bool) [[true], []] = true
 test ListR (ListR Bool) [[5]] = false
 
-// 2. Vectors: same list, but the length is a parameter driving row generation.
 vec_rows : ShallowType -> Nat -> Tree -> Eff Row Tree Tree
   := {A, n} => nat_rec (Fn Tree ({_} => Eff Row Tree Tree)) n
   ({get} => see get Unit)
@@ -487,12 +379,6 @@ test Vec 2 Bool [true] = false
 test Vec 2 Bool [true, false, true] = false
 test Vec 0 Bool [] = true
 
-// Rows twin of RawRecord: observe the names list, then the payload spine at
-// the observed length (vec_rows over a dependent parameter). Stricter than
-// RawRecord on junk spines. Hypotheses answer the names projection only; the
-// payload rows branch on the observed length, which stops at a mint. Conduct
-// pins are Pi-Guard-literal: consuming a branching row program at a mint
-// under Meta is the TreeOf simulator pathology.
 raw_record_rows := {
   names <- see pair_fst (List Tree)
   vec_rows Tree (list_len Tree names) pair_snd
@@ -506,7 +392,6 @@ test RawRecordRows 5 = false
 test (Pi Guard RawRecordRows ({_} => List Tree)) ({r} => r.fst) = true
 test (Pi Guard RawRecordRows ({_} => Tree)) ({r} => r.snd) = false
 
-// 3. Records with names: entries data -> one presence row + one field row each.
 record_rows := fix ({self, entries} =>
   if (is_leaf entries) { done }
   else {
@@ -524,25 +409,18 @@ test NamedRec xy ({ x := 2, y := 5 }) = false
 test NamedRec xy ({ x := 2, y := false, z := 9 }) = true
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := succ }) = true
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := not_bool }) = false
-// The field accessor is the subject-last `dot name` partial, which is exactly the
-// tree `r.x` reduces to -- so a record HYPOTHESIS can project its declared fields,
-// at the declared type, and nothing else. Field access on abstract records needed
-// its own walker mediation before this; now it rides the ordinary Prj replay.
 test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.x) = true
 test (Pi Guard (NamedRec xy) ({_r} => Bool)) ({r} => r.y) = true
 test (Pi Guard (NamedRec xy) ({_r} => Bool)) ({r} => r.x) = false
 test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.z) = false
 test (Pi Meta (NamedRec xy) ({_r} => Nat)) ({r} => r.x) = true
 
-
-// 4. Type-keyed records: keys are trees, so a type can be its own key.
 TypeRec : Pi (Sampled [[Nat]]) (List Tree) ({_} => Space)
   := {tys} => NamedRec (list_map Tree Tree ({T} => pair T T) tys)
 test TypeRec [Nat, Bool] ({ (Nat) := 7, (Bool) := false }) = true
 test TypeRec [Nat, Bool] ({ (Nat) := false, (Bool) := false }) = false
 test (Pi Guard (TypeRec [Nat, Bool]) ({_r} => Nat)) ({r} => dot Nat r) = true
 
-// 5. Intersection: a list of predicates, all applied to the subject itself.
 all_rows := fix ({self, tys} =>
   if (is_leaf tys) { done }
   else {
@@ -555,9 +433,6 @@ test AllOf [Nat, Point 5] 5 = true
 test AllOf [Nat, Point 5] 6 = false
 test AllOf [] 5 = true
 
-// 6. Unique application: each predicate must claim a distinct list element.
-// The continuation searches for a bijection (untrusted), then emits one row
-// per matched pair so every claim is re-judged by the checker.
 splits := fix ({self, xs} =>
   if (is_leaf xs) { [] }
   else { cons Tree (pair xs.fst xs.snd)
@@ -590,7 +465,6 @@ test UniqueOf [Point 5, Point 6] [5, 5] = false
 test UniqueOf [Tree, Point 5] [5, 7] = true
 test UniqueOf [Tree, Tree] [5] = false
 
-// 7. Tree checkers: branch at each node, sequence the two child programs.
 tree_rows : ShallowType -> Tree -> Eff Row Tree Tree
   := {LeafTy} => (fix ({self, get} => {
   node <- see get node_like
@@ -604,7 +478,6 @@ TreeOf : Pi Guard ShallowType ({_} => Space)
 test TreeOf Unit (pair (pair t t) t) = true
 test TreeOf Unit (pair (t t) t) = false
 
-// 8. Trees with different kinds of sub-objects at tagged nodes.
 MixedCode : List Tree := < Leaf : t, Node : t >
 mixed_rows := fix ({self, get} => {
   node <- see get (Pred is_fork)
@@ -623,10 +496,6 @@ test MixedTree (Node (pair false (pair (Leaf false) (Leaf false)))) = false
 test MixedTree (Node (pair 2 (pair (Leaf 5) (Leaf false)))) = false
 test MixedTree 5 = false
 
-// 9. Perfect trees of depth n: no data branching at all, pure parameter recursion.
-// Stays raw: the left child's program is sequenced mid-program, and eff_bind
-// inspects its subject, so a neutral IH refuses there (the eff_bind class);
-// only tail-position recursion certifies (vec_rows above).
 perfect_rows := fix ({self, n, get} =>
   if (is_leaf n) { see get Unit }
   else {
@@ -640,7 +509,6 @@ test Perfect 1 (pair t t) = true
 test Perfect 2 (pair (pair t t) (pair t t)) = true
 test Perfect 2 (pair (pair t t) t) = false
 
-// 10. Balanced trees: observe a computed measure, constrain it with a type.
 height : Pi (Sampled [pair t t]) Tree ({_} => Nat)
   := fix ({self, v} =>
   if (is_fork v) {
@@ -666,7 +534,6 @@ test Balanced (pair (pair t t) t) = true
 test Balanced (pair (pair (pair t t) t) t) = false
 test Balanced (pair (pair (pair t t) (pair t t)) (pair t t)) = true
 
-// 11. Dependent record: the observed value of one field shapes another field's rows.
 len_xs_rows := {
   _ <- see ({r} => field_cell r "len") (Pred is_fork)
   n <- see ({r} => field r "len") Nat

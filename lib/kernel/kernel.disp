@@ -154,10 +154,6 @@ Bool : Refine Space Coherent := ({
   members := [true, false]
   elim := {_self, b, true_case, false_case} => triage true_case ({_} => false_case) ({_l, _r} => true_case) b
 })
-// Relocated above ShallowType so the universes' rows can name these VALUES.
-// Annotations are unaffected either way: ShallowType/Space/Refine/Coherent/Nat are
-// givens, so a forward reference in a type is already legal (Tree : Refine Space
-// Coherent, with Space below). Only values must precede their use.
 PiCode : ShallowType -> Tree -> Space
   := {A, B} => make_type ({ tele := perform (Fresh A) ({x} => perform (Observe (pair App (B x))) ({_} => Pure t)) })
 SigmaCode : ShallowType -> Tree -> Space
@@ -258,16 +254,8 @@ slot_ask : Pi (Sampled ["members", "zz"]) Tree ({_} => Pi (Sampled [Bool]) Tree 
   if (is_leaf c) { inj "None" t } else { inj "Some" (pair_snd c) }
 }
 property_names : List Tree := ["recognize", "gate", "elim", "members", "norm", "ends", "under"]
-/// Rows a type OFFERS rather than demands: transparent to a frame that does not
-/// match, so a subject stays applicable and observable past them. `entries` pairs
-/// a slot name with a family of the subject.
 offer_rows : Pi (Sampled [[pair "members" ({_T} => Tree)]]) (List Tree) ({_} => Pi (Sampled [Pure t]) Tree ({_} => Tree))
   := {entries, tail} => list_rec t t entries tail ({e, _tl, rest} => perform (Offer (pair (slot_ask (pair_fst e)) (pair_snd e))) ({_} => rest))
-/// The universes' interface, as a function of the universe of types. obs joins the
-/// convention every other applicable slot already follows (gate takes Ind, elim and
-/// recognize take self, check takes the type), and that argument is what lets these
-/// families be honest closures: gate and under mention the universe, which no tree
-/// can embed in itself.
 universe_obs := {U} => offer_rows (list_zip property_names [
   ({_T} => Cell (PiCode Tree ({_} => Bool))),
   ({T} => Cell (PiCode U ({_} => PiCode (PiCode T ({_} => U)) ({_} => Tree)))),
@@ -281,9 +269,6 @@ ShallowType : Space := ({ #recognize := {_self, v} => is_type v, obs := universe
 test ShallowType ({ #recognize := {_self, _v} => true }) = true
 test ({ #recognize := {_self, v} => is_leaf v }) zero = true
 test ({ #recognize := {_self, v} => is_leaf v }) 5 = false
-/// Self-application is the cycle-breaker, and only the self-referential universe
-/// needs it: a Space member's gate and under still land in ShallowType, so Space
-/// passes ShallowType explicitly and shares this one rows tree.
 universe_rows := universe_obs ShallowType
 RecognizeP : ShallowType -> Space := {_T} => PiCode Tree ({_} => Bool)
 GateP : ShallowType -> Space := {T} => PiCode ShallowType ({_} => PiCode (PiCode T ({_} => ShallowType)) ({_} => Tree))
