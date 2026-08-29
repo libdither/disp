@@ -1,5 +1,8 @@
 open use raw "../prelude.disp" {}
 open use raw "kernel.disp" {}
+// AI may comment here only to say WHY a pin reads as it does, and only on that
+// pin's own line: a pointer for someone who already reads the code, never an
+// explanation of it. Wrapping is fine; staying short is the point.
 
 given DefaultWalker : Tree := Guard
 Fn : Pi (Sampled [Bool]) ShallowType ({_} => Pi (Sampled [{_v} => Bool]) Tree ({_} => Space)) := Pi DefaultWalker
@@ -161,7 +164,7 @@ test Invalid (invalid 5) = true
 test Invalid (make_hyp Nat t) = false
 test OpenChain (wait open_chain (pair t (pair t []))) = true
 test StuckElim (wait elim_stuck (pair t (pair t []))) = true
-test StuckElim (wait elim_stuck (pair (elim_of Nat ({_} => Nat)) (pair (make_hyp Nat t) []))) = false
+test StuckElim (wait elim_stuck (pair (elim_of Nat ({_} => Nat)) (pair (make_hyp Nat t) []))) = false  // rows describe neutral-free shape; the judge owns live mints
 test TeqPartial (wait tree_eq 5) = true
 test TypeFace Nat = true
 test TypeFace Bool = true
@@ -170,7 +173,7 @@ test TypeFace (pair "recognize" 5) = false
 test ShallowType Hyp = true
 test ShallowType TypeFace = true
 test (SusRows -> Tree) ({h} => (h.snd).snd) = true
-test (SusRows -> Tree) ({h} => h 5) = false
+test (SusRows -> Tree) ({h} => h 5) = false  // undeclared observation
 test (ElimHead -> Space) ({E} => (((E.snd).snd).snd).fst) = true
 test (ElimHead -> Tree) ({E} => ((E.snd).snd).fst) = true
 
@@ -206,25 +209,25 @@ test eq_cong Nat Nat succ 2 2 refl = refl
 
 test (Pi Guard ShallowType ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
 test (Pi Guard ShallowType ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
-test (Pi Guard ShallowType ({T} => Tree)) ({T} => ask T ({X} => X)) = false
-test (Pi Guard Nat ({n} => Tree)) ({n} => ask n MembersP) = false
-test (Pi Guard ShallowType ({T} => ShallowType)) ({T} => Cell (NormP T)) = false
+test (Pi Guard ShallowType ({T} => Tree)) ({T} => ask T ({X} => X)) = false  // unknown property: no row carries that accessor
+test (Pi Guard Nat ({n} => Tree)) ({n} => ask n MembersP) = false  // only the universes offer property rows
+test (Pi Guard ShallowType ({T} => ShallowType)) ({T} => Cell (NormP T)) = false  // a witness is formed, never consumed: stage WC
 test tree_eq (ask Nat GateP) (inj "Some" Nat.gate) = true
 test tree_eq (ask (Eq Nat 2 2) UnderP) (inj "Some" Nat) = true
 test tree_eq (ask (Eq Nat 2 2) EndsP) (inj "Some" (pair 2 2)) = true
 
 test (Pi Guard Space ({T} => Cell (MembersP T))) ({T} => ask T MembersP) = true
 test (Pi Guard Space ({T} => Cell (GateP T))) ({T} => ask T MembersP) = false
-test (Pi Guard Space ({T} => ShallowType)) ({T} => T) = false
+test (Pi Guard Space ({T} => ShallowType)) ({T} => T) = false  // nominal universes: no subsumption either way
 test (Pi Guard Space ({T} => Space)) ({T} => PiCode T ({_} => Bool)) = true
 test (Pi Guard Space ({T} => Space)) ({T} => SigmaCode T ({_} => T)) = true
 test (Pi Guard Space ({T} => Space)) ({T} => Pi Guard T ({_} => Bool)) = true
 test (Pi Guard ShallowType ({T} => Space)) ({T} => PiCode T ({_} => Bool)) = true
 
 test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard (Eq ShallowType A B) ({_} => Pi Guard A ({a} => B))))) ({_A, _B, _p, a} => a) = true
-test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard A ({a} => B)))) ({_A, _B, a} => a) = false
+test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard A ({a} => B)))) ({_A, _B, a} => a) = false  // no ledger equation, so no transport
 test (Pi Guard ShallowType ({A} => Pi Guard ShallowType ({B} => Pi Guard (Eq ShallowType A B) ({_} => Pi Guard (Pi Guard A ({_} => Bool)) ({f} => Pi Guard B ({_} => Bool)))))) ({_A, _B, _p, f} => f) = true
-test (Pi Guard Nat ({n} => Pi Guard Nat ({m} => Pi Guard (Eq (Quotient Nat succ) n m) ({_} => Pi Guard (Point n) ({v} => Point m))))) ({_n, _m, _p, v} => v) = false
+test (Pi Guard Nat ({n} => Pi Guard Nat ({m} => Pi Guard (Eq (Quotient Nat succ) n m) ({_} => Pi Guard (Point n) ({v} => Point m))))) ({_n, _m, _p, v} => v) = false  // quotient-carried equations stay out of conversion (A7 grading)
 
 tree_rec : {C : ShallowType} -> Tree -> C -> (arm 1 (Tree.gate Tree (const_fn C))) -> (arm 2 (Tree.gate Tree (const_fn C))) -> C
   := {C} => elim_of Tree ({_} => C)
@@ -249,12 +252,12 @@ test Coherent (Sigma Guard Nat ({_} => Bool)) = true
 liar_rows := perform (Observe (pair Self Bool)) ({_} => Pure t)
 LiarTele := ({ #recognize := {_self, _v} => true, tele := liar_rows })
 LiarObs := ({ #recognize := {_self, _v} => true, obs := const_fn liar_rows })
-test LiarTele 5 = true
-test Pi Guard Unit ({_} => LiarTele) ({_u} => 5) = false
+test LiarTele 5 = true  // direct application runs the recognizer
+test Pi Guard Unit ({_} => LiarTele) ({_u} => 5) = false  // the judge runs tele instead, and tele overrides
 test Pi Meta Unit ({_} => LiarTele) ({_u} => 5) = false
 test Pi Guard Unit ({_} => LiarTele) ({_u} => true) = true
-test Pi Guard Unit ({_} => LiarObs) ({_u} => 5) = true
-test Coherent LiarTele = false
+test Pi Guard Unit ({_} => LiarObs) ({_u} => 5) = true  // obs only describes, so the recognizer still decides
+test Coherent LiarTele = false  // rows_ok forbids stating a type whose two faces disagree
 test Coherent LiarObs = true
 
 test Space Nat = true
@@ -264,7 +267,7 @@ test Space (Sigma Guard Nat ({_} => Bool)) = true
 test Space (Point 5) = true
 test Space (Cell Nat) = true
 test Space ShallowType = true
-test Space Space = true
+test Space Space = true  // inert: no universe carries an eliminator to exploit it
 test Space (Pred ({_v} => true)) = false
 test Space RawRecord = false
 test Space Table = false
@@ -276,7 +279,7 @@ test Space (pair 5 (pair 1 (pair "recognize" ({ members := [t] })))) = false
 test ShallowType Space = true
 test Fn Space ({_} => Bool) ({T} => T 5) = true
 test Fn Space ({_} => Nat) ({T} => T 5) = false
-test (Pi Guard Tree ({x} => Space)) ({x} => make_type ({ tele := x })) = false
+test (Pi Guard Tree ({x} => Space)) ({x} => make_type ({ tele := x })) = false  // structure decided AT a mint is not instantiation-stable
 test (Pi Guard Tree ({x} => Space)) ({x} => tag (pair "recognize" (pair [x, "tele"] [list_const t, list_const (pair 1 2)])) t) = false
 
 list_len_t : Tree -> Nat
@@ -303,11 +306,11 @@ List : ShallowType -> Space := {A} => ({
 })
 test Space (List Nat) = true
 
-test Fn ShallowType ({A} => Fn ShallowType ({B} => Fn (Fn A ({_} => B)) ({_} => Fn (List A) ({_} => List B)))) ({A, B, f, xs} => (elim_of (List A) ({_} => List B)) xs [] ({h, _tl, _ih} => h)) = false
+test Fn ShallowType ({A} => Fn ShallowType ({B} => Fn (Fn A ({_} => B)) ({_} => Fn (List A) ({_} => List B)))) ({A, B, f, xs} => (elim_of (List A) ({_} => List B)) xs [] ({h, _tl, _ih} => h)) = false  // wrong-typed arm; applying to a NEUTRAL argument is the shared frontier
 
 list_rec : {A : ShallowType} -> {C : ShallowType} -> List A -> C -> (arm 1 ((List A).gate (List A) (const_fn C))) -> C
   := {A, C} => elim_of (List A) ({_} => C)
-test Pi Meta ShallowType ({T} => Fn Tree ({_} => Bool)) ({T, v} => T v) = false
+test Pi Meta ShallowType ({T} => Fn Tree ({_} => Bool)) ({T, v} => T v) = false  // Meta gap: an abstract value cannot act as a recognizer
 test Pi Guard ShallowType ({T} => Fn Tree ({_} => Bool)) ({T, v} => T v) = false
 test Pi Meta ShallowType ({_} => Bool) ({T} => T 5) = true
 list_samples : List Tree := [[], [1], [1, 2]]
@@ -359,7 +362,7 @@ test ListR Nat [] = true
 test ListR Nat [1, 2] = true
 test ListR Nat [1, t t] = false
 test ListR Nat (t t) = false
-test ListR Nat 5 = true
+test ListR Nat 5 = true  // structural pun: succ n = cons zero n, so a nat IS a list of zeros
 test List Nat 5 = true
 test ListR (ListR Bool) [[true], []] = true
 test ListR (ListR Bool) [[5]] = false
@@ -390,7 +393,7 @@ test RawRecordRows ({}) = true
 test RawRecordRows (pair ["a"] t) = false
 test RawRecordRows 5 = false
 test (Pi Guard RawRecordRows ({_} => List Tree)) ({r} => r.fst) = true
-test (Pi Guard RawRecordRows ({_} => Tree)) ({r} => r.snd) = false
+test (Pi Guard RawRecordRows ({_} => Tree)) ({r} => r.snd) = false  // the payload rows branch on the observed length, which stops at a mint
 
 record_rows := fix ({self, entries} =>
   if (is_leaf entries) { done }
@@ -406,13 +409,13 @@ xy : List Tree := [pair "x" Nat, pair "y" Bool]
 test NamedRec xy ({ x := 2, y := false }) = true
 test NamedRec xy ({ x := 2 }) = false
 test NamedRec xy ({ x := 2, y := 5 }) = false
-test NamedRec xy ({ x := 2, y := false, z := 9 }) = true
+test NamedRec xy ({ x := 2, y := false, z := 9 }) = true  // rows constrain the named fields only
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := succ }) = true
 test NamedRec [pair "step" (Nat -> Nat)] ({ step := not_bool }) = false
-test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.x) = true
+test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.x) = true  // the row accessor is dot "x", exactly what r.x reduces to
 test (Pi Guard (NamedRec xy) ({_r} => Bool)) ({r} => r.y) = true
 test (Pi Guard (NamedRec xy) ({_r} => Bool)) ({r} => r.x) = false
-test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.z) = false
+test (Pi Guard (NamedRec xy) ({_r} => Nat)) ({r} => r.z) = false  // undeclared field: no row to match
 test (Pi Meta (NamedRec xy) ({_r} => Nat)) ({r} => r.x) = true
 
 TypeRec : Pi (Sampled [[Nat]]) (List Tree) ({_} => Space)
@@ -507,7 +510,7 @@ Perfect : Pi (Sampled [1]) Nat ({_} => Space)
   := {n} => Tele Guard (perfect_rows n ({v} => v))
 test Perfect 1 (pair t t) = true
 test Perfect 2 (pair (pair t t) (pair t t)) = true
-test Perfect 2 (pair (pair t t) t) = false
+test Perfect 2 (pair (pair t t) t) = false  // perfect_rows stays raw: a mid-program neutral IH refuses in eff_bind
 
 height : Pi (Sampled [pair t t]) Tree ({_} => Nat)
   := fix ({self, v} =>
