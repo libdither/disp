@@ -1,0 +1,59 @@
+open use raw "lib/prelude.disp" {}
+open use raw "lib/list.disp" {}
+open use raw "lib/stream.disp" {}
+
+next_level :: {levels : List (List Tree)} -> List Tree :=> append (map ({v} => t v) (head levels)) (concat (map ({p} => cross pair (pair_fst p) (pair_snd p)) (zip (reverse levels) (tail levels))))
+trees_step :: {st : Pair (List (List Tree)) (List Tree)} -> Step Tree (Pair (List (List Tree)) (List Tree)) :=> {
+  let levels := pair_fst st
+  let pending := pair_snd st
+  if (is_nil pending) {
+    let nl := next_level levels
+    yield (head nl) (pair (cons nl levels) (tail nl))
+  } else {
+    yield (head pending) (pair levels (tail pending))
+  }
+}
+Trees :: Stream Tree := s_new trees_step (pair [[t]] [t])
+
+test tree_eq (s_items (s_take 10 4 Trees)) [t, t t, t (t t), t t t] = true
+test length (s_items (s_take 40 38 Trees)) = 38
+taken2 :: Pair (List Tree) (Stream Tree) := s_take 10 2 Trees
+taken2more :: Pair (List Tree) (Stream Tree) := s_take 10 2 (s_rest taken2)
+test tree_eq (append (s_items taken2) (s_items taken2more)) (s_items (s_take 10 4 Trees)) = true
+
+BadBool :: {v : Tree} -> Bool :=> triage true is_leaf false v
+Bool :: {v : Tree} -> Bool :=> triage true is_leaf ({_l, _r} => false) v
+test BadBool (t t t) = true
+test Bool (t t t) = false
+test Bool t = true
+test Bool (t t) = true
+test Bool (t (t t)) = false
+
+Bools :: List Tree := s_items (s_take 50 5 (s_filter Bool Trees))
+test length Bools = 2
+test tree_eq Bools [true, false] = true
+
+Arrow :: {A : Tree -> Bool, B : Tree -> Bool, fuel : Nat, v : Tree} -> Bool :=> s_all B fuel (s_map ({a} => v a) (s_filter A Trees))
+BoolFn :: {v : Tree} -> Bool :=> Arrow Bool Bool 25 v
+test BoolFn (t t t) = true
+test BoolFn (t t (t t)) = true
+test BoolFn t = false
+test BoolFn (t t) = false
+test Arrow Bool Bool 1 t = true
+
+candidates :: List Tree := s_items (s_take 60 40 Trees)
+boolfns :: List Tree := filter BoolFn candidates
+test length boolfns = 7
+test all ({v} => and (Bool (v true)) (Bool (v false))) boolfns = true
+behaviors :: List (Pair Tree Tree) := dedup (map ({v} => pair (v true) (v false)) boolfns)
+test length behaviors = 3
+test tree_eq behaviors [pair true true, pair true false, pair false false] = true
+
+idfns :: List Tree := filter ({v} => and (tree_eq (v true) true) (tree_eq (v false) false)) boolfns
+test length idfns = 4
+m :: Tree := t (t t t) t
+test Bool m = false
+test all ({v} => not (Bool (v m))) idfns = true
+outputs_on_m :: List Tree := dedup (map ({v} => v m) idfns)
+test length outputs_on_m = 2
+test tree_eq outputs_on_m [m, t t t] = true
