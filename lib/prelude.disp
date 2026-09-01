@@ -179,3 +179,8 @@ succ : Nat -> Nat := {n} => t t n
 // nat_pred reads succ's payload (succ n = t t n). A raw pair_snd read: stays untyped like
 // the projections above (a Pi annotation would mint a hyp the projection then triages).
 nat_pred := {n} => pair_snd n
+
+// Nat shape predicates, named for intent: zero = leaf, succ n = fork. Aliases of
+// the raw shape tests (same trees), so use these wherever the value is a number.
+is_zero :: Nat -> Bool := is_leaf
+is_succ :: Nat -> Bool := is_fork

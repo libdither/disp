@@ -16,8 +16,8 @@ skip_state :: Step V St -> St := pair_snd
 s_items :: Pair (List V) (Stream V) -> List V := pair_fst
 s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
 rec s_take :: {fuel : Nat, n : Nat, s : Stream V} -> Pair (List V) (Stream V) :=>
-	if (is_leaf n) { pair [] s }
-	else if (is_leaf fuel) { pair [] s }
+	if (is_zero n) { pair [] s }
+	else if (is_zero fuel) { pair [] s }
 	else {
 		let r := s_step s
 		if (yielded r) {
@@ -39,7 +39,7 @@ s_filter :: {p : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({st} => {
 	} else { skip (s_with st (skip_state r)) }
 }) inner
 rec s_all :: {p : V -> Bool} -> {fuel : Nat, s : Stream V} -> Bool :=>
-	if (is_leaf fuel) { true }
+	if (is_zero fuel) { true }
 	else {
 		let r := s_step s
 		if (yielded r) {
@@ -53,6 +53,6 @@ took2 := s_take 10 2 nats
 test tree_eq (s_items (s_take 10 2 (s_rest took2))) [2, 3] = true
 test tree_eq (s_items (s_take 10 3 (s_map succ nats))) [1, 2, 3] = true
 test tree_eq (s_items (s_take 10 2 (s_filter is_fork nats))) [1, 2] = true
-test length (s_items (s_take 3 9 (s_filter is_leaf nats))) = 1
+test length (s_items (s_take 3 9 (s_filter is_zero nats))) = 1
 test s_all is_fork 5 (s_map succ nats) = true
-test s_all is_leaf 5 (s_map succ nats) = false
+test s_all is_zero 5 (s_map succ nats) = false
