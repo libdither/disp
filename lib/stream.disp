@@ -1,0 +1,56 @@
+// Resumable fueled streams: a stream is pair stepper state; a step yields or skips.
+open use raw "prelude.disp" {}
+open use raw "list.disp" {}
+
+s_new :: {stepper : St -> Step V St, st : St} -> Stream V :=> pair stepper st
+s_with :: {s : Stream V, st : St} -> Stream V :=> pair (pair_fst s) st
+s_step :: {s : Stream V} -> Step V St :=> (pair_fst s) (pair_snd s)
+
+yield :: {v : V, st : St} -> Step V St :=> pair true (pair v st)
+skip :: {st : St} -> Step V St :=> pair false st
+yielded :: Step V St -> Bool := pair_fst
+y_val :: {r : Step V St} -> V :=> pair_fst (pair_snd r)
+y_state :: {r : Step V St} -> St :=> pair_snd (pair_snd r)
+skip_state :: Step V St -> St := pair_snd
+
+s_items :: Pair (List V) (Stream V) -> List V := pair_fst
+s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
+s_take :: {fuel : Nat, n : Nat, s : Stream V} -> Pair (List V) (Stream V) :=> (fix ({self, fuel2, n2, s2, acc} =>
+	if (is_leaf n2) { pair (reverse acc) s2 }
+	else if (is_leaf fuel2) { pair (reverse acc) s2 }
+	else {
+		let r := s_step s2
+		if (yielded r) { self (nat_pred fuel2) (nat_pred n2) (s_with s2 (y_state r)) (cons (y_val r) acc) }
+		else { self (nat_pred fuel2) n2 (s_with s2 (skip_state r)) acc }
+	})) fuel n s []
+
+s_map :: {f : V -> W, inner : Stream V} -> Stream W :=> s_new ({st} => {
+	let r := s_step st
+	if (yielded r) { yield (f (y_val r)) (s_with st (y_state r)) }
+	else { skip (s_with st (skip_state r)) }
+}) inner
+s_filter :: {p : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({st} => {
+	let r := s_step st
+	if (yielded r) {
+		let rest := s_with st (y_state r)
+		if (p (y_val r)) { yield (y_val r) rest } else { skip rest }
+	} else { skip (s_with st (skip_state r)) }
+}) inner
+s_all :: {p : V -> Bool, fuel : Nat, s : Stream V} -> Bool :=> (fix ({self, fuel2, s2} =>
+	if (is_leaf fuel2) { true }
+	else {
+		let r := s_step s2
+		if (yielded r) {
+			if (p (y_val r)) { self (nat_pred fuel2) (s_with s2 (y_state r)) } else { false }
+		} else { self (nat_pred fuel2) (s_with s2 (skip_state r)) }
+	})) fuel s
+
+nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
+test tree_eq (s_items (s_take 10 3 nats)) [0, 1, 2] = true
+took2 := s_take 10 2 nats
+test tree_eq (s_items (s_take 10 2 (s_rest took2))) [2, 3] = true
+test tree_eq (s_items (s_take 10 3 (s_map succ nats))) [1, 2, 3] = true
+test tree_eq (s_items (s_take 10 2 (s_filter is_fork nats))) [1, 2] = true
+test length (s_items (s_take 3 9 (s_filter is_leaf nats))) = 1
+test s_all is_fork 5 (s_map succ nats) = true
+test s_all is_leaf 5 (s_map succ nats) = false

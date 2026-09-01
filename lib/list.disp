@@ -1,0 +1,46 @@
+// Simple list manipulation library
+open use raw "prelude.disp" {}
+
+nil :: List A := t
+cons :: {h : A, tl : List A} -> List A :=> t h tl
+is_nil :: List A -> Bool := is_leaf
+head :: List A -> A := pair_fst
+tail :: List A -> List A := pair_snd
+reduce :: {step : A -> C -> C, base : C} -> List A -> C :=> fix ({self, xs} =>
+	if (is_nil xs) { base }
+	else { step (head xs) (self (tail xs)) })
+
+map :: {f : A -> B} -> List A -> List B :=> reduce ({h, ih} => cons (f h) ih) []
+append :: {xs : List A, ys : List A} -> List A :=> reduce cons ys xs
+concat :: List (List A) -> List A := reduce append []
+reverse :: List A -> List A := reduce ({h, ih} => append ih [h]) []
+length :: List A -> Nat := reduce ({_h, ih} => succ ih) zero
+filter :: {p : A -> Bool} -> List A -> List A :=> reduce ({h, ih} => if (p h) { cons h ih } else { ih }) []
+all :: {p : A -> Bool} -> List A -> Bool :=> reduce ({h, ih} => and (p h) ih) true
+any :: {p : A -> Bool} -> List A -> Bool :=> reduce ({h, ih} => or (p h) ih) false
+member :: {x : A} -> List A -> Bool :=> any (tree_eq x)
+dedup :: List A -> List A := reduce ({h, ih} => if (member h ih) { ih } else { cons h ih }) []
+cross :: {f : A -> B -> C, xs : List A, ys : List B} -> List C :=> concat (map ({x} => map (f x) ys) xs)
+zip :: List A -> List B -> List (Pair A B) := fix ({self, xs, ys} =>
+	if (is_nil xs) { [] }
+	else if (is_nil ys) { [] }
+	else { cons 
+		(pair (head xs) (head ys))
+		(self (tail xs) (tail ys))
+	})
+
+test tree_eq (reduce cons [] [1, 2]) [1, 2] = true
+test length [7, 8] = 2
+test tree_eq (map succ [1, 2]) [2, 3] = true
+test tree_eq (reverse [1, 2]) [2, 1] = true
+test tree_eq (append [1] [2]) [1, 2] = true
+test tree_eq (concat [[1], [2]]) [1, 2] = true
+test tree_eq (zip [1, 2] [8, 9]) [pair 1 8, pair 2 9] = true
+test tree_eq (filter is_leaf [t, 5, t]) [t, t] = true
+test all is_leaf [t, t] = true
+test all is_leaf [t, 5] = false
+test any is_fork [t, 5] = true
+test member 2 [1, 2] = true
+test member 3 [1, 2] = false
+test tree_eq (dedup [1, 1, 2]) [1, 2] = true
+test tree_eq (cross pair [1, 2] [8]) [pair 1 8, pair 2 8] = true
