@@ -2,7 +2,7 @@
 open use raw "prelude.disp" {}
 
 nil :: List A := t
-cons :: {h : A, tl : List A} -> List A :=> t h tl
+cons :: {item : A, rest : List A} -> List A :=> t item rest
 is_nil :: List A -> Bool := is_leaf
 head :: List A -> A := pair_fst
 tail :: List A -> List A := pair_snd
@@ -10,17 +10,17 @@ rec reduce :: {step : A -> C -> C, base : C} -> {xs : List A} -> C :=>
 	if (is_nil xs) { base }
 	else { step (head xs) (reduce (tail xs)) }
 
-map :: {f : A -> B} -> List A -> List B :=> reduce ({h, ih} => cons (f h) ih) []
+map :: {transform : A -> B} -> List A -> List B :=> reduce ({item, mapped} => cons (transform item) mapped) []
 append :: {xs : List A, ys : List A} -> List A :=> reduce cons ys xs
 concat :: List (List A) -> List A := reduce append []
-reverse :: List A -> List A := reduce ({h, ih} => append ih [h]) []
-length :: List A -> Nat := reduce ({_h, ih} => succ ih) zero
-filter :: {p : A -> Bool} -> List A -> List A :=> reduce ({h, ih} => if (p h) { cons h ih } else { ih }) []
-all :: {p : A -> Bool} -> List A -> Bool :=> reduce ({h, ih} => (p h) && ih) true
-any :: {p : A -> Bool} -> List A -> Bool :=> reduce ({h, ih} => (p h) || ih) false
-member :: {x : A} -> List A -> Bool :=> any (tree_eq x)
-dedup :: List A -> List A := reduce ({h, ih} => if (member h ih) { ih } else { cons h ih }) []
-cross :: {f : A -> B -> C, xs : List A, ys : List B} -> List C :=> concat (map ({x} => map (f x) ys) xs)
+reverse :: List A -> List A := reduce ({item, reversed} => append reversed [item]) []
+length :: List A -> Nat := reduce ({_item, count} => succ count) zero
+filter :: {keep : A -> Bool} -> List A -> List A :=> reduce ({item, kept} => if (keep item) { cons item kept } else { kept }) []
+all :: {holds : A -> Bool} -> List A -> Bool :=> reduce ({item, rest_ok} => (holds item) && rest_ok) true
+any :: {holds : A -> Bool} -> List A -> Bool :=> reduce ({item, rest_any} => (holds item) || rest_any) false
+member :: {target : A} -> List A -> Bool :=> any (tree_eq target)
+dedup :: List A -> List A := reduce ({item, deduped} => if (member item deduped) { deduped } else { cons item deduped }) []
+cross :: {combine : A -> B -> C, xs : List A, ys : List B} -> List C :=> concat (map ({left} => map (combine left) ys) xs)
 rec zip :: {xs : List A, ys : List B} -> List (Pair A B) :=>
 	if (is_nil xs || is_nil ys) { [] }
 	else { cons (pair (head xs) (head ys)) (zip (tail xs) (tail ys)) }

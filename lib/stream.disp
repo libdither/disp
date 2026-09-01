@@ -4,53 +4,53 @@
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 
-s_new :: {stepper : St -> Step V St, st : St} -> Stream V :=> pair stepper st
-s_with :: {s : Stream V, st : St} -> Stream V :=> pair (pair_fst s) st
-s_step :: {s : Stream V} -> Step V St :=> (pair_fst s) (pair_snd s)
+s_new :: {stepper : St -> Step V St, state : St} -> Stream V :=> pair stepper state
+s_with :: {stream : Stream V, state : St} -> Stream V :=> pair (pair_fst stream) state
+s_step :: {stream : Stream V} -> Step V St :=> (pair_fst stream) (pair_snd stream)
 
-yield :: {v : V, st : St} -> Step V St :=> pair true (pair v st)
-skip :: {st : St} -> Step V St :=> pair false st
+yield :: {item : V, state : St} -> Step V St :=> pair true (pair item state)
+skip :: {state : St} -> Step V St :=> pair false state
 yielded :: Step V St -> Bool := pair_fst
-y_val :: {r : Step V St} -> V :=> pair_fst (pair_snd r)
-y_state :: {r : Step V St} -> St :=> pair_snd (pair_snd r)
+y_val :: {step : Step V St} -> V :=> pair_fst (pair_snd step)
+y_state :: {step : Step V St} -> St :=> pair_snd (pair_snd step)
 skip_state :: Step V St -> St := pair_snd
 
 s_items :: Pair (List V) (Stream V) -> List V := pair_fst
 s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
-// fuel bounds steps and n bounds items: skips burn only fuel, so a sparse filter cannot hang a take
-rec s_take :: {fuel : Nat, n : Nat, s : Stream V} -> Pair (List V) (Stream V) :=>
-	if (is_zero n || is_zero fuel) { pair [] s }
+// fuel bounds steps and count bounds items: skips burn only fuel, so a sparse filter cannot hang a take
+rec s_take :: {fuel : Nat, count : Nat, stream : Stream V} -> Pair (List V) (Stream V) :=>
+	if (is_zero count || is_zero fuel) { pair [] stream }
 	else {
-		let r := s_step s
-		if (not (yielded r)) { s_take (nat_pred fuel) n (s_with s (skip_state r)) }
+		let step := s_step stream
+		if (not (yielded step)) { s_take (nat_pred fuel) count (s_with stream (skip_state step)) }
 		else {
-			let item := y_val r
-			let rest := s_take (nat_pred fuel) (nat_pred n) (s_with s (y_state r))
-			pair (cons item (s_items rest)) (s_rest rest)
+			let item := y_val step
+			let taken := s_take (nat_pred fuel) (nat_pred count) (s_with stream (y_state step))
+			pair (cons item (s_items taken)) (s_rest taken)
 		}
 	}
 
-s_map :: {f : V -> W, inner : Stream V} -> Stream W :=> s_new ({st} => {
-	let r := s_step st
-	if (yielded r) { yield (f (y_val r)) (s_with st (y_state r)) }
-	else { skip (s_with st (skip_state r)) }
+s_map :: {transform : V -> W, inner : Stream V} -> Stream W :=> s_new ({state} => {
+	let step := s_step state
+	if (yielded step) { yield (transform (y_val step)) (s_with state (y_state step)) }
+	else { skip (s_with state (skip_state step)) }
 }) inner
-s_filter :: {p : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({st} => {
-	let r := s_step st
-	if (not (yielded r)) { skip (s_with st (skip_state r)) }
+s_filter :: {keep : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({state} => {
+	let step := s_step state
+	if (not (yielded step)) { skip (s_with state (skip_state step)) }
 	else {
-		let item := y_val r
-		let rest := s_with st (y_state r)
-		if (p item) { yield item rest } else { skip rest }
+		let item := y_val step
+		let advanced := s_with state (y_state step)
+		if (keep item) { yield item advanced } else { skip advanced }
 	}
 }) inner
 // fuel running out answers true — survived so far (no counterexample found), not proof
-rec s_all :: {p : V -> Bool} -> {fuel : Nat, s : Stream V} -> Bool :=>
+rec s_all :: {holds : V -> Bool} -> {fuel : Nat, stream : Stream V} -> Bool :=>
 	if (is_zero fuel) { true }
 	else {
-		let r := s_step s
-		if (not (yielded r)) { s_all (nat_pred fuel) (s_with s (skip_state r)) }
-		else { (p (y_val r)) && (s_all (nat_pred fuel) (s_with s (y_state r))) }
+		let step := s_step stream
+		if (not (yielded step)) { s_all (nat_pred fuel) (s_with stream (skip_state step)) }
+		else { (holds (y_val step)) && (s_all (nat_pred fuel) (s_with stream (y_state step))) }
 	}
 
 nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
