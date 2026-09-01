@@ -31,7 +31,7 @@ const KEYWORDS = new Set(["use", "open", "match", "if", "then", "else"])
 // `<`/`>` are the sum-type-literal delimiters (`< Tag : T, … >`). They are single
 // chars with no multi-char punctuation built on them, and `->`/`=>`/`→` are
 // matched first, so a bare `>` never steals an arrow's tail.
-const PUNCT = ["#", ":=>", ":=", "::", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
+const PUNCT = ["#", ":=>", ":=", "::", "==", "&&", "||", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -512,10 +512,38 @@ const lineApp: P<Expr> = (ts, i) => {
   return ok(result, pos)
 }
 
-// makeExpr: arrow-suffix handler shared by expr and lineExpr.
+// ── Infix tier: a fixed, CLOSED set (==, &&, ||), non-associative, binding
+// looser than application and tighter than the arrow suffix. Pure sugar:
+// `a == b` is the application `tree_eq a b` (a scope-bound name, exactly like
+// the `if`→`cond` desugar), so the tree is identical to the spelled-out call;
+// `&&`/`||` reuse the `if` node and therefore SHORT-CIRCUIT — the strict
+// named forms remain `and`/`or`. Chaining is a hard error: parenthesize.
+const INFIX_DESUGAR: Record<string, (a: Expr, b: Expr) => Expr> = {
+  "==": (a, b) => ({ tag: "app", f: { tag: "app", f: { tag: "var", name: "tree_eq" }, x: a }, x: b }),
+  "&&": (a, b) => ({ tag: "if", cond: a, thenBody: b, elseBody: { tag: "var", name: "false" } }),
+  "||": (a, b) => ({ tag: "if", cond: a, thenBody: { tag: "var", name: "true" }, elseBody: b }),
+}
+const infixOpP: P<string> = alt<string>(
+  map(nl(punctP("==")), () => "=="),
+  map(nl(punctP("&&")), () => "&&"),
+  map(nl(punctP("||")), () => "||"),
+)
+
+// makeExpr: infix tier + arrow-suffix handler shared by expr and lineExpr.
 const makeExpr = (appP: P<Expr>): P<Expr> => {
-  const p: P<Expr> = (ts, i) => {
+  const operand: P<Expr> = (ts, i) => {
     const lhs = appP(ts, i)
+    if (!lhs.ok) return lhs
+    const op = infixOpP(ts, lhs.pos)
+    if (!op.ok) return lhs
+    const rhs = seq(skipNl, appP)(ts, op.pos)
+    if (!rhs.ok) return rhs
+    const more = infixOpP(ts, rhs.pos)
+    if (more.ok) throw new Error(`parse: infix operators (==, &&, ||) are non-associative — parenthesize`)
+    return ok(INFIX_DESUGAR[op.v](lhs.v, rhs.v[1]), rhs.pos)
+  }
+  const p: P<Expr> = (ts, i) => {
+    const lhs = operand(ts, i)
     if (!lhs.ok) return lhs
     const arr = arrowP(ts, lhs.pos)
     if (!arr.ok) return lhs

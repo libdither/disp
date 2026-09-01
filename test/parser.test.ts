@@ -482,6 +482,31 @@ describe("parse: items", () => {
     expect(() => parseItems("rec f : T")).toThrow(/requires a value/)
   })
 
+  it("infix ==/&&/|| desugar; application binds tighter", () => {
+    const eq = parseItems("x := f a == g b")[0]
+    if (eq.tag !== "field") throw new Error("shape")
+    expect(eq.value).toEqual(ap(ap(v("tree_eq"), ap(v("f"), v("a"))), ap(v("g"), v("b"))))
+    const and = parseItems("x := a && b")[0]
+    if (and.tag !== "field") throw new Error("shape")
+    expect(and.value).toEqual({ tag: "if", cond: v("a"), thenBody: v("b"), elseBody: v("false") })
+    const or = parseItems("x := a || b")[0]
+    if (or.tag !== "field") throw new Error("shape")
+    expect(or.value).toEqual({ tag: "if", cond: v("a"), thenBody: v("true"), elseBody: v("b") })
+  })
+
+  it("infix operators are non-associative", () => {
+    expect(() => parseItems("x := a == b == c")).toThrow(/non-associative/)
+    expect(() => parseItems("x := a == b && c")).toThrow(/non-associative/)
+  })
+
+  it("infix in an equation lhs coexists with the bare = item separator", () => {
+    const items = parseItems("test a == b = true")
+    const eq = items[0]
+    if (eq.tag !== "test") throw new Error("shape")
+    expect(eq.lhs).toEqual(ap(ap(v("tree_eq"), ap(v("test"), v("a"))), v("b")))
+    expect(eq.rhs).toEqual(v("true"))
+  })
+
   it("arrow-bearing doc annotation still starts a new item after an expression", () => {
     // regression: isDeclStart must accept `::` before it sees the `->`,
     // else the previous item's expression swallows the line.

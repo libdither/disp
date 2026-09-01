@@ -322,6 +322,14 @@ are written `Arrow { a : Nat, b : Nat } R`.
 
 - `atom` projection `.`: highest, left-associative.
 - `app`: left-associative juxtaposition, looser than `.`.
+- Infix tier (`==`, `&&`, `||`): looser than `app`, tighter than the `->`
+  suffix, NON-associative — chaining is a parse error, parenthesize. A fixed,
+  closed set of pure sugar: `a == b` desugars to the application `tree_eq a b`
+  (scope-bound name, identical tree to the spelled-out call); `a && b` /
+  `a || b` desugar through the `if` node — `if a { b } else { false }` /
+  `if a { true } else { b }` — so they short-circuit exactly as `if` does
+  (deferred when a branch mentions a local; the strict named forms remain
+  `and`/`or`). Not available in an unparenthesized `if` condition head.
 - The `->` suffix in `expr` and the `binder` form: right-associative.
   `a -> b -> c` parses as `a -> (b -> c)`.
 - The binder body (after either arrow) is a full `expr`, so
