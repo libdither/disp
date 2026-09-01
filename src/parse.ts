@@ -922,22 +922,34 @@ const asnP: P<{ bind: boolean }> = alt<{ bind: boolean }>(
   map(nl(punctP(":=>")), () => ({ bind: true })),
   map(nl(punctP(":=")), () => ({ bind: false })),
 )
-const bindWrap = (ann: { ty: Expr } | null | undefined, value: Expr): Expr => {
+const bindWrap = (ann: { ty: Expr } | null | undefined, value: Expr, recName: string | null = null): Expr => {
   if (!ann) throw new Error(`parse: ':=>' requires a ':' or '::' annotation to bind parameters from`)
   // Bind the leading run of NAMED parameters only; the first unnamed arrow
   // (`A -> …`) ends the run, leaving a point-free remainder. Wrapping an
-  // unnamed arrow would eta-expand and change the value tree.
-  const params: Param[] = []
+  // unnamed arrow would eta-expand and change the value tree. Binder GROUPS
+  // are preserved: under `rec`, the LAST named group loops inside the fix
+  // and earlier groups become plain outer lambdas (the partial-fixpoint
+  // shape, `{step, base} => fix ({name, xs} => …)`) — the annotation's group
+  // spelling is meaning-free for the checked type, so grouping carries the
+  // split. One group = the full-arity fixpoint.
+  const groups: Param[][] = []
   let ty = ann.ty
   outer: while (ty.tag === "binder" && !ty.fat) {
+    const g: Param[] = []
     for (const p of ty.params) {
-      if (p.name === null) break outer
-      params.push({ name: p.name, type: null })
+      if (p.name === null) { if (g.length > 0) groups.push(g); break outer }
+      g.push({ name: p.name, type: null })
     }
+    groups.push(g)
     ty = ty.body
   }
-  if (params.length === 0) throw new Error(`parse: ':=>' needs leading named binder parameters ({x : A} -> …) to bind from`)
-  return { tag: "binder", fat: true, params, body: value }
+  if (groups.length === 0) throw new Error(`parse: ':=>' needs leading named binder parameters ({x : A} -> …) to bind from`)
+  if (recName === null)
+    return { tag: "binder", fat: true, params: groups.flat(), body: value }
+  const loop: Expr = { tag: "app", f: { tag: "var", name: "fix" },
+    x: { tag: "binder", fat: true, params: [{ name: recName, type: null }, ...groups[groups.length - 1]], body: value } }
+  const outerParams = groups.slice(0, -1).flat()
+  return outerParams.length === 0 ? loop : { tag: "binder", fat: true, params: outerParams, body: loop }
 }
 const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; docType?: Expr; value: Expr; faced?: boolean; keyExpr?: Expr; line?: number; endLine?: number }> =>
   nl((ts, i) => {
@@ -1511,14 +1523,18 @@ const headFieldP: P<RecMember> = (ts, i) => {
   const ann = optional(annP)(ts, pos)
   if (ann.ok && ann.v) { if (ann.v.doc) docType = ann.v.ty; else type = ann.v.ty; pos = ann.pos }
   let value: Expr | null = null
+  let bound = false
   const asn = optional(seq(asnP, skipNl, lazy(() => expr)))(ts, pos)
   if (asn.ok && asn.v) {
     const src = type != null ? { ty: type } : docType != null ? { ty: docType } : null
-    value = asn.v[0].bind ? bindWrap(src, asn.v[2]) : asn.v[2]
+    bound = asn.v[0].bind
+    value = bound ? bindWrap(src, asn.v[2], isRec ? last.name : null) : asn.v[2]
     pos = asn.pos
   }
   if (type === null && value === null) return err(`decorated declaration: expected ':' or ':='`, pos)
-  if (isRec) {
+  if (isRec && !bound) {
+    // plain `rec NAME := body`: the fixpoint of the whole value (full arity).
+    // The partial shape needs the annotation's binder groups, i.e. ':=>'.
     if (value === null) throw new Error(`parse: 'rec' requires a value to take the fixpoint of`)
     value = { tag: "app", f: { tag: "var", name: "fix" }, x: { tag: "binder", fat: true, params: [{ name: last.name, type: null }], body: value } }
   }

@@ -459,8 +459,18 @@ describe("parse: items", () => {
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.head).toEqual(v("let"))
-    expect(d.value).toEqual(ap(v("fix"), lam([{ name: "go", type: null }],
-      lam([{ name: "n", type: null }], ap(v("go"), v("n"))))))
+    // one binder node {go, n}: same compiled tree as nested {go} => {n} =>
+    expect(d.value).toEqual(ap(v("fix"), lam([{ name: "go", type: null }, { name: "n", type: null }],
+      ap(v("go"), v("n")))))
+  })
+
+  it("rec with grouped binders takes the partial fixpoint at the last group", () => {
+    const items = parseItems("rec red :: {s : F, b : C} -> {xs : L} -> C :=> s (red xs)")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.value).toEqual(lam([{ name: "s", type: null }, { name: "b", type: null }],
+      ap(v("fix"), lam([{ name: "red", type: null }, { name: "xs", type: null }],
+        ap(v("s"), ap(v("red"), v("xs")))))))
   })
 
   it("rec as a plain definition name is untouched; rec without a value errors", () => {
