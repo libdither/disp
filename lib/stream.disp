@@ -5,14 +5,14 @@ open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 
 s_new :: {stepper : St -> Step V St, state : St} -> Stream V :=> pair stepper state
-s_with :: {stream : Stream V, state : St} -> Stream V :=> pair (pair_fst stream) state
-s_step :: {stream : Stream V} -> Step V St :=> (pair_fst stream) (pair_snd stream)
+s_with :: {stream : Stream V, state : St} -> Stream V :=> pair stream.fst state
+s_step :: {stream : Stream V} -> Step V St :=> stream.fst stream.snd
 
 yield :: {item : V, state : St} -> Step V St :=> pair true (pair item state)
 skip :: {state : St} -> Step V St :=> pair false state
 yielded :: Step V St -> Bool := pair_fst
-y_val :: {step : Step V St} -> V :=> pair_fst (pair_snd step)
-y_state :: {step : Step V St} -> St :=> pair_snd (pair_snd step)
+y_val :: {step : Step V St} -> V :=> step.snd.fst
+y_state :: {step : Step V St} -> St :=> step.snd.snd
 skip_state :: Step V St -> St := pair_snd
 
 s_items :: Pair (List V) (Stream V) -> List V := pair_fst
@@ -21,26 +21,26 @@ s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
 rec s_take :: {fuel : Nat, count : Nat, stream : Stream V} -> Pair (List V) (Stream V) :=>
 	if (is_zero count || is_zero fuel) { pair [] stream }
 	else {
-		let step := s_step stream
-		if (not (yielded step)) { s_take (nat_pred fuel) count (s_with stream (skip_state step)) }
+		let step := stream.s_step
+		if (not step.yielded) { s_take (nat_pred fuel) count (stream.s_with step.skip_state) }
 		else {
-			let item := y_val step
-			let taken := s_take (nat_pred fuel) (nat_pred count) (s_with stream (y_state step))
-			pair (cons item (s_items taken)) (s_rest taken)
+			let item := step.y_val
+			let taken := s_take (nat_pred fuel) (nat_pred count) (stream.s_with step.y_state)
+			pair (cons item taken.s_items) taken.s_rest
 		}
 	}
 
 s_map :: {transform : V -> W, inner : Stream V} -> Stream W :=> s_new ({state} => {
-	let step := s_step state
-	if (yielded step) { yield (transform (y_val step)) (s_with state (y_state step)) }
-	else { skip (s_with state (skip_state step)) }
+	let step := state.s_step
+	if (step.yielded) { yield (transform step.y_val) (state.s_with step.y_state) }
+	else { skip (state.s_with step.skip_state) }
 }) inner
 s_filter :: {keep : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({state} => {
-	let step := s_step state
-	if (not (yielded step)) { skip (s_with state (skip_state step)) }
+	let step := state.s_step
+	if (not step.yielded) { skip (state.s_with step.skip_state) }
 	else {
-		let item := y_val step
-		let advanced := s_with state (y_state step)
+		let item := step.y_val
+		let advanced := state.s_with step.y_state
 		if (keep item) { yield item advanced } else { skip advanced }
 	}
 }) inner
@@ -48,18 +48,18 @@ s_filter :: {keep : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({state} 
 rec s_all :: {holds : V -> Bool} -> {fuel : Nat, stream : Stream V} -> Bool :=>
 	if (is_zero fuel) { true }
 	else {
-		let step := s_step stream
-		if (not (yielded step)) { s_all (nat_pred fuel) (s_with stream (skip_state step)) }
-		else { (holds (y_val step)) && (s_all (nat_pred fuel) (s_with stream (y_state step))) }
+		let step := stream.s_step
+		if (not step.yielded) { s_all (nat_pred fuel) (stream.s_with step.skip_state) }
+		else { (holds step.y_val) && (s_all (nat_pred fuel) (stream.s_with step.y_state)) }
 	}
 
 nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
 
-test s_items (s_take 10 3 nats) = [0, 1, 2]
+test (s_take 10 3 nats).s_items = [0, 1, 2]
 took2 := s_take 10 2 nats
-test s_items (s_take 10 2 (s_rest took2)) = [2, 3]
-test s_items (s_take 10 3 (s_map succ nats)) = [1, 2, 3]
-test s_items (s_take 10 2 (s_filter is_fork nats)) = [1, 2]
-test length (s_items (s_take 3 9 (s_filter is_zero nats))) = 1
+test (s_take 10 2 took2.s_rest).s_items = [2, 3]
+test (s_take 10 3 (s_map succ nats)).s_items = [1, 2, 3]
+test (s_take 10 2 (s_filter is_fork nats)).s_items = [1, 2]
+test (s_take 3 9 (s_filter is_zero nats)).s_items.length = 1
 test s_all is_fork 5 (s_map succ nats) = true
 test s_all is_zero 5 (s_map succ nats) = false

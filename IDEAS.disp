@@ -2,24 +2,24 @@ open use raw "lib/prelude.disp" {}
 open use raw "lib/list.disp" {}
 open use raw "lib/stream.disp" {}
 
-next_level :: {levels : List (List Tree)} -> List Tree :=> append (map ({v} => t v) (head levels)) (concat (map ({p} => cross pair (pair_fst p) (pair_snd p)) (zip (reverse levels) (tail levels))))
+next_level :: {levels : List (List Tree)} -> List Tree :=> append (map ({v} => t v) levels.head) (concat (map ({p} => cross pair p.fst p.snd) (zip levels.reverse levels.tail)))
 trees_step :: {state : Pair (List (List Tree)) (List Tree)} -> Step Tree (Pair (List (List Tree)) (List Tree)) :=> {
-  let levels := pair_fst state
-  let pending := pair_snd state
-  if (is_nil pending) {
+  let levels := state.fst
+  let pending := state.snd
+  if (pending.is_nil) {
     let grown := next_level levels
-    yield (head grown) (pair (cons grown levels) (tail grown))
+    yield grown.head (pair (cons grown levels) grown.tail)
   } else {
-    yield (head pending) (pair levels (tail pending))
+    yield pending.head (pair levels pending.tail)
   }
 }
 Trees :: Stream Tree := s_new trees_step (pair [[t]] [t])
 
-test tree_eq (s_items (s_take 10 4 Trees)) [t, t t, t (t t), t t t] = true
-test length (s_items (s_take 40 38 Trees)) = 38
+test (s_take 10 4 Trees).s_items = [t, t t, t (t t), t t t]
+test (s_take 40 38 Trees).s_items.length = 38
 taken2 :: Pair (List Tree) (Stream Tree) := s_take 10 2 Trees
-taken2more :: Pair (List Tree) (Stream Tree) := s_take 10 2 (s_rest taken2)
-test tree_eq (append (s_items taken2) (s_items taken2more)) (s_items (s_take 10 4 Trees)) = true
+taken2more :: Pair (List Tree) (Stream Tree) := s_take 10 2 taken2.s_rest
+test append taken2.s_items taken2more.s_items = (s_take 10 4 Trees).s_items
 
 BadBool :: {tree : Tree} -> Bool :=> triage true is_leaf false tree
 Bool :: {tree : Tree} -> Bool :=> triage true is_leaf ({_l, _r} => false) tree
@@ -29,8 +29,8 @@ test Bool t = true
 test Bool (t t) = true
 test Bool (t (t t)) = false
 
-Bools :: List Tree := s_items (s_take 50 5 (s_filter Bool Trees))
-test length Bools = 2
+Bools :: List Tree := (s_take 50 5 (s_filter Bool Trees)).s_items
+test Bools.length = 2
 test tree_eq Bools [true, false] = true
 
 Arrow :: {Dom : Tree -> Bool, Cod : Tree -> Bool, fuel : Nat, fn : Tree} -> Bool :=> s_all Cod fuel (s_map ({arg} => fn arg) (s_filter Dom Trees))
@@ -41,19 +41,19 @@ test BoolFn t = false
 test BoolFn (t t) = false
 test Arrow Bool Bool 1 t = true
 
-candidates :: List Tree := s_items (s_take 60 40 Trees)
+candidates :: List Tree := (s_take 60 40 Trees).s_items
 boolfns :: List Tree := filter BoolFn candidates
-test length boolfns = 7
+test boolfns.length = 7
 test all ({fn} => (Bool (fn true)) && (Bool (fn false))) boolfns = true
 behaviors :: List (Pair Tree Tree) := dedup (map ({fn} => pair (fn true) (fn false)) boolfns)
-test length behaviors = 3
+test behaviors.length = 3
 test tree_eq behaviors [pair true true, pair true false, pair false false] = true
 
 idfns :: List Tree := filter ({fn} => (fn true == true) && (fn false == false)) boolfns
-test length idfns = 4
+test idfns.length = 4
 probe :: Tree := t (t t t) t
 test Bool probe = false
 test all ({fn} => not (Bool (fn probe))) idfns = true
 outputs_on_probe :: List Tree := dedup (map ({fn} => fn probe) idfns)
-test length outputs_on_probe = 2
+test outputs_on_probe.length = 2
 test outputs_on_probe = [probe, t t t]
