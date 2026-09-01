@@ -44,12 +44,12 @@ test Arrow Bool Bool 1 t = true
 candidates :: List Tree := s_items (s_take 60 40 Trees)
 boolfns :: List Tree := filter BoolFn candidates
 test length boolfns = 7
-test all ({v} => and (Bool (v true)) (Bool (v false))) boolfns = true
+test all ({v} => (Bool (v true)) && (Bool (v false))) boolfns = true
 behaviors :: List (Pair Tree Tree) := dedup (map ({v} => pair (v true) (v false)) boolfns)
 test length behaviors = 3
 test tree_eq behaviors [pair true true, pair true false, pair false false] = true
 
-idfns :: List Tree := filter ({v} => and (tree_eq (v true) true) (tree_eq (v false) false)) boolfns
+idfns :: List Tree := filter ({v} => (v true == true) && (v false == false)) boolfns
 test length idfns = 4
 m :: Tree := t (t t t) t
 test Bool m = false
