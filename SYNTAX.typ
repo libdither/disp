@@ -136,15 +136,17 @@ open use \"prelude.disp\"     // import",
 
 #rule(
   "field",
-  "field    ::= head? IDENT (\":\" expr)? (\":=\" expr)?
+  "field    ::= head? IDENT ((\":\" | \"::\") expr)? ((\":=\" | \":=>\") expr)?
 head     ::= expr        // top-level only; one decorator expression",
   "true := t
 id : {A : Type} -> A -> A
    := {A} => {x} => x
 guard (license_guard SortRelation.rel) sort : T := impl // explicit relation contract
 guard (license_guard FastRelation.rel) fast : T := impl // another owned name
-guard g iface : T                                // interface entry (no value)",
-  note: [Exported record member — a *declaration request* (this note is normative; the protocol vocabulary lives in `archive/live-kernel/kernel/cut.disp`, idioms in archive/live-kernel/KERNEL_DESIGN.md § Declarations and Guards). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:` or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
+guard g iface : T                                // interface entry (no value)
+reduce :: (A -> C -> C) -> C -> List A -> C := impl // doc annotation (unchecked)
+member :: {x : A} -> List A -> Bool :=> any (eq x)  // ':=>' binds x from the annotation",
+  note: [Exported record member — a *declaration request* (this note is normative; the protocol vocabulary lives in `archive/live-kernel/kernel/cut.disp`, idioms in archive/live-kernel/KERNEL_DESIGN.md § Declarations and Guards). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. A `::` annotation is a *doc annotation*: parsed as an expression (structure only), stored on the item as `docType`, and never resolved, compiled, or verified — a comprehension-grade signature, so raw modules may use type vocabulary that is not in scope (`lib/list.disp`, `lib/stream.disp`). A declaration carries `:` or `::`, not both. `:=>` assigns THROUGH the annotation: the leading run of *named* thin-binder parameters (stopping at the first unnamed arrow) is bound around the body as fat lambdas at parse time, so the value tree is identical to the hand-written `{x, …} => body` and an unnamed-arrow remainder stays point-free; works with either annotation flavor (doc-annotation params need no types), and only the `:` flavor is then checker-verified. `:=>` without an annotation, or without leading named binders, is a parse error. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:`, `::`, or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
 )
 
 #rule(

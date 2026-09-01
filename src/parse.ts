@@ -31,7 +31,7 @@ const KEYWORDS = new Set(["use", "open", "match", "if", "then", "else"])
 // `<`/`>` are the sum-type-literal delimiters (`< Tag : T, … >`). They are single
 // chars with no multi-char punctuation built on them, and `->`/`=>`/`→` are
 // matched first, so a bare `>` never steals an arrow's tail.
-const PUNCT = ["#", ":=", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
+const PUNCT = ["#", ":=>", ":=", "::", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -153,7 +153,7 @@ export type NamedField = { name: string; type: Expr | null; value: Expr; faced?:
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
 export type RecMember =
-  | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr; line?: number; endLine?: number }
+  | { tag: "field"; name: string; type: Expr | null; docType?: Expr; value: Expr | null; pun?: boolean; head?: Expr; line?: number; endLine?: number }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "bind"; name: string; expr: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr; line?: number; endLine?: number }
@@ -421,7 +421,7 @@ function isDeclStart(ts: Tok[], i: number): boolean {
       const v = (t as any).v
       if (v === "(" || v === "{" || (v === "[" || v === "idx[")) depth++
       else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
-      else if (depth === 0 && (v === ":=" || v === ":")) return true
+      else if (depth === 0 && (v === ":=" || v === ":" || v === "::")) return true
       else if (depth === 0 && (v === "=" || v === ";" || v === "=>" || v === "->")) return false
     }
     q++
@@ -448,7 +448,7 @@ function isEquationStart(ts: Tok[], i: number): boolean {
       if (v === "(" || v === "{" || (v === "[" || v === "idx[")) depth++
       else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
       else if (depth === 0 && v === "=") return true
-      else if (depth === 0 && (v === ":=" || v === ":" || v === ";" || v === "=>" || v === "->")) return false
+      else if (depth === 0 && (v === ":=" || v === ":" || v === "::" || v === ";" || v === "=>" || v === "->")) return false
     }
     q++
   }
@@ -908,7 +908,38 @@ const sumTypeP: P<Expr> = (ts, i) => {
 // Fields carry their 1-based source extent (line of the name token, line of
 // the last value token), so downstream tooling can attribute a declaration
 // to its source lines — like the equation items' `line`.
-const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; faced?: boolean; keyExpr?: Expr; line?: number; endLine?: number }> =>
+// `: T` is the checked annotation; `:: T` is a DOC annotation — parsed for
+// structure, never resolved or verified, so it may use vocabulary not in scope.
+const annP: P<{ doc: boolean; ty: Expr }> = alt<{ doc: boolean; ty: Expr }>(
+  map(seq(nl(punctP("::")), skipNl, lazy(() => expr)), ([, , ty]) => ({ doc: true, ty })),
+  map(seq(nl(punctP(":")), skipNl, lazy(() => expr)), ([, , ty]) => ({ doc: false, ty })),
+)
+// `:=>` assigns THROUGH the annotation's binders: the leading thin-binder chain
+// of the (checked or doc) annotation names the parameters, and the body is the
+// result under them — the parser wraps it in the same fat lambdas the writer
+// would have spelled, so the value tree is identical to the hand-written form.
+const asnP: P<{ bind: boolean }> = alt<{ bind: boolean }>(
+  map(nl(punctP(":=>")), () => ({ bind: true })),
+  map(nl(punctP(":=")), () => ({ bind: false })),
+)
+const bindWrap = (ann: { ty: Expr } | null | undefined, value: Expr): Expr => {
+  if (!ann) throw new Error(`parse: ':=>' requires a ':' or '::' annotation to bind parameters from`)
+  // Bind the leading run of NAMED parameters only; the first unnamed arrow
+  // (`A -> …`) ends the run, leaving a point-free remainder. Wrapping an
+  // unnamed arrow would eta-expand and change the value tree.
+  const params: Param[] = []
+  let ty = ann.ty
+  outer: while (ty.tag === "binder" && !ty.fat) {
+    for (const p of ty.params) {
+      if (p.name === null) break outer
+      params.push({ name: p.name, type: null })
+    }
+    ty = ty.body
+  }
+  if (params.length === 0) throw new Error(`parse: ':=>' needs leading named binder parameters ({x : A} -> …) to bind from`)
+  return { tag: "binder", fat: true, params, body: value }
+}
+const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; docType?: Expr; value: Expr; faced?: boolean; keyExpr?: Expr; line?: number; endLine?: number }> =>
   nl((ts, i) => {
     // `#name := v` marks the record's FACE field (compiled through the
     // scope-bound `faced` former; see the recValue case in expr.ts).
@@ -927,12 +958,14 @@ const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: E
       return err("expected field name or (key)", j)
     }
     const r = seq(optional(punctP("#")), keyP,
-      optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
-      nl(punctP(":=")), skipNl, lazy(() => valParser))(ts, i)
+      optional(annP),
+      asnP, skipNl, lazy(() => valParser))(ts, i)
     if (!r.ok) return r
-    const [hash, key, ann, , , value] = r.v
+    const [hash, key, ann, asn, , value] = r.v
     return ok({
-      tag: "field" as const, name: key.name, keyExpr: key.keyExpr, type: ann ? ann[2] : null, value, faced: hash != null ? true : undefined,
+      tag: "field" as const, name: key.name, keyExpr: key.keyExpr,
+      type: ann && !ann.doc ? ann.ty : null, docType: ann && ann.doc ? ann.ty : undefined,
+      value: asn.bind ? bindWrap(ann, value) : value, faced: hash != null ? true : undefined,
       line: tokLine(ts, i), endLine: endTokLine(ts, r.pos),
     }, r.pos)
   })
@@ -1464,13 +1497,18 @@ const headFieldP: P<RecMember> = (ts, i) => {
   if (last.tag !== "var") return err(`decorated declaration: the declared name must be a plain identifier`, pos)
   const head = atoms.slice(0, -1).reduce((f, x) => ({ tag: "app" as const, f, x }))
   let type: Expr | null = null
-  const ann = optional(seq(nl(punctP(":")), skipNl, lazy(() => expr)))(ts, pos)
-  if (ann.ok && ann.v) { type = ann.v[2]; pos = ann.pos }
+  let docType: Expr | undefined
+  const ann = optional(annP)(ts, pos)
+  if (ann.ok && ann.v) { if (ann.v.doc) docType = ann.v.ty; else type = ann.v.ty; pos = ann.pos }
   let value: Expr | null = null
-  const asn = optional(seq(nl(punctP(":=")), skipNl, lazy(() => expr)))(ts, pos)
-  if (asn.ok && asn.v) { value = asn.v[2]; pos = asn.pos }
+  const asn = optional(seq(asnP, skipNl, lazy(() => expr)))(ts, pos)
+  if (asn.ok && asn.v) {
+    const src = type != null ? { ty: type } : docType != null ? { ty: docType } : null
+    value = asn.v[0].bind ? bindWrap(src, asn.v[2]) : asn.v[2]
+    pos = asn.pos
+  }
   if (type === null && value === null) return err(`decorated declaration: expected ':' or ':='`, pos)
-  return ok({ tag: "field" as const, name: last.name, type, value, head, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
+  return ok({ tag: "field" as const, name: last.name, type, docType, value, head, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
 }
 
 const itemP: P<RecMember | RecMember[]> = nl(alt<RecMember | RecMember[]>(openGivenItem, openItem, topFieldP, headFieldP, equationItem))

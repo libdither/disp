@@ -407,6 +407,52 @@ describe("parse: items", () => {
     expect(d.body).toEqual(leaf)
   })
 
+  it("doc annotation (::) parses but is not a checked type", () => {
+    const items = parseItems("foo :: Bar Baz := t")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.type).toBeNull()
+    expect(d.docType).toEqual(ap(v("Bar"), v("Baz")))
+    expect(d.value).toEqual(leaf)
+  })
+
+  it("doc annotation on a decorated (let) declaration", () => {
+    const items = parseItems("let x :: A -> B := t")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.head).toEqual(v("let"))
+    expect(d.type).toBeNull()
+    expect(d.docType).toEqual(binder([{ name: null, type: v("A") }], v("B")))
+  })
+
+  it(":=> binds the annotation's named params around the body", () => {
+    const items = parseItems("addx : {n : Nat} -> {m : Nat} -> Nat :=> f n m")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.value).toEqual(lam([{ name: "n", type: null }, { name: "m", type: null }],
+      ap(ap(v("f"), v("n")), v("m"))))
+  })
+
+  it(":=> from a doc annotation, stopping at the first unnamed arrow", () => {
+    const items = parseItems("member :: {x : A} -> List A -> Bool :=> any (eq x)")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.type).toBeNull()
+    expect(d.value).toEqual(lam([{ name: "x", type: null }], ap(v("any"), ap(v("eq"), v("x")))))
+  })
+
+  it(":=> without an annotation, or without named binders, is an error", () => {
+    expect(() => parseItems("k :=> 5")).toThrow(/requires a ':' or '::'/)
+    expect(() => parseItems("k : Nat :=> 5")).toThrow(/named binder parameters/)
+  })
+
+  it("arrow-bearing doc annotation still starts a new item after an expression", () => {
+    // regression: isDeclStart must accept `::` before it sees the `->`,
+    // else the previous item's expression swallows the line.
+    const items = parseItems("zed := f a\nfoo :: A -> B := t")
+    expect(items.map(i => (i.tag === "field" ? i.name : i.tag))).toEqual(["zed", "foo"])
+  })
+
   it("empty program", () => {
     expect(parseItems("")).toEqual([])
     expect(parseItems("  \n // just a comment \n")).toEqual([])
