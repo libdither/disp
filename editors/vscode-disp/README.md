@@ -24,8 +24,13 @@ rather than lexical.
   `open given { … }` entries, named args).
 - Constants: booleans `true`/`false`, the bare leaf `t` / `△`, the hole `_`,
   numbers. Plus strings, comments (`//`, `/* */`), projections (`.field`),
-  operators (`:=`, `->`/`→`, `=>`, `:`, `=`), and capitalized identifiers as
-  types/constructors (which also covers sum-literal tags `< Tag : T, … >`).
+  operators (`:=`, `:=>`, `->`/`→`, `=>`, `:`, `=`), and capitalized identifiers
+  as types/constructors (which also covers sum-literal tags `< Tag : T, … >`).
+- Doc annotations `name :: T` (unchecked signatures) render as a dimmed
+  doc-comment block under any default theme — the not-live signal — ending at
+  the live `:=`/`:=>`. Binder NAMES inside them stay live-colored (with `:=>`
+  they really bind), only the types dim. See § Doc annotations to also keep
+  type/operator differences inside the dim.
 - Application heads get call coloring (`entity.name.function`): in disp,
   application is juxtaposition, so an identifier that starts an expression
   (line start, after an opening bracket, separator, `:=`/`:`/`=`, an arrow, or
@@ -39,6 +44,41 @@ rather than lexical.
 Known line-based limits: an annotation split across lines (`name` on one line,
 `: T` on the next) loses the name highlight, and brace depth is not tracked
 (a multi-line record's members on their own lines get top-level name coloring).
+A named-arg default inside a doc annotation (`:: {y : B := d} -> …`) ends the
+dim region early at its inner `:=`.
+
+## Doc annotations
+
+`:: T` is parsed but never resolved or verified (SYNTAX.typ § field), so the
+grammar scopes the whole annotation `comment.block.documentation.annotation.disp`:
+every default theme dims it as one block, no customization needed. Two
+exceptions stay fully live even inside the dim, because they are semantically
+meaningful: the assignment that ends the region (`:=`/`:=>`), and binder
+NAMES (`{x : A}` — an identifier after `{`/`,` before `:`/`,`/`}` gets the
+real `variable.parameter` scope, since `:=>` genuinely binds them). All other
+inner tokens carry `documentation.*` variant scopes (`…entity.name.type…`,
+`…variable.other…`, `…keyword.operator…`, `…constant.numeric…`,
+`…punctuation.bracket…`, `…punctuation.annotation…` for the `::` itself, plus
+string/leaf/hole variants). Default themes don't match those prefixes, so they
+inherit the dim — but to keep type/operator differences *inside* the dim too,
+add the live palette at ~55% opacity (Dark+ hues shown; adjust to taste):
+
+```jsonc
+"editor.tokenColorCustomizations": {
+  "textMateRules": [
+    { "scope": "documentation.entity.name.type.disp",     "settings": { "foreground": "#4EC9B08C" } },
+    { "scope": "documentation.variable.other.disp",       "settings": { "foreground": "#9CDCFE8C" } },
+    { "scope": "documentation.keyword.operator.disp",     "settings": { "foreground": "#D4D4D48C" } },
+    { "scope": "documentation.constant.numeric.disp",     "settings": { "foreground": "#B5CEA88C" } },
+    { "scope": ["documentation.punctuation.bracket.disp",
+                "documentation.punctuation.annotation.disp"],
+                                                          "settings": { "foreground": "#8080808C" } },
+    { "scope": ["documentation.string.disp",
+                "documentation.constant.leaf.disp",
+                "documentation.constant.hole.disp"],      "settings": { "foreground": "#CE91788C" } }
+  ]
+}
+```
 
 ## Color model
 
@@ -55,7 +95,7 @@ the rust-ic-net crate) shows disp and Rust side by side under Dark+.
 ## Install (local)
 
 ```sh
-ln -s "$(pwd)/editors/vscode-disp" ~/.vscode/extensions/zyansheep.disp-lang-0.3.0
+ln -s "$(pwd)/editors/vscode-disp" ~/.vscode/extensions/zyansheep.disp-lang-0.4.0
 ```
 
 Then reload VS Code (`Developer: Reload Window`). Grammar lives in

@@ -2,16 +2,25 @@
   "name": "disp-lang",
   "displayName": "Disp",
   "description": "Syntax highlighting for the Disp language (.disp)",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "zyansheep",
-  "engines": { "vscode": "^1.70.0" },
-  "categories": ["Programming Languages"],
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "disp",
-        "aliases": ["Disp", "disp"],
-        "extensions": [".disp"],
+        "aliases": [
+          "Disp",
+          "disp"
+        ],
+        "extensions": [
+          ".disp"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],

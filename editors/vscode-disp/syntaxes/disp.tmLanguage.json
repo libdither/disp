@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#doc-annotation" },
     { "include": "#module" },
     { "include": "#declarations" },
     { "include": "#binders" },
@@ -35,6 +36,29 @@
       "name": "string.quoted.double.disp",
       "begin": "\"",
       "end": "\""
+    },
+    "doc-annotation": {
+      "comment": "Doc annotation `:: T` (SYNTAX.typ § field): parsed but never resolved or verified — NOT live code. The whole region takes a comment.block.documentation base, so every default theme dims it as one block with zero customization (the not-live signal). Inner tokens additionally carry documentation.*-prefixed variant scopes that default themes do not match — they inherit the dim — but which users can target for dimmed-yet-differentiated rendering (README § Doc annotations: the live palette at ~55% opacity). The region ends just before the assignment (`:=` or `:=>`), which returns to live coloring. Known limit: a named-arg default (`{y : B := d}`) inside a doc annotation ends the region early at its inner `:=`.",
+      "name": "comment.block.documentation.annotation.disp",
+      "begin": "::",
+      "beginCaptures": { "0": { "name": "documentation.punctuation.annotation.disp" } },
+      "end": "(?=:=)",
+      "patterns": [
+        { "include": "#comments" },
+        { "name": "documentation.string.disp", "begin": "\"", "end": "\"" },
+        { "name": "documentation.constant.hole.disp", "match": "(?<![A-Za-z0-9_'])_(?![A-Za-z0-9_'])" },
+        { "name": "documentation.constant.leaf.disp", "match": "(?<![A-Za-z0-9_'])t(?![A-Za-z0-9_'])|△" },
+        {
+          "comment": "Binder NAMES stay LIVE (real variable.parameter scope, no documentation.* prefix): with `:=>` the annotation's leading named params are genuinely bound around the body, so the names are semantically meaningful even though the types beside them are not. Deepest-scope matching means default themes color them normally inside the dim block. Name position: an identifier directly after `{` or `,` and directly before `:`/`,`/`}` (bare `_` stays the hole). Line-based limit: a param at the start of a wrapped line loses the lookbehind and falls back to dim.",
+          "match": "(?<=[{,])\\s*([a-zA-Z][A-Za-z0-9_']*|_[A-Za-z0-9_']+)(?=\\s*[:,}])",
+          "captures": { "1": { "name": "variable.parameter.disp" } }
+        },
+        { "name": "documentation.entity.name.type.disp", "match": "(?<![A-Za-z0-9_'])[A-Z][A-Za-z0-9_']*(?![A-Za-z0-9_'])" },
+        { "name": "documentation.constant.numeric.disp", "match": "(?<![A-Za-z0-9_'])[0-9]+(?![A-Za-z0-9_'])" },
+        { "name": "documentation.keyword.operator.disp", "match": "->|→|=>|:" },
+        { "name": "documentation.punctuation.bracket.disp", "match": "[{}()\\[\\],]" },
+        { "name": "documentation.variable.other.disp", "match": "(?<![A-Za-z0-9_'])[a-z_][A-Za-z0-9_']*(?![A-Za-z0-9_'])" }
+      ]
     },
     "module": {
       "comment": "Module system. `use`/`open` are true keywords; `raw` (only after `use`) and `given` (only after `open`) are identifiers the parser recognizes structurally, so they are highlighted positionally, never as bare words.",
@@ -123,7 +147,7 @@
     },
     "applications": {
       "comment": "Function-position identifiers — the Rust-like call-site yellow. In disp application is juxtaposition, so the head of an application spine is an identifier that STARTS an expression (line start, after an opening bracket, separator, ':='/':'/'='/arrows, or if/then/else) AND is applied to at least one atom. The exclusion list keeps keywords, decorator heads, literals, and the leaf out of head position; the starter prefix is re-scoped by the included rules so consumed operators/keywords keep their colors.",
-      "match": "((?::=|=>|->|→|[=:({\\[,;])|^|(?<![A-Za-z0-9_'])(?:if|then|else)(?![A-Za-z0-9_']))\\s*(?!(?:match|if|then|else|use|open|let|sig|base|given|guard|test|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[])",
+      "match": "((?::=>|:=|=>|->|→|[=:({\\[,;])|^|(?<![A-Za-z0-9_'])(?:if|then|else)(?![A-Za-z0-9_']))\\s*(?!(?:match|if|then|else|use|open|let|sig|base|given|guard|test|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[])",
       "captures": {
         "1": {
           "patterns": [
@@ -172,6 +196,7 @@
     },
     "operators": {
       "patterns": [
+        { "name": "keyword.operator.define.bind.disp", "match": ":=>" },
         { "name": "keyword.operator.define.disp", "match": ":=" },
         { "name": "keyword.operator.arrow.disp", "match": "->|→|=>" },
         { "name": "keyword.operator.disp", "match": ":|=" }
