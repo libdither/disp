@@ -26,7 +26,7 @@ rather than lexical.
   `open given { … }` entries, named args).
 - Constants: booleans `true`/`false`, the bare leaf `t` / `△`, the hole `_`,
   numbers. Plus strings, comments (`//`, `/* */`), projections (`.field`),
-  operators (`:=`, `:=>`, `->`/`→`, `=>`, `:`, `=`), and capitalized identifiers
+  operators (`:=`, `:=>`, `==`, `&&`, `||`, `->`/`→`, `=>`, `:`, `=`), and capitalized identifiers
   as types/constructors (which also covers sum-literal tags `< Tag : T, … >`).
 - Doc annotations `name :: T` (unchecked signatures) render as a dimmed
   doc-comment block under any default theme — the not-live signal — ending at
