@@ -102,8 +102,17 @@
           }
         },
         {
-          "comment": "let / rec / sig / base / given NAME (and `let rec NAME`) — the top-level decorators, the braced lexical `let`, and the parser-consumed recursion marker",
-          "match": "(^|(?<=[{,;]))\\s*((?:let\\s+)?rec|let|sig|base|given)(?![A-Za-z0-9_'])\\s+([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
+          "comment": "rec NAME (and `let rec NAME`) — the parser-consumed recursion marker (the value becomes a fix). Control-flow colored, NOT decorator-colored: rec changes the value's meaning, the blue heads only shape the declaration request. Tried before the decorator rule so `let rec` splits blue + purple.",
+          "match": "(^|(?<=[{,;]))\\s*(?:(let)\\s+)?(rec)(?![A-Za-z0-9_'])\\s+([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
+          "captures": {
+            "2": { "name": "storage.type.declaration.disp" },
+            "3": { "name": "keyword.control.recursion.disp" },
+            "4": { "name": "entity.name.function.disp" }
+          }
+        },
+        {
+          "comment": "let / sig / base / given NAME — the top-level decorators and the braced lexical `let`",
+          "match": "(^|(?<=[{,;]))\\s*(let|sig|base|given)(?![A-Za-z0-9_'])\\s+([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
           "captures": {
             "2": { "name": "storage.type.declaration.disp" },
             "3": { "name": "entity.name.function.disp" }

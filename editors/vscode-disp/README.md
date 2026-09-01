@@ -11,11 +11,12 @@ rather than lexical.
   `given` after `open`. Elsewhere they are plain identifiers, as in the tokenizer.
 - Declaration decorators are library values, highlighted only in head position
   (member start, followed by the declared name and `:`/`:=`): `let`, `sig`,
-  `base`, `given`, `rec` (the parser-consumed recursion marker, incl. `let rec`),
-  and guard chains `guard <policy> NAME`
+  `base`, `given`, and guard chains `guard <policy> NAME`
   with the std policies (`freeze`, `license_guard`) colored inside
   the head. Mid-expression uses, e.g. `default_guard t (guard freeze (base zero))`,
-  stay plain, because there they are ordinary values. Custom decorator heads
+  stay plain, because there they are ordinary values. `rec` (incl. `let rec`) is
+  control-flow colored like `match`/`if`, not decorator-blue: it is not a request
+  decorator but recursion sugar that changes the value itself. Custom decorator heads
   are possible in the language but not in this closed set, so they stay plain too.
 - `test` is highlighted as the conventional equation prefix at member start
   (and the equation's applied head gets call coloring, like any call site);
