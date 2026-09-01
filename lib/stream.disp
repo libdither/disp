@@ -2,57 +2,76 @@
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 
+// takes a stepper and an initial state, packs them as a stream
 s_new :: {stepper : St -> Step V St, st : St} -> Stream V :=> pair stepper st
+// takes a stream and a state, rebuilds the stream at that state
 s_with :: {s : Stream V, st : St} -> Stream V :=> pair (pair_fst s) st
+// takes a stream, runs its stepper on its state for one step result
 s_step :: {s : Stream V} -> Step V St :=> (pair_fst s) (pair_snd s)
 
+// takes an item and the next state, builds the produced-an-item step result
 yield :: {v : V, st : St} -> Step V St :=> pair true (pair v st)
+// takes the next state, builds the produced-nothing step result
 skip :: {st : St} -> Step V St :=> pair false st
+// takes a step result: did it produce an item?
 yielded :: Step V St -> Bool := pair_fst
+// takes a yielded step result, extracts its item
 y_val :: {r : Step V St} -> V :=> pair_fst (pair_snd r)
+// takes a yielded step result, extracts the state to continue from
 y_state :: {r : Step V St} -> St :=> pair_snd (pair_snd r)
+// takes a skipped step result, extracts the state to continue from
 skip_state :: Step V St -> St := pair_snd
 
+// takes a take result, extracts the items gathered
 s_items :: Pair (List V) (Stream V) -> List V := pair_fst
+// takes a take result, extracts the stream to resume from
 s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
+// takes a step budget, an item count, and a stream; gathers up to count items within budget, plus the stream to resume
 rec s_take :: {fuel : Nat, n : Nat, s : Stream V} -> Pair (List V) (Stream V) :=>
-	if (is_zero n) { pair [] s }
-	else if (is_zero fuel) { pair [] s }
+	if (is_zero n || is_zero fuel) { pair [] s }
 	else {
 		let r := s_step s
-		if (yielded r) {
+		if (not (yielded r)) { s_take (nat_pred fuel) n (s_with s (skip_state r)) }
+		else {
+			let item := y_val r
 			let rest := s_take (nat_pred fuel) (nat_pred n) (s_with s (y_state r))
-			pair (cons (y_val r) (s_items rest)) (s_rest rest)
-		} else { s_take (nat_pred fuel) n (s_with s (skip_state r)) }
+			pair (cons item (s_items rest)) (s_rest rest)
+		}
 	}
 
+// takes a function and a stream, builds the stream of transformed items
 s_map :: {f : V -> W, inner : Stream V} -> Stream W :=> s_new ({st} => {
 	let r := s_step st
 	if (yielded r) { yield (f (y_val r)) (s_with st (y_state r)) }
 	else { skip (s_with st (skip_state r)) }
 }) inner
+// takes a predicate and a stream, builds the stream of passing items (the rest become skips)
 s_filter :: {p : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({st} => {
 	let r := s_step st
-	if (yielded r) {
+	if (not (yielded r)) { skip (s_with st (skip_state r)) }
+	else {
+		let item := y_val r
 		let rest := s_with st (y_state r)
-		if (p (y_val r)) { yield (y_val r) rest } else { skip rest }
-	} else { skip (s_with st (skip_state r)) }
+		if (p item) { yield item rest } else { skip rest }
+	}
 }) inner
+// takes a predicate, a step budget, and a stream; false on the first failing item, true if the budget runs out first
 rec s_all :: {p : V -> Bool} -> {fuel : Nat, s : Stream V} -> Bool :=>
 	if (is_zero fuel) { true }
 	else {
 		let r := s_step s
-		if (yielded r) {
-			if (p (y_val r)) { s_all (nat_pred fuel) (s_with s (y_state r)) } else { false }
-		} else { s_all (nat_pred fuel) (s_with s (skip_state r)) }
+		if (not (yielded r)) { s_all (nat_pred fuel) (s_with s (skip_state r)) }
+		else { (p (y_val r)) && (s_all (nat_pred fuel) (s_with s (y_state r))) }
 	}
 
+// the stream 0, 1, 2, …
 nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
-test tree_eq (s_items (s_take 10 3 nats)) [0, 1, 2] = true
+
+test s_items (s_take 10 3 nats) = [0, 1, 2]
 took2 := s_take 10 2 nats
-test tree_eq (s_items (s_take 10 2 (s_rest took2))) [2, 3] = true
-test tree_eq (s_items (s_take 10 3 (s_map succ nats))) [1, 2, 3] = true
-test tree_eq (s_items (s_take 10 2 (s_filter is_fork nats))) [1, 2] = true
+test s_items (s_take 10 2 (s_rest took2)) = [2, 3]
+test s_items (s_take 10 3 (s_map succ nats)) = [1, 2, 3]
+test s_items (s_take 10 2 (s_filter is_fork nats)) = [1, 2]
 test length (s_items (s_take 3 9 (s_filter is_zero nats))) = 1
 test s_all is_fork 5 (s_map succ nats) = true
 test s_all is_zero 5 (s_map succ nats) = false
