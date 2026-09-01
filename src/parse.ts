@@ -1493,9 +1493,19 @@ const headFieldP: P<RecMember> = (ts, i) => {
     pos = r.pos
   }
   if (atoms.length < 2) return err(`decorated declaration`, i)
+  // A `rec` head atom immediately before the declared name is RECURSION sugar,
+  // consumed here (never a request
+  // decorator): the value becomes `fix ({NAME} => body)`, so the body may refer
+  // to the definition by its own name. Right-associative binder desugaring makes
+  // the tree identical to a hand-written `fix ({self, args…} => …)`. Without
+  // `rec`, the name in the body keeps its usual meaning (the previous binding,
+  // per the guard/rebind protocol) — recursion is declared, never inferred.
+  const recAt = atoms.length - 2
+  const isRec = recAt >= 0 && atoms[recAt].tag === "var" && (atoms[recAt] as { name: string }).name === "rec"
+  if (isRec) atoms.splice(recAt, 1)
   const last = atoms[atoms.length - 1]
   if (last.tag !== "var") return err(`decorated declaration: the declared name must be a plain identifier`, pos)
-  const head = atoms.slice(0, -1).reduce((f, x) => ({ tag: "app" as const, f, x }))
+  const head = atoms.length >= 2 ? atoms.slice(0, -1).reduce((f, x) => ({ tag: "app" as const, f, x })) : undefined
   let type: Expr | null = null
   let docType: Expr | undefined
   const ann = optional(annP)(ts, pos)
@@ -1508,6 +1518,10 @@ const headFieldP: P<RecMember> = (ts, i) => {
     pos = asn.pos
   }
   if (type === null && value === null) return err(`decorated declaration: expected ':' or ':='`, pos)
+  if (isRec) {
+    if (value === null) throw new Error(`parse: 'rec' requires a value to take the fixpoint of`)
+    value = { tag: "app", f: { tag: "var", name: "fix" }, x: { tag: "binder", fat: true, params: [{ name: last.name, type: null }], body: value } }
+  }
   return ok({ tag: "field" as const, name: last.name, type, docType, value, head, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
 }
 

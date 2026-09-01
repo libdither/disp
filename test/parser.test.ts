@@ -446,6 +446,32 @@ describe("parse: items", () => {
     expect(() => parseItems("k : Nat :=> 5")).toThrow(/named binder parameters/)
   })
 
+  it("rec wraps the value in fix with the definition's own name bound", () => {
+    const items = parseItems("rec f := g f")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.head).toBeUndefined()
+    expect(d.value).toEqual(ap(v("fix"), lam([{ name: "f", type: null }], ap(v("g"), v("f")))))
+  })
+
+  it("rec composes with a decorator head and with :=>", () => {
+    const items = parseItems("let rec go :: {n : Nat} -> Nat :=> go n")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.head).toEqual(v("let"))
+    expect(d.value).toEqual(ap(v("fix"), lam([{ name: "go", type: null }],
+      lam([{ name: "n", type: null }], ap(v("go"), v("n"))))))
+  })
+
+  it("rec as a plain definition name is untouched; rec without a value errors", () => {
+    const items = parseItems("rec := 5")
+    const d = items[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.name).toBe("rec")
+    expect(d.value).toEqual({ tag: "num", value: 5 })
+    expect(() => parseItems("rec f : T")).toThrow(/requires a value/)
+  })
+
   it("arrow-bearing doc annotation still starts a new item after an expression", () => {
     // regression: isDeclStart must accept `::` before it sees the `->`,
     // else the previous item's expression swallows the line.
