@@ -18,24 +18,24 @@ skip_state :: Step V St -> St := pair_snd
 s_items :: Pair (List V) (Stream V) -> List V := pair_fst
 s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
 // fuel bounds steps and count bounds items: skips burn only fuel, so a sparse filter cannot hang a take
-rec s_take :: {fuel : Nat, count : Nat, stream : Stream V} -> Pair (List V) (Stream V) :=>
+rec s_take :: {stream : Stream V, fuel : Nat, count : Nat} -> Pair (List V) (Stream V) :=>
 	if (is_zero count || is_zero fuel) { pair [] stream }
 	else {
 		let step := stream.s_step
-		if (not step.yielded) { s_take (nat_pred fuel) count (stream.s_with step.skip_state) }
+		if (not step.yielded) { s_take (stream.s_with step.skip_state) (nat_pred fuel) count }
 		else {
 			let item := step.y_val
-			let taken := s_take (nat_pred fuel) (nat_pred count) (stream.s_with step.y_state)
+			let taken := s_take (stream.s_with step.y_state) (nat_pred fuel) (nat_pred count)
 			pair (cons item taken.s_items) taken.s_rest
 		}
 	}
 
-s_map :: {transform : V -> W, inner : Stream V} -> Stream W :=> s_new ({state} => {
+s_map :: {stream : Stream V, transform : V -> W} -> Stream W :=> s_new ({state} => {
 	let step := state.s_step
 	if (step.yielded) { yield (transform step.y_val) (state.s_with step.y_state) }
 	else { skip (state.s_with step.skip_state) }
-}) inner
-s_filter :: {keep : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({state} => {
+}) stream
+s_filter :: {stream : Stream V, keep : V -> Bool} -> Stream V :=> s_new ({state} => {
 	let step := state.s_step
 	if (not step.yielded) { skip (state.s_with step.skip_state) }
 	else {
@@ -43,23 +43,23 @@ s_filter :: {keep : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({state} 
 		let advanced := state.s_with step.y_state
 		if (keep item) { yield item advanced } else { skip advanced }
 	}
-}) inner
+}) stream
 // fuel running out answers true — survived so far (no counterexample found), not proof
-rec s_all :: {holds : V -> Bool} -> {fuel : Nat, stream : Stream V} -> Bool :=>
+rec s_all :: {stream : Stream V, holds : V -> Bool, fuel : Nat} -> Bool :=>
 	if (is_zero fuel) { true }
 	else {
 		let step := stream.s_step
-		if (not step.yielded) { s_all (nat_pred fuel) (stream.s_with step.skip_state) }
-		else { (holds step.y_val) && (s_all (nat_pred fuel) (stream.s_with step.y_state)) }
+		if (not step.yielded) { s_all (stream.s_with step.skip_state) holds (nat_pred fuel) }
+		else { (holds step.y_val) && (s_all (stream.s_with step.y_state) holds (nat_pred fuel)) }
 	}
 
 nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
 
-test (s_take 10 3 nats).s_items = [0, 1, 2]
-took2 := s_take 10 2 nats
-test (s_take 10 2 took2.s_rest).s_items = [2, 3]
-test (s_take 10 3 (s_map succ nats)).s_items = [1, 2, 3]
-test (s_take 10 2 (s_filter is_fork nats)).s_items = [1, 2]
-test (s_take 3 9 (s_filter is_zero nats)).s_items.length = 1
-test s_all is_fork 5 (s_map succ nats) = true
-test s_all is_zero 5 (s_map succ nats) = false
+test (nats.s_take 10 3).s_items = [0, 1, 2]
+took2 := nats.s_take 10 2
+test (took2.s_rest.s_take 10 2).s_items = [2, 3]
+test ((nats.s_map succ).s_take 10 3).s_items = [1, 2, 3]
+test ((nats.s_filter is_fork).s_take 10 2).s_items = [1, 2]
+test ((nats.s_filter is_zero).s_take 3 9).s_items.length = 1
+test (nats.s_map succ).s_all is_fork 5 = true
+test (nats.s_map succ).s_all is_zero 5 = false
