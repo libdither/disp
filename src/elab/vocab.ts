@@ -69,6 +69,7 @@ export function pairAccessor(
   which: "fst" | "snd",
 ): Tree | undefined {
   const settings = lookupEntry("elab_settings")?.tree
-  if (settings == null) return undefined
-  return settingsTarget(settings, which) ?? lookupEntry(which === "fst" ? "pair_fst" : "pair_snd")?.tree
+  const raw = lookupEntry(which === "fst" ? "pair_fst" : "pair_snd")?.tree
+  if (settings == null) return raw
+  return settingsTarget(settings, which) ?? raw
 }

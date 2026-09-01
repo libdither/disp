@@ -399,6 +399,14 @@ export function exprToCir(
       const dotTree = sugarTree(lookupEntry, "dot")
       if (dotTree)
         return cap(cap({ tag: "lit", t: dotTree }, { tag: "lit", t: stringToTree(e.field) }), target)
+      // Method-call fallback (UFCS): with no `dot` in scope, a projection whose
+      // field names a MODULE-SCOPE binding is receiver-first application —
+      // `x.f args` compiles as `f x args`. Resolves through lookupEntry only
+      // (top-level bindings, never local binder params), and fires only where
+      // the remaining meaning would be the bare cut, so dot-owning worlds (the
+      // kernel) keep field semantics unchanged.
+      const fnEntry = lookupEntry(e.field)
+      if (fnEntry?.tree) return cap({ tag: "lit", t: fnEntry.tree }, target)
       return cap(target, { tag: "lit", t: accTree(e.field) })
     }
     case "index": {
