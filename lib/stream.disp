@@ -15,14 +15,16 @@ skip_state :: Step V St -> St := pair_snd
 
 s_items :: Pair (List V) (Stream V) -> List V := pair_fst
 s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
-s_take :: {fuel : Nat, n : Nat, s : Stream V} -> Pair (List V) (Stream V) :=> (fix ({self, fuel2, n2, s2, acc} =>
-	if (is_leaf n2) { pair (reverse acc) s2 }
-	else if (is_leaf fuel2) { pair (reverse acc) s2 }
+rec s_take :: {fuel : Nat, n : Nat, s : Stream V} -> Pair (List V) (Stream V) :=>
+	if (is_leaf n) { pair [] s }
+	else if (is_leaf fuel) { pair [] s }
 	else {
-		let r := s_step s2
-		if (yielded r) { self (nat_pred fuel2) (nat_pred n2) (s_with s2 (y_state r)) (cons (y_val r) acc) }
-		else { self (nat_pred fuel2) n2 (s_with s2 (skip_state r)) acc }
-	})) fuel n s []
+		let r := s_step s
+		if (yielded r) {
+			let rest := s_take (nat_pred fuel) (nat_pred n) (s_with s (y_state r))
+			pair (cons (y_val r) (s_items rest)) (s_rest rest)
+		} else { s_take (nat_pred fuel) n (s_with s (skip_state r)) }
+	}
 
 s_map :: {f : V -> W, inner : Stream V} -> Stream W :=> s_new ({st} => {
 	let r := s_step st
@@ -36,14 +38,14 @@ s_filter :: {p : V -> Bool, inner : Stream V} -> Stream V :=> s_new ({st} => {
 		if (p (y_val r)) { yield (y_val r) rest } else { skip rest }
 	} else { skip (s_with st (skip_state r)) }
 }) inner
-s_all :: {p : V -> Bool, fuel : Nat, s : Stream V} -> Bool :=> (fix ({self, fuel2, s2} =>
-	if (is_leaf fuel2) { true }
+rec s_all :: {p : V -> Bool} -> {fuel : Nat, s : Stream V} -> Bool :=>
+	if (is_leaf fuel) { true }
 	else {
-		let r := s_step s2
+		let r := s_step s
 		if (yielded r) {
-			if (p (y_val r)) { self (nat_pred fuel2) (s_with s2 (y_state r)) } else { false }
-		} else { self (nat_pred fuel2) (s_with s2 (skip_state r)) }
-	})) fuel s
+			if (p (y_val r)) { s_all (nat_pred fuel) (s_with s (y_state r)) } else { false }
+		} else { s_all (nat_pred fuel) (s_with s (skip_state r)) }
+	}
 
 nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
 test tree_eq (s_items (s_take 10 3 nats)) [0, 1, 2] = true

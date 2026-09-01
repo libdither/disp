@@ -6,9 +6,9 @@ cons :: {h : A, tl : List A} -> List A :=> t h tl
 is_nil :: List A -> Bool := is_leaf
 head :: List A -> A := pair_fst
 tail :: List A -> List A := pair_snd
-reduce :: {step : A -> C -> C, base : C} -> List A -> C :=> fix ({self, xs} =>
+rec reduce :: {step : A -> C -> C, base : C} -> {xs : List A} -> C :=>
 	if (is_nil xs) { base }
-	else { step (head xs) (self (tail xs)) })
+	else { step (head xs) (reduce (tail xs)) }
 
 map :: {f : A -> B} -> List A -> List B :=> reduce ({h, ih} => cons (f h) ih) []
 append :: {xs : List A, ys : List A} -> List A :=> reduce cons ys xs
