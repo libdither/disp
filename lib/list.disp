@@ -21,13 +21,13 @@ any :: {p : A -> Bool} -> List A -> Bool :=> reduce ({h, ih} => or (p h) ih) fal
 member :: {x : A} -> List A -> Bool :=> any (tree_eq x)
 dedup :: List A -> List A := reduce ({h, ih} => if (member h ih) { ih } else { cons h ih }) []
 cross :: {f : A -> B -> C, xs : List A, ys : List B} -> List C :=> concat (map ({x} => map (f x) ys) xs)
-zip :: List A -> List B -> List (Pair A B) := fix ({self, xs, ys} =>
+rec zip :: {xs : List A, ys : List B} -> List (Pair A B) :=>
 	if (is_nil xs) { [] }
 	else if (is_nil ys) { [] }
 	else { cons 
 		(pair (head xs) (head ys))
-		(self (tail xs) (tail ys))
-	})
+		(zip (tail xs) (tail ys))
+	}
 
 test tree_eq (reduce cons [] [1, 2]) [1, 2] = true
 test length [7, 8] = 2
