@@ -156,7 +156,7 @@
     },
     "applications": {
       "comment": "Function-position identifiers — the Rust-like call-site yellow. In disp application is juxtaposition, so the head of an application spine is an identifier that STARTS an expression (line start, after an opening bracket, separator, ':='/':'/'='/arrows, or if/then/else) AND is applied to at least one atom. The exclusion list keeps keywords, decorator heads, literals, and the leaf out of head position; the starter prefix is re-scoped by the included rules so consumed operators/keywords keep their colors.",
-      "match": "((?::=>|:=|=>|->|→|[=:({\\[,;&|])|^|(?<![A-Za-z0-9_'])(?:if|then|else)(?![A-Za-z0-9_']))\\s*(?!(?:match|if|then|else|use|open|let|rec|sig|base|given|guard|test|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[])",
+      "match": "((?::=>|:=|==|&&|\\|\\||=>|->|→|[=:({\\[,;&|])|^|(?<![A-Za-z0-9_'])(?:if|then|else)(?![A-Za-z0-9_']))\\s*(?!(?:match|if|then|else|use|open|let|rec|sig|base|given|guard|test|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[])",
       "captures": {
         "1": {
           "patterns": [
