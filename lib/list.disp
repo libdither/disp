@@ -13,30 +13,30 @@ rec reduce :: {step : A -> C -> C, base : C} -> {xs : List A} -> C :=>
 map :: {xs : List A, transform : A -> B} -> List B :=> reduce ({item, mapped} => cons (transform item) mapped) [] xs
 append :: {xs : List A, ys : List A} -> List A :=> reduce cons ys xs
 concat :: List (List A) -> List A := reduce append []
-reverse :: List A -> List A := reduce ({item, reversed} => reversed.append [item]) []
+reverse :: List A -> List A := reduce ({item, reversed} => reversed.append([item])) []
 length :: List A -> Nat := reduce ({_item, count} => succ count) zero
 filter :: {xs : List A, keep : A -> Bool} -> List A :=> reduce ({item, kept} => if (keep item) { cons item kept } else { kept }) [] xs
 all :: {xs : List A, holds : A -> Bool} -> Bool :=> reduce ({item, rest_ok} => (holds item) && rest_ok) true xs
 any :: {xs : List A, holds : A -> Bool} -> Bool :=> reduce ({item, rest_any} => (holds item) || rest_any) false xs
-member :: {xs : List A, target : A} -> Bool :=> xs.any (tree_eq target)
-dedup :: List A -> List A := reduce ({item, deduped} => if (deduped.member item) { deduped } else { cons item deduped }) []
-cross :: {xs : List A, ys : List B, combine : A -> B -> C} -> List C :=> (xs.map ({left} => ys.map (combine left))).concat
+member :: {xs : List A, target : A} -> Bool :=> xs.any(tree_eq target)
+dedup :: List A -> List A := reduce ({item, deduped} => if (deduped.member(item)) { deduped } else { cons item deduped }) []
+cross :: {xs : List A, ys : List B, combine : A -> B -> C} -> List C :=> xs.map({left} => ys.map(combine left)).concat
 rec zip :: {xs : List A, ys : List B} -> List (Pair A B) :=>
 	if (xs.is_nil || ys.is_nil) { [] }
 	else { cons (pair xs.head ys.head) (zip xs.tail ys.tail) }
 
 test reduce cons [] [1, 2] = [1, 2]
 test [7, 8].length = 2
-test [1, 2].map succ = [2, 3]
+test [1, 2].map(succ) = [2, 3]
 test [1, 2].reverse = [2, 1]
-test [1].append [2] = [1, 2]
+test [1].append([2]) = [1, 2]
 test [[1], [2]].concat = [1, 2]
-test [1, 2].zip [8, 9] = [pair 1 8, pair 2 9]
-test [t, 5, t].filter is_leaf = [t, t]
-test [t, t].all is_leaf = true
-test [t, 5].all is_leaf = false
-test [t, 5].any is_fork = true
-test [1, 2].member 2 = true
-test [1, 2].member 3 = false
+test [1, 2].zip([8, 9]) = [pair 1 8, pair 2 9]
+test [t, 5, t].filter(is_leaf) = [t, t]
+test [t, t].all(is_leaf) = true
+test [t, 5].all(is_leaf) = false
+test [t, 5].any(is_fork) = true
+test [1, 2].member(2) = true
+test [1, 2].member(3) = false
 test [1, 1, 2].dedup = [1, 2]
-test [1, 2].cross [8] pair = [pair 1 8, pair 2 8]
+test [1, 2].cross([8], pair) = [pair 1 8, pair 2 8]

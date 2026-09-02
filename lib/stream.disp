@@ -79,12 +79,12 @@ rec s_all :: {stream : Bounded (Stream V), holds : V -> Bool} -> Bool :=>
 
 nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
 
-test ((nats.bounded 10).s_take 3).s_items = [0, 1, 2]
-test ((nats.bounded 1).s_take 5).s_items = [0]
-took2 := (nats.bounded 10).s_take 2
-test (took2.s_rest.s_take 2).s_items = [2, 3]
-test (((nats.s_map succ).bounded 10).s_take 3).s_items = [1, 2, 3]
-test (((nats.bounded 10).s_filter is_fork).s_take 2).s_items = [1, 2]
-test (((nats.bounded 3).s_filter is_zero).s_take 9).s_items.length = 1
-test ((nats.bounded 5).s_map succ).s_all is_fork = true
-test ((nats.bounded 5).s_map succ).s_all is_zero = false
+test nats.bounded(10).s_take(3).s_items = [0, 1, 2]
+test nats.bounded(1).s_take(5).s_items = [0]
+took2 := nats.bounded(10).s_take(2)
+test took2.s_rest.s_take(2).s_items = [2, 3]
+test nats.s_map(succ).bounded(10).s_take(3).s_items = [1, 2, 3]
+test nats.bounded(10).s_filter(is_fork).s_take(2).s_items = [1, 2]
+test nats.bounded(3).s_filter(is_zero).s_take(9).s_items.length = 1
+test nats.bounded(5).s_map(succ).s_all(is_fork) = true
+test nats.bounded(5).s_map(succ).s_all(is_zero) = false
