@@ -1,6 +1,9 @@
-// Resumable fueled streams: a stream is pair stepper state; a step yields an item
-// or skips. Skips exist to keep every step cheap: a filter answers "nothing this
-// step" instead of hunting for its next match inside one step.
+// Resumable streams: a stream is pair stepper state; a step yields an item,
+// skips, or is done (the leaf). Skips exist to keep every step cheap: a filter
+// answers "nothing this step" instead of hunting for its next match inside one
+// step. Termination is the STREAM's burden, not each consumer's: `bounded`
+// wraps any stream to force done after a budget of draws, and consumers that
+// recurse until done ask for `Bounded (Stream V)` in their signatures.
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 
@@ -10,56 +13,78 @@ s_step :: {stream : Stream V} -> Step V St :=> stream.fst stream.snd
 
 yield :: {item : V, state : St} -> Step V St :=> pair true (pair item state)
 skip :: {state : St} -> Step V St :=> pair false state
+done :: Step V St := t
+is_done :: Step V St -> Bool := is_leaf
+// check is_done before yielded/y_val/…: projections on the done leaf are garbage
 yielded :: Step V St -> Bool := pair_fst
 y_val :: {step : Step V St} -> V :=> step.snd.fst
 y_state :: {step : Step V St} -> St :=> step.snd.snd
 skip_state :: Step V St -> St := pair_snd
 
+// forces done after fuel draws: the budget threads through the resumed rest
+bounded :: {stream : Stream V, fuel : Nat} -> Bounded (Stream V) :=> s_new ({st} => {
+	let budget := st.fst
+	let inner := st.snd
+	if (is_zero budget) { done }
+	else {
+		let step := inner.s_step
+		if (step.is_done) { done }
+		else if (step.yielded) { yield step.y_val (pair (nat_pred budget) (inner.s_with step.y_state)) }
+		else { skip (pair (nat_pred budget) (inner.s_with step.skip_state)) }
+	}
+}) (pair fuel stream)
+
 s_items :: Pair (List V) (Stream V) -> List V := pair_fst
 s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
-// fuel bounds steps and count bounds items: skips burn only fuel, so a sparse filter cannot hang a take
-rec s_take :: {stream : Stream V, fuel : Nat, count : Nat} -> Pair (List V) (Stream V) :=>
-	if (is_zero count || is_zero fuel) { pair [] stream }
+// count bounds items only; termination is the stream's job, so pass a Bounded one
+rec s_take :: {stream : Bounded (Stream V), count : Nat} -> Pair (List V) (Stream V) :=>
+	if (is_zero count) { pair [] stream }
 	else {
 		let step := stream.s_step
-		if (not step.yielded) { s_take (stream.s_with step.skip_state) (nat_pred fuel) count }
+		if (step.is_done) { pair [] stream }
+		else if (not step.yielded) { s_take (stream.s_with step.skip_state) count }
 		else {
 			let item := step.y_val
-			let taken := s_take (stream.s_with step.y_state) (nat_pred fuel) (nat_pred count)
+			let taken := s_take (stream.s_with step.y_state) (nat_pred count)
 			pair (cons item taken.s_items) taken.s_rest
 		}
 	}
 
 s_map :: {stream : Stream V, transform : V -> W} -> Stream W :=> s_new ({state} => {
 	let step := state.s_step
-	if (step.yielded) { yield (transform step.y_val) (state.s_with step.y_state) }
+	if (step.is_done) { done }
+	else if (step.yielded) { yield (transform step.y_val) (state.s_with step.y_state) }
 	else { skip (state.s_with step.skip_state) }
 }) stream
 s_filter :: {stream : Stream V, keep : V -> Bool} -> Stream V :=> s_new ({state} => {
 	let step := state.s_step
-	if (not step.yielded) { skip (state.s_with step.skip_state) }
+	if (step.is_done) { done }
+	else if (not step.yielded) { skip (state.s_with step.skip_state) }
 	else {
 		let item := step.y_val
 		let advanced := state.s_with step.y_state
 		if (keep item) { yield item advanced } else { skip advanced }
 	}
 }) stream
-// fuel running out answers true — survived so far (no counterexample found), not proof
-rec s_all :: {stream : Stream V, holds : V -> Bool, fuel : Nat} -> Bool :=>
-	if (is_zero fuel) { true }
-	else {
+// exact over everything the stream delivers: true means it FINISHED with no
+// counterexample. Whether that covers the domain is the stream's provenance —
+// a budget-bounded stream gives evidence, an exhausted domain gives proof.
+rec s_all :: {stream : Bounded (Stream V), holds : V -> Bool} -> Bool :=>
+	{
 		let step := stream.s_step
-		if (not step.yielded) { s_all (stream.s_with step.skip_state) holds (nat_pred fuel) }
-		else { (holds step.y_val) && (s_all (stream.s_with step.y_state) holds (nat_pred fuel)) }
+		if (step.is_done) { true }
+		else if (not step.yielded) { s_all (stream.s_with step.skip_state) holds }
+		else { (holds step.y_val) && (s_all (stream.s_with step.y_state) holds) }
 	}
 
 nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
 
-test (nats.s_take 10 3).s_items = [0, 1, 2]
-took2 := nats.s_take 10 2
-test (took2.s_rest.s_take 10 2).s_items = [2, 3]
-test ((nats.s_map succ).s_take 10 3).s_items = [1, 2, 3]
-test ((nats.s_filter is_fork).s_take 10 2).s_items = [1, 2]
-test ((nats.s_filter is_zero).s_take 3 9).s_items.length = 1
-test (nats.s_map succ).s_all is_fork 5 = true
-test (nats.s_map succ).s_all is_zero 5 = false
+test ((nats.bounded 10).s_take 3).s_items = [0, 1, 2]
+test ((nats.bounded 1).s_take 5).s_items = [0]
+took2 := (nats.bounded 10).s_take 2
+test (took2.s_rest.s_take 2).s_items = [2, 3]
+test (((nats.s_map succ).bounded 10).s_take 3).s_items = [1, 2, 3]
+test (((nats.bounded 10).s_filter is_fork).s_take 2).s_items = [1, 2]
+test (((nats.bounded 3).s_filter is_zero).s_take 9).s_items.length = 1
+test ((nats.bounded 5).s_map succ).s_all is_fork = true
+test ((nats.bounded 5).s_map succ).s_all is_zero = false

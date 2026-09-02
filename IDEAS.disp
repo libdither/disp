@@ -20,11 +20,11 @@ trees_step :: {state : Pair (List (List Tree)) (List Tree)} -> Step Tree (Pair (
 }
 Trees :: Stream Tree := s_new trees_step (pair [[t]] [t])
 
-test (Trees.s_take 10 4).s_items = [t, t t, t (t t), t t t]
-test (Trees.s_take 40 38).s_items.length = 38
-taken2 :: Pair (List Tree) (Stream Tree) := Trees.s_take 10 2
-taken2more :: Pair (List Tree) (Stream Tree) := taken2.s_rest.s_take 10 2
-test taken2.s_items.append taken2more.s_items = (Trees.s_take 10 4).s_items
+test ((Trees.bounded 10).s_take 4).s_items = [t, t t, t (t t), t t t]
+test ((Trees.bounded 40).s_take 38).s_items.length = 38
+taken2 :: Pair (List Tree) (Stream Tree) := (Trees.bounded 10).s_take 2
+taken2more :: Pair (List Tree) (Stream Tree) := taken2.s_rest.s_take 2
+test taken2.s_items.append taken2more.s_items = ((Trees.bounded 10).s_take 4).s_items
 
 BadBool :: {tree : Tree} -> Bool :=> triage true is_leaf false tree
 Bool :: {tree : Tree} -> Bool :=> triage true is_leaf ({_l, _r} => false) tree
@@ -34,14 +34,14 @@ test Bool t = true
 test Bool (t t) = true
 test Bool (t (t t)) = false
 
-Bools :: List Tree := ((Trees.s_filter Bool).s_take 50 5).s_items
+Bools :: List Tree := (((Trees.bounded 50).s_filter Bool).s_take 5).s_items
 test Bools.length = 2
 test Bools = [true, false]
 
 Arrow :: {Dom : Tree -> Bool, Cod : Tree -> Bool, fuel : Nat, fn : Tree} -> Bool :=> {
-  let members := Trees.s_filter Dom
+  let members := (Trees.bounded fuel).s_filter Dom
   let outputs := members.s_map ({arg} => fn arg)
-  outputs.s_all Cod fuel
+  outputs.s_all Cod
 }
 BoolFn :: {fn : Tree} -> Bool :=> Arrow Bool Bool 25 fn
 test BoolFn (t t t) = true
@@ -50,7 +50,7 @@ test BoolFn t = false
 test BoolFn (t t) = false
 test Arrow Bool Bool 1 t = true
 
-candidates :: List Tree := (Trees.s_take 60 40).s_items
+candidates :: List Tree := ((Trees.bounded 60).s_take 40).s_items
 boolfns :: List Tree := candidates.filter BoolFn
 test boolfns.length = 7
 test boolfns.all ({fn} => (Bool (fn true)) && (Bool (fn false))) = true
