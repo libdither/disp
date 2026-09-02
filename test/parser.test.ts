@@ -482,6 +482,22 @@ describe("parse: items", () => {
     expect(() => parseItems("rec f : T")).toThrow(/requires a value/)
   })
 
+  it("glued call parens feed the postfix chain; spaced parens stay application", () => {
+    const d = parseItems("x := s.f(a, b).g(c)")[0]
+    if (d.tag !== "field") throw new Error("shape")
+    expect(d.value).toEqual(
+      ap(proj(ap(ap(proj(v("s"), "f"), v("a")), v("b")), "g"), v("c")))
+    const bare = parseItems("x := f(a, b)")[0]
+    if (bare.tag !== "field") throw new Error("shape")
+    expect(bare.value).toEqual(ap(ap(v("f"), v("a")), v("b")))
+    const empty = parseItems("x := s.f()")[0]
+    if (empty.tag !== "field") throw new Error("shape")
+    expect(empty.value).toEqual(proj(v("s"), "f"))
+    const spaced = parseItems("x := f (a)")[0]
+    if (spaced.tag !== "field") throw new Error("shape")
+    expect(spaced.value).toEqual(ap(v("f"), v("a")))
+  })
+
   it("infix ==/&&/|| desugar; application binds tighter", () => {
     const eq = parseItems("x := f a == g b")[0]
     if (eq.tag !== "field") throw new Error("shape")
