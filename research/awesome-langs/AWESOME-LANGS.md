@@ -3,7 +3,7 @@
 Languages and systems surveyed against **disp**'s goals, August 2026.
 Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26).
+(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -51,6 +51,7 @@ search on itself.
 | [**Acorn**](acorn.md) | ✗ | ◐ | ◐ | ✗ | ✗ | **✅** | *local* neural proposer in the loop |
 | [**Salt**](salt.md) | ✗ | ◐ | ✗ | ✗ | ◐ᶜ | ✗ | proof-coverage as a continuous signal |
 | [**Telomare** (Stand-In Language)](telomare.md) | ✗ | ◐ | ✗ | ✗ | ◐ᵗ | ✗ | the *static cost bound*: totality by inferred iteration counts, `--certificate`/`--meter` |
+| [**Stellogen**](stellogen.md) | ◐ | ◐ | ◐ | ✗ | ✗ | ✗ | *types as user-space test suites*; the usine/usage split `CHECK.disp` re-derives, with the same function-type gap |
 | [**Indie AI-first cluster**](indie-ai-first-cluster.md) | ✗ | ◐ | ✗ | ✗ | mostly ✗ | ◐ | LSTS shares the library-not-kernel thesis |
 | [**Adjacent substrates**](adjacent-substrates.md) | — | — | — | **✅**ᵉ | — | — | egg/e-graphs ≈ disp's `~_T` machinery |
 | [**Graveyard**](graveyard.md) | — | — | — | — | — | — | what happens when this is attempted |
