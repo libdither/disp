@@ -3,8 +3,10 @@
 /// sees a concrete 'light' or 'dark', so it needs no prefers-color-scheme rule.
 export type ThemePref = 'system' | 'light' | 'dark'
 export type Theme = 'light' | 'dark'
+export type SiteStyle = 'original' | 'simple'
 
 export const THEME_KEY = 'disp-theme'
+export const STYLE_KEY = 'disp-style'
 
 const DARK_QUERY = '(prefers-color-scheme: dark)'
 
@@ -21,6 +23,14 @@ function storedPref(): ThemePref {
   }
 }
 
+function storedStyle(): SiteStyle {
+  try {
+    return localStorage.getItem(STYLE_KEY) === 'simple' ? 'simple' : 'original'
+  } catch {
+    return 'original'
+  }
+}
+
 function systemTheme(): Theme {
   return typeof matchMedia === 'function' && matchMedia(DARK_QUERY).matches
     ? 'dark'
@@ -34,6 +44,7 @@ class ThemeStore {
   /// before first paint, and `sync()` re-reads storage once mounted.
   pref = $state<ThemePref>('system')
   system = $state<Theme>('light')
+  style = $state<SiteStyle>('original')
 
   get resolved(): Theme {
     return this.pref === 'system' ? this.system : this.pref
@@ -43,6 +54,7 @@ class ThemeStore {
   sync() {
     this.pref = storedPref()
     this.system = systemTheme()
+    this.style = storedStyle()
     this.apply()
 
     if (typeof matchMedia !== 'function') return
@@ -74,9 +86,21 @@ class ThemeStore {
     else this.set('dark')
   }
 
+  toggleStyle() {
+    this.style = this.style === 'simple' ? 'original' : 'simple'
+    try {
+      if (this.style === 'original') localStorage.removeItem(STYLE_KEY)
+      else localStorage.setItem(STYLE_KEY, this.style)
+    } catch {
+      // The toggle still works when storage is unavailable.
+    }
+    this.apply()
+  }
+
   private apply() {
     if (typeof document === 'undefined') return
     document.documentElement.dataset.theme = this.resolved
+    document.documentElement.dataset.style = this.style
   }
 }
 

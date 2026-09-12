@@ -18,6 +18,12 @@
 				} catch (e) {
 					document.documentElement.dataset.theme = 'light'
 				}
+				try {
+					document.documentElement.dataset.style =
+						localStorage.getItem('disp-style') === 'simple' ? 'simple' : 'original'
+				} catch (e) {
+					document.documentElement.dataset.style = 'original'
+				}
 			})()
 		</script>
 		%sveltekit.head%

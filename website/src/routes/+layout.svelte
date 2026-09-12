@@ -106,6 +106,14 @@
         {/each}
 
         <button
+          class="styletoggle"
+          aria-pressed={theme.style === "simple"}
+          title="Best Motherfucking Website inspired style"
+          onclick={() => theme.toggleStyle()}
+        >
+          Simple style
+        </button>
+        <button
           class="themetoggle"
           class:auto={theme.pref === "system"}
           onclick={() => theme.cycle()}
@@ -287,6 +295,23 @@
   }
 
   /* sun/moon toggle; the dot marks "following your system" */
+  .styletoggle {
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: none;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.875rem;
+    padding: 0.35em 0.6em;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .styletoggle:hover,
+  .styletoggle[aria-pressed="true"] {
+    background: var(--bg-panel-hover);
+    border-color: var(--accent);
+  }
+
   .themetoggle {
     position: relative;
     display: inline-flex;
