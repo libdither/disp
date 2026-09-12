@@ -22,6 +22,8 @@ Misc notes:
  - No memory system other than the repository itself is used for this project: anything durable belongs in the code or docs where future agents can read it, never in agent-side memory files.
  - Multi-line commit messages go through `git commit -F-` with a heredoc, never `-m` with a quoted string: zsh eats backticks and parentheses, so a message loses its code spans silently.
  - Python is `python`, not `python3`. Node works too for scripted file edits.
+ - Every code example shown in a response or written into a doc must be correct disp code. You don't need to run it, just make sure all the references concepts are existing concepts in disp standard library.
+ - When being asked to research, make sure you link to primary sources via inline markdown (ideally fragment) links. 
 
 ## Writing Style
 
