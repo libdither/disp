@@ -3,7 +3,7 @@
 Languages and systems surveyed against **disp**'s goals, August 2026.
 Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04).
+(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -52,6 +52,7 @@ search on itself.
 | [**Salt**](salt.md) | ✗ | ◐ | ✗ | ✗ | ◐ᶜ | ✗ | proof-coverage as a continuous signal |
 | [**Telomare** (Stand-In Language)](telomare.md) | ✗ | ◐ | ✗ | ✗ | ◐ᵗ | ✗ | the *static cost bound*: totality by inferred iteration counts, `--certificate`/`--meter` |
 | [**Stellogen**](stellogen.md) | ◐ | ◐ | ◐ | ✗ | ✗ | ✗ | *types as user-space test suites*; the usine/usage split `CHECK.disp` re-derives, with the same function-type gap |
+| [**Nock / Hoon**](nock-hoon.md) | ✅ | ◐ | ◐ | ✗ | **◐** | ✗ | the *substrate*: a frozen reflective combinator VM whose jets are `.opt.disp` overlays without licenses |
 | [**Indie AI-first cluster**](indie-ai-first-cluster.md) | ✗ | ◐ | ✗ | ✗ | mostly ✗ | ◐ | LSTS shares the library-not-kernel thesis |
 | [**Adjacent substrates**](adjacent-substrates.md) | — | — | — | **✅**ᵉ | — | — | egg/e-graphs ≈ disp's `~_T` machinery |
 | [**Graveyard**](graveyard.md) | — | — | — | — | — | — | what happens when this is attempted |
@@ -77,9 +78,10 @@ itself, and no one else's can.**
 
 ### Closest by axis
 
-- **A1 (reflection):** disp leads. Native intensionality with no quotation layer is
-  unique here; everyone else quotes (Lean `Expr`, Agda `Term`, Meta-F*) or, like
-  Mojo, stages the same language without ever making terms data.
+- **A1 (reflection):** disp and Nock are the only two with native intensionality and
+  no quotation layer; everyone else quotes (Lean `Expr`, Agda `Term`, Meta-F*) or, like
+  Mojo, stages the same language without ever making terms data. Nock has run an
+  operating system on it for a decade and never built a checker on it.
 - **A2 (spec power):** disp trails badly. Lean, Agda, F*, Nova, Blight all have more.
 - **A3 (kernel):** MM0 ahead; Nova and Blight match the architecture.
 - **A4 (equality):** **disp is last.** Nova (extensional + certificates), Agda
@@ -89,7 +91,8 @@ itself, and no one else's can.**
 - **A5 (performance):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ CakeML ahead; disp is an
   interpreted tree-walker with a measured 4,000–67,000× ic-net penalty. Telomare is the
   only entry with a *static* cost bound (inferred per-site iteration counts): the coeffect
-  half of §9, which disp has not built.
+  half of §9, which disp has not built. Vere and NockVM are native Nock interpreters
+  ahead of disp's tree-walkers, with no cost model at all.
 - **A6 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
   and CryptOpt (randomized, certified) are all ahead of disp, which has this
   designed but unbuilt.
@@ -143,6 +146,12 @@ itself, and no one else's can.**
 11. **Inferred iteration bounds as a static cost certificate**, with the two failure kinds
     named (budget exhausted vs. input nothing bounds) and the analysis cached in a
     compile-once artifact. → `telomare.md`
+12. **A spec-level conformance vector file for the substrate** (Nock's `norm/tests.json`: 63
+    vectors including crash cases). disp's five evaluators agree with each other, but no
+    third party can run a vector file against a new backend. → `nock-hoon.md`
+13. **The jet failure catalogue as a checklist for `.opt.disp` overlays:** registration by
+    side effect, matching on intensional identity, silent loss under hint drift, mismatches
+    visible only in traces, no differential check in production. → `nock-hoon.md`
 
 ---
 
