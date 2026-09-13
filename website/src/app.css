@@ -394,7 +394,7 @@ pre {
 :root[data-style='simple'] .def-text { font-size: 0.875rem; }
 :root[data-style='simple'] .hero-code { height: min(70vh, 32rem); }
 :root[data-style='simple'] .theatre .hero-code { height: min(80vh, 46rem); }
-:root[data-style='simple'] :is(.why, .compare) { padding-block: 2rem; }
+:root[data-style='simple'] .why { padding-block: 2rem; }
 :root[data-style='simple'] .axes { grid-template-columns: minmax(0, 1fr); }
 :root[data-style='simple'] .page { padding-block: 2rem; text-align: left; }
 :root[data-style='simple'] .page > .grid { grid-template-columns: minmax(0, 1fr); }

@@ -1,19 +1,22 @@
-// Build-time loader for the comparison section: reads research/awesome-langs
+// Build-time loader for the comparison page: reads research/awesome-langs
 // (the master table, the axes file with disp's self-assessment, and each
 // language write-up) and serves the result as the `virtual:awesome-langs`
-// module. Node-only (the .server suffix keeps it out of client code); vite
-// dev reloads the page when any of the markdown files change.
+// module; `virtual:awesome-langs/summary` is the landing page's small cut.
+// Node-only (the .server suffix keeps it out of client code); vite dev
+// reloads the page when any of the markdown files change.
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Marked } from 'marked'
 import type { Plugin } from 'vite'
-import { AXIS_IDS, type Axis, type AxisId, type Lang, type LangsData, type Score } from './types.ts'
+import { AXIS_IDS, type Axis, type AxisId, type Lang, type LangsData, type LangsSummary, type Score } from './types.ts'
 
 const DIR = resolve(fileURLToPath(new URL('../../../../research/awesome-langs/', import.meta.url)))
 const GH = 'https://github.com/libdither/disp/blob/main/research/awesome-langs/'
 const VIRTUAL = 'virtual:awesome-langs'
+const SUMMARY = VIRTUAL + '/summary'
 const RESOLVED = '\0' + VIRTUAL
+const RESOLVED_SUMMARY = '\0' + SUMMARY
 
 // links open in a new tab; relative "foo.md" links point at the file on GitHub
 const md = new Marked({
@@ -159,24 +162,45 @@ export function loadLangs(): LangsData {
   }
 }
 
+export function summarize(d: LangsData): LangsSummary {
+  const ahead = {} as LangsSummary['ahead']
+  for (const id of AXIS_IDS) {
+    ahead[id] = d.langs.filter((l) => l.scores[id].ahead).map((l) => ({ slug: l.slug, name: l.name }))
+  }
+  return {
+    surveyed: d.surveyed,
+    axes: d.axes,
+    disp: d.disp,
+    ahead,
+    count: d.langs.filter((l) => AXIS_IDS.every((id) => l.scores[id].level != null)).length,
+    surveyUrl: d.surveyUrl
+  }
+}
+
 export function awesomeLangs(): Plugin {
+  // both modules come from one parse; a markdown edit drops the memo
+  let cache: LangsData | null = null
+  const data = () => (cache ??= loadLangs())
   return {
     name: 'awesome-langs',
     resolveId(id) {
       if (id === VIRTUAL) return RESOLVED
+      if (id === SUMMARY) return RESOLVED_SUMMARY
     },
     load(id) {
-      if (id !== RESOLVED) return
+      if (id !== RESOLVED && id !== RESOLVED_SUMMARY) return
       for (const f of readdirSync(DIR)) this.addWatchFile(join(DIR, f))
-      return `export default ${JSON.stringify(loadLangs())}`
+      return `export default ${JSON.stringify(id === RESOLVED ? data() : summarize(data()))}`
     },
     configureServer(server) {
       server.watcher.add(DIR)
       server.watcher.on('change', (file) => {
         if (!resolve(file).startsWith(DIR)) return
-        const mod = server.moduleGraph.getModuleById(RESOLVED)
-        if (!mod) return
-        server.moduleGraph.invalidateModule(mod)
+        cache = null
+        for (const rid of [RESOLVED, RESOLVED_SUMMARY]) {
+          const mod = server.moduleGraph.getModuleById(rid)
+          if (mod) server.moduleGraph.invalidateModule(mod)
+        }
         server.ws.send({ type: 'full-reload' })
       })
     }

@@ -45,5 +45,16 @@ export interface LangsData {
   surveyUrl: string
 }
 
+/// What the landing page needs: the axes, disp's own row, and who the survey
+/// rates ahead of disp per axis. A few kilobytes instead of every write-up.
+export interface LangsSummary {
+  surveyed: string
+  axes: Axis[]
+  disp: Record<AxisId, Score>
+  ahead: Record<AxisId, { slug: string; name: string }[]> // master-table order
+  count: number // projects with all six axes scored
+  surveyUrl: string
+}
+
 export const LEVEL_SYMBOL = ['✗', '◐', '✅'] as const
 export const LEVEL_WORD = ['absent', 'partial', 'has it'] as const

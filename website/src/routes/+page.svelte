@@ -2,12 +2,11 @@
   import { flushSync } from "svelte";
   import { base } from "$app/paths";
   import HeroCard from "$lib/components/HeroCard.svelte";
-  import Compare from "$lib/langs/Compare.svelte";
   import { LEVEL_WORD } from "$lib/langs/types";
-  import langs from "virtual:awesome-langs";
+  import summary from "virtual:awesome-langs/summary";
 
   const REPO = "https://github.com/libdither/disp";
-  const AXES_URL = langs.surveyUrl.replace(/AWESOME-LANGS\.md$/, "_AXES.md");
+  const AXES_URL = summary.surveyUrl.replace(/AWESOME-LANGS\.md$/, "_AXES.md");
   const JAY = "https://github.com/barry-jay-personal";
   const TREECALC = "https://treecalcul.us/";
 
@@ -342,13 +341,13 @@
     Everything else about disp exists to make that loop close: the tree
     calculus underneath (programs are data, with no quote/eval border), types
     as predicates, a trusted kernel small enough to audit, and the plan for
-    user-definable syntax. The survey below reduces the goal to six
-    requirements and scores every neighbouring language on them, disp
+    user-definable syntax. A survey of the neighbouring languages reduces the
+    goal to six requirements and scores each of them on the same scale, disp
     included.
   </p>
   <ol class="axes">
-    {#each langs.axes as ax (ax.id)}
-      {@const s = langs.disp[ax.id]}
+    {#each summary.axes as ax (ax.id)}
+      {@const s = summary.disp[ax.id]}
       <li>
         <span class="ax-id">{ax.id}</span>
         <div class="ax-body">
@@ -372,22 +371,35 @@
     (✗ absent · ◐ partial · ✅ has it) with a word for how. Text and scores come from
     <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
   </p>
-</section>
-
-<hr class="keyline container" />
-
-<!-- ============================== comparisons ============================== -->
-<section class="compare container">
-  <h2 class="sect-title">Progress &amp; Comparisons</h2>
-  <p class="sect-sub">
-    Every language and system that aims near disp's goal, scored on the same
-    six axes ({langs.surveyed}). Sort by an axis to see who is ahead, pick up
-    to two to compare against disp. The full write-ups live in
-    <a href={langs.surveyUrl} target="_blank" rel="noopener"
-      >research/awesome-langs</a
-    >.
-  </p>
-  <Compare data={langs} />
+  <div class="teaser card">
+    <p>
+      {summary.count} neighbouring projects are scored on the same six axes.
+      None of them combines native reflection with search, the pair disp is
+      built around, and disp is last on equality, where several small projects
+      already have answers. Per axis, the survey rates these ahead of disp:
+    </p>
+    <ul class="ahead-list">
+      {#each summary.axes as ax (ax.id)}
+        <li>
+          <span class="ax-id">{ax.id}</span>
+          <b>{ax.short}</b>
+          <span>
+            {#if summary.ahead[ax.id].length}
+              {#each summary.ahead[ax.id] as l, i (l.slug)}{i
+                  ? ", "
+                  : ""}<a href="{base}/compare/?lang={l.slug}">{l.name}</a
+                >{/each}
+            {:else}
+              <span class="nobody">nobody rated ahead</span>
+            {/if}
+          </span>
+        </li>
+      {/each}
+    </ul>
+    <a class="btn" href="{base}/compare/">
+      See the full comparison <span class="btn-arrow" aria-hidden="true">⟶</span>
+    </a>
+  </div>
 </section>
 
 <hr class="keyline container" />
@@ -742,12 +754,8 @@
     flex: 1;
   }
   /* ---------- why ---------- */
-  .why,
-  .compare {
-    padding-block: 3.2rem;
-  }
   .why {
-    padding-top: 3.4rem;
+    padding-block: 3.4rem 3.2rem;
   }
   .sect-title {
     font-size: clamp(1.9rem, 4vw, 2.6rem);
@@ -830,6 +838,46 @@
     font-size: 0.8rem;
     color: var(--fg-faint);
   }
+  /* the comparison teaser: the one fact worth the front page, the rest is /compare */
+  .teaser {
+    margin-top: 1.6rem;
+    padding: 1.1rem 1.3rem 1.2rem;
+  }
+  .teaser > p {
+    margin: 0 0 0.8rem;
+    color: var(--fg-muted);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    max-width: 46rem;
+  }
+  .ahead-list {
+    list-style: none;
+    margin: 0 0 1.1rem;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem 1.6rem;
+    font-size: 0.86rem;
+    color: var(--fg-muted);
+    line-height: 1.5;
+  }
+  .ahead-list li {
+    display: flex;
+    gap: 0.5em;
+    align-items: baseline;
+  }
+  .ahead-list .ax-id {
+    padding-top: 0;
+  }
+  .ahead-list b {
+    flex: none;
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .nobody {
+    color: var(--fg-faint);
+    font-style: italic;
+  }
 
   /* ---------- responsive ---------- */
   @media (max-width: 880px) {
@@ -847,7 +895,8 @@
     .hero-code {
       height: min(70vh, 34rem);
     }
-    .axes {
+    .axes,
+    .ahead-list {
       grid-template-columns: minmax(0, 1fr);
     }
     /* the definition box drops under the wordmark on small screens */
