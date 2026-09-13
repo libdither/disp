@@ -17,8 +17,14 @@ export interface Example {
   id: string
   label: string
   kernel: boolean // opens the kernel (first run pays the self-verification load)
+  landing: boolean // offered by the landing card's picker (a short, self-contained tour)
   source: string
 }
+
+/// The playground's last-loaded example id; the landing card reads it so a
+/// returning visitor's pick follows them, and never writes it (the playground
+/// owns its own state — the card hands over through the link instead).
+export const EXAMPLE_STORAGE_KEY = 'disp-playground-example'
 
 // id is the stable key (localStorage choice, ?example= deep links, the
 // landing card's lookup) — filenames can differ (hello-card.disp keeps the
@@ -37,12 +43,12 @@ export const manifest = [
     kernel: false
   },
   { id: 'welcome', file: 'welcome.disp', label: 'Welcome tour', kernel: true },
-  { id: 'trees', file: 'trees.disp', label: 'Raw tree calculus (no kernel — instant)', kernel: false },
+  { id: 'trees', file: 'trees.disp', label: 'Raw tree calculus (no kernel — instant)', kernel: false, landing: true },
   { id: 'typesystem', file: 'typesystem.disp', label: 'Build a type system from scratch', kernel: false },
-  { id: 'records', file: 'records.disp', label: 'Records & derived fields', kernel: true },
-  { id: 'proofs', file: 'proofs.disp', label: 'Proofs & hypotheses', kernel: true },
-  { id: 'universe', file: 'universe.disp', label: 'Who checks the types?', kernel: true },
-  { id: 'hello', file: 'hello-card.disp', label: 'Hello (landing card)', kernel: true }
+  { id: 'records', file: 'records.disp', label: 'Records & derived fields', kernel: true, landing: true },
+  { id: 'proofs', file: 'proofs.disp', label: 'Proofs & hypotheses', kernel: true, landing: true },
+  { id: 'universe', file: 'universe.disp', label: 'Who checks the types?', kernel: true, landing: true },
+  { id: 'hello', file: 'hello-card.disp', label: 'Hello (landing card)', kernel: true, landing: true }
 ]
 
 let raw: Record<string, string> = {}
@@ -61,5 +67,11 @@ export const examples: Example[] = manifest.map((m) => ({
   id: m.id,
   label: m.label,
   kernel: m.kernel,
+  landing: 'landing' in m && m.landing === true,
   source: byFile.get(m.file) ?? ''
 }))
+
+/// The landing card's menu: hello first, then the rest in manifest order.
+export const landingExamples: Example[] = examples
+  .filter((e) => e.landing)
+  .sort((a, b) => Number(b.id === 'hello') - Number(a.id === 'hello'))

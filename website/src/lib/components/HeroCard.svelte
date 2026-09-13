@@ -2,16 +2,22 @@
   // The landing page's live code card: a real disp editor wired to the shared
   // compiler worker (the same session the Playground uses), with test results
   // rendered inline in the code — rechecked on a debounce after every edit.
+  // The toolbar picks among the landing examples (the playground's own
+  // manifest) and hands the buffer to the playground: an untouched example
+  // goes by its deep link, an edited one rides the share hash.
   // Two faces on a 3D flip (code / ambient TreeVis; the initial face is
   // random): the flip axis matches the layout — up-down in the normal card,
   // left-right in theatre — and the floating right-edge picker orients the
   // same way. The YouTube-style theatre toggle's actual layout change lives
   // in +page.svelte (the grid owner); the card only reports the press.
   import { onMount } from 'svelte'
+  import { base } from '$app/paths'
+  import { goto } from '$app/navigation'
   import DispEditor, { type EditorApi, type LineMark } from './DispEditor.svelte'
   import TreeVis from './TreeVis.svelte'
   import { disp } from '$lib/disp/client.svelte'
-  import { examples } from '$lib/disp/examples'
+  import { landingExamples, EXAMPLE_STORAGE_KEY } from '$lib/disp/examples'
+  import { encodeShared } from '$lib/disp/share'
 
   interface Props {
     theatre?: boolean
@@ -20,7 +26,12 @@
   }
   let { theatre = false, flipped = $bindable(false), onToggleTheatre }: Props = $props()
 
-  const hero = examples.find((e) => e.id === 'hello') ?? examples[0]
+  const hero = landingExamples[0]
+  let exampleId = $state(hero.id)
+  const example = $derived(landingExamples.find((e) => e.id === exampleId) ?? hero)
+  // the playground's auto-run rule: a warm kernel, or a buffer that never
+  // opens it (the raw tree-calculus example runs in milliseconds cold)
+  const canAutoRun = (doc: string) => disp.kernelLoaded || !/\buse\s+(?!raw\b)/.test(doc)
 
   let editor: EditorApi | undefined
   let running = $state(false)
@@ -79,10 +90,31 @@
   function onEdit(): void {
     clearTimeout(editTimer)
     editTimer = setTimeout(() => {
-      if (!disp.kernelLoaded || disp.status === 'dead') return
+      if (!editor || disp.status === 'dead' || !canAutoRun(editor.getDoc())) return
       if (running) return onEdit()
       void run()
     }, 150)
+  }
+
+  function pickExample(id: string): void {
+    const ex = landingExamples.find((e) => e.id === id)
+    if (!ex || !editor) return
+    exampleId = id
+    editor.setDoc(ex.source)
+    summary = null
+    runError = null
+    onEdit()
+  }
+
+  // untouched buffer: a plain anchor to the example's deep link (middle-click
+  // and copy-link keep working); edited: the buffer travels in the share hash
+  const playgroundHref = $derived(`${base}/playground/?example=${exampleId}`)
+  async function openInPlayground(e: MouseEvent): Promise<void> {
+    const doc = editor?.getDoc()
+    if (doc == null || doc === example.source) return
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    e.preventDefault()
+    await goto(`${base}/playground/#${await encodeShared(doc)}`)
   }
 
   const statusText = $derived.by(() => {
@@ -150,12 +182,20 @@
 
   onMount(() => {
     flipped = Math.random() < 0.5 // land on either face (the snap guard keeps this from animating)
+    // a returning visitor's last playground example, when it is one of ours
+    try {
+      const saved = localStorage.getItem(EXAMPLE_STORAGE_KEY)
+      if (saved && saved !== exampleId && landingExamples.some((e) => e.id === saved)) {
+        exampleId = saved
+        editor?.setDoc(example.source)
+      }
+    } catch {}
     void (async () => {
       try {
         await disp.init()
-        // Auto-run only when the precompiled kernel restored — never spend a
-        // visitor's minute uninvited.
-        if (disp.kernelLoaded) await run()
+        // Auto-run only when it is cheap (the precompiled kernel restored, or
+        // the example never opens it) — never spend a visitor's minute uninvited.
+        if (editor && canAutoRun(editor.getDoc())) await run()
       } catch {
         /* status chip already says 'dead' */
       }
@@ -171,12 +211,29 @@
   <div class="flipper" class:snap>
     <div class="face front" style:pointer-events={flipped ? 'none' : 'auto'}>
       <div class="toolbar">
-        <span class="fname">hello.disp</span>
+        <select
+          class="picker"
+          value={exampleId}
+          onchange={(e) => pickExample((e.currentTarget as HTMLSelectElement).value)}
+          aria-label="example"
+          title="pick an example"
+        >
+          {#each landingExamples as ex (ex.id)}
+            <option value={ex.id}>{ex.label.replace(/ \(.*\)/, '')}</option>
+          {/each}
+        </select>
         <span class="status {statusKind}">{statusText}</span>
         <button class="tbtn run" onclick={() => void run()} disabled={running || disp.status === 'dead'} title="run (Ctrl/⌘-Enter)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.2-4.5z" fill="currentColor" /></svg>
           Run
         </button>
+        <a class="tbtn" href={playgroundHref} onclick={openInPlayground} title="open in the playground — your edits come along">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M9 2.5h4.5V7M13.5 2.5 7 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M6.5 3.5H3.5v9h9V9.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+          Playground
+        </a>
         <button
           class="tbtn icon"
           onclick={() => onToggleTheatre?.()}
@@ -312,10 +369,19 @@
     background: color-mix(in oklab, var(--g2) 4%, var(--bg-elev));
     flex: none;
   }
-  .fname {
+  .picker {
     font-family: var(--font-mono);
     font-size: 0.78rem;
-    color: var(--fg-muted);
+    color: var(--fg);
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 0.28em 0.5em;
+    max-width: 11rem;
+    cursor: pointer;
+  }
+  .picker:hover {
+    border-color: var(--accent);
   }
   .status {
     margin-left: auto;
@@ -377,6 +443,9 @@
   .tbtn:disabled {
     opacity: 0.55;
     cursor: default;
+  }
+  a.tbtn {
+    text-decoration: none;
   }
   .tbtn svg {
     width: 0.95em;

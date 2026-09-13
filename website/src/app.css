@@ -359,7 +359,7 @@ pre {
 :root[data-style='simple'] h3 { font-size: 1.17rem; }
 :root[data-style='simple'] :is(h1, h2, h3) { font-weight: 700; letter-spacing: normal; }
 :root[data-style='simple'] .grad-text { color: var(--fg); background: none; }
-:root[data-style='simple'] :is(.aurora, .glyph, .sprout, .treeline, .feat-dot, .tipleaf) { display: none; }
+:root[data-style='simple'] :is(.aurora, .glyph, .sprout, .treeline, .tipleaf) { display: none; }
 :root[data-style='simple'] :is(.card, .btn, .defbox, .term, .teaser, .styletoggle) { border-radius: 0; box-shadow: none; }
 :root[data-style='simple'] .btn { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border-strong); }
 :root[data-style='simple'] .btn:hover { transform: none; }
@@ -394,8 +394,8 @@ pre {
 :root[data-style='simple'] .def-text { font-size: 0.875rem; }
 :root[data-style='simple'] .hero-code { height: min(70vh, 32rem); }
 :root[data-style='simple'] .theatre .hero-code { height: min(80vh, 46rem); }
-:root[data-style='simple'] .features { padding-block: 2rem; }
-:root[data-style='simple'] .feat-grid { display: block; margin-top: 1rem; }
+:root[data-style='simple'] :is(.why, .compare) { padding-block: 2rem; }
+:root[data-style='simple'] .axes { grid-template-columns: minmax(0, 1fr); }
 :root[data-style='simple'] .page { padding-block: 2rem; text-align: left; }
 :root[data-style='simple'] .page > .grid { grid-template-columns: minmax(0, 1fr); }
 :root[data-style='simple'] .learn { grid-template-columns: minmax(0, 1fr); }

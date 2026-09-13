@@ -9,7 +9,8 @@
   import { disp } from '$lib/disp/client.svelte'
   import type { RunOutcome, ItemEvent, ValueNode, RawTree } from '$lib/disp/protocol'
   import { parseTree, type T } from '$lib/treecalc/treecalc'
-  import { examples } from '$lib/disp/examples'
+  import { examples, EXAMPLE_STORAGE_KEY } from '$lib/disp/examples'
+  import { encodeShared, decodeShared, isSharedHash } from '$lib/disp/share'
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
   import TreeValue, { type TreeValueCtl } from '$lib/components/TreeValue.svelte'
   import TreeVis from '$lib/components/TreeVis.svelte'
@@ -687,22 +688,9 @@
 
   // ---- share (the buffer travels in the URL hash) --------------------------
 
-  function b64url(b: Uint8Array): string {
-    let s = ''
-    for (const x of b) s += String.fromCharCode(x)
-    return btoa(s).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
-  }
   async function share() {
     const doc = editorApi?.getDoc() ?? currentDoc
-    const bytes = new TextEncoder().encode(doc)
-    let payload: string
-    if (typeof CompressionStream !== 'undefined') {
-      const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))
-      payload = 'c' + b64url(new Uint8Array(await new Response(stream).arrayBuffer()))
-    } else {
-      payload = 'r' + b64url(bytes)
-    }
-    history.replaceState(null, '', `#${payload}`)
+    history.replaceState(null, '', `#${await encodeShared(doc)}`)
     try {
       await navigator.clipboard.writeText(location.href)
       toast('link copied — the buffer travels in the URL')
@@ -710,24 +698,10 @@
       toast('link ready in the address bar')
     }
   }
-  async function decodeShared(h: string): Promise<string | null> {
-    try {
-      const raw = Uint8Array.from(atob(h.slice(1).replaceAll('-', '+').replaceAll('_', '/')), (c) =>
-        c.charCodeAt(0)
-      )
-      if (h[0] === 'r') return new TextDecoder().decode(raw)
-      if (h[0] !== 'c' || typeof DecompressionStream === 'undefined') return null
-      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
-      return await new Response(stream).text()
-    } catch {
-      return null
-    }
-  }
 
   // ---- persistence ----------------------------------------------------------
 
   const LS_DOC = 'disp-playground-doc'
-  const LS_EX = 'disp-playground-example'
   const LS_LIVE = 'disp-playground-live'
   const LS_WELCOME = 'disp-playground-welcomed'
   const LS_TABS = 'disp-playground-tabs'
@@ -736,7 +710,7 @@
   function persist() {
     try {
       localStorage.setItem(LS_DOC, currentDoc)
-      localStorage.setItem(LS_EX, exampleId)
+      localStorage.setItem(EXAMPLE_STORAGE_KEY, exampleId)
     } catch {}
   }
   // open file tabs persist as paths (content re-reads from the bundled
@@ -765,7 +739,7 @@
       // doc precedence: #shared-code > ?example=<id> deep link > saved buffer
       const hash = location.hash.slice(1)
       let loaded = false
-      if (hash.length > 1 && (hash[0] === 'c' || hash[0] === 'r')) {
+      if (isSharedHash(hash)) {
         const doc = await decodeShared(hash)
         if (doc != null) {
           currentDoc = doc
@@ -781,7 +755,7 @@
       if (!loaded) {
         try {
           const saved = localStorage.getItem(LS_DOC)
-          const savedEx = localStorage.getItem(LS_EX)
+          const savedEx = localStorage.getItem(EXAMPLE_STORAGE_KEY)
           if (savedEx && examples.some((x) => x.id === savedEx)) exampleId = savedEx
           if (saved) {
             currentDoc = saved

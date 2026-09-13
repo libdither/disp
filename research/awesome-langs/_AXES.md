@@ -34,3 +34,18 @@ FOUNDATIONS Part V, A4 is the spine: disp picked an **intensional** substrate
 **extensional** (swap a program for a different, faster, equivalent one). Nearly
 every comparison in this directory ends up being about how the other project
 handles that same gap.
+
+## Where disp stands
+
+The same scale applied to disp itself, so the website's comparison can draw
+disp on its own axes. Update it when the status changes; the site rebuilds
+from this table.
+
+| Axis | disp | Note |
+|---|:--:|---|
+| A1 Reflection | ✅ | Native intensionality with no quotation layer: `shape_of` triages any program, and the checker is an ordinary tree. |
+| A2 Spec power | ◐ | Dependent types as library code over the kernel (Pi, telescopes, coproducts, a universe that checks itself), but far less spec power than Lean, Agda, or F*. |
+| A3 Kernel | ✅ | A two-op trusted core (`bind_hyp`, `hyp_reduce`) in the archived kernel; the promoted kernel keeps legitimacy in provenance. MM0's core is smaller and externally verified. |
+| A4 Equality | ◐ | The substrate is intensional (`tree_eq` is pointer identity). One end-to-end slice of witness-licensed rewrites (map fusion) has landed; whether a decidable fragment licenses enough rewrites is open question Q1. |
+| A5 Perf | ✗ | Interpreted tree-walkers (the TypeScript oracle, Rust eager at about 2×, the ic-net at a measured 4,000–67,000× penalty). Cost as a typing-level resource is designed, not built. |
+| A6 Search | ◐ | The optimizer is designed (`research/OPTIMIZER.typ`) and unbuilt; the licensing machinery it needs exists as one slice. |

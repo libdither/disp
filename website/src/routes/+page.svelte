@@ -2,10 +2,12 @@
   import { flushSync } from "svelte";
   import { base } from "$app/paths";
   import HeroCard from "$lib/components/HeroCard.svelte";
-  import { highlightDisp } from "$lib/editor/highlight";
-  import { examples } from "$lib/disp/examples";
+  import Compare from "$lib/langs/Compare.svelte";
+  import { LEVEL_WORD } from "$lib/langs/types";
+  import langs from "virtual:awesome-langs";
 
   const REPO = "https://github.com/libdither/disp";
+  const AXES_URL = langs.surveyUrl.replace(/AWESOME-LANGS\.md$/, "_AXES.md");
   const JAY = "https://github.com/barry-jay-personal";
   const TREECALC = "https://treecalcul.us/";
 
@@ -156,21 +158,6 @@
     } catch {}
   }
 
-  let showcaseIdx = $state(0);
-  const showcase = examples.filter((e) =>
-    ["trees", "records", "proofs", "universe"].includes(e.id),
-  );
-
-  const kernelChain = [
-    "prelude",
-    "cut",
-    "engine",
-    "cells",
-    "base",
-    "positive",
-    "generic",
-    "universe",
-  ];
 </script>
 
 <svelte:head>
@@ -337,105 +324,70 @@
   </div>
 </section>
 
-<!-- ============================== features ============================== -->
-<section class="features container">
+<!-- ============================== why ============================== -->
+<section class="why container">
   <h2 class="sect-title">Why <span class="grad-text">disp</span>?</h2>
-  <p class="sect-sub">
-    <i
-      >Because when AGI comes and our code isn't formally verified yet, we're
-      gonna be screwed.</i
-    >
+  <p class="goal">
+    The goal of disp is a language where you write only the specification and
+    the implementation is derived from it. A specification is a type, and in
+    disp a type is a predicate you can run, so the type checker is an ordinary
+    function from programs to a yes or a no. Multiply that verdict by a cost
+    score from a model of the hardware, and "find the best program" becomes a
+    search with a fitness function. Because the checker, the cost model, and
+    the search are all disp programs, the search can be aimed at itself: an
+    optimizer that improves its own optimizer, and stays readable while it
+    does.
   </p>
-  <div class="feat-grid">
-    <div class="card feat">
-      <h3>
-        <span class="feat-dot" aria-hidden="true"></span>Programs are data are
-        trees
-      </h3>
-      <p>
-        Disp is homoiconic like lisp, except there is no quote/eval border to
-        deal with. Programs can just take other programs as input and use the
-        `triage` reduction rule to inspect them.
-      </p>
-    </div>
-    <div class="card feat">
-      <h3>
-        <span class="feat-dot" aria-hidden="true"></span>Types you can run
-      </h3>
-      <p>
-        A type is a predicate: a function that takes a tree and returns a
-        verdict, and applying it <i>is</i> the type check. You can implement new
-        type theories by just writing new functions, and you don't have to
-        think about type systems in terms of confusing sequent calculus
-        diagrams, <i>they're just programs</i>.
-      </p>
-    </div>
-    <div class="card feat">
-      <h3>
-        <span class="feat-dot" aria-hidden="true"></span>You should be able to
-        just define the parser
-      </h3>
-      <p>
-        I've never understood why programming languages don't just allow you to
-        entirely replace the parser. Well, I guess lisp and some ML languages
-        (Haskell, Agda) allows you to do this kinda but not super well or not
-        completely. Disp doesn't have this feature <i>yet</i>, but its pretty
-        much just a matter of time at this point. The goal is to be able to
-        literally change syntax or program representation with a simple dropdown
-        menu. Users can make their own by defining a parser |- pretty-printer
-        adjoint functor pair.
-      </p>
-    </div>
-    <div class="card feat">
-      <h3>
-        <span class="feat-dot" aria-hidden="true"></span>Optimize
-        <a href="https://www.youtube.com/watch?v=VtzvlXL9gXk">ZA WARUDO</a> (with
-        a self-optimizing optimizer)
-      </h3>
-      <p>
-        Idea: have tree programs compile to <a
-          href="{REPO}/blob/main/research/OPTIMIZER.typ"
-          target="_blank"
-          rel="noopener">interaction nets</a
-        >, and have another interaction net search the original interaction nets
-        to find-and-replace certain nets with native operations. Possibly using
-        <a href="https://egraphs-good.github.io/">e-graphs</a>. Then buy a
-        dedicated hyper-parallel chip that basically runs a cellular automata
-        specialized to simulate agent reduction where agents are connected by
-        other agents through the physical space of the chip and reduce at a
-        billion parallel reductions per second or something.
-      </p>
-    </div>
-  </div>
+  <p class="goal">
+    Everything else about disp exists to make that loop close: the tree
+    calculus underneath (programs are data, with no quote/eval border), types
+    as predicates, a trusted kernel small enough to audit, and the plan for
+    user-definable syntax. The survey below reduces the goal to six
+    requirements and scores every neighbouring language on them, disp
+    included.
+  </p>
+  <ol class="axes">
+    {#each langs.axes as ax (ax.id)}
+      {@const s = langs.disp[ax.id]}
+      <li>
+        <span class="ax-id">{ax.id}</span>
+        <div class="ax-body">
+          <h3>{ax.name}</h3>
+          <p>{@html ax.requiresHtml}</p>
+        </div>
+        <span
+          class="ax-pip lv{s.level ?? 'n'}"
+          title="disp today: {s.raw} {s.level == null
+            ? 'not scored'
+            : LEVEL_WORD[s.level]}"
+        >
+          {s.raw}
+          <small>{s.level == null ? "not scored" : LEVEL_WORD[s.level]}</small>
+        </span>
+      </li>
+    {/each}
+  </ol>
+  <p class="axes-key">
+    The pip on each row is where disp stands today, on the survey's own scale
+    (✗ absent · ◐ partial · ✅ has it). Text and scores come from
+    <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
+  </p>
 </section>
 
 <hr class="keyline container" />
 
-<!-- ============================== showcase ============================== -->
-<section class="showcase container">
-  <h2 class="sect-title">Examples</h2>
-  <p class="sect-sub">Click open in playground to check them out!</p>
-  <div class="tabs">
-    {#each showcase as ex, i}
-      <button
-        class="tab"
-        class:active={showcaseIdx === i}
-        onclick={() => (showcaseIdx = i)}
-      >
-        {ex.label.replace(/ \(.*\)/, "")}
-      </button>
-    {/each}
-    <div class="tab-space"></div>
-    <a
-      class="btn tab-run"
-      href="{base}/playground/?example={showcase[showcaseIdx].id}"
-    >
-      ▶ Open in playground
-    </a>
-  </div>
-  <pre class="show-code">{@html highlightDisp(
-      showcase[showcaseIdx].source.trim(),
-    )}</pre>
+<!-- ============================== comparisons ============================== -->
+<section class="compare container">
+  <h2 class="sect-title">Progress &amp; Comparisons</h2>
+  <p class="sect-sub">
+    Every language and system that aims near disp's goal, scored on the same
+    six axes ({langs.surveyed}). Sort by an axis to see who is ahead, pick up
+    to two to compare against disp. The full write-ups live in
+    <a href={langs.surveyUrl} target="_blank" rel="noopener"
+      >research/awesome-langs</a
+    >.
+  </p>
+  <Compare data={langs} />
 </section>
 
 <hr class="keyline container" />
@@ -789,8 +741,12 @@
     min-width: 0;
     flex: 1;
   }
-  /* ---------- features ---------- */
-  .features {
+  /* ---------- why ---------- */
+  .why,
+  .compare {
+    padding-block: 3.2rem;
+  }
+  .why {
     padding-top: 3.4rem;
   }
   .sect-title {
@@ -802,160 +758,75 @@
     max-width: 44rem;
     margin-top: 0;
   }
-  .feat-grid {
+  .goal {
+    color: var(--fg-muted);
+    max-width: 46rem;
+    font-size: 1.02rem;
+    line-height: 1.75;
+    margin: 0 0 1rem;
+  }
+  .axes {
+    list-style: none;
+    margin: 1.8rem 0 0;
+    padding: 0;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1.1rem;
-    margin-top: 1.6rem;
+    gap: 0.9rem 1.4rem;
   }
-  .feat h3 {
-    margin: 0 0 0.5rem;
-    font-size: 1.25rem;
+  .axes li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.8rem;
+    align-items: start;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-elev);
   }
-  .feat p {
-    color: var(--fg-muted);
-    font-size: 0.94rem;
-    margin: 0;
-  }
-  .feat-dot {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    margin-right: 0.45em;
-    border-radius: 50% 50% 50% 2px;
-    background: var(--grad-brand);
-    transform: rotate(45deg);
-  }
-  .features,
-  .showcase,
-  .selfcheck,
-  .involve {
-    padding-block: 3.2rem;
-  }
-
-  /* ---------- showcase ---------- */
-  .tabs {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.8rem;
-  }
-  .tab {
-    background: none;
-    border: 1px solid transparent;
-    color: var(--fg-muted);
-    font: inherit;
-    font-size: 0.9rem;
-    padding: 0.4em 0.9em;
-    border-radius: 999px;
-    cursor: pointer;
-  }
-  .tab:hover {
-    color: var(--fg);
-    background: var(--bg-panel-hover);
-  }
-  .tab.active {
-    color: var(--fg);
-    border-color: var(--border-strong);
-    background: var(--bg-panel);
-    box-shadow: inset 0 -2px 0 -0.5px var(--accent);
-  }
-  .tab-space {
-    flex: 1;
-  }
-  .tab-run {
-    font-size: 0.84rem;
-    padding: 0.4em 1em;
-  }
-  .show-code {
-    font-size: 0.8rem;
-    max-height: 430px;
-    overflow: auto;
-    line-height: 1.6;
-  }
-
-  /* ---------- self-check band ---------- */
-  .selfcheck {
-    text-align: center;
-  }
-  .selfcheck .sect-sub {
-    margin-inline: auto;
-  }
-  .chain {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    align-items: center;
-    gap: 0.45rem;
-    margin-top: 1.8rem;
+  .ax-id {
     font-family: var(--font-mono);
-    font-size: 0.82rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--accent);
+    padding-top: 0.2rem;
   }
-  .chip {
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    padding: 0.32em 0.85em;
-    background: var(--bg-panel);
-    animation: chipglow 6s ease-in-out calc(var(--d) * 0.75s) infinite;
+  .ax-body h3 {
+    margin: 0 0 0.25rem;
+    font-size: 1.05rem;
   }
-  @keyframes chipglow {
-    0%,
-    100% {
-      border-color: var(--border-strong);
-      box-shadow: none;
-    }
-    8% {
-      border-color: var(--g2);
-      box-shadow: 0 0 14px -2px color-mix(in oklab, var(--g2) 55%, transparent);
-    }
-    16% {
-      border-color: var(--border-strong);
-      box-shadow: none;
-    }
+  .ax-body p {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 0.88rem;
+    line-height: 1.55;
   }
-  .chev {
+  .ax-pip {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.1em;
+    min-width: 3.2rem;
+    padding: 0.3em 0.45em;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    line-height: 1.1;
+  }
+  .ax-pip small {
+    font-family: var(--font-body);
+    font-size: 0.62rem;
     color: var(--fg-faint);
   }
-  .loop {
-    margin-left: 0.5rem;
-    color: var(--g1);
-    border: 1px dashed color-mix(in oklab, var(--g1) 55%, transparent);
-    border-radius: 999px;
-    padding: 0.32em 0.85em;
+  .ax-pip.lv1 {
+    background: color-mix(in oklab, var(--accent) 18%, transparent);
   }
-
-  /* ---------- involve ---------- */
-  .inv-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1.1rem;
-    margin-top: 1.4rem;
+  .ax-pip.lv2 {
+    background: color-mix(in oklab, var(--accent) 42%, transparent);
   }
-  a.inv {
-    display: block;
-    text-decoration: none !important;
-    transition:
-      transform 0.15s ease,
-      border-color 0.15s ease;
-  }
-  a.inv:hover {
-    transform: translateY(-3px);
-    border-color: var(--fg-faint);
-  }
-  .inv h3 {
-    margin: 0 0 0.4rem;
-    font-size: 1.15rem;
-    color: var(--fg);
-  }
-  .inv p {
-    color: var(--fg-muted);
-    font-size: 0.9rem;
-    min-height: 3.2em;
-  }
-  .inv-cta {
-    color: var(--accent);
-    font-size: 0.9rem;
+  .axes-key {
+    margin: 0.9rem 0 0;
+    font-size: 0.8rem;
+    color: var(--fg-faint);
   }
 
   /* ---------- responsive ---------- */
@@ -974,8 +845,7 @@
     .hero-code {
       height: min(70vh, 34rem);
     }
-    .feat-grid,
-    .inv-grid {
+    .axes {
       grid-template-columns: minmax(0, 1fr);
     }
     /* the definition box drops under the wordmark on small screens */

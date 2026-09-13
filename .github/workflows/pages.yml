@@ -8,6 +8,8 @@ on:
     # examples) into the playground worker, so changes there redeploy too
     paths:
       - 'website/**'
+      # the landing page's comparison section is built from the survey files
+      - 'research/awesome-langs/**'
       - 'lib/**'
       - 'archive/live-kernel/**'
       - 'src/**'

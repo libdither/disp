@@ -1,6 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite'
 import { defineConfig, type Plugin } from 'vite'
 import { fileURLToPath } from 'node:url'
+import { awesomeLangs } from './src/lib/langs/loader.server.ts'
 
 // The playground bundles the real disp compiler (../src) into a web worker.
 // Two impedance mismatches to bridge:
@@ -36,7 +37,7 @@ function dispCompilerBridge(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [dispCompilerBridge(), sveltekit()],
+  plugins: [dispCompilerBridge(), awesomeLangs(), sveltekit()],
   server: { fs: { allow: ['..'] } },
   worker: {
     format: 'es',
