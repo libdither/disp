@@ -55,12 +55,12 @@ assignment (§13): blame flows from a failed whole back to the choices that made
 
 | Axis | Velvet/Loom/WybeCoder | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Inherits Lean metaprogramming; Loom generates verifiers *as* Lean developments, which is a real reflective move. |
-| A2 Spec power | ✅ | Full Lean + mathlib behind a Dafny-style surface. |
-| A3 Kernel | ✅ | Lean's kernel; Loom verifiers are *foundational* (proofs bottom out in Lean, not in a trusted VC generator). |
-| A4 Equality | ◐ | Lean's, plus SMT within its fragment. Not a rewrite-licensing relation. |
-| A5 Perf | ✗ | Imperative programs extracted for testing; no native systems backend, no cost model. |
-| A6 Search | **✅** | Best-documented agentic verified-synthesis loop with published benchmark numbers. |
+| A1 Reflection | ◐ (Lean meta) | Inherits Lean metaprogramming; Loom generates verifiers *as* Lean developments, which is a real reflective move. |
+| A2 Spec power | ✅ (Lean+mathlib) | Full Lean + mathlib behind a Dafny-style surface. |
+| A3 Kernel | ✅ (Lean kernel) | Lean's kernel; Loom verifiers are *foundational* (proofs bottom out in Lean, not in a trusted VC generator). |
+| A4 Equality | ◐ (Lean+SMT) | Lean's, plus SMT within its fragment. Not a rewrite-licensing relation. |
+| A5 Perf | ✗ (none) | Imperative programs extracted for testing; no native systems backend, no cost model. |
+| A6 Search | **✅** (agentic loop) | Best-documented agentic verified-synthesis loop with published benchmark numbers. |
 
 ## What disp could steal
 

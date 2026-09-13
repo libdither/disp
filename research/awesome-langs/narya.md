@@ -84,12 +84,12 @@ discipline.
 
 | Axis | Narya | Note |
 |---|---|---|
-| A1 Reflection | ✗ | No programs-as-data at all; even Agda's quotation API has no analogue. |
-| A2 Spec power | **✅** | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. |
-| A3 Kernel | ✗ | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). |
-| A4 Equality | **◐** | The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. |
-| A5 Perf | ✗ | No cost model, no performance story; correctness-first by design. |
-| A6 Search | ✗ | No synthesis; no tactics even. |
+| A1 Reflection | ✗ (none) | No programs-as-data at all; even Agda's quotation API has no analogue. |
+| A2 Spec power | **✅** (HoTT) | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. |
+| A3 Kernel | ✗ (big checker) | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). |
+| A4 Equality | **◐** (observational) | The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. |
+| A5 Perf | ✗ (none) | No cost model, no performance story; correctness-first by design. |
+| A6 Search | ✗ (none) | No synthesis; no tactics even. |
 
 ## What disp could steal
 

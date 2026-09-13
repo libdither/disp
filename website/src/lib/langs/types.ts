@@ -18,7 +18,8 @@ export interface Axis {
 export interface Score {
   level: 0 | 1 | 2 | null
   ahead: boolean
-  raw: string // the cell as written (◐→✅, ◐ᶠ, mostly ✗ …), bold stripped
+  raw: string // the cell as written (◐→✅, ◐ᶠ, mostly ✗ …), bold and tag stripped
+  tag?: string // how the level is reached: "quotation", "native", "SMT" …
   noteHtml?: string // the per-language scorecard note
 }
 

@@ -66,12 +66,12 @@ scope.
 
 | Axis | This cluster | Note |
 |---|---|---|
-| A1 Reflection | ◐ | fiat-crypto/bedrock2 live inside Rocq, so program synthesis is Gallina metaprogramming — reflective in the deep-embedding sense. |
-| A2 Spec power | ✅ | Full CIC (Rocq). Specs are dependent types. |
-| A3 Kernel | ✅ | Rocq's kernel; CryptOpt's equivalence checker is verified *in* Rocq. Textbook A3. |
-| A4 Equality | ◐ | A verified **equivalence checker** for straight-line assembly — a real, decidable, machine-checked licensing relation, but only for a tiny fragment. |
-| A5 Perf | **✅** | Beats GCC/Clang. Measured on-CPU. Shipping in BoringSSL. The best A5 result in this survey. |
-| A6 Search | **✅** | Randomized search with a real cost objective and a proof-carrying output. Narrow, but complete. |
+| A1 Reflection | ◐ (Gallina meta) | fiat-crypto/bedrock2 live inside Rocq, so program synthesis is Gallina metaprogramming — reflective in the deep-embedding sense. |
+| A2 Spec power | ✅ (CIC) | Full CIC (Rocq). Specs are dependent types. |
+| A3 Kernel | ✅ (Rocq kernel) | Rocq's kernel; CryptOpt's equivalence checker is verified *in* Rocq. Textbook A3. |
+| A4 Equality | ◐ (verified checker) | A verified **equivalence checker** for straight-line assembly — a real, decidable, machine-checked licensing relation, but only for a tiny fragment. |
+| A5 Perf | **✅** (beats GCC) | Beats GCC/Clang. Measured on-CPU. Shipping in BoringSSL. The best A5 result in this survey. |
+| A6 Search | **✅** (randomized) | Randomized search with a real cost objective and a proof-carrying output. Narrow, but complete. |
 
 ## What disp could steal
 

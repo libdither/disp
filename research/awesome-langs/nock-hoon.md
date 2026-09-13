@@ -161,12 +161,12 @@ improved since, and the core team kept 4K anyway.
 
 | Axis | Nock / Hoon | Note |
 |---|---|---|
-| A1 Reflection | ✅ | Formulas are nouns, opcode 2 is eval, no quotation; the metacircular interpreter is library code and jetted. The only other native-reflection entry, but nothing is checked with it. |
-| A2 Spec power | ◐ | Structural types with variance and wet genericity, vases for runtime typing; no dependent types, compiler-internal, and the authors would redesign it. |
-| A3 Kernel | ◐ | A page of spec, a conformance suite, and a decade of independent interpreters; then an unbounded trusted surface of jets with no evidence objects and no production differential check. |
-| A4 Equality | ✗ | Opcode 5 is structural; jets are asserted equivalences dispatched by intensional identity, and the dashboard has been rewritten repeatedly around that mismatch. |
-| A5 Perf | **◐** | Native C and Rust runtimes ahead of disp's tree-walkers; no cost model, cost as a value forbidden by design, and Skew's dispatch critique stands. |
-| A6 Search | ✗ | None; `honk`'s parity policy is a differential oracle, not a search. |
+| A1 Reflection | ✅ (native eval) | Formulas are nouns, opcode 2 is eval, no quotation; the metacircular interpreter is library code and jetted. The only other native-reflection entry, but nothing is checked with it. |
+| A2 Spec power | ◐ (structural) | Structural types with variance and wet genericity, vases for runtime typing; no dependent types, compiler-internal, and the authors would redesign it. |
+| A3 Kernel | ◐ (spec + jets) | A page of spec, a conformance suite, and a decade of independent interpreters; then an unbounded trusted surface of jets with no evidence objects and no production differential check. |
+| A4 Equality | ✗ (structural) | Opcode 5 is structural; jets are asserted equivalences dispatched by intensional identity, and the dashboard has been rewritten repeatedly around that mismatch. |
+| A5 Perf | **◐** (native runtimes) | Native C and Rust runtimes ahead of disp's tree-walkers; no cost model, cost as a value forbidden by design, and Skew's dispatch critique stands. |
+| A6 Search | ✗ (none) | None; `honk`'s parity policy is a differential oracle, not a search. |
 
 ## Where disp differs
 

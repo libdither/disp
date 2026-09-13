@@ -103,12 +103,12 @@ the linear fragment Eng's thesis proves (Theorem 70.5).
 
 | Axis | Stellogen | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Code is inert first-order terms matched by unification; no `eval`, no self-evaluator. |
-| A2 Spec power | ◐ | "Type system as library code" is the entire project; no dependent types, function types only for the linear λ fragment. |
-| A3 Kernel | ◐ | Two-part kernel with a normative spec and two trusted observations; trust rests on per-system paper theorems, no evidence objects. |
-| A4 Equality | ✗ | `==` is syntactic, order- and variable-name-sensitive by specification; no behavioral equality. |
-| A5 Perf | ✗ | None; docs admit concrete execution "has a horrible complexity" (repeated graph isomorphism). |
-| A6 Search | ✗ | None, and none intended. |
+| A1 Reflection | ◐ (inert terms) | Code is inert first-order terms matched by unification; no `eval`, no self-evaluator. |
+| A2 Spec power | ◐ (library types) | "Type system as library code" is the entire project; no dependent types, function types only for the linear λ fragment. |
+| A3 Kernel | ◐ (paper theorems) | Two-part kernel with a normative spec and two trusted observations; trust rests on per-system paper theorems, no evidence objects. |
+| A4 Equality | ✗ (syntactic) | `==` is syntactic, order- and variable-name-sensitive by specification; no behavioral equality. |
+| A5 Perf | ✗ (none) | None; docs admit concrete execution "has a horrible complexity" (repeated graph isomorphism). |
+| A6 Search | ✗ (none) | None, and none intended. |
 
 ## Where disp differs
 

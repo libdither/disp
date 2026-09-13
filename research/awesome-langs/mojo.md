@@ -58,12 +58,12 @@ a checker multiplying the cost score.
 
 | Axis | Mojo | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Same language at compile time, no quotation layer; `std/reflection` reads type structure. Terms are never data; the checker is C++. |
-| A2 Spec power | ◐ | Compile-time-value indexing, `where` clauses, conditional conformance, linear types. No propositions, no proofs, no runtime-value dependency. |
-| A3 Kernel | ✗ | Trust is the whole MLIR/LLVM C++ stack. Now visible, never small. |
-| A4 Equality | ✗ | MLIR rewrites are unverified compiler transforms; no semantic licensing, no certificates. |
-| A5 Perf | **✅** | The strongest hardware story in this survey: MLIR codegen for CPU/GPU/accelerators, vendor-class kernels, zero-cost flat structs. |
-| A6 Search | ◐ᶠ | Offline benchmark sweeps over kernel parameter grids, cost only, no checker in the loop; the in-language `autotune` was removed in v0.7.0. |
+| A1 Reflection | ◐ (staging) | Same language at compile time, no quotation layer; `std/reflection` reads type structure. Terms are never data; the checker is C++. |
+| A2 Spec power | ◐ (comptime values) | Compile-time-value indexing, `where` clauses, conditional conformance, linear types. No propositions, no proofs, no runtime-value dependency. |
+| A3 Kernel | ✗ (MLIR stack) | Trust is the whole MLIR/LLVM C++ stack. Now visible, never small. |
+| A4 Equality | ✗ (MLIR rewrites) | MLIR rewrites are unverified compiler transforms; no semantic licensing, no certificates. |
+| A5 Perf | **✅** (MLIR codegen) | The strongest hardware story in this survey: MLIR codegen for CPU/GPU/accelerators, vendor-class kernels, zero-cost flat structs. |
+| A6 Search | ◐ᶠ (param sweeps) | Offline benchmark sweeps over kernel parameter grids, cost only, no checker in the loop; the in-language `autotune` was removed in v0.7.0. |
 
 ## What disp could steal
 

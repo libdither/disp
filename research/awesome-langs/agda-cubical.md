@@ -57,12 +57,12 @@ what Agda gets for free.
 
 | Axis | Agda/Cubical | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Full reflection API, quotation-based. The best non-intensional A1. |
-| A2 Spec power | **✅** | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. |
-| A3 Kernel | ◐ | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. |
-| A4 Equality | **✅** | Cubical: computational univalence. The answer disp cites and has not integrated. |
-| A5 Perf | ✗ | GHC/JS backends, research-grade. No systems performance, no cost model. |
-| A6 Search | ✗ | Auto/agda-mode search is trivial. No synthesis. |
+| A1 Reflection | ◐ (quotation) | Full reflection API, quotation-based. The best non-intensional A1. |
+| A2 Spec power | **✅** (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. |
+| A3 Kernel | ◐ (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. |
+| A4 Equality | **✅** (cubical) | Cubical: computational univalence. The answer disp cites and has not integrated. |
+| A5 Perf | ✗ (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. |
+| A6 Search | ✗ (none) | Auto/agda-mode search is trivial. No synthesis. |
 
 ## What disp could steal
 

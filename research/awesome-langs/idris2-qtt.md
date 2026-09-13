@@ -48,12 +48,12 @@ one axis is.
 
 | Axis | Idris 2 | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Elaborator reflection, quotation-based. |
-| A2 Spec power | ✅ | Full dependent types + QTT. |
-| A3 Kernel | ✗ | No LCF kernel; typechecker is the TCB. |
-| A4 Equality | ✗ | Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. |
-| A5 Perf | ◐ | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. |
-| A6 Search | ✗ | Proof search (`auto`) is basic. No synthesis, no optimizer. |
+| A1 Reflection | ◐ (quotation) | Elaborator reflection, quotation-based. |
+| A2 Spec power | ✅ (dependent+QTT) | Full dependent types + QTT. |
+| A3 Kernel | ✗ (trusted checker) | No LCF kernel; typechecker is the TCB. |
+| A4 Equality | ✗ (intensional) | Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. |
+| A5 Perf | ◐ (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. |
+| A6 Search | ✗ (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. |
 
 ## What disp could steal
 

@@ -99,12 +99,12 @@ affine-only boundary disp measured.
 
 | Axis | Telomare | Note |
 |---|---|---|
-| A1 Reflection | ✗ | Closures are pairs, so a program can project a closure's *environment*; its code is an opaque `Defer`. No self-interpreter, no checker-in-the-language: every analysis is Haskell. |
-| A2 Spec power | ◐ | Static layer is STLC-shaped (no polymorphism, an `Any` escape). Refinements are predicates, checked statically only when the failure is unconditional. No dependent types, no proofs. |
-| A3 Kernel | ✗ | Trusted base is the whole compiler. `--certificate` is a *report*, not a re-checkable certificate; `.telc` artifacts carry counts nothing independent verifies. |
-| A4 Equality | ✗ | Structural only (`shallowEq1` for merging superpositions). No equivalence story. |
-| A5 Perf + cost | ◐ | Perf: Haskell tree-walker; sizing tic-tac-toe ≈ 70 s, a UDT test compile 5–6 min. Cost: a static, inferred, input-universal per-site bound (ahead of disp) plus a measured step/node meter (level with disp's `ApplyStats`). No hardware model. |
-| A6 Search | ✗ | No synthesis. The superposition evaluator exists but is pointed at bounds, not candidates. |
+| A1 Reflection | ✗ (env only) | Closures are pairs, so a program can project a closure's *environment*; its code is an opaque `Defer`. No self-interpreter, no checker-in-the-language: every analysis is Haskell. |
+| A2 Spec power | ◐ (STLC+refinements) | Static layer is STLC-shaped (no polymorphism, an `Any` escape). Refinements are predicates, checked statically only when the failure is unconditional. No dependent types, no proofs. |
+| A3 Kernel | ✗ (report only) | Trusted base is the whole compiler. `--certificate` is a *report*, not a re-checkable certificate; `.telc` artifacts carry counts nothing independent verifies. |
+| A4 Equality | ✗ (structural) | Structural only (`shallowEq1` for merging superpositions). No equivalence story. |
+| A5 Perf + cost | ◐ (static bounds) | Perf: Haskell tree-walker; sizing tic-tac-toe ≈ 70 s, a UDT test compile 5–6 min. Cost: a static, inferred, input-universal per-site bound (ahead of disp) plus a measured step/node meter (level with disp's `ApplyStats`). No hardware model. |
+| A6 Search | ✗ (none) | No synthesis. The superposition evaluator exists but is pointed at bounds, not candidates. |
 
 ## What disp could steal
 

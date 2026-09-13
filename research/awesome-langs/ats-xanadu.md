@@ -52,12 +52,12 @@ detail.
 
 | Axis | ATS3 | Note |
 |---|---|---|
-| A1 Reflection | ✗ | No programs-as-data. |
-| A2 Spec power | ✅ | Dependent + linear types, natively, for low-level code. |
-| A3 Kernel | ✗ | No LCF kernel; the typechecker is the TCB. |
-| A4 Equality | ✗ | Not addressed as a rewrite-licensing problem. |
-| A5 Perf | **✅** | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. |
-| A6 Search | ✗ | None. |
+| A1 Reflection | ✗ (none) | No programs-as-data. |
+| A2 Spec power | ✅ (dependent+linear) | Dependent + linear types, natively, for low-level code. |
+| A3 Kernel | ✗ (trusted checker) | No LCF kernel; the typechecker is the TCB. |
+| A4 Equality | ✗ (none) | Not addressed as a rewrite-licensing problem. |
+| A5 Perf | **✅** (to C) | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. |
+| A6 Search | ✗ (none) | None. |
 
 ## What disp could steal
 

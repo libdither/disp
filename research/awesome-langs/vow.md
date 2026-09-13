@@ -52,12 +52,12 @@ of a search procedure.
 
 | Axis | Vow | Note |
 |---|---|---|
-| A1 Reflection | ✗ | Deliberately not: macros and metaprogramming are *excluded* to keep the verifier tractable. Directly opposed to disp's A1. |
-| A2 Spec power | ◐ | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. |
-| A3 Kernel | ✗ | TCB = vowc + ESBMC. No certificates, no LCF split. |
-| A4 Equality | ✗ | Not addressed. |
-| A5 Perf | ✅ | Cranelift native codegen, linear types, self-hosted with byte-identical bootstrap. Real systems performance. |
-| A6 Search | ◐ | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. |
+| A1 Reflection | ✗ (excluded) | Deliberately not: macros and metaprogramming are *excluded* to keep the verifier tractable. Directly opposed to disp's A1. |
+| A2 Spec power | ◐ (contracts, BMC) | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. |
+| A3 Kernel | ✗ (BMC TCB) | TCB = vowc + ESBMC. No certificates, no LCF split. |
+| A4 Equality | ✗ (none) | Not addressed. |
+| A5 Perf | ✅ (Cranelift) | Cranelift native codegen, linear types, self-hosted with byte-identical bootstrap. Real systems performance. |
+| A6 Search | ◐ (CEGIS+LLM) | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. |
 
 ## What disp could steal
 

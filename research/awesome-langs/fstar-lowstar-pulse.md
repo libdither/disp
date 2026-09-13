@@ -50,12 +50,12 @@ evidence that A6 is being attacked from the F* side too.
 
 | Axis | F*/Low*/Pulse | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Meta-F* reflects F* syntax for tactics; deep embedding, not programs-as-data. |
-| A2 Spec power | **✅** | Full dependent types + refinements + effects + separation logic (Pulse). Production-proven expressiveness. |
-| A3 Kernel | ◐ | Trusted base is much larger than LCF-ideal: the F* typechecker *and* Z3 *and* KaRaMeL extraction are trusted. Bigger TCB than disp targets. |
-| A4 Equality | ◐ | SMT-decided equalities within its fragment — genuinely automates many rewrites, but it is "retreat to a decidable fragment" (FOUNDATIONS [P1]), not a general licensing relation. |
-| A5 Perf | **✅** | Low*→C→native; HACL* is competitive with hand-optimized C. The proof that verified code can be fast. |
-| A6 Search | ✗ | Humans write the code and the proofs. This is precisely disp's identified delta. |
+| A1 Reflection | ◐ (Meta-F*) | Meta-F* reflects F* syntax for tactics; deep embedding, not programs-as-data. |
+| A2 Spec power | **✅** (dependent+SMT) | Full dependent types + refinements + effects + separation logic (Pulse). Production-proven expressiveness. |
+| A3 Kernel | ◐ (big TCB) | Trusted base is much larger than LCF-ideal: the F* typechecker *and* Z3 *and* KaRaMeL extraction are trusted. Bigger TCB than disp targets. |
+| A4 Equality | ◐ (SMT fragment) | SMT-decided equalities within its fragment — genuinely automates many rewrites, but it is "retreat to a decidable fragment" (FOUNDATIONS [P1]), not a general licensing relation. |
+| A5 Perf | **✅** (via C) | Low*→C→native; HACL* is competitive with hand-optimized C. The proof that verified code can be fast. |
+| A6 Search | ✗ (human-written) | Humans write the code and the proofs. This is precisely disp's identified delta. |
 
 ## What disp could steal
 

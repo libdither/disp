@@ -48,12 +48,12 @@ and Q5 explicitly flags open gaps).
 
 | Axis | NanoLang | Note |
 |---|---|---|
-| A1 Reflection | ✗ | No programs-as-data. |
-| A2 Spec power | ✗ | No user-level spec language. The proofs are *about* the language, not written *in* it. |
-| A3 Kernel | ◐ | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. |
-| A4 Equality | ✗ | Not addressed. |
-| A5 Perf | ✅ | Transpiles to C; NanoISA sandbox for FFI. |
-| A6 Search | ◐ | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. |
+| A1 Reflection | ✗ (none) | No programs-as-data. |
+| A2 Spec power | ✗ (none) | No user-level spec language. The proofs are *about* the language, not written *in* it. |
+| A3 Kernel | ◐ (metatheory) | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. |
+| A4 Equality | ✗ (none) | Not addressed. |
+| A5 Perf | ✅ (to C) | Transpiles to C; NanoISA sandbox for FFI. |
+| A6 Search | ◐ (LLM target) | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. |
 
 ## What disp could steal
 

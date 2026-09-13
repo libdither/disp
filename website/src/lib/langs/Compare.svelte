@@ -104,7 +104,7 @@
       x: Math.min(ev.clientX + 14, window.innerWidth - 350),
       y: ev.clientY + 14,
       title: `${name} · ${id} ${axis?.short ?? ''}`,
-      html: `<b>${s.raw}</b> ${word}${s.ahead ? ' · <b>ahead of disp</b>' : ''}${s.noteHtml ? `<br>${s.noteHtml}` : ''}`
+      html: `<b>${s.raw}</b> ${word}${s.tag ? ` · ${s.tag}` : ''}${s.ahead ? ' · <b>ahead of disp</b>' : ''}${s.noteHtml ? `<br>${s.noteHtml}` : ''}`
     }
   }
   const hideTip = () => (tip = null)
@@ -146,17 +146,18 @@
                   </button>
                 </th>
               {/each}
-              <th class="closest">Closest to disp on</th>
             </tr>
           </thead>
           <tbody>
             <tr class="disp-row">
-              <th scope="row"><span class="rowname"><i class="sw" aria-hidden="true"></i>disp</span></th>
+              <th scope="row"><span class="rowname"><i class="sw" aria-hidden="true"></i>disp <small class="self">self-assessed</small></span></th>
               {#each data.axes as ax (ax.id)}
                 {@const s = data.disp[ax.id]}
-                <td class="cell {lv(s.level)}" onmouseenter={(e) => showTip(e, 'disp', ax.id, s)} onmouseleave={hideTip}>{s.raw}</td>
+                <td class="cell {lv(s.level)}" onmouseenter={(e) => showTip(e, 'disp', ax.id, s)} onmouseleave={hideTip}>
+                  {s.raw}
+                  {#if s.tag}<small class="how">{s.tag}</small>{/if}
+                </td>
               {/each}
-              <td class="closest">self-assessed, today</td>
             </tr>
             {#each rows as lang (lang.slug)}
               {@const pick = pickOf(lang.slug)}
@@ -168,13 +169,15 @@
                 </th>
                 {#each data.axes as ax (ax.id)}
                   {@const s = lang.scores[ax.id]}
-                  <td class="cell {lv(s.level)}" class:ahead={s.ahead} onmouseenter={(e) => showTip(e, lang.name, ax.id, s)} onmouseleave={hideTip}>{s.raw}</td>
+                  <td class="cell {lv(s.level)}" class:ahead={s.ahead} onmouseenter={(e) => showTip(e, lang.name, ax.id, s)} onmouseleave={hideTip}>
+                    {s.raw}
+                    {#if s.tag}<small class="how">{s.tag}</small>{/if}
+                  </td>
                 {/each}
-                <td class="closest">{@html lang.closestHtml}</td>
               </tr>
             {/each}
             {#if !rows.length}
-              <tr><td class="empty" colspan={data.axes.length + 2}>nothing matches</td></tr>
+              <tr><td class="empty" colspan={data.axes.length + 1}>nothing matches</td></tr>
             {/if}
           </tbody>
         </table>
@@ -182,6 +185,7 @@
       <p class="key">
         <span>✗ absent</span><span>◐ partial</span><span>✅ has it</span>
         <span><i class="ring-key" aria-hidden="true"></i> ahead of disp and worth stealing from</span>
+        <span>small text: how the level is reached</span>
         <span>— not scored</span>
         {#each Object.entries(data.footnotes) as [k, v] (k)}<span><sup>{k}</sup> {v}</span>{/each}
       </p>
@@ -227,6 +231,7 @@
                 <dt>
                   <span class="sym {lv(s.level)}">{s.raw}</span>
                   <span class="sc-ax">{ax.id} {ax.short}</span>
+                  {#if s.tag}<span class="sc-how">{s.tag}</span>{/if}
                   {#if s.ahead}<span class="tag">ahead of disp</span>{/if}
                 </dt>
                 <dd>{@html s.noteHtml ?? ''}</dd>
@@ -269,7 +274,7 @@
   }
   .top {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 330px;
+    grid-template-columns: minmax(0, 1fr) 310px;
     gap: 1.6rem;
     align-items: start;
   }
@@ -380,7 +385,7 @@
   }
   tbody th {
     font-weight: 500;
-    white-space: nowrap;
+    max-width: 11rem;
   }
   .rowbtn,
   .rowname {
@@ -431,11 +436,29 @@
   td.cell {
     text-align: center;
     font-family: var(--font-mono);
-    width: 3rem;
-    min-width: 3rem;
+    width: 5rem;
+    min-width: 5rem;
+    padding-inline: 0.25rem;
+    line-height: 1.2;
     /* the 2px surface gap between adjacent fills */
     border-left: 2px solid var(--bg-elev);
     cursor: help;
+  }
+  /* the how-tag: body face, small, wraps inside the cell */
+  td.cell .how {
+    display: block;
+    margin-top: 0.15rem;
+    font-family: var(--font-body);
+    font-size: 0.62rem;
+    font-weight: 400;
+    line-height: 1.15;
+    color: var(--fg-muted);
+    white-space: normal;
+  }
+  .self {
+    font-weight: 400;
+    font-size: 0.7rem;
+    color: var(--fg-faint);
   }
   td.lv1 {
     background: color-mix(in oklab, var(--accent) 18%, transparent);
@@ -449,11 +472,6 @@
   td.ahead {
     box-shadow: inset 0 0 0 2px var(--accent);
     font-weight: 700;
-  }
-  td.closest {
-    font-size: 0.78rem;
-    color: var(--fg-muted);
-    min-width: 10rem;
   }
   td.empty {
     text-align: center;
@@ -572,6 +590,10 @@
   }
   .sym.lv2 {
     background: color-mix(in oklab, var(--accent) 42%, transparent);
+  }
+  .sc-how {
+    font-weight: 400;
+    color: var(--fg-muted);
   }
   .tag {
     font-size: 0.68rem;

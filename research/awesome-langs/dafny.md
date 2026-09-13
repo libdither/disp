@@ -57,12 +57,12 @@ toward conventional languages.
 
 | Axis | Dafny | Note |
 |---|---|---|
-| A1 Reflection | ✗ | None. |
-| A2 Spec power | ◐ | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. |
-| A3 Kernel | ✗ | TCB = Dafny + Boogie + Z3. Large. |
-| A4 Equality | ◐ | SMT-fragment only. |
-| A5 Perf | ✗ | Managed backends. Not a systems language. |
-| A6 Search | **✅** | The best *LLM-writability* of any verification language, by a wide margin. |
+| A1 Reflection | ✗ (none) | None. |
+| A2 Spec power | ◐ (SMT) | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. |
+| A3 Kernel | ✗ (SMT TCB) | TCB = Dafny + Boogie + Z3. Large. |
+| A4 Equality | ◐ (SMT fragment) | SMT-fragment only. |
+| A5 Perf | ✗ (managed) | Managed backends. Not a systems language. |
+| A6 Search | **✅** (LLM-written) | The best *LLM-writability* of any verification language, by a wide margin. |
 
 ## What disp could steal
 

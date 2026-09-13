@@ -48,12 +48,12 @@ arguably a better fit for it than Lean's.
 
 | Axis | Acorn | Note |
 |---|---|---|
-| A1 Reflection | ✗ | None. |
-| A2 Spec power | ◐ | A real theorem-proving language, but aimed at mathematics; not dependent-type-strength program specification. |
-| A3 Kernel | ◐ | Has its own checker; TCB not characterized as an LCF kernel. |
-| A4 Equality | ✗ | Not addressed for program rewriting. |
-| A5 Perf | ✗ | Not a systems language at all. |
-| A6 Search | **✅** | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. |
+| A1 Reflection | ✗ (none) | None. |
+| A2 Spec power | ◐ (math prover) | A real theorem-proving language, but aimed at mathematics; not dependent-type-strength program specification. |
+| A3 Kernel | ◐ (own checker) | Has its own checker; TCB not characterized as an LCF kernel. |
+| A4 Equality | ✗ (none) | Not addressed for program rewriting. |
+| A5 Perf | ✗ (none) | Not a systems language at all. |
+| A6 Search | **✅** (local neural) | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. |
 
 ## What disp could steal
 

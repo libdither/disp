@@ -49,12 +49,12 @@ engine. That is a genuinely different way to cash in the same theory.
 
 | Axis | Soma | Note |
 |---|---|---|
-| A1 Reflection | ✗ | No programs-as-data; conventional compiler pipeline. |
-| A2 Spec power | ✅ | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. |
-| A3 Kernel | ✗ | No LCF kernel; trust the compiler. |
-| A4 Equality | ✗ | Not addressed. |
-| A5 Perf | **✅** | LLVM native, GC-free, flat types at C cost. Best A5 among the dependently-typed indies. |
-| A6 Search | ✗ | None. |
+| A1 Reflection | ✗ (none) | No programs-as-data; conventional compiler pipeline. |
+| A2 Spec power | ✅ (dependent+QTT) | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. |
+| A3 Kernel | ✗ (trusted compiler) | No LCF kernel; trust the compiler. |
+| A4 Equality | ✗ (none) | Not addressed. |
+| A5 Perf | **✅** (LLVM native) | LLVM native, GC-free, flat types at C cost. Best A5 among the dependently-typed indies. |
+| A6 Search | ✗ (none) | None. |
 
 ## What disp could steal
 

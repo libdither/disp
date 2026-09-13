@@ -45,12 +45,12 @@ requiring dependent types for everything, it uses a separation-logic frontend
 
 | Axis | CakeML/Pancake | Note |
 |---|---|---|
-| A1 Reflection | ✗ | Conventional verified compiler; no programs-as-data. |
-| A2 Spec power | ◐ | HOL4 for the compiler proof (very strong); Viper/separation logic for user code (decidable fragment). Not dependent types in the user language. |
-| A3 Kernel | ✅ | HOL4's LCF kernel — the original LCF architecture disp's §4 descends from. |
-| A4 Equality | ◐ | Compiler correctness *is* a semantics-preservation relation — the most industrial-strength "these two programs are equivalent" machinery in existence, but proved per-compiler-pass by humans, not searched. |
-| A5 Perf | **✅** | Verified native code. Pancake drivers are performant and run in production-ish settings (LionsOS/seL4). |
-| A6 Search | ✗ | None. All proofs and code are human-written. |
+| A1 Reflection | ✗ (none) | Conventional verified compiler; no programs-as-data. |
+| A2 Spec power | ◐ (HOL4+sep logic) | HOL4 for the compiler proof (very strong); Viper/separation logic for user code (decidable fragment). Not dependent types in the user language. |
+| A3 Kernel | ✅ (HOL4 LCF) | HOL4's LCF kernel — the original LCF architecture disp's §4 descends from. |
+| A4 Equality | ◐ (compiler proof) | Compiler correctness *is* a semantics-preservation relation — the most industrial-strength "these two programs are equivalent" machinery in existence, but proved per-compiler-pass by humans, not searched. |
+| A5 Perf | **✅** (verified native) | Verified native code. Pancake drivers are performant and run in production-ish settings (LionsOS/seL4). |
+| A6 Search | ✗ (none) | None. All proofs and code are human-written. |
 
 ## What disp could steal
 

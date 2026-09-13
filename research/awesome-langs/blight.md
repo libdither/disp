@@ -44,12 +44,12 @@ than most academic kernels manage.
 
 | Axis | Blight | Note |
 |---|---|---|
-| A1 Reflection | ◐ | S-expression syntax and a tower/kernel split invite metaprogramming, but no native programs-as-data. |
-| A2 Spec power | **✅** | Cubical + QTT + effects is a *more* ambitious type theory than disp currently implements. |
-| A3 Kernel | ✅ | Same architecture as disp, plus an independent second checker. |
-| A4 Equality | **✅** | Cubical: computational univalence and higher inductive types — the heavyweight-but-real answer disp cites in §7 but hasn't integrated. |
-| A5 Perf | ✗ | No native backend, no cost model. Rust host, research-scale. |
-| A6 Search | ✗ | Tactics are human-written. No synthesis. |
+| A1 Reflection | ◐ (s-expressions) | S-expression syntax and a tower/kernel split invite metaprogramming, but no native programs-as-data. |
+| A2 Spec power | **✅** (cubical+QTT) | Cubical + QTT + effects is a *more* ambitious type theory than disp currently implements. |
+| A3 Kernel | ✅ (LCF, two checkers) | Same architecture as disp, plus an independent second checker. |
+| A4 Equality | **✅** (cubical) | Cubical: computational univalence and higher inductive types — the heavyweight-but-real answer disp cites in §7 but hasn't integrated. |
+| A5 Perf | ✗ (none) | No native backend, no cost model. Rust host, research-scale. |
+| A6 Search | ✗ (tactics) | Tactics are human-written. No synthesis. |
 
 ## What disp could steal
 

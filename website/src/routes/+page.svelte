@@ -359,17 +359,17 @@
           class="ax-pip lv{s.level ?? 'n'}"
           title="disp today: {s.raw} {s.level == null
             ? 'not scored'
-            : LEVEL_WORD[s.level]}"
+            : LEVEL_WORD[s.level]}{s.tag ? ` (${s.tag})` : ''}"
         >
           {s.raw}
-          <small>{s.level == null ? "not scored" : LEVEL_WORD[s.level]}</small>
+          <small>{s.tag ?? (s.level == null ? "not scored" : LEVEL_WORD[s.level])}</small>
         </span>
       </li>
     {/each}
   </ol>
   <p class="axes-key">
     The pip on each row is where disp stands today, on the survey's own scale
-    (✗ absent · ◐ partial · ✅ has it). Text and scores come from
+    (✗ absent · ◐ partial · ✅ has it) with a word for how. Text and scores come from
     <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
   </p>
 </section>
@@ -806,6 +806,8 @@
     align-items: center;
     gap: 0.1em;
     min-width: 3.2rem;
+    max-width: 6.5rem;
+    text-align: center;
     padding: 0.3em 0.45em;
     border-radius: 8px;
     font-family: var(--font-mono);

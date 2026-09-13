@@ -53,12 +53,12 @@ by *specification minimalism* rather than by an in-repo harness.
 
 | Axis | MM0 | Note |
 |---|---|---|
-| A1 Reflection | ◐ | MM0 formalizes MM0, but via explicit deep embedding, not native programs-as-data. No tree-calculus-style intensionality. |
-| A2 Spec power | ◐ | Interpretable as a subset of HOL — deliberately *weaker* than dependent types. Expressiveness was traded away for verifier simplicity. |
-| A3 Kernel | **✅** | The strongest trusted-core story in existence: a C verifier small enough to formalize, with the whole authoring layer untrusted and proof-producing. |
-| A4 Equality | ✗ | Not addressed — MM0 is a proof format, not an optimizing calculus. No rewrite-licensing notion. |
-| A5 Perf | **◐** | Checking is Metamath-fast (seconds for huge libraries). MMC compiles to verified x86. But MM0 is not a general-purpose systems language you'd write applications in. |
-| A6 Search | ✗ | No synthesis. MM1 tactics are human-written metaprogramming. |
+| A1 Reflection | ◐ (deep embedding) | MM0 formalizes MM0, but via explicit deep embedding, not native programs-as-data. No tree-calculus-style intensionality. |
+| A2 Spec power | ◐ (HOL subset) | Interpretable as a subset of HOL — deliberately *weaker* than dependent types. Expressiveness was traded away for verifier simplicity. |
+| A3 Kernel | **✅** (tiny C verifier) | The strongest trusted-core story in existence: a C verifier small enough to formalize, with the whole authoring layer untrusted and proof-producing. |
+| A4 Equality | ✗ (proof format) | Not addressed — MM0 is a proof format, not an optimizing calculus. No rewrite-licensing notion. |
+| A5 Perf | **◐** (verified x86) | Checking is Metamath-fast (seconds for huge libraries). MMC compiles to verified x86. But MM0 is not a general-purpose systems language you'd write applications in. |
+| A6 Search | ✗ (none) | No synthesis. MM1 tactics are human-written metaprogramming. |
 
 ## What disp could steal
 

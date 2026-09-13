@@ -66,12 +66,12 @@ This matters to disp for two reasons:
 
 | Axis | Salt (claimed) | Note |
 |---|---|---|
-| A1 Reflection | ✗ | None. |
-| A2 Spec power | ◐ | Z3 contracts: bounds, postconditions, quantifiers, loop invariants, bitvectors. SMT-shaped, not dependent. |
-| A3 Kernel | ✗ | TCB = saltc + Z3 + MLIR. |
-| A4 Equality | ✗ | Not addressed. |
-| A5 Perf | ◐ (unverified) | MLIR→LLVM, claims `-O3` parity, compiler-checked arena regions. Plausible design; unverified claim. |
-| A6 Search | ✗ | Not agent-oriented; no synthesis. |
+| A1 Reflection | ✗ (none) | None. |
+| A2 Spec power | ◐ (SMT contracts) | Z3 contracts: bounds, postconditions, quantifiers, loop invariants, bitvectors. SMT-shaped, not dependent. |
+| A3 Kernel | ✗ (SMT TCB) | TCB = saltc + Z3 + MLIR. |
+| A4 Equality | ✗ (none) | Not addressed. |
+| A5 Perf | ◐ (claimed) | MLIR→LLVM, claims `-O3` parity, compiler-checked arena regions. Plausible design; unverified claim. |
+| A6 Search | ✗ (none) | Not agent-oriented; no synthesis. |
 
 ## What disp could steal
 

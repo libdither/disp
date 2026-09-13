@@ -62,12 +62,12 @@ retrofitting.
 
 | Axis | Cluster | Note |
 |---|---|---|
-| A1 Reflection | ✗ | None. Structurally impossible in the two-layer design. |
-| A2 Spec power | ◐–✅ | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). |
-| A3 Kernel | ◐ | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. |
-| A4 Equality | ◐ | Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. |
-| A5 Perf | **✅** | It is Rust. Nothing to prove. |
-| A6 Search | ◐ | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. |
+| A1 Reflection | ✗ (two-layer) | None. Structurally impossible in the two-layer design. |
+| A2 Spec power | ◐–✅ (refinement–Iris) | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). |
+| A3 Kernel | ◐ (per tool) | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. |
+| A4 Equality | ◐ (per tool) | Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. |
+| A5 Perf | **✅** (Rust) | It is Rust. Nothing to prove. |
+| A6 Search | ◐ (harness gen) | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. |
 
 ## What disp could steal
 

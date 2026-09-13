@@ -51,12 +51,12 @@ Reflection is affordable **if you can drop out of it on demand**.
 
 | Axis | LogosLang | Note |
 |---|---|---|
-| A1 Reflection | ◐ | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. |
-| A2 Spec power | ◐ (design only) | A "proof layer" is specified. No type theory exists yet. |
-| A3 Kernel | ✗ | No kernel discipline described. |
-| A4 Equality | ✗ | The "rewriting engine" is named but unspecified. |
-| A5 Perf | ✅ | Cranelift JIT, measured, 3× vectorized C. Ships binaries for three platforms. |
-| A6 Search | ✗ | None. |
+| A1 Reflection | ◐ (logic graph) | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. |
+| A2 Spec power | ◐ (designed) | A "proof layer" is specified. No type theory exists yet. |
+| A3 Kernel | ✗ (none) | No kernel discipline described. |
+| A4 Equality | ✗ (unspecified) | The "rewriting engine" is named but unspecified. |
+| A5 Perf | ✅ (Cranelift JIT) | Cranelift JIT, measured, 3× vectorized C. Ships binaries for three platforms. |
+| A6 Search | ✗ (none) | None. |
 
 ## What disp could steal
 

@@ -49,12 +49,12 @@ scaffolding changes that dramatically (see `velvet-loom-wybecoder.md`).
 
 | Axis | Lean 4 | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. |
-| A2 Spec power | **✅** | Full dependent types + universes + mathlib. Far more spec power than disp has today. |
-| A3 Kernel | ✅ | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. |
-| A4 Equality | ◐ | Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. |
-| A5 Perf | ◐ | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. |
-| A6 Search | **◐→✅** | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. |
+| A1 Reflection | ◐ (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. |
+| A2 Spec power | **✅** (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. |
+| A3 Kernel | ✅ (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. |
+| A4 Equality | ◐ (tactics) | Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. |
+| A5 Perf | ◐ (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. |
+| A6 Search | **◐→✅** (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. |
 
 ## What disp could steal
 

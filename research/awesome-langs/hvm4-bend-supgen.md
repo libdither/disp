@@ -54,12 +54,12 @@ previously-intractable O(n log n) sort found this way, and — importantly — i
 
 | Axis | HVM4/Bend2 | Note |
 |---|---|---|
-| A1 Reflection | ◐ | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. |
-| A2 Spec power | ◐ | Bend2 *plans* dependent types + proofs; HVM4 itself is untyped. Not shipped. |
-| A3 Kernel | ✗ | No LCF kernel, no evidence discipline. Trust = trust `hvm.c`. |
-| A4 Equality | ✗ | Affine/optimal-sharing semantics, no equivalence-licensing story at all. |
-| A5 Perf | **✅** | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2. |
-| A6 Search | **✅** | The only project anywhere with superposition-based program search *in the runtime*. |
+| A1 Reflection | ◐ (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. |
+| A2 Spec power | ◐ (planned) | Bend2 *plans* dependent types + proofs; HVM4 itself is untyped. Not shipped. |
+| A3 Kernel | ✗ (trust hvm.c) | No LCF kernel, no evidence discipline. Trust = trust `hvm.c`. |
+| A4 Equality | ✗ (none) | Affine/optimal-sharing semantics, no equivalence-licensing story at all. |
+| A5 Perf | **✅** (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2. |
+| A6 Search | **✅** (superposition) | The only project anywhere with superposition-based program search *in the runtime*. |
 
 ## What disp could steal
 

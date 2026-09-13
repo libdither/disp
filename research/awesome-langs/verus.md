@@ -40,12 +40,12 @@ in existence that the FOUNDATIONS §15 paradigm works on systems code.
 
 | Axis | Verus | Note |
 |---|---|---|
-| A1 Reflection | ✗ | No programs-as-data. Ghost code is erased, not inspectable. The checker is not a Verus program. |
-| A2 Spec power | ◐ | Rich first-order + quantifiers + linear ghost state; **not** dependent types. Deliberately SMT-shaped ([P1] retreat). |
-| A3 Kernel | ✗ | TCB = Verus + Z3 + rustc. No LCF discipline, no certificates. |
-| A4 Equality | ◐ | SMT-fragment equality; no rewrite-licensing relation, no optimizer. |
-| A5 Perf | **✅** | *It is Rust.* Native, zero-overhead, real kernels and allocators verified and shipped. Best A5 in the survey. |
-| A6 Search | **✅** | Best-demonstrated spec→implementation loop for systems code, with cost in the loop (IDS). |
+| A1 Reflection | ✗ (erased) | No programs-as-data. Ghost code is erased, not inspectable. The checker is not a Verus program. |
+| A2 Spec power | ◐ (SMT) | Rich first-order + quantifiers + linear ghost state; **not** dependent types. Deliberately SMT-shaped ([P1] retreat). |
+| A3 Kernel | ✗ (SMT TCB) | TCB = Verus + Z3 + rustc. No LCF discipline, no certificates. |
+| A4 Equality | ◐ (SMT fragment) | SMT-fragment equality; no rewrite-licensing relation, no optimizer. |
+| A5 Perf | **✅** (Rust) | *It is Rust.* Native, zero-overhead, real kernels and allocators verified and shipped. Best A5 in the survey. |
+| A6 Search | **✅** (LLM, cost loop) | Best-demonstrated spec→implementation loop for systems code, with cost in the loop (IDS). |
 
 ## What disp could steal
 

@@ -46,12 +46,12 @@ it looks like when applied to the whole type theory.
 
 | Axis | Nova | Note |
 |---|---|---|
-| A1 Reflection | ✗ | Standard elaborator/kernel pipeline; no programs-as-data. |
-| A2 Spec power | **✅** | Full extensional MLTT — strictly stronger equality story than disp has. |
-| A3 Kernel | ✅ | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. |
-| A4 Equality | **✅** | Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. |
-| A5 Perf | ✗ | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. |
-| A6 Search | ✗ | No synthesis. |
+| A1 Reflection | ✗ (none) | Standard elaborator/kernel pipeline; no programs-as-data. |
+| A2 Spec power | **✅** (extensional MLTT) | Full extensional MLTT — strictly stronger equality story than disp has. |
+| A3 Kernel | ✅ (certificates) | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. |
+| A4 Equality | **✅** (extensional) | Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. |
+| A5 Perf | ✗ (none) | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. |
+| A6 Search | ✗ (none) | No synthesis. |
 
 ## What disp could steal
 

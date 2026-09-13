@@ -32,14 +32,18 @@ const inline = (s: string) => md.parseInline(s.trim(), { async: false })
 const read = (file: string) => readFileSync(join(DIR, file), 'utf-8')
 const cells = (row: string) => row.split('|').slice(1, -1).map((c) => c.trim())
 
-/// One table cell of the rating key: bold = ahead of disp; the first symbol
-/// is the level (◐→✅ reads as ◐: the conservative end), the rest stays raw.
+/// One table cell of the rating key: bold = ahead of disp; a trailing
+/// "(tag)" says how the level is reached; the first symbol is the level
+/// (◐→✅ reads as ◐: the conservative end), the rest stays raw.
 function parseCell(cell: string): Score {
   const ahead = /\*\*.*\*\*/.test(cell)
-  const raw = cell.replaceAll('**', '').trim()
+  let raw = cell.replaceAll('**', '').trim()
+  const tm = raw.match(/\(([^)]+)\)\s*$/)
+  const tag = tm?.[1].trim()
+  if (tm) raw = raw.slice(0, tm.index).trim()
   const sym = [...raw].find((c) => c === '✅' || c === '◐' || c === '✗')
   const level = sym === '✅' ? 2 : sym === '◐' ? 1 : sym === '✗' ? 0 : null
-  return { level, ahead, raw }
+  return { level, ahead, raw, tag }
 }
 
 /// Rows shaped `| A1 Reflection | ◐ | note |` (per-language scorecards and
@@ -118,8 +122,12 @@ export function loadLangs(): LangsData {
       const file = m[3]
       const detail = parseLangFile(file)
       const scores = {} as Record<AxisId, Score>
+      // the master table carries the level; the write-up's scorecard carries
+      // the how-tag and the note
       AXIS_IDS.forEach((id, i) => {
-        scores[id] = { ...parseCell(rest[i] ?? ''), noteHtml: detail.notes[id]?.noteHtml }
+        const master = parseCell(rest[i] ?? '')
+        const note = detail.notes[id]
+        scores[id] = { ...master, tag: note?.tag ?? master.tag, noteHtml: note?.noteHtml }
       })
       langs.push({
         slug: file.replace(/\.md$/, ''),
