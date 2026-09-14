@@ -356,19 +356,21 @@
         </div>
         <span
           class="ax-pip lv{s.level ?? 'n'}"
-          title="disp today: {s.raw} {s.level == null
+          style:--fill={s.pct ?? 0}
+          title="disp today: {s.pct != null ? `${s.pct}% of the requirement, ` : ''}{s.raw} {s.level == null
             ? 'not scored'
             : LEVEL_WORD[s.level]}{s.tag ? ` (${s.tag})` : ''}"
         >
-          {s.raw}
+          <span class="pip-score">{s.raw}{#if s.pct != null}<b>{s.pct}%</b>{/if}</span>
           <small>{s.tag ?? (s.level == null ? "not scored" : LEVEL_WORD[s.level])}</small>
         </span>
       </li>
     {/each}
   </ol>
   <p class="axes-key">
-    The pip on each row is where disp stands today, on the survey's own scale
-    (✗ absent · ◐ partial · ✅ has it) with a word for how. Text and scores come from
+    The pip on each row is where disp stands today: the share of that axis's
+    requirement met (three clauses each), the symbol it derives (✗ under 25% · ◐ ·
+    ✅ from 80%), and a word for how. Text and scores come from
     <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
   </p>
   <div class="teaser card">
@@ -376,7 +378,7 @@
       {summary.count} neighbouring projects are scored on the same six axes.
       None of them combines native reflection with search, the pair disp is
       built around, and disp is last on equality, where several small projects
-      already have answers. Per axis, the survey rates these ahead of disp:
+      already have answers. Per axis, these score higher than disp:
     </p>
     <ul class="ahead-list">
       {#each summary.axes as ax (ax.id)}
@@ -390,7 +392,7 @@
                   : ""}<a href="{base}/compare/?lang={l.slug}">{l.name}</a
                 >{/each}
             {:else}
-              <span class="nobody">nobody rated ahead</span>
+              <span class="nobody">nobody scores higher</span>
             {/if}
           </span>
         </li>
@@ -813,8 +815,8 @@
     flex-direction: column;
     align-items: center;
     gap: 0.1em;
-    min-width: 3.2rem;
-    max-width: 6.5rem;
+    min-width: 4rem;
+    max-width: 7rem;
     text-align: center;
     padding: 0.3em 0.45em;
     border-radius: 8px;
@@ -827,11 +829,18 @@
     font-size: 0.62rem;
     color: var(--fg-faint);
   }
-  .ax-pip.lv1 {
-    background: color-mix(in oklab, var(--accent) 18%, transparent);
+  .ax-pip {
+    background: color-mix(in oklab, var(--accent) calc(var(--fill, 0) * 0.45%), transparent);
   }
-  .ax-pip.lv2 {
-    background: color-mix(in oklab, var(--accent) 42%, transparent);
+  .pip-score {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3em;
+  }
+  .pip-score b {
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    font-weight: 600;
   }
   .axes-key {
     margin: 0.9rem 0 0;

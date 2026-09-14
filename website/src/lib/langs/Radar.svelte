@@ -1,16 +1,16 @@
 <script lang="ts">
-  // A six-axis radar: disp's profile against the picked languages. Levels are
-  // the survey's 0/1/2 (✗/◐/✅); the zero ring sits off-centre so an all-✗
-  // profile is still a visible hexagon. A dashed ring on a vertex marks the
-  // survey's "ahead of disp". Colours arrive as CSS variables so a series
-  // keeps its hue across theme changes.
+  // A six-axis radar: disp's profile against the picked languages. Values are
+  // percentages of disp's requirement (the outer ring is 100%); the zero ring
+  // sits off-centre so an all-zero profile is still a visible hexagon. A
+  // dashed ring on a vertex marks a project ahead of disp. Colours arrive as
+  // CSS variables so a series keeps its hue across theme changes.
   import type { Axis } from './types'
 
   export interface RadarSeries {
     key: string
     name: string
     color: string
-    levels: (number | null)[]
+    values: (number | null)[] // 0–100
     ahead: boolean[]
   }
   interface Props {
@@ -26,13 +26,13 @@
   const CY = 170
   const R = 112
   const R0 = 20
-  const RING_SYM = ['✗', '◐', '✅']
+  const RINGS = [25, 50, 75, 100]
 
   const angle = (i: number) => -Math.PI / 2 + (i * 2 * Math.PI) / axes.length
-  const radius = (level: number | null) => R0 + ((R - R0) * (level ?? 0)) / 2
+  const radius = (v: number | null) => R0 + ((R - R0) * (v ?? 0)) / 100
   const pt = (i: number, r: number) => [CX + r * Math.cos(angle(i)), CY + r * Math.sin(angle(i))] as const
-  const ring = (level: number) => axes.map((_, i) => pt(i, radius(level)).join(',')).join(' ')
-  const poly = (s: RadarSeries) => axes.map((_, i) => pt(i, radius(s.levels[i])).join(',')).join(' ')
+  const ring = (v: number) => axes.map((_, i) => pt(i, radius(v)).join(',')).join(' ')
+  const poly = (s: RadarSeries) => axes.map((_, i) => pt(i, radius(s.values[i])).join(',')).join(' ')
   // labels hang off the spoke ends: anchored by side, nudged up on the top half
   const anchor = (i: number) => {
     const c = Math.cos(angle(i))
@@ -46,9 +46,10 @@
 
 <figure class="radar">
   <svg viewBox="0 0 {W} {H}" role="img" aria-label="disp and the picked languages on the six axes">
-    {#each [0, 1, 2] as lv (lv)}
-      <polygon class="ring" class:outer={lv === 2} points={ring(lv)} />
-      <text class="ring-lbl" x={CX + 5} y={CY - radius(lv) - 3}>{RING_SYM[lv]}</text>
+    <polygon class="ring" points={ring(0)} />
+    {#each RINGS as v (v)}
+      <polygon class="ring" class:outer={v === 100} points={ring(v)} />
+      <text class="ring-lbl" x={CX + 5} y={CY - radius(v) - 3}>{v}%</text>
     {/each}
     {#each axes as ax, i (ax.id)}
       {@const [x, y] = pt(i, R)}
@@ -64,15 +65,15 @@
     {/each}
     {#each series as s (s.key)}
       {#each axes as ax, i (ax.id)}
-        {@const [x, y] = pt(i, radius(s.levels[i]))}
+        {@const [x, y] = pt(i, radius(s.values[i]))}
         {#if s.ahead[i]}
           <circle class="ahead" cx={x} cy={y} r="8.5" style:stroke={s.color} />
         {/if}
-        <circle class="dot" class:hollow={s.levels[i] == null} cx={x} cy={y} r="4.5" style:fill={s.color} style:stroke={s.levels[i] == null ? s.color : null} />
+        <circle class="dot" class:hollow={s.values[i] == null} cx={x} cy={y} r="4.5" style:fill={s.color} style:stroke={s.values[i] == null ? s.color : null} />
         <circle
           class="hit"
           role="graphics-symbol"
-          aria-label="{s.name} on {ax.short}: {s.levels[i] == null ? 'not scored' : RING_SYM[s.levels[i] ?? 0]}"
+          aria-label="{s.name} on {ax.short}: {s.values[i] == null ? 'not scored' : s.values[i] + '%'}"
           cx={x}
           cy={y}
           r="12"

@@ -13,13 +13,18 @@ export interface Axis {
   short: string // "Reflection"
   requiresHtml: string // what disp needs, from _AXES.md
   source: string // where the requirement comes from (GOALS / FOUNDATIONS refs)
+  clauses: string[] // the three clauses 100% means, plain text
 }
 
 export interface Score {
-  level: 0 | 1 | 2 | null
-  ahead: boolean
-  raw: string // the cell as written (◐→✅, ◐ᶠ, mostly ✗ …), bold and tag stripped
+  level: 0 | 1 | 2 | null // derived from pct when present: ✗ below 25, ◐ to 79, ✅ from 80
+  pct?: number // percent of disp's requirement met, the mean of three clauses
+  provisional?: boolean // a clause the write-up leaves open
+  ahead: boolean // a higher pct than disp's on the axis (the master table's bold when no pct)
+  raw: string // the symbol as written, with any footnote superscript
   tag?: string // how the level is reached: "quotation", "native", "SMT" …
+  clauses?: string // "1 · 0 · ½†"
+  whyHtml?: string // the clause-level justification
   noteHtml?: string // the per-language scorecard note
 }
 

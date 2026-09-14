@@ -23,7 +23,7 @@
 
   const scored = $derived(data.langs.filter((l) => l.scored))
   const unscored = $derived(data.langs.filter((l) => !l.scored))
-  const rank = (l: Lang, id: AxisId) => (l.scores[id].level ?? -1) + (l.scores[id].ahead ? 0.5 : 0)
+  const rank = (l: Lang, id: AxisId) => l.scores[id].pct ?? (l.scores[id].level == null ? -1 : l.scores[id].level * 50)
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase()
     let out = scored.filter((l) => !q || l.name.toLowerCase().includes(q))
@@ -72,12 +72,14 @@
     for (const slug of want) if (langOf(slug)?.scored && !pickOf(slug)) toggle(slug, false)
   })
 
+  // a cell without a percentage (none today) falls back to its level
+  const value = (s: Score) => s.pct ?? (s.level == null ? null : s.level * 50)
   const series = $derived<RadarSeries[]>([
     {
       key: 'disp',
       name: 'disp',
       color: 'var(--cmp-0)',
-      levels: AXIS_IDS.map((id) => data.disp[id].level),
+      values: AXIS_IDS.map((id) => value(data.disp[id])),
       ahead: AXIS_IDS.map(() => false)
     },
     ...picks.flatMap((p) => {
@@ -88,7 +90,7 @@
           key: l.slug,
           name: l.name,
           color: SLOT_COLORS[p.slot],
-          levels: AXIS_IDS.map((id) => l.scores[id].level),
+          values: AXIS_IDS.map((id) => value(l.scores[id])),
           ahead: AXIS_IDS.map((id) => l.scores[id].ahead)
         }
       ]
@@ -100,11 +102,13 @@
   function showTip(ev: MouseEvent, name: string, id: AxisId, s: Score): void {
     const axis = data.axes.find((a) => a.id === id)
     const word = s.level == null ? 'not scored' : LEVEL_WORD[s.level]
+    const head = `<b>${s.raw}${s.pct != null ? ` ${s.pct}%${s.provisional ? '?' : ''}` : ''}</b> ${word}${s.tag ? ` · ${s.tag}` : ''}${s.ahead ? ' · <b>ahead of disp</b>' : ''}`
+    const clauses = s.clauses ? `<br><span class="tip-clauses">${s.clauses}</span>${s.whyHtml ? ` — ${s.whyHtml}` : ''}` : ''
     tip = {
       x: Math.min(ev.clientX + 14, window.innerWidth - 350),
       y: ev.clientY + 14,
       title: `${name} · ${id} ${axis?.short ?? ''}`,
-      html: `<b>${s.raw}</b> ${word}${s.tag ? ` · ${s.tag}` : ''}${s.ahead ? ' · <b>ahead of disp</b>' : ''}${s.noteHtml ? `<br>${s.noteHtml}` : ''}`
+      html: `${head}${clauses}${s.noteHtml ? `<br>${s.noteHtml}` : ''}`
     }
   }
   const hideTip = () => (tip = null)
@@ -119,6 +123,7 @@
   }
 
   const lv = (level: number | null) => (level == null ? 'lvn' : `lv${level}`)
+  const pctText = (s: Score) => (s.pct == null ? '' : `${s.pct}%${s.provisional ? '?' : ''}`)
 </script>
 
 <div class="compare">
@@ -139,7 +144,7 @@
               <th class="name">Project</th>
               {#each data.axes as ax (ax.id)}
                 <th class="axh">
-                  <button class="sortbtn" class:on={sortAxis === ax.id} onclick={() => sortBy(ax.id)} title="sort by {ax.name}">
+                  <button class="sortbtn" class:on={sortAxis === ax.id} onclick={() => sortBy(ax.id)} title="sort by {ax.name}. 100% = {ax.clauses.join(' · ')}">
                     {ax.id}
                     <small>{ax.short}</small>
                     {#if sortAxis === ax.id}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
@@ -153,8 +158,8 @@
               <th scope="row"><span class="rowname"><i class="sw" aria-hidden="true"></i>disp <small class="self">self-assessed</small></span></th>
               {#each data.axes as ax (ax.id)}
                 {@const s = data.disp[ax.id]}
-                <td class="cell {lv(s.level)}" onmouseenter={(e) => showTip(e, 'disp', ax.id, s)} onmouseleave={hideTip}>
-                  {s.raw}
+                <td class="cell {lv(s.level)}" style:--fill={value(s) ?? 0} onmouseenter={(e) => showTip(e, 'disp', ax.id, s)} onmouseleave={hideTip}>
+                  <span class="score">{s.raw}<span class="pct">{pctText(s)}</span></span>
                   {#if s.tag}<small class="how">{s.tag}</small>{/if}
                 </td>
               {/each}
@@ -169,8 +174,8 @@
                 </th>
                 {#each data.axes as ax (ax.id)}
                   {@const s = lang.scores[ax.id]}
-                  <td class="cell {lv(s.level)}" class:ahead={s.ahead} onmouseenter={(e) => showTip(e, lang.name, ax.id, s)} onmouseleave={hideTip}>
-                    {s.raw}
+                  <td class="cell {lv(s.level)}" class:ahead={s.ahead} style:--fill={value(s) ?? 0} onmouseenter={(e) => showTip(e, lang.name, ax.id, s)} onmouseleave={hideTip}>
+                    <span class="score">{s.raw}<span class="pct">{pctText(s)}</span></span>
                     {#if s.tag}<small class="how">{s.tag}</small>{/if}
                   </td>
                 {/each}
@@ -183,9 +188,11 @@
         </table>
       </div>
       <p class="key">
-        <span>✗ absent</span><span>◐ partial</span><span>✅ has it</span>
-        <span><i class="ring-key" aria-hidden="true"></i> ahead of disp and worth stealing from</span>
-        <span>small text: how the level is reached</span>
+        <span>percent of what disp needs on the axis, three clauses each (hover an axis)</span>
+        <span>✗ under 25%</span><span>◐ 25–79%</span><span>✅ 80%+</span>
+        <span><i class="ring-key" aria-hidden="true"></i> ahead of disp</span>
+        <span>small text: how</span>
+        <span>? a clause the write-up leaves open</span>
         <span>— not scored</span>
         {#each Object.entries(data.footnotes) as [k, v] (k)}<span><sup>{k}</sup> {v}</span>{/each}
       </p>
@@ -199,7 +206,7 @@
     <aside class="right">
       <Radar axes={data.axes} {series} onhover={radarHover} />
       <p class="radar-note">
-        The outer ring is ✅, the inner ✗. A dashed ring marks an axis where the survey rates the project ahead of disp.
+        The outer ring is 100% of what disp needs on that axis. A dashed ring marks a project ahead of disp there.
       </p>
     </aside>
   </div>
@@ -229,12 +236,17 @@
               {@const s = lang.scores[ax.id]}
               <div class="sc">
                 <dt>
-                  <span class="sym {lv(s.level)}">{s.raw}</span>
+                  <span class="sym {lv(s.level)}">{s.raw} {pctText(s)}</span>
                   <span class="sc-ax">{ax.id} {ax.short}</span>
                   {#if s.tag}<span class="sc-how">{s.tag}</span>{/if}
                   {#if s.ahead}<span class="tag">ahead of disp</span>{/if}
                 </dt>
-                <dd>{@html s.noteHtml ?? ''}</dd>
+                <dd>
+                  {@html s.noteHtml ?? ''}
+                  {#if s.clauses}
+                    <div class="clauses"><code>{s.clauses}</code> {@html s.whyHtml ?? ''}</div>
+                  {/if}
+                </dd>
               </div>
             {/each}
           </dl>
@@ -460,14 +472,25 @@
     font-size: 0.7rem;
     color: var(--fg-faint);
   }
-  td.lv1 {
-    background: color-mix(in oklab, var(--accent) 18%, transparent);
-  }
-  td.lv2 {
-    background: color-mix(in oklab, var(--accent) 42%, transparent);
+  /* a sequential fill: the percentage sets the tint */
+  td.cell {
+    background: color-mix(in oklab, var(--accent) calc(var(--fill, 0) * 0.45%), transparent);
   }
   td.lvn {
     color: var(--fg-faint);
+    background: none;
+  }
+  .score {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3em;
+    white-space: nowrap;
+  }
+  .pct {
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--fg);
   }
   td.ahead {
     box-shadow: inset 0 0 0 2px var(--accent);
@@ -580,6 +603,15 @@
     margin: 0;
     color: var(--fg-muted);
   }
+  .clauses {
+    margin-top: 0.2rem;
+    font-size: 0.78rem;
+    color: var(--fg-faint);
+  }
+  .clauses code {
+    font-size: 0.85em;
+    color: var(--fg-muted);
+  }
   .sym {
     font-family: var(--font-mono);
     padding: 0.05em 0.35em;
@@ -649,6 +681,10 @@
   }
   .tip-body :global(b) {
     color: var(--fg);
+  }
+  .tip-body :global(.tip-clauses) {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
   }
 
   @media (max-width: 960px) {

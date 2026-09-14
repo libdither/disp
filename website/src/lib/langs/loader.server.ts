@@ -35,30 +35,42 @@ const inline = (s: string) => md.parseInline(s.trim(), { async: false })
 const read = (file: string) => readFileSync(join(DIR, file), 'utf-8')
 const cells = (row: string) => row.split('|').slice(1, -1).map((c) => c.trim())
 
-/// One table cell of the rating key: bold = ahead of disp; a trailing
-/// "(tag)" says how the level is reached; the first symbol is the level
-/// (◐→✅ reads as ◐: the conservative end), the rest stays raw.
+const levelOf = (pct: number): 0 | 1 | 2 => (pct < 25 ? 0 : pct < 80 ? 1 : 2)
+
+/// One table cell: `◐ 50% (tag)` in a scorecard, `**◐ 50%**ᶠ` in the master
+/// table (bold = ahead of disp, superscripts are footnotes). The level derives
+/// from the percentage when there is one, else from the symbol.
 function parseCell(cell: string): Score {
   const ahead = /\*\*.*\*\*/.test(cell)
   let raw = cell.replaceAll('**', '').trim()
   const tm = raw.match(/\(([^)]+)\)\s*$/)
   const tag = tm?.[1].trim()
   if (tm) raw = raw.slice(0, tm.index).trim()
+  const pm = raw.match(/(\d{1,3})%(\?)?/)
+  const pct = pm ? Number(pm[1]) : undefined
+  const provisional = !!pm?.[2]
+  if (pm) raw = (raw.slice(0, pm.index) + raw.slice(pm.index! + pm[0].length)).replace(/\s+/g, '')
   const sym = [...raw].find((c) => c === '✅' || c === '◐' || c === '✗')
-  const level = sym === '✅' ? 2 : sym === '◐' ? 1 : sym === '✗' ? 0 : null
-  return { level, ahead, raw, tag }
+  const level = pct != null ? levelOf(pct) : sym === '✅' ? 2 : sym === '◐' ? 1 : sym === '✗' ? 0 : null
+  return { level, pct, provisional, ahead, raw, tag }
 }
 
-/// Rows shaped `| A1 Reflection | ◐ | note |` (per-language scorecards and
-/// disp's own table share the shape).
+/// Rows shaped `| A1 Reflection | ◐ 50% (tag) | note | 1 · 0 · ½ — why |`
+/// (per-language scorecards and disp's own table share the shape).
 function parseScorecard(text: string): Partial<Record<AxisId, Score>> {
   const out: Partial<Record<AxisId, Score>> = {}
   for (const line of text.split('\n')) {
     const m = line.match(/^\| (A[1-6]) /)
     if (!m) continue
-    const [, score, note] = cells(line)
+    const [, score, note, clauses] = cells(line)
     const id = m[1] as AxisId
-    out[id] = { ...parseCell(score ?? ''), noteHtml: note ? inline(note) : undefined }
+    const [vals, why] = (clauses ?? '').split(' — ')
+    out[id] = {
+      ...parseCell(score ?? ''),
+      noteHtml: note ? inline(note) : undefined,
+      clauses: vals?.trim() || undefined,
+      whyHtml: why ? inline(why) : undefined
+    }
   }
   return out
 }
@@ -75,18 +87,21 @@ function sections(text: string): Map<string, string> {
 
 function parseAxes(text: string): { axes: Axis[]; disp: Record<AxisId, Score> } {
   const axes: Axis[] = []
+  // two tables start their rows with `| **A1** |`: the axes (bold name, four
+  // columns) and the grading clauses (three plain columns)
   for (const line of text.split('\n')) {
     const m = line.match(/^\| \*\*(A[1-6])\*\* /)
     if (!m) continue
-    const [, name, requires, source] = cells(line)
-    const clean = name.replaceAll('**', '')
-    axes.push({
-      id: m[1] as AxisId,
-      name: clean,
-      short: clean.split(/ \/ | \+ | \(|:/)[0].trim(),
-      requiresHtml: inline(requires),
-      source
-    })
+    const id = m[1] as AxisId
+    const row = cells(line).slice(1)
+    if (row[0]?.startsWith('**')) {
+      const [name, requires, source] = row
+      const clean = name.replaceAll('**', '')
+      axes.push({ id, name: clean, short: clean.split(/ \/ | \+ | \(|:/)[0].trim(), requiresHtml: inline(requires), source, clauses: [] })
+    } else {
+      const ax = axes.find((a) => a.id === id)
+      if (ax) ax.clauses = row.slice(0, 3)
+    }
   }
   const stands = sections(text).get('Where disp stands') ?? ''
   const disp = parseScorecard(stands) as Record<AxisId, Score>
@@ -125,12 +140,21 @@ export function loadLangs(): LangsData {
       const file = m[3]
       const detail = parseLangFile(file)
       const scores = {} as Record<AxisId, Score>
-      // the master table carries the level; the write-up's scorecard carries
-      // the how-tag and the note
+      // the master table carries symbol and footnotes; the write-up's
+      // scorecard carries the percentage, how-tag, clauses and note; "ahead"
+      // is derived from the percentages when both sides have one
       AXIS_IDS.forEach((id, i) => {
         const master = parseCell(rest[i] ?? '')
         const note = detail.notes[id]
-        scores[id] = { ...master, tag: note?.tag ?? master.tag, noteHtml: note?.noteHtml }
+        const pct = note?.pct ?? master.pct
+        const dispPct = disp[id].pct
+        scores[id] = {
+          ...master,
+          ...(note ? { tag: note.tag, clauses: note.clauses, whyHtml: note.whyHtml, noteHtml: note.noteHtml, provisional: note.provisional } : {}),
+          pct,
+          level: pct != null ? levelOf(pct) : master.level,
+          ahead: pct != null && dispPct != null ? pct > dispPct : master.ahead
+        }
       })
       langs.push({
         slug: file.replace(/\.md$/, ''),
