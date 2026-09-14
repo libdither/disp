@@ -18,6 +18,16 @@ Vow, NanoLang, Salt, and LogosLang have their own files. This covers the rest.
 | [CLR](https://github.com/ityonemo/clr) | Isaac Yonemoto | 277 | Lifetimes + refinement types for **Zig**, via AIR static analysis | ✅ Zig | A tool, not a language; high-credibility dev |
 | [Verity](https://github.com/Th0rgal/verity) | Thomas Marchand | 143 | Verified compiler in **Lean 4**, spec → proven-equivalent bytecode, **0 axioms, no `sorry`** | ✗ EVM only | Best executed; wrong target |
 
+## Scorecard (cluster-level)
+
+| Axis | Cluster | Note | Clauses |
+|---|---|---|---|
+| G1 Substrate | ✗ 0% (none) | Contracts + SMT on a convenient host; nobody in the genre makes programs data. | 0 · 0 · 0 — contracts + SMT on a host; no reflection anywhere in the genre |
+| G2 Specification | ◐ 25% (Z3 contracts) | Z3-discharged contracts are the genre default; Aver and Verity borrow Lean for real proofs. | ½ · ½ · 0 · 0 — Z3 contracts throughout, Aver and Verity borrowing Lean proofs; no equality story |
+| G3 Trust | ✗ 0% (SMT TCB) | The solver and the host toolchain are trusted; Verity (Lean, zero axioms) is the lone exception. | 0 · 0 · 0 — contracts + SMT; Verity (Lean, zero axioms) is the exception |
+| G4 Execution | ◐ 25% (host legs) | Only LSTS (to C) and CLR (on Zig) touch native code; Verity compiles verified to EVM only. | ½ · ½ · 0 · 0 — LSTS compiles to C and CLR rides on Zig; Verity is a verified compiler to EVM bytecode |
+| G5 Search | ◐ 33% (agent loops) | Agent loops around contracts throughout; Prove's refutation challenges are the novel move. | ½ · ½ · 0 — agent loops around contracts; Prove's refutation challenges |
+
 ## The three findings that matter to disp
 
 **1. Almost nobody has the performance leg.** Of the eight above, only LSTS and CLR

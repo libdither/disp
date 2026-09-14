@@ -3,6 +3,7 @@
   import { base } from "$app/paths";
   import HeroCard from "$lib/components/HeroCard.svelte";
   import { LEVEL_WORD } from "$lib/langs/types";
+  import ClauseDots from "$lib/langs/ClauseDots.svelte";
   import summary from "virtual:awesome-langs/summary";
 
   const REPO = "https://github.com/libdither/disp";
@@ -361,16 +362,20 @@
             ? 'not scored'
             : LEVEL_WORD[s.level]}{s.tag ? ` (${s.tag})` : ''}"
         >
-          <span class="pip-score">{s.raw}{#if s.pct != null}<b>{s.pct}%</b>{/if}</span>
+          {#if s.clauses}
+            <ClauseDots clauses={s.clauses} labels={ax.clauses} size={10} />
+          {/if}
+          <span class="pip-score">{#if !s.clauses}{s.raw}{/if}{#if s.pct != null}<b>{s.pct}%</b>{/if}</span>
           <small>{s.tag ?? (s.level == null ? "not scored" : LEVEL_WORD[s.level])}</small>
         </span>
       </li>
     {/each}
   </ol>
   <p class="axes-key">
-    The pip on each row is where disp stands today: the share of that axis's
-    requirement met (three or four clauses each), the symbol it derives (✗ under 25% · ◐ ·
-    ✅ from 80%), and a word for how. Text and scores come from
+    The figure on each row is where disp stands today, one dot per clause of the
+    requirement: filled = met, half-filled = halfway, empty = not met, dashed =
+    still open. The percent is their mean, the word is how it's reached, and
+    hovering a dot names its clause. Text and scores come from
     <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
   </p>
   <div class="teaser card">
@@ -839,7 +844,7 @@
   }
   .pip-score b {
     font-family: var(--font-body);
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 600;
   }
   .axes-key {

@@ -6,6 +6,7 @@
   import { onMount } from 'svelte'
   import { replaceState } from '$app/navigation'
   import Radar, { type RadarSeries } from './Radar.svelte'
+  import ClauseDots from './ClauseDots.svelte'
   import { AXIS_IDS, LEVEL_WORD, type AxisId, type Lang, type LangsData, type Score } from './types'
 
   interface Props {
@@ -178,7 +179,7 @@
               {#each data.axes as ax (ax.id)}
                 {@const s = data.disp[ax.id]}
                 <td class="cell {lv(s.level)}" style:--fill={value(s) ?? 0} onmouseenter={(e) => showTip(e, 'disp', ax.id, s)} onmouseleave={hideTip}>
-                  <span class="score">{s.raw}<span class="pct">{pctText(s)}</span></span>
+                  <span class="score">{#if s.clauses}<ClauseDots clauses={s.clauses} size={8} titles={false} />{:else}{s.raw}{/if}<span class="pct">{pctText(s)}</span></span>
                   {#if s.tag}<small class="how">{s.tag}</small>{/if}
                 </td>
               {/each}
@@ -197,7 +198,7 @@
                 {#each data.axes as ax (ax.id)}
                   {@const s = lang.scores[ax.id]}
                   <td class="cell {lv(s.level)}" class:ahead={s.ahead} style:--fill={value(s) ?? 0} onmouseenter={(e) => showTip(e, lang.name, ax.id, s)} onmouseleave={hideTip}>
-                    <span class="score">{s.raw}<span class="pct">{pctText(s)}</span></span>
+                    <span class="score">{#if s.clauses}<ClauseDots clauses={s.clauses} size={8} titles={false} />{:else}{s.raw}{/if}<span class="pct">{pctText(s)}</span></span>
                     {#if s.tag}<small class="how">{s.tag}</small>{/if}
                   </td>
                 {/each}
@@ -210,8 +211,11 @@
         </table>
       </div>
       <p class="key">
-        <span>percent of what disp needs on the axis, three or four clauses each (hover an axis)</span>
-        <span>✗ under 25%</span><span>◐ 25–79%</span><span>✅ 80%+</span>
+        <span>percent of what disp needs on the axis; one dot per clause (hover an axis for them)</span>
+        <span><ClauseDots clauses="1" titles={false} size={9} /> met</span>
+        <span><ClauseDots clauses="½" titles={false} size={9} /> halfway</span>
+        <span><ClauseDots clauses="0" titles={false} size={9} /> not met</span>
+        <span><ClauseDots clauses="?" titles={false} size={9} /> open</span>
         <span><i class="ring-key" aria-hidden="true"></i> ahead of disp</span>
         <span>small text: how</span>
         <span>? a clause the write-up leaves open</span>
@@ -258,7 +262,7 @@
               {@const s = lang.scores[ax.id]}
               <div class="sc">
                 <dt>
-                  <span class="sym {lv(s.level)}">{s.raw} {pctText(s)}</span>
+                  <span class="sym {lv(s.level)}">{#if s.clauses}<ClauseDots clauses={s.clauses} labels={ax.clauses} size={9} /> {pctText(s)}{:else}{s.raw} {pctText(s)}{/if}</span>
                   <span class="sc-ax">{ax.id} {ax.short}</span>
                   {#if s.tag}<span class="sc-how">{s.tag}</span>{/if}
                   {#if s.ahead}<span class="tag">ahead of disp</span>{/if}
@@ -524,7 +528,7 @@
   }
   .score {
     display: inline-flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.3em;
     white-space: nowrap;
   }
