@@ -16,7 +16,7 @@
   // colour follows the entity: a pick keeps its slot until it is dropped
   const SLOT_COLORS = ['var(--cmp-1)', 'var(--cmp-2)']
   let picks = $state<{ slug: string; slot: number }[]>([])
-  // an axis, or 'all': the average of the six percentages (an unscored cell
+  // an axis, or 'all': the average of the five percentages (an unscored cell
   // counts as 0, so a one-axis entry cannot top the list)
   type SortKey = AxisId | 'all'
   let sortAxis = $state<SortKey | null>(null)
@@ -150,9 +150,9 @@
           <thead>
             <tr>
               <th class="name">
-                <button class="sortbtn name-sort" class:on={sortAxis === 'all'} onclick={() => sortBy('all')} title="sort by the average of the six percentages; an unscored cell counts as 0">
+                <button class="sortbtn name-sort" class:on={sortAxis === 'all'} onclick={() => sortBy('all')} title="sort by the average of the five percentages; an unscored cell counts as 0">
                   Project
-                  <small>avg of six</small>
+                  <small>avg of five</small>
                   {#if sortAxis === 'all'}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
                 </button>
               </th>
@@ -172,7 +172,7 @@
               <th scope="row">
                 <span class="namecell">
                   <span class="rowname"><i class="sw" aria-hidden="true"></i>disp <small class="self">self-assessed</small></span>
-                  <span class="avg" title="average of the six">{dispAverage}%</span>
+                  <span class="avg" title="average of the five">{dispAverage}%</span>
                 </span>
               </th>
               {#each data.axes as ax (ax.id)}
@@ -191,7 +191,7 @@
                     <button class="rowbtn" aria-pressed={!!pick} onclick={() => toggle(lang.slug)}>
                       <i class="sw" aria-hidden="true"></i>{lang.name}
                     </button>
-                    <span class="avg" title="average of the six">{average(lang.scores)}%</span>
+                    <span class="avg" title="average of the five">{average(lang.scores)}%</span>
                   </span>
                 </th>
                 {#each data.axes as ax (ax.id)}
@@ -210,7 +210,7 @@
         </table>
       </div>
       <p class="key">
-        <span>percent of what disp needs on the axis, three clauses each (hover an axis)</span>
+        <span>percent of what disp needs on the axis, three or four clauses each (hover an axis)</span>
         <span>✗ under 25%</span><span>◐ 25–79%</span><span>✅ 80%+</span>
         <span><i class="ring-key" aria-hidden="true"></i> ahead of disp</span>
         <span>small text: how</span>

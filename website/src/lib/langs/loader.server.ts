@@ -100,7 +100,7 @@ function parseAxes(text: string): { axes: Axis[]; disp: Record<AxisId, Score> } 
       axes.push({ id, name: clean, short: clean.split(/ \/ | \+ | \(|:/)[0].trim(), requiresHtml: inline(requires), source, clauses: [] })
     } else {
       const ax = axes.find((a) => a.id === id)
-      if (ax) ax.clauses = row.slice(0, 3)
+      if (ax) ax.clauses = row.filter(Boolean)
     }
   }
   const stands = sections(text).get('Where disp stands') ?? ''
@@ -136,7 +136,7 @@ export function loadLangs(): LangsData {
   for (const line of master.split('\n')) {
     const m = line.match(/^\| \[\*\*(.+?)\*\*(.*?)\]\((.+?\.md)\) \|/)
     if (m) {
-      const [, ...rest] = cells(line) // name, six scores, closest
+      const [, ...rest] = cells(line) // name, one score per axis, closest
       const file = m[3]
       const detail = parseLangFile(file)
       const scores = {} as Record<AxisId, Score>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A six-axis radar: disp's profile against the picked languages. Values are
+  // A radar, one spoke per axis: disp's profile against the picked languages. Values are
   // percentages of disp's requirement (the outer ring is 100%); the zero ring
   // sits off-centre so an all-zero profile is still a visible hexagon. A
   // dashed ring on a vertex marks a project ahead of disp. Colours arrive as
@@ -45,7 +45,7 @@
 </script>
 
 <figure class="radar">
-  <svg viewBox="0 0 {W} {H}" role="img" aria-label="disp and the picked languages on the six axes">
+  <svg viewBox="0 0 {W} {H}" role="img" aria-label="disp and the picked languages on the five axes">
     <polygon class="ring" points={ring(0)} />
     {#each RINGS as v (v)}
       <polygon class="ring" class:outer={v === 100} points={ring(v)} />

@@ -4,8 +4,8 @@
 // 2 ✅ has it · null not scored (—). `ahead` is the survey's bold: ahead of
 // disp on that axis and worth stealing from (hand-curated, not derived).
 
-export type AxisId = 'A1' | 'A2' | 'A3' | 'A4' | 'A5' | 'A6'
-export const AXIS_IDS: AxisId[] = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6']
+export type AxisId = 'A1' | 'A2' | 'A3' | 'A4' | 'A5'
+export const AXIS_IDS: AxisId[] = ['A1', 'A2', 'A3', 'A4', 'A5']
 
 export interface Axis {
   id: AxisId
@@ -13,12 +13,12 @@ export interface Axis {
   short: string // "Reflection"
   requiresHtml: string // what disp needs, from _AXES.md
   source: string // where the requirement comes from (GOALS / FOUNDATIONS refs)
-  clauses: string[] // the three clauses 100% means, plain text
+  clauses: string[] // the three or four clauses 100% means, plain text
 }
 
 export interface Score {
   level: 0 | 1 | 2 | null // derived from pct when present: ✗ below 25, ◐ to 79, ✅ from 80
-  pct?: number // percent of disp's requirement met, the mean of three clauses
+  pct?: number // percent of disp's requirement met, the mean of its clauses
   provisional?: boolean // a clause the write-up leaves open
   ahead: boolean // a higher pct than disp's on the axis (the master table's bold when no pct)
   raw: string // the symbol as written, with any footnote superscript
@@ -57,7 +57,7 @@ export interface LangsSummary {
   axes: Axis[]
   disp: Record<AxisId, Score>
   ahead: Record<AxisId, { slug: string; name: string }[]> // master-table order
-  count: number // projects with all six axes scored
+  count: number // projects with every axis scored
   surveyUrl: string
 }
 

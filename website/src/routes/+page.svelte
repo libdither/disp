@@ -342,7 +342,7 @@
     calculus underneath (programs are data, with no quote/eval border), types
     as predicates, a trusted kernel small enough to audit, and the plan for
     user-definable syntax. A survey of the neighbouring languages reduces the
-    goal to six requirements and scores each of them on the same scale, disp
+    goal to five requirements and scores each of them on the same scale, disp
     included.
   </p>
   <ol class="axes">
@@ -369,13 +369,13 @@
   </ol>
   <p class="axes-key">
     The pip on each row is where disp stands today: the share of that axis's
-    requirement met (three clauses each), the symbol it derives (✗ under 25% · ◐ ·
+    requirement met (three or four clauses each), the symbol it derives (✗ under 25% · ◐ ·
     ✅ from 80%), and a word for how. Text and scores come from
     <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
   </p>
   <div class="teaser card">
     <p>
-      {summary.count} neighbouring projects are scored on the same six axes.
+      {summary.count} neighbouring projects are scored on the same five axes.
       None of them combines native reflection with search, the pair disp is
       built around, and disp is last on equality, where several small projects
       already have answers. Per axis, these score higher than disp:
