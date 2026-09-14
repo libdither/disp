@@ -15,9 +15,9 @@
   <h1>Progress &amp; <span class="grad-text">Comparisons</span></h1>
   <p class="lede">
     Every language and system that aims near disp's goal, scored on the same
-    five axes ({langs.surveyed}) as a percentage of what disp itself needs
-    there, with disp's own row at the top. Sort by an axis to see who is
-    ahead, pick up to two to compare against disp. The full write-ups live in
+    five axes (as of {langs.surveyed}) as a percentage of what disp's final goal
+    state is. Compare against current state of disp and sort by an axis to see
+    who is ahead. The full write-ups are at
     <a href={langs.surveyUrl} target="_blank" rel="noopener"
       >research/awesome-langs</a
     >.
