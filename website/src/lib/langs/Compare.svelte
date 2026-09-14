@@ -16,27 +16,37 @@
   // colour follows the entity: a pick keeps its slot until it is dropped
   const SLOT_COLORS = ['var(--cmp-1)', 'var(--cmp-2)']
   let picks = $state<{ slug: string; slot: number }[]>([])
-  let sortAxis = $state<AxisId | null>(null)
+  // an axis, or 'all': the average of the six percentages (an unscored cell
+  // counts as 0, so a one-axis entry cannot top the list)
+  type SortKey = AxisId | 'all'
+  let sortAxis = $state<SortKey | null>(null)
   let sortDesc = $state(true)
   let onlyAhead = $state(false)
   let query = $state('')
 
   const scored = $derived(data.langs.filter((l) => l.scored))
   const unscored = $derived(data.langs.filter((l) => !l.scored))
-  const rank = (l: Lang, id: AxisId) => l.scores[id].pct ?? (l.scores[id].level == null ? -1 : l.scores[id].level * 50)
+  const value = (s: Score) => s.pct ?? (s.level == null ? null : s.level * 50)
+  const average = (scores: Record<AxisId, Score>) =>
+    Math.round(AXIS_IDS.reduce((sum, id) => sum + (value(scores[id]) ?? 0), 0) / AXIS_IDS.length)
+  const rank = (l: Lang, key: SortKey) => (key === 'all' ? average(l.scores) : (value(l.scores[key]) ?? -1))
+  const dispAverage = $derived(average(data.disp))
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase()
     let out = scored.filter((l) => !q || l.name.toLowerCase().includes(q))
-    if (onlyAhead) out = out.filter((l) => (sortAxis ? [sortAxis] : AXIS_IDS).some((id) => l.scores[id].ahead))
+    if (onlyAhead) {
+      const axes = sortAxis && sortAxis !== 'all' ? [sortAxis] : AXIS_IDS
+      out = out.filter((l) => axes.some((id) => l.scores[id].ahead))
+    }
     if (sortAxis) {
-      const id = sortAxis
-      out = [...out].sort((a, b) => (sortDesc ? rank(b, id) - rank(a, id) : rank(a, id) - rank(b, id)))
+      const key = sortAxis
+      out = [...out].sort((a, b) => (sortDesc ? rank(b, key) - rank(a, key) : rank(a, key) - rank(b, key)))
     }
     return out
   })
 
-  // click a column: ahead-first, then reversed, then back to survey order
-  function sortBy(id: AxisId): void {
+  // click a column: highest first, then reversed, then back to survey order
+  function sortBy(id: SortKey): void {
     if (sortAxis !== id) {
       sortAxis = id
       sortDesc = true
@@ -72,8 +82,6 @@
     for (const slug of want) if (langOf(slug)?.scored && !pickOf(slug)) toggle(slug, false)
   })
 
-  // a cell without a percentage (none today) falls back to its level
-  const value = (s: Score) => s.pct ?? (s.level == null ? null : s.level * 50)
   const series = $derived<RadarSeries[]>([
     {
       key: 'disp',
@@ -133,15 +141,21 @@
         <input type="search" placeholder="filter by name" bind:value={query} aria-label="filter languages" />
         <label class="chk">
           <input type="checkbox" bind:checked={onlyAhead} />
-          only ahead of disp {sortAxis ? `on ${sortAxis}` : '(any axis)'}
+          only ahead of disp {sortAxis && sortAxis !== 'all' ? `on ${sortAxis}` : '(any axis)'}
         </label>
-        <span class="hint">click an axis to sort · click a name to compare (up to two)</span>
+        <span class="hint">click an axis to sort, or Project for the average · click a name to compare (up to two)</span>
       </div>
       <div class="matrix-wrap">
         <table class="matrix">
           <thead>
             <tr>
-              <th class="name">Project</th>
+              <th class="name">
+                <button class="sortbtn name-sort" class:on={sortAxis === 'all'} onclick={() => sortBy('all')} title="sort by the average of the six percentages; an unscored cell counts as 0">
+                  Project
+                  <small>avg of six</small>
+                  {#if sortAxis === 'all'}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
+                </button>
+              </th>
               {#each data.axes as ax (ax.id)}
                 <th class="axh">
                   <button class="sortbtn" class:on={sortAxis === ax.id} onclick={() => sortBy(ax.id)} title="sort by {ax.name}. 100% = {ax.clauses.join(' · ')}">
@@ -155,7 +169,12 @@
           </thead>
           <tbody>
             <tr class="disp-row">
-              <th scope="row"><span class="rowname"><i class="sw" aria-hidden="true"></i>disp <small class="self">self-assessed</small></span></th>
+              <th scope="row">
+                <span class="namecell">
+                  <span class="rowname"><i class="sw" aria-hidden="true"></i>disp <small class="self">self-assessed</small></span>
+                  <span class="avg" title="average of the six">{dispAverage}%</span>
+                </span>
+              </th>
               {#each data.axes as ax (ax.id)}
                 {@const s = data.disp[ax.id]}
                 <td class="cell {lv(s.level)}" style:--fill={value(s) ?? 0} onmouseenter={(e) => showTip(e, 'disp', ax.id, s)} onmouseleave={hideTip}>
@@ -168,9 +187,12 @@
               {@const pick = pickOf(lang.slug)}
               <tr class:picked={!!pick} style:--row-color={pick ? SLOT_COLORS[pick.slot] : null}>
                 <th scope="row">
-                  <button class="rowbtn" aria-pressed={!!pick} onclick={() => toggle(lang.slug)}>
-                    <i class="sw" aria-hidden="true"></i>{lang.name}
-                  </button>
+                  <span class="namecell">
+                    <button class="rowbtn" aria-pressed={!!pick} onclick={() => toggle(lang.slug)}>
+                      <i class="sw" aria-hidden="true"></i>{lang.name}
+                    </button>
+                    <span class="avg" title="average of the six">{average(lang.scores)}%</span>
+                  </span>
                 </th>
                 {#each data.axes as ax (ax.id)}
                   {@const s = lang.scores[ax.id]}
@@ -390,6 +412,26 @@
   .sortbtn.on {
     color: var(--accent);
     border-color: var(--accent);
+  }
+  .name-sort {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0.4em;
+    padding-left: 0.3em;
+  }
+  .namecell {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .avg {
+    flex: none;
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--fg-faint);
+    font-variant-numeric: tabular-nums;
   }
   .arrow {
     font-size: 0.75rem;
