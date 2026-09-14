@@ -97,7 +97,9 @@ applications, corporate-backed (Anoma). ~9 months quiet.
 - **Ivy** (Microsoft, 239★) — protocol verification, last pushed **2021-01-06**.
   Superseded by Veil (Lean-embedded, NUS).
 - **Stateright** — Rust model checker, maintenance mode since 2025-07-27.
-- **Cedille** — quiescent since ~2021 (see `adjacent-substrates.md`).
+- **Cedille** — quiescent since ~2021. λ-encodings *with* induction and
+  definitionally zero-cost φ coercions, one of FOUNDATIONS §7's three answers to
+  the equality problem; the most elegant of the three is the one that stopped.
 - **Peridot** (Eashan Hatti) — archived 2023-01-06; author now does academic
   concurrency verification at Yale.
 - **Sixty / Sixten** (Olle Fredriksson) — last pushed 2024-09-05; author at a chip

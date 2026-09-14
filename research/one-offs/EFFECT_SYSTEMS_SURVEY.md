@@ -352,6 +352,11 @@ the row checker is initially a no-op.
    fibred algebras is unstudied — likely the most fruitful direction for
    a research paper coming out of disp.
 
+Adjacent (memory, not effects): **Neut** (vekatze, ~1,000★) does static memory
+management via a box modality — no GC, no borrow checker — and is the nearest
+prior art if disp's pure substrate ever needs a no-GC execution story alongside
+Koka's Perceus reuse analysis.
+
 ---
 
 ## References (key papers)

@@ -37,7 +37,7 @@ export interface Lang {
   sourceUrl: string // the markdown file on GitHub
   closestHtml: string // "Closest to disp on" from the master table
   scores: Record<AxisId, Score>
-  scored: boolean // false for the unscored entries (adjacent substrates, graveyard)
+  scored: boolean // false for the unscored entries (graveyard)
   differsHtml: string | null // "## Where disp differs"
   verdictHtml: string | null // "## Verdict"
 }

@@ -88,3 +88,10 @@ stopped after the foundation and never built the optimizer.
 
 **Distance from disp's goals: shares G2+G4, absent on everything that makes disp
 disp.**
+
+Footnote, same square at the opposite corner: **Wuffs** (Google, ~4,800★) is
+G2+G4 at 5% of the ambition and 100% of the delivery — programmer-stated facts
+proved at compile time (bounds/overflow safety only, not functional
+correctness), transpiled to C with zero runtime cost, deployed in production
+parsers. Where ATS shows depth without adoption, Wuffs shows shallowness that
+shipped.
