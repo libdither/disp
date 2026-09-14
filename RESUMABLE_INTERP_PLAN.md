@@ -1,7 +1,7 @@
 # Resumable computations: a disp machine, then a transparent native accelerator
 
-Status (2026-09-14): Half 1 landed (steps 1–2 below, marked done); nothing of Half 2
-exists yet. Delete this file once the accelerator exists and its tests say what this
+Status (2026-09-14): steps 1–5 landed (marked done below). What remains is the follow-on
+list in step 6, each its own plan. Delete this file once the accelerator exists and its tests say what this
 file says.
 
 ## What this is for
@@ -298,16 +298,36 @@ the TypeScript one through the existing differential-oracle harness.
    reports no count) and compares with that session's `steps`: equal on all six programs,
    including the S-rule discard shape and `succ 2`, which is one free stem rule at 0 on both
    sides (`succ` eta-reduces to `t t`).
-3. TypeScript stepper, the intercept table, registration at boot, a real `noNativeIntercept`,
-   and the vitest differential. Adjacent fix in the same change: the TypeScript loop throws
-   on budget exhaustion without resetting `stackTop`, so abandoned frames in the shared
-   slot array are never reclaimed; add the reset. Verification: parser and evaluator suites,
-   the differential, and every disp file that uses `m_advance` under both intercept settings.
-4. Rust stepper, `tc_advance`, the TypeScript wrapper for `rust-eager`, the cross-backend
-   differential. This is the default backend, so this step is what makes the streams fast.
-5. Measure: GRADUAL.disp's witness tests and the LoopR cases, wall time and `cold_equiv`,
-   intercept on and off. The expected result is that the interpreter overhead of `run_s`
-   disappears and the machine's own cost becomes the frame traffic.
+3. Done. `src/core/tree.ts`: the single `treeEqId` is a table of natives (compiled id, the
+   stats counter it charges, a handler returning `null` to decline), `stepMachine` is the
+   `machineRules` native (decode, k dispatches by the table above, re-encode; forces a
+   suspension only where the disp code triages, stores the raw nodes the disp code
+   stores, declines on any state the machine did not build), and a throw now resets the
+   shared frame stack. `m_advance` registers at the same driver site as `tree_eq`
+   (`NATIVE_NAMES`). `noNativeIntercept` is real in all three sessions (registration is
+   a no-op), reachable as `--no-native-intercept` on `src/run.ts` and
+   `DISP_NO_NATIVE_INTERCEPT=1` on the harness. `test/machine.test.ts` compares the
+   intercepted and in-language `m_advance` node for node on 300 random terms and counts,
+   past completion, on the discard shape and on a suspended operand. On the TypeScript
+   backend the refuter root goes from 561,704 to 84,609 steps and GRADUAL.disp from
+   4,449,920 to 1,065,643 (5 s to 1 s), passing either way.
+4. Done. `evaluators/rust-eager/crate/src/machine.rs` is the port of `stepMachine` over the
+   arena (`whnf` where the disp code triages; the string tags are re-interned per call so a
+   scoped reclamation can never leave a stale id); `reduce` and the lazy `step_lazy` answer
+   `apply(susp(m_advance, m), k)` with it and fall back to the definition when it declines;
+   `tc_recognize_machine` (wasm) and `recognize_machine` (napi) register the handle, and
+   both wrappers route `recognizeNative("m_advance")` to them (optional calls, so an older
+   artifact just runs the definition). `cargo test` has the hand-built `not false` state;
+   `test/machine.test.ts` compares the native stepper's dumps with the TypeScript one on
+   200 random terms and counts, and with a `noNativeIntercept` native session on the
+   same backend. Both artifacts rebuilt (`build.sh`, `build-native.sh`).
+5. Done. Cold runs on rust-eager-native (`--stats`, `cold_equiv` = `steps` when nothing is
+   loaded), intercept on / off: `lib/tests/refuter.test.disp` 148,950 / 1,014,987 steps,
+   GRADUAL.disp 1,800,154 / 8,005,946 steps and under 1 s / 2 s wall. On the TypeScript
+   backend, 84,609 / 561,704 and 1,065,643 / 4,449,920 (1 s / 5 s). The witness streams
+   and the LoopR cases are most of GRADUAL.disp's work, and what is left with the
+   intercept on is the streams' own bookkeeping: the merge, the buffers and the machine
+   states as trees. The two backends' counts differ from each other, as they must.
 6. Follow-ons, each its own plan: the symbolic machine for the confirmer; running the
    step-everything policy on the interaction-net backend, where independent machines are
    disjoint subnets; the exhaustion-versus-budget grade on streams.

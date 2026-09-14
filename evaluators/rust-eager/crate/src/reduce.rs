@@ -41,8 +41,8 @@ impl Arena {
             }
             // Produce a `result` value, or `continue 'outer` after re-aiming cur_f/cur_x.
             let result: u32;
-            if self.tree_eq_id != 0 && cur_f == self.tree_eq_id {
-                // tree_eq fast-path stage 1: apply(tree_eq, x) ⇒ susp(tree_eq, x).
+            if (self.tree_eq_id != 0 && cur_f == self.tree_eq_id) || (self.machine_id != 0 && cur_f == self.machine_id) {
+                // native stage 1 (tree_eq, m_advance): apply(native, x) ⇒ susp(native, x).
                 // O(1); not budget- or interaction-charged (matches eager's fast-path).
                 result = self.susp(cur_f, cur_x);
             } else {
@@ -61,6 +61,16 @@ impl Arena {
                             self.tt
                         } else {
                             self.ff
+                        }
+                    } else if self.machine_id != 0 && sf == self.machine_id {
+                        // m_advance stage 2: apply(susp(m_advance, m), k) ⇒ the native stepper;
+                        // a state the machine did not build runs the definition instead.
+                        match self.step_machine(sa, cur_x, budget)? {
+                            Some(r) => r,
+                            None => {
+                                cur_f = self.force(sf, sa, cur_f, budget)?;
+                                continue 'outer;
+                            }
                         }
                     } else {
                         // Operator suspension: force then re-dispatch (eager never
@@ -215,10 +225,13 @@ impl Arena {
         // the O(1) hash-cons compare — WITHOUT this the lazy path forces the in-language
         // tree_eq (O(size)) and blows kernel-verify budget. (Stage 1, `apply(tree_eq, x)
         // = susp(tree_eq, x)`, is what lazy apply already builds, so only stage 2 here.)
-        if self.tree_eq_id != 0 {
-            if let Node::Susp(sf, sa) = self.node(f) {
-                if sf == self.tree_eq_id {
-                    return Ok(if self.equal(sa, a, budget)? { self.tt } else { self.ff });
+        if let Node::Susp(sf, sa) = self.node(f) {
+            if self.tree_eq_id != 0 && sf == self.tree_eq_id {
+                return Ok(if self.equal(sa, a, budget)? { self.tt } else { self.ff });
+            }
+            if self.machine_id != 0 && sf == self.machine_id {
+                if let Some(r) = self.step_machine(sa, a, budget)? {
+                    return Ok(r);
                 }
             }
         }

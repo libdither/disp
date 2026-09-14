@@ -76,10 +76,12 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   // Block-internal probing (Def__local bindings): always on under --print, and
   // opt-in via --locals for plain runs of probe files that reference internals.
   const exposeLocals = printSpec != null || args.includes("--locals")
+  // Conformance: run the standard natives (tree_eq, m_advance) in-language.
+  const noNativeIntercept = args.includes("--no-native-intercept")
   const file = args.find((arg: string) => !arg.startsWith("--"))
-  if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--print=<name,glob*,Def__local>] [--locals] [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
+  if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--print=<name,glob*,Def__local>] [--locals] [--no-native-intercept] [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
   try {
-    const session = getBackend(backendName).createSession() as unknown as Session<Tree>
+    const session = getBackend(backendName).createSession({ noNativeIntercept }) as unknown as Session<Tree>
     // Warm start from the test harness's persistent reduction cache when present
     // (memo entries are calculus-level facts; the stamp pins the evaluator build).
     // Read-only here — probes load warmth, only the harness writes it. Any shard's

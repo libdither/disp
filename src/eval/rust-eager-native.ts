@@ -45,6 +45,7 @@ interface EagerSessionNative {
   beginScope(): void
   endScope(keep: number[]): void
   recognizeTreeEq(handle: number): void
+  recognizeMachine?(handle: number): void                  // absent in older addons
   setMemoLimit(n: number): void
   clearCaches(): void
   loadSnapshot(path: string, stamp: string): boolean
@@ -79,9 +80,12 @@ class RustEagerNativeSession implements Session<number> {
   #s: EagerSessionNative
   #budget: number
 
+  #noNativeIntercept: boolean
+
   constructor(opts?: SessionOpts) {
     this.#s = new (loadAddon().EagerSession)()
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
+    this.#noNativeIntercept = opts?.noNativeIntercept === true
     // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
     // (RUST_EAGER_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
     // by dispose() anyway.
@@ -169,7 +173,9 @@ class RustEagerNativeSession implements Session<number> {
   endScope(keep: number[]): void { this.#s.endScope(keep) }
 
   recognizeNative(name: string, handle: number): void {
+    if (this.#noNativeIntercept) return
     if (name === "tree_eq") this.#s.recognizeTreeEq(handle)
+    else if (name === "m_advance") this.#s.recognizeMachine?.(handle)
   }
 
   // Drop the only reference to the napi object; its finalizer then frees the owned arena.

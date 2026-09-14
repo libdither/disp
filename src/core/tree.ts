@@ -239,6 +239,7 @@ export type ApplyStats = {
   triageStemRules: number
   triageForkRules: number
   treeEqRules: number
+  machineRules: number
   memoHits: number
   memoMisses: number
   memoWrites: number
@@ -264,8 +265,17 @@ interface RuleCounters {
   triageStemRules: number
   triageForkRules: number
   treeEqRules: number
+  machineRules: number
   maxStack: number
 }
+
+// A native: a disp definition the host answers for, keyed by the definition's
+// compiled tree id (Session.recognizeNative at boot). Arity 2, two stages: apply(
+// native, a) suspends as the honest P(native, a); the partial meeting b runs the
+// handler. `null` from the handler means "no native answer for these operands":
+// the partial is forced and applied in-language, so the intercept stays transparent.
+export type NativeRule = "treeEqRules" | "machineRules"
+export interface NativeEntry { id: number; rule: NativeRule; handler: (a: Tree, b: Tree) => Tree | null }
 
 export interface EagerState {
   applyMemo: Map<number, Map<number, Tree>>
@@ -275,8 +285,8 @@ export interface EagerState {
   misses: number
   memoWrites: number
   counters: RuleCounters
-  // `tree_eq`'s compiled tree id for this session's native fast-path (-1 = unset).
-  treeEqId: number
+  // This session's natives (tree_eq, m_advance): tiny, scanned linearly on the fork path.
+  natives: NativeEntry[]
   // While `force` runs, stage-1 suspension is disabled so the partial reduces to
   // its genuine combinator reduct instead of re-suspending.
   suspEnabled: boolean
@@ -285,7 +295,7 @@ export interface EagerState {
 export function freshCounters(): RuleCounters {
   return {
     calls: 0, steps: 0, leafRules: 0, stemRules: 0, kRules: 0, sRules: 0,
-    triageLeafRules: 0, triageStemRules: 0, triageForkRules: 0, treeEqRules: 0, maxStack: 0,
+    triageLeafRules: 0, triageStemRules: 0, triageForkRules: 0, treeEqRules: 0, machineRules: 0, maxStack: 0,
   }
 }
 
@@ -298,7 +308,7 @@ export function freshState(): EagerState {
     misses: 0,
     memoWrites: 0,
     counters: freshCounters(),
-    treeEqId: -1,
+    natives: [],
     suspEnabled: true,
   }
 }
@@ -590,7 +600,7 @@ export function apply(fInit: Tree, xInit: Tree, budget: { remaining: number; lim
     return result  // stack empty (for this call), final result
   }
 
-  while (true) {
+  try { while (true) {
     if (budget.remaining <= 0) throw new BudgetExhausted(budget.limit ?? 0)
     if (stackTop > counters.maxStack) counters.maxStack = stackTop
 
@@ -604,11 +614,14 @@ export function apply(fInit: Tree, xInit: Tree, budget: { remaining: number; lim
     // applied to curX; tree_eq stage 2: a `tree_eq a` partial meeting its second
     // operand is the O(1) hash-cons equality. Other suspensions: force, then apply.
     if (curF.tag === "susp") {
-      if (st.treeEqId !== -1 && curF.f.id === st.treeEqId) {
-        traceApply("tree_eq", curF, curX, stackTop)
-        counters.treeEqRules++
-        const r = deliver(treeEqual(curF.a, curX) ? TREE_TRUE : TREE_FALSE)
-        if (r !== null) return r; continue
+      const nat = st.natives.length !== 0 ? nativeAt(st, curF.f.id) : null
+      if (nat !== null) {
+        const answer = nat.handler(curF.a, curX)
+        if (answer !== null) {
+          traceApply(nat.rule, curF, curX, stackTop)
+          counters[nat.rule]++
+          const r = deliver(answer); if (r !== null) return r; continue
+        }
       }
       curF = force(curF); continue
     }
@@ -622,11 +635,14 @@ export function apply(fInit: Tree, xInit: Tree, budget: { remaining: number; lim
     // shadow it. Stage 2 (the partial meeting its second operand → O(1) compare)
     // is the `curF.tag === "susp"` branch above. `suspEnabled` is cleared only
     // while `force` materializes the genuine reduct, so forcing is non-recursive.
-    if (st.suspEnabled && st.treeEqId !== -1 && curF.id === st.treeEqId) {
-      traceApply("tree_eq", curF, curX, stackTop)
-      counters.treeEqRules++
-      const r = deliver(susp(curF, curX))
-      if (r !== null) return r; continue
+    if (st.suspEnabled && st.natives.length !== 0) {
+      const nat = nativeAt(st, curF.id)
+      if (nat !== null) {
+        traceApply(nat.rule, curF, curX, stackTop)
+        counters[nat.rule]++
+        const r = deliver(susp(curF, curX))
+        if (r !== null) return r; continue
+      }
     }
 
     // Memo check (inlined so we can capture the inner map for memoSet
@@ -710,6 +726,9 @@ export function apply(fInit: Tree, xInit: Tree, budget: { remaining: number; lim
       s.kind = ContKind.ApplyTo; s.arg = curX.right
     }
     curF = b; curX = curX.left; continue
+  } } catch (e) {
+    stackTop = baseTop  // frames abandoned by a throw (budget exhaustion) must not outlive the call
+    throw e
   }
 }
 
@@ -749,8 +768,23 @@ export const TREE_FALSE = K                         // △ △ = stem(LEAF)
 // reduct the moment the partial is inspected structurally instead of applied. The
 // optimization yields answers identical to the spec. The id is per-session (the
 // registry handle in Phase-2 terms), read from `active`.
-export function setTreeEqId(id: number): void { active.treeEqId = id }
-export function getTreeEqId(): number { return active.treeEqId }
+function nativeAt(st: EagerState, id: number): NativeEntry | null {
+  const n = st.natives
+  for (let i = 0; i < n.length; i++) if (n[i].id === id) return n[i]
+  return null
+}
+// One entry per rule on the active state; -1 unregisters.
+export function setNativeId(rule: NativeRule, id: number): void {
+  const n = active.natives.filter(e => e.rule !== rule)
+  if (id !== -1) n.push({ id, rule, handler: NATIVE_HANDLERS[rule] })
+  active.natives = n
+}
+export function getNativeId(rule: NativeRule): number {
+  for (const e of active.natives) if (e.rule === rule) return e.id
+  return -1
+}
+export function setTreeEqId(id: number): void { setNativeId("treeEqRules", id) }
+export function getTreeEqId(): number { return getNativeId("treeEqRules") }
 
 const FORCE_BUDGET = 10_000_000
 
@@ -769,6 +803,136 @@ export function force(t: Tree): Tree {
     active.suspEnabled = prev
   }
   return t.forced
+}
+
+// --- lib/machine.disp's m_advance, natively ---
+// The state encoding is machine.disp's, built from the lib's literal trees: a
+// string is a list of char-code Nats, a list is nil = leaf / cons = fork, a pair is a
+// fork. Done v = pair "Done" v; Run = pair "Run" (pair (pair f x) stack); frames are
+// pair "To" arg, pair "Res" func, pair "S" (pair b x). The tags below hash-cons to
+// the compiler's nodes, so an encoded result is the node the disp definition builds.
+function stringTree(s: string): Tree {
+  let r = LEAF
+  for (let i = s.length - 1; i >= 0; i--) {
+    let n = LEAF
+    for (let k = s.codePointAt(i)!; k > 0; k--) n = fork(LEAF, n)
+    r = fork(n, r)
+  }
+  return r
+}
+const TAG_DONE = stringTree("Done"), TAG_RUN = stringTree("Run")
+const TAG_TO = stringTree("To"), TAG_RES = stringTree("Res"), TAG_S = stringTree("S")
+
+const enum MK { To, Res, S }
+interface MFrame { kind: MK; a: Tree; b: Tree }   // To: a = arg; Res: a = func; S: a = b, b = x
+
+// The node the disp machine sees when it triages t: a suspension forces, memoized.
+function shape(t: Tree): Tree { while (t.tag === "susp") t = force(t); return t }
+const kShaped = (v: Tree): boolean => v.tag === "fork" && shape(v.left).tag === "leaf"
+
+// stepMachine(m, k): what `m_advance m k` returns, or null when `m` is not a state the
+// machine built (the caller then runs the definition). Forces only where the disp
+// code observes a shape, stores the raw nodes the disp code stores, and never
+// consults the memo or a native inside the run: the count is the definition's.
+export function stepMachine(state: Tree, k: Tree): Tree | null {
+  let kk = shape(k)                       // is_zero steps
+  if (kk.tag === "leaf") return state
+  const m = shape(state)                  // m_finished m
+  if (m.tag !== "fork") return null
+  if (m.left.id === TAG_DONE.id) return state
+  if (m.left.id !== TAG_RUN.id) return null
+  const inner = m.right
+  if (inner.tag !== "fork") return null
+  const app = inner.left
+  if (app.tag !== "fork") return null
+  let f = app.left, x = app.right
+  const frames: MFrame[] = []
+  for (let l = inner.right; l.tag !== "leaf"; l = l.right) {
+    if (l.tag !== "fork") return null
+    const fr = l.left
+    if (fr.tag !== "fork") return null
+    const tag = fr.left.id
+    if (tag === TAG_TO.id) frames.push({ kind: MK.To, a: fr.right, b: LEAF })
+    else if (tag === TAG_RES.id) frames.push({ kind: MK.Res, a: fr.right, b: LEAF })
+    else if (tag === TAG_S.id) {
+      const p = fr.right
+      if (p.tag !== "fork") return null
+      frames.push({ kind: MK.S, a: p.left, b: p.right })
+    } else return null
+  }
+  frames.reverse()                        // list head = top of stack = last element here
+  let done = false, result = LEAF
+
+  // m_deliver: pop until an application is pending
+  const deliver = (v: Tree): void => {
+    for (;;) {
+      const fr = frames.pop()
+      if (fr === undefined) { done = true; result = v; return }
+      if (fr.kind === MK.To) { f = v; x = fr.a; return }
+      if (fr.kind === MK.Res) { f = fr.a; x = v; return }
+      const vs = shape(v)
+      if (kShaped(vs)) { v = (vs as { right: Tree }).right; continue }
+      const bs = shape(fr.a)
+      if (kShaped(bs)) { f = v; x = (bs as { right: Tree }).right; return }
+      frames.push({ kind: MK.Res, a: v, b: LEAF }); f = fr.a; x = fr.b; return
+    }
+  }
+  // m_settle: leaf and stem heads only build
+  const settle = (): void => {
+    while (!done) {
+      const fs = shape(f)
+      if (fs.tag === "leaf") deliver(stem(x))
+      else if (fs.tag === "stem") deliver(fork(fs.child, x))
+      else return
+    }
+  }
+  // m_step: one dispatch on a fork head
+  const step = (): void => {
+    settle()
+    if (done) return
+    const fs = shape(f) as { left: Tree; right: Tree }
+    const a = fs.left, b = fs.right
+    const as = shape(a)
+    if (as.tag === "leaf") { deliver(b); return }
+    if (as.tag === "stem") {
+      const c = as.child
+      const cs = shape(c)
+      if (kShaped(cs)) {
+        const v = (cs as { right: Tree }).right
+        const vs = shape(v)
+        if (kShaped(vs)) { deliver((vs as { right: Tree }).right); return }
+        const bs = shape(b)
+        if (kShaped(bs)) { f = v; x = (bs as { right: Tree }).right; return }
+        frames.push({ kind: MK.Res, a: v, b: LEAF }); f = b; return
+      }
+      frames.push({ kind: MK.S, a: b, b: x }); f = c; return
+    }
+    const af = as as { left: Tree; right: Tree }
+    const xs = shape(x)
+    if (xs.tag === "leaf") { deliver(af.left); return }
+    if (xs.tag === "stem") { f = af.right; x = xs.child; return }
+    const xf = xs as { left: Tree; right: Tree }
+    frames.push({ kind: MK.To, a: xf.right, b: LEAF }); f = b; x = xf.left
+  }
+  // m_advance: is_zero steps, m_finished m, then step and nat_pred
+  while (kk.tag !== "leaf") {
+    if (done) break
+    step()
+    kk = shape(kk.tag === "stem" ? kk.child : (kk as { right: Tree }).right)
+  }
+  if (done) return fork(TAG_DONE, result)
+  let stack = LEAF
+  for (let i = 0; i < frames.length; i++) {
+    const fr = frames[i]
+    const node = fr.kind === MK.To ? fork(TAG_TO, fr.a) : fr.kind === MK.Res ? fork(TAG_RES, fr.a) : fork(TAG_S, fork(fr.a, fr.b))
+    stack = fork(node, stack)
+  }
+  return fork(TAG_RUN, fork(fork(f, x), stack))
+}
+
+const NATIVE_HANDLERS: Record<NativeRule, (a: Tree, b: Tree) => Tree | null> = {
+  treeEqRules: (a, b) => treeEqual(a, b) ? TREE_TRUE : TREE_FALSE,
+  machineRules: stepMachine,
 }
 
 // --- Pretty printer ---

@@ -40,6 +40,7 @@ interface RustEagerExports {
   tc_equal(a: number, b: number, budget: number): number      // 0=false 1=true 2=exhausted
   tc_interactions(): bigint                                    // total interactions this session
   tc_recognize_tree_eq(handle: number): void                  // register tree_eq fast-path
+  tc_recognize_machine?(handle: number): void                 // register m_advance's native stepper (absent in older artifacts)
   tc_set_memo_limit(n: number): void                          // cap apply memo (0 = unbounded)
   tc_clear_caches(): void                                      // drop caches to relieve pressure
 }
@@ -57,6 +58,7 @@ class RustEagerSession implements Session<number> {
   readonly canonicalHandles = false
   #x: RustEagerExports
   #budget: number
+  #noNativeIntercept: boolean
 
   constructor(opts?: SessionOpts) {
     const bytes = readFileSync(ARTIFACT)
@@ -64,6 +66,7 @@ class RustEagerSession implements Session<number> {
     const inst = new WebAssembly.Instance(mod, {})
     this.#x = inst.exports as unknown as RustEagerExports
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
+    this.#noNativeIntercept = opts?.noNativeIntercept === true
     // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
     // (RUST_EAGER_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
     // by dispose() anyway; this is for constrained or long-running deployments.
@@ -150,7 +153,9 @@ class RustEagerSession implements Session<number> {
   // compare (the two-stage susp scheme), so conversion checking is cheap — without
   // it, in-language tree_eq blows the host's per-call apply budget on kernel verify.
   recognizeNative(name: string, handle: number): void {
+    if (this.#noNativeIntercept) return
     if (name === "tree_eq") this.#x.tc_recognize_tree_eq(handle)
+    else if (name === "m_advance") this.#x.tc_recognize_machine?.(handle)
   }
 
   // dispose drops the only references to the WASM instance/exports; the JS GC

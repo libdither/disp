@@ -222,6 +222,10 @@ export type ParseProgramOptions = {
   exposeLocals?: boolean
 }
 
+// The disp definitions a backend may answer for natively: tree_eq (lib/prelude.disp)
+// and m_advance (lib/machine.disp). Registered by name at their definition site.
+const NATIVE_NAMES = new Set(["tree_eq", "m_advance"])
+
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
   // Default to the shared eager defaultSession so callers that don't manage
   // sessions keep the single-global-session behavior — in particular the
@@ -899,9 +903,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             target[idx] = { ...decl, type: decl.type ?? prev.type }
           } else target.push(decl)
         }
-        // Register the canonical tree_eq tree id with the runtime fast-path on first
-        // definition (also when bound privately via `let`).
-        if (it.name === "tree_eq" && r.pushDef && r.tree != null) elab.cs.recognizeNative?.("tree_eq", r.tree)
+        // Register a standard native's canonical tree id with the runtime fast-path on
+        // first definition (also when bound privately via `let`).
+        if (NATIVE_NAMES.has(it.name) && r.pushDef && r.tree != null) elab.cs.recognizeNative?.(it.name, r.tree)
         // The declaration protocol's vocabulary, registered per MODULE (state.ts):
         // a session can hold several kernels, so each one's definition is pristine
         // and only a ROOT-file binding of these names counts as a shadow.

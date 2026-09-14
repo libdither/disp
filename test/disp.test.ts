@@ -26,7 +26,7 @@ const SHARE_SESSIONS = process.env.DISP_INDEPENDENT_SESSIONS !== "1"
 // runs the whole suite on that backend without changing the global default.
 const backendName = process.env.DISP_EVALUATOR ?? defaultBackendName
 const sharedSession = SHARE_SESSIONS
-  ? (getBackend(backendName).createSession() as unknown as Session<Tree>)
+  ? (getBackend(backendName).createSession({ noNativeIntercept: process.env.DISP_NO_NATIVE_INTERCEPT === "1" }) as unknown as Session<Tree>)
   : undefined
 
 // Per-file scoped reclamation (rust-eager native + the eager TS backend): open a scope

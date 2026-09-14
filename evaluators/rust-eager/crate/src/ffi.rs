@@ -68,6 +68,13 @@ pub extern "C" fn tc_recognize_tree_eq(handle: u32) {
     with(|a| a.tree_eq_id = handle);
 }
 
+/// Register `m_advance`'s handle (lib/machine.disp) so `apply(m_advance, m) k` runs the
+/// native stepper (machine.rs). Idempotent.
+#[no_mangle]
+pub extern "C" fn tc_recognize_machine(handle: u32) {
+    with(|a| a.recognize_machine(handle));
+}
+
 // ── memory knobs (run at smaller footprints) ────────────────────────────────
 /// Cap the eager apply memo at `n` entries (0 = unbounded); over the cap the memo is
 /// cleared. Pure cache → correctness-preserving (just re-reduces).

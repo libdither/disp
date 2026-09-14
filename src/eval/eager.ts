@@ -11,7 +11,7 @@ import {
   type Tree, LEAF, stem, fork, apply, applyTree, force, treeEqual,
   encodeTernary, decodeTernary, prettyTree,
   type EagerState, type ApplyStats, freshState, freshCounters, statsOf, trimApplyMemo, nodeStats,
-  getActive, setActive,
+  getActive, setActive, setNativeId, getNativeId, type NativeRule,
   beginScope as coreBeginScope, endScope as coreEndScope,
 } from "../core/tree.js"
 import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classification } from "./types.js"
@@ -22,9 +22,15 @@ import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classificati
 export type { Tree } from "../core/tree.js"
 export { prettyTree } from "../core/tree.js"
 
+// The standard natives, by the disp name the driver registers them under.
+const NATIVE_RULES: Record<string, NativeRule> = { tree_eq: "treeEqRules", m_advance: "machineRules" }
+
 export class EagerSession implements Session<Tree> {
   // Not marked #private: withActiveSession reads it.
   readonly st: EagerState = freshState()
+  // Conformance mode: standard natives run in-language (recognizeNative is a no-op).
+  readonly #noNativeIntercept: boolean
+  constructor(opts?: SessionOpts) { this.#noNativeIntercept = opts?.noNativeIntercept === true }
 
   // Handles are hash-consed Tree pointers, so identity coincides with equality.
   // The engine may use this only as an optimization gate (run.ts name registry).
@@ -74,12 +80,15 @@ export class EagerSession implements Session<Tree> {
     try { return treeEqual(a, b) } finally { setActive(prev) }
   }
 
-  // ── tree_eq native fast-path registration ──
-  setTreeEqId(id: number): void { this.st.treeEqId = id }
-  getTreeEqId(): number { return this.st.treeEqId }
-  // ABI hook: idempotently register the tree_eq handle for the fast path.
+  // ── native fast-path registration ──
+  setTreeEqId(id: number): void { withActiveSession(this, () => setNativeId("treeEqRules", id)) }
+  getTreeEqId(): number { return withActiveSession(this, () => getNativeId("treeEqRules")) }
+  // ABI hook: idempotently register a standard native's handle; the first definition wins.
   recognizeNative(name: string, handle: Tree): void {
-    if (name === "tree_eq" && this.st.treeEqId === -1) this.st.treeEqId = handle.id
+    if (this.#noNativeIntercept) return
+    const rule = NATIVE_RULES[name]
+    if (rule === undefined) return
+    withActiveSession(this, () => { if (getNativeId(rule) === -1) setNativeId(rule, handle.id) })
   }
 
   // ── stats / cache (read this session's own state) ──
@@ -138,7 +147,7 @@ export const eagerBackend: EvalBackend<Tree> = {
   // kernel-load time, so none are reported here.
   natives(): ReadonlyMap<string, readonly string[]> { return new Map() },
   createSession(opts?: SessionOpts): EagerSession {
-    const s = new EagerSession()
+    const s = new EagerSession(opts)
     if (opts?.applyCacheLimit !== undefined) s.setApplyCacheLimit(opts.applyCacheLimit)
     return s
   },

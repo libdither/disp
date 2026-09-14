@@ -66,6 +66,11 @@ impl EagerSession {
     pub fn recognize_tree_eq(&mut self, handle: u32) {
         self.arena.tree_eq_id = handle;
     }
+    /// Register `m_advance`'s handle (lib/machine.disp) for the native stepper (machine.rs).
+    #[napi]
+    pub fn recognize_machine(&mut self, handle: u32) {
+        self.arena.recognize_machine(handle);
+    }
 
     // ── memory knobs ──
     /// Cap the eager apply memo at `n` entries (0 = unbounded); over the cap it sheds.

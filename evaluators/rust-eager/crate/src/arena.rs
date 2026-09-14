@@ -101,6 +101,9 @@ pub(crate) struct Arena {
     /// compare (the two-stage susp scheme), so conversion checking is cheap — without
     /// it, in-language `tree_eq` makes kernel verification blow the host's apply budget.
     pub(crate) tree_eq_id: u32,
+    /// `m_advance`'s handle (lib/machine.disp), registered via `recognizeNative` (0 = unset):
+    /// `apply(m_advance, m) k` is answered by `step_machine` (machine.rs).
+    pub(crate) machine_id: u32,
     /// Bool `true`/`false` (the tree_eq fast-path results), built once at session
     /// init: raw shapes `△` / `△ △` per TYPE_THEORY §2.7 (Scott until 2026-07-07).
     pub(crate) tt: u32,
@@ -154,6 +157,7 @@ impl Arena {
             memo: Memo::new(),
             interactions: 0,
             tree_eq_id: 0,
+            machine_id: 0,
             tt: 0,
             ff: 0,
             scopes: Vec::new(),

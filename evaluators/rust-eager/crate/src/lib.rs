@@ -28,6 +28,7 @@ mod snapshot;
 // backend owns its arena per `#[napi]` object instead (see `native`).
 #[cfg(target_arch = "wasm32")]
 mod ffi;
+mod machine;
 mod memo;
 mod reduce;
 // The in-process native N-API Session backend (host RAM, no wasm32 4 GiB ceiling; -O3 with

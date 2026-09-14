@@ -216,3 +216,33 @@ fn snapshot_cold_equivalent_steps() {
     assert_eq!(c.interactions + c.predicted_cold_add(), cold_not_false, "lone nested hit charges its own cold cost");
     let _ = std::fs::remove_file(&path);
 }
+
+// The native stepper (machine.rs) on a hand-built machine state: `m_start not false`
+// advanced ten steps is Done true; a zero count and a Done state return the same handle.
+fn nat(a: &mut Arena, n: u32) -> u32 {
+    let mut r = LEAF_ID;
+    for _ in 0..n {
+        r = a.fork(LEAF_ID, r);
+    }
+    r
+}
+#[test]
+fn machine_not_false_is_done_true() {
+    let mut a = Arena::new();
+    let not = build_not(&mut a);
+    let run = a.string_tree("Run");
+    let done = a.string_tree("Done");
+    let app = a.fork(not, LEAF_ID);
+    let inner = a.fork(app, LEAF_ID);
+    let state = a.fork(run, inner);
+    let mut budget = 1_000_000i64;
+    let k0 = nat(&mut a, 0);
+    assert_eq!(a.step_machine(state, k0, &mut budget).ok().unwrap(), Some(state), "zero steps: the same state");
+    let k10 = nat(&mut a, 10);
+    let r = a.step_machine(state, k10, &mut budget).ok().unwrap().unwrap();
+    let expect_true = a.stem(LEAF_ID);
+    let expected = a.fork(done, expect_true);
+    assert_eq!(r, expected, "not false = true, as a Done state");
+    assert_eq!(a.step_machine(r, k10, &mut budget).ok().unwrap(), Some(r), "a Done state is returned as is");
+    assert_eq!(a.step_machine(LEAF_ID, k10, &mut budget).ok().unwrap(), None, "not a machine state: declined");
+}
