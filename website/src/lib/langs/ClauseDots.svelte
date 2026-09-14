@@ -10,7 +10,8 @@
   }
   export interface Clause {
     v: string // '1' | '½' | '0' | '?' | '—'
-    word: string // the state in words, with the † qualifier spelled out
+    route?: string // a ½ names the half-credit condition it takes: '½(contracts)'
+    word: string // the state in words, the ½ route and † qualifier spelled out
   }
   export function parseClauses(clauses: string): Clause[] {
     return clauses
@@ -19,8 +20,12 @@
       .filter(Boolean)
       .map((t) => {
         const knowledge = t.includes('†')
-        const v = t.replace('†', '').trim()
-        return { v, word: (WORD[v] ?? v) + (knowledge ? ' (from general knowledge)' : '') }
+        const m = t.replace('†', '').trim().match(/^(.+?)(?:\(([^)]+)\))?$/)
+        const v = m?.[1].trim() ?? t
+        const route = m?.[2]
+        const word =
+          (WORD[v] ?? v) + (route ? ` (${route})` : '') + (knowledge ? ' (from general knowledge)' : '')
+        return { v, route, word }
       })
   }
 </script>

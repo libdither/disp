@@ -119,15 +119,17 @@
     const axis = data.axes.find((a) => a.id === id)
     const word = s.level == null ? 'not scored' : LEVEL_WORD[s.level]
     const head = `<b>${s.raw}${s.pct != null ? ` ${s.pct}%${s.provisional ? '?' : ''}` : ''}</b> ${word}${s.tag ? ` · ${s.tag}` : ''}${s.ahead ? ' · <b>ahead of disp</b>' : ''}`
-    // each grading clause with this project's verdict on it, then the write-up's one-line why
+    // each grading clause with this project's verdict on it; a ½ names its route.
+    // the scorecard note below carries the narrative, so the one-line why is
+    // omitted here — it largely restates the note
     const parts = s.clauses ? parseClauses(s.clauses) : []
     const clauses = parts.length
       ? `<div class="tip-clauses">${parts
           .map(
             (c, i) =>
-              `<span class="tip-clause"><i class="cd ${dotCls(c.v)}"></i><span>${esc(axis?.clauses[i] ?? `clause ${i + 1}`)} — <b>${c.word}</b></span></span>`
+              `<span class="tip-clause"><i class="cd ${dotCls(c.v)}"></i><span>${esc(axis?.clauses[i] ?? `clause ${i + 1}`)} — <b>${esc(c.word)}</b></span></span>`
           )
-          .join('')}</div>${s.whyHtml ? `<div class="tip-why">${s.whyHtml}</div>` : ''}`
+          .join('')}</div>${!s.noteHtml && s.whyHtml ? `<div class="tip-why">${s.whyHtml}</div>` : ''}`
       : ''
     tip = {
       ...place(ev),

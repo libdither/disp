@@ -56,9 +56,14 @@ def scores():
             cells = [c.strip() for c in line.split('|')[1:-1]]
             if len(cells) < 6: continue
             name, vals, why = cells[0], cells[1:-2], cells[-1]
+            bases = []
             for v in vals:
-                if v.replace('†', '') not in VAL: sys.exit(f'{ax} {name}: bad clause value {v!r}')
-            xs = [VAL[v.replace('†', '')] for v in vals if VAL[v.replace('†', '')] is not None]
+                # `½(route)` names the half-credit condition taken; a bare ½ is not allowed
+                cm = re.match(r'^(1|½|0|\?|—)(?:\(([^)]+)\))?†?$', v)
+                if not cm: sys.exit(f'{ax} {name}: bad clause value {v!r}')
+                if cm.group(1) == '½' and not cm.group(2): sys.exit(f'{ax} {name}: ½ without a route tag in {v!r} — write ½(route)')
+                bases.append(cm.group(1))
+            xs = [VAL[b] for b in bases if VAL[b] is not None]
             pct = round(sum(xs) / len(xs) * 100) if xs else 0
             out[ax].append(dict(name=name, vals=vals, pct=pct, prov=any('?' in v for v in vals),
                                 knowledge=any('†' in v for v in vals), why=why, line=i))

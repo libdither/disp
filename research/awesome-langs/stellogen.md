@@ -103,9 +103,9 @@ the linear fragment Eng's thesis proves (Theorem 70.5).
 
 | Axis | Stellogen | Note | Clauses |
 |---|---|---|---|
-| G1 Substrate | ✅ 83% (inert terms) | Code is inert first-order terms matched by unification; no `eval`, no self-evaluator. | 1 · ½ · 1 — code is a first-order term that shape checkers unify against; no eval back to code; types are library constellations |
-| G2 Specification | ✗ 12% (library types) | "Type system as library code" is the entire project; no dependent types, function types only for the linear λ fragment. Equality: `==` is syntactic, order- and variable-name-sensitive by specification; no behavioral equality. | ½ · 0 · 0 · 0 — types are user-space test galaxies over values; no dependent types, no proofs; `==` is syntactic |
-| G3 Trust | ◐ 50% (paper theorems) | Two-part kernel with a normative spec and two trusted observations; trust rests on per-system paper theorems, no evidence objects. | 1 · 0 · ½ — ~3,200 lines with a normative spec and two trusted observations; checkers are user space; trust rests on paper theorems, no evidence objects |
+| G1 Substrate | ✅ 83% (inert terms) | Code is inert first-order terms matched by unification; no `eval`, no self-evaluator. | 1 · ½(no eval back) · 1 — code is a first-order term that shape checkers unify against; no eval back to code; types are library constellations |
+| G2 Specification | ✗ 12% (library types) | "Type system as library code" is the entire project; no dependent types, function types only for the linear λ fragment. Equality: `==` is syntactic, order- and variable-name-sensitive by specification; no behavioral equality. | ½(value tests) · 0 · 0 · 0 — types are user-space test galaxies over values; no dependent types, no proofs; `==` is syntactic |
+| G3 Trust | ◐ 50% (paper theorems) | Two-part kernel with a normative spec and two trusted observations; trust rests on per-system paper theorems, no evidence objects. | 1 · 0 · ½(paper theorems) — ~3,200 lines with a normative spec and two trusted observations; checkers are user space; trust rests on paper theorems, no evidence objects |
 | G4 Execution | ✗ 0% (none) | None; docs admit concrete execution "has a horrible complexity" (repeated graph isomorphism). | 0 · 0 · 0 · 0 — execution has "a horrible complexity" |
 | G5 Search | ✗ 0% (none) | None, and none intended. | 0 · 0 · 0 — none intended |
 

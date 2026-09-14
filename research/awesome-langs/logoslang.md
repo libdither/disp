@@ -51,7 +51,7 @@ Reflection is affordable **if you can drop out of it on demand**.
 
 | Axis | LogosLang | Note | Clauses |
 |---|---|---|---|
-| G1 Substrate | ◐ 50% (logic graph) | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. | ½ · 1 · 0 — the Logic Graph is walkable today and is the program; self-rewriting and the proof layer are unbuilt |
+| G1 Substrate | ◐ 50% (logic graph) | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. | ½(walk only) · 1 · 0 — the Logic Graph is walkable today and is the program; self-rewriting and the proof layer are unbuilt |
 | G2 Specification | ✗ 0% (designed) | A "proof layer" is specified. No type theory exists yet. Equality: The "rewriting engine" is named but unspecified. | 0 · 0 · 0 · 0 — the proof layer and the rewriting engine are design documents |
 | G3 Trust | ✗ 0% (none) | No kernel discipline described. | 0 · 0 · 0 — no kernel discipline described |
 | G4 Execution | ◐ 25% (Cranelift JIT) | Cranelift JIT, measured, 3× vectorized C. Ships binaries for three platforms. | 1 · 0 · 0 · 0 — Cranelift JIT within 3× of vectorized C; `.compile()` lowers a function, it does not license a replacement |

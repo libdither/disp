@@ -53,10 +53,10 @@ of a search procedure.
 | Axis | Vow | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (excluded) | Deliberately not: macros and metaprogramming are *excluded* to keep the verifier tractable. Directly opposed to disp's G1. | 0 · 0 · 0 — macros and metaprogramming excluded on purpose |
-| G2 Specification | ◐ 25% (contracts, BMC) | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. Equality: Not addressed. | ½ · ½ · 0 · 0 — contracts + loop invariants under bounded model checking; young; equality not addressed |
+| G2 Specification | ◐ 25% (contracts, BMC) | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. Equality: Not addressed. | ½(contracts) · ½(BMC-discharged) · 0 · 0 — contracts + loop invariants under bounded model checking; young; equality not addressed |
 | G3 Trust | ✗ 0% (BMC TCB) | TCB = vowc + ESBMC. No certificates, no LCF split. | 0 · 0 · 0 — TCB = vowc + ESBMC |
 | G4 Execution | ◐ 25% (Cranelift) | Cranelift native codegen, linear types, self-hosted with byte-identical bootstrap. Real systems performance. | 1 · 0 · 0 · 0 — Cranelift native with a byte-identical bootstrap |
-| G5 Search | ◐ 33% (CEGIS+LLM) | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. | ½ · ½ · 0 — CEGIS with an external LLM; no cost objective |
+| G5 Search | ◐ 33% (CEGIS+LLM) | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. | ½(LLM loop) · ½(checker only) · 0 — CEGIS with an external LLM; no cost objective |
 
 ## What disp could steal
 

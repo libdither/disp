@@ -52,7 +52,7 @@ arguably a better fit for it than Lean's.
 | G2 Specification | ◐ 25% (math prover) | A real theorem-proving language, but aimed at mathematics; not dependent-type-strength program specification. Equality: Not addressed for program rewriting. | 0 · 1 · 0 · 0 — a theorem-proving language for mathematics with a growing library; no program specifications |
 | G3 Trust | ✗ 0%? (own checker) | Has its own checker; TCB not characterized as an LCF kernel. | 0 · ? · 0 — has its own checker; the write-up does not characterize its TCB or proof objects |
 | G4 Execution | ✗ 0% (none) | Not a systems language at all. | 0 · 0 · 0 · 0 — not a systems language |
-| G5 Search | ◐ 50% (local neural) | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. | ½ · ½ · ½ — an embedded local model fills in proofs with the checker in the loop; the library becomes the next model's training data |
+| G5 Search | ◐ 50% (local neural) | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. | ½(local model) · ½(checker only) · ½(data flywheel) — an embedded local model fills in proofs with the checker in the loop; the library becomes the next model's training data |
 
 ## What disp could steal
 

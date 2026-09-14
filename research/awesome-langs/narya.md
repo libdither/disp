@@ -85,8 +85,8 @@ discipline.
 | Axis | Narya | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (none) | No programs-as-data at all; even Agda's quotation API has no analogue. | 0 · 0 · 0 — no reflection API at all |
-| G2 Specification | ◐ 50% (HoTT) | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. Equality: The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. | 1 · ½ · 0 · ½ — HoTT + parametricity + modalities, no library yet; observational Id per former, transport computing on some formers so far |
-| G3 Trust | ✗ 17% (big checker) | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). | 0 · ½ · 0 — tens of thousands of OCaml lines are the trust base; NbE unproven |
+| G2 Specification | ◐ 50% (HoTT) | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. Equality: The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. | 1 · ½(no library) · 0 · ½(some formers) — HoTT + parametricity + modalities, no library yet; observational Id per former, transport computing on some formers so far |
+| G3 Trust | ✗ 17% (big checker) | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). | 0 · ½(large checker) · 0 — tens of thousands of OCaml lines are the trust base; NbE unproven |
 | G4 Execution | ✗ 0% (none) | No cost model, no performance story; correctness-first by design. | 0 · 0 · 0 · 0 — correctness-first, no performance story |
 | G5 Search | ✗ 0% (none) | No synthesis; no tactics even. | 0 · 0 · 0 — no tactics even |
 

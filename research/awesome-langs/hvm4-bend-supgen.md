@@ -54,11 +54,11 @@ previously-intractable O(n log n) sort found this way, and — importantly — i
 
 | Axis | HVM4/Bend2 | Note | Clauses |
 |---|---|---|---|
-| G1 Substrate | ◐ 33% (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. | ½ · ½ · 0 — terms are runtime graph nodes with no in-language inspection; untyped, no checker |
+| G1 Substrate | ◐ 33% (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. | ½(runtime graphs) · ½(graphs only) · 0 — terms are runtime graph nodes with no in-language inspection; untyped, no checker |
 | G2 Specification | ✗ 0% (planned) | Bend2 *plans* dependent types + proofs; HVM4 itself is untyped. Not shipped. Equality: Affine/optimal-sharing semantics, no equivalence-licensing story at all. | 0 · 0 · 0 · 0 — untyped; Bend2's types and proofs are planned |
 | G3 Trust | ✗ 0% (trust hvm.c) | No LCF kernel, no evidence discipline. Trust = trust `hvm.c`. | 0 · 0 · 0 — trust is `hvm.c` |
 | G4 Execution | ◐ 50% (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2. | 1 · 0 · 1† · 0 — native C with GPU lineage; the runtime reports interaction counts; no verified path, no rewrite mechanism |
-| G5 Search | ◐ 50% (superposition) | The only project anywhere with superposition-based program search *in the runtime*. | 1 · ½ · 0 — SupGen enumerates superposed candidates until tests pass; tests rather than a checker, no cost objective |
+| G5 Search | ◐ 50% (superposition) | The only project anywhere with superposition-based program search *in the runtime*. | 1 · ½(tests only) · 0 — SupGen enumerates superposed candidates until tests pass; tests rather than a checker, no cost objective |
 
 ## What disp could steal
 
