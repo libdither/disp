@@ -46,14 +46,14 @@ one axis is.
 
 ## Scorecard
 
-| Axis | Idris 2 | Note |
-|---|---|---|
-| A1 Reflection | ◐ (quotation) | Elaborator reflection, quotation-based. |
-| A2 Spec power | ✅ (dependent+QTT) | Full dependent types + QTT. |
-| A3 Kernel | ✗ (trusted checker) | No LCF kernel; typechecker is the TCB. |
-| A4 Equality | ✗ (intensional) | Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. |
-| A5 Perf | ◐ (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. |
-| A6 Search | ✗ (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. |
+| Axis | Idris 2 | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ◐ 50% (quotation) | Elaborator reflection, quotation-based. | 1 · 0 · ½ — elaborator reflection, quotation-based |
+| A2 Spec power | ✅ 83% (dependent+QTT) | Full dependent types + QTT. | 1 · 1 · ½ — dependent types + QTT; a working standard library |
+| A3 Kernel | ✗ 17% (trusted checker) | No LCF kernel; typechecker is the TCB. | 0 · ½ · 0 — the typechecker is the TCB |
+| A4 Equality | ✗ 17% (intensional) | Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. | ½ · 0 · 0 — intensional propositional equality, nothing more |
+| A5 Perf | ◐ 33% (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. | ½ · 0 · ½ — Chez backend; erasure by quantity makes specs free at runtime |
+| A6 Search | ✗ 0% (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. | 0 · 0 · 0 — `auto` is basic |
 
 ## What disp could steal
 

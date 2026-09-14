@@ -52,14 +52,14 @@ previously-intractable O(n log n) sort found this way, and — importantly — i
 
 ## Scorecard
 
-| Axis | HVM4/Bend2 | Note |
-|---|---|---|
-| A1 Reflection | ◐ (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. |
-| A2 Spec power | ◐ (planned) | Bend2 *plans* dependent types + proofs; HVM4 itself is untyped. Not shipped. |
-| A3 Kernel | ✗ (trust hvm.c) | No LCF kernel, no evidence discipline. Trust = trust `hvm.c`. |
-| A4 Equality | ✗ (none) | Affine/optimal-sharing semantics, no equivalence-licensing story at all. |
-| A5 Perf | **✅** (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2. |
-| A6 Search | **✅** (superposition) | The only project anywhere with superposition-based program search *in the runtime*. |
+| Axis | HVM4/Bend2 | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ◐ 33% (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. | ½ · ½ · 0 — terms are runtime graph nodes with no in-language inspection; untyped, no checker |
+| A2 Spec power | ✗ 0% (planned) | Bend2 *plans* dependent types + proofs; HVM4 itself is untyped. Not shipped. | 0 · 0 · 0 — untyped; Bend2's types and proofs are planned |
+| A3 Kernel | ✗ 0% (trust hvm.c) | No LCF kernel, no evidence discipline. Trust = trust `hvm.c`. | 0 · 0 · 0 — trust is `hvm.c` |
+| A4 Equality | ✗ 0% (none) | Affine/optimal-sharing semantics, no equivalence-licensing story at all. | 0 · 0 · 0 — none |
+| A5 Perf | ◐ 50% (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2. | 1 · ½† · 0 — native C with GPU lineage; the runtime reports interaction counts; no cost in types |
+| A6 Search | ◐ 50% (superposition) | The only project anywhere with superposition-based program search *in the runtime*. | 1 · ½ · 0 — SupGen enumerates superposed candidates until tests pass; tests rather than a checker, no cost objective |
 
 ## What disp could steal
 

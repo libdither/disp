@@ -60,14 +60,14 @@ retrofitting.
 
 ## Scorecard (cluster-level)
 
-| Axis | Cluster | Note |
-|---|---|---|
-| A1 Reflection | ✗ (two-layer) | None. Structurally impossible in the two-layer design. |
-| A2 Spec power | ◐–✅ (refinement–Iris) | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). |
-| A3 Kernel | ◐ (per tool) | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. |
-| A4 Equality | ◐ (per tool) | Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. |
-| A5 Perf | **✅** (Rust) | It is Rust. Nothing to prove. |
-| A6 Search | ◐ (harness gen) | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. |
+| Axis | Cluster | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (two-layer) | None. Structurally impossible in the two-layer design. | 0 · 0 · 0 — structurally impossible in the two-layer design |
+| A2 Spec power | ✅ 83% (refinement–Iris) | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). | 1 · 1 · ½ — from Flux refinements to RefinedRust's Iris and Aeneas's Lean; libcrux and ACE-RISCV are the library |
+| A3 Kernel | ◐ 50% (per tool) | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. | ½ · ½ · ½ — Aeneas/hax/RefinedRust inherit Lean/F*/Rocq kernels; Kani/Creusot/Flux trust SMT |
+| A4 Equality | ◐ 33% (per tool) | Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. | ½ · ½ · 0 — Aeneas's functional translation of borrows is a machine-produced equivalence, per tool and human-directed |
+| A5 Perf | ◐ 33% (Rust) | It is Rust. Nothing to prove. | 1 · 0 · 0 — it is Rust |
+| A6 Search | ◐ 33% (harness gen) | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. | ½ · ½ · 0 — Kani's autoharness; otherwise human-driven with AI assistance |
 
 ## What disp could steal
 

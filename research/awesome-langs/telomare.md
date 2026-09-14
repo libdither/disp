@@ -97,14 +97,14 @@ affine-only boundary disp measured.
 
 ## Scorecard
 
-| Axis | Telomare | Note |
-|---|---|---|
-| A1 Reflection | ✗ (env only) | Closures are pairs, so a program can project a closure's *environment*; its code is an opaque `Defer`. No self-interpreter, no checker-in-the-language: every analysis is Haskell. |
-| A2 Spec power | ◐ (STLC+refinements) | Static layer is STLC-shaped (no polymorphism, an `Any` escape). Refinements are predicates, checked statically only when the failure is unconditional. No dependent types, no proofs. |
-| A3 Kernel | ✗ (report only) | Trusted base is the whole compiler. `--certificate` is a *report*, not a re-checkable certificate; `.telc` artifacts carry counts nothing independent verifies. |
-| A4 Equality | ✗ (structural) | Structural only (`shallowEq1` for merging superpositions). No equivalence story. |
-| A5 Perf + cost | ◐ (static bounds) | Perf: Haskell tree-walker; sizing tic-tac-toe ≈ 70 s, a UDT test compile 5–6 min. Cost: a static, inferred, input-universal per-site bound (ahead of disp) plus a measured step/node meter (level with disp's `ApplyStats`). No hardware model. |
-| A6 Search | ✗ (none) | No synthesis. The superposition evaluator exists but is pointed at bounds, not candidates. |
+| Axis | Telomare | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 17% (env only) | Closures are pairs, so a program can project a closure's *environment*; its code is an opaque `Defer`. No self-interpreter, no checker-in-the-language: every analysis is Haskell. | ½ · 0 · 0 — a closure's environment is a pair you can project; its code is an opaque `Defer`; every analysis is Haskell |
+| A2 Spec power | ✗ 17% (STLC+refinements) | Static layer is STLC-shaped (no polymorphism, an `Any` escape). Refinements are predicates, checked statically only when the failure is unconditional. No dependent types, no proofs. | ½ · 0 · 0 — STLC-shaped statics; refinements are runtime validators |
+| A3 Kernel | ✗ 0% (report only) | Trusted base is the whole compiler. `--certificate` is a *report*, not a re-checkable certificate; `.telc` artifacts carry counts nothing independent verifies. | 0 · 0 · 0 — the whole compiler is trusted; `--certificate` is a report nothing re-checks |
+| A4 Equality | ✗ 0% (structural) | Structural only (`shallowEq1` for merging superpositions). No equivalence story. | 0 · 0 · 0 — structural only |
+| A5 Perf + cost | ◐ 33% (static bounds) | Perf: Haskell tree-walker; sizing tic-tac-toe ≈ 70 s, a UDT test compile 5–6 min. Cost: a static, inferred, input-universal per-site bound (ahead of disp) plus a measured step/node meter (level with disp's `ApplyStats`). No hardware model. | 0 · ½ · ½ — a Haskell tree-walker; `--meter` counts steps and nodes; `--certificate` is a static, inferred, input-universal iteration bound |
+| A6 Search | ✗ 0% (none) | No synthesis. The superposition evaluator exists but is pointed at bounds, not candidates. | 0 · 0 · 0 — superposition is aimed at bounds, not candidates |
 
 ## What disp could steal
 

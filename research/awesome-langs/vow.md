@@ -50,14 +50,14 @@ of a search procedure.
 
 ## Scorecard
 
-| Axis | Vow | Note |
-|---|---|---|
-| A1 Reflection | ✗ (excluded) | Deliberately not: macros and metaprogramming are *excluded* to keep the verifier tractable. Directly opposed to disp's A1. |
-| A2 Spec power | ◐ (contracts, BMC) | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. |
-| A3 Kernel | ✗ (BMC TCB) | TCB = vowc + ESBMC. No certificates, no LCF split. |
-| A4 Equality | ✗ (none) | Not addressed. |
-| A5 Perf | ✅ (Cranelift) | Cranelift native codegen, linear types, self-hosted with byte-identical bootstrap. Real systems performance. |
-| A6 Search | ◐ (CEGIS+LLM) | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. |
+| Axis | Vow | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (excluded) | Deliberately not: macros and metaprogramming are *excluded* to keep the verifier tractable. Directly opposed to disp's A1. | 0 · 0 · 0 — macros and metaprogramming excluded on purpose |
+| A2 Spec power | ◐ 33% (contracts, BMC) | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. | ½ · ½ · 0 — contracts + loop invariants under bounded model checking; young |
+| A3 Kernel | ✗ 0% (BMC TCB) | TCB = vowc + ESBMC. No certificates, no LCF split. | 0 · 0 · 0 — TCB = vowc + ESBMC |
+| A4 Equality | ✗ 0% (none) | Not addressed. | 0 · 0 · 0 — not addressed |
+| A5 Perf | ◐ 33% (Cranelift) | Cranelift native codegen, linear types, self-hosted with byte-identical bootstrap. Real systems performance. | 1 · 0 · 0 — Cranelift native, linear types |
+| A6 Search | ◐ 33% (CEGIS+LLM) | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. | ½ · ½ · 0 — CEGIS with an external LLM; no cost objective |
 
 ## What disp could steal
 

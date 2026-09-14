@@ -55,14 +55,14 @@ what Agda gets for free.
 
 ## Scorecard
 
-| Axis | Agda/Cubical | Note |
-|---|---|---|
-| A1 Reflection | ◐ (quotation) | Full reflection API, quotation-based. The best non-intensional A1. |
-| A2 Spec power | **✅** (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. |
-| A3 Kernel | ◐ (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. |
-| A4 Equality | **✅** (cubical) | Cubical: computational univalence. The answer disp cites and has not integrated. |
-| A5 Perf | ✗ (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. |
-| A6 Search | ✗ (none) | Auto/agda-mode search is trivial. No synthesis. |
+| Axis | Agda/Cubical | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ◐ 50% (quotation) | Full reflection API, quotation-based. The best non-intensional A1. | 1 · 0 · ½† — `quoteTerm`/`unquote`; the TC monad can infer and check types |
+| A2 Spec power | ✅ 100% (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. | 1 · 1 · 1 — dependent types, HITs, univalence; the standard and cubical libraries |
+| A3 Kernel | ✗ 17% (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. | 0 · ½ · 0 — the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
+| A4 Equality | ◐ 67% (cubical) | Cubical: computational univalence. The answer disp cites and has not integrated. | 1 · 1 · 0 — cubical: computational univalence; no rewrite consumer |
+| A5 Perf | ✗ 0% (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. | 0 · 0 · 0 — research-grade GHC/JS backends |
+| A6 Search | ✗ 0% (none) | Auto/agda-mode search is trivial. No synthesis. | 0 · 0 · 0 — `auto` is trivial |
 
 ## What disp could steal
 

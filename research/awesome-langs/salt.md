@@ -64,14 +64,14 @@ This matters to disp for two reasons:
 
 ## Scorecard
 
-| Axis | Salt (claimed) | Note |
-|---|---|---|
-| A1 Reflection | ✗ (none) | None. |
-| A2 Spec power | ◐ (SMT contracts) | Z3 contracts: bounds, postconditions, quantifiers, loop invariants, bitvectors. SMT-shaped, not dependent. |
-| A3 Kernel | ✗ (SMT TCB) | TCB = saltc + Z3 + MLIR. |
-| A4 Equality | ✗ (none) | Not addressed. |
-| A5 Perf | ◐ (claimed) | MLIR→LLVM, claims `-O3` parity, compiler-checked arena regions. Plausible design; unverified claim. |
-| A6 Search | ✗ (none) | Not agent-oriented; no synthesis. |
+| Axis | Salt (claimed) | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| A2 Spec power | ◐ 33% (SMT contracts) | Z3 contracts: bounds, postconditions, quantifiers, loop invariants, bitvectors. SMT-shaped, not dependent. | ½ · ½ · 0 — Z3 contracts: bounds, postconditions, quantifiers, invariants (claimed); no library |
+| A3 Kernel | ✗ 0% (SMT TCB) | TCB = saltc + Z3 + MLIR. | 0 · 0 · 0 — TCB = saltc + Z3 + MLIR (claimed) |
+| A4 Equality | ✗ 0% (none) | Not addressed. | 0 · 0 · 0 — not addressed |
+| A5 Perf | ✗ 17% (claimed) | MLIR→LLVM, claims `-O3` parity, compiler-checked arena regions. Plausible design; unverified claim. | ½ · 0 · 0 — MLIR→LLVM with claimed `-O3` parity, unverified |
+| A6 Search | ✗ 0% (none) | Not agent-oriented; no synthesis. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 

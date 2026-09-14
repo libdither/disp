@@ -42,14 +42,14 @@ than most academic kernels manage.
 
 ## Scorecard
 
-| Axis | Blight | Note |
-|---|---|---|
-| A1 Reflection | ◐ (s-expressions) | S-expression syntax and a tower/kernel split invite metaprogramming, but no native programs-as-data. |
-| A2 Spec power | **✅** (cubical+QTT) | Cubical + QTT + effects is a *more* ambitious type theory than disp currently implements. |
-| A3 Kernel | ✅ (LCF, two checkers) | Same architecture as disp, plus an independent second checker. |
-| A4 Equality | **✅** (cubical) | Cubical: computational univalence and higher inductive types — the heavyweight-but-real answer disp cites in §7 but hasn't integrated. |
-| A5 Perf | ✗ (none) | No native backend, no cost model. Rust host, research-scale. |
-| A6 Search | ✗ (tactics) | Tactics are human-written. No synthesis. |
+| Axis | Blight | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0%? (s-expressions) | S-expression syntax and a tower/kernel split invite metaprogramming, but no native programs-as-data. | ? · 0 · 0 — s-expressions "invite metaprogramming"; the write-up does not say what a program can inspect |
+| A2 Spec power | ◐ 67% (cubical+QTT) | Cubical + QTT + effects is a *more* ambitious type theory than disp currently implements. | 1 · 1 · 0 — cubical + QTT + effects; two months old, no library |
+| A3 Kernel | ✅ 100% (LCF, two checkers) | Same architecture as disp, plus an independent second checker. | 1 · 1 · 1 — a microscopic kernel is the only thing that can mint a `Proof`; the tower is untrusted; a second independently written re-checker |
+| A4 Equality | ◐ 67% (cubical) | Cubical: computational univalence and higher inductive types — the heavyweight-but-real answer disp cites in §7 but hasn't integrated. | 1 · 1 · 0 — cubical univalence and HITs compute; no rewrite consumer |
+| A5 Perf | ✗ 0% (none) | No native backend, no cost model. Rust host, research-scale. | 0 · 0 · 0 — no native backend, no cost model |
+| A6 Search | ✗ 0% (tactics) | Tactics are human-written. No synthesis. | 0 · 0 · 0 — tactics are human-written |
 
 ## What disp could steal
 

@@ -50,14 +50,14 @@ detail.
 
 ## Scorecard
 
-| Axis | ATS3 | Note |
-|---|---|---|
-| A1 Reflection | ✗ (none) | No programs-as-data. |
-| A2 Spec power | ✅ (dependent+linear) | Dependent + linear types, natively, for low-level code. |
-| A3 Kernel | ✗ (trusted checker) | No LCF kernel; the typechecker is the TCB. |
-| A4 Equality | ✗ (none) | Not addressed as a rewrite-licensing problem. |
-| A5 Perf | **✅** (to C) | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. |
-| A6 Search | ✗ (none) | None. |
+| Axis | ATS3 | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — no programs-as-data |
+| A2 Spec power | ✅ 83% (dependent+linear) | Dependent + linear types, natively, for low-level code. | 1 · 1† · ½ — dependent + linear types with an explicit proof language; a 25-year library, little used |
+| A3 Kernel | ✗ 17% (trusted checker) | No LCF kernel; the typechecker is the TCB. | 0 · ½† · 0 — the typechecker is the TCB; proof terms exist |
+| A4 Equality | ✗ 0% (none) | Not addressed as a rewrite-licensing problem. | 0 · 0 · 0 — not addressed |
+| A5 Perf | ◐ 33% (to C) | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. | 1 · 0 · 0 — to C, no GC, no runtime |
+| A6 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 

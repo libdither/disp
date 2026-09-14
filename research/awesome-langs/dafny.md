@@ -55,14 +55,14 @@ toward conventional languages.
 
 ## Scorecard
 
-| Axis | Dafny | Note |
-|---|---|---|
-| A1 Reflection | ✗ (none) | None. |
-| A2 Spec power | ◐ (SMT) | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. |
-| A3 Kernel | ✗ (SMT TCB) | TCB = Dafny + Boogie + Z3. Large. |
-| A4 Equality | ◐ (SMT fragment) | SMT-fragment only. |
-| A5 Perf | ✗ (managed) | Managed backends. Not a systems language. |
-| A6 Search | **✅** (LLM-written) | The best *LLM-writability* of any verification language, by a wide margin. |
+| Axis | Dafny | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| A2 Spec power | ◐ 50% (SMT) | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. | ½ · ½ · ½ — first-order + quantifiers, SMT-shaped; a decade of AWS production specs |
+| A3 Kernel | ✗ 0% (SMT TCB) | TCB = Dafny + Boogie + Z3. Large. | 0 · 0 · 0 — TCB = Dafny + Boogie + Z3 |
+| A4 Equality | ◐ 33% (SMT fragment) | SMT-fragment only. | ½ · ½ · 0 — SMT fragment only |
+| A5 Perf | ✗ 0% (managed) | Managed backends. Not a systems language. | 0 · 0 · 0 — managed backends |
+| A6 Search | ◐ 33% (LLM-written) | The best *LLM-writability* of any verification language, by a wide margin. | ½ · ½ · 0 — LLMs write it best (82–96% on benchmarks) but the search lives in external tools; correctness only |
 
 ## What disp could steal
 

@@ -47,14 +47,14 @@ scaffolding changes that dramatically (see `velvet-loom-wybecoder.md`).
 
 ## Scorecard
 
-| Axis | Lean 4 | Note |
-|---|---|---|
-| A1 Reflection | ◐ (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. |
-| A2 Spec power | **✅** (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. |
-| A3 Kernel | ✅ (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. |
-| A4 Equality | ◐ (tactics) | Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. |
-| A5 Perf | ◐ (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. |
-| A6 Search | **◐→✅** (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. |
+| Axis | Lean 4 | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ◐ 50% (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. | 1 · 0 · ½† — `Expr` deep embedding; `MetaM` exposes inference and checking to metaprograms |
+| A2 Spec power | ✅ 100% (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. | 1 · 1 · 1 — full dependent types and universes; mathlib |
+| A3 Kernel | ✅ 83% (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. | ½ · 1 · 1 — a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
+| A4 Equality | ◐ 33% (tactics) | Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. | ½ · ½ · 0 — propositional equality plus Quot and axioms; rewriting is tactic-driven |
+| A5 Perf | ✗ 17% (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. | ½ · 0 · 0 — via C, reference-counted; fine for tooling, not systems class |
+| A6 Search | ◐ 33% (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. | ½ · ½ · 0 — the richest external ecosystem of proof-search agents; nothing built in; no cost |
 
 ## What disp could steal
 

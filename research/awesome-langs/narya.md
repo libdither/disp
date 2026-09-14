@@ -82,14 +82,14 @@ discipline.
 
 ## Scorecard
 
-| Axis | Narya | Note |
-|---|---|---|
-| A1 Reflection | ✗ (none) | No programs-as-data at all; even Agda's quotation API has no analogue. |
-| A2 Spec power | **✅** (HoTT) | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. |
-| A3 Kernel | ✗ (big checker) | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). |
-| A4 Equality | **◐** (observational) | The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. |
-| A5 Perf | ✗ (none) | No cost model, no performance story; correctness-first by design. |
-| A6 Search | ✗ (none) | No synthesis; no tactics even. |
+| Axis | Narya | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (none) | No programs-as-data at all; even Agda's quotation API has no analogue. | 0 · 0 · 0 — no reflection API at all |
+| A2 Spec power | ◐ 67% (HoTT) | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. | 1 · 1 · 0 — HoTT + parametricity + modalities; no library, breaking changes expected |
+| A3 Kernel | ✗ 17% (big checker) | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). | 0 · ½ · 0 — tens of thousands of OCaml lines are the trust base; NbE unproven |
+| A4 Equality | ◐ 50% (observational) | The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. | 1 · ½ · 0 — observational Id per type former; transport computes on only some formers so far |
+| A5 Perf | ✗ 0% (none) | No cost model, no performance story; correctness-first by design. | 0 · 0 · 0 — correctness-first, no performance story |
+| A6 Search | ✗ 0% (none) | No synthesis; no tactics even. | 0 · 0 · 0 — no tactics even |
 
 ## What disp could steal
 

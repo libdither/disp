@@ -56,14 +56,14 @@ a checker multiplying the cost score.
 
 ## Scorecard
 
-| Axis | Mojo | Note |
-|---|---|---|
-| A1 Reflection | ◐ (staging) | Same language at compile time, no quotation layer; `std/reflection` reads type structure. Terms are never data; the checker is C++. |
-| A2 Spec power | ◐ (comptime values) | Compile-time-value indexing, `where` clauses, conditional conformance, linear types. No propositions, no proofs, no runtime-value dependency. |
-| A3 Kernel | ✗ (MLIR stack) | Trust is the whole MLIR/LLVM C++ stack. Now visible, never small. |
-| A4 Equality | ✗ (MLIR rewrites) | MLIR rewrites are unverified compiler transforms; no semantic licensing, no certificates. |
-| A5 Perf | **✅** (MLIR codegen) | The strongest hardware story in this survey: MLIR codegen for CPU/GPU/accelerators, vendor-class kernels, zero-cost flat structs. |
-| A6 Search | ◐ᶠ (param sweeps) | Offline benchmark sweeps over kernel parameter grids, cost only, no checker in the loop; the in-language `autotune` was removed in v0.7.0. |
+| Axis | Mojo | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ◐ 33% (staging) | Same language at compile time, no quotation layer; `std/reflection` reads type structure. Terms are never data; the checker is C++. | ½ · ½ · 0 — `reflect[T]` reads type structure only, natively; terms are never data; the checker is C++ |
+| A2 Spec power | ✗ 17% (comptime values) | Compile-time-value indexing, `where` clauses, conditional conformance, linear types. No propositions, no proofs, no runtime-value dependency. | ½ · 0 · 0 — types indexed by compile-time values only; no propositions, no proofs |
+| A3 Kernel | ✗ 0% (MLIR stack) | Trust is the whole MLIR/LLVM C++ stack. Now visible, never small. | 0 · 0 · 0 — the whole MLIR/LLVM C++ stack |
+| A4 Equality | ✗ 0% (MLIR rewrites) | MLIR rewrites are unverified compiler transforms; no semantic licensing, no certificates. | 0 · 0 · 0 — MLIR rewrites are unverified compiler transforms |
+| A5 Perf | ◐ 33% (MLIR codegen) | The strongest hardware story in this survey: MLIR codegen for CPU/GPU/accelerators, vendor-class kernels, zero-cost flat structs. | 1 · 0 · 0 — MLIR codegen for CPU/GPU/accelerators; benchmark sweeps are offline tooling |
+| A6 Search | ◐ 33% (param sweeps) | Offline benchmark sweeps over kernel parameter grids, cost only, no checker in the loop; the in-language `autotune` was removed in v0.7.0. | ½ · ½ · 0 — offline parameter sweeps, cost only, correctness assumed |
 
 ## What disp could steal
 

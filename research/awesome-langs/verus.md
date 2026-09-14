@@ -38,14 +38,14 @@ in existence that the FOUNDATIONS §15 paradigm works on systems code.
 
 ## Scorecard
 
-| Axis | Verus | Note |
-|---|---|---|
-| A1 Reflection | ✗ (erased) | No programs-as-data. Ghost code is erased, not inspectable. The checker is not a Verus program. |
-| A2 Spec power | ◐ (SMT) | Rich first-order + quantifiers + linear ghost state; **not** dependent types. Deliberately SMT-shaped ([P1] retreat). |
-| A3 Kernel | ✗ (SMT TCB) | TCB = Verus + Z3 + rustc. No LCF discipline, no certificates. |
-| A4 Equality | ◐ (SMT fragment) | SMT-fragment equality; no rewrite-licensing relation, no optimizer. |
-| A5 Perf | **✅** (Rust) | *It is Rust.* Native, zero-overhead, real kernels and allocators verified and shipped. Best A5 in the survey. |
-| A6 Search | **✅** (LLM, cost loop) | Best-demonstrated spec→implementation loop for systems code, with cost in the loop (IDS). |
+| Axis | Verus | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (erased) | No programs-as-data. Ghost code is erased, not inspectable. The checker is not a Verus program. | 0 · 0 · 0 — ghost code is erased; the checker is not a Verus program |
+| A2 Spec power | ◐ 50% (SMT) | Rich first-order + quantifiers + linear ghost state; **not** dependent types. Deliberately SMT-shaped ([P1] retreat). | ½ · ½ · ½ — first-order contracts with quantifiers and ghost state, Z3-discharged; verified kernels and allocators are the library in use |
+| A3 Kernel | ✗ 0% (SMT TCB) | TCB = Verus + Z3 + rustc. No LCF discipline, no certificates. | 0 · 0 · 0 — TCB = Verus + Z3 + rustc |
+| A4 Equality | ◐ 33% (SMT fragment) | SMT-fragment equality; no rewrite-licensing relation, no optimizer. | ½ · ½ · 0 — SMT-fragment equalities in proofs; nothing rewrites programs on their authority |
+| A5 Perf | ◐ 33% (Rust) | *It is Rust.* Native, zero-overhead, real kernels and allocators verified and shipped. Best A5 in the survey. | 1 · 0 · 0 — it is Rust; no cost primitive, no cost in types |
+| A6 Search | ◐ 67% (LLM, cost loop) | Best-demonstrated spec→implementation loop for systems code, with cost in the loop (IDS). | 1 · 1 · 0 — IDS synthesizes code and proofs with benchmarks inside the loop (7/7 KV-store specs); the proposer is an external LLM |
 
 ## What disp could steal
 

@@ -44,14 +44,14 @@ it looks like when applied to the whole type theory.
 
 ## Scorecard
 
-| Axis | Nova | Note |
-|---|---|---|
-| A1 Reflection | ✗ (none) | Standard elaborator/kernel pipeline; no programs-as-data. |
-| A2 Spec power | **✅** (extensional MLTT) | Full extensional MLTT — strictly stronger equality story than disp has. |
-| A3 Kernel | ✅ (certificates) | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. |
-| A4 Equality | **✅** (extensional) | Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. |
-| A5 Perf | ✗ (none) | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. |
-| A6 Search | ✗ (none) | No synthesis. |
+| Axis | Nova | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (none) | Standard elaborator/kernel pipeline; no programs-as-data. | 0 · 0 · 0 — standard elaborator/kernel pipeline |
+| A2 Spec power | ◐ 67% (extensional MLTT) | Full extensional MLTT — strictly stronger equality story than disp has. | 1 · 1 · 0 — extensional MLTT; solo and research-scale, no library |
+| A3 Kernel | ◐ 67%? (certificates) | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. | 1 · 1 · ? — a small kernel with its own spec re-checks certificate-carrying artifacts; no independent checker is mentioned |
+| A4 Equality | ◐ 67% (extensional) | Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. | 1 · 1 · 0 — extensional: anything provably equal is treated as equal; certificates recover decidability; no optimizer consumes it |
+| A5 Perf | ✗ 0% (none) | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. | 0 · 0 · 0 — a research-scale Idris 2 program |
+| A6 Search | ✗ 0% (none) | No synthesis. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 

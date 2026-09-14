@@ -47,14 +47,14 @@ engine. That is a genuinely different way to cash in the same theory.
 
 ## Scorecard
 
-| Axis | Soma | Note |
-|---|---|---|
-| A1 Reflection | ✗ (none) | No programs-as-data; conventional compiler pipeline. |
-| A2 Spec power | ✅ (dependent+QTT) | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. |
-| A3 Kernel | ✗ (trusted compiler) | No LCF kernel; trust the compiler. |
-| A4 Equality | ✗ (none) | Not addressed. |
-| A5 Perf | **✅** (LLVM native) | LLVM native, GC-free, flat types at C cost. Best A5 among the dependently-typed indies. |
-| A6 Search | ✗ (none) | None. |
+| Axis | Soma | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (none) | No programs-as-data; conventional compiler pipeline. | 0 · 0 · 0 — conventional compiler pipeline |
+| A2 Spec power | ◐ 33% (dependent+QTT) | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. | 1 · 0 · 0 — dependent types + QTT + rows; not a proof assistant, no proof library |
+| A3 Kernel | ✗ 0% (trusted compiler) | No LCF kernel; trust the compiler. | 0 · 0 · 0 — trust the compiler |
+| A4 Equality | ✗ 0% (none) | Not addressed. | 0 · 0 · 0 — not addressed |
+| A5 Perf | ◐ 50% (LLVM native) | LLVM native, GC-free, flat types at C cost. Best A5 among the dependently-typed indies. | 1 · 0 · ½ — LLVM native, GC-free; QTT quantities are a usage grade the compiler spends, not cost |
+| A6 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 

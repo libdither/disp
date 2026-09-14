@@ -49,14 +49,14 @@ Reflection is affordable **if you can drop out of it on demand**.
 
 ## Scorecard
 
-| Axis | LogosLang | Note |
-|---|---|---|
-| A1 Reflection | ◐ (logic graph) | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. |
-| A2 Spec power | ◐ (designed) | A "proof layer" is specified. No type theory exists yet. |
-| A3 Kernel | ✗ (none) | No kernel discipline described. |
-| A4 Equality | ✗ (unspecified) | The "rewriting engine" is named but unspecified. |
-| A5 Perf | ✅ (Cranelift JIT) | Cranelift JIT, measured, 3× vectorized C. Ships binaries for three platforms. |
-| A6 Search | ✗ (none) | None. |
+| Axis | LogosLang | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ◐ 50% (logic graph) | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. | ½ · 1 · 0 — the Logic Graph is walkable today and is the program; self-rewriting and the proof layer are unbuilt |
+| A2 Spec power | ✗ 0% (designed) | A "proof layer" is specified. No type theory exists yet. | 0 · 0 · 0 — the proof layer is a design document |
+| A3 Kernel | ✗ 0% (none) | No kernel discipline described. | 0 · 0 · 0 — no kernel discipline described |
+| A4 Equality | ✗ 0% (unspecified) | The "rewriting engine" is named but unspecified. | 0 · 0 · 0 — the rewriting engine is unspecified |
+| A5 Perf | ◐ 33% (Cranelift JIT) | Cranelift JIT, measured, 3× vectorized C. Ships binaries for three platforms. | 1 · 0 · 0 — Cranelift JIT within 3× of vectorized C, measured |
+| A6 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 

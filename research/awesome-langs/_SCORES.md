@@ -45,38 +45,38 @@ column, and lists every derived symbol that differs from the master table.
 
 ## A2 Spec power
 
-(a) specifications mention values (½ contracts or refinements over runtime values, 1 dependent types) · (b) propositions and proofs are first-class objects (½ obligations discharged by a solver, no proof objects) · (c) the type system is library code over a kernel, not built into the compiler
+(a) specifications mention values (½ contracts or refinements over runtime values, 1 dependent types) · (b) propositions and proofs are first-class objects (½ obligations discharged by a solver, no proof objects) · (c) breadth in use: universes, inductive families and a proof library people build on (½ a small or young library)
 
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
-| disp | 1 | ½ | 1 | 83 | Pi, telescopes, coproducts as library code over the kernel; proofs run (`Eq`, induction) but the library is small and there is no universe hierarchy yet |
+| disp | 1 | ½ | ½ | 67 | Pi, telescopes, coproducts and proofs that run; a small library (~1,300 pins), no universe hierarchy yet |
 | HVM4 / Bend2 / SupGen | 0 | 0 | 0 | 0 | untyped; Bend2's types and proofs are planned |
-| Metamath Zero | 0 | 1 | 1 | 67 | a HOL subset, weaker than dependent types by design; explicit proof objects; the logic is a user-written spec the verifier is generic over |
-| Verus | ½ | ½ | 0 | 33 | first-order contracts, quantifiers and ghost state over runtime values; Z3 discharges them, no proof objects |
-| F* / Low* / Pulse | 1 | 1 | 0 | 67 | dependent types + refinements + effects + Pulse separation logic, built into the typechecker |
-| Lean 4 | 1 | 1 | 0 | 67 | full dependent types, universes, mathlib; the type theory lives in the kernel and elaborator |
-| Nova | 1 | 1 | 0 | 67 | extensional MLTT, kernel-defined |
-| Blight | 1 | 1 | 0 | 67 | cubical + QTT + effects in the kernel; only the tower is library code |
-| Soma | 1 | 0 | 0 | 33 | dependent types + QTT + rows; not a proof assistant |
-| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 0 | 67 | full CIC in Rocq |
-| Velvet / Loom / WybeCoder | 1 | 1 | 0 | 67 | Lean + mathlib behind a Dafny-style surface |
-| Agda / Cubical | 1 | 1 | 0 | 67 | dependent types, HITs, univalence; kernel-defined |
-| Narya | 1 | 1 | 0 | 67 | HoTT + internal parametricity + modalities; kernel-defined |
-| Idris 2 / QTT | 1 | 1 | 0 | 67 | dependent types + QTT; kernel-defined |
-| CakeML + Pancake | ½ | ½ | 0 | 33 | Viper separation-logic contracts for user code; HOL4 proofs are about the compiler, not the program |
-| ATS3 / Xanadu | 1 | 1† | 0 | 67 | dependent + linear types with an explicit proof language (props and proof functions) |
-| Vow | ½ | ½ | 0 | 33 | contracts + loop invariants, bounded model checking |
-| Dafny | ½ | ½ | 0 | 33 | first-order + quantifiers, SMT-shaped, no proof objects |
+| Metamath Zero | 0 | 1 | ½ | 50 | a HOL subset, weaker than dependent types by design; explicit proof objects; a modest library plus Metamath imports |
+| Verus | ½ | ½ | ½ | 50 | first-order contracts with quantifiers and ghost state, Z3-discharged; verified kernels and allocators are the library in use |
+| F* / Low* / Pulse | 1 | 1 | 1 | 100 | dependent types, refinements, effects, Pulse; HACL*/EverCrypt is a decade-deep library |
+| Lean 4 | 1 | 1 | 1 | 100 | full dependent types and universes; mathlib |
+| Nova | 1 | 1 | 0 | 67 | extensional MLTT; solo and research-scale, no library |
+| Blight | 1 | 1 | 0 | 67 | cubical + QTT + effects; two months old, no library |
+| Soma | 1 | 0 | 0 | 33 | dependent types + QTT + rows; not a proof assistant, no proof library |
+| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 1 | 100 | full CIC in Rocq; fiat-crypto and bedrock2 are the library |
+| Velvet / Loom / WybeCoder | 1 | 1 | 1 | 100 | Lean + mathlib behind a Dafny-style surface |
+| Agda / Cubical | 1 | 1 | 1 | 100 | dependent types, HITs, univalence; the standard and cubical libraries |
+| Narya | 1 | 1 | 0 | 67 | HoTT + parametricity + modalities; no library, breaking changes expected |
+| Idris 2 / QTT | 1 | 1 | ½ | 83 | dependent types + QTT; a working standard library |
+| CakeML + Pancake | ½ | ½ | ½ | 50 | Viper contracts for user code; HOL4's library serves the compiler proof |
+| ATS3 / Xanadu | 1 | 1† | ½ | 83 | dependent + linear types with an explicit proof language; a 25-year library, little used |
+| Vow | ½ | ½ | 0 | 33 | contracts + loop invariants under bounded model checking; young |
+| Dafny | ½ | ½ | ½ | 50 | first-order + quantifiers, SMT-shaped; a decade of AWS production specs |
 | NanoLang | 0 | 0 | 0 | 0 | no user-level spec language; the proofs are about the language |
-| Rust cluster | 1 | 1 | 0 | 67 | from Flux refinements to RefinedRust's Iris and Aeneas's Lean; scored on the strongest members |
+| Rust cluster | 1 | 1 | ½ | 83 | from Flux refinements to RefinedRust's Iris and Aeneas's Lean; libcrux and ACE-RISCV are the library |
 | Mojo | ½ | 0 | 0 | 17 | types indexed by compile-time values only; no propositions, no proofs |
 | LogosLang | 0 | 0 | 0 | 0 | the proof layer is a design document |
-| Acorn | 0 | 1 | 0 | 33 | a theorem-proving language for mathematics; no program specifications |
-| Salt | ½ | ½ | 0 | 33 | Z3 contracts: bounds, postconditions, quantifiers, invariants (claimed) |
-| Telomare (Stand-In Language) | ½ | 0 | 0 | 17 | STLC-shaped statics; refinements are runtime validators, checked statically only when the failure is unconditional |
-| Stellogen | ½ | 0 | 1 | 50 | types are user-space test galaxies over values; no dependent types, function types only for the linear fragment |
+| Acorn | 0 | 1 | ½ | 50 | a theorem-proving language for mathematics; acornlib aims at the Top 100 list |
+| Salt | ½ | ½ | 0 | 33 | Z3 contracts: bounds, postconditions, quantifiers, invariants (claimed); no library |
+| Telomare (Stand-In Language) | ½ | 0 | 0 | 17 | STLC-shaped statics; refinements are runtime validators |
+| Stellogen | ½ | 0 | 0 | 17 | types are user-space test galaxies over values; no dependent types, no proofs, function types only for the linear fragment |
 | Nock / Hoon | 0 | 0 | 0 | 0 | structural types with variance and wet genericity; nothing states a value property |
-| Indie AI-first cluster | ½ | ½ | 0 | 33 | Z3 contracts throughout; Aver and Verity borrow real proofs from Lean |
+| Indie AI-first cluster | ½ | ½ | 0 | 33 | Z3 contracts throughout; Aver and Verity borrow proofs from Lean |
 
 ## A3 Kernel / trust
 

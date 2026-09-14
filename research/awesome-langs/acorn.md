@@ -46,14 +46,14 @@ arguably a better fit for it than Lean's.
 
 ## Scorecard
 
-| Axis | Acorn | Note |
-|---|---|---|
-| A1 Reflection | ✗ (none) | None. |
-| A2 Spec power | ◐ (math prover) | A real theorem-proving language, but aimed at mathematics; not dependent-type-strength program specification. |
-| A3 Kernel | ◐ (own checker) | Has its own checker; TCB not characterized as an LCF kernel. |
-| A4 Equality | ✗ (none) | Not addressed for program rewriting. |
-| A5 Perf | ✗ (none) | Not a systems language at all. |
-| A6 Search | **✅** (local neural) | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. |
+| Axis | Acorn | Note | Clauses |
+|---|---|---|---|
+| A1 Reflection | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| A2 Spec power | ◐ 50% (math prover) | A real theorem-proving language, but aimed at mathematics; not dependent-type-strength program specification. | 0 · 1 · ½ — a theorem-proving language for mathematics; acornlib aims at the Top 100 list |
+| A3 Kernel | ✗ 0%? (own checker) | Has its own checker; TCB not characterized as an LCF kernel. | 0 · ? · 0 — has its own checker; the write-up does not characterize its TCB or proof objects |
+| A4 Equality | ✗ 0% (none) | Not addressed for program rewriting. | 0 · 0 · 0 — not addressed for programs |
+| A5 Perf | ✗ 0% (none) | Not a systems language at all. | 0 · 0 · 0 — not a systems language |
+| A6 Search | ◐ 50% (local neural) | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. | ½ · ½ · ½ — an embedded local model fills in proofs with the checker in the loop; the library becomes the next model's training data |
 
 ## What disp could steal
 
