@@ -13,10 +13,10 @@ left out of the mean); an axis is the mean of its three or four clauses; the sym
 import re, sys, pathlib
 
 D = pathlib.Path(__file__).resolve().parent.parent / 'research' / 'awesome-langs'
-AXES = ['A1', 'A2', 'A3', 'A4', 'A5']
+AXES = ['G1', 'G2', 'G3', 'G4', 'G5']
 VAL = {'1': 1.0, '½': 0.5, '0': 0.0, '?': 0.0, '—': None}
 SUP = 'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ'
-ROW = re.compile(r'^\| (A[1-5]) [^|]*\|')
+ROW = re.compile(r'^\| (G[1-5]) [^|]*\|')
 
 def symbol(pct):
     return '✗' if pct < 25 else '◐' if pct < 80 else '✅'
@@ -50,7 +50,7 @@ def scores():
     lines = (D / '_SCORES.md').read_text().split('\n')
     out, ax = {}, None
     for i, line in enumerate(lines):
-        m = re.match(r'^## (A[1-5]) ', line)
+        m = re.match(r'^## (G[1-5]) ', line)
         if m: ax = m.group(1); out[ax] = []; continue
         if ax and line.startswith('| ') and not line.startswith('| Project') and not line.startswith('|---'):
             cells = [c.strip() for c in line.split('|')[1:-1]]

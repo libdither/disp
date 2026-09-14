@@ -34,8 +34,8 @@ theorems say the semantics are deterministic and the type system is sound. They 
 proof about their own code. There is no spec language for user-level properties,
 no dependent types, no proof obligations in user code.
 
-disp needs both levels: a proved-sound kernel (A3) **and** user-written
-specifications strong enough to serve as the optimizer's scoring oracle (A2).
+disp needs both levels: a proved-sound kernel (G3) **and** user-written
+specifications strong enough to serve as the optimizer's scoring oracle (G2).
 NanoLang has an exemplary version of the first and none of the second.
 
 That said, the first level is done to a standard almost nobody meets. `Admitted`-free
@@ -48,11 +48,11 @@ and Q5 explicitly flags open gaps).
 
 | Axis | NanoLang | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — none |
-| A2 Specification | ✗ 0% (none) | No user-level spec language. The proofs are *about* the language, not written *in* it. Equality: Not addressed. | 0 · 0 · 0 · 0 — no user-level spec language; the proofs are about the language |
-| A3 Trust | ✗ 17% (metatheory) | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. | ½ · 0 · 0 — no kernel, but the core semantics are proved sound in Coq, `Admitted`-free |
-| A4 Execution | ◐ 38% (to C) | Transpiles to C; NanoISA sandbox for FFI. | 1 · ½ · 0 · 0 — transpiles to C; NanoISA is a modelled VM whose semantics are proved, used to sandbox FFI |
-| A5 Search | ✗ 17% (LLM target) | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. | 0 · ½ · 0 — designed as an LLM target with mandatory tests; no engine of its own |
+| G1 Substrate | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — none |
+| G2 Specification | ✗ 0% (none) | No user-level spec language. The proofs are *about* the language, not written *in* it. Equality: Not addressed. | 0 · 0 · 0 · 0 — no user-level spec language; the proofs are about the language |
+| G3 Trust | ✗ 17% (metatheory) | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. | ½ · 0 · 0 — no kernel, but the core semantics are proved sound in Coq, `Admitted`-free |
+| G4 Execution | ◐ 38% (to C) | Transpiles to C; NanoISA sandbox for FFI. | 1 · ½ · 0 · 0 — transpiles to C; NanoISA is a modelled VM whose semantics are proved, used to sandbox FFI |
+| G5 Search | ✗ 17% (LLM target) | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. | 0 · ½ · 0 — designed as an LLM target with mandatory tests; no engine of its own |
 
 ## What disp could steal
 
@@ -74,8 +74,8 @@ and Q5 explicitly flags open gaps).
 disp's entire architecture is about making user-level specification cheap and
 machine-checkable; NanoLang's is about making the *language* trustworthy and easy
 for models to emit. They are complementary halves that don't overlap: NanoLang
-would need a whole type theory to reach disp's A2, and disp would need a Coq
-development to match NanoLang's A3-adjacent guarantee.
+would need a whole type theory to reach disp's G2, and disp would need a Coq
+development to match NanoLang's G3-adjacent guarantee.
 
 ## Verdict
 
@@ -84,5 +84,5 @@ narrower thesis.** Useful to disp as (a) proof that mechanized metatheory is
 achievable solo, (b) a model for agent-facing language constraints, and (c) a
 caution about the phrase "formally verified language" — always ask *which level*.
 
-**Distance from disp's goals: shares A4 and the AI-target motivation; absent on
-A1, A2, equality, A5.**
+**Distance from disp's goals: shares G4 and the AI-target motivation; absent on
+G1, G2, equality, G5.**

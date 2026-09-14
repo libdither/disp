@@ -18,7 +18,7 @@ types, open variants.
 ## Why it matters to disp: same three ingredients, opposite bet
 
 Soma combines *dependent types + QTT grading + interaction nets + native codegen* —
-which is, ingredient for ingredient, disp's A2 + A4 + §9 + §11. It is the closest
+which is, ingredient for ingredient, disp's G2 + G4 + §9 + §11. It is the closest
 technical cousin in this entire survey. And it makes the opposite call on the
 central question:
 
@@ -49,11 +49,11 @@ engine. That is a genuinely different way to cash in the same theory.
 
 | Axis | Soma | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✗ 0% (none) | No programs-as-data; conventional compiler pipeline. | 0 · 0 · 0 — conventional compiler pipeline |
-| A2 Specification | ◐ 38% (dependent+QTT) | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. Equality: Not addressed. | 1 · 0 · ½ · 0 — dependent types + QTT + rows, not a proof assistant; quantities are a usage grade; equality not addressed |
-| A3 Trust | ✗ 0% (trusted compiler) | No LCF kernel; trust the compiler. | 0 · 0 · 0 — trust the compiler |
-| A4 Execution | ◐ 25% (LLVM native) | LLVM native, GC-free, flat types at C cost. Best A4 among the dependently-typed indies. | 1 · 0 · 0 · 0 — LLVM native, GC-free flat types at C cost; LLVM trusted |
-| A5 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| G1 Substrate | ✗ 0% (none) | No programs-as-data; conventional compiler pipeline. | 0 · 0 · 0 — conventional compiler pipeline |
+| G2 Specification | ◐ 38% (dependent+QTT) | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. Equality: Not addressed. | 1 · 0 · ½ · 0 — dependent types + QTT + rows, not a proof assistant; quantities are a usage grade; equality not addressed |
+| G3 Trust | ✗ 0% (trusted compiler) | No LCF kernel; trust the compiler. | 0 · 0 · 0 — trust the compiler |
+| G4 Execution | ◐ 25% (LLVM native) | LLVM native, GC-free, flat types at C cost. Best G4 among the dependently-typed indies. | 1 · 0 · 0 · 0 — LLVM native, GC-free flat types at C cost; LLVM trusted |
+| G5 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 
@@ -90,5 +90,5 @@ search.** Small and young, but a real compiler with a real backend by a competen
 solo developer. The flat/heap tiering is the single most directly stealable idea
 in this directory.
 
-**Distance from disp's goals: shares A2 and beats disp on A4; nothing on A1, A3,
-equality, A5.**
+**Distance from disp's goals: shares G2 and beats disp on G4; nothing on G1, G3,
+equality, G5.**

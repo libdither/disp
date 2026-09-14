@@ -55,11 +55,11 @@ assignment (§13): blame flows from a failed whole back to the choices that made
 
 | Axis | Velvet/Loom/WybeCoder | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ◐ 50% (Lean meta) | Inherits Lean metaprogramming; Loom generates verifiers *as* Lean developments, which is a real reflective move. | 1 · 0 · ½ — Lean metaprogramming; Loom generates verifiers as Lean developments |
-| A2 Specification | ◐ 62% (Lean+mathlib) | Full Lean + mathlib behind a Dafny-style surface. Equality: Lean's, plus SMT within its fragment. Not a rewrite-licensing relation. | 1 · 1 · 0 · ½ — Lean + mathlib behind a Dafny-style surface; Lean's equality plus SMT in its fragment |
-| A3 Trust | ✅ 83% (Lean kernel) | Lean's kernel; Loom verifiers are *foundational* (proofs bottom out in Lean, not in a trusted VC generator). | ½ · 1 · 1 — Lean's kernel; Loom verifiers are foundational, no trusted VC generator |
-| A4 Execution | ✗ 0% (none) | Imperative programs extracted for testing; no native systems backend, no cost model. | 0 · 0 · 0 · 0 — programs are extracted for testing only |
-| A5 Search | ◐ 50% (agentic loop) | Best-documented agentic verified-synthesis loop with published benchmark numbers. | 1 · ½ · 0 — WybeCoder's agentic loop proves 74% of Verina; correctness only, no cost |
+| G1 Substrate | ◐ 50% (Lean meta) | Inherits Lean metaprogramming; Loom generates verifiers *as* Lean developments, which is a real reflective move. | 1 · 0 · ½ — Lean metaprogramming; Loom generates verifiers as Lean developments |
+| G2 Specification | ◐ 62% (Lean+mathlib) | Full Lean + mathlib behind a Dafny-style surface. Equality: Lean's, plus SMT within its fragment. Not a rewrite-licensing relation. | 1 · 1 · 0 · ½ — Lean + mathlib behind a Dafny-style surface; Lean's equality plus SMT in its fragment |
+| G3 Trust | ✅ 83% (Lean kernel) | Lean's kernel; Loom verifiers are *foundational* (proofs bottom out in Lean, not in a trusted VC generator). | ½ · 1 · 1 — Lean's kernel; Loom verifiers are foundational, no trusted VC generator |
+| G4 Execution | ✗ 0% (none) | Imperative programs extracted for testing; no native systems backend, no cost model. | 0 · 0 · 0 · 0 — programs are extracted for testing only |
+| G5 Search | ◐ 50% (agentic loop) | Best-documented agentic verified-synthesis loop with published benchmark numbers. | 1 · ½ · 0 — WybeCoder's agentic loop proves 74% of Verina; correctness only, no cost |
 
 ## What disp could steal
 
@@ -88,8 +88,8 @@ graveyard reason. It works, expensively, on benchmark-sized problems.
 
 ## Verdict
 
-**The state of the art for the neural half of disp's A5, with the numbers to prove
-it, and zero overlap with disp's A4.** The single most useful external result for
+**The state of the art for the neural half of disp's G5, with the numbers to prove
+it, and zero overlap with disp's G4.** The single most useful external result for
 calibrating what disp's proposer must beat.
 
 **Distance from disp's goals: solves the proof-search half on benchmarks; ignores

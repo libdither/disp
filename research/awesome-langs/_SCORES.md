@@ -9,7 +9,7 @@ write-up does not settle (scored 0, percentage provisional); `—` marks a claus
 `scripts/awesome-scores.py --write` recomputes the percentages and copies every cell into the
 write-ups, the master table and disp's own table.
 
-## A1 Substrate
+## G1 Substrate
 
 (a) programs can inspect other programs · (b) one representation is both run and inspected, no quotation layer · (c) the checker is callable from programs as an ordinary function (½ from metaprograms only)
 
@@ -44,7 +44,7 @@ write-ups, the master table and disp's own table.
 | Nock / Hoon | 1 | 1 | ½ | 83 | formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | contracts + SMT on a host; no reflection anywhere in the genre |
 
-## A2 Specification
+## G2 Specification
 
 (a) specifications mention values (½ contracts or refinements over runtime values, 1 dependent types) · (b) propositions and proofs are first-class, with a library in use (½ solver-discharged obligations, or proofs without a library) · (c) resources and cost as types (½ a usage grade, erasure by quantity, or a static bound that is not a type) · (d) an equality theory you can state and check: extensional, cubical, observational (½ propositional or SMT-fragment equality, tactic-driven or a decidable fragment)
 
@@ -79,7 +79,7 @@ write-ups, the master table and disp's own table.
 | Nock / Hoon | 0 | 0 | 0 | 0 | 0 | structural types with variance; nothing states a value property; opcode 5 is structural equality |
 | Indie AI-first cluster | ½ | ½ | 0 | 0 | 25 | Z3 contracts throughout, Aver and Verity borrowing Lean proofs; no equality story |
 
-## A3 Trust
+## G3 Trust
 
 (a) a trusted core small enough to audit · (b) it mints unforgeable evidence: theorems, proof objects, certificates (½ proof objects checked only by a large checker) · (c) the clever layers are untrusted and re-checked by the core, and an independent checker exists (½ re-checked by the one core only)
 
@@ -114,7 +114,7 @@ write-ups, the master table and disp's own table.
 | Nock / Hoon | 1 | 0 | ½ | 50 | a page of spec, a conformance suite, independent interpreters; jets are an unbounded trusted surface with no evidence and no production differential check |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | contracts + SMT; Verity (Lean, zero axioms) is the exception |
 
-## A4 Execution
+## G4 Execution
 
 (a) C/Rust-class native execution (½ compiled but not systems class) · (b) a verified or modelled path to the machine: a verified compiler or a hardware model in the logic (½ a verified backend for a fragment, or a modelled VM) · (c) the runtime accounts for its own cost deterministically: steps, interaction counts, a replayable model (½ timing hints or a report outside the model) · (d) definitions are replaced by faster equivalents on a checked license (½ asserted, like jets or unverified compiler passes, or a fixed set of proved passes)
 
@@ -150,7 +150,7 @@ write-ups, the master table and disp's own table.
 | Indie AI-first cluster | ½ | ½ | 0 | 0 | 25 | LSTS compiles to C and CLR rides on Zig; Verity is a verified compiler to EVM bytecode |
 | Adjacent substrates | — | — | — | 1 | 100 | egg: e-graphs hold classes of equivalent programs, saturation emits certificates a Lean kernel replays, extraction installs the cheapest member; a rewrite engine, not a language |
 
-## A5 Search
+## G5 Search
 
 (a) spec → implementation automatically (½ an external LLM loop, harness generation, basic proof search) · (b) scored by the checker and by measured cost, both in the loop (½ one of the two) · (c) the search is aimed at itself (½ a flywheel started)
 

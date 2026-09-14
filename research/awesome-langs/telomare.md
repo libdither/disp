@@ -99,11 +99,11 @@ affine-only boundary disp measured.
 
 | Axis | Telomare | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✗ 17% (env only) | Closures are pairs, so a program can project a closure's *environment*; its code is an opaque `Defer`. No self-interpreter, no checker-in-the-language: every analysis is Haskell. | ½ · 0 · 0 — a closure's environment is a pair you can project; its code is an opaque `Defer`; every analysis is Haskell |
-| A2 Specification | ◐ 25% (STLC+refinements) | Static layer is STLC-shaped (no polymorphism, an `Any` escape). Refinements are predicates, checked statically only when the failure is unconditional. No dependent types, no proofs. Equality: Structural only (`shallowEq1` for merging superpositions). No equivalence story. | ½ · 0 · ½ · 0 — STLC-shaped statics with refinements as runtime validators; a static, inferred iteration bound per site; structural equality only |
-| A3 Trust | ✗ 0% (report only) | Trusted base is the whole compiler. `--certificate` is a *report*, not a re-checkable certificate; `.telc` artifacts carry counts nothing independent verifies. | 0 · 0 · 0 — the whole compiler is trusted; `--certificate` is a report nothing re-checks |
-| A4 Execution | ◐ 25% (static bounds) | Perf: Haskell tree-walker; sizing tic-tac-toe ≈ 70 s, a UDT test compile 5–6 min. Cost: a static, inferred, input-universal per-site bound (ahead of disp) plus a measured step/node meter (level with disp's `ApplyStats`). No hardware model. | 0 · 0 · 1 · 0 — a Haskell tree-walker; `--meter` counts steps and nodes deterministically; the static bound is graded under Specification |
-| A5 Search | ✗ 0% (none) | No synthesis. The superposition evaluator exists but is pointed at bounds, not candidates. | 0 · 0 · 0 — superposition is aimed at bounds, not candidates |
+| G1 Substrate | ✗ 17% (env only) | Closures are pairs, so a program can project a closure's *environment*; its code is an opaque `Defer`. No self-interpreter, no checker-in-the-language: every analysis is Haskell. | ½ · 0 · 0 — a closure's environment is a pair you can project; its code is an opaque `Defer`; every analysis is Haskell |
+| G2 Specification | ◐ 25% (STLC+refinements) | Static layer is STLC-shaped (no polymorphism, an `Any` escape). Refinements are predicates, checked statically only when the failure is unconditional. No dependent types, no proofs. Equality: Structural only (`shallowEq1` for merging superpositions). No equivalence story. | ½ · 0 · ½ · 0 — STLC-shaped statics with refinements as runtime validators; a static, inferred iteration bound per site; structural equality only |
+| G3 Trust | ✗ 0% (report only) | Trusted base is the whole compiler. `--certificate` is a *report*, not a re-checkable certificate; `.telc` artifacts carry counts nothing independent verifies. | 0 · 0 · 0 — the whole compiler is trusted; `--certificate` is a report nothing re-checks |
+| G4 Execution | ◐ 25% (static bounds) | Perf: Haskell tree-walker; sizing tic-tac-toe ≈ 70 s, a UDT test compile 5–6 min. Cost: a static, inferred, input-universal per-site bound (ahead of disp) plus a measured step/node meter (level with disp's `ApplyStats`). No hardware model. | 0 · 0 · 1 · 0 — a Haskell tree-walker; `--meter` counts steps and nodes deterministically; the static bound is graded under Specification |
+| G5 Search | ✗ 0% (none) | No synthesis. The superposition evaluator exists but is pointed at bounds, not candidates. | 0 · 0 · 0 — superposition is aimed at bounds, not candidates |
 
 ## What disp could steal
 
@@ -130,7 +130,7 @@ embeds trivially in tree calculus (pairs are forks, `Zero` is the leaf, `Gate` i
 closures are already pairs); disp adds general recursion, reflection, a kernel, dependent types,
 an equality ledger, and five evaluators. Telomare's stated goals — totality, resource effects
 "measured from the bottom up," an eventual optimizing backend — are a proper subset of disp's:
-A4's cost-model half plus a weak A2, with A1, equality, A5 and self-application absent from the
+G4's cost-model half plus a weak G2, with G1, equality, G5 and self-application absent from the
 essays entirely.
 
 The one thing Telomare has that disp does not is the one thing it built: a totality checker
@@ -147,5 +147,5 @@ costs.** Nothing else in this survey emits a static, input-universal cost bound;
 here took a decade to reach tic-tac-toe. The interaction-net backend it abandoned, and the
 reason given, is independent corroboration of disp's Q2 finding.
 
-**Distance from disp's goals: ahead on the static half of A4 only; a runtime-checked shadow of
-A2; absent on A1, A3, equality, A5.**
+**Distance from disp's goals: ahead on the static half of G4 only; a runtime-checked shadow of
+G2; absent on G1, G3, equality, G5.**

@@ -25,14 +25,14 @@ written in it (the MAX kernel library, in the same repo).
 
 ## Why it matters to disp
 
-**1. The staging half of A1, shipped at industrial scale.** Compile-time and
+**1. The staging half of G1, shipped at industrial scale.** Compile-time and
 runtime Mojo are the same language: the compiler embeds an interpreter
 (`KGEN/lib/Interpreter/`) that evaluates ordinary Mojo during elaboration, types
 are first-class compile-time values, and there is no quotation layer. This is the
 nearest any mainstream-audience language comes to disp's position that the
 metaprogram should be a program in the language. The boundary is just as
 informative: programs never become data (there is no way to inspect a function
-body), and the checker itself is C++, so the reflective loop disp needs for A5
+body), and the checker itself is C++, so the reflective loop disp needs for G5
 cannot close here.
 
 **2. Where "dependent types" land when you refuse propositions.** Types indexed
@@ -51,18 +51,18 @@ winner. v0.7.0 (January 2024) removed them for a redesign that never returned;
 production autotuning today is offline benchmark-sweep scripts over kernel
 parameter grids (`max/kernels/benchmarks/autotune/`), cost-only, correctness
 assumed. A well-funded team tried cost-in-the-loop search inside the language and
-moved it out to tooling. disp's A5 differs on exactly the dimension Mojo dropped:
+moved it out to tooling. disp's G5 differs on exactly the dimension Mojo dropped:
 a checker multiplying the cost score.
 
 ## Scorecard
 
 | Axis | Mojo | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ◐ 33% (staging) | Same language at compile time, no quotation layer; `std/reflection` reads type structure. Terms are never data; the checker is C++. | ½ · ½ · 0 — `reflect[T]` reads type structure only, natively; terms are never data; the checker is C++ |
-| A2 Specification | ✗ 12% (comptime values) | Compile-time-value indexing, `where` clauses, conditional conformance, linear types. No propositions, no proofs, no runtime-value dependency. Equality: MLIR rewrites are unverified compiler transforms; no semantic licensing, no certificates. | ½ · 0 · 0 · 0 — types indexed by compile-time values only; no propositions, no proofs, no equality |
-| A3 Trust | ✗ 0% (MLIR stack) | Trust is the whole MLIR/LLVM C++ stack. Now visible, never small. | 0 · 0 · 0 — the whole MLIR/LLVM C++ stack |
-| A4 Execution | ◐ 38% (MLIR codegen) | The strongest hardware story in this survey: MLIR codegen for CPU/GPU/accelerators, vendor-class kernels, zero-cost flat structs. | 1 · 0 · 0 · ½ — MLIR codegen for CPU/GPU/accelerators; MLIR rewrites are asserted compiler transforms, unverified |
-| A5 Search | ◐ 33% (param sweeps) | Offline benchmark sweeps over kernel parameter grids, cost only, no checker in the loop; the in-language `autotune` was removed in v0.7.0. | ½ · ½ · 0 — offline parameter sweeps, cost only, correctness assumed |
+| G1 Substrate | ◐ 33% (staging) | Same language at compile time, no quotation layer; `std/reflection` reads type structure. Terms are never data; the checker is C++. | ½ · ½ · 0 — `reflect[T]` reads type structure only, natively; terms are never data; the checker is C++ |
+| G2 Specification | ✗ 12% (comptime values) | Compile-time-value indexing, `where` clauses, conditional conformance, linear types. No propositions, no proofs, no runtime-value dependency. Equality: MLIR rewrites are unverified compiler transforms; no semantic licensing, no certificates. | ½ · 0 · 0 · 0 — types indexed by compile-time values only; no propositions, no proofs, no equality |
+| G3 Trust | ✗ 0% (MLIR stack) | Trust is the whole MLIR/LLVM C++ stack. Now visible, never small. | 0 · 0 · 0 — the whole MLIR/LLVM C++ stack |
+| G4 Execution | ◐ 38% (MLIR codegen) | The strongest hardware story in this survey: MLIR codegen for CPU/GPU/accelerators, vendor-class kernels, zero-cost flat structs. | 1 · 0 · 0 · ½ — MLIR codegen for CPU/GPU/accelerators; MLIR rewrites are asserted compiler transforms, unverified |
+| G5 Search | ◐ 33% (param sweeps) | Offline benchmark sweeps over kernel parameter grids, cost only, no checker in the loop; the in-language `autotune` was removed in v0.7.0. | ½ · ½ · 0 — offline parameter sweeps, cost only, correctness assumed |
 
 ## What disp could steal
 
@@ -76,7 +76,7 @@ a checker multiplying the cost score.
   messages from it (their `constrained.mojo` does exactly this). A model for the
   friendly face disp's programs-as-data could expose, minimal enough that stdlib
   authors actually use it.
-- **The autotune retreat as A5 calibration.** Measured-cost search lasted under a
+- **The autotune retreat as G5 calibration.** Measured-cost search lasted under a
   year as a language primitive before moving to offline tooling. disp's design
   (external optimizer, checker in the loop) is consistent with that lesson: the
   search loop wants to live outside the core language.
@@ -91,16 +91,16 @@ kernel, no equality story, and the trusted base is the entire MLIR/LLVM C++
 stack. Mojo is the performance substrate of the two-layer world with no proof
 layer yet built on top; if one appears it will be another Rust-cluster-shaped
 system, with the optimizer living outside the language it optimizes. Nothing
-here competes with disp's A1+A5 claim. The competition is for the audience:
+here competes with disp's G1+G5 claim. The competition is for the audience:
 people who want one language for hosts and accelerators in the AI era.
 
 ## Verdict
 
 **The industrial proof that one-language-at-every-stage sells, and the
-competition for the AI-hardware audience.** Mojo shows what A1+A4 look like with
+competition for the AI-hardware audience.** Mojo shows what G1+G4 look like with
 the other four axes dropped: it stages without reflection, indexes types without
 propositions, and rewrites without licenses. Now that the compiler is readable,
 the comptime interpreter is the part worth an afternoon.
 
-**Distance from disp's goals: minimal on A4 and the staging half of A1; maximal
-on A3, equality, and A5.**
+**Distance from disp's goals: minimal on G4 and the staging half of G1; maximal
+on G3, equality, and G5.**

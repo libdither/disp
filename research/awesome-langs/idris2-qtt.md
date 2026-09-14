@@ -38,7 +38,7 @@ one axis is.
 ## Other things Idris 2 does that disp's design touches
 
 - **Elaborator reflection**: Idris 2 exposes its elaborator so users can write
-  type-directed metaprograms — the same A1-by-quotation approach as Agda/Lean.
+  type-directed metaprograms — the same G1-by-quotation approach as Agda/Lean.
 - **Multiple backends** (Chez Scheme default, RefC, JS): a plurality discipline
   closer to disp's §10 than most languages, though without byte-identity demands.
 - **Totality checking** as a separate, queryable judgement — relevant because disp
@@ -48,11 +48,11 @@ one axis is.
 
 | Axis | Idris 2 | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ◐ 50% (quotation) | Elaborator reflection, quotation-based. | 1 · 0 · ½ — elaborator reflection, quotation-based |
-| A2 Specification | ◐ 75% (dependent+QTT) | Full dependent types + QTT. Equality: Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. | 1 · 1 · ½ · ½ — dependent types + QTT with a working standard library; quantities give erasure; intensional propositional equality |
-| A3 Trust | ✗ 17% (trusted checker) | No LCF kernel; typechecker is the TCB. | 0 · ½ · 0 — the typechecker is the TCB |
-| A4 Execution | ✗ 12% (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. | ½ · 0 · 0 · 0 — Chez backend; erasure is graded under Specification |
-| A5 Search | ✗ 0% (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. | 0 · 0 · 0 — `auto` is basic |
+| G1 Substrate | ◐ 50% (quotation) | Elaborator reflection, quotation-based. | 1 · 0 · ½ — elaborator reflection, quotation-based |
+| G2 Specification | ◐ 75% (dependent+QTT) | Full dependent types + QTT. Equality: Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. | 1 · 1 · ½ · ½ — dependent types + QTT with a working standard library; quantities give erasure; intensional propositional equality |
+| G3 Trust | ✗ 17% (trusted checker) | No LCF kernel; typechecker is the TCB. | 0 · ½ · 0 — the typechecker is the TCB |
+| G4 Execution | ✗ 12% (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. | ½ · 0 · 0 · 0 — Chez backend; erasure is graded under Specification |
+| G5 Search | ✗ 0% (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. | 0 · 0 · 0 — `auto` is basic |
 
 ## What disp could steal
 
@@ -70,7 +70,7 @@ one axis is.
 ## Where disp differs
 
 Idris 2 is a conventional dependently-typed language with a good grading story and
-no ambitions on equality or A5. Its type system is built into the compiler, not written
+no ambitions on equality or G5. Its type system is built into the compiler, not written
 as library code over a two-op kernel; there is no reflective substrate, no rewrite
 licensing, no optimizer.
 
@@ -86,5 +86,5 @@ grades to be *compositional and cheap to compute*, not just checkable.
 what one axis costs.** Also the cleanest answer to "how do dependent specs avoid
 slowing down the generated code."
 
-**Distance from disp's goals: shares A2, provides the A4-adjacent erasure
-mechanism, nothing on A1's substrate question, equality, or A5.**
+**Distance from disp's goals: shares G2, provides the G4-adjacent erasure
+mechanism, nothing on G1's substrate question, equality, or G5.**

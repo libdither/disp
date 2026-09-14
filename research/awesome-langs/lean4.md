@@ -49,11 +49,11 @@ scaffolding changes that dramatically (see `velvet-loom-wybecoder.md`).
 
 | Axis | Lean 4 | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ◐ 50% (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. | 1 · 0 · ½† — `Expr` deep embedding; `MetaM` exposes inference and checking to metaprograms |
-| A2 Specification | ◐ 62% (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. Equality: Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. | 1 · 1 · 0 · ½ — full dependent types, universes, mathlib; propositional equality with Quot and axioms, rewriting tactic-driven |
-| A3 Trust | ✅ 83% (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. | ½ · 1 · 1 — a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
-| A4 Execution | ✗ 12% (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. | ½ · 0 · 0 · 0 — via C, reference-counted; fine for tooling, not systems class |
-| A5 Search | ◐ 33% (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. | ½ · ½ · 0 — the richest external ecosystem of proof-search agents; nothing built in; no cost |
+| G1 Substrate | ◐ 50% (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. | 1 · 0 · ½† — `Expr` deep embedding; `MetaM` exposes inference and checking to metaprograms |
+| G2 Specification | ◐ 62% (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. Equality: Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. | 1 · 1 · 0 · ½ — full dependent types, universes, mathlib; propositional equality with Quot and axioms, rewriting tactic-driven |
+| G3 Trust | ✅ 83% (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. | ½ · 1 · 1 — a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
+| G4 Execution | ✗ 12% (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. | ½ · 0 · 0 · 0 — via C, reference-counted; fine for tooling, not systems class |
+| G5 Search | ◐ 33% (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. | ½ · ½ · 0 — the richest external ecosystem of proof-search agents; nothing built in; no cost |
 
 ## What disp could steal
 
@@ -84,13 +84,13 @@ Three ways, all deliberate:
 
 ## Verdict
 
-**disp's most serious competitor for A2, and the place where the neural half of
-A5 already works.** If disp's Q1 (a decidable rewrite-licensing fragment) fails,
+**disp's most serious competitor for G2, and the place where the neural half of
+G5 already works.** If disp's Q1 (a decidable rewrite-licensing fragment) fails,
 the honest fallback for the whole project is "write specs in Lean and let
 Aristotle/Gauss-class provers close obligations" — which is what Runtime
 Verification's production zkEVM pipeline actually does. disp's claim to exist is
-A1 + equality + A4 + A5 as a *combination*; Lean beats it on A2 and A3 individually and
-loses on A4 badly.
+G1 + equality + G4 + G5 as a *combination*; Lean beats it on G2 and G3 individually and
+loses on G4 badly.
 
 **Distance from disp's goals: same destination on verification, opposite substrate;
 no systems-performance or cost story at all.**

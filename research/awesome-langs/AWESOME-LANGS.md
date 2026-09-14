@@ -12,11 +12,11 @@ search on itself.
 
 | Axis | Short name |
 |---|---|
-| **A1** | Substrate: reflection, programs-as-data |
-| **A2** | Specification: dependent types, proofs, resources, equality |
-| **A3** | Trust: tiny kernel, everything clever untrusted |
-| **A4** | Execution: native speed, path to the machine, cost accounting, licensed rewrites |
-| **A5** | Search: spec → implementation, and self-application |
+| **G1** | Substrate: reflection, programs-as-data |
+| **G2** | Specification: dependent types, proofs, resources, equality |
+| **G3** | Trust: tiny kernel, everything clever untrusted |
+| **G4** | Execution: native speed, path to the machine, cost accounting, licensed rewrites |
+| **G5** | Search: spec → implementation, and self-application |
 
 ---
 
@@ -24,7 +24,7 @@ search on itself.
 
 Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES.md`](_AXES.md) clauses; ✅ from 80%, ◐ from 25%, ✗ below · **bold = ahead of disp on that axis** · the write-ups carry the how-tags and clause values
 
-| Project | A1 | A2 | A3 | A4 | A5 | Closest to disp on |
+| Project | G1 | G2 | G3 | G4 | G5 | Closest to disp on |
 |---|:--:|:--:|:--:|:--:|:--:|---|
 | [**HVM4 / Bend2 / SupGen**](hvm4-bend-supgen.md) | ◐ 33% | ✗ 0% | ✗ 0% | **◐ 50%** | **◐ 50%** | the *search substrate* — superposition search in the runtime |
 | [**Metamath Zero**](metamath-zero.md) | ◐ 33%? | ◐ 25% | **✅ 100%** | **◐ 50%** | ✗ 0% | the *kernel* + hardware model + self-verification |
@@ -40,7 +40,7 @@ Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES
 | [**Narya**](narya.md) | ✗ 0% | ◐ 50% | ✗ 17% | ✗ 0% | ✗ 0% | the *interval-free* equality answer, shaped like disp's per-type metadata |
 | [**Idris 2 / QTT**](idris2-qtt.md) | ◐ 50% | **◐ 75%** | ✗ 17% | ✗ 12% | ✗ 0% | the *grading* formalism disp's cost ledger uses |
 | [**CakeML + Pancake**](cakeml-pancake.md) | ✗ 0% | ◐ 38% | **✅ 100%** | **◐ 62%** | ✗ 0% | verified *all the way to the binary* |
-| [**ATS3 / Xanadu**](ats-xanadu.md) | ✗ 0% | ◐ 50% | ✗ 17% | ◐ 25% | ✗ 0% | the 25-year prior attempt at A2+A4 |
+| [**ATS3 / Xanadu**](ats-xanadu.md) | ✗ 0% | ◐ 50% | ✗ 17% | ◐ 25% | ✗ 0% | the 25-year prior attempt at G2+G4 |
 | [**Vow**](vow.md) | ✗ 0% | ◐ 25% | ✗ 0% | ◐ 25% | **◐ 33%** | the *agent-facing interface* |
 | [**Dafny**](dafny.md) | ✗ 0% | ◐ 38% | ✗ 0% | ✗ 0% | **◐ 33%** | calibration: what AI writes best |
 | [**NanoLang**](nanolang.md) | ✗ 0% | ✗ 0% | ✗ 17% | ◐ 38% | **✗ 17%** | mechanized metatheory, solo |
@@ -62,7 +62,7 @@ Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES
 
 ## How close is anyone to disp's actual goal?
 
-**Nobody occupies disp's square.** Every project here is missing the same pair: **A1 + A5
+**Nobody occupies disp's square.** Every project here is missing the same pair: **G1 + G5
 together**, a reflective substrate and a search. That
 combination — a reflective substrate where the optimizer is a program in the
 language it optimizes — is what makes self-application possible, and it is
@@ -77,22 +77,22 @@ itself, and no one else's can.**
 
 ### Closest by axis
 
-- **A1 (substrate):** disp and Nock are the only two with native intensionality and
+- **G1 (substrate):** disp and Nock are the only two with native intensionality and
   no quotation layer; everyone else quotes (Lean `Expr`, Agda `Term`, Meta-F*) or, like
   Mojo, stages the same language without ever making terms data. Nock has run an
   operating system on it for a decade and never built a checker on it. Stellogen
   inspects natively but cannot run what it inspects.
-- **A2 (specification):** disp trails. Lean, Agda, F*, Rocq have more type theory and
+- **G2 (specification):** disp trails. Lean, Agda, F*, Rocq have more type theory and
   far more library; on the equality clause Nova (extensional), Agda and Blight
   (cubical) and Narya (observational) all have answers where disp has a slice, which
   is disp's own Q1 confirmed as the weakest point.
-- **A3 (trust):** MM0 ahead; Blight and CakeML match it with an independent second
+- **G3 (trust):** MM0 ahead; Blight and CakeML match it with an independent second
   checker; Nova, Lean and Rocq match the architecture.
-- **A4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma on raw speed; CakeML, MM0 and the
+- **G4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma on raw speed; CakeML, MM0 and the
   Jasmin/bedrock2 line have the verified path to the machine disp lacks; disp,
   HVM4 and Telomare are the ones that account for cost deterministically; only
   CryptOpt installs a rewrite on a checked license, Nock and Mojo assert theirs.
-- **A5 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
+- **G5 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
   and CryptOpt (randomized, certified) are all ahead of disp, which has this
   designed but unbuilt. Nobody has aimed a search at itself.
 
@@ -169,9 +169,9 @@ production verdict from the Rust→Lean pipeline (Runtime Verification + Ethereu
 Foundation, May 2026): AI provers are a productivity multiplier for structural
 lemmas and linear arithmetic, but **weak at domain-specific algebra and
 loop-invariant discovery, and spec design stays human**. Proof-*closing* is getting
-solved; invariant *discovery* and implementation *synthesis* are not. disp's A5
+solved; invariant *discovery* and implementation *synthesis* are not. disp's G5
 needs the second category.
 
-Both point the same way: disp's differentiator (A1+A5 self-application) is real and
+Both point the same way: disp's differentiator (G1+G5 self-application) is real and
 unoccupied, but it is gated behind equality, where disp is behind everyone and where the
 available answers come from theories disp deliberately did not choose.

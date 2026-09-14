@@ -16,7 +16,7 @@ shipped binary.
 
 ## Why it's the current best answer for "AI iterates on a spec"
 
-This is the ecosystem where disp's A5 has actually been demonstrated end-to-end:
+This is the ecosystem where disp's G5 has actually been demonstrated end-to-end:
 
 - **AlphaVerus** (CMU, ICML 2025) — bootstraps verified code generation with
   zero human-labeled data: translate from a higher-resource language, refine with
@@ -40,11 +40,11 @@ in existence that the FOUNDATIONS §15 paradigm works on systems code.
 
 | Axis | Verus | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✗ 0% (erased) | No programs-as-data. Ghost code is erased, not inspectable. The checker is not a Verus program. | 0 · 0 · 0 — ghost code is erased; the checker is not a Verus program |
-| A2 Specification | ◐ 38% (SMT) | Rich first-order + quantifiers + linear ghost state; **not** dependent types. Deliberately SMT-shaped ([P1] retreat). Equality: SMT-fragment equality; no rewrite-licensing relation, no optimizer. | ½ · ½ · 0 · ½ — first-order contracts with ghost state, Z3-discharged, over a large verified codebase; SMT-fragment equalities |
-| A3 Trust | ✗ 0% (SMT TCB) | TCB = Verus + Z3 + rustc. No LCF discipline, no certificates. | 0 · 0 · 0 — TCB = Verus + Z3 + rustc |
-| A4 Execution | ◐ 25% (Rust) | *It is Rust.* Native, zero-overhead, real kernels and allocators verified and shipped. Best A4 in the survey. | 1 · 0 · 0 · 0 — it is Rust; rustc trusted, no cost model, no rewrite license |
-| A5 Search | ◐ 67% (LLM, cost loop) | Best-demonstrated spec→implementation loop for systems code, with cost in the loop (IDS). | 1 · 1 · 0 — IDS synthesizes code and proofs with benchmarks inside the loop (7/7 KV-store specs); the proposer is an external LLM |
+| G1 Substrate | ✗ 0% (erased) | No programs-as-data. Ghost code is erased, not inspectable. The checker is not a Verus program. | 0 · 0 · 0 — ghost code is erased; the checker is not a Verus program |
+| G2 Specification | ◐ 38% (SMT) | Rich first-order + quantifiers + linear ghost state; **not** dependent types. Deliberately SMT-shaped ([P1] retreat). Equality: SMT-fragment equality; no rewrite-licensing relation, no optimizer. | ½ · ½ · 0 · ½ — first-order contracts with ghost state, Z3-discharged, over a large verified codebase; SMT-fragment equalities |
+| G3 Trust | ✗ 0% (SMT TCB) | TCB = Verus + Z3 + rustc. No LCF discipline, no certificates. | 0 · 0 · 0 — TCB = Verus + Z3 + rustc |
+| G4 Execution | ◐ 25% (Rust) | *It is Rust.* Native, zero-overhead, real kernels and allocators verified and shipped. Best G4 in the survey. | 1 · 0 · 0 · 0 — it is Rust; rustc trusted, no cost model, no rewrite license |
+| G5 Search | ◐ 67% (LLM, cost loop) | Best-demonstrated spec→implementation loop for systems code, with cost in the loop (IDS). | 1 · 1 · 0 — IDS synthesizes code and proofs with benchmarks inside the loop (7/7 KV-store specs); the proposer is an external LLM |
 
 ## What disp could steal
 
@@ -62,7 +62,7 @@ in existence that the FOUNDATIONS §15 paradigm works on systems code.
 
 ## Where disp differs
 
-Verus is the **anti-disp on A1–A3 and equality** and the **proof of concept for A5**. It
+Verus is the **anti-disp on G1–G3 and equality** and the **proof of concept for G5**. It
 succeeds by giving up everything disp considers foundational: no reflection, no
 dependent types, no small kernel, no equality theory — just Rust plus an SMT
 solver plus an enormous TCB. And it works, today, on real kernels.

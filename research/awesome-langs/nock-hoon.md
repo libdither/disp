@@ -92,7 +92,7 @@ Nock embeds in tree calculus without tags: an atom is a chain of stems over the 
 written that way passed the 63 conformance vectors (a probe, not landed). The real kernel is opcodes 0 to
 5, six rules against tree calculus's three, and the difference is what is baked in: Nock fixes naturals and
 pairs as data, so `+` is O(1) on machine words and bignums in every runtime, while disp encodes them and
-pays for it (axis halving on unary atoms was the slow part of the probe). Nock's reflection is disp's A1
+pays for it (axis halving on unary atoms was the slow part of the probe). Nock's reflection is disp's G1
 claim in production: a formula is a noun, opcode 2 is eval, and the metacircular interpreter is library
 code. What Nock never did with it is build a checker. Hoon's types are compiler-internal over Hoon syntax,
 and Nock code is checked only by running it. The community's own alternative-Nock papers permute or re-base
@@ -161,11 +161,11 @@ improved since, and the core team kept 4K anyway.
 
 | Axis | Nock / Hoon | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✅ 83% (native eval) | Formulas are nouns, opcode 2 is eval, no quotation; the metacircular interpreter is library code and jetted. The only other native-reflection entry, but nothing is checked with it. | 1 · 1 · ½ — formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
-| A2 Specification | ✗ 0% (structural) | Structural types with variance and wet genericity, vases for runtime typing; no dependent types, compiler-internal, and the authors would redesign it. Equality: Opcode 5 is structural; jets are asserted equivalences dispatched by intensional identity, and the dashboard has been rewritten repeatedly around that mismatch. | 0 · 0 · 0 · 0 — structural types with variance; nothing states a value property; opcode 5 is structural equality |
-| A3 Trust | ◐ 50% (spec + jets) | A page of spec, a conformance suite, and a decade of independent interpreters; then an unbounded trusted surface of jets with no evidence objects and no production differential check. | 1 · 0 · ½ — a page of spec, a conformance suite, independent interpreters; jets are an unbounded trusted surface with no evidence and no production differential check |
-| A4 Execution | ◐ 50% (native runtimes) | Native C and Rust runtimes ahead of disp's tree-walkers; no cost model, cost as a value forbidden by design, and Skew's dispatch critique stands. | ½ · ½ · ½ · ½ — C and Rust interpreters with jets; a page of frozen spec with a conformance suite is a modelled VM; `%bout` timing hints, cost as a value forbidden; jets are asserted equivalences dispatched on intensional identity |
-| A5 Search | ✗ 0% (none) | None; `honk`'s parity policy is a differential oracle, not a search. | 0 · 0 · 0 — `honk`'s parity policy is a differential oracle, not a search |
+| G1 Substrate | ✅ 83% (native eval) | Formulas are nouns, opcode 2 is eval, no quotation; the metacircular interpreter is library code and jetted. The only other native-reflection entry, but nothing is checked with it. | 1 · 1 · ½ — formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
+| G2 Specification | ✗ 0% (structural) | Structural types with variance and wet genericity, vases for runtime typing; no dependent types, compiler-internal, and the authors would redesign it. Equality: Opcode 5 is structural; jets are asserted equivalences dispatched by intensional identity, and the dashboard has been rewritten repeatedly around that mismatch. | 0 · 0 · 0 · 0 — structural types with variance; nothing states a value property; opcode 5 is structural equality |
+| G3 Trust | ◐ 50% (spec + jets) | A page of spec, a conformance suite, and a decade of independent interpreters; then an unbounded trusted surface of jets with no evidence objects and no production differential check. | 1 · 0 · ½ — a page of spec, a conformance suite, independent interpreters; jets are an unbounded trusted surface with no evidence and no production differential check |
+| G4 Execution | ◐ 50% (native runtimes) | Native C and Rust runtimes ahead of disp's tree-walkers; no cost model, cost as a value forbidden by design, and Skew's dispatch critique stands. | ½ · ½ · ½ · ½ — C and Rust interpreters with jets; a page of frozen spec with a conformance suite is a modelled VM; `%bout` timing hints, cost as a value forbidden; jets are asserted equivalences dispatched on intensional identity |
+| G5 Search | ✗ 0% (none) | None; `honk`'s parity policy is a differential oracle, not a search. | 0 · 0 · 0 — `honk`'s parity policy is a differential oracle, not a search |
 
 ## Where disp differs
 
@@ -188,6 +188,6 @@ reflective combinator VM, with disp's equality and cost problems handled sociall
 trusting the jets, where disp wants proofs and measurement. Read it as the field manual for how a jet
 system fails.**
 
-**Distance from disp's goals: overlaps A1 entirely and A3's tiny-kernel discipline; the jet system is
-`.opt.disp` without licenses and its failure catalogue is the useful part; zero on A5; kelvin freezing is
+**Distance from disp's goals: overlaps G1 entirely and G3's tiny-kernel discipline; the jet system is
+`.opt.disp` without licenses and its failure catalogue is the useful part; zero on G5; kelvin freezing is
 the one substrate bet disp rejects outright.**

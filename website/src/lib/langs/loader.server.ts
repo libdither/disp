@@ -55,12 +55,12 @@ function parseCell(cell: string): Score {
   return { level, pct, provisional, ahead, raw, tag }
 }
 
-/// Rows shaped `| A1 Reflection | ◐ 50% (tag) | note | 1 · 0 · ½ — why |`
+/// Rows shaped `| G1 Substrate | ◐ 50% (tag) | note | 1 · 0 · ½ — why |`
 /// (per-language scorecards and disp's own table share the shape).
 function parseScorecard(text: string): Partial<Record<AxisId, Score>> {
   const out: Partial<Record<AxisId, Score>> = {}
   for (const line of text.split('\n')) {
-    const m = line.match(/^\| (A[1-6]) /)
+    const m = line.match(/^\| (G[1-5]) /)
     if (!m) continue
     const [, score, note, clauses] = cells(line)
     const id = m[1] as AxisId
@@ -87,10 +87,10 @@ function sections(text: string): Map<string, string> {
 
 function parseAxes(text: string): { axes: Axis[]; disp: Record<AxisId, Score> } {
   const axes: Axis[] = []
-  // two tables start their rows with `| **A1** |`: the axes (bold name, four
+  // two tables start their rows with `| **G1** |`: the axes (bold name, four
   // columns) and the grading clauses (three plain columns)
   for (const line of text.split('\n')) {
-    const m = line.match(/^\| \*\*(A[1-6])\*\* /)
+    const m = line.match(/^\| \*\*(G[1-5])\*\* /)
     if (!m) continue
     const id = m[1] as AxisId
     const row = cells(line).slice(1)

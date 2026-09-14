@@ -34,7 +34,7 @@ disp's counterargument is real and should be stated explicitly whenever this com
 up: the two-layer approach can never satisfy disp's §3 requirement, because **the
 optimizer is written in a different language from the programs it optimizes** and
 therefore can never be aimed at itself. Every project in this table is structurally
-incapable of A5's self-application. That is disp's actual differentiator, more than
+incapable of G5's self-application. That is disp's actual differentiator, more than
 any individual mechanism.
 
 **2. The Rust→Lean pipeline is the practical fallback.** If disp's Q1 fails, the
@@ -46,7 +46,7 @@ quoting for calibration: they are a "productivity multiplier" — good at struct
 lemmas and linear arithmetic, **weak at domain-specific algebra and loop-invariant
 discovery**, and **spec design stays human**.
 
-That last finding matters for disp's A5. The hard part is not proof-closing (AI is
+That last finding matters for disp's G5. The hard part is not proof-closing (AI is
 getting good at it); it is *invariant discovery* and *spec design* — which is
 exactly what disp's optimizer would have to do to synthesize implementations, not
 just prove them.
@@ -62,11 +62,11 @@ retrofitting.
 
 | Axis | Cluster | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✗ 0% (two-layer) | None. Structurally impossible in the two-layer design. | 0 · 0 · 0 — structurally impossible in the two-layer design |
-| A2 Specification | ◐ 62% (refinement–Iris) | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). Equality: Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. | 1 · 1 · 0 · ½ — from Flux refinements to RefinedRust's Iris and Aeneas's Lean, with libcrux and ACE-RISCV as the library; Aeneas's borrow translation is a machine-produced equivalence, per tool |
-| A3 Trust | ◐ 50% (per tool) | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. | ½ · ½ · ½ — Aeneas/hax/RefinedRust inherit Lean/F*/Rocq kernels; Kani/Creusot/Flux trust SMT |
-| A4 Execution | ◐ 25% (Rust) | It is Rust. Nothing to prove. | 1 · 0 · 0 · 0 — it is Rust |
-| A5 Search | ◐ 33% (harness gen) | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. | ½ · ½ · 0 — Kani's autoharness; otherwise human-driven with AI assistance |
+| G1 Substrate | ✗ 0% (two-layer) | None. Structurally impossible in the two-layer design. | 0 · 0 · 0 — structurally impossible in the two-layer design |
+| G2 Specification | ◐ 62% (refinement–Iris) | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). Equality: Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. | 1 · 1 · 0 · ½ — from Flux refinements to RefinedRust's Iris and Aeneas's Lean, with libcrux and ACE-RISCV as the library; Aeneas's borrow translation is a machine-produced equivalence, per tool |
+| G3 Trust | ◐ 50% (per tool) | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. | ½ · ½ · ½ — Aeneas/hax/RefinedRust inherit Lean/F*/Rocq kernels; Kani/Creusot/Flux trust SMT |
+| G4 Execution | ◐ 25% (Rust) | It is Rust. Nothing to prove. | 1 · 0 · 0 · 0 — it is Rust |
+| G5 Search | ◐ 33% (harness gen) | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. | ½ · ½ · 0 — Kani's autoharness; otherwise human-driven with AI assistance |
 
 ## What disp could steal
 
@@ -80,9 +80,9 @@ retrofitting.
 
 ## Verdict
 
-**The competition, and the fallback.** disp is not competing with these on A4 or
-A2 — it is competing on the claim that a unified reflective substrate enables
+**The competition, and the fallback.** disp is not competing with these on G4 or
+G2 — it is competing on the claim that a unified reflective substrate enables
 self-application that none of them can ever do. That claim is disp's whole reason
 to exist, and this cluster is the reason it has to be stated sharply.
 
-**Distance from disp's goals: maximal on A1 and A5, minimal on A4.**
+**Distance from disp's goals: maximal on G1 and G5, minimal on G4.**

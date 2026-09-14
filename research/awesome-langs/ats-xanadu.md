@@ -6,7 +6,7 @@
 
 ## What it is
 
-ATS is the longest-running serious attempt at exactly disp's A2 + A4 combination:
+ATS is the longest-running serious attempt at exactly disp's G2 + G4 combination:
 **dependent types + linear types at C-level performance**. ATS2 compiles to C,
 runs with no runtime overhead, and has been used for embedded and kernel-adjacent
 work; its type system supports proving memory-safety and functional-correctness
@@ -19,7 +19,7 @@ layer immediately; ATS3 stages it.
 
 ## Why disp should care
 
-**1. It is the closest thing to disp's A2+A4 intersection that actually exists and
+**1. It is the closest thing to disp's G2+G4 intersection that actually exists and
 runs.** Not F* (which extracts to C through KaRaMeL), not Verus (which is Rust +
 SMT, no dependent types) — ATS is *natively* a dependently-typed language whose
 compilation model is C with no GC and no runtime. If disp's claim is "dependent
@@ -33,7 +33,7 @@ is embodied here: ATS made everyday systems programming possible with dependent
 types, and almost nobody came. The blocker was never capability; it was ergonomics
 and the proof burden.
 
-For disp this is a direct warning about A2. disp's answer (types are predicates,
+For disp this is a direct warning about G2. disp's answer (types are predicates,
 checking is running, the type system is library code) is genuinely more ergonomic
 in principle. But ATS3 is the reminder that "more ergonomic in principle" is what
 every dependently-typed systems language has claimed, and the field's verdict is
@@ -52,11 +52,11 @@ detail.
 
 | Axis | ATS3 | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — no programs-as-data |
-| A2 Specification | ◐ 50% (dependent+linear) | Dependent + linear types, natively, for low-level code. Equality: Not addressed as a rewrite-licensing problem. | 1 · 1† · 0 · 0 — dependent + linear types with an explicit proof language and a 25-year library; equality not addressed |
-| A3 Trust | ✗ 17% (trusted checker) | No LCF kernel; the typechecker is the TCB. | 0 · ½† · 0 — the typechecker is the TCB; proof terms exist |
-| A4 Execution | ◐ 25% (to C) | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. | 1 · 0 · 0 · 0 — to C, no GC, no runtime; the C compiler trusted |
-| A5 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| G1 Substrate | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — no programs-as-data |
+| G2 Specification | ◐ 50% (dependent+linear) | Dependent + linear types, natively, for low-level code. Equality: Not addressed as a rewrite-licensing problem. | 1 · 1† · 0 · 0 — dependent + linear types with an explicit proof language and a 25-year library; equality not addressed |
+| G3 Trust | ✗ 17% (trusted checker) | No LCF kernel; the typechecker is the TCB. | 0 · ½† · 0 — the typechecker is the TCB; proof terms exist |
+| G4 Execution | ◐ 25% (to C) | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. | 1 · 0 · 0 · 0 — to C, no GC, no runtime; the C compiler trusted |
+| G5 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 
@@ -77,14 +77,14 @@ learning-curve problem that killed ATS's adoption matters far less — which is
 arguably disp's strongest reply to the "dependent types never went mainstream"
 objection.
 
-Conversely, ATS has none of A1/A3/A5, no equality story, and no ambition toward them.
+Conversely, ATS has none of G1/G3/G5, no equality story, and no ambition toward them.
 
 ## Verdict
 
-**The 25-year prior attempt at disp's A2+A4, still actively maintained by its
+**The 25-year prior attempt at disp's G2+G4, still actively maintained by its
 author, and the field's best evidence about why that combination alone is not
 enough.** Worth reading precisely because it shows what disp would be if it
 stopped after the foundation and never built the optimizer.
 
-**Distance from disp's goals: shares A2+A4, absent on everything that makes disp
+**Distance from disp's goals: shares G2+G4, absent on everything that makes disp
 disp.**

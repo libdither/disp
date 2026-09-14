@@ -4,8 +4,9 @@
 // 2 ✅ has it · null not scored (—). `ahead` is the survey's bold: ahead of
 // disp on that axis and worth stealing from (hand-curated, not derived).
 
-export type AxisId = 'A1' | 'A2' | 'A3' | 'A4' | 'A5'
-export const AXIS_IDS: AxisId[] = ['A1', 'A2', 'A3', 'A4', 'A5']
+// G for goal: the five parts of disp's own goal, in the order of the loop
+export type AxisId = 'G1' | 'G2' | 'G3' | 'G4' | 'G5'
+export const AXIS_IDS: AxisId[] = ['G1', 'G2', 'G3', 'G4', 'G5']
 
 export interface Axis {
   id: AxisId

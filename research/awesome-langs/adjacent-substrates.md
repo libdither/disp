@@ -79,7 +79,7 @@ states *facts* and the compiler proves bounds/overflow safety at compile time, t
 transpiles to C with zero runtime cost. The specs are shallow (safety, not
 functional correctness) — but it is a real, widely-deployed instance of
 "programmer writes assertions, compiler discharges them, output is C-fast," which
-is disp's A2+A4 at 5% of the ambition and 100% of the delivery.
+is disp's G2+G4 at 5% of the ambition and 100% of the delivery.
 
 ## What disp should do with this file
 

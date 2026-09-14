@@ -46,11 +46,11 @@ it looks like when applied to the whole type theory.
 
 | Axis | Nova | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✗ 0% (none) | Standard elaborator/kernel pipeline; no programs-as-data. | 0 · 0 · 0 — standard elaborator/kernel pipeline |
-| A2 Specification | ◐ 62% (extensional MLTT) | Full extensional MLTT — strictly stronger equality story than disp has. Equality: Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. | 1 · ½ · 0 · 1 — extensional MLTT: anything provably equal is treated as equal and certificates recover decidability; solo, no library |
-| A3 Trust | ◐ 67%? (certificates) | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. | 1 · 1 · ? — a small kernel with its own spec re-checks certificate-carrying artifacts; no independent checker is mentioned |
-| A4 Execution | ✗ 0% (none) | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. | 0 · 0 · 0 · 0 — a research-scale Idris 2 program |
-| A5 Search | ✗ 0% (none) | No synthesis. | 0 · 0 · 0 — none |
+| G1 Substrate | ✗ 0% (none) | Standard elaborator/kernel pipeline; no programs-as-data. | 0 · 0 · 0 — standard elaborator/kernel pipeline |
+| G2 Specification | ◐ 62% (extensional MLTT) | Full extensional MLTT — strictly stronger equality story than disp has. Equality: Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. | 1 · ½ · 0 · 1 — extensional MLTT: anything provably equal is treated as equal and certificates recover decidability; solo, no library |
+| G3 Trust | ◐ 67%? (certificates) | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. | 1 · 1 · ? — a small kernel with its own spec re-checks certificate-carrying artifacts; no independent checker is mentioned |
+| G4 Execution | ✗ 0% (none) | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. | 0 · 0 · 0 · 0 — a research-scale Idris 2 program |
+| G5 Search | ✗ 0% (none) | No synthesis. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 
@@ -75,7 +75,7 @@ performance story at all.
 
 The honest read: **Nova has already solved the half of equality that disp calls its
 make-or-break question — by choosing a theory where it isn't a question.** What
-Nova cannot do is anything on A4/A5, which is most of why disp exists.
+Nova cannot do is anything on G4/G5, which is most of why disp exists.
 
 ## Verdict
 
@@ -84,5 +84,5 @@ whose architecture most resembles disp's intended optimizer/checker split.**
 Tiny (4 stars) and unknown, but the author is an Idris 2 contributor committing
 daily and writing real specs.
 
-**Distance from disp's goals: solves equality differently and better; absent on A1, A4,
-A5.**
+**Distance from disp's goals: solves equality differently and better; absent on G1, G4,
+G5.**

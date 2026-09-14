@@ -26,7 +26,7 @@ cells on the telescope walker (§5), so the cost is paid only where transport is
 actually used? disp's one-negative-former design is unusually well suited to
 trying this — a path is another cell kind.
 
-### 2. Agda's reflection = what A1 looks like without an intensional substrate
+### 2. Agda's reflection = what G1 looks like without an intensional substrate
 
 Agda has a full reflection API: `quoteTerm`, `unquote`, `Term`/`Name` as inspectable
 data, macros that run in `TC`. This is the mainstream way to get programs-as-data —
@@ -57,11 +57,11 @@ what Agda gets for free.
 
 | Axis | Agda/Cubical | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ◐ 50% (quotation) | Full reflection API, quotation-based. The best non-intensional A1. | 1 · 0 · ½† — `quoteTerm`/`unquote`; the TC monad can infer and check types |
-| A2 Specification | ◐ 75% (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. Equality: Cubical: computational univalence. The answer disp cites and has not integrated. | 1 · 1 · 0 · 1 — dependent types, HITs, univalence with the standard and cubical libraries; cubical equality computes |
-| A3 Trust | ✗ 17% (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. | 0 · ½ · 0 — the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
-| A4 Execution | ✗ 0% (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. | 0 · 0 · 0 · 0 — research-grade GHC/JS backends |
-| A5 Search | ✗ 0% (none) | Auto/agda-mode search is trivial. No synthesis. | 0 · 0 · 0 — `auto` is trivial |
+| G1 Substrate | ◐ 50% (quotation) | Full reflection API, quotation-based. The best non-intensional G1. | 1 · 0 · ½† — `quoteTerm`/`unquote`; the TC monad can infer and check types |
+| G2 Specification | ◐ 75% (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. Equality: Cubical: computational univalence. The answer disp cites and has not integrated. | 1 · 1 · 0 · 1 — dependent types, HITs, univalence with the standard and cubical libraries; cubical equality computes |
+| G3 Trust | ✗ 17% (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. | 0 · ½ · 0 — the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
+| G4 Execution | ✗ 0% (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. | 0 · 0 · 0 · 0 — research-grade GHC/JS backends |
+| G5 Search | ✗ 0% (none) | Auto/agda-mode search is trivial. No synthesis. | 0 · 0 · 0 — `auto` is trivial |
 
 ## What disp could steal
 
@@ -90,5 +90,5 @@ Agda's expressiveness cannot.
 **The reference for disp's unbuilt equality work and the fairest benchmark for what
 native intensionality actually saves over quotation-based reflection.**
 
-**Distance from disp's goals: ahead on A2 (equality included), absent on A4/A5, opposite approach
-on A1.**
+**Distance from disp's goals: ahead on G2 (equality included), absent on G4/G5, opposite approach
+on G1.**

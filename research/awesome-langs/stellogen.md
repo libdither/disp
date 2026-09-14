@@ -103,11 +103,11 @@ the linear fragment Eng's thesis proves (Theorem 70.5).
 
 | Axis | Stellogen | Note | Clauses |
 |---|---|---|---|
-| A1 Substrate | ✅ 83% (inert terms) | Code is inert first-order terms matched by unification; no `eval`, no self-evaluator. | 1 · ½ · 1 — code is a first-order term that shape checkers unify against; no eval back to code; types are library constellations |
-| A2 Specification | ✗ 12% (library types) | "Type system as library code" is the entire project; no dependent types, function types only for the linear λ fragment. Equality: `==` is syntactic, order- and variable-name-sensitive by specification; no behavioral equality. | ½ · 0 · 0 · 0 — types are user-space test galaxies over values; no dependent types, no proofs; `==` is syntactic |
-| A3 Trust | ◐ 50% (paper theorems) | Two-part kernel with a normative spec and two trusted observations; trust rests on per-system paper theorems, no evidence objects. | 1 · 0 · ½ — ~3,200 lines with a normative spec and two trusted observations; checkers are user space; trust rests on paper theorems, no evidence objects |
-| A4 Execution | ✗ 0% (none) | None; docs admit concrete execution "has a horrible complexity" (repeated graph isomorphism). | 0 · 0 · 0 · 0 — execution has "a horrible complexity" |
-| A5 Search | ✗ 0% (none) | None, and none intended. | 0 · 0 · 0 — none intended |
+| G1 Substrate | ✅ 83% (inert terms) | Code is inert first-order terms matched by unification; no `eval`, no self-evaluator. | 1 · ½ · 1 — code is a first-order term that shape checkers unify against; no eval back to code; types are library constellations |
+| G2 Specification | ✗ 12% (library types) | "Type system as library code" is the entire project; no dependent types, function types only for the linear λ fragment. Equality: `==` is syntactic, order- and variable-name-sensitive by specification; no behavioral equality. | ½ · 0 · 0 · 0 — types are user-space test galaxies over values; no dependent types, no proofs; `==` is syntactic |
+| G3 Trust | ◐ 50% (paper theorems) | Two-part kernel with a normative spec and two trusted observations; trust rests on per-system paper theorems, no evidence objects. | 1 · 0 · ½ — ~3,200 lines with a normative spec and two trusted observations; checkers are user space; trust rests on paper theorems, no evidence objects |
+| G4 Execution | ✗ 0% (none) | None; docs admit concrete execution "has a horrible complexity" (repeated graph isomorphism). | 0 · 0 · 0 · 0 — execution has "a horrible complexity" |
+| G5 Search | ✗ 0% (none) | None, and none intended. | 0 · 0 · 0 — none intended |
 
 ## Where disp differs
 
@@ -130,6 +130,6 @@ and is cited here as Stellogen's claim.
 disp's behavioral types descend from, with the usine/usage split made explicit and the same
 function-type gap unsolved. Watch the shape-system (acyclic ⇒ terminating) and `logics/` work.**
 
-**Distance from disp's goals: overlaps on the A2 "types as library code" thesis and the A3 kernel
-discipline, near zero on equality, A4 and A5; load-bearing reconnaissance on exactly the question `CHECK.disp`
+**Distance from disp's goals: overlaps on the G2 "types as library code" thesis and the G3 kernel
+discipline, near zero on equality, G4 and G5; load-bearing reconnaissance on exactly the question `CHECK.disp`
 is asking.**
