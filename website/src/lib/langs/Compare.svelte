@@ -17,9 +17,8 @@
   // colour follows the entity: a pick keeps its slot until it is dropped
   const SLOT_COLORS = ['var(--cmp-1)', 'var(--cmp-2)']
   let picks = $state<{ slug: string; slot: number }[]>([])
-  // an axis, or 'all': the average of the five percentages (an unscored cell
-  // counts as 0, so a one-axis entry cannot top the list)
-  type SortKey = AxisId | 'all' | 'frontier'
+  // an axis, or 'frontier': Pareto layers, the average breaking ties inside one
+  type SortKey = AxisId | 'frontier'
   let sortAxis = $state<SortKey | null>(null)
   let sortDesc = $state(true)
   let onlyAhead = $state(false)
@@ -51,16 +50,12 @@
   const frontier = $derived(scored.filter((l) => layerOf.get(l.slug) === 0))
 
   const rank = (l: Lang, key: SortKey) =>
-    key === 'all'
-      ? average(l.scores)
-      : key === 'frontier'
-        ? -(layerOf.get(l.slug) ?? 99) * 1000 + average(l.scores)
-        : (value(l.scores[key]) ?? -1)
+    key === 'frontier' ? -(layerOf.get(l.slug) ?? 99) * 1000 + average(l.scores) : (value(l.scores[key]) ?? -1)
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase()
     let out = scored.filter((l) => !q || l.name.toLowerCase().includes(q))
     if (onlyAhead) {
-      const axes = sortAxis && sortAxis !== 'all' && sortAxis !== 'frontier' ? [sortAxis] : AXIS_IDS
+      const axes = sortAxis && sortAxis !== 'frontier' ? [sortAxis] : AXIS_IDS
       out = out.filter((l) => axes.some((id) => l.scores[id].ahead))
     }
     if (sortAxis) {
@@ -263,27 +258,19 @@
         <input type="search" placeholder="filter by name" bind:value={query} aria-label="filter languages" />
         <label class="chk">
           <input type="checkbox" bind:checked={onlyAhead} />
-          only ahead of disp {sortAxis && sortAxis !== 'all' && sortAxis !== 'frontier' ? `on ${sortAxis}` : '(any axis)'}
+          only ahead of disp {sortAxis && sortAxis !== 'frontier' ? `on ${sortAxis}` : '(any axis)'}
         </label>
-        <button
-          class="fbtn"
-          class:on={sortAxis === 'frontier'}
-          onclick={() => sortBy('frontier')}
-          title="sort by Pareto layer: first the frontier (no surveyed project matches or beats them on every axis), then each successive peel; the average breaks ties"
-        >
-          Pareto sort{#if sortAxis === 'frontier'}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
-        </button>
-        <span class="hint">click an axis to sort, or Project for the average · click a name to compare (up to two)</span>
+        <span class="hint">click an axis to sort, or Project for the Pareto sort · click a name to compare (up to two)</span>
       </div>
       <div class="matrix-wrap">
         <table class="matrix">
           <thead>
             <tr>
               <th class="name">
-                <button class="sortbtn name-sort" class:on={sortAxis === 'all'} onclick={() => sortBy('all')} title="sort by the average of the five percentages; an unscored cell counts as 0">
+                <button class="sortbtn name-sort" class:on={sortAxis === 'frontier'} onclick={() => sortBy('frontier')} title="Pareto sort: first the frontier (no surveyed project matches or beats them on every axis at once), then each successive peel; the average breaks ties inside a layer">
                   Project
-                  <small>avg of five</small>
-                  {#if sortAxis === 'all'}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
+                  <small>Pareto sort</small>
+                  {#if sortAxis === 'frontier'}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
                 </button>
               </th>
               {#each data.axes as ax (ax.id)}
@@ -946,23 +933,6 @@
   }
 
   /* ---- pareto sort + scatter ---- */
-  .fbtn {
-    font: inherit;
-    font-size: 0.78rem;
-    color: var(--fg-muted);
-    background: none;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    padding: 0.2em 0.8em;
-    cursor: pointer;
-    display: inline-flex;
-    gap: 0.35em;
-    align-items: center;
-  }
-  .fbtn.on {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
   .fr {
     font-size: 0.62rem;
     color: var(--accent);
