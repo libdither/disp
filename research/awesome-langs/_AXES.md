@@ -12,11 +12,11 @@ self-application needs the substrate.
 
 | # | Axis | What disp requires | Where it comes from |
 |---|------|--------------------|---------------------|
-| **G1** | **Substrate** | Programs can inspect programs without Gödel numbering or quotation, so the type checker is an ordinary program in the language | GOALS "programs are data"; FOUNDATIONS §1 (tree calculus) |
-| **G2** | **Specification** | Dependent types or stronger, with proofs, resources and cost, and behavioral equality all statable and checkable in the type system; the type system itself is library code over the kernel | GOALS "dependently typed or strictly more powerful"; FOUNDATIONS §2 (types as predicates), §6, §7 (equality), §9 (graded coeffects) |
-| **G3** | **Trust** | LCF-style: a tiny trusted core mints unforgeable evidence, everything clever is untrusted and re-checked | FOUNDATIONS §4 (2-op kernel: `bind_hyp`, `hyp_reduce`), §12 |
-| **G4** | **Execution** | C/Rust-class native execution with a faithful path to the hardware, a deterministic account of cost, and definitions that can be replaced by faster equivalents under a checked license | GOALS bullet 2 and the hardware bullet; FOUNDATIONS §11 (cost), §12 (licensed rewrites), Part V |
-| **G5** | **Search** | Spec → implementation automatically: search over programs scored by a checker (0/1) × measured cost, and eventually the optimizer aimed at itself | GOALS "external optimizer"; FOUNDATIONS §12–15 |
+| **G1** | **Substrate** | Programs can take other programs apart and run them directly — no encoding step, no separate quote/eval layer — so the type checker is just an ordinary program in the language | GOALS "programs are data"; FOUNDATIONS §1 (tree calculus) |
+| **G2** | **Specification** | A spec can say everything that matters: types that mention values (dependent types or stronger), proofs you can run, resource and cost budgets, and a workable answer to when two different programs count as the same — with the whole type system built as library code, not baked into the core | GOALS "dependently typed or strictly more powerful"; FOUNDATIONS §2 (types as predicates), §6, §7 (equality), §9 (graded coeffects) |
+| **G3** | **Trust** | A verdict is only as believable as the code you must audit to accept it, so that code is kept tiny: every clever layer — elaborator, solver, search — is untrusted and must hand a small core replayable evidence for its claims, and only what the core re-checks counts (the tradition LCF started) | FOUNDATIONS §4 (2-op kernel: `bind_hyp`, `hyp_reduce`), §12 |
+| **G4** | **Execution** | Runs at C/Rust speed with a faithful model of what the hardware will do, a cost account that is exact and replayable rather than a benchmark, and slow definitions swappable for fast ones only when a checked certificate says they are equal | GOALS bullet 2 and the hardware bullet; FOUNDATIONS §11 (cost), §12 (licensed rewrites), Part V |
+| **G5** | **Search** | From spec to implementation automatically: a search over candidate programs scored by the checker (pass/fail) times measured cost — and eventually that optimizer aimed at its own code | GOALS "external optimizer"; FOUNDATIONS §12–15 |
 
 ## Rating key
 
