@@ -3,7 +3,7 @@
 Languages and systems surveyed against **disp**'s goals, August 2026.
 Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12).
+(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -52,11 +52,11 @@ Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES
 | [**Telomare** (Stand-In Language)](telomare.md) | ✗ 17% | ◐ 25% | ✗ 0% | ◐ 25%ᵗ | ✗ 0% | the *static cost bound*: totality by inferred iteration counts, `--certificate`/`--meter` |
 | [**Stellogen**](stellogen.md) | ✅ 83% | ✗ 12% | ◐ 50% | ✗ 0% | ✗ 0% | *types as user-space test suites*; the usine/usage split `CHECK.disp` re-derives, with the same function-type gap |
 | [**Nock / Hoon**](nock-hoon.md) | ✅ 83% | ✗ 0% | ◐ 50% | **◐ 50%** | ✗ 0% | the *substrate*: a frozen reflective combinator VM whose jets are `.opt.disp` overlays without licenses |
+| [**Thermite**](thermite.md) | ✗ 0% | ◐ 38% | ◐ 50% | ◐ 38% | **◐ 33%** | the *enumerated trust ledger* and the CI-budgeted generated skill — two of this survey's steal items, shipped |
 | [**Indie AI-first cluster**](indie-ai-first-cluster.md) | ✗ 0% | ◐ 25% | ✗ 0% | ◐ 25% | **◐ 33%** | LSTS shares the library-not-kernel thesis |
-| [**Adjacent substrates**](adjacent-substrates.md) | — | — | — | **✅ 100%**ᵉ | — | egg/e-graphs ≈ disp's `~_T` machinery |
 | [**Graveyard**](graveyard.md) | — | — | — | — | — | what happens when this is attempted |
 
-ᵈ designed, not built · ᶜ claimed, unverified provenance · ᵉ egg specifically · ᶠ cost-only parameter sweeps, not program search · ᵗ static iteration bounds, no native speed
+ᵈ designed, not built · ᶜ claimed, unverified provenance · ᶠ cost-only parameter sweeps, not program search · ᵗ static iteration bounds, no native speed
 
 ---
 
@@ -117,7 +117,7 @@ itself, and no one else's can.**
 
 1. **Evaluate egg/e-graphs before building more bespoke rewrite machinery** for Q1.
    ROVER-style certificate emission (replayed by a kernel) is disp's §12
-   architecture, already working. → `adjacent-substrates.md`
+   architecture, already working. → `../OPTIMIZER.typ` (the e-graph/ic-net analysis lives there now)
 2. **Soma's flat/heap tiering.** Duplication of flat values is a free register copy;
    only heap types pay for SUP/ERA. Directly attacks disp's measured no-memo tax.
    → `soma.md`
@@ -129,11 +129,13 @@ itself, and no one else's can.**
    `velvet-loom-wybecoder.md`
 5. **Structured, machine-readable checker output** (Vow's JSON-for-agents) plus a
    **fallback ladder** (Velvet: SMT → tactics → property testing). `Ok false` gives
-   a proposer nothing. → `vow.md`, `velvet-loom-wybecoder.md`
+   a proposer nothing. Thermite ships both, with every degrade a named outcome.
+   → `vow.md`, `velvet-loom-wybecoder.md`, `thermite.md`
 6. **Proof-coverage as a continuous build metric** with graceful degradation to
    runtime checks. A second smooth signal beside cost. → `salt.md`
-7. **A CI-enforced `TRUST_ASSUMPTIONS.md` / axiom ledger.** → `indie-ai-first-cluster.md`
-   (Verity), `metamath-zero.md` (thinking-sand)
+7. **A CI-enforced `TRUST_ASSUMPTIONS.md` / axiom ledger.** Thermite's per-clause trust
+   profiles + `#[slag]` inventory + audit chain is this, as the project's central idea.
+   → `indie-ai-first-cluster.md` (Verity), `metamath-zero.md` (thinking-sand), `thermite.md`
 8. **Source-directed `.compile()`** as the reflection escape hatch — full
    reflectivity by default, native speed on demand. → `logoslang.md`
 9. **Scope the first real win like CryptOpt or Pancake did:** one narrow domain
@@ -151,6 +153,9 @@ itself, and no one else's can.**
 13. **The jet failure catalogue as a checklist for `.opt.disp` overlays:** registration by
     side effect, matching on intensional identity, silent loss under hint drift, mismatches
     visible only in traces, no differential check in production. → `nock-hoon.md`
+14. **A CI-enforced token budget on a generated language reference:** derive the
+    agent-facing reference from the elaborator's own vocabulary and let a token budget
+    veto surface growth ("any feature that doesn't fit doesn't ship"). → `thermite.md`
 
 ---
 

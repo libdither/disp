@@ -42,6 +42,7 @@ write-ups, the master table and disp's own table.
 | Telomare (Stand-In Language) | ½ | 0 | 0 | 17 | a closure's environment is a pair you can project; its code is an opaque `Defer`; every analysis is Haskell |
 | Stellogen | 1 | ½ | 1 | 83 | code is a first-order term that shape checkers unify against; no eval back to code; types are library constellations |
 | Nock / Hoon | 1 | 1 | ½ | 83 | formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
+| Thermite | 0 | 0 | 0 | 0 | no reflection; Forge is an external tool and programs are never data |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | contracts + SMT on a host; no reflection anywhere in the genre |
 
 ## G2 Specification
@@ -77,6 +78,7 @@ write-ups, the master table and disp's own table.
 | Telomare (Stand-In Language) | ½ | 0 | ½ | 0 | 25 | STLC-shaped statics with refinements as runtime validators; a static, inferred iteration bound per site; structural equality only |
 | Stellogen | ½ | 0 | 0 | 0 | 12 | types are user-space test galaxies over values; no dependent types, no proofs; `==` is syntactic |
 | Nock / Hoon | 0 | 0 | 0 | 0 | 0 | structural types with variance; nothing states a value property; opcode 5 is structural equality |
+| Thermite | ½ | ½ | 0 | ½ | 38 | contracts and invariants, solver-discharged along a recorded ladder; termination measures but no cost or resource types; SMT-fragment equality |
 | Indie AI-first cluster | ½ | ½ | 0 | 0 | 25 | Z3 contracts throughout, Aver and Verity borrowing Lean proofs; no equality story |
 
 ## G3 Trust
@@ -112,6 +114,7 @@ write-ups, the master table and disp's own table.
 | Telomare (Stand-In Language) | 0 | 0 | 0 | 0 | the whole compiler is trusted; `--certificate` is a report nothing re-checks |
 | Stellogen | 1 | 0 | ½ | 50 | ~3,200 lines with a normative spec and two trusted observations; checkers are user space; trust rests on paper theorems, no evidence objects |
 | Nock / Hoon | 1 | 0 | ½ | 50 | a page of spec, a conformance suite, independent interpreters; jets are an unbounded trusted surface with no evidence and no production differential check |
+| Thermite | ½ | ½ | ½ | 50 | L3 trusts Verus+Z3+rustc while L4 replays certificates through axiom-probed Lean; the manifest is a report, the Lean proofs are evidence for a fragment; audit re-derives the chain with independent replay but SMT verdicts carry nothing |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | contracts + SMT; Verity (Lean, zero axioms) is the exception |
 
 ## G4 Execution
@@ -147,8 +150,8 @@ write-ups, the master table and disp's own table.
 | Telomare (Stand-In Language) | 0 | 0 | 1 | 0 | 25 | a Haskell tree-walker; `--meter` counts steps and nodes deterministically; the static bound is graded under Specification |
 | Stellogen | 0 | 0 | 0 | 0 | 0 | execution has "a horrible complexity" |
 | Nock / Hoon | ½ | ½ | ½ | ½ | 50 | C and Rust interpreters with jets; a page of frozen spec with a conformance suite is a modelled VM; `%bout` timing hints, cost as a value forbidden; jets are asserted equivalences dispatched on intensional identity |
+| Thermite | 1 | ½ | 0 | 0 | 38 | native via rustc; translation-validated lowering for a fragment; no cost model; no licensed rewrites |
 | Indie AI-first cluster | ½ | ½ | 0 | 0 | 25 | LSTS compiles to C and CLR rides on Zig; Verity is a verified compiler to EVM bytecode |
-| Adjacent substrates | — | — | — | 1 | 100 | egg: e-graphs hold classes of equivalent programs, saturation emits certificates a Lean kernel replays, extraction installs the cheapest member; a rewrite engine, not a language |
 
 ## G5 Search
 
@@ -183,4 +186,5 @@ write-ups, the master table and disp's own table.
 | Telomare (Stand-In Language) | 0 | 0 | 0 | 0 | superposition is aimed at bounds, not candidates |
 | Stellogen | 0 | 0 | 0 | 0 | none intended |
 | Nock / Hoon | 0 | 0 | 0 | 0 | `honk`'s parity policy is a differential oracle, not a search |
+| Thermite | ½ | ½ | 0 | 33 | a purpose-built external-agent loop with the checker and mutation scoring in it; no cost objective |
 | Indie AI-first cluster | ½ | ½ | 0 | 33 | agent loops around contracts; Prove's refutation challenges |

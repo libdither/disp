@@ -7,6 +7,7 @@ One line per script. Every disp run here is memory-capped and timed; see `CLAUDE
 - `annotation_census.py` — bucket every top-level definition in `.disp` files by annotation tier (none, membership, sampled, guard-tier weak/precise, dependent), to track annotation waves.
 - `scratch_lint.py` — flag `open use` paths in root-level scratch `.disp` files that do not resolve, so a stale probe fails at grep speed.
 - `rss_run.py` — run a command and report its peak RSS and wall time on stderr; the portable stand-in for GNU time that the two shell scripts use.
+- `survey-probe.sh` — first-pass evidence for an awesome-langs candidate: GitHub API metadata (API-verified dates for the write-up header), contributors, recent commits, a shallow clone kept under /tmp, file counts, and a proof-debt scan (`sorry`/`admit`/`axiom` in proof files); scoring stays manual.
 - `awesome-scores.py` — recompute `research/awesome-langs/_SCORES.md` (clause values → percentages, `--write` to rewrite the column) and report each axis ranked, every derived symbol that differs from the master table, the "ahead of disp" changes, and the cells still marked open.
 
 ## Elsewhere
