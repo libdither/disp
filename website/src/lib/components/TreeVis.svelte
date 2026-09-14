@@ -5,9 +5,9 @@
   // Either way it renders real reductions: pruned subtrees fall to the
   // ground, rest a while, and fade; surviving branches glide to their new
   // positions; ready redexes wear the letter of the rule about to fire.
-  import { onMount, onDestroy } from 'svelte'
-  import { fade, scale } from 'svelte/transition'
-  import { backOut } from 'svelte/easing'
+  import { onMount, onDestroy } from "svelte";
+  import { fade, scale } from "svelte/transition";
+  import { backOut } from "svelte/easing";
   import {
     parseTree,
     stepOnce,
@@ -26,78 +26,128 @@
     stuckSpine,
     spineAt,
     DEFS,
-    type T
-  } from '$lib/treecalc/treecalc'
+    type T,
+  } from "$lib/treecalc/treecalc";
 
   export interface Preset {
-    expr: string
-    tip: string
+    expr: string;
+    tip: string;
   }
 
-  type ExprSpec = string | { expr: string; stepMs?: number }
+  type ExprSpec = string | { expr: string; stepMs?: number };
 
   interface Props {
-    variant?: 'ambient' | 'lab'
-    exprs?: ExprSpec[]
-    presets?: Preset[]
-    stepMs?: number
-    height?: number
+    variant?: "ambient" | "lab";
+    exprs?: ExprSpec[];
+    presets?: Preset[];
+    stepMs?: number;
+    height?: number;
     // the dictionary names parse against (REPLACES the built-in toy defs —
     // an embedding with real definitions must not let `add`-the-teaching-tree
     // shadow `add`-the-library-value). Substituted defs enter as collapsed
     // PODS: real structure, drawn folded until a reduction consumes them or
     // they're clicked open.
-    defs?: Record<string, T>
+    defs?: Record<string, T>;
     // async fallback for names outside `defs` (the playground resolves them
     // against its live elaboration session). A hit re-parses the input if no
     // step has fired yet; a miss leaves the name a free variable (fruit).
-    resolveDef?: (name: string) => Promise<T | null>
+    resolveDef?: (name: string) => Promise<T | null>;
     // embedding chrome: hide the prev/next tree cycling (and shift+arrow)
-    minimal?: boolean
+    minimal?: boolean;
     // replaces the edit box ⓘ's combinator list when the host brings its own
     // name universe
-    namesHint?: string
+    namesHint?: string;
     // two-way fold sync: BEFORE any step has fired, clicking a labeled pod
     // offers the unfold to the host (the playground unfolds its buffer value
     // and re-seeds this panel). Return true = handled externally; false =
     // reveal locally as usual.
-    onPodOpen?: (label: string) => boolean
+    onPodOpen?: (label: string) => boolean;
     // engine macro-step: when local stepping is stuck on a named head whose
     // definition never shipped (too large for a pod), the host may perform
     // the application on the REAL evaluator and return the result tree —
     // the reduction the elaborator pre-applies, shown as one step. null =
     // the engine couldn't (unbound name, divergent, or oversized result).
-    engineStep?: (name: string, args: T[]) => Promise<T | null>
+    engineStep?: (name: string, args: T[]) => Promise<T | null>;
     // parse with EVERY application held as an apply node: expressions arrive
     // carrying their construction work, so the reducer always has visible
     // steps (the playground panel's posture) instead of a pre-built tree
-    lazyParse?: boolean
+    lazyParse?: boolean;
     // imperative handle: re-seed the instrument IN PLACE (new program + defs)
     // — the tree animates from its current drawing instead of remounting
-    api?: (a: { setProgram: (expr: string, newDefs?: Record<string, T>) => void }) => void
+    api?: (a: {
+      setProgram: (expr: string, newDefs?: Record<string, T>) => void;
+    }) => void;
   }
 
   // The tree-calculus pieces — the ONE source shared by the cassette (symbol
   // tape) AND the example list / ambient auto-cycle, so the two match precisely:
-  // stem (△), fork (s), K, S, the three triage variations (△ subscripted by the
+  // stem (△), fork (s), K, S, the three F-rule cases (F subscripted by the
   // argument shape it reads — leaf t / stem s / fork f), then not / and / add.
-  const PIECES: { sym: string; sub?: string; expr: string; tip: string; sep?: boolean; stepMs?: number; lazyTop?: boolean }[] = [
-    { sym: '△', expr: 't x', tip: 'stem · a leaf applied builds a stem (△ x)', lazyTop: true },
-    { sym: 's', expr: 't x y', tip: 'fork · a stem applied builds a fork (△ x y)', lazyTop: true },
-    { sym: 'K', expr: 'K x y', tip: 'K · keep the first argument, discard the second' },
-    { sym: 'S', expr: 'S f g x', tip: 'S · share x between both sides: (f x) (g x)' },
-    { sym: '△', sub: 't', expr: 't (t a b) c t', tip: 'triage · argument is a leaf → take the first branch (a)' },
-    { sym: '△', sub: 's', expr: 't (t a b) c (t u)', tip: 'triage · argument is a stem → second branch on its child (b u)' },
-    { sym: '△', sub: 'f', expr: 't (t a b) c (t u v)', tip: 'triage · argument is a fork → third branch on its children (c u v)' },
-    { sym: '¬', expr: 'not true', tip: 'not · negation, built from triage', sep: true },
-    { sym: '∧', expr: 'and false true', tip: 'and · conjunction' },
-    { sym: '+', expr: 'add 2 3', tip: 'add · the recursion storm', stepMs: 90 }
-  ]
+  const PIECES: {
+    sym: string;
+    sub?: string;
+    expr: string;
+    tip: string;
+    sep?: boolean;
+    stepMs?: number;
+    lazyTop?: boolean;
+  }[] = [
+    {
+      sym: "△",
+      expr: "t x",
+      tip: "stem · a leaf applied builds a stem (△ x)",
+      lazyTop: true,
+    },
+    {
+      sym: "s",
+      expr: "t x y",
+      tip: "fork · a stem applied builds a fork (△ x y)",
+      lazyTop: true,
+    },
+    {
+      sym: "K",
+      expr: "K x y",
+      tip: "K · keep the first argument, discard the second",
+    },
+    {
+      sym: "S",
+      expr: "S f g x",
+      tip: "S · share x between both sides: (f x) (g x)",
+    },
+    {
+      sym: "F",
+      sub: "t",
+      expr: "t (t a b) c t",
+      tip: "F rule · the argument is a leaf → take the first branch (a)",
+    },
+    {
+      sym: "F",
+      sub: "s",
+      expr: "t (t a b) c (t u)",
+      tip: "F rule · the argument is a stem → second branch on its child (b u)",
+    },
+    {
+      sym: "F",
+      sub: "f",
+      expr: "t (t a b) c (t u v)",
+      tip: "F rule · the argument is a fork → third branch on its children (c u v)",
+    },
+    {
+      sym: "¬",
+      expr: "not true",
+      tip: "not · negation, one F rule on the argument's shape",
+      sep: true,
+    },
+    { sym: "∧", expr: "and false true", tip: "and · conjunction" },
+    { sym: "+", expr: "add 2 3", tip: "add · the recursion storm", stepMs: 90 },
+  ];
 
   let {
-    variant = 'ambient',
+    variant = "ambient",
     // the ambient tour rolls through the pieces above, in palette order
-    exprs = PIECES.map((p) => (p.stepMs ? { expr: p.expr, stepMs: p.stepMs } : p.expr)),
+    exprs = PIECES.map((p) =>
+      p.stepMs ? { expr: p.expr, stepMs: p.stepMs } : p.expr,
+    ),
     presets = [],
     stepMs = 1050,
     height = 360,
@@ -108,170 +158,176 @@
     onPodOpen = undefined,
     engineStep = undefined,
     lazyParse = false,
-    api = undefined
-  }: Props = $props()
+    api = undefined,
+  }: Props = $props();
 
   // the live name dictionary: the host's defs (or the built-in toy set) —
   // replaceable via api.setProgram — plus whatever resolveDef has supplied.
   // Initial value read-once like the other posture props.
   // svelte-ignore state_referenced_locally
-  let hostDefs = $state.raw<Record<string, T>>(defs ?? DEFS)
-  let resolved = $state<Record<string, T>>({})
-  const activeDefs = $derived({ ...hostDefs, ...resolved })
+  let hostDefs = $state.raw<Record<string, T>>(defs ?? DEFS);
+  let resolved = $state<Record<string, T>>({});
+  const activeDefs = $derived({ ...hostDefs, ...resolved });
 
-  const exprOf = (e: ExprSpec) => (typeof e === 'string' ? e : e.expr)
-  const speedOf = (e: ExprSpec) => (typeof e === 'string' ? undefined : e.stepMs)
+  const exprOf = (e: ExprSpec) => (typeof e === "string" ? e : e.expr);
+  const speedOf = (e: ExprSpec) =>
+    typeof e === "string" ? undefined : e.stepMs;
 
   // the letters redexes wear: △ builds a stem from the leaf, f builds a fork
-  const RULE_GLYPH = { L: '△', s: 'f', K: 'K', S: 'S', F: 'F' } as const
+  const RULE_GLYPH = { L: "△", s: "f", K: "K", S: "S", F: "F" } as const;
 
   // ---- instrument state ----------------------------------------------------
   // props are read once here on purpose: variant/exprs/presets are static at
   // every usage site, they just pick the instrument's starting posture
   // svelte-ignore state_referenced_locally
-  let running = $state(variant === 'ambient')
+  let running = $state(variant === "ambient");
   // svelte-ignore state_referenced_locally
-  let autoCycle = $state(variant === 'ambient') // ambient rolls through exprs on its own
-  let parallel = $state(true) // fire every ready redex per step — on by default
-  let styled = $state(true) // nature styling vs plain diagram
-  let motion = $state(true) // transitions + debris vs instant
+  let autoCycle = $state(variant === "ambient"); // ambient rolls through exprs on its own
+  let parallel = $state(true); // fire every ready redex per step — on by default
+  let styled = $state(true); // nature styling vs plain diagram
+  let motion = $state(true); // transitions + debris vs instant
   // svelte-ignore state_referenced_locally
-  let labels = $state(variant === 'lab') // name badges on recognized subtrees
+  let labels = $state(variant === "lab"); // name badges on recognized subtrees
 
   // svelte-ignore state_referenced_locally
-  let input = $state(exprOf(exprs[0] ?? 'not false'))
+  let input = $state(exprOf(exprs[0] ?? "not false"));
   // svelte-ignore state_referenced_locally
-  let activeTip = $state(presets.find((p) => p.expr === input)?.tip ?? '')
+  let activeTip = $state(presets.find((p) => p.expr === input)?.tip ?? "");
   // the dropdown offers the presets when there are any, else the PIECES list —
   // the same source the cassette tape uses, so the two match precisely
   const exampleOptions = $derived(
-    presets.length ? presets : PIECES.map((p) => ({ expr: p.expr, tip: p.tip }))
-  )
+    presets.length
+      ? presets
+      : PIECES.map((p) => ({ expr: p.expr, tip: p.tip })),
+  );
 
   // ---- the cassette: a chip that toggles open into a stationary tape; a
   // draggable selector rides the tape and snaps to the nearest piece. Shares
   // PIECES with the example list, so cassette and prev/next agree. -----------
-  const matchPaletteIdx = (s: string) => PIECES.findIndex((it) => it.expr === s)
+  const matchPaletteIdx = (s: string) =>
+    PIECES.findIndex((it) => it.expr === s);
   // svelte-ignore state_referenced_locally
-  let selectedIdx = $state(Math.max(0, matchPaletteIdx(input)))
+  let selectedIdx = $state(Math.max(0, matchPaletteIdx(input)));
   $effect(() => {
-    const i = matchPaletteIdx(input)
-    if (i >= 0) selectedIdx = i
-  })
-  const clampIdx = (i: number) => Math.max(0, Math.min(PIECES.length - 1, i))
-  const CELLW = 34 // tape cell width
-  const CELLH = 28 // tape cell height — the pieces stack VERTICALLY
-  let cassetteOpen = $state(false) // chip ⇄ expanded tape
-  let showSelectors = $state(false) // the ⚘ tree toggle reveals the view selectors
-  let cassetteWrapEl: HTMLDivElement | undefined = $state()
-  let selectorsWrapEl: HTMLDivElement | undefined = $state()
+    const i = matchPaletteIdx(input);
+    if (i >= 0) selectedIdx = i;
+  });
+  const clampIdx = (i: number) => Math.max(0, Math.min(PIECES.length - 1, i));
+  const CELLW = 34; // tape cell width
+  const CELLH = 28; // tape cell height — the pieces stack VERTICALLY
+  let cassetteOpen = $state(false); // chip ⇄ expanded tape
+  let showSelectors = $state(false); // the ⚘ tree toggle reveals the view selectors
+  let cassetteWrapEl: HTMLDivElement | undefined = $state();
+  let selectorsWrapEl: HTMLDivElement | undefined = $state();
   // press anywhere on the (vertical) tape and the selector jumps there, then
   // scrubs. Each landing snaps to a cell (sticky, bouncy via CSS) and previews
   // that piece frozen — the tree changes as you drag, nothing plays.
-  let tapeEl: HTMLDivElement | undefined = $state()
-  let selDragging = $state(false)
+  let tapeEl: HTMLDivElement | undefined = $state();
+  let selDragging = $state(false);
   // the selector rides UP from the bottom cell (leaf △) → sticky; CSS bounces it
-  const selY = $derived(selectedIdx * CELLH)
+  const selY = $derived(selectedIdx * CELLH);
   // which cell the pointer is over — measured from the tape's bottom (3px pad)
   const cellAtY = (clientY: number) => {
-    if (!tapeEl) return selectedIdx
-    const r = tapeEl.getBoundingClientRect()
-    return clampIdx(Math.floor((r.bottom - 3 - clientY) / CELLH))
-  }
+    if (!tapeEl) return selectedIdx;
+    const r = tapeEl.getBoundingClientRect();
+    return clampIdx(Math.floor((r.bottom - 3 - clientY) / CELLH));
+  };
 
   // select a piece: load and RUN it (tape release and prev/next land here)
   function pickPalette(i: number) {
-    const t = clampIdx(i)
-    selectedIdx = t
-    running = true
-    load(PIECES[t].expr)
+    const t = clampIdx(i);
+    selectedIdx = t;
+    running = true;
+    load(PIECES[t].expr);
   }
   // preview a piece WITHOUT playing — used live while scrubbing, so the tree
   // changes as you drag but nothing runs. Cleared nodes = instant swap.
   function loadFrozen(i: number) {
-    selectedIdx = clampIdx(i)
-    running = false
-    autoCycle = false
-    clearTimeout(timer)
-    nodes = []
-    edges = []
-    load(PIECES[selectedIdx].expr)
+    selectedIdx = clampIdx(i);
+    running = false;
+    autoCycle = false;
+    clearTimeout(timer);
+    nodes = [];
+    edges = [];
+    load(PIECES[selectedIdx].expr);
   }
   // the selector rises out of the chip (y = 0) up to its cell as the tape unfurls
   const selectorIn = (_n: Element, { duration = 300 } = {}) => ({
     duration,
     easing: backOut,
-    css: (t: number) => `opacity: ${t}; transform: translateY(${-selY * t}px)`
-  })
+    css: (t: number) => `opacity: ${t}; transform: translateY(${-selY * t}px)`,
+  });
   // opening the tape freezes the ambient cycle so the selector holds still
   function openCassette() {
-    cassetteOpen = true
-    autoCycle = false
-    running = false
-    clearTimeout(timer)
+    cassetteOpen = true;
+    autoCycle = false;
+    running = false;
+    clearTimeout(timer);
   }
   function tapeDown(e: PointerEvent) {
-    selDragging = true
-    tapeEl?.setPointerCapture(e.pointerId)
-    const li = cellAtY(e.clientY)
-    if (li !== selectedIdx) loadFrozen(li) // jump to the pressed cell
+    selDragging = true;
+    tapeEl?.setPointerCapture(e.pointerId);
+    const li = cellAtY(e.clientY);
+    if (li !== selectedIdx) loadFrozen(li); // jump to the pressed cell
   }
   function tapeMove(e: PointerEvent) {
-    if (!selDragging) return
-    const li = cellAtY(e.clientY)
-    if (li !== selectedIdx) loadFrozen(li) // scrub
+    if (!selDragging) return;
+    const li = cellAtY(e.clientY);
+    if (li !== selectedIdx) loadFrozen(li); // scrub
   }
   function tapeUp() {
-    if (!selDragging) return
-    selDragging = false
-    pickPalette(selectedIdx) // land + run
+    if (!selDragging) return;
+    selDragging = false;
+    pickPalette(selectedIdx); // land + run
   }
 
-  const matchIdx = () => exampleOptions.findIndex((o) => o.expr === input)
+  const matchIdx = () => exampleOptions.findIndex((o) => o.expr === input);
   // prev/next switch trees; stop at the ends rather than wrapping
   function cyclePreset(dir: 1 | -1) {
-    const opts = exampleOptions
-    if (!opts.length) return
-    const cur = matchIdx()
-    const next = cur === -1 ? (dir === 1 ? 0 : opts.length - 1) : cur + dir
-    if (next < 0 || next >= opts.length) return
-    load(opts[next].expr)
+    const opts = exampleOptions;
+    if (!opts.length) return;
+    const cur = matchIdx();
+    const next = cur === -1 ? (dir === 1 ? 0 : opts.length - 1) : cur + dir;
+    if (next < 0 || next >= opts.length) return;
+    load(opts[next].expr);
   }
   // focusing the edit box pauses the reduction so it holds still while you type
   function pauseForEdit() {
-    autoCycle = false
-    running = false
-    clearTimeout(timer)
+    autoCycle = false;
+    running = false;
+    clearTimeout(timer);
   }
   // the edit box parses AS YOU TYPE: each keystroke that yields a valid
   // expression swaps the tree in immediately (frozen, the cassette-scrub
   // posture); mid-edit gibberish holds the last good tree and just tints the
   // underline. Enter restarts the loaded tree and drops focus, so the arrow
   // keys step it straight away; Escape only drops focus.
-  let editInvalid = $state(false)
+  let editInvalid = $state(false);
   function liveParse() {
-    let t: T
+    let t: T;
     try {
-      const lazyTop = PIECES.find((p) => p.expr === input)?.lazyTop ?? false
-      t = parseTree(input, activeDefs, { lazyTop, lazyAll: lazyParse })
+      const lazyTop = PIECES.find((p) => p.expr === input)?.lazyTop ?? false;
+      t = parseTree(input, activeDefs, { lazyTop, lazyAll: lazyParse });
     } catch {
-      editInvalid = true
-      return
+      editInvalid = true;
+      return;
     }
-    editInvalid = false
-    if (cur && treeEq(t, cur)) return // cosmetic edit — same tree, keep it
-    nodes = []
-    edges = []
-    load(input)
+    editInvalid = false;
+    if (cur && treeEq(t, cur)) return; // cosmetic edit — same tree, keep it
+    nodes = [];
+    edges = [];
+    load(input);
   }
   function onEditKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      load(input)
+    if (e.key === "Enter") {
+      e.preventDefault();
+      load(input);
       // hand the keyboard to the instrument: arrows step, space runs
-      ;((e.target as HTMLElement).closest('.vis') as HTMLElement | null)?.focus()
-    } else if (e.key === 'Escape') {
-      ;(e.target as HTMLElement).blur()
+      (
+        (e.target as HTMLElement).closest(".vis") as HTMLElement | null
+      )?.focus();
+    } else if (e.key === "Escape") {
+      (e.target as HTMLElement).blur();
     }
   }
   // RAW state on purpose: the whole animation pipeline (oldByRef, survivors,
@@ -280,10 +336,10 @@
   // through `cur` and once from a fresh parse would no longer be ===. These
   // are only ever reassigned wholesale, so raw loses nothing (and spares the
   // proxy machinery a thousand-node tree per frame).
-  let cur = $state.raw<T | null>(null)
-  let ruleMsg = $state('')
-  let stepCount = $state(0)
-  let err = $state('')
+  let cur = $state.raw<T | null>(null);
+  let ruleMsg = $state("");
+  let stepCount = $state(0);
+  let err = $state("");
 
   // ---- pods: subtrees drawn folded ---------------------------------------
   // Display-only folding over the real tree (reduction always computes on
@@ -295,259 +351,270 @@
   // (podMode); the built-in tour keeps drawing everything open. Not reactive
   // state: every change is followed by show(cur), which relayouts.
   // svelte-ignore state_referenced_locally
-  const podMode = !!(defs || resolveDef)
-  const AUTOFOLD_MIN = 9 // unseen non-apply data this big folds shut
-  const UNFOLD_BUDGET = 16 // nodes revealed per pod click
-  let folded = new Map<T, string | null>() // root -> label (null = anonymous)
-  let seen = new WeakSet<T>() // every node that has ever been drawn
-  const sizeMemo = new WeakMap<T, number>()
+  const podMode = !!(defs || resolveDef);
+  const AUTOFOLD_MIN = 9; // unseen non-apply data this big folds shut
+  const UNFOLD_BUDGET = 16; // nodes revealed per pod click
+  let folded = new Map<T, string | null>(); // root -> label (null = anonymous)
+  let seen = new WeakSet<T>(); // every node that has ever been drawn
+  const sizeMemo = new WeakMap<T, number>();
   function sizeOf(t: T): number {
-    const hit = sizeMemo.get(t)
-    if (hit !== undefined) return hit
-    const n = 1 + childrenOf(t).reduce((s, c) => s + sizeOf(c), 0)
-    sizeMemo.set(t, n)
-    return n
+    const hit = sizeMemo.get(t);
+    if (hit !== undefined) return hit;
+    const n = 1 + childrenOf(t).reduce((s, c) => s + sizeOf(c), 0);
+    sizeMemo.set(t, n);
+    return n;
   }
   // a folded region's label: numeral, string, dictionary match, or anonymous
   function autoName(t: T): string | null {
-    const n = natValue(t)
-    if (n !== null && n >= 1) return String(n)
-    const s = strValue(t)
-    if (s !== null) return JSON.stringify(s)
+    const n = natValue(t);
+    if (n !== null && n >= 1) return String(n);
+    const s = strValue(t);
+    if (s !== null) return JSON.stringify(s);
     if (sizeOf(t) >= 3) {
-      for (const [name, d] of Object.entries(activeDefs)) if (treeEq(t, d)) return name
+      for (const [name, d] of Object.entries(activeDefs))
+        if (treeEq(t, d)) return name;
     }
-    return null
+    return null;
   }
   // reveal one budgeted level from a pod root: children beyond the budget
   // re-fold — but ONLY when they have a recognized name (a numeral, a
   // string, a dictionary match). An unnameable subtree is not a pod: hiding
   // structure behind an ellipsis reads as noise, so it draws instead.
   function reveal(root: T, budget: number) {
-    let left = budget
+    let left = budget;
     const visit = (t: T) => {
-      seen.add(t)
-      left--
+      seen.add(t);
+      left--;
       for (const c of childrenOf(t)) {
-        if (seen.has(c) || folded.has(c)) continue
+        if (seen.has(c) || folded.has(c)) continue;
         if (left > 0 || sizeOf(c) <= 3) {
-          visit(c)
-          continue
+          visit(c);
+          continue;
         }
-        const name = autoName(c)
-        if (name !== null) folded.set(c, name)
-        else visit(c)
+        const name = autoName(c);
+        if (name !== null) folded.set(c, name);
+        else visit(c);
       }
-    }
-    visit(root)
+    };
+    visit(root);
   }
   function openPod(t: T) {
     // before any step, a labeled pod is a host atom — the host may prefer to
     // unfold its own value (and re-seed this panel) instead of a local reveal
-    const label = folded.get(t)
-    if (onPodOpen && stepCount === 0 && label && onPodOpen(label)) return
-    if (!folded.delete(t) || !cur) return
-    reveal(t, UNFOLD_BUDGET)
-    show(cur)
+    const label = folded.get(t);
+    if (onPodOpen && stepCount === 0 && label && onPodOpen(label)) return;
+    if (!folded.delete(t) || !cur) return;
+    reveal(t, UNFOLD_BUDGET);
+    show(cur);
   }
   // the reverse of openPod: a recognized subtree (a numeral, a string, a
   // dictionary match) folds back into a pod on demand — click its badge, or
   // shift-click its root when badges are off. Never the root or an apply (the
   // machinery always draws). The hidden children dissolve: nothing was discarded.
   function closePod(t: T) {
-    if (!cur || t === cur || t.tag === 'apply' || folded.has(t)) return
-    const name = autoName(t)
-    if (name === null) return
-    folded.set(t, name)
-    show(cur, { allShrink: true })
+    if (!cur || t === cur || t.tag === "apply" || folded.has(t)) return;
+    const name = autoName(t);
+    if (name === null) return;
+    folded.set(t, name);
+    show(cur, { allShrink: true });
   }
   // after a step: fold big DATA the rewrite newly exposed — but only when it
   // has a recognized NAME, and never at the root (the answer always draws;
   // apply nodes — the computation's own machinery — always draw too)
   function refreshFolds(t: T) {
-    if (!podMode) return
+    if (!podMode) return;
     // a rewrite can SELECT an existing pod as the whole result (K keeping a
     // folded branch) — the root always opens
-    folded.delete(t)
+    folded.delete(t);
     const visit = (n: T, isRoot: boolean) => {
-      if (folded.has(n)) return
+      if (folded.has(n)) return;
       if (!seen.has(n)) {
-        if (!isRoot && n.tag !== 'apply' && sizeOf(n) > AUTOFOLD_MIN) {
-          const name = autoName(n)
+        if (!isRoot && n.tag !== "apply" && sizeOf(n) > AUTOFOLD_MIN) {
+          const name = autoName(n);
           if (name !== null) {
-            folded.set(n, name)
-            return
+            folded.set(n, name);
+            return;
           }
         }
-        seen.add(n)
+        seen.add(n);
       }
-      for (const c of childrenOf(n)) visit(c, false)
-    }
-    visit(t, true)
+      for (const c of childrenOf(n)) visit(c, false);
+    };
+    visit(t, true);
   }
 
   // names outside activeDefs, asked of the host once each; a hit swaps the
   // fruit for the real definition — but only before any step has fired
   // (swapping a tree mid-reduction under the viewer is worse than fruit)
-  const attempted = new Set<string>()
+  const attempted = new Set<string>();
   function maybeResolve(t: T) {
-    if (!resolveDef) return
-    const missing = new Set<string>()
+    if (!resolveDef) return;
+    const missing = new Set<string>();
     const walk = (n: T): void => {
-      if (n.tag === 'var' && !(n.name in activeDefs) && !attempted.has(n.name)) missing.add(n.name)
-      for (const c of childrenOf(n)) walk(c)
-    }
-    walk(t)
+      if (n.tag === "var" && !(n.name in activeDefs) && !attempted.has(n.name))
+        missing.add(n.name);
+      for (const c of childrenOf(n)) walk(c);
+    };
+    walk(t);
     for (const name of missing) {
-      attempted.add(name)
+      attempted.add(name);
       void resolveDef(name).then((tree) => {
-        if (!tree) return
-        resolved = { ...resolved, [name]: tree }
-        if (stepCount === 0 && cur) load(input)
-      })
+        if (!tree) return;
+        resolved = { ...resolved, [name]: tree };
+        if (stepCount === 0 && cur) load(input);
+      });
     }
   }
 
   // a normal form has no apply nodes left; a tree that still carries them is
   // STUCK — waiting on a free variable's shape (an honest distinction the
   // readout should make)
-  const hasApply = (t: T): boolean => t.tag === 'apply' || childrenOf(t).some(hasApply)
+  const hasApply = (t: T): boolean =>
+    t.tag === "apply" || childrenOf(t).some(hasApply);
   function restMsg(t: T): string {
     return hasApply(t)
       ? `stuck on free variables: ${pretty(t, { names: true, defs: activeDefs })}`
-      : `normal form: ${pretty(t, { names: true, defs: activeDefs })}`
+      : `normal form: ${pretty(t, { names: true, defs: activeDefs })}`;
   }
 
   // ---- layout ---------------------------------------------------------------
 
   interface VNode {
-    path: string
-    tree: T
-    tag: T['tag']
-    x: number
-    y: number
-    depth: number
-    ready: 'L' | 's' | 'K' | 'S' | 'F' | null
-    next: boolean
-    tint: string
-    tilt: number
-    label: string | null
-    vname: string | null // a named leaf's name — always shown
-    pod: string | null // a folded defs splice: real structure, drawn shut
-    canFire: boolean // an apply the user can fire by clicking (ready, or an engine-able spine head)
-    fresh?: boolean // no prior position: genuinely new growth
+    path: string;
+    tree: T;
+    tag: T["tag"];
+    x: number;
+    y: number;
+    depth: number;
+    ready: "L" | "s" | "K" | "S" | "F" | null;
+    next: boolean;
+    tint: string;
+    tilt: number;
+    label: string | null;
+    vname: string | null; // a named leaf's name — always shown
+    pod: string | null; // a folded defs splice: real structure, drawn shut
+    canFire: boolean; // an apply the user can fire by clicking (ready, or an engine-able spine head)
+    fresh?: boolean; // no prior position: genuinely new growth
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
   interface VEdge {
-    id: string
-    x1: number
-    y1: number
-    cx: number
-    cy: number
-    x2: number
-    y2: number
-    w: number
-    trunk?: boolean
+    id: string;
+    x1: number;
+    y1: number;
+    cx: number;
+    cy: number;
+    x2: number;
+    y2: number;
+    w: number;
+    trunk?: boolean;
   }
   // a pruned leaf falls on its own; pruned branches disintegrate in place.
   // `delay` staggers the exit: triage joins the chosen branch FIRST, and only
   // then do the rejected branches let go.
   interface Debris {
-    id: number
-    x: number
-    y: number
-    dy: number
-    dx: number
-    rot: number
-    tint: string
-    label?: string // a discarded named leaf falls with its name on
+    id: number;
+    x: number;
+    y: number;
+    dy: number;
+    dx: number;
+    rot: number;
+    tint: string;
+    label?: string; // a discarded named leaf falls with its name on
   }
   interface GhostEdge {
-    id: number
-    d: string
-    w: number
+    id: number;
+    d: string;
+    w: number;
   }
   // consumed pattern pieces dissolve in place — the collapse marks the site;
   // gliding them toward the joint read as clutter, so they stay put
   interface Vanishing {
-    id: number
-    x: number
-    y: number
-    tag: T['tag']
-    tint: string
-    tilt: number
+    id: number;
+    x: number;
+    y: number;
+    tag: T["tag"];
+    tint: string;
+    tilt: number;
   }
 
   // raw like `cur` (VNode.tree must stay ===-comparable across frames)
-  let nodes = $state.raw<VNode[]>([])
-  let edges = $state.raw<VEdge[]>([])
-  let debris = $state<Debris[]>([])
-  let ghosts = $state<GhostEdge[]>([])
-  let vanishing = $state<Vanishing[]>([])
-  let debrisId = 0
-  const W = 560
-  const XSTEP = 46
-  const YSTEP = 50
-  const GROUND = 46
+  let nodes = $state.raw<VNode[]>([]);
+  let edges = $state.raw<VEdge[]>([]);
+  let debris = $state<Debris[]>([]);
+  let ghosts = $state<GhostEdge[]>([]);
+  let vanishing = $state<Vanishing[]>([]);
+  let debrisId = 0;
+  const W = 560;
+  const XSTEP = 46;
+  const YSTEP = 50;
+  const GROUND = 46;
 
-  const LEAF_TINTS = ['#6dbd7e', '#4aa96c', '#8fce9d', '#3d9b74', '#5cb787']
-  const VAR_TINT = '#dcaa5e' // named leaves are the grove's autumn leaves
+  const LEAF_TINTS = ["#6dbd7e", "#4aa96c", "#8fce9d", "#3d9b74", "#5cb787"];
+  const VAR_TINT = "#dcaa5e"; // named leaves are the grove's autumn leaves
   const hash = (s: string) => {
-    let h = 0
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
-    return Math.abs(h)
-  }
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  };
 
   function nameOf(t: T): string | null {
-    if (!labels || t.tag === 'apply') return null
-    const n = natValue(t)
-    if (n !== null && n >= 1) return String(n)
-    if (nodeCount(t) < 3) return null
-    for (const [name, d] of Object.entries(activeDefs)) if (treeEq(t, d)) return name
-    return null
+    if (!labels || t.tag === "apply") return null;
+    const n = natValue(t);
+    if (n !== null && n >= 1) return String(n);
+    if (nodeCount(t) < 3) return null;
+    for (const [name, d] of Object.entries(activeDefs))
+      if (treeEq(t, d)) return name;
+    return null;
   }
 
   function layout(tree: T): { nodes: VNode[]; edges: VEdge[] } {
-    type Lay = { path: string; tree: T; x: number; depth: number }
-    const out: Lay[] = []
-    function go(t: T, path: string, depth: number): { rootX: number; width: number } {
+    type Lay = { path: string; tree: T; x: number; depth: number };
+    const out: Lay[] = [];
+    function go(
+      t: T,
+      path: string,
+      depth: number,
+    ): { rootX: number; width: number } {
       // a pod draws as a single closed node — its real children stay unshown
-      const kids = folded.has(t) ? [] : childrenOf(t)
+      const kids = folded.has(t) ? [] : childrenOf(t);
       if (kids.length === 0) {
-        out.push({ path, tree: t, x: 0, depth })
-        return { rootX: 0, width: 1 }
+        out.push({ path, tree: t, x: 0, depth });
+        return { rootX: 0, width: 1 };
       }
-      let cum = 0
-      let first: number | null = null
-      let last = 0
+      let cum = 0;
+      let first: number | null = null;
+      let last = 0;
       for (let i = 0; i < kids.length; i++) {
-        const before = out.length
-        const sub = go(kids[i], path + i, depth + 1)
-        for (let j = before; j < out.length; j++) out[j].x += cum
-        const r = sub.rootX + cum
-        if (first === null) first = r
-        last = r
-        cum += sub.width
+        const before = out.length;
+        const sub = go(kids[i], path + i, depth + 1);
+        for (let j = before; j < out.length; j++) out[j].x += cum;
+        const r = sub.rootX + cum;
+        if (first === null) first = r;
+        last = r;
+        cum += sub.width;
       }
-      const myX = ((first ?? 0) + last) / 2
-      out.push({ path, tree: t, x: myX, depth })
-      return { rootX: myX, width: Math.max(cum, 1) }
+      const myX = ((first ?? 0) + last) / 2;
+      out.push({ path, tree: t, x: myX, depth });
+      return { rootX: myX, width: Math.max(cum, 1) };
     }
-    go(tree, 'r', 0)
-    const maxX = Math.max(...out.map((n) => n.x), 1)
-    const maxD = Math.max(...out.map((n) => n.depth), 1)
-    const sx = Math.min(XSTEP * 2, (W - 90) / Math.max(maxX, 1))
-    const sy = Math.min(YSTEP * 1.7, (height - GROUND - 70) / Math.max(maxD, 1))
-    const ox = (W - maxX * sx) / 2
-    const px = (n: Lay) => ox + n.x * sx
-    const py = (n: Lay) => height - GROUND - 14 - n.depth * sy
-    const nextSite = parallel ? null : nextApplyToFire(tree)
+    go(tree, "r", 0);
+    const maxX = Math.max(...out.map((n) => n.x), 1);
+    const maxD = Math.max(...out.map((n) => n.depth), 1);
+    const sx = Math.min(XSTEP * 2, (W - 90) / Math.max(maxX, 1));
+    const sy = Math.min(
+      YSTEP * 1.7,
+      (height - GROUND - 70) / Math.max(maxD, 1),
+    );
+    const ox = (W - maxX * sx) / 2;
+    const px = (n: Lay) => ox + n.x * sx;
+    const py = (n: Lay) => height - GROUND - 14 - n.depth * sy;
+    const nextSite = parallel ? null : nextApplyToFire(tree);
     const vnodes: VNode[] = out.map((n) => {
-      const pod = folded.has(n.tree) ? (folded.get(n.tree) ?? '…') : null
+      const pod = folded.has(n.tree) ? (folded.get(n.tree) ?? "…") : null;
       // every application is clickable: ready ones fire directly, stuck
       // named spines take an engine step, anything else runs the guided
       // cascade (reduce what it needs first, then fire it)
-      const canFire = n.tree.tag === 'apply'
+      const canFire = n.tree.tag === "apply";
       return {
         path: n.path,
         tree: n.tree,
@@ -557,43 +624,46 @@
         depth: n.depth,
         ready: readyRule(n.tree),
         next: nextSite !== null && n.tree === nextSite,
-        tint: n.tree.tag === 'var' ? VAR_TINT : LEAF_TINTS[hash(n.path) % LEAF_TINTS.length],
+        tint:
+          n.tree.tag === "var"
+            ? VAR_TINT
+            : LEAF_TINTS[hash(n.path) % LEAF_TINTS.length],
         tilt: (hash(n.path) % 70) - 35,
         label: pod ? null : nameOf(n.tree), // a pod already wears its name
-        vname: n.tree.tag === 'var' ? n.tree.name : null,
+        vname: n.tree.tag === "var" ? n.tree.name : null,
         pod,
-        canFire
-      }
-    })
-    const byPath = new Map(out.map((n) => [n.path, n]))
-    const vedges: VEdge[] = []
+        canFire,
+      };
+    });
+    const byPath = new Map(out.map((n) => [n.path, n]));
+    const vedges: VEdge[] = [];
     for (const n of out) {
-      const kids = childrenOf(n.tree)
+      const kids = childrenOf(n.tree);
       for (let i = 0; i < kids.length; i++) {
-        const c = byPath.get(n.path + i)
-        if (!c) continue
-        const x1 = px(n)
-        const y1 = py(n)
-        const x2 = px(c)
-        const y2 = py(c)
+        const c = byPath.get(n.path + i);
+        if (!c) continue;
+        const x1 = px(n);
+        const y1 = py(n);
+        const x2 = px(c);
+        const y2 = py(c);
         // curved when styled; control on the segment midpoint = straight line
         vedges.push({
-          id: n.path + '>' + i,
+          id: n.path + ">" + i,
           x1,
           y1,
           cx: x1 + (x2 - x1) * 0.5,
           cy: styled ? y1 + (y2 - y1) * 0.62 : y1 + (y2 - y1) * 0.5,
           x2,
           y2,
-          w: styled ? Math.max(1.6, 5.4 - n.depth * 0.85) : 1.4
-        })
+          w: styled ? Math.max(1.6, 5.4 - n.depth * 0.85) : 1.4,
+        });
       }
     }
     if (styled) {
       // the trunk is an edge too, so it glides with the root
-      const root = out[out.length - 1]
+      const root = out[out.length - 1];
       vedges.push({
-        id: '__trunk',
+        id: "__trunk",
         x1: W / 2,
         y1: height - GROUND + 12,
         cx: W / 2,
@@ -601,41 +671,42 @@
         x2: px(root),
         y2: py(root),
         w: 5,
-        trunk: true
-      })
+        trunk: true,
+      });
     }
-    return { nodes: vnodes, edges: vedges }
+    return { nodes: vnodes, edges: vedges };
   }
 
-  const edgeD = (e: VEdge) => `M ${e.x1} ${e.y1} Q ${e.cx} ${e.cy} ${e.x2} ${e.y2}`
+  const edgeD = (e: VEdge) =>
+    `M ${e.x1} ${e.y1} Q ${e.cx} ${e.cy} ${e.x2} ${e.y2}`;
 
   // ---- one tween for everything: nodes and branches share the same clock
   // and the same easing, so a branch endpoint never drifts from its leaf ----
 
-  let anim: number | undefined
+  let anim: number | undefined;
   // ease-out with a small overshoot; both nodes and edges ride this curve
   const ease = (t: number) => {
-    const c = 0.9
-    const u = t - 1
-    return 1 + (c + 1) * u * u * u + c * u * u
-  }
+    const c = 0.9;
+    const u = t - 1;
+    return 1 + (c + 1) * u * u * u + c * u * u;
+  };
   // returns the ids of the old edges the tween carries forward (as a same-id
   // morph or as a moved child's travelling branch) — every other old edge is
   // the caller's to fade out, so no branch ever pops off screen
   function animateTo(
     l: { nodes: VNode[]; edges: VEdge[] },
     oldByRef: Map<T, VNode>,
-    sitePaths: string[] = []
+    sitePaths: string[] = [],
   ): Set<string> {
-    cancelAnimationFrame(anim!)
-    const used = new Set<string>()
+    cancelAnimationFrame(anim!);
+    const used = new Set<string>();
     if (!motion || nodes.length === 0) {
-      nodes = l.nodes
-      edges = l.edges
-      return used
+      nodes = l.nodes;
+      edges = l.edges;
+      return used;
     }
-    const nFrom = new Map(nodes.map((n) => [n.path, n]))
-    const eFrom = new Map(edges.map((e) => [e.id, e]))
+    const nFrom = new Map(nodes.map((n) => [n.path, n]));
+    const eFrom = new Map(edges.map((e) => [e.id, e]));
     // Correspondence, the general rewrite-animation rule: a node that kept
     // BOTH its path and its tree didn't move — it stays and glides with the
     // layout. Otherwise find the tree wherever it stood before: a kept
@@ -645,58 +716,63 @@
     // stood at your path — a joint grown by the rewrite emerges from the
     // redex site it replaced. Only then is a node genuinely new growth.
     const fromFor = (tn: VNode): VNode | undefined => {
-      const byPath = nFrom.get(tn.path)
-      if (byPath && byPath.tree === tn.tree) return byPath
-      return oldByRef.get(tn.tree) ?? byPath
-    }
+      const byPath = nFrom.get(tn.path);
+      if (byPath && byPath.tree === tn.tree) return byPath;
+      return oldByRef.get(tn.tree) ?? byPath;
+    };
     const nPairs = l.nodes.map((tn) => {
-      const f = fromFor(tn)
-      return { tn: { ...tn, fresh: !f }, f }
-    })
-    const newByPath = new Map(l.nodes.map((n) => [n.path, n]))
+      const f = fromFor(tn);
+      return { tn: { ...tn, fresh: !f }, f };
+    });
+    const newByPath = new Map(l.nodes.map((n) => [n.path, n]));
     const ePairs = l.edges.map((te) => {
-      const cPath = te.trunk ? 'r' : te.id.replace('>', '')
-      const pPath = te.trunk ? '' : te.id.split('>')[0]
-      const child = newByPath.get(cPath)
-      let f = eFrom.get(te.id)
-      let fId = f ? te.id : null
+      const cPath = te.trunk ? "r" : te.id.replace(">", "");
+      const pPath = te.trunk ? "" : te.id.split(">")[0];
+      const child = newByPath.get(cPath);
+      let f = eFrom.get(te.id);
+      let fId = f ? te.id : null;
       if (f && !te.trunk) {
-        const oldChild = nFrom.get(cPath)
-        const sameChild = oldChild && child && oldChild.tree === child.tree
+        const oldChild = nFrom.get(cPath);
+        const sameChild = oldChild && child && oldChild.tree === child.tree;
         // The port rule: an edge whose parent survives OUTSIDE the rewritten
         // region is a stable port — the branch stays and receives the
         // arriving child (K's kept leaf lands on the waiting branch). An
         // edge whose parent is part of the RESULT re-wires: it travels with
         // its child instead (triage's selected branch and S's shared
         // argument bring their branches along).
-        const inResult = sitePaths.some((sp) => pPath.startsWith(sp))
+        const inResult = sitePaths.some((sp) => pPath.startsWith(sp));
         if (!sameChild && inResult) {
-          f = undefined
-          fId = null
+          f = undefined;
+          fId = null;
         }
       }
       if (!f && !te.trunk && child) {
         // the child moved here from elsewhere: bring its old incoming
         // branch along instead of growing a new one
-        const old = oldByRef.get(child.tree)
-        if (old && old.path !== 'r') {
-          fId = `${old.path.slice(0, -1)}>${old.path.slice(-1)}`
-          f = eFrom.get(fId)
-          if (!f) fId = null
+        const old = oldByRef.get(child.tree);
+        if (old && old.path !== "r") {
+          fId = `${old.path.slice(0, -1)}>${old.path.slice(-1)}`;
+          f = eFrom.get(fId);
+          if (!f) fId = null;
         }
       }
-      if (fId) used.add(fId)
+      if (fId) used.add(fId);
       // otherwise a NEW branch grows out of its parent endpoint
-      return { te, f: f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 } }
-    })
-    const t0 = performance.now()
-    const D = 550
+      return {
+        te,
+        f: f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 },
+      };
+    });
+    const t0 = performance.now();
+    const D = 550;
     const frame = (now: number) => {
-      const t = Math.min(1, (now - t0) / D)
-      const k = ease(t)
+      const t = Math.min(1, (now - t0) / D);
+      const k = ease(t);
       nodes = nPairs.map(({ tn, f }) =>
-        f ? { ...tn, x: f.x + (tn.x - f.x) * k, y: f.y + (tn.y - f.y) * k } : tn
-      )
+        f
+          ? { ...tn, x: f.x + (tn.x - f.x) * k, y: f.y + (tn.y - f.y) * k }
+          : tn,
+      );
       edges = ePairs.map(({ te, f }) => ({
         ...te,
         x1: f.x1 + (te.x1 - f.x1) * k,
@@ -704,12 +780,12 @@
         cx: f.cx + (te.cx - f.cx) * k,
         cy: f.cy + (te.cy - f.cy) * k,
         x2: f.x2 + (te.x2 - f.x2) * k,
-        y2: f.y2 + (te.y2 - f.y2) * k
-      }))
-      if (t < 1) anim = requestAnimationFrame(frame)
-    }
-    anim = requestAnimationFrame(frame)
-    return used
+        y2: f.y2 + (te.y2 - f.y2) * k,
+      }));
+      if (t < 1) anim = requestAnimationFrame(frame);
+    };
+    anim = requestAnimationFrame(frame);
+    return used;
   }
 
   // The redex's own pattern (the apply node, the rule's matched spine, and
@@ -717,40 +793,45 @@
   // Everything else that disappears was DISCARDED data: leaves fall, branches
   // disintegrate. This split is derivable from any pattern-matching rule, not
   // just these five.
-  function spineOf(site: T & { tag: 'apply' }): T[] {
-    const out: T[] = [site]
-    const f = site.f
-    if (f.tag === 'leaf' || f.tag === 'stem') out.push(f)
-    else if (f.tag === 'fork') {
-      out.push(f)
-      const a = f.l
-      if (a.tag === 'leaf' || a.tag === 'stem') out.push(a) // K, S
-      else if (a.tag === 'fork') {
-        out.push(a) // F
-        out.push(site.x) // triage consumes the argument's shell
+  function spineOf(site: T & { tag: "apply" }): T[] {
+    const out: T[] = [site];
+    const f = site.f;
+    if (f.tag === "leaf" || f.tag === "stem") out.push(f);
+    else if (f.tag === "fork") {
+      out.push(f);
+      const a = f.l;
+      if (a.tag === "leaf" || a.tag === "stem")
+        out.push(a); // K, S
+      else if (a.tag === "fork") {
+        out.push(a); // F
+        out.push(site.x); // triage consumes the argument's shell
       }
     }
-    return out
+    return out;
   }
 
-  function show(tree: T, opts: { spine?: Set<T>; allShrink?: boolean; sitePaths?: string[] } = {}) {
-    const { spine, allShrink = false, sitePaths = [] } = opts
-    const prevNodes = nodes
-    const prevEdges = edges
-    const l = layout(tree)
-    const oldByRef = new Map<T, VNode>()
-    for (const n of prevNodes) if (!oldByRef.has(n.tree)) oldByRef.set(n.tree, n)
-    const usedEdges = animateTo(l, oldByRef, sitePaths)
+  function show(
+    tree: T,
+    opts: { spine?: Set<T>; allShrink?: boolean; sitePaths?: string[] } = {},
+  ) {
+    const { spine, allShrink = false, sitePaths = [] } = opts;
+    const prevNodes = nodes;
+    const prevEdges = edges;
+    const l = layout(tree);
+    const oldByRef = new Map<T, VNode>();
+    for (const n of prevNodes)
+      if (!oldByRef.has(n.tree)) oldByRef.set(n.tree, n);
+    const usedEdges = animateTo(l, oldByRef, sitePaths);
     if (motion && styled && prevNodes.length > 0) {
-      const survivors = new Set(l.nodes.map((n) => n.tree))
-      const removed = prevNodes.filter((n) => !survivors.has(n.tree))
-      const fresh: Debris[] = []
-      const shrunk: Vanishing[] = []
+      const survivors = new Set(l.nodes.map((n) => n.tree));
+      const removed = prevNodes.filter((n) => !survivors.has(n.tree));
+      const fresh: Debris[] = [];
+      const shrunk: Vanishing[] = [];
       for (const n of removed) {
-        const consumed = allShrink || (spine?.has(n.tree) ?? false)
-        if ((n.tag === 'leaf' || n.tag === 'var') && !consumed) {
+        const consumed = allShrink || (spine?.has(n.tree) ?? false);
+        if ((n.tag === "leaf" || n.tag === "var") && !consumed) {
           // fruit drops heavier than leaves: less drift, less spin
-          const damp = n.tag === 'var' ? 0.35 : 1
+          const damp = n.tag === "var" ? 0.35 : 1;
           fresh.push({
             id: debrisId++,
             x: n.x,
@@ -759,8 +840,8 @@
             dx: ((hash(n.path) % 36) - 18) * 1.1 * damp,
             rot: ((hash(n.path) % 160) - 80) * damp,
             tint: n.tint,
-            label: n.vname ?? undefined
-          })
+            label: n.vname ?? undefined,
+          });
         } else {
           // consumed machinery dissolves where it stood — the shrinking ring
           // and core mark the reduction point while the result takes its place
@@ -770,179 +851,191 @@
             y: n.y,
             tag: n.tag,
             tint: n.tint,
-            tilt: n.tilt
-          })
+            tilt: n.tilt,
+          });
         }
       }
       if (fresh.length) {
-        debris.push(...fresh)
-        while (debris.length > 90) debris.shift()
-        const ids = fresh.map((d) => d.id)
+        debris.push(...fresh);
+        while (debris.length > 90) debris.shift();
+        const ids = fresh.map((d) => d.id);
         setTimeout(() => {
-          debris = debris.filter((d) => !ids.includes(d.id))
-        }, 6400)
+          debris = debris.filter((d) => !ids.includes(d.id));
+        }, 6400);
       }
       if (shrunk.length) {
-        vanishing.push(...shrunk)
-        const ids = shrunk.map((v) => v.id)
+        vanishing.push(...shrunk);
+        const ids = shrunk.map((v) => v.id);
         setTimeout(() => {
-          vanishing = vanishing.filter((v) => !ids.includes(v.id))
-        }, 460)
+          vanishing = vanishing.filter((v) => !ids.includes(v.id));
+        }, 460);
       }
       // any branch the tween didn't carry forward dissolves where it stood —
       // whether its subtree fell, its machinery was consumed, or its id was
       // claimed by a re-wired edge travelling in with a different child
-      const gone = prevEdges.filter((e) => !e.trunk && !usedEdges.has(e.id))
+      const gone = prevEdges.filter((e) => !e.trunk && !usedEdges.has(e.id));
       if (gone.length) {
-        const fading: GhostEdge[] = gone.map((e) => ({ id: debrisId++, d: edgeD(e), w: e.w }))
-        ghosts.push(...fading)
-        const ids = fading.map((g) => g.id)
+        const fading: GhostEdge[] = gone.map((e) => ({
+          id: debrisId++,
+          d: edgeD(e),
+          w: e.w,
+        }));
+        ghosts.push(...fading);
+        const ids = fading.map((g) => g.id);
         setTimeout(() => {
-          ghosts = ghosts.filter((g) => !ids.includes(g.id))
-        }, 500)
+          ghosts = ghosts.filter((g) => !ids.includes(g.id));
+        }, 500);
       }
     }
   }
 
   // ---- the run loop ----------------------------------------------------------
 
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let exprIdx = 0
-  let atNormalForm = $state(false)
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let exprIdx = 0;
+  let atNormalForm = $state(false);
   // some expressions bring their own clock (add 2 3 runs a few hundred steps)
   // svelte-ignore state_referenced_locally
-  let curStepMs = stepMs
+  let curStepMs = stepMs;
   const speedFor = (src: string) => {
-    const e = exprs.find((x) => exprOf(x) === src)
-    return (e && speedOf(e)) || stepMs
-  }
+    const e = exprs.find((x) => exprOf(x) === src);
+    return (e && speedOf(e)) || stepMs;
+  };
 
   function load(src: string, opts: { keepAuto?: boolean } = {}) {
-    loadGen++ // aborts any guided cascade aimed at the old program
-    clearTimeout(timer)
-    if (!opts.keepAuto) autoCycle = false
-    err = ''
-    editInvalid = false
-    ruleMsg = ''
-    stepCount = 0
-    atNormalForm = false
-    curStepMs = speedFor(src)
-    debris = []
-    ghosts = []
-    vanishing = []
-    history = []
-    input = src
-    activeTip = presets.find((p) => p.expr === src)?.tip ?? ''
+    loadGen++; // aborts any guided cascade aimed at the old program
+    clearTimeout(timer);
+    if (!opts.keepAuto) autoCycle = false;
+    err = "";
+    editInvalid = false;
+    ruleMsg = "";
+    stepCount = 0;
+    atNormalForm = false;
+    curStepMs = speedFor(src);
+    debris = [];
+    ghosts = [];
+    vanishing = [];
+    history = [];
+    input = src;
+    activeTip = presets.find((p) => p.expr === src)?.tip ?? "";
     try {
       // the stem/fork pieces parse lazily so their construction rule fires visibly
-      const lazyTop = PIECES.find((p) => p.expr === src)?.lazyTop ?? false
-      folded = new Map()
-      seen = new WeakSet()
+      const lazyTop = PIECES.find((p) => p.expr === src)?.lazyTop ?? false;
+      folded = new Map();
+      seen = new WeakSet();
       // pods are a HOST-defs behavior: the built-in tour's whole point is
       // showing the toy combinators' structure, so it keeps drawing them open
       cur = parseTree(src, activeDefs, {
         lazyTop,
         lazyAll: lazyParse,
-        onDefSplice: podMode ? (node, name) => folded.set(node, name) : undefined
-      })
+        onDefSplice: podMode
+          ? (node, name) => folded.set(node, name)
+          : undefined,
+      });
       // the root is never a pod — a program that IS one atom draws in full
-      folded.delete(cur)
+      folded.delete(cur);
       // everything visible at load is 'seen': later auto-folds only ever
       // apply to data a reduction newly exposes
       const markSeen = (t: T): void => {
-        if (folded.has(t)) return
-        seen.add(t)
-        childrenOf(t).forEach(markSeen)
-      }
-      markSeen(cur)
-      maybeResolve(cur)
-      show(cur)
-      if (running) schedule()
+        if (folded.has(t)) return;
+        seen.add(t);
+        childrenOf(t).forEach(markSeen);
+      };
+      markSeen(cur);
+      maybeResolve(cur);
+      show(cur);
+      if (running) schedule();
     } catch (e) {
-      cur = null
-      err = e instanceof Error ? e.message : String(e)
+      cur = null;
+      err = e instanceof Error ? e.message : String(e);
     }
   }
 
   // each fired step remembers where it came from, so ◀ can walk back
-  let history: { tree: T; msg: string; steps: number }[] = []
-  let historyLen = $state(0)
+  let history: { tree: T; msg: string; steps: number }[] = [];
+  let historyLen = $state(0);
   const remember = () => {
-    if (!cur) return
-    history.push({ tree: cur, msg: ruleMsg, steps: stepCount })
-    if (history.length > 400) history.shift()
-    historyLen = history.length
-  }
+    if (!cur) return;
+    history.push({ tree: cur, msg: ruleMsg, steps: stepCount });
+    if (history.length > 400) history.shift();
+    historyLen = history.length;
+  };
 
   function fire(): boolean {
-    if (!cur) return false
+    if (!cur) return false;
     // gather the pattern spines BEFORE stepping: these pieces are consumed
     // (they shrink); anything else that vanishes was discarded (it falls or
     // fades) — concurrently with the kept trees gliding into the result
-    const sites = (parallel ? readySites(cur) : [nextApplyToFire(cur)].filter((s) => s !== null)) as (T & {
-      tag: 'apply'
-    })[]
-    const spine = new Set(sites.flatMap((s) => spineOf(s)))
+    const sites = (
+      parallel
+        ? readySites(cur)
+        : [nextApplyToFire(cur)].filter((s) => s !== null)
+    ) as (T & {
+      tag: "apply";
+    })[];
+    const spine = new Set(sites.flatMap((s) => spineOf(s)));
     // every on-screen occurrence of a fired site: edges inside those regions
     // re-wire, travelling with their subtrees instead of holding their port
-    const sitePaths = nodes.filter((n) => sites.some((s) => s === n.tree)).map((n) => n.path)
+    const sitePaths = nodes
+      .filter((n) => sites.some((s) => s === n.tree))
+      .map((n) => n.path);
     if (parallel) {
-      const s = stepParallel(cur)
+      const s = stepParallel(cur);
       if (!s) {
-        ruleMsg = restMsg(cur)
-        atNormalForm = true
-        return false
+        ruleMsg = restMsg(cur);
+        atNormalForm = true;
+        return false;
       }
-      remember()
-      cur = s.next
-      stepCount++
-      refreshFolds(cur)
+      remember();
+      cur = s.next;
+      stepCount++;
+      refreshFolds(cur);
       ruleMsg =
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
-          : `${s.fired.length} redexes fired in parallel (${s.fired.join(' ')})`
-      show(cur, { spine, sitePaths })
-      return true
+          : `${s.fired.length} redexes fired in parallel (${s.fired.join(" ")})`;
+      show(cur, { spine, sitePaths });
+      return true;
     }
-    const s = stepOnce(cur)
+    const s = stepOnce(cur);
     if (!s) {
-      ruleMsg = restMsg(cur)
-      atNormalForm = true
-      return false
+      ruleMsg = restMsg(cur);
+      atNormalForm = true;
+      return false;
     }
-    remember()
-    cur = s.next
-    stepCount++
-    refreshFolds(cur)
-    ruleMsg = s.rule
-    show(cur, { spine, sitePaths })
-    return true
+    remember();
+    cur = s.next;
+    stepCount++;
+    refreshFolds(cur);
+    ruleMsg = s.rule;
+    show(cur, { spine, sitePaths });
+    return true;
   }
 
   function back() {
-    const h = history.pop()
-    if (!h) return
-    historyLen = history.length
-    running = false
-    autoCycle = false
-    clearTimeout(timer)
-    cur = h.tree
-    stepCount = h.steps
-    ruleMsg = h.msg || 'stepped back'
-    atNormalForm = false
+    const h = history.pop();
+    if (!h) return;
+    historyLen = history.length;
+    running = false;
+    autoCycle = false;
+    clearTimeout(timer);
+    cur = h.tree;
+    stepCount = h.steps;
+    ruleMsg = h.msg || "stepped back";
+    atNormalForm = false;
     // undoing a rewrite: the rule's products shrink away, its inputs regrow
-    show(cur, { allShrink: true })
+    show(cur, { allShrink: true });
   }
 
   // Engine macro-step: the local rules are stuck, but the head is a NAME the
   // host's evaluator knows — hand it the spine, splice the result back, and
   // show the whole thing as one step (the pattern dissolves, the result
   // grows, folds apply to whatever arrives).
-  let engineBusy = false
+  let engineBusy = false;
   async function tryEngine(): Promise<boolean> {
-    if (!engineStep || !cur || engineBusy) return false
-    const s = stuckSpine(cur)
-    return s ? engineAt(s) : false
+    if (!engineStep || !cur || engineBusy) return false;
+    const s = stuckSpine(cur);
+    return s ? engineAt(s) : false;
   }
 
   // ---- user-directed reduction order: click a redex, fire THAT one --------
@@ -950,39 +1043,39 @@
   // valid reduction — the click just overrides the leftmost-innermost /
   // parallel defaults for one step. A stuck apply that heads a named spine
   // fires its engine step instead.
-  function fireAt(site: T & { tag: 'apply' }) {
-    if (!cur || !readyRule(site)) return
-    running = false
-    autoCycle = false
-    clearTimeout(timer)
-    const spine = new Set(spineOf(site))
-    const sitePaths = nodes.filter((n) => n.tree === site).map((n) => n.path)
-    const { result, rule } = reduceStep(site.f, site.x)
-    remember()
-    cur = replaceNode(cur, site, result)
-    stepCount++
-    refreshFolds(cur)
-    atNormalForm = false
-    ruleMsg = rule
-    show(cur, { spine, sitePaths })
+  function fireAt(site: T & { tag: "apply" }) {
+    if (!cur || !readyRule(site)) return;
+    running = false;
+    autoCycle = false;
+    clearTimeout(timer);
+    const spine = new Set(spineOf(site));
+    const sitePaths = nodes.filter((n) => n.tree === site).map((n) => n.path);
+    const { result, rule } = reduceStep(site.f, site.x);
+    remember();
+    cur = replaceNode(cur, site, result);
+    stepCount++;
+    refreshFolds(cur);
+    atNormalForm = false;
+    ruleMsg = rule;
+    show(cur, { spine, sitePaths });
   }
   function clickApply(n: VNode) {
-    const t = n.tree
-    if (t.tag !== 'apply') return
+    const t = n.tree;
+    if (t.tag !== "apply") return;
     if (readyRule(t)) {
-      fireAt(t as T & { tag: 'apply' })
-      return
+      fireAt(t as T & { tag: "apply" });
+      return;
     }
-    const s = engineStep ? spineAt(t) : null
+    const s = engineStep ? spineAt(t) : null;
     if (s) {
-      running = false
-      autoCycle = false
-      clearTimeout(timer)
-      void engineAt(s)
-      return
+      running = false;
+      autoCycle = false;
+      clearTimeout(timer);
+      void engineAt(s);
+      return;
     }
     // blocked: reduce whatever it needs first, then fire it
-    void reduceHere(n.path)
+    void reduceHere(n.path);
   }
 
   // Guided reduction: the clicked application isn't ready, so fire the
@@ -991,125 +1084,131 @@
   // ordinary remembered step — step-back unwinds the cascade. The site is
   // re-located BY PATH each tick: inner rewrites rebuild the spine objects
   // but never move the clicked position.
-  let cascadeBusy = false
-  let loadGen = 0
+  let cascadeBusy = false;
+  let loadGen = 0;
   function nodeAtPath(root: T, path: string): T | null {
-    let t: T = root
+    let t: T = root;
     for (const ch of path.slice(1)) {
-      const kids = childrenOf(t)
-      const k = kids[Number(ch)]
-      if (!k) return null
-      t = k
+      const kids = childrenOf(t);
+      const k = kids[Number(ch)];
+      if (!k) return null;
+      t = k;
     }
-    return t
+    return t;
   }
   async function reduceHere(path: string) {
-    if (cascadeBusy || engineBusy || !cur) return
-    cascadeBusy = true
-    running = false
-    autoCycle = false
-    clearTimeout(timer)
-    const gen = loadGen
+    if (cascadeBusy || engineBusy || !cur) return;
+    cascadeBusy = true;
+    running = false;
+    autoCycle = false;
+    clearTimeout(timer);
+    const gen = loadGen;
     try {
       for (let i = 0; i < 300; i++) {
-        if (gen !== loadGen || !cur) return // a new program loaded mid-cascade
-        const site = nodeAtPath(cur, path)
-        if (!site || site.tag !== 'apply') return
+        if (gen !== loadGen || !cur) return; // a new program loaded mid-cascade
+        const site = nodeAtPath(cur, path);
+        if (!site || site.tag !== "apply") return;
         if (readyRule(site)) {
-          fireAt(site as T & { tag: 'apply' })
-          return
+          fireAt(site as T & { tag: "apply" });
+          return;
         }
-        const inner = nextApplyToFire(site)
+        const inner = nextApplyToFire(site);
         if (inner && inner !== site) {
-          fireAt(inner)
-          await new Promise((r) => setTimeout(r, 220))
-          continue
+          fireAt(inner);
+          await new Promise((r) => setTimeout(r, 220));
+          continue;
         }
-        const s = engineStep ? stuckSpine(site) : null
+        const s = engineStep ? stuckSpine(site) : null;
         if (s && (await engineAt(s))) {
-          await new Promise((r) => setTimeout(r, 220))
-          continue
+          await new Promise((r) => setTimeout(r, 220));
+          continue;
         }
-        return // genuinely stuck (free variables) — leave the tree honest
+        return; // genuinely stuck (free variables) — leave the tree honest
       }
     } finally {
-      cascadeBusy = false
+      cascadeBusy = false;
     }
   }
-  async function engineAt(s: { site: T & { tag: 'apply' }; name: string; args: T[] }): Promise<boolean> {
-    if (!engineStep || !cur || engineBusy) return false
-    engineBusy = true
-    ruleMsg = `${s.name} is opaque here — asking the engine…`
+  async function engineAt(s: {
+    site: T & { tag: "apply" };
+    name: string;
+    args: T[];
+  }): Promise<boolean> {
+    if (!engineStep || !cur || engineBusy) return false;
+    engineBusy = true;
+    ruleMsg = `${s.name} is opaque here — asking the engine…`;
     try {
-      const result = await engineStep(s.name, s.args)
+      const result = await engineStep(s.name, s.args);
       if (!result || !cur) {
-        ruleMsg = `stuck: the engine couldn't reduce ${s.name} here (or the result is too large to draw)`
-        return false
+        ruleMsg = `stuck: the engine couldn't reduce ${s.name} here (or the result is too large to draw)`;
+        return false;
       }
-      remember()
+      remember();
       // the spine (applies + the named head) is the consumed pattern
-      const spine = new Set<T>()
-      let f: T = s.site
-      while (f.tag === 'apply') {
-        spine.add(f)
-        f = f.f
+      const spine = new Set<T>();
+      let f: T = s.site;
+      while (f.tag === "apply") {
+        spine.add(f);
+        f = f.f;
       }
-      spine.add(f)
-      const sitePaths = nodes.filter((n) => n.tree === s.site).map((n) => n.path)
-      cur = replaceNode(cur, s.site, result)
-      stepCount++
-      refreshFolds(cur)
-      atNormalForm = false
-      ruleMsg = `engine step: ${s.name} applied by the real evaluator`
-      show(cur, { spine, sitePaths })
-      return true
+      spine.add(f);
+      const sitePaths = nodes
+        .filter((n) => n.tree === s.site)
+        .map((n) => n.path);
+      cur = replaceNode(cur, s.site, result);
+      stepCount++;
+      refreshFolds(cur);
+      atNormalForm = false;
+      ruleMsg = `engine step: ${s.name} applied by the real evaluator`;
+      show(cur, { spine, sitePaths });
+      return true;
     } finally {
-      engineBusy = false
+      engineBusy = false;
     }
   }
 
   function schedule() {
-    clearTimeout(timer)
+    clearTimeout(timer);
     timer = setTimeout(() => {
-      if (!running) return
+      if (!running) return;
       void (async () => {
-        const went = fire() || (await tryEngine())
+        const went = fire() || (await tryEngine());
         if (went) {
-          schedule()
+          schedule();
         } else if (autoCycle) {
-          timer = setTimeout(nextExpr, Math.max(curStepMs * 2.2, 2000))
+          timer = setTimeout(nextExpr, Math.max(curStepMs * 2.2, 2000));
         } else {
-          running = false
+          running = false;
         }
-      })()
-    }, curStepMs)
+      })();
+    }, curStepMs);
   }
 
   function nextExpr() {
-    exprIdx = (exprIdx + 1) % exprs.length
-    running = true
-    load(exprOf(exprs[exprIdx]), { keepAuto: true })
+    exprIdx = (exprIdx + 1) % exprs.length;
+    running = true;
+    load(exprOf(exprs[exprIdx]), { keepAuto: true });
   }
 
   const step = () => {
-    running = false
-    autoCycle = false
-    clearTimeout(timer)
-    if (!cur) load(input)
-    if (!fire()) void tryEngine()
-  }
+    running = false;
+    autoCycle = false;
+    clearTimeout(timer);
+    if (!cur) load(input);
+    if (!fire()) void tryEngine();
+  };
   const toggleRun = () => {
-    autoCycle = false
-    running = !running
+    autoCycle = false;
+    running = !running;
     if (running) {
-      if (!cur || atNormalForm) load(input)
-      schedule()
-    } else clearTimeout(timer)
-  }
+      if (!cur || atNormalForm) load(input);
+      schedule();
+    } else clearTimeout(timer);
+  };
   const reset = () => {
-    running = variant === 'ambient'
-    load(input, { keepAuto: variant === 'ambient' })
-  }
+    running = variant === "ambient";
+    load(input, { keepAuto: variant === "ambient" });
+  };
   // keyboard drive. The arrows work no matter which control inside the widget
   // holds focus (so tabbing to a transport button doesn't strand them): ←/→
   // step the reduction, shift+←/→ hop between trees. Only the text edit box is
@@ -1117,68 +1216,159 @@
   // runs/pauses, but only when the widget itself (not a button) is focused, so
   // it never hijacks a focused button's own activation.
   function onKey(e: KeyboardEvent) {
-    const inEdit = (e.target as HTMLElement).tagName === 'INPUT'
-    if (!inEdit && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-      e.preventDefault()
+    const inEdit = (e.target as HTMLElement).tagName === "INPUT";
+    if (!inEdit && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
       if (e.shiftKey) {
-        if (!minimal) cyclePreset(e.key === 'ArrowRight' ? 1 : -1)
-      } else if (e.key === 'ArrowLeft') back()
-      else step()
-      return
+        if (!minimal) cyclePreset(e.key === "ArrowRight" ? 1 : -1);
+      } else if (e.key === "ArrowLeft") back();
+      else step();
+      return;
     }
-    if (e.key === ' ' && e.target === e.currentTarget) {
-      e.preventDefault()
-      toggleRun()
+    if (e.key === " " && e.target === e.currentTarget) {
+      e.preventDefault();
+      toggleRun();
+      return;
+    }
+    // r resets to the start (plain key only, so browser shortcuts keep theirs)
+    if (!inEdit && (e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      reset();
     }
   }
 
   onMount(() => {
     api?.({
       setProgram: (expr, newDefs) => {
-        if (newDefs) hostDefs = newDefs
-        running = false
-        autoCycle = false
-        clearTimeout(timer)
-        load(expr)
-      }
-    })
-    load(input, { keepAuto: autoCycle })
-  })
-  onDestroy(() => clearTimeout(timer))
+        if (newDefs) hostDefs = newDefs;
+        running = false;
+        autoCycle = false;
+        clearTimeout(timer);
+        load(expr);
+      },
+    });
+    load(input, { keepAuto: autoCycle });
+  });
+  onDestroy(() => clearTimeout(timer));
 </script>
 
 <svelte:document
   onpointerdown={(e) => {
-    const t = e.target as Node
-    if (cassetteOpen && cassetteWrapEl && !cassetteWrapEl.contains(t)) cassetteOpen = false
-    if (showSelectors && selectorsWrapEl && !selectorsWrapEl.contains(t)) showSelectors = false
+    const t = e.target as Node;
+    if (cassetteOpen && cassetteWrapEl && !cassetteWrapEl.contains(t))
+      cassetteOpen = false;
+    if (showSelectors && selectorsWrapEl && !selectorsWrapEl.contains(t))
+      showSelectors = false;
   }}
 />
 
 <!-- transport + selector icons (fill = triangles, .stroke = outlined) -->
-{#snippet icoPrev()}<svg class="ico" viewBox="0 0 24 24"><rect x="6" y="6" width="2.2" height="12" rx="0.6" /><path d="M18 6 L10 12 L18 18 Z" /></svg>{/snippet}
-{#snippet icoBack()}<svg class="ico" viewBox="0 0 24 24"><path d="M15.5 6 L8 12 L15.5 18 Z" /></svg>{/snippet}
-{#snippet icoPlay()}<svg class="ico" viewBox="0 0 24 24"><path d="M8 5.5 L18.5 12 L8 18.5 Z" /></svg>{/snippet}
-{#snippet icoPause()}<svg class="ico" viewBox="0 0 24 24"><rect x="7.5" y="5.5" width="3.2" height="13" rx="0.8" /><rect x="13.3" y="5.5" width="3.2" height="13" rx="0.8" /></svg>{/snippet}
-{#snippet icoFwd()}<svg class="ico" viewBox="0 0 24 24"><path d="M8.5 6 L16 12 L8.5 18 Z" /></svg>{/snippet}
-{#snippet icoNext()}<svg class="ico" viewBox="0 0 24 24"><path d="M6 6 L14 12 L6 18 Z" /><rect x="15.8" y="6" width="2.2" height="12" rx="0.6" /></svg>{/snippet}
-{#snippet icoReset()}<svg class="ico stroke" viewBox="0 0 24 24"><polyline points="3 5 3 10.5 8.5 10.5" /><path d="M5.2 15.5 a8 8 0 1 0 1.9 -8.4 L3 10.5" /></svg>{/snippet}
-{#snippet icoParallel()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 8.5 h9" /><path d="M10.5 5.5 L13.5 8.5 L10.5 11.5" /><path d="M4 15.5 h9" /><path d="M10.5 12.5 L13.5 15.5 L10.5 18.5" /></svg>{/snippet}
-{#snippet icoLeaf()}<svg class="ico" viewBox="0 0 24 24"><path d="M12 3.5 C6.5 7 6 15 11.6 20.6 C17.5 15 17.5 7 12 3.5 Z" /></svg>{/snippet}
-{#snippet icoMotion()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M9.6 4.6 A2 2 0 1 1 11 8 H2.5 M12.6 19.4 A2 2 0 1 0 14 16 H2.5 M17.7 7.7 A2.5 2.5 0 1 1 19.5 12 H2.5" /></svg>{/snippet}
-{#snippet icoLabels()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M20.4 13.4 l-7 7 a2 2 0 0 1 -2.8 0 L2.5 12 V2.5 h9.5 l8.4 8.4 a2 2 0 0 1 0 2.5 Z" /><circle cx="7.3" cy="7.3" r="1.15" fill="currentColor" stroke="none" /></svg>{/snippet}
+{#snippet icoPrev()}<svg class="ico" viewBox="0 0 24 24"
+    ><rect x="6" y="6" width="2.2" height="12" rx="0.6" /><path
+      d="M18 6 L10 12 L18 18 Z"
+    /></svg
+  >{/snippet}
+{#snippet icoBack()}<svg class="ico" viewBox="0 0 24 24"
+    ><path d="M15.5 6 L8 12 L15.5 18 Z" /></svg
+  >{/snippet}
+{#snippet icoPlay()}<svg class="ico" viewBox="0 0 24 24"
+    ><path d="M8 5.5 L18.5 12 L8 18.5 Z" /></svg
+  >{/snippet}
+{#snippet icoPause()}<svg class="ico" viewBox="0 0 24 24"
+    ><rect x="7.5" y="5.5" width="3.2" height="13" rx="0.8" /><rect
+      x="13.3"
+      y="5.5"
+      width="3.2"
+      height="13"
+      rx="0.8"
+    /></svg
+  >{/snippet}
+{#snippet icoFwd()}<svg class="ico" viewBox="0 0 24 24"
+    ><path d="M8.5 6 L16 12 L8.5 18 Z" /></svg
+  >{/snippet}
+{#snippet icoNext()}<svg class="ico" viewBox="0 0 24 24"
+    ><path d="M6 6 L14 12 L6 18 Z" /><rect
+      x="15.8"
+      y="6"
+      width="2.2"
+      height="12"
+      rx="0.6"
+    /></svg
+  >{/snippet}
+{#snippet icoReset()}<svg class="ico stroke" viewBox="0 0 24 24"
+    ><polyline points="3 5 3 10.5 8.5 10.5" /><path
+      d="M5.2 15.5 a8 8 0 1 0 1.9 -8.4 L3 10.5"
+    /></svg
+  >{/snippet}
+{#snippet icoParallel()}<svg class="ico stroke" viewBox="0 0 24 24"
+    ><path d="M4 8.5 h9" /><path d="M10.5 5.5 L13.5 8.5 L10.5 11.5" /><path
+      d="M4 15.5 h9"
+    /><path d="M10.5 12.5 L13.5 15.5 L10.5 18.5" /></svg
+  >{/snippet}
+{#snippet icoLeaf()}<svg class="ico" viewBox="0 0 24 24"
+    ><path d="M12 3.5 C6.5 7 6 15 11.6 20.6 C17.5 15 17.5 7 12 3.5 Z" /></svg
+  >{/snippet}
+{#snippet icoMotion()}<svg class="ico stroke" viewBox="0 0 24 24"
+    ><path
+      d="M9.6 4.6 A2 2 0 1 1 11 8 H2.5 M12.6 19.4 A2 2 0 1 0 14 16 H2.5 M17.7 7.7 A2.5 2.5 0 1 1 19.5 12 H2.5"
+    /></svg
+  >{/snippet}
+{#snippet icoLabels()}<svg class="ico stroke" viewBox="0 0 24 24"
+    ><path
+      d="M20.4 13.4 l-7 7 a2 2 0 0 1 -2.8 0 L2.5 12 V2.5 h9.5 l8.4 8.4 a2 2 0 0 1 0 2.5 Z"
+    /><circle
+      cx="7.3"
+      cy="7.3"
+      r="1.15"
+      fill="currentColor"
+      stroke="none"
+    /></svg
+  >{/snippet}
 
 <!-- the four view selectors — shared by the lab's inline row and the ambient
      ⚘ pop-out; each is an on/off icon toggle -->
 {#snippet selectorButtons()}
-  <button class="mpi sel" class:on={parallel} aria-pressed={parallel} data-tip="parallel — fire every ready redex per step" aria-label="parallel reduction"
-    onclick={() => { parallel = !parallel; if (cur) show(cur) }}>{@render icoParallel()}</button>
-  <button class="mpi sel" class:on={styled} aria-pressed={styled} data-tip="nature — styling vs plain diagram" aria-label="nature styling"
-    onclick={() => { styled = !styled; if (cur) show(cur) }}>{@render icoLeaf()}</button>
-  <button class="mpi sel" class:on={motion} aria-pressed={motion} data-tip="motion — glide + falling leaves vs instant" aria-label="motion"
-    onclick={() => (motion = !motion)}>{@render icoMotion()}</button>
-  <button class="mpi sel" class:on={labels} aria-pressed={labels} data-tip="labels — name badges on recognized subtrees" aria-label="labels"
-    onclick={() => { labels = !labels; if (cur) show(cur) }}>{@render icoLabels()}</button>
+  <button
+    class="mpi sel"
+    class:on={parallel}
+    aria-pressed={parallel}
+    data-tip="parallel — fire every ready redex per step"
+    aria-label="parallel reduction"
+    onclick={() => {
+      parallel = !parallel;
+      if (cur) show(cur);
+    }}>{@render icoParallel()}</button
+  >
+  <button
+    class="mpi sel"
+    class:on={styled}
+    aria-pressed={styled}
+    data-tip="nature — styling vs plain diagram"
+    aria-label="nature styling"
+    onclick={() => {
+      styled = !styled;
+      if (cur) show(cur);
+    }}>{@render icoLeaf()}</button
+  >
+  <button
+    class="mpi sel"
+    class:on={motion}
+    aria-pressed={motion}
+    data-tip="motion — glide + falling leaves vs instant"
+    aria-label="motion"
+    onclick={() => (motion = !motion)}>{@render icoMotion()}</button
+  >
+  <button
+    class="mpi sel"
+    class:on={labels}
+    aria-pressed={labels}
+    data-tip="labels — name badges on recognized subtrees"
+    aria-label="labels"
+    onclick={() => {
+      labels = !labels;
+      if (cur) show(cur);
+    }}>{@render icoLabels()}</button
+  >
 {/snippet}
 
 <!-- the widget is a keyboard-drivable instrument: focus it, then space
@@ -1187,28 +1377,53 @@
 <div
   class="vis"
   class:plain={!styled}
-  class:lab={variant === 'lab'}
+  class:lab={variant === "lab"}
   tabindex="0"
   role="application"
-  aria-label="tree-calculus visualizer — space runs or pauses, arrow keys step back and forward, shift-click a named subtree to fold it shut"
+  aria-label="tree-calculus visualizer — space runs or pauses, arrow keys step back and forward, r resets, shift-click a named subtree to fold it shut"
   onkeydown={onKey}
   onmousedown={(e) => {
     // clicking a control shouldn't leave it focused (no stuck selection ring);
     // keeps keyboard focus on the widget so the arrow keys keep working
-    if ((e.target as HTMLElement).closest('button')) e.preventDefault()
+    if ((e.target as HTMLElement).closest("button")) e.preventDefault();
   }}
 >
   {#if err}
     <p class="err">{err}</p>
   {:else}
-    <svg viewBox="0 0 {W} {height}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <svg
+      viewBox="0 0 {W} {height}"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
       {#if styled}
-        <ellipse cx={W / 2} cy={height - 22} rx={W * 0.36} ry="16" class="hill back" />
-        <ellipse cx={W / 2 - 30} cy={height - 16} rx={W * 0.3} ry="13" class="hill front" />
+        <ellipse
+          cx={W / 2}
+          cy={height - 22}
+          rx={W * 0.36}
+          ry="16"
+          class="hill back"
+        />
+        <ellipse
+          cx={W / 2 - 30}
+          cy={height - 16}
+          rx={W * 0.3}
+          ry="13"
+          class="hill front"
+        />
         <g class="grass">
-          <path d="M {W / 2 - 118} {height - 24} q 2 -12 7 -16 M {W / 2 - 112} {height - 24} q 3 -8 9 -10" />
-          <path d="M {W / 2 + 104} {height - 20} q 2 -12 7 -16 M {W / 2 + 111} {height - 20} q 3 -8 9 -10" />
-          <path d="M {W / 2 - 40} {height - 12} q 2 -10 6 -13 M {W / 2 - 34} {height - 12} q 3 -7 8 -9" />
+          <path
+            d="M {W / 2 - 118} {height - 24} q 2 -12 7 -16 M {W / 2 -
+              112} {height - 24} q 3 -8 9 -10"
+          />
+          <path
+            d="M {W / 2 + 104} {height - 20} q 2 -12 7 -16 M {W / 2 +
+              111} {height - 20} q 3 -8 9 -10"
+          />
+          <path
+            d="M {W / 2 - 40} {height - 12} q 2 -10 6 -13 M {W / 2 -
+              34} {height - 12} q 3 -7 8 -9"
+          />
         </g>
         <circle cx={W / 2 - 128} cy={height - 30} r="2.3" class="daisy" />
         <circle cx={W / 2 + 122} cy={height - 26} r="2.3" class="daisy alt" />
@@ -1217,14 +1432,22 @@
       <!-- pruned leaves fall; their branches disintegrate where they stood -->
       {#each debris as d (d.id)}
         <g style="transform: translate({d.x}px, {d.y}px)">
-          <g class="debris" class:fruit={!!d.label} style="--dy: {d.dy}px; --dx: {d.dx}px">
+          <g
+            class="debris"
+            class:fruit={!!d.label}
+            style="--dy: {d.dy}px; --dx: {d.dx}px"
+          >
             <g class="dspin" style="--rot: {d.rot}deg">
               {#if d.label}
                 <circle r="9" class="fruitbody" />
                 <text
                   class="vname"
                   y="0.5"
-                  style="font-size: {d.label.length === 1 ? 9.5 : d.label.length === 2 ? 8 : 6.5}px"
+                  style="font-size: {d.label.length === 1
+                    ? 9.5
+                    : d.label.length === 2
+                      ? 8
+                      : 6.5}px"
                   >{d.label.length <= 3 ? d.label : d.label.slice(0, 3)}</text
                 >
               {:else}
@@ -1245,15 +1468,15 @@
       {#each vanishing as v (v.id)}
         <g style="transform: translate({v.x}px, {v.y}px)">
           <g class="vshrink">
-            {#if v.tag === 'leaf'}
+            {#if v.tag === "leaf"}
               <path
                 class="leafshape"
                 d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
                 style="fill:{v.tint}; transform: rotate({v.tilt}deg)"
               />
-            {:else if v.tag === 'var'}
+            {:else if v.tag === "var"}
               <circle r="9" class="fruitbody" />
-            {:else if v.tag === 'apply'}
+            {:else if v.tag === "apply"}
               <!-- ring AND core, at live size — the whole apply marker
                    collapses into the joint that replaces it -->
               <circle r="8.5" class="bud-ring" />
@@ -1267,7 +1490,12 @@
 
       <g class="tree" class:swaying={styled && motion}>
         {#each edges as e (e.id)}
-          <path d={edgeD(e)} class="branch" class:trunk={e.trunk} style="stroke-width:{e.w}" />
+          <path
+            d={edgeD(e)}
+            class="branch"
+            class:trunk={e.trunk}
+            style="stroke-width:{e.w}"
+          />
         {/each}
         {#each nodes as n (n.path)}
           <g class="node" style="transform: translate({n.x}px, {n.y}px)">
@@ -1282,7 +1510,8 @@
               class:growing={motion && styled && n.fresh !== false}
               class:fireable={n.canFire}
               style="--gd: {n.depth * 55}ms"
-              onclick={(e) => (e.shiftKey ? closePod(n.tree) : n.canFire && clickApply(n))}
+              onclick={(e) =>
+                e.shiftKey ? closePod(n.tree) : n.canFire && clickApply(n)}
             >
               {#if n.pod != null}
                 <!-- a seed pod: a real subtree folded shut. Reduction computes
@@ -1291,49 +1520,80 @@
                      Green (grown from real structure), unlike the orange
                      fruit (free names with no insides at all). -->
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-                <g class="pod" onclick={(e) => { e.stopPropagation(); openPod(n.tree) }}>
+                <g
+                  class="pod"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    openPod(n.tree);
+                  }}
+                >
                   <title>unfold one level</title>
-                  {#if styled}<path class="fstalk" d="M0,-9 Q1,-13 3.5,-14.5" />{/if}
+                  {#if styled}<path
+                      class="fstalk"
+                      d="M0,-9 Q1,-13 3.5,-14.5"
+                    />{/if}
                   <circle r="10" class="podbody" />
                   <path class="podseam" d="M0,-6.5 Q2.8,0 0,6.5" />
                   {#if n.pod.length <= 3}
                     <text
                       class="vname"
                       y="0.5"
-                      style="font-size: {n.pod.length === 1 ? 10 : n.pod.length === 2 ? 8.5 : 7}px"
-                      >{n.pod}</text
+                      style="font-size: {n.pod.length === 1
+                        ? 10
+                        : n.pod.length === 2
+                          ? 8.5
+                          : 7}px">{n.pod}</text
                     >
                   {:else}
                     <text class="vname above" y="-17">{n.pod}</text>
                   {/if}
                 </g>
-              {:else if n.tag === 'apply'}
+              {:else if n.tag === "apply"}
                 {#if n.canFire}<circle r="13" class="hitzone" />{/if}
                 <circle r={styled ? 8.5 : 8} class="bud-ring" />
-                {#if !styled}<text class="at">@</text>{:else}<circle r="3" class="bud-core" />{/if}
-              {:else if n.tag === 'leaf'}
+                {#if !styled}<text class="at">@</text>{:else}<circle
+                    r="3"
+                    class="bud-core"
+                  />{/if}
+              {:else if n.tag === "leaf"}
                 {#if styled}
                   <path
                     class="leafshape"
                     d="M0,-9 C5.8,-5.5 5.8,3 0,9 C-5.8,3 -5.8,-5.5 0,-9 Z"
                     style="fill:{n.tint}; transform: rotate({n.tilt}deg)"
                   />
-                  <path class="vein" d="M0,-6 L0,6" style="transform: rotate({n.tilt}deg)" />
+                  <path
+                    class="vein"
+                    d="M0,-6 L0,6"
+                    style="transform: rotate({n.tilt}deg)"
+                  />
                 {:else}
                   <circle r="4.5" class="dot leafdot" />
                 {/if}
-              {:else if n.tag === 'var'}
+              {:else if n.tag === "var"}
                 <!-- a named leaf is FRUIT: rounder, bigger, unmistakably not foliage -->
                 <g class="fruit" style="transform: rotate({n.tilt * 0.12}deg)">
-                  {#if styled}<path class="fstalk" d="M0,-9 Q1,-13 3.5,-14.5" />{/if}
+                  {#if styled}<path
+                      class="fstalk"
+                      d="M0,-9 Q1,-13 3.5,-14.5"
+                    />{/if}
                   <circle r="10" class="fruitbody" />
-                  {#if styled}<ellipse cx="-3.4" cy="-3.8" rx="2.9" ry="1.8" class="fshine" />{/if}
+                  {#if styled}<ellipse
+                      cx="-3.4"
+                      cy="-3.8"
+                      rx="2.9"
+                      ry="1.8"
+                      class="fshine"
+                    />{/if}
                   {#if n.vname && n.vname.length <= 3}
                     <text
                       class="vname"
                       y="0.5"
-                      style="font-size: {n.vname.length === 1 ? 10 : n.vname.length === 2 ? 8.5 : 7}px"
-                      >{n.vname}</text
+                      style="font-size: {n.vname.length === 1
+                        ? 10
+                        : n.vname.length === 2
+                          ? 8.5
+                          : 7}px">{n.vname}</text
                     >
                   {:else}
                     <text class="vname above" y="-17">{n.vname}</text>
@@ -1345,7 +1605,11 @@
               {#if n.ready}
                 <!-- eased: the mark settles onto its node after the glide
                      lands, instead of standing pre-planted at the endpoint -->
-                <g class="firemark" class:eased={motion} class:next={n.next || parallel}>
+                <g
+                  class="firemark"
+                  class:eased={motion}
+                  class:next={n.next || parallel}
+                >
                   <circle r="7.5" class="fire-ring" />
                   <text class="fire-letter" y="0.5">{RULE_GLYPH[n.ready]}</text>
                 </g>
@@ -1353,14 +1617,24 @@
               {#if n.next && styled}
                 <g class="blossom" class:eased={motion}>
                   {#each [36, 108, 180, 252, 324] as a}
-                    <circle r="2.6" cx={9.5 * Math.cos((a * Math.PI) / 180)} cy={9.5 * Math.sin((a * Math.PI) / 180)} />
+                    <circle
+                      r="2.6"
+                      cx={9.5 * Math.cos((a * Math.PI) / 180)}
+                      cy={9.5 * Math.sin((a * Math.PI) / 180)}
+                    />
                   {/each}
                 </g>
               {/if}
               {#if n.label}
                 <!-- the badge doubles as the fold button: the named subtree closes into a pod -->
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-                <g class="badgewrap" onclick={(e) => { e.stopPropagation(); closePod(n.tree) }}>
+                <g
+                  class="badgewrap"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    closePod(n.tree);
+                  }}
+                >
                   <title>fold {n.label} shut</title>
                   <text class="badge" y="-14">{n.label}</text>
                 </g>
@@ -1371,18 +1645,32 @@
       </g>
     </svg>
 
-    {#if variant === 'lab' && !minimal}
+    {#if variant === "lab" && !minimal}
       <!-- minimal embeddings (the playground panel) show no readout text at
            all — the term input below is the only prose -->
       <div class="readout">
         <div class="rline">
           <span class="expr">{input}</span>
-          <span class="rule" class:nf={atNormalForm}>{ruleMsg || 'press ▶ (or →) to fire the next reduction'}</span>
-          <span class="count">{stepCount} step{stepCount === 1 ? '' : 's'}{parallel ? ' · parallel' : ''}</span>
+          <span class="rule" class:nf={atNormalForm}
+            >{ruleMsg || "press ▶ (or →) to fire the next reduction"}</span
+          >
+          <span class="count"
+            >{stepCount} step{stepCount === 1 ? "" : "s"}{parallel
+              ? " · parallel"
+              : ""}</span
+          >
         </div>
         {#if cur}
-          <div class="forms"><span class="flabel">named</span><code>{pretty(cur, { names: true, defs: activeDefs })}</code></div>
-          <div class="forms"><span class="flabel">raw</span><code>{pretty(cur, { names: false })}</code></div>
+          <div class="forms">
+            <span class="flabel">named</span><code
+              >{pretty(cur, { names: true, defs: activeDefs })}</code
+            >
+          </div>
+          <div class="forms">
+            <span class="flabel">raw</span><code
+              >{pretty(cur, { names: false })}</code
+            >
+          </div>
         {/if}
       </div>
     {/if}
@@ -1404,16 +1692,21 @@
       aria-label="tree-calculus expression — parses as you type"
     />
     <span class="info">
-      <button type="button" class="info-btn" aria-label="what can I type here?">i</button>
+      <button type="button" class="info-btn" aria-label="what can I type here?"
+        >i</button
+      >
       <span class="info-pop" role="tooltip">
         {#if namesHint}
           Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree. {namesHint}
         {:else}
-          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree. Combinators:
-          <code>t</code> (△), <code>K</code>, <code>S</code>, <code>not</code>, <code>and</code>,
-          <code>or</code>, <code>add</code>, and plain numbers. Any other name — <code>x</code>,
-          <code>y</code>, <code>f</code> … — is a free variable: a named leaf the reductions carry
-          along symbolically.
+          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree.
+          Combinators:
+          <code>t</code> (△), <code>K</code>, <code>S</code>, <code>not</code>,
+          <code>and</code>,
+          <code>or</code>, <code>add</code>, and plain numbers. Any other name —
+          <code>x</code>,
+          <code>y</code>, <code>f</code> … — is a free variable: a named leaf the
+          reductions carry along symbolically.
         {/if}
       </span>
     </span>
@@ -1427,22 +1720,54 @@
   <div class="bottombar">
     <div class="tside tleft">
       {#if !minimal}
-        <button class="tbtn" onclick={() => cyclePreset(-1)} data-tip="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
+        <button
+          class="tbtn"
+          onclick={() => cyclePreset(-1)}
+          data-tip="previous tree (shift+←)"
+          aria-label="previous tree">{@render icoPrev()}</button
+        >
       {/if}
-      <button class="tbtn" onclick={back} disabled={historyLen === 0} data-tip="step back (←)" aria-label="step back">{@render icoBack()}</button>
+      <button
+        class="tbtn"
+        onclick={back}
+        disabled={historyLen === 0}
+        data-tip="step back (←)"
+        aria-label="step back">{@render icoBack()}</button
+      >
     </div>
 
-    <button class="tbtn play" onclick={toggleRun} data-tip="run / pause (space)" aria-label={running ? 'pause' : 'play'}>{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button>
+    <button
+      class="tbtn play"
+      onclick={toggleRun}
+      data-tip="run / pause (space)"
+      aria-label={running ? "pause" : "play"}
+      >{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button
+    >
 
     <div class="tside tright">
-      <button class="tbtn" onclick={step} data-tip="step forward (→)" aria-label="step forward">{@render icoFwd()}</button>
+      <button
+        class="tbtn"
+        onclick={step}
+        data-tip="step forward (→)"
+        aria-label="step forward">{@render icoFwd()}</button
+      >
       {#if !minimal}
-        <button class="tbtn" onclick={() => cyclePreset(1)} data-tip="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
+        <button
+          class="tbtn"
+          onclick={() => cyclePreset(1)}
+          data-tip="next tree (shift+→)"
+          aria-label="next tree">{@render icoNext()}</button
+        >
       {/if}
-      <button class="tbtn" onclick={reset} data-tip="reset to the start" aria-label="reset">{@render icoReset()}</button>
+      <button
+        class="tbtn"
+        onclick={reset}
+        data-tip="reset to the start (r)"
+        aria-label="reset">{@render icoReset()}</button
+      >
     </div>
 
-    {#if variant === 'ambient'}
+    {#if variant === "ambient"}
       <!-- cassette (far left): the chip toggles a VERTICAL tape that expands
            upward — leaf △ at the bottom, + at the top. Press anywhere on it and
            the selector jumps there, then scrubs. -->
@@ -1451,12 +1776,18 @@
           type="button"
           class="cassette-chip"
           class:open={cassetteOpen}
-          onclick={() => (cassetteOpen ? (cassetteOpen = false) : openCassette())}
+          onclick={() =>
+            cassetteOpen ? (cassetteOpen = false) : openCassette()}
           aria-haspopup="true"
           aria-expanded={cassetteOpen}
           aria-label={`tree pieces — now: ${PIECES[selectedIdx].tip}`}
-          data-tip={`${PIECES[selectedIdx].tip} — pick a piece`}
-        ><span class="glyph">{PIECES[selectedIdx].sym}{#if PIECES[selectedIdx].sub}<sub>{PIECES[selectedIdx].sub}</sub>{/if}</span></button>
+          data-tip={`select preset`}
+          ><span class="glyph"
+            >{PIECES[selectedIdx].sym}{#if PIECES[selectedIdx].sub}<sub
+                >{PIECES[selectedIdx].sub}</sub
+              >{/if}</span
+          ></button
+        >
         {#if cassetteOpen}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
@@ -1479,7 +1810,14 @@
             onpointercancel={tapeUp}
           >
             {#each PIECES as it, i}
-              <div class="tcell" class:on={i === selectedIdx} style="height: {CELLH}px; --ci: {i}" data-tip={it.tip}>{it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}</div>
+              <div
+                class="tcell"
+                class:on={i === selectedIdx}
+                style="height: {CELLH}px; --ci: {i}"
+                data-tip={it.tip}
+              >
+                {it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}
+              </div>
             {/each}
             <div
               class="selector"
@@ -1494,15 +1832,26 @@
       <!-- the ⚘ view toggle (far right): reveals the selectors, popping upward -->
       <div class="selectors-wrap corner-right" bind:this={selectorsWrapEl}>
         {#if showSelectors}
-          <div class="selectors-pop" transition:scale={{ duration: 200, start: 0.8, opacity: 0, easing: backOut }}>{@render selectorButtons()}</div>
+          <div
+            class="selectors-pop"
+            transition:scale={{
+              duration: 200,
+              start: 0.8,
+              opacity: 0,
+              easing: backOut,
+            }}
+          >
+            {@render selectorButtons()}
+          </div>
         {/if}
         <button
           class="tree-toggle"
           onclick={() => (showSelectors = !showSelectors)}
           aria-expanded={showSelectors}
-          aria-label={showSelectors ? 'hide view options' : 'view options'}
-          data-tip={showSelectors ? 'hide view options' : 'view options'}
-        ><span class="glyph">{showSelectors ? '×' : '⚘'}</span></button>
+          aria-label="options"
+          data-tip={showSelectors ? undefined : "options"}
+          ><span class="glyph">{showSelectors ? "×" : "⚘"}</span></button
+        >
       </div>
     {:else}
       <div class="selectors corner-right">{@render selectorButtons()}</div>
@@ -1554,8 +1903,12 @@
     align-items: center;
     gap: 0.1rem;
   }
-  .tleft { justify-self: end; } /* hug the right, next to play */
-  .tright { justify-self: start; } /* hug the left, next to play */
+  .tleft {
+    justify-self: end;
+  } /* hug the right, next to play */
+  .tright {
+    justify-self: start;
+  } /* hug the left, next to play */
   .corner-left {
     position: absolute;
     left: 0;
@@ -1582,19 +1935,55 @@
     padding: 0.18em;
     border-radius: 6px;
     cursor: pointer;
-    transition: opacity 0.18s ease, color 0.18s ease, background 0.18s ease;
+    transition:
+      opacity 0.18s ease,
+      color 0.18s ease,
+      background 0.18s ease;
   }
-  .vis:not(.lab) .tbtn { opacity: 0.5; }
-  .vis:not(.lab):hover .tbtn { opacity: 1; }
-  .tbtn:hover { color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
-  .tbtn:disabled { opacity: 0.28; cursor: default; color: var(--fg-muted); background: none; }
-  .vis:not(.lab):hover .tbtn:disabled { opacity: 0.32; }
-  .tbtn .ico { width: 18px; height: 18px; display: block; fill: currentColor; }
-  .tbtn .ico.stroke { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .vis:not(.lab) .tbtn {
+    opacity: 0.5;
+  }
+  .vis:not(.lab):hover .tbtn {
+    opacity: 1;
+  }
+  .tbtn:hover {
+    color: var(--accent);
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
+  }
+  .tbtn:disabled {
+    opacity: 0.28;
+    cursor: default;
+    color: var(--fg-muted);
+    background: none;
+  }
+  .vis:not(.lab):hover .tbtn:disabled {
+    opacity: 0.32;
+  }
+  .tbtn .ico {
+    width: 18px;
+    height: 18px;
+    display: block;
+    fill: currentColor;
+  }
+  .tbtn .ico.stroke {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
   /* play/pause is the primary — larger and greener */
-  .tbtn.play { color: var(--g2); padding: 0.1em; }
-  .tbtn.play:hover { color: var(--accent); }
-  .tbtn.play .ico { width: 24px; height: 24px; }
+  .tbtn.play {
+    color: var(--g2);
+    padding: 0.1em;
+  }
+  .tbtn.play:hover {
+    color: var(--accent);
+  }
+  .tbtn.play .ico {
+    width: 24px;
+    height: 24px;
+  }
   /* the edit box: bare editable text, centred, sitting above the transport */
   .editrow {
     position: relative;
@@ -1606,7 +1995,11 @@
     min-width: 0;
   }
   /* a spacer as wide as the (i) keeps the box itself centred */
-  .editrow::before { content: ''; flex: none; width: 16px; }
+  .editrow::before {
+    content: "";
+    flex: none;
+    width: 16px;
+  }
   .editbox {
     width: 100%;
     max-width: min(24rem, calc(100% - 3rem));
@@ -1623,8 +2016,11 @@
     caret-color: var(--accent);
     /* a quiet affordance that this is editable: a faint dashed underline that
        firms up to the accent on hover / focus */
-    border-bottom: 1px dashed color-mix(in oklab, var(--fg-faint) 50%, transparent);
-    transition: border-color 0.15s ease, background 0.15s ease;
+    border-bottom: 1px dashed
+      color-mix(in oklab, var(--fg-faint) 50%, transparent);
+    transition:
+      border-color 0.15s ease,
+      background 0.15s ease;
   }
   .editbox:hover {
     border-bottom-color: var(--fg-muted);
@@ -1638,7 +2034,9 @@
   .editbox.invalid {
     border-bottom-color: color-mix(in oklab, var(--err) 65%, transparent);
   }
-  .editbox::selection { background: color-mix(in oklab, var(--accent) 28%, transparent); }
+  .editbox::selection {
+    background: color-mix(in oklab, var(--accent) 28%, transparent);
+  }
   /* the (i) that explains what names you can type, right beside the box */
   .info {
     position: relative;
@@ -1661,10 +2059,16 @@
     place-items: center;
     cursor: help;
     padding: 0;
-    transition: color 0.15s ease, border-color 0.15s ease;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease;
   }
   .info-btn:hover,
-  .info-btn:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+  .info-btn:focus-visible {
+    color: var(--accent);
+    border-color: var(--accent);
+    outline: none;
+  }
   .info-pop {
     position: absolute;
     bottom: calc(100% + 9px);
@@ -1684,7 +2088,10 @@
     opacity: 0;
     visibility: hidden;
     transform: translateY(4px);
-    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease,
+      visibility 0.15s;
     pointer-events: none;
   }
   .info:hover .info-pop,
@@ -1727,16 +2134,40 @@
     border-radius: 50%;
     padding: 0;
     cursor: pointer;
-    transition: opacity 0.18s ease, border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+    transition:
+      opacity 0.18s ease,
+      border-color 0.18s ease,
+      color 0.18s ease,
+      background 0.18s ease;
   }
   /* ambient greys the whole control set out until the pointer enters the widget
      (the lab instrument stays full); a direct hover always lifts a button */
-  .vis:not(.lab) .mpi { opacity: 0.45; }
-  .vis:not(.lab):hover .mpi { opacity: 1; }
-  .mpi:hover { opacity: 1; border-color: var(--accent); color: var(--accent); }
-  .mpi:disabled { opacity: 0.22; cursor: default; border-color: var(--border-strong); color: var(--fg-muted); }
-  .vis:not(.lab):hover .mpi:disabled { opacity: 0.3; }
-  .mpi .ico { width: 16px; height: 16px; display: block; fill: currentColor; }
+  .vis:not(.lab) .mpi {
+    opacity: 0.45;
+  }
+  .vis:not(.lab):hover .mpi {
+    opacity: 1;
+  }
+  .mpi:hover {
+    opacity: 1;
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .mpi:disabled {
+    opacity: 0.22;
+    cursor: default;
+    border-color: var(--border-strong);
+    color: var(--fg-muted);
+  }
+  .vis:not(.lab):hover .mpi:disabled {
+    opacity: 0.3;
+  }
+  .mpi .ico {
+    width: 16px;
+    height: 16px;
+    display: block;
+    fill: currentColor;
+  }
   .mpi .ico.stroke {
     fill: none;
     stroke: currentColor;
@@ -1745,8 +2176,12 @@
     stroke-linejoin: round;
   }
   /* play/pause is the primary — greener than the rest */
-  .mpi.play { color: var(--g2); }
-  .mpi.play:hover { color: var(--accent); }
+  .mpi.play {
+    color: var(--g2);
+  }
+  .mpi.play:hover {
+    color: var(--accent);
+  }
   /* a selector that is ON lights up like the old solid toggle pill */
   .mpi.sel.on {
     border-color: var(--g2);
@@ -1754,13 +2189,20 @@
     background: color-mix(in oklab, var(--g1) 12%, var(--bg-elev));
   }
 
-  .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.1rem 0 0; font-style: italic; }
+  .tip-line {
+    color: var(--fg-faint);
+    font-size: 0.8rem;
+    margin: 0.1rem 0 0;
+    font-style: italic;
+  }
 
   /* ---- tooltips: one styled tip for every control, read from its data-tip.
      Hover or keyboard focus shows it above the control; corners hug the widget
      edge, the pop-out's stacked buttons tip to the left, and the open tape's
      selected piece wears its tip (cells take no pointer, the tape does). ---- */
-  [data-tip] { position: relative; }
+  [data-tip] {
+    position: relative;
+  }
   [data-tip]::after {
     content: attr(data-tip);
     position: absolute;
@@ -1786,39 +2228,90 @@
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease,
+      visibility 0.15s;
   }
   [data-tip]:hover::after,
-  [data-tip]:focus-visible::after { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
-  .corner-left [data-tip]::after { left: 0; transform: translate(0, 3px); }
+  [data-tip]:focus-visible::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+  }
+  .corner-left [data-tip]::after {
+    left: 0;
+    transform: translate(0, 3px);
+  }
   .corner-left [data-tip]:hover::after,
-  .corner-left [data-tip]:focus-visible::after { transform: none; }
-  .corner-right > [data-tip]::after { left: auto; right: 0; transform: translate(0, 3px); }
+  .corner-left [data-tip]:focus-visible::after {
+    transform: none;
+  }
+  .corner-right > [data-tip]::after {
+    left: auto;
+    right: 0;
+    transform: translate(0, 3px);
+  }
   .corner-right > [data-tip]:hover::after,
-  .corner-right > [data-tip]:focus-visible::after { transform: none; }
-  .selectors-pop [data-tip]::after { left: auto; right: calc(100% + 7px); bottom: auto; top: 50%; transform: translate(3px, -50%); }
+  .corner-right > [data-tip]:focus-visible::after {
+    transform: none;
+  }
+  .selectors-pop [data-tip]::after {
+    left: auto;
+    right: calc(100% + 7px);
+    bottom: auto;
+    top: 50%;
+    transform: translate(3px, -50%);
+  }
   .selectors-pop [data-tip]:hover::after,
-  .selectors-pop [data-tip]:focus-visible::after { transform: translate(0, -50%); }
-  .cassette-tape .tcell::after { left: calc(100% + 9px); bottom: auto; top: 50%; transform: translate(0, -50%); }
-  .cassette-tape .tcell.on::after { opacity: 1; visibility: visible; }
+  .selectors-pop [data-tip]:focus-visible::after {
+    transform: translate(0, -50%);
+  }
+  .cassette-tape .tcell::after {
+    left: calc(100% + 9px);
+    bottom: auto;
+    top: 50%;
+    transform: translate(0, -50%);
+  }
+  .cassette-tape .tcell.on::after {
+    opacity: 1;
+    visibility: visible;
+  }
 
   /* ---- scenery ---- */
-  .hill.back { fill: color-mix(in oklab, var(--g1) 16%, var(--bg-elev)); }
-  .hill.front { fill: color-mix(in oklab, var(--g2) 13%, var(--bg-elev)); }
+  .hill.back {
+    fill: color-mix(in oklab, var(--g1) 16%, var(--bg-elev));
+  }
+  .hill.front {
+    fill: color-mix(in oklab, var(--g2) 13%, var(--bg-elev));
+  }
   .grass path {
     stroke: color-mix(in oklab, var(--g2) 55%, transparent);
     stroke-width: 1.5;
     fill: none;
     stroke-linecap: round;
   }
-  .daisy { fill: var(--blossom); }
-  .daisy.alt { fill: var(--g4); opacity: 0.8; }
+  .daisy {
+    fill: var(--blossom);
+  }
+  .daisy.alt {
+    fill: var(--g4);
+    opacity: 0.8;
+  }
 
-  .tree { transform-origin: 50% 100%; }
-  .tree.swaying { animation: sway 9s ease-in-out infinite alternate; }
+  .tree {
+    transform-origin: 50% 100%;
+  }
+  .tree.swaying {
+    animation: sway 9s ease-in-out infinite alternate;
+  }
   @keyframes sway {
-    from { transform: rotate(-0.7deg); }
-    to { transform: rotate(0.7deg); }
+    from {
+      transform: rotate(-0.7deg);
+    }
+    to {
+      transform: rotate(0.7deg);
+    }
   }
   .trunk,
   .branch {
@@ -1827,22 +2320,55 @@
     stroke-linecap: round;
     opacity: 0.8;
   }
-  .plain .trunk, .plain .branch { stroke: var(--fg-faint); opacity: 0.6; }
-  .trunk { stroke-width: 5; }
+  .plain .trunk,
+  .plain .branch {
+    stroke: var(--fg-faint);
+    opacity: 0.6;
+  }
+  .trunk {
+    stroke-width: 5;
+  }
 
   /* ---- nodes ---- */
-  .inner.growing { animation: grow 0.5s var(--gd) cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
-  @keyframes grow {
-    from { transform: scale(0); opacity: 0; }
+  .inner.growing {
+    animation: grow 0.5s var(--gd) cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
   }
-  .leafshape { stroke: color-mix(in oklab, var(--fg) 18%, transparent); stroke-width: 0.5; }
-  .vein { stroke: rgba(255, 255, 255, 0.55); stroke-width: 0.8; fill: none; }
-  .knot { fill: var(--bark); }
-  .plain .knot { fill: var(--fg-muted); }
-  .dot.leafdot { fill: var(--g2); }
-  .bud-ring { fill: none; stroke: var(--g4); stroke-width: 1.5; stroke-dasharray: 3 3; }
-  .plain .bud-ring { stroke: var(--warn); }
-  .bud-core { fill: var(--g4); }
+  @keyframes grow {
+    from {
+      transform: scale(0);
+      opacity: 0;
+    }
+  }
+  .leafshape {
+    stroke: color-mix(in oklab, var(--fg) 18%, transparent);
+    stroke-width: 0.5;
+  }
+  .vein {
+    stroke: rgba(255, 255, 255, 0.55);
+    stroke-width: 0.8;
+    fill: none;
+  }
+  .knot {
+    fill: var(--bark);
+  }
+  .plain .knot {
+    fill: var(--fg-muted);
+  }
+  .dot.leafdot {
+    fill: var(--g2);
+  }
+  .bud-ring {
+    fill: none;
+    stroke: var(--g4);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 3;
+  }
+  .plain .bud-ring {
+    stroke: var(--warn);
+  }
+  .bud-core {
+    fill: var(--g4);
+  }
   .at {
     fill: var(--warn);
     font-size: 10px;
@@ -1865,12 +2391,18 @@
     text-anchor: middle;
     dominant-baseline: middle;
   }
-  .firemark.next { animation: firepulse 1s ease-in-out infinite; transform-origin: 0 0; }
+  .firemark.next {
+    animation: firepulse 1s ease-in-out infinite;
+    transform-origin: 0 0;
+  }
   /* when the layout is animating, a newly-ready mark waits for its node to
      land (the glide is ~settled by 0.3s) and then grows in on it — never
      pre-planted at the endpoint while the tree is still travelling */
   .firemark.eased,
-  .blossom.eased { animation: markin 0.26s ease-out 0.34s backwards; transform-origin: 0 0; }
+  .blossom.eased {
+    animation: markin 0.26s ease-out 0.34s backwards;
+    transform-origin: 0 0;
+  }
   .firemark.eased.next {
     animation:
       markin 0.26s ease-out 0.34s backwards,
@@ -1883,9 +2415,16 @@
     }
   }
   @keyframes firepulse {
-    50% { transform: scale(1.25); }
+    50% {
+      transform: scale(1.25);
+    }
   }
-  .blossom circle { fill: var(--blossom); opacity: 0.85; stroke: #fff; stroke-width: 0.5; }
+  .blossom circle {
+    fill: var(--blossom);
+    opacity: 0.85;
+    stroke: #fff;
+    stroke-width: 0.5;
+  }
 
   .badge {
     fill: var(--g2);
@@ -1893,8 +2432,12 @@
     text-anchor: middle;
     font-family: var(--font-mono);
   }
-  .badgewrap { cursor: pointer; }
-  .badgewrap:hover .badge { fill: var(--accent); }
+  .badgewrap {
+    cursor: pointer;
+  }
+  .badgewrap:hover .badge {
+    fill: var(--accent);
+  }
 
   /* named leaves (free variables) are FRUIT: big, round, name worn on the skin */
   .fruitbody {
@@ -1902,8 +2445,13 @@
     stroke: color-mix(in oklab, #8a5410 55%, transparent);
     stroke-width: 0.8;
   }
-  .plain .fruitbody { fill: #dfa050; stroke: var(--fg-faint); }
-  .fshine { fill: rgba(255, 255, 255, 0.42); }
+  .plain .fruitbody {
+    fill: #dfa050;
+    stroke: var(--fg-faint);
+  }
+  .fshine {
+    fill: rgba(255, 255, 255, 0.42);
+  }
   .fstalk {
     stroke: var(--bark);
     stroke-width: 1.5;
@@ -1924,7 +2472,9 @@
   }
 
   /* clickable redexes: the pointer says "fire me"; hovering thickens the ring */
-  .inner.fireable { cursor: pointer; }
+  .inner.fireable {
+    cursor: pointer;
+  }
   .hitzone {
     fill: transparent;
     stroke: none;
@@ -1938,7 +2488,9 @@
 
   /* a folded defs splice is a POD: green (real structure grown inside, unlike
      the orange fruit's opaque nothing), a seam hinting it opens. Click opens. */
-  .pod { cursor: pointer; }
+  .pod {
+    cursor: pointer;
+  }
   .podbody {
     fill: #79ae74;
     stroke: color-mix(in oklab, #2e5e33 60%, transparent);
@@ -1947,7 +2499,10 @@
   .pod:hover .podbody {
     fill: #8abd85;
   }
-  .plain .podbody { fill: #8fbb8a; stroke: var(--fg-faint); }
+  .plain .podbody {
+    fill: #8fbb8a;
+    stroke: var(--fg-faint);
+  }
   .podseam {
     stroke: rgba(255, 255, 255, 0.55);
     stroke-width: 1.1;
@@ -2018,7 +2573,10 @@
   }
 
   /* ---- readout ---- */
-  .readout { margin-top: 0.3rem; font-size: 0.8rem; }
+  .readout {
+    margin-top: 0.3rem;
+    font-size: 0.8rem;
+  }
   .rline {
     display: flex;
     align-items: baseline;
@@ -2028,8 +2586,12 @@
     color: var(--fg-muted);
     flex-wrap: wrap;
   }
-  .lab .rline { justify-content: flex-start; }
-  .expr { color: var(--fg); }
+  .lab .rline {
+    justify-content: flex-start;
+  }
+  .expr {
+    color: var(--fg);
+  }
   .rule {
     font-size: 0.74rem;
     color: var(--fg-faint);
@@ -2039,9 +2601,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .rule.nf { color: var(--g2); font-style: normal; }
-  .count { color: var(--fg-faint); font-size: 0.72rem; white-space: nowrap; }
-  .forms { display: flex; gap: 0.6em; align-items: baseline; overflow-x: auto; padding: 0.12rem 0; }
+  .rule.nf {
+    color: var(--g2);
+    font-style: normal;
+  }
+  .count {
+    color: var(--fg-faint);
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+  .forms {
+    display: flex;
+    gap: 0.6em;
+    align-items: baseline;
+    overflow-x: auto;
+    padding: 0.12rem 0;
+  }
   .flabel {
     color: var(--fg-faint);
     font-size: 0.68rem;
@@ -2050,8 +2625,17 @@
     flex: none;
     min-width: 3.6em;
   }
-  .forms code { white-space: nowrap; background: none; border: none; padding: 0; }
-  .err { color: var(--err); font-family: var(--font-mono); font-size: 0.82rem; }
+  .forms code {
+    white-space: nowrap;
+    background: none;
+    border: none;
+    padding: 0;
+  }
+  .err {
+    color: var(--err);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+  }
 
   /* ---- the cassette (ambient): a chip in the bar; the tape pops up above ---- */
   /* position comes from .corner-left (absolute); being positioned makes it the
@@ -2076,13 +2660,31 @@
     padding: 0;
     cursor: pointer;
     opacity: 0.5;
-    transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+    transition:
+      opacity 0.2s ease,
+      border-color 0.2s ease,
+      color 0.2s ease,
+      transform 0.2s ease;
   }
-  .vis:hover .cassette-chip { opacity: 1; }
-  .cassette-chip:hover { border-color: var(--accent); color: var(--accent); }
-  .cassette-chip .glyph { display: inline-flex; align-items: center; transition: transform 0.2s ease; }
-  .cassette-chip:hover .glyph { transform: scale(1.06); }
-  .cassette-chip sub { font-size: 0.6em; margin-left: 0.03em; }
+  .vis:hover .cassette-chip {
+    opacity: 1;
+  }
+  .cassette-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .cassette-chip .glyph {
+    display: inline-flex;
+    align-items: center;
+    transition: transform 0.2s ease;
+  }
+  .cassette-chip:hover .glyph {
+    transform: scale(1.06);
+  }
+  .cassette-chip sub {
+    font-size: 0.6em;
+    margin-left: 0.03em;
+  }
   /* the expanded tape: a stationary VERTICAL column of every piece + a draggable
      selector, floating just ABOVE the chip and expanding upward — leaf △ at the
      bottom, + at the top. The whole tape is the slider track — press anywhere
@@ -2107,10 +2709,22 @@
     user-select: none;
     -webkit-user-select: none;
   }
-  .cassette-tape.grabbing { cursor: grabbing; }
-  @keyframes tapeReveal { from { opacity: 0; transform: translateY(8px); } }
+  .cassette-tape.grabbing {
+    cursor: grabbing;
+  }
+  @keyframes tapeReveal {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
   /* the cells stagger in bottom-to-top as the tape unfurls up out of the chip */
-  @keyframes cellIn { from { opacity: 0; transform: translateY(6px) scale(0.6); } }
+  @keyframes cellIn {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.6);
+    }
+  }
   .tcell {
     flex: none;
     width: 100%;
@@ -2122,10 +2736,18 @@
     align-items: center;
     justify-content: center;
     pointer-events: none; /* the tape handles all the pointer work */
-    animation: cellIn 0.3s calc(var(--ci, 0) * 24ms) both cubic-bezier(0.34, 1.6, 0.5, 1);
+    animation: cellIn 0.3s calc(var(--ci, 0) * 24ms) both
+      cubic-bezier(0.34, 1.6, 0.5, 1);
   }
-  .tcell sub { font-size: 0.62em; margin-left: 0.02em; }
-  .tcell.on { color: var(--g2); font-weight: 650; transition: color 0.15s ease; }
+  .tcell sub {
+    font-size: 0.62em;
+    margin-left: 0.02em;
+  }
+  .tcell.on {
+    color: var(--g2);
+    font-weight: 650;
+    transition: color 0.15s ease;
+  }
   /* the selector thumb — purely visual; the tape drives it. It rests on the
      bottom cell and rides UP (translateY) to the selected piece. */
   .selector {
@@ -2175,10 +2797,24 @@
     padding: 0;
     cursor: pointer;
     opacity: 0.5;
-    transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+    transition:
+      opacity 0.2s ease,
+      border-color 0.2s ease,
+      color 0.2s ease,
+      transform 0.2s ease;
   }
-  .vis:hover .tree-toggle { opacity: 1; }
-  .tree-toggle:hover { border-color: var(--accent); color: var(--accent); }
-  .tree-toggle .glyph { display: block; transition: transform 0.2s ease; }
-  .tree-toggle:hover .glyph { transform: rotate(20deg); }
+  .vis:hover .tree-toggle {
+    opacity: 1;
+  }
+  .tree-toggle:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .tree-toggle .glyph {
+    display: block;
+    transition: transform 0.2s ease;
+  }
+  .tree-toggle:hover .glyph {
+    transform: rotate(20deg);
+  }
 </style>

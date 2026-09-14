@@ -207,6 +207,27 @@
   })
 </script>
 
+<!-- the theatre toggle, shared by the code face's toolbar and the visualizer face -->
+{#snippet theatreButton()}
+  <button
+    class="tbtn icon"
+    onclick={() => onToggleTheatre?.()}
+    title={theatre ? 'exit theatre mode' : 'theatre mode'}
+    aria-label={theatre ? 'exit theatre mode' : 'theatre mode'}
+  >
+    {#if theatre}
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="1.5" y="3.5" width="13" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4" />
+        <rect x="4.5" y="6" width="7" height="4" rx="0.8" fill="currentColor" />
+      </svg>
+    {:else}
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="1.5" y="3.5" width="13" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4" />
+      </svg>
+    {/if}
+  </button>
+{/snippet}
+
 <div class="hero-card" class:flipped class:theatre bind:this={rootEl}>
   <div class="flipper" class:snap>
     <div class="face front" style:pointer-events={flipped ? 'none' : 'auto'}>
@@ -234,23 +255,7 @@
           </svg>
           Playground
         </a>
-        <button
-          class="tbtn icon"
-          onclick={() => onToggleTheatre?.()}
-          title={theatre ? 'exit theatre mode' : 'theatre mode'}
-          aria-label={theatre ? 'exit theatre mode' : 'theatre mode'}
-        >
-          {#if theatre}
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <rect x="1.5" y="3.5" width="13" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4" />
-              <rect x="4.5" y="6" width="7" height="4" rx="0.8" fill="currentColor" />
-            </svg>
-          {:else}
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <rect x="1.5" y="3.5" width="13" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4" />
-            </svg>
-          {/if}
-        </button>
+        {@render theatreButton()}
       </div>
       <div class="editwrap">
         <DispEditor
@@ -265,6 +270,8 @@
       {/if}
     </div>
     <div class="face back" style:pointer-events={flipped ? 'auto' : 'none'}>
+      <!-- the visualizer face carries the same toggle, top right like the code face's -->
+      <div class="viz-tools">{@render theatreButton()}</div>
       <div class="vizwrap">
         {#if showBack}
           <TreeVis />
@@ -491,6 +498,12 @@
     min-height: 0;
     padding: 0.75rem;
     display: flex;
+  }
+  .viz-tools {
+    position: absolute;
+    top: 0.55rem;
+    right: 0.6rem;
+    z-index: 3;
   }
   .vizwrap :global(.vis) {
     display: flex;
