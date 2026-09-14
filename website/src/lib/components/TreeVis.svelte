@@ -350,6 +350,17 @@
     reveal(t, UNFOLD_BUDGET)
     show(cur)
   }
+  // the reverse of openPod: a recognized subtree (a numeral, a string, a
+  // dictionary match) folds back into a pod on demand — click its badge, or
+  // shift-click its root when badges are off. Never the root or an apply (the
+  // machinery always draws). The hidden children dissolve: nothing was discarded.
+  function closePod(t: T) {
+    if (!cur || t === cur || t.tag === 'apply' || folded.has(t)) return
+    const name = autoName(t)
+    if (name === null) return
+    folded.set(t, name)
+    show(cur, { allShrink: true })
+  }
   // after a step: fold big DATA the rewrite newly exposed — but only when it
   // has a recognized NAME, and never at the root (the answer always draws;
   // apply nodes — the computation's own machinery — always draw too)
@@ -1160,13 +1171,13 @@
 <!-- the four view selectors — shared by the lab's inline row and the ambient
      ⚘ pop-out; each is an on/off icon toggle -->
 {#snippet selectorButtons()}
-  <button class="mpi sel" class:on={parallel} aria-pressed={parallel} title="parallel — fire every ready redex per step" aria-label="parallel reduction"
+  <button class="mpi sel" class:on={parallel} aria-pressed={parallel} data-tip="parallel — fire every ready redex per step" aria-label="parallel reduction"
     onclick={() => { parallel = !parallel; if (cur) show(cur) }}>{@render icoParallel()}</button>
-  <button class="mpi sel" class:on={styled} aria-pressed={styled} title="nature — styling vs plain diagram" aria-label="nature styling"
+  <button class="mpi sel" class:on={styled} aria-pressed={styled} data-tip="nature — styling vs plain diagram" aria-label="nature styling"
     onclick={() => { styled = !styled; if (cur) show(cur) }}>{@render icoLeaf()}</button>
-  <button class="mpi sel" class:on={motion} aria-pressed={motion} title="motion — glide + falling leaves vs instant" aria-label="motion"
+  <button class="mpi sel" class:on={motion} aria-pressed={motion} data-tip="motion — glide + falling leaves vs instant" aria-label="motion"
     onclick={() => (motion = !motion)}>{@render icoMotion()}</button>
-  <button class="mpi sel" class:on={labels} aria-pressed={labels} title="labels — name badges on recognized subtrees" aria-label="labels"
+  <button class="mpi sel" class:on={labels} aria-pressed={labels} data-tip="labels — name badges on recognized subtrees" aria-label="labels"
     onclick={() => { labels = !labels; if (cur) show(cur) }}>{@render icoLabels()}</button>
 {/snippet}
 
@@ -1179,7 +1190,7 @@
   class:lab={variant === 'lab'}
   tabindex="0"
   role="application"
-  aria-label="tree-calculus visualizer — space runs or pauses, arrow keys step back and forward"
+  aria-label="tree-calculus visualizer — space runs or pauses, arrow keys step back and forward, shift-click a named subtree to fold it shut"
   onkeydown={onKey}
   onmousedown={(e) => {
     // clicking a control shouldn't leave it focused (no stuck selection ring);
@@ -1271,7 +1282,7 @@
               class:growing={motion && styled && n.fresh !== false}
               class:fireable={n.canFire}
               style="--gd: {n.depth * 55}ms"
-              onclick={() => n.canFire && clickApply(n)}
+              onclick={(e) => (e.shiftKey ? closePod(n.tree) : n.canFire && clickApply(n))}
             >
               {#if n.pod != null}
                 <!-- a seed pod: a real subtree folded shut. Reduction computes
@@ -1280,7 +1291,7 @@
                      Green (grown from real structure), unlike the orange
                      fruit (free names with no insides at all). -->
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-                <g class="pod" onclick={() => openPod(n.tree)}>
+                <g class="pod" onclick={(e) => { e.stopPropagation(); openPod(n.tree) }}>
                   <title>unfold one level</title>
                   {#if styled}<path class="fstalk" d="M0,-9 Q1,-13 3.5,-14.5" />{/if}
                   <circle r="10" class="podbody" />
@@ -1347,7 +1358,12 @@
                 </g>
               {/if}
               {#if n.label}
-                <text class="badge" y="-14">{n.label}</text>
+                <!-- the badge doubles as the fold button: the named subtree closes into a pod -->
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <g class="badgewrap" onclick={(e) => { e.stopPropagation(); closePod(n.tree) }}>
+                  <title>fold {n.label} shut</title>
+                  <text class="badge" y="-14">{n.label}</text>
+                </g>
               {/if}
             </g>
           </g>
@@ -1411,19 +1427,19 @@
   <div class="bottombar">
     <div class="tside tleft">
       {#if !minimal}
-        <button class="tbtn" onclick={() => cyclePreset(-1)} title="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
+        <button class="tbtn" onclick={() => cyclePreset(-1)} data-tip="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
       {/if}
-      <button class="tbtn" onclick={back} disabled={historyLen === 0} title="step back (←)" aria-label="step back">{@render icoBack()}</button>
+      <button class="tbtn" onclick={back} disabled={historyLen === 0} data-tip="step back (←)" aria-label="step back">{@render icoBack()}</button>
     </div>
 
-    <button class="tbtn play" onclick={toggleRun} title="run / pause (space)" aria-label={running ? 'pause' : 'play'}>{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button>
+    <button class="tbtn play" onclick={toggleRun} data-tip="run / pause (space)" aria-label={running ? 'pause' : 'play'}>{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button>
 
     <div class="tside tright">
-      <button class="tbtn" onclick={step} title="step forward (→)" aria-label="step forward">{@render icoFwd()}</button>
+      <button class="tbtn" onclick={step} data-tip="step forward (→)" aria-label="step forward">{@render icoFwd()}</button>
       {#if !minimal}
-        <button class="tbtn" onclick={() => cyclePreset(1)} title="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
+        <button class="tbtn" onclick={() => cyclePreset(1)} data-tip="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
       {/if}
-      <button class="tbtn" onclick={reset} title="reset to the start" aria-label="reset">{@render icoReset()}</button>
+      <button class="tbtn" onclick={reset} data-tip="reset to the start" aria-label="reset">{@render icoReset()}</button>
     </div>
 
     {#if variant === 'ambient'}
@@ -1439,8 +1455,8 @@
           aria-haspopup="true"
           aria-expanded={cassetteOpen}
           aria-label={`tree pieces — now: ${PIECES[selectedIdx].tip}`}
-          title={`${PIECES[selectedIdx].tip} — pick a piece`}
-        >{PIECES[selectedIdx].sym}{#if PIECES[selectedIdx].sub}<sub>{PIECES[selectedIdx].sub}</sub>{/if}</button>
+          data-tip={`${PIECES[selectedIdx].tip} — pick a piece`}
+        ><span class="glyph">{PIECES[selectedIdx].sym}{#if PIECES[selectedIdx].sub}<sub>{PIECES[selectedIdx].sub}</sub>{/if}</span></button>
         {#if cassetteOpen}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
@@ -1463,7 +1479,7 @@
             onpointercancel={tapeUp}
           >
             {#each PIECES as it, i}
-              <div class="tcell" class:on={i === selectedIdx} style="height: {CELLH}px; --ci: {i}" title={it.tip}>{it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}</div>
+              <div class="tcell" class:on={i === selectedIdx} style="height: {CELLH}px; --ci: {i}" data-tip={it.tip}>{it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}</div>
             {/each}
             <div
               class="selector"
@@ -1485,8 +1501,8 @@
           onclick={() => (showSelectors = !showSelectors)}
           aria-expanded={showSelectors}
           aria-label={showSelectors ? 'hide view options' : 'view options'}
-          title={showSelectors ? 'hide view options' : 'view options'}
-        >{showSelectors ? '×' : '⚘'}</button>
+          data-tip={showSelectors ? 'hide view options' : 'view options'}
+        ><span class="glyph">{showSelectors ? '×' : '⚘'}</span></button>
       </div>
     {:else}
       <div class="selectors corner-right">{@render selectorButtons()}</div>
@@ -1585,9 +1601,12 @@
     display: flex;
     justify-content: center;
     align-items: center;
+    gap: 0.35rem;
     width: 100%;
     min-width: 0;
   }
+  /* a spacer as wide as the (i) keeps the box itself centred */
+  .editrow::before { content: ''; flex: none; width: 16px; }
   .editbox {
     width: 100%;
     max-width: min(24rem, calc(100% - 3rem));
@@ -1620,12 +1639,10 @@
     border-bottom-color: color-mix(in oklab, var(--err) 65%, transparent);
   }
   .editbox::selection { background: color-mix(in oklab, var(--accent) 28%, transparent); }
-  /* the (i) that explains what names you can type, at the row's right edge */
+  /* the (i) that explains what names you can type, right beside the box */
   .info {
-    position: absolute;
-    right: 0.1rem;
-    top: 50%;
-    transform: translateY(-50%);
+    position: relative;
+    flex: none;
     display: inline-flex;
   }
   .info-btn {
@@ -1739,6 +1756,52 @@
 
   .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.1rem 0 0; font-style: italic; }
 
+  /* ---- tooltips: one styled tip for every control, read from its data-tip.
+     Hover or keyboard focus shows it above the control; corners hug the widget
+     edge, the pop-out's stacked buttons tip to the left, and the open tape's
+     selected piece wears its tip (cells take no pointer, the tape does). ---- */
+  [data-tip] { position: relative; }
+  [data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 7px);
+    transform: translate(-50%, 3px);
+    width: max-content;
+    max-width: 15em;
+    padding: 0.35em 0.6em;
+    border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev);
+    box-shadow: 0 10px 24px -14px color-mix(in oklab, var(--fg) 45%, transparent);
+    color: var(--fg-muted);
+    font-family: var(--font-body);
+    font-size: 0.7rem;
+    font-weight: 400;
+    font-style: normal;
+    line-height: 1.4;
+    text-align: left;
+    white-space: normal;
+    z-index: 60;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  }
+  [data-tip]:hover::after,
+  [data-tip]:focus-visible::after { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+  .corner-left [data-tip]::after { left: 0; transform: translate(0, 3px); }
+  .corner-left [data-tip]:hover::after,
+  .corner-left [data-tip]:focus-visible::after { transform: none; }
+  .corner-right > [data-tip]::after { left: auto; right: 0; transform: translate(0, 3px); }
+  .corner-right > [data-tip]:hover::after,
+  .corner-right > [data-tip]:focus-visible::after { transform: none; }
+  .selectors-pop [data-tip]::after { left: auto; right: calc(100% + 7px); bottom: auto; top: 50%; transform: translate(3px, -50%); }
+  .selectors-pop [data-tip]:hover::after,
+  .selectors-pop [data-tip]:focus-visible::after { transform: translate(0, -50%); }
+  .cassette-tape .tcell::after { left: calc(100% + 9px); bottom: auto; top: 50%; transform: translate(0, -50%); }
+  .cassette-tape .tcell.on::after { opacity: 1; visibility: visible; }
+
   /* ---- scenery ---- */
   .hill.back { fill: color-mix(in oklab, var(--g1) 16%, var(--bg-elev)); }
   .hill.front { fill: color-mix(in oklab, var(--g2) 13%, var(--bg-elev)); }
@@ -1830,6 +1893,8 @@
     text-anchor: middle;
     font-family: var(--font-mono);
   }
+  .badgewrap { cursor: pointer; }
+  .badgewrap:hover .badge { fill: var(--accent); }
 
   /* named leaves (free variables) are FRUIT: big, round, name worn on the skin */
   .fruitbody {
@@ -2014,7 +2079,9 @@
     transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
   }
   .vis:hover .cassette-chip { opacity: 1; }
-  .cassette-chip:hover { border-color: var(--accent); color: var(--accent); transform: scale(1.06); }
+  .cassette-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .cassette-chip .glyph { display: inline-flex; align-items: center; transition: transform 0.2s ease; }
+  .cassette-chip:hover .glyph { transform: scale(1.06); }
   .cassette-chip sub { font-size: 0.6em; margin-left: 0.03em; }
   /* the expanded tape: a stationary VERTICAL column of every piece + a draggable
      selector, floating just ABOVE the chip and expanding upward — leaf △ at the
@@ -2111,5 +2178,7 @@
     transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
   }
   .vis:hover .tree-toggle { opacity: 1; }
-  .tree-toggle:hover { border-color: var(--accent); color: var(--accent); transform: rotate(20deg); }
+  .tree-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .tree-toggle .glyph { display: block; transition: transform 0.2s ease; }
+  .tree-toggle:hover .glyph { transform: rotate(20deg); }
 </style>
