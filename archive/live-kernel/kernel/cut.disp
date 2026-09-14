@@ -33,6 +33,9 @@ cons : Tree -> Tree -> Tree := {h, tl} => t h tl
 list_const : Tree -> Tree := {x} => t t x // const x y = x (K): a stored record value ignores the cut payload
 inj : Tree -> Tree -> Tree := {tag, pay} => t tag pay // a coproduct value: tag + payload
 acc : Tree -> Tree := {name} => inj name t // accessor: nullary coproduct (unit payload)
+dot : Tree -> Tree -> Tree := {field, target} => target (acc field) // owns projection: `r.x` is the cut `r (acc "x")`, never a method call
+// `.fst`/`.snd` read record fields here too (std/pair.disp's records), not raw pair halves
+elab_settings := cons (t "fst" ({p} => dot "fst" p)) (cons (t "snd" ({p} => dot "snd" p)) nil)
 
 // Constructor declarators: `C := injN "C"` declares an N-field coproduct constructor (payload =
 // right-nested pairs the match-arm binders destructure). The §2.6 cut's "data declaration".

@@ -60,10 +60,9 @@ export function sugarTree(
   return lookupEntry(name)?.tree
 }
 
-// .fst/.snd are pair projections ONLY in scopes that carry elab_settings (the
-// new-syntax worlds); legacy scopes keep the record-cut reading of those field
-// names (lib/std/pair.disp's records). A settings entry can re-point them;
-// otherwise they resolve to the scope's pair_fst/pair_snd.
+// .fst/.snd are pair projections wherever pair_fst/pair_snd are in scope. An
+// elab_settings entry re-points them (the archived kernel routes them back to
+// its record cut); otherwise they resolve to the scope's pair_fst/pair_snd.
 export function pairAccessor(
   lookupEntry: (name: string) => ScopeEntry | undefined,
   which: "fst" | "snd",

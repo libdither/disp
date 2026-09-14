@@ -49,15 +49,13 @@ guard (license_guard AddRelation.rel) add : Nat -> Nat -> Nat :=
   {n, m} => nat_rec ({_} => Nat) m ({pred, ih} => succ ih) n
 
 // ── derived ops ──
-// pred/is_zero are ONE-LEVEL branches, so they ride case_value, not nat_rec:
-// same certificate (case_value pads the arms and routes them through the same
+// pred is a ONE-LEVEL branch, so it rides case_value, not nat_rec: same
+// certificate (case_value pads the arms and routes them through the same
 // gated respond), but the discarded IH is never computed — O(1) instead of the
 // recursor's O(n). Arms are CASE-shaped: raw args only, no phantom-IH binder.
+// (is_zero is the raw prelude's: the shape test is_leaf, the same function.)
 pred : Nat -> Nat :=
   {n} => case_value Nat ({_} => Nat) { zero := 0; succ := {k} => k } n
-
-is_zero : Nat -> Bool :=
-  {n} => case_value Nat ({_} => Bool) { zero := true; succ := {_k} => false } n
 
 double : Nat -> Nat :=
   {n} => add n n
