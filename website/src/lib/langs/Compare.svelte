@@ -19,7 +19,7 @@
   let picks = $state<{ slug: string; slot: number }[]>([])
   // an axis, or 'all': the average of the five percentages (an unscored cell
   // counts as 0, so a one-axis entry cannot top the list)
-  type SortKey = AxisId | 'all'
+  type SortKey = AxisId | 'all' | 'frontier'
   let sortAxis = $state<SortKey | null>(null)
   let sortDesc = $state(true)
   let onlyAhead = $state(false)
@@ -30,13 +30,37 @@
   const value = (s: Score) => s.pct ?? (s.level == null ? null : s.level * 50)
   const average = (scores: Record<AxisId, Score>) =>
     Math.round(AXIS_IDS.reduce((sum, id) => sum + (value(scores[id]) ?? 0), 0) / AXIS_IDS.length)
-  const rank = (l: Lang, key: SortKey) => (key === 'all' ? average(l.scores) : (value(l.scores[key]) ?? -1))
   const dispAverage = $derived(average(data.disp))
+
+  // ---- Pareto dominance among the surveyed languages (disp is a reference, not a member).
+  // Layer 0 is the frontier: nobody matches-or-beats it on every axis at once. Peeling
+  // the frontier off repeatedly layers the rest — the sort an average can't give,
+  // because a single exceptional axis keeps a project on an early layer.
+  const vec = (l: Lang) => AXIS_IDS.map((id) => value(l.scores[id]) ?? 0)
+  const dominates = (a: number[], b: number[]) => a.every((v, i) => v >= b[i]) && a.some((v, i) => v > b[i])
+  const layerOf = $derived.by(() => {
+    const out = new Map<string, number>()
+    let pool = scored.map((l) => ({ slug: l.slug, v: vec(l) }))
+    for (let layer = 0; pool.length; layer++) {
+      const front = pool.filter((p) => !pool.some((q) => q !== p && dominates(q.v, p.v)))
+      for (const p of front) out.set(p.slug, layer)
+      pool = pool.filter((p) => !out.has(p.slug))
+    }
+    return out
+  })
+  const frontier = $derived(scored.filter((l) => layerOf.get(l.slug) === 0))
+
+  const rank = (l: Lang, key: SortKey) =>
+    key === 'all'
+      ? average(l.scores)
+      : key === 'frontier'
+        ? -(layerOf.get(l.slug) ?? 99) * 1000 + average(l.scores)
+        : (value(l.scores[key]) ?? -1)
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase()
     let out = scored.filter((l) => !q || l.name.toLowerCase().includes(q))
     if (onlyAhead) {
-      const axes = sortAxis && sortAxis !== 'all' ? [sortAxis] : AXIS_IDS
+      const axes = sortAxis && sortAxis !== 'all' && sortAxis !== 'frontier' ? [sortAxis] : AXIS_IDS
       out = out.filter((l) => axes.some((id) => l.scores[id].ahead))
     }
     if (sortAxis) {
@@ -163,6 +187,73 @@
 
   const lv = (level: number | null) => (level == null ? 'lvn' : `lv${level}`)
   const pctText = (s: Score) => (s.pct == null ? '' : `${s.pct}%${s.provisional ? '?' : ''}`)
+
+  // ---- the Pareto scatter: any two axes, dots grouped on shared coordinates
+  let px = $state<AxisId>('G2')
+  let py = $state<AxisId>('G4')
+  const PW = 560
+  const PH = 340
+  const PL = 42
+  const PR = 110
+  const PT = 16
+  const PB = 34
+  const sx = (v: number) => PL + (v / 100) * (PW - PL - PR)
+  const sy = (v: number) => PH - PB - (v / 100) * (PH - PT - PB)
+  interface PGroup {
+    x: number
+    y: number
+    langs: Lang[]
+    onFrontier: boolean // someone at this point is on the five-axis frontier
+  }
+  const pgroups = $derived.by(() => {
+    const m = new Map<string, PGroup>()
+    for (const l of scored) {
+      const x = value(l.scores[px]) ?? 0
+      const y = value(l.scores[py]) ?? 0
+      const k = `${x},${y}`
+      const g = m.get(k) ?? { x, y, langs: [], onFrontier: false }
+      g.langs.push(l)
+      g.onFrontier ||= layerOf.get(l.slug) === 0
+      m.set(k, g)
+    }
+    return [...m.values()]
+  })
+  // maximal points for the picked pair, left to right; the stair joins them
+  const pairFront = $derived(
+    pgroups
+      .filter((g) => !pgroups.some((h) => h.x >= g.x && h.y >= g.y && (h.x > g.x || h.y > g.y)))
+      .sort((a, b) => a.x - b.x)
+  )
+  const stairPath = $derived.by(() => {
+    if (!pairFront.length) return ''
+    let d = `M ${sx(pairFront[0].x)} ${sy(pairFront[0].y)}`
+    for (let i = 1; i < pairFront.length; i++) d += ` H ${sx(pairFront[i].x)} V ${sy(pairFront[i].y)}`
+    return d
+  })
+  const dxy = $derived({ x: value(data.disp[px]) ?? 0, y: value(data.disp[py]) ?? 0 })
+  // colour follows the entity: a picked language keeps its slot colour here too
+  const groupColor = (g: PGroup) => {
+    for (const l of g.langs) {
+      const p = pickOf(l.slug)
+      if (p) return SLOT_COLORS[p.slot]
+    }
+    return null
+  }
+  const plabel = (g: PGroup) =>
+    (g.langs[0].name.length > 18 ? g.langs[0].name.slice(0, 17) + '…' : g.langs[0].name) +
+    (g.langs.length > 1 ? ` +${g.langs.length - 1}` : '')
+  function showGroupTip(ev: MouseEvent, g: PGroup): void {
+    tip = {
+      ...place(ev),
+      title: g.langs.length > 1 ? `${g.langs.length} projects share this point` : g.langs[0].name,
+      html: g.langs
+        .map(
+          (l) =>
+            `<b>${l.name}</b> — ${px} ${g.x}% · ${py} ${g.y}%${layerOf.get(l.slug) === 0 ? ' · <b>five-axis frontier</b>' : ''}`
+        )
+        .join('<br>')
+    }
+  }
 </script>
 
 <div class="compare">
@@ -172,8 +263,16 @@
         <input type="search" placeholder="filter by name" bind:value={query} aria-label="filter languages" />
         <label class="chk">
           <input type="checkbox" bind:checked={onlyAhead} />
-          only ahead of disp {sortAxis && sortAxis !== 'all' ? `on ${sortAxis}` : '(any axis)'}
+          only ahead of disp {sortAxis && sortAxis !== 'all' && sortAxis !== 'frontier' ? `on ${sortAxis}` : '(any axis)'}
         </label>
+        <button
+          class="fbtn"
+          class:on={sortAxis === 'frontier'}
+          onclick={() => sortBy('frontier')}
+          title="sort by Pareto layer: first the frontier (no surveyed project matches or beats them on every axis), then each successive peel; the average breaks ties"
+        >
+          Pareto sort{#if sortAxis === 'frontier'}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
+        </button>
         <span class="hint">click an axis to sort, or Project for the average · click a name to compare (up to two)</span>
       </div>
       <div class="matrix-wrap">
@@ -223,6 +322,7 @@
                       <i class="sw" aria-hidden="true"></i>{lang.name}
                     </button>
                     <span class="avg" title="average of the five">{average(lang.scores)}%</span>
+                    {#if layerOf.get(lang.slug) === 0}<small class="fr" title="on the five-axis Pareto frontier: no surveyed project matches or beats it on every axis at once">frontier</small>{/if}
                   </span>
                 </th>
                 {#each data.axes as ax (ax.id)}
@@ -258,6 +358,49 @@
           {#each unscored as l, i (l.slug)}{i ? ', ' : ''}<a href={l.sourceUrl} target="_blank" rel="noopener">{l.name}</a>{/each}.
         </p>
       {/if}
+      <section class="pareto">
+        <div class="pareto-head">
+          <h2>The Pareto frontier</h2>
+          <label>x <select bind:value={px}>{#each data.axes as ax (ax.id)}<option value={ax.id}>{ax.id} {ax.short}</option>{/each}</select></label>
+          <label>y <select bind:value={py}>{#each data.axes as ax (ax.id)}<option value={ax.id}>{ax.id} {ax.short}</option>{/each}</select></label>
+        </div>
+        <p class="pareto-note">
+          A project is on the frontier when no other surveyed project matches or beats it on every
+          axis at once — the exceptional projects an average buries. On all five axes that is
+          {#each frontier as l, i (l.slug)}{i ? ', ' : ''}<b>{l.name}</b>{/each}. The table's Pareto
+          sort orders by how many frontier peels a project survives. The stair below is the frontier
+          for just the two picked axes; disp is drawn for reference, not as a member.
+        </p>
+        <svg class="pareto-plot" viewBox="0 0 {PW} {PH}" role="img" aria-label="the surveyed languages on {px} against {py}, with the Pareto stair for the pair">
+          {#each [0, 25, 50, 75, 100] as t (t)}
+            <line class="grid" x1={sx(t)} y1={sy(0)} x2={sx(t)} y2={sy(100)} />
+            <line class="grid" x1={sx(0)} y1={sy(t)} x2={sx(100)} y2={sy(t)} />
+            <text class="tick" x={sx(t)} y={PH - PB + 14} text-anchor="middle">{t}</text>
+            <text class="tick" x={PL - 6} y={sy(t) + 3} text-anchor="end">{t}</text>
+          {/each}
+          <text class="axlab" x={(PL + PW - PR) / 2} y={PH - 2} text-anchor="middle">{px} {data.axes.find((a) => a.id === px)?.short}</text>
+          <text class="axlab" x={PL} y={PT - 6}>{py} {data.axes.find((a) => a.id === py)?.short} ↑</text>
+          <path class="stair" d={stairPath} />
+          {#each pgroups as g (`${g.x},${g.y}`)}
+            <g class="pt" class:front={g.onFrontier} onmouseenter={(e) => showGroupTip(e, g)} onmouseleave={hideTip} role="img" aria-label="{g.langs.map((l) => l.name).join(', ')} at {px} {g.x}%, {py} {g.y}%">
+              <circle cx={sx(g.x)} cy={sy(g.y)} r={4 + Math.min(3, g.langs.length - 1)} style:fill={groupColor(g) ?? undefined} />
+            </g>
+          {/each}
+          {#each pairFront as g (`${g.x},${g.y}`)}
+            <text class="plab" x={sx(g.x) + 9} y={sy(g.y) + 3}>{plabel(g)}</text>
+          {/each}
+          <g class="disp-pt">
+            <path d="M {sx(dxy.x)} {sy(dxy.y) - 6} l 6 6 l -6 6 l -6 -6 Z" />
+            <text class="plab disp-lab" x={sx(dxy.x) + 10} y={sy(dxy.y) - 6}>disp</text>
+          </g>
+        </svg>
+        <p class="pareto-key">
+          <span>● a project · a bigger dot is several sharing the point — hover them</span>
+          <span><i class="fr-ring" aria-hidden="true"></i> on the five-axis frontier</span>
+          <span>the stair joins the frontier for this pair</span>
+          <span>◆ disp, reference</span>
+        </p>
+      </section>
     </div>
     <aside class="right">
       <Radar axes={data.axes} {series} onhover={radarHover} />
@@ -800,6 +943,131 @@
     margin-top: 0.3rem;
     color: var(--fg-faint);
     font-style: italic;
+  }
+
+  /* ---- pareto sort + scatter ---- */
+  .fbtn {
+    font: inherit;
+    font-size: 0.78rem;
+    color: var(--fg-muted);
+    background: none;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 0.2em 0.8em;
+    cursor: pointer;
+    display: inline-flex;
+    gap: 0.35em;
+    align-items: center;
+  }
+  .fbtn.on {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .fr {
+    font-size: 0.62rem;
+    color: var(--accent);
+    border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent);
+    border-radius: 999px;
+    padding: 0 0.45em;
+    white-space: nowrap;
+  }
+  .pareto {
+    margin-top: 1.6rem;
+  }
+  .pareto-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+  }
+  .pareto-head h2 {
+    font-size: 1.05rem;
+    margin: 0;
+  }
+  .pareto-head label {
+    font-size: 0.78rem;
+    color: var(--fg-muted);
+    display: inline-flex;
+    gap: 0.35em;
+    align-items: center;
+  }
+  .pareto-head select {
+    font: inherit;
+    font-size: 0.78rem;
+    color: var(--fg);
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 0.15em 0.3em;
+  }
+  .pareto-note {
+    margin: 0.4rem 0 0.7rem;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+    max-width: 46rem;
+  }
+  .pareto-plot {
+    width: 100%;
+    max-width: 40rem;
+    height: auto;
+    display: block;
+  }
+  .pareto-plot .grid {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+  .pareto-plot .tick,
+  .pareto-plot .axlab,
+  .pareto-plot .plab {
+    font-size: 10px;
+    fill: var(--fg-faint);
+    font-family: var(--font-body);
+  }
+  .pareto-plot .axlab {
+    fill: var(--fg-muted);
+    font-weight: 600;
+  }
+  .pareto-plot .stair {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    opacity: 0.7;
+  }
+  .pareto-plot .pt circle {
+    fill: color-mix(in oklab, var(--fg-muted) 55%, transparent);
+    stroke: var(--bg);
+    stroke-width: 1;
+  }
+  .pareto-plot .pt.front circle {
+    stroke: var(--accent);
+    stroke-width: 1.8;
+  }
+  .pareto-plot .plab {
+    font-size: 9.5px;
+    fill: var(--fg-muted);
+  }
+  .pareto-plot .disp-pt path {
+    fill: var(--cmp-0);
+  }
+  .pareto-plot .disp-lab {
+    fill: var(--cmp-0);
+    font-weight: 700;
+  }
+  .pareto-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+    margin: 0.4rem 0 0;
+    font-size: 0.75rem;
+    color: var(--fg-faint);
+  }
+  .fr-ring {
+    display: inline-block;
+    width: 0.65em;
+    height: 0.65em;
+    border-radius: 50%;
+    border: 1.8px solid var(--accent);
+    vertical-align: middle;
   }
 
   @media (max-width: 960px) {
