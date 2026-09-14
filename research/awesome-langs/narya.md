@@ -58,7 +58,7 @@ good properties.
 ### 3. Narya's Id at functions is `~_T` made into the identity type
 
 `Id (A → B) f g` says related inputs map to related outputs: the "different
-program, same behavior" statement A4 needs, with transport as the "carry every
+program, same behavior" statement equality needs, with transport as the "carry every
 proof across the rewrite" mechanism the optimizer story wants. Narya chose this
 parametric form over naive pointwise equality on principle, the same shape as
 disp's walker-computed logical relation.
@@ -84,12 +84,11 @@ discipline.
 
 | Axis | Narya | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✗ 0% (none) | No programs-as-data at all; even Agda's quotation API has no analogue. | 0 · 0 · 0 — no reflection API at all |
-| A2 Spec power | ◐ 67% (HoTT) | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. | 1 · 1 · 0 — HoTT + parametricity + modalities; no library, breaking changes expected |
-| A3 Kernel | ✗ 17% (big checker) | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). | 0 · ½ · 0 — tens of thousands of OCaml lines are the trust base; NbE unproven |
-| A4 Equality | ◐ 50% (observational) | The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. | 1 · ½ · 0 — observational Id per type former; transport computes on only some formers so far |
-| A5 Perf | ✗ 0% (none) | No cost model, no performance story; correctness-first by design. | 0 · 0 · 0 — correctness-first, no performance story |
-| A6 Search | ✗ 0% (none) | No synthesis; no tactics even. | 0 · 0 · 0 — no tactics even |
+| A1 Substrate | ✗ 0% (none) | No programs-as-data at all; even Agda's quotation API has no analogue. | 0 · 0 · 0 — no reflection API at all |
+| A2 Specification | ◐ 50% (HoTT) | Full HoTT + internal parametricity + modalities; beyond disp, and beyond Cubical Agda on the parametricity axis. Equality: The interval-free observational design FOUNDATIONS cites; univalence-as-theorem landed, but transport computes on only some formers so far. | 1 · ½ · 0 · ½ — HoTT + parametricity + modalities, no library yet; observational Id per former, transport computing on some formers so far |
+| A3 Trust | ✗ 17% (big checker) | The typechecker is the trust base: tens of thousands of OCaml lines, NbE unproven (mitigated by an intrinsically-scoped GADT core). | 0 · ½ · 0 — tens of thousands of OCaml lines are the trust base; NbE unproven |
+| A4 Execution | ✗ 0% (none) | No cost model, no performance story; correctness-first by design. | 0 · 0 · 0 · 0 — correctness-first, no performance story |
+| A5 Search | ✗ 0% (none) | No synthesis; no tactics even. | 0 · 0 · 0 — no tactics even |
 
 ## What disp could steal
 
@@ -124,5 +123,5 @@ disp-shaped living system.
 per-former, interval-free shape matches disp's per-type metadata architecture.
 Watch it: partially computing today, moving daily.**
 
-**Distance from disp's goals: ahead on A2 and on A4 design, absent everywhere
+**Distance from disp's goals: ahead on A2 and on equality design, absent everywhere
 else; orthogonal project, load-bearing reconnaissance.**

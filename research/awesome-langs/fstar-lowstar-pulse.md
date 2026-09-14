@@ -44,18 +44,17 @@ quotation/deep embedding rather than native intensionality.
 
 **The ICSE 2025 dataset** (940 KLOC of F* for neural synthesis of SMT-assisted
 proof-oriented programming) is the incumbents building the AI on-ramp — direct
-evidence that A6 is being attacked from the F* side too.
+evidence that A5 is being attacked from the F* side too.
 
 ## Scorecard
 
 | Axis | F*/Low*/Pulse | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ◐ 50% (Meta-F*) | Meta-F* reflects F* syntax for tactics; deep embedding, not programs-as-data. | 1 · 0 · ½† — Meta-F* reflects F* syntax (deep embedding); tactics can call the typechecker |
-| A2 Spec power | ✅ 100% (dependent+SMT) | Full dependent types + refinements + effects + separation logic (Pulse). Production-proven expressiveness. | 1 · 1 · 1 — dependent types, refinements, effects, Pulse; HACL*/EverCrypt is a decade-deep library |
-| A3 Kernel | ✗ 17% (big TCB) | Trusted base is much larger than LCF-ideal: the F* typechecker *and* Z3 *and* KaRaMeL extraction are trusted. Bigger TCB than disp targets. | 0 · ½ · 0 — typechecker, Z3 and KaRaMeL are all trusted; proof terms exist, SMT verdicts have none |
-| A4 Equality | ◐ 33% (SMT fragment) | SMT-decided equalities within its fragment — genuinely automates many rewrites, but it is "retreat to a decidable fragment" (FOUNDATIONS [P1]), not a general licensing relation. | ½ · ½ · 0 — SMT-decided equalities within the fragment |
-| A5 Perf | ◐ 33% (via C) | Low*→C→native; HACL* is competitive with hand-optimized C. The proof that verified code can be fast. | 1 · 0 · 0 — Low*→C competitive with hand-optimized C; no cost model |
-| A6 Search | ✗ 0% (human-written) | Humans write the code and the proofs. This is precisely disp's identified delta. | 0 · 0 · 0 — humans write the code and the proofs |
+| A1 Substrate | ◐ 50% (Meta-F*) | Meta-F* reflects F* syntax for tactics; deep embedding, not programs-as-data. | 1 · 0 · ½† — Meta-F* reflects F* syntax (deep embedding); tactics can call the typechecker |
+| A2 Specification | ◐ 62% (dependent+SMT) | Full dependent types + refinements + effects + separation logic (Pulse). Production-proven expressiveness. Equality: SMT-decided equalities within its fragment — genuinely automates many rewrites, but it is "retreat to a decidable fragment" (FOUNDATIONS [P1]), not a general licensing relation. | 1 · 1 · 0 · ½ — dependent types, refinements, effects, Pulse, with HACL* as the library; SMT-fragment equality |
+| A3 Trust | ✗ 17% (big TCB) | Trusted base is much larger than LCF-ideal: the F* typechecker *and* Z3 *and* KaRaMeL extraction are trusted. Bigger TCB than disp targets. | 0 · ½ · 0 — typechecker, Z3 and KaRaMeL are all trusted; proof terms exist, SMT verdicts have none |
+| A4 Execution | ◐ 25% (via C) | Low*→C→native; HACL* is competitive with hand-optimized C. The proof that verified code can be fast. | 1 · 0 · 0 · 0 — Low*→C competitive with hand-optimized C; KaRaMeL and the C compiler are trusted |
+| A5 Search | ✗ 0% (human-written) | Humans write the code and the proofs. This is precisely disp's identified delta. | 0 · 0 · 0 — humans write the code and the proofs |
 
 ## What disp could steal
 
@@ -90,5 +89,5 @@ Firefox. disp's honest one-line pitch is: *F\* with the human removed from the
 implementation step, on a substrate where the checker is itself optimizable.*
 Everything in disp's Part IV is what it costs to earn that sentence.
 
-**Distance from disp's goals: closest shipping system on A2+A5; zero on A6, which
+**Distance from disp's goals: closest shipping system on A2+A4; zero on A5, which
 is the entire point of disp.**

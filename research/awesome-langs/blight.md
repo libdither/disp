@@ -44,12 +44,11 @@ than most academic kernels manage.
 
 | Axis | Blight | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✗ 0%? (s-expressions) | S-expression syntax and a tower/kernel split invite metaprogramming, but no native programs-as-data. | ? · 0 · 0 — s-expressions "invite metaprogramming"; the write-up does not say what a program can inspect |
-| A2 Spec power | ◐ 67% (cubical+QTT) | Cubical + QTT + effects is a *more* ambitious type theory than disp currently implements. | 1 · 1 · 0 — cubical + QTT + effects; two months old, no library |
-| A3 Kernel | ✅ 100% (LCF, two checkers) | Same architecture as disp, plus an independent second checker. | 1 · 1 · 1 — a microscopic kernel is the only thing that can mint a `Proof`; the tower is untrusted; a second independently written re-checker |
-| A4 Equality | ◐ 67% (cubical) | Cubical: computational univalence and higher inductive types — the heavyweight-but-real answer disp cites in §7 but hasn't integrated. | 1 · 1 · 0 — cubical univalence and HITs compute; no rewrite consumer |
-| A5 Perf | ✗ 0% (none) | No native backend, no cost model. Rust host, research-scale. | 0 · 0 · 0 — no native backend, no cost model |
-| A6 Search | ✗ 0% (tactics) | Tactics are human-written. No synthesis. | 0 · 0 · 0 — tactics are human-written |
+| A1 Substrate | ✗ 0%? (s-expressions) | S-expression syntax and a tower/kernel split invite metaprogramming, but no native programs-as-data. | ? · 0 · 0 — s-expressions "invite metaprogramming"; the write-up does not say what a program can inspect |
+| A2 Specification | ◐ 75% (cubical+QTT) | Cubical + QTT + effects is a *more* ambitious type theory than disp currently implements. Equality: Cubical: computational univalence and higher inductive types — the heavyweight-but-real answer disp cites in §7 but hasn't integrated. | 1 · ½ · ½ · 1 — cubical + QTT + effects: computational univalence and quantities in the kernel; two months old, no library |
+| A3 Trust | ✅ 100% (LCF, two checkers) | Same architecture as disp, plus an independent second checker. | 1 · 1 · 1 — a microscopic kernel is the only thing that can mint a `Proof`; the tower is untrusted; a second independently written re-checker |
+| A4 Execution | ✗ 0% (none) | No native backend, no cost model. Rust host, research-scale. | 0 · 0 · 0 · 0 — no native backend, no cost model |
+| A5 Search | ✗ 0% (tactics) | Tactics are human-written. No synthesis. | 0 · 0 · 0 — tactics are human-written |
 
 ## What disp could steal
 
@@ -68,7 +67,7 @@ than most academic kernels manage.
 
 Blight has no systems story whatsoever — no native codegen, no cost, no optimizer.
 It is a proof assistant with good architecture. disp shares the architecture and
-adds A5/A6, which is where all of disp's risk lives.
+adds A4/A5, which is where all of disp's risk lives.
 
 Also: Blight is **two months old with one contributor and no stars**, and its
 commit history shows heavy AI assistance (mutation-testing gates, watchdogs). The
@@ -82,4 +81,4 @@ type theory and no performance ambitions.** Most valuable as evidence that the
 kernel/tower + independent-re-checker design is the natural answer, and as a live
 experiment in whether cubical + QTT + effects can share one kernel.
 
-**Distance from disp's goals: same A3, stronger A2/A4, nothing on A5/A6.**
+**Distance from disp's goals: same A3, stronger A2 (equality included), nothing on A4/A5.**

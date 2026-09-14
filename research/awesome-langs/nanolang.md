@@ -48,12 +48,11 @@ and Q5 explicitly flags open gaps).
 
 | Axis | NanoLang | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — none |
-| A2 Spec power | ✗ 0% (none) | No user-level spec language. The proofs are *about* the language, not written *in* it. | 0 · 0 · 0 — no user-level spec language; the proofs are about the language |
-| A3 Kernel | ✗ 17% (metatheory) | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. | ½ · 0 · 0 — no kernel, but the core semantics are proved sound in Coq, `Admitted`-free |
-| A4 Equality | ✗ 0% (none) | Not addressed. | 0 · 0 · 0 — not addressed |
-| A5 Perf | ◐ 33% (to C) | Transpiles to C; NanoISA sandbox for FFI. | 1 · 0 · 0 — transpiles to C |
-| A6 Search | ✗ 17% (LLM target) | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. | 0 · ½ · 0 — designed as an LLM target with mandatory tests; no engine of its own |
+| A1 Substrate | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — none |
+| A2 Specification | ✗ 0% (none) | No user-level spec language. The proofs are *about* the language, not written *in* it. Equality: Not addressed. | 0 · 0 · 0 · 0 — no user-level spec language; the proofs are about the language |
+| A3 Trust | ✗ 17% (metatheory) | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. | ½ · 0 · 0 — no kernel, but the core semantics are proved sound in Coq, `Admitted`-free |
+| A4 Execution | ◐ 38% (to C) | Transpiles to C; NanoISA sandbox for FFI. | 1 · ½ · 0 · 0 — transpiles to C; NanoISA is a modelled VM whose semantics are proved, used to sandbox FFI |
+| A5 Search | ✗ 17% (LLM target) | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. | 0 · ½ · 0 — designed as an LLM target with mandatory tests; no engine of its own |
 
 ## What disp could steal
 
@@ -85,5 +84,5 @@ narrower thesis.** Useful to disp as (a) proof that mechanized metatheory is
 achievable solo, (b) a model for agent-facing language constraints, and (c) a
 caution about the phrase "formally verified language" — always ask *which level*.
 
-**Distance from disp's goals: shares A5 and the AI-target motivation; absent on
-A1, A2, A4, A6.**
+**Distance from disp's goals: shares A4 and the AI-target motivation; absent on
+A1, A2, equality, A5.**

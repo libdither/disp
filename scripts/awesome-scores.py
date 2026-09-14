@@ -6,17 +6,17 @@
                                               values and why into every write-up's scorecard, the master table
                                               cells, and disp's table in _AXES.md
 
-A clause is 0, ½ or 1 (suffix † = from general knowledge, ? = open, scored 0); an axis is the mean
-of its three clauses; the symbol is ✗ below 25, ◐ to 79, ✅ from 80; bold in the master table means
-a higher percentage than disp's.
+A clause is 0, ½ or 1 (suffix † = from general knowledge, ? = open, scored 0; — = does not apply,
+left out of the mean); an axis is the mean of its three or four clauses; the symbol is ✗ below 25,
+◐ to 79, ✅ from 80; bold in the master table means a higher percentage than disp's.
 """
 import re, sys, pathlib
 
 D = pathlib.Path(__file__).resolve().parent.parent / 'research' / 'awesome-langs'
-AXES = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6']
-VAL = {'1': 1.0, '½': 0.5, '0': 0.0, '?': 0.0}
+AXES = ['A1', 'A2', 'A3', 'A4', 'A5']
+VAL = {'1': 1.0, '½': 0.5, '0': 0.0, '?': 0.0, '—': None}
 SUP = 'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ'
-ROW = re.compile(r'^\| (A[1-6]) [^|]*\|')
+ROW = re.compile(r'^\| (A[1-5]) [^|]*\|')
 
 def symbol(pct):
     return '✗' if pct < 25 else '◐' if pct < 80 else '✅'
@@ -30,7 +30,7 @@ def master():
     for i, line in enumerate(lines):
         m = re.match(r'^\| \[\*\*(.+?)\*\*(.*?)\]\((.+?\.md)\) \|', line)
         if not m: continue
-        cells = [c.strip() for c in line.split('|')[2:8]]
+        cells = [c.strip() for c in line.split('|')[2:7]]
         row = {}
         for ax, cell in zip(AXES, cells):
             sym = next((ch for ch in cell.replace('**', '') if ch in '✅◐✗'), None)
@@ -50,15 +50,16 @@ def scores():
     lines = (D / '_SCORES.md').read_text().split('\n')
     out, ax = {}, None
     for i, line in enumerate(lines):
-        m = re.match(r'^## (A[1-6]) ', line)
+        m = re.match(r'^## (A[1-5]) ', line)
         if m: ax = m.group(1); out[ax] = []; continue
         if ax and line.startswith('| ') and not line.startswith('| Project') and not line.startswith('|---'):
             cells = [c.strip() for c in line.split('|')[1:-1]]
             if len(cells) < 6: continue
-            name, vals, why = cells[0], cells[1:4], cells[5]
+            name, vals, why = cells[0], cells[1:-2], cells[-1]
             for v in vals:
                 if v.replace('†', '') not in VAL: sys.exit(f'{ax} {name}: bad clause value {v!r}')
-            pct = round(sum(VAL[v.replace('†', '')] for v in vals) / 3 * 100)
+            xs = [VAL[v.replace('†', '')] for v in vals if VAL[v.replace('†', '')] is not None]
+            pct = round(sum(xs) / len(xs) * 100) if xs else 0
             out[ax].append(dict(name=name, vals=vals, pct=pct, prov=any('?' in v for v in vals),
                                 knowledge=any('†' in v for v in vals), why=why, line=i))
     return out, lines
@@ -98,7 +99,7 @@ def main():
         for rows in sc.values():
             for r in rows:
                 cells = lines[r['line']].split('|')
-                cells[5] = f" {r['pct']}{'?' if r['prov'] else ''} "
+                cells[-3] = f" {r['pct']}{'?' if r['prov'] else ''} "
                 lines[r['line']] = '|'.join(cells)
         (D / '_SCORES.md').write_text('\n'.join(lines))
         # 2. each write-up's scorecard, and disp's table in _AXES.md

@@ -7,7 +7,7 @@ dependently-typed language*.
 
 ## Why disp should care: two mechanisms
 
-### 1. Cubical type theory = the heavyweight answer to A4
+### 1. Cubical type theory = the heavyweight answer to equality
 
 FOUNDATIONS §7 lists three responses to the intensional-equality problem, and
 cubical (CCHM 2016, Cubical Agda JFP 2021) is the one that *fully computes*:
@@ -57,18 +57,17 @@ what Agda gets for free.
 
 | Axis | Agda/Cubical | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ◐ 50% (quotation) | Full reflection API, quotation-based. The best non-intensional A1. | 1 · 0 · ½† — `quoteTerm`/`unquote`; the TC monad can infer and check types |
-| A2 Spec power | ✅ 100% (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. | 1 · 1 · 1 — dependent types, HITs, univalence; the standard and cubical libraries |
-| A3 Kernel | ✗ 17% (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. | 0 · ½ · 0 — the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
-| A4 Equality | ◐ 67% (cubical) | Cubical: computational univalence. The answer disp cites and has not integrated. | 1 · 1 · 0 — cubical: computational univalence; no rewrite consumer |
-| A5 Perf | ✗ 0% (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. | 0 · 0 · 0 — research-grade GHC/JS backends |
-| A6 Search | ✗ 0% (none) | Auto/agda-mode search is trivial. No synthesis. | 0 · 0 · 0 — `auto` is trivial |
+| A1 Substrate | ◐ 50% (quotation) | Full reflection API, quotation-based. The best non-intensional A1. | 1 · 0 · ½† — `quoteTerm`/`unquote`; the TC monad can infer and check types |
+| A2 Specification | ◐ 75% (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. Equality: Cubical: computational univalence. The answer disp cites and has not integrated. | 1 · 1 · 0 · 1 — dependent types, HITs, univalence with the standard and cubical libraries; cubical equality computes |
+| A3 Trust | ✗ 17% (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. | 0 · ½ · 0 — the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
+| A4 Execution | ✗ 0% (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. | 0 · 0 · 0 · 0 — research-grade GHC/JS backends |
+| A5 Search | ✗ 0% (none) | Auto/agda-mode search is trivial. No synthesis. | 0 · 0 · 0 — `auto` is trivial |
 
 ## What disp could steal
 
 - **Path types as telescope cells.** The single highest-value experiment: does
   disp's one-negative-former design (§5) let cubical paths enter as a cell op
-  rather than a kernel change? If yes, disp gets a principled A4 story *without*
+  rather than a kernel change? If yes, disp gets a principled equality story *without*
   the wholesale performance cost, because non-cubical code never touches the
   interval machinery. NEGATIVE_TYPES.md already argues new formers are library
   code — this is the test case that matters.
@@ -88,8 +87,8 @@ Agda's expressiveness cannot.
 
 ## Verdict
 
-**The reference for disp's unbuilt A4 work and the fairest benchmark for what
+**The reference for disp's unbuilt equality work and the fairest benchmark for what
 native intensionality actually saves over quotation-based reflection.**
 
-**Distance from disp's goals: ahead on A2/A4, absent on A5/A6, opposite approach
+**Distance from disp's goals: ahead on A2 (equality included), absent on A4/A5, opposite approach
 on A1.**

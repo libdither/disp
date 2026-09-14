@@ -22,8 +22,8 @@ specified and not yet built.** What ships today is a parser, a Logic Graph
 interpreter, and `.compile()` — an explicit, source-directed call that lowers a
 function to machine code via **Cranelift**.
 
-So: A1 partially real (the graph is walkable and reflectable), A2 and A4 are
-design documents, A5 is measured and real.
+So: A1 partially real (the graph is walkable and reflectable), A2 and equality are
+design documents, A4 is measured and real.
 
 ## The performance table (measured, one core, Ryzen 7 5800U, July 2026)
 
@@ -51,12 +51,11 @@ Reflection is affordable **if you can drop out of it on demand**.
 
 | Axis | LogosLang | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ◐ 50% (logic graph) | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. | ½ · 1 · 0 — the Logic Graph is walkable today and is the program; self-rewriting and the proof layer are unbuilt |
-| A2 Spec power | ✗ 0% (designed) | A "proof layer" is specified. No type theory exists yet. | 0 · 0 · 0 — the proof layer is a design document |
-| A3 Kernel | ✗ 0% (none) | No kernel discipline described. | 0 · 0 · 0 — no kernel discipline described |
-| A4 Equality | ✗ 0% (unspecified) | The "rewriting engine" is named but unspecified. | 0 · 0 · 0 — the rewriting engine is unspecified |
-| A5 Perf | ◐ 33% (Cranelift JIT) | Cranelift JIT, measured, 3× vectorized C. Ships binaries for three platforms. | 1 · 0 · 0 — Cranelift JIT within 3× of vectorized C, measured |
-| A6 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| A1 Substrate | ◐ 50% (logic graph) | The Logic Graph is the design's centerpiece and is walkable today; self-rewriting is specified, not built. | ½ · 1 · 0 — the Logic Graph is walkable today and is the program; self-rewriting and the proof layer are unbuilt |
+| A2 Specification | ✗ 0% (designed) | A "proof layer" is specified. No type theory exists yet. Equality: The "rewriting engine" is named but unspecified. | 0 · 0 · 0 · 0 — the proof layer and the rewriting engine are design documents |
+| A3 Trust | ✗ 0% (none) | No kernel discipline described. | 0 · 0 · 0 — no kernel discipline described |
+| A4 Execution | ◐ 25% (Cranelift JIT) | Cranelift JIT, measured, 3× vectorized C. Ships binaries for three platforms. | 1 · 0 · 0 · 0 — Cranelift JIT within 3× of vectorized C; `.compile()` lowers a function, it does not license a replacement |
+| A5 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal
 
@@ -75,7 +74,7 @@ Reflection is affordable **if you can drop out of it on demand**.
 ## Where disp differs
 
 disp has actually built the parts LogosLang has only specified: a real type system
-(A2), a kernel (A3), an equality story (A4, even if unfinished), and ~1,200 tests.
+(A2), a kernel (A3), an equality story (equality, even if unfinished), and ~1,200 tests.
 LogosLang has built the part disp has not: a JIT that makes the reflective
 representation fast on demand.
 
@@ -92,4 +91,4 @@ can rewrite, at systems speed — with the foundation still missing and the
 performance escape hatch already working.** Worth watching, and worth stealing the
 `.compile()` idea from immediately.
 
-**Distance from disp's goals: same ambition on A1+A5, nothing yet on A2–A4, A6.**
+**Distance from disp's goals: same ambition on A1+A4, nothing yet on A2, A3, A5.**

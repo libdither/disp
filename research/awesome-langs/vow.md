@@ -52,12 +52,11 @@ of a search procedure.
 
 | Axis | Vow | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✗ 0% (excluded) | Deliberately not: macros and metaprogramming are *excluded* to keep the verifier tractable. Directly opposed to disp's A1. | 0 · 0 · 0 — macros and metaprogramming excluded on purpose |
-| A2 Spec power | ◐ 33% (contracts, BMC) | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. | ½ · ½ · 0 — contracts + loop invariants under bounded model checking; young |
-| A3 Kernel | ✗ 0% (BMC TCB) | TCB = vowc + ESBMC. No certificates, no LCF split. | 0 · 0 · 0 — TCB = vowc + ESBMC |
-| A4 Equality | ✗ 0% (none) | Not addressed. | 0 · 0 · 0 — not addressed |
-| A5 Perf | ◐ 33% (Cranelift) | Cranelift native codegen, linear types, self-hosted with byte-identical bootstrap. Real systems performance. | 1 · 0 · 0 — Cranelift native, linear types |
-| A6 Search | ◐ 33% (CEGIS+LLM) | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. | ½ · ½ · 0 — CEGIS with an external LLM; no cost objective |
+| A1 Substrate | ✗ 0% (excluded) | Deliberately not: macros and metaprogramming are *excluded* to keep the verifier tractable. Directly opposed to disp's A1. | 0 · 0 · 0 — macros and metaprogramming excluded on purpose |
+| A2 Specification | ◐ 25% (contracts, BMC) | Contracts + loop invariants. Not dependent types; **bounded** model checking, so guarantees are bounded-depth, not universal. Equality: Not addressed. | ½ · ½ · 0 · 0 — contracts + loop invariants under bounded model checking; young; equality not addressed |
+| A3 Trust | ✗ 0% (BMC TCB) | TCB = vowc + ESBMC. No certificates, no LCF split. | 0 · 0 · 0 — TCB = vowc + ESBMC |
+| A4 Execution | ◐ 25% (Cranelift) | Cranelift native codegen, linear types, self-hosted with byte-identical bootstrap. Real systems performance. | 1 · 0 · 0 · 0 — Cranelift native with a byte-identical bootstrap |
+| A5 Search | ◐ 33% (CEGIS+LLM) | CEGIS with an external LLM as proposer. No internal search, no cost objective, no self-optimization. | ½ · ½ · 0 — CEGIS with an external LLM; no cost objective |
 
 ## What disp could steal
 
@@ -91,5 +90,5 @@ credible compiler engineer, and almost entirely disjoint from disp on substrate.
 Its value to disp is the *interface* layer — what the verifier hands back to
 whatever is proposing — which disp has not designed at all.
 
-**Distance from disp's goals: shares the motivation and A5; opposite on A1;
-weaker A2/A3; A6 outsourced to an LLM.**
+**Distance from disp's goals: shares the motivation and A4; opposite on A1;
+weaker A2/A3; A5 outsourced to an LLM.**

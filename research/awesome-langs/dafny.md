@@ -12,7 +12,7 @@ AWS (authorization, storage, cryptographic protocols).
 ## Why disp should care: Dafny is the empirical ceiling for "AI writes verified code"
 
 This is the one axis where Dafny leads everything, and it is directly relevant to
-disp's A6 proposer question:
+disp's A5 proposer question:
 
 | Benchmark result | Language | Source |
 |---|---|---|
@@ -48,7 +48,7 @@ toward conventional languages.
   at organizational scale — the Cedar authorization language is specified in Dafny
   and Lean and re-verified continuously.
 - **Compilation is to managed backends** — so Dafny is a verified-logic tier, not a
-  systems-performance endpoint. It fails A5 by construction.
+  systems-performance endpoint. It fails A4 by construction.
 - The **midspiral/LemmaScript** experiment (annotated TypeScript → Dafny *or* Lean)
   is a live indie attempt to use Dafny as a verification IR behind a familiar
   surface — the "verification-aware intermediate language" framing (arXiv:2501.06283).
@@ -57,12 +57,11 @@ toward conventional languages.
 
 | Axis | Dafny | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
-| A2 Spec power | ◐ 50% (SMT) | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. | ½ · ½ · ½ — first-order + quantifiers, SMT-shaped; a decade of AWS production specs |
-| A3 Kernel | ✗ 0% (SMT TCB) | TCB = Dafny + Boogie + Z3. Large. | 0 · 0 · 0 — TCB = Dafny + Boogie + Z3 |
-| A4 Equality | ◐ 33% (SMT fragment) | SMT-fragment only. | ½ · ½ · 0 — SMT fragment only |
-| A5 Perf | ✗ 0% (managed) | Managed backends. Not a systems language. | 0 · 0 · 0 — managed backends |
-| A6 Search | ◐ 33% (LLM-written) | The best *LLM-writability* of any verification language, by a wide margin. | ½ · ½ · 0 — LLMs write it best (82–96% on benchmarks) but the search lives in external tools; correctness only |
+| A1 Substrate | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| A2 Specification | ◐ 38% (SMT) | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. Equality: SMT-fragment only. | ½ · ½ · 0 · ½ — first-order + quantifiers over a decade of AWS specs; SMT-fragment equality |
+| A3 Trust | ✗ 0% (SMT TCB) | TCB = Dafny + Boogie + Z3. Large. | 0 · 0 · 0 — TCB = Dafny + Boogie + Z3 |
+| A4 Execution | ✗ 0% (managed) | Managed backends. Not a systems language. | 0 · 0 · 0 · 0 — managed backends |
+| A5 Search | ◐ 33% (LLM-written) | The best *LLM-writability* of any verification language, by a wide margin. | ½ · ½ · 0 — LLMs write it best (82–96% on benchmarks) but the search lives in external tools; correctness only |
 
 ## What disp could steal
 
@@ -87,5 +86,5 @@ the AI-writability ceiling looks like and what it costs (conventionality). Its
 numbers are the strongest available argument for disp preferring a search-based
 proposer over a neural one.
 
-**Distance from disp's goals: opposite on A1–A5; the reference point for A6's
+**Distance from disp's goals: opposite on A1–A4; the reference point for A5's
 neural half.**

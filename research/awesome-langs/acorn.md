@@ -48,12 +48,11 @@ arguably a better fit for it than Lean's.
 
 | Axis | Acorn | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
-| A2 Spec power | ◐ 50% (math prover) | A real theorem-proving language, but aimed at mathematics; not dependent-type-strength program specification. | 0 · 1 · ½ — a theorem-proving language for mathematics; acornlib aims at the Top 100 list |
-| A3 Kernel | ✗ 0%? (own checker) | Has its own checker; TCB not characterized as an LCF kernel. | 0 · ? · 0 — has its own checker; the write-up does not characterize its TCB or proof objects |
-| A4 Equality | ✗ 0% (none) | Not addressed for program rewriting. | 0 · 0 · 0 — not addressed for programs |
-| A5 Perf | ✗ 0% (none) | Not a systems language at all. | 0 · 0 · 0 — not a systems language |
-| A6 Search | ◐ 50% (local neural) | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. | ½ · ½ · ½ — an embedded local model fills in proofs with the checker in the loop; the library becomes the next model's training data |
+| A1 Substrate | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
+| A2 Specification | ◐ 25% (math prover) | A real theorem-proving language, but aimed at mathematics; not dependent-type-strength program specification. Equality: Not addressed for program rewriting. | 0 · 1 · 0 · 0 — a theorem-proving language for mathematics with a growing library; no program specifications |
+| A3 Trust | ✗ 0%? (own checker) | Has its own checker; TCB not characterized as an LCF kernel. | 0 · ? · 0 — has its own checker; the write-up does not characterize its TCB or proof objects |
+| A4 Execution | ✗ 0% (none) | Not a systems language at all. | 0 · 0 · 0 · 0 — not a systems language |
+| A5 Search | ◐ 50% (local neural) | The only project here with a *locally-trained, embedded* neural proposer in the verification loop. | ½ · ½ · ½ — an embedded local model fills in proofs with the checker in the loop; the library becomes the next model's training data |
 
 ## What disp could steal
 
@@ -75,5 +74,5 @@ arguably a better fit for it than Lean's.
 endgame, built at solo scale by a highly credible engineer, and aimed at the wrong
 domain.**
 
-**Distance from disp's goals: zero overlap on A1–A5; the closest methodological
-model for A6's proposer.**
+**Distance from disp's goals: zero overlap on A1–A4; the closest methodological
+model for A5's proposer.**

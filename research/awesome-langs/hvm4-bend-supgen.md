@@ -54,12 +54,11 @@ previously-intractable O(n log n) sort found this way, and — importantly — i
 
 | Axis | HVM4/Bend2 | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ◐ 33% (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. | ½ · ½ · 0 — terms are runtime graph nodes with no in-language inspection; untyped, no checker |
-| A2 Spec power | ✗ 0% (planned) | Bend2 *plans* dependent types + proofs; HVM4 itself is untyped. Not shipped. | 0 · 0 · 0 — untyped; Bend2's types and proofs are planned |
-| A3 Kernel | ✗ 0% (trust hvm.c) | No LCF kernel, no evidence discipline. Trust = trust `hvm.c`. | 0 · 0 · 0 — trust is `hvm.c` |
-| A4 Equality | ✗ 0% (none) | Affine/optimal-sharing semantics, no equivalence-licensing story at all. | 0 · 0 · 0 — none |
-| A5 Perf | ◐ 50% (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2. | 1 · ½† · 0 — native C with GPU lineage; the runtime reports interaction counts; no cost in types |
-| A6 Search | ◐ 50% (superposition) | The only project anywhere with superposition-based program search *in the runtime*. | 1 · ½ · 0 — SupGen enumerates superposed candidates until tests pass; tests rather than a checker, no cost objective |
+| A1 Substrate | ◐ 33% (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. | ½ · ½ · 0 — terms are runtime graph nodes with no in-language inspection; untyped, no checker |
+| A2 Specification | ✗ 0% (planned) | Bend2 *plans* dependent types + proofs; HVM4 itself is untyped. Not shipped. Equality: Affine/optimal-sharing semantics, no equivalence-licensing story at all. | 0 · 0 · 0 · 0 — untyped; Bend2's types and proofs are planned |
+| A3 Trust | ✗ 0% (trust hvm.c) | No LCF kernel, no evidence discipline. Trust = trust `hvm.c`. | 0 · 0 · 0 — trust is `hvm.c` |
+| A4 Execution | ◐ 50% (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2. | 1 · 0 · 1† · 0 — native C with GPU lineage; the runtime reports interaction counts; no verified path, no rewrite mechanism |
+| A5 Search | ◐ 50% (superposition) | The only project anywhere with superposition-based program search *in the runtime*. | 1 · ½ · 0 — SupGen enumerates superposed candidates until tests pass; tests rather than a checker, no cost objective |
 
 ## What disp could steal
 
@@ -96,4 +95,4 @@ metacircularity, equality) and disp is missing what it built (a fast net with
 working superposition search). Risk: Taelin's restart pattern (HVM2→3→4,
 Kind→Kind2→Bend2) means the proof system has been "planned" for years.
 
-**Distance from disp's goals: closest on A5/A6, absent on A1–A4.**
+**Distance from disp's goals: closest on A4/A5, absent on A1–A3.**

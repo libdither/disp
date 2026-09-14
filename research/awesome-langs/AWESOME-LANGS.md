@@ -12,12 +12,11 @@ search on itself.
 
 | Axis | Short name |
 |---|---|
-| **A1** | Reflection / programs-as-data |
-| **A2** | Spec power (dependent types, type system as library code) |
-| **A3** | Tiny trusted kernel, everything clever untrusted |
-| **A4** | Equality — licensing "different program, same behavior" |
-| **A5** | Native performance + cost model |
-| **A6** | Search: spec → implementation, and self-application |
+| **A1** | Substrate: reflection, programs-as-data |
+| **A2** | Specification: dependent types, proofs, resources, equality |
+| **A3** | Trust: tiny kernel, everything clever untrusted |
+| **A4** | Execution: native speed, path to the machine, cost accounting, licensed rewrites |
+| **A5** | Search: spec → implementation, and self-application |
 
 ---
 
@@ -25,37 +24,37 @@ search on itself.
 
 Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES.md`](_AXES.md) clauses; ✅ from 80%, ◐ from 25%, ✗ below · **bold = ahead of disp on that axis** · the write-ups carry the how-tags and clause values
 
-| Project | A1 | A2 | A3 | A4 | A5 | A6 | Closest to disp on |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| [**HVM4 / Bend2 / SupGen**](hvm4-bend-supgen.md) | ◐ 33% | ✗ 0% | ✗ 0% | ✗ 0% | **◐ 50%** | **◐ 50%** | the *search substrate* — superposition search in the runtime |
-| [**Metamath Zero**](metamath-zero.md) | ◐ 33%? | ◐ 50% | **✅ 100%** | ✗ 0% | ✗ 17% | ✗ 0% | the *kernel* + hardware model + self-verification |
-| [**Verus**](verus.md) | ✗ 0% | ◐ 50% | ✗ 0% | ◐ 33% | **◐ 33%** | **◐ 67%** | *delivered outcomes* — verified fast systems code from specs |
-| [**F\* / Low\* / Pulse**](fstar-lowstar-pulse.md) | ◐ 50% | **✅ 100%** | ✗ 17% | ◐ 33% | **◐ 33%** | ✗ 0% | the *shipping baseline*: dependent spec → verified fast C |
-| [**Lean 4**](lean4.md) | ◐ 50% | **✅ 100%** | ✅ 83% | ◐ 33% | ✗ 17% | **◐ 33%** | *spec power* + where the AI provers live |
-| [**Nova**](nova.md) | ✗ 0% | ◐ 67% | ◐ 67%? | **◐ 67%** | ✗ 0% | ✗ 0% | the *equality* answer + certificate/kernel split |
-| [**Blight**](blight.md) | ✗ 0%? | ◐ 67% | **✅ 100%** | **◐ 67%** | ✗ 0% | ✗ 0% | the *kernel architecture*, independently reinvented |
-| [**Soma**](soma.md) | ✗ 0% | ◐ 33% | ✗ 0% | ✗ 0% | **◐ 50%** | ✗ 0% | same four ingredients, assembled for speed |
-| [**fiat-crypto + CryptOpt + Jasmin**](fiat-crypto-cryptopt-jasmin.md) | ◐ 50% | **✅ 100%** | ✅ 83% | **◐ 67%** | **◐ 67%** | **◐ 67%** | the *whole endgame*, at 1/1000th scope |
-| [**Velvet / Loom / WybeCoder**](velvet-loom-wybecoder.md) | ◐ 50% | **✅ 100%** | ✅ 83% | ◐ 33% | ✗ 0% | **◐ 50%** | the *agentic proof loop*, with numbers |
-| [**Agda / Cubical**](agda-cubical.md) | ◐ 50% | **✅ 100%** | ✗ 17% | **◐ 67%** | ✗ 0% | ✗ 0% | cubical equality; reflection-by-quotation contrast |
-| [**Narya**](narya.md) | ✗ 0% | ◐ 67% | ✗ 17% | ◐ 50% | ✗ 0% | ✗ 0% | the *interval-free* equality answer, shaped like disp's per-type metadata |
-| [**Idris 2 / QTT**](idris2-qtt.md) | ◐ 50% | **✅ 83%** | ✗ 17% | ✗ 17% | **◐ 33%** | ✗ 0% | the *grading* formalism disp's cost ledger uses |
-| [**CakeML + Pancake**](cakeml-pancake.md) | ✗ 0% | ◐ 50% | **✅ 100%** | ◐ 33% | **◐ 33%** | ✗ 0% | verified *all the way to the binary* |
-| [**ATS3 / Xanadu**](ats-xanadu.md) | ✗ 0% | **✅ 83%** | ✗ 17% | ✗ 0% | **◐ 33%** | ✗ 0% | the 25-year prior attempt at A2+A5 |
-| [**Vow**](vow.md) | ✗ 0% | ◐ 33% | ✗ 0% | ✗ 0% | **◐ 33%** | **◐ 33%** | the *agent-facing interface* |
-| [**Dafny**](dafny.md) | ✗ 0% | ◐ 50% | ✗ 0% | ◐ 33% | ✗ 0% | **◐ 33%** | calibration: what AI writes best |
-| [**NanoLang**](nanolang.md) | ✗ 0% | ✗ 0% | ✗ 17% | ✗ 0% | **◐ 33%** | **✗ 17%** | mechanized metatheory, solo |
-| [**Rust cluster**](rust-verification-cluster.md) | ✗ 0% | **✅ 83%** | ◐ 50% | ◐ 33% | **◐ 33%** | **◐ 33%** | the competition, and the fallback |
-| [**Mojo**](mojo.md) | ◐ 33% | ✗ 17% | ✗ 0% | ✗ 0% | **◐ 33%** | **◐ 33%**ᶠ | one language at every stage, at industrial scale |
-| [**LogosLang**](logoslang.md) | ◐ 50% | ✗ 0%ᵈ | ✗ 0% | ✗ 0% | **◐ 33%** | ✗ 0% | nearest indie statement of disp's thesis |
-| [**Acorn**](acorn.md) | ✗ 0% | ◐ 50% | ✗ 0%? | ✗ 0% | ✗ 0% | **◐ 50%** | *local* neural proposer in the loop |
-| [**Salt**](salt.md) | ✗ 0% | ◐ 33% | ✗ 0% | ✗ 0% | ✗ 17%ᶜ | ✗ 0% | proof-coverage as a continuous signal |
-| [**Telomare** (Stand-In Language)](telomare.md) | ✗ 17% | ✗ 17% | ✗ 0% | ✗ 0% | **◐ 33%**ᵗ | ✗ 0% | the *static cost bound*: totality by inferred iteration counts, `--certificate`/`--meter` |
-| [**Stellogen**](stellogen.md) | ✅ 83% | ✗ 17% | ◐ 50% | ✗ 0% | ✗ 0% | ✗ 0% | *types as user-space test suites*; the usine/usage split `CHECK.disp` re-derives, with the same function-type gap |
-| [**Nock / Hoon**](nock-hoon.md) | ✅ 83% | ✗ 0% | ◐ 50% | ✗ 0% | **◐ 33%** | ✗ 0% | the *substrate*: a frozen reflective combinator VM whose jets are `.opt.disp` overlays without licenses |
-| [**Indie AI-first cluster**](indie-ai-first-cluster.md) | ✗ 0% | ◐ 33% | ✗ 0% | ✗ 0% | ✗ 17% | **◐ 33%** | LSTS shares the library-not-kernel thesis |
-| [**Adjacent substrates**](adjacent-substrates.md) | — | — | — | **✅ 100%**ᵉ | — | — | egg/e-graphs ≈ disp's `~_T` machinery |
-| [**Graveyard**](graveyard.md) | — | — | — | — | — | — | what happens when this is attempted |
+| Project | A1 | A2 | A3 | A4 | A5 | Closest to disp on |
+|---|:--:|:--:|:--:|:--:|:--:|---|
+| [**HVM4 / Bend2 / SupGen**](hvm4-bend-supgen.md) | ◐ 33% | ✗ 0% | ✗ 0% | **◐ 50%** | **◐ 50%** | the *search substrate* — superposition search in the runtime |
+| [**Metamath Zero**](metamath-zero.md) | ◐ 33%? | ◐ 25% | **✅ 100%** | **◐ 50%** | ✗ 0% | the *kernel* + hardware model + self-verification |
+| [**Verus**](verus.md) | ✗ 0% | ◐ 38% | ✗ 0% | ◐ 25% | **◐ 67%** | *delivered outcomes* — verified fast systems code from specs |
+| [**F\* / Low\* / Pulse**](fstar-lowstar-pulse.md) | ◐ 50% | **◐ 62%** | ✗ 17% | ◐ 25% | ✗ 0% | the *shipping baseline*: dependent spec → verified fast C |
+| [**Lean 4**](lean4.md) | ◐ 50% | **◐ 62%** | ✅ 83% | ✗ 12% | **◐ 33%** | *spec power* + where the AI provers live |
+| [**Nova**](nova.md) | ✗ 0% | **◐ 62%** | ◐ 67%? | ✗ 0% | ✗ 0% | the *equality* answer + certificate/kernel split |
+| [**Blight**](blight.md) | ✗ 0%? | **◐ 75%** | **✅ 100%** | ✗ 0% | ✗ 0% | the *kernel architecture*, independently reinvented |
+| [**Soma**](soma.md) | ✗ 0% | ◐ 38% | ✗ 0% | ◐ 25% | ✗ 0% | same four ingredients, assembled for speed |
+| [**fiat-crypto + CryptOpt + Jasmin**](fiat-crypto-cryptopt-jasmin.md) | ◐ 50% | **◐ 62%** | ✅ 83% | **◐ 75%** | **◐ 67%** | the *whole endgame*, at 1/1000th scope |
+| [**Velvet / Loom / WybeCoder**](velvet-loom-wybecoder.md) | ◐ 50% | **◐ 62%** | ✅ 83% | ✗ 0% | **◐ 50%** | the *agentic proof loop*, with numbers |
+| [**Agda / Cubical**](agda-cubical.md) | ◐ 50% | **◐ 75%** | ✗ 17% | ✗ 0% | ✗ 0% | cubical equality; reflection-by-quotation contrast |
+| [**Narya**](narya.md) | ✗ 0% | ◐ 50% | ✗ 17% | ✗ 0% | ✗ 0% | the *interval-free* equality answer, shaped like disp's per-type metadata |
+| [**Idris 2 / QTT**](idris2-qtt.md) | ◐ 50% | **◐ 75%** | ✗ 17% | ✗ 12% | ✗ 0% | the *grading* formalism disp's cost ledger uses |
+| [**CakeML + Pancake**](cakeml-pancake.md) | ✗ 0% | ◐ 38% | **✅ 100%** | **◐ 62%** | ✗ 0% | verified *all the way to the binary* |
+| [**ATS3 / Xanadu**](ats-xanadu.md) | ✗ 0% | ◐ 50% | ✗ 17% | ◐ 25% | ✗ 0% | the 25-year prior attempt at A2+A4 |
+| [**Vow**](vow.md) | ✗ 0% | ◐ 25% | ✗ 0% | ◐ 25% | **◐ 33%** | the *agent-facing interface* |
+| [**Dafny**](dafny.md) | ✗ 0% | ◐ 38% | ✗ 0% | ✗ 0% | **◐ 33%** | calibration: what AI writes best |
+| [**NanoLang**](nanolang.md) | ✗ 0% | ✗ 0% | ✗ 17% | ◐ 38% | **✗ 17%** | mechanized metatheory, solo |
+| [**Rust cluster**](rust-verification-cluster.md) | ✗ 0% | **◐ 62%** | ◐ 50% | ◐ 25% | **◐ 33%** | the competition, and the fallback |
+| [**Mojo**](mojo.md) | ◐ 33% | ✗ 12% | ✗ 0% | ◐ 38% | **◐ 33%**ᶠ | one language at every stage, at industrial scale |
+| [**LogosLang**](logoslang.md) | ◐ 50% | ✗ 0%ᵈ | ✗ 0% | ◐ 25% | ✗ 0% | nearest indie statement of disp's thesis |
+| [**Acorn**](acorn.md) | ✗ 0% | ◐ 25% | ✗ 0%? | ✗ 0% | **◐ 50%** | *local* neural proposer in the loop |
+| [**Salt**](salt.md) | ✗ 0% | ◐ 25% | ✗ 0% | ✗ 12%ᶜ | ✗ 0% | proof-coverage as a continuous signal |
+| [**Telomare** (Stand-In Language)](telomare.md) | ✗ 17% | ◐ 25% | ✗ 0% | ◐ 25%ᵗ | ✗ 0% | the *static cost bound*: totality by inferred iteration counts, `--certificate`/`--meter` |
+| [**Stellogen**](stellogen.md) | ✅ 83% | ✗ 12% | ◐ 50% | ✗ 0% | ✗ 0% | *types as user-space test suites*; the usine/usage split `CHECK.disp` re-derives, with the same function-type gap |
+| [**Nock / Hoon**](nock-hoon.md) | ✅ 83% | ✗ 0% | ◐ 50% | **◐ 50%** | ✗ 0% | the *substrate*: a frozen reflective combinator VM whose jets are `.opt.disp` overlays without licenses |
+| [**Indie AI-first cluster**](indie-ai-first-cluster.md) | ✗ 0% | ◐ 25% | ✗ 0% | ◐ 25% | **◐ 33%** | LSTS shares the library-not-kernel thesis |
+| [**Adjacent substrates**](adjacent-substrates.md) | — | — | — | **✅ 100%**ᵉ | — | egg/e-graphs ≈ disp's `~_T` machinery |
+| [**Graveyard**](graveyard.md) | — | — | — | — | — | what happens when this is attempted |
 
 ᵈ designed, not built · ᶜ claimed, unverified provenance · ᵉ egg specifically · ᶠ cost-only parameter sweeps, not program search · ᵗ static iteration bounds, no native speed
 
@@ -63,8 +62,8 @@ Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES
 
 ## How close is anyone to disp's actual goal?
 
-**Nobody occupies disp's square.** Every project here has at most four of the six
-axes, and the missing ones are always the same pair: **A1 + A6 together**. That
+**Nobody occupies disp's square.** Every project here is missing the same pair: **A1 + A5
+together**, a reflective substrate and a search. That
 combination — a reflective substrate where the optimizer is a program in the
 language it optimizes — is what makes self-application possible, and it is
 structurally unavailable to the entire two-layer world (Rust+SMT, Lean+extraction,
@@ -78,24 +77,24 @@ itself, and no one else's can.**
 
 ### Closest by axis
 
-- **A1 (reflection):** disp and Nock are the only two with native intensionality and
+- **A1 (substrate):** disp and Nock are the only two with native intensionality and
   no quotation layer; everyone else quotes (Lean `Expr`, Agda `Term`, Meta-F*) or, like
   Mojo, stages the same language without ever making terms data. Nock has run an
-  operating system on it for a decade and never built a checker on it.
-- **A2 (spec power):** disp trails badly. Lean, Agda, F*, Nova, Blight all have more.
-- **A3 (kernel):** MM0 ahead; Nova and Blight match the architecture.
-- **A4 (equality):** **disp is last.** Nova (extensional + certificates), Agda
-  (cubical), Narya (observational, partially computing), and egg (e-graphs with
-  replayable certificates) all have answers.
-  This is disp's own Q1 and the survey confirms it as the weakest point.
-- **A5 (performance):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ CakeML ahead; disp is an
-  interpreted tree-walker with a measured 4,000–67,000× ic-net penalty. Telomare is the
-  only entry with a *static* cost bound (inferred per-site iteration counts): the coeffect
-  half of §9, which disp has not built. Vere and NockVM are native Nock interpreters
-  ahead of disp's tree-walkers, with no cost model at all.
-- **A6 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
+  operating system on it for a decade and never built a checker on it. Stellogen
+  inspects natively but cannot run what it inspects.
+- **A2 (specification):** disp trails. Lean, Agda, F*, Rocq have more type theory and
+  far more library; on the equality clause Nova (extensional), Agda and Blight
+  (cubical) and Narya (observational) all have answers where disp has a slice, which
+  is disp's own Q1 confirmed as the weakest point.
+- **A3 (trust):** MM0 ahead; Blight and CakeML match it with an independent second
+  checker; Nova, Lean and Rocq match the architecture.
+- **A4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma on raw speed; CakeML, MM0 and the
+  Jasmin/bedrock2 line have the verified path to the machine disp lacks; disp,
+  HVM4 and Telomare are the ones that account for cost deterministically; only
+  CryptOpt installs a rewrite on a checked license, Nock and Mojo assert theirs.
+- **A5 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
   and CryptOpt (randomized, certified) are all ahead of disp, which has this
-  designed but unbuilt.
+  designed but unbuilt. Nobody has aimed a search at itself.
 
 ### The three results that most change the picture
 
@@ -159,20 +158,20 @@ itself, and no one else's can.**
 
 Two of them, stated plainly:
 
-**disp's weakest axis is the one it identified as its spine.** FOUNDATIONS Part V
-says A4 (the intensional/extensional gap) is make-or-break Q1. This survey confirms
-disp is *last* on that axis among serious systems — and that two small projects
-(Nova, Blight) already have working answers by choosing different theories, while
-egg has a tooled, certificate-emitting answer for the first-order fragment.
+**disp's weakest clauses are the ones it identified as its spine.** FOUNDATIONS Part V
+says equality (the intensional/extensional gap) is make-or-break Q1. This survey confirms
+disp holds half an equality theory and half a rewrite license, while two small projects
+(Nova, Blight) already have working equality theories by choosing different foundations,
+and egg has a tooled, certificate-emitting rewrite engine for the first-order fragment.
 
 **The thing disp wants to automate is the thing AI provers are worst at.** The
 production verdict from the Rust→Lean pipeline (Runtime Verification + Ethereum
 Foundation, May 2026): AI provers are a productivity multiplier for structural
 lemmas and linear arithmetic, but **weak at domain-specific algebra and
 loop-invariant discovery, and spec design stays human**. Proof-*closing* is getting
-solved; invariant *discovery* and implementation *synthesis* are not. disp's A6
+solved; invariant *discovery* and implementation *synthesis* are not. disp's A5
 needs the second category.
 
-Both point the same way: disp's differentiator (A1+A6 self-application) is real and
-unoccupied, but it is gated behind A4, where disp is behind everyone and where the
+Both point the same way: disp's differentiator (A1+A5 self-application) is real and
+unoccupied, but it is gated behind equality, where disp is behind everyone and where the
 available answers come from theories disp deliberately did not choose.

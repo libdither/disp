@@ -18,7 +18,7 @@ compilation reuses CakeML's **verified backend**, so semantics are preserved to 
 binary. A verified Ethernet NIC driver for LionsOS/seL4 Microkit took a first-year
 PhD student ~3 person-months. New features landed February 2026 (function inlining).
 
-## Why disp should care: this is A5 taken seriously
+## Why disp should care: this is A4 taken seriously
 
 Everything else in this survey that claims systems performance either (a) trusts a
 compiler (Verus trusts rustc, F* trusts KaRaMeL + the C compiler, ATS trusts the C
@@ -45,12 +45,11 @@ requiring dependent types for everything, it uses a separation-logic frontend
 
 | Axis | CakeML/Pancake | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✗ 0% (none) | Conventional verified compiler; no programs-as-data. | 0 · 0 · 0 — conventional verified compiler |
-| A2 Spec power | ◐ 50% (HOL4+sep logic) | HOL4 for the compiler proof (very strong); Viper/separation logic for user code (decidable fragment). Not dependent types in the user language. | ½ · ½ · ½ — Viper contracts for user code; HOL4's library serves the compiler proof |
-| A3 Kernel | ✅ 100% (HOL4 LCF) | HOL4's LCF kernel — the original LCF architecture disp's §4 descends from. | 1 · 1 · 1† — HOL4's LCF kernel; theorems are the evidence; independent HOL checkers exist (OpenTheory, Candle) |
-| A4 Equality | ◐ 33% (compiler proof) | Compiler correctness *is* a semantics-preservation relation — the most industrial-strength "these two programs are equivalent" machinery in existence, but proved per-compiler-pass by humans, not searched. | ½ · 0 · ½ — per-pass semantics preservation proved by humans licenses the compiler's fixed passes |
-| A5 Perf | ◐ 33% (verified native) | Verified native code. Pancake drivers are performant and run in production-ish settings (LionsOS/seL4). | 1 · 0 · 0 — verified native code in production-ish settings |
-| A6 Search | ✗ 0% (none) | None. All proofs and code are human-written. | 0 · 0 · 0 — human-written |
+| A1 Substrate | ✗ 0% (none) | Conventional verified compiler; no programs-as-data. | 0 · 0 · 0 — conventional verified compiler |
+| A2 Specification | ◐ 38% (HOL4+sep logic) | HOL4 for the compiler proof (very strong); Viper/separation logic for user code (decidable fragment). Not dependent types in the user language. Equality: Compiler correctness *is* a semantics-preservation relation — the most industrial-strength "these two programs are equivalent" machinery in existence, but proved per-compiler-pass by humans, not searched. | ½ · ½ · 0 · ½ — Viper contracts for user code, HOL4 proofs about the compiler; per-pass semantics preservation is the equality, proved by humans |
+| A3 Trust | ✅ 100% (HOL4 LCF) | HOL4's LCF kernel — the original LCF architecture disp's §4 descends from. | 1 · 1 · 1† — HOL4's LCF kernel; theorems are the evidence; independent HOL checkers exist (OpenTheory, Candle) |
+| A4 Execution | ◐ 62% (verified native) | Verified native code. Pancake drivers are performant and run in production-ish settings (LionsOS/seL4). | 1 · 1 · 0 · ½ — verified native code, the compiler proved down to the binary; the proved passes are fixed, not user-defined; no cost model |
+| A5 Search | ✗ 0% (none) | None. All proofs and code are human-written. | 0 · 0 · 0 — human-written |
 
 ## What disp could steal
 
@@ -73,8 +72,8 @@ requiring dependent types for everything, it uses a separation-logic frontend
 These are *human-driven* verification projects with no automation ambitions. The
 proofs are large, expensive, and written by experts (seL4-adjacent culture). disp's
 entire premise is that this labor is what should be automated. CakeML/Pancake is
-therefore both the quality bar for A5 and the cost demonstration that motivates
-disp's A6.
+therefore both the quality bar for A4 and the cost demonstration that motivates
+disp's A5.
 
 ## Verdict
 
@@ -82,5 +81,5 @@ disp's A6.
 available library of worked program-equivalence proofs — which is disp's Q1
 problem in a different notation.**
 
-**Distance from disp's goals: ahead on A5's verification depth, absent on A1 and
-A6, and deliberately human-powered.**
+**Distance from disp's goals: ahead on A4's verification depth, absent on A1 and
+A5, and deliberately human-powered.**

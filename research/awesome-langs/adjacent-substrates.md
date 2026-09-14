@@ -39,7 +39,7 @@ elaboration → *same type, same tree*, O(1) conversion).
 The limitation FOUNDATIONS already names is the important one: content-addressing
 gives *syntactic* identity, not *semantic* equality — two behaviorally identical
 definitions still hash differently. So Unison validates disp's substrate choice and
-simultaneously demonstrates that it does not solve A4.
+simultaneously demonstrates that it does not solve equality.
 
 ## Granule — coeffects, the multi-axis version
 
@@ -79,7 +79,7 @@ states *facts* and the compiler proves bounds/overflow safety at compile time, t
 transpiles to C with zero runtime cost. The specs are shallow (safety, not
 functional correctness) — but it is a real, widely-deployed instance of
 "programmer writes assertions, compiler discharges them, output is C-fast," which
-is disp's A2+A5 at 5% of the ambition and 100% of the delivery.
+is disp's A2+A4 at 5% of the ambition and 100% of the delivery.
 
 ## What disp should do with this file
 

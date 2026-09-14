@@ -33,7 +33,7 @@ point and a soundness hazard").
 
 **The equality answer disp cites.** Lean is intensional MLTT with definitional
 unfolding, `Quot`, and propositional extensionality as axioms. It does **not**
-solve A4 the way disp needs — mathlib works because humans supply the rewrite
+solve equality the way disp needs — mathlib works because humans supply the rewrite
 chains, and `grind`/`simp` automate the easy ones. The Lean FRO Y3 roadmap
 (Aug 2025–Jul 2026) explicitly targets software verification: `grind`/`simp`
 scaling, counterexample generation, VC generation from `do`-notation.
@@ -49,17 +49,16 @@ scaffolding changes that dramatically (see `velvet-loom-wybecoder.md`).
 
 | Axis | Lean 4 | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ◐ 50% (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. | 1 · 0 · ½† — `Expr` deep embedding; `MetaM` exposes inference and checking to metaprograms |
-| A2 Spec power | ✅ 100% (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. | 1 · 1 · 1 — full dependent types and universes; mathlib |
-| A3 Kernel | ✅ 83% (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. | ½ · 1 · 1 — a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
-| A4 Equality | ◐ 33% (tactics) | Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. | ½ · ½ · 0 — propositional equality plus Quot and axioms; rewriting is tactic-driven |
-| A5 Perf | ✗ 17% (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. | ½ · 0 · 0 — via C, reference-counted; fine for tooling, not systems class |
-| A6 Search | ◐ 33% (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. | ½ · ½ · 0 — the richest external ecosystem of proof-search agents; nothing built in; no cost |
+| A1 Substrate | ◐ 50% (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. | 1 · 0 · ½† — `Expr` deep embedding; `MetaM` exposes inference and checking to metaprograms |
+| A2 Specification | ◐ 62% (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. Equality: Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. | 1 · 1 · 0 · ½ — full dependent types, universes, mathlib; propositional equality with Quot and axioms, rewriting tactic-driven |
+| A3 Trust | ✅ 83% (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. | ½ · 1 · 1 — a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
+| A4 Execution | ✗ 12% (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. | ½ · 0 · 0 · 0 — via C, reference-counted; fine for tooling, not systems class |
+| A5 Search | ◐ 33% (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. | ½ · ½ · 0 — the richest external ecosystem of proof-search agents; nothing built in; no cost |
 
 ## What disp could steal
 
 - **`grind`-style automation as a target for the optimizer.** Lean's Y3 roadmap is
-  effectively an admission that A4 must be attacked with engineering, not just
+  effectively an admission that equality must be attacked with engineering, not just
   theory. Whatever Lean lands there is directly relevant to disp's Q1.
 - **The AI-proposer plumbing.** disp's §15 is "barely sketched even in design."
   Lean has the only mature interface (`sorry`-holes, tactic state as a serializable
@@ -86,12 +85,12 @@ Three ways, all deliberate:
 ## Verdict
 
 **disp's most serious competitor for A2, and the place where the neural half of
-A6 already works.** If disp's Q1 (a decidable rewrite-licensing fragment) fails,
+A5 already works.** If disp's Q1 (a decidable rewrite-licensing fragment) fails,
 the honest fallback for the whole project is "write specs in Lean and let
 Aristotle/Gauss-class provers close obligations" — which is what Runtime
 Verification's production zkEVM pipeline actually does. disp's claim to exist is
-A1 + A4 + A5 + A6 as a *combination*; Lean beats it on A2 and A3 individually and
-loses on A5 badly.
+A1 + equality + A4 + A5 as a *combination*; Lean beats it on A2 and A3 individually and
+loses on A4 badly.
 
 **Distance from disp's goals: same destination on verification, opposite substrate;
 no systems-performance or cost story at all.**

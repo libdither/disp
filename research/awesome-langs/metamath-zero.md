@@ -53,12 +53,11 @@ by *specification minimalism* rather than by an in-repo harness.
 
 | Axis | MM0 | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ◐ 33%? (deep embedding) | MM0 formalizes MM0, but via explicit deep embedding, not native programs-as-data. No tree-calculus-style intensionality. | 1 · 0 · ? — MM1 metaprograms manipulate terms over a deep embedding; whether they can call the verifier is not in the write-up |
-| A2 Spec power | ◐ 50% (HOL subset) | Interpretable as a subset of HOL — deliberately *weaker* than dependent types. Expressiveness was traded away for verifier simplicity. | 0 · 1 · ½ — a HOL subset, weaker than dependent types by design; explicit proof objects; a modest library plus Metamath imports |
-| A3 Kernel | ✅ 100% (tiny C verifier) | The strongest trusted-core story in existence: a C verifier small enough to formalize, with the whole authoring layer untrusted and proof-producing. | 1 · 1 · 1 — a C verifier small enough to formalize; MMB proof objects; MM1 untrusted; independent verifiers in Rust and Kotlin |
-| A4 Equality | ✗ 0% (proof format) | Not addressed — MM0 is a proof format, not an optimizing calculus. No rewrite-licensing notion. | 0 · 0 · 0 — a proof format, not an optimizing calculus |
-| A5 Perf | ✗ 17% (verified x86) | Checking is Metamath-fast (seconds for huge libraries). MMC compiles to verified x86. But MM0 is not a general-purpose systems language you'd write applications in. | ½ · 0 · 0 — MMC compiles to verified x86 but MM0 is not a general systems language; the hardware model is a spec, not a cost model |
-| A6 Search | ✗ 0% (none) | No synthesis. MM1 tactics are human-written metaprogramming. | 0 · 0 · 0 — MM1 tactics are human-written |
+| A1 Substrate | ◐ 33%? (deep embedding) | MM0 formalizes MM0, but via explicit deep embedding, not native programs-as-data. No tree-calculus-style intensionality. | 1 · 0 · ? — MM1 metaprograms manipulate terms over a deep embedding; whether they can call the verifier is not in the write-up |
+| A2 Specification | ◐ 25% (HOL subset) | Interpretable as a subset of HOL — deliberately *weaker* than dependent types. Expressiveness was traded away for verifier simplicity. Equality: Not addressed — MM0 is a proof format, not an optimizing calculus. No rewrite-licensing notion. | 0 · 1 · 0 · 0 — a HOL subset with explicit proof objects and a modest library; no dependent types, no resource types, equality not addressed |
+| A3 Trust | ✅ 100% (tiny C verifier) | The strongest trusted-core story in existence: a C verifier small enough to formalize, with the whole authoring layer untrusted and proof-producing. | 1 · 1 · 1 — a C verifier small enough to formalize; MMB proof objects; MM1 untrusted; independent verifiers in Rust and Kotlin |
+| A4 Execution | ◐ 50% (verified x86) | Checking is Metamath-fast (seconds for huge libraries). MMC compiles to verified x86. But MM0 is not a general-purpose systems language you'd write applications in. | ½ · 1 · 0 · ½ — MMC compiles to a formal x86 model with the correctness proved; not a general systems language; no cost model; compilation is the only licensed rewrite |
+| A5 Search | ✗ 0% (none) | No synthesis. MM1 tactics are human-written metaprogramming. | 0 · 0 · 0 — MM1 tactics are human-written |
 
 ## What disp could steal
 
@@ -85,15 +84,15 @@ minimal-kernel end of the design space works when you take nothing else with you
 
 The other difference is the target: MM0's endgame is *trust* (a verified verifier
 on verified hardware). disp's endgame is *automation* (synthesize the program).
-MM0 has no A6 at all and doesn't want one.
+MM0 has no A5 at all and doesn't want one.
 
 ## Verdict
 
 **The reference implementation of disp's A3, and the only project that has taken
-A5's "hardware model in the logic" seriously.** Carneiro is also the single most
+A4's "hardware model in the logic" seriously.** Carneiro is also the single most
 credible individual in this entire survey. Read `mm0.md` and the `verifier.mm0`
 goal theorem before making any further decisions about disp's kernel/certificate
 boundary.
 
-**Distance from disp's goals: far on A2/A4/A6, ahead of disp on A3 and on
+**Distance from disp's goals: far on A2/A5 and on equality, ahead of disp on A3 and on
 hardware modeling.**

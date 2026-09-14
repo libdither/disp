@@ -14,7 +14,7 @@ Vow, NanoLang, Salt, and LogosLang have their own files. This covers the rest.
 | [Sigil](https://github.com/inerte/sigil) | Julio Nobrega | ~15 | Z3 refinement `where` clauses, requires/ensures across call boundaries, capability effects | ✗ **emits TypeScript** | Good ideas, wrong target |
 | [Locque](https://github.com/jaggederest/locque) | Justin George | 3 | Dependently typed, strict value/computation split | ✗ | **Stalled** (Mar 2026); "built almost entirely by LLMs" |
 | [Prove](https://code.botwork.se) | Magnus Knutas | — | Refinement types + **"refutation challenges"** | unknown | Self-hosted forge, hard to assess |
-| [LSTS](https://github.com/Lambda-Mountain-Compiler-Backend/LSTS) | Andrew Johnson | 125 | Language **and proof assistant**; proof concepts moved "entirely to libraries" | ✅ **compiles to C** | Closest to disp's A2+A3+A5 in this tier |
+| [LSTS](https://github.com/Lambda-Mountain-Compiler-Backend/LSTS) | Andrew Johnson | 125 | Language **and proof assistant**; proof concepts moved "entirely to libraries" | ✅ **compiles to C** | Closest to disp's A2+A3+A4 in this tier |
 | [CLR](https://github.com/ityonemo/clr) | Isaac Yonemoto | 277 | Lifetimes + refinement types for **Zig**, via AIR static analysis | ✅ Zig | A tool, not a language; high-credibility dev |
 | [Verity](https://github.com/Th0rgal/verity) | Thomas Marchand | 143 | Verified compiler in **Lean 4**, spec → proven-equivalent bytecode, **0 axioms, no `sorry`** | ✗ EVM only | Best executed; wrong target |
 
@@ -68,5 +68,5 @@ None of these is a design competitor to disp; collectively they establish that
 "contracts for AI authors" is now a crowded idea while "reflective, dependently
 typed, systems-fast, self-optimizing" remains empty.
 
-**Distance from disp's goals: all shallow on A1/A4/A6; LSTS is the only one sharing
+**Distance from disp's goals: all shallow on A1/A5 and on equality; LSTS is the only one sharing
 disp's library-not-kernel philosophy with a native backend.**

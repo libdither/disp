@@ -161,12 +161,11 @@ improved since, and the core team kept 4K anyway.
 
 | Axis | Nock / Hoon | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ✅ 83% (native eval) | Formulas are nouns, opcode 2 is eval, no quotation; the metacircular interpreter is library code and jetted. The only other native-reflection entry, but nothing is checked with it. | 1 · 1 · ½ — formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
-| A2 Spec power | ✗ 0% (structural) | Structural types with variance and wet genericity, vases for runtime typing; no dependent types, compiler-internal, and the authors would redesign it. | 0 · 0 · 0 — structural types with variance and wet genericity; nothing states a value property |
-| A3 Kernel | ◐ 50% (spec + jets) | A page of spec, a conformance suite, and a decade of independent interpreters; then an unbounded trusted surface of jets with no evidence objects and no production differential check. | 1 · 0 · ½ — a page of spec, a conformance suite, independent interpreters; jets are an unbounded trusted surface with no evidence and no production differential check |
-| A4 Equality | ✗ 0% (structural) | Opcode 5 is structural; jets are asserted equivalences dispatched by intensional identity, and the dashboard has been rewritten repeatedly around that mismatch. | 0 · 0 · 0 — opcode 5 is structural; jets are asserted equivalences keyed on intensional identity |
-| A5 Perf | ◐ 33% (native runtimes) | Native C and Rust runtimes ahead of disp's tree-walkers; no cost model, cost as a value forbidden by design, and Skew's dispatch critique stands. | ½ · ½ · 0 — native C and Rust interpreters with jets; `%bout` prints timings; cost as a value forbidden by design |
-| A6 Search | ✗ 0% (none) | None; `honk`'s parity policy is a differential oracle, not a search. | 0 · 0 · 0 — `honk`'s parity policy is a differential oracle, not a search |
+| A1 Substrate | ✅ 83% (native eval) | Formulas are nouns, opcode 2 is eval, no quotation; the metacircular interpreter is library code and jetted. The only other native-reflection entry, but nothing is checked with it. | 1 · 1 · ½ — formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
+| A2 Specification | ✗ 0% (structural) | Structural types with variance and wet genericity, vases for runtime typing; no dependent types, compiler-internal, and the authors would redesign it. Equality: Opcode 5 is structural; jets are asserted equivalences dispatched by intensional identity, and the dashboard has been rewritten repeatedly around that mismatch. | 0 · 0 · 0 · 0 — structural types with variance; nothing states a value property; opcode 5 is structural equality |
+| A3 Trust | ◐ 50% (spec + jets) | A page of spec, a conformance suite, and a decade of independent interpreters; then an unbounded trusted surface of jets with no evidence objects and no production differential check. | 1 · 0 · ½ — a page of spec, a conformance suite, independent interpreters; jets are an unbounded trusted surface with no evidence and no production differential check |
+| A4 Execution | ◐ 50% (native runtimes) | Native C and Rust runtimes ahead of disp's tree-walkers; no cost model, cost as a value forbidden by design, and Skew's dispatch critique stands. | ½ · ½ · ½ · ½ — C and Rust interpreters with jets; a page of frozen spec with a conformance suite is a modelled VM; `%bout` timing hints, cost as a value forbidden; jets are asserted equivalences dispatched on intensional identity |
+| A5 Search | ✗ 0% (none) | None; `honk`'s parity policy is a differential oracle, not a search. | 0 · 0 · 0 — `honk`'s parity policy is a differential oracle, not a search |
 
 ## Where disp differs
 
@@ -190,5 +189,5 @@ trusting the jets, where disp wants proofs and measurement. Read it as the field
 system fails.**
 
 **Distance from disp's goals: overlaps A1 entirely and A3's tiny-kernel discipline; the jet system is
-`.opt.disp` without licenses and its failure catalogue is the useful part; zero on A6; kelvin freezing is
+`.opt.disp` without licenses and its failure catalogue is the useful part; zero on A5; kelvin freezing is
 the one substrate bet disp rejects outright.**

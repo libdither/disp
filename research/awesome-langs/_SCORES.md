@@ -1,16 +1,17 @@
 # Scores
 
-Draft for review (2026-09-14). Each axis's maximum is disp's own requirement, split into
-three clauses in [`_AXES.md`](_AXES.md#grading-the-maximum-and-the-clauses); every clause
-scores 0, ½ or 1 and the axis percentage is their mean. The write-ups' scorecard notes are
-the evidence. `†` marks a value taken from general knowledge beyond the write-up; `?` marks
-a clause the write-up does not settle (scored 0, percentage provisional). Rows follow the
-master table, disp first. `scripts/awesome-scores.py` recomputes the percentages, ranks each
-column, and lists every derived symbol that differs from the master table.
+Every score, in one place (2026-09-14). Each axis's maximum is disp's own requirement, split into
+three or four clauses in [`_AXES.md`](_AXES.md#grading-the-maximum-and-the-clauses); every clause
+scores 0, ½ or 1 and the axis percentage is their mean. The write-ups' scorecard notes are the
+evidence. `†` marks a value taken from general knowledge beyond the write-up; `?` marks a clause the
+write-up does not settle (scored 0, percentage provisional); `—` marks a clause that does not apply
+(left out of the mean). Rows follow the master table, disp first. This file is the source:
+`scripts/awesome-scores.py --write` recomputes the percentages and copies every cell into the
+write-ups, the master table and disp's own table.
 
-## A1 Reflection / programs-as-data
+## A1 Substrate
 
-(a) programs can inspect other programs · (b) one representation is both run and inspected, no quotation layer · (c) the checker is callable from programs as an ordinary function
+(a) programs can inspect other programs · (b) one representation is both run and inspected, no quotation layer · (c) the checker is callable from programs as an ordinary function (½ from metaprograms only)
 
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
@@ -43,42 +44,42 @@ column, and lists every derived symbol that differs from the master table.
 | Nock / Hoon | 1 | 1 | ½ | 83 | formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | contracts + SMT on a host; no reflection anywhere in the genre |
 
-## A2 Spec power
+## A2 Specification
 
-(a) specifications mention values (½ contracts or refinements over runtime values, 1 dependent types) · (b) propositions and proofs are first-class objects (½ obligations discharged by a solver, no proof objects) · (c) breadth in use: universes, inductive families and a proof library people build on (½ a small or young library)
+(a) specifications mention values (½ contracts or refinements over runtime values, 1 dependent types) · (b) propositions and proofs are first-class, with a library in use (½ solver-discharged obligations, or proofs without a library) · (c) resources and cost as types (½ a usage grade, erasure by quantity, or a static bound that is not a type) · (d) an equality theory you can state and check: extensional, cubical, observational (½ propositional or SMT-fragment equality, tactic-driven or a decidable fragment)
 
-| Project | a | b | c | % | Why |
-|---|:-:|:-:|:-:|--:|---|
-| disp | 1 | ½ | ½ | 67 | Pi, telescopes, coproducts and proofs that run; a small library (~1,300 pins), no universe hierarchy yet |
-| HVM4 / Bend2 / SupGen | 0 | 0 | 0 | 0 | untyped; Bend2's types and proofs are planned |
-| Metamath Zero | 0 | 1 | ½ | 50 | a HOL subset, weaker than dependent types by design; explicit proof objects; a modest library plus Metamath imports |
-| Verus | ½ | ½ | ½ | 50 | first-order contracts with quantifiers and ghost state, Z3-discharged; verified kernels and allocators are the library in use |
-| F* / Low* / Pulse | 1 | 1 | 1 | 100 | dependent types, refinements, effects, Pulse; HACL*/EverCrypt is a decade-deep library |
-| Lean 4 | 1 | 1 | 1 | 100 | full dependent types and universes; mathlib |
-| Nova | 1 | 1 | 0 | 67 | extensional MLTT; solo and research-scale, no library |
-| Blight | 1 | 1 | 0 | 67 | cubical + QTT + effects; two months old, no library |
-| Soma | 1 | 0 | 0 | 33 | dependent types + QTT + rows; not a proof assistant, no proof library |
-| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 1 | 100 | full CIC in Rocq; fiat-crypto and bedrock2 are the library |
-| Velvet / Loom / WybeCoder | 1 | 1 | 1 | 100 | Lean + mathlib behind a Dafny-style surface |
-| Agda / Cubical | 1 | 1 | 1 | 100 | dependent types, HITs, univalence; the standard and cubical libraries |
-| Narya | 1 | 1 | 0 | 67 | HoTT + parametricity + modalities; no library, breaking changes expected |
-| Idris 2 / QTT | 1 | 1 | ½ | 83 | dependent types + QTT; a working standard library |
-| CakeML + Pancake | ½ | ½ | ½ | 50 | Viper contracts for user code; HOL4's library serves the compiler proof |
-| ATS3 / Xanadu | 1 | 1† | ½ | 83 | dependent + linear types with an explicit proof language; a 25-year library, little used |
-| Vow | ½ | ½ | 0 | 33 | contracts + loop invariants under bounded model checking; young |
-| Dafny | ½ | ½ | ½ | 50 | first-order + quantifiers, SMT-shaped; a decade of AWS production specs |
-| NanoLang | 0 | 0 | 0 | 0 | no user-level spec language; the proofs are about the language |
-| Rust cluster | 1 | 1 | ½ | 83 | from Flux refinements to RefinedRust's Iris and Aeneas's Lean; libcrux and ACE-RISCV are the library |
-| Mojo | ½ | 0 | 0 | 17 | types indexed by compile-time values only; no propositions, no proofs |
-| LogosLang | 0 | 0 | 0 | 0 | the proof layer is a design document |
-| Acorn | 0 | 1 | ½ | 50 | a theorem-proving language for mathematics; acornlib aims at the Top 100 list |
-| Salt | ½ | ½ | 0 | 33 | Z3 contracts: bounds, postconditions, quantifiers, invariants (claimed); no library |
-| Telomare (Stand-In Language) | ½ | 0 | 0 | 17 | STLC-shaped statics; refinements are runtime validators |
-| Stellogen | ½ | 0 | 0 | 17 | types are user-space test galaxies over values; no dependent types, no proofs, function types only for the linear fragment |
-| Nock / Hoon | 0 | 0 | 0 | 0 | structural types with variance and wet genericity; nothing states a value property |
-| Indie AI-first cluster | ½ | ½ | 0 | 33 | Z3 contracts throughout; Aver and Verity borrow proofs from Lean |
+| Project | a | b | c | d | % | Why |
+|---|:-:|:-:|:-:|:-:|--:|---|
+| disp | 1 | ½ | 0 | ½ | 50 | Pi, telescopes, coproducts and proofs that run, over a small library; cost as a grade is designed; equality is intensional with witness-licensed slices and the decidable fragment open (Q1) |
+| HVM4 / Bend2 / SupGen | 0 | 0 | 0 | 0 | 0 | untyped; Bend2's types and proofs are planned |
+| Metamath Zero | 0 | 1 | 0 | 0 | 25 | a HOL subset with explicit proof objects and a modest library; no dependent types, no resource types, equality not addressed |
+| Verus | ½ | ½ | 0 | ½ | 38 | first-order contracts with ghost state, Z3-discharged, over a large verified codebase; SMT-fragment equalities |
+| F* / Low* / Pulse | 1 | 1 | 0 | ½ | 62 | dependent types, refinements, effects, Pulse, with HACL* as the library; SMT-fragment equality |
+| Lean 4 | 1 | 1 | 0 | ½ | 62 | full dependent types, universes, mathlib; propositional equality with Quot and axioms, rewriting tactic-driven |
+| Nova | 1 | ½ | 0 | 1 | 62 | extensional MLTT: anything provably equal is treated as equal and certificates recover decidability; solo, no library |
+| Blight | 1 | ½ | ½ | 1 | 75 | cubical + QTT + effects: computational univalence and quantities in the kernel; two months old, no library |
+| Soma | 1 | 0 | ½ | 0 | 38 | dependent types + QTT + rows, not a proof assistant; quantities are a usage grade; equality not addressed |
+| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 0 | ½ | 62 | full CIC with fiat-crypto and bedrock2 as the library; a verified equivalence checker for straight-line assembly is the equality story, a tiny fragment |
+| Velvet / Loom / WybeCoder | 1 | 1 | 0 | ½ | 62 | Lean + mathlib behind a Dafny-style surface; Lean's equality plus SMT in its fragment |
+| Agda / Cubical | 1 | 1 | 0 | 1 | 75 | dependent types, HITs, univalence with the standard and cubical libraries; cubical equality computes |
+| Narya | 1 | ½ | 0 | ½ | 50 | HoTT + parametricity + modalities, no library yet; observational Id per former, transport computing on some formers so far |
+| Idris 2 / QTT | 1 | 1 | ½ | ½ | 75 | dependent types + QTT with a working standard library; quantities give erasure; intensional propositional equality |
+| CakeML + Pancake | ½ | ½ | 0 | ½ | 38 | Viper contracts for user code, HOL4 proofs about the compiler; per-pass semantics preservation is the equality, proved by humans |
+| ATS3 / Xanadu | 1 | 1† | 0 | 0 | 50 | dependent + linear types with an explicit proof language and a 25-year library; equality not addressed |
+| Vow | ½ | ½ | 0 | 0 | 25 | contracts + loop invariants under bounded model checking; young; equality not addressed |
+| Dafny | ½ | ½ | 0 | ½ | 38 | first-order + quantifiers over a decade of AWS specs; SMT-fragment equality |
+| NanoLang | 0 | 0 | 0 | 0 | 0 | no user-level spec language; the proofs are about the language |
+| Rust cluster | 1 | 1 | 0 | ½ | 62 | from Flux refinements to RefinedRust's Iris and Aeneas's Lean, with libcrux and ACE-RISCV as the library; Aeneas's borrow translation is a machine-produced equivalence, per tool |
+| Mojo | ½ | 0 | 0 | 0 | 12 | types indexed by compile-time values only; no propositions, no proofs, no equality |
+| LogosLang | 0 | 0 | 0 | 0 | 0 | the proof layer and the rewriting engine are design documents |
+| Acorn | 0 | 1 | 0 | 0 | 25 | a theorem-proving language for mathematics with a growing library; no program specifications |
+| Salt | ½ | ½ | 0 | 0 | 25 | Z3 contracts (claimed), no library, equality not addressed |
+| Telomare (Stand-In Language) | ½ | 0 | ½ | 0 | 25 | STLC-shaped statics with refinements as runtime validators; a static, inferred iteration bound per site; structural equality only |
+| Stellogen | ½ | 0 | 0 | 0 | 12 | types are user-space test galaxies over values; no dependent types, no proofs; `==` is syntactic |
+| Nock / Hoon | 0 | 0 | 0 | 0 | 0 | structural types with variance; nothing states a value property; opcode 5 is structural equality |
+| Indie AI-first cluster | ½ | ½ | 0 | 0 | 25 | Z3 contracts throughout, Aver and Verity borrowing Lean proofs; no equality story |
 
-## A3 Kernel / trust
+## A3 Trust
 
 (a) a trusted core small enough to audit · (b) it mints unforgeable evidence: theorems, proof objects, certificates (½ proof objects checked only by a large checker) · (c) the clever layers are untrusted and re-checked by the core, and an independent checker exists (½ re-checked by the one core only)
 
@@ -113,80 +114,45 @@ column, and lists every derived symbol that differs from the master table.
 | Nock / Hoon | 1 | 0 | ½ | 50 | a page of spec, a conformance suite, independent interpreters; jets are an unbounded trusted surface with no evidence and no production differential check |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | contracts + SMT; Verity (Lean, zero axioms) is the exception |
 
-## A4 Equality
+## A4 Execution
 
-(a) a behavioral equality beyond syntactic identity (½ a decidable fragment or a fixed proved relation) · (b) it is mechanically checkable and composes (½ tactic- or human-driven) · (c) it licenses rewrites: something replaces programs by equivalent ones on its authority (½ one slice or a fixed set of passes)
+(a) C/Rust-class native execution (½ compiled but not systems class) · (b) a verified or modelled path to the machine: a verified compiler or a hardware model in the logic (½ a verified backend for a fragment, or a modelled VM) · (c) the runtime accounts for its own cost deterministically: steps, interaction counts, a replayable model (½ timing hints or a report outside the model) · (d) definitions are replaced by faster equivalents on a checked license (½ asserted, like jets or unverified compiler passes, or a fixed set of proved passes)
 
-| Project | a | b | c | % | Why |
-|---|:-:|:-:|:-:|--:|---|
-| disp | ½ | ½ | ½ | 50 | witness-licensed rewrites landed as one slice (map fusion); whether a decidable fragment is rich enough is open (Q1) |
-| HVM4 / Bend2 / SupGen | 0 | 0 | 0 | 0 | none |
-| Metamath Zero | 0 | 0 | 0 | 0 | a proof format, not an optimizing calculus |
-| Verus | ½ | ½ | 0 | 33 | SMT-fragment equalities in proofs; nothing rewrites programs on their authority |
-| F* / Low* / Pulse | ½ | ½ | 0 | 33 | SMT-decided equalities within the fragment |
-| Lean 4 | ½ | ½ | 0 | 33 | propositional equality plus Quot and axioms; rewriting is tactic-driven |
-| Nova | 1 | 1 | 0 | 67 | extensional: anything provably equal is treated as equal; certificates recover decidability; no optimizer consumes it |
-| Blight | 1 | 1 | 0 | 67 | cubical univalence and HITs compute; no rewrite consumer |
-| Soma | 0 | 0 | 0 | 0 | not addressed |
-| fiat-crypto + CryptOpt + Jasmin | ½ | 1 | ½ | 67 | a verified, decidable equivalence checker for straight-line assembly licenses CryptOpt's output; a tiny fragment |
-| Velvet / Loom / WybeCoder | ½ | ½ | 0 | 33 | Lean's equality plus SMT in its fragment |
-| Agda / Cubical | 1 | 1 | 0 | 67 | cubical: computational univalence; no rewrite consumer |
-| Narya | 1 | ½ | 0 | 50 | observational Id per type former; transport computes on only some formers so far |
-| Idris 2 / QTT | ½ | 0 | 0 | 17 | intensional propositional equality, nothing more |
-| CakeML + Pancake | ½ | 0 | ½ | 33 | per-pass semantics preservation proved by humans licenses the compiler's fixed passes |
-| ATS3 / Xanadu | 0 | 0 | 0 | 0 | not addressed |
-| Vow | 0 | 0 | 0 | 0 | not addressed |
-| Dafny | ½ | ½ | 0 | 33 | SMT fragment only |
-| NanoLang | 0 | 0 | 0 | 0 | not addressed |
-| Rust cluster | ½ | ½ | 0 | 33 | Aeneas's functional translation of borrows is a machine-produced equivalence, per tool and human-directed |
-| Mojo | 0 | 0 | 0 | 0 | MLIR rewrites are unverified compiler transforms |
-| LogosLang | 0 | 0 | 0 | 0 | the rewriting engine is unspecified |
-| Acorn | 0 | 0 | 0 | 0 | not addressed for programs |
-| Salt | 0 | 0 | 0 | 0 | not addressed |
-| Telomare (Stand-In Language) | 0 | 0 | 0 | 0 | structural only |
-| Stellogen | 0 | 0 | 0 | 0 | `==` is syntactic by specification |
-| Nock / Hoon | 0 | 0 | 0 | 0 | opcode 5 is structural; jets are asserted equivalences keyed on intensional identity |
-| Indie AI-first cluster | 0 | 0 | 0 | 0 | none |
-| Adjacent substrates | 1 | 1 | 1 | 100 | egg: e-graphs hold classes of equivalent programs, saturation emits certificates a Lean kernel replays, extraction picks the cheapest member |
+| Project | a | b | c | d | % | Why |
+|---|:-:|:-:|:-:|:-:|--:|---|
+| disp | 0 | 0 | 1 | ½ | 38 | interpreted tree-walkers; `--stats` steps and `cold_equiv` are a deterministic, replayable cost model; no hardware model; `.opt.disp` overlays replace definitions under a license, one slice landed |
+| HVM4 / Bend2 / SupGen | 1 | 0 | 1† | 0 | 50 | native C with GPU lineage; the runtime reports interaction counts; no verified path, no rewrite mechanism |
+| Metamath Zero | ½ | 1 | 0 | ½ | 50 | MMC compiles to a formal x86 model with the correctness proved; not a general systems language; no cost model; compilation is the only licensed rewrite |
+| Verus | 1 | 0 | 0 | 0 | 25 | it is Rust; rustc trusted, no cost model, no rewrite license |
+| F* / Low* / Pulse | 1 | 0 | 0 | 0 | 25 | Low*→C competitive with hand-optimized C; KaRaMeL and the C compiler are trusted |
+| Lean 4 | ½ | 0 | 0 | 0 | 12 | via C, reference-counted; fine for tooling, not systems class |
+| Nova | 0 | 0 | 0 | 0 | 0 | a research-scale Idris 2 program |
+| Blight | 0 | 0 | 0 | 0 | 0 | no native backend, no cost model |
+| Soma | 1 | 0 | 0 | 0 | 25 | LLVM native, GC-free flat types at C cost; LLVM trusted |
+| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 0 | 1 | 75 | beats GCC/Clang; Jasmin and bedrock2 compile under verified compilers; CryptOpt's output is installed on a verified equivalence check; cost is measured on the CPU inside the search rather than modelled |
+| Velvet / Loom / WybeCoder | 0 | 0 | 0 | 0 | 0 | programs are extracted for testing only |
+| Agda / Cubical | 0 | 0 | 0 | 0 | 0 | research-grade GHC/JS backends |
+| Narya | 0 | 0 | 0 | 0 | 0 | correctness-first, no performance story |
+| Idris 2 / QTT | ½ | 0 | 0 | 0 | 12 | Chez backend; erasure is graded under Specification |
+| CakeML + Pancake | 1 | 1 | 0 | ½ | 62 | verified native code, the compiler proved down to the binary; the proved passes are fixed, not user-defined; no cost model |
+| ATS3 / Xanadu | 1 | 0 | 0 | 0 | 25 | to C, no GC, no runtime; the C compiler trusted |
+| Vow | 1 | 0 | 0 | 0 | 25 | Cranelift native with a byte-identical bootstrap |
+| Dafny | 0 | 0 | 0 | 0 | 0 | managed backends |
+| NanoLang | 1 | ½ | 0 | 0 | 38 | transpiles to C; NanoISA is a modelled VM whose semantics are proved, used to sandbox FFI |
+| Rust cluster | 1 | 0 | 0 | 0 | 25 | it is Rust |
+| Mojo | 1 | 0 | 0 | ½ | 38 | MLIR codegen for CPU/GPU/accelerators; MLIR rewrites are asserted compiler transforms, unverified |
+| LogosLang | 1 | 0 | 0 | 0 | 25 | Cranelift JIT within 3× of vectorized C; `.compile()` lowers a function, it does not license a replacement |
+| Acorn | 0 | 0 | 0 | 0 | 0 | not a systems language |
+| Salt | ½ | 0 | 0 | 0 | 12 | MLIR→LLVM with claimed `-O3` parity, unverified |
+| Telomare (Stand-In Language) | 0 | 0 | 1 | 0 | 25 | a Haskell tree-walker; `--meter` counts steps and nodes deterministically; the static bound is graded under Specification |
+| Stellogen | 0 | 0 | 0 | 0 | 0 | execution has "a horrible complexity" |
+| Nock / Hoon | ½ | ½ | ½ | ½ | 50 | C and Rust interpreters with jets; a page of frozen spec with a conformance suite is a modelled VM; `%bout` timing hints, cost as a value forbidden; jets are asserted equivalences dispatched on intensional identity |
+| Indie AI-first cluster | ½ | ½ | 0 | 0 | 25 | LSTS compiles to C and CLR rides on Zig; Verity is a verified compiler to EVM bytecode |
+| Adjacent substrates | — | — | — | 1 | 100 | egg: e-graphs hold classes of equivalent programs, saturation emits certificates a Lean kernel replays, extraction installs the cheapest member; a rewrite engine, not a language |
 
-## A5 Performance + cost model
+## A5 Search
 
-(a) C/Rust-class native execution (½ compiled but not systems class) · (b) a primitive returns cost with results (½ a meter or report outside the language) · (c) cost is a typing-level resource (½ a usage grade, erasure, or a static bound that is not a type)
-
-| Project | a | b | c | % | Why |
-|---|:-:|:-:|:-:|--:|---|
-| disp | 0 | ½ | 0 | 17 | interpreted tree-walkers; `--stats` steps are a deterministic meter outside the language; cost as a grade is designed |
-| HVM4 / Bend2 / SupGen | 1 | ½† | 0 | 50 | native C with GPU lineage; the runtime reports interaction counts; no cost in types |
-| Metamath Zero | ½ | 0 | 0 | 17 | MMC compiles to verified x86 but MM0 is not a general systems language; the hardware model is a spec, not a cost model |
-| Verus | 1 | 0 | 0 | 33 | it is Rust; no cost primitive, no cost in types |
-| F* / Low* / Pulse | 1 | 0 | 0 | 33 | Low*→C competitive with hand-optimized C; no cost model |
-| Lean 4 | ½ | 0 | 0 | 17 | via C, reference-counted; fine for tooling, not systems class |
-| Nova | 0 | 0 | 0 | 0 | a research-scale Idris 2 program |
-| Blight | 0 | 0 | 0 | 0 | no native backend, no cost model |
-| Soma | 1 | 0 | ½ | 50 | LLVM native, GC-free; QTT quantities are a usage grade the compiler spends, not cost |
-| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 0 | 67 | beats GCC/Clang; on-CPU benchmarking is the fitness function |
-| Velvet / Loom / WybeCoder | 0 | 0 | 0 | 0 | programs are extracted for testing only |
-| Agda / Cubical | 0 | 0 | 0 | 0 | research-grade GHC/JS backends |
-| Narya | 0 | 0 | 0 | 0 | correctness-first, no performance story |
-| Idris 2 / QTT | ½ | 0 | ½ | 33 | Chez backend; erasure by quantity makes specs free at runtime |
-| CakeML + Pancake | 1 | 0 | 0 | 33 | verified native code in production-ish settings |
-| ATS3 / Xanadu | 1 | 0 | 0 | 33 | to C, no GC, no runtime |
-| Vow | 1 | 0 | 0 | 33 | Cranelift native, linear types |
-| Dafny | 0 | 0 | 0 | 0 | managed backends |
-| NanoLang | 1 | 0 | 0 | 33 | transpiles to C |
-| Rust cluster | 1 | 0 | 0 | 33 | it is Rust |
-| Mojo | 1 | 0 | 0 | 33 | MLIR codegen for CPU/GPU/accelerators; benchmark sweeps are offline tooling |
-| LogosLang | 1 | 0 | 0 | 33 | Cranelift JIT within 3× of vectorized C, measured |
-| Acorn | 0 | 0 | 0 | 0 | not a systems language |
-| Salt | ½ | 0 | 0 | 17 | MLIR→LLVM with claimed `-O3` parity, unverified |
-| Telomare (Stand-In Language) | 0 | ½ | ½ | 33 | a Haskell tree-walker; `--meter` counts steps and nodes; `--certificate` is a static, inferred, input-universal iteration bound |
-| Stellogen | 0 | 0 | 0 | 0 | execution has "a horrible complexity" |
-| Nock / Hoon | ½ | ½ | 0 | 33 | native C and Rust interpreters with jets; `%bout` prints timings; cost as a value forbidden by design |
-| Indie AI-first cluster | ½ | 0 | 0 | 17 | only LSTS compiles to C and CLR rides on Zig; the genre runs on hosts |
-
-## A6 Search / self-application
-
-(a) spec → implementation automatically (½ an external LLM loop, harness generation, basic proof search) · (b) scored by the checker and by cost (½ one of the two) · (c) the search is aimed at itself (½ a flywheel started)
+(a) spec → implementation automatically (½ an external LLM loop, harness generation, basic proof search) · (b) scored by the checker and by measured cost, both in the loop (½ one of the two) · (c) the search is aimed at itself (½ a flywheel started)
 
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|

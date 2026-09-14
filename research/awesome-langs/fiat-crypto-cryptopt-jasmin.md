@@ -14,7 +14,7 @@ superoptimization *"has never scaled past tiny straight-line kernels."*
 
 This cluster is the **exception that proves the rule** — the only place where
 "spec in, search runs, proof certifies, output is the fastest code in the world"
-actually ships. It is the working precedent for disp's A6, and its limits are
+actually ships. It is the working precedent for disp's A5, and its limits are
 disp's warning label.
 
 ## The pipeline that works
@@ -66,16 +66,15 @@ scope.
 
 | Axis | This cluster | Note | Clauses |
 |---|---|---|---|
-| A1 Reflection | ◐ 50% (Gallina meta) | fiat-crypto/bedrock2 live inside Rocq, so program synthesis is Gallina metaprogramming — reflective in the deep-embedding sense. | 1 · 0 · ½ — Gallina metaprogramming over a deep embedding; tactics see the checker |
-| A2 Spec power | ✅ 100% (CIC) | Full CIC (Rocq). Specs are dependent types. | 1 · 1 · 1 — full CIC in Rocq; fiat-crypto and bedrock2 are the library |
-| A3 Kernel | ✅ 83% (Rocq kernel) | Rocq's kernel; CryptOpt's equivalence checker is verified *in* Rocq. Textbook A3. | ½ · 1 · 1† — Rocq's kernel; CryptOpt's equivalence checker is verified in Rocq; coqchk re-checks |
-| A4 Equality | ◐ 67% (verified checker) | A verified **equivalence checker** for straight-line assembly — a real, decidable, machine-checked licensing relation, but only for a tiny fragment. | ½ · 1 · ½ — a verified, decidable equivalence checker for straight-line assembly licenses CryptOpt's output; a tiny fragment |
-| A5 Perf | ◐ 67% (beats GCC) | Beats GCC/Clang. Measured on-CPU. Shipping in BoringSSL. The best A5 result in this survey. | 1 · 1 · 0 — beats GCC/Clang; on-CPU benchmarking is the fitness function |
-| A6 Search | ◐ 67% (randomized) | Randomized search with a real cost objective and a proof-carrying output. Narrow, but complete. | 1 · 1 · 0 — randomized search over assembly with measured cost and a verified equivalence check; straight-line only; unmaintained since 2024 |
+| A1 Substrate | ◐ 50% (Gallina meta) | fiat-crypto/bedrock2 live inside Rocq, so program synthesis is Gallina metaprogramming — reflective in the deep-embedding sense. | 1 · 0 · ½ — Gallina metaprogramming over a deep embedding; tactics see the checker |
+| A2 Specification | ◐ 62% (CIC) | Full CIC (Rocq). Specs are dependent types. Equality: A verified **equivalence checker** for straight-line assembly — a real, decidable, machine-checked licensing relation, but only for a tiny fragment. | 1 · 1 · 0 · ½ — full CIC with fiat-crypto and bedrock2 as the library; a verified equivalence checker for straight-line assembly is the equality story, a tiny fragment |
+| A3 Trust | ✅ 83% (Rocq kernel) | Rocq's kernel; CryptOpt's equivalence checker is verified *in* Rocq. Textbook A3. | ½ · 1 · 1† — Rocq's kernel; CryptOpt's equivalence checker is verified in Rocq; coqchk re-checks |
+| A4 Execution | ◐ 75% (beats GCC) | Beats GCC/Clang. Measured on-CPU. Shipping in BoringSSL. The best A4 result in this survey. | 1 · 1 · 0 · 1 — beats GCC/Clang; Jasmin and bedrock2 compile under verified compilers; CryptOpt's output is installed on a verified equivalence check; cost is measured on the CPU inside the search rather than modelled |
+| A5 Search | ◐ 67% (randomized) | Randomized search with a real cost objective and a proof-carrying output. Narrow, but complete. | 1 · 1 · 0 — randomized search over assembly with measured cost and a verified equivalence check; straight-line only; unmaintained since 2024 |
 
 ## What disp could steal
 
-- **CryptOpt's structure, verbatim, as disp's first A6 milestone.** disp's
+- **CryptOpt's structure, verbatim, as disp's first A5 milestone.** disp's
   make-or-break Q1 asks for *one* certified `~_T`-licensed rewrite re-checked by
   the trusted kernel. CryptOpt is the template: pick a domain small enough that
   search terminates, make the equivalence checker verified and cheap, use measured
