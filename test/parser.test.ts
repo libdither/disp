@@ -986,3 +986,55 @@ describe("coproduct match", () => {
       [{ pat: "Ok", binders: ["x"] }, { pat: "Err", binders: ["y"] }])
   })
 })
+
+// ─────────────────────────── keyword-first braced bodies ─────────────────
+
+// A brace in expression position (a lambda body, a match-arm body, …) goes
+// through the primary classifier, which reads the first IDENTIFIER to tell a
+// block (`let x …`, `x := …`) from a binder (`x }`) or a record type. A brace
+// whose first token is a KEYWORD (`if`/`match`/`use`) can be neither a binder
+// nor a record type: it is a block whose trailing expression is that keyword
+// form, exactly as a `let`-first body is.
+describe("keyword-first braced bodies", () => {
+  const x = { name: "x", type: null }
+
+  it("lambda body starting with `if` is a block (braced and then/else spellings)", () => {
+    expect(parseExpr(`{x} => { if x { a } else { b } }`)).toEqual(lam([x], mkIf(v("x"), v("a"), v("b"))))
+    expect(parseExpr(`{x} => { if x then a else b }`)).toEqual(lam([x], mkIf(v("x"), v("a"), v("b"))))
+    // Multi-line, as written in library code (the reported failure).
+    const src = `{st} => {
+      if (is_leaf st) { done }
+      else { skip t }
+    }`
+    expect(parseExpr(src)).toEqual(
+      lam([{ name: "st", type: null }], mkIf(ap(v("is_leaf"), v("st")), v("done"), ap(v("skip"), leaf))))
+    // The same shape at item level.
+    expect(parseItems(`f := {x} => { if (is_leaf x) { t } else { t t } }`).length).toBe(1)
+  })
+
+  it("lambda body starting with `match` is a block", () => {
+    const e = parseExpr(`{x} => { match x { A y => y; B => t } }`)
+    expect(e.tag).toBe("binder")
+    expect((e as any).body.tag).toBe("match")
+    expect((e as any).body.cond).toEqual(v("x"))
+  })
+
+  it("lambda body starting with `use` is a block", () => {
+    expect(parseExpr(`{x} => { use "p" }`)).toEqual(lam([x], use("p")))
+  })
+
+  it("match-arm body starting with `if` is a block", () => {
+    const e = parseExpr(`match m { A => { if (is_leaf t) { t } else { t t } }; B => t }`)
+    expect((e as any).arms[0].body).toEqual(mkIf(ap(v("is_leaf"), leaf), leaf, ap(leaf, leaf)))
+  })
+
+  it("regression: `{ x }` is still a record TYPE as a primary and a block as an if branch", () => {
+    expect(parseExpr(`{ x }`)).toEqual(recType([x]))
+    expect(parseExpr(`{y} => { x }`)).toEqual(lam([{ name: "y", type: null }], recType([x])))
+    expect(parseExpr(`if c { x } else { y }`)).toEqual(mkIf(v("c"), v("x"), v("y")))
+    // `let`-first and `:=`-first braces keep their block / record-value readings.
+    expect(parseExpr(`{y} => { let z := y; z }`)).toEqual(
+      lam([{ name: "y", type: null }], ap(lam([{ name: "z", type: null }], v("z")), v("y"))))
+    expect(parseExpr(`{ x := t }`)).toEqual(recValue([{ name: "x", type: null, value: leaf }]))
+  })
+})

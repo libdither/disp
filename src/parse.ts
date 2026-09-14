@@ -1328,9 +1328,15 @@ function parseBraced(binderParser: P<Expr>): P<Expr> {
       return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
     }
 
-    // `open` (still a keyword) → unified body. `let`/`test` members are plain
-    // identifiers now, classified structurally by classifyBracedContent below.
-    if (ts[pos].t === "kw" && (ts[pos] as any).v === "open") {
+    // A keyword-first brace is a body: a keyword can name neither a binder
+    // param nor a record-type field. `open` heads a member; `if`/`match`/`use`
+    // head a trailing expression the member parser cannot see, so try the bare
+    // `{ expr }` form first (as braceBlockP does), then the unified body.
+    // `let`/`test` members are plain identifiers, classified structurally by
+    // classifyBracedContent below.
+    if (ts[pos].t === "kw") {
+      const exprForm = seq(lazy(() => expr), skipNl, punctP("}"))(ts, pos)
+      if (exprForm.ok) return ok(exprForm.v[0], exprForm.pos)
       return unifiedBracedInner(ts, pos)
     }
 
