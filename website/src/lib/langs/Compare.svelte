@@ -6,8 +6,8 @@
   import { onMount } from 'svelte'
   import { replaceState } from '$app/navigation'
   import Radar, { type RadarSeries } from './Radar.svelte'
-  import ClauseDots from './ClauseDots.svelte'
-  import { AXIS_IDS, LEVEL_WORD, type AxisId, type Lang, type LangsData, type Score } from './types'
+  import ClauseDots, { parseClauses } from './ClauseDots.svelte'
+  import { AXIS_IDS, LEVEL_WORD, type Axis, type AxisId, type Lang, type LangsData, type Score } from './types'
 
   interface Props {
     data: LangsData
@@ -106,18 +106,43 @@
     })
   ])
 
-  // one tooltip for matrix cells and radar vertices alike
-  let tip = $state<{ x: number; y: number; title: string; html: string } | null>(null)
+  // one tooltip for matrix cells, axis headers and radar vertices alike
+  let tip = $state<{ x: number; y: number; flip: boolean; title: string; html: string } | null>(null)
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  const dotCls = (v: string) => (v === '1' ? 'met' : v === '½' ? 'half' : v === '?' ? 'open' : v === '—' ? 'na' : 'no')
+  // the itemized tips are tall, so open upward from the lower half of the screen
+  const place = (ev: MouseEvent) => {
+    const flip = ev.clientY > window.innerHeight * 0.5
+    return { x: Math.min(ev.clientX + 14, window.innerWidth - 350), y: ev.clientY + (flip ? -14 : 14), flip }
+  }
   function showTip(ev: MouseEvent, name: string, id: AxisId, s: Score): void {
     const axis = data.axes.find((a) => a.id === id)
     const word = s.level == null ? 'not scored' : LEVEL_WORD[s.level]
     const head = `<b>${s.raw}${s.pct != null ? ` ${s.pct}%${s.provisional ? '?' : ''}` : ''}</b> ${word}${s.tag ? ` · ${s.tag}` : ''}${s.ahead ? ' · <b>ahead of disp</b>' : ''}`
-    const clauses = s.clauses ? `<br><span class="tip-clauses">${s.clauses}</span>${s.whyHtml ? ` — ${s.whyHtml}` : ''}` : ''
+    // each grading clause with this project's verdict on it, then the write-up's one-line why
+    const parts = s.clauses ? parseClauses(s.clauses) : []
+    const clauses = parts.length
+      ? `<div class="tip-clauses">${parts
+          .map(
+            (c, i) =>
+              `<span class="tip-clause"><i class="cd ${dotCls(c.v)}"></i><span>${esc(axis?.clauses[i] ?? `clause ${i + 1}`)} — <b>${c.word}</b></span></span>`
+          )
+          .join('')}</div>${s.whyHtml ? `<div class="tip-why">${s.whyHtml}</div>` : ''}`
+      : ''
     tip = {
-      x: Math.min(ev.clientX + 14, window.innerWidth - 350),
-      y: ev.clientY + 14,
+      ...place(ev),
       title: `${name} · ${id} ${axis?.short ?? ''}`,
       html: `${head}${clauses}${s.noteHtml ? `<br>${s.noteHtml}` : ''}`
+    }
+  }
+  function showAxisTip(ev: MouseEvent, ax: Axis): void {
+    const list = ax.clauses
+      .map((c) => `<span class="tip-clause"><i class="cd head"></i><span>${esc(c)}</span></span>`)
+      .join('')
+    tip = {
+      ...place(ev),
+      title: `${ax.id} ${ax.name} — the clauses`,
+      html: `<div class="tip-clauses">${list}</div><div class="tip-why">each clause scores 0, ½ or 1; the percentage is their mean · click to sort</div>`
     }
   }
   const hideTip = () => (tip = null)
@@ -159,7 +184,7 @@
               </th>
               {#each data.axes as ax (ax.id)}
                 <th class="axh">
-                  <button class="sortbtn" class:on={sortAxis === ax.id} onclick={() => sortBy(ax.id)} title="sort by {ax.name}. 100% = {ax.clauses.join(' · ')}">
+                  <button class="sortbtn" class:on={sortAxis === ax.id} onclick={() => sortBy(ax.id)} onmouseenter={(e) => showAxisTip(e, ax)} onmouseleave={hideTip}>
                     {ax.id}
                     <small>{ax.short}</small>
                     {#if sortAxis === ax.id}<span class="arrow" aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>{/if}
@@ -290,7 +315,7 @@
   </div>
 
   {#if tip}
-    <div class="tip" style:left="{tip.x}px" style:top="{tip.y}px" role="tooltip">
+    <div class="tip" style:left="{tip.x}px" style:top="{tip.y}px" style:transform={tip.flip ? 'translateY(-100%)' : undefined} role="tooltip">
       <div class="tip-title">{tip.title}</div>
       <div class="tip-body">{@html tip.html}</div>
     </div>
@@ -729,8 +754,47 @@
     color: var(--fg);
   }
   .tip-body :global(.tip-clauses) {
-    font-family: var(--font-mono);
-    font-size: 0.9em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-top: 0.25rem;
+  }
+  .tip-body :global(.tip-clause) {
+    display: flex;
+    gap: 0.45em;
+    align-items: baseline;
+  }
+  .tip-body :global(i.cd) {
+    flex: none;
+    width: 0.6em;
+    height: 0.6em;
+    border-radius: 50%;
+    border: 1.5px solid var(--fg-faint);
+    transform: translateY(0.05em);
+  }
+  .tip-body :global(i.cd.met) {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .tip-body :global(i.cd.half) {
+    border-color: var(--accent);
+    background: linear-gradient(90deg, var(--accent) 50%, transparent 50%);
+  }
+  .tip-body :global(i.cd.open) {
+    border-style: dashed;
+  }
+  .tip-body :global(i.cd.na) {
+    border-style: dotted;
+  }
+  .tip-body :global(i.cd.head) {
+    border-color: var(--fg-muted);
+    width: 0.45em;
+    height: 0.45em;
+  }
+  .tip-body :global(.tip-why) {
+    margin-top: 0.3rem;
+    color: var(--fg-faint);
+    font-style: italic;
   }
 
   @media (max-width: 960px) {

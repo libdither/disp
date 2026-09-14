@@ -1,3 +1,30 @@
+<script module lang="ts">
+  // Shared by the dots and the compare page's tooltips: one entry per clause
+  // of the survey files' "1 · ½† · 0 · ?" strings.
+  const WORD: Record<string, string> = {
+    '1': 'met',
+    '½': 'halfway',
+    '0': 'not met',
+    '?': 'open, scored 0',
+    '—': 'not applicable'
+  }
+  export interface Clause {
+    v: string // '1' | '½' | '0' | '?' | '—'
+    word: string // the state in words, with the † qualifier spelled out
+  }
+  export function parseClauses(clauses: string): Clause[] {
+    return clauses
+      .split('·')
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .map((t) => {
+        const knowledge = t.includes('†')
+        const v = t.replace('†', '').trim()
+        return { v, word: (WORD[v] ?? v) + (knowledge ? ' (from general knowledge)' : '') }
+      })
+  }
+</script>
+
 <script lang="ts">
   // One dot per grading clause, so a glance shows how much of an axis is met
   // and a hover shows which clause is missing. Input is the survey files'
@@ -11,28 +38,13 @@
   }
   let { clauses, labels = [], size = 9, titles = true }: Props = $props()
 
-  const WORD: Record<string, string> = {
-    '1': 'met',
-    '½': 'halfway',
-    '0': 'not met',
-    '?': 'open, scored 0',
-    '—': 'not applicable'
-  }
   const dots = $derived(
-    clauses
-      .split('·')
-      .map((t) => t.trim())
-      .filter(Boolean)
-      .map((t, i) => {
-        const knowledge = t.includes('†')
-        const v = t.replace('†', '').trim()
-        const word = (WORD[v] ?? v) + (knowledge ? ' (from general knowledge)' : '')
-        return { v, title: labels[i] ? `${labels[i]} — ${word}` : word }
-      })
+    parseClauses(clauses).map((c, i) => ({
+      ...c,
+      title: labels[i] ? `${labels[i]} — ${c.word}` : c.word
+    }))
   )
-  const summary = $derived(
-    `clauses: ${dots.map((d) => WORD[d.v] ?? d.v).join(', ')}`
-  )
+  const summary = $derived(`clauses: ${dots.map((d) => WORD[d.v] ?? d.v).join(', ')}`)
 
   // one 12×12 cell per dot; r leaves room for the stroke
   const U = 12
