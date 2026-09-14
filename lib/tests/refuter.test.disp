@@ -1,0 +1,86 @@
+// The refuter behind TYPES.html: a type's relation run over the domain's generator
+// instead of over a symbol. It can refute with a witness, prove only by exhausting a
+// finite type's own generator, and otherwise reports how far it looked.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../../IDEAS.disp" {}
+
+// A data type as a relation: both recognized and identical. Its diagonal is the recognizer.
+rel_of :: {recognize : Tree -> Bool} -> Tree -> Tree -> Bool :=> {x, y} => ((recognize x) && (recognize y)) && (x == y)
+rec NatR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { (v == succ (nat_pred v)) && NatR (nat_pred v) }
+NatRel := rel_of NatR
+BoolRel := rel_of Bool
+test NatRel 2 2 = true
+test NatRel 2 3 = false
+test NatRel (t t) (t t) = false
+
+// Related pairs of a domain, smallest first. For a data type the pairs are the diagonal;
+// for a quotient they are (a, nf a). Both are bounded, so reaching done is a budget, not exhaustion.
+diag_pairs :: {recognize : Tree -> Bool, fuel : Nat} -> Stream (Pair Tree Tree) :=>
+	Trees.bounded(fuel).s_filter(recognize).s_map({a} => pair a a)
+quot_pairs :: {recognize : Tree -> Bool, nf : Tree -> Tree, fuel : Nat} -> Stream (Pair Tree Tree) :=>
+	Trees.bounded(fuel).s_filter(recognize).s_map({a} => pair a (nf a))
+// A finite type's own generator: reaching done here IS exhaustion.
+s_from_list :: {items : List V} -> Stream V :=> s_new ({xs} => if (xs.is_nil) { done } else { yield xs.head xs.tail }) items
+bools := s_from_list [true, false]
+test bools.bounded(9).s_take(9).s_items = [true, false]
+
+refuted :: {witness : Pair Tree Tree} -> Verdict :=> pair "Refuted" witness
+// Open carries how many related pairs were checked: evidence, never a verdict
+open_after :: {probes : Nat} -> Verdict :=> pair "Open" probes
+
+// refute: walk the related pairs; the first pair the function does not carry to a
+// related pair is a concrete witness. Reaching done is Proved only when the caller
+// vouches that the stream is the domain's own exhaustive generator.
+rec refute :: {pairs : Stream (Pair Tree Tree), cod_rel : Tree -> Tree -> Bool, exhaustive : Bool, fn : Tree, probes : Nat} -> Verdict :=> {
+	let step := pairs.s_step
+	if (step.is_done) { if (exhaustive) { "Proved" } else { open_after probes } }
+	else if (not step.yielded) { refute (pairs.s_with step.skip_state) cod_rel exhaustive fn probes }
+	else {
+		let p := step.y_val
+		if (cod_rel (fn p.fst) (fn p.snd)) { refute (pairs.s_with step.y_state) cod_rel exhaustive fn (succ probes) }
+		else { refuted p }
+	}
+}
+refute_arrow :: {dom : Tree -> Bool, cod_rel : Tree -> Tree -> Bool, fuel : Nat, fn : Tree} -> Verdict :=>
+	refute (diag_pairs dom fuel) cod_rel false fn zero
+
+// Nat -> Nat: succ passes every probe (evidence only); pair n n fails at 1
+test refute_arrow NatR NatRel 40 succ = open_after 3
+test refute_arrow NatR NatRel 40 ({n} => pair n n) = refuted (pair 1 1)
+// Bool -> Bool over Bool's own finite generator: exhaustion is a real Proved
+bool_pairs := s_from_list [pair true true, pair false false]
+test refute bool_pairs BoolRel true not zero = "Proved"
+// pair true true is t t t, a fork, so the very first pair already refutes
+test refute bool_pairs BoolRel true ({b} => pair b b) zero = refuted (pair true true)
+// Parity -> Nat: the pairs are (a, parity a); id cannot tell 2 from 0, is_even can
+rec parity :: {n : Tree} -> Tree :=> if (is_zero n) { zero } else if (is_zero (nat_pred n)) { succ zero } else { parity (nat_pred (nat_pred n)) }
+rec is_even :: {n : Tree} -> Bool :=> if (is_zero n) { true } else if (is_zero (nat_pred n)) { false } else { is_even (nat_pred (nat_pred n)) }
+test refute (quot_pairs NatR parity 40) NatRel false ({n} => n) zero = refuted (pair 2 0)
+test refute (quot_pairs NatR parity 40) BoolRel false is_even zero = open_after 3
+// the refuter agrees with IDEAS.disp's Arrow on the diagonal
+test Arrow NatR NatR 40 ({n} => pair n n) = false
+test Arrow NatR NatR 40 succ = true
+
+// The paused run (lib/machine.disp): the evaluator's loop as a value, advanced k
+// steps at a time with the state kept. A fueled apply that returns a value:
+spin := fix ({self, v} => self v)
+test m_finished (m_advance (m_start succ 2) 100) = true
+test m_result (m_advance (m_start succ 2) 100) = 3
+test m_finished (m_advance (m_start spin 1) 300) = false
+test m_finished (m_advance (m_start NatR 3) 20000) = true
+// the discard the eager backends share: the looping argument is never run, natively or in the machine
+test ({x} => ({_y} => 1) (spin x)) 1 = 1
+test m_result (m_advance (m_start ({x} => ({_y} => 1) (spin x)) 1) 50) = 1
+// every candidate Arrow accepts as Bool -> Bool finishes in the machine with the native answer
+m_agrees := {fn, a} => {
+	let m := m_advance (m_start fn a) 2000
+	(m_finished m) && (m_result m == fn a)
+}
+test boolfns.all({fn} => (m_agrees fn true) && (m_agrees fn false)) = true
+test idfns.all({fn} => m_agrees fn probe) = true
+// a task advances by a constant quantum and yields at most once
+test (task succ 2 8).bounded(10).s_take(2).s_items = [3]
+test (task spin 1 8).bounded(6).s_take(1).s_items = []

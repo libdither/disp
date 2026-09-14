@@ -8,9 +8,10 @@
 //
 // Run, memory-capped (see CLAUDE.md):
 //   timeout 300 systemd-run --user --scope -p MemoryMax=3G -p MemorySwapMax=512M npx tsx src/run.ts GRADUAL.disp
-// Needs lib/stream.disp and IDEAS.disp (the size-ordered enumeration of all trees).
+// Needs lib/machine.disp, lib/stream.disp and IDEAS.disp (the size-ordered enumeration of all trees).
 open use raw "lib/prelude.disp" {}
 open use raw "lib/list.disp" {}
+open use raw "lib/machine.disp" {}
 open use raw "lib/stream.disp" {}
 open use raw "IDEAS.disp" {}
 
@@ -94,9 +95,9 @@ test run LoopR 1 300 = stuck
 // A stream step must always return. A program run may not. Reconcile them by
 // chopping the RUN: each step of a task runs the application from scratch with
 // `next` of the previous fuel, yields the answer if it got one, otherwise skips.
-// After yielding it is done. (No resumable evaluator exists yet, so restart is
-// the only option; with doubling fuel the restarts cost a constant factor.)
-task :: {f : Tree, x : Tree, start : Nat, next : Nat -> Nat} -> Stream Tree :=> s_new ({st} => {
+// After yielding it is done. Restarting is what a run that cannot pause leaves
+// you; with doubling fuel the restarts cost a constant factor.
+restart_task :: {f : Tree, x : Tree, first_fuel : Nat, next : Nat -> Nat} -> Stream Tree :=> s_new ({st} => {
 	let phase := st.fst
 	if (phase == "Finished") { done }
 	else {
@@ -104,15 +105,30 @@ task :: {f : Tree, x : Tree, start : Nat, next : Nat -> Nat} -> Stream Tree :=> 
 		if (r.is_answered) { yield r.answer (pair "Finished" t) }
 		else { skip (pair "Running" (next st.snd)) }
 	}
-}) (pair "Running" start)
+}) (pair "Running" first_fuel)
 rec add :: {a : Nat, b : Nat} -> Nat :=> if (is_zero a) { b } else { succ (add (nat_pred a) b) }
 dbl :: Nat -> Nat := {n} => add n n
 // Q: how many items does the task for `succ 2` ever yield? For `LoopR 1`?
-test (task succ 2 8 dbl).bounded(10).s_take(2).s_items = [3]
-test (task LoopR 1 8 dbl).bounded(6).s_take(1).s_items = []
+test (restart_task succ 2 8 dbl).bounded(10).s_take(2).s_items = [3]
+test (restart_task LoopR 1 8 dbl).bounded(6).s_take(1).s_items = []
 // A: one and zero. And the second line RETURNED: six steps, each a bounded run,
 // then the budget ended the stream. The program is partial; the stream is
 // total. That is the whole trick. Everything after this is bookkeeping.
+//
+// Q: run_s stops when the fuel is gone. Why can a task not CONTINUE from there?
+// A: the work in progress sat on the host's call stack, gone once run_s returned.
+// lib/machine.disp keeps it in a value: the pending application plus a stack of
+// frames saying what to do with its result, the loop of step 3 turned inside out.
+// m_advance runs such a machine for k steps and hands the state back.
+test m_result (m_advance (m_start succ 2) 100) = 3
+test m_finished (m_advance (m_start LoopR 1) 300) = false
+// lib/stream.disp's task advances one machine by the same quantum every step and
+// yields its answer once. Nothing restarts, so there is no fuel schedule.
+// Q: LoopR 1, quantum 8, six steps: how much of ITS run has each form done?
+test (task succ 2 8).bounded(10).s_take(2).s_items = [3]
+test (task LoopR 1 8).bounded(6).s_take(1).s_items = []
+// A: the restart form ran 8 + 16 + ... + 256 steps and got 256 deep once; this one
+// ran 48 steps of a single run and is still 48 deep, ready for the 49th.
 
 // ---------------------------------------------------------------- 5. many tasks at once: the fair merge
 // A stream of streams, flattened fairly. Each round draws one inner stream from
@@ -135,7 +151,7 @@ rec advance_all :: {live : List (Stream V)} -> Pair (List V) (List (Stream V)) :
 		let rest := advance_all live.tail
 		pair (one.fst.append(rest.fst)) (one.snd.append(rest.snd))
 	}
-s_merge_with :: {source : Stream (Stream V), advance : List (Stream V) -> Pair (List V) (List (Stream V))} -> Stream V :=> s_new ({st} => {
+s_merge_with :: {source : Stream (Stream V), policy : List (Stream V) -> Pair (List V) (List (Stream V))} -> Stream V :=> s_new ({st} => {
 	let src := st.fst
 	let live := st.snd.fst
 	let buf := st.snd.snd
@@ -147,7 +163,7 @@ s_merge_with :: {source : Stream (Stream V), advance : List (Stream V) -> Pair (
 			else { pair (src.s_with s.skip_state) live }
 		if (pulled.snd.is_nil) { if (s.is_done) { done } else { skip (pair pulled.fst (pair [] [])) } }
 		else {
-			let adv := advance pulled.snd
+			let adv := policy pulled.snd
 			skip (pair pulled.fst (pair adv.snd adv.fst))
 		}
 	}
@@ -171,30 +187,30 @@ test [1, 2, 3, 4, 5].all({n} => merged_all.member(n)) = true
 // is ONE closed program, so partial A, B and fn compose by ordinary application
 // inside it, and only the boundary around the candidate is a stream. The
 // witness stream keeps the candidates whose check came back true.
-witnesses_over :: {source : Stream Tree, A : Tree, B : Tree, fn : Tree, advance : Tree, next : Nat -> Nat} -> Stream Tree :=> {
+witnesses_over :: {source : Stream Tree, A : Tree, B : Tree, fn : Tree, policy : Tree, quantum : Nat} -> Stream Tree :=> {
 	let check := {a} => if (A a) { not (B a (fn a)) } else { false }
-	let tasks := source.s_map({a} => (task check a 32 next).s_map({b} => pair a b))
-	(s_merge_with tasks advance).s_filter({p} => p.snd == true).s_map({p} => p.fst)
+	let tasks := source.s_map({a} => (task check a quantum).s_map({b} => pair a b))
+	(s_merge_with tasks policy).s_filter({p} => p.snd == true).s_map({p} => p.fst)
 }
-witnesses :: {A : Tree, B : Tree, fn : Tree, advance : Tree, next : Nat -> Nat} -> Stream Tree :=> witnesses_over Trees A B fn advance next
+witnesses :: {A : Tree, B : Tree, fn : Tree, policy : Tree, quantum : Nat} -> Stream Tree :=> witnesses_over Trees A B fn policy quantum
 nat_cod := {_a, y} => NatR y
-// Round-robin gives each task rare turns, so its fuel doubles; map gives every
-// task a turn every round, so its fuel grows by a constant. A resumable task
-// would need neither schedule; that coupling is the price of restarting.
-additive := {fuel} => add 512 fuel
+// Round-robin gives each task rare turns; map gives every task a turn every
+// round. With the restart form the fuel schedule had to match the policy
+// (doubling for rare turns, a constant added for frequent ones); a paused run
+// takes the same quantum under either. That decoupling is what the machine buys.
 // Q: the first witness against pair n n : Nat -> Nat? (0 maps to pair 0 0 = 1, a Nat.)
-test (witnesses NatR nat_cod ({n} => pair n n) advance_head dbl).bounded(300).s_take(1).s_items = [1]
-test (witnesses NatR nat_cod ({n} => pair n n) advance_all additive).bounded(40).s_take(1).s_items = [1]
+test (witnesses NatR nat_cod ({n} => pair n n) advance_head 64).bounded(300).s_take(1).s_items = [1]
+test (witnesses NatR nat_cod ({n} => pair n n) advance_all 64).bounded(40).s_take(1).s_items = [1]
 // Now the case Arrow could not survive. LoopR accepts 0 and loops on everything
 // else; this function returns a stem, never a Nat.
 // Q: does the witness stream find 0, given that every other probe spins forever?
-test (witnesses LoopR nat_cod ({_n} => t t) advance_head dbl).bounded(120).s_take(1).s_items = [0]
-test (witnesses LoopR nat_cod ({_n} => t t) advance_all additive).bounded(12).s_take(1).s_items = [0]
+test (witnesses LoopR nat_cod ({_n} => t t) advance_head 64).bounded(120).s_take(1).s_items = [0]
+test (witnesses LoopR nat_cod ({_n} => t t) advance_all 64).bounded(12).s_take(1).s_items = [0]
 // A: yes, in both forms. The spinning probes sit in the live list burning their
 // fuel; fairness means 0's probe still gets its turns. This is the measured
 // difference between the two checkers: Arrow dies here, this one answers.
 // And a claim that is true:
-test (witnesses NatR nat_cod succ advance_head dbl).bounded(150).s_take(1).s_items = []
+test (witnesses NatR nat_cod succ advance_head 64).bounded(150).s_take(1).s_items = []
 // Q: is that last line a proof that succ : Nat -> Nat?
 // A: no. The budget ran out with the source still going. Silence within a
 // budget is evidence. Even unbounded silence would only say "no input where
@@ -207,7 +223,7 @@ bool_cod := {_a, y} => Bool y
 bools := s_from_list [true, false]
 // Q: what does the witness stream of `not : Bool -> Bool` do, and how would
 // you tell that apart from a budget running out?
-exhausted := (witnesses_over bools Bool bool_cod not advance_head dbl).bounded(50).s_take(1)
+exhausted := (witnesses_over bools Bool bool_cod not advance_head 64).bounded(50).s_take(1)
 test exhausted.s_items = []
 test exhausted.s_rest.s_step.is_done = true
 test is_zero exhausted.s_rest.snd.fst = false
@@ -223,9 +239,9 @@ verdict :: {ws : Bounded (Stream Tree)} -> Tree :=> {
 	else if (is_zero taken.s_rest.snd.fst) { "Open" }
 	else { "Proved" }
 }
-test verdict ((witnesses_over bools Bool bool_cod not advance_head dbl).bounded(50)) = "Proved"
-test verdict ((witnesses_over bools Bool bool_cod ({b} => pair b b) advance_head dbl).bounded(50)) = pair "Refuted" true
-test verdict ((witnesses NatR nat_cod succ advance_head dbl).bounded(50)) = "Open"
+test verdict ((witnesses_over bools Bool bool_cod not advance_head 64).bounded(50)) = "Proved"
+test verdict ((witnesses_over bools Bool bool_cod ({b} => pair b b) advance_head 64).bounded(50)) = pair "Refuted" true
+test verdict ((witnesses NatR nat_cod succ advance_head 64).bounded(50)) = "Open"
 // Q: why is Proved reachable only through a finite source here?
 // A: because done needs the source exhausted, and over Trees that never
 // happens. Every checker in CHECK.disp and lib/tests/confirmer.test.disp is a
@@ -254,7 +270,7 @@ test s_fold_absorb ((s_from_list [1, t t, 3]).bounded(9)) and true false NatR = 
 // first: the witness stream over the first four Nats, folded with plus (there
 // is no absorbing element for plus, so pass one that never occurs).
 first_nats := s_from_list [0, 1, 2, 3]
-fails := (witnesses_over first_nats NatR nat_cod ({n} => pair n n) advance_head dbl).bounded(200)
+fails := (witnesses_over first_nats NatR nat_cod ({n} => pair n n) advance_head 64).bounded(200)
 test s_fold_absorb fails add 0 "None" ({_w} => 1) = 3
 // pair n n fails on 3 of the first 4 Nats: a distance from membership. An
 // optimizer can descend a number where it cannot descend a Bool.
@@ -264,7 +280,7 @@ test s_fold_absorb fails add 0 "None" ({_w} => 1) = 3
 //   a type is a recognizer; its members are a stream                    (1)
 //   the honest checker refutes with witnesses, never proves infinity     (2)
 //   an evaluator with a fuel gauge makes a partial program bounded       (3)
-//   a bounded run repeated is a task: a total stream over a partial run  (4)
+//   a paused run advanced a quantum per step is a task: total over partial (4)
 //   a fair merge with a pluggable policy runs every task at once         (5)
 //   the general Pi is the witness stream of one closed check per input   (6)
 //   done means exhaustion, the only stream-born Proved                   (7)
@@ -275,8 +291,7 @@ test s_fold_absorb fails add 0 "None" ({_w} => 1) = 3
 // on a placeholder; the confirmer adds case splits and an induction licence.
 // They are shortcuts, and their contract is agreement with steps 6 and 7 on
 // every candidate. Nothing above them is ever more than a shortcut.
-// Still missing, most valuable first: a native fueled apply that returns a
-// value instead of throwing (run_s is the readable spec, and slow); a resumable
-// task, so the fuel schedule stops depending on the policy; a grade on streams
-// for "ended by exhaustion" versus "ended by budget"; a queue with cheap
-// rotation in place of append.
+// Still missing, most valuable first: a native stepper for the machine
+// (m_advance is the readable spec, and slow); a grade on streams for "ended by
+// exhaustion" versus "ended by budget"; a queue with cheap rotation in place of
+// append.

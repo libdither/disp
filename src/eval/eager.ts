@@ -137,5 +137,9 @@ export const eagerBackend: EvalBackend<Tree> = {
   // later sub-step; today tree_eq is registered via recognizeNative at
   // kernel-load time, so none are reported here.
   natives(): ReadonlyMap<string, readonly string[]> { return new Map() },
-  createSession(_opts?: SessionOpts): EagerSession { return new EagerSession() },
+  createSession(opts?: SessionOpts): EagerSession {
+    const s = new EagerSession()
+    if (opts?.applyCacheLimit !== undefined) s.setApplyCacheLimit(opts.applyCacheLimit)
+    return s
+  },
 }

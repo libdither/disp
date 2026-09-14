@@ -48,6 +48,9 @@ export interface SessionOpts {
   // intercepting them, so the native fast-path can be validated against the real
   // compiled definition.
   noNativeIntercept?: boolean
+  // TypeScript eager only: cap the apply memo at this many entries. 0 turns it off,
+  // which makes `steps` the memo-free dispatch count lib/machine.disp defines.
+  applyCacheLimit?: number
   // Replaces the module-global trace buffer.
   trace?: (event: unknown) => void
 }
