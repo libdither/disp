@@ -50,3 +50,25 @@ from this table.
 | A4 Equality | ◐ (witnesses) | The substrate is intensional (`tree_eq` is pointer identity). One end-to-end slice of witness-licensed rewrites (map fusion) has landed; whether a decidable fragment licenses enough rewrites is open question Q1. |
 | A5 Perf | ✗ (interpreted) | Interpreted tree-walkers (the TypeScript oracle, Rust eager at about 2×, the ic-net at a measured 4,000–67,000× penalty). Cost as a typing-level resource is designed, not built. |
 | A6 Search | ◐ (designed) | The optimizer is designed (`research/OPTIMIZER.typ`) and unbuilt; the licensing machinery it needs exists as one slice. |
+
+## Grading: the maximum and the clauses
+
+The three symbols are coarse. [`_SCORES.md`](_SCORES.md) grades every cell as a percentage
+of disp's own requirement: the "What disp requires" column above, split into three clauses.
+Each clause scores 0, ½ or 1 and the axis is their mean, so the scale is 0, 17, 33, 50, 67,
+83, 100. The maximum is what disp needs, not the best project in the survey, so a project can
+be excellent and score low; "or stronger (HoTT)" is graded under A4, where it does the work.
+
+| Axis | (a) | (b) | (c) |
+|---|---|---|---|
+| **A1** | programs can inspect other programs | one representation is both run and inspected, no quotation layer | the checker is callable from programs as an ordinary function |
+| **A2** | specifications mention values (½ contracts or refinements over runtime values, 1 dependent types) | propositions and proofs are first-class objects (½ obligations discharged by a solver, no proof objects) | the type system is library code over a kernel, not built into the compiler |
+| **A3** | a trusted core small enough to audit | it mints unforgeable evidence: theorems, proof objects, certificates (½ proof objects checked only by a large checker) | the clever layers are untrusted and re-checked by the core, and an independent checker exists (½ re-checked by the one core only) |
+| **A4** | a behavioral equality beyond syntactic identity (½ a decidable fragment or a fixed proved relation) | it is mechanically checkable and composes (½ tactic- or human-driven) | it licenses rewrites: something replaces programs by equivalent ones on its authority (½ one slice or a fixed set of passes) |
+| **A5** | C/Rust-class native execution (½ compiled but not systems class) | a primitive returns cost with results (½ a meter or report outside the language) | cost is a typing-level resource (½ a usage grade, erasure, or a static bound that is not a type) |
+| **A6** | spec → implementation automatically (½ an external LLM loop, harness generation, basic proof search) | scored by the checker and by cost (½ one of the two) | the search is aimed at itself (½ a flywheel started) |
+
+Rules: a design gets no credit, the how-tag carries it. The derived symbol is ✗ below 25,
+◐ from 25 to 79, ✅ from 80. "Ahead of disp" is derived: a higher percentage than disp's on
+that axis. `scripts/awesome-scores.py` recomputes the percentages, lists every derived
+symbol that differs from the master table, and ranks each column.
