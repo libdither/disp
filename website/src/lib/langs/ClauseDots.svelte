@@ -13,6 +13,12 @@
     route?: string // a ½ names the half-credit condition it takes: '½(contracts)'
     word: string // the state in words, the ½ route and † qualifier spelled out
   }
+  /// A clause definition reads `(a) **short label** — full criterion`; split it.
+  export function splitClause(text: string): { key: string; label: string; detail: string } {
+    const m = text.match(/^\((\w)\)\s*\*\*(.+?)\*\*\s*—\s*(.*)$/)
+    return m ? { key: `(${m[1]})`, label: m[2], detail: m[3] } : { key: '', label: text, detail: '' }
+  }
+
   export function parseClauses(clauses: string): Clause[] {
     return clauses
       .split('·')
@@ -46,7 +52,7 @@
   const dots = $derived(
     parseClauses(clauses).map((c, i) => ({
       ...c,
-      title: labels[i] ? `${labels[i]} — ${c.word}` : c.word
+      title: labels[i] ? `${splitClause(labels[i]).label} — ${c.word}` : c.word
     }))
   )
   const summary = $derived(`clauses: ${dots.map((d) => WORD[d.v] ?? d.v).join(', ')}`)

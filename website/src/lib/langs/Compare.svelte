@@ -6,7 +6,7 @@
   import { onMount } from 'svelte'
   import { replaceState } from '$app/navigation'
   import Radar, { type RadarSeries } from './Radar.svelte'
-  import ClauseDots, { parseClauses } from './ClauseDots.svelte'
+  import ClauseDots, { parseClauses, splitClause } from './ClauseDots.svelte'
   import { AXIS_IDS, LEVEL_WORD, type Axis, type AxisId, type Lang, type LangsData, type Score } from './types'
 
   interface Props {
@@ -119,16 +119,16 @@
     const axis = data.axes.find((a) => a.id === id)
     const word = s.level == null ? 'not scored' : LEVEL_WORD[s.level]
     const head = `<b>${s.raw}${s.pct != null ? ` ${s.pct}%${s.provisional ? '?' : ''}` : ''}</b> ${word}${s.tag ? ` · ${s.tag}` : ''}${s.ahead ? ' · <b>ahead of disp</b>' : ''}`
-    // each grading clause with this project's verdict on it; a ½ names its route.
-    // the scorecard note below carries the narrative, so the one-line why is
-    // omitted here — it largely restates the note
+    // each grading clause's short label with this project's verdict; a ½ names
+    // its route. Full criteria live on the axis header's tooltip; the scorecard
+    // note below carries the narrative, so the one-line why is omitted here
     const parts = s.clauses ? parseClauses(s.clauses) : []
     const clauses = parts.length
       ? `<div class="tip-clauses">${parts
-          .map(
-            (c, i) =>
-              `<span class="tip-clause"><i class="cd ${dotCls(c.v)}"></i><span>${esc(axis?.clauses[i] ?? `clause ${i + 1}`)} — <b>${esc(c.word)}</b></span></span>`
-          )
+          .map((c, i) => {
+            const cl = axis ? splitClause(axis.clauses[i] ?? `clause ${i + 1}`) : { label: `clause ${i + 1}` }
+            return `<span class="tip-clause"><i class="cd ${dotCls(c.v)}"></i><span>${esc(cl.label)} — <b>${esc(c.word)}</b></span></span>`
+          })
           .join('')}</div>${!s.noteHtml && s.whyHtml ? `<div class="tip-why">${s.whyHtml}</div>` : ''}`
       : ''
     tip = {
@@ -139,7 +139,10 @@
   }
   function showAxisTip(ev: MouseEvent, ax: Axis): void {
     const list = ax.clauses
-      .map((c) => `<span class="tip-clause"><i class="cd head"></i><span>${esc(c)}</span></span>`)
+      .map((c) => {
+        const cl = splitClause(c)
+        return `<span class="tip-clause"><i class="cd head"></i><span>${cl.key} <b>${esc(cl.label)}</b>${cl.detail ? ` — ${esc(cl.detail)}` : ''}</span></span>`
+      })
       .join('')
     tip = {
       ...place(ev),
