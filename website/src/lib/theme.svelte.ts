@@ -1,23 +1,35 @@
-/// Theme preference: 'system' follows the OS, 'light'/'dark' pin it.
-/// The resolved value is mirrored onto <html data-theme> — app.css only ever
-/// sees a concrete 'light' or 'dark', so it needs no prefers-color-scheme rule.
-export type ThemePref = 'system' | 'light' | 'dark'
+/// Theme preference: 'system' follows the OS, 'light'/'dark' pin it, and a
+/// number strictly between 0 and 1 is an intermediate the page renders
+/// continuously (0 is light, 1 is dark). `mix` is that number for any
+/// preference; it is mirrored onto <html style="--mix"> (app.css derives every
+/// colour from it) and the side of the midpoint onto <html data-theme> for the
+/// few things that can only flip.
+export type ThemePref = 'system' | 'light' | 'dark' | number
 export type Theme = 'light' | 'dark'
 export type SiteStyle = 'original' | 'simple'
 
 export const THEME_KEY = 'disp-theme'
 export const STYLE_KEY = 'disp-style'
+export const FUNNY_KEY = 'disp-funny'
 
 const DARK_QUERY = '(prefers-color-scheme: dark)'
 
-const isPref = (v: unknown): v is ThemePref =>
-  v === 'system' || v === 'light' || v === 'dark'
+/// A stored preference: one of the three words, or a number between the two
+/// ends (the ends themselves read back as the words). Keep in step with the
+/// app.html head script.
+export function parsePref(v: unknown): ThemePref {
+  if (v === 'system' || v === 'light' || v === 'dark') return v
+  if (typeof v === 'number' || (typeof v === 'string' && v !== '')) {
+    const n = Number(v)
+    if (Number.isFinite(n)) return n <= 0 ? 'light' : n >= 1 ? 'dark' : n
+  }
+  return 'system'
+}
 
 /// Reads the stored preference. Private-mode Safari throws on localStorage.
 function storedPref(): ThemePref {
   try {
-    const v = localStorage.getItem(THEME_KEY)
-    return isPref(v) ? v : 'system'
+    return parsePref(localStorage.getItem(THEME_KEY))
   } catch {
     return 'system'
   }
@@ -31,13 +43,20 @@ function storedStyle(): SiteStyle {
   }
 }
 
+/// The field guide's jokes instead of its definitions; off unless asked for.
+function storedFunny(): boolean {
+  try {
+    return localStorage.getItem(FUNNY_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 function systemTheme(): Theme {
   return typeof matchMedia === 'function' && matchMedia(DARK_QUERY).matches
     ? 'dark'
     : 'light'
 }
-
-const resolve = (p: ThemePref): Theme => (p === 'system' ? systemTheme() : p)
 
 class ThemeStore {
   /// SSR prerenders the light palette; the app.html head script fixes the DOM
@@ -45,9 +64,19 @@ class ThemeStore {
   pref = $state<ThemePref>('system')
   system = $state<Theme>('light')
   style = $state<SiteStyle>('original')
+  funny = $state(false)
 
+  /// 0 light … 1 dark, whatever the preference
+  get mix(): number {
+    if (this.pref === 'system') return this.system === 'dark' ? 1 : 0
+    if (this.pref === 'light') return 0
+    if (this.pref === 'dark') return 1
+    return this.pref
+  }
+
+  /// the side of the midpoint, for what can only be one or the other
   get resolved(): Theme {
-    return this.pref === 'system' ? this.system : this.pref
+    return this.mix < 0.5 ? 'light' : 'dark'
   }
 
   /// Adopt the real preference after hydration and follow later OS changes.
@@ -55,6 +84,7 @@ class ThemeStore {
     this.pref = storedPref()
     this.system = systemTheme()
     this.style = storedStyle()
+    this.funny = storedFunny()
     this.apply()
 
     if (typeof matchMedia !== 'function') return
@@ -68,39 +98,61 @@ class ThemeStore {
   }
 
   set(pref: ThemePref) {
-    this.pref = pref
+    this.pref = parsePref(pref) // the ends snap to their words
     try {
-      if (pref === 'system') localStorage.removeItem(THEME_KEY)
-      else localStorage.setItem(THEME_KEY, pref)
+      if (this.pref === 'system') localStorage.removeItem(THEME_KEY)
+      else localStorage.setItem(THEME_KEY, String(this.pref))
     } catch {
       // no persistence available; the in-memory preference still applies
     }
     this.apply()
   }
 
-  /// light → dark → system → light. Starting from 'system', step to whichever
-  /// explicit theme is NOT showing, so the first click always changes something.
+  /// system → light → dark → system; an intermediate steps on to dark
   cycle() {
-    if (this.pref === 'system') this.set(this.system === 'dark' ? 'light' : 'dark')
-    else if (this.pref === 'dark') this.set('system')
-    else this.set('dark')
+    const p = this.pref
+    this.set(p === 'system' ? 'light' : p === 'light' ? 'dark' : p === 'dark' ? 'system' : 'dark')
+  }
+
+  /// While a scrub drags the mix, the page follows the pointer with no easing.
+  setScrubbing(on: boolean) {
+    if (typeof document === 'undefined') return
+    document.documentElement.classList.toggle('scrubbing', on)
+  }
+
+  setStyle(style: SiteStyle) {
+    this.style = style
+    try {
+      if (style === 'original') localStorage.removeItem(STYLE_KEY)
+      else localStorage.setItem(STYLE_KEY, style)
+    } catch {
+      // The switch still works when storage is unavailable.
+    }
+    this.apply()
   }
 
   toggleStyle() {
-    this.style = this.style === 'simple' ? 'original' : 'simple'
+    this.setStyle(this.style === 'simple' ? 'original' : 'simple')
+  }
+
+  setFunny(funny: boolean) {
+    this.funny = funny
     try {
-      if (this.style === 'original') localStorage.removeItem(STYLE_KEY)
-      else localStorage.setItem(STYLE_KEY, this.style)
+      if (funny) localStorage.setItem(FUNNY_KEY, '1')
+      else localStorage.removeItem(FUNNY_KEY)
     } catch {
-      // The toggle still works when storage is unavailable.
+      // as above
     }
     this.apply()
   }
 
   private apply() {
     if (typeof document === 'undefined') return
-    document.documentElement.dataset.theme = this.resolved
-    document.documentElement.dataset.style = this.style
+    const el = document.documentElement
+    el.dataset.theme = this.resolved
+    el.style.setProperty('--mix', String(this.mix))
+    el.dataset.style = this.style
+    el.dataset.funny = this.funny ? '1' : '0'
   }
 }
 

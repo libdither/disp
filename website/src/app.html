@@ -8,21 +8,33 @@
 		<meta name="description" content="disp — a self-verifying dependently-typed language built on tree calculus. Types are programs; the checker checks itself." />
 		<script>
 			// resolve the theme before first paint, or the light palette flashes
-			// on a dark-mode load. Keep in step with lib/theme.svelte.ts.
+			// on a dark-mode load. The stored value is a word or a number between
+			// 0 (light) and 1 (dark); the blend goes to --mix, the side of the
+			// midpoint to data-theme. Keep in step with lib/theme.svelte.ts.
 			(function () {
+				var el = document.documentElement
 				try {
 					var p = localStorage.getItem('disp-theme')
-					if (p !== 'light' && p !== 'dark')
-						p = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-					document.documentElement.dataset.theme = p
+					var m = p === 'light' ? 0 : p === 'dark' ? 1 : p ? Number(p) : NaN
+					if (!(m >= 0 && m <= 1))
+						m = matchMedia('(prefers-color-scheme: dark)').matches ? 1 : 0
+					el.dataset.theme = m < 0.5 ? 'light' : 'dark'
+					el.style.setProperty('--mix', String(m))
 				} catch (e) {
-					document.documentElement.dataset.theme = 'light'
+					el.dataset.theme = 'light'
+					el.style.setProperty('--mix', '0')
 				}
 				try {
 					document.documentElement.dataset.style =
 						localStorage.getItem('disp-style') === 'simple' ? 'simple' : 'original'
 				} catch (e) {
 					document.documentElement.dataset.style = 'original'
+				}
+				try {
+					document.documentElement.dataset.funny =
+						localStorage.getItem('disp-funny') === '1' ? '1' : '0'
+				} catch (e) {
+					document.documentElement.dataset.funny = '0'
 				}
 			})()
 		</script>

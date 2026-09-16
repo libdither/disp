@@ -4,32 +4,57 @@
    blossom pink and honey gold accents, deep forest ink.
 
    Dark ("a grove at dusk") overrides the same tokens under
-   [data-theme='dark']; theme.svelte.ts always writes a concrete
-   light/dark value, so no prefers-color-scheme branch is needed
+   [data-theme='dark']; theme.svelte.ts writes the side of the midpoint there and the
+   blend itself as --mix, so no prefers-color-scheme branch is needed
    here. Every color below must be a token: the CodeMirror theme
    in lib/editor/disp-language.ts reads these same vars.
    ============================================================ */
 
+/* One number drives the palette: --mix is 0 for light and 1 for dark, and any
+   value between is an intermediate the page renders continuously. Every colour
+   is derived from its light/dark pair below; both ends are exactly the old
+   palettes. Registered so it can transition: a theme change eases every colour
+   together, and app.html sets it before first paint. */
+@property --mix {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
 :root {
   /* surfaces — warm sage-tinted paper */
-  --bg: #f5f8f0;
-  --bg-elev: #fbfcf8;
-  --bg-panel: rgba(47, 94, 63, 0.045);
-  --bg-panel-hover: rgba(47, 94, 63, 0.09);
-  --bg-code: #eef4e7;
-  --border: rgba(74, 104, 82, 0.18);
-  --border-strong: rgba(74, 104, 82, 0.34);
+  --l-bg: #f5f8f0;
+  --d-bg: #11160f;
+  --l-bg-elev: #fbfcf8;
+  --d-bg-elev: #191f18;
+  --l-bg-panel: rgba(47, 94, 63, 0.045);
+  --d-bg-panel: rgba(150, 205, 160, 0.055);
+  --l-bg-panel-hover: rgba(47, 94, 63, 0.09);
+  --d-bg-panel-hover: rgba(150, 205, 160, 0.11);
+  --l-bg-code: #eef4e7;
+  --d-bg-code: #151b14;
+  --l-border: rgba(74, 104, 82, 0.18);
+  --d-border: rgba(163, 201, 170, 0.15);
+  --l-border-strong: rgba(74, 104, 82, 0.34);
+  --d-border-strong: rgba(163, 201, 170, 0.3);
 
   /* ink — deep forest, never pure black */
-  --fg: #253829;
-  --fg-muted: #55695b;
-  --fg-faint: #7f927f;
+  --l-fg: #253829;
+  --d-fg: #e2ebe0;
+  --l-fg-muted: #55695b;
+  --d-fg-muted: #a3b7a6;
+  --l-fg-faint: #7f927f;
+  --d-fg-faint: #788c7b;
 
   /* the canopy gradient: spring leaf → deep leaf → teal moss → sunlight */
-  --g1: #58b368;
-  --g2: #2f9e6e;
-  --g3: #2e8f83;
-  --g4: #e2b04a;
+  --l-g1: #58b368;
+  --d-g1: #6ecf7e;
+  --l-g2: #2f9e6e;
+  --d-g2: #43c08a;
+  --l-g3: #2e8f83;
+  --d-g3: #45b3a5;
+  --l-g4: #e2b04a;
+  --d-g4: #edc264;
   --grad-brand: linear-gradient(118deg, var(--g1) 0%, var(--g2) 38%, var(--g3) 70%, var(--g4) 100%);
   --grad-brand-soft: linear-gradient(118deg,
       color-mix(in oklab, var(--g1) 22%, transparent) 0%,
@@ -39,13 +64,20 @@
   /* the seasons gradient: a leaf aging as you read */
   --grad-seasons: linear-gradient(90deg, #58b368 0%, #2f9e6e 34%, #b5a83a 62%, #e2b04a 80%, #d97b4f 100%);
 
-  --accent: #2f9e6e;
-  --accent-2: #2e8f83;
-  --ok: #3a9d63;
-  --err: #c95f6d;
-  --warn: #d99a2b;
-  --bark: #8f9d7e;
-  --blossom: #e8a7b6;
+  --l-accent: #2f9e6e;
+  --d-accent: #56c78e;
+  --l-accent-2: #2e8f83;
+  --d-accent-2: #48bdae;
+  --l-ok: #3a9d63;
+  --d-ok: #5cc47f;
+  --l-err: #c95f6d;
+  --d-err: #e8899a;
+  --l-warn: #d99a2b;
+  --d-warn: #e6b555;
+  --l-bark: #8f9d7e;
+  --d-bark: #798a6b;
+  --l-blossom: #e8a7b6;
+  --d-blossom: #e8a7b6;
 
   /* type */
   --font-display: 'Fraunces Variable', 'Fraunces', Georgia, serif;
@@ -60,36 +92,185 @@
   --shadow-lift: 0 10px 30px -10px rgba(47, 74, 55, 0.22);
 
   /* the brightest surface: .btn:hover, inline glosses, QR paper */
-  --bg-hi: #ffffff;
+  --l-bg-hi: #ffffff;
+  --d-bg-hi: #212a20;
 
   /* disp syntax — pastel botanicals, shared by .hl-* and CodeMirror */
-  --hl-comment: #7c8b74;
-  --hl-string: #2b8a52;
-  --hl-number: #1d7f8a;
-  --hl-kw: #7c5cbf;
-  --hl-op: #66766b;
-  --hl-punct: #85937f;
-  --hl-atom: #bf5a92;
-  --hl-type: #0f766e;
-  --hl-fn: #a8770f;
-  --hl-var: #2e4034;
+  --l-hl-comment: #7c8b74;
+  --d-hl-comment: #7f9179;
+  --l-hl-string: #2b8a52;
+  --d-hl-string: #7fd39a;
+  --l-hl-number: #1d7f8a;
+  --d-hl-number: #5fc8d8;
+  --l-hl-kw: #7c5cbf;
+  --d-hl-kw: #b79df0;
+  --l-hl-op: #66766b;
+  --d-hl-op: #92a596;
+  --l-hl-punct: #85937f;
+  --d-hl-punct: #7b8d80;
+  --l-hl-atom: #bf5a92;
+  --d-hl-atom: #f0a0c4;
+  --l-hl-type: #0f766e;
+  --d-hl-type: #4fd0c0;
+  --l-hl-fn: #a8770f;
+  --d-hl-fn: #e8c06a;
+  --l-hl-var: #2e4034;
+  --d-hl-var: #d6e2d4;
 
   /* editor chrome (CodeMirror + output cells) */
-  --ed-gutter: #8ea08b;
-  --ed-line: rgba(74, 104, 82, 0.05);
-  --ed-line-gutter: rgba(74, 104, 82, 0.08);
-  --ed-sel: rgba(88, 179, 104, 0.22);
-  --ed-out-fg: #43584a;
-  --ed-out-bg: rgba(74, 104, 82, 0.07);
-  --ed-out-rule: rgba(74, 104, 82, 0.4);
-  --ed-out-fail-fg: #a44f5c;
-  --ed-out-fail-bg: rgba(201, 95, 109, 0.07);
-  --ed-out-fail-rule: rgba(201, 95, 109, 0.55);
-  --ed-chip: rgba(74, 104, 82, 0.08);
-  --ed-pass-line: rgba(58, 157, 99, 0.1);
-  --ed-fail-line: rgba(201, 95, 109, 0.13);
+  --l-ed-gutter: #8ea08b;
+  --d-ed-gutter: #6f8378;
+  --l-ed-line: rgba(74, 104, 82, 0.05);
+  --d-ed-line: rgba(150, 205, 160, 0.05);
+  --l-ed-line-gutter: rgba(74, 104, 82, 0.08);
+  --d-ed-line-gutter: rgba(150, 205, 160, 0.09);
+  --l-ed-sel: rgba(88, 179, 104, 0.22);
+  --d-ed-sel: rgba(110, 207, 126, 0.26);
+  --l-ed-out-fg: #43584a;
+  --d-ed-out-fg: #b7cbba;
+  --l-ed-out-bg: rgba(74, 104, 82, 0.07);
+  --d-ed-out-bg: rgba(150, 205, 160, 0.07);
+  --l-ed-out-rule: rgba(74, 104, 82, 0.4);
+  --d-ed-out-rule: rgba(150, 205, 160, 0.34);
+  --l-ed-out-fail-fg: #a44f5c;
+  --d-ed-out-fail-fg: #eda0ae;
+  --l-ed-out-fail-bg: rgba(201, 95, 109, 0.07);
+  --d-ed-out-fail-bg: rgba(232, 137, 154, 0.1);
+  --l-ed-out-fail-rule: rgba(201, 95, 109, 0.55);
+  --d-ed-out-fail-rule: rgba(232, 137, 154, 0.5);
+  --l-ed-chip: rgba(74, 104, 82, 0.08);
+  --d-ed-chip: rgba(150, 205, 160, 0.09);
+  --l-ed-pass-line: rgba(58, 157, 99, 0.1);
+  --d-ed-pass-line: rgba(92, 196, 127, 0.12);
+  --l-ed-fail-line: rgba(201, 95, 109, 0.13);
+  --d-ed-fail-line: rgba(232, 137, 154, 0.14);
 
   color-scheme: light;
+
+  /* The blend. Surfaces glide from their light value to their dark one along
+     --mix-w, a curve of --mix bent so the page background reaches mid
+     lightness exactly at --mix 0.5 (the numbers are the two backgrounds'
+     oklab L; the simple style overrides them). --bg-l is that lightness.
+     Inks track it: on the light side an ink keeps its own hue and chroma and
+     its lightness shrinks toward black as the background darkens, on the dark
+     side it grows toward white as the background lightens, so contrast is
+     held at every step and both ends are the old palette exactly. The
+     polarity flips across a hair-thin ramp at the middle (--mix-k), where
+     black and white are equally readable on the mid-grey. Brand hues keep a
+     floor of their own lightness there so they stay coloured. */
+  --bgl-l: 0.9747;
+  --bgl-d: 0.1922;
+  --mix-gamma: 0.7211;
+  --mix-w: pow(var(--mix), var(--mix-gamma));
+  --bg-l: calc(var(--bgl-l) + (var(--bgl-d) - var(--bgl-l)) * var(--mix-w));
+  --mix-r: calc((var(--bg-l) - 0.5) / (var(--bgl-l) - 0.5));
+  --mix-rd: calc((0.5 - var(--bg-l)) / (0.5 - var(--bgl-d)));
+  --mix-k: clamp(0, calc((var(--mix) - 0.495) / 0.01), 1);
+  transition: --mix 0.9s cubic-bezier(0.4, 0, 0.2, 1);
+
+  --bg: color-mix(in oklab, var(--l-bg) calc(100% - var(--mix-w) * 100%), var(--d-bg));
+  --bg-elev: color-mix(in oklab, var(--l-bg-elev) calc(100% - var(--mix-w) * 100%), var(--d-bg-elev));
+  --bg-panel: color-mix(in oklab, var(--l-bg-panel) calc(100% - var(--mix-w) * 100%), var(--d-bg-panel));
+  --bg-panel-hover: color-mix(in oklab, var(--l-bg-panel-hover) calc(100% - var(--mix-w) * 100%), var(--d-bg-panel-hover));
+  --bg-code: color-mix(in oklab, var(--l-bg-code) calc(100% - var(--mix-w) * 100%), var(--d-bg-code));
+  --border: color-mix(in oklab, var(--l-border) calc(100% - var(--mix-w) * 100%), var(--d-border));
+  --border-strong: color-mix(in oklab, var(--l-border-strong) calc(100% - var(--mix-w) * 100%), var(--d-border-strong));
+  --fg: color-mix(in oklab,
+    oklch(from var(--l-fg) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-fg) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+  --fg-muted: color-mix(in oklab,
+    oklch(from var(--l-fg-muted) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-fg-muted) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+  --fg-faint: color-mix(in oklab,
+    oklch(from var(--l-fg-faint) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-fg-faint) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+  --g1: color-mix(in oklab,
+    oklch(from var(--l-g1) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-g1) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --g2: color-mix(in oklab,
+    oklch(from var(--l-g2) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-g2) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --g3: color-mix(in oklab,
+    oklch(from var(--l-g3) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-g3) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --g4: color-mix(in oklab,
+    oklch(from var(--l-g4) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-g4) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --accent: color-mix(in oklab,
+    oklch(from var(--l-accent) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-accent) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --accent-2: color-mix(in oklab,
+    oklch(from var(--l-accent-2) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-accent-2) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --ok: color-mix(in oklab,
+    oklch(from var(--l-ok) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-ok) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --err: color-mix(in oklab,
+    oklch(from var(--l-err) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-err) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --warn: color-mix(in oklab,
+    oklch(from var(--l-warn) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-warn) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --bark: color-mix(in oklab,
+    oklch(from var(--l-bark) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-bark) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+  --blossom: color-mix(in oklab,
+    oklch(from var(--l-blossom) clamp(0, calc(l * (0.5 + 0.5 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-blossom) clamp(0, calc(1 - (1 - l) * (0.5 + 0.5 * var(--mix-rd))), 1) c h));
+  --bg-hi: color-mix(in oklab, var(--l-bg-hi) calc(100% - var(--mix-w) * 100%), var(--d-bg-hi));
+  --hl-comment: color-mix(in oklab,
+    oklch(from var(--l-hl-comment) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-comment) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-string: color-mix(in oklab,
+    oklch(from var(--l-hl-string) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-string) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-number: color-mix(in oklab,
+    oklch(from var(--l-hl-number) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-number) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-kw: color-mix(in oklab,
+    oklch(from var(--l-hl-kw) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-kw) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-op: color-mix(in oklab,
+    oklch(from var(--l-hl-op) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-op) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-punct: color-mix(in oklab,
+    oklch(from var(--l-hl-punct) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-punct) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-atom: color-mix(in oklab,
+    oklch(from var(--l-hl-atom) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-atom) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-type: color-mix(in oklab,
+    oklch(from var(--l-hl-type) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-type) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-fn: color-mix(in oklab,
+    oklch(from var(--l-hl-fn) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-fn) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --hl-var: color-mix(in oklab,
+    oklch(from var(--l-hl-var) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-hl-var) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --ed-gutter: color-mix(in oklab,
+    oklch(from var(--l-ed-gutter) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-ed-gutter) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+  --ed-line: color-mix(in oklab, var(--l-ed-line) calc(100% - var(--mix-w) * 100%), var(--d-ed-line));
+  --ed-line-gutter: color-mix(in oklab, var(--l-ed-line-gutter) calc(100% - var(--mix-w) * 100%), var(--d-ed-line-gutter));
+  --ed-sel: color-mix(in oklab, var(--l-ed-sel) calc(100% - var(--mix-w) * 100%), var(--d-ed-sel));
+  --ed-out-fg: color-mix(in oklab,
+    oklch(from var(--l-ed-out-fg) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-ed-out-fg) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+  --ed-out-bg: color-mix(in oklab, var(--l-ed-out-bg) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-bg));
+  --ed-out-rule: color-mix(in oklab, var(--l-ed-out-rule) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-rule));
+  --ed-out-fail-fg: color-mix(in oklab,
+    oklch(from var(--l-ed-out-fail-fg) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-ed-out-fail-fg) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+  --ed-out-fail-bg: color-mix(in oklab, var(--l-ed-out-fail-bg) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-fail-bg));
+  --ed-out-fail-rule: color-mix(in oklab, var(--l-ed-out-fail-rule) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-fail-rule));
+  --ed-chip: color-mix(in oklab, var(--l-ed-chip) calc(100% - var(--mix-w) * 100%), var(--d-ed-chip));
+  --ed-pass-line: color-mix(in oklab, var(--l-ed-pass-line) calc(100% - var(--mix-w) * 100%), var(--d-ed-pass-line));
+  --ed-fail-line: color-mix(in oklab, var(--l-ed-fail-line) calc(100% - var(--mix-w) * 100%), var(--d-ed-fail-line));
+}
+/* a scrub drags --mix by hand: the page follows the pointer, no easing */
+:root.scrubbing {
+  transition: none;
 }
 
 /* ============================================================
@@ -98,62 +279,10 @@
    ============================================================ */
 
 [data-theme='dark'] {
-  --bg: #11160f;
-  --bg-elev: #191f18;
-  --bg-panel: rgba(150, 205, 160, 0.055);
-  --bg-panel-hover: rgba(150, 205, 160, 0.11);
-  --bg-code: #151b14;
-  --border: rgba(163, 201, 170, 0.15);
-  --border-strong: rgba(163, 201, 170, 0.3);
-
-  --fg: #e2ebe0;
-  --fg-muted: #a3b7a6;
-  --fg-faint: #788c7b;
-
-  --g1: #6ecf7e;
-  --g2: #43c08a;
-  --g3: #45b3a5;
-  --g4: #edc264;
+  /* the few values that cannot blend: they flip with the midpoint */
   --grad-seasons: linear-gradient(90deg, #6ecf7e 0%, #43c08a 34%, #c8bd4f 62%, #edc264 80%, #e8916a 100%);
-
-  --accent: #56c78e;
-  --accent-2: #48bdae;
-  --ok: #5cc47f;
-  --err: #e8899a;
-  --warn: #e6b555;
-  --bark: #798a6b;
-  --blossom: #e8a7b6;
-
   --shadow-soft: 0 2px 14px -4px rgba(0, 0, 0, 0.5);
   --shadow-lift: 0 10px 30px -10px rgba(0, 0, 0, 0.66);
-
-  --bg-hi: #212a20;
-
-  --hl-comment: #7f9179;
-  --hl-string: #7fd39a;
-  --hl-number: #5fc8d8;
-  --hl-kw: #b79df0;
-  --hl-op: #92a596;
-  --hl-punct: #7b8d80;
-  --hl-atom: #f0a0c4;
-  --hl-type: #4fd0c0;
-  --hl-fn: #e8c06a;
-  --hl-var: #d6e2d4;
-
-  --ed-gutter: #6f8378;
-  --ed-line: rgba(150, 205, 160, 0.05);
-  --ed-line-gutter: rgba(150, 205, 160, 0.09);
-  --ed-sel: rgba(110, 207, 126, 0.26);
-  --ed-out-fg: #b7cbba;
-  --ed-out-bg: rgba(150, 205, 160, 0.07);
-  --ed-out-rule: rgba(150, 205, 160, 0.34);
-  --ed-out-fail-fg: #eda0ae;
-  --ed-out-fail-bg: rgba(232, 137, 154, 0.1);
-  --ed-out-fail-rule: rgba(232, 137, 154, 0.5);
-  --ed-chip: rgba(150, 205, 160, 0.09);
-  --ed-pass-line: rgba(92, 196, 127, 0.12);
-  --ed-fail-line: rgba(232, 137, 154, 0.14);
-
   color-scheme: dark;
 }
 
@@ -296,20 +425,34 @@ pre {
 
 /* Reading style inspired by https://lantoniaina.github.io/Best/. */
 :root[data-style='simple'] {
-  --bg: #fefefe;
-  --bg-elev: #fefefe;
-  --bg-hi: #fff;
-  --bg-panel: #f3f3f3;
-  --bg-panel-hover: #e9e9e9;
-  --bg-code: #f3f3f3;
-  --fg: #454545;
-  --fg-muted: #454545;
-  --fg-faint: #666;
-  --border: #ddd;
-  --border-strong: #999;
-  --accent: #0077aa;
-  --accent-2: #0077aa;
-  --link-visited: #941352;
+  --l-bg: #fefefe;
+  --d-bg: #111;
+  --l-bg-elev: #fefefe;
+  --d-bg-elev: #111;
+  --l-bg-hi: #fff;
+  --d-bg-hi: #222;
+  --l-bg-panel: #f3f3f3;
+  --d-bg-panel: #1b1b1b;
+  --l-bg-panel-hover: #e9e9e9;
+  --d-bg-panel-hover: #292929;
+  --l-bg-code: #f3f3f3;
+  --d-bg-code: #1b1b1b;
+  --l-fg: #454545;
+  --d-fg: #bababa;
+  --l-fg-muted: #454545;
+  --d-fg-muted: #bababa;
+  --l-fg-faint: #666;
+  --d-fg-faint: #aaa;
+  --l-border: #ddd;
+  --d-border: #444;
+  --l-border-strong: #999;
+  --d-border-strong: #777;
+  --l-accent: #0077aa;
+  --d-accent: #60b9df;
+  --l-accent-2: #0077aa;
+  --d-accent-2: #60b9df;
+  --l-link-visited: #941352;
+  --d-link-visited: #d78bb0;
   --font-body: Arial, Helvetica, sans-serif;
   --font-display: var(--font-body);
   --font-mono: ui-monospace, monospace;
@@ -317,24 +460,14 @@ pre {
   --radius: 0;
   --shadow-soft: none;
   --shadow-lift: none;
+  --bgl-l: 0.9970;
+  --bgl-d: 0.1776;
+  --mix-gamma: 0.7212;
+  --link-visited: color-mix(in oklab,
+    oklch(from var(--l-link-visited) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
+    oklch(from var(--d-link-visited) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
 }
 
-:root[data-style='simple'][data-theme='dark'] {
-  --bg: #111;
-  --bg-elev: #111;
-  --bg-hi: #222;
-  --bg-panel: #1b1b1b;
-  --bg-panel-hover: #292929;
-  --bg-code: #1b1b1b;
-  --fg: #bababa;
-  --fg-muted: #bababa;
-  --fg-faint: #aaa;
-  --border: #444;
-  --border-strong: #777;
-  --accent: #60b9df;
-  --accent-2: #60b9df;
-  --link-visited: #d78bb0;
-}
 
 :root[data-style='simple'],
 :root[data-style='simple'] body {

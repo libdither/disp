@@ -5,7 +5,7 @@
   import "../app.css";
   import { base } from "$app/paths";
   import { page } from "$app/state";
-  import { theme } from "$lib/theme.svelte";
+  import { theme, type ThemePref } from "$lib/theme.svelte";
 
   let { children } = $props();
 
@@ -17,6 +17,59 @@
     light: "Theme: light",
     dark: "Theme: dark",
   };
+  const themeLabel = (p: ThemePref) =>
+    typeof p === "number" ? `Theme: ${Math.round(p * 100)}% of the way to dark` : THEME_LABEL[p];
+  const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
+    { value: "system", label: "System" },
+    { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" },
+  ];
+  // the appearance menu: a thin column of icons that appears under the theme
+  // button on hover (or keyboard focus, CSS-driven). Clicking the button
+  // cycles the theme in menu order; the simple style is only ever picked by
+  // hand, from its own icon in the menu.
+  const cycleTheme = () => theme.cycle();
+  // the theme icons are a tape (the visualizer's cassette, sideways): a thumb
+  // rides to the chosen icon with a bounce, and pressing anywhere on the
+  // column jumps it there, then scrubs. The top cell (system) snaps; between
+  // the sun and the moon the thumb is continuous and the page blends live
+  // under the drag, and the thumb squares off to say so.
+  const CELL = 32; // 30px icon + 2px gap
+  const thumbY = $derived(theme.pref === "system" ? 0 : CELL * (1 + theme.mix));
+  const continuous = $derived(typeof theme.pref === "number");
+  let themesEl: HTMLDivElement | undefined = $state();
+  let hot = $state<number | null>(null); // the icon under the pointer
+  let scrubbing = $state(false);
+  // pointer height in cells from the tape's top: the system cell snaps, below
+  // it the sun's centre is 0 and the moon's centre is 1, ends snap to the words
+  const prefAt = (clientY: number): ThemePref => {
+    if (!themesEl) return theme.pref;
+    const u = (clientY - themesEl.getBoundingClientRect().top) / CELL;
+    if (u < 1) return "system";
+    const m = Math.max(0, Math.min(1, u - 1.5));
+    return m < 0.04 ? "light" : m > 0.96 ? "dark" : m;
+  };
+  const cellAt = (clientY: number) => {
+    if (!themesEl) return null;
+    const u = (clientY - themesEl.getBoundingClientRect().top) / CELL;
+    return Math.max(0, Math.min(THEME_OPTIONS.length - 1, Math.floor(u)));
+  };
+  function themesDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    scrubbing = true;
+    theme.setScrubbing(true);
+    themesEl?.setPointerCapture(e.pointerId);
+    theme.set(prefAt(e.clientY));
+  }
+  function themesMove(e: PointerEvent) {
+    hot = cellAt(e.clientY);
+    if (scrubbing) theme.set(prefAt(e.clientY));
+  }
+  function themesUp() {
+    if (!scrubbing) return;
+    scrubbing = false;
+    theme.setScrubbing(false);
+  }
 
   const REPO = "https://github.com/libdither/disp";
 
@@ -37,6 +90,33 @@
 
   let warnDismissed = $state(false);
 </script>
+
+<!-- the appearance glyphs: sun, moon, half-and-half for "follow the system", plain lines for the simple style -->
+{#snippet sun()}
+  <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="12" cy="12" r="4.4" />
+    <g class="rays">
+      <path d="M12 1.8v2.6M12 19.6v2.6M1.8 12h2.6M19.6 12h2.6" />
+      <path d="M4.8 4.8l1.9 1.9M17.3 17.3l1.9 1.9M19.2 4.8l-1.9 1.9M6.7 17.3l-1.9 1.9" />
+    </g>
+  </svg>
+{/snippet}
+{#snippet moon()}
+  <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z" />
+  </svg>
+{/snippet}
+{#snippet auto()}
+  <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.9" />
+    <path d="M12 3.8a8.2 8.2 0 0 1 0 16.4Z" />
+  </svg>
+{/snippet}
+{#snippet plain()}
+  <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
+    <g class="rays"><path d="M4 6h16M4 12h11M4 18h14" /></g>
+  </svg>
+{/snippet}
 
 <div class="shell" class:app={isApp}>
   {#if !warnDismissed}
@@ -105,41 +185,56 @@
           {/if}
         {/each}
 
-        <button
-          class="styletoggle"
-          aria-pressed={theme.style === "simple"}
-          title="Best Motherfucking Website inspired style"
-          onclick={() => theme.toggleStyle()}
-        >
-          Simple style
-        </button>
-        <button
-          class="themetoggle"
-          class:auto={theme.pref === "system"}
-          onclick={() => theme.cycle()}
-          title={THEME_LABEL[theme.pref]}
-          aria-label={THEME_LABEL[theme.pref]}
-        >
-          {#if theme.resolved === "dark"}
-            <!-- dusk: a crescent moon -->
-            <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z"
-              />
-            </svg>
-          {:else}
-            <!-- midmorning: a sun -->
-            <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="4.4" />
-              <g class="rays">
-                <path d="M12 1.8v2.6M12 19.6v2.6M1.8 12h2.6M19.6 12h2.6" />
-                <path
-                  d="M4.8 4.8l1.9 1.9M17.3 17.3l1.9 1.9M19.2 4.8l-1.9 1.9M6.7 17.3l-1.9 1.9"
-                />
-              </g>
-            </svg>
-          {/if}
-        </button>
+        <div class="appearance">
+          <button
+            class="themetoggle"
+            class:auto={theme.pref === "system"}
+            title="Appearance — {themeLabel(theme.pref)} (click cycles, hover for more)"
+            aria-label="Appearance — {themeLabel(theme.pref)}. Click to cycle the theme."
+            onclick={cycleTheme}
+          >
+            {#if theme.resolved === "dark"}{@render moon()}{:else}{@render sun()}{/if}
+          </button>
+          <div class="amenu" role="menu" aria-label="appearance">
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="amenu-tape"
+                class:scrubbing
+                bind:this={themesEl}
+                onpointerdown={themesDown}
+                onpointermove={themesMove}
+                onpointerup={themesUp}
+                onpointercancel={themesUp}
+                onpointerleave={() => (hot = null)}
+              >
+                <span class="athumb" class:cont={continuous} style="transform: translateY({thumbY}px)" aria-hidden="true"></span>
+                {#each THEME_OPTIONS as o, i (o.value)}
+                  <button
+                    class="amenu-item"
+                    class:hot={hot === i}
+                    role="menuitemradio"
+                    aria-checked={theme.pref === o.value}
+                    title={o.label}
+                    aria-label={o.label}
+                    onclick={() => theme.set(o.value)}
+                  >
+                    {#if o.value === "system"}{@render auto()}{:else if o.value === "light"}{@render sun()}{:else}{@render moon()}{/if}
+                  </button>
+                {/each}
+              </div>
+              <span class="amenu-sep"></span>
+              <button
+                class="amenu-item"
+                role="menuitemcheckbox"
+                aria-checked={theme.style === "simple"}
+                title="Simple style"
+                aria-label="Simple style"
+                onclick={() => theme.setStyle(theme.style === "simple" ? "original" : "simple")}
+              >
+                {@render plain()}
+              </button>
+            </div>
+        </div>
       </div>
     </nav>
   </header>
@@ -295,21 +390,115 @@
   }
 
   /* sun/moon toggle; the dot marks "following your system" */
-  .styletoggle {
+  .appearance {
+    position: relative;
+    display: inline-flex;
+  }
+  .amenu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--bg-elev);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: 999px;
+    box-shadow: var(--shadow-lift);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    /* the close waits a beat, so crossing the gap below the button keeps it */
+    transition:
+      opacity 0.15s ease 0.12s,
+      transform 0.15s ease 0.12s,
+      visibility 0s linear 0.27s;
+  }
+  .amenu::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -8px;
+    height: 8px;
+  }
+  .appearance:hover .amenu,
+  .appearance:focus-within .amenu {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition-delay: 0s;
+  }
+  .amenu-tape {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
+    touch-action: none; /* a drag on touch scrubs, never scrolls */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* the tape takes the pointer; the icons stay keyboard-operable */
+  .amenu-tape .amenu-item {
+    position: relative;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .athumb {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 30px;
+    height: 30px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 1.5px solid var(--g2);
+    background: color-mix(in oklab, var(--g1) 16%, transparent);
+    box-shadow: 0 1px 6px -2px color-mix(in oklab, var(--g2) 70%, transparent);
+    pointer-events: none;
+    /* sticky + bouncy, the cassette's ride; squares off on an intermediate */
+    transition:
+      transform 0.24s cubic-bezier(0.34, 1.7, 0.5, 1),
+      border-radius 0.3s ease;
+  }
+  .athumb.cont {
+    border-radius: 30%;
+  }
+  /* under a scrub the thumb sits exactly where the pointer is */
+  .amenu-tape.scrubbing .athumb {
+    transition: border-radius 0.3s ease;
+  }
+  .amenu-item {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
     background: none;
-    color: var(--fg);
-    font: inherit;
-    font-size: 0.875rem;
-    padding: 0.35em 0.6em;
-    white-space: nowrap;
+    color: var(--fg-muted);
     cursor: pointer;
   }
-  .styletoggle:hover,
-  .styletoggle[aria-pressed="true"] {
+  .amenu-item:hover,
+  .amenu-item:focus-visible,
+  .amenu-item.hot {
     background: var(--bg-panel-hover);
-    border-color: var(--accent);
+    color: var(--fg);
+    outline: none;
+  }
+  .amenu-item[aria-checked="true"] {
+    color: var(--accent);
+  }
+  .amenu-sep {
+    width: 16px;
+    height: 1px;
+    margin: 2px 0;
+    background: var(--border);
   }
 
   .themetoggle {
@@ -332,7 +521,9 @@
       background 0.15s ease,
       border-color 0.15s ease;
   }
-  .themetoggle:hover {
+  .themetoggle:hover,
+  .appearance:hover .themetoggle,
+  .appearance:focus-within .themetoggle {
     color: var(--fg);
     background: var(--bg-panel-hover);
     border-color: var(--border);
