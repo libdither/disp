@@ -154,10 +154,12 @@
      Inks track it: on the light side an ink keeps its own hue and chroma and
      its lightness shrinks toward black as the background darkens, on the dark
      side it grows toward white as the background lightens, so contrast is
-     held at every step and both ends are the old palette exactly. The
-     polarity flips across a hair-thin ramp at the middle (--mix-k), where
-     black and white are equally readable on the mid-grey. Brand hues keep a
-     floor of their own lightness there so they stay coloured. */
+     held on either side and both ends are the old palette exactly. The
+     polarity crosses over a band around the middle (--mix-k): a continuous
+     blend has to pass through the point where ink and background match, so
+     the band trades a dip in contrast near 0.5 for no jump anywhere; the
+     tape steers a release away from that dip. Brand hues keep a floor of
+     their own lightness so they stay coloured. */
   --bgl-l: 0.9747;
   --bgl-d: 0.1922;
   --mix-gamma: 0.7211;
@@ -165,7 +167,10 @@
   --bg-l: calc(var(--bgl-l) + (var(--bgl-d) - var(--bgl-l)) * var(--mix-w));
   --mix-r: calc((var(--bg-l) - 0.5) / (var(--bgl-l) - 0.5));
   --mix-rd: calc((0.5 - var(--bg-l)) / (0.5 - var(--bgl-d)));
-  --mix-k: clamp(0, calc((var(--mix) - 0.495) / 0.01), 1);
+  /* the inks cross polarity over a band around the middle, eased, so a
+     blend never jumps; inside the band contrast dips, to nothing at 0.5 */
+  --mix-k0: clamp(0, calc((var(--mix) - 0.36) / 0.28), 1);
+  --mix-k: calc(var(--mix-k0) * var(--mix-k0) * (3 - 2 * var(--mix-k0)));
   transition: --mix 0.9s cubic-bezier(0.4, 0, 0.2, 1);
 
   --bg: color-mix(in oklab, var(--l-bg) calc(100% - var(--mix-w) * 100%), var(--d-bg));

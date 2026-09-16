@@ -34,41 +34,60 @@
   // column jumps it there, then scrubs. The top cell (system) snaps; between
   // the sun and the moon the thumb is continuous and the page blends live
   // under the drag, and the thumb squares off to say so.
-  const CELL = 32; // 30px icon + 2px gap
-  const thumbY = $derived(theme.pref === "system" ? 0 : CELL * (1 + theme.mix));
+  // Geometry, in px from the tape's top: each icon is 30px with a 2px gap,
+  // and a 64px track sits between the sun and the moon so the blend has room.
+  const SUN_Y = 32;
+  const MOON_Y = 130;
+  const thumbY = $derived(theme.pref === "system" ? 0 : SUN_Y + (MOON_Y - SUN_Y) * theme.mix);
   const continuous = $derived(typeof theme.pref === "number");
+  let scrubbing = $state(false);
+  // squished while pressed on the track, a little squat while an intermediate holds
+  const thumbTransform = $derived(
+    `translateY(${thumbY}px) scale(${scrubbing && continuous ? "1.2, 0.72" : continuous ? "1.08, 0.86" : "1, 1"})`,
+  );
   let themesEl: HTMLDivElement | undefined = $state();
   let hot = $state<number | null>(null); // the icon under the pointer
-  let scrubbing = $state(false);
-  // pointer height in cells from the tape's top: the system cell snaps, below
-  // it the sun's centre is 0 and the moon's centre is 1, ends snap to the words
+  const tapeY = (clientY: number) => clientY - (themesEl?.getBoundingClientRect().top ?? clientY);
+  // the system cell snaps; from the sun's centre (0) to the moon's (1) the
+  // thumb is continuous, and the last few percent snap to the words
   const prefAt = (clientY: number): ThemePref => {
     if (!themesEl) return theme.pref;
-    const u = (clientY - themesEl.getBoundingClientRect().top) / CELL;
-    if (u < 1) return "system";
-    const m = Math.max(0, Math.min(1, u - 1.5));
-    return m < 0.04 ? "light" : m > 0.96 ? "dark" : m;
+    const u = tapeY(clientY);
+    if (u < SUN_Y - 1) return "system";
+    const m = Math.max(0, Math.min(1, (u - (SUN_Y + 15)) / (MOON_Y - SUN_Y)));
+    return m < 0.03 ? "light" : m > 0.97 ? "dark" : m;
   };
   const cellAt = (clientY: number) => {
     if (!themesEl) return null;
-    const u = (clientY - themesEl.getBoundingClientRect().top) / CELL;
-    return Math.max(0, Math.min(THEME_OPTIONS.length - 1, Math.floor(u)));
+    const u = tapeY(clientY);
+    return u < SUN_Y ? 0 : u < SUN_Y + 32 ? 1 : u >= MOON_Y - 2 ? 2 : null;
   };
+  // a snap to one of the words eases the page like a click would; only the
+  // continuous stretch follows the pointer instantly
+  function scrubTo(clientY: number) {
+    const p = prefAt(clientY);
+    theme.setScrubbing(typeof p === "number");
+    theme.set(p);
+  }
   function themesDown(e: PointerEvent) {
     if (e.button !== 0) return;
     scrubbing = true;
-    theme.setScrubbing(true);
     themesEl?.setPointerCapture(e.pointerId);
-    theme.set(prefAt(e.clientY));
+    scrubTo(e.clientY);
   }
   function themesMove(e: PointerEvent) {
     hot = cellAt(e.clientY);
-    if (scrubbing) theme.set(prefAt(e.clientY));
+    if (scrubbing) scrubTo(e.clientY);
   }
+  // the inks cross polarity around the middle of the track and contrast
+  // dips there; a release inside that stretch settles just outside it
+  const DIP = 0.08;
   function themesUp() {
     if (!scrubbing) return;
     scrubbing = false;
     theme.setScrubbing(false);
+    const p = theme.pref;
+    if (typeof p === "number" && Math.abs(p - 0.5) < DIP) theme.set(p < 0.5 ? 0.5 - DIP : 0.5 + DIP);
   }
 
   const REPO = "https://github.com/libdither/disp";
@@ -111,6 +130,19 @@
     <circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.9" />
     <path d="M12 3.8a8.2 8.2 0 0 1 0 16.4Z" />
   </svg>
+{/snippet}
+{#snippet themeItem(o: { value: ThemePref; label: string }, i: number)}
+  <button
+    class="amenu-item"
+    class:hot={hot === i}
+    role="menuitemradio"
+    aria-checked={theme.pref === o.value}
+    title={o.label}
+    aria-label={o.label}
+    onclick={() => theme.set(o.value)}
+  >
+    {#if o.value === "system"}{@render auto()}{:else if o.value === "light"}{@render sun()}{:else}{@render moon()}{/if}
+  </button>
 {/snippet}
 {#snippet plain()}
   <svg class="tglyph" viewBox="0 0 24 24" aria-hidden="true">
@@ -199,7 +231,7 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 class="amenu-tape"
-                class:scrubbing
+                class:scrubbing={scrubbing && continuous}
                 bind:this={themesEl}
                 onpointerdown={themesDown}
                 onpointermove={themesMove}
@@ -207,20 +239,29 @@
                 onpointercancel={themesUp}
                 onpointerleave={() => (hot = null)}
               >
-                <span class="athumb" class:cont={continuous} style="transform: translateY({thumbY}px)" aria-hidden="true"></span>
-                {#each THEME_OPTIONS as o, i (o.value)}
-                  <button
-                    class="amenu-item"
-                    class:hot={hot === i}
-                    role="menuitemradio"
-                    aria-checked={theme.pref === o.value}
-                    title={o.label}
-                    aria-label={o.label}
-                    onclick={() => theme.set(o.value)}
-                  >
-                    {#if o.value === "system"}{@render auto()}{:else if o.value === "light"}{@render sun()}{:else}{@render moon()}{/if}
-                  </button>
-                {/each}
+                <span
+                  class="athumb"
+                  class:cont={continuous}
+                  class:pressed={scrubbing && continuous}
+                  style="transform: {thumbTransform}"
+                  aria-hidden="true"
+                ></span>
+                {@render themeItem(THEME_OPTIONS[0], 0)}
+                {@render themeItem(THEME_OPTIONS[1], 1)}
+                <!-- the track between the sun and the moon: a wedge shaded from
+                     the light page to the dark one, the room there is to blend -->
+                <svg class="atrack" viewBox="0 0 10 64" aria-hidden="true">
+                  <defs>
+                    <linearGradient id="atrack-shade" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0" style="stop-color: var(--l-bg)" />
+                      <stop offset="1" style="stop-color: var(--d-bg)" />
+                    </linearGradient>
+                  </defs>
+                  <path d="M3.5 0.5 H6.5 L9.5 63.5 H0.5 Z" fill="url(#atrack-shade)" stroke="var(--border-strong)" stroke-width="1" stroke-linejoin="round" />
+                  <!-- the crossover: where the inks swap sides -->
+                  <path d="M1.5 32 H8.5" stroke="var(--border-strong)" stroke-width="1" stroke-dasharray="1 1" />
+                </svg>
+                {@render themeItem(THEME_OPTIONS[2], 2)}
               </div>
               <span class="amenu-sep"></span>
               <button
@@ -460,13 +501,24 @@
     background: color-mix(in oklab, var(--g1) 16%, transparent);
     box-shadow: 0 1px 6px -2px color-mix(in oklab, var(--g2) 70%, transparent);
     pointer-events: none;
+    z-index: 1;
     /* sticky + bouncy, the cassette's ride; squares off on an intermediate */
     transition:
       transform 0.24s cubic-bezier(0.34, 1.7, 0.5, 1),
       border-radius 0.3s ease;
   }
   .athumb.cont {
-    border-radius: 30%;
+    border-radius: 35%;
+  }
+  .athumb.pressed {
+    border-radius: 40%;
+  }
+  .atrack {
+    display: block;
+    flex: none;
+    width: 10px;
+    height: 64px;
+    align-self: center;
   }
   /* under a scrub the thumb sits exactly where the pointer is */
   .amenu-tape.scrubbing .athumb {
