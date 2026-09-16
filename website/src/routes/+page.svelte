@@ -1,5 +1,6 @@
 <script lang="ts">
   import { flushSync } from "svelte";
+  import { theme } from "$lib/theme.svelte";
   import { base } from "$app/paths";
   import HeroCard from "$lib/components/HeroCard.svelte";
   import { LEVEL_WORD } from "$lib/langs/types";
@@ -64,54 +65,81 @@
     }
   }
 
-  // the field guide: one fixed card, entries swap on hover.
-  // `html` is trusted author-written markup: links, <em>, <code> all work,
+  // the field guide: one fixed card, entries swap on hover. Each entry has a
+  // serious definition and a joke; the appearance menu's "funny style" picks
+  // (both render, :root[data-funny] shows one, so there is no flash on load).
+  // Both are trusted author-written markup: links, <em>, <code> all work,
   // and plain \n newlines render as line breaks (white-space: pre-line).
   interface Entry {
     term: string;
     pos: string;
-    html: string;
+    serious: string;
+    funny: string;
   }
   const entries: Record<string, Entry> = {
     disp: {
       term: "disp",
       pos: "n.",
-      html: 'Ingredients: <ul><li>one leaf</li> <li>five rewrite rules</li> <li>types-as-predicates</li> <li>interaction nets</li> <li>and <a href="https://dither.link/">a dream</a>...</li></ul>',
+      serious:
+        "Inspired by: <ul><li>tree calculus</li> <li>types-as-predicates</li> <li>stream types</li> <li>interaction nets</li> <li>e-graphs</li> <li>library learning</li></ul>",
+      funny:
+        'Ingredients: <ul><li>one leaf</li> <li>five rewrite rules</li> <li>types-as-predicates</li> <li>interaction nets</li> <li>and <a href="https://dither.link/">a dream</a>...</li></ul>',
     },
     decentralized: {
       term: "decentralized",
       pos: "adj.",
-      html: "Is your favorite programming language being sensible and not including your new pet feature into the language? Well in disp you can implement that feature yourself! Just need to formally prove it plays nice with everything else ofc :)",
+      serious:
+        "No committee decides what disp can express. Syntax, type rules and optimizations are ordinary library definitions, so anyone can add a feature locally. Changing an existing meaning needs a proof that the old and new definitions agree.",
+      funny:
+        "Is your favorite programming language being sensible and not including your new pet feature into the language? Well in disp you can implement that feature yourself! Just need to formally prove it plays nice with everything else ofc :)",
     },
     lisp: {
       term: "lisp",
       pos: "n.",
-      html: "Disp is like Lisp but no quote/eval on S-expressions required, just <code>triage</code> on a tree! Honestly, who even liked S-expressions anyway, too many parentheses...",
+      serious:
+        "Like Lisp, programs are data a program can take apart. Unlike Lisp there is no quote or eval: every value is already a tree, and the F rule reads its shape directly.",
+      funny:
+        "Disp is like Lisp but no quote/eval on S-expressions required, just <code>triage</code> on a tree! Honestly, who even liked S-expressions anyway, too many parentheses...",
     },
     universal: {
       term: "universal",
       pos: "adj.",
-      html: "The goal is for disp to be a singular substrate that other languages can be rebuilt in and transpiled to. Disp shall become the <em>grey goo of programming languages</em> mwahahahaHAHAHAHA",
+      serious:
+        "One substrate other languages can be expressed in and compiled to. A language becomes a library: its parser, types and rewrites are disp definitions, and its programs inherit disp's checker and optimizer.",
+      funny:
+        "The goal is for disp to be a singular substrate that other languages can be rebuilt in and transpiled to. Disp shall become the <em>grey goo of programming languages</em> mwahahahaHAHAHAHA",
     },
     parsers: {
       term: "user-definable parsers",
       pos: "n. pl.",
-      html: '"A parser for things is a function from strings to potentially a pair of that thing and its string" and in disp, compilation is just a function man...',
+      serious:
+        "A parser is a function from a string to a value plus the unread rest. In disp it is an ordinary definition, so a library can ship its own syntax; compilation is composition.",
+      funny:
+        '"A parser for things is a function from strings to potentially a pair of that thing and its string" and in disp, compilation is just a function man...',
     },
     typesystems: {
       term: "type systems",
       pos: "n. pl.",
-      html: "A type system is just a system of types. Types are just predicates on programs. A type system is just a collection of predicates on programs. Why does no one teach it this way?!?",
+      serious:
+        "A type is a predicate: a program that inspects another program and says whether it fits. A type system is a library of such predicates, and the checker is itself disp code, extendable like any other.",
+      funny:
+        "A type system is just a system of types. Types are just predicates on programs. A type system is just a collection of predicates on programs. Why does no one teach it this way?!?",
     },
     optimizer: {
       term: "self-optimizing optimizer",
       pos: "n.",
-      html: "Eliezer Yudkowsky called me and said this was probably a bad idea but idk man, I'd rather my recursive self-improvement loop be interpretable than whatever Anthropic and OpenAI be up to.",
+      serious:
+        "The planned endgame: a search for faster programs, scored by an equivalence-proving checker and by measured cost, then pointed at its own code. Each step is a checked rewrite, so the loop stays inspectable.",
+      funny:
+        "Eliezer Yudkowsky called me and said this was probably a bad idea but idk man, I'd rather my recursive self-improvement loop be interpretable than whatever Anthropic and OpenAI be up to.",
     },
     nets: {
       term: "interaction nets",
       pos: "n. pl.",
-      html: 'Okay, so imagine like feynman diagrams where particles are splitting apart and annihilating but in doing so they are doing computation, oh hi there <a href="https://github.com/VictorTaelin" target="_blank" rel="noopener">@VictorTaelin</a> didn\'t see you there',
+      serious:
+        "A graph that rewrites itself locally: each step touches two connected nodes and nothing else, so steps that share no nodes run at once. disp uses it as its model of hardware and of cost.",
+      funny:
+        'Okay, so imagine like feynman diagrams where particles are splitting apart and annihilating but in doing so they are doing computation, oh hi there <a href="https://github.com/VictorTaelin" target="_blank" rel="noopener">@VictorTaelin</a> didn\'t see you there',
     },
   };
   let entryKey = $state("disp");
@@ -157,7 +185,6 @@
       copiedTimer = setTimeout(() => (copied = false), 1600);
     } catch {}
   }
-
 </script>
 
 <svelte:head>
@@ -206,8 +233,38 @@
       <span class="def-head">
         <span class="def-term">{entry.term}</span>
         <span class="def-pos">{entry.pos}</span>
+        <!-- the jokes instead of the definitions: a faint switch on the card itself -->
+        <button
+          class="def-funny"
+          class:on={theme.funny}
+          aria-pressed={theme.funny}
+          title={theme.funny ? "back to the definitions" : "funny style"}
+          aria-label="funny style"
+          onclick={() => theme.setFunny(!theme.funny)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle
+              cx="12"
+              cy="12"
+              r="8.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+            />
+            <circle cx="9" cy="10" r="1.15" />
+            <circle cx="15" cy="10" r="1.15" />
+            <path
+              d="M8.3 14.2c1 1.5 2.2 2.2 3.7 2.2s2.7-.7 3.7-2.2"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
       </span>
-      <div class="def-text">{@html entry.html}</div>
+      <div class="def-text serious">{@html entry.serious}</div>
+      <div class="def-text funny">{@html entry.funny}</div>
     </aside>
     <div class="hero-sub">
       <p class="sub">
@@ -333,15 +390,14 @@
     disp a type is a predicate you can run, so the type checker is an ordinary
     function from programs to a yes or a no. Multiply that verdict by a cost
     score from a model of the hardware, and "find the best program" becomes a
-    search with a fitness function. Because the checker, the cost model, and
-    the search are all disp programs, the search can be aimed at itself: an
-    optimizer that improves its own optimizer, and stays readable while it
-    does.
+    search with a fitness function. Because the checker, the cost model, and the
+    search are all disp programs, the search can be aimed at itself: an
+    optimizer that improves its own optimizer, and stays readable while it does.
   </p>
   <p class="goal">
-    Everything else about disp exists to make that loop close: the tree
-    calculus underneath (programs are data, with no quote/eval border), types
-    as predicates, a trusted kernel small enough to audit, and the plan for
+    Everything else about disp exists to make that loop close: the tree calculus
+    underneath (programs are data, with no quote/eval border), types as
+    predicates, a trusted kernel small enough to audit, and the plan for
     user-definable syntax. A survey of the neighbouring languages reduces the
     goal to five requirements and scores each of them on the same scale, disp
     included.
@@ -358,15 +414,23 @@
         <span
           class="ax-pip lv{s.level ?? 'n'}"
           style:--fill={s.pct ?? 0}
-          title="disp today: {s.pct != null ? `${s.pct}% of the requirement, ` : ''}{s.raw} {s.level == null
+          title="disp today: {s.pct != null
+            ? `${s.pct}% of the requirement, `
+            : ''}{s.raw} {s.level == null
             ? 'not scored'
             : LEVEL_WORD[s.level]}{s.tag ? ` (${s.tag})` : ''}"
         >
           {#if s.clauses}
             <ClauseDots clauses={s.clauses} labels={ax.clauses} size={10} />
           {/if}
-          <span class="pip-score">{#if !s.clauses}{s.raw}{/if}{#if s.pct != null}<b>{s.pct}%</b>{/if}</span>
-          <small>{s.tag ?? (s.level == null ? "not scored" : LEVEL_WORD[s.level])}</small>
+          <span class="pip-score"
+            >{#if !s.clauses}{s.raw}{/if}{#if s.pct != null}<b>{s.pct}%</b
+              >{/if}</span
+          >
+          <small
+            >{s.tag ??
+              (s.level == null ? "not scored" : LEVEL_WORD[s.level])}</small
+          >
         </span>
       </li>
     {/each}
@@ -380,10 +444,10 @@
   </p>
   <div class="teaser card">
     <p>
-      {summary.count} neighbouring projects are scored on the same five axes.
-      None of them combines native reflection with search, the pair disp is
-      built around, and disp is last on equality, where several small projects
-      already have answers. Per axis, these score higher than disp:
+      {summary.count} neighbouring projects are scored on the same five axes. None
+      of them combines native reflection with search, the pair disp is built around,
+      and disp is last on equality, where several small projects already have answers.
+      Per axis, these score higher than disp:
     </p>
     <ul class="ahead-list">
       {#each summary.axes as ax (ax.id)}
@@ -392,9 +456,8 @@
           <b>{ax.short}</b>
           <span>
             {#if summary.ahead[ax.id].length}
-              {#each summary.ahead[ax.id] as l, i (l.slug)}{i
-                  ? ", "
-                  : ""}<a href="{base}/compare/?lang={l.slug}">{l.name}</a
+              {#each summary.ahead[ax.id] as l, i (l.slug)}{i ? ", " : ""}<a
+                  href="{base}/compare/?lang={l.slug}">{l.name}</a
                 >{/each}
             {:else}
               <span class="nobody">nobody scores higher</span>
@@ -404,7 +467,8 @@
       {/each}
     </ul>
     <a class="btn" href="{base}/compare/">
-      See the full comparison <span class="btn-arrow" aria-hidden="true">⟶</span>
+      See the full comparison <span class="btn-arrow" aria-hidden="true">⟶</span
+      >
     </a>
   </div>
 </section>
@@ -547,6 +611,10 @@
   }
 
   /* ---- the field guide (one card, fixed size, pinned beside the wordmark) ---- */
+  :global(:root[data-funny="1"]) .def-text.serious,
+  :global(:root:not([data-funny="1"])) .def-text.funny {
+    display: none;
+  }
   .dterm {
     background: none;
     border: none;
@@ -631,6 +699,37 @@
     font-style: italic;
     color: var(--fg-faint);
     font-size: 0.85rem;
+  }
+  .def-funny {
+    margin-left: auto;
+    align-self: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--fg-faint);
+    opacity: 0.4;
+    cursor: pointer;
+    transition:
+      opacity 0.15s ease,
+      color 0.15s ease;
+  }
+  .def-funny svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+  }
+  .def-funny:hover,
+  .def-funny:focus-visible {
+    opacity: 1;
+    color: var(--fg);
+    outline: none;
+  }
+  .def-funny.on {
+    opacity: 1;
+    color: var(--g2);
   }
   .def-text {
     flex: 1;
@@ -835,7 +934,11 @@
     color: var(--fg-faint);
   }
   .ax-pip {
-    background: color-mix(in oklab, var(--accent) calc(var(--fill, 0) * 0.45%), transparent);
+    background: color-mix(
+      in oklab,
+      var(--accent) calc(var(--fill, 0) * 0.45%),
+      transparent
+    );
   }
   .pip-score {
     display: inline-flex;
