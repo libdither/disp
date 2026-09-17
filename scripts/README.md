@@ -8,6 +8,7 @@ One line per script. Every disp run here is memory-capped and timed; see `CLAUDE
 - `scratch_lint.py` — flag `open use` paths in root-level scratch `.disp` files that do not resolve, so a stale probe fails at grep speed.
 - `rss_run.py` — run a command and report its peak RSS and wall time on stderr; the portable stand-in for GNU time that the two shell scripts use.
 - `survey-probe.sh` — first-pass evidence for an awesome-langs candidate: GitHub API metadata (API-verified dates for the write-up header), contributors, recent commits, a shallow clone kept under /tmp, file counts, and a proof-debt scan (`sorry`/`admit`/`axiom` in proof files); scoring stays manual.
+- `verify-source.sh` — fetch-verify a research citation (URL, DOI, or arXiv id): browser-agent fetch with cookie hops and a TLS-insecure retry, Semantic Scholar / Crossref metadata with an open-access fallback when the publisher blocks, PDF/HTML/README text extraction, and with `-q '<quote>'` the `#page=N` or `#anchor` fragment link for the quoted passage; downloads cache under `/tmp/verify-source/`.
 - `awesome-scores.py` — recompute `research/awesome-langs/_SCORES.md` (clause values → percentages, `--write` to rewrite the column) and report each axis ranked, every derived symbol that differs from the master table, the "ahead of disp" changes, and the cells still marked open.
 
 ## Elsewhere
