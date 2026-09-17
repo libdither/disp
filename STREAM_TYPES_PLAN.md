@@ -94,15 +94,17 @@ square, enumerated fairly by `s_bind`:
 
 ```
 s_bind :: {source : Stream V, inner : V -> Stream W, policy : Tree} -> Stream W :=> s_merge_with (source.s_map(inner)) policy
+// the one way to ask a space: keeps the upgrade to path-carrying spaces local (step 6)
+sp_related :: {sp : Space, x : Tree, y : Tree} -> Bool :=> sp x y
 // the trees of `source` that the relation admits: `same a a`, one task each
 sp_members :: {sp : Space, source : Stream Tree, policy : Tree, quantum : Nat} -> Stream Tree :=> {
-	let tasks := source.s_map({a} => (task ({c} => sp c c) a quantum).s_map({ok} => pair a ok))
+	let tasks := source.s_map({a} => (task ({c} => sp_related sp c c) a quantum).s_map({ok} => pair a ok))
 	(s_merge_with tasks policy).s_filter({p} => p.snd == true).s_map({p} => p.fst)
 }
 // the related pairs drawn from `source`: `same a b` over the source's square
 sp_pairs :: {sp : Space, source : Stream Tree, policy : Tree, quantum : Nat} -> Stream (Pair Tree Tree) :=> {
 	let square := s_bind source ({a} => source.s_map({b} => pair a b)) policy
-	let tasks := square.s_map({p} => (task ({q} => sp q.fst q.snd) p quantum).s_map({ok} => pair p ok))
+	let tasks := square.s_map({p} => (task ({q} => sp_related sp q.fst q.snd) p quantum).s_map({ok} => pair p ok))
 	(s_merge_with tasks policy).s_filter({p} => p.snd == true).s_map({p} => p.fst)
 }
 ```
@@ -179,7 +181,7 @@ rec tele_envs :: {rows : List Row, envs : Stream Env, policy : Tree, quantum : N
 ```
 // the Pi check under one environment: the two outputs are related at the codomain
 pi_check :: {cod : Env -> Space, f : Tree, g : Tree, env : Env} -> Bool :=>
-	(cod env) (env_apply_l f env) (env_apply_r g env)
+	sp_related (cod env) (env_apply_l f env) (env_apply_r g env)
 tele_witnesses :: {rows : List Row, check : Env -> Bool, policy : Tree, quantum : Nat} -> Stream Env :=> {
 	let envs := tele_envs rows (s_from_list [env_empty]) policy quantum
 	let tasks := envs.s_map({env} => (task ({e} => not (check e)) env quantum).s_map({b} => pair env b))
@@ -228,7 +230,9 @@ task and a merge layer of its own and pairs are drawn from a square. Sigma's mem
    budget, and that a bounded candidate stream at any depth ends spent. Part 1's taint
    is what makes these fall out; the test is what says so.
 4. **Record-free encoding stays.** `Row` and `Env` are pairs and lists (`Space` is a
-   plain function now); the `env_` accessors and row constructors are the only way in.
+   plain function now); the `env_` accessors and row constructors are the only way in,
+   and `sp_related` is the only way a space is asked, because the paths follow-on
+   (step 6) changes what a space answers and must touch nothing else.
 
 ### The boundary this fixes
 
@@ -328,7 +332,35 @@ root and accept that nothing else can use it.
    dispatch counts before and after, reported.
 6. Follow-ons, each its own plan: grades as semiring folds with the machine's count as the
    cost unit; records for spaces and rows once the stream layer can open the kernel; a
-   native stepper for the symbolic machine.
+   native stepper for the symbolic machine; and paths, below.
+
+   **Paths.** A `Space` here is a setoid: `same a b` is a bit, so `"Proved"` sameness
+   carries nothing, the way a level-0 `"Proved"` carries nothing until a certificate
+   does. A path is the re-runnable witness of sameness, the positive twin of a
+   refutation: a transformation from `a` to `b` given as a STREAM of local steps, each
+   step one cheap check (`s_all (path.bounded(fuel)) step_ok`), with the ending saying
+   whether it arrived. Every type the three parts test is a set (any two paths `3 ~ 3`
+   are the same), so paths are invisible there; they appear for quotients by a rewrite
+   relation with no normalizer (sameness is "some rewrite path exists", a search
+   stream), for stream sameness (the confirmer's `stream_eq` already takes the
+   bisimulation relation as an argument: that relation is the path), for types up to
+   equivalence (the path is the pair of round-trip programs, and claims transport along
+   it), and above all for the optimizer of GOALS.md: the certificate of an `.opt.disp`
+   overwrite is a path from the readable definition to the fast one, and it is what
+   turns Part 3's "the shortcut agrees with the honest run" from a claim into a receipt
+   whose checks never re-run the honest stream. The first real path is that certificate;
+   this follow-on starts when it does. Its cost (the path's length, or the machine's
+   dispatch count along it) is a grade, which is the distance between two programs at a
+   type and the quantity the optimizer descends on. When it lands, `Space` becomes the
+   `prop_space` case of the coinductive `Tree -> Tree -> Pair Bool Space` (the Bool is
+   relatedness, the tail the space of paths, `triv` the contractible tail that makes
+   today's spaces the 0-truncation); `sp_related` reads the Bool and nothing else in
+   Parts 2 and 3 moves. Coherences (paths compose, composition is associative up to a
+   2-path, two rewrite orders reconverge) are not part of the object: each is a ∀∃
+   claim, `Open` at the stream level by construction and discharged only by the
+   certificate rung, so a "homotopy space" is a space plus a bundle of such claims and
+   truncation is the honest default. Order independence of rewrites (confluence, the
+   interaction-net evaluator's licence) is the one 2-path claim expected to carry weight.
 
 ## Risks and non-goals
 
@@ -344,5 +376,6 @@ root and accept that nothing else can use it.
   budget to raise, and the plan documents it rather than working around it.
 - Resumption in the symbolic machine is only as sound as the run lemma, and the clauses
   `sapply_s` adds for symbols must all be mirrored; the from-scratch search is the oracle.
-- No native acceleration of the symbolic machine, no records in the stream layer, and no
-  grade beyond the ending in this plan.
+- No native acceleration of the symbolic machine, no records in the stream layer, no
+  grade beyond the ending, and no path-carrying spaces or coherence claims in this plan:
+  the setoid `Space` is exact for every type Parts 2 and 3 test.
