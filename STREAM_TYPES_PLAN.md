@@ -73,49 +73,94 @@ members come from: `Guard` mints a hypothesis (the placeholder run), `Enum` list
 
 ### Design: a space
 
-A space is what a binder ranges over, with the three faces the checkers use:
+A space is what a binder ranges over. It carries the two programs the checkers judge
+with, a partner map that says which pair a candidate is related to, and a stream of
+CANDIDATES that is total per step by contract (a finite list, or raw `Trees` under a
+budget). Nothing in a space runs a user program inside a stream step:
 
 ```
-space :: {recognize : Tree -> Bool, same : Tree -> Tree -> Bool, pairs : Stream (Pair Tree Tree)} -> Space :=>
-	pair recognize (pair same pairs)
+space :: {recognize : Tree -> Bool, same : Tree -> Tree -> Bool, partner : Tree -> Tree, candidates : Stream Tree} -> Space :=>
+	pair recognize (pair same (pair partner candidates))
 sp_recognize :: Space -> Tree -> Bool := pair_fst
 sp_same :: Space -> Tree -> Tree -> Bool := {sp} => sp.snd.fst
-sp_pairs :: Space -> Stream (Pair Tree Tree) := {sp} => sp.snd.snd
-// a data type: sameness is identity, the pairs are the diagonal of its members
-data_space :: {recognize : Tree -> Bool, members : Stream Tree} -> Space :=>
-	space recognize ({x, y} => ((recognize x) && (recognize y)) && (x == y)) (members.s_map({a} => pair a a))
-// a quotient: the same trees, related through the normalizer
+sp_partner :: Space -> Tree -> Tree := {sp} => sp.snd.snd.fst
+sp_candidates :: Space -> Stream Tree := {sp} => sp.snd.snd.snd
+// a data type: sameness is identity, every member is its own partner (the diagonal)
+data_space :: {recognize : Tree -> Bool, candidates : Stream Tree} -> Space :=>
+	space recognize (rel_of recognize) ({a} => a) candidates
+// a quotient: the same candidates, related through the normalizer
 quot_space :: {base : Space, nf : Tree -> Tree} -> Space :=>
-	space base.sp_recognize ({x, y} => nf x == nf y) (base.sp_pairs.s_map({p} => pair p.fst (nf p.fst)))
+	space base.sp_recognize ({x, y} => nf x == nf y) nf base.sp_candidates
+// an intersection: both recognizers, the first space's candidates and sameness
+isect_space :: {A : Space, B : Space} -> Space :=>
+	space ({a} => (A.sp_recognize a) && (B.sp_recognize a)) A.sp_same A.sp_partner A.sp_candidates
 ```
 
-Members are the left components of the pairs. A finite type brings its own generator
-(`data_space Bool (s_from_list [true, false])`, exhausted-ending); an infinite one is
-`Trees.bounded(fuel).s_filter(recognize)`, spent-ending. This is the refuter's
-`rel_of`/`diag_pairs`/`quot_pairs` as one value per type, and `Space` uses the same
-field names as the kernel's (`#recognize`, `members`) so the two can be matched up later;
-pairs rather than a record because the stream layer opens only the raw prelude, where
-record literals are not available.
+The related pairs of a space are DERIVED, by one task per candidate that recognizes it
+and computes its partner inside the same closed program, merged fairly:
+
+```
+// the ∃ face: a candidate becomes a pair only when its own task says so
+sp_pairs :: {sp : Space, policy : Tree, quantum : Nat} -> Stream (Pair Tree Tree) :=> {
+	let relate := {a} => if (sp.sp_recognize a) { some (pair a (sp.sp_partner a)) } else { none }
+	let tasks := sp.sp_candidates.s_map({a} => task relate a quantum)
+	(s_merge_with tasks policy).s_filter({o} => not (is_none o)).s_map({o} => o.snd)
+}
+sp_members :: {sp : Space, policy : Tree, quantum : Nat} -> Stream Tree :=> (sp_pairs sp policy quantum).s_map(pair_fst)
+```
+
+A partial recognizer (`LoopR`) or a diverging normalizer stalls only its own task; the
+other candidates keep their turns, which is GRADUAL §6's guarantee carried into the
+member stream itself. The ending is right by Part 1: candidates from `Trees.bounded`
+end spent, so do the pairs, so does any verdict over them (`Open`); a finite candidate
+list with a total recognizer ends exhausted (`Proved` is reachable); a finite list with
+a recognizer that loops on one candidate never ends on its own and reads spent under
+any budget, which is the truth about it. `Option` here is the confirmer's
+(`some`/`none`/`is_none`) and `rel_of` is `lib/tests/fixtures.disp`'s; both move into
+the library when the space module is written. This is the refuter's `rel_of`/`diag_pairs`/`quot_pairs` as
+one value per type; `Space` keeps the kernel's field name `#recognize` and its
+`candidates` plays the role of the kernel `Enum` table's `members`, so the two can be
+matched up later. Pairs rather than a record because the stream layer opens only the raw
+prelude, where record literals are not available; the `sp_` accessors are the only way
+in, so the later record migration is local.
 
 ### Design: the telescope
 
-A telescope is a list of rows, mirroring the kernel's: `fresh_row A` binds one related
-pair from a space that may depend on the environment so far, `observe_row at T` judges a
-value computed from the environment and the candidate at a space. Environments are lists
-of pairs, newest first. Two folds:
+A telescope is a list of rows, mirroring the kernel's. An ENVIRONMENT is what the rows
+have bound so far:
+
+```
+// Env := List (Pair Tree Tree), newest binder first; each pair is a related pair of
+// the space its row ranged over (left and right components, identical at a data type)
+env_empty :: Env := []
+env_bind :: {p : Pair Tree Tree, env : Env} -> Env :=> cons p env
+// the candidate applied along the environment, oldest binder first, on either side
+env_apply_l :: {f : Tree, env : Env} -> Tree :=> reduce ({p, acc} => acc p.fst) f env
+env_apply_r :: {f : Tree, env : Env} -> Tree :=> reduce ({p, acc} => acc p.snd) f env
+// rows: `fresh_row A` binds one related pair from a space that may depend on the
+// environment so far; `observe_row value at` judges a value computed from the
+// environment and the candidate at a space
+fresh_row :: {A : Env -> Space} -> Row :=> pair "Fresh" A
+observe_row :: {value : Env -> Tree -> Tree, at : Env -> Space} -> Row :=> pair "Observe" (pair value at)
+```
+
+`reduce` is the right fold of `lib/list.disp`; over a newest-first list it reaches the
+oldest binder last, so `env_apply_l f [(b, b'), (a, a')]` is `f a b`. Two folds over the
+rows:
 
 - The **environment stream** (the ∃ face, what a Sigma's members are): every `fresh_row`
   extends the environments by the dependent fair merge, which is `s_merge_with` over a
   stream of streams. With `s_bind source inner policy := s_merge_with (source.s_map(inner)) policy`:
 
 ```
-rec tele_envs :: {rows : List Row, envs : Stream Env, policy : Tree} -> Stream Env :=>
+rec tele_envs :: {rows : List Row, envs : Stream Env, policy : Tree, quantum : Nat} -> Stream Env :=>
 	if (rows.is_nil) { envs }
 	else if (rows.head.fst == "Fresh") {
 		let A := rows.head.snd
-		tele_envs rows.tail (s_bind envs ({env} => (A env).sp_pairs.s_map({p} => cons p env)) policy) policy
+		let extend := {env} => (sp_pairs (A env) policy quantum).s_map({p} => env_bind p env)
+		tele_envs rows.tail (s_bind envs extend policy) policy quantum
 	}
-	else { tele_envs rows.tail envs policy }
+	else { tele_envs rows.tail envs policy quantum }
 ```
 
 - The **witness stream** (the ∀ face, what a claim is): one task per environment, the
@@ -124,18 +169,19 @@ rec tele_envs :: {rows : List Row, envs : Stream Env, policy : Tree} -> Stream E
   on related inputs: `f` is run along the left components and `g` along the right ones,
   both outputs must be members of the codomain space and related by its sameness.
   Membership is the diagonal, `f` the same as itself (TYPES.html §3), and equality of
-  two programs at a type is the same check with `g` different:
+  two programs at a type is the same check with `g` different. No domain guard is
+  needed here: an environment only ever holds pairs that a recognition task admitted.
 
 ```
 // the Pi check under one environment: outputs are members, and related
 pi_check :: {cod : Env -> Space, f : Tree, g : Tree, env : Env} -> Bool :=> {
 	let sp := cod env
-	let out_l := reduce ({p, acc} => acc p.fst) f env
-	let out_r := reduce ({p, acc} => acc p.snd) g env
+	let out_l := env_apply_l f env
+	let out_r := env_apply_r g env
 	((sp.sp_recognize out_l) && (sp.sp_recognize out_r)) && (sp.sp_same out_l out_r)
 }
 tele_witnesses :: {rows : List Row, check : Env -> Bool, policy : Tree, quantum : Nat} -> Stream Env :=> {
-	let envs := tele_envs rows (s_from_list [[]]) policy
+	let envs := tele_envs rows (s_from_list [env_empty]) policy quantum
 	let tasks := envs.s_map({env} => (task ({e} => not (check e)) env quantum).s_map({b} => pair env b))
 	(s_merge_with tasks policy).s_filter({p} => p.snd == true).s_map({p} => p.fst)
 }
@@ -145,40 +191,40 @@ pi_claim :: {rows : List Row, cod : Env -> Space, f : Tree, policy : Tree, quant
 	eq_claim rows cod f f policy quantum
 ```
 
-`reduce` is the right fold of `lib/list.disp`; over a newest-first environment it applies
-`f` to the oldest binder first. GRADUAL's `witnesses_over src A B fn policy quantum` is
-`pi_claim [fresh_row ({_env} => data_space A src)] ...` with `B` folded into the codomain
-space, and the refuter's `refute_arrow` is `verdict` of the same claim over a
-`quot_space` when the domain is a quotient; their tests keep their outcomes. Sigma's
-members are `tele_envs` of its two rows mapped to pairs; Isect is a space whose
-recognizer is the conjunction and whose pairs are the first space's filtered by the
-second; Eq at a type is `eq_claim`.
+`pi_check` is what the fold of a one-observation telescope amounts to; the general
+`observe_row` fold (the kernel's `SigmaCode`, judging the candidate's shape and both
+projections) is written when Sigma is, in step 3. GRADUAL's
+`witnesses_over src A B fn policy quantum` is `pi_claim [fresh_row ({_env} => data_space A src)] ...`
+with `B` folded into the codomain space, and the refuter's `refute_arrow` is `verdict`
+of the same claim over a `quot_space` when the domain is a quotient; their tests keep
+their outcomes, though the budgets in their `bounded` calls will need retuning, since
+recognition now costs a task and a merge layer of its own. Sigma's members are
+`tele_envs` of its two rows mapped to pairs; Isect is `isect_space`; Eq at a type is
+`eq_claim`.
 
-### To resolve before building
+### Decisions (2026-09-16, to review)
 
-- **Where domain recognition runs.** `Trees.bounded(fuel).s_filter(recognize)` runs
-  the recognizer natively inside one stream step, which is the hang GRADUAL §2 measures
-  and §6 exists to fix (`witnesses_over` guards `A a` INSIDE the task). `pi_check` as
-  written has no domain guard at all, so either the pairs are pre-filtered (partial
-  recognizers hang the env stream and the `LoopR` tests are lost) or unfiltered
-  (non-members become spurious witnesses). The two faces of the telescope want
-  different things: the witness stream wants unfiltered candidates with membership
-  conjoined inside the task (a non-member is not a witness, as in `witnesses_over`),
-  while the env stream as Sigma's members wants real members. One answer: a space's
-  pairs stream is total-per-step by contract (finite lists, or `Trees` unfiltered), and
-  recognition is always a task, both in `pi_check` and in a `sp_members` that is itself
-  a witness-style merge; membership at a partial recognizer is then semi-decidable on
-  both faces, which is the truth.
-- **Normalizers run natively too.** `quot_space` maps `nf` inside `s_map`, carrying the
-  refuter's `quot_pairs` assumption that a normalizer is total. Either declare it (a
-  normalizer is trusted code, like `Trees`) or task it like recognition.
-- **The policy contract.** Part 1's policy answers a dropped-spent flag; `s_bind` and
-  `tele_envs` inherit it unchanged, so a bounded inner pairs stream taints the env
-  stream and the verdict reads `Open`. Check that `tele_envs` over a finite telescope
-  of finite spaces really ends exhausted under both policies (the merge-of-merges).
-- **Record-free encoding.** `Space` and `Row` are pairs because the stream layer opens
-  the raw prelude; keep the accessors the only way in so the record migration later is
-  local.
+1. **Recognition is a task, on both faces.** No recognizer runs inside a stream step:
+   a space's `candidates` are total per step by contract and `sp_pairs` admits a
+   candidate only through its own task. The env stream then already holds members, so
+   the witness face needs no guard of its own, and a partial recognizer stalls one task
+   instead of the whole stream (the `LoopR` tests survive). Membership at a partial
+   recognizer is semi-decidable on both faces, which is what it is. The cost is a
+   second merge layer under every claim; GRADUAL's and the refuter's budgets get
+   retuned, outcomes pinned unchanged.
+2. **Normalizers are tasked the same way.** A quotient's partner map runs inside the
+   candidate's task, next to its recognizer, and nothing is trusted total. Proving a
+   recognizer or normalizer total, and then running it natively inside a step, is
+   reserved for the optimization adjoints (an `.opt.disp` overwrite backed by a
+   certificate), not for the honest layer.
+3. **TODO, merge-of-merges endings:** `tele_envs` nests one merge per `fresh_row` and
+   `sp_pairs` adds one under each; `lib/tests/stream.test.disp` (or the space root) must
+   pin that a finite telescope of finite spaces with total recognizers ends exhausted
+   under both policies, that one partial recognizer anywhere in it ends spent under any
+   budget, and that a bounded candidate stream at any depth ends spent. Part 1's taint
+   is what makes these fall out; the test is what says so.
+4. **Record-free encoding stays.** `Space`, `Row` and `Env` are pairs and lists; the
+   `sp_`/`env_` accessors and row constructors are the only way in.
 
 ### The boundary this fixes
 
@@ -255,14 +301,18 @@ root and accept that nothing else can use it.
 ## Steps
 
 1. Endings: landed (see Part 1).
-2. Spaces. `lib/space.disp`: `space`, `data_space`, `quot_space`, a finite space from a
-   list, a `Trees`-backed space with fuel; the refuter's pair streams become `sp_pairs`
-   of spaces. Verification: the refuter's tests with the same outcomes.
-3. Telescopes. `lib/tele.disp`: rows, `s_bind`, `tele_envs`, `pi_check`,
-   `tele_witnesses`, `eq_claim`, `pi_claim`, Sigma members, Isect; GRADUAL §6 and the
-   refuter's `refute_arrow` become instances; the ∀∃ test; the kernel-agreement root.
-   Verification: GRADUAL and refuter outcomes unchanged; `boolfns` verdicts agree with
-   `Tele Enum`.
+2. Spaces. `lib/space.disp`: `space`, `data_space`, `quot_space`, `isect_space`,
+   `sp_pairs`/`sp_members` (tasked recognition), a finite space from a list, a
+   `Trees`-backed space with fuel; the refuter's pair streams become `sp_pairs` of
+   spaces. Verification: the refuter's tests with the same outcomes (budgets retuned),
+   the `LoopR` member stream yields `0`, decision 3's ending tests for one space.
+3. Telescopes. `lib/tele.disp`: `Env` and its accessors, rows, `s_bind`, `tele_envs`,
+   `pi_check`, `tele_witnesses`, `eq_claim`, `pi_claim`, Sigma members and the
+   `observe_row` fold, Isect; GRADUAL §6 and the refuter's `refute_arrow` become
+   instances; the confirmer's `agrees` lines and sweeps switch to `verdict` of a
+   `pi_claim` (deferred from step 1); the ∀∃ test; decision 3's merge-of-merges
+   tests; the kernel-agreement root. Verification: GRADUAL and refuter outcomes
+   unchanged; `boolfns` verdicts agree with `Tele Enum`.
 4. The contract. `lib/tests/contract.test.disp`: the soundness claim per checker,
    `"Proved"` over the finite claim space, `"Open"` with pinned counts over `Nat`; then the
    old `agrees`/`sweep` lines retire. Verification: the harness.
