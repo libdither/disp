@@ -60,51 +60,21 @@ only ~3 commits in Jan–Jul 2025. Systems language with linear types and
 capability-based security; explicitly *not* a proof language. Author deprioritized
 it. A well-designed language that simply stopped.
 
-## Kind / Kind2 — the proof language HigherOrderCO abandoned
+## Kind / Kind2 — the proof language HigherOrderCO abandoned, then rebuilt elsewhere
 
 **Repo:** https://github.com/HigherOrderCO/Kind · Last pushed **2025-01-22**.
 
 Taelin's dependently-typed language on the HVM runtime — i.e. *the exact
-combination disp wants*: proofs + optimal-reduction substrate. The team's energy
-went to Bend/HVM instead, which have **no proof system**. Bend2 is now promised to
-carry proofs again (see `hvm4-bend-supgen.md`), but the honest reading is that the
-verification half has been dropped and re-promised across three runtime
-generations.
+combination disp wants*: proofs + optimal-reduction substrate. For two years the
+team's energy went to Bend 1 and HVM2 instead, which had **no proof system**. Then
+Bend 2 (September 2026, `bend2.md`) brought the proofs back — by dropping the
+interaction-net runtime instead: an affine type theory compiled to plain C, with
+the nets left behind in a dormant HVM4 (`hvm4.md`).
 
 **Relevance to disp:** the clearest evidence that "dependent types on an
 interaction-net substrate" is hard enough that the people best positioned to build
-it kept deferring it in favor of raw performance work.
-
-## Cogent — concluded, superseded
-
-**Repo:** https://github.com/au-ts/cogent · Last pushed **2025-03-18**. The
-Trustworthy Systems (seL4) group's earlier verified-systems language, generating C
-plus Isabelle proofs for file systems. Effort shifted to **Pancake** (see
-`cakeml-pancake.md`) — a case of orderly succession rather than failure, but a data
-point that even the seL4 group restarted its language design.
-
-## Juvix — stale
-
-**Repo:** https://github.com/anoma/juvix (509★) · Last release v0.6.10
-**2025-03-26**, last push 2025-11-05. Dependently-typed language for decentralized
-applications, corporate-backed (Anoma). ~9 months quiet.
-
-## Also checked, also gone
-
-- **CryptOpt** — the verified superoptimizer, **unmaintained since 2024-06-26**.
-  Covered in `fiat-crypto-cryptopt-jasmin.md`; the most architecturally
-  disp-shaped project of all, and it stopped.
-- **Ivy** (Microsoft, 239★) — protocol verification, last pushed **2021-01-06**.
-  Superseded by Veil (Lean-embedded, NUS).
-- **Stateright** — Rust model checker, maintenance mode since 2025-07-27.
-- **Cedille** — quiescent since ~2021. λ-encodings *with* induction and
-  definitionally zero-cost φ coercions, one of FOUNDATIONS §7's three answers to
-  the equality problem; the most elegant of the three is the one that stopped.
-- **Peridot** (Eashan Hatti) — archived 2023-01-06; author now does academic
-  concurrency verification at Yale.
-- **Sixty / Sixten** (Olle Fredriksson) — last pushed 2024-09-05; author at a chip
-  startup. His unboxed-dependent-types work remains a reference point.
-- **Fathom** (brendanzab) — dormant since 2023-09-06.
+it never shipped the two together. First the proofs went, then the nets; each half
+shipped alone.
 
 ## The pattern, and what disp should take from it
 
@@ -112,8 +82,10 @@ Three distinct failure modes, and disp is exposed to different amounts of each:
 
 1. **Vision without an artifact** (Magmide). Killed the closest competitor. disp has
    defended against this — the foundation runs and is tested.
-2. **The verification leg gets dropped for the performance leg** (Kind → Bend;
-   arguably Vale, Austral). This is the most common outcome for anyone building on
+2. **The verification leg gets dropped for the performance leg** (Kind → Bend 1;
+   arguably Vale, Austral; Bend 2 is the mirror image, keeping the proofs and dropping
+   the exotic runtime, so the two halves still never shipped together). This is the
+   most common outcome for anyone building on
    an exotic runtime, because performance work yields visible wins and proof work
    yields none until it's finished. disp's ordering — build the type system first,
    optimizer second — is the opposite of the sequence that killed these, which is

@@ -32,6 +32,11 @@ and HVM4 made the third (keep optimal sharing, lose attribution). Three projects
 three different points on the same tradeoff, and **disp has measured its own**:
 dropping memoization inflates work 4,000–67,000× (600× raw speed loss).
 
+Bend 2 (Taelin's own product, September 2026) then made Soma's call — native code,
+unique ownership, no optimal sharing — and dropped its cost counter with it, leaving
+HVM4 dormant (`bend2.md`, `hvm4.md`). Two of the three points are now occupied by
+people who tried the third first.
+
 Soma's tiering is the pragmatic engineering answer disp doesn't currently have:
 
 - **Flat types** (ints, bools, floats, all-flat structs): duplication is a register

@@ -3,7 +3,7 @@
 Languages and systems surveyed against **disp**'s goals, August 2026.
 Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14).
+(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14; HVM4 and Bend 2: 2026-09-17).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -26,7 +26,8 @@ Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES
 
 | Project | G1 | G2 | G3 | G4 | G5 | Closest to disp on |
 |---|:--:|:--:|:--:|:--:|:--:|---|
-| [**HVM4 / Bend2 / SupGen**](hvm4-bend-supgen.md) | ◐ 33% | ✗ 0% | ✗ 0% | **◐ 50%** | **◐ 50%** | the *search substrate* — superposition search in the runtime |
+| [**HVM4 / Interaction Calculus**](hvm4.md) | ◐ 33% | ✗ 0% | ✗ 0% | **◐ 50%** | **◐ 33%** | the *search substrate*: label-coordinated duplication and superposition, shipped but dormant |
+| [**Bend 2 / BendTT / BendRT**](bend2.md) | ✗ 0% | **◐ 62%** | ◐ 33% | ◐ 25% | **◐ 33%** | the shipped *law / proof / gate* loop, and consistency from affinity instead of universes |
 | [**Metamath Zero**](metamath-zero.md) | ◐ 33%? | ◐ 25% | **✅ 100%** | **◐ 50%** | ✗ 0% | the *kernel* + hardware model + self-verification |
 | [**Verus**](verus.md) | ✗ 0% | ◐ 38% | ✗ 0% | ◐ 25% | **◐ 67%** | *delivered outcomes* — verified fast systems code from specs |
 | [**F\* / Low\* / Pulse**](fstar-lowstar-pulse.md) | ◐ 50% | **◐ 62%** | ✗ 17% | ◐ 25% | ✗ 0% | the *shipping baseline*: dependent spec → verified fast C |
@@ -88,15 +89,17 @@ itself, and no one else's can.**
   is disp's own Q1 confirmed as the weakest point.
 - **G3 (trust):** MM0 ahead; Blight and CakeML match it with an independent second
   checker; Nova, Lean and Rocq match the architecture.
-- **G4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma on raw speed; CakeML, MM0 and the
-  Jasmin/bedrock2 line have the verified path to the machine disp lacks; disp,
-  HVM4 and Telomare are the ones that account for cost deterministically; only
-  CryptOpt installs a rewrite on a checked license, Nock and Mojo assert theirs.
-- **G5 (search):** HVM4 (enumerative), Verus+IDS (neural, with cost in the loop),
-  and CryptOpt (randomized, certified) are all ahead of disp, which has this
-  designed but unbuilt. Nobody has aimed a search at itself.
+- **G4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ Bend 2 on raw speed; CakeML, MM0
+  and the Jasmin/bedrock2 line have the verified path to the machine disp lacks; disp,
+  HVM4 and Telomare are the ones that account for cost deterministically, and Bend 2
+  dropped its counter on the way to native speed; only CryptOpt installs a rewrite on
+  a checked license, Nock and Mojo assert theirs.
+- **G5 (search):** Verus+IDS (neural, with cost in the loop) and CryptOpt (randomized,
+  certified) are ahead of disp, which has this designed but unbuilt; HVM4's
+  superposition enumeration ships for values only and is dormant, and Bend 2's search
+  is a commercial LLM outside the language. Nobody has aimed a search at itself.
 
-### The three results that most change the picture
+### The four results that most change the picture
 
 1. **Inductive Deductive Synthesis** (Berkeley+Google, May 2026): autonomously
    produced verified distributed KV stores for **7/7 consistency specs**, some
@@ -110,6 +113,11 @@ itself, and no one else's can.**
 3. **CryptOpt is unmaintained since June 2024.** The one project whose architecture
    matched disp's endgame exactly — untrusted randomized search + verified
    equivalence checker + measured on-CPU cost — stopped. → `fiat-crypto-cryptopt-jasmin.md`
+4. **Bend 2 shipped (September 2026) by dropping the interaction-net runtime.** The
+   company that built the only superposition-search substrate moved its product to
+   affine ownership and compiled C, kept dependent types and proofs, and dropped its
+   cost counter. The search half and the proof half now live in different repos, and
+   the search half is dormant. → `bend2.md`, `hvm4.md`
 
 ---
 
@@ -123,14 +131,17 @@ itself, and no one else's can.**
    → `soma.md`
 3. **HVM4's label algebra, as shipped code.** disp's open Q2 is HVM4's feature set;
    `src/hvm.c`'s DUP/SUP rules and the collapser's priority queue are readable
-   today. → `hvm4-bend-supgen.md`
+   today, though the repo has sat "before launch" since May 2026 and its own company
+   shipped Bend 2 on a runtime without nets. → `hvm4.md`
 4. **A benchmark.** DafnyBench took Dafny from 68%→96% in a year by making progress
-   measurable. disp's optimizer claim is currently unfalsifiable. → `dafny.md`,
-   `velvet-loom-wybecoder.md`
+   measurable. disp's optimizer claim is currently unfalsifiable. Bend 2 ships its
+   arena as a directory of tiered law-proving tasks. → `dafny.md`,
+   `velvet-loom-wybecoder.md`, `bend2.md`
 5. **Structured, machine-readable checker output** (Vow's JSON-for-agents) plus a
    **fallback ladder** (Velvet: SMT → tactics → property testing). `Ok false` gives
-   a proposer nothing. Thermite ships both, with every degrade a named outcome.
-   → `vow.md`, `velvet-loom-wybecoder.md`, `thermite.md`
+   a proposer nothing. Thermite ships both, with every degrade a named outcome; Bend 2
+   ships the simplest form, a human-owned laws file and an AI-owned proof file with the
+   checker as the gate. → `vow.md`, `velvet-loom-wybecoder.md`, `thermite.md`, `bend2.md`
 6. **Proof-coverage as a continuous build metric** with graceful degradation to
    runtime checks. A second smooth signal beside cost. → `salt.md`
 7. **A CI-enforced `TRUST_ASSUMPTIONS.md` / axiom ledger.** Thermite's per-clause trust
@@ -155,7 +166,8 @@ itself, and no one else's can.**
     visible only in traces, no differential check in production. → `nock-hoon.md`
 14. **A CI-enforced token budget on a generated language reference:** derive the
     agent-facing reference from the elaborator's own vocabulary and let a token budget
-    veto surface growth ("any feature that doesn't fit doesn't ship"). → `thermite.md`
+    veto surface growth ("any feature that doesn't fit doesn't ship"). Bend 2 caps
+    every tracked file in the repo the same way. → `thermite.md`, `bend2.md`
 
 ---
 
@@ -168,6 +180,9 @@ says equality (the intensional/extensional gap) is make-or-break Q1. This survey
 disp holds half an equality theory and half a rewrite license, while two small projects
 (Nova, Blight) already have working equality theories by choosing different foundations,
 and egg has a tooled, certificate-emitting rewrite engine for the first-order fragment.
+Bend 2 is a data point the other way: it also chose intensional equality with no
+extensionality principle, and shipped a working proof language on it, rewriting by
+hand through an explicit motive.
 
 **The thing disp wants to automate is the thing AI provers are worst at.** The
 production verdict from the Rust→Lean pipeline (Runtime Verification + Ethereum

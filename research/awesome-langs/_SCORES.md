@@ -16,7 +16,8 @@ write-ups, the master table and disp's own table.
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
 | disp | 1 | 1 | 1 | 100 | `shape_of` triages any program; the checker is an ordinary tree you apply |
-| HVM4 / Bend2 / SupGen | ½(runtime graphs) | ½(graphs only) | 0 | 33 | terms are runtime graph nodes with no in-language inspection; untyped, no checker |
+| HVM4 / Interaction Calculus | ½(runtime graphs) | ½(graphs only) | 0 | 33 | terms are runtime graph nodes with no in-language inspection; untyped, no checker |
+| Bend 2 / BendTT / BendRT | 0 | 0 | 0 | 0 | no reflection: no quote, no term inspection; templates re-parse closed source text at compile time; the checker is TypeScript |
 | Metamath Zero | 1 | 0 | ? | 33? | MM1 metaprograms manipulate terms over a deep embedding; whether they can call the verifier is not in the write-up |
 | Verus | 0 | 0 | 0 | 0 | ghost code is erased; the checker is not a Verus program |
 | F* / Low* / Pulse | 1 | 0 | ½(metaprograms)† | 50 | Meta-F* reflects F* syntax (deep embedding); tactics can call the typechecker |
@@ -52,7 +53,8 @@ write-ups, the master table and disp's own table.
 | Project | a | b | c | d | % | Why |
 |---|:-:|:-:|:-:|:-:|--:|---|
 | disp | 1 | ½(small library) | 0 | ½(witness slices) | 50 | Pi, telescopes, coproducts and proofs that run, over a small library; cost as a grade is designed; equality is intensional with witness-licensed slices and the decidable fragment open (Q1) |
-| HVM4 / Bend2 / SupGen | 0 | 0 | 0 | 0 | 0 | untyped; Bend2's types and proofs are planned |
+| HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | 0 | untyped; the typed language became Bend 2, which does not run on this runtime |
+| Bend 2 / BendTT / BendRT | 1 | ½(small library) | ½(usage grade) | ½(propositional) | 62 | affine dependent types with Type : Type, laws proven by defs over a small Base; quantities &0/&1/&2 are a usage grade; intensional J with a written motive, no extensionality |
 | Metamath Zero | 0 | 1 | 0 | 0 | 25 | a HOL subset with explicit proof objects and a modest library; no dependent types, no resource types, equality not addressed |
 | Verus | ½(contracts) | ½(solver-discharged) | 0 | ½(SMT-fragment) | 38 | first-order contracts with ghost state, Z3-discharged, over a large verified codebase; SMT-fragment equalities |
 | F* / Low* / Pulse | 1 | 1 | 0 | ½(SMT-fragment) | 62 | dependent types, refinements, effects, Pulse, with HACL* as the library; SMT-fragment equality |
@@ -88,7 +90,8 @@ write-ups, the master table and disp's own table.
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
 | disp | 1 | 1 | ½(one core) | 83 | a two-op core mints hypotheses; elaborator and library untrusted; five evaluators agree but nothing independent re-checks the kernel's verdicts |
-| HVM4 / Bend2 / SupGen | 0 | 0 | 0 | 0 | trust is `hvm.c` |
+| HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | trust is `hvm.c` |
+| Bend 2 / BendTT / BendRT | ½(one-file kernel) | ½(proof defs) | 0 | 33 | bend.ts is "the trusted kernel", one human-written file, checking in one pass; proofs are defs the kernel checks, no certificate minted; nothing re-checks, and the Lean model admittedly lags the checker |
 | Metamath Zero | 1 | 1 | 1 | 100 | a C verifier small enough to formalize; MMB proof objects; MM1 untrusted; independent verifiers in Rust and Kotlin |
 | Verus | 0 | 0 | 0 | 0 | TCB = Verus + Z3 + rustc |
 | F* / Low* / Pulse | 0 | ½(large checker) | 0 | 17 | typechecker, Z3 and KaRaMeL are all trusted; proof terms exist, SMT verdicts have none |
@@ -124,7 +127,8 @@ write-ups, the master table and disp's own table.
 | Project | a | b | c | d | % | Why |
 |---|:-:|:-:|:-:|:-:|--:|---|
 | disp | 0 | 0 | 1 | ½(one slice) | 38 | interpreted tree-walkers; `--stats` steps and `cold_equiv` are a deterministic, replayable cost model; no hardware model; `.opt.disp` overlays replace definitions under a license, one slice landed |
-| HVM4 / Bend2 / SupGen | 1 | 0 | 1† | 0 | 50 | native C with GPU lineage; the runtime reports interaction counts; no verified path, no rewrite mechanism |
+| HVM4 / Interaction Calculus | 1 | 0 | 1† | 0 | 50 | native C with GPU lineage; the runtime reports interaction counts; no verified path, no rewrite mechanism |
+| Bend 2 / BendTT / BendRT | 1 | 0 | 0 | 0 | 25 | 0.8–1.5× hand-written C sequential, 9–12× on 16 threads, up to 67× on the GPU, self-reported; clang, Metal and CUDA trusted and the C runtime unverified; the pre-release interaction counter was dropped ("bend has no --stats"); no rewrite mechanism |
 | Metamath Zero | ½(not general) | 1 | 0 | ½(compile only) | 50 | MMC compiles to a formal x86 model with the correctness proved; not a general systems language; no cost model; compilation is the only licensed rewrite |
 | Verus | 1 | 0 | 0 | 0 | 25 | it is Rust; rustc trusted, no cost model, no rewrite license |
 | F* / Low* / Pulse | 1 | 0 | 0 | 0 | 25 | Low*→C competitive with hand-optimized C; KaRaMeL and the C compiler are trusted |
@@ -160,7 +164,8 @@ write-ups, the master table and disp's own table.
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
 | disp | 0 | 0 | 0 | 0 | the optimizer is designed (`research/OPTIMIZER.typ`), not built; no search exists yet |
-| HVM4 / Bend2 / SupGen | 1 | ½(tests only) | 0 | 50 | SupGen enumerates superposed candidates until tests pass; tests rather than a checker, no cost objective |
+| HVM4 / Interaction Calculus | ½(value enumeration) | ½(tests only) | 0 | 33 | the primer solves X + 2 = 4 by collapsing an infinite superposition of naturals; the program-hole filler (SupGen, NeoGen) was never published; equations rather than a checker, no cost objective |
+| Bend 2 / BendTT / BendRT | ½(external LLM loop) | ½(checker only) | 0 | 33 | the shipped loop is a human LAWS.bend, an AI-written PROOF.bend and the checker as the gate (Bender wraps Anthropic/OpenAI models); the checker scores, cost never does; no search of its own |
 | Metamath Zero | 0 | 0 | 0 | 0 | MM1 tactics are human-written |
 | Verus | 1 | 1 | 0 | 67 | IDS synthesizes code and proofs with benchmarks inside the loop (7/7 KV-store specs); the proposer is an external LLM |
 | F* / Low* / Pulse | 0 | 0 | 0 | 0 | humans write the code and the proofs |
