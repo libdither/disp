@@ -290,15 +290,51 @@ sm_need :: {s : Val, f : Val, x : Val, stack : List MFrame} -> SMachine :=> pair
 ```
 
 Resuming under an alternative substitutes it for the needed symbol in the registers and
-every frame (`subst` from the confirmer, mapped over the state) and continues. This is
-sound by the run lemma TYPES.html §9 already relies on: every rule that fired examined a
-known part, so it fires identically after substitution, and the paused state after
-substitution is the state the from-scratch run reaches after the same dispatches. The
-search then costs one continuation per alternative instead of one full re-run per
-alternative per depth, and the dispatch count comes out of the machine for free, which
-is the cost unit a graded type will want later. The token, normalizer and neutral-term
-clauses become dispatch cases of the symbolic step, with the differential against the
-from-scratch `search_r` as the gate.
+every frame (`subst` from the confirmer, mapped over the state) and continues. The search
+then costs one continuation per alternative instead of one full re-run per alternative
+per depth, and the dispatch count comes out of the machine for free, which is the cost
+unit a graded type will want later. The token, normalizer and neutral-term clauses become
+dispatch cases of the symbolic step.
+
+### The run lemma as a bisimulation, and why it is the adjoint
+
+The symbolic machine and the concrete one are related by abstraction (a candidate becomes
+a symbol) and concretization (`subst` puts a candidate back), and the abstract system is
+sound exactly when the second undoes the first on every run: whatever the symbolic run
+proves, every concrete run agrees with. That is the adjoint condition between the two
+systems, and its unit is a family of PATHS, one per candidate — the lockstep trace of the
+two machines. So state the run lemma as a bisimulation instead of an end-to-end
+comparison, with "substitute the symbol" as the relation on states, the shape the
+confirmer's `stream_eq` already takes (a relation between stream states, supplied as an
+argument):
+
+```
+// the two machines as streams of states, related by subst: one step each, forever
+sm_states :: {m : SMachine, quantum : Nat} -> Stream SMachine :=> s_new ({st} => yield st (m_advance st quantum)) m
+lockstep :: {sm : SMachine, s : Val, a : Tree} -> Tree -> Tree -> Bool :=>
+	{x, y} => (subst s (known a) x) == y
+```
+
+Two claims replace the end-to-end differential, and together they are the proof the
+property test only gathers evidence for:
+
+1. **Per rule, by exhaustion.** For each of the machine's dispatch rules (K, S, triage,
+   and the symbolic clauses), "if it fires on a symbolic state it fires identically after
+   any substitution" is a `Pi` over a FINITE source of rule shapes — Part 2's finite
+   spaces — so its verdict is a real `"Proved"`, not an `"Open"` with counts.
+2. **Along the trace, by propagation.** If the states are related before a step they are
+   related after it: the same "it propagates through every step" law Part 1 pinned for
+   endings, one level up. The bisimulation is uniform in the candidate, which is what
+   turns per-candidate evidence into a statement about every candidate — the placeholder
+   trick applied to a PAIR of machines.
+
+Trust bottoms out in one place, as before: the machine's step relation is the spec
+(`test/machine.test.ts` pins `m_advance`'s dispatch count against the TypeScript
+evaluator). Everything above it is a claim the stream layer can state. This is the first
+place in the repo where a path does real work, and it needs no path-carrying space: these
+paths are traces over `lib/machine.disp` states, already streams. A coinductive `Space`
+would only be needed to quantify OVER such paths as members of a type ("the space of
+sound abstractions"), which nothing here does.
 
 Where it lives is a decision: the confirmer's value vocabulary (`Val`, `Res`, codes,
 `subst`, `judge_as`) sits in a test root today. The machine over it wants a module, so the
@@ -326,10 +362,14 @@ root and accept that nothing else can use it.
    `"Proved"` over the finite claim space, `"Open"` with pinned counts over `Nat`; then the
    old `agrees`/`sweep` lines retire. Verification: the harness.
 5. The symbolic machine. `lib/symbolic.disp` (or the confirmer root): the machine over
-   `Val`, `sm_need`, resumption in `search_r`, a differential of the machine on all-`Known`
-   inputs against `lib/machine.disp`, and the confirmer's whole test list unchanged.
+   `Val`, `sm_need`, resumption in `search_r`, and the confirmer's whole test list
+   unchanged. The run lemma as a bisimulation rather than an end-to-end differential:
+   `sm_states`, `lockstep`, the per-rule claim over a finite source of rule shapes
+   (`"Proved"` by exhaustion), and the propagation claim along the trace, with a failing
+   lockstep reporting the first unrelated state pair instead of a differing final result.
    Verification: verdicts identical to the from-scratch search on every confirmer test;
-   dispatch counts before and after, reported.
+   the per-rule claim `"Proved"`; the machine on all-`Known` inputs in lockstep with
+   `lib/machine.disp`; dispatch counts before and after, reported.
 6. Follow-ons, each its own plan: grades as semiring folds with the machine's count as the
    cost unit; records for spaces and rows once the stream layer can open the kernel; a
    native stepper for the symbolic machine; and paths, below.
@@ -348,8 +388,11 @@ root and accept that nothing else can use it.
    it), and above all for the optimizer of GOALS.md: the certificate of an `.opt.disp`
    overwrite is a path from the readable definition to the fast one, and it is what
    turns Part 3's "the shortcut agrees with the honest run" from a claim into a receipt
-   whose checks never re-run the honest stream. The first real path is that certificate;
-   this follow-on starts when it does. Its cost (the path's length, or the machine's
+   whose checks never re-run the honest stream. The first real path is EARLIER than that
+   certificate: it is Part 3's run lemma read as a lockstep bisimulation, the unit of the
+   adjoint between the abstract checker and the stream one. It needs none of this
+   follow-on's machinery, because a trace is already a stream; what starts this follow-on
+   is the first type whose MEMBERS are paths. Its cost (the path's length, or the machine's
    dispatch count along it) is a grade, which is the distance between two programs at a
    type and the quantity the optimizer descends on. When it lands, `Space` becomes the
    `prop_space` case of the coinductive `Tree -> Tree -> Pair Bool Space` (the Bool is
