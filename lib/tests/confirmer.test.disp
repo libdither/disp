@@ -26,17 +26,19 @@
 //   H  fuel bounds DISPATCHES (state-passed), not depth.
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
+open use raw "fixtures.disp" {}
 open use raw "../../IDEAS.disp" {}
 
 // ---------------------------------------------------------------- codes
 // A code is a positive recognizer (a declared grammar: Nat, Tree, Bool, False)
 // or a negative former (arrow, quotient). Only positive codes split, and only
 // positive codes are identity-fine (their relation is tree_eq).
-rec NatR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { (v == succ (nat_pred v)) && NatR (nat_pred v) }
 TreeR :: {v : Tree} -> Bool :=> true
 FalseR :: {v : Tree} -> Bool :=> false
-// (Bool, the recognizer {t, t t}, comes from IDEAS.disp)
+// (NatR, LoopR and the quotient normalizers come from fixtures.disp; Bool, the
+// recognizer {t, t t}, from IDEAS.disp)
 ArrowC :: {Dom : Code, Cod : Code} -> Code :=> pair "Arrow" (pair Dom Cod)
 QuotC :: {Base : Code, nf : Tree} -> Code :=> pair "Quot" (pair Base nf)
 is_arrow_code :: Code -> Bool := {c} => c.fst == "Arrow"
@@ -46,8 +48,6 @@ arrow_cod :: Code -> Code := {c} => c.snd.snd
 quot_base :: Code -> Code := {c} => c.snd.fst
 quot_nf :: Code -> Tree := {c} => c.snd.snd
 // the declared quotients: Parity (mod 2) and All (every Nat identified)
-rec parity :: {n : Tree} -> Tree :=> if (is_zero n) { zero } else if (is_zero (nat_pred n)) { succ zero } else { parity (nat_pred (nat_pred n)) }
-always_zero := {_} => zero
 Parity := QuotC NatR parity
 All := QuotC NatR always_zero
 normalizers := [Parity, All].map(quot_nf)
@@ -392,12 +392,6 @@ explain :: Res -> Tree := {r} =>
 	else if (r.fst == "Coarse") { pair "coarse symbol at fine position" r.snd }
 	else { r }
 
-refuted :: {witness : Tree} -> Verdict :=> pair "Refuted" witness
-open_on :: {reason : Tree} -> Verdict :=> pair "Open" reason
-is_refuted :: Verdict -> Bool := {v} => v.fst == "Refuted"
-is_open :: Verdict -> Bool := {v} => (v == "Open") || (v.fst == "Open")
-// the plain vocabulary: Proved | Refuted w | Open
-flat :: Verdict -> Verdict := {v} => if (v.is_open) { "Open" } else { v }
 why :: Verdict -> Tree := {v} => if (v.fst == "Open") { v.snd } else { "not open" }
 combine :: {verdicts : List Verdict} -> Verdict :=> {
 	let refutations := verdicts.filter(is_refuted)
@@ -429,8 +423,6 @@ rec sym_at :: {k : Nat, path : List Tree} -> Val :=>
 // ---------------------------------------------------------------- the store
 // Certified pairs: related at a negative code, both members, distinct as
 // trees. (id, shift) at Nat -> Nat is certified below by eq_arrow_at itself.
-id := {n} => n
-shift := {n} => if (is_zero n) { zero } else { succ (nat_pred n) }
 store_pairs := [pair (ArrowC NatR NatR) (pair id shift)]
 pairs_at :: Code -> List (Pair Tree Tree) := {code} => store_pairs.filter({e} => e.fst == code).map(pair_snd)
 // the negative input symbol an Open reason names, if any (every reason is
@@ -615,10 +607,7 @@ respects_by_induction :: {step_fn : Tree, gen : Val -> Val} -> Verdict :=> {
 }
 
 // ---------------------------------------------------------------- subjects
-rec dbl :: {n : Tree} -> Tree :=> if (is_zero n) { zero } else { succ (succ (dbl (nat_pred n))) }
-dbl_step := {dbl2, n} => if (is_zero n) { zero } else { succ (succ (dbl2 (nat_pred n))) }
 dbl_step_pairs := {d2, n} => if (is_zero n) { zero } else { pair t (pair t (d2 (nat_pred n))) }
-rec add :: {a : Tree, b : Tree} -> Tree :=> if (is_zero a) { b } else { succ (add (nat_pred a) b) }
 dbl_step_add := {d2, n} => if (is_zero n) { zero } else { add 2 (d2 (nat_pred n)) }
 // never descends: fix bad_step (succ zero) loops forever
 bad_step := {bad2, n} => if (is_zero n) { zero } else { succ (bad2 n) }
@@ -658,8 +647,6 @@ test eq_by_symbol dbl (fix dbl_step) = "Open"
 test eq_by_induction dbl_step dbl_step_pairs = "Proved"
 test eq_by_induction dbl_step dbl_step_add = "Proved"
 test eq_by_induction dbl_step ({d2, n} => if (is_zero n) { zero } else { succ (d2 (nat_pred n)) }) = refuted 1
-agrees :: {verdict : Verdict, enumerated : Bool} -> Bool :=>
-	if (verdict == "Proved") { enumerated } else if (verdict == "Open") { true } else { not enumerated }
 same_on :: {Dom : Code, fuel : Nat, fn : Tree, gn : Tree} -> Bool :=>
 	Trees.bounded(fuel).s_filter(Dom).s_all({n} => fn n == gn n)
 same_on_nats :: {fuel : Nat, fn : Tree, gn : Tree} -> Bool :=> same_on NatR fuel fn gn
@@ -738,10 +725,7 @@ test agrees (stream_eq NatR same_states nats skip0) (prefix_eq 6 nats skip0) = t
 test agrees (stream_eq NatR pair_states nats slow) (prefix_eq 6 nats slow) = true
 
 // ================================================================ (C) quotients, CHECK.disp's generator form
-is_even_step := {ie, n} => if (is_zero n) { true } else if (is_zero (nat_pred n)) { false } else { ie (nat_pred (nat_pred n)) }
-is_even := fix is_even_step
 is_even_not_step := {ie, n} => if (is_zero n) { true } else { not (ie (nat_pred n)) }
-id_step := {_self, n} => n
 test is_even 4 = true
 test is_even 5 = false
 test apply_ih NatR [] gen_parity (gen_parity (in_sym NatR ["pred"])) = answered (rec_sym NatR ["pred"])
@@ -879,7 +863,6 @@ test check_by_induction loop_f_step = "Open"
 
 // ---- F. a diverging recognizer: membership there is Open, never a verdict
 // the v1 confirmer: check_arrow LoopR NatR id = "Proved" (no table => vacuous)
-rec LoopR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { LoopR v }
 test check_arrow LoopR NatR id = "Open"
 test judge_as LoopR (known 0) = "Yes"
 test judge_as LoopR (known 1) = stuck
@@ -899,7 +882,6 @@ test in_sym_at NatR 0 [] == in_sym_at NatR 1 [] = false
 test check_arrow2 NatR NatR NatR f2 = refuted (pair 0 1)
 test check_arrow2 NatR NatR NatR ({a, b} => pair a b) = refuted (pair 1 0)
 test check_arrow2 NatR NatR NatR ({a, _b} => a) = "Proved"
-add_step := {self, a, b} => if (is_zero a) { b } else { succ (self (nat_pred a) b) }
 test fix add_step 2 3 = 5
 // the second root is never a descendant of the first: no license on it
 test apply_ih NatR [] same (in_sym_at NatR 1 []) = stuck

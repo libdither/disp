@@ -12,6 +12,7 @@
 open use raw "lib/prelude.disp" {}
 open use raw "lib/list.disp" {}
 open use raw "lib/machine.disp" {}
+open use raw "lib/verdict.disp" {}
 open use raw "lib/stream.disp" {}
 open use raw "IDEAS.disp" {}
 
@@ -131,48 +132,17 @@ test (task LoopR 1 8).bounded(6).s_take(1).s_items = []
 // ran 48 steps of a single run and is still 48 deep, ready for the 49th.
 
 // ---------------------------------------------------------------- 5. many tasks at once: the fair merge
-// A stream of streams, flattened fairly. Each round draws one inner stream from
-// the source, then lets a POLICY step some of the live ones. Answers wait in a
-// buffer and leave one per step. A policy returns (answers, survivors).
-// Round-robin steps the head and sends it to the back:
-advance_head :: {live : List (Stream V)} -> Pair (List V) (List (Stream V)) :=> {
-	let inner := live.head
-	let r := inner.s_step
-	if (r.is_done) { pair [] live.tail }
-	else if (not r.yielded) { pair [] (live.tail.append([inner.s_with r.skip_state])) }
-	else { pair [r.y_val] (live.tail.append([inner.s_with r.y_state])) }
-}
-// Map steps every live stream: round-robin applied to each one alone. The calls
-// are independent of each other, which is what a parallel evaluator would use.
-rec advance_all :: {live : List (Stream V)} -> Pair (List V) (List (Stream V)) :=>
-	if (live.is_nil) { pair [] [] }
-	else {
-		let one := advance_head [live.head]
-		let rest := advance_all live.tail
-		pair (one.fst.append(rest.fst)) (one.snd.append(rest.snd))
-	}
-s_merge_with :: {source : Stream (Stream V), policy : List (Stream V) -> Pair (List V) (List (Stream V))} -> Stream V :=> s_new ({st} => {
-	let src := st.fst
-	let live := st.snd.fst
-	let buf := st.snd.snd
-	if (not buf.is_nil) { yield buf.head (pair src (pair live buf.tail)) }
-	else {
-		let s := src.s_step
-		let pulled := if (s.is_done) { pair src live }
-			else if (s.yielded) { pair (src.s_with s.y_state) (live.append([s.y_val])) }
-			else { pair (src.s_with s.skip_state) live }
-		if (pulled.snd.is_nil) { if (s.is_done) { done } else { skip (pair pulled.fst (pair [] [])) } }
-		else {
-			let adv := policy pulled.snd
-			skip (pair pulled.fst (pair adv.snd adv.fst))
-		}
-	}
-}) (pair source (pair [] []))
+// A stream of streams, flattened fairly: lib/stream.disp's s_merge_with. Each
+// round draws one inner stream from the source, then lets a POLICY step some of
+// the live ones. Answers wait in a buffer and leave one per step. A policy
+// returns (answers, (survivors, dropped_spent)). Round-robin (advance_head)
+// steps the head and sends it to the back. Map (advance_all) steps every live
+// stream, round-robin applied to each one alone: the calls are independent of
+// each other, which is what a parallel evaluator would use.
 // Q: the merge is `done` in exactly one situation. Which?
 // A: the source is exhausted AND no live stream remains. Keep that: it is the
 // only way a Proved will ever come out of a stream.
-s_from_list :: {items : List V} -> Stream V :=> s_new ({xs} => if (xs.is_nil) { done } else { yield xs.head xs.tail }) items
-// Three finite streams, both policies: same items, order aside.
+// Three finite streams (s_from_list), both policies: same items, order aside.
 three := s_from_list [s_from_list [1, 2], s_from_list [3], s_from_list [4, 5]]
 merged_rr := (s_merge_with three advance_head).bounded(40).s_take(9).s_items
 merged_all := (s_merge_with three advance_all).bounded(40).s_take(9).s_items
@@ -225,22 +195,18 @@ bools := s_from_list [true, false]
 // you tell that apart from a budget running out?
 exhausted := (witnesses_over bools Bool bool_cod not advance_head 64).bounded(50).s_take(1)
 test exhausted.s_items = []
-test exhausted.s_rest.s_step.is_done = true
-test is_zero exhausted.s_rest.snd.fst = false
-// A: it ends with budget to spare: the rest is done AND the budget, the first
-// component of bounded's state, is not zero. That peek into bounded's state is
-// the honest label the library does not yet carry as a type. "Ended by
+test exhausted.s_rest.s_step.is_exhausted = true
+test (witnesses NatR nat_cod succ advance_head 64).bounded(50).s_take(1).s_rest.s_step.is_spent = true
+// A: by the SHAPE of the ending. A stream ends `done` (the leaf) when its
+// members ran out and `spent` (a stem) when a budget stopped it; every
+// combinator passes its inner's ending through, and the rest of a taken stream
+// re-steps to the same ending, so no one peeks into anyone's state. "Ended by
 // exhaustion" and "ended by budget" are different facts, and only the first is
-// a proof. Making that a grade on the stream is the next library step.
-// The three verdicts, read off a bounded witness stream:
-verdict :: {ws : Bounded (Stream Tree)} -> Tree :=> {
-	let taken := ws.s_take(1)
-	if (not taken.s_items.is_nil) { pair "Refuted" taken.s_items.head }
-	else if (is_zero taken.s_rest.snd.fst) { "Open" }
-	else { "Proved" }
-}
+// a proof. The three verdicts, read off a bounded witness stream
+// (lib/stream.disp's verdict): a witness refutes, an exhausted silence proves,
+// a spent silence is open.
 test verdict ((witnesses_over bools Bool bool_cod not advance_head 64).bounded(50)) = "Proved"
-test verdict ((witnesses_over bools Bool bool_cod ({b} => pair b b) advance_head 64).bounded(50)) = pair "Refuted" true
+test verdict ((witnesses_over bools Bool bool_cod ({b} => pair b b) advance_head 64).bounded(50)) = refuted true
 test verdict ((witnesses NatR nat_cod succ advance_head 64).bounded(50)) = "Open"
 // Q: why is Proved reachable only through a finite source here?
 // A: because done needs the source exhausted, and over Trees that never
@@ -251,27 +217,32 @@ test verdict ((witnesses NatR nat_cod succ advance_head 64).bounded(50)) = "Open
 
 // ---------------------------------------------------------------- 8. grades: the same stream, other verdict algebras
 // Bool is one way to total up a stream of checks. Any algebra with a `times`,
-// its unit, and an absorbing `zero` (so the fold can stop early) will do. This
-// one combinator is s_all, the failure count, the worst cost, or the
+// its unit `one` (what an exhausted ending folds to), an `unknown` (what a
+// spent ending folds to) and an absorbing `zero` (so the fold can stop early) will
+// do. This one combinator is s_all, the failure count, the worst cost, or the
 // three-valued verdict, depending only on what you hand it.
-rec s_fold_absorb :: {stream : Bounded (Stream V), times : P -> P -> P, one : P, zero : P, measure : V -> P} -> P :=> {
+rec s_fold_absorb :: {stream : Bounded (Stream V), times : P -> P -> P, one : P, unknown : P, zero : P, measure : V -> P} -> P :=> {
 	let step := stream.s_step
-	if (step.is_done) { one }
-	else if (not step.yielded) { s_fold_absorb (stream.s_with step.skip_state) times one zero measure }
+	if (step.is_done) { if (step.is_spent) { unknown } else { one } }
+	else if (not step.yielded) { s_fold_absorb (stream.s_with step.skip_state) times one unknown zero measure }
 	else {
 		let here := measure step.y_val
-		if (here == zero) { zero } else { times here (s_fold_absorb (stream.s_with step.y_state) times one zero measure) }
+		if (here == zero) { zero } else { times here (s_fold_absorb (stream.s_with step.y_state) times one unknown zero measure) }
 	}
 }
-// Q: with times = and, one = true, zero = false, which library function is this?
-test s_fold_absorb ((s_from_list [1, 2, 3]).bounded(9)) and true false NatR = true
-test s_fold_absorb ((s_from_list [1, t t, 3]).bounded(9)) and true false NatR = false
-// A: s_all, early exit included. Now count failures instead of stopping at the
+// Q: with times = and, one = true, unknown = true, zero = false, which library function is this?
+test s_fold_absorb ((s_from_list [1, 2, 3]).bounded(9)) and true true false NatR = true
+test s_fold_absorb ((s_from_list [1, t t, 3]).bounded(9)) and true true false NatR = false
+// A: s_all, early exit included: its true on a spent stream is the `unknown`
+// element. Hand it "Open" instead and the same fold is three-valued:
+test s_fold_absorb (nats.bounded(3)) and true "Open" false NatR = "Open"
+test s_fold_absorb ((s_from_list [1, t t, 3]).bounded(9)) and true "Open" false NatR = false
+// Now count failures instead of stopping at the
 // first: the witness stream over the first four Nats, folded with plus (there
 // is no absorbing element for plus, so pass one that never occurs).
 first_nats := s_from_list [0, 1, 2, 3]
 fails := (witnesses_over first_nats NatR nat_cod ({n} => pair n n) advance_head 64).bounded(200)
-test s_fold_absorb fails add 0 "None" ({_w} => 1) = 3
+test s_fold_absorb fails add 0 "Open" "None" ({_w} => 1) = 3
 // pair n n fails on 3 of the first 4 Nats: a distance from membership. An
 // optimizer can descend a number where it cannot descend a Bool.
 
@@ -292,6 +263,5 @@ test s_fold_absorb fails add 0 "None" ({_w} => 1) = 3
 // They are shortcuts, and their contract is agreement with steps 6 and 7 on
 // every candidate. Nothing above them is ever more than a shortcut.
 // Still missing, most valuable first: a native stepper for the machine
-// (m_advance is the readable spec, and slow); a grade on streams for "ended by
-// exhaustion" versus "ended by budget"; a queue with cheap rotation in place of
-// append.
+// (m_advance is the readable spec, and slow); a queue with cheap rotation in
+// place of append. The next steps of the library are STREAM_TYPES_PLAN.md.

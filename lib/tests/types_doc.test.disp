@@ -2,12 +2,13 @@
 // test line in refuter.test.disp or confirmer.test.disp, run here.
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
+open use raw "fixtures.disp" {}
 open use raw "../../IDEAS.disp" {}
 open use raw "confirmer.test.disp" {}
 
 // section 2: a type is a two-argument program; its diagonal is the recognizer
-rel_of :: {recognize : Tree -> Bool} -> Tree -> Tree -> Bool :=> {x, y} => ((recognize x) && (recognize y)) && (x == y)
 NatRel := rel_of NatR
 test NatRel 2 2 = true
 test NatRel 2 3 = false

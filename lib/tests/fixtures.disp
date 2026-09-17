@@ -1,0 +1,27 @@
+// Shared fixtures for the roots under lib/tests: the recognizers, quotient
+// normalizers and subject programs every checker is tried on, spelled once so
+// the cross-root agreement tests are about the same objects. (GRADUAL.disp keeps
+// its own shape-based NatR on purpose: it explains why.)
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+
+rec NatR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { (v == succ (nat_pred v)) && NatR (nat_pred v) }
+// accepts 0 and loops on everything else: membership there is never a verdict
+rec LoopR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { LoopR v }
+// a data type as a relation: both recognized and identical; its diagonal is the recognizer
+rel_of :: {recognize : Tree -> Bool} -> Tree -> Tree -> Bool :=> {x, y} => ((recognize x) && (recognize y)) && (x == y)
+
+// the quotient normalizers: parity (mod 2) and the one that identifies every Nat
+rec parity :: {n : Tree} -> Tree :=> if (is_zero n) { zero } else if (is_zero (nat_pred n)) { succ zero } else { parity (nat_pred (nat_pred n)) }
+always_zero := {_} => zero
+
+// subjects: the fixpoint STEPS are what the inductive checkers take
+id := {n} => n
+shift := {n} => if (is_zero n) { zero } else { succ (nat_pred n) }
+id_step := {_self, n} => n
+rec dbl :: {n : Tree} -> Tree :=> if (is_zero n) { zero } else { succ (succ (dbl (nat_pred n))) }
+dbl_step := {dbl2, n} => if (is_zero n) { zero } else { succ (succ (dbl2 (nat_pred n))) }
+rec add :: {a : Tree, b : Tree} -> Tree :=> if (is_zero a) { b } else { succ (add (nat_pred a) b) }
+add_step := {self, a, b} => if (is_zero a) { b } else { succ (self (nat_pred a) b) }
+is_even_step := {ie, n} => if (is_zero n) { true } else if (is_zero (nat_pred n)) { false } else { ie (nat_pred (nat_pred n)) }
+is_even := fix is_even_step

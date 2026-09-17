@@ -1,10 +1,12 @@
 # Stream types: endings, spaces and telescopes, the contract as a claim
 
-Status (2026-09-16): plan, checked against the code it touches; nothing is landed. Its
-three parts are the first three items of the roadmap that followed the resumable machine
-(`RESUMABLE_INTERP_PLAN.md`): a grade on how a stream ended, the telescope as the one
-stream former, and the checkers' contract written as a claim the stream layer can run.
-Delete this file once each part is code with tests that say what its section says.
+Status (2026-09-16): Part 1 is landed (`lib/stream.disp`, `lib/verdict.disp`,
+`lib/tests/stream.test.disp`); Parts 2 and 3 are plan, checked against the code they
+touch. The three parts are the first three items of the roadmap that followed the
+resumable machine (`RESUMABLE_INTERP_PLAN.md`): a grade on how a stream ended, the
+telescope as the one stream former, and the checkers' contract written as a claim the
+stream layer can run. Delete this file once each part is code with tests that say what
+its section says.
 
 ## What this is for
 
@@ -39,69 +41,22 @@ caller or a comment instead of a value:
 Each part is useful alone and the order matters: spaces need endings for their verdicts,
 telescopes need spaces, the contract needs telescopes.
 
-## Part 1: how a stream ended
+## Part 1: how a stream ended (landed)
 
-### Today
-
-A step is `done` (the leaf), `yield item state` (a fork whose left is `true`) or
-`skip state` (a fork whose left is `false`); `is_done` is `is_leaf` (`lib/stream.disp`).
-`bounded` answers `done` when its fuel is zero, and every combinator answers a fresh `done`
-when its inner is done, so the reason is gone one combinator up.
-
-### Design
-
-Two ways to end, told apart by shape and nothing else:
-
-```
-done :: Step V St := t
-// the budget ended the stream: nothing is known about the rest
-spent :: Step V St := t t
-is_done :: Step V St -> Bool := {s} => not (is_fork s)
-is_exhausted :: Step V St -> Bool := is_leaf
-is_spent :: Step V St -> Bool := is_stem
-```
-
-`spent` is a stem, so every consumer that checks `is_done` before reading `yielded`
-(all of them, by the library's own rule) keeps working unchanged, and a consumer that
-never asks why treats both endings alike. The ending is re-observable: a stream's rest
-after `s_take` steps to the same ending again, so `taken.s_rest.s_step.is_spent` is the
-question, on any stream, with no peek into anyone's state.
-
-The one law: an ending propagates. `bounded` answers `spent` at zero fuel and passes an
-inner's ending through (`if (step.is_done) { step }`, not `{ done }`); `s_map`,
-`s_filter` and `s_take` pass it through the same way; `s_all` stays two-valued and is
-documented as evidence (its `true` on a spent stream is "no counterexample seen"). The
-fair merge is the only combinator that can hide an ending: a policy drops an inner that
-is done, so a policy must report whether the inner it dropped was spent, and the merge
-keeps a taint bit in its state and ends `spent` when the source ended spent or any inner
-did. The merge moves from GRADUAL.disp into `lib/stream.disp` on this occasion, with its
-two policies and `s_from_list` (defined identically in GRADUAL.disp and the refuter).
-
-The three-valued verdict is then a library function, not a peek:
-
-```
-verdict :: {ws : Stream Tree} -> Tree :=> {
-	let taken := ws.s_take(1)
-	if (not taken.s_items.is_nil) { pair "Refuted" taken.s_items.head }
-	else if (taken.s_rest.s_step.is_spent) { "Open" }
-	else { "Proved" }
-}
-```
-
-GRADUAL §8's `s_fold_absorb` gets the fourth element of the algebra, what an exhausted
-ending and a spent ending fold to (`one` and a new `open`), and §7 reads the ending
-instead of the fuel. The refuter's `refute` loses `exhaustive`: `diag_pairs` over
-`Trees.bounded(fuel)` ends spent and answers `open_after`, `bool_pairs` over
-`s_from_list` ends exhausted and answers `"Proved"`, which are the outcomes its tests
-already pin. IDEAS.disp keeps `Arrow` as the Bool it is; the sweeps that compare
-shortcuts with it (confirmer `agrees`) switch to `verdict` on the witness stream, so
-that the comparison is three-valued on both sides.
-
-Tests live in a new harness root `lib/tests/stream.test.disp` (a raw open runs none of a
-module's inline tests, so `lib/stream.disp`'s own tests never run under `npm test`): a
-finite list under `bounded` ends exhausted, `nats` under `bounded` ends spent, a merge
-with one spent inner ends spent, `s_map`/`s_filter`/`s_take` preserve either ending, and
-`verdict` on the three shapes.
+As designed: `done` is the leaf, `spent` a stem, `is_done` "not a fork"; `bounded`
+answers `spent` at zero fuel without stepping the inner (so a finite source whose fuel
+is exactly its length reads spent, pinned as the conservative reading) and every
+combinator passes an ending through; the merge and its two policies live in
+`lib/stream.disp`, a policy answering `(items, (survivors, dropped_spent))`; `verdict`
+reads the ending; the refuter's `refute` lost `exhaustive`; GRADUAL §7 reads the shape
+and §8's `s_fold_absorb` folds a spent ending to its `unknown` element (`open` is a
+keyword). Deviations from the plan: the verdict vocabulary is its own module,
+`lib/verdict.disp` (`refuted`, `open_on`, `is_proved`/`is_refuted`/`is_open`, `flat`,
+`agrees`, and `agree` between two verdicts), and the shared recognizers, normalizers
+and subject programs the roots kept re-spelling are `lib/tests/fixtures.disp`. Not
+done: the confirmer's `agrees` lines and sweeps still compare against `Arrow`'s Bool;
+switching them to `verdict` of a witness stream needs `witnesses_over` in the library,
+which is Part 2's `pi_claim`, so that move belongs to step 3.
 
 ## Part 2: spaces, and the telescope as the one stream former
 
@@ -199,6 +154,32 @@ members are `tele_envs` of its two rows mapped to pairs; Isect is a space whose
 recognizer is the conjunction and whose pairs are the first space's filtered by the
 second; Eq at a type is `eq_claim`.
 
+### To resolve before building
+
+- **Where domain recognition runs.** `Trees.bounded(fuel).s_filter(recognize)` runs
+  the recognizer natively inside one stream step, which is the hang GRADUAL §2 measures
+  and §6 exists to fix (`witnesses_over` guards `A a` INSIDE the task). `pi_check` as
+  written has no domain guard at all, so either the pairs are pre-filtered (partial
+  recognizers hang the env stream and the `LoopR` tests are lost) or unfiltered
+  (non-members become spurious witnesses). The two faces of the telescope want
+  different things: the witness stream wants unfiltered candidates with membership
+  conjoined inside the task (a non-member is not a witness, as in `witnesses_over`),
+  while the env stream as Sigma's members wants real members. One answer: a space's
+  pairs stream is total-per-step by contract (finite lists, or `Trees` unfiltered), and
+  recognition is always a task, both in `pi_check` and in a `sp_members` that is itself
+  a witness-style merge; membership at a partial recognizer is then semi-decidable on
+  both faces, which is the truth.
+- **Normalizers run natively too.** `quot_space` maps `nf` inside `s_map`, carrying the
+  refuter's `quot_pairs` assumption that a normalizer is total. Either declare it (a
+  normalizer is trusted code, like `Trees`) or task it like recognition.
+- **The policy contract.** Part 1's policy answers a dropped-spent flag; `s_bind` and
+  `tele_envs` inherit it unchanged, so a bounded inner pairs stream taints the env
+  stream and the verdict reads `Open`. Check that `tele_envs` over a finite telescope
+  of finite spaces really ends exhausted under both policies (the merge-of-merges).
+- **Record-free encoding.** `Space` and `Row` are pairs because the stream layer opens
+  the raw prelude; keep the accessors the only way in so the record migration later is
+  local.
+
 ### The boundary this fixes
 
 Every `fresh_row` is a ∀ in the witness reading, and stacking them stays a single ∀ over
@@ -273,13 +254,7 @@ root and accept that nothing else can use it.
 
 ## Steps
 
-1. Endings. `lib/stream.disp`: `spent`, `is_exhausted`, `is_spent`, `is_done` as
-   "not a fork"; `bounded`, `s_map`, `s_filter`, `s_take` pass endings through;
-   `s_from_list`, the merge, its two policies (reporting a dropped spent inner) and
-   `verdict` move in from GRADUAL.disp; `s_fold_absorb` gets its `open` element. The
-   refuter drops `exhaustive`; GRADUAL §7 reads the ending; `agrees` in the confirmer
-   compares against `verdict`. New root `lib/tests/stream.test.disp` with the propagation
-   laws. Verification: every root's verdicts unchanged, the harness, GRADUAL.disp.
+1. Endings: landed (see Part 1).
 2. Spaces. `lib/space.disp`: `space`, `data_space`, `quot_space`, a finite space from a
    list, a `Trees`-backed space with fuel; the refuter's pair streams become `sp_pairs`
    of spaces. Verification: the refuter's tests with the same outcomes.
