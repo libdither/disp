@@ -230,41 +230,35 @@
       onmouseenter={holdEntry}
       onmouseleave={lookAway}
     >
-      <span class="def-head">
-        <span class="def-term">{entry.term}</span>
-        <span class="def-pos">{entry.pos}</span>
-        <!-- the jokes instead of the definitions: a faint switch on the card itself -->
-        <button
-          class="def-funny"
-          class:on={theme.funny}
-          aria-pressed={theme.funny}
-          title={theme.funny ? "back to the definitions" : "funny style"}
-          aria-label="funny style"
-          onclick={() => theme.setFunny(!theme.funny)}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle
-              cx="12"
-              cy="12"
-              r="8.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.7"
-            />
-            <circle cx="9" cy="10" r="1.15" />
-            <circle cx="15" cy="10" r="1.15" />
-            <path
-              d="M8.3 14.2c1 1.5 2.2 2.2 3.7 2.2s2.7-.7 3.7-2.2"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.7"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-      </span>
-      <div class="def-text serious">{@html entry.serious}</div>
-      <div class="def-text funny">{@html entry.funny}</div>
+      <!-- every entry in both variants, stacked in one grid cell: the hidden
+           ones keep their height, so the card is as tall as the tallest entry at
+           this width and never moves on hover or on the funny switch — and each
+           entry keeps its own rule right under its own term -->
+      <div class="def-stack">
+        {#each Object.entries(entries) as [k, e] (k)}
+          <div class="def-entry" class:shown={e === entry} aria-hidden={e !== entry}>
+            <span class="def-head">
+              <span class="def-term">{e.term}</span>
+              <span class="def-pos">{e.pos}</span>
+            </span>
+            <div class="def-texts">
+              <div class="def-text serious">{@html e.serious}</div>
+              <div class="def-text funny">{@html e.funny}</div>
+            </div>
+          </div>
+        {/each}
+      </div>
+      <!-- the jokes instead of the definitions: a faint switch at the card's corner -->
+      <button
+        class="def-funny"
+        class:on={theme.funny}
+        aria-pressed={theme.funny}
+        title={theme.funny ? "back to the definitions" : "funny style"}
+        aria-label="funny style"
+        onclick={() => theme.setFunny(!theme.funny)}
+      >
+        <span class="emo" aria-hidden="true">{theme.funny ? "😂" : "🙂"}</span>
+      </button>
     </aside>
     <div class="hero-sub">
       <p class="sub">
@@ -611,9 +605,13 @@
   }
 
   /* ---- the field guide (one card, fixed size, pinned beside the wordmark) ---- */
+  .def-entry.shown .def-text {
+    visibility: visible;
+  }
+  /* the other variant stays laid out (it holds the height) but unseen */
   :global(:root[data-funny="1"]) .def-text.serious,
   :global(:root:not([data-funny="1"])) .def-text.funny {
-    display: none;
+    visibility: hidden;
   }
   .dterm {
     background: none;
@@ -635,7 +633,6 @@
     position: relative;
     width: 100%;
     max-width: 270px;
-    min-height: 176px;
     background: color-mix(in oklab, var(--g4) 5%, var(--bg-elev));
     border: 1px solid var(--border-strong);
     border-radius: 12px;
@@ -677,10 +674,24 @@
     border: 1px solid #8a6414;
     box-shadow: 0 2px 3px rgba(47, 74, 55, 0.35);
   }
+  .def-stack {
+    flex: 1;
+    display: grid;
+  }
+  .def-entry {
+    grid-area: 1 / 1;
+    visibility: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .def-entry.shown {
+    visibility: visible;
+  }
   .def-head {
     display: flex;
     align-items: baseline;
     gap: 0.5em;
+    padding-right: 1.4rem; /* room for the switch at the corner */
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.3rem;
   }
@@ -701,8 +712,9 @@
     font-size: 0.85rem;
   }
   .def-funny {
-    margin-left: auto;
-    align-self: center;
+    position: absolute;
+    top: 0.85rem;
+    right: 0.95rem;
     width: 18px;
     height: 18px;
     padding: 0;
@@ -715,11 +727,14 @@
       opacity 0.15s ease,
       color 0.15s ease;
   }
-  .def-funny svg {
+  .def-funny .emo {
     display: block;
-    width: 16px;
-    height: 16px;
-    fill: currentColor;
+    font-size: 15px;
+    line-height: 1;
+    filter: grayscale(1); /* faint until pressed */
+  }
+  .def-funny.on .emo {
+    filter: none;
   }
   .def-funny:hover,
   .def-funny:focus-visible {
@@ -731,9 +746,14 @@
     opacity: 1;
     color: var(--g2);
   }
+  .def-texts {
+    display: grid;
+    margin-top: 0.45rem;
+  }
   .def-text {
-    flex: 1;
-    margin: 0.45rem 0 0;
+    grid-area: 1 / 1;
+    visibility: hidden;
+    margin: 0;
     font-size: 0.77rem;
     line-height: 1.5;
     color: var(--fg-muted);
