@@ -221,7 +221,7 @@
           <button
             class="themetoggle"
             class:auto={theme.pref === "system"}
-            title="Appearance — {themeLabel(theme.pref)} (click cycles, hover for more)"
+            title="{themeLabel(theme.pref)} — click cycles, hover for more"
             aria-label="Appearance — {themeLabel(theme.pref)}. Click to cycle the theme."
             onclick={cycleTheme}
           >

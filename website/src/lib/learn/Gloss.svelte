@@ -7,7 +7,7 @@
   let { tip, children }: Props = $props()
 </script>
 
-<dfn class="gloss" title={tip}>
+<dfn class="gloss">
   {@render children()}<span class="tipbox" role="tooltip">{tip}</span>
 </dfn>
 

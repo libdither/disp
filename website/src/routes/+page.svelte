@@ -89,15 +89,15 @@
       term: "decentralized",
       pos: "adj.",
       serious:
-        "No committee decides what disp can express. Syntax, type rules and optimizations are ordinary library definitions, so anyone can add a feature locally. Changing an existing meaning needs a proof that the old and new definitions agree.",
+        "When there is no need for consensus on language features, since everyone can provably transpile other people's code into their own desired style.",
       funny:
-        "Is your favorite programming language being sensible and not including your new pet feature into the language? Well in disp you can implement that feature yourself! Just need to formally prove it plays nice with everything else ofc :)",
+        "Is your favorite programming language being sensible and not including your new pet feature? In disp you can implement that feature yourself! Just formally prove it can transpile to/from everything else :)",
     },
     lisp: {
       term: "lisp",
       pos: "n.",
       serious:
-        "Like Lisp, programs are data a program can take apart. Unlike Lisp there is no quote or eval: every value is already a tree, and the F rule reads its shape directly.",
+        "Like Lisp, programs are data a program can take apart. Unlike Lisp there is no quote or eval: every value is already a tree, and the F (triage) rule reads its shape directly.",
       funny:
         "Disp is like Lisp but no quote/eval on S-expressions required, just <code>triage</code> on a tree! Honestly, who even liked S-expressions anyway, too many parentheses...",
     },
@@ -105,7 +105,7 @@
       term: "universal",
       pos: "adj.",
       serious:
-        "One substrate other languages can be expressed in and compiled to. A language becomes a library: its parser, types and rewrites are disp definitions, and its programs inherit disp's checker and optimizer.",
+        "A language is universal (in the sense of a <a href='https://www.youtube.com/watch?v=V9tMzmlpuYo'>universal property</a>) if all other languages can be transpiled into it. Disp aims to be fully backwards compatible by subsuming all other languages",
       funny:
         "The goal is for disp to be a singular substrate that other languages can be rebuilt in and transpiled to. Disp shall become the <em>grey goo of programming languages</em> mwahahahaHAHAHAHA",
     },
@@ -113,7 +113,7 @@
       term: "user-definable parsers",
       pos: "n. pl.",
       serious:
-        "A parser is a function from a string to a value plus the unread rest. In disp it is an ordinary definition, so a library can ship its own syntax; compilation is composition.",
+        "Parsers are just functions! And since in disp everything parses to a tree calculus program, you can just write your own parser and pretty-printer.",
       funny:
         '"A parser for things is a function from strings to potentially a pair of that thing and its string" and in disp, compilation is just a function man...',
     },
@@ -121,7 +121,7 @@
       term: "type systems",
       pos: "n. pl.",
       serious:
-        "A type is a predicate: a program that inspects another program and says whether it fits. A type system is a library of such predicates, and the checker is itself disp code, extendable like any other.",
+        "In disp a type annotation desugars to a predicate run on a program. A type system a set of predicates, thus you can create your own type systems just by defining new predicates.",
       funny:
         "A type system is just a system of types. Types are just predicates on programs. A type system is just a collection of predicates on programs. Why does no one teach it this way?!?",
     },
@@ -129,7 +129,7 @@
       term: "self-optimizing optimizer",
       pos: "n.",
       serious:
-        "The planned endgame: a search for faster programs, scored by an equivalence-proving checker and by measured cost, then pointed at its own code. Each step is a checked rewrite, so the loop stays inspectable.",
+        "The endgame of disp is to make a general-purpose optimizer that produces code as small and fast as possible, and then make it generate versions of itself; an (ideally) interpretable RSI loop",
       funny:
         "Eliezer Yudkowsky called me and said this was probably a bad idea but idk man, I'd rather my recursive self-improvement loop be interpretable than whatever Anthropic and OpenAI be up to.",
     },
@@ -137,7 +137,7 @@
       term: "interaction nets",
       pos: "n. pl.",
       serious:
-        "A graph that rewrites itself locally: each step touches two connected nodes and nothing else, so steps that share no nodes run at once. disp uses it as its model of hardware and of cost.",
+        "A computational model that is locally-rewriting and massively parallel. The goal is to use its local nature to efficiently model hardware layouts and execution cost.",
       funny:
         'Okay, so imagine like feynman diagrams where particles are splitting apart and annihilating but in doing so they are doing computation, oh hi there <a href="https://github.com/VictorTaelin" target="_blank" rel="noopener">@VictorTaelin</a> didn\'t see you there',
     },
@@ -167,8 +167,16 @@
   };
   const onWindowClick = (e: MouseEvent) => {
     if (!pinned) return;
-    const t = e.target as Element | null;
-    if (t?.closest(".defbox") || t?.closest(".dterm")) return;
+    // the path as dispatched, not the target: a click on something the card
+    // re-renders (the face switch swaps its icon) must still count as inside
+    const inside = e
+      .composedPath()
+      .some(
+        (n) =>
+          n instanceof Element &&
+          (n.classList.contains("defbox") || n.classList.contains("dterm")),
+      );
+    if (inside) return;
     pinned = null;
     entryKey = "disp";
   };
@@ -236,7 +244,11 @@
            entry keeps its own rule right under its own term -->
       <div class="def-stack">
         {#each Object.entries(entries) as [k, e] (k)}
-          <div class="def-entry" class:shown={e === entry} aria-hidden={e !== entry}>
+          <div
+            class="def-entry"
+            class:shown={e === entry}
+            aria-hidden={e !== entry}
+          >
             <span class="def-head">
               <span class="def-term">{e.term}</span>
               <span class="def-pos">{e.pos}</span>
@@ -253,11 +265,25 @@
         class="def-funny"
         class:on={theme.funny}
         aria-pressed={theme.funny}
-        title={theme.funny ? "back to the definitions" : "funny style"}
+        title={theme.funny ? "you saw nothing" : "pssst"}
         aria-label="funny style"
-        onclick={() => theme.setFunny(!theme.funny)}
+        onclick={(e) => {
+          e.stopPropagation(); // never reaches the unpin-on-click-outside
+          theme.setFunny(!theme.funny);
+        }}
       >
-        <span class="emo" aria-hidden="true">{theme.funny ? "😂" : "🙂"}</span>
+        <!-- the faces are Pixelarticons' smile and laugh (MIT, halfmage/pixelarticons), inlined -->
+        <svg class="emo" viewBox="0 0 24 24" aria-hidden="true">
+          {#if theme.funny}
+            <path
+              d="M6 20h12v2H6zM6 2h12v2H6zm12 2h2v2h-2zM4 4h2v2H4zm0 14h2v2H4zm14 0h2v2h-2zM2 6h2v12H2zm18 0h2v12h-2zM7 14h2v2H7zm0-2h10v2H7zm2 4h6v2H9zm6-2h2v2h-2zM8 8h2v2H8zm6 0h2v2h-2z"
+            />
+          {:else}
+            <path
+              d="M6 20h12v2H6zM6 2h12v2H6zm12 2h2v2h-2zM4 4h2v2H4zm0 14h2v2H4zm14 0h2v2h-2zM2 6h2v12H2zm18 0h2v12h-2zM7 13h2v2H7zm2 2h6v2H9zm6-2h2v2h-2zM8 8h2v2H8zm6 0h2v2h-2z"
+            />
+          {/if}
+        </svg>
       </button>
     </aside>
     <div class="hero-sub">
@@ -332,7 +358,6 @@
           class="copybtn"
           class:copied
           onclick={copyClone}
-          title="copy to clipboard"
           aria-label="copy the clone command"
         >
           {#if copied}
@@ -729,12 +754,10 @@
   }
   .def-funny .emo {
     display: block;
-    font-size: 15px;
-    line-height: 1;
-    filter: grayscale(1); /* faint until pressed */
-  }
-  .def-funny.on .emo {
-    filter: none;
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+    shape-rendering: crispEdges; /* keep the pixels square */
   }
   .def-funny:hover,
   .def-funny:focus-visible {

@@ -955,7 +955,6 @@
       <button
         class="btn tb subtle icon"
         onclick={() => (showWelcome ? dismissWelcome() : (showWelcome = true))}
-        title="about this playground"
         aria-label="about this playground"
       >
         ⓘ

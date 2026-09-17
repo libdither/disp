@@ -1697,9 +1697,9 @@
       >
       <span class="info-pop" role="tooltip">
         {#if namesHint}
-          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree. {namesHint}
+          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree; <kbd>space</kbd> runs, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>r</kbd> resets. {namesHint}
         {:else}
-          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree.
+          Edits parse as you type; <kbd>Enter</kbd> (re)starts the tree; <kbd>space</kbd> runs, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>r</kbd> resets.
           Combinators:
           <code>t</code> (△), <code>K</code>, <code>S</code>, <code>not</code>,
           <code>and</code>,
@@ -1723,7 +1723,6 @@
         <button
           class="tbtn"
           onclick={() => cyclePreset(-1)}
-          data-tip="previous tree (shift+←)"
           aria-label="previous tree">{@render icoPrev()}</button
         >
       {/if}
@@ -1731,7 +1730,6 @@
         class="tbtn"
         onclick={back}
         disabled={historyLen === 0}
-        data-tip="step back (←)"
         aria-label="step back">{@render icoBack()}</button
       >
     </div>
@@ -1739,7 +1737,6 @@
     <button
       class="tbtn play"
       onclick={toggleRun}
-      data-tip="run / pause (space)"
       aria-label={running ? "pause" : "play"}
       >{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button
     >
@@ -1748,21 +1745,18 @@
       <button
         class="tbtn"
         onclick={step}
-        data-tip="step forward (→)"
         aria-label="step forward">{@render icoFwd()}</button
       >
       {#if !minimal}
         <button
           class="tbtn"
           onclick={() => cyclePreset(1)}
-          data-tip="next tree (shift+→)"
           aria-label="next tree">{@render icoNext()}</button
         >
       {/if}
       <button
         class="tbtn"
         onclick={reset}
-        data-tip="reset to the start (r)"
         aria-label="reset">{@render icoReset()}</button
       >
     </div>

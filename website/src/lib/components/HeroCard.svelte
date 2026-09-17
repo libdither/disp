@@ -237,7 +237,6 @@
           value={exampleId}
           onchange={(e) => pickExample((e.currentTarget as HTMLSelectElement).value)}
           aria-label="example"
-          title="pick an example"
         >
           {#each landingExamples as ex (ex.id)}
             <option value={ex.id}>{ex.label.replace(/ \(.*\)/, '')}</option>
@@ -248,7 +247,7 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.2-4.5z" fill="currentColor" /></svg>
           Run
         </button>
-        <a class="tbtn" href={playgroundHref} onclick={openInPlayground} title="open in the playground — your edits come along">
+        <a class="tbtn" href={playgroundHref} onclick={openInPlayground}>
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M9 2.5h4.5V7M13.5 2.5 7 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
             <path d="M6.5 3.5H3.5v9h9V9.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
