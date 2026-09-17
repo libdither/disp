@@ -91,7 +91,7 @@ rec sapply :: {f : Val, x : Val, fuel : Nat} -> Res :=> {
 	else { pick_rule f.snd.fst f.snd.snd }
 }
 
-rec NatR :: {v : Tree} -> Bool :=> if (is_leaf v) { true } else { (is_fork v) && ((v.fst == t) && NatR v.snd) }
+rec NatR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { (v == succ (nat_pred v)) && NatR (nat_pred v) }
 // judge a partly-known value AS a Nat by Nat's shape certificate (leaf, or
 // fork(leaf, Nat)) — never by running NatR's own recursion on a symbol
 rec judge_nat :: {val : Val} -> Tree :=>
@@ -101,11 +101,11 @@ rec judge_nat :: {val : Val} -> Tree :=>
 	else if (val.fst == "AssumedFn") { "Stuck" }
 	else {
 		let left := val.snd.fst
-		if ((left.fst == "Known") && (is_leaf left.snd)) { judge_nat val.snd.snd } else { "Stuck" }
+		if (left == known t) { judge_nat val.snd.snd } else { "Stuck" }
 	}
 
-rec dbl :: {n : Tree} -> Tree :=> if (is_leaf n) { zero } else { succ (succ (dbl n.snd)) }
-dbl_step := {dbl2, n} => if (is_leaf n) { zero } else { succ (succ (dbl2 n.snd)) }
+rec dbl :: {n : Tree} -> Tree :=> if (is_zero n) { zero } else { succ (succ (dbl (nat_pred n))) }
+dbl_step := {dbl2, n} => if (is_zero n) { zero } else { succ (succ (dbl2 (nat_pred n))) }
 test dbl 3 = 6
 test tree_eq dbl (fix dbl_step) = true
 

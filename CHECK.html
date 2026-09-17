@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHECK.disp — checking a function type with one run instead of a stream</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdad3; --card: #ffffff;
+    --accent: #2f6fd6; --known: #1d1d1b; --cloud: #b8681a; --cloud-bg: #fff2e0;
+    --ok: #1f8a4c; --bad: #c2352b; --open: #8a6d1f; --code-bg: #f1efe9; --wall: #c2352b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15161a; --fg: #e8e6df; --muted: #9c9b93; --line: #34363d; --card: #1d1f25;
+      --accent: #7aa7ee; --known: #e8e6df; --cloud: #f0a94f; --cloud-bg: #3a2d1a;
+      --ok: #5fcb84; --bad: #f07a6e; --open: #e0b64a; --code-bg: #23252c; --wall: #f07a6e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 1.8rem; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 1.3rem; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.05rem; margin: 24px 0 8px; }
+  p, li { max-width: 72ch; }
+  .lede { color: var(--muted); font-size: 1.05rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 16px 0; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .row > * { flex: 1 1 260px; min-width: 0; }
+  #nats-row > * { flex: 0 1 auto; }
+  .muted { color: var(--muted); }
+  .small { font-size: 0.88rem; }
+  svg text { font-family: system-ui, sans-serif; font-size: 12px; fill: var(--fg); }
+  svg .mono { font-family: ui-monospace, Menlo, monospace; }
+  svg .muted { fill: var(--muted); }
+  svg .arrow { stroke: var(--fg); stroke-width: 1.4; fill: none; marker-end: url(#arr); }
+  svg .arrow.accent { stroke: var(--accent); }
+  svg .arrow.bad { stroke: var(--bad); }
+  svg .node { fill: var(--known); }
+  svg .edge { stroke: var(--known); stroke-width: 1.6; }
+  svg .cloud { fill: var(--cloud-bg); stroke: var(--cloud); stroke-width: 1.4; stroke-dasharray: 4 3; }
+  svg .cloudtext { fill: var(--cloud); font-weight: 600; }
+  svg .box { fill: var(--card); stroke: var(--line); }
+  svg .wall { stroke: var(--wall); stroke-width: 3; stroke-dasharray: 6 4; }
+  .verdict { font-weight: 700; padding: 2px 8px; border-radius: 6px; display: inline-block; }
+  .v-Proved { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+  .v-Refuted { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+  .v-Open { color: var(--open); background: color-mix(in srgb, var(--open) 16%, transparent); }
+  .v-Evidence { color: var(--open); background: color-mix(in srgb, var(--open) 16%, transparent); }
+  .tag { font-size: 0.78rem; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  select, button, input[type=range] { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  label { display: inline-flex; gap: 8px; align-items: center; margin-right: 14px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin: 8px 0 12px; }
+  .trace { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; line-height: 1.5; max-height: 360px; overflow: auto; background: var(--code-bg); border-radius: 8px; padding: 10px 12px; white-space: pre; }
+  .trace .rule { color: var(--accent); }
+  .trace .stuck { color: var(--bad); font-weight: 700; }
+  .trace .ih { color: var(--cloud); font-weight: 600; }
+  .trace .short { color: var(--ok); }
+  .kn { color: var(--known); } .cl { color: var(--cloud); font-weight: 600; }
+  .forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .forms .card { margin: 0; text-align: center; padding: 10px; }
+  .forms .card svg { display: block; margin: 0 auto 6px; }
+  .forms .card b { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 0.9rem; }
+  .forms .card span { font-size: 0.85rem; color: var(--muted); }
+  .rulegrid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .rule { display: grid; grid-template-columns: 200px 1fr 130px; gap: 12px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  .rule .name { font-weight: 600; }
+  .rule .look { font-size: 0.85rem; }
+  .rule.inspects { border-color: var(--wall); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .open { color: var(--open); }
+  .treebox { min-height: 120px; }
+  .treebox svg { max-width: 100%; height: auto; }
+  .caption { font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; color: var(--muted); margin-top: 4px; word-break: break-all; }
+  .warn { border-left: 4px solid var(--bad); padding-left: 12px; }
+  .note { border-left: 4px solid var(--accent); padding-left: 12px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .cols2 { grid-template-columns: 1fr; } .rule { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Checking <code>fn : Nat -&gt; Nat</code> with one run instead of a stream</h1>
+<p class="lede">A walkthrough of <code>CHECK.disp</code>. In disp a type is just a program that says yes or no to a tree. So a claim like "<code>fn</code> turns naturals into naturals" is a claim about <em>every</em> member of an infinite stream. This page explains the stream way of checking it, why that can only ever refute, and how <code>CHECK.disp</code> turns the infinite stream into one run on a placeholder. Everything below is computed live by a small in-page reimplementation.</p>
+
+<svg width="0" height="0" style="position:absolute"><defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker>
+</defs></svg>
+
+<h2>1. What is being claimed</h2>
+<p>Everything in disp is a binary tree grown from one leaf <code>t</code>. A tree is a <b>leaf</b>, a <b>stem</b> (one child), or a <b>fork</b> (two children). Numbers are trees too: zero is the leaf, and <code>succ n</code> is a fork whose left child is a leaf and whose right child is <code>n</code>.</p>
+<div class="card"><div class="row" id="nats-row" style="align-items:flex-end;justify-content:space-around"></div></div>
+<p>A <b>type</b> is a recognizer: a function from trees to booleans. The type of naturals is the recognizer <code>NatR</code>:</p>
+<pre><code>rec NatR :: {v : Tree} -> Bool :=> if (is_leaf v) { true } else { (is_fork v) && ((v.fst == t) && NatR v.snd) }</code></pre>
+<p>So "<code>fn : Nat -&gt; Nat</code>" unpacks to: <em>for every tree n that NatR accepts, NatR also accepts fn n</em>. There are infinitely many such n. That is the whole difficulty.</p>
+
+<h2>2. The stream way: enumerate, filter, map, check</h2>
+<p>The companion file <code>IDEAS.disp</code> takes the claim literally. It enumerates every tree in size order (a stream called <code>Trees</code>), keeps the ones the domain recognizer accepts, applies <code>fn</code> to each, and asks whether the codomain recognizer accepts every output:</p>
+<pre><code>Arrow :: {Dom : Tree -> Bool, Cod : Tree -> Bool, fuel : Nat, fn : Tree} -> Bool :=> {
+  let members := Trees.bounded(fuel).s_filter(Dom)
+  let outputs := members.s_map({arg} => fn arg)
+  outputs.s_all(Cod)
+}</code></pre>
+<div class="card">
+<svg viewBox="0 0 860 120" width="100%" height="120" aria-label="pipeline diagram">
+  <rect class="box" x="10" y="35" width="120" height="50" rx="8"/><text x="70" y="56" text-anchor="middle">all trees</text><text x="70" y="74" text-anchor="middle" class="mono muted">Trees</text>
+  <path class="arrow" d="M132,60 L208,60"/><text x="170" y="50" text-anchor="middle" class="mono">s_filter(Nat)</text>
+  <rect class="box" x="210" y="35" width="130" height="50" rx="8"/><text x="275" y="56" text-anchor="middle">members of Nat</text><text x="275" y="74" text-anchor="middle" class="mono muted">E(Nat)</text>
+  <path class="arrow" d="M342,60 L418,60"/><text x="380" y="50" text-anchor="middle" class="mono">s_map(fn)</text>
+  <rect class="box" x="420" y="35" width="130" height="50" rx="8"/><text x="485" y="56" text-anchor="middle">outputs</text><text x="485" y="74" text-anchor="middle" class="mono muted">fn n, fn n', …</text>
+  <path class="arrow" d="M552,60 L628,60"/><text x="590" y="50" text-anchor="middle" class="mono">s_all(Nat)</text>
+  <rect class="box" x="630" y="35" width="220" height="50" rx="8"/><text x="740" y="56" text-anchor="middle">false = a counterexample</text><text x="740" y="74" text-anchor="middle" class="muted">true = finished with none (only if the stream ended)</text>
+</svg>
+</div>
+<p>This is honest and simple, but for an infinite domain it has a built-in asymmetry. If some member misbehaves, the stream eventually reaches it and answers <b>false</b> with a concrete counterexample: a real refutation. If nothing misbehaves, the stream never ends. The only way to get <b>true</b> is to cap it with a budget (<code>bounded(fuel)</code>), and then <b>true</b> only means "no counterexample among the first few thousand trees". That is evidence, not proof. The stream side is a <em>refuter</em>.</p>
+
+<div class="card">
+<h3 style="margin-top:0">Try the refuter</h3>
+<div class="controls">
+  <label>function <select id="fn-select"></select></label>
+  <label>fuel (trees enumerated) <input id="fuel" type="range" min="10" max="400" value="120"> <span id="fuel-val">120</span></label>
+</div>
+<pre id="fn-src" style="margin-top:0"></pre>
+<div id="stream-out"></div>
+</div>
+
+<h2>3. The idea: run <code>fn</code> once, on a placeholder</h2>
+<p>Look at what the stream is doing when <code>fn</code> is <code>succ</code>. Every member n goes through the same motions: <code>succ</code> wraps a fork around it and never looks inside. All the runs are the same run with a different thing pasted in. So do that run <em>once</em>, with a placeholder pasted in, and read the answer off the shape that comes out.</p>
+<p><code>CHECK.disp</code> calls a tree with placeholders in it a <b>partly-known value</b> (<code>Val</code>). There are five forms:</p>
+<div class="forms" id="forms"></div>
+<p style="margin-top:14px">The important one is <code>member_of T</code>. It <em>means</em> "any item the stream <code>Trees.s_filter(T)</em> would ever yield", but it <em>stores</em> only the recognizer's name. Every rule we are allowed to fire on it needs just the name, and the name is the key back to the stream if the shortcut fails and we have to enumerate after all.</p>
+
+<h3>The rules, and the one place they look inside</h3>
+<p>The substrate has five rewrite rules. Applying a tree <code>f</code> to an argument <code>x</code> either grows the tree (leaf and stem heads) or, for a fork head <code>t a b</code>, dispatches on the shape of <code>a</code>. The key question for each rule: does it need to <em>look inside</em> the argument <code>x</code>?</p>
+<div class="rulegrid" id="rules"></div>
+<p style="margin-top:14px">Only the triage rule inspects its argument. That line in <code>sapply</code> is the whole abstraction wall: if a triage lands on a placeholder, the run is <b>stuck</b>. Stuck is never a verdict. It just means this shortcut does not apply and the stream is still there.</p>
+<p>Here is the same thing as pictures. Under the <span class="cl">orange cloud</span> is something we know only by the name of its type. Substituting any concrete member for the cloud must give a valid concrete run.</p>
+<div class="card">
+<svg viewBox="0 0 860 150" width="100%" height="150">
+  <text x="20" y="24" font-weight="600">succ ⟨∈Nat⟩ : the stem head grows a fork around the cloud, no inspection</text>
+  <g transform="translate(60,60)"><line class="edge" x1="0" y1="0" x2="0" y2="30"/><circle class="node" cx="0" cy="0" r="6"/><circle class="node" cx="0" cy="30" r="6"/><text x="14" y="34" class="mono muted">succ = t t</text></g>
+  <text x="150" y="80" font-size="18">·</text>
+  <g transform="translate(200,60)"><rect class="cloud" x="-34" y="-14" width="68" height="28" rx="14"/><text class="cloudtext" x="0" y="5" text-anchor="middle">∈ Nat</text></g>
+  <path class="arrow accent" d="M260,75 L330,75"/>
+  <g transform="translate(400,50)"><line class="edge" x1="0" y1="0" x2="-30" y2="34"/><line class="edge" x1="0" y1="0" x2="34" y2="34"/><circle class="node" cx="0" cy="0" r="6"/><circle class="node" cx="-30" cy="34" r="6"/><rect class="cloud" x="0" y="20" width="68" height="28" rx="14"/><text class="cloudtext" x="34" y="39" text-anchor="middle">∈ Nat</text></g>
+  <text x="500" y="70" class="mono">HalfFork (Known t) (Member Nat)</text>
+  <text x="500" y="92" class="muted">= "a fork of a leaf and some Nat" = succ of some Nat</text>
+  <text x="500" y="114" class="ok" font-weight="600">judge_nat: Yes, for every substitution</text>
+</svg>
+</div>
+<div class="card">
+<svg viewBox="0 0 860 130" width="100%" height="130">
+  <text x="20" y="24" font-weight="600">is_leaf ⟨∈Nat⟩ : the triage must see whether the cloud is a leaf or a fork</text>
+  <g transform="translate(70,60)"><line class="edge" x1="0" y1="0" x2="-24" y2="28"/><line class="edge" x1="0" y1="0" x2="24" y2="28"/><line class="edge" x1="-24" y1="28" x2="-40" y2="54"/><line class="edge" x1="-24" y1="28" x2="-8" y2="54"/><circle class="node" cx="0" cy="0" r="6"/><circle class="node" cx="-24" cy="28" r="6"/><circle class="node" cx="24" cy="28" r="6"/><circle class="node" cx="-40" cy="54" r="6"/><circle class="node" cx="-8" cy="54" r="6"/><text x="40" y="34" class="mono muted">triage-shaped fork</text></g>
+  <text x="230" y="70" font-size="18">·</text>
+  <g transform="translate(290,60)"><rect class="cloud" x="-34" y="-14" width="68" height="28" rx="14"/><text class="cloudtext" x="0" y="5" text-anchor="middle">∈ Nat</text></g>
+  <line class="wall" x1="360" y1="30" x2="360" y2="110"/>
+  <text x="380" y="60" class="bad" font-weight="700">STUCK</text>
+  <text x="380" y="82" class="muted">the rule to fire depends on what is under the cloud;</text>
+  <text x="380" y="100" class="muted">no verdict, fall back to the stream by the stored name</text>
+</svg>
+</div>
+
+<h2>4. Why one run is enough: substitution commutes with the run</h2>
+<p>Here is the argument in one square. Take a concrete member n. You can either substitute n for the cloud first and then run <code>fn</code> concretely (bottom path), or run <code>fn</code> on the cloud once and substitute n into the partly-known result (top path). If the symbolic run never got stuck, both paths give the same tree, for <em>every</em> n.</p>
+<div class="card">
+<svg viewBox="0 0 860 230" width="100%" height="230">
+  <g transform="translate(120,50)"><rect class="cloud" x="-60" y="-16" width="120" height="32" rx="16"/><text class="cloudtext" x="0" y="5" text-anchor="middle">Member Nat</text></g>
+  <path class="arrow accent" d="M190,50 L600,50"/><text x="395" y="40" text-anchor="middle" class="mono">sapply (known fn) · —   (ONE run)</text>
+  <rect class="box" x="610" y="30" width="200" height="40" rx="8"/><text x="710" y="55" text-anchor="middle">partly-known output V</text>
+  <path class="arrow" d="M120,70 L120,160"/><text x="60" y="118" text-anchor="middle" class="mono">subst n</text>
+  <path class="arrow" d="M710,72 L710,160"/><text x="770" y="118" text-anchor="middle" class="mono">subst n</text>
+  <rect class="box" x="70" y="165" width="100" height="40" rx="8"/><text x="120" y="190" text-anchor="middle" class="mono">n</text>
+  <path class="arrow" d="M175,185 L605,185"/><text x="395" y="176" text-anchor="middle" class="mono">fn n   (for every n the stream yields)</text>
+  <rect class="box" x="610" y="165" width="200" height="40" rx="8"/><text x="710" y="190" text-anchor="middle" class="mono">fn n</text>
+  <text x="395" y="120" text-anchor="middle" class="muted">commutes whenever the top run never inspected the cloud</text>
+</svg>
+</div>
+<p>Why does it commute? Each of the five rules is decided by the shape of the <em>head</em> and, for triage, the shape of the argument. When the run never triages a placeholder, every rule fired on the top path fires identically after substitution, because substitution only changes what is under the clouds and the rules never looked there. Category-minded readers will recognize the shape: the placeholder is a <em>generic element</em>, and a computation that never inspects it is natural in it, so its value at the generic element determines its value everywhere. The stream is the set of elements; the symbol is the identity arrow standing in for all of them.</p>
+<p>The last step is reading a verdict off V. <code>judge_nat</code> does <em>not</em> run <code>NatR</code> on V (that would triage the clouds and get stuck). It walks V by Nat's shape certificate: a leaf is a Nat, a fork with a leaf on the left is a Nat if the right side is, a stem is never a Nat, and a cloud labelled Nat is a Nat by its own name. If that walk says Yes, then every substitution instance is a Nat, so the bottom-right corner is a Nat for every n. That is the proof. If it says No for a shape no substitution can fix (a stem, or a concrete non-Nat), that is a refutation, and the same square says the stream would have found the same counterexample. That is why <b>Proved may never meet the refuter's false</b>: they are two paths around one commuting square.</p>
+
+<div class="card">
+<h3 style="margin-top:0">Try the confirmer: <code>check_by_structure</code></h3>
+<p class="small muted">Same function as chosen above. One symbolic run of <code>fn</code> on <code>Member Nat</code>, then the judge. Pick an n to see the square commute live.</p>
+<div class="controls">
+  <label>function <select id="fn-select2"></select></label>
+  <label>n for the square <select id="n-select"><option>0</option><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label>
+</div>
+<div class="cols2">
+  <div>
+    <div><b>Verdict:</b> <span id="struct-verdict"></span></div>
+    <div class="treebox" id="struct-tree"></div>
+    <div class="caption" id="struct-caption"></div>
+  </div>
+  <div>
+    <div id="square-out" class="small"></div>
+  </div>
+</div>
+<details style="margin-top:10px"><summary>symbolic trace (every <code>sapply</code> call)</summary><div class="trace" id="struct-trace"></div></details>
+</div>
+
+<p>Notice which functions get <span class="verdict v-Open">Open</span>. Anything that looks at its argument, including every recursive function on Nat (recursion on a number starts by asking "is it zero?"), triages the cloud and stops. That is where the second optimization comes in.</p>
+
+<h2>5. Splitting the stream by its own equation: induction</h2>
+<p>The stream of naturals satisfies an equation about itself: it is <code>zero</code> followed by the successor of everything in it.</p>
+<pre><code>E(Nat) = [zero] ++ E(Nat).s_map(succ)</code></pre>
+<p>That means every member is either the leaf or a fork with a leaf on the left and <em>another member</em> on the right. So instead of one placeholder for "any Nat", use two runs that together cover the stream: one on <code>zero</code> (which is concrete, so just run it), and one on <code>succ ⟨∈Nat⟩</code>. The second run knows the outermost shape of its argument, which is exactly what <code>is_leaf</code> and <code>.snd</code> needed. The shape-shortcut table in <code>sapply</code> answers those directly: <code>is_leaf</code> of a half-fork is false, <code>pair_snd</code> of a half-fork is its right child.</p>
+<div class="card">
+<svg viewBox="0 0 860 170" width="100%" height="170">
+  <text x="20" y="24" font-weight="600">E(Nat) as a line, covered by two symbolic runs</text>
+  <line x1="40" y1="90" x2="820" y2="90" stroke="var(--line)" stroke-width="2"/>
+  <g transform="translate(70,90)"><circle class="node" cx="0" cy="0" r="7"/><text x="0" y="28" text-anchor="middle" class="mono">zero</text></g>
+  <g transform="translate(190,90)"><circle class="node" cx="0" cy="0" r="7"/><text x="0" y="28" text-anchor="middle" class="mono">succ zero</text></g>
+  <g transform="translate(330,90)"><circle class="node" cx="0" cy="0" r="7"/><text x="0" y="28" text-anchor="middle" class="mono">succ (succ zero)</text></g>
+  <g transform="translate(470,90)"><circle class="node" cx="0" cy="0" r="7"/><text x="0" y="28" text-anchor="middle" class="mono">…</text></g>
+  <g transform="translate(600,90)"><circle class="node" cx="0" cy="0" r="7"/><text x="0" y="28" text-anchor="middle" class="mono">succ (succ (… zero))</text></g>
+  <text x="780" y="95" class="muted">…</text>
+  <path d="M55,60 Q70,45 85,60" fill="none" stroke="var(--accent)" stroke-width="2"/><text x="70" y="40" text-anchor="middle" class="mono" fill="var(--accent)">base: run on zero</text>
+  <path d="M170,60 Q470,-10 770,60" fill="none" stroke="var(--cloud)" stroke-width="2"/><text x="470" y="52" text-anchor="middle" class="mono" fill="var(--cloud)">step: one run on succ ⟨∈Nat⟩</text>
+  <text x="40" y="150" class="muted">every element is on exactly one of the two arcs, so the two runs cover the whole stream</text>
+</svg>
+</div>
+<p>But the step run has a problem: a recursive function calls itself on the right child. <code>fn</code> is <code>fix step_fn</code>, and in the step run the recursive call is <code>step_fn</code>'s first argument. <code>CHECK.disp</code> binds that argument to the fifth placeholder form, <code>assumed_fn Nat</code>: a call that we may <em>assume</em> returns a member of Nat. Applying it to anything answers <code>Member Nat</code>. That is the induction hypothesis as a value.</p>
+<pre><code>check_by_induction :: {step_fn : Tree} -> Tree :=> {
+  let base_output := (fix step_fn) zero                                    // concrete run
+  if (not (NatR base_output)) { "Refuted" }
+  else {
+    let with_ih := sapply (known step_fn) (assumed_fn NatR) 400            // bind the recursion to the IH token
+    ...
+      let step_output := sapply with_ih.answer (half_fork (known t) (member_of NatR)) 400   // run on succ ⟨∈Nat⟩
+      ... judge_nat step_output.answer ...</code></pre>
+<p>Structurally this is the initial-algebra square. Nat is the least solution of <code>X = 1 + X</code>, with the two constructors <code>[zero, succ]</code> as the algebra. Proving something about all of Nat means proving it for the two constructors, assuming it for the recursive slot. The link between the step function and the real function is the single line <code>test tree_eq dbl (fix dbl_step) = true</code>: the real recursive function <em>is</em> the fixed point of the step, so what holds for one unrolled layer under the hypothesis holds for the whole fixed point.</p>
+<div class="card">
+<svg viewBox="0 0 860 210" width="100%" height="210">
+  <rect class="box" x="60" y="30" width="180" height="40" rx="8"/><text x="150" y="55" text-anchor="middle" class="mono">1 + Nat</text>
+  <path class="arrow" d="M245,50 L595,50"/><text x="420" y="40" text-anchor="middle" class="mono">[zero, succ]  (the constructors)</text>
+  <rect class="box" x="600" y="30" width="180" height="40" rx="8"/><text x="690" y="55" text-anchor="middle" class="mono">Nat</text>
+  <path class="arrow" d="M150,72 L150,150"/><text x="150" y="115" text-anchor="end" class="mono" dx="-10">1 + (assumed_fn)</text>
+  <path class="arrow" d="M690,72 L690,150"/><text x="700" y="115" class="mono">fn = fix step_fn</text>
+  <rect class="box" x="60" y="152" width="180" height="40" rx="8"/><text x="150" y="177" text-anchor="middle" class="mono">1 + ⟨∈Nat⟩</text>
+  <path class="arrow accent" d="M245,172 L595,172"/><text x="420" y="163" text-anchor="middle" class="mono">base run, step run  →  lands in Nat?</text>
+  <rect class="box" x="600" y="152" width="180" height="40" rx="8"/><text x="690" y="177" text-anchor="middle" class="mono">Nat</text>
+  <text x="420" y="118" text-anchor="middle" class="muted">the bottom arrow is what the two symbolic runs compute;</text>
+  <text x="420" y="136" text-anchor="middle" class="muted">the IH token is the left arrow's recursive half, assumed to land in Nat</text>
+</svg>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">Try the confirmer: <code>check_by_induction</code></h3>
+<p class="small muted">Each example also has a step-function form (a first argument for the recursive call, even if unused). Base runs concretely on zero; the step runs symbolically on <code>succ ⟨∈Nat⟩</code> with the recursion bound to the IH token.</p>
+<div class="controls"><label>step function <select id="fn-select3"></select></label></div>
+<pre id="step-src" style="margin-top:0"></pre>
+<div class="cols2">
+  <div>
+    <div><b>Base:</b> <span id="ind-base"></span></div>
+    <div><b>Step verdict:</b> <span id="ind-verdict"></span></div>
+    <div class="treebox" id="ind-tree"></div>
+    <div class="caption" id="ind-caption"></div>
+  </div>
+  <div id="ind-notes" class="small"></div>
+</div>
+<details style="margin-top:10px"><summary>symbolic trace of the step run</summary><div class="trace" id="ind-trace"></div></details>
+</div>
+
+<h2>6. What the three verdicts mean</h2>
+<table>
+<tr><th>verdict</th><th>what happened</th><th>relation to the stream</th></tr>
+<tr><td><span class="verdict v-Proved">Proved</span></td><td>the symbolic run finished and the judge said Yes on the output's known shell</td><td>every substitution instance is a Nat, so the stream's <code>s_all</code> would never find a counterexample</td></tr>
+<tr><td><span class="verdict v-Refuted">Refuted</span></td><td>the base case, or the run's output, has a shape no member can fix (a stem, a concrete non-Nat)</td><td>the stream would reach the same counterexample; the two paths agree</td></tr>
+<tr><td><span class="verdict v-Open">Open</span></td><td>stuck: some rule needed to look under a cloud, or the judge could not decide</td><td>not a verdict. The stored name <code>NatR</code> is the key back to <code>Trees.s_filter(NatR)</code>, so we enumerate after all</td></tr>
+</table>
+<p>The cost difference is the whole point. The stream checks <code>succ</code> by running it on as many members as the budget allows and can still only say "no counterexample so far". The confirmer runs <code>succ</code> once, on a cloud, in a handful of rule firings, and says Proved.</p>
+
+<h2>7. Known debts in the v1 confirmer</h2>
+<div class="card warn">
+<p><b>No decreasing-measure check.</b> The induction hypothesis token answers <code>Member Nat</code> for <em>any</em> argument. Nothing checks that the recursive call happens on something smaller. The example <code>loop_step</code> above recurses on <code>n</code> itself. It passes its base case, and its step run is Proved (confirmed against the real <code>CHECK.disp</code>), yet <code>fix loop_step</code> never returns on any n ≥ 1. The claim "returns a Nat" is vacuously fine for a function that never returns, but a checker that says Proved there has not shown termination. Fixing it means making the IH token accept only arguments that are structurally below the step's argument: in the step run, exactly the right child of the half-fork.</p>
+</div>
+<div class="card note">
+<p><b>The judge is conservative on half-forks.</b> <code>judge_nat</code> answers Stuck for a fork whose left child is not a known leaf. For <code>{_d, n} =&gt; pair n n</code> the step output is a fork whose left child is <code>succ ⟨∈Nat⟩</code>, itself a fork, so it can never equal the leaf: a sound answer would be No, hence Refuted. Today it says Open, which is honest but weaker than it could be.</p>
+</div>
+
+<p class="muted small" style="margin-top:40px">Source: <code>CHECK.disp</code>, <code>IDEAS.disp</code>, <code>lib/stream.disp</code>, <code>lib/prelude.disp</code>. The in-page evaluator implements the five substrate rules with the same convention as <code>src/core/tree.ts</code>, and the checker is a line-for-line port of <code>sapply</code>, <code>judge_nat</code>, <code>check_by_structure</code>, and <code>check_by_induction</code>. Compiled trees for the example functions are produced by a small bracket-abstraction compiler, so their exact shapes differ from disp's elaborator output while their behaviour is the same.</p>
+
+</main>
+
+<script id="engine">
+// ===================== trees and the five rules =====================
+const L = { tag: 'leaf' };
+const stem = c => ({ tag: 'stem', c });
+const fork = (l, r) => ({ tag: 'fork', l, r });
+function eq(a, b) {
+  if (a === b) return true;
+  if (a.tag !== b.tag) return false;
+  if (a.tag === 'leaf') return true;
+  if (a.tag === 'stem') return eq(a.c, b.c);
+  return eq(a.l, b.l) && eq(a.r, b.r);
+}
+function nat(n) { let c = L; for (let i = 0; i < n; i++) c = fork(L, c); return c; }
+function natValue(t) { let n = 0; while (t.tag === 'fork' && t.l.tag === 'leaf') { n++; t = t.r; } return t.tag === 'leaf' ? n : null; }
+function size(t) { return t.tag === 'leaf' ? 1 : t.tag === 'stem' ? 1 + size(t.c) : 1 + size(t.l) + size(t.r); }
+class OutOfBudget extends Error {}
+// apply(f, x): the substrate's rules, eager, same convention as src/core/tree.ts
+//   leaf · x = stem x          stem a · x = fork a x
+//   fork(leaf, b) · x = b                                  (K)
+//   fork(stem c, b) · x = (c · x) · (b · x)                (S)
+//   fork(fork(c, d), b) · leaf = c ; · stem u = d · u ; · fork u v = (b · u) · v   (triage)
+function apply(f, x, bud) {
+  if (bud && --bud.n < 0) throw new OutOfBudget('budget');
+  if (f.tag === 'leaf') return stem(x);
+  if (f.tag === 'stem') return fork(f.c, x);
+  const a = f.l, b = f.r;
+  if (a.tag === 'leaf') return b;
+  if (a.tag === 'stem') return apply(apply(a.c, x, bud), apply(b, x, bud), bud);
+  if (x.tag === 'leaf') return a.l;
+  if (x.tag === 'stem') return apply(a.r, x.c, bud);
+  return apply(apply(b, x.l, bud), x.r, bud);
+}
+const run = (f, x, n = 20000) => apply(f, x, { n });
+
+// ===================== a tiny lambda -> tree compiler =====================
+const K = stem(L);                          // K x y = x ; also succ, also false
+const I = fork(fork(L, L), L);              // disp's identity is a TRIAGE (src/core/tree.ts): it rebuilds x by cases, so it INSPECTS x
+const S = fork(stem(fork(L, L)), L);        // S a b c = (a c)(b c)
+const V = name => ({ tag: 'var', name });
+const A = (...es) => es.reduce((f, x) => ({ tag: 'app', f, x }));
+const TR = tree => ({ tag: 'tree', tree });
+const LAM = (params, body) => params.reduceRight((b, p) => ({ tag: 'lam', param: p, body: b }), body);
+const cK = { tag: 'K' }, cI = { tag: 'I' }, cS = { tag: 'S' };
+function isFree(name, e) {
+  if (e.tag === 'var') return e.name === name;
+  if (e.tag === 'app') return isFree(name, e.f) || isFree(name, e.x);
+  if (e.tag === 'lam') return e.param !== name && isFree(name, e.body);
+  return false;
+}
+function abs(name, body) {
+  if (!isFree(name, body)) return { tag: 'app', f: cK, x: body };
+  if (body.tag === 'var') return cI;
+  if (body.tag === 'app') {
+    if (body.x.tag === 'var' && body.x.name === name && !isFree(name, body.f)) return body.f;
+    const af = abs(name, body.f), ax = abs(name, body.x);
+    return { tag: 'app', f: { tag: 'app', f: cS, x: af }, x: ax };
+  }
+  if (body.tag === 'lam') return abs(name, abs(body.param, body.body));
+  throw new Error('cannot abstract over ' + body.tag);
+}
+function toTree(e) {
+  if (e.tag === 'I') return I;
+  if (e.tag === 'K') return K;
+  if (e.tag === 'S') return S;
+  if (e.tag === 'tree') return e.tree;
+  if (e.tag === 'lam') return toTree(abs(e.param, e.body));
+  if (e.tag === 'var') throw new Error('free variable ' + e.name);
+  if (e.f.tag === 'app' && e.f.f.tag === 'S') return fork(stem(toTree(e.f.x)), toTree(e.x));
+  if (e.f.tag === 'app' && e.f.f.tag === 'K') return toTree(e.f.x);
+  if (e.f.tag === 'K') return fork(L, toTree(e.x));
+  return run(toTree(e.f), toTree(e.x));
+}
+const lam = (params, body) => toTree(LAM(params, body));
+
+// ===================== the prelude pieces CHECK.disp leans on =====================
+const TRUE = L, FALSE = stem(L);
+const TRIAGE = lam(['l', 's', 'f'], A(TR(L), A(TR(L), V('l'), V('s')), V('f')));
+const PAIR = lam(['a', 'b'], A(TR(L), V('a'), V('b')));
+const PAIR_FST = lam(['p'], A(TR(TRIAGE), TR(L), TR(I), LAM(['l', 'r'], V('l')), V('p')));
+const PAIR_SND = lam(['p'], A(TR(TRIAGE), TR(L), TR(I), LAM(['l', 'r'], V('r')), V('p')));
+const IS_LEAF = lam(['v'], A(TR(TRIAGE), TR(TRUE), LAM(['_'], TR(FALSE)), LAM(['l', 'r'], TR(FALSE)), V('v')));
+const IS_FORK = lam(['v'], A(TR(TRIAGE), TR(FALSE), LAM(['_'], TR(FALSE)), LAM(['l', 'r'], TR(TRUE)), V('v')));
+// cond c a b = triage a (K b) (K (K b)) c ; extra args go to the chosen arm (select-then-apply)
+const COND = lam(['c', 'a', 'b'], A(TR(TRIAGE), V('a'), A(TR(K), V('b')), A(TR(K), A(TR(K), V('b'))), V('c')));
+// `if c { A } else { B }` with free vars fv: pick the arm first, then feed it the free vars
+const IF = (c, thenE, elseE, fv) => A(TR(COND), c, LAM(fv, thenE), LAM(fv, elseE), ...fv.map(V));
+const WAIT = lam(['a', 'b', 'c'], A(TR(L), A(TR(L), V('a')), A(TR(L), TR(L), V('c')), V('b')));
+const OMEGA = lam(['x'], A(V('x'), V('x')));
+const FIX = lam(['f'], A(TR(WAIT), TR(OMEGA), LAM(['x'], A(V('f'), A(TR(WAIT), TR(OMEGA), V('x'))))));
+const SUCC = K, ZERO = L;
+const fix = f => run(FIX, f);
+function NatR(t) { while (true) { if (t.tag === 'leaf') return true; if (t.tag !== 'fork' || t.l.tag !== 'leaf') return false; t = t.r; } }
+
+// ===================== the examples =====================
+// each: a direct fn (tree) and a step form (tree taking the recursive-call slot first)
+const EXAMPLES = [
+  { id: 'succ', name: 'succ', src: 'succ                       // = {n} => t t n, the tree `t t`',
+    fn: SUCC, step: lam(['d', 'n'], A(TR(SUCC), V('n'))), stepSrc: '{_d, n} => succ n' },
+  { id: 'id', name: 'identity', src: '{n} => n                   // disp compiles this to the triage t (t t t) t, which rebuilds n by cases',
+    fn: I, step: lam(['d', 'n'], V('n')), stepSrc: '{_d, n} => n' },
+  { id: 'k55', name: 'constant pair 5 5', src: '{_n} => pair 5 5',
+    fn: fork(L, fork(nat(5), nat(5))), step: lam(['d', 'n'], A(TR(PAIR), TR(nat(5)), TR(nat(5)))), stepSrc: '{_d, _n} => pair 5 5' },
+  { id: 'wrap', name: 'wrap in a stem', src: '{n} => t n',
+    fn: L, step: lam(['d', 'n'], A(TR(L), V('n'))), stepSrc: '{_d, n} => t n' },
+  { id: 'pred', name: 'pred (n.snd)', src: '{n} => n.snd           // pair_snd n; pred zero = zero by triage\'s leaf arm',
+    fn: PAIR_SND, step: lam(['d', 'n'], A(TR(PAIR_SND), V('n'))), stepSrc: '{_d, n} => n.snd' },
+  { id: 'dbl', name: 'dbl (recursive)', src: 'rec dbl :: {n : Tree} -> Tree :=> if (is_leaf n) { zero } else { succ (succ (dbl n.snd)) }',
+    fn: null, step: lam(['d', 'n'], IF(A(TR(IS_LEAF), V('n')), TR(ZERO), A(TR(SUCC), A(TR(SUCC), A(V('d'), A(TR(PAIR_SND), V('n'))))), ['d', 'n'])),
+    stepSrc: 'dbl_step := {dbl2, n} => if (is_leaf n) { zero } else { succ (succ (dbl2 n.snd)) }' },
+  { id: 'pairnn', name: 'pair n n', src: '{n} => pair n n',
+    fn: lam(['n'], A(TR(PAIR), V('n'), V('n'))), step: lam(['d', 'n'], A(TR(PAIR), V('n'), V('n'))), stepSrc: '{_d, n} => pair n n' },
+  { id: 'loop', name: 'loop_step (the debt)', src: 'rec loop :: {n : Tree} -> Tree :=> if (is_leaf n) { zero } else { succ (loop n) }   // never returns for n >= 1',
+    fn: null, step: lam(['d', 'n'], IF(A(TR(IS_LEAF), V('n')), TR(ZERO), A(TR(SUCC), A(V('d'), V('n'))), ['d', 'n'])),
+    stepSrc: 'loop_step := {self, n} => if (is_leaf n) { zero } else { succ (self n) }' },
+];
+for (const ex of EXAMPLES) if (!ex.fn) ex.fn = fix(ex.step);
+
+// ===================== partly-known values (Val) and results (Res) =====================
+const Known = t => ({ k: 'Known', t });
+const Member = name => ({ k: 'Member', name });
+const AssumedFn = name => ({ k: 'AssumedFn', name });
+const HalfStem = a => ({ k: 'HalfStem', a });
+const HalfFork = (a, b) => ({ k: 'HalfFork', a, b });
+const STUCK = { stuck: true };
+const answered = v => ({ v });
+
+// the shape-shortcut table: functions whose answer on a half-known shape is fixed by the shape alone
+const SHORTCUTS = [
+  { name: 'pair_fst', tree: PAIR_FST, on: x => x.k === 'HalfFork' ? x.a : null },
+  { name: 'pair_snd', tree: PAIR_SND, on: x => x.k === 'HalfFork' ? x.b : null },
+  { name: 'is_leaf', tree: IS_LEAF, on: x => (x.k === 'HalfFork' || x.k === 'HalfStem') ? Known(FALSE) : null },
+  { name: 'is_fork', tree: IS_FORK, on: x => x.k === 'HalfFork' ? Known(TRUE) : x.k === 'HalfStem' ? Known(FALSE) : null },
+];
+
+// sapply: the five rules lifted to partly-known values. A line-for-line port of CHECK.disp.
+function sapply(f, x, fuel, trace, depth = 0) {
+  const log = (rule, note) => trace && trace.push({ depth, f, x, rule, note });
+  const go = (a, b) => sapply(a, b, fuel - 1, trace, depth + 1);
+  const isK = v => v.k === 'Known';
+  if (fuel <= 0) { log('fuel', 'out of fuel'); return STUCK; }
+  if (isK(f) && isK(x)) {
+    try { log('concrete', 'both sides known: run the real rules'); return answered(Known(run(f.t, x.t))); }
+    catch (e) { log('fuel', 'concrete run exhausted its budget'); return STUCK; }
+  }
+  if (isK(f)) for (const s of SHORTCUTS) if (eq(f.t, s.tree)) {
+    const r = s.on(x);
+    log('shortcut', r ? `${s.name}: answer fixed by the argument's known shell` : `${s.name}: needs a shape it cannot see`);
+    return r ? answered(r) : STUCK;
+  }
+  if (f.k === 'AssumedFn') { log('ih', 'induction hypothesis: the call is assumed to return a member'); return answered(Member(f.name)); }
+  if (f.k === 'Member') { log('wall', 'the head itself is a cloud: which rule fires is unknown'); return STUCK; }
+  if (f.k === 'HalfStem') { log('grow', 'stem head grows a fork'); return answered(HalfFork(f.a, x)); }
+  let left, right;
+  if (isK(f)) {
+    const ft = f.t;
+    if (ft.tag === 'leaf') { log('grow', 'leaf head grows a stem'); return answered(HalfStem(x)); }
+    if (ft.tag === 'stem') { log('grow', 'stem head grows a fork'); return answered(HalfFork(Known(ft.c), x)); }
+    left = Known(ft.l); right = Known(ft.r);
+  } else { left = f.a; right = f.b; }
+  // pick_rule: dispatch on the head's left child
+  if (left.k === 'Member' || left.k === 'AssumedFn') { log('wall', 'the rule to fire depends on a cloud'); return STUCK; }
+  if (left.k === 'HalfStem' || (left.k === 'Known' && left.t.tag === 'stem')) {
+    const w = left.k === 'HalfStem' ? left.a : Known(left.t.c);
+    log('S', 'S rule: (w · x) · (right · x), no inspection of x');
+    const wz = go(w, x); if (wz.stuck) return STUCK;
+    const yz = go(right, x); if (yz.stuck) return STUCK;
+    return go(wz.v, yz.v);
+  }
+  if (left.k === 'Known' && left.t.tag === 'leaf') { log('K', 'K rule: drop x unread'); return answered(right); }
+  // rule_triage: the ONLY rule that inspects x
+  const onLeaf = left.k === 'HalfFork' ? left.a : Known(left.t.l);
+  const onStem = left.k === 'HalfFork' ? left.b : Known(left.t.r);
+  const z = x;
+  if (z.k === 'Member' || z.k === 'AssumedFn') { log('wall', 'TRIAGE ON A CLOUD: must look inside a symbol without a license'); return STUCK; }
+  if (z.k === 'HalfStem') { log('triage', 'triage: x is a (half) stem'); return go(onStem, z.a); }
+  if (z.k === 'HalfFork') { log('triage', 'triage: x is a (half) fork'); const r1 = go(right, z.a); if (r1.stuck) return STUCK; return go(r1.v, z.b); }
+  const zt = z.t;
+  if (zt.tag === 'leaf') { log('triage', 'triage: x is the leaf'); return answered(onLeaf); }
+  if (zt.tag === 'stem') { log('triage', 'triage: x is a stem'); return go(onStem, Known(zt.c)); }
+  log('triage', 'triage: x is a fork'); const r1 = go(right, Known(zt.l)); if (r1.stuck) return STUCK; return go(r1.v, Known(zt.r));
+}
+
+// judge a partly-known value AS a Nat by Nat's shape certificate, never by running NatR on a cloud
+function judgeNat(v) {
+  if (v.k === 'Known') return NatR(v.t) ? 'Yes' : 'No';
+  if (v.k === 'Member') return v.name === 'Nat' ? 'Yes' : 'Stuck';
+  if (v.k === 'HalfStem') return 'No';
+  if (v.k === 'AssumedFn') return 'Stuck';
+  return (v.a.k === 'Known' && v.a.t.tag === 'leaf') ? judgeNat(v.b) : 'Stuck';
+}
+const verdictOf = j => j === 'Yes' ? 'Proved' : j === 'No' ? 'Refuted' : 'Open';
+
+function checkByStructure(fn) {
+  const trace = [];
+  const r = sapply(Known(fn), Member('Nat'), 200, trace);
+  if (r.stuck) return { verdict: 'Open', trace, out: null };
+  return { verdict: verdictOf(judgeNat(r.v)), trace, out: r.v };
+}
+function checkByInduction(step) {
+  let base;
+  try { base = run(fix(step), ZERO); } catch (e) { return { verdict: 'Open', baseText: 'base run did not finish', trace: [], out: null }; }
+  const baseOk = NatR(base);
+  const baseText = `(fix step) zero = ${pretty(base)} : ${baseOk ? 'a Nat' : 'NOT a Nat'}`;
+  if (!baseOk) return { verdict: 'Refuted', baseText, trace: [], out: null };
+  const trace = [];
+  const withIH = sapply(Known(step), AssumedFn('Nat'), 400, trace);
+  if (withIH.stuck) return { verdict: 'Open', baseText, trace, out: null };
+  trace.push({ depth: 0, rule: 'note', note: '--- now apply the layer to succ ⟨∈Nat⟩ ---' });
+  const out = sapply(withIH.v, HalfFork(Known(L), Member('Nat')), 400, trace);
+  if (out.stuck) return { verdict: 'Open', baseText, trace, out: null };
+  return { verdict: verdictOf(judgeNat(out.v)), baseText, trace, out: out.v };
+}
+
+// substitution: paste a concrete member under every cloud, then flatten to a tree
+function subst(v, n) {
+  if (v.k === 'Known') return v.t;
+  if (v.k === 'Member') return n;
+  if (v.k === 'HalfStem') return stem(subst(v.a, n));
+  if (v.k === 'HalfFork') return fork(subst(v.a, n), subst(v.b, n));
+  throw new Error('cannot substitute into an IH token');
+}
+
+// ===================== the stream side (IDEAS.disp's Arrow) =====================
+function* allTrees() { // size order: all trees of size s before size s+1
+  const bySize = [[], [L]];
+  yield L;
+  for (let s = 2; ; s++) {
+    const out = bySize[s - 1].map(stem);
+    for (let i = 1; i <= s - 2; i++) for (const l of bySize[i]) for (const r of bySize[s - 1 - i]) out.push(fork(l, r));
+    bySize.push(out);
+    for (const t of out) yield t;
+  }
+}
+function arrowCheck(fn, fuel) {
+  const rows = []; let counterexample = null; let seen = 0;
+  for (const t of allTrees()) {
+    if (seen++ >= fuel) break;
+    if (!NatR(t)) continue;
+    let out, ok, note = '';
+    try { out = run(fn, t, 5000); ok = NatR(out); } catch (e) { out = null; ok = null; note = 'did not finish (5000 steps)'; }
+    rows.push({ n: t, out, ok, note });
+    if (ok === false && !counterexample) { counterexample = t; break; }
+  }
+  return { rows, counterexample, seen: Math.min(seen, fuel) };
+}
+
+// ===================== printing =====================
+function rawPretty(t, atom = false) {
+  if (t.tag === 'leaf') return 't';
+  const inner = t.tag === 'stem' ? `t ${rawPretty(t.c, true)}` : `t ${rawPretty(t.l, true)} ${rawPretty(t.r, true)}`;
+  return atom ? `(${inner})` : inner;
+}
+function pretty(t, atom = false) {
+  const n = natValue(t); if (n !== null && n > 0) return String(n);
+  if (t.tag === 'leaf') return 't';
+  const inner = t.tag === 'stem' ? `t ${pretty(t.c, true)}` : `t ${pretty(t.l, true)} ${pretty(t.r, true)}`;
+  return atom ? `(${inner})` : inner;
+}
+// known trees in the trace print by name when they are a prelude piece, and by node count when large
+const NAMED = () => [['succ (= K)', SUCC], ['I', I], ['pair_fst', PAIR_FST], ['pair_snd', PAIR_SND], ['is_leaf', IS_LEAF], ['is_fork', IS_FORK], ['cond', COND], ['triage', TRIAGE], ['pair', PAIR], ['fix', FIX],
+  ...EXAMPLES.flatMap(e => [[e.id === 'dbl' || e.id === 'loop' ? e.id + '_step' : 'step[' + e.id + ']', e.step], [e.id === 'dbl' || e.id === 'loop' ? e.id + ' (= fix ' + e.id + '_step)' : e.id, e.fn]])];
+function prettyKnown(t, atom) {
+  if (size(t) >= 3) for (const [name, tree] of NAMED()) if (eq(t, tree)) return name;
+  if (size(t) > 24) return `[tree of ${size(t)} nodes]`;
+  return pretty(t, atom);
+}
+function prettyValFull(v, atom = false) {
+  if (v.k === 'Known') return pretty(v.t, atom);
+  if (v.k === 'Member') return `⟨∈${v.name}⟩`;
+  if (v.k === 'AssumedFn') return `⟨IH→${v.name}⟩`;
+  const inner = v.k === 'HalfStem' ? `t ${prettyValFull(v.a, true)}` : `t ${prettyValFull(v.a, true)} ${prettyValFull(v.b, true)}`;
+  return atom ? `(${inner})` : inner;
+}
+function prettyVal(v, atom = false) {
+  if (v.k === 'Known') return prettyKnown(v.t, atom);
+  if (v.k === 'Member') return `⟨∈${v.name}⟩`;
+  if (v.k === 'AssumedFn') return `⟨IH→${v.name}⟩`;
+  const inner = v.k === 'HalfStem' ? `t ${prettyVal(v.a, true)}` : `t ${prettyVal(v.a, true)} ${prettyVal(v.b, true)}`;
+  return atom ? `(${inner})` : inner;
+}
+
+// ===================== DOM =====================
+if (typeof document !== 'undefined') {
+  const $ = id => document.getElementById(id);
+  const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const verdictHtml = v => `<span class="verdict v-${v}">${v}</span>`;
+
+  // --- tree drawing (Known = solid nodes; clouds = dashed pills) ---
+  function display(v) { // Val -> display node
+    if (v.k === 'Known') return dispTree(v.t);
+    if (v.k === 'Member') return { kind: 'cloud', label: `∈ ${v.name}`, ch: [] };
+    if (v.k === 'AssumedFn') return { kind: 'cloud', label: `IH → ${v.name}`, ch: [] };
+    if (v.k === 'HalfStem') return { kind: 'node', ch: [display(v.a)] };
+    return { kind: 'node', ch: [display(v.a), display(v.b)] };
+  }
+  function dispTree(t) { return { kind: 'node', ch: t.tag === 'leaf' ? [] : t.tag === 'stem' ? [dispTree(t.c)] : [dispTree(t.l), dispTree(t.r)] }; }
+  function layout(n, depth = 0) {
+    const w = n.kind === 'cloud' ? 3 : 1;
+    if (!n.ch.length) return { nodes: [{ n, x: 0, depth }], rootX: 0, width: w };
+    let cum = 0, all = [], first = null, last = 0;
+    for (const c of n.ch) {
+      const sub = layout(c, depth + 1);
+      for (const s of sub.nodes) all.push({ n: s.n, x: s.x + cum, depth: s.depth });
+      const r = sub.rootX + cum; if (first === null) first = r; last = r; cum += sub.width;
+    }
+    const myX = (first + last) / 2;
+    all.push({ n, x: myX, depth });
+    return { nodes: all, rootX: myX, width: Math.max(cum, w) };
+  }
+  function drawVal(el, v) {
+    const root = display(v);
+    const lay = layout(root);
+    const sx = 26, sy = 32, pad = 30;
+    const W = lay.width * sx + pad * 2, H = (Math.max(...lay.nodes.map(n => n.depth)) + 1) * sy + pad;
+    const pos = new Map(lay.nodes.map(n => [n.n, { x: pad + n.x * sx + sx / 2, y: 18 + n.depth * sy }]));
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="${Math.min(W, 420)}" height="${H * Math.min(W, 420) / W}">`;
+    for (const { n } of lay.nodes) for (const c of n.ch) { const p = pos.get(n), q = pos.get(c); s += `<line class="edge" x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}"/>`; }
+    for (const { n } of lay.nodes) {
+      const p = pos.get(n);
+      if (n.kind === 'cloud') s += `<rect class="cloud" x="${p.x - 36}" y="${p.y - 12}" width="72" height="24" rx="12"/><text class="cloudtext" x="${p.x}" y="${p.y + 4}" text-anchor="middle" font-size="11">${n.label}</text>`;
+      else s += `<circle class="node" cx="${p.x}" cy="${p.y}" r="6"/>`;
+    }
+    el.innerHTML = s + '</svg>';
+  }
+  function drawTree(el, t) { drawVal(el, Known(t)); }
+
+  function renderTrace(el, trace) {
+    if (!trace.length) { el.textContent = '(no symbolic run)'; return; }
+    const cls = r => r.rule === 'wall' || r.rule === 'fuel' ? 'stuck' : r.rule === 'ih' ? 'ih' : r.rule === 'shortcut' ? 'short' : 'rule';
+    el.innerHTML = trace.map(r => r.rule === 'note' ? `<span class="muted">${esc(r.note)}</span>` :
+      `${'  '.repeat(r.depth)}${esc(prettyVal(r.f))} · ${esc(prettyVal(r.x))}\n${'  '.repeat(r.depth)}  <span class="${cls(r)}">→ ${esc(r.note)}</span>`).join('\n');
+  }
+
+  // --- section 1: numerals ---
+  $('nats-row').innerHTML = [0, 1, 2, 3].map(i => `<div style="text-align:center"><div id="nat-${i}"></div><div class="caption">${i} = ${esc(rawPretty(nat(i)))}${i === 0 ? ' (the leaf)' : ''}</div></div>`).join('');
+  for (const i of [0, 1, 2, 3]) drawTree($(`nat-${i}`), nat(i));
+
+  // --- section 3: the five forms ---
+  const FORMS = [
+    { v: Known(nat(2)), name: 'known v', what: 'a fully concrete tree' },
+    { v: Member('Nat'), name: 'member_of T', what: 'any item Trees.s_filter(T) would yield; stores only the name T' },
+    { v: AssumedFn('Nat'), name: 'assumed_fn C', what: 'a call we may assume returns a member of C (the induction token)' },
+    { v: HalfStem(Member('Nat')), name: 'half_stem a', what: 'a stem whose child is partly known' },
+    { v: HalfFork(Known(L), Member('Nat')), name: 'half_fork a b', what: 'a fork whose children are partly known' },
+  ];
+  $('forms').innerHTML = FORMS.map((f, i) => `<div class="card"><div id="form-${i}"></div><b>${f.name}</b><span>${f.what}</span></div>`).join('');
+  FORMS.forEach((f, i) => drawVal($(`form-${i}`), f.v));
+
+  // --- section 3: the rules ---
+  const RULES = [
+    { name: 'leaf · x = t x', what: 'grow: a leaf head becomes a stem around x', look: 'no', sym: 'answers half_stem x' },
+    { name: 't a · x = t a x', what: 'grow: a stem head becomes a fork', look: 'no', sym: 'answers half_fork a x' },
+    { name: 't t b · x = b  (K)', what: 'drop x unread, answer b', look: 'no', sym: 'answers b' },
+    { name: 't (t c) b · x = (c x)(b x)  (S)', what: 'copy x into two sub-applications', look: 'no', sym: 'two recursive sapply calls, then a third' },
+    { name: 't (t c d) b · x  (triage)', what: 'x = leaf → c ; x = t u → d u ; x = t u v → b u v', look: 'YES', sym: 'fine on known or half-known x; STUCK on a cloud' },
+  ];
+  $('rules').innerHTML = RULES.map(r => `<div class="rule ${r.look === 'YES' ? 'inspects' : ''}"><div class="name mono"><code>${esc(r.name)}</code></div><div>${r.what}<div class="muted small">on partly-known values: ${r.sym}</div></div><div class="look ${r.look === 'YES' ? 'bad' : 'ok'}">looks inside x? <b>${r.look}</b></div></div>`).join('');
+
+  // --- selectors ---
+  const opts = EXAMPLES.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  for (const id of ['fn-select', 'fn-select2', 'fn-select3']) $(id).innerHTML = opts;
+  const byId = id => EXAMPLES.find(e => e.id === id);
+  let current = 'succ';
+
+  function renderStream() {
+    const ex = byId(current), fuel = +$('fuel').value;
+    $('fuel-val').textContent = fuel;
+    $('fn-src').textContent = ex.src;
+    const r = arrowCheck(ex.fn, fuel);
+    const shown = r.rows.slice(0, 8);
+    let html = `<table><tr><th>member n</th><th>fn n</th><th>NatR (fn n)?</th></tr>` + shown.map(row =>
+      `<tr><td class="mono">${esc(pretty(row.n))}</td><td class="mono">${row.out ? esc(pretty(row.out)) : '<span class="muted">' + row.note + '</span>'}</td><td class="${row.ok ? 'ok' : row.ok === false ? 'bad' : 'open'}">${row.ok === null ? '?' : row.ok ? 'yes' : 'NO'}</td></tr>`).join('') +
+      (r.rows.length > shown.length ? `<tr><td colspan="3" class="muted">… ${r.rows.length - shown.length} more members among the first ${r.seen} trees</td></tr>` : '') + `</table>`;
+    if (r.counterexample) html += `<p><span class="verdict v-Refuted">false</span> counterexample <code>n = ${esc(pretty(r.counterexample))}</code>. The refuter is certain: this output is not a Nat.</p>`;
+    else if (r.rows.some(x => x.ok === null)) html += `<p><span class="verdict v-Open">no answer</span> a member's run did not finish. The stream cannot even produce evidence here.</p>`;
+    else html += `<p><span class="verdict v-Evidence">true, so far</span> no counterexample among the ${r.rows.length} members found in the first ${r.seen} trees. Raise the fuel and it will still be "so far". The stream never ends, so this is evidence, never proof.</p>`;
+    $('stream-out').innerHTML = html;
+  }
+
+  function renderStructure() {
+    const ex = byId(current);
+    const r = checkByStructure(ex.fn);
+    $('struct-verdict').innerHTML = verdictHtml(r.verdict) + (r.out ? ` <span class="muted small">judge_nat said ${judgeNat(r.out)}</span>` : ' <span class="muted small">stuck: the run needed to look under a cloud</span>');
+    if (r.out) { drawVal($('struct-tree'), r.out); $('struct-caption').textContent = 'output: ' + prettyValFull(r.out); }
+    else { $('struct-tree').innerHTML = ''; $('struct-caption').textContent = ''; }
+    renderTrace($('struct-trace'), r.trace);
+    const n = +$('n-select').value;
+    let sq;
+    if (!r.out) sq = `<p class="muted">No symbolic output, so the square has no top path. Fall back to the stream (the refuter above), using the stored name <code>NatR</code> as the key.</p>`;
+    else {
+      const top = subst(r.out, nat(n));
+      let bottom, bottomText;
+      try { bottom = run(ex.fn, nat(n)); bottomText = pretty(bottom); } catch (e) { bottom = null; bottomText = 'did not finish'; }
+      const same = bottom && eq(top, bottom);
+      sq = `<p><b>The square at n = ${n}</b></p>
+        <div><span class="muted">top path:</span> run once, then substitute<br><code>${esc(prettyValFull(r.out))}</code> [⟨∈Nat⟩ := ${n}] = <code>${esc(pretty(top))}</code></div>
+        <div style="margin-top:6px"><span class="muted">bottom path:</span> substitute, then run <code>fn</code><br><code>fn ${n}</code> = <code>${esc(bottomText)}</code></div>
+        <p class="${same ? 'ok' : 'bad'}"><b>${same ? 'equal: the square commutes' : 'DIFFERENT (this would be a soundness bug)'}</b></p>`;
+    }
+    $('square-out').innerHTML = sq;
+  }
+
+  function renderInduction() {
+    const ex = byId(current);
+    $('step-src').textContent = ex.stepSrc;
+    const r = checkByInduction(ex.step);
+    $('ind-base').textContent = r.baseText || '';
+    $('ind-verdict').innerHTML = verdictHtml(r.verdict);
+    if (r.out) { drawVal($('ind-tree'), r.out); $('ind-caption').textContent = 'step output on succ ⟨∈Nat⟩: ' + prettyValFull(r.out) + '  → judge_nat: ' + judgeNat(r.out); }
+    else { $('ind-tree').innerHTML = ''; $('ind-caption').textContent = ''; }
+    renderTrace($('ind-trace'), r.trace);
+    const s = checkByStructure(ex.fn);
+    let notes = `<p>By structure alone this function was ${verdictHtml(s.verdict)}; by induction it is ${verdictHtml(r.verdict)}.</p>`;
+    if (ex.id === 'dbl') notes += `<p>The step run knows its argument is <code>succ ⟨∈Nat⟩</code>, so <code>is_leaf</code> answers false by shape and <code>.snd</code> peels the cloud out. The recursive call <code>dbl2 ⟨∈Nat⟩</code> hits the IH token and answers <code>⟨∈Nat⟩</code>. Two <code>succ</code> wraps later the judge walks two leaf-left forks down to a Nat cloud: Yes.</p>`;
+    if (ex.id === 'id') notes += `<p>Surprising at first: the identity is Open by structure. disp's compiled identity is a triage, <code>t (t t t) t</code>, which takes its argument apart by cases and rebuilds it. On a cloud that is a triage without a license, so the run is stuck. The check is about the <em>tree</em>, not the mathematical function, which is exactly what makes it decidable. Induction hands it a half-fork, the triage can fire, and the run finishes.</p>`;
+    if (ex.id === 'pred') notes += `<p>Structure got stuck because <code>pair_snd</code> on a bare cloud needs a shape. Induction hands it a half-fork, and the shortcut table answers with the right child. No recursion was needed: the gain here is the known outer shape, not the hypothesis.</p>`;
+    if (ex.id === 'loop') {
+      let concrete;
+      try { concrete = pretty(run(ex.fn, nat(1), 20000)); } catch (e) { concrete = 'did not finish in 20000 steps'; }
+      notes += `<p class="bad"><b>The debt, live.</b> Step verdict says Proved, but <code>(fix loop_step) 1</code> = ${esc(concrete)}. The IH token answered ⟨∈Nat⟩ for a recursive call on <code>n</code> itself, not on something smaller. Nothing in v1 checks that the recursion descends.</p>`;
+    }
+    if (ex.id === 'pairnn') notes += `<p class="open">The step output is a fork whose left child is <code>succ ⟨∈Nat⟩</code>. That child is a fork, so it can never be the leaf, and a sharper judge would answer No (Refuted). The v1 judge only recognizes a known leaf on the left, so it answers Stuck and the verdict is Open. The refuter above finds the counterexample immediately.</p>`;
+    $('ind-notes').innerHTML = notes;
+  }
+
+  function renderAll() {
+    for (const id of ['fn-select', 'fn-select2', 'fn-select3']) $(id).value = current;
+    renderStream(); renderStructure(); renderInduction();
+  }
+  for (const id of ['fn-select', 'fn-select2', 'fn-select3']) $(id).addEventListener('change', e => { current = e.target.value; renderAll(); });
+  $('fuel').addEventListener('input', renderStream);
+  $('n-select').addEventListener('change', renderStructure);
+  renderAll();
+}
+</script>
+</body>
+</html>

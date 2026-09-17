@@ -1,0 +1,63 @@
+// Companion to TYPES.html: every snippet the document shows that is not already a
+// test line in refuter.test.disp or confirmer.test.disp, run here.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "confirmer.test.disp" {}
+
+// section 2: a type is a two-argument program; its diagonal is the recognizer
+rel_of :: {recognize : Tree -> Bool} -> Tree -> Tree -> Bool :=> {x, y} => ((recognize x) && (recognize y)) && (x == y)
+NatRel := rel_of NatR
+test NatRel 2 2 = true
+test NatRel 2 3 = false
+test NatRel (t t) (t t) = false
+member :: {rel : Tree -> Tree -> Bool, v : Tree} -> Bool :=> rel v v
+test member NatRel 2 = true
+test member NatRel (t t) = false
+
+// section 4: a quotient is a coarser relation on the same trees
+ParityRel := {x, y} => ((NatR x) && (NatR y)) && (parity x == parity y)
+test ParityRel 2 0 = true
+test ParityRel 2 1 = false
+test ParityRel (t t) (t t) = false
+test member ParityRel 2 = true
+
+// section 3: the same two functions, judged at two types
+test eq_arrow NatR id shift = "Proved"
+test eq_arrow TreeR id shift = refuted (t t)
+test id (t t) = t t
+test shift (t t) = t t t
+
+// section 6: verdicts of the checker (confirmer.test.disp)
+test check_by_structure succ = "Proved"
+test check_by_structure ({n} => pair n n) = refuted 1
+test check_by_induction dbl_step = "Proved"
+test check_by_induction bad_step = "Open"
+test why (check_arrow_r NatFn TreeR ({f} => f)) = "not open"
+test check_arrow NatFn TreeR ({f} => f) = refuted (pair id shift)
+
+// section 4 again: respect is membership
+test respects_nf is_even_step parity Bool = "Proved"
+test respects_nf id_step parity NatR = refuted (pair 0 2)
+
+// section 7: streams
+test stream_eq NatR same_states nats nats_add = "Proved"
+test stream_eq NatR same_states nats by_two = refuted (pair [known 0, known 1, known 2, known 3] [known 0, known 2, known 4, known 6])
+
+// section 8: the code type
+test check_arrow TreeR Bool is_leaf = "Proved"
+test check_arrow NatFn Bool sniff = refuted (pair id shift)
+test check_arrow FalseR NatR id = "Proved"
+
+// section 9: the honesty contract, one line of it
+test agrees (check_by_structure succ) (Arrow NatR NatR 40 succ) = true
+
+// section 6: the hook is on the rule, not on the text. A triage built at runtime and
+// applied to the input inspects it just the same: the run NEEDS the symbol's shape.
+runtime_triage := {n} => (t (t zero succ) id) n
+runtime_id := {n} => (t (t zero ({_} => zero)) ({_l, r} => succ r)) n
+test runtime_triage 1 = t t
+test run runtime_triage (in_sym NatR []) = need (in_sym NatR [])
+test check_by_structure runtime_triage = refuted 1
+test check_by_structure runtime_id = "Proved"
