@@ -47,9 +47,9 @@ it looks like when applied to the whole type theory.
 | Axis | Nova | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (none) | Standard elaborator/kernel pipeline; no programs-as-data. | 0 · 0 · 0 — standard elaborator/kernel pipeline |
-| G2 Specification | ◐ 62% (extensional MLTT) | Full extensional MLTT — strictly stronger equality story than disp has. Equality: Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. | 1 · ½(no library) · 0 · 1 — extensional MLTT: anything provably equal is treated as equal and certificates recover decidability; solo, no library |
-| G3 Trust | ◐ 67%? (certificates) | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. | 1 · 1 · ? — a small kernel with its own spec re-checks certificate-carrying artifacts; no independent checker is mentioned |
-| G4 Execution | ✗ 0% (none) | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. | 0 · 0 · 0 · 0 — a research-scale Idris 2 program |
+| G2 Specification | ◐ 70% (extensional MLTT) | Full extensional MLTT — strictly stronger equality story than disp has. Equality: Extensional — the thing disp needs, obtained by paying undecidability and recovering it with certificates. | 1 · ½(no library) · 0 · 1 — extensional MLTT: anything provably equal is treated as equal and certificates recover decidability; solo, no library |
+| G3 Trust | ✅ 80%? (certificates) | Explicit small trusted kernel with its own spec document; certificate-carrying artifacts. Same shape as disp's. | 1 · 1 · ? · — — a small kernel with its own spec re-checks certificate-carrying artifacts; no independent checker is mentioned |
+| G4 Execution | ✗ 0% (none) | Written in Idris 2, research-scale. No native codegen, no cost model, no systems ambition. | 0 · 0 · 0 — a research-scale Idris 2 program |
 | G5 Search | ✗ 0% (none) | No synthesis. | 0 · 0 · 0 — none |
 
 ## What disp could steal

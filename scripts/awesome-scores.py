@@ -7,8 +7,10 @@
                                               cells, and disp's table in _AXES.md
 
 A clause is 0, ½ or 1 (suffix † = from general knowledge, ? = open, scored 0; — = does not apply,
-left out of the mean); an axis is the mean of its three or four clauses; the symbol is ✗ below 25,
-◐ to 79, ✅ from 80; bold in the master table means a higher percentage than disp's.
+left out of the mean); an axis is the weighted mean of its three or four clauses, the weights read from
+a `Weights: 40 · 30 · 30` line under the axis header (relative; a — clause drops out and the rest
+renormalize; equal weights if the line is missing); the symbol is ✗ below 25, ◐ to 79, ✅ from 80;
+bold in the master table means a higher percentage than disp's.
 """
 import re, sys, pathlib
 
@@ -17,6 +19,7 @@ AXES = ['G1', 'G2', 'G3', 'G4', 'G5']
 VAL = {'1': 1.0, '½': 0.5, '0': 0.0, '?': 0.0, '—': None}
 SUP = 'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ'
 ROW = re.compile(r'^\| (G[1-5]) [^|]*\|')
+WEIGHTS = {}  # axis -> relative clause weights, filled by scores()
 
 def symbol(pct):
     return '✗' if pct < 25 else '◐' if pct < 80 else '✅'
@@ -52,6 +55,8 @@ def scores():
     for i, line in enumerate(lines):
         m = re.match(r'^## (G[1-5]) ', line)
         if m: ax = m.group(1); out[ax] = []; continue
+        w = re.match(r'^Weights?:\s*(.+?)\s*$', line)
+        if ax and w: WEIGHTS[ax] = [float(x) for x in re.split(r'\s*[·,]\s*|\s+', w.group(1)) if x]; continue
         if ax and line.startswith('| ') and not line.startswith('| Project') and not line.startswith('|---'):
             cells = [c.strip() for c in line.split('|')[1:-1]]
             if len(cells) < 6: continue
@@ -63,8 +68,10 @@ def scores():
                 if not cm: sys.exit(f'{ax} {name}: bad clause value {v!r}')
                 if cm.group(1) == '½' and not cm.group(2): sys.exit(f'{ax} {name}: ½ without a route tag in {v!r} — write ½(route)')
                 bases.append(cm.group(1))
-            xs = [VAL[b] for b in bases if VAL[b] is not None]
-            pct = round(sum(xs) / len(xs) * 100) if xs else 0
+            ws = WEIGHTS.get(ax) or [1.0] * len(bases)
+            if len(ws) != len(bases): sys.exit(f'{ax} {name}: {len(bases)} clauses but {len(ws)} weights')
+            xs = [(VAL[b], w) for b, w in zip(bases, ws) if VAL[b] is not None]
+            pct = round(sum(v * w for v, w in xs) / sum(w for _, w in xs) * 100) if xs else 0
             out[ax].append(dict(name=name, vals=vals, pct=pct, prov=any('?' in v for v in vals),
                                 knowledge=any('†' in v for v in vals), why=why, line=i))
     return out, lines
@@ -133,7 +140,7 @@ def main():
     old['disp'] = disp_symbols()
     flips, ahead_changes, open_cells, knowledge = [], [], [], []
     for ax, rows in sc.items():
-        print(f"\n== {ax}  (disp {disp_pct[ax]})")
+        print(f"\n== {ax}  (disp {disp_pct[ax]}; weights {' · '.join(str(int(w)) for w in WEIGHTS.get(ax, []))})")
         for r in sorted(rows, key=lambda r: -r['pct']):
             m = old.get(clean(r['name']), {}).get(ax, (None, False))
             sym, ahead = symbol(r['pct']), r['pct'] > disp_pct[ax]

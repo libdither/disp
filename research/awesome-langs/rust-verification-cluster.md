@@ -63,10 +63,10 @@ retrofitting.
 | Axis | Cluster | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (two-layer) | None. Structurally impossible in the two-layer design. | 0 · 0 · 0 — structurally impossible in the two-layer design |
-| G2 Specification | ◐ 62% (refinement–Iris) | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). Equality: Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. | 1 · 1 · 0 · ½(per-tool translation) — from Flux refinements to RefinedRust's Iris and Aeneas's Lean, with libcrux and ACE-RISCV as the library; Aeneas's borrow translation is a machine-produced equivalence, per tool |
-| G3 Trust | ◐ 50% (per tool) | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. | ½(per tool) · ½(per tool) · ½(per tool) — Aeneas/hax/RefinedRust inherit Lean/F*/Rocq kernels; Kani/Creusot/Flux trust SMT |
-| G4 Execution | ◐ 25% (Rust) | It is Rust. Nothing to prove. | 1 · 0 · 0 · 0 — it is Rust |
-| G5 Search | ◐ 33% (harness gen) | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. | ½(harness gen) · ½(checker only) · 0 — Kani's autoharness; otherwise human-driven with AI assistance |
+| G2 Specification | ◐ 65% (refinement–Iris) | Ranges from refinement types (Flux) to full Iris separation logic (RefinedRust) and Lean (Aeneas). Equality: Aeneas's functional translation of borrows is a genuine semantic-equivalence achievement, but per-tool and human-directed. | 1 · 1 · 0 · ½(per-tool translation) — from Flux refinements to RefinedRust's Iris and Aeneas's Lean, with libcrux and ACE-RISCV as the library; Aeneas's borrow translation is a machine-produced equivalence, per tool |
+| G3 Trust | ◐ 38% (per tool) | Aeneas/hax/RefinedRust inherit real kernels (Lean/F*/Rocq). Kani/Creusot/Flux trust SMT. | ½(per tool) · ½(per tool) · ½(per tool) · 0 — Aeneas/hax/RefinedRust inherit Lean/F*/Rocq kernels; Kani/Creusot/Flux trust SMT |
+| G4 Execution | ◐ 40% (Rust) | It is Rust. Nothing to prove. | 1 · 0 · 0 — it is Rust |
+| G5 Search | ◐ 40% (harness gen) | Kani's Autoharness auto-generates harnesses; otherwise human-driven with AI assistance. | ½(harness gen) · ½(checker only) · 0 — Kani's autoharness; otherwise human-driven with AI assistance |
 
 ## What disp could steal
 

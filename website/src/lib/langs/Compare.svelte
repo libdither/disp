@@ -165,7 +165,7 @@
     tip = {
       ...place(ev),
       title: `${ax.id} ${ax.name} — the clauses`,
-      html: `<div class="tip-clauses">${list}</div><div class="tip-why">each clause scores 0, ½ or 1; the percentage is their mean · click to sort</div>`
+      html: `<div class="tip-clauses">${list}</div><div class="tip-why">each clause scores 0, ½ or 1; the percentage is their weighted mean · click to sort</div>`
     }
   }
   const hideTip = () => (tip = null)
@@ -269,7 +269,7 @@
         <span><i class="ring-key" aria-hidden="true"></i> ahead of disp</span>
         <span>small text: how</span>
         <span>? a clause the write-up leaves open</span>
-        <span>— not scored</span>
+        <span><ClauseDots clauses="—" titles={false} size={9} /> does not apply (left out of the mean)</span>
         {#each Object.entries(data.footnotes) as [k, v] (k)}<span><sup>{k}</sup> {v}</span>{/each}
       </p>
       {#if unscored.length}

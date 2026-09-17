@@ -54,8 +54,8 @@ detail.
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — no programs-as-data |
 | G2 Specification | ◐ 50% (dependent+linear) | Dependent + linear types, natively, for low-level code. Equality: Not addressed as a rewrite-licensing problem. | 1 · 1† · 0 · 0 — dependent + linear types with an explicit proof language and a 25-year library; equality not addressed |
-| G3 Trust | ✗ 17% (trusted checker) | No LCF kernel; the typechecker is the TCB. | 0 · ½(large checker)† · 0 — the typechecker is the TCB; proof terms exist |
-| G4 Execution | ◐ 25% (to C) | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. | 1 · 0 · 0 · 0 — to C, no GC, no runtime; the C compiler trusted |
+| G3 Trust | ✗ 15% (trusted checker) | No LCF kernel; the typechecker is the TCB. | 0 · ½(large checker)† · 0 · 0 — the typechecker is the TCB; proof terms exist |
+| G4 Execution | ◐ 40% (to C) | Compiles to C, no GC, no runtime. Genuine systems performance with dependent types — rare. | 1 · 0 · 0 — to C, no GC, no runtime; the C compiler trusted |
 | G5 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal

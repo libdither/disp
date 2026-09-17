@@ -50,10 +50,10 @@ scaffolding changes that dramatically (see `velvet-loom-wybecoder.md`).
 | Axis | Lean 4 | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ◐ 50% (quotation) | Full metaprogramming, but via quotation/`Expr` deep embedding, not native intensionality. | 1 · 0 · ½(metaprograms)† — `Expr` deep embedding; `MetaM` exposes inference and checking to metaprograms |
-| G2 Specification | ◐ 62% (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. Equality: Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. | 1 · 1 · 0 · ½(propositional) — full dependent types, universes, mathlib; propositional equality with Quot and axioms, rewriting tactic-driven |
-| G3 Trust | ✅ 83% (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. | ½(mid-size kernel) · 1 · 1 — a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
-| G4 Execution | ✗ 12% (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. | ½(not systems) · 0 · 0 · 0 — via C, reference-counted; fine for tooling, not systems class |
-| G5 Search | ◐ 33% (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. | ½(external agents) · ½(checker only) · 0 — the richest external ecosystem of proof-search agents; nothing built in; no cost |
+| G2 Specification | ◐ 65% (dependent) | Full dependent types + universes + mathlib. Far more spec power than disp has today. Equality: Intensional MLTT + axioms. Rewriting is human/tactic-driven, not a decidable licensing relation. Same wall disp faces, answered socially (mathlib) rather than structurally. | 1 · 1 · 0 · ½(propositional) — full dependent types, universes, mathlib; propositional equality with Quot and axioms, rewriting tactic-driven |
+| G3 Trust | ◐ 60% (small kernel) | Small trusted kernel, external checkers exist (lean4lean, lean4export). Larger than MM0's, much smaller than the elaborator. | ½(mid-size kernel) · 1 · 1 · 0 — a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
+| G4 Execution | ✗ 20% (via C) | Compiles via C, reference-counted; fine for tooling, **not** C/Rust-class for systems code. No cost-as-resource. No hardware model. | ½(not systems) · 0 · 0 — via C, reference-counted; fine for tooling, not systems class |
+| G5 Search | ◐ 40% (external agents) | No built-in synthesis, but the richest external ecosystem of proof-search agents anywhere. | ½(external agents) · ½(checker only) · 0 — the richest external ecosystem of proof-search agents; nothing built in; no cost |
 
 ## What disp could steal
 

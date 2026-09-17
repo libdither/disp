@@ -57,9 +57,9 @@ update, and Bend 2's own README says it has no proof search.
 |---|---|---|---|
 | G1 Substrate | ◐ 33% (graph nodes) | Terms are runtime graph nodes; no in-language checker-as-program discipline. Untyped core. | ½(runtime graphs) · ½(graphs only) · 0 — terms are runtime graph nodes with no in-language inspection; untyped, no checker |
 | G2 Specification | ✗ 0% (untyped) | Untyped. The typed language became Bend 2, which does not run on this runtime. | 0 · 0 · 0 · 0 — untyped; the typed language became Bend 2, which does not run on this runtime |
-| G3 Trust | ✗ 0% (trust hvm.c) | No kernel, no evidence discipline. Trust = trust `hvm.c`. | 0 · 0 · 0 — trust is `hvm.c` |
-| G4 Execution | ◐ 50% (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2; `-s` reports interaction counts. | 1 · 0 · 1† · 0 — native C with GPU lineage; the runtime reports interaction counts; no verified path, no rewrite mechanism |
-| G5 Search | ◐ 33% (value enumeration) | The only runtime anywhere with superposition-based search built in; what ships enumerates values against an equation. The program synthesizer (SupGen/NeoGen) is unpublished. | ½(value enumeration) · ½(tests only) · 0 — the primer solves X + 2 = 4 by collapsing an infinite superposition of naturals; the program-hole filler (SupGen, NeoGen) was never published; equations rather than a checker, no cost objective |
+| G3 Trust | ✗ 0% (trust hvm.c) | No kernel, no evidence discipline. Trust = trust `hvm.c`. | 0 · 0 · 0 · 0 — trust is `hvm.c` |
+| G4 Execution | ◐ 70% (native, GPU) | Native C, AOT compilation of superposition-bearing functions to machine code, claimed 10–100× over interpretation; GPU lineage from HVM2; `-s` reports interaction counts. | 1 · 0 · 1† — native C with GPU lineage; the runtime reports interaction counts; no verified path |
+| G5 Search | ◐ 40% (value enumeration) | The only runtime anywhere with superposition-based search built in; what ships enumerates values against an equation. The program synthesizer (SupGen/NeoGen) is unpublished. | ½(value enumeration) · ½(tests only) · 0 — the primer solves X + 2 = 4 by collapsing an infinite superposition of naturals; the program-hole filler (SupGen, NeoGen) was never published; equations rather than a checker, no cost objective |
 
 ## What disp could steal
 

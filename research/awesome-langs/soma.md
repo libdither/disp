@@ -55,9 +55,9 @@ engine. That is a genuinely different way to cash in the same theory.
 | Axis | Soma | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (none) | No programs-as-data; conventional compiler pipeline. | 0 · 0 · 0 — conventional compiler pipeline |
-| G2 Specification | ◐ 38% (dependent+QTT) | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. Equality: Not addressed. | 1 · 0 · ½(usage grade) · 0 — dependent types + QTT + rows, not a proof assistant; quantities are a usage grade; equality not addressed |
-| G3 Trust | ✗ 0% (trusted compiler) | No LCF kernel; trust the compiler. | 0 · 0 · 0 — trust the compiler |
-| G4 Execution | ◐ 25% (LLVM native) | LLVM native, GC-free, flat types at C cost. Best G4 among the dependently-typed indies. | 1 · 0 · 0 · 0 — LLVM native, GC-free flat types at C cost; LLVM trusted |
+| G2 Specification | ◐ 40% (dependent+QTT) | Dependent types + QTT + row polymorphism. Real, though not a proof assistant. Equality: Not addressed. | 1 · 0 · ½(usage grade) · 0 — dependent types + QTT + rows, not a proof assistant; quantities are a usage grade; equality not addressed |
+| G3 Trust | ✗ 0% (trusted compiler) | No LCF kernel; trust the compiler. | 0 · 0 · 0 · 0 — trust the compiler |
+| G4 Execution | ◐ 40% (LLVM native) | LLVM native, GC-free, flat types at C cost. Best G4 among the dependently-typed indies. | 1 · 0 · 0 — LLVM native, GC-free flat types at C cost; LLVM trusted |
 | G5 Search | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 
 ## What disp could steal

@@ -50,8 +50,8 @@ one axis is.
 |---|---|---|---|
 | G1 Substrate | ◐ 50% (quotation) | Elaborator reflection, quotation-based. | 1 · 0 · ½(metaprograms) — elaborator reflection, quotation-based |
 | G2 Specification | ◐ 75% (dependent+QTT) | Full dependent types + QTT. Equality: Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. | 1 · 1 · ½(erasure) · ½(propositional) — dependent types + QTT with a working standard library; quantities give erasure; intensional propositional equality |
-| G3 Trust | ✗ 17% (trusted checker) | No LCF kernel; typechecker is the TCB. | 0 · ½(large checker) · 0 — the typechecker is the TCB |
-| G4 Execution | ✗ 12% (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. | ½(not systems) · 0 · 0 · 0 — Chez backend; erasure is graded under Specification |
+| G3 Trust | ✗ 15% (trusted checker) | No LCF kernel; typechecker is the TCB. | 0 · ½(large checker) · 0 · 0 — the typechecker is the TCB |
+| G4 Execution | ✗ 20% (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. | ½(not systems) · 0 · 0 — Chez backend; erasure is graded under Specification |
 | G5 Search | ✗ 0% (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. | 0 · 0 · 0 — `auto` is basic |
 
 ## What disp could steal

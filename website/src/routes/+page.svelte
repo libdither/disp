@@ -457,7 +457,7 @@
   <p class="axes-key">
     The figure on each row is where disp stands today, one dot per clause of the
     requirement: filled = met, half-filled = halfway, empty = not met, dashed =
-    still open. The percent is their mean, the word is how it's reached, and
+    still open. The percent is their weighted mean, the word is how it's reached, and
     hovering a dot names its clause. Text and scores come from
     <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
   </p>

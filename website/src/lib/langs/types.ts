@@ -19,7 +19,7 @@ export interface Axis {
 
 export interface Score {
   level: 0 | 1 | 2 | null // derived from pct when present: ✗ below 25, ◐ to 79, ✅ from 80
-  pct?: number // percent of disp's requirement met, the mean of its clauses
+  pct?: number // percent of disp's requirement met, the weighted mean of its clauses
   provisional?: boolean // a clause the write-up leaves open
   ahead: boolean // a higher pct than disp's on the axis (the master table's bold when no pct)
   raw: string // the symbol as written, with any footnote superscript

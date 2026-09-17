@@ -67,10 +67,10 @@ scope.
 | Axis | This cluster | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ◐ 50% (Gallina meta) | fiat-crypto/bedrock2 live inside Rocq, so program synthesis is Gallina metaprogramming — reflective in the deep-embedding sense. | 1 · 0 · ½(metaprograms) — Gallina metaprogramming over a deep embedding; tactics see the checker |
-| G2 Specification | ◐ 62% (CIC) | Full CIC (Rocq). Specs are dependent types. Equality: A verified **equivalence checker** for straight-line assembly — a real, decidable, machine-checked licensing relation, but only for a tiny fragment. | 1 · 1 · 0 · ½(asm fragment) — full CIC with fiat-crypto and bedrock2 as the library; a verified equivalence checker for straight-line assembly is the equality story, a tiny fragment |
-| G3 Trust | ✅ 83% (Rocq kernel) | Rocq's kernel; CryptOpt's equivalence checker is verified *in* Rocq. Textbook G3. | ½(mid-size kernel) · 1 · 1† — Rocq's kernel; CryptOpt's equivalence checker is verified in Rocq; coqchk re-checks |
-| G4 Execution | ◐ 75% (beats GCC) | Beats GCC/Clang. Measured on-CPU. Shipping in BoringSSL. The best G4 result in this survey. | 1 · 1 · 0 · 1 — beats GCC/Clang; Jasmin and bedrock2 compile under verified compilers; CryptOpt's output is installed on a verified equivalence check; cost is measured on the CPU inside the search rather than modelled |
-| G5 Search | ◐ 67% (randomized) | Randomized search with a real cost objective and a proof-carrying output. Narrow, but complete. | 1 · 1 · 0 — randomized search over assembly with measured cost and a verified equivalence check; straight-line only; unmaintained since 2024 |
+| G2 Specification | ◐ 65% (CIC) | Full CIC (Rocq). Specs are dependent types. Equality: A verified **equivalence checker** for straight-line assembly — a real, decidable, machine-checked licensing relation, but only for a tiny fragment. | 1 · 1 · 0 · ½(asm fragment) — full CIC with fiat-crypto and bedrock2 as the library; a verified equivalence checker for straight-line assembly is the equality story, a tiny fragment |
+| G3 Trust | ✅ 85% (Rocq kernel) | Rocq's kernel; CryptOpt's output is installed only on an equivalence check verified *in* Rocq. Textbook G3. | ½(mid-size kernel) · 1 · 1† · 1 — Rocq's kernel; CryptOpt's equivalence checker is verified in Rocq; coqchk re-checks; CryptOpt's output is installed only on that verified check |
+| G4 Execution | ◐ 70% (beats GCC) | Beats GCC/Clang. Measured on-CPU. Shipping in BoringSSL. The best G4 result in this survey. | 1 · 1 · 0 — beats GCC/Clang; Jasmin and bedrock2 compile under verified compilers; cost is measured on the CPU inside the search rather than modelled |
+| G5 Search | ✅ 80% (randomized) | Randomized search with a real cost objective and a proof-carrying output. Narrow, but complete. | 1 · 1 · 0 — randomized search over assembly with measured cost and a verified equivalence check; straight-line only; unmaintained since 2024 |
 
 ## What disp could steal
 

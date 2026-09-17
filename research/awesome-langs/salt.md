@@ -68,8 +68,8 @@ This matters to disp for two reasons:
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
 | G2 Specification | ◐ 25% (SMT contracts) | Z3 contracts: bounds, postconditions, quantifiers, loop invariants, bitvectors. SMT-shaped, not dependent. Equality: Not addressed. | ½(contracts) · ½(solver-discharged) · 0 · 0 — Z3 contracts (claimed), no library, equality not addressed |
-| G3 Trust | ✗ 0% (SMT TCB) | TCB = saltc + Z3 + MLIR. | 0 · 0 · 0 — TCB = saltc + Z3 + MLIR (claimed) |
-| G4 Execution | ✗ 12% (claimed) | MLIR→LLVM, claims `-O3` parity, compiler-checked arena regions. Plausible design; unverified claim. | ½(claimed) · 0 · 0 · 0 — MLIR→LLVM with claimed `-O3` parity, unverified |
+| G3 Trust | ✗ 0% (SMT TCB) | TCB = saltc + Z3 + MLIR. | 0 · 0 · 0 · 0 — TCB = saltc + Z3 + MLIR (claimed) |
+| G4 Execution | ✗ 20% (claimed) | MLIR→LLVM, claims `-O3` parity, compiler-checked arena regions. Plausible design; unverified claim. | ½(claimed) · 0 · 0 — MLIR→LLVM with claimed `-O3` parity, unverified |
 | G5 Search | ✗ 0% (none) | Not agent-oriented; no synthesis. | 0 · 0 · 0 — none |
 
 ## What disp could steal

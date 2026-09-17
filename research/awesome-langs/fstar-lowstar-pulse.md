@@ -51,9 +51,9 @@ evidence that G5 is being attacked from the F* side too.
 | Axis | F*/Low*/Pulse | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ◐ 50% (Meta-F*) | Meta-F* reflects F* syntax for tactics; deep embedding, not programs-as-data. | 1 · 0 · ½(metaprograms)† — Meta-F* reflects F* syntax (deep embedding); tactics can call the typechecker |
-| G2 Specification | ◐ 62% (dependent+SMT) | Full dependent types + refinements + effects + separation logic (Pulse). Production-proven expressiveness. Equality: SMT-decided equalities within its fragment — genuinely automates many rewrites, but it is "retreat to a decidable fragment" (FOUNDATIONS [P1]), not a general licensing relation. | 1 · 1 · 0 · ½(SMT-fragment) — dependent types, refinements, effects, Pulse, with HACL* as the library; SMT-fragment equality |
-| G3 Trust | ✗ 17% (big TCB) | Trusted base is much larger than LCF-ideal: the F* typechecker *and* Z3 *and* KaRaMeL extraction are trusted. Bigger TCB than disp targets. | 0 · ½(large checker) · 0 — typechecker, Z3 and KaRaMeL are all trusted; proof terms exist, SMT verdicts have none |
-| G4 Execution | ◐ 25% (via C) | Low*→C→native; HACL* is competitive with hand-optimized C. The proof that verified code can be fast. | 1 · 0 · 0 · 0 — Low*→C competitive with hand-optimized C; KaRaMeL and the C compiler are trusted |
+| G2 Specification | ◐ 65% (dependent+SMT) | Full dependent types + refinements + effects + separation logic (Pulse). Production-proven expressiveness. Equality: SMT-decided equalities within its fragment — genuinely automates many rewrites, but it is "retreat to a decidable fragment" (FOUNDATIONS [P1]), not a general licensing relation. | 1 · 1 · 0 · ½(SMT-fragment) — dependent types, refinements, effects, Pulse, with HACL* as the library; SMT-fragment equality |
+| G3 Trust | ✗ 15% (big TCB) | Trusted base is much larger than LCF-ideal: the F* typechecker *and* Z3 *and* KaRaMeL extraction are trusted. Bigger TCB than disp targets. | 0 · ½(large checker) · 0 · 0 — typechecker, Z3 and KaRaMeL are all trusted; proof terms exist, SMT verdicts have none |
+| G4 Execution | ◐ 40% (via C) | Low*→C→native; HACL* is competitive with hand-optimized C. The proof that verified code can be fast. | 1 · 0 · 0 — Low*→C competitive with hand-optimized C; KaRaMeL and the C compiler are trusted |
 | G5 Search | ✗ 0% (human-written) | Humans write the code and the proofs. This is precisely disp's identified delta. | 0 · 0 · 0 — humans write the code and the proofs |
 
 ## What disp could steal

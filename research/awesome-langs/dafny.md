@@ -58,10 +58,10 @@ toward conventional languages.
 | Axis | Dafny | Note | Clauses |
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (none) | None. | 0 · 0 · 0 — none |
-| G2 Specification | ◐ 38% (SMT) | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. Equality: SMT-fragment only. | ½(contracts) · ½(solver-discharged) · 0 · ½(SMT-fragment) — first-order + quantifiers over a decade of AWS specs; SMT-fragment equality |
-| G3 Trust | ✗ 0% (SMT TCB) | TCB = Dafny + Boogie + Z3. Large. | 0 · 0 · 0 — TCB = Dafny + Boogie + Z3 |
-| G4 Execution | ✗ 0% (managed) | Managed backends. Not a systems language. | 0 · 0 · 0 · 0 — managed backends |
-| G5 Search | ◐ 33% (LLM-written) | The best *LLM-writability* of any verification language, by a wide margin. | ½(external LLMs) · ½(checker only) · 0 — LLMs write it best (82–96% on benchmarks) but the search lives in external tools; correctness only |
+| G2 Specification | ◐ 40% (SMT) | First-order + quantifiers; no dependent types. Deliberately SMT-shaped. Equality: SMT-fragment only. | ½(contracts) · ½(solver-discharged) · 0 · ½(SMT-fragment) — first-order + quantifiers over a decade of AWS specs; SMT-fragment equality |
+| G3 Trust | ✗ 0% (SMT TCB) | TCB = Dafny + Boogie + Z3. Large. | 0 · 0 · 0 · — — TCB = Dafny + Boogie + Z3 |
+| G4 Execution | ✗ 0% (managed) | Managed backends. Not a systems language. | 0 · 0 · 0 — managed backends |
+| G5 Search | ◐ 40% (LLM-written) | The best *LLM-writability* of any verification language, by a wide margin. | ½(external LLMs) · ½(checker only) · 0 — LLMs write it best (82–96% on benchmarks) but the search lives in external tools; correctness only |
 
 ## What disp could steal
 

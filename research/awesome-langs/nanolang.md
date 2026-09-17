@@ -50,9 +50,9 @@ and Q5 explicitly flags open gaps).
 |---|---|---|---|
 | G1 Substrate | ✗ 0% (none) | No programs-as-data. | 0 · 0 · 0 — none |
 | G2 Specification | ✗ 0% (none) | No user-level spec language. The proofs are *about* the language, not written *in* it. Equality: Not addressed. | 0 · 0 · 0 · 0 — no user-level spec language; the proofs are about the language |
-| G3 Trust | ✗ 17% (metatheory) | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. | ½(soundness proof) · 0 · 0 — no kernel, but the core semantics are proved sound in Coq, `Admitted`-free |
-| G4 Execution | ◐ 38% (to C) | Transpiles to C; NanoISA sandbox for FFI. | 1 · ½(modelled VM) · 0 · 0 — transpiles to C; NanoISA is a modelled VM whose semantics are proved, used to sandbox FFI |
-| G5 Search | ✗ 17% (LLM target) | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. | 0 · ½(tests only) · 0 — designed as an LLM target with mandatory tests; no engine of its own |
+| G3 Trust | ✗ 15% (metatheory) | No LCF kernel, but mechanized `Admitted`-free metatheory in Coq — a different and complementary kind of trust. | ½(soundness proof) · 0 · 0 · 0 — no kernel, but the core semantics are proved sound in Coq, `Admitted`-free |
+| G4 Execution | ◐ 55% (to C) | Transpiles to C; NanoISA sandbox for FFI. | 1 · ½(modelled VM) · 0 — transpiles to C; NanoISA is a modelled VM whose semantics are proved, used to sandbox FFI |
+| G5 Search | ✗ 20% (LLM target) | Designed as an LLM target (canonical syntax, mandatory tests) but no synthesis engine or optimizer of its own. | 0 · ½(tests only) · 0 — designed as an LLM target with mandatory tests; no engine of its own |
 
 ## What disp could steal
 

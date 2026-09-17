@@ -64,7 +64,10 @@ function parseScorecard(text: string): Partial<Record<AxisId, Score>> {
     if (!m) continue
     const [, score, note, clauses] = cells(line)
     const id = m[1] as AxisId
-    const [vals, why] = (clauses ?? '').split(' — ')
+    // the first ` — ` not followed by another clause value: a `—` (does not
+    // apply) clause may sit last, as in `1 · 1 · — — why`
+    const cm = (clauses ?? '').match(/^(.*?) — (?![—·])(.*)$/s)
+    const [vals, why] = cm ? [cm[1], cm[2]] : [clauses ?? '', undefined]
     out[id] = {
       ...parseCell(score ?? ''),
       noteHtml: note ? inline(note) : undefined,
