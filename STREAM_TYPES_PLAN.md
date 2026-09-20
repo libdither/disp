@@ -1,7 +1,8 @@
 # Stream types: endings, spaces and telescopes, the contract as a claim
 
-Status (2026-09-16): Part 1 is landed (`lib/stream.disp`, `lib/verdict.disp`,
-`lib/tests/stream.test.disp`); Parts 2 and 3 are plan, checked against the code they
+Status (2026-09-18): Part 1 is landed (`lib/stream.disp`, `lib/verdict.disp`,
+`lib/tests/stream.test.disp`) and the stream layer has since been rebuilt on a general
+coalgebra core (see the end of Part 1); Parts 2 and 3 are plan, checked against the code they
 touch. The three parts are the first three items of the roadmap that followed the
 resumable machine (`RESUMABLE_INTERP_PLAN.md`): a grade on how a stream ended, the
 telescope as the one stream former, and the checkers' contract written as a claim the
@@ -43,14 +44,13 @@ telescopes need spaces, the contract needs telescopes.
 
 ## Part 1: how a stream ended (landed)
 
-As designed: `done` is the leaf, `spent` a stem, `is_done` "not a fork"; `bounded`
-answers `spent` at zero fuel without stepping the inner (so a finite source whose fuel
-is exactly its length reads spent, pinned as the conservative reading) and every
-combinator passes an ending through; the merge and its two policies live in
-`lib/stream.disp`, a policy answering `(items, (survivors, dropped_spent))`; `verdict`
-reads the ending; the refuter's `refute` lost `exhaustive`; GRADUAL §7 reads the shape
-and §8's `s_fold_absorb` folds a spent ending to its `unknown` element (`open` is a
-keyword). Deviations from the plan: the verdict vocabulary is its own module,
+As designed, with the encoding since replaced (below): `bounded` answers `spent` at
+zero fuel without stepping the inner (so a finite source whose fuel is exactly its
+length reads spent, pinned as the conservative reading) and every combinator passes an
+ending through; the merge and its two policies live in `lib/stream.disp`, a policy
+playing a `round` (found items, survivors, dropped_spent); `verdict` reads the ending;
+the refuter's `refute` lost `exhaustive`; GRADUAL §7 reads the ending and §8's
+`s_fold_absorb` folds a spent ending to its `unknown` element (`open` is a keyword). Deviations from the plan: the verdict vocabulary is its own module,
 `lib/verdict.disp` (`refuted`, `open_on`, `is_proved`/`is_refuted`/`is_open`, `flat`,
 `agrees`, and `agree` between two verdicts), and the shared recognizers, normalizers
 and subject programs the roots kept re-spelling are `lib/tests/fixtures.disp`. Not
@@ -58,6 +58,17 @@ done: the confirmer's `agrees` lines and sweeps still compare against `Arrow`'s 
 switching them to `verdict` of a witness stream needs `witnesses_over` in the library,
 which is Part 2's `pi_claim`, so that move belongs to step 3.
 
+The coalgebra rework (2026-09-18): a stream is `Coalgebra F`, a step-shape map, a
+stepper and a state (`c_new`), observed one layer at a time by `c_out` and consumed by
+`c_fold`, whose algebra gets a `recurse` it may skip calling (the early exit). Three
+named instances: `Stream T` (shape `Emit`, infinite: `nats`, IDEAS' `Trees`), `Task R`
+(shape `Step R`, `finished r | running next`: `task`, sequenced by `task_then`), and
+`Items V` (shape `Step Ending (Draw V)`: a step finishes with `exhausted` or `spent`, or
+runs on with `yield item next` or `skip next`). `as_items` lifts a `Stream` and `answers`
+a `Task`; `c_bounded` adds a budget to any shape and `bounded` is it plus reading the
+budget's halt as `spent`; `s_map`/`s_filter` are per-layer maps (`c_hoist`), so they
+cannot touch an ending. `stopping` pairs item streams with a claimed step bound that
+`settle` spends as fuel: a lying bound finishes spent (Open), never a false Proved.
 ## Part 2: spaces, and the telescope as the one stream former
 
 ### Today
@@ -93,18 +104,18 @@ Members and related pairs are DERIVED, never stored: a source of candidate trees
 square, enumerated fairly by `s_bind`:
 
 ```
-s_bind :: {source : Stream V, inner : V -> Stream W, policy : Tree} -> Stream W :=> s_merge_with (source.s_map(inner)) policy
+s_bind :: {source : Items V, inner : V -> Items W, policy : Tree} -> Items W :=> s_merge_with (source.s_map(inner)) policy
 // the one way to ask a space: keeps the upgrade to path-carrying spaces local (step 6)
 sp_related :: {sp : Space, x : Tree, y : Tree} -> Bool :=> sp x y
 // the trees of `source` that the relation admits: `same a a`, one task each
-sp_members :: {sp : Space, source : Stream Tree, policy : Tree, quantum : Nat} -> Stream Tree :=> {
-	let tasks := source.s_map({a} => (task ({c} => sp_related sp c c) a quantum).s_map({ok} => pair a ok))
+sp_members :: {sp : Space, source : Items Tree, policy : Tree, quantum : Nat} -> Items Tree :=> {
+	let tasks := source.s_map({a} => (task ({c} => sp_related sp c c) a quantum).answers.s_map({ok} => pair a ok))
 	(s_merge_with tasks policy).s_filter({p} => p.snd == true).s_map({p} => p.fst)
 }
 // the related pairs drawn from `source`: `same a b` over the source's square
-sp_pairs :: {sp : Space, source : Stream Tree, policy : Tree, quantum : Nat} -> Stream (Pair Tree Tree) :=> {
+sp_pairs :: {sp : Space, source : Items Tree, policy : Tree, quantum : Nat} -> Items (Pair Tree Tree) :=> {
 	let square := s_bind source ({a} => source.s_map({b} => pair a b)) policy
-	let tasks := square.s_map({p} => (task ({q} => sp_related sp q.fst q.snd) p quantum).s_map({ok} => pair p ok))
+	let tasks := square.s_map({p} => (task ({q} => sp_related sp q.fst q.snd) p quantum).answers.s_map({ok} => pair p ok))
 	(s_merge_with tasks policy).s_filter({p} => p.snd == true).s_map({p} => p.fst)
 }
 ```
@@ -123,7 +134,7 @@ ever ends exhausted, so no stream verdict over `Trees` is ever `"Proved"`, which
 right: no finite prefix of all trees says there are no more members. A claim that
 supplies a finite source (`s_from_list [true, false]` for `Bool`) is asserting that the
 list is the whole type; that assertion is a certificate the claim carries, the way
-`Trees.bounded(fuel)` carries a budget, and the ending it produces (`"Proved"` on
+`Trees.as_items.bounded(fuel)` carries a budget, and the ending it produces (`"Proved"` on
 exhaustion) is only as good as it. `Space` matches the kernel's `#recognize` as the
 diagonal and the kernel `Enum` table's `members` as a supplied source, so the two can be
 matched up later.
@@ -145,7 +156,7 @@ env_apply_r :: {f : Tree, env : Env} -> Tree :=> reduce ({p, acc} => acc p.snd) 
 // environment so far, drawn from a source of candidates (Trees, or a list that
 // certifies exhaustion); `observe_row value at` judges a value computed from the
 // environment and the candidate at a space
-fresh_row :: {A : Env -> Space, src : Env -> Stream Tree} -> Row :=> pair "Fresh" (pair A src)
+fresh_row :: {A : Env -> Space, src : Env -> Items Tree} -> Row :=> pair "Fresh" (pair A src)
 observe_row :: {value : Env -> Tree -> Tree, at : Env -> Space} -> Row :=> pair "Observe" (pair value at)
 ```
 
@@ -157,7 +168,7 @@ rows:
   extends the environments by the dependent fair merge, `s_bind` again:
 
 ```
-rec tele_envs :: {rows : List Row, envs : Stream Env, policy : Tree, quantum : Nat} -> Stream Env :=>
+rec tele_envs :: {rows : List Row, envs : Items Env, policy : Tree, quantum : Nat} -> Items Env :=>
 	if (rows.is_nil) { envs }
 	else if (rows.head.fst == "Fresh") {
 		let A := rows.head.snd.fst
@@ -182,14 +193,14 @@ rec tele_envs :: {rows : List Row, envs : Stream Env, policy : Tree, quantum : N
 // the Pi check under one environment: the two outputs are related at the codomain
 pi_check :: {cod : Env -> Space, f : Tree, g : Tree, env : Env} -> Bool :=>
 	sp_related (cod env) (env_apply_l f env) (env_apply_r g env)
-tele_witnesses :: {rows : List Row, check : Env -> Bool, policy : Tree, quantum : Nat} -> Stream Env :=> {
+tele_witnesses :: {rows : List Row, check : Env -> Bool, policy : Tree, quantum : Nat} -> Items Env :=> {
 	let envs := tele_envs rows (s_from_list [env_empty]) policy quantum
-	let tasks := envs.s_map({env} => (task ({e} => not (check e)) env quantum).s_map({b} => pair env b))
+	let tasks := envs.s_map({env} => (task ({e} => not (check e)) env quantum).answers.s_map({b} => pair env b))
 	(s_merge_with tasks policy).s_filter({p} => p.snd == true).s_map({p} => p.fst)
 }
-eq_claim :: {rows : List Row, cod : Env -> Space, f : Tree, g : Tree, policy : Tree, quantum : Nat} -> Stream Env :=>
+eq_claim :: {rows : List Row, cod : Env -> Space, f : Tree, g : Tree, policy : Tree, quantum : Nat} -> Items Env :=>
 	tele_witnesses rows ({env} => pi_check cod f g env) policy quantum
-pi_claim :: {rows : List Row, cod : Env -> Space, f : Tree, policy : Tree, quantum : Nat} -> Stream Env :=>
+pi_claim :: {rows : List Row, cod : Env -> Space, f : Tree, policy : Tree, quantum : Nat} -> Items Env :=>
 	eq_claim rows cod f f policy quantum
 ```
 
@@ -216,7 +227,7 @@ task and a merge layer of its own and pairs are drawn from a square. Sigma's mem
    where the refuter walked a diagonal; GRADUAL's and the refuter's budgets get
    retuned, outcomes pinned unchanged.
 2. **Normalizers, generators and diagonals are adjoints.** `(a, a)` and `(a, nf a)`
-   pair streams, a `Trees.bounded.s_filter(recognize)` member stream, and a native
+   pair streams, a `Trees.as_items.bounded.s_filter(recognize)` member stream, and a native
    recognizer are all shortcuts over `sp_members`/`sp_pairs` whose contract is
    agreement; proving a recognizer or normalizer total, and running it natively inside
    a step, belongs to the optimization adjoints (an `.opt.disp` overwrite backed by a
@@ -310,7 +321,7 @@ argument):
 
 ```
 // the two machines as streams of states, related by subst: one step each, forever
-sm_states :: {m : SMachine, quantum : Nat} -> Stream SMachine :=> s_new ({st} => yield st (m_advance st quantum)) m
+sm_states :: {m : SMachine, quantum : Nat} -> Stream SMachine :=> stream_new ({st} => emit st (m_advance st quantum)) m
 lockstep :: {sm : SMachine, s : Val, a : Tree} -> Tree -> Tree -> Bool :=>
 	{x, y} => (subst s (known a) x) == y
 ```
@@ -347,8 +358,8 @@ root and accept that nothing else can use it.
 1. Endings: landed (see Part 1).
 2. Spaces. `lib/space.disp`: `data_space`, `quot_space`, `isect_space`, `s_bind`,
    `sp_members`/`sp_pairs` over a source; the refuter's pair streams become `sp_pairs`
-   over `Trees.bounded(fuel)` and over `bools`. Verification: the refuter's tests with
-   the same outcomes (budgets retuned), `sp_members LoopR Trees` yields `0`,
+   over `Trees.as_items.bounded(fuel)` and over `bools`. Verification: the refuter's tests with
+   the same outcomes (budgets retuned), `sp_members LoopR Trees.as_items` yields `0`,
    `sp_pairs (quot_space NatR parity)` yields `(2, 0)` and `(0, 2)`, decision 3's
    ending tests for one space.
 3. Telescopes. `lib/tele.disp`: `Env` and its accessors, rows, `s_bind`, `tele_envs`,

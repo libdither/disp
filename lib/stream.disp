@@ -1,164 +1,178 @@
-// Resumable streams: a stream is pair stepper state; a step yields an item,
-// skips, or ends. Skips exist to keep every step cheap: a filter answers
-// "nothing this step" instead of hunting for its next match inside one step.
-// Termination is the STREAM's burden, not each consumer's: `bounded` wraps any
-// stream to force an ending after a budget of draws, and consumers that recurse
-// until the end ask for `Bounded (Stream V)` in their signatures.
-// Two endings, told apart by shape alone: `done` (the leaf) means the members
-// ran out, `spent` (a stem) means a budget stopped the stream and nothing is
-// known about the rest. One law: an ending propagates. Every combinator passes
-// its inner's ending through unchanged, so `is_spent` read off the rest of a
-// taken stream says how the SOURCE ended, and only an exhausted ending is ever
-// evidence of a proof. Tests live in lib/tests/stream.test.disp (a raw open
-// runs no inline tests).
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 open use raw "machine.disp" {}
 open use raw "verdict.disp" {}
 
-s_new :: {stepper : St -> Step V St, state : St} -> Stream V :=> pair stepper state
-s_with :: {stream : Stream V, state : St} -> Stream V :=> pair stream.fst state
-s_step :: {stream : Stream V} -> Step V St :=> stream.fst stream.snd
+c_new :: {fmap : (X -> Y) -> F X -> F Y, stepper : St -> F St, state : St} -> Coalgebra F :=> pair fmap (pair stepper state)
+c_fmap :: Coalgebra F -> (X -> Y) -> F X -> F Y := pair_fst
+c_stepper :: Coalgebra F -> St -> F St := {c} => c.snd.fst
+c_state :: Coalgebra F -> St := {c} => c.snd.snd
+c_with :: {c : Coalgebra F, state : St} -> Coalgebra F :=> c_new c.c_fmap c.c_stepper state
+c_out :: {c : Coalgebra F} -> F (Coalgebra F) :=> c.c_fmap (c_with c) (c.c_stepper c.c_state)
+c_hoist :: {fmap : (X -> Y) -> G X -> G Y, convert : F X -> G X, c : Coalgebra F} -> Coalgebra G :=>
+	c_new fmap ({state} => convert (c.c_stepper state)) c.c_state
+rec c_fold :: {alg : (Coalgebra F -> A) -> F (Coalgebra F) -> A} -> {c : Coalgebra F} -> A :=> alg c_fold (c_out c)
 
-yield :: {item : V, state : St} -> Step V St :=> pair true (pair item state)
-skip :: {state : St} -> Step V St :=> pair false state
-done :: Step V St := t
-spent :: Step V St := t t
-is_done :: Step V St -> Bool := {step} => not (is_fork step)
-is_exhausted :: Step V St -> Bool := is_leaf
-is_spent :: Step V St -> Bool := is_stem
-// check is_done before yielded/y_val/…: projections on an ending are garbage
-yielded :: Step V St -> Bool := pair_fst
-y_val :: {step : Step V St} -> V :=> step.snd.fst
-y_state :: {step : Step V St} -> St :=> step.snd.snd
-skip_state :: Step V St -> St := pair_snd
+finished :: {result : R} -> Step R X :=> pair "Finished" result
+running :: {next : X} -> Step R X :=> pair "Running" next
+is_finished :: Step R X -> Bool := {step} => step.fst == "Finished"
+finished_result :: Step R X -> R := pair_snd
+running_next :: Step R X -> X := pair_snd
+halt_map :: {transform : X -> Y, step : Step R X} -> Step R Y :=>
+	if (step.is_finished) { step } else { running (transform step.running_next) }
 
-// forces an ending after fuel draws: the budget threads through the resumed
-// rest. Zero fuel answers spent WITHOUT stepping the inner (a step is a draw),
-// so a finite stream whose fuel is exactly its length reads spent, not exhausted.
-bounded :: {stream : Stream V, fuel : Nat} -> Bounded (Stream V) :=> s_new ({st} => {
-	let budget := st.fst
-	let inner := st.snd
-	if (is_zero budget) { spent }
+emit :: {item : T, next : X} -> Emit T X :=> pair item next
+emitted :: Emit T X -> T := pair_fst
+emit_next :: Emit T X -> X := pair_snd
+emit_map :: {transform : X -> Y, emission : Emit T X} -> Emit T Y :=> emit emission.emitted (transform emission.emit_next)
+
+yield :: {item : V, next : X} -> Draw V X :=> pair "Yield" (pair item next)
+skip :: {next : X} -> Draw V X :=> pair "Skip" next
+is_yield :: Draw V X -> Bool := {draw} => draw.fst == "Yield"
+yielded_item :: Draw V X -> V := {draw} => draw.snd.fst
+draw_next :: Draw V X -> X := {draw} => if (draw.is_yield) { draw.snd.snd } else { draw.snd }
+draw_map :: {transform : X -> Y, draw : Draw V X} -> Draw V Y :=>
+	if (draw.is_yield) { yield draw.yielded_item (transform draw.draw_next) } else { skip (transform draw.draw_next) }
+draw_item_map :: {transform : V -> W, draw : Draw V X} -> Draw W X :=>
+	if (draw.is_yield) { yield (transform draw.yielded_item) draw.draw_next } else { draw }
+draw_filter :: {keep : V -> Bool, draw : Draw V X} -> Draw V X :=>
+	if ((draw.is_yield) && (not (keep draw.yielded_item))) { skip draw.draw_next } else { draw }
+
+exhausted :: Ending := "Exhausted"
+spent :: Ending := "Spent"
+is_exhausted :: Ending -> Bool := {ending} => ending == exhausted
+is_spent :: Ending -> Bool := {ending} => ending == spent
+item_map :: {transform : X -> Y} -> Step Ending (Draw V X) -> Step Ending (Draw V Y) :=> halt_map (draw_map transform)
+
+stream_new :: {stepper : St -> Emit T St, state : St} -> Stream T :=> c_new emit_map stepper state
+task_new :: {stepper : St -> Step R St, state : St} -> Task R :=> c_new halt_map stepper state
+s_new :: {stepper : St -> Step Ending (Draw V St), state : St} -> Items V :=> c_new item_map stepper state
+
+nats :: Stream Nat := stream_new ({n} => emit n (succ n)) zero
+as_items :: {stream : Stream V} -> Items V :=>
+	c_hoist item_map ({emission} => running (yield emission.emitted emission.emit_next)) stream
+s_from_list :: {values : List V} -> Items V :=>
+	s_new ({rest} => if (rest.is_nil) { finished exhausted } else { running (yield rest.head rest.tail) }) values
+
+s_map :: {items : Items V, transform : V -> W} -> Items W :=> c_hoist item_map (halt_map (draw_item_map transform)) items
+s_filter :: {items : Items V, keep : V -> Bool} -> Items V :=> c_hoist item_map (halt_map (draw_filter keep)) items
+
+budget :: {fuel : Nat, state : St} -> Budget St :=> pair fuel state
+budget_fuel :: Budget St -> Nat := pair_fst
+budget_state :: Budget St -> St := pair_snd
+c_bounded :: {c : Coalgebra F, fuel : Nat} -> Coalgebra ({X} => Step Unit (F X)) :=> c_new ({transform} => halt_map (c.c_fmap transform)) ({remaining} => {
+	if (is_zero remaining.budget_fuel) { finished t }
+	else { running (c.c_fmap (budget (nat_pred remaining.budget_fuel)) (c.c_stepper remaining.budget_state)) }
+}) (budget fuel c.c_state)
+budget_ending :: Step Unit (Step Ending (Draw V X)) -> Step Ending (Draw V X) :=
+	{step} => if (step.is_finished) { finished spent } else { step.running_next }
+bounded :: {items : Items V, fuel : Nat} -> Bounded (Items V) :=> c_hoist item_map budget_ending (c_bounded items fuel)
+
+stopping :: {items : Items V, bound : Nat} -> Stopping V :=> pair bound items
+stopping_bound :: Stopping V -> Nat := pair_fst
+stopping_items :: Stopping V -> Items V := pair_snd
+stopping_list :: {values : List V} -> Stopping V :=> stopping (s_from_list values) (succ values.length)
+settle :: {claim : Stopping V} -> Bounded (Items V) :=> claim.stopping_items.bounded(claim.stopping_bound)
+
+taken :: {items : List V, rest : Items V} -> Taken V :=> pair items rest
+s_items :: Taken V -> List V := pair_fst
+s_rest :: Taken V -> Items V := pair_snd
+rec s_take :: {items : Bounded (Items V), count : Nat} -> Taken V :=>
+	if (is_zero count) { taken [] items }
 	else {
-		let step := inner.s_step
-		if (step.is_done) { step }
-		else if (step.yielded) { yield step.y_val (pair (nat_pred budget) (inner.s_with step.y_state)) }
-		else { skip (pair (nat_pred budget) (inner.s_with step.skip_state)) }
-	}
-}) (pair fuel stream)
-
-s_items :: Pair (List V) (Stream V) -> List V := pair_fst
-s_rest :: Pair (List V) (Stream V) -> Stream V := pair_snd
-// count bounds items only; termination is the stream's job, so pass a Bounded
-// one. The rest of an ended stream is left unstepped, so stepping it again
-// re-observes the ending.
-rec s_take :: {stream : Bounded (Stream V), count : Nat} -> Pair (List V) (Stream V) :=>
-	if (is_zero count) { pair [] stream }
-	else {
-		let step := stream.s_step
-		if (step.is_done) { pair [] stream }
-		else if (not step.yielded) { s_take (stream.s_with step.skip_state) count }
-		else {
-			let item := step.y_val
-			let taken := s_take (stream.s_with step.y_state) (nat_pred count)
-			pair (cons item taken.s_items) taken.s_rest
+		let step := c_out items
+		let draw := step.running_next
+		if (step.is_finished) { taken [] items }
+		else if (draw.is_yield) {
+			let more := s_take draw.draw_next (nat_pred count)
+			taken (cons draw.yielded_item more.s_items) more.s_rest
 		}
+		else { s_take draw.draw_next count }
 	}
+s_all :: {items : Bounded (Items V), holds : V -> Bool} -> Bool :=> c_fold ({recurse, step} => {
+	let draw := step.running_next
+	if (step.is_finished) { true }
+	else if (draw.is_yield) { (holds draw.yielded_item) && (recurse draw.draw_next) }
+	else { recurse draw.draw_next }
+}) items
+s_ending :: {items : Bounded (Items V)} -> Ending :=> c_fold ({recurse, step} =>
+	if (step.is_finished) { step.finished_result } else { recurse step.running_next.draw_next }
+) items
 
-s_map :: {stream : Stream V, transform : V -> W} -> Stream W :=> s_new ({state} => {
-	let step := state.s_step
-	if (step.is_done) { step }
-	else if (step.yielded) { yield (transform step.y_val) (state.s_with step.y_state) }
-	else { skip (state.s_with step.skip_state) }
-}) stream
-s_filter :: {stream : Stream V, keep : V -> Bool} -> Stream V :=> s_new ({state} => {
-	let step := state.s_step
-	if (step.is_done) { step }
-	else if (not step.yielded) { skip (state.s_with step.skip_state) }
-	else {
-		let item := step.y_val
-		let advanced := state.s_with step.y_state
-		if (keep item) { yield item advanced } else { skip advanced }
-	}
-}) stream
-s_from_list :: {items : List V} -> Stream V :=> s_new ({xs} => if (xs.is_nil) { done } else { yield xs.head xs.tail }) items
-// exact over everything the stream delivers: true means it ENDED with no
-// counterexample. Two-valued on purpose; on a spent stream the true is
-// evidence, and `verdict` is the reading that tells the endings apart.
-rec s_all :: {stream : Bounded (Stream V), holds : V -> Bool} -> Bool :=>
-	{
-		let step := stream.s_step
-		if (step.is_done) { true }
-		else if (not step.yielded) { s_all (stream.s_with step.skip_state) holds }
-		else { (holds step.y_val) && (s_all (stream.s_with step.y_state) holds) }
-	}
-
-// a task: one application as a stream that answers at most once. The state is a
-// paused machine (machine.disp); every step advances it by the same quantum and
-// returns, so a fair policy needs no fuel schedule. Yields the answer once, then
-// done: a task never ends spent on its own, only under `bounded`.
-task :: {f : Tree, x : Tree, quantum : Nat} -> Stream Tree :=> s_new ({m} => {
-	if (is_leaf m) { done }
-	else {
-		let next := m_advance m quantum
-		if (m_finished next) { yield (m_result next) t }
-		else { skip next }
-	}
+task :: {f : Tree, x : Tree, quantum : Nat} -> Task Tree :=> task_new ({machine} => {
+	let advanced := m_advance machine quantum
+	if (m_finished advanced) { finished (m_result advanced) } else { running advanced }
 }) (m_start f x)
+answers :: {task : Task R} -> Items R :=> s_new ({pending} => {
+	if (pending.is_finished) { finished exhausted }
+	else {
+		let step := c_out pending.running_next
+		if (step.is_finished) { running (yield step.finished_result (finished t)) }
+		else { running (skip (running step.running_next)) }
+	}
+}) (running task)
+task_return :: {result : R} -> Task R :=> task_new finished result
+first_phase :: {task : Task R} -> Phase R S :=> pair "First" task
+second_phase :: {task : Task S} -> Phase R S :=> pair "Second" task
+in_second_phase :: Phase R S -> Bool := {phase} => phase.fst == "Second"
+phase_task :: Phase R S -> Tree := pair_snd
+task_then :: {first : Task R, next : R -> Task S} -> Task S :=> task_new ({phase} => {
+	let step := c_out phase.phase_task
+	if (phase.in_second_phase) { halt_map second_phase step }
+	else if (step.is_finished) { halt_map second_phase (c_out (next step.finished_result)) }
+	else { halt_map first_phase step }
+}) (first_phase first)
 
-// A fair merge of a stream of streams. Each round draws one inner from the
-// source, then a POLICY steps some of the live ones; answers wait in a buffer
-// and leave one per step. A policy answers (items, (survivors, dropped_spent)):
-// the flag is true when an inner it dropped ended spent, and taints the merge.
-// The merge ends only when the source is done AND no inner is live, and ends
-// exhausted only if the source did and no inner was ever spent.
-// Round-robin steps the head and sends it to the back:
-advance_head :: {live : List (Stream V)} -> Pair (List V) (Pair (List (Stream V)) Bool) :=> {
-	let inner := live.head
-	let r := inner.s_step
-	if (r.is_done) { pair [] (pair live.tail r.is_spent) }
-	else if (not r.yielded) { pair [] (pair (live.tail.append([inner.s_with r.skip_state])) false) }
-	else { pair [r.y_val] (pair (live.tail.append([inner.s_with r.y_state])) false) }
+round :: {found : List V, survivors : List (Items V), dropped_spent : Bool} -> Round V :=> pair found (pair survivors dropped_spent)
+round_found :: Round V -> List V := pair_fst
+round_survivors :: Round V -> List (Items V) := {played} => played.snd.fst
+round_dropped_spent :: Round V -> Bool := {played} => played.snd.snd
+advance_head :: {live : List (Items V)} -> Round V :=> {
+	let step := c_out live.head
+	if (step.is_finished) { round [] live.tail step.finished_result.is_spent }
+	else {
+		let draw := step.running_next
+		let requeued := live.tail.append([draw.draw_next])
+		if (draw.is_yield) { round [draw.yielded_item] requeued false } else { round [] requeued false }
+	}
 }
-// Map steps every live stream: round-robin applied to each one alone. The calls
-// are independent of each other, which is what a parallel evaluator would use.
-rec advance_all :: {live : List (Stream V)} -> Pair (List V) (Pair (List (Stream V)) Bool) :=>
-	if (live.is_nil) { pair [] (pair [] false) }
+rec advance_all :: {live : List (Items V)} -> Round V :=>
+	if (live.is_nil) { round [] [] false }
 	else {
 		let one := advance_head [live.head]
-		let rest := advance_all live.tail
-		pair (one.fst.append(rest.fst)) (pair (one.snd.fst.append(rest.snd.fst)) (one.snd.snd || rest.snd.snd))
+		let others := advance_all live.tail
+		round (one.round_found.append(others.round_found)) (one.round_survivors.append(others.round_survivors)) (one.round_dropped_spent || others.round_dropped_spent)
 	}
-s_merge_with :: {source : Stream (Stream V), policy : List (Stream V) -> Pair (List V) (Pair (List (Stream V)) Bool)} -> Stream V :=> s_new ({st} => {
-	let src := st.fst
-	let live := st.snd.fst
-	let buf := st.snd.snd.fst
-	let tainted := st.snd.snd.snd
-	if (not buf.is_nil) { yield buf.head (pair src (pair live (pair buf.tail tainted))) }
+
+merge_state :: {source : Items (Items V), live : List (Items V), buffer : List V, tainted : Bool} -> MergeState V :=>
+	pair source (pair live (pair buffer tainted))
+merge_source :: MergeState V -> Items (Items V) := pair_fst
+merge_live :: MergeState V -> List (Items V) := {st} => st.snd.fst
+merge_buffer :: MergeState V -> List V := {st} => st.snd.snd.fst
+merge_tainted :: MergeState V -> Bool := {st} => st.snd.snd.snd
+s_merge_with :: {source : Items (Items V), policy : List (Items V) -> Round V} -> Items V :=> s_new ({st} => {
+	let buffer := st.merge_buffer
+	if (not buffer.is_nil) { running (yield buffer.head (merge_state st.merge_source st.merge_live buffer.tail st.merge_tainted)) }
 	else {
-		let s := src.s_step
-		let pulled := if (s.is_done) { pair src live }
-			else if (s.yielded) { pair (src.s_with s.y_state) (live.append([s.y_val])) }
-			else { pair (src.s_with s.skip_state) live }
-		if (pulled.snd.is_nil) {
-			if (s.is_done) { if (tainted || s.is_spent) { spent } else { done } }
-			else { skip (pair pulled.fst (pair [] (pair [] tainted))) }
+		let pulled := c_out st.merge_source
+		let draw := pulled.running_next
+		let source_after := if (pulled.is_finished) { st.merge_source } else { draw.draw_next }
+		let live_after := if (pulled.is_finished) { st.merge_live }
+			else if (draw.is_yield) { st.merge_live.append([draw.yielded_item]) }
+			else { st.merge_live }
+		if (not live_after.is_nil) {
+			let played := policy live_after
+			running (skip (merge_state source_after played.round_survivors played.round_found (st.merge_tainted || played.round_dropped_spent)))
 		}
-		else {
-			let adv := policy pulled.snd
-			skip (pair pulled.fst (pair adv.snd.fst (pair adv.fst (tainted || adv.snd.snd))))
-		}
+		else if (not pulled.is_finished) { running (skip (merge_state source_after [] [] st.merge_tainted)) }
+		else if (st.merge_tainted || pulled.finished_result.is_spent) { finished spent }
+		else { finished exhausted }
 	}
-}) (pair source (pair [] (pair [] false)))
+}) (merge_state source [] [] false)
 
-// the three verdicts read off a bounded witness stream: a witness refutes, an
-// exhausted silence proves, a spent silence is open
-verdict :: {ws : Bounded (Stream Tree)} -> Verdict :=> {
-	let taken := ws.s_take(1)
-	if (not taken.s_items.is_nil) { refuted taken.s_items.head }
-	else if (taken.s_rest.s_step.is_spent) { "Open" }
-	else { "Proved" }
-}
-
-nats :: Stream Nat := s_new ({n} => yield n (succ n)) zero
+verdict :: {witnesses : Bounded (Items Tree)} -> Verdict :=> c_fold ({recurse, step} => {
+	let draw := step.running_next
+	if (step.is_finished) { if (step.finished_result.is_spent) { "Open" } else { "Proved" } }
+	else if (draw.is_yield) { refuted draw.yielded_item }
+	else { recurse draw.draw_next }
+}) witnesses

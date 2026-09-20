@@ -17,12 +17,12 @@ test NatRel 2 3 = false
 test NatRel (t t) (t t) = false
 
 // Related pairs of a domain, smallest first. For a data type the pairs are the diagonal;
-// for a quotient they are (a, nf a). Both are bounded, so they end spent, never exhausted.
-diag_pairs :: {recognize : Tree -> Bool, fuel : Nat} -> Stream (Pair Tree Tree) :=>
-	Trees.bounded(fuel).s_filter(recognize).s_map({a} => pair a a)
-quot_pairs :: {recognize : Tree -> Bool, nf : Tree -> Tree, fuel : Nat} -> Stream (Pair Tree Tree) :=>
-	Trees.bounded(fuel).s_filter(recognize).s_map({a} => pair a (nf a))
-// A finite type's own generator ends exhausted.
+// for a quotient they are (a, nf a). Both are bounded, so they finish spent, never exhausted.
+diag_pairs :: {recognize : Tree -> Bool, fuel : Nat} -> Items (Pair Tree Tree) :=>
+	Trees.as_items.bounded(fuel).s_filter(recognize).s_map({a} => pair a a)
+quot_pairs :: {recognize : Tree -> Bool, nf : Tree -> Tree, fuel : Nat} -> Items (Pair Tree Tree) :=>
+	Trees.as_items.bounded(fuel).s_filter(recognize).s_map({a} => pair a (nf a))
+// A finite type's own generator finishes exhausted.
 bools := s_from_list [true, false]
 test bools.bounded(9).s_take(9).s_items = [true, false]
 
@@ -32,16 +32,14 @@ open_after :: {probes : Nat} -> Verdict :=> open_on probes
 // refute: walk the related pairs; the first pair the function does not carry to a
 // related pair is a concrete witness. The ending says the rest: an exhausted
 // stream was the domain's own generator (Proved), a spent one was a budget (Open).
-rec refute :: {pairs : Stream (Pair Tree Tree), cod_rel : Tree -> Tree -> Bool, fn : Tree, probes : Nat} -> Verdict :=> {
-	let step := pairs.s_step
-	if (step.is_done) { if (step.is_spent) { open_after probes } else { "Proved" } }
-	else if (not step.yielded) { refute (pairs.s_with step.skip_state) cod_rel fn probes }
-	else {
-		let p := step.y_val
-		if (cod_rel (fn p.fst) (fn p.snd)) { refute (pairs.s_with step.y_state) cod_rel fn (succ probes) }
-		else { refuted p }
-	}
-}
+refute :: {pairs : Bounded (Items (Pair Tree Tree)), cod_rel : Tree -> Tree -> Bool, fn : Tree, probes : Nat} -> Verdict :=> c_fold ({recurse, step, checked} => {
+	let draw := step.running_next
+	let p := draw.yielded_item
+	if (step.is_finished) { if (step.finished_result.is_spent) { open_after checked } else { "Proved" } }
+	else if (not draw.is_yield) { recurse draw.draw_next checked }
+	else if (cod_rel (fn p.fst) (fn p.snd)) { recurse draw.draw_next (succ checked) }
+	else { refuted p }
+}) pairs probes
 refute_arrow :: {dom : Tree -> Bool, cod_rel : Tree -> Tree -> Bool, fuel : Nat, fn : Tree} -> Verdict :=>
 	refute (diag_pairs dom fuel) cod_rel fn zero
 
@@ -77,6 +75,6 @@ m_agrees := {fn, a} => {
 }
 test boolfns.all({fn} => (m_agrees fn true) && (m_agrees fn false)) = true
 test idfns.all({fn} => m_agrees fn probe) = true
-// a task advances by a constant quantum and yields at most once
-test (task succ 2 8).bounded(10).s_take(2).s_items = [3]
-test (task spin 1 8).bounded(6).s_take(1).s_items = []
+// a task advances by a constant quantum and answers at most once
+test (task succ 2 8).answers.bounded(10).s_take(2).s_items = [3]
+test (task spin 1 8).answers.bounded(6).s_take(1).s_items = []

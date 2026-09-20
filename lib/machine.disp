@@ -6,7 +6,7 @@
 // with the memo off (test/machine.test.ts pins that). Not done after k steps is
 // never a verdict. Tests live in lib/tests/refuter.test.disp: a raw open runs no
 // inline tests, and a given-bearing file cannot be a root. Names carry
-// m_/machine_: is_done (stream.disp) and Frame (kernel.disp) are taken.
+// m_/machine_: is_finished (stream.disp) and Frame (kernel.disp) are taken.
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 // the state and its frames are plain trees; a checked consumer fills these

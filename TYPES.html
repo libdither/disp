@@ -100,7 +100,7 @@
 <p>Everything in disp is a tree: a number, a program, a type. Today a type is a program that says yes or no to one tree, and checking a value means applying the type to it. That works perfectly for data: <code>Nat 3</code> runs a shape check and answers yes.</p>
 <p>It stops working the moment the claim is about a function. <code>succ : Nat -&gt; Nat</code> says: for every tree that is a Nat, <code>succ</code> of it is a Nat. No single run visits every Nat. The honest way to check it is to list every tree in order of size, keep the Nats, and run <code>succ</code> on each. disp already has that list, <code>Trees</code>, and IDEAS.disp already has the honest checker:</p>
 <pre><code>Arrow :: {Dom : Tree -&gt; Bool, Cod : Tree -&gt; Bool, fuel : Nat, fn : Tree} -&gt; Bool :=&gt; {
-  let members := Trees.bounded(fuel).s_filter(Dom)
+  let members := Trees.as_items.bounded(fuel).s_filter(Dom)
   let outputs := members.s_map({arg} =&gt; fn arg)
   outputs.s_all(Cod)
 }</code></pre>
@@ -169,34 +169,32 @@ test respects_nf id_step parity NatR = refuted (pair 0 2)  // id : Parity -&gt; 
 <h2>5. The honest checker, precisely: the refuter</h2>
 <p>The refuter is the type's relation run over the domain's list of related pairs instead of over a placeholder. It is IDEAS.disp's <code>Arrow</code> generalized from members to pairs, and it is the ground truth every shortcut is measured against.</p>
 <pre><code>// Related pairs of a domain, smallest first. For a data type the pairs are the diagonal;
-// for a quotient they are (a, nf a). Both are bounded, so reaching done is a budget, not exhaustion.
-diag_pairs :: {recognize : Tree -&gt; Bool, fuel : Nat} -&gt; Stream (Pair Tree Tree) :=&gt;
-	Trees.bounded(fuel).s_filter(recognize).s_map({a} =&gt; pair a a)
-quot_pairs :: {recognize : Tree -&gt; Bool, nf : Tree -&gt; Tree, fuel : Nat} -&gt; Stream (Pair Tree Tree) :=&gt;
-	Trees.bounded(fuel).s_filter(recognize).s_map({a} =&gt; pair a (nf a))
+// for a quotient they are (a, nf a). Both are bounded, so they finish spent, never exhausted.
+diag_pairs :: {recognize : Tree -&gt; Bool, fuel : Nat} -&gt; Items (Pair Tree Tree) :=&gt;
+	Trees.as_items.bounded(fuel).s_filter(recognize).s_map({a} =&gt; pair a a)
+quot_pairs :: {recognize : Tree -&gt; Bool, nf : Tree -&gt; Tree, fuel : Nat} -&gt; Items (Pair Tree Tree) :=&gt;
+	Trees.as_items.bounded(fuel).s_filter(recognize).s_map({a} =&gt; pair a (nf a))
 
 refuted :: {witness : Pair Tree Tree} -&gt; Verdict :=&gt; pair &quot;Refuted&quot; witness
 open_after :: {probes : Nat} -&gt; Verdict :=&gt; pair &quot;Open&quot; probes
 
 // refute: walk the related pairs; the first pair the function does not carry to a
-// related pair is a concrete witness. Reaching done is Proved only when the caller
-// vouches that the stream is the domain&#x27;s own exhaustive generator.
-rec refute :: {pairs : Stream (Pair Tree Tree), cod_rel : Tree -&gt; Tree -&gt; Bool, exhaustive : Bool, fn : Tree, probes : Nat} -&gt; Verdict :=&gt; {
-	let step := pairs.s_step
-	if (step.is_done) { if (exhaustive) { &quot;Proved&quot; } else { open_after probes } }
-	else if (not step.yielded) { refute (pairs.s_with step.skip_state) cod_rel exhaustive fn probes }
-	else {
-		let p := step.y_val
-		if (cod_rel (fn p.fst) (fn p.snd)) { refute (pairs.s_with step.y_state) cod_rel exhaustive fn (succ probes) }
-		else { refuted p }
-	}
-}
+// related pair is a concrete witness. The ending says the rest: an exhausted
+// stream was the domain&#x27;s own generator (Proved), a spent one was a budget (Open).
+refute :: {pairs : Bounded (Items (Pair Tree Tree)), cod_rel : Tree -&gt; Tree -&gt; Bool, fn : Tree, probes : Nat} -&gt; Verdict :=&gt; c_fold ({recurse, step, checked} =&gt; {
+	let draw := step.running_next
+	let p := draw.yielded_item
+	if (step.is_finished) { if (step.finished_result.is_spent) { open_after checked } else { &quot;Proved&quot; } }
+	else if (not draw.is_yield) { recurse draw.draw_next checked }
+	else if (cod_rel (fn p.fst) (fn p.snd)) { recurse draw.draw_next (succ checked) }
+	else { refuted p }
+}) pairs probes
 
-test refute (diag_pairs NatR 40) NatRel false succ zero = open_after 3
-test refute (diag_pairs NatR 40) NatRel false ({n} =&gt; pair n n) zero = refuted (pair 1 1)
-test refute (quot_pairs NatR parity 40) NatRel false ({n} =&gt; n) zero = refuted (pair 2 0)
+test refute (diag_pairs NatR 40) NatRel succ zero = open_after 3
+test refute (diag_pairs NatR 40) NatRel ({n} =&gt; pair n n) zero = refuted (pair 1 1)
+test refute (quot_pairs NatR parity 40) NatRel ({n} =&gt; n) zero = refuted (pair 2 0)
 bool_pairs := s_from_list [pair true true, pair false false]
-test refute bool_pairs BoolRel true not zero = &quot;Proved&quot;</code></pre>
+test refute bool_pairs BoolRel not zero = &quot;Proved&quot;</code></pre>
 <p>What it can say, exactly:</p>
 <table>
 <tr><th>outcome</th><th>when</th><th>strength</th></tr>
@@ -284,18 +282,19 @@ test check_by_structure runtime_triage = refuted 1
 test check_by_structure runtime_id = "Proved"</code></pre>
 <p>The run reports that it needed the symbol's shape, because the built triage is applied to the symbol and the triage <em>rule</em> is where the evaluator looks. The first function then turns out not to be a member at all: it sends the number one to the stem <code>t t</code>, and the search finds that by splitting and re-running the case concretely. The second, a Nat identity written the same way, is Proved after the split. Under the v1 confirmer in <code>CHECK.disp</code>, which cannot split, both come back <span class="verdict v-Open">Open</span>: never Proved, never a false verdict.</p>
 <h2>7. Streams: the same trick facing the other way</h2>
-<p>A stream is a stepper and a state; a step yields an item, skips, or is done. Two streams are the same when every item and every step agree, forever. The honest check is prefix comparison and never ends; the shortcut is one symbolic step. Run each stepper on a symbolic state, compare the items, and check that the next states are again a pair the relation covers. The assumption "these states are related" may only be used on the <em>next</em> states, after both sides have taken a step; using it on the current states would prove any two streams equal.</p>
-<pre><code>nats_add := s_new ({n} =&gt; yield n (add 1 n)) zero
-by_two := s_new ({n} =&gt; yield n (succ (succ n))) zero
-nats_pair := s_new ({p} =&gt; yield p.fst (pair (succ p.fst) t)) (pair zero t)
+<p>A stream is a stepper and a state; a step finishes with an ending, or runs on with an item (a yield) or without one (a skip). Two streams are the same when every item and every step agree, forever. The honest check is prefix comparison and never ends; the shortcut is one symbolic step. Run each stepper on a symbolic state, compare the items, and check that the next states are again a pair the relation covers. The assumption "these states are related" may only be used on the <em>next</em> states, after both sides have taken a step; using it on the current states would prove any two streams equal.</p>
+<pre><code>naturals := nats.as_items
+nats_add := s_new ({n} =&gt; running (yield n (add 1 n))) zero
+by_two := s_new ({n} =&gt; running (yield n (succ (succ n)))) zero
+nats_pair := s_new ({p} =&gt; running (yield p.fst (pair (succ p.fst) t))) (pair zero t)
 pair_states := {x} =&gt; pair x (half_fork x (known t))
-test stream_eq NatR same_states nats nats_add = &quot;Proved&quot;
-test stream_eq NatR same_states nats by_two = refuted (pair [known 0, known 1, known 2, known 3] [known 0, known 2, known 4, known 6])
-test stream_eq NatR pair_states nats nats_pair = &quot;Proved&quot;</code></pre>
+test stream_eq NatR same_states naturals nats_add = &quot;Proved&quot;
+test stream_eq NatR same_states naturals by_two = refuted (pair [known 0, known 1, known 2, known 3] [known 0, known 2, known 4, known 6])
+test stream_eq NatR pair_states naturals nats_pair = &quot;Proved&quot;</code></pre>
 <p>The third line relates two streams with different state spaces through a user-supplied relation between states; the coinductive hypothesis is discharged by matching the next states against that pattern.</p>
 <h3>Two notions of the same, and why the finer one is the type's</h3>
-<p>What section 7 checks is <em>strong</em> bisimulation: a skip is a step, and a skip must meet a skip. A stream that skips before every item is therefore not the same as one that does not (<code>slow</code> versus <code>nats</code> is refuted in the probe). That is deliberate. The library's <code>bounded</code> spends budget on skips, so under any looser sameness it would carry equal streams to unequal prefixes and fail to belong to its own type.</p>
-<p>The optimizer still needs a sameness to appeal to when it removes a skip, and it gets one without a new mechanism: a quotient. The weak stream type is <code>Stream V</code> quotiented by the skip-removal normalizer, exactly as Parity was Nat quotiented by <code>parity</code>. A function belongs to an arrow out of the weak type only if it cannot count skips, which <code>bounded</code> cannot claim and a consumer that only reads items can. The normalizer is partial on a stream that skips forever, so forming the quotient carries a <em>productivity</em> obligation, a certificate that skips are finitely many between items, parallel to the termination obligation on functions. Skip removal is then licensed as a rewrite at the weak type and scored as a measured improvement, and a context that counts skips is simply not a member of the weak arrow, so the rewrite does not fire there.</p>
+<p>What section 7 checks is <em>strong</em> bisimulation: a skip is a step, and a skip must meet a skip. A stream that skips before every item is therefore not the same as one that does not (<code>slow</code> versus <code>naturals</code> is refuted in the probe). That is deliberate. The library's <code>bounded</code> spends budget on skips, so under any looser sameness it would carry equal streams to unequal prefixes and fail to belong to its own type.</p>
+<p>The optimizer still needs a sameness to appeal to when it removes a skip, and it gets one without a new mechanism: a quotient. The weak stream type is <code>Items V</code> quotiented by the skip-removal normalizer, exactly as Parity was Nat quotiented by <code>parity</code>. A function belongs to an arrow out of the weak type only if it cannot count skips, which <code>bounded</code> cannot claim and a consumer that only reads items can. The normalizer is partial on a stream that skips forever, so forming the quotient carries a <em>productivity</em> obligation, a certificate that skips are finitely many between items, parallel to the termination obligation on functions. Skip removal is then licensed as a rewrite at the weak type and scored as a measured improvement, and a context that counts skips is simply not a member of the weak arrow, so the rewrite does not fire there.</p>
 <h2>8. Tree is the type of code</h2>
 <p>disp's substrate lets any program take any tree apart, including a function. That is the reflection the whole project is built on, and it is also why no untyped notion of "same behaviour" survives: a program that compares trees bit for bit tells any two different trees apart. The design does not fight this. It gives the ability a type.</p>
 <p>At <code>Tree</code> sameness is bit for bit and every tree belongs, so inspecting functions are perfectly good members there:</p>
@@ -336,7 +335,7 @@ test sweep.all({p} =&gt; agrees p.fst p.snd) = true      // 40 candidate trees: 
 test check_arrow LoopR NatR id = &quot;Open&quot;</code></pre>
 <h2>10. What the optimizer gets</h2>
 <p>The optimizer's job is to replace a program by a different, faster one that is the same at the type the specification names. Under this design that is one certificate of section 6's equality rung, plus one membership check: the surrounding context must belong to the arrow from the type where the two programs are the same to the type of the whole. A context that inspects its hole does not belong to that arrow, so the rewrite is refused there, and a context that only applies its hole does.</p>
-<p>Every verdict is stored as replayable data: which symbol, which cases, which recursive calls were licensed, and for a refutation the concrete pair. Replay never searches; it re-runs the named steps and checks the licences. Refuted witnesses are kept as a regression battery every later candidate must pass. Cost is judged by measured native steps, not by the symbolic run's step count, because the two are not proportional; the symbolic count only gives the asymptotic direction. Correctness gates, cost ranks. The stream case shows the two channels apart: removing a skip is not an equality at <code>Stream V</code>, it is an equality at the weak quotient and an improvement at the strong type, and the rewrite fires only inside contexts that belong to the arrow out of the weak type.</p>
+<p>Every verdict is stored as replayable data: which symbol, which cases, which recursive calls were licensed, and for a refutation the concrete pair. Replay never searches; it re-runs the named steps and checks the licences. Refuted witnesses are kept as a regression battery every later candidate must pass. Cost is judged by measured native steps, not by the symbolic run's step count, because the two are not proportional; the symbolic count only gives the asymptotic direction. Correctness gates, cost ranks. The stream case shows the two channels apart: removing a skip is not an equality at <code>Items V</code>, it is an equality at the weak quotient and an improvement at the strong type, and the rewrite fires only inside contexts that belong to the arrow out of the weak type.</p>
 <h2>11. What stays Open on purpose, and how to read an Open</h2>
 <p>Membership at <code>Nat -&gt; Nat</code> is undecidable, so some true claims stay Open forever. The design does not hide this; it names the budget or the rule that stopped the run.</p>
 <table>

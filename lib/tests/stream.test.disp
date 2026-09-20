@@ -1,4 +1,3 @@
-// The stream laws. lib/stream.disp is only ever raw-opened, so its tests run here.
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
 open use raw "../machine.disp" {}
@@ -6,51 +5,72 @@ open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
 open use raw "fixtures.disp" {}
 
-test nats.bounded(10).s_take(3).s_items = [0, 1, 2]
-test nats.bounded(1).s_take(5).s_items = [0]
-took2 := nats.bounded(10).s_take(2)
-test took2.s_rest.s_take(2).s_items = [2, 3]
-test nats.s_map(succ).bounded(10).s_take(3).s_items = [1, 2, 3]
-test nats.bounded(10).s_filter(is_fork).s_take(2).s_items = [1, 2]
-test nats.bounded(3).s_filter(is_zero).s_take(9).s_items.length = 1
-test nats.bounded(5).s_map(succ).s_all(is_fork) = true
-test nats.bounded(5).s_map(succ).s_all(is_zero) = false
-test (s_from_list [true, false]).bounded(9).s_take(9).s_items = [true, false]
-test (task succ 2 8).bounded(10).s_take(2).s_items = [3]
-test (task (fix ({self, v} => self v)) 1 8).bounded(6).s_take(1).s_items = []
+spin := fix ({self, v} => self v)
+naturals := nats.as_items
 
-// ---------------------------------------------------------------- endings
-// the ending of a bounded stream: drain it, then step the rest once more
-ending := {stream} => stream.s_take(100).s_rest.s_step
-test done.is_done = true
-test spent.is_done = true
-test (yield 1 2).is_done = false
-test (skip 2).is_done = false
-test done.is_exhausted = true
+test (c_out nats).emitted = 0
+test (c_out (c_out nats).emit_next).emitted = 1
+test (c_out (c_bounded nats 0)).is_finished = true
+emitted_list := {recurse, step} => if (step.is_finished) { [] } else { cons step.running_next.emitted (recurse step.running_next.emit_next) }
+test c_fold emitted_list (c_bounded nats 3) = [0, 1, 2]
+
+test (finished exhausted).is_finished = true
+test (running (skip 2)).is_finished = false
+test (yield 1 2).is_yield = true
+test (yield 1 2).yielded_item = 1
+test (yield 1 2).draw_next = 2
+test (skip 2).is_yield = false
+test (skip 2).draw_next = 2
+test exhausted.is_exhausted = true
 test spent.is_spent = true
-test done.is_spent = false
-// a finite source under a budget it fits in ends exhausted; nats end spent
-test (s_from_list [1, 2]).bounded(9).ending.is_exhausted = true
-test nats.bounded(5).ending.is_spent = true
-// fuel exactly the length: the last draw leaves zero fuel, and zero fuel is
-// spent without asking the inner (the conservative reading, on purpose)
-test (s_from_list [1, 2]).bounded(2).ending.is_spent = true
-test (s_from_list [1, 2]).bounded(3).ending.is_exhausted = true
-// every combinator passes either ending through
-test (s_from_list [1, 2]).bounded(9).s_map(succ).ending.is_exhausted = true
-test nats.bounded(5).s_map(succ).ending.is_spent = true
-test (s_from_list [1, 2]).bounded(9).s_filter(is_zero).ending.is_exhausted = true
-test nats.bounded(5).s_filter(is_zero).ending.is_spent = true
-test nats.bounded(5).s_take(2).s_rest.s_take(9).s_rest.s_step.is_spent = true
-test (s_from_list [1, 2]).bounded(9).s_take(1).s_rest.s_take(9).s_rest.s_step.is_exhausted = true
-// a task that answered is exhausted; one that never answers is spent under its budget
-test (task succ 2 8).bounded(10).ending.is_exhausted = true
-test (task (fix ({self, v} => self v)) 1 8).bounded(6).ending.is_spent = true
-// s_all stays two-valued: its true on a spent stream is evidence, not proof
-test nats.bounded(3).s_all(NatR) = true
+test exhausted.is_spent = false
+
+test naturals.bounded(10).s_take(3).s_items = [0, 1, 2]
+test naturals.bounded(1).s_take(5).s_items = [0]
+took2 := naturals.bounded(10).s_take(2)
+test took2.s_rest.s_take(2).s_items = [2, 3]
+test naturals.s_map(succ).bounded(10).s_take(3).s_items = [1, 2, 3]
+test naturals.bounded(10).s_filter(is_fork).s_take(2).s_items = [1, 2]
+test naturals.bounded(3).s_filter(is_zero).s_take(9).s_items.length = 1
+test naturals.bounded(5).s_map(succ).s_all(is_fork) = true
+test naturals.bounded(5).s_map(succ).s_all(is_zero) = false
+test (s_from_list [true, false]).bounded(9).s_take(9).s_items = [true, false]
+
+test (s_from_list [1, 2]).bounded(9).s_ending = exhausted
+test naturals.bounded(5).s_ending = spent
+test (s_from_list [1, 2]).bounded(2).s_ending = spent
+test (s_from_list [1, 2]).bounded(3).s_ending = exhausted
+test (s_from_list [1, 2]).bounded(9).s_map(succ).s_ending = exhausted
+test naturals.bounded(5).s_map(succ).s_ending = spent
+test (s_from_list [1, 2]).bounded(9).s_filter(is_zero).s_ending = exhausted
+test naturals.bounded(5).s_filter(is_zero).s_ending = spent
+test naturals.bounded(5).s_take(2).s_rest.s_take(9).s_rest.s_ending = spent
+test (s_from_list [1, 2]).bounded(9).s_take(1).s_rest.s_take(9).s_rest.s_ending = exhausted
+test naturals.bounded(3).s_all(NatR) = true
 test (s_from_list [1, 2]).bounded(9).s_all(NatR) = true
 
-// ---------------------------------------------------------------- the fair merge
+answer_within := {job, fuel} => c_fold ({recurse, step} =>
+	if (step.is_finished) { spent }
+	else if (step.running_next.is_finished) { step.running_next.finished_result }
+	else { recurse step.running_next.running_next }
+) (c_bounded job fuel)
+test answer_within (task succ 2 8) 10 = 3
+test answer_within (task spin 1 8) 6 = spent
+test answer_within (task_then (task succ 2 8) ({a} => task succ a 8)) 10 = 4
+test answer_within (task_then (task_return 5) ({a} => task_return (pair a a))) 1 = pair 5 5
+eff_bind := task_then
+test answer_within ({ a <- task succ 2 8; b <- task succ a 8; task_return (pair a b) }) 20 = pair 3 4
+test (task succ 2 8).answers.bounded(10).s_take(2).s_items = [3]
+test (task spin 1 8).answers.bounded(6).s_take(1).s_items = []
+test (task succ 2 8).answers.bounded(10).s_ending = exhausted
+test (task spin 1 8).answers.bounded(6).s_ending = spent
+
+test (stopping_list [1, 2]).settle.s_take(9).s_items = [1, 2]
+test (stopping_list [1, 2]).settle.s_ending = exhausted
+test (stopping (s_from_list [1, 2]) 1).settle.s_ending = spent
+test verdict ((stopping_list [1, 2]).settle.s_filter({_n} => false)) = "Proved"
+test verdict ((stopping (s_from_list [1, 2]) 1).settle.s_filter({_n} => false)) = "Open"
+
 three := s_from_list [s_from_list [1, 2], s_from_list [3], s_from_list [4, 5]]
 merged_rr := (s_merge_with three advance_head).bounded(40).s_take(9).s_items
 merged_all := (s_merge_with three advance_all).bounded(40).s_take(9).s_items
@@ -58,24 +78,19 @@ test merged_rr.length = 5
 test merged_all.length = 5
 test [1, 2, 3, 4, 5].all({n} => merged_rr.member(n)) = true
 test [1, 2, 3, 4, 5].all({n} => merged_all.member(n)) = true
-// exhausted source, exhausted inners: the merge is the one stream-born Proved
-test (s_merge_with three advance_head).bounded(40).ending.is_exhausted = true
-test (s_merge_with three advance_all).bounded(40).ending.is_exhausted = true
-// one spent inner taints the whole merge, under either policy
-one_spent := s_from_list [s_from_list [1], nats.bounded(2)]
-test (s_merge_with one_spent advance_head).bounded(40).ending.is_spent = true
-test (s_merge_with one_spent advance_all).bounded(40).ending.is_spent = true
+test (s_merge_with three advance_head).bounded(40).s_ending = exhausted
+test (s_merge_with three advance_all).bounded(40).s_ending = exhausted
+one_spent := s_from_list [s_from_list [1], naturals.bounded(2)]
+test (s_merge_with one_spent advance_head).bounded(40).s_ending = spent
+test (s_merge_with one_spent advance_all).bounded(40).s_ending = spent
 test (s_merge_with one_spent advance_head).bounded(40).s_take(9).s_items.length = 3
-// a spent source taints it too, even when every inner ran out
-test (s_merge_with (three.bounded(2)) advance_head).bounded(40).ending.is_spent = true
+test (s_merge_with (three.bounded(2)) advance_head).bounded(40).s_ending = spent
 test (s_merge_with (three.bounded(2)) advance_head).bounded(40).s_take(9).s_items = [1, 2, 3]
-// the merge's own budget running out is spent as well
-test (s_merge_with three advance_head).bounded(3).ending.is_spent = true
+test (s_merge_with three advance_head).bounded(3).s_ending = spent
 
-// ---------------------------------------------------------------- verdicts
 test verdict ((s_from_list [7]).bounded(9)) = refuted 7
 test verdict ((s_from_list []).bounded(9)) = "Proved"
-test verdict (nats.s_filter({_n} => false).bounded(9)) = "Open"
+test verdict (naturals.s_filter({_n} => false).bounded(9)) = "Open"
 test verdict ((s_merge_with one_spent advance_head).s_filter({_n} => false).bounded(40)) = "Open"
 test verdict ((s_merge_with three advance_head).s_filter({_n} => false).bounded(40)) = "Proved"
 test agrees "Proved" true = true

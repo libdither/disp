@@ -43,8 +43,8 @@ test respects_nf is_even_step parity Bool = "Proved"
 test respects_nf id_step parity NatR = refuted (pair 0 2)
 
 // section 7: streams
-test stream_eq NatR same_states nats nats_add = "Proved"
-test stream_eq NatR same_states nats by_two = refuted (pair [known 0, known 1, known 2, known 3] [known 0, known 2, known 4, known 6])
+test stream_eq NatR same_states naturals nats_add = "Proved"
+test stream_eq NatR same_states naturals by_two = refuted (pair [known 0, known 1, known 2, known 3] [known 0, known 2, known 4, known 6])
 
 // section 8: the code type
 test check_arrow TreeR Bool is_leaf = "Proved"
