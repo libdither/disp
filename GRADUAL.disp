@@ -222,12 +222,11 @@ test verdict ((witnesses NatR nat_cod succ advance_head 64).bounded(50)) = "Open
 // for lib/stream.disp's c_fold, which hands the algebra each step together with
 // a `recurse` it may skip calling: skipping it is the early exit.
 s_fold_absorb :: {stream : Bounded (Items V), times : P -> P -> P, one : P, unknown : P, zero : P, measure : V -> P} -> P :=> c_fold ({recurse, step} => {
-	let draw := step.running_next
 	if (step.is_finished) { if (step.finished_result.is_spent) { unknown } else { one } }
-	else if (not draw.is_yield) { recurse draw.draw_next }
+	else if (not step.step_draw.is_yield) { recurse step.step_rest }
 	else {
-		let here := measure draw.yielded_item
-		if (here == zero) { zero } else { times here (recurse draw.draw_next) }
+		let here := measure step.step_draw.yielded_item
+		if (here == zero) { zero } else { times here (recurse step.step_rest) }
 	}
 }) stream
 // Q: with times = and, one = true, unknown = true, zero = false, which library function is this?

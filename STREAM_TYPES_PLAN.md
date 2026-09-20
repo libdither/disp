@@ -58,17 +58,29 @@ done: the confirmer's `agrees` lines and sweeps still compare against `Arrow`'s 
 switching them to `verdict` of a witness stream needs `witnesses_over` in the library,
 which is Part 2's `pi_claim`, so that move belongs to step 3.
 
-The coalgebra rework (2026-09-18): a stream is `Coalgebra F`, a step-shape map, a
+The coalgebra rework (2026-09-19): a stream is `Coalgebra F`, a step-shape map, a
 stepper and a state (`c_new`), observed one layer at a time by `c_out` and consumed by
-`c_fold`, whose algebra gets a `recurse` it may skip calling (the early exit). Three
-named instances: `Stream T` (shape `Emit`, infinite: `nats`, IDEAS' `Trees`), `Task R`
-(shape `Step R`, `finished r | running next`: `task`, sequenced by `task_then`), and
-`Items V` (shape `Step Ending (Draw V)`: a step finishes with `exhausted` or `spent`, or
-runs on with `yield item next` or `skip next`). `as_items` lifts a `Stream` and `answers`
-a `Task`; `c_bounded` adds a budget to any shape and `bounded` is it plus reading the
-budget's halt as `spent`; `s_map`/`s_filter` are per-layer maps (`c_hoist`), so they
-cannot touch an ending. `stopping` pairs item streams with a claimed step bound that
-`settle` spends as fuel: a lying bound finishes spent (Open), never a false Proved.
+`c_fold`, whose algebra gets a `recurse` it may skip calling (the early exit). Two step
+shapes: `Emit T` (an item and a successor) and `Step R` (`finished result | running
+next`), and three named instances over them: `Stream T` (infinite: `nats`, IDEAS'
+`Trees`), `Task R` (a run that finishes with an answer, sequenced by `task_then`) and
+`Items V` (`Step Ending (Emit (Option V))`: a step finishes with `exhausted` or `spent`,
+or runs on carrying `yield item` or `skip`). `as_items` lifts a `Stream` and `answers` a
+`Task`.
+
+Stopping is a combinator, not a shape. `c_until` reads a rule on the state before
+stepping and `c_after` reads one on the step just taken; every ending in the library
+comes from one of the two (`s_from_list` at nil, `c_bounded` at zero fuel, `task` when
+the machine finishes, `answers` after its yield, the merge off a latch in its state), so
+no stepper can mint an ending of its own. `bounded` is `c_bounded` plus reading the
+budget's halt as `spent`; `s_map`/`s_filter` are per-layer maps (`c_hoist`), which leave
+states alone and so cannot touch an ending.
+
+Items do NOT promise to stop: the type says only that IF a stream finishes, it finishes
+with an ending. A stopping claim is a `measure` on states that should drop each draw:
+`stopping` carries one, `stopping_fuel` turns it into a budget and `settle` spends it, so
+a wrong measure finishes spent (Open), never a false Proved. Because `c_hoist` never
+changes a state, `stopping_map`/`stopping_filter` carry the same measure for free.
 ## Part 2: spaces, and the telescope as the one stream former
 
 ### Today

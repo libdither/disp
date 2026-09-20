@@ -33,11 +33,10 @@ open_after :: {probes : Nat} -> Verdict :=> open_on probes
 // related pair is a concrete witness. The ending says the rest: an exhausted
 // stream was the domain's own generator (Proved), a spent one was a budget (Open).
 refute :: {pairs : Bounded (Items (Pair Tree Tree)), cod_rel : Tree -> Tree -> Bool, fn : Tree, probes : Nat} -> Verdict :=> c_fold ({recurse, step, checked} => {
-	let draw := step.running_next
-	let p := draw.yielded_item
+	let p := step.step_draw.yielded_item
 	if (step.is_finished) { if (step.finished_result.is_spent) { open_after checked } else { "Proved" } }
-	else if (not draw.is_yield) { recurse draw.draw_next checked }
-	else if (cod_rel (fn p.fst) (fn p.snd)) { recurse draw.draw_next (succ checked) }
+	else if (not step.step_draw.is_yield) { recurse step.step_rest checked }
+	else if (cod_rel (fn p.fst) (fn p.snd)) { recurse step.step_rest (succ checked) }
 	else { refuted p }
 }) pairs probes
 refute_arrow :: {dom : Tree -> Bool, cod_rel : Tree -> Tree -> Bool, fuel : Nat, fn : Tree} -> Verdict :=>

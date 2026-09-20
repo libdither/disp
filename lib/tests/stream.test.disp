@@ -15,12 +15,12 @@ emitted_list := {recurse, step} => if (step.is_finished) { [] } else { cons step
 test c_fold emitted_list (c_bounded nats 3) = [0, 1, 2]
 
 test (finished exhausted).is_finished = true
-test (running (skip 2)).is_finished = false
-test (yield 1 2).is_yield = true
-test (yield 1 2).yielded_item = 1
-test (yield 1 2).draw_next = 2
-test (skip 2).is_yield = false
-test (skip 2).draw_next = 2
+test (running (emit skip 2)).is_finished = false
+test (yield 1).is_yield = true
+test (yield 1).yielded_item = 1
+test skip.is_yield = false
+test (running (emit (yield 1) 2)).step_draw.yielded_item = 1
+test (running (emit skip 2)).step_rest = 2
 test exhausted.is_exhausted = true
 test spent.is_spent = true
 test exhausted.is_spent = false
@@ -67,9 +67,13 @@ test (task spin 1 8).answers.bounded(6).s_ending = spent
 
 test (stopping_list [1, 2]).settle.s_take(9).s_items = [1, 2]
 test (stopping_list [1, 2]).settle.s_ending = exhausted
-test (stopping (s_from_list [1, 2]) 1).settle.s_ending = spent
+test (stopping_list [1, 2]).stopping_fuel = 3
+test (stopping_list [1, 2]).stopping_map(succ).settle.s_take(9).s_items = [2, 3]
+test (stopping_list [1, 2]).stopping_map(succ).settle.s_ending = exhausted
+test (stopping_list [1, 2, 3]).stopping_filter(is_zero).settle.s_ending = exhausted
+test (stopping (s_from_list [1, 2]) ({_rest} => zero)).settle.s_ending = spent
 test verdict ((stopping_list [1, 2]).settle.s_filter({_n} => false)) = "Proved"
-test verdict ((stopping (s_from_list [1, 2]) 1).settle.s_filter({_n} => false)) = "Open"
+test verdict ((stopping (s_from_list [1, 2]) ({_rest} => zero)).settle.s_filter({_n} => false)) = "Open"
 
 three := s_from_list [s_from_list [1, 2], s_from_list [3], s_from_list [4, 5]]
 merged_rr := (s_merge_with three advance_head).bounded(40).s_take(9).s_items

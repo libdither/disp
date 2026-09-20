@@ -20,59 +20,79 @@ finished_result :: Step R X -> R := pair_snd
 running_next :: Step R X -> X := pair_snd
 halt_map :: {transform : X -> Y, step : Step R X} -> Step R Y :=>
 	if (step.is_finished) { step } else { running (transform step.running_next) }
+keep_going :: Step R Unit := running t
+c_until :: {c : Coalgebra F, rule : St -> Step R Unit} -> Coalgebra ({X} => Step R (F X)) :=>
+	c_new ({transform} => halt_map (c.c_fmap transform)) ({state} => {
+		let ruling := rule state
+		if (ruling.is_finished) { ruling } else { running (c.c_stepper state) }
+	}) c.c_state
+c_after :: {c : Coalgebra F, rule : F St -> Step R Unit} -> Coalgebra ({X} => Step R (F X)) :=>
+	c_new ({transform} => halt_map (c.c_fmap transform)) ({state} => {
+		let stepped := c.c_stepper state
+		let ruling := rule stepped
+		if (ruling.is_finished) { ruling } else { running stepped }
+	}) c.c_state
 
 emit :: {item : T, next : X} -> Emit T X :=> pair item next
 emitted :: Emit T X -> T := pair_fst
 emit_next :: Emit T X -> X := pair_snd
 emit_map :: {transform : X -> Y, emission : Emit T X} -> Emit T Y :=> emit emission.emitted (transform emission.emit_next)
+emit_item_map :: {transform : T -> U, emission : Emit T X} -> Emit U X :=> emit (transform emission.emitted) emission.emit_next
 
-yield :: {item : V, next : X} -> Draw V X :=> pair "Yield" (pair item next)
-skip :: {next : X} -> Draw V X :=> pair "Skip" next
-is_yield :: Draw V X -> Bool := {draw} => draw.fst == "Yield"
-yielded_item :: Draw V X -> V := {draw} => draw.snd.fst
-draw_next :: Draw V X -> X := {draw} => if (draw.is_yield) { draw.snd.snd } else { draw.snd }
-draw_map :: {transform : X -> Y, draw : Draw V X} -> Draw V Y :=>
-	if (draw.is_yield) { yield draw.yielded_item (transform draw.draw_next) } else { skip (transform draw.draw_next) }
-draw_item_map :: {transform : V -> W, draw : Draw V X} -> Draw W X :=>
-	if (draw.is_yield) { yield (transform draw.yielded_item) draw.draw_next } else { draw }
-draw_filter :: {keep : V -> Bool, draw : Draw V X} -> Draw V X :=>
-	if ((draw.is_yield) && (not (keep draw.yielded_item))) { skip draw.draw_next } else { draw }
+yield :: {item : V} -> Option V :=> pair "Yield" item
+skip :: Option V := pair "Skip" t
+is_yield :: Option V -> Bool := {option} => option.fst == "Yield"
+yielded_item :: Option V -> V := pair_snd
+option_map :: {transform : V -> W, option : Option V} -> Option W :=>
+	if (option.is_yield) { yield (transform option.yielded_item) } else { option }
+option_filter :: {keep : V -> Bool, option : Option V} -> Option V :=>
+	if ((option.is_yield) && (not (keep option.yielded_item))) { skip } else { option }
 
 exhausted :: Ending := "Exhausted"
 spent :: Ending := "Spent"
 is_exhausted :: Ending -> Bool := {ending} => ending == exhausted
 is_spent :: Ending -> Bool := {ending} => ending == spent
-item_map :: {transform : X -> Y} -> Step Ending (Draw V X) -> Step Ending (Draw V Y) :=> halt_map (draw_map transform)
+item_map :: {transform : X -> Y} -> Step Ending (Emit (Option V) X) -> Step Ending (Emit (Option V) Y) :=> halt_map (emit_map transform)
+step_draw :: Step Ending (Emit (Option V) X) -> Option V := {step} => step.running_next.emitted
+step_rest :: Step Ending (Emit (Option V) X) -> X := {step} => step.running_next.emit_next
 
 stream_new :: {stepper : St -> Emit T St, state : St} -> Stream T :=> c_new emit_map stepper state
 task_new :: {stepper : St -> Step R St, state : St} -> Task R :=> c_new halt_map stepper state
-s_new :: {stepper : St -> Step Ending (Draw V St), state : St} -> Items V :=> c_new item_map stepper state
+s_new :: {stepper : St -> Step Ending (Emit (Option V) St), state : St} -> Items V :=> c_new item_map stepper state
 
 nats :: Stream Nat := stream_new ({n} => emit n (succ n)) zero
 as_items :: {stream : Stream V} -> Items V :=>
-	c_hoist item_map ({emission} => running (yield emission.emitted emission.emit_next)) stream
+	c_hoist item_map ({emission} => running (emit (yield emission.emitted) emission.emit_next)) stream
 s_from_list :: {values : List V} -> Items V :=>
-	s_new ({rest} => if (rest.is_nil) { finished exhausted } else { running (yield rest.head rest.tail) }) values
+	c_until (stream_new ({rest} => emit (yield rest.head) rest.tail) values)
+		({rest} => if (rest.is_nil) { finished exhausted } else { keep_going })
 
-s_map :: {items : Items V, transform : V -> W} -> Items W :=> c_hoist item_map (halt_map (draw_item_map transform)) items
-s_filter :: {items : Items V, keep : V -> Bool} -> Items V :=> c_hoist item_map (halt_map (draw_filter keep)) items
+s_map :: {items : Items V, transform : V -> W} -> Items W :=>
+	c_hoist item_map (halt_map (emit_item_map (option_map transform))) items
+s_filter :: {items : Items V, keep : V -> Bool} -> Items V :=>
+	c_hoist item_map (halt_map (emit_item_map (option_filter keep))) items
 
 budget :: {fuel : Nat, state : St} -> Budget St :=> pair fuel state
 budget_fuel :: Budget St -> Nat := pair_fst
 budget_state :: Budget St -> St := pair_snd
-c_bounded :: {c : Coalgebra F, fuel : Nat} -> Coalgebra ({X} => Step Unit (F X)) :=> c_new ({transform} => halt_map (c.c_fmap transform)) ({remaining} => {
-	if (is_zero remaining.budget_fuel) { finished t }
-	else { running (c.c_fmap (budget (nat_pred remaining.budget_fuel)) (c.c_stepper remaining.budget_state)) }
-}) (budget fuel c.c_state)
-budget_ending :: Step Unit (Step Ending (Draw V X)) -> Step Ending (Draw V X) :=
+c_budgeted :: {c : Coalgebra F, fuel : Nat} -> Coalgebra F :=>
+	c_new c.c_fmap ({remaining} => c.c_fmap (budget (nat_pred remaining.budget_fuel)) (c.c_stepper remaining.budget_state)) (budget fuel c.c_state)
+out_of_fuel :: Budget St -> Step Unit Unit := {remaining} => if (is_zero remaining.budget_fuel) { finished t } else { keep_going }
+c_bounded :: {c : Coalgebra F, fuel : Nat} -> Coalgebra ({X} => Step Unit (F X)) :=> c_until (c_budgeted c fuel) out_of_fuel
+budget_ending :: Step Unit (Step Ending (Emit (Option V) X)) -> Step Ending (Emit (Option V) X) :=
 	{step} => if (step.is_finished) { finished spent } else { step.running_next }
 bounded :: {items : Items V, fuel : Nat} -> Bounded (Items V) :=> c_hoist item_map budget_ending (c_bounded items fuel)
 
-stopping :: {items : Items V, bound : Nat} -> Stopping V :=> pair bound items
-stopping_bound :: Stopping V -> Nat := pair_fst
+stopping :: {items : Items V, measure : St -> Nat} -> Stopping V :=> pair measure items
+stopping_measure :: Stopping V -> St -> Nat := pair_fst
 stopping_items :: Stopping V -> Items V := pair_snd
-stopping_list :: {values : List V} -> Stopping V :=> stopping (s_from_list values) (succ values.length)
-settle :: {claim : Stopping V} -> Bounded (Items V) :=> claim.stopping_items.bounded(claim.stopping_bound)
+stopping_fuel :: Stopping V -> Nat := {claim} => succ (claim.stopping_measure claim.stopping_items.c_state)
+settle :: {claim : Stopping V} -> Bounded (Items V) :=> claim.stopping_items.bounded(claim.stopping_fuel)
+stopping_map :: {claim : Stopping V, transform : V -> W} -> Stopping W :=>
+	stopping (claim.stopping_items.s_map(transform)) claim.stopping_measure
+stopping_filter :: {claim : Stopping V, keep : V -> Bool} -> Stopping V :=>
+	stopping (claim.stopping_items.s_filter(keep)) claim.stopping_measure
+stopping_list :: {values : List V} -> Stopping V :=> stopping (s_from_list values) length
 
 taken :: {items : List V, rest : Items V} -> Taken V :=> pair items rest
 s_items :: Taken V -> List V := pair_fst
@@ -81,36 +101,33 @@ rec s_take :: {items : Bounded (Items V), count : Nat} -> Taken V :=>
 	if (is_zero count) { taken [] items }
 	else {
 		let step := c_out items
-		let draw := step.running_next
 		if (step.is_finished) { taken [] items }
-		else if (draw.is_yield) {
-			let more := s_take draw.draw_next (nat_pred count)
-			taken (cons draw.yielded_item more.s_items) more.s_rest
+		else if (step.step_draw.is_yield) {
+			let more := s_take step.step_rest (nat_pred count)
+			taken (cons step.step_draw.yielded_item more.s_items) more.s_rest
 		}
-		else { s_take draw.draw_next count }
+		else { s_take step.step_rest count }
 	}
-s_all :: {items : Bounded (Items V), holds : V -> Bool} -> Bool :=> c_fold ({recurse, step} => {
-	let draw := step.running_next
+s_all :: {items : Bounded (Items V), holds : V -> Bool} -> Bool :=> c_fold ({recurse, step} =>
 	if (step.is_finished) { true }
-	else if (draw.is_yield) { (holds draw.yielded_item) && (recurse draw.draw_next) }
-	else { recurse draw.draw_next }
-}) items
+	else if (step.step_draw.is_yield) { (holds step.step_draw.yielded_item) && (recurse step.step_rest) }
+	else { recurse step.step_rest }
+) items
 s_ending :: {items : Bounded (Items V)} -> Ending :=> c_fold ({recurse, step} =>
-	if (step.is_finished) { step.finished_result } else { recurse step.running_next.draw_next }
+	if (step.is_finished) { step.finished_result } else { recurse step.step_rest }
 ) items
 
-task :: {f : Tree, x : Tree, quantum : Nat} -> Task Tree :=> task_new ({machine} => {
-	let advanced := m_advance machine quantum
-	if (m_finished advanced) { finished (m_result advanced) } else { running advanced }
-}) (m_start f x)
-answers :: {task : Task R} -> Items R :=> s_new ({pending} => {
-	if (pending.is_finished) { finished exhausted }
-	else {
-		let step := c_out pending.running_next
-		if (step.is_finished) { running (yield step.finished_result (finished t)) }
-		else { running (skip (running step.running_next)) }
-	}
-}) (running task)
+m_trace :: {machine : Machine, quantum : Nat} -> Stream Machine :=> stream_new ({paused} => {
+	let advanced := m_advance paused quantum
+	emit advanced advanced
+}) machine
+task :: {f : Tree, x : Tree, quantum : Nat} -> Task Tree :=> c_hoist halt_map (halt_map emit_next)
+	(c_after (m_trace (m_start f x) quantum) ({emission} => if (m_finished emission.emitted) { finished (m_result emission.emitted) } else { keep_going }))
+answers :: {task : Task R} -> Items R :=> c_until (stream_new ({pending} => {
+	let step := c_out pending.running_next
+	if (step.is_finished) { emit (yield step.finished_result) (finished t) }
+	else { emit skip (running step.running_next) }
+}) (running task)) ({pending} => if (pending.is_finished) { finished exhausted } else { keep_going })
 task_return :: {result : R} -> Task R :=> task_new finished result
 first_phase :: {task : Task R} -> Phase R S :=> pair "First" task
 second_phase :: {task : Task S} -> Phase R S :=> pair "Second" task
@@ -131,9 +148,8 @@ advance_head :: {live : List (Items V)} -> Round V :=> {
 	let step := c_out live.head
 	if (step.is_finished) { round [] live.tail step.finished_result.is_spent }
 	else {
-		let draw := step.running_next
-		let requeued := live.tail.append([draw.draw_next])
-		if (draw.is_yield) { round [draw.yielded_item] requeued false } else { round [] requeued false }
+		let requeued := live.tail.append([step.step_rest])
+		if (step.step_draw.is_yield) { round [step.step_draw.yielded_item] requeued false } else { round [] requeued false }
 	}
 }
 rec advance_all :: {live : List (Items V)} -> Round V :=>
@@ -144,35 +160,34 @@ rec advance_all :: {live : List (Items V)} -> Round V :=>
 		round (one.round_found.append(others.round_found)) (one.round_survivors.append(others.round_survivors)) (one.round_dropped_spent || others.round_dropped_spent)
 	}
 
-merge_state :: {source : Items (Items V), live : List (Items V), buffer : List V, tainted : Bool} -> MergeState V :=>
-	pair source (pair live (pair buffer tainted))
+merge_state :: {source : Items (Items V), live : List (Items V), buffer : List V, tainted : Bool, ending : Step Ending Unit} -> MergeState V :=>
+	pair source (pair live (pair buffer (pair tainted ending)))
 merge_source :: MergeState V -> Items (Items V) := pair_fst
 merge_live :: MergeState V -> List (Items V) := {st} => st.snd.fst
 merge_buffer :: MergeState V -> List V := {st} => st.snd.snd.fst
-merge_tainted :: MergeState V -> Bool := {st} => st.snd.snd.snd
-s_merge_with :: {source : Items (Items V), policy : List (Items V) -> Round V} -> Items V :=> s_new ({st} => {
+merge_tainted :: MergeState V -> Bool := {st} => st.snd.snd.snd.fst
+merge_ending :: MergeState V -> Step Ending Unit := {st} => st.snd.snd.snd.snd
+s_merge_with :: {source : Items (Items V), policy : List (Items V) -> Round V} -> Items V :=> c_until (stream_new ({st} => {
 	let buffer := st.merge_buffer
-	if (not buffer.is_nil) { running (yield buffer.head (merge_state st.merge_source st.merge_live buffer.tail st.merge_tainted)) }
+	if (not buffer.is_nil) { emit (yield buffer.head) (merge_state st.merge_source st.merge_live buffer.tail st.merge_tainted keep_going) }
 	else {
 		let pulled := c_out st.merge_source
-		let draw := pulled.running_next
-		let source_after := if (pulled.is_finished) { st.merge_source } else { draw.draw_next }
+		let source_after := if (pulled.is_finished) { st.merge_source } else { pulled.step_rest }
 		let live_after := if (pulled.is_finished) { st.merge_live }
-			else if (draw.is_yield) { st.merge_live.append([draw.yielded_item]) }
+			else if (pulled.step_draw.is_yield) { st.merge_live.append([pulled.step_draw.yielded_item]) }
 			else { st.merge_live }
 		if (not live_after.is_nil) {
 			let played := policy live_after
-			running (skip (merge_state source_after played.round_survivors played.round_found (st.merge_tainted || played.round_dropped_spent)))
+			emit skip (merge_state source_after played.round_survivors played.round_found (st.merge_tainted || played.round_dropped_spent) keep_going)
 		}
-		else if (not pulled.is_finished) { running (skip (merge_state source_after [] [] st.merge_tainted)) }
-		else if (st.merge_tainted || pulled.finished_result.is_spent) { finished spent }
-		else { finished exhausted }
+		else if (not pulled.is_finished) { emit skip (merge_state source_after [] [] st.merge_tainted keep_going) }
+		else if (st.merge_tainted || pulled.finished_result.is_spent) { emit skip (merge_state source_after [] [] true (finished spent)) }
+		else { emit skip (merge_state source_after [] [] false (finished exhausted)) }
 	}
-}) (merge_state source [] [] false)
+}) (merge_state source [] [] false keep_going)) merge_ending
 
-verdict :: {witnesses : Bounded (Items Tree)} -> Verdict :=> c_fold ({recurse, step} => {
-	let draw := step.running_next
+verdict :: {witnesses : Bounded (Items Tree)} -> Verdict :=> c_fold ({recurse, step} =>
 	if (step.is_finished) { if (step.finished_result.is_spent) { "Open" } else { "Proved" } }
-	else if (draw.is_yield) { refuted draw.yielded_item }
-	else { recurse draw.draw_next }
-}) witnesses
+	else if (step.step_draw.is_yield) { refuted step.step_draw.yielded_item }
+	else { recurse step.step_rest }
+) witnesses

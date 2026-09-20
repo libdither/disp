@@ -522,8 +522,8 @@ check_by_induction2 :: {B : Code, Cod : Code, step_fn : Tree} -> Verdict :=>
 
 // ---------------------------------------------------------------- (B) streams
 // An item stream is a coalgebra (lib/stream.disp) whose stepper answers
-// finished ending | running (yield item next) | running (skip next), each layer
-// a string tag in front of its payload. Bisimulation up to a user-supplied relation between
+// finished ending | running (emit drawn next), where drawn is `yield item` or
+// `skip`. Bisimulation up to a user-supplied relation between
 // the two state spaces, given as a PATTERN pair over one variable:
 // R = { (l x, r x) } for rel := {x} => pair (l x) (r x); equal states is
 // same_states. Strong: a skip is a step and must meet a skip. The coinductive
@@ -536,12 +536,11 @@ related :: {rel : Val -> Pair Val Val, a : Val, b : Val} -> Res :=> {
 }
 same_states := {x} => pair x x
 
-v_step_draw :: Val -> Val := v_snd
+v_step_emission :: Val -> Val := v_snd
 v_step_ending :: Val -> Val := v_snd
-v_yield_item :: Val -> Val := {st} => v_fst (v_snd (v_step_draw st))
-v_yield_next :: Val -> Val := {st} => v_snd (v_snd (v_step_draw st))
-v_skip_next :: Val -> Val := {st} => v_snd (v_step_draw st)
-v_next_after :: {shape : Res, st : Val} -> Val :=> if (shape == "skip") { v_skip_next st } else { v_yield_next st }
+v_step_draw :: Val -> Val := {st} => v_fst (v_step_emission st)
+v_step_rest :: Val -> Val := {st} => v_snd (v_step_emission st)
+v_yield_item :: Val -> Val := {st} => v_snd (v_step_draw st)
 tag_of :: {v : Val} -> Res :=>
 	if (v.is_splittable) { need v }
 	else if (not (v_is_fork v)) { stuck }
@@ -562,8 +561,8 @@ bisim_step :: {rel : Val -> Pair Val Val, st1 : Val, st2 : Val} -> Res :=> {
 	else if (not (is_shape sh2)) { sh2 }
 	else if (not (sh1 == sh2)) { "NotBisim" }
 	else if (sh1 == "done") { if (v_step_ending st1 == v_step_ending st2) { "Yes" } else { "NotBisim" } }
-	else if (sh1 == "skip") { related rel (v_skip_next st1) (v_skip_next st2) }
-	else if (v_yield_item st1 == v_yield_item st2) { related rel (v_yield_next st1) (v_yield_next st2) }
+	else if (sh1 == "skip") { related rel (v_step_rest st1) (v_step_rest st2) }
+	else if (v_yield_item st1 == v_yield_item st2) { related rel (v_step_rest st1) (v_step_rest st2) }
 	else { "NotBisim" }
 }
 // the first `draws` observations of a stream from a ground state, every step
@@ -578,7 +577,7 @@ rec observe :: {stream : Tree, state : Val, draws : Nat} -> Res :=>
 			else if (sh == "done") { answered ["done"] }
 			else {
 				let seen := if (sh == "skip") { "skip" } else { v_yield_item step }
-				and_then (observe stream (v_next_after sh step) (nat_pred draws)) ({rest} => answered (cons seen rest))
+				and_then (observe stream (v_step_rest step) (nat_pred draws)) ({rest} => answered (cons seen rest))
 			}
 		})
 	}
@@ -697,16 +696,16 @@ test tree_sweep.all({p} => agrees p.fst p.snd) = true
 
 // ================================================================ (B) streams
 naturals := nats.as_items
-nats_add := s_new ({n} => running (yield n (add 1 n))) zero
-by_two := s_new ({n} => running (yield n (succ (succ n)))) zero
+nats_add := s_new ({n} => running (emit (yield n) (add 1 n))) zero
+by_two := s_new ({n} => running (emit (yield n) (succ (succ n)))) zero
 // skips: a step that yields nothing on zero, then counts
-skip0 := s_new ({n} => if (is_zero n) { running (skip (succ n)) } else { running (yield n (succ n)) }) zero
-skip0_add := s_new ({n} => if (is_zero n) { running (skip (add 1 n)) } else { running (yield n (add 1 n)) }) zero
+skip0 := s_new ({n} => if (is_zero n) { running (emit skip (succ n)) } else { running (emit (yield n) (succ n)) }) zero
+skip0_add := s_new ({n} => if (is_zero n) { running (emit skip (add 1 n)) } else { running (emit (yield n) (add 1 n)) }) zero
 // a different state space: the counter carried in a pair
-nats_pair := s_new ({p} => running (yield p.fst (pair (succ p.fst) t))) (pair zero t)
+nats_pair := s_new ({p} => running (emit (yield p.fst) (pair (succ p.fst) t))) (pair zero t)
 pair_states := {x} => pair x (half_fork x (known t))
 // the same items as nats, but a skip before each one (weakly equal, not strongly)
-slow := s_new ({p} => if (is_leaf p.fst) { running (skip (pair false p.snd)) } else { running (yield p.snd (pair t (succ p.snd))) }) (pair t zero)
+slow := s_new ({p} => if (is_leaf p.fst) { running (emit skip (pair false p.snd)) } else { running (emit (yield p.snd) (pair t (succ p.snd))) }) (pair t zero)
 
 test related same_states (known 3) (known 3) = "Yes"
 test related same_states (known 3) (known 4) = "Unrelated"
@@ -720,7 +719,7 @@ test stream_eq NatR same_states naturals skip0 = refuted (pair [known 0, known 1
 test stream_eq NatR pair_states naturals nats_pair = "Proved"
 test stream_eq NatR same_states naturals nats_pair = "Open"
 // a yield may not meet a skip (strong), even when the items would agree
-test bisim_step same_states (known (running (yield 0 1))) (known (running (skip 1))) = "NotBisim"
+test bisim_step same_states (known (running (emit (yield 0) 1))) (known (running (emit skip 1))) = "NotBisim"
 test bisim_step same_states (known (finished exhausted)) (known (finished spent)) = "NotBisim"
 test observe slow (known (pair t zero)) 4 = answered ["skip", known 0, "skip", known 1]
 test stream_eq NatR pair_states naturals slow = refuted (pair [known 0, known 1, known 2, known 3] ["skip", known 0, "skip", known 1])
