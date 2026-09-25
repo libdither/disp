@@ -6,882 +6,145 @@
 <title>Anna's Archive Tee</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kaushan+Script&family=Mochiy+Pop+One&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kaushan+Script&family=Nunito:wght@700;800;900&display=swap">
 <style>
 :root {
-  --bg: #fff4f9; --bg2: #eef2ff; --ink: #4a2350; --muted: #8d6b92;
-  --card: rgba(255,255,255,.62); --line: #f0d6e8; --accent: #ff6fa8;
+  --bg: #0f1422; --bg2: #1d2636; --ink: #eef4ff; --muted: #9fb0c8;
+  --card: rgba(255,255,255,.05); --line: rgba(160,215,255,.18); --accent: #0096ff;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #1c1626; --bg2: #141a2b; --ink: #f8e9f4; --muted: #bba7c6;
-    --card: rgba(42,33,56,.62); --line: #3c2f4c; --accent: #ff9ec7;
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #eef4ff; --bg2: #ffffff; --ink: #0d1b2e; --muted: #56667d;
+    --card: rgba(255,255,255,.7); --line: rgba(1,96,167,.18); --accent: #0160a7;
   }
 }
-:root[data-theme="dark"] {
-  --bg: #1c1626; --bg2: #141a2b; --ink: #f8e9f4; --muted: #bba7c6;
-  --card: rgba(42,33,56,.62); --line: #3c2f4c; --accent: #ff9ec7;
+:root[data-theme="light"] {
+  --bg: #eef4ff; --bg2: #ffffff; --ink: #0d1b2e; --muted: #56667d;
+  --card: rgba(255,255,255,.7); --line: rgba(1,96,167,.18); --accent: #0160a7;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
-  min-height: 100vh; color: var(--ink);
-  font-family: "Mochiy Pop One", ui-rounded, "Trebuchet MS", system-ui, sans-serif;
-  background:
-    radial-gradient(1100px 700px at 8% -10%, rgba(255,170,210,.35), transparent 60%),
-    radial-gradient(900px 600px at 105% 5%, rgba(160,200,255,.35), transparent 60%),
-    linear-gradient(160deg, var(--bg), var(--bg2));
+  min-height: 100vh; color: var(--ink); font-family: Nunito, ui-rounded, system-ui, sans-serif; font-weight: 700;
+  background: radial-gradient(1000px 600px at 20% -10%, rgba(0,150,255,.22), transparent 60%),
+              radial-gradient(800px 500px at 100% 10%, rgba(255,0,91,.14), transparent 60%),
+              linear-gradient(170deg, var(--bg), var(--bg2));
 }
 header { text-align: center; padding: 26px 16px 4px; }
 h1 { font-family: "Kaushan Script", cursive; font-weight: 400; font-size: clamp(34px, 6vw, 56px); margin: 0; color: var(--accent); }
-header p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
-main { display: grid; grid-template-columns: 1.08fr 1fr; gap: 20px; max-width: 1240px; margin: 0 auto; padding: 16px; }
-@media (max-width: 820px) { main { grid-template-columns: 1fr; } }
-figure { margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 12px; backdrop-filter: blur(6px); }
+header p { margin: 6px auto 0; color: var(--muted); font-size: 14px; max-width: 720px; }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1280px; margin: 0 auto; padding: 16px; }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+figure { margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 12px; }
 figcaption { font-size: 11px; color: var(--muted); text-align: center; margin-top: 8px; letter-spacing: .12em; text-transform: uppercase; }
 canvas { display: block; width: 100%; height: auto; }
-.checker { border-radius: 14px; background: conic-gradient(rgba(128,100,140,.08) 25%, transparent 0 50%, rgba(128,100,140,.08) 0 75%, transparent 0) 0 0 / 24px 24px; }
-.controls { max-width: 1240px; margin: 0 auto 40px; padding: 0 16px; display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: center; justify-content: center; }
+#art { border-radius: 12px; background: conic-gradient(rgba(128,140,170,.12) 25%, transparent 0 50%, rgba(128,140,170,.12) 0 75%, transparent 0) 0 0 / 24px 24px; }
+.controls { max-width: 1280px; margin: 0 auto 16px; padding: 0 16px; display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; justify-content: center; }
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.sw { width: 32px; height: 32px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line), 0 2px 6px rgba(0,0,0,.15); cursor: pointer; padding: 0; }
-.sw[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--accent), 0 2px 6px rgba(0,0,0,.15); }
-.btn { font: inherit; font-size: 13px; border: 0; border-radius: 999px; padding: 10px 18px; cursor: pointer; color: #fff; background: linear-gradient(135deg, #ff8fc0, #b99bff); box-shadow: 0 4px 14px rgba(255,111,168,.35); }
-.btn.alt { background: linear-gradient(135deg, #6fc6ff, #62dcb4); box-shadow: 0 4px 14px rgba(80,190,230,.35); }
-.btn:disabled { opacity: .6; cursor: progress; }
-.status { font-size: 12px; color: var(--muted); min-width: 110px; text-align: center; }
+.sw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line), 0 2px 6px rgba(0,0,0,.25); cursor: pointer; padding: 0; }
+.sw[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--accent), 0 2px 6px rgba(0,0,0,.25); }
+.btn { font: inherit; font-size: 13px; font-weight: 800; border: 0; border-radius: 999px; padding: 10px 18px; cursor: pointer; color: #fff; background: #0195ff; box-shadow: 0 4px 14px rgba(0,150,255,.35); }
+.btn.alt { background: #7f01ff; box-shadow: 0 4px 14px rgba(127,1,255,.3); }
+.btn.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line); }
+.btn:disabled { opacity: .55; cursor: progress; }
+.status { font-size: 12px; color: var(--muted); min-width: 220px; text-align: center; }
+.bar { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; margin-top: 8px; }
+.bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #0096ff, #7f01ff, #ff005b); transition: width .2s; }
+.notes { max-width: 880px; margin: 0 auto 48px; padding: 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.notes b { color: var(--ink); }
 </style>
 </head>
 <body>
 <header>
   <h1>Anna's Archive tee</h1>
-  <p>Painted live in your browser with plain JavaScript and canvas: no images, no libraries.</p>
+  <p>A canvas painting made only of brush strokes. Your browser paints it live from a hidden underdrawing, big brushes first, then finer ones where the detail is.</p>
 </header>
 <main>
-  <figure><canvas id="shirt" aria-label="T-shirt mockup with the Anna design printed on the chest"></canvas><figcaption>On the tee</figcaption></figure>
-  <figure><canvas id="art" class="checker" aria-label="Print artwork: pastel anime girl Anna holding a book, with the words Anna's Archive"></canvas><figcaption>Print file (transparent background)</figcaption></figure>
+  <figure><canvas id="shirt" aria-label="T-shirt mockup with the painting printed on the chest"></canvas><figcaption>On the tee</figcaption></figure>
+  <figure>
+    <canvas id="art" aria-label="Painting: Anna, with Anna's Archive blue hair, reads Fahrenheit 451 on a mountain of books under the glowing ISBN map, with Monero-chan and AI scraper bots"></canvas>
+    <div class="bar"><i id="bar"></i></div>
+    <figcaption id="caption">Print file (transparent background)</figcaption>
+  </figure>
 </main>
 <div class="controls">
   <div class="swatches" id="swatches" role="group" aria-label="Shirt colour"></div>
-  <button class="btn" id="repaint">Repaint brushwork</button>
+  <button class="btn" id="repaint">Repaint</button>
+  <button class="btn ghost" id="under" aria-pressed="false">Show underdrawing</button>
   <button class="btn alt" id="dlPrint">Download print PNG</button>
   <button class="btn alt" id="dlMock">Download mockup PNG</button>
-  <span class="status" id="status"></span>
+  <span class="status" id="status" role="status"></span>
 </div>
+<p class="notes">
+  <b>What's in it:</b> Anna reads <i>Fahrenheit 451</i>, the top pick on the "Recommended" shelf (and the book HTTP status 451, "Unavailable For Legal Reasons", is named after).
+  Behind her glows the map of every ISBN from Anna's Archive's ISBN visualization, with her book pinned at 978-1-4516-7331-9.
+  GPTBot, CCBot and ClaudeBot hoover up data, Monero-chan holds an XMR coin, and the ribbon lists the domains Wikipedia gives as active.
+  Her colours are the site's own: #0096ff, #0160a7, #a0d7ff, #ff005b, #7f01ff, #fffe92.
+</p>
+<script src="scene.js"></script>
+<script src="painter.js"></script>
+<script src="shirt.js"></script>
 <script>
 'use strict';
-
-// ─── canvas size of the artwork in design units (5:6, prints at 4500×5400) ───
-const DW = 1000, DH = 1200, TAU = Math.PI * 2;
-
-// ─── seeded randomness so a preview and its print file are the same painting ───
-function mulberry32(a) {
-  return () => {
-    a |= 0; a = a + 0x6D2B79F5 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-let R = mulberry32(7);
-const rand = (a = 0, b = 1) => a + R() * (b - a);
-const pick = arr => arr[Math.floor(R() * arr.length)];
-function gauss() { let u = 0, v = 0; while (!u) u = R(); while (!v) v = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
-const ease = x => x <= 0 ? 0 : x >= 1 ? 1 : Math.sin(x * Math.PI / 2);
-const lerp = (a, b, t) => a + (b - a) * t;
-
-// ─── palette ───
-const C = {
-  pink: '#ff9fcb', rose: '#ff6fa8', peach: '#ffbe9c', butter: '#ffe07a', mint: '#8eeccb',
-  sky: '#8ccfff', lilac: '#c6a8ff', cream: '#fffaf2', white: '#ffffff',
-  ink: '#4a2350', eyeInk: '#35183f', hairLine: '#a2508f', skinLine: '#c46f7f',
-  skin: '#ffefe7', skinShade: '#f8c6c6', blush: '#ff8db0',
-  hairRoot: '#ffb4d7', hairTip: '#d4b6ff', hairShade: '#f08ac2', hairShadeTip: '#ad8ff2', hairHi: '#fff3fa',
-  backRoot: '#f59bc8', backTip: '#aa90ee',
-};
-
-// ─── geometry helpers ───
-/// Catmull-Rom spline through control points, sampled into a polyline.
-function spline(pts, closed = false, seg = 10) {
-  const n = pts.length, out = [];
-  const at = i => closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
-  const last = closed ? n : n - 1;
-  for (let i = 0; i < last; i++) {
-    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
-    for (let s = 0; s < seg; s++) {
-      const t = s / seg, t2 = t * t, t3 = t2 * t;
-      out.push([0, 1].map(k => 0.5 * (2 * p1[k] + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3)));
-    }
-  }
-  if (!closed) out.push(pts[n - 1]);
-  return out;
-}
-function trace(ctx, pts, close = true) {
-  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  if (close) ctx.closePath();
-}
-function fillPoly(ctx, pts, style) { if (style) ctx.fillStyle = style; trace(ctx, pts); ctx.fill(); }
-const mirror = pts => pts.map(([x, y]) => [-x, y]);
-function arcLen(pts) { const c = [0]; for (let i = 1; i < pts.length; i++) c.push(c[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return c; }
-function normals(pts) {
-  return pts.map((_, i) => {
-    const p = pts[Math.max(0, i - 1)], q = pts[Math.min(pts.length - 1, i + 1)];
-    const d = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
-    return [-(q[1] - p[1]) / d, (q[0] - p[0]) / d];
-  });
-}
-/// Offsets a polyline both ways by a half-width profile hw(t), giving a closed outline plus its two edges.
-function ribbon(pts, hw) {
-  const cum = arcLen(pts), L = cum[cum.length - 1] || 1, nrm = normals(pts), left = [], right = [];
-  pts.forEach((p, i) => {
-    const w = hw(cum[i] / L);
-    left.push([p[0] + nrm[i][0] * w, p[1] + nrm[i][1] * w]);
-    right.push([p[0] - nrm[i][0] * w, p[1] - nrm[i][1] * w]);
-  });
-  return { left, right, poly: left.concat(right.slice().reverse()), center: pts };
-}
-/// Tapered ink line: thin at both ends, full width in the middle.
-function ink(ctx, ctrl, w, color, o = {}) {
-  const pts = o.sampled ? ctrl : spline(ctrl, !!o.closed, o.seg || 8);
-  const a = o.a ?? 0.25, b = o.b ?? 0.25, min = o.min ?? 0.1;
-  const r = ribbon(pts, t => w / 2 * Math.max(min, Math.min(ease(t / a), ease((1 - t) / b))));
-  ctx.globalAlpha = o.alpha ?? 1;
-  fillPoly(ctx, r.poly, color);
-  ctx.globalAlpha = 1;
-}
-function ellipse(ctx, x, y, rx, ry, rot = 0, style) {
-  ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot, 0, TAU);
-  if (style) { ctx.fillStyle = style; ctx.fill(); }
-}
-function circlePts(cx, cy, r, n = 12, jit = 0.06, sy = 1) {
-  return Array.from({ length: n }, (_, i) => { const a = i / n * TAU, rr = r * (1 + rand(-jit, jit)); return [cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * sy]; });
-}
-
-// ─── brushes ───
-/// Watercolour wash: a recursively deformed polygon stacked many times at low opacity.
-function deform(pts, depth, spread) {
-  let cur = pts.map(p => [p[0], p[1], p[2] ?? spread]);
-  for (let d = 0; d < depth; d++) {
-    const out = [];
-    for (let i = 0; i < cur.length; i++) {
-      const a = cur[i], b = cur[(i + 1) % cur.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]), v = (a[2] + b[2]) / 2;
-      out.push(a, [(a[0] + b[0]) / 2 + gauss() * len * v, (a[1] + b[1]) / 2 + gauss() * len * v, v * rand(0.55, 1.05)]);
-    }
-    cur = out;
-  }
-  return cur;
-}
-function watercolor(ctx, base, color, o = {}) {
-  const core = deform(base, 2, o.spread ?? 0.22);
-  ctx.fillStyle = color;
-  for (let l = 0; l < (o.layers ?? 24); l++) {
-    ctx.globalAlpha = o.alpha ?? 0.055;
-    trace(ctx, deform(core, 3, o.spread2 ?? 0.16)); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
-/// Bristle brush: many thin hairs along a spine, with dry, ragged ends.
-function bristle(ctx, ctrl, width, colors, o = {}) {
-  const pts = spline(ctrl, false, o.seg || 16), cum = arcLen(pts), L = cum[cum.length - 1], nrm = normals(pts);
-  const count = o.count || Math.max(10, Math.round(width / 1.5)), ta = o.a ?? 0.1, tb = o.b ?? 0.18;
-  if (o.base) {
-    const r = ribbon(pts, t => width / 2 * 0.86 * Math.min(ease(t / ta), ease((1 - t) / tb)));
-    ctx.globalAlpha = o.baseAlpha ?? 1; fillPoly(ctx, r.poly, o.base); ctx.globalAlpha = 1;
-  }
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  for (let k = 0; k < count; k++) {
-    const u = (k + rand(-0.45, 0.45)) / (count - 1) - 0.5, edge = Math.abs(u) * 2;
-    const t0 = rand(0, ta * (0.3 + edge)), t1 = 1 - rand(0, tb * (0.2 + edge * 1.4)) - (R() < (o.dry ?? 0.18) ? rand(0, 0.3) : 0);
-    ctx.strokeStyle = pick(colors);
-    ctx.globalAlpha = (o.alpha ?? 0.85) * rand(0.5, 1);
-    ctx.lineWidth = width / count * rand(1.3, 2.8);
-    ctx.beginPath();
-    let pen = false;
-    for (let i = 0; i < pts.length; i++) {
-      const t = cum[i] / L;
-      if (t < t0 || t > t1) continue;
-      const press = Math.min(1, ease(t / ta) * 0.8 + 0.2, ease((1 - t) / tb) * 0.8 + 0.2);
-      const off = u * width * press;
-      const x = pts[i][0] + nrm[i][0] * off, y = pts[i][1] + nrm[i][1] * off;
-      pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y); pen = true;
-    }
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-}
-function splatter(ctx, cx, cy, spread, n, colors) {
-  for (let i = 0; i < n; i++) {
-    const a = rand(0, TAU), d = Math.abs(gauss()) * spread, r = rand(1, 5.5) * (1 - Math.min(0.8, d / spread / 3));
-    ctx.globalAlpha = rand(0.45, 0.9);
-    ellipse(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d, r, r, 0, pick(colors));
-  }
-  ctx.globalAlpha = 1;
-}
-function sparkle(ctx, x, y, r, color, o = {}) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(o.rot || 0);
-  if (o.glow) {
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.6);
-    g.addColorStop(0, o.glow); g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = g; ctx.fillRect(-r * 1.6, -r * 1.6, r * 3.2, r * 3.2);
-  }
-  ctx.beginPath();
-  for (let k = 0; k < 4; k++) {
-    const a = k * Math.PI / 2 - Math.PI / 2, b = a + Math.PI / 2, rr = k % 2 ? r * 0.72 : r;
-    if (!k) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
-    const nr = (k + 1) % 2 ? r * 0.72 : r;
-    ctx.quadraticCurveTo(Math.cos(a + Math.PI / 4) * r * 0.14, Math.sin(a + Math.PI / 4) * r * 0.14, Math.cos(b) * nr, Math.sin(b) * nr);
-  }
-  ctx.closePath();
-  if (o.outline) { ctx.lineWidth = o.outline; ctx.strokeStyle = C.ink; ctx.lineJoin = 'round'; ctx.stroke(); }
-  ctx.fillStyle = color; ctx.fill();
-  ctx.restore();
-}
-function star5(ctx, x, y, r, rot, fill, line) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.beginPath();
-  for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5 - Math.PI / 2, rr = i % 2 ? r * 0.5 : r; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
-  ctx.closePath(); ctx.lineJoin = 'round';
-  if (line) { ctx.lineWidth = 2.4; ctx.strokeStyle = line; ctx.stroke(); }
-  ctx.fillStyle = fill; ctx.fill(); ctx.restore();
-}
-function heart(ctx, x, y, s, rot, fill) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s / 20, s / 20);
-  ctx.beginPath(); ctx.moveTo(0, 6);
-  ctx.bezierCurveTo(-4, 2, -12, -2, -12, -8); ctx.bezierCurveTo(-12, -14, -4, -16, 0, -9);
-  ctx.bezierCurveTo(4, -16, 12, -14, 12, -8); ctx.bezierCurveTo(12, -2, 4, 2, 0, 6);
-  ctx.fillStyle = fill; ctx.fill(); ctx.restore();
-}
-
-// ─── little books that float around her ───
-function closedBook(ctx, x, y, w, h, rot, cover, band) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
-  const d = w * 0.16, hw = w / 2, hh = h / 2;
-  ctx.lineJoin = 'round';
-  // page block peeking out at the top and right
-  const pages = [[-hw, -hh], [-hw + d, -hh - d * 0.7], [hw + d, -hh - d * 0.7], [hw + d, hh - d * 0.7], [hw, hh], [hw, -hh]];
-  fillPoly(ctx, pages, C.cream);
-  ctx.strokeStyle = 'rgba(160,120,150,.45)'; ctx.lineWidth = 1;
-  for (let i = 1; i < 4; i++) { const f = i / 4; ctx.beginPath(); ctx.moveTo(hw + d * f, -hh - d * 0.7 * f); ctx.lineTo(hw + d * f, hh - d * 0.7 * f); ctx.stroke(); }
-  ctx.lineWidth = 2.6; ctx.strokeStyle = C.ink; trace(ctx, pages); ctx.stroke();
-  // cover
-  const g = ctx.createLinearGradient(-hw, -hh, hw, hh);
-  g.addColorStop(0, '#fff'); g.addColorStop(0.18, cover); g.addColorStop(1, cover);
-  ctx.beginPath(); ctx.roundRect(-hw, -hh, w, h, 5); ctx.fillStyle = g; ctx.fill(); ctx.stroke();
-  ctx.fillStyle = band; ctx.fillRect(-hw + w * 0.1, -hh + h * 0.62, w * 0.9, h * 0.1);
-  ctx.globalAlpha = 0.9; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(-hw + w * 0.12, -hh, w * 0.05, h);
-  ctx.globalAlpha = 1;
-  heart(ctx, w * 0.06, -hh + h * 0.33, w * 0.32, 0, 'rgba(255,255,255,.95)');
-  ctx.restore();
-}
-function openBook(ctx, x, y, s, rot, cover) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s / 50, s / 50);
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  // covers flare out like wings
-  const cov = [[0, 18], [-54, 4], [-62, -34], [-8, -22], [0, -18], [8, -22], [62, -34], [54, 4]];
-  fillPoly(ctx, cov, cover); ctx.lineWidth = 2.6; ctx.strokeStyle = C.ink; ctx.stroke();
-  for (const sd of [-1, 1]) {
-    const pg = [[0, 12], [sd * 22, 2], [sd * 50, 0], [sd * 54, -38], [sd * 26, -38], [0, -26]];
-    fillPoly(ctx, spline(pg.slice(0, 3), false, 6).concat(spline(pg.slice(3), false, 6)), C.cream); ctx.stroke();
-    ctx.strokeStyle = 'rgba(160,120,150,.55)'; ctx.lineWidth = 1.4;
-    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(sd * 10, -20 + i * 8); ctx.quadraticCurveTo(sd * 28, -28 + i * 8, sd * 44, -26 + i * 8); ctx.stroke(); }
-    ctx.strokeStyle = C.ink; ctx.lineWidth = 2.6;
-  }
-  ctx.restore();
-}
-function loosePage(ctx, x, y, s, rot) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s / 40, s / 40);
-  ctx.beginPath(); ctx.moveTo(-16, -22); ctx.quadraticCurveTo(0, -27, 16, -22); ctx.lineTo(16, 22); ctx.quadraticCurveTo(0, 17, -16, 22); ctx.closePath();
-  ctx.fillStyle = C.cream; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = C.ink; ctx.lineJoin = 'round'; ctx.stroke();
-  ctx.strokeStyle = 'rgba(160,120,150,.6)'; ctx.lineWidth = 1.4;
-  for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(-10, -12 + i * 9); ctx.lineTo(i === 3 ? 2 : 10, -12 + i * 9); ctx.stroke(); }
-  ctx.restore();
-}
-
-// ─── Anna ───
-// Head space: origin between the eyes-ish, chin at y≈165. Body shares the origin but not the tilt.
-const HX = 500, HY = 430, TILT = -0.07;
-const withHead = (ctx, fn) => { ctx.save(); ctx.translate(HX, HY); ctx.translate(0, 150); ctx.rotate(TILT); ctx.translate(0, -150); fn(); ctx.restore(); };
-const withBody = (ctx, fn) => { ctx.save(); ctx.translate(HX, HY); fn(); ctx.restore(); };
-
-const FACE = [[-126, -110], [-133, -40], [-131, 15], [-122, 58], [-104, 98], [-76, 130], [-44, 151], [-15, 162], [0, 167], [15, 162], [44, 151], [76, 130], [104, 98], [122, 58], [131, 15], [133, -40], [126, -110], [80, -160], [0, -175], [-80, -160]];
-const JAW = [[-132, 0], [-122, 58], [-104, 98], [-76, 130], [-44, 151], [-15, 162], [0, 167], [15, 162], [44, 151], [76, 130], [104, 98], [122, 58], [132, 0]];
-const EYE_WHITE = [[-36, 6], [-30, -16], [-12, -29], [10, -32], [30, -26], [41, -12], [43, 4], [37, 22], [21, 33], [0, 37], [-19, 33], [-31, 21]];
-
-function lockShape(spine, w, o = {}) {
-  const pts = spline(spine, false, 14);
-  return ribbon(pts, t => w / 2 * (0.4 + 0.6 * ease(t / 0.14)) * Math.pow(1 - t, o.tip ?? 0.85) * (1 + (o.bulge ?? 0.3) * Math.sin(Math.PI * t)));
-}
-/// One clump of anime hair: gradient fill, cel shadow on one side, tapered outline.
-function lock(ctx, spine, w, o = {}) {
-  const r = lockShape(spine, w, o), n = r.center.length;
-  const s0 = spine[0], s1 = spine[spine.length - 1];
-  const g = ctx.createLinearGradient(s0[0], s0[1], s1[0], s1[1]);
-  g.addColorStop(0, o.root || C.hairRoot); g.addColorStop(1, o.tipC || C.hairTip);
-  fillPoly(ctx, r.poly, g);
-  const side = o.shadeSide ?? 1, edge = side > 0 ? r.right : r.left;
-  const inner = r.center.map((c, i) => [lerp(c[0], edge[i][0], o.shadeFrom ?? 0.25), lerp(c[1], edge[i][1], o.shadeFrom ?? 0.25)]);
-  const k0 = Math.floor(n * 0.12);
-  const sg = ctx.createLinearGradient(s0[0], s0[1], s1[0], s1[1]);
-  sg.addColorStop(0, 'rgba(0,0,0,0)'); sg.addColorStop(0.16, 'rgba(0,0,0,0)'); sg.addColorStop(0.42, o.shade || C.hairShade); sg.addColorStop(1, o.shadeTip || C.hairShadeTip);
-  ctx.globalAlpha = o.shadeAlpha ?? 0.55;
-  fillPoly(ctx, inner.slice(k0).concat(edge.slice(k0).reverse()), sg);
-  ctx.globalAlpha = 1;
-  if (o.wash !== false) {
-    ctx.save(); trace(ctx, r.poly); ctx.clip();
-    for (const [t, col] of [[rand(0.25, 0.45), 'rgba(255,255,255,1)'], [rand(0.55, 0.8), o.washC || '#ffc4ec']]) {
-      const c = r.center[Math.floor(t * (n - 1))];
-      watercolor(ctx, circlePts(c[0], c[1], w * 0.42, 7, 0.2, 1.8), col, { layers: 6, alpha: 0.07, spread: 0.3 });
-    }
-    ctx.restore();
-  }
-  if (o.strands) for (const f of [-0.45, 0.2]) {
-    const pts = r.center.map((c, i) => [lerp(c[0], r.left[i][0], f), lerp(c[1], r.left[i][1], f)]).slice(Math.floor(n * 0.3), Math.floor(n * 0.88));
-    ink(ctx, pts, 1.3, o.lineC || C.hairLine, { sampled: true, alpha: 0.4, a: 0.3, b: 0.4 });
-  }
-  if (o.line !== false) {
-    const lw = o.lw ?? 2.2, k = Math.floor(n * (o.lineFrom ?? 0.15));
-    ink(ctx, r.left.slice(k), lw, o.lineC || C.hairLine, { sampled: true, a: 0.3, b: 0.04, min: 0.3 });
-    ink(ctx, r.right.slice(k), lw, o.lineC || C.hairLine, { sampled: true, a: 0.3, b: 0.04, min: 0.3 });
-  }
-  return r;
-}
-/// Glossy "angel ring" streak across a lock.
-function hairShine(ctx, r, t0, t1, wf, alpha = 0.85) {
-  const n = r.center.length, i0 = Math.floor(n * t0), i1 = Math.floor(n * t1), L = [], Rr = [];
-  for (let i = i0; i <= i1; i++) {
-    const t = (i - i0) / (i1 - i0), bump = Math.sin(Math.PI * t) * wf;
-    const c = r.center[i], l = r.left[i], rr = r.right[i];
-    L.push([lerp(c[0], l[0], bump), lerp(c[1], l[1], bump)]); Rr.push([lerp(c[0], rr[0], bump * 0.8), lerp(c[1], rr[1], bump * 0.8)]);
-  }
-  ctx.globalAlpha = alpha; fillPoly(ctx, L.concat(Rr.reverse()), C.hairHi); ctx.globalAlpha = 1;
-}
-
-const BACK_LOCKS = [
-  { s: [[-120, -140], [-168, -40], [-188, 80], [-200, 200], [-220, 320], [-236, 420], [-224, 470]], w: 96 },
-  { s: [[-150, -60], [-196, 40], [-222, 160], [-246, 280], [-266, 360], [-280, 410]], w: 60 },
-  { s: [[-80, -160], [-140, -20], [-160, 120], [-166, 260], [-172, 380], [-156, 445]], w: 84 },
-  { s: [[-30, -120], [-90, 80], [-120, 250], [-128, 400]], w: 110 },
-];
-const BANGS = [
-  { s: [[-92, -178], [-126, -122], [-142, -52], [-138, 8]], w: 44 },
-  { s: [[-58, -196], [-90, -136], [-106, -70], [-100, -6]], w: 46 },
-  { s: [[-26, -206], [-50, -140], [-60, -72], [-50, 0]], w: 46 },
-  { s: [[-6, -212], [-12, -150], [-12, -80], [-1, -20]], w: 38 },
-  { s: [[16, -210], [38, -150], [50, -80], [44, -4]], w: 46 },
-  { s: [[50, -198], [86, -140], [104, -72], [104, -2]], w: 46 },
-  { s: [[86, -180], [124, -124], [142, -54], [140, 8]], w: 44 },
-  { s: [[-40, -190], [-30, -120], [-27, -44], [-32, 8]], w: 16, thin: true },
-  { s: [[26, -196], [22, -120], [20, -52], [24, 4]], w: 15, thin: true },
-];
-const SIDE_LOCKS = [
-  { s: [[-124, -132], [-144, -50], [-148, 40], [-140, 130], [-130, 220], [-142, 312]], w: 44 },
-  { s: [[-140, -96], [-164, 4], [-172, 112], [-168, 220], [-182, 322]], w: 32 },
-];
-const CAP = [[-150, 10], [-160, -60], [-150, -128], [-116, -178], [-60, -208], [0, -216], [60, -208], [116, -178], [150, -128], [160, -60], [150, 10], [118, -60], [60, -110], [0, -120], [-60, -110], [-118, -60]];
-const BACKCAP = [[0, -220], [92, -202], [152, -150], [184, -70], [192, 30], [160, 130], [0, 170], [-160, 130], [-192, 30], [-184, -70], [-152, -150], [-92, -202]];
-
-function drawBackHair(ctx) {
-  const g = ctx.createLinearGradient(0, -220, 0, 300);
-  g.addColorStop(0, C.backRoot); g.addColorStop(1, C.backTip);
-  fillPoly(ctx, spline(BACKCAP, true, 10), g);
-  const locks = BACK_LOCKS.flatMap(l => [l, { ...l, s: mirror(l.s), m: true }]);
-  for (const l of locks) {
-    const r = lock(ctx, l.s, l.w, { root: C.backRoot, tipC: C.backTip, shade: '#df7fb4', shadeTip: '#8e76df', shadeAlpha: 0.45, shadeSide: l.m ? -1 : 1, lw: 2.4, lineFrom: 0.25, strands: true });
-    hairShine(ctx, r, 0.55, 0.72, 0.18, 0.35);
-  }
-}
-
-function drawEye(ctx, side) {
-  ctx.save(); ctx.translate(side * 60, 28); ctx.scale(side, 1);
-  const white = spline(EYE_WHITE, true, 8);
-  fillPoly(ctx, white, '#fffafd');
-  ctx.save(); trace(ctx, white); ctx.clip();
-  let g = ctx.createLinearGradient(0, -34, 0, 2);
-  g.addColorStop(0, 'rgba(150,130,215,.85)'); g.addColorStop(1, 'rgba(150,130,215,0)');
-  ctx.fillStyle = g; ctx.fillRect(-50, -40, 100, 45);
-  // iris
-  ctx.save(); ellipse(ctx, 2, 3, 26, 35); ctx.clip();
-  g = ctx.createLinearGradient(0, -32, 0, 38);
-  g.addColorStop(0, '#2b2a78'); g.addColorStop(0.35, '#3a6cc0'); g.addColorStop(0.72, '#3fc2cf'); g.addColorStop(1, '#bfffe9');
-  ctx.fillStyle = g; ctx.fillRect(-30, -40, 70, 82);
-  g = ctx.createRadialGradient(4, 28, 1, 4, 28, 22);
-  g.addColorStop(0, 'rgba(220,255,245,.95)'); g.addColorStop(1, 'rgba(220,255,245,0)');
-  ctx.fillStyle = g; ctx.fillRect(-30, 0, 70, 42);
-  ctx.strokeStyle = 'rgba(200,255,250,.35)'; ctx.lineWidth = 1.1;
-  for (let k = 0; k < 14; k++) {
-    const a = k / 14 * TAU + 0.2;
-    ctx.beginPath(); ctx.moveTo(2 + Math.cos(a) * 12, 6 + Math.sin(a) * 17); ctx.lineTo(2 + Math.cos(a) * 24, 3 + Math.sin(a) * 32); ctx.stroke();
-  }
-  ellipse(ctx, 2, 6, 10.5, 15.5, 0, '#1b1a4c');
-  g = ctx.createLinearGradient(0, -34, 0, -2);
-  g.addColorStop(0, 'rgba(22,14,64,.75)'); g.addColorStop(1, 'rgba(22,14,64,0)');
-  ctx.fillStyle = g; ctx.fillRect(-30, -40, 70, 40);
-  ctx.restore();
-  ellipse(ctx, 2, 3, 26, 35); ctx.lineWidth = 2.2; ctx.strokeStyle = 'rgba(30,24,86,.9)'; ctx.stroke();
-  // highlights
-  ellipse(ctx, -9, -10, 8.5, 11.5, -0.35, '#ffffff');
-  ellipse(ctx, 14, 18, 3.8, 3.8, 0, '#ffffff');
-  ellipse(ctx, 17, -8, 2.8, 2.8, 0, 'rgba(255,190,228,.95)');
-  sparkle(ctx, -11, 20, 5.5, 'rgba(255,255,255,.95)');
-  ctx.restore();
-  // lashes and lids
-  ink(ctx, [[-40, 8], [-33, -15], [-13, -31], [11, -35], [31, -28], [44, -14], [54, -7]], 7, C.eyeInk, { a: 0.28, b: 0.08, min: 0.12 });
-  ink(ctx, [[41, -18], [52, -27], [59, -29]], 3, C.eyeInk, { a: 0.1, b: 0.8 });
-  ink(ctx, [[45, -9], [56, -12], [62, -10]], 2.6, C.eyeInk, { a: 0.1, b: 0.8 });
-  ink(ctx, [[42, -12], [45, -1], [41, 11]], 3, C.eyeInk, { a: 0.2, b: 0.6 });
-  ink(ctx, [[4, 38], [24, 33], [37, 22], [42, 12]], 2.2, C.eyeInk, { a: 0.5, b: 0.2, alpha: 0.85 });
-  ink(ctx, [[-33, 19], [-25, 28]], 1.4, C.eyeInk, { alpha: 0.5 });
-  ink(ctx, [[-20, -44], [6, -48], [30, -41], [42, -31]], 1.6, C.skinLine, { alpha: 0.6 });
-  ctx.restore();
-}
-
-function drawFace(ctx) {
-  const face = spline(FACE, true, 10);
-  const g = ctx.createLinearGradient(-130, -60, 130, 160);
-  g.addColorStop(0, '#fff6f1'); g.addColorStop(1, C.skin);
-  fillPoly(ctx, face, g);
-  ctx.save(); trace(ctx, face); ctx.clip();
-  // shadow cast by the bangs onto the forehead
-  ctx.globalAlpha = 0.75;
-  for (const b of BANGS) { ctx.save(); ctx.translate(4, 12); fillPoly(ctx, lockShape(b.s, b.w).poly, C.skinShade); ctx.restore(); }
-  ctx.globalAlpha = 1;
-  // soft side shading
-  const sg = ctx.createLinearGradient(-135, 0, -80, 0);
-  sg.addColorStop(0, 'rgba(246,180,190,.55)'); sg.addColorStop(1, 'rgba(246,180,190,0)');
-  ctx.fillStyle = sg; ctx.fillRect(-140, -100, 70, 280);
-  // blush
-  for (const s of [-1, 1]) {
-    const bg = ctx.createRadialGradient(s * 78, 80, 2, s * 78, 80, 34);
-    bg.addColorStop(0, 'rgba(255,130,170,.62)'); bg.addColorStop(1, 'rgba(255,130,170,0)');
-    ctx.save(); ctx.translate(s * 78, 80); ctx.scale(1, 0.55); ctx.translate(-s * 78, -80);
-    ctx.fillStyle = bg; ctx.fillRect(s * 78 - 40, 40, 80, 80); ctx.restore();
-    for (let k = 0; k < 3; k++) ink(ctx, [[s * 78 - 12 + k * 10, 72], [s * 78 - 18 + k * 10, 86]], 1.8, '#ff6f9d', { alpha: 0.7 });
-  }
-  ctx.restore();
-  ink(ctx, JAW, 2.6, C.skinLine, { a: 0.18, b: 0.18 });
-  // nose and mouth
-  ink(ctx, [[5, 86], [2, 94]], 2.2, '#dc8a95', { a: 0.4, b: 0.4 });
-  const mouth = spline([[-15, 114], [-6, 116.5], [0, 117], [6, 116.5], [15, 114], [9, 124], [0, 129], [-9, 124]], true, 8);
-  fillPoly(ctx, mouth, '#c84b76');
-  ctx.save(); trace(ctx, mouth); ctx.clip(); ellipse(ctx, 0, 128, 8, 5, 0, '#ff9ab3'); ctx.restore();
-  ink(ctx, [[-18, 111], [-7, 116], [0, 116.8], [7, 116], [18, 111]], 2.4, '#8f2e55', { a: 0.2, b: 0.2 });
-  ink(ctx, [[-6, 127], [0, 129.5], [6, 127]], 1.4, '#8f2e55', { alpha: 0.6 });
-  drawEye(ctx, -1); drawEye(ctx, 1);
-}
-
-function drawFrontHair(ctx) {
-  drawSideLocks(ctx);
-  const cg = ctx.createRadialGradient(-40, -200, 10, 0, -150, 170);
-  cg.addColorStop(0, '#ffc9e3'); cg.addColorStop(1, C.hairRoot);
-  const cap = spline(CAP, true, 10);
-  fillPoly(ctx, cap, cg);
-  ink(ctx, spline(CAP.slice(0, 11), false, 10), 2.6, C.hairLine, { sampled: true, a: 0.12, b: 0.12 });
-  const shines = [];
-  for (const b of BANGS) {
-    const r = lock(ctx, b.s, b.w, { lw: b.thin ? 1.6 : 2.2, shadeSide: b.s[3][0] > b.s[0][0] ? 1 : -1, strands: !b.thin });
-    if (!b.thin) shines.push(r);
-  }
-  shines.forEach((r, i) => hairShine(ctx, r, 0.2 + (i % 2) * 0.04, 0.36 + (i % 2) * 0.04, 0.38, 0.72));
-  // ahoge
-  lock(ctx, [[4, -212], [16, -246], [40, -262], [58, -250]], 13, { tip: 1, bulge: 0.2, lw: 1.8, lineFrom: 0.05 });
-}
-
-function drawSideLocks(ctx) {
-  for (const sd of [-1, 1]) for (const l of SIDE_LOCKS) {
-    const r = lock(ctx, sd < 0 ? l.s : mirror(l.s), l.w, { shadeSide: sd, lw: 2.2, strands: true });
-    hairShine(ctx, r, 0.16, 0.3, 0.36, 0.7);
-  }
-}
-
-function drawAccessories(ctx) {
-  // ribbon bow on her right side
-  ctx.save(); ctx.translate(122, -160); ctx.rotate(0.35);
-  const loop = [[0, 0], [22, -20], [46, -26], [54, -8], [44, 14], [20, 10]];
-  for (const sd of [-1, 1]) {
-    const pts = spline(sd > 0 ? loop : mirror(loop), true, 8);
-    const g = ctx.createLinearGradient(0, -26, 0, 16); g.addColorStop(0, '#b9fff0'); g.addColorStop(1, '#5fd9b4');
-    fillPoly(ctx, pts, g); ctx.lineWidth = 2.4; ctx.strokeStyle = C.ink; ctx.lineJoin = 'round'; ctx.stroke();
-    ink(ctx, [[sd * 12, -2], [sd * 30, -10], [sd * 42, -8]], 2, 'rgba(60,150,130,.7)', {});
-  }
-  for (const sd of [-1, 1]) {
-    const tail = spline([[0, 4], [sd * 14, 26], [sd * 18, 48], [sd * 8, 44], [sd * 2, 20]], true, 8);
-    fillPoly(ctx, tail, '#7fe6c6'); ctx.lineWidth = 2.2; ctx.strokeStyle = C.ink; ctx.stroke();
-  }
-  ellipse(ctx, 0, 0, 11, 12, 0, '#9ff3dc'); ctx.lineWidth = 2.4; ctx.strokeStyle = C.ink; ctx.stroke();
-  ellipse(ctx, -3, -4, 4, 3, -0.4, 'rgba(255,255,255,.9)');
-  ctx.restore();
-  star5(ctx, -104, -96, 15, -0.25, C.butter, C.ink);
-  ellipse(ctx, -108, -101, 3, 2, -0.5, 'rgba(255,255,255,.9)');
-  // eyebrows peek through the bangs
-  for (const s of [-1, 1]) ink(ctx, [[s * 24, -58], [s * 50, -66], [s * 80, -60]], 3, C.hairLine, { alpha: 0.55, a: 0.3, b: 0.5 });
-}
-
-const TORSO = [[-36, 236], [-92, 254], [-152, 276], [-190, 304], [-206, 352], [-214, 430], [-220, 540], [-226, 660], [226, 660], [220, 540], [214, 430], [206, 352], [190, 304], [152, 276], [92, 254], [36, 236], [0, 246]];
-const COLLAR = [[-34, 234], [-92, 252], [-156, 276], [-192, 300], [-156, 318], [-100, 332], [-44, 348], [0, 362], [0, 336], [-16, 292]];
-const BOOK = { x: 0, y: 492, w: 260, h: 290, rot: -0.035 };
-
-function drawBody(ctx) {
-  // neck
-  const neck = spline([[-29, 110], [-30, 180], [-33, 232], [-40, 262], [40, 262], [33, 232], [30, 180], [29, 110]], true, 8);
-  fillPoly(ctx, neck, C.skin);
-  ctx.save(); trace(ctx, neck); ctx.clip();
-  const ng = ctx.createLinearGradient(0, 140, 0, 200); ng.addColorStop(0, C.skinShade); ng.addColorStop(1, 'rgba(248,198,198,0)');
-  ctx.fillStyle = ng; ctx.fillRect(-50, 100, 100, 110);
-  ctx.restore();
-  ink(ctx, [[-29, 140], [-30, 190], [-33, 236]], 2.2, C.skinLine, { a: 0.3, b: 0.3 });
-  ink(ctx, [[29, 140], [30, 190], [33, 236]], 2.2, C.skinLine, { a: 0.3, b: 0.3 });
-  // blouse
-  const torso = spline(TORSO, true, 10);
-  const tg = ctx.createLinearGradient(-220, 0, 220, 0);
-  tg.addColorStop(0, '#f6c96f'); tg.addColorStop(0.28, '#ffe7a6'); tg.addColorStop(0.72, '#ffe7a6'); tg.addColorStop(1, '#f3c268');
-  fillPoly(ctx, torso, tg);
-  ctx.save(); trace(ctx, torso); ctx.clip();
-  for (const [x, y, rr, col] of [[-170, 360, 70, '#fff3c9'], [175, 420, 80, '#ffd98a'], [-150, 560, 90, '#ffe2a8'], [160, 600, 70, '#fff0c0']])
-    watercolor(ctx, circlePts(x, y, rr, 8, 0.2), col, { layers: 8, alpha: 0.08 });
-  // knit ribs
-  ctx.strokeStyle = 'rgba(214,150,60,.28)'; ctx.lineWidth = 1.4;
-  for (let x = -220; x <= 220; x += 11) { ctx.beginPath(); ctx.moveTo(x, 300); ctx.quadraticCurveTo(x * 1.03, 480, x * 1.05, 660); ctx.stroke(); }
-  // blouse front between the lapels
-  fillPoly(ctx, spline([[-40, 234], [0, 250], [40, 234], [30, 300], [0, 350], [-30, 300]], true, 8), '#fffaf6');
-  ctx.globalAlpha = 0.45;
-  fillPoly(ctx, spline([[-40, 234], [0, 256], [40, 234], [26, 270], [0, 280], [-26, 270]], true, 8), '#e6d9fb');
-  ctx.globalAlpha = 1;
-  // forearms reach in toward the book
-  for (const s of [-1, 1]) {
-    ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(s * 196, 560); ctx.quadraticCurveTo(s * 170, 470, s * 92, 380);
-    ctx.lineWidth = 52; ctx.strokeStyle = C.ink; ctx.stroke();
-    ctx.lineWidth = 47; ctx.strokeStyle = '#ffe29a'; ctx.stroke();
-    ctx.lineWidth = 16; ctx.strokeStyle = 'rgba(232,168,70,.45)'; ctx.translate(s * 8, 12); ctx.stroke(); ctx.translate(-s * 8, -12);
-    ink(ctx, [[s * 186, 520], [s * 160, 470], [s * 130, 430]], 2, 'rgba(200,130,50,.6)', {});
-  }
-  ctx.restore();
-  ink(ctx, TORSO.slice(0, 8), 2.8, C.ink, { a: 0.1, b: 0.02, min: 0.4 });
-  ink(ctx, mirror(TORSO.slice(0, 8)), 2.8, C.ink, { a: 0.1, b: 0.02, min: 0.4 });
-  for (const s of [-1, 1]) ink(ctx, [[s * 164, 320], [s * 166, 400], [s * 172, 480]], 2.2, C.ink, { alpha: 0.8 });
-  // sailor collar
-  for (const s of [-1, 1]) {
-    const pts = spline(s < 0 ? COLLAR : mirror(COLLAR), true, 8);
-    const cg = ctx.createLinearGradient(0, 230, s * 190, 330); cg.addColorStop(0, '#a9dcff'); cg.addColorStop(1, '#79b8ff');
-    fillPoly(ctx, pts, cg); ctx.lineWidth = 2.6; ctx.strokeStyle = C.ink; ctx.lineJoin = 'round'; ctx.stroke();
-    ink(ctx, [[s * 178, 300], [s * 150, 311], [s * 98, 324], [s * 40, 339], [s * 8, 350]], 4, '#ffffff', { a: 0.08, b: 0.08, min: 0.6 });
-    ink(ctx, [[s * 164, 294], [s * 140, 303], [s * 94, 315], [s * 38, 329], [s * 10, 338]], 2.4, '#ffffff', { a: 0.08, b: 0.08, min: 0.6, alpha: 0.85 });
-  }
-  // bow
-  ctx.save(); ctx.translate(0, 300);
-  for (const s of [-1, 1]) {
-    const tail = spline([[s * 4, 6], [s * 18, 36], [s * 28, 70], [s * 8, 64], [s * 2, 30]], true, 8);
-    fillPoly(ctx, tail, '#ff79ab'); ctx.lineWidth = 2.4; ctx.strokeStyle = C.ink; ctx.stroke();
-  }
-  for (const s of [-1, 1]) {
-    const loopPts = spline([[0, 0], [s * 24, -18], [s * 50, -20], [s * 56, 0], [s * 46, 18], [s * 22, 12]], true, 8);
-    const bg = ctx.createLinearGradient(0, -20, 0, 18); bg.addColorStop(0, '#ffb9d4'); bg.addColorStop(1, '#ff6fa3');
-    fillPoly(ctx, loopPts, bg); ctx.lineWidth = 2.4; ctx.strokeStyle = C.ink; ctx.stroke();
-    ink(ctx, [[s * 14, -2], [s * 32, -8], [s * 44, -4]], 2, 'rgba(200,60,110,.6)', {});
-  }
-  ellipse(ctx, 0, 1, 12, 13, 0, '#ff8cb9'); ctx.lineWidth = 2.4; ctx.strokeStyle = C.ink; ctx.stroke();
-  ellipse(ctx, -3, -4, 4, 3, -0.4, 'rgba(255,255,255,.85)');
-  ctx.restore();
-}
-
-function drawBook(ctx) {
-  const { x, y, w, h, rot } = BOOK, hw = w / 2, hh = h / 2;
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.lineJoin = 'round';
-  // page block along the top edge
-  const top = [[-hw + 6, -hh], [-hw + 16, -hh - 12], [hw + 10, -hh - 12], [hw, -hh]];
-  fillPoly(ctx, top, C.cream); ctx.lineWidth = 2.6; ctx.strokeStyle = C.ink; ctx.stroke();
-  ctx.strokeStyle = 'rgba(170,120,150,.5)'; ctx.lineWidth = 1;
-  for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(-hw + 6 + i * 2.5, -hh - i * 3); ctx.lineTo(hw + i * 2.5, -hh - i * 3); ctx.stroke(); }
-  // cover
-  const g = ctx.createLinearGradient(-hw, -hh, hw, hh);
-  g.addColorStop(0, '#d9c6ff'); g.addColorStop(0.55, '#b6a4ff'); g.addColorStop(1, '#8fc4ff');
-  ctx.beginPath(); ctx.roundRect(-hw, -hh, w, h, 10); ctx.fillStyle = g; ctx.fill();
-  ctx.save(); ctx.clip();
-  watercolor(ctx, circlePts(-60, -70, 90, 9, 0.1), 'rgba(255,190,230,1)', { layers: 10, alpha: 0.06 });
-  watercolor(ctx, circlePts(70, 60, 90, 9, 0.1), 'rgba(160,240,220,1)', { layers: 10, alpha: 0.06 });
-  ctx.fillStyle = 'rgba(90,60,170,.28)'; ctx.fillRect(-hw, -hh, 26, h);
-  ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillRect(-hw + 26, -hh, 4, h);
-  ctx.restore();
-  ctx.beginPath(); ctx.roundRect(-hw, -hh, w, h, 10); ctx.lineWidth = 3; ctx.strokeStyle = C.ink; ctx.stroke();
-  ctx.setLineDash([7, 6]); ctx.lineWidth = 2.2; ctx.strokeStyle = '#fff3b0';
-  ctx.beginPath(); ctx.roundRect(-hw + 40, -hh + 18, w - 58, h - 36, 8); ctx.stroke(); ctx.setLineDash([]);
-  // emblem: a little stack of books inside a badge
-  const ey = -hh + 104;
-  ellipse(ctx, 13, ey, 48, 48, 0, 'rgba(255,255,255,.9)'); ctx.lineWidth = 2.6; ctx.strokeStyle = C.ink; ctx.stroke();
-  ellipse(ctx, 13, ey, 40, 40); ctx.setLineDash([3, 5]); ctx.lineWidth = 2; ctx.strokeStyle = C.lilac; ctx.stroke(); ctx.setLineDash([]);
-  const books = [[-8, 18, 44, 12, '#ff9fcb'], [-4, 6, 38, 12, '#8ccfff'], [-10, -6, 42, 12, '#8eeccb']];
-  for (const [bx, by, bw, bh, col] of books) {
-    ctx.beginPath(); ctx.roundRect(13 + bx - bw / 2 + 8, ey + by - bh / 2, bw, bh, 3);
-    ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = C.ink; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillRect(13 + bx - bw / 2 + 14, ey + by - 2, bw - 14, 2.5);
-  }
-  star5(ctx, 13, ey - 22, 10, 0.1, C.butter, C.ink);
-  ctx.restore();
-}
-
-function drawFingers(ctx) {
-  const { x, y, h, rot } = BOOK, top = y - h / 2;
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.translate(-x, -y);
-  const hands = [[-112, [28, 32, 34, 30]], [52, [30, 34, 32, 28]]];
-  for (const [x0, lens] of hands) {
-    lens.forEach((len, i) => {
-      const fx = x0 + i * 16, fw = 15;
-      ctx.beginPath(); ctx.roundRect(fx, top - 12, fw, len + 12, [6, 6, 7.5, 7.5]);
-      const g = ctx.createLinearGradient(fx, 0, fx + fw, 0); g.addColorStop(0, '#fff3ee'); g.addColorStop(1, '#fbd6d3');
-      ctx.fillStyle = g; ctx.fill(); ctx.lineWidth = 2.2; ctx.strokeStyle = C.skinLine; ctx.stroke();
-      ellipse(ctx, fx + fw / 2, top + len - 7, 4.2, 5, 0, 'rgba(255,170,195,.8)');
-      ellipse(ctx, fx + fw / 2 - 1, top + len - 8.5, 1.6, 2, 0, 'rgba(255,255,255,.9)');
-    });
-  }
-  ctx.restore();
-}
-
-// ─── backdrop and lettering ───
-function drawBackdrop(ctx) {
-  const cx = 500, cy = 520;
-  watercolor(ctx, circlePts(cx, cy, 358, 14, 0.03), C.cream, { layers: 20, alpha: 0.14, spread: 0.1, spread2: 0.07 });
-  const blobs = [
-    [560, 420, 240, C.sky], [420, 580, 230, C.lilac], [640, 690, 160, C.mint], [350, 340, 130, C.butter],
-    [680, 330, 120, C.pink], [350, 720, 130, C.peach], [520, 260, 110, '#b7e3ff'], [740, 540, 105, '#ffc2e0'],
-  ];
-  for (const [x, y, r, c] of blobs) watercolor(ctx, circlePts(x, y, r, 10, 0.12), c, { layers: 22, alpha: 0.05 });
-  const glow = ctx.createRadialGradient(500, 400, 20, 500, 420, 300);
-  glow.addColorStop(0, 'rgba(255,255,255,.85)'); glow.addColorStop(0.55, 'rgba(255,250,253,.35)'); glow.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = glow; ctx.fillRect(150, 100, 700, 650);
-  // ensō ring
-  const ring = (r0, a0, a1, w, cols, o) => bristle(ctx, Array.from({ length: 16 }, (_, i) => { const a = lerp(a0, a1, i / 15), r = r0 * (1 + 0.012 * Math.sin(i * 1.7)); return [cx + Math.cos(a) * r, cy + Math.sin(a) * r]; }), w, cols, o);
-  ring(368, 2.3, 2.3 + TAU * 0.86, 34, ['#ff8fc3', '#ffa9d2', '#ff7ab3', '#ffc1de'], { base: 'rgba(255,160,205,.55)', dry: 0.3, count: 34 });
-  ring(392, -0.7, 1.6, 10, ['#9fd8ff', '#c1b0ff'], { count: 10, dry: 0.3 });
-  ring(392, 3.4, 4.6, 8, ['#8eeccb', '#b7f5de'], { count: 8, dry: 0.3 });
-  splatter(ctx, 190, 250, 50, 26, [C.pink, C.sky, C.butter]);
-  splatter(ctx, 830, 820, 60, 30, [C.lilac, C.mint, C.pink]);
-  splatter(ctx, 820, 250, 40, 18, [C.mint, C.butter]);
-}
-
-function drawFloaters(ctx, front) {
-  if (!front) {
-    closedBook(ctx, 196, 318, 68, 90, -0.38, '#9ff0d2', '#ff9fcb');
-    closedBook(ctx, 812, 372, 62, 84, 0.3, '#ffc09e', '#8ccfff');
-    closedBook(ctx, 168, 640, 58, 78, 0.22, '#9fd6ff', '#ffe07a');
-    closedBook(ctx, 842, 648, 70, 94, -0.2, '#cdb2ff', '#8eeccb');
-    openBook(ctx, 132, 190, 40, -0.3, '#ff9fcb');
-    openBook(ctx, 872, 206, 36, 0.3, '#8ccfff');
-    loosePage(ctx, 124, 470, 34, 0.42); loosePage(ctx, 884, 520, 30, -0.5); loosePage(ctx, 862, 830, 28, 0.3);
-    return;
-  }
-  const sp = [
-    [248, 420, 16, C.white], [760, 240, 20, C.white], [860, 450, 12, C.butter], [140, 560, 11, C.butter],
-    [640, 168, 10, C.white], [360, 168, 9, C.white], [760, 780, 15, C.white], [230, 790, 13, C.white],
-    [905, 300, 9, C.white], [95, 380, 9, C.white], [690, 400, 8, C.white], [310, 470, 7, C.white],
-  ];
-  for (const [x, y, r, c] of sp) sparkle(ctx, x, y, r, c, { glow: 'rgba(255,255,255,.7)', outline: r > 12 ? 2 : 0 });
-  heart(ctx, 128, 300, 22, -0.3, '#ff7ab3'); heart(ctx, 880, 400, 18, 0.25, '#ff9fcb'); heart(ctx, 190, 850, 16, 0.2, '#c6a8ff');
-  star5(ctx, 875, 190, 13, 0.2, C.butter, C.ink); star5(ctx, 118, 700, 11, -0.3, C.mint, C.ink);
-}
-
-function textOnArc(ctx, text, cx, cy, r, mid, font, fill, line) {
-  ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
-  const widths = [...text].map(ch => ctx.measureText(ch).width), total = widths.reduce((a, b) => a + b, 0) + (text.length - 1) * 2;
-  let a = mid - total / r / 2;
-  const start = a;
-  [...text].forEach((ch, i) => {
-    const w = widths[i], ang = a + w / 2 / r;
-    ctx.save(); ctx.translate(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r); ctx.rotate(ang + Math.PI / 2);
-    ctx.lineWidth = 8; ctx.strokeStyle = line; ctx.strokeText(ch, 0, 0);
-    ctx.fillStyle = fill; ctx.fillText(ch, 0, 0);
-    ctx.restore();
-    a += (w + 2) / r;
-  });
-  return [start, a];
-}
-
-function stickerText(ctx, text, x, y, font, fill, o = {}) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(o.rot || 0);
-  ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round';
-  ctx.lineWidth = o.outline ?? 18;
-  ctx.strokeStyle = C.ink; ctx.strokeText(text, o.sx ?? 5, o.sy ?? 7);
-  ctx.fillStyle = C.ink; ctx.fillText(text, o.sx ?? 5, o.sy ?? 7);
-  ctx.strokeStyle = '#fff'; ctx.strokeText(text, 0, 0);
-  ctx.fillStyle = fill; ctx.fillText(text, 0, 0);
-  if (o.shine) { ctx.save(); ctx.globalAlpha = 0.55; ctx.lineWidth = 2.2; ctx.strokeStyle = '#fff'; ctx.strokeText(text, -2, -3); ctx.restore(); }
-  ctx.restore();
-}
-
-function drawTitle(ctx) {
-  bristle(ctx, [[110, 1052], [300, 1030], [520, 1044], [720, 1022], [895, 1040]], 136, ['#aef3dc', '#8eeccb', '#c8f8e8', '#b9e4ff', '#d8f7ee'], { base: '#bff4e2', dry: 0.25, a: 0.08, b: 0.14 });
-  bristle(ctx, [[180, 1124], [420, 1136], [640, 1118], [830, 1128]], 26, ['#ffd1e6', '#ffb3d6', '#ffe6f1'], { dry: 0.35 });
-  const g = ctx.createLinearGradient(290, 900, 710, 1010);
-  g.addColorStop(0, '#ff5f9e'); g.addColorStop(0.5, '#ff8a9a'); g.addColorStop(1, '#ffb266');
-  stickerText(ctx, "Anna's", 492, 1012, '400 156px "Kaushan Script", "Brush Script MT", cursive', g, { rot: -0.07, outline: 20, shine: true });
-  // ARCHIVE, one bouncy pastel letter at a time
-  const word = 'ARCHIVE', cols = ['#5bbcff', '#a484ff', '#ff78bb', '#3fd6a6', '#ffa94d', '#ff6fa8', '#7c9dff'];
-  ctx.font = '400 84px "Mochiy Pop One", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif';
-  const ws = [...word].map(ch => ctx.measureText(ch).width), gap = 6, total = ws.reduce((a, b) => a + b, 0) + gap * (word.length - 1);
-  let x = 500 - total / 2;
-  [...word].forEach((ch, i) => {
-    const lx = x + ws[i] / 2, bounce = Math.sin(i * 1.3) * 6;
-    stickerText(ctx, ch, lx, 1112 + bounce, ctx.font, cols[i], { rot: (i % 2 ? 0.06 : -0.05), outline: 16, sx: 4, sy: 6, shine: true });
-    x += ws[i] + gap;
-  });
-  ctx.font = '400 28px "Mochiy Pop One", "Hiragino Maru Gothic ProN", "Yu Gothic", sans-serif';
-  stickerText(ctx, 'アンナのアーカイブ', 500, 1172, ctx.font, '#7a4a8f', { outline: 8, sx: 0, sy: 0 });
-  sparkle(ctx, 330, 1162, 11, C.butter, { outline: 1.8 }); sparkle(ctx, 670, 1162, 11, C.butter, { outline: 1.8 });
-  const ends = textOnArc(ctx, 'THE LARGEST TRULY OPEN LIBRARY', 500, 520, 410, -Math.PI / 2, '400 27px "Mochiy Pop One", "Trebuchet MS", sans-serif', '#6b3a86', '#fff');
-  for (const [a, d] of [[ends[0], -0.07], [ends[1], 0.07]]) sparkle(ctx, 500 + Math.cos(a + d) * 410, 520 + Math.sin(a + d) * 410, 12, C.butter, { outline: 1.8 });
-}
-
-// ─── chalky pastel grain, only where there is already paint ───
-function grainTile(dark) {
-  const c = document.createElement('canvas'); c.width = c.height = 160;
-  const x = c.getContext('2d'), img = x.createImageData(160, 160), r = mulberry32(dark ? 99 : 42);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = r();
-    if (dark) { img.data[i] = 90; img.data[i + 1] = 40; img.data[i + 2] = 110; img.data[i + 3] = v > 0.86 ? 255 * r() : 0; }
-    else { img.data[i] = img.data[i + 1] = img.data[i + 2] = 255; img.data[i + 3] = v > 0.8 ? 255 * r() : 0; }
-  }
-  x.putImageData(img, 0, 0);
-  return c;
-}
-function drawGrain(ctx) {
-  ctx.save(); ctx.globalCompositeOperation = 'source-atop';
-  for (const [dark, alpha] of [[false, 0.22], [true, 0.07]]) {
-    const pat = ctx.createPattern(grainTile(dark), 'repeat');
-    pat.setTransform(new DOMMatrix().scale(0.55));
-    ctx.globalAlpha = alpha; ctx.fillStyle = pat; ctx.fillRect(0, 0, DW, DH);
-  }
-  ctx.restore();
-}
-
-/// Paints the whole design at `scale` device pixels per design unit.
-function renderArt(scale, seed) {
-  const c = document.createElement('canvas');
-  c.width = Math.round(DW * scale); c.height = Math.round(DH * scale);
-  const ctx = c.getContext('2d');
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  R = mulberry32(seed);
-  drawBackdrop(ctx);
-  drawFloaters(ctx, false);
-  withHead(ctx, () => drawBackHair(ctx));
-  withBody(ctx, () => drawBody(ctx));
-  withHead(ctx, () => { drawFace(ctx); drawFrontHair(ctx); drawAccessories(ctx); });
-  withBody(ctx, () => { drawBook(ctx); drawFingers(ctx); });
-  drawFloaters(ctx, true);
-  drawTitle(ctx);
-  drawGrain(ctx);
-  return c;
-}
-
-// ─── the t-shirt mockup ───
-const SHIRTS = [
-  ['Midnight', '#26213a'], ['Cloud white', '#f6f4f1'], ['Sakura', '#ffd6e7'], ['Lavender', '#dcd0f7'],
-  ['Sky', '#cde5fb'], ['Mint', '#cbf0e1'], ['Butter', '#fff0c0'], ['Heather', '#b9b5c1'], ['Black', '#141216'],
-];
-const PRINT = { x: 305, y: 226, w: 390, h: 468 };
-function shirtPath(ctx, fresh = true) {
-  if (fresh) ctx.beginPath();
-  ctx.moveTo(392, 118);
-  ctx.quadraticCurveTo(500, 146, 608, 118);
-  ctx.quadraticCurveTo(690, 150, 768, 166);
-  ctx.quadraticCurveTo(872, 236, 940, 356);
-  ctx.lineTo(828, 458);
-  ctx.quadraticCurveTo(782, 418, 738, 372);
-  ctx.quadraticCurveTo(724, 700, 730, 1030);
-  ctx.quadraticCurveTo(500, 1052, 270, 1030);
-  ctx.quadraticCurveTo(276, 700, 262, 372);
-  ctx.quadraticCurveTo(218, 418, 172, 458);
-  ctx.lineTo(60, 356);
-  ctx.quadraticCurveTo(128, 236, 232, 166);
-  ctx.quadraticCurveTo(310, 150, 392, 118);
-  ctx.closePath();
-}
-function luminance(hex) { const n = parseInt(hex.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255; }
-/// Soft shape via the offscreen-shadow trick, so blur works in every browser.
-function softStroke(ctx, K, pts, width, color, blur) {
-  ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = blur * K; ctx.shadowOffsetX = 4000 * K;
-  ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.strokeStyle = '#000';
-  trace(ctx, spline(pts, false, 10).map(([x, y]) => [x - 4000, y]), false); ctx.stroke(); ctx.restore();
-}
-function drawShirt(ctx, W, H, color, art) {
-  const K = Math.min(W / 1000, H / 1100), lum = luminance(color);
-  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H);
-  ctx.translate((W - 1000 * K) / 2, (H - 1100 * K) / 2); ctx.scale(K, K);
-  // drop shadow onto the page
-  ctx.save(); ctx.shadowColor = 'rgba(70,40,90,.28)'; ctx.shadowBlur = 44 * K; ctx.shadowOffsetY = 20 * K;
-  shirtPath(ctx); ctx.fillStyle = color; ctx.fill(); ctx.restore();
-  ctx.save(); shirtPath(ctx); ctx.clip();
-  // inside of the back neck
-  ctx.beginPath(); ctx.moveTo(392, 118); ctx.quadraticCurveTo(500, 146, 608, 118); ctx.quadraticCurveTo(560, 196, 500, 196); ctx.quadraticCurveTo(440, 196, 392, 118);
-  ctx.fillStyle = color; ctx.fill(); ctx.fillStyle = lum > 0.5 ? 'rgba(80,60,100,.22)' : 'rgba(0,0,0,.35)'; ctx.fill();
-  ctx.beginPath(); ctx.moveTo(398, 121); ctx.quadraticCurveTo(500, 150, 602, 121); ctx.lineWidth = 11; ctx.strokeStyle = lum > 0.5 ? 'rgba(80,60,100,.12)' : 'rgba(255,255,255,.06)'; ctx.stroke();
-  ctx.beginPath(); ctx.roundRect(484, 138, 32, 16, 3); ctx.fillStyle = '#ffb3d6'; ctx.fill();
-  ctx.fillStyle = '#4a2350'; ctx.font = '400 10px "Mochiy Pop One", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('A', 500, 147);
-  // collar rib
-  ctx.beginPath(); ctx.moveTo(392, 118); ctx.quadraticCurveTo(440, 196, 500, 196); ctx.quadraticCurveTo(560, 196, 608, 118);
-  ctx.lineWidth = 30; ctx.strokeStyle = color; ctx.stroke();
-  ctx.lineWidth = 30; ctx.strokeStyle = lum > 0.5 ? 'rgba(90,70,110,.08)' : 'rgba(255,255,255,.05)'; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(380, 122); ctx.quadraticCurveTo(438, 214, 500, 214); ctx.quadraticCurveTo(562, 214, 620, 122);
-  ctx.setLineDash([5, 4]); ctx.lineWidth = 1.4; ctx.strokeStyle = lum > 0.5 ? 'rgba(80,60,100,.35)' : 'rgba(255,255,255,.22)'; ctx.stroke(); ctx.setLineDash([]);
-  // the print
-  ctx.drawImage(art, PRINT.x, PRINT.y, PRINT.w, PRINT.h);
-  // fabric shading over everything, print included
-  ctx.globalCompositeOperation = 'multiply';
-  const shade = a => lum > 0.5 ? `rgba(110,90,140,${a * 0.5})` : `rgba(0,0,0,${a})`;
-  ctx.save(); ctx.shadowColor = shade(0.5); ctx.shadowBlur = 80 * K;
-  ctx.beginPath(); ctx.rect(-4000, -4000, 9000, 9000); shirtPath(ctx, false); ctx.fillStyle = '#000'; ctx.fill('evenodd'); ctx.restore();
-  const folds = [
-    [[[268, 392], [320, 438], [380, 470]], 16, 30, 0.45], [[[732, 392], [680, 438], [620, 470]], 16, 30, 0.45],
-    [[[200, 240], [160, 320], [130, 380]], 14, 34, 0.35], [[[800, 240], [840, 320], [870, 380]], 14, 34, 0.35],
-    [[[350, 1030], [356, 960]], 10, 30, 0.25], [[[640, 1030], [632, 970]], 10, 30, 0.25],
-  ];
-  for (const [pts, w, b, a] of folds) softStroke(ctx, K, pts, w, shade(a), b);
-  ctx.globalCompositeOperation = 'screen';
-  const hi = lum > 0.5 ? 'rgba(255,255,255,.55)' : 'rgba(170,150,210,.22)';
-  const lights = [[[[292, 410], [340, 452], [392, 486]], 10, 20], [[[708, 410], [660, 452], [608, 486]], 10, 20], [[[368, 1020], [376, 940]], 10, 22], [[[612, 1020], [604, 950]], 10, 22], [[[210, 250], [172, 330]], 10, 22], [[[500, 260], [500, 900]], 120, 120]];
-  for (const [pts, w, b] of lights) softStroke(ctx, K, pts, w, hi, b);
-  ctx.globalCompositeOperation = 'source-over';
-  // stitching
-  ctx.setLineDash([6, 5]); ctx.lineWidth = 1.5; ctx.strokeStyle = lum > 0.5 ? 'rgba(80,60,100,.35)' : 'rgba(255,255,255,.2)';
-  for (const seg of [[[69, 346], [181, 448]], [[931, 346], [819, 448]]]) { ctx.beginPath(); ctx.moveTo(...seg[0]); ctx.lineTo(...seg[1]); ctx.stroke(); }
-  ctx.beginPath(); ctx.moveTo(272, 1014); ctx.quadraticCurveTo(500, 1036, 728, 1014); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(232, 166); ctx.quadraticCurveTo(262, 270, 262, 372); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(768, 166); ctx.quadraticCurveTo(738, 270, 738, 372); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
-  shirtPath(ctx); ctx.lineWidth = 1.5; ctx.strokeStyle = lum > 0.5 ? 'rgba(80,60,100,.25)' : 'rgba(255,255,255,.12)'; ctx.stroke();
-  ctx.restore();
-}
-
-// ─── page wiring ───
 const $ = id => document.getElementById(id);
-const state = { seed: 20240917, shirt: SHIRTS[0][1], art: null, artScale: 0 };
+const PREVIEW = 1.2; // pixels per design unit for the on-page painting
+const state = { seed: 451, shirt: SHIRTS[0][1], ud: null, strokes: null, painting: null, showUnder: false, run: 0 };
 const status = t => { $('status').textContent = t; };
+const frame = () => new Promise(r => requestAnimationFrame(r));
 
 function sizeCanvas(cv, aspect) {
   const dpr = Math.min(2, window.devicePixelRatio || 1), w = Math.max(280, cv.clientWidth || 500);
   cv.width = Math.round(w * dpr); cv.height = Math.round(w * aspect * dpr);
 }
-function paint(repaintArt) {
-  const shirt = $('shirt'), art = $('art');
-  sizeCanvas(shirt, 1.1); sizeCanvas(art, 1.2);
-  const need = Math.min(2.4, Math.max(art.width / DW, shirt.width * PRINT.w / 1000 / DW) * 1.05);
-  if (repaintArt || !state.art || need > state.artScale * 1.01) {
-    const t0 = performance.now();
-    state.art = renderArt(need, state.seed); state.artScale = need;
-    status(`painted in ${Math.round(performance.now() - t0)} ms`);
-  }
-  const actx = art.getContext('2d');
+function shown() { return state.showUnder && state.ud ? state.ud.ref : state.painting; }
+function blit() {
+  const art = $('art'), actx = art.getContext('2d');
   actx.clearRect(0, 0, art.width, art.height);
-  actx.drawImage(state.art, 0, 0, art.width, art.height);
-  drawShirt(shirt.getContext('2d'), shirt.width, shirt.height, state.shirt, state.art);
+  if (shown()) actx.drawImage(shown(), 0, 0, art.width, art.height);
 }
+function drawMock() {
+  const sh = $('shirt');
+  if (shown()) drawShirt(sh.getContext('2d'), sh.width, sh.height, state.shirt, shown());
+}
+function layout() { sizeCanvas($('shirt'), 1.1); sizeCanvas($('art'), 1.2); blit(); drawMock(); }
+
+async function paint() {
+  const run = ++state.run;
+  $('repaint').disabled = true;
+  const pc = document.createElement('canvas'); pc.width = DW * PREVIEW; pc.height = DH * PREVIEW;
+  const pctx = pc.getContext('2d'); pctx.setTransform(PREVIEW, 0, 0, PREVIEW, 0, 0);
+  state.painting = pc; state.strokes = null; blit(); drawMock();
+  const t0 = performance.now(), n = PAINTER.layers.length;
+  let total = 0;
+  const strokes = await paintStrokes(state.ud, state.seed, async (layer, li) => {
+    for (let i = 0; i < layer.length; i += 6000) {
+      if (run !== state.run) return;
+      const j = Math.min(layer.length, i + 6000);
+      renderStrokes(pctx, layer, i, j);
+      total += j - i;
+      status(`painting · brush ${li + 1} of ${n} · ${total.toLocaleString()} strokes`);
+      $('bar').style.width = `${((li + j / layer.length) / n * 100).toFixed(1)}%`;
+      blit(); await frame();
+    }
+  });
+  if (run !== state.run) return;
+  renderWeave(pctx);
+  state.strokes = strokes; blit(); drawMock();
+  $('bar').style.width = '100%';
+  status(`${strokes.length.toLocaleString()} brush strokes · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  $('repaint').disabled = false;
+}
+
 function download(canvas, name) {
   return new Promise(res => canvas.toBlob(b => {
     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000); res();
   }, 'image/png'));
 }
-function busy(btn, label, job) {
+function job(btn, label, fn) {
+  if (!state.strokes) { status('wait for the painting to finish'); return; }
   btn.disabled = true; status(label);
-  setTimeout(async () => { try { await job(); status('saved ✓'); } finally { btn.disabled = false; } }, 30);
+  setTimeout(async () => { try { await fn(); status('saved ✓'); } finally { btn.disabled = false; } }, 40);
 }
 
 SHIRTS.forEach(([name, col], i) => {
@@ -891,28 +154,36 @@ SHIRTS.forEach(([name, col], i) => {
   b.onclick = () => {
     state.shirt = col;
     document.querySelectorAll('.sw').forEach(s => s.setAttribute('aria-pressed', s === b ? 'true' : 'false'));
-    drawShirt($('shirt').getContext('2d'), $('shirt').width, $('shirt').height, col, state.art);
+    drawMock();
   };
   $('swatches').appendChild(b);
 });
-$('repaint').onclick = () => { state.seed = (Math.random() * 1e9) | 0; paint(true); };
-$('dlPrint').onclick = e => busy(e.target, 'painting 4500×5400…', () => download(renderArt(4.5, state.seed), `annas-archive-tee-print-${state.seed}.png`));
-$('dlMock').onclick = e => busy(e.target, 'rendering mockup…', () => {
+$('repaint').onclick = () => { state.seed = (Math.random() * 1e9) | 0; paint(); };
+$('under').onclick = e => {
+  state.showUnder = !state.showUnder; e.target.setAttribute('aria-pressed', String(state.showUnder));
+  e.target.textContent = state.showUnder ? 'Show painting' : 'Show underdrawing';
+  $('caption').textContent = state.showUnder ? 'Underdrawing (never printed)' : 'Print file (transparent background)';
+  blit(); drawMock();
+};
+$('dlPrint').onclick = e => job(e.target, 'painting 4500×5400 · this takes a while…', () => download(renderPainting(state.strokes, 4.5), `annas-archive-tee-print-${state.seed}.png`));
+$('dlMock').onclick = e => job(e.target, 'rendering mockup…', () => {
   const c = document.createElement('canvas'); c.width = 2000; c.height = 2200;
-  const art = renderArt(2000 * PRINT.w / 1000 / DW * 1.1, state.seed);
-  const x = c.getContext('2d'); x.fillStyle = '#fbeff6'; x.fillRect(0, 0, c.width, c.height);
+  const x = c.getContext('2d'); x.fillStyle = '#e9eef7'; x.fillRect(0, 0, c.width, c.height);
   const s = document.createElement('canvas'); s.width = c.width; s.height = c.height;
-  drawShirt(s.getContext('2d'), s.width, s.height, state.shirt, art); x.drawImage(s, 0, 0);
+  drawShirt(s.getContext('2d'), s.width, s.height, state.shirt, renderPainting(state.strokes, 2000 * PRINT.w / 1000 / DW * 1.1));
+  x.drawImage(s, 0, 0);
   return download(c, `annas-archive-tee-mockup-${state.seed}.png`);
 });
 
 let resizeTimer;
-window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => paint(false), 150); });
-const fontsReady = Promise.race([
-  Promise.all([document.fonts.load('156px "Kaushan Script"'), document.fonts.load('84px "Mochiy Pop One"', 'ARCHIVEアンナのアーカイブ')]),
-  new Promise(r => setTimeout(r, 2500)),
-]).catch(() => {});
-fontsReady.then(() => { paint(true); document.body.dataset.ready = '1'; });
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(layout, 150); });
+const fonts = ['124px "Kaushan Script"', '900 20px Nunito', '800 20px Nunito', '700 20px Nunito'];
+Promise.race([Promise.all(fonts.map(f => document.fonts.load(f))), new Promise(r => setTimeout(r, 3000))]).catch(() => {}).then(async () => {
+  status('sketching the underdrawing…'); layout(); await frame();
+  state.ud = buildUnderdrawing(11);
+  await paint();
+  document.body.dataset.ready = '1';
+});
 </script>
 </body>
 </html>
