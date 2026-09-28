@@ -1,175 +1,96 @@
-# Reflection after a full read: Jay & Bader, *Simple Types for Polymorphic Functions*
+# Reading notes: what the comparison must keep separate
 
-Companion to `COMBINATORY_TYPES.md`, which is the reference write-up of the system and its
-mapping onto disp. This file is narrower: it records what a complete read of the paper
-changed, answers the questions I had after a partial read, and states the critiques the
-reference doc does not make. Sections marked (merge) are worth folding into
-`COMBINATORY_TYPES.md` later; the rest is scaffolding that can be deleted.
+Companion to [COMBINATORY_TYPES.md](COMBINATORY_TYPES.md), revised 2026-09-19 after
+reading the full Jay–Bader paper and its bundled OCaml implementation. The comparison
+there is the main account. These notes retain the qualifications that are easy to lose
+when summarizing it; the previous version contained stronger claims than the sources
+justify.
 
-## 1. The reframe: this is abstract interpretation, and Jay says so
+## 1. Exact description, abstraction, and reflection
 
-The single sentence that reorganises the whole paper is §12.3 plus the aside in §1: "the
-layers of abstract types could be used to support different layers of abstract
-interpretation."
+The bare closed types correspond one-to-one with normal-form SK values. Type application
+computes on these descriptions. Abstract types then hide structure behind declared
+constructor and elimination rules. This is a useful connection to abstract interpretation,
+and the authors suggest it, but the paper does not supply a lattice of all these domains
+or prove that its recursive type implements a widening operator. Those were analogies in
+the earlier notes, not established results.
 
-Read that way, everything lines up:
+Being an abstract interpreter and being a type system are compatible descriptions. It
+was misleading to insist that the paper is only the former. Its typing judgment has
+proved properties, including preservation and uniqueness, even though inference is partial.
 
-- **Combinatory types are the concrete domain.** The abstraction map is the identity.
-  `|p|` is a bijection on normal forms, so a core type is the value's exact shape. Zero
-  information lost, and correspondingly zero termination guarantee: type application
-  diverges exactly when the term does (`(SII)(SII)`). Calling this a "type system" is
-  generous; it is a partial evaluator that happens to be written over shapes.
-- **Abstract types are where abstraction actually happens.** `Bool = Abs0{S1 K0}` is the
-  first genuinely lossy step in the paper: two distinct values collapse to one type.
-  Everything a type system is normally for (accepting `successor zero`, rejecting
-  `successor tt`) lives in this layer, not the core.
-- **`Rec{F}` is the widening operator.** §1: "By abstracting away internal structure,
-  recursive functions can preserve their type across iterations." Without an abstract
-  recursion type the type would grow without bound at each unfolding. That is precisely
-  what widening is for.
-- **The precision/tractability trade is named out loud.** §6.1: "Although function types
-  hide many details they also risk eliminating polymorphism." `cond` has a huge structural
-  type that is fully polymorphic; `cond_mono : Bool → U → U → U` is small and monomorphic.
-  Abstraction loses information. That is the point, not a wart.
+Structural analysis is performed by an external checker in this paper. General inspection
+of program structure from inside the language belongs to the tree-calculus work and the
+proposed extension. SK tags distinguish terms for the checker; they do not give arbitrary
+SK programs a tree-inspection primitive. Internalizing types and type-level computation
+is explicitly future work. [Jay & Bader, §12.4](https://arxiv.org/html/2604.12194v1#S12.SS4.p1.1.2).
 
-So the honest reading of the contribution is: *a lattice of abstract domains over
-normal-form SK terms, where the concrete domain is exact and each declaration adds a
-coarser domain with its own transfer functions.* Types are the demo application.
+## 2. Uniqueness is a design choice, not the price of inference
 
-## 2. Answers to the questions I had
+In a fixed context the final system assigns at most one type. Maintaining that property
+explains the reserved shapes for tagged constructors and the extra information carried
+by some constructor arguments. It helps make inference syntax-directed.
 
-**Is this a type system or an abstract interpreter?** The latter, layered so that the top
-layers behave like the former. See §1 above.
+It does not establish that all systems with inference need exclusive typing. Hindley–Milner
+infers a principal scheme representing many typings. Bidirectional systems can synthesize
+an interface while permitting checks against other types. Nor does uniqueness establish
+termination: the paper's type-application computation can diverge.
+[Damas & Milner, p. 2](https://steshaw.org/hm/milner-damas.pdf#page=2);
+[Dunfield & Krishnaswami, §4.6.1](https://www.cl.cam.ac.uk/~nk480/bidir-survey.pdf#page=15).
 
-**What is the "summary system" of §9?** Not what I guessed. It is a summary in the mundane
-sense: Figure 5 collects every type-application branch introduced across §§5 through 8 into
-one omnibus `match`, "for the sake of completeness." There is no separate summarising or
-collapsing mechanism. My guess that it was the size-control device was wrong.
+Disp can retain overlapping predicates while selecting an interface for inference,
+normalization, implicit operations, or compiled representation. The additional obligation
+is that behavior-changing choices be explicit or coherent, not that values have only one
+valid membership.
 
-Where does size control actually come from, then? From the abstract types, which do triple
-duty: nominal identity, termination, and compression. In the core layer types are literally
-the same size as terms (§10: "term and type have the same size" for `SSSS…`), and
-`successor1000 zero` has size 38020 in Table 1. `Bool` is one node regardless of how big
-`tt`'s SK expansion is.
+## 3. Inhabitants carry information, with limited consequences
 
-**Is the subtyping relation `<` decidable?** The question dissolves. Subtyping exists only
-in §3's hybrid system, which is a stepping stone the paper discards: "by replacing subtyping
-with type applications such as `S0(K0) = S1 K0` it will be enough to support the combinatory
-types alone." The final system (Figure 5) has no subtyping at all. Worth noting anyway that
-Figure 1 includes transitivity with an undetermined middle type (`U < W if U < V and V < W`),
-the usual undecidability smell, which may be part of why they moved on, though the paper's
-stated reason is just simplification.
+The sum encoding requires values from both summands even when only one is selected.
+The empty-list constructor needs an inhabitant of its element type, and arrow introduction
+needs one of its domain. This follows from the paper's choice to transmit the missing
+type information through ordinary terms. It is a real restriction on these interfaces.
 
-**How does tagging capture intensionality?** `tagged{f,t} = S(S(KK)f)(tag(Kt))` preserves
-functionality (Theorem 2.1: `tagged{f,t} u ⟶ f u`) while changing the shape, and shape is
-the type. Theorem 2.2 (`tagged_not_star`) says a tagged term is never a star-abstraction;
-that separation is what keeps type application single-valued. The S1 restriction enforces
-it: `S1 U (V) = S2 U V` fires only if `S2 U V` is not a tagged type, so tagged terms fall
-through to declaration-specific rules or have no type at all.
+It does not prove that every type in the system is inhabited or that an extension cannot
+have empty types. The earlier claim that there can be no empty types was too strong.
+Likewise, a dummy is part of the term representation, but its precise runtime cost or
+safe erasure depends on evaluation and compilation; the paper does not establish a
+universal overhead bound or an erasure theorem.
 
-Why he wants this: §5.3, "System F types are not intensional, in that all two-values types
-are identified." He wants nominal distinctions between isomorphic encodings, obtained
-structurally rather than by fiat. Only an intensional calculus can do this; λ-calculus
-cannot tell `λxy.x` used as `tt` from `λxy.x` used as `K`.
+## 4. Termination, reduction, and inference are separate
 
-**Recursion.** `Z{f} x ⟶ f (Z{f}) x` built from `wait2` and double tagging so that `Z{f}`
-is a normal form. `Rec{F} = Abs1{K0} F`, elimination conditional on
-`F (V∗U → V)(V∗U) = V`. The `V∗U` rather than `U` is another dummy-value hack, "to ensure
-that type application is functional." The paper admits `Rec` gets no declaration at all
-because "it is not clear how to represent a conditional elimination rule", so the
-declaration language is incomplete and `Rec` is hand-rolled. The "special cases for Z" in
-the inference algorithm are about not descending into the `wait2`/tag machinery
-structurally; the side condition itself is determined, not searched, since `V1` comes from
-the argument type.
+The bare example of divergent self-application demonstrates divergent inference. It is
+not a decision procedure for whether arbitrary terms have normal forms. Inference requires
+types for both operands even when reduction can discard an operand. Reduction preserves
+an existing typing; the reverse implication need not hold.
 
-**SK versus tree calculus.** Confirmed stepping stone. §12.4: the plan is to port this to
-tree calculus, then "internalise the types and type-level computations as terms and
-intensional programs, and then blend them in a system of dependent types." His roadmap
-terminates roughly where disp already stands.
+The full abstract system types recursive computations that need not terminate. Their
+recursive-call arguments are retagged with an arrow interface: omitting that wrapper from
+the reduction formula hides an essential typing step. Naturals and lists expose one
+constructor layer; recursion and folding are defined separately.
 
-## 3. Three critiques the reference doc does not make (merge)
+An inference cutoff ensures the attempt stops but may reject a typable term. Similarly,
+a candidate-by-candidate inhabitation search must dovetail its attempts or use increasing
+budgets, otherwise a divergent check can block it forever. Turing-completeness alone does
+not prove that the inhabitation problem is undecidable.
 
-**The dummy-value tax is systemic.** Dummies appear in sums (`inl` needs a `dV`), function
-types (`lam x t d`), list `nil`, and `Rec`'s `V∗U`. The pattern is exact: wherever the
-result type is not determined by the argument's shape, a *runtime value* is inserted to
-carry the missing type information. This is System F's type application re-encoded as term
-application, with an inhabitant standing in for the type. Three consequences the paper
-underplays: types must be inhabited (it calls this "not a practical difficulty" but it
-"complicates the theory"), programs carry runtime junk that a compiler would have to erase,
-and there can be no empty types. That last one is a hard wall for anyone wanting to read
-this as a logic. Jay is not doing logic, so it costs him nothing, but it is the single
-biggest reason the system cannot be lifted into a proof assistant as-is.
+The performance table supports small inference costs on the ordinary examples, not a
+general linear bound. Its repeated-S examples explicitly exceed the prose claim that
+all tested ratios stay below three. [Jay & Bader, §10](https://arxiv.org/html/2604.12194v1#S10.p1.1).
 
-**"No changes to the term language" is true at the BNF and misleading in practice.** The
-grammar stays `S | K | MN`, yes. But constructors must be tagged, λ must be star-abstraction
-with no η-contraction (§2.2: with η, "all constructors c would also be abstractions"), and
-dummies must be threaded through. The term language is unchanged; the *programs* are
-typing-shaped. This matters because the headline pitch in §12.3 is "no need to encode
-programs as syntax trees before analysing them", yet their own most realistic experiment
-undercuts it: the toy compiler is "completely oblivious to our data types and tagging
-approach", so "infer_app wrangles nothing but combinatory types." Oblivious code typechecks
-but gains nothing from the abstract layer, meaning it gets no abstraction at all. To
-benefit, you write in their idiom. That is an encoding, just relocated from the analysis to
-the source program.
+## 5. What remains unresolved
 
-**Uniqueness is a maintained invariant, not a structural theorem.** Theorem 9.1 (at most
-one type) is proven in Rocq for the system as it stands. But all the interesting content
-comes from declarations that add branches to a partial function, and every branch is a
-chance to make it non-functional. The guards are ad hoc and hand-placed: the S1 restriction,
-`tagged_not_star`, dummy values, `V∗U` in `Rec`. There is no general criterion for "when is
-a new declaration safe", which is exactly what you would want before believing this scales.
-§12.2 (typing modules) would stress it immediately.
+The hybrid-system correspondence is still Conjecture 3.1. The introduction's broad
+comparison with HM should be read alongside that qualification.
 
-Minor: §10 says the calls-to-size ratio stays "below 3 for all tested examples", but their
-own Table 1 lists `S^10` at 6.36 and `S^100` at 73.76. They caveat these as unrealistic in
-the next sentence, so it is loose phrasing rather than a wrong claim, but the reference
-doc's repetition of "below 3 for all tested examples" inherits the looseness.
+Declarations describe how new abstract types should acquire application rules, but their
+translation is not automated. The recursive type is supplied by explicit rules rather
+than a declaration, and the paper identifies its conditional elimination rule as an
+unresolved issue. The proved properties of the presented system must be re-established
+or covered by an extension theorem when rules change.
+[Jay & Bader, §6.2](https://arxiv.org/html/2604.12194v1#S6.SS2.p3.m1).
 
-## 4. What actually motivates the paper (correction, merge)
-
-I had previously read the emphasis on decidable inference as being about annotation burden.
-That is wrong. §1 is explicit that inference is a demonstration: "To illustrate the
-possibilities, we develop an effective type inference algorithm." The goal stated in §12.3
-and §13 is *static program analysis without encodings*. Because every computable function
-has a normal form in combinatory logic, programs already are the trees an analysis wants to
-walk, so analyses need no separate syntax representation and no separation of syntax from
-semantics. Types are the first and simplest such analysis, and effective inference is the
-evidence that the framework is tractable rather than the goal.
-
-This also explains why he tolerates a system whose concrete domain diverges on `(SII)(SII)`.
-An abstract interpreter is allowed to be a partial function; a type checker is not supposed
-to be. He is building the former.
-
-## 5. What this changes for disp
-
-Mostly it sharpens what `COMBINATORY_TYPES.md` §6 already says, rather than replacing it.
-
-- The "inference island" idea (§6.2 there) survives the full read and gets a sharper
-  statement: what you would import is not a type system but an *exact shape analysis* over
-  the structural fragment, with declared abstract types as the coarsening layer. Uniqueness
-  is the price of inference, and abstraction is the price of tractability. Those are two
-  separate trades, and the paper pays both.
-- The dummy-value tax is the reason a wholesale import is unattractive. disp has empty types
-  and cares about propositions; Jay's encoding of "which type did you mean" as "hand me an
-  inhabitant" is incompatible with that at the root, not at the margin.
-- The abstract-interpretation framing is a better organising metaphor for disp's own type
-  tiers than the one currently in `COMBINATORY_TYPES.md` §6.5, which mentions it only in
-  passing. Concrete domain = exact structure, abstract domains = declared recognizers with
-  their own transfer rules, widening = whatever keeps recursive types from growing.
-- The genuinely portable technique is small and specific: **derived rules as theorems about
-  where evaluation lands.** `|cond|(Bool)(U)(U) = U` is proven by computation, and the
-  familiar typing rule for `cond` falls out as a corollary. That pattern (state the ordinary
-  rule, prove it as a fact about the evaluator rather than assume it as a primitive) is
-  directly reusable for recognizer-level lemmas and does not require adopting anything else
-  from the paper.
-
-## 6. Still open
-
-- Conjecture 3.1 (every HM-typable program has a principal combinatory type) is unproven:
-  "the case analyses for the proof have been written out, but we have yet to find the right
-  induction principle to combine them." This is the paper's main claimed relationship to HM
-  and it is a conjecture.
-- No general safety criterion for declarations (see §3 above).
-- The PEPM'25 typed tree calculus is paywalled and not in this folder; it is the version
-  with quantifiers that this paper claims to improve on, so the comparison is taken on
-  trust.
+For disp, a structural inference layer remains a possible design, not a proved speedup or
+a required repair. The most directly reusable method is proving convenient analysis rules
+against the underlying computation. The main comparison now links the current kernel
+and distinguishes guarded checking from finite sampling; the former July file paths and
+blanket claims of machine-checked soundness should not be carried forward.

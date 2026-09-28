@@ -1,8 +1,9 @@
 # Barry Jay's Combinatory Types, and What They Would Mean for disp
 
-A deep dive into Barry Jay's recent type-system work (types are programs that reduce; type
-inference is evaluation, not unification), and a point-by-point mapping onto disp's kernel
-(types are recognizers; checking is evaluation of predicates). Written 2026-07.
+A reading of Jay & Bader's *Simple Types for Polymorphic Functions*: inference evaluates
+a type-application operation over structural and abstract types. The comparison with disp
+distinguishes unique typing, principal types, and deterministic inference. Written 2026-07;
+comparison and technical corrections revised 2026-09-19 against the paper and current code.
 
 ## This folder
 
@@ -13,8 +14,8 @@ inference is evaluation, not unification), and a point-by-point mapping onto dis
   appendix with Jose Vergara). Background for the substrate the types are meant to move to.
 - `ocaml-implementation/` — Bader's OCaml type inference for the paper
   (github.com/olydis/combinatory-types, archived on Zenodo as 10.5281/zenodo.15338381).
-  `lib/infer.ml` is the algorithm of Section 10 of the paper; `lib/types.ml` is type
-  application; `lib/iota.dag` is an example program.
+  `lib/infer.ml` implements both inference and type application; `lib/types.ml` defines
+  type representations and structural helpers; `lib/iota.dag` is an example program.
 
 Not downloaded (paywalled): Jay, "Typed Program Analysis without Encodings", PEPM'25,
 DOI 10.1145/3704253.3706138. Its Rocq formalization is public:
@@ -76,14 +77,17 @@ close cousins; that is why the mapping later in this document is mostly smooth.
 ### 3.1 Terms
 
 `M, N ::= S | K | M N`, with `S M N P ⟶ M P (N P)` and `K M N ⟶ M`. Lambda is sugar via
-bracket/star abstraction; abstractions are always normal forms. Two gadgets matter:
+bracket/star abstraction. Bracket abstraction produces normal forms; the optimized star
+abstraction can retain closed subterms, so its normality requires those to be normal.
+Two gadgets matter:
 
 - `wait{M,N} = S(S(KM)(KN))I` — keeps M and N apart until applied (`wait{M,N} P ⟶ M N P`).
   Used to build normal-form fixpoints: `Z{f}` waits for an argument, so it is normal if f is.
 - `tagged{f,t} = S(S(KK)f)(tag (K t))` with `tag = S(S(KK)(KK))` — wraps f so that
   `tagged{f,t} u ⟶ f u` (functionality preserved) but the term is structurally marked by t.
-  Theorem `tagged_not_star`: a tagged term is never a λ-abstraction. This separation is what
-  lets the type system tell constructors apart from functions — the basis of nominal typing.
+  Theorem `tagged_not_star`: a tagged term is never the output of the specified
+  star-abstraction algorithm. This separates constructor representations from those
+  abstraction outputs; it does not mean constructors lack functional behavior.
 
 ### 3.2 Types and type application
 
@@ -112,10 +116,11 @@ M : T    N : U
      M N : V
 ```
 
-The recursive call in the S2 rule terminates iff the corresponding term reduction does —
-type application is exactly as terminating as the program. Proven in Rocq: reduction
-preserves typing; every combinator has at most one type; there is an effective type
-inference algorithm.
+The S2 rule can recurse indefinitely. In the bare system, applying exact structural types
+tracks computation on their corresponding values. This is not a characterization of
+whether an arbitrary term has a normal form under some reduction strategy: inference
+also requires types for both subterms of every application. The paper proves reduction
+preservation, uniqueness in a fixed context, and inference correctness for its rules.
 
 ### 3.3 Worked examples (verified by hand against the rules above)
 
@@ -126,9 +131,9 @@ K0 (I0) = K1 I0            where I0 = S2 K0 K0
 K1 I0 (S0) = I0
 ```
 
-Same type as `SKK`, correctly, since `K(SKK) S ⟶ SKK`. Membership is "evaluates to this
-shape": one type per *value*, many terms per type. The type is a prediction of the result's
-shape; checking is checking the prediction.
+Same type as `SKK`. In the bare system, a type determines one closed normal-form value,
+but multiple typable terms can reduce to that value. The converse does not follow:
+reducing to a typable value need not make the original term typable.
 
 **Polymorphism without ∀.** The identity `I = SKK` has the single type `I0`. Apply it to an
 argument of any type T — evaluate, don't unify:
@@ -157,9 +162,11 @@ S2 I0 I0 (S2 I0 I0) = I0(X) (I0(X))   where X = S2 I0 I0
 I0 (X) = X                            ...so the application reduces to X(X) = itself — loop
 ```
 
-Type application diverges exactly where the term does. So even the bare core is a
-classifier: a **termination analysis plus exact result-shape analysis**. Programs that loop
-are ill-typed. The paper's inference algorithm loops here too (§10).
+The paper's inference algorithm loops on this example too (§10); it does not return a
+rejection. Moreover, $K I \Omega$ reduces to $I$ by discarding its last argument, but
+inference still tries to type $\Omega$. Thus having a normal form is insufficient for
+typability. The abstract system below also types potentially nonterminating recursive
+computations, so the bare example is not a termination guarantee for the full system.
 
 **Self-application works, though.** `let f = I in f f` is `(SII) I`, and
 `S2 I0 I0 (I0) = I0(I0)(I0(I0)) = I0`. This is the example that needs `let` and type-scheme
@@ -227,12 +234,16 @@ The paper's abstract types, cumulatively:
   `derive_lam`). Warning the paper repeats: tagging into a function type *hides*
   polymorphism (`cond_mono : Bool→U→U→U` is monomorphic where raw `cond` was polymorphic).
   Abstraction and polymorphism are in tension — opacity is a choice, per declaration.
-- **Recursion.** `Z{f} x ⟶ f (Z{f}) x` with `Z{f}` a normal form (via `wait2` and double
-  tagging). `Rec{F} = Abs1{K0} F`, with a *conditional* elimination rule:
+- **Recursion.** The precise reduction is $Z\{f\}\,x \longrightarrow
+  f\,(\operatorname{tagged}\{Z\{f\},Kx\})\,x$. The recursive-call argument is retagged
+  with an arrow interface; replacing it by the unwrapped recursive function loses a
+  typing-relevant step. `Z{f}` is a normal form when f is. `Rec{F} = Abs1{K0} F`, with a
+  *conditional* elimination rule:
   `Rec{F} (V∗U) ⇒ V if F(V∗U→V)(V∗U) = V`. The paper does not give Rec a declaration —
   conditional rules don't fit the declaration machinery cleanly yet.
-- **Nat.** `Nat = zero | successor of Nat`. Nats are encoded as their own fold: `n` applied
-  to `pair base step` computes the fold. Elimination typing:
+- **Nat.** `Nat = zero | successor of Nat`. Applying a numeral to a pair of handlers
+  performs case analysis: the successor handler receives the predecessor, not an already
+  folded result. Recursion is supplied separately. Elimination typing:
   `Nat (V1∗V2) = V1 if V2(Nat) = V1`. Example: `isZero = λn. n (pair tt (K ff))` — argument
   type `Bool ∗ K1 Bool`, side condition `K1 Bool (Nat) = Bool ✓`, so `isZero n : Bool`.
   Primitive recursion (`primrec`) and minimisation (`minrec`) are defined via Z with
@@ -247,72 +258,72 @@ rules (S, K, application-via-type-application, plus variable lookup for open ter
 
 ### 3.6 Checking and errors, concretely
 
-A program is rejected when type application is **undefined** (no rule fires) or
-**diverges**. The paper's running error example is `successor tt`: applying the successor
-rule's shape to `Bool` matches nothing, inference fails fast. Positive case:
+A missing type-application rule gives a finite rejection; divergence gives no answer.
+A bounded implementation can stop either computation, but budget exhaustion does not
+establish untypability. The paper's running error example is `successor tt`: applying the
+successor rule's shape to `Bool` matches nothing, inference fails fast. Positive case:
 `zero : Nat`, `successor zero : Nat` (rule fires), etc. So the abstract layer does the
 ordinary accept/reject job — with the criterion defined *nominally* (declarations and tags)
 on top of the exact structural computation.
 
 ### 3.7 Type inference (§10)
 
-Since types are unique when they exist, inference is a recursive evaluator:
+Inference looks up variables in a fixed context, assigns the primitive types to S and K,
+and recursively infers both operands of an application before calling type application.
+The implementation is in [infer.ml](ocaml-implementation/lib/infer.ml); its constructor
+recognition helpers are in [types.ml](ocaml-implementation/lib/types.ml). It analyzes term
+structure rather than executing the term on a hypothetical argument.
 
-```ocaml
-let rec infer gamma m =
-  match m with
-  | Ref x -> get x gamma
-  | Sop -> Some Sty | Kop -> Some Kty
-  | App (m1, m2) ->
-      match (infer gamma m1, infer gamma m2) with
-      | Some ty, Some vty -> infer_app ty vty   (* evaluate the type *)
-      | _, _ -> None
-```
+Theorem 10.1 identifies successful inference with derivable typing. The unbounded procedure
+finds a type whenever one exists; on an untypable term it may fail or run indefinitely.
+The Rocq implementation bounds recursion depth; OCaml's `infer_safe` budgets type
+applications, while `infer_measure` runs without that cutoff. A fixed cutoff makes the
+implementation terminate but may reject a typable input. These are separate guarantees.
+[Jay & Bader, §10](https://arxiv.org/html/2604.12194v1#S10.p1.1).
 
-`infer_app` (in `ocaml-implementation/lib/infer.ml`) implements the type-application rules
-recursively. Theorem 10.1 (Rocq): `Γ ⊢ M : T ⟺ infer Γ M = T` — sound *and* complete; it
-finds the type whenever one exists. Termination: fails quickly on common type errors, loops
-only on pathological self-application (`(SII)(SII)`); Z-recursion is handled by special
-cases. The Rocq version bounds recursion depth; the OCaml version counts `infer_app` calls
-as a budget. Measured: calls-to-term-size ratio below 2 for most, below 3 for all tested
-examples — effectively linear for realistic programs. Known worst case: long chains
-`SSSS…` force repeated rewriting of the whole type, O(k²).
+The reported calls-to-size ratios are small for the ordinary examples, including the toy
+compiler, but this is experimental evidence, not a general linear bound. Table 1 includes
+ratios 6.36 and 73.76 for repeated-S terms; the paper explains their quadratic growth.
+Uniqueness prevents searching among competing types; it does not bound the cost of
+computing the unique answer.
 
-### 3.8 Inhabitation ("find a term that fits this type")
+### 3.8 Inhabitation (finding a term of a specified type)
 
-Not treated in the paper (the word "inhabited" appears only as the dummy-value side
-condition for sums and lists). The landscape, from the mechanics:
+In the bare closed system every structural type decodes to its one normal-form value.
+Abstract types instead group different values and can express useful synthesis targets.
+The paper does not establish a general inhabitation algorithm or an undecidability theorem
+for the full system. Turing-completeness alone would not prove inhabitation undecidable.
 
-- **Core layer: trivial.** Types and values are in bijection — `S2 K0 K0` decodes to exactly
-  `SKK`. Inhabitation is a decoder, not a search; the "proposition" already contains its
-  proof. Curry-Howard degenerates.
-- **Abstract layer: genuine synthesis, semi-decidable.** "Find a term of type `Nat→Nat`"
-  means finding a combinator + dummy whose tag checks out — a search problem. Two unusual
-  conveniences: checking a candidate is effective (type application is a function;
-  uniqueness means no guessing which type to check against), and enumeration has no
-  redundancy (programs are normal forms of an intensional calculus — no two candidates are
-  the same term modulo reduction). But undecidable in general: the system types μ-recursive
-  functions, so inhabitation is Rice-flavored hard. Semi-decision procedure: enumerate
-  normal forms by size, type-check each.
-- The interesting zone is exactly where the two layers meet: abstract types as *specs*,
-  structural computation as the *search space*.
+One possible semidecision procedure is to enumerate finite typing derivations, or dovetail
+candidate terms and increasing inference budgets. Running unbounded inference on each
+candidate in sequence is insufficient: one divergent attempt could prevent reaching a
+later solution. Restricting a search to distinct normal forms removes reduction-equivalent
+candidates, but not different programs implementing the same function. These are
+observations about possible search procedures, not results proved in the paper.
 
-### 3.9 Comparison to the usual suspects
+### 3.9 Unique types are not the same as principal types
 
-| | HM | System F | Combinatory types |
+| Question | Hindley–Milner | System F | Jay & Bader's final system |
 |---|---|---|---|
-| type variables / quantifiers | yes / ∀ at top | yes / ∀ anywhere | none |
-| principal types | yes (schemes) | no | yes — the unique type |
-| inference | unification (Algorithm W) | undecidable | evaluation of type application |
-| polymorphism | declared by ∀, instantiated by substitution | declared by ∀, applied explicitly | latent in structure, revealed by application |
-| data types | ad hoc constants + declarations | Church encodings | declarations = new type-application rules over tagged SK-terms |
-| term syntax changes for typing | yes (let, annotations) | yes (Λ, type application) | none — terms stay SK |
-| beyond-HM polymorphism | no | yes (no inference) | yes (with inference) — e.g. `(SII) I` |
+| What is typed? | Expressions with implicit polymorphic instantiation | Distinguish explicitly typed terms from their erased forms | SK terms, with variable types supplied by a context |
+| Is there only one valid type? | No; one principal scheme covers its instances | Explicitly typed terms have unique types in the standard presentation; erased terms need not | At most one type in a fixed context |
+| How is type information found? | Algorithm W computes a principal scheme | Checking explicit terms and reconstructing omitted types are different problems; unrestricted reconstruction is undecidable | Infer operand types, then evaluate type application; this may diverge |
+| Where does polymorphism live? | Quantified schemes and instantiation | Type abstraction and explicit type application | Detailed type structure whose application can work for many argument types |
+| What information can be hidden? | Declared interfaces and data types | Quantified interfaces and encodings | Tagged abstract types with their own application rules |
 
-The philosophical claim (§13): combinatory logic is a better base for static analysis than
-λ-calculus because all programs are normal forms — "there is no need to encode programs as
-syntax trees before analysing them" — and expressiveness grows by *declarations* (new
-type-application rules), never by changing the term language.
+A principal scheme is not the only valid type: every other valid scheme is an instance
+of it in the Damas–Milner result. This directly refutes the claim that multiple typings
+make inference impossible. [Damas & Milner, p. 2](https://steshaw.org/hm/milner-damas.pdf#page=2).
+
+Likewise, selecting a type during synthesis need not exclude checking the expression at
+other types. Bidirectional systems separate these judgments; intersections make their
+relationship particularly clear. [Dunfield & Krishnaswami, §4.6.1](https://www.cl.cam.ac.uk/~nk480/bidir-survey.pdf#page=15).
+
+The self-application example in §3.3 demonstrates avoiding HM's let-generalization
+machinery, not a computation that HM cannot express. The paper also demonstrates storing
+polymorphic programs together; its general correspondence with the hybrid HM system
+remains Conjecture 3.1. Avoid treating this as a proved blanket inclusion of one language
+in another.
 
 ## 4. The PEPM'25 typed tree calculus (brief)
 
@@ -328,129 +339,199 @@ breadth-first strategy. The 2026 combinatory-types paper is the sequel that dele
 quantifiers; §12.4 says the endgame is to port combinatory types to tree calculus,
 internalise the types *as terms*, "and then blend them in a system of dependent types."
 
-## 5. The disp mirror, point by point
+## 5. Comparison with disp
 
-Both systems make the same root move — collapse typing into ordinary evaluation in one
-untyped universe of normal-form trees; no separate type syntax, no unification, no
-metavariables — and then fork on **which side runs**:
+### 5.1 Structural descriptions and predicate membership
 
-| | Jay (combinatory types) | disp (kernel, post `param_apply`) |
+Jay's types describe programs using a prescribed type grammar and type-application
+operation. In the bare system the description is exact; abstract types intentionally hide
+structure. The application rule computes a result description from the two operand
+descriptions. The final system maintains at most one type for a term in a fixed context.
+[Jay & Bader, introduction](https://arxiv.org/html/2604.12194v1#S1.p1.m7).
+
+Disp instead lets a supplied recognizer judge a value. Several recognizers can accept the
+same value without competing to be its exclusive type. That is a useful way to express
+refinements and multiple interfaces. It is not an obstacle to implementing an algorithm
+that selects a useful description as well.
+
+The systems do not already share a single in-language implementation of typing. Jay's
+paper distinguishes term syntax from type syntax; its checker is implemented externally
+in Rocq and OCaml. Internalizing types and analysis in tree calculus is future work.
+Disp's recognizers and checking machinery are already disp programs. Nor does bare SK
+provide disp's general operations for inspecting trees: structural analysis by the
+external checker is different from reflection available to the checked program.
+[Jay & Bader, §12.4](https://arxiv.org/html/2604.12194v1#S12.SS4.p1.1.2).
+
+### 5.2 What the current code actually provides
+
+| Aspect | Jay & Bader | Current disp |
 |---|---|---|
-| a type is… | a **transfer function**: argument-type → result-type | a **recognizer/predicate**: value → Bool (`make_type` bundles recognizer + gate + members + elim) |
-| the app rule | `M:T, N:U ⊢ MN : T(U)` — evaluate the **type** | `Pi A B` mints a fresh hyp `h:A`, runs `f h`, checks against `B h` — evaluate the **term** (on a neutral); recognizer judges |
-| typing a value | unique (at most one type) | membership (a value passes many types: Nat, refinements, Eq-families…) |
-| consequence | **inference** falls out: evaluation replaces unification | **checking** only; inference impossible in principle (no unique answer) |
-| open functions | never evaluated; no hypotheses anywhere | neutral evaluation is the core mechanism: `bind_hyp`, `hyp_reduce`, `respond` tables, parametricity policing in the walker |
-| polymorphism | latent in structure, computed on application | erased dependent intersections (`Intersection`, Cedille lineage); enforced parametricity |
-| conversion | syntactic identity of types | `tree_eq` — O(1) hash-cons identity (everything always normal) |
-| termination | type application loops iff the term loops | user recognizers are arbitrary computation; budgets make it explicit (`Err` not loop) |
-| where correctness lives | **external**: Rocq theorems about the calculus | **internal**: kernel written in disp; `param_apply`'s honesty claim is itself a machine-checked Pi-type statement; `Type : Type` deliberate |
-| recursion | special-case `Rec{F}` with conditional elimination | ordinary dependent eliminators (motives), registered per-type |
-| nominal/abstract types | `tagged{f,t}` + declarations | type formers are library code; records are headered values projected by name |
+| Type representation | Structural forms plus labeled abstract forms | Callable recognizers, optionally carrying checking and observation metadata |
+| Application analysis | Apply the inferred function type to the inferred argument type | A chosen function recognizer checks behavior through a chosen walker |
+| Open terms | Variables obtain types from a context | Guarded checking uses fresh typed placeholders and controls their observations |
+| Multiple memberships | Excluded in the final typing judgment | Intentional: refinements, singleton types, and other predicates may overlap |
+| Information hiding | Tagged terms receive an abstract type in place of their structural type | Recognizers and declared interfaces can expose selected properties without exclusive membership |
+| General inference | Partial inference procedure for the specified rules | No general reconstruction procedure in the current elaborator; synthesis of selected interfaces remains possible |
+| Guarantees | Paper proves preservation, uniqueness, and inference correctness for its system | Guarantees depend on the selected recognizer/walker; library checks are not by themselves a metatheoretic soundness proof |
 
-The deepest single difference: **Jay's system is a function; disp's is a relation.**
-`T(U)=V` computes *the* answer; `param_apply T v` tests *a* membership. Everything else —
-inference vs checking, uniqueness vs multiplicity, no-hyps vs hyps — follows from that.
+The implementation references are [kernel.disp](../../lib/kernel/kernel.disp) and
+[types.disp](../../lib/kernel/types.disp):
 
-Two structural echoes worth naming:
+- `Pred` wraps a recognizer; `Refine` combines base membership with another predicate.
+  `Point` recognizes exactly one tree. Thus the concrete value `3` belongs to `Nat`,
+  `Tree`, and `Point 3`. This is ordinary overlapping membership.
+- `Pi` takes a checking table as well as a domain and codomain family. `Fn` supplies
+  `DefaultWalker`, whose default is `Guard`. `Sampled` uses supplied examples instead;
+  acceptance under that table must not be described as a universal proof.
+- `Isect` implements a dependent intersection through the same table-based machinery.
+  Any uniformity claim must account for the actual walker's observation restrictions;
+  the presence of an intersection constructor alone is not a parametricity theorem.
+- `ShallowType` recognizes the type wrapper. `Space` additionally requires structure that
+  the checker can use. `Coherent` checks several agreements using finite probes and
+  other checks; its name does not establish arbitrary semantic coherence.
+- `Named` gives a recognizer a distinct name while delegating membership to its underlying
+  type. It does not force its values to lose membership in differently named types.
+  Equating this with Jay's exclusive tagged-constructor typing would be misleading.
+- `Quotient` carries a normalizer and `canon` consults the selected type. Therefore even
+  when raw trees have structural identity, the meaning of a typed equality can depend
+  on the chosen type. Structural identity is not a decision procedure for equivalence
+  of arbitrary predicates.
 
-- **The app rule is the whole system, in both.** Jay: one rule, `T(U)=V`. disp: with
-  `param_apply` absorbed into the Pi former, the application rule *is* `Pi`'s recognizer
-  (mint, run, check). The difference: Jay's rule is still meta-level (OCaml/Rocq);
-  disp's runs in-language.
-- **Tagging ≈ headers.** Jay's `tagged{f,t}` (nominal marker, functionality preserved) is
-  the same device as disp's headered records and `make_type` bundles: intensionality
-  exploited to give nominal identity to structural values. Both calculi can do this only
-  because they are intensional — λ-calculus cannot.
+The [elaborator](../../src/elab/driver.ts) records declared type information and delegates
+module checking to the in-language `check_module` hook (`Record` in the current kernel).
+That is an implementation choice, not a proof that disp cannot support inference.
 
-Also note what Jay's "polymorphism" is *not*: it is not parametricity. A combinator's type
-makes no uniformity promise — it just computes. disp's `Intersection` plus the walker's
-policing actually enforces parametric behavior. Jay gets genericity for free but no free
-theorems.
+### 5.3 What uniqueness buys, and what it costs
 
-## 6. What this could mean for disp
+Three properties must stay separate:
 
-### 6.1 A direct embedding is nearly free
+1. **Unique typing:** all derivations for the same term in the same context give the same
+   type, allowing whatever equality the system specifies.
+2. **Principal typing:** there is a best type or scheme representing the other valid
+   typings through subtyping or instantiation.
+3. **Deterministic synthesis:** an algorithm chooses one type. Its answer need not be the
+   only valid type, or even a principal one.
 
-SK embeds in disp's tree substrate immediately (same Leaf/Stem/Fork trees). A combinatory
-type is a tree; `infer_app` is a ~30-line disp function on trees; checking a program is
-`tree_eq` against the computed type. This would be a small, self-contained **litmus test
-of the kernel and elaborator**: a second, structurally different checker (transfer-function
-style rather than recognizer style) to sanity-check against `param_apply` on shared
-examples. It also exercises exactly the machinery Jay-style typing would need in tree
-calculus anyway (his §12.4 internalisation plan).
+Jay supplies the first property together with syntax-directed inference rules. Abstract
+constructor cases reserve particular structural shapes, so inference need not choose
+between retaining an exact structural type and assigning an abstract one.
+[Jay & Bader, §5](https://arxiv.org/html/2604.12194v1#S5.p5.1).
 
-### 6.2 An "inference island" inside disp
+This simplicity has a concrete price. Where a result type would otherwise be ambiguous,
+these encodings pass dummy inhabitants: the unused side of a sum, the element type of an
+empty list, or a function's domain. Consequently those constructions require inhabitants
+that ordinary explicit type arguments would not require. This obstructs their usual use
+with empty types. It does not prove that the framework cannot be extended with empty
+types, and the dummy-value convention is not a necessary consequence of unique typing
+in other systems. [Jay & Bader, §5.4](https://arxiv.org/html/2604.12194v1#S5.SS4.p1.m12).
 
-disp cannot infer, for a principled reason: predicates have no unique answer. But one could
-carve a fragment where types *are* unique shape-descriptors (combinatory types, possibly
-plus declared nominal abstract types), and recover **inference-by-evaluation exactly there**
-— e.g. auto-infer types for first-order structural glue code, while recognizer-checking
-handles the rich layers. Jay's work is the first existence proof that this trade is
-available with the quantifier machinery fully removed: uniqueness, not unification, is the
-real prerequisite for inference. disp gave up uniqueness globally; nothing stops a local
-subsystem from reinstating it. This is probably the most actionable idea in the whole
-comparison.
+Uniqueness is attractive because it removes choices from composing interfaces. In other
+systems it may hold only for fully annotated internal terms; different annotations can
+erase to the same runtime program. Principal schemes and bidirectional checking provide
+other ways to control choices. None requires that a runtime value satisfy only one
+property.
 
-### 6.3 A cheaper checking tier
+Dependent types do not themselves force non-unique typing either. A result type may
+depend on an argument value while still being uniquely determined by the annotated term
+and its context. Moving Jay's system toward dependent types therefore does not entail
+adopting disp's overlapping predicates or giving up all inference.
 
-disp's Pi checking pays for hypotheses, `respond` tables, and parametricity policing on
-every check. For non-dependent, structurally-typed code, Jay shows a lighter path: compute
-the result type by evaluation, compare with `tree_eq`. No minted neutrals, no policing —
-because you never evaluate the *term*, only the *type*. If profiling ever shows hyp
-machinery dominating check time, a Jay-style fast path for the structural fragment is the
-obvious optimization tier (and fits the repo's "nice code first, `.opt.disp` later" rule:
-recognizers stay the spec, type application becomes the proven-faster path where it
-applies).
+Disp can even construct an exact singleton description for an already evaluated value
+using `Point`. Under the set interpretation, any accepting predicate contains that
+singleton. But discovering that containment still requires establishing the predicate
+on the value. Exact descriptions do not automatically yield small, reusable interfaces,
+efficient implication checking, or an inference procedure for unevaluated programs.
 
-### 6.4 Dependent types: Jay's roadmap ends where disp lives
+### 5.4 Predicates are flexible; arbitrary reasoning remains hard
 
-Recap of the earlier analysis, kept because it drives the above:
+Allowing a predicate to define membership does not make it a total decision procedure.
+Nor does it automatically give the predicate an induction principle, an eliminator, or a
+sound rule for reasoning about unknown inputs. Those need separate justification.
 
-- The core system is already *degenerately dependent*: the argument's type is its full
-  value-structure, so result types already depend on argument *values* (in disguise).
-  `Vec' = Abs1{vec_tag} |n|` with the index riding as a shape is sketched by the machinery.
-- What's missing for real dependent types: opacity that *retains* a value index (abstract
-  types currently erase values wholesale); propositions *about* values, not just shapes
-  (i.e. recognizers); and an internalised judgment (`:` as a computed relation, not a
-  meta-level derivation).
-- The cost is known: **uniqueness dies** (a `Vec Nat 2` is also a `List Nat`), and
-  uniqueness is the load-bearing assumption of inference-by-evaluation. Take the step and
-  you land where disp sits: types are predicates, checking is evaluation, hypotheses do the
-  work of binders, inference is gone. Jay's §12.4 endgame and disp's kernel look like the
-  same point in the design space reached from opposite directions.
+For disp the central questions are whether a check terminates, whether its abstract
+observations justify the claimed behavior for actual inputs, and what evidence permits
+one interface to be used as another. Arbitrary predicate implication and equivalence
+cannot be decided in general. A budget limits work but cannot turn exhaustion into a
+proof of membership or nonmembership.
 
-### 6.5 What each side teaches the other
+Jay's unique typing does not solve these questions in general. Its own inference can
+fail to terminate, while its abstract recursive types permit nonterminating programs.
+Its formal results apply to the particular rules proved in the paper; disp does not
+inherit those results by adopting structural descriptions or tagging.
 
-disp → Jay: neutral evaluation + `respond` is a working answer to "how do you check open
-functions"; the parametricity-policing walker is a working answer to "how do you enforce
-uniformity"; budgets make the divergence-is-the-type-error tradeoff explicit
-(`Err` instead of loop). Also: the observer-restriction problem (programs that can detect
-they're being probed with a minted neutral — `ACTIVE_BUGS.md` item 5, studied in miniature
-in `lib/standalone_kernel.disp`) is a real hazard Jay will meet the moment types inspect
-*terms* during checking rather than just other types.
+## 6. What to borrow, and where to require a definite choice
 
-Jay → disp: uniqueness as the precise price of inference (§6.2); derived rules as theorems
-about evaluation (`app_ty_cond`) as a pattern for stating recognizer-level lemmas; abstract
-interpretation as the organising metaphor for layered type systems (his §12.3: combinatory
-types as concrete domain, abstract types as abstract domains — maps cleanly onto disp's
-`Type`/`StrictType`/`BehavioralType` tiers in `lib/kernel/universe.disp`); and the
-demonstration that a serious type system can be *one partial function* — a useful
-austerity benchmark for kernel complexity.
+### 6.1 An optional analysis that returns a type
 
-## 7. Sources
+Disp can retain overlapping membership while adding an analysis that returns one useful
+interface, perhaps using declared interfaces, known constructors, and proved application
+rules. Bidirectional checking is another option: synthesize where sufficient information
+is available, and use an expected type elsewhere. This need not be complete for arbitrary
+user predicates, and a principal result should be claimed only if proved.
 
-- Jay & Bader, *Simple Types for Polymorphic Functions*, arXiv:2604.12194 (2026).
-  PDF + text in this folder. Rocq: github.com/barry-jay-personal/combinatory-types.
-  OCaml: github.com/olydis/combinatory-types (in `ocaml-implementation/`).
-- Jay, *Typed Program Analysis without Encodings*, PEPM'25, DOI 10.1145/3704253.3706138.
-  Rocq: github.com/barry-jay-personal/typed_tree_calculus.
-- Jay, *Reflective Programs in Tree Calculus* (2021+, appendix with Vergara). In this
-  folder. Site: treecalcul.us (spec, demos, visualizations).
-- Jay, *Pattern Calculus: Computing with Functions and Structures*, Springer 2009.
-  Language: bondi (github.com/Barry-Jay/bondi).
-- Jay & Vergara, *Confusion in the Church-Turing Thesis*, arXiv:1410.7103 (2014).
-- disp side: `lib/kernel/engine.disp` (walker, `param_apply`), `lib/kernel/cells.disp`
-  (Pi/telescope recognizers), `lib/kernel/universe.disp` (Type tiers),
-  `lib/standalone_kernel.disp` (Pi-checking experiments), `ACTIVE_BUGS.md`,
-  `KERNEL_DESIGN.md`, `archive/live-kernel/TYPE_THEORY.typ`.
+A structural analysis inspired by Jay is one candidate. It would need a defined fragment,
+a mapping between its descriptions and disp recognizers, and a soundness argument for
+its application rules. SK and disp's tree calculus have different primitive operations;
+an embedding of SK alone would not analyze arbitrary disp code.
+
+This is a possible engineering direction, not an implemented feature or a demonstrated
+speedup. Exact descriptions can grow large and their computation can diverge. Any proposed
+fast path must be checked against the existing membership specification and profiled on
+representative workloads before calling it cheaper.
+
+### 6.2 Keep representation and behavior choices explicit
+
+Multiple memberships are harmless when they merely record additional facts. A definite
+choice matters when selecting an interface changes what the program does:
+
+- **Implicit operations or conversions:** choose an implementation explicitly, define an
+  unambiguous resolution rule, or prove that alternative choices agree observationally.
+- **Typed equality and normalization:** choose which type's equality is intended. The
+  existing `Quotient`/`canon` design already makes a relevant choice explicit.
+- **Specialized compilation and external interfaces:** select a concrete representation
+  and calling convention at each boundary, with evidence connecting it to the properties
+  used by the program.
+
+These require coherence of the selected behavior, not exclusive membership of the value.
+Even deterministic inference alone is insufficient if harmless changes to annotations
+can select incompatible behavior silently.
+
+### 6.3 Derive convenient rules from the underlying computation
+
+A particularly reusable idea is the paper's treatment of conditionals: a familiar typing
+rule is established by proving how the conditional's type application behaves. Disp can
+similarly justify convenient checking or inference rules against its existing recognizers
+and walker semantics. The proof obligation must cover the chosen checker; a few accepted
+examples, especially under `Sampled`, are not enough.
+
+Abstract interpretation is a useful way to understand the trade between exact structure
+and compact interfaces. However, the paper does not construct a lattice of all its types
+or establish a widening operator in the technical sense. Its recursive abstract type
+hides repeated unfolding; calling that a proved widening algorithm overstates the result.
+
+### 6.4 Limits of the current proposal
+
+The hybrid-system correspondence remains Conjecture 3.1. Declaration translation has
+not been automated, and the paper explicitly leaves the declaration of its recursive
+abstract type unresolved because of its conditional elimination rule. Extending the
+system needs justification that the new rules preserve the required properties; the
+existing theorem is not a theorem about every possible extension.
+[Jay & Bader, §6.2](https://arxiv.org/html/2604.12194v1#S6.SS2.p3.m1).
+
+The portable design lesson is to separate the properties a value satisfies from the
+interface a particular analysis or operation chooses. Disp can adopt a deterministic
+choice locally without replacing predicate membership globally.
+
+## 7. Sources and scope
+
+The main source is Jay & Bader, *Simple Types for Polymorphic Functions*, arXiv:2604.12194v1
+(April 2026), available as the [local text](simple-types-for-polymorphic-functions.txt)
+and [PDF](simple-types-for-polymorphic-functions-2604.12194.pdf). Sections 3, 5, and 6
+were checked against the full text and the bundled OCaml implementation. Online passage
+links above were fetch-verified with `scripts/verify-source.sh`.
+
+The inference distinction also uses [Damas & Milner, p. 2](https://steshaw.org/hm/milner-damas.pdf#page=2)
+and [Dunfield & Krishnaswami, §4.6.1](https://www.cl.cam.ac.uk/~nk480/bidir-survey.pdf#page=15).
+The current disp comparison is grounded in the linked source files, not the older kernel
+layout described in the original July notes. The lineage and PEPM'25 overview are
+background; they are not a fresh verification of those earlier papers.
