@@ -365,6 +365,50 @@ proposal is to promote that vocabulary and the evaluator to `lib/symbolic.disp` 
 confirmer keeping its tests as the root; the alternative is to keep everything in the
 root and accept that nothing else can use it.
 
+### Hazards the kernel's checker already hit
+
+The kernel (`lib/kernel/`) proves claims with a symbolic checker too, and its annotation
+plan (`archive/ANNOTATION_MIGRATION_PLAN.md`, the trust facts and the boundaries) records
+where that went wrong. The confirmer re-found two of them on its own: its hole G is the
+kernel's same-typed-binder aliasing (bb6c7ffa), and its hole B is the kernel's typed
+equation ledger, which refuses a coarse equation where a fine one is needed. The rest, as
+a checklist for the symbolic machine:
+
+- **A symbolic answer must survive substitution.** The kernel's rule: an operation may act
+  on a stand-in only if running it symbolically and then substituting any value equals
+  substituting first and running concretely. Every hole it found was a place a stand-in
+  reached plain evaluation: a recognizer run by the judge, a sampling filter, a check that
+  read a field off a stand-in. Here that rule is the run lemma's per-rule claim, checked by
+  exhaustion instead of audited by hand, and the first places to look are the same: any
+  user code (a recognizer, a normalizer) run on a value with a symbol in it.
+- **Two unknowns are never unequal by encoding.** The kernel twice baked in an answer
+  computed from stand-ins' own trees: an `Eq` recognizer that compared endpoints outside
+  its binder, and a `tree_eq` inside a type family that still answers natively. The
+  confirmer's canonical encoding makes equal `Val`s the same unknown, which licenses only
+  `true`; its guard for the rest is that `"No"` is reserved for a ground counterexample,
+  and the symbolic machine must keep that guard.
+- **A supplied table is a certificate, and the kernel's was never checked.** The kernel's
+  `teq_one` trusts that a type's member list is complete, and a Bool whose eliminator
+  always takes one branch passed every coherence check it had (`GoodGate`, `Coherent`).
+  Decision 2 already treats a finite source as a certificate the claim carries; the
+  confirmer's split `table` is the same assertion, hand-written for four codes. Before
+  tables come from spaces, make completeness a claim the stream layer can refute: a tree
+  the recognizer admits that no alternative of the table matches.
+- **A law the checker acts on must be proven, not sampled.** Once the kernel converted
+  types along recorded equations, a false equation that passed its probes would rewrite
+  types, where a false check only misjudges; so its laws stayed inert tests until they
+  carried proofs. Here the laws that act are the certificates behind `.opt.disp`
+  overwrites and, later, paths: a sampled one would swap the readable definition for a
+  wrong fast one everywhere downstream.
+- **Stand-ins must be unforgeable.** Kernel stand-ins were trees, so a candidate could
+  build one, and the defense grew into a ledger of issued stand-ins plus two walkers (the
+  checker's, which sees stand-ins, and the candidate's, which must not). The confirmer's
+  symbols live outside the tree encoding (a candidate's tree is always `Known`), which
+  removes the class; keep it that way when the vocabulary moves to `lib/symbolic.disp`.
+- **A test can pass for the wrong reason.** When the kernel closed its equation-ledger
+  hole, a pinned result flipped: it had held because of the hole, not for the reason its
+  comment gave. When a hole closes here, re-derive every test in its family.
+
 ## Steps
 
 1. Endings: landed (see Part 1).

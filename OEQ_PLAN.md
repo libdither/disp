@@ -12,7 +12,7 @@ kernel (`lib/kernel/`, the standalone checker promoted 2026-08-17), which has si
 the machinery the investigation said was missing.
 
 Status (2026-08-17): this file is the design rationale ladder; day-to-day execution
-tracking for the equality remainder lives in `ANNOTATION_MIGRATION_PLAN.md` (Stage EQ).
+tracking for the equality remainder lived in `archive/ANNOTATION_MIGRATION_PLAN.md` (Stage EQ).
 Since the last update here, the typed equation ledger landed (A7: equations carry their
 carrier, coarse-for-fine reuse refused), which was this plan's stated prerequisite for
 steps 3 and 4.
