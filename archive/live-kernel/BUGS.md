@@ -2,7 +2,7 @@
 
 > Archived 2026-08-17 with the kernel it tracks. The status below is frozen as
 > of retirement; the probe files it cites live under archive/live-kernel/tests/.
-> The active tracker for the promoted kernel is the repo-root ACTIVE_BUGS.md.
+> The promoted kernel's tracker is archive/ACTIVE_BUGS.md (archived 2026-09-29).
 
 ## The defense model (why these are gaps, not inconsistencies)
 

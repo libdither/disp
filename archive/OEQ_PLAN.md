@@ -11,11 +11,15 @@ describes the retired live kernel's `oeq` layer, while the work below happens in
 kernel (`lib/kernel/`, the standalone checker promoted 2026-08-17), which has since grown
 the machinery the investigation said was missing.
 
-Status (2026-08-17): this file is the design rationale ladder; day-to-day execution
-tracking for the equality remainder lived in `archive/ANNOTATION_MIGRATION_PLAN.md` (Stage EQ).
-Since the last update here, the typed equation ledger landed (A7: equations carry their
-carrier, coarse-for-fine reuse refused), which was this plan's stated prerequisite for
-steps 3 and 4.
+Status: archived 2026-09-29 with steps 1 and 2 landed in the kernel and steps 3 and 4
+unbuilt. Their prerequisite, the typed equation ledger, landed 2026-08-15 (A7), and the
+relatedness judgment works as `rel_probe` but stayed test-only
+(`lib/kernel/kernel.test.disp`). The kernel's plans stopped in favor of the stream layer
+(`STREAM_TYPES_PLAN.md`), which starts where this plan was heading: a type is its
+relation, membership is the diagonal, and a Pi relates related inputs. Two lessons are
+carried there: the transport limit below (in the paths follow-on) and step 2's normalizer
+obligations (in Part 2's shortcut contracts). Execution tracking lived in
+`archive/ANNOTATION_MIGRATION_PLAN.md` (Stage EQ).
 
 ## The constraint that shapes everything
 

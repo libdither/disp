@@ -1,5 +1,15 @@
 # Active bugs
 
+Archived 2026-09-29 with the kernel's plans (`archive/ANNOTATION_MIGRATION_PLAN.md`,
+`archive/OEQ_PLAN.md`). Last updated 2026-08-02, so both open items predate the fixes that
+followed. S9 narrowed on 2026-08-25: type formation now runs through the checking walker,
+which refuses a codomain that inspects its argument; what remains is a `tree_eq` inside a
+type family that still answers natively (the annotation plan's boundary 8). S2's
+prerequisite, the typed equation ledger, landed 2026-08-15 (A7); the relatedness judgment
+it unblocked (`rel_probe` in `lib/kernel/kernel.test.disp`) works but stayed test-only, so
+`Fn Q B` still does not enforce respect. The stream layer's Pi relates related inputs by
+construction (`STREAM_TYPES_PLAN.md`, Part 2).
+
 This file tracks the kernel (`lib/kernel/`, the provenance-based checker that
 was promoted from lib/standalone/ on 2026-08-17). The previous kernel's ledger
 is frozen at `archive/live-kernel/BUGS.md`; its defense model is different, so

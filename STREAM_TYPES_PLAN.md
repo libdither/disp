@@ -139,7 +139,10 @@ shortcuts to this: `(a, a)` for a data type is the square already thinned to the
 diagonal, and `(a, nf a)` for a quotient is one related pair per member, which is enough
 to check that a function respects the quotient (any related pair reaches `nf a` through
 sameness at the codomain). Both are optimization adjoints over `sp_pairs`, with
-agreement as their contract, not part of a space.
+agreement as their contract, not part of a space. For `(a, nf a)` that contract is two
+obligations the kernel's quotient work already named (`archive/OEQ_PLAN.md`, step 2): `nf`
+is idempotent, and `nf a` is a member of the base space; without either, `(a, nf a)` is
+not a related pair.
 
 The source is the claim's, not the space's. Over `Trees` (the default) no member stream
 ever ends exhausted, so no stream verdict over `Trees` is ever `"Proved"`, which is
@@ -471,6 +474,14 @@ a checklist for the symbolic machine:
    certificate rung, so a "homotopy space" is a space plus a bundle of such claims and
    truncation is the honest default. Order independence of rewrites (confluence, the
    interaction-net evaluator's licence) is the one 2-path claim expected to carry weight.
+
+   Transport has one hard limit, found by the kernel's equality plan
+   (`archive/OEQ_PLAN.md`, "The constraint that shapes everything"): a claim that may
+   compare trees structurally cannot be transported along a path between two different
+   trees. A path from `id` to a different tree that agrees with it on every input would
+   carry the claim `f == id` from true to false. So transport is licensed only for claims
+   that do not inspect the trees they are about, and deciding which claims those are
+   comes before the first transport lands.
 
 ## Risks and non-goals
 
