@@ -1,6 +1,6 @@
 # Narya
 
-**Repo:** https://github.com/gwaithimirdain/narya (292★, pushed 2026-08-19)
+**Repo:** https://github.com/gwaithimirdain/narya (304★, pushed 2026-09-29)
 **Relevance:** the reference implementation of the *observational* pole of the
 three equality answers FOUNDATIONS §7 cites (Cedille φ / observational / cubical).
 The survey already covers the cubical pole (`agda-cubical.md`); this is the third
@@ -11,7 +11,7 @@ pole, and the one whose shape matches disp's per-type metadata architecture.
 Mike Shulman's experimental proof assistant for higher observational type theory
 (HOTT, "third-generation" HoTT): identity types compute on each type former, with
 no cubical interval, and univalence is a theorem rather than an axiom. Essentially
-solo (2,031 of ~2,092 commits), OCaml, GPL-3, near-daily commits since August
+solo (2,063 of ~2,126 commits), OCaml, GPL-3, near-daily commits since August
 2023. Real tooling: ProofGeneral holes and case-splitting, user-definable mixfix
 notation, separate compilation, a static binary. No tactics. Self-described as
 "very much a work in progress" with breaking changes expected.

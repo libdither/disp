@@ -1,6 +1,6 @@
 # Scores
 
-Every score, in one place (2026-09-14). Each axis's maximum is disp's own requirement, split into
+Every score, in one place (2026-09-30). Each axis's maximum is disp's own requirement, split into
 three or four clauses in [`_AXES.md`](_AXES.md#grading-the-maximum-and-the-clauses); every clause
 scores 0, ½ or 1 and the axis percentage is their mean. The write-ups' scorecard notes are the
 evidence. `†` marks a value taken from general knowledge beyond the write-up; `?` marks a clause the
@@ -31,6 +31,8 @@ Weights: 1 · 1 · 1
 | Velvet / Loom / WybeCoder | 1 | 0 | ½(metaprograms) | 50 | Lean metaprogramming; Loom generates verifiers as Lean developments |
 | Agda / Cubical | 1 | 0 | ½(metaprograms)† | 50 | `quoteTerm`/`unquote`; the TC monad can infer and check types |
 | Narya | 0 | 0 | 0 | 0 | no reflection API at all |
+| Dedukti / Lambdapi | ½(rewrite patterns) | ½(patterns only) | 0 | 33 | rewrite rules match unevaluated calls, defined symbols included, with no quotation layer; arbitrary terms need `dk meta`'s quoting; the checker is OCaml |
+| Andromeda 2 | ½(object judgements) | 0 | ½(metaprograms) | 33 | AML programs match on and build object-theory judgements by calling the nucleus; AML code itself is never data |
 | Idris 2 / QTT | 1 | 0 | ½(metaprograms) | 50 | elaborator reflection, quotation-based |
 | CakeML + Pancake | 0 | 0 | 0 | 0 | conventional verified compiler |
 | ATS3 / Xanadu | 0 | 0 | 0 | 0 | no programs-as-data |
@@ -70,6 +72,8 @@ Weights: 30 · 20 · 20 · 30
 | Velvet / Loom / WybeCoder | 1 | 1 | 0 | ½(SMT-fragment) | 65 | Lean + mathlib behind a Dafny-style surface; Lean's equality plus SMT in its fragment |
 | Agda / Cubical | 1 | 1 | 0 | 1 | 80 | dependent types, HITs, univalence with the standard and cubical libraries; cubical equality computes |
 | Narya | 1 | ½(no library) | 0 | ½(some formers) | 55 | HoTT + parametricity + modalities, no library yet; observational Id per former, transport computing on some formers so far |
+| Dedukti / Lambdapi | 1 | 1 | 0 | ½(user rewrite rules) | 65 | dependent types with every theory a library file and large translated proof libraries; equality is conversion modulo user rules, decidable only when they are confluent and terminating, which is assumed |
+| Andromeda 2 | 1 | ½(no library) | 0 | 1 | 70 | user-defined dependent theories with example theories only; equality reflection is a one-rule theory and a sound extensible checker handles user equality rules |
 | Idris 2 / QTT | 1 | 1 | ½(erasure) | ½(propositional) | 75 | dependent types + QTT with a working standard library; quantities give erasure; intensional propositional equality |
 | CakeML + Pancake | ½(contracts) | ½(compiler-level) | 0 | ½(pass preservation) | 40 | Viper contracts for user code, HOL4 proofs about the compiler; per-pass semantics preservation is the equality, proved by humans |
 | ATS3 / Xanadu | 1 | 1† | 0 | 0 | 50 | dependent + linear types with an explicit proof language and a 25-year library; equality not addressed |
@@ -109,6 +113,8 @@ Weights: 30 · 30 · 15 · 25
 | Velvet / Loom / WybeCoder | ½(mid-size kernel) | 1 | 1 | — | 80 | Lean's kernel; Loom verifiers are foundational, no trusted VC generator |
 | Agda / Cubical | 0 | ½(large checker) | 0 | — | 20 | the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
 | Narya | 0 | ½(large checker) | 0 | — | 20 | tens of thousands of OCaml lines are the trust base; NbE unproven |
+| Dedukti / Lambdapi | ½(mid-size kernel) | 1 | 1 | ½(type-preservation only) | 72 | a 4,389-line kernel; proof terms; Lambdapi and Kontroli re-check the same calculus, and re-checking other provers is the purpose; a rewrite rule is accepted on type preservation, confluence and termination assumed |
+| Andromeda 2 | ½(mid-size nucleus) | 1 | ½(one core) | — | 70 | a 4,189-line nucleus is the only maker of judgements; the equality checker and AML are untrusted; no second checker |
 | Idris 2 / QTT | 0 | ½(large checker) | 0 | 0 | 15 | the typechecker is the TCB |
 | CakeML + Pancake | 1 | 1 | 1† | ½(fixed passes) | 88 | HOL4's LCF kernel; theorems are the evidence; independent HOL checkers exist (OpenTheory, Candle); the compiler's proved passes are the only licensed rewrites, fixed rather than user-defined |
 | ATS3 / Xanadu | 0 | ½(large checker)† | 0 | 0 | 15 | the typechecker is the TCB; proof terms exist |
@@ -148,6 +154,8 @@ Weights: 40 · 30 · 30
 | Velvet / Loom / WybeCoder | 0 | 0 | 0 | 0 | programs are extracted for testing only |
 | Agda / Cubical | 0 | 0 | 0 | 0 | research-grade GHC/JS backends |
 | Narya | 0 | 0 | 0 | 0 | correctness-first, no performance story |
+| Dedukti / Lambdapi | 0 | 0 | 0 | 0 | a proof checker: no compiled output, no cost model |
+| Andromeda 2 | 0 | 0 | 0 | 0 | an interpreter for a proof checker |
 | Idris 2 / QTT | ½(not systems) | 0 | 0 | 20 | Chez backend; erasure is graded under Specification |
 | CakeML + Pancake | 1 | 1 | 0 | 70 | verified native code, the compiler proved down to the binary; no cost model |
 | ATS3 / Xanadu | 1 | 0 | 0 | 40 | to C, no GC, no runtime; the C compiler trusted |
@@ -187,6 +195,8 @@ Weights: 40 · 40 · 20
 | Velvet / Loom / WybeCoder | 1 | ½(checker only) | 0 | 60 | WybeCoder's agentic loop proves 74% of Verina; correctness only, no cost |
 | Agda / Cubical | 0 | 0 | 0 | 0 | `auto` is trivial |
 | Narya | 0 | 0 | 0 | 0 | no tactics even |
+| Dedukti / Lambdapi | ½(ATP proof export) | ½(checker only) | 0 | 40 | Zenon Modulo, LEO-III and SMT solvers via Carcara emit proofs the kernel checks; the `why3` tactic admits its goal as an axiom; no cost |
+| Andromeda 2 | 0 | 0 | 0 | 0 | handlers direct hand-written proof procedures; no synthesis |
 | Idris 2 / QTT | 0 | 0 | 0 | 0 | `auto` is basic |
 | CakeML + Pancake | 0 | 0 | 0 | 0 | human-written |
 | ATS3 / Xanadu | 0 | 0 | 0 | 0 | none |

@@ -1,9 +1,9 @@
 # AWESOME-LANGS
 
 Languages and systems surveyed against **disp**'s goals, August 2026.
-Scored on the six axes defined in [`_AXES.md`](_AXES.md); one file per project with
+Scored on the five axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Narya: 2026-08-19; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14; HVM4 and Bend 2: 2026-09-17).
+(Mojo: 2026-08-18, the day its compiler went open source; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14; HVM4 and Bend 2: 2026-09-17; Narya, Dedukti / Lambdapi and Andromeda 2: 2026-09-30).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by a hardware-faithful cost score, search a reflective low-level
@@ -39,6 +39,8 @@ Cells are `symbol percent`: the share of disp's own requirement met, per [`_AXES
 | [**Velvet / Loom / WybeCoder**](velvet-loom-wybecoder.md) | ◐ 50% | **◐ 65%** | ✅ 80% | ✗ 0% | **◐ 60%** | the *agentic proof loop*, with numbers |
 | [**Agda / Cubical**](agda-cubical.md) | ◐ 50% | **✅ 80%** | ✗ 20% | ✗ 0% | ✗ 0% | cubical equality; reflection-by-quotation contrast |
 | [**Narya**](narya.md) | ✗ 0% | ◐ 55% | ✗ 20% | ✗ 0% | ✗ 0% | the *interval-free* equality answer, shaped like disp's per-type metadata |
+| [**Dedukti / Lambdapi**](dedukti-lambdapi.md) | ◐ 33% | **◐ 65%** | ◐ 72% | ✗ 0% | **◐ 40%** | *types as library files* over one small checker, and rewrite rules as overlays without a license |
+| [**Andromeda 2**](andromeda.md) | ◐ 33% | **◐ 70%** | ◐ 70% | ✗ 0% | ✗ 0% | the *LCF nucleus* for dependent theories, and an equality checker built from user rules |
 | [**Idris 2 / QTT**](idris2-qtt.md) | ◐ 50% | **◐ 75%** | ✗ 15% | ✗ 20% | ✗ 0% | the *grading* formalism disp's cost ledger uses |
 | [**CakeML + Pancake**](cakeml-pancake.md) | ✗ 0% | ◐ 40% | **✅ 88%** | **◐ 70%** | ✗ 0% | verified *all the way to the binary* |
 | [**ATS3 / Xanadu**](ats-xanadu.md) | ✗ 0% | ◐ 50% | ✗ 15% | **◐ 40%** | ✗ 0% | the 25-year prior attempt at G2+G4 |
@@ -86,11 +88,14 @@ itself, and no one else's can.**
 - **G2 (specification):** disp trails. Lean, Agda, F*, Rocq have more type theory and
   far more library; on the equality clause Nova (extensional), Agda and Blight
   (cubical) and Narya (observational) all have answers where disp has a slice, which
-  is disp's own Q1 confirmed as the weakest point.
+  is disp's own Q1 confirmed as the weakest point. Dedukti and Andromeda let the user
+  add equality rules instead: Dedukti assumes they are confluent and terminating,
+  Andromeda admits only the shapes its checker can use soundly.
 - **G3 (trust):** MM0 ahead; Blight and CakeML match it with an independent second
-  checker; Nova, Lean and Rocq match the architecture. Only CryptOpt installs a rewrite
-  on a checked license; Nock and Mojo assert theirs, and everyone else's compiler is a
-  trusted pass.
+  checker; Nova, Lean and Rocq match the architecture. Dedukti has three independent
+  checkers and exists to re-check other provers. Only CryptOpt installs a rewrite
+  on a checked license; Nock and Mojo assert theirs, Dedukti's rewrite rules pass a
+  type check only, and everyone else's compiler is a trusted pass.
 - **G4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ Bend 2 on raw speed; CakeML, MM0
   and the Jasmin/bedrock2 line have the verified path to the machine disp lacks; disp,
   HVM4 and Telomare are the ones that account for cost deterministically, and Bend 2
