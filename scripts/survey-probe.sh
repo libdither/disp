@@ -7,11 +7,17 @@
 #      verification date is printed for the write-up header)
 #   2. contributors with commit counts (the "authorship verified" header line)
 #   3. recent commit subjects (agent-run repos are visible here immediately)
-#   4. a shallow clone kept under /tmp for follow-up reading, with a top-level
-#      listing, file counts by extension, and top-level docs
-#   5. a proof-debt scan: sorry/admit/Admitted/assume/axiom counts in proof
-#      files, so "the Lean/Coq spine is real" can be claimed or denied cheaply
+#   4. a clone kept under /tmp for follow-up reading, with a top-level listing,
+#      file counts by extension, and top-level docs. The clone is partial
+#      (`--filter=tree:0`): every commit, files at HEAD, old trees on demand
+#   5. commits per year and the total, counted from that full history
+#   6. a proof-debt scan: sorry/admit/Admitted/assume/axiom word matches in
+#      proof files, a lead to follow up; it reports how many files it scanned
+#      and says "not scanned" when the repo has none of those types
 #
+# Sections 1-5 are exact counts; 6 is a word match. If the host refuses the
+# partial clone the script falls back to a shallow one and says the history
+# is incomplete instead of printing counts from it.
 # The output is evidence, not a verdict: scoring against _AXES.md stays manual.
 #
 # usage: scripts/survey-probe.sh <owner/name | github url> [branch]
@@ -46,7 +52,7 @@ if p:
 PY
 [ -n "$BRANCH" ] || BRANCH=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['default_branch'])" "$TMP/repo.json")
 
-echo "== contributors"
+echo "== contributors (top 10, commits GitHub links to an account)"
 api "repos/$REPO/contributors?per_page=10" > "$TMP/contrib.json" && python - "$TMP/contrib.json" <<'PY'
 import json, sys
 for c in json.load(open(sys.argv[1])):
@@ -64,8 +70,20 @@ PY
 DIR="/tmp/survey-$(basename "$REPO")"
 echo "== clone -> $DIR"
 rm -rf "$DIR"
-git clone --quiet --depth 50 -b "$BRANCH" "https://github.com/$REPO" "$DIR" || exit 1
+FULL=1
+git clone --quiet --filter=tree:0 -b "$BRANCH" "https://github.com/$REPO" "$DIR" 2>/dev/null || {
+  FULL=0; rm -rf "$DIR"
+  git clone --quiet --depth 50 -b "$BRANCH" "https://github.com/$REPO" "$DIR" || exit 1
+}
 ls "$DIR" | sed 's/^/  /'
+
+echo "== commits per year ($BRANCH, by author date)"
+if [ "$FULL" = 1 ] && [ "$(git -C "$DIR" rev-parse --is-shallow-repository)" = false ]; then
+  git -C "$DIR" log --format=%ad --date=format:%Y | sort | uniq -c | awk '{printf "  %s  %s\n", $2, $1}'
+  echo "  total $(git -C "$DIR" rev-list --count HEAD), $(git -C "$DIR" rev-list --count --no-merges HEAD) without merges"
+else
+  echo "  NOT COUNTED: partial clone refused, fell back to --depth 50; git history here is incomplete"
+fi
 
 echo "== files by extension (top 12)"
 find "$DIR" -type f -not -path "*/.git/*" | sed -E 's/.*\.([A-Za-z0-9]+)$/\1/; t; s/.*/none/' \
@@ -75,9 +93,16 @@ echo "== top-level docs"
 find "$DIR" -maxdepth 1 -iname "*.md" -exec wc -l {} + | sed "s#$DIR/##; s/^/  /"
 
 echo "== proof-debt scan (.lean/.v/.agda/.thy/.dfy/.fst)"
-for w in sorry admit Admitted assume axiom native_decide; do
-  n=$(grep -rw "$w" "$DIR" --include='*.lean' --include='*.v' --include='*.agda' \
-        --include='*.thy' --include='*.dfy' --include='*.fst' 2>/dev/null | wc -l)
-  [ "$n" -gt 0 ] && echo "  $w: $n line(s) — check whether comments or real"
-done
+find "$DIR" -type f -not -path "*/.git/*" \( -name '*.lean' -o -name '*.v' -o -name '*.agda' \
+  -o -name '*.thy' -o -name '*.dfy' -o -name '*.fst' \) > "$TMP/proof-files"
+NPROOF=$(wc -l < "$TMP/proof-files")
+if [ "$NPROOF" -eq 0 ]; then
+  echo "  NOT SCANNED: no files of these types, so this says nothing about proof debt"
+else
+  echo "  scanned $NPROOF file(s); word matches, comments included — read the hits before claiming anything"
+  for w in sorry admit Admitted assume axiom native_decide; do
+    n=$(tr '\n' '\0' < "$TMP/proof-files" | xargs -0 grep -hw "$w" 2>/dev/null | wc -l)
+    echo "  $w: $n line(s)"
+  done
+fi
 echo "done; clone kept at $DIR for follow-up reading"
