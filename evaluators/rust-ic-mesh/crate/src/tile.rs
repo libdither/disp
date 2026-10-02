@@ -57,6 +57,7 @@ pub(crate) struct Tile<'a> {
     pub c: u32,
     pub k: u32,
     pub speculate: u32,
+    pub outbox_cap: u32,
     pub slots: &'a mut [Slot],
     pub free: &'a mut u8,
     pub rr: &'a mut u8,
@@ -89,6 +90,7 @@ impl<'a> Tile<'a> {
     pub fn run(&mut self, n: u32) {
         *self.rr = if *self.rr == 4 { 0 } else { *self.rr + 1 };
         for _ in 0..n {
+            if self.outbox_cap > 0 && self.outbox.len() as u32 + BURST > self.outbox_cap { break; }
             let Some(e) = self.events.pop_front() else { break };
             self.out.events += 1;
             match e {

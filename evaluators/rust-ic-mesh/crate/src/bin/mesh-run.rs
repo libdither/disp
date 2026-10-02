@@ -29,6 +29,8 @@ fn main() {
             "--fill" => cfg.init_fill = it.next().unwrap().parse().unwrap(),
             "--ev" => cfg.events_per_tick = it.next().unwrap().parse().unwrap(),
             "--spec" => cfg.speculate = it.next().unwrap().parse().unwrap(),
+            "--outbox" => cfg.outbox_cap = it.next().unwrap().parse().unwrap(),
+            "--evq" => cfg.events_cap = it.next().unwrap().parse().unwrap(),
             "--no-check" => check = false,
             "--dump" | "--seq" => {}
             _ => src = Some(a.clone()),

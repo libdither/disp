@@ -102,11 +102,27 @@ For a 64×64 grid of 8-slot tiles, an address is 17 bits.
 - **Slot:** about 96 bits (tag, phase, a 3-bit port permutation, three port fields with
   reader/dropped flags, and the docking fields).
 - **Message:** at most about 80 bits, one flit.
-- **Tile:** roughly 5 kbit of state. That is 8 slots, four 4-flit input buffers, a 32-flit
-  outbox, and the 6-field free-space distance. The largest outbox and event queue seen in the
-  benchmarks below are 21 and 13 entries.
+- **Tile:** roughly 5 kbit of state. That is 8 slots, four 4-flit input buffers, a 24-flit
+  outbox, a 4-entry event queue, and the 6-field free-space distance.
 - **Rewrite logic:** the rule table is 26 rows of at most 6 fresh agents and 9 wires; no tile
   ever searches.
+
+Queue sizes are machine parameters with real backpressure:
+- a tile starts an event only when its outbox has room for everything one event can send
+  (12 flits);
+- its router hands it a message only while its event queue has room.
+
+`queue-sweep` runs the soak corpus plus fib, sort, exp and size under shrinking queues:
+
+| outbox / event queue | pure demand | full speculation |
+|---|---|---|
+| unbounded | 164 of 164 | 164 of 164 |
+| 24 / 4 | 164 of 164 | 164 of 164 |
+| 16 / 2 | 164 of 164 | 163, 1 deadlock |
+| 13 / 1 | 164 of 164 | 160, 4 deadlocks |
+
+No size ever gave a wrong answer. 24/4 is pinned by a test, and the player can run any of
+these sizes and shows a deadlock when it happens.
 
 For scale, that is about twice the RAM and ROM of one GreenArrays GA144 node. The tile's
 logic is not yet written as gates (that is what `evaluators/gated-ca` set up).
@@ -150,6 +166,7 @@ cargo test --release                           # ~10 s: soak, differential, tigh
 cargo run --release --bin mesh-run -- fib:4    # one program; also `@(F(L,L),L)` or ternary
 cargo run --release --bin mesh-run -- sort:3 --spec 1 --grid 96x96
 cargo run --release --bin mesh-bench           # the tables above
+cargo run --release --bin queue-sweep          # how small a tile's queues can be
 ```
 
 `../build-player.sh` rebuilds `player/engine.js` (it borrows a wasm linker through
@@ -175,8 +192,9 @@ and the addresses its ports hold.
   rewrite. Speculation buys time with work. A smarter policy (e.g. speculate only where
   duplication will want both copies) is untried.
 - **Gates.** The tile logic as a gate netlist, with measured gate count and depth.
-- **Outbox overflow.** The outbox and event queue are unbounded in the simulator, so the
-  numbers above are measured maxima, not proven bounds. A hardware tile needs either a proof of
-  the bound or overflow into free slots.
+- **Queue bound.** 24/4 suffices on every workload here, but that is measured, not proven.
+  Small enough queues can deadlock, because a full outbox stops a tile from taking messages,
+  and those messages fill its neighbours' buffers. A proof needs either a bound on messages per
+  tile or overflow into free slots.
 - **One remaining forwarder case.** Indirections still appear when a rewrite fuses two outside
   wires (unpair meeting pair) before either end is read.

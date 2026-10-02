@@ -54,14 +54,16 @@ pub extern "C" fn text_len() -> u32 { unsafe { TEXT.len() as u32 } }
 /// Load a term (`@(…)` notation, ternary, or `workload:n`) onto a fresh mesh. Returns 0 on
 /// success; otherwise the error is in the text buffer.
 #[no_mangle]
-pub extern "C" fn mesh_new(w: u32, h: u32, k: u32, fifo: u32, ev: u32, spec: u32, fill: u32, src: *const u8, len: usize) -> i32 {
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn mesh_new(w: u32, h: u32, k: u32, fifo: u32, ev: u32, spec: u32, fill: u32, outbox_cap: u32, events_cap: u32,
+                           src: *const u8, len: usize) -> i32 {
     install_panic_hook();
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     let t = match parse_source(src) {
         Ok(t) => t,
         Err(e) => { set_text(&e); return 1; }
     };
-    let cfg = Config { w, h, k, fifo, events_per_tick: ev, speculate: spec, init_fill: fill };
+    let cfg = Config { w, h, k, fifo, events_per_tick: ev, speculate: spec, init_fill: fill, outbox_cap, events_cap };
     match run::load(&t, cfg, false) {
         Ok(mut mesh) => {
             mesh.rec = Some(Recorder::default());
@@ -94,7 +96,7 @@ fn parse_source(src: &str) -> Result<Term, String> {
 pub extern "C" fn mesh_step(n: u32) -> u32 {
     let st = state();
     let mut ran = 0;
-    while ran < n && !st.mesh.quiescent() {
+    while ran < n && !st.mesh.quiescent() && st.mesh.stalled < 256 {
         st.mesh.step();
         ran += 1;
         let rec = st.mesh.rec.as_ref().unwrap();

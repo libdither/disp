@@ -137,6 +137,9 @@
       <span class="k">speculation</span><span><input id="cSpec" type="range" min="0" max="8" value="3" style="width:120px"> <span id="cSpecV" class="note"></span></span>
       <span class="k">router buffer</span><span><select id="cFifo"><option>1</option><option>2</option><option selected>4</option><option>8</option></select> flits</span>
       <span class="k">events / tick</span><span><select id="cEv"><option selected>1</option><option>2</option><option>4</option></select></span>
+      <span class="k">tile queues</span><span><select id="cQ" title="outbox and event queue sizes per tile">
+        <option value="0,0" selected>unbounded</option><option value="24,4">hardware: 24 out, 4 in</option>
+        <option value="16,2">tight: 16 out, 2 in</option><option value="13,1">tightest: 13 out, 1 in</option></select></span>
     </div>
     <div class="note" style="margin-top:6px" id="hw"></div>
 
@@ -269,7 +272,8 @@ function load() {
   let g = $("cGrid").value;
   let side = g === "auto" ? Math.max(16, Math.min(160, Math.ceil(Math.sqrt(agents / fill * (spec ? 8 : 5) + 200)))) : +g;
   side = Math.max(side, Math.ceil(Math.sqrt(agents / fill)) + 1);
-  const rc = withString(src, (p, n) => E.mesh_new(side, side, k, +$("cFifo").value, +$("cEv").value, spec, fill, p, n));
+  const [qo, qe] = $("cQ").value.split(",").map(Number);
+  const rc = withString(src, (p, n) => E.mesh_new(side, side, k, +$("cFifo").value, +$("cEv").value, spec, fill, qo, qe, p, n));
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
   M = { w: side, h: side, k, side: layoutSide(k), src, spec, agents };
   M.tw = M.side + 1; // tile pitch in pixel-layer units
@@ -619,7 +623,7 @@ function refreshPanel(full) {
   for (let i = 0; i < 8; i++) { $("m" + i).textContent = fmt(st[16 + i]); $("mb" + i).style.width = `${100 * st[16 + i] / total}%`; }
   drawChart();
   // status
-  const quiet = st[14] === 1, outcome = st[15];
+  const outcome = st[15], quiet = st[14] === 1 || outcome === 3;
   const badge = $("badge");
   if (!quiet) { badge.className = "badge run"; badge.textContent = playing ? "RUNNING" : "PAUSED"; $("verdict").textContent = ""; $("decoded").textContent = ""; $("answer").textContent = ""; return; }
   if (!full && prevStat === "done") return;
@@ -641,6 +645,9 @@ function refreshPanel(full) {
       const opt = [...g.options].map(o => +o.value).filter(v => v >= want)[0];
       if (opt) g.value = opt; else { const o = document.createElement("option"); o.value = want; o.textContent = want + "×" + want; g.appendChild(o); g.value = want; }
       load(); setPlaying(true); };
+  } else if (outcome === 3) {
+    badge.className = "badge bad"; badge.textContent = "DEADLOCK";
+    $("verdict").textContent = "full queues are waiting on each other";
   } else {
     badge.className = "badge bad"; badge.textContent = "STUCK";
     $("verdict").textContent = "quiet without an answer";

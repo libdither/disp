@@ -61,3 +61,16 @@ fn tight_grids_never_lie() {
     println!("tight grids: {done} complete, {oom} out of space");
     assert!(done > 0 && oom > 0, "the squeeze should exercise both outcomes");
 }
+
+/// Hardware-sized queues: a 24-flit outbox and a 4-entry event queue per tile carry the
+/// whole corpus to the end, even under full speculation (queue-sweep finds the first
+/// deadlock at 16/2). Pins the sizing the README quotes.
+#[test]
+fn hardware_sized_queues_finish_the_corpus() {
+    let cfg = Config { w: 48, h: 48, speculate: 1, outbox_cap: 24, events_cap: 4, ..Config::default() };
+    for (i, term, want) in &corpus() {
+        let rep = run::run(term, cfg, false, 10_000_000).unwrap();
+        assert_eq!(rep.outcome, "done", "term {i}");
+        assert_eq!(rep.answer.as_deref(), Some(want.as_str()), "term {i}");
+    }
+}

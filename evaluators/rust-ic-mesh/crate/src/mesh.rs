@@ -163,10 +163,21 @@ pub struct Config {
     /// Speculation: a computation nobody has asked for yet starts anyway when its tile has
     /// at least this many free slots (0 = never; demand only).
     pub speculate: u32,
+    /// Hardware queue sizes (0 = unbounded). A tile starts an event only when its outbox
+    /// has room for everything one event can send ([`BURST`]); its router delivers to it
+    /// only while its event queue is below `events_cap`.
+    pub outbox_cap: u32,
+    pub events_cap: u32,
 }
 
+/// The most messages one event can put in a tile's outbox (a rewrite: two direct ships,
+/// two moves or drops, six spawns and a release, rounded up).
+pub const BURST: u32 = 12;
+
 impl Default for Config {
-    fn default() -> Self { Config { w: 64, h: 64, k: 8, fifo: 4, events_per_tick: 1, init_fill: 3, speculate: 0 } }
+    fn default() -> Self {
+        Config { w: 64, h: 64, k: 8, fifo: 4, events_per_tick: 1, init_fill: 3, speculate: 0, outbox_cap: 0, events_cap: 0 }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -237,6 +248,8 @@ pub enum Outcome {
     OutOfSpace,
     /// Quiescent without an answer.
     Stuck,
+    /// Work is pending but nothing has moved for a long time: full queues waiting on each other.
+    Deadlock,
     /// Tick budget exhausted.
     Running,
 }
@@ -247,6 +260,7 @@ impl Outcome {
             Outcome::Done => "done",
             Outcome::OutOfSpace => "out-of-space",
             Outcome::Stuck => "stuck",
+            Outcome::Deadlock => "deadlock",
             Outcome::Running => "running",
         }
     }
@@ -313,6 +327,8 @@ pub struct Mesh {
     pub shadow: Option<Net>,
     pub rec: Option<Recorder>,
     pub out_addr: u32,
+    /// Consecutive ticks with work pending and nothing moving.
+    pub stalled: u32,
     /// Step tiles on all cores when this many or more are active (and nothing is being
     /// shadow-checked, which needs one global order). `usize::MAX` keeps it on one thread.
     pub par_min: usize,
@@ -357,6 +373,7 @@ impl Mesh {
             rec: None,
             out_addr: NONE,
             par_min: 4096,
+            stalled: 0,
         }
     }
 
@@ -530,6 +547,7 @@ impl Mesh {
         cur.clear();
         std::mem::swap(&mut cur, &mut self.active);
         self.epoch += 1;
+        let before = (self.stats.events, self.stats.hops);
         if cur.len() >= self.par_min && self.shadow.is_none() {
             // Contiguous stretches of the grid per thread keep threads off each other's lines.
             cur.sort_unstable();
@@ -544,6 +562,8 @@ impl Mesh {
                 self.touch(c);
             }
         }
+        let moved = (self.stats.events, self.stats.hops) != before || !self.phi_dirty.is_empty();
+        self.stalled = if moved || self.active.is_empty() { 0 } else { self.stalled + 1 };
         self.spare = cur;
         self.stats.peaks();
         self.relax_field();
@@ -570,6 +590,8 @@ impl Mesh {
             if o != EJECT {
                 let nb = self.nb[c as usize][o];
                 if self.fifo_len[(nb * 4) as usize + (o ^ 1)] as usize >= b { continue; }
+            } else if self.cfg.events_cap > 0 && self.events[c as usize].len() >= self.cfg.events_cap as usize {
+                continue;
             }
             used[o] = true;
             moves.push((c, i as u8, o as u8));
@@ -700,13 +722,14 @@ impl Mesh {
     /// Run until quiescent or until the clock reads `max_ticks`.
     pub fn run(&mut self, max_ticks: u64) -> Outcome {
         while !self.quiescent() {
-            if self.tick >= max_ticks { return Outcome::Running; }
+            if self.tick >= max_ticks || self.stalled >= 256 { return self.outcome(); }
             self.step();
         }
         self.outcome()
     }
 
     pub fn outcome(&self) -> Outcome {
+        if self.stalled >= 256 { return Outcome::Deadlock; }
         if !self.quiescent() { return Outcome::Running; }
         if self.readback().is_some() { return Outcome::Done; }
         if self.stats.parked_reserves > 0 { Outcome::OutOfSpace } else { Outcome::Stuck }
@@ -852,6 +875,7 @@ impl Raw {
             c,
             k: self.k,
             speculate: cfg.speculate,
+            outbox_cap: cfg.outbox_cap,
             slots: std::slice::from_raw_parts_mut(self.slots.add(ci * self.k as usize), self.k as usize),
             free: &mut *self.free.add(ci),
             rr: &mut *self.rr.add(ci),
