@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Builds Tetris: build/tetris plays in a terminal, tetris.html in a browser (as WebAssembly).
-# Needs bend and hvm (cargo install hvm bend-lang), a C compiler, python, and zig (or ZIG=...).
+# Builds Tetris: build/tetris opens a native window, tetris.html runs in a browser.
+# Needs Bend 2 (curl -fsSL https://bend-lang.com/install.sh | sh), or BEND="bun path/to/bend2/main.ts".
 set -euo pipefail
 cd "$(dirname "$0")"
+BEND=${BEND:-bend}
 mkdir -p build
-bend gen-c tetris.bend | python host/patch.py > build/tetris.c
-cc -O2 -w -DPROGRAM='"tetris.c"' -Ibuild host/host.c -o build/tetris -lm
-${ZIG:-zig} cc -target wasm32-wasi -O2 -s -mexec-model=reactor -w -DPROGRAM='"tetris.c"' -Ibuild host/host.c -o build/tetris.wasm
+$BEND tetris.bend -o build/tetris
+rm -rf build/web
+$BEND web/index.html -o build/web
 
-# One self-contained page, with the runtime and the WebAssembly inline, so it opens from disk.
-base64 -w 100 build/tetris.wasm > build/tetris.wasm.b64
-{
-  printf '<!doctype html>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-  awk '/^\/\/ @hvm\.js$/ { system("cat host/hvm.js"); next }
-       /^@wasm\.b64$/ { system("cat build/tetris.wasm.b64"); next }
-       { print }' host/page.html
-} > tetris.html
+# One self-contained page: the bundled script goes inline, so it opens from disk.
+python - <<'EOF'
+import pathlib, re
+web = pathlib.Path("build/web")
+page = (web / "index.html").read_text()
+tag = re.search(r'<script type="module" crossorigin src="\./([^"]+)"></script>', page)
+script = (web / tag.group(1)).read_text()
+assert "</script" not in script
+page = page.replace(tag.group(0), '<script type="module">\n' + script + "\n</script>")
+pathlib.Path("tetris.html").write_text(page)
+EOF

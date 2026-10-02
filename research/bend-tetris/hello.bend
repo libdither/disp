@@ -1,4 +1,5 @@
-def main() -> IO(u24):
-  with IO:
-    * <- IO/print("Hello, world!\n")
-    return wrap(0)
+import Base
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    IO.print("Hello, world!")
