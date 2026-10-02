@@ -1,0 +1,17 @@
+[package]
+name = "rust-ic-strands"
+version = "0.0.0"
+edition = "2021"
+description = "disp's interaction net as strands on the links of a lattice, moved by local thermal dynamics"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+rust-ca-lattice = { path = "../../rust-ca-lattice/crate" }
+rust-ic-mesh = { path = "../../rust-ic-mesh/crate" }
+
+[profile.release]
+opt-level = 3
+debug = false
