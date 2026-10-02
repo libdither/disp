@@ -188,9 +188,12 @@ and the addresses its ports hold.
 
 ## Open
 
-- **Time to answer.** Pure demand is sequential along its demand chain, at about 9 ticks per
-  rewrite. Speculation buys time with work. A smarter policy (e.g. speculate only where
-  duplication will want both copies) is untried.
+- **Time to answer.** Pure demand is sequential along its demand chain, at about 8 ticks per
+  rewrite, and that is distance, not bookkeeping: the chain pays ~8 hops per rewrite. Handing a
+  same-tile producer over without messages changed ticks by 0.2%. So the lever is placement
+  (where fresh agents and data land relative to their future readers). Speculation buys time
+  with work instead; a smarter policy (e.g. speculate only where a duplicator's both copies
+  will be read) is untried.
 - **Gates.** The tile logic as a gate netlist, with measured gate count and depth.
 - **Queue bound.** 24/4 suffices on every workload here, but that is measured, not proven.
   Small enough queues can deadlock, because a full outbox stops a tile from taking messages,

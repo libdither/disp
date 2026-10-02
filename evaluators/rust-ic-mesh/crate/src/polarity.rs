@@ -18,12 +18,6 @@ pub const fn is_source(tag: Tag, p: usize) -> bool {
     }
 }
 
-/// Slots a consumer reserves before it pulls a producer: the most fresh agents any of its
-/// rules can create.
-pub fn max_fresh(tag: Tag) -> usize {
-    RULES.iter().filter(|r| r.consumer == tag).map(|r| r.fresh.len()).max().unwrap_or(0)
-}
-
 /// How a rule endpoint behaves at fire time: `Have` supplies a source reference, `Need`
 /// receives one. A dying sink port supplies the reference it held; a dying source port
 /// needs a new source for its outside reader.
