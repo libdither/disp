@@ -15,6 +15,7 @@ fn main() {
     let mut check = 0u64;
     let mut progress = 0u64;
     let mut profile = false;
+    let mut clean = 0f64;
     while let Some(a) = it.next() {
         match a.as_str() {
             "--k" => p.k = it.next().unwrap().parse().unwrap(),
@@ -38,6 +39,7 @@ fn main() {
             "--progress" => progress = it.next().unwrap().parse().unwrap(),
             "--spread" => p.spread = it.next().unwrap().parse().unwrap(),
             "--profile" => profile = true,
+            "--clean" => clean = it.next().unwrap().parse().unwrap(),
             "--pulse" => p.pulse = true,
             "--phop" => p.p_hop = it.next().unwrap().parse().unwrap(),
             "--margolus" => p.margolus = true,
@@ -95,6 +97,18 @@ fn main() {
         fin
     };
     let dt = t0.elapsed().as_secs_f64();
+    if done && clean > 0.0 {
+        // Keep running so erasers collect what the answer no longer needs.
+        let (c0, mut marks) = (l.stats.clocks, vec![]);
+        let mut left = l.garbage(&mut marks);
+        println!("garbage when the answer is in: {left} agents");
+        while left > 0 && l.stats.clocks - c0 < clean {
+            let next = l.stats.proposals + l.live_sites() as u64;
+            l.run_on(next);
+            left = l.garbage(&mut marks);
+        }
+        println!("after {:.0} more clocks: {left} agents of garbage left", l.stats.clocks - c0);
+    }
     let ans = l.readback().map(|t| oracle::show(&t));
     let proj = l.check_projection();
     let s = &l.stats;
@@ -103,6 +117,35 @@ fn main() {
     println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  collected {} ({} dead computations)", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected, s.dead);
     println!("proposals {}  fires {} (blocked {})  swaps {}  hops {}  folds {}  flips {}  strands {} (peak {})  peak live sites {}  fullest site {}  {:.2}s",
         s.proposals, s.fires, s.blocked_fires, s.swaps, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_live, s.peak_site, dt);
+    let mut left = std::collections::BTreeMap::new();
+    for &site in l.live() {
+        for k in 0..l.ks {
+            let t = l.tag(site, k);
+            if t != 0 { *left.entry(rust_ic_strands::lattice::tag_of(t).name()).or_insert(0) += 1; }
+        }
+    }
+    println!("left on the lattice: {}", left.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", "));
+    if std::env::var("PIECES").is_ok() {
+        // Connected pieces of the abstract net that remain, with their agents and readers.
+        let n = l.shadow.agents.len();
+        let mut seen = vec![false; n];
+        let mut pieces = std::collections::BTreeMap::new();
+        for start in 0..n {
+            if seen[start] || l.shadow.agents[start].is_none() { continue; }
+            let (mut stack, mut tags) = (vec![start], std::collections::BTreeMap::new());
+            seen[start] = true;
+            while let Some(i) = stack.pop() {
+                let a = l.shadow.agents[i].as_ref().unwrap();
+                *tags.entry(a.tag.name()).or_insert(0) += 1;
+                for p in a.ports.iter().flatten() {
+                    if !seen[p.0 as usize] { seen[p.0 as usize] = true; stack.push(p.0 as usize); }
+                }
+            }
+            let key = tags.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", ");
+            *pieces.entry(key).or_insert(0) += 1;
+        }
+        for (k, c) in pieces { println!("  {c} × [{k}]"); }
+    }
     let blocked: Vec<String> = s.blocked_rule.iter().enumerate().filter(|(_, &n)| n > 0)
         .map(|(i, n)| format!("{}·{} {n}", rust_ca_lattice::rules::RULES[i].consumer.name(), rust_ca_lattice::rules::RULES[i].producer.name())).collect();
     println!("blocked by lanes {}; by rule: {}", s.blocked_lanes, blocked.join(", "));

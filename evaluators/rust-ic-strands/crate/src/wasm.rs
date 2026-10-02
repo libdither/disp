@@ -71,6 +71,43 @@ pub extern "C" fn strands_run(n: u32) -> u32 {
     s.done as u32
 }
 
+/// One move (with blocks, one clock), recorded. Returns how many events it made; 2 << 16 is
+/// added once the answer is in.
+#[no_mangle]
+pub extern "C" fn strands_step(max_proposals: u32) -> u32 {
+    let s = st();
+    s.l.step(max_proposals as u64);
+    if !s.done { s.done = s.l.p.lazy && s.l.readback().is_some() || s.l.shadow.active_pair().is_none(); }
+    s.l.events.len() as u32 | if s.done { 2 << 16 } else { 0 }
+}
+#[no_mangle] pub extern "C" fn events_ptr() -> *const u32 { st().l.events.as_ptr() as *const u32 }
+#[no_mangle] pub extern "C" fn events_len() -> u32 { st().l.events.len() as u32 }
+
+/// After the answer: keep running so erasers collect the garbage.
+#[no_mangle]
+pub extern "C" fn strands_run_on(n: u32) {
+    let l = &mut st().l;
+    let target = l.stats.proposals + n as u64;
+    l.run_on(target);
+}
+
+static mut MARKS: Vec<u8> = Vec::new();
+/// Mark every agent the answer no longer depends on; returns how many there are.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn strands_garbage() -> u32 { unsafe { st().l.garbage(&mut MARKS) as u32 } }
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn garbage_ptr() -> *const u8 { unsafe { MARKS.as_ptr() } }
+
+/// "A·F → T1 Pair" for rule i.
+#[no_mangle]
+pub extern "C" fn rule_text(i: u32) -> u32 {
+    let r = &rust_ca_lattice::rules::RULES[i as usize];
+    let fresh: Vec<&str> = r.fresh.iter().map(|t| t.name()).collect();
+    set_text(&format!("{}·{} → {}", r.consumer.name(), r.producer.name(), if fresh.is_empty() { "nothing".to_string() } else { fresh.join(" ") }))
+}
+
 #[no_mangle] pub extern "C" fn tags_ptr() -> *const u8 { st().l.tags.as_ptr() }
 #[no_mangle] pub extern "C" fn want_ptr() -> *const bool { st().l.want.as_ptr() }
 #[no_mangle] pub extern "C" fn mate_ptr() -> *const u8 { st().l.mate.as_ptr() }

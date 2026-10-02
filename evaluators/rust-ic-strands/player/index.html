@@ -37,6 +37,16 @@
   details summary { cursor:pointer; color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
   #banner { position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:7px 14px; border-radius:10px; border:1px solid var(--line2);
     background:rgba(11,14,20,.9); font-size:12px; pointer-events:none; transition:opacity .4s; }
+  #tip { position:absolute; z-index:7; min-width:280px; max-width:380px; box-sizing:border-box; padding:8px 9px;
+    border:1px solid #3a506f; border-radius:9px; background:rgba(11,14,20,.97); box-shadow:0 10px 30px rgba(0,0,0,.6);
+    font-size:11px; line-height:1.4; pointer-events:none; }
+  #tip[hidden] { display:none; } #tip.pinned { border-color:var(--accent); }
+  .th { color:var(--accent); margin-bottom:4px; display:flex; justify-content:space-between; gap:10px; }
+  .ts { margin:4px 0; padding:4px 6px; border-radius:5px; background:#111a27; border:1px solid #1d2b3e; }
+  .ts.dead { opacity:.6; } .tp { color:#aab6c6; margin-top:2px; } .tw { color:#d6e2f0; margin-top:3px; }
+  .chip { font-size:10px; padding:0 5px; border-radius:8px; border:1px solid var(--line2); margin-left:4px; }
+  .story { margin:8px 0; padding:7px 9px; border:1px solid #6b3fa0; border-radius:8px; background:rgba(150,80,230,.08); font-size:11.5px; }
+  .story[hidden] { display:none; } .story b { color:#d6a8ff; font-weight:normal; }
   kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:4px; padding:0 4px; font-size:10.5px; color:var(--dim); }
 </style></head><body>
 <div id="wrap">
@@ -48,10 +58,12 @@
       <button id="load">load</button><span class="sep"></span>
       <button class="icon" id="reset" title="restart (R)">⟲</button>
       <button class="icon primary" id="play" title="play / pause (space)">▶</button>
+      <button class="icon" id="step" title="one move (→); shift: run to the next rewrite">+1</button>
       <button class="icon" id="end" title="run to the end">⏭</button>
       <input id="speed" type="range" min="0" max="100" value="45" style="width:120px"><span id="speedv"></span>
     </div>
     <div id="banner"></div>
+    <div id="tip" hidden></div>
   </div>
   <div id="side">
     <h1>interaction nets as strands on a lattice</h1>
@@ -61,6 +73,7 @@
       accepted by an energy: wires pull like springs, crowding pushes, heat jiggles.</div>
     <div id="badge" class="badge run">LOADING</div>
     <div id="decoded"></div><div id="answer"></div><div class="note" id="verdict"></div>
+    <div id="story" class="story" hidden></div>
 
     <h3>time and work</h3>
     <div class="row"><span class="k" id="clockName">clocks</span><span class="v" id="sSweep">0</span></div>
@@ -72,7 +85,7 @@
     <div class="note"><span style="color:#ffd866">■</span> rewrites per clock &nbsp;<span style="color:#56c8ff">■</span> strands in use</div>
 
     <h3>matter</h3>
-    <div class="row"><span class="k">agents</span><span class="v" id="sAgents">0</span></div>
+    <div class="row"><span class="k">agents (of them garbage)</span><span class="v" id="sAgents">0</span></div>
     <div class="row"><span class="k">strands (peak)</span><span class="v" id="sStrands">0</span></div>
     <div class="row"><span class="k">wanted walkers stepping · blocked</span><span class="v" id="sWalk">0</span></div>
     <div class="row"><span class="k">demand delivered by pulse</span><span class="v" id="sPulse">0</span></div>
@@ -81,9 +94,9 @@
 
     <h3>the lattice</h3>
     <div class="cfg">
-      <span class="k">space</span><select id="cDim"><option value="1">2D sheet</option><option value="6">3D, 6 layers</option></select>
+      <span class="k">space</span><select id="cDim"><option value="6" selected>3D, 6 layers</option><option value="1">2D sheet (needs 4 strands per link, and is slow)</option></select>
       <span class="k">agents per site</span><select id="cK"><option>1</option><option selected>2</option></select>
-      <span class="k">strands per link</span><select id="cL"><option>2</option><option selected>3</option><option>4</option></select>
+      <span class="k">strands per link</span><select id="cL"><option>2</option><option>3</option><option selected>4</option></select>
       <span class="k">rewrites inside</span><select id="cBlock"><option value="1" selected>one 2×2 block</option><option value="0">a site and its neighbours</option></select>
       <span class="k">evaluation</span><select id="cLazy"><option value="1" selected>lazy: only wanted readers react</option><option value="0">eager: every pair reacts</option></select>
       <span class="k">temperature</span><span><input id="cTemp" type="range" min="2" max="40" value="20" style="width:110px"> <span id="cTempV" class="note"></span></span>
@@ -113,13 +126,15 @@
       <p><b>Tension.</b> At temperature 2 a loose wire gains more from wiggling than it loses to its tension, so
         over long runs it swells until no lane is free. A link carrying n strands costs n²/2 more, so wire stays
         loose in open space but cannot crowd every lane around a reaction.</p>
-      <p><b>Garbage.</b> An eraser that touches a computation's output collects it. A duplicator becomes a plain
-        wire from its input to its other output; a dead apply becomes erasers on its inputs. Otherwise erasers wait
-        forever on garbage, crowding the reactions that matter.</p>
+      <p><b>Garbage.</b> Agents the answer no longer depends on are drawn dimmed. An eraser that touches a computation's
+        output collects it: a duplicator becomes a plain wire from its input to its other output; a dead apply becomes
+        erasers on its inputs; an unpair with both parts erased becomes one eraser on the pair. Once the answer is in,
+        the machine keeps running until only the answer is left.</p>
       <p><b>Clocks.</b> With random turns, a clock is one turn for the busiest site. With 2×2×2 blocks, the lattice is
         cut into disjoint blocks at a random offset every clock and each block makes one move: what a synchronous
         chip would do, with no two moves ever touching the same site.</p>
-      <p class="note"><kbd>space</kbd> play · <kbd>R</kbd> restart · <kbd>F</kbd> fit · drag to pan · wheel to zoom</p>
+      <p class="note"><kbd>space</kbd> play · <kbd>→</kbd> one move · <kbd>shift →</kbd> to the next rewrite · <kbd>R</kbd> restart ·
+        <kbd>F</kbd> fit · drag to pan · wheel to zoom · hover a site to see what is in it, click to pin it, <kbd>Esc</kbd> to unpin</p>
     </details>
   </div>
 </div>
@@ -130,8 +145,35 @@ const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "
 const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1];
 const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage", Sel: "second dispatch",
   Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root" };
+const LABEL = { L: "L", S: "S", F: "F", P: "P", Pair: "⟨⟩", A: "A", T1: "T", Sel: "σ", Unp: "U", Dn: "δ", Eps: "ε", Nrm: "N", Out: "⊙" };
+const DESC = {
+  L: "a leaf △, the simplest value", S: "a stem △x: a value with one child", F: "a fork △xy: a value with two children",
+  P: "a suspended application f a: it becomes a value once something needs it", Pair: "a pair carrying the arms of a pending choice",
+  A: "applies the operator it reads to an argument (leaf → stem, stem → fork, fork → triage)",
+  T1: "looks at the shape of a value and picks one of its arms", Sel: "the second half of triage: picks among three arms by the shape of a value",
+  Unp: "splits a pair into its two parts", Dn: "copies the value it reads for two readers, one layer at a time",
+  Eps: "erases whatever it reads", Nrm: "drives its input all the way to a finished value", Out: "the root: the answer arrives here" };
+const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right"], P: ["value", "function", "argument"], Pair: ["value", "first", "second"],
+  A: ["operator", "argument", "result"], T1: ["subject", "arms", "result"], Sel: ["subject", "arms", "result"], Unp: ["pair", "first", "second"],
+  Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"] };
+const MEANING = {
+  "A·L": "apply(leaf, x) = stem x", "A·S": "apply(stem a, x) = fork a x", "A·F": "apply(fork a b, x) = triage a with arms ⟨b, x⟩",
+  "A·P": "the operator is still suspended: force it first, then apply", "T1·L": "the subject a is a leaf: the result is b, and c is erased",
+  "T1·S": "the subject a is a stem s: the result is (s c)(b c), sharing c through a duplicator", "T1·F": "the subject a is a fork w x: dispatch on c with arms ⟨w, ⟨x, b⟩⟩",
+  "T1·P": "the subject a is still suspended: force it, then triage again", "Sel·L": "the subject z is a leaf: the result is w; the other arms are erased",
+  "Sel·S": "the subject z is a stem u: the result is x u; w and b are erased", "Sel·F": "the subject z is a fork u v: the result is (b u) v; w and x are erased",
+  "Sel·P": "the subject z is still suspended: force it, then dispatch again", "Unp·Pair": "the pair comes apart: each part is wired straight to its reader",
+  "Dn·L": "two copies of a leaf", "Dn·S": "copy the stem; a new duplicator copies its child", "Dn·F": "copy the fork; two new duplicators copy its children",
+  "Dn·P": "force it once, then copy the value", "Eps·L": "the leaf is erased", "Eps·S": "the stem is erased; an eraser moves on to its child",
+  "Eps·F": "the fork is erased; erasers move on to both children", "Eps·P": "the suspension is erased; erasers move on to its function and argument",
+  "Eps·Pair": "the pair is erased; erasers move on to both parts", "Nrm·L": "a leaf is already finished", "Nrm·S": "keep the stem; normalize its child",
+  "Nrm·F": "keep the fork; normalize both children", "Nrm·P": "force it, then keep normalizing" };
 const COLOR = ["#000", "#ffd866", "#ffb454", "#ff7a59", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff"];
 const isConsumer = t => t >= 6 && t <= 12;
+const isProducer = t => t >= 1 && t <= 5;
+// Which ports are outputs (sources): a producer's principal, a computation's result, a duplicator's or unpair's two parts.
+const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0 : false;
+const DIRS = ["east", "west", "south", "north", "up a layer", "down a layer"];
 const NONE = 255;
 let E = null, catalog = null, L = null;
 const $ = id => document.getElementById(id);
@@ -139,16 +181,18 @@ const cv = $("cv"), ctx = cv.getContext("2d");
 const enc = new TextEncoder(), dec = new TextDecoder();
 const text = n => dec.decode(new Uint8Array(E.memory.buffer, E.text_ptr(), n));
 function withString(s, f) { const b = enc.encode(s); const p = E.alloc(b.length || 1); new Uint8Array(E.memory.buffer, p, b.length).set(b); return f(p, b.length); }
-let view = { s: 10, ox: 0, oy: 0 }, playing = false, finished = false, oracleText = null, hist = [], bursts = [];
+let view = { s: 10, ox: 0, oy: 0 }, playing = false, finished = false, cleaned = false, answerClock = 0, oracleText = null, hist = [], bursts = [];
+let garbage = null, garbageCount = 0, lastGarbage = 0, story = [], hover = null, pinned = null;
 
 // ---- loading -------------------------------------------------------------------------------
 function populate() {
   const sel = $("prog");
   for (const w of catalog.workloads) { const o = document.createElement("option"); o.value = w.name; o.textContent = w.name; o.title = w.desc; sel.appendChild(o); }
   for (const [v, t] of [["random", "random term"], ["custom", "custom term…"]]) { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); }
-  $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${TAGS[t]} ${NAMES[TAGS[t]]}</span>`).join("")
+  $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${LABEL[TAGS[t]]} ${NAMES[TAGS[t]]}</span>`).join("")
     + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
-    + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span>`;
+    + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
+    + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;border:2px solid #d6a8ff;border-radius:2px"></span>last move</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   sel.value = q.get("p") || "share-tower"; $("progN").value = q.get("n") || 4;
   if (q.get("dim")) $("cDim").value = q.get("dim");
@@ -181,13 +225,14 @@ function load() {
     side = Math.ceil(side * 1.4);
   }
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
-  L = { w: side, h: side, depth, k, lanes, ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4 };
-  finished = false; oracleText = null; hist = []; bursts = [];
+  L = { w: side, h: side, depth, k, lanes, ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: +$("cGc").value === 1 };
+  finished = false; cleaned = false; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
+  refreshGarbage(true);
   const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), pulse = +$("cPulse").value ? bits : 0;
   $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each, plus a wanted bit) and a switchboard of ${ends} ends × ${bits} bits${pulse ? `, plus ${bits} bits saying which strand carries a pulse` : ""}: ≈ ${5 * L.k + ends * bits + pulse} bits. Moves touch at most one 2×2 block.`;
   $("clockName").textContent = +$("cSched").value ? "clocks (one move per 2×2×2 block)" : "clocks (turns of the busiest site)";
   location.hash = `p=${$("prog").value}&n=${$("progN").value}&dim=${depth}`;
-  fitContent(); draw(); panel(true);
+  fitContent(); draw(); panel(true); showStory();
   banner(`${src}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
 }
 
@@ -195,11 +240,15 @@ function load() {
 const S = 10; // world units per site
 function siteXYZ(s) { const x = s % L.w, y = Math.floor(s / L.w) % L.h, z = Math.floor(s / (L.w * L.h)); return [x, y, z]; }
 function siteOrigin(s) { const [x, y, z] = siteXYZ(s); return [x * S + z * S * 0.38, y * S - z * S * 0.58]; }
+const agentRadius = () => L.k === 1 ? S * 0.26 : S * 0.17;
 function slotPos(s, k) {
   const [ox, oy] = siteOrigin(s);
   if (L.k === 1) return [ox + S / 2, oy + S / 2];
   return [ox + S * (0.32 + 0.36 * k), oy + S / 2];
 }
+// Ports sit on the agent's rim: the principal on top, the others lower left and lower right.
+const PORT_ANGLE = [-Math.PI / 2, Math.PI * 5 / 6, Math.PI / 6];
+function portPos(s, k, p) { const [x, y] = slotPos(s, k), r = agentRadius(); return [x + r * Math.cos(PORT_ANGLE[p]), y + r * Math.sin(PORT_ANGLE[p])]; }
 // Where strand i on face f meets the edge of a site.
 function lanePos(s, f, i) {
   const [ox, oy] = siteOrigin(s), t = (i + 1) / (L.lanes + 1);
@@ -213,7 +262,7 @@ function lanePos(s, f, i) {
   }
 }
 function endPos(s, e) {
-  if (e < 3 * L.ks) { const k = Math.floor(e / 3); return slotPos(s, k); }
+  if (e < 3 * L.ks) return portPos(s, Math.floor(e / 3), e % 3);
   const x = e - 3 * L.ks; return lanePos(s, Math.floor(x / L.lanes), x % L.lanes);
 }
 function neighbor(s, f) {
@@ -221,11 +270,27 @@ function neighbor(s, f) {
   switch (f) { case 0: return at(x + 1, y, z); case 1: return at(x - 1, y, z); case 2: return at(x, y + 1, z);
     case 3: return at(x, y - 1, z); case 4: return at(x, y, z + 1); default: return at(x, y, z - 1); }
 }
+const faceOf = e => Math.floor((e - 3 * L.ks) / L.lanes);
 function views() {
   const b = E.memory.buffer, n = L.w * L.h * L.depth;
   return { tags: new Uint8Array(b, E.tags_ptr(), n * L.ks), want: new Uint8Array(b, E.want_ptr(), n * L.ks),
     mate: new Uint8Array(b, E.mate_ptr(), n * L.ends), live: new Uint32Array(b, E.live_ptr(), E.live_len()),
     pulse: new Uint8Array(b, E.pulse_ptr(), n) };
+}
+// Follow the wire from end e of site s to the agent port at its other end: {site, end, len, path}.
+function follow(V, s, e, path) {
+  let site = s, cur = e, len = 0;
+  if (path) { const [x, y] = endPos(s, e); path.moveTo(x, y); }
+  for (let guard = 0; guard < 20000; guard++) {
+    const m = V.mate[site * L.ends + cur];
+    if (m === NONE) return null;
+    if (path) { const [x, y] = endPos(site, m); path.lineTo(x, y); }
+    if (m < 3 * L.ks) return { site, end: m, len };
+    const x = m - 3 * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes;
+    site = neighbor(site, f); cur = 3 * L.ks + (f ^ 1) * L.lanes + i; len++;
+    if (path) { const [px, py] = endPos(site, cur); path.lineTo(px, py); }
+  }
+  return null;
 }
 function fitContent() {
   const V = views(); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -240,6 +305,12 @@ function fitContent() {
   view.s = Math.min((r.width - 30) / (x1 - x0), (r.height - 90) / (y1 - y0));
   view.ox = (r.width - (x1 - x0) * view.s) / 2 - x0 * view.s; view.oy = (r.height - (y1 - y0) * view.s) / 2 + 25 - y0 * view.s;
 }
+function refreshGarbage(force) {
+  const now = performance.now(); if (!force && now - lastGarbage < 300) return; lastGarbage = now;
+  garbageCount = E.strands_garbage();
+  garbage = new Uint8Array(E.memory.buffer, E.garbage_ptr(), L.w * L.h * L.depth * L.ks).slice();
+}
+const dead = (s, k) => garbage && garbage[s * L.ks + k] === 1;
 
 // ---- drawing -----------------------------------------------------------------------------------------
 function draw() {
@@ -252,7 +323,7 @@ function draw() {
   const vx0 = -view.ox / view.s - S, vy0 = -view.oy / view.s - S, vx1 = (r.width - view.ox) / view.s + S, vy1 = (r.height - view.oy) / view.s + S;
   const sites = [...V.live].filter(s => { const [ox, oy] = siteOrigin(s); return ox >= vx0 && ox <= vx1 && oy >= vy0 && oy <= vy1; });
   if (L.depth > 1) sites.sort((a, b) => Math.floor(b / (L.w * L.h)) - Math.floor(a / (L.w * L.h)));
-  const detail = view.s > 2.2;
+  const detail = view.s > 2.2, rad = agentRadius();
   // site floors (occupied sites, faint), by layer for 3D depth cue
   for (const s of sites) {
     const [ox, oy] = siteOrigin(s), z = Math.floor(s / (L.w * L.h));
@@ -281,34 +352,53 @@ function draw() {
     }
   }
   ctx.lineCap = "round";
-  ctx.strokeStyle = "rgba(120,150,190,0.55)"; ctx.lineWidth = Math.max(0.35, 1.1 / view.s); ctx.stroke(strands);
-  if (detail) { ctx.strokeStyle = "rgba(150,175,210,0.45)"; ctx.lineWidth = Math.max(0.3, 0.9 / view.s); ctx.stroke(board); }
+  ctx.strokeStyle = "rgba(120,150,190,0.55)"; ctx.lineWidth = lw(1.1); ctx.stroke(strands);
+  if (detail) { ctx.strokeStyle = "rgba(150,175,210,0.45)"; ctx.lineWidth = lw(0.9); ctx.stroke(board); }
   // the principal wire of every wanted reader, followed end to end
   const hot = new Path2D();
   for (const s of V.live) for (let k = 0; k < L.ks; k++) {
     const t = V.tags[s * L.ks + k];
-    if (!t || !isConsumer(t) || !V.want[s * L.ks + k]) continue;
-    let site = s, e = k * 3, [px, py] = slotPos(s, k); hot.moveTo(px, py);
-    for (let guard = 0; guard < 4000; guard++) {
-      const m = V.mate[site * L.ends + e];
-      if (m === NONE) break;
-      const [mx, my] = endPos(site, m); hot.lineTo(mx, my);
-      if (m < base) break;
-      const x = m - base, f = Math.floor(x / L.lanes), i = x % L.lanes;
-      site = neighbor(site, f); e = base + (f ^ 1) * L.lanes + i;
-      const [nx, ny] = endPos(site, e); hot.lineTo(nx, ny);
-    }
+    if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) follow(V, s, k * 3, hot);
   }
   ctx.globalCompositeOperation = "lighter";
-  ctx.strokeStyle = "rgba(86,200,255,0.9)"; ctx.lineWidth = Math.max(0.6, 2.2 / view.s); ctx.stroke(hot);
+  ctx.strokeStyle = "rgba(86,200,255,0.9)"; ctx.lineWidth = lw(2.2); ctx.stroke(hot);
   ctx.globalCompositeOperation = "source-over";
+  // the focused site's wires, each to its far end
+  const focus = pinned ?? hover, ends = [];
+  if (focus != null) {
+    const lit = new Path2D();
+    for (let k = 0; k < L.ks; k++) {
+      const t = V.tags[focus * L.ks + k]; if (!t) continue;
+      for (let p = 0; p < ARITY[t]; p++) { const far = follow(V, focus, k * 3 + p, lit); if (far) ends.push(far); }
+    }
+    ctx.strokeStyle = "rgba(255,170,70,0.95)"; ctx.lineWidth = lw(2.6); ctx.stroke(lit);
+    const [ox, oy] = siteOrigin(focus);
+    ctx.strokeStyle = pinned != null ? "#56c8ff" : "rgba(255,170,70,0.9)"; ctx.lineWidth = lw(1.5); ctx.strokeRect(ox + 0.3, oy + 0.3, S - 0.6, S - 0.6);
+  }
   // agents
-  const rad = L.k === 1 ? S * 0.26 : S * 0.17;
+  const labels = view.s * rad > 6;
   for (const s of sites) for (let k = 0; k < L.ks; k++) {
     const t = V.tags[s * L.ks + k]; if (!t) continue;
     const [x, y] = slotPos(s, k);
+    ctx.globalAlpha = dead(s, k) ? 0.28 : 1;
     ctx.fillStyle = COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
-    if (V.want[s * L.ks + k] && isConsumer(t)) { ctx.strokeStyle = "#56c8ff"; ctx.lineWidth = Math.max(0.4, 1.4 / view.s); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
+    if (V.want[s * L.ks + k] && isConsumer(t)) { ctx.strokeStyle = "#56c8ff"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
+    if (detail) {
+      const [px, py] = portPos(s, k, 0);
+      ctx.fillStyle = "#0b0e14"; ctx.beginPath(); ctx.arc(px, py, rad * 0.32, 0, 7); ctx.fill();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = lw(0.7); ctx.stroke();
+    }
+    if (labels) {
+      const lab = LABEL[TAGS[t]];
+      ctx.fillStyle = "#0b0e14"; ctx.font = `bold ${rad * (lab.length > 1 ? 0.8 : 1.05)}px ui-monospace,monospace`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(lab, x, y + rad * 0.12);
+    }
+  }
+  ctx.globalAlpha = 1;
+  for (const far of ends) {
+    if (far.end >= 3 * L.ks) continue;
+    const [x, y] = slotPos(far.site, Math.floor(far.end / 3));
+    ctx.strokeStyle = "rgba(255,170,70,0.95)"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.7, 0, 7); ctx.stroke();
   }
   // demand pulses, each on the strand end it is about to cross
   ctx.globalCompositeOperation = "lighter";
@@ -319,47 +409,209 @@ function draw() {
     ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(x, y, S * 0.13, 0, 7); ctx.fill();
   }
   ctx.globalCompositeOperation = "source-over";
+  // the last stepped move: its sites outlined, and an arrow for what moved
+  if (!playing) for (const ev of story) {
+    ctx.strokeStyle = "#d6a8ff"; ctx.lineWidth = lw(1.8);
+    for (const s of [ev[1], ev[2]]) { const [ox, oy] = siteOrigin(s); ctx.strokeRect(ox - 0.4, oy - 0.4, S + 0.8, S + 0.8); }
+    if ((ev[0] === 1 || ev[0] === 2) && ev[1] !== ev[2]) {
+      const [ax, ay] = siteOrigin(ev[1]), [bx, by] = siteOrigin(ev[2]);
+      arrow(ax + S / 2, ay + S / 2, bx + S / 2, by + S / 2);
+    }
+  }
   // rewrites, as fading rings
   const now = performance.now(); let keep = 0;
   for (const b of bursts) {
     const a = (now - b.t) / 700; if (a >= 1) continue; bursts[keep++] = b;
     const [ox, oy] = siteOrigin(b.s);
-    ctx.strokeStyle = `rgba(255,216,102,${(1 - a) * 0.9})`; ctx.lineWidth = Math.max(0.5, 1.6 / view.s);
+    ctx.strokeStyle = `rgba(255,216,102,${(1 - a) * 0.9})`; ctx.lineWidth = lw(1.6);
     ctx.beginPath(); ctx.arc(ox + S / 2, oy + S / 2, S * (0.6 + a * 2.2), 0, 7); ctx.stroke();
   }
   bursts.length = keep;
 }
+// A stroke px screen pixels wide when zoomed out, growing gently as you zoom in.
+const lw = px => px * (1 + view.s / 14) / view.s;
+function arrow(ax, ay, bx, by) {
+  const a = Math.atan2(by - ay, bx - ax), h = S * 0.3;
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+  ctx.lineTo(bx - h * Math.cos(a - 0.5), by - h * Math.sin(a - 0.5)); ctx.moveTo(bx, by); ctx.lineTo(bx - h * Math.cos(a + 0.5), by - h * Math.sin(a + 0.5));
+  ctx.stroke();
+}
+
+// ---- words ---------------------------------------------------------------------------------------------
+const who = t => `${TAGS[t]} (${NAMES[TAGS[t]]})`;
+function at(s) { const [x, y, z] = siteXYZ(s); return L.depth > 1 ? `(${x}, ${y}, layer ${z})` : `(${x}, ${y})`; }
+function dirTo(s, t) {
+  const [a, b, c] = siteXYZ(s), [x, y, z] = siteXYZ(t);
+  return x > a ? "east" : x < a ? "west" : y > b ? "south" : y < b ? "north" : z > c ? "up a layer" : z < c ? "down a layer" : "nowhere";
+}
+function sentence(ev) {
+  const [kind, s, t, a, b, x, y] = ev;
+  switch (kind) {
+    case 1: return `<b>Step.</b> ${who(a)} stepped ${dirTo(s, t)} from ${at(s)} to ${at(t)}`
+      + (x ? `, along its principal wire toward ${isProducer(a) ? "the agent reading it" : "what it reads"}. It ate the strand it walked along; its other wires each grew by a strand.`
+           : `. Wires that left that way got a strand shorter; its others each grew by a strand.`);
+    case 2: return `<b>Exchange.</b> ${who(a)} at ${at(s)} traded places with ${who(b)} at ${at(t)}, getting through a full site.`;
+    case 3: return `<b>Fold.</b> A wire went ${dirTo(s, t)} from ${at(s)} and straight back; it snapped shut, freeing two strands.`;
+    case 4: return `<b>Flip.</b> A wire turning a corner at ${at(s)} flipped across its square to ${at(t)}.`;
+    case 5: { const r = text(E.rule_text(x)), key = `${TAGS[a]}·${TAGS[b]}`;
+      const m = MEANING[key] || "";
+      return `<b>Rewrite ${r}</b> at ${at(s)}: the ${NAMES[TAGS[a]]} met the ${NAMES[TAGS[b]]} it was waiting for${s !== t ? ` (one strand away at ${at(t)})` : ""}. ${m.charAt(0).toUpperCase() + m.slice(1)}.`; }
+    case 6: return `<b>Garbage.</b> An eraser at ${at(s)} touched a copy nobody wants: the duplicator at ${at(t)} became a plain wire from its value to its other copy.`;
+    case 7: return `<b>Garbage.</b> An eraser at ${at(s)} touched the result of ${who(b)} at ${at(t)}: nobody needs it, so it became erasers on its two inputs.`;
+    case 8: return `<b>Garbage.</b> Both parts of the unpair at ${at(t)} were being erased, so it became one eraser on the pair.`;
+    case 9: return `<b>Demand.</b> A wanted reader at ${at(s)} touched the output of ${who(a)} at ${at(t)}: that computation is wanted now.`;
+    case 10: return `<b>Demand.</b> A pulse reached the output of ${who(a)} at ${at(t)}: that computation is wanted now.`;
+  }
+  return "";
+}
+function showStory() {
+  const el = $("story");
+  if (!story.length) { el.hidden = true; return; }
+  el.hidden = false;
+  // Rewrites first, then garbage and demand, then exchanges, steps and wire reshaping.
+  const rank = [9, 4, 3, 6, 7, 0, 1, 1, 1, 2, 2];
+  const shown = [...story].sort((x, y) => rank[x[0]] - rank[y[0]]).slice(0, 6).map(sentence).join("<br>");
+  el.innerHTML = (story.length > 6 ? `<div class="note">${story.length} moves this clock; the six that matter most:</div>` : "") + shown;
+}
+function tipHTML(site) {
+  const V = views(), [x, y, z] = siteXYZ(site);
+  let used = 0; for (let k = 0; k < L.k; k++) if (V.tags[site * L.ks + k]) used++;
+  let h = `<div class="th"><span>site (${x}, ${y}${L.depth > 1 ? `, layer ${z}` : ""})</span><span class="note">${used} of ${L.k} seats used</span></div>`;
+  for (let k = 0; k < L.ks; k++) {
+    const t = V.tags[site * L.ks + k]; if (!t) continue;
+    const name = TAGS[t], wanted = isConsumer(t) && V.want[site * L.ks + k], gone = dead(site, k);
+    h += `<div class="ts${gone ? " dead" : ""}"><span style="color:${COLOR[t]}">${LABEL[name]} ${NAMES[name]}</span>`
+      + (gone ? `<span class="chip">garbage</span>` : "") + (wanted ? `<span class="chip" style="color:#56c8ff">wanted</span>` : "")
+      + `<div class="tp">${DESC[name]}.</div>`;
+    for (let p = 0; p < ARITY[t]; p++) {
+      const far = follow(V, site, k * 3 + p), out = isSource(t, p);
+      let w;
+      if (!far) w = "unwired";
+      else {
+        const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3, fn = TAGS[ft];
+        const where = far.site === site ? "in this site" : `${far.len} strand${far.len === 1 ? "" : "s"} away at ${at(far.site)}`;
+        w = `${out ? "read by" : "reads"} the ${PORTS[fn][fp]} of ${LABEL[fn]} ${NAMES[fn]}, ${where}`;
+      }
+      h += `<div class="tw">${p === 0 ? "◆" : "·"} ${PORTS[name][p]} (${out ? "out" : "in"}): ${w}</div>`;
+    }
+    if (isConsumer(t)) h += `<div class="tp">${status(V, site, k, t, wanted, gone)}</div>`;
+    h += `</div>`;
+  }
+  // wires passing through, and how full each link is
+  const through = [], links = [];
+  for (let f = 0; f < L.faces; f++) {
+    let n = 0;
+    for (let i = 0; i < L.lanes; i++) {
+      const e = 3 * L.ks + f * L.lanes + i, m = V.mate[site * L.ends + e];
+      if (m === NONE) continue;
+      n++;
+      if (m >= 3 * L.ks && m > e) through.push(`${DIRS[f]} ↔ ${DIRS[faceOf(m)]}`);
+    }
+    if (n) links.push(`${DIRS[f]} ${n}/${L.lanes}`);
+  }
+  if (through.length) h += `<div class="tp">wires passing through: ${through.join(", ")}</div>`;
+  if (links.length) h += `<div class="tp">strands on each link: ${links.join(", ")}</div>`;
+  const pe = V.pulse[site];
+  if (pe !== NONE) h += `<div class="tp" style="color:#fff">a demand pulse here is about to cross ${DIRS[faceOf(pe)]}</div>`;
+  if (!used && !through.length) h += `<div class="tp">empty</div>`;
+  return h;
+}
+// What a consumer is doing, in words.
+function status(V, site, k, t, wanted, gone) {
+  if (gone) return "Garbage: the answer no longer depends on it. An eraser will collect it.";
+  const far = follow(V, site, k * 3);
+  if (!far) return "";
+  const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3;
+  if (t === 11) return isProducer(ft) && fp === 0 ? "It erases that value when they meet." : "Garbage leads here: it collects the computation when it touches its output.";
+  if (!wanted) return "Not wanted yet: it waits until something needs its result.";
+  if (isProducer(ft) && fp === 0) return far.len <= 1 ? "Its value is within reach: it rewrites on its next turn, if its square has room." : `Its value is ${far.len} strands away: it walks along the wire toward it.`;
+  const fw = V.want[far.site * L.ks + Math.floor(far.end / 3)];
+  return fw ? "Its input is still being computed by another wanted computation." : "Its input is another computation nobody has asked for yet: a demand pulse is on the way.";
+}
+function siteAt(clientX, clientY) {
+  if (!L) return null;
+  const r = cv.getBoundingClientRect(), V = views();
+  const wx = (clientX - r.left - view.ox) / view.s, wy = (clientY - r.top - view.oy) / view.s;
+  let fallback = null;
+  for (let z = 0; z < L.depth; z++) {
+    const x = Math.floor((wx - z * S * 0.38) / S), y = Math.floor((wy + z * S * 0.58) / S);
+    if (x < 0 || y < 0 || x >= L.w || y >= L.h) continue;
+    const s = z * L.w * L.h + y * L.w + x;
+    if (fallback == null) fallback = s;
+    let live = V.pulse[s] !== NONE;
+    for (let e = 0; e < L.ends && !live; e++) if (V.mate[s * L.ends + e] !== NONE) live = true;
+    if (live) return s;
+  }
+  return fallback;
+}
+function placeTip(clientX, clientY) {
+  const tip = $("tip"), r = $("stage").getBoundingClientRect();
+  const x = clientX - r.left + 16, y = clientY - r.top + 16;
+  tip.style.left = Math.min(x, r.width - 390) + "px"; tip.style.top = Math.max(4, Math.min(y, r.height - tip.offsetHeight - 10)) + "px";
+}
+function showTip(site, cx, cy, pin) {
+  const tip = $("tip");
+  if (site == null) { tip.hidden = true; return; }
+  tip.innerHTML = tipHTML(site); tip.hidden = false; tip.classList.toggle("pinned", pin); placeTip(cx, cy);
+}
 
 // ---- the loop ------------------------------------------------------------------------------------------
 function proposalsPerFrame() { const v = +$("speed").value; return v >= 100 ? Infinity : Math.round(Math.pow(10, 1 + v / 100 * 6)); }
+const stats = () => new Float64Array(E.memory.buffer, E.stats_ptr(), 17);
 function frame() {
-  if (L && playing && !finished) {
+  if (L && playing && !cleaned) {
     const want = proposalsPerFrame(), t0 = performance.now();
     let ran = 0;
     while (ran < want) {
-      const chunk = Math.min(want - ran, 200000);
-      finished = E.strands_run(chunk) === 1; ran += chunk;
-      if (finished || performance.now() - t0 > 14) break;
+      // After the answer, about one clock at a time, so the moment the garbage is gone is not overshot.
+      const chunk = Math.min(want - ran, finished ? Math.max(200, E.live_len()) : 200000);
+      if (!finished) { finished = E.strands_run(chunk) === 1; if (finished) answerClock = stats()[1]; }
+      else E.strands_run_on(chunk);
+      ran += chunk;
+      if (finished && afterAnswer()) break;
+      if (performance.now() - t0 > 14) break;
     }
     const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now();
     for (let i = 0; i < fl.length && bursts.length < 600; i++) bursts.push({ s: fl[i], t: now });
     E.fire_log_clear();
-    const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 17);
+    const st = stats();
     hist.push({ sw: st[1], fires: st[2], strands: st[7] }); if (hist.length > 3000) hist.splice(0, 1500);
-    if (finished) { playing = false; $("play").textContent = "▶"; }
+    if (cleaned) setPlaying(false);
   }
+  if (L) refreshGarbage(playing);
   draw(); panel(false);
+  if (pinned != null && L) { const tip = $("tip"); if (!tip.hidden) tip.innerHTML = tipHTML(pinned); }
   requestAnimationFrame(frame);
+}
+// Once the answer is in: done when there is no garbage left (or nothing collects it).
+function afterAnswer() {
+  if (!L.gc) { cleaned = true; return true; }
+  refreshGarbage(true);
+  if (garbageCount === 0 || stats()[1] - answerClock > 200000) { cleaned = true; return true; }
+  return false;
+}
+function stepOnce(toRewrite) {
+  if (!L || cleaned) return;
+  setPlaying(false);
+  const t0 = performance.now();
+  do {
+    const r = E.strands_step(5000000);
+    story = Array.from({ length: E.events_len() }, (_, i) => Array.from(new Uint32Array(E.memory.buffer, E.events_ptr() + i * 32, 8)));
+    if (!finished && r >> 16) { finished = true; answerClock = stats()[1]; }
+  } while (toRewrite && !story.some(e => e[0] === 5) && performance.now() - t0 < 3000);
+  if (finished) afterAnswer();
+  E.fire_log_clear();
+  refreshGarbage(true); showStory(); panel(true);
 }
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
 let lastPanel = 0;
 function panel(force) {
   if (!L) return;
   const now = performance.now(); if (!force && now - lastPanel < 200) return; lastPanel = now;
-  const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 17);
+  const st = stats();
   $("sSweep").textContent = fmt(st[1]); $("sFires").innerHTML = `<b>${fmt(st[2])}</b>`;
   $("sHops").textContent = `${fmt(st[3])} · ${fmt(st[4])}`; $("sFold").textContent = `${fmt(st[5])} · ${fmt(st[6])}`;
-  $("sBlock").textContent = fmt(st[9]); $("sAgents").textContent = fmt(st[11]); $("sStrands").textContent = `${fmt(st[7])} (${fmt(st[8])})`;
+  $("sBlock").textContent = fmt(st[9]); $("sAgents").textContent = `${fmt(st[11])} (${fmt(garbageCount)})`; $("sStrands").textContent = `${fmt(st[7])} (${fmt(st[8])})`;
   $("sWalk").textContent = `${fmt(st[12])} · ${fmt(st[13])}`;
   $("sPulse").textContent = fmt(st[14]); $("sExtent").textContent = fmt(st[15]); $("sGc").textContent = fmt(st[16]);
   chart();
@@ -368,9 +620,13 @@ function panel(force) {
   const ans = text(E.strands_answer()), decd = text(E.strands_answer_decoded());
   if (oracleText === null) oracleText = text(E.strands_oracle(200000));
   const ok = oracleText === "" ? null : ans === oracleText;
-  badge.className = "badge " + (ok === false ? "bad" : "ok"); badge.textContent = ok === false ? "WRONG ANSWER" : `DONE in ${fmt(st[1])} clocks`;
+  badge.className = "badge " + (ok === false ? "bad" : cleaned ? "ok" : "run");
+  badge.textContent = ok === false ? "WRONG ANSWER" : cleaned
+    ? (garbageCount ? `ANSWER IN ${fmt(answerClock)} CLOCKS · ${garbageCount} GARBAGE LEFT` : `DONE in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}`)
+    : `ANSWER IN at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
   $("decoded").textContent = decd ? `= ${decd}` : ""; $("answer").textContent = ans;
-  $("verdict").textContent = ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText;
+  $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)
+    + (cleaned && !garbageCount && L.gc ? "; only the answer is left on the lattice" : "");
 }
 function chart() {
   const c = $("chart"), g = c.getContext("2d"), W = c.width, H = c.height; g.clearRect(0, 0, W, H);
@@ -385,13 +641,30 @@ function chart() {
 // ---- input -------------------------------------------------------------------------------------------------
 function resize() { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
 let drag = null;
-cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy }; cv.setPointerCapture(e.pointerId); });
-cv.addEventListener("pointermove", e => { if (drag) { view.ox = drag.ox + e.clientX - drag.x; view.oy = drag.oy + e.clientY - drag.y; } });
-cv.addEventListener("pointerup", () => drag = null);
+cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy, moved: false }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => {
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    view.ox = drag.ox + dx; view.oy = drag.oy + dy;
+  }
+  hover = siteAt(e.clientX, e.clientY);
+  if (pinned == null) showTip(hover, e.clientX, e.clientY, false);
+});
+cv.addEventListener("pointerup", e => {
+  if (drag && !drag.moved) {
+    const s = siteAt(e.clientX, e.clientY);
+    pinned = pinned === s ? null : s;
+    showTip(pinned ?? s, e.clientX, e.clientY, pinned != null);
+  }
+  drag = null;
+});
+cv.addEventListener("pointerleave", () => { hover = null; if (pinned == null) $("tip").hidden = true; });
 cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-  const s2 = Math.max(0.05, Math.min(40, view.s * Math.exp(-e.deltaY * 0.0016))); view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2; }, { passive: false });
-function setPlaying(p) { playing = p && !finished; $("play").textContent = playing ? "❚❚" : "▶"; }
+  const s2 = Math.max(0.05, Math.min(60, view.s * Math.exp(-e.deltaY * 0.0016))); view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2; }, { passive: false });
+function setPlaying(p) { playing = p && !cleaned; $("play").textContent = playing ? "❚❚" : "▶"; if (playing) { story = []; showStory(); } }
 $("play").onclick = () => setPlaying(!playing);
+$("step").onclick = e => stepOnce(e.shiftKey);
 $("end").onclick = () => { $("speed").value = 100; speedLabel(); setPlaying(true); };
 $("reset").onclick = () => load();
 $("load").onclick = () => { load(); setPlaying(true); };
@@ -400,7 +673,10 @@ $("speed").oninput = speedLabel;
 function speedLabel() { const v = proposalsPerFrame(); $("speedv").textContent = v === Infinity ? "max speed" : `${fmt(v)} proposals/frame`; }
 window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") { load(); setPlaying(true); } return; }
-  if (e.key === " ") { e.preventDefault(); setPlaying(!playing); } else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
+  if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(e.shiftKey); }
+  else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; }
+  else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
 });
 window.addEventListener("resize", resize);
 let bt = 0; function banner(m, bad) { const b = $("banner"); b.textContent = m; b.style.opacity = 1; b.style.color = bad ? "var(--warn)" : "var(--fg)"; clearTimeout(bt); bt = setTimeout(() => b.style.opacity = 0, bad ? 6000 : 3500); }

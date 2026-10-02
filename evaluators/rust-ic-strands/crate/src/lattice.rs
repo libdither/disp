@@ -166,7 +166,22 @@ pub struct Lattice {
     pub fire_log: Vec<u32>,
     /// In Margolus mode, the corner of the block the current move must stay inside.
     fence: Option<[i64; 3]>,
+    /// Record every move in `events`, for a player stepping one move at a time.
+    pub narrate: bool,
+    /// [kind (EV_*), site, other site, tag, other tag, detail, detail, 0] per recorded move.
+    pub events: Vec<[u32; 8]>,
 }
+
+pub const EV_STEP: u32 = 1;
+pub const EV_SWAP: u32 = 2;
+pub const EV_FOLD: u32 = 3;
+pub const EV_FLIP: u32 = 4;
+pub const EV_FIRE: u32 = 5;
+pub const EV_DUP: u32 = 6;
+pub const EV_DEAD: u32 = 7;
+pub const EV_UNP: u32 = 8;
+pub const EV_CONTACT: u32 = 9;
+pub const EV_PULSE: u32 = 10;
 
 impl Lattice {
     pub fn sites(&self) -> u32 { self.p.w * self.p.h * self.p.depth }
@@ -195,6 +210,7 @@ impl Lattice {
         self.set(s, b, a);
     }
     #[inline] pub fn nb(&self, s: u32, f: usize) -> u32 { self.nb[s as usize][f] }
+    fn note(&mut self, e: [u32; 8]) { if self.narrate { self.events.push(e); } }
     fn xyz(&self, s: u32) -> [i64; 3] {
         let (w, h) = (self.p.w, self.p.h);
         [(s % w) as i64, ((s / w) % h) as i64, (s / (w * h)) as i64]
@@ -260,6 +276,8 @@ impl Lattice {
             check_every: 0,
             fire_log: vec![],
             fence: None,
+            narrate: false,
+            events: vec![],
         }
     }
 
@@ -635,7 +653,11 @@ impl Lattice {
             if walker { self.stats.walk_fail[0] += 1; }
             return may_swap && self.swap(s, k, f);
         };
-        self.hop_to(s, k, f, k2, true, walker).is_some()
+        let along = { let m = self.mate_of(s, self.ae(k, 0)); self.is_strand(m) && self.face(m) == f };
+        let (tag, want) = (self.tag(s, k) as u32, self.want[s as usize * self.ks + k] as u32);
+        let ok = self.hop_to(s, k, f, k2, true, walker).is_some();
+        if ok { self.note([EV_STEP, s, t, tag, 0, along as u32, want, 0]); }
+        ok
     }
 
     /// The step itself, into slot k2 of the neighbour. With `metropolis`, the energy decides;
@@ -775,6 +797,7 @@ impl Lattice {
         let residents: Vec<usize> = (0..self.p.k).filter(|&k| self.tag(t, k) != 0).collect();
         if residents.is_empty() { return false; }
         let kb = residents[self.below(residents.len())];
+        let (ta, tb) = (self.tag(s, ka) as u32, self.tag(t, kb) as u32);
         let kt = self.p.k;
         debug_assert!(self.tag(t, kt) == 0 && self.tag(s, kt) == 0, "transient slot busy");
         let Some(d1) = self.hop_to(s, ka, f, kt, false, false) else { return false };
@@ -785,6 +808,7 @@ impl Lattice {
         self.relocate(t, kt, kb);
         if self.accept(d1 + d2) {
             self.stats.swaps += 1;
+            self.note([EV_SWAP, s, t, ta, tb, 0, 0, 0]);
             self.last_op = "swap";
             return true;
         }
@@ -809,6 +833,7 @@ impl Lattice {
         self.link(s, a, b);
         self.strand_count(-2);
         self.stats.folds += 1;
+        self.note([EV_FOLD, s, t, 0, 0, 0, 0, 0]);
         self.last_op = "fold";
         self.refresh(s);
         self.refresh(t);
@@ -845,6 +870,7 @@ impl Lattice {
         self.link(w, self.se(f2 ^ 1, c), self.se(f1 ^ 1, d));
         self.link(z, self.se(f1, d), g);
         self.stats.flips += 1;
+        self.note([EV_FLIP, s, w, 0, 0, 0, 0, 0]);
         self.last_op = "flip";
         for y in [s, x, z, w] { self.refresh(y); }
         true
@@ -1083,6 +1109,7 @@ impl Lattice {
         }
         self.stats.fires += 1;
         self.last_op = "fire";
+        self.note([EV_FIRE, s, sp, code(ct) as u32, code(pt) as u32, ri as u32, 0, 0]);
         if self.fire_log.len() < 4096 { self.fire_log.push(s); }
         for &x in &region.sites { if x != u32::MAX { self.refresh(x); } }
         true
@@ -1199,7 +1226,7 @@ impl Lattice {
         if let Some((kc, kp, via)) = self.active_pair(s) {
             if self.fire(s, kc, kp, via) { return; }
         }
-        if let Some((site, k)) = self.infect.take() { self.want[site as usize * self.ks + k] = true; }
+        self.take_infect(s);
         if self.unit() < self.p.p_hop && self.occ[s as usize] > 0 {
             let ks: Vec<usize> = (0..self.ks).filter(|&k| self.tag(s, k) != 0).collect();
             let k = ks[self.below(ks.len())];
@@ -1254,6 +1281,16 @@ impl Lattice {
         if self.p.pulse { self.step_pulses(); }
     }
 
+    /// A wanted reader at s touched a computation's output during its turn: that computation
+    /// is wanted now.
+    fn take_infect(&mut self, s: u32) {
+        let Some((site, k)) = self.infect.take() else { return };
+        if !self.want[site as usize * self.ks + k] {
+            self.want[site as usize * self.ks + k] = true;
+            self.note([EV_CONTACT, s, site, self.tag(site, k) as u32, 0, 0, 0, 0]);
+        }
+    }
+
     /// A wanted reader at `s` whose principal wire leaves the site puts a demand pulse on it.
     fn send_pulse(&mut self, s: u32) {
         if self.pulse_at[s as usize] != NONE { return; }
@@ -1294,6 +1331,7 @@ impl Lattice {
                 if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !*w {
                     *w = true;
                     self.stats.pulses += 1;
+                    self.note([EV_PULSE, s, t, tg as u32, 0, 0, 0, 0]);
                 }
             }
         }
@@ -1322,6 +1360,7 @@ impl Lattice {
                 self.erase_inputs(s, ke, d, kd, via);
                 return true;
             }
+            if td != 0 && tag_of(td) == Tag::Unp && q > 0 && self.erase_unpair(s, ke, d, kd, q, via) { return true; }
             if td == 0 || tag_of(td) != Tag::Dn || q == 0 { continue; }
             let (input, other) = (self.mate_of(d, self.ae(kd, 0)), self.mate_of(d, self.ae(kd, 3 - q)));
             if input == self.ae(kd, 3 - q) { continue; }
@@ -1346,9 +1385,104 @@ impl Lattice {
             self.refresh(d);
             self.stats.collected += 1;
             self.last_op = "collect";
+            self.note([EV_DUP, s, d, 0, 0, 0, 0, 0]);
             return true;
         }
         false
+    }
+
+    /// Eraser ke at s reads output q of unpair kd at d. If an eraser in s or d reads its other
+    /// output too, the unpair is dead: all three go and one eraser takes its input.
+    fn erase_unpair(&mut self, s: u32, ke: usize, d: u32, kd: usize, q: usize, via: Option<(usize, usize)>) -> bool {
+        let other = self.mate_of(d, self.ae(kd, 3 - q));
+        let eps = code(Tag::Eps);
+        let (s2, k2, via2) = if other != NONE && !self.is_strand(other) {
+            (d, other as usize / ARITY, None)
+        } else if self.is_strand(other) && self.nb(d, self.face(other)) == s {
+            let (f, i) = (self.face(other), self.lane(other));
+            let m = self.mate_of(s, self.se(f ^ 1, i));
+            if m == NONE || self.is_strand(m) { return false; }
+            (s, m as usize / ARITY, Some((f, i)))
+        } else { return false };
+        if self.tag(s2, k2) != eps || (s2, k2) == (s, ke) { return false; }
+        let m0 = self.mate_of(d, self.ae(kd, 0));
+        let sid = |l: &Self, x: u32, k: usize| l.sids[x as usize * l.ks + k];
+        let (e1, e2, u) = (sid(self, s, ke), sid(self, s2, k2), sid(self, d, kd));
+        let src = self.shadow.get(u).ports[0].expect("wired");
+        for x in [e1, e2, u] { self.shadow.agents[x as usize] = None; }
+        let e = self.shadow.mk(Tag::Eps);
+        self.shadow.link(e, 0, src.0, src.1);
+        // Free the strands from each eraser to the unpair, then the three agents.
+        if let Some((f, i)) = via {
+            self.set(s, self.se(f, i), NONE);
+            self.set(d, self.se(f ^ 1, i), NONE);
+            self.strand_count(-1);
+        }
+        if let Some((f, i)) = via2 {
+            self.set(d, self.se(f, i), NONE);
+            self.set(s, self.se(f ^ 1, i), NONE);
+            self.strand_count(-1);
+        }
+        for (x, k) in [(s, ke), (s2, k2)] { self.set(x, self.ae(k, 0), NONE); self.remove(x, k); }
+        for p in 0..ARITY { self.set(d, self.ae(kd, p), NONE); }
+        self.remove(d, kd);
+        self.place(d, kd, eps, e);
+        self.link(d, self.ae(kd, 0), m0);
+        self.refresh(s);
+        self.refresh(d);
+        self.stats.collected += 1;
+        self.stats.dead += 1;
+        self.last_op = "erase unpair";
+        self.note([EV_UNP, s, d, 0, 0, 0, 0, 0]);
+        true
+    }
+
+    /// Agents the answer no longer depends on: everything outside the root's piece of the
+    /// abstract net. Fills `marks` (one byte per slot, 1 = garbage) and returns their number.
+    pub fn garbage(&self, marks: &mut Vec<u8>) -> usize {
+        let n = self.shadow.agents.len();
+        let mut reached = vec![false; n];
+        let mut stack: Vec<usize> = (0..n).filter(|&i| matches!(&self.shadow.agents[i], Some(a) if a.tag == Tag::Out)).collect();
+        for &i in &stack { reached[i] = true; }
+        while let Some(i) = stack.pop() {
+            for p in self.shadow.agents[i].as_ref().unwrap().ports.iter().flatten() {
+                if !reached[p.0 as usize] { reached[p.0 as usize] = true; stack.push(p.0 as usize); }
+            }
+        }
+        marks.clear();
+        marks.resize(self.tags.len(), 0);
+        let mut count = 0;
+        for &s in &self.live {
+            for k in 0..self.ks {
+                let i = s as usize * self.ks + k;
+                if self.tags[i] != 0 && !reached[self.sids[i] as usize] { marks[i] = 1; count += 1; }
+            }
+        }
+        count
+    }
+
+    /// Keep the machine running regardless of whether the answer is in: after it is, erasers
+    /// go on collecting garbage.
+    pub fn run_on(&mut self, max_proposals: u64) {
+        let mut next_inv = 0;
+        while self.stats.proposals < max_proposals {
+            if self.p.margolus { self.margolus_clock(); } else { self.propose(); }
+            if self.check_every > 0 && self.stats.proposals >= next_inv {
+                next_inv = self.stats.proposals + self.check_every;
+                if let Err(e) = self.check_invariants() { panic!("after proposal {} ({}): {e}", self.stats.proposals, self.last_op); }
+            }
+        }
+    }
+
+    /// One recorded move (or, with blocks, one clock): proposals until something happens.
+    pub fn step(&mut self, max_proposals: u64) {
+        self.narrate = true;
+        self.events.clear();
+        let stop = self.stats.proposals + max_proposals;
+        while self.events.is_empty() && self.stats.proposals < stop {
+            if self.p.margolus { self.margolus_clock(); } else { self.propose(); }
+        }
+        self.narrate = false;
     }
 
     /// Eraser ke at s reads output 2 of the dead computation kd at d: both go, and two erasers
@@ -1357,6 +1491,7 @@ impl Lattice {
     fn erase_inputs(&mut self, s: u32, ke: usize, d: u32, kd: usize, via: Option<(usize, usize)>) {
         let (m0, m1) = (self.mate_of(d, self.ae(kd, 0)), self.mate_of(d, self.ae(kd, 1)));
         let (esid, dsid) = (self.sids[s as usize * self.ks + ke], self.sids[d as usize * self.ks + kd]);
+        let dead_tag = self.tag(d, kd) as u32;
         let dead = self.shadow.get(dsid);
         assert_eq!(dead.ports[2], Some((esid, 0)), "collected a computation the abstract net does not have");
         let (src0, src1) = (dead.ports[0].expect("wired"), dead.ports[1].expect("wired"));
@@ -1384,6 +1519,7 @@ impl Lattice {
         self.stats.collected += 1;
         self.stats.dead += 1;
         self.last_op = "erase inputs";
+        self.note([EV_DEAD, s, d, code(Tag::Eps) as u32, dead_tag, 0, 0, 0]);
     }
 
     /// The chance this proposal lands on the most-favoured site. A chip gives every site one
@@ -1405,7 +1541,7 @@ impl Lattice {
         if let Some((kc, kp, via)) = self.active_pair(s) {
             if self.fire(s, kc, kp, via) { return true; }
         }
-        if let Some((site, k)) = self.infect.take() { self.want[site as usize * self.ks + k] = true; }
+        self.take_infect(s);
         let k = ks[self.below(ks.len())];
         let m = self.mate_of(s, self.ae(k, 0));
         if self.is_strand(m) { let may_swap = self.unit() < self.p.swap; self.hop(s, k, self.face(m), may_swap); }

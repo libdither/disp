@@ -7,7 +7,10 @@ an address**. It is the answer to two problems with the earlier spatial machines
 - `rust-ic-mesh` completes everything, but by using global addresses and a router in every
   tile.
 
-Open `player/index.html` to watch it run (rebuild with `./build-player.sh`).
+Open `player/index.html` to watch it run (rebuild with `./build-player.sh`). Step one move at a
+time with `+1` or `→` (shift: to the next rewrite), each move told in words; hover any site to
+see what its agents are, where each of their wires leads and what they are waiting for (click
+to pin). Garbage is drawn dimmed.
 
 ## The machine
 
@@ -53,10 +56,15 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`).
     vanish. Every consumer that reads a duplicator also has rules for whatever the duplicator
     itself would have read, so no pair without a rule can appear;
   - an apply, triage or dispatch is dead, so it and the eraser are replaced by two erasers, one
-    on each of its inputs.
+    on each of its inputs;
+  - an unpair whose two parts are both being erased (erasers in its site or the next) becomes
+    one eraser on the pair.
 
-  Neither needs room, so both can always happen. Without them, lazy evaluation leaves erasers
-  parked on garbage nobody wants, and it crowds out the reactions that matter.
+  None needs room, so all can always happen. Without them, lazy evaluation leaves erasers
+  parked on garbage nobody wants, and it crowds out the reactions that matter. With them the
+  machine cleans up completely: run on past the answer (`run_on`, `strands-run --clean`, and the
+  player does it by itself) and only the answer is left on the lattice, usually within a few
+  dozen clocks.
 
 Every rewrite and every collection is replayed on the abstract net, and a rewrite must be a
 pair the net has. At the end, the lattice is compared with the abstract net wire by wire.
@@ -110,7 +118,8 @@ neighbours (158 vs 146 at 2 slots, 2 strands).
   with fresh agents (every site full) and its links fill with wires (no free strand to drag),
   so a wanted walker 15 strands from its target cannot advance. Neither stronger crowding,
   pressure, repulsion nor weaker tension on idle matter cured it. They only move the jam. With
-  collection and strong tension, 2D fib(0) does finish, but in 271k clocks (15× 3D).
+  4 strands per link, collection and crowded links, 2D fib(0) and fib(1) do finish, in 50k and
+  79k clocks (7–11× 3D); with 3 strands per link they still jam.
 - **3D works**, with six links per site: 2 agents and 4 strands per link, about 165 bits per
   site with the pulse.
 
@@ -133,6 +142,7 @@ Each fix took a share of that, on fib(0) with random turns:
 | + rewrite squares in any plane (they were all horizontal, so 3D pairs had to share a layer) | 10–12k |
 | + erasers collect duplicators (below) | 9.7k |
 | + erasers collect dead computations | 8.1–9.1k |
+| + erasers collect unpairs, so garbage cascades all the way | 6.5–7.2k |
 
 **Garbage blocks large programs.** fib(2) froze after 3,306 rewrites: the one rewrite that
 mattered (a duplicator meeting a fork, the largest rule) had no room, because 196 erasers were
@@ -154,22 +164,22 @@ Charging crowded links instead costs nothing there: wire stays loose in open spa
 a strand to a link that already holds n costs n more, which stops swelling exactly where lanes
 would fill. fib(2) then takes 124–147k clocks.
 
-**Against the address-based mesh.** The mesh speculates, so it does several times the
-rewrites. Clocks with pulses, both kinds of collection and crowded links (c = 1), over 2–3
-seeds for random turns and one for blocks; every run matches the oracle and the abstract net:
+**Against the address-based mesh.** Clocks to the answer with pulses, all collection and
+crowded links (c = 1), over 1–2 seeds; every run matches the oracle and the abstract net, and
+afterwards cleans up to only the answer. Rewrites include erasing garbage, as the mesh's do:
 
 | program | mesh rewrites | mesh ticks | strand rewrites | random turns | blocks |
 |---|---|---|---|---|---|
-| fib(0) | 1,627 | 7,450 | 454 | 8.1–9.1k | 60k |
-| fib(1) | 1,821 | 8,928 | 529 | 7.9–8.3k | 44k |
-| sort(1) | 2,174 | 2,615 | 163–171 | 1.2–2.7k | 13k |
-| exp(1) | 15,139 | 100k | 2,924 | 49–55k | 353k |
-| fib(2) | 20,808 | 137k | 3,186 | 70–72k | 482k |
+| fib(0) | 1,627 | 7,450 | 1,067 | 6.5–7.2k | 43k |
+| fib(1) | 1,821 | 8,928 | 1,094 | 6.9–7.1k | 45k |
+| sort(1) | 2,174 | 2,615 | 210 | 2.7k | 13k |
+| exp(1) | 15,139 | 100k | 3,453 | 46k | — |
+| fib(2) | 20,808 | 137k | 3,569 | 60–61k | — |
 
-With random turns the strand lattice is within 1.2× of the mesh on small programs and about
-twice as fast on exp(1) and fib(2), doing a quarter or less of the rewrites. With blocks it is about
-3.5× behind on the large ones. A mesh tile is about 5 kbit plus a router; a strand site here is
-about 165 bits, and fib(2) peaks at about 2,000 sites in use.
+With random turns the strand lattice is level with the mesh on sort(1), slightly faster on
+fib(0) and fib(1), and over twice as fast on exp(1) and fib(2). With blocks it is 5–7× slower
+than with random turns. A mesh tile is about 5 kbit plus a router; a strand site here is about
+165 bits, and fib(2) peaks at about 2,000 sites in use.
 
 ## Things tried that did not help, and why
 
@@ -194,8 +204,6 @@ about 165 bits, and fib(2) peaks at about 2,000 sites in use.
 
 ## Open
 
-- **Unpairs.** An eraser on one output of an unpair is not collected (the other output still
-  needs a "first" or "second" of the pair, which no agent does).
 - **The synchronous schedule** pays one move per block per clock. Block rules that make several
   moves at once (a walker eating every strand of its wire inside the block) would close part
   of the gap, at the cost of bigger block logic.
@@ -212,10 +220,12 @@ cargo test --release                                  # ~5 s: corpus in 4 config
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --margolus
-cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --budget 5000000000
+cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --budget 5000000000 --clean 100000
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 link=1"
 ```
 
+`strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
+answer is left; `PIECES=1` lists the connected pieces of the net at the end.
 `strands-run --profile` prints what wanted readers spend their time waiting on;
 `--progress N` prints the wanted readers and their wire lengths every N proposals, and `WHO=1`
 adds what each one is waiting on, which is how the 2D jam was diagnosed.

@@ -65,6 +65,7 @@ fn margolus_blocks_with_pulses_in_3d() {
 
 /// Collection and link crowding with every invariant re-checked after every move: share-tower
 /// collects duplicators, and the corpus terms that collect anything are re-run the same way.
+/// Each then runs on past its answer until only the answer is left.
 #[test]
 fn collection_keeps_the_projection_exact() {
     let p = |margolus| Params { w: 16, h: 16, depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, gc: true, margolus,
@@ -77,7 +78,18 @@ fn collection_keeps_the_projection_exact() {
         l.check_every = 1;
         assert!(l.run(50_000_000), "{}", oracle::show(t));
         l.check_projection().unwrap();
-        Some((l.stats.collected, l.readback().map(|t| oracle::show(&t))))
+        let answer = l.readback().map(|t| oracle::show(&t));
+        // After the answer the machine runs on until erasers have collected all the garbage.
+        let mut marks = vec![];
+        for _ in 0..200 {
+            if l.garbage(&mut marks) == 0 { break; }
+            let next = l.stats.proposals + 20_000;
+            l.run_on(next);
+        }
+        assert_eq!(l.garbage(&mut marks), 0, "garbage left after the answer: {}", oracle::show(t));
+        assert_eq!(l.readback().map(|t| oracle::show(&t)), answer);
+        l.check_projection().unwrap();
+        Some((l.stats.collected, answer))
     };
     let tower = rust_ic_mesh::term::workload("share-tower", 3).unwrap();
     let want = oracle::show(&oracle::nf(tower.clone(), &mut Fuel(100_000)).unwrap());
