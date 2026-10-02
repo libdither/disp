@@ -75,13 +75,16 @@ pub struct Params {
     /// plain wire from its input to its other output. Without this, lazy evaluation leaves
     /// erasers parked on duplicators forever, crowding the reactions that matter.
     pub gc: bool,
+    /// Energy c·n²/2 on a link carrying n strands: wire pulls harder where it is crowded, so
+    /// loose wire can wander in open space but cannot fill every lane around a reaction.
+    pub link_crowd: f64,
     pub seed: u64,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, gc: false, seed: 1 }
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, gc: false, link_crowd: 0.0, seed: 1 }
     }
 }
 
@@ -273,6 +276,8 @@ impl Lattice {
             self.live_pos[s as usize] = u32::MAX;
         }
     }
+
+    fn used_lanes(&self, s: u32, f: usize) -> usize { (0..self.p.lanes).filter(|&i| self.mate_of(s, self.se(f, i)) != NONE).count() }
 
     fn free_slot(&self, s: u32) -> Option<usize> { (0..self.p.k).find(|&k| self.tag(s, k) == 0) }
 
@@ -662,6 +667,12 @@ impl Lattice {
         if lanes.len() < need { if walker { self.stats.walk_fail[1] += 1; } return None; }
         lanes.truncate(need);
         de += self.p.crowd * (self.occ[t as usize] as f64 - (self.occ[s as usize] as f64 - 1.0));
+        if self.p.link_crowd != 0.0 {
+            let through = (0..a).filter(|&q| matches!(plan[q], Plan::Through(_))).count();
+            let n = self.used_lanes(s, f) as f64;
+            let n2 = n - through as f64 + need as f64;
+            de += self.p.link_crowd * (n2 * n2 - n * n) / 2.0;
+        }
         if self.p.pressure != 0.0 {
             de += self.p.pressure * (self.press[t as usize] as f64 - self.press[s as usize] as f64);
         }
@@ -817,7 +828,10 @@ impl Lattice {
         // W is X + f2 = Z + f1, so the step from W to Z is -f1.
         let Some(d) = self.free_lanes(w, f1 ^ 1, 1) else { return false };
         let (c, d) = (c[0], d[0]);
-        if !self.accept(0.0) { return false; }
+        // The corner's two strands move from links s–x and s–z to x–w and w–z.
+        let de = self.p.link_crowd * ((self.used_lanes(x, f2) + self.used_lanes(w, f1 ^ 1)) as f64
+            - (self.used_lanes(s, f1) + self.used_lanes(s, f2)) as f64 + 2.0);
+        if !self.accept(de) { return false; }
         let a = self.mate_of(x, self.se(f1 ^ 1, i));
         let g = self.mate_of(z, self.se(f2 ^ 1, j));
         self.set(s, e, NONE);

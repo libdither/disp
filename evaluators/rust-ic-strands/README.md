@@ -32,7 +32,9 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`).
 - **Scheduling is thermal.** Moves are random local proposals, accepted Metropolis-style by an
   energy:
   - wire tension, heavier on principal wires, so reactants find each other;
-  - crowding;
+  - crowded links: a link carrying n strands costs n²/2, so wire pulls harder where it would
+    fill every lane;
+  - crowded sites;
   - a temperature, which lets matter step out of the way.
 
   Most turns (80%) go to sites holding agents; bare wire only needs enough turns to straighten.
@@ -66,7 +68,7 @@ Tests also re-check every invariant after every single move.
   and every block holding matter makes one move inside it. No two moves ever touch the same
   site, so the clock count is literal.
 
-Blocks cost 4–7× more clocks than random turns: each site gets a fraction of a move per
+Blocks cost 5–9× more clocks than random turns: each site gets a fraction of a move per
 clock, and a walker's next strand leads out of its block half the time.
 
 An earlier version measured time as proposals divided by live sites, which ignored extra turns.
@@ -139,24 +141,28 @@ continue, so with aux tension 1 an extra strand costs 1 − 2·ln 5 < 0. Wire gr
 lane near the reaction is full, and a reader cannot step without a free lane for its other
 wires. The threshold is sharp: at aux tension 3, just below 2·ln 5 ≈ 3.2, fib(2) still swells
 (45k to 167k strands) and freezes at 4,970 rewrites; at 4, wire stays near 43k strands and
-fib(2) finishes.
+fib(2) finishes, in 455k clocks.
+
+Strong tension everywhere costs up to 2.3× on small programs, because compact means crowded.
+Charging crowded links instead costs nothing there: wire stays loose in open space, but adding
+a strand to a link that already holds n costs n more, which stops swelling exactly where lanes
+would fill. fib(2) then takes 124–147k clocks.
 
 **Against the address-based mesh.** The mesh speculates, so it does several times the
-rewrites. Random-turn clocks, with collection and pulses:
+rewrites. Clocks with pulses, collection and crowded links (c = 1), over 2–3 seeds:
 
-| program | mesh rewrites | mesh ticks | strand rewrites | light tension (3, 1) | tension 6, 4 | blocks, light tension |
-|---|---|---|---|---|---|---|
-| fib(0) | 1,627 | 7,450 | 556 | 9.7k | 18k | 38k |
-| fib(1) | 1,821 | 8,928 | 655 | 11k | 15k | 50k |
-| sort(1) | 2,174 | 2,615 | 210 | 2.1k | 4.9k | 14k |
-| exp(1) | 15,139 | 100k | 4,102 | 90k at tension 6, 3 | 125k | — |
-| fib(2) | 20,808 | 137k | 5,453 | swells and freezes | 455k | — |
+| program | mesh rewrites | mesh ticks | strand rewrites | random turns | blocks |
+|---|---|---|---|---|---|
+| fib(0) | 1,627 | 7,450 | 556 | 8.8–12.7k | 75k |
+| fib(1) | 1,821 | 8,928 | 655 | 12.8–14.9k | 74k |
+| sort(1) | 2,174 | 2,615 | 212 | 1.9–2.6k | 17k |
+| exp(1) | 15,139 | 100k | 4,104 | 72–79k | — |
+| fib(2) | 20,808 | 137k | 5,451 | 124–147k | — |
 
-So with light tension the strand lattice is within 1.3× of the mesh on fib(0) and fib(1), and
-faster on sort(1) and exp(1). Strong tension costs 1.3–2.3× on small programs, but it is what
-lets fib(2) finish (about 3.3× the mesh's time, on a quarter of its rewrites). A mesh tile is
-about 5 kbit plus a router; a strand site here is about 165 bits. fib(0) peaks at about 2,000
-sites in use.
+With random turns the strand lattice is within 1.2–1.7× of the mesh on fib(0) and fib(1), level
+on sort(1) and fib(2), and faster on exp(1), doing a third to a tenth of the rewrites. A mesh
+tile is about 5 kbit plus a router; a strand site here is about 165 bits. fib(0) peaks at about
+2,000 sites in use.
 
 ## Things tried that did not help, and why
 
@@ -181,9 +187,6 @@ sites in use.
 
 ## Open
 
-- **One tension for every size.** Light tension is up to 2.3× faster on small programs; strong
-  tension is needed for large ones. Tension that rises with how crowded a link's lanes are
-  might give both.
 - **More garbage.** Erasers still park on the outputs of other computations nobody wants
   (about a dozen on applications during fib(2)). Deleting such a computation and erasing its
   inputs would collect them too.
@@ -201,10 +204,10 @@ From `crate/` (memory-cap long runs, see `AGENTS.md`):
 ```sh
 cargo test --release                                  # ~5 s: corpus in 4 configurations, per-move invariants, collection
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --margolus
-cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --wp 6 --wa 4 --budget 5000000000
-cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8"
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --margolus
+cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --budget 5000000000
+cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 link=1"
 ```
 
 `strands-run --profile` prints what wanted readers spend their time waiting on;

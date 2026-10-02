@@ -42,6 +42,7 @@ fn main() {
             "--phop" => p.p_hop = it.next().unwrap().parse().unwrap(),
             "--margolus" => p.margolus = true,
             "--gc" => p.gc = true,
+            "--link" => p.link_crowd = it.next().unwrap().parse().unwrap(),
             "--block" => p.block = true,
             "--lazy" => p.lazy = true,
             "--idle" => p.idle_tension = it.next().unwrap().parse().unwrap(),

@@ -46,20 +46,22 @@ fn block_rewrites_in_3d() {
 }
 
 /// The chip schedule: disjoint 2×2×2 blocks each making one move per clock, demand pulses,
-/// duplicators collected by erasers.
+/// duplicators collected by erasers, crowded links pulling harder.
 #[test]
 fn margolus_blocks_with_pulses_in_3d() {
-    all_finish(Params { depth: 6, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, gc: true, agent_turns: 0.8, ..base() });
+    all_finish(Params { depth: 6, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, gc: true, link_crowd: 1.0,
+                        agent_turns: 0.8, ..base() });
 }
 
-/// Erasers collecting duplicators, with every invariant re-checked after every move.
+/// Erasers collecting duplicators and link crowding, with every invariant re-checked after
+/// every move.
 #[test]
 fn collection_keeps_the_projection_exact() {
     let t = rust_ic_mesh::term::workload("share-tower", 3).unwrap();
     let want = oracle::show(&oracle::nf(t.clone(), &mut Fuel(100_000)).unwrap());
     for margolus in [false, true] {
         let p = Params { w: 24, h: 24, depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, gc: true, margolus,
-                         swap: 1.0, agent_turns: 0.8, ..base() };
+                         link_crowd: 1.0, swap: 1.0, agent_turns: 0.8, ..base() };
         let mut net = Net::new();
         let root = net.build(&t);
         let (_, out) = net.drive(root);

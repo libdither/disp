@@ -33,6 +33,7 @@ fn parse(spec: &str) -> Params {
             "pulse" => p.pulse = v == "1",
             "margolus" => p.margolus = v == "1",
             "gc" => p.gc = v == "1",
+            "link" => p.link_crowd = v.parse().unwrap(),
             "agents" => p.agent_turns = v.parse().unwrap(),
             _ => panic!("unknown key {k}"),
         }

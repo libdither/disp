@@ -87,7 +87,7 @@
       <span class="k">rewrites inside</span><select id="cBlock"><option value="1" selected>one 2×2 block</option><option value="0">a site and its neighbours</option></select>
       <span class="k">evaluation</span><select id="cLazy"><option value="1" selected>lazy: only wanted readers react</option><option value="0">eager: every pair reacts</option></select>
       <span class="k">temperature</span><span><input id="cTemp" type="range" min="2" max="40" value="20" style="width:110px"> <span id="cTempV" class="note"></span></span>
-      <span class="k">wire tension</span><select id="cTension"><option value="3,1" selected>light: fastest on small programs</option><option value="6,4">strong: wires never swell (large programs)</option></select>
+      <span class="k">wire tension</span><select id="cTension"><option value="3,1,1" selected>light, crowded links pull harder</option><option value="3,1,0">light everywhere (wire swells on long runs)</option><option value="6,4,0">strong everywhere (slower)</option></select>
       <span class="k">exchanges</span><select id="cSwap"><option value="1" selected>on</option><option value="0">off</option></select>
       <span class="k">demand travels</span><select id="cPulse"><option value="1" selected>as pulses along wires</option><option value="0">only by contact</option></select>
       <span class="k">garbage</span><select id="cGc"><option value="1" selected>erasers collect duplicators</option><option value="0">left in place</option></select>
@@ -111,7 +111,8 @@
         wire, one strand per clock; when it reaches another computation's output, that computation is wanted too.
         A pulse whose strand gets moved is dropped, and the reader sends another.</p>
       <p><b>Tension.</b> At temperature 2 a loose wire gains more from wiggling than it loses to its tension, so
-        over long runs wire swells until no lane is free. Strong tension stops that, at some cost on small programs.</p>
+        over long runs it swells until no lane is free. A link carrying n strands costs n²/2 more, so wire stays
+        loose in open space but cannot crowd every lane around a reaction.</p>
       <p><b>Garbage.</b> An eraser that touches one output of a duplicator collects it: the duplicator becomes a
         plain wire from its input to its other output, and both vanish. Otherwise erasers wait forever on copies
         nobody wants, crowding the reactions that matter.</p>
