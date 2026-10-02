@@ -30,7 +30,7 @@ fn main() {
             "--ev" => cfg.events_per_tick = it.next().unwrap().parse().unwrap(),
             "--spec" => cfg.speculate = it.next().unwrap().parse().unwrap(),
             "--no-check" => check = false,
-            "--dump" => {}
+            "--dump" | "--seq" => {}
             _ => src = Some(a.clone()),
         }
     }
@@ -48,7 +48,9 @@ fn main() {
         if let Err(e) = m.check_projection() { println!("projection: {e}"); }
         return;
     }
-    let rep = run::run(&t, cfg, check, 50_000_000).unwrap_or_else(|e| panic!("{e}"));
+    let seq = args.iter().any(|a| a == "--seq");
+    let rep = run::run_with(&t, cfg, check, 50_000_000, |m| if seq { m.par_min = usize::MAX })
+        .unwrap_or_else(|e| panic!("{e}"));
     let dt = t0.elapsed().as_secs_f64();
     let s = &rep.mesh.stats;
     let verdict = match (&rep.answer, &want) {

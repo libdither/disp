@@ -3,6 +3,7 @@
 //! about the rule ROM it relies on, [`term`] the front end, and [`run`] the one-call driver.
 
 pub mod mesh;
+mod tile;
 pub mod polarity;
 pub mod term;
 pub mod run;

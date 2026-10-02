@@ -31,6 +31,20 @@ A tile has `K` agent slots (default 8), a five-port router (four neighbours plus
 small input buffers, and a protocol engine that handles one event per tick. Messages move one
 tile per tick, X first and then Y, which is the standard deadlock-free routing for a mesh.
 
+**The compiler enforces locality.** The protocol (`tile.rs`) is written against a `Tile`
+value that holds mutable references to one tile's slots and queues, plus a read-only view of
+the free-space field, and nothing else. A handler that touches another tile does not compile.
+
+A tick has five phases:
+1. every router decides from start-of-tick state;
+2. chosen messages leave their queues;
+3. they enter the neighbour's buffer (each buffer has exactly one writer);
+4. every tile runs its events;
+5. the free-space field relaxes, every tile from last tick's values.
+
+No phase can race. So the native build may step tiles on all cores (it does once 4,096 tiles
+are active at once), and a test checks this gives the identical machine, tick for tick.
+
 There are eight messages:
 
 | message | what it does |
@@ -109,28 +123,30 @@ logic is not yet written as gates (that is what `evaluators/gated-ca` set up).
 
 | program | speculation | rewrites | ticks | rewrites/tick | hops/rewrite | in own tile | peak live |
 |---|---|---|---|---|---|---|---|
-| fib(4) | off | 118k | 1.07M | 0.11 | 8.7 | 82% | 3.5k |
-| fib(4) | ≥4 free | 260k | 234k | 1.1 | 8.2 | 86% | 3.6k |
-| fib(4) | ≥1 free | 443k | 22k | 20 | 11.5 | 82% | 6.0k |
-| sort(3) | off | 505k | 8.27M | 0.06 | 16.4 | 81% | 17.5k |
-| sort(3) | ≥4 free | 922k | 656k | 1.4 | 10.5 | 85% | 10.8k |
-| sort(3) | ≥1 free | 2.70M | 74k | 36 | 15.0 | 82% | 13.7k |
+| fib(4) | off | 118k | 996k | 0.12 | 8.0 | 82% | 3.5k |
+| fib(4) | ≥4 free | 253k | 193k | 1.3 | 8.0 | 86% | 3.2k |
+| fib(4) | ≥1 free | 444k | 20k | 22 | 11.7 | 81% | 5.4k |
+| sort(3) | off | 505k | 8.93M | 0.06 | 17.8 | 81% | 17.5k |
+| sort(3) | ≥4 free | 986k | 783k | 1.3 | 11.5 | 85% | 10.0k |
+| sort(3) | ≥1 free | 2.81M | 71k | 39 | 15.3 | 82% | 16.2k |
 | size(size) | off | 209k | 1.10M | 0.19 | 4.3 | 86% | 3.1k |
-| size(size) | ≥1 free | 362k | 33k | 11 | 7.5 | 81% | 3.3k |
+| size(size) | ≥1 free | 356k | 35k | 10 | 7.4 | 81% | 2.5k |
 
 For comparison, firing every active pair as soon as it exists (what the abstract net does)
 takes fib(5) 845k rewrites, 41k ticks and 17k live agents. Full speculation here does it in
 753k rewrites, 29k ticks and 9.4k live agents.
 
-The simulator does about 0.5–0.9 million rewrites (7–9 million message hops) per second on
-one core, in native code and in the browser alike.
+The simulator does about 0.5–0.8 million rewrites (7–9 million message hops) per second on one
+core, in native code and in the browser alike. These workloads keep only a few hundred tiles
+busy per tick, too few for multi-core stepping to pay for its per-phase synchronization; it is
+there for grids with tens of thousands of busy tiles.
 
 ## Running it
 
 From `crate/` (wrap long runs in a memory cap, see `AGENTS.md`):
 
 ```sh
-cargo test --release                           # ~10 s: soak, differential, tight grids, shapes
+cargo test --release                           # ~10 s: soak, differential, tight grids, shapes, serial = parallel
 cargo run --release --bin mesh-run -- fib:4    # one program; also `@(F(L,L),L)` or ternary
 cargo run --release --bin mesh-run -- sort:3 --spec 1 --grid 96x96
 cargo run --release --bin mesh-bench           # the tables above
@@ -143,7 +159,8 @@ and the addresses its ports hold.
 
 ## Layout
 
-- `crate/src/mesh.rs`: the tile, the router, every message handler, readback and the
+- `crate/src/tile.rs`: the protocol: every message handler, written against one tile.
+- `crate/src/mesh.rs`: storage, the router, the five-phase tick, loading, readback and the
   projection check.
 - `crate/src/polarity.rs`: which ports are sources, checked against the rule table.
 - `crate/src/term.rs`: term syntax, ternary programs, the benchmark workloads.

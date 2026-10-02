@@ -80,3 +80,17 @@ fn cascade_frontier_completes() {
         assert_eq!(rep.mesh.stats.fires, fires, "{name}");
     }
 }
+
+/// Tiles stepped on all cores are the same machine as tiles stepped on one: every handler
+/// is tile-local, so the order tiles run in cannot matter.
+#[test]
+fn parallel_stepping_is_the_same_machine() {
+    for (name, n, speculate) in [("fib", 2, 1), ("sort", 1, 2), ("exp", 1, 4)] {
+        let t = term::workload(name, n).unwrap();
+        let cfg = Config { w: 64, h: 64, speculate, ..Config::default() };
+        let serial = run::run_with(&t, cfg, false, 50_000_000, |m| m.par_min = usize::MAX).unwrap();
+        let parallel = run::run_with(&t, cfg, false, 50_000_000, |m| m.par_min = 1).unwrap();
+        let key = |r: &run::Report| (r.answer.clone(), r.mesh.tick, r.mesh.stats.fires, r.mesh.stats.hops, r.mesh.stats.sent);
+        assert_eq!(key(&serial), key(&parallel), "{name}:{n}");
+    }
+}

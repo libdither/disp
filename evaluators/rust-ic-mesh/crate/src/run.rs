@@ -20,7 +20,13 @@ pub struct Report {
 }
 
 pub fn run(term: &Term, cfg: Config, check: bool, max_ticks: u64) -> Result<Report, String> {
+    run_with(term, cfg, check, max_ticks, |_| {})
+}
+
+/// `run`, with a chance to adjust the machine before it starts.
+pub fn run_with(term: &Term, cfg: Config, check: bool, max_ticks: u64, setup: impl FnOnce(&mut Mesh)) -> Result<Report, String> {
     let mut mesh = load(term, cfg, check)?;
+    setup(&mut mesh);
     let outcome = mesh.run(max_ticks);
     if check && outcome == Outcome::Done {
         mesh.check_projection()?;

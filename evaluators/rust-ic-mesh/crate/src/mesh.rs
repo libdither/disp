@@ -1,31 +1,21 @@
 //! The mesh: a W×H grid of tiles. Each tile holds K agent slots, a five-port router, and a
-//! protocol engine that handles one event per tick. Wires are not matter: a wire is a
-//! reference held by its sink, naming the source's (tile, slot, port) address, and every
-//! source has exactly one reader.
+//! protocol engine (`tile.rs`) that handles one event per tick. Wires are not matter: a
+//! wire is a reference held by its sink, naming the source's (tile, slot, port) address,
+//! and every source has exactly one reader.
 //!
-//! Every handler below reads and writes only its own tile and emits messages; nothing
-//! reaches into a neighbour. That is the hardware contract, and it is also why the
-//! simulation is deterministic whatever order tiles are visited in.
-//!
-//! Evaluation is demand-driven. A consumer starts only when someone subscribes to its
-//! result (the normalizer and the root are always hungry); erasure is a `Drop` that runs
-//! the eraser rule in place at a producer, or cancels a computation nobody will read.
-//!
-//! Messages:
-//! - `Pull`    a reader asks a source for its value. A producer ships itself to the reader;
-//!             a pending computation records the reader and starts; an indirection hands
-//!             its target over and dies.
-//! - `Ship`    a producer reaches the consumer that wants it: the rewrite fires (or docks
-//!             while room is found).
-//! - `Moved`   a subscribed reader learns its source's new address.
-//! - `Spawn`   a fresh agent lands in a slot reserved for it in another tile.
-//! - `Drop`    the reader of a source is gone.
-//! - `Reserve` a docked consumer looks for room, following the free-space field;
-//!             `Grant` answers, `Release` returns room a rewrite did not use.
+//! A tick has five phases, each touching state in a way that cannot race:
+//! 1. decide: every router picks which flits move, from start-of-tick state only;
+//! 2. pop: each chosen flit leaves its queue (a queue is popped only by its own tile);
+//! 3. push: each flit enters the next tile's input buffer (each buffer has one writer);
+//! 4. events: each tile runs its protocol on itself alone;
+//! 5. the free-space field relaxes one step.
+//! So the native build runs tiles on all cores and gets the same machine, tick for tick,
+//! as the one-thread browser build.
 
-use crate::polarity::{is_source, role, Role};
+use crate::polarity::is_source;
+use crate::tile::{Out, Tile};
 use rust_ca_lattice::net::Net;
-use rust_ca_lattice::rules::{find_index, End, Tag, ALL_TAGS, RULES};
+use rust_ca_lattice::rules::{Tag, ALL_TAGS};
 use std::collections::VecDeque;
 
 pub const NONE: u32 = u32::MAX;
@@ -58,19 +48,19 @@ pub const KIND_NAMES: [&str; N_KINDS] = ["pull", "ship", "moved", "spawn", "rese
 
 /// `Moved` flags: the reader is already subscribed at the new source; the new source is a
 /// value the reader should hold rather than pull (only the root reads that way).
-const PRESUB: u8 = 1;
-const VALUE: u8 = 2;
+pub(crate) const PRESUB: u8 = 1;
+pub(crate) const VALUE: u8 = 2;
 
 // Flags on the value a source port keeps for its reader. Addresses fit in 30 bits.
-const ADDR: u32 = 0x3FFF_FFFF;
+pub(crate) const ADDR: u32 = 0x3FFF_FFFF;
 /// The reader is a consumer, so a producer may be shipped straight to it.
-const SHIPPABLE: u32 = 1 << 30;
+pub(crate) const SHIPPABLE: u32 = 1 << 30;
 /// The reader dropped this source; the low bits keep the eraser's shadow id.
-const DEAD: u32 = 1 << 31;
-#[inline] fn is_dead(v: u32) -> bool { v != NONE && v & DEAD != 0 }
-#[inline] fn is_sub(v: u32) -> bool { v != NONE && v & DEAD == 0 }
-#[inline] fn dead(eps_sid: u32) -> u32 { DEAD | (eps_sid & 0x3FFF_FFFF) }
-#[inline] fn dead_sid(v: u32) -> u32 { if v & 0x3FFF_FFFF == 0x3FFF_FFFF { NONE } else { v & 0x3FFF_FFFF } }
+pub(crate) const DEAD: u32 = 1 << 31;
+#[inline] pub(crate) fn is_dead(v: u32) -> bool { v != NONE && v & DEAD != 0 }
+#[inline] pub(crate) fn is_sub(v: u32) -> bool { v != NONE && v & DEAD == 0 }
+#[inline] pub(crate) fn dead(eps_sid: u32) -> u32 { DEAD | (eps_sid & 0x3FFF_FFFF) }
+#[inline] pub(crate) fn dead_sid(v: u32) -> u32 { if v & 0x3FFF_FFFF == 0x3FFF_FFFF { NONE } else { v & 0x3FFF_FFFF } }
 
 // Router ports: four neighbours and the local ejection port.
 pub const EAST: usize = 0;
@@ -102,14 +92,10 @@ pub const PERMS: [[u8; 3]; 6] = [[0, 1, 2], [2, 1, 0], [1, 0, 2], [0, 2, 1], [1,
 }
 #[inline] pub fn physical(perm: u8, q: usize) -> u32 { PERMS[perm as usize][q] as u32 }
 /// The permutation that puts logical port `q` on physical port `phys` (a transposition).
-fn perm_to(q: usize, phys: usize) -> u8 {
+pub(crate) fn perm_to(q: usize, phys: usize) -> u8 {
     (0..6u8).find(|&p| PERMS[p as usize][q] as usize == phys && PERMS[p as usize].iter().enumerate()
         .all(|(l, &x)| l == q || l == phys || x as usize == l)).unwrap()
 }
-
-/// Readers that are hungry from birth: the normalizer drives the answer, the root holds
-/// it, and an eraser only ever drops.
-#[inline] fn eager(t: Tag) -> bool { matches!(t, Tag::Nrm | Tag::Eps | Tag::Out) }
 
 /// One agent slot. For a sink port `p[i]` is the reference it holds; for a source port it
 /// is the reader that subscribed (or NONE, or DEAD). An indirection keeps its targets in
@@ -136,7 +122,7 @@ impl Slot {
         Slot { kind: FREE, st: 0, perm: 0, dock_tag: 0, hold: 0, p: [NONE; 3], dock: NONE, sid: NONE, psid: NONE };
 }
 
-/// A message, one flit. Fields are interpreted per kind (see the module docs).
+/// A message, one flit. Fields are interpreted per kind (see `tile.rs`).
 #[derive(Clone, Copy, Debug)]
 pub struct Flit {
     pub kind: u8,
@@ -151,26 +137,13 @@ pub struct Flit {
 }
 
 impl Flit {
-    fn new(kind: u8, dst: u32) -> Flit {
+    pub(crate) fn new(kind: u8, dst: u32) -> Flit {
         Flit { kind, tag: 0, n: 0, hops: 0, dst, x: NONE, y: NONE, z: NONE, sid: NONE }
     }
 }
 
-/// A producer that has reached the consumer which wants it.
 #[derive(Clone, Copy, Debug)]
-struct Docked {
-    tag: u8,
-    aux: [u32; 2],
-    sid: u32,
-}
-
-fn rule_index(consumer: u8, producer: u8) -> usize {
-    let (ct, pt) = (tag_of(consumer), tag_of(producer));
-    find_index(ct, pt).unwrap_or_else(|| panic!("no rule {}·{}", ct.name(), pt.name()))
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Ev {
+pub(crate) enum Ev {
     Msg(Flit),
     Activate(u32),
 }
@@ -221,6 +194,32 @@ pub struct Stats {
     pub local_fires: u64,
 }
 
+impl Stats {
+    fn absorb(&mut self, o: &Out) {
+        self.fires += o.fires;
+        self.cancels += o.cancels;
+        self.direct_ships += o.direct_ships;
+        self.events += o.events;
+        self.local_fires += o.local_fires;
+        for k in 0..N_KINDS { self.sent[k] += o.sent[k]; }
+        let add = |x: &mut u64, d: i64| *x = (*x as i64 + d) as u64;
+        add(&mut self.live, o.live);
+        add(&mut self.inds, o.inds);
+        add(&mut self.reserved, o.reserved);
+        add(&mut self.in_flight, o.in_flight);
+        add(&mut self.parked_reserves, o.parked);
+        self.max_outbox = self.max_outbox.max(o.max_outbox);
+        self.max_events = self.max_events.max(o.max_events);
+        self.max_reserve_hops = self.max_reserve_hops.max(o.max_reserve_hops);
+    }
+    fn peaks(&mut self) {
+        self.peak_live = self.peak_live.max(self.live);
+        self.peak_inds = self.peak_inds.max(self.inds);
+        self.peak_reserved = self.peak_reserved.max(self.reserved);
+        self.peak_in_flight = self.peak_in_flight.max(self.in_flight);
+    }
+}
+
 /// Per-tick activity, recorded only when the player asks for it.
 #[derive(Default)]
 pub struct Recorder {
@@ -253,6 +252,37 @@ impl Outcome {
     }
 }
 
+/// Raw views of the per-tile state, so phases can hand disjoint tiles to different
+/// threads. Each phase's comment says why its accesses are disjoint.
+#[derive(Clone, Copy)]
+struct Raw {
+    slots: *mut Slot,
+    free: *mut u8,
+    rr: *mut u8,
+    outbox: *mut VecDeque<Flit>,
+    events: *mut VecDeque<Ev>,
+    parked: *mut Vec<Flit>,
+    fifo_buf: *mut Flit,
+    fifo_head: *mut u8,
+    fifo_len: *mut u8,
+    k: u32,
+    b: usize,
+}
+unsafe impl Send for Raw {}
+unsafe impl Sync for Raw {}
+
+/// Run `f` over chunks of `items`: on all cores when `parallel`, else as one chunk.
+fn chunked<T: Sync, R: Send>(items: &[T], parallel: bool, f: impl Fn(&[T]) -> R + Sync + Send) -> Vec<R> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if parallel {
+        use rayon::prelude::*;
+        let chunk = (items.len() / (4 * rayon::current_num_threads())).max(64);
+        return items.par_chunks(chunk).map(f).collect();
+    }
+    let _ = parallel;
+    vec![f(items)]
+}
+
 pub struct Mesh {
     pub cfg: Config,
     pub slots: Vec<Slot>,
@@ -272,12 +302,20 @@ pub struct Mesh {
     phi_dirty: Vec<u32>,
     phi_stamp: Vec<u32>,
     phi_epoch: u32,
-    moves: Vec<(u32, usize, usize)>,
+    /// Scratch for the serial tick, kept to avoid reallocating every tick.
+    moves: Vec<(u32, u8, u8)>,
+    sends: Vec<(u32, u8, Flit)>,
+    /// Precomputed geometry: each tile's (x, y), and its neighbour in each direction.
+    xy: Vec<(u16, u16)>,
+    nb: Vec<[u32; 4]>,
     pub tick: u64,
     pub stats: Stats,
     pub shadow: Option<Net>,
     pub rec: Option<Recorder>,
     pub out_addr: u32,
+    /// Step tiles on all cores when this many or more are active (and nothing is being
+    /// shadow-checked, which needs one global order). `usize::MAX` keeps it on one thread.
+    pub par_min: usize,
 }
 
 impl Mesh {
@@ -306,11 +344,19 @@ impl Mesh {
             phi_stamp: vec![0; cells],
             phi_epoch: 1,
             moves: vec![],
+            sends: vec![],
+            xy: (0..cells as u32).map(|c| ((c % cfg.w) as u16, (c / cfg.w) as u16)).collect(),
+            nb: (0..cells as u32).map(|c| {
+                let (x, y, w, h) = (c % cfg.w, c / cfg.w, cfg.w, cfg.h);
+                [if x + 1 < w { c + 1 } else { NONE }, if x > 0 { c - 1 } else { NONE },
+                 if y + 1 < h { c + w } else { NONE }, if y > 0 { c - w } else { NONE }]
+            }).collect(),
             tick: 0,
             stats: Stats::default(),
             shadow: None,
             rec: None,
             out_addr: NONE,
+            par_min: 4096,
         }
     }
 
@@ -318,23 +364,10 @@ impl Mesh {
     #[inline] fn si(&self, cell: u32, slot: u32) -> usize { (cell * self.cfg.k + slot) as usize }
     #[inline] pub fn slot_at(&self, a: u32) -> &Slot { &self.slots[self.si(a_cell(a), a_slot(a))] }
 
-    #[inline]
-    fn neighbor(&self, c: u32, d: usize) -> Option<u32> {
-        let (x, y, w, h) = (c % self.cfg.w, c / self.cfg.w, self.cfg.w, self.cfg.h);
-        match d {
-            EAST if x + 1 < w => Some(c + 1),
-            WEST if x > 0 => Some(c - 1),
-            SOUTH if y + 1 < h => Some(c + w),
-            NORTH if y > 0 => Some(c - w),
-            _ => None,
-        }
-    }
-
     /// Dimension-order routing: X first, then Y. Deadlock-free on a mesh.
     #[inline]
     fn route(&self, c: u32, dst_cell: u32) -> usize {
-        let (x, y) = (c % self.cfg.w, c / self.cfg.w);
-        let (dx, dy) = (dst_cell % self.cfg.w, dst_cell / self.cfg.w);
+        let ((x, y), (dx, dy)) = (self.xy[c as usize], self.xy[dst_cell as usize]);
         if dx > x { EAST } else if dx < x { WEST } else if dy > y { SOUTH } else if dy < y { NORTH } else { EJECT }
     }
 
@@ -352,90 +385,27 @@ impl Mesh {
         }
     }
 
-    fn emit(&mut self, c: u32, f: Flit) {
-        self.stats.sent[f.kind as usize] += 1;
-        self.stats.in_flight += 1;
-        self.stats.peak_in_flight = self.stats.peak_in_flight.max(self.stats.in_flight);
-        if a_cell(f.dst) == c {
-            self.push_event(c, Ev::Msg(f));
-        } else {
-            let ob = &mut self.outbox[c as usize];
-            ob.push_back(f);
-            self.stats.max_outbox = self.stats.max_outbox.max(ob.len() as u64);
-            self.touch(c);
+    fn raw(&mut self) -> Raw {
+        Raw {
+            slots: self.slots.as_mut_ptr(),
+            free: self.free.as_mut_ptr(),
+            rr: self.rr.as_mut_ptr(),
+            outbox: self.outbox.as_mut_ptr(),
+            events: self.events.as_mut_ptr(),
+            parked: self.parked.as_mut_ptr(),
+            fifo_buf: self.fifo_buf.as_mut_ptr(),
+            fifo_head: self.fifo_head.as_mut_ptr(),
+            fifo_len: self.fifo_len.as_mut_ptr(),
+            k: self.cfg.k,
+            b: self.cfg.fifo as usize,
         }
     }
 
-    fn push_event(&mut self, c: u32, e: Ev) {
-        let q = &mut self.events[c as usize];
-        q.push_back(e);
-        self.stats.max_events = self.stats.max_events.max(q.len() as u64);
-        self.touch(c);
-    }
-
-    // ---- slot bookkeeping -------------------------------------------------------------
-
-    fn set_free(&mut self, c: u32, s: u32) {
-        let i = self.si(c, s);
-        let was = self.slots[i].kind;
-        if was == FREE { return; }
-        if is_agent(was) { self.stats.live -= 1; }
-        if was == IND { self.stats.inds -= 1; }
-        if was == RESV { self.stats.reserved -= 1; }
-        self.slots[i] = Slot::EMPTY;
-        self.free[c as usize] += 1;
-        self.dirty_phi(c);
-        if !self.parked[c as usize].is_empty() { self.wake_parked(c); }
-    }
-
-    /// Parked reservations retry as ordinary events, never inline: a wake can happen in the
-    /// middle of a rewrite that is about to use the slot that just came free.
-    fn wake_parked(&mut self, c: u32) {
-        let parked = std::mem::take(&mut self.parked[c as usize]);
-        for f in parked {
-            self.stats.parked_reserves -= 1;
-            self.push_event(c, Ev::Msg(f));
-        }
-    }
-
-    fn place(&mut self, c: u32, s: u32, slot: Slot) {
-        let i = self.si(c, s);
-        let was = self.slots[i].kind;
-        debug_assert!(was == FREE || was == RESV, "placing over a live slot");
-        if was == FREE {
-            self.free[c as usize] -= 1;
-            self.dirty_phi(c);
-        }
-        if was == RESV { self.stats.reserved -= 1; }
-        if is_agent(slot.kind) {
-            self.stats.live += 1;
-            self.stats.peak_live = self.stats.peak_live.max(self.stats.live);
-        }
-        if slot.kind == IND {
-            self.stats.inds += 1;
-            self.stats.peak_inds = self.stats.peak_inds.max(self.stats.inds);
-        }
-        if slot.kind == RESV {
-            self.stats.reserved += 1;
-            self.stats.peak_reserved = self.stats.peak_reserved.max(self.stats.reserved);
-        }
-        self.slots[i] = slot;
-    }
-
-    /// Reserve `n` free slots of tile `c`, returning their mask.
-    fn reserve_local(&mut self, c: u32, n: u32) -> u16 {
-        let mut mask = 0u16;
-        let mut got = 0;
-        for s in 0..self.cfg.k {
-            if got == n { break; }
-            if self.slots[self.si(c, s)].kind == FREE {
-                self.place(c, s, Slot { kind: RESV, ..Slot::EMPTY });
-                mask |= 1 << s;
-                got += 1;
-            }
-        }
-        debug_assert_eq!(got, n);
-        mask
+    /// Fold a phase's per-tile output into the machine.
+    fn absorb(&mut self, o: Out) {
+        self.stats.absorb(&o);
+        for &c in &o.phi_dirty { self.dirty_phi(c); }
+        if let Some(r) = self.rec.as_mut() { r.fires.extend_from_slice(&o.rec_fires); }
     }
 
     // ---- loading ------------------------------------------------------------------------
@@ -479,21 +449,22 @@ impl Mesh {
                 }
             }
             let base = at[id as usize];
-            m.place(a_cell(base), a_slot(base), slot);
+            let i = m.si(a_cell(base), a_slot(base));
+            m.slots[i] = slot;
+            m.free[a_cell(base) as usize] -= 1;
+            m.stats.live += 1;
         }
+        m.stats.peaks();
         m.out_addr = at[out as usize];
         m.init_phi();
         for &id in &order {
-            if eager(net.get(id).tag) {
+            if crate::tile::eager(net.get(id).tag) {
                 let base = at[id as usize];
-                m.push_event(a_cell(base), Ev::Activate(a_slot(base)));
+                m.events[a_cell(base) as usize].push_back(Ev::Activate(a_slot(base)));
+                m.touch(a_cell(base));
             }
         }
         if check { m.shadow = Some(net); }
-        m.phi_dirty.clear();
-        m.epoch += 1;
-        let start = std::mem::take(&mut m.active);
-        for c in start { m.touch(c); }
         Ok(m)
     }
 
@@ -532,12 +503,10 @@ impl Mesh {
             }
             while let Some(c) = q.pop_front() {
                 let d = self.phi[c as usize][f];
-                for dir in 0..4 {
-                    if let Some(nb) = self.neighbor(c, dir) {
-                        if self.phi[nb as usize][f] == INF && d + 1 < cap {
-                            self.phi[nb as usize][f] = d + 1;
-                            q.push_back(nb);
-                        }
+                for &nb in &self.nb[c as usize] {
+                    if nb != NONE && self.phi[nb as usize][f] == INF && d + 1 < cap {
+                        self.phi[nb as usize][f] = d + 1;
+                        q.push_back(nb);
                     }
                 }
             }
@@ -550,9 +519,6 @@ impl Mesh {
 
     pub fn quiescent(&self) -> bool { self.active.is_empty() }
 
-    /// One clock tick: every router moves at most one flit per output port, then every
-    /// tile handles up to `events_per_tick` protocol events, then the free-space field
-    /// relaxes one step.
     pub fn step(&mut self) {
         self.tick += 1;
         self.stats.ticks = self.tick;
@@ -564,115 +530,169 @@ impl Mesh {
         cur.clear();
         std::mem::swap(&mut cur, &mut self.active);
         self.epoch += 1;
-        let b = self.cfg.fifo as usize;
-
-        // Switch allocation, from start-of-tick state only.
-        let mut moves = std::mem::take(&mut self.moves);
-        moves.clear();
-        for &c in &cur {
-            let start = self.rr[c as usize] as usize;
-            let mut used = [false; 5];
-            for j in 0..5 {
-                let i = (start + j) % 5;
-                let dst = if i < 4 {
-                    let q = (c * 4) as usize + i;
-                    if self.fifo_len[q] == 0 { continue; }
-                    self.fifo_buf[q * b + self.fifo_head[q] as usize].dst
-                } else {
-                    match self.outbox[c as usize].front() { Some(f) => f.dst, None => continue }
-                };
-                let o = self.route(c, a_cell(dst));
-                if used[o] { continue; }
-                if o != EJECT {
-                    let nb = self.neighbor(c, o).expect("XY routing stays on the grid");
-                    if self.fifo_len[(nb * 4) as usize + (o ^ 1)] as usize >= b { continue; }
-                }
-                used[o] = true;
-                moves.push((c, i, o));
-            }
-            self.rr[c as usize] = ((start + 1) % 5) as u8;
-        }
-
-        // Link traversal.
-        for &(c, i, o) in &moves {
-            let mut f = if i < 4 {
-                let q = (c * 4) as usize + i;
-                let f = self.fifo_buf[q * b + self.fifo_head[q] as usize];
-                self.fifo_head[q] = ((self.fifo_head[q] as usize + 1) % b) as u8;
-                self.fifo_len[q] -= 1;
-                f
-            } else {
-                self.outbox[c as usize].pop_front().unwrap()
-            };
-            if o == EJECT {
-                self.push_event(c, Ev::Msg(f));
-            } else {
-                let nb = self.neighbor(c, o).unwrap();
-                let q = (nb * 4) as usize + (o ^ 1);
-                let tail = (self.fifo_head[q] as usize + self.fifo_len[q] as usize) % b;
-                f.hops = f.hops.saturating_add(1);
-                self.fifo_buf[q * b + tail] = f;
-                self.fifo_len[q] += 1;
-                self.stats.hops += 1;
-                if let Some(r) = self.rec.as_mut() {
-                    r.moves.push([c, o as u32 | (f.kind as u32) << 4 | (f.tag as u32) << 8]);
-                }
-                self.touch(nb);
-            }
-        }
-        self.moves = moves;
-
-        // Protocol engines.
-        for &c in &cur {
-            for _ in 0..self.cfg.events_per_tick {
-                let Some(e) = self.events[c as usize].pop_front() else { break };
-                self.stats.events += 1;
-                match e {
-                    Ev::Msg(f) => {
-                        self.stats.in_flight -= 1;
-                        self.handle(c, f);
-                    }
-                    Ev::Activate(s) => self.activate(c, s),
-                }
-            }
+        if cur.len() >= self.par_min && self.shadow.is_none() {
+            // Contiguous stretches of the grid per thread keep threads off each other's lines.
+            cur.sort_unstable();
+            self.phases_parallel(&cur);
+        } else {
+            self.phases_serial(&cur);
         }
         for &c in &cur {
             let ci = c as usize;
-            let busy = !self.events[ci].is_empty()
-                || !self.outbox[ci].is_empty()
-                || self.fifo_len[ci * 4..ci * 4 + 4].iter().any(|&l| l > 0);
-            if busy { self.touch(c); }
+            if !self.events[ci].is_empty() || !self.outbox[ci].is_empty()
+                || self.fifo_len[ci * 4..ci * 4 + 4].iter().any(|&l| l > 0) {
+                self.touch(c);
+            }
         }
-
         self.spare = cur;
+        self.stats.peaks();
+        self.relax_field();
+    }
 
-        // The free-space field relaxes one step per tick, as the hardware would.
+    /// Phase 1 for one tile: which flits its router moves this tick, from start-of-tick
+    /// state only.
+    #[inline]
+    fn decide(&self, c: u32, moves: &mut Vec<(u32, u8, u8)>) {
+        let b = self.cfg.fifo as usize;
+        let start = self.rr[c as usize] as usize;
+        let mut used = [false; 5];
+        for j in 0..5 {
+            let i = if start + j >= 5 { start + j - 5 } else { start + j };
+            let dst = if i < 4 {
+                let q = (c * 4) as usize + i;
+                if self.fifo_len[q] == 0 { continue; }
+                self.fifo_buf[q * b + self.fifo_head[q] as usize].dst
+            } else {
+                match self.outbox[c as usize].front() { Some(f) => f.dst, None => continue }
+            };
+            let o = self.route(c, a_cell(dst));
+            if used[o] { continue; }
+            if o != EJECT {
+                let nb = self.nb[c as usize][o];
+                if self.fifo_len[(nb * 4) as usize + (o ^ 1)] as usize >= b { continue; }
+            }
+            used[o] = true;
+            moves.push((c, i as u8, o as u8));
+        }
+    }
+
+    fn phases_serial(&mut self, cur: &[u32]) {
+        let mut moves = std::mem::take(&mut self.moves);
+        moves.clear();
+        for &c in cur { self.decide(c, &mut moves); }
+        let raw = self.raw();
+        let mut out = Out { record: self.rec.is_some(), ..Out::default() };
+        let mut sends = std::mem::take(&mut self.sends);
+        sends.clear();
+        for &m in &moves { unsafe { raw.pop(&self.nb, m, &mut sends, &mut out) }; }
+        for &(nb, o, f) in &sends {
+            unsafe { raw.push(nb, o, f) };
+            self.stats.hops += 1;
+            if let Some(r) = self.rec.as_mut() {
+                r.moves.push([self.nb[nb as usize][o as usize ^ 1], o as u32 | (f.kind as u32) << 4 | (f.tag as u32) << 8]);
+            }
+            self.touch(nb);
+        }
+        let (phi, cfg) = (&self.phi, self.cfg);
+        let mut shadow = self.shadow.as_mut();
+        for &c in cur {
+            let mut t = unsafe { raw.tile(c, cfg, &self.nb, phi, shadow.as_deref_mut(), &mut out) };
+            t.run(cfg.events_per_tick);
+        }
+        self.absorb(out);
+        self.moves = moves;
+        self.sends = sends;
+    }
+
+    /// The same phases on all cores. Each phase's accesses are disjoint: decide only reads;
+    /// each move pops a different queue (an input buffer or the outbox of the tile that owns
+    /// it, and a tile ejects at most once, into its own events); each input buffer is pushed
+    /// by exactly one neighbour through one port; and each tile's events touch only itself.
+    fn phases_parallel(&mut self, cur: &[u32]) {
+        let record = self.rec.is_some();
+        let this = &*self;
+        let decided: Vec<Vec<(u32, u8, u8)>> = chunked(cur, true, |tiles| {
+            let mut moves = Vec::with_capacity(tiles.len() * 2);
+            for &c in tiles { this.decide(c, &mut moves); }
+            moves
+        });
+        let raw = self.raw();
+        let nb_tab = &self.nb;
+        let popped: Vec<(Vec<(u32, u8, Flit)>, Out)> = chunked(&decided, true, |groups| {
+            let raw = &raw;
+            let (mut sends, mut out) = (vec![], Out::default());
+            for moves in groups {
+                for &m in moves { unsafe { raw.pop(nb_tab, m, &mut sends, &mut out) }; }
+            }
+            (sends, out)
+        });
+        let pushed: Vec<(Vec<u32>, Vec<[u32; 2]>)> = chunked(&popped, true, |groups| {
+            let raw = &raw;
+            let (mut touched, mut rec) = (vec![], vec![]);
+            for (sends, _) in groups {
+                for &(nb, o, f) in sends {
+                    unsafe { raw.push(nb, o, f) };
+                    touched.push(nb);
+                    if record { rec.push([nb_tab[nb as usize][o as usize ^ 1], o as u32 | (f.kind as u32) << 4 | (f.tag as u32) << 8]); }
+                }
+            }
+            (touched, rec)
+        });
+        let (phi, cfg) = (&self.phi, self.cfg);
+        let outs: Vec<Out> = chunked(cur, true, |tiles| {
+            let raw = &raw;
+            let mut out = Out { record, ..Out::default() };
+            for &c in tiles {
+                let mut t = unsafe { raw.tile(c, cfg, nb_tab, phi, None, &mut out) };
+                t.run(cfg.events_per_tick);
+            }
+            out
+        });
+        for (_, o) in popped { self.absorb(o); }
+        for o in outs { self.absorb(o); }
+        for (touched, rec) in pushed {
+            self.stats.hops += touched.len() as u64;
+            for c in touched { self.touch(c); }
+            if let Some(r) = self.rec.as_mut() { r.moves.extend_from_slice(&rec); }
+        }
+    }
+
+    /// The free-space field relaxes one step per tick, as the hardware would.
+    fn relax_field(&mut self) {
         if self.phi_dirty.is_empty() { return; }
         let dirty = std::mem::take(&mut self.phi_dirty);
         self.phi_epoch += 1;
         let cap = self.phi_cap();
+        // Every tile reads last tick's values (as simultaneous hardware would), so the
+        // result does not depend on the order tiles are visited in.
+        let mut updates = Vec::with_capacity(dirty.len());
         for &c in &dirty {
-            let old = self.phi[c as usize];
             let mut new = [INF; FIELDS];
             for f in 0..FIELDS {
                 if self.free[c as usize] as usize > f {
                     new[f] = 0;
                 } else {
                     let mut best = INF;
-                    for d in 0..4 {
-                        if let Some(nb) = self.neighbor(c, d) { best = best.min(self.phi[nb as usize][f]); }
+                    for &nb in &self.nb[c as usize] {
+                        if nb != NONE { best = best.min(self.phi[nb as usize][f]); }
                     }
                     new[f] = if best >= cap - 1 { INF } else { best + 1 };
                 }
             }
-            if new != old {
-                self.phi[c as usize] = new;
-                for d in 0..4 {
-                    if let Some(nb) = self.neighbor(c, d) { self.dirty_phi(nb); }
-                }
-                if (0..FIELDS).any(|f| new[f] < old[f]) && !self.parked[c as usize].is_empty() {
-                    self.wake_parked(c);
-                }
+            if new != self.phi[c as usize] { updates.push((c, new)); }
+        }
+        for (c, new) in updates {
+            let old = std::mem::replace(&mut self.phi[c as usize], new);
+            for nb in self.nb[c as usize] {
+                if nb != NONE { self.dirty_phi(nb); }
+            }
+            if (0..FIELDS).any(|f| new[f] < old[f]) && !self.parked[c as usize].is_empty() {
+                let mut out = Out::default();
+                let raw = self.raw();
+                let (phi, cfg) = (&self.phi, self.cfg);
+                unsafe { raw.tile(c, cfg, &self.nb, phi, None, &mut out) }.wake_parked();
+                self.absorb(out);
+                self.touch(c);
             }
         }
     }
@@ -690,578 +710,6 @@ impl Mesh {
         if !self.quiescent() { return Outcome::Running; }
         if self.readback().is_some() { return Outcome::Done; }
         if self.stats.parked_reserves > 0 { Outcome::OutOfSpace } else { Outcome::Stuck }
-    }
-
-    // ---- protocol handlers (tile-local) ---------------------------------------------------
-
-    fn handle(&mut self, c: u32, f: Flit) {
-        match f.kind {
-            PULL => self.on_pull(c, f),
-            SHIP => self.on_ship(c, f),
-            MOVED => self.on_moved(c, f),
-            SPAWN => self.on_spawn(c, f),
-            DROP => self.on_drop(c, f),
-            RESERVE => self.on_reserve(c, f),
-            GRANT => self.on_grant(c, f),
-            RELEASE => self.on_release(c, f),
-            k => panic!("unknown message kind {k}"),
-        }
-    }
-
-    /// A reader starts reading: pull its source, or (an eraser) drop it.
-    fn activate(&mut self, c: u32, s: u32) {
-        let i = self.si(c, s);
-        let slot = self.slots[i];
-        if slot.st != IDLE || !is_agent(slot.kind) { return; }
-        let t = tag_of(slot.kind);
-        let r = slot.p[0];
-        if t == Tag::Eps {
-            let mut f = Flit::new(DROP, r);
-            f.sid = slot.sid;
-            self.set_free(c, s);
-            self.emit(c, f);
-            return;
-        }
-        self.slots[i].st = AWAIT;
-        let mut f = Flit::new(PULL, r);
-        f.x = addr(c, s, 0) | if t == Tag::Out { 0 } else { SHIPPABLE };
-        self.emit(c, f);
-    }
-
-    fn speculative(&self, c: u32) -> bool {
-        self.cfg.speculate > 0 && self.free[c as usize] as u32 >= self.cfg.speculate
-    }
-
-    /// A consumer just took a slot: start it if it is wanted, cancel it if nobody can read
-    /// it, and otherwise let it wait for demand.
-    fn settle(&mut self, c: u32, s: u32) {
-        let sl = self.slots[self.si(c, s)];
-        let t = tag_of(sl.kind);
-        let outs = (1..t.arity()).filter(|&k| is_source(t, k));
-        let (mut any_sub, mut all_dead, mut n) = (false, true, 0);
-        for k in outs {
-            n += 1;
-            any_sub |= is_sub(sl.p[k]);
-            all_dead &= is_dead(sl.p[k]);
-        }
-        if eager(t) || any_sub || self.speculative(c) {
-            self.activate(c, s);
-        } else if n > 0 && all_dead {
-            self.cancel(c, s);
-        }
-    }
-
-    fn on_pull(&mut self, c: u32, f: Flit) {
-        let s = a_slot(f.dst);
-        let i = self.si(c, s);
-        let slot = self.slots[i];
-        let k = logical(slot.perm, a_port(f.dst));
-        match slot.kind {
-            IND => {
-                assert!(slot.st & (1 << k) != 0, "pull at a spent indirection port");
-                let mut m = Flit::new(MOVED, f.x & ADDR);
-                m.x = slot.p[k];
-                self.emit(c, m);
-                self.spend_ind(c, s, k);
-            }
-            RESV => {
-                assert_eq!(slot.p[k], NONE, "two readers pulled one reserved source");
-                self.slots[i].p[k] = f.x;
-            }
-            kind if is_agent(kind) => {
-                let t = tag_of(kind);
-                assert!(is_source(t, k), "pull at sink port {k} of {}", t.name());
-                if t.is_producer() && f.x & SHIPPABLE != 0 {
-                    self.ship(c, s, f.x & ADDR);
-                } else if t.is_producer() {
-                    let mut m = Flit::new(MOVED, f.x & ADDR);
-                    m.x = f.dst;
-                    m.n = VALUE;
-                    self.emit(c, m);
-                } else {
-                    assert_eq!(slot.p[k], NONE, "two readers subscribed to one source");
-                    self.slots[i].p[k] = f.x;
-                    self.activate(c, s);
-                }
-            }
-            _ => panic!("pull at a free slot {:#x}", f.dst),
-        }
-    }
-
-    fn spend_ind(&mut self, c: u32, s: u32, k: usize) {
-        let i = self.si(c, s);
-        let sl = &mut self.slots[i];
-        sl.st &= !(1 << k);
-        sl.p[k] = NONE;
-        if sl.st == 0 { self.set_free(c, s); }
-    }
-
-    fn ship(&mut self, c: u32, s: u32, to: u32) {
-        let slot = self.slots[self.si(c, s)];
-        let mut m = Flit::new(SHIP, to);
-        m.tag = slot.kind;
-        m.x = slot.p[1];
-        m.y = slot.p[2];
-        m.sid = slot.sid;
-        self.set_free(c, s);
-        self.emit(c, m);
-    }
-
-    fn on_moved(&mut self, c: u32, f: Flit) {
-        let s = a_slot(f.dst);
-        let i = self.si(c, s);
-        assert_eq!(self.slots[i].st, AWAIT, "moved to a reader that was not waiting");
-        self.slots[i].p[0] = f.x;
-        match f.n {
-            PRESUB => {}
-            VALUE => self.slots[i].st = HOLD,
-            _ => {
-                self.slots[i].st = IDLE;
-                self.activate(c, s);
-            }
-        }
-    }
-
-    fn on_spawn(&mut self, c: u32, f: Flit) {
-        let s = a_slot(f.dst);
-        let i = self.si(c, s);
-        let pend = self.slots[i];
-        assert_eq!(pend.kind, RESV, "spawn into an unreserved slot");
-        let t = tag_of(f.tag);
-        let mut slot = Slot { kind: f.tag, sid: f.sid, ..Slot::EMPTY };
-        let fields = [f.x, f.y, f.z];
-        for p in 0..3 {
-            if p < t.arity() && is_source(t, p) && pend.p[p] != NONE {
-                assert_eq!(fields[p], NONE, "two readers for one fresh source");
-                slot.p[p] = pend.p[p];
-            } else {
-                assert!(pend.p[p] == NONE, "early reader at a sink");
-                slot.p[p] = fields[p];
-            }
-        }
-        self.place(c, s, slot);
-        if t.is_producer() {
-            if is_dead(slot.p[0]) {
-                self.erase(c, s, dead_sid(slot.p[0]));
-            } else if slot.p[0] != NONE {
-                self.ship(c, s, slot.p[0] & ADDR);
-            }
-        } else {
-            self.settle(c, s);
-        }
-    }
-
-    /// The reader of the source at `f.dst` is gone.
-    fn on_drop(&mut self, c: u32, f: Flit) {
-        let s = a_slot(f.dst);
-        let i = self.si(c, s);
-        let slot = self.slots[i];
-        let k = logical(slot.perm, a_port(f.dst));
-        match slot.kind {
-            IND => {
-                assert!(slot.st & (1 << k) != 0, "drop at a spent indirection port");
-                let mut m = Flit::new(DROP, slot.p[k]);
-                m.sid = f.sid;
-                self.spend_ind(c, s, k);
-                self.emit(c, m);
-            }
-            RESV => {
-                assert_eq!(slot.p[k], NONE);
-                self.slots[i].p[k] = dead(f.sid);
-            }
-            kind if is_agent(kind) => {
-                let t = tag_of(kind);
-                assert!(is_source(t, k), "drop at sink port {k} of {}", t.name());
-                if t.is_producer() {
-                    self.erase(c, s, f.sid);
-                } else {
-                    assert_eq!(slot.p[k], NONE, "drop at a source somebody else reads");
-                    self.slots[i].p[k] = dead(f.sid);
-                    if slot.st == IDLE { self.settle(c, s); }
-                }
-            }
-            _ => panic!("drop at a free slot {:#x}", f.dst),
-        }
-    }
-
-    /// The eraser rule, run where the producer stands: it dies, and its children are
-    /// dropped in turn.
-    fn erase(&mut self, c: u32, s: u32, eps_sid: u32) {
-        let sl = self.slots[self.si(c, s)];
-        let t = tag_of(sl.kind);
-        let ri = find_index(Tag::Eps, t).expect("an eraser rule for every producer");
-        let rule = &RULES[ri];
-        self.stats.fires += 1;
-        self.stats.local_fires += 1;
-        if let Some(r) = self.rec.as_mut() { r.fires.push([c, ri as u32]); }
-        let fresh = match self.shadow.as_mut() {
-            Some(net) => {
-                assert_eq!(net.get(eps_sid).ports[0], Some((sl.sid, 0)), "erased a pair the abstract net does not have");
-                net.fire(eps_sid, sl.sid).1
-            }
-            None => vec![NONE; rule.fresh.len()],
-        };
-        self.set_free(c, s);
-        for (a, b) in rule.wires {
-            let ((End::Fresh(e, 0), End::PAux(j)) | (End::PAux(j), End::Fresh(e, 0))) = (*a, *b) else {
-                unreachable!("eraser rules hand each child to a fresh eraser")
-            };
-            let mut m = Flit::new(DROP, sl.p[j as usize]);
-            m.sid = fresh[e as usize];
-            self.emit(c, m);
-        }
-    }
-
-    /// A computation nobody will read: it dies without running, and drops its inputs.
-    fn cancel(&mut self, c: u32, s: u32) {
-        let sl = self.slots[self.si(c, s)];
-        let t = tag_of(sl.kind);
-        self.stats.cancels += 1;
-        let mut erasers = [NONE; 3];
-        if let Some(net) = self.shadow.as_mut() {
-            let a = net.get(sl.sid).clone();
-            for k in 0..t.arity() {
-                let (other, q) = a.ports[k].expect("closed net");
-                if is_source(t, k) {
-                    assert_eq!(net.get(other).tag, Tag::Eps, "cancelled a computation somebody reads");
-                    net.agents[other as usize] = None;
-                } else {
-                    let e = net.mk(Tag::Eps);
-                    net.link(e, 0, other, q);
-                    erasers[k] = e;
-                }
-            }
-            net.agents[sl.sid as usize] = None;
-        }
-        self.set_free(c, s);
-        for k in 0..t.arity() {
-            if !is_source(t, k) {
-                let mut m = Flit::new(DROP, sl.p[k]);
-                m.sid = erasers[k];
-                self.emit(c, m);
-            }
-        }
-    }
-
-    fn route_reserve(&mut self, c: u32, mut f: Flit) {
-        let field = f.n as usize - 1;
-        self.stats.in_flight += 1;
-        let mut best = (INF, NONE);
-        if self.phi[c as usize][field] != INF {
-            for d in 0..4 {
-                if let Some(nb) = self.neighbor(c, d) {
-                    let v = self.phi[nb as usize][field];
-                    if v < best.0 { best = (v, nb); }
-                }
-            }
-        }
-        if best.1 == NONE {
-            self.stats.parked_reserves += 1;
-            self.parked[c as usize].push(f);
-            return;
-        }
-        f.dst = addr(best.1, 0, 0);
-        self.outbox[c as usize].push_back(f);
-        self.touch(c);
-    }
-
-    fn on_reserve(&mut self, c: u32, f: Flit) {
-        self.stats.max_reserve_hops = self.stats.max_reserve_hops.max(f.hops as u64);
-        if self.free[c as usize] >= f.n {
-            let mask = self.reserve_local(c, f.n as u32);
-            let mut g = Flit::new(GRANT, f.x);
-            g.x = c;
-            g.y = mask as u32;
-            self.emit(c, g);
-        } else {
-            self.route_reserve(c, f);
-        }
-    }
-
-    fn on_grant(&mut self, c: u32, f: Flit) {
-        let s = a_slot(f.dst);
-        let sl = self.slots[self.si(c, s)];
-        assert_eq!(sl.st, DOCKED, "grant to a consumer that was not waiting for room");
-        let docked = Docked { tag: sl.dock_tag, aux: [sl.p[0], sl.dock], sid: sl.psid };
-        self.fire(c, s, docked, Some((f.x, f.y as u16)));
-    }
-
-    fn on_release(&mut self, c: u32, f: Flit) {
-        for s in 0..self.cfg.k {
-            if f.y & (1 << s) != 0 {
-                let sl = self.slots[self.si(c, s)];
-                assert!(sl.kind == RESV && sl.p == [NONE; 3], "release of a used reservation");
-                self.set_free(c, s);
-            }
-        }
-    }
-
-    /// A producer arrived. Fire at once if this tile has room for the slots the rule needs;
-    /// otherwise dock it here, hold what room there is, and look for the rest.
-    fn on_ship(&mut self, c: u32, f: Flit) {
-        let s = a_slot(f.dst);
-        let i = self.si(c, s);
-        let cs = self.slots[i];
-        assert_eq!(cs.st, AWAIT, "ship arrived at a consumer that did not ask");
-        let docked = Docked { tag: f.tag, aux: [f.x, f.y], sid: f.sid };
-        let plan = self.plan(c, s, &cs, &docked);
-        let short = plan.slots.saturating_sub(plan.hosts() + self.free[c as usize] as usize);
-        if short == 0 {
-            self.fire(c, s, docked, None);
-            return;
-        }
-        let local = self.free[c as usize] as u32;
-        let hold = if local > 0 { self.reserve_local(c, local) } else { 0 };
-        let sl = &mut self.slots[i];
-        sl.st = DOCKED;
-        sl.hold = hold;
-        sl.p[0] = f.x;
-        sl.dock = f.y;
-        sl.dock_tag = f.tag;
-        sl.psid = f.sid;
-        let mut r = Flit::new(RESERVE, addr(c, 0, 0));
-        r.n = short as u8;
-        r.x = addr(c, s, 0);
-        self.stats.sent[RESERVE as usize] += 1;
-        self.route_reserve(c, r);
-    }
-
-    /// What a rewrite will need: which fresh producers go straight to a waiting reader
-    /// (they never take a slot), how many slots the rest take, which of the consumer's
-    /// result ports have no reader yet, and what becomes of the consumer's own slot: it
-    /// hosts the fresh agent that answers its one unread result (so the reader's address
-    /// stays good), or any fresh agent if every result is accounted for, or else lingers
-    /// as indirections.
-    fn plan(&self, c: u32, s: u32, cs: &Slot, d: &Docked) -> Plan {
-        let ct = tag_of(cs.kind);
-        let rule = &RULES[rule_index(cs.kind, d.tag)];
-        let mut linger = 0u8;
-        for i in 1..ct.arity() {
-            if !is_source(ct, i) || cs.p[i] != NONE { continue; }
-            let me = addr(c, s, physical(cs.perm, i));
-            let read_inside = (1..ct.arity()).any(|j| !is_source(ct, j) && cs.p[j] == me) || d.aux.contains(&me);
-            if !read_inside { linger |= 1 << i; }
-        }
-        let mut direct = 0u8;
-        let mut heir = None;
-        for &(a, b) in rule.wires {
-            if let (End::Fresh(k, p), End::CAux(i)) | (End::CAux(i), End::Fresh(k, p)) = (a, b) {
-                let reader = cs.p[i as usize];
-                let t = rule.fresh[k as usize];
-                if p == 0 && t.is_producer() && is_sub(reader) && reader & SHIPPABLE != 0 {
-                    direct |= 1 << k;
-                }
-                if linger == 1 << i && is_source(t, p as usize) {
-                    heir = Some((k as usize, perm_to(p as usize, physical(cs.perm, i as usize) as usize)));
-                }
-            }
-        }
-        let slots = rule.fresh.len() - direct.count_ones() as usize;
-        let host = if heir.is_some() { heir } else if linger == 0 && slots > 0 { Some((usize::MAX, 0)) } else { None };
-        Plan { linger: if heir.is_some() { 0 } else { linger }, direct, slots, host }
-    }
-
-    /// The rewrite. Fresh agents take the consumer's own slot (when it is free to go), the
-    /// slots it held while docked, other free slots of this tile, then the granted remote
-    /// room. Everything else this changes travels as messages.
-    fn fire(&mut self, c: u32, s: u32, d: Docked, grant: Option<(u32, u16)>) {
-        let ci = self.si(c, s);
-        let cs = self.slots[ci];
-        let ct = tag_of(cs.kind);
-        let ri = rule_index(cs.kind, d.tag);
-        let rule = &RULES[ri];
-        self.stats.fires += 1;
-        if let Some(r) = self.rec.as_mut() { r.fires.push([c, ri as u32]); }
-
-        let fresh_ids = match self.shadow.as_mut() {
-            Some(net) => {
-                assert_eq!(net.get(cs.sid).ports[0], Some((d.sid, 0)), "fired a pair the abstract net does not have");
-                assert_eq!(net.get(d.sid).tag, tag_of(d.tag));
-                net.fire(cs.sid, d.sid).1
-            }
-            None => vec![NONE; rule.fresh.len()],
-        };
-
-        let plan = self.plan(c, s, &cs, &d);
-        let n = rule.fresh.len();
-        let mut tgt = [NONE; 6];
-        let mut fperm = [0u8; 6];
-        let mut placed = 0;
-        if let Some((k, perm)) = plan.host {
-            if k != usize::MAX {
-                tgt[k] = addr(c, s, 0);
-                fperm[k] = perm;
-                placed += 1;
-            }
-        }
-        let mut order = [0usize; 6];
-        let mut n_order = 0;
-        for k in 0..n {
-            if plan.direct & (1 << k) == 0 && tgt[k] == NONE {
-                order[n_order] = k;
-                n_order += 1;
-            }
-        }
-        let mut next = 0;
-        let mut put = |a: u32| {
-            if next == n_order { return false; }
-            tgt[order[next]] = a;
-            next += 1;
-            true
-        };
-        if plan.host == Some((usize::MAX, 0)) && put(addr(c, s, 0)) { placed += 1; }
-        let mut spare_hold = cs.hold;
-        for b in 0..self.cfg.k {
-            if placed < plan.slots && cs.hold & (1 << b) != 0 && put(addr(c, b, 0)) {
-                spare_hold &= !(1 << b);
-                placed += 1;
-            }
-        }
-        for b in 0..self.cfg.k {
-            if placed == plan.slots { break; }
-            if b != s && self.slots[self.si(c, b)].kind == FREE && put(addr(c, b, 0)) { placed += 1; }
-        }
-        let mut unused = 0u16;
-        if let Some((gc, gmask)) = grant {
-            unused = gmask;
-            for b in 0..self.cfg.k {
-                if placed < plan.slots && gmask & (1 << b) != 0 && put(addr(gc, b, 0)) {
-                    unused &= !(1 << b);
-                    placed += 1;
-                }
-            }
-        }
-        assert_eq!(placed, plan.slots, "not enough room to fire");
-        if tgt[..n].iter().all(|&a| a == NONE || a_cell(a) == c) { self.stats.local_fires += 1; }
-
-        let mut fresh = [Slot::EMPTY; 6];
-        for (k, t) in rule.fresh.iter().enumerate() {
-            fresh[k] = Slot { kind: code(*t), perm: fperm[k], sid: fresh_ids[k], ..Slot::EMPTY };
-        }
-        let aux = [NONE, d.aux[0], d.aux[1]];
-        let own = |r: u32| r != NONE && a_cell(r) == c && a_slot(r) == s && is_source(ct, logical(cs.perm, a_port(r)));
-        let have = |e: End| -> u32 {
-            match e {
-                End::Fresh(k, p) => tgt[k as usize] | physical(fperm[k as usize], p as usize),
-                End::CAux(i) => cs.p[i as usize],
-                End::PAux(j) => aux[j as usize],
-            }
-        };
-        let partner = |e: End| -> End {
-            for (a, b) in rule.wires {
-                if *a == e { return *b; }
-                if *b == e { return *a; }
-            }
-            unreachable!("validated ROM")
-        };
-        // A reference into the dying consumer's own result port chases through the rule.
-        // Fresh addresses never chase: one of them may be the consumer's reused slot.
-        let resolve = |mut e: End| -> End {
-            for _ in 0..16 {
-                if matches!(e, End::Fresh(..)) || !own(have(e)) { return e; }
-                e = partner(End::CAux(logical(cs.perm, a_port(have(e))) as u8));
-            }
-            panic!("vicious circle inside a rewrite")
-        };
-        let read_inside = |i: usize| -> bool {
-            let me = addr(c, s, physical(cs.perm, i));
-            (1..ct.arity()).any(|j| !is_source(ct, j) && cs.p[j] == me) || aux.contains(&me)
-        };
-
-        let mut ind = [NONE; 3];
-        let mut out: [Flit; 4] = [Flit::new(0, NONE); 4];
-        let mut n_out = 0;
-        let mut ships: [(usize, u32); 2] = [(0, NONE); 2];
-        let mut n_ships = 0;
-        for &(a, b) in rule.wires {
-            let (h, nd) = if role(rule, a) == Role::Have { (a, b) } else { (b, a) };
-            if let End::CAux(i) = nd {
-                if read_inside(i as usize) { continue; }
-            }
-            let h = resolve(h);
-            let src = have(h);
-            match nd {
-                End::Fresh(k, p) => fresh[k as usize].p[p as usize] = src,
-                End::CAux(i) => {
-                    let reader = cs.p[i as usize];
-                    if is_dead(reader) {
-                        let mut f = Flit::new(DROP, src);
-                        f.sid = dead_sid(reader);
-                        out[n_out] = f;
-                        n_out += 1;
-                    } else if is_sub(reader) {
-                        match h {
-                            End::Fresh(k, 0) if plan.direct & (1 << k) != 0 => {
-                                ships[n_ships] = (k as usize, reader & ADDR);
-                                n_ships += 1;
-                            }
-                            End::Fresh(k, p) if p > 0 => {
-                                // A fresh computation: subscribe the reader on its behalf.
-                                fresh[k as usize].p[p as usize] = reader;
-                                let mut f = Flit::new(MOVED, reader & ADDR);
-                                f.x = src;
-                                f.n = PRESUB;
-                                out[n_out] = f;
-                                n_out += 1;
-                            }
-                            _ => {
-                                let mut f = Flit::new(MOVED, reader & ADDR);
-                                f.x = src;
-                                out[n_out] = f;
-                                n_out += 1;
-                            }
-                        }
-                    } else if plan.linger & (1 << i) != 0 {
-                        ind[i as usize] = src;
-                    }
-                }
-                End::PAux(_) => unreachable!("producer aux ports are sinks"),
-            }
-        }
-
-        // The consumer's slot dies, lingers as indirections, or hosts a fresh agent.
-        self.set_free(c, s);
-        if plan.linger != 0 {
-            self.place(c, s, Slot { kind: IND, st: plan.linger, perm: cs.perm, p: ind, ..Slot::EMPTY });
-        }
-        for &(k, to) in &ships[..n_ships] {
-            let mut f = Flit::new(SHIP, to);
-            f.tag = fresh[k].kind;
-            f.x = fresh[k].p[1];
-            f.y = fresh[k].p[2];
-            f.sid = fresh[k].sid;
-            self.stats.direct_ships += 1;
-            self.emit(c, f);
-        }
-        for f in &out[..n_out] { self.emit(c, *f); }
-        for (k, t) in rule.fresh.iter().enumerate() {
-            let a = tgt[k];
-            if a == NONE { continue; }
-            if a_cell(a) == c {
-                self.place(c, a_slot(a), fresh[k]);
-                if t.is_consumer() {
-                    let wanted = eager(*t) || (1..t.arity()).any(|p| is_source(*t, p) && is_sub(fresh[k].p[p]));
-                    if wanted || self.speculative(c) { self.push_event(c, Ev::Activate(a_slot(a))); }
-                }
-            } else {
-                let mut f = Flit::new(SPAWN, a);
-                f.tag = fresh[k].kind;
-                f.x = fresh[k].p[0];
-                f.y = fresh[k].p[1];
-                f.z = fresh[k].p[2];
-                f.sid = fresh[k].sid;
-                self.emit(c, f);
-            }
-        }
-        for b in 0..self.cfg.k {
-            if spare_hold & (1 << b) != 0 { self.set_free(c, b); }
-        }
-        if unused != 0 {
-            let (gc, _) = grant.unwrap();
-            let mut f = Flit::new(RELEASE, addr(gc, 0, 0));
-            f.y = unused as u32;
-            self.emit(c, f);
-        }
     }
 
     // ---- reading the answer ---------------------------------------------------------------
@@ -1358,16 +806,62 @@ impl Mesh {
     }
 }
 
-struct Plan {
-    /// Result ports that stay behind as indirections.
-    linger: u8,
-    direct: u8,
-    slots: usize,
-    /// The fresh agent the consumer's own slot hosts, with its port permutation
-    /// (`usize::MAX`: whichever fresh agent comes first, unpermuted).
-    host: Option<(usize, u8)>,
-}
+impl Raw {
+    /// Phase 2 for one move: the flit leaves its queue; an ejected flit joins its tile's
+    /// events, any other is queued to be pushed next door.
+    #[inline]
+    unsafe fn pop(&self, nb: &[[u32; 4]], (c, i, o): (u32, u8, u8), sends: &mut Vec<(u32, u8, Flit)>, out: &mut Out) {
+        let b = self.b;
+        let f = if i < 4 {
+            let q = (c * 4) as usize + i as usize;
+            let head = self.fifo_head.add(q);
+            let f = *self.fifo_buf.add(q * b + *head as usize);
+            *head = if *head as usize + 1 == b { 0 } else { *head + 1 };
+            *self.fifo_len.add(q) -= 1;
+            f
+        } else {
+            (*self.outbox.add(c as usize)).pop_front().unwrap()
+        };
+        if o as usize == EJECT {
+            let ev = &mut *self.events.add(c as usize);
+            ev.push_back(Ev::Msg(f));
+            out.max_events = out.max_events.max(ev.len() as u64);
+        } else {
+            sends.push((nb[c as usize][o as usize], o, f));
+        }
+    }
 
-impl Plan {
-    fn hosts(&self) -> usize { self.host.is_some() as usize }
+    /// Phase 3 for one flit: it enters the input buffer of tile `nb` facing direction `o`.
+    #[inline]
+    unsafe fn push(&self, nb: u32, o: u8, mut f: Flit) {
+        let b = self.b;
+        let q = (nb * 4) as usize + (o as usize ^ 1);
+        let mut tail = *self.fifo_head.add(q) as usize + *self.fifo_len.add(q) as usize;
+        if tail >= b { tail -= b; }
+        f.hops = f.hops.saturating_add(1);
+        *self.fifo_buf.add(q * b + tail) = f;
+        *self.fifo_len.add(q) += 1;
+    }
+
+    /// One tile's view. Safety: the caller hands out each tile at most once at a time.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn tile<'a>(&self, c: u32, cfg: Config, nb: &'a [[u32; 4]], phi: &'a [[u8; FIELDS]],
+                       shadow: Option<&'a mut Net>, out: &'a mut Out) -> Tile<'a> {
+        let ci = c as usize;
+        Tile {
+            c,
+            k: self.k,
+            speculate: cfg.speculate,
+            slots: std::slice::from_raw_parts_mut(self.slots.add(ci * self.k as usize), self.k as usize),
+            free: &mut *self.free.add(ci),
+            rr: &mut *self.rr.add(ci),
+            outbox: &mut *self.outbox.add(ci),
+            events: &mut *self.events.add(ci),
+            parked: &mut *self.parked.add(ci),
+            nb: &nb[ci],
+            phi,
+            shadow,
+            out,
+        }
+    }
 }
