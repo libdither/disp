@@ -1,5 +1,5 @@
-//! The cascade's soak corpus under a list of lattice configurations: how many finish, how
-//! many proposals they take, and how crowded and stretched things get.
+//! The cascade's soak corpus under a list of lattice configurations: how many finish and how
+//! many clocks they take.
 //!   strands-sweep "k=8 lanes=4" "k=6 lanes=3 temp=1.0" ...
 
 use rust_ca_lattice::net::Net;
@@ -30,6 +30,10 @@ fn parse(spec: &str) -> Params {
             "idle" => p.idle_tension = v.parse().unwrap(),
             "active" => p.active = v.parse().unwrap(),
             "swap" => p.swap = v.parse().unwrap(),
+            "pulse" => p.pulse = v == "1",
+            "margolus" => p.margolus = v == "1",
+            "gc" => p.gc = v == "1",
+            "agents" => p.agent_turns = v.parse().unwrap(),
             _ => panic!("unknown key {k}"),
         }
     }
@@ -43,13 +47,13 @@ fn main() {
         let t = rng.rand_term(3 + (i % 4));
         if let Ok(w) = oracle::nf(t.clone(), &mut Fuel(5_000)) { corpus.push((t, oracle::show(&w))); }
     }
-    println!("| config | done | wrong | stuck | unloadable | median proposals | p90 | fires | sec |");
+    println!("| config | done | wrong | stuck | unloadable | median clocks | p90 | fires | sec |");
     println!("|---|---|---|---|---|---|---|---|---|");
     let budget: u64 = std::env::var("BUDGET").ok().and_then(|v| v.parse().ok()).unwrap_or(3_000_000);
     for spec in std::env::args().skip(1) {
         let p = parse(&spec);
         let t0 = std::time::Instant::now();
-        let (mut done, mut wrong, mut stuck, mut props, mut fires, mut unloadable) = (0, 0, 0, vec![], 0u64, 0);
+        let (mut done, mut wrong, mut stuck, mut clocks, mut fires, mut unloadable) = (0, 0, 0, vec![], 0u64, 0);
         for (i, (t, want)) in corpus.iter().enumerate() {
             let mut net = Net::new();
             let root = net.build(t);
@@ -60,13 +64,13 @@ fn main() {
             if !fin { stuck += 1; continue; }
             if l.readback().map(|t| oracle::show(&t)).as_deref() == Some(want.as_str()) && l.check_projection().is_ok() {
                 done += 1;
-                props.push(l.stats.proposals);
+                clocks.push(l.stats.clocks);
             } else {
                 wrong += 1;
             }
         }
-        props.sort();
-        let q = |f: f64| props.get(((props.len() as f64 * f) as usize).min(props.len().saturating_sub(1))).copied().unwrap_or(0);
-        println!("| {spec} | {done} | {wrong} | {stuck} | {unloadable} | {} | {} | {fires} | {:.1} |", q(0.5), q(0.9), t0.elapsed().as_secs_f64());
+        clocks.sort_by(f64::total_cmp);
+        let q = |f: f64| clocks.get(((clocks.len() as f64 * f) as usize).min(clocks.len().saturating_sub(1))).copied().unwrap_or(0.0);
+        println!("| {spec} | {done} | {wrong} | {stuck} | {unloadable} | {:.0} | {:.0} | {fires} | {:.1} |", q(0.5), q(0.9), t0.elapsed().as_secs_f64());
     }
 }

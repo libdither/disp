@@ -63,18 +63,21 @@
     <div id="decoded"></div><div id="answer"></div><div class="note" id="verdict"></div>
 
     <h3>time and work</h3>
-    <div class="row"><span class="k">sweeps (every site once)</span><span class="v" id="sSweep">0</span></div>
+    <div class="row"><span class="k" id="clockName">clocks</span><span class="v" id="sSweep">0</span></div>
     <div class="row"><span class="k">rewrites</span><span class="v" id="sFires">0</span></div>
     <div class="row"><span class="k">steps · exchanges</span><span class="v" id="sHops">0</span></div>
     <div class="row"><span class="k">folds · flips</span><span class="v" id="sFold">0</span></div>
     <div class="row"><span class="k">rewrites waiting for room</span><span class="v" id="sBlock">0</span></div>
     <canvas class="chart" id="chart" width="680" height="160"></canvas>
-    <div class="note"><span style="color:#ffd866">■</span> rewrites per sweep &nbsp;<span style="color:#56c8ff">■</span> strands in use</div>
+    <div class="note"><span style="color:#ffd866">■</span> rewrites per clock &nbsp;<span style="color:#56c8ff">■</span> strands in use</div>
 
     <h3>matter</h3>
     <div class="row"><span class="k">agents</span><span class="v" id="sAgents">0</span></div>
     <div class="row"><span class="k">strands (peak)</span><span class="v" id="sStrands">0</span></div>
     <div class="row"><span class="k">wanted walkers stepping · blocked</span><span class="v" id="sWalk">0</span></div>
+    <div class="row"><span class="k">demand delivered by pulse</span><span class="v" id="sPulse">0</span></div>
+    <div class="row"><span class="k">duplicators collected</span><span class="v" id="sGc">0</span></div>
+    <div class="row"><span class="k">most sites in use at once</span><span class="v" id="sExtent">0</span></div>
 
     <h3>the lattice</h3>
     <div class="cfg">
@@ -84,8 +87,12 @@
       <span class="k">rewrites inside</span><select id="cBlock"><option value="1" selected>one 2×2 block</option><option value="0">a site and its neighbours</option></select>
       <span class="k">evaluation</span><select id="cLazy"><option value="1" selected>lazy: only wanted readers react</option><option value="0">eager: every pair reacts</option></select>
       <span class="k">temperature</span><span><input id="cTemp" type="range" min="2" max="40" value="20" style="width:110px"> <span id="cTempV" class="note"></span></span>
+      <span class="k">wire tension</span><select id="cTension"><option value="3,1" selected>light: fastest on small programs</option><option value="6,4">strong: wires never swell (large programs)</option></select>
       <span class="k">exchanges</span><select id="cSwap"><option value="1" selected>on</option><option value="0">off</option></select>
-      <span class="k">self-propelled walkers</span><select id="cActive"><option value="0.5" selected>on</option><option value="0">off</option></select>
+      <span class="k">demand travels</span><select id="cPulse"><option value="1" selected>as pulses along wires</option><option value="0">only by contact</option></select>
+      <span class="k">garbage</span><select id="cGc"><option value="1" selected>erasers collect duplicators</option><option value="0">left in place</option></select>
+      <span class="k">turns</span><select id="cTurns"><option value="0.8" selected>mostly to sites with agents</option><option value="0">evenly to every site</option></select>
+      <span class="k">schedule</span><select id="cSched"><option value="0" selected>random turns (asynchronous chip)</option><option value="1">2×2×2 blocks, one move each per clock (synchronous chip)</option></select>
     </div>
     <div class="note" style="margin-top:6px" id="bits"></div>
 
@@ -100,8 +107,17 @@
       <p><b>Exchange.</b> In a full site, an agent may trade places with a resident, so walkers get through crowds.</p>
       <p><b>Rewrite.</b> When a wanted reader and the value it reads meet (same site, or one strand apart), the rule
         fires inside a 2×2 block: fresh agents take the free seats and are wired with fresh strands.</p>
-      <p><b>Demand.</b> Nothing reacts until wanted. A wanted reader that reaches another computation's output makes
-        that computation wanted too, so demand travels with the walkers, not as a signal.</p>
+      <p><b>Demand.</b> Nothing reacts until wanted. A wanted reader sends a pulse (white dot) along its principal
+        wire, one strand per clock; when it reaches another computation's output, that computation is wanted too.
+        A pulse whose strand gets moved is dropped, and the reader sends another.</p>
+      <p><b>Tension.</b> At temperature 2 a loose wire gains more from wiggling than it loses to its tension, so
+        over long runs wire swells until no lane is free. Strong tension stops that, at some cost on small programs.</p>
+      <p><b>Garbage.</b> An eraser that touches one output of a duplicator collects it: the duplicator becomes a
+        plain wire from its input to its other output, and both vanish. Otherwise erasers wait forever on copies
+        nobody wants, crowding the reactions that matter.</p>
+      <p><b>Clocks.</b> With random turns, a clock is one turn for the busiest site. With 2×2×2 blocks, the lattice is
+        cut into disjoint blocks at a random offset every clock and each block makes one move: what a synchronous
+        chip would do, with no two moves ever touching the same site.</p>
       <p class="note"><kbd>space</kbd> play · <kbd>R</kbd> restart · <kbd>F</kbd> fit · drag to pan · wheel to zoom</p>
     </details>
   </div>
@@ -130,7 +146,8 @@ function populate() {
   for (const w of catalog.workloads) { const o = document.createElement("option"); o.value = w.name; o.textContent = w.name; o.title = w.desc; sel.appendChild(o); }
   for (const [v, t] of [["random", "random term"], ["custom", "custom term…"]]) { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); }
   $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${TAGS[t]} ${NAMES[TAGS[t]]}</span>`).join("")
-    + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`;
+    + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
+    + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   sel.value = q.get("p") || "share-tower"; $("progN").value = q.get("n") || 4;
   if (q.get("dim")) $("cDim").value = q.get("dim");
@@ -156,17 +173,18 @@ function load() {
   let side = Math.ceil(Math.sqrt(agents) * (depth > 1 ? 7 : 8)) + 16;
   // Grow the grid until the term's initial drawing fits.
   let rc = 2;
-  const flags = (+$("cBlock").value) | (+$("cLazy").value << 1);
+  const flags = (+$("cBlock").value) | (+$("cLazy").value << 1) | (+$("cPulse").value << 2) | (+$("cSched").value << 3) | (+$("cGc").value << 4);
   for (let tries = 0; tries < 6; tries++) {
-    rc = withString(src, (p, n) => E.strands_new(side, side, depth, k, lanes, flags, +$("cTemp").value / 10, +$("cSwap").value, +$("cActive").value, 7, p, n));
+    rc = withString(src, (p, n) => E.strands_new(side, side, depth, k, lanes, flags, +$("cTemp").value / 10, +$("cSwap").value, +$("cTurns").value, ...$("cTension").value.split(",").map(Number), 7, p, n));
     if (rc !== 2) break;
     side = Math.ceil(side * 1.4);
   }
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
   L = { w: side, h: side, depth, k, lanes, ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4 };
   finished = false; oracleText = null; hist = []; bursts = [];
-  const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1));
-  $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each) plus a switchboard of ${ends} ends × ${bits} bits ≈ ${4 * L.k + ends * bits} bits. Moves touch at most one 2×2 block.`;
+  const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), pulse = +$("cPulse").value ? bits : 0;
+  $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each, plus a wanted bit) and a switchboard of ${ends} ends × ${bits} bits${pulse ? `, plus ${bits} bits saying which strand carries a pulse` : ""}: ≈ ${5 * L.k + ends * bits + pulse} bits. Moves touch at most one 2×2 block.`;
+  $("clockName").textContent = +$("cSched").value ? "clocks (one move per 2×2×2 block)" : "clocks (turns of the busiest site)";
   location.hash = `p=${$("prog").value}&n=${$("progN").value}&dim=${depth}`;
   fitContent(); draw(); panel(true);
   banner(`${src}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
@@ -205,7 +223,8 @@ function neighbor(s, f) {
 function views() {
   const b = E.memory.buffer, n = L.w * L.h * L.depth;
   return { tags: new Uint8Array(b, E.tags_ptr(), n * L.ks), want: new Uint8Array(b, E.want_ptr(), n * L.ks),
-    mate: new Uint8Array(b, E.mate_ptr(), n * L.ends), live: new Uint32Array(b, E.live_ptr(), E.live_len()) };
+    mate: new Uint8Array(b, E.mate_ptr(), n * L.ends), live: new Uint32Array(b, E.live_ptr(), E.live_len()),
+    pulse: new Uint8Array(b, E.pulse_ptr(), n) };
 }
 function fitContent() {
   const V = views(); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -290,6 +309,15 @@ function draw() {
     ctx.fillStyle = COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
     if (V.want[s * L.ks + k] && isConsumer(t)) { ctx.strokeStyle = "#56c8ff"; ctx.lineWidth = Math.max(0.4, 1.4 / view.s); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
   }
+  // demand pulses, each on the strand end it is about to cross
+  ctx.globalCompositeOperation = "lighter";
+  for (const s of sites) {
+    const e = V.pulse[s]; if (e === NONE) continue;
+    const [x, y] = endPos(s, e);
+    ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.beginPath(); ctx.arc(x, y, S * 0.32, 0, 7); ctx.fill();
+    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(x, y, S * 0.13, 0, 7); ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
   // rewrites, as fading rings
   const now = performance.now(); let keep = 0;
   for (const b of bursts) {
@@ -315,7 +343,7 @@ function frame() {
     const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now();
     for (let i = 0; i < fl.length && bursts.length < 600; i++) bursts.push({ s: fl[i], t: now });
     E.fire_log_clear();
-    const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 14);
+    const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 17);
     hist.push({ sw: st[1], fires: st[2], strands: st[7] }); if (hist.length > 3000) hist.splice(0, 1500);
     if (finished) { playing = false; $("play").textContent = "▶"; }
   }
@@ -327,18 +355,19 @@ let lastPanel = 0;
 function panel(force) {
   if (!L) return;
   const now = performance.now(); if (!force && now - lastPanel < 200) return; lastPanel = now;
-  const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 14);
+  const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 17);
   $("sSweep").textContent = fmt(st[1]); $("sFires").innerHTML = `<b>${fmt(st[2])}</b>`;
   $("sHops").textContent = `${fmt(st[3])} · ${fmt(st[4])}`; $("sFold").textContent = `${fmt(st[5])} · ${fmt(st[6])}`;
   $("sBlock").textContent = fmt(st[9]); $("sAgents").textContent = fmt(st[11]); $("sStrands").textContent = `${fmt(st[7])} (${fmt(st[8])})`;
   $("sWalk").textContent = `${fmt(st[12])} · ${fmt(st[13])}`;
+  $("sPulse").textContent = fmt(st[14]); $("sExtent").textContent = fmt(st[15]); $("sGc").textContent = fmt(st[16]);
   chart();
   const badge = $("badge");
   if (!finished) { badge.className = "badge run"; badge.textContent = playing ? "RUNNING" : "PAUSED"; $("decoded").textContent = ""; $("answer").textContent = ""; $("verdict").textContent = ""; return; }
   const ans = text(E.strands_answer()), decd = text(E.strands_answer_decoded());
   if (oracleText === null) oracleText = text(E.strands_oracle(200000));
   const ok = oracleText === "" ? null : ans === oracleText;
-  badge.className = "badge " + (ok === false ? "bad" : "ok"); badge.textContent = ok === false ? "WRONG ANSWER" : `DONE in ${fmt(st[1])} sweeps`;
+  badge.className = "badge " + (ok === false ? "bad" : "ok"); badge.textContent = ok === false ? "WRONG ANSWER" : `DONE in ${fmt(st[1])} clocks`;
   $("decoded").textContent = decd ? `= ${decd}` : ""; $("answer").textContent = ans;
   $("verdict").textContent = ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText;
 }

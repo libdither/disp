@@ -39,16 +39,18 @@ fn parse(src: &str) -> Result<Term, String> {
     term::parse(src)
 }
 
-/// Load a term. Flags: bit 0 block rewrites, bit 1 lazy. Returns 0, or an error in the text.
+/// Load a term. Flags: bit 0 block rewrites, bit 1 lazy, bit 2 demand pulses, bit 3 Margolus
+/// blocks, bit 4 erasers collect duplicators. Returns 0, or an error in the text.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub extern "C" fn strands_new(w: u32, h: u32, depth: u32, k: u32, lanes: u32, flags: u32, temp: f64, swap: f64, active: f64,
+pub extern "C" fn strands_new(w: u32, h: u32, depth: u32, k: u32, lanes: u32, flags: u32, temp: f64, swap: f64, agent_turns: f64, w_principal: f64, w_aux: f64,
                               seed: u32, src: *const u8, len: usize) -> i32 {
     std::panic::set_hook(Box::new(|info| { set_text(&format!("engine panic: {info}")); }));
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     let t = match parse(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, depth, k: k as usize, lanes: lanes as usize, block: flags & 1 != 0, lazy: flags & 2 != 0,
-                     temp, swap, active, seed: seed as u64, ..Params::default() };
+                     pulse: flags & 4 != 0, margolus: flags & 8 != 0, gc: flags & 16 != 0, temp, swap, agent_turns, w_principal, w_aux, seed: seed as u64, ..Params::default() };
+    if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
     let mut net = Net::new();
     let root = net.build(&t);
     let (_, out) = net.drive(root);
@@ -72,6 +74,7 @@ pub extern "C" fn strands_run(n: u32) -> u32 {
 #[no_mangle] pub extern "C" fn tags_ptr() -> *const u8 { st().l.tags.as_ptr() }
 #[no_mangle] pub extern "C" fn want_ptr() -> *const bool { st().l.want.as_ptr() }
 #[no_mangle] pub extern "C" fn mate_ptr() -> *const u8 { st().l.mate.as_ptr() }
+#[no_mangle] pub extern "C" fn pulse_ptr() -> *const u8 { st().l.pulse_at.as_ptr() }
 #[no_mangle] pub extern "C" fn live_ptr() -> *const u32 { st().l.live().as_ptr() }
 #[no_mangle] pub extern "C" fn live_len() -> u32 { st().l.live().len() as u32 }
 #[no_mangle] pub extern "C" fn slots_per_site() -> u32 { st().l.ks as u32 }
@@ -80,16 +83,17 @@ pub extern "C" fn strands_run(n: u32) -> u32 {
 #[no_mangle] pub extern "C" fn fire_log_len() -> u32 { st().l.fire_log.len() as u32 }
 #[no_mangle] pub extern "C" fn fire_log_clear() { st().l.fire_log.clear(); }
 
-/// proposals, sweeps, fires, hops, swaps, folds, flips, strands, peak strands, blocked, done,
-/// agents, wanted walker steps, walker steps blocked by a full site
+/// proposals, clocks, fires, hops, swaps, folds, flips, strands, peak strands, blocked, done,
+/// agents, wanted walker steps, walker steps blocked by a full site, demand pulses delivered,
+/// peak live sites, duplicators collected
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn stats_ptr() -> *const f64 {
     let s = st();
     let x = &s.l.stats;
-    let v = [x.proposals as f64, x.sweeps, x.fires as f64, x.hops as f64, x.swaps as f64, x.folds as f64, x.flips as f64,
+    let v = [x.proposals as f64, x.clocks, x.fires as f64, x.hops as f64, x.swaps as f64, x.folds as f64, x.flips as f64,
              x.strands as f64, x.peak_strands as f64, x.blocked_fires as f64, s.done as u8 as f64,
-             s.l.shadow.live_count() as f64, x.walk_ok as f64, x.walk_fail[0] as f64];
+             s.l.shadow.live_count() as f64, x.walk_ok as f64, x.walk_fail[0] as f64, x.pulses as f64, x.peak_live as f64, x.collected as f64];
     unsafe { for (i, y) in v.iter().enumerate() { STATS[i] = *y; } STATS.as_ptr() }
 }
 

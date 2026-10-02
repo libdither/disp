@@ -18,7 +18,7 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`).
   present there, namely agent ports and strand ends. A wire is a path: port, switchboard,
   strand, switchboard, …, port. Two wires cross for free by passing through the same
   switchboard.
-- **Moves.** Every move touches at most one 2×2 block of sites:
+- **Moves.** Every move touches at most one 2×2 square of sites:
   - **step**: an agent moves to a neighbouring site. It eats the strand it walks along and
     drags its other wires one strand longer.
   - **exchange**: an agent trades places with an agent in a full site, so walkers get through
@@ -26,34 +26,57 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`).
   - **fold**: a wire that leaves a site and comes straight back snaps shut.
   - **flip**: a wire's corner turns to the other side of its square.
   - **rewrite**: once a consumer and its producer meet (same site, or one strand apart), the
-    rule fires inside a 2×2 block containing both. A small search seats the fresh agents in the
-    block's free slots and wires them with free strands. If there is no room, nothing changes
-    and the pair waits.
+    rule fires inside a 2×2 square containing both, in any plane. A small search seats the
+    fresh agents in the square's free slots and wires them with free strands. If there is no
+    room, nothing changes and the pair waits.
 - **Scheduling is thermal.** Moves are random local proposals, accepted Metropolis-style by an
   energy:
   - wire tension, heavier on principal wires, so reactants find each other;
   - crowding;
   - a temperature, which lets matter step out of the way.
 
+  Most turns (80%) go to sites holding agents; bare wire only needs enough turns to straighten.
   Nothing schedules anything, and there are no rules against cycles.
-- **Laziness by contact.** Only *wanted* consumers react:
+- **Laziness.** Only *wanted* consumers react:
   - The normalizer, the root and erasers start out wanted.
-  - A wanted reader that reaches another computation's output makes that computation wanted.
+  - A wanted reader puts a *demand pulse* on its principal wire. The pulse crosses one strand
+    per clock, following the switchboards. When it reaches another computation's output, that
+    computation is wanted too. Touching it by walking there does the same.
+  - If the strand under a pulse is moved, the pulse is dropped and the reader sends another, so
+    a pulse can never jump onto another wire.
   - In a rewrite, a fresh consumer is wanted when its output feeds a wanted reader.
+- **Garbage.** An eraser that touches one output of a duplicator collects it: the duplicator
+  becomes a plain wire from its input to its other output, and both agents vanish. It needs no
+  room, so it can always happen. Every consumer that reads a duplicator also has rules for
+  whatever the duplicator itself would have read, so no pair without a rule can appear.
+  Without this, lazy evaluation leaves erasers parked on copies nobody wants, and they crowd
+  out the reactions that matter.
 
-  Demand travels with the walkers; nothing is signalled along wires.
-- **Active matter.** Wanted consumers get turns of their own (self-propelled); idle matter
-  only gets thermal turns.
+Every rewrite and every collection is replayed on the abstract net, and a rewrite must be a
+pair the net has. At the end, the lattice is compared with the abstract net wire by wire.
+Tests also re-check every invariant after every single move.
 
-Every rewrite is replayed on the abstract net and must be a pair it has. At the end, the
-lattice is compared with the abstract net wire by wire. Tests also re-check every invariant
-after every single move.
+## Two schedules, and what a clock is
+
+- **Random turns** (an asynchronous chip): one site at a time makes a move. A *clock* is one
+  turn for the busiest site, since a chip gives every site at most one turn per clock. This
+  counts the extra turns agent sites get.
+- **Blocks** (`--margolus`, a synchronous chip): every clock the lattice is cut into 2×2×2
+  blocks at a random offset (the Margolus neighbourhood of classic physical cellular automata),
+  and every block holding matter makes one move inside it. No two moves ever touch the same
+  site, so the clock count is literal.
+
+Blocks cost 4–7× more clocks than random turns: each site gets a fraction of a move per
+clock, and a walker's next strand leads out of its block half the time.
+
+An earlier version measured time as proposals divided by live sites, which ignored extra turns.
+It made "self-propelled walkers" (extra turns for wanted readers) look like a 4× win; counted
+honestly they are 25× slower, and they are gone.
 
 ## What the exploration found
 
 Measured on the cascade's 160-term soak corpus (`strands-sweep`) and on the lambada benchmark
-programs (`strands-run`). "Sweeps" are proposals divided by live sites: the time a chip
-would take, since every site acts at once.
+programs (`strands-run`).
 
 **Temperature does the work that rules did in the cascade.** At 2 slots per site, temperature
 0.6 leaves terms stuck, and 1.2–2.0 completes all 160. The cascade needed relief rungs,
@@ -67,32 +90,73 @@ correct in every run):
 |---|---|---|---|---|---|
 | 2D | 1 | 4 | site + neighbours | 160 | ~99 bits |
 | 2D | 1 | 3 | site + neighbours | 147 | ~64 bits |
-| 2D | 2 | 3 | 2×2 block | 159 | ~98 bits |
-| 2D | 2 | 2 | 2×2 block | 158 | ~64 bits |
+| 2D | 2 | 3 | 2×2 square | 159; 160 lazy with exchanges and pulses | ~98 bits |
+| 2D | 2 | 2 | 2×2 square | 158 | ~64 bits |
 | 3D | 1 | 3 | site + neighbours | 160 | ~109 bits |
-| 3D | 2 | 2 | 2×2 block | 160 | ~98 bits |
+| 3D | 2 | 2 | 2×2 square | 160 | ~98 bits |
+| 3D | 2 | 3 | 2×2 square, blocks schedule | 160 | ~135 bits |
 
-Rewriting inside a 2×2 block is both more local and better than spilling into a site's four
-neighbours (158 vs 146 at 2 slots, 2 strands). With it, every transition of the machine is a
-function of one 2×2 block: the Margolus neighbourhood of the classic physical cellular automata.
+Rewriting inside a 2×2 square is both more local and better than spilling into a site's four
+neighbours (158 vs 146 at 2 slots, 2 strands).
 
 **Real programs need wire capacity, and that means 3D.**
 - **2D jams.** Lazy fib stalls after a few dozen rewrites. Diagnosis: the reaction zone fills
   with fresh agents (every site full) and its links fill with wires (no free strand to drag),
   so a wanted walker 15 strands from its target cannot advance. Neither stronger crowding,
-  pressure, repulsion nor weaker tension on idle matter cured it. They only move the jam.
-- **3D works.** Six links per site instead of four, at 2 agents and 3 strands per link
-  (~128 bits per site):
+  pressure, repulsion nor weaker tension on idle matter cured it. They only move the jam. With
+  collection and strong tension, 2D fib(0) does finish, but in 271k clocks (15× 3D).
+- **3D works**, with six links per site: 2 agents and 4 strands per link, about 165 bits per
+  site with the pulse.
 
-  | program | rewrites | sweeps | sweeps per rewrite |
-  |---|---|---|---|
-  | fib(0) | 830 | 20k | 24 |
-  | fib(1) | 998 | 31k | 31 |
+**Where the time goes.** `strands-run --profile` samples what every wanted reader is waiting
+on. On fib(0), before pulses:
+- some pair was ready to react during only 17% of clocks: lazy evaluation is close to
+  sequential, so each step's latency is the whole cost;
+- readers carrying demand to a computation spent most of the rest, walking ~9 strands to touch
+  it;
+- readers walking to the value they need took most of the remainder, ~4 strands.
 
-  That is with exchanges and self-propelled walkers. Without them, fib(0) took 76k sweeps:
-  walkers spent most of their turns facing full sites, which is exactly what exchanges fix.
-- **Comparison.** The address-based mesh does the same programs at about 5 ticks per
-  rewrite: faster, but with a 5-kbit tile, a router and global addresses.
+Each fix took a share of that, on fib(0) with random turns:
+
+| change | clocks |
+|---|---|
+| exchanges off | 54k |
+| exchanges on | 24k |
+| + most turns to agent sites | 19k |
+| + demand pulses | 13–15k |
+| + rewrite squares in any plane (they were all horizontal, so 3D pairs had to share a layer) | 10–12k |
+| + erasers collect duplicators (below) | 9.7k |
+
+**Garbage blocks large programs.** fib(2) froze after 3,306 rewrites: the one rewrite that
+mattered (a duplicator meeting a fork, the largest rule) had no room, because 196 erasers were
+parked on duplicator outputs around it. Collecting duplicators removes them and also saves
+work: fib(0) drops from 830 rewrites to 556.
+
+**Then wires swell.** With collection, fib(2) froze again at 2,246 rewrites. This time a wanted
+reader sat 2–4 strands from its value for 1.7M clocks while wire grew from 31k to 156k strands.
+At temperature 2 a wire's entropy outweighs its tension: in 3D a path has about 5 ways to
+continue, so with aux tension 1 an extra strand costs 1 − 2·ln 5 < 0. Wire grows until every
+lane near the reaction is full, and a reader cannot step without a free lane for its other
+wires. The threshold is sharp: at aux tension 3, just below 2·ln 5 ≈ 3.2, fib(2) still swells
+(45k to 167k strands) and freezes at 4,970 rewrites; at 4, wire stays near 43k strands and
+fib(2) finishes.
+
+**Against the address-based mesh.** The mesh speculates, so it does several times the
+rewrites. Random-turn clocks, with collection and pulses:
+
+| program | mesh rewrites | mesh ticks | strand rewrites | light tension (3, 1) | tension 6, 4 | blocks, light tension |
+|---|---|---|---|---|---|---|
+| fib(0) | 1,627 | 7,450 | 556 | 9.7k | 18k | 38k |
+| fib(1) | 1,821 | 8,928 | 655 | 11k | 15k | 50k |
+| sort(1) | 2,174 | 2,615 | 210 | 2.1k | 4.9k | 14k |
+| exp(1) | 15,139 | 100k | 4,102 | 90k at tension 6, 3 | 125k | — |
+| fib(2) | 20,808 | 137k | 5,453 | swells and freezes | 455k | — |
+
+So with light tension the strand lattice is within 1.3× of the mesh on fib(0) and fib(1), and
+faster on sort(1) and exp(1). Strong tension costs 1.3–2.3× on small programs, but it is what
+lets fib(2) finish (about 3.3× the mesh's time, on a quarter of its rewrites). A mesh tile is
+about 5 kbit plus a router; a strand site here is about 165 bits. fib(0) peaks at about 2,000
+sites in use.
 
 ## Things tried that did not help, and why
 
@@ -108,19 +172,25 @@ function of one 2×2 block: the Margolus neighbourhood of the classic physical c
   - T1·F and Dn·F need 5-port builders.
 
   Five ports would make every switchboard bigger, so this stayed an analysis.
-- **More self-propulsion** (90% of turns to walkers): worse. Walkers retry blocked rewrites
-  while idle matter never gets the turns it needs to make room.
+- **Walker priority.** Letting a wanted reader take its site's turn: neutral at 50%. At 100%
+  it livelocks: a reader whose rewrite has no room retries forever and its site never does
+  anything else to make room.
+- **Under blocks**: a higher step rate is worse (wires need reshaping turns too), and letting
+  a ready rewrite go first in its block changes nothing.
+- **Eager evaluation** finishes fib(0) in 11k clocks, but with about 67× the rewrites.
 
 ## Open
 
-- **Speed.** About 25–30 sweeps per rewrite, against about 5 ticks for the address-based mesh.
-  Most proposals still go to kink motion on idle wires, and walkers wander. A better initial
-  layout would help: the term is drawn in one layer of the 3D grid, as a 2D tree drawing.
-  Biasing proposals toward where reactions wait would help too.
-- **Larger programs.** fib(2), exp and sort have not been run to completion yet.
-- **The hardware schedule.** The simulator draws proposals one at a time. A chip would update
-  all 2×2 blocks of one parity at once (Margolus), each picking its own random move.
-- **Bits.** The switchboard dominates site size: 24 ends at 5 bits in the 3D configuration.
+- **One tension for every size.** Light tension is up to 2.3× faster on small programs; strong
+  tension is needed for large ones. Tension that rises with how crowded a link's lanes are
+  might give both.
+- **More garbage.** Erasers still park on the outputs of other computations nobody wants
+  (about a dozen on applications during fib(2)). Deleting such a computation and erasing its
+  inputs would collect them too.
+- **The synchronous schedule** pays one move per block per clock. Block rules that make several
+  moves at once (a walker eating every strand of its wire inside the block) would close part
+  of the gap, at the cost of bigger block logic.
+- **Bits.** The switchboard dominates site size: 30 ends at 5 bits in the 3D configuration.
   Most pass-throughs run straight across a site, so an encoding where "straight" is free could
   roughly halve it.
 
@@ -129,11 +199,14 @@ function of one 2×2 block: the Margolus neighbourhood of the classic physical c
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~3 s: corpus in 3 configurations, per-move invariants
+cargo test --release                                  # ~5 s: corpus in 4 configurations, per-move invariants, collection
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 3 --block --lazy --temp 2 --swap 1 --active 0.5
-cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=1 lanes=4 temp=2.0 grid=48"
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --margolus
+cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --wp 6 --wa 4 --budget 5000000000
+cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8"
 ```
 
-`strands-run --progress N` prints the wanted readers and their wire lengths every N
-proposals. `WHO=1` adds what each one is waiting on, which is how the 2D jam was diagnosed.
+`strands-run --profile` prints what wanted readers spend their time waiting on;
+`--progress N` prints the wanted readers and their wire lengths every N proposals, and `WHO=1`
+adds what each one is waiting on, which is how the 2D jam was diagnosed.
