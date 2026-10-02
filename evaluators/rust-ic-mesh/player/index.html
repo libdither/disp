@@ -1,0 +1,793 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rust-ic-mesh — interaction nets on a mesh of tiles</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#0d131d; --fg:#c8d3e0; --dim:#8595ad; --faint:#5a6b86; --accent:#56c8ff;
+    --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; --line:#1b2436; --line2:#2a3a52; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #wrap { display:flex; height:100vh; }
+  #stage { position:relative; flex:1; min-width:0; height:100%; overflow:hidden; }
+  #cv { width:100%; height:100%; display:block; cursor:grab; }
+  #cv.dragging { cursor:grabbing; }
+  #side { flex:0 0 372px; width:372px; padding:12px 14px 30px; overflow:auto; border-left:1px solid var(--line);
+    background:var(--panel); box-sizing:border-box; }
+  h1 { font-size:14px; margin:2px 0 4px; color:var(--accent); letter-spacing:.04em; }
+  h3 { color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
+  .note { color:var(--dim); font-size:11.5px; }
+  .row { display:flex; justify-content:space-between; margin:2px 0; align-items:baseline; gap:8px; }
+  .k { color:var(--dim); } .v { color:var(--fg); text-align:right; font-variant-numeric:tabular-nums; }
+  .v b { color:var(--hot); font-weight:normal; }
+  button, select, input { background:#16202f; color:var(--fg); border:1px solid var(--line2); border-radius:6px;
+    padding:4px 8px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button:disabled { opacity:.35; cursor:default; border-color:var(--line2); }
+  input[type=number] { width:52px; } input[type=range] { vertical-align:middle; accent-color:var(--accent); }
+  button:focus-visible, select:focus-visible, input:focus-visible, #cv:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  #topbar { position:absolute; z-index:5; top:10px; left:50%; transform:translateX(-50%); max-width:calc(100% - 20px);
+    box-sizing:border-box; display:flex; align-items:center; flex-wrap:wrap; justify-content:center; gap:7px; padding:6px 8px;
+    border:1px solid var(--line2); border-radius:12px; background:rgba(11,14,20,.9); box-shadow:0 6px 24px rgba(0,0,0,.4);
+    backdrop-filter:blur(8px); }
+  .sep { width:1px; height:24px; background:var(--line2); }
+  .icon { width:34px; height:30px; padding:0; display:grid; place-items:center; font:16px/1 system-ui,sans-serif; }
+  .icon.primary { width:40px; color:#04121c; background:var(--accent); border-color:#8bddff; }
+  .icon.primary:hover { background:#8bddff; }
+  .tog { padding:4px 7px; color:var(--dim); }
+  .tog.on { color:#04121c; background:#8bb8d8; border-color:#b9dcf2; }
+  #speedv { color:var(--dim); min-width:84px; display:inline-block; font-size:11px; }
+  #speed { width:120px; }
+  #prog { max-width:130px; }
+  #layers { position:absolute; z-index:5; left:12px; bottom:12px; display:flex; gap:5px; padding:5px; border-radius:10px;
+    border:1px solid var(--line2); background:rgba(11,14,20,.88); backdrop-filter:blur(6px); }
+  #custom { width:220px; }
+  #tip { position:absolute; z-index:7; min-width:250px; max-width:340px; box-sizing:border-box; padding:8px 9px;
+    border:1px solid #3a506f; border-radius:9px; background:rgba(11,14,20,.97); box-shadow:0 10px 30px rgba(0,0,0,.6);
+    font-size:11px; line-height:1.35; pointer-events:none; }
+  #tip[hidden] { display:none; } #tip.pinned { border-color:var(--accent); }
+  .th { color:var(--accent); margin-bottom:4px; display:flex; justify-content:space-between; gap:10px; }
+  .ts { margin:3px 0; padding:3px 5px; border-radius:5px; background:#111a27; border:1px solid #1d2b3e; }
+  .ts .tag { font-weight:bold; }
+  .tp { color:var(--dim); font-size:10.5px; padding-left:8px; }
+  #banner { position:absolute; z-index:4; left:50%; bottom:64px; transform:translateX(-50%); padding:7px 14px;
+    border-radius:10px; border:1px solid var(--line2); background:rgba(11,14,20,.9); font-size:12px; pointer-events:none;
+    transition:opacity .4s; }
+  .badge { text-align:center; font-weight:bold; letter-spacing:.1em; padding:6px; border-radius:7px; margin:8px 0;
+    border:1px solid var(--line2); }
+  .badge.run { color:var(--accent); background:rgba(86,200,255,.07); }
+  .badge.ok { color:var(--ok); background:rgba(63,191,127,.1); border-color:rgba(63,191,127,.45); }
+  .badge.bad { color:var(--warn); background:rgba(255,107,107,.1); border-color:rgba(255,107,107,.45); }
+  .badge.idle { color:var(--dim); }
+  #answer { word-break:break-all; color:var(--hot); font-size:12px; max-height:68px; overflow:auto; }
+  #decoded { font-size:20px; color:var(--hot); }
+  canvas.chart { width:100%; height:92px; display:block; background:#0a1019; border:1px solid var(--line); border-radius:7px; }
+  .legend { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:2px 10px; font-size:11px; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .bar { height:6px; border-radius:3px; background:#1a2638; overflow:hidden; margin:1px 0 4px; }
+  .bar i { display:block; height:100%; }
+  .cfg { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; align-items:center; font-size:12px; }
+  .cfg .k { white-space:nowrap; }
+  details summary { cursor:pointer; color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
+  .how p { margin:5px 0; color:#aab6c6; font-size:11.5px; }
+  .how b { color:var(--fg); font-weight:normal; text-decoration:underline; text-decoration-color:#3a506f; }
+  kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:4px; padding:0 4px; font-size:10.5px; color:var(--dim); }
+</style></head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv" tabindex="0" aria-label="the mesh"></canvas>
+    <div id="topbar">
+      <select id="prog" title="program"></select>
+      <input id="progN" type="number" min="0" max="30" title="size">
+      <input id="custom" placeholder="@(@(S(L),S(L)),L)  or ternary" hidden>
+      <button id="load" title="load onto a fresh mesh (Enter)">load</button>
+      <span class="sep"></span>
+      <button class="icon" id="reset" title="restart this program (R)">⟲</button>
+      <button class="icon" id="step" title="one tick (→)">›</button>
+      <button class="icon primary" id="play" title="play / pause (space)">▶</button>
+      <button class="icon" id="end" title="run to the end">⏭</button>
+      <input id="speed" type="range" min="0" max="100" value="58" title="ticks per second">
+      <span id="speedv"></span>
+    </div>
+    <div id="layers">
+      <button class="tog on" id="vWires" title="references between agents (1)">wires</button>
+      <button class="tog on" id="vMsgs" title="messages in flight (2)">messages</button>
+      <button class="tog" id="vHeat" title="router traffic heat (3)">traffic</button>
+      <button class="tog" id="vSpace" title="free slots and the free-space field (4)">room</button>
+      <button class="tog" id="vFollow" title="keep the busiest region in view (5)">follow</button>
+      <button class="icon" id="fit" title="fit the grid (F)">⤢</button>
+    </div>
+    <div id="tip" hidden></div>
+    <div id="banner"></div>
+  </div>
+  <div id="side">
+    <h1>interaction nets on a mesh of tiles</h1>
+    <div class="note">Each square is a tile of a chip: 8 agent slots around a little router. A wire is not
+      matter but a reference (an address) held by the one reader of a value; messages hop one tile per tick.
+      Everything you see is the live engine, compiled to WebAssembly, the same code the Rust tests check.</div>
+    <div id="badge" class="badge idle">LOADING</div>
+    <div id="decoded"></div>
+    <div id="answer"></div>
+    <div class="note" id="verdict"></div>
+
+    <h3>clock and work</h3>
+    <div class="row"><span class="k">tick</span><span class="v" id="sTick">0</span></div>
+    <div class="row"><span class="k">rewrites</span><span class="v" id="sFires">0</span></div>
+    <div class="row"><span class="k">rewrites / tick (now · avg)</span><span class="v" id="sPar">0</span></div>
+    <div class="row"><span class="k">message hops (per rewrite)</span><span class="v" id="sHops">0</span></div>
+    <div class="row"><span class="k">rewrites in their own tile</span><span class="v" id="sLocal">–</span></div>
+    <div class="row"><span class="k">cancelled · shipped direct</span><span class="v" id="sCancel">0</span></div>
+    <canvas class="chart" id="chart" width="680" height="184"></canvas>
+    <div class="note"><span style="color:#ffd866">■</span> rewrites per tick &nbsp;<span style="color:#56c8ff">■</span> live agents</div>
+
+    <h3>memory</h3>
+    <div class="row"><span class="k">live agents (peak)</span><span class="v" id="sLive">0</span></div>
+    <div class="bar"><i id="occBar" style="background:linear-gradient(90deg,#56c8ff,#ffd866)"></i></div>
+    <div class="row"><span class="k">indirections · reserved</span><span class="v" id="sInd">0</span></div>
+    <div class="row"><span class="k">messages in flight (peak)</span><span class="v" id="sFlight">0</span></div>
+
+    <h3>messages sent</h3>
+    <div id="msgs"></div>
+
+    <h3>agents</h3>
+    <div class="legend" id="agents"></div>
+
+    <h3>machine</h3>
+    <div class="cfg">
+      <span class="k">grid</span><span><select id="cGrid"></select></span>
+      <span class="k">slots per tile</span><span><select id="cK"><option>6</option><option selected>8</option><option>12</option><option>16</option></select></span>
+      <span class="k">speculation</span><span><input id="cSpec" type="range" min="0" max="8" value="3" style="width:120px"> <span id="cSpecV" class="note"></span></span>
+      <span class="k">router buffer</span><span><select id="cFifo"><option>1</option><option>2</option><option selected>4</option><option>8</option></select> flits</span>
+      <span class="k">events / tick</span><span><select id="cEv"><option selected>1</option><option>2</option><option>4</option></select></span>
+    </div>
+    <div class="note" style="margin-top:6px" id="hw"></div>
+
+    <details class="how" open><summary>how it works</summary>
+      <p><b>Pull.</b> A consumer that wants a value sends a pull to the address it holds. A producer answers
+        by <b>shipping</b> itself over; an unfinished computation records the reader and starts working.</p>
+      <p><b>Fire.</b> When a producer reaches its consumer the rule fires right there: fresh agents take free slots
+        (the dying consumer's own slot first), and anything the rule hands to someone else travels as a message.</p>
+      <p><b>No locks.</b> Every value has exactly one reader, so every request about a value comes from one place,
+        and a tile settles races by handling one event at a time.</p>
+      <p><b>Demand and drop.</b> Nothing runs until something asks for it. An eraser sends a <b>drop</b> instead:
+        a producer is erased where it stands, and a computation nobody can read any more is cancelled.</p>
+      <p><b>Room.</b> When a tile is full, a rewrite docks and follows the free-space field (toggle <i>space</i>)
+        to the nearest tile with enough room. Running out of room is reported, never guessed around.</p>
+      <p class="note"><kbd>space</kbd> play · <kbd>→</kbd> step · <kbd>R</kbd> restart · <kbd>F</kbd> fit ·
+        <kbd>1</kbd>–<kbd>5</kbd> layers · drag to pan · wheel to zoom · click a tile to pin it</p>
+    </details>
+  </div>
+</div>
+<script src="engine.js"></script>
+<script>
+"use strict";
+// ---- the engine ---------------------------------------------------------------------------
+const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "ind", "resv"];
+const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3, 3];
+const GLYPH = ["", "L", "S", "F", "P", "⟨⟩", "@", "T", "?", "⊲", "δ", "ε", "N", "◉", "↪", ""];
+const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage",
+  Sel: "second dispatch", Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root" };
+const COLOR = ["#121923", "#ffd866", "#ffb454", "#ff7a59", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0",
+  "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#3c4a5e", "#22324a"];
+const MSG = ["pull", "ship", "moved", "spawn", "reserve", "grant", "release", "drop"];
+const MSG_DESC = ["a reader asks for a value", "a producer travels to its consumer", "a reader learns a new address",
+  "a fresh agent lands in reserved room", "a docked rewrite looks for room", "room found",
+  "unused room returned", "a value's reader is gone"];
+const MSG_COLOR = ["#56c8ff", "#ffb454", "#6ee07a", "#c792ea", "#8595ad", "#ffd866", "#5a6b86", "#ff6b6b"];
+const PHASE = ["idle", "?", "waiting", "?", "holds", "docked"];
+const PERMS = [[0, 1, 2], [2, 1, 0], [1, 0, 2], [0, 2, 1], [1, 2, 0], [2, 0, 1]];
+const NONE = 0xFFFFFFFF;
+const isProducer = t => t >= 1 && t <= 5;
+const isConsumer = t => t >= 6 && t <= 12;
+function isSource(t, p) {
+  if (isProducer(t)) return p === 0;
+  if (t === 6 || t === 7 || t === 8) return p === 2;
+  if (t === 12) return p === 1;
+  if (t === 9 || t === 10) return p === 1 || p === 2;
+  return false;
+}
+const aCell = a => (a & 0x3FFFFFFF) >>> 6, aSlot = a => (a >>> 2) & 15, aPort = a => a & 3;
+const rgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const RGB = COLOR.map(rgb);
+
+let E = null;              // wasm exports
+let catalog = null;
+const enc = new TextEncoder(), dec = new TextDecoder();
+const text = n => dec.decode(new Uint8Array(E.memory.buffer, E.text_ptr(), n));
+function withString(s, f) {
+  const b = enc.encode(s); const p = E.alloc(b.length || 1);
+  new Uint8Array(E.memory.buffer, p, b.length).set(b); return f(p, b.length);
+}
+
+// ---- state ----------------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+let M = null;              // the loaded machine: {w,h,k,side,source,...}
+let playing = false, acc = 0, lastT = 0, finished = false, oracleText = null;
+let view = { s: 4, ox: 0, oy: 0 };
+let heat = null, bursts = [], hover = null, pinned = null;
+let lastMoves = new Uint32Array(0), lastMoveTick = 0;
+const hist = [];           // {tick, fires, live}
+let prevStat = null, statFrame = 0;
+const show = { wires: true, msgs: true, heat: false, space: false };
+let autoplay = false, initialZoom = 1, follow = false, focus = null;
+
+// ---- loading --------------------------------------------------------------------------------
+function populate() {
+  const sel = $("prog");
+  for (const w of catalog.workloads) {
+    const o = document.createElement("option"); o.value = w.name; o.textContent = w.name; o.title = w.desc; sel.appendChild(o);
+  }
+  for (const [v, t] of [["random", "random term"], ["custom", "custom term…"]]) {
+    const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o);
+  }
+  const g = $("cGrid");
+  for (const v of ["auto", 12, 16, 24, 32, 48, 64, 96, 128, 160]) {
+    const o = document.createElement("option"); o.value = v; o.textContent = v === "auto" ? "auto" : v + "×" + v; g.appendChild(o);
+  }
+  $("msgs").innerHTML = MSG.map((m, i) => `<div class="row"><span class="k"><span class="sw" style="background:${MSG_COLOR[i]}"></span>${m}</span>
+    <span class="v" id="m${i}">0</span></div><div class="bar" title="${MSG_DESC[i]}"><i id="mb${i}" style="background:${MSG_COLOR[i]};width:0"></i></div>`).join("");
+  $("agents").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t =>
+    `<span><span class="sw" style="background:${COLOR[t]}"></span>${GLYPH[t]} ${NAMES[TAGS[t]]}</span>`).join("") +
+    `<span><span class="sw" style="background:${COLOR[14]}"></span>↪ indirection</span><span><span class="sw" style="background:#1e2c44;border:1px dashed #56c8ff"></span>reserved room</span>`;
+  const params = new URLSearchParams(location.hash.slice(1));
+  sel.value = params.get("p") || "fib";
+  $("progN").value = params.get("n") || 3;
+  $("cSpec").value = params.get("spec") ?? 3;
+  if (params.get("speed")) $("speed").value = params.get("speed");
+  if (params.get("grid")) { const g = $("cGrid"); if (![...g.options].some(o => o.value === params.get("grid"))) {
+    const o = document.createElement("option"); o.value = o.textContent = params.get("grid"); g.appendChild(o); } g.value = params.get("grid"); }
+  for (const key of ["wires", "msgs", "heat", "space", "follow"]) if (params.has(key)) show[key] = params.get(key) === "1";
+  follow = !!show.follow;
+  autoplay = params.get("play") !== "0";
+  initialZoom = +(params.get("z") || 1);
+  syncProgUI();
+}
+
+function syncProgUI() {
+  const v = $("prog").value, w = catalog.workloads.find(w => w.name === v);
+  $("custom").hidden = v !== "custom";
+  $("progN").hidden = !(w && w.n > 0) && v !== "random";
+  $("prog").title = w ? w.desc : v === "random" ? "a random term: size is the seed" : "type a term";
+  const s = +$("cSpec").value;
+  $("cSpecV").textContent = s === 0 ? "off: demand only" : `start early if ≥${s} free`;
+}
+
+function sourceText() {
+  const v = $("prog").value;
+  if (v === "custom") return $("custom").value.trim() || "@(@(S(L),S(L)),L)";
+  if (v === "random") return `random:${$("progN").value}:6`;
+  const w = catalog.workloads.find(w => w.name === v);
+  return w && w.n > 0 ? `${v}:${$("progN").value}` : v;
+}
+
+function layoutSide(k) { return Math.ceil(Math.sqrt(k + 1)); }
+
+function load() {
+  const src = sourceText();
+  const k = +$("cK").value, spec = +$("cSpec").value, fill = 3;
+  const agents = withString(src, (p, n) => E.mesh_probe(p, n));
+  if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return; }
+  let g = $("cGrid").value;
+  let side = g === "auto" ? Math.max(16, Math.min(160, Math.ceil(Math.sqrt(agents / fill * (spec ? 8 : 5) + 200)))) : +g;
+  side = Math.max(side, Math.ceil(Math.sqrt(agents / fill)) + 1);
+  const rc = withString(src, (p, n) => E.mesh_new(side, side, k, +$("cFifo").value, +$("cEv").value, spec, fill, p, n));
+  if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
+  M = { w: side, h: side, k, side: layoutSide(k), src, spec, agents };
+  M.tw = M.side + 1; // tile pitch in pixel-layer units
+  M.pix = document.createElement("canvas"); M.pix.width = M.w * M.tw + 1; M.pix.height = M.h * M.tw + 1;
+  M.pctx = M.pix.getContext("2d"); M.img = M.pctx.createImageData(M.pix.width, M.pix.height);
+  M.px = new Uint32Array(M.img.data.buffer);
+  M.slotPos = slotLayout(k, M.side);
+  heat = new Float32Array(M.w * M.h);
+  bursts = []; hist.length = 0; prevStat = null; finished = false; oracleText = null; pinned = null; acc = 0;
+  lastMoves = new Uint32Array(0);
+  location.hash = `p=${$("prog").value}&n=${$("progN").value}&spec=${spec}`;
+  $("hw").innerHTML = hardwareNote(M);
+  fit(); if (initialZoom !== 1) zoomAt(initialZoom); refreshPanel(true); draw(0);
+  banner(`${src} — ${agents} agents on ${side}×${side} tiles · ${side * side * k} slots`);
+}
+
+function slotLayout(k, side) {
+  // Slots sit around the router hub (the centre, when the block has one), corners first so a
+  // lightly loaded tile reads as a scatter rather than a stripe.
+  const centre = side % 2 ? (side * side - 1) / 2 : -1, cells = [];
+  for (let i = 0; i < side * side; i++) if (i !== centre) cells.push([i % side, Math.floor(i / side)]);
+  const m = (side - 1) / 2, corner = ([x, y]) => (x === 0 || x === side - 1) && (y === 0 || y === side - 1);
+  cells.sort((a, b) => (corner(b) - corner(a)) || (Math.hypot(b[0] - m, b[1] - m) - Math.hypot(a[0] - m, a[1] - m)));
+  const ring = cells.filter(corner); // opposite corners first: 0,0 then far,far, then the other two
+  const order = ring.length === 4 ? [ring[0], ring[3], ring[1], ring[2]] : ring;
+  const pos = [...order, ...cells.filter(c => !corner(c))].slice(0, k);
+  return { pos, router: centre >= 0 ? [centre % side, Math.floor(centre / side)] : null };
+}
+
+function hardwareNote(M) {
+  const cells = M.w * M.h, addr = Math.ceil(Math.log2(cells)) + Math.ceil(Math.log2(M.k)) + 2;
+  const slotBits = 4 + 3 + 3 + 3 * (addr + 2);
+  const flit = 4 + addr + 4 + 3 * addr;
+  return `addresses are ${addr} bits here; a slot is ~${slotBits} bits (tag, phase, port permutation, three references
+    with reader flags), a tile ~${M.k * slotBits + 4 * 4 * flit} bits of state including four ${+$("cFifo").value}-flit
+    router buffers. The router is plain X-then-Y; tiles only ever talk to their four neighbours.`;
+}
+
+// ---- view -------------------------------------------------------------------------------------
+function fit() {
+  if (!M) return;
+  const r = cv.getBoundingClientRect(), pw = M.pix.width, ph = M.pix.height;
+  view.s = Math.min((r.width - 40) / pw, (r.height - 90) / ph);
+  view.ox = (r.width - pw * view.s) / 2; view.oy = (r.height - ph * view.s) / 2 + 22;
+}
+function zoomAt(f, mx, my) {
+  const r = cv.getBoundingClientRect(); mx ??= r.width / 2; my ??= r.height / 2;
+  const s2 = Math.max(0.3, Math.min(60, view.s * f));
+  view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2;
+}
+function resize() {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+}
+const tileCentre = c => [(c % M.w) * M.tw + 1 + M.side / 2, Math.floor(c / M.w) * M.tw + 1 + M.side / 2];
+function slotCentre(c, s) {
+  const [sx, sy] = M.slotPos.pos[s];
+  return [(c % M.w) * M.tw + 1 + sx + 0.5, Math.floor(c / M.w) * M.tw + 1 + sy + 0.5];
+}
+
+// ---- reading engine memory ----------------------------------------------------------------
+function views() {
+  const buf = E.memory.buffer;
+  return {
+    u8: new Uint8Array(buf, E.slots_ptr(), M.w * M.h * M.k * 32),
+    u32: new Uint32Array(buf, E.slots_ptr(), M.w * M.h * M.k * 8),
+    fifo: new Uint8Array(buf, E.fifo_ptr(), M.w * M.h * 4),
+    free: new Uint8Array(buf, E.free_ptr(), M.w * M.h),
+    phi: new Uint8Array(buf, E.phi_ptr(), M.w * M.h * E.phi_fields()),
+  };
+}
+function stats() { return new Float64Array(E.memory.buffer, E.stats_ptr(), 26); }
+
+// ---- the loop ---------------------------------------------------------------------------------
+function ticksPerSecond() { const v = +$("speed").value; return v >= 100 ? Infinity : Math.pow(10, v / 100 * 5.3); }
+function frame(t) {
+  const dt = Math.min(0.1, (t - (lastT || t)) / 1000); lastT = t;
+  if (M && playing && !finished) {
+    const tps = ticksPerSecond();
+    const t0 = performance.now();
+    let want = tps === Infinity ? 1e9 : (acc += dt * tps, Math.floor(acc));
+    if (tps !== Infinity) acc -= want;
+    let ran = 0;
+    while (ran < want) {
+      const chunk = Math.min(want - ran, tps > 2000 ? 4096 : 64);
+      const r = E.mesh_step(chunk); ran += r;
+      if (r < chunk) { finished = true; break; }
+      if (performance.now() - t0 > 13) { acc = 0; break; }
+    }
+    if (ran > 0) harvest();
+  }
+  decayHeat(dt);
+  if (follow && focus && !drag) {
+    const r = cv.getBoundingClientRect(), tx = r.width / 2 - focus[0] * view.s, ty = r.height / 2 - focus[1] * view.s;
+    const k = 1 - Math.exp(-dt * 2.5); view.ox += (tx - view.ox) * k; view.oy += (ty - view.oy) * k;
+  }
+  draw(tps_progress());
+  if (++statFrame % 4 === 0 || finished) refreshPanel(false);
+  requestAnimationFrame(frame);
+}
+function tps_progress() { const tps = ticksPerSecond(); return playing && tps < 90 ? Math.min(1, acc) : 1; }
+
+function harvest() {
+  const buf = E.memory.buffer;
+  lastMoves = new Uint32Array(buf, E.moves_ptr(), E.moves_len() * 2).slice();
+  const ff = new Uint32Array(buf, E.frame_fires_ptr(), E.frame_fires_len() * 2);
+  const now = performance.now();
+  for (let i = 0; i < ff.length && bursts.length < 1500; i += 2) {
+    const name = catalog.rules[ff[i + 1]], ct = TAGS.indexOf(name.split("·")[0]);
+    bursts.push({ c: ff[i], t0: now, col: COLOR[ct] || "#ffffff" });
+  }
+  if (ff.length) {
+    let sx = 0, sy = 0; for (let i = 0; i < ff.length; i += 2) { const [x, y] = tileCentre(ff[i]); sx += x; sy += y; }
+    const n = ff.length / 2, c = [sx / n, sy / n];
+    focus = focus ? [focus[0] * 0.9 + c[0] * 0.1, focus[1] * 0.9 + c[1] * 0.1] : c;
+  }
+  const tr = new Uint32Array(buf, E.traffic_ptr(), M.w * M.h);
+  for (let i = 0; i < tr.length; i++) if (tr[i]) heat[i] += tr[i];
+  E.mesh_frame_reset();
+  const st = stats();
+  hist.push({ tick: st[0], fires: st[1], live: st[3] });
+  if (hist.length > 4000) hist.splice(0, 2000);
+  if (finished) onFinish();
+}
+function decayHeat(dt) { if (!heat) return; const f = Math.exp(-dt * 1.6); for (let i = 0; i < heat.length; i++) heat[i] *= f; }
+
+function onFinish() {
+  playing = false; $("play").textContent = "▶";
+  if (oracleText === null) oracleText = text(E.mesh_oracle(200000));
+  refreshPanel(true);
+}
+
+// ---- drawing ------------------------------------------------------------------------------------
+function draw(progress) {
+  const d = devicePixelRatio || 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#0b0e14"; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (!M) return;
+  const V = views();
+  paintPixels(V);
+  ctx.setTransform(d * view.s, 0, 0, d * view.s, d * view.ox, d * view.oy);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(M.pix, 0, 0);
+  const vis = visibleTiles();
+  if (view.s >= 7) drawGlyphs(V, vis);
+  if (show.wires) drawWires(V, vis);
+  if (show.msgs) drawMessages(progress);
+  drawBursts();
+  drawHover(V);
+}
+
+function visibleTiles() {
+  const r = cv.getBoundingClientRect();
+  const x0 = Math.max(0, Math.floor((-view.ox / view.s) / M.tw) - 1), y0 = Math.max(0, Math.floor((-view.oy / view.s) / M.tw) - 1);
+  const x1 = Math.min(M.w - 1, Math.ceil(((r.width - view.ox) / view.s) / M.tw) + 1);
+  const y1 = Math.min(M.h - 1, Math.ceil(((r.height - view.oy) / view.s) / M.tw) + 1);
+  return { x0, y0, x1, y1 };
+}
+
+function paintPixels(V) {
+  const { w, h, k, tw, px } = M, pw = M.pix.width;
+  const gut = pack(13, 18, 27), bgFree = pack(...RGB[0]);
+  px.fill(pack(8, 11, 16));
+  const maxHeat = show.heat ? Math.max(4, ...sampleMax(heat)) : 1;
+  for (let c = 0; c < w * h; c++) {
+    const x0 = (c % w) * tw + 1, y0 = Math.floor(c / w) * tw + 1;
+    let tint = null;
+    if (show.heat && heat[c] > 0.05) tint = heatColor(Math.min(1, Math.sqrt(heat[c] / maxHeat)));
+    if (show.space) tint = spaceColor(V.free[c], V.phi[c * E.phi_fields() + 2], k);
+    // router hub
+    if (M.slotPos.router) {
+      const occ = V.fifo[c * 4] + V.fifo[c * 4 + 1] + V.fifo[c * 4 + 2] + V.fifo[c * 4 + 3];
+      const v = Math.min(1, occ / 6);
+      px[(y0 + M.slotPos.router[1]) * pw + x0 + M.slotPos.router[0]] =
+        occ ? pack(40 + 215 * v, 60 + 150 * v, 90 + 30 * v) : (tint ? pack(...tint) : gut);
+    }
+    for (let s = 0; s < k; s++) {
+      const kind = V.u8[(c * k + s) * 32];
+      const [sx, sy] = M.slotPos.pos[s];
+      let col;
+      if (kind === 0) col = tint ? pack(...tint) : bgFree;
+      else { const rgbv = RGB[kind]; col = pack(rgbv[0], rgbv[1], rgbv[2]); }
+      px[(y0 + sy) * pw + x0 + sx] = col;
+    }
+  }
+  M.pctx.putImageData(M.img, 0, 0);
+}
+function sampleMax(a) { let m = 0; for (let i = 0; i < a.length; i += 3) if (a[i] > m) m = a[i]; return [m]; }
+function pack(r, g, b) { return (255 << 24) | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255); }
+function heatColor(v) { return [20 + 235 * v, 22 + 120 * v * v, 40 + 20 * (1 - v)]; }
+function spaceColor(free, phi, k) {
+  const v = free / k; const f = phi === 255 ? 0 : Math.max(0, 1 - phi / 12);
+  return [14 + 20 * f, 20 + 120 * v, 30 + 60 * v + 50 * f];
+}
+
+function drawGlyphs(V, vis) {
+  ctx.save();
+  ctx.font = `bold 0.62px ui-monospace,monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (let y = vis.y0; y <= vis.y1; y++) for (let x = vis.x0; x <= vis.x1; x++) {
+    const c = y * M.w + x;
+    for (let s = 0; s < M.k; s++) {
+      const b = (c * M.k + s) * 32, kind = V.u8[b];
+      if (!kind) continue;
+      const [cx, cy] = slotCentre(c, s);
+      if (kind === 15) { ctx.strokeStyle = "#56c8ff88"; ctx.lineWidth = 0.08; ctx.setLineDash([0.15, 0.12]);
+        ctx.strokeRect(cx - 0.42, cy - 0.42, 0.84, 0.84); ctx.setLineDash([]); continue; }
+      ctx.fillStyle = kind === 13 ? "#000" : "rgba(8,11,16,.85)";
+      ctx.fillText(GLYPH[kind], cx, cy + 0.03);
+      const st = V.u8[b + 1];
+      if (isConsumer(kind) && st === 2) { ctx.fillStyle = "#fff"; ctx.fillRect(cx + 0.28, cy - 0.42, 0.14, 0.14); }
+      if (isConsumer(kind) && st === 5) { ctx.strokeStyle = "#ffd866"; ctx.lineWidth = 0.07; ctx.strokeRect(cx - 0.44, cy - 0.44, 0.88, 0.88); }
+    }
+  }
+  ctx.restore();
+}
+
+function drawWires(V, vis) {
+  const n = (vis.x1 - vis.x0 + 1) * (vis.y1 - vis.y0 + 1);
+  const dense = n * M.k > 60000;
+  const paths = { want: new Path2D(), idle: new Path2D(), data: new Path2D(), ind: new Path2D(), root: new Path2D() };
+  let count = 0;
+  for (let y = vis.y0; y <= vis.y1; y++) for (let x = vis.x0; x <= vis.x1; x++) {
+    const c = y * M.w + x;
+    for (let s = 0; s < M.k; s++) {
+      const si = c * M.k + s, kind = V.u8[si * 32];
+      if (!kind || kind === 15) continue;
+      const st = V.u8[si * 32 + 1];
+      for (let p = 0; p < 3; p++) {
+        let r, path;
+        if (kind === 14) { if (!(st & (1 << p))) continue; r = V.u32[si * 8 + 2 + p]; path = paths.ind; }
+        else {
+          if (p >= ARITY[kind] || isSource(kind, p)) continue;
+          r = V.u32[si * 8 + 2 + p];
+          if (r === NONE) continue;
+          if (kind === 5 + 8 /* Out */) path = paths.root;
+          else if (isConsumer(kind) && p === 0) { if (st === 5) continue; path = st === 2 ? paths.want : paths.idle; }
+          else { if (dense) continue; path = paths.data; }
+        }
+        const tc = aCell(r), ts = aSlot(r);
+        if (tc >= M.w * M.h) continue;
+        const [x1, y1] = slotCentre(c, s), [x2, y2] = slotCentre(tc, ts);
+        const dx = x2 - x1, dy = y2 - y1, bend = 0.18 + 0.06 * p;
+        path.moveTo(x1, y1);
+        path.quadraticCurveTo((x1 + x2) / 2 - dy * bend, (y1 + y2) / 2 + dx * bend, x2, y2);
+        if (++count > 120000) break;
+      }
+    }
+  }
+  const lw = Math.max(0.06, 1.1 / view.s);
+  ctx.lineCap = "round";
+  const stroke = (p, col, w) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke(p); };
+  stroke(paths.data, "rgba(140,160,190,0.16)", lw);
+  stroke(paths.ind, "rgba(160,170,190,0.35)", lw);
+  stroke(paths.idle, "rgba(86,200,255,0.22)", lw);
+  ctx.globalCompositeOperation = "lighter";
+  stroke(paths.want, "rgba(86,200,255,0.75)", lw * 1.6);
+  stroke(paths.root, "rgba(255,255,255,0.8)", lw * 1.8);
+  ctx.globalCompositeOperation = "source-over";
+}
+
+const sprites = {};
+function sprite(col) {
+  if (sprites[col]) return sprites[col];
+  const c = document.createElement("canvas"); c.width = c.height = 32;
+  const g = c.getContext("2d"), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.18, col); gr.addColorStop(0.45, col + "66"); gr.addColorStop(1, col + "00");
+  g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+  return (sprites[col] = c);
+}
+const DIR = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+function drawMessages(progress) {
+  const m = lastMoves; if (!m.length) return;
+  ctx.globalCompositeOperation = "lighter";
+  const size = Math.max(1.4, Math.min(M.side * 0.9, 9 / view.s));
+  const streak = progress >= 1;
+  for (let i = 0; i < m.length; i += 2) {
+    const c = m[i], info = m[i + 1], dir = info & 15, kind = (info >> 4) & 15, tag = info >> 8;
+    const [x, y] = tileCentre(c), [dx, dy] = DIR[dir];
+    const t = streak ? 1 : easeInOut(progress);
+    const px = x + dx * M.tw * t, py = y + dy * M.tw * t;
+    const col = kind === 1 ? COLOR[tag] : MSG_COLOR[kind];
+    if (streak) {
+      ctx.strokeStyle = col + "55"; ctx.lineWidth = size * 0.35;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(px, py); ctx.stroke();
+    }
+    ctx.drawImage(sprite(col), px - size / 2, py - size / 2, size, size);
+  }
+  ctx.globalCompositeOperation = "source-over";
+}
+const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+function drawBursts() {
+  const now = performance.now(), life = 650;
+  let keep = 0;
+  for (const b of bursts) {
+    const a = (now - b.t0) / life; if (a >= 1) continue;
+    bursts[keep++] = b;
+    const [x, y] = tileCentre(b.c);
+    ctx.strokeStyle = b.col; ctx.globalAlpha = (1 - a) * (1 - a) * 0.95;
+    ctx.lineWidth = Math.max(0.08, 1.4 / view.s) * (1 - a) + 0.03;
+    ctx.beginPath(); ctx.arc(x, y, 0.6 + a * M.tw * 1.1, 0, Math.PI * 2); ctx.stroke();
+  }
+  bursts.length = keep; ctx.globalAlpha = 1;
+}
+
+function drawHover(V) {
+  const h = pinned ?? hover; if (h == null) return;
+  const x = (h % M.w) * M.tw, y = Math.floor(h / M.w) * M.tw;
+  ctx.strokeStyle = pinned != null ? "#56c8ff" : "#ffffffaa"; ctx.lineWidth = Math.max(0.08, 1.5 / view.s);
+  ctx.strokeRect(x + 0.5, y + 0.5, M.tw, M.tw);
+  // the tile's references, out and in
+  ctx.globalCompositeOperation = "lighter";
+  for (let s = 0; s < M.k; s++) {
+    const si = h * M.k + s, kind = V.u8[si * 32]; if (!kind || kind === 15) continue;
+    for (let p = 0; p < 3; p++) {
+      if (kind !== 14 && (p >= ARITY[kind] || isSource(kind, p))) continue;
+      if (kind === 14 && !(V.u8[si * 32 + 1] & (1 << p))) continue;
+      const r = V.u32[si * 8 + 2 + p]; if (r === NONE || aCell(r) >= M.w * M.h) continue;
+      const [x1, y1] = slotCentre(h, s), [x2, y2] = slotCentre(aCell(r), aSlot(r));
+      ctx.strokeStyle = "#ffd866"; ctx.lineWidth = Math.max(0.1, 2 / view.s);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+  }
+  ctx.globalCompositeOperation = "source-over";
+}
+
+// ---- the panel ----------------------------------------------------------------------------------
+const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 1 : 2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
+function refreshPanel(full) {
+  if (!M) return;
+  const st = stats();
+  const tick = st[0], fires = st[1], hops = st[2], live = st[3], peak = st[4];
+  $("sTick").textContent = fmt(tick);
+  $("sFires").textContent = fmt(fires);
+  let now = 0;
+  if (hist.length > 1) { const a = hist[Math.max(0, hist.length - 12)], b = hist[hist.length - 1]; now = (b.fires - a.fires) / Math.max(1, b.tick - a.tick); }
+  $("sPar").innerHTML = `<b>${now.toFixed(2)}</b> · ${(fires / Math.max(1, tick)).toFixed(2)}`;
+  $("sHops").textContent = `${fmt(hops)} (${(hops / Math.max(1, fires)).toFixed(1)})`;
+  $("sLocal").textContent = fires ? `${(100 * st[11] / fires).toFixed(0)}%` : "–";
+  $("sCancel").textContent = `${fmt(st[9])} · ${fmt(st[10])}`;
+  const slots = M.w * M.h * M.k;
+  $("sLive").innerHTML = `<b>${fmt(live)}</b> (${fmt(peak)}) of ${fmt(slots)}`;
+  $("occBar").style.width = `${Math.min(100, 100 * (live + st[5] + st[6]) / slots)}%`;
+  $("sInd").textContent = `${fmt(st[5])} · ${fmt(st[6])}`;
+  $("sFlight").textContent = `${fmt(st[7])} (${fmt(st[8])})`;
+  const total = Math.max(1, ...Array.from(st.slice(16, 24)));
+  for (let i = 0; i < 8; i++) { $("m" + i).textContent = fmt(st[16 + i]); $("mb" + i).style.width = `${100 * st[16 + i] / total}%`; }
+  drawChart();
+  // status
+  const quiet = st[14] === 1, outcome = st[15];
+  const badge = $("badge");
+  if (!quiet) { badge.className = "badge run"; badge.textContent = playing ? "RUNNING" : "PAUSED"; $("verdict").textContent = ""; $("decoded").textContent = ""; $("answer").textContent = ""; return; }
+  if (!full && prevStat === "done") return;
+  prevStat = "done";
+  if (outcome === 0) {
+    const ans = text(E.mesh_answer()), decd = text(E.mesh_answer_decoded());
+    if (oracleText === null) oracleText = text(E.mesh_oracle(200000));
+    const ok = oracleText === "" ? null : ans === oracleText;
+    badge.className = "badge " + (ok === false ? "bad" : "ok");
+    badge.textContent = ok === false ? "WRONG ANSWER" : `DONE in ${fmt(tick)} ticks`;
+    $("decoded").textContent = decd ? `= ${decd}` : "";
+    $("answer").textContent = ans.length > 600 ? ans.slice(0, 600) + "…" : ans;
+    $("verdict").textContent = ok === null ? "the oracle ran out of fuel on this one" :
+      ok ? "matches the independent recursive oracle" : "does NOT match the oracle: " + oracleText.slice(0, 200);
+  } else if (outcome === 1) {
+    badge.className = "badge bad"; badge.textContent = "OUT OF ROOM";
+    $("verdict").innerHTML = `every tile is too full to fire; nothing is guessed around. <button id="grow">grow the grid ×1.5 and rerun</button>`;
+    $("grow").onclick = () => { const g = $("cGrid"); const want = Math.ceil(M.w * 1.5);
+      const opt = [...g.options].map(o => +o.value).filter(v => v >= want)[0];
+      if (opt) g.value = opt; else { const o = document.createElement("option"); o.value = want; o.textContent = want + "×" + want; g.appendChild(o); g.value = want; }
+      load(); setPlaying(true); };
+  } else {
+    badge.className = "badge bad"; badge.textContent = "STUCK";
+    $("verdict").textContent = "quiet without an answer";
+  }
+}
+
+function drawChart() {
+  const c = $("chart"), g = c.getContext("2d"), W = c.width, H = c.height;
+  g.clearRect(0, 0, W, H);
+  if (hist.length < 2) return;
+  const n = Math.min(hist.length - 1, 340), start = hist.length - 1 - n;
+  const rates = [], lives = [];
+  for (let i = start + 1; i < hist.length; i++) {
+    const a = hist[i - 1], b = hist[i];
+    rates.push((b.fires - a.fires) / Math.max(1, b.tick - a.tick)); lives.push(b.live);
+  }
+  const rmax = Math.max(0.5, ...rates), lmax = Math.max(1, ...lives), bw = W / rates.length;
+  g.fillStyle = "#ffd866";
+  rates.forEach((r, i) => { const h = (H - 6) * r / rmax; g.globalAlpha = 0.85; g.fillRect(i * bw, H - h, Math.max(1, bw - 0.5), h); });
+  g.globalAlpha = 1; g.strokeStyle = "#56c8ff"; g.lineWidth = 2; g.beginPath();
+  lives.forEach((l, i) => { const y = H - 4 - (H - 10) * l / lmax; i ? g.lineTo(i * bw + bw / 2, y) : g.moveTo(bw / 2, y); });
+  g.stroke();
+  g.fillStyle = "#8595ad"; g.font = "18px ui-monospace,monospace";
+  g.fillText(`${rmax.toFixed(1)}/tick`, 8, 22); g.fillText(`${fmt(lmax)} live`, W - 150, 22);
+}
+
+// ---- the tooltip ----------------------------------------------------------------------------
+function tileAt(clientX, clientY) {
+  if (!M) return null;
+  const r = cv.getBoundingClientRect();
+  const wx = (clientX - r.left - view.ox) / view.s, wy = (clientY - r.top - view.oy) / view.s;
+  const x = Math.floor(wx / M.tw), y = Math.floor(wy / M.tw);
+  return x < 0 || y < 0 || x >= M.w || y >= M.h ? null : y * M.w + x;
+}
+const where = a => `(${aCell(a) % M.w},${Math.floor(aCell(a) / M.w)})#${aSlot(a)}.${aPort(a)}`;
+function tipHTML(c) {
+  const V = views(), x = c % M.w, y = Math.floor(c / M.w);
+  const fifo = [0, 1, 2, 3].map(i => V.fifo[c * 4 + i]);
+  const phi = Array.from(V.phi.slice(c * E.phi_fields(), (c + 1) * E.phi_fields())).map(v => v === 255 ? "∞" : v);
+  let h = `<div class="th"><span>tile (${x}, ${y})</span><span class="note">${V.free[c]} free</span></div>
+    <div class="tp">router buffers E W S N: ${fifo.join(" ")} · room field (1..6 slots): ${phi.join(" ")}</div>`;
+  for (let s = 0; s < M.k; s++) {
+    const si = c * M.k + s, kind = V.u8[si * 32]; if (!kind) continue;
+    const st = V.u8[si * 32 + 1], perm = V.u8[si * 32 + 2];
+    const ports = [0, 1, 2].map(p => V.u32[si * 8 + 2 + p]);
+    let body = "";
+    if (kind === 15) body = `<div class="tp">reserved for an arriving agent</div>`;
+    else if (kind === 14) { for (let p = 0; p < 3; p++) if (st & (1 << p)) body += `<div class="tp">port ${PERMS[perm][p]} forwards to ${where(ports[p])}</div>`; }
+    else {
+      for (let p = 0; p < ARITY[kind]; p++) {
+        const r = ports[p], phys = PERMS[perm][p];
+        if (isConsumer(kind) && p === 0 && st === 5) { body += `<div class="tp">holding a producer, waiting for room</div>`; continue; }
+        if (isSource(kind, p)) body += `<div class="tp">out ${phys}: ${r === NONE ? "nobody has asked yet" : r & 0x80000000 ? "dropped" : "read by " + where(r & 0x3FFFFFFF)}</div>`;
+        else body += `<div class="tp">in ${phys}: reads ${r === NONE ? "—" : where(r)}</div>`;
+      }
+    }
+    const phase = isConsumer(kind) || kind === 13 ? ` · ${PHASE[st] || st}` : "";
+    h += `<div class="ts"><span class="tag" style="color:${COLOR[kind]}">${GLYPH[kind]} ${TAGS[kind]}</span>
+      <span class="note"> slot ${s}${phase}${perm ? " · permuted" : ""}</span>${body}</div>`;
+  }
+  return h;
+}
+function placeTip(clientX, clientY) {
+  const tip = $("tip"), r = $("stage").getBoundingClientRect();
+  let x = clientX - r.left + 16, y = clientY - r.top + 16;
+  tip.style.left = Math.min(x, r.width - 350) + "px"; tip.style.top = Math.min(y, r.height - tip.offsetHeight - 10) + "px";
+}
+
+// ---- input --------------------------------------------------------------------------------------
+let drag = null;
+cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy, moved: false }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => {
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; cv.classList.add("dragging"); }
+    view.ox = drag.ox + dx; view.oy = drag.oy + dy;
+  }
+  hover = tileAt(e.clientX, e.clientY);
+  const tip = $("tip");
+  if (pinned == null) {
+    if (hover == null) tip.hidden = true;
+    else { tip.innerHTML = tipHTML(hover); tip.hidden = false; tip.classList.remove("pinned"); placeTip(e.clientX, e.clientY); }
+  }
+});
+cv.addEventListener("pointerup", e => {
+  cv.classList.remove("dragging");
+  if (drag && !drag.moved) {
+    const t = tileAt(e.clientX, e.clientY);
+    pinned = pinned === t ? null : t;
+    const tip = $("tip");
+    if (pinned != null) { tip.innerHTML = tipHTML(pinned); tip.hidden = false; tip.classList.add("pinned"); placeTip(e.clientX, e.clientY); }
+    else tip.classList.remove("pinned");
+  }
+  drag = null;
+});
+cv.addEventListener("pointerleave", () => { hover = null; if (pinned == null) $("tip").hidden = true; });
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  zoomAt(Math.exp(-e.deltaY * 0.0016), mx, my);
+}, { passive: false });
+setInterval(() => { if (pinned != null && M) $("tip").innerHTML = tipHTML(pinned); }, 250);
+
+function setPlaying(p) { playing = p && !finished; $("play").textContent = playing ? "❚❚" : "▶"; lastT = 0; }
+$("play").onclick = () => setPlaying(!playing);
+$("step").onclick = () => { if (!M || finished) return; setPlaying(false); const r = E.mesh_step(1); if (r < 1) finished = true; harvest(); acc = 0; refreshPanel(true); };
+$("end").onclick = () => { if (!M) return; $("speed").value = 100; speedLabel(); setPlaying(true); };
+$("reset").onclick = () => { load(); };
+$("load").onclick = () => { load(); setPlaying(true); };
+$("fit").onclick = fit;
+$("prog").onchange = () => { syncProgUI(); };
+$("cSpec").oninput = syncProgUI;
+$("speed").oninput = speedLabel;
+function speedLabel() { const t = ticksPerSecond(); $("speedv").textContent = t === Infinity ? "max speed" : `${t < 10 ? t.toFixed(1) : fmt(t)} ticks/s`; }
+const LAYERS = [["vWires", "wires"], ["vMsgs", "msgs"], ["vHeat", "heat"], ["vSpace", "space"], ["vFollow", "follow"]];
+for (const [id, key] of LAYERS) {
+  $(id).onclick = () => { show[key] = !show[key]; if (key === "heat" && show.heat) show.space = false;
+    if (key === "space" && show.space) show.heat = false; follow = show.follow; syncToggles(); };
+}
+function syncToggles() { for (const [id, key] of LAYERS) $(id).classList.toggle("on", !!show[key]); }
+window.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") { load(); setPlaying(true); } return; }
+  if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+  else if (e.key === "ArrowRight") $("step").onclick();
+  else if (e.key === "r" || e.key === "R") load();
+  else if (e.key === "f" || e.key === "F") fit();
+  else if ("12345".includes(e.key)) $(LAYERS[+e.key - 1][0]).onclick();
+  else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; }
+});
+window.addEventListener("resize", () => { resize(); });
+
+let bannerTimer = 0;
+function banner(msg, bad) {
+  const b = $("banner"); b.textContent = msg; b.style.opacity = 1; b.style.color = bad ? "var(--warn)" : "var(--fg)";
+  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.opacity = 0, bad ? 6000 : 3500);
+}
+
+// ---- boot -------------------------------------------------------------------------------------
+(async () => {
+  const bytes = Uint8Array.from(atob(window.MESH_WASM), ch => ch.charCodeAt(0));
+  const { instance } = await WebAssembly.instantiate(bytes, {});
+  E = instance.exports;
+  catalog = JSON.parse(text(E.catalog()));
+  populate(); resize(); speedLabel(); syncToggles();
+  load();
+  if (autoplay) setPlaying(true);
+  requestAnimationFrame(frame);
+})().catch(err => { $("badge").className = "badge bad"; $("badge").textContent = "ENGINE FAILED"; $("verdict").textContent = String(err); });
+</script>
+</body></html>

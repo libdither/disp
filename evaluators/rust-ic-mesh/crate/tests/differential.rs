@@ -60,3 +60,23 @@ fn speculative_random_terms_match_the_oracle() {
         assert_eq!(rep.answer, Some(oracle::show(&want)), "term {i}: {}", oracle::show(&t));
     }
 }
+
+/// The cascade's deep-reduction frontier, verbatim: every term completes, with the same
+/// number of interactions the abstract net needs.
+#[test]
+fn cascade_frontier_completes() {
+    use rust_ca_lattice::oracle::{ap, f2, s, Term};
+    let terms = [
+        ("k-combinator", ap(ap(oracle::k(), s(Term::L)), Term::L), 9),
+        ("fork-dispatch", ap(f2(Term::L, Term::L), Term::L), 6),
+        ("s-rule-sharing", ap(f2(s(Term::L), s(Term::L)), Term::L), 13),
+        ("k-chain", oracle::chain_k(2), 15),
+        ("disp-t", oracle::disp_t(), 18),
+    ];
+    for (name, t, fires) in terms {
+        let want = oracle::show(&oracle::nf(t.clone(), &mut Fuel(100_000)).unwrap());
+        let rep = run::run(&t, Config { w: 16, h: 16, ..Config::default() }, true, 1_000_000).unwrap();
+        assert_eq!(rep.answer, Some(want), "{name}");
+        assert_eq!(rep.mesh.stats.fires, fires, "{name}");
+    }
+}

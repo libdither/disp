@@ -68,7 +68,7 @@ fn main() {
         s.hops, s.hops as f64 / s.fires.max(1) as f64, s.events, 100.0 * s.local_fires as f64 / s.fires.max(1) as f64);
     let sent: Vec<String> = KIND_NAMES.iter().zip(s.sent.iter()).map(|(k, n)| format!("{k} {n}")).collect();
     println!("sent    {}", sent.join(", "));
-    println!("peak live {}  inds {} (end {})  reserved {}  in flight {}  outbox {}  event queue {}  reserve hops {}",
-        s.peak_live, s.peak_inds, s.inds, s.peak_reserved, s.peak_in_flight, s.max_outbox, s.max_events, s.max_reserve_hops);
+    println!("live at end {}  peak live {}  inds {} (end {})  reserved {}  in flight {}  outbox {}  event queue {}  reserve hops {}",
+        s.live, s.peak_live, s.peak_inds, s.inds, s.peak_reserved, s.peak_in_flight, s.max_outbox, s.max_events, s.max_reserve_hops);
     println!("wall {:.3}s  ({:.1} M hops/s, {:.2} M fires/s)", dt, s.hops as f64 / dt / 1e6, s.fires as f64 / dt / 1e6);
 }

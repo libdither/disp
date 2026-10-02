@@ -2,6 +2,11 @@
 
 The six-neighbor cellular substrate for disp's tree-calculus interaction net.
 
+Its successor is `evaluators/rust-ic-mesh`, where wires are addresses held by their one reader
+instead of paths of cells; it completes this crate's whole soak corpus. This crate stays as
+the record of the physical-wire approach, and its `rules.rs`, `net.rs` and `oracle.rs` are
+still the shared semantic layer both machines check against.
+
 ## Cascade substrate
 
 `cascade.rs` and its siblings implement the event-driven substrate specified in

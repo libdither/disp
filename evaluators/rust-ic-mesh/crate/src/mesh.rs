@@ -117,6 +117,7 @@ fn perm_to(q: usize, phys: usize) -> u8 {
 /// the agent did. A docked consumer keeps the producer it pulled in `p[0]`, `dock` and
 /// `dock_tag`, and the local slots it is holding in `hold`.
 #[derive(Clone, Copy, Debug)]
+#[repr(C)]
 pub struct Slot {
     pub kind: u8,
     pub st: u8,
