@@ -195,6 +195,11 @@ and the addresses its ports hold.
 - **Queue bound.** 24/4 suffices on every workload here, but that is measured, not proven.
   Small enough queues can deadlock, because a full outbox stops a tile from taking messages,
   and those messages fill its neighbours' buffers. A proof needs either a bound on messages per
-  tile or overflow into free slots.
+  tile or overflow into free slots. A bound looks within reach: nearly every message is
+  addressed to one slot, and the protocol allows at most about four in flight to any slot at
+  once (one per source port from its single reader, one answer to a waiting reader, one spawn
+  or grant, one activation). So an event queue of about 4K entries could never overflow on that
+  traffic. Reserve messages are the one exception, since many tiles can aim at the same roomy
+  tile.
 - **One remaining forwarder case.** Indirections still appear when a rewrite fuses two outside
   wires (unpair meeting pair) before either end is read.

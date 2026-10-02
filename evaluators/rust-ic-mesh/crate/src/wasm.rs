@@ -199,3 +199,15 @@ pub extern "C" fn mesh_probe(src: *const u8, len: usize) -> i32 {
         Err(e) => { set_text(&e); -1 }
     }
 }
+
+/// Fires per rule, in rule-table order (26 counts).
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn rule_fires_ptr() -> *const f64 {
+    static mut RULE: [f64; 26] = [0.0; 26];
+    let s = &state().mesh.stats;
+    unsafe {
+        for (i, x) in s.rule_fires.iter().enumerate() { RULE[i] = *x as f64; }
+        RULE.as_ptr()
+    }
+}

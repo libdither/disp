@@ -124,6 +124,9 @@
     <div class="row"><span class="k">indirections · reserved</span><span class="v" id="sInd">0</span></div>
     <div class="row"><span class="k">messages in flight (peak)</span><span class="v" id="sFlight">0</span></div>
 
+    <h3>rules fired</h3>
+    <div id="rules" class="note">–</div>
+
     <h3>messages sent</h3>
     <div id="msgs"></div>
 
@@ -286,7 +289,7 @@ function load() {
   lastMoves = new Uint32Array(0);
   location.hash = `p=${$("prog").value}&n=${$("progN").value}&spec=${spec}`;
   $("hw").innerHTML = hardwareNote(M);
-  fit(); if (initialZoom !== 1) zoomAt(initialZoom); refreshPanel(true); draw(0);
+  fitContent(); if (initialZoom !== 1) zoomAt(initialZoom); refreshPanel(true); draw(0);
   banner(`${src} — ${agents} agents on ${side}×${side} tiles · ${side * side * k} slots`);
 }
 
@@ -315,9 +318,24 @@ function hardwareNote(M) {
 // ---- view -------------------------------------------------------------------------------------
 function fit() {
   if (!M) return;
-  const r = cv.getBoundingClientRect(), pw = M.pix.width, ph = M.pix.height;
-  view.s = Math.min((r.width - 40) / pw, (r.height - 90) / ph);
-  view.ox = (r.width - pw * view.s) / 2; view.oy = (r.height - ph * view.s) / 2 + 22;
+  fitBox(0, 0, M.pix.width, M.pix.height);
+}
+function fitBox(x0, y0, x1, y1) {
+  const r = cv.getBoundingClientRect(), pw = x1 - x0, ph = y1 - y0;
+  view.s = Math.min((r.width - 40) / pw, (r.height - 150) / ph, 40);
+  view.ox = (r.width - pw * view.s) / 2 - x0 * view.s; view.oy = (r.height - ph * view.s) / 2 + 20 - y0 * view.s;
+}
+/// Frame the occupied tiles, with room around them for the computation to spread into.
+function fitContent() {
+  const V = views(); let x0 = M.w, y0 = M.h, x1 = -1, y1 = -1;
+  for (let c = 0; c < M.w * M.h; c++) if (V.free[c] < M.k) {
+    const x = c % M.w, y = Math.floor(c / M.w);
+    x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+  }
+  if (x1 < 0) return fit();
+  const pad = Math.max(3, Math.round((x1 - x0 + 1) * 0.35));
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(M.w - 1, x1 + pad); y1 = Math.min(M.h - 1, y1 + pad);
+  fitBox(x0 * M.tw, y0 * M.tw, (x1 + 1) * M.tw + 1, (y1 + 1) * M.tw + 1);
 }
 function zoomAt(f, mx, my) {
   const r = cv.getBoundingClientRect(); mx ??= r.width / 2; my ??= r.height / 2;
@@ -622,6 +640,7 @@ function refreshPanel(full) {
   const total = Math.max(1, ...Array.from(st.slice(16, 24)));
   for (let i = 0; i < 8; i++) { $("m" + i).textContent = fmt(st[16 + i]); $("mb" + i).style.width = `${100 * st[16 + i] / total}%`; }
   drawChart();
+  drawRules();
   // status
   const outcome = st[15], quiet = st[14] === 1 || outcome === 3;
   const badge = $("badge");
@@ -652,6 +671,18 @@ function refreshPanel(full) {
     badge.className = "badge bad"; badge.textContent = "STUCK";
     $("verdict").textContent = "quiet without an answer";
   }
+}
+
+function drawRules() {
+  const rf = new Float64Array(E.memory.buffer, E.rule_fires_ptr(), 26);
+  const rows = [...rf].map((n, i) => [n, i]).filter(([n]) => n > 0).sort((a, b) => b[0] - a[0]).slice(0, 10);
+  if (!rows.length) { $("rules").textContent = "none yet"; return; }
+  const max = rows[0][0];
+  $("rules").innerHTML = rows.map(([n, i]) => {
+    const name = catalog.rules[i], col = COLOR[TAGS.indexOf(name.split("·")[0])];
+    return `<div class="row"><span class="k" style="color:${col}">${name}</span><span class="v">${fmt(n)}</span></div>
+      <div class="bar"><i style="background:${col};width:${100 * n / max}%"></i></div>`;
+  }).join("");
 }
 
 function drawChart() {

@@ -30,6 +30,7 @@ pub(crate) struct Out {
     pub max_events: u64,
     pub max_reserve_hops: u64,
     pub phi_dirty: Vec<u32>,
+    pub rule_fires: [u64; 26],
     pub record: bool,
     pub rec_fires: Vec<[u32; 2]>,
 }
@@ -357,6 +358,7 @@ impl<'a> Tile<'a> {
 
     fn record_fire(&mut self, ri: usize) {
         self.out.fires += 1;
+        self.out.rule_fires[ri] += 1;
         if self.out.record { self.out.rec_fires.push([self.c, ri as u32]); }
     }
 

@@ -203,6 +203,8 @@ pub struct Stats {
     pub max_reserve_hops: u64,
     pub parked_reserves: u64,
     pub local_fires: u64,
+    /// Fires per rule, in rule-table order.
+    pub rule_fires: [u64; 26],
 }
 
 impl Stats {
@@ -213,6 +215,7 @@ impl Stats {
         self.events += o.events;
         self.local_fires += o.local_fires;
         for k in 0..N_KINDS { self.sent[k] += o.sent[k]; }
+        for r in 0..26 { self.rule_fires[r] += o.rule_fires[r]; }
         let add = |x: &mut u64, d: i64| *x = (*x as i64 + d) as u64;
         add(&mut self.live, o.live);
         add(&mut self.inds, o.inds);
