@@ -27,6 +27,8 @@ fn main() {
             "--k" => cfg.k = it.next().unwrap().parse().unwrap(),
             "--fifo" => cfg.fifo = it.next().unwrap().parse().unwrap(),
             "--fill" => cfg.init_fill = it.next().unwrap().parse().unwrap(),
+            "--ev" => cfg.events_per_tick = it.next().unwrap().parse().unwrap(),
+            "--spec" => cfg.speculate = it.next().unwrap().parse().unwrap(),
             "--no-check" => check = false,
             "--dump" => {}
             _ => src = Some(a.clone()),

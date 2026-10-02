@@ -6,7 +6,7 @@ description = "disp's tree-calculus interaction net on a 2D mesh of message-pass
 license = "MIT"
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
 # The validated rule ROM, the abstract net, and the independent oracle live there.

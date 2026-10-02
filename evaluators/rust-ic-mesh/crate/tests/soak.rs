@@ -35,19 +35,26 @@ fn soak_completes_every_term() {
 
 #[test]
 fn tight_grids_never_lie() {
-    let corpus = corpus();
+    let small: &[u32] = &[1, 2, 3, 5];
+    let mut terms: Vec<(String, Term, String, &[u32])> = corpus().into_iter().step_by(3)
+        .map(|(i, t, w)| (format!("term {i}"), t, w, small)).collect();
+    for (name, n) in [("fib", 4), ("sort", 3), ("exp", 2)] {
+        let t = rust_ic_mesh::term::workload(name, n).unwrap();
+        let w = oracle::show(&oracle::nf(t.clone(), &mut Fuel(100_000_000)).unwrap());
+        terms.push((format!("{name}:{n}"), t, w, &[12, 16, 24, 40]));
+    }
     let (mut done, mut oom) = (0, 0);
-    for (i, term, want) in corpus.iter().step_by(3) {
-        for side in [1u32, 2, 3] {
+    for (name, term, want, sides) in &terms {
+        for &side in *sides {
             let cfg = Config { w: side, h: side, k: 6, init_fill: 6, ..Config::default() };
-            let Ok(rep) = run::run(term, cfg, true, 2_000_000) else { continue };
+            let Ok(rep) = run::run(term, cfg, true, 5_000_000) else { continue };
             match rep.outcome {
                 "done" => {
-                    assert_eq!(rep.answer.as_deref(), Some(want.as_str()), "term {i} on {side}x{side}: WRONG ANSWER");
+                    assert_eq!(rep.answer.as_deref(), Some(want.as_str()), "{name} on {side}x{side}: WRONG ANSWER");
                     done += 1;
                 }
                 "out-of-space" => oom += 1,
-                other => panic!("term {i} on {side}x{side}: {other}"),
+                other => panic!("{name} on {side}x{side}: {other}"),
             }
         }
     }

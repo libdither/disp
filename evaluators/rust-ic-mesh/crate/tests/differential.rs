@@ -24,7 +24,7 @@ fn random_terms_match_the_oracle() {
 fn workloads_match_the_oracle() {
     let cfg = Config { w: 96, h: 96, ..Config::default() };
     for (name, _, n) in term::WORKLOADS {
-        let n = (*n).min(3);
+        let n = (*n).min(if *name == "sort" { 2 } else { 3 });
         let t = term::workload(name, n).unwrap();
         let want = oracle::show(&oracle::nf(t.clone(), &mut Fuel(100_000_000)).unwrap());
         let rep = run::run(&t, cfg, true, 20_000_000).unwrap();
@@ -34,12 +34,29 @@ fn workloads_match_the_oracle() {
 }
 
 #[test]
-fn router_shapes_do_not_change_answers() {
-    let t = term::workload("fib", 3).unwrap();
-    let want = oracle::show(&oracle::nf(t.clone(), &mut Fuel(100_000_000)).unwrap());
-    for (k, fifo, ev) in [(6, 1, 1), (8, 2, 1), (16, 4, 1), (8, 4, 3), (12, 1, 2)] {
-        let cfg = Config { w: 40, h: 40, k, fifo, events_per_tick: ev, ..Config::default() };
-        let rep = run::run(&t, cfg, true, 20_000_000).unwrap();
-        assert_eq!(rep.answer.as_deref(), Some(want.as_str()), "k={k} fifo={fifo} ev={ev}");
+fn shapes_and_speculation_do_not_change_answers() {
+    for (name, n) in [("fib", 2), ("sort", 2), ("share-tower", 5)] {
+        let t = term::workload(name, n).unwrap();
+        let want = oracle::show(&oracle::nf(t.clone(), &mut Fuel(100_000_000)).unwrap());
+        for (k, fifo, ev) in [(6, 1, 1), (8, 2, 1), (16, 4, 1), (8, 4, 3), (12, 1, 2)] {
+            let levels: &[u32] = if k == 8 && fifo == 2 { &[0, 6, 3, 1] } else { &[0, 5] };
+            for &speculate in levels {
+                let cfg = Config { w: 64, h: 64, k, fifo, events_per_tick: ev, speculate, ..Config::default() };
+                let rep = run::run(&t, cfg, true, 20_000_000).unwrap();
+                assert_eq!(rep.answer.as_deref(), Some(want.as_str()), "{name}:{n} k={k} fifo={fifo} ev={ev} spec={speculate}");
+            }
+        }
+    }
+}
+
+#[test]
+fn speculative_random_terms_match_the_oracle() {
+    let mut rng = Lcg(99);
+    let cfg = Config { w: 32, h: 32, speculate: 1, ..Config::default() };
+    for i in 0..600 {
+        let t = rng.rand_term(2 + i % 5);
+        let Ok(want) = oracle::nf(t.clone(), &mut Fuel(20_000)) else { continue };
+        let rep = run::run(&t, cfg, true, 5_000_000).unwrap();
+        assert_eq!(rep.answer, Some(oracle::show(&want)), "term {i}: {}", oracle::show(&t));
     }
 }

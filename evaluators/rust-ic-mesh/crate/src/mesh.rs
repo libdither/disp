@@ -38,8 +38,8 @@ pub const RESV: u8 = 15;
 
 // Reader phases (consumers and Out).
 pub const IDLE: u8 = 0;
-pub const AWAIT_MOVED: u8 = 2;
-pub const AWAIT_SHIP: u8 = 3;
+/// Pulled its source; a `Ship` or a `Moved` will answer.
+pub const AWAIT: u8 = 2;
 pub const HOLD: u8 = 4;
 /// Holding the producer it pulled, waiting for room to fire.
 pub const DOCKED: u8 = 5;
@@ -56,8 +56,10 @@ pub const DROP: u8 = 7;
 pub const N_KINDS: usize = 8;
 pub const KIND_NAMES: [&str; N_KINDS] = ["pull", "ship", "moved", "spawn", "reserve", "grant", "release", "drop"];
 
-/// `Moved` flag: the reader is already subscribed at the new source.
+/// `Moved` flags: the reader is already subscribed at the new source; the new source is a
+/// value the reader should hold rather than pull (only the root reads that way).
 const PRESUB: u8 = 1;
+const VALUE: u8 = 2;
 
 // Flags on the value a source port keeps for its reader. Addresses fit in 30 bits.
 const ADDR: u32 = 0x3FFF_FFFF;
@@ -91,6 +93,20 @@ pub const INF: u8 = u8::MAX;
 #[inline] pub fn tag_of(kind: u8) -> Tag { ALL_TAGS[kind as usize - 1] }
 #[inline] pub fn is_agent(kind: u8) -> bool { (1..=13).contains(&kind) }
 
+/// Port permutations: an agent's logical port q sits at physical port PERMS[perm][q]. A
+/// fresh agent that inherits a dying consumer's slot is permuted so its result lands on the
+/// physical port the consumer's reader already names. Everything else is the identity.
+pub const PERMS: [[u8; 3]; 6] = [[0, 1, 2], [2, 1, 0], [1, 0, 2], [0, 2, 1], [1, 2, 0], [2, 0, 1]];
+#[inline] pub fn logical(perm: u8, phys: usize) -> usize {
+    PERMS[perm as usize].iter().position(|&x| x as usize == phys).unwrap()
+}
+#[inline] pub fn physical(perm: u8, q: usize) -> u32 { PERMS[perm as usize][q] as u32 }
+/// The permutation that puts logical port `q` on physical port `phys` (a transposition).
+fn perm_to(q: usize, phys: usize) -> u8 {
+    (0..6u8).find(|&p| PERMS[p as usize][q] as usize == phys && PERMS[p as usize].iter().enumerate()
+        .all(|(l, &x)| l == q || l == phys || x as usize == l)).unwrap()
+}
+
 /// Readers that are hungry from birth: the normalizer drives the answer, the root holds
 /// it, and an eraser only ever drops.
 #[inline] fn eager(t: Tag) -> bool { matches!(t, Tag::Nrm | Tag::Eps | Tag::Out) }
@@ -104,6 +120,7 @@ pub const INF: u8 = u8::MAX;
 pub struct Slot {
     pub kind: u8,
     pub st: u8,
+    pub perm: u8,
     pub dock_tag: u8,
     pub hold: u16,
     pub p: [u32; 3],
@@ -115,7 +132,7 @@ pub struct Slot {
 
 impl Slot {
     pub const EMPTY: Slot =
-        Slot { kind: FREE, st: 0, dock_tag: 0, hold: 0, p: [NONE; 3], dock: NONE, sid: NONE, psid: NONE };
+        Slot { kind: FREE, st: 0, perm: 0, dock_tag: 0, hold: 0, p: [NONE; 3], dock: NONE, sid: NONE, psid: NONE };
 }
 
 /// A message, one flit. Fields are interpreted per kind (see the module docs).
@@ -169,10 +186,13 @@ pub struct Config {
     pub events_per_tick: u32,
     /// Agents per tile when the initial term is laid out.
     pub init_fill: u32,
+    /// Speculation: a computation nobody has asked for yet starts anyway when its tile has
+    /// at least this many free slots (0 = never; demand only).
+    pub speculate: u32,
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { w: 64, h: 64, k: 8, fifo: 4, events_per_tick: 1, init_fill: 3 } }
+    fn default() -> Self { Config { w: 64, h: 64, k: 8, fifo: 4, events_per_tick: 1, init_fill: 3, speculate: 0 } }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -245,6 +265,7 @@ pub struct Mesh {
     parked: Vec<Vec<Flit>>,
     rr: Vec<u8>,
     active: Vec<u32>,
+    spare: Vec<u32>,
     stamp: Vec<u32>,
     epoch: u32,
     phi_dirty: Vec<u32>,
@@ -277,6 +298,7 @@ impl Mesh {
             parked: (0..cells).map(|_| Vec::new()).collect(),
             rr: vec![0; cells],
             active: vec![],
+            spare: vec![],
             stamp: vec![0; cells],
             epoch: 1,
             phi_dirty: vec![],
@@ -537,7 +559,9 @@ impl Mesh {
             r.moves.clear();
             r.fires.clear();
         }
-        let cur = std::mem::take(&mut self.active);
+        let mut cur = std::mem::take(&mut self.spare);
+        cur.clear();
+        std::mem::swap(&mut cur, &mut self.active);
         self.epoch += 1;
         let b = self.cfg.fifo as usize;
 
@@ -619,7 +643,10 @@ impl Mesh {
             if busy { self.touch(c); }
         }
 
+        self.spare = cur;
+
         // The free-space field relaxes one step per tick, as the hardware would.
+        if self.phi_dirty.is_empty() { return; }
         let dirty = std::mem::take(&mut self.phi_dirty);
         self.phi_epoch += 1;
         let cap = self.phi_cap();
@@ -694,14 +721,14 @@ impl Mesh {
             self.emit(c, f);
             return;
         }
-        if t == Tag::Out && a_port(r) == 0 {
-            self.slots[i].st = HOLD;
-            return;
-        }
-        self.slots[i].st = if a_port(r) == 0 { AWAIT_SHIP } else { AWAIT_MOVED };
+        self.slots[i].st = AWAIT;
         let mut f = Flit::new(PULL, r);
         f.x = addr(c, s, 0) | if t == Tag::Out { 0 } else { SHIPPABLE };
         self.emit(c, f);
+    }
+
+    fn speculative(&self, c: u32) -> bool {
+        self.cfg.speculate > 0 && self.free[c as usize] as u32 >= self.cfg.speculate
     }
 
     /// A consumer just took a slot: start it if it is wanted, cancel it if nobody can read
@@ -716,7 +743,7 @@ impl Mesh {
             any_sub |= is_sub(sl.p[k]);
             all_dead &= is_dead(sl.p[k]);
         }
-        if eager(t) || any_sub {
+        if eager(t) || any_sub || self.speculative(c) {
             self.activate(c, s);
         } else if n > 0 && all_dead {
             self.cancel(c, s);
@@ -724,9 +751,10 @@ impl Mesh {
     }
 
     fn on_pull(&mut self, c: u32, f: Flit) {
-        let (s, k) = (a_slot(f.dst), a_port(f.dst));
+        let s = a_slot(f.dst);
         let i = self.si(c, s);
         let slot = self.slots[i];
+        let k = logical(slot.perm, a_port(f.dst));
         match slot.kind {
             IND => {
                 assert!(slot.st & (1 << k) != 0, "pull at a spent indirection port");
@@ -742,8 +770,13 @@ impl Mesh {
             kind if is_agent(kind) => {
                 let t = tag_of(kind);
                 assert!(is_source(t, k), "pull at sink port {k} of {}", t.name());
-                if t.is_producer() {
+                if t.is_producer() && f.x & SHIPPABLE != 0 {
                     self.ship(c, s, f.x & ADDR);
+                } else if t.is_producer() {
+                    let mut m = Flit::new(MOVED, f.x & ADDR);
+                    m.x = f.dst;
+                    m.n = VALUE;
+                    self.emit(c, m);
                 } else {
                     assert_eq!(slot.p[k], NONE, "two readers subscribed to one source");
                     self.slots[i].p[k] = f.x;
@@ -776,11 +809,15 @@ impl Mesh {
     fn on_moved(&mut self, c: u32, f: Flit) {
         let s = a_slot(f.dst);
         let i = self.si(c, s);
-        assert_eq!(self.slots[i].st, AWAIT_MOVED, "moved to a reader that was not waiting");
+        assert_eq!(self.slots[i].st, AWAIT, "moved to a reader that was not waiting");
         self.slots[i].p[0] = f.x;
-        if f.n != PRESUB {
-            self.slots[i].st = IDLE;
-            self.activate(c, s);
+        match f.n {
+            PRESUB => {}
+            VALUE => self.slots[i].st = HOLD,
+            _ => {
+                self.slots[i].st = IDLE;
+                self.activate(c, s);
+            }
         }
     }
 
@@ -815,9 +852,10 @@ impl Mesh {
 
     /// The reader of the source at `f.dst` is gone.
     fn on_drop(&mut self, c: u32, f: Flit) {
-        let (s, k) = (a_slot(f.dst), a_port(f.dst));
+        let s = a_slot(f.dst);
         let i = self.si(c, s);
         let slot = self.slots[i];
+        let k = logical(slot.perm, a_port(f.dst));
         match slot.kind {
             IND => {
                 assert!(slot.st & (1 << k) != 0, "drop at a spent indirection port");
@@ -963,10 +1001,10 @@ impl Mesh {
         let s = a_slot(f.dst);
         let i = self.si(c, s);
         let cs = self.slots[i];
-        assert!(cs.st == AWAIT_SHIP || cs.st == AWAIT_MOVED, "ship arrived at a consumer that did not ask");
+        assert_eq!(cs.st, AWAIT, "ship arrived at a consumer that did not ask");
         let docked = Docked { tag: f.tag, aux: [f.x, f.y], sid: f.sid };
         let plan = self.plan(c, s, &cs, &docked);
-        let short = plan.slots.saturating_sub(plan.reuse as usize + self.free[c as usize] as usize);
+        let short = plan.slots.saturating_sub(plan.hosts() + self.free[c as usize] as usize);
         if short == 0 {
             self.fire(c, s, docked, None);
             return;
@@ -989,28 +1027,37 @@ impl Mesh {
 
     /// What a rewrite will need: which fresh producers go straight to a waiting reader
     /// (they never take a slot), how many slots the rest take, which of the consumer's
-    /// result ports must linger as indirections, and so whether its own slot is reusable.
+    /// result ports have no reader yet, and what becomes of the consumer's own slot: it
+    /// hosts the fresh agent that answers its one unread result (so the reader's address
+    /// stays good), or any fresh agent if every result is accounted for, or else lingers
+    /// as indirections.
     fn plan(&self, c: u32, s: u32, cs: &Slot, d: &Docked) -> Plan {
         let ct = tag_of(cs.kind);
         let rule = &RULES[rule_index(cs.kind, d.tag)];
         let mut linger = 0u8;
         for i in 1..ct.arity() {
             if !is_source(ct, i) || cs.p[i] != NONE { continue; }
-            let me = addr(c, s, i as u32);
+            let me = addr(c, s, physical(cs.perm, i));
             let read_inside = (1..ct.arity()).any(|j| !is_source(ct, j) && cs.p[j] == me) || d.aux.contains(&me);
             if !read_inside { linger |= 1 << i; }
         }
         let mut direct = 0u8;
+        let mut heir = None;
         for &(a, b) in rule.wires {
-            if let (End::Fresh(k, 0), End::CAux(i)) | (End::CAux(i), End::Fresh(k, 0)) = (a, b) {
-                let sub = cs.p[i as usize];
-                if rule.fresh[k as usize].is_producer() && is_sub(sub) && sub & SHIPPABLE != 0 {
+            if let (End::Fresh(k, p), End::CAux(i)) | (End::CAux(i), End::Fresh(k, p)) = (a, b) {
+                let reader = cs.p[i as usize];
+                let t = rule.fresh[k as usize];
+                if p == 0 && t.is_producer() && is_sub(reader) && reader & SHIPPABLE != 0 {
                     direct |= 1 << k;
+                }
+                if linger == 1 << i && is_source(t, p as usize) {
+                    heir = Some((k as usize, perm_to(p as usize, physical(cs.perm, i as usize) as usize)));
                 }
             }
         }
         let slots = rule.fresh.len() - direct.count_ones() as usize;
-        Plan { linger, direct, slots, reuse: linger == 0 && slots > 0 }
+        let host = if heir.is_some() { heir } else if linger == 0 && slots > 0 { Some((usize::MAX, 0)) } else { None };
+        Plan { linger: if heir.is_some() { 0 } else { linger }, direct, slots, host }
     }
 
     /// The rewrite. Fresh agents take the consumer's own slot (when it is free to go), the
@@ -1037,13 +1084,31 @@ impl Mesh {
         let plan = self.plan(c, s, &cs, &d);
         let n = rule.fresh.len();
         let mut tgt = [NONE; 6];
-        let mut places = (0..n).filter(|&k| plan.direct & (1 << k) == 0);
-        let mut put = |a: u32| match places.next() {
-            Some(k) => { tgt[k] = a; true }
-            None => false,
-        };
+        let mut fperm = [0u8; 6];
         let mut placed = 0;
-        if plan.reuse && put(addr(c, s, 0)) { placed += 1; }
+        if let Some((k, perm)) = plan.host {
+            if k != usize::MAX {
+                tgt[k] = addr(c, s, 0);
+                fperm[k] = perm;
+                placed += 1;
+            }
+        }
+        let mut order = [0usize; 6];
+        let mut n_order = 0;
+        for k in 0..n {
+            if plan.direct & (1 << k) == 0 && tgt[k] == NONE {
+                order[n_order] = k;
+                n_order += 1;
+            }
+        }
+        let mut next = 0;
+        let mut put = |a: u32| {
+            if next == n_order { return false; }
+            tgt[order[next]] = a;
+            next += 1;
+            true
+        };
+        if plan.host == Some((usize::MAX, 0)) && put(addr(c, s, 0)) { placed += 1; }
         let mut spare_hold = cs.hold;
         for b in 0..self.cfg.k {
             if placed < plan.slots && cs.hold & (1 << b) != 0 && put(addr(c, b, 0)) {
@@ -1070,13 +1135,13 @@ impl Mesh {
 
         let mut fresh = [Slot::EMPTY; 6];
         for (k, t) in rule.fresh.iter().enumerate() {
-            fresh[k] = Slot { kind: code(*t), sid: fresh_ids[k], ..Slot::EMPTY };
+            fresh[k] = Slot { kind: code(*t), perm: fperm[k], sid: fresh_ids[k], ..Slot::EMPTY };
         }
         let aux = [NONE, d.aux[0], d.aux[1]];
-        let own = |r: u32| r != NONE && a_cell(r) == c && a_slot(r) == s && is_source(ct, a_port(r));
+        let own = |r: u32| r != NONE && a_cell(r) == c && a_slot(r) == s && is_source(ct, logical(cs.perm, a_port(r)));
         let have = |e: End| -> u32 {
             match e {
-                End::Fresh(k, p) => tgt[k as usize] | p as u32,
+                End::Fresh(k, p) => tgt[k as usize] | physical(fperm[k as usize], p as usize),
                 End::CAux(i) => cs.p[i as usize],
                 End::PAux(j) => aux[j as usize],
             }
@@ -1093,12 +1158,12 @@ impl Mesh {
         let resolve = |mut e: End| -> End {
             for _ in 0..16 {
                 if matches!(e, End::Fresh(..)) || !own(have(e)) { return e; }
-                e = partner(End::CAux(a_port(have(e)) as u8));
+                e = partner(End::CAux(logical(cs.perm, a_port(have(e))) as u8));
             }
             panic!("vicious circle inside a rewrite")
         };
         let read_inside = |i: usize| -> bool {
-            let me = addr(c, s, i as u32);
+            let me = addr(c, s, physical(cs.perm, i));
             (1..ct.arity()).any(|j| !is_source(ct, j) && cs.p[j] == me) || aux.contains(&me)
         };
 
@@ -1145,7 +1210,7 @@ impl Mesh {
                                 n_out += 1;
                             }
                         }
-                    } else {
+                    } else if plan.linger & (1 << i) != 0 {
                         ind[i as usize] = src;
                     }
                 }
@@ -1156,7 +1221,7 @@ impl Mesh {
         // The consumer's slot dies, lingers as indirections, or hosts a fresh agent.
         self.set_free(c, s);
         if plan.linger != 0 {
-            self.place(c, s, Slot { kind: IND, st: plan.linger, p: ind, ..Slot::EMPTY });
+            self.place(c, s, Slot { kind: IND, st: plan.linger, perm: cs.perm, p: ind, ..Slot::EMPTY });
         }
         for &(k, to) in &ships[..n_ships] {
             let mut f = Flit::new(SHIP, to);
@@ -1175,7 +1240,7 @@ impl Mesh {
                 self.place(c, a_slot(a), fresh[k]);
                 if t.is_consumer() {
                     let wanted = eager(*t) || (1..t.arity()).any(|p| is_source(*t, p) && is_sub(fresh[k].p[p]));
-                    if wanted { self.push_event(c, Ev::Activate(a_slot(a))); }
+                    if wanted || self.speculative(c) { self.push_event(c, Ev::Activate(a_slot(a))); }
                 }
             } else {
                 let mut f = Flit::new(SPAWN, a);
@@ -1205,7 +1270,7 @@ impl Mesh {
         for _ in 0..10_000_000 {
             let sl = self.slot_at(r);
             if sl.kind != IND { return r; }
-            r = sl.p[a_port(r)];
+            r = sl.p[logical(sl.perm, a_port(r))];
         }
         panic!("indirection cycle")
     }
@@ -1221,7 +1286,7 @@ impl Mesh {
             let r = m.follow(r);
             if let Some(t) = memo.get(&r) { return Some(t.clone()); }
             let sl = *m.slot_at(r);
-            if !is_agent(sl.kind) || a_port(r) != 0 { return None; }
+            if !is_agent(sl.kind) || logical(sl.perm, a_port(r)) != 0 { return None; }
             let t = match tag_of(sl.kind) {
                 Tag::L => Rc::new(Term::L),
                 Tag::S => Rc::new(Term::S(go(m, sl.p[1], memo)?)),
@@ -1264,9 +1329,10 @@ impl Mesh {
                 let r = self.follow(sl.p[p]);
                 let tsl = self.slot_at(r);
                 if !is_agent(tsl.kind) { return Err(format!("slot {i} port {p} references a non-agent")); }
-                if a.ports[p] != Some((tsl.sid, a_port(r) as u8)) {
+                let q = logical(tsl.perm, a_port(r));
+                if a.ports[p] != Some((tsl.sid, q as u8)) {
                     return Err(format!("slot {i} ({}) port {p}: mesh {:?} vs abstract {:?}",
-                        t.name(), (tsl.sid, a_port(r)), a.ports[p]));
+                        t.name(), (tsl.sid, q), a.ports[p]));
                 }
             }
         }
@@ -1282,7 +1348,7 @@ impl Mesh {
         for (i, sl) in self.slots.iter().enumerate() {
             if !is_agent(sl.kind) || !tag_of(sl.kind).is_consumer() { continue; }
             let r = sl.p[0];
-            let what = (r != NONE).then(|| { let a = self.follow(r); let x = self.slot_at(a); (x.kind, x.st, a_port(a)) });
+            let what = (r != NONE).then(|| { let a = self.follow(r); let x = self.slot_at(a); (x.kind, x.st, logical(x.perm, a_port(a))) });
             out.push(format!("slot {i} tile {} {} st={} p={:x?} -> {what:?}",
                 i as u32 / self.cfg.k, tag_of(sl.kind).name(), sl.st, sl.p));
         }
@@ -1292,8 +1358,15 @@ impl Mesh {
 }
 
 struct Plan {
+    /// Result ports that stay behind as indirections.
     linger: u8,
     direct: u8,
     slots: usize,
-    reuse: bool,
+    /// The fresh agent the consumer's own slot hosts, with its port permutation
+    /// (`usize::MAX`: whichever fresh agent comes first, unpermuted).
+    host: Option<(usize, u8)>,
+}
+
+impl Plan {
+    fn hosts(&self) -> usize { self.host.is_some() as usize }
 }
