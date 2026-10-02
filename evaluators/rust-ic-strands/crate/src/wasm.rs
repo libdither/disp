@@ -40,7 +40,7 @@ fn parse(src: &str) -> Result<Term, String> {
 }
 
 /// Load a term. Flags: bit 0 block rewrites, bit 1 lazy, bit 2 demand pulses, bit 3 Margolus
-/// blocks, bit 4 erasers collect duplicators. Returns 0, or an error in the text.
+/// blocks, bit 4 erasers collect garbage. Returns 0, or an error in the text.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn strands_new(w: u32, h: u32, depth: u32, k: u32, lanes: u32, flags: u32, temp: f64, swap: f64, agent_turns: f64, w_principal: f64, w_aux: f64,
@@ -85,7 +85,7 @@ pub extern "C" fn strands_run(n: u32) -> u32 {
 
 /// proposals, clocks, fires, hops, swaps, folds, flips, strands, peak strands, blocked, done,
 /// agents, wanted walker steps, walker steps blocked by a full site, demand pulses delivered,
-/// peak live sites, duplicators collected
+/// peak live sites, garbage collected
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn stats_ptr() -> *const f64 {

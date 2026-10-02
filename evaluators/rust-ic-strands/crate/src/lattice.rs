@@ -71,9 +71,10 @@ pub struct Params {
     /// Run as a chip would: each clock, the lattice is cut into 2×2×2 blocks (offset at
     /// random), and every block holding matter makes one move confined to it. Needs `block`.
     pub margolus: bool,
-    /// An eraser touching one output of a duplicator collects it: the duplicator becomes a
-    /// plain wire from its input to its other output. Without this, lazy evaluation leaves
-    /// erasers parked on duplicators forever, crowding the reactions that matter.
+    /// An eraser touching a computation's output collects it: a duplicator becomes a plain
+    /// wire from its input to its other output, an apply, triage or dispatch becomes erasers on
+    /// its inputs. Without this, lazy evaluation leaves erasers parked on garbage forever,
+    /// crowding the reactions that matter.
     pub gc: bool,
     /// Energy c·n²/2 on a link carrying n strands: wire pulls harder where it is crowded, so
     /// loose wire can wander in open space but cannot fill every lane around a reaction.
@@ -112,8 +113,10 @@ pub struct Stats {
     pub walk_ok: u64,
     /// Demand pulses that reached a computation nobody wanted yet.
     pub pulses: u64,
-    /// Duplicators collected by an eraser on one of their outputs.
+    /// Duplicators and dead computations collected by an eraser on their output.
     pub collected: u64,
+    /// Of those, dead computations replaced by erasers on their inputs.
+    pub dead: u64,
 }
 
 #[inline] fn code(t: Tag) -> u8 { ALL_TAGS.iter().position(|x| *x == t).unwrap() as u8 + 1 }
@@ -1296,9 +1299,10 @@ impl Lattice {
         }
     }
 
-    /// An eraser at s touching a duplicator's output (same site, or one strand away): both
-    /// vanish and the duplicator's input is joined straight to its other output. Every
-    /// consumer that reads a duplicator also has rules for what the duplicator would have read.
+    /// An eraser at s touching a computation's output (same site, or one strand away). A
+    /// duplicator becomes a plain wire from its input to its other output; every consumer that
+    /// reads a duplicator also has rules for what the duplicator would have read. An apply,
+    /// triage or dispatch is dead, so it is replaced by erasers on its two inputs.
     fn collect(&mut self, s: u32) -> bool {
         for ke in 0..self.p.k {
             let t = self.tag(s, ke);
@@ -1314,6 +1318,10 @@ impl Lattice {
             if md == NONE || self.is_strand(md) { continue; }
             let (kd, q) = (md as usize / ARITY, md as usize % ARITY);
             let td = self.tag(d, kd);
+            if td != 0 && matches!(tag_of(td), Tag::A | Tag::T1 | Tag::Sel) && q == 2 {
+                self.erase_inputs(s, ke, d, kd, via);
+                return true;
+            }
             if td == 0 || tag_of(td) != Tag::Dn || q == 0 { continue; }
             let (input, other) = (self.mate_of(d, self.ae(kd, 0)), self.mate_of(d, self.ae(kd, 3 - q)));
             if input == self.ae(kd, 3 - q) { continue; }
@@ -1341,6 +1349,41 @@ impl Lattice {
             return true;
         }
         false
+    }
+
+    /// Eraser ke at s reads output 2 of the dead computation kd at d: both go, and two erasers
+    /// take their slots, one on each of the computation's inputs (the one at s reuses the
+    /// strand between them).
+    fn erase_inputs(&mut self, s: u32, ke: usize, d: u32, kd: usize, via: Option<(usize, usize)>) {
+        let (m0, m1) = (self.mate_of(d, self.ae(kd, 0)), self.mate_of(d, self.ae(kd, 1)));
+        let (esid, dsid) = (self.sids[s as usize * self.ks + ke], self.sids[d as usize * self.ks + kd]);
+        let dead = self.shadow.get(dsid);
+        assert_eq!(dead.ports[2], Some((esid, 0)), "collected a computation the abstract net does not have");
+        let (src0, src1) = (dead.ports[0].expect("wired"), dead.ports[1].expect("wired"));
+        self.shadow.agents[esid as usize] = None;
+        self.shadow.agents[dsid as usize] = None;
+        let (e0, e1) = (self.shadow.mk(Tag::Eps), self.shadow.mk(Tag::Eps));
+        self.shadow.link(e0, 0, src0.0, src0.1);
+        self.shadow.link(e1, 0, src1.0, src1.1);
+        self.set(s, self.ae(ke, 0), NONE);
+        for p in 0..ARITY { self.set(d, self.ae(kd, p), NONE); }
+        self.remove(s, ke);
+        self.remove(d, kd);
+        self.place(d, kd, code(Tag::Eps), e1);
+        self.link(d, self.ae(kd, 0), m1);
+        self.place(s, ke, code(Tag::Eps), e0);
+        match via {
+            None => self.link(s, self.ae(ke, 0), m0),
+            Some((f, i)) => {
+                self.link(s, self.ae(ke, 0), self.se(f, i));
+                self.link(d, self.se(f ^ 1, i), m0);
+            }
+        }
+        self.refresh(s);
+        self.refresh(d);
+        self.stats.collected += 1;
+        self.stats.dead += 1;
+        self.last_op = "erase inputs";
     }
 
     /// The chance this proposal lands on the most-favoured site. A chip gives every site one

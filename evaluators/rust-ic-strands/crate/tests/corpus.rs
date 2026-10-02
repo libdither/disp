@@ -24,6 +24,16 @@ fn run(t: &Term, p: Params, check_every: u64) -> (bool, Option<String>, Result<(
     (done, l.readback().map(|t| oracle::show(&t)), l.check_projection())
 }
 
+/// What a run collects: (any garbage, any dead computation); None if the term does not fit.
+fn collects(t: &Term, p: Params) -> Option<(bool, bool)> {
+    let mut net = Net::new();
+    let root = net.build(t);
+    let (_, out) = net.drive(root);
+    let mut l = Lattice::load(p, net, out).ok()?;
+    l.run(50_000_000);
+    Some((l.stats.collected > 0, l.stats.dead > 0))
+}
+
 fn all_finish(p: Params) {
     for (i, (t, want)) in corpus().iter().enumerate() {
         let (done, got, proj) = run(t, Params { seed: i as u64 + 1, ..p }, 0);
@@ -53,25 +63,39 @@ fn margolus_blocks_with_pulses_in_3d() {
                         agent_turns: 0.8, ..base() });
 }
 
-/// Erasers collecting duplicators and link crowding, with every invariant re-checked after
-/// every move.
+/// Collection and link crowding with every invariant re-checked after every move: share-tower
+/// collects duplicators, and the corpus terms that collect anything are re-run the same way.
 #[test]
 fn collection_keeps_the_projection_exact() {
-    let t = rust_ic_mesh::term::workload("share-tower", 3).unwrap();
-    let want = oracle::show(&oracle::nf(t.clone(), &mut Fuel(100_000)).unwrap());
-    for margolus in [false, true] {
-        let p = Params { w: 24, h: 24, depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, gc: true, margolus,
-                         link_crowd: 1.0, swap: 1.0, agent_turns: 0.8, ..base() };
+    let p = |margolus| Params { w: 16, h: 16, depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, gc: true, margolus,
+                                link_crowd: 1.0, swap: 1.0, agent_turns: 0.8, ..base() };
+    let run_checked = |t: &Term, p: Params| {
         let mut net = Net::new();
-        let root = net.build(&t);
+        let root = net.build(t);
         let (_, out) = net.drive(root);
-        let mut l = Lattice::load(p, net, out).expect("load");
+        let mut l = Lattice::load(p, net, out).ok()?;
         l.check_every = 1;
-        assert!(l.run(50_000_000), "margolus {margolus}");
-        assert!(l.stats.collected > 0, "nothing collected");
-        assert_eq!(l.readback().map(|t| oracle::show(&t)).as_deref(), Some(want.as_str()));
+        assert!(l.run(50_000_000), "{}", oracle::show(t));
         l.check_projection().unwrap();
+        Some((l.stats.collected, l.readback().map(|t| oracle::show(&t))))
+    };
+    let tower = rust_ic_mesh::term::workload("share-tower", 3).unwrap();
+    let want = oracle::show(&oracle::nf(tower.clone(), &mut Fuel(100_000)).unwrap());
+    for margolus in [false, true] {
+        let (collected, got) = run_checked(&tower, Params { w: 24, h: 24, ..p(margolus) }).expect("load");
+        assert!(collected > 0, "nothing collected");
+        assert_eq!(got.as_deref(), Some(want.as_str()));
     }
+    let mut dead = 0;
+    for (i, (t, want)) in corpus().iter().enumerate() {
+        let q = Params { seed: i as u64 + 1, ..p(false) };
+        let Some((any, d)) = collects(t, q) else { continue };
+        if !any { continue; }
+        let (_, got) = run_checked(t, q).unwrap();
+        assert_eq!(got.as_deref(), Some(want.as_str()), "term {i}");
+        dead += d as usize;
+    }
+    assert!(dead > 0, "no corpus term collects a dead computation");
 }
 
 #[test]

@@ -100,7 +100,7 @@ fn main() {
     let s = &l.stats;
     println!("{} — answer {} (want {}) projection {:?}", if done { "DONE" } else { "UNFINISHED" },
         ans.as_deref().unwrap_or("-"), want.as_deref().unwrap_or("?"), proj.err());
-    println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  duplicators collected {}", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected);
+    println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  collected {} ({} dead computations)", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected, s.dead);
     println!("proposals {}  fires {} (blocked {})  swaps {}  hops {}  folds {}  flips {}  strands {} (peak {})  peak live sites {}  fullest site {}  {:.2}s",
         s.proposals, s.fires, s.blocked_fires, s.swaps, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_live, s.peak_site, dt);
     let blocked: Vec<String> = s.blocked_rule.iter().enumerate().filter(|(_, &n)| n > 0)

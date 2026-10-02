@@ -47,12 +47,16 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`).
   - If the strand under a pulse is moved, the pulse is dropped and the reader sends another, so
     a pulse can never jump onto another wire.
   - In a rewrite, a fresh consumer is wanted when its output feeds a wanted reader.
-- **Garbage.** An eraser that touches one output of a duplicator collects it: the duplicator
-  becomes a plain wire from its input to its other output, and both agents vanish. It needs no
-  room, so it can always happen. Every consumer that reads a duplicator also has rules for
-  whatever the duplicator itself would have read, so no pair without a rule can appear.
-  Without this, lazy evaluation leaves erasers parked on copies nobody wants, and they crowd
-  out the reactions that matter.
+- **Garbage.** An eraser that touches a computation's output collects it, by contact like a
+  rewrite:
+  - a duplicator becomes a plain wire from its input to its other output, and both agents
+    vanish. Every consumer that reads a duplicator also has rules for whatever the duplicator
+    itself would have read, so no pair without a rule can appear;
+  - an apply, triage or dispatch is dead, so it and the eraser are replaced by two erasers, one
+    on each of its inputs.
+
+  Neither needs room, so both can always happen. Without them, lazy evaluation leaves erasers
+  parked on garbage nobody wants, and it crowds out the reactions that matter.
 
 Every rewrite and every collection is replayed on the abstract net, and a rewrite must be a
 pair the net has. At the end, the lattice is compared with the abstract net wire by wire.
@@ -68,7 +72,7 @@ Tests also re-check every invariant after every single move.
   and every block holding matter makes one move inside it. No two moves ever touch the same
   site, so the clock count is literal.
 
-Blocks cost 5–9× more clocks than random turns: each site gets a fraction of a move per
+Blocks cost 5–7× more clocks than random turns: each site gets a fraction of a move per
 clock, and a walker's next strand leads out of its block half the time.
 
 An earlier version measured time as proposals divided by live sites, which ignored extra turns.
@@ -128,11 +132,13 @@ Each fix took a share of that, on fib(0) with random turns:
 | + demand pulses | 13–15k |
 | + rewrite squares in any plane (they were all horizontal, so 3D pairs had to share a layer) | 10–12k |
 | + erasers collect duplicators (below) | 9.7k |
+| + erasers collect dead computations | 8.1–9.1k |
 
 **Garbage blocks large programs.** fib(2) froze after 3,306 rewrites: the one rewrite that
 mattered (a duplicator meeting a fork, the largest rule) had no room, because 196 erasers were
 parked on duplicator outputs around it. Collecting duplicators removes them and also saves
-work: fib(0) drops from 830 rewrites to 556.
+work: fib(0) drops from 830 rewrites to 556. Collecting dead applies too takes it to 454, and
+fib(2) from 5,451 to 3,186.
 
 **Then wires swell.** With collection, fib(2) froze again at 2,246 rewrites. This time a wanted
 reader sat 2–4 strands from its value for 1.7M clocks while wire grew from 31k to 156k strands.
@@ -149,20 +155,21 @@ a strand to a link that already holds n costs n more, which stops swelling exact
 would fill. fib(2) then takes 124–147k clocks.
 
 **Against the address-based mesh.** The mesh speculates, so it does several times the
-rewrites. Clocks with pulses, collection and crowded links (c = 1), over 2–3 seeds:
+rewrites. Clocks with pulses, both kinds of collection and crowded links (c = 1), over 2–3
+seeds for random turns and one for blocks; every run matches the oracle and the abstract net:
 
 | program | mesh rewrites | mesh ticks | strand rewrites | random turns | blocks |
 |---|---|---|---|---|---|
-| fib(0) | 1,627 | 7,450 | 556 | 8.8–12.7k | 75k |
-| fib(1) | 1,821 | 8,928 | 655 | 12.8–14.9k | 74k |
-| sort(1) | 2,174 | 2,615 | 212 | 1.9–2.6k | 17k |
-| exp(1) | 15,139 | 100k | 4,104 | 72–79k | — |
-| fib(2) | 20,808 | 137k | 5,451 | 124–147k | — |
+| fib(0) | 1,627 | 7,450 | 454 | 8.1–9.1k | 60k |
+| fib(1) | 1,821 | 8,928 | 529 | 7.9–8.3k | 44k |
+| sort(1) | 2,174 | 2,615 | 163–171 | 1.2–2.7k | 13k |
+| exp(1) | 15,139 | 100k | 2,924 | 49–55k | 353k |
+| fib(2) | 20,808 | 137k | 3,186 | 70–72k | 482k |
 
-With random turns the strand lattice is within 1.2–1.7× of the mesh on fib(0) and fib(1), level
-on sort(1) and fib(2), and faster on exp(1), doing a third to a tenth of the rewrites. A mesh
-tile is about 5 kbit plus a router; a strand site here is about 165 bits. fib(0) peaks at about
-2,000 sites in use.
+With random turns the strand lattice is within 1.2× of the mesh on small programs and about
+twice as fast on exp(1) and fib(2), doing a quarter or less of the rewrites. With blocks it is about
+3.5× behind on the large ones. A mesh tile is about 5 kbit plus a router; a strand site here is
+about 165 bits, and fib(2) peaks at about 2,000 sites in use.
 
 ## Things tried that did not help, and why
 
@@ -187,9 +194,8 @@ tile is about 5 kbit plus a router; a strand site here is about 165 bits. fib(0)
 
 ## Open
 
-- **More garbage.** Erasers still park on the outputs of other computations nobody wants
-  (about a dozen on applications during fib(2)). Deleting such a computation and erasing its
-  inputs would collect them too.
+- **Unpairs.** An eraser on one output of an unpair is not collected (the other output still
+  needs a "first" or "second" of the pair, which no agent does).
 - **The synchronous schedule** pays one move per block per clock. Block rules that make several
   moves at once (a walker eating every strand of its wire inside the block) would close part
   of the gap, at the cost of bigger block logic.
