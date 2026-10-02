@@ -1,0 +1,25 @@
+[package]
+name = "rust-ic-mesh"
+version = "0.0.0"
+edition = "2021"
+description = "disp's tree-calculus interaction net on a 2D mesh of message-passing tiles"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+# The validated rule ROM, the abstract net, and the independent oracle live there.
+rust-ca-lattice = { path = "../../rust-ca-lattice/crate" }
+
+[profile.release]
+opt-level = 3
+debug = false
+panic = "abort"
+
+[profile.wasm]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

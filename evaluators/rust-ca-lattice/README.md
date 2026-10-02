@@ -121,7 +121,7 @@ guest's connectors, and the face's two lanes bound the sum — which is why an a
 agent at rest cannot be moved at all, only walked forward. As of 2026-08-01 the deep-reduction
 frontier is complete: `frontier_deep_reductions` pins all five terms normalizing end
 to end, the last being disp-t at its T1·F comb dock. The random soak, a harder and
-much wider corpus, sits at 129 of 160. A run may still park, and a park is a valid
+much wider corpus, sits at 130 of 160. A run may still park, and a park is a valid
 outcome the geometry checks hold to account; what the substrate never does is compute
 a wrong answer.
 `debug-cascade <term> --why` walks the relief decision tree for every blocked op and
