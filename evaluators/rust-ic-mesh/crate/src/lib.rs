@@ -7,5 +7,5 @@ mod tile;
 pub mod polarity;
 pub mod term;
 pub mod run;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "player"))]
 pub mod wasm;

@@ -8,6 +8,10 @@ license = "MIT"
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# The browser player's C ABI (build-player.sh turns it on).
+player = []
+
 [dependencies]
 # The validated rule ROM, the abstract net, and the independent oracle live there.
 rust-ca-lattice = { path = "../../rust-ca-lattice/crate" }

@@ -1,0 +1,386 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rust-ic-strands — interaction nets as strands on a lattice</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#0d131d; --fg:#c8d3e0; --dim:#8595ad; --accent:#56c8ff; --ok:#3fbf7f; --warn:#ff6b6b;
+    --hot:#ffd866; --line:#1b2436; --line2:#2a3a52; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #wrap { display:flex; height:100vh; }
+  #stage { position:relative; flex:1; min-width:0; overflow:hidden; }
+  #cv { width:100%; height:100%; display:block; cursor:grab; }
+  #side { flex:0 0 372px; padding:12px 14px 30px; overflow:auto; border-left:1px solid var(--line); background:var(--panel); box-sizing:border-box; }
+  h1 { font-size:14px; margin:2px 0 4px; color:var(--accent); }
+  h3 { color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
+  .note { color:var(--dim); font-size:11.5px; }
+  .row { display:flex; justify-content:space-between; margin:2px 0; gap:8px; }
+  .k { color:var(--dim); } .v { font-variant-numeric:tabular-nums; } .v b { color:var(--hot); font-weight:normal; }
+  button, select, input { background:#16202f; color:var(--fg); border:1px solid var(--line2); border-radius:6px; padding:4px 8px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  input[type=number] { width:52px; } input[type=range] { accent-color:var(--accent); vertical-align:middle; }
+  #topbar { position:absolute; z-index:5; top:10px; left:50%; transform:translateX(-50%); display:flex; flex-wrap:wrap; justify-content:center;
+    gap:7px; align-items:center; padding:6px 8px; border:1px solid var(--line2); border-radius:12px; background:rgba(11,14,20,.9);
+    box-shadow:0 6px 24px rgba(0,0,0,.4); backdrop-filter:blur(8px); max-width:calc(100% - 20px); box-sizing:border-box; }
+  .icon { width:34px; height:30px; padding:0; display:grid; place-items:center; font:16px/1 system-ui,sans-serif; }
+  .icon.primary { width:40px; color:#04121c; background:var(--accent); border-color:#8bddff; }
+  .sep { width:1px; height:24px; background:var(--line2); }
+  #speedv { color:var(--dim); font-size:11px; min-width:96px; }
+  .badge { text-align:center; font-weight:bold; letter-spacing:.1em; padding:6px; border-radius:7px; margin:8px 0; border:1px solid var(--line2); }
+  .badge.run { color:var(--accent); } .badge.ok { color:var(--ok); border-color:rgba(63,191,127,.45); background:rgba(63,191,127,.1); }
+  .badge.bad { color:var(--warn); border-color:rgba(255,107,107,.45); background:rgba(255,107,107,.1); }
+  #answer { word-break:break-all; color:var(--hot); font-size:12px; max-height:64px; overflow:auto; }
+  #decoded { font-size:20px; color:var(--hot); }
+  .cfg { display:grid; grid-template-columns:auto 1fr; gap:5px 10px; align-items:center; font-size:12px; }
+  .legend { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:2px 10px; font-size:11px; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
+  canvas.chart { width:100%; height:80px; display:block; background:#0a1019; border:1px solid var(--line); border-radius:7px; }
+  .how p { margin:5px 0; color:#aab6c6; font-size:11.5px; } .how b { color:var(--fg); font-weight:normal; text-decoration:underline; text-decoration-color:#3a506f; }
+  details summary { cursor:pointer; color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
+  #banner { position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:7px 14px; border-radius:10px; border:1px solid var(--line2);
+    background:rgba(11,14,20,.9); font-size:12px; pointer-events:none; transition:opacity .4s; }
+  kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:4px; padding:0 4px; font-size:10.5px; color:var(--dim); }
+</style></head><body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="topbar">
+      <select id="prog"></select><input id="progN" type="number" min="0" max="30" title="size">
+      <input id="custom" placeholder="@(@(S(L),S(L)),L)" hidden style="width:200px">
+      <button id="load">load</button><span class="sep"></span>
+      <button class="icon" id="reset" title="restart (R)">⟲</button>
+      <button class="icon primary" id="play" title="play / pause (space)">▶</button>
+      <button class="icon" id="end" title="run to the end">⏭</button>
+      <input id="speed" type="range" min="0" max="100" value="45" style="width:120px"><span id="speedv"></span>
+    </div>
+    <div id="banner"></div>
+  </div>
+  <div id="side">
+    <h1>interaction nets as strands on a lattice</h1>
+    <div class="note">No addresses and no routing. A wire is a path of <i>strands</i> laid along the links between
+      neighbouring sites; strand i of a link is the same wire from both sides. Each site holds a bead or two (agents)
+      and a little switchboard joining the strand ends that meet there. Every move is a random local proposal,
+      accepted by an energy: wires pull like springs, crowding pushes, heat jiggles.</div>
+    <div id="badge" class="badge run">LOADING</div>
+    <div id="decoded"></div><div id="answer"></div><div class="note" id="verdict"></div>
+
+    <h3>time and work</h3>
+    <div class="row"><span class="k">sweeps (every site once)</span><span class="v" id="sSweep">0</span></div>
+    <div class="row"><span class="k">rewrites</span><span class="v" id="sFires">0</span></div>
+    <div class="row"><span class="k">steps · exchanges</span><span class="v" id="sHops">0</span></div>
+    <div class="row"><span class="k">folds · flips</span><span class="v" id="sFold">0</span></div>
+    <div class="row"><span class="k">rewrites waiting for room</span><span class="v" id="sBlock">0</span></div>
+    <canvas class="chart" id="chart" width="680" height="160"></canvas>
+    <div class="note"><span style="color:#ffd866">■</span> rewrites per sweep &nbsp;<span style="color:#56c8ff">■</span> strands in use</div>
+
+    <h3>matter</h3>
+    <div class="row"><span class="k">agents</span><span class="v" id="sAgents">0</span></div>
+    <div class="row"><span class="k">strands (peak)</span><span class="v" id="sStrands">0</span></div>
+    <div class="row"><span class="k">wanted walkers stepping · blocked</span><span class="v" id="sWalk">0</span></div>
+
+    <h3>the lattice</h3>
+    <div class="cfg">
+      <span class="k">space</span><select id="cDim"><option value="1">2D sheet</option><option value="6">3D, 6 layers</option></select>
+      <span class="k">agents per site</span><select id="cK"><option>1</option><option selected>2</option></select>
+      <span class="k">strands per link</span><select id="cL"><option>2</option><option selected>3</option><option>4</option></select>
+      <span class="k">rewrites inside</span><select id="cBlock"><option value="1" selected>one 2×2 block</option><option value="0">a site and its neighbours</option></select>
+      <span class="k">evaluation</span><select id="cLazy"><option value="1" selected>lazy: only wanted readers react</option><option value="0">eager: every pair reacts</option></select>
+      <span class="k">temperature</span><span><input id="cTemp" type="range" min="2" max="40" value="20" style="width:110px"> <span id="cTempV" class="note"></span></span>
+      <span class="k">exchanges</span><select id="cSwap"><option value="1" selected>on</option><option value="0">off</option></select>
+      <span class="k">self-propelled walkers</span><select id="cActive"><option value="0.5" selected>on</option><option value="0">off</option></select>
+    </div>
+    <div class="note" style="margin-top:6px" id="bits"></div>
+
+    <h3>legend</h3>
+    <div class="legend" id="legend"></div>
+
+    <details class="how" open><summary>how it works</summary>
+      <p><b>Step.</b> An agent moves to a neighbouring site. The strand it walks along is eaten; its other wires are
+        dragged one strand longer. Wanted readers mostly step along their principal wire, toward what they need.</p>
+      <p><b>Fold and flip.</b> A wire that goes out and straight back snaps shut; a corner can flip to the other side
+        of its square. Together they let wires straighten like strings under tension.</p>
+      <p><b>Exchange.</b> In a full site, an agent may trade places with a resident, so walkers get through crowds.</p>
+      <p><b>Rewrite.</b> When a wanted reader and the value it reads meet (same site, or one strand apart), the rule
+        fires inside a 2×2 block: fresh agents take the free seats and are wired with fresh strands.</p>
+      <p><b>Demand.</b> Nothing reacts until wanted. A wanted reader that reaches another computation's output makes
+        that computation wanted too, so demand travels with the walkers, not as a signal.</p>
+      <p class="note"><kbd>space</kbd> play · <kbd>R</kbd> restart · <kbd>F</kbd> fit · drag to pan · wheel to zoom</p>
+    </details>
+  </div>
+</div>
+<script src="engine.js"></script>
+<script>
+"use strict";
+const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out"];
+const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1];
+const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage", Sel: "second dispatch",
+  Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root" };
+const COLOR = ["#000", "#ffd866", "#ffb454", "#ff7a59", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff"];
+const isConsumer = t => t >= 6 && t <= 12;
+const NONE = 255;
+let E = null, catalog = null, L = null;
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+const enc = new TextEncoder(), dec = new TextDecoder();
+const text = n => dec.decode(new Uint8Array(E.memory.buffer, E.text_ptr(), n));
+function withString(s, f) { const b = enc.encode(s); const p = E.alloc(b.length || 1); new Uint8Array(E.memory.buffer, p, b.length).set(b); return f(p, b.length); }
+let view = { s: 10, ox: 0, oy: 0 }, playing = false, finished = false, oracleText = null, hist = [], bursts = [];
+
+// ---- loading -------------------------------------------------------------------------------
+function populate() {
+  const sel = $("prog");
+  for (const w of catalog.workloads) { const o = document.createElement("option"); o.value = w.name; o.textContent = w.name; o.title = w.desc; sel.appendChild(o); }
+  for (const [v, t] of [["random", "random term"], ["custom", "custom term…"]]) { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); }
+  $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${TAGS[t]} ${NAMES[TAGS[t]]}</span>`).join("")
+    + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`;
+  const q = new URLSearchParams(location.hash.slice(1));
+  sel.value = q.get("p") || "share-tower"; $("progN").value = q.get("n") || 4;
+  if (q.get("dim")) $("cDim").value = q.get("dim");
+  syncUI();
+}
+function syncUI() {
+  const v = $("prog").value, w = catalog.workloads.find(w => w.name === v);
+  $("custom").hidden = v !== "custom"; $("progN").hidden = !(w && w.n > 0) && v !== "random";
+  $("cTempV").textContent = (+$("cTemp").value / 10).toFixed(1);
+}
+function source() {
+  const v = $("prog").value;
+  if (v === "custom") return $("custom").value.trim() || "@(@(S(L),S(L)),L)";
+  if (v === "random") return `random:${$("progN").value}:6`;
+  const w = catalog.workloads.find(w => w.name === v);
+  return w && w.n > 0 ? `${v}:${$("progN").value}` : v;
+}
+function load() {
+  const src = source();
+  const agents = withString(src, (p, n) => E.strands_probe(p, n));
+  if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return; }
+  const depth = +$("cDim").value, k = +$("cK").value, lanes = +$("cL").value;
+  let side = Math.ceil(Math.sqrt(agents) * (depth > 1 ? 7 : 8)) + 16;
+  // Grow the grid until the term's initial drawing fits.
+  let rc = 2;
+  const flags = (+$("cBlock").value) | (+$("cLazy").value << 1);
+  for (let tries = 0; tries < 6; tries++) {
+    rc = withString(src, (p, n) => E.strands_new(side, side, depth, k, lanes, flags, +$("cTemp").value / 10, +$("cSwap").value, +$("cActive").value, 7, p, n));
+    if (rc !== 2) break;
+    side = Math.ceil(side * 1.4);
+  }
+  if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
+  L = { w: side, h: side, depth, k, lanes, ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4 };
+  finished = false; oracleText = null; hist = []; bursts = [];
+  const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1));
+  $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each) plus a switchboard of ${ends} ends × ${bits} bits ≈ ${4 * L.k + ends * bits} bits. Moves touch at most one 2×2 block.`;
+  location.hash = `p=${$("prog").value}&n=${$("progN").value}&dim=${depth}`;
+  fitContent(); draw(); panel(true);
+  banner(`${src}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
+}
+
+// ---- geometry ------------------------------------------------------------------------------------
+const S = 10; // world units per site
+function siteXYZ(s) { const x = s % L.w, y = Math.floor(s / L.w) % L.h, z = Math.floor(s / (L.w * L.h)); return [x, y, z]; }
+function siteOrigin(s) { const [x, y, z] = siteXYZ(s); return [x * S + z * S * 0.38, y * S - z * S * 0.58]; }
+function slotPos(s, k) {
+  const [ox, oy] = siteOrigin(s);
+  if (L.k === 1) return [ox + S / 2, oy + S / 2];
+  return [ox + S * (0.32 + 0.36 * k), oy + S / 2];
+}
+// Where strand i on face f meets the edge of a site.
+function lanePos(s, f, i) {
+  const [ox, oy] = siteOrigin(s), t = (i + 1) / (L.lanes + 1);
+  switch (f) {
+    case 0: return [ox + S, oy + S * t];
+    case 1: return [ox, oy + S * t];
+    case 2: return [ox + S * t, oy + S];
+    case 3: return [ox + S * t, oy];
+    case 4: return [ox + S * t * 0.6 + S * 0.55, oy + S * 0.18];
+    default: return [ox + S * t * 0.6 + S * 0.05, oy + S * 0.82];
+  }
+}
+function endPos(s, e) {
+  if (e < 3 * L.ks) { const k = Math.floor(e / 3); return slotPos(s, k); }
+  const x = e - 3 * L.ks; return lanePos(s, Math.floor(x / L.lanes), x % L.lanes);
+}
+function neighbor(s, f) {
+  const [x, y, z] = siteXYZ(s), at = (x, y, z) => z * L.w * L.h + y * L.w + x;
+  switch (f) { case 0: return at(x + 1, y, z); case 1: return at(x - 1, y, z); case 2: return at(x, y + 1, z);
+    case 3: return at(x, y - 1, z); case 4: return at(x, y, z + 1); default: return at(x, y, z - 1); }
+}
+function views() {
+  const b = E.memory.buffer, n = L.w * L.h * L.depth;
+  return { tags: new Uint8Array(b, E.tags_ptr(), n * L.ks), want: new Uint8Array(b, E.want_ptr(), n * L.ks),
+    mate: new Uint8Array(b, E.mate_ptr(), n * L.ends), live: new Uint32Array(b, E.live_ptr(), E.live_len()) };
+}
+function fitContent() {
+  const V = views(); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const s of V.live) {
+    let has = false; for (let k = 0; k < L.ks; k++) if (V.tags[s * L.ks + k]) has = true;
+    if (!has) continue;
+    const [ox, oy] = siteOrigin(s); x0 = Math.min(x0, ox); y0 = Math.min(y0, oy); x1 = Math.max(x1, ox + S); y1 = Math.max(y1, oy + S);
+  }
+  if (x1 < x0) { x0 = 0; y0 = 0; x1 = L.w * S; y1 = L.h * S; }
+  const pad = Math.max(S * 4, (x1 - x0) * 0.08); x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+  const r = cv.getBoundingClientRect();
+  view.s = Math.min((r.width - 30) / (x1 - x0), (r.height - 90) / (y1 - y0));
+  view.ox = (r.width - (x1 - x0) * view.s) / 2 - x0 * view.s; view.oy = (r.height - (y1 - y0) * view.s) / 2 + 25 - y0 * view.s;
+}
+
+// ---- drawing -----------------------------------------------------------------------------------------
+function draw() {
+  const d = devicePixelRatio || 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#0b0e14"; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (!L) return;
+  const V = views();
+  ctx.setTransform(d * view.s, 0, 0, d * view.s, d * view.ox, d * view.oy);
+  const r = cv.getBoundingClientRect();
+  const vx0 = -view.ox / view.s - S, vy0 = -view.oy / view.s - S, vx1 = (r.width - view.ox) / view.s + S, vy1 = (r.height - view.oy) / view.s + S;
+  const sites = [...V.live].filter(s => { const [ox, oy] = siteOrigin(s); return ox >= vx0 && ox <= vx1 && oy >= vy0 && oy <= vy1; });
+  if (L.depth > 1) sites.sort((a, b) => Math.floor(b / (L.w * L.h)) - Math.floor(a / (L.w * L.h)));
+  const detail = view.s > 2.2;
+  // site floors (occupied sites, faint), by layer for 3D depth cue
+  for (const s of sites) {
+    const [ox, oy] = siteOrigin(s), z = Math.floor(s / (L.w * L.h));
+    let n = 0; for (let k = 0; k < L.ks; k++) if (V.tags[s * L.ks + k]) n++;
+    ctx.fillStyle = n ? `rgba(40,60,90,${0.35 - z * 0.03})` : `rgba(30,42,60,${0.18 - z * 0.015})`;
+    ctx.fillRect(ox + 0.6, oy + 0.6, S - 1.2, S - 1.2);
+  }
+  // strands between sites, and switchboard pairings inside them
+  const strands = new Path2D(), board = new Path2D();
+  const base = 3 * L.ks;
+  for (const s of sites) {
+    for (let e = 0; e < L.ends; e++) {
+      const m = V.mate[s * L.ends + e];
+      if (m === NONE) continue;
+      if (e >= base) {
+        const x = e - base, f = Math.floor(x / L.lanes), i = x % L.lanes;
+        if (f % 2 === 0) { // draw each strand once, from its lower face side
+          const t = neighbor(s, f), [ax, ay] = lanePos(s, f, i), [bx, by] = lanePos(t, f ^ 1, i);
+          strands.moveTo(ax, ay); strands.lineTo(bx, by);
+        }
+      }
+      if (detail && m > e) {
+        const [ax, ay] = endPos(s, e), [bx, by] = endPos(s, m), [cx, cy] = siteOrigin(s);
+        board.moveTo(ax, ay); board.quadraticCurveTo(cx + S / 2, cy + S / 2, bx, by);
+      }
+    }
+  }
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(120,150,190,0.55)"; ctx.lineWidth = Math.max(0.35, 1.1 / view.s); ctx.stroke(strands);
+  if (detail) { ctx.strokeStyle = "rgba(150,175,210,0.45)"; ctx.lineWidth = Math.max(0.3, 0.9 / view.s); ctx.stroke(board); }
+  // the principal wire of every wanted reader, followed end to end
+  const hot = new Path2D();
+  for (const s of V.live) for (let k = 0; k < L.ks; k++) {
+    const t = V.tags[s * L.ks + k];
+    if (!t || !isConsumer(t) || !V.want[s * L.ks + k]) continue;
+    let site = s, e = k * 3, [px, py] = slotPos(s, k); hot.moveTo(px, py);
+    for (let guard = 0; guard < 4000; guard++) {
+      const m = V.mate[site * L.ends + e];
+      if (m === NONE) break;
+      const [mx, my] = endPos(site, m); hot.lineTo(mx, my);
+      if (m < base) break;
+      const x = m - base, f = Math.floor(x / L.lanes), i = x % L.lanes;
+      site = neighbor(site, f); e = base + (f ^ 1) * L.lanes + i;
+      const [nx, ny] = endPos(site, e); hot.lineTo(nx, ny);
+    }
+  }
+  ctx.globalCompositeOperation = "lighter";
+  ctx.strokeStyle = "rgba(86,200,255,0.9)"; ctx.lineWidth = Math.max(0.6, 2.2 / view.s); ctx.stroke(hot);
+  ctx.globalCompositeOperation = "source-over";
+  // agents
+  const rad = L.k === 1 ? S * 0.26 : S * 0.17;
+  for (const s of sites) for (let k = 0; k < L.ks; k++) {
+    const t = V.tags[s * L.ks + k]; if (!t) continue;
+    const [x, y] = slotPos(s, k);
+    ctx.fillStyle = COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+    if (V.want[s * L.ks + k] && isConsumer(t)) { ctx.strokeStyle = "#56c8ff"; ctx.lineWidth = Math.max(0.4, 1.4 / view.s); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
+  }
+  // rewrites, as fading rings
+  const now = performance.now(); let keep = 0;
+  for (const b of bursts) {
+    const a = (now - b.t) / 700; if (a >= 1) continue; bursts[keep++] = b;
+    const [ox, oy] = siteOrigin(b.s);
+    ctx.strokeStyle = `rgba(255,216,102,${(1 - a) * 0.9})`; ctx.lineWidth = Math.max(0.5, 1.6 / view.s);
+    ctx.beginPath(); ctx.arc(ox + S / 2, oy + S / 2, S * (0.6 + a * 2.2), 0, 7); ctx.stroke();
+  }
+  bursts.length = keep;
+}
+
+// ---- the loop ------------------------------------------------------------------------------------------
+function proposalsPerFrame() { const v = +$("speed").value; return v >= 100 ? Infinity : Math.round(Math.pow(10, 1 + v / 100 * 6)); }
+function frame() {
+  if (L && playing && !finished) {
+    const want = proposalsPerFrame(), t0 = performance.now();
+    let ran = 0;
+    while (ran < want) {
+      const chunk = Math.min(want - ran, 200000);
+      finished = E.strands_run(chunk) === 1; ran += chunk;
+      if (finished || performance.now() - t0 > 14) break;
+    }
+    const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now();
+    for (let i = 0; i < fl.length && bursts.length < 600; i++) bursts.push({ s: fl[i], t: now });
+    E.fire_log_clear();
+    const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 14);
+    hist.push({ sw: st[1], fires: st[2], strands: st[7] }); if (hist.length > 3000) hist.splice(0, 1500);
+    if (finished) { playing = false; $("play").textContent = "▶"; }
+  }
+  draw(); panel(false);
+  requestAnimationFrame(frame);
+}
+const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
+let lastPanel = 0;
+function panel(force) {
+  if (!L) return;
+  const now = performance.now(); if (!force && now - lastPanel < 200) return; lastPanel = now;
+  const st = new Float64Array(E.memory.buffer, E.stats_ptr(), 14);
+  $("sSweep").textContent = fmt(st[1]); $("sFires").innerHTML = `<b>${fmt(st[2])}</b>`;
+  $("sHops").textContent = `${fmt(st[3])} · ${fmt(st[4])}`; $("sFold").textContent = `${fmt(st[5])} · ${fmt(st[6])}`;
+  $("sBlock").textContent = fmt(st[9]); $("sAgents").textContent = fmt(st[11]); $("sStrands").textContent = `${fmt(st[7])} (${fmt(st[8])})`;
+  $("sWalk").textContent = `${fmt(st[12])} · ${fmt(st[13])}`;
+  chart();
+  const badge = $("badge");
+  if (!finished) { badge.className = "badge run"; badge.textContent = playing ? "RUNNING" : "PAUSED"; $("decoded").textContent = ""; $("answer").textContent = ""; $("verdict").textContent = ""; return; }
+  const ans = text(E.strands_answer()), decd = text(E.strands_answer_decoded());
+  if (oracleText === null) oracleText = text(E.strands_oracle(200000));
+  const ok = oracleText === "" ? null : ans === oracleText;
+  badge.className = "badge " + (ok === false ? "bad" : "ok"); badge.textContent = ok === false ? "WRONG ANSWER" : `DONE in ${fmt(st[1])} sweeps`;
+  $("decoded").textContent = decd ? `= ${decd}` : ""; $("answer").textContent = ans;
+  $("verdict").textContent = ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText;
+}
+function chart() {
+  const c = $("chart"), g = c.getContext("2d"), W = c.width, H = c.height; g.clearRect(0, 0, W, H);
+  if (hist.length < 3) return;
+  const n = Math.min(hist.length - 1, 300), st = hist.length - 1 - n, rates = [], sts = [];
+  for (let i = st + 1; i < hist.length; i++) { const a = hist[i - 1], b = hist[i]; rates.push((b.fires - a.fires) / Math.max(1e-9, b.sw - a.sw)); sts.push(b.strands); }
+  const rm = Math.max(1e-6, ...rates), sm = Math.max(1, ...sts), bw = W / rates.length;
+  g.fillStyle = "#ffd866"; rates.forEach((r, i) => { const h = (H - 6) * r / rm; g.fillRect(i * bw, H - h, Math.max(1, bw - .5), h); });
+  g.strokeStyle = "#56c8ff"; g.lineWidth = 2; g.beginPath(); sts.forEach((s, i) => { const y = H - 4 - (H - 10) * s / sm; i ? g.lineTo(i * bw, y) : g.moveTo(0, y); }); g.stroke();
+}
+
+// ---- input -------------------------------------------------------------------------------------------------
+function resize() { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
+let drag = null;
+cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => { if (drag) { view.ox = drag.ox + e.clientX - drag.x; view.oy = drag.oy + e.clientY - drag.y; } });
+cv.addEventListener("pointerup", () => drag = null);
+cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const s2 = Math.max(0.05, Math.min(40, view.s * Math.exp(-e.deltaY * 0.0016))); view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2; }, { passive: false });
+function setPlaying(p) { playing = p && !finished; $("play").textContent = playing ? "❚❚" : "▶"; }
+$("play").onclick = () => setPlaying(!playing);
+$("end").onclick = () => { $("speed").value = 100; speedLabel(); setPlaying(true); };
+$("reset").onclick = () => load();
+$("load").onclick = () => { load(); setPlaying(true); };
+$("prog").onchange = syncUI; $("cTemp").oninput = syncUI;
+$("speed").oninput = speedLabel;
+function speedLabel() { const v = proposalsPerFrame(); $("speedv").textContent = v === Infinity ? "max speed" : `${fmt(v)} proposals/frame`; }
+window.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") { load(); setPlaying(true); } return; }
+  if (e.key === " ") { e.preventDefault(); setPlaying(!playing); } else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
+});
+window.addEventListener("resize", resize);
+let bt = 0; function banner(m, bad) { const b = $("banner"); b.textContent = m; b.style.opacity = 1; b.style.color = bad ? "var(--warn)" : "var(--fg)"; clearTimeout(bt); bt = setTimeout(() => b.style.opacity = 0, bad ? 6000 : 3500); }
+(async () => {
+  const bytes = Uint8Array.from(atob(window.STRANDS_WASM), c => c.charCodeAt(0));
+  E = (await WebAssembly.instantiate(bytes, {})).instance.exports;
+  catalog = JSON.parse(text(E.catalog()));
+  populate(); resize(); speedLabel(); load();
+  if (new URLSearchParams(location.hash.slice(1)).get("play") !== "0") setPlaying(true);
+  requestAnimationFrame(frame);
+})().catch(err => { $("badge").className = "badge bad"; $("badge").textContent = "ENGINE FAILED"; $("verdict").textContent = String(err); });
+</script>
+</body></html>

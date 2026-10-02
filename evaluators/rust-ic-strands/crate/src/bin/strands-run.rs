@@ -38,6 +38,8 @@ fn main() {
             "--block" => p.block = true,
             "--lazy" => p.lazy = true,
             "--idle" => p.idle_tension = it.next().unwrap().parse().unwrap(),
+            "--active" => p.active = it.next().unwrap().parse().unwrap(),
+            "--swap" => p.swap = it.next().unwrap().parse().unwrap(),
             "--repel" => p.repel = it.next().unwrap().parse().unwrap(),
             _ => src = Some(a.clone()),
         }
@@ -71,9 +73,9 @@ fn main() {
     let s = &l.stats;
     println!("{} — answer {} (want {}) projection {:?}", if done { "DONE" } else { "UNFINISHED" },
         ans.as_deref().unwrap_or("-"), want.as_deref().unwrap_or("?"), proj.err());
-    println!("sweeps {:.0}", s.sweeps);
-    println!("proposals {}  fires {} (blocked {})  hops {}  folds {}  flips {}  strands {} (peak {})  fullest site {}  {:.2}s",
-        s.proposals, s.fires, s.blocked_fires, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_site, dt);
+    println!("sweeps {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}", s.sweeps, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2]);
+    println!("proposals {}  fires {} (blocked {})  swaps {}  hops {}  folds {}  flips {}  strands {} (peak {})  fullest site {}  {:.2}s",
+        s.proposals, s.fires, s.blocked_fires, s.swaps, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_site, dt);
     let blocked: Vec<String> = s.blocked_rule.iter().enumerate().filter(|(_, &n)| n > 0)
         .map(|(i, n)| format!("{}·{} {n}", rust_ca_lattice::rules::RULES[i].consumer.name(), rust_ca_lattice::rules::RULES[i].producer.name())).collect();
     println!("blocked by lanes {}; by rule: {}", s.blocked_lanes, blocked.join(", "));

@@ -28,6 +28,8 @@ fn parse(spec: &str) -> Params {
             "block" => p.block = v == "1",
             "lazy" => p.lazy = v == "1",
             "idle" => p.idle_tension = v.parse().unwrap(),
+            "active" => p.active = v.parse().unwrap(),
+            "swap" => p.swap = v.parse().unwrap(),
             _ => panic!("unknown key {k}"),
         }
     }
