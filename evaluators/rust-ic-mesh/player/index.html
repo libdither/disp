@@ -287,7 +287,8 @@ function load() {
   heat = new Float32Array(M.w * M.h);
   bursts = []; hist.length = 0; prevStat = null; finished = false; oracleText = null; pinned = null; acc = 0;
   lastMoves = new Uint32Array(0);
-  location.hash = `p=${$("prog").value}&n=${$("progN").value}&spec=${spec}`;
+  const g0 = $("cGrid").value;
+  location.hash = `p=${$("prog").value}&n=${$("progN").value}&spec=${spec}` + (g0 === "auto" ? "" : `&grid=${g0}`);
   $("hw").innerHTML = hardwareNote(M);
   fitContent(); if (initialZoom !== 1) zoomAt(initialZoom); refreshPanel(true); draw(0);
   banner(`${src} — ${agents} agents on ${side}×${side} tiles · ${side * side * k} slots`);
