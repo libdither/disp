@@ -43,9 +43,13 @@ fn main() {
             "--pulse" => p.pulse = true,
             "--phop" => p.p_hop = it.next().unwrap().parse().unwrap(),
             "--margolus" => p.margolus = true,
+            "--block-moves" => p.block_moves = true,
+            "--block-side" => p.block_side = it.next().unwrap().parse().unwrap(),
             "--gc" => p.gc = true,
             "--link" => p.link_crowd = it.next().unwrap().parse().unwrap(),
             "--idle-crowd" => p.idle_crowd = it.next().unwrap().parse().unwrap(),
+            "--board" => p.board_crowd = it.next().unwrap().parse().unwrap(),
+            "--pairs" => p.pairs = it.next().unwrap().parse().unwrap(),
             "--block" => p.block = true,
             "--lazy" => p.lazy = true,
             "--idle" => p.idle_tension = it.next().unwrap().parse().unwrap(),
@@ -72,6 +76,7 @@ fn main() {
         // Time-averaged count of wanted consumers in each waiting state, sampled four times a
         // clock, plus the share of clocks where some consumer had its partner in reach.
         let (mut acc, mut lens, mut ready, mut fin, mut crowd) = ([0f64; 5], [0f64; 2], 0f64, false, [0usize; 8]);
+        let mut boards = [0u64; 8];
         while l.stats.proposals < budget && !fin {
             let c0 = l.stats.clocks;
             fin = l.run((l.stats.proposals + (l.live_sites() / 4).max(1) as u64).min(budget));
@@ -80,6 +85,8 @@ fn main() {
             for i in 0..5 { acc[i] += n[i] as f64 * dc; }
             for i in 0..2 { lens[i] += len[i] as f64 * dc; }
             if n[0] > 0 { ready += dc; }
+            let b = l.board_stats();
+            for i in 0..8 { boards[i] += b[i]; }
             let c = l.crowding();
             for i in 0..8 { crowd[i] += c[i]; }
         }
@@ -89,6 +96,13 @@ fn main() {
         println!("clocks per rewrite {:.1}; some pair in reach during {:.0}% of clocks", c / l.stats.fires.max(1) as f64, 100.0 * ready / c);
         println!("crowding: {:.0}% of the sites walkers head into are full, against {:.0}% of all sites holding agents; walker steps into full sites that went through as exchanges: {} of {}",
             100.0 * crowd[0] as f64 / crowd[1].max(1) as f64, 100.0 * crowd[2] as f64 / crowd[3].max(1) as f64, l.stats.walk_swap, l.stats.walk_fail[0]);
+        let pairs = boards[..6].iter().sum::<u64>().max(1) as f64;
+        println!("switchboards: {:.1} ends in use per live site; pairings: straight through {:.0}%, straight to another lane {:.0}%, corner {:.0}%, U-turn {:.0}%, port to strand {:.0}%, port to port {:.0}%",
+            boards[7] as f64 / boards[6].max(1) as f64, 100.0 * boards[0] as f64 / pairs, 100.0 * boards[1] as f64 / pairs, 100.0 * boards[2] as f64 / pairs,
+            100.0 * boards[3] as f64 / pairs, 100.0 * boards[4] as f64 / pairs, 100.0 * boards[5] as f64 / pairs);
+        let h = l.pairs_hist.borrow();
+        let tot = h.iter().sum::<u64>().max(1) as f64;
+        println!("pairings per live site: {}", h.iter().enumerate().filter(|(_, &n)| n > 0).map(|(i, &n)| format!("{i}: {:.3}%", 100.0 * n as f64 / tot)).collect::<Vec<_>>().join(", "));
         let full = crowd[0].max(1) as f64;
         println!("full sites walkers head into hold: two idle agents {:.0}%, one idle {:.0}%, no idle {:.0}%; the walker's own partner {:.0}%",
             100.0 * crowd[4] as f64 / full, 100.0 * crowd[5] as f64 / full, 100.0 * crowd[6] as f64 / full, 100.0 * crowd[7] as f64 / full);
@@ -122,7 +136,7 @@ fn main() {
     let s = &l.stats;
     println!("{} — answer {} (want {}) projection {:?}", if done { "DONE" } else { "UNFINISHED" },
         ans.as_deref().unwrap_or("-"), want.as_deref().unwrap_or("?"), proj.err());
-    println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  collected {} ({} dead computations)", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected, s.dead);
+    println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  collected {} ({} dead computations)  refused for a full switchboard {}  turns dropped for stale reads {}", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected, s.dead, s.capped, s.stale);
     println!("proposals {}  fires {} (blocked {})  swaps {}  hops {}  folds {}  flips {}  strands {} (peak {})  peak live sites {}  fullest site {}  {:.2}s",
         s.proposals, s.fires, s.blocked_fires, s.swaps, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_live, s.peak_site, dt);
     let mut left = std::collections::BTreeMap::new();

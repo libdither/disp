@@ -55,12 +55,12 @@ fn block_rewrites_in_3d() {
     all_finish(Params { depth: 6, k: 2, lanes: 2, block: true, lazy: true, ..base() });
 }
 
-/// The chip schedule: disjoint 2×2×2 blocks each making one move per clock, demand pulses,
-/// duplicators collected by erasers, crowded links pulling harder.
+/// The chip schedule: disjoint 2×2×2 blocks in which every site takes a turn, demand pulses,
+/// garbage collected by erasers, crowded switchboards pulling harder, at most 8 pairings a site.
 #[test]
 fn margolus_blocks_with_pulses_in_3d() {
-    all_finish(Params { depth: 6, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, gc: true, link_crowd: 1.0,
-                        idle_crowd: 10.0, agent_turns: 0.8, ..base() });
+    all_finish(Params { depth: 6, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true,
+                        board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, ..base() });
 }
 
 /// Collection and link crowding with every invariant re-checked after every move: share-tower
@@ -68,7 +68,7 @@ fn margolus_blocks_with_pulses_in_3d() {
 /// Each then runs on past its answer until only the answer is left.
 #[test]
 fn collection_keeps_the_projection_exact() {
-    let p = |margolus| Params { w: 16, h: 16, depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, gc: true, margolus,
+    let p = |margolus| Params { w: 16, h: 16, depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, gc: true, margolus, block_moves: margolus,
                                 link_crowd: 1.0, idle_crowd: 10.0, swap: 1.0, agent_turns: 0.8, ..base() };
     let run_checked = |t: &Term, p: Params| {
         let mut net = Net::new();
@@ -127,6 +127,8 @@ fn invariants_hold_after_every_move() {
         Params { depth: 4, k: 1, lanes: 3, lazy: true, w: 24, h: 24, ..base() },
         Params { depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, swap: 1.0, agent_turns: 0.8, w: 16, h: 16, ..base() },
         Params { depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, swap: 1.0, w: 16, h: 16, ..base() },
+        Params { depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true, swap: 1.0,
+                 board_crowd: 0.5, idle_crowd: 10.0, pairs: 6, w: 16, h: 16, ..base() },
     ];
     for src in terms {
         let t = rust_ic_mesh::term::parse(src).unwrap();

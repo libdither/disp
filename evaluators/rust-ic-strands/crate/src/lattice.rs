@@ -71,6 +71,12 @@ pub struct Params {
     /// Run as a chip would: each clock, the lattice is cut into 2×2×2 blocks (offset at
     /// random), and every block holding matter makes one move confined to it. Needs `block`.
     pub margolus: bool,
+    /// With blocks, every site of a block takes a turn each clock, in priority order, and a turn
+    /// that would look at a site an earlier turn changed is dropped (as if every site decided
+    /// from the state at the start of the clock).
+    pub block_moves: bool,
+    /// Side of a block, in sites (2: the classic Margolus neighbourhood).
+    pub block_side: u32,
     /// An eraser touching a computation's output collects it: a duplicator becomes a plain
     /// wire from its input to its other output, an apply, triage or dispatch becomes erasers on
     /// its inputs. Without this, lazy evaluation leaves erasers parked on garbage forever,
@@ -82,13 +88,18 @@ pub struct Params {
     /// Energy for each pair of idle agents (anything but a wanted reader) sharing a site:
     /// idle matter keeps a seat free, so wanted readers can walk through it and rewrites have room.
     pub idle_crowd: f64,
+    /// Energy c·p²/2 on a site whose switchboard holds p pairings.
+    pub board_crowd: f64,
+    /// Most pairings a site's switchboard holds (0: no limit). A move that would overfill a
+    /// site does not happen.
+    pub pairs: usize,
     pub seed: u64,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, gc: false, link_crowd: 0.0, idle_crowd: 0.0, seed: 1 }
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1 }
     }
 }
 
@@ -122,6 +133,10 @@ pub struct Stats {
     pub collected: u64,
     /// Of those, dead computations replaced by erasers on their inputs.
     pub dead: u64,
+    /// Moves refused because a site's switchboard was full.
+    pub capped: u64,
+    /// Turns dropped for looking at a site an earlier move in the block changed this clock.
+    pub stale: u64,
 }
 
 #[inline] fn code(t: Tag) -> u8 { ALL_TAGS.iter().position(|x| *x == t).unwrap() as u8 + 1 }
@@ -169,8 +184,17 @@ pub struct Lattice {
     pub check_every: u64,
     /// Sites where rewrites fired, for the player (cleared by whoever reads it).
     pub fire_log: Vec<u32>,
+    /// How many sites held 0, 1, … pairings, summed over board_stats calls.
+    pub pairs_hist: std::cell::RefCell<Vec<u64>>,
     /// In Margolus mode, the corner of the block the current move must stay inside.
     fence: Option<[i64; 3]>,
+    /// Sites of the current block already changed this clock (moves must leave them alone),
+    /// and the sites the move under way has changed.
+    taken: Vec<u32>,
+    touched: Vec<u32>,
+    track: bool,
+    /// The turn under way looked at a site an earlier move this clock changed, so it is dropped.
+    stale: std::cell::Cell<bool>,
     /// Record every move in `events`, for a player stepping one move at a time.
     pub narrate: bool,
     /// [kind (EV_*), site, other site, tag, other tag, detail, detail, 0] per recorded move.
@@ -200,6 +224,7 @@ impl Lattice {
     #[inline] pub fn mate_of(&self, s: u32, e: u8) -> u8 { self.mate[s as usize * self.ends + e as usize] }
     #[inline] fn set(&mut self, s: u32, e: u8, m: u8) {
         self.mate[s as usize * self.ends + e as usize] = m;
+        if self.track { self.touched.push(s); }
         // A pulse rides one strand of one wire: if that strand is touched, the pulse is lost
         // rather than risk it continuing on another wire. The reader sends another.
         if self.p.pulse && self.is_strand(e) {
@@ -220,12 +245,22 @@ impl Lattice {
         let (w, h) = (self.p.w, self.p.h);
         [(s % w) as i64, ((s / w) % h) as i64, (s / (w * h)) as i64]
     }
-    /// Whether a move may touch site t: always, unless a Margolus block is fenced off.
-    fn inside(&self, t: u32) -> bool {
+    /// Whether t is in the current Margolus block (always, without blocks).
+    fn in_block(&self, t: u32) -> bool {
         let Some(c) = self.fence else { return true };
         if t == u32::MAX { return false; }
         let x = self.xyz(t);
-        (0..3).all(|i| ((x[i] - c[i]) as u64) <= 1)
+        (0..3).all(|i| ((x[i] - c[i]) as u64) < self.p.block_side as u64)
+    }
+    /// Whether a move may look at site t: it is in the block, and no earlier move this clock
+    /// changed it. Looking at a changed site drops the whole turn, as on a chip where every site
+    /// decides from the state at the start of the clock and moves that would have read stale
+    /// state lose to the ones before them.
+    fn inside(&self, t: u32) -> bool {
+        if !self.in_block(t) { return false; }
+        let stale = self.taken.contains(&t);
+        if stale { self.stale.set(true); }
+        !stale
     }
     #[inline] pub fn tag(&self, s: u32, k: usize) -> u8 { self.tags[s as usize * self.ks + k] }
 
@@ -281,6 +316,11 @@ impl Lattice {
             check_every: 0,
             fire_log: vec![],
             fence: None,
+            pairs_hist: Default::default(),
+            taken: vec![],
+            touched: vec![],
+            track: false,
+            stale: std::cell::Cell::new(false),
             narrate: false,
             events: vec![],
         }
@@ -307,6 +347,14 @@ impl Lattice {
     fn idle(&self, s: u32, k: usize) -> bool { self.tag(s, k) != 0 && !self.want[s as usize * self.ks + k] }
     fn idle_at(&self, s: u32) -> usize { (0..self.ks).filter(|&k| self.idle(s, k)).count() }
 
+    pub fn pairs(&self, s: u32) -> usize { self.mate[s as usize * self.ends..(s as usize + 1) * self.ends].iter().filter(|&&m| m != NONE).count() / 2 }
+    /// Whether site s has room for `extra` more pairings.
+    fn room(&mut self, s: u32, extra: usize) -> bool {
+        let ok = self.p.pairs == 0 || self.pairs(s) + extra <= self.p.pairs;
+        if !ok { self.stats.capped += 1; }
+        ok
+    }
+
     fn used_lanes(&self, s: u32, f: usize) -> usize { (0..self.p.lanes).filter(|&i| self.mate_of(s, self.se(f, i)) != NONE).count() }
 
     fn free_slot(&self, s: u32) -> Option<usize> { (0..self.p.k).find(|&k| self.tag(s, k) == 0) }
@@ -317,6 +365,7 @@ impl Lattice {
     }
 
     fn place(&mut self, s: u32, k: usize, tag: u8, sid: u32) {
+        if self.track { self.touched.push(s); }
         if !self.in_agents[s as usize] {
             self.in_agents[s as usize] = true;
             self.agent_sites.push(s);
@@ -330,6 +379,7 @@ impl Lattice {
     }
 
     fn remove(&mut self, s: u32, k: usize) {
+        if self.track { self.touched.push(s); }
         self.tags[s as usize * self.ks + k] = 0;
         self.sids[s as usize * self.ks + k] = u32::MAX;
         self.occ[s as usize] -= 1;
@@ -565,6 +615,7 @@ impl Lattice {
                     if self.mate_of(t, self.se(self.face(e) ^ 1, self.lane(e))) == NONE { return Err(format!("site {s}: strand {e} used on one side only")); }
                 }
             }
+            if self.p.pairs != 0 && self.pairs(s) > self.p.pairs { return Err(format!("site {s}: {} pairings", self.pairs(s))); }
             for k in 0..self.ks {
                 let t = self.tag(s, k);
                 if t == 0 { continue; }
@@ -629,10 +680,10 @@ impl Lattice {
 
     pub fn live_sites(&self) -> usize { self.live.len() }
 
-    /// How crowded it is where walkers want to go, against the blob as a whole: [full sites a
-    /// wanted reader's principal wire leads into, sites it leads into, full sites among sites
-    /// holding agents, sites holding agents, of the full targets: both occupants idle, one
-    /// idle, none idle, holding the walker's own partner].
+    /// How crowded it is where walkers (wanted readers whose principal wire ends at a producer)
+    /// want to go, against the blob as a whole: [full sites a walker's wire leads into, sites
+    /// it leads into, full sites among sites holding agents, sites holding agents, of the full
+    /// targets: both occupants idle, one idle, none idle, holding the walker's own partner].
     pub fn crowding(&self) -> [usize; 8] {
         let mut c = [0; 8];
         for &s in &self.live {
@@ -642,13 +693,43 @@ impl Lattice {
                 if t == 0 || !tag_of(t).is_consumer() || tag_of(t) == Tag::Eps || !self.want[s as usize * self.ks + k] { continue; }
                 let m = self.mate_of(s, self.ae(k, 0));
                 if !self.is_strand(m) { continue; }
+                let (s2, k2, q2, _) = self.follow(s, self.ae(k, 0));
+                if q2 != 0 || self.tag(s2, k2) == 0 || !tag_of(self.tag(s2, k2)).is_producer() { continue; }
                 let n = self.nb(s, self.face(m));
                 c[1] += 1;
                 if (self.occ[n as usize] as usize) < self.p.k { continue; }
                 c[0] += 1;
                 c[[6, 5, 4][self.idle_at(n).min(2)]] += 1;
-                let (s2, k2, _, _) = self.follow(s, self.ae(k, 0));
-                if s2 == n && self.tag(n, k2) != 0 { c[7] += 1; }
+                if s2 == n { c[7] += 1; }
+            }
+        }
+        c
+    }
+
+    /// What switchboards hold, over live sites: [straight through (a strand on one face to the
+    /// same lane on the opposite face), straight to another lane, turning a corner, U-turn,
+    /// agent port to strand, port to port, sites, ends in use].
+    pub fn board_stats(&self) -> [u64; 8] {
+        let mut c = [0u64; 8];
+        self.pairs_hist.borrow_mut().resize(16, 0);
+        let ports = (ARITY * self.ks) as u8;
+        for &s in &self.live {
+            c[6] += 1;
+            let used = (0..self.ends as u8).filter(|&e| self.mate_of(s, e) != NONE).count() / 2;
+            self.pairs_hist.borrow_mut()[used.min(15)] += 1;
+            for e in 0..self.ends as u8 {
+                let m = self.mate_of(s, e);
+                if m == NONE { continue; }
+                c[7] += 1;
+                if m < e { continue; }
+                c[match (e >= ports, m >= ports) {
+                    (true, true) => {
+                        let (f, g) = (self.face(e), self.face(m));
+                        if f == g { 3 } else if f / 2 == g / 2 { if self.lane(e) == self.lane(m) { 0 } else { 1 } } else { 2 }
+                    }
+                    (false, false) => 5,
+                    _ => 4,
+                }] += 1;
             }
         }
         c
@@ -727,6 +808,8 @@ impl Lattice {
         lanes.extend((0..self.p.lanes).filter(|&i| self.mate_of(s, self.se(f, i)) == NONE));
         if lanes.len() < need { if walker { self.stats.walk_fail[1] += 1; } return None; }
         lanes.truncate(need);
+        let loops = (0..a).filter(|&q| matches!(plan[q], Plan::SelfLoop(_))).count() / 2;
+        if metropolis && !self.room(t, need + loops) { return None; }
         de += self.p.crowd * (self.occ[t as usize] as f64 - (self.occ[s as usize] as f64 - 1.0));
         if self.p.idle_crowd != 0.0 && self.idle(s, k) {
             de += self.p.idle_crowd * (self.idle_at(t) as f64 - (self.idle_at(s) as f64 - 1.0));
@@ -736,6 +819,13 @@ impl Lattice {
             let n = self.used_lanes(s, f) as f64;
             let n2 = n - through as f64 + need as f64;
             de += self.p.link_crowd * (n2 * n2 - n * n) / 2.0;
+        }
+        if self.p.board_crowd != 0.0 {
+            let through = (0..a).filter(|&q| matches!(plan[q], Plan::Through(_))).count();
+            let sq = |x: f64| x * x;
+            let (ps, pt) = (self.pairs(s) as f64, self.pairs(t) as f64);
+            let (ds, dt) = (-((through + loops) as f64), (need + loops) as f64);
+            de += self.p.board_crowd * (sq(ps + ds) - sq(ps) + sq(pt + dt) - sq(pt)) / 2.0;
         }
         if self.p.pressure != 0.0 {
             de += self.p.pressure * (self.press[t as usize] as f64 - self.press[s as usize] as f64);
@@ -845,7 +935,7 @@ impl Lattice {
             return false;
         };
         self.relocate(t, kt, kb);
-        if self.accept(d1 + d2) {
+        if self.room(s, 0) && self.room(t, 0) && self.accept(d1 + d2) {
             self.stats.swaps += 1;
             self.note([EV_SWAP, s, t, ta, tb, 0, 0, 0]);
             self.last_op = "swap";
@@ -895,9 +985,11 @@ impl Lattice {
         // W is X + f2 = Z + f1, so the step from W to Z is -f1.
         let Some(d) = self.free_lanes(w, f1 ^ 1, 1) else { return false };
         let (c, d) = (c[0], d[0]);
+        if !self.room(w, 1) { return false; }
         // The corner's two strands move from links s–x and s–z to x–w and w–z.
         let de = self.p.link_crowd * ((self.used_lanes(x, f2) + self.used_lanes(w, f1 ^ 1)) as f64
-            - (self.used_lanes(s, f1) + self.used_lanes(s, f2)) as f64 + 2.0);
+            - (self.used_lanes(s, f1) + self.used_lanes(s, f2)) as f64 + 2.0)
+            + self.p.board_crowd * (self.pairs(w) as f64 - self.pairs(s) as f64 + 1.0);
         if !self.accept(de) { return false; }
         let a = self.mate_of(x, self.se(f1 ^ 1, i));
         let g = self.mate_of(z, self.se(f2 ^ 1, j));
@@ -928,7 +1020,7 @@ impl Lattice {
             let (site, m, face) = if self.is_strand(m) {
                 let f = self.face(m);
                 let n = self.nb(s, f);
-                if !self.inside(n) { continue; }
+                if !self.inside(n) { if self.stale.get() { return None; } continue; }
                 (n, self.mate_of(n, self.se(f ^ 1, self.lane(m))), Some(f))
             } else { (s, m, None) };
             if self.is_strand(m) || m == NONE { continue; }
@@ -998,6 +1090,15 @@ impl Lattice {
         // the machine, rewrites included, is a function of one 2×2 block.
         let principal_lane = via.map(|f| (f, self.lane(self.mate_of(s, self.ae(kc, 0)))));
         let regions = self.regions(s, sp);
+        if self.stale.get() { return false; }
+        // Pairings each site loses with the dying pair, before the rewrite wires anything.
+        let mut lost: Vec<(u32, u8, u8)> = vec![];
+        for (site, k) in if self.p.pairs == 0 { vec![] } else { vec![(s, kc), (sp, kp)] } {
+            for q in 0..ARITY {
+                let (e, m) = (self.ae(k, q), self.mate_of(site, self.ae(k, q)));
+                if m != NONE && !lost.contains(&(site, e.min(m), e.max(m))) { lost.push((site, e.min(m), e.max(m))); }
+            }
+        }
         let link_key = |site: u32, f: usize, nb: u32| if site < nb { (site, f) } else { (nb, f ^ 1) };
         let mut chosen = None;
         for region in regions {
@@ -1035,9 +1136,22 @@ impl Lattice {
                 }
                 need
             };
+            let left: Vec<usize> = region.sites.iter().map(|&x| {
+                if x == u32::MAX || self.p.pairs == 0 { 0 } else { self.pairs(x) - lost.iter().filter(|l| l.0 == x).count() }
+            }).collect();
+            let fits = |loc: &[usize]| -> bool {
+                if self.p.pairs == 0 { return true; }
+                let mut add = vec![0usize; nloc];
+                for &(a, b) in &links {
+                    let (la, lb) = (at(a, loc), at(b, loc));
+                    for &(x, _) in &region.route[la][lb] { add[region.sites.iter().position(|&y| y == x).unwrap()] += 1; }
+                    add[lb] += 1;
+                }
+                (0..nloc).all(|l| left[l] + add[l] <= self.p.pairs)
+            };
             let check = |loc: &[usize]| -> Option<usize> {
                 let need = need_of(loc);
-                need.iter().all(|(k, &v)| v <= *avail.get(k).unwrap_or(&0)).then(|| need.values().sum())
+                (need.iter().all(|(k, &v)| v <= *avail.get(k).unwrap_or(&0)) && fits(loc)).then(|| need.values().sum())
             };
             let mut best: Option<(usize, Vec<usize>)> = None;
             let mut loc = vec![0usize; n];
@@ -1187,7 +1301,7 @@ impl Lattice {
             if hx == u32::MAX || hy == u32::MAX { continue; }
             let d = self.nb(hx, fy);
             if sp != s && sp != hx && sp != hy { continue; }
-            if ![s, hx, hy, d].iter().all(|&x| self.inside(x)) { continue; }
+            if ![s, hx, hy, d].iter().all(|&x| self.inside(x)) { if self.stale.get() { return vec![]; } continue; }
             let sites = vec![s, hx, hy, d];
             let step = |a: u32, f: usize| (a, f);
             let mut route = vec![vec![vec![]; 4]; 4];
@@ -1246,8 +1360,8 @@ impl Lattice {
     /// Site s's move: react if it can, else step an agent or reshape a wire.
     fn turn(&mut self, s: u32) {
         if self.p.pulse { self.send_pulse(s); }
-        if self.p.gc && self.collect(s) { return; }
-        if self.p.active > 0.0 && self.unit() < self.p.active && self.active_turn(s) { return; }
+        if self.p.gc && self.collect(s) || self.stale.get() { return; }
+        if self.p.active > 0.0 && self.unit() < self.p.active && self.active_turn(s) || self.stale.get() { return; }
         if self.p.pressure != 0.0 {
             // Pressure fades, and arrives from neighbours one unit weaker.
             let from_nb = (0..self.faces).map(|f| self.nb(s, f)).filter(|&t| t != u32::MAX)
@@ -1265,17 +1379,18 @@ impl Lattice {
         if let Some((kc, kp, via)) = self.active_pair(s) {
             if self.fire(s, kc, kp, via) { return; }
         }
+        if self.stale.get() { return; }
         self.take_infect(s);
         if self.unit() < self.p.p_hop && self.occ[s as usize] > 0 {
             let ks: Vec<usize> = (0..self.ks).filter(|&k| self.tag(s, k) != 0).collect();
             let k = ks[self.below(ks.len())];
             // Mostly step along the principal wire; sometimes anywhere.
             let m = self.mate_of(s, self.ae(k, 0));
-            let f = if self.is_strand(m) && self.inside(self.nb(s, self.face(m))) && self.unit() < 0.7 { self.face(m) }
+            let f = if self.is_strand(m) && self.in_block(self.nb(s, self.face(m))) && self.unit() < 0.7 { self.face(m) }
                 else if self.fence.is_none() { self.below(self.faces) }
                 else {
                     // A block clipped by the edge of the lattice can leave no neighbour inside.
-                    let fs: Vec<usize> = (0..self.faces).filter(|&f| self.inside(self.nb(s, f))).collect();
+                    let fs: Vec<usize> = (0..self.faces).filter(|&f| self.in_block(self.nb(s, f))).collect();
                     if fs.is_empty() { return; }
                     fs[self.below(fs.len())]
                 };
@@ -1283,20 +1398,23 @@ impl Lattice {
             self.hop(s, k, f, may_swap);
         } else {
             let used: Vec<u8> = (0..self.faces * self.p.lanes).map(|x| (ARITY * self.ks + x) as u8)
-                .filter(|&e| self.mate_of(s, e) != NONE && self.inside(self.nb(s, self.face(e)))).collect();
+                .filter(|&e| self.mate_of(s, e) != NONE && self.in_block(self.nb(s, self.face(e)))).collect();
             if used.is_empty() { return; }
             let e = used[self.below(used.len())];
-            if !self.fold(s, e) { self.flip(s, e); }
+            if !self.fold(s, e) && !self.stale.get() { self.flip(s, e); }
         }
     }
 
     /// One chip clock: cut the lattice into 2×2×2 blocks at a random offset; every block
-    /// holding matter picks one of its sites (preferring agents) and makes one move inside it.
+    /// holding matter picks one of its sites (preferring agents) and makes one move inside it,
+    /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
-        let o = [self.below(2) as i64, self.below(2) as i64, if self.p.depth > 1 { self.below(2) as i64 } else { 0 }];
+        let b = self.p.block_side as usize;
+        let o = [self.below(b) as i64, self.below(b) as i64, if self.p.depth > 1 { self.below(b) as i64 } else { 0 }];
+        let b = b as i64;
         let mut cells: Vec<([i64; 3], u32)> = self.live.iter().map(|&s| {
             let x = self.xyz(s);
-            ([x[0] - (x[0] + o[0]) % 2, x[1] - (x[1] + o[1]) % 2, x[2] - (x[2] + o[2]) % 2], s)
+            ([x[0] - (x[0] + o[0]) % b, x[1] - (x[1] + o[1]) % b, x[2] - (x[2] + o[2]) % b], s)
         }).collect();
         cells.sort_unstable();
         let mut i = 0;
@@ -1308,6 +1426,32 @@ impl Lattice {
             let ready: Vec<u32> = cells[i..j].iter().map(|c| c.1).filter(|&s| self.occ[s as usize] > 0 && self.active_pair(s).is_some()).collect();
             self.infect.set(None);
             let agents: Vec<u32> = cells[i..j].iter().map(|c| c.1).filter(|&s| self.occ[s as usize] > 0).collect();
+            if self.p.block_moves {
+                // Every site takes a turn: reactions first, then agents, then bare wire; a site
+                // some earlier move changed this clock sits it out.
+                let mut order = ready;
+                let mut rest: Vec<u32> = cells[i..j].iter().map(|c| c.1).filter(|s| !order.contains(s)).collect();
+                for n in (1..rest.len()).rev() { let m = self.below(n + 1); rest.swap(n, m); }
+                rest.sort_by_key(|&s| self.occ[s as usize] == 0);
+                order.extend(rest);
+                self.taken.clear();
+                for s in order {
+                    if self.taken.contains(&s) { continue; }
+                    self.touched.clear();
+                    self.track = true;
+                    self.stale.set(false);
+                    self.stats.proposals += 1;
+                    self.turn(s);
+                    if self.stale.get() { self.stats.stale += 1; }
+                    self.track = false;
+                    let touched = std::mem::take(&mut self.touched);
+                    self.taken.extend(touched);
+                }
+                self.taken.clear();
+                self.stale.set(false);
+                i = j;
+                continue;
+            }
             let s = if !ready.is_empty() { ready[self.below(ready.len())] }
                 else if !agents.is_empty() && self.unit() < self.p.agent_turns { agents[self.below(agents.len())] }
                 else { cells[i + self.below(j - i)].1 };
@@ -1326,6 +1470,7 @@ impl Lattice {
         let Some((site, k)) = self.infect.take() else { return };
         if !self.want[site as usize * self.ks + k] {
             self.want[site as usize * self.ks + k] = true;
+            if self.track { self.touched.push(site); }
             self.note([EV_CONTACT, s, site, self.tag(site, k) as u32, 0, 0, 0, 0]);
         }
     }
@@ -1389,7 +1534,7 @@ impl Lattice {
             let (d, md, via) = if self.is_strand(m) {
                 let (f, i) = (self.face(m), self.lane(m));
                 let n = self.nb(s, f);
-                if !self.inside(n) { continue; }
+                if !self.inside(n) { if self.stale.get() { return false; } continue; }
                 (n, self.mate_of(n, self.se(f ^ 1, i)), Some((f, i)))
             } else { (s, m, None) };
             if md == NONE || self.is_strand(md) { continue; }

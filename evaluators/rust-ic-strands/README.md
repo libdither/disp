@@ -28,7 +28,9 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`):
 - **The switchboard.** A site holds up to K agents and a switchboard: a pairing of the ends
   present there, namely agent ports and strand ends. A wire is a path: port, switchboard,
   strand, switchboard, …, port. Two wires cross for free by passing through the same
-  switchboard.
+  switchboard. It is stored as a list of at most 8 pairings of two end numbers each (`--pairs
+  8`: 80 bits in 3D, against 150 for a mate for every end), and a move that would need a ninth
+  pairing in a site does not happen.
 - **Moves.** Every move touches at most one 2×2 square of sites:
   - **step**: an agent moves to a neighbouring site. It eats the strand it walks along and
     drags its other wires one strand longer.
@@ -43,14 +45,16 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`):
 - **Scheduling is thermal.** Moves are random local proposals, accepted Metropolis-style by an
   energy:
   - wire tension, heavier on principal wires, so reactants find each other;
-  - crowded links: a link carrying n strands costs n²/2, so wire pulls harder where it would
-    fill every lane;
+  - crowded switchboards (`--board 0.5`): a site whose switchboard holds p pairings costs
+    p²/4, so wire pulls harder where it bunches and a site rarely needs all 8 of its slots;
   - crowded sites, and above all two *idle* agents (anything but a wanted reader) sharing a
     site, so idle matter keeps a seat free for traffic;
   - a temperature, which lets matter step out of the way.
 
-  Most turns (80%) go to sites holding agents; bare wire only needs enough turns to straighten.
-  Nothing schedules anything, and there are no rules against cycles.
+  With random turns, most turns (80%) go to sites holding agents; bare wire only needs enough
+  turns to straighten. With blocks, a site holding a wanted reader spends half its turns on it
+  (`--active 0.5`): a step along its principal wire, or its rewrite. Nothing schedules
+  anything, and there are no rules against cycles.
 - **Laziness.** Only *wanted* consumers react:
   - The normalizer, the root and erasers start out wanted.
   - A wanted reader puts a *demand pulse* on its principal wire. The pulse crosses one strand
@@ -96,40 +100,57 @@ The benchmark programs (`fib`, `exp`, `sort`, …) come from the lambada suite a
 encoding: binary numbers, least significant bit first. Their fib counts from fib 0 = 1, so its
 fib 1 = 1 and fib 2 = 2 are right for that program; disp's `fib` gives fib 2 = 1.
 
-Compiled disp is general rather than hand-tuned, so it costs more. Clocks to the answer on the
-default configuration (one seed each, every answer correct), before and after idle matter
-keeps a seat free:
+Compiled disp is general rather than hand-tuned, so it costs more. Clocks to the answer under
+random turns (one seed each, every answer correct): with crowded links, then with idle matter
+keeping a seat free, then with crowded switchboards of at most 8 pairings (the default now):
 
-| call | clocks | with idle repulsion | rewrites |
-|---|---|---|---|
-| `size [5, 6, 7]` | 57k | 40k | 3.6k |
-| `greet "a"` | 72k | 47k | 6k |
-| `add 3 4` | 87k | 66k | 6.5k |
-| `is_even 5` | 90k | 75k | 6.5k |
-| `fib 2` | 111k | 72–85k | 6.3k |
-| `doubled [1, 2, 3]` | 162k | 118k | 21k |
-| `fib 3` | 297k | 192k | 13k |
-| `mul 2 3` | 315k | 197k | 18k |
-| `sum [1, 2, 3]` | 330k | 225k | 20k |
-| `isort [2, 1]` | 405k | 255k | 16k |
-| `rev [1, 2, 3]` | 498k | 454k | 15k |
+| call | crowded links | + idle repulsion | switchboards | rewrites |
+|---|---|---|---|---|
+| `size [5, 6, 7]` | 57k | 40k | 41k | 3.6k |
+| `greet "a"` | 72k | 47k | 43k | 6k |
+| `add 3 4` | 87k | 66k | 68k | 6.5k |
+| `is_even 5` | 90k | 75k | 74k | 6.5k |
+| `fib 2` | 111k | 72–85k | 72k | 6.3k |
+| `doubled [1, 2, 3]` | 162k | 118k | 148k | 21k |
+| `fib 3` | 297k | 192k | 212k | 13k |
+| `mul 2 3` | 315k | 197k | 204k | 18k |
+| `sum [1, 2, 3]` | 330k | 225k | 227k | 20k |
+| `isort [2, 1]` | 405k | 255k | 231k | 16k |
+| `rev [1, 2, 3]` | 498k | 454k | 393k | 15k |
+
+Single seeds vary by about ±15%, so the last two columns are a draw. The switchboards are half
+the size.
 
 disp's `fib 3` (= 2) takes about 4× the rewrites of the lambada program's `fib 2` (also 2): the
 cost of the compiler's general recursion and conditionals, not of the lattice. The
 address-based mesh needs 27.5k rewrites for disp's `fib 2`.
 
-## Two schedules, and what a clock is
+## Schedules, and what a clock is
 
 - **Random turns** (an asynchronous chip): one site at a time makes a move. A *clock* is one
   turn for the busiest site, since a chip gives every site at most one turn per clock. This
   counts the extra turns agent sites get.
 - **Blocks** (`--margolus`, a synchronous chip): every clock the lattice is cut into 2×2×2
-  blocks at a random offset (the Margolus neighbourhood of classic physical cellular automata),
-  and every block holding matter makes one move inside it. No two moves ever touch the same
-  site, so the clock count is literal.
+  blocks at a random offset (the Margolus neighbourhood of classic physical cellular automata).
+  Moves stay inside their block, so blocks never interfere. Inside a block, either:
+  - *one move per block*, the classic rule;
+  - *a turn for every site* (`--block-moves`). Every site decides on a move from the state at
+    the start of the clock, and a priority order (ready rewrites, then sites with agents, then
+    bare wire, ties at random) keeps a move only if nothing it looks at was changed by a move
+    ahead of it. On a chip that is a small arbiter per block. The simulator plays the turns in
+    priority order and drops a turn the moment it looks at a changed site, which comes to the
+    same thing.
 
-Blocks cost 5–7× more clocks than random turns: each site gets a fraction of a move per
-clock, and a walker's next strand leads out of its block half the time.
+One move per block costs 5–7× the clocks of random turns. A turn for every site costs 2–2.5×,
+and about 1.8× once walkers get half their site's turns. What is left is mostly the block
+edge: half the time a walker's next strand leads out of its block. Blocks 3 sites wide
+(`--block-side 3`) cut that to a third and save another 7–15%, at the price of an arbiter over
+27 sites instead of 8.
+
+The first version of a turn for every site let later turns steer around sites that earlier
+turns had changed, and counted every site that had had its turn as changed, even when its turn
+did nothing. A chip deciding all turns at once cannot steer like that. Making it faithful was
+also 1.4–1.5× faster, because idle sites no longer block their neighbours.
 
 An earlier version measured time as proposals divided by live sites, which ignored extra turns.
 It made "self-propelled walkers" (extra turns for wanted readers) look like a 4× win; counted
@@ -157,6 +178,7 @@ correct in every run):
 | 3D | 1 | 3 | site + neighbours | 160 | ~109 bits |
 | 3D | 2 | 2 | 2×2 square | 160 | ~98 bits |
 | 3D | 2 | 3 | 2×2 square, blocks schedule | 160 | ~135 bits |
+| 3D | 2 | 3 | 2×2 square, blocks, a list of 8 pairings | 160 | ~95 bits |
 
 Rewriting inside a 2×2 square is both more local and better than spilling into a site's four
 neighbours (158 vs 146 at 2 slots, 2 strands).
@@ -169,7 +191,7 @@ neighbours (158 vs 146 at 2 slots, 2 strands).
   4 strands per link, collection and crowded links, 2D fib(0) and fib(1) do finish, in 50k and
   79k clocks (7–11× 3D); with 3 strands per link they still jam.
 - **3D works**, with six links per site: 2 agents and 4 strands per link, about 165 bits per
-  site with the pulse.
+  site with the pulse (95 once the switchboard is a list of 8 pairings, below).
 
 **Where the time goes.** `strands-run --profile` samples what every wanted reader is waiting
 on. On fib(0), before pulses:
@@ -211,7 +233,8 @@ fib(2) finishes, in 455k clocks.
 Strong tension everywhere costs up to 2.3× on small programs, because compact means crowded.
 Charging crowded links instead costs nothing there: wire stays loose in open space, but adding
 a strand to a link that already holds n costs n more, which stops swelling exactly where lanes
-would fill. fib(2) then takes 124–147k clocks.
+would fill. fib(2) then takes 124–147k clocks. (Crowded switchboards later replaced crowded
+links, below.)
 
 **Then the blob jams.** With all that in place, wires pull matter into a dense blob: 75% of the
 sites holding agents are full (two agents in two seats), and so are 79% of the sites wanted
@@ -227,24 +250,61 @@ disp's `fib 2` clocks fall 111k → 72–75k, `add 3 4` 87k → 63–66k, the be
 61k → 34–39k; under blocks `fib(2)` 402k → 287k. The strength has a sweet spot: at 16 and
 beyond idle matter can barely move, and things slow down again.
 
-**Against the address-based mesh.** Clocks to the answer with pulses, all collection, crowded
-links (c = 1) and idle matter keeping a seat free (10), over 2 seeds; every run matches the
-oracle and the abstract net, and afterwards cleans up to only the answer. Rewrites include
-erasing garbage, as the mesh's do:
+**Switchboards are mostly empty.** On fib(1) and fib(2) a live site uses about 5 of its 30
+ends. About half its pairings join an agent port to a strand, and 26–30% turn a corner. Straight
+runs make up 15–25%; U-turns and port-to-port pairings are at most 2% each. 31–40% of live sites
+hold one pairing, and about 1% hold 8 or more. So a switchboard can be a short list of pairings
+rather than a mate for every end, with a hard cap: a move that would overfill a site does not
+happen.
+
+**Crowding belongs to the switchboard, not the link.** Charging p²/4 for a site whose
+switchboard holds p pairings, instead of n²/2 for a link carrying n strands, is exactly what a
+short list needs, and it is also faster. It stops swelling the same way, since a strand adds a
+pairing at every site it passes. And because an agent's wired ports are pairings too, it also
+keeps agents apart, so the separate charge for crowded sites now matters little (turning it
+off changes clocks by −5% to +8%). Clocks under blocks with a turn for every site, 3 seeds
+each:
+
+| crowding | fib(1) | fib(2) | exp(1) | disp `fib 2` | disp `add 3 4` |
+|---|---|---|---|---|---|
+| links | 14.2k | 89k | 75k | 183k | 153k |
+| switchboards | 12.9k | 67k | 64k | 139k | 121k |
+| switchboards, at most 8 pairings | 14.9k | 75k | 65k | 151k | 127k |
+| switchboards, at most 6 pairings | 14.9k | 106k | 88k | 221k | 185k |
+
+Under random turns switchboard crowding is 7–19% faster as well (fib(2) 36.7k → 30.9k clocks,
+disp `fib 2` 80k → 65k). Stronger (p²/2) or weaker (p²/8) switchboard crowding is slower. Eight pairings (80 bits,
+against 150) cost 2–16% against no cap and still beat crowded links on four programs of five;
+six cost 16–59%.
+
+**Walkers then want turns, not room.** With idle matter spread out, only 12% of the sites a
+walker heads into are full, and 8% of those hold its own partner. On fib(1) under blocks a
+walker tries a step about 0.4 times per clock and 60% of the tries go through. Letting a site
+that holds a wanted reader spend half its turns on it cuts clocks under blocks by 5–24%. Under
+random turns the same rule is neutral. Spending every turn on the reader livelocks under both:
+a reader whose rewrite has no room retries forever, and its site never does anything else to
+make room.
+
+**Against the address-based mesh.** Clocks to the answer with everything above (pulses, all
+collection, idle matter keeping a seat free, switchboard crowding, at most 8 pairings per
+site), 3 seeds; under blocks every site takes a turn and walkers get half of theirs. Every run
+matches the oracle and the abstract net, and afterwards cleans up to only the answer. Rewrites
+include erasing garbage, as the mesh's do:
 
 | program | mesh rewrites | mesh ticks | strand rewrites | random turns | blocks |
 |---|---|---|---|---|---|
-| fib(0) | 1,627 | 7,450 | ~990 | 5.0–5.5k | 36k |
-| fib(1) | 1,821 | 8,928 | ~1,070 | 6.7–7.7k | 49k |
-| sort(1) | 2,174 | 2,615 | 172–324 | 1.5–1.6k | 19k |
-| exp(1) | 15,139 | 100k | ~3,470 | 31–33k | 258k |
-| fib(2) | 20,808 | 137k | ~3,500 | 34–39k | 287k |
+| fib(0) | 1,627 | 7,450 | 970–1,090 | 5.0k | 8.9k |
+| fib(1) | 1,821 | 8,928 | 1,040–1,090 | 5.9k | 11.3k |
+| sort(1) | 2,174 | 2,615 | 168–215 | 1.5k | 2.5k |
+| exp(1) | 15,139 | 100k | ~3,500 | 30.4k | 55.3k |
+| fib(2) | 20,808 | 137k | 3,510–3,580 | 35.2k | 64.8k |
 
-With random turns the strand lattice beats the mesh on every program: by 1.2–1.7× on fib(0),
-fib(1) and sort(1), and 3–4× on exp(1) and fib(2). With blocks it is 6–8× slower than with
-random turns (12× on sort(1), the one program the idle repulsion slowed under blocks: 13k →
-19k). A mesh tile is about 5 kbit plus a router; a strand site here is about
-165 bits, and fib(2) peaks at about 2,000 sites in use.
+With random turns the strand lattice beats the mesh on every program: 1.5–1.7× on fib(0),
+fib(1) and sort(1), and 3.3–3.9× on exp(1) and fib(2). Blocks take about 1.8× the clocks of
+random turns, which still beats the mesh by 1.8–2.1× on exp(1) and fib(2), ties on sort(1), and
+loses by 1.2–1.3× on fib(0) and fib(1). A mesh tile is about 5 kbit plus a router; a strand
+site is about 95 bits (two agent tags with their wanted bits, 8 pairings, the pulse), and fib(2)
+peaks at 2,000–2,300 sites in use.
 
 ## Things tried that did not help, and why
 
@@ -267,21 +327,28 @@ random turns (12× on sort(1), the one program the idle repulsion slowed under b
 
   Five ports would make every switchboard bigger, so this stayed an analysis.
 - **Lower temperature** with the idle repulsion (1.5): slower everywhere.
-- **Walker priority.** Letting a wanted reader take its site's turn: neutral at 50%. At 100%
-  it livelocks: a reader whose rewrite has no room retries forever and its site never does
-  anything else to make room.
-- **Under blocks**: a higher step rate is worse (wires need reshaping turns too), and letting
-  a ready rewrite go first in its block changes nothing.
+- **Walker priority under random turns**: neutral at 50%, livelock at 100% (above). Under
+  blocks 80% is already slower than 50%.
+- **Under blocks with one move per block**: a higher step rate is worse (wires need reshaping
+  turns too), and letting a ready rewrite go first in its block changes nothing.
+- **Heavier tension**: principal 4 instead of 3 is within seed noise; principal 6 and aux 2
+  is slower.
+- **Three strands per link** instead of four: much slower, and some runs never finish.
+- **No exchanges**, now that idle matter keeps seats free: −4% to +13% under blocks, slower on
+  four programs of five.
+- **Weaker idle repulsion** (5 instead of 10) next to switchboard crowding: −16% to +5%, about
+  even.
+- **No demand pulses**: 40–66% slower under blocks.
 - **Eager evaluation** finishes fib(0) in 11k clocks, but with about 67× the rewrites.
 
 ## Open
 
-- **The synchronous schedule** pays one move per block per clock. Block rules that make several
-  moves at once (a walker eating every strand of its wire inside the block) would close part
-  of the gap, at the cost of bigger block logic.
-- **Bits.** The switchboard dominates site size: 30 ends at 5 bits in the 3D configuration.
-  Most pass-throughs run straight across a site, so an encoding where "straight" is free could
-  roughly halve it.
+- **The synchronous schedule** still takes about 1.8× the clocks of random turns, mostly
+  because a walker's next strand leaves its block half the time. Wider blocks help a little
+  (above); a walker that eats every strand of its wire inside its block in one turn might help
+  more.
+- **Bits.** With a list of pairings, the number of strands per link costs only the log of the
+  number of ends, so wider links are nearly free. Whether they help is untested.
 
 ## Running it
 
@@ -290,14 +357,15 @@ From `crate/` (memory-cap long runs, see `AGENTS.md`):
 ```sh
 cargo test --release                                  # ~5 s: corpus in 4 configurations, per-move invariants, collection
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --idle-crowd 10
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --idle-crowd 10 --margolus
-cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --idle-crowd 10 --budget 5000000000 --clean 100000
-cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 link=1 idlecrowd=10"
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --margolus --block-moves --active 0.5
+cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --budget 5000000000 --clean 100000
+cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 ```
 
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end.
-`strands-run --profile` prints what wanted readers spend their time waiting on;
-`--progress N` prints the wanted readers and their wire lengths every N proposals, and `WHO=1`
-adds what each one is waiting on, which is how the 2D jam was diagnosed.
+`strands-run --profile` prints what wanted readers spend their time waiting on, how crowded it
+is where walkers go, and what switchboards hold; `--progress N` prints the wanted readers and
+their wire lengths every N proposals, and `WHO=1` adds what each one is waiting on, which is
+how the 2D jam was diagnosed.

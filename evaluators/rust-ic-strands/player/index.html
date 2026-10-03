@@ -112,13 +112,14 @@
       <span class="k">rewrites inside</span><select id="cBlock"><option value="1" selected>one 2×2 block</option><option value="0">a site and its neighbours</option></select>
       <span class="k">evaluation</span><select id="cLazy"><option value="1" selected>lazy: only wanted readers react</option><option value="0">eager: every pair reacts</option></select>
       <span class="k">temperature</span><span><input id="cTemp" type="range" min="2" max="40" value="20" style="width:110px"> <span id="cTempV" class="note"></span></span>
-      <span class="k">wire tension</span><select id="cTension"><option value="3,1,1" selected>light, crowded links pull harder</option><option value="3,1,0">light everywhere (wire swells on long runs)</option><option value="6,4,0">strong everywhere (slower)</option></select>
+      <span class="k">wire tension</span><select id="cTension"><option value="3,1,0,0.5" selected>light, crowded switchboards pull harder</option><option value="3,1,1,0">light, crowded links pull harder</option><option value="3,1,0,0">light everywhere (wire swells on long runs)</option><option value="6,4,0,0">strong everywhere (slower)</option></select>
+      <span class="k">switchboard</span><select id="cBoard"><option value="8" selected>a list of 8 pairings</option><option value="0">a mate for every end</option></select>
       <span class="k">idle matter</span><select id="cIdle"><option value="10" selected>keeps a seat free, so wanted readers get through</option><option value="0">packs in tight</option></select>
       <span class="k">exchanges</span><select id="cSwap"><option value="1" selected>on</option><option value="0">off</option></select>
       <span class="k">demand travels</span><select id="cPulse"><option value="1" selected>as pulses along wires</option><option value="0">only by contact</option></select>
       <span class="k">garbage</span><select id="cGc"><option value="1" selected>erasers collect it</option><option value="0">left in place</option></select>
       <span class="k">turns</span><select id="cTurns"><option value="0.8" selected>mostly to sites with agents</option><option value="0">evenly to every site</option></select>
-      <span class="k">schedule</span><select id="cSched"><option value="0" selected>random turns (asynchronous chip)</option><option value="1">2×2×2 blocks, one move each per clock (synchronous chip)</option></select>
+      <span class="k">schedule</span><select id="cSched"><option value="0" selected>random turns (asynchronous chip)</option><option value="1">2×2×2 blocks, one move each per clock (synchronous chip)</option><option value="2">2×2×2 blocks, a turn for every site, half of it for wanted readers (synchronous chip)</option></select>
     </div>
     <div class="note" style="margin-top:6px" id="bits"></div>
 
@@ -324,7 +325,7 @@ function load() {
   let side = Math.ceil(Math.sqrt(agents) * (depth > 1 ? 7 : 8)) + 16;
   // Grow the grid until the term's initial drawing fits.
   let rc = 2;
-  const flags = (+$("cBlock").value) | (+$("cLazy").value << 1) | (+$("cPulse").value << 2) | (+$("cSched").value << 3) | (+$("cGc").value << 4);
+  const flags = (+$("cBlock").value) | (+$("cLazy").value << 1) | (+$("cPulse").value << 2) | ((+$("cSched").value > 0) << 3) | (+$("cGc").value << 4) | ((+$("cSched").value == 2) * 96) | (+$("cBoard").value << 8);
   for (let tries = 0; tries < 6; tries++) {
     rc = withString(src, (p, n) => E.strands_new(side, side, depth, k, lanes, flags, +$("cTemp").value / 10, +$("cSwap").value, +$("cTurns").value, ...$("cTension").value.split(",").map(Number), +$("cIdle").value, 7, p, n));
     if (rc !== 2) break;
@@ -338,8 +339,9 @@ function load() {
   refreshGarbage(true); layoutLayers();
   $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
   const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), pulse = +$("cPulse").value ? bits : 0;
-  $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each, plus a wanted bit) and a switchboard of ${ends} ends × ${bits} bits${pulse ? `, plus ${bits} bits saying which strand carries a pulse` : ""}: ≈ ${5 * L.k + ends * bits + pulse} bits. Moves touch at most one 2×2 block.`;
-  $("clockName").textContent = +$("cSched").value ? "clocks (one move per 2×2×2 block)" : "clocks (turns of the busiest site)";
+  const P = +$("cBoard").value, board = P ? 2 * P * bits : ends * bits;
+  $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each, plus a wanted bit) and a switchboard of ${P ? `${P} pairings × 2 ends` : `${ends} ends`} × ${bits} bits${pulse ? `, plus ${bits} bits saying which strand carries a pulse` : ""}: ≈ ${5 * L.k + board + pulse} bits. Moves touch at most one 2×2 block.`;
+  $("clockName").textContent = ["clocks (turns of the busiest site)", "clocks (one move per 2×2×2 block)", "clocks (2×2×2 blocks)"][+$("cSched").value];
   location.hash = `p=${$("prog").value}&n=${$("progN").value}${d ? `&a=${encodeURIComponent($("args").value)}` : ""}&dim=${depth}&view=${viewMode}`;
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
