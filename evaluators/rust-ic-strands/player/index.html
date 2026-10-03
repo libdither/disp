@@ -7,7 +7,11 @@
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
   #wrap { display:flex; height:100vh; }
   #stage { position:relative; flex:1; min-width:0; overflow:hidden; }
-  #cv { width:100%; height:100%; display:block; cursor:grab; }
+  #cv, #cv3 { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  #cv3[hidden], #bar3d[hidden] { display:none; }
+  #bar3d { position:absolute; z-index:5; left:12px; bottom:12px; display:flex; gap:8px; align-items:center; padding:6px 9px;
+    border:1px solid var(--line2); border-radius:10px; background:rgba(11,14,20,.9); font-size:11.5px; color:var(--dim); }
+  #progInfo { margin:6px 0; font-size:11.5px; color:#aab6c6; } #progInfo b { color:var(--hot); font-weight:normal; }
   #side { flex:0 0 372px; padding:12px 14px 30px; overflow:auto; border-left:1px solid var(--line); background:var(--panel); box-sizing:border-box; }
   h1 { font-size:14px; margin:2px 0 4px; color:var(--accent); }
   h3 { color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
@@ -51,9 +55,14 @@
 </style></head><body>
 <div id="wrap">
   <div id="stage">
-    <canvas id="cv"></canvas>
+    <canvas id="cv"></canvas><canvas id="cv3" hidden></canvas>
+    <div id="bar3d" hidden>layer spacing <input id="gap3d" type="range" min="10" max="60" value="25" style="width:90px">
+      show <select id="layer3d"><option value="all">all layers</option></select>
+      <label><input type="checkbox" id="follow3d" checked> follow the action</label>
+      <button id="fit3d" title="fit (F)">fit</button></div>
     <div id="topbar">
       <select id="prog"></select><input id="progN" type="number" min="0" max="30" title="size">
+      <input id="args" hidden style="width:150px" title="arguments as disp literals: numbers, [lists], &quot;strings&quot;, true, false, t">
       <input id="custom" placeholder="@(@(S(L),S(L)),L)" hidden style="width:200px">
       <button id="load">load</button><span class="sep"></span>
       <button class="icon" id="reset" title="restart (R)">⟲</button>
@@ -61,6 +70,8 @@
       <button class="icon" id="step" title="one move (→); shift: run to the next rewrite">+1</button>
       <button class="icon" id="end" title="run to the end">⏭</button>
       <input id="speed" type="range" min="0" max="100" value="45" style="width:120px"><span id="speedv"></span>
+      <span class="sep"></span>
+      <select id="viewMode" title="how to draw the layers (V)"><option value="oblique">layers stacked</option><option value="layers">layers side by side</option><option value="3d">3D</option></select>
     </div>
     <div id="banner"></div>
     <div id="tip" hidden></div>
@@ -71,6 +82,7 @@
       neighbouring sites; strand i of a link is the same wire from both sides. Each site holds a bead or two (agents)
       and a little switchboard joining the strand ends that meet there. Every move is a random local proposal,
       accepted by an energy: wires pull like springs, crowding pushes, heat jiggles.</div>
+    <div id="progInfo"></div>
     <div id="badge" class="badge run">LOADING</div>
     <div id="decoded"></div><div id="answer"></div><div class="note" id="verdict"></div>
     <div id="story" class="story" hidden></div>
@@ -133,12 +145,18 @@
       <p><b>Clocks.</b> With random turns, a clock is one turn for the busiest site. With 2×2×2 blocks, the lattice is
         cut into disjoint blocks at a random offset every clock and each block makes one move: what a synchronous
         chip would do, with no two moves ever touching the same site.</p>
+      <p><b>Views.</b> <i>Layers stacked</i> draws every layer of the 3D lattice offset over the others: compact, but
+        layers overlap. <i>Layers side by side</i> gives each layer its own panel: exact, and every site is easy to
+        click. <i>3D</i> shows the lattice as it is: drag to orbit, right-drag to pan, spread the layers apart or show
+        one at a time.</p>
       <p class="note"><kbd>space</kbd> play · <kbd>→</kbd> one move · <kbd>shift →</kbd> to the next rewrite · <kbd>R</kbd> restart ·
-        <kbd>F</kbd> fit · drag to pan · wheel to zoom · hover a site to see what is in it, click to pin it, <kbd>Esc</kbd> to unpin</p>
+        <kbd>F</kbd> fit · <kbd>V</kbd> next view · drag to pan · wheel to zoom · click a site to see what is in it, <kbd>Esc</kbd> to let go</p>
     </details>
   </div>
 </div>
 <script src="engine.js"></script>
+<script src="programs.js"></script>
+<script src="three.min.js"></script>
 <script>
 "use strict";
 const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out"];
@@ -175,6 +193,7 @@ const isProducer = t => t >= 1 && t <= 5;
 const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0 : false;
 const DIRS = ["east", "west", "south", "north", "up a layer", "down a layer"];
 const NONE = 255;
+const DISP = window.DISP_PROGRAMS || [];
 let E = null, catalog = null, L = null;
 const $ = id => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d");
@@ -182,36 +201,118 @@ const enc = new TextEncoder(), dec = new TextDecoder();
 const text = n => dec.decode(new Uint8Array(E.memory.buffer, E.text_ptr(), n));
 function withString(s, f) { const b = enc.encode(s); const p = E.alloc(b.length || 1); new Uint8Array(E.memory.buffer, p, b.length).set(b); return f(p, b.length); }
 let view = { s: 10, ox: 0, oy: 0 }, playing = false, finished = false, cleaned = false, answerClock = 0, oracleText = null, hist = [], bursts = [];
-let garbage = null, garbageCount = 0, lastGarbage = 0, story = [], hover = null, pinned = null;
+let garbage = null, garbageCount = 0, lastGarbage = 0, story = [], hover = null, pinned = null, viewMode = "oblique", lay = null, running = null;
+
+// ---- programs: disp definitions in, disp values out -----------------------------------------
+const nat = n => "20".repeat(n) + "0";
+// Arguments as disp literals, encoded the way disp builds them: a number n is n forks over a leaf,
+// [lists] and "strings" (code points) are cons forks ending in a leaf, true = t, false = t t.
+function parseArgs(src) {
+  let i = 0;
+  const skip = () => { while (i < src.length && /[\s,]/.test(src[i])) i++; };
+  const value = () => {
+    skip();
+    if (src[i] === "[") {
+      i++; const items = [];
+      for (;;) { skip(); if (src[i] === "]") { i++; break; } if (i >= src.length) throw "a [ is never closed"; items.push(value()); }
+      return items.reduceRight((tail, x) => "2" + x + tail, "0");
+    }
+    if (src[i] === '"') {
+      const close = src.indexOf('"', i + 1); if (close < 0) throw 'a " is never closed';
+      const str = src.slice(i + 1, close); i = close + 1;
+      return [...str].reduceRight((tail, ch) => "2" + nat(ch.codePointAt(0)) + tail, "0");
+    }
+    const m = src.slice(i).match(/^(\d+|true|false|t)/);
+    if (!m) throw `can't read "${src.slice(i, i + 10)}"`;
+    i += m[0].length;
+    return m[0] === "true" || m[0] === "t" ? "0" : m[0] === "false" ? "10" : nat(+m[0]);
+  };
+  const out = []; skip();
+  while (i < src.length) { out.push(value()); skip(); }
+  return out;
+}
+// The engine prints trees as L, S(x), F(x,y).
+function parseTree(src) {
+  let i = 0;
+  const go = () => {
+    const c = src[i++];
+    if (c === "L") return { k: 0 };
+    if (c === "S") { i++; const x = go(); i++; return { k: 1, c: x }; }
+    i++; const l = go(); i++; const r = go(); i++; return { k: 2, l, r };
+  };
+  return go();
+}
+function natOf(t) { let n = 0; while (t.k === 2 && t.l.k === 0) { n++; t = t.r; } return t.k === 0 ? n : null; }
+function listOf(t) { const out = []; while (t.k === 2) { out.push(t.l); t = t.r; } return t.k === 0 ? out : null; }
+function stringOf(t) {
+  const xs = listOf(t); if (!xs || !xs.length) return null;
+  const codes = xs.map(natOf); return codes.every(c => c !== null && c >= 32 && c <= 0x10ffff) ? String.fromCodePoint(...codes) : null;
+}
+// disp's own printer (src/format/print.ts): leaf t, numbers, strings, else t(…)(…).
+function dispPrint(t, root = true, budget = { left: 200 }) {
+  if (t.k === 0) return "t";
+  const size = x => { let n = 0; const st = [x]; while (st.length && n < 8) { const y = st.pop(); n++; if (y.k === 1) st.push(y.c); if (y.k === 2) st.push(y.l, y.r); } return n; };
+  if (root || size(t) >= 8) {
+    const n = natOf(t); if (n !== null && n > 0) return String(n);
+    const str = stringOf(t); if (str !== null) return JSON.stringify(str);
+  }
+  if (budget.left-- <= 0) return "…";
+  return t.k === 1 ? `t(${dispPrint(t.c, false, budget)})` : `t(${dispPrint(t.l, false, budget)})(${dispPrint(t.r, false, budget)})`;
+}
+function decodeAs(kind, t) {
+  if (kind === "nat") { const n = natOf(t); if (n !== null) return String(n); }
+  if (kind === "bool") { if (t.k === 0) return "true"; if (t.k === 1 && t.c.k === 0) return "false"; }
+  if (kind === "string") { if (t.k === 0) return '""'; const s = stringOf(t); if (s !== null) return JSON.stringify(s); }
+  if (kind === "list") { const xs = listOf(t); if (xs) return `[${xs.map(x => { const n = natOf(x); return n !== null ? n : dispPrint(x); }).join(", ")}]`; }
+  return dispPrint(t);
+}
+const dispProg = v => v.startsWith("disp:") ? DISP.find(p => "disp:" + p.name === v) : null;
 
 // ---- loading -------------------------------------------------------------------------------
 function populate() {
   const sel = $("prog");
-  for (const w of catalog.workloads) { const o = document.createElement("option"); o.value = w.name; o.textContent = w.name; o.title = w.desc; sel.appendChild(o); }
-  for (const [v, t] of [["random", "random term"], ["custom", "custom term…"]]) { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); }
+  const group = label => { const g = document.createElement("optgroup"); g.label = label; sel.appendChild(g); return g; };
+  const add = (g, value, label, title) => { const o = document.createElement("option"); o.value = value; o.textContent = label; if (title) o.title = title; g.appendChild(o); };
+  const gd = group("disp programs");
+  for (const p of DISP) add(gd, "disp:" + p.name, p.name, p.desc);
+  const gb = group("benchmarks (binary numbers)");
+  for (const w of catalog.workloads) add(gb, w.name, w.name, w.desc);
+  const go = group("other");
+  add(go, "random", "random term"); add(go, "custom", "custom term…");
   $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${LABEL[TAGS[t]]} ${NAMES[TAGS[t]]}</span>`).join("")
     + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
     + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
-    + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;border:2px solid #d6a8ff;border-radius:2px"></span>last move</span>`;
+    + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;border:2px solid #d6a8ff;border-radius:2px"></span>last move</span>`
+    + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
-  sel.value = q.get("p") || "share-tower"; $("progN").value = q.get("n") || 4;
+  sel.value = q.get("p") || (DISP.length ? "disp:fib" : "share-tower");
+  if (!sel.value) sel.value = "share-tower";
+  $("progN").value = q.get("n") || 4;
+  const d = dispProg(sel.value); $("args").value = q.get("a") ?? (d ? d.example : "");
   if (q.get("dim")) $("cDim").value = q.get("dim");
+  if (q.get("view")) $("viewMode").value = q.get("view");
   syncUI();
 }
 function syncUI() {
-  const v = $("prog").value, w = catalog.workloads.find(w => w.name === v);
-  $("custom").hidden = v !== "custom"; $("progN").hidden = !(w && w.n > 0) && v !== "random";
+  const v = $("prog").value, w = catalog.workloads.find(w => w.name === v), d = dispProg(v);
+  $("custom").hidden = v !== "custom"; $("args").hidden = !d;
+  $("progN").hidden = !(w && w.n > 0) && v !== "random";
   $("cTempV").textContent = (+$("cTemp").value / 10).toFixed(1);
+  $("progInfo").innerHTML = d ? `<b>${d.name}</b>: ${d.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude; type the arguments as disp literals (numbers, [lists], "strings").`
+    : w ? `<b>${w.name}</b>: ${w.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
+    : v === "random" ? "A random tree-calculus term." : "Your own term: L, S(x), F(x,y), @(f,x), or ternary digits.";
 }
 function source() {
-  const v = $("prog").value;
+  const v = $("prog").value, d = dispProg(v);
+  if (d) return [d.tree, ...parseArgs($("args").value)].join(" ");
   if (v === "custom") return $("custom").value.trim() || "@(@(S(L),S(L)),L)";
   if (v === "random") return `random:${$("progN").value}:6`;
   const w = catalog.workloads.find(w => w.name === v);
   return w && w.n > 0 ? `${v}:${$("progN").value}` : v;
 }
 function load() {
-  const src = source();
+  let src;
+  try { src = source(); } catch (err) { banner(`arguments: ${err}`, true); return; }
   const agents = withString(src, (p, n) => E.strands_probe(p, n));
   if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return; }
   const depth = +$("cDim").value, k = +$("cK").value, lanes = +$("cL").value;
@@ -226,20 +327,45 @@ function load() {
   }
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
   L = { w: side, h: side, depth, k, lanes, ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: +$("cGc").value === 1 };
+  const d = dispProg($("prog").value);
+  running = d ? { kind: d.kind, call: `${d.name} ${$("args").value.trim()}` } : null;
   finished = false; cleaned = false; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
-  refreshGarbage(true);
+  refreshGarbage(true); layoutLayers();
+  $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
   const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), pulse = +$("cPulse").value ? bits : 0;
   $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each, plus a wanted bit) and a switchboard of ${ends} ends × ${bits} bits${pulse ? `, plus ${bits} bits saying which strand carries a pulse` : ""}: ≈ ${5 * L.k + ends * bits + pulse} bits. Moves touch at most one 2×2 block.`;
   $("clockName").textContent = +$("cSched").value ? "clocks (one move per 2×2×2 block)" : "clocks (turns of the busiest site)";
-  location.hash = `p=${$("prog").value}&n=${$("progN").value}&dim=${depth}`;
+  location.hash = `p=${$("prog").value}&n=${$("progN").value}${d ? `&a=${encodeURIComponent($("args").value)}` : ""}&dim=${depth}&view=${viewMode}`;
+  V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
-  banner(`${src}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
+  banner(`${running ? running.call : src.length > 60 ? $("prog").value : src}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
 }
 
 // ---- geometry ------------------------------------------------------------------------------------
 const S = 10; // world units per site
 function siteXYZ(s) { const x = s % L.w, y = Math.floor(s / L.w) % L.h, z = Math.floor(s / (L.w * L.h)); return [x, y, z]; }
-function siteOrigin(s) { const [x, y, z] = siteXYZ(s); return [x * S + z * S * 0.38, y * S - z * S * 0.58]; }
+// Side by side: each layer gets a panel just big enough for where matter is.
+function layoutLayers() {
+  const V = views(); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const s of V.live) { const [x, y] = siteXYZ(s); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  if (x1 < x0) { x0 = y0 = 0; x1 = L.w - 1; y1 = L.h - 1; }
+  const m = 4, cols = L.depth <= 3 ? L.depth : Math.ceil(L.depth / 2);
+  lay = { x0: Math.max(0, x0 - m), y0: Math.max(0, y0 - m), w: Math.min(L.w, x1 - x0 + 2 * m + 1), h: Math.min(L.h, y1 - y0 + 2 * m + 1), cols, gap: 6 };
+}
+// Relayout when matter leaves the panels, or has shrunk to well under half of them.
+function outsideLayout(V) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const s of V.live) { const [x, y] = siteXYZ(s); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  if (x1 < x0) return false;
+  if (x0 < lay.x0 || y0 < lay.y0 || x1 >= lay.x0 + lay.w || y1 >= lay.y0 + lay.h) return true;
+  return (x1 - x0 + 9) * 2.2 < lay.w && (y1 - y0 + 9) * 2.2 < lay.h;
+}
+function panelOrigin(z) { const col = z % lay.cols, row = Math.floor(z / lay.cols); return [col * (lay.w + lay.gap) * S, row * (lay.h + lay.gap) * S]; }
+function siteOrigin(s) {
+  const [x, y, z] = siteXYZ(s);
+  if (viewMode === "layers") { const [px, py] = panelOrigin(z); return [px + (x - lay.x0) * S, py + (y - lay.y0) * S]; }
+  return [x * S + z * S * 0.38, y * S - z * S * 0.58];
+}
 const agentRadius = () => L.k === 1 ? S * 0.26 : S * 0.17;
 function slotPos(s, k) {
   const [ox, oy] = siteOrigin(s);
@@ -277,30 +403,43 @@ function views() {
     mate: new Uint8Array(b, E.mate_ptr(), n * L.ends), live: new Uint32Array(b, E.live_ptr(), E.live_len()),
     pulse: new Uint8Array(b, E.pulse_ptr(), n) };
 }
-// Follow the wire from end e of site s to the agent port at its other end: {site, end, len, path}.
-function follow(V, s, e, path) {
+// Walk the wire from end e of site s to the agent port at its other end, calling onPair(site, a, b)
+// for each switchboard pairing on the way. Returns {site, end, len}.
+function walk(V, s, e, onPair) {
   let site = s, cur = e, len = 0;
-  if (path) { const [x, y] = endPos(s, e); path.moveTo(x, y); }
   for (let guard = 0; guard < 20000; guard++) {
     const m = V.mate[site * L.ends + cur];
     if (m === NONE) return null;
-    if (path) { const [x, y] = endPos(site, m); path.lineTo(x, y); }
+    if (onPair) onPair(site, cur, m);
     if (m < 3 * L.ks) return { site, end: m, len };
     const x = m - 3 * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes;
     site = neighbor(site, f); cur = 3 * L.ks + (f ^ 1) * L.lanes + i; len++;
-    if (path) { const [px, py] = endPos(site, cur); path.lineTo(px, py); }
   }
   return null;
 }
+// The same walk drawn into a 2D path; side by side, a wire leaving its layer's panel breaks off.
+function follow(V, s, e, path) {
+  if (!path) return walk(V, s, e);
+  const [x0, y0] = endPos(s, e); path.moveTo(x0, y0);
+  let prev = s;
+  const layer = x => Math.floor(x / (L.w * L.h));
+  return walk(V, s, e, (site, a, b) => {
+    const [ax, ay] = endPos(site, a), [bx, by] = endPos(site, b);
+    if (viewMode === "layers" && layer(site) !== layer(prev)) path.moveTo(ax, ay); else path.lineTo(ax, ay);
+    path.lineTo(bx, by); prev = site;
+  });
+}
 function fitContent() {
+  if (viewMode === "3d") { fit3d(); return; }
   const V = views(); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
   for (const s of V.live) {
     let has = false; for (let k = 0; k < L.ks; k++) if (V.tags[s * L.ks + k]) has = true;
     if (!has) continue;
     const [ox, oy] = siteOrigin(s); x0 = Math.min(x0, ox); y0 = Math.min(y0, oy); x1 = Math.max(x1, ox + S); y1 = Math.max(y1, oy + S);
   }
+  if (viewMode === "layers") { const rows = Math.ceil(L.depth / lay.cols); x0 = 0; y0 = -3 * S; x1 = (lay.cols * (lay.w + lay.gap) - lay.gap) * S; y1 = (rows * (lay.h + lay.gap) - lay.gap) * S; }
   if (x1 < x0) { x0 = 0; y0 = 0; x1 = L.w * S; y1 = L.h * S; }
-  const pad = Math.max(S * 4, (x1 - x0) * 0.08); x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+  const pad = Math.max(S * 4, (x1 - x0) * 0.05); x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
   const r = cv.getBoundingClientRect();
   view.s = Math.min((r.width - 30) / (x1 - x0), (r.height - 90) / (y1 - y0));
   view.ox = (r.width - (x1 - x0) * view.s) / 2 - x0 * view.s; view.oy = (r.height - (y1 - y0) * view.s) / 2 + 25 - y0 * view.s;
@@ -311,28 +450,44 @@ function refreshGarbage(force) {
   garbage = new Uint8Array(E.memory.buffer, E.garbage_ptr(), L.w * L.h * L.depth * L.ks).slice();
 }
 const dead = (s, k) => garbage && garbage[s * L.ks + k] === 1;
+// A stroke px screen pixels wide when zoomed out, growing gently as you zoom in.
+const lw = px => px * (1 + view.s / 14) / view.s;
 
-// ---- drawing -----------------------------------------------------------------------------------------
+// ---- drawing in 2D -----------------------------------------------------------------------------------
 function draw() {
+  if (viewMode === "3d") { draw3d(); return; }
   const d = devicePixelRatio || 1;
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#0b0e14"; ctx.fillRect(0, 0, cv.width, cv.height);
   if (!L) return;
   const V = views();
+  if (viewMode === "layers" && performance.now() - (lay.checked ?? 0) > 500) {
+    lay.checked = performance.now();
+    if (outsideLayout(V)) { layoutLayers(); fitContent(); }
+  }
   ctx.setTransform(d * view.s, 0, 0, d * view.s, d * view.ox, d * view.oy);
   const r = cv.getBoundingClientRect();
   const vx0 = -view.ox / view.s - S, vy0 = -view.oy / view.s - S, vx1 = (r.width - view.ox) / view.s + S, vy1 = (r.height - view.oy) / view.s + S;
   const sites = [...V.live].filter(s => { const [ox, oy] = siteOrigin(s); return ox >= vx0 && ox <= vx1 && oy >= vy0 && oy <= vy1; });
-  if (L.depth > 1) sites.sort((a, b) => Math.floor(b / (L.w * L.h)) - Math.floor(a / (L.w * L.h)));
+  if (L.depth > 1 && viewMode === "oblique") sites.sort((a, b) => Math.floor(b / (L.w * L.h)) - Math.floor(a / (L.w * L.h)));
   const detail = view.s > 2.2, rad = agentRadius();
-  // site floors (occupied sites, faint), by layer for 3D depth cue
+  if (viewMode === "layers") {
+    for (let z = 0; z < L.depth; z++) {
+      const [px, py] = panelOrigin(z);
+      ctx.fillStyle = "rgba(22,32,47,0.55)"; ctx.fillRect(px, py, lay.w * S, lay.h * S);
+      ctx.strokeStyle = "#2a3a52"; ctx.lineWidth = lw(1); ctx.strokeRect(px, py, lay.w * S, lay.h * S);
+      ctx.fillStyle = "#8595ad"; ctx.font = `${Math.max(S * 1.6, 14 / view.s)}px ui-monospace,monospace`; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText(`layer ${z}`, px, py - S * 0.4);
+    }
+  }
+  // site floors (occupied sites, faint), by layer for a depth cue when stacked
   for (const s of sites) {
-    const [ox, oy] = siteOrigin(s), z = Math.floor(s / (L.w * L.h));
+    const [ox, oy] = siteOrigin(s), z = viewMode === "oblique" ? Math.floor(s / (L.w * L.h)) : 0;
     let n = 0; for (let k = 0; k < L.ks; k++) if (V.tags[s * L.ks + k]) n++;
     ctx.fillStyle = n ? `rgba(40,60,90,${0.35 - z * 0.03})` : `rgba(30,42,60,${0.18 - z * 0.015})`;
     ctx.fillRect(ox + 0.6, oy + 0.6, S - 1.2, S - 1.2);
   }
   // strands between sites, and switchboard pairings inside them
-  const strands = new Path2D(), board = new Path2D();
+  const strands = new Path2D(), board = new Path2D(), updown = [];
   const base = 3 * L.ks;
   for (const s of sites) {
     for (let e = 0; e < L.ends; e++) {
@@ -340,10 +495,11 @@ function draw() {
       if (m === NONE) continue;
       if (e >= base) {
         const x = e - base, f = Math.floor(x / L.lanes), i = x % L.lanes;
-        if (f % 2 === 0) { // draw each strand once, from its lower face side
+        if (f % 2 === 0 && (f < 4 || viewMode === "oblique")) { // each strand once, from its lower face side
           const t = neighbor(s, f), [ax, ay] = lanePos(s, f, i), [bx, by] = lanePos(t, f ^ 1, i);
           strands.moveTo(ax, ay); strands.lineTo(bx, by);
         }
+        if (f >= 4 && viewMode === "layers") updown.push([s, e, f]);
       }
       if (detail && m > e) {
         const [ax, ay] = endPos(s, e), [bx, by] = endPos(s, m), [cx, cy] = siteOrigin(s);
@@ -354,6 +510,13 @@ function draw() {
   ctx.lineCap = "round";
   ctx.strokeStyle = "rgba(120,150,190,0.55)"; ctx.lineWidth = lw(1.1); ctx.stroke(strands);
   if (detail) { ctx.strokeStyle = "rgba(150,175,210,0.45)"; ctx.lineWidth = lw(0.9); ctx.stroke(board); }
+  // in side-by-side panels, a strand to the layer above or below shows as a small arrowhead
+  for (const [s, e, f] of updown) {
+    const [x, y] = endPos(s, e), h = S * 0.12;
+    ctx.fillStyle = f === 4 ? "#7fd0ff" : "#ffb070"; ctx.beginPath();
+    if (f === 4) { ctx.moveTo(x, y - h); ctx.lineTo(x - h, y + h); ctx.lineTo(x + h, y + h); } else { ctx.moveTo(x, y + h); ctx.lineTo(x - h, y - h); ctx.lineTo(x + h, y - h); }
+    ctx.fill();
+  }
   // the principal wire of every wanted reader, followed end to end
   const hot = new Path2D();
   for (const s of V.live) for (let k = 0; k < L.ks; k++) {
@@ -363,17 +526,21 @@ function draw() {
   ctx.globalCompositeOperation = "lighter";
   ctx.strokeStyle = "rgba(86,200,255,0.9)"; ctx.lineWidth = lw(2.2); ctx.stroke(hot);
   ctx.globalCompositeOperation = "source-over";
-  // the focused site's wires, each to its far end
-  const focus = pinned ?? hover, ends = [];
-  if (focus != null) {
+  // the selected site's wires, each to its far end
+  const ends = [];
+  if (pinned != null) {
     const lit = new Path2D();
     for (let k = 0; k < L.ks; k++) {
-      const t = V.tags[focus * L.ks + k]; if (!t) continue;
-      for (let p = 0; p < ARITY[t]; p++) { const far = follow(V, focus, k * 3 + p, lit); if (far) ends.push(far); }
+      const t = V.tags[pinned * L.ks + k]; if (!t) continue;
+      for (let p = 0; p < ARITY[t]; p++) { const far = follow(V, pinned, k * 3 + p, lit); if (far) ends.push(far); }
     }
     ctx.strokeStyle = "rgba(255,170,70,0.95)"; ctx.lineWidth = lw(2.6); ctx.stroke(lit);
-    const [ox, oy] = siteOrigin(focus);
-    ctx.strokeStyle = pinned != null ? "#56c8ff" : "rgba(255,170,70,0.9)"; ctx.lineWidth = lw(1.5); ctx.strokeRect(ox + 0.3, oy + 0.3, S - 0.6, S - 0.6);
+    const [ox, oy] = siteOrigin(pinned);
+    ctx.strokeStyle = "#56c8ff"; ctx.lineWidth = lw(1.5); ctx.strokeRect(ox + 0.3, oy + 0.3, S - 0.6, S - 0.6);
+  }
+  if (hover != null && hover !== pinned) {
+    const [ox, oy] = siteOrigin(hover);
+    ctx.strokeStyle = "rgba(200,215,235,0.5)"; ctx.lineWidth = lw(1); ctx.strokeRect(ox + 0.3, oy + 0.3, S - 0.6, S - 0.6);
   }
   // agents
   const labels = view.s * rad > 6;
@@ -428,13 +595,190 @@ function draw() {
   }
   bursts.length = keep;
 }
-// A stroke px screen pixels wide when zoomed out, growing gently as you zoom in.
-const lw = px => px * (1 + view.s / 14) / view.s;
 function arrow(ax, ay, bx, by) {
   const a = Math.atan2(by - ay, bx - ax), h = S * 0.3;
   ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
   ctx.lineTo(bx - h * Math.cos(a - 0.5), by - h * Math.sin(a - 0.5)); ctx.moveTo(bx, by); ctx.lineTo(bx - h * Math.cos(a + 0.5), by - h * Math.sin(a + 0.5));
   ctx.stroke();
+}
+
+// ---- drawing in 3D (three.js) -------------------------------------------------------------------------
+const V3 = { ready: false, dirty: true, fitted: false, cap: 0 };
+const W3 = { x: [1, 0, 0], y: [0, 0, 1], z: [0, 1, 0] }; // lattice x, y, layer → world axes (layers stack upward)
+function pos3(s) { const [x, y, z] = siteXYZ(s); return [x - V3.cx, z * V3.gap, y - V3.cy]; }
+const FACE3 = () => [[0.5, 0, 0], [-0.5, 0, 0], [0, 0, 0.5], [0, 0, -0.5], [0, V3.gap / 2, 0], [0, -V3.gap / 2, 0]];
+function end3(s, e, faces) {
+  const c = pos3(s);
+  if (e < 3 * L.ks) {
+    const k = Math.floor(e / 3), p = e % 3, dx = L.k === 1 ? 0 : (k - (L.k - 1) / 2) * 0.36;
+    const po = [[0, 0.17, 0], [-0.14, -0.09, 0], [0.14, -0.09, 0]][p];
+    return [c[0] + dx + po[0], c[1] + po[1], c[2] + po[2]];
+  }
+  const x = e - 3 * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes, off = (i - (L.lanes - 1) / 2) * 0.13, fd = faces[f];
+  const perp = f < 2 ? [0, 0, off] : f < 4 ? [off, 0, 0] : [off * 0.7, 0, off * 0.7];
+  return [c[0] + fd[0] + perp[0], c[1] + fd[1] + perp[1], c[2] + fd[2] + perp[2]];
+}
+function init3d() {
+  const T = window.THREE;
+  if (!T) { banner("three.js did not load", true); return false; }
+  const canvas = $("cv3");
+  V3.T = T;
+  V3.renderer = new T.WebGLRenderer({ canvas, antialias: true });
+  V3.renderer.setPixelRatio(devicePixelRatio || 1);
+  V3.scene = new T.Scene(); V3.scene.background = new T.Color(0x0b0e14);
+  V3.camera = new T.PerspectiveCamera(45, 1, 0.1, 20000);
+  V3.controls = new T.OrbitControls(V3.camera, canvas);
+  V3.controls.enableDamping = true; V3.controls.screenSpacePanning = true;
+  V3.scene.add(new T.AmbientLight(0xffffff, 0.7));
+  const sun = new T.DirectionalLight(0xffffff, 1.8); sun.position.set(1, 2.5, 1.5); V3.scene.add(sun);
+  V3.wires = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 }));
+  V3.wires.frustumCulled = false; V3.scene.add(V3.wires);
+  V3.marks = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ vertexColors: true }));
+  V3.marks.frustumCulled = false; V3.scene.add(V3.marks);
+  V3.ray = new T.Raycaster();
+  V3.gap = 2.5; V3.cx = 0; V3.cy = 0;
+  let down = null;
+  canvas.addEventListener("pointerdown", e => { down = { x: e.clientX, y: e.clientY }; });
+  canvas.addEventListener("pointerup", e => {
+    if (!down || Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) { down = null; return; }
+    down = null;
+    const s = pick3(e.clientX, e.clientY);
+    pinned = s == null || pinned === s ? null : s;
+    showTip(pinned, e.clientX, e.clientY, pinned != null); V3.dirty = true;
+  });
+  V3.ready = true;
+  return true;
+}
+// Instanced meshes are rebuilt when the number of things outgrows them.
+function instanced(name, geometry, material, count) {
+  const T = V3.T, old = V3[name];
+  if (old && old.instanceMatrix.count >= count) return old;
+  if (old) { V3.scene.remove(old); old.dispose(); }
+  const m = new T.InstancedMesh(geometry, material, Math.max(1024, count * 2));
+  m.frustumCulled = false; V3.scene.add(m); V3[name] = m;
+  return m;
+}
+function draw3d() {
+  if (!L || (!V3.ready && !init3d())) return;
+  const T = V3.T, V = views();
+  if (!V3.fitted) {
+    // World coordinates are centred once per load, on where matter starts out.
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const s of V.live) { const [x, y] = siteXYZ(s); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    V3.cx = x1 < x0 ? 0 : (x0 + x1) / 2; V3.cy = y1 < y0 ? 0 : (y0 + y1) / 2;
+    V3.dirty = true; V3.fitted = true; V3.refit = true;
+  }
+  const shown = $("layer3d").value, onlyZ = shown === "all" ? -1 : +shown;
+  const visible = s => onlyZ < 0 || Math.floor(s / (L.w * L.h)) === onlyZ;
+  if (V3.dirty || playing) {
+    V3.dirty = false;
+    const faces = FACE3(), m4 = new T.Matrix4(), col = new T.Color(), bg = new T.Color(0x0b0e14);
+    const live = [...V.live].filter(visible);
+    // agents, the halo of wanted readers, the cells that hold anything, pulses
+    let na = 0, nw = 0, np = 0, fx = 0, fy = 0, fz = 0;
+    const agentsMesh = instanced("agents", V3.sphere ??= new T.SphereGeometry(0.17, 16, 12), V3.agentMat ??= new T.MeshStandardMaterial({ roughness: 0.45, metalness: 0.1 }), live.length * L.ks);
+    const haloMesh = instanced("halo", V3.haloGeo ??= new T.SphereGeometry(0.25, 14, 10), V3.haloMat ??= new T.MeshBasicMaterial({ color: 0x56c8ff, transparent: true, opacity: 0.28, depthWrite: false }), live.length * L.ks);
+    const cells = instanced("cells", V3.box ??= new T.BoxGeometry(0.94, 0.94, 0.94), V3.cellMat ??= new T.MeshBasicMaterial({ color: 0x3a5a84, transparent: true, opacity: 0.07, depthWrite: false }), live.length);
+    const pulses = instanced("pulses", V3.dot ??= new T.SphereGeometry(0.07, 8, 6), V3.dotMat ??= new T.MeshBasicMaterial({ color: 0xffffff }), live.length);
+    V3.cellSite = new Uint32Array(live.length);
+    live.forEach((s, i) => {
+      const c = pos3(s);
+      m4.makeTranslation(c[0], c[1], c[2]); cells.setMatrixAt(i, m4); V3.cellSite[i] = s;
+      for (let k = 0; k < L.ks; k++) {
+        const t = V.tags[s * L.ks + k]; if (!t) continue;
+        const p = end3(s, k * 3, faces); // the principal port; the sphere sits just below it
+        m4.makeTranslation(p[0], p[1] - 0.17, p[2]); agentsMesh.setMatrixAt(na, m4);
+        col.set(COLOR[t]); if (dead(s, k)) col.lerp(bg, 0.72); agentsMesh.setColorAt(na++, col);
+        if (isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) { haloMesh.setMatrixAt(nw++, m4); fx += p[0]; fy += p[1]; fz += p[2]; }
+      }
+      const pe = V.pulse[s];
+      if (pe !== NONE) { const p = end3(s, pe, faces); m4.makeTranslation(p[0], p[1], p[2]); pulses.setMatrixAt(np++, m4); }
+    });
+    V3.focus = nw ? [fx / nw, fy / nw, fz / nw] : null;
+    for (const [mesh, n] of [[agentsMesh, na], [haloMesh, nw], [cells, live.length], [pulses, np]]) {
+      mesh.count = n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+    // wires: every switchboard pairing as a short curve through the site; wanted readers' principal
+    // wires in blue and the selected site's wires in orange, followed end to end
+    const hi = new Map();
+    for (const s of V.live) for (let k = 0; k < L.ks; k++) {
+      const t = V.tags[s * L.ks + k];
+      if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) walk(V, s, k * 3, (site, a, b) => hi.set(site * L.ends + Math.min(a, b), 1));
+    }
+    if (pinned != null) for (let k = 0; k < L.ks; k++) {
+      const t = V.tags[pinned * L.ks + k]; if (!t) continue;
+      for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * 3 + p, (site, a, b) => hi.set(site * L.ends + Math.min(a, b), 2));
+    }
+    const palette = [[0.33, 0.42, 0.56], [0.34, 0.78, 1], [1, 0.67, 0.27]];
+    const posv = [], colv = [];
+    for (const s of live) {
+      const c = pos3(s);
+      for (let e = 0; e < L.ends; e++) {
+        const m = V.mate[s * L.ends + e];
+        if (m === NONE || m < e) continue;
+        const a = end3(s, e, faces), b = end3(s, m, faces), rgb = palette[hi.get(s * L.ends + e) ?? 0];
+        const ctrl = [c[0] * 0.6 + (a[0] + b[0]) * 0.2, c[1] * 0.6 + (a[1] + b[1]) * 0.2, c[2] * 0.6 + (a[2] + b[2]) * 0.2];
+        let prev = a;
+        for (let j = 1; j <= 3; j++) {
+          const t = j / 3, u = 1 - t, q = [0, 1, 2].map(d => u * u * a[d] + 2 * u * t * ctrl[d] + t * t * b[d]);
+          posv.push(...prev, ...q); colv.push(...rgb, ...rgb); prev = q;
+        }
+      }
+    }
+    V3.wires.geometry.setAttribute("position", new T.Float32BufferAttribute(posv, 3));
+    V3.wires.geometry.setAttribute("color", new T.Float32BufferAttribute(colv, 3));
+    // outlines: the selected site in blue, the last stepped move's sites in purple
+    const mp = [], mc = [];
+    const outline = (s, rgb) => {
+      const c = pos3(s), h = 0.5, hy = Math.min(0.5, V3.gap / 2);
+      const P = [[-h, -hy, -h], [h, -hy, -h], [h, -hy, h], [-h, -hy, h], [-h, hy, -h], [h, hy, -h], [h, hy, h], [-h, hy, h]].map(p => [c[0] + p[0], c[1] + p[1], c[2] + p[2]]);
+      for (const [i, j] of [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]) { mp.push(...P[i], ...P[j]); mc.push(...rgb, ...rgb); }
+    };
+    if (pinned != null) outline(pinned, [0.34, 0.78, 1]);
+    if (!playing) for (const ev of story.slice(0, 40)) { outline(ev[1], [0.84, 0.66, 1]); if (ev[2] !== ev[1]) outline(ev[2], [0.84, 0.66, 1]); }
+    V3.marks.geometry.setAttribute("position", new T.Float32BufferAttribute(mp, 3));
+    V3.marks.geometry.setAttribute("color", new T.Float32BufferAttribute(mc, 3));
+    if (V3.refit) { V3.refit = false; fit3d(); }
+  }
+  // Glide toward where the wanted readers are, keeping the camera's angle and distance.
+  if ($("follow3d").checked && V3.focus) {
+    const t = V3.controls.target, d = [0, 1, 2].map(i => (V3.focus[i] - [t.x, t.y, t.z][i]) * 0.06);
+    t.x += d[0]; t.y += d[1]; t.z += d[2];
+    V3.camera.position.x += d[0]; V3.camera.position.y += d[1]; V3.camera.position.z += d[2];
+  }
+  V3.controls.update();
+  V3.renderer.render(V3.scene, V3.camera);
+}
+function pick3(cx, cy) {
+  if (!V3.cells) return null;
+  const r = $("cv3").getBoundingClientRect();
+  V3.ray.setFromCamera(new V3.T.Vector2((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1), V3.camera);
+  const hit = V3.ray.intersectObject(V3.cells, false)[0];
+  return hit ? V3.cellSite[hit.instanceId] : null;
+}
+function fit3d() {
+  if (!L || !V3.ready) return;
+  const V = views(); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const s of V.live) { const [x, y] = siteXYZ(s); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  if (x1 < x0) return;
+  // Following the action, frame a neighbourhood of the wanted readers; otherwise everything.
+  const follow = $("follow3d").checked && V3.focus;
+  const span = follow ? 26 : Math.max(x1 - x0, y1 - y0, L.depth * V3.gap) + 4, mid = (L.depth - 1) * V3.gap / 2;
+  const c = follow ? V3.focus : [(x0 + x1) / 2 - V3.cx, mid, (y0 + y1) / 2 - V3.cy];
+  V3.controls.target.set(c[0], c[1], c[2]);
+  V3.camera.position.set(c[0] + span * 0.35, c[1] + span * 0.75, c[2] + span * 0.85);
+  V3.camera.far = Math.max(5000, span * 20); V3.camera.updateProjectionMatrix();
+  V3.dirty = true;
+}
+function setView(mode) {
+  viewMode = mode; $("viewMode").value = mode;
+  const is3 = mode === "3d";
+  $("cv3").hidden = !is3; $("bar3d").hidden = !is3; cv.style.visibility = is3 ? "hidden" : "visible";
+  if (L && mode === "layers") layoutLayers();
+  resize();
+  if (L) { if (is3) { if (V3.ready || init3d()) { resize(); fit3d(); } } else fitContent(); }
+  hover = null; V3.dirty = true;
+  if (L) location.hash = location.hash.replace(/view=\w+/, `view=${mode}`);
 }
 
 // ---- words ---------------------------------------------------------------------------------------------
@@ -445,7 +789,7 @@ function dirTo(s, t) {
   return x > a ? "east" : x < a ? "west" : y > b ? "south" : y < b ? "north" : z > c ? "up a layer" : z < c ? "down a layer" : "nowhere";
 }
 function sentence(ev) {
-  const [kind, s, t, a, b, x, y] = ev;
+  const [kind, s, t, a, b, x] = ev;
   switch (kind) {
     case 1: return `<b>Step.</b> ${who(a)} stepped ${dirTo(s, t)} from ${at(s)} to ${at(t)}`
       + (x ? `, along its principal wire toward ${isProducer(a) ? "the agent reading it" : "what it reads"}. It ate the strand it walked along; its other wires each grew by a strand.`
@@ -453,8 +797,7 @@ function sentence(ev) {
     case 2: return `<b>Exchange.</b> ${who(a)} at ${at(s)} traded places with ${who(b)} at ${at(t)}, getting through a full site.`;
     case 3: return `<b>Fold.</b> A wire went ${dirTo(s, t)} from ${at(s)} and straight back; it snapped shut, freeing two strands.`;
     case 4: return `<b>Flip.</b> A wire turning a corner at ${at(s)} flipped across its square to ${at(t)}.`;
-    case 5: { const r = text(E.rule_text(x)), key = `${TAGS[a]}·${TAGS[b]}`;
-      const m = MEANING[key] || "";
+    case 5: { const r = text(E.rule_text(x)), key = `${TAGS[a]}·${TAGS[b]}`, m = MEANING[key] || "";
       return `<b>Rewrite ${r}</b> at ${at(s)}: the ${NAMES[TAGS[a]]} met the ${NAMES[TAGS[b]]} it was waiting for${s !== t ? ` (one strand away at ${at(t)})` : ""}. ${m.charAt(0).toUpperCase() + m.slice(1)}.`; }
     case 6: return `<b>Garbage.</b> An eraser at ${at(s)} touched a copy nobody wants: the duplicator at ${at(t)} became a plain wire from its value to its other copy.`;
     case 7: return `<b>Garbage.</b> An eraser at ${at(s)} touched the result of ${who(b)} at ${at(t)}: nobody needs it, so it became erasers on its two inputs.`;
@@ -484,7 +827,7 @@ function tipHTML(site) {
       + (gone ? `<span class="chip">garbage</span>` : "") + (wanted ? `<span class="chip" style="color:#56c8ff">wanted</span>` : "")
       + `<div class="tp">${DESC[name]}.</div>`;
     for (let p = 0; p < ARITY[t]; p++) {
-      const far = follow(V, site, k * 3 + p), out = isSource(t, p);
+      const far = walk(V, site, k * 3 + p), out = isSource(t, p);
       let w;
       if (!far) w = "unwired";
       else {
@@ -519,7 +862,7 @@ function tipHTML(site) {
 // What a consumer is doing, in words.
 function status(V, site, k, t, wanted, gone) {
   if (gone) return "Garbage: the answer no longer depends on it. An eraser will collect it.";
-  const far = follow(V, site, k * 3);
+  const far = walk(V, site, k * 3);
   if (!far) return "";
   const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3;
   if (t === 11) return isProducer(ft) && fp === 0 ? "It erases that value when they meet." : "Garbage leads here: it collects the computation when it touches its output.";
@@ -532,6 +875,13 @@ function siteAt(clientX, clientY) {
   if (!L) return null;
   const r = cv.getBoundingClientRect(), V = views();
   const wx = (clientX - r.left - view.ox) / view.s, wy = (clientY - r.top - view.oy) / view.s;
+  if (viewMode === "layers") {
+    const col = Math.floor(wx / ((lay.w + lay.gap) * S)), row = Math.floor(wy / ((lay.h + lay.gap) * S)), z = row * lay.cols + col;
+    if (col < 0 || col >= lay.cols || z < 0 || z >= L.depth) return null;
+    const [px, py] = panelOrigin(z), x = Math.floor((wx - px) / S) + lay.x0, y = Math.floor((wy - py) / S) + lay.y0;
+    if (x < lay.x0 || y < lay.y0 || x >= lay.x0 + lay.w || y >= lay.y0 + lay.h) return null;
+    return z * L.w * L.h + y * L.w + x;
+  }
   let fallback = null;
   for (let z = 0; z < L.depth; z++) {
     const x = Math.floor((wx - z * S * 0.38) / S), y = Math.floor((wy + z * S * 0.58) / S);
@@ -601,7 +951,7 @@ function stepOnce(toRewrite) {
   } while (toRewrite && !story.some(e => e[0] === 5) && performance.now() - t0 < 3000);
   if (finished) afterAnswer();
   E.fire_log_clear();
-  refreshGarbage(true); showStory(); panel(true);
+  refreshGarbage(true); showStory(); panel(true); V3.dirty = true;
 }
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
 let lastPanel = 0;
@@ -616,15 +966,17 @@ function panel(force) {
   $("sPulse").textContent = fmt(st[14]); $("sExtent").textContent = fmt(st[15]); $("sGc").textContent = fmt(st[16]);
   chart();
   const badge = $("badge");
-  if (!finished) { badge.className = "badge run"; badge.textContent = playing ? "RUNNING" : "PAUSED"; $("decoded").textContent = ""; $("answer").textContent = ""; $("verdict").textContent = ""; return; }
-  const ans = text(E.strands_answer()), decd = text(E.strands_answer_decoded());
+  if (!finished) { badge.className = "badge run"; badge.textContent = playing ? "RUNNING" : "PAUSED"; $("decoded").textContent = running ? `${running.call} = …` : ""; $("answer").textContent = ""; $("verdict").textContent = ""; return; }
+  const ans = text(E.strands_answer());
   if (oracleText === null) oracleText = text(E.strands_oracle(200000));
   const ok = oracleText === "" ? null : ans === oracleText;
   badge.className = "badge " + (ok === false ? "bad" : cleaned ? "ok" : "run");
   badge.textContent = ok === false ? "WRONG ANSWER" : cleaned
     ? (garbageCount ? `ANSWER IN ${fmt(answerClock)} CLOCKS · ${garbageCount} GARBAGE LEFT` : `DONE in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}`)
     : `ANSWER IN at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
-  $("decoded").textContent = decd ? `= ${decd}` : ""; $("answer").textContent = ans;
+  if (running) { $("decoded").textContent = `${running.call} = ${decodeAs(running.kind, parseTree(ans))}`; }
+  else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
+  $("answer").textContent = ans;
   $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)
     + (cleaned && !garbageCount && L.gc ? "; only the answer is left on the lattice" : "");
 }
@@ -639,7 +991,11 @@ function chart() {
 }
 
 // ---- input -------------------------------------------------------------------------------------------------
-function resize() { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
+function resize() {
+  const r = $("stage").getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+  if (V3.ready) { V3.renderer.setSize(r.width, r.height, false); V3.camera.aspect = r.width / Math.max(1, r.height); V3.camera.updateProjectionMatrix(); }
+}
 let drag = null;
 cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy, moved: false }; cv.setPointerCapture(e.pointerId); });
 cv.addEventListener("pointermove", e => {
@@ -649,33 +1005,40 @@ cv.addEventListener("pointermove", e => {
     view.ox = drag.ox + dx; view.oy = drag.oy + dy;
   }
   hover = siteAt(e.clientX, e.clientY);
-  if (pinned == null) showTip(hover, e.clientX, e.clientY, false);
 });
 cv.addEventListener("pointerup", e => {
   if (drag && !drag.moved) {
     const s = siteAt(e.clientX, e.clientY);
-    pinned = pinned === s ? null : s;
-    showTip(pinned ?? s, e.clientX, e.clientY, pinned != null);
+    pinned = s == null || pinned === s ? null : s;
+    showTip(pinned, e.clientX, e.clientY, pinned != null);
   }
   drag = null;
 });
-cv.addEventListener("pointerleave", () => { hover = null; if (pinned == null) $("tip").hidden = true; });
+cv.addEventListener("pointerleave", () => { hover = null; });
 cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   const s2 = Math.max(0.05, Math.min(60, view.s * Math.exp(-e.deltaY * 0.0016))); view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2; }, { passive: false });
-function setPlaying(p) { playing = p && !cleaned; $("play").textContent = playing ? "❚❚" : "▶"; if (playing) { story = []; showStory(); } }
+function setPlaying(p) { playing = p && !cleaned; $("play").textContent = playing ? "❚❚" : "▶"; if (playing) { story = []; showStory(); } V3.dirty = true; }
 $("play").onclick = () => setPlaying(!playing);
 $("step").onclick = e => stepOnce(e.shiftKey);
 $("end").onclick = () => { $("speed").value = 100; speedLabel(); setPlaying(true); };
 $("reset").onclick = () => load();
 $("load").onclick = () => { load(); setPlaying(true); };
-$("prog").onchange = syncUI; $("cTemp").oninput = syncUI;
+$("prog").onchange = () => { const d = dispProg($("prog").value); if (d) $("args").value = d.example; syncUI(); };
+$("cTemp").oninput = syncUI;
 $("speed").oninput = speedLabel;
+$("viewMode").onchange = () => setView($("viewMode").value);
+$("gap3d").oninput = () => { V3.gap = +$("gap3d").value / 10; fit3d(); };
+$("layer3d").onchange = () => { V3.dirty = true; };
+$("fit3d").onclick = () => fit3d();
+$("follow3d").onchange = () => fit3d();
 function speedLabel() { const v = proposalsPerFrame(); $("speedv").textContent = v === Infinity ? "max speed" : `${fmt(v)} proposals/frame`; }
 window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") { load(); setPlaying(true); } return; }
+  if (e.target.tagName === "SELECT") return;
   if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
   else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(e.shiftKey); }
-  else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; }
+  else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; V3.dirty = true; }
+  else if (e.key === "v" || e.key === "V") { const modes = ["oblique", "layers", "3d"]; setView(modes[(modes.indexOf(viewMode) + 1) % 3]); }
   else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
 });
 window.addEventListener("resize", resize);
@@ -684,7 +1047,9 @@ let bt = 0; function banner(m, bad) { const b = $("banner"); b.textContent = m; 
   const bytes = Uint8Array.from(atob(window.STRANDS_WASM), c => c.charCodeAt(0));
   E = (await WebAssembly.instantiate(bytes, {})).instance.exports;
   catalog = JSON.parse(text(E.catalog()));
-  populate(); resize(); speedLabel(); load();
+  populate(); resize(); speedLabel();
+  viewMode = $("viewMode").value;
+  load(); setView(viewMode);
   if (new URLSearchParams(location.hash.slice(1)).get("play") !== "0") setPlaying(true);
   requestAnimationFrame(frame);
 })().catch(err => { $("badge").className = "badge bad"; $("badge").textContent = "ENGINE FAILED"; $("verdict").textContent = String(err); });

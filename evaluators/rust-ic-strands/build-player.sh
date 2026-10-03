@@ -17,3 +17,5 @@ wasm=target/wasm32-unknown-unknown/wasm/rust_ic_strands.wasm
   printf '";\n'
 } > ../player/engine.js
 echo "player/engine.js: $(stat -c %s "$wasm") bytes of wasm"
+# The disp programs the player offers, compiled with the real elaborator.
+(cd ../../.. && npx tsx evaluators/rust-ic-strands/programs/emit.ts)

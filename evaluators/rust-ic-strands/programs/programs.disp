@@ -1,0 +1,50 @@
+// Ordinary disp definitions over the prelude, compiled to trees for the strand-lattice player
+// (build-player.sh). Each `///` line documents the definition below it:
+//   /// <what it computes> -> <nat | bool | list | string>; try: <arguments>
+// The suggested arguments are small: disp numbers are unary, and general compiled code takes
+// thousands of rewrites even for add 2 3, so these finish in about a minute in the browser.
+open use raw "../../../lib/prelude.disp" {}
+open use raw "../../../lib/list.disp" {}
+
+/// a + b on unary numbers -> nat; try: 2 3
+add := fix ({self, a, b} => if (is_leaf a) then b else (succ (self (nat_pred a) b)))
+
+/// a × b, by repeated addition -> nat; try: 2 2
+mul := fix ({self, a, b} => if (is_leaf a) then 0 else (add b (self (nat_pred a) b)))
+
+/// the n-th Fibonacci number, fib 0 = 0 and fib 1 = 1 -> nat; try: 2
+fib := fix ({self, n} => if (is_leaf n) then 0 else (if (is_leaf (nat_pred n)) then 1 else (add (self (nat_pred n)) (self (nat_pred (nat_pred n))))))
+
+/// whether n is even -> bool; try: 3
+is_even := fix ({self, n} => if (is_leaf n) then true else (not (self (nat_pred n))))
+
+/// the sum of a list of numbers -> nat; try: [1, 2]
+sum := reduce add 0
+
+/// how many items a list has -> nat; try: [5, 6, 7]
+size := length
+
+/// a list backwards -> list; try: [1, 2]
+rev := reverse
+
+/// every number in a list doubled -> list; try: [1, 2]
+doubled := {xs} => map xs ({x} => add x x)
+
+insert := fix ({self, x, xs} => if (is_nil xs) then [x] else (if (nat_le x (head xs)) then (cons x xs) else (cons (head xs) (self x (tail xs)))))
+/// a list of numbers sorted by insertion -> list; try: [2, 1]
+isort := reduce insert []
+
+/// a greeting -> string; try: "a"
+greet := {name} => append "hi " name
+
+test add 3 4 = 7
+test mul 3 4 = 12
+test fib 6 = 8
+test is_even 4 = true
+test is_even 5 = false
+test sum [1, 2, 3] = 6
+test size [5, 6, 7] = 3
+test rev [1, 2, 3] = [3, 2, 1]
+test doubled [1, 2] = [2, 4]
+test isort [3, 1, 2] = [1, 2, 3]
+test greet "disp" = "hi disp"
