@@ -45,7 +45,8 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`):
   - wire tension, heavier on principal wires, so reactants find each other;
   - crowded links: a link carrying n strands costs n²/2, so wire pulls harder where it would
     fill every lane;
-  - crowded sites;
+  - crowded sites, and above all two *idle* agents (anything but a wanted reader) sharing a
+    site, so idle matter keeps a seat free for traffic;
   - a temperature, which lets matter step out of the way.
 
   Most turns (80%) go to sites holding agents; bare wire only needs enough turns to straighten.
@@ -96,21 +97,22 @@ encoding: binary numbers, least significant bit first. Their fib counts from fib
 fib 1 = 1 and fib 2 = 2 are right for that program; disp's `fib` gives fib 2 = 1.
 
 Compiled disp is general rather than hand-tuned, so it costs more. Clocks to the answer on the
-default configuration (one seed each, every answer correct):
+default configuration (one seed each, every answer correct), before and after idle matter
+keeps a seat free:
 
-| call | clocks | rewrites |
-|---|---|---|
-| `size [5, 6, 7]` | 57k | 3.6k |
-| `add 3 4` | 87k | 6.5k |
-| `is_even 5` | 90k | 6.5k |
-| `fib 2` | 111k | 6.3k |
-| `doubled [1, 2, 3]` | 162k | 21k |
-| `fib 3` | 297k | 13k |
-| `mul 2 3` | 315k | 18k |
-| `sum [1, 2, 3]` | 330k | 20k |
-| `rev [1, 2, 3]` | 498k | 15k |
-| `isort [2, 1]` | 405k | 17k |
-| `greet "a"` | 72k | 6k |
+| call | clocks | with idle repulsion | rewrites |
+|---|---|---|---|
+| `size [5, 6, 7]` | 57k | 40k | 3.6k |
+| `greet "a"` | 72k | 47k | 6k |
+| `add 3 4` | 87k | 66k | 6.5k |
+| `is_even 5` | 90k | 75k | 6.5k |
+| `fib 2` | 111k | 72–85k | 6.3k |
+| `doubled [1, 2, 3]` | 162k | 118k | 21k |
+| `fib 3` | 297k | 192k | 13k |
+| `mul 2 3` | 315k | 197k | 18k |
+| `sum [1, 2, 3]` | 330k | 225k | 20k |
+| `isort [2, 1]` | 405k | 255k | 16k |
+| `rev [1, 2, 3]` | 498k | 454k | 15k |
 
 disp's `fib 3` (= 2) takes about 4× the rewrites of the lambada program's `fib 2` (also 2): the
 cost of the compiler's general recursion and conditionals, not of the lattice. The
@@ -189,6 +191,7 @@ Each fix took a share of that, on fib(0) with random turns:
 | + erasers collect duplicators (below) | 9.7k |
 | + erasers collect dead computations | 8.1–9.1k |
 | + erasers collect unpairs, so garbage cascades all the way | 6.5–7.2k |
+| + idle matter keeps a seat free (below) | 5.0–5.5k |
 
 **Garbage blocks large programs.** fib(2) froze after 3,306 rewrites: the one rewrite that
 mattered (a duplicator meeting a fork, the largest rule) had no room, because 196 erasers were
@@ -210,28 +213,50 @@ Charging crowded links instead costs nothing there: wire stays loose in open spa
 a strand to a link that already holds n costs n more, which stops swelling exactly where lanes
 would fill. fib(2) then takes 124–147k clocks.
 
-**Against the address-based mesh.** Clocks to the answer with pulses, all collection and
-crowded links (c = 1), over 1–2 seeds; every run matches the oracle and the abstract net, and
-afterwards cleans up to only the answer. Rewrites include erasing garbage, as the mesh's do:
+**Then the blob jams.** With all that in place, wires pull matter into a dense blob: 75% of the
+sites holding agents are full (two agents in two seats), and so are 79% of the sites wanted
+readers try to step into. Only 7% of those blocked steps get through as exchanges, and rewrites
+wait for room about three times per rewrite that fires. Stronger crowding of all agents helps
+little (crowding 3: 4–21% fewer clocks): tension still packs everything.
+
+The fix is a distinction physics already makes between active and passive matter. Two idle
+agents (anything but a wanted reader) sharing a site cost energy (10, against temperature 2),
+and wanted readers are exempt. Idle matter spreads to about one agent per site; full sites drop
+from 75% to 8–14%, blocked rewrites by 5–10×, and wanted readers walk straight through. On
+disp's `fib 2` clocks fall 111k → 72–75k, `add 3 4` 87k → 63–66k, the benchmark's `fib(2)`
+61k → 34–39k; under blocks `fib(2)` 402k → 287k. The strength has a sweet spot: at 16 and
+beyond idle matter can barely move, and things slow down again.
+
+**Against the address-based mesh.** Clocks to the answer with pulses, all collection, crowded
+links (c = 1) and idle matter keeping a seat free (10), over 2 seeds; every run matches the
+oracle and the abstract net, and afterwards cleans up to only the answer. Rewrites include
+erasing garbage, as the mesh's do:
 
 | program | mesh rewrites | mesh ticks | strand rewrites | random turns | blocks |
 |---|---|---|---|---|---|
-| fib(0) | 1,627 | 7,450 | 1,067 | 6.5–7.2k | 43k |
-| fib(1) | 1,821 | 8,928 | 1,094 | 6.9–7.1k | 45k |
-| sort(1) | 2,174 | 2,615 | 210 | 2.7k | 13k |
-| exp(1) | 15,139 | 100k | 3,453 | 46k | — |
-| fib(2) | 20,808 | 137k | 3,569 | 60–61k | — |
+| fib(0) | 1,627 | 7,450 | ~990 | 5.0–5.5k | 36k |
+| fib(1) | 1,821 | 8,928 | ~1,070 | 6.7–7.7k | 49k |
+| sort(1) | 2,174 | 2,615 | 172–324 | 1.5–1.6k | 19k |
+| exp(1) | 15,139 | 100k | ~3,470 | 31–33k | 258k |
+| fib(2) | 20,808 | 137k | ~3,500 | 34–39k | 287k |
 
-With random turns the strand lattice is level with the mesh on sort(1), slightly faster on
-fib(0) and fib(1), and over twice as fast on exp(1) and fib(2). With blocks it is 5–7× slower
-than with random turns. A mesh tile is about 5 kbit plus a router; a strand site here is about
+With random turns the strand lattice beats the mesh on every program: by 1.2–1.7× on fib(0),
+fib(1) and sort(1), and 3–4× on exp(1) and fib(2). With blocks it is 6–8× slower than with
+random turns (12× on sort(1), the one program the idle repulsion slowed under blocks: 13k →
+19k). A mesh tile is about 5 kbit plus a router; a strand site here is about
 165 bits, and fib(2) peaks at about 2,000 sites in use.
 
 ## Things tried that did not help, and why
 
 - **Pressure** from blocked rewrites (a diffusing field agents drift down): no measurable change
   on the corpus or on fib. Wire tension holds neighbours in place at least as strongly.
-- **Short-range repulsion**: same.
+- **Short-range repulsion between all agents in neighbouring sites**: same. (The repulsion that
+  works is narrower: same site only, idle agents only.)
+- **Stronger crowding of every agent**: 4–21% fewer clocks at crowding 3; tension still packs
+  everything.
+- **Calling values**: letting a demand pulse that reaches a value mark it active, so it also
+  passes through idle matter toward its reader. Within seed noise, and blocked rewrites roughly
+  tripled as called values crowd in around their readers.
 - **Weak or no tension on idle matter**: wires grow without bound and the reaction zone still
   congests.
 - **Splitting big rules** so each step creates at most two agents, with a temporary "builder"
@@ -241,6 +266,7 @@ than with random turns. A mesh tile is about 5 kbit plus a router; a strand site
   - T1·F and Dn·F need 5-port builders.
 
   Five ports would make every switchboard bigger, so this stayed an analysis.
+- **Lower temperature** with the idle repulsion (1.5): slower everywhere.
 - **Walker priority.** Letting a wanted reader take its site's turn: neutral at 50%. At 100%
   it livelocks: a reader whose rewrite has no room retries forever and its site never does
   anything else to make room.
@@ -264,10 +290,10 @@ From `crate/` (memory-cap long runs, see `AGENTS.md`):
 ```sh
 cargo test --release                                  # ~5 s: corpus in 4 configurations, per-move invariants, collection
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --margolus
-cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --budget 5000000000 --clean 100000
-cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 link=1"
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --idle-crowd 10
+cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --idle-crowd 10 --margolus
+cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --link 1 --idle-crowd 10 --budget 5000000000 --clean 100000
+cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 link=1 idlecrowd=10"
 ```
 
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the

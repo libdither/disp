@@ -60,7 +60,7 @@ fn block_rewrites_in_3d() {
 #[test]
 fn margolus_blocks_with_pulses_in_3d() {
     all_finish(Params { depth: 6, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, gc: true, link_crowd: 1.0,
-                        agent_turns: 0.8, ..base() });
+                        idle_crowd: 10.0, agent_turns: 0.8, ..base() });
 }
 
 /// Collection and link crowding with every invariant re-checked after every move: share-tower
@@ -69,7 +69,7 @@ fn margolus_blocks_with_pulses_in_3d() {
 #[test]
 fn collection_keeps_the_projection_exact() {
     let p = |margolus| Params { w: 16, h: 16, depth: 4, k: 2, lanes: 3, block: true, lazy: true, pulse: true, gc: true, margolus,
-                                link_crowd: 1.0, swap: 1.0, agent_turns: 0.8, ..base() };
+                                link_crowd: 1.0, idle_crowd: 10.0, swap: 1.0, agent_turns: 0.8, ..base() };
     let run_checked = |t: &Term, p: Params| {
         let mut net = Net::new();
         let root = net.build(t);

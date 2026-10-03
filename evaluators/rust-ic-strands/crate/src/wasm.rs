@@ -44,12 +44,12 @@ fn parse(src: &str) -> Result<Term, String> {
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn strands_new(w: u32, h: u32, depth: u32, k: u32, lanes: u32, flags: u32, temp: f64, swap: f64, agent_turns: f64, w_principal: f64, w_aux: f64,
-                              link_crowd: f64, seed: u32, src: *const u8, len: usize) -> i32 {
+                              link_crowd: f64, idle_crowd: f64, seed: u32, src: *const u8, len: usize) -> i32 {
     std::panic::set_hook(Box::new(|info| { set_text(&format!("engine panic: {info}")); }));
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     let t = match parse(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, depth, k: k as usize, lanes: lanes as usize, block: flags & 1 != 0, lazy: flags & 2 != 0,
-                     pulse: flags & 4 != 0, margolus: flags & 8 != 0, gc: flags & 16 != 0, temp, swap, agent_turns, w_principal, w_aux, link_crowd, seed: seed as u64, ..Params::default() };
+                     pulse: flags & 4 != 0, margolus: flags & 8 != 0, gc: flags & 16 != 0, temp, swap, agent_turns, w_principal, w_aux, link_crowd, idle_crowd, seed: seed as u64, ..Params::default() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
     let mut net = Net::new();
     let root = net.build(&t);

@@ -79,13 +79,16 @@ pub struct Params {
     /// Energy c·n²/2 on a link carrying n strands: wire pulls harder where it is crowded, so
     /// loose wire can wander in open space but cannot fill every lane around a reaction.
     pub link_crowd: f64,
+    /// Energy for each pair of idle agents (anything but a wanted reader) sharing a site:
+    /// idle matter keeps a seat free, so wanted readers can walk through it and rewrites have room.
+    pub idle_crowd: f64,
     pub seed: u64,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, gc: false, link_crowd: 0.0, seed: 1 }
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, gc: false, link_crowd: 0.0, idle_crowd: 0.0, seed: 1 }
     }
 }
 
@@ -111,6 +114,8 @@ pub struct Stats {
     /// Why wanted consumers failed to step along their principal: [no seat, no lane, energy].
     pub walk_fail: [u64; 3],
     pub walk_ok: u64,
+    /// Walker steps into a full site that went through as an exchange.
+    pub walk_swap: u64,
     /// Demand pulses that reached a computation nobody wanted yet.
     pub pulses: u64,
     /// Duplicators and dead computations collected by an eraser on their output.
@@ -297,6 +302,10 @@ impl Lattice {
             self.live_pos[s as usize] = u32::MAX;
         }
     }
+
+    /// Idle: anything but a wanted reader.
+    fn idle(&self, s: u32, k: usize) -> bool { self.tag(s, k) != 0 && !self.want[s as usize * self.ks + k] }
+    fn idle_at(&self, s: u32) -> usize { (0..self.ks).filter(|&k| self.idle(s, k)).count() }
 
     fn used_lanes(&self, s: u32, f: usize) -> usize { (0..self.p.lanes).filter(|&i| self.mate_of(s, self.se(f, i)) != NONE).count() }
 
@@ -620,6 +629,31 @@ impl Lattice {
 
     pub fn live_sites(&self) -> usize { self.live.len() }
 
+    /// How crowded it is where walkers want to go, against the blob as a whole: [full sites a
+    /// wanted reader's principal wire leads into, sites it leads into, full sites among sites
+    /// holding agents, sites holding agents, of the full targets: both occupants idle, one
+    /// idle, none idle, holding the walker's own partner].
+    pub fn crowding(&self) -> [usize; 8] {
+        let mut c = [0; 8];
+        for &s in &self.live {
+            if self.occ[s as usize] > 0 { c[3] += 1; if self.occ[s as usize] as usize >= self.p.k { c[2] += 1; } }
+            for k in 0..self.p.k {
+                let t = self.tag(s, k);
+                if t == 0 || !tag_of(t).is_consumer() || tag_of(t) == Tag::Eps || !self.want[s as usize * self.ks + k] { continue; }
+                let m = self.mate_of(s, self.ae(k, 0));
+                if !self.is_strand(m) { continue; }
+                let n = self.nb(s, self.face(m));
+                c[1] += 1;
+                if (self.occ[n as usize] as usize) < self.p.k { continue; }
+                c[0] += 1;
+                c[[6, 5, 4][self.idle_at(n).min(2)]] += 1;
+                let (s2, k2, _, _) = self.follow(s, self.ae(k, 0));
+                if s2 == n && self.tag(n, k2) != 0 { c[7] += 1; }
+            }
+        }
+        c
+    }
+
     /// Average strands per wire end over all agent ports (a measure of how stretched wires are).
     pub fn wire_length(&self) -> (u64, u64) {
         let (mut total, mut ends) = (0, 0);
@@ -651,7 +685,9 @@ impl Lattice {
         };
         let Some(k2) = self.free_slot(t) else {
             if walker { self.stats.walk_fail[0] += 1; }
-            return may_swap && self.swap(s, k, f);
+            let ok = may_swap && self.swap(s, k, f);
+            if ok && walker { self.stats.walk_swap += 1; }
+            return ok;
         };
         let along = { let m = self.mate_of(s, self.ae(k, 0)); self.is_strand(m) && self.face(m) == f };
         let (tag, want) = (self.tag(s, k) as u32, self.want[s as usize * self.ks + k] as u32);
@@ -692,6 +728,9 @@ impl Lattice {
         if lanes.len() < need { if walker { self.stats.walk_fail[1] += 1; } return None; }
         lanes.truncate(need);
         de += self.p.crowd * (self.occ[t as usize] as f64 - (self.occ[s as usize] as f64 - 1.0));
+        if self.p.idle_crowd != 0.0 && self.idle(s, k) {
+            de += self.p.idle_crowd * (self.idle_at(t) as f64 - (self.idle_at(s) as f64 - 1.0));
+        }
         if self.p.link_crowd != 0.0 {
             let through = (0..a).filter(|&q| matches!(plan[q], Plan::Through(_))).count();
             let n = self.used_lanes(s, f) as f64;

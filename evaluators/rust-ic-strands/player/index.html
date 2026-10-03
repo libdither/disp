@@ -113,6 +113,7 @@
       <span class="k">evaluation</span><select id="cLazy"><option value="1" selected>lazy: only wanted readers react</option><option value="0">eager: every pair reacts</option></select>
       <span class="k">temperature</span><span><input id="cTemp" type="range" min="2" max="40" value="20" style="width:110px"> <span id="cTempV" class="note"></span></span>
       <span class="k">wire tension</span><select id="cTension"><option value="3,1,1" selected>light, crowded links pull harder</option><option value="3,1,0">light everywhere (wire swells on long runs)</option><option value="6,4,0">strong everywhere (slower)</option></select>
+      <span class="k">idle matter</span><select id="cIdle"><option value="10" selected>keeps a seat free, so wanted readers get through</option><option value="0">packs in tight</option></select>
       <span class="k">exchanges</span><select id="cSwap"><option value="1" selected>on</option><option value="0">off</option></select>
       <span class="k">demand travels</span><select id="cPulse"><option value="1" selected>as pulses along wires</option><option value="0">only by contact</option></select>
       <span class="k">garbage</span><select id="cGc"><option value="1" selected>erasers collect it</option><option value="0">left in place</option></select>
@@ -138,6 +139,10 @@
       <p><b>Tension.</b> At temperature 2 a loose wire gains more from wiggling than it loses to its tension, so
         over long runs it swells until no lane is free. A link carrying n strands costs n²/2 more, so wire stays
         loose in open space but cannot crowd every lane around a reaction.</p>
+      <p><b>Density.</b> Wires pull matter together until, left alone, three quarters of occupied sites are full, and wanted
+        readers and rewrites stall against full sites. Two idle agents (anything but a wanted reader) sharing a site cost
+        energy, so idle matter spreads out to about one agent per site and keeps a seat free for traffic, while wanted
+        readers pass through.</p>
       <p><b>Garbage.</b> Agents the answer no longer depends on are drawn dimmed. An eraser that touches a computation's
         output collects it: a duplicator becomes a plain wire from its input to its other output; a dead apply becomes
         erasers on its inputs; an unpair with both parts erased becomes one eraser on the pair. Once the answer is in,
@@ -321,7 +326,7 @@ function load() {
   let rc = 2;
   const flags = (+$("cBlock").value) | (+$("cLazy").value << 1) | (+$("cPulse").value << 2) | (+$("cSched").value << 3) | (+$("cGc").value << 4);
   for (let tries = 0; tries < 6; tries++) {
-    rc = withString(src, (p, n) => E.strands_new(side, side, depth, k, lanes, flags, +$("cTemp").value / 10, +$("cSwap").value, +$("cTurns").value, ...$("cTension").value.split(",").map(Number), 7, p, n));
+    rc = withString(src, (p, n) => E.strands_new(side, side, depth, k, lanes, flags, +$("cTemp").value / 10, +$("cSwap").value, +$("cTurns").value, ...$("cTension").value.split(",").map(Number), +$("cIdle").value, 7, p, n));
     if (rc !== 2) break;
     side = Math.ceil(side * 1.4);
   }

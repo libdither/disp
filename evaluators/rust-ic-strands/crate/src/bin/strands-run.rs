@@ -45,6 +45,7 @@ fn main() {
             "--margolus" => p.margolus = true,
             "--gc" => p.gc = true,
             "--link" => p.link_crowd = it.next().unwrap().parse().unwrap(),
+            "--idle-crowd" => p.idle_crowd = it.next().unwrap().parse().unwrap(),
             "--block" => p.block = true,
             "--lazy" => p.lazy = true,
             "--idle" => p.idle_tension = it.next().unwrap().parse().unwrap(),
@@ -70,7 +71,7 @@ fn main() {
     let done = if profile {
         // Time-averaged count of wanted consumers in each waiting state, sampled four times a
         // clock, plus the share of clocks where some consumer had its partner in reach.
-        let (mut acc, mut lens, mut ready, mut fin) = ([0f64; 5], [0f64; 2], 0f64, false);
+        let (mut acc, mut lens, mut ready, mut fin, mut crowd) = ([0f64; 5], [0f64; 2], 0f64, false, [0usize; 8]);
         while l.stats.proposals < budget && !fin {
             let c0 = l.stats.clocks;
             fin = l.run((l.stats.proposals + (l.live_sites() / 4).max(1) as u64).min(budget));
@@ -79,11 +80,18 @@ fn main() {
             for i in 0..5 { acc[i] += n[i] as f64 * dc; }
             for i in 0..2 { lens[i] += len[i] as f64 * dc; }
             if n[0] > 0 { ready += dc; }
+            let c = l.crowding();
+            for i in 0..8 { crowd[i] += c[i]; }
         }
         let c = l.stats.clocks.max(1e-9);
         println!("wanted consumers on average: in reach {:.2}  walking to partner {:.2} (length {:.1})  carrying demand {:.2} (length {:.1})  waiting on a computation {:.2}  erasers parked {:.1}",
             acc[0] / c, acc[1] / c, lens[0] / acc[1].max(1e-9), acc[2] / c, lens[1] / acc[2].max(1e-9), acc[3] / c, acc[4] / c);
         println!("clocks per rewrite {:.1}; some pair in reach during {:.0}% of clocks", c / l.stats.fires.max(1) as f64, 100.0 * ready / c);
+        println!("crowding: {:.0}% of the sites walkers head into are full, against {:.0}% of all sites holding agents; walker steps into full sites that went through as exchanges: {} of {}",
+            100.0 * crowd[0] as f64 / crowd[1].max(1) as f64, 100.0 * crowd[2] as f64 / crowd[3].max(1) as f64, l.stats.walk_swap, l.stats.walk_fail[0]);
+        let full = crowd[0].max(1) as f64;
+        println!("full sites walkers head into hold: two idle agents {:.0}%, one idle {:.0}%, no idle {:.0}%; the walker's own partner {:.0}%",
+            100.0 * crowd[4] as f64 / full, 100.0 * crowd[5] as f64 / full, 100.0 * crowd[6] as f64 / full, 100.0 * crowd[7] as f64 / full);
         fin
     } else if progress == 0 { l.run(budget) } else {
         let mut fin = false;
