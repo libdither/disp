@@ -7,8 +7,12 @@
 #   4. lattice    run the whole lattice (shifting, all block units, pulses) clock by clock
 #   5. gpu        the GPU version of the same schedule (crate/src/gpu): every recorded turn and block,
 #                 and the lattice in lockstep with the simulator, its pulse phases fused into the
-#                 next clock's turns and only the tiles near something run
-#   6. layout     with --layout: synthesis, place and route on IHP SG13G2, design rule check,
+#                 next clock's turns and only the tiles near something run; every count of what the
+#                 turns did matches too, also under settings other than the chip's
+#   6. browser    the player's WebGPU path (player/gpu.js) in headless Chromium: a run handed back
+#                 and forth between GPU and CPU matches one that stays on the CPU (skipped without
+#                 chromium)
+#   7. layout     with --layout: synthesis, place and route on IHP SG13G2, design rule check,
 #                 layout versus schematic, timing (see flow/layout.sh)
 # Exits non-zero on the first stage that fails. Each stage prints its wall time.
 #
@@ -95,7 +99,20 @@ for term in "${LATTICE[@]}"; do
 done
 r=$(gpu fib:0 --grid 232 --depth 8 --seed 1 --check --batch 13 | tail -1) || fail=1
 printf "   %-28s %s\n" "fib:0 232x232x8, by 13" "$r"
+r=$(gpu fib:0 --grid 232 --depth 8 --seed 2 --check --batch 16 --clocks 1500 lazy=0 pairs=0 link=1 board=0 idlecrowd=0 swap=0.5 temp=1.5 | tail -1) || fail=1
+printf "   %-28s %s\n" "fib:0, eager and other knobs" "$r"
 [ $fail = 0 ] || { echo "   the GPU differs from the simulator"; exit 1; }
+done_
+
+stage "browser"
+if command -v "${CHROME:-chromium}" >/dev/null; then
+  cap 6G 900 "$HW/../build-player.sh" >/dev/null
+  r=$(cap 6G 1800 node "$HW/../player/check.mjs" 'src=sort:1&clocks=200' 2>&1 | tail -1) || fail=1
+  printf "   %-28s %s\n" "player sort:1, CPU⇄GPU" "$r"
+  [ $fail = 0 ] || { echo "   the player's GPU path differs from its CPU"; exit 1; }
+else
+  echo "   skipped: no chromium (set CHROME)"
+fi
 done_
 
 if [ "${1:-}" = "--layout" ]; then

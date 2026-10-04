@@ -91,6 +91,6 @@ fn collect_stage() -> bool {
   let c_again = ke == 0u && e1 && !c.c_apply && !c.c_stale;
   if (c_again) { c = co_collect(1u); }
   if (c.c_stale) { stale = true; return true; }
-  if (c.c_apply) { touched = c.c_touched; return true; }
+  if (c.c_apply) { touched = c.c_touched; tally[T_COLLECTED]++; return true; }
   return false;
 }

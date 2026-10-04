@@ -139,6 +139,12 @@ fn flip(s: u32, x: u32, z: u32, w: u32, e: u32, metro: u32) -> bool {
   return true;
 }
 
+/// Agent k at p is a wanted reader stepping along its principal wire across f (lattice.rs `hop`).
+fn walker(k: u32, f: u32) -> bool {
+  let m = gm(p, ae(k, 0u));
+  return LAZY && gw(p, k) && is_consumer(gt(p, k)) && is_strand(m) && face(m) == f;
+}
+
 /// Whether an earlier turn this clock changed position n (its low 3 bits).
 fn mv_taken(n: u32) -> bool { return ((taken >> (n & 7u)) & 1u) != 0u; }
 
@@ -180,12 +186,12 @@ fn move_stage(active_mode: bool, act_k: u32) {
 
   // move_act: fold or flip (written directly), or set up the hop: whether T is full, which of
   // its residents an exchange moves.
-  var hop = false; var full = false; var kb = 0u; var fsl = 0u;
+  var hop = false; var full = false; var kb = 0u; var fsl = 0u; var wk = false;
   var mv_touched = 0u; var mv_stale = false;
   if (reshape) {
     var folded = false;
     if (mv_taken(tn)) { mv_stale = true; }
-    else if (fold(p, t, e)) { mv_touched |= (1u << p) | (1u << t); folded = true; }
+    else if (fold(p, t, e)) { mv_touched |= (1u << p) | (1u << t); folded = true; tally[T_FOLDS]++; }
     if (!folded && !mv_stale && is_strand(m) && (f >> 1u) != (f2 >> 1u) && onlat(p, f) && onlat(p, f2)) {
       if ((tn & 8u) == 0u) {}
       else if ((zn & 8u) == 0u) {}
@@ -194,6 +200,7 @@ fn move_stage(active_mode: bool, act_k: u32) {
       else if (mv_taken(wn)) { mv_stale = true; }
       else if (flip(p, t, zn & 7u, wn & 7u, e, d_metro())) {
         mv_touched |= (1u << p) | (1u << t) | (1u << (zn & 7u)) | (1u << (wn & 7u));
+        tally[T_FLIPS]++;
       }
     }
   }
@@ -202,6 +209,8 @@ fn move_stage(active_mode: bool, act_k: u32) {
     else if (mv_taken(tn)) { mv_stale = true; }
     else {
       fsl = free_slot(t); full = (fsl & 4u) == 0u;
+      wk = walker(k, f);
+      if (full && wk) { tally[T_NO_SEAT]++; }
       // An exchange's resident: T is full, so both its slots hold one.
       kb = select(1u, 0u, pick3(d_resident(), 2u) == 0u);
       hop = !(full && !may_swap);
@@ -215,7 +224,7 @@ fn move_stage(active_mode: bool, act_k: u32) {
   if (hop) {
     let xs = select(p, TMP, full); let xt = select(t, TMP + 1u, full);
     let h1 = hop_to(p, t, xs, xt, k, f, select(fsl & 3u, 2u, full), !full, d_metro());
-    if (h1.ok && !full) { mv_touched |= (1u << p) | (1u << t); }
+    if (h1.ok && !full) { mv_touched |= (1u << p) | (1u << t); tally[T_HOPS]++; if (wk) { tally[T_WALKS]++; } }
     if (h1.ok && full) {
       let h = hop_to(xt, xs, xt, xs, kb, f ^ 1u, k, false, d_metro());
       if (h.ok) {
@@ -223,6 +232,7 @@ fn move_stage(active_mode: bool, act_k: u32) {
         if (pairs(xs) <= PAIRS && pairs(xt) <= PAIRS && accept(h1.de + h.de, d_metro())) {
           copy(p, xs); copy(t, xt);
           mv_touched |= (1u << p) | (1u << t);
+          tally[T_HOPS] += 2u; tally[T_SWAPS]++;
         }
       }
     }

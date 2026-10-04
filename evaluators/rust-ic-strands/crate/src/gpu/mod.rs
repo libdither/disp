@@ -2,6 +2,7 @@
 //! lattice's sites in one storage buffer, a batch of clocks per submission, run only where
 //! something is (`tiles.wgsl`).
 
+use crate::lattice::Params;
 use std::num::NonZeroU64;
 use wgpu::{BufferUsages as U, ShaderStages};
 
@@ -18,12 +19,12 @@ const RECS_PER_DISPATCH: usize = 1 << 17;
 /// Clocks between rebuilds of the active tiles: no more than a tile is wide, so nothing outruns
 /// the ring of neighbours each rebuild adds.
 const REBUILD: u64 = 8;
-
-/// The whole shader: the generated tables, then the stages in order.
-pub fn shader() -> String {
-    [crate::tables::wgsl().as_str(), include_str!("prelude.wgsl"), include_str!("collect.wgsl"), include_str!("fire.wgsl"),
-     include_str!("moves.wgsl"), include_str!("block.wgsl"), include_str!("tiles.wgsl")].join("\n")
-}
+/// Words of tiles.wgsl `counts`: the list lengths, the tally, and the rewrites' sites.
+const COUNTS: usize = 16 + FIRES_MAX;
+/// Of the tally (tiles.wgsl `T_*`): what the turns did since it was last taken.
+pub const TALLY: usize = 11;
+/// Rewrites whose sites are kept per tally.
+pub const FIRES_MAX: usize = 4096;
 
 /// Workgroups of 64 covering n invocations (the kernels index by `g.x + g.y * num_workgroups.x * 64`).
 fn groups(n: u32) -> (u32, u32) { let g = n.div_ceil(64); (g.min(65535), g.div_ceil(65535)) }
@@ -49,7 +50,9 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    pub fn new() -> Result<Gpu, String> {
+    /// The kernels for configuration p (see tables.rs `gpu_unfit`).
+    pub fn new(p: &Params) -> Result<Gpu, String> {
+        if let Some(why) = crate::tables::gpu_unfit(p) { return Err(format!("the GPU kernels cannot run this configuration: {why}")); }
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::VULKAN, ..wgpu::InstanceDescriptor::new_without_display_handle() });
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() })).map_err(|e| format!("no Vulkan adapter: {e}"))?;
@@ -57,7 +60,7 @@ impl Gpu {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("strands"), required_limits: adapter.limits(), ..Default::default() })).map_err(|e| format!("no device: {e}"))?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("strands"), source: wgpu::ShaderSource::Wgsl(shader().into()) });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("strands"), source: wgpu::ShaderSource::Wgsl(crate::tables::shader(p).into()) });
         let buffer = |binding, ty, dynamic, min: Option<u64>| wgpu::BindGroupLayoutEntry { binding, visibility: ShaderStages::COMPUTE, count: None,
             ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: dynamic, min_binding_size: min.and_then(NonZeroU64::new) } };
         let storage = wgpu::BufferBindingType::Storage { read_only: false };
@@ -122,7 +125,8 @@ impl Gpu {
         if n == 0 { return; }
         let clocks = self.buffer(STRIDE, U::UNIFORM | U::COPY_DST);
         let small = || self.buffer(4, U::STORAGE);
-        let (sites, pul, marks, list, counts, busy, live) = (small(), small(), small(), small(), small(), small(), small());
+        let (sites, pul, marks, list, busy, live) = (small(), small(), small(), small(), small(), small());
+        let counts = self.buffer(COUNTS as u64 * 4, U::STORAGE);
         let buf = self.buffer((n * REC * 4) as u64, U::STORAGE | U::COPY_DST | U::COPY_SRC);
         let staging = self.buffer((n * REC * 4) as u64, U::MAP_READ | U::COPY_DST);
         let bind = self.bind(&clocks, [&sites, &pul, &buf, &marks, &list, &counts, &busy, &live]);
@@ -181,12 +185,12 @@ impl<'g> Grid<'g> {
         let tiles = (nt[0] * nt[1] * nt[2]) as u64;
         let sites = gpu.buffer(n * SITE as u64 * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
         let gathered = gpu.buffer(n * (SITE as u64 + 1) * 4, U::STORAGE | U::COPY_SRC);
-        let staging = gpu.buffer(n * (SITE as u64 + 1) * 4, U::MAP_READ | U::COPY_DST);
+        let staging = gpu.buffer((n * (SITE as u64 + 1)).max(COUNTS as u64) * 4, U::MAP_READ | U::COPY_DST);
         let live = gpu.buffer(n * 4, U::STORAGE | U::COPY_DST);
         let pul = gpu.buffer(2 * n * 4, U::STORAGE | U::COPY_DST);
         let marks = gpu.buffer(tiles * 4, U::STORAGE);
         let list = gpu.buffer(tiles * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
-        let counts = gpu.buffer(4 * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
+        let counts = gpu.buffer(COUNTS as u64 * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
         let busy = gpu.buffer((nb[0] * nb[1] * nb[2]) as u64 * 4, U::STORAGE);
         let args = gpu.buffer(6 * 4, U::STORAGE | U::INDIRECT | U::COPY_DST | U::COPY_SRC);
         let clocks = gpu.buffer((2 * batch.max(1) as u64 + 1) * STRIDE, U::UNIFORM | U::COPY_DST);
@@ -211,7 +215,7 @@ impl<'g> Grid<'g> {
         q.write_buffer(&self.sites, 0, bytemuck::cast_slice(state));
         q.write_buffer(&self.pul, 0, bytemuck::cast_slice(&pul));
         q.write_buffer(&self.pul, pul.len() as u64 * 4, bytemuck::cast_slice(&pul));
-        q.write_buffer(&self.counts, 0, bytemuck::cast_slice(&[0u32; 4]));
+        q.write_buffer(&self.counts, 0, bytemuck::cast_slice(&[0u32; 16]));
         q.write_buffer(&self.live, 0, bytemuck::cast_slice(&live));
         q.write_buffer(&self.list, 0, bytemuck::cast_slice(&all));
         q.write_buffer(&self.args, 0, bytemuck::cast_slice(&[self.tiles(), 1, 1, 0, 1, 1]));
@@ -228,6 +232,15 @@ impl<'g> Grid<'g> {
         let idx = v.chunks(SITE + 1).map(|r| r[0]).collect();
         let words = v.chunks(SITE + 1).flat_map(|r| r[1..].iter().copied()).collect();
         (idx, words)
+    }
+
+    /// What the turns did since the last take (tiles.wgsl `T_*`), and the sites of the first
+    /// `FIRES_MAX` rewrites in no particular order; then a fresh tally.
+    pub fn take_tally(&self) -> ([u32; TALLY], Vec<u32>) {
+        let v = self.gpu.read(&self.counts, 4, &self.staging, COUNTS - 4);
+        let fires = v[TALLY + 1..TALLY + 1 + (v[TALLY] as usize).min(FIRES_MAX)].to_vec();
+        self.gpu.queue.write_buffer(&self.counts, 16, bytemuck::cast_slice(&[0u32; 12]));
+        (v[..TALLY].try_into().unwrap(), fires)
     }
 
     /// One clock's `Clock` (block.wgsl), padded to the uniform stride.

@@ -1,7 +1,7 @@
 //! The chip configuration's constants as WGSL (the GPU kernel's tables), from the simulator's own
 //! rules, energies and probabilities, so the two cannot drift apart. hw/rtl gets the same as
 //! Verilog from `strands-hw`.
-use crate::lattice::{chip, fresh_wanted, Energy};
+use crate::lattice::{chip, fresh_wanted, Energy, Params};
 use rust_ca_lattice::rules::{End, Tag, ALL_TAGS, RULES};
 use std::fmt::Write;
 
@@ -22,10 +22,22 @@ fn array(w: &mut String, name: &str, vals: &[u32]) {
     writeln!(w, "const {name}: array<u32, {}> = array<u32, {}>({body});", vals.len(), vals.len()).unwrap();
 }
 
-pub fn wgsl() -> String {
-    let p = chip();
-    let e = Energy::new(&p);
-    assert!(e.pressure == 0 && e.repel == 0, "the chip has no pressure or repulsion");
+/// Why the GPU kernels cannot run a configuration: they are the chip's block schedule on its
+/// 40-byte site, with pulses; energies, probabilities and switches come from the tables.
+pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
+    if !(p.margolus && p.block_moves && p.block && p.block_side == 2) { return Some("it runs only 2×2×2 blocks with a turn for every site"); }
+    if p.k != 2 || p.lanes != 4 { return Some("its site holds 2 agents and 4 strands per link"); }
+    if !p.pulse { return Some("demand always travels as pulses there"); }
+    if p.pressure != 0.0 || p.repel != 0.0 { return Some("it has no pressure or repulsion"); }
+    None
+}
+
+pub fn wgsl() -> String { wgsl_for(&chip()) }
+
+/// The tables for configuration p (which `gpu_unfit` accepts).
+pub fn wgsl_for(p: &Params) -> String {
+    assert!(gpu_unfit(p).is_none(), "{}", gpu_unfit(p).unwrap());
+    let e = Energy::new(p);
     let chance = |x: f64| (x * 256.0).round() as u32;
     let mut v = String::new();
     let w = &mut v;
@@ -35,7 +47,8 @@ pub fn wgsl() -> String {
     writeln!(w, "const E_CROWD: i32 = {}; const E_IDLE: i32 = {}; const E_LINK: i32 = {}; const E_BOARD: i32 = {};", e.crowd, e.idle, e.link, e.board).unwrap();
     writeln!(w, "const CH_ACTIVE: u32 = {}u; const CH_HOP: u32 = {}u; const CH_ALONG: u32 = {}u; const CH_SWAP: u32 = {}u;",
         chance(p.active), chance(p.p_hop), chance(0.7), chance(p.swap)).unwrap();
-    writeln!(w, "const PAIRS: u32 = {}u; const LAZY: bool = {}; const GC: bool = {};", p.pairs, p.lazy, p.gc).unwrap();
+    // No cap: more pairings than a site's 33 ends can hold.
+    writeln!(w, "const PAIRS: u32 = {}u; const LAZY: bool = {}; const GC: bool = {};", if p.pairs == 0 { 31 } else { p.pairs }, p.lazy, p.gc).unwrap();
     for t in ALL_TAGS {
         let name = match t { Tag::Pair => "PAIR".into(), Tag::Sel => "SEL".into(), Tag::Unp => "UNP".into(), Tag::Dn => "DN".into(),
                              Tag::Eps => "EPS".into(), Tag::Nrm => "NRM".into(), Tag::Out => "OUT".into(), _ => t.name().to_uppercase() };
@@ -75,4 +88,10 @@ fn rule_wa(ri: u32, k: u32) -> u32 { if (ri >= NRULES || k >= 9u) { return 0u; }
 fn rule_wb(ri: u32, k: u32) -> u32 { if (ri >= NRULES || k >= 9u) { return 0u; } return RULE_WB[ri * 9u + k]; }
 "#);
     v
+}
+
+/// The whole GPU shader for configuration p: the tables, then the stages in order.
+pub fn shader(p: &Params) -> String {
+    [wgsl_for(p).as_str(), include_str!("gpu/prelude.wgsl"), include_str!("gpu/collect.wgsl"), include_str!("gpu/fire.wgsl"),
+     include_str!("gpu/moves.wgsl"), include_str!("gpu/block.wgsl"), include_str!("gpu/tiles.wgsl")].join("\n")
 }

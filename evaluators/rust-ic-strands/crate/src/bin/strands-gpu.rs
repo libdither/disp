@@ -2,13 +2,14 @@
 //!   strands-gpu --vectors FILE...                                   replay recorded turns and blocks (hw/validate.sh)
 //!   strands-gpu TERM --grid N [--depth D] [--seed S] --check [--batch B] [--clocks C]   simulator and GPU in lockstep
 //!   strands-gpu TERM --grid N [--depth D] [--seed S] [--batch B] [--clocks C]  the GPU alone
-//! `--dense` runs every block and site each clock instead of only the tiles near something.
+//! `--dense` runs every block and site each clock instead of only the tiles near something;
+//! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`).
 
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel};
 use rust_ca_lattice::rules::ALL_TAGS;
 use rust_ic_mesh::term;
-use rust_ic_strands::gpu::{Gpu, Grid, REC, SITE};
+use rust_ic_strands::gpu::{Gpu, Grid, REC, SITE, TALLY};
 use rust_ic_strands::lattice::{chip, Lattice, Params, OPS};
 use std::collections::BTreeMap;
 
@@ -32,6 +33,14 @@ fn diff(a: &[u8], b: &[u8]) -> String {
     }).collect::<Vec<_>>().join(", ")
 }
 fn bytes(w: &[u32]) -> Vec<u8> { w.iter().flat_map(|x| x.to_le_bytes()).collect() }
+
+/// The simulator's counts in the order of the GPU's tally (tiles.wgsl `T_*`).
+const COUNTED: [&str; TALLY] = ["turns", "rewrites", "rewrites without room", "steps", "exchanges", "folds", "flips", "collected",
+    "walker steps", "walker steps without a seat", "pulses delivered"];
+fn counted(l: &Lattice) -> [u64; TALLY] {
+    let x = &l.stats;
+    [x.proposals, x.fires, x.blocked_fires, x.hops, x.swaps, x.folds, x.flips, x.collected, x.walk_ok, x.walk_fail[0], x.pulses]
+}
 
 /// One recorded turn ('T') or block ('B'), as lattice.rs `margolus_clock` writes it.
 struct Rec { kind: u8, clock: u32, corner: [i32; 3], dims: [u32; 3], valid: u8, pos: u8, taken: u8, before: Vec<u8>, after: Vec<u8>, touched: u8, stale: u8, op: u8 }
@@ -121,9 +130,8 @@ fn compare(p: &Params, want: &[u32], got: &[u32]) -> Option<String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let gpu = Gpu::new().unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) });
-    println!("GPU: {}", gpu.name);
-    if args.first().is_some_and(|a| a == "--vectors") { std::process::exit(if vectors(&gpu, &args[1..]) { 0 } else { 1 }); }
+    let start = |p: &Params| { let g = Gpu::new(p).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) }); println!("GPU: {}", g.name); g };
+    if args.first().is_some_and(|a| a == "--vectors") { std::process::exit(if vectors(&start(&chip()), &args[1..]) { 0 } else { 1 }); }
     let mut p = chip();
     let (mut src, mut check, mut dense, mut batch, mut max) = (None, false, false, None, 1_000_000u64);
     let mut it = args.iter();
@@ -141,9 +149,13 @@ fn main() {
             "--clocks" => max = val().parse().unwrap(),
             "--check" => check = true,
             "--dense" => dense = true,
-            _ => src = Some(a.clone()),
+            _ => match a.split_once('=') {
+                Some((k, v)) => p.set(k, v).unwrap_or_else(|e| panic!("{e}")),
+                None => src = Some(a.clone()),
+            },
         }
     }
+    let gpu = start(&p);
     let src = src.expect("term");
     let t = match src.split_once(':') {
         Some((name, n)) if term::workload(name, 0).is_some() => term::workload(name, n.parse().unwrap()).unwrap(),
@@ -167,6 +179,8 @@ fn main() {
         let mut c = 0;
         while c < max && !(l.readback().is_some() || l.shadow.active_pair().is_none()) {
             let n = (batch as u64).min(max - c);
+            let before = counted(&l);
+            l.fire_log.clear();
             for _ in 0..n { l.chip_clock(); }
             grid.run(c, p.seed, n as usize, dense, false);
             c += n;
@@ -174,10 +188,21 @@ fn main() {
                 println!("clock {c} differs (after {} matching): {d}", c - n);
                 std::process::exit(1);
             }
+            let (got, mut fires) = grid.take_tally();
+            let want = counted(&l);
+            let off: Vec<String> = (0..TALLY).filter(|&i| got[i] as u64 != want[i] - before[i])
+                .map(|i| format!("{} cpu {} gpu {}", COUNTED[i], want[i] - before[i], got[i])).collect();
+            let mut cpu_fires = l.fire_log.clone();
+            cpu_fires.sort_unstable();
+            fires.sort_unstable();
+            if !off.is_empty() || cpu_fires != fires {
+                println!("clocks {} to {c}: the counts differ: {}{}", c - n, off.join(", "), if cpu_fires != fires { format!(" (rewrites at cpu {cpu_fires:?} gpu {fires:?})") } else { String::new() });
+                std::process::exit(1);
+            }
         }
         let done = l.readback().is_some() || l.shadow.active_pair().is_none();
         println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
-        println!("{c} clocks matched on all {} sites  {:.2}s", l.sites(), t0.elapsed().as_secs_f64());
+        println!("{c} clocks matched on all {} sites, and so did every count ({} rewrites, {} steps)  {:.2}s", l.sites(), l.stats.fires, l.stats.hops, t0.elapsed().as_secs_f64());
         return;
     }
     let batch = batch.unwrap_or(64);
@@ -204,7 +229,9 @@ fn main() {
         looking += t1.elapsed().as_secs_f64();
     }
     let dt = t0.elapsed().as_secs_f64();
+    let (tally, _) = grid.take_tally();
     println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
+    println!("{}", (0..TALLY).map(|i| format!("{} {}", COUNTED[i], tally[i])).collect::<Vec<_>>().join(", "));
     println!("clocks {c} (checked every {batch})  {} sites, {} holding anything at the end  {dt:.2}s ({looking:.2}s looking for the answer)  {:.0} clocks/s",
         l.sites(), l.live().len(), c as f64 / dt.max(1e-9));
 }

@@ -10,38 +10,7 @@ fn parse(spec: &str) -> Params {
     let mut p = Params::default();
     for kv in spec.split_whitespace() {
         let (k, v) = kv.split_once('=').expect("key=value");
-        match k {
-            "k" => p.k = v.parse().unwrap(),
-            "lanes" => p.lanes = v.parse().unwrap(),
-            "grid" => { p.w = v.parse().unwrap(); p.h = p.w; }
-            "depth" => p.depth = v.parse().unwrap(),
-            "temp" => p.temp = v.parse().unwrap(),
-            "crowd" => p.crowd = v.parse().unwrap(),
-            "repel" => p.repel = v.parse().unwrap(),
-            "press" => p.pressure = v.parse().unwrap(),
-            "peak" => p.pressure_peak = v.parse().unwrap(),
-            "wp" => p.w_principal = v.parse().unwrap(),
-            "wa" => p.w_aux = v.parse().unwrap(),
-            "hop" => p.p_hop = v.parse().unwrap(),
-            "fill" => p.init_fill = v.parse().unwrap(),
-            "spread" => p.spread = v.parse().unwrap(),
-            "block" => p.block = v == "1",
-            "lazy" => p.lazy = v == "1",
-            "idle" => p.idle_tension = v.parse().unwrap(),
-            "active" => p.active = v.parse().unwrap(),
-            "swap" => p.swap = v.parse().unwrap(),
-            "pulse" => p.pulse = v == "1",
-            "margolus" => p.margolus = v == "1",
-            "blockmoves" => p.block_moves = v == "1",
-            "blockside" => p.block_side = v.parse().unwrap(),
-            "gc" => p.gc = v == "1",
-            "link" => p.link_crowd = v.parse().unwrap(),
-            "idlecrowd" => p.idle_crowd = v.parse().unwrap(),
-            "board" => p.board_crowd = v.parse().unwrap(),
-            "pairs" => p.pairs = v.parse().unwrap(),
-            "agents" => p.agent_turns = v.parse().unwrap(),
-            _ => panic!("unknown key {k}"),
-        }
+        p.set(k, v).unwrap_or_else(|e| panic!("{e}"));
     }
     p
 }

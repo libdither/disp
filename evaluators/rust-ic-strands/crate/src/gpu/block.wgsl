@@ -26,6 +26,9 @@ var<private> tick: u32;
 /// The block's corner (its position 0), which may lie off the lattice.
 var<private> corner: vec3<i32>;
 
+/// What this invocation's turns and pulses did, by `T_*` (tiles.wgsl), added to `counts` at the end.
+var<private> tally: array<u32, 11>;
+
 /// The block's place in the lattice (the RTL's `edges`), in the RTL's wrapping arithmetic.
 fn edges(c: vec3<i32>, w: u32, h: u32, d: u32) {
   corner = c; onl = 0u;
@@ -89,7 +92,12 @@ fn turn() {
     let active_mode = d_active() < CH_ACTIVE && (wanted_reader(p, 0u) || wanted_reader(p, 1u) || wanted_reader(p, 2u));
     let pr = active_pair(p);
     if (pr.stale) { stale = true; done = true; }
-    else if (pr.found) { done = fire(pr.kc, pr.kp, pr.via, pr.face) != 0u; }
+    else if (pr.found) {
+      let r = fire(pr.kc, pr.kp, pr.via, pr.face);
+      done = r != 0u;
+      if (r == 0u) { tally[T_BLOCKED]++; }
+      if (r == 1u) { tally[T_FIRES]++; log_fire(site_at(corner, p)); }
+    }
     if (!done) {
       let act_k = reader_k();
       // A reader that touched a pending computation wants it now (lattice.rs `take_infect`).
@@ -123,7 +131,7 @@ fn run_block() {
   let rot = hash(bkey, tick).x & 7u;
   for (var bi = 0u; bi < 24u; bi++) {
     let q = ((bi & 7u) + rot) & 7u;
-    if (cls[q] == (bi >> 3u) && (taken & (1u << q)) == 0u) { p = q; turn(); }
+    if (cls[q] == (bi >> 3u) && (taken & (1u << q)) == 0u) { p = q; tally[T_TURNS]++; turn(); }
   }
 }
 
@@ -192,6 +200,7 @@ fn block_turns(b: vec3<i32>) {
       live[s] = u32(held);
     }
   }
+  add_tally();
 }
 /// Every block's turns for this clock.
 @compute @workgroup_size(64)
@@ -219,7 +228,7 @@ fn pulse_step(s: u32, old: Site) -> Site {
       if (is_strand(m)) { if (!got) { got = true; arr = m; } }
       else if (m != NONE) {
         let k = port_k(m); let qq = port_q(m);
-        if (qq != 0u && vgt(t, k) != 0u && is_consumer(vgt(t, k)) && !vgw(t, k)) { t = vsw(t, k, true); }
+        if (qq != 0u && vgt(t, k) != 0u && is_consumer(vgt(t, k)) && !vgw(t, k)) { t = vsw(t, k, true); tally[T_PULSES]++; }
       }
     }
   }
@@ -240,7 +249,7 @@ fn site_pulse(s: u32) {
 @compute @workgroup_size(64)
 fn pulses(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
   let s = invocation(g, nw);
-  if (s < clk.n) { site_pulse(s); }
+  if (s < clk.n) { site_pulse(s); add_tally(); }
 }
 
 /// A recorded turn or block (lattice.rs test vectors), REC words: kind (0 turn, 1 block), the

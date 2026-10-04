@@ -10,8 +10,20 @@
 @group(0) @binding(4) var<storage, read_write> marks: array<atomic<u32>>;
 /// The active tiles.
 @group(0) @binding(5) var<storage, read_write> list: array<u32>;
-/// The length of the active list being built, of the busy list of each parity, of the gathered sites.
+/// The length of the active list being built, of the busy list of each parity, of the gathered
+/// sites; from TALLY on, what the turns did; from FIRES on, how many rewrites fired, then their sites.
 @group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>>;
+/// What the turns did, in the order of the simulator's `Stats`: turns, rewrites, rewrites without
+/// room, steps (an exchange is two), exchanges, folds, flips, collections, wanted readers stepping
+/// and finding no seat, demand pulses delivered.
+const TALLY: u32 = 4u;
+const T_TURNS: u32 = 0u; const T_FIRES: u32 = 1u; const T_BLOCKED: u32 = 2u; const T_HOPS: u32 = 3u; const T_SWAPS: u32 = 4u;
+const T_FOLDS: u32 = 5u; const T_FLIPS: u32 = 6u; const T_COLLECTED: u32 = 7u; const T_WALKS: u32 = 8u; const T_NO_SEAT: u32 = 9u;
+const T_PULSES: u32 = 10u;
+const FIRES: u32 = 15u;
+const FIRES_MAX: u32 = 4096u;
+fn add_tally() { for (var i = 0u; i < 11u; i++) { if (tally[i] != 0u) { atomicAdd(&counts[TALLY + i], tally[i]); } } }
+fn log_fire(s: u32) { let j = atomicAdd(&counts[FIRES], 1u); if (j < FIRES_MAX) { atomicStore(&counts[FIRES + 1u + j], s); } }
 /// The busy blocks, by index.
 @group(0) @binding(7) var<storage, read_write> busy: array<u32>;
 /// The indirect dispatches over the active tiles and over the busy blocks (x, y, z each).
@@ -114,6 +126,7 @@ fn busy_pulses(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     let s = site_at(c, q);
     if (s != 0xFFFFFFFFu) { site_pulse(s); }
   }
+  add_tally();
 }
 
 /// The sites holding anything (all in the busy blocks of the clock whose list is `list`), each as

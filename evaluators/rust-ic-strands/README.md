@@ -19,6 +19,8 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`):
   - *layers side by side*: exact, with every site easy to click;
   - *3D*: three.js, with orbit, spread or isolate layers, and a camera that follows the action.
     `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1, MIT).
+- **CPU or GPU** (the selector next to the speed, or `G`): the GPU runs the chip's schedule
+  through WebGPU (below), and a run moves between the two at any clock as it is.
 
 ## The machine
 
@@ -403,6 +405,24 @@ A clock costs at least 0.08 ms of launching kernels (three a clock, four more ev
 fib's few thousand sites in use add about as much again, so the GPU gains most where much is
 going on at once.
 
+The GPU also counts what the turns did, the same counts the simulator keeps: turns, rewrites (and
+where they fired), rewrites without room, steps, exchanges, folds, flips, collections, walker
+steps, pulses delivered. In lockstep they match too. The energies, probabilities and switches come
+from tables the simulator generates (`tables.rs`), so any configuration with the chip's schedule,
+site and pulses runs on it: eager evaluation, no cap on pairings, other tensions and temperatures.
+
+**In the browser.** `player/gpu.js` drives the same kernels through WebGPU, with the shader the
+engine generates for the loaded settings. The engine stays the record of the run: a GPU stretch
+starts from the engine's sites and ends by putting the GPU's back, with its counts, and the engine
+rebuilds its abstract net from them (`Lattice::adopt`). So the CPU can take over at any clock
+and carry on exactly as if it had run all along (`tests/resume.rs`). `player/check.mjs` runs
+`player/gpu-check.html` in headless Chromium: one engine hands its run back and forth between GPU
+and CPU in batches of varying size, and must match one that stays on the CPU, site for site and
+count for count. Headless Chromium here only gets SwiftShader (a GPU emulated on the CPU), so this
+checks Chrome's WGSL compiler and WebGPU's rules, not speed. The kernels need 30 KB of workgroup
+memory and 9 storage buffers per stage, above WebGPU's defaults (16 KB, 8) but within what
+desktop GPUs offer.
+
 ## Running it
 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
@@ -419,7 +439,9 @@ cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1
 `--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip and the GPU
 version match it (see [`hw/README.md`](hw/README.md)). `crate/gpu.sh TERM --grid N [--depth D]`
 runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` without the tiles,
-`--vectors FILE...` replays recorded turns); `strands-hw --wgsl` prints its generated tables. `TRACE=file strands-run ...` writes when each rewrite's pair
+`--vectors FILE...` replays recorded turns, `key=value` changes a setting as `strands-sweep`
+spells it); `strands-hw --wgsl` prints its generated tables. `node player/check.mjs 'src=sort:1'`
+checks the browser's GPU path. `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end.

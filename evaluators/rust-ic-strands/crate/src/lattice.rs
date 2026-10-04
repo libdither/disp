@@ -96,6 +96,49 @@ pub struct Params {
     pub seed: u64,
 }
 
+impl Params {
+    /// Set one parameter by its short name (`strands-sweep`'s and `strands-gpu`'s key=value).
+    pub fn set(&mut self, k: &str, v: &str) -> Result<(), String> {
+        let f = || v.parse::<f64>().map_err(|_| format!("{k}={v}: not a number"));
+        let n = || v.parse::<usize>().map_err(|_| format!("{k}={v}: not a count"));
+        let on = v == "1";
+        match k {
+            "k" => self.k = n()?,
+            "lanes" => self.lanes = n()?,
+            "grid" => { self.w = n()? as u32; self.h = self.w; }
+            "depth" => self.depth = n()? as u32,
+            "temp" => self.temp = f()?,
+            "crowd" => self.crowd = f()?,
+            "repel" => self.repel = f()?,
+            "press" => self.pressure = f()?,
+            "peak" => self.pressure_peak = n()? as u8,
+            "wp" => self.w_principal = f()?,
+            "wa" => self.w_aux = f()?,
+            "hop" => self.p_hop = f()?,
+            "fill" => self.init_fill = n()?,
+            "spread" => self.spread = n()?,
+            "block" => self.block = on,
+            "lazy" => self.lazy = on,
+            "idle" => self.idle_tension = f()?,
+            "active" => self.active = f()?,
+            "swap" => self.swap = f()?,
+            "pulse" => self.pulse = on,
+            "margolus" => self.margolus = on,
+            "blockmoves" => self.block_moves = on,
+            "blockside" => self.block_side = n()? as u32,
+            "gc" => self.gc = on,
+            "link" => self.link_crowd = f()?,
+            "idlecrowd" => self.idle_crowd = f()?,
+            "board" => self.board_crowd = f()?,
+            "pairs" => self.pairs = n()?,
+            "agents" => self.agent_turns = f()?,
+            "seed" => self.seed = n()? as u64,
+            _ => return Err(format!("unknown parameter {k}")),
+        }
+        Ok(())
+    }
+}
+
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
@@ -1776,10 +1819,13 @@ impl Lattice {
     }
 
     /// Every site as 10 words, the bytes of `dump_state` (a 2D lattice's missing faces read as no end).
-    pub fn state_words(&self) -> Vec<u32> {
+    pub fn state_words(&self) -> Vec<u32> { self.state_words_of(&(0..self.sites()).collect::<Vec<_>>()) }
+    /// Just these sites, in `state_words`' format.
+    pub fn state_words_of(&self, sites: &[u32]) -> Vec<u32> {
         assert!(self.ks == 3 && self.p.lanes == 4, "a 40-byte site has 3 slots and 4 lanes");
-        let mut v = Vec::with_capacity(self.sites() as usize * 10);
-        for s in 0..self.sites() as usize {
+        let mut v = Vec::with_capacity(sites.len() * 10);
+        for &s in sites {
+            let s = s as usize;
             let mut b = [NONE; 40];
             b[..self.ends].copy_from_slice(&self.mate[s * self.ends..(s + 1) * self.ends]);
             for k in 0..3 { b[33 + k] = self.tags[s * 3 + k]; b[36 + k] = self.want[s * 3 + k] as u8; }
@@ -1790,12 +1836,52 @@ impl Lattice {
     }
 
     /// Take every site from `state_words`' format, rebuilding what is derived from it so the lattice
-    /// reads back; agent ids and the abstract net are not restored, so it cannot run on.
+    /// reads back; agent ids and the abstract net are not restored until `adopt`.
     pub fn set_state_words(&mut self, v: &[u32]) {
         assert!(v.len() == self.sites() as usize * 10, "a state of 10 words per site");
         for s in 0..self.sites() { self.set_site_words(s, &v[s as usize * 10..s as usize * 10 + 10]); }
         self.agent_sites = (0..self.sites()).filter(|&s| self.occ[s as usize] > 0).collect();
         self.pulse_sites = (0..self.sites()).filter(|&s| self.pulse_at[s as usize] != NONE).collect();
+    }
+
+    /// The sites holding anything, each as its index then its words of `state_words` (11 words).
+    pub fn held_sites(&self) -> Vec<u32> {
+        let v = self.state_words_of(&self.live);
+        self.live.iter().zip(v.chunks(10)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied())).collect()
+    }
+
+    /// Become exactly these sites (as `held_sites` gives them), every other site empty, then `adopt`.
+    pub fn put_sites(&mut self, recs: &[u32]) {
+        const EMPTY: [u32; 10] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
+        for s in self.live.clone() { self.set_site_words(s, &EMPTY); }
+        for r in recs.chunks(11) { self.set_site_words(r[0], &r[1..]); }
+        self.agent_sites = self.live.iter().copied().filter(|&s| self.occ[s as usize] > 0).collect();
+        self.pulse_sites = self.live.iter().copied().filter(|&s| self.pulse_at[s as usize] != NONE).collect();
+        self.adopt();
+    }
+
+    /// The abstract net read back off the lattice (its agents renumbered) and the strand count,
+    /// so a state made elsewhere (a GPU's) runs on here.
+    pub fn adopt(&mut self) {
+        let mut net = Net { ints: self.shadow.ints, ..Net::new() };
+        let live = self.live.clone();
+        for &s in &live {
+            for k in 0..self.ks { if self.tag(s, k) != 0 { self.sids[s as usize * self.ks + k] = net.mk(tag_of(self.tag(s, k))); } }
+        }
+        let mut ends = 0;
+        for &s in &live {
+            for k in 0..self.ks {
+                if self.tag(s, k) == 0 { continue; }
+                for q in 0..tag_of(self.tag(s, k)).arity() {
+                    let (s2, k2, p2, _) = self.follow(s, self.ae(k, q));
+                    net.link(self.sids[s as usize * self.ks + k], q as u8, self.sids[s2 as usize * self.ks + k2], p2 as u8);
+                }
+            }
+            ends += (ARITY * self.ks..self.ends).filter(|&e| self.mate_of(s, e as u8) != NONE).count() as u64;
+        }
+        self.shadow = net;
+        self.stats.strands = ends / 2;
+        self.stats.peak_strands = self.stats.peak_strands.max(self.stats.strands);
     }
 
     /// Take one site from `state_words`' format, enough for `readback` (the lists of agent and
