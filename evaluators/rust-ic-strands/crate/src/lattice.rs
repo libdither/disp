@@ -1769,6 +1769,50 @@ impl Lattice {
         self.dumps = Some(w);
     }
 
+    /// One clock of the chip's schedule (`chip()`): every block's turns, then the pulse phase.
+    pub fn chip_clock(&mut self) {
+        assert!(self.p.margolus && self.p.block_moves, "the chip's schedule needs blocks and a turn for every site");
+        self.margolus_clock();
+    }
+
+    /// Every site as 10 words, the bytes of `dump_state` (a 2D lattice's missing faces read as no end).
+    pub fn state_words(&self) -> Vec<u32> {
+        assert!(self.ks == 3 && self.p.lanes == 4, "a 40-byte site has 3 slots and 4 lanes");
+        let mut v = Vec::with_capacity(self.sites() as usize * 10);
+        for s in 0..self.sites() as usize {
+            let mut b = [NONE; 40];
+            b[..self.ends].copy_from_slice(&self.mate[s * self.ends..(s + 1) * self.ends]);
+            for k in 0..3 { b[33 + k] = self.tags[s * 3 + k]; b[36 + k] = self.want[s * 3 + k] as u8; }
+            b[39] = self.pulse_at[s];
+            v.extend(b.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())));
+        }
+        v
+    }
+
+    /// Take every site from `state_words`' format, rebuilding what is derived from it so the lattice
+    /// reads back; agent ids and the abstract net are not restored, so it cannot run on.
+    pub fn set_state_words(&mut self, v: &[u32]) {
+        assert!(v.len() == self.sites() as usize * 10, "a state of 10 words per site");
+        for s in 0..self.sites() { self.set_site_words(s, &v[s as usize * 10..s as usize * 10 + 10]); }
+        self.agent_sites = (0..self.sites()).filter(|&s| self.occ[s as usize] > 0).collect();
+        self.pulse_sites = (0..self.sites()).filter(|&s| self.pulse_at[s as usize] != NONE).collect();
+    }
+
+    /// Take one site from `state_words`' format, enough for `readback` (the lists of agent and
+    /// pulse sites are left to `set_state_words`).
+    pub fn set_site_words(&mut self, s: u32, w: &[u32]) {
+        assert!(self.ks == 3 && self.p.lanes == 4 && w.len() == 10, "a site of 10 words");
+        let i = s as usize;
+        let mut b = [0u8; 40];
+        for (c, x) in b.chunks_mut(4).zip(w) { c.copy_from_slice(&x.to_le_bytes()); }
+        self.mate[i * self.ends..(i + 1) * self.ends].copy_from_slice(&b[..self.ends]);
+        for k in 0..3 { self.tags[i * 3 + k] = b[33 + k]; self.want[i * 3 + k] = b[36 + k] != 0; self.sids[i * 3 + k] = u32::MAX; }
+        self.occ[i] = b[33..36].iter().filter(|&&t| t != 0).count() as u8;
+        self.in_agents[i] = self.occ[i] > 0;
+        self.pulse_at[i] = b[39];
+        self.refresh(s);
+    }
+
     /// A wanted reader at s touched a computation's output during its turn: that computation
     /// is wanted now.
     fn take_infect(&mut self, s: u32) {

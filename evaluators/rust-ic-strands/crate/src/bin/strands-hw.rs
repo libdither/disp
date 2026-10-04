@@ -55,6 +55,10 @@ fn main() {
         }
         table(w, name, 8, "input [4:0] ri, input [3:0] k", "{ri, k}", rows);
     }
+    if std::env::args().nth(1).as_deref() == Some("--wgsl") {
+        print!("{}", rust_ic_strands::tables::wgsl());
+        return;
+    }
     let out = std::env::args().nth(1).unwrap_or_else(|| "../hw/rtl/strands_tables.vh".into());
     std::fs::write(&out, v).expect("write tables");
     eprintln!("wrote {out}");

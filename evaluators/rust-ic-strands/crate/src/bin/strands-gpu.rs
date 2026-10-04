@@ -1,0 +1,212 @@
+//! The chip's block schedule on a GPU, checked bit for bit against the simulator.
+//!   strands-gpu --vectors FILE...                                   replay recorded turns and blocks (hw/validate.sh)
+//!   strands-gpu TERM --grid N [--depth D] [--seed S] --check [--clocks C]      simulator and GPU in lockstep
+//!   strands-gpu TERM --grid N [--depth D] [--seed S] [--batch B] [--clocks C]  the GPU alone
+//! `--dense` runs every block and site each clock instead of only the tiles near something.
+
+use rust_ca_lattice::net::Net;
+use rust_ca_lattice::oracle::{self, Fuel};
+use rust_ca_lattice::rules::ALL_TAGS;
+use rust_ic_mesh::term;
+use rust_ic_strands::gpu::{Gpu, Grid, REC, SITE};
+use rust_ic_strands::lattice::{chip, Lattice, Params, OPS};
+use std::collections::BTreeMap;
+
+const SB: usize = 4 * SITE;
+
+fn end(m: u8) -> String { if m == 255 { "-".into() } else { m.to_string() } }
+fn tag(t: u8) -> String { if t == 0 { "-".into() } else { ALL_TAGS.get(t as usize - 1).map_or(t.to_string(), |t| t.name().into()) } }
+
+/// A site's 40 bytes, decoded.
+fn show(b: &[u8]) -> String {
+    let mates: String = (0..33).filter(|&e| b[e] != 255).map(|e| format!(" {e}:{}", b[e])).collect();
+    format!("mates{mates} | tags {} {} {} | want {} {} {} | pulse {}", tag(b[33]), tag(b[34]), tag(b[35]), b[36], b[37], b[38], end(b[39]))
+}
+/// The fields two sites differ in, as `field want→got`.
+fn diff(a: &[u8], b: &[u8]) -> String {
+    (0..SB).filter(|&i| a[i] != b[i]).map(|i| match i {
+        0..33 => format!("end {i} {}→{}", end(a[i]), end(b[i])),
+        33..36 => format!("tag {} {}→{}", i - 33, tag(a[i]), tag(b[i])),
+        36..39 => format!("want {} {}→{}", i - 36, a[i], b[i]),
+        _ => format!("pulse {}→{}", end(a[i]), end(b[i])),
+    }).collect::<Vec<_>>().join(", ")
+}
+fn bytes(w: &[u32]) -> Vec<u8> { w.iter().flat_map(|x| x.to_le_bytes()).collect() }
+
+/// One recorded turn ('T') or block ('B'), as lattice.rs `margolus_clock` writes it.
+struct Rec { kind: u8, clock: u32, corner: [i32; 3], dims: [u32; 3], valid: u8, pos: u8, taken: u8, before: Vec<u8>, after: Vec<u8>, touched: u8, stale: u8, op: u8 }
+
+fn parse(data: &[u8]) -> Vec<Rec> {
+    let (mut at, mut dims, mut out) = (0, [0u32; 3], vec![]);
+    let word = |s: &[u8]| u32::from_le_bytes(s[..4].try_into().unwrap());
+    while at < data.len() {
+        let kind = data[at];
+        let n = match kind { b'H' => 12, b'T' => 19 + 16 * SB + 3, b'B' => 17 + 16 * SB, _ => { eprintln!("unknown record {kind} at byte {at}"); break } };
+        if at + 1 + n > data.len() { eprintln!("truncated record at byte {at}"); break; }
+        let r = &data[at + 1..at + 1 + n];
+        at += 1 + n;
+        if kind == b'H' { dims = [word(&r[0..]), word(&r[4..]), word(&r[8..])]; continue; }
+        let (pos, taken, s) = if kind == b'T' { (r[17], r[18], 19) } else { (0, 0, 17) };
+        let tail = &r[s + 16 * SB..];
+        out.push(Rec { kind, clock: word(r), corner: [0, 1, 2].map(|i| word(&r[4 + 4 * i..]) as i32), dims, valid: r[16], pos, taken,
+            before: r[s..s + 8 * SB].to_vec(), after: r[s + 8 * SB..s + 16 * SB].to_vec(),
+            touched: tail.first().copied().unwrap_or(0), stale: tail.get(1).copied().unwrap_or(0), op: tail.get(2).copied().unwrap_or(0) });
+    }
+    out
+}
+
+/// Replay every record of every file through the GPU and report as hw/sim/tb_block.cpp does.
+fn vectors(gpu: &Gpu, files: &[String]) -> bool {
+    let mut all_ok = true;
+    for f in files {
+        let t0 = std::time::Instant::now();
+        let recs = parse(&std::fs::read(f).unwrap_or_else(|e| panic!("{f}: {e}")));
+        let mut words = Vec::with_capacity(recs.len() * REC);
+        for r in &recs {
+            words.extend([(r.kind == b'B') as u32, r.clock]);
+            words.extend(r.corner.map(|c| c as u32));
+            words.extend(r.dims);
+            words.extend([r.valid as u32, r.pos as u32, r.taken as u32]);
+            words.extend(r.before.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())));
+            words.extend([0, 0]);
+        }
+        gpu.replay(&mut words);
+        let (mut by, mut bad, mut shown) = (BTreeMap::<&str, (u64, u64)>::new(), 0, 0);
+        for (i, r) in recs.iter().enumerate() {
+            let g = &words[i * REC..(i + 1) * REC];
+            let got = bytes(&g[11..91]);
+            let mut why = String::new();
+            for q in 0..8 {
+                let (a, b) = (&r.after[q * SB..(q + 1) * SB], &got[q * SB..(q + 1) * SB]);
+                if a != b { why += &format!("  site {q}: {}\n    want {}\n    got  {}\n", diff(a, b), show(a), show(b)); }
+            }
+            if r.kind == b'T' {
+                if g[91] != r.touched as u32 { why += &format!("  touched want {:02x} got {:02x}\n", r.touched, g[91]); }
+                if g[92] != r.stale as u32 { why += &format!("  stale want {} got {}\n", r.stale, g[92]); }
+            }
+            let kind = if r.kind == b'B' { "block" } else { OPS.get(r.op as usize).map_or("?", |&o| if o.is_empty() { "none" } else { o }) };
+            let e = by.entry(kind).or_default();
+            e.0 += 1;
+            if !why.is_empty() {
+                e.1 += 1;
+                bad += 1;
+                if shown < 5 {
+                    shown += 1;
+                    println!("MISMATCH record {} ({kind}) clock {} corner {},{},{} pos {} taken {:02x}\n{why}", i + 1, r.clock, r.corner[0], r.corner[1], r.corner[2], r.pos, r.taken);
+                    for q in 0..8 { println!("  before {q}: {}", show(&r.before[q * SB..(q + 1) * SB])); }
+                }
+            }
+        }
+        println!("== {f}");
+        for (k, (n, m)) in &by { println!("{k:<14} {n:>9} records {m:>6} mismatches"); }
+        println!("{} records, {bad} mismatches ({:.2}s)", recs.len(), t0.elapsed().as_secs_f64());
+        all_ok &= bad == 0;
+    }
+    all_ok
+}
+
+/// The first few sites two states differ in, with their coordinates.
+fn compare(p: &Params, want: &[u32], got: &[u32]) -> Option<String> {
+    if want == got { return None; }
+    let (a, b) = (bytes(want), bytes(got));
+    let differ: Vec<usize> = (0..want.len() / SITE).filter(|&s| a[s * SB..(s + 1) * SB] != b[s * SB..(s + 1) * SB]).collect();
+    let mut r = format!("{} sites differ", differ.len());
+    for &s in differ.iter().take(4) {
+        let (x, y, z) = (s as u32 % p.w, s as u32 / p.w % p.h, s as u32 / (p.w * p.h));
+        let (sa, sb) = (&a[s * SB..(s + 1) * SB], &b[s * SB..(s + 1) * SB]);
+        r += &format!("\n  site ({x}, {y}, {z}): {}\n    cpu {}\n    gpu {}", diff(sa, sb), show(sa), show(sb));
+    }
+    Some(r)
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let gpu = Gpu::new().unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) });
+    println!("GPU: {}", gpu.name);
+    if args.first().is_some_and(|a| a == "--vectors") { std::process::exit(if vectors(&gpu, &args[1..]) { 0 } else { 1 }); }
+    let mut p = chip();
+    let (mut src, mut check, mut dense, mut batch, mut max) = (None, false, false, 64usize, 1_000_000u64);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut val = || it.next().expect("a value").clone();
+        match a.as_str() {
+            "--grid" => {
+                let v = val();
+                let (w, h) = v.split_once('x').unwrap_or((&v, &v));
+                (p.w, p.h) = (w.parse().unwrap(), h.parse().unwrap());
+            }
+            "--depth" => p.depth = val().parse().unwrap(),
+            "--seed" => p.seed = val().parse().unwrap(),
+            "--batch" => batch = val().parse().unwrap(),
+            "--clocks" => max = val().parse().unwrap(),
+            "--check" => check = true,
+            "--dense" => dense = true,
+            _ => src = Some(a.clone()),
+        }
+    }
+    let src = src.expect("term");
+    let t = match src.split_once(':') {
+        Some((name, n)) if term::workload(name, 0).is_some() => term::workload(name, n.parse().unwrap()).unwrap(),
+        _ => term::workload(&src, 0).unwrap_or_else(|| term::parse(&src).expect("bad term")),
+    };
+    let want = oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok().map(|w| oracle::show(&w));
+    let mut net = Net::new();
+    let root = net.build(&t);
+    let (_, out) = net.drive(root);
+    let mut l = Lattice::load(p, net, out).expect("load");
+    let show_ans = |l: &Lattice| l.readback().map(|t| oracle::show(&t)).unwrap_or("-".into());
+    let want = want.as_deref().unwrap_or("?");
+    let t0 = std::time::Instant::now();
+    if check {
+        let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, 1);
+        let state = l.state_words();
+        grid.upload(&state);
+        if let Some(d) = compare(&p, &state, &grid.download()) { println!("upload differs: {d}"); std::process::exit(1); }
+        let mut c = 0;
+        while c < max && !(l.readback().is_some() || l.shadow.active_pair().is_none()) {
+            l.chip_clock();
+            grid.run(c, p.seed, 1, dense);
+            c += 1;
+            if let Some(d) = compare(&p, &l.state_words(), &grid.download()) {
+                println!("clock {c} differs (after {} matching): {d}", c - 1);
+                std::process::exit(1);
+            }
+        }
+        let done = l.readback().is_some() || l.shadow.active_pair().is_none();
+        println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
+        println!("{c} clocks matched on all {} sites  {:.2}s", l.sites(), t0.elapsed().as_secs_f64());
+        return;
+    }
+    let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, batch);
+    grid.upload(&l.state_words());
+    // The answer is looked for after every batch, in the active tiles only (`--dense`: everywhere);
+    // a tile that dropped out of the list since the last look is empty now.
+    const EMPTY: [u32; SITE] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
+    let (mut c, mut done, mut prev, mut looking) = (0u64, l.readback().is_some(), vec![], 0f64);
+    while c < max && !done {
+        let n = (batch as u64).min(max - c);
+        grid.run(c, p.seed, n as usize, dense);
+        c += n;
+        let t1 = std::time::Instant::now();
+        if dense { l.set_state_words(&grid.download()); } else {
+            let (list, words) = grid.gather();
+            let now: std::collections::HashSet<u32> = list.iter().copied().collect();
+            for &t in prev.iter().filter(|t| !now.contains(t)) {
+                for i in 0..grid.tile_sites() { if let Some(s) = grid.tile_site(t, i) { l.set_site_words(s, &EMPTY); } }
+            }
+            for (j, &t) in list.iter().enumerate() {
+                for i in 0..grid.tile_sites() {
+                    let at = (j * grid.tile_sites() + i) * SITE;
+                    if let Some(s) = grid.tile_site(t, i) { l.set_site_words(s, &words[at..at + SITE]); }
+                }
+            }
+            prev = list;
+        }
+        done = l.readback().is_some();
+        looking += t1.elapsed().as_secs_f64();
+    }
+    let dt = t0.elapsed().as_secs_f64();
+    println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
+    println!("clocks {c} (checked every {batch})  {} sites, {} active tiles of {} sites at the end  {dt:.2}s ({looking:.2}s looking for the answer)  {:.0} clocks/s",
+        l.sites(), prev.len(), grid.tile_sites(), c as f64 / dt.max(1e-9));
+}
