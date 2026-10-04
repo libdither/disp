@@ -26,19 +26,20 @@ done_
 
 stage "vectors"
 run=$CRATE/target/release/strands-run
-# term grid depth sample: the rules program and small terms record everything; the benchmarks
-# record every rare move and a sample of steps, flips and idle turns.
+# term grid depth sample [seed]: the rules program and small terms record everything; the
+# benchmarks record every rare move and a sample of steps, flips and idle turns. Seed 7 of fib is
+# there for a site's second eraser collecting.
 WORKLOADS=(
   "rules:0 100 4 1" "share-tower:3 24 4 1" "k-chain:4 32 4 1" "discard-tree:4 40 4 1" "convoy:4 40 4 1"
   "full-tree:3 40 4 1" "disp-t 24 4 1" "s-rule 16 4 1" "fork 16 4 1" "k 16 4 1"
   "@(F(@(L,L),L),L) 24 4 1" "@(F(F(L,L),L),@(L,L)) 24 4 1" "@(@(S(L),L),@(L,L)) 24 4 1"
-  "fib:0 232 8 500" "sort:1 490 8 500"
+  "fib:0 232 8 500" "sort:1 490 8 500" "fib:0 232 8 500 7"
 )
 pids=()
 for w in "${WORKLOADS[@]}"; do
-  read -r term grid depth sample <<< "$w"
-  name=$(echo "$term" | tr -c 'a-zA-Z0-9' '_')
-  ( VECTORS=$OUT/vectors/$name.bin VECTOR_SAMPLE=$sample cap 3G 1800 "$run" "$term" --grid "$grid" --seed 1 --chip --depth "$depth" \
+  read -r term grid depth sample seed <<< "$w"
+  name=$(echo "$term" | tr -c 'a-zA-Z0-9' '_')${seed:+s$seed}
+  ( VECTORS=$OUT/vectors/$name.bin VECTOR_SAMPLE=$sample cap 3G 1800 "$run" "$term" --grid "$grid" --seed "${seed:-1}" --chip --depth "$depth" \
       | grep '^DONE' > /dev/null || { echo "   $term did not finish"; exit 1; } ) & pids+=($!)
 done
 LATTICE=("k" "fork" "s-rule" "@(F(@(L,L),L),L)")
@@ -51,14 +52,23 @@ for p in "${pids[@]}"; do wait "$p"; done
 done_
 
 stage "block"
-cap 8G 3600 "$HW/eda.sh" verilator --cc --exe --build -O2 -j 4 -Wno-fatal -Wno-lint -Wno-style --top-module strands_block \
+cap 8G 3600 "$HW/eda.sh" verilator --cc --exe --build -O2 -j 4 -DCOVER -Wno-fatal -Wno-lint -Wno-style --top-module strands_block \
   -I"$HW/rtl" "$HW/rtl/strands_block.v" "$HW/rtl/strands_stages.v" "$HW/sim/tb_block.cpp" -o tb_block --Mdir "$OUT/block" > "$OUT/block.log" 2>&1
-fail=0
+fail=0; : > "$OUT/cover.txt"
 for v in "$OUT"/vectors/*.bin; do
-  r=$(cap 2G 3600 env -u LD_LIBRARY_PATH "$OUT/block/tb_block" "$v" 2>&1 | tail -1) || fail=1
-  printf "   %-28s %s\n" "$(basename "$v" .bin)" "$r"
+  cap 2G 3600 env -u LD_LIBRARY_PATH "$OUT/block/tb_block" "$v" > "$OUT/block.out" 2>&1 || fail=1
+  printf "   %-28s %s\n" "$(basename "$v" .bin)" "$(tail -1 "$OUT/block.out")"
+  command grep '^cover ' "$OUT/block.out" >> "$OUT/cover.txt" || true
 done
 [ $fail = 0 ] || { echo "   block unit differs from the simulator"; exit 1; }
+# Every rarer path of a turn must have been checked at least once.
+for c in collect-here collect-via collect-second-eraser fire-here fire-via-x fire-via-y fire-no-links fire-six-fresh \
+         move-2-sites move-4-sites exchange-done exchange-refused; do
+  n=$(command grep -c "^cover $c\$" "$OUT/cover.txt" || true)
+  [ "$n" -gt 0 ] || { echo "   no recorded turn reaches $c"; fail=1; }
+done
+[ $fail = 0 ] || exit 1
+echo "   every rarer path reached: $(sort "$OUT/cover.txt" | uniq -c | awk '{printf "%s %s, ", $3, $1}' | sed 's/, $//')"
 done_
 
 stage "lattice"

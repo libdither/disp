@@ -80,9 +80,8 @@ int main(int argc, char **argv) {
     bool ok = true; std::string why;
     for (int q = 0; q < 8; q++) {
       uint32_t want[7], got[7]; pack(after[q], want);
-      top.rd_pos = q; top.eval();
-      for (int i = 0; i < 7; i++) got[i] = top.rd_data[i];
-      got[6] &= (1u << (SW - 192)) - 1;
+      memset(got, 0, sizeof got);
+      for (int b = 0; b < SW; b++) if (top.st_out[(q * SW + b) / 32] >> ((q * SW + b) % 32) & 1) got[b / 32] |= 1u << (b % 32);
       if (memcmp(want, got, 28)) { ok = false; why += "  site " + std::to_string(q) + "\n    want " + show(want) + "\n    got  " + show(got) + "\n"; }
     }
     if (tag == 'T') {

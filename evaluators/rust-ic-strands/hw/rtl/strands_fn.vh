@@ -19,6 +19,8 @@ function [SW-1:0] sm(input [SW-1:0] S, input [5:0] e, input [5:0] v);
   integer j;
   begin sm = S; for (j = 0; j < NE; j = j + 1) if (e == j) sm[j*6 +: 6] = v; end
 endfunction
+/// End e if c holds, else no end: a write to no end changes nothing.
+function [5:0] only(input c, input [5:0] e); only = c ? e : NONE; endfunction
 function [SW-1:0] lk(input [SW-1:0] S, input [5:0] a, input [5:0] b);
   lk = sm(sm(S, a, b), b, a);
 endfunction
@@ -59,20 +61,34 @@ function born_wanted(input [3:0] t); born_wanted = t == T_NRM || t == T_OUT || t
 function [1:0] occ(input [SW-1:0] S);
   occ = (gt(S, 0) != 0) + (gt(S, 1) != 0) + (gt(S, 2) != 0);
 endfunction
+/// How many of 33 bits are set, added as a tree.
+function [5:0] count33(input [32:0] b);
+  reg [23:0] g; reg [17:0] h; reg [11:0] q; integer j;
+  begin
+    g = 0; for (j = 0; j < 11; j = j + 1) g[j*2 +: 2] = b[3*j] + b[3*j+1] + b[3*j+2];
+    for (j = 0; j < 6; j = j + 1) h[j*3 +: 3] = g[4*j +: 2] + g[4*j+2 +: 2];
+    for (j = 0; j < 3; j = j + 1) q[j*4 +: 4] = h[6*j +: 3] + h[6*j+3 +: 3];
+    count33 = q[3:0] + q[7:4] + q[11:8];
+  end
+endfunction
 function [4:0] pairs(input [SW-1:0] S);
-  integer j; reg [5:0] n;
-  begin n = 0; for (j = 0; j < NE; j = j + 1) if (S[j*6 +: 6] != NONE) n = n + 1; pairs = n[5:1]; end
+  integer j; reg [32:0] b; reg [5:0] n;
+  begin for (j = 0; j < NE; j = j + 1) b[j] = S[j*6 +: 6] != NONE; n = count33(b); pairs = n[5:1]; end
 endfunction
 function idle(input [SW-1:0] S, input [1:0] k); idle = gt(S, k) != 0 && !gw(S, k); endfunction
 function [1:0] idle_at(input [SW-1:0] S); idle_at = idle(S, 0) + idle(S, 1) + idle(S, 2); endfunction
+/// Which of face f's four lanes hold a strand end.
+function [3:0] lanes_used(input [SW-1:0] S, input [2:0] f);
+  integer g, i;
+  begin lanes_used = 0; for (g = 0; g < 6; g = g + 1) if (f == g) for (i = 0; i < 4; i = i + 1) lanes_used[i] = S[(9 + 4*g + i)*6 +: 6] != NONE; end
+endfunction
 function [2:0] used_lanes(input [SW-1:0] S, input [2:0] f);
-  integer i; reg [2:0] n;
-  begin n = 0; for (i = 0; i < 4; i = i + 1) if (gm(S, se(f, i)) != NONE) n = n + 1; used_lanes = n; end
+  reg [3:0] u; begin u = lanes_used(S, f); used_lanes = u[0] + u[1] + u[2] + u[3]; end
 endfunction
 /// {found, lane}: the lowest free lane on face f.
 function [2:0] free_lane(input [SW-1:0] S, input [2:0] f);
-  integer i;
-  begin free_lane = 0; for (i = 3; i >= 0; i = i - 1) if (gm(S, se(f, i)) == NONE) free_lane = {1'b1, i[1:0]}; end
+  integer i; reg [3:0] u;
+  begin u = lanes_used(S, f); free_lane = 0; for (i = 3; i >= 0; i = i - 1) if (!u[i]) free_lane = {1'b1, i[1:0]}; end
 endfunction
 /// {found, slot}: the lowest free slot among the two real ones.
 function [2:0] free_slot(input [SW-1:0] S);

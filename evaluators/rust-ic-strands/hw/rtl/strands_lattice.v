@@ -48,7 +48,6 @@ module strands_lattice #(parameter W = 16, H = 16, D = 4) (
       strands_block blk (
         .clk(clk), .rst(rst),
         .wr_en(hit), .wr_pos({wr_z[0], wr_y[0], wr_x[0]}), .wr_data(wr_data),
-        .rd_pos(3'd0), .rd_data(),
         .ld_all(ld), .ld_data(li), .st_out(so),
         .go_turn(1'b0), .go_block(go), .turn_pos(3'd0), .turn_taken(8'd0),
         .clock(clock ^ seed),

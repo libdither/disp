@@ -1,0 +1,10 @@
+# Routing tracks for IHP SG13G2 as OpenROAD-flow-scripts has them since 9c29d89304 ("platforms:
+# ihp-sg13g2: Fix track pitch", 2026-03-16), made for the current routing directions
+# (flip_directions.py): the pinned flow gives Metal5 one track per 3.48 um instead of 0.48.
+make_tracks Metal1 -x_offset 0.0 -x_pitch 0.48 -y_offset 0.0 -y_pitch 0.42
+make_tracks Metal2 -x_offset 0.0 -x_pitch 0.48 -y_offset 0.0 -y_pitch 0.42
+make_tracks Metal3 -x_offset 0.0 -x_pitch 0.48 -y_offset 0.0 -y_pitch 0.42
+make_tracks Metal4 -x_offset 0.0 -x_pitch 0.48 -y_offset 0.0 -y_pitch 0.42
+make_tracks Metal5 -x_offset 0.0 -x_pitch 0.48 -y_offset 0.0 -y_pitch 0.42
+make_tracks TopMetal1 -x_offset 1.64 -x_pitch 3.28 -y_offset 1.64 -y_pitch 3.28
+make_tracks TopMetal2 -x_offset 2.0 -x_pitch 4.0 -y_offset 2.0 -y_pitch 4.0
