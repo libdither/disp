@@ -27,6 +27,7 @@ fn tile_site(t: vec3<u32>, i: u32) -> u32 {
 /// The active tiles' blocks' turns: one tile per workgroup.
 @compute @workgroup_size(64)
 fn tile_turns(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
+  lid = l;
   let t = tile_xyz(list[wg.x]);
   let b = t * vec3<u32>(clk.tbx, clk.tby, clk.tbz) + vec3<u32>(l % clk.tbx, (l / clk.tbx) % clk.tby, l / (clk.tbx * clk.tby));
   if (b.x >= clk.nbx || b.y >= clk.nby || b.z >= clk.nbz) { return; }

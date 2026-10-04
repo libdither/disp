@@ -39,19 +39,18 @@ fn key(q: u32) -> u32 {
 struct Pair { found: bool, stale: bool, via: bool, inf: bool, kc: u32, kp: u32, face: u32, inf_pos: u32, inf_k: u32 }
 fn active_pair(q: u32) -> Pair {
   var r = Pair(false, false, false, false, 0u, 0u, 0u, 0u, 0u);
-  let s = blk[q];
   for (var k = 0u; k < 3u; k++) {
-    let t = gt(s, k); let m = gm(s, ae(k, 0u));
-    var skip = t == 0u || !is_consumer(t) || (LAZY && !gw(s, k)) || m == NONE;
+    let t = gt(q, k); let m = gm(q, ae(k, 0u));
+    var skip = t == 0u || !is_consumer(t) || (LAZY && !gw(q, k)) || m == NONE;
     var sp = q; var mm = m; var f = 0u;
     if (!skip && is_strand(m)) {
       f = face(m); let nn = inb(q, f);
       if ((nn & 8u) == 0u) { skip = true; }
       else if ((taken & (1u << (nn & 7u))) != 0u) { r.stale = true; return r; }
-      else { sp = nn & 7u; mm = gm(blk[sp], se(f ^ 1u, lane(m))); }
+      else { sp = nn & 7u; mm = gm(sp, se(f ^ 1u, lane(m))); }
     }
     if (!skip && !is_strand(mm) && mm != NONE) {
-      let k2 = port_k(mm); let qq = port_q(mm); let t2 = gt(blk[sp], k2);
+      let k2 = port_k(mm); let qq = port_q(mm); let t2 = gt(sp, k2);
       if (qq == 0u && t2 != 0u && is_producer(t2)) {
         r.found = true; r.kc = k; r.kp = k2; r.via = is_strand(m); r.face = f; return r;
       } else if (LAZY && qq != 0u && t2 != 0u && is_consumer(t2) && t != T_EPS) {
@@ -62,38 +61,57 @@ fn active_pair(q: u32) -> Pair {
   return r;
 }
 
-fn wanted_reader(s: Site, k: u32) -> bool { let t = gt(s, k); return t != 0u && is_consumer(t) && t != T_EPS && gw(s, k); }
+fn wanted_reader(s: u32, k: u32) -> bool { let t = gt(s, k); return t != 0u && is_consumer(t) && t != T_EPS && gw(s, k); }
+fn vwanted_reader(s: Site, k: u32) -> bool { let t = vgt(s, k); return t != 0u && is_consumer(t) && t != T_EPS && vgw(s, k); }
 /// The wanted reader an active turn moves (the RTL's `active_reader`).
 fn reader_k() -> u32 {
-  let s = blk[p]; var ksl = 0u; var n = 0u;
-  for (var k = 0u; k < 3u; k++) { if (wanted_reader(s, k)) { ksl |= k << (2u * n); n++; } }
+  var ksl = 0u; var n = 0u;
+  for (var k = 0u; k < 3u; k++) { if (wanted_reader(p, k)) { ksl |= k << (2u * n); n++; } }
   return (ksl >> (2u * pick5(d_agent(), n))) & 3u;
 }
+
+// While stages move from sites as values (blk) to sites in slots, a stage still on values gets
+// the block copied into blk before it and back after it.
+const SLOT_COLLECT: bool = false;
+const SLOT_FIRE: bool = false;
+const SLOT_MOVES: bool = false;
+fn to_values() { for (var q = 0u; q < 8u; q++) { blk[q] = get_site(q); } }
+fn from_values() { for (var q = 0u; q < 8u; q++) { put_site(q, blk[q]); } }
 
 /// Position p's turn (lattice.rs `turn`): collect, else react, else take an infection and step,
 /// exchange, fold or flip; then drop the pulses whose strand was rewired.
 fn turn() {
   dice = hash(key(p), tick); touched = 0u; stale = false;
   var pm0: array<u32, 8>;
-  for (var q = 0u; q < 8u; q++) { pm0[q] = gm(blk[q], gpul(blk[q])); }
+  for (var q = 0u; q < 8u; q++) { pm0[q] = gm(q, gpul(q)); }
   var done = false;
-  if (GC) { done = collect_stage(); }
+  if (GC) {
+    if (!SLOT_COLLECT) { to_values(); }
+    done = collect_stage();
+    if (!SLOT_COLLECT) { from_values(); }
+  }
   if (!done) {
-    let active_mode = d_active() < CH_ACTIVE && (wanted_reader(blk[p], 0u) || wanted_reader(blk[p], 1u) || wanted_reader(blk[p], 2u));
+    let active_mode = d_active() < CH_ACTIVE && (wanted_reader(p, 0u) || wanted_reader(p, 1u) || wanted_reader(p, 2u));
     let pr = active_pair(p);
     if (pr.stale) { stale = true; done = true; }
-    else if (pr.found) { done = fire(pr.kc, pr.kp, pr.via, pr.face) != 0u; }
+    else if (pr.found) {
+      if (!SLOT_FIRE) { to_values(); }
+      done = fire(pr.kc, pr.kp, pr.via, pr.face) != 0u;
+      if (!SLOT_FIRE) { from_values(); }
+    }
     if (!done) {
       let act_k = reader_k();
       // A reader that touched a pending computation wants it now (lattice.rs `take_infect`).
-      if (pr.inf && !gw(blk[pr.inf_pos], pr.inf_k)) { blk[pr.inf_pos] = sw(blk[pr.inf_pos], pr.inf_k, true); touched |= 1u << pr.inf_pos; }
+      if (pr.inf && !gw(pr.inf_pos, pr.inf_k)) { sw(pr.inf_pos, pr.inf_k, true); touched |= 1u << pr.inf_pos; }
+      if (!SLOT_MOVES) { to_values(); }
       move_stage(active_mode, act_k);
+      if (!SLOT_MOVES) { from_values(); }
     }
   }
   // A pulse whose strand's mate changed during the turn is lost.
   for (var q = 0u; q < 8u; q++) {
-    let e = gpul(blk[q]);
-    if (e != NONE && gm(blk[q], e) != pm0[q]) { blk[q] = spul(blk[q], NONE); }
+    let e = gpul(q);
+    if (e != NONE && gm(q, e) != pm0[q]) { spul(q, NONE); }
   }
   taken |= touched;
 }
@@ -105,10 +123,10 @@ fn run_block() {
   taken = 0u;
   var cls: array<u32, 8>;
   for (var q = 0u; q < 8u; q++) {
-    let s = blk[q]; var c = 3u;
+    var c = 3u;
     if ((onl & (1u << q)) != 0u) {
-      if (occ(s) != 0u) { c = select(1u, 0u, active_pair(q).found); }
-      else { for (var e = 9u; e < NE; e++) { if (getb(s, e) != NONE) { c = 2u; break; } } }
+      if (occ(q) != 0u) { c = select(1u, 0u, active_pair(q).found); }
+      else { for (var e = 9u; e < NE; e++) { if (getb(q, e) != NONE) { c = 2u; break; } } }
     }
     cls[q] = c;
   }
@@ -140,25 +158,27 @@ fn block_turns(b: vec3<i32>) {
   if (onl == 0u) { return; }
   var any = false;
   for (var q = 0u; q < 8u; q++) {
-    blk[q] = EMPTY;
+    var t = EMPTY;
     if ((onl & (1u << q)) != 0u) {
-      blk[q] = load(site_at(c, q));
-      for (var i = 0u; i < 10u; i++) { if (blk[q][i] != EMPTY[i]) { any = true; } }
+      t = load(site_at(c, q));
+      for (var i = 0u; i < 10u; i++) { if (t[i] != EMPTY[i]) { any = true; } }
     }
+    put_site(q, t);
   }
   if (!any) { return; }
   run_block();
   for (var q = 0u; q < 8u; q++) {
     if ((onl & (1u << q)) != 0u) {
       let s = site_at(c, q);
-      if ((taken & (1u << q)) != 0u) { store(s, blk[q]); }
-      pul[s] = gpul(blk[q]);
+      if ((taken & (1u << q)) != 0u) { store(s, get_site(q)); }
+      pul[s] = gpul(q);
     }
   }
 }
 /// Every block's turns for this clock.
 @compute @workgroup_size(64)
-fn turns(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+fn turns(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
+  lid = l;
   let id = invocation(g, nw);
   if (id >= clk.n) { return; }
   block_turns(vec3<i32>(i32(id % clk.nbx), i32((id / clk.nbx) % clk.nby), i32(id / (clk.nbx * clk.nby))));
@@ -177,19 +197,19 @@ fn site_pulse(s: u32) {
     if (!on[f]) { continue; }
     let pe = pul[nb[f]];
     if (is_strand(pe) && face(pe) == (f ^ 1u)) {
-      let m = gm(t, se(f, lane(pe)));
+      let m = vgm(t, se(f, lane(pe)));
       if (is_strand(m)) { if (!got) { got = true; arr = m; } }
       else if (m != NONE) {
         let k = port_k(m); let qq = port_q(m);
-        if (qq != 0u && gt(t, k) != 0u && is_consumer(gt(t, k)) && !gw(t, k)) { t = sw(t, k, true); }
+        if (qq != 0u && vgt(t, k) != 0u && is_consumer(vgt(t, k)) && !vgw(t, k)) { t = vsw(t, k, true); }
       }
     }
   }
   var sent = false;
   for (var k = 0u; k < 3u; k++) {
-    if (!got && !sent && occ(t) != 0u && wanted_reader(t, k) && is_strand(gm(t, ae(k, 0u)))) { arr = gm(t, ae(k, 0u)); sent = true; }
+    if (!got && !sent && vocc(t) != 0u && vwanted_reader(t, k) && is_strand(vgm(t, ae(k, 0u)))) { arr = vgm(t, ae(k, 0u)); sent = true; }
   }
-  t = spul(t, arr);
+  t = vspul(t, arr);
   var changed = false;
   for (var i = 0u; i < 10u; i++) { if (t[i] != old[i]) { changed = true; } }
   if (changed) { store(s, t); }
@@ -207,16 +227,17 @@ fn pulses(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) 
 /// then the turn's touched positions and whether it was dropped.
 const REC: u32 = 93u;
 @compute @workgroup_size(64)
-fn vectors(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+fn vectors(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
+  lid = l;
   let r = invocation(g, nw);
   if (r >= clk.n) { return; }
   let b = r * REC;
   tick = recs[b + 1u];
   edges(vec3<i32>(i32(recs[b + 2u]), i32(recs[b + 3u]), i32(recs[b + 4u])), recs[b + 5u], recs[b + 6u], recs[b + 7u]);
-  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { blk[q][i] = recs[b + 11u + q * 10u + i]; } }
+  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { sb[at(q, i)] = recs[b + 11u + q * 10u + i]; } }
   if (recs[b] == 0u) { taken = recs[b + 10u]; p = recs[b + 9u]; turn(); }
   else { run_block(); }
-  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { recs[b + 11u + q * 10u + i] = blk[q][i]; } }
+  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { recs[b + 11u + q * 10u + i] = sb[at(q, i)]; } }
   recs[b + 91u] = touched;
   recs[b + 92u] = u32(stale);
 }

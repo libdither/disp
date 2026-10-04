@@ -138,14 +138,14 @@ fn fr_setup() -> bool {
   let S = blk[p];
   let sp4 = inb(p, fr_fc_face); fr_fs_sp = select(p, sp4 & 7u, via);
   var SP = S; if (via) { SP = blk[nbq(p, fr_fc_face) & 7u]; }
-  let ct = gt(S, kc); let pt = gt(SP, kp); fr_fs_ri = rule_of(ct, pt); fr_fs_n = rule_n(fr_fs_ri);
-  fr_fs_lane = lane(gm(S, ae(kc, 0u)));
+  let ct = vgt(S, kc); let pt = vgt(SP, kp); fr_fs_ri = rule_of(ct, pt); fr_fs_n = rule_n(fr_fs_ri);
+  fr_fs_lane = lane(vgm(S, ae(kc, 0u)));
   // rule_wires
   fr_fs_nw = rule_nw(fr_fs_ri);
   for (var w = 0u; w < 9u; w++) { fr_fs_wa[w] = rule_wa(fr_fs_ri, w); fr_fs_wb[w] = rule_wb(fr_fs_ri, w); }
   for (var w = 0u; w < 4u; w++) { fr_fs_part[w] = fr_partner(fr_aux_end(w)); }
-  var dmc = array<u32, 4>(NONE, gm(S, ae(kc, 1u)), gm(S, ae(kc, 2u)), NONE);
-  var dmp = array<u32, 4>(NONE, gm(SP, ae(kp, 1u)), gm(SP, ae(kp, 2u)), NONE);
+  var dmc = array<u32, 4>(NONE, vgm(S, ae(kc, 1u)), vgm(S, ae(kc, 2u)), NONE);
+  var dmp = array<u32, 4>(NONE, vgm(SP, ae(kp, 1u)), vgm(SP, ae(kp, 2u)), NONE);
   if (arity(ct) < 3u) { dmc[2] = NONE; } if (arity(ct) < 2u) { dmc[1] = NONE; }
   if (arity(pt) < 3u) { dmp[2] = NONE; } if (arity(pt) < 2u) { dmp[1] = NONE; }
   // Where the path from each dying aux port ends: through its mate while that is another dying
@@ -210,7 +210,7 @@ fn fr_setup() -> bool {
   fr_fs_lost_s = 0u; fr_fs_lost_sp = 0u;
   for (var j = 0u; j < 6u; j++) {
     let k = select(kp, kc, j < 3u); let q = j % 3u; let at_s = j < 3u || !via;
-    var m = gm(SP, ae(k, q)); if (at_s) { m = gm(S, ae(k, q)); }
+    var m = vgm(SP, ae(k, q)); if (at_s) { m = vgm(S, ae(k, q)); }
     var dying = m < 9u && port_k(m) == kp;
     if (at_s) { dying = m < 9u && (port_k(m) == kc || (!via && port_k(m) == kp)); }
     if (m != NONE && (!dying || m > ae(k, q))) {
@@ -234,14 +234,14 @@ fn fr_prep(fr: u32) {
     var n = 0u; var lst = 0u;
     if (l == fr_fp_ploc) { lst |= fr_fc_kp << (n * 2u); n++; }
     if (l == 0u) { lst |= fr_fc_kc << (n * 2u); n++; }
-    for (var kk = 0u; kk < 2u; kk++) { if (gt(Q, kk) == 0u) { lst |= kk << (n * 2u); n++; } }
+    for (var kk = 0u; kk < 2u; kk++) { if (vgt(Q, kk) == 0u) { lst |= kk << (n * 2u); n++; } }
     fr_fp_slots[l] = lst & 0xFFu; fr_fp_nslots[l] = n & 7u;
-    fr_fp_left[l] = (pairs(Q) - select(0u, fr_fs_lost_s, l == 0u) - select(0u, fr_fs_lost_sp, l != 0u && l == fr_fp_ploc)) & 31u;
+    fr_fp_left[l] = (vpairs(Q) - select(0u, fr_fs_lost_s, l == 0u) - select(0u, fr_fs_lost_sp, l != 0u && l == fr_fp_ploc)) & 31u;
   }
-  fr_fp_avail[0] = (4u - used_lanes(fr_fp_q[0], fr_fp_fx)) & 7u;
-  fr_fp_avail[1] = (4u - used_lanes(fr_fp_q[0], fr_fp_fy)) & 7u;
-  fr_fp_avail[2] = (4u - used_lanes(fr_fp_q[1], fr_fp_fy)) & 7u;
-  fr_fp_avail[3] = (4u - used_lanes(fr_fp_q[2], fr_fp_fx)) & 7u;
+  fr_fp_avail[0] = (4u - vused_lanes(fr_fp_q[0], fr_fp_fx)) & 7u;
+  fr_fp_avail[1] = (4u - vused_lanes(fr_fp_q[0], fr_fp_fy)) & 7u;
+  fr_fp_avail[2] = (4u - vused_lanes(fr_fp_q[1], fr_fp_fy)) & 7u;
+  fr_fp_avail[3] = (4u - vused_lanes(fr_fp_q[2], fr_fp_fx)) & 7u;
   // The strand between the pair comes free.
   if (fr_fc_via && fr_fp_ploc == 1u) { fr_fp_avail[0] = (fr_fp_avail[0] + 1u) & 7u; }
   if (fr_fc_via && fr_fp_ploc == 2u) { fr_fp_avail[1] = (fr_fp_avail[1] + 1u) & 7u; }
@@ -298,28 +298,28 @@ fn fr_init(best_code: u32) {
   for (var l = 0u; l < 4u; l++) {
     var Y = fr_fp_q[l];
     // The strand between the pair comes free.
-    Y = sm(Y, only(via && l == 0u, se(fr_fc_face, fr_fs_lane)), NONE);
-    Y = sm(Y, only(via && l == ploc, se(fr_fc_face ^ 1u, fr_fs_lane)), NONE);
+    Y = vsm(Y, only(via && l == 0u, se(fr_fc_face, fr_fs_lane)), NONE);
+    Y = vsm(Y, only(via && l == ploc, se(fr_fc_face ^ 1u, fr_fs_lane)), NONE);
     // Lanes for new strands, per edge (fx and fy from here, fy from the fx neighbour, fx from
     // the fy neighbour): the lowest free ones, used from the highest down.
     if (l == 0u) {
-      var fl = fr_lanes_for(lanes_used(Y, fr_fp_fx), bneed & 15u); fr_alanes[0] = fl & 0xFFu; fr_aptr[0] = fl >> 8u;
-      fl = fr_lanes_for(lanes_used(Y, fr_fp_fy), (bneed >> 4u) & 15u); fr_alanes[1] = fl & 0xFFu; fr_aptr[1] = fl >> 8u;
+      var fl = fr_lanes_for(vlanes_used(Y, fr_fp_fx), bneed & 15u); fr_alanes[0] = fl & 0xFFu; fr_aptr[0] = fl >> 8u;
+      fl = fr_lanes_for(vlanes_used(Y, fr_fp_fy), (bneed >> 4u) & 15u); fr_alanes[1] = fl & 0xFFu; fr_aptr[1] = fl >> 8u;
     }
-    if (l == 1u) { let fl = fr_lanes_for(lanes_used(Y, fr_fp_fy), (bneed >> 8u) & 15u); fr_alanes[2] = fl & 0xFFu; fr_aptr[2] = fl >> 8u; }
-    if (l == 2u) { let fl = fr_lanes_for(lanes_used(Y, fr_fp_fx), (bneed >> 12u) & 15u); fr_alanes[3] = fl & 0xFFu; fr_aptr[3] = fl >> 8u; }
+    if (l == 1u) { let fl = fr_lanes_for(vlanes_used(Y, fr_fp_fy), (bneed >> 8u) & 15u); fr_alanes[2] = fl & 0xFFu; fr_aptr[2] = fl >> 8u; }
+    if (l == 2u) { let fl = fr_lanes_for(vlanes_used(Y, fr_fp_fx), (bneed >> 12u) & 15u); fr_alanes[3] = fl & 0xFFu; fr_aptr[3] = fl >> 8u; }
     // The pair goes: its ports and slots empty.
     for (var e = 0u; e < 9u; e++) {
-      if ((l == 0u && e / 3u == fr_fc_kc) || (l == ploc && e / 3u == fr_fc_kp)) { Y = sm(Y, e, NONE); }
+      if ((l == 0u && e / 3u == fr_fc_kc) || (l == ploc && e / 3u == fr_fc_kp)) { Y = vsm(Y, e, NONE); }
     }
     for (var e = 0u; e < 3u; e++) {
-      if ((l == 0u && e == fr_fc_kc) || (l == ploc && e == fr_fc_kp)) { Y = stg(Y, e, 0u); Y = sw(Y, e, false); }
+      if ((l == 0u && e == fr_fc_kc) || (l == ploc && e == fr_fc_kp)) { Y = vstg(Y, e, 0u); Y = vsw(Y, e, false); }
     }
     // The fresh agents take their seats.
     for (var i = 0u; i < 6u; i++) {
       if (i < n && ((loc >> (i * 2u)) & 3u) == l) {
         let kk = (seat >> (i * 2u)) & 3u; let t = rule_fresh(fr_fs_ri, i);
-        Y = stg(Y, kk, t); Y = sw(Y, kk, born_wanted(t) || (LAZY && ((wanted >> i) & 1u) != 0u));
+        Y = vstg(Y, kk, t); Y = vsw(Y, kk, born_wanted(t) || (LAZY && ((wanted >> i) & 1u) != 0u));
       }
     }
     fr_aq[l] = Y;
@@ -349,7 +349,7 @@ fn fr_link(aj: u32) {
     if (l == la) { a = ea; b = select(se(f0, l0), eb, nst == 0u); fr_atch |= 1u << l; }
     else if (nst == 2u && l == x1) { a = se(f0 ^ 1u, l0); b = se(f1, l1); fr_atch |= 1u << l; }
     else if (l == lb) { a = select(se(f1 ^ 1u, l1), se(f0 ^ 1u, l0), nst == 1u); b = eb; fr_atch |= 1u << l; }
-    fr_aq[l] = lk(fr_aq[l], a, b);
+    fr_aq[l] = vlk(fr_aq[l], a, b);
   }
 }
 
