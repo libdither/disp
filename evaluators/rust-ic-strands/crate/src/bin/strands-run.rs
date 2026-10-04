@@ -43,6 +43,7 @@ fn main() {
             "--pulse" => p.pulse = true,
             "--phop" => p.p_hop = it.next().unwrap().parse().unwrap(),
             "--margolus" => p.margolus = true,
+            "--chip" => p = rust_ic_strands::lattice::Params { w: p.w, h: p.h, seed: p.seed, ..rust_ic_strands::lattice::chip() },
             "--block-moves" => p.block_moves = true,
             "--block-side" => p.block_side = it.next().unwrap().parse().unwrap(),
             "--gc" => p.gc = true,
@@ -71,6 +72,22 @@ fn main() {
     let (_, out) = net.drive(root);
     let mut l = Lattice::load(p, net, out).expect("load");
     l.check_every = check;
+    if let Ok(path) = std::env::var("VECTORS") {
+        let mut w = std::io::BufWriter::new(std::fs::File::create(path).expect("vectors file"));
+        // Header: the lattice's size.
+        std::io::Write::write_all(&mut w, &[&b"H"[..], &l.p.w.to_le_bytes(), &l.p.h.to_le_bytes(), &l.p.depth.to_le_bytes()].concat()).expect("write vectors");
+        l.vectors = Some(Box::new(w));
+        l.vector_sample = std::env::var("VECTOR_SAMPLE").ok().map_or(100, |v| v.parse().unwrap());
+    }
+    if let Ok(path) = std::env::var("DUMPS") {
+        let mut w = std::io::BufWriter::new(std::fs::File::create(path).expect("dumps file"));
+        let seed = (l.p.seed as u32).wrapping_mul(0x9E37_79B9);
+        std::io::Write::write_all(&mut w, &[&b"H"[..], &l.p.w.to_le_bytes(), &l.p.h.to_le_bytes(), &l.p.depth.to_le_bytes(), &seed.to_le_bytes()].concat()).expect("write dumps");
+        l.dumps = Some(Box::new(w));
+        l.dump_state();
+    }
+    let trace = std::env::var("TRACE").ok();
+    if trace.is_some() { l.trace_start(); }
     let t0 = std::time::Instant::now();
     let done = if profile {
         // Time-averaged count of wanted consumers in each waiting state, sampled four times a
@@ -119,6 +136,21 @@ fn main() {
         fin
     };
     let dt = t0.elapsed().as_secs_f64();
+    if let Some(path) = trace {
+        // One line per rewrite: clock, rule, site, when its pair first existed and the rewrite that
+        // made it (-1: from the start or a collection), when its consumer was first wanted, and
+        // how often it found no room.
+        let tr = &l.trace;
+        let mut out = String::from("clock,rule,site,active,cause,wanted,blocked,strands,sites\n");
+        for &(c, ri, site, cs, ps) in &tr.fires {
+            let (a, cause) = tr.active.get(&(cs, ps)).copied().unwrap_or((f64::NAN, -2));
+            let w = tr.wanted.get(&cs).copied().unwrap_or(f64::NAN);
+            let r = &rust_ca_lattice::rules::RULES[ri];
+            let (len, d) = tr.apart.get(&(cs, ps)).map(|&(l, d)| (l as i64, d as i64)).unwrap_or((-1, -1));
+            out += &format!("{c},{}·{},{site},{a},{cause},{w},{},{len},{d}\n", r.consumer.name(), r.producer.name(), tr.blocked.get(&cs).copied().unwrap_or(0));
+        }
+        std::fs::write(&path, out).expect("write trace");
+    }
     if done && clean > 0.0 {
         // Keep running so erasers collect what the answer no longer needs.
         let (c0, mut marks) = (l.stats.clocks, vec![]);

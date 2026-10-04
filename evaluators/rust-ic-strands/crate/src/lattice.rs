@@ -175,6 +175,11 @@ pub struct Lattice {
     live: Vec<u32>,
     live_pos: Vec<u32>,
     rng: u64,
+    pub e: Energy,
+    /// The random word of the turn under way.
+    cur: Dice,
+    /// Strand ends with a pulse that the move under way has rewired, and their mates before it.
+    pulse_watch: Vec<(u32, u8, u8)>,
     pub shadow: Net,
     pub stats: Stats,
     pub out: (u32, usize),
@@ -199,7 +204,134 @@ pub struct Lattice {
     pub narrate: bool,
     /// [kind (EV_*), site, other site, tag, other tag, detail, detail, 0] per recorded move.
     pub events: Vec<[u32; 8]>,
+    pub trace: Trace,
+    /// Where to write test vectors for the chip: every turn and every block of the block schedule.
+    pub vectors: Option<Box<dyn std::io::Write>>,
+    /// Of the turns that change nothing, and of the blocks, write one in this many.
+    pub vector_sample: u32,
+    /// Where to write the whole lattice's state after every clock, for the chip's lattice-level check.
+    pub dumps: Option<Box<dyn std::io::Write>>,
 }
+
+/// The random bits one turn may use, one field per decision, so that a chip can draw them all
+/// at once. Under blocks they are a hash of the site and the clock.
+#[derive(Clone, Copy, Default)]
+pub struct Dice(pub u64);
+impl Dice {
+    pub const METRO: u32 = 0; // 16 bits: Metropolis acceptance
+    pub const ACTIVE: u32 = 16; // 8 bits: a wanted reader takes the turn
+    pub const HOP: u32 = 24; // 8 bits: an agent steps, rather than wire reshaping
+    pub const ALONG: u32 = 32; // 8 bits: the step goes along the principal wire
+    pub const SWAP: u32 = 40; // 8 bits: a step into a full site may become an exchange
+    pub const AGENT: u32 = 48; // 5 bits: which agent
+    pub const WHERE: u32 = 53; // 5 bits: which face, or which strand
+    pub const RESIDENT: u32 = 58; // 3 bits: which agent to exchange with
+    pub const REGION: u32 = 61; // 3 bits: which square a rewrite tries first
+    pub fn bits(self, at: u32, n: u32) -> u64 { (self.0 >> at) & ((1 << n) - 1) }
+    /// True with probability p, to 1/256.
+    pub fn chance(self, at: u32, p: f64) -> bool { self.bits(at, 8) < (p * 256.0).round() as u64 }
+    /// One of `among` choices, from an n-bit field.
+    pub fn pick(self, at: u32, n: u32, among: usize) -> usize { ((self.bits(at, n) * among as u64) >> n) as usize }
+}
+
+/// The random word for a key (a site's coordinates) at a clock: eight add-rotate-xor rounds,
+/// a few hundred gates on chip.
+pub fn hash(key: u32, clock: u32) -> u64 {
+    let (mut x, mut y) = (clock, key);
+    for i in 0..8u32 {
+        x = x.rotate_right(8).wrapping_add(y) ^ key ^ i.wrapping_mul(0x9E37_79B9);
+        y = y.rotate_left(3) ^ x;
+    }
+    (x as u64) << 32 | y as u64
+}
+
+/// Energies in quarter units, so a move adds small integers, and the acceptance table:
+/// a move raising the energy by d is accepted when 16 random bits fall below `accept[d]`.
+#[derive(Clone)]
+pub struct Energy {
+    pub principal: [i32; 2],
+    pub aux: [i32; 2],
+    pub crowd: i32,
+    pub idle: i32,
+    pub link: i32,
+    pub board: i32,
+    pub pressure: i32,
+    pub repel: i32,
+    pub accept: Vec<u32>,
+}
+impl Energy {
+    pub fn new(p: &Params) -> Energy {
+        let q = |x: f64| { let v = x * 4.0; assert!((v - v.round()).abs() < 1e-9, "energy {x} is not a multiple of 1/4"); v.round() as i32 };
+        let half = |x: f64| { let v = q(x); assert!(v % 2 == 0, "crowding {x} is not a multiple of 1/2"); v / 2 };
+        let accept = (0..).map(|d: i32| (65536.0 * (-(d as f64) / (4.0 * p.temp)).exp()).floor().min(65535.0) as u32)
+            .take_while(|&a| a > 0).collect();
+        Energy { principal: [q(p.w_principal), q(p.w_principal * p.idle_tension)], aux: [q(p.w_aux), q(p.w_aux * p.idle_tension)],
+                 crowd: q(p.crowd), idle: q(p.idle_crowd), link: half(p.link_crowd), board: half(p.board_crowd),
+                 pressure: q(p.pressure), repel: q(p.repel), accept }
+    }
+}
+
+/// The state of a few sites, kept while a move is tried.
+struct Saved {
+    sites: Vec<(u32, Vec<u8>, Vec<u8>, Vec<u32>, Vec<bool>, u8, u8)>,
+    strands: u64,
+    hops: u64,
+    touched: usize,
+    watch: usize,
+}
+
+/// What a traced run records, to see where time goes: when each active pair first existed in
+/// the abstract net, when each consumer was first wanted, and every rewrite.
+#[derive(Default)]
+pub struct Trace {
+    pub on: bool,
+    /// (consumer, producer) → (clock it first existed, the rewrite that made it, or -1).
+    pub active: std::collections::HashMap<(u32, u32), (f64, i64)>,
+    pub wanted: std::collections::HashMap<u32, f64>,
+    /// Rewrites a consumer tried that had no room.
+    pub blocked: std::collections::HashMap<u32, u32>,
+    /// [clock, rule, site, consumer, producer] per rewrite.
+    pub fires: Vec<(f64, usize, u32, u32, u32)>,
+    /// Pairs that just became ready (active and wanted), measured at the end of the move.
+    pending: Vec<(u32, u32)>,
+    /// (consumer, producer) → strands of wire between them, and sites apart, when it became ready.
+    pub apart: std::collections::HashMap<(u32, u32), (u32, u32)>,
+}
+
+/// Which fresh agents of a rule start out wanted: erasers and normalizers, and consumers whose
+/// output feeds the dying consumer's reader (wanted, or it would not have fired) or a wanted
+/// fresh consumer.
+pub fn fresh_wanted(rule: &rust_ca_lattice::rules::Rule) -> [bool; 6] {
+    let mut wanted = [false; 6];
+    for (f, t) in rule.fresh.iter().enumerate() { wanted[f] = matches!(t, Tag::Nrm | Tag::Eps); }
+    loop {
+        let mut changed = false;
+        for &(a, b) in rule.wires {
+            for (x, y) in [(a, b), (b, a)] {
+                let End::Fresh(f, p) = x else { continue };
+                let tf = rule.fresh[f as usize];
+                if wanted[f as usize] || !tf.is_consumer() || p == 0 || !crate::polarity_is_source(tf, p as usize) { continue; }
+                let feeds = match y {
+                    End::CAux(i) => crate::polarity_is_source(rule.consumer, i as usize),
+                    End::Fresh(g, 0) => rule.fresh[g as usize].is_consumer() && wanted[g as usize],
+                    _ => false,
+                };
+                if feeds { wanted[f as usize] = true; changed = true; }
+            }
+        }
+        if !changed { return wanted; }
+    }
+}
+
+/// The configuration the chip implements (the lattice's size and the seed are free).
+pub fn chip() -> Params {
+    Params { depth: 8, k: 2, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, temp: 2.0, block: true, lazy: true, swap: 1.0,
+             agent_turns: 0.8, pulse: true, margolus: true, block_moves: true, gc: true, idle_crowd: 10.0, board_crowd: 0.5,
+             pairs: 8, active: 0.5, ..Params::default() }
+}
+
+/// Names of the moves, as numbered in test vectors.
+pub const OPS: &[&str] = &["", "hop", "swap", "fold", "flip", "fire", "collect", "erase unpair", "erase inputs"];
 
 pub const EV_STEP: u32 = 1;
 pub const EV_SWAP: u32 = 2;
@@ -223,15 +355,17 @@ impl Lattice {
     #[inline] fn lane(&self, e: u8) -> usize { (e as usize - ARITY * self.ks) % self.p.lanes }
     #[inline] pub fn mate_of(&self, s: u32, e: u8) -> u8 { self.mate[s as usize * self.ends + e as usize] }
     #[inline] fn set(&mut self, s: u32, e: u8, m: u8) {
-        self.mate[s as usize * self.ends + e as usize] = m;
+        let old = std::mem::replace(&mut self.mate[s as usize * self.ends + e as usize], m);
         if self.track { self.touched.push(s); }
-        // A pulse rides one strand of one wire: if that strand is touched, the pulse is lost
-        // rather than risk it continuing on another wire. The reader sends another.
-        if self.p.pulse && self.is_strand(e) {
-            if self.pulse_at[s as usize] == e { self.pulse_at[s as usize] = NONE; }
-            let (f, i) = (self.face(e), self.lane(e));
-            let t = self.nb(s, f);
-            if t != u32::MAX && self.pulse_at[t as usize] == self.se(f ^ 1, i) { self.pulse_at[t as usize] = NONE; }
+        if self.pulse_at[s as usize] == e && !self.pulse_watch.iter().any(|w| (w.0, w.1) == (s, e)) {
+            self.pulse_watch.push((s, e, old));
+        }
+    }
+    /// A pulse rides one strand of one wire: if a move rewired the end it sits on, the pulse is
+    /// lost rather than risk it continuing on another wire. The reader sends another.
+    fn settle_pulses(&mut self) {
+        for (s, e, old) in std::mem::take(&mut self.pulse_watch) {
+            if self.pulse_at[s as usize] == e && self.mate_of(s, e) != old { self.pulse_at[s as usize] = NONE; }
         }
     }
     #[inline] fn link(&mut self, s: u32, a: u8, b: u8) {
@@ -308,6 +442,9 @@ impl Lattice {
             live: vec![],
             live_pos: vec![u32::MAX; n],
             rng: p.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+            e: Energy::new(&p),
+            cur: Dice::default(),
+            pulse_watch: vec![],
             shadow: Net::new(),
             stats: Stats::default(),
             out: (u32::MAX, 0),
@@ -323,6 +460,10 @@ impl Lattice {
             stale: std::cell::Cell::new(false),
             narrate: false,
             events: vec![],
+            trace: Trace::default(),
+            vectors: None,
+            vector_sample: 1,
+            dumps: None,
         }
     }
 
@@ -346,6 +487,84 @@ impl Lattice {
     /// Idle: anything but a wanted reader.
     fn idle(&self, s: u32, k: usize) -> bool { self.tag(s, k) != 0 && !self.want[s as usize * self.ks + k] }
     fn idle_at(&self, s: u32) -> usize { (0..self.ks).filter(|&k| self.idle(s, k)).count() }
+
+    /// Start tracing: the active pairs and wanted consumers there are now date from clock 0.
+    pub fn trace_start(&mut self) {
+        self.trace.on = true;
+        for pr in self.shadow.all_active_pairs() { self.trace.active.insert(pr, (0.0, -1)); }
+        for &s in &self.live.clone() { for k in 0..self.ks { if self.tag(s, k) != 0 { self.tr_want(s, k); } } }
+    }
+    /// Note the active pairs any of these agents is now part of.
+    fn tr_pairs(&mut self, ids: &[u32], cause: i64) {
+        if !self.trace.on { return; }
+        for &a in ids {
+            let Some(ag) = self.shadow.agents[a as usize].as_ref() else { continue };
+            let Some((b, 0)) = ag.ports[0] else { continue };
+            let Some(bg) = self.shadow.agents[b as usize].as_ref() else { continue };
+            let pr = if ag.tag.is_consumer() && bg.tag.is_producer() { (a, b) } else if ag.tag.is_producer() && bg.tag.is_consumer() { (b, a) } else { continue };
+            if !self.trace.active.contains_key(&pr) {
+                self.trace.active.insert(pr, (self.stats.clocks, cause));
+                if self.trace.wanted.contains_key(&pr.0) { self.trace.pending.push(pr); }
+            }
+        }
+    }
+    /// Measure how far apart the pairs that just became ready are.
+    pub fn tr_measure(&mut self) {
+        if self.trace.pending.is_empty() { return; }
+        let mut at = std::collections::HashMap::new();
+        for &s in &self.live { for k in 0..self.ks { if self.tag(s, k) != 0 { at.insert(self.sids[s as usize * self.ks + k], (s, k)); } } }
+        for (c, p) in std::mem::take(&mut self.trace.pending) {
+            let (Some(&(sc, kc)), Some(&(sp, _))) = (at.get(&c), at.get(&p)) else { continue };
+            let (_, _, _, len) = self.follow(sc, self.ae(kc, 0));
+            let (a, b) = (self.xyz(sc), self.xyz(sp));
+            let d = (0..3).map(|i| (a[i] - b[i]).unsigned_abs()).sum::<u64>();
+            self.trace.apart.insert((c, p), (len as u32, d as u32));
+        }
+    }
+    fn tr_want(&mut self, s: u32, k: usize) {
+        if self.trace.on && self.want[s as usize * self.ks + k] {
+            let sid = self.sids[s as usize * self.ks + k];
+            if !self.trace.wanted.contains_key(&sid) {
+                self.trace.wanted.insert(sid, self.stats.clocks);
+                // Already in a pair: it is ready now.
+                if let Some((b, 0)) = self.shadow.agents[sid as usize].as_ref().and_then(|a| a.ports[0]) {
+                    if self.trace.active.contains_key(&(sid, b)) { self.trace.pending.push((sid, b)); }
+                }
+            }
+        }
+    }
+
+    /// The site at position q (x + 2y + 4z) of the 2×2×2 block with corner c, if on the lattice.
+    pub fn block_site(&self, c: [i64; 3], q: usize) -> Option<u32> {
+        let x = [c[0] + (q & 1) as i64, c[1] + (q >> 1 & 1) as i64, c[2] + (q >> 2 & 1) as i64];
+        let dims = [self.p.w as i64, self.p.h as i64, self.p.depth as i64];
+        (0..3).all(|i| x[i] >= 0 && x[i] < dims[i]).then(|| (x[2] * dims[1] * dims[0] + x[1] * dims[0] + x[0]) as u32)
+    }
+    fn block_valid(&self, c: [i64; 3]) -> u8 { (0..8).filter(|&q| self.block_site(c, q).is_some()).fold(0, |m, q| m | 1 << q) }
+    fn block_pos(&self, c: [i64; 3], s: u32) -> u8 { (0..8).find(|&q| self.block_site(c, q) == Some(s)).unwrap() as u8 }
+    /// A block's state as the chip holds it, per position: the switchboard (33 ends, 255: none),
+    /// the three slots' tags and wanted bits, and the pulse.
+    fn block_bytes(&self, c: [i64; 3]) -> Vec<u8> {
+        let mut r = vec![];
+        for q in 0..8 {
+            match self.block_site(c, q) {
+                Some(s) => {
+                    for e in 0..self.ends as u8 { r.push(self.mate_of(s, e)); }
+                    for k in 0..self.ks { r.push(self.tag(s, k)); }
+                    for k in 0..self.ks { r.push(self.want[s as usize * self.ks + k] as u8); }
+                    r.push(self.pulse_at[s as usize]);
+                }
+                None => r.extend(std::iter::repeat(0u8).take(self.ends + 2 * self.ks + 1)),
+            }
+        }
+        r
+    }
+
+    /// What the clock contributes to random words: the clock, mixed with the seed.
+    pub fn tick(&self) -> u32 { self.stats.clocks as u32 ^ (self.p.seed as u32).wrapping_mul(0x9E37_79B9) }
+
+    /// A site's coordinates packed into the key of its random words.
+    fn key(&self, s: u32) -> u32 { let x = self.xyz(s); (x[0] | x[1] << 10 | x[2] << 20) as u32 }
 
     pub fn pairs(&self, s: u32) -> usize { self.mate[s as usize * self.ends..(s as usize + 1) * self.ends].iter().filter(|&&m| m != NONE).count() / 2 }
     /// Whether site s has room for `extra` more pairings.
@@ -374,6 +593,7 @@ impl Lattice {
         self.want[s as usize * self.ks + k] = matches!(t, Tag::Nrm | Tag::Out | Tag::Eps);
         self.tags[s as usize * self.ks + k] = tag;
         self.sids[s as usize * self.ks + k] = sid;
+        self.tr_want(s, k);
         self.occ[s as usize] += 1;
         self.stats.peak_site = self.stats.peak_site.max(self.occ[s as usize] as u64);
     }
@@ -382,6 +602,7 @@ impl Lattice {
         if self.track { self.touched.push(s); }
         self.tags[s as usize * self.ks + k] = 0;
         self.sids[s as usize * self.ks + k] = u32::MAX;
+        self.want[s as usize * self.ks + k] = false;
         self.occ[s as usize] -= 1;
     }
 
@@ -753,7 +974,11 @@ impl Lattice {
 
     // ---- moves ------------------------------------------------------------------------------
 
-    fn accept(&mut self, de: f64) -> bool { de <= 0.0 || self.unit() < (-de / self.p.temp).exp() }
+    /// Metropolis, in integers: a move raising the energy by de quarter units is accepted with
+    /// probability accept[de] / 65536.
+    fn accept(&mut self, de: i32) -> bool {
+        de <= 0 || (de as usize) < self.e.accept.len() && (self.cur.bits(Dice::METRO, 16) as u32) < self.e.accept[de as usize]
+    }
 
     /// Agent k of site s steps across face f into a free slot there; if there is none, it
     /// may trade places with an agent there instead.
@@ -779,7 +1004,7 @@ impl Lattice {
 
     /// The step itself, into slot k2 of the neighbour. With `metropolis`, the energy decides;
     /// without, the step is made if it fits and its energy change is returned.
-    fn hop_to(&mut self, s: u32, k: usize, f: usize, k2: usize, metropolis: bool, walker: bool) -> Option<f64> {
+    fn hop_to(&mut self, s: u32, k: usize, f: usize, k2: usize, metropolis: bool, walker: bool) -> Option<i32> {
         let t = self.nb(s, f);
         let a = tag_of(self.tag(s, k)).arity();
         // Where each port's wire goes after the step.
@@ -787,11 +1012,11 @@ impl Lattice {
         enum Plan { SelfLoop(usize), Through(usize), Drag }
         let mut plan = [Plan::Drag; ARITY];
         let mut need = 0;
-        let mut de = 0.0;
-        let scale = if self.p.lazy && !self.want[s as usize * self.ks + k] { self.p.idle_tension } else { 1.0 };
+        let mut de = 0i32;
+        let idle = (self.p.lazy && !self.want[s as usize * self.ks + k]) as usize;
         for q in 0..a {
             let m = self.mate_of(s, self.ae(k, q));
-            let w = scale * if q == 0 { self.p.w_principal } else { self.p.w_aux };
+            let w = if q == 0 { self.e.principal[idle] } else { self.e.aux[idle] };
             if !self.is_strand(m) && m as usize / ARITY == k {
                 plan[q] = Plan::SelfLoop(m as usize % ARITY);
             } else if self.is_strand(m) && self.face(m) == f {
@@ -810,30 +1035,29 @@ impl Lattice {
         lanes.truncate(need);
         let loops = (0..a).filter(|&q| matches!(plan[q], Plan::SelfLoop(_))).count() / 2;
         if metropolis && !self.room(t, need + loops) { return None; }
-        de += self.p.crowd * (self.occ[t as usize] as f64 - (self.occ[s as usize] as f64 - 1.0));
-        if self.p.idle_crowd != 0.0 && self.idle(s, k) {
-            de += self.p.idle_crowd * (self.idle_at(t) as f64 - (self.idle_at(s) as f64 - 1.0));
+        de += self.e.crowd * (self.occ[t as usize] as i32 - (self.occ[s as usize] as i32 - 1));
+        if self.e.idle != 0 && self.idle(s, k) {
+            de += self.e.idle * (self.idle_at(t) as i32 - (self.idle_at(s) as i32 - 1));
         }
-        if self.p.link_crowd != 0.0 {
-            let through = (0..a).filter(|&q| matches!(plan[q], Plan::Through(_))).count();
-            let n = self.used_lanes(s, f) as f64;
-            let n2 = n - through as f64 + need as f64;
-            de += self.p.link_crowd * (n2 * n2 - n * n) / 2.0;
+        let through = (0..a).filter(|&q| matches!(plan[q], Plan::Through(_))).count() as i32;
+        if self.e.link != 0 {
+            let n = self.used_lanes(s, f) as i32;
+            let n2 = n - through + need as i32;
+            de += self.e.link * (n2 * n2 - n * n);
         }
-        if self.p.board_crowd != 0.0 {
-            let through = (0..a).filter(|&q| matches!(plan[q], Plan::Through(_))).count();
-            let sq = |x: f64| x * x;
-            let (ps, pt) = (self.pairs(s) as f64, self.pairs(t) as f64);
-            let (ds, dt) = (-((through + loops) as f64), (need + loops) as f64);
-            de += self.p.board_crowd * (sq(ps + ds) - sq(ps) + sq(pt + dt) - sq(pt)) / 2.0;
+        if self.e.board != 0 {
+            let sq = |x: i32| x * x;
+            let (ps, pt) = (self.pairs(s) as i32, self.pairs(t) as i32);
+            let (ds, dt) = (-(through + loops as i32), (need + loops) as i32);
+            de += self.e.board * (sq(ps + ds) - sq(ps) + sq(pt + dt) - sq(pt));
         }
-        if self.p.pressure != 0.0 {
-            de += self.p.pressure * (self.press[t as usize] as f64 - self.press[s as usize] as f64);
+        if self.e.pressure != 0 {
+            de += self.e.pressure * (self.press[t as usize] as i32 - self.press[s as usize] as i32);
         }
-        if self.p.repel != 0.0 {
+        if self.e.repel != 0 {
             // Agents next door to t, after leaving s (which is next door to t), minus those next to s.
-            let around = |x: u32| (0..self.faces).map(|g| self.nb(x, g)).filter(|&y| y != u32::MAX).map(|y| self.occ[y as usize] as f64).sum::<f64>();
-            de += 2.0 * self.p.repel * (around(t) - 1.0 - around(s));
+            let around = |x: u32| (0..self.faces).map(|g| self.nb(x, g)).filter(|&y| y != u32::MAX).map(|y| self.occ[y as usize] as i32).sum::<i32>();
+            de += 2 * self.e.repel * (around(t) - 1 - around(s));
         }
         if metropolis && !self.accept(de) { if walker { self.stats.walk_fail[2] += 1; } return None; }
         if walker { self.stats.walk_ok += 1; }
@@ -925,26 +1149,52 @@ impl Lattice {
         let t = self.nb(s, f);
         let residents: Vec<usize> = (0..self.p.k).filter(|&k| self.tag(t, k) != 0).collect();
         if residents.is_empty() { return false; }
-        let kb = residents[self.below(residents.len())];
+        let kb = residents[self.cur.pick(Dice::RESIDENT, 3, residents.len())];
         let (ta, tb) = (self.tag(s, ka) as u32, self.tag(t, kb) as u32);
         let kt = self.p.k;
         debug_assert!(self.tag(t, kt) == 0 && self.tag(s, kt) == 0, "transient slot busy");
-        let Some(d1) = self.hop_to(s, ka, f, kt, false, false) else { return false };
-        let Some(d2) = self.hop_to(t, kb, f ^ 1, ka, false, false) else {
-            self.hop_to(t, kt, f ^ 1, ka, false, false).expect("undo a half exchange");
-            return false;
-        };
-        self.relocate(t, kt, kb);
-        if self.room(s, 0) && self.room(t, 0) && self.accept(d1 + d2) {
-            self.stats.swaps += 1;
-            self.note([EV_SWAP, s, t, ta, tb, 0, 0, 0]);
-            self.last_op = "swap";
-            return true;
+        // Tried as two steps through the transient slot; if it does not go through, both sites
+        // are put back exactly as they were (a chip simply would not write them).
+        let saved = self.save(&[s, t]);
+        let ok = (|| {
+            let d1 = self.hop_to(s, ka, f, kt, false, false)?;
+            let d2 = self.hop_to(t, kb, f ^ 1, ka, false, false)?;
+            self.relocate(t, kt, kb);
+            (self.room(s, 0) && self.room(t, 0) && self.accept(d1 + d2)).then_some(())
+        })().is_some();
+        if !ok { self.restore(saved); return false; }
+        self.stats.swaps += 1;
+        self.note([EV_SWAP, s, t, ta, tb, 0, 0, 0]);
+        self.last_op = "swap";
+        true
+    }
+
+    /// Everything a move may change at these sites, to put back if the move does not happen.
+    fn save(&self, sites: &[u32]) -> Saved {
+        Saved {
+            sites: sites.iter().map(|&x| {
+                let (m, a) = (x as usize * self.ends, x as usize * self.ks);
+                (x, self.mate[m..m + self.ends].to_vec(), self.tags[a..a + self.ks].to_vec(), self.sids[a..a + self.ks].to_vec(),
+                 self.want[a..a + self.ks].to_vec(), self.occ[x as usize], self.pulse_at[x as usize])
+            }).collect(),
+            strands: self.stats.strands, hops: self.stats.hops, touched: self.touched.len(), watch: self.pulse_watch.len(),
         }
-        self.relocate(t, kb, kt);
-        self.hop_to(s, ka, f, kb, false, false).expect("undo an exchange");
-        self.hop_to(t, kt, f ^ 1, ka, false, false).expect("undo an exchange");
-        false
+    }
+    fn restore(&mut self, v: Saved) {
+        for (x, mate, tags, sids, want, occ, pulse) in v.sites {
+            let (m, a) = (x as usize * self.ends, x as usize * self.ks);
+            self.mate[m..m + self.ends].copy_from_slice(&mate);
+            self.tags[a..a + self.ks].copy_from_slice(&tags);
+            self.sids[a..a + self.ks].copy_from_slice(&sids);
+            self.want[a..a + self.ks].copy_from_slice(&want);
+            self.occ[x as usize] = occ;
+            self.pulse_at[x as usize] = pulse;
+            self.refresh(x);
+        }
+        self.stats.strands = v.strands;
+        self.stats.hops = v.hops;
+        self.touched.truncate(v.touched);
+        self.pulse_watch.truncate(v.watch);
     }
 
     /// A wire leaving s on face f lane i and coming straight back on lane j snaps shut.
@@ -987,9 +1237,9 @@ impl Lattice {
         let (c, d) = (c[0], d[0]);
         if !self.room(w, 1) { return false; }
         // The corner's two strands move from links s–x and s–z to x–w and w–z.
-        let de = self.p.link_crowd * ((self.used_lanes(x, f2) + self.used_lanes(w, f1 ^ 1)) as f64
-            - (self.used_lanes(s, f1) + self.used_lanes(s, f2)) as f64 + 2.0)
-            + self.p.board_crowd * (self.pairs(w) as f64 - self.pairs(s) as f64 + 1.0);
+        let de = 2 * self.e.link * ((self.used_lanes(x, f2) + self.used_lanes(w, f1 ^ 1)) as i32
+            - (self.used_lanes(s, f1) + self.used_lanes(s, f2)) as i32 + 2)
+            + 2 * self.e.board * (self.pairs(w) as i32 - self.pairs(s) as i32 + 1);
         if !self.accept(de) { return false; }
         let a = self.mate_of(x, self.se(f1 ^ 1, i));
         let g = self.mate_of(z, self.se(f2 ^ 1, j));
@@ -1184,6 +1434,7 @@ impl Lattice {
         let Some((region, slots_at, loc, need, ploc)) = chosen else {
             self.press[s as usize] = self.p.pressure_peak;
             self.stats.blocked_fires += 1;
+            if self.trace.on { *self.trace.blocked.entry(self.sids[s as usize * self.ks + kc]).or_insert(0) += 1; }
             self.stats.blocked_rule[ri] += 1;
             return false;
         };
@@ -1205,36 +1456,22 @@ impl Lattice {
 
         let (csid, psid) = (self.sids[s as usize * self.ks + kc], self.sids[sp as usize * self.ks + kp]);
         assert_eq!(self.shadow.get(csid).ports[0], Some((psid, 0)), "fired a pair the abstract net does not have");
+        let near: Vec<u32> = if self.trace.on { [csid, psid].iter().flat_map(|&a| self.shadow.get(a).ports.iter().flatten().map(|r| r.0).collect::<Vec<_>>()).collect() } else { vec![] };
         let fresh_sids = self.shadow.fire(csid, psid).1;
+        if self.trace.on {
+            let ids: Vec<u32> = fresh_sids.iter().chain(near.iter()).copied().collect();
+            self.tr_pairs(&ids, self.trace.fires.len() as i64);
+            self.trace.fires.push((self.stats.clocks, ri, s, csid, psid));
+        }
         for (site, k) in [(s, kc), (sp, kp)] {
             for q in 0..ARITY { self.set(site, self.ae(k, q), NONE); }
             self.remove(site, k);
         }
-        // Which fresh consumers are wanted: those whose output feeds the dying consumer's
-        // reader (wanted, or it would not have fired) or a wanted fresh consumer.
-        let mut wanted = [false; 6];
-        for (f, t) in rule.fresh.iter().enumerate() { wanted[f] = matches!(t, Tag::Nrm | Tag::Eps); }
-        loop {
-            let mut changed = false;
-            for &(a, b) in rule.wires {
-                for (x, y) in [(a, b), (b, a)] {
-                    let End::Fresh(f, p) = x else { continue };
-                    let tf = rule.fresh[f as usize];
-                    if wanted[f as usize] || !tf.is_consumer() || p == 0 || !crate::polarity_is_source(tf, p as usize) { continue; }
-                    let feeds = match y {
-                        End::CAux(i) => crate::polarity_is_source(ct, i as usize),
-                        End::Fresh(g, 0) => rule.fresh[g as usize].is_consumer() && wanted[g as usize],
-                        _ => false,
-                    };
-                    if feeds { wanted[f as usize] = true; changed = true; }
-                }
-            }
-            if !changed { break; }
-        }
+        let wanted = fresh_wanted(rule);
         for (f, t) in rule.fresh.iter().enumerate() {
             let (_, site, k) = seats[f];
             self.place(site, k, code(*t), fresh_sids[f]);
-            if self.p.lazy && wanted[f] { self.want[site as usize * self.ks + k] = true; }
+            if self.p.lazy && wanted[f] { self.want[site as usize * self.ks + k] = true; self.tr_want(site, k); }
         }
         for (a, b) in links {
             let end_at = |t: T| match t {
@@ -1294,7 +1531,7 @@ impl Lattice {
                 for fx in [2 * a, 2 * a + 1] { for fy in [2 * b, 2 * b + 1] { orient.push((fx, fy)); } }
             }
         }
-        let start = self.below(orient.len());
+        let start = self.cur.pick(Dice::REGION, 3, orient.len());
         for j in 0..orient.len() {
             let (fx, fy) = orient[(start + j) % orient.len()];
             let (hx, hy) = (self.nb(s, fx), self.nb(s, fy));
@@ -1355,13 +1592,16 @@ impl Lattice {
             self.live[pick]
         };
         self.turn(s);
+        self.settle_pulses();
+        if self.trace.on { self.tr_measure(); }
     }
 
     /// Site s's move: react if it can, else step an agent or reshape a wire.
     fn turn(&mut self, s: u32) {
-        if self.p.pulse { self.send_pulse(s); }
+        self.infect.set(None);
+        self.cur = if self.p.margolus && self.p.block_moves { Dice(hash(self.key(s), self.tick())) } else { Dice(self.rand()) };
         if self.p.gc && self.collect(s) || self.stale.get() { return; }
-        if self.p.active > 0.0 && self.unit() < self.p.active && self.active_turn(s) || self.stale.get() { return; }
+        if self.p.active > 0.0 && self.cur.chance(Dice::ACTIVE, self.p.active) && self.active_turn(s) || self.stale.get() { return; }
         if self.p.pressure != 0.0 {
             // Pressure fades, and arrives from neighbours one unit weaker.
             let from_nb = (0..self.faces).map(|f| self.nb(s, f)).filter(|&t| t != u32::MAX)
@@ -1381,26 +1621,26 @@ impl Lattice {
         }
         if self.stale.get() { return; }
         self.take_infect(s);
-        if self.unit() < self.p.p_hop && self.occ[s as usize] > 0 {
+        let d = self.cur;
+        if d.chance(Dice::HOP, self.p.p_hop) && self.occ[s as usize] > 0 {
             let ks: Vec<usize> = (0..self.ks).filter(|&k| self.tag(s, k) != 0).collect();
-            let k = ks[self.below(ks.len())];
+            let k = ks[d.pick(Dice::AGENT, 5, ks.len())];
             // Mostly step along the principal wire; sometimes anywhere.
             let m = self.mate_of(s, self.ae(k, 0));
-            let f = if self.is_strand(m) && self.in_block(self.nb(s, self.face(m))) && self.unit() < 0.7 { self.face(m) }
-                else if self.fence.is_none() { self.below(self.faces) }
+            let f = if self.is_strand(m) && self.in_block(self.nb(s, self.face(m))) && d.chance(Dice::ALONG, 0.7) { self.face(m) }
                 else {
                     // A block clipped by the edge of the lattice can leave no neighbour inside.
-                    let fs: Vec<usize> = (0..self.faces).filter(|&f| self.in_block(self.nb(s, f))).collect();
+                    let fs: Vec<usize> = (0..self.faces).filter(|&f| self.nb(s, f) != u32::MAX && self.in_block(self.nb(s, f))).collect();
                     if fs.is_empty() { return; }
-                    fs[self.below(fs.len())]
+                    fs[d.pick(Dice::WHERE, 5, fs.len())]
                 };
-            let may_swap = self.unit() < self.p.swap;
+            let may_swap = d.chance(Dice::SWAP, self.p.swap);
             self.hop(s, k, f, may_swap);
         } else {
             let used: Vec<u8> = (0..self.faces * self.p.lanes).map(|x| (ARITY * self.ks + x) as u8)
                 .filter(|&e| self.mate_of(s, e) != NONE && self.in_block(self.nb(s, self.face(e)))).collect();
             if used.is_empty() { return; }
-            let e = used[self.below(used.len())];
+            let e = used[d.pick(Dice::WHERE, 5, used.len())];
             if !self.fold(s, e) && !self.stale.get() { self.flip(s, e); }
         }
     }
@@ -1409,8 +1649,14 @@ impl Lattice {
     /// holding matter picks one of its sites (preferring agents) and makes one move inside it,
     /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
-        let b = self.p.block_side as usize;
-        let o = [self.below(b) as i64, self.below(b) as i64, if self.p.depth > 1 { self.below(b) as i64 } else { 0 }];
+        let b = self.p.block_side as u64;
+        // Under a turn for every site, the offset and the order in each block are hashes of the
+        // clock, the same everywhere on a chip.
+        let clock = self.tick();
+        let g = hash(u32::MAX, clock);
+        let deep = self.p.depth > 1;
+        let mut draw = |i: u32| if self.p.block_moves { (g >> (8 * i)) % b } else { self.rand() % b };
+        let o = [draw(0) as i64, draw(1) as i64, if deep { draw(2) as i64 } else { 0 }];
         let b = b as i64;
         let mut cells: Vec<([i64; 3], u32)> = self.live.iter().map(|&s| {
             let x = self.xyz(s);
@@ -1427,25 +1673,66 @@ impl Lattice {
             self.infect.set(None);
             let agents: Vec<u32> = cells[i..j].iter().map(|c| c.1).filter(|&s| self.occ[s as usize] > 0).collect();
             if self.p.block_moves {
-                // Every site takes a turn: reactions first, then agents, then bare wire; a site
-                // some earlier move changed this clock sits it out.
-                let mut order = ready;
-                let mut rest: Vec<u32> = cells[i..j].iter().map(|c| c.1).filter(|s| !order.contains(s)).collect();
-                for n in (1..rest.len()).rev() { let m = self.below(n + 1); rest.swap(n, m); }
-                rest.sort_by_key(|&s| self.occ[s as usize] == 0);
-                order.extend(rest);
+                // Every site takes a turn: reactions first, then agents, then bare wire, each
+                // group in block order rotated by the block's own random word; a site some earlier
+                // move changed this clock sits it out.
+                let c = cells[i].0;
+                let bkey = ((c[0] + 1) | (c[1] + 1) << 10 | (c[2] + 1) << 20) as u32 | 1 << 31;
+                let n = (b * b * b) as u64;
+                let rot = hash(bkey, clock) % n;
+                let mut order: Vec<u32> = cells[i..j].iter().map(|c| c.1).collect();
+                order.sort_by_key(|&s| {
+                    let x = self.xyz(s);
+                    let pos = ((x[0] - c[0]) + b * (x[1] - c[1]) + b * b * (x[2] - c[2])) as u64;
+                    let class = if ready.contains(&s) { 0 } else if self.occ[s as usize] > 0 { 1 } else { 2 };
+                    (class, (pos + n - rot) % n)
+                });
                 self.taken.clear();
-                for s in order {
+                let sampled = |l: &Self, salt: u32| hash(salt, clock) % l.vector_sample.max(1) as u64 == 0;
+                let block_in = (self.vectors.is_some() && sampled(self, bkey)).then(|| self.block_bytes(c));
+                for &s in &order {
                     if self.taken.contains(&s) { continue; }
+                    let turn_in = self.vectors.is_some().then(|| self.block_bytes(c));
                     self.touched.clear();
                     self.track = true;
                     self.stale.set(false);
                     self.stats.proposals += 1;
+                    self.last_op = "";
                     self.turn(s);
+                    self.settle_pulses();
+                    if self.trace.on { self.tr_measure(); }
                     if self.stale.get() { self.stats.stale += 1; }
                     self.track = false;
                     let touched = std::mem::take(&mut self.touched);
+                    let after = turn_in.as_ref().map(|_| self.block_bytes(c));
+                    // Every rare move; steps, flips, dropped and idle turns sampled.
+                    let rare = !matches!(self.last_op, "" | "hop" | "flip");
+                    let keep = turn_in.is_some() && (rare || sampled(self, self.key(s)));
+                    if let (Some(before), true) = (turn_in, keep) {
+                        let mask = |l: &Self, v: &[u32]| (0..8).filter(|&q| l.block_site(c, q).is_some_and(|x| v.contains(&x))).fold(0u8, |m, q| m | 1 << q);
+                        let mut r = vec![b'T'];
+                        r.extend(clock.to_le_bytes());
+                        for i in 0..3 { r.extend((c[i] as i32).to_le_bytes()); }
+                        r.push(self.block_valid(c));
+                        r.push(self.block_pos(c, s));
+                        r.push(mask(self, &self.taken));
+                        r.extend(before);
+                        r.extend(after.unwrap());
+                        r.push(mask(self, &touched));
+                        r.push(self.stale.get() as u8);
+                        r.push(OPS.iter().position(|&o| o == self.last_op).unwrap_or(255) as u8);
+                        self.vectors.as_mut().unwrap().write_all(&r).expect("write vectors");
+                    }
                     self.taken.extend(touched);
+                }
+                if let Some(before) = block_in {
+                    let mut r = vec![b'B'];
+                    r.extend(clock.to_le_bytes());
+                    for i in 0..3 { r.extend((c[i] as i32).to_le_bytes()); }
+                    r.push(self.block_valid(c));
+                    r.extend(before);
+                    r.extend(self.block_bytes(c));
+                    self.vectors.as_mut().unwrap().write_all(&r).expect("write vectors");
                 }
                 self.taken.clear();
                 self.stale.set(false);
@@ -1457,11 +1744,29 @@ impl Lattice {
                 else { cells[i + self.below(j - i)].1 };
             self.stats.proposals += 1;
             self.turn(s);
+            self.settle_pulses();
+            if self.trace.on { self.tr_measure(); }
             i = j;
         }
         self.fence = None;
         self.stats.clocks += 1.0;
         if self.p.pulse { self.step_pulses(); }
+        self.dump_state();
+    }
+
+    /// Write every site's state (as in test vectors), with the clock, if dumping.
+    pub fn dump_state(&mut self) {
+        let Some(mut w) = self.dumps.take() else { return };
+        let mut r = vec![b'S'];
+        r.extend((self.stats.clocks as u32).to_le_bytes());
+        for s in 0..self.sites() {
+            for e in 0..self.ends as u8 { r.push(self.mate_of(s, e)); }
+            for k in 0..self.ks { r.push(self.tag(s, k)); }
+            for k in 0..self.ks { r.push(self.want[s as usize * self.ks + k] as u8); }
+            r.push(self.pulse_at[s as usize]);
+        }
+        w.write_all(&r).expect("write dump");
+        self.dumps = Some(w);
     }
 
     /// A wanted reader at s touched a computation's output during its turn: that computation
@@ -1470,6 +1775,7 @@ impl Lattice {
         let Some((site, k)) = self.infect.take() else { return };
         if !self.want[site as usize * self.ks + k] {
             self.want[site as usize * self.ks + k] = true;
+            self.tr_want(site, k);
             if self.track { self.touched.push(site); }
             self.note([EV_CONTACT, s, site, self.tag(site, k) as u32, 0, 0, 0, 0]);
         }
@@ -1490,35 +1796,40 @@ impl Lattice {
         }
     }
 
-    /// Every pulse crosses its strand and follows the far site's switchboard onto the next
-    /// one. Reaching a computation's output wants it; reaching anything else ends the pulse.
+    /// The pulse phase of a clock. Every pulse crosses its strand at the same time and follows
+    /// the far site's switchboard onto the next strand (a site reached by two keeps the one that
+    /// came in on its lowest face); a pulse reaching a computation's output wants it, and one
+    /// reaching anything else ends. Then every wanted reader with no pulse in its site sends one.
     fn step_pulses(&mut self) {
         let moving: Vec<(u32, u8)> = std::mem::take(&mut self.pulse_sites).into_iter()
             .filter_map(|s| {
                 let e = std::mem::replace(&mut self.pulse_at[s as usize], NONE);
                 (e != NONE).then_some((s, e))
             }).collect();
+        let mut arrive: std::collections::BTreeMap<u32, (usize, u8)> = Default::default();
         for (s, e) in moving {
             let (f, i) = (self.face(e), self.lane(e));
             let t = self.nb(s, f);
             let m = self.mate_of(t, self.se(f ^ 1, i));
             if self.is_strand(m) {
-                let (at, end) = if self.pulse_at[t as usize] == NONE { (t, m) } else { (s, e) };
-                if self.pulse_at[at as usize] == NONE {
-                    self.pulse_at[at as usize] = end;
-                    self.pulse_sites.push(at);
-                }
+                let a = arrive.entry(t).or_insert((f ^ 1, m));
+                if f ^ 1 < a.0 { *a = (f ^ 1, m); }
             } else if m != NONE {
                 let (k, q) = (m as usize / ARITY, m as usize % ARITY);
                 let tg = self.tag(t, k);
-                let w = &mut self.want[t as usize * self.ks + k];
-                if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !*w {
-                    *w = true;
+                if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !self.want[t as usize * self.ks + k] {
+                    self.want[t as usize * self.ks + k] = true;
+                    self.tr_want(t, k);
                     self.stats.pulses += 1;
                     self.note([EV_PULSE, s, t, tg as u32, 0, 0, 0, 0]);
                 }
             }
         }
+        for (t, (_, m)) in arrive {
+            self.pulse_at[t as usize] = m;
+            self.pulse_sites.push(t);
+        }
+        for i in 0..self.live.len() { let s = self.live[i]; if self.occ[s as usize] > 0 { self.send_pulse(s); } }
     }
 
     /// An eraser at s touching a computation's output (same site, or one strand away). A
@@ -1555,6 +1866,7 @@ impl Lattice {
             self.shadow.agents[esid as usize] = None;
             self.shadow.agents[dsid as usize] = None;
             self.shadow.link(src.0, src.1, dst.0, dst.1);
+            self.tr_pairs(&[src.0, dst.0], -1);
             if let Some((f, i)) = via {
                 self.set(s, self.se(f, i), NONE);
                 self.set(d, self.se(f ^ 1, i), NONE);
@@ -1596,6 +1908,7 @@ impl Lattice {
         for x in [e1, e2, u] { self.shadow.agents[x as usize] = None; }
         let e = self.shadow.mk(Tag::Eps);
         self.shadow.link(e, 0, src.0, src.1);
+        self.tr_pairs(&[e, src.0], -1);
         // Free the strands from each eraser to the unpair, then the three agents.
         if let Some((f, i)) = via {
             self.set(s, self.se(f, i), NONE);
@@ -1684,6 +1997,7 @@ impl Lattice {
         let (e0, e1) = (self.shadow.mk(Tag::Eps), self.shadow.mk(Tag::Eps));
         self.shadow.link(e0, 0, src0.0, src0.1);
         self.shadow.link(e1, 0, src1.0, src1.1);
+        self.tr_pairs(&[e0, e1, src0.0, src1.0], -1);
         self.set(s, self.ae(ke, 0), NONE);
         for p in 0..ARITY { self.set(d, self.ae(kd, p), NONE); }
         self.remove(s, ke);
@@ -1725,10 +2039,11 @@ impl Lattice {
         if let Some((kc, kp, via)) = self.active_pair(s) {
             if self.fire(s, kc, kp, via) { return true; }
         }
+        if self.stale.get() { return true; }
         self.take_infect(s);
-        let k = ks[self.below(ks.len())];
+        let k = ks[self.cur.pick(Dice::AGENT, 5, ks.len())];
         let m = self.mate_of(s, self.ae(k, 0));
-        if self.is_strand(m) { let may_swap = self.unit() < self.p.swap; self.hop(s, k, self.face(m), may_swap); }
+        if self.is_strand(m) { let may_swap = self.cur.chance(Dice::SWAP, self.p.swap); self.hop(s, k, self.face(m), may_swap); }
         true
     }
 

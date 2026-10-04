@@ -134,15 +134,18 @@ address-based mesh needs 27.5k rewrites for disp's `fib 2`.
   blocks at a random offset (the Margolus neighbourhood of classic physical cellular automata).
   Moves stay inside their block, so blocks never interfere. Inside a block, either:
   - *one move per block*, the classic rule;
-  - *a turn for every site* (`--block-moves`). Every site decides on a move from the state at
-    the start of the clock, and a priority order (ready rewrites, then sites with agents, then
-    bare wire, ties at random) keeps a move only if nothing it looks at was changed by a move
-    ahead of it. On a chip that is a small arbiter per block. The simulator plays the turns in
-    priority order and drops a turn the moment it looks at a changed site, which comes to the
-    same thing.
+  - *a turn for every site* (`--block-moves`): the sites take their turns one after another,
+    ready rewrites first, then sites with agents, then bare wire, each group in block order
+    rotated by the block's random word. A turn that looks at a site an earlier turn changed
+    this clock is dropped.
+
+  The second is what [`hw/`](hw/README.md) builds as a chip (`--chip`). There every random
+  choice of a turn comes from a 64-bit word that is a hash of the site's coordinates, the clock
+  and the seed; energies are integers in quarter units, with a table for acceptance; and pulses
+  all step at once. The chip and the simulator agree bit for bit.
 
 One move per block costs 5–7× the clocks of random turns. A turn for every site costs 2–2.5×,
-and about 1.8× once walkers get half their site's turns. What is left is mostly the block
+and 1.4–1.8× once walkers get half their site's turns. What is left is mostly the block
 edge: half the time a walker's next strand leads out of its block. Blocks 3 sites wide
 (`--block-side 3`) cut that to a third and save another 7–15%, at the price of an arbiter over
 27 sites instead of 8.
@@ -150,7 +153,10 @@ edge: half the time a walker's next strand leads out of its block. Blocks 3 site
 The first version of a turn for every site let later turns steer around sites that earlier
 turns had changed, and counted every site that had had its turn as changed, even when its turn
 did nothing. A chip deciding all turns at once cannot steer like that. Making it faithful was
-also 1.4–1.5× faster, because idle sites no longer block their neighbours.
+also 1.4–1.5× faster, because idle sites no longer block their neighbours. Making it exactly
+reproducible on a chip (the hashed random words, integer energies, pulses stepping together, a
+pending infection that cannot leak into the next turn, a dropped turn that really does nothing
+more) cost nothing: 4–19% fewer clocks on every program.
 
 An earlier version measured time as proposals divided by live sites, which ignored extra turns.
 It made "self-propelled walkers" (extra turns for wanted readers) look like a 4× win; counted
@@ -285,26 +291,43 @@ random turns the same rule is neutral. Spending every turn on the reader liveloc
 a reader whose rewrite has no room retries forever, and its site never does anything else to
 make room.
 
+**Quiet stretches are one reader walking.** The rate of rewrites comes in bursts: on fib(2),
+60–80% of the time passes in stretches of 20 clocks or more with no rewrite anywhere. Tracing
+when each pair first exists, when its reader is first wanted and when it fires
+(`TRACE=file strands-run`) shows what they are:
+- during 78–91% of those stretches exactly one pair is ready, wanted and waiting to meet. Lazy
+  evaluation runs nearly single file, so nothing else can happen;
+- pairs become ready close by: 1–4 strands apart (median 2), only 1% 12 or more. Nothing moves
+  as a chunk; there are no big trees to haul;
+- they close slowly: 0.28 strands per clock under random turns, 0.12–0.14 under blocks. A pair
+  one strand apart fires in 1.4–2.9 clocks, three apart in 14–29;
+- bursts are the cascades that follow a rewrite whose products are already in reach of each
+  other, such as copying or erasing a tree.
+
+So time ≈ rewrites × the time to close a gap of two or three strands, and the levers are the
+walker's speed and where a rewrite seats what will react next.
+
 **Against the address-based mesh.** Clocks to the answer with everything above (pulses, all
 collection, idle matter keeping a seat free, switchboard crowding, at most 8 pairings per
-site), 3 seeds; under blocks every site takes a turn and walkers get half of theirs. Every run
+site), 3 seeds; blocks are the chip's schedule (`--chip`). Every run
 matches the oracle and the abstract net, and afterwards cleans up to only the answer. Rewrites
 include erasing garbage, as the mesh's do:
 
 | program | mesh rewrites | mesh ticks | strand rewrites | random turns | blocks |
 |---|---|---|---|---|---|
-| fib(0) | 1,627 | 7,450 | 970–1,090 | 5.0k | 8.9k |
-| fib(1) | 1,821 | 8,928 | 1,040–1,090 | 5.9k | 11.3k |
-| sort(1) | 2,174 | 2,615 | 168–215 | 1.5k | 2.5k |
-| exp(1) | 15,139 | 100k | ~3,500 | 30.4k | 55.3k |
-| fib(2) | 20,808 | 137k | 3,510–3,580 | 35.2k | 64.8k |
+| fib(0) | 1,627 | 7,450 | 960–1,090 | 5.2k | 8.5k |
+| fib(1) | 1,821 | 8,928 | 1,050–1,120 | 6.1k | 9.9k |
+| sort(1) | 2,174 | 2,615 | 164–318 | 1.7k | 2.3k |
+| exp(1) | 15,139 | 100k | 3,370–3,510 | 31.5k | 45.0k |
+| fib(2) | 20,808 | 137k | 3,510–3,570 | 32.7k | 57.7k |
 
-With random turns the strand lattice beats the mesh on every program: 1.5–1.7× on fib(0),
-fib(1) and sort(1), and 3.3–3.9× on exp(1) and fib(2). Blocks take about 1.8× the clocks of
-random turns, which still beats the mesh by 1.8–2.1× on exp(1) and fib(2), ties on sort(1), and
-loses by 1.2–1.3× on fib(0) and fib(1). A mesh tile is about 5 kbit plus a router; a strand
-site is about 95 bits (two agent tags with their wanted bits, 8 pairings, the pulse), and fib(2)
-peaks at 2,000–2,300 sites in use.
+With random turns the strand lattice beats the mesh on every program: 1.4–1.5× on fib(0),
+fib(1) and sort(1), and 3.2–4.2× on exp(1) and fib(2). Blocks take 1.4–1.8× the clocks of
+random turns, which still beats the mesh by 2.2–2.4× on exp(1) and fib(2) and slightly on
+sort(1), and loses by about 1.1× on fib(0) and fib(1). A mesh tile is about 5 kbit plus a
+router; a strand site is about 95 bits of state (two agent tags with their wanted bits, 8
+pairings, the pulse), and fib(2) peaks at 2,000–2,300 sites in use. What the logic around those
+bits costs is in [`hw/`](hw/README.md).
 
 ## Things tried that did not help, and why
 
@@ -358,11 +381,14 @@ From `crate/` (memory-cap long runs, see `AGENTS.md`):
 cargo test --release                                  # ~5 s: corpus in 4 configurations, per-move invariants, collection
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
-cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --margolus --block-moves --active 0.5
+cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
 cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --budget 5000000000 --clean 100000
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 ```
 
+`--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip matches it
+(see [`hw/README.md`](hw/README.md)). `TRACE=file strands-run ...` writes when each rewrite's pair
+first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end.
 `strands-run --profile` prints what wanted readers spend their time waiting on, how crowded it

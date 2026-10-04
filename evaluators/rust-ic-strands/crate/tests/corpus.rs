@@ -99,13 +99,15 @@ fn collection_keeps_the_projection_exact() {
         assert_eq!(got.as_deref(), Some(want.as_str()));
     }
     let mut dead = 0;
-    for (i, (t, want)) in corpus().iter().enumerate() {
-        let q = Params { seed: i as u64 + 1, ..p(false) };
-        let Some((any, d)) = collects(t, q) else { continue };
-        if !any { continue; }
-        let (_, got) = run_checked(t, q).unwrap();
-        assert_eq!(got.as_deref(), Some(want.as_str()), "term {i}");
-        dead += d as usize;
+    for margolus in [false, true] {
+        for (i, (t, want)) in corpus().iter().enumerate() {
+            let q = Params { seed: i as u64 + 1, ..p(margolus) };
+            let Some((any, d)) = collects(t, q) else { continue };
+            if !any { continue; }
+            let (_, got) = run_checked(t, q).unwrap();
+            assert_eq!(got.as_deref(), Some(want.as_str()), "term {i}");
+            dead += d as usize;
+        }
     }
     assert!(dead > 0, "no corpus term collects a dead computation");
 }
