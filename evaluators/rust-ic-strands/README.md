@@ -373,6 +373,36 @@ bits costs is in [`hw/`](hw/README.md).
 - **Bits.** With a list of pairings, the number of strands per link costs only the log of the
   number of ends, so wider links are nearly free. Whether they help is untested.
 
+## On a GPU
+
+`crate/src/gpu` runs the chip's schedule (`--chip`) on a GPU through wgpu and Vulkan. It holds the
+same semantics as `hw/rtl`, ported stage by stage, and nothing else. A thread runs one 2×2×2 block,
+and the block only reads and writes its own 8 sites, so whatever runs on the GPU still runs on the
+chip. It matches the simulator bit for bit: `hw/validate.sh` replays every recorded turn and block
+through it, and runs it in lockstep with the simulator.
+
+Its speed comes from locality. A clock moves anything at most one site, so only tiles of 64 blocks
+near something run. The GPU rebuilds the list of such tiles every 8 clocks, the tiles holding
+something and their neighbours. Within them, each clock lists the blocks holding something, so
+every thread of the turn kernel has work. Each clock's pulse phase runs at the start of the next
+clock's turns; the pulses sit in two buffers by clock parity, so a block reads its neighbours'
+while writing its own. A thread keeps its sites in workgroup memory and changes them in place.
+Locality alone makes it 4.8× faster than running every block and site each clock.
+
+Against the simulator, on one machine (Ryzen 5 7640U, single-threaded, against its integrated
+Radeon 760M), same seed, both looking for the answer as they go:
+
+| program | lattice | clocks | CPU | GPU |
+|---|---|---|---|---|
+| fib(0) | 232×232×8 | 7,568 | 2.9 s | 1.7 s |
+| fib(1) | 300×300×8 | 9,898 | 3.8 s | 2.3 s |
+| sort(1) | 490×490×8 | 2,501 | 4.2 s | 1.4 s |
+| fib(2) | 300×300×8 | 57,949 | 19.9 s | 12.7 s |
+
+A clock costs at least 0.08 ms of launching kernels (three a clock, four more every eight), and
+fib's few thousand sites in use add about as much again, so the GPU gains most where much is
+going on at once.
+
 ## Running it
 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
@@ -386,8 +416,10 @@ cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lane
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 ```
 
-`--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip matches it
-(see [`hw/README.md`](hw/README.md)). `TRACE=file strands-run ...` writes when each rewrite's pair
+`--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip and the GPU
+version match it (see [`hw/README.md`](hw/README.md)). `crate/gpu.sh TERM --grid N [--depth D]`
+runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` without the tiles,
+`--vectors FILE...` replays recorded turns); `strands-hw --wgsl` prints its generated tables. `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end.

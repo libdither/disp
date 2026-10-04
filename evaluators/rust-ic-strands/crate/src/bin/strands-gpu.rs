@@ -1,6 +1,6 @@
 //! The chip's block schedule on a GPU, checked bit for bit against the simulator.
 //!   strands-gpu --vectors FILE...                                   replay recorded turns and blocks (hw/validate.sh)
-//!   strands-gpu TERM --grid N [--depth D] [--seed S] --check [--clocks C]      simulator and GPU in lockstep
+//!   strands-gpu TERM --grid N [--depth D] [--seed S] --check [--batch B] [--clocks C]   simulator and GPU in lockstep
 //!   strands-gpu TERM --grid N [--depth D] [--seed S] [--batch B] [--clocks C]  the GPU alone
 //! `--dense` runs every block and site each clock instead of only the tiles near something.
 
@@ -125,7 +125,7 @@ fn main() {
     println!("GPU: {}", gpu.name);
     if args.first().is_some_and(|a| a == "--vectors") { std::process::exit(if vectors(&gpu, &args[1..]) { 0 } else { 1 }); }
     let mut p = chip();
-    let (mut src, mut check, mut dense, mut batch, mut max) = (None, false, false, 64usize, 1_000_000u64);
+    let (mut src, mut check, mut dense, mut batch, mut max) = (None, false, false, None, 1_000_000u64);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().expect("a value").clone();
@@ -137,7 +137,7 @@ fn main() {
             }
             "--depth" => p.depth = val().parse().unwrap(),
             "--seed" => p.seed = val().parse().unwrap(),
-            "--batch" => batch = val().parse().unwrap(),
+            "--batch" => batch = Some(val().parse::<usize>().unwrap()),
             "--clocks" => max = val().parse().unwrap(),
             "--check" => check = true,
             "--dense" => dense = true,
@@ -158,17 +158,20 @@ fn main() {
     let want = want.as_deref().unwrap_or("?");
     let t0 = std::time::Instant::now();
     if check {
-        let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, 1);
+        // Compared after every batch (one clock unless --batch).
+        let batch = batch.unwrap_or(1);
+        let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, batch);
         let state = l.state_words();
         grid.upload(&state);
         if let Some(d) = compare(&p, &state, &grid.download()) { println!("upload differs: {d}"); std::process::exit(1); }
         let mut c = 0;
         while c < max && !(l.readback().is_some() || l.shadow.active_pair().is_none()) {
-            l.chip_clock();
-            grid.run(c, p.seed, 1, dense);
-            c += 1;
+            let n = (batch as u64).min(max - c);
+            for _ in 0..n { l.chip_clock(); }
+            grid.run(c, p.seed, n as usize, dense, false);
+            c += n;
             if let Some(d) = compare(&p, &l.state_words(), &grid.download()) {
-                println!("clock {c} differs (after {} matching): {d}", c - 1);
+                println!("clock {c} differs (after {} matching): {d}", c - n);
                 std::process::exit(1);
             }
         }
@@ -177,36 +180,31 @@ fn main() {
         println!("{c} clocks matched on all {} sites  {:.2}s", l.sites(), t0.elapsed().as_secs_f64());
         return;
     }
+    let batch = batch.unwrap_or(64);
     let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, batch);
     grid.upload(&l.state_words());
-    // The answer is looked for after every batch, in the active tiles only (`--dense`: everywhere);
-    // a tile that dropped out of the list since the last look is empty now.
+    // The answer is looked for after every batch, among the sites holding anything (`--dense`:
+    // everywhere); a site that held something at the last look and is not among them is empty now.
     const EMPTY: [u32; SITE] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
-    let (mut c, mut done, mut prev, mut looking) = (0u64, l.readback().is_some(), vec![], 0f64);
+    let (mut c, mut done, mut looking) = (0u64, l.readback().is_some(), 0f64);
+    let mut prev: std::collections::HashSet<u32> = l.live().iter().copied().collect();
     while c < max && !done {
         let n = (batch as u64).min(max - c);
-        grid.run(c, p.seed, n as usize, dense);
+        grid.run(c, p.seed, n as usize, dense, !dense);
         c += n;
         let t1 = std::time::Instant::now();
         if dense { l.set_state_words(&grid.download()); } else {
-            let (list, words) = grid.gather();
-            let now: std::collections::HashSet<u32> = list.iter().copied().collect();
-            for &t in prev.iter().filter(|t| !now.contains(t)) {
-                for i in 0..grid.tile_sites() { if let Some(s) = grid.tile_site(t, i) { l.set_site_words(s, &EMPTY); } }
-            }
-            for (j, &t) in list.iter().enumerate() {
-                for i in 0..grid.tile_sites() {
-                    let at = (j * grid.tile_sites() + i) * SITE;
-                    if let Some(s) = grid.tile_site(t, i) { l.set_site_words(s, &words[at..at + SITE]); }
-                }
-            }
-            prev = list;
+            let (idx, words) = grid.gathered();
+            let now: std::collections::HashSet<u32> = idx.iter().copied().collect();
+            for &s in prev.difference(&now) { l.set_site_words(s, &EMPTY); }
+            for (j, &s) in idx.iter().enumerate() { l.set_site_words(s, &words[j * SITE..(j + 1) * SITE]); }
+            prev = now;
         }
         done = l.readback().is_some();
         looking += t1.elapsed().as_secs_f64();
     }
     let dt = t0.elapsed().as_secs_f64();
     println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
-    println!("clocks {c} (checked every {batch})  {} sites, {} active tiles of {} sites at the end  {dt:.2}s ({looking:.2}s looking for the answer)  {:.0} clocks/s",
-        l.sites(), prev.len(), grid.tile_sites(), c as f64 / dt.max(1e-9));
+    println!("clocks {c} (checked every {batch})  {} sites, {} holding anything at the end  {dt:.2}s ({looking:.2}s looking for the answer)  {:.0} clocks/s",
+        l.sites(), l.live().len(), c as f64 / dt.max(1e-9));
 }

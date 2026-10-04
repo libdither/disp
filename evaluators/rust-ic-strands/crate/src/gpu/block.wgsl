@@ -2,17 +2,24 @@
 // strands_lattice.v; lattice.rs `margolus_clock`, `turn`, `step_pulses`).
 
 /// One clock's parameters: the lattice's size, the clock mixed with the seed (lattice.rs `tick`),
-/// blocks per axis, how many invocations a full-lattice dispatch covers, and the tiles (tiles.wgsl):
-/// blocks per tile and tiles per axis.
+/// blocks per axis, how many invocations a full-lattice dispatch covers, the tiles (tiles.wgsl):
+/// blocks per tile and tiles per axis; then the clock's parity (which pulse buffer it writes),
+/// whether its turns start with the previous clock's pulse phase, and which busy list it runs.
 struct Clock { w: u32, h: u32, d: u32, tick: u32, nbx: u32, nby: u32, nbz: u32, n: u32,
-               tbx: u32, tby: u32, tbz: u32, ntx: u32, nty: u32, ntz: u32, pad0: u32, pad1: u32 }
+               tbx: u32, tby: u32, tbz: u32, ntx: u32, nty: u32, ntz: u32, par: u32, fused: u32,
+               list: u32, pad0: u32, pad1: u32, pad2: u32 }
 @group(0) @binding(0) var<uniform> clk: Clock;
 /// Every site, 10 words each, at x + w * (y + h * z).
 @group(0) @binding(1) var<storage, read_write> sites: array<u32>;
-/// Every site's pulse once the turns are done: the pulse phase reads its neighbours' here.
+/// Every site's pulse once a clock's turns are done, in two buffers by the clock's parity: a pulse
+/// phase reads its neighbours' from the clock before while the turns write this clock's.
 @group(0) @binding(2) var<storage, read_write> pul: array<u32>;
-/// Recorded turns and blocks to replay (the `vectors` kernel), REC words each.
+/// Recorded turns and blocks to replay (the `vectors` kernel), REC words each; or the sites holding
+/// anything, gathered to look for the answer (tiles.wgsl `busy_gather`).
 @group(0) @binding(3) var<storage, read_write> recs: array<u32>;
+/// Per site: it holds something, or has a pulse left in the buffer the next clock writes (to be
+/// cleared then). The busy list and the active tiles are made from these.
+@group(0) @binding(8) var<storage, read_write> live: array<u32>;
 
 /// The clock mixed with the seed.
 var<private> tick: u32;
@@ -70,14 +77,6 @@ fn reader_k() -> u32 {
   return (ksl >> (2u * pick5(d_agent(), n))) & 3u;
 }
 
-// While stages move from sites as values (blk) to sites in slots, a stage still on values gets
-// the block copied into blk before it and back after it.
-const SLOT_COLLECT: bool = false;
-const SLOT_FIRE: bool = false;
-const SLOT_MOVES: bool = false;
-fn to_values() { for (var q = 0u; q < 8u; q++) { blk[q] = get_site(q); } }
-fn from_values() { for (var q = 0u; q < 8u; q++) { put_site(q, blk[q]); } }
-
 /// Position p's turn (lattice.rs `turn`): collect, else react, else take an infection and step,
 /// exchange, fold or flip; then drop the pulses whose strand was rewired.
 fn turn() {
@@ -85,27 +84,17 @@ fn turn() {
   var pm0: array<u32, 8>;
   for (var q = 0u; q < 8u; q++) { pm0[q] = gm(q, gpul(q)); }
   var done = false;
-  if (GC) {
-    if (!SLOT_COLLECT) { to_values(); }
-    done = collect_stage();
-    if (!SLOT_COLLECT) { from_values(); }
-  }
+  if (GC) { done = collect_stage(); }
   if (!done) {
     let active_mode = d_active() < CH_ACTIVE && (wanted_reader(p, 0u) || wanted_reader(p, 1u) || wanted_reader(p, 2u));
     let pr = active_pair(p);
     if (pr.stale) { stale = true; done = true; }
-    else if (pr.found) {
-      if (!SLOT_FIRE) { to_values(); }
-      done = fire(pr.kc, pr.kp, pr.via, pr.face) != 0u;
-      if (!SLOT_FIRE) { from_values(); }
-    }
+    else if (pr.found) { done = fire(pr.kc, pr.kp, pr.via, pr.face) != 0u; }
     if (!done) {
       let act_k = reader_k();
       // A reader that touched a pending computation wants it now (lattice.rs `take_infect`).
       if (pr.inf && !gw(pr.inf_pos, pr.inf_k)) { sw(pr.inf_pos, pr.inf_k, true); touched |= 1u << pr.inf_pos; }
-      if (!SLOT_MOVES) { to_values(); }
       move_stage(active_mode, act_k);
-      if (!SLOT_MOVES) { from_values(); }
     }
   }
   // A pulse whose strand's mate changed during the turn is lost.
@@ -148,30 +137,59 @@ fn load(s: u32) -> Site { var t: Site; for (var i = 0u; i < 10u; i++) { t[i] = s
 fn store(s: u32, t: Site) { for (var i = 0u; i < 10u; i++) { sites[s * 10u + i] = t[i]; } }
 fn invocation(g: vec3<u32>, n: vec3<u32>) -> u32 { return g.x + g.y * n.x * 64u; }
 
-/// The turns of block b (corner 2b - the clock's offset, a hash of the clock), if it holds anything.
+fn nsites() -> u32 { return clk.w * clk.h * clk.d; }
+/// A site's pulse after the previous clock's turns.
+fn pul_read(s: u32) -> u32 { return pul[(clk.par ^ 1u) * nsites() + s]; }
+/// A site's pulse in the buffer this clock's turns write.
+fn pul_here(s: u32) -> u32 { return pul[clk.par * nsites() + s]; }
+fn set_pul(s: u32, v: u32) { pul[clk.par * nsites() + s] = v; }
+/// The corner of block b at this clock's offset (a hash of the clock).
+fn block_corner(b: vec3<i32>) -> vec3<i32> {
+  let o = hash(0xFFFFFFFFu, clk.tick).x;
+  return 2 * b - vec3<i32>(i32(o & 1u), i32((o >> 8u) & 1u), select(0, i32((o >> 16u) & 1u), clk.d > 1u));
+}
+
+/// Block b's turns. With `fused`, its sites first take the previous clock's pulse phase. Every
+/// site's pulse goes to this clock's buffer afterwards, so a site that emptied leaves no stale
+/// pulse behind.
 fn block_turns(b: vec3<i32>) {
   tick = clk.tick;
-  let o = hash(0xFFFFFFFFu, tick).x;
-  let off = vec3<i32>(i32(o & 1u), i32((o >> 8u) & 1u), select(0, i32((o >> 16u) & 1u), clk.d > 1u));
-  let c = 2 * b - off;
+  let c = block_corner(b);
   edges(c, clk.w, clk.h, clk.d);
   if (onl == 0u) { return; }
-  var any = false;
+  var any = 0u; var stale_pulse = false;
   for (var q = 0u; q < 8u; q++) {
     var t = EMPTY;
     if ((onl & (1u << q)) != 0u) {
-      t = load(site_at(c, q));
-      for (var i = 0u; i < 10u; i++) { if (t[i] != EMPTY[i]) { any = true; } }
+      let s = site_at(c, q);
+      t = load(s);
+      for (var i = 0u; i < 10u; i++) { if (t[i] != EMPTY[i]) { any |= 1u << q; } }
+      if (pul_here(s) != NONE) { stale_pulse = true; }
     }
     put_site(q, t);
   }
-  if (!any) { return; }
-  run_block();
+  if (any == 0u && !stale_pulse) { return; }
+  var dirty = 0u;
+  if (clk.fused != 0u) {
+    for (var q = 0u; q < 8u; q++) {
+      if ((any & (1u << q)) != 0u) {
+        let t = get_site(q); let u = pulse_step(site_at(c, q), t);
+        var changed = false;
+        for (var i = 0u; i < 10u; i++) { if (u[i] != t[i]) { changed = true; } }
+        if (changed) { put_site(q, u); dirty |= 1u << q; }
+      }
+    }
+  }
+  taken = 0u;
+  if (any != 0u) { run_block(); }
   for (var q = 0u; q < 8u; q++) {
     if ((onl & (1u << q)) != 0u) {
       let s = site_at(c, q);
-      if ((taken & (1u << q)) != 0u) { store(s, get_site(q)); }
-      pul[s] = gpul(q);
+      if (((taken | dirty) & (1u << q)) != 0u) { store(s, get_site(q)); }
+      set_pul(s, gpul(q));
+      var held = pul_read(s) != NONE;
+      for (var i = 0u; i < 10u; i++) { if (sb[at(q, i)] != EMPTY[i]) { held = true; } }
+      live[s] = u32(held);
     }
   }
 }
@@ -184,18 +202,18 @@ fn turns(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) n
   block_turns(vec3<i32>(i32(id % clk.nbx), i32((id / clk.nbx) % clk.nby), i32(id / (clk.nbx * clk.nby))));
 }
 
-/// One site's pulse phase (lattice.rs `step_pulses`; hw/rtl/strands_lattice.v `strands_site_net`):
-/// pulses pointing at the site arrive, the one through its lowest face winning; a pulse reaching
-/// a computation's output wants it; a wanted reader with no pulse in its site sends one.
-fn site_pulse(s: u32) {
+/// Site s's pulse phase (lattice.rs `step_pulses`; hw/rtl/strands_lattice.v `strands_site_net`),
+/// from its state `old` and its neighbours' pulses after the previous clock's turns: pulses
+/// pointing at the site arrive, the one through its lowest face winning; a pulse reaching a
+/// computation's output wants it; a wanted reader with no pulse in its site sends one.
+fn pulse_step(s: u32, old: Site) -> Site {
   let x = s % clk.w; let y = (s / clk.w) % clk.h; let z = s / (clk.w * clk.h);
   let on = array<bool, 6>(x + 1u < clk.w, x > 0u, y + 1u < clk.h, y > 0u, z + 1u < clk.d, z > 0u);
   let nb = array<u32, 6>(s + 1u, s - 1u, s + clk.w, s - clk.w, s + clk.w * clk.h, s - clk.w * clk.h);
-  let old = load(s);
   var t = old; var arr = NONE; var got = false;
   for (var f = 0u; f < 6u; f++) {
     if (!on[f]) { continue; }
-    let pe = pul[nb[f]];
+    let pe = pul_read(nb[f]);
     if (is_strand(pe) && face(pe) == (f ^ 1u)) {
       let m = vgm(t, se(f, lane(pe)));
       if (is_strand(m)) { if (!got) { got = true; arr = m; } }
@@ -209,7 +227,11 @@ fn site_pulse(s: u32) {
   for (var k = 0u; k < 3u; k++) {
     if (!got && !sent && vocc(t) != 0u && vwanted_reader(t, k) && is_strand(vgm(t, ae(k, 0u)))) { arr = vgm(t, ae(k, 0u)); sent = true; }
   }
-  t = vspul(t, arr);
+  return vspul(t, arr);
+}
+fn site_pulse(s: u32) {
+  let old = load(s);
+  let t = pulse_step(s, old);
   var changed = false;
   for (var i = 0u; i < 10u; i++) { if (t[i] != old[i]) { changed = true; } }
   if (changed) { store(s, t); }

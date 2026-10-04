@@ -6,7 +6,7 @@ It does exactly what the simulator does, bit for bit; `validate.sh` checks that,
 `--layout` lays the chip's tile out on an open, manufacturable process (IHP SG13G2, 130 nm).
 
 ```sh
-hw/validate.sh            # ~4 min: tables, vectors, every turn and block, whole lattice clock by clock
+hw/validate.sh            # ~4 min: tables, vectors, every turn and block, whole lattice clock by clock, the GPU version
 hw/validate.sh --layout   # + synthesis, place and route, design rules, antenna, layout vs schematic
 hw/flow/size.sh           # ~2 min: cells per stage, to see what a change costs before laying it out
 ```
@@ -66,6 +66,9 @@ energies, the acceptance table, the probabilities) is generated from the simulat
 - **The lattice**: the simulator dumps every site after every clock (`DUMPS=file`), and
   `sim/tb_lattice.cpp` runs the whole chip (shifting, 50 block units, pulses) on an 8×8×2 lattice
   clock by clock from the same start, comparing every site.
+- **The GPU version** (`crate/src/gpu`, the same schedule ported from `rtl/`): every recorded turn
+  and block replayed through it, and the lattice run in lockstep with the simulator, including
+  fib(0) on 232×232×8 with pulse phases fused into the next clock and only live tiles running.
 - **Layout** (`flow/layout.sh`): OpenROAD-flow-scripts places and routes one block unit, from
   scratch; then IHP's own KLayout decks check the result: design rules on the final GDS (the main
   tables, and the antenna rules IHP's runner leaves off unless asked), and layout versus schematic

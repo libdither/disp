@@ -1,5 +1,6 @@
 // Locality: most of a lattice is empty, and a clock moves anything at most one site, so only the
-// tiles near something need running. A tile is tbx×tby×tbz blocks, 64 of them (4×4×4, or 8×8×1 on
+// tiles near something need running, and of their blocks only the ones holding something (the
+// busy list, made afresh every clock so that each invocation of the turn kernel has work). A tile is tbx×tby×tbz blocks, 64 of them (4×4×4, or 8×8×1 on
 // a flat lattice), one workgroup's worth, one block per invocation; it owns those blocks whatever
 // the clock's offset, so it reaches at most one site into its lower neighbours. Every few clocks
 // (no more than a tile is wide) the active list is rebuilt: the tiles holding something, and
@@ -9,7 +10,11 @@
 @group(0) @binding(4) var<storage, read_write> marks: array<atomic<u32>>;
 /// The active tiles.
 @group(0) @binding(5) var<storage, read_write> list: array<u32>;
-/// The indirect dispatch over the active tiles (x, y, z), then the length of the list being built.
+/// The length of the active list being built, of the busy list of each parity, of the gathered sites.
+@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>>;
+/// The busy blocks, by index.
+@group(0) @binding(7) var<storage, read_write> busy: array<u32>;
+/// The indirect dispatches over the active tiles and over the busy blocks (x, y, z each).
 @group(1) @binding(0) var<storage, read_write> args: array<atomic<u32>>;
 
 fn ntiles() -> u32 { return clk.ntx * clk.nty * clk.ntz; }
@@ -24,27 +29,6 @@ fn tile_site(t: vec3<u32>, i: u32) -> u32 {
   return x + clk.w * (y + clk.h * z);
 }
 
-/// The active tiles' blocks' turns: one tile per workgroup.
-@compute @workgroup_size(64)
-fn tile_turns(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
-  lid = l;
-  let t = tile_xyz(list[wg.x]);
-  let b = t * vec3<u32>(clk.tbx, clk.tby, clk.tbz) + vec3<u32>(l % clk.tbx, (l / clk.tbx) % clk.tby, l / (clk.tbx * clk.tby));
-  if (b.x >= clk.nbx || b.y >= clk.nby || b.z >= clk.nbz) { return; }
-  block_turns(vec3<i32>(b));
-}
-
-/// The active tiles' sites' pulse phase.
-@compute @workgroup_size(64)
-fn tile_pulses(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
-  let t = tile_xyz(list[wg.x]);
-  let e = tile_sites();
-  for (var i = l; i < e.x * e.y * e.z; i += 64u) {
-    let s = tile_site(t, i);
-    if (s != 0xFFFFFFFFu) { site_pulse(s); }
-  }
-}
-
 var<workgroup> holds: atomic<u32>;
 /// An active tile holding anything marks itself and its 26 neighbours.
 @compute @workgroup_size(64)
@@ -55,9 +39,7 @@ fn tile_mark(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_ind
   let e = tile_sites();
   for (var i = l; i < e.x * e.y * e.z; i += 64u) {
     let s = tile_site(t, i);
-    if (s != 0xFFFFFFFFu) {
-      for (var k = 0u; k < 10u; k++) { if (sites[s * 10u + k] != EMPTY[k]) { atomicStore(&holds, 1u); break; } }
-    }
+    if (s != 0xFFFFFFFFu && live[s] != 0u) { atomicStore(&holds, 1u); }
   }
   workgroupBarrier();
   if (atomicLoad(&holds) != 0u && l < 27u) {
@@ -72,7 +54,7 @@ fn tile_mark(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_ind
 @compute @workgroup_size(64)
 fn tile_clear(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
   let t = invocation(g, nw);
-  if (t == 0u) { atomicStore(&args[3], 0u); }
+  if (t == 0u) { atomicStore(&counts[0], 0u); }
   if (t < ntiles()) { atomicStore(&marks[t], 0u); }
 }
 
@@ -80,27 +62,76 @@ fn tile_clear(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgrou
 @compute @workgroup_size(64)
 fn tile_compact(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
   let t = invocation(g, nw);
-  if (t < ntiles() && atomicLoad(&marks[t]) != 0u) { list[atomicAdd(&args[3], 1u)] = t; }
+  if (t < ntiles() && atomicLoad(&marks[t]) != 0u) { list[atomicAdd(&counts[0], 1u)] = t; }
 }
 
 /// The dispatch over the new list.
 @compute @workgroup_size(1)
 fn tile_args() {
-  atomicStore(&args[0], atomicLoad(&args[3])); atomicStore(&args[1], 1u); atomicStore(&args[2], 1u);
+  atomicStore(&args[0], atomicLoad(&counts[0])); atomicStore(&args[1], 1u); atomicStore(&args[2], 1u);
 }
 
-/// The active tiles' sites, tile after tile in list order, into `recs` (to look for the answer).
+/// A block of an active tile is busy when one of its sites is live (holds something, or still
+/// has a pulse in the buffer this clock writes, from before it emptied, to be cleared).
 @compute @workgroup_size(64)
-fn tile_gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
+fn tile_busy(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
   let t = tile_xyz(list[wg.x]);
-  let e = tile_sites();
-  let n = e.x * e.y * e.z;
-  for (var i = l; i < n; i += 64u) {
-    let s = tile_site(t, i);
-    for (var k = 0u; k < 10u; k++) {
-      var v = EMPTY[k];
-      if (s != 0xFFFFFFFFu) { v = sites[s * 10u + k]; }
-      recs[(wg.x * n + i) * 10u + k] = v;
+  let b = t * vec3<u32>(clk.tbx, clk.tby, clk.tbz) + vec3<u32>(l % clk.tbx, (l / clk.tbx) % clk.tby, l / (clk.tbx * clk.tby));
+  if (b.x >= clk.nbx || b.y >= clk.nby || b.z >= clk.nbz) { return; }
+  let c = block_corner(vec3<i32>(b));
+  var held = false;
+  for (var q = 0u; q < 8u; q++) { let s = site_at(c, q); if (s != 0xFFFFFFFFu && live[s] != 0u) { held = true; } }
+  if (held) { busy[atomicAdd(&counts[1u + clk.par], 1u)] = b.x + clk.nbx * (b.y + clk.nby * b.z); }
+}
+
+/// The dispatch over this clock's busy list, and an empty list for the next clock.
+@compute @workgroup_size(1)
+fn busy_args() {
+  atomicStore(&args[3], (atomicLoad(&counts[1u + clk.par]) + 63u) / 64u); atomicStore(&args[4], 1u); atomicStore(&args[5], 1u);
+  atomicStore(&counts[1u + (clk.par ^ 1u)], 0u);
+}
+
+fn busy_block(i: u32) -> vec3<i32> {
+  let id = busy[i];
+  return vec3<i32>(i32(id % clk.nbx), i32((id / clk.nbx) % clk.nby), i32(id / (clk.nbx * clk.nby)));
+}
+/// The busy blocks' turns, 64 to a workgroup.
+@compute @workgroup_size(64)
+fn busy_turns(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
+  lid = l;
+  let i = wg.x * 64u + l;
+  if (i >= atomicLoad(&counts[1u + clk.list])) { return; }
+  block_turns(busy_block(i));
+}
+/// The pulse phase of the clock whose busy list is `list` (every site holding anything is in one of
+/// its blocks): closes a batch of clocks.
+@compute @workgroup_size(64)
+fn busy_pulses(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
+  let i = wg.x * 64u + l;
+  if (i >= atomicLoad(&counts[1u + clk.list])) { return; }
+  let c = block_corner(busy_block(i));
+  for (var q = 0u; q < 8u; q++) {
+    let s = site_at(c, q);
+    if (s != 0xFFFFFFFFu) { site_pulse(s); }
+  }
+}
+
+/// The sites holding anything (all in the busy blocks of the clock whose list is `list`), each as
+/// its index and its 10 words, appended to `recs` (their count in counts[3]).
+@compute @workgroup_size(64)
+fn busy_gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
+  let i = wg.x * 64u + l;
+  if (i >= atomicLoad(&counts[1u + clk.list])) { return; }
+  let c = block_corner(busy_block(i));
+  for (var q = 0u; q < 8u; q++) {
+    let s = site_at(c, q);
+    if (s == 0xFFFFFFFFu) { continue; }
+    var held = false;
+    for (var k = 0u; k < 10u; k++) { if (sites[s * 10u + k] != EMPTY[k]) { held = true; } }
+    if (held) {
+      let j = atomicAdd(&counts[3], 1u) * 11u;
+      recs[j] = s;
+      for (var k = 0u; k < 10u; k++) { recs[j + 1u + k] = sites[s * 10u + k]; }
     }
   }
 }

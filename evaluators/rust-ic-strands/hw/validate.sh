@@ -5,7 +5,10 @@
 #                 recording turns and blocks, and whole-lattice states clock by clock
 #   3. block      replay every recorded turn and block through the block unit (Verilator)
 #   4. lattice    run the whole lattice (shifting, all block units, pulses) clock by clock
-#   5. layout     with --layout: synthesis, place and route on IHP SG13G2, design rule check,
+#   5. gpu        the GPU version of the same schedule (crate/src/gpu): every recorded turn and block,
+#                 and the lattice in lockstep with the simulator, its pulse phases fused into the
+#                 next clock's turns and only the tiles near something run
+#   6. layout     with --layout: synthesis, place and route on IHP SG13G2, design rule check,
 #                 layout versus schematic, timing (see flow/layout.sh)
 # Exits non-zero on the first stage that fails. Each stage prints its wall time.
 #
@@ -82,9 +85,22 @@ done
 [ $fail = 0 ] || { echo "   lattice differs from the simulator"; exit 1; }
 done_
 
+stage "gpu"
+gpu() { cap 8G 3600 "$CRATE/gpu.sh" "$@" 2>&1; }
+r=$(gpu --vectors "$OUT"/vectors/*.bin) || fail=1
+echo "   $(echo "$r" | command grep -E '^[0-9]+ records' | awk '{n+=$1; m+=$3} END {print n " records, " m " mismatches"}')"
+for term in "${LATTICE[@]}"; do
+  r=$(gpu "$term" --grid 8 --seed 1 --depth 2 --check | tail -1) || fail=1
+  printf "   %-28s %s\n" "$term" "$r"
+done
+r=$(gpu fib:0 --grid 232 --depth 8 --seed 1 --check --batch 13 | tail -1) || fail=1
+printf "   %-28s %s\n" "fib:0 232x232x8, by 13" "$r"
+[ $fail = 0 ] || { echo "   the GPU differs from the simulator"; exit 1; }
+done_
+
 if [ "${1:-}" = "--layout" ]; then
   stage "layout"
   "$HW/flow/layout.sh"
   done_
 fi
-echo "== the chip matches the simulator"
+echo "== the chip and the GPU match the simulator"

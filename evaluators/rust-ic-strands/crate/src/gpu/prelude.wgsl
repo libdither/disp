@@ -8,8 +8,8 @@
 //   bytes 33..35  the three slots' tags (0: empty)
 //   bytes 36..38  the three slots' wanted bits
 //   byte  39      the strand end a demand pulse sits on (255: none)
-// The `v` functions take and return sites as values, as the RTL does; the plain ones name sites
-// by slot (below) and are what the stages use.
+// The stages name sites by slot (below); the `v` functions, for the pulse phase, take and return
+// a site as a value.
 
 alias Site = array<u32, 10>;
 const NONE: u32 = 255u;
@@ -19,8 +19,6 @@ const EMPTY: Site = Site(0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xF
                          0xFFFFFFFFu, 0xFFFFFFFFu, 0x000000FFu, 0xFF000000u);
 
 // ---- the block under way ------------------------------------------------------------------
-/// The block's 8 sites, by position q = x + 2y + 4z.
-var<private> blk: array<Site, 8>;
 /// Per position: bit f says the neighbour across face f is on the lattice.
 var<private> latq: array<u32, 8>;
 /// Bit q: position q is on the lattice.
@@ -36,7 +34,7 @@ var<private> stale: bool;
 /// The turn's 64 random bits: .x bits 0..31, .y bits 32..63.
 var<private> dice: vec2<u32>;
 
-// ---- a site's fields -----------------------------------------------------------------------
+// ---- a site as a value ---------------------------------------------------------------------
 fn vgetb(s: Site, i: u32) -> u32 { var t = s; return (t[i >> 2u] >> ((i & 3u) * 8u)) & 0xFFu; }
 fn vsetb(s: Site, i: u32, v: u32) -> Site {
   var t = s; let w = i >> 2u; let sh = (i & 3u) * 8u;
@@ -45,27 +43,22 @@ fn vsetb(s: Site, i: u32, v: u32) -> Site {
 }
 /// The mate of end e (none for an end beyond the 33).
 fn vgm(s: Site, e: u32) -> u32 { if (e >= NE) { return NONE; } return vgetb(s, e); }
-/// Set the mate of end e; a write to no end (NONE, or beyond the 33) changes nothing.
-fn vsm(s: Site, e: u32, v: u32) -> Site { if (e >= NE) { return s; } return vsetb(s, e, v); }
-fn vlk(s: Site, a: u32, b: u32) -> Site { return vsm(vsm(s, a, b), b, a); }
 /// End e if c holds, else no end.
 fn only(c: bool, e: u32) -> u32 { return select(NONE, e, c); }
 fn vgt(s: Site, k: u32) -> u32 { return vgetb(s, 33u + min(k, 2u)); }
-fn vstg(s: Site, k: u32, v: u32) -> Site { return vsetb(s, 33u + min(k, 2u), v); }
 fn vgw(s: Site, k: u32) -> bool { return vgetb(s, 36u + min(k, 2u)) != 0u; }
 fn vsw(s: Site, k: u32, v: bool) -> Site { return vsetb(s, 36u + min(k, 2u), select(0u, 1u, v)); }
-fn vgpul(s: Site) -> u32 { return vgetb(s, 39u); }
 fn vspul(s: Site, v: u32) -> Site { return vsetb(s, 39u, v); }
 
 // ---- sites in slots -------------------------------------------------------------------------
 // Each invocation keeps its sites in SLOTS slots of workgroup memory: slots 0..7 are the block's
-// positions, the rest working copies (TMP on). Functions name a site by its slot and change it in
+// positions, the rest working copies (TMP on; the rewrite's working copy is the most, four). Functions name a site by its slot and change it in
 // place, so a site's byte is an address, not a choice among ten words held in registers. Word w of
 // slot s of invocation lid is at (s * 10 + w) * WG + lid: neighbouring invocations, neighbouring banks.
-const SLOTS: u32 = 16u;
+const SLOTS: u32 = 12u;
 const TMP: u32 = 8u;
 const WG: u32 = 64u;
-var<workgroup> sb: array<u32, 10240>;
+var<workgroup> sb: array<u32, 7680>;
 /// This invocation's place in its workgroup.
 var<private> lid: u32;
 fn at(s: u32, w: u32) -> u32 { return (s * 10u + w) * WG + lid; }
@@ -87,20 +80,26 @@ fn sw(s: u32, k: u32, v: bool) { setb(s, 36u + min(k, 2u), select(0u, 1u, v)); }
 fn gpul(s: u32) -> u32 { return getb(s, 39u); }
 fn spul(s: u32, v: u32) { setb(s, 39u, v); }
 fn occ(s: u32) -> u32 { return u32(gt(s, 0u) != 0u) + u32(gt(s, 1u) != 0u) + u32(gt(s, 2u) != 0u); }
-fn pairs(s: u32) -> u32 { var n = 0u; for (var e = 0u; e < NE; e++) { n += u32(getb(s, e) != NONE); } return n >> 1u; }
+/// Bit j for each byte j of word x that is not NONE.
+fn held(x: u32) -> u32 {
+  let y = ~x; let z = y | (y >> 4u); let v = z | (z >> 2u); let b = (v | (v >> 1u)) & 0x01010101u;
+  return (b | (b >> 7u) | (b >> 14u) | (b >> 21u)) & 15u;
+}
+/// Pairings on the switchboard, a word at a time (ends 0..31 in words 0..7, end 32 in word 8).
+fn pairs(s: u32) -> u32 {
+  var n = held(sb[at(s, 8u)]) & 1u;
+  for (var w = 0u; w < 8u; w++) { n += countOneBits(held(sb[at(s, w)])); }
+  return n >> 1u;
+}
 fn idle(s: u32, k: u32) -> bool { return gt(s, k) != 0u && !gw(s, k); }
 fn idle_at(s: u32) -> u32 { return u32(idle(s, 0u)) + u32(idle(s, 1u)) + u32(idle(s, 2u)); }
+/// Which of face f's four lanes hold a strand end: bytes 9 + 4f .. 12 + 4f, across two words.
 fn lanes_used(s: u32, f: u32) -> u32 {
   if (f >= 6u) { return 0u; }
-  var u = 0u; for (var i = 0u; i < 4u; i++) { if (getb(s, se(f, i)) != NONE) { u |= 1u << i; } }
-  return u;
+  return held((sb[at(s, 2u + f)] >> 8u) | (sb[at(s, 3u + f)] << 24u));
 }
 fn used_lanes(s: u32, f: u32) -> u32 { return countOneBits(lanes_used(s, f)); }
-fn free_lane(s: u32, f: u32) -> u32 {
-  let u = lanes_used(s, f);
-  for (var i = 0u; i < 4u; i++) { if ((u & (1u << i)) == 0u) { return 4u | i; } }
-  return 0u;
-}
+fn free_lane(s: u32, f: u32) -> u32 { let u = lanes_used(s, f); return select(4u | firstTrailingBit(~u), 0u, u == 15u); }
 fn free_slot(s: u32) -> u32 {
   if (gt(s, 0u) == 0u) { return 4u; }
   if (gt(s, 1u) == 0u) { return 5u; }
@@ -130,29 +129,6 @@ fn born_wanted(t: u32) -> bool { return t == T_NRM || t == T_OUT || t == T_EPS; 
 // ---- counts ------------------------------------------------------------------------------------
 /// Agents in the three slots.
 fn vocc(s: Site) -> u32 { return u32(vgt(s, 0u) != 0u) + u32(vgt(s, 1u) != 0u) + u32(vgt(s, 2u) != 0u); }
-/// Pairings on the switchboard.
-fn vpairs(s: Site) -> u32 { var n = 0u; for (var e = 0u; e < NE; e++) { n += u32(vgetb(s, e) != NONE); } return n >> 1u; }
-fn vidle(s: Site, k: u32) -> bool { return vgt(s, k) != 0u && !vgw(s, k); }
-fn vidle_at(s: Site) -> u32 { return u32(vidle(s, 0u)) + u32(vidle(s, 1u)) + u32(vidle(s, 2u)); }
-/// Which of face f's four lanes hold a strand end (none for a face beyond the six).
-fn vlanes_used(s: Site, f: u32) -> u32 {
-  if (f >= 6u) { return 0u; }
-  var u = 0u; for (var i = 0u; i < 4u; i++) { if (vgetb(s, se(f, i)) != NONE) { u |= 1u << i; } }
-  return u;
-}
-fn vused_lanes(s: Site, f: u32) -> u32 { return countOneBits(vlanes_used(s, f)); }
-/// 4 | lane: the lowest free lane on face f; 0: none.
-fn vfree_lane(s: Site, f: u32) -> u32 {
-  let u = vlanes_used(s, f);
-  for (var i = 0u; i < 4u; i++) { if ((u & (1u << i)) == 0u) { return 4u | i; } }
-  return 0u;
-}
-/// 4 | slot: the lowest free slot among the two real ones; 0: none.
-fn vfree_slot(s: Site) -> u32 {
-  if (vgt(s, 0u) == 0u) { return 4u; }
-  if (vgt(s, 1u) == 0u) { return 5u; }
-  return 0u;
-}
 /// pick(n bits of field, among): (bits * among) >> n.
 fn pick5(bits: u32, among: u32) -> u32 { return (bits * among) >> 5u; }
 fn pick3(bits: u32, among: u32) -> u32 { return (bits * among) >> 3u; }
