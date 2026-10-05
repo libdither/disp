@@ -403,11 +403,15 @@ Radeon 760M), same seed, both looking for the answer as they go:
 | fib(2) | 300×300×8 | 57,949 | 19.9 s | 13.0 s |
 
 **Why not more.** These programs keep 2,000–3,000 sites in use, a few hundred busy blocks a
-clock, and every clock waits on the one before. So a clock takes as long as the slowest thread's
-turns: up to 8 in a row, each a long chain of dependent steps that a GPU thread runs much more
-slowly than a CPU core (about 175 µs a clock on fib(1), against 400 µs for the CPU's whole clock).
-More work per clock is where the GPU should gain, but it gains less than it could: copies of
-fib(1) side by side, through the browser path below (clocks a second):
+clock, and every clock waits on the one before. So a clock takes as long as the slowest wave: on
+fib(1) about 185 µs on the GPU, against 400 µs for the CPU's whole clock. Little of that is the
+block's turns following one another. Letting each block take only its first turn cuts it only
+to 140 µs, and turns that do nothing at all still cost 60 µs (loading and storing the blocks, the
+pulse phase, the busy list). The rest is one turn: the 32 threads of a wave take different turns
+(a step, a fold, a rewrite), so the wave runs each of their paths in turn, each a long chain of
+dependent steps that a GPU thread runs far more slowly than a CPU core. More work per clock is
+where the GPU should gain, but it gains less than it could: copies of fib(1) side by side, through
+the browser path below (clocks a second):
 
 | copies | sites in use | CPU (wasm) | GPU | ratio |
 |---|---|---|---|---|
@@ -415,19 +419,12 @@ fib(1) side by side, through the browser path below (clocks a second):
 | 4 | 8,060 | 361 | 1,632 | 4.5× |
 | 16 | 32,240 | 71 | 520 | 7.3× |
 
-Two things hold it back. A thread's block and working copies take 480 bytes of workgroup memory,
-so only about 2 waves fit on each SIMD, too few to hide latency; and the 32 threads of a wave
-take different turns (a step, a fold, a rewrite), so the wave runs each of their paths in turn.
-Making the GPU orders of magnitude faster than a core would take a different kernel: a block's
-turns tried at once, one thread each, then kept in order where they do not conflict, and the
-turns sorted by kind so a wave runs one path; with sites kept as their list of pairings, as the
-chip keeps them, so more threads fit.
-
-The GPU also counts what the turns did, the same counts the simulator keeps: turns, rewrites (and
-where they fired), rewrites without room, steps, exchanges, folds, flips, collections, walker
-steps, pulses delivered. In lockstep they match too. The energies, probabilities and switches come
-from tables the simulator generates (`tables.rs`), so any configuration with the chip's schedule,
-site and pulses runs on it: eager evaluation, no cap on pairings, other tensions and temperatures.
+A thread's block and working copies take 480 bytes of workgroup memory, so only about 2 waves fit
+on each SIMD, too few to hide latency. Orders of magnitude over a core would need both: turns
+sorted by kind so that a wave runs one path, and sites kept as their list of pairings, as the
+chip keeps them, so that many more threads fit; and even then only for runs with tens of
+thousands of sites busy. For programs as small as these, a clock is a few hundred dependent jobs,
+and a core runs those nearly as fast as a GPU can.
 
 **In the browser.** `player/gpu.js` drives the same kernels through WebGPU, with the shader the
 engine generates for the loaded settings. The engine stays the record of the run: a GPU stretch
