@@ -14,6 +14,9 @@
 //! Moves are proposed at random and accepted by an energy (wire tension, heavier on
 //! principal wires so reactants find each other, plus crowding pressure), Metropolis-style.
 
+#[path = "field.rs"]
+mod field;
+pub use field::{Channel, Fields, Source};
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::rules::{find_index, End, Tag, ALL_TAGS, RULES};
 
@@ -94,6 +97,11 @@ pub struct Params {
     /// site does not happen.
     pub pairs: usize,
     pub seed: u64,
+    /// A demand pulse that reaches a value's principal port wants it (as one reaching a
+    /// computation's output does), and wanted values walk toward their readers as wanted readers do.
+    pub calls: bool,
+    /// Fields every site keeps and moves read as energy (field.rs); unused channels are off.
+    pub fields: [Channel; 4],
 }
 
 impl Params {
@@ -133,6 +141,11 @@ impl Params {
             "pairs" => self.pairs = n()?,
             "agents" => self.agent_turns = f()?,
             "seed" => self.seed = n()? as u64,
+            "calls" => self.calls = on,
+            "field" => {
+                let c = Channel::parse(v)?;
+                *self.fields.iter_mut().find(|c| c.source == Source::NONE).ok_or("at most 4 fields")? = c;
+            }
             _ => return Err(format!("unknown parameter {k}")),
         }
         Ok(())
@@ -142,7 +155,7 @@ impl Params {
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1 }
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fields: [Channel::OFF; 4] }
     }
 }
 
@@ -254,6 +267,7 @@ pub struct Lattice {
     pub vector_sample: u32,
     /// Where to write the whole lattice's state after every clock, for the chip's lattice-level check.
     pub dumps: Option<Box<dyn std::io::Write>>,
+    pub fields: Fields,
 }
 
 /// The random bits one turn may use, one field per decision, so that a chip can draw them all
@@ -372,6 +386,11 @@ pub fn chip() -> Params {
              agent_turns: 0.8, pulse: true, margolus: true, block_moves: true, gc: true, idle_crowd: 10.0, board_crowd: 0.5,
              pairs: 8, active: 0.5, ..Params::default() }
 }
+
+/// The demand field (README "Fields"): a wanted reader or a demand pulse sets its site to 3, which
+/// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
+/// and wire that idle matter lays down pays crowding times the field. Used with `calls`.
+pub const DEMAND: &str = "src=reader+pulse,bits=2,level=3,step=1,decay=1,idle=4,called=-2,wire=0.5";
 
 /// Names of the moves, as numbered in test vectors.
 pub const OPS: &[&str] = &["", "hop", "swap", "fold", "flip", "fire", "collect", "erase unpair", "erase inputs"];
@@ -507,6 +526,7 @@ impl Lattice {
             vectors: None,
             vector_sample: 1,
             dumps: None,
+            fields: Fields::new(&p, n),
         }
     }
 
@@ -1102,6 +1122,10 @@ impl Lattice {
             let around = |x: u32| (0..self.faces).map(|g| self.nb(x, g)).filter(|&y| y != u32::MAX).map(|y| self.occ[y as usize] as i32).sum::<i32>();
             de += 2 * self.e.repel * (around(t) - 1 - around(s));
         }
+        if self.fields.on {
+            let (ps, pt) = (self.pairs(s) as i32, self.pairs(t) as i32);
+            de += self.field_step_de(s, k, t, ps, -(through + loops as i32), pt, (need + loops) as i32);
+        }
         if metropolis && !self.accept(de) { if walker { self.stats.walk_fail[2] += 1; } return None; }
         if walker { self.stats.walk_ok += 1; }
 
@@ -1282,7 +1306,8 @@ impl Lattice {
         // The corner's two strands move from links s–x and s–z to x–w and w–z.
         let de = 2 * self.e.link * ((self.used_lanes(x, f2) + self.used_lanes(w, f1 ^ 1)) as i32
             - (self.used_lanes(s, f1) + self.used_lanes(s, f2)) as i32 + 2)
-            + 2 * self.e.board * (self.pairs(w) as i32 - self.pairs(s) as i32 + 1);
+            + 2 * self.e.board * (self.pairs(w) as i32 - self.pairs(s) as i32 + 1)
+            + if self.fields.on { self.field_flip_de(s, self.pairs(s) as i32, w, self.pairs(w) as i32) } else { 0 };
         if !self.accept(de) { return false; }
         let a = self.mate_of(x, self.se(f1 ^ 1, i));
         let g = self.mate_of(z, self.se(f2 ^ 1, j));
@@ -1477,6 +1502,7 @@ impl Lattice {
         let Some((region, slots_at, loc, need, ploc)) = chosen else {
             self.press[s as usize] = self.p.pressure_peak;
             self.stats.blocked_fires += 1;
+            self.fields.blocked(s);
             if self.trace.on { *self.trace.blocked.entry(self.sids[s as usize * self.ks + kc]).or_insert(0) += 1; }
             self.stats.blocked_rule[ri] += 1;
             return false;
@@ -1541,6 +1567,7 @@ impl Lattice {
             self.link(site, cur, eb);
         }
         self.stats.fires += 1;
+        self.fields.fired(s);
         self.last_op = "fire";
         self.note([EV_FIRE, s, sp, code(ct) as u32, code(pt) as u32, ri as u32, 0, 0]);
         if self.fire_log.len() < 4096 { self.fire_log.push(s); }
@@ -1692,6 +1719,7 @@ impl Lattice {
     /// holding matter picks one of its sites (preferring agents) and makes one move inside it,
     /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
+        if self.fields.on { self.update_fields(); }
         let b = self.p.block_side as u64;
         // Under a turn for every site, the offset and the order in each block are hashes of the
         // clock, the same everywhere on a chip.
@@ -1947,6 +1975,7 @@ impl Lattice {
             } else if m != NONE {
                 let (k, q) = (m as usize / ARITY, m as usize % ARITY);
                 let tg = self.tag(t, k);
+                if self.p.calls && q == 0 && tg != 0 && tag_of(tg).is_producer() { self.want[t as usize * self.ks + k] = true; }
                 if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !self.want[t as usize * self.ks + k] {
                     self.want[t as usize * self.ks + k] = true;
                     self.tr_want(t, k);
@@ -1959,7 +1988,24 @@ impl Lattice {
             self.pulse_at[t as usize] = m;
             self.pulse_sites.push(t);
         }
-        for i in 0..self.live.len() { let s = self.live[i]; if self.occ[s as usize] > 0 { self.send_pulse(s); } }
+        for i in 0..self.live.len() {
+            let s = self.live[i];
+            if self.occ[s as usize] == 0 { continue; }
+            if self.p.calls { self.call_here(s); }
+            self.send_pulse(s);
+        }
+    }
+
+    /// A wanted reader whose value shares its site calls it without a pulse.
+    fn call_here(&mut self, s: u32) {
+        for k in 0..self.ks {
+            let t = self.tag(s, k);
+            if t == 0 || !tag_of(t).is_consumer() || tag_of(t) == Tag::Eps || !self.want[s as usize * self.ks + k] { continue; }
+            let m = self.mate_of(s, self.ae(k, 0));
+            if m == NONE || self.is_strand(m) { continue; }
+            let k2 = m as usize / ARITY;
+            if self.tag(s, k2) != 0 && tag_of(self.tag(s, k2)).is_producer() { self.want[s as usize * self.ks + k2] = true; }
+        }
     }
 
     /// An eraser at s touching a computation's output (same site, or one strand away). A
@@ -2162,8 +2208,8 @@ impl Lattice {
     /// step along its principal wire. False when the site holds no wanted consumer.
     fn active_turn(&mut self, s: u32) -> bool {
         let ks: Vec<usize> = (0..self.ks).filter(|&k| {
-            let t = self.tag(s, k);
-            t != 0 && tag_of(t).is_consumer() && tag_of(t) != Tag::Eps && self.want[s as usize * self.ks + k]
+            let (t, i) = (self.tag(s, k), s as usize * self.ks + k);
+            t != 0 && self.want[i] && (tag_of(t).is_consumer() && tag_of(t) != Tag::Eps || self.p.calls && tag_of(t).is_producer())
         }).collect();
         if ks.is_empty() { return false; }
         if let Some((kc, kp, via)) = self.active_pair(s) {

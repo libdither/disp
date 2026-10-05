@@ -4,7 +4,7 @@
 
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
-use rust_ic_strands::lattice::{Lattice, Params};
+use rust_ic_strands::lattice::{Lattice, Params, DEMAND};
 
 fn corpus() -> Vec<(Term, String)> {
     let mut rng = Lcg(20260730);
@@ -61,6 +61,33 @@ fn block_rewrites_in_3d() {
 fn margolus_blocks_with_pulses_in_3d() {
     all_finish(Params { depth: 6, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true,
                         board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, ..base() });
+}
+
+/// The chip schedule with the demand field: called values walk toward their readers and idle
+/// matter yields to demand. Every term still finishes with the oracle's answer and projects
+/// exactly; some, on a small lattice, re-check every invariant after every move.
+#[test]
+fn demand_field() {
+    let chip = |w, depth| {
+        let mut p = Params { w, h: w, depth, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true,
+                             board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, calls: true, ..base() };
+        p.set("field", DEMAND).unwrap();
+        p
+    };
+    all_finish(chip(48, 6));
+    let mut checked = 0;
+    for (i, (t, want)) in corpus().iter().enumerate().step_by(8) {
+        let mut net = Net::new();
+        let root = net.build(t);
+        let (_, out) = net.drive(root);
+        let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..chip(16, 4) }, net, out) else { continue };
+        l.check_every = 1;
+        assert!(l.run(50_000_000), "term {i} did not finish");
+        assert_eq!(l.readback().map(|t| oracle::show(&t)).as_deref(), Some(want.as_str()), "term {i}: WRONG ANSWER");
+        l.check_projection().unwrap_or_else(|e| panic!("term {i}: {e}"));
+        checked += 1;
+    }
+    assert!(checked >= 10, "only {checked} terms fit the small lattice");
 }
 
 /// Collection and link crowding with every invariant re-checked after every move: share-tower

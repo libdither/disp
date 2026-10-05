@@ -331,17 +331,98 @@ router; a strand site is about 95 bits of state (two agent tags with their wante
 pairings, the pulse), and fib(2) peaks at 2,000–2,300 sites in use. What the logic around those
 bits costs is in [`hw/`](hw/README.md).
 
+## Fields: demand that clears its own way
+
+Matter learns about the rest of the machine only along wires: tension pulls along them and demand
+pulses run along them. Matter not wired to a reaction cannot know it is there, and parks in the
+way. A *field* adds a channel through space. Every site, empty or not, keeps a few small numbers
+and recomputes them each clock from what it holds, its own numbers and its face neighbours'
+numbers of the clock before, the way pulses move (`crate/src/field.rs`, `--field`). A channel has:
+- sources: a wanted reader, a demand pulse, a rewrite, a rewrite without room, or the
+  switchboard's pairings;
+- a falloff per hop through space and per hop across a face that carries a strand, and a fade
+  per clock: a site takes the most of its source, each neighbour's value less the hop's falloff,
+  and its own value less the fade;
+- weights: energy per unit of the channel climbed by an idle agent, a called value and a wanted
+  computation, and for wire that an idle agent drags or a flip moves (switchboard crowding times
+  the channel).
+
+**The demand field** (`--demand`):
+- a demand pulse that reaches a value's principal port wants it, as one reaching a computation's
+  output does (`calls`; a value's wanted bit was unused), and a wanted value walks along its
+  principal wire toward its reader, as wanted readers do;
+- one channel of 2 bits: a wanted reader or a demand pulse sets its site to 3, which falls by one
+  a hop and a clock;
+- an idle agent pays 4 a unit to climb it, a called value gains 2, and wire laid down by idle
+  matter pays crowding times the field.
+
+So demand becomes a field: idle matter yields along the reader's wire and around both of its
+ends, and the value it asks for comes to meet it. On the chip's schedule, 2 seeds each, every run
+finishing (the answers checked against the oracle on fib(2), `add 3 4` and `isort`, and on the
+160-term corpus in `tests/corpus.rs`):
+
+| program | clocks | with the demand field |
+|---|---|---|
+| fib(0) | 7.6k | −31% |
+| fib(1) | 9.7k | −30% |
+| sort(1) | 2.3k | −22% |
+| exp(1) | 43.1k | −28% |
+| fib(2) | 57.9k | −48% |
+| disp `add 3 4` | 106.7k | −51% |
+| disp `fib 2` | 115.8k | −48% |
+| disp `fib 3` | 264.6k | −51% |
+| disp `rev [1, 2, 3]` | 280.5k | −49% |
+| disp `isort [2, 1]` | 308.1k | −51% |
+
+How it got there, on fib(2), disp `add 3 4` and disp `fib 2` (geometric mean of clocks):
+
+| field | bits a site | clocks |
+|---|---|---|
+| a wanted reader's own site, idle agents pushed out | 1 | −3% |
+| its face neighbours too (2 at the reader, 1 next to it) | 2 | −13% |
+| + wire laid down by idle matter pays | 2 | −20% |
+| + one hop further (3 at the reader, falling by one a hop) | 2 | −27% |
+| + demand pulses as sources, fading one a clock: the reader's whole wire is cleared | 2 | −33% |
+| + a called value is drawn up the field | 2 | −36% |
+| + a called value counts as wanted, so idle crowding spares it | 2 | −41% |
+| + called values walk toward their readers | 2 | −48% |
+
+What it is and is not:
+- **It clears the walker's way, more than it makes room for rewrites.** Rewrites without room fall
+  to a third, but cutting them further (letting the walker's own wire pay too) gained nothing.
+  On disp `add 3 4`, walker steps that found no seat fall from 58k to 14k and those that found no
+  free lane from 17k to 5.5k.
+- **Only the reader's partner is related.** With the abstract net deciding what is related to a
+  reader, sparing everything within 6 steps of it did worse than sparing only its partner, and
+  sparing nothing (pushing the partner away too) gained nothing. Separating whole trees is not
+  the point. Without the called mark the field gains −15% rather than −36%.
+- **Each half needs the other.** Called values walking toward their readers without the field
+  gain about 20%, with blocked rewrites more than doubled as values crowd their readers; the field
+  alone gains about 40%; together about 48%.
+- **What did not help:** rewrites, rewrites without room or a stuck pair's growing pull as
+  sources; 3 bits and a longer reach; spreading further along wires than through space; the
+  reader drawn up its own field; weights a quarter stronger or weaker.
+
+Cost: 2 bits a site (on about 95), none per agent. A site's update is the most of eight 2-bit
+inputs with decrements, and a step or flip adds three small terms to its energy. On fib(1) and
+fib(2) about 130 sites a clock hold a field, against some 2,000 holding something, so a GPU that
+runs only busy blocks visits few more. In analog a channel is a diode-OR mesh: each node sits at
+the most of its source and its neighbours less one diode drop, and a leak makes the fade. It is
+not yet on the chip or the GPU (`tables.rs` `gpu_unfit` refuses it), nor the default.
+
 ## Things tried that did not help, and why
 
 - **Pressure** from blocked rewrites (a diffusing field agents drift down): no measurable change
-  on the corpus or on fib. Wire tension holds neighbours in place at least as strongly.
+  on the corpus or on fib. Wire tension holds neighbours in place at least as strongly. A field that
+  works centres on demand instead, and spares the reader's partner (Fields, above).
 - **Short-range repulsion between all agents in neighbouring sites**: same. (The repulsion that
   works is narrower: same site only, idle agents only.)
 - **Stronger crowding of every agent**: 4–21% fewer clocks at crowding 3; tension still packs
   everything.
 - **Calling values**: letting a demand pulse that reaches a value mark it active, so it also
   passes through idle matter toward its reader. Within seed noise, and blocked rewrites roughly
-  tripled as called values crowd in around their readers.
+  tripled as called values crowd in around their readers. Today it saves
+  about 20% on its own, and with the demand field it is part of the largest gain (Fields, above).
 - **Weak or no tension on idle matter**: wires grow without bound and the reaction zone still
   congests.
 - **Splitting big rules** so each step creates at most two agents, with a temporary "builder"
@@ -368,6 +449,7 @@ bits costs is in [`hw/`](hw/README.md).
 
 ## Open
 
+- **The demand field on the chip and the GPU**, and as the default (Fields, above).
 - **The synchronous schedule** still takes about 1.8× the clocks of random turns, mostly
   because a walker's next strand leaves its block half the time. Wider blocks help a little
   (above); a walker that eats every strand of its wire inside its block in one turn might help
@@ -471,10 +553,11 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~5 s: corpus in 4 configurations, per-move invariants, collection
+cargo test --release                                  # ~6 s: corpus in 5 configurations (one with the demand field), per-move invariants, collection
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
+cargo run --release --bin strands-run -- fib:0 --grid 256 --chip --demand          # with the demand field (field.rs; --field SPEC for others)
 cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --budget 5000000000 --clean 100000
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 ```

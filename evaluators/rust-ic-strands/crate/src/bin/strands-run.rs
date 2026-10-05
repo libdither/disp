@@ -58,6 +58,9 @@ fn main() {
             "--swap" => p.swap = it.next().unwrap().parse().unwrap(),
             "--agents" => p.agent_turns = it.next().unwrap().parse().unwrap(),
             "--repel" => p.repel = it.next().unwrap().parse().unwrap(),
+            "--field" => p.set("field", &it.next().unwrap()).unwrap_or_else(|e| panic!("{e}")),
+            "--calls" => p.calls = true,
+            "--demand" => { p.calls = true; p.set("field", rust_ic_strands::lattice::DEMAND).unwrap(); }
             _ => src = Some(a.clone()),
         }
     }
@@ -171,6 +174,10 @@ fn main() {
     println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  collected {} ({} dead computations)  refused for a full switchboard {}  turns dropped for stale reads {}", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected, s.dead, s.capped, s.stale);
     println!("proposals {}  fires {} (blocked {})  swaps {}  hops {}  folds {}  flips {}  strands {} (peak {})  peak live sites {}  fullest site {}  {:.2}s",
         s.proposals, s.fires, s.blocked_fires, s.swaps, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_live, s.peak_site, dt);
+    if l.fields.on {
+        println!("fields: {} bits a site; on average {:.0} sites a clock hold a field, against {} holding anything at the end", l.fields.bits(),
+            l.fields.support as f64 / l.stats.clocks.max(1.0), l.live().len());
+    }
     let mut left = std::collections::BTreeMap::new();
     for &site in l.live() {
         for k in 0..l.ks {

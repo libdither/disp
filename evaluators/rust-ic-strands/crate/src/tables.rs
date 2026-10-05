@@ -29,6 +29,7 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if p.k != 2 || p.lanes != 4 { return Some("its site holds 2 agents and 4 strands per link"); }
     if !p.pulse { return Some("demand always travels as pulses there"); }
     if p.pressure != 0.0 || p.repel != 0.0 { return Some("it has no pressure or repulsion"); }
+    if p.calls || p.fields.iter().any(|c| c.source != crate::lattice::Source::NONE) { return Some("it has no fields, and does not call values"); }
     None
 }
 
