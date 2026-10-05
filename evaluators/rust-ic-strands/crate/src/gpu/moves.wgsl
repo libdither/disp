@@ -13,6 +13,16 @@ fn mv_strands(s: u32) -> u32 {
   return (u >> 1u) & 0xFFFFFFu;
 }
 
+/// The place of x's set bit n (from 0, lowest first), found by halves.
+fn nth_bit(x: u32, n: u32) -> u32 {
+  var v = x; var k = n; var at_ = 0u;
+  for (var w = 16u; w > 0u; w >>= 1u) {
+    let lo = countOneBits(v & ((1u << w) - 1u));
+    if (k >= lo) { k -= lo; v >>= w; at_ += w; }
+  }
+  return at_;
+}
+
 /// hop_to's {ok, de}.
 struct Hop { ok: bool, de: i32 }
 
@@ -174,9 +184,8 @@ fn move_stage(active_mode: bool, act_k: u32) {
     for (var g = 0u; g < 6u; g++) { if ((inb(p, g) & 8u) == 0u) { used &= ~(15u << (4u * g)); } }
     let n = countOneBits(used);
     if (n != 0u) {
-      reshape = true; let pk_ = pick5(d_where(), n);
-      for (var c = 0u; c < pk_; c++) { used &= used - 1u; }
-      e = 9u + firstTrailingBit(used); f = face(e);
+      reshape = true;
+      e = 9u + nth_bit(used, pick5(d_where(), n)); f = face(e);
     }
   }
   tn = inb(p, f); let m = gm(p, e); let f2 = face(m);

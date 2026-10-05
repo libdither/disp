@@ -48,10 +48,11 @@ fn key(q: u32) -> u32 {
   return (x & 1023u) | ((y & 1023u) << 10u) | ((z & 1023u) << 20u);
 }
 
-/// A consumer at position q whose partner is here or one strand away (lattice.rs `active_pair`).
-struct Pair { found: bool, stale: bool, via: bool, inf: bool, kc: u32, kp: u32, face: u32, inf_pos: u32, inf_k: u32 }
+/// A consumer at position q whose partner is here or one strand away (lattice.rs `active_pair`),
+/// as the block stood before its first turn; `seen`: the positions across a strand it looked at.
+struct Pair { found: bool, stale: bool, via: bool, inf: bool, kc: u32, kp: u32, face: u32, inf_pos: u32, inf_k: u32, seen: u32 }
 fn active_pair(q: u32) -> Pair {
-  var r = Pair(false, false, false, false, 0u, 0u, 0u, 0u, 0u);
+  var r = Pair(false, false, false, false, 0u, 0u, 0u, 0u, 0u, 0u);
   for (var k = 0u; k < 3u; k++) {
     let t = gt(q, k); let m = gm(q, ae(k, 0u));
     var skip = t == 0u || !is_consumer(t) || (LAZY && !gw(q, k)) || m == NONE;
@@ -59,8 +60,7 @@ fn active_pair(q: u32) -> Pair {
     if (!skip && is_strand(m)) {
       f = face(m); let nn = inb(q, f);
       if ((nn & 8u) == 0u) { skip = true; }
-      else if ((taken & (1u << (nn & 7u))) != 0u) { r.stale = true; return r; }
-      else { sp = nn & 7u; mm = gm(sp, se(f ^ 1u, lane(m))); }
+      else { r.seen |= 1u << (nn & 7u); sp = nn & 7u; mm = gm(sp, se(f ^ 1u, lane(m))); }
     }
     if (!skip && !is_strand(mm) && mm != NONE) {
       let k2 = port_k(mm); let qq = port_q(mm); let t2 = gt(sp, k2);
@@ -73,13 +73,38 @@ fn active_pair(q: u32) -> Pair {
   }
   return r;
 }
+/// Position q's pair, noted in slot PAIR for its turn.
+fn note_pair(q: u32) -> Pair {
+  let r = active_pair(q);
+  sb[at(PAIR, q)] = u32(r.found) | (u32(r.via) << 1u) | (u32(r.inf) << 2u) | (r.kc << 3u) | (r.kp << 5u) | (r.face << 7u)
+                  | (r.inf_pos << 10u) | (r.inf_k << 13u) | (r.seen << 16u);
+  return r;
+}
+/// Position q's pair as noted. Turns since change only the positions they took, and q is not one
+/// of them, so the pair is the same unless it looked across a strand at a taken position: then
+/// the turn read stale state (lattice.rs `active_pair` stops at the first such look).
+fn noted_pair(q: u32) -> Pair {
+  let v = sb[at(PAIR, q)];
+  return Pair((v & 1u) != 0u, (taken & (v >> 16u)) != 0u, (v & 2u) != 0u, (v & 4u) != 0u, (v >> 3u) & 3u, (v >> 5u) & 3u,
+              (v >> 7u) & 7u, (v >> 10u) & 7u, (v >> 13u) & 3u, v >> 16u);
+}
 
-fn wanted_reader(s: u32, k: u32) -> bool { let t = gt(s, k); return t != 0u && is_consumer(t) && t != T_EPS && gw(s, k); }
 fn vwanted_reader(s: Site, k: u32) -> bool { let t = vgt(s, k); return t != 0u && is_consumer(t) && t != T_EPS && vgw(s, k); }
-/// The wanted reader an active turn moves (the RTL's `active_reader`).
-fn reader_k() -> u32 {
+/// Bit k: slot k of position s holds a wanted reader (its tags are word 8's top three bytes, its
+/// wanted bits word 9's low three).
+fn readers(s: u32) -> u32 {
+  let tags = sb[at(s, 8u)] >> 8u; let wants = sb[at(s, 9u)];
+  var m = 0u;
+  for (var k = 0u; k < 3u; k++) {
+    let t = (tags >> (8u * k)) & 0xFFu;
+    if (t != 0u && is_consumer(t) && t != T_EPS && ((wants >> (8u * k)) & 0xFFu) != 0u) { m |= 1u << k; }
+  }
+  return m;
+}
+/// The wanted reader an active turn moves (the RTL's `active_reader`), among `rd` (bit k: slot k).
+fn reader_k(rd: u32) -> u32 {
   var ksl = 0u; var n = 0u;
-  for (var k = 0u; k < 3u; k++) { if (wanted_reader(p, k)) { ksl |= k << (2u * n); n++; } }
+  for (var k = 0u; k < 3u; k++) { if (((rd >> k) & 1u) != 0u) { ksl |= k << (2u * n); n++; } }
   return (ksl >> (2u * pick5(d_agent(), n))) & 3u;
 }
 
@@ -90,20 +115,19 @@ const ST_PAIR: u32 = 0u; const ST_MOVE: u32 = 1u; const ST_COLLECT: u32 = 2u; co
 /// runs lies together: the GPU fetches less of it.
 fn turn() {
   dice = hash(key(p), tick); touched = 0u; stale = false;
-  var pm0: array<u32, 8>;
-  for (var q = 0u; q < 8u; q++) { pm0[q] = gm(q, gpul(q)); }
   let eraser = (gt(p, 0u) == T_EPS && gm(p, ae(0u, 0u)) != NONE) || (gt(p, 1u) == T_EPS && gm(p, ae(1u, 0u)) != NONE);
   var st = select(ST_PAIR, ST_COLLECT, GC && eraser);
   var pr: Pair;
   loop {
     if (st == ST_PAIR) {
-      pr = active_pair(p);
+      pr = noted_pair(p);
       if (pr.stale) { stale = true; break; }
       st = select(ST_MOVE, ST_FIRE, pr.found);
     }
     if (st == ST_MOVE) {
-      let active_mode = d_active() < CH_ACTIVE && (wanted_reader(p, 0u) || wanted_reader(p, 1u) || wanted_reader(p, 2u));
-      let act_k = reader_k();
+      let rd = readers(p);
+      let active_mode = d_active() < CH_ACTIVE && rd != 0u;
+      let act_k = reader_k(rd);
       // A reader that touched a pending computation wants it now (lattice.rs `take_infect`).
       if (pr.inf && !gw(pr.inf_pos, pr.inf_k)) { sw(pr.inf_pos, pr.inf_k, true); touched |= 1u << pr.inf_pos; }
       move_stage(active_mode, act_k);
@@ -120,25 +144,40 @@ fn turn() {
     if (r == 1u) { tally[T_FIRES]++; log_fire(site_at(corner, p)); }
     break;
   }
-  // A pulse whose strand's mate changed during the turn is lost.
-  for (var q = 0u; q < 8u; q++) {
+  // A pulse whose strand's mate changed during the turn is lost (only a touched position changes).
+  var tb = touched;
+  while (tb != 0u) {
+    let q = firstTrailingBit(tb);
+    tb &= tb - 1u;
     let e = gpul(q);
-    if (e != NONE && gm(q, e) != pm0[q]) { spul(q, NONE); }
+    if (e != NONE && gm(q, e) != pmate(q)) { spul(q, NONE); }
+    set_pmate(q);
   }
   taken |= touched;
 }
+
+/// Byte q: the mate of the strand end position q's pulse sits on (none without a pulse), as it
+/// was before the turn under way; kept up to date as turns touch positions.
+var<private> pmates: vec2<u32>;
+fn pmate(q: u32) -> u32 { return (pmates[q >> 2u] >> (8u * (q & 3u))) & 0xFFu; }
+fn set_pmate(q: u32) {
+  let i = q >> 2u; let sh = 8u * (q & 3u);
+  pmates[i] = (pmates[i] & ~(0xFFu << sh)) | (gm(q, gpul(q)) << sh);
+}
+fn set_pmates() { for (var q = 0u; q < 8u; q++) { set_pmate(q); } }
 
 /// The block's turns (lattice.rs `margolus_clock` with `block_moves`): sites with a reaction
 /// ready, then with agents, then bare wire, each in block order rotated by the block's random
 /// word; a site an earlier turn changed sits out.
 fn run_block() {
   taken = 0u;
+  set_pmates();
   var cls: array<u32, 8>;
   for (var q = 0u; q < 8u; q++) {
     var c = 3u;
     if ((onl & (1u << q)) != 0u) {
-      if (occ(q) != 0u) { c = select(1u, 0u, active_pair(q).found); }
-      else { for (var e = 9u; e < NE; e++) { if (getb(q, e) != NONE) { c = 2u; break; } } }
+      if (occ(q) != 0u) { c = select(1u, 0u, note_pair(q).found); }
+      else { sb[at(PAIR, q)] = 0u; if (mv_strands(q) != 0u) { c = 2u; } }
     }
     cls[q] = c;
   }
@@ -216,14 +255,7 @@ fn block_turns(b: vec3<i32>) {
   if (any == 0u && here == 0u) { return; }
   var dirty = 0u;
   if (clk.fused != 0u) {
-    for (var q = 0u; q < 8u; q++) {
-      if ((any & (1u << q)) != 0u) {
-        let t = get_site(q); let u = pulse_step(sx[q], t);
-        var changed = false;
-        for (var i = 0u; i < 10u; i++) { if (u[i] != t[i]) { changed = true; } }
-        if (changed) { put_site(q, u); dirty |= 1u << q; }
-      }
-    }
+    for (var q = 0u; q < 8u; q++) { if ((any & (1u << q)) != 0u) { dirty |= pulse_at(q, sx[q]); } }
   }
   taken = 0u;
   if (any != 0u) { run_block(); }
@@ -248,19 +280,22 @@ fn turns(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) n
   block_turns(vec3<i32>(i32(id % clk.nbx), i32((id / clk.nbx) % clk.nby), i32(id / (clk.nbx * clk.nby))));
 }
 
-/// Site s's pulse phase (lattice.rs `step_pulses`; hw/rtl/strands_lattice.v `strands_site_net`),
-/// from its state `old` and its neighbours' pulses after the previous clock's turns: pulses
-/// pointing at the site arrive, the one through its lowest face winning; a pulse reaching a
-/// computation's output wants it; a wanted reader with no pulse in its site sends one.
-fn pulse_step(s: u32, old: Site) -> Site {
+/// Site s's neighbours' pulses after the previous clock's turns, by face (none off the lattice).
+fn neighbour_pulses(s: u32) -> array<u32, 6> {
   let x = s % clk.w; let y = (s / clk.w) % clk.h; let z = s / (clk.w * clk.h);
   let on = array<bool, 6>(x + 1u < clk.w, x > 0u, y + 1u < clk.h, y > 0u, z + 1u < clk.d, z > 0u);
   let nb = array<u32, 6>(s + 1u, s - 1u, s + clk.w, s - clk.w, s + clk.w * clk.h, s - clk.w * clk.h);
   var pes: array<u32, 6>;
-  for (var f = 0u; f < 6u; f++) { pes[f] = pul_read(select(s, nb[f], on[f])); }
+  for (var f = 0u; f < 6u; f++) { pes[f] = select(NONE, pul_read(select(s, nb[f], on[f])), on[f]); }
+  return pes;
+}
+/// A site's pulse phase (lattice.rs `step_pulses`; hw/rtl/strands_lattice.v `strands_site_net`),
+/// from its state `old` and its neighbours' pulses `pes`: pulses pointing at the site arrive, the
+/// one through its lowest face winning; a pulse reaching a computation's output wants it; a
+/// wanted reader with no pulse in its site sends one.
+fn pulse_step(old: Site, pes: array<u32, 6>) -> Site {
   var t = old; var arr = NONE; var got = false;
   for (var f = 0u; f < 6u; f++) {
-    if (!on[f]) { continue; }
     let pe = pes[f];
     if (is_strand(pe) && face(pe) == (f ^ 1u)) {
       let m = vgm(t, se(f, lane(pe)));
@@ -277,9 +312,17 @@ fn pulse_step(s: u32, old: Site) -> Site {
   }
   return vspul(t, arr);
 }
+/// The pulse phase of position q, site s; bit q if it changed.
+fn pulse_at(q: u32, s: u32) -> u32 {
+  let t = get_site(q); let u = pulse_step(t, neighbour_pulses(s));
+  var changed = false;
+  for (var i = 0u; i < 10u; i++) { if (u[i] != t[i]) { changed = true; } }
+  if (changed) { put_site(q, u); }
+  return u32(changed) << q;
+}
 fn site_pulse(s: u32) {
   let old = load(s);
-  let t = pulse_step(s, old);
+  let t = pulse_step(old, neighbour_pulses(s));
   var changed = false;
   for (var i = 0u; i < 10u; i++) { if (t[i] != old[i]) { changed = true; } }
   if (changed) { store(s, t); }
@@ -305,7 +348,7 @@ fn vectors(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups)
   tick = recs[b + 1u];
   edges(vec3<i32>(i32(recs[b + 2u]), i32(recs[b + 3u]), i32(recs[b + 4u])), recs[b + 5u], recs[b + 6u], recs[b + 7u]);
   for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { sb[at(q, i)] = recs[b + 11u + q * 10u + i]; } }
-  if (recs[b] == 0u) { taken = recs[b + 10u]; p = recs[b + 9u]; turn(); }
+  if (recs[b] == 0u) { taken = recs[b + 10u]; p = recs[b + 9u]; note_pair(p); set_pmates(); turn(); }
   else { run_block(); }
   for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { recs[b + 11u + q * 10u + i] = sb[at(q, i)]; } }
   recs[b + 91u] = touched;

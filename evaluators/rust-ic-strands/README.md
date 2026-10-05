@@ -397,18 +397,18 @@ Radeon 760M), same seed, both looking for the answer as they go:
 
 | program | lattice | clocks | CPU | GPU |
 |---|---|---|---|---|
-| fib(0) | 232×232×8 | 7,568 | 2.83 s | 0.77 s |
-| fib(1) | 300×300×8 | 9,898 | 3.74 s | 1.03 s |
+| fib(0) | 232×232×8 | 7,568 | 2.83 s | 0.71 s |
+| fib(1) | 300×300×8 | 9,898 | 3.74 s | 0.93 s |
 | sort(1) | 490×490×8 | 2,501 | 4.06 s | 0.63 s |
-| fib(2) | 300×300×8 | 57,949 | 19.6 s | 5.6 s |
+| fib(2) | 300×300×8 | 57,949 | 19.6 s | 5.1 s |
 
 **What a clock costs.** These programs keep 2,000–3,000 sites in use, a few hundred busy blocks
 a clock, and every clock waits on the one before. So a clock takes as long as its slowest wave
-(the 32 threads that run in lockstep): on fib(1) about 85 µs, against 380 µs for the CPU's whole
+(the 32 threads that run in lockstep): on fib(1) about 75 µs, against 380 µs for the CPU's whole
 clock. Loading and storing the blocks, the pulse phase and the busy list take about a seventh of
 it; the turns take the rest. A wave runs every path any of its blocks takes, one after another,
 each a long chain of dependent steps that a GPU thread runs far more slowly than a CPU core. What
-made the clock 2.2× faster than the version before, in the order made, each against the one
+made the clock 2.5× faster than the version before, in the order made, each against the one
 before it, on fib(1):
 
 - each block lists its turns first, so a wave runs as many turns as its busiest block has sites,
@@ -419,7 +419,14 @@ before it, on fib(1):
   driver from unrolling the loops): 23%;
 - the block's loads issued together, not site by site: 10%;
 - the code a turn usually runs shorter and in one place (both halves of an exchange through one
-  copy of the step, the step's writes as loops, the rare stages last): about 10%.
+  copy of the step, the step's writes as loops, the rare stages last): about 10%;
+- each position's pair looked for once a clock, not again at its turn (a turn changes only the
+  positions it takes, so the pair stands unless it was seen across a strand at one of them): 6%;
+- a pulse lost to a rewired strand looked for only where the turn wrote: 3%.
+
+Code size matters: the turn kernel is about 100 KB against a 32 KB instruction cache. Running the
+pulse phase as eight inlined copies, to load all 48 neighbours' pulses at once, made the kernel
+170 KB and a clock 18% slower.
 
 Two things that do not help. Running every block and site each clock (`--dense`) is 7.5× slower
 even on the smallest lattice fib(1) fits in, all but 0.4% of which is empty. Running several
@@ -451,9 +458,9 @@ hands a run back and forth between GPU and CPU in batches of varying size, and i
 that stays on the CPU, site for site and count for count. `player/dawn.sh` runs it in Node on
 Dawn, Chrome's WebGPU, on the machine's own GPU (`check`, or `bench` for speeds);
 `player/check.mjs` runs it in headless Chromium, which here only gets SwiftShader, a GPU emulated
-on the CPU. The kernels need 7.5 KB of workgroup memory, within WebGPU's default of 16 KB.
+on the CPU. The kernels need 8 KB of workgroup memory, within WebGPU's default of 16 KB.
 
-In the browser the GPU runs fib(1) at 8,500 clocks a second, against 2,490 for the player's CPU
+In the browser the GPU runs fib(1) at 9,000 clocks a second, against 2,350 for the player's CPU
 engine (WebAssembly, nearly as fast as the native simulator). An earlier version listed each
 clock's busy blocks in a kernel of its own and launched the turns as an indirect dispatch (one
 whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on the CPU, about

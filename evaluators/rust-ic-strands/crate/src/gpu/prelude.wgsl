@@ -55,16 +55,18 @@ fn vsw(s: Site, k: u32, v: bool) -> Site { return vsetb(s, 36u + min(k, 2u), sel
 fn vspul(s: Site, v: u32) -> Site { return vsetb(s, 39u, v); }
 
 // ---- sites in slots -------------------------------------------------------------------------
-// Each invocation keeps its sites in SLOTS slots of workgroup memory: slots 0..7 are the block's
-// positions, the rest working copies (TMP on; the rewrite's working copy is the most, four). Functions name a site by its slot and change it in
+// Each invocation keeps its sites in slots of workgroup memory: slots 0..7 are the block's
+// positions, then working copies (TMP on; the rewrite's working copy is the most, four), then
+// slot PAIR, a word per position noting its pair (block.wgsl). Functions name a site by its slot and change it in
 // place, so a site's byte is an address, not a choice among ten words held in registers. Word w of
 // slot s of invocation lid is at (s * 10 + w) * WG + lid: neighbouring invocations, neighbouring banks.
 // A workgroup is WG invocations, fewer than a wave: a wave runs every path any of its blocks
 // takes, so fewer blocks to a wave means fewer paths, and the waves are spread over more of the GPU.
-const SLOTS: u32 = 12u;
+const SLOTS: u32 = 13u;
 const TMP: u32 = 8u;
+const PAIR: u32 = 12u;
 const WG: u32 = 16u;
-var<workgroup> sb: array<u32, 1920>;
+var<workgroup> sb: array<u32, 2080>;
 /// This invocation's place in its workgroup.
 var<private> lid: u32;
 fn at(s: u32, w: u32) -> u32 { return (s * 10u + w) * WG + lid; }
