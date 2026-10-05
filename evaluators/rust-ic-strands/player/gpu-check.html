@@ -1,75 +1,14 @@
 <!doctype html><html><head><meta charset="utf-8"><title>gpu check</title></head>
 <body style="background:#0b0e14;color:#c8d3e0;font:13px ui-monospace,monospace"><pre id="out"></pre>
-<!-- The player's WebGPU path checked against its CPU, in the browser (check.mjs runs it headless).
-     Two engines load the same term: one runs on the CPU throughout, the other is handed back and
-     forth between the GPU and the CPU as the player's switch does, in batches of varying size.
-     After every stretch both must hold the same sites and the same counts.
-     Hash: src=TERM, then any of depth, temp, swap, board, idle, link, wp, wa, pairs, lazy, gc, clocks, seed. -->
+<!-- gpu-check.js in a browser (check.mjs runs it in headless Chromium): the hash is its settings,
+     with bench=1 for speeds instead of the check. The title ends as "DONE ok ..." or "DONE FAIL ...". -->
 <script src="engine.js"></script>
 <script src="gpu.js"></script>
+<script src="gpu-check.js"></script>
 <script>
 const out = document.getElementById("out"), say = s => { out.textContent += s + "\n"; console.log(s); };
-const done = s => { say(s); document.title = "DONE " + s; };
-const q = new URLSearchParams(location.hash.slice(1)), num = (k, d) => q.has(k) ? +q.get(k) : d;
-const enc = new TextEncoder(), dec = new TextDecoder();
-async function engine() {
-  const bytes = Uint8Array.from(atob(window.STRANDS_WASM), c => c.charCodeAt(0));
-  const E = { ...(await WebAssembly.instantiate(bytes, {})).instance.exports };
-  E.text = n => dec.decode(new Uint8Array(E.memory.buffer, E.text_ptr(), n));
-  E.withString = (s, f) => { const b = enc.encode(s); const p = E.alloc(b.length || 1); new Uint8Array(E.memory.buffer, p, b.length).set(b); return f(p, b.length); };
-  E.stats = () => Array.from(new Float64Array(E.memory.buffer, E.stats_ptr(), 17));
-  E.held = () => { const p = E.strands_held(); return new Uint32Array(E.memory.buffer, p, E.words_len()).slice(); };
-  return E;
-}
-// The player's settings for the chip's schedule (index.html `load`), with the hash's changes.
-const src = q.get("src") || "sort:1", depth = num("depth", 6), seed = num("seed", 7);
-const flags = 1 | (num("lazy", 1) << 1) | 4 | 8 | (num("gc", 1) << 4) | 96 | (num("pairs", 8) << 8);
-const args = [flags, num("temp", 2), num("swap", 1), 0.8, num("wp", 3), num("wa", 1), num("link", 0), num("board", 0.5), num("idle", 10), seed];
-function load(E, side) { return E.withString(src, (p, n) => E.strands_new(side, side, depth, 2, 4, ...args, p, n)); }
-// Sites by index, so two engines' lists compare whatever their order.
-function byIndex(held) {
-  const R = StrandsGPU.REC, idx = Array.from({ length: held.length / R }, (_, i) => i).sort((a, b) => held[a * R] - held[b * R]);
-  const v = new Uint32Array(held.length); idx.forEach((j, i) => v.set(held.subarray(j * R, j * R + R), i * R)); return v;
-}
-const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-// Stats both must agree on (wasm.rs `stats_ptr`): all but the peaks, which the GPU's engine sees only between stretches.
-const NAMES = ["proposals", "clocks", "fires", "hops", "swaps", "folds", "flips", "strands", null, "blocked", "done", "agents", "walk_ok", "walk_fail", "pulses", null, "collected"];
-(async () => {
-  const A = await engine(), B = await engine();
-  const agents = A.withString(src, (p, n) => A.strands_probe(p, n));
-  let side = Math.ceil(Math.sqrt(agents) * (depth > 1 ? 7 : 8)) + 16, rc = 2;
-  for (let t = 0; t < 6 && rc === 2; t++) { rc = load(A, side); if (rc === 2) side = Math.ceil(side * 1.4); }
-  if (rc !== 0 || load(B, side) !== 0) return done("FAIL load: " + A.text(A.text_len()));
-  if (!B.strands_gpu_shader()) return done("FAIL unfit: " + B.text(B.text_len()));
-  const t0 = performance.now();
-  let gpu;
-  try { gpu = await StrandsGPU.open(B.text(B.text_len())); } catch (e) { return done("FAIL " + e.message); }
-  say(`${src} on ${side}×${side}×${depth}, ${agents} agents; GPU: ${gpu.name} (ready in ${((performance.now() - t0) / 1000).toFixed(1)}s)`);
-  const batches = [1, 7, 13, 64], max = num("clocks", 1e9), grid = new StrandsGPU.Grid(gpu, side, side, depth, 64);
-  let clocks = 0, stretch = 0, onGpu = 0;
-  while (clocks < max) {
-    const n = Math.min(max - clocks, 40 + 30 * (stretch % 5)), first = clocks;
-    A.fire_log_clear(); B.fire_log_clear();
-    if (stretch % 3 === 2) B.strands_clocks(n);
-    else {
-      grid.upload(B.held());
-      for (let c = 0; c < n;) { const m = Math.min(batches[(stretch + c) % 4], n - c); grid.run(first + c, seed, m, c + m === n); c += m; }
-      const r = await grid.take();
-      const w = new Uint32Array(B.memory.buffer, B.words_ptr(r.held.length + r.tally.length + r.fires.length), r.held.length + r.tally.length + r.fires.length);
-      w.set(r.held); w.set(r.tally, r.held.length); w.set(r.fires, r.held.length + r.tally.length);
-      B.strands_gpu_ran(n, r.held.length, r.fires.length);
-      onGpu += n;
-    }
-    const fin = A.strands_clocks(n);
-    clocks += n; stretch++;
-    const sa = A.stats(), sb = B.stats(), off = NAMES.map((k, i) => k && sa[i] !== sb[i] ? `${k} cpu ${sa[i]} handed ${sb[i]}` : null).filter(Boolean);
-    if (!same(byIndex(A.held()), byIndex(B.held()))) return done(`FAIL clock ${clocks}: the sites differ`);
-    if (off.length) return done(`FAIL clock ${clocks}: ${off.join(", ")}`);
-    const log = E => Array.from(new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len())).sort((a, b) => a - b);
-    if (!same(log(A), log(B))) return done(`FAIL clock ${clocks}: rewrites at cpu ${log(A)} handed ${log(B)}`);
-    if (fin) break;
-  }
-  const s = A.stats();
-  done(`ok ${clocks} clocks (${onGpu} on the GPU) matched, ${s[2]} rewrites, answer ${A.text(A.strands_answer())}  ${((performance.now() - t0) / 1000).toFixed(1)}s`);
-})().catch(e => done("FAIL " + (e.stack || e)));
+const hash = location.hash.slice(1);
+StrandsCheck[/(^|&)bench=1/.test(hash) ? "bench" : "check"](hash, say)
+  .catch(e => "FAIL " + (e.stack || e))
+  .then(v => { say(v); document.title = "DONE " + v; });
 </script></body></html>

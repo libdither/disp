@@ -93,5 +93,5 @@ fn rule_wb(ri: u32, k: u32) -> u32 { if (ri >= NRULES || k >= 9u) { return 0u; }
 /// The whole GPU shader for configuration p: the tables, then the stages in order.
 pub fn shader(p: &Params) -> String {
     [wgsl_for(p).as_str(), include_str!("gpu/prelude.wgsl"), include_str!("gpu/collect.wgsl"), include_str!("gpu/fire.wgsl"),
-     include_str!("gpu/moves.wgsl"), include_str!("gpu/block.wgsl"), include_str!("gpu/tiles.wgsl")].join("\n")
+     include_str!("gpu/moves.wgsl"), include_str!("gpu/block.wgsl"), include_str!("gpu/busy.wgsl")].join("\n")
 }

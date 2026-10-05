@@ -2,12 +2,13 @@
 // strands_lattice.v; lattice.rs `margolus_clock`, `turn`, `step_pulses`).
 
 /// One clock's parameters: the lattice's size, the clock mixed with the seed (lattice.rs `tick`),
-/// blocks per axis, how many invocations a full-lattice dispatch covers, the tiles (tiles.wgsl):
-/// blocks per tile and tiles per axis; then the clock's parity (which pulse buffer it writes),
-/// whether its turns start with the previous clock's pulse phase, and which busy list it runs.
+/// blocks per axis, how many invocations a full-lattice dispatch covers; the next clock's tick, the
+/// stamp that marks a block as on its busy list (busy.wgsl), the list that clock runs and the list
+/// to empty; then the clock's parity (which pulse buffer it writes), whether its turns start with
+/// the previous clock's pulse phase, and which busy list it runs.
 struct Clock { w: u32, h: u32, d: u32, tick: u32, nbx: u32, nby: u32, nbz: u32, n: u32,
-               tbx: u32, tby: u32, tbz: u32, ntx: u32, nty: u32, ntz: u32, par: u32, fused: u32,
-               list: u32, pad0: u32, pad1: u32, pad2: u32 }
+               tick_next: u32, stamp: u32, next: u32, clear: u32, pad0: u32, pad1: u32, par: u32, fused: u32,
+               list: u32, pad2: u32, pad3: u32, pad4: u32 }
 @group(0) @binding(0) var<uniform> clk: Clock;
 /// Every site, 10 words each, at x + w * (y + h * z).
 @group(0) @binding(1) var<storage, read_write> sites: array<u32>;
@@ -15,18 +16,15 @@ struct Clock { w: u32, h: u32, d: u32, tick: u32, nbx: u32, nby: u32, nbz: u32, 
 /// phase reads its neighbours' from the clock before while the turns write this clock's.
 @group(0) @binding(2) var<storage, read_write> pul: array<u32>;
 /// Recorded turns and blocks to replay (the `vectors` kernel), REC words each; or the sites holding
-/// anything, gathered to look for the answer (tiles.wgsl `busy_gather`).
+/// anything, gathered to look for the answer (busy.wgsl `busy_gather`).
 @group(0) @binding(3) var<storage, read_write> recs: array<u32>;
-/// Per site: it holds something, or has a pulse left in the buffer the next clock writes (to be
-/// cleared then). The busy list and the active tiles are made from these.
-@group(0) @binding(8) var<storage, read_write> live: array<u32>;
 
 /// The clock mixed with the seed.
 var<private> tick: u32;
 /// The block's corner (its position 0), which may lie off the lattice.
 var<private> corner: vec3<i32>;
 
-/// What this invocation's turns and pulses did, by `T_*` (tiles.wgsl), added to `counts` at the end.
+/// What this invocation's turns and pulses did, by `T_*` (busy.wgsl), added to `counts` at the end.
 var<private> tally: array<u32, 11>;
 
 /// The block's place in the lattice (the RTL's `edges`), in the RTL's wrapping arithmetic.
@@ -159,9 +157,11 @@ fn block_corner(b: vec3<i32>) -> vec3<i32> {
 
 /// Block b's turns. With `fused`, its sites first take the previous clock's pulse phase. Every
 /// site's pulse goes to this clock's buffer afterwards, so a site that emptied leaves no stale
-/// pulse behind.
+/// pulse behind. A site that holds something, or has a pulse left in the buffer the next clock
+/// writes (to be cleared then), puts its block on the next clock's busy list.
 fn block_turns(b: vec3<i32>) {
   tick = clk.tick;
+  next_clock();
   let c = block_corner(b);
   edges(c, clk.w, clk.h, clk.d);
   if (onl == 0u) { return; }
@@ -197,7 +197,7 @@ fn block_turns(b: vec3<i32>) {
       set_pul(s, gpul(q));
       var held = pul_read(s) != NONE;
       for (var i = 0u; i < 10u; i++) { if (sb[at(q, i)] != EMPTY[i]) { held = true; } }
-      live[s] = u32(held);
+      if (held && clk.next != NO_LIST) { mark_next(s); }
     }
   }
   add_tally();

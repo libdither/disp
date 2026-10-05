@@ -383,13 +383,14 @@ and the block only reads and writes its own 8 sites, so whatever runs on the GPU
 chip. It matches the simulator bit for bit: `hw/validate.sh` replays every recorded turn and block
 through it, and runs it in lockstep with the simulator.
 
-Its speed comes from locality. A clock moves anything at most one site, so only tiles of 64 blocks
-near something run. The GPU rebuilds the list of such tiles every 8 clocks, the tiles holding
-something and their neighbours. Within them, each clock lists the blocks holding something, so
-every thread of the turn kernel has work. Each clock's pulse phase runs at the start of the next
-clock's turns; the pulses sit in two buffers by clock parity, so a block reads its neighbours'
-while writing its own. A thread keeps its sites in workgroup memory and changes them in place.
-Locality alone makes it 4.8× faster than running every block and site each clock.
+Its speed comes from locality. A clock moves anything at most one site, inside its block, so a
+clock need run only the blocks holding something: its busy list. Each block makes the next clock's
+list as it finishes its turns, marking the next clock's blocks that hold its sites (one atomic
+per block, so each joins once). So a clock is a single dispatch, of a fixed number of workgroups
+that share out however many blocks are busy; nothing waits to learn the list's length. Each
+clock's pulse phase runs at the start of the next clock's turns; the pulses sit in two buffers
+by clock parity, so a block reads its neighbours' while writing its own. A thread keeps its
+sites in workgroup memory and changes them in place.
 
 Against the simulator, on one machine (Ryzen 5 7640U, single-threaded, against its integrated
 Radeon 760M), same seed, both looking for the answer as they go:
@@ -398,12 +399,29 @@ Radeon 760M), same seed, both looking for the answer as they go:
 |---|---|---|---|---|
 | fib(0) | 232×232×8 | 7,568 | 2.9 s | 1.7 s |
 | fib(1) | 300×300×8 | 9,898 | 3.8 s | 2.3 s |
-| sort(1) | 490×490×8 | 2,501 | 4.2 s | 1.4 s |
-| fib(2) | 300×300×8 | 57,949 | 19.9 s | 12.7 s |
+| sort(1) | 490×490×8 | 2,501 | 4.2 s | 1.3 s |
+| fib(2) | 300×300×8 | 57,949 | 19.9 s | 13.0 s |
 
-A clock costs at least 0.08 ms of launching kernels (three a clock, four more every eight), and
-fib's few thousand sites in use add about as much again, so the GPU gains most where much is
-going on at once.
+**Why not more.** These programs keep 2,000–3,000 sites in use, a few hundred busy blocks a
+clock, and every clock waits on the one before. So a clock takes as long as the slowest thread's
+turns: up to 8 in a row, each a long chain of dependent steps that a GPU thread runs much more
+slowly than a CPU core (about 175 µs a clock on fib(1), against 400 µs for the CPU's whole clock).
+More work per clock is where the GPU should gain, but it gains less than it could: copies of
+fib(1) side by side, through the browser path below (clocks a second):
+
+| copies | sites in use | CPU (wasm) | GPU | ratio |
+|---|---|---|---|---|
+| 1 | 2,015 | 1,604 | 4,001 | 2.5× |
+| 4 | 8,060 | 361 | 1,632 | 4.5× |
+| 16 | 32,240 | 71 | 520 | 7.3× |
+
+Two things hold it back. A thread's block and working copies take 480 bytes of workgroup memory,
+so only about 2 waves fit on each SIMD, too few to hide latency; and the 32 threads of a wave
+take different turns (a step, a fold, a rewrite), so the wave runs each of their paths in turn.
+Making the GPU orders of magnitude faster than a core would take a different kernel: a block's
+turns tried at once, one thread each, then kept in order where they do not conflict, and the
+turns sorted by kind so a wave runs one path; with sites kept as their list of pairings, as the
+chip keeps them, so more threads fit.
 
 The GPU also counts what the turns did, the same counts the simulator keeps: turns, rewrites (and
 where they fired), rewrites without room, steps, exchanges, folds, flips, collections, walker
@@ -415,13 +433,19 @@ site and pulses runs on it: eager evaluation, no cap on pairings, other tensions
 engine generates for the loaded settings. The engine stays the record of the run: a GPU stretch
 starts from the engine's sites and ends by putting the GPU's back, with its counts, and the engine
 rebuilds its abstract net from them (`Lattice::adopt`). So the CPU can take over at any clock
-and carry on exactly as if it had run all along (`tests/resume.rs`). `player/check.mjs` runs
-`player/gpu-check.html` in headless Chromium: one engine hands its run back and forth between GPU
-and CPU in batches of varying size, and must match one that stays on the CPU, site for site and
-count for count. Headless Chromium here only gets SwiftShader (a GPU emulated on the CPU), so this
-checks Chrome's WGSL compiler and WebGPU's rules, not speed. The kernels need 30 KB of workgroup
-memory and 9 storage buffers per stage, above WebGPU's defaults (16 KB, 8) but within what
-desktop GPUs offer.
+and carry on exactly as if it had run all along (`tests/resume.rs`). `player/gpu-check.js`
+hands a run back and forth between GPU and CPU in batches of varying size, and it must match one
+that stays on the CPU, site for site and count for count. `player/dawn.sh` runs it in Node on
+Dawn, Chrome's WebGPU, on the machine's own GPU (`check`, or `bench` for speeds);
+`player/check.mjs` runs it in headless Chromium, which here only gets SwiftShader, a GPU emulated
+on the CPU. The kernels need 30 KB of workgroup memory, above WebGPU's default of 16 KB but within
+what desktop GPUs offer.
+
+In the browser the GPU runs fib(1) at 5,500 clocks a second, against 2,450 for the player's CPU
+engine (WebAssembly, nearly as fast as the native simulator). An earlier version listed each
+clock's busy blocks in a kernel of its own and launched the turns as an indirect dispatch (one
+whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on the CPU, about
+60 µs each, so recording a clock cost more than the GPU took to run it: 4,400 clocks a second.
 
 ## Running it
 
@@ -440,8 +464,9 @@ cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1
 version match it (see [`hw/README.md`](hw/README.md)). `crate/gpu.sh TERM --grid N [--depth D]`
 runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` without the tiles,
 `--vectors FILE...` replays recorded turns, `key=value` changes a setting as `strands-sweep`
-spells it); `strands-hw --wgsl` prints its generated tables. `node player/check.mjs 'src=sort:1'`
-checks the browser's GPU path. `TRACE=file strands-run ...` writes when each rewrite's pair
+spells it); `strands-hw --wgsl` prints its generated tables. `player/dawn.sh check 'src=sort:1'`
+checks the browser's GPU path, and `player/dawn.sh bench 'src=fib:1'` times it against the
+browser's CPU engine (`copies=16&clocks=512` for many copies side by side). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end.

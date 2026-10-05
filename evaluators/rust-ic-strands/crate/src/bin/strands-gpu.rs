@@ -2,7 +2,8 @@
 //!   strands-gpu --vectors FILE...                                   replay recorded turns and blocks (hw/validate.sh)
 //!   strands-gpu TERM --grid N [--depth D] [--seed S] --check [--batch B] [--clocks C]   simulator and GPU in lockstep
 //!   strands-gpu TERM --grid N [--depth D] [--seed S] [--batch B] [--clocks C]  the GPU alone
-//! `--dense` runs every block and site each clock instead of only the tiles near something;
+//! `--dense` runs every block and site each clock instead of only the blocks holding something;
+//! `--narrow` (with `--check`) runs the turns in one workgroup, each invocation taking many blocks;
 //! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`).
 
 use rust_ca_lattice::net::Net;
@@ -133,7 +134,7 @@ fn main() {
     let start = |p: &Params| { let g = Gpu::new(p).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) }); println!("GPU: {}", g.name); g };
     if args.first().is_some_and(|a| a == "--vectors") { std::process::exit(if vectors(&start(&chip()), &args[1..]) { 0 } else { 1 }); }
     let mut p = chip();
-    let (mut src, mut check, mut dense, mut batch, mut max) = (None, false, false, None, 1_000_000u64);
+    let (mut src, mut check, mut dense, mut narrow, mut batch, mut max) = (None, false, false, false, None, 1_000_000u64);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().expect("a value").clone();
@@ -149,6 +150,7 @@ fn main() {
             "--clocks" => max = val().parse().unwrap(),
             "--check" => check = true,
             "--dense" => dense = true,
+            "--narrow" => narrow = true,
             _ => match a.split_once('=') {
                 Some((k, v)) => p.set(k, v).unwrap_or_else(|e| panic!("{e}")),
                 None => src = Some(a.clone()),
@@ -181,6 +183,7 @@ fn main() {
             let n = (batch as u64).min(max - c);
             let before = counted(&l);
             l.fire_log.clear();
+            grid.busy_hint = if narrow { 0 } else { l.live().len() as u32 };
             for _ in 0..n { l.chip_clock(); }
             grid.run(c, p.seed, n as usize, dense, false);
             c += n;
