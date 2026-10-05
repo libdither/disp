@@ -4,6 +4,7 @@
 //!   strands-gpu TERM --grid N [--depth D] [--seed S] [--batch B] [--clocks C]  the GPU alone
 //! `--dense` runs every block and site each clock instead of only the blocks holding something;
 //! `--narrow` (with `--check`) runs the turns in one workgroup, each invocation taking many blocks;
+//! `--bench` runs exactly `--clocks` clocks without looking for the answer and times the GPU alone;
 //! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`).
 
 use rust_ca_lattice::net::Net;
@@ -134,7 +135,7 @@ fn main() {
     let start = |p: &Params| { let g = Gpu::new(p).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) }); println!("GPU: {}", g.name); g };
     if args.first().is_some_and(|a| a == "--vectors") { std::process::exit(if vectors(&start(&chip()), &args[1..]) { 0 } else { 1 }); }
     let mut p = chip();
-    let (mut src, mut check, mut dense, mut narrow, mut batch, mut max) = (None, false, false, false, None, 1_000_000u64);
+    let (mut src, mut check, mut dense, mut narrow, mut bench, mut batch, mut max) = (None, false, false, false, false, None, 1_000_000u64);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().expect("a value").clone();
@@ -151,6 +152,7 @@ fn main() {
             "--check" => check = true,
             "--dense" => dense = true,
             "--narrow" => narrow = true,
+            "--bench" => bench = true,
             _ => match a.split_once('=') {
                 Some((k, v)) => p.set(k, v).unwrap_or_else(|e| panic!("{e}")),
                 None => src = Some(a.clone()),
@@ -211,6 +213,23 @@ fn main() {
     let batch = batch.unwrap_or(64);
     let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, batch);
     grid.upload(&l.state_words());
+    if bench {
+        // The GPU raises its clock only under load: a first pass warms it, the second is timed.
+        for c in (0..max.min(4096)).step_by(batch) { grid.run(c, p.seed, batch.min((max.min(4096) - c) as usize), dense, false); }
+        grid.take_tally();
+        grid.upload(&l.state_words());
+        let t0 = std::time::Instant::now();
+        let mut c = 0u64;
+        while c < max {
+            let n = (batch as u64).min(max - c);
+            grid.run(c, p.seed, n as usize, dense, false);
+            c += n;
+        }
+        let (tally, _) = grid.take_tally();
+        let dt = t0.elapsed().as_secs_f64();
+        println!("{c} clocks in {dt:.3}s: {:.1} µs a clock, {:.0} clocks/s ({} rewrites, {} turns)", dt * 1e6 / c as f64, c as f64 / dt, tally[1], tally[0]);
+        return;
+    }
     // The answer is looked for after every batch, among the sites holding anything (`--dense`:
     // everywhere); a site that held something at the last look and is not among them is empty now.
     const EMPTY: [u32; SITE] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];

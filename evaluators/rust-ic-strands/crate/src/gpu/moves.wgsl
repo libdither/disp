@@ -62,34 +62,33 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
   // Where the through-wires land inside the neighbour: a wire coming back to another port of the
   // agent becomes a loop.
   var tgt = array<u32, 3>(NONE, NONE, NONE);
-  for (var q = 0u; q < 3u; q++) {
-    if (q < a && pk[q] == 2u) {
+  for (var q = 0u; q < rolled(a); q++) {
+    if (pk[q] == 2u) {
       let mt = gm(t0, se(f1, pv[q]));
       tgt[q] = mt;
       if (is_strand(mt) && face(mt) == f1) {
-        for (var r = 3u; r > 0u; r--) { if (r - 1u < a && pk[r - 1u] == 2u && pv[r - 1u] == lane(mt)) { tgt[q] = ae(k2, r - 1u); } }
+        for (var r = a; r > 0u; r--) { if (pk[r - 1u] == 2u && pv[r - 1u] == lane(mt)) { tgt[q] = ae(k2, r - 1u); } }
       }
     }
   }
   if (so != s0) { copy(so, s0); }
   if (to != t0) { copy(to, t0); }
   var li = 0u; var dj = array<u32, 3>(0u, 0u, 0u);
-  for (var q = 0u; q < 3u; q++) {
-    sm(so, only(q < a && pk[q] == 2u, se(f, pv[q])), NONE);
-    sm(to, only(q < a && pk[q] == 2u, se(f1, pv[q])), NONE);
-    if (q < a && pk[q] == 0u) { dj[q] = (lanes >> (2u * li)) & 3u; li++; }
+  for (var q = 0u; q < rolled(a); q++) {
+    sm(so, only(pk[q] == 2u, se(f, pv[q])), NONE);
+    sm(to, only(pk[q] == 2u, se(f1, pv[q])), NONE);
+    if (pk[q] == 0u) { dj[q] = (lanes >> (2u * li)) & 3u; li++; }
   }
-  for (var q = 0u; q < 3u; q++) { sm(so, only(q < a, ae(k, q)), NONE); }
+  for (var q = 0u; q < rolled(a); q++) { sm(so, ae(k, q), NONE); }
   stg(so, k, 0u); sw(so, k, false);
   stg(to, k2, tg); sw(to, k2, wnt);
-  for (var q = 0u; q < 3u; q++) {
-    let drag = q < a && pk[q] == 0u;
+  for (var q = 0u; q < rolled(a); q++) {
+    let drag = pk[q] == 0u;
     lk(so, only(drag, dm[q]), only(drag, se(f, dj[q])));
     lk(to, only(drag, se(f1, dj[q])), only(drag, ae(k2, q)));
   }
-  for (var q = 0u; q < 3u; q++) {
-    lk(to, only(q < a && pk[q] != 0u, ae(k2, q)),
-       select(select(NONE, tgt[q], q < a && pk[q] == 2u), ae(k2, pv[q]), q < a && pk[q] == 1u));
+  for (var q = 0u; q < rolled(a); q++) {
+    lk(to, only(pk[q] != 0u, ae(k2, q)), select(select(NONE, tgt[q], pk[q] == 2u), ae(k2, pv[q]), pk[q] == 1u));
   }
   return Hop(true, de);
 }
@@ -223,13 +222,19 @@ fn move_stage(active_mode: bool, act_k: u32) {
   // exchange built in slots xs, xt until it is judged.
   if (hop) {
     let xs = select(p, TMP, full); let xt = select(t, TMP + 1u, full);
-    let h1 = hop_to(p, t, xs, xt, k, f, select(fsl & 3u, 2u, full), !full, d_metro());
-    if (h1.ok && !full) { mv_touched |= (1u << p) | (1u << t); tally[T_HOPS]++; if (wk) { tally[T_WALKS]++; } }
-    if (h1.ok && full) {
-      let h = hop_to(xt, xs, xt, xs, kb, f ^ 1u, k, false, d_metro());
-      if (h.ok) {
+    // Both halves of an exchange go through one hop_to: its code is long, and fetched once.
+    var de = 0;
+    for (var half = 0u; half < rolled(select(1u, 2u, full)); half++) {
+      let second = half == 1u;
+      let h = hop_to(select(p, xt, second), select(t, xs, second), select(xs, xt, second), select(xt, xs, second),
+                     select(k, kb, second), f ^ u32(second), select(select(fsl & 3u, 2u, full), k, second), !full, d_metro());
+      if (!h.ok) { break; }
+      if (!second) {
+        de = h.de;
+        if (!full) { mv_touched |= (1u << p) | (1u << t); tally[T_HOPS]++; if (wk) { tally[T_WALKS]++; } }
+      } else {
         relocate(xt, 2u, kb);
-        if (pairs(xs) <= PAIRS && pairs(xt) <= PAIRS && accept(h1.de + h.de, d_metro())) {
+        if (pairs(xs) <= PAIRS && pairs(xt) <= PAIRS && accept(de + h.de, d_metro())) {
           copy(p, xs); copy(t, xt);
           mv_touched |= (1u << p) | (1u << t);
           tally[T_HOPS] += 2u; tally[T_SWAPS]++;

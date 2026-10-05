@@ -25,8 +25,10 @@ pub const FIRES_MAX: usize = 4096;
 /// busy.wgsl `NO_LIST`: a dense clock makes no busy list.
 const NO_LIST: u32 = 3;
 
-/// Workgroups of 64 covering n invocations (the kernels index by `g.x + g.y * num_workgroups.x * 64`).
-fn groups(n: u32) -> (u32, u32) { let g = n.div_ceil(64); (g.min(65535), g.div_ceil(65535)) }
+/// Invocations in a workgroup of the kernels that keep a block in workgroup memory (prelude.wgsl `WG`).
+const WG: u32 = 16;
+/// Workgroups of `size` covering n invocations (the kernels index by `g.x + g.y * num_workgroups.x * size`).
+fn groups(n: u32, size: u32) -> (u32, u32) { let g = n.div_ceil(size); (g.min(65535), g.div_ceil(65535)) }
 
 pub struct Gpu {
     pub device: wgpu::Device,
@@ -53,7 +55,11 @@ impl Gpu {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("strands"), required_limits: adapter.limits(), ..Default::default() })).map_err(|e| format!("no device: {e}"))?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("strands"), source: wgpu::ShaderSource::Wgsl(crate::tables::shader(p).into()) });
+        // Every loop in the kernels is bounded, so wgpu need not count their iterations; its
+        // counters keep the driver from unrolling the loops and cost a quarter of a clock.
+        let checks = wgpu::ShaderRuntimeChecks { force_loop_bounding: false, ..wgpu::ShaderRuntimeChecks::checked() };
+        let source = wgpu::ShaderSource::Wgsl(crate::tables::shader(p).into());
+        let module = unsafe { device.create_shader_module_trusted(wgpu::ShaderModuleDescriptor { label: Some("strands"), source }, checks) };
         let buffer = |binding, ty, dynamic, min: Option<u64>| wgpu::BindGroupLayoutEntry { binding, visibility: ShaderStages::COMPUTE, count: None,
             ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: dynamic, min_binding_size: min.and_then(NonZeroU64::new) } };
         let storage = wgpu::BufferBindingType::Storage { read_only: false };
@@ -63,7 +69,7 @@ impl Gpu {
         let run_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("run"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
         let pipeline = |entry, pl: &wgpu::PipelineLayout| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(entry), layout: Some(pl), module: &module,
             entry_point: Some(entry), cache: None,
-            // Every kernel writes a slot of workgroup memory before reading it, so the 30 KB need no clearing.
+            // Every kernel writes a slot of workgroup memory before reading it, so it needs no clearing.
             compilation_options: wgpu::PipelineCompilationOptions { zero_initialize_workgroup_memory: false, ..Default::default() } });
         let gpu = Gpu {
             turns: pipeline("turns", &run_layout), pulses: pipeline("pulses", &run_layout), vectors: pipeline("vectors", &run_layout),
@@ -126,7 +132,7 @@ impl Gpu {
                 let mut pass = enc.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&self.vectors);
                 pass.set_bind_group(0, &bind, &[0]);
-                let (x, y) = groups(m);
+                let (x, y) = groups(m, WG);
                 pass.dispatch_workgroups(x, y, 1);
             }
             self.queue.submit([enc.finish()]);
@@ -252,30 +258,31 @@ impl<'g> Grid<'g> {
         self.gpu.queue.write_buffer(&self.clocks, 0, bytemuck::cast_slice(&c));
         if gather { self.gpu.queue.write_buffer(&self.counts, 12, bytemuck::cast_slice(&[0u32])); }
         let g = self.gpu;
-        let wide = groups(self.busy_hint.saturating_mul(3) / 2 + 64).0;
+        let share = self.busy_hint.saturating_mul(3) / 2 + 64;
+        let (wide, turn_groups) = (groups(share, 64).0, groups(share, WG).0);
         let mut enc = g.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_compute_pass(&Default::default());
             if !dense && !self.seeded {
                 pass.set_bind_group(0, &self.bind, &[(n as u32 + 1) * STRIDE as u32]);
                 pass.set_pipeline(&g.seed_busy);
-                let (x, y) = groups(sites);
+                let (x, y) = groups(sites, 64);
                 pass.dispatch_workgroups(x, y, 1);
                 self.seeded = true;
             }
             for i in 0..n as u32 {
                 if dense {
-                    for (k, (pipeline, m)) in [(&g.turns, blocks), (&g.pulses, sites)].into_iter().enumerate() {
+                    for (k, (pipeline, m, size)) in [(&g.turns, blocks, WG), (&g.pulses, sites, 64)].into_iter().enumerate() {
                         pass.set_bind_group(0, &self.bind, &[(2 * i + k as u32) * STRIDE as u32]);
                         pass.set_pipeline(pipeline);
-                        let (x, y) = groups(m);
+                        let (x, y) = groups(m, size);
                         pass.dispatch_workgroups(x, y, 1);
                     }
                     continue;
                 }
                 pass.set_bind_group(0, &self.bind, &[i * STRIDE as u32]);
                 pass.set_pipeline(&g.clock_turns);
-                pass.dispatch_workgroups(wide, 1, 1);
+                pass.dispatch_workgroups(turn_groups, 1, 1);
             }
             if !dense {
                 pass.set_bind_group(0, &self.bind, &[n as u32 * STRIDE as u32]);

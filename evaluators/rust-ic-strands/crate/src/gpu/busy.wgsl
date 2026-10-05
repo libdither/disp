@@ -34,13 +34,33 @@ fn next_clock() {
   next_offset = vec3<u32>(o & 1u, (o >> 8u) & 1u, select(0u, (o >> 16u) & 1u, clk.d > 1u));
 }
 /// Site s holds something the next clock must run: its block joins the next busy list, once.
-fn mark_next(s: u32) {
+fn mark_next_site(s: u32) {
   let x = vec3<u32>(s % clk.w, (s / clk.w) % clk.h, s / (clk.w * clk.h));
   let b3 = (x + next_offset) / 2u;
   let b = b3.x + clk.nbx * (b3.y + clk.nby * b3.z);
   if (atomicMax(&marks[b], clk.stamp) < clk.stamp) { busy[clk.next * nblocks() + atomicAdd(&counts[clk.next], 1u)] = b; }
 }
-
+/// The positions of the block with corner c whose sites hold something (bit q): their blocks
+/// join the next busy list, each once. Along an axis where the corner plus the next offset is
+/// even, both positions fall in one next block, named by the lower; the marks go out together.
+fn mark_next(c: vec3<i32>, held: u32) {
+  let ev = (vec3<u32>(c) + next_offset) & vec3<u32>(1u);
+  let merged = select(0u, 1u, ev.x == 0u) | select(0u, 2u, ev.y == 0u) | select(0u, 4u, ev.z == 0u);
+  var need = 0u;
+  for (var q = 0u; q < 8u; q++) { if ((held & (1u << q)) != 0u) { need |= 1u << (q & ~merged); } }
+  var bs: array<u32, 8>; var won = 0u;
+  for (var r = 0u; r < 8u; r++) {
+    let x = vec3<u32>(vec3<i32>(c.x + i32(r & 1u), c.y + i32((r >> 1u) & 1u), c.z + i32((r >> 2u) & 1u)));
+    let b3 = (x + next_offset) / 2u;
+    bs[r] = b3.x + clk.nbx * (b3.y + clk.nby * b3.z);
+  }
+  var old: array<u32, 8>;
+  for (var r = 0u; r < 8u; r++) { if ((need & (1u << r)) != 0u) { old[r] = atomicMax(&marks[bs[r]], clk.stamp); } }
+  for (var r = 0u; r < 8u; r++) { if ((need & (1u << r)) != 0u && old[r] < clk.stamp) { won |= 1u << r; } }
+  if (won == 0u) { return; }
+  var j = clk.next * nblocks() + atomicAdd(&counts[clk.next], countOneBits(won));
+  for (var r = 0u; r < 8u; r++) { if ((won & (1u << r)) != 0u) { busy[j] = bs[r]; j++; } }
+}
 fn busy_block(i: u32) -> vec3<i32> {
   let id = busy[clk.list * nblocks() + i];
   return vec3<i32>(i32(id % clk.nbx), i32((id / clk.nbx) % clk.nby), i32(id / (clk.nbx * clk.nby)));
@@ -51,22 +71,22 @@ fn stride(nw: vec3<u32>) -> u32 { return nw.x * 64u; }
 /// After loading a state: the first clock's busy list, from every site holding something.
 @compute @workgroup_size(64)
 fn seed_busy(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
-  let s = invocation(g, nw);
+  let s = invocation(g, nw, 64u);
   if (s >= nsites()) { return; }
   next_clock();
   var held = false;
   for (var k = 0u; k < 10u; k++) { if (sites[s * 10u + k] != EMPTY[k]) { held = true; } }
-  if (held) { mark_next(s); }
+  if (held) { mark_next_site(s); }
 }
 
 /// One clock: the busy blocks' turns, each starting with the previous clock's pulse phase when
 /// `fused`; they make the next clock's busy list, and the list after that starts empty.
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn clock_turns(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
   lid = l;
   if (wg.x == 0u && l == 0u) { atomicStore(&counts[clk.clear], 0u); }
   let n = atomicLoad(&counts[clk.list]);
-  for (var i = wg.x * 64u + l; i < n; i += stride(nw)) { block_turns(busy_block(i)); }
+  for (var i = wg.x * WG + l; i < n; i += nw.x * WG) { block_turns(busy_block(i)); }
 }
 
 /// The pulse phase of the clock whose busy list is `list` (every site holding anything is in one of

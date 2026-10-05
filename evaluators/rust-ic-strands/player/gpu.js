@@ -8,6 +8,8 @@ window.StrandsGPU = (() => {
   const TALLY = 11, FIRES_MAX = 4096, COUNTS = 16 + FIRES_MAX, NO_LIST = 3;
   const EMPTY = [~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, 0xFF, 0xFF000000];
   const groups = n => { const g = Math.max(1, Math.ceil(n / 64)); return [Math.min(g, 65535), Math.ceil(g / 65535)]; };
+  // Invocations in a workgroup of the turn kernel (prelude.wgsl `WG`).
+  const WG = 16;
   const S = GPUBufferUsage;
 
   /// The kernels for one shader. Throws with the reason when the browser or GPU cannot run them.
@@ -15,10 +17,7 @@ window.StrandsGPU = (() => {
     if (!navigator.gpu) throw new Error("this browser has no WebGPU");
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!adapter) throw new Error("WebGPU found no GPU");
-    // A block's 8 sites and its working copies sit in 30 KB of workgroup memory.
-    const need = { maxComputeWorkgroupStorageSize: 30720 };
-    for (const [k, v] of Object.entries(need)) if (adapter.limits[k] < v) throw new Error(`this GPU offers ${adapter.limits[k]} of ${k}, the kernels need ${v}`);
-    const limits = ["maxComputeWorkgroupStorageSize", "maxStorageBufferBindingSize", "maxBufferSize"];
+    const limits = ["maxStorageBufferBindingSize", "maxBufferSize"];
     const device = await adapter.requestDevice({ requiredLimits: Object.fromEntries(limits.map(k => [k, adapter.limits[k]])) });
     device.pushErrorScope("validation");
     const module = device.createShaderModule({ code });
@@ -98,7 +97,7 @@ window.StrandsGPU = (() => {
       this.clock(c, n + 1, [0, tick(first), (first + 1) >>> 0, first % 3, NO_LIST, 0, 0, NO_LIST]);
       g.device.queue.writeBuffer(this.clocks, 0, c);
       if (gather) g.device.queue.writeBuffer(this.counts, 12, new Uint32Array(1));
-      const wide = Math.min(65535, Math.ceil((this.busyHint * 1.5 + 64) / 64));
+      const share = this.busyHint * 1.5 + 64, wide = Math.min(65535, Math.ceil(share / 64)), turnGroups = Math.min(65535, Math.ceil(share / WG));
       const enc = g.device.createCommandEncoder(), pass = enc.beginComputePass();
       if (!this.seeded) {
         pass.setBindGroup(0, this.bind, [(n + 1) * STRIDE]);
@@ -106,7 +105,7 @@ window.StrandsGPU = (() => {
         this.seeded = true;
       }
       pass.setPipeline(P.clock_turns);
-      for (let i = 0; i < n; i++) { pass.setBindGroup(0, this.bind, [i * STRIDE]); pass.dispatchWorkgroups(wide); }
+      for (let i = 0; i < n; i++) { pass.setBindGroup(0, this.bind, [i * STRIDE]); pass.dispatchWorkgroups(turnGroups); }
       pass.setBindGroup(0, this.bind, [n * STRIDE]);
       pass.setPipeline(P.busy_pulses); pass.dispatchWorkgroups(wide);
       if (gather) { pass.setPipeline(P.busy_gather); pass.dispatchWorkgroups(wide); }

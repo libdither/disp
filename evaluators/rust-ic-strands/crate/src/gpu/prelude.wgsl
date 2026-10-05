@@ -19,8 +19,9 @@ const EMPTY: Site = Site(0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xF
                          0xFFFFFFFFu, 0xFFFFFFFFu, 0x000000FFu, 0xFF000000u);
 
 // ---- the block under way ------------------------------------------------------------------
-/// Per position: bit f says the neighbour across face f is on the lattice.
-var<private> latq: array<u32, 8>;
+/// Bit 4a + 2b + d: along axis a, the neighbour of the positions on side b in direction d (0 up,
+/// 1 down) is on the lattice.
+var<private> lat: u32;
 /// Bit q: position q is on the lattice.
 var<private> onl: u32;
 /// The position taking its turn.
@@ -43,6 +44,9 @@ fn vsetb(s: Site, i: u32, v: u32) -> Site {
 }
 /// The mate of end e (none for an end beyond the 33).
 fn vgm(s: Site, e: u32) -> u32 { if (e >= NE) { return NONE; } return vgetb(s, e); }
+/// n, hidden from the compiler: a loop it bounds is not unrolled, so its code is fetched once (a
+/// turn's code is several times the GPU's instruction cache).
+fn rolled(n: u32) -> u32 { return n + clk.zero; }
 /// End e if c holds, else no end.
 fn only(c: bool, e: u32) -> u32 { return select(NONE, e, c); }
 fn vgt(s: Site, k: u32) -> u32 { return vgetb(s, 33u + min(k, 2u)); }
@@ -55,10 +59,12 @@ fn vspul(s: Site, v: u32) -> Site { return vsetb(s, 39u, v); }
 // positions, the rest working copies (TMP on; the rewrite's working copy is the most, four). Functions name a site by its slot and change it in
 // place, so a site's byte is an address, not a choice among ten words held in registers. Word w of
 // slot s of invocation lid is at (s * 10 + w) * WG + lid: neighbouring invocations, neighbouring banks.
+// A workgroup is WG invocations, fewer than a wave: a wave runs every path any of its blocks
+// takes, so fewer blocks to a wave means fewer paths, and the waves are spread over more of the GPU.
 const SLOTS: u32 = 12u;
 const TMP: u32 = 8u;
-const WG: u32 = 64u;
-var<workgroup> sb: array<u32, 7680>;
+const WG: u32 = 16u;
+var<workgroup> sb: array<u32, 1920>;
 /// This invocation's place in its workgroup.
 var<private> lid: u32;
 fn at(s: u32, w: u32) -> u32 { return (s * 10u + w) * WG + lid; }
@@ -147,7 +153,7 @@ fn nbq(q: u32, f: u32) -> u32 {
   }
 }
 /// Whether position q's neighbour across face f is on the lattice.
-fn onlat(q: u32, f: u32) -> bool { return f < 6u && ((latq[q & 7u] >> f) & 1u) != 0u; }
+fn onlat(q: u32, f: u32) -> bool { let a = f >> 1u; return f < 6u && ((lat >> (4u * a + 2u * ((q >> a) & 1u) + (f & 1u))) & 1u) != 0u; }
 /// Position q's neighbour across f if it is in the block (and so on the lattice): 8 | position, else 0.
 fn inb(q: u32, f: u32) -> u32 { let n = nbq(q, f); if ((n & 8u) != 0u && onlat(q, f)) { return n; } return 0u; }
 

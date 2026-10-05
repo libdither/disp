@@ -5,9 +5,9 @@
 /// blocks per axis, how many invocations a full-lattice dispatch covers; the next clock's tick, the
 /// stamp that marks a block as on its busy list (busy.wgsl), the list that clock runs and the list
 /// to empty; then the clock's parity (which pulse buffer it writes), whether its turns start with
-/// the previous clock's pulse phase, and which busy list it runs.
+/// the previous clock's pulse phase, and which busy list it runs. `zero` is always 0 (see `rolled`).
 struct Clock { w: u32, h: u32, d: u32, tick: u32, nbx: u32, nby: u32, nbz: u32, n: u32,
-               tick_next: u32, stamp: u32, next: u32, clear: u32, pad0: u32, pad1: u32, par: u32, fused: u32,
+               tick_next: u32, stamp: u32, next: u32, clear: u32, zero: u32, pad1: u32, par: u32, fused: u32,
                list: u32, pad2: u32, pad3: u32, pad4: u32 }
 @group(0) @binding(0) var<uniform> clk: Clock;
 /// Every site, 10 words each, at x + w * (y + h * z).
@@ -29,11 +29,16 @@ var<private> tally: array<u32, 11>;
 
 /// The block's place in the lattice (the RTL's `edges`), in the RTL's wrapping arithmetic.
 fn edges(c: vec3<i32>, w: u32, h: u32, d: u32) {
-  corner = c; onl = 0u;
+  corner = c; onl = 0u; lat = 0u;
+  let size = vec3<u32>(w, h, d);
+  for (var a = 0u; a < 3u; a++) {
+    for (var b = 0u; b < 2u; b++) {
+      let x = u32(c[a] + i32(b));
+      lat |= (u32(x + 1u < size[a]) | (u32(x != 0u) << 1u)) << (4u * a + 2u * b);
+    }
+  }
   for (var q = 0u; q < 8u; q++) {
     let x = u32(c.x + i32(q & 1u)); let y = u32(c.y + i32((q >> 1u) & 1u)); let z = u32(c.z + i32((q >> 2u) & 1u));
-    latq[q] = u32(x + 1u < w) | (u32(x != 0u) << 1u) | (u32(y + 1u < h) << 2u) | (u32(y != 0u) << 3u)
-            | (u32(z + 1u < d) << 4u) | (u32(z != 0u) << 5u);
     if (x < w && y < h && z < d) { onl |= 1u << q; }
   }
 }
@@ -78,30 +83,42 @@ fn reader_k() -> u32 {
   return (ksl >> (2u * pick5(d_agent(), n))) & 3u;
 }
 
+const ST_PAIR: u32 = 0u; const ST_MOVE: u32 = 1u; const ST_COLLECT: u32 = 2u; const ST_FIRE: u32 = 3u;
 /// Position p's turn (lattice.rs `turn`): collect, else react, else take an infection and step,
-/// exchange, fold or flip; then drop the pulses whose strand was rewired.
+/// exchange, fold or flip; then drop the pulses whose strand was rewired. The stages run in a
+/// loop with the rare ones (collecting, a rewrite) last in it, so that the code a turn usually
+/// runs lies together: the GPU fetches less of it.
 fn turn() {
   dice = hash(key(p), tick); touched = 0u; stale = false;
   var pm0: array<u32, 8>;
   for (var q = 0u; q < 8u; q++) { pm0[q] = gm(q, gpul(q)); }
-  var done = false;
-  if (GC) { done = collect_stage(); }
-  if (!done) {
-    let active_mode = d_active() < CH_ACTIVE && (wanted_reader(p, 0u) || wanted_reader(p, 1u) || wanted_reader(p, 2u));
-    let pr = active_pair(p);
-    if (pr.stale) { stale = true; done = true; }
-    else if (pr.found) {
-      let r = fire(pr.kc, pr.kp, pr.via, pr.face);
-      done = r != 0u;
-      if (r == 0u) { tally[T_BLOCKED]++; }
-      if (r == 1u) { tally[T_FIRES]++; log_fire(site_at(corner, p)); }
+  let eraser = (gt(p, 0u) == T_EPS && gm(p, ae(0u, 0u)) != NONE) || (gt(p, 1u) == T_EPS && gm(p, ae(1u, 0u)) != NONE);
+  var st = select(ST_PAIR, ST_COLLECT, GC && eraser);
+  var pr: Pair;
+  loop {
+    if (st == ST_PAIR) {
+      pr = active_pair(p);
+      if (pr.stale) { stale = true; break; }
+      st = select(ST_MOVE, ST_FIRE, pr.found);
     }
-    if (!done) {
+    if (st == ST_MOVE) {
+      let active_mode = d_active() < CH_ACTIVE && (wanted_reader(p, 0u) || wanted_reader(p, 1u) || wanted_reader(p, 2u));
       let act_k = reader_k();
       // A reader that touched a pending computation wants it now (lattice.rs `take_infect`).
       if (pr.inf && !gw(pr.inf_pos, pr.inf_k)) { sw(pr.inf_pos, pr.inf_k, true); touched |= 1u << pr.inf_pos; }
       move_stage(active_mode, act_k);
+      break;
     }
+    if (st == ST_COLLECT) {
+      if (collect_stage()) { break; }
+      st = ST_PAIR;
+      continue;
+    }
+    // A rewrite that finds no room writes nothing, and the turn goes on to a move.
+    let r = fire(pr.kc, pr.kp, pr.via, pr.face);
+    if (r == 0u) { tally[T_BLOCKED]++; st = ST_MOVE; continue; }
+    if (r == 1u) { tally[T_FIRES]++; log_fire(site_at(corner, p)); }
+    break;
   }
   // A pulse whose strand's mate changed during the turn is lost.
   for (var q = 0u; q < 8u; q++) {
@@ -127,9 +144,16 @@ fn run_block() {
   }
   let bkey = (u32(corner.x + 1) & 1023u) | ((u32(corner.y + 1) & 1023u) << 10u) | ((u32(corner.z + 1) & 1023u) << 20u) | (1u << 31u);
   let rot = hash(bkey, tick).x & 7u;
+  // The positions in turn order, 3 bits each, so that a wave runs as many turns as its busiest
+  // block has sites rather than one per position and group.
+  var order = 0u; var n = 0u;
   for (var bi = 0u; bi < 24u; bi++) {
     let q = ((bi & 7u) + rot) & 7u;
-    if (cls[q] == (bi >> 3u) && (taken & (1u << q)) == 0u) { p = q; tally[T_TURNS]++; turn(); }
+    if (cls[q] == (bi >> 3u)) { order |= q << (3u * n); n++; }
+  }
+  for (var j = 0u; j < n; j++) {
+    let q = (order >> (3u * j)) & 7u;
+    if ((taken & (1u << q)) == 0u) { p = q; tally[T_TURNS]++; turn(); }
   }
 }
 
@@ -141,7 +165,8 @@ fn site_at(c: vec3<i32>, q: u32) -> u32 {
 }
 fn load(s: u32) -> Site { var t: Site; for (var i = 0u; i < 10u; i++) { t[i] = sites[s * 10u + i]; } return t; }
 fn store(s: u32, t: Site) { for (var i = 0u; i < 10u; i++) { sites[s * 10u + i] = t[i]; } }
-fn invocation(g: vec3<u32>, n: vec3<u32>) -> u32 { return g.x + g.y * n.x * 64u; }
+/// Invocation g's index in a dispatch of n workgroups of `size`.
+fn invocation(g: vec3<u32>, n: vec3<u32>, size: u32) -> u32 { return g.x + g.y * n.x * size; }
 
 fn nsites() -> u32 { return clk.w * clk.h * clk.d; }
 /// A site's pulse after the previous clock's turns.
@@ -155,33 +180,45 @@ fn block_corner(b: vec3<i32>) -> vec3<i32> {
   return 2 * b - vec3<i32>(i32(o & 1u), i32((o >> 8u) & 1u), select(0, i32((o >> 16u) & 1u), clk.d > 1u));
 }
 
+/// Position q's site, already loaded as t, into its slot (EMPTY off the lattice); whether it holds
+/// anything.
+fn stage(q: u32, t: Site) -> u32 {
+  let on = (onl & (1u << q)) != 0u;
+  var any = 0u;
+  for (var i = 0u; i < 10u; i++) { let v = select(EMPTY[i], t[i], on); if (v != EMPTY[i]) { any = 1u << q; } sb[at(q, i)] = v; }
+  return any;
+}
+
 /// Block b's turns. With `fused`, its sites first take the previous clock's pulse phase. Every
 /// site's pulse goes to this clock's buffer afterwards, so a site that emptied leaves no stale
 /// pulse behind. A site that holds something, or has a pulse left in the buffer the next clock
-/// writes (to be cleared then), puts its block on the next clock's busy list.
+/// writes (to be cleared then), puts its block on the next clock's busy list. Loads are issued
+/// together rather than site by site, since each waits on memory.
 fn block_turns(b: vec3<i32>) {
   tick = clk.tick;
   next_clock();
   let c = block_corner(b);
   edges(c, clk.w, clk.h, clk.d);
   if (onl == 0u) { return; }
-  var any = 0u; var stale_pulse = false;
+  // A position off the lattice reads site 0 and is ignored.
+  var sx: array<u32, 8>;
+  for (var q = 0u; q < 8u; q++) { sx[q] = select(0u, site_at(c, q), (onl & (1u << q)) != 0u); }
+  let t0 = load(sx[0]); let t1 = load(sx[1]); let t2 = load(sx[2]); let t3 = load(sx[3]);
+  let t4 = load(sx[4]); let t5 = load(sx[5]); let t6 = load(sx[6]); let t7 = load(sx[7]);
+  // Bit q: a pulse in the buffer this clock writes, and in the previous clock's.
+  var here = 0u; var before = 0u;
   for (var q = 0u; q < 8u; q++) {
-    var t = EMPTY;
-    if ((onl & (1u << q)) != 0u) {
-      let s = site_at(c, q);
-      t = load(s);
-      for (var i = 0u; i < 10u; i++) { if (t[i] != EMPTY[i]) { any |= 1u << q; } }
-      if (pul_here(s) != NONE) { stale_pulse = true; }
-    }
-    put_site(q, t);
+    here |= u32(pul_here(sx[q]) != NONE) << q;
+    before |= u32(pul_read(sx[q]) != NONE) << q;
   }
-  if (any == 0u && !stale_pulse) { return; }
+  here &= onl; before &= onl;
+  let any = stage(0u, t0) | stage(1u, t1) | stage(2u, t2) | stage(3u, t3) | stage(4u, t4) | stage(5u, t5) | stage(6u, t6) | stage(7u, t7);
+  if (any == 0u && here == 0u) { return; }
   var dirty = 0u;
   if (clk.fused != 0u) {
     for (var q = 0u; q < 8u; q++) {
       if ((any & (1u << q)) != 0u) {
-        let t = get_site(q); let u = pulse_step(site_at(c, q), t);
+        let t = get_site(q); let u = pulse_step(sx[q], t);
         var changed = false;
         for (var i = 0u; i < 10u; i++) { if (u[i] != t[i]) { changed = true; } }
         if (changed) { put_site(q, u); dirty |= 1u << q; }
@@ -190,23 +227,23 @@ fn block_turns(b: vec3<i32>) {
   }
   taken = 0u;
   if (any != 0u) { run_block(); }
+  var held = before;
   for (var q = 0u; q < 8u; q++) {
     if ((onl & (1u << q)) != 0u) {
-      let s = site_at(c, q);
+      let s = sx[q];
       if (((taken | dirty) & (1u << q)) != 0u) { store(s, get_site(q)); }
       set_pul(s, gpul(q));
-      var held = pul_read(s) != NONE;
-      for (var i = 0u; i < 10u; i++) { if (sb[at(q, i)] != EMPTY[i]) { held = true; } }
-      if (held && clk.next != NO_LIST) { mark_next(s); }
+      for (var i = 0u; i < 10u; i++) { if (sb[at(q, i)] != EMPTY[i]) { held |= 1u << q; } }
     }
   }
+  if (clk.next != NO_LIST) { mark_next(c, held); }
   add_tally();
 }
 /// Every block's turns for this clock.
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn turns(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
   lid = l;
-  let id = invocation(g, nw);
+  let id = invocation(g, nw, WG);
   if (id >= clk.n) { return; }
   block_turns(vec3<i32>(i32(id % clk.nbx), i32((id / clk.nbx) % clk.nby), i32(id / (clk.nbx * clk.nby))));
 }
@@ -219,10 +256,12 @@ fn pulse_step(s: u32, old: Site) -> Site {
   let x = s % clk.w; let y = (s / clk.w) % clk.h; let z = s / (clk.w * clk.h);
   let on = array<bool, 6>(x + 1u < clk.w, x > 0u, y + 1u < clk.h, y > 0u, z + 1u < clk.d, z > 0u);
   let nb = array<u32, 6>(s + 1u, s - 1u, s + clk.w, s - clk.w, s + clk.w * clk.h, s - clk.w * clk.h);
+  var pes: array<u32, 6>;
+  for (var f = 0u; f < 6u; f++) { pes[f] = pul_read(select(s, nb[f], on[f])); }
   var t = old; var arr = NONE; var got = false;
   for (var f = 0u; f < 6u; f++) {
     if (!on[f]) { continue; }
-    let pe = pul_read(nb[f]);
+    let pe = pes[f];
     if (is_strand(pe) && face(pe) == (f ^ 1u)) {
       let m = vgm(t, se(f, lane(pe)));
       if (is_strand(m)) { if (!got) { got = true; arr = m; } }
@@ -248,7 +287,7 @@ fn site_pulse(s: u32) {
 /// Every site's pulse phase.
 @compute @workgroup_size(64)
 fn pulses(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
-  let s = invocation(g, nw);
+  let s = invocation(g, nw, 64u);
   if (s < clk.n) { site_pulse(s); add_tally(); }
 }
 
@@ -257,10 +296,10 @@ fn pulses(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) 
 /// position and the positions taken before it, the 8 sites before (80 words, replaced by after),
 /// then the turn's touched positions and whether it was dropped.
 const REC: u32 = 93u;
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn vectors(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
   lid = l;
-  let r = invocation(g, nw);
+  let r = invocation(g, nw, WG);
   if (r >= clk.n) { return; }
   let b = r * REC;
   tick = recs[b + 1u];
