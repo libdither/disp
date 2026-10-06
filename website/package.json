@@ -4,14 +4,15 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "npm run snapshot && vite build",
+    "dev": "npm run pages && vite dev",
+    "build": "npm run snapshot && npm run pages && vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "snapshot": "tsx scripts/build-kernel-snapshot.mts",
     "validate:examples": "tsx scripts/validate-examples.mts",
     "vfs-check": "tsx scripts/vfs-check.mts",
-    "dono-stats": "tsx scripts/build-dono-stats.mts"
+    "dono-stats": "tsx scripts/build-dono-stats.mts",
+    "pages": "tsx scripts/link-pages.mts"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.8",

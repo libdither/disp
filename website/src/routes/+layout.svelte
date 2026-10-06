@@ -322,6 +322,7 @@
           >Goals</a
         >
         <a href="{base}/funding/">Funding</a>
+        <a href="{base}/pages/">Pages</a>
       </div>
     </div>
   </footer>
