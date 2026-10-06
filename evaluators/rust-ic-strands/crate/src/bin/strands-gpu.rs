@@ -5,6 +5,7 @@
 //! `--dense` runs every block and site each clock instead of only the blocks holding something;
 //! `--narrow` (with `--check`) runs the turns in one workgroup, each invocation taking many blocks;
 //! `--bench` runs exactly `--clocks` clocks without looking for the answer and times the GPU alone;
+//! `--demand` runs the current design (lattice.rs `latest`: the chip's schedule with the demand field);
 //! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`).
 
 use rust_ca_lattice::net::Net;
@@ -153,6 +154,7 @@ fn main() {
             "--dense" => dense = true,
             "--narrow" => narrow = true,
             "--bench" => bench = true,
+            "--demand" => p.set("demand", "1").unwrap(),
             _ => match a.split_once('=') {
                 Some((k, v)) => p.set(k, v).unwrap_or_else(|e| panic!("{e}")),
                 None => src = Some(a.clone()),
@@ -172,13 +174,16 @@ fn main() {
     let mut l = Lattice::load(p, net, out).expect("load");
     let show_ans = |l: &Lattice| l.readback().map(|t| oracle::show(&t)).unwrap_or("-".into());
     let want = want.as_deref().unwrap_or("?");
+    assert!(!dense || !l.fields.on, "--dense keeps no field");
+    // The simulator's demand field, a value a site, if it keeps one.
+    let field = |l: &Lattice| l.fields.on.then(|| (0..l.sites()).map(|s| l.fields.value(s)).collect::<Vec<u8>>());
     let t0 = std::time::Instant::now();
     if check {
         // Compared after every batch (one clock unless --batch).
         let batch = batch.unwrap_or(1);
         let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, batch);
         let state = l.state_words();
-        grid.upload(&state);
+        grid.upload(&state, field(&l).as_deref());
         if let Some(d) = compare(&p, &state, &grid.download()) { println!("upload differs: {d}"); std::process::exit(1); }
         let mut c = 0;
         while c < max && !(l.readback().is_some() || l.shadow.active_pair().is_none()) {
@@ -192,6 +197,15 @@ fn main() {
             if let Some(d) = compare(&p, &l.state_words(), &grid.download()) {
                 println!("clock {c} differs (after {} matching): {d}", c - n);
                 std::process::exit(1);
+            }
+            if let Some(want) = field(&l) {
+                let got = grid.download_field();
+                let off: Vec<u32> = (0..l.sites()).filter(|&s| want[s as usize] != got[s as usize]).collect();
+                if !off.is_empty() {
+                    let at = off.iter().take(4).map(|&s| format!("{s} cpu {} gpu {}", want[s as usize], got[s as usize])).collect::<Vec<_>>().join(", ");
+                    println!("clock {c}: the field differs at {} sites (after {} matching): {at}", off.len(), c - n);
+                    std::process::exit(1);
+                }
             }
             let (got, mut fires) = grid.take_tally();
             let want = counted(&l);
@@ -207,17 +221,18 @@ fn main() {
         }
         let done = l.readback().is_some() || l.shadow.active_pair().is_none();
         println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
-        println!("{c} clocks matched on all {} sites, and so did every count ({} rewrites, {} steps)  {:.2}s", l.sites(), l.stats.fires, l.stats.hops, t0.elapsed().as_secs_f64());
+        println!("{c} clocks matched on all {} sites{}, and so did every count ({} rewrites, {} steps)  {:.2}s", l.sites(),
+            if l.fields.on { " and their fields" } else { "" }, l.stats.fires, l.stats.hops, t0.elapsed().as_secs_f64());
         return;
     }
     let batch = batch.unwrap_or(64);
     let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, batch);
-    grid.upload(&l.state_words());
+    grid.upload(&l.state_words(), field(&l).as_deref());
     if bench {
         // The GPU raises its clock only under load: a first pass warms it, the second is timed.
         for c in (0..max.min(4096)).step_by(batch) { grid.run(c, p.seed, batch.min((max.min(4096) - c) as usize), dense, false); }
         grid.take_tally();
-        grid.upload(&l.state_words());
+        grid.upload(&l.state_words(), field(&l).as_deref());
         let t0 = std::time::Instant::now();
         let mut c = 0u64;
         while c < max {
@@ -241,7 +256,7 @@ fn main() {
         c += n;
         let t1 = std::time::Instant::now();
         if dense { l.set_state_words(&grid.download()); } else {
-            let (idx, words) = grid.gathered();
+            let (idx, words, _) = grid.gathered();
             let now: std::collections::HashSet<u32> = idx.iter().copied().collect();
             for &s in prev.difference(&now) { l.set_site_words(s, &EMPTY); }
             for (j, &s) in idx.iter().enumerate() { l.set_site_words(s, &words[j * SITE..(j + 1) * SITE]); }

@@ -142,6 +142,7 @@ impl Params {
             "agents" => self.agent_turns = f()?,
             "seed" => self.seed = n()? as u64,
             "calls" => self.calls = on,
+            "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
                 *self.fields.iter_mut().find(|c| c.source == Source::NONE).ok_or("at most 4 fields")? = c;
@@ -387,6 +388,10 @@ pub fn chip() -> Params {
              pairs: 8, active: 0.5, ..Params::default() }
 }
 
+/// The current design: the chip's schedule with the demand field. The player and the GPU run it;
+/// hw/ builds `chip`.
+pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p }
+
 /// The demand field (README "Fields"): a wanted reader or a demand pulse sets its site to 3, which
 /// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
 /// and wire that idle matter lays down pays crowding times the field. Used with `calls`.
@@ -410,6 +415,7 @@ impl Lattice {
     pub fn sites(&self) -> u32 { self.p.w * self.p.h * self.p.depth }
     /// Sites holding an agent or a strand.
     pub fn live(&self) -> &[u32] { &self.live }
+    fn in_live(&self, s: u32) -> bool { self.live_pos[s as usize] != u32::MAX }
     #[inline] fn ae(&self, k: usize, p: usize) -> u8 { (k * ARITY + p) as u8 }
     #[inline] fn se(&self, f: usize, i: usize) -> u8 { (ARITY * self.ks + f * self.p.lanes + i) as u8 }
     #[inline] fn is_strand(&self, e: u8) -> bool { e != NONE && e as usize >= ARITY * self.ks }
@@ -1872,17 +1878,22 @@ impl Lattice {
         self.pulse_sites = (0..self.sites()).filter(|&s| self.pulse_at[s as usize] != NONE).collect();
     }
 
-    /// The sites holding anything, each as its index then its words of `state_words` (11 words).
+    /// The sites holding anything or a field, each as its index, its words of `state_words` and its
+    /// field (12 words).
     pub fn held_sites(&self) -> Vec<u32> {
-        let v = self.state_words_of(&self.live);
-        self.live.iter().zip(v.chunks(10)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied())).collect()
+        let mut sites = self.live.clone();
+        sites.extend(self.fields.near().iter().filter(|&&s| !self.in_live(s)));
+        let v = self.state_words_of(&sites);
+        sites.iter().zip(v.chunks(10)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied()).chain([self.fields.value(s) as u32])).collect()
     }
 
-    /// Become exactly these sites (as `held_sites` gives them), every other site empty, then `adopt`.
+    /// Become exactly these sites (as `held_sites` gives them), every other site empty with no
+    /// field, then `adopt`.
     pub fn put_sites(&mut self, recs: &[u32]) {
         const EMPTY: [u32; 10] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
         for s in self.live.clone() { self.set_site_words(s, &EMPTY); }
-        for r in recs.chunks(11) { self.set_site_words(r[0], &r[1..]); }
+        for s in self.fields.near().to_vec() { self.fields.set_value(s, 0); }
+        for r in recs.chunks(12) { self.set_site_words(r[0], &r[1..11]); self.fields.set_value(r[0], r[11] as u8); }
         self.agent_sites = self.live.iter().copied().filter(|&s| self.occ[s as usize] > 0).collect();
         self.pulse_sites = self.live.iter().copied().filter(|&s| self.pulse_at[s as usize] != NONE).collect();
         self.adopt();

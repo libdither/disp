@@ -1,7 +1,7 @@
 //! The chip configuration's constants as WGSL (the GPU kernel's tables), from the simulator's own
 //! rules, energies and probabilities, so the two cannot drift apart. hw/rtl gets the same as
 //! Verilog from `strands-hw`.
-use crate::lattice::{chip, fresh_wanted, Energy, Params};
+use crate::lattice::{chip, fresh_wanted, Channel, Energy, Params, Source, NONE};
 use rust_ca_lattice::rules::{End, Tag, ALL_TAGS, RULES};
 use std::fmt::Write;
 
@@ -29,7 +29,13 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if p.k != 2 || p.lanes != 4 { return Some("its site holds 2 agents and 4 strands per link"); }
     if !p.pulse { return Some("demand always travels as pulses there"); }
     if p.pressure != 0.0 || p.repel != 0.0 { return Some("it has no pressure or repulsion"); }
-    if p.calls || p.fields.iter().any(|c| c.source != crate::lattice::Source::NONE) { return Some("it has no fields, and does not call values"); }
+    let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
+    if let Some(c) = fields.next() {
+        if fields.next().is_some() { return Some("it keeps one field"); }
+        if c.source.0 & !(Source::READER | Source::PULSE) != 0 { return Some("its field's sources are wanted readers and demand pulses"); }
+        if c.wire_step != NONE && c.wire_step < c.step { return Some("its field spreads alike along wires and through space"); }
+        if c.bits > 4 { return Some("its field has at most 4 bits"); }
+    }
     None
 }
 
@@ -50,6 +56,15 @@ pub fn wgsl_for(p: &Params) -> String {
         chance(p.active), chance(p.p_hop), chance(0.7), chance(p.swap)).unwrap();
     // No cap: more pairings than a site's 33 ends can hold.
     writeln!(w, "const PAIRS: u32 = {}u; const LAZY: bool = {}; const GC: bool = {};", if p.pairs == 0 { 31 } else { p.pairs }, p.lazy, p.gc).unwrap();
+    // The one field (field.rs), if any; with none, every field term is dead code.
+    let f = p.fields.iter().find(|c| c.source != Source::NONE).copied();
+    let c = f.unwrap_or(Channel::OFF);
+    let fw = c.weights();
+    writeln!(w, "const CALLS: bool = {}; const FIELD: bool = {}; const F_READER: bool = {}; const F_PULSE: bool = {};",
+        p.calls, f.is_some(), c.source.0 & Source::READER != 0, c.source.0 & Source::PULSE != 0).unwrap();
+    writeln!(w, "const F_LEVEL: u32 = {}u; const F_CAP: u32 = {}u; const F_STEP: u32 = {}u; const F_DECAY: u32 = {}u;",
+        c.level.min(if f.is_some() { c.cap() } else { 0 }), if f.is_some() { c.cap() } else { 0 }, c.step, c.decay).unwrap();
+    writeln!(w, "const F_W: array<i32, 3> = array<i32, 3>({}, {}, {}); const F_WIRE: i32 = {};", fw[0], fw[1], fw[2], fw[3]).unwrap();
     for t in ALL_TAGS {
         let name = match t { Tag::Pair => "PAIR".into(), Tag::Sel => "SEL".into(), Tag::Unp => "UNP".into(), Tag::Dn => "DN".into(),
                              Tag::Eps => "EPS".into(), Tag::Nrm => "NRM".into(), Tag::Out => "OUT".into(), _ => t.name().to_uppercase() };

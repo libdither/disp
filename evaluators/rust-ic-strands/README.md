@@ -7,7 +7,9 @@ an address**. It is the answer to two problems with the earlier spatial machines
 - `rust-ic-mesh` completes everything, but by using global addresses and a router in every
   tile.
 
-Open `player/index.html` to watch it run (rebuild with `./build-player.sh`):
+Open `player/index.html` to watch it run (rebuild with `./build-player.sh`). It shows only the
+current design (`lattice.rs` `latest`: the chip's schedule with the demand field, below), with the
+field drawn as an amber tint and called values ringed in orange:
 - **Programs:** ordinary disp definitions (below) with arguments typed as disp literals, or the
   benchmark programs.
 - **Stepping:** one move at a time with `+1` or `→` (shift: to the next rewrite), each move told
@@ -19,8 +21,8 @@ Open `player/index.html` to watch it run (rebuild with `./build-player.sh`):
   - *layers side by side*: exact, with every site easy to click;
   - *3D*: three.js, with orbit, spread or isolate layers, and a camera that follows the action.
     `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1, MIT).
-- **CPU or GPU** (the selector next to the speed, or `G`): the GPU runs the chip's schedule
-  through WebGPU (below), and a run moves between the two at any clock as it is.
+- **CPU or GPU** (the selector next to the speed, or `G`): the GPU runs the same design through
+  WebGPU (below), and a run moves between the two at any clock as it is.
 
 ## The machine
 
@@ -406,9 +408,11 @@ What it is and is not:
 Cost: 2 bits a site (on about 95), none per agent. A site's update is the most of eight 2-bit
 inputs with decrements, and a step or flip adds three small terms to its energy. On fib(1) and
 fib(2) about 130 sites a clock hold a field, against some 2,000 holding something, so a GPU that
-runs only busy blocks visits few more. In analog a channel is a diode-OR mesh: each node sits at
-the most of its source and its neighbours less one diode drop, and a leak makes the fade. It is
-not yet on the chip or the GPU (`tables.rs` `gpu_unfit` refuses it), nor the default.
+runs only busy blocks visits few more, though working the field out still makes its clock about a
+fifth dearer (On a GPU, below). In analog a channel is a diode-OR mesh: each node sits at
+the most of its source and its neighbours less one diode drop, and a leak makes the fade. It runs
+on the GPU (below) and is what the player shows, but it is not yet on the chip (`hw/rtl`), and
+`--chip` alone still leaves it out.
 
 ## Things tried that did not help, and why
 
@@ -449,7 +453,7 @@ not yet on the chip or the GPU (`tables.rs` `gpu_unfit` refuses it), nor the def
 
 ## Open
 
-- **The demand field on the chip and the GPU**, and as the default (Fields, above).
+- **The demand field on the chip** (`hw/rtl`), so that `--chip` can include it (Fields, above).
 - **The synchronous schedule** still takes about 1.8× the clocks of random turns, mostly
   because a walker's next strand leaves its block half the time. Wider blocks help a little
   (above); a walker that eats every strand of its wire inside its block in one turn might help
@@ -475,14 +479,19 @@ by clock parity, so a block reads its neighbours' while writing its own. A threa
 sites in workgroup memory and changes them in place.
 
 Against the simulator, on one machine (Ryzen 5 7640U, single-threaded, against its integrated
-Radeon 760M), same seed, both looking for the answer as they go:
+Radeon 760M), same seed, both looking for the answer as they go, without and with the demand
+field (Fields, above):
 
 | program | lattice | clocks | CPU | GPU |
 |---|---|---|---|---|
-| fib(0) | 232×232×8 | 7,568 | 2.83 s | 0.71 s |
-| fib(1) | 300×300×8 | 9,898 | 3.74 s | 0.93 s |
-| sort(1) | 490×490×8 | 2,501 | 4.06 s | 0.63 s |
-| fib(2) | 300×300×8 | 57,949 | 19.6 s | 5.1 s |
+| fib(0) | 232×232×8 | 7,568 | 2.91 s | 0.69 s |
+| … with the demand field | | 5,181 | 2.61 s | 0.65 s |
+| fib(1) | 300×300×8 | 9,898 | 3.94 s | 1.04 s |
+| … with the demand field | | 6,691 | 3.57 s | 0.78 s |
+| sort(1) | 490×490×8 | 2,501 | 4.45 s | 0.74 s |
+| … with the demand field | | 1,759 | 3.43 s | 0.60 s |
+| fib(2) | 300×300×8 | 57,949 | 21.2 s | 5.71 s |
+| … with the demand field | | 28,260 | 12.0 s | 3.56 s |
 
 **What a clock costs.** These programs keep 2,000–3,000 sites in use, a few hundred busy blocks
 a clock, and every clock waits on the one before. So a clock takes as long as its slowest wave
@@ -518,7 +527,7 @@ the block, one for the pulses), so k clocks need a border 2k wide, and 64 KB hol
 14×14×8 sites of 40 bytes, of which two clocks leave a 6×6 interior.
 
 More work per clock is where the GPU gains: copies of fib(1) side by side, through the browser
-path below, 2,048 clocks (clocks a second):
+path below, 2,048 clocks without the demand field (clocks a second):
 
 | copies | sites in use | CPU (wasm) | GPU | ratio |
 |---|---|---|---|---|
@@ -531,6 +540,18 @@ and sites kept as their list of pairings, as the chip keeps them, so that more o
 even then only for runs with tens of thousands of sites busy. For programs as small as these, a
 clock is a few hundred dependent jobs, and a core runs those nearly as fast as a GPU can.
 
+**The demand field** runs there too (`--demand`), matched bit for bit, field and all. A site's
+field rides in its pulse word, above the pulse, so the two pulse buffers by clock parity carry it:
+a block works out its sites' field at the start of its turns, from its own and its neighbours'
+words of the clock before, right after their pulse phase. A block holding only field stays busy,
+and a field high enough to reach across a face puts the neighbour's block on the next clock's
+list. `tables.rs` `gpu_unfit` takes one field of up to 4 bits, set by wanted readers and demand
+pulses. Working out the field makes a GPU clock about a fifth dearer: on fib(1) with the field's
+weights set to zero, so that the run is the same, 94 µs a clock against 79. The cost is spread
+about evenly over computing it, the blocks holding only field and marking the blocks a strong
+field reaches, so there is no one piece to cut. Called values walking add turns too. So on the
+GPU the field saves less time than clocks (the table above).
+
 **In the browser.** `player/gpu.js` drives the same kernels through WebGPU, with the shader the
 engine generates for the loaded settings. The engine stays the record of the run: a GPU stretch
 starts from the engine's sites and ends by putting the GPU's back, with its counts, and the engine
@@ -542,7 +563,8 @@ Dawn, Chrome's WebGPU, on the machine's own GPU (`check`, or `bench` for speeds)
 `player/check.mjs` runs it in headless Chromium, which here only gets SwiftShader, a GPU emulated
 on the CPU. The kernels need 8 KB of workgroup memory, within WebGPU's default of 16 KB.
 
-In the browser the GPU runs fib(1) at 9,000 clocks a second, against 2,350 for the player's CPU
+In the browser, on fib(1), the GPU runs about 7,500 clocks a second, and 5,200 to 6,200 with the
+demand field (which needs a quarter fewer clocks), against 2,000 and 1,550 for the player's CPU
 engine (WebAssembly, nearly as fast as the native simulator). An earlier version listed each
 clock's busy blocks in a kernel of its own and launched the turns as an indirect dispatch (one
 whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on the CPU, about
@@ -553,7 +575,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~6 s: corpus in 5 configurations (one with the demand field), per-move invariants, collection
+cargo test --release                                  # ~8 s: corpus in 5 configurations (one with the demand field), per-move invariants, collection, handover
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -565,10 +587,11 @@ cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1
 `--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip and the GPU
 version match it (see [`hw/README.md`](hw/README.md)). `crate/gpu.sh TERM --grid N [--depth D]`
 runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` without the tiles,
-`--vectors FILE...` replays recorded turns, `key=value` changes a setting as `strands-sweep`
-spells it); `strands-hw --wgsl` prints its generated tables. `player/dawn.sh check 'src=sort:1'`
-checks the browser's GPU path, and `player/dawn.sh bench 'src=fib:1'` times it against the
-browser's CPU engine (`copies=16&clocks=512` for many copies side by side). `TRACE=file strands-run ...` writes when each rewrite's pair
+`--vectors FILE...` replays recorded turns, `--demand` adds the demand field, `key=value` changes
+a setting as `strands-sweep` spells it); `strands-hw --wgsl` prints its generated tables.
+`player/dawn.sh check 'src=sort:1'` checks the browser's GPU path on the design the player shows,
+and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
+(`copies=16&clocks=512` for many copies side by side, `demand=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end.

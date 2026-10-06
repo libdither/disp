@@ -1,9 +1,9 @@
 // The player's GPU path (gpu.js) against its CPU engine, and the two's speeds; run in a browser by
-// gpu-check.html and in Node by dawn.mjs. A hash such as 'src=fib:1&lazy=0' picks the term and the
-// settings, which are the player's for the chip's schedule (index.html `load`) unless changed:
-// depth, seed, lazy, gc, pairs, temp, swap, wp, wa, link, board, idle; and clocks, a limit.
+// gpu-check.html and in Node by dawn.mjs. A hash such as 'src=fib:1&lazy=0' picks the term; clocks,
+// copies and stretch shape the run; every other key changes a setting of the current design, which
+// the player runs (lattice.rs `latest`, `Params::set`: depth, seed, lazy, pairs, temp, demand, ...).
 window.StrandsCheck = (() => {
-  const enc = new TextEncoder(), dec = new TextDecoder(), R = 11;
+  const enc = new TextEncoder(), dec = new TextDecoder(), R = 12;
   async function engine() {
     const bytes = Uint8Array.from(atob(window.STRANDS_WASM), c => c.charCodeAt(0));
     const E = { ...(await WebAssembly.instantiate(bytes, {})).instance.exports };
@@ -20,18 +20,23 @@ window.StrandsCheck = (() => {
     return E;
   }
   function settings(hash) {
-    const q = new URLSearchParams(hash), num = (k, d) => q.has(k) ? +q.get(k) : d;
-    const flags = 1 | (num("lazy", 1) << 1) | 4 | 8 | (num("gc", 1) << 4) | 96 | (num("pairs", 8) << 8);
-    const depth = num("depth", 6), seed = num("seed", 7);
-    const args = [flags, num("temp", 2), num("swap", 1), 0.8, num("wp", 3), num("wa", 1), num("link", 0), num("board", 0.5), num("idle", 10), seed];
-    return { src: q.get("src") || "sort:1", depth, seed, max: num("clocks", 1e9), copies: num("copies", 1), stretch: num("stretch", 256),
-      make: (E, w, h, src) => E.withString(src, (p, n) => E.strands_new(w, h, depth, 2, 4, ...args, p, n)) };
+    const q = new URLSearchParams(hash), num = (k, d) => q.has(k) ? +q.get(k) : d, seed = num("seed", 7);
+    const own = new Set(["src", "clocks", "copies", "stretch", "seed"]);
+    const sets = [...q.entries()].filter(([k]) => !own.has(k)).map(([k, v]) => `${k}=${v}`).concat(`seed=${seed}`);
+    const apply = E => {
+      E.strands_settings();
+      for (const kv of sets) if (E.withString(kv, (p, n) => E.strands_set(p, n))) throw new Error(E.text(E.text_len()));
+    };
+    return { src: q.get("src") || "sort:1", seed, max: num("clocks", 1e9), copies: num("copies", 1), stretch: num("stretch", 256),
+      make: (E, w, h, src) => { apply(E); return E.withString(src, (p, n) => E.strands_new(w, h, p, n)); }, apply };
   }
   /// An engine with the term loaded on a lattice sized as the player sizes it.
   async function loaded(S) {
     const E = await engine();
     const agents = E.withString(S.src, (p, n) => E.strands_probe(p, n));
     if (agents < 0) throw new Error(E.text(E.text_len()));
+    S.apply(E);
+    S.depth = E.strands_depth();
     let side = Math.ceil(Math.sqrt(agents) * (S.depth > 1 ? 7 : 8)) + 16, rc = 2;
     for (let t = 0; t < 6 && rc === 2; t++) { rc = S.make(E, side, side, S.src); if (rc === 2) side = Math.ceil(side * 1.4); }
     if (rc !== 0) throw new Error("load: " + E.text(E.text_len()));

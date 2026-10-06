@@ -8,9 +8,11 @@
 #   5. gpu        the GPU version of the same schedule (crate/src/gpu): every recorded turn and block,
 #                 and the lattice in lockstep with the simulator, its pulse phases fused into the
 #                 next clock's turns and only the blocks holding something run; every count of what
-#                 the turns did matches too, also under settings other than the chip's
+#                 the turns did matches too, also under settings other than the chip's, and with
+#                 the demand field (lattice.rs `latest`), its value at every site compared too
 #   6. browser    the player's WebGPU path (player/gpu.js) on Dawn, Chrome's WebGPU (player/dawn.sh):
-#                 a run handed back and forth between GPU and CPU matches one that stays on the CPU
+#                 a run of the design the player shows (`latest`) handed back and forth between GPU
+#                 and CPU matches one that stays on the CPU
 #   7. layout     with --layout: synthesis, place and route on IHP SG13G2, design rule check,
 #                 layout versus schematic, timing (see flow/layout.sh)
 # Exits non-zero on the first stage that fails. Each stage prints its wall time.
@@ -102,6 +104,10 @@ r=$(gpu fib:0 --grid 232 --depth 8 --seed 2 --check --batch 16 --clocks 1500 laz
 printf "   %-28s %s\n" "fib:0, eager and other knobs" "$r"
 r=$(gpu fib:0 --grid 232 --depth 8 --seed 3 --check --batch 7 --clocks 1000 --narrow | tail -1) || fail=1
 printf "   %-28s %s\n" "fib:0, one workgroup" "$r"
+r=$(gpu fib:0 --grid 232 --depth 8 --seed 1 --check --batch 13 --demand | tail -1) || fail=1
+printf "   %-28s %s\n" "fib:0, demand field, by 13" "$r"
+r=$(gpu sort:1 --grid 490 --depth 8 --seed 1 --check --batch 32 --demand | tail -1) || fail=1
+printf "   %-28s %s\n" "sort:1, demand field, by 32" "$r"
 [ $fail = 0 ] || { echo "   the GPU differs from the simulator"; exit 1; }
 done_
 

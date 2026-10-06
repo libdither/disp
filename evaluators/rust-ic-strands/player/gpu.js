@@ -1,8 +1,9 @@
 // The chip's block schedule on WebGPU: crate/src/gpu/mod.rs's `Grid` for the browser, running the
 // shader the engine makes for the loaded configuration (tables.rs `shader`). A grid moves a run's
-// sites as the engine's `strands_held` gives them: each site's index, then its 10 words.
+// sites as the engine's `strands_held` gives them: each site's index, its 10 words and its demand
+// field (which rides in the site's pulse word, above the pulse).
 window.StrandsGPU = (() => {
-  const SITE = 10, REC = SITE + 1, STRIDE = 256, CLOCK = 80;
+  const SITE = 10, REC = SITE + 2, STRIDE = 256, CLOCK = 80;
   // busy.wgsl `counts`: the list lengths, the tally (`T_*`), then the rewrites' count and sites;
   // `NO_LIST`: a clock that fills no busy list.
   const TALLY = 11, FIRES_MAX = 4096, COUNTS = 16 + FIRES_MAX, NO_LIST = 3;
@@ -41,7 +42,7 @@ window.StrandsGPU = (() => {
   class Grid {
     constructor(gpu, w, h, d, batch) {
       // `busyHint`: about how many blocks are busy, which sets how many workgroups share them out.
-      Object.assign(this, { gpu, w, h, d, batch, seeded: false, busyHint: 64, cap: 11 * 4096 });
+      Object.assign(this, { gpu, w, h, d, batch, seeded: false, busyHint: 64, cap: REC * 4096 });
       const dev = gpu.device, n = w * h * d, buf = (bytes, usage) => dev.createBuffer({ size: Math.max(4, bytes), usage });
       this.nb = [(w >> 1) + 1, (h >> 1) + 1, (d >> 1) + 1];
       const blocks = this.blocks();
@@ -59,7 +60,8 @@ window.StrandsGPU = (() => {
     blocks() { return this.nb[0] * this.nb[1] * this.nb[2]; }
     destroy() { for (const b of [this.sites, this.gathered, this.pul, this.marks, this.busy, this.counts, this.clocks]) b.destroy(); }
 
-    /// Load these sites, every other site empty; each site's pulse goes to both pulse buffers.
+    /// Load these sites, every other site empty with no field; each site's pulse word goes to both
+    /// pulse buffers.
     upload(held) {
       const n = this.w * this.h * this.d, q = this.gpu.device.queue;
       const state = new Uint32Array(n * SITE), pul = new Uint32Array(2 * n);
@@ -67,8 +69,8 @@ window.StrandsGPU = (() => {
       pul.fill(0xFF);
       for (let i = 0; i < held.length; i += REC) {
         const s = held[i];
-        state.set(held.subarray(i + 1, i + REC), s * SITE);
-        pul[s] = pul[n + s] = held[i + SITE] >>> 24;
+        state.set(held.subarray(i + 1, i + 1 + SITE), s * SITE);
+        pul[s] = pul[n + s] = (held[i + SITE] >>> 24) | (held[i + SITE + 1] << 8);
       }
       q.writeBuffer(this.sites, 0, state);
       q.writeBuffer(this.pul, 0, pul);

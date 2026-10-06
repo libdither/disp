@@ -1,7 +1,7 @@
 //! The browser build: the strand lattice driven from JavaScript through a flat C ABI. The
 //! player draws straight from the lattice's own arrays.
 
-use crate::lattice::{Lattice, Params};
+use crate::lattice::{latest, Lattice, Params};
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel, Term};
 use rust_ic_mesh::term;
@@ -41,20 +41,36 @@ fn parse(src: &str) -> Result<Term, String> {
     term::parse(src)
 }
 
-/// Load a term. Flags: bit 0 block rewrites, bit 1 lazy, bit 2 demand pulses, bit 3 Margolus
-/// blocks, bit 4 erasers collect garbage, bit 5 a turn for every site of a block each clock,
-/// bit 6 wanted readers take half their site's turns, bits 8–11 the most pairings a switchboard
-/// holds (0: no limit). Returns 0, or an error in the text.
+/// The next run's settings, which start from the current design (lattice.rs `latest`).
+static mut NEXT: Option<Params> = None;
+#[allow(static_mut_refs)]
+fn next() -> &'static mut Params { unsafe { NEXT.get_or_insert_with(latest) } }
+
+/// Start the next run's settings over from the current design.
 #[no_mangle]
-#[allow(clippy::too_many_arguments)]
-pub extern "C" fn strands_new(w: u32, h: u32, depth: u32, k: u32, lanes: u32, flags: u32, temp: f64, swap: f64, agent_turns: f64, w_principal: f64, w_aux: f64,
-                              link_crowd: f64, board_crowd: f64, idle_crowd: f64, seed: u32, src: *const u8, len: usize) -> i32 {
+pub extern "C" fn strands_settings() { *next() = latest(); }
+
+/// Change one of the next run's settings, as `key=value` (lattice.rs `Params::set`). Returns 0, or
+/// 1 with why in the text.
+#[no_mangle]
+pub extern "C" fn strands_set(src: *const u8, len: usize) -> i32 {
+    let kv = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
+    let r = kv.split_once('=').ok_or(format!("{kv}: not key=value")).and_then(|(k, v)| next().set(k, v));
+    match r { Ok(()) => 0, Err(e) => { set_text(&e); 1 } }
+}
+
+/// The next run's layers.
+#[no_mangle]
+pub extern "C" fn strands_depth() -> u32 { next().depth }
+
+/// Load a term on a w×h lattice with the next run's settings. Returns 0, or an error in the text
+/// (2: the term's drawing does not fit).
+#[no_mangle]
+pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32 {
     std::panic::set_hook(Box::new(|info| { set_text(&format!("engine panic: {info}")); }));
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     let t = match parse(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
-    let p = Params { w, h, depth, k: k as usize, lanes: lanes as usize, block: flags & 1 != 0, lazy: flags & 2 != 0,
-                     pulse: flags & 4 != 0, margolus: flags & 8 != 0, gc: flags & 16 != 0, block_moves: flags & 32 != 0,
-                     active: if flags & 64 != 0 { 0.5 } else { 0.0 }, pairs: (flags >> 8 & 15) as usize, temp, swap, agent_turns, w_principal, w_aux, link_crowd, board_crowd, idle_crowd, seed: seed as u64, ..Params::default() };
+    let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
     let mut net = Net::new();
     let root = net.build(&t);
@@ -120,6 +136,14 @@ pub extern "C" fn rule_text(i: u32) -> u32 {
 #[no_mangle] pub extern "C" fn live_ptr() -> *const u32 { st().l.live().as_ptr() }
 #[no_mangle] pub extern "C" fn live_len() -> u32 { st().l.live().len() as u32 }
 #[no_mangle] pub extern "C" fn slots_per_site() -> u32 { st().l.ks as u32 }
+/// The loaded lattice's layers, agents per site and strands per link (0, 1, 2).
+#[no_mangle] pub extern "C" fn lattice_shape(i: u32) -> u32 { let p = &st().l.p; [p.depth, p.k as u32, p.lanes as u32][i as usize % 3] }
+/// The demand field at every site, and its bits (0: no field).
+#[no_mangle] pub extern "C" fn field_ptr() -> *const u8 { st().l.fields.values().as_ptr() }
+#[no_mangle] pub extern "C" fn field_bits() -> u32 { st().l.fields.bits() }
+/// The sites where the demand field is not zero.
+#[no_mangle] pub extern "C" fn field_sites_ptr() -> *const u32 { st().l.fields.near().as_ptr() }
+#[no_mangle] pub extern "C" fn field_sites_len() -> u32 { st().l.fields.near().len() as u32 }
 #[no_mangle] pub extern "C" fn ends_per_site() -> u32 { st().l.ends as u32 }
 #[no_mangle] pub extern "C" fn fire_log_ptr() -> *const u32 { st().l.fire_log.as_ptr() }
 #[no_mangle] pub extern "C" fn fire_log_len() -> u32 { st().l.fire_log.len() as u32 }
@@ -199,7 +223,7 @@ pub extern "C" fn words_ptr(n: u32) -> *mut u32 { unsafe { WORDS.resize(n as usi
 #[allow(static_mut_refs)]
 pub extern "C" fn words_len() -> u32 { unsafe { WORDS.len() as u32 } }
 
-/// The sites holding anything (each its index, then its 10 words), into the words.
+/// The sites holding anything or a field (each its index, its 10 words, its field), into the words.
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn strands_held() -> *const u32 { unsafe { WORDS = st().l.held_sites(); WORDS.as_ptr() } }

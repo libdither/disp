@@ -29,7 +29,7 @@ struct Hop { ok: bool, de: i32 }
 /// Agent k of slot s0 steps across face f into slot k2 of the neighbour t0, the result built in
 /// slots so and to (which may be s0 and t0) if the step can be made. With `metropolis`, the step
 /// must leave the neighbour room and pass the energy test.
-fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropolis: bool, metro: u32) -> Hop {
+fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropolis: bool, metro: u32, vs: u32, vt: u32) -> Hop {
   let f1 = f ^ 1u;
   let tg = gt(s0, k); let a = arity(tg); let wnt = gw(s0, k); let idl = LAZY && !wnt;
   // Per port: plan (0 drag, 1 loop, 2 through), its lane or loop end, and a dragged wire's mate.
@@ -66,6 +66,17 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
   if (E_BOARD != 0) {
     let ps = pairs(s0);
     de += E_BOARD * (i32(sq(ps - through - loops)) - i32(sq(ps)) + i32(sq(pt + need + loops)) - i32(sq(pt)));
+  }
+  if (FIELD) {
+    // The demand field between where the agent is and where it goes (vs, vt): by what it is, and
+    // for an idle agent the wire it drags (lattice.rs `field_step_de`).
+    let kind = select(select(2u, 1u, is_producer(tg)), 0u, !wnt);
+    de += F_W[kind] * (i32(vt) - i32(vs));
+    if (kind == 0u && F_WIRE != 0) {
+      let ps = i32(pairs(s0)); let pti = i32(pt);
+      let ds = -(i32(through) + i32(loops)); let dt = i32(need) + i32(loops);
+      de += F_WIRE * (i32(vs) * ((ps + ds) * (ps + ds) - ps * ps) + i32(vt) * ((pti + dt) * (pti + dt) - pti * pti));
+    }
   }
   if (metropolis && !accept(de, metro)) { fail = true; }
   if (fail) { return Hop(false, de); }
@@ -137,7 +148,8 @@ fn flip(s: u32, x: u32, z: u32, w: u32, e: u32, metro: u32) -> bool {
   let m = gm(s, e); let f1 = face(e); let i = lane(e); let f2 = face(m); let j = lane(m);
   let c = free_lane(x, f2); let d = free_lane(w, f1 ^ 1u); let pw = pairs(w);
   let de = 2 * E_LINK * (i32(used_lanes(x, f2)) + i32(used_lanes(w, f1 ^ 1u)) - i32(used_lanes(s, f1)) - i32(used_lanes(s, f2)) + 2)
-         + 2 * E_BOARD * (i32(pw) - i32(pairs(s)) + 1);
+         + 2 * E_BOARD * (i32(pw) - i32(pairs(s)) + 1)
+         + select(0, F_WIRE * (i32(fld_at(w)) * (2 * i32(pw) + 1) - i32(fld_at(s)) * (2 * i32(pairs(s)) - 1)), FIELD);
   if (!((c & 4u) != 0u && (d & 4u) != 0u && pw + 1u <= PAIRS && accept(de, metro))) { return false; }
   let a = gm(x, se(f1 ^ 1u, i)); let g = gm(z, se(f2 ^ 1u, j));
   sm(s, e, NONE); sm(s, m, NONE);
@@ -236,7 +248,8 @@ fn move_stage(active_mode: bool, act_k: u32) {
     for (var half = 0u; half < rolled(select(1u, 2u, full)); half++) {
       let second = half == 1u;
       let h = hop_to(select(p, xt, second), select(t, xs, second), select(xs, xt, second), select(xt, xs, second),
-                     select(k, kb, second), f ^ u32(second), select(select(fsl & 3u, 2u, full), k, second), !full, d_metro());
+                     select(k, kb, second), f ^ u32(second), select(select(fsl & 3u, 2u, full), k, second), !full, d_metro(),
+                     fld_at(select(p, t, second)), fld_at(select(t, p, second)));
       if (!h.ok) { break; }
       if (!second) {
         de = h.de;

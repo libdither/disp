@@ -68,7 +68,9 @@ energies, the acceptance table, the probabilities) is generated from the simulat
   clock by clock from the same start, comparing every site.
 - **The GPU version** (`crate/src/gpu`, the same schedule ported from `rtl/`): every recorded turn
   and block replayed through it, and the lattice run in lockstep with the simulator, including
-  fib(0) on 232×232×8 with pulse phases fused into the next clock and only live tiles running.
+  fib(0) on 232×232×8 with pulse phases fused into the next clock and only live tiles running,
+  and fib(0) and sort(1) with the demand field (which the chip does not have yet), its value at
+  every site compared too.
 - **Layout** (`flow/layout.sh`): OpenROAD-flow-scripts places and routes one block unit, from
   scratch; then IHP's own KLayout decks check the result: design rules on the final GDS (the main
   tables, and the antenna rules IHP's runner leaves off unless asked), and layout versus schematic

@@ -82,7 +82,12 @@ impl Channel {
         if !(1..=8).contains(&c.bits) { return Err(format!("field {spec}: bits must be 1 to 8")); }
         Ok(c)
     }
-    fn cap(&self) -> u8 { ((1u16 << self.bits) - 1) as u8 }
+    pub fn cap(&self) -> u8 { ((1u16 << self.bits) - 1) as u8 }
+    /// The weights in quarter units (idle, called, wanted), and wire's halved, as `board` is.
+    pub fn weights(&self) -> [i32; 4] {
+        let q = |x: f64| (x * 4.0).round() as i32;
+        [q(self.idle), q(self.called), q(self.wanted), q(self.wire) / 2]
+    }
 }
 
 /// The channels' values, and the rewrites of the clock before.
@@ -100,20 +105,32 @@ struct Chan {
     value: Vec<u8>,
     /// Sites where the value is not zero.
     near: Vec<u32>,
-    /// The weights in quarter units (idle, called, wanted), and wire's halved, as `board` is.
+    /// `Channel::weights`.
     w: [i32; 4],
 }
 
 impl Fields {
     pub fn new(p: &Params, sites: usize) -> Fields {
-        let q = |x: f64| (x * 4.0).round() as i32;
         let chans: Vec<Chan> = p.fields.iter().filter(|c| c.source != Source::NONE).map(|&spec| Chan {
-            spec, value: vec![0; sites], near: vec![], w: [q(spec.idle), q(spec.called), q(spec.wanted), q(spec.wire) / 2],
+            spec, value: vec![0; sites], near: vec![], w: spec.weights(),
         }).collect();
         Fields { on: !chans.is_empty(), support: 0, chans, fired: vec![], blocked: vec![] }
     }
     /// Bits a site spends on the channels.
     pub fn bits(&self) -> u32 { self.chans.iter().map(|c| c.spec.bits as u32).sum() }
+    /// The first channel's value at site s (the one channel a GPU keeps).
+    pub fn value(&self, s: u32) -> u8 { self.chans.first().map_or(0, |c| c.value[s as usize]) }
+    /// The first channel at every site (empty without a channel).
+    pub fn values(&self) -> &[u8] { self.chans.first().map_or(&[], |c| &c.value) }
+    /// The sites where the first channel is not zero.
+    pub fn near(&self) -> &[u32] { self.chans.first().map_or(&[], |c| &c.near) }
+    /// Set the first channel at site s (handing a run over from a GPU).
+    pub fn set_value(&mut self, s: u32, v: u8) {
+        let Some(c) = self.chans.first_mut() else { return };
+        let old = std::mem::replace(&mut c.value[s as usize], v);
+        if old == 0 && v != 0 { c.near.push(s); }
+        if old != 0 && v == 0 { c.near.retain(|&x| x != s); }
+    }
     pub fn fired(&mut self, s: u32) { if self.on { self.fired.push(s); } }
     pub fn blocked(&mut self, s: u32) { if self.on { self.blocked.push(s); } }
 }

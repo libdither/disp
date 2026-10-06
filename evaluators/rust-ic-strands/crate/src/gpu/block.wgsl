@@ -101,6 +101,19 @@ fn readers(s: u32) -> u32 {
   }
   return m;
 }
+/// Bit k: slot k of position s holds an agent that walks along its principal wire on an active
+/// turn: a wanted reader, or (with `CALLS`) a called value.
+fn walkers(s: u32) -> u32 {
+  var m = readers(s);
+  if (CALLS) {
+    let tags = sb[at(s, 8u)] >> 8u; let wants = sb[at(s, 9u)];
+    for (var k = 0u; k < 3u; k++) {
+      let t = (tags >> (8u * k)) & 0xFFu;
+      if (t != 0u && is_producer(t) && ((wants >> (8u * k)) & 0xFFu) != 0u) { m |= 1u << k; }
+    }
+  }
+  return m;
+}
 /// The wanted reader an active turn moves (the RTL's `active_reader`), among `rd` (bit k: slot k).
 fn reader_k(rd: u32) -> u32 {
   var ksl = 0u; var n = 0u;
@@ -125,7 +138,7 @@ fn turn() {
       st = select(ST_MOVE, ST_FIRE, pr.found);
     }
     if (st == ST_MOVE) {
-      let rd = readers(p);
+      let rd = walkers(p);
       let active_mode = d_active() < CH_ACTIVE && rd != 0u;
       let act_k = reader_k(rd);
       // A reader that touched a pending computation wants it now (lattice.rs `take_infect`).
@@ -208,11 +221,35 @@ fn store(s: u32, t: Site) { for (var i = 0u; i < 10u; i++) { sites[s * 10u + i] 
 fn invocation(g: vec3<u32>, n: vec3<u32>, size: u32) -> u32 { return g.x + g.y * n.x * size; }
 
 fn nsites() -> u32 { return clk.w * clk.h * clk.d; }
-/// A site's pulse after the previous clock's turns.
+/// A site's pulse word after the previous clock's turns: the strand end its pulse sits on (low
+/// byte, NONE without one) and its demand field (the next byte; lattice.rs `update_fields`).
 fn pul_read(s: u32) -> u32 { return pul[(clk.par ^ 1u) * nsites() + s]; }
-/// A site's pulse in the buffer this clock's turns write.
+/// A site's pulse word in the buffer this clock's turns write.
 fn pul_here(s: u32) -> u32 { return pul[clk.par * nsites() + s]; }
 fn set_pul(s: u32, v: u32) { pul[clk.par * nsites() + s] = v; }
+/// A pulse word with no pulse and no field.
+const QUIET: u32 = 0xFFu;
+fn pw_end(w: u32) -> u32 { return w & 0xFFu; }
+fn pw_field(w: u32) -> u32 { return (w >> 8u) & 0xFFu; }
+
+/// Bits 4q .. 4q + 3: position q's demand field this clock.
+var<private> fld: u32;
+fn fld_at(q: u32) -> u32 { return (fld >> (4u * (q & 7u))) & 15u; }
+/// Site s's demand field this clock (lattice.rs `update_fields`): `src` if it is a source (a
+/// wanted reader or a demand pulse there), its own value of the clock before less the fade, and
+/// each neighbour's less the falloff, whichever is most.
+fn field_of(s: u32, src: bool) -> u32 {
+  let x = s % clk.w; let y = (s / clk.w) % clk.h; let z = s / (clk.w * clk.h);
+  let on = array<bool, 6>(x + 1u < clk.w, x > 0u, y + 1u < clk.h, y > 0u, z + 1u < clk.d, z > 0u);
+  let nb = array<u32, 6>(s + 1u, s - 1u, s + clk.w, s - clk.w, s + clk.w * clk.h, s - clk.w * clk.h);
+  var fs: array<u32, 6>;
+  for (var f = 0u; f < 6u; f++) { fs[f] = select(0u, pw_field(pul_read(select(s, nb[f], on[f]))), on[f]); }
+  var v = select(0u, F_LEVEL, src);
+  let own = pw_field(pul_read(s));
+  if (F_DECAY != NONE && own > F_DECAY) { v = max(v, own - F_DECAY); }
+  for (var f = 0u; f < 6u; f++) { if (F_STEP != NONE && fs[f] > F_STEP) { v = max(v, fs[f] - F_STEP); } }
+  return min(v, F_CAP);
+}
 /// The corner of block b at this clock's offset (a hash of the clock).
 fn block_corner(b: vec3<i32>) -> vec3<i32> {
   let o = hash(0xFFFFFFFFu, clk.tick).x;
@@ -244,19 +281,28 @@ fn block_turns(b: vec3<i32>) {
   for (var q = 0u; q < 8u; q++) { sx[q] = select(0u, site_at(c, q), (onl & (1u << q)) != 0u); }
   let t0 = load(sx[0]); let t1 = load(sx[1]); let t2 = load(sx[2]); let t3 = load(sx[3]);
   let t4 = load(sx[4]); let t5 = load(sx[5]); let t6 = load(sx[6]); let t7 = load(sx[7]);
-  // Bit q: a pulse in the buffer this clock writes, and in the previous clock's.
+  // Bit q: a pulse or a field in the buffer this clock writes, and in the previous clock's.
   var here = 0u; var before = 0u;
   for (var q = 0u; q < 8u; q++) {
-    here |= u32(pul_here(sx[q]) != NONE) << q;
-    before |= u32(pul_read(sx[q]) != NONE) << q;
+    here |= u32(pul_here(sx[q]) != QUIET) << q;
+    before |= u32(pul_read(sx[q]) != QUIET) << q;
   }
   here &= onl; before &= onl;
   let any = stage(0u, t0) | stage(1u, t1) | stage(2u, t2) | stage(3u, t3) | stage(4u, t4) | stage(5u, t5) | stage(6u, t6) | stage(7u, t7);
-  if (any == 0u && here == 0u) { return; }
   var dirty = 0u;
   if (clk.fused != 0u) {
     for (var q = 0u; q < 8u; q++) { if ((any & (1u << q)) != 0u) { dirty |= pulse_at(q, sx[q]); } }
   }
+  // The demand field, from the sites as the pulse phase left them; empty sites have one too.
+  fld = 0u;
+  if (FIELD) {
+    for (var q = 0u; q < 8u; q++) {
+      if ((onl & (1u << q)) == 0u) { continue; }
+      let src = (F_READER && readers(q) != 0u) || (F_PULSE && gpul(q) != NONE);
+      fld |= field_of(sx[q], src) << (4u * q);
+    }
+  }
+  if (any == 0u && here == 0u && (!FIELD || (before == 0u && fld == 0u))) { return; }
   taken = 0u;
   if (any != 0u) { run_block(); }
   var held = before;
@@ -264,11 +310,21 @@ fn block_turns(b: vec3<i32>) {
     if ((onl & (1u << q)) != 0u) {
       let s = sx[q];
       if (((taken | dirty) & (1u << q)) != 0u) { store(s, get_site(q)); }
-      set_pul(s, gpul(q));
+      set_pul(s, gpul(q) | (fld_at(q) << 8u));
       for (var i = 0u; i < 10u; i++) { if (sb[at(q, i)] != EMPTY[i]) { held |= 1u << q; } }
+      if (fld_at(q) != 0u) { held |= 1u << q; }
     }
   }
-  if (clk.next != NO_LIST) { mark_next(c, held); }
+  if (clk.next != NO_LIST) {
+    mark_next(c, held);
+    // A field strong enough to reach a neighbour next clock puts the neighbour's block on the list.
+    if (FIELD && F_STEP != NONE) {
+      for (var q = 0u; q < 8u; q++) {
+        if ((onl & (1u << q)) == 0u || fld_at(q) <= F_STEP) { continue; }
+        for (var f = 0u; f < 6u; f++) { if (onlat(q, f)) { mark_next_site(site_at(c, q) + face_step(f)); } }
+      }
+    }
+  }
   add_tally();
 }
 /// Every block's turns for this clock.
@@ -280,13 +336,18 @@ fn turns(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) n
   block_turns(vec3<i32>(i32(id % clk.nbx), i32((id / clk.nbx) % clk.nby), i32(id / (clk.nbx * clk.nby))));
 }
 
+/// The index step to the neighbour across face f.
+fn face_step(f: u32) -> u32 {
+  let d = array<u32, 6>(1u, 0xFFFFFFFFu, clk.w, 0u - clk.w, clk.w * clk.h, 0u - clk.w * clk.h);
+  return d[min(f, 5u)];
+}
 /// Site s's neighbours' pulses after the previous clock's turns, by face (none off the lattice).
 fn neighbour_pulses(s: u32) -> array<u32, 6> {
   let x = s % clk.w; let y = (s / clk.w) % clk.h; let z = s / (clk.w * clk.h);
   let on = array<bool, 6>(x + 1u < clk.w, x > 0u, y + 1u < clk.h, y > 0u, z + 1u < clk.d, z > 0u);
   let nb = array<u32, 6>(s + 1u, s - 1u, s + clk.w, s - clk.w, s + clk.w * clk.h, s - clk.w * clk.h);
   var pes: array<u32, 6>;
-  for (var f = 0u; f < 6u; f++) { pes[f] = select(NONE, pul_read(select(s, nb[f], on[f])), on[f]); }
+  for (var f = 0u; f < 6u; f++) { pes[f] = select(NONE, pw_end(pul_read(select(s, nb[f], on[f]))), on[f]); }
   return pes;
 }
 /// A site's pulse phase (lattice.rs `step_pulses`; hw/rtl/strands_lattice.v `strands_site_net`),
@@ -302,8 +363,17 @@ fn pulse_step(old: Site, pes: array<u32, 6>) -> Site {
       if (is_strand(m)) { if (!got) { got = true; arr = m; } }
       else if (m != NONE) {
         let k = port_k(m); let qq = port_q(m);
+        // A pulse reaching a value's principal port calls it (lattice.rs `calls`).
+        if (CALLS && qq == 0u && vgt(t, k) != 0u && is_producer(vgt(t, k))) { t = vsw(t, k, true); }
         if (qq != 0u && vgt(t, k) != 0u && is_consumer(vgt(t, k)) && !vgw(t, k)) { t = vsw(t, k, true); tally[T_PULSES]++; }
       }
+    }
+  }
+  // A wanted reader calls a value it shares its site with (lattice.rs `call_here`).
+  if (CALLS) {
+    for (var k = 0u; k < 3u; k++) {
+      let m = vgm(t, ae(k, 0u));
+      if (vwanted_reader(t, k) && m != NONE && !is_strand(m) && vgt(t, port_k(m)) != 0u && is_producer(vgt(t, port_k(m)))) { t = vsw(t, port_k(m), true); }
     }
   }
   var sent = false;

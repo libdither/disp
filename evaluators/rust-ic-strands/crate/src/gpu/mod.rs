@@ -153,6 +153,8 @@ pub struct Grid<'g> {
     pub busy_hint: u32,
     /// The first clock needs its busy list made from the state (after an upload).
     seeded: bool,
+    /// The pulse buffer the last clock wrote, which holds the field.
+    last_par: usize,
     sites: wgpu::Buffer,
     staging: wgpu::Buffer,
     pul: wgpu::Buffer,
@@ -169,46 +171,55 @@ impl<'g> Grid<'g> {
         let n = (w * h * d) as u64;
         let blocks = ((w / 2 + 1) * (h / 2 + 1) * (d / 2 + 1)) as u64;
         let sites = gpu.buffer(n * SITE as u64 * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
-        let gathered = gpu.buffer(n * (SITE as u64 + 1) * 4, U::STORAGE | U::COPY_SRC);
-        let staging = gpu.buffer((n * (SITE as u64 + 1)).max(COUNTS as u64) * 4, U::MAP_READ | U::COPY_DST);
-        let pul = gpu.buffer(2 * n * 4, U::STORAGE | U::COPY_DST);
+        let gathered = gpu.buffer(n * (SITE as u64 + 2) * 4, U::STORAGE | U::COPY_SRC);
+        let staging = gpu.buffer((n * (SITE as u64 + 2)).max(COUNTS as u64) * 4, U::MAP_READ | U::COPY_DST);
+        let pul = gpu.buffer(2 * n * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
         let marks = gpu.buffer(blocks * 4, U::STORAGE | U::COPY_DST);
         let busy = gpu.buffer(3 * blocks * 4, U::STORAGE);
         let counts = gpu.buffer(COUNTS as u64 * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
         let clocks = gpu.buffer((2 * batch.max(1) as u64 + 2) * STRIDE, U::UNIFORM | U::COPY_DST);
         let bind = gpu.bind(&clocks, [&sites, &pul, &gathered, &marks, &busy, &counts]);
-        Grid { gpu, w, h, d, batch: batch.max(1), busy_hint: 64, seeded: false, sites, staging, pul, marks, counts, gathered, clocks, bind }
+        Grid { gpu, w, h, d, batch: batch.max(1), busy_hint: 64, seeded: false, last_par: 0, sites, staging, pul, marks, counts, gathered, clocks, bind }
     }
 
     fn sites(&self) -> usize { (self.w * self.h * self.d) as usize }
     fn blocks(&self) -> u32 { (self.w / 2 + 1) * (self.h / 2 + 1) * (self.d / 2 + 1) }
 
-    /// Load a state of `SITE` words per site; each site's pulse also goes to both pulse buffers.
-    pub fn upload(&mut self, state: &[u32]) {
+    /// Load a state of `SITE` words per site, and its demand field (a value a site) if it keeps one:
+    /// each site's pulse word (its pulse, its field above it) goes to both pulse buffers.
+    pub fn upload(&mut self, state: &[u32], field: Option<&[u8]>) {
         assert_eq!(state.len(), self.sites() * SITE, "a state of {SITE} words per site");
         const EMPTY: [u32; SITE] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
-        let pul: Vec<u32> = state.chunks(SITE).map(|s| s[9] >> 24).collect();
+        let fv = |i: usize| field.map_or(0, |f| f[i] as u32);
+        let pul: Vec<u32> = state.chunks(SITE).enumerate().map(|(i, s)| (s[9] >> 24) | fv(i) << 8).collect();
         let q = &self.gpu.queue;
         q.write_buffer(&self.sites, 0, bytemuck::cast_slice(state));
         q.write_buffer(&self.pul, 0, bytemuck::cast_slice(&pul));
         q.write_buffer(&self.pul, pul.len() as u64 * 4, bytemuck::cast_slice(&pul));
         q.write_buffer(&self.counts, 0, bytemuck::cast_slice(&[0u32; 16]));
         q.write_buffer(&self.marks, 0, bytemuck::cast_slice(&vec![0u32; self.blocks() as usize]));
-        self.busy_hint = state.chunks(SITE).filter(|s| *s != EMPTY).count() as u32;
+        self.busy_hint = state.chunks(SITE).enumerate().filter(|(i, s)| *s != EMPTY || fv(*i) != 0).count() as u32;
         self.seeded = false;
     }
 
     pub fn download(&self) -> Vec<u32> { self.gpu.read(&self.sites, 0, &self.staging, self.sites() * SITE) }
 
-    /// The sites holding anything after the last `run` that gathered: their indices and their
-    /// `SITE` words each.
-    pub fn gathered(&mut self) -> (Vec<u32>, Vec<u32>) {
+    /// The demand field after the last `run`, a value a site.
+    pub fn download_field(&self) -> Vec<u8> {
+        let n = self.sites();
+        self.gpu.read(&self.pul, self.last_par * n, &self.staging, n).iter().map(|w| (w >> 8) as u8).collect()
+    }
+
+    /// The sites holding anything or a field after the last `run` that gathered: their indices,
+    /// their `SITE` words each, and their fields.
+    pub fn gathered(&mut self) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
         let n = self.gpu.read(&self.counts, 3, &self.staging, 1)[0] as usize;
-        let v = self.gpu.read(&self.gathered, 0, &self.staging, n * (SITE + 1));
+        let v = self.gpu.read(&self.gathered, 0, &self.staging, n * (SITE + 2));
         self.busy_hint = n as u32;
-        let idx = v.chunks(SITE + 1).map(|r| r[0]).collect();
-        let words = v.chunks(SITE + 1).flat_map(|r| r[1..].iter().copied()).collect();
-        (idx, words)
+        let idx = v.chunks(SITE + 2).map(|r| r[0]).collect();
+        let words = v.chunks(SITE + 2).flat_map(|r| r[1..=SITE].iter().copied()).collect();
+        let field = v.chunks(SITE + 2).map(|r| r[SITE + 1] as u8).collect();
+        (idx, words, field)
     }
 
     /// What the turns did since the last take (busy.wgsl `T_*`), and the sites of the first
@@ -244,6 +255,7 @@ impl<'g> Grid<'g> {
         // Clock t runs list t % 3 and fills list (t + 1) % 3, stamping its blocks t + 2.
         let turns = |t: u64, next: u32, par: u32, fused: bool| [tick(t), tick(t + 1), (t + 2) as u32, next, list(t + 2), par, fused as u32, list(t)];
         let last = first + n as u64 - 1;
+        self.last_par = (last % 2) as usize;
         let mut c = Vec::with_capacity((2 * n + 2) * STRIDE as usize / 4);
         for t in first..=last {
             if dense { c.extend(self.clock(blocks, turns(t, NO_LIST, par(t), false))); c.extend(self.clock(sites, turns(t, NO_LIST, par(t) ^ 1, false))); }

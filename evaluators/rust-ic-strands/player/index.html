@@ -33,7 +33,6 @@
   .badge.bad { color:var(--warn); border-color:rgba(255,107,107,.45); background:rgba(255,107,107,.1); }
   #answer { word-break:break-all; color:var(--hot); font-size:12px; max-height:64px; overflow:auto; }
   #decoded { font-size:20px; color:var(--hot); }
-  .cfg { display:grid; grid-template-columns:auto 1fr; gap:5px 10px; align-items:center; font-size:12px; }
   .legend { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:2px 10px; font-size:11px; }
   .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
   canvas.chart { width:100%; height:80px; display:block; background:#0a1019; border:1px solid var(--line); border-radius:7px; }
@@ -106,24 +105,8 @@
     <div class="row"><span class="k">garbage collected</span><span class="v" id="sGc">0</span></div>
     <div class="row"><span class="k">most sites in use at once</span><span class="v" id="sExtent">0</span></div>
 
-    <h3>the lattice</h3>
-    <div class="cfg">
-      <span class="k">space</span><select id="cDim"><option value="6" selected>3D, 6 layers</option><option value="1">2D sheet (needs 4 strands per link, and is slow)</option></select>
-      <span class="k">agents per site</span><select id="cK"><option>1</option><option selected>2</option></select>
-      <span class="k">strands per link</span><select id="cL"><option>2</option><option>3</option><option selected>4</option></select>
-      <span class="k">rewrites inside</span><select id="cBlock"><option value="1" selected>one 2×2 block</option><option value="0">a site and its neighbours</option></select>
-      <span class="k">evaluation</span><select id="cLazy"><option value="1" selected>lazy: only wanted readers react</option><option value="0">eager: every pair reacts</option></select>
-      <span class="k">temperature</span><span><input id="cTemp" type="range" min="2" max="40" value="20" style="width:110px"> <span id="cTempV" class="note"></span></span>
-      <span class="k">wire tension</span><select id="cTension"><option value="3,1,0,0.5" selected>light, crowded switchboards pull harder</option><option value="3,1,1,0">light, crowded links pull harder</option><option value="3,1,0,0">light everywhere (wire swells on long runs)</option><option value="6,4,0,0">strong everywhere (slower)</option></select>
-      <span class="k">switchboard</span><select id="cBoard"><option value="8" selected>a list of 8 pairings</option><option value="0">a mate for every end</option></select>
-      <span class="k">idle matter</span><select id="cIdle"><option value="10" selected>keeps a seat free, so wanted readers get through</option><option value="0">packs in tight</option></select>
-      <span class="k">exchanges</span><select id="cSwap"><option value="1" selected>on</option><option value="0">off</option></select>
-      <span class="k">demand travels</span><select id="cPulse"><option value="1" selected>as pulses along wires</option><option value="0">only by contact</option></select>
-      <span class="k">garbage</span><select id="cGc"><option value="1" selected>erasers collect it</option><option value="0">left in place</option></select>
-      <span class="k">turns</span><select id="cTurns"><option value="0.8" selected>mostly to sites with agents</option><option value="0">evenly to every site</option></select>
-      <span class="k">schedule</span><select id="cSched"><option value="0" selected>random turns (asynchronous chip)</option><option value="1">2×2×2 blocks, one move each per clock (synchronous chip)</option><option value="2">2×2×2 blocks, a turn for every site, half of it for wanted readers (synchronous chip)</option></select>
-    </div>
-    <div class="note" style="margin-top:6px" id="bits"></div>
+    <h3>the design</h3>
+    <div class="note" id="bits"></div>
 
     <h3>legend</h3>
     <div class="legend" id="legend"></div>
@@ -137,11 +120,16 @@
       <p><b>Rewrite.</b> When a wanted reader and the value it reads meet (same site, or one strand apart), the rule
         fires inside a 2×2 block: fresh agents take the free seats and are wired with fresh strands.</p>
       <p><b>Demand.</b> Nothing reacts until wanted. A wanted reader sends a pulse (white dot) along its principal
-        wire, one strand per clock; when it reaches another computation's output, that computation is wanted too.
-        A pulse whose strand gets moved is dropped, and the reader sends another.</p>
+        wire, one strand per clock; when it reaches another computation's output, that computation is wanted too,
+        and when it reaches the value the reader needs, that value is called (orange ring): it counts as wanted, and
+        walks along its wire toward its reader. A pulse whose strand gets moved is dropped, and the reader sends another.</p>
+      <p><b>Demand field.</b> Every site, empty or not, keeps a number from 0 to 3 (amber tint): 3 where a wanted
+        reader or a pulse is, falling by one a site and a clock. Idle matter pays to climb it, and so does wire it lays
+        down, so it gets out of the way along the reader's wire and around both of its ends; a called value is drawn
+        up it, toward its reader.</p>
       <p><b>Tension.</b> At temperature 2 a loose wire gains more from wiggling than it loses to its tension, so
-        over long runs it swells until no lane is free. A link carrying n strands costs n²/2 more, so wire stays
-        loose in open space but cannot crowd every lane around a reaction.</p>
+        over long runs it swells until no lane is free. A site whose switchboard holds p pairings costs p²/4, so wire
+        stays loose in open space but cannot crowd every lane around a reaction.</p>
       <p><b>Density.</b> Wires pull matter together until, left alone, three quarters of occupied sites are full, and wanted
         readers and rewrites stall against full sites. Two idle agents (anything but a wanted reader) sharing a site cost
         energy, so idle matter spreads out to about one agent per site and keeps a seat free for traffic, while wanted
@@ -150,9 +138,9 @@
         output collects it: a duplicator becomes a plain wire from its input to its other output; a dead apply becomes
         erasers on its inputs; an unpair with both parts erased becomes one eraser on the pair. Once the answer is in,
         the machine keeps running until only the answer is left.</p>
-      <p><b>Clocks.</b> With random turns, a clock is one turn for the busiest site. With 2×2×2 blocks, the lattice is
-        cut into disjoint blocks at a random offset every clock and each block makes one move: what a synchronous
-        chip would do, with no two moves ever touching the same site.</p>
+      <p><b>Clocks.</b> Every clock the lattice is cut into disjoint 2×2×2 blocks at a random offset, and in each block
+        every site takes a turn, a site with a wanted reader or a called value spending half of its on it: what a
+        synchronous chip does, with no move ever reaching outside its block.</p>
       <p><b>Views.</b> <i>Layers stacked</i> draws every layer of the 3D lattice offset over the others: compact, but
         layers overlap. <i>Layers side by side</i> gives each layer its own panel: exact, and every site is easy to
         click. <i>3D</i> shows the lattice as it is: drag to orbit, right-drag to pan, spread the layers apart or show
@@ -290,6 +278,7 @@ function populate() {
   add(go, "random", "random term"); add(go, "custom", "custom term…");
   $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${LABEL[TAGS[t]]} ${NAMES[TAGS[t]]}</span>`).join("")
     + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
+    + `<span><span class="sw" style="background:none;border:2px solid #ffa94d"></span>called value</span><span><span class="sw" style="background:rgba(255,170,80,0.35)"></span>demand field</span>`
     + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
     + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;border:2px solid #d6a8ff;border-radius:2px"></span>last move</span>`
     + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`;
@@ -298,7 +287,6 @@ function populate() {
   if (!sel.value) sel.value = "share-tower";
   $("progN").value = q.get("n") || 4;
   const d = dispProg(sel.value); $("args").value = q.get("a") ?? (d ? d.example : "");
-  if (q.get("dim")) $("cDim").value = q.get("dim");
   if (q.get("view")) $("viewMode").value = q.get("view");
   syncUI();
 }
@@ -306,7 +294,6 @@ function syncUI() {
   const v = $("prog").value, w = catalog.workloads.find(w => w.name === v), d = dispProg(v);
   $("custom").hidden = v !== "custom"; $("args").hidden = !d;
   $("progN").hidden = !(w && w.n > 0) && v !== "random";
-  $("cTempV").textContent = (+$("cTemp").value / 10).toFixed(1);
   $("progInfo").innerHTML = d ? `<b>${d.name}</b>: ${d.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude; type the arguments as disp literals (numbers, [lists], "strings").`
     : w ? `<b>${w.name}</b>: ${w.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
     : v === "random" ? "A random tree-calculus term." : "Your own term: L, S(x), F(x,y), @(f,x), or ternary digits.";
@@ -324,30 +311,33 @@ function load() {
   try { src = source(); } catch (err) { banner(`arguments: ${err}`, true); return; }
   const agents = withString(src, (p, n) => E.strands_probe(p, n));
   if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return; }
-  const depth = +$("cDim").value, k = +$("cK").value, lanes = +$("cL").value;
+  // The current design (lattice.rs `latest`): the chip's schedule with the demand field.
+  E.strands_settings();
+  withString(`seed=${SEED}`, (p, n) => E.strands_set(p, n));
+  const depth = E.strands_depth();
   let side = Math.ceil(Math.sqrt(agents) * (depth > 1 ? 7 : 8)) + 16;
   // Grow the grid until the term's initial drawing fits.
   let rc = 2;
-  const flags = (+$("cBlock").value) | (+$("cLazy").value << 1) | (+$("cPulse").value << 2) | ((+$("cSched").value > 0) << 3) | (+$("cGc").value << 4) | ((+$("cSched").value == 2) * 96) | (+$("cBoard").value << 8);
   for (let tries = 0; tries < 6; tries++) {
-    rc = withString(src, (p, n) => E.strands_new(side, side, depth, k, lanes, flags, +$("cTemp").value / 10, +$("cSwap").value, +$("cTurns").value, ...$("cTension").value.split(",").map(Number), +$("cIdle").value, SEED, p, n));
+    rc = withString(src, (p, n) => E.strands_new(side, side, p, n));
     if (rc !== 2) break;
     side = Math.ceil(side * 1.4);
   }
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
   if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
-  L = { w: side, h: side, depth, k, lanes, ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: +$("cGc").value === 1 };
+  L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
   const d = dispProg($("prog").value);
   running = d ? { kind: d.kind, call: `${d.name} ${$("args").value.trim()}` } : null;
   finished = false; cleaned = false; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   refreshGarbage(true); layoutLayers();
   $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
-  const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), pulse = +$("cPulse").value ? bits : 0;
-  const P = +$("cBoard").value, board = P ? 2 * P * bits : ends * bits;
-  $("bits").textContent = `a site here is ${L.k} agent tag${L.k > 1 ? "s" : ""} (4 bits each, plus a wanted bit) and a switchboard of ${P ? `${P} pairings × 2 ends` : `${ends} ends`} × ${bits} bits${pulse ? `, plus ${bits} bits saying which strand carries a pulse` : ""}: ≈ ${5 * L.k + board + pulse} bits. Moves touch at most one 2×2 block.`;
-  $("clockName").textContent = ["clocks (turns of the busiest site)", "clocks (one move per 2×2×2 block)", "clocks (2×2×2 blocks)"][+$("cSched").value];
-  location.hash = `p=${$("prog").value}&n=${$("progN").value}${d ? `&a=${encodeURIComponent($("args").value)}` : ""}&dim=${depth}&view=${viewMode}${onGpu ? "&gpu=1" : ""}`;
+  const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), field = E.field_bits();
+  $("bits").textContent = `The chip's schedule with the demand field. A site is ${L.k} agent tags (4 bits each, plus a wanted bit, which on a value means called), `
+    + `a switchboard of 8 pairings × 2 ends × ${bits} bits, ${bits} bits saying which strand carries a pulse, and ${field} bits of demand field: `
+    + `≈ ${5 * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
+  $("clockName").textContent = "clocks (2×2×2 blocks)";
+  location.hash = `p=${$("prog").value}&n=${$("progN").value}${d ? `&a=${encodeURIComponent($("args").value)}` : ""}&view=${viewMode}${onGpu ? "&gpu=1" : ""}`;
   if (onGpu && !gpuCode) setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
@@ -492,6 +482,14 @@ function draw() {
       ctx.fillText(`layer ${z}`, px, py - S * 0.4);
     }
   }
+  // the demand field: a warm tint, stronger nearer a wanted reader or a pulse
+  if (E.field_bits()) {
+    const b = E.memory.buffer, fv = new Uint8Array(b, E.field_ptr(), L.w * L.h * L.depth), fs = new Uint32Array(b, E.field_sites_ptr(), E.field_sites_len());
+    for (const s of fs) {
+      const [ox, oy] = siteOrigin(s); if (ox < vx0 || ox > vx1 || oy < vy0 || oy > vy1) continue;
+      ctx.fillStyle = `rgba(255,170,80,${0.05 + 0.07 * fv[s]})`; ctx.fillRect(ox, oy, S, S);
+    }
+  }
   // site floors (occupied sites, faint), by layer for a depth cue when stacked
   for (const s of sites) {
     const [ox, oy] = siteOrigin(s), z = viewMode === "oblique" ? Math.floor(s / (L.w * L.h)) : 0;
@@ -562,7 +560,7 @@ function draw() {
     const [x, y] = slotPos(s, k);
     ctx.globalAlpha = dead(s, k) ? 0.28 : 1;
     ctx.fillStyle = COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
-    if (V.want[s * L.ks + k] && isConsumer(t)) { ctx.strokeStyle = "#56c8ff"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
+    if (V.want[s * L.ks + k]) { ctx.strokeStyle = isConsumer(t) ? "#56c8ff" : "#ffa94d"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
     if (detail) {
       const [px, py] = portPos(s, k, 0);
       ctx.fillStyle = "#0b0e14"; ctx.beginPath(); ctx.arc(px, py, rad * 0.32, 0, 7); ctx.fill();
@@ -835,9 +833,10 @@ function tipHTML(site) {
   let h = `<div class="th"><span>site (${x}, ${y}${L.depth > 1 ? `, layer ${z}` : ""})</span><span class="note">${used} of ${L.k} seats used</span></div>`;
   for (let k = 0; k < L.ks; k++) {
     const t = V.tags[site * L.ks + k]; if (!t) continue;
-    const name = TAGS[t], wanted = isConsumer(t) && V.want[site * L.ks + k], gone = dead(site, k);
+    const name = TAGS[t], wanted = isConsumer(t) && V.want[site * L.ks + k], called = !isConsumer(t) && V.want[site * L.ks + k], gone = dead(site, k);
     h += `<div class="ts${gone ? " dead" : ""}"><span style="color:${COLOR[t]}">${LABEL[name]} ${NAMES[name]}</span>`
       + (gone ? `<span class="chip">garbage</span>` : "") + (wanted ? `<span class="chip" style="color:#56c8ff">wanted</span>` : "")
+      + (called ? `<span class="chip" style="color:#ffa94d">called: walking to its reader</span>` : "")
       + `<div class="tp">${DESC[name]}.</div>`;
     for (let p = 0; p < ARITY[t]; p++) {
       const far = walk(V, site, k * 3 + p), out = isSource(t, p);
@@ -970,7 +969,6 @@ const SEED = 7;
 function held() { const p = E.strands_held(); return new Uint32Array(E.memory.buffer, p, E.words_len()).slice(); }
 async function setEngine(want, why) {
   if (want === "gpu" && !onGpu) {
-    if (!gpuCode && +$("cSched").value !== 2) { $("cSched").value = 2; load(); banner("the GPU runs only the chip's schedule (blocks, a turn for every site), so the run restarted under it"); }
     if (!gpuCode) return setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
     const code = gpuCode;
     if (!G || G.code !== code) {
@@ -1109,7 +1107,6 @@ $("end").onclick = () => { $("speed").value = 100; speedLabel(); setPlaying(true
 $("reset").onclick = () => load();
 $("load").onclick = () => { load(); setPlaying(true); };
 $("prog").onchange = () => { const d = dispProg($("prog").value); if (d) $("args").value = d.example; syncUI(); };
-$("cTemp").oninput = syncUI;
 $("speed").oninput = speedLabel;
 $("viewMode").onchange = () => setView($("viewMode").value);
 $("engine").onchange = () => setEngine($("engine").value);

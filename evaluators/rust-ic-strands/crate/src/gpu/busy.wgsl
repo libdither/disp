@@ -76,7 +76,14 @@ fn seed_busy(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroup
   next_clock();
   var held = false;
   for (var k = 0u; k < 10u; k++) { if (sites[s * 10u + k] != EMPTY[k]) { held = true; } }
-  if (held) { mark_next_site(s); }
+  // An upload writes both pulse buffers alike, so either holds the field.
+  let fv = pw_field(pul_read(s));
+  if (held || fv != 0u) { mark_next_site(s); }
+  if (FIELD && F_STEP != NONE && fv > F_STEP) {
+    let x = s % clk.w; let y = (s / clk.w) % clk.h; let z = s / (clk.w * clk.h);
+    let on = array<bool, 6>(x + 1u < clk.w, x > 0u, y + 1u < clk.h, y > 0u, z + 1u < clk.d, z > 0u);
+    for (var f = 0u; f < 6u; f++) { if (on[f]) { mark_next_site(s + face_step(f)); } }
+  }
 }
 
 /// One clock: the busy blocks' turns, each starting with the previous clock's pulse phase when
@@ -104,8 +111,9 @@ fn busy_pulses(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nw
   add_tally();
 }
 
-/// The sites holding anything (all in the busy blocks of the clock whose list is `list`), each as
-/// its index and its 10 words, appended to `recs` (their count in counts[3]).
+/// The sites holding anything or a field (all in the busy blocks of the clock whose list is
+/// `list`), each as its index, its 10 words and its field, appended to `recs` (their count in
+/// counts[3]).
 @compute @workgroup_size(64)
 fn busy_gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
   let n = atomicLoad(&counts[clk.list]);
@@ -116,10 +124,12 @@ fn busy_gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nw
       if (s == 0xFFFFFFFFu) { continue; }
       var held = false;
       for (var k = 0u; k < 10u; k++) { if (sites[s * 10u + k] != EMPTY[k]) { held = true; } }
-      if (held) {
-        let j = atomicAdd(&counts[3], 1u) * 11u;
+      let fv = pw_field(pul_read(s));
+      if (held || fv != 0u) {
+        let j = atomicAdd(&counts[3], 1u) * 12u;
         recs[j] = s;
         for (var k = 0u; k < 10u; k++) { recs[j + 1u + k] = sites[s * 10u + k]; }
+        recs[j + 11u] = fv;
       }
     }
   }
