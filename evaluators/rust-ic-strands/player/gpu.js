@@ -38,6 +38,19 @@ window.StrandsGPU = (() => {
     return { device, layout, pipes, name: [a.vendor, a.architecture, a.description].filter(Boolean).join(" ") || "a GPU" };
   }
 
+  /// How long reading a buffer back takes with nothing to wait for, the slowest of a few (ms): in
+  /// Firefox up to ~100 ms, as its WebGPU looks for finished work on a timer; on Dawn under 1 ms.
+  async function latency(device) {
+    let worst = 0;
+    for (let i = 0; i < 4; i++) {
+      const b = device.createBuffer({ size: 4, usage: S.MAP_READ }), t = performance.now();
+      await b.mapAsync(GPUMapMode.READ);
+      worst = Math.max(worst, performance.now() - t);
+      b.destroy();
+    }
+    return worst;
+  }
+
   /// A w×h×d lattice on the GPU running up to `batch` clocks per submission (mod.rs `Grid`).
   class Grid {
     constructor(gpu, w, h, d, batch) {
@@ -129,23 +142,46 @@ window.StrandsGPU = (() => {
       return v;
     }
 
+    /// After a run that gathered: what the turns did since the last copy and as many of the sites
+    /// holding anything as `cap` has room for, copied out in the queue, which then starts the tally
+    /// afresh; so runs submitted after it do not touch the copy.
+    copyOut() {
+      const dev = this.gpu.device, room = Math.min(this.cap, this.w * this.h * this.d * REC);
+      const staging = dev.createBuffer({ size: (COUNTS + room) * 4, usage: S.MAP_READ | S.COPY_DST });
+      const enc = dev.createCommandEncoder();
+      enc.copyBufferToBuffer(this.counts, 0, staging, 0, COUNTS * 4);
+      enc.copyBufferToBuffer(this.gathered, 0, staging, COUNTS * 4, room * 4);
+      enc.clearBuffer(this.counts, 16, 48);
+      dev.queue.submit([enc.finish()]);
+      return staging.mapAsync(GPUMapMode.READ).then(() => {
+        const v = new Uint32Array(staging.getMappedRange().slice(0));
+        staging.destroy();
+        const n = v[3] * REC;
+        this.cap = Math.max(this.cap, Math.ceil(n * 1.5));
+        this.busyHint = v[3];
+        const fires = Math.min(v[4 + TALLY], FIRES_MAX);
+        return { n, room, held: v.subarray(COUNTS, COUNTS + Math.min(n, room)), tally: v.subarray(4, 4 + TALLY), fires: v.subarray(5 + TALLY, 5 + TALLY + fires) };
+      }, e => { staging.destroy(); throw e; });
+    }
+
     /// After a run that gathered: the sites holding anything (as `upload` takes them), what the
     /// turns did since the last take, and the sites of their first rewrites; then a fresh tally.
     async take() {
-      const room = Math.min(this.cap, this.w * this.h * this.d * REC);
-      const v = await this.read([{ src: this.counts, at: 0, words: COUNTS }, { src: this.gathered, at: 0, words: room }]);
-      this.gpu.device.queue.writeBuffer(this.counts, 16, new Uint32Array(12));
-      const n = v[3] * REC;
-      let held = v.subarray(COUNTS, COUNTS + Math.min(n, room));
-      if (n > room) {
-        const rest = await this.read([{ src: this.gathered, at: room, words: n - room }]);
-        const all = new Uint32Array(n); all.set(held); all.set(rest, room); held = all;
-      }
-      this.cap = Math.max(this.cap, Math.ceil(n * 1.5));
-      this.busyHint = v[3];
-      const fires = Math.min(v[4 + TALLY], FIRES_MAX);
-      return { held, tally: v.subarray(4, 4 + TALLY), fires: v.subarray(5 + TALLY, 5 + TALLY + fires) };
+      const c = await this.copyOut();
+      if (c.n <= c.room) return c;
+      const rest = await this.read([{ src: this.gathered, at: c.room, words: c.n - c.room }]);
+      const held = new Uint32Array(c.n); held.set(c.held); held.set(rest, c.room);
+      return { ...c, held };
+    }
+
+    /// Clocks `first .. first + n` in submissions of up to the batch, then `copyOut`: what `take`
+    /// returns, or null when more sites held anything than the copy had room for. Several can be
+    /// out at once, each running on from the one before; a null one runs again from its sites (a
+    /// run is fixed by its sites, clocks and seed), and `cap` has grown meanwhile.
+    stretch(first, seed, n) {
+      for (let c = 0; c < n;) { const m = Math.min(this.batch, n - c); this.run(first + c, seed, m, c + m === n); c += m; }
+      return this.copyOut().then(c => c.n <= c.room ? c : null);
     }
   }
-  return { open, Grid, TALLY, REC };
+  return { open, latency, Grid, TALLY, REC };
 })();

@@ -11,9 +11,11 @@
 #                 the turns did matches too, also under settings other than the chip's, with the
 #                 demand field (its value at every site compared too), and with the current design
 #                 (lattice.rs `latest`: the demand field and forking S rules)
-#   6. browser    the player's WebGPU path (player/gpu.js) on Dawn, Chrome's WebGPU (player/dawn.sh):
-#                 a run of the design the player shows (`latest`) handed back and forth between GPU
-#                 and CPU matches one that stays on the CPU
+#   6. browser    the player's WebGPU path (player/gpu.js) on Dawn, Chrome's WebGPU (player/dawn.sh),
+#                 and on Firefox's if Firefox or Floorp is installed (player/firefox.sh): a run of the
+#                 design the player shows (`latest`) handed back and forth between GPU and CPU, with
+#                 stretches out several at a time, matches one that stays on the CPU; and in Firefox
+#                 the player itself reaches the same answer on its GPU about as fast as on its CPU
 #   7. layout     with --layout: synthesis, place and route on IHP SG13G2, design rule check,
 #                 layout versus schematic, timing (see flow/layout.sh)
 # Exits non-zero on the first stage that fails. Each stage prints its wall time.
@@ -120,6 +122,14 @@ for h in 'src=sort:1' 'src=fib:0&lazy=0&pairs=0&temp=1.5&board=0&link=1'; do
   r=$(cap 8G 1800 "$HW/../player/dawn.sh" check "$h" 2>&1 | tail -1) || fail=1
   printf "   %-28s %s\n" "$h" "$r"
 done
+if [ -n "${FIREFOX:-}" ] || command -v firefox >/dev/null || command -v floorp >/dev/null; then
+  r=$(cap 6G 900 "$HW/../player/firefox.sh" check 'src=sort:1' 2>&1 | tail -1) || fail=1
+  printf "   %-28s %s\n" "firefox: src=sort:1" "$r"
+  r=$(cap 6G 900 "$HW/../player/firefox.sh" player 'p=disp:add&a=3 4' 2>&1 | tail -1) || fail=1
+  printf "   %-28s %s\n" "firefox: the player, add 3 4" "$r"
+else
+  echo "   no firefox or floorp: its WebGPU not checked"
+fi
 [ $fail = 0 ] || { echo "   the player's GPU path differs from its CPU"; exit 1; }
 done_
 

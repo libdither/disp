@@ -638,17 +638,31 @@ fib(1) a clock takes 125 µs against 94, with five times the rewrites.
 engine generates for the loaded settings. The engine stays the record of the run: a GPU stretch
 starts from the engine's sites and ends by putting the GPU's back, with its counts, and the engine
 rebuilds its abstract net from them (`Lattice::adopt`). So the CPU can take over at any clock
-and carry on exactly as if it had run all along (`tests/resume.rs`). `player/gpu-check.js`
-hands a run back and forth between GPU and CPU in batches of varying size, and it must match one
-that stays on the CPU, site for site and count for count. `player/dawn.sh` runs it in Node on
-Dawn, Chrome's WebGPU, on the machine's own GPU (`check`, or `bench` for speeds);
-`player/check.mjs` runs it in headless Chromium, which here only gets SwiftShader, a GPU emulated
-on the CPU. The kernels need 8 KB of workgroup memory, within WebGPU's default of 16 KB.
+and carry on exactly as if it had run all along (`tests/resume.rs`).
 
-In the browser, on fib(1), the GPU runs about 7,500 clocks a second, 5,200 to 6,200 with the
-demand field (which needs a quarter fewer clocks) and 4,650 in the current design (which needs
-two thirds fewer), against 2,000, 1,550 and 970 for the player's CPU engine (WebAssembly, nearly
-as fast as the native simulator): the current design reaches the answer in 0.8 s on the GPU. An earlier version listed each
+Stretches run ahead of the engine. Reading one back is slow in Firefox, whose WebGPU looks for
+finished work on a timer: up to 100 ms for a readback, even of 4 bytes, against well under 1 ms on
+Dawn, Chrome's WebGPU. So the player keeps enough stretches out to cover that (`gpu.js`
+`latency`), each copying its sites out within the queue (`stretch`), and the engine takes them back
+in turn, one a frame. Anything else that touches the engine drops the stretches still out, and the
+GPU starts again from the engine's sites; a stretch whose sites did not fit its copy runs again,
+as a run is fixed by its sites, clocks and seed. Waiting for each stretch instead, the player ran
+15 clocks a second in Floorp, its estimate of a clock's cost swallowed by the wait.
+
+`player/gpu-check.js` hands a run back and forth between GPU and CPU in batches of varying size,
+the GPU's stretches out several at a time and sometimes too short of room, and it must match one
+that stays on the CPU, site for site and count for count. `player/dawn.sh` runs it in Node on
+Dawn on the machine's own GPU (`check`, or `bench` for speeds); `player/firefox.sh` runs it in
+headless Firefox or Floorp (`check`), and runs the player itself there from clock 0 on each engine
+(`player`); `player/check.mjs` runs it in headless Chromium, which here only gets SwiftShader, a
+GPU emulated on the CPU. The kernels need 8 KB of workgroup memory, within WebGPU's default of
+16 KB.
+
+In Floorp (Firefox 154), the player reaches the answer of disp `add 3 4` in 3.2 s on the GPU
+against 5.8 s on its CPU engine. On Dawn's bench, on fib(1), the GPU runs about 7,500 clocks a
+second, 5,200 to 6,200 with the demand field (which needs a quarter fewer clocks) and 3,750 to
+4,650 in the current design (which needs two thirds fewer), against 2,000, 1,550 and 760 to 970
+for the CPU engine (WebAssembly, nearly as fast as the native simulator). An earlier version listed each
 clock's busy blocks in a kernel of its own and launched the turns as an indirect dispatch (one
 whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on the CPU, about
 60 µs each, so recording a clock cost more than the GPU took to run it: 4,400 clocks a second.
@@ -673,8 +687,9 @@ version match it (see [`hw/README.md`](hw/README.md)). `crate/gpu.sh TERM --grid
 runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` without the tiles,
 `--vectors FILE...` replays recorded turns, `--latest` runs the current design, `key=value` changes
 a setting as `strands-sweep` spells it); `strands-hw --wgsl` prints its generated tables.
-`player/dawn.sh check 'src=sort:1'` checks the browser's GPU path on the design the player shows,
-and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
+`player/dawn.sh check 'src=sort:1'` checks the browser's GPU path on the design the player shows
+(`player/firefox.sh check` the same in Firefox; `player/firefox.sh player 'p=disp:add&a=3 4'` times
+the player itself there), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
 (`copies=16&clocks=512` for many copies side by side, `demand=0&fork=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the

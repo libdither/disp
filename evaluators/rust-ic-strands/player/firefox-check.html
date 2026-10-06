@@ -1,0 +1,66 @@
+<!doctype html><html><head><meta charset="utf-8"><title>firefox check</title></head>
+<body style="background:#0b0e14;color:#c8d3e0;font:13px ui-monospace,monospace">
+<!-- For firefox.sh: posts each line it has to say to /report, the last starting "ok" or "FAIL".
+     The hash is mode=check or mode=player, then settings. check: gpu-check.js's check on this
+     browser's WebGPU. player: the player itself (index.html) from clock 0 on the CPU and then on
+     the GPU, each to the answer; the GPU must not be much slower than the CPU. Then once more on
+     the GPU, paused, stepped and handed to the CPU and back on the way, to the same answer. -->
+<script src="engine.js"></script>
+<script src="gpu.js"></script>
+<script src="gpu-check.js"></script>
+<script>
+const say = s => fetch("/report", { method: "POST", body: s });
+const q = new URLSearchParams(location.hash.slice(1)), mode = q.get("mode");
+q.delete("mode");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function player() {
+  const limit = +(q.get("secs") || 120) * 1000;
+  q.delete("secs");
+  const f = document.createElement("iframe");
+  f.style.cssText = "width:1200px;height:800px";
+  document.body.append(f);
+  const runs = {};
+  for (const engine of ["cpu", "gpu", "gpu, interrupted"]) {
+    f.src = `index.html?${engine}#${q}&view=layers`;
+    await new Promise(r => f.onload = r);
+    // The player's state is in script-level bindings, which only its own eval sees.
+    const w = f.contentWindow, v = e => { try { return w.eval(e); } catch { return undefined; } };
+    for (let i = 0; i < 300 && !v("L"); i++) await sleep(100);
+    if (!v("L")) return "FAIL the player did not load";
+    w.setPlaying(false);
+    w.document.getElementById("speed").value = 100;
+    if (engine !== "cpu") {
+      await w.setEngine("gpu");
+      if (!v("onGpu")) return "FAIL no GPU: " + w.document.getElementById("sEngine").textContent;
+    }
+    w.document.getElementById("reset").click();
+    for (let i = 0; i < 100 && v("stats()[1]") !== 0; i++) await sleep(50);
+    w.setPlaying(true);
+    const t0 = performance.now();
+    if (engine === "gpu, interrupted") {
+      const busy = async () => { for (let i = 0; i < 100 && v("G.busy"); i++) await sleep(20); };
+      await sleep(700); w.setPlaying(false); await busy(); await sleep(200);
+      w.document.getElementById("step").click(); w.setPlaying(true);
+      await sleep(700); await w.setEngine("cpu"); await sleep(400); await w.setEngine("gpu");
+    }
+    while (!v("finished") && performance.now() - t0 < limit) await sleep(50);
+    const secs = (performance.now() - t0) / 1000, clocks = v("stats()[1]"), done = v("finished");
+    w.setPlaying(false);
+    runs[engine.split(",")[0] + (engine.includes(",") ? "2" : "")] = { secs, rate: clocks / secs, done, answer: v("text(E.strands_answer())") };
+    await say(`${engine}: ${done ? "answer" : "no answer"} after ${clocks} clocks in ${secs.toFixed(1)} s (${Math.round(clocks / secs)} clocks/s)`
+      + (engine === "gpu" ? `, ${v("G.kernels.name")}, readback ${Math.round(v("G.latency"))} ms` : ""));
+    if (engine === "gpu") runs.oracle = v("text(E.strands_oracle(5000000))");
+  }
+  const { cpu, gpu, gpu2, oracle } = runs;
+  if (!cpu.done || !gpu.done || !gpu2.done) return "FAIL no answer";
+  if (cpu.answer !== gpu.answer || gpu2.answer !== gpu.answer || (oracle && gpu.answer !== oracle))
+    return `FAIL answers: cpu ${cpu.answer}, gpu ${gpu.answer}, interrupted ${gpu2.answer}, oracle ${oracle}`;
+  if (gpu.rate < cpu.rate / 4) return `FAIL the GPU ran ${Math.round(gpu.rate)} clocks/s against ${Math.round(cpu.rate)} on the CPU`;
+  return `ok the answer in ${cpu.secs.toFixed(1)} s on the CPU, ${gpu.secs.toFixed(1)} s on the GPU`;
+}
+
+(mode === "player" ? player() : StrandsCheck.check(q.toString(), say))
+  .catch(e => "FAIL " + (e.stack || e))
+  .then(say);
+</script></body></html>

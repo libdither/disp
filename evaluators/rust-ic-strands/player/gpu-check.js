@@ -56,23 +56,47 @@ window.StrandsCheck = (() => {
   const NAMES = ["proposals", "clocks", "fires", "hops", "swaps", "folds", "flips", "strands", null, "blocked", "done", "agents", "walk_ok", "walk_fail", "pulses", null, "collected"];
   const secs = t0 => ((performance.now() - t0) / 1000).toFixed(1) + "s";
 
-  /// One engine stays on the CPU; the other is handed back and forth between GPU and CPU, in
-  /// batches of varying size. After every stretch both must hold the same sites and counts.
+  /// The player's way of running the GPU (index.html `gpuStep`): stretches of the given sizes out
+  /// `depth` at a time, each taken back into engine E in turn. A stretch that comes back with too
+  /// little room drops those still out, and the GPU runs again from E's sites. Returns how many
+  /// times that happened.
+  async function pipeline(grid, E, first, seed, sizes, depth) {
+    let next = 0, at = first, out = [], again = 0;
+    const fill = () => { while (out.length < depth && next < sizes.length) { const n = sizes[next++]; out.push({ n, back: grid.stretch(at, seed, n) }); at += n; } };
+    fill();
+    while (out.length) {
+      const s = out.shift(), r = await s.back;
+      if (!r) {
+        await Promise.all(out.map(o => o.back));
+        at -= s.n + out.reduce((a, o) => a + o.n, 0); next -= 1 + out.length; out = [];
+        grid.upload(E.held()); again++;
+      } else E.ran(s.n, r);
+      fill();
+    }
+    return again;
+  }
+
+  /// One engine stays on the CPU; the other is handed back and forth between GPU and CPU, the GPU
+  /// running stretches of varying size several at a time, as the player does, and sometimes with
+  /// too little room to copy its sites back. After every handover both must hold the same sites
+  /// and counts.
   async function check(hash, say) {
     const S = settings(hash), a = await loaded(S), A = a.E, B = await engine();
     if (S.make(B, a.side, a.side, S.src) !== 0) return "FAIL load";
     const t0 = performance.now(), gpu = await kernels(B);
     say(`${S.src} on ${a.side}×${a.side}×${S.depth}, ${a.agents} agents; GPU: ${gpu.name} (ready in ${secs(t0)})`);
     const batches = [1, 7, 13, 64], grid = new StrandsGPU.Grid(gpu, a.side, a.side, S.depth, 64);
-    let clocks = 0, stretch = 0, onGpu = 0;
+    let clocks = 0, stretch = 0, onGpu = 0, again = 0;
     while (clocks < S.max) {
       const n = Math.min(S.max - clocks, 40 + 30 * (stretch % 5)), first = clocks;
       A.fire_log_clear(); B.fire_log_clear();
       if (stretch % 3 === 2) B.strands_clocks(n);
       else {
         grid.upload(B.held());
-        for (let c = 0; c < n;) { const m = Math.min(batches[(stretch + c) % 4], n - c); grid.run(first + c, S.seed, m, c + m === n); c += m; }
-        B.ran(n, await grid.take());
+        const sizes = [];
+        for (let c = 0; c < n;) { const m = Math.min(batches[(stretch + c) % 4], n - c); sizes.push(m); c += m; }
+        if (stretch % 7 === 4) grid.cap = 8 * StrandsGPU.REC;
+        again += await pipeline(grid, B, first, S.seed, sizes, 1 + stretch % 4);
         onGpu += n;
       }
       const fin = A.strands_clocks(n);
@@ -84,11 +108,12 @@ window.StrandsCheck = (() => {
       if (!same(log(A), log(B))) return `FAIL clock ${clocks}: rewrites at cpu ${log(A)} handed ${log(B)}`;
       if (fin) break;
     }
-    return `ok ${clocks} clocks (${onGpu} on the GPU) matched, ${A.stats()[2]} rewrites, answer ${A.text(A.strands_answer())}  ${secs(t0)}`;
+    return `ok ${clocks} clocks (${onGpu} on the GPU, ${again} stretches run again) matched, ${A.stats()[2]} rewrites, answer ${A.text(A.strands_answer())}  ${secs(t0)}`;
   }
 
   /// Clocks a second on the CPU engine and on the GPU, to the answer (or `clocks`), the GPU
-  /// handing its sites back to the engine every `stretch` clocks as the player does. With
+  /// handing its sites back to the engine every `stretch` clocks, as many stretches out at once as
+  /// the player keeps for this browser's readback time. With
   /// `copies`, that many of the term's starting states side by side, for `clocks` clocks: how
   /// each scales with the work in a clock.
   async function bench(hash, say) {
@@ -122,19 +147,21 @@ window.StrandsCheck = (() => {
     }
     if (!/(^|&)gpu=0/.test(hash)) {
       const E = await make(), gpu = await kernels(E), grid = new StrandsGPU.Grid(gpu, w, h, S.depth, 64);
+      const lat = await StrandsGPU.latency(gpu.device), depth = Math.max(2, Math.ceil(lat / 25) + 1);
       grid.upload(E.held());
-      let clock = 0, done = 0, wait = 0;
+      let clock = 0, done = 0, wait = 0, at = 0, out = [];
       const t0 = performance.now();
       while (!done && clock < S.max) {
-        const n = Math.min(S.stretch, S.max - clock);
-        for (let c = 0; c < n;) { const m = Math.min(64, n - c); grid.run(clock + c, S.seed, m, c + m === n); c += m; }
-        const tw = performance.now(), r = await grid.take();
+        while (out.length < depth && at < S.max) { const n = Math.min(S.stretch, S.max - at); out.push({ n, back: grid.stretch(at, S.seed, n) }); at += n; }
+        const s = out.shift(), tw = performance.now(), r = await s.back;
         wait += performance.now() - tw;
-        done = E.ran(n, r);
-        clock += n;
+        if (!r) { await Promise.all(out.map(o => o.back)); out = []; at = clock; grid.upload(E.held()); continue; }
+        done = E.ran(s.n, r);
+        clock += s.n;
       }
+      await Promise.all(out.map(o => o.back));
       const dt = (performance.now() - t0) / 1000;
-      line += ` gpu ${(clock / dt).toFixed(0)} clocks/s (${clock} clocks${done ? ", answer in" : ""}; ${(100 * wait / 1000 / dt).toFixed(0)}% waiting on the GPU) ${gpu.name}`;
+      line += ` gpu ${(clock / dt).toFixed(0)} clocks/s (${clock} clocks${done ? ", answer in" : ""}; ${(100 * wait / 1000 / dt).toFixed(0)}% waiting on the GPU, readback ${lat.toFixed(0)} ms, ${depth} stretches out) ${gpu.name}`;
     }
     say(line);
     return "ok " + line;
