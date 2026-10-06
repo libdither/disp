@@ -63,14 +63,15 @@ fn margolus_blocks_with_pulses_in_3d() {
                         board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, ..base() });
 }
 
-/// The chip schedule with the demand field: called values walk toward their readers and idle
-/// matter yields to demand. Every term still finishes with the oracle's answer and projects
-/// exactly; some, on a small lattice, re-check every invariant after every move.
+/// The chip schedule with the demand field and forking S rules: called values walk toward their
+/// readers, idle matter yields to demand, and an S rule's (b c) runs alongside its (s c). Every
+/// term still finishes with the oracle's answer and projects exactly; some, on a small lattice,
+/// re-check every invariant after every move.
 #[test]
-fn demand_field() {
+fn demand_field_and_fork() {
     let chip = |w, depth| {
         let mut p = Params { w, h: w, depth, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true,
-                             board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, calls: true, ..base() };
+                             board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, calls: true, fork: true, ..base() };
         p.set("field", DEMAND).unwrap();
         p
     };

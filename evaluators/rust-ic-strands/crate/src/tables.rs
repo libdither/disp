@@ -1,7 +1,7 @@
 //! The chip configuration's constants as WGSL (the GPU kernel's tables), from the simulator's own
 //! rules, energies and probabilities, so the two cannot drift apart. hw/rtl gets the same as
 //! Verilog from `strands-hw`.
-use crate::lattice::{chip, fresh_wanted, Channel, Energy, Params, Source, NONE};
+use crate::lattice::{chip, fresh_wanted_in, Channel, Energy, Params, Source, NONE};
 use rust_ca_lattice::rules::{End, Tag, ALL_TAGS, RULES};
 use std::fmt::Write;
 
@@ -79,7 +79,7 @@ pub fn wgsl_for(p: &Params) -> String {
     array(w, "RULE_OF", &rule_of);
     array(w, "RULE_N", &RULES.iter().map(|r| r.fresh.len() as u32).collect::<Vec<_>>());
     array(w, "RULE_NW", &RULES.iter().map(|r| r.wires.len() as u32).collect::<Vec<_>>());
-    array(w, "RULE_WANTED", &RULES.iter().map(|r| fresh_wanted(r).iter().enumerate().fold(0, |m, (f, &b)| m | (b as u32) << f)).collect::<Vec<_>>());
+    array(w, "RULE_WANTED", &RULES.iter().map(|r| fresh_wanted_in(r, p.fork).iter().enumerate().fold(0, |m, (f, &b)| m | (b as u32) << f)).collect::<Vec<_>>());
     let mut fresh = vec![0u32; RULES.len() * 6];
     let (mut wa, mut wb) = (vec![0u32; RULES.len() * 9], vec![0u32; RULES.len() * 9]);
     for (i, r) in RULES.iter().enumerate() {

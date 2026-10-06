@@ -100,6 +100,9 @@ pub struct Params {
     /// A demand pulse that reaches a value's principal port wants it (as one reaching a
     /// computation's output does), and wanted values walk toward their readers as wanted readers do.
     pub calls: bool,
+    /// The S rule forks: its (b c) starts wanted alongside (s c), rather than waiting for (s c)
+    /// to ask for it (`fresh_wanted_in`). A (b c) that (s c) throws away is collected.
+    pub fork: bool,
     /// Fields every site keeps and moves read as energy (field.rs); unused channels are off.
     pub fields: [Channel; 4],
 }
@@ -142,6 +145,7 @@ impl Params {
             "agents" => self.agent_turns = f()?,
             "seed" => self.seed = n()? as u64,
             "calls" => self.calls = on,
+            "fork" => self.fork = on,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -156,7 +160,7 @@ impl Params {
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fields: [Channel::OFF; 4] }
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, fields: [Channel::OFF; 4] }
     }
 }
 
@@ -359,7 +363,12 @@ pub struct Trace {
 /// Which fresh agents of a rule start out wanted: erasers and normalizers, and consumers whose
 /// output feeds the dying consumer's reader (wanted, or it would not have fired) or a wanted
 /// fresh consumer.
-pub fn fresh_wanted(rule: &rust_ca_lattice::rules::Rule) -> [bool; 6] {
+pub fn fresh_wanted(rule: &rust_ca_lattice::rules::Rule) -> [bool; 6] { fresh_wanted_in(rule, false) }
+
+/// `fresh_wanted`, and with `inputs` also consumers whose output feeds a wanted fresh
+/// computation's input (an apply's argument, a triage's or dispatch's arms). Only the S rule
+/// wires one: (s c)(b c), whose (b c) and the duplicator sharing c then start wanted.
+pub fn fresh_wanted_in(rule: &rust_ca_lattice::rules::Rule, inputs: bool) -> [bool; 6] {
     let mut wanted = [false; 6];
     for (f, t) in rule.fresh.iter().enumerate() { wanted[f] = matches!(t, Tag::Nrm | Tag::Eps); }
     loop {
@@ -372,6 +381,7 @@ pub fn fresh_wanted(rule: &rust_ca_lattice::rules::Rule) -> [bool; 6] {
                 let feeds = match y {
                     End::CAux(i) => crate::polarity_is_source(rule.consumer, i as usize),
                     End::Fresh(g, 0) => rule.fresh[g as usize].is_consumer() && wanted[g as usize],
+                    End::Fresh(g, 1) if inputs => matches!(rule.fresh[g as usize], Tag::A | Tag::T1 | Tag::Sel) && wanted[g as usize],
                     _ => false,
                 };
                 if feeds { wanted[f as usize] = true; changed = true; }
@@ -388,9 +398,9 @@ pub fn chip() -> Params {
              pairs: 8, active: 0.5, ..Params::default() }
 }
 
-/// The current design: the chip's schedule with the demand field. The player and the GPU run it;
-/// hw/ builds `chip`.
-pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p }
+/// The current design: the chip's schedule with the demand field and forking S rules. The player
+/// and the GPU run it; hw/ builds `chip`.
+pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p.fork = true; p }
 
 /// The demand field (README "Fields"): a wanted reader or a demand pulse sets its site to 3, which
 /// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
@@ -1542,7 +1552,7 @@ impl Lattice {
             for q in 0..ARITY { self.set(site, self.ae(k, q), NONE); }
             self.remove(site, k);
         }
-        let wanted = fresh_wanted(rule);
+        let wanted = fresh_wanted_in(rule, self.p.fork);
         for (f, t) in rule.fresh.iter().enumerate() {
             let (_, site, k) = seats[f];
             self.place(site, k, code(*t), fresh_sids[f]);

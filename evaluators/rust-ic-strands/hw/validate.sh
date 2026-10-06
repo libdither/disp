@@ -8,8 +8,9 @@
 #   5. gpu        the GPU version of the same schedule (crate/src/gpu): every recorded turn and block,
 #                 and the lattice in lockstep with the simulator, its pulse phases fused into the
 #                 next clock's turns and only the blocks holding something run; every count of what
-#                 the turns did matches too, also under settings other than the chip's, and with
-#                 the demand field (lattice.rs `latest`), its value at every site compared too
+#                 the turns did matches too, also under settings other than the chip's, with the
+#                 demand field (its value at every site compared too), and with the current design
+#                 (lattice.rs `latest`: the demand field and forking S rules)
 #   6. browser    the player's WebGPU path (player/gpu.js) on Dawn, Chrome's WebGPU (player/dawn.sh):
 #                 a run of the design the player shows (`latest`) handed back and forth between GPU
 #                 and CPU matches one that stays on the CPU
@@ -104,10 +105,12 @@ r=$(gpu fib:0 --grid 232 --depth 8 --seed 2 --check --batch 16 --clocks 1500 laz
 printf "   %-28s %s\n" "fib:0, eager and other knobs" "$r"
 r=$(gpu fib:0 --grid 232 --depth 8 --seed 3 --check --batch 7 --clocks 1000 --narrow | tail -1) || fail=1
 printf "   %-28s %s\n" "fib:0, one workgroup" "$r"
-r=$(gpu fib:0 --grid 232 --depth 8 --seed 1 --check --batch 13 --demand | tail -1) || fail=1
+r=$(gpu fib:0 --grid 232 --depth 8 --seed 1 --check --batch 13 demand=1 | tail -1) || fail=1
 printf "   %-28s %s\n" "fib:0, demand field, by 13" "$r"
-r=$(gpu sort:1 --grid 490 --depth 8 --seed 1 --check --batch 32 --demand | tail -1) || fail=1
-printf "   %-28s %s\n" "sort:1, demand field, by 32" "$r"
+r=$(gpu fib:0 --grid 232 --depth 8 --seed 2 --check --batch 13 --latest | tail -1) || fail=1
+printf "   %-28s %s\n" "fib:0, current design, by 13" "$r"
+r=$(gpu sort:1 --grid 490 --depth 8 --seed 1 --check --batch 32 --latest | tail -1) || fail=1
+printf "   %-28s %s\n" "sort:1, current design, by 32" "$r"
 [ $fail = 0 ] || { echo "   the GPU differs from the simulator"; exit 1; }
 done_
 

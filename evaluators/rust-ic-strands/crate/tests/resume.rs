@@ -1,5 +1,5 @@
 //! A state taken off one lattice and put into another, as the browser player does when it hands a
-//! run between its CPU and its GPU, runs on exactly as if it had never left, demand field and all.
+//! run between its CPU and its GPU, runs on exactly as if it had never left, in the current design too.
 
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
@@ -16,7 +16,7 @@ fn load(t: &Term, p: Params) -> Option<Lattice> {
 fn resume_after_a_handover() { handover(chip()) }
 
 #[test]
-fn resume_after_a_handover_with_the_field() { handover(latest()) }
+fn resume_after_a_handover_in_the_current_design() { handover(latest()) }
 
 fn handover(p: Params) {
     let p = Params { w: 56, h: 56, depth: 6, ..p };

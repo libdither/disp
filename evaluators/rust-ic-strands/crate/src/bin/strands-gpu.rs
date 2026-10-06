@@ -5,7 +5,8 @@
 //! `--dense` runs every block and site each clock instead of only the blocks holding something;
 //! `--narrow` (with `--check`) runs the turns in one workgroup, each invocation taking many blocks;
 //! `--bench` runs exactly `--clocks` clocks without looking for the answer and times the GPU alone;
-//! `--demand` runs the current design (lattice.rs `latest`: the chip's schedule with the demand field);
+//! `--latest` runs the current design (lattice.rs `latest`: the chip's schedule with the demand field
+//! and forking S rules);
 //! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`).
 
 use rust_ca_lattice::net::Net;
@@ -13,7 +14,7 @@ use rust_ca_lattice::oracle::{self, Fuel};
 use rust_ca_lattice::rules::ALL_TAGS;
 use rust_ic_mesh::term;
 use rust_ic_strands::gpu::{Gpu, Grid, REC, SITE, TALLY};
-use rust_ic_strands::lattice::{chip, Lattice, Params, OPS};
+use rust_ic_strands::lattice::{chip, latest, Lattice, Params, OPS};
 use std::collections::BTreeMap;
 
 const SB: usize = 4 * SITE;
@@ -154,7 +155,7 @@ fn main() {
             "--dense" => dense = true,
             "--narrow" => narrow = true,
             "--bench" => bench = true,
-            "--demand" => p.set("demand", "1").unwrap(),
+            "--latest" => p = Params { w: p.w, h: p.h, depth: p.depth, seed: p.seed, ..latest() },
             _ => match a.split_once('=') {
                 Some((k, v)) => p.set(k, v).unwrap_or_else(|e| panic!("{e}")),
                 None => src = Some(a.clone()),

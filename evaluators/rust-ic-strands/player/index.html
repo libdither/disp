@@ -127,6 +127,11 @@
         reader or a pulse is, falling by one a site and a clock. Idle matter pays to climb it, and so does wire it lays
         down, so it gets out of the way along the reader's wire and around both of its ends; a called value is drawn
         up it, toward its reader.</p>
+      <p><b>Fork.</b> Demand alone runs one computation at a time, each waiting on the next like a call stack. The S rule
+        is where a program forks: <i>△(△s) b c</i> becomes <i>(s c)(b c)</i>, sharing <i>c</i> between two
+        computations. Both halves start wanted, so <i>(b c)</i> runs alongside <i>(s c)</i> rather than after
+        it, and several reactions run at once. When <i>(s c)</i> turns out to throw <i>(b c)</i> away, erasers collect it
+        and what it did is lost.</p>
       <p><b>Tension.</b> At temperature 2 a loose wire gains more from wiggling than it loses to its tension, so
         over long runs it swells until no lane is free. A site whose switchboard holds p pairings costs p²/4, so wire
         stays loose in open space but cannot crowd every lane around a reaction.</p>
@@ -311,7 +316,7 @@ function load() {
   try { src = source(); } catch (err) { banner(`arguments: ${err}`, true); return; }
   const agents = withString(src, (p, n) => E.strands_probe(p, n));
   if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return; }
-  // The current design (lattice.rs `latest`): the chip's schedule with the demand field.
+  // The current design (lattice.rs `latest`): the chip's schedule with the demand field and forking S rules.
   E.strands_settings();
   withString(`seed=${SEED}`, (p, n) => E.strands_set(p, n));
   const depth = E.strands_depth();
@@ -333,7 +338,7 @@ function load() {
   refreshGarbage(true); layoutLayers();
   $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
   const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), field = E.field_bits();
-  $("bits").textContent = `The chip's schedule with the demand field. A site is ${L.k} agent tags (4 bits each, plus a wanted bit, which on a value means called), `
+  $("bits").textContent = `The chip's schedule with the demand field, and S rules that fork. A site is ${L.k} agent tags (4 bits each, plus a wanted bit, which on a value means called), `
     + `a switchboard of 8 pairings × 2 ends × ${bits} bits, ${bits} bits saying which strand carries a pulse, and ${field} bits of demand field: `
     + `≈ ${5 * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
   $("clockName").textContent = "clocks (2×2×2 blocks)";

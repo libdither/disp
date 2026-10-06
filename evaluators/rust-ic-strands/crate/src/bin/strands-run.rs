@@ -44,6 +44,7 @@ fn main() {
             "--phop" => p.p_hop = it.next().unwrap().parse().unwrap(),
             "--margolus" => p.margolus = true,
             "--chip" => p = rust_ic_strands::lattice::Params { w: p.w, h: p.h, seed: p.seed, ..rust_ic_strands::lattice::chip() },
+            "--latest" => p = rust_ic_strands::lattice::Params { w: p.w, h: p.h, seed: p.seed, ..rust_ic_strands::lattice::latest() },
             "--block-moves" => p.block_moves = true,
             "--block-side" => p.block_side = it.next().unwrap().parse().unwrap(),
             "--gc" => p.gc = true,
@@ -60,6 +61,7 @@ fn main() {
             "--repel" => p.repel = it.next().unwrap().parse().unwrap(),
             "--field" => p.set("field", &it.next().unwrap()).unwrap_or_else(|e| panic!("{e}")),
             "--calls" => p.calls = true,
+            "--fork" => p.fork = true,
             "--demand" => { p.calls = true; p.set("field", rust_ic_strands::lattice::DEMAND).unwrap(); }
             _ => src = Some(a.clone()),
         }

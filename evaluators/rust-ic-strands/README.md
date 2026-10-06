@@ -8,8 +8,8 @@ an address**. It is the answer to two problems with the earlier spatial machines
   tile.
 
 Open `player/index.html` to watch it run (rebuild with `./build-player.sh`). It shows only the
-current design (`lattice.rs` `latest`: the chip's schedule with the demand field, below), with the
-field drawn as an amber tint and called values ringed in orange:
+current design (`lattice.rs` `latest`: the chip's schedule with the demand field and forking S
+rules, below), with the field drawn as an amber tint and called values ringed in orange:
 - **Programs:** ordinary disp definitions (below) with arguments typed as disp literals, or the
   benchmark programs.
 - **Stepping:** one move at a time with `+1` or `→` (shift: to the next rewrite), each move told
@@ -414,6 +414,78 @@ the most of its source and its neighbours less one diode drop, and a leak makes 
 on the GPU (below) and is what the player shows, but it is not yet on the chip (`hw/rtl`), and
 `--chip` alone still leaves it out.
 
+## Fork: the S rule runs both halves
+
+Demand alone runs one thing at a time. On an idealised lazy machine (demand arrives at once,
+every wanted rewrite fires at once, garbage collected as the lattice does it) the programs below
+fire 1.2 to 2.4 rewrites a step, and 74–92% of steps fire one. On the lattice about one wanted
+reader walks at a time while 3 to 20 wait on it, like a call stack, and a rewrite fires in one
+clock in ten.
+
+Tree calculus forks in one place: the S rule, `△(△s) b c = s c (b c)`, gives `c` to two
+computations. Lazily, `(s c)` runs first and `(b c)` waits until the result of `(s c)` asks for
+it. The eager reference evaluator (`src/core/tree.ts`) also runs them in order: it skips `b c` when
+`s c` comes out K-headed, which the kernel relies on.
+
+**Fork** (`fork`, part of `latest`): both halves start wanted. It is two bits of the rule table,
+nothing else: the S rule's `(b c)` apply and the duplicator sharing `c` start wanted
+(`fresh_wanted_in`), so the GPU runs it from its tables as they are. When `(s c)` throws `(b c)`
+away, erasers collect it: with a diverging `(b c)` thrown away, nothing of it is left 66 clocks
+after the answer. Lattices sized as the player sizes them, 2 seeds, every answer checked:
+
+| program | clocks | with fork | rewrites | peak sites |
+|---|---|---|---|---|
+| disp `add 2 3` | 41,585 | 10,455 (4.0×) | −50% | −51% |
+| disp `mul 2 2` | 131,061 | 18,634 (7.0×) | −46% | −43% |
+| disp `sum [1, 2]` | 109,000 | 18,145 (6.0×) | −44% | −39% |
+| disp `rev [1, 2]` | 82,666 | 16,741 (4.9×) | −38% | −48% |
+| disp `fib 2` | 65,594 | 15,316 (4.3×) | −27% | −19% |
+| disp `isort [2, 1]` | 135,259 | 33,415 (4.0×) | −31% | −15% |
+| disp `doubled [1, 2]` | 74,548 | 20,011 (3.7×) | −44% | −60% |
+| disp `is_even 3` | 41,058 | 12,690 (3.2×) | −38% | −49% |
+| disp `size [5, 6, 7]` | 41,128 | 13,564 (3.0×) | −25% | −6% |
+| disp `greet "a"` | 46,736 | 15,930 (2.9×) | −37% | −4% |
+| fib(1) | 7,452 | 3,184 (2.3×) | +18% | +29% |
+| fib(2) | 34,512 | 10,418 (3.3×) | +43% | +49% |
+| exp(1) | 33,723 | 11,896 (2.8×) | +19% | +35% |
+| sort(1) | 2,066 | 1,256 (1.6×) | +64% | −2% |
+| sort(2) | 114,380 | 20,996 (5.4×) | −17% | −7% |
+
+On disp programs, 4.2× fewer clocks (geometric mean), 38% fewer rewrites and 36% less space:
+- **Less work.** A computation that runs sooner finds its garbage sooner: a triage throws away its
+  unused branches before anyone has asked the duplicator holding them to copy, so the eraser turns
+  the duplicator into a wire. In the ideal model of `add 2 3`, copying falls by 60%.
+- **Less space.** Pending computations no longer pile up waiting to be asked: lazy evaluation's
+  space leak.
+- **Several reactions at once.** On fib(2) 8 wanted readers walk at a time rather than 1, and a
+  rewrite fires in a third of clocks.
+
+The hand-written benchmarks throw some `(b c)` away after it has run, for up to 64% more rewrites.
+The demand field still matters with fork: without it the runs above take 30–68% more clocks, and
+without called values walking 20–37%. Wanting every computation's inputs, not only the S rule's,
+gains nothing more in the ideal model: the S rule is the only rule that wires a computation to
+another's input.
+
+**Caching what a program throws away (tried, not kept).** The eager evaluator is fast by caching:
+equal trees are one node, so copying is free, and `apply(f, x)` facts are memoized and kept
+across runs with what they cost. A net has neither: a duplicator copies a value one layer at a
+time as it is read (on disp programs 45% of rewrites copy and 30% erase), and equal computations
+built apart both run; only a shared suspension runs once (`Dn·P`). What does carry over is the S
+rule's choice, as a fact about code: for each S node of the loaded program, its `(b c)` is needed
+nearly always or nearly never. Learned on a smaller input and kept with the program as a mark that
+copies inherit, like the memo snapshot (fib(1) for fib(2), exp(0) for exp(1), sort(1) for sort(2)),
+no fork at marked nodes takes 13–29% fewer rewrites than forking everywhere on the lattice, but no
+fewer clocks (exp(1) 8% more): the lattice has room and time to spare, so waste costs energy, not
+time. It would take a new agent tag, an S that does not fork. Marks from the code's shape alone (`s` is K or `K (K w)`, the
+eager evaluator's own shortcut) remove almost nothing.
+
+**Leases (tried, not kept).** Demand recomputed every step from the normalizer stops a
+thrown-away `(b c)` at once, rather than when erasers reach it: in the ideal model fib(2)'s extra
+rewrites fall from 38% to 4%, but much of the speed goes too (size-self 10.9× fewer steps → 2.6×),
+since an argument loses its lease while it sits in a pair waiting to be triaged. Letting leases
+pass through pairs recovers some. It also needs demand sent again and again: more pulses and
+state.
+
 ## Things tried that did not help, and why
 
 - **Pressure** from blocked rewrites (a diffusing field agents drift down): no measurable change
@@ -453,7 +525,10 @@ on the GPU (below) and is what the player shows, but it is not yet on the chip (
 
 ## Open
 
-- **The demand field on the chip** (`hw/rtl`), so that `--chip` can include it (Fields, above).
+- **The demand field and fork on the chip** (`hw/rtl`), so that `--chip` can include them (Fields
+  and Fork, above). Fork is only the rule table's wanted bits.
+- **Each step now costs about 16 clocks**, mostly walking: with fork the number of steps is within
+  about 1.6× of the longest chain of rewrites that depend on each other.
 - **The synchronous schedule** still takes about 1.8× the clocks of random turns, mostly
   because a walker's next strand leaves its block half the time. Wider blocks help a little
   (above); a walker that eats every strand of its wire inside its block in one turn might help
@@ -479,19 +554,23 @@ by clock parity, so a block reads its neighbours' while writing its own. A threa
 sites in workgroup memory and changes them in place.
 
 Against the simulator, on one machine (Ryzen 5 7640U, single-threaded, against its integrated
-Radeon 760M), same seed, both looking for the answer as they go, without and with the demand
-field (Fields, above):
+Radeon 760M), same seed, both looking for the answer as they go: the chip's schedule, with the
+demand field (Fields, above), and the current design, which adds fork (Fork, above):
 
 | program | lattice | clocks | CPU | GPU |
 |---|---|---|---|---|
 | fib(0) | 232×232×8 | 7,568 | 2.91 s | 0.69 s |
 | … with the demand field | | 5,181 | 2.61 s | 0.65 s |
+| … and fork | | 2,789 | 2.40 s | 0.52 s |
 | fib(1) | 300×300×8 | 9,898 | 3.94 s | 1.04 s |
 | … with the demand field | | 6,691 | 3.57 s | 0.78 s |
+| … and fork | | 2,724 | 2.38 s | 0.56 s |
 | sort(1) | 490×490×8 | 2,501 | 4.45 s | 0.74 s |
 | … with the demand field | | 1,759 | 3.43 s | 0.60 s |
+| … and fork | | 1,014 | 2.13 s | 0.40 s |
 | fib(2) | 300×300×8 | 57,949 | 21.2 s | 5.71 s |
 | … with the demand field | | 28,260 | 12.0 s | 3.56 s |
+| … and fork | | 9,830 | 6.76 s | 1.84 s |
 
 **What a clock costs.** These programs keep 2,000–3,000 sites in use, a few hundred busy blocks
 a clock, and every clock waits on the one before. So a clock takes as long as its slowest wave
@@ -540,7 +619,8 @@ and sites kept as their list of pairings, as the chip keeps them, so that more o
 even then only for runs with tens of thousands of sites busy. For programs as small as these, a
 clock is a few hundred dependent jobs, and a core runs those nearly as fast as a GPU can.
 
-**The demand field** runs there too (`--demand`), matched bit for bit, field and all. A site's
+**The demand field** runs there too (`demand=1`; `--latest` adds fork, which is only the
+rule table's wanted bits), matched bit for bit, field and all. A site's
 field rides in its pulse word, above the pulse, so the two pulse buffers by clock parity carry it:
 a block works out its sites' field at the start of its turns, from its own and its neighbours'
 words of the clock before, right after their pulse phase. A block holding only field stays busy,
@@ -550,7 +630,9 @@ pulses. Working out the field makes a GPU clock about a fifth dearer: on fib(1) 
 weights set to zero, so that the run is the same, 94 µs a clock against 79. The cost is spread
 about evenly over computing it, the blocks holding only field and marking the blocks a strong
 field reaches, so there is no one piece to cut. Called values walking add turns too. So on the
-GPU the field saves less time than clocks (the table above).
+GPU the field saves less time than clocks (the table above). Fork runs from the rule table as it
+is. It gives a clock more to do, several reactions at once, which is what a GPU is good at: on
+fib(1) a clock takes 125 µs against 94, with five times the rewrites.
 
 **In the browser.** `player/gpu.js` drives the same kernels through WebGPU, with the shader the
 engine generates for the loaded settings. The engine stays the record of the run: a GPU stretch
@@ -563,9 +645,10 @@ Dawn, Chrome's WebGPU, on the machine's own GPU (`check`, or `bench` for speeds)
 `player/check.mjs` runs it in headless Chromium, which here only gets SwiftShader, a GPU emulated
 on the CPU. The kernels need 8 KB of workgroup memory, within WebGPU's default of 16 KB.
 
-In the browser, on fib(1), the GPU runs about 7,500 clocks a second, and 5,200 to 6,200 with the
-demand field (which needs a quarter fewer clocks), against 2,000 and 1,550 for the player's CPU
-engine (WebAssembly, nearly as fast as the native simulator). An earlier version listed each
+In the browser, on fib(1), the GPU runs about 7,500 clocks a second, 5,200 to 6,200 with the
+demand field (which needs a quarter fewer clocks) and 4,650 in the current design (which needs
+two thirds fewer), against 2,000, 1,550 and 970 for the player's CPU engine (WebAssembly, nearly
+as fast as the native simulator): the current design reaches the answer in 0.8 s on the GPU. An earlier version listed each
 clock's busy blocks in a kernel of its own and launched the turns as an indirect dispatch (one
 whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on the CPU, about
 60 µs each, so recording a clock cost more than the GPU took to run it: 4,400 clocks a second.
@@ -580,6 +663,7 @@ cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy -
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip --demand          # with the demand field (field.rs; --field SPEC for others)
+cargo run --release --bin strands-run -- fib:0 --grid 256 --latest                 # the current design: the demand field and fork
 cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --budget 5000000000 --clean 100000
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 ```
@@ -587,11 +671,11 @@ cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1
 `--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip and the GPU
 version match it (see [`hw/README.md`](hw/README.md)). `crate/gpu.sh TERM --grid N [--depth D]`
 runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` without the tiles,
-`--vectors FILE...` replays recorded turns, `--demand` adds the demand field, `key=value` changes
+`--vectors FILE...` replays recorded turns, `--latest` runs the current design, `key=value` changes
 a setting as `strands-sweep` spells it); `strands-hw --wgsl` prints its generated tables.
 `player/dawn.sh check 'src=sort:1'` checks the browser's GPU path on the design the player shows,
 and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
-(`copies=16&clocks=512` for many copies side by side, `demand=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
+(`copies=16&clocks=512` for many copies side by side, `demand=0&fork=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end.
