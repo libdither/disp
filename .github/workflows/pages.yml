@@ -13,6 +13,12 @@ on:
       - 'lib/**'
       - 'archive/live-kernel/**'
       - 'src/**'
+      # the repo's own HTML pages and the files they load, served under /repo/
+      # (website/scripts/link-pages.mts): players, visualizers, the atlas
+      - '**.html'
+      - 'evaluators/*/player/**'
+      - 'research/interaction-combinator/*.js'
+      - 'research/STREAM_TYPES_ONTOLOGY.md'
       - '.github/workflows/pages.yml'
   schedule:
     # weekly redeploy so the donation stats' 30-day window stays honest
