@@ -85,6 +85,7 @@ impl Terms {
                 Tag::S => &[1],
                 Tag::F | Tag::P | Tag::Pair => &[1, 2],
                 Tag::A | Tag::T1 | Tag::Sel => &[0, 1],
+                Tag::Sup => &[],
                 _ => &[0],
             };
             if state == UNSEEN {
@@ -116,6 +117,10 @@ impl Terms {
                     Some((w, (x, b))) => { let wx = self.intern((FORK, w, x)); let f = self.intern((FORK, wx, b)); self.intern((APPLY, f, v[0])) }
                     None => self.cut(),
                 },
+                // A superposition, and a duplicator copying for one, mean different things in different
+                // universes: never merged.
+                Tag::Sup => self.cut(),
+                Tag::Dn if a.label != 0 => self.cut(),
                 Tag::Nrm | Tag::Dn => v[0],
                 Tag::Unp => match pair(self, v[0]) { Some((x, y)) => if q == 1 { x } else { y }, None => self.cut() },
                 Tag::Eps | Tag::Out => self.cut(),
