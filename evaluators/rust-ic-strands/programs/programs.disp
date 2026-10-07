@@ -1,6 +1,6 @@
 // Ordinary disp definitions over the prelude, compiled to trees for the strand-lattice player
 // (build-player.sh). Each `///` line documents the definition below it:
-//   /// <what it computes> -> <nat | bool | list | string>; try: <arguments>
+//   /// <what it computes> -> <nat | bool | list | string | bits>; try: <arguments>
 // The suggested arguments are small: disp numbers are unary, and general compiled code takes
 // thousands of rewrites even for add 2 3, so these finish in about a minute in the browser.
 open use raw "../../../lib/prelude.disp" {}
@@ -37,6 +37,108 @@ isort := reduce insert []
 /// a greeting -> string; try: "a"
 greet := {name} => append "hi " name
 
+// Binary numbers. A number tree is a bit, b0 = t or b1 = t t, or a pair of number trees, the
+// low half first: pair lo hi is lo + 2^(bits in lo) × hi. A list of bits, least significant
+// first, is one (its nil is a b0 on top), and so is a perfect tree of 2^k bits. Each adder takes
+// two number trees of the same shape and gives `pair sum carry`, a number tree again.
+b0 := t
+b1 := t t
+/// a for b0, b for b1
+by_bit := {a, b} => triage a ({_} => b) t
+flip := by_bit b1 b0
+/// the first of p for b0, the second for b1
+pick := by_bit pair_fst pair_snd
+/// what bits x and y make of a column: k when both are b0 (the carry dies), p when they differ (it goes through), g when both are b1 (one starts)
+kind := {k, p, g} => triage (by_bit k p) ({_} => by_bit p g) t
+/// x + y + c for bits: the sum bit and the carry out
+column := kind ({c} => pair c b0) ({c} => pair (flip c) c) ({c} => pair c b1)
+
+/// x + y + c column by column from the bottom, each column's carry out going into the next
+ripple := fix ({self, x, y, c} => if (is_fork x) {
+	let lo := self (pair_fst x) (pair_fst y) c
+	let hi := self (pair_snd x) (pair_snd y) (pair_snd lo)
+	pair (pair (pair_fst lo) (pair_fst hi)) (pair_snd hi)
+} else { column x y c })
+/// x + y by ripple carry, on bit lists or bit trees -> bits; try: [b1, b0, b1, b1] [b0, b1, b1, b0]
+ripple_add := {x, y} => ripple x y b0
+
+/// the high half's sum after the low half's: pick the high sum by the low carry
+join := {lo, hi} => {
+	let h := pick (pair_snd lo) hi
+	pair (pair (pair_fst lo) (pair_fst h)) (pair_snd h)
+}
+/// x + y and x + y + 1, both halves at once
+both := fix ({self, x, y} => if (is_fork x) {
+	let lo := self (pair_fst x) (pair_fst y)
+	let hi := self (pair_snd x) (pair_snd y)
+	pair (join (pair_fst lo) hi) (join (pair_snd lo) hi)
+} else {
+	let f := column x y
+	pair (f b0) (f b1)
+})
+/// x + y by carry select, each half summed with carry 0 and carry 1 at once -> bits; try: (t (t b1 b0) (t b1 b1)) (t (t b0 b1) (t b1 b0))
+select_add := {x, y} => pair_fst (both x y)
+
+/// the carry rule of x + y (its carry out for carry in b0 and for b1) and its sum as a function of the carry in
+look := fix ({self, x, y} => if (is_fork x) {
+	let lo := self (pair_fst x) (pair_fst y)
+	let hi := self (pair_snd x) (pair_snd y)
+	let rule := pair (pick (pair_fst (pair_fst lo)) (pair_fst hi)) (pick (pair_snd (pair_fst lo)) (pair_fst hi))
+	pair rule ({c} => pair (pair_snd lo c) (pair_snd hi (pick c (pair_fst lo))))
+} else { kind (pair (pair b0 b0) ({c} => c)) (pair (pair b0 b1) flip) (pair (pair b1 b1) ({c} => c)) x y })
+/// x + y by carry lookahead, carry rules combined up the tree and carries sent back down -> bits; try: (t (t b1 b0) (t b1 b1)) (t (t b0 b1) (t b1 b0))
+lookahead_add := {x, y} => {
+	let r := look x y
+	pair (pair_snd r b0) (pair_fst (pair_fst r))
+}
+
+// Carry save. A digit tree is a number tree whose digits may also be 2 = t b1 (1 = t b0 is b1, so a
+// binary number is one). Adding a binary number into a digit tree moves each column's carry one
+// column up and no further: d + z + c is the digit u + c and the carry out v, where d + z = u + 2v,
+// so no column waits on the one below.
+/// a for the digit 0, b for 1, c for 2
+by_digit := {a, b, c} => triage a (by_bit b c) t
+/// d + z + c for a digit d and bits z and c, by d + z: the digit and a carry out that does not wait on c
+save_column := by_digit
+	(by_bit ({c} => pair c b0) ({c} => pair (t c) b0))
+	(by_bit ({c} => pair (t c) b0) ({c} => pair c b1))
+	(by_bit ({c} => pair c b1) ({c} => pair (t c) b1))
+/// d + z + c for a digit tree d and a binary number z of its shape: ripple's recursion with save_column for column
+save := fix ({self, d, z, c} => if (is_fork d) {
+	let lo := self (pair_fst d) (pair_fst z) c
+	let hi := self (pair_snd d) (pair_snd z) (pair_snd lo)
+	pair (pair (pair_fst lo) (pair_fst hi)) (pair_snd hi)
+} else { save_column d z c })
+/// a digit tree as two binary numbers with its value as their sum
+undigit := fix ({self, d} => if (is_fork d) {
+	let lo := self (pair_fst d)
+	let hi := self (pair_snd d)
+	pair (pair (pair_fst lo) (pair_fst hi)) (pair (pair_snd lo) (pair_snd hi))
+} else { by_digit (pair b0 b0) (pair b1 b0) (pair b1 b1) d })
+/// a digit tree as a binary number, its carries done by lookahead
+resolve := {d} => {
+	let xy := undigit d
+	lookahead_add (pair_fst xy) (pair_snd xy)
+}
+/// the sum of number trees of one shape with room on top, each added in by lookahead -> bits; try: [[b1, b1, b0], [b1, b0, b0], [b1, b1, b0]]
+added := {xs} => reduce ({x, s} => pair_fst (lookahead_add x s)) (head xs) (tail xs)
+/// the sum of number trees of one shape with room on top, each saved into a digit tree and the carries done once at the end -> bits; try: [[b1, b1, b0], [b1, b0, b0], [b1, b1, b0]]
+saved := {xs} => pair_fst (resolve (reduce ({x, d} => pair_fst (save d x b0)) (head xs) (tail xs)))
+
+half := fix ({self, n} => if (is_leaf n) then 0 else (if (is_leaf (nat_pred n)) then 0 else (succ (self (nat_pred (nat_pred n))))))
+low_bit := fix ({self, n} => if (is_leaf n) then b0 else (flip (self (nat_pred n))))
+/// n / 2^m
+drop := fix ({self, m, n} => if (is_leaf m) then n else (self (nat_pred m) (half n)))
+pow2 := fix ({self, k} => if (is_leaf k) then 1 else (add (self (nat_pred k)) (self (nat_pred k))))
+/// the w lowest bits of n as a list, least significant first
+bits := fix ({self, w, n} => if (is_leaf w) then [] else (cons (low_bit n) (self (nat_pred w) (half n))))
+/// the 2^k lowest bits of n as a perfect tree
+bit_tree := fix ({self, k, n} => if (is_leaf k) then (low_bit n) else (pair (self (nat_pred k) n) (self (nat_pred k) (drop (pow2 (nat_pred k)) n))))
+width := fix ({self, x} => if (is_fork x) then (add (self (pair_fst x)) (self (pair_snd x))) else 1)
+shift := fix ({self, k, n} => if (is_leaf k) then n else (self (nat_pred k) (add n n)))
+/// a number tree as a unary number
+value := fix ({self, x} => if (is_fork x) then (add (self (pair_fst x)) (shift (width (pair_fst x)) (self (pair_snd x)))) else (if (is_leaf x) then 0 else 1))
+
 test add 3 4 = 7
 test mul 3 4 = 12
 test fib 6 = 8
@@ -48,3 +150,22 @@ test rev [1, 2, 3] = [3, 2, 1]
 test doubled [1, 2] = [2, 4]
 test isort [3, 1, 2] = [1, 2, 3]
 test greet "disp" = "hi disp"
+test value (bits 4 13) = 13
+test value (bit_tree 2 13) = 13
+test value (bit_tree 3 200) = 200
+test value (ripple_add (bits 4 13) (bits 4 6)) = 19
+test value (ripple_add (bit_tree 2 13) (bit_tree 2 6)) = 19
+test value (ripple_add (bits 5 31) (bits 5 1)) = 32
+test value (select_add (bit_tree 2 13) (bit_tree 2 6)) = 19
+test value (select_add (bits 4 13) (bits 4 6)) = 19
+test value (select_add (bit_tree 3 255) (bit_tree 3 1)) = 256
+test value (select_add (bit_tree 3 200) (bit_tree 3 100)) = 300
+test value (lookahead_add (bit_tree 2 13) (bit_tree 2 6)) = 19
+test value (lookahead_add (bits 4 13) (bits 4 6)) = 19
+test value (lookahead_add (bit_tree 3 255) (bit_tree 3 1)) = 256
+test value (lookahead_add (bit_tree 3 200) (bit_tree 3 100)) = 300
+test value (saved [bits 4 5, bits 4 6, bits 4 3]) = 14
+test value (added [bits 4 5, bits 4 6, bits 4 3]) = 14
+test value (saved [bit_tree 3 90, bit_tree 3 77, bit_tree 3 3, bit_tree 3 63]) = 233
+test value (added [bit_tree 3 90, bit_tree 3 77, bit_tree 3 3, bit_tree 3 63]) = 233
+test value (resolve (t (t (t b1) b0) (t b1 (t b1)))) = 22

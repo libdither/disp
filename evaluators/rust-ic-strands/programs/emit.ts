@@ -19,7 +19,7 @@ for (const d of parseProgram(src, file, { session })) if (d.kind === "Def") tree
 const lines = src.split("\n")
 const programs = []
 for (let i = 0; i + 1 < lines.length; i++) {
-  const doc = lines[i].match(/^\/\/\/ (.*) -> (nat|bool|list|string); try: (.*)$/)
+  const doc = lines[i].match(/^\/\/\/ (.*) -> (nat|bool|list|string|bits); try: (.*)$/)
   const def = lines[i + 1].match(/^(\w+) :=/)
   if (!doc || !def) continue
   const tree = trees.get(def[1])

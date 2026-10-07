@@ -420,8 +420,16 @@ function dispPrint(t, root = true, budget = { left: 200 }) {
   if (budget.left-- <= 0) return "…";
   return t.k === 1 ? `t(${dispPrint(t.c, false, budget)})` : `t(${dispPrint(t.l, false, budget)})(${dispPrint(t.r, false, budget)})`;
 }
+/// A number tree's value (programs.disp, binary numbers): b0 = t, b1 = t t, a pair is its low half then its high half.
+function bitsOf(t) {
+  if (t.k === 0) return { v: 0n, w: 1n };
+  if (t.k === 1) return t.c.k === 0 ? { v: 1n, w: 1n } : null;
+  const lo = bitsOf(t.l), hi = lo && bitsOf(t.r);
+  return hi && { v: lo.v + (hi.v << lo.w), w: lo.w + hi.w };
+}
 function decodeAs(kind, t) {
   if (kind === "nat") { const n = natOf(t); if (n !== null) return String(n); }
+  if (kind === "bits") { const n = bitsOf(t); if (n) return String(n.v); }
   if (kind === "bool") { if (t.k === 0) return "true"; if (t.k === 1 && t.c.k === 0) return "false"; }
   if (kind === "string") { if (t.k === 0) return '""'; const s = stringOf(t); if (s !== null) return JSON.stringify(s); }
   if (kind === "list") { const xs = listOf(t); if (xs) return `[${xs.map(x => { const n = natOf(x); return n !== null ? n : dispPrint(x); }).join(", ")}]`; }
