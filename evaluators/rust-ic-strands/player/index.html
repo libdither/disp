@@ -33,6 +33,14 @@
   #timeline { position:relative; flex:1; height:26px; } #timeline canvas { position:absolute; inset:0 0 auto 0; width:100%; height:8px; }
   #time { position:absolute; left:0; right:0; bottom:0; width:100%; margin:0; }
   #timev { color:var(--dim); font-size:11px; white-space:nowrap; }
+  #combo { position:relative; display:flex; } #src { width:220px; border-radius:6px 0 0 6px; } #pick { border-radius:0 6px 6px 0; border-left:none; padding:4px 7px; }
+  #menu { position:absolute; z-index:8; top:calc(100% + 5px); left:0; width:440px; max-height:min(62vh, 480px); overflow:auto; padding:4px 0;
+    border:1px solid var(--line2); border-radius:9px; background:rgba(11,14,20,.97); box-shadow:0 10px 30px rgba(0,0,0,.6); }
+  #menu[hidden] { display:none; }
+  #menu .grp { color:var(--accent); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; padding:7px 10px 2px; }
+  #menu .opt { display:flex; justify-content:space-between; gap:12px; padding:3px 10px; cursor:pointer; white-space:nowrap; }
+  #menu .opt span { color:var(--dim); font-size:11px; overflow:hidden; text-overflow:ellipsis; }
+  #menu .opt:hover { background:#16202f; } #menu .opt.on { background:#1d2d44; box-shadow:inset 2px 0 var(--accent); }
   .badge { text-align:center; font-weight:bold; letter-spacing:.1em; padding:6px; border-radius:7px; margin:8px 0; border:1px solid var(--line2); }
   .badge.run { color:var(--accent); } .badge.ok { color:var(--ok); border-color:rgba(63,191,127,.45); background:rgba(63,191,127,.1); }
   .badge.bad { color:var(--warn); border-color:rgba(255,107,107,.45); background:rgba(255,107,107,.1); }
@@ -65,9 +73,9 @@
       <label><input type="checkbox" id="follow3d" checked> follow the action</label>
       <button id="fit3d" title="fit (F)">fit</button></div>
     <div id="topbar">
-      <select id="prog"></select><input id="progN" type="number" min="0" max="30" title="size">
-      <input id="args" hidden style="width:150px" title="arguments as disp literals: numbers, [lists], &quot;strings&quot;, true, false, t">
-      <input id="custom" placeholder="@(@(S(L),S(L)),L)" hidden style="width:200px">
+      <span id="combo"><input id="src" spellcheck="false" autocomplete="off" placeholder="fib 2"
+        title="disp code (fib 2, add 2 (mul 2 2), map [1, 2] succ), a benchmark (sort:1), or a term (@(F(L,L),L), ternary digits); ↓ lists the programs"><button
+        id="pick" tabindex="-1" title="programs (↓)">▾</button><div id="menu" hidden></div></span>
       <button id="load">load</button><span class="sep"></span>
       <button class="icon" id="reset" title="restart (R)">⟲</button>
       <button class="icon primary" id="play" title="play / pause (space)">▶</button>
@@ -173,6 +181,8 @@
 <script src="programs.js"></script>
 <script src="three.min.js"></script>
 <script src="timeline.js"></script>
+<!-- the disp compiler, loaded the first time something needs compiling (dispCompiler) -->
+<script id="compilerJs" type="text/plain" src="compiler.js"></script>
 <script>
 "use strict";
 const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out"];
@@ -280,21 +290,25 @@ function decodeAs(kind, t) {
   if (kind === "bool") { if (t.k === 0) return "true"; if (t.k === 1 && t.c.k === 0) return "false"; }
   if (kind === "string") { if (t.k === 0) return '""'; const s = stringOf(t); if (s !== null) return JSON.stringify(s); }
   if (kind === "list") { const xs = listOf(t); if (xs) return `[${xs.map(x => { const n = natOf(x); return n !== null ? n : dispPrint(x); }).join(", ")}]`; }
+  // Of unknown kind: a list of numbers or strings reads as one, if it is not a number or string itself.
+  const xs = !kind && natOf(t) === null && stringOf(t) === null ? listOf(t) : null, items = xs?.map(x => natOf(x) ?? stringOf(x));
+  if (items?.length && items.every(v => v !== null)) return `[${items.map(v => typeof v === "string" ? JSON.stringify(v) : v).join(", ")}]`;
   return dispPrint(t);
 }
-const dispProg = v => v.startsWith("disp:") ? DISP.find(p => "disp:" + p.name === v) : null;
 
 // ---- loading -------------------------------------------------------------------------------
+/// What the input box offers: each disp program with its example, the benchmarks, a random term.
+let entries = [], picked = -1;
+/// Benchmark sizes to offer where the engine's own (`n`) would take minutes.
+const SIZE = { fib: 1, exp: 1, sort: 1 };
+const DEFAULT = DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
 function populate() {
-  const sel = $("prog");
-  const group = label => { const g = document.createElement("optgroup"); g.label = label; sel.appendChild(g); return g; };
-  const add = (g, value, label, title) => { const o = document.createElement("option"); o.value = value; o.textContent = label; if (title) o.title = title; g.appendChild(o); };
-  const gd = group("disp programs");
-  for (const p of DISP) add(gd, "disp:" + p.name, p.name, p.desc);
-  const gb = group("benchmarks (binary numbers)");
-  for (const w of catalog.workloads) add(gb, w.name, w.name, w.desc);
-  const go = group("other");
-  add(go, "random", "random term"); add(go, "custom", "custom term…");
+  entries = [...DISP.map(p => ({ group: "disp programs", name: p.name, text: `${p.name} ${p.example}`, desc: p.desc, prog: p })),
+    ...catalog.workloads.map(w => ({ group: "benchmarks (binary numbers)", name: w.name, text: w.n > 0 ? `${w.name}:${SIZE[w.name] ?? w.n}` : w.name, desc: w.desc, work: w })),
+    { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" }];
+  let group = "";
+  $("menu").innerHTML = entries.map((e, i) => (e.group !== group ? `<div class="grp">${group = e.group}</div>` : "")
+    + `<div class="opt" data-i="${i}" title="${e.desc}">${e.text}<span>${e.desc}</span></div>`).join("");
   $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${LABEL[TAGS[t]]} ${NAMES[TAGS[t]]}</span>`).join("")
     + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
     + `<span><span class="sw" style="background:none;border:2px solid #ffa94d"></span>called value</span><span><span class="sw" style="background:rgba(255,170,80,0.35)"></span>demand field</span>`
@@ -302,34 +316,100 @@ function populate() {
     + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;border:2px solid #d6a8ff;border-radius:2px"></span>last move</span>`
     + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
-  sel.value = q.get("p") || (DISP.length ? "disp:fib" : "share-tower");
-  if (!sel.value) sel.value = "share-tower";
-  $("progN").value = q.get("n") || 4;
-  const d = dispProg(sel.value); $("args").value = q.get("a") ?? (d ? d.example : "");
+  $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
   if (q.get("view")) $("viewMode").value = q.get("view");
   syncUI();
 }
+/// Links from before the input box: p=disp:NAME&a=ARGS, p=WORKLOAD&n=N, p=random&n=N.
+function oldLink(q) {
+  const p = q.get("p"), n = q.get("n") ?? 4, d = DISP.find(d => "disp:" + d.name === p), w = catalog.workloads.find(w => w.name === p);
+  return d ? `${d.name} ${q.get("a") ?? d.example}` : p === "random" ? `random:${n}:6` : w ? (w.n > 0 ? `${p}:${n}` : p) : null;
+}
+/// The entry the text calls: a benchmark as `name:n` or bare `name`, else the disp program its first
+/// word names, else while that word is being typed, the first entry it begins.
+function matchEntry(input) {
+  const word = input.match(/^\s*([\w-]+)/)?.[1], rest = word ? input.trim().slice(word.length) : "";
+  if (!word) return -1;
+  const is = f => entries.findIndex(f);
+  const w = is(e => e.work && e.name === word);
+  if (w >= 0 && (!rest || rest[0] === ":")) return w;
+  if (word === "random" && (!rest || rest[0] === ":")) return is(e => e.name === "random");
+  const d = is(e => e.prog && e.name === word);
+  return d >= 0 ? d : rest ? -1 : is(e => e.name.startsWith(word));
+}
 function syncUI() {
-  const v = $("prog").value, w = catalog.workloads.find(w => w.name === v), d = dispProg(v);
-  $("custom").hidden = v !== "custom"; $("args").hidden = !d;
-  $("progN").hidden = !(w && w.n > 0) && v !== "random";
-  $("progInfo").innerHTML = d ? `<b>${d.name}</b>: ${d.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude; type the arguments as disp literals (numbers, [lists], "strings").`
-    : w ? `<b>${w.name}</b>: ${w.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
-    : v === "random" ? "A random tree-calculus term." : "Your own term: L, S(x), F(x,y), @(f,x), or ternary digits.";
+  const input = $("src").value.trim(), i = matchEntry(input), e = entries[i];
+  showPicked(i);
+  $("progInfo").innerHTML = e?.prog ? `<b>${e.name}</b>: ${e.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude.`
+      + ` Type any disp expression: arguments as literals (numbers, [lists], "strings") or calls of their own, like <i>${e.name} (add 1 1)</i>.`
+    : e?.work ? `<b>${e.name}</b>: ${e.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
+      + (e.work.n > 0 ? ` <i>${e.name}:n</i> sets n.` : "")
+    : e ? "A random tree-calculus term: <i>random:seed:depth</i>."
+    : /^[LSF@(),\s]+$|^[012\s]+$/.test(input) ? "A term of your own: L, S(x), F(x,y), @(f,x), or ternary digits, several applied left to right."
+    : "Ordinary disp code, compiled in your browser with the prelude, <i>lib/list.disp</i> and <i>programs/programs.disp</i> in scope.";
 }
-function source() {
-  const v = $("prog").value, d = dispProg(v);
-  if (d) return [d.tree, ...parseArgs($("args").value)].join(" ");
-  if (v === "custom") return $("custom").value.trim() || "@(@(S(L),S(L)),L)";
-  if (v === "random") return `random:${$("progN").value}:6`;
-  const w = catalog.workloads.find(w => w.name === v);
-  return w && w.n > 0 ? `${v}:${$("progN").value}` : v;
+/// Highlight entry i of the menu (-1: none).
+function showPicked(i) {
+  picked = i;
+  const m = $("menu");
+  for (const o of m.children) o.classList.toggle("on", o.dataset.i === String(i));
+  const o = m.querySelector(".on");
+  if (o && !m.hidden) m.scrollTop = Math.min(Math.max(m.scrollTop, o.offsetTop + o.offsetHeight + 4 - m.clientHeight), o.offsetTop - 26);
 }
-function load() {
-  let src;
-  try { src = source(); } catch (err) { banner(`arguments: ${err}`, true); return; }
-  const agents = withString(src, (p, n) => E.strands_probe(p, n));
-  if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return; }
+/// Fill the input box with entry i, its argument selected for typing over.
+function choose(i) {
+  const fill = entries[i].text, at = fill.search(/[\s:]/);
+  $("src").value = fill; syncUI();
+  $("src").focus(); if (at > 0) $("src").setSelectionRange(at + 1, fill.length);
+}
+function openMenu(open) { $("menu").hidden = !open; if (open) showPicked(picked); }
+
+/// The compiler (compiler.js), loaded on first use; resolves to window.StrandsDisp once its scope
+/// has loaded, whose `names` are then every top-level definition in scope.
+let compiler = null;
+function dispCompiler() {
+  return compiler ??= new Promise((ok, no) => {
+    const s = document.createElement("script");
+    s.src = $("compilerJs").src; s.onload = () => ok(window.StrandsDisp.ready); s.onerror = () => no(new Error("compiler.js did not load"));
+    document.head.append(s);
+  }).catch(err => { compiler = null; throw err; });
+}
+/// Compiled input, by its text.
+const compiled = new Map();
+/// What to load for the input without compiling, else null: { src, kind, call } with src a term for
+/// the engine. Benchmarks and terms go to the engine as they are, and a disp program called with
+/// literal arguments takes its tree from programs.js.
+function plan(input) {
+  if (withString(input, (p, n) => E.strands_probe(p, n)) >= 0) return { src: input };
+  const [, name, args] = input.match(/^(\w+)\s*(.*)$/s) ?? [], d = DISP.find(p => p.name === name);
+  if (d) try { return { src: [d.tree, ...parseArgs(args)].join(" "), kind: d.kind, call: input }; } catch {}
+  return compiled.get(input) ?? null;
+}
+async function compile(input) {
+  if (!window.StrandsDisp) banner("loading the disp compiler…");
+  const r = await (await dispCompiler()).compile(input), d = DISP.find(p => p.name === r.head);
+  const p = { src: r.term, kind: d ? d.kind : r.kind, call: input };
+  compiled.set(input, p);
+  return p;
+}
+let loads = 0;
+/// Load what the input box says, compiling it first if it needs that; `play` starts it once loaded.
+async function load(play) {
+  const input = $("src").value.trim() || DEFAULT, seq = ++loads;
+  let p;
+  try { p = plan(input) ?? await compile(input); }
+  catch (err) {
+    if (seq !== loads) return;
+    banner(String(err.message ?? err), true);
+    if (!L) { $("src").value = DEFAULT; syncUI(); await load(play); }
+    return;
+  }
+  if (seq === loads && start(p, input) && play) setPlaying(true);
+}
+/// Start a run of p (see `plan`); input is what the input box said.
+function start(p, input) {
+  const src = p.src, agents = withString(src, (p, n) => E.strands_probe(p, n));
+  if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return false; }
   // The current design (lattice.rs `latest`): the chip's schedule with the demand field and forking S rules.
   E.strands_settings();
   withString(`seed=${SEED}`, (p, n) => E.strands_set(p, n));
@@ -342,12 +422,11 @@ function load() {
     if (rc !== 2) break;
     side = Math.ceil(side * 1.4);
   }
-  if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return; }
+  if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return false; }
   if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
   L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
-  const d = dispProg($("prog").value);
-  running = d ? { kind: d.kind, call: `${d.name} ${$("args").value.trim()}` } : null;
+  running = p.call ? { kind: p.kind, call: p.call } : null;
   finished = false; cleaned = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   tlReset();
   refreshGarbage(true); layoutLayers();
@@ -357,11 +436,12 @@ function load() {
     + `a switchboard of 8 pairings × 2 ends × ${bits} bits, ${bits} bits saying which strand carries a pulse, and ${field} bits of demand field: `
     + `≈ ${5 * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
   $("clockName").textContent = "clocks (2×2×2 blocks)";
-  location.hash = `p=${$("prog").value}&n=${$("progN").value}${d ? `&a=${encodeURIComponent($("args").value)}` : ""}&view=${viewMode}${onGpu ? "&gpu=1" : ""}`;
+  location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${onGpu ? "&gpu=1" : ""}`;
   if (onGpu && !gpuCode) setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
-  banner(`${running ? running.call : src.length > 60 ? $("prog").value : src}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
+  banner(`${input.length > 60 ? input.slice(0, 57) + "…" : input}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
+  return true;
 }
 
 // ---- geometry ------------------------------------------------------------------------------------
@@ -1172,8 +1252,21 @@ $("back").onclick = e => tlBack(e.shiftKey);
 $("time").oninput = () => tlSeek(+$("time").value);
 $("end").onclick = () => { $("speed").value = 100; speedLabel(); setPlaying(true); };
 $("reset").onclick = () => load();
-$("load").onclick = () => { load(); setPlaying(true); };
-$("prog").onchange = () => { const d = dispProg($("prog").value); if (d) $("args").value = d.example; syncUI(); };
+$("load").onclick = () => load(true);
+$("src").oninput = () => { syncUI(); openMenu(true); };
+$("src").onclick = () => openMenu(true);
+$("src").onblur = () => openMenu(false);
+$("src").onkeydown = e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if ($("menu").hidden) return openMenu(true);
+    const step = e.key === "ArrowDown" ? 1 : entries.length - 1, i = picked < 0 ? (step === 1 ? 0 : entries.length - 1) : (picked + step) % entries.length;
+    $("src").value = entries[i].text; syncUI(); showPicked(i);
+  } else if (e.key === "Escape" || e.key === "Enter") openMenu(false);
+};
+$("pick").onmousedown = $("menu").onmousedown = e => e.preventDefault();
+$("pick").onclick = () => { $("src").focus(); openMenu($("menu").hidden); };
+$("menu").onclick = e => { const o = e.target.closest(".opt"); if (o) { choose(+o.dataset.i); openMenu(false); } };
 $("speed").oninput = speedLabel;
 $("viewMode").onchange = () => setView($("viewMode").value);
 $("engine").onchange = () => setEngine($("engine").value);
@@ -1183,7 +1276,7 @@ $("fit3d").onclick = () => fit3d();
 $("follow3d").onchange = () => fit3d();
 function speedLabel() { const v = proposalsPerFrame(); $("speedv").textContent = v === Infinity ? "max speed" : `${fmt(v)} proposals/frame`; }
 window.addEventListener("keydown", e => {
-  if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") { load(); setPlaying(true); } return; }
+  if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") load(true); return; }
   if (e.target.tagName === "SELECT") return;
   if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
   else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(e.shiftKey); }
@@ -1203,7 +1296,7 @@ let bt = 0; function banner(m, bad) { const b = $("banner"); b.textContent = m; 
   viewMode = $("viewMode").value;
   if (!navigator.gpu) { $("engine").options[1].disabled = true; $("engine").title = "this browser has no WebGPU (Chrome on Linux: chrome://flags/#enable-unsafe-webgpu)"; }
   const q = new URLSearchParams(location.hash.slice(1));
-  load(); setView(viewMode);
+  await load(); setView(viewMode);
   if (q.get("gpu") === "1") await setEngine("gpu");
   if (q.get("play") !== "0") setPlaying(true);
   requestAnimationFrame(frame);
