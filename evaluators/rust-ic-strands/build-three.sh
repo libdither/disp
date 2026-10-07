@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Bundle three.js (and its orbit controls) into player/three.min.js, a plain script that sets
-# window.THREE, so the player's 3D view works when index.html is opened straight from disk.
+# Bundle three.js (with its orbit controls and wide lines) into player/three.min.js, a plain script
+# that sets window.THREE, so the player's 3D view works when index.html is opened straight from disk.
 set -euo pipefail
 version=0.186.1
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -12,9 +12,12 @@ npm install --silent "three@$version" >/dev/null
 cat > entry.js <<'JS'
 import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
-window.THREE = { ...THREE, OrbitControls }
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js"
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js"
+import { LineMaterial } from "three/addons/lines/LineMaterial.js"
+window.THREE = { ...THREE, OrbitControls, LineSegments2, LineSegmentsGeometry, LineMaterial }
 JS
 "$here/../../node_modules/.bin/esbuild" entry.js --bundle --minify --format=iife --legal-comments=inline \
-  --banner:js="/* three.js $version (MIT, https://threejs.org) with OrbitControls, bundled by build-three.sh */" \
+  --banner:js="/* three.js $version (MIT, https://threejs.org) with OrbitControls and wide lines, bundled by build-three.sh */" \
   --outfile="$here/player/three.min.js" --log-level=warning
 echo "player/three.min.js: $(stat -c %s "$here/player/three.min.js") bytes (three $version)"

@@ -21,9 +21,15 @@
   #verdict { font-size:11px; color:var(--fg-faint); }
   #banner { position:absolute; z-index:6; top:12px; left:50%; transform:translateX(-50%); max-width:60%; padding:5px 12px; border-radius:9px;
     border:1px solid var(--border-strong); background:rgba(11,14,20,.92); font-size:12px; pointer-events:none; opacity:0; transition:opacity .4s; }
-  #bar3d { position:absolute; z-index:5; top:10px; right:12px; display:flex; gap:8px; align-items:center; padding:4px 8px;
-    border:1px solid var(--border); border-radius:9px; background:rgba(11,14,20,.85); font-size:11px; color:var(--fg-muted); }
-  #bar3d input[type=range] { width:80px; } #bar3d select, #bar3d button { padding:1px 6px; font-size:11px; }
+  /* the 3D view's controls, top right, in the dock's style; their tips open downward */
+  #bar3d { position:absolute; z-index:5; top:10px; right:12px; display:flex; gap:5px; align-items:center; padding:3px 3px 3px 11px;
+    border:1px solid var(--border); border-radius:19px; background:rgba(11,14,20,.85); color:var(--fg-faint); }
+  #bar3d > * { opacity:.55; transition:opacity .18s; } #bar3d:hover > *, #bar3d:focus-within > * { opacity:1; }
+  #bar3d .gap3 { display:flex; align-items:center; gap:5px; } #bar3d .gap3 .ico { width:15px; height:15px; } #gap3d { width:72px; }
+  #bar3d select { height:30px; padding:0 8px; border-radius:15px; color:var(--fg-muted); font-size:11px; cursor:pointer; }
+  #bar3d select:hover { border-color:var(--accent); }
+  #bar3d [data-tip]::after { top:calc(100% + 9px); bottom:auto; left:auto; right:0; transform:translate(0, -3px); }
+  #bar3d [data-tip]:hover::after, #bar3d [data-tip]:focus-visible::after { transform:none; }
   /* the dock, as in the tree visualizer: the input box over a time bar over the transport,
      play at the centre, speed in the left corner, toggles in the right */
   #dock { position:absolute; z-index:5; left:0; right:0; bottom:0; padding:30px 12px 8px; pointer-events:none;
@@ -138,10 +144,11 @@
   <div id="stage">
     <canvas id="cv"></canvas><canvas id="cv3" hidden></canvas>
     <div id="hud"><div id="decoded"></div><div id="badge">loading</div><div id="verdict"></div></div>
-    <div id="bar3d" hidden>spacing <input id="gap3d" type="range" min="10" max="60" value="25">
-      <select id="layer3d"><option value="all">all layers</option></select>
-      <label><input type="checkbox" id="follow3d" checked> follow</label>
-      <button id="fit3d" title="fit (F)">fit</button></div>
+    <div id="bar3d" hidden>
+      <label class="gap3" data-tip="spacing between the layers"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M12 3.5 3.5 8l8.5 4.5L20.5 8z"/><path d="M3.5 12.5 12 17l8.5-4.5"/><path d="M3.5 16.5 12 21l8.5-4.5"/></svg><input id="gap3d" type="range" min="10" max="80" value="30" aria-label="spacing between the layers"></label>
+      <select id="layer3d" aria-label="layers shown"><option value="all">all layers</option></select>
+      <button class="mpi" id="follow3d" aria-pressed="false" data-tip="follow the action: glide along with the wanted readers" aria-label="follow the action"><svg class="ico stroke" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+      <button class="mpi" id="fit3d" data-tip="fit the whole net in view (F)" aria-label="fit the whole net in view"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button></div>
     <div id="dock">
       <div id="storyline"></div>
       <div id="editrow">
@@ -261,8 +268,9 @@
         synchronous chip does, with no move ever reaching outside its block.</p>
       <p><b>Views.</b> <i>Layers stacked</i> draws every layer of the 3D lattice offset over the others: compact, but
         layers overlap. <i>Layers side by side</i> gives each layer its own panel: exact, and every site is easy to
-        click. <i>3D</i> shows the lattice as it is: drag to orbit, right-drag to pan, spread the layers apart or show
-        one at a time.</p>
+        click. <i>3D</i> shows the lattice as it is, each layer over a faint labelled floor and each wire one path in the
+        colour of its segment: drag to orbit, right-drag to pan, the wheel zooms toward the pointer, <kbd>F</kbd> fits the
+        whole net; spread the layers apart, show one at a time, or follow the action.</p>
       <p><b>Segments.</b> The term the root computes is a tree of applications. With segments on, an application's
         function and each of its arguments get colours of their own, and an application nested inside one of them
         splits that colour again, so each part of the term shows as a region of the net. Hues go to the parts by how
@@ -853,8 +861,10 @@ function arrow(path, ax, ay, bx, by) {
 }
 
 // ---- drawing in 3D (three.js) -------------------------------------------------------------------------
-const V3 = { ready: false, dirty: true, fitted: false, cap: 0 };
-const W3 = { x: [1, 0, 0], y: [0, 0, 1], z: [0, 1, 0] }; // lattice x, y, layer → world axes (layers stack upward)
+// Lattice x and y lie flat (world x and z) and the layers stack upward, V3.gap apart. Each wire is one
+// path in the colour of the segment whose output it carries, agents keep a few pixels of size however
+// far away, and under each layer a faint floor covers the 4×4 blocks of sites it uses.
+const V3 = { ready: false, dirty: true, fitted: false, follow: false, moved: true, key: "", builtAt: 0, cost: 0, gap: 3, cx: 0, cy: 0 };
 function pos3(s) { const [x, y, z] = siteXYZ(s); return [x - V3.cx, z * V3.gap, y - V3.cy]; }
 const FACE3 = () => [[0.5, 0, 0], [-0.5, 0, 0], [0, 0, 0.5], [0, 0, -0.5], [0, V3.gap / 2, 0], [0, -V3.gap / 2, 0]];
 function end3(s, e, faces) {
@@ -868,25 +878,40 @@ function end3(s, e, faces) {
   const perp = f < 2 ? [0, 0, off] : f < 4 ? [off, 0, 0] : [off * 0.7, 0, off * 0.7];
   return [c[0] + fd[0] + perp[0], c[1] + fd[1] + perp[1], c[2] + fd[2] + perp[2]];
 }
+/// An agent's radius, how far under its layer a floor lies, the side of a floor tile (in sites), the background.
+const R3 = 0.17, FLOOR3 = 0.4, BLOCK3 = 4, BG3 = 0x0b0e14;
+/// An sRGB channel (0 to 1) as the linear one three.js works in.
+const lin3 = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const rgb3 = hex => [hex >> 16 & 255, hex >> 8 & 255, hex & 255].map(c => lin3(c / 255));
+/// Wires: plain, garbage (with segments on), then lit: a wanted reader's principal wire, the selected
+/// site's wires, a pick's, the pointer's preview, the part of a term clicked in the panel.
+const WIRE3 = [0x5d7090, 0x2f3a4a, 0x56c8ff, 0xffaa46, 0xff5fd2, 0xff9be6, 0xffffff].map(rgb3), BGL3 = rgb3(BG3);
 function init3d() {
   const T = window.THREE;
-  if (!T) { banner("three.js did not load", true); return false; }
+  if (!T?.LineSegments2) { banner("three.js did not load", true); return false; }
   const canvas = $("cv3");
   V3.T = T;
-  V3.renderer = new T.WebGLRenderer({ canvas, antialias: true });
+  // The frame is kept, so the canvas can be read between frames: only a change draws it again.
+  V3.renderer = new T.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
   V3.renderer.setPixelRatio(devicePixelRatio || 1);
-  V3.scene = new T.Scene(); V3.scene.background = new T.Color(0x0b0e14);
-  V3.camera = new T.PerspectiveCamera(45, 1, 0.1, 20000);
+  V3.scene = new T.Scene(); V3.scene.background = new T.Color(BG3); V3.scene.fog = new T.Fog(BG3, 1, 2);
+  V3.camera = new T.PerspectiveCamera(40, 1, 0.1, 20000); V3.scene.add(V3.camera);
   V3.controls = new T.OrbitControls(V3.camera, canvas);
-  V3.controls.enableDamping = true; V3.controls.screenSpacePanning = true;
-  V3.scene.add(new T.AmbientLight(0xffffff, 0.7));
-  const sun = new T.DirectionalLight(0xffffff, 1.8); sun.position.set(1, 2.5, 1.5); V3.scene.add(sun);
-  V3.wires = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 }));
-  V3.wires.frustumCulled = false; V3.scene.add(V3.wires);
-  V3.marks = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ vertexColors: true }));
-  V3.marks.frustumCulled = false; V3.scene.add(V3.marks);
+  V3.controls.enableDamping = true; V3.controls.screenSpacePanning = true; V3.controls.zoomToCursor = true;
+  V3.controls.addEventListener("change", () => { V3.moved = true; });
+  // lit from over the viewer's left shoulder, wherever the camera goes
+  V3.scene.add(new T.AmbientLight(0xffffff, 0.9));
+  const sun = new T.DirectionalLight(0xffffff, 1.5), aim = new T.Object3D();
+  sun.position.set(-1, 2, 1); aim.position.set(0, 0, -1); V3.camera.add(sun, aim); sun.target = aim;
+  const wide = width => { const l = new T.LineSegments2(new T.LineSegmentsGeometry(), new T.LineMaterial({ vertexColors: true, linewidth: width, fog: true }));
+    l.frustumCulled = false; l.userData.w = segs3(); V3.scene.add(l); return l; };
+  const thin = () => { const l = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ vertexColors: true })); l.frustumCulled = false; V3.scene.add(l); return l; };
+  V3.wires = wide(1.5); V3.hot = wide(2.5); V3.marks = thin(); V3.edges = thin();
+  // Lit wires are drawn over the rest, as in the flat views, and agents over both.
+  Object.assign(V3.hot.material, { depthTest: false, depthWrite: false }); V3.hot.renderOrder = 1;
+  V3.kind = COLOR.map(c => new T.Color(c));
   V3.ray = new T.Raycaster();
-  V3.gap = 2.5; V3.cx = 0; V3.cy = 0;
+  V3.gap = +$("gap3d").value / 10;
   let down = null;
   canvas.addEventListener("pointerdown", e => { down = { x: e.clientX, y: e.clientY }; });
   canvas.addEventListener("pointerup", e => {
@@ -909,132 +934,282 @@ function instanced(name, geometry, material, count) {
   m.frustumCulled = false; V3.scene.add(m); V3[name] = m;
   return m;
 }
+/// Line segments for a wide line, in arrays that grow as needed.
+const segs3 = () => ({ pos: new Float32Array(6 * 4096), col: new Float32Array(6 * 4096), n: 0 });
+function seg3(w, a, b, rgb) {
+  if (6 * w.n + 6 > w.pos.length) {
+    const p = new Float32Array(2 * w.pos.length), c = new Float32Array(2 * w.pos.length);
+    p.set(w.pos); c.set(w.col); w.pos = p; w.col = c;
+  }
+  const o = 6 * w.n++, P = w.pos, C = w.col;
+  P[o] = a[0]; P[o + 1] = a[1]; P[o + 2] = a[2]; P[o + 3] = b[0]; P[o + 4] = b[1]; P[o + 5] = b[2];
+  C[o] = C[o + 3] = rgb[0]; C[o + 1] = C[o + 4] = rgb[1]; C[o + 2] = C[o + 5] = rgb[2];
+}
+function feed3(line) {
+  const w = line.userData.w;
+  let g = line.geometry;
+  if (g.attributes.instanceStart?.data.array !== w.pos) {
+    g.dispose(); g = line.geometry = new V3.T.LineSegmentsGeometry(); g.setPositions(w.pos); g.setColors(w.col);
+  } else for (const a of [g.attributes.instanceStart, g.attributes.instanceColorStart]) {
+    a.data.clearUpdateRanges(); a.data.addUpdateRange(0, 6 * w.n); a.data.needsUpdate = true;
+  }
+  g.instanceCount = w.n;
+}
+/// Thin line segments, in a geometry of their own (the old one's buffers let go).
+function thin3(line, pos, col) {
+  const T = V3.T, g = new T.BufferGeometry();
+  g.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); g.setAttribute("color", new T.Float32BufferAttribute(col, 3));
+  line.geometry.dispose(); line.geometry = g;
+}
+/// A layer's label, drawn the same size on screen however far away.
+function label3(text) {
+  const T = V3.T, c = document.createElement("canvas"), g = c.getContext("2d"), d = 2, font = `${11 * d}px ui-monospace,SFMono-Regular,Menlo,monospace`;
+  g.font = font; c.width = Math.ceil(g.measureText(text).width) + 12 * d; c.height = 16 * d;
+  g.font = font; g.fillStyle = "#8595ad"; g.textBaseline = "middle"; g.fillText(text, 2 * d, c.height / 2);
+  const map = new T.CanvasTexture(c); map.colorSpace = T.SRGBColorSpace;
+  const sp = new T.Sprite(new T.SpriteMaterial({ map, sizeAttenuation: false, depthTest: false, fog: false }));
+  sp.center.set(1, 0.5); sp.renderOrder = 10; sp.userData.aspect = c.width / c.height; V3.scene.add(sp);
+  return sp;
+}
+/// Everything drawn, built again from the lattice.
+function build3d(V) {
+  const T = V3.T, faces = FACE3(), ks = L.ks, ends = L.ends, plane = L.w * L.h, segs = showSegments && NET.bySeat ? NET : null;
+  const onlyZ = $("layer3d").value === "all" ? -1 : +$("layer3d").value;
+  const live = onlyZ < 0 ? V.live : V.live.filter(s => Math.floor(s / plane) === onlyZ);
+  const pk = PICK.on ? PICK.marks : null, bg = new T.Color(BG3), col = new T.Color(), m4 = new T.Matrix4();
+  if (V3.idx?.length !== plane * L.depth) V3.idx = new Int32Array(plane * L.depth).fill(-1);
+  const idx = V3.idx, np = live.length * ends;
+  live.forEach((s, i) => { idx[s] = i; });
+  if (!(V3.wseg?.length >= np)) { V3.wseg = new Int32Array(2 * np); V3.wlit = new Uint8Array(2 * np); }
+  // each switchboard pairing, by its lower end: the segment of the wire through it, and how it is lit
+  const wseg = V3.wseg.fill(-1, 0, np), wlit = V3.wlit.fill(0, 0, np);
+  const stamp = (to, v) => (site, a, b) => { const i = idx[site]; if (i >= 0) to[i * ends + Math.min(a, b)] = v; };
+  const segRgb = segs ? NET.segs.map(g => g.rgb.map(lin3)) : [], segOf = seat => { const j = segs ? NET.bySeat[seat] : -1; return j >= 0 ? NET.seg[j] : -1; };
+  if (segs) for (const s of V.live) for (let k = 0; k < ks; k++) {
+    const t = V.tags[s * ks + k], g = t ? segOf(s * ks + k) : -1;
+    if (g >= 0) for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) walk(V, s, k * 3 + p, stamp(wseg, g));
+  }
+  for (const s of V.live) for (let k = 0; k < ks; k++) {
+    const t = V.tags[s * ks + k];
+    if (t && isConsumer(t) && V.want[s * ks + k] && !dead(s, k)) walk(V, s, k * 3, stamp(wlit, 1));
+  }
+  if (pinned != null) for (let k = 0; k < ks; k++) { const t = V.tags[pinned * ks + k]; for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * 3 + p, stamp(wlit, 2)); }
+  if (pk) for (const seat of PICK.lit) {
+    const b = pk[seat], t = V.tags[seat], code = b & 16 ? 5 : b & 1 ? 3 : 4;
+    for (let p = 0; p < ARITY[t]; p++) if (!isSource(t, p)) walk(V, siteOf(seat), slotOf(seat) * 3 + p, stamp(wlit, code));
+  }
+  // every pairing as a short curve through its site, so each wire is one path; with a pick, the rest dimmed
+  const wires = V3.wires.userData.w, hot = V3.hot.userData.w, rgb = [0, 0, 0], q = [0, 0, 0];
+  wires.n = hot.n = 0;
+  for (let i = 0; i < live.length; i++) {
+    const s = live[i], c = pos3(s);
+    for (let e = 0; e < ends; e++) {
+      const m = V.mate[s * ends + e];
+      if (m === NONE || m < e) continue;
+      const h = wlit[i * ends + e], g = wseg[i * ends + e], base = h ? WIRE3[h + 1] : g >= 0 ? segRgb[g] : WIRE3[segs ? 1 : 0], dim = pk && !h ? 0.72 : 0;
+      for (let d = 0; d < 3; d++) rgb[d] = base[d] + (BGL3[d] - base[d]) * dim;
+      const a = end3(s, e, faces), b = end3(s, m, faces), to = h ? hot : wires;
+      for (let d = 0; d < 3; d++) q[d] = c[d] * 0.6 + (a[d] + b[d]) * 0.2;
+      if (Math.abs(q[0] - (a[0] + b[0]) / 2) + Math.abs(q[1] - (a[1] + b[1]) / 2) + Math.abs(q[2] - (a[2] + b[2]) / 2) < 1e-3) { seg3(to, a, b, rgb); continue; }
+      let p0 = a;
+      for (let j = 1; j <= 3; j++) {
+        const t = j / 3, u = 1 - t, p1 = [0, 1, 2].map(d => u * u * a[d] + 2 * u * t * q[d] + t * t * b[d]);
+        seg3(to, p0, p1, rgb); p0 = p1;
+      }
+    }
+  }
+  feed3(V3.wires); feed3(V3.hot);
+  // agents, their rings (a wanted reader's, a called value's, a pick's), pulses, and the cells a click finds
+  const cap = live.length * ks, group = n => ({ p: new Float32Array(3 * n), r: new Float32Array(n), n: 0 });
+  const A = group(cap), Rg = group(3 * cap), Pu = group(live.length), put = (g, p, r) => { g.p.set(p, 3 * g.n); g.r[g.n++] = r; };
+  const agents = instanced("agents", V3.sphere ??= new T.SphereGeometry(1, 14, 10), V3.agentMat ??= new T.MeshStandardMaterial({ roughness: 0.5, metalness: 0.05 }), cap);
+  agents.renderOrder = 2;
+  const rings = instanced("rings", V3.ringGeo ??= new T.RingGeometry(0.78, 1, 32), V3.ringMat ??= new T.MeshBasicMaterial({ transparent: true, depthWrite: false, side: T.DoubleSide }), 3 * cap);
+  const pulses = instanced("pulses", V3.dot ??= new T.SphereGeometry(1, 8, 6), V3.dotMat ??= new T.MeshBasicMaterial({ color: 0xffffff }), live.length);
+  const cells = instanced("cells", V3.box ??= new T.BoxGeometry(1, 1, 1), V3.cellMat ??= new T.MeshBasicMaterial(), live.length);
+  const RING = V3.ringCol ??= { want: new T.Color(0x56c8ff), called: new T.Color(0xffa94d), pick: new T.Color(PINK), prev: new T.Color(0xff9be6), focus: new T.Color(0xffffff) };
+  const ring = (p, r, c) => { rings.setColorAt(Rg.n, c); put(Rg, p, r * R3); };
+  V3.agentSeat = new Uint32Array(cap); V3.cellSite = new Uint32Array(live.length);
+  let fx = 0, fy = 0, fz = 0, nf = 0;
+  live.forEach((s, i) => {
+    const c = pos3(s);
+    m4.makeTranslation(c[0], c[1], c[2]); cells.setMatrixAt(i, m4); V3.cellSite[i] = s;
+    for (let k = 0; k < ks; k++) {
+      const seat = s * ks + k, t = V.tags[seat]; if (!t) continue;
+      const p = end3(s, k * 3, faces), b = pk ? pk[seat] : 0, gone = dead(s, k), g = segs ? segOf(seat) : -1;
+      p[1] -= R3; // the principal port is on top of the agent
+      if (!segs) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
+      if (gone) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
+      V3.agentSeat[A.n] = seat; agents.setColorAt(A.n, col); put(A, p, (gone ? 0.75 : 1) * (pk && !b ? 0.7 : 1) * R3);
+      if (V.want[seat] && !gone && (!pk || b)) {
+        ring(p, 1.6, isConsumer(t) ? RING.want : RING.called);
+        if (isConsumer(t)) { fx += p[0]; fy += p[1]; fz += p[2]; nf++; }
+      }
+      if (b && !(segs && !(b & 26))) ring(p, 1.25, b & 16 ? RING.focus : b & 3 ? RING.pick : RING.prev);
+      if (b & 10) ring(p, 1.95, RING.pick);
+    }
+    if (V.pulse[s] !== NONE) put(Pu, end3(s, V.pulse[s], faces), 0.07);
+  });
+  V3.focus = nf ? [fx / nf, fy / nf, fz / nf] : null;
+  cells.count = live.length; cells.visible = false; cells.instanceMatrix.needsUpdate = true; cells.boundingSphere = null;
+  for (const m of [agents, rings]) if (m.instanceColor) m.instanceColor.needsUpdate = true;
+  // [mesh, places, as big as an agent of radius, at least this many pixels, facing the camera]
+  V3.groups = [[agents, A, R3, 2.6, false], [rings, Rg, R3, 2.6, true], [pulses, Pu, 0.07, 1.6, false]];
+  // floors: under each layer, a faint tile on each block of sites it uses, outlined
+  const B = BLOCK3, used = new Set(), key = (z, bx, by) => (z * 4096 + bx) * 4096 + by;
+  for (const s of live) { const [x, y, z] = siteXYZ(s); used.add(key(z, Math.floor(x / B), Math.floor(y / B))); }
+  const tiles = instanced("tiles", V3.tile ??= new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+    V3.tileMat ??= new T.MeshBasicMaterial({ color: 0x1d2b40, transparent: true, opacity: 0.22, depthWrite: false, side: T.DoubleSide }), used.size);
+  const ep = [], ec = [], edge = rgb3(0x2f425c), centres = [];
+  V3.layerUsed = new Array(L.depth).fill(false);
+  let nt = 0;
+  for (const k of used) {
+    const by = k % 4096, bx = Math.floor(k / 4096) % 4096, z = Math.floor(k / 4096 / 4096);
+    const x0 = bx * B - 0.5 - V3.cx, z0 = by * B - 0.5 - V3.cy, y = z * V3.gap - FLOOR3;
+    m4.makeScale(B, 1, B).setPosition(x0 + B / 2, y, z0 + B / 2); tiles.setMatrixAt(nt++, m4);
+    centres.push(x0 + B / 2, y, z0 + B / 2); V3.layerUsed[z] = true;
+    const side = (u0, v0, u1, v1) => { ep.push(u0, y, v0, u1, y, v1); ec.push(...edge, ...edge); };
+    if (!used.has(key(z, bx, by - 1))) side(x0, z0, x0 + B, z0);
+    if (!used.has(key(z, bx, by + 1))) side(x0, z0 + B, x0 + B, z0 + B);
+    if (!used.has(key(z, bx - 1, by))) side(x0, z0, x0, z0 + B);
+    if (!used.has(key(z, bx + 1, by))) side(x0 + B, z0, x0 + B, z0 + B);
+  }
+  tiles.count = nt; tiles.instanceMatrix.needsUpdate = true;
+  thin3(V3.edges, ep, ec);
+  V3.tileXYZ = centres;
+  if (V3.labels?.length !== L.depth) { for (const sp of V3.labels ?? []) V3.scene.remove(sp); V3.labels = L.depth > 1 ? Array.from({ length: L.depth }, (_, z) => label3(`layer ${z}`)) : []; }
+  // the selected site outlined; a faint segment for each agent that moved in a stepped clock
+  const mp = [], mc = [];
+  if (pinned != null) {
+    const c = pos3(pinned), h = 0.5, hy = Math.min(0.5, V3.gap / 2), blue = rgb3(0x56c8ff);
+    const P = [[-h, -hy, -h], [h, -hy, -h], [h, -hy, h], [-h, -hy, h], [-h, hy, -h], [h, hy, -h], [h, hy, h], [-h, hy, h]].map(p => [c[0] + p[0], c[1] + p[1], c[2] + p[2]]);
+    for (const [i, j] of [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]) { mp.push(...P[i], ...P[j]); mc.push(...blue, ...blue); }
+  }
+  if (!playing && showMoves) for (const [kind, s, t] of story) if ((kind === 1 || kind === 2) && s !== t && (onlyZ < 0 || Math.floor(s / plane) === onlyZ)) {
+    mp.push(...pos3(s), ...pos3(t)); mc.push(0.14, 0.1, 0.27, 0.34, 0.24, 0.6);
+  }
+  thin3(V3.marks, mp, mc);
+  for (const s of live) idx[s] = -1;
+}
+/// A group of instances at their places, each at least minPx pixels in radius on screen (as an agent of
+/// radius r0 would be), billboards turned to face the camera. unit: world units a pixel at depth 1.
+function place3d(mesh, g, r0, minPx, face, unit) {
+  const cam = V3.camera, v = cam.matrixWorldInverse.elements, w = cam.matrixWorld.elements, M = mesh.instanceMatrix.array, k = minPx * unit / r0;
+  for (let i = 0; i < g.n; i++) {
+    const x = g.p[3 * i], y = g.p[3 * i + 1], z = g.p[3 * i + 2], o = 16 * i;
+    const s = g.r[i] * Math.max(1, -(v[2] * x + v[6] * y + v[10] * z + v[14]) * k);
+    if (face) for (let j = 0; j < 11; j++) M[o + j] = (j & 3) === 3 ? 0 : w[j] * s;
+    else { M.fill(0, o, o + 11); M[o] = M[o + 5] = M[o + 10] = s; }
+    M[o + 11] = 0; M[o + 12] = x; M[o + 13] = y; M[o + 14] = z; M[o + 15] = 1;
+  }
+  mesh.count = g.n; mesh.instanceMatrix.needsUpdate = true; mesh.boundingSphere = null;
+}
+/// What depends on where the camera is: sizes on screen, line widths, the fog, the layer labels.
+function frame3d() {
+  const cam = V3.camera, cv3 = $("cv3"), W = Math.max(1, cv3.clientWidth), H = Math.max(1, cv3.clientHeight), tan = Math.tan(cam.fov * Math.PI / 360);
+  const dist = cam.position.distanceTo(V3.controls.target), px = H / (2 * dist * tan);
+  cam.near = dist / 200; cam.far = dist * 40 + 1000; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+  V3.scene.fog.near = dist * 0.8; V3.scene.fog.far = dist * 3;
+  const lw = Math.min(3, Math.max(1.25, 0.06 * px));
+  V3.wires.material.linewidth = lw; V3.hot.material.linewidth = 1.6 * lw + 0.6;
+  for (const l of [V3.wires, V3.hot]) l.material.resolution.set(W, H);
+  for (const [mesh, g, r0, minPx, face] of V3.groups) place3d(mesh, g, r0, minPx, face, 2 * tan / H);
+  // the layer labels: a column by the leftmost floor tile on screen with room for them
+  const e = cam.matrixWorld.elements, t = V3.tileXYZ, off = BLOCK3 / 2, s = 2 * 16 * tan / H, v = new V3.T.Vector3();
+  let best = Infinity, ax = 0, az = 0;
+  for (let i = 0; i < t.length; i += 3) {
+    v.set(t[i], t[i + 1], t[i + 2]).project(cam);
+    if (v.z < 1 && v.x > -1 + 260 / W && v.x < best && v.x < 1 && Math.abs(v.y) < 1) { best = v.x; ax = t[i]; az = t[i + 2]; }
+  }
+  // every used layer's, or where they would overlap, the lowest one's and every other or fewer above it
+  const at = z => new V3.T.Vector3(ax, z * V3.gap - FLOOR3, az).project(cam).y * H / 2, z0 = V3.layerUsed.indexOf(true);
+  const step = L.depth > 1 ? Math.ceil(15 * (L.depth - 1) / Math.max(1e-6, Math.abs(at(L.depth - 1) - at(0)))) : 1;
+  V3.labels.forEach((sp, z) => { sp.visible = best < 1 && V3.layerUsed[z] && (z - z0) % step === 0; sp.position.set(ax - e[0] * off, z * V3.gap - FLOOR3, az - e[2] * off); sp.scale.set(s * sp.userData.aspect, s, 1); });
+}
+/// Rewrites as rings spreading flat on their layer and fading (see afterRun); true while any shows.
+function bursts3(now) {
+  const T = V3.T, plane = L.w * L.h, onlyZ = $("layer3d").value === "all" ? -1 : +$("layer3d").value;
+  let keep = 0;
+  for (const b of bursts) if (now - b.t < b.life) bursts[keep++] = b;
+  bursts.length = keep;
+  const mesh = instanced("bursts", V3.flat ??= new T.RingGeometry(0.88, 1, 40).rotateX(-Math.PI / 2),
+    V3.flashMat ??= new T.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide, fog: false }), keep);
+  const m4 = new T.Matrix4(), col = new T.Color();
+  let n = 0;
+  for (const b of bursts) {
+    if (onlyZ >= 0 && Math.floor(b.s / plane) !== onlyZ) continue;
+    const a = (now - b.t) / b.life, c = pos3(b.s), r = 0.5 + 1.3 * a;
+    m4.makeScale(r, 1, r).setPosition(c[0], c[1] - FLOOR3 / 2, c[2]); mesh.setMatrixAt(n, m4);
+    mesh.setColorAt(n++, col.set(0xffd866).multiplyScalar((1 - a) * (b.alpha ?? 1)));
+  }
+  mesh.count = n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  const showing = n > 0 || V3.flashes > 0;
+  V3.flashes = n;
+  return showing;
+}
 function draw3d() {
   if (!L || (!V3.ready && !init3d())) return;
-  const T = V3.T, V = views();
+  const V = views(), now = performance.now();
   if (showSegments && netSync()) V3.dirty = true;
   if (!V3.fitted) {
     // World coordinates are centred once per load, on where matter starts out.
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
     for (const s of V.live) { const [x, y] = siteXYZ(s); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-    V3.cx = x1 < x0 ? 0 : (x0 + x1) / 2; V3.cy = y1 < y0 ? 0 : (y0 + y1) / 2;
+    V3.cx = x1 < x0 ? 0 : Math.round((x0 + x1) / 2); V3.cy = y1 < y0 ? 0 : Math.round((y0 + y1) / 2);
     V3.dirty = true; V3.fitted = true; V3.refit = true;
   }
-  const shown = $("layer3d").value, onlyZ = shown === "all" ? -1 : +shown;
-  const visible = s => onlyZ < 0 || Math.floor(s / (L.w * L.h)) === onlyZ;
   pickSync();
-  const pk = PICK.on ? PICK.marks : null;
-  if (V3.dirty || playing) {
-    V3.dirty = false;
-    const faces = FACE3(), m4 = new T.Matrix4(), col = new T.Color(), bg = new T.Color(0x0b0e14);
-    const live = [...V.live].filter(visible);
-    V3.agentSeat = new Uint32Array(live.length * L.ks);
-    // agents, the halo of wanted readers, the cells that hold anything, pulses
-    let na = 0, nw = 0, np = 0, fx = 0, fy = 0, fz = 0;
-    const agentsMesh = instanced("agents", V3.sphere ??= new T.SphereGeometry(0.17, 16, 12), V3.agentMat ??= new T.MeshStandardMaterial({ roughness: 0.45, metalness: 0.1 }), live.length * L.ks);
-    const haloMesh = instanced("halo", V3.haloGeo ??= new T.SphereGeometry(0.25, 14, 10), V3.haloMat ??= new T.MeshBasicMaterial({ color: 0x56c8ff, transparent: true, opacity: 0.28, depthWrite: false }), live.length * L.ks);
-    const cells = instanced("cells", V3.box ??= new T.BoxGeometry(0.94, 0.94, 0.94), V3.cellMat ??= new T.MeshBasicMaterial({ color: 0x3a5a84, transparent: true, opacity: 0.07, depthWrite: false }), live.length);
-    const pulses = instanced("pulses", V3.dot ??= new T.SphereGeometry(0.07, 8, 6), V3.dotMat ??= new T.MeshBasicMaterial({ color: 0xffffff }), live.length);
-    V3.cellSite = new Uint32Array(live.length);
-    live.forEach((s, i) => {
-      const c = pos3(s);
-      m4.makeTranslation(c[0], c[1], c[2]); cells.setMatrixAt(i, m4); V3.cellSite[i] = s;
-      for (let k = 0; k < L.ks; k++) {
-        const t = V.tags[s * L.ks + k]; if (!t) continue;
-        const p = end3(s, k * 3, faces); // the principal port; the sphere sits just below it
-        m4.makeTranslation(p[0], p[1] - 0.17, p[2]); agentsMesh.setMatrixAt(na, m4);
-        const b = pk ? pk[s * L.ks + k] : 0;
-        col.set(showSegments ? segAt(s * L.ks + k)?.css ?? "#4a5465" : COLOR[t]); if (dead(s, k)) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
-        V3.agentSeat[na] = s * L.ks + k; agentsMesh.setColorAt(na++, col);
-        if (isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k) && (!pk || b)) { haloMesh.setMatrixAt(nw++, m4); fx += p[0]; fy += p[1]; fz += p[2]; }
-      }
-      const pe = V.pulse[s];
-      if (pe !== NONE) { const p = end3(s, pe, faces); m4.makeTranslation(p[0], p[1], p[2]); pulses.setMatrixAt(np++, m4); }
-    });
-    V3.focus = nw ? [fx / nw, fy / nw, fz / nw] : null;
-    for (const [mesh, n] of [[agentsMesh, na], [haloMesh, nw], [cells, live.length], [pulses, np]]) {
-      mesh.count = n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
-    // wires: every switchboard pairing as a short curve through the site; wanted readers' principal
-    // wires in blue and the selected site's wires in orange, followed end to end
-    const hi = new Map();
-    for (const s of V.live) for (let k = 0; k < L.ks; k++) {
-      const t = V.tags[s * L.ks + k];
-      if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) walk(V, s, k * 3, (site, a, b) => hi.set(site * L.ends + Math.min(a, b), 1));
-    }
-    if (pinned != null) for (let k = 0; k < L.ks; k++) {
-      const t = V.tags[pinned * L.ks + k]; if (!t) continue;
-      for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * 3 + p, (site, a, b) => hi.set(site * L.ends + Math.min(a, b), 2));
-    }
-    // the picks' wires: pink, the pointer's preview light pink, the part clicked in the panel white
-    if (pk) for (const seat of PICK.lit) {
-      const b = pk[seat], t = V.tags[seat], code = b & 16 ? 5 : b & 1 ? 3 : 4;
-      if (t) for (let p = 0; p < ARITY[t]; p++) if (!isSource(t, p)) walk(V, siteOf(seat), slotOf(seat) * 3 + p, (site, a, c) => hi.set(site * L.ends + Math.min(a, c), code));
-    }
-    const palette = [pk ? [0.15, 0.19, 0.26] : [0.33, 0.42, 0.56], pk ? [0.17, 0.39, 0.5] : [0.34, 0.78, 1], [1, 0.67, 0.27], [1, 0.37, 0.82], [1, 0.62, 0.9], [1, 1, 1]];
-    const posv = [], colv = [];
-    for (const s of live) {
-      const c = pos3(s);
-      for (let e = 0; e < L.ends; e++) {
-        const m = V.mate[s * L.ends + e];
-        if (m === NONE || m < e) continue;
-        const a = end3(s, e, faces), b = end3(s, m, faces), rgb = palette[hi.get(s * L.ends + e) ?? 0];
-        const ctrl = [c[0] * 0.6 + (a[0] + b[0]) * 0.2, c[1] * 0.6 + (a[1] + b[1]) * 0.2, c[2] * 0.6 + (a[2] + b[2]) * 0.2];
-        let prev = a;
-        for (let j = 1; j <= 3; j++) {
-          const t = j / 3, u = 1 - t, q = [0, 1, 2].map(d => u * u * a[d] + 2 * u * t * ctrl[d] + t * t * b[d]);
-          posv.push(...prev, ...q); colv.push(...rgb, ...rgb); prev = q;
-        }
-      }
-    }
-    V3.wires.geometry.setAttribute("position", new T.Float32BufferAttribute(posv, 3));
-    V3.wires.geometry.setAttribute("color", new T.Float32BufferAttribute(colv, 3));
-    // outlines: the selected site in blue, the picks' roots in pink; a faint segment for each agent that moved in a stepped clock
-    const mp = [], mc = [];
-    const outline = (s, rgb) => {
-      const c = pos3(s), h = 0.5, hy = Math.min(0.5, V3.gap / 2);
-      const P = [[-h, -hy, -h], [h, -hy, -h], [h, -hy, h], [-h, -hy, h], [-h, hy, -h], [h, hy, -h], [h, hy, h], [-h, hy, h]].map(p => [c[0] + p[0], c[1] + p[1], c[2] + p[2]]);
-      for (const [i, j] of [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]) { mp.push(...P[i], ...P[j]); mc.push(...rgb, ...rgb); }
-    };
-    if (pinned != null) outline(pinned, [0.34, 0.78, 1]);
-    if (pk) for (const seat of PICK.lit) if (pk[seat] & 10 && visible(siteOf(seat))) outline(siteOf(seat), pk[seat] & 2 ? [1, 0.37, 0.82] : [1, 0.62, 0.9]);
-    if (!playing && showMoves) for (const [kind, s, t] of story) if ((kind === 1 || kind === 2) && s !== t && visible(s)) {
-      mp.push(...pos3(s), ...pos3(t)); mc.push(0.42, 0.36, 0.55, 0.62, 0.52, 0.8);
-    }
-    V3.marks.geometry.setAttribute("position", new T.Float32BufferAttribute(mp, 3));
-    V3.marks.geometry.setAttribute("color", new T.Float32BufferAttribute(mc, 3));
-    if (V3.refit) { V3.refit = false; fit3d(); }
+  // Built again when anything drawn changed; while playing, for at most a quarter of the time.
+  const st = stats(), key = `${st[0]}|${st[1]}|${lastGarbage}`;
+  let built = false;
+  if (V3.dirty || (key !== V3.key && !(playing && now - V3.builtAt < 3 * V3.cost))) {
+    V3.dirty = false; V3.key = key; build3d(V); V3.cost = performance.now() - now; V3.builtAt = now; built = true;
   }
-  // Glide toward where the wanted readers are, keeping the camera's angle and distance.
-  if ($("follow3d").checked && V3.focus) {
+  if (V3.refit) { V3.refit = false; fit3d(); }
+  // Following the action: glide toward where the wanted readers are, keeping the camera's angle and distance.
+  if (V3.follow && V3.focus) {
     const t = V3.controls.target, d = [0, 1, 2].map(i => (V3.focus[i] - [t.x, t.y, t.z][i]) * 0.06);
-    t.x += d[0]; t.y += d[1]; t.z += d[2];
-    V3.camera.position.x += d[0]; V3.camera.position.y += d[1]; V3.camera.position.z += d[2];
+    if (Math.hypot(...d) > 1e-3) { t.x += d[0]; t.y += d[1]; t.z += d[2]; V3.camera.position.x += d[0]; V3.camera.position.y += d[1]; V3.camera.position.z += d[2]; V3.moved = true; }
   }
-  V3.controls.update();
-  V3.renderer.render(V3.scene, V3.camera);
+  const cv3 = $("cv3"), size = `${cv3.width}x${cv3.height}`, moved = V3.controls.update() || V3.moved, flash = bursts3(now);
+  V3.moved = false;
+  if (built || moved || flash || size !== V3.size) { V3.size = size; frame3d(); V3.renderer.render(V3.scene, V3.camera); }
   pickPanel(false);
 }
 function pick3(cx, cy) {
   if (!V3.cells) return null;
   const r = $("cv3").getBoundingClientRect();
   V3.ray.setFromCamera(new V3.T.Vector2((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1), V3.camera);
+  // the agent under the pointer, else the nearest site holding anything
+  const a = V3.agents && V3.ray.intersectObject(V3.agents, false)[0];
+  if (a) return siteOf(V3.agentSeat[a.instanceId]);
   const hit = V3.ray.intersectObject(V3.cells, false)[0];
   return hit ? V3.cellSite[hit.instanceId] : null;
 }
+/// Frame the whole net (following the action, the wanted readers' neighbourhood) from above at a
+/// slant, looking across its long side if it has one, else from the south as the flat views do.
 function fit3d() {
   if (!L || !V3.ready) return;
-  const V = views(); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-  for (const s of V.live) { const [x, y] = siteXYZ(s); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-  if (x1 < x0) return;
-  // Following the action, frame a neighbourhood of the wanted readers; otherwise everything.
-  const follow = $("follow3d").checked && V3.focus;
-  const span = follow ? 26 : Math.max(x1 - x0, y1 - y0, L.depth * V3.gap) + 4, mid = (L.depth - 1) * V3.gap / 2;
-  const c = follow ? V3.focus : [(x0 + x1) / 2 - V3.cx, mid, (y0 + y1) / 2 - V3.cy];
-  V3.controls.target.set(c[0], c[1], c[2]);
-  V3.camera.position.set(c[0] + span * 0.35, c[1] + span * 0.75, c[2] + span * 0.85);
-  V3.camera.far = Math.max(5000, span * 20); V3.camera.updateProjectionMatrix();
-  V3.dirty = true;
+  const cam = V3.camera, cv3 = $("cv3"), W = Math.max(1, cv3.clientWidth), H = Math.max(1, cv3.clientHeight);
+  const near = V3.follow && V3.focus, P = [];
+  for (const s of views().live) { const p = pos3(s); if (!near || Math.hypot(p[0] - near[0], p[2] - near[2]) < 14) P.push(p); }
+  if (!P.length) return;
+  const m = [0, 1, 2].map(d => P.reduce((a, p) => a + p[d], 0) / P.length);
+  let xx = 0, zz = 0, xz = 0;
+  for (const p of P) { const dx = p[0] - m[0], dz = p[2] - m[2]; xx += dx * dx; zz += dz * dz; xz += dx * dz; }
+  const a = 0.5 * Math.atan2(2 * xz, xx - zz), l1 = (xx + zz) / 2 + Math.hypot((xx - zz) / 2, xz), long = !near && l1 > 2.5 * (xx + zz - l1);
+  const r = long ? [Math.cos(a), Math.sin(a)] : [1, 0], el = 0.62;
+  cam.position.set(m[0] - r[1], m[1] + Math.tan(el), m[2] + r[0]); cam.lookAt(...m); cam.updateMatrixWorld();
+  // Extents along the camera's axes, keeping 50 pixels for the hud, 130 for the dock and 80 a side for the layer labels.
+  const e = cam.matrixWorld.elements, ax = [0, 1, 2].map(i => [e[4 * i], e[4 * i + 1], e[4 * i + 2]]), lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+  for (const p of P) for (let i = 0; i < 3; i++) { const v = (p[0] - m[0]) * ax[i][0] + (p[1] - m[1]) * ax[i][1] + (p[2] - m[2]) * ax[i][2]; lo[i] = Math.min(lo[i], v); hi[i] = Math.max(hi[i], v); }
+  const top = 50, bottom = 130, tanV = Math.tan(cam.fov * Math.PI / 360), tanH = tanV * Math.max(0.3, (W - 160) / H), tanU = tanV * Math.max(0.3, (H - top - bottom) / H);
+  const c = [0, 1, 2].map(d => m[d] + ax[0][d] * (lo[0] + hi[0]) / 2 + ax[1][d] * (lo[1] + hi[1]) / 2);
+  const dist = Math.max(8, hi[2] + 1.08 * Math.max((hi[0] - lo[0]) / 2 / tanH, (hi[1] - lo[1]) / 2 / tanU)), shift = (bottom - top) / H * dist * tanV;
+  for (let d = 0; d < 3; d++) c[d] -= ax[1][d] * shift;
+  V3.controls.target.set(...c);
+  cam.position.set(...[0, 1, 2].map(d => c[d] + ax[2][d] * dist));
+  V3.moved = true;
 }
 const VIEWS = {
   oblique: ["layers stacked", `<rect x="3" y="10" width="11" height="11" rx="1.5"/><path d="M7 6.5h10.5V17"/><path d="M11 3h10v10"/>`],
@@ -1836,10 +2011,16 @@ $("speed").oninput = speedLabel;
 const nextView = () => { const modes = ["oblique", "layers", "3d"]; setView(modes[(modes.indexOf(viewMode) + 1) % 3]); };
 $("viewMode").onclick = nextView;
 $("engine").onclick = () => setEngine(onGpu ? "cpu" : "gpu");
-$("gap3d").oninput = () => { V3.gap = +$("gap3d").value / 10; fit3d(); };
+// New spacing keeps the camera's view, raised or lowered with the layer it looks at.
+$("gap3d").oninput = () => {
+  const gap = +$("gap3d").value / 10, t = V3.controls?.target, dy = t ? t.y * (gap / V3.gap - 1) : 0;
+  V3.gap = gap; V3.dirty = true; if (t) { t.y += dy; V3.camera.position.y += dy; }
+};
 $("layer3d").onchange = () => { V3.dirty = true; };
 $("fit3d").onclick = () => fit3d();
-$("follow3d").onchange = () => fit3d();
+$("follow3d").onclick = () => {
+  V3.follow = !V3.follow; $("follow3d").classList.toggle("on", V3.follow); $("follow3d").setAttribute("aria-pressed", V3.follow); fit3d();
+};
 function speedLabel() { const v = proposalsPerFrame(); $("speedbox").dataset.tip = v === Infinity ? "speed: as fast as it goes" : `speed: ${fmt(v)} proposals a frame`; }
 window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") load(true); return; }

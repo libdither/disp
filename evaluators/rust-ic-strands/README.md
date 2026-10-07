@@ -40,8 +40,11 @@ rules, below), with the field drawn as an amber tint and called values ringed in
 - **Views**, since each wins on something:
   - *layers stacked*: compact, but layers overlap;
   - *layers side by side*: exact, with every site easy to click;
-  - *3D*: three.js, with orbit, spread or isolate layers, and a camera that follows the action.
-    `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1, MIT).
+  - *3D*: three.js, the lattice as it is: each layer over a faint labelled floor, each wire one
+    path in its segment's colour, agents a few pixels wide however far away. It opens fitted at a
+    slant across the net's long side (`F` again); drag to orbit, right-drag to pan, the wheel
+    zooms toward the pointer; spread or isolate layers, or follow the action.
+    `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1 with its wide lines, MIT).
 - **CPU or GPU** (the chip toggle, or `G`): the GPU runs the same design through
   WebGPU (below), and a run moves between the two at any clock as it is.
 - **Going back** (the time bar, `◂` or `←` one clock, `⏮` or `shift ←` to the last rewrite): every move is a hash
