@@ -268,6 +268,62 @@ pub fn wires(l: &Lattice) -> Vec<u32> {
     v
 }
 
+/// Applications and the arms of a choice: their inputs start segments of their own.
+pub fn splits(t: Tag) -> bool { matches!(t, Tag::P | Tag::Pair | Tag::A | Tag::T1 | Tag::Sel) }
+
+/// The segments of the term the root computes, as `player/net.js` `segment` cuts them: a spanning
+/// tree over inputs from the root, first visit wins, in which every application's inputs each
+/// start a segment and every other agent's stay in its own. Each agent's segment by id (NOWHERE:
+/// garbage), and each segment's parent (NOWHERE for the root's) and depth.
+pub fn segments(net: &Net) -> (Vec<u32>, Vec<(u32, u32)>) {
+    let n = net.agents.len();
+    let mut seg = vec![NOWHERE; n];
+    let mut segs: Vec<(u32, u32)> = vec![];
+    let mut stack: Vec<(u32, u32)> = (0..n as u32).rev().filter(|&i| live(net, i).is_some_and(|a| a.tag == Tag::Out)).map(|i| (i, NOWHERE)).collect();
+    while let Some((i, from)) = stack.pop() {
+        if seg[i as usize] != NOWHERE { continue; }
+        let Some(a) = live(net, i) else { continue };
+        seg[i as usize] = match from {
+            NOWHERE => { segs.push((NOWHERE, 0)); segs.len() as u32 - 1 }
+            p if splits(live(net, p).unwrap().tag) => { let g = seg[p as usize]; segs.push((g, segs[g as usize].1 + 1)); segs.len() as u32 - 1 }
+            p => seg[p as usize],
+        };
+        let kids: Vec<u32> = (0..a.tag.arity()).filter(|&q| !is_source(a.tag, q)).filter_map(|q| a.ports[q].map(|r| r.0)).collect();
+        for &c in kids.iter().rev() { if seg[c as usize] == NOWHERE { stack.push((c, i)); } }
+    }
+    (seg, segs)
+}
+
+/// How mixed the segments are on the lattice, for each depth in `depths` (segments cut at that
+/// depth, deeper ones counted as their ancestor there): of the pairs of agents in one site or in
+/// neighbouring sites, the share in different segments, over that share if the same agents were
+/// scattered at random (1: as mixed as chance, 0: every segment apart). Garbage is left out.
+pub fn mixing(l: &Lattice, depths: &[u32]) -> Vec<f64> {
+    let (seg, segs) = segments(&l.shadow);
+    let at = |s: u32, k: usize| { let i = s as usize * l.ks + k; if l.tags[i] == 0 { NOWHERE } else { seg.get(l.sids[i] as usize).copied().unwrap_or(NOWHERE) } };
+    depths.iter().map(|&d| {
+        let cut = |mut g: u32| { while segs[g as usize].1 > d { g = segs[g as usize].0; } g };
+        let (mut pairs, mut differ, mut count) = (0u64, 0u64, std::collections::HashMap::<u32, u64>::new());
+        for &s in l.live() {
+            for k in 0..l.ks {
+                let g = at(s, k);
+                if g == NOWHERE { continue; }
+                let g = cut(g);
+                *count.entry(g).or_insert(0) += 1;
+                let mut meet = |h: u32| { if h != NOWHERE { pairs += 1; differ += (cut(h) != g) as u64; } };
+                for k2 in k + 1..l.ks { meet(at(s, k2)); }
+                for f in (0..l.faces).step_by(2) {
+                    let t = l.nb(s, f);
+                    if t != u32::MAX { for k2 in 0..l.ks { meet(at(t, k2)); } }
+                }
+            }
+        }
+        let n = count.values().sum::<u64>() as f64;
+        let same = count.values().map(|&c| (c * c.saturating_sub(1)) as f64).sum::<f64>() / (n * (n - 1.0)).max(1.0);
+        if pairs == 0 || same >= 1.0 { 0.0 } else { differ as f64 / pairs as f64 / (1.0 - same) }
+    }).collect()
+}
+
 /// Where each agent of the abstract net sits on the lattice (site × slots + slot), by its id.
 pub fn seats(l: &Lattice) -> Vec<u32> {
     let mut at = vec![NOWHERE; l.shadow.agents.len()];

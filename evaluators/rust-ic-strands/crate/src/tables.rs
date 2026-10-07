@@ -29,6 +29,7 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if p.k != 2 || p.lanes != 4 { return Some("its site holds 2 agents and 4 strands per link"); }
     if !p.pulse { return Some("demand always travels as pulses there"); }
     if p.pressure != 0.0 || p.repel != 0.0 { return Some("it has no pressure or repulsion"); }
+    if p.strangers != 0.0 || p.trees != 0.0 || p.garbage != 0.0 { return Some("it keeps no tree labels and does not look for strangers"); }
     let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
     if let Some(c) = fields.next() {
         if fields.next().is_some() { return Some("it keeps one field"); }

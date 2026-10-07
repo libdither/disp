@@ -15,6 +15,8 @@ fn main() {
     let mut progress = 0u64;
     let mut profile = false;
     let mut clean = 0f64;
+    let mut mix = 0f64;
+    let mut sets = vec![];
     while let Some(a) = it.next() {
         match a.as_str() {
             "--k" => p.k = it.next().unwrap().parse().unwrap(),
@@ -63,9 +65,13 @@ fn main() {
             "--fork" => p.fork = true,
             "--share" => p.share = it.next().unwrap().parse().unwrap(),
             "--demand" => { p.calls = true; p.set("field", rust_ic_strands::lattice::DEMAND).unwrap(); }
+            "--mix" => mix = it.next().unwrap().parse().unwrap(),
+            _ if a.contains('=') => sets.push(a.clone()),
             _ => src = Some(a.clone()),
         }
     }
+    // key=value settings (`Params::set`) go last, so they change whatever the flags chose.
+    for kv in &sets { let (k, v) = kv.split_once('=').unwrap(); p.set(k, v).unwrap_or_else(|e| panic!("{e}")); }
     let src = src.expect("term");
     let t = match src.split_once(':') {
         Some((name, n)) if term::workload(name, 0).is_some() => term::workload(name, n.parse().unwrap()).unwrap(),
@@ -128,6 +134,20 @@ fn main() {
         let full = crowd[0].max(1) as f64;
         println!("full sites walkers head into hold: two idle agents {:.0}%, one idle {:.0}%, no idle {:.0}%; the walker's own partner {:.0}%",
             100.0 * crowd[4] as f64 / full, 100.0 * crowd[5] as f64 / full, 100.0 * crowd[6] as f64 / full, 100.0 * crowd[7] as f64 / full);
+        fin
+    } else if mix > 0.0 {
+        // How mixed the root's segments are (readback.rs `mixing`), sampled every `mix` clocks.
+        let (mut fin, mut sum, mut n, mut right) = (false, [0f64; 4], 0, 0f64);
+        while l.stats.proposals < budget && !fin {
+            let c0 = l.stats.clocks;
+            while l.stats.clocks - c0 < mix && !fin { fin = l.run((l.stats.proposals + l.live_sites() as u64).min(budget)); }
+            for (a, m) in sum.iter_mut().zip(rust_ic_strands::readback::mixing(&l, &[1, 2, 3, u32::MAX])) { *a += m; }
+            let (r, of) = l.labels_right();
+            right += r as f64 / of.max(1) as f64;
+            n += 1;
+        }
+        println!("mixing at segment depth 1, 2, 3, all: {}; tree labels right {:.0}%", sum.iter().map(|a| format!("{:.3}", a / n.max(1) as f64)).collect::<Vec<_>>().join(" "),
+            100.0 * right / n.max(1) as f64);
         fin
     } else if progress == 0 { l.run(budget) } else {
         let mut fin = false;

@@ -561,7 +561,7 @@ part that big repeats):
 Sharing parts of 3 or more is worse again (`doubled` unfinished in 900 s, `is_even` too tangled to
 lay out). A disp program is code, a value, applied to its arguments: there is no computation in it
 to share, so all that sharing saves is room at load, paid for in copying and in distance. On a
-lattice a part used in two places is a wire between them. `share=8` in the player's address shows
+lattice a part used in two places is a wire between them. `set=share=8` in the player's link shows
 the shared parts once, behind their duplicators, in the graph view and as `x₁` in the details.
 
 **Leases (tried, not kept).** Demand recomputed every step from the normalizer stops a
@@ -570,6 +570,55 @@ rewrites fall from 38% to 4%, but much of the speed goes too (size-self 10.9× f
 since an argument loses its lease while it sits in a pair waiting to be triaged. Letting leases
 pass through pairs recovers some. It also needs demand sent again and again: more pulses and
 state.
+
+**Keeping the term's parts apart (tried, not kept).** The player colours agents by segment (the
+parts of the term the root computes, split at every application), but on the lattice the parts
+interleave. Three energies, all off by default, push them apart. Each uses only what an agent's
+site and its neighbours hold, and an idle agent pays it as it steps:
+- *strangers* (`strangers=w`): w for every agent in its site or a neighbouring one that is not at
+  the end of one of its wires within two strands (`reach`), as in a force-directed drawing of a
+  graph;
+- *tree labels* (`trees=w`): w for every such stranger with another label. Every agent carries a
+  2-bit label its reader gives it (`label_from`): an application's function and argument get labels
+  different from each other and from the application's, and anything else's inputs share its label.
+  Labels are set from the root down when a term is loaded, and a rewrite's fresh agents take the
+  consumer's. On every turn, an agent whose reader is in its site or one strand away takes the
+  label that reader gives (`relabel`), so labels follow the tree wherever readers touch what they
+  read. Then 88–97% of the agents the root's computation reaches carry the label their reader gives
+  them;
+- *garbage* (`garbage=w`): what an eraser reads takes a fifth label, passed down the garbage the
+  same way, and a garbage stranger next to a live agent costs w more.
+
+To measure it, `readback.rs` `mixing` cuts the root's term into the player's segments and counts
+the pairs of agents in one site or in neighbouring sites that belong to different segments, over
+the share expected if the same agents were scattered at random (1: as mixed as chance, 0: every
+segment apart). `strands-run --mix 50` averages it over a run, sampled every 50 clocks. On the ten
+disp programs (lattices sized as the player sizes them, 2 seeds each, every answer checked), against
+the current design, geometric means of the clocks to the answer, the rewrites, and peak strands and
+sites:
+
+| setting | mixing | clocks | rewrites | peak strands | peak sites |
+|---|---|---|---|---|---|
+| the current design | 0.30 | | | | |
+| `strangers=1` | 0.29 | −1% | +1% | +2% | +3% |
+| `strangers=3` | 0.23 | +4% | +3% | +8% | +13% |
+| `trees=4` | 0.19 | +2% | +1% | +2% | +3% |
+| `trees=4 garbage=4` | 0.19 | +3% | +1% | +4% | +3% |
+
+Tree labels make the parts about a third less mixed at every depth of the term (cut at the root's
+first application, 0.29 → 0.19), for the price of seed noise: per program the clocks move between
+−7% and +6%. Weaker labels (`trees=2`) separate less (about 0.23) and stronger ones (`trees=8`) a
+little more (about 0.18) for 6% more clocks. Repelling every stranger separates less and spreads
+matter out (13% more sites): what keeps parts apart is knowing which part an agent is in, not
+keeping clear of everything. Garbage labels add nothing measurable. Separation gains no speed
+either, as with the demand field (only the reader's partner is related, Fields above): rewrites
+happen where parts meet, and walkers and called values do not pay. So the parts can be kept apart
+for 2 bits an agent (3 with garbage), but not faster. In the player the difference is hard to see:
+most of a picture is the program's code, one long value, and the parts being computed are a small
+knot at its end. Moves read sites two away (the neighbours of the site a step goes to), so neither
+the chip nor the GPU runs these settings, and the GPU says so (`tables.rs` `gpu_unfit`); on a chip
+a field of one bit for each label, spread one hop a clock, could stand in for that (untested). The
+player takes such settings from its link, `#src=fib%202&set=trees=4`.
 
 ## Reading back
 
@@ -788,7 +837,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~8 s: corpus in 5 configurations (one with the demand field), per-move invariants, collection, handover, reading back
+cargo test --release                                  # ~8 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, handover, reading back
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -815,4 +864,7 @@ answer is left; `PIECES=1` lists the connected pieces of the net at the end.
 `strands-run --profile` prints what wanted readers spend their time waiting on, how crowded it
 is where walkers go, and what switchboards hold; `--progress N` prints the wanted readers and
 their wire lengths every N proposals, and `WHO=1` adds what each one is waiting on, which is
-how the 2D jam was diagnosed.
+how the 2D jam was diagnosed. `strands-run --mix N` prints how mixed the root's segments are,
+sampled every N clocks, and how many agents carry the tree label their reader gives them (Keeping
+the term's parts apart, above); `strands-run` takes `key=value` settings as `strands-sweep` spells
+them, applied after the flags (`--latest trees=4`).

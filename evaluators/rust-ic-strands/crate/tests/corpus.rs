@@ -69,19 +69,35 @@ fn margolus_blocks_with_pulses_in_3d() {
 /// re-check every invariant after every move.
 #[test]
 fn demand_field_and_fork() {
-    let chip = |w, depth| {
-        let mut p = Params { w, h: w, depth, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true,
-                             board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, calls: true, fork: true, ..base() };
-        p.set("field", DEMAND).unwrap();
-        p
-    };
-    all_finish(chip(48, 6));
+    all_finish(demand_and_fork(48, 6, &[]));
+    each_move_checked(&[]);
+}
+
+/// Keeping the term's parts apart (README): strangers repelled, tree labels and garbage labels.
+#[test]
+fn parts_kept_apart() {
+    let sets = [("strangers", "1"), ("trees", "4"), ("garbage", "4")];
+    all_finish(demand_and_fork(48, 6, &sets));
+    each_move_checked(&sets);
+}
+
+/// The chip schedule with the demand field and forking S rules, and these settings (`Params::set`).
+fn demand_and_fork(w: u32, depth: u32, sets: &[(&str, &str)]) -> Params {
+    let mut p = Params { w, h: w, depth, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true,
+                         board_crowd: 0.5, pairs: 8, idle_crowd: 10.0, agent_turns: 0.8, calls: true, fork: true, ..base() };
+    p.set("field", DEMAND).unwrap();
+    for (k, v) in sets { p.set(k, v).unwrap(); }
+    p
+}
+
+/// Every eighth corpus term that fits a 16×16×4 lattice, re-checking every invariant after every move.
+fn each_move_checked(sets: &[(&str, &str)]) {
     let mut checked = 0;
     for (i, (t, want)) in corpus().iter().enumerate().step_by(8) {
         let mut net = Net::new();
         let root = net.build(t);
         let (_, out) = net.drive(root);
-        let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..chip(16, 4) }, net, out) else { continue };
+        let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..demand_and_fork(16, 4, sets) }, net, out) else { continue };
         l.check_every = 1;
         assert!(l.run(50_000_000), "term {i} did not finish");
         assert_eq!(l.readback().map(|t| oracle::show(&t)).as_deref(), Some(want.as_str()), "term {i}: WRONG ANSWER");

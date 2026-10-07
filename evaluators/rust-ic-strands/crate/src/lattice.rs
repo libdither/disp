@@ -108,6 +108,14 @@ pub struct Params {
     pub share: usize,
     /// Fields every site keeps and moves read as energy (field.rs); unused channels are off.
     pub fields: [Channel; 4],
+    /// Energy an idle agent pays per agent in its site or a neighbouring one that is a stranger to
+    /// it: not at the end of one of its wires within two strands.
+    pub strangers: f64,
+    /// Energy an idle agent pays per stranger whose tree label differs from its own (`label_from`).
+    pub trees: f64,
+    /// Energy an idle agent pays per stranger when one of the two is garbage (labelled so by an
+    /// eraser reading it, `label_from`) and the other is not.
+    pub garbage: f64,
 }
 
 impl Params {
@@ -150,6 +158,9 @@ impl Params {
             "calls" => self.calls = on,
             "fork" => self.fork = on,
             "share" => self.share = n()?,
+            "strangers" => self.strangers = f()?,
+            "trees" => self.trees = f()?,
+            "garbage" => self.garbage = f()?,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -164,7 +175,8 @@ impl Params {
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4] }
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
+                 strangers: 0.0, trees: 0.0, garbage: 0.0 }
     }
 }
 
@@ -225,6 +237,8 @@ pub struct Lattice {
     pub tags: Vec<u8>,
     pub sids: Vec<u32>,
     pub want: Vec<bool>,
+    /// site*k + slot: the agent's tree label, 3 bits (`relabel`).
+    pub label: Vec<u8>,
     /// Sites that hold (or recently held) an agent; stale entries drop out when drawn.
     agent_sites: Vec<u32>,
     in_agents: Vec<bool>,
@@ -325,6 +339,9 @@ pub struct Energy {
     pub board: i32,
     pub pressure: i32,
     pub repel: i32,
+    pub strangers: i32,
+    pub trees: i32,
+    pub garbage: i32,
     pub accept: Vec<u32>,
 }
 impl Energy {
@@ -335,13 +352,14 @@ impl Energy {
             .take_while(|&a| a > 0).collect();
         Energy { principal: [q(p.w_principal), q(p.w_principal * p.idle_tension)], aux: [q(p.w_aux), q(p.w_aux * p.idle_tension)],
                  crowd: q(p.crowd), idle: q(p.idle_crowd), link: half(p.link_crowd), board: half(p.board_crowd),
-                 pressure: q(p.pressure), repel: q(p.repel), accept }
+                 pressure: q(p.pressure), repel: q(p.repel), strangers: q(p.strangers), trees: q(p.trees),
+                 garbage: q(p.garbage), accept }
     }
 }
 
 /// The state of a few sites, kept while a move is tried.
 struct Saved {
-    sites: Vec<(u32, Vec<u8>, Vec<u8>, Vec<u32>, Vec<bool>, u8, u8)>,
+    sites: Vec<(u32, Vec<u8>, Vec<u8>, Vec<u32>, Vec<bool>, u8, u8, Vec<u8>)>,
     strands: u64,
     hops: u64,
     touched: usize,
@@ -396,6 +414,19 @@ pub fn fresh_wanted_in(rule: &rust_ca_lattice::rules::Rule, inputs: bool) -> [bo
         if !changed { return wanted; }
     }
 }
+
+/// The tree label of what feeds input q of a reader labelled `label`: an application's function
+/// and argument (`readback::splits`) each get their own of four, different from each other and from
+/// the application's; anything else's inputs share its label, except that what an eraser or
+/// garbage reads is garbage.
+pub fn label_from(reader: Tag, label: u8, q: usize) -> u8 {
+    if reader == Tag::Eps || label == GARBAGE { return GARBAGE; }
+    if !crate::readback::splits(reader) { return label; }
+    label ^ (1 + (0..q).filter(|&r| !crate::polarity_is_source(reader, r)).count() as u8)
+}
+
+/// The tree label of garbage, apart from the four of the root's computation.
+pub const GARBAGE: u8 = 4;
 
 /// The configuration the chip implements (the lattice's size and the seed are free).
 pub fn chip() -> Params {
@@ -520,6 +551,7 @@ impl Lattice {
             tags: vec![0; n * ks],
             sids: vec![u32::MAX; n * ks],
             want: vec![false; n * ks],
+            label: vec![0; n * ks],
             agent_sites: vec![],
             in_agents: vec![false; n],
             mate: vec![NONE; n * ends],
@@ -811,6 +843,7 @@ impl Lattice {
         }
         for s in 0..l.sites() { l.refresh(s); }
         l.shadow = net;
+        l.label_tree();
         l.check_invariants().map_err(|e| format!("after loading: {e}"))?;
         Ok(l)
     }
@@ -1161,6 +1194,7 @@ impl Lattice {
             let (ps, pt) = (self.pairs(s) as i32, self.pairs(t) as i32);
             de += self.field_step_de(s, k, t, ps, -(through + loops as i32), pt, (need + loops) as i32);
         }
+        if (self.e.strangers != 0 || self.labels()) && self.idle(s, k) { de += self.strangers_de(s, k, t); }
         if metropolis && !self.accept(de) { if walker { self.stats.walk_fail[2] += 1; } return None; }
         if walker { self.stats.walk_ok += 1; }
 
@@ -1181,7 +1215,7 @@ impl Lattice {
                 } else { mt };
             }
         }
-        let (tag, sid, want) = (self.tag(s, k), self.sids[s as usize * self.ks + k], self.want[s as usize * self.ks + k]);
+        let (tag, sid, want, label) = (self.tag(s, k), self.sids[s as usize * self.ks + k], self.want[s as usize * self.ks + k], self.label[s as usize * self.ks + k]);
         let mut li = 0;
         let mut news = vec![];
         for q in 0..a {
@@ -1204,6 +1238,7 @@ impl Lattice {
         self.remove(s, k);
         self.place(t, k2, tag, sid);
         self.want[t as usize * self.ks + k2] = want;
+        self.label[t as usize * self.ks + k2] = label;
         for (q, m, j) in news {
             self.link(s, m, self.se(f, j));
             self.link(t, self.se(f ^ 1, j), self.ae(k2, q));
@@ -1226,6 +1261,90 @@ impl Lattice {
         Some(de)
     }
 
+    /// The energy for idle agent k stepping from s to t, by the strangers around it there and here
+    /// (`Params::strangers`, `trees`, `garbage`): agents in the site or a neighbouring one that its
+    /// wires do not reach within two strands.
+    fn strangers_de(&self, s: u32, k: usize, t: u32) -> i32 {
+        let mut kin = [(u32::MAX, usize::MAX); ARITY];
+        for q in 0..tag_of(self.tag(s, k)).arity() { if let Some((x, k2, _)) = self.reach(s, self.ae(k, q), 2) { kin[q] = (x, k2); } }
+        let own = self.label[s as usize * self.ks + k];
+        let around = |x: u32| -> i32 {
+            let mut e = 0;
+            for u in std::iter::once(x).chain((0..self.faces).map(|f| self.nb(x, f))) {
+                if u == u32::MAX { continue; }
+                for k2 in 0..self.ks {
+                    if self.tag(u, k2) == 0 || (u, k2) == (s, k) || kin.contains(&(u, k2)) { continue; }
+                    let other = self.label[u as usize * self.ks + k2];
+                    e += self.e.strangers + if other == own { 0 } else { self.e.trees + if (other == GARBAGE) != (own == GARBAGE) { self.e.garbage } else { 0 } };
+                }
+            }
+            e
+        };
+        around(t) - around(s)
+    }
+
+    /// The agent port at the other end of the wire from end e of site s, if the wire is at most n
+    /// strands long: its site, slot and port.
+    fn reach(&self, mut s: u32, e: u8, n: usize) -> Option<(u32, usize, usize)> {
+        let mut m = self.mate_of(s, e);
+        for _ in 0..=n {
+            if m == NONE { return None; }
+            if !self.is_strand(m) { return Some((s, m as usize / ARITY, m as usize % ARITY)); }
+            let (f, i) = (self.face(m), self.lane(m));
+            s = self.nb(s, f);
+            m = self.mate_of(s, self.se(f ^ 1, i));
+        }
+        None
+    }
+
+    /// Whether agents keep tree labels (`Params::trees`, `garbage`).
+    fn labels(&self) -> bool { self.e.trees != 0 || self.e.garbage != 0 }
+
+    /// Every agent at s whose reader is in reach (in s, or one strand away) takes its tree label
+    /// from it (`label_from`); a duplicator or an unpair with two readers in reach, from one that
+    /// is not garbage.
+    fn relabel(&mut self, s: u32) {
+        for k in 0..self.ks {
+            let t = self.tag(s, k);
+            if t == 0 { continue; }
+            let tg = tag_of(t);
+            let from = (0..tg.arity()).filter(|&q| crate::polarity_is_source(tg, q)).filter_map(|q| self.reach(s, self.ae(k, q), 1))
+                .map(|(r, kr, qr)| label_from(tag_of(self.tag(r, kr)), self.label[r as usize * self.ks + kr], qr)).min();
+            if let Some(l) = from { self.label[s as usize * self.ks + k] = l; }
+        }
+    }
+
+    /// Each agent the root's computation reaches (its seat) and the tree label its reader gives it:
+    /// from the root down, as `relabel` gives them with every reader in reach, or with `as_is` from
+    /// the reader's label as it is.
+    fn tree_labels(&self, as_is: bool) -> Vec<(usize, u8)> {
+        let mut seat = std::collections::HashMap::new();
+        for &s in &self.live { for k in 0..self.ks { if self.tag(s, k) != 0 { seat.insert(self.sids[s as usize * self.ks + k], s as usize * self.ks + k); } } }
+        let mut stack: Vec<(u32, u8)> = self.shadow.agents.iter().enumerate()
+            .filter(|(_, a)| a.as_ref().is_some_and(|a| a.tag == Tag::Out)).map(|(i, _)| (i as u32, 0)).collect();
+        let mut seen = vec![false; self.shadow.agents.len()];
+        let mut out = vec![];
+        while let Some((id, l)) = stack.pop() {
+            if std::mem::replace(&mut seen[id as usize], true) { continue; }
+            let Some(&i) = seat.get(&id) else { continue };
+            out.push((i, l));
+            let (a, l) = (self.shadow.get(id), if as_is { self.label[i] } else { l });
+            for q in (0..a.tag.arity()).rev() {
+                if crate::polarity_is_source(a.tag, q) { continue; }
+                if let Some((b, _)) = a.ports[q] { if !seen[b as usize] { stack.push((b, label_from(a.tag, l, q))); } }
+            }
+        }
+        out
+    }
+    /// Label a freshly loaded term from the root down.
+    fn label_tree(&mut self) { for (i, l) in self.tree_labels(false) { self.label[i] = l; } }
+    /// Of the agents the root's computation reaches, how many carry the tree label their reader
+    /// gives them, as the reader's label is, and how many there are.
+    pub fn labels_right(&self) -> (usize, usize) {
+        let v = self.tree_labels(true);
+        (v.iter().filter(|&&(i, l)| self.label[i] == l).count(), v.len())
+    }
+
     /// Move the agent in slot `from` of site s to empty slot `to`, keeping its wires.
     fn relocate(&mut self, s: u32, from: usize, to: usize) {
         let a = tag_of(self.tag(s, from)).arity();
@@ -1235,6 +1354,7 @@ impl Lattice {
         self.tags[j] = self.tags[i];
         self.sids[j] = self.sids[i];
         self.want[j] = self.want[i];
+        self.label[j] = self.label[i];
         self.tags[i] = 0;
         self.sids[i] = u32::MAX;
         self.want[i] = false;
@@ -1277,18 +1397,19 @@ impl Lattice {
             sites: sites.iter().map(|&x| {
                 let (m, a) = (x as usize * self.ends, x as usize * self.ks);
                 (x, self.mate[m..m + self.ends].to_vec(), self.tags[a..a + self.ks].to_vec(), self.sids[a..a + self.ks].to_vec(),
-                 self.want[a..a + self.ks].to_vec(), self.occ[x as usize], self.pulse_at[x as usize])
+                 self.want[a..a + self.ks].to_vec(), self.occ[x as usize], self.pulse_at[x as usize], self.label[a..a + self.ks].to_vec())
             }).collect(),
             strands: self.stats.strands, hops: self.stats.hops, touched: self.touched.len(), watch: self.pulse_watch.len(),
         }
     }
     fn restore(&mut self, v: Saved) {
-        for (x, mate, tags, sids, want, occ, pulse) in v.sites {
+        for (x, mate, tags, sids, want, occ, pulse, label) in v.sites {
             let (m, a) = (x as usize * self.ends, x as usize * self.ks);
             self.mate[m..m + self.ends].copy_from_slice(&mate);
             self.tags[a..a + self.ks].copy_from_slice(&tags);
             self.sids[a..a + self.ks].copy_from_slice(&sids);
             self.want[a..a + self.ks].copy_from_slice(&want);
+            self.label[a..a + self.ks].copy_from_slice(&label);
             self.occ[x as usize] = occ;
             self.pulse_at[x as usize] = pulse;
             self.refresh(x);
@@ -1567,6 +1688,7 @@ impl Lattice {
             self.tr_pairs(&ids, self.trace.fires.len() as i64);
             self.trace.fires.push((self.stats.clocks, ri, s, csid, psid));
         }
+        let label = self.label[s as usize * self.ks + kc];
         for (site, k) in [(s, kc), (sp, kp)] {
             for q in 0..ARITY { self.set(site, self.ae(k, q), NONE); }
             self.remove(site, k);
@@ -1575,6 +1697,7 @@ impl Lattice {
         for (f, t) in rule.fresh.iter().enumerate() {
             let (_, site, k) = seats[f];
             self.place(site, k, code(*t), fresh_sids[f]);
+            self.label[site as usize * self.ks + k] = if *t == Tag::Eps { GARBAGE } else { label };
             if self.p.lazy && wanted[f] { self.want[site as usize * self.ks + k] = true; self.tr_want(site, k); }
         }
         for (a, b) in links {
@@ -1601,6 +1724,8 @@ impl Lattice {
             }
             self.link(site, cur, eb);
         }
+        // Fresh agents take their labels from readers among them or next to them, the outermost first.
+        if self.labels() { for _ in 0..2 { for &x in &region.sites { if x != u32::MAX { self.relabel(x); } } } }
         self.stats.fires += 1;
         self.fields.fired(s);
         self.last_op = "fire";
@@ -1705,6 +1830,7 @@ impl Lattice {
     fn turn(&mut self, s: u32) {
         self.infect.set(None);
         self.cur = if self.p.margolus && self.p.block_moves { Dice(hash(self.key(s), self.tick())) } else { Dice(self.rand()) };
+        if self.labels() && self.occ[s as usize] > 0 { self.relabel(s); }
         if self.p.gc && self.collect(s) || self.stale.get() { return; }
         if self.p.active > 0.0 && self.cur.chance(Dice::ACTIVE, self.p.active) && self.active_turn(s) || self.stale.get() { return; }
         if self.p.pressure != 0.0 {
@@ -1961,7 +2087,7 @@ impl Lattice {
         let mut b = [0u8; 40];
         for (c, x) in b.chunks_mut(4).zip(w) { c.copy_from_slice(&x.to_le_bytes()); }
         self.mate[i * self.ends..(i + 1) * self.ends].copy_from_slice(&b[..self.ends]);
-        for k in 0..3 { self.tags[i * 3 + k] = b[33 + k]; self.want[i * 3 + k] = b[36 + k] != 0; self.sids[i * 3 + k] = u32::MAX; }
+        for k in 0..3 { self.tags[i * 3 + k] = b[33 + k]; self.want[i * 3 + k] = b[36 + k] != 0; self.sids[i * 3 + k] = u32::MAX; self.label[i * 3 + k] = 0; }
         self.occ[i] = b[33..36].iter().filter(|&&t| t != 0).count() as u8;
         self.in_agents[i] = self.occ[i] > 0;
         self.pulse_at[i] = b[39];
@@ -2141,6 +2267,7 @@ impl Lattice {
         for p in 0..ARITY { self.set(d, self.ae(kd, p), NONE); }
         self.remove(d, kd);
         self.place(d, kd, eps, e);
+        self.label[d as usize * self.ks + kd] = GARBAGE;
         self.link(d, self.ae(kd, 0), m0);
         self.refresh(s);
         self.refresh(d);
@@ -2222,6 +2349,7 @@ impl Lattice {
         self.place(d, kd, code(Tag::Eps), e1);
         self.link(d, self.ae(kd, 0), m1);
         self.place(s, ke, code(Tag::Eps), e0);
+        for (x, k) in [(d, kd), (s, ke)] { self.label[x as usize * self.ks + k] = GARBAGE; }
         match via {
             None => self.link(s, self.ae(ke, 0), m0),
             Some((f, i)) => {
