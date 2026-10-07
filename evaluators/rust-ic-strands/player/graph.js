@@ -299,7 +299,7 @@ function drawGraph() {
   const tones = new Map();
   /// Colour number `key` at opacity a, for use `slot`, mixed once a frame.
   const tone = (key, c, slot, a) => { let t = tones.get(key); if (!t) tones.set(key, t = []); return t[slot] ??= graphMix(c, a); };
-  const keyOf = i => segs ? NET.seg[i] : -2 - NET.tag[i], colourOf = i => segs ? (NET.seg[i] >= 0 ? segs[NET.seg[i]].rgb : GREY) : KIND[NET.tag[i]];
+  const keyOf = i => segs ? 2 * NET.seg[i] + isValue(NET.tag[i]) : -2 - NET.tag[i], colourOf = i => segs ? netTone(i)?.rgb ?? GREY : KIND[NET.tag[i]];
   // Paths batched by colour, width (0 a fill) and dash, drawn lowest z first so what is lit lands on top.
   const batches = new Map();
   const into = (style, z, width, dash = false) => {

@@ -84,6 +84,17 @@
   .mpi:hover { border-color:var(--accent); color:var(--accent); }
   .mpi.on { border-color:var(--g2); color:var(--g2); background:rgba(63,191,127,.1); }
   .mpi:disabled { opacity:.3; cursor:default; border-color:var(--border-strong); color:var(--fg-muted); }
+  /* the views and colour toggles, popping up out of the view button as the tree visualizer's options do */
+  .popwrap { position:relative; display:inline-flex; }
+  .pop { position:absolute; bottom:calc(100% + 8px); left:50%; display:flex; flex-direction:column; align-items:center; gap:6px; padding:6px 5px;
+    border:1px solid var(--border-strong); border-radius:20px; background:rgba(11,14,20,.94); box-shadow:0 12px 28px -14px rgba(0,0,0,.8);
+    transform:translateX(-50%); transform-origin:50% 100%; animation:popin .2s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes popin { from { opacity:0; transform:translateX(-50%) scale(.8); } }
+  .popsep { width:18px; height:1px; background:var(--border-strong); }
+  #dock .pop .mpi { opacity:1; }
+  .pop [data-tip]::after { left:auto; right:calc(100% + 9px); bottom:auto; top:50%; transform:translate(3px, -50%); }
+  .pop [data-tip]:hover::after, .pop [data-tip]:focus-visible::after { transform:translate(0, -50%); }
+  .popwrap > [data-tip]::after { left:auto; right:0; transform:translate(0, 3px); } .popwrap > [data-tip]:hover::after { transform:none; }
   #speedbox { display:flex; align-items:center; gap:5px; color:var(--fg-faint); } #speedbox .ico { width:15px; height:15px; } #speed { width:84px; }
   #dock .tbtn, #dock .mpi, #speedbox, #timebar { opacity:.55; transition:opacity .18s; }
   #dock:hover .tbtn, #dock:hover .mpi, #dock:hover #speedbox, #dock:hover #timebar, #dock:focus-within .tbtn, #dock:focus-within .mpi { opacity:1; }
@@ -177,9 +188,14 @@
         </div>
         <div class="corner-left"><span id="speedbox" data-tip="speed"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l4-4"/></svg><input id="speed" type="range" min="0" max="100" value="45" aria-label="speed"></span></div>
         <div class="corner-right">
-          <button class="mpi on" id="segments" aria-pressed="true" data-tip="segments: colour each agent by where it is in the term, split at every application, nested ones again (C)" aria-label="segments"><svg class="ico stroke" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5V12l6 6"/><path d="M12 12l-7.5 4"/></svg></button>
-          <button class="mpi on" id="moves" aria-pressed="true" data-tip="moves: after a step, a faint arrow for each agent that moved" aria-label="moves"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 19 L11 12"/><path d="M7 12 H11 V16"/><path d="M13 7 H20"/><path d="M17 4 L20 7 L17 10"/></svg></button>
-          <button class="mpi" id="viewMode" aria-label="view"></button>
+          <div class="popwrap" id="viewWrap">
+            <div class="pop" id="viewPop" hidden>
+              <button class="mpi on" id="segments" aria-pressed="true" data-tip="segments (C): colour each agent by where it is in the term, split at every application, nested ones again" aria-label="segments"><svg class="ico stroke" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5V12l6 6"/><path d="M12 12l-7.5 4"/></svg></button>
+              <button class="mpi on" id="moves" aria-pressed="true" data-tip="moves: after a step, a faint arrow for each agent that moved" aria-label="moves"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 19 L11 12"/><path d="M7 12 H11 V16"/><path d="M13 7 H20"/><path d="M17 4 L20 7 L17 10"/></svg></button>
+              <span class="popsep"></span>
+            </div>
+            <button class="mpi" id="viewMode" aria-expanded="false" aria-label="views and colours"></button>
+          </div>
           <button class="mpi" id="engine" aria-pressed="false" data-tip="running on the CPU; click for the GPU (G)" aria-label="run on the GPU"><svg class="ico stroke" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2.5v3.5M15 2.5v3.5M9 18v3.5M15 18v3.5M2.5 9h3.5M2.5 15h3.5M18 9h3.5M18 15h3.5"/></svg></button>
           <button class="mpi" id="details" aria-pressed="false" data-tip="details: picked terms, numbers, legend, how it works (D)" aria-label="details"><svg class="ico stroke" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
         </div>
@@ -274,12 +290,13 @@
         <i>Graph</i> leaves the lattice out: each agent is a node and each wire a line, laid out by springs along
         wires, a push between nodes that crowd, and a pull that hangs what feeds an input below its reader, so the
         term reads as a tree from the root down. Nodes keep their places as the run plays, and a gold wire with a
-        diamond joins two agents about to rewrite.</p>
+        diamond joins two agents about to rewrite. Since only rewrites change it, a step there is one rewrite.</p>
       <p><b>Segments.</b> The term the root computes is a tree of applications. With segments on, an application's
         function and each of its arguments get colours of their own, and an application nested inside one of them
         splits that colour again, so each part of the term shows as a region of the net. Hues go to the parts by how
         many applications each holds, so nested parts take hues near the part around them; lightness alternates with
-        how deep a part is nested. A value (code or data) is one segment, however big. With something picked, the
+        how deep a part is nested. A value (code or data) is one segment, however big, and stays grey, only tinted
+        toward its part's hue: the colour is on applications and the agents that carry them out. With something picked, the
         segments are the pick's, and its term in the details is tinted the same way.</p>
       <p><b>Reduction state.</b> Every output of the net means a term: a value is a tree, a suspension or an apply is
         an application <i>f x</i>, a triage on <i>a</i> with arms <i>b, c</i> is <i>t a b c</i>, and a duplicator's two
@@ -329,7 +346,8 @@ const MEANING = {
   "Eps·F": "the fork is erased; erasers move on to both children", "Eps·P": "the suspension is erased; erasers move on to its function and argument",
   "Eps·Pair": "the pair is erased; erasers move on to both parts", "Nrm·L": "a leaf is already finished", "Nrm·S": "keep the stem; normalize its child",
   "Nrm·F": "keep the fork; normalize both children", "Nrm·P": "force it, then keep normalizing" };
-const COLOR = ["#000", "#ffd866", "#ffb454", "#ff7a59", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff"];
+// Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
+const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff"];
 const isConsumer = t => t >= 6 && t <= 12;
 const isProducer = t => t >= 1 && t <= 5;
 // Which ports are outputs (sources): a producer's principal, a computation's result, a duplicator's or unpair's two parts.
@@ -432,7 +450,7 @@ function populate() {
     + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
     + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;color:#b89ad8;width:auto;font-size:11px">→</span>a move in a stepped clock</span>`
     + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`
-    + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, not its kind</span>`;
+    + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, not its kind; values (L, S, F) stay grey, tinted toward their part</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
   if (q.get("view")) viewMode = q.get("view");
@@ -802,7 +820,7 @@ function draw() {
     const t = V.tags[s * L.ks + k]; if (!t) continue;
     const [x, y] = slotPos(s, k), b = pk ? pk[s * L.ks + k] : 0;
     ctx.globalAlpha = pk && !b ? 0.14 : dead(s, k) ? (b ? 0.6 : 0.28) : 1;
-    ctx.fillStyle = segs ? segAt(s * L.ks + k)?.css ?? "#4a5465" : COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+    ctx.fillStyle = segs ? toneAt(s * L.ks + k)?.css ?? "#4a5465" : COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
     if (V.want[s * L.ks + k]) { ctx.strokeStyle = isConsumer(t) ? "#56c8ff" : "#ffa94d"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
     if (b && rad * view.s > 1 && !(segs && !(b & 26))) {
       const ring = rings[b & 16 ? 2 : b & 3 ? 0 : 1];
@@ -991,7 +1009,9 @@ function build3d(V) {
   // each switchboard pairing, by its lower end: the segment of the wire through it, and how it is lit
   const wseg = V3.wseg.fill(-1, 0, np), wlit = V3.wlit.fill(0, 0, np);
   const stamp = (to, v) => (site, a, b) => { const i = idx[site]; if (i >= 0) to[i * ends + Math.min(a, b)] = v; };
-  const segRgb = segs ? NET.segs.map(g => g.rgb.map(lin3)) : [], segOf = seat => { const j = segs ? NET.bySeat[seat] : -1; return j >= 0 ? NET.seg[j] : -1; };
+  // two tones a segment: its colour, then the grey its values take
+  const segRgb = segs ? NET.segs.flatMap(g => [g.rgb, g.value.rgb]).map(c => c.map(lin3)) : [];
+  const segOf = seat => { const j = segs ? NET.bySeat[seat] : -1; return j >= 0 && NET.seg[j] >= 0 ? 2 * NET.seg[j] + isValue(NET.tag[j]) : -1; };
   if (segs) for (const s of V.live) for (let k = 0; k < ks; k++) {
     const t = V.tags[s * ks + k], g = t ? segOf(s * ks + k) : -1;
     if (g >= 0) for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) walk(V, s, k * 3 + p, stamp(wseg, g));
@@ -1226,7 +1246,13 @@ const VIEWS = {
 function setView(mode) {
   viewMode = mode;
   $("viewMode").innerHTML = `<svg class="ico stroke" viewBox="0 0 24 24">${VIEWS[mode][1]}</svg>`;
-  $("viewMode").dataset.tip = `view: ${VIEWS[mode][0]} (V for the next)`;
+  $("viewMode").dataset.tip = `view: ${VIEWS[mode][0]}; click for the others (V for the next)`;
+  for (const b of $("viewPop").querySelectorAll("[data-view]")) b.classList.toggle("on", b.dataset.view === mode);
+  // In the graph view only rewrites change anything drawn: a step is one.
+  const g = mode === "graph";
+  $("prev").hidden = $("next").hidden = g;
+  $("step").dataset.tip = g ? "on to the next rewrite (→)" : "one clock on (→)";
+  $("back").dataset.tip = g ? "back to the last rewrite (←)" : "one clock back (←)";
   const is3 = mode === "3d";
   $("cv3").hidden = !is3; $("bar3d").hidden = !is3; cv.style.visibility = is3 ? "hidden" : "visible";
   if (L && mode === "layers") layoutLayers();
@@ -1868,6 +1894,10 @@ function afterAnswer() {
   }
   return false;
 }
+/// A move that changes the net: a rewrite, or in the graph view garbage collected too.
+const changesNet = e => e[0] === 5 || viewMode === "graph" && e[0] >= 6 && e[0] <= 8;
+/// Steps by rewrites: with shift, or always in the graph view.
+const byRewrite = e => e.shiftKey || viewMode === "graph";
 function stepOnce(toRewrite) {
   if (!L || settled || G?.busy || T.job) return;
   setPlaying(false);
@@ -1876,7 +1906,7 @@ function stepOnce(toRewrite) {
   do {
     const r = tlStepClock();
     if (!finished && r >> 16) { finished = true; answerClock = stats()[1]; }
-  } while ((toRewrite ? !story.some(e => e[0] === 5) : !story.length) && performance.now() - t0 < 3000);
+  } while ((toRewrite ? !story.some(changesNet) : !story.length) && performance.now() - t0 < 3000);
   if (finished) afterAnswer();
   E.fire_log_clear();
   tlNote(); refreshGarbage(true); showStory(); panel(true); V3.dirty = true;
@@ -1979,7 +2009,7 @@ function segWires(V) {
   const by = new Map();
   for (let i = 0; i < NET.n; i++) {
     if (NET.seg[i] < 0) continue;
-    const t = NET.tag[i], seat = NET.seat[i], css = NET.segs[NET.seg[i]].css;
+    const t = NET.tag[i], seat = NET.seat[i], css = netTone(i).css;
     for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) {
       if (!by.has(css)) by.set(css, new Path2D());
       follow(V, siteOf(seat), slotOf(seat) * 3 + p, by.get(css));
@@ -1993,9 +2023,9 @@ function setSegments(on) {
   V3.dirty = true; if (L) pickPanel(true);
 }
 $("play").onclick = () => setPlaying(!playing);
-$("step").onclick = e => stepOnce(e.shiftKey);
+$("step").onclick = e => stepOnce(byRewrite(e));
 $("next").onclick = () => stepOnce(true);
-$("back").onclick = e => tlBack(e.shiftKey);
+$("back").onclick = e => tlBack(byRewrite(e));
 $("prev").onclick = () => tlBack(true);
 $("time").oninput = () => tlSeek(+$("time").value);
 $("reset").onclick = () => load();
@@ -2019,7 +2049,13 @@ $("drop").onclick = () => { $("src").focus(); openMenu($("menu").hidden); };
 $("menu").onclick = e => { const o = e.target.closest(".opt"); if (o) { choose(+o.dataset.i); openMenu(false); } };
 $("speed").oninput = speedLabel;
 const nextView = () => { const modes = ["oblique", "layers", "3d", "graph"]; setView(modes[(modes.indexOf(viewMode) + 1) % modes.length]); };
-$("viewMode").onclick = nextView;
+/// The views and colour toggles, popped out above the view button.
+function openViews(open) { $("viewPop").hidden = !open; $("viewMode").setAttribute("aria-expanded", open); $("viewMode").classList.toggle("open", open); }
+$("viewPop").insertAdjacentHTML("beforeend", Object.entries(VIEWS).map(([mode, [name, icon]]) =>
+  `<button class="mpi" data-view="${mode}" data-tip="${name}" aria-label="${name}"><svg class="ico stroke" viewBox="0 0 24 24">${icon}</svg></button>`).join(""));
+$("viewMode").onclick = () => openViews($("viewPop").hidden);
+$("viewPop").onclick = e => { const b = e.target.closest("[data-view]"); if (b) { setView(b.dataset.view); openViews(false); } };
+document.addEventListener("pointerdown", e => { if (!$("viewWrap").contains(e.target)) openViews(false); });
 $("engine").onclick = () => setEngine(onGpu ? "cpu" : "gpu");
 // New spacing keeps the camera's view, raised or lowered with the layer it looks at.
 $("gap3d").oninput = () => {
@@ -2036,8 +2072,8 @@ window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") load(true); return; }
   if (e.target.tagName === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
-  else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(e.shiftKey); }
-  else if (e.key === "ArrowLeft") { e.preventDefault(); tlBack(e.shiftKey); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(byRewrite(e)); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); tlBack(byRewrite(e)); }
   else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; V3.dirty = true; pickClear(); }
   else if (e.key === "v" || e.key === "V") nextView();
   else if (e.key === "d" || e.key === "D") setDetails($("side").hidden);

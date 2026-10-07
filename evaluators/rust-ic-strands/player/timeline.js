@@ -116,14 +116,15 @@ function tlBack(toRewrite) {
   while (T.job) tlPump();
   if (to > 0) { tlStepClock(); tlArrived(); }
 }
-/// The latest clock x < hi whose next clock fired a rewrite (null if none), found by replaying back
-/// from saved states.
+/// The latest clock x < hi whose next clock fired a rewrite (in the graph view, or collected garbage:
+/// anything that changes the net), null if none, found by replaying back from saved states.
 function tlLastRewrite(hi) {
+  const changes = () => { const st = stats(); return st[2] + (viewMode === "graph" ? st[16] : 0); };
   for (let top = hi; top > 0;) {
     const s = T.saved[tlIndex(top - 1)];
     E.restore_state(s.id);
     let last = null;
-    for (let x = s.clock; x < top; x++) { const f = stats()[2]; tlClocks(1); if (stats()[2] > f) last = x; }
+    for (let x = s.clock; x < top; x++) { const f = changes(); tlClocks(1); if (changes() > f) last = x; }
     if (last !== null) return last;
     top = s.clock;
   }

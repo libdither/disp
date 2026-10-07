@@ -12,7 +12,10 @@ current design (`lattice.rs` `latest`: the chip's schedule with the demand field
 rules, below), with the field drawn as an amber tint and called values ringed in orange:
 - **Layout**, as in the website's tree visualizer: the lattice fills the page with the answer at
   the top left, and the input box, time bar and transport sit at the bottom, speed in the left
-  corner and round toggles (moves, view, GPU, details) in the right. Everything else (picked
+  corner and round buttons in the right: the view (a pop-out of the four views and the segments
+  and moves toggles, as the tree visualizer's options pop out), the GPU and the details.
+  Leaf, stem and fork are greys: colour is kept for applications and the agents that carry them
+  out. Everything else (picked
   terms, numbers, legend, how it works) is in a details drawer, `D`, shut until wanted. Rewrites
   flash for about four clocks of the run as shown, at most 0.6 s, and the more fire at once the
   fainter each is, so a fast run is not buried in rings.
@@ -22,14 +25,15 @@ rules, below), with the field drawn as an amber tint and called values ringed in
 - **Stepping:** `▸` or `→` runs on to the next clock where something happens, `⏭` or `shift →` to
   the next rewrite. The clock is summed up in a line over the input box (rewrites, steps, folds),
   told in words in the details, and drawn as a faint arrow for each agent that moved (the moves
-  toggle).
+  toggle). In the graph view the net changes only when something rewrites, so there `▸` and `◂`
+  go on to the next rewrite and back to the last (garbage collected counts too).
 - **Inspecting:** click a site to see its agents, where each of their wires leads, and what they
   are waiting for. Garbage is drawn dimmed.
 - **Segments** (`C`, on by default): agents and their wires are coloured by where they are in the
   term the root computes. Every application splits its colour among its function and arguments,
   and applications nested in those split theirs again (`net.js`, from the abstract net that
   `readback.rs` `wires` hands over), so each part of the term shows up as a region of the net.
-  With something picked, the segments are the pick's, and its term in the details is tinted to
+  Values (code and data) stay grey, only tinted toward their part's hue. With something picked, the segments are the pick's, and its term in the details is tinted to
   match.
 - **Reduction state:** shift+click an agent to pick the computation it heads (hold shift to
   preview): it and every agent feeding its inputs are lit in pink, everything else dimmed, and

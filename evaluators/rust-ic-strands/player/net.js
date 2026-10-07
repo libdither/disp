@@ -9,6 +9,8 @@
 // segment's hue is the middle of its share of the hue circle, shared out among the parts of each
 // application by how many applications each holds, so nested segments take hues near their parent's;
 // its lightness alternates with how deep it is nested, so a part stands out from the whole around it.
+// Values (leaf, stem, fork: code and data) take a grey only tinted toward their segment's hue, so
+// the colour is on applications and the agents that carry them out.
 const NET = { key: "", segKey: "", at: 0, rev: 0, n: 0, id: null, seat: null, tag: null, far: null, index: new Map(), bySeat: null,
   seg: null, segs: [], renumbered: 0 };
 /// Applications and the arms of a choice: P, Pair, A, T1, Sel.
@@ -88,10 +90,11 @@ function segment() {
     else for (const c of kids) { lo[c] = lo[i]; hi[c] = hi[i]; seg[c] = seg[i]; }
   }
   for (const s of segs) {
-    const h = (200 + 300 * (s.lo + s.hi) / 2) % 360, l = s.depth % 2 ? 0.5 : 0.66, sat = 0.75;
+    const h = (200 + 300 * (s.lo + s.hi) / 2) % 360, l = s.depth % 2 ? 0.52 : 0.66, sat = 0.62, vl = s.depth % 2 ? 0.46 : 0.56;
     s.css = `hsl(${h.toFixed(1)},${sat * 100}%,${l * 100}%)`;
     s.tint = `hsla(${h.toFixed(1)},${sat * 100}%,${l * 100}%,0.16)`;
     s.rgb = hslRgb(h / 360, sat, l);
+    s.value = { css: `hsl(${h.toFixed(1)},11%,${vl * 100}%)`, rgb: hslRgb(h / 360, 0.11, vl) };
   }
   NET.seg = seg; NET.segs = segs;
 }
@@ -99,6 +102,15 @@ function hslRgb(h, s, l) {
   const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
   return [f(0), f(8), f(4)];
 }
+const isValue = t => t >= 1 && t <= 3;
+/// Agent i's colour with segments on, { css, rgb }: its segment's, or for a value the tinted grey;
+/// null if it is in no segment.
+function netTone(i) {
+  const g = NET.seg[i];
+  return g < 0 ? null : isValue(NET.tag[i]) ? NET.segs[g].value : NET.segs[g];
+}
+/// The same for the agent in a seat.
+function toneAt(seat) { const i = NET.bySeat ? NET.bySeat[seat] : -1; return i >= 0 ? netTone(i) : null; }
 /// The segment of the agent in a seat, or null if it is in none (garbage, or outside every pick).
 function segAt(seat) {
   const i = NET.bySeat ? NET.bySeat[seat] : -1;
