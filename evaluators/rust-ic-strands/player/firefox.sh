@@ -2,7 +2,8 @@
 # firefox-check.html in headless Firefox ($FIREFOX, else firefox or floorp on the path), whose
 # WebGPU reads buffers back on a timer of about 100 ms, unlike Dawn's (dawn.sh):
 #   player/firefox.sh check 'src=sort:1'            gpu-check.js's check on Firefox's WebGPU
-#   player/firefox.sh player 'p=disp:add&a=3 4'     the player from clock 0, on the CPU then the GPU
+#   player/firefox.sh player 'src=add 3 4'          the player from clock 0, on the CPU then the GPU
+#   player/firefox.sh input                         the player's input box, on the CPU (input-check.html)
 # Each run has a profile of its own; the page posts what it finds to a small server here. Exits
 # non-zero unless the last line starts with "ok".
 set -euo pipefail
@@ -10,6 +11,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 ff=${FIREFOX:-$(command -v firefox || command -v floorp || true)}
 [ -n "$ff" ] || { echo "FAIL no firefox or floorp on the path (set FIREFOX)"; exit 2; }
 mode=${1:-check} hash=${2:-}
+page=firefox-check.html; [ "$mode" = input ] && page=input-check.html
 work=$(mktemp -d)
 srv='' browser=''
 trap 'kill $srv $browser 2>/dev/null; rm -rf "$work"' EXIT
@@ -42,7 +44,7 @@ http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
 EOF
 srv=$!
 until python -c "import socket; socket.create_connection(('127.0.0.1', $port))" 2>/dev/null; do sleep 0.1; done
-"$ff" --headless --no-remote --profile "$work/profile" "http://127.0.0.1:$port/firefox-check.html#mode=$mode&$hash" >/dev/null 2>&1 &
+"$ff" --headless --no-remote --profile "$work/profile" "http://127.0.0.1:$port/$page#mode=$mode&$hash" >/dev/null 2>&1 &
 browser=$!
 # Print the page's lines as they come, until the last one.
 shown=0

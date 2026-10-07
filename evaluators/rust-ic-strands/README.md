@@ -715,7 +715,7 @@ runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` with
 a setting as `strands-sweep` spells it); `strands-hw --wgsl` prints its generated tables.
 `player/dawn.sh check 'src=sort:1'` checks the browser's GPU path on the design the player shows
 (`player/firefox.sh check` the same in Firefox; `player/firefox.sh player 'src=add 3 4'` times
-the player itself there), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
+the player itself there, and `player/firefox.sh input` checks its input box and compiler), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
 (`copies=16&clocks=512` for many copies side by side, `demand=0&fork=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the

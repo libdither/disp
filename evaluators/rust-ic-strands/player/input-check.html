@@ -1,0 +1,79 @@
+<!doctype html><html><head><meta charset="utf-8"><title>input box check</title></head>
+<body style="background:#0b0e14;color:#c8d3e0;font:13px ui-monospace,monospace">
+<!-- For firefox.sh input: drives the player's input box (index.html) in a frame, posting each line to
+     /report, the last starting "ok" or "FAIL". Old links, the highlighted entry and the description as
+     text is typed, choosing entries, compile errors, then runs to the answer on the CPU through each
+     way in (programs.js, compiled, a benchmark), and the compiler's name table. -->
+<script>
+const say = s => fetch("/report", { method: "POST", body: s });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let bad = 0;
+const check = (ok, what) => { if (!ok) bad++; return say(`${ok ? "pass" : "BAD"} ${what}`); };
+
+async function open(hash) {
+  const f = document.createElement("iframe");
+  f.style.cssText = "width:1200px;height:800px";
+  document.body.replaceChildren(f);
+  f.src = "index.html#" + hash;
+  await new Promise(r => f.onload = r);
+  // The player's state is in script-level bindings, which only its own eval sees.
+  const w = f.contentWindow, v = e => { try { return w.eval(e); } catch { return undefined; } };
+  for (let i = 0; i < 300 && !v("L"); i++) await sleep(100);
+  return { w, v, $: id => w.document.getElementById(id) };
+}
+function type(P, text) { const s = P.$("src"); s.focus(); s.value = text; s.dispatchEvent(new P.w.Event("input", { bubbles: true })); }
+const key = (P, k) => P.$("src").dispatchEvent(new P.w.KeyboardEvent("keydown", { key: k, bubbles: true }));
+const lit = P => P.w.document.querySelector("#menu .opt.on")?.firstChild.textContent ?? "(none)";
+
+/// Type text, press Enter, and run it to the answer on the CPU at full speed.
+async function run(P, text, expect) {
+  type(P, text);
+  const t0 = performance.now(), want = "#src=" + encodeURIComponent(text);
+  key(P, "Enter");
+  while (!P.w.location.hash.startsWith(want) && performance.now() - t0 < 20000) await sleep(5);
+  const ms = performance.now() - t0;
+  P.$("speed").value = 100;
+  while (!P.v("cleaned") && performance.now() - t0 < 120000) await sleep(50);
+  await sleep(300); // the panel catches up
+  const decoded = P.$("decoded").textContent, verdict = P.$("verdict").textContent;
+  return check(P.v("finished") && (expect === undefined || decoded === `${text} = ${expect}`) && verdict.startsWith("matches"),
+    `${text}: loaded in ${ms.toFixed(0)} ms, "${decoded}" after ${P.v("stats()[1]")} clocks (${verdict})`);
+}
+
+async function main() {
+  let P = await open("p=disp:add&a=1 1&play=0");
+  await check(P.$("src").value === "add 1 1" && P.w.location.hash.startsWith("#src=add%201%201"), `old link p=disp:add&a=1 1 loads "${P.$("src").value}"`);
+  P = await open("p=fib&n=2&play=0");
+  await check(P.$("src").value === "fib:2", `old link p=fib&n=2 loads "${P.$("src").value}"`);
+
+  P = await open("play=0");
+  for (const [text, want, info] of [["fib 7", "fib 2", "Fibonacci"], ["sort:3", "sort:1", "merge-sort"], ["is_", "is_even 3", "even"],
+      ["map [1] succ", "(none)", "compiled in your browser"], ["@(F(L,L),L)", "(none)", "A term of your own"]]) {
+    type(P, text);
+    await check(lit(P) === want && P.$("progInfo").textContent.includes(info) && !P.$("menu").hidden, `typing "${text}" highlights "${lit(P)}"`);
+  }
+  key(P, "Escape");
+  P.w.document.querySelector('#menu .opt[data-i="1"]').click();
+  const s = P.$("src");
+  await check(s.value === "mul 2 2" && s.value.slice(s.selectionStart, s.selectionEnd) === "2 2", `choosing the second entry fills "${s.value}", its arguments selected`);
+  type(P, ""); key(P, "ArrowDown");
+  await check(lit(P) === "add 2 3" && s.value === "add 2 3", `↓ from nothing picks "${s.value}"`);
+
+  // The first compile loads the compiler.
+  const t0 = performance.now();
+  await run(P, "succ (add 0 0)", "1");
+  await say(`first compile, compiler.js included, and the run: ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  const before = P.v("running.call");
+  for (const [text, msg] of [["fib 3)", "trailing"], ["nope 1", "nope is not defined"]]) {
+    type(P, text); key(P, "Enter"); await sleep(300);
+    await check(P.$("banner").textContent.includes(msg) && P.v("running.call") === before, `"${text}" says "${P.$("banner").textContent}"`);
+  }
+  for (const [text, expect] of [["is_even 1", "false"], ["add 1 (add 0 1)", "2"], ["is_nil []", "true"], ["map [0] succ", "[1]"], ["k-chain:2"]])
+    await run(P, text, expect);
+
+  const names = P.w.StrandsDisp?.names ?? [], fib = names.find(n => n.name === "fib");
+  await check(names.length > 50 && fib?.tree === P.v("DISP.find(p => p.name === 'fib').tree"), `StrandsDisp.names has ${names.length} names, fib's tree as in programs.js`);
+  return bad ? `FAIL ${bad} checks` : "ok the input box works";
+}
+main().catch(e => "FAIL " + (e.stack || e)).then(say);
+</script></body></html>
