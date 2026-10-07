@@ -45,6 +45,11 @@ rules, below), with the field drawn as an amber tint and called values ringed in
     slant across the net's long side (`F` again); drag to orbit, right-drag to pan, the wheel
     zooms toward the pointer; spread or isolate layers, or follow the action.
     `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1 with its wide lines, MIT).
+  - *graph* (`player/graph.js`): the lattice left out, only who is wired to whom. Springs along
+    wires, a push between nodes that crowd, and a pull that hangs what feeds an input below its
+    reader lay the net out so the term reads as a tree from the root down. Nodes keep their places
+    as the run plays: a new agent starts where its neighbours are. A gold wire with a diamond joins
+    two agents about to rewrite.
 - **CPU or GPU** (the chip toggle, or `G`): the GPU runs the same design through
   WebGPU (below), and a run moves between the two at any clock as it is.
 - **Going back** (the time bar, `◂` or `←` one clock, `⏮` or `shift ←` to the last rewrite): every move is a hash

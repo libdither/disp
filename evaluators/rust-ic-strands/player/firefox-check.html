@@ -109,8 +109,14 @@ async function pick() {
   if (v("PICK.preview") !== null || v("!!document.querySelector('#pick .prev')")) return "FAIL the preview stayed after shift was let go";
   v("document.querySelector('#pick .tm [data-n]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); draw()");
   if (!v("PICK.focus") || !v("PICK.lit.some(s => PICK.marks[s] & 16)")) return "FAIL a click on a term lit nothing";
-  for (const view of ["oblique", "3d", "layers"]) { v(`setView('${view}'); V3.dirty = true; draw()`); await sleep(50); }
-  await say(`previews, clicks on terms and all three views work`);
+  // In the graph view, the node under the pointer is the agent's.
+  v("setView('graph'); draw()");
+  const gxy = v(`(() => { const i = NET.bySeat[${any}], r = cv.getBoundingClientRect(); return [r.left + view.ox + GRAPH.x[i] * view.s, r.top + view.oy + GRAPH.y[i] * view.s]; })()`);
+  v(`PICK.shift = true; PICK.pointer = { x: ${gxy[0]}, y: ${gxy[1]} }; draw()`);
+  if (v("PICK.preview?.seat") !== any) return `FAIL no preview under the pointer in the graph view (${v("PICK.preview?.seat")} for ${any})`;
+  v("PICK.shift = false; draw()");
+  for (const view of ["oblique", "3d", "graph", "layers"]) { v(`setView('${view}'); V3.dirty = true; draw()`); await sleep(50); }
+  await say(`previews, clicks on terms and all four views work`);
   // On the GPU, if there is one: picks are found again as it hands back its stretches renumbered.
   if (v("!!navigator.gpu")) {
     await w.setEngine("gpu");
