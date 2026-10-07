@@ -10,16 +10,24 @@ an address**. It is the answer to two problems with the earlier spatial machines
 Open `player/index.html` to watch it run (rebuild with `./build-player.sh`). It shows only the
 current design (`lattice.rs` `latest`: the chip's schedule with the demand field and forking S
 rules, below), with the field drawn as an amber tint and called values ringed in orange:
+- **Layout**, as in the website's tree visualizer: the lattice fills the page with the answer at
+  the top left, and the input box, time bar and transport sit at the bottom, speed in the left
+  corner and round toggles (moves, view, GPU, details) in the right. Everything else (picked
+  terms, numbers, legend, how it works) is in a details drawer, `D`, shut until wanted. Rewrites
+  flash for about four clocks of the run as shown, at most 0.6 s, and the more fire at once the
+  fainter each is, so a fast run is not buried in rings.
 - **Programs:** one input box takes ordinary disp code (`fib 2`, `add 2 (mul 2 2)`,
   `map [1, 2] succ`), a benchmark program (`sort:1`) or a raw term. Its list (`▾` or `↓`) offers
   each program with an example.
-- **Stepping:** one move at a time with `+1` or `→` (shift: to the next rewrite), each move told
-  in words.
+- **Stepping:** `▸` or `→` runs on to the next clock where something happens, `⏭` or `shift →` to
+  the next rewrite. The clock is summed up in a line over the input box (rewrites, steps, folds),
+  told in words in the details, and drawn as a faint arrow for each agent that moved (the moves
+  toggle).
 - **Inspecting:** click a site to see its agents, where each of their wires leads, and what they
   are waiting for. Garbage is drawn dimmed.
 - **Reduction state:** shift+click an agent to pick the computation it heads (hold shift to
   preview): it and every agent feeding its inputs are lit in pink, everything else dimmed, and
-  the side panel writes what it means now as disp (Reading back, below). Picks follow their
+  the details drawer opens to write what it means now as disp (Reading back, below). Picks follow their
   agents as they move and rewrite; one whose value a rewrite uses up drops out. Going back keeps
   the root picked; other picks are found again only where the net still looks as it did. `Esc`
   lets go.
@@ -28,9 +36,9 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   - *layers side by side*: exact, with every site easy to click;
   - *3D*: three.js, with orbit, spread or isolate layers, and a camera that follows the action.
     `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1, MIT).
-- **CPU or GPU** (the selector next to the speed, or `G`): the GPU runs the same design through
+- **CPU or GPU** (the chip toggle, or `G`): the GPU runs the same design through
   WebGPU (below), and a run moves between the two at any clock as it is.
-- **Going back** (the time bar, `←` one clock, `shift ←` to the last rewrite): every move is a hash
+- **Going back** (the time bar, `◂` or `←` one clock, `⏮` or `shift ←` to the last rewrite): every move is a hash
   of its site and its clock, so a run repeats exactly from any state of it. States are saved in the
   engine (`wasm.rs` `save_state`) and thinned with distance from the clock on show (`timeline.js`):
   each time the budget (64 MB) is full, the one whose neighbours are nearest for its distance goes,
@@ -542,7 +550,7 @@ reduction-state panel. It only reads; a run goes exactly as without it.
   those, neighbours whose own surroundings are unchanged. Seats alone fail, as look-alike agents
   move into each other's seats within a stretch. Against a CPU run that keeps its ids, after
   stretches of 50 clocks, 89% of picks are found again and none is mistaken for another.
-- **The panel** writes each pick as disp: applications as *f x y* (a fork *t a b* is an
+- **The details drawer** writes each pick as disp: applications as *f x y* (a fork *t a b* is an
   application of *t* too), numbers, lists and strings as literals, code equal to a known
   definition by its name (matched by a hash of its ternary form), other code over 6 nodes as
   ‹the definition it is a piece of› or ‹its size›, computations shared by duplicators as *x₁* in

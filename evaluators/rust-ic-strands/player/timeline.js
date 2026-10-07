@@ -75,6 +75,7 @@ function tlClocks(n) {
 /// time), saving states more densely as the target nears.
 function tlSeek(target) {
   target = Math.max(0, Math.min(Math.round(target), T.frontier));
+  story = [];
   dropGpu();
   if (playing) setPlaying(false);
   const c = clockNow(), s = T.saved[tlIndex(target)];
@@ -134,7 +135,8 @@ function tlShow() {
   const r = $("time"), c = clockNow();
   r.max = T.frontier; r.value = T.job ? T.job.target : c;
   const mb = T.saved.reduce((a, s) => a + s.bytes, 0) / (1 << 20);
-  $("timev").textContent = `clock ${fmt(c)} of ${fmt(T.frontier)} · ${T.saved.length} saved (${mb.toFixed(1)} MB)`;
+  $("timev").textContent = `clock ${fmt(c)} / ${fmt(T.frontier)}`;
+  $("timev").title = `${T.saved.length} states saved (${mb.toFixed(1)} MB)`;
   // The ticks: drawn again only when they or the canvas changed.
   const cv = $("ticks"), w = Math.round(cv.clientWidth * devicePixelRatio), h = Math.round(cv.clientHeight * devicePixelRatio);
   const key = `${w} ${h} ${T.frontier} ${T.saved.length} ${T.saved[T.saved.length - 1]?.clock} ${answerClock} ${T.coolAt}`;
@@ -144,7 +146,7 @@ function tlShow() {
   const g = cv.getContext("2d");
   g.clearRect(0, 0, w, h);
   const x = k => T.frontier ? 6 * devicePixelRatio + (w - 12 * devicePixelRatio) * k / T.frontier : 0;
-  g.fillStyle = "rgba(88,196,255,.55)";
+  g.fillStyle = "rgba(133,149,173,.35)";
   for (const s of T.saved) g.fillRect(x(s.clock), 0, Math.max(1, devicePixelRatio), h);
   if (finished || answerClock) { g.fillStyle = "#ffd866"; g.fillRect(x(answerClock), 0, 2 * devicePixelRatio, h); }
   if (T.coolAt !== null) { g.fillStyle = "#8bddff"; g.fillRect(x(T.coolAt), 0, 2 * devicePixelRatio, h); }

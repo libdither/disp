@@ -2,117 +2,186 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rust-ic-strands — interaction nets as strands on a lattice</title>
 <style>
-  :root { --bg:#0b0e14; --panel:#0d131d; --fg:#c8d3e0; --dim:#8595ad; --accent:#56c8ff; --ok:#3fbf7f; --warn:#ff6b6b;
-    --hot:#ffd866; --line:#1b2436; --line2:#2a3a52; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  :root { --bg:#0b0e14; --bg-elev:#121a26; --panel:#0d131d; --fg:#c8d3e0; --fg-muted:#8595ad; --fg-faint:#5b6a80; --accent:#56c8ff;
+    --g2:#3fbf7f; --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; --border:#1b2436; --border-strong:#2a3a52;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --body:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 var(--mono); }
   #wrap { display:flex; height:100vh; }
   #stage { position:relative; flex:1; min-width:0; overflow:hidden; }
   #cv, #cv3 { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
-  #cv3[hidden], #bar3d[hidden] { display:none; }
-  #bar3d { position:absolute; z-index:5; left:12px; bottom:12px; display:flex; gap:8px; align-items:center; padding:6px 9px;
-    border:1px solid var(--line2); border-radius:10px; background:rgba(11,14,20,.9); font-size:11.5px; color:var(--dim); }
-  #progInfo { margin:6px 0; font-size:11.5px; color:#aab6c6; } #progInfo b { color:var(--hot); font-weight:normal; }
-  #side { flex:0 0 372px; padding:12px 14px 30px; overflow:auto; border-left:1px solid var(--line); background:var(--panel); box-sizing:border-box; }
-  h1 { font-size:14px; margin:2px 0 4px; color:var(--accent); }
-  h3 { color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
-  .note { color:var(--dim); font-size:11.5px; }
-  .row { display:flex; justify-content:space-between; margin:2px 0; gap:8px; }
-  .k { color:var(--dim); } .v { font-variant-numeric:tabular-nums; } .v b { color:var(--hot); font-weight:normal; }
-  button, select, input { background:#16202f; color:var(--fg); border:1px solid var(--line2); border-radius:6px; padding:4px 8px; font:inherit; }
+  [hidden] { display:none !important; }
+  button, select, input { background:var(--bg-elev); color:var(--fg); border:1px solid var(--border-strong); border-radius:6px; padding:4px 8px; font:inherit; }
   button { cursor:pointer; } button:hover { border-color:var(--accent); }
-  input[type=number] { width:52px; } input[type=range] { accent-color:var(--accent); vertical-align:middle; }
-  #topbar { position:absolute; z-index:5; top:10px; left:50%; transform:translateX(-50%); display:flex; flex-wrap:wrap; justify-content:center;
-    gap:7px; align-items:center; padding:6px 8px; border:1px solid var(--line2); border-radius:12px; background:rgba(11,14,20,.9);
-    box-shadow:0 6px 24px rgba(0,0,0,.4); backdrop-filter:blur(8px); max-width:calc(100% - 20px); box-sizing:border-box; }
-  .icon { width:34px; height:30px; padding:0; display:grid; place-items:center; font:16px/1 system-ui,sans-serif; }
-  .icon.primary { width:40px; color:#04121c; background:var(--accent); border-color:#8bddff; }
-  .sep { width:1px; height:24px; background:var(--line2); }
-  #speedv { color:var(--dim); font-size:11px; min-width:96px; }
-  #timebar { position:absolute; z-index:5; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:8px; align-items:center;
-    padding:5px 8px; border:1px solid var(--line2); border-radius:12px; background:rgba(11,14,20,.9); width:min(720px, calc(100% - 20px)); box-sizing:border-box; }
-  #timeline { position:relative; flex:1; height:26px; } #timeline canvas { position:absolute; inset:0 0 auto 0; width:100%; height:8px; }
-  #time { position:absolute; left:0; right:0; bottom:0; width:100%; margin:0; }
-  #timev { color:var(--dim); font-size:11px; white-space:nowrap; }
-  #combo { position:relative; display:flex; } #src { width:220px; border-radius:6px 0 0 6px; } #pick { border-radius:0 6px 6px 0; border-left:none; padding:4px 7px; }
-  #menu { position:absolute; z-index:8; top:calc(100% + 5px); left:0; width:440px; max-height:min(62vh, 480px); overflow:auto; padding:4px 0;
-    border:1px solid var(--line2); border-radius:9px; background:rgba(11,14,20,.97); box-shadow:0 10px 30px rgba(0,0,0,.6); }
-  #menu[hidden] { display:none; }
+  .ico { width:18px; height:18px; display:block; fill:currentColor; }
+  .ico.stroke { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  /* what the run says: top left, over the lattice */
+  #hud { position:absolute; z-index:4; top:10px; left:14px; max-width:min(70%, 760px); pointer-events:none; }
+  #decoded { font-size:18px; color:var(--hot); word-break:break-word; }
+  #badge { font-size:11.5px; color:var(--fg-muted); } #badge.ok { color:var(--ok); } #badge.bad { color:var(--warn); }
+  #verdict { font-size:11px; color:var(--fg-faint); }
+  #banner { position:absolute; z-index:6; top:12px; left:50%; transform:translateX(-50%); max-width:60%; padding:5px 12px; border-radius:9px;
+    border:1px solid var(--border-strong); background:rgba(11,14,20,.92); font-size:12px; pointer-events:none; opacity:0; transition:opacity .4s; }
+  #bar3d { position:absolute; z-index:5; top:10px; right:12px; display:flex; gap:8px; align-items:center; padding:4px 8px;
+    border:1px solid var(--border); border-radius:9px; background:rgba(11,14,20,.85); font-size:11px; color:var(--fg-muted); }
+  #bar3d input[type=range] { width:80px; } #bar3d select, #bar3d button { padding:1px 6px; font-size:11px; }
+  /* the dock, as in the tree visualizer: the input box over a time bar over the transport,
+     play at the centre, speed in the left corner, toggles in the right */
+  #dock { position:absolute; z-index:5; left:0; right:0; bottom:0; padding:30px 12px 8px; pointer-events:none;
+    background:linear-gradient(to top, rgba(11,14,20,.94) 60%, rgba(11,14,20,0)); }
+  #dock > * { pointer-events:auto; width:min(780px, 100%); margin:0 auto; box-sizing:border-box; }
+  #storyline { min-height:16px; text-align:center; color:var(--fg-faint); font-size:11px; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #editrow { position:relative; display:flex; justify-content:center; align-items:center; gap:6px; }
+  #src { width:100%; max-width:min(30rem, calc(100% - 3rem)); min-width:0; background:none; border:none; border-radius:7px 7px 0 0; outline:none;
+    text-align:center; font-size:13.5px; padding:3px 8px; caret-color:var(--accent); border-bottom:1px dashed rgba(133,149,173,.45);
+    transition:border-color .15s, background .15s; }
+  #src:hover { border-bottom-color:var(--fg-muted); background:rgba(18,26,38,.5); }
+  #src:focus { border-bottom:1px solid var(--accent); background:rgba(18,26,38,.7); }
+  .mini { flex:none; width:16px; height:16px; padding:0; border-radius:50%; display:inline-grid; place-items:center; background:none;
+    border:1px solid var(--border-strong); color:var(--fg-faint); font:italic 700 10px/1 var(--body); cursor:help; }
+  #drop { font-style:normal; font-size:9px; cursor:pointer; }
+  .mini:hover, .mini:focus-visible { color:var(--accent); border-color:var(--accent); outline:none; }
+  .info { position:relative; flex:none; display:inline-flex; }
+  .info-pop { position:absolute; bottom:calc(100% + 9px); right:-6px; width:330px; padding:9px 11px; border-radius:9px; border:1px solid var(--border-strong);
+    background:var(--bg-elev); box-shadow:0 12px 28px -14px rgba(0,0,0,.8); color:var(--fg-muted); font:11.5px/1.5 var(--body); text-align:left;
+    z-index:50; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity .15s, transform .15s, visibility .15s; pointer-events:none; }
+  .info:hover .info-pop, .info-btn:focus-visible + .info-pop { opacity:1; visibility:visible; transform:none; }
+  .info-pop i, .info-pop b { color:var(--fg); font-weight:normal; } .info-pop p { margin:0 0 6px; } .info-pop p:last-child { margin:0; }
+  #menu { position:absolute; z-index:8; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); width:min(460px, 100%); max-height:min(56vh, 460px);
+    overflow:auto; padding:4px 0; border:1px solid var(--border-strong); border-radius:9px; background:rgba(11,14,20,.97); box-shadow:0 10px 30px rgba(0,0,0,.6); }
   #menu .grp { color:var(--accent); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; padding:7px 10px 2px; }
   #menu .opt { display:flex; justify-content:space-between; gap:12px; padding:3px 10px; cursor:pointer; white-space:nowrap; }
-  #menu .opt span { color:var(--dim); font-size:11px; overflow:hidden; text-overflow:ellipsis; }
-  #menu .opt:hover { background:#16202f; } #menu .opt.on { background:#1d2d44; box-shadow:inset 2px 0 var(--accent); }
-  .badge { text-align:center; font-weight:bold; letter-spacing:.1em; padding:6px; border-radius:7px; margin:8px 0; border:1px solid var(--line2); }
-  .badge.run { color:var(--accent); } .badge.ok { color:var(--ok); border-color:rgba(63,191,127,.45); background:rgba(63,191,127,.1); }
-  .badge.bad { color:var(--warn); border-color:rgba(255,107,107,.45); background:rgba(255,107,107,.1); }
+  #menu .opt span { color:var(--fg-muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; }
+  #menu .opt:hover { background:var(--bg-elev); } #menu .opt.on { background:#1d2d44; box-shadow:inset 2px 0 var(--accent); }
+  #timebar { display:flex; align-items:center; gap:10px; margin-top:4px; }
+  #timeline { position:relative; flex:1; height:18px; }
+  #ticks { position:absolute; left:0; right:0; top:50%; height:10px; width:100%; transform:translateY(-50%); }
+  #timev { color:var(--fg-faint); font-size:11px; white-space:nowrap; min-width:96px; text-align:right; }
+  input[type=range] { -webkit-appearance:none; appearance:none; background:none; border:none; padding:0; margin:0; height:18px; cursor:pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height:3px; border-radius:2px; background:var(--border-strong); }
+  input[type=range]::-moz-range-track { height:3px; border-radius:2px; background:var(--border-strong); }
+  input[type=range]::-moz-range-progress { height:3px; border-radius:2px; background:rgba(86,200,255,.45); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; margin-top:-4.5px; border:none; border-radius:50%; background:var(--fg); }
+  input[type=range]::-moz-range-thumb { width:12px; height:12px; border:none; border-radius:50%; background:var(--fg); }
+  #time { position:relative; width:100%; }
+  .bottombar { position:relative; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:2px; min-height:32px; }
+  .tside { display:flex; align-items:center; gap:2px; } .tleft { justify-self:end; } .tright { justify-self:start; }
+  .corner-left, .corner-right { position:absolute; top:50%; transform:translateY(-50%); display:flex; align-items:center; gap:5px; }
+  .corner-left { left:0; } .corner-right { right:0; }
+  /* bare transport icons, dimmed until the pointer is on the dock */
+  .tbtn { border:none; background:none; color:var(--fg-muted); display:inline-grid; place-items:center; padding:3px; border-radius:6px;
+    transition:opacity .18s, color .18s, background .18s; }
+  .tbtn:hover { color:var(--accent); background:rgba(86,200,255,.12); }
+  .tbtn.play { color:var(--g2); padding:2px; } .tbtn.play .ico { width:26px; height:26px; } .tbtn.play:hover { color:var(--accent); }
+  .mpi { width:30px; height:30px; display:inline-grid; place-items:center; padding:0; border-radius:50%; border:1px solid var(--border-strong);
+    background:var(--bg-elev); color:var(--fg-muted); transition:opacity .18s, border-color .18s, color .18s, background .18s; }
+  .mpi .ico { width:16px; height:16px; }
+  .mpi:hover { border-color:var(--accent); color:var(--accent); }
+  .mpi.on { border-color:var(--g2); color:var(--g2); background:rgba(63,191,127,.1); }
+  .mpi:disabled { opacity:.3; cursor:default; border-color:var(--border-strong); color:var(--fg-muted); }
+  #speedbox { display:flex; align-items:center; gap:5px; color:var(--fg-faint); } #speedbox .ico { width:15px; height:15px; } #speed { width:84px; }
+  #dock .tbtn, #dock .mpi, #speedbox, #timebar { opacity:.55; transition:opacity .18s; }
+  #dock:hover .tbtn, #dock:hover .mpi, #dock:hover #speedbox, #dock:hover #timebar, #dock:focus-within .tbtn, #dock:focus-within .mpi { opacity:1; }
+  #dock .mpi:disabled { opacity:.3; }
+  /* one styled tip for every control, from its data-tip */
+  [data-tip] { position:relative; }
+  [data-tip]::after { content:attr(data-tip); position:absolute; left:50%; bottom:calc(100% + 7px); transform:translate(-50%, 3px); width:max-content; max-width:17em;
+    padding:4px 8px; border-radius:7px; border:1px solid var(--border-strong); background:var(--bg-elev); color:var(--fg-muted); font:400 11px/1.4 var(--body);
+    text-align:left; white-space:normal; z-index:60; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .15s, transform .15s, visibility .15s; }
+  [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity:1; visibility:visible; transform:translate(-50%, 0); }
+  .corner-left [data-tip]::after { left:0; transform:translate(0, 3px); } .corner-left [data-tip]:hover::after { transform:none; }
+  .corner-right > [data-tip]::after { left:auto; right:0; transform:translate(0, 3px); } .corner-right > [data-tip]:hover::after { transform:none; }
+  /* the details drawer: shut until asked for, or until something is picked */
+  #side { flex:0 0 372px; padding:10px 14px 30px; overflow:auto; border-left:1px solid var(--border); background:var(--panel); box-sizing:border-box; }
+  .sidehead { display:flex; align-items:baseline; gap:8px; } .sidehead h1 { flex:1; }
+  .sidehead button { border:none; background:none; color:var(--fg-muted); font-size:16px; padding:0 4px; } .sidehead button:hover { color:var(--accent); }
+  h1 { font-size:14px; margin:2px 0 4px; color:var(--accent); }
+  h3 { color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
+  .note { color:var(--fg-muted); font-size:11.5px; }
+  .row { display:flex; justify-content:space-between; margin:2px 0; gap:8px; }
+  .k { color:var(--fg-muted); } .v { font-variant-numeric:tabular-nums; } .v b { color:var(--hot); font-weight:normal; }
   #answer { word-break:break-all; color:var(--hot); font-size:12px; max-height:64px; overflow:auto; }
-  #decoded { font-size:20px; color:var(--hot); }
   .legend { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:2px 10px; font-size:11px; }
   .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
-  canvas.chart { width:100%; height:80px; display:block; background:#0a1019; border:1px solid var(--line); border-radius:7px; }
+  canvas.chart { width:100%; height:80px; display:block; background:#0a1019; border:1px solid var(--border); border-radius:7px; }
   .how p { margin:5px 0; color:#aab6c6; font-size:11.5px; } .how b { color:var(--fg); font-weight:normal; text-decoration:underline; text-decoration-color:#3a506f; }
   details summary { cursor:pointer; color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
-  #banner { position:absolute; left:50%; bottom:20px; transform:translateX(-50%); padding:7px 14px; border-radius:10px; border:1px solid var(--line2);
-    background:rgba(11,14,20,.9); font-size:12px; pointer-events:none; transition:opacity .4s; }
   #tip { position:absolute; z-index:7; min-width:280px; max-width:380px; box-sizing:border-box; padding:8px 9px;
     border:1px solid #3a506f; border-radius:9px; background:rgba(11,14,20,.97); box-shadow:0 10px 30px rgba(0,0,0,.6);
     font-size:11px; line-height:1.4; pointer-events:none; }
-  #tip[hidden] { display:none; } #tip.pinned { border-color:var(--accent); }
+  #tip.pinned { border-color:var(--accent); }
   .th { color:var(--accent); margin-bottom:4px; display:flex; justify-content:space-between; gap:10px; }
   .ts { margin:4px 0; padding:4px 6px; border-radius:5px; background:#111a27; border:1px solid #1d2b3e; }
   .ts.dead { opacity:.6; } .tp { color:#aab6c6; margin-top:2px; } .tw { color:#d6e2f0; margin-top:3px; }
-  .chip { font-size:10px; padding:0 5px; border-radius:8px; border:1px solid var(--line2); margin-left:4px; }
-  .story { margin:8px 0; padding:7px 9px; border:1px solid #6b3fa0; border-radius:8px; background:rgba(150,80,230,.08); font-size:11.5px; }
-  .story[hidden] { display:none; } .story b { color:#d6a8ff; font-weight:normal; }
-  kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:4px; padding:0 4px; font-size:10.5px; color:var(--dim); }
+  .chip { font-size:10px; padding:0 5px; border-radius:8px; border:1px solid var(--border-strong); margin-left:4px; }
+  .story { margin:6px 0; padding:2px 0 2px 9px; border-left:2px solid var(--border-strong); font-size:11.5px; color:#aab6c6; }
+  .story b { color:var(--fg); font-weight:normal; }
+  kbd { border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:4px; padding:0 4px; font:10.5px var(--mono); color:var(--fg-muted); }
   .pk { margin:6px 0; padding:6px 8px; border:1px solid #6a2d5e; border-radius:8px; background:rgba(255,95,210,.05); }
   .pk.prev { border-style:dashed; border-color:#8a5a80; background:none; }
-  .pkh { display:flex; gap:6px; align-items:baseline; flex-wrap:wrap; font-size:11px; color:var(--dim); margin-bottom:3px; }
+  .pkh { display:flex; gap:6px; align-items:baseline; flex-wrap:wrap; font-size:11px; color:var(--fg-muted); margin-bottom:3px; }
   .pkh .x { margin-left:auto; padding:0 6px; font-size:12px; line-height:16px; }
   .tm { font-size:12.5px; line-height:1.6; word-break:break-word; color:#e6edf6; }
   .tm .v { color:var(--hot); } .tm .nm { color:#7fd0ff; } .tm .ch { color:#c4a8e8; font-style:italic; } .tm .sh { color:#ff8ad8; }
-  .tm .el { color:var(--dim); } .tm .er { color:#8a96a8; font-style:italic; }
+  .tm .el { color:var(--fg-muted); } .tm .er { color:#8a96a8; font-style:italic; }
   .tm .w { text-decoration:underline 2px #56c8ff; text-underline-offset:4px; }
   .tm [data-n] { cursor:pointer; border-radius:3px; } .tm [data-n]:hover:not(:has([data-n]:hover)) { background:rgba(255,255,255,.08); }
   .tm .fx { outline:1px solid #fff; background:rgba(255,255,255,.06); }
-  .tm .wh { color:var(--dim); margin-top:3px; }
+  .tm .wh { color:var(--fg-muted); margin-top:3px; }
   .pkn { color:#ffb3e8; font-size:11px; margin:3px 0; }
 </style></head><body>
 <div id="wrap">
   <div id="stage">
     <canvas id="cv"></canvas><canvas id="cv3" hidden></canvas>
-    <div id="bar3d" hidden>layer spacing <input id="gap3d" type="range" min="10" max="60" value="25" style="width:90px">
-      show <select id="layer3d"><option value="all">all layers</option></select>
-      <label><input type="checkbox" id="follow3d" checked> follow the action</label>
+    <div id="hud"><div id="decoded"></div><div id="badge">loading</div><div id="verdict"></div></div>
+    <div id="bar3d" hidden>spacing <input id="gap3d" type="range" min="10" max="60" value="25">
+      <select id="layer3d"><option value="all">all layers</option></select>
+      <label><input type="checkbox" id="follow3d" checked> follow</label>
       <button id="fit3d" title="fit (F)">fit</button></div>
-    <div id="topbar">
-      <span id="combo"><input id="src" spellcheck="false" autocomplete="off" placeholder="fib 2"
-        title="disp code (fib 2, add 2 (mul 2 2), map [1, 2] succ), a benchmark (sort:1), or a term (@(F(L,L),L), ternary digits); ↓ lists the programs"><button
-        id="pick" tabindex="-1" title="programs (↓)">▾</button><div id="menu" hidden></div></span>
-      <button id="load">load</button><span class="sep"></span>
-      <button class="icon" id="reset" title="restart (R)">⟲</button>
-      <button class="icon primary" id="play" title="play / pause (space)">▶</button>
-      <button class="icon" id="step" title="one move (→); shift: run to the next rewrite">+1</button>
-      <button class="icon" id="end" title="run to the end">⏭</button>
-      <input id="speed" type="range" min="0" max="100" value="45" style="width:120px"><span id="speedv"></span>
-      <select id="engine" title="what runs the lattice (G); a run moves between them as it is"><option value="cpu">on the CPU</option><option value="gpu">on the GPU</option></select>
-      <span class="sep"></span>
-      <select id="viewMode" title="how to draw the layers (V)"><option value="oblique">layers stacked</option><option value="layers">layers side by side</option><option value="3d">3D</option></select>
+    <div id="dock">
+      <div id="storyline"></div>
+      <div id="editrow">
+        <button class="mini" id="drop" tabindex="-1" aria-label="programs (↓)">▾</button>
+        <input id="src" spellcheck="false" autocomplete="off" placeholder="fib 2" aria-label="disp code, a benchmark or a term; Enter loads it">
+        <span class="info"><button type="button" class="mini info-btn" aria-label="what can I type here?">i</button>
+          <span class="info-pop" role="tooltip"><p id="progInfo"></p>
+            <p><kbd>Enter</kbd> loads · <kbd>↓</kbd> lists the programs · <kbd>space</kbd> plays · <kbd>←</kbd> <kbd>→</kbd> a clock,
+              with <kbd>shift</kbd> a rewrite · <kbd>R</kbd> restarts · <kbd>V</kbd> view · <kbd>G</kbd> GPU · <kbd>D</kbd> details · <kbd>F</kbd> fit</p>
+            <p>Drag to pan, wheel to zoom. Click a site to see what is in it. <kbd>shift</kbd>+click an agent to read what it computes,
+              as disp, in the details (hold <kbd>shift</kbd> to preview); <kbd>Esc</kbd> lets go.</p></span></span>
+        <div id="menu" hidden></div>
+      </div>
+      <div id="timebar"><div id="timeline"><canvas id="ticks"></canvas><input id="time" type="range" min="0" max="0" value="0" aria-label="every clock reached so far"></div>
+        <span id="timev"></span></div>
+      <div class="bottombar">
+        <div class="tside tleft">
+          <button class="tbtn" id="prev" data-tip="back to the last rewrite (shift ←)" aria-label="back to the last rewrite"><svg class="ico" viewBox="0 0 24 24"><rect x="6" y="6" width="2.2" height="12" rx="0.6"/><path d="M18 6 L10 12 L18 18 Z"/></svg></button>
+          <button class="tbtn" id="back" data-tip="one clock back (←)" aria-label="one clock back"><svg class="ico" viewBox="0 0 24 24"><path d="M15.5 6 L8 12 L15.5 18 Z"/></svg></button>
+        </div>
+        <button class="tbtn play" id="play" data-tip="play / pause (space)" aria-label="play"></button>
+        <div class="tside tright">
+          <button class="tbtn" id="step" data-tip="one clock on (→)" aria-label="one clock on"><svg class="ico" viewBox="0 0 24 24"><path d="M8.5 6 L16 12 L8.5 18 Z"/></svg></button>
+          <button class="tbtn" id="next" data-tip="on to the next rewrite (shift →)" aria-label="on to the next rewrite"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6 L14 12 L6 18 Z"/><rect x="15.8" y="6" width="2.2" height="12" rx="0.6"/></svg></button>
+          <button class="tbtn" id="reset" data-tip="restart (R)" aria-label="restart"><svg class="ico stroke" viewBox="0 0 24 24"><polyline points="3 5 3 10.5 8.5 10.5"/><path d="M5.2 15.5 a8 8 0 1 0 1.9 -8.4 L3 10.5"/></svg></button>
+        </div>
+        <div class="corner-left"><span id="speedbox" data-tip="speed"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l4-4"/></svg><input id="speed" type="range" min="0" max="100" value="45" aria-label="speed"></span></div>
+        <div class="corner-right">
+          <button class="mpi on" id="moves" aria-pressed="true" data-tip="moves: after a step, a faint arrow for each agent that moved" aria-label="moves"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 19 L11 12"/><path d="M7 12 H11 V16"/><path d="M13 7 H20"/><path d="M17 4 L20 7 L17 10"/></svg></button>
+          <button class="mpi" id="viewMode" aria-label="view"></button>
+          <button class="mpi" id="engine" aria-pressed="false" data-tip="running on the CPU; click for the GPU (G)" aria-label="run on the GPU"><svg class="ico stroke" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2.5v3.5M15 2.5v3.5M9 18v3.5M15 18v3.5M2.5 9h3.5M2.5 15h3.5M18 9h3.5M18 15h3.5"/></svg></button>
+          <button class="mpi" id="details" aria-pressed="false" data-tip="details: picked terms, numbers, legend, how it works (D)" aria-label="details"><svg class="ico stroke" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+        </div>
+      </div>
     </div>
-    <div id="timebar"><button class="icon" id="back" title="one clock back (←); shift: back to the last rewrite">−1</button>
-      <div id="timeline"><canvas id="ticks"></canvas><input id="time" type="range" min="0" max="0" value="0" title="every clock reached so far; drag to go back or forth"></div>
-      <span id="timev"></span></div>
     <div id="banner"></div>
     <div id="tip" hidden></div>
   </div>
-  <div id="side">
-    <h1>interaction nets as strands on a lattice</h1>
+  <div id="side" hidden>
+    <div class="sidehead"><h1>interaction nets as strands on a lattice</h1><button id="closeSide" aria-label="close (D)">×</button></div>
     <div class="note">No addresses and no routing. A wire is a path of <i>strands</i> laid along the links between
       neighbouring sites; strand i of a link is the same wire from both sides. Each site holds a bead or two (agents)
       and a little switchboard joining the strand ends that meet there. Every move is a random local proposal,
       accepted by an energy: wires pull like springs, crowding pushes, heat jiggles.</div>
-    <div id="progInfo"></div>
-    <div id="badge" class="badge run">LOADING</div>
-    <div id="decoded"></div><div id="answer"></div><div class="note" id="verdict"></div>
+    <div id="answer"></div>
     <div id="story" class="story" hidden></div>
 
     <h3>reduction state</h3>
@@ -144,12 +213,14 @@
 
     <details class="how" open><summary>how it works</summary>
       <p><b>Step.</b> An agent moves to a neighbouring site. The strand it walks along is eaten; its other wires are
-        dragged one strand longer. Wanted readers mostly step along their principal wire, toward what they need.</p>
+        dragged one strand longer. Wanted readers mostly step along their principal wire, toward what they need. After
+        a clock stepped by hand, a faint arrow marks each agent that moved in it (the moves toggle).</p>
       <p><b>Fold and flip.</b> A wire that goes out and straight back snaps shut; a corner can flip to the other side
         of its square. Together they let wires straighten like strings under tension.</p>
       <p><b>Exchange.</b> In a full site, an agent may trade places with a resident, so walkers get through crowds.</p>
       <p><b>Rewrite.</b> When a wanted reader and the value it reads meet (same site, or one strand apart), the rule
-        fires inside a 2×2 block: fresh agents take the free seats and are wired with fresh strands.</p>
+        fires inside a 2×2 block: fresh agents take the free seats and are wired with fresh strands. A rewrite flashes a
+        ring for about four clocks of the run as shown, at most 0.6 s, and the more fire at once the fainter each is.</p>
       <p><b>Demand.</b> Nothing reacts until wanted. A wanted reader sends a pulse (white dot) along its principal
         wire, one strand per clock; when it reaches another computation's output, that computation is wanted too,
         and when it reaches the value the reader needs, that value is called (orange ring): it counts as wanted, and
@@ -177,8 +248,8 @@
         so wiggles cost more than they gain, the wire straightens and the answer contracts as far as it will go.</p>
       <p><b>Going back.</b> Every move is a hash of its site and its clock, so a run repeats exactly from any state of
         it. The run is saved at some clocks, densely near the clock on show and more sparsely away from it, in at most
-        64 MB; going to a clock puts back the nearest saved state before it and runs on. The ticks above the time bar
-        are the saved states.</p>
+        64 MB; going to a clock puts back the nearest saved state before it and runs on. The faint ticks on the time
+        bar are the saved states.</p>
       <p><b>Clocks.</b> Every clock the lattice is cut into disjoint 2×2×2 blocks at a random offset, and in each block
         every site takes a turn, a site with a wanted reader or a called value spending half of its on it: what a
         synchronous chip does, with no move ever reaching outside its block.</p>
@@ -193,9 +264,6 @@
         that is a known definition by its name, other code as ‹its size›, shared computations as <i>x₁</i> in a
         <i>where</i>, and what is being computed underlined in blue. Picks follow their agents as they move and
         rewrite; one whose value is used up by a rewrite drops out.</p>
-      <p class="note"><kbd>space</kbd> play · <kbd>→</kbd> one move · <kbd>shift →</kbd> to the next rewrite · <kbd>←</kbd> one clock back · <kbd>shift ←</kbd> back to the last rewrite · <kbd>R</kbd> restart ·
-        <kbd>F</kbd> fit · <kbd>V</kbd> next view · drag to pan · wheel to zoom · click a site to see what is in it, <kbd>Esc</kbd> to let go ·
-        <kbd>shift</kbd>+click an agent to pick its computation (hold <kbd>shift</kbd> to preview)</p>
     </details>
   </div>
 </div>
@@ -336,11 +404,11 @@ function populate() {
     + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
     + `<span><span class="sw" style="background:none;border:2px solid #ffa94d"></span>called value</span><span><span class="sw" style="background:rgba(255,170,80,0.35)"></span>demand field</span>`
     + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
-    + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;border:2px solid #d6a8ff;border-radius:2px"></span>last move</span>`
+    + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;color:#b89ad8;width:auto;font-size:11px">→</span>a move in a stepped clock</span>`
     + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
-  if (q.get("view")) $("viewMode").value = q.get("view");
+  if (q.get("view")) viewMode = q.get("view");
   syncUI();
 }
 /// Links from before the input box: p=disp:NAME&a=ARGS, p=WORKLOAD&n=N, p=random&n=N.
@@ -568,8 +636,9 @@ function fitContent() {
   if (x1 < x0) { x0 = 0; y0 = 0; x1 = L.w * S; y1 = L.h * S; }
   const pad = Math.max(S * 4, (x1 - x0) * 0.05); x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
   const r = cv.getBoundingClientRect();
-  view.s = Math.min((r.width - 30) / (x1 - x0), (r.height - 90) / (y1 - y0));
-  view.ox = (r.width - (x1 - x0) * view.s) / 2 - x0 * view.s; view.oy = (r.height - (y1 - y0) * view.s) / 2 + 25 - y0 * view.s;
+  const top = 50, bottom = 130;
+  view.s = Math.min((r.width - 30) / (x1 - x0), (r.height - top - bottom) / (y1 - y0));
+  view.ox = (r.width - (x1 - x0) * view.s) / 2 - x0 * view.s; view.oy = top + (r.height - top - bottom - (y1 - y0) * view.s) / 2 - y0 * view.s;
 }
 function refreshGarbage(force) {
   const now = performance.now(); if (!force && now - lastGarbage < 300) return; lastGarbage = now;
@@ -731,35 +800,39 @@ function draw() {
   for (const s of sites) {
     const e = V.pulse[s]; if (e === NONE) continue;
     const [x, y] = endPos(s, e);
-    ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.beginPath(); ctx.arc(x, y, S * 0.32, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.14)"; ctx.beginPath(); ctx.arc(x, y, S * 0.3, 0, 7); ctx.fill();
     ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(x, y, S * 0.13, 0, 7); ctx.fill();
   }
   ctx.globalCompositeOperation = "source-over";
-  // the last stepped move: its sites outlined, and an arrow for what moved
-  if (!playing) for (const ev of story) {
-    ctx.strokeStyle = "#d6a8ff"; ctx.lineWidth = lw(1.8);
-    for (const s of [ev[1], ev[2]]) { const [ox, oy] = siteOrigin(s); ctx.strokeRect(ox - 0.4, oy - 0.4, S + 0.8, S + 0.8); }
-    if ((ev[0] === 1 || ev[0] === 2) && ev[1] !== ev[2]) {
-      const [ax, ay] = siteOrigin(ev[1]), [bx, by] = siteOrigin(ev[2]);
-      arrow(ax + S / 2, ay + S / 2, bx + S / 2, by + S / 2);
+  // a clock stepped by hand: a faint arrow for each agent that stepped or traded places, a faint ring where a rule fired
+  if (!playing && showMoves && story.length) {
+    const arrows = new Path2D(), fired = new Path2D();
+    for (const [kind, s, t] of story) {
+      const [ax, ay] = siteOrigin(s), [bx, by] = siteOrigin(t);
+      if ((kind === 1 || kind === 2) && s !== t) arrow(arrows, ax + S / 2, ay + S / 2, bx + S / 2, by + S / 2);
+      if (kind === 2 && s !== t) arrow(arrows, bx + S / 2, by + S / 2, ax + S / 2, ay + S / 2);
+      if (kind === 5) { fired.moveTo(ax + S * 1.05, ay + S / 2); fired.arc(ax + S / 2, ay + S / 2, S * 0.55, 0, 7); }
     }
+    ctx.lineCap = "round"; ctx.lineWidth = lw(1);
+    ctx.strokeStyle = "rgba(200,170,255,0.4)"; ctx.stroke(arrows);
+    ctx.strokeStyle = "rgba(255,216,102,0.5)"; ctx.stroke(fired);
   }
-  // rewrites, as fading rings
+  // rewrites, as rings that fade (see afterRun)
   const now = performance.now(); let keep = 0;
+  ctx.lineWidth = lw(1.2);
   for (const b of bursts) {
-    const a = (now - b.t) / 700; if (a >= 1) continue; bursts[keep++] = b;
+    const a = (now - b.t) / b.life; if (a >= 1) continue; bursts[keep++] = b;
     const [ox, oy] = siteOrigin(b.s);
-    ctx.strokeStyle = `rgba(255,216,102,${(1 - a) * 0.9})`; ctx.lineWidth = lw(1.6);
-    ctx.beginPath(); ctx.arc(ox + S / 2, oy + S / 2, S * (0.6 + a * 2.2), 0, 7); ctx.stroke();
+    ctx.strokeStyle = `rgba(255,216,102,${(1 - a) * b.alpha})`;
+    ctx.beginPath(); ctx.arc(ox + S / 2, oy + S / 2, S * (0.5 + a * 1.3), 0, 7); ctx.stroke();
   }
   bursts.length = keep;
   pickPanel(false);
 }
-function arrow(ax, ay, bx, by) {
-  const a = Math.atan2(by - ay, bx - ax), h = S * 0.3;
-  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
-  ctx.lineTo(bx - h * Math.cos(a - 0.5), by - h * Math.sin(a - 0.5)); ctx.moveTo(bx, by); ctx.lineTo(bx - h * Math.cos(a + 0.5), by - h * Math.sin(a + 0.5));
-  ctx.stroke();
+function arrow(path, ax, ay, bx, by) {
+  const a = Math.atan2(by - ay, bx - ax), h = S * 0.22;
+  path.moveTo(ax, ay); path.lineTo(bx, by);
+  path.lineTo(bx - h * Math.cos(a - 0.5), by - h * Math.sin(a - 0.5)); path.moveTo(bx, by); path.lineTo(bx - h * Math.cos(a + 0.5), by - h * Math.sin(a + 0.5));
 }
 
 // ---- drawing in 3D (three.js) -------------------------------------------------------------------------
@@ -898,7 +971,7 @@ function draw3d() {
     }
     V3.wires.geometry.setAttribute("position", new T.Float32BufferAttribute(posv, 3));
     V3.wires.geometry.setAttribute("color", new T.Float32BufferAttribute(colv, 3));
-    // outlines: the selected site in blue, the last stepped move's sites in purple
+    // outlines: the selected site in blue, the picks' roots in pink; a faint segment for each agent that moved in a stepped clock
     const mp = [], mc = [];
     const outline = (s, rgb) => {
       const c = pos3(s), h = 0.5, hy = Math.min(0.5, V3.gap / 2);
@@ -907,7 +980,9 @@ function draw3d() {
     };
     if (pinned != null) outline(pinned, [0.34, 0.78, 1]);
     if (pk) for (const seat of PICK.lit) if (pk[seat] & 10 && visible(siteOf(seat))) outline(siteOf(seat), pk[seat] & 2 ? [1, 0.37, 0.82] : [1, 0.62, 0.9]);
-    if (!playing) for (const ev of story.slice(0, 40)) { outline(ev[1], [0.84, 0.66, 1]); if (ev[2] !== ev[1]) outline(ev[2], [0.84, 0.66, 1]); }
+    if (!playing && showMoves) for (const [kind, s, t] of story) if ((kind === 1 || kind === 2) && s !== t && visible(s)) {
+      mp.push(...pos3(s), ...pos3(t)); mc.push(0.42, 0.36, 0.55, 0.62, 0.52, 0.8);
+    }
     V3.marks.geometry.setAttribute("position", new T.Float32BufferAttribute(mp, 3));
     V3.marks.geometry.setAttribute("color", new T.Float32BufferAttribute(mc, 3));
     if (V3.refit) { V3.refit = false; fit3d(); }
@@ -943,8 +1018,14 @@ function fit3d() {
   V3.camera.far = Math.max(5000, span * 20); V3.camera.updateProjectionMatrix();
   V3.dirty = true;
 }
+const VIEWS = {
+  oblique: ["layers stacked", `<rect x="3" y="10" width="11" height="11" rx="1.5"/><path d="M7 6.5h10.5V17"/><path d="M11 3h10v10"/>`],
+  layers: ["layers side by side", `<rect x="2.5" y="6.5" width="8.5" height="11" rx="1.5"/><rect x="13" y="6.5" width="8.5" height="11" rx="1.5"/>`],
+  "3d": ["3D", `<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>`] };
 function setView(mode) {
-  viewMode = mode; $("viewMode").value = mode;
+  viewMode = mode;
+  $("viewMode").innerHTML = `<svg class="ico stroke" viewBox="0 0 24 24">${VIEWS[mode][1]}</svg>`;
+  $("viewMode").dataset.tip = `view: ${VIEWS[mode][0]} (V for the next)`;
   const is3 = mode === "3d";
   $("cv3").hidden = !is3; $("bar3d").hidden = !is3; cv.style.visibility = is3 ? "hidden" : "visible";
   if (L && mode === "layers") layoutLayers();
@@ -982,8 +1063,13 @@ function sentence(ev) {
 }
 function showStory() {
   const el = $("story");
-  if (!story.length) { el.hidden = true; return; }
+  if (!story.length) { el.hidden = true; $("storyline").textContent = ""; return; }
   el.hidden = false;
+  // In the dock, the clock in one line: how many of each kind of move.
+  const n = k => story.filter(e => k.includes(e[0])).length, parts = [];
+  for (const [k, one, many] of [[[5], "rewrite", "rewrites"], [[6, 7, 8], "garbage collection", "garbage collections"], [[9, 10], "demand", "demands"],
+      [[1], "step", "steps"], [[2], "exchange", "exchanges"], [[3, 4], "fold or flip", "folds and flips"]]) { const c = n(k); if (c) parts.push(`${c} ${c === 1 ? one : many}`); }
+  $("storyline").textContent = `clock ${fmt(stats()[1])}: ${parts.join(" · ")}`;
   // Rewrites first, then garbage and demand, then exchanges, steps and wire reshaping.
   const rank = [9, 4, 3, 6, 7, 0, 1, 1, 1, 2, 2];
   const shown = [...story].sort((x, y) => rank[x[0]] - rank[y[0]]).slice(0, 6).map(sentence).join("<br>");
@@ -1165,11 +1251,12 @@ function pickSeat(seat) {
   if (seat == null || E.pick_toggle(siteOf(seat), slotOf(seat)) < 0) return false;
   PICK.rev++; PICK.focus = null; PICK.focusSeats = [];
   pickSync(); pickPanel(true);
+  if (PICK.roots.length) setDetails(true);
   // The compiler knows every definition in scope by name: load it for the readback's names.
   if (!window.StrandsDisp) dispCompiler().then(() => pickPanel(true), () => {});
   return true;
 }
-function pickAt(cx, cy) { if (!pickSeat(agentAt(cx, cy))) banner("shift+click on an agent to pick the computation it heads"); }
+function pickAt(cx, cy) { if (!pickSeat(agentAt(cx, cy))) banner("no agent there to pick"); }
 function pickClear() { if (!L) return; E.pick_clear(); PICK.rev++; PICK.focus = null; PICK.focusSeats = []; pickSync(); pickPanel(true); }
 
 // Terms as the engine writes them: L, S(x), F(x,y), @(f,x), <x,y> a pair, ~(x) erased, #n=x shared, #n read
@@ -1398,7 +1485,7 @@ function pickPanel(force) {
   }
   const notes = PICK.notes.map(n => `<div class="pkn">${esc(n.say)}</div>`).join("");
   const key = blocks.length ? `<div class="note"><span style="color:var(--hot)">values</span> · <span style="color:#7fd0ff">known definitions</span> · <span style="color:#c4a8e8"><i>‹code›</i></span> · <span style="text-decoration:underline 2px #56c8ff;text-underline-offset:3px">being computed</span> · <span style="color:#ff8ad8">x₁</span> shared · click part of a term to light its agents</div>` : "";
-  const html = notes + blocks.join("") + (key || `<div class="note">Hold <kbd>shift</kbd> and click an agent to pick the computation it heads: the agents it depends on light up, and what it means now is written here as disp. Picks follow their agents as they move and rewrite. <kbd>Esc</kbd> lets go.</div>`);
+  const html = notes + blocks.join("") + (key || `<div class="note">Nothing picked: shift+click an agent to read what it computes.</div>`);
   if (html !== PICK.html) { $("pick").innerHTML = html; PICK.html = html; }
 }
 $("pick").addEventListener("pointerdown", e => {
@@ -1450,10 +1537,15 @@ function frame() {
   if (pinned != null && L) { const tip = $("tip"); if (!tip.hidden) tip.innerHTML = tipHTML(pinned); }
   requestAnimationFrame(frame);
 }
-// After clocks ran (on either side): the rewrites to flash, a point on the chart, the speed.
+// After clocks ran (on either side): the rewrites to flash, a point on the chart, the speed. A
+// rewrite's ring lasts about four clocks of the run as shown, at most 600 ms, so running fast it is
+// gone in a frame or two; however many fire at once, together they are about as bright as a dozen.
 function afterRun() {
-  const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now();
-  for (let i = 0; i < fl.length && bursts.length < 600; i++) bursts.push({ s: fl[i], t: now });
+  const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now(), r = rate();
+  const life = Math.max(60, Math.min(600, r ? 4000 / r : 600)), room = 200 - bursts.length, every = Math.max(1, Math.ceil(fl.length / Math.max(1, room)));
+  for (let i = 0; i < fl.length && bursts.length < 200; i += every) bursts.push({ s: fl[i], t: now, life });
+  const alpha = 0.8 * Math.min(1, 12 / Math.max(1, bursts.length));
+  for (const b of bursts) b.alpha = Math.min(b.alpha ?? 1, alpha);
   E.fire_log_clear();
   const st = stats();
   if (!hist.length || st[1] !== hist[hist.length - 1].sw) { hist.push({ sw: st[1], fires: st[2], strands: st[7], t: now }); if (hist.length > 3000) hist.splice(0, 1500); }
@@ -1487,7 +1579,7 @@ async function setEngine(want, why) {
     if (!gpuCode) return setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
     const code = gpuCode;
     if (!G || G.code !== code) {
-      $("engine").disabled = true; $("sEngine").textContent = "compiling the GPU kernels…";
+      $("engine").disabled = true; $("sEngine").textContent = "compiling the GPU kernels…"; banner("compiling the GPU kernels…");
       try {
         G?.kernels.device.destroy();
         G = { code, kernels: await StrandsGPU.open(code), grid: null, busy: false, load: 0, at: -1, out: [], gen: 0, latency: undefined,
@@ -1498,7 +1590,8 @@ async function setEngine(want, why) {
     }
     onGpu = true; dropGpu();
   } else if (want === "cpu") { onGpu = false; dropGpu(); }
-  $("engine").value = onGpu ? "gpu" : "cpu";
+  $("engine").classList.toggle("on", onGpu); $("engine").setAttribute("aria-pressed", onGpu);
+  $("engine").dataset.tip = onGpu ? "running on the GPU; click for the CPU (G)" : "running on the CPU; click for the GPU (G)";
   location.hash = location.hash.replace(/&gpu=1/, "") + (onGpu ? "&gpu=1" : "");
   if (why) banner(why, true);
   panel(true);
@@ -1594,16 +1687,16 @@ function panel(force) {
   $("sWalk").textContent = `${fmt(st[12])} · ${fmt(st[13])}`;
   $("sPulse").textContent = fmt(st[14]); $("sExtent").textContent = fmt(st[15]); $("sGc").textContent = fmt(st[16]);
   chart();
-  const badge = $("badge");
-  if (!finished) { badge.className = "badge run"; badge.textContent = playing ? "RUNNING" : "PAUSED"; $("decoded").textContent = running ? `${running.call} = …` : ""; $("answer").textContent = ""; $("verdict").textContent = ""; return; }
+  const badge = $("badge"), work = `${fmt(st[2])} rewrites` + (r ? ` · ${fmt(r)} clocks/s` : "") + (onGpu ? " on the GPU" : "");
+  if (!finished) { badge.className = ""; badge.textContent = `${playing ? "running" : "paused"} · ${work}`; $("decoded").textContent = running ? `${running.call} = …` : ""; $("answer").textContent = ""; $("verdict").textContent = ""; return; }
   const ans = text(E.strands_answer());
   if (oracleText === null) oracleText = text(E.strands_oracle(200000));
   const ok = oracleText === "" ? null : ans === oracleText;
-  badge.className = "badge " + (ok === false ? "bad" : cleaned ? "ok" : "run");
-  badge.textContent = ok === false ? "WRONG ANSWER" : cleaned
-    ? (garbageCount ? `ANSWER IN ${fmt(answerClock)} CLOCKS · ${garbageCount} GARBAGE LEFT`
-      : settled ? `DONE in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}` : `ANSWER AT ${fmt(answerClock)} CLOCKS · CONTRACTING`)
-    : `ANSWER IN at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
+  badge.className = ok === false ? "bad" : settled ? "ok" : "";
+  badge.textContent = ok === false ? "wrong answer" : cleaned
+    ? (garbageCount ? `answer in ${fmt(answerClock)} clocks · ${garbageCount} garbage left`
+      : settled ? `done in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}` : `answer at ${fmt(answerClock)} clocks · contracting (temperature ${E.strands_temp().toFixed(2)})`)
+    : `answer in at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
   if (running) { $("decoded").textContent = `${running.call} = ${decodeAs(running.kind, parseTree(ans))}`; }
   else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
   $("answer").textContent = ans;
@@ -1654,14 +1747,31 @@ window.addEventListener("keyup", e => { if (e.key === "Shift") PICK.shift = fals
 window.addEventListener("blur", () => { PICK.shift = false; });
 cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   const s2 = Math.max(0.05, Math.min(60, view.s * Math.exp(-e.deltaY * 0.0016))); view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2; }, { passive: false });
-function setPlaying(p) { playing = p && !settled; if (!playing) dropGpu(); $("play").textContent = playing ? "❚❚" : "▶"; if (playing) { story = []; showStory(); } V3.dirty = true; }
+const PLAY = `<svg class="ico" viewBox="0 0 24 24"><path d="M8 5.5 L18.5 12 L8 18.5 Z"/></svg>`;
+const PAUSE = `<svg class="ico" viewBox="0 0 24 24"><rect x="7.5" y="5.5" width="3.2" height="13" rx="0.8"/><rect x="13.3" y="5.5" width="3.2" height="13" rx="0.8"/></svg>`;
+function setPlaying(p) {
+  playing = p && !settled; if (!playing) dropGpu();
+  $("play").innerHTML = playing ? PAUSE : PLAY; $("play").setAttribute("aria-label", playing ? "pause" : "play");
+  if (playing) { story = []; showStory(); }
+  V3.dirty = true;
+}
+/// The details drawer, opened by a pick or the details button (D).
+function setDetails(open) {
+  if ($("side").hidden === !open) return;
+  $("side").hidden = !open; $("details").classList.toggle("on", open); $("details").setAttribute("aria-pressed", open);
+  resize(); if (L) { panel(true); pickPanel(true); }
+}
+let showMoves = true;
 $("play").onclick = () => setPlaying(!playing);
 $("step").onclick = e => stepOnce(e.shiftKey);
+$("next").onclick = () => stepOnce(true);
 $("back").onclick = e => tlBack(e.shiftKey);
+$("prev").onclick = () => tlBack(true);
 $("time").oninput = () => tlSeek(+$("time").value);
-$("end").onclick = () => { $("speed").value = 100; speedLabel(); setPlaying(true); };
 $("reset").onclick = () => load();
-$("load").onclick = () => load(true);
+$("moves").onclick = () => { showMoves = !showMoves; $("moves").classList.toggle("on", showMoves); $("moves").setAttribute("aria-pressed", showMoves); V3.dirty = true; };
+$("details").onclick = () => setDetails($("side").hidden);
+$("closeSide").onclick = () => setDetails(false);
 $("src").oninput = () => { syncUI(); openMenu(true); };
 $("src").onclick = () => openMenu(true);
 $("src").onblur = () => openMenu(false);
@@ -1673,25 +1783,27 @@ $("src").onkeydown = e => {
     $("src").value = entries[i].text; syncUI(); showPicked(i);
   } else if (e.key === "Escape" || e.key === "Enter") openMenu(false);
 };
-$("pick").onmousedown = $("menu").onmousedown = e => e.preventDefault();
-$("pick").onclick = () => { $("src").focus(); openMenu($("menu").hidden); };
+$("drop").onmousedown = $("menu").onmousedown = e => e.preventDefault();
+$("drop").onclick = () => { $("src").focus(); openMenu($("menu").hidden); };
 $("menu").onclick = e => { const o = e.target.closest(".opt"); if (o) { choose(+o.dataset.i); openMenu(false); } };
 $("speed").oninput = speedLabel;
-$("viewMode").onchange = () => setView($("viewMode").value);
-$("engine").onchange = () => setEngine($("engine").value);
+const nextView = () => { const modes = ["oblique", "layers", "3d"]; setView(modes[(modes.indexOf(viewMode) + 1) % 3]); };
+$("viewMode").onclick = nextView;
+$("engine").onclick = () => setEngine(onGpu ? "cpu" : "gpu");
 $("gap3d").oninput = () => { V3.gap = +$("gap3d").value / 10; fit3d(); };
 $("layer3d").onchange = () => { V3.dirty = true; };
 $("fit3d").onclick = () => fit3d();
 $("follow3d").onchange = () => fit3d();
-function speedLabel() { const v = proposalsPerFrame(); $("speedv").textContent = v === Infinity ? "max speed" : `${fmt(v)} proposals/frame`; }
+function speedLabel() { const v = proposalsPerFrame(); $("speedbox").dataset.tip = v === Infinity ? "speed: as fast as it goes" : `speed: ${fmt(v)} proposals a frame`; }
 window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" && e.target.type !== "range") { if (e.key === "Enter") load(true); return; }
-  if (e.target.tagName === "SELECT") return;
+  if (e.target.tagName === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
   else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(e.shiftKey); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); tlBack(e.shiftKey); }
   else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; V3.dirty = true; pickClear(); }
-  else if (e.key === "v" || e.key === "V") { const modes = ["oblique", "layers", "3d"]; setView(modes[(modes.indexOf(viewMode) + 1) % 3]); }
+  else if (e.key === "v" || e.key === "V") nextView();
+  else if (e.key === "d" || e.key === "D") setDetails($("side").hidden);
   else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
   else if (e.key === "g" || e.key === "G") setEngine(onGpu ? "cpu" : "gpu");
 });
@@ -1701,14 +1813,13 @@ let bt = 0; function banner(m, bad) { const b = $("banner"); b.textContent = m; 
   const bytes = Uint8Array.from(atob(window.STRANDS_WASM), c => c.charCodeAt(0));
   E = (await WebAssembly.instantiate(bytes, {})).instance.exports;
   catalog = JSON.parse(text(E.catalog()));
-  populate(); resize(); speedLabel();
-  viewMode = $("viewMode").value;
-  if (!navigator.gpu) { $("engine").options[1].disabled = true; $("engine").title = "this browser has no WebGPU (Chrome on Linux: chrome://flags/#enable-unsafe-webgpu)"; }
+  populate(); resize(); speedLabel(); setPlaying(false);
+  if (!navigator.gpu) { $("engine").disabled = true; $("engine").dataset.tip = "this browser has no WebGPU (Chrome on Linux: chrome://flags/#enable-unsafe-webgpu)"; }
   const q = new URLSearchParams(location.hash.slice(1));
   await load(); setView(viewMode);
   if (q.get("gpu") === "1") await setEngine("gpu");
   if (q.get("play") !== "0") setPlaying(true);
   requestAnimationFrame(frame);
-})().catch(err => { $("badge").className = "badge bad"; $("badge").textContent = "ENGINE FAILED"; $("verdict").textContent = String(err); });
+})().catch(err => { $("badge").className = "bad"; $("badge").textContent = "the engine failed"; $("verdict").textContent = String(err); });
 </script>
 </body></html>
