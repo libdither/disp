@@ -15,7 +15,12 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   corner and round buttons in the right: the view (a pop-out of the four views and the segments
   and moves toggles, as the tree visualizer's options pop out), the GPU and the details.
   Leaf, stem and fork are greys: colour is kept for applications and the agents that carry them
-  out. Everything else (picked
+  out, and an agent's shape says what kind it is (`player/shapes.js`, the same in every view and
+  the legend): values are triangles with a dark hole for each child, applications disks (a
+  suspended one hollow), choices diamonds, the arms of a choice a pill (an unpair splits it in
+  two), a duplicator a Y, an eraser a ×, a normalizer a hexagon, the root a ring around a dot; the
+  principal port is where the shape interacts, on top or, in the graph view, toward its wire.
+  Small on screen, holes go first, then shapes become squares. Everything else (picked
   terms, numbers, legend, how it works) is in a details drawer, `D`, shut until wanted. Rewrites
   flash for about four clocks of the run as shown, at most 0.6 s, and the more fire at once the
   fainter each is, so a fast run is not buried in rings.
@@ -33,8 +38,9 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   term the root computes. Every application splits its colour among its function and arguments,
   and applications nested in those split theirs again (`net.js`, from the abstract net that
   `readback.rs` `wires` hands over), so each part of the term shows up as a region of the net.
-  Values (code and data) stay grey, only tinted toward their part's hue. With something picked, the segments are the pick's, and its term in the details is tinted to
-  match.
+  Values (code and data) stay grey, only tinted toward their part's hue; what kind an agent is,
+  its shape says. With something picked, the segments are the pick's, and its term in the details
+  is tinted to match.
 - **Reduction state:** shift+click an agent to pick the computation it heads (hold shift to
   preview): it and every agent feeding its inputs are lit in pink, everything else dimmed, and
   the details drawer opens to write what it means now as disp (Reading back, below). Picks follow their
@@ -45,15 +51,18 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   - *layers stacked*: compact, but layers overlap;
   - *layers side by side*: exact, with every site easy to click;
   - *3D*: three.js, the lattice as it is: each layer over a faint labelled floor, each wire one
-    path in its segment's colour, agents a few pixels wide however far away. It opens fitted at a
-    slant across the net's long side (`F` again); drag to orbit, right-drag to pan, the wheel
+    path in its segment's colour, agents as solids of their kind's shape (pyramids for values,
+    balls for applications, octahedra for choices, a ring for a suspension, a Y, a ×, the root a
+    ring around a ball; one instanced mesh a kind) a few pixels wide however far away. It opens
+    fitted at a slant across the net's long side (`F` again); drag to orbit, right-drag to pan, the wheel
     zooms toward the pointer; spread or isolate layers, or follow the action.
     `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1 with its wide lines, MIT).
   - *graph* (`player/graph.js`): the lattice left out, only who is wired to whom. Springs along
     wires, a push between nodes that crowd, and a pull that hangs what feeds an input below its
     reader lay the net out so the term reads as a tree from the root down. Nodes keep their places
-    as the run plays: a new agent starts where its neighbours are. A gold wire with a diamond joins
-    two agents about to rewrite.
+    as the run plays: a new agent starts where its neighbours are. A gold wire with a spark joins
+    two agents about to rewrite; a value, pair, unpair or duplicator turns its tip to its principal
+    wire.
 - **CPU or GPU** (the chip toggle, or `G`): the GPU runs the same design through
   WebGPU (below), and a run moves between the two at any clock as it is.
 - **Going back** (the time bar, `◂` or `←` one clock, `⏮` or `shift ←` to the last rewrite): every move is a hash

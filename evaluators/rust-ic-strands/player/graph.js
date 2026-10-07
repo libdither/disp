@@ -268,6 +268,13 @@ function graphAgentAt(cx, cy) {
   return null;
 }
 
+/// Which way node i's principal wire leaves it, as a unit vector (up if it has none).
+function graphFacing(i) {
+  const { x, y } = GRAPH, f = NET.far[3 * i], j = f >> 2;
+  if (f < 0 || j === i) return [0, -1];
+  const dx = x[j] - x[i], dy = y[j] - y[i], d = Math.hypot(dx, dy);
+  return d > 1e-6 ? [dx / d, dy / d] : [0, -1];
+}
 /// A colour (r, g, b from 0 to 1) at opacity a over the page's background, as an opaque css colour.
 const graphMix = (c, a) => `rgb(${Math.round(255 * c[0] * a + 11 * (1 - a))},${Math.round(255 * c[1] * a + 14 * (1 - a))},${Math.round(255 * c[2] * a + 20 * (1 - a))})`;
 const graphRgb = hex => [1, 3, 5].map(k => parseInt(hex.slice(k, k + 2), 16) / 255);
@@ -293,7 +300,7 @@ function drawGraph() {
   // Everything is drawn opaque, its colour mixed with the background beforehand: a path of
   // thousands of lines drawn see-through is many times slower. How faint, by how much it matters:
   // 0 as it is, 1 garbage, 2 garbage in a pick, 3 outside the picks.
-  const KIND = GRAPH.kind ??= COLOR.map(graphRgb), GREY = graphRgb("#4a5465"), WIRE = graphRgb("#7896be");
+  const KIND = GRAPH.kind ??= Array.from({ length: 256 }, (_, t) => graphRgb(kindColor(t))), GREY = graphRgb("#4a5465"), WIRE = graphRgb("#7896be");
   const PINKS = [graphRgb(PINK), graphRgb("#ff9be6")], BLUE = graphRgb("#56c8ff"), ORANGE = graphRgb("#ffa94d");
   const WIRE_A = [1, 0.3, 0.6, 0.12], NODE_A = [1, 0.28, 0.6, 0.14];
   const tones = new Map();
@@ -341,26 +348,28 @@ function drawGraph() {
     if (((flag[w] & 2) && wanted(i)) || ((flag[w] & 4) && wanted(j))) line(into(tone(-40, BLUE, lv, lv === 3 ? 0.3 : 0.9), 2 + a, 2), i, j);
     if (atPinned.has(i) || atPinned.has(j)) { line(into("#ffaa46", 5, 2.4), i, j); farEnds.add(atPinned.has(i) ? j : i); }
   }
-  // active pairs, about to rewrite: the wire between their principal ports thick and gold, a diamond in its middle
+  // active pairs, about to rewrite: the wire between their principal ports thick and gold, a spark in its middle
   for (let w = 0; w < wires; w++) {
     if (!(flag[w] & 1)) continue;
     const i = wa[w], j = wb[w];
     if (!shown(i) && !shown(j)) continue;
     const a = pk && !(pk[seatOf(i)] || pk[seatOf(j)]) ? 0.2 : gone(i) && gone(j) ? 0.4 : 1, gold = graphMix([1, 0.85, 0.4], a);
     line(into(gold, 6 + a, 3), i, j);
-    const mx = (x[i] + x[j]) / 2, my = (y[i] + y[j]) / 2, h = rad * 0.75, p = into(gold, 7 + a, 0);
-    p.moveTo(mx, my - h); p.lineTo(mx + h, my); p.lineTo(mx, my + h); p.lineTo(mx - h, my); p.closePath();
+    partInto(into(gold, 7 + a, 0), SPARK, (x[i] + x[j]) / 2, (y[i] + y[j]) / 2, rad, 0, -1, false);
   }
   flush();
-  // nodes, in segment colour (or by kind), garbage faint, with picks the rest fainter; a pixel or
-  // two across, squares, which look the same and draw much faster
-  const level = new Uint8Array(n), visible = [], round = view.s * rad > 2.5, squares = new Map();
+  // nodes, each in its kind's shape (shapes.js), one with a tip (a value, pair, unpair, duplicator)
+  // turned to point it along its principal wire; in segment colour (or by kind), garbage faint, with
+  // picks the rest fainter; a pixel or two across, squares, which look the same and draw much faster
+  const level = new Uint8Array(n), visible = [], round = view.s * rad > 2.5, holes = view.s * rad > 3.5, squares = new Map();
+  // a value's holes, one for each child, filled dark over the nodes
+  const marks = into("#0b0e14", 2, 0);
   for (let i = 0; i < n; i++) {
     if (!shown(i)) continue;
     visible.push(i);
     const b = pk ? pk[seatOf(i)] : 0, lv = pk && !b ? 3 : gone(i) ? (b ? 2 : 1) : 0, style = tone(keyOf(i), colourOf(i), 4 + lv, NODE_A[lv]);
     level[i] = lv;
-    if (round) { const p = into(style, NODE_A[lv], 0); p.moveTo(x[i] + rad, y[i]); p.arc(x[i], y[i], rad, 0, 7); }
+    if (round) { const t = NET.tag[i], [ux, uy] = shapeOf(t).turn ? graphFacing(i) : [0, -1]; shapeInto(into(style, NODE_A[lv], 0), t, x[i], y[i], rad, ux, uy, holes, marks); }
     else { let q = squares.get(style); if (!q) squares.set(style, q = { z: NODE_A[lv], at: [] }); q.at.push(i); }
   }
   flush();
@@ -382,21 +391,14 @@ function drawGraph() {
     if (farEnds.has(i)) ring(into("#ffaa46", 3, 1.4), i, 1.7);
   }
   flush();
-  // close up, each node's principal port on its rim, toward the wire it is on, and its letter
+  // close up, each node's principal port on its rim, toward the wire it is on
   if (view.s * rad > 3.5) {
-    const labels = view.s * rad > 6;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const dots = NODE_A.map(() => new Path2D());
     for (const i of visible) {
-      ctx.globalAlpha = NODE_A[level[i]];
-      const f = NET.far[3 * i], j = f >> 2, ang = f >= 0 && j !== i ? Math.atan2(y[j] - y[i], x[j] - x[i]) : -Math.PI / 2;
-      ctx.fillStyle = "#0b0e14"; ctx.beginPath(); ctx.arc(x[i] + rad * Math.cos(ang), y[i] + rad * Math.sin(ang), rad * 0.32, 0, 7); ctx.fill();
-      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = lw(0.7); ctx.stroke();
-      if (labels) {
-        const lab = LABEL[TAGS[NET.tag[i]]];
-        ctx.fillStyle = "#0b0e14"; ctx.font = `bold ${rad * (lab.length > 1 ? 0.8 : 1.05)}px ui-monospace,monospace`;
-        ctx.fillText(lab, x[i], y[i] + rad * 0.12);
-      }
+      const t = NET.tag[i], [ux, uy] = graphFacing(i), k = rad * (shapeOf(t).turn ? rimAt(t, -Math.PI / 2) : rimAt(t, Math.atan2(uy, ux)));
+      dots[level[i]].moveTo(x[i] + k * ux + rad * 0.24, y[i] + k * uy); dots[level[i]].arc(x[i] + k * ux, y[i] + k * uy, rad * 0.24, 0, 7);
     }
+    dots.forEach((p, lv) => { ctx.globalAlpha = NODE_A[lv]; ctx.fillStyle = "#0b0e14"; ctx.fill(p); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = lw(0.7); ctx.stroke(p); });
     ctx.globalAlpha = 1;
   }
   // rewrites are not flashed here; let their rings run out

@@ -123,6 +123,7 @@
   #answer { word-break:break-all; color:var(--fg-faint); font:11px var(--mono); max-height:64px; overflow:auto; margin-top:8px; }
   #answer:not(:empty)::before { content:"answer as a tree  "; font:600 10px var(--body); letter-spacing:.08em; text-transform:uppercase; }
   .legend { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:3px 12px; font-size:11.5px; }
+  svg.kind { display:inline-block; vertical-align:-3px; margin-right:5px; }
   .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
   canvas.chart { width:100%; height:80px; display:block; margin-top:8px; background:var(--bg-elev); border-radius:8px; }
   .how p { margin:6px 0; } .how b { color:var(--fg); font-weight:600; }
@@ -290,7 +291,16 @@
         <i>Graph</i> leaves the lattice out: each agent is a node and each wire a line, laid out by springs along
         wires, a push between nodes that crowd, and a pull that hangs what feeds an input below its reader, so the
         term reads as a tree from the root down. Nodes keep their places as the run plays, and a gold wire with a
-        diamond joins two agents about to rewrite. Since only rewrites change it, a step there is one rewrite.</p>
+        spark joins two agents about to rewrite. Since only rewrites change it, a step there is one rewrite.</p>
+      <p><b>Shapes.</b> An agent's shape says what kind it is, so its colour is free to say where it is in the term.
+        Values are triangles △, with a dark hole for each child (a stem one, a fork two); applications are disks, a
+        suspended one hollow; choices are diamonds, triage whole and its second dispatch split in two; the arms of a
+        choice travel as a pill, which an unpair splits in two; a duplicator is a Y, an eraser a ×, a normalizer a
+        hexagon and the root a ring around a dot. The dot with a white rim is the principal port, where an agent
+        interacts: on top in the lattice views, and in the graph view toward its wire, a value, pair, unpair or
+        duplicator turning to point its tip there. In 3D the same families are solids: pyramids (a knob under one
+        for each child), balls, a ring, octahedra, a capsule, a Y, a ×, a hexagonal nut. Small on screen, holes go
+        first, then shapes become squares.</p>
       <p><b>Segments.</b> The term the root computes is a tree of applications. With segments on, an application's
         function and each of its arguments get colours of their own, and an application nested inside one of them
         splits that colour again, so each part of the term shows as a region of the net. Hues go to the parts by how
@@ -312,6 +322,7 @@
 <script src="gpu.js"></script>
 <script src="programs.js"></script>
 <script src="three.min.js"></script>
+<script src="shapes.js"></script>
 <script src="timeline.js"></script>
 <script src="net.js"></script>
 <script src="graph.js"></script>
@@ -323,7 +334,6 @@ const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "
 const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1];
 const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage", Sel: "second dispatch",
   Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root" };
-const LABEL = { L: "L", S: "S", F: "F", P: "P", Pair: "⟨⟩", A: "A", T1: "T", Sel: "σ", Unp: "U", Dn: "δ", Eps: "ε", Nrm: "N", Out: "⊙" };
 const DESC = {
   L: "a leaf △, the simplest value", S: "a stem △x: a value with one child", F: "a fork △xy: a value with two children",
   P: "a suspended application f a: it becomes a value once something needs it", Pair: "a pair carrying the arms of a pending choice",
@@ -348,6 +358,9 @@ const MEANING = {
   "Nrm·F": "keep the fork; normalize both children", "Nrm·P": "force it, then keep normalizing" };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
 const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff"];
+const kindColor = t => COLOR[t] ?? "#8a96a8";
+/// A kind as its icon (shapes.js) and its name.
+const kindHTML = t => `${shapeSVG(t, kindColor(t))}${NAMES[TAGS[t]] ?? `agent of kind ${t}`}`;
 const isConsumer = t => t >= 6 && t <= 12;
 const isProducer = t => t >= 1 && t <= 5;
 // Which ports are outputs (sources): a producer's principal, a computation's result, a duplicator's or unpair's two parts.
@@ -452,13 +465,13 @@ function populate() {
   let group = "";
   $("menu").innerHTML = entries.map((e, i) => (e.group !== group ? `<div class="grp">${group = e.group}</div>` : "")
     + `<div class="opt" data-i="${i}" title="${e.desc}">${e.text}<span>${e.desc}</span></div>`).join("");
-  $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span><span class="sw" style="background:${COLOR[t]}"></span>${LABEL[TAGS[t]]} ${NAMES[TAGS[t]]}</span>`).join("")
+  $("legend").innerHTML = TAGS.map((_, t) => t ? `<span>${kindHTML(t)}</span>` : "").join("")
     + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
     + `<span><span class="sw" style="background:none;border:2px solid #ffa94d"></span>called value</span><span><span class="sw" style="background:rgba(255,170,80,0.35)"></span>demand field</span>`
     + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
     + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;color:#b89ad8;width:auto;font-size:11px">→</span>a move in a stepped clock</span>`
     + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`
-    + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, not its kind; values (L, S, F) stay grey, tinted toward their part</span>`;
+    + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, and its shape what kind it is; values stay grey, tinted toward their part</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
   if (q.get("view")) viewMode = q.get("view");
@@ -777,13 +790,16 @@ function draw() {
   ctx.strokeStyle = `rgba(120,150,190,${(segs ? 0.25 : 0.55) * dim})`; ctx.lineWidth = lw(1.1); ctx.stroke(strands);
   if (detail) { ctx.strokeStyle = `rgba(150,175,210,${(segs ? 0.2 : 0.45) * dim})`; ctx.lineWidth = lw(0.9); ctx.stroke(board); }
   if (segs) for (const [css, path] of segWires(V)) { ctx.strokeStyle = css; ctx.lineWidth = lw(1.3); ctx.stroke(path); }
-  // in side-by-side panels, a strand to the layer above or below shows as a small arrowhead
+  // in side-by-side panels, a strand to the layer above or below shows as a small chevron, open so it
+  // is not taken for a value's triangle
+  const chevrons = [new Path2D(), new Path2D()];
   for (const [s, e, f] of updown) {
-    const [x, y] = endPos(s, e), h = S * 0.12;
-    ctx.fillStyle = f === 4 ? "#7fd0ff" : "#ffb070"; ctx.beginPath();
-    if (f === 4) { ctx.moveTo(x, y - h); ctx.lineTo(x - h, y + h); ctx.lineTo(x + h, y + h); } else { ctx.moveTo(x, y + h); ctx.lineTo(x - h, y - h); ctx.lineTo(x + h, y - h); }
-    ctx.fill();
+    const [x, y] = endPos(s, e), h = S * 0.1, d = f === 4 ? h / 2 : -h / 2, p = chevrons[f - 4];
+    p.moveTo(x - h, y + d); p.lineTo(x, y - d); p.lineTo(x + h, y + d);
   }
+  ctx.lineJoin = "round"; ctx.lineWidth = lw(1.2);
+  ctx.strokeStyle = "#7fd0ff"; ctx.stroke(chevrons[0]); ctx.strokeStyle = "#ffb070"; ctx.stroke(chevrons[1]);
+  ctx.lineJoin = "miter";
   // the principal wire of every wanted reader, followed end to end
   const hot = new Path2D();
   for (const s of V.live) for (let k = 0; k < L.ks; k++) {
@@ -825,30 +841,43 @@ function draw() {
     const [ox, oy] = siteOrigin(hover);
     ctx.strokeStyle = "rgba(200,215,235,0.5)"; ctx.lineWidth = lw(1); ctx.strokeRect(ox + 0.3, oy + 0.3, S - 0.6, S - 0.6);
   }
-  // agents, and rings around the picked ones (in a pick, the pointer's preview, the part clicked in the panel, roots)
-  const labels = view.s * rad > 6, rings = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
-  for (const s of sites) for (let k = 0; k < L.ks; k++) {
-    const t = V.tags[s * L.ks + k]; if (!t) continue;
-    const [x, y] = slotPos(s, k), b = pk ? pk[s * L.ks + k] : 0;
-    ctx.globalAlpha = pk && !b ? 0.14 : dead(s, k) ? (b ? 0.6 : 0.28) : 1;
-    ctx.fillStyle = segs ? toneAt(s * L.ks + k)?.css ?? "#4a5465" : COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
-    if (V.want[s * L.ks + k]) { ctx.strokeStyle = isConsumer(t) ? "#56c8ff" : "#ffa94d"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
-    if (b && rad * view.s > 1 && !(segs && !(b & 26))) {
-      const ring = rings[b & 16 ? 2 : b & 3 ? 0 : 1];
-      ring.moveTo(x + rad * 1.2, y); ring.arc(x, y, rad * 1.2, 0, 7);
-      if (b & 10) { rings[3].moveTo(x + rad * 1.9, y); rings[3].arc(x, y, rad * 1.9, 0, 7); }
+  // agents, each in its kind's shape (shapes.js), batched by colour a layer at a time; a pixel or so
+  // across, squares; rings around the wanted, and around the picked (in a pick, the pointer's
+  // preview, the part clicked in the panel, roots)
+  const px = view.s * rad, holes = px > 3.5, outline = px > 3, rings = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
+  const fills = new Map(), wants = new Map(), ports = new Map(), plane = L.w * L.h;
+  const into = (m, css, a) => { const key = `${css}|${a}`; let b = m.get(key); if (!b) m.set(key, b = { css, a, path: new Path2D(), marks: new Path2D() }); return b; };
+  const flush = () => {
+    for (const b of fills.values()) {
+      ctx.globalAlpha = b.a; ctx.fillStyle = b.css; ctx.fill(b.path);
+      if (outline) { ctx.strokeStyle = "#0b0e14"; ctx.lineWidth = lw(0.8); ctx.stroke(b.path); }
+      if (holes) { ctx.fillStyle = "#0b0e14"; ctx.fill(b.marks); }
     }
-    if (detail) {
-      const [px, py] = portPos(s, k, 0);
-      ctx.fillStyle = "#0b0e14"; ctx.beginPath(); ctx.arc(px, py, rad * 0.32, 0, 7); ctx.fill();
-      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = lw(0.7); ctx.stroke();
-    }
-    if (labels) {
-      const lab = LABEL[TAGS[t]];
-      ctx.fillStyle = "#0b0e14"; ctx.font = `bold ${rad * (lab.length > 1 ? 0.8 : 1.05)}px ui-monospace,monospace`;
-      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(lab, x, y + rad * 0.12);
+    ctx.lineWidth = lw(1.4);
+    for (const b of wants.values()) { ctx.globalAlpha = b.a; ctx.strokeStyle = b.css; ctx.stroke(b.path); }
+    for (const b of ports.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = "#0b0e14"; ctx.fill(b.path); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = lw(0.7); ctx.stroke(b.path); }
+    fills.clear(); wants.clear(); ports.clear();
+  };
+  let layer = -1;
+  for (const s of sites) {
+    // stacked, a layer covers the ones under it
+    if (viewMode === "oblique" && Math.floor(s / plane) !== layer) { flush(); layer = Math.floor(s / plane); }
+    for (let k = 0; k < L.ks; k++) {
+      const seat = s * L.ks + k, t = V.tags[seat]; if (!t) continue;
+      const [x, y] = slotPos(s, k), b = pk ? pk[seat] : 0, a = pk && !b ? 0.14 : dead(s, k) ? (b ? 0.6 : 0.28) : 1;
+      const fill = into(fills, segs ? toneAt(seat)?.css ?? "#4a5465" : kindColor(t), a);
+      if (px < 1.5) fill.path.rect(x - rad, y - rad, 2 * rad, 2 * rad); else shapeInto(fill.path, t, x, y, rad, 0, -1, holes, fill.marks);
+      if (V.want[seat]) { const w = into(wants, isConsumer(t) ? "#56c8ff" : "#ffa94d", a).path; w.moveTo(x + rad * 1.45, y); w.arc(x, y, rad * 1.45, 0, 7); }
+      if (b && px > 1 && !(segs && !(b & 26))) {
+        const ring = rings[b & 16 ? 2 : b & 3 ? 0 : 1];
+        ring.moveTo(x + rad * 1.2, y); ring.arc(x, y, rad * 1.2, 0, 7);
+        if (b & 10) { rings[3].moveTo(x + rad * 1.9, y); rings[3].arc(x, y, rad * 1.9, 0, 7); }
+      }
+      // the principal port, on top of the shape
+      if (detail) { const p = into(ports, "", a).path, py = y - rad * rimAt(t, -Math.PI / 2); p.moveTo(x + rad * 0.24, py); p.arc(x, py, rad * 0.24, 0, 7); }
     }
   }
+  flush();
   ctx.globalAlpha = 1;
   if (pk) [[PINK, 1.1], ["rgba(255,155,230,0.8)", 1.1], ["#ffffff", 1.6], [PINK, 2]].forEach(([c, w], i) => { ctx.strokeStyle = c; ctx.lineWidth = lw(w); ctx.stroke(rings[i]); });
   for (const far of ends) {
@@ -898,9 +927,10 @@ function arrow(path, ax, ay, bx, by) {
 
 // ---- drawing in 3D (three.js) -------------------------------------------------------------------------
 // Lattice x and y lie flat (world x and z) and the layers stack upward, V3.gap apart. Each wire is one
-// path in the colour of the segment whose output it carries, agents keep a few pixels of size however
-// far away, and under each layer a faint floor covers the 4×4 blocks of sites it uses.
-const V3 = { ready: false, dirty: true, fitted: false, follow: false, moved: true, key: "", builtAt: 0, cost: 0, gap: 3, cx: 0, cy: 0 };
+// path in the colour of the segment whose output it carries, agents (each kind a solid of its own,
+// shapes.js) keep a few pixels of size however far away, and under each layer a faint floor covers
+// the 4×4 blocks of sites it uses.
+const V3 = { ready: false, dirty: true, fitted: false, follow: false, moved: true, key: "", builtAt: 0, cost: 0, gap: 3, cx: 0, cy: 0, solids: [], agentMeshes: [] };
 function pos3(s) { const [x, y, z] = siteXYZ(s); return [x - V3.cx, z * V3.gap, y - V3.cy]; }
 const FACE3 = () => [[0.5, 0, 0], [-0.5, 0, 0], [0, 0, 0.5], [0, 0, -0.5], [0, V3.gap / 2, 0], [0, -V3.gap / 2, 0]];
 function end3(s, e, faces) {
@@ -916,6 +946,8 @@ function end3(s, e, faces) {
 }
 /// An agent's radius, how far under its layer a floor lies, the side of a floor tile (in sites), the background.
 const R3 = 0.17, FLOOR3 = 0.4, BLOCK3 = 4, BG3 = 0x0b0e14;
+/// Agents' solids by tag (shapes.js `shapeSolid`), 0 for a kind with none of its own.
+const SOLIDS3 = 15, kind3 = t => t < SOLIDS3 ? t : 0;
 /// An sRGB channel (0 to 1) as the linear one three.js works in.
 const lin3 = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 const rgb3 = hex => [hex >> 16 & 255, hex >> 8 & 255, hex & 255].map(c => lin3(c / 255));
@@ -945,7 +977,7 @@ function init3d() {
   V3.wires = wide(1.5); V3.hot = wide(2.5); V3.marks = thin(); V3.edges = thin();
   // Lit wires are drawn over the rest, as in the flat views, and agents over both.
   Object.assign(V3.hot.material, { depthTest: false, depthWrite: false }); V3.hot.renderOrder = 1;
-  V3.kind = COLOR.map(c => new T.Color(c));
+  V3.kind = Array.from({ length: 256 }, (_, t) => new T.Color(kindColor(t)));
   V3.ray = new T.Raycaster();
   V3.gap = +$("gap3d").value / 10;
   let down = null;
@@ -1059,15 +1091,24 @@ function build3d(V) {
   feed3(V3.wires); feed3(V3.hot);
   // agents, their rings (a wanted reader's, a called value's, a pick's), pulses, and the cells a click finds
   const cap = live.length * ks, group = n => ({ p: new Float32Array(3 * n), r: new Float32Array(n), n: 0 });
-  const A = group(cap), Rg = group(3 * cap), Pu = group(live.length), put = (g, p, r) => { g.p.set(p, 3 * g.n); g.r[g.n++] = r; };
-  const agents = instanced("agents", V3.sphere ??= new T.SphereGeometry(1, 14, 10), V3.agentMat ??= new T.MeshStandardMaterial({ roughness: 0.5, metalness: 0.05 }), cap);
-  agents.renderOrder = 2;
+  const Rg = group(3 * cap), Pu = group(live.length), put = (g, p, r) => { g.p.set(p, 3 * g.n); g.r[g.n++] = r; };
+  // agents: a mesh for each kind, of its solid (shapes.js), each instance's seat beside it for clicks
+  const many = new Int32Array(SOLIDS3), kinds = [];
+  for (const s of live) for (let k = 0; k < ks; k++) { const t = V.tags[s * ks + k]; if (t) many[kind3(t)]++; }
+  V3.agentMeshes = [];
+  for (let t = 0; t < SOLIDS3; t++) {
+    if (!many[t] && !V3[`agents${t}`]) continue;
+    const solid = V3.solids[t] ??= shapeSolid(T, t);
+    const mesh = instanced(`agents${t}`, solid.geometry, V3.agentMat ??= new T.MeshStandardMaterial({ roughness: 0.5, metalness: 0.05 }), many[t]);
+    mesh.renderOrder = 2; mesh.userData.seats = new Uint32Array(many[t]);
+    V3.agentMeshes.push(mesh); kinds[t] = { mesh, g: group(many[t]), face: solid.face };
+  }
   const rings = instanced("rings", V3.ringGeo ??= new T.RingGeometry(0.78, 1, 32), V3.ringMat ??= new T.MeshBasicMaterial({ transparent: true, depthWrite: false, side: T.DoubleSide }), 3 * cap);
   const pulses = instanced("pulses", V3.dot ??= new T.SphereGeometry(1, 8, 6), V3.dotMat ??= new T.MeshBasicMaterial({ color: 0xffffff }), live.length);
   const cells = instanced("cells", V3.box ??= new T.BoxGeometry(1, 1, 1), V3.cellMat ??= new T.MeshBasicMaterial(), live.length);
   const RING = V3.ringCol ??= { want: new T.Color(0x56c8ff), called: new T.Color(0xffa94d), pick: new T.Color(PINK), prev: new T.Color(0xff9be6), focus: new T.Color(0xffffff) };
   const ring = (p, r, c) => { rings.setColorAt(Rg.n, c); put(Rg, p, r * R3); };
-  V3.agentSeat = new Uint32Array(cap); V3.cellSite = new Uint32Array(live.length);
+  V3.cellSite = new Uint32Array(live.length);
   let fx = 0, fy = 0, fz = 0, nf = 0;
   live.forEach((s, i) => {
     const c = pos3(s);
@@ -1078,7 +1119,8 @@ function build3d(V) {
       p[1] -= R3; // the principal port is on top of the agent
       if (!segs) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
       if (gone) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
-      V3.agentSeat[A.n] = seat; agents.setColorAt(A.n, col); put(A, p, (gone ? 0.75 : 1) * (pk && !b ? 0.7 : 1) * R3);
+      const K = kinds[kind3(t)];
+      K.mesh.userData.seats[K.g.n] = seat; K.mesh.setColorAt(K.g.n, col); put(K.g, p, (gone ? 0.75 : 1) * (pk && !b ? 0.7 : 1) * R3);
       if (V.want[seat] && !gone && (!pk || b)) {
         ring(p, 1.6, isConsumer(t) ? RING.want : RING.called);
         if (isConsumer(t)) { fx += p[0]; fy += p[1]; fz += p[2]; nf++; }
@@ -1090,9 +1132,9 @@ function build3d(V) {
   });
   V3.focus = nf ? [fx / nf, fy / nf, fz / nf] : null;
   cells.count = live.length; cells.visible = false; cells.instanceMatrix.needsUpdate = true; cells.boundingSphere = null;
-  for (const m of [agents, rings]) if (m.instanceColor) m.instanceColor.needsUpdate = true;
+  for (const m of [...V3.agentMeshes, rings]) if (m.instanceColor) m.instanceColor.needsUpdate = true;
   // [mesh, places, as big as an agent of radius, at least this many pixels, facing the camera]
-  V3.groups = [[agents, A, R3, 2.6, false], [rings, Rg, R3, 2.6, true], [pulses, Pu, 0.07, 1.6, false]];
+  V3.groups = [...kinds.filter(Boolean).map(K => [K.mesh, K.g, R3, 2.6, K.face]), [rings, Rg, R3, 2.6, true], [pulses, Pu, 0.07, 1.6, false]];
   // floors: under each layer, a faint tile on each block of sites it uses, outlined
   const B = BLOCK3, used = new Set(), key = (z, bx, by) => (z * 4096 + bx) * 4096 + by;
   for (const s of live) { const [x, y, z] = siteXYZ(s); used.add(key(z, Math.floor(x / B), Math.floor(y / B))); }
@@ -1219,8 +1261,8 @@ function pick3(cx, cy) {
   const r = $("cv3").getBoundingClientRect();
   V3.ray.setFromCamera(new V3.T.Vector2((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1), V3.camera);
   // the agent under the pointer, else the nearest site holding anything
-  const a = V3.agents && V3.ray.intersectObject(V3.agents, false)[0];
-  if (a) return siteOf(V3.agentSeat[a.instanceId]);
+  const a = V3.ray.intersectObjects(V3.agentMeshes, false)[0];
+  if (a) return siteOf(a.object.userData.seats[a.instanceId]);
   const hit = V3.ray.intersectObject(V3.cells, false)[0];
   return hit ? V3.cellSite[hit.instanceId] : null;
 }
@@ -1320,10 +1362,10 @@ function tipHTML(site) {
   for (let k = 0; k < L.ks; k++) {
     const t = V.tags[site * L.ks + k]; if (!t) continue;
     const name = TAGS[t], wanted = isConsumer(t) && V.want[site * L.ks + k], called = !isConsumer(t) && V.want[site * L.ks + k], gone = dead(site, k);
-    h += `<div class="ts${gone ? " dead" : ""}"><span style="color:${COLOR[t]}">${LABEL[name]} ${NAMES[name]}</span>`
+    h += `<div class="ts${gone ? " dead" : ""}"><span style="color:var(--fg)">${kindHTML(t)}</span>`
       + (gone ? `<span class="chip">garbage</span>` : "") + (wanted ? `<span class="chip" style="color:#56c8ff">wanted</span>` : "")
       + (called ? `<span class="chip" style="color:#ffa94d">called: walking to its reader</span>` : "")
-      + `<div class="tp">${DESC[name]}.</div>`;
+      + (DESC[name] ? `<div class="tp">${DESC[name]}.</div>` : "");
     for (let p = 0; p < ARITY[t]; p++) {
       const far = walk(V, site, k * 3 + p), out = isSource(t, p);
       let w;
@@ -1331,9 +1373,9 @@ function tipHTML(site) {
       else {
         const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3, fn = TAGS[ft];
         const where = far.site === site ? "in this site" : `${far.len} strand${far.len === 1 ? "" : "s"} away at ${at(far.site)}`;
-        w = `${out ? "read by" : "reads"} the ${PORTS[fn][fp]} of ${LABEL[fn]} ${NAMES[fn]}, ${where}`;
+        w = `${out ? "read by" : "reads"} the ${PORTS[fn]?.[fp] ?? `port ${fp}`} of ${kindHTML(ft)}, ${where}`;
       }
-      h += `<div class="tw">${p === 0 ? "◆" : "·"} ${PORTS[name][p]} (${out ? "out" : "in"}): ${w}</div>`;
+      h += `<div class="tw">${p === 0 ? "○" : "·"} ${PORTS[name]?.[p] ?? `port ${p}`} (${out ? "out" : "in"}): ${w}</div>`;
     }
     if (isConsumer(t)) h += `<div class="tp">${status(V, site, k, t, wanted, gone)}</div>`;
     h += `</div>`;
@@ -1464,11 +1506,11 @@ function pickNote(was, fate, other) {
 function agentAt(cx, cy) {
   if (!L) return null;
   if (viewMode === "3d") {
-    if (!V3.agents || !V3.agentSeat) return null;
+    if (!V3.agentMeshes.length) return null;
     const r = $("cv3").getBoundingClientRect();
     V3.ray.setFromCamera(new V3.T.Vector2((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1), V3.camera);
-    const hit = V3.ray.intersectObject(V3.agents, false)[0];
-    return hit ? V3.agentSeat[hit.instanceId] : null;
+    const hit = V3.ray.intersectObjects(V3.agentMeshes, false)[0];
+    return hit ? hit.object.userData.seats[hit.instanceId] : null;
   }
   if (viewMode === "graph") return graphAgentAt(cx, cy);
   const r = cv.getBoundingClientRect(), V = views(), wx = (cx - r.left - view.ox) / view.s, wy = (cy - r.top - view.oy) / view.s;
@@ -1705,7 +1747,7 @@ function pickPanel(force) {
       if (n) { ctx.focus = n; focusOf.set(key, n); }
     }
     const t = V.tags[seat], gone = seat < V.tags.length && dead(siteOf(seat), slotOf(seat)), want = seat < V.tags.length && V.want[seat];
-    const head = `<span style="color:${COLOR[tag]}">${LABEL[TAGS[tag]]} ${NAMES[TAGS[tag]]}</span>`
+    const head = `<span style="color:var(--fg)">${kindHTML(tag)}</span>`
       + (t ? `<span>at ${at(siteOf(seat))}</span>` : "") + (gloss ? `<span>· ${gloss}</span>` : "")
       + (gone ? `<span class="chip">garbage</span>` : "") + (want && isConsumer(tag) ? `<span class="chip" style="color:#56c8ff">wanted</span>` : "")
       + (key === "preview" ? `<span class="chip">under the pointer</span>` : `<button class="x" data-drop="${seat}" title="let go of it (shift+click it again)">×</button>`);
