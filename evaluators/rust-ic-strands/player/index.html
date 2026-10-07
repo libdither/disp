@@ -545,11 +545,13 @@ async function load(play) {
 }
 /// Start a run of p (see `plan`); input is what the input box said.
 function start(p, input) {
-  const src = p.src, agents = withString(src, (p, n) => E.strands_probe(p, n));
-  if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return false; }
-  // The current design (lattice.rs `latest`): the chip's schedule with the demand field and forking S rules.
+  // The current design (lattice.rs `latest`): the chip's schedule with the demand field and forking S rules;
+  // `share=N` in the address builds equal parts of the program once (share.rs).
   E.strands_settings();
   withString(`seed=${SEED}`, (p, n) => E.strands_set(p, n));
+  withString(`share=${SHARE}`, (p, n) => E.strands_set(p, n));
+  const src = p.src, agents = withString(src, (p, n) => E.strands_probe(p, n));
+  if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return false; }
   const depth = E.strands_depth();
   let side = Math.ceil(Math.sqrt(agents) * (depth > 1 ? 7 : 8)) + 16;
   // Grow the grid until the term's initial drawing fits.
@@ -573,7 +575,7 @@ function start(p, input) {
     + `a switchboard of 8 pairings × 2 ends × ${bits} bits, ${bits} bits saying which strand carries a pulse, and ${field} bits of demand field: `
     + `≈ ${5 * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
   $("clockName").textContent = "clocks (2×2×2 blocks)";
-  location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${onGpu ? "&gpu=1" : ""}`;
+  location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${onGpu ? "&gpu=1" : ""}${SHARE ? `&share=${SHARE}` : ""}`;
   if (onGpu && !gpuCode) setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
@@ -1807,7 +1809,7 @@ function rate() {
 let onGpu = false, G = null;
 /// The shader for the loaded settings, or why the GPU cannot run them.
 let gpuCode = null, gpuWhy = "";
-const SEED = 7;
+const SEED = 7, SHARE = +(new URLSearchParams(location.hash.slice(1)).get("share") ?? 0) || 0;
 function held() { const p = E.strands_held(); return new Uint32Array(E.memory.buffer, p, E.words_len()).slice(); }
 async function setEngine(want, why) {
   if (want === "gpu" && !onGpu) {

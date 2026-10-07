@@ -2,7 +2,6 @@
 //! many clocks they take.
 //!   strands-sweep "k=8 lanes=4" "k=6 lanes=3 temp=1.0" ...
 
-use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel, Lcg};
 use rust_ic_strands::lattice::{Lattice, Params};
 
@@ -30,9 +29,7 @@ fn main() {
         let t0 = std::time::Instant::now();
         let (mut done, mut wrong, mut stuck, mut clocks, mut fires, mut collected, mut unloadable) = (0, 0, 0, vec![], 0u64, 0u64, 0);
         for (i, (t, want)) in corpus.iter().enumerate() {
-            let mut net = Net::new();
-            let root = net.build(t);
-            let (_, out) = net.drive(root);
+            let (net, out) = rust_ic_strands::share::net(t, p.share);
             let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..p }, net, out) else { unloadable += 1; continue };
             let fin = l.run(budget);
             fires += l.stats.fires;

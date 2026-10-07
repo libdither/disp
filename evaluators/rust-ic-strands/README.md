@@ -537,6 +537,33 @@ fewer clocks (exp(1) 8% more): the lattice has room and time to spare, so waste 
 time. It would take a new agent tag, an S that does not fork. Marks from the code's shape alone (`s` is K or `K (K w)`, the
 eager evaluator's own shortcut) remove almost nothing.
 
+**Sharing equal parts of the program (tried, not kept; `share=N`).** Built with every part of at
+least N agents that occurs more than once built once and read through duplicators (`share.rs`, as
+if the program had named it), a disp program loads with 20–69% fewer agents and gives the same
+answers (`tests/share.rs`). It runs slower: a shared part sits in one place and its readers are
+spread over the drawing, so its copies travel along long wires, and code that was laid out ready
+is now copied a layer at a time as it is read. On the disp programs, `--latest`, 2 seeds, grids
+sized as the player sizes them (sharing parts of 8 or more agents · of 24 or more; 0% where no
+part that big repeats):
+
+| program | agents at load | clocks | rewrites | peak sites |
+|---|---|---|---|---|
+| disp `add 2 3` | −35% · 0% | +33% · 0% | +9% · 0% | +68% · 0% |
+| disp `mul 2 2` | −58% · −29% | +31% · +24% | +7% · +6% | +59% · +160% |
+| disp `fib 2` | −61% · −32% | +81% · +63% | +11% · +11% | +221% · +271% |
+| disp `is_even 3` | −23% · 0% | +16% · 0% | +4% · 0% | +49% · 0% |
+| disp `sum [1, 2]` | −52% · −20% | +47% · +24% | +6% · +2% | +226% · +154% |
+| disp `size [5, 6, 7]` | −28% · 0% | +27% · 0% | +2% · 0% | +73% · 0% |
+| disp `rev [1, 2]` | −55% · −38% | +29% · +24% | +7% · +4% | +64% · +56% |
+| disp `doubled [1, 2]` | −53% · −20% | +32% · +19% | +8% · +5% | +207% · +154% |
+| disp `greet "a"` | −56% · −47% | +20% · +1% | +17% · +14% | +25% · −28% |
+
+Sharing parts of 3 or more is worse again (`doubled` unfinished in 900 s, `is_even` too tangled to
+lay out). A disp program is code, a value, applied to its arguments: there is no computation in it
+to share, so all that sharing saves is room at load, paid for in copying and in distance. On a
+lattice a part used in two places is a wire between them. `share=8` in the player's address shows
+the shared parts once, behind their duplicators, in the graph view and as `x₁` in the details.
+
 **Leases (tried, not kept).** Demand recomputed every step from the normalizer stops a
 thrown-away `(b c)` at once, rather than when erasers reach it: in the ideal model fib(2)'s extra
 rewrites fall from 38% to 4%, but much of the speed goes too (size-self 10.9× fewer steps → 2.6×),

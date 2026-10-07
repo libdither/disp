@@ -1,7 +1,6 @@
 //! Run terms on the strand lattice and compare with the oracle.
-//!   strands-run <term | workload[:n]> [--k K] [--lanes L] [--grid N] [--3d] [--temp T] [--seed S]
+//!   strands-run <term | workload[:n]> [--k K] [--lanes L] [--grid N] [--3d] [--temp T] [--seed S] [--share N]
 
-use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel};
 use rust_ic_mesh::term;
 use rust_ic_strands::lattice::{Lattice, Params};
@@ -62,6 +61,7 @@ fn main() {
             "--field" => p.set("field", &it.next().unwrap()).unwrap_or_else(|e| panic!("{e}")),
             "--calls" => p.calls = true,
             "--fork" => p.fork = true,
+            "--share" => p.share = it.next().unwrap().parse().unwrap(),
             "--demand" => { p.calls = true; p.set("field", rust_ic_strands::lattice::DEMAND).unwrap(); }
             _ => src = Some(a.clone()),
         }
@@ -72,10 +72,10 @@ fn main() {
         _ => term::workload(&src, 0).unwrap_or_else(|| term::parse(&src).expect("bad term")),
     };
     let want = oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok().map(|w| oracle::show(&w));
-    let mut net = Net::new();
-    let root = net.build(&t);
-    let (_, out) = net.drive(root);
+    let (net, out) = rust_ic_strands::share::net(&t, p.share);
+    let agents = net.live_count();
     let mut l = Lattice::load(p, net, out).expect("load");
+    println!("loaded {agents} agents");
     l.check_every = check;
     if let Ok(path) = std::env::var("VECTORS") {
         let mut w = std::io::BufWriter::new(std::fs::File::create(path).expect("vectors file"));

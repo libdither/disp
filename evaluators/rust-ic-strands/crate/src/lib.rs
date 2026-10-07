@@ -2,6 +2,7 @@
 
 pub mod lattice;
 pub mod readback;
+pub mod share;
 pub mod tables;
 #[cfg(feature = "gpu")]
 pub mod gpu;

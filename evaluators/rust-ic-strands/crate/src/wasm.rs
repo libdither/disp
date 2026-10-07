@@ -2,7 +2,6 @@
 //! player draws straight from the lattice's own arrays.
 
 use crate::lattice::{latest, Lattice, Params, Stats};
-use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel, Term};
 use rust_ic_mesh::term;
 
@@ -73,9 +72,7 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let t = match parse(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
-    let mut net = Net::new();
-    let root = net.build(&t);
-    let (_, out) = net.drive(root);
+    let (net, out) = crate::share::net(&t, p.share);
     match Lattice::load(p, net, out) {
         Ok(l) => { unsafe { STATE = Some(State { l, term: t, done: false }); SAVED.clear(); } 0 }
         Err(e) => { set_text(&e); 2 }
@@ -185,7 +182,7 @@ pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
 pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     match parse(src) {
-        Ok(t) => { let mut net = Net::new(); let r = net.build(&t); net.drive(r); net.agents.len() as i32 }
+        Ok(t) => crate::share::net(&t, next().share).0.agents.len() as i32,
         Err(e) => { set_text(&e); -1 }
     }
 }

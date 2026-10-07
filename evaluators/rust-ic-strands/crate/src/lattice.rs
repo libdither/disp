@@ -103,6 +103,9 @@ pub struct Params {
     /// The S rule forks: its (b c) starts wanted alongside (s c), rather than waiting for (s c)
     /// to ask for it (`fresh_wanted_in`). A (b c) that (s c) throws away is collected.
     pub fork: bool,
+    /// Parts of the loaded term that occur more than once, of at least this many agents, are
+    /// built once and read through duplicators (share.rs); 0 builds every occurrence apart.
+    pub share: usize,
     /// Fields every site keeps and moves read as energy (field.rs); unused channels are off.
     pub fields: [Channel; 4],
 }
@@ -146,6 +149,7 @@ impl Params {
             "seed" => self.seed = n()? as u64,
             "calls" => self.calls = on,
             "fork" => self.fork = on,
+            "share" => self.share = n()?,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -160,7 +164,7 @@ impl Params {
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, fields: [Channel::OFF; 4] }
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4] }
     }
 }
 
