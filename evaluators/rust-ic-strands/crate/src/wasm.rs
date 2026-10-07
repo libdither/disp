@@ -236,6 +236,7 @@ pub extern "C" fn strands_held() -> *const u32 { unsafe { WORDS = st().l.held_si
 #[allow(static_mut_refs)]
 pub extern "C" fn strands_gpu_ran(clocks: u32, held: u32, fires: u32) -> u32 {
     let s = st();
+    unsafe { HANDED_BACK += 1; }
     let w = unsafe { &WORDS };
     let (held, rest) = w.split_at(held as usize);
     s.l.put_sites(held);
@@ -274,7 +275,11 @@ pub extern "C" fn save_state() -> u32 {
 pub extern "C" fn restore_state(i: u32) {
     let s = st();
     let v = unsafe { SAVED[i as usize].as_ref().expect("a saved state") };
+    // Putting sites back numbers the agents afresh, as a GPU's hand-back does: picks are found again
+    // in the net as it was at the last look (the first time since it).
+    unsafe { if LOOKED_AT == HANDED_BACK { picked().remember(&s.l); } }
     s.l.put_sites(&v.held);
+    unsafe { HANDED_BACK += 1; }
     s.l.stats = v.stats.clone();
     s.l.cooling = v.cooling;
     s.l.set_temp(v.temp);
@@ -298,3 +303,113 @@ pub extern "C" fn state_bytes(i: u32) -> u32 {
 /// Start cooling the run (lattice.rs `cool`); the temperature it runs at now.
 #[no_mangle] pub extern "C" fn strands_cool() { st().l.cool(); }
 #[no_mangle] pub extern "C" fn strands_temp() -> f64 { st().l.p.temp }
+
+// ---- reading the net back, and computations picked in the player (readback.rs) ----------------
+
+use crate::readback::{self, Fate, Selection, NOWHERE};
+use rust_ca_lattice::rules::{Tag, ALL_TAGS};
+
+/// Times a GPU handed a run back, each renumbering the abstract net.
+static mut HANDED_BACK: u64 = 0;
+static mut LOOKED_AT: u64 = 0;
+static mut PICKED: Option<Selection> = None;
+/// Seats (site × slots + slot) passed out to JavaScript.
+static mut SEATS: Vec<u32> = Vec::new();
+
+#[allow(static_mut_refs)]
+fn picked() -> &'static mut Selection { unsafe { PICKED.get_or_insert_with(Selection::default) } }
+#[allow(static_mut_refs)]
+fn put_seats(v: Vec<u32>) -> u32 { unsafe { SEATS = v; SEATS.len() as u32 } }
+fn code(t: Tag) -> u32 { ALL_TAGS.iter().position(|x| *x == t).unwrap() as u32 + 1 }
+/// The id of the agent in a seat.
+fn at_seat(site: u32, slot: u32) -> Option<u32> {
+    let l = &st().l;
+    let i = site as usize * l.ks + slot as usize;
+    (slot < l.ks as u32 && i < l.tags.len() && l.tags[i] != 0).then(|| l.sids[i])
+}
+/// Where every agent sits (readback.rs `seats`), worked out once for each state of the lattice.
+static mut WHERE: (u64, u64, u64, usize, Vec<u32>) = (0, 0, 0, 0, Vec::new());
+#[allow(static_mut_refs)]
+fn to_seats(ids: impl IntoIterator<Item = u32>) -> Vec<u32> {
+    let l = &st().l;
+    let now = (l.stats.proposals, l.stats.clocks.to_bits(), unsafe { HANDED_BACK }, l.shadow.agents.len());
+    let at = unsafe {
+        if (WHERE.0, WHERE.1, WHERE.2, WHERE.3) != now || WHERE.4.is_empty() { WHERE = (now.0, now.1, now.2, now.3, readback::seats(l)); }
+        &WHERE.4
+    };
+    ids.into_iter().map(|id| at.get(id as usize).copied().unwrap_or(NOWHERE)).collect()
+}
+fn put_term(r: &readback::Rd, budget: u32) -> u32 {
+    let (s, at) = readback::text(r, budget as usize);
+    put_seats(to_seats(at));
+    set_text(&s)
+}
+
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn seats_ptr() -> *const u32 { unsafe { SEATS.as_ptr() } }
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn seats_len() -> u32 { unsafe { SEATS.len() as u32 } }
+
+/// The agents the agent in a seat depends on (readback.rs `subtree`), into the seats; returns how many.
+#[no_mangle]
+pub extern "C" fn strands_subtree(site: u32, slot: u32) -> u32 {
+    let Some(id) = at_seat(site, slot) else { return put_seats(vec![]) };
+    put_seats(to_seats(readback::subtree(&st().l.shadow, id)))
+}
+
+/// What the agent in a seat means now (readback.rs `text`), in the text; each node's seat in the seats.
+#[no_mangle]
+pub extern "C" fn strands_term(site: u32, slot: u32, budget: u32) -> u32 {
+    let Some(id) = at_seat(site, slot) else { put_seats(vec![]); return set_text("") };
+    put_term(&readback::Reader::new(&st().l.shadow).meaning(id), budget)
+}
+
+/// Pick the agent in a seat, or let it go if it is picked: 1 if it is picked now, 0 if let go, -1 if
+/// the seat is empty.
+#[no_mangle]
+pub extern "C" fn pick_toggle(site: u32, slot: u32) -> i32 {
+    let Some(id) = at_seat(site, slot) else { return -1 };
+    picked().toggle(&st().l.shadow, id) as i32
+}
+
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn pick_clear() { *picked() = Selection::default(); unsafe { WHERE.4.clear(); } }
+
+/// Find the picked agents again (readback.rs `Selection::follow`). `gpu`: a GPU may hand the run
+/// back before the next look. The seats: [seat, tag, output (3: all)] for each root, then [tag, what
+/// happened (1 rewritten, 2 forced, 3 consumed, 4 lost), other tag] for each root not where it was.
+/// Returns the roots, plus those events << 16.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn pick_follow(gpu: u32) -> u32 {
+    let renumbered = unsafe { std::mem::replace(&mut LOOKED_AT, HANDED_BACK) != HANDED_BACK };
+    let sel = picked();
+    if sel.roots.is_empty() { return put_seats(vec![]); }
+    let reports = sel.follow(&st().l, renumbered, gpu != 0);
+    let seat = to_seats(sel.roots.iter().map(|r| r.id));
+    let mut v = vec![];
+    for (r, s) in sel.roots.iter().zip(seat) { v.extend([s, code(r.tag), r.out.map_or(3, |p| p as u32)]); }
+    for e in &reports {
+        let fate = match e.fate { Fate::Rewritten => 1, Fate::Forced => 2, Fate::Consumed => 3, Fate::Lost => 4 };
+        v.extend([code(e.was), fate, e.other.map_or(0, code)]);
+    }
+    put_seats(v);
+    sel.roots.len() as u32 | (reports.len() as u32) << 16
+}
+
+/// What root i stands for now, as `strands_term` gives it.
+#[no_mangle]
+pub extern "C" fn pick_term(i: u32, budget: u32) -> u32 {
+    let Some(r) = picked().roots.get(i as usize) else { put_seats(vec![]); return set_text("") };
+    put_term(&r.meaning(&st().l.shadow), budget)
+}
+
+/// The agents root i depends on, as `strands_subtree` gives them.
+#[no_mangle]
+pub extern "C" fn pick_subtree(i: u32) -> u32 {
+    let Some(r) = picked().roots.get(i as usize) else { return put_seats(vec![]) };
+    put_seats(to_seats(readback::subtree(&st().l.shadow, r.id)))
+}

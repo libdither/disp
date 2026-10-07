@@ -64,6 +64,18 @@
   .story { margin:8px 0; padding:7px 9px; border:1px solid #6b3fa0; border-radius:8px; background:rgba(150,80,230,.08); font-size:11.5px; }
   .story[hidden] { display:none; } .story b { color:#d6a8ff; font-weight:normal; }
   kbd { border:1px solid var(--line2); border-bottom-width:2px; border-radius:4px; padding:0 4px; font-size:10.5px; color:var(--dim); }
+  .pk { margin:6px 0; padding:6px 8px; border:1px solid #6a2d5e; border-radius:8px; background:rgba(255,95,210,.05); }
+  .pk.prev { border-style:dashed; border-color:#8a5a80; background:none; }
+  .pkh { display:flex; gap:6px; align-items:baseline; flex-wrap:wrap; font-size:11px; color:var(--dim); margin-bottom:3px; }
+  .pkh .x { margin-left:auto; padding:0 6px; font-size:12px; line-height:16px; }
+  .tm { font-size:12.5px; line-height:1.6; word-break:break-word; color:#e6edf6; }
+  .tm .v { color:var(--hot); } .tm .nm { color:#7fd0ff; } .tm .ch { color:#c4a8e8; font-style:italic; } .tm .sh { color:#ff8ad8; }
+  .tm .el { color:var(--dim); } .tm .er { color:#8a96a8; font-style:italic; }
+  .tm .w { text-decoration:underline 2px #56c8ff; text-underline-offset:4px; }
+  .tm [data-n] { cursor:pointer; border-radius:3px; } .tm [data-n]:hover:not(:has([data-n]:hover)) { background:rgba(255,255,255,.08); }
+  .tm .fx { outline:1px solid #fff; background:rgba(255,255,255,.06); }
+  .tm .wh { color:var(--dim); margin-top:3px; }
+  .pkn { color:#ffb3e8; font-size:11px; margin:3px 0; }
 </style></head><body>
 <div id="wrap">
   <div id="stage">
@@ -102,6 +114,9 @@
     <div id="badge" class="badge run">LOADING</div>
     <div id="decoded"></div><div id="answer"></div><div class="note" id="verdict"></div>
     <div id="story" class="story" hidden></div>
+
+    <h3>reduction state</h3>
+    <div id="pick"></div>
 
     <h3>time and work</h3>
     <div class="row"><span class="k" id="clockName">clocks</span><span class="v" id="sSweep">0</span></div>
@@ -171,8 +186,16 @@
         layers overlap. <i>Layers side by side</i> gives each layer its own panel: exact, and every site is easy to
         click. <i>3D</i> shows the lattice as it is: drag to orbit, right-drag to pan, spread the layers apart or show
         one at a time.</p>
+      <p><b>Reduction state.</b> Every output of the net means a term: a value is a tree, a suspension or an apply is
+        an application <i>f x</i>, a triage on <i>a</i> with arms <i>b, c</i> is <i>t a b c</i>, and a duplicator's two
+        copies are one value, shared. Shift+click an agent to pick the computation it heads, that is, it and every
+        agent feeding its inputs. Its term is written as disp, with numbers, lists and strings as literals, code
+        that is a known definition by its name, other code as ‹its size›, shared computations as <i>x₁</i> in a
+        <i>where</i>, and what is being computed underlined in blue. Picks follow their agents as they move and
+        rewrite; one whose value is used up by a rewrite drops out.</p>
       <p class="note"><kbd>space</kbd> play · <kbd>→</kbd> one move · <kbd>shift →</kbd> to the next rewrite · <kbd>←</kbd> one clock back · <kbd>shift ←</kbd> back to the last rewrite · <kbd>R</kbd> restart ·
-        <kbd>F</kbd> fit · <kbd>V</kbd> next view · drag to pan · wheel to zoom · click a site to see what is in it, <kbd>Esc</kbd> to let go</p>
+        <kbd>F</kbd> fit · <kbd>V</kbd> next view · drag to pan · wheel to zoom · click a site to see what is in it, <kbd>Esc</kbd> to let go ·
+        <kbd>shift</kbd>+click an agent to pick its computation (hold <kbd>shift</kbd> to preview)</p>
     </details>
   </div>
 </div>
@@ -564,6 +587,9 @@ function draw() {
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#0b0e14"; ctx.fillRect(0, 0, cv.width, cv.height);
   if (!L) return;
   const V = views();
+  pickSync();
+  // With something picked, everything else is dimmed.
+  const pk = PICK.on ? PICK.marks : null, dim = pk ? 0.35 : 1;
   if (viewMode === "layers" && performance.now() - (lay.checked ?? 0) > 500) {
     lay.checked = performance.now();
     if (outsideLayout(V)) { layoutLayers(); fitContent(); }
@@ -588,7 +614,7 @@ function draw() {
     const b = E.memory.buffer, fv = new Uint8Array(b, E.field_ptr(), L.w * L.h * L.depth), fs = new Uint32Array(b, E.field_sites_ptr(), E.field_sites_len());
     for (const s of fs) {
       const [ox, oy] = siteOrigin(s); if (ox < vx0 || ox > vx1 || oy < vy0 || oy > vy1) continue;
-      ctx.fillStyle = `rgba(255,170,80,${0.05 + 0.07 * fv[s]})`; ctx.fillRect(ox, oy, S, S);
+      ctx.fillStyle = `rgba(255,170,80,${(0.05 + 0.07 * fv[s]) * dim})`; ctx.fillRect(ox, oy, S, S);
     }
   }
   // site floors (occupied sites, faint), by layer for a depth cue when stacked
@@ -620,8 +646,8 @@ function draw() {
     }
   }
   ctx.lineCap = "round";
-  ctx.strokeStyle = "rgba(120,150,190,0.55)"; ctx.lineWidth = lw(1.1); ctx.stroke(strands);
-  if (detail) { ctx.strokeStyle = "rgba(150,175,210,0.45)"; ctx.lineWidth = lw(0.9); ctx.stroke(board); }
+  ctx.strokeStyle = `rgba(120,150,190,${0.55 * dim})`; ctx.lineWidth = lw(1.1); ctx.stroke(strands);
+  if (detail) { ctx.strokeStyle = `rgba(150,175,210,${0.45 * dim})`; ctx.lineWidth = lw(0.9); ctx.stroke(board); }
   // in side-by-side panels, a strand to the layer above or below shows as a small arrowhead
   for (const [s, e, f] of updown) {
     const [x, y] = endPos(s, e), h = S * 0.12;
@@ -636,8 +662,23 @@ function draw() {
     if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) follow(V, s, k * 3, hot);
   }
   ctx.globalCompositeOperation = "lighter";
-  ctx.strokeStyle = "rgba(86,200,255,0.9)"; ctx.lineWidth = lw(2.2); ctx.stroke(hot);
+  ctx.strokeStyle = `rgba(86,200,255,${0.9 * dim})`; ctx.lineWidth = lw(2.2); ctx.stroke(hot);
   ctx.globalCompositeOperation = "source-over";
+  // the picks' wires: every input of a picked agent to what feeds it, and dashed, where a root's value goes
+  if (pk) {
+    const lit = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
+    for (const seat of PICK.lit) {
+      const b = pk[seat], t = V.tags[seat], s = siteOf(seat), k = slotOf(seat);
+      if (!t) continue;
+      const path = b & 16 ? lit[2] : b & 1 ? lit[0] : lit[1];
+      for (let p = 0; p < ARITY[t]; p++) { const into = isSource(t, p) ? (b & 10 ? lit[3] : null) : path; if (into) follow(V, s, k * 3 + p, into); }
+    }
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(255,155,230,0.7)"; ctx.lineWidth = lw(1.8); ctx.stroke(lit[1]);
+    ctx.strokeStyle = PINK; ctx.lineWidth = lw(2.4); ctx.stroke(lit[0]);
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = lw(2.6); ctx.stroke(lit[2]);
+    ctx.setLineDash([lw(3), lw(3)]); ctx.strokeStyle = PINK; ctx.lineWidth = lw(1.6); ctx.stroke(lit[3]); ctx.setLineDash([]);
+  }
   // the selected site's wires, each to its far end
   const ends = [];
   if (pinned != null) {
@@ -654,14 +695,19 @@ function draw() {
     const [ox, oy] = siteOrigin(hover);
     ctx.strokeStyle = "rgba(200,215,235,0.5)"; ctx.lineWidth = lw(1); ctx.strokeRect(ox + 0.3, oy + 0.3, S - 0.6, S - 0.6);
   }
-  // agents
-  const labels = view.s * rad > 6;
+  // agents, and rings around the picked ones (in a pick, the pointer's preview, the part clicked in the panel, roots)
+  const labels = view.s * rad > 6, rings = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
   for (const s of sites) for (let k = 0; k < L.ks; k++) {
     const t = V.tags[s * L.ks + k]; if (!t) continue;
-    const [x, y] = slotPos(s, k);
-    ctx.globalAlpha = dead(s, k) ? 0.28 : 1;
+    const [x, y] = slotPos(s, k), b = pk ? pk[s * L.ks + k] : 0;
+    ctx.globalAlpha = pk && !b ? 0.14 : dead(s, k) ? (b ? 0.6 : 0.28) : 1;
     ctx.fillStyle = COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
     if (V.want[s * L.ks + k]) { ctx.strokeStyle = isConsumer(t) ? "#56c8ff" : "#ffa94d"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
+    if (b && rad * view.s > 1) {
+      const ring = rings[b & 16 ? 2 : b & 3 ? 0 : 1];
+      ring.moveTo(x + rad * 1.2, y); ring.arc(x, y, rad * 1.2, 0, 7);
+      if (b & 10) { rings[3].moveTo(x + rad * 1.9, y); rings[3].arc(x, y, rad * 1.9, 0, 7); }
+    }
     if (detail) {
       const [px, py] = portPos(s, k, 0);
       ctx.fillStyle = "#0b0e14"; ctx.beginPath(); ctx.arc(px, py, rad * 0.32, 0, 7); ctx.fill();
@@ -674,6 +720,7 @@ function draw() {
     }
   }
   ctx.globalAlpha = 1;
+  if (pk) [[PINK, 1.1], ["rgba(255,155,230,0.8)", 1.1], ["#ffffff", 1.6], [PINK, 2]].forEach(([c, w], i) => { ctx.strokeStyle = c; ctx.lineWidth = lw(w); ctx.stroke(rings[i]); });
   for (const far of ends) {
     if (far.end >= 3 * L.ks) continue;
     const [x, y] = slotPos(far.site, Math.floor(far.end / 3));
@@ -706,6 +753,7 @@ function draw() {
     ctx.beginPath(); ctx.arc(ox + S / 2, oy + S / 2, S * (0.6 + a * 2.2), 0, 7); ctx.stroke();
   }
   bursts.length = keep;
+  pickPanel(false);
 }
 function arrow(ax, ay, bx, by) {
   const a = Math.atan2(by - ay, bx - ax), h = S * 0.3;
@@ -754,6 +802,7 @@ function init3d() {
   canvas.addEventListener("pointerup", e => {
     if (!down || Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) { down = null; return; }
     down = null;
+    if (e.shiftKey) { pickAt(e.clientX, e.clientY); return; }
     const s = pick3(e.clientX, e.clientY);
     pinned = s == null || pinned === s ? null : s;
     showTip(pinned, e.clientX, e.clientY, pinned != null); V3.dirty = true;
@@ -782,10 +831,13 @@ function draw3d() {
   }
   const shown = $("layer3d").value, onlyZ = shown === "all" ? -1 : +shown;
   const visible = s => onlyZ < 0 || Math.floor(s / (L.w * L.h)) === onlyZ;
+  pickSync();
+  const pk = PICK.on ? PICK.marks : null;
   if (V3.dirty || playing) {
     V3.dirty = false;
     const faces = FACE3(), m4 = new T.Matrix4(), col = new T.Color(), bg = new T.Color(0x0b0e14);
     const live = [...V.live].filter(visible);
+    V3.agentSeat = new Uint32Array(live.length * L.ks);
     // agents, the halo of wanted readers, the cells that hold anything, pulses
     let na = 0, nw = 0, np = 0, fx = 0, fy = 0, fz = 0;
     const agentsMesh = instanced("agents", V3.sphere ??= new T.SphereGeometry(0.17, 16, 12), V3.agentMat ??= new T.MeshStandardMaterial({ roughness: 0.45, metalness: 0.1 }), live.length * L.ks);
@@ -800,8 +852,10 @@ function draw3d() {
         const t = V.tags[s * L.ks + k]; if (!t) continue;
         const p = end3(s, k * 3, faces); // the principal port; the sphere sits just below it
         m4.makeTranslation(p[0], p[1] - 0.17, p[2]); agentsMesh.setMatrixAt(na, m4);
-        col.set(COLOR[t]); if (dead(s, k)) col.lerp(bg, 0.72); agentsMesh.setColorAt(na++, col);
-        if (isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) { haloMesh.setMatrixAt(nw++, m4); fx += p[0]; fy += p[1]; fz += p[2]; }
+        const b = pk ? pk[s * L.ks + k] : 0;
+        col.set(COLOR[t]); if (dead(s, k)) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
+        V3.agentSeat[na] = s * L.ks + k; agentsMesh.setColorAt(na++, col);
+        if (isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k) && (!pk || b)) { haloMesh.setMatrixAt(nw++, m4); fx += p[0]; fy += p[1]; fz += p[2]; }
       }
       const pe = V.pulse[s];
       if (pe !== NONE) { const p = end3(s, pe, faces); m4.makeTranslation(p[0], p[1], p[2]); pulses.setMatrixAt(np++, m4); }
@@ -821,7 +875,12 @@ function draw3d() {
       const t = V.tags[pinned * L.ks + k]; if (!t) continue;
       for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * 3 + p, (site, a, b) => hi.set(site * L.ends + Math.min(a, b), 2));
     }
-    const palette = [[0.33, 0.42, 0.56], [0.34, 0.78, 1], [1, 0.67, 0.27]];
+    // the picks' wires: pink, the pointer's preview light pink, the part clicked in the panel white
+    if (pk) for (const seat of PICK.lit) {
+      const b = pk[seat], t = V.tags[seat], code = b & 16 ? 5 : b & 1 ? 3 : 4;
+      if (t) for (let p = 0; p < ARITY[t]; p++) if (!isSource(t, p)) walk(V, siteOf(seat), slotOf(seat) * 3 + p, (site, a, c) => hi.set(site * L.ends + Math.min(a, c), code));
+    }
+    const palette = [pk ? [0.15, 0.19, 0.26] : [0.33, 0.42, 0.56], pk ? [0.17, 0.39, 0.5] : [0.34, 0.78, 1], [1, 0.67, 0.27], [1, 0.37, 0.82], [1, 0.62, 0.9], [1, 1, 1]];
     const posv = [], colv = [];
     for (const s of live) {
       const c = pos3(s);
@@ -847,6 +906,7 @@ function draw3d() {
       for (const [i, j] of [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]) { mp.push(...P[i], ...P[j]); mc.push(...rgb, ...rgb); }
     };
     if (pinned != null) outline(pinned, [0.34, 0.78, 1]);
+    if (pk) for (const seat of PICK.lit) if (pk[seat] & 10 && visible(siteOf(seat))) outline(siteOf(seat), pk[seat] & 2 ? [1, 0.37, 0.82] : [1, 0.62, 0.9]);
     if (!playing) for (const ev of story.slice(0, 40)) { outline(ev[1], [0.84, 0.66, 1]); if (ev[2] !== ev[1]) outline(ev[2], [0.84, 0.66, 1]); }
     V3.marks.geometry.setAttribute("position", new T.Float32BufferAttribute(mp, 3));
     V3.marks.geometry.setAttribute("color", new T.Float32BufferAttribute(mc, 3));
@@ -860,6 +920,7 @@ function draw3d() {
   }
   V3.controls.update();
   V3.renderer.render(V3.scene, V3.camera);
+  pickPanel(false);
 }
 function pick3(cx, cy) {
   if (!V3.cells) return null;
@@ -1017,6 +1078,346 @@ function showTip(site, cx, cy, pin) {
   if (site == null) { tip.hidden = true; return; }
   tip.innerHTML = tipHTML(site); tip.hidden = false; tip.classList.toggle("pinned", pin); placeTip(cx, cy);
 }
+
+// ---- picked computations: their agents lit, and what they mean now ------------------------------------
+// Shift+click an agent to pick the computation it heads: it and every agent feeding its inputs
+// (readback.rs `subtree`). The engine follows picks as agents move and rewrite (`Selection::follow`),
+// and the side panel writes what each means now (readback.rs `text`) as disp.
+// Marks per seat (site × slots + slot): 1 in a pick, 2 a pick's root, 4 under the pointer with shift
+// held, 8 its root, 16 the part of a term last clicked in the panel.
+const PICK = { L: null, roots: [], marks: null, lit: [], on: false, key: "", rev: 0, shift: false, pointer: null, preview: null,
+  focus: null, focusSeats: [], focusDirty: false, notes: [], nodes: {}, html: "", shown: "", at: 0 };
+const PINK = "#ff5fd2", NOWHERE = 0xffffffff;
+const seatsOut = n => new Uint32Array(E.memory.buffer, E.seats_ptr(), n).slice();
+const siteOf = seat => Math.floor(seat / L.ks), slotOf = seat => seat % L.ks;
+/// Bring the picks up to date with the lattice, and the preview with the pointer.
+function pickSync() {
+  if (!L) return;
+  if (PICK.L !== L) {
+    E.pick_clear();
+    Object.assign(PICK, { L, roots: [], marks: new Uint8Array(L.w * L.h * L.depth * L.ks), lit: [], on: false, key: "", preview: null, focus: null, focusSeats: [], notes: [], html: "" });
+  }
+  const st = stats(), key = `${st[0]}|${st[1]}|${PICK.rev}|${onGpu}`;
+  let changed = false;
+  if (key !== PICK.key) {
+    PICK.key = key; changed = true;
+    const r = E.pick_follow(onGpu ? 1 : 0), n = r & 0xffff, ev = r >>> 16, w = seatsOut(3 * (n + ev));
+    PICK.roots = Array.from({ length: n }, (_, i) => ({ seat: w[3 * i], tag: w[3 * i + 1], out: w[3 * i + 2] }));
+    for (let j = n; j < n + ev; j++) pickNote(w[3 * j], w[3 * j + 1], w[3 * j + 2]);
+  }
+  const under = PICK.shift && PICK.pointer ? agentAt(PICK.pointer.x, PICK.pointer.y) : null;
+  const pv = under == null ? null : `${under}|${key}`;
+  if (pv !== (PICK.preview ? PICK.preview.key : null)) {
+    PICK.preview = under == null ? null : { key: pv, seat: under, seats: seatsOut(E.strands_subtree(siteOf(under), slotOf(under))) };
+    changed = true;
+  }
+  if (changed || PICK.focusDirty) { PICK.focusDirty = false; relight(); V3.dirty = true; }
+}
+function relight() {
+  const m = PICK.marks;
+  for (const s of PICK.lit) m[s] = 0;
+  PICK.lit = [];
+  const mark = (s, b) => { if (s >= m.length) return; if (!m[s]) PICK.lit.push(s); m[s] |= b; };
+  PICK.roots.forEach((r, i) => { for (const s of seatsOut(E.pick_subtree(i))) mark(s, 1); mark(r.seat, 2); });
+  if (PICK.preview) { for (const s of PICK.preview.seats) mark(s, 4); mark(PICK.preview.seat, 8); }
+  for (const s of PICK.focusSeats) mark(s, 16);
+  PICK.on = PICK.lit.length > 0;
+}
+/// What became of a pick that is not where it was (readback.rs `Fate`): followed on, or dropped out.
+function pickNote(was, fate, other) {
+  if (fate === 1 || fate === 2) return;
+  const a = NAMES[TAGS[was]];
+  const say = fate === 4 ? `The ${a} you picked is gone after a stretch on the GPU: used up, or not found again among the agents the GPU hands back renumbered.`
+    : was === 11 ? `The eraser you picked is done: what it read is erased.`
+    : other === 11 ? `The ${a} you picked dropped out: nobody needs it, and it is being erased.`
+    : [5, 10, 12].includes(other) ? `The ${a} you picked dropped out: between two looks its value went on past the ${NAMES[TAGS[other]]} reading it, further than can be followed.`
+    : `The ${a} you picked dropped out: its value was used up by ${other ? `the ${NAMES[TAGS[other]]} reading it` : "a rewrite"}.`;
+  PICK.notes.push({ say, t: performance.now() });
+  if (PICK.notes.length > 3) PICK.notes.shift();
+}
+/// The agent drawn under the pointer, as a seat.
+function agentAt(cx, cy) {
+  if (!L) return null;
+  if (viewMode === "3d") {
+    if (!V3.agents || !V3.agentSeat) return null;
+    const r = $("cv3").getBoundingClientRect();
+    V3.ray.setFromCamera(new V3.T.Vector2((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1), V3.camera);
+    const hit = V3.ray.intersectObject(V3.agents, false)[0];
+    return hit ? V3.agentSeat[hit.instanceId] : null;
+  }
+  const r = cv.getBoundingClientRect(), V = views(), wx = (cx - r.left - view.ox) / view.s, wy = (cy - r.top - view.oy) / view.s;
+  const sites = [];
+  if (viewMode === "layers") { const s = siteAt(cx, cy); if (s != null) sites.push(s); }
+  else for (let z = 0; z < L.depth; z++) {
+    const x = Math.floor((wx - z * S * 0.38) / S), y = Math.floor((wy + z * S * 0.58) / S);
+    if (x >= 0 && y >= 0 && x < L.w && y < L.h) sites.push(z * L.w * L.h + y * L.w + x);
+  }
+  let best = null, bd = (S * 0.45) ** 2;
+  for (const s of sites) for (let k = 0; k < L.ks; k++) {
+    if (!V.tags[s * L.ks + k]) continue;
+    const [x, y] = slotPos(s, k), d = (x - wx) ** 2 + (y - wy) ** 2;
+    if (d < bd) { bd = d; best = s * L.ks + k; }
+  }
+  return best;
+}
+/// Pick the agent at a seat, or let it go if it is a pick's root.
+function pickSeat(seat) {
+  if (seat == null || E.pick_toggle(siteOf(seat), slotOf(seat)) < 0) return false;
+  PICK.rev++; PICK.focus = null; PICK.focusSeats = [];
+  pickSync(); pickPanel(true);
+  // The compiler knows every definition in scope by name: load it for the readback's names.
+  if (!window.StrandsDisp) dispCompiler().then(() => pickPanel(true), () => {});
+  return true;
+}
+function pickAt(cx, cy) { if (!pickSeat(agentAt(cx, cy))) banner("shift+click on an agent to pick the computation it heads"); }
+function pickClear() { if (!L) return; E.pick_clear(); PICK.rev++; PICK.focus = null; PICK.focusSeats = []; pickSync(); pickPanel(true); }
+
+// Terms as the engine writes them: L, S(x), F(x,y), @(f,x), <x,y> a pair, ~(x) erased, #n=x shared, #n read
+// again, … not read; each node with the seat of the agent computing it.
+function parseTerm(src, seats) {
+  let i = 0, t = 0;
+  const labels = new Map();
+  const go = () => {
+    const seat = seats[t++], c = src[i++];
+    switch (c) {
+      case "L": return { k: "L", seat };
+      case "S": case "~": { i++; const x = go(); i++; return { k: c, x, seat }; }
+      case "F": case "@": { i++; const x = go(); i++; const y = go(); i++; return { k: c, x, y, seat }; }
+      case "<": { const x = go(); i++; const y = go(); i++; return { k: c, x, y, seat }; }
+      case "#": {
+        let n = ""; while (/\d/.test(src[i])) n += src[i++];
+        if (src[i] !== "=") return { k: "#", n, seat, body: labels.get(n).body };
+        i++; const node = { k: "#", n, seat, body: null }; labels.set(n, node); node.body = go(); return node;
+      }
+      case "…": return { k: "…", seat };
+      default: return { k: "?", seat };
+    }
+  };
+  return go();
+}
+const kidsOf = n => n.k === "#" ? [n.body] : n.y ? [n.x, n.y] : n.x ? [n.x] : [];
+const bare = n => { while (n.k === "#") n = n.body; return n; };
+// A value's hash: its ternary form (0 leaf, 1 stem, 2 fork, in preorder) read as a number in two bases,
+// modulo two primes (both under 2^26, so products stay exact), computed from its parts.
+const HP = [50331653, 25165843], HB = [911, 3571];
+function val(n) {
+  if (n.val !== undefined) return n.val;
+  let v = null;
+  const mul = (a, b, i) => (a * b) % HP[i];
+  if (n.k === "#") v = val(n.body);
+  else if (n.k === "L") v = { h: [1, 1], pw: [HB[0], HB[1]], size: 1 };
+  else if (n.k === "S") { const x = val(n.x); if (x) v = { h: [0, 1].map(i => (2 * x.pw[i] + x.h[i]) % HP[i]), pw: [0, 1].map(i => mul(HB[i], x.pw[i], i)), size: 1 + x.size }; }
+  else if (n.k === "F") {
+    const x = val(n.x), y = val(n.y);
+    if (x && y) v = { h: [0, 1].map(i => (mul(mul(3, x.pw[i], i), y.pw[i], i) + mul(x.h[i], y.pw[i], i) + y.h[i]) % HP[i]),
+                      pw: [0, 1].map(i => mul(mul(HB[i], x.pw[i], i), y.pw[i], i)), size: 1 + x.size + y.size };
+  }
+  n.val = v;
+  return v;
+}
+const hkey = v => `${v.h[0]}:${v.h[1]}:${v.size}`;
+// Known definitions by the hash of their tree: the programs here, and window.StrandsDisp.names when an
+// in-browser compiler provides it. A piece of one is named after the program running if it is in it, else
+// after the smallest definition holding it.
+let NAMED = new Map(), PARTS = new Map(), namedFrom = "";
+function nameTable() {
+  const extra = Array.isArray(window.StrandsDisp?.names) ? window.StrandsDisp.names : [];
+  const from = `${DISP.length}:${extra.length}`;
+  if (from === namedFrom) return;
+  namedFrom = from; NAMED = new Map(); PARTS = new Map();
+  const defs = [...DISP, ...extra].filter(d => typeof d.tree === "string" && /^[012]+$/.test(d.tree)).map(d => {
+    let i = 0;
+    const go = () => { const c = d.tree[i++]; return c === "0" ? { k: "L" } : c === "1" ? { k: "S", x: go() } : { k: "F", x: go(), y: go() }; };
+    return { name: d.name, t: go() };
+  });
+  for (const d of defs) { const k = hkey(val(d.t)); if (!NAMED.has(k)) NAMED.set(k, d.name); }
+  defs.sort((a, b) => val(a.t).size - val(b.t).size);
+  for (const d of defs) {
+    const stack = [d.t];
+    while (stack.length) {
+      const n = stack.pop(), v = val(n);
+      if (v.size <= SMALL) continue;
+      const k = hkey(v), holders = PARTS.get(k);
+      if (!holders) PARTS.set(k, [d.name]); else if (!holders.includes(d.name)) holders.push(d.name);
+      stack.push(...kidsOf(n));
+    }
+  }
+}
+function natAst(n) { let c = 0; n = bare(n); while (n.k === "F" && bare(n.x).k === "L") { c++; n = bare(n.y); } return n.k === "L" ? c : null; }
+function listAst(n) { const xs = []; n = bare(n); while (n.k === "F") { xs.push(n.x); n = bare(n.y); } return n.k === "L" && xs.length ? xs : null; }
+// Data, written as a disp literal: a number, a string, or a list of data.
+function dataOf(n) {
+  if (n.data !== undefined) return n.data;
+  let d = null;
+  const nat = natAst(n), xs = nat === null ? listAst(n) : null;
+  if (nat !== null) d = String(nat);
+  else if (xs) {
+    const codes = xs.map(natAst);
+    if (codes.every(c => c !== null && c >= 32 && c <= 0x10ffff)) d = JSON.stringify(String.fromCodePoint(...codes));
+    else { const items = xs.map(dataOf); if (items.every(x => x !== null)) d = `[${items.join(", ")}]`; }
+  }
+  n.data = d;
+  return d;
+}
+/// Values up to this many nodes are written out as t …, bigger ones as one token.
+const SMALL = 6;
+/// A value written as one token, or null: a known definition, a leaf, data, or code too big to write out.
+/// Applied to something (`head`), a value is code, so not written as data.
+function atomOf(n, head) {
+  const memo = head ? "atomH" : "atom";
+  if (n[memo] !== undefined) return n[memo];
+  const v = val(n);
+  let a = null;
+  if (v) {
+    const k = hkey(v), name = NAMED.get(k), data = bare(n).k === "L" ? "t" : head ? null : dataOf(n), holders = PARTS.get(k);
+    const part = holders && (holders.find(p => running?.call.startsWith(p + " ")) ?? holders[0]);
+    if (name) a = { cls: "nm", text: name, title: `${name}, a known definition (${v.size} nodes)` };
+    else if (data !== null) a = { cls: "v", text: data, title: "a finished value" };
+    else if (v.size > SMALL) a = { cls: "ch", text: `‹${part ?? v.size}›`, title: part ? `a piece of ${part}'s code, ${v.size} nodes of tree` : `code with no known name, ${v.size} nodes of tree` };
+  }
+  n[memo] = a;
+  return a;
+}
+const SUBS = "₀₁₂₃₄₅₆₇₈₉", sub = n => String(n).replace(/\d/g, d => SUBS[d]);
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+/// A term as HTML: applications as f x y (a fork t a b and a stem t a are applications of t too),
+/// shared computations bound in a where, the first `limit` nodes breadth first and … past them.
+function termHTML(root, ctx, limit) {
+  const binds = new Map(), V = ctx.V, TEE = { k: "L", seat: NOWHERE };
+  const wanted = n => n.seat < V.tags.length && isConsumer(V.tags[n.seat]) && V.want[n.seat];
+  const build = (n, head) => {
+    if (n.k === "#" && !val(n) && n.body.k !== "…") {
+      if (!binds.has(n.n)) binds.set(n.n, { name: `x${sub(binds.size + 1)}`, body: n.body });
+      return { ast: n, ref: binds.get(n.n).name };
+    }
+    const a = n === TEE ? { cls: "v", text: "t", title: "a leaf" } : atomOf(n, head);
+    if (a) return { ast: n, atom: a };
+    const b = bare(n);
+    if (b.k === "…" || b.k === "?") return { ast: n, atom: { cls: "el", text: b.k, title: b.k === "…" ? "more, not read" : "could not be read" } };
+    if (b.k === "<") return { ast: n, pair: [build(b.x), build(b.y)] };
+    if (b.k === "~") return { ast: n, erase: build(b.x) };
+    let h = b, hot = false;
+    const args = [];
+    for (;;) {
+      if (h !== b && (atomOf(h, true) || h.k === "#" && !val(h))) break;
+      if (h.k === "@") { hot ||= wanted(h); args.unshift(h.y); h = h.x; }
+      else if (h.k === "F") { args.unshift(h.x, h.y); h = TEE; break; }
+      else if (h.k === "S") { args.unshift(h.x); h = TEE; break; }
+      else if (h.k === "#") h = h.body;
+      else break;
+    }
+    return { ast: n, head: build(h, true), args: args.map(x => build(x)), hot, value: !!val(n) };
+  };
+  // The answer of a program of known kind, as far as it is built: succ (…), add 2 (…), cons x (…).
+  const named = (n, name, args) => ({ ast: n, head: { ast: n, atom: { cls: "nm", text: name, title: "the answer, as far as it is built" } }, args, hot: false, value: false });
+  const peel = n => {
+    const b = bare(n);
+    if (val(b) || b.k !== "F") return build(n);
+    if (ctx.answer === "nat" && bare(b.x).k === "L") {
+      let k = 0, m = b;
+      while (m.k === "F" && bare(m.x).k === "L" && !val(m)) { k++; m = bare(m.y); }
+      return named(n, k === 1 ? "succ" : "add", k === 1 ? [peel(m)] : [{ ast: n, atom: { cls: "v", text: String(k) } }, peel(m)]);
+    }
+    if (ctx.answer === "list" || ctx.answer === "string") return named(n, "cons", [build(b.x), peel(b.y)]);
+    return build(n);
+  };
+  const render = (d, lim) => {
+    const shown = new Set(), q = [d];
+    while (q.length && shown.size < lim) {
+      const x = q.shift(); shown.add(x);
+      q.push(...(x.pair || (x.erase ? [x.erase] : x.args ? [x.head, ...x.args] : [])));
+    }
+    const tag = (x, cls, inner, title) => { ctx.nodes.push(x.ast); const f = ctx.focus === x.ast ? " fx" : "";
+      return `<span class="${cls}${f}" data-n="${ctx.block}:${ctx.nodes.length - 1}"${title ? ` title="${esc(title)}"` : ""}>${inner}</span>`; };
+    const out = (x, paren) => {
+      if (!shown.has(x)) return tag(x, "el", "…", "more: click to light its agents");
+      if (x.atom) return tag(x, x.atom.cls, esc(x.atom.text), x.atom.title);
+      if (x.ref) return tag(x, "sh", x.ref, "shared: computed once, read in several places");
+      if (x.pair) return tag(x, "", `⟨${out(x.pair[0])}, ${out(x.pair[1])}⟩`, "the arms of a pending choice");
+      if (x.erase) return tag(x, "", `<span class="er">erasing</span> ${out(x.erase, true)}`);
+      const s = tag(x, (x.value ? "v" : "") + (x.hot ? " w" : ""), [out(x.head, true), ...x.args.map(a => out(a, true))].join(" "), x.hot ? "being computed now" : "");
+      return paren ? `(${s})` : s;
+    };
+    return out(d, false);
+  };
+  if (ctx.answer && val(root)) {
+    const tree = n => { n = bare(n); return n.k === "L" ? { k: 0 } : n.k === "S" ? { k: 1, c: tree(n.x) } : { k: 2, l: tree(n.x), r: tree(n.y) }; };
+    return render({ ast: root, atom: { cls: "v", text: decodeAs(ctx.answer, tree(root)), title: "the answer" } }, 1);
+  }
+  let html = render(ctx.answer ? peel(root) : build(root), limit);
+  const where = [];
+  for (const [, b] of binds) where.push(`${b.name} = ${render(build(b.body), Math.max(24, limit >> 2))}`);
+  if (where.length) html += `<div class="wh">where ${where.join("<br>&emsp;&emsp;")}</div>`;
+  return html;
+}
+/// The side panel's account of the picks: for each, what it means now.
+function pickPanel(force) {
+  if (!L) return;
+  const now = performance.now();
+  if (!force && now - PICK.at < 250) return;
+  PICK.at = now;
+  PICK.notes = PICK.notes.filter(n => now - n.t < 6000);
+  const state = `${PICK.key}|${PICK.preview?.key}|${PICK.focus?.path}|${PICK.notes.length}|${namedFrom}`;
+  if (!force && state === PICK.shown) return;
+  PICK.shown = state;
+  nameTable();
+  const V = views();
+  PICK.nodes = {};
+  const blocks = [], focusOf = new Map();
+  const block = (key, seat, tag, src, seats, gloss) => {
+    const ctx = { V, block: key, nodes: [], focus: null, answer: tag === 13 && running ? running.kind : null };
+    const ast = src ? parseTerm(src, seats) : null;
+    if (ast && PICK.focus && PICK.focus.block === key) {
+      let n = ast; for (const i of PICK.focus.path) n = n && kidsOf(n)[i];
+      if (n) { ctx.focus = n; focusOf.set(key, n); }
+    }
+    const t = V.tags[seat], gone = seat < V.tags.length && dead(siteOf(seat), slotOf(seat)), want = seat < V.tags.length && V.want[seat];
+    const head = `<span style="color:${COLOR[tag]}">${LABEL[TAGS[tag]]} ${NAMES[TAGS[tag]]}</span>`
+      + (t ? `<span>at ${at(siteOf(seat))}</span>` : "") + (gloss ? `<span>· ${gloss}</span>` : "")
+      + (gone ? `<span class="chip">garbage</span>` : "") + (want && isConsumer(tag) ? `<span class="chip" style="color:#56c8ff">wanted</span>` : "")
+      + (key === "preview" ? `<span class="chip">under the pointer</span>` : `<button class="x" data-drop="${seat}" title="let go of it (shift+click it again)">×</button>`);
+    const body = ast ? termHTML(ast, ctx, 220) : `<span class="el">nothing to read</span>`;
+    PICK.nodes[key] = { root: ast, list: ctx.nodes };
+    blocks.push(`<div class="pk${key === "preview" ? " prev" : ""}"><div class="pkh">${head}</div><div class="tm">${body}</div></div>`);
+  };
+  const GLOSS = { 9: "the pair it splits", 11: "what it erases", 13: "the answer so far" };
+  if (PICK.preview && !PICK.roots.some(r => r.seat === PICK.preview.seat)) {
+    const s = PICK.preview.seat, n = E.strands_term(siteOf(s), slotOf(s), 4000);
+    block("preview", s, V.tags[s], text(n), seatsOut(E.seats_len()), GLOSS[V.tags[s]]);
+  }
+  PICK.roots.forEach((r, i) => { const n = E.pick_term(i, 20000); block(String(i), r.seat, r.tag, text(n), seatsOut(E.seats_len()), r.out === 3 ? GLOSS[r.tag] : ""); });
+  // The clicked part of a term: its agents are lit, wherever they have moved.
+  if (PICK.focus) {
+    const n = focusOf.get(PICK.focus.block), seats = new Set();
+    if (!n) PICK.focus = null;
+    else {
+      const go = x => { if (x.seat !== NOWHERE) { seats.add(x.seat); for (const s of seatsOut(E.strands_subtree(siteOf(x.seat), slotOf(x.seat)))) seats.add(s); } else kidsOf(x).forEach(go); };
+      go(n);
+    }
+    PICK.focusSeats = [...seats]; PICK.focusDirty = true;
+  }
+  const notes = PICK.notes.map(n => `<div class="pkn">${esc(n.say)}</div>`).join("");
+  const key = blocks.length ? `<div class="note"><span style="color:var(--hot)">values</span> · <span style="color:#7fd0ff">known definitions</span> · <span style="color:#c4a8e8"><i>‹code›</i></span> · <span style="text-decoration:underline 2px #56c8ff;text-underline-offset:3px">being computed</span> · <span style="color:#ff8ad8">x₁</span> shared · click part of a term to light its agents</div>` : "";
+  const html = notes + blocks.join("") + (key || `<div class="note">Hold <kbd>shift</kbd> and click an agent to pick the computation it heads: the agents it depends on light up, and what it means now is written here as disp. Picks follow their agents as they move and rewrite. <kbd>Esc</kbd> lets go.</div>`);
+  if (html !== PICK.html) { $("pick").innerHTML = html; PICK.html = html; }
+}
+$("pick").addEventListener("pointerdown", e => {
+  const drop = e.target.closest("[data-drop]");
+  if (drop) { pickSeat(+drop.dataset.drop); return; }
+  const el = e.target.closest("[data-n]");
+  if (!el) return;
+  const [block, i] = el.dataset.n.split(":"), info = PICK.nodes[block], n = info?.list[+i];
+  if (!n) return;
+  // Its path from the term's root, so it is found again as the term changes.
+  const path = [], seen = new Set();
+  const find = x => { if (x === n) return true; if (seen.has(x)) return false; seen.add(x);
+    return kidsOf(x).some((c, j) => { path.push(j); if (find(c)) return true; path.pop(); return false; }); };
+  if (!find(info.root)) return;
+  const same = PICK.focus && PICK.focus.block === block && PICK.focus.path.join() === path.join();
+  PICK.focus = same ? null : { block, path };
+  if (same) { PICK.focusSeats = []; PICK.focusDirty = true; }
+  pickPanel(true);
+});
 
 // ---- the loop ------------------------------------------------------------------------------------------
 function proposalsPerFrame() { const v = +$("speed").value; return v >= 100 ? Infinity : Math.round(Math.pow(10, 1 + v / 100 * 6)); }
@@ -1234,16 +1635,23 @@ cv.addEventListener("pointermove", e => {
     view.ox = drag.ox + dx; view.oy = drag.oy + dy;
   }
   hover = siteAt(e.clientX, e.clientY);
+  PICK.pointer = { x: e.clientX, y: e.clientY }; PICK.shift = e.shiftKey;
 });
 cv.addEventListener("pointerup", e => {
-  if (drag && !drag.moved) {
+  if (drag && !drag.moved && e.shiftKey) pickAt(e.clientX, e.clientY);
+  else if (drag && !drag.moved) {
     const s = siteAt(e.clientX, e.clientY);
     pinned = s == null || pinned === s ? null : s;
     showTip(pinned, e.clientX, e.clientY, pinned != null);
   }
   drag = null;
 });
-cv.addEventListener("pointerleave", () => { hover = null; });
+cv.addEventListener("pointerleave", () => { hover = null; PICK.pointer = null; });
+$("cv3").addEventListener("pointermove", e => { PICK.pointer = { x: e.clientX, y: e.clientY }; PICK.shift = e.shiftKey; });
+$("cv3").addEventListener("pointerleave", () => { PICK.pointer = null; });
+window.addEventListener("keydown", e => { if (e.key === "Shift") PICK.shift = true; });
+window.addEventListener("keyup", e => { if (e.key === "Shift") PICK.shift = false; });
+window.addEventListener("blur", () => { PICK.shift = false; });
 cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   const s2 = Math.max(0.05, Math.min(60, view.s * Math.exp(-e.deltaY * 0.0016))); view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2; }, { passive: false });
 function setPlaying(p) { playing = p && !settled; if (!playing) dropGpu(); $("play").textContent = playing ? "❚❚" : "▶"; if (playing) { story = []; showStory(); } V3.dirty = true; }
@@ -1282,7 +1690,7 @@ window.addEventListener("keydown", e => {
   if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
   else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(e.shiftKey); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); tlBack(e.shiftKey); }
-  else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; V3.dirty = true; }
+  else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; V3.dirty = true; pickClear(); }
   else if (e.key === "v" || e.key === "V") { const modes = ["oblique", "layers", "3d"]; setView(modes[(modes.indexOf(viewMode) + 1) % 3]); }
   else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
   else if (e.key === "g" || e.key === "G") setEngine(onGpu ? "cpu" : "gpu");

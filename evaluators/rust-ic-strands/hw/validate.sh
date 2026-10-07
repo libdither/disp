@@ -15,7 +15,8 @@
 #                 and on Firefox's if Firefox or Floorp is installed (player/firefox.sh): a run of the
 #                 design the player shows (`latest`) handed back and forth between GPU and CPU, with
 #                 stretches out several at a time, matches one that stays on the CPU; and in Firefox
-#                 the player itself reaches the same answer on its GPU about as fast as on its CPU
+#                 the player itself reaches the same answer on its GPU about as fast as on its CPU,
+#                 its input box compiles disp code, and picked computations read back as they reduce
 #   7. layout     with --layout: synthesis, place and route on IHP SG13G2, design rule check,
 #                 layout versus schematic, timing (see flow/layout.sh)
 # Exits non-zero on the first stage that fails. Each stage prints its wall time.
@@ -127,6 +128,10 @@ if [ -n "${FIREFOX:-}" ] || command -v firefox >/dev/null || command -v floorp >
   printf "   %-28s %s\n" "firefox: src=sort:1" "$r"
   r=$(cap 6G 900 "$HW/../player/firefox.sh" player 'p=disp:add&a=3 4' 2>&1 | tail -1) || fail=1
   printf "   %-28s %s\n" "firefox: the player, add 3 4" "$r"
+  r=$(cap 6G 900 "$HW/../player/firefox.sh" input 2>&1 | tail -1) || fail=1
+  printf "   %-28s %s\n" "firefox: the input box" "$r"
+  r=$(cap 6G 900 "$HW/../player/firefox.sh" pick 'p=disp:fib&a=2' 2>&1 | tail -1) || fail=1
+  printf "   %-28s %s\n" "firefox: picks, fib 2" "$r"
 else
   echo "   no firefox or floorp: its WebGPU not checked"
 fi

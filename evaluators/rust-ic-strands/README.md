@@ -17,6 +17,12 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   in words.
 - **Inspecting:** click a site to see its agents, where each of their wires leads, and what they
   are waiting for. Garbage is drawn dimmed.
+- **Reduction state:** shift+click an agent to pick the computation it heads (hold shift to
+  preview): it and every agent feeding its inputs are lit in pink, everything else dimmed, and
+  the side panel writes what it means now as disp (Reading back, below). Picks follow their
+  agents as they move and rewrite; one whose value a rewrite uses up drops out. Going back keeps
+  the root picked; other picks are found again only where the net still looks as it did. `Esc`
+  lets go.
 - **Views**, since each wins on something:
   - *layers stacked*: compact, but layers overlap;
   - *layers side by side*: exact, with every site easy to click;
@@ -512,6 +518,37 @@ since an argument loses its lease while it sits in a pair waiting to be triaged.
 pass through pairs recovers some. It also needs demand sent again and again: more pulses and
 state.
 
+## Reading back
+
+`crate/src/readback.rs` reads what any piece of the net means right now, for the player's
+reduction-state panel. It only reads; a run goes exactly as without it.
+- **Meaning.** Each output means a term, read off the abstract net by the rules: a value is a
+  tree; a suspension and an apply's result are applications *f x*; a triage on *a* with arms
+  ⟨*b*, *c*⟩ is *t a b c* (what `A·F` made it from); a dispatch on *z* with arms ⟨*w*, ⟨*x*,
+  *b*⟩⟩ is *t (t w x) b z*; an unpair's outputs are its pair's parts; a normalizer is its input;
+  a duplicator's two copies are one value, read once and shared. `tests/readback.rs` checks that
+  at every 12th clock of 64 runs the root's term, reduced by the oracle, is the answer.
+- **A computation** is an agent and, recursively, every agent feeding its inputs. A duplicator's
+  input belongs to every computation reading either copy.
+- **Following a pick.** When a picked agent is rewritten, whatever reads its outputs now reads
+  what it became, so the pick moves there. When the reader only passed the value on (a
+  duplicator, a normalizer, a pair) and went too, the pick moves on past it: to both copies, to
+  the normalized value, to the pair's reader. A forced suspension moves to the apply computing it.
+  A pick whose value a rewrite uses up drops out. Checked: whatever a pick follows still reduces to
+  what it did.
+- **Across a GPU.** A GPU hands its stretch back as bare sites, so the abstract net is rebuilt
+  with every agent renumbered. Picks are found again by neighbourhood: tags and ports out to 8
+  wires that no other agent has in either net (then 6, 4, 3 within a clock's reach), and from
+  those, neighbours whose own surroundings are unchanged. Seats alone fail, as look-alike agents
+  move into each other's seats within a stretch. Against a CPU run that keeps its ids, after
+  stretches of 50 clocks, 89% of picks are found again and none is mistaken for another.
+- **The panel** writes each pick as disp: applications as *f x y* (a fork *t a b* is an
+  application of *t* too), numbers, lists and strings as literals, code equal to a known
+  definition by its name (matched by a hash of its ternary form), other code over 6 nodes as
+  ‹the definition it is a piece of› or ‹its size›, computations shared by duplicators as *x₁* in
+  a *where*, and what is being computed underlined in blue. A program's answer, as far as it is
+  built, reads `succ (…)` or `cons x (…)`. Clicking part of a term lights its agents.
+
 ## Things tried that did not help, and why
 
 - **Pressure** from blocked rewrites (a diffusing field agents drift down): no measurable change
@@ -698,7 +735,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~8 s: corpus in 5 configurations (one with the demand field), per-move invariants, collection, handover
+cargo test --release                                  # ~8 s: corpus in 5 configurations (one with the demand field), per-move invariants, collection, handover, reading back
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -715,7 +752,9 @@ runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` with
 a setting as `strands-sweep` spells it); `strands-hw --wgsl` prints its generated tables.
 `player/dawn.sh check 'src=sort:1'` checks the browser's GPU path on the design the player shows
 (`player/firefox.sh check` the same in Firefox; `player/firefox.sh player 'src=add 3 4'` times
-the player itself there, and `player/firefox.sh input` checks its input box and compiler), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
+the player itself there, `player/firefox.sh input` checks its input box and compiler, and
+`player/firefox.sh pick 'p=disp:fib&a=2'` checks its picks and their reading back, followed to the
+answer), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
 (`copies=16&clocks=512` for many copies side by side, `demand=0&fork=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the

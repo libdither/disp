@@ -1,6 +1,7 @@
 //! Interaction nets as strands on the links of a lattice (evaluators/rust-ic-strands).
 
 pub mod lattice;
+pub mod readback;
 pub mod tables;
 #[cfg(feature = "gpu")]
 pub mod gpu;

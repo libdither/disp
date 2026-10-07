@@ -4,7 +4,9 @@
      The hash is mode=check or mode=player, then settings. check: gpu-check.js's check on this
      browser's WebGPU. player: the player itself (index.html) from clock 0 on the CPU and then on
      the GPU, each to the answer; the GPU must not be much slower than the CPU. Then once more on
-     the GPU, paused, stepped and handed to the CPU and back on the way, to the same answer. -->
+     the GPU, paused, stepped and handed to the CPU and back on the way, to the same answer.
+     pick: computations picked in the player (shift+click), read back and followed as it runs, in
+     every view and, if there is one, on the GPU; the root must read back as the answer at the end. -->
 <script src="engine.js"></script>
 <script src="gpu.js"></script>
 <script src="gpu-check.js"></script>
@@ -60,7 +62,82 @@ async function player() {
   return `ok the answer in ${cpu.secs.toFixed(1)} s on the CPU, ${gpu.secs.toFixed(1)} s on the GPU`;
 }
 
-(mode === "player" ? player() : StrandsCheck.check(q.toString(), say))
+async function pick() {
+  const limit = +(q.get("secs") || 240) * 1000;
+  q.delete("secs");
+  const f = document.createElement("iframe");
+  f.style.cssText = "width:1200px;height:800px";
+  document.body.append(f);
+  f.src = `index.html#${q}&view=layers&play=0`;
+  await new Promise(r => f.onload = r);
+  const w = f.contentWindow, v = e => w.eval(e), t0 = performance.now();
+  for (let i = 0; i < 300 && !v("typeof L !== 'undefined' && L"); i++) await sleep(100);
+  if (!v("L")) return "FAIL the player did not load";
+  const panel = () => v("document.getElementById('pick').innerText").replace(/\s+/g, " ").trim();
+  const seatOf = test => v(`(() => { const V = views(), out = []; for (const s of V.live) for (let k = 0; k < L.ks; k++) { const i = s * L.ks + k, t = V.tags[i]; if (t && (${test})) out.push(i); } return out; })()`);
+  v("E.strands_clocks(400); draw()");
+  const [root] = seatOf("t === 13");
+  if (!v(`pickSeat(${root})`) || v("PICK.roots.length") !== 1) return "FAIL could not pick the root";
+  await say(`the root picked, ${v("PICK.lit.length")} agents lit; reads: ${panel().slice(0, 300)}`);
+  const wanted = seatOf("isConsumer(t) && t !== 13 && V.want[i]").slice(0, 3);
+  for (const s of wanted) v(`pickSeat(${s})`);
+  const ms = v("(() => { const t = performance.now(); pickPanel(true); return performance.now() - t; })()");
+  const frame = on => v(`(() => { const t = performance.now(); for (let i = 0; i < 5; i++) { PICK.on = ${on}; draw(); } return (performance.now() - t) / 5; })()`);
+  const [lit, unlit] = [frame(true), frame(false)];
+  v("PICK.key = ''; draw()");
+  await say(`${v("PICK.roots.length")} picks, ${v("PICK.lit.length")} agents lit; the panel takes ${ms.toFixed(1)} ms, a frame ${lit.toFixed(1)} ms lit and ${unlit.toFixed(1)} ms not`);
+  for (let i = 0; i < 10; i++) v("E.strands_clocks(200); draw()");
+  v("pickPanel(true)");
+  if (!v("PICK.roots.some(r => r.tag === 13)")) return "FAIL the root's pick was lost";
+  await say(`after 2000 more clocks: ${v("PICK.roots.length")} picks; ${v("PICK.notes.map(n => n.say).join(' ') || 'no notes'")}`);
+  // Going back to an earlier clock puts sites back and numbers the agents afresh: the root stays picked.
+  // (this check runs clocks straight on the engine, so it tells the time bar how far the run got)
+  const back = Math.floor(v("stats()[1]") / 2);
+  v("tlNote()");
+  v(`tlSeek(${back})`);
+  for (let i = 0; i < 500 && v("T.job") !== null; i++) await sleep(20);
+  await sleep(150);
+  if (v("stats()[1]") !== back) return `FAIL going back landed at ${v("stats()[1]")}, not ${back}`;
+  if (!v("PICK.roots.some(r => r.tag === 13)")) return `FAIL going back lost the root's pick: ${JSON.stringify(v("PICK.roots.map(r => r.tag)"))} ${v("PICK.notes.map(n => n.say).join(' ')")}`;
+  await say(`back to clock ${back}: the root still picked, reading ${panel().slice(0, 100)}`);
+  // Shift held over an agent previews its computation; a click on part of a term lights its agents.
+  const [any] = seatOf("isProducer(t)");
+  const xy = v(`(() => { const [x, y] = slotPos(siteOf(${any}), slotOf(${any})), r = cv.getBoundingClientRect(); return [r.left + view.ox + x * view.s, r.top + view.oy + y * view.s]; })()`);
+  v(`PICK.shift = true; PICK.pointer = { x: ${xy[0]}, y: ${xy[1]} }; draw(); pickPanel(true)`);
+  if (v("PICK.preview?.seat") !== any) return `FAIL no preview under the pointer (${v("PICK.preview?.seat")} for ${any})`;
+  v("PICK.shift = false; draw(); pickPanel(true)");
+  if (v("PICK.preview") !== null || v("!!document.querySelector('#pick .prev')")) return "FAIL the preview stayed after shift was let go";
+  v("document.querySelector('#pick .tm [data-n]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); draw()");
+  if (!v("PICK.focus") || !v("PICK.lit.some(s => PICK.marks[s] & 16)")) return "FAIL a click on a term lit nothing";
+  for (const view of ["oblique", "3d", "layers"]) { v(`setView('${view}'); V3.dirty = true; draw()`); await sleep(50); }
+  await say(`previews, clicks on terms and all three views work`);
+  // On the GPU, if there is one: picks are found again as it hands back its stretches renumbered.
+  if (v("!!navigator.gpu")) {
+    await w.setEngine("gpu");
+    if (v("onGpu")) {
+      for (const s of seatOf("isConsumer(t) && t !== 13 && V.want[i]").slice(0, 4)) v(`pickSeat(${s})`);
+      const before = v("PICK.roots.length");
+      w.setPlaying(true); await sleep(3000); w.setPlaying(false);
+      for (let i = 0; i < 100 && v("G.busy"); i++) await sleep(20);
+      v("draw(); pickPanel(true)");
+      await say(`on the GPU for 3 s (${v("stats()[1]")} clocks): ${before} picks, ${v("PICK.roots.length")} now; ${v("PICK.notes.map(n => n.say).join(' ') || 'no notes'")}`);
+      if (!v("PICK.roots.some(r => r.tag === 13)")) return "FAIL the GPU lost the root's pick";
+      await w.setEngine("cpu");
+    } else await say("no GPU: " + v("document.getElementById('sEngine').textContent"));
+  }
+  while (!v("E.strands_clocks(500)") && performance.now() - t0 < limit) await sleep(0);
+  v("draw(); pickPanel(true)");
+  const answer = v("running ? decodeAs(running.kind, parseTree(text(E.strands_answer()))) : text(E.strands_answer())");
+  const reads = v("[...document.querySelectorAll('#pick .pk')].find(b => b.querySelector('.pkh').innerText.includes('root'))?.querySelector('.tm').innerText.trim()");
+  await say(`at ${v("stats()[1]")} clocks the answer is ${answer}; the panel reads: ${panel().slice(0, 300)}`);
+  if (!v("PICK.roots.some(r => r.tag === 13)")) return "FAIL the root's pick was lost";
+  if (reads !== answer) return `FAIL the root reads back as ${reads}, not the answer ${answer}`;
+  w.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" }));
+  if (v("PICK.roots.length") !== 0) return "FAIL Esc did not let go";
+  return `ok picks followed to the answer ${answer} in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+}
+
+(mode === "player" ? player() : mode === "pick" ? pick() : StrandsCheck.check(q.toString(), say))
   .catch(e => "FAIL " + (e.stack || e))
   .then(say);
 </script></body></html>
