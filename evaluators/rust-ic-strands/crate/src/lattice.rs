@@ -237,6 +237,8 @@ pub struct Lattice {
     live_pos: Vec<u32>,
     rng: u64,
     pub e: Energy,
+    /// Cooling, once only the answer is left: the clock it began and the temperature then (`cool`).
+    pub cooling: Option<(f64, f64)>,
     /// The random word of the turn under way.
     cur: Dice,
     /// Strand ends with a pulse that the move under way has rewired, and their mates before it.
@@ -398,6 +400,12 @@ pub fn chip() -> Params {
              pairs: 8, active: 0.5, ..Params::default() }
 }
 
+/// Clocks over which cooling halves the temperature, and the temperature it stops at.
+pub const COOL_HALF: f64 = 100.0;
+pub const COOL_MIN: f64 = 0.05;
+/// The temperature `clocks` after cooling began at t0.
+pub fn cooled(t0: f64, clocks: f64) -> f64 { (t0 * 0.5f64.powf(clocks / COOL_HALF)).max(COOL_MIN) }
+
 /// The current design: the chip's schedule with the demand field and forking S rules. The player
 /// and the GPU run it; hw/ builds `chip`.
 pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p.fork = true; p }
@@ -521,6 +529,7 @@ impl Lattice {
             live_pos: vec![u32::MAX; n],
             rng: p.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
             e: Energy::new(&p),
+            cooling: None,
             cur: Dice::default(),
             pulse_watch: vec![],
             shadow: Net::new(),
@@ -640,6 +649,12 @@ impl Lattice {
     }
 
     /// What the clock contributes to random words: the clock, mixed with the seed.
+    /// Start cooling: from now on the temperature halves every `COOL_HALF` clocks down to
+    /// `COOL_MIN`, so wire straightens and the answer contracts as far as it will go.
+    pub fn cool(&mut self) { if self.cooling.is_none() { self.cooling = Some((self.stats.clocks, self.p.temp)); } }
+    /// Run at temperature t from the next move on.
+    pub fn set_temp(&mut self, t: f64) { if self.p.temp != t { self.p.temp = t; self.e = Energy::new(&self.p); } }
+
     pub fn tick(&self) -> u32 { self.stats.clocks as u32 ^ (self.p.seed as u32).wrapping_mul(0x9E37_79B9) }
 
     /// A site's coordinates packed into the key of its random words.
@@ -1735,6 +1750,7 @@ impl Lattice {
     /// holding matter picks one of its sites (preferring agents) and makes one move inside it,
     /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
+        if let Some((from, t0)) = self.cooling { self.set_temp(cooled(t0, self.stats.clocks - from)); }
         if self.fields.on { self.update_fields(); }
         let b = self.p.block_side as u64;
         // Under a turn for every site, the offset and the order in each block are hashes of the

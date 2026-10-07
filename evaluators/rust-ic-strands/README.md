@@ -23,6 +23,18 @@ rules, below), with the field drawn as an amber tint and called values ringed in
     `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1, MIT).
 - **CPU or GPU** (the selector next to the speed, or `G`): the GPU runs the same design through
   WebGPU (below), and a run moves between the two at any clock as it is.
+- **Going back** (the time bar, `←` one clock, `shift ←` to the last rewrite): every move is a hash
+  of its site and its clock, so a run repeats exactly from any state of it. States are saved in the
+  engine (`wasm.rs` `save_state`) and thinned with distance from the clock on show (`timeline.js`):
+  each time the budget (64 MB) is full, the one whose neighbours are nearest for its distance goes,
+  so near the clock on show there is about one every clock and far away about one every tenth of the
+  distance. Any clock reached is shown by putting back the nearest saved state before it and running
+  on, saving more densely near the target, so stepping back costs a few clocks of replay and a jump a
+  tenth of its length.
+- **At the end** the run cools: once only the answer is left, the temperature halves every 100
+  clocks down to 0.05 (`Lattice::cool`), so the wire straightens and the answer contracts as far as
+  it will go (disp `add 2 3`: 32 strands of wire become 11, one a wire). The clock it began at is
+  recorded, and replays cool there too.
 
 ## The machine
 

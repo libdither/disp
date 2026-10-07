@@ -28,6 +28,11 @@
   .icon.primary { width:40px; color:#04121c; background:var(--accent); border-color:#8bddff; }
   .sep { width:1px; height:24px; background:var(--line2); }
   #speedv { color:var(--dim); font-size:11px; min-width:96px; }
+  #timebar { position:absolute; z-index:5; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:8px; align-items:center;
+    padding:5px 8px; border:1px solid var(--line2); border-radius:12px; background:rgba(11,14,20,.9); width:min(720px, calc(100% - 20px)); box-sizing:border-box; }
+  #timeline { position:relative; flex:1; height:26px; } #timeline canvas { position:absolute; inset:0 0 auto 0; width:100%; height:8px; }
+  #time { position:absolute; left:0; right:0; bottom:0; width:100%; margin:0; }
+  #timev { color:var(--dim); font-size:11px; white-space:nowrap; }
   .badge { text-align:center; font-weight:bold; letter-spacing:.1em; padding:6px; border-radius:7px; margin:8px 0; border:1px solid var(--line2); }
   .badge.run { color:var(--accent); } .badge.ok { color:var(--ok); border-color:rgba(63,191,127,.45); background:rgba(63,191,127,.1); }
   .badge.bad { color:var(--warn); border-color:rgba(255,107,107,.45); background:rgba(255,107,107,.1); }
@@ -73,6 +78,9 @@
       <span class="sep"></span>
       <select id="viewMode" title="how to draw the layers (V)"><option value="oblique">layers stacked</option><option value="layers">layers side by side</option><option value="3d">3D</option></select>
     </div>
+    <div id="timebar"><button class="icon" id="back" title="one clock back (←); shift: back to the last rewrite">−1</button>
+      <div id="timeline"><canvas id="ticks"></canvas><input id="time" type="range" min="0" max="0" value="0" title="every clock reached so far; drag to go back or forth"></div>
+      <span id="timev"></span></div>
     <div id="banner"></div>
     <div id="tip" hidden></div>
   </div>
@@ -142,7 +150,12 @@
       <p><b>Garbage.</b> Agents the answer no longer depends on are drawn dimmed. An eraser that touches a computation's
         output collects it: a duplicator becomes a plain wire from its input to its other output; a dead apply becomes
         erasers on its inputs; an unpair with both parts erased becomes one eraser on the pair. Once the answer is in,
-        the machine keeps running until only the answer is left.</p>
+        the machine keeps running until only the answer is left. Then it cools: the temperature halves every 100 clocks,
+        so wiggles cost more than they gain, the wire straightens and the answer contracts as far as it will go.</p>
+      <p><b>Going back.</b> Every move is a hash of its site and its clock, so a run repeats exactly from any state of
+        it. The run is saved at some clocks, densely near the clock on show and more sparsely away from it, in at most
+        64 MB; going to a clock puts back the nearest saved state before it and runs on. The ticks above the time bar
+        are the saved states.</p>
       <p><b>Clocks.</b> Every clock the lattice is cut into disjoint 2×2×2 blocks at a random offset, and in each block
         every site takes a turn, a site with a wanted reader or a called value spending half of its on it: what a
         synchronous chip does, with no move ever reaching outside its block.</p>
@@ -150,7 +163,7 @@
         layers overlap. <i>Layers side by side</i> gives each layer its own panel: exact, and every site is easy to
         click. <i>3D</i> shows the lattice as it is: drag to orbit, right-drag to pan, spread the layers apart or show
         one at a time.</p>
-      <p class="note"><kbd>space</kbd> play · <kbd>→</kbd> one move · <kbd>shift →</kbd> to the next rewrite · <kbd>R</kbd> restart ·
+      <p class="note"><kbd>space</kbd> play · <kbd>→</kbd> one move · <kbd>shift →</kbd> to the next rewrite · <kbd>←</kbd> one clock back · <kbd>shift ←</kbd> back to the last rewrite · <kbd>R</kbd> restart ·
         <kbd>F</kbd> fit · <kbd>V</kbd> next view · drag to pan · wheel to zoom · click a site to see what is in it, <kbd>Esc</kbd> to let go</p>
     </details>
   </div>
@@ -159,6 +172,7 @@
 <script src="gpu.js"></script>
 <script src="programs.js"></script>
 <script src="three.min.js"></script>
+<script src="timeline.js"></script>
 <script>
 "use strict";
 const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out"];
@@ -334,7 +348,8 @@ function load() {
   L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
   const d = dispProg($("prog").value);
   running = d ? { kind: d.kind, call: `${d.name} ${$("args").value.trim()}` } : null;
-  finished = false; cleaned = false; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
+  finished = false; cleaned = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
+  tlReset();
   refreshGarbage(true); layoutLayers();
   $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
   const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), field = E.field_bits();
@@ -926,14 +941,21 @@ function showTip(site, cx, cy, pin) {
 function proposalsPerFrame() { const v = +$("speed").value; return v >= 100 ? Infinity : Math.round(Math.pow(10, 1 + v / 100 * 6)); }
 const stats = () => new Float64Array(E.memory.buffer, E.stats_ptr(), 17);
 function frame() {
-  if (L && playing && !cleaned && !G?.busy && onGpu) gpuStep();
-  else if (L && playing && !cleaned && !G?.busy) {
+  if (T.job) tlPump();
+  // Cooling runs on the CPU: the GPU's tables hold the temperature the run started at.
+  else if (L && playing && !settled && !G?.busy && onGpu && !cleaned) gpuStep();
+  else if (L && playing && !settled && !G?.busy) {
     const want = proposalsPerFrame(), t0 = performance.now();
     let ran = 0;
     while (ran < want) {
       // After the answer, about one clock at a time, so the moment the garbage is gone is not overshot.
       const chunk = Math.min(want - ran, finished ? Math.max(200, E.live_len()) : 200000);
-      if (!finished) { finished = E.strands_run(chunk) === 1; if (finished) answerClock = stats()[1]; }
+      // Short of the clock the run once cooled at, clocks that stop there, to cool there again.
+      if (T.coolAt !== null && stats()[1] <= T.coolAt) {
+        const fin = tlClocks(Math.max(1, Math.round(chunk / Math.max(1, E.live_len())))) === 1;
+        if (!finished && fin) { finished = true; answerClock = stats()[1]; }
+      }
+      else if (!finished) { finished = E.strands_run(chunk) === 1; if (finished) answerClock = stats()[1]; }
       else E.strands_run_on(chunk);
       ran += chunk;
       if (finished && afterAnswer()) break;
@@ -953,7 +975,13 @@ function afterRun() {
   E.fire_log_clear();
   const st = stats();
   if (!hist.length || st[1] !== hist[hist.length - 1].sw) { hist.push({ sw: st[1], fires: st[2], strands: st[7], t: now }); if (hist.length > 3000) hist.splice(0, 1500); }
-  if (cleaned) setPlaying(false);
+  tlNote();
+  // Cooled: once at the coldest, done when the wire has not got shorter for 300 clocks.
+  if (cleaned && !settled && E.strands_temp() <= 0.05 + 1e-9) {
+    if (!T.shortest || st[7] < T.shortest.strands) T.shortest = { strands: st[7], clock: st[1] };
+    else if (st[1] - T.shortest.clock >= 300) { settled = true; T.settleAt = st[1]; T.shortest = null; }
+  }
+  if (settled) setPlaying(false);
 }
 // Clocks per second over about the last second of running.
 function rate() {
@@ -1014,9 +1042,12 @@ async function gpuStep() {
     while (G.out.length < depth) {
       let n = Math.max(1, Math.min(Math.round(proposalsPerFrame() / Math.max(1, E.live_len())), Math.round(25 / G.msPerClock)));
       if (finished) n = Math.min(n, 8);
+      // No further than the clock the run once cooled at: cooling runs on the CPU.
+      if (T.coolAt !== null) { if (G.at >= T.coolAt) break; n = Math.min(n, T.coolAt - G.at); }
       G.out.push({ n, back: grid.stretch(G.at, SEED, n) });
       G.at += n;
     }
+    if (!G.out.length) return;
     const s = G.out.shift(), r = await s.back;
     // Loaded afresh meanwhile: this grid belongs to the old run. Dropped: the engine moved on.
     if (load !== G.load) { grid.destroy(); return; }
@@ -1046,21 +1077,25 @@ function dropGpu() {
 function afterAnswer() {
   if (!L.gc) { cleaned = true; return true; }
   refreshGarbage(true);
-  if (garbageCount === 0 || stats()[1] - answerClock > 200000) { cleaned = true; return true; }
+  if (garbageCount === 0 || stats()[1] - answerClock > 200000) {
+    // Only the answer left: it cools and contracts, from this clock on in every replay too.
+    if (T.coolAt === null) { T.coolAt = stats()[1]; E.strands_cool(); }
+    cleaned = true; return true;
+  }
   return false;
 }
 function stepOnce(toRewrite) {
-  if (!L || cleaned || G?.busy) return;
+  if (!L || settled || G?.busy || T.job) return;
   setPlaying(false);
   const t0 = performance.now();
+  // Clocks until something happens (with toRewrite, a rewrite), each told in words.
   do {
-    const r = E.strands_step(5000000);
-    story = Array.from({ length: E.events_len() }, (_, i) => Array.from(new Uint32Array(E.memory.buffer, E.events_ptr() + i * 32, 8)));
+    const r = tlStepClock();
     if (!finished && r >> 16) { finished = true; answerClock = stats()[1]; }
-  } while (toRewrite && !story.some(e => e[0] === 5) && performance.now() - t0 < 3000);
+  } while ((toRewrite ? !story.some(e => e[0] === 5) : !story.length) && performance.now() - t0 < 3000);
   if (finished) afterAnswer();
   E.fire_log_clear();
-  refreshGarbage(true); showStory(); panel(true); V3.dirty = true;
+  tlNote(); refreshGarbage(true); showStory(); panel(true); V3.dirty = true;
 }
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
 let lastPanel = 0;
@@ -1070,7 +1105,8 @@ function panel(force) {
   const st = stats();
   $("sSweep").textContent = fmt(st[1]); $("sFires").innerHTML = `<b>${fmt(st[2])}</b>`;
   const r = rate();
-  if (!$("engine").disabled) $("sEngine").textContent = (onGpu ? `the GPU (${G.kernels.name})` : "the CPU (WebAssembly)") + (r ? ` · ${fmt(r)} clocks/s` : "");
+  if (!$("engine").disabled) $("sEngine").textContent = (cleaned && !settled ? `the CPU, cooling (temperature ${E.strands_temp().toFixed(2)})`
+    : onGpu ? `the GPU (${G.kernels.name})` : "the CPU (WebAssembly)") + (r ? ` · ${fmt(r)} clocks/s` : "");
   $("sHops").textContent = `${fmt(st[3])} · ${fmt(st[4])}`; $("sFold").textContent = `${fmt(st[5])} · ${fmt(st[6])}`;
   $("sBlock").textContent = fmt(st[9]); $("sAgents").textContent = `${fmt(st[11])} (${fmt(garbageCount)})`; $("sStrands").textContent = `${fmt(st[7])} (${fmt(st[8])})`;
   $("sWalk").textContent = `${fmt(st[12])} · ${fmt(st[13])}`;
@@ -1083,13 +1119,14 @@ function panel(force) {
   const ok = oracleText === "" ? null : ans === oracleText;
   badge.className = "badge " + (ok === false ? "bad" : cleaned ? "ok" : "run");
   badge.textContent = ok === false ? "WRONG ANSWER" : cleaned
-    ? (garbageCount ? `ANSWER IN ${fmt(answerClock)} CLOCKS · ${garbageCount} GARBAGE LEFT` : `DONE in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}`)
+    ? (garbageCount ? `ANSWER IN ${fmt(answerClock)} CLOCKS · ${garbageCount} GARBAGE LEFT`
+      : settled ? `DONE in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}` : `ANSWER AT ${fmt(answerClock)} CLOCKS · CONTRACTING`)
     : `ANSWER IN at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
   if (running) { $("decoded").textContent = `${running.call} = ${decodeAs(running.kind, parseTree(ans))}`; }
   else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
   $("answer").textContent = ans;
   $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)
-    + (cleaned && !garbageCount && L.gc ? "; only the answer is left on the lattice" : "");
+    + (cleaned && !garbageCount && L.gc ? (settled ? "; only the answer is left on the lattice, contracted" : "; only the answer is left, cooling so it contracts") : "");
 }
 function chart() {
   const c = $("chart"), g = c.getContext("2d"), W = c.width, H = c.height; g.clearRect(0, 0, W, H);
@@ -1128,9 +1165,11 @@ cv.addEventListener("pointerup", e => {
 cv.addEventListener("pointerleave", () => { hover = null; });
 cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   const s2 = Math.max(0.05, Math.min(60, view.s * Math.exp(-e.deltaY * 0.0016))); view.ox = mx - (mx - view.ox) * s2 / view.s; view.oy = my - (my - view.oy) * s2 / view.s; view.s = s2; }, { passive: false });
-function setPlaying(p) { playing = p && !cleaned; if (!playing) dropGpu(); $("play").textContent = playing ? "❚❚" : "▶"; if (playing) { story = []; showStory(); } V3.dirty = true; }
+function setPlaying(p) { playing = p && !settled; if (!playing) dropGpu(); $("play").textContent = playing ? "❚❚" : "▶"; if (playing) { story = []; showStory(); } V3.dirty = true; }
 $("play").onclick = () => setPlaying(!playing);
 $("step").onclick = e => stepOnce(e.shiftKey);
+$("back").onclick = e => tlBack(e.shiftKey);
+$("time").oninput = () => tlSeek(+$("time").value);
 $("end").onclick = () => { $("speed").value = 100; speedLabel(); setPlaying(true); };
 $("reset").onclick = () => load();
 $("load").onclick = () => { load(); setPlaying(true); };
@@ -1148,6 +1187,7 @@ window.addEventListener("keydown", e => {
   if (e.target.tagName === "SELECT") return;
   if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
   else if (e.key === "ArrowRight") { e.preventDefault(); stepOnce(e.shiftKey); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); tlBack(e.shiftKey); }
   else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; V3.dirty = true; }
   else if (e.key === "v" || e.key === "V") { const modes = ["oblique", "layers", "3d"]; setView(modes[(modes.indexOf(viewMode) + 1) % 3]); }
   else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();

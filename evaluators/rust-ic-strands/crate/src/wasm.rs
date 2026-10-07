@@ -1,7 +1,7 @@
 //! The browser build: the strand lattice driven from JavaScript through a flat C ABI. The
 //! player draws straight from the lattice's own arrays.
 
-use crate::lattice::{latest, Lattice, Params};
+use crate::lattice::{latest, Lattice, Params, Stats};
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel, Term};
 use rust_ic_mesh::term;
@@ -66,6 +66,7 @@ pub extern "C" fn strands_depth() -> u32 { next().depth }
 /// Load a term on a w×h lattice with the next run's settings. Returns 0, or an error in the text
 /// (2: the term's drawing does not fit).
 #[no_mangle]
+#[allow(static_mut_refs)]
 pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32 {
     std::panic::set_hook(Box::new(|info| { set_text(&format!("engine panic: {info}")); }));
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
@@ -76,7 +77,7 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let root = net.build(&t);
     let (_, out) = net.drive(root);
     match Lattice::load(p, net, out) {
-        Ok(l) => { unsafe { STATE = Some(State { l, term: t, done: false }); } 0 }
+        Ok(l) => { unsafe { STATE = Some(State { l, term: t, done: false }); SAVED.clear(); } 0 }
         Err(e) => { set_text(&e); 2 }
     }
 }
@@ -247,3 +248,53 @@ pub extern "C" fn strands_gpu_ran(clocks: u32, held: u32, fires: u32) -> u32 {
     if !s.done { s.done = s.l.p.lazy && s.l.readback().is_some() || s.l.shadow.active_pair().is_none(); }
     s.done as u32
 }
+
+/// A run as it was at some clock, for going back to it: the sites holding anything, the counts,
+/// whether the answer was in, and the temperature and cooling (which change once the answer is
+/// left alone). Restoring one and running on repeats the run exactly, as a handover does.
+struct Saved { held: Vec<u32>, stats: Stats, done: bool, temp: f64, cooling: Option<(f64, f64)> }
+static mut SAVED: Vec<Option<Saved>> = Vec::new();
+
+/// Save the run as it is now; returns the saved state's number.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn save_state() -> u32 {
+    let s = st();
+    let v = Saved { held: s.l.held_sites(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling };
+    let saved = unsafe { &mut SAVED };
+    match saved.iter().position(|x| x.is_none()) {
+        Some(i) => { saved[i] = Some(v); i as u32 }
+        None => { saved.push(Some(v)); saved.len() as u32 - 1 }
+    }
+}
+
+/// Put the run back as saved state i had it.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn restore_state(i: u32) {
+    let s = st();
+    let v = unsafe { SAVED[i as usize].as_ref().expect("a saved state") };
+    s.l.put_sites(&v.held);
+    s.l.stats = v.stats.clone();
+    s.l.cooling = v.cooling;
+    s.l.set_temp(v.temp);
+    s.l.events.clear();
+    s.l.fire_log.clear();
+    s.done = v.done;
+}
+
+/// Forget saved state i.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn drop_state(i: u32) { unsafe { SAVED[i as usize] = None; } }
+
+/// The bytes saved state i takes.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn state_bytes(i: u32) -> u32 {
+    unsafe { SAVED[i as usize].as_ref().map_or(0, |v| (v.held.len() * 4 + std::mem::size_of::<Saved>()) as u32) }
+}
+
+/// Start cooling the run (lattice.rs `cool`); the temperature it runs at now.
+#[no_mangle] pub extern "C" fn strands_cool() { st().l.cool(); }
+#[no_mangle] pub extern "C" fn strands_temp() -> f64 { st().l.p.temp }
