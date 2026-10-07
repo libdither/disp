@@ -179,6 +179,27 @@ impl Net {
         self.active_pair().is_none()
     }
 
+    /// `reduce`, keeping a list of the agents a rewrite made or rewired instead of looking at every
+    /// agent for each one, and telling `each` every rule it fires. Every order fires the same number
+    /// of rewrites (interaction nets are strongly confluent), so `ints` is the same as `reduce` gives.
+    pub fn reduce_listed(&mut self, budget: u64, mut each: impl FnMut(&'static Rule)) -> bool {
+        let mut todo: Vec<u32> = (0..self.agents.len() as u32).rev().collect();
+        let start = self.ints;
+        while let Some(id) = todo.pop() {
+            let Some(a) = &self.agents[id as usize] else { continue };
+            let Some((b, 0)) = a.ports[0] else { continue };
+            let bt = self.get(b).tag;
+            let (c, p) = if a.tag.is_consumer() && bt.is_producer() { (id, b) } else if a.tag.is_producer() && bt.is_consumer() { (b, id) } else { continue };
+            if self.ints - start == budget { return false; }
+            let near: Vec<u32> = [c, p].iter().flat_map(|&x| self.get(x).ports).flatten().map(|r| r.0).filter(|&x| x != c && x != p).collect();
+            let (rule, fresh) = self.fire(c, p);
+            each(rule);
+            todo.extend(near);
+            todo.extend(fresh);
+        }
+        true
+    }
+
     /// Read the value tree hanging off a ref (an Out's port-0 far end at quiescence).
     pub fn readback(&self, r: Option<Ref>) -> Option<crate::oracle::Term> {
         use crate::oracle::Term;

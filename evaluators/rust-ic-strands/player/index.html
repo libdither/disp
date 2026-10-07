@@ -364,6 +364,9 @@ const MEANING = {
   "Dn·Pair": "copy the pair; two new duplicators copy its parts" };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
 const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#f7768e"];
+const kindColor = t => COLOR[t] ?? "#8a96a8";
+/// A kind as its icon (shapes.js) and its name.
+const kindHTML = t => `${shapeSVG(t, kindColor(t))}${NAMES[TAGS[t]] ?? `agent of kind ${t}`}`;
 const isConsumer = t => t >= 6 && t <= 12;
 const isProducer = t => t >= 1 && t <= 5 || t === 14;
 // Which ports are outputs (sources): a producer's principal, a computation's result, a duplicator's or unpair's two parts.
@@ -392,7 +395,8 @@ function parseArgs(src) {
     if (src[i] === "[") {
       i++; const items = [];
       for (;;) { skip(); if (src[i] === "]") { i++; break; } if (i >= src.length) throw "a [ is never closed"; items.push(value()); }
-      return items.reduceRight((tail, x) => "2" + x + tail, "0");
+      // A list holding a superposition is written F(x,rest): ternary digits cannot hold one.
+      return items.reduceRight((tail, x) => /&/.test(x + tail) ? `F(${x},${tail})` : "2" + x + tail, "0");
     }
     if (src[i] === '"') {
       const close = src.indexOf('"', i + 1); if (close < 0) throw 'a " is never closed';

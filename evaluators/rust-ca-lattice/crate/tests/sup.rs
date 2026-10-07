@@ -116,3 +116,18 @@ fn plain_terms_unchanged() {
         assert_eq!((plain, ints), (Some(w), plain_ints));
     }
 }
+
+#[test]
+fn listed_reduction_fires_the_same_rewrites() {
+    let mut rng = Lcg(777);
+    for i in 0..600u32 {
+        let t = rng.rand_sup_term(3 + i % 4, 2, 0.15);
+        if sup::oracle_answers(&t, 5_000).is_none() { continue; }
+        let (mut a, mut b) = (Net::new(), Net::new());
+        let (ra, rb) = (sup::build(&mut a, &t), sup::build(&mut b, &t));
+        let ((_, oa), (_, ob)) = (a.drive(ra), b.drive(rb));
+        assert!(a.reduce(500_000) && b.reduce_listed(500_000, |_| {}));
+        assert_eq!(a.ints, b.ints, "{}", sup::show(&t));
+        assert_eq!(sup::read(&a, a.get(oa).ports[0]), sup::read(&b, b.get(ob).ports[0]));
+    }
+}

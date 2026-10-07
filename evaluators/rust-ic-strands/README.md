@@ -812,6 +812,130 @@ either way. Unary 255 + 1 takes 8.5k.
 
 The tests run with `npx tsx src/run.ts evaluators/rust-ic-strands/programs/programs.disp`.
 
+## Superpositions
+
+A *superposition* `&ℓ{a,b}` is one value that is `a` in one universe and `b` in another, as in
+HVM's [Interaction Calculus](https://raw.githubusercontent.com/HigherOrderCO/HVM3/HEAD/IC.md).
+Whatever reads it splits in two from there on, one copy reading `a` and one reading `b`, and its
+result is a superposition of the two; what was done before anything looked at the superposed
+value was done once for both. The label ℓ (1 to 255) names the choice: the same label picks the
+same side everywhere, so a term holding n labels stands for 2ⁿ plain terms, its universes, and
+its answer collapses to theirs. That is how a search can run many candidates as one.
+
+**The rules** (rust-ca-lattice `rules.rs` `SUP_RULES`). A new value `Sup` [value, first side,
+second side], and a label on every agent: a superposition's, or a duplicator's; 0 for everything
+else, and a duplicator of label 0 is a plain copy. A rule says the label of each agent it makes
+(none, the consumer's or the producer's). Writing `Dn_ℓ` for a duplicator of label ℓ:
+- `A·Sup`: `&ℓ{a,b} x` becomes `&ℓ{a x₀, b x₁}`, x copied by a `Dn_ℓ`;
+- `T1·Sup` and `Sel·Sup`: the same, the arms copied by a `Dn_ℓ`, so a duplicator can now meet a
+  pair: `Dn·Pair` copies it as `Dn·F` copies a fork;
+- `Nrm·Sup` normalizes both sides; `Eps·Sup` erases both;
+- `Dn·Sup` with the same label hands its first copy the first side and its second copy the
+  second (it makes nothing); with another label, 0 included, it copies both sides and gives each
+  copy a superposition of its copies;
+- the duplicators a duplicator makes copying a value (`Dn·S`, `Dn·F`, `Dn·P`, `Dn·Pair`) take its
+  label, so a labelled copy stays labelled all the way down.
+
+`Unp·Sup` cannot happen: an unpair reads a triage's or dispatch's arms, and those only ever carry a
+pair that `A·F` or `T1·F` made, or a duplicator's copy of one. The 8 rules are kept apart from the
+other 26, which are all that the cascade's 5-bit rule numbers, the chip and the GPU hold. A net
+with superpositions runs on the abstract net and on the lattice's CPU; the GPU refuses it
+(`tables.rs` `gpu_refuses`: its 40-byte site has no room for labels), so the player stays on the
+CPU for it.
+
+**On the lattice** every seat keeps its agent's label, 8 bits, through steps, exchanges, rewrites,
+saved states (`held_labels` beside `held_sites`) and hand-overs. A superposition is read whole: a
+rewrite that makes one feeding a wanted reader also wants the computations feeding its two sides
+(`fresh_wanted_in`), so both universes run at once.
+
+**Writing them** (`term::parse_sup`; the player's input box takes the same): `&1{a,b}` anywhere a
+term goes, a and b in any of the term notations (`L`, `S(x)`, `F(x,y)`, `@(f,x)`, ternary digits).
+Terms side by side apply left to right, at the top and now inside any bracket too. So `<add's tree>
+20200 &1{2020200,202020200}` is disp's `add 2` applied to 3 or to 4, which the player writes `add 2
+&1{3,4}` (a list holding one, `[&1{1,3}, 2]`, goes in as `F(&1{…},…)`); `fib:&1{2,3}` is a
+benchmark program on a superposed argument. An answer is shown collapsed: a superposition for each
+of the input's labels whose universes differ (`sup::collapse`), so it equals the oracle's answers,
+collapsed the same way, exactly when every universe agrees; `-> nat` and the other kinds decode
+each side.
+
+**Checked** (rust-ca-lattice `tests/sup.rs`, `crate/tests/sup.rs`): random terms with
+superpositions in random places, with 1 to 3 labels so that labels repeat (and must stay
+correlated), run to the answer and collapsed, against the oracle run on every choice. On the
+abstract net 2384 terms, 7710 universes; on the lattice in the current design 120 terms, 354
+universes, 10 of them re-checking every invariant after every move. Every new rule fires on both.
+The root read back as a superposed term, reduced by the oracle in each universe, is the answer at
+every 12th clock; a saved state put back with its labels runs on exactly; terms without
+superpositions run exactly as before.
+
+**How much the universes share** (`strands-sup`): each call superposed, against its two universes
+run one at a time. Rewrites on the abstract net to quiescence (`Net::reduce_listed`; eager, so
+9–150× the lattice's), then clocks and rewrites to the answer on the lattice in the current design,
+grids sized as the player sizes them, 2 seeds, every answer checked universe by universe. *Shared*
+is what the superposed run saves on the abstract net, over the smaller universe's rewrites;
+*first fork* is how far into the lattice run (in rewrites) the first `A·Sup`, `T1·Sup` or `Sel·Sup`
+fires, the first time anything looks at the superposed value:
+
+| superposed | abstract net: one by one → superposed | shared | lattice clocks: one by one, longest → superposed | lattice rewrites: one by one → superposed | first fork |
+|---|---|---|---|---|---|
+| disp `add 2 &1{3,4}` | 65.5k → 33.0k | 99% | 21.3k, 10.8k → 11.0k | 4326 → 2269 | never |
+| disp `size [&1{5,9}, 6, 7]` | 49.2k → 25.1k | 98% | 26.8k, 13.6k → 14.3k | 5546 → 2800 | never |
+| disp `rev [&1{1,3}, 2]` | 140.2k → 70.7k | 99% | 33.8k, 17.1k → 17.2k | 10.4k → 5263 | never |
+| disp `greet &1{"a","b"}` | 142.9k → 90.8k | 73% | 32.1k, 16.2k → 17.1k | 8203 → 4421 | never |
+| disp `isort [&1{2,0}, 1]` | 429.7k → 258.4k | 97% | 51.4k, 33.5k → 34.5k | 14.9k → 9730 | 50% |
+| disp `sum [&1{1,2}, 2]` | 193.6k → 116.5k | 85% | 36.5k, 18.4k → 18.8k | 13.9k → 8498 | 17% |
+| disp `doubled [&1{1,3}, 2]` | 245.5k → 148.6k | 88% | 40.5k, 20.5k → 21.4k | 15.4k → 9942 | 12% |
+| disp `mul 2 &1{2,3}` | 311.3k → 220.0k | 64% | 40.4k, 21.8k → 25.6k | 16.8k → 13.5k | 11% |
+| disp `add &1{2,3} 3` | 77.8k → 70.7k | 22% | 24.6k, 14.1k → 17.1k | 5174 → 5016 | 7% |
+| disp `is_even &1{3,4}` | 58.6k → 54.3k | 17% | 28.6k, 15.9k → 19.1k | 5653 → 5266 | 3% |
+| disp `mul &1{2,3} 2` | 348.9k → 332.9k | 11% | 41.0k, 22.2k → 25.8k | 18.8k → 18.9k | 2% |
+| disp `fib &1{2,3}` | 244.3k → 234.7k | 11% | 39.5k, 24.1k → 27.4k | 13.7k → 13.6k | 1% |
+| disp `&1{add,mul} 2 2` | 175.9k → 175.9k | 0% | 29.1k, 18.6k → 19.2k | 9791 → 10.2k | at once |
+| `fib:&1{1,2}` | 223.0k → 177.5k | 83% | 13.6k, 10.4k → 11.3k | 6542 → 6420 | 4% |
+| `sort:&1{1,2}` | 1904k → 1713k | 65% | 22.3k, 21.0k → 20.9k | 11.2k → 11.4k | 1% |
+
+- **A value only passed along is shared whole.** disp's `add` walks its first argument and puts the
+  second at the bottom; `size` never looks at the items, `rev` and `greet` only move them. Then
+  nothing forks, the superposition rides through to the answer (only `Nrm·Sup` at the end, and
+  duplicators copying it as plain copies do), and the run costs one run: half the rewrites, the
+  clocks of the longer universe.
+- **A value looked at at once is shared hardly at all.** Where the program triages on the
+  superposed value first thing (`add`'s and `mul`'s first argument, `fib`, `is_even`, the lambada
+  programs, two different programs), the run forks within the first 1–7% of its rewrites and from
+  there each universe does all its own work: as many rewrites as the two apart, −7% to +4%.
+- **In between, it splits where it looks.** `isort` compares the superposed item halfway through,
+  `sum`, `doubled` and `mul`'s second argument a sixth or a tenth of the way in, and walking the
+  list or the recursion up to there is done once: 20–39% fewer rewrites. Each later step that
+  looks at the value forks again (`mul 2 &1{2,3}`: 10 forks, 40 copies of a superposition).
+- **The universes run side by side.** Even with nothing shared, the superposed run takes 1.0–1.2×
+  the clocks of the longer universe alone, 0.6–0.95× the two one after the other: two computations
+  on one lattice at once, as fork runs both halves of the S rule.
+- The eager abstract net shares more than the lattice (lambada `sort`: 65% against none):
+  evaluated eagerly, a program also works on its own code, which does not depend on the input
+  and so is done once.
+
+**A search over candidates.** Superposing candidates, each choice its own label, runs them as one;
+which universes give the wanted answer names the candidates that do:
+- *Four adders* (programs.disp): `&1{&2{ripple_add, select_add}, &2{lookahead_add, add}}` applied
+  to 13 and 6 as 4-bit number trees. Three universes give 19 and the fourth, unary `add` on binary
+  numbers, 48. Different programs share nothing (32.1k rewrites either way), but the four run side by
+  side: 24.4k clocks, against 20.1k for the slowest alone and 69.5k for the four one after another.
+- *Every tree of depth 2 as the function*, the search space as one superposition: `f = &1{L, &2{S(g₁), F(g₂, g₃)}}`,
+  each `gᵢ = &{L, &{S(L), F(L,L)}}` with labels of its own, 8 labels in all, so 256 universes and 13
+  distinct trees. `F(f L, f S(L))` uses f twice with the same labels, so each universe applies one
+  tree to both examples. Wanting `F(F(L,L), F(L,S(L)))` (f x = F(L, x) on both), 32 universes give it,
+  all with f = `S(L)`, K. Superposed: 204 rewrites and 458 clocks on the lattice, against 261 rewrites
+  and 1264 clocks for the 13 trees one after another (147 for the slowest). Applying a stem does not
+  look at its child, so `S(g₁) x = F(g₁, x)` applies the three stems at once.
+
+**Copying forces.** A duplicator copying for a superposition is still the need-duplicator: copying
+a suspension forces it (`Dn·P`). So an argument a universe never reads is computed anyway when a
+superposed function is applied to it: `K L (fib 3)` throws `fib 3` away in 728 rewrites on the
+abstract net, and `&1{K,K} L (fib 3)` (both sides K) computes it, 158.5k. On the lattice it costs
+little here (24 rewrites against 7), as the universes throw their copies away before the duplicator
+gets far and erasers collect it, but an argument that does not terminate could stop a run the oracle
+finishes. None of the random terms did. A triage or dispatch on a superposition copies its arms the
+same way, both arms though only one is taken.
+
 ## Reading back
 
 `crate/src/readback.rs` reads what any piece of the net means right now, for the player's
@@ -894,6 +1018,12 @@ reduction-state panel. It only reads; a run goes exactly as without it.
   number of ends, so wider links are nearly free. Whether they help is untested.
 - **Adders are bound by work, not depth** (Adding binary numbers, above): two fifths of their
   rewrites are duplicators copying. With less copying a tree's O(log n) depth might show.
+- **Superpositions that copy lazily** (Superpositions, above): a duplicator copying for one forces
+  what it copies, arms a universe will not take included. A copy that leaves a suspension
+  suspended would keep the oracle's laziness, at the price of computing it once per universe.
+  Labels on the chip and the GPU (8 bits a seat) are untried. An eraser collecting a labelled
+  duplicator hands its other copy the whole superposition: the answer collapses the same, but the
+  side that universe will never pick is carried along and worked on.
 
 ## On a GPU
 
@@ -1031,13 +1161,15 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~8 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, handover, reading back, merging equal computations
+cargo test --release                                  # ~9 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, handover, reading back, merging equal computations, superpositions
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip --demand          # with the demand field (field.rs; --field SPEC for others)
 cargo run --release --bin strands-run -- fib:0 --grid 256 --latest                 # the current design: the demand field and fork
 cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --budget 5000000000 --clean 100000
+cargo run --release --bin strands-run -- 'fib:&1{1,2}' --grid 300 --latest        # a superposed argument (Superpositions, above)
+cargo run --release --bin strands-sup -- CASES                                     # lines name|term[|want]: superposed against its universes alone
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 ```
 
