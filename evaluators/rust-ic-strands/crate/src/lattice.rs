@@ -17,6 +17,8 @@
 #[path = "field.rs"]
 mod field;
 pub use field::{Channel, Fields, Source};
+#[path = "memo.rs"]
+pub mod memo;
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::rules::{find_index, End, Tag, ALL_TAGS, RULES};
 
@@ -116,6 +118,12 @@ pub struct Params {
     /// Energy an idle agent pays per stranger when one of the two is garbage (labelled so by an
     /// eraser reading it, `label_from`) and the other is not.
     pub garbage: f64,
+    /// With blocks, every `memo_every` clocks a central detector merges equal computations at most
+    /// this many sites apart (memo.rs); 0: none. With `memo_local`, only equal computations in one
+    /// 2×2×2 block are merged, the merge staying inside it.
+    pub memo: u32,
+    pub memo_every: u32,
+    pub memo_local: bool,
 }
 
 impl Params {
@@ -161,6 +169,9 @@ impl Params {
             "strangers" => self.strangers = f()?,
             "trees" => self.trees = f()?,
             "garbage" => self.garbage = f()?,
+            "memo" => self.memo = n()? as u32,
+            "memoevery" => self.memo_every = n()? as u32,
+            "memolocal" => self.memo_local = on,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -176,7 +187,7 @@ impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
-                 strangers: 0.0, trees: 0.0, garbage: 0.0 }
+                 strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false }
     }
 }
 
@@ -214,6 +225,9 @@ pub struct Stats {
     pub capped: u64,
     /// Turns dropped for looking at a site an earlier move in the block changed this clock.
     pub stale: u64,
+    /// Computations dropped for a copy of an equal one (`Params::memo`), and merges with no room.
+    pub merged: u64,
+    pub unmerged: u64,
 }
 
 #[inline] fn code(t: Tag) -> u8 { ALL_TAGS.iter().position(|x| *x == t).unwrap() as u8 + 1 }
@@ -1984,6 +1998,7 @@ impl Lattice {
         self.fence = None;
         self.stats.clocks += 1.0;
         if self.p.pulse { self.step_pulses(); }
+        if self.p.memo > 0 && self.stats.clocks as u64 % self.p.memo_every.max(1) as u64 == 0 { self.memo_turn(); }
         self.dump_state();
     }
 
