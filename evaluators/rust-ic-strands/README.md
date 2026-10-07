@@ -25,6 +25,12 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   toggle).
 - **Inspecting:** click a site to see its agents, where each of their wires leads, and what they
   are waiting for. Garbage is drawn dimmed.
+- **Segments** (`C`, on by default): agents and their wires are coloured by where they are in the
+  term the root computes. Every application splits its colour among its function and arguments,
+  and applications nested in those split theirs again (`net.js`, from the abstract net that
+  `readback.rs` `wires` hands over), so each part of the term shows up as a region of the net.
+  With something picked, the segments are the pick's, and its term in the details is tinted to
+  match.
 - **Reduction state:** shift+click an agent to pick the computation it heads (hold shift to
   preview): it and every agent feeding its inputs are lit in pink, everything else dimmed, and
   the details drawer opens to write what it means now as disp (Reading back, below). Picks follow their

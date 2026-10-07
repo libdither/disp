@@ -90,44 +90,49 @@
   [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity:1; visibility:visible; transform:translate(-50%, 0); }
   .corner-left [data-tip]::after { left:0; transform:translate(0, 3px); } .corner-left [data-tip]:hover::after { transform:none; }
   .corner-right > [data-tip]::after { left:auto; right:0; transform:translate(0, 3px); } .corner-right > [data-tip]:hover::after { transform:none; }
-  /* the details drawer: shut until asked for, or until something is picked */
-  #side { flex:0 0 372px; padding:10px 14px 30px; overflow:auto; border-left:1px solid var(--border); background:var(--panel); box-sizing:border-box; }
-  .sidehead { display:flex; align-items:baseline; gap:8px; } .sidehead h1 { flex:1; }
-  .sidehead button { border:none; background:none; color:var(--fg-muted); font-size:16px; padding:0 4px; } .sidehead button:hover { color:var(--accent); }
-  h1 { font-size:14px; margin:2px 0 4px; color:var(--accent); }
-  h3 { color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
-  .note { color:var(--fg-muted); font-size:11.5px; }
-  .row { display:flex; justify-content:space-between; margin:2px 0; gap:8px; }
-  .k { color:var(--fg-muted); } .v { font-variant-numeric:tabular-nums; } .v b { color:var(--hot); font-weight:normal; }
-  #answer { word-break:break-all; color:var(--hot); font-size:12px; max-height:64px; overflow:auto; }
-  .legend { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:2px 10px; font-size:11px; }
+  /* the details drawer: shut until asked for, or until something is picked; prose in the body
+     font, code and numbers in mono, section labels small and faint as in the tree visualizer */
+  #side { flex:0 0 372px; padding:12px 16px 30px; overflow:auto; border-left:1px solid var(--border); background:var(--panel); box-sizing:border-box;
+    font:12px/1.5 var(--body); color:var(--fg-muted); scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent; }
+  .sidehead { display:flex; align-items:center; gap:8px; } .sidehead h1 { flex:1; }
+  .sidehead button { border:none; background:none; color:var(--fg-faint); font-size:17px; line-height:1; padding:2px 6px; border-radius:6px; }
+  .sidehead button:hover { color:var(--accent); background:rgba(86,200,255,.12); }
+  h1 { font:600 13px/1.4 var(--body); margin:2px 0 6px; color:var(--fg); }
+  h3, details summary { color:var(--fg-faint); font:600 10.5px/1.4 var(--body); letter-spacing:.08em; text-transform:uppercase; margin:20px 0 7px; }
+  details summary { cursor:pointer; } details summary:hover { color:var(--fg-muted); }
+  .note { color:var(--fg-muted); font:11.5px/1.5 var(--body); }
+  .row { display:flex; justify-content:space-between; align-items:baseline; margin:3px 0; gap:10px; }
+  .k { color:var(--fg-muted); } .v { font:12px var(--mono); color:var(--fg); font-variant-numeric:tabular-nums; text-align:right; } .v b { color:var(--hot); font-weight:normal; }
+  #answer { word-break:break-all; color:var(--fg-faint); font:11px var(--mono); max-height:64px; overflow:auto; margin-top:8px; }
+  #answer:not(:empty)::before { content:"answer as a tree  "; font:600 10px var(--body); letter-spacing:.08em; text-transform:uppercase; }
+  .legend { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:3px 12px; font-size:11.5px; }
   .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
-  canvas.chart { width:100%; height:80px; display:block; background:#0a1019; border:1px solid var(--border); border-radius:7px; }
-  .how p { margin:5px 0; color:#aab6c6; font-size:11.5px; } .how b { color:var(--fg); font-weight:normal; text-decoration:underline; text-decoration-color:#3a506f; }
-  details summary { cursor:pointer; color:var(--accent); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:16px 0 6px; }
-  #tip { position:absolute; z-index:7; min-width:280px; max-width:380px; box-sizing:border-box; padding:8px 9px;
-    border:1px solid #3a506f; border-radius:9px; background:rgba(11,14,20,.97); box-shadow:0 10px 30px rgba(0,0,0,.6);
-    font-size:11px; line-height:1.4; pointer-events:none; }
+  canvas.chart { width:100%; height:80px; display:block; margin-top:8px; background:var(--bg-elev); border-radius:8px; }
+  .how p { margin:6px 0; } .how b { color:var(--fg); font-weight:600; }
+  #tip { position:absolute; z-index:7; min-width:280px; max-width:380px; box-sizing:border-box; padding:9px 10px;
+    border:1px solid var(--border-strong); border-radius:9px; background:var(--bg-elev); box-shadow:0 12px 28px -14px rgba(0,0,0,.8);
+    font:11.5px/1.45 var(--body); color:var(--fg-muted); pointer-events:none; }
   #tip.pinned { border-color:var(--accent); }
-  .th { color:var(--accent); margin-bottom:4px; display:flex; justify-content:space-between; gap:10px; }
-  .ts { margin:4px 0; padding:4px 6px; border-radius:5px; background:#111a27; border:1px solid #1d2b3e; }
-  .ts.dead { opacity:.6; } .tp { color:#aab6c6; margin-top:2px; } .tw { color:#d6e2f0; margin-top:3px; }
-  .chip { font-size:10px; padding:0 5px; border-radius:8px; border:1px solid var(--border-strong); margin-left:4px; }
-  .story { margin:6px 0; padding:2px 0 2px 9px; border-left:2px solid var(--border-strong); font-size:11.5px; color:#aab6c6; }
-  .story b { color:var(--fg); font-weight:normal; }
+  .th { color:var(--fg); font-weight:600; margin-bottom:5px; display:flex; justify-content:space-between; gap:10px; }
+  .ts { margin:5px 0; padding:5px 7px; border-radius:7px; background:rgba(255,255,255,.03); border:1px solid var(--border); }
+  .ts.dead { opacity:.6; } .tp { margin-top:2px; } .tw { color:var(--fg); margin-top:3px; }
+  .chip { font-size:10px; padding:0 6px; border-radius:8px; border:1px solid var(--border-strong); margin-left:4px; }
+  .story { margin:10px 0 0; padding:2px 0 2px 10px; border-left:2px solid var(--border-strong); font-size:11.5px; }
+  .story b { color:var(--fg); font-weight:600; }
   kbd { border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:4px; padding:0 4px; font:10.5px var(--mono); color:var(--fg-muted); }
-  .pk { margin:6px 0; padding:6px 8px; border:1px solid #6a2d5e; border-radius:8px; background:rgba(255,95,210,.05); }
-  .pk.prev { border-style:dashed; border-color:#8a5a80; background:none; }
-  .pkh { display:flex; gap:6px; align-items:baseline; flex-wrap:wrap; font-size:11px; color:var(--fg-muted); margin-bottom:3px; }
-  .pkh .x { margin-left:auto; padding:0 6px; font-size:12px; line-height:16px; }
-  .tm { font-size:12.5px; line-height:1.6; word-break:break-word; color:#e6edf6; }
+  .pk { margin:8px 0; padding:7px 9px 8px; border:1px solid var(--border-strong); border-left:2px solid #ff5fd2; border-radius:8px; background:var(--bg-elev); }
+  .pk.prev { border-style:dashed; border-left:2px dashed #b77aa8; background:none; }
+  .pkh { display:flex; gap:6px; align-items:baseline; flex-wrap:wrap; font-size:11.5px; color:var(--fg-muted); margin-bottom:4px; }
+  .pkh .x { margin-left:auto; padding:0 5px; border:none; background:none; color:var(--fg-faint); font-size:14px; line-height:16px; }
+  .pkh .x:hover { color:var(--accent); }
+  .tm { font:12.5px/1.65 var(--mono); word-break:break-word; color:var(--fg); }
   .tm .v { color:var(--hot); } .tm .nm { color:#7fd0ff; } .tm .ch { color:#c4a8e8; font-style:italic; } .tm .sh { color:#ff8ad8; }
   .tm .el { color:var(--fg-muted); } .tm .er { color:#8a96a8; font-style:italic; }
   .tm .w { text-decoration:underline 2px #56c8ff; text-underline-offset:4px; }
   .tm [data-n] { cursor:pointer; border-radius:3px; } .tm [data-n]:hover:not(:has([data-n]:hover)) { background:rgba(255,255,255,.08); }
   .tm .fx { outline:1px solid #fff; background:rgba(255,255,255,.06); }
   .tm .wh { color:var(--fg-muted); margin-top:3px; }
-  .pkn { color:#ffb3e8; font-size:11px; margin:3px 0; }
+  .pkn { color:#ffb3e8; font-size:11.5px; margin:4px 0; }
 </style></head><body>
 <div id="wrap">
   <div id="stage">
@@ -183,10 +188,10 @@
       and a little switchboard joining the strand ends that meet there. Every move is a random local proposal,
       accepted by an energy: wires pull like springs, crowding pushes, heat jiggles.</div>
     <div id="answer"></div>
-    <div id="story" class="story" hidden></div>
 
     <h3>reduction state</h3>
     <div id="pick"></div>
+    <div id="story" class="story" hidden></div>
 
     <h3>time and work</h3>
     <div class="row"><span class="k" id="clockName">clocks</span><span class="v" id="sSweep">0</span></div>
@@ -258,6 +263,12 @@
         layers overlap. <i>Layers side by side</i> gives each layer its own panel: exact, and every site is easy to
         click. <i>3D</i> shows the lattice as it is: drag to orbit, right-drag to pan, spread the layers apart or show
         one at a time.</p>
+      <p><b>Segments.</b> The term the root computes is a tree of applications. With segments on, an application's
+        function and each of its arguments get colours of their own, and an application nested inside one of them
+        splits that colour again, so each part of the term shows as a region of the net. Hues go to the parts by how
+        many applications each holds, so nested parts take hues near the part around them; lightness alternates with
+        how deep a part is nested. A value (code or data) is one segment, however big. With something picked, the
+        segments are the pick's, and its term in the details is tinted the same way.</p>
       <p><b>Reduction state.</b> Every output of the net means a term: a value is a tree, a suspension or an apply is
         an application <i>f x</i>, a triage on <i>a</i> with arms <i>b, c</i> is <i>t a b c</i>, and a duplicator's two
         copies are one value, shared. Shift+click an agent to pick the computation it heads, that is, it and every
@@ -741,11 +752,11 @@ function draw() {
   // the picks' wires: every input of a picked agent to what feeds it, and dashed, where a root's value goes
   if (pk) {
     const lit = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
-    if (segs) lit[0] = lit[1] = new Path2D();
     for (const seat of PICK.lit) {
       const b = pk[seat], t = V.tags[seat], s = siteOf(seat), k = slotOf(seat);
       if (!t) continue;
-      const path = b & 16 ? lit[2] : b & 1 ? lit[0] : lit[1];
+      // With segments on, the segment colours stand for the pinks.
+      const path = b & 16 ? lit[2] : segs ? null : b & 1 ? lit[0] : lit[1];
       for (let p = 0; p < ARITY[t]; p++) { const into = isSource(t, p) ? (b & 10 ? lit[3] : null) : path; if (into) follow(V, s, k * 3 + p, into); }
     }
     ctx.lineCap = "round";
