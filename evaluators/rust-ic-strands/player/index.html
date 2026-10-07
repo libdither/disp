@@ -330,20 +330,21 @@
 <script id="compilerJs" type="text/plain" src="compiler.js"></script>
 <script>
 "use strict";
-const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out"];
-const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1];
+const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "Sup"];
+const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3];
 const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage", Sel: "second dispatch",
-  Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root" };
+  Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root", Sup: "superposition" };
 const DESC = {
   L: "a leaf △, the simplest value", S: "a stem △x: a value with one child", F: "a fork △xy: a value with two children",
   P: "a suspended application f a: it becomes a value once something needs it", Pair: "a pair carrying the arms of a pending choice",
   A: "applies the operator it reads to an argument (leaf → stem, stem → fork, fork → triage)",
   T1: "looks at the shape of a value and picks one of its arms", Sel: "the second half of triage: picks among three arms by the shape of a value",
   Unp: "splits a pair into its two parts", Dn: "copies the value it reads for two readers, one layer at a time",
-  Eps: "erases whatever it reads", Nrm: "drives its input all the way to a finished value", Out: "the root: the answer arrives here" };
+  Eps: "erases whatever it reads", Nrm: "drives its input all the way to a finished value", Out: "the root: the answer arrives here",
+  Sup: "a superposition &ℓ{a,b}: a in one universe and b in the other; whatever reads it splits in two" };
 const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right"], P: ["value", "function", "argument"], Pair: ["value", "first", "second"],
   A: ["operator", "argument", "result"], T1: ["subject", "arms", "result"], Sel: ["subject", "arms", "result"], Unp: ["pair", "first", "second"],
-  Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"] };
+  Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"], Sup: ["value", "first side", "second side"] };
 const MEANING = {
   "A·L": "apply(leaf, x) = stem x", "A·S": "apply(stem a, x) = fork a x", "A·F": "apply(fork a b, x) = triage a with arms ⟨b, x⟩",
   "A·P": "the operator is still suspended: force it first, then apply", "T1·L": "the subject a is a leaf: the result is b, and c is erased",
@@ -355,14 +356,16 @@ const MEANING = {
   "Dn·P": "force it once, then copy the value", "Eps·L": "the leaf is erased", "Eps·S": "the stem is erased; an eraser moves on to its child",
   "Eps·F": "the fork is erased; erasers move on to both children", "Eps·P": "the suspension is erased; erasers move on to its function and argument",
   "Eps·Pair": "the pair is erased; erasers move on to both parts", "Nrm·L": "a leaf is already finished", "Nrm·S": "keep the stem; normalize its child",
-  "Nrm·F": "keep the fork; normalize both children", "Nrm·P": "force it, then keep normalizing" };
+  "Nrm·F": "keep the fork; normalize both children", "Nrm·P": "force it, then keep normalizing",
+  "A·Sup": "apply each side, to its own copy of the argument: the result is a superposition of the two",
+  "T1·Sup": "triage each side, with its own copy of the arms", "Sel·Sup": "dispatch on each side, with its own copy of the arms",
+  "Nrm·Sup": "keep the superposition; normalize both sides", "Eps·Sup": "the superposition is erased; erasers move on to both sides",
+  "Dn·Sup": "a copy for this superposition hands each copy its own side; any other copies both sides and superposes the copies",
+  "Dn·Pair": "copy the pair; two new duplicators copy its parts" };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
-const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff"];
-const kindColor = t => COLOR[t] ?? "#8a96a8";
-/// A kind as its icon (shapes.js) and its name.
-const kindHTML = t => `${shapeSVG(t, kindColor(t))}${NAMES[TAGS[t]] ?? `agent of kind ${t}`}`;
+const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#f7768e"];
 const isConsumer = t => t >= 6 && t <= 12;
-const isProducer = t => t >= 1 && t <= 5;
+const isProducer = t => t >= 1 && t <= 5 || t === 14;
 // Which ports are outputs (sources): a producer's principal, a computation's result, a duplicator's or unpair's two parts.
 const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0 : false;
 const DIRS = ["east", "west", "south", "north", "up a layer", "down a layer"];
@@ -396,6 +399,13 @@ function parseArgs(src) {
       const str = src.slice(i + 1, close); i = close + 1;
       return [...str].reduceRight((tail, ch) => "2" + nat(ch.codePointAt(0)) + tail, "0");
     }
+    // A superposition &ℓ{a, b} of two arguments (the engine's term syntax).
+    const sup = src.slice(i).match(/^&(\d+)\{/);
+    if (sup) {
+      i += sup[0].length; const a = value(), b = value(); skip();
+      if (src[i] !== "}") throw "a { is never closed";
+      i++; return `&${sup[1]}{${a},${b}}`;
+    }
     const m = src.slice(i).match(/^(\d+|true|false|t)/);
     if (!m) throw `can't read "${src.slice(i, i + 10)}"`;
     i += m[0].length;
@@ -405,12 +415,13 @@ function parseArgs(src) {
   while (i < src.length) { out.push(value()); skip(); }
   return out;
 }
-// The engine prints trees as L, S(x), F(x,y).
+// The engine prints trees as L, S(x), F(x,y), and superposed answers as &l{x,y}.
 function parseTree(src) {
   let i = 0;
   const go = () => {
     const c = src[i++];
     if (c === "L") return { k: 0 };
+    if (c === "&") { const l = src.slice(i).match(/^\d+/)[0]; i += l.length + 1; const a = go(); i++; const b = go(); i++; return { k: 3, l, a, b }; }
     if (c === "S") { i++; const x = go(); i++; return { k: 1, c: x }; }
     i++; const l = go(); i++; const r = go(); i++; return { k: 2, l, r };
   };
@@ -441,6 +452,7 @@ function bitsOf(t) {
   return hi && { v: lo.v + (hi.v << lo.w), w: lo.w + hi.w };
 }
 function decodeAs(kind, t) {
+  if (t.k === 3) return `&${t.l}{${decodeAs(kind, t.a)}, ${decodeAs(kind, t.b)}}`;
   if (kind === "nat") { const n = natOf(t); if (n !== null) return String(n); }
   if (kind === "bits") { const n = bitsOf(t); if (n) return String(n.v); }
   if (kind === "bool") { if (t.k === 0) return "true"; if (t.k === 1 && t.c.k === 0) return "false"; }
@@ -1541,8 +1553,8 @@ function pickSeat(seat) {
 function pickAt(cx, cy) { if (!pickSeat(agentAt(cx, cy))) banner("no agent there to pick"); }
 function pickClear() { if (!L) return; E.pick_clear(); PICK.rev++; PICK.focus = null; PICK.focusSeats = []; pickSync(); pickPanel(true); }
 
-// Terms as the engine writes them: L, S(x), F(x,y), @(f,x), <x,y> a pair, ~(x) erased, #n=x shared, #n read
-// again, … not read; each node with the seat of the agent computing it.
+// Terms as the engine writes them: L, S(x), F(x,y), @(f,x), <x,y> a pair, &l{x,y} a superposition, ~(x)
+// erased, #n=x shared, #n read again, … not read; each node with the seat of the agent computing it.
 function parseTerm(src, seats) {
   let i = 0, t = 0;
   const labels = new Map();
@@ -1553,6 +1565,7 @@ function parseTerm(src, seats) {
       case "S": case "~": { i++; const x = go(); i++; return { k: c, x, seat }; }
       case "F": case "@": { i++; const x = go(); i++; const y = go(); i++; return { k: c, x, y, seat }; }
       case "<": { const x = go(); i++; const y = go(); i++; return { k: c, x, y, seat }; }
+      case "&": { let l = ""; while (/\d/.test(src[i])) l += src[i++]; i++; const x = go(); i++; const y = go(); i++; return { k: c, l, x, y, seat }; }
       case "#": {
         let n = ""; while (/\d/.test(src[i])) n += src[i++];
         if (src[i] !== "=") return { k: "#", n, seat, body: labels.get(n).body };
@@ -1664,6 +1677,7 @@ function termHTML(root, ctx, limit) {
     const b = bare(n);
     if (b.k === "…" || b.k === "?") return { ast: n, atom: { cls: "el", text: b.k, title: b.k === "…" ? "more, not read" : "could not be read" } };
     if (b.k === "<") return { ast: n, pair: [build(b.x), build(b.y)] };
+    if (b.k === "&") return { ast: n, label: b.l, pair: [build(b.x), build(b.y)] };
     if (b.k === "~") return { ast: n, erase: build(b.x) };
     let h = b, hot = false;
     const args = [];
@@ -1707,6 +1721,7 @@ function termHTML(root, ctx, limit) {
       if (!shown.has(x)) s = tag(x, "el", "…", "more: click to light its agents", own);
       else if (x.atom) s = tag(x, x.atom.cls, esc(x.atom.text), x.atom.title, own);
       else if (x.ref) s = tag(x, "sh", x.ref, "shared: computed once, read in several places", own);
+      else if (x.label) s = tag(x, "", `&amp;${x.label}{${out(x.pair[0])}, ${out(x.pair[1])}}`, "a superposition: one side in each universe", own);
       else if (x.pair) s = tag(x, "", `⟨${out(x.pair[0])}, ${out(x.pair[1])}⟩`, "the arms of a pending choice", own);
       else if (x.erase) s = tag(x, "", `<span class="er">erasing</span> ${out(x.erase, true)}`, "", own);
       else { s = tag(x, (x.value ? "v" : "") + (x.hot ? " w" : ""), [out(x.head, true), ...x.args.map(a => out(a, true))].join(" "), x.hot ? "being computed now" : "", own); if (paren) s = `(${s})`; }

@@ -5,13 +5,15 @@
 //!
 //! Thanks to the ≤3-port lowered alphabet, ports are a fixed `[Option<Ref>; 3]`.
 
-use crate::rules::{find, End, Rule, Tag};
+use crate::rules::{find_labelled, End, Rule, Tag};
 
 pub type Ref = (u32, u8); // (agent id, port)
 
 #[derive(Clone, Debug)]
 pub struct Agent {
     pub tag: Tag,
+    /// A superposition's label, or a duplicator's (rules.rs `Lab`); 0 for everything else.
+    pub label: u8,
     pub ports: [Option<Ref>; 3],
 }
 
@@ -24,8 +26,9 @@ pub struct Net {
 impl Net {
     pub fn new() -> Self { Self::default() }
 
-    pub fn mk(&mut self, tag: Tag) -> u32 {
-        self.agents.push(Some(Agent { tag, ports: [None; 3] }));
+    pub fn mk(&mut self, tag: Tag) -> u32 { self.mk_labelled(tag, 0) }
+    pub fn mk_labelled(&mut self, tag: Tag, label: u8) -> u32 {
+        self.agents.push(Some(Agent { tag, label, ports: [None; 3] }));
         (self.agents.len() - 1) as u32
     }
     pub fn get(&self, id: u32) -> &Agent { self.agents[id as usize].as_ref().expect("live agent") }
@@ -105,8 +108,9 @@ impl Net {
     /// Apply one interaction. Generic over the ROM. Returns the fresh agent ids in
     /// template order (the lattice uses this to sync its shadow ids).
     pub fn fire(&mut self, consumer: u32, producer: u32) -> (&'static Rule, Vec<u32>) {
-        let (ct, pt) = (self.get(consumer).tag, self.get(producer).tag);
-        let rule = find(ct, pt).unwrap_or_else(|| panic!(
+        let (c, p) = (self.get(consumer), self.get(producer));
+        let (ct, pt, cl, pl) = (c.tag, p.tag, c.label, p.label);
+        let rule = find_labelled(ct, cl, pt, pl).unwrap_or_else(|| panic!(
             "no rule for {}·{} — reachable-plane invariant violated", ct.name(), pt.name()));
         self.ints += 1;
 
@@ -116,7 +120,7 @@ impl Net {
         self.agents[consumer as usize] = None;
         self.agents[producer as usize] = None;
 
-        let fresh: Vec<u32> = rule.fresh.iter().map(|t| self.mk(*t)).collect();
+        let fresh: Vec<u32> = rule.fresh.iter().enumerate().map(|(k, t)| self.mk_labelled(*t, rule.label(k, cl, pl))).collect();
 
         // A wire endpoint resolves to a fresh port or to an external target. An external
         // target may itself point back INTO the dying pair (a direct aux–aux wire between

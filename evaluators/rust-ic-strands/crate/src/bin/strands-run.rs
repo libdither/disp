@@ -1,7 +1,9 @@
 //! Run terms on the strand lattice and compare with the oracle.
 //!   strands-run <term | workload[:n]> [--k K] [--lanes L] [--grid N] [--3d] [--temp T] [--seed S] [--share N]
+//! A term may hold superpositions (`&1{a,b}`, `fib:&1{2,3}`); its answer is then checked universe by
+//! universe and shown collapsed (rust-ca-lattice sup.rs).
 
-use rust_ca_lattice::oracle::{self, Fuel};
+use rust_ca_lattice::sup::{self, STerm};
 use rust_ic_mesh::term;
 use rust_ic_strands::lattice::{Lattice, Params};
 
@@ -73,12 +75,14 @@ fn main() {
     // key=value settings (`Params::set`) go last, so they change whatever the flags chose.
     for kv in &sets { let (k, v) = kv.split_once('=').unwrap(); p.set(k, v).unwrap_or_else(|e| panic!("{e}")); }
     let src = src.expect("term");
-    let t = match src.split_once(':') {
-        Some((name, n)) if term::workload(name, 0).is_some() => term::workload(name, n.parse().unwrap()).unwrap(),
-        _ => term::workload(&src, 0).unwrap_or_else(|| term::parse(&src).expect("bad term")),
+    let t: STerm = match src.split_once(':') {
+        Some((name, n)) if n.starts_with('&') && term::workload_sup(name, n).is_some() => term::workload_sup(name, n).unwrap().expect("bad superposition"),
+        Some((name, n)) if term::workload(name, 0).is_some() => (&term::workload(name, n.parse().unwrap()).unwrap()).into(),
+        _ => term::workload(&src, 0).map(|t| (&t).into()).unwrap_or_else(|| term::parse_sup(&src).expect("bad term")),
     };
-    let want = oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok().map(|w| oracle::show(&w));
-    let (net, out) = rust_ic_strands::share::net(&t, p.share);
+    let labels = t.labels();
+    let want = sup::oracle_answers(&t, 100_000_000).map(|u| sup::show(&sup::collapse(&u, &labels)));
+    let (net, out) = rust_ic_strands::share::net_sup(&t, p.share);
     let agents = net.live_count();
     let mut l = Lattice::load(p, net, out).expect("load");
     println!("loaded {agents} agents");
@@ -170,7 +174,7 @@ fn main() {
         for &(c, ri, site, cs, ps) in &tr.fires {
             let (a, cause) = tr.active.get(&(cs, ps)).copied().unwrap_or((f64::NAN, -2));
             let w = tr.wanted.get(&cs).copied().unwrap_or(f64::NAN);
-            let r = &rust_ca_lattice::rules::RULES[ri];
+            let r = rust_ca_lattice::rules::rule(ri);
             let (len, d) = tr.apart.get(&(cs, ps)).map(|&(l, d)| (l as i64, d as i64)).unwrap_or((-1, -1));
             out += &format!("{c},{}·{},{site},{a},{cause},{w},{},{len},{d}\n", r.consumer.name(), r.producer.name(), tr.blocked.get(&cs).copied().unwrap_or(0));
         }
@@ -188,7 +192,7 @@ fn main() {
         }
         println!("after {:.0} more clocks: {left} agents of garbage left", l.stats.clocks - c0);
     }
-    let ans = l.readback().map(|t| oracle::show(&t));
+    let ans = l.read_answer().map(|a| sup::show(&if labels.is_empty() { a } else { sup::collapse(&a.universes(&labels), &labels) }));
     let proj = l.check_projection();
     let s = &l.stats;
     println!("{} — answer {} (want {}) projection {:?}", if done { "DONE" } else { "UNFINISHED" },
@@ -230,6 +234,6 @@ fn main() {
         for (k, c) in pieces { println!("  {c} × [{k}]"); }
     }
     let blocked: Vec<String> = s.blocked_rule.iter().enumerate().filter(|(_, &n)| n > 0)
-        .map(|(i, n)| format!("{}·{} {n}", rust_ca_lattice::rules::RULES[i].consumer.name(), rust_ca_lattice::rules::RULES[i].producer.name())).collect();
+        .map(|(i, n)| format!("{}·{} {n}", rust_ca_lattice::rules::rule(i).consumer.name(), rust_ca_lattice::rules::rule(i).producer.name())).collect();
     println!("blocked by lanes {}; by rule: {}", s.blocked_lanes, blocked.join(", "));
 }

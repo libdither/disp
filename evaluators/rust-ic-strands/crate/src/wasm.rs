@@ -2,10 +2,11 @@
 //! player draws straight from the lattice's own arrays.
 
 use crate::lattice::{latest, Lattice, Params, Stats};
-use rust_ca_lattice::oracle::{self, Fuel, Term};
+use rust_ca_lattice::oracle;
+use rust_ca_lattice::sup::{self, STerm};
 use rust_ic_mesh::term;
 
-struct State { l: Lattice, term: Term, done: bool }
+struct State { l: Lattice, term: STerm, done: bool }
 static mut STATE: Option<State> = None;
 static mut TEXT: Vec<u8> = Vec::new();
 static mut STATS: [f64; 24] = [0.0; 24];
@@ -26,18 +27,27 @@ pub extern "C" fn text_ptr() -> *const u8 { unsafe { TEXT.as_ptr() } }
 #[allow(static_mut_refs)]
 pub extern "C" fn text_len() -> u32 { unsafe { TEXT.len() as u32 } }
 
-fn parse(src: &str) -> Result<Term, String> {
+/// A workload (`fib:2`, or `fib:&1{2,3}` superposed), a random term, or a term (`term::parse_sup`).
+fn parse(src: &str) -> Result<STerm, String> {
     let src = src.trim();
     if let Some((name, n)) = src.split_once(':') {
-        if let (Some(t), Ok(n)) = (term::workload(name, 0), n.trim().parse::<u64>()) { let _ = t; return Ok(term::workload(name, n).unwrap()); }
+        if let (Some(_), Ok(n)) = (term::workload(name, 0), n.trim().parse::<u64>()) { return Ok((&term::workload(name, n).unwrap()).into()); }
+        if let Some(t) = term::workload_sup(name, n.trim()) { return t; }
     }
-    if let Some(t) = term::workload(src, 0) { return Ok(t); }
+    if let Some(t) = term::workload(src, 0) { return Ok((&t).into()); }
     if let Some(rest) = src.strip_prefix("random:") {
         let (seed, depth) = rest.split_once(':').unwrap_or((rest, "5"));
         let mut rng = oracle::Lcg(seed.trim().parse().map_err(|_| "random:<seed>:<depth>")?);
-        return Ok(rng.rand_term(depth.trim().parse().map_err(|_| "random:<seed>:<depth>")?));
+        return Ok((&rng.rand_term(depth.trim().parse().map_err(|_| "random:<seed>:<depth>")?)).into());
     }
-    term::parse(src)
+    term::parse_sup(src)
+}
+
+/// An answer as the player shows it: as it is, or for a superposed input its universes over the
+/// input's labels (`sup::collapse`), as the oracle's are shown.
+fn collapsed(input: &STerm, answer: &STerm) -> STerm {
+    let labels = input.labels();
+    if labels.is_empty() { answer.clone() } else { sup::collapse(&answer.universes(&labels), &labels) }
 }
 
 /// The next run's settings, which start from the current design (lattice.rs `latest`).
@@ -72,7 +82,7 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let t = match parse(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
-    let (net, out) = crate::share::net(&t, p.share);
+    let (net, out) = crate::share::net_sup(&t, p.share);
     match Lattice::load(p, net, out) {
         Ok(l) => { unsafe { STATE = Some(State { l, term: t, done: false }); SAVED.clear(); } 0 }
         Err(e) => { set_text(&e); 2 }
@@ -96,7 +106,7 @@ pub extern "C" fn strands_run(n: u32) -> u32 {
 pub extern "C" fn strands_step(max_proposals: u32) -> u32 {
     let s = st();
     s.l.step(max_proposals as u64);
-    if !s.done { s.done = s.l.p.lazy && s.l.readback().is_some() || s.l.shadow.active_pair().is_none(); }
+    if !s.done { s.done = s.l.answered(); }
     s.l.events.len() as u32 | if s.done { 2 << 16 } else { 0 }
 }
 #[no_mangle] pub extern "C" fn events_ptr() -> *const u32 { st().l.events.as_ptr() as *const u32 }
@@ -122,7 +132,7 @@ pub extern "C" fn garbage_ptr() -> *const u8 { unsafe { MARKS.as_ptr() } }
 /// "A·F → T1 Pair" for rule i.
 #[no_mangle]
 pub extern "C" fn rule_text(i: u32) -> u32 {
-    let r = &rust_ca_lattice::rules::RULES[i as usize];
+    let r = rust_ca_lattice::rules::rule(i as usize);
     let fresh: Vec<&str> = r.fresh.iter().map(|t| t.name()).collect();
     set_text(&format!("{}·{} → {}", r.consumer.name(), r.producer.name(), if fresh.is_empty() { "nothing".to_string() } else { fresh.join(" ") }))
 }
@@ -162,19 +172,29 @@ pub extern "C" fn stats_ptr() -> *const f64 {
 }
 
 #[no_mangle]
-pub extern "C" fn strands_answer() -> u32 { match st().l.readback() { Some(t) => set_text(&oracle::show(&t)), None => set_text("") } }
-
-#[no_mangle]
-pub extern "C" fn strands_answer_decoded() -> u32 {
-    let Some(t) = st().l.readback() else { return set_text("") };
-    if let Some(n) = term::read_nat(&t) { return set_text(&format!("{n}")); }
-    if let Some(xs) = term::read_nat_list(&t) { return set_text(&format!("{xs:?}")); }
-    set_text("")
+pub extern "C" fn strands_answer() -> u32 {
+    let s = st();
+    match s.l.read_answer() { Some(a) => set_text(&sup::show(&collapsed(&s.term, &a))), None => set_text("") }
 }
 
+/// The answer as a benchmark number or list of numbers, each universe's for a superposed input.
+#[no_mangle]
+pub extern "C" fn strands_answer_decoded() -> u32 {
+    fn decode(t: &STerm) -> Option<String> {
+        if let STerm::Sup(l, a, b) = t { return Some(format!("&{l}{{{}, {}}}", decode(a)?, decode(b)?)); }
+        let t = t.plain()?;
+        term::read_nat(&t).map(|n| format!("{n}")).or_else(|| term::read_nat_list(&t).map(|xs| format!("{xs:?}")))
+    }
+    let s = st();
+    let Some(a) = s.l.read_answer() else { return set_text("") };
+    set_text(&decode(&collapsed(&s.term, &a)).unwrap_or_default())
+}
+
+/// The oracle's answer, universe by universe for a superposed input, collapsed as `strands_answer` is.
 #[no_mangle]
 pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
-    match oracle::nf(st().term.clone(), &mut Fuel(fuel as u64 * 1000)) { Ok(t) => set_text(&oracle::show(&t)), Err(_) => set_text("") }
+    let t = &st().term;
+    match sup::oracle_answers(t, fuel as u64 * 1000) { Some(u) => set_text(&sup::show(&sup::collapse(&u, &t.labels()))), None => set_text("") }
 }
 
 /// The size of the term's initial drawing (agents), or -1 with the parse error in the text.
@@ -182,7 +202,7 @@ pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
 pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     match parse(src) {
-        Ok(t) => crate::share::net(&t, next().share).0.agents.len() as i32,
+        Ok(t) => crate::share::net_sup(&t, next().share).0.agents.len() as i32,
         Err(e) => { set_text(&e); -1 }
     }
 }
@@ -198,7 +218,7 @@ pub extern "C" fn catalog() -> u32 {
 /// The GPU shader for the loaded configuration, in the text; or 0 and why the GPU cannot run it.
 #[no_mangle]
 pub extern "C" fn strands_gpu_shader() -> u32 {
-    match crate::tables::gpu_unfit(&st().l.p) {
+    match crate::tables::gpu_refuses(&st().l) {
         Some(why) => { set_text(why); 0 }
         None => { set_text(&crate::tables::shader(&st().l.p)); 1 }
     }
@@ -209,7 +229,7 @@ pub extern "C" fn strands_gpu_shader() -> u32 {
 pub extern "C" fn strands_clocks(n: u32) -> u32 {
     let s = st();
     for _ in 0..n { s.l.chip_clock(); }
-    if !s.done { s.done = s.l.p.lazy && s.l.readback().is_some() || s.l.shadow.active_pair().is_none(); }
+    if !s.done { s.done = s.l.answered(); }
     s.done as u32
 }
 
@@ -243,14 +263,15 @@ pub extern "C" fn strands_gpu_ran(clocks: u32, held: u32, fires: u32) -> u32 {
                    &mut x.collected, &mut x.walk_ok, &mut x.walk_fail[0], &mut x.pulses].into_iter().zip(&rest[..11]) { *n += *c as u64; }
     let room = 4096usize.saturating_sub(s.l.fire_log.len());
     s.l.fire_log.extend(rest[11..11 + fires as usize].iter().take(room));
-    if !s.done { s.done = s.l.p.lazy && s.l.readback().is_some() || s.l.shadow.active_pair().is_none(); }
+    if !s.done { s.done = s.l.answered(); }
     s.done as u32
 }
 
-/// A run as it was at some clock, for going back to it: the sites holding anything, the counts,
-/// whether the answer was in, and the temperature and cooling (which change once the answer is
-/// left alone). Restoring one and running on repeats the run exactly, as a handover does.
-struct Saved { held: Vec<u32>, stats: Stats, done: bool, temp: f64, cooling: Option<(f64, f64)> }
+/// A run as it was at some clock, for going back to it: the sites holding anything and the
+/// superposition labels there, the counts, whether the answer was in, and the temperature and
+/// cooling (which change once the answer is left alone). Restoring one and running on repeats the
+/// run exactly, as a handover does.
+struct Saved { held: Vec<u32>, labels: Vec<u32>, stats: Stats, done: bool, temp: f64, cooling: Option<(f64, f64)> }
 static mut SAVED: Vec<Option<Saved>> = Vec::new();
 
 /// Save the run as it is now; returns the saved state's number.
@@ -258,7 +279,7 @@ static mut SAVED: Vec<Option<Saved>> = Vec::new();
 #[allow(static_mut_refs)]
 pub extern "C" fn save_state() -> u32 {
     let s = st();
-    let v = Saved { held: s.l.held_sites(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling };
+    let v = Saved { held: s.l.held_sites(), labels: s.l.held_labels(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling };
     let saved = unsafe { &mut SAVED };
     match saved.iter().position(|x| x.is_none()) {
         Some(i) => { saved[i] = Some(v); i as u32 }
@@ -275,7 +296,7 @@ pub extern "C" fn restore_state(i: u32) {
     // Putting sites back numbers the agents afresh, as a GPU's hand-back does: picks are found again
     // in the net as it was at the last look (the first time since it).
     unsafe { if LOOKED_AT == HANDED_BACK { picked().remember(&s.l); } }
-    s.l.put_sites(&v.held);
+    s.l.put_sites_labelled(&v.held, &v.labels);
     unsafe { HANDED_BACK += 1; }
     s.l.stats = v.stats.clone();
     s.l.cooling = v.cooling;
@@ -294,7 +315,7 @@ pub extern "C" fn drop_state(i: u32) { unsafe { SAVED[i as usize] = None; } }
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn state_bytes(i: u32) -> u32 {
-    unsafe { SAVED[i as usize].as_ref().map_or(0, |v| (v.held.len() * 4 + std::mem::size_of::<Saved>()) as u32) }
+    unsafe { SAVED[i as usize].as_ref().map_or(0, |v| ((v.held.len() + v.labels.len()) * 4 + std::mem::size_of::<Saved>()) as u32) }
 }
 
 /// Start cooling the run (lattice.rs `cool`); the temperature it runs at now.

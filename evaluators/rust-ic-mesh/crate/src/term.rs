@@ -2,50 +2,80 @@
 //! the lambada benchmark programs ship in, and the named workloads both front ends offer.
 
 use rust_ca_lattice::oracle::{self, ap, f2, s, Term};
+use rust_ca_lattice::sup::{self, STerm};
+use std::rc::Rc;
 
-/// Parse `L`, `S(t)`, `F(t,t)`, `@(t,t)`; whitespace is ignored. Bare ternary digits
-/// (`0`/`1`/`2` preorder) are accepted too, and several space-separated terms left-fold
-/// into one application, the way the benchmark runner feeds a program its argument.
+/// Parse a plain term (`parse_sup`, without superpositions).
 pub fn parse(src: &str) -> Result<Term, String> {
-    let parts: Vec<&str> = src.split_whitespace().collect();
-    let all_ternary = !parts.is_empty() && parts.iter().all(|p| p.bytes().all(|b| matches!(b, b'0'..=b'2')));
-    if all_ternary {
-        let mut terms = parts.iter().map(|p| ternary(p));
-        let first = terms.next().unwrap()?;
-        return terms.try_fold(first, |acc, t| Ok(ap(acc, t?)));
-    }
-    let cleaned: Vec<u8> = src.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    let mut pos = 0;
-    let t = parse_at(&cleaned, &mut pos)?;
-    if pos != cleaned.len() {
-        return Err(format!("trailing input at byte {pos}"));
-    }
-    Ok(t)
+    parse_sup(src)?.plain().ok_or_else(|| "a superposition (&ℓ{…}) here: only the strand lattice runs those".into())
 }
 
-fn parse_at(b: &[u8], pos: &mut usize) -> Result<Term, String> {
+/// Parse `L`, `S(t)`, `F(t,t)`, `@(t,t)`, bare ternary digits (`0`/`1`/`2` preorder), and
+/// `&ℓ{t,t}`, the superposition of label ℓ ≥ 1 (rules.rs `SUP_RULES`). Terms side by side apply
+/// left to right, the way the benchmark runner feeds a program its arguments, at the top and
+/// inside any bracket; whitespace only separates. So `<program> &1{20200,2020200} 20200` is a
+/// program applied to 2 or 3 (as disp writes numbers), then to 2.
+pub fn parse_sup(src: &str) -> Result<STerm, String> {
+    let b = src.as_bytes();
+    let mut pos = 0;
+    let t = sequence(b, &mut pos)?;
+    skip(b, &mut pos);
+    match b.get(pos) {
+        None => Ok(t),
+        Some(&c) => Err(format!("unexpected '{}' at byte {pos}", c as char)),
+    }
+}
+
+fn skip(b: &[u8], pos: &mut usize) { while b.get(*pos).is_some_and(|c| c.is_ascii_whitespace()) { *pos += 1; } }
+
+/// Terms side by side, applied left to right, up to a ',' or a closing bracket.
+fn sequence(b: &[u8], pos: &mut usize) -> Result<STerm, String> {
+    let mut t = one(b, pos)?;
+    loop {
+        skip(b, pos);
+        match b.get(*pos) {
+            None | Some(b',' | b')' | b'}') => return Ok(t),
+            _ => t = sup::ap(t, one(b, pos)?),
+        }
+    }
+}
+
+fn one(b: &[u8], pos: &mut usize) -> Result<STerm, String> {
+    skip(b, pos);
     let head = *b.get(*pos).ok_or("unexpected end of term")?;
+    if matches!(head, b'0'..=b'2') {
+        let start = *pos;
+        while b.get(*pos).is_some_and(|c| matches!(c, b'0'..=b'2')) { *pos += 1; }
+        return Ok((&ternary(std::str::from_utf8(&b[start..*pos]).unwrap())?).into());
+    }
     *pos += 1;
-    let arg = |pos: &mut usize, close: u8| -> Result<Term, String> {
-        let t = parse_at(b, pos)?;
-        if b.get(*pos) != Some(&close) {
-            return Err(format!("expected '{}' at byte {}", close as char, *pos));
-        }
-        *pos += 1;
-        Ok(t)
-    };
-    let open = |pos: &mut usize| -> Result<(), String> {
-        if b.get(*pos) != Some(&b'(') {
-            return Err(format!("expected '(' at byte {}", *pos));
-        }
+    let expect = |pos: &mut usize, c: u8| -> Result<(), String> {
+        skip(b, pos);
+        if b.get(*pos) != Some(&c) { return Err(format!("expected '{}' at byte {}", c as char, *pos)); }
         *pos += 1;
         Ok(())
     };
+    let two = |pos: &mut usize, open: u8, close: u8| -> Result<(Rc<STerm>, Rc<STerm>), String> {
+        expect(pos, open)?;
+        let a = sequence(b, pos)?;
+        expect(pos, b',')?;
+        let c = sequence(b, pos)?;
+        expect(pos, close)?;
+        Ok((Rc::new(a), Rc::new(c)))
+    };
     match head {
-        b'L' => Ok(Term::L),
-        b'S' => { open(pos)?; Ok(s(arg(pos, b')')?)) }
-        b'F' => { open(pos)?; let a = arg(pos, b',')?; Ok(f2(a, arg(pos, b')')?)) }
-        b'@' => { open(pos)?; let a = arg(pos, b',')?; Ok(ap(a, arg(pos, b')')?)) }
+        b'L' => Ok(STerm::L),
+        b'S' => { expect(pos, b'(')?; let a = sequence(b, pos)?; expect(pos, b')')?; Ok(STerm::S(Rc::new(a))) }
+        b'F' => { let (x, y) = two(pos, b'(', b')')?; Ok(STerm::F(x, y)) }
+        b'@' => { let (x, y) = two(pos, b'(', b')')?; Ok(STerm::Ap(x, y)) }
+        b'&' => {
+            let start = *pos;
+            while b.get(*pos).is_some_and(|c| c.is_ascii_digit()) { *pos += 1; }
+            let label: u8 = std::str::from_utf8(&b[start..*pos]).unwrap().parse().map_err(|_| format!("expected a label 1–255 after '&' at byte {start}"))?;
+            if label == 0 { return Err("label 0 is a plain copy: superpositions are labelled 1–255".into()); }
+            let (x, y) = two(pos, b'{', b'}')?;
+            Ok(STerm::Sup(label, x, y))
+        }
         c => Err(format!("unexpected '{}' at byte {}", c as char, *pos - 1)),
     }
 }
@@ -136,6 +166,37 @@ pub fn workload(name: &str, n: u64) -> Option<Term> {
     })
 }
 
+/// A workload that is a program applied to its argument, applied to a superposition of
+/// arguments instead: `fib:&1{2,3}` is fib applied to &1{2,3}, `sort:&1{&2{1,2},3}` sorts one
+/// of three lists. None if `name` is no such workload.
+pub fn workload_sup(name: &str, arg: &str) -> Option<Result<STerm, String>> {
+    let Some(Term::Ap(program, _)) = workload(name, 0) else { return None };
+    if !matches!(name, "fib" | "exp" | "sort") { return None; }
+    fn go(name: &str, b: &[u8], pos: &mut usize) -> Result<STerm, String> {
+        let digits = |pos: &mut usize| { let s = *pos; while b.get(*pos).is_some_and(|c| c.is_ascii_digit()) { *pos += 1; } std::str::from_utf8(&b[s..*pos]).unwrap().parse::<u64>() };
+        if b.get(*pos) != Some(&b'&') {
+            let n = digits(pos).map_err(|_| format!("expected a number or &ℓ{{…}} at byte {}", *pos))?;
+            let Some(Term::Ap(_, a)) = workload(name, n) else { unreachable!() };
+            return Ok((&*a).into());
+        }
+        *pos += 1;
+        let label = digits(pos).ok().filter(|&l| (1..256).contains(&l)).ok_or("a label 1–255 after '&'")? as u8;
+        let part = |pos: &mut usize, c: u8| -> Result<STerm, String> {
+            if b.get(*pos) != Some(&c) { return Err(format!("expected '{}' at byte {}", c as char, *pos)); }
+            *pos += 1;
+            go(name, b, pos)
+        };
+        let x = part(pos, b'{')?;
+        let y = part(pos, b',')?;
+        if b.get(*pos) != Some(&b'}') { return Err(format!("expected '}}' at byte {}", *pos)); }
+        *pos += 1;
+        Ok(sup::sup(label, x, y))
+    }
+    let b: Vec<u8> = arg.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
+    let mut pos = 0;
+    Some(go(name, &b, &mut pos).and_then(|a| if pos == b.len() { Ok(sup::ap((&*program).into(), a)) } else { Err(format!("trailing input at byte {pos}")) }))
+}
+
 pub const WORKLOADS: &[(&str, &str, u64)] = &[
     ("k", "K applied: K (S L) L → S(L)", 0),
     ("fork", "fork dispatch: (F L L) L → L", 0),
@@ -165,6 +226,14 @@ mod tests {
         for n in [0, 1, 2, 5, 14, 255] {
             assert_eq!(read_nat(&nat(n)), Some(n));
         }
+        // Superpositions, and terms side by side inside brackets.
+        for (src, want) in [("&1{L,S(L)}", "&1{L,S(L)}"), ("10 &2{0, 10} 0", "@(@(S(L),&2{L,S(L)}),L)"),
+                            ("F(10 0, &12{200,&1{L,L}})", "F(@(S(L),L),&12{F(L,L),&1{L,L}})")] {
+            assert_eq!(sup::show(&parse_sup(src).unwrap()), want);
+        }
+        assert!(parse("&1{L,L}").is_err() && parse_sup("&0{L,L}").is_err() && parse_sup("&1{L}").is_err());
+        let fib = workload_sup("fib", "&1{2,3}").unwrap().unwrap();
+        assert_eq!(fib.universes(&[1]).into_iter().map(|(_, t)| t).collect::<Vec<_>>(), [workload("fib", 2).unwrap(), workload("fib", 3).unwrap()]);
     }
 
     #[test]

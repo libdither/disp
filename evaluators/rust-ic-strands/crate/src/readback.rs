@@ -14,6 +14,7 @@ use crate::lattice::Lattice;
 use crate::polarity_is_source as is_source;
 use rust_ca_lattice::net::{Agent, Net, Ref};
 use rust_ca_lattice::oracle::Term;
+use rust_ca_lattice::sup::STerm;
 use rust_ca_lattice::rules::Tag;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -38,6 +39,8 @@ pub enum Kind {
     Apply(Rd, Rd),
     /// The arms of a pending triage or dispatch.
     Pair(Rd, Rd),
+    /// A superposition and its label.
+    Sup(u8, Rd, Rd),
     /// A value duplicators hand to several readers, labelled by the first duplicator copying it.
     Shared(u32, Rd),
     /// What an eraser erases.
@@ -59,7 +62,7 @@ fn parts(r: &Rd) -> Option<(Rd, Rd)> {
 fn children(r: &Rd) -> Vec<&Rd> {
     match &r.kind {
         Kind::Stem(x) | Kind::Erased(x) | Kind::Shared(_, x) => vec![x],
-        Kind::Fork(x, y) | Kind::Apply(x, y) | Kind::Pair(x, y) => vec![x, y],
+        Kind::Fork(x, y) | Kind::Apply(x, y) | Kind::Pair(x, y) | Kind::Sup(_, x, y) => vec![x, y],
         Kind::Leaf | Kind::Cut => vec![],
     }
 }
@@ -108,6 +111,7 @@ impl<'a> Reader<'a> {
             Tag::F => { let x = self.source(ports[1]); let y = self.source(ports[2]); node(id, Kind::Fork(x, y)) }
             Tag::P => { let f = self.source(ports[1]); let x = self.source(ports[2]); node(id, Kind::Apply(f, x)) }
             Tag::Pair => { let x = self.source(ports[1]); let y = self.source(ports[2]); node(id, Kind::Pair(x, y)) }
+            Tag::Sup => { let x = self.source(ports[1]); let y = self.source(ports[2]); node(id, Kind::Sup(a.label, x, y)) }
             Tag::A => { let f = self.source(ports[0]); let x = self.source(ports[1]); node(id, Kind::Apply(f, x)) }
             Tag::T1 => {
                 let a = self.source(ports[0]);
@@ -164,13 +168,35 @@ pub fn term(r: &Rd) -> Option<Term> {
                 memo.insert(*l, t.clone());
                 t
             }
-            Kind::Pair(..) | Kind::Erased(_) | Kind::Cut => return None,
+            Kind::Pair(..) | Kind::Sup(..) | Kind::Erased(_) | Kind::Cut => return None,
         })
     }
     go(r, &mut HashMap::new()).map(|t| (*t).clone())
 }
 
-/// The term as text: `L`, `S(x)`, `F(x,y)` and `@(f,x)` as the oracle prints them, `<x,y>` for a
+/// `term`, superpositions included.
+pub fn sup_term(r: &Rd) -> Option<STerm> {
+    fn go(r: &Rd, memo: &mut HashMap<u32, Rc<STerm>>) -> Option<Rc<STerm>> {
+        Some(Rc::new(match &r.kind {
+            Kind::Leaf => STerm::L,
+            Kind::Stem(x) => STerm::S(go(x, memo)?),
+            Kind::Fork(x, y) => STerm::F(go(x, memo)?, go(y, memo)?),
+            Kind::Apply(f, x) => STerm::Ap(go(f, memo)?, go(x, memo)?),
+            Kind::Sup(l, x, y) => STerm::Sup(*l, go(x, memo)?, go(y, memo)?),
+            Kind::Shared(l, x) => {
+                if let Some(t) = memo.get(l) { return Some(t.clone()); }
+                let t = go(x, memo)?;
+                memo.insert(*l, t.clone());
+                return Some(t);
+            }
+            Kind::Pair(..) | Kind::Erased(_) | Kind::Cut => return None,
+        }))
+    }
+    go(r, &mut HashMap::new()).map(|t| (*t).clone())
+}
+
+/// The term as text: `L`, `S(x)`, `F(x,y)` and `@(f,x)` as the oracle prints them, `&l{x,y}` for a
+/// superposition of label l, `<x,y>` for a
 /// pair, `~(x)` for what an eraser erases, `#n=x` for a value shared by duplicators where it is
 /// first read and `#n` where it is read again, `…` for whatever lies past the first `budget` nodes,
 /// breadth first, and `?` for what could not be read. Also the agent of each node (each `#n=`,
@@ -220,6 +246,7 @@ pub fn text(r: &Rd, budget: usize) -> (String, Vec<u32>) {
             Kind::Fork(..) => ("F(", ")"),
             Kind::Apply(..) => ("@(", ")"),
             Kind::Pair(..) => ("<", ">"),
+            Kind::Sup(l, ..) => { o.s.push_str(&format!("&{l}{{")); ("", "}") }
             Kind::Erased(_) => ("~(", ")"),
             Kind::Shared(..) => unreachable!(),
         };

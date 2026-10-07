@@ -41,6 +41,12 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     None
 }
 
+/// Why the GPU cannot run this lattice: its configuration (`gpu_unfit`), or superpositions, whose
+/// labels its 40-byte site has no room for (and whose rules its tables leave out).
+pub fn gpu_refuses(l: &crate::lattice::Lattice) -> Option<&'static str> {
+    gpu_unfit(&l.p).or_else(|| (l.labelled() > 0).then_some("it runs no superpositions"))
+}
+
 pub fn wgsl() -> String { wgsl_for(&chip()) }
 
 /// The tables for configuration p (which `gpu_unfit` accepts).

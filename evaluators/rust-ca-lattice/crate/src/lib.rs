@@ -7,12 +7,13 @@
 //! (serial worklist, generations as physical ticks), [`cascade_par`] (N threads over one
 //! shared `AtomicU64` array, claims only where cascades meet), and [`cascade_gather`]
 //! (the deterministic six-phase GPU/shader lowering). [`rules`], [`net`], and [`oracle`]
-//! define and independently check the semantic layer; [`cascade_trace`] serializes
+//! define and independently check the semantic layer ([`sup`]: superposed terms for it); [`cascade_trace`] serializes
 //! player replays.
 
 pub mod rules;
 pub mod signal;
 pub mod oracle;
+pub mod sup;
 pub mod net;
 pub mod lattice;
 pub mod cascade;

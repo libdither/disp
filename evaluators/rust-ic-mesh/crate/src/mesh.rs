@@ -21,7 +21,8 @@ use std::collections::VecDeque;
 pub const NONE: u32 = u32::MAX;
 pub const K_MAX: u32 = 16;
 
-// Slot kinds: 0 free, 1..=13 the agent tags (ALL_TAGS order), then two plumbing kinds.
+// Slot kinds: 0 free, 1..=13 the agent tags (ALL_TAGS order; `Sup`, the 14th, never loads),
+// then two plumbing kinds.
 pub const FREE: u8 = 0;
 pub const IND: u8 = 14;
 pub const RESV: u8 = 15;
@@ -461,6 +462,7 @@ impl Mesh {
         }
         for &id in &order {
             let a = net.get(id);
+            if a.tag == Tag::Sup || a.label != 0 { return Err("the mesh runs no superpositions".into()); }
             let mut slot = Slot { kind: code(a.tag), sid: id, ..Slot::EMPTY };
             for p in 0..a.tag.arity() {
                 if !is_source(a.tag, p) {

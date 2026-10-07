@@ -20,7 +20,8 @@ pub use field::{Channel, Fields, Source};
 #[path = "memo.rs"]
 pub mod memo;
 use rust_ca_lattice::net::Net;
-use rust_ca_lattice::rules::{find_index, End, Tag, ALL_TAGS, RULES};
+use rust_ca_lattice::sup::STerm;
+use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_RULES};
 
 pub const NONE: u8 = u8::MAX;
 /// Ports per agent slot.
@@ -204,8 +205,8 @@ pub struct Stats {
     pub blocked_fires: u64,
     pub swaps: u64,
     pub blocked_lanes: u64,
-    /// Blocked fires per rule.
-    pub blocked_rule: [u64; 26],
+    /// Blocked fires per rule, by `rules::rule` number.
+    pub blocked_rule: Vec<u64>,
     pub strands: u64,
     pub peak_strands: u64,
     pub peak_site: u64,
@@ -256,6 +257,9 @@ pub struct Lattice {
     pub want: Vec<bool>,
     /// site*k + slot: the agent's tree label, 3 bits (`relabel`).
     pub label: Vec<u8>,
+    /// site*k + slot: the agent's superposition label (rules.rs `Lab`), a superposition's or a
+    /// duplicator's copying for one; 0 for every other agent.
+    pub sup_label: Vec<u8>,
     /// Sites that hold (or recently held) an agent; stale entries drop out when drawn.
     agent_sites: Vec<u32>,
     in_agents: Vec<bool>,
@@ -378,7 +382,7 @@ impl Energy {
 
 /// The state of a few sites, kept while a move is tried.
 struct Saved {
-    sites: Vec<(u32, Vec<u8>, Vec<u8>, Vec<u32>, Vec<bool>, u8, u8, Vec<u8>)>,
+    sites: Vec<(u32, Vec<u8>, Vec<u8>, Vec<u32>, Vec<bool>, u8, u8, Vec<u8>, Vec<u8>)>,
     strands: u64,
     hops: u64,
     touched: usize,
@@ -405,7 +409,7 @@ pub struct Trace {
 
 /// Which fresh agents of a rule start out wanted: erasers and normalizers, and consumers whose
 /// output feeds the dying consumer's reader (wanted, or it would not have fired) or a wanted
-/// fresh consumer.
+/// fresh consumer, directly or as a side of a fresh superposition.
 pub fn fresh_wanted(rule: &rust_ca_lattice::rules::Rule) -> [bool; 6] { fresh_wanted_in(rule, false) }
 
 /// `fresh_wanted`, and with `inputs` also consumers whose output feeds a wanted fresh
@@ -421,11 +425,18 @@ pub fn fresh_wanted_in(rule: &rust_ca_lattice::rules::Rule, inputs: bool) -> [bo
                 let End::Fresh(f, p) = x else { continue };
                 let tf = rule.fresh[f as usize];
                 if wanted[f as usize] || !tf.is_consumer() || p == 0 || !crate::polarity_is_source(tf, p as usize) { continue; }
-                let feeds = match y {
+                let read_by = |y: End| match y {
                     End::CAux(i) => crate::polarity_is_source(rule.consumer, i as usize),
                     End::Fresh(g, 0) => rule.fresh[g as usize].is_consumer() && wanted[g as usize],
-                    End::Fresh(g, 1) if inputs => matches!(rule.fresh[g as usize], Tag::A | Tag::T1 | Tag::Sel) && wanted[g as usize],
                     _ => false,
+                };
+                let feeds = match y {
+                    // A superposition is read whole: what reads it reads both its sides.
+                    End::Fresh(g, _) if rule.fresh[g as usize] == Tag::Sup => rule.wires.iter()
+                        .find_map(|&(a, b)| if a == End::Fresh(g, 0) { Some(b) } else if b == End::Fresh(g, 0) { Some(a) } else { None })
+                        .is_some_and(read_by),
+                    End::Fresh(g, 1) if inputs => matches!(rule.fresh[g as usize], Tag::A | Tag::T1 | Tag::Sel) && wanted[g as usize],
+                    y => read_by(y),
                 };
                 if feeds { wanted[f as usize] = true; changed = true; }
             }
@@ -571,6 +582,7 @@ impl Lattice {
             sids: vec![u32::MAX; n * ks],
             want: vec![false; n * ks],
             label: vec![0; n * ks],
+            sup_label: vec![0; n * ks],
             agent_sites: vec![],
             in_agents: vec![false; n],
             mate: vec![NONE; n * ends],
@@ -743,6 +755,7 @@ impl Lattice {
         self.want[s as usize * self.ks + k] = matches!(t, Tag::Nrm | Tag::Out | Tag::Eps);
         self.tags[s as usize * self.ks + k] = tag;
         self.sids[s as usize * self.ks + k] = sid;
+        self.sup_label[s as usize * self.ks + k] = 0;
         self.tr_want(s, k);
         self.occ[s as usize] += 1;
         self.stats.peak_site = self.stats.peak_site.max(self.occ[s as usize] as u64);
@@ -847,6 +860,7 @@ impl Lattice {
             let s = (z * gw * gh + (oy + y * spread) * gw + ox + x * spread) as u32;
             let k = l.free_slot(s).ok_or("two agents drawn on one site")?;
             l.place(s, k, code(net.get(id).tag), id);
+            l.sup_label[s as usize * l.ks + k] = net.get(id).label;
             at[id as usize] = (s, k);
         }
         l.out = at[out as usize];
@@ -924,18 +938,22 @@ impl Lattice {
         self.live.iter().find_map(|&s| (0..self.ks).find(|&k| self.tag(s, k) == out).map(|k| (s, k)))
     }
 
-    pub fn readback(&self) -> Option<rust_ca_lattice::oracle::Term> {
-        use rust_ca_lattice::oracle::Term;
+    /// The answer as a plain term, once the root reads a value tree with no superposition in it.
+    pub fn readback(&self) -> Option<rust_ca_lattice::oracle::Term> { self.read_answer()?.plain() }
+
+    /// The answer once the root reads a value tree, superpositions included.
+    pub fn read_answer(&self) -> Option<STerm> {
         use std::rc::Rc;
-        fn go(l: &Lattice, s: u32, k: usize, depth: u32) -> Option<Rc<Term>> {
+        fn go(l: &Lattice, s: u32, k: usize, depth: u32) -> Option<Rc<STerm>> {
             if depth > 100_000 { return None; }
             let t = l.tag(s, k);
             if t == 0 { return None; }
             let child = |q: usize| { let (s2, k2, p2, _) = l.follow(s, l.ae(k, q)); if p2 != 0 { None } else { go(l, s2, k2, depth + 1) } };
             Some(Rc::new(match tag_of(t) {
-                Tag::L => Term::L,
-                Tag::S => Term::S(child(1)?),
-                Tag::F => Term::F(child(1)?, child(2)?),
+                Tag::L => STerm::L,
+                Tag::S => STerm::S(child(1)?),
+                Tag::F => STerm::F(child(1)?, child(2)?),
+                Tag::Sup => STerm::Sup(l.sup_label[s as usize * l.ks + k], child(1)?, child(2)?),
                 _ => return None,
             }))
         }
@@ -944,6 +962,12 @@ impl Lattice {
         if p2 != 0 { return None; }
         go(self, s2, k2, 0).map(|t| (*t).clone())
     }
+
+    /// Whether the run is over: the answer is in, or (eager) nothing is left to do.
+    pub fn answered(&self) -> bool { self.p.lazy && self.read_answer().is_some() || self.shadow.active_pair().is_none() }
+
+    /// Agents carrying a superposition label: superpositions, and duplicators copying for them.
+    pub fn labelled(&self) -> usize { self.live.iter().map(|&s| (0..self.ks).filter(|&k| self.tag(s, k) != 0 && self.sup_label[s as usize * self.ks + k] != 0).count()).sum() }
 
     /// The lattice must be the abstract net: same agents, every wire joining the ports the
     /// abstract net joins.
@@ -957,6 +981,7 @@ impl Lattice {
                 let sid = self.sids[s as usize * self.ks + k];
                 let a = self.shadow.agents.get(sid as usize).and_then(|a| a.as_ref()).ok_or("lost agent")?;
                 if a.tag != tag_of(t) { return Err("tag mismatch".into()); }
+                if a.label != self.sup_label[s as usize * self.ks + k] { return Err(format!("{} label: lattice {} vs abstract {}", a.tag.name(), self.sup_label[s as usize * self.ks + k], a.label)); }
                 for q in 0..a.tag.arity() {
                     let (s2, k2, p2, _) = self.follow(s, self.ae(k, q));
                     let sid2 = self.sids[s2 as usize * self.ks + k2];
@@ -1235,7 +1260,8 @@ impl Lattice {
                 } else { mt };
             }
         }
-        let (tag, sid, want, label) = (self.tag(s, k), self.sids[s as usize * self.ks + k], self.want[s as usize * self.ks + k], self.label[s as usize * self.ks + k]);
+        let i = s as usize * self.ks + k;
+        let (tag, sid, want, label, sup) = (self.tags[i], self.sids[i], self.want[i], self.label[i], self.sup_label[i]);
         let mut li = 0;
         let mut news = vec![];
         for q in 0..a {
@@ -1259,6 +1285,7 @@ impl Lattice {
         self.place(t, k2, tag, sid);
         self.want[t as usize * self.ks + k2] = want;
         self.label[t as usize * self.ks + k2] = label;
+        self.sup_label[t as usize * self.ks + k2] = sup;
         for (q, m, j) in news {
             self.link(s, m, self.se(f, j));
             self.link(t, self.se(f ^ 1, j), self.ae(k2, q));
@@ -1375,6 +1402,7 @@ impl Lattice {
         self.sids[j] = self.sids[i];
         self.want[j] = self.want[i];
         self.label[j] = self.label[i];
+        self.sup_label[j] = self.sup_label[i];
         self.tags[i] = 0;
         self.sids[i] = u32::MAX;
         self.want[i] = false;
@@ -1417,19 +1445,21 @@ impl Lattice {
             sites: sites.iter().map(|&x| {
                 let (m, a) = (x as usize * self.ends, x as usize * self.ks);
                 (x, self.mate[m..m + self.ends].to_vec(), self.tags[a..a + self.ks].to_vec(), self.sids[a..a + self.ks].to_vec(),
-                 self.want[a..a + self.ks].to_vec(), self.occ[x as usize], self.pulse_at[x as usize], self.label[a..a + self.ks].to_vec())
+                 self.want[a..a + self.ks].to_vec(), self.occ[x as usize], self.pulse_at[x as usize], self.label[a..a + self.ks].to_vec(),
+                 self.sup_label[a..a + self.ks].to_vec())
             }).collect(),
             strands: self.stats.strands, hops: self.stats.hops, touched: self.touched.len(), watch: self.pulse_watch.len(),
         }
     }
     fn restore(&mut self, v: Saved) {
-        for (x, mate, tags, sids, want, occ, pulse, label) in v.sites {
+        for (x, mate, tags, sids, want, occ, pulse, label, sup) in v.sites {
             let (m, a) = (x as usize * self.ends, x as usize * self.ks);
             self.mate[m..m + self.ends].copy_from_slice(&mate);
             self.tags[a..a + self.ks].copy_from_slice(&tags);
             self.sids[a..a + self.ks].copy_from_slice(&sids);
             self.want[a..a + self.ks].copy_from_slice(&want);
             self.label[a..a + self.ks].copy_from_slice(&label);
+            self.sup_label[a..a + self.ks].copy_from_slice(&sup);
             self.occ[x as usize] = occ;
             self.pulse_at[x as usize] = pulse;
             self.refresh(x);
@@ -1537,8 +1567,9 @@ impl Lattice {
         // The producer's site and location: here (0), or across face f (f + 1).
         let (sp, ploc) = match via { None => (s, 0), Some(f) => (self.nb(s, f), f + 1) };
         let (ct, pt) = (tag_of(self.tag(s, kc)), tag_of(self.tag(sp, kp)));
-        let ri = find_index(ct, pt).unwrap_or_else(|| panic!("no rule {}·{}", ct.name(), pt.name()));
-        let rule = &RULES[ri];
+        let (cl, pl) = (self.sup_label[s as usize * self.ks + kc], self.sup_label[sp as usize * self.ks + kp]);
+        let ri = find_index_labelled(ct, cl, pt, pl).unwrap_or_else(|| panic!("no rule {}·{}", ct.name(), pt.name()));
+        let rule = rule(ri);
         let n = rule.fresh.len();
 
         // Each dying aux port is joined to an end in this site (or to another dying aux port)
@@ -1680,6 +1711,7 @@ impl Lattice {
             self.stats.blocked_fires += 1;
             self.fields.blocked(s);
             if self.trace.on { *self.trace.blocked.entry(self.sids[s as usize * self.ks + kc]).or_insert(0) += 1; }
+            self.stats.blocked_rule.resize(N_RULES, 0);
             self.stats.blocked_rule[ri] += 1;
             return false;
         };
@@ -1701,6 +1733,7 @@ impl Lattice {
 
         let (csid, psid) = (self.sids[s as usize * self.ks + kc], self.sids[sp as usize * self.ks + kp]);
         assert_eq!(self.shadow.get(csid).ports[0], Some((psid, 0)), "fired a pair the abstract net does not have");
+        assert_eq!((self.shadow.get(csid).label, self.shadow.get(psid).label), (cl, pl), "fired with labels the abstract net does not have");
         let near: Vec<u32> = if self.trace.on { [csid, psid].iter().flat_map(|&a| self.shadow.get(a).ports.iter().flatten().map(|r| r.0).collect::<Vec<_>>()).collect() } else { vec![] };
         let fresh_sids = self.shadow.fire(csid, psid).1;
         if self.trace.on {
@@ -1718,6 +1751,7 @@ impl Lattice {
             let (_, site, k) = seats[f];
             self.place(site, k, code(*t), fresh_sids[f]);
             self.label[site as usize * self.ks + k] = if *t == Tag::Eps { GARBAGE } else { label };
+            self.sup_label[site as usize * self.ks + k] = rule.label(f, cl, pl);
             if self.p.lazy && wanted[f] { self.want[site as usize * self.ks + k] = true; self.tr_want(site, k); }
         }
         for (a, b) in links {
@@ -2064,13 +2098,24 @@ impl Lattice {
         sites.iter().zip(v.chunks(10)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied()).chain([self.fields.value(s) as u32])).collect()
     }
 
+    /// The seats of agents carrying a superposition label and their labels, [seat, label] each:
+    /// what `held_sites` leaves out (the chip's 40-byte site has no room for them).
+    pub fn held_labels(&self) -> Vec<u32> {
+        self.live.iter().flat_map(|&s| (0..self.ks).map(move |k| s as usize * self.ks + k))
+            .filter(|&i| self.tags[i] != 0 && self.sup_label[i] != 0).flat_map(|i| [i as u32, self.sup_label[i] as u32]).collect()
+    }
+
     /// Become exactly these sites (as `held_sites` gives them), every other site empty with no
     /// field, then `adopt`.
-    pub fn put_sites(&mut self, recs: &[u32]) {
+    pub fn put_sites(&mut self, recs: &[u32]) { self.put_sites_labelled(recs, &[]) }
+
+    /// `put_sites`, with the superposition labels `held_labels` gave.
+    pub fn put_sites_labelled(&mut self, recs: &[u32], labels: &[u32]) {
         const EMPTY: [u32; 10] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
         for s in self.live.clone() { self.set_site_words(s, &EMPTY); }
         for s in self.fields.near().to_vec() { self.fields.set_value(s, 0); }
         for r in recs.chunks(12) { self.set_site_words(r[0], &r[1..11]); self.fields.set_value(r[0], r[11] as u8); }
+        for l in labels.chunks(2) { self.sup_label[l[0] as usize] = l[1] as u8; }
         self.agent_sites = self.live.iter().copied().filter(|&s| self.occ[s as usize] > 0).collect();
         self.pulse_sites = self.live.iter().copied().filter(|&s| self.pulse_at[s as usize] != NONE).collect();
         self.adopt();
@@ -2082,7 +2127,10 @@ impl Lattice {
         let mut net = Net { ints: self.shadow.ints, ..Net::new() };
         let live = self.live.clone();
         for &s in &live {
-            for k in 0..self.ks { if self.tag(s, k) != 0 { self.sids[s as usize * self.ks + k] = net.mk(tag_of(self.tag(s, k))); } }
+            for k in 0..self.ks {
+                let i = s as usize * self.ks + k;
+                if self.tags[i] != 0 { self.sids[i] = net.mk_labelled(tag_of(self.tags[i]), self.sup_label[i]); }
+            }
         }
         let mut ends = 0;
         for &s in &live {
@@ -2109,7 +2157,7 @@ impl Lattice {
         let mut b = [0u8; 40];
         for (c, x) in b.chunks_mut(4).zip(w) { c.copy_from_slice(&x.to_le_bytes()); }
         self.mate[i * self.ends..(i + 1) * self.ends].copy_from_slice(&b[..self.ends]);
-        for k in 0..3 { self.tags[i * 3 + k] = b[33 + k]; self.want[i * 3 + k] = b[36 + k] != 0; self.sids[i * 3 + k] = u32::MAX; self.label[i * 3 + k] = 0; }
+        for k in 0..3 { self.tags[i * 3 + k] = b[33 + k]; self.want[i * 3 + k] = b[36 + k] != 0; self.sids[i * 3 + k] = u32::MAX; self.label[i * 3 + k] = 0; self.sup_label[i * 3 + k] = 0; }
         self.occ[i] = b[33..36].iter().filter(|&&t| t != 0).count() as u8;
         self.in_agents[i] = self.occ[i] > 0;
         self.pulse_at[i] = b[39];
@@ -2421,8 +2469,7 @@ impl Lattice {
         let (mut next_check, mut next_inv) = (0, 0);
         while self.stats.proposals < max_proposals {
             if self.stats.proposals >= next_check {
-                if self.p.lazy && self.readback().is_some() { return true; }
-                if self.shadow.active_pair().is_none() { return true; }
+                if self.answered() { return true; }
                 next_check = self.stats.proposals + 50 * self.live.len().max(1) as u64;
             }
             if self.p.margolus { self.margolus_clock(); } else { self.propose(); }
@@ -2431,6 +2478,6 @@ impl Lattice {
                 if let Err(e) = self.check_invariants() { panic!("after proposal {} ({}): {e}", self.stats.proposals, self.last_op); }
             }
         }
-        (self.p.lazy && self.readback().is_some()) || self.shadow.active_pair().is_none()
+        self.answered()
     }
 }

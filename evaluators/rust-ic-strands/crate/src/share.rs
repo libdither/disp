@@ -5,6 +5,7 @@
 
 use rust_ca_lattice::net::{Net, Ref};
 use rust_ca_lattice::oracle::Term;
+use rust_ca_lattice::sup::STerm;
 use rust_ca_lattice::rules::Tag;
 use std::collections::HashMap;
 
@@ -16,6 +17,15 @@ struct Part { kind: u8, kids: [usize; 2], size: u64 }
 pub fn net(t: &Term, min: usize) -> (Net, u32) {
     let mut net = Net::new();
     let root = if min == 0 { net.build(t) } else { build(&mut net, t, min) };
+    let (_, out) = net.drive(root);
+    (net, out)
+}
+
+/// `net` for a term that may hold superpositions; one that does is built whole, with no sharing.
+pub fn net_sup(t: &STerm, min: usize) -> (Net, u32) {
+    if let Some(t) = t.plain() { return net(&t, min); }
+    let mut net = Net::new();
+    let root = rust_ca_lattice::sup::build(&mut net, t);
     let (_, out) = net.drive(root);
     (net, out)
 }

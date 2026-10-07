@@ -5,12 +5,12 @@
 //! the unique reader of the source it references (linearity), which is what makes the
 //! whole protocol lock-free: every remote operation on a source comes from one place.
 
-use rust_ca_lattice::rules::{End, Rule, Tag, ALL_TAGS, RULES};
+use rust_ca_lattice::rules::{all_rules, End, Rule, Tag, ALL_TAGS};
 
 /// Is port `p` of `tag` a source (value flows out of it)?
 pub const fn is_source(tag: Tag, p: usize) -> bool {
     match tag {
-        Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair => p == 0,
+        Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup => p == 0,
         Tag::A | Tag::T1 | Tag::Sel => p == 2,
         Tag::Nrm => p == 1,
         Tag::Unp | Tag::Dn => p == 1 || p == 2,
@@ -39,7 +39,7 @@ pub fn role(rule: &Rule, e: End) -> Role {
 /// The polarity lemma, checked over the whole ROM: every template wire pairs a `Have` with
 /// a `Need`, so every rewrite keeps "one source, one sink" per wire.
 pub fn validate() -> Result<(), String> {
-    for r in RULES {
+    for r in all_rules() {
         for (a, b) in r.wires {
             if role(r, *a) == role(r, *b) {
                 return Err(format!(
