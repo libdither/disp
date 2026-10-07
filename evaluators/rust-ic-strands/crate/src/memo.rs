@@ -1,9 +1,10 @@
 //! Memoization as a radius (README "Memo radius"): equal computations closer than r sites on the
 //! lattice are merged, one computing and the other reading a copy of its result through a fresh
 //! duplicator; farther ones are both computed. Equal means equal terms as `readback` reads them,
-//! duplicators transparent, so twins at different stages of evaluation are missed. The detector is
-//! central (it hashes the whole abstract net) and the merge is surgery on the lattice, not a local
-//! move, so only the CPU runs it.
+//! duplicators transparent, so twins at different stages of evaluation are missed (or, with
+//! `Params::memo_names`, equal names fixed when agents are made, `Names`). The detector is central
+//! (it hashes the whole abstract net) and the merge is surgery on the lattice, kept inside one
+//! 2×2×2 block with `Params::memo_local` but still not a chip's move, so only the CPU runs it.
 
 use super::{code, Lattice, ARITY, GARBAGE, NONE};
 use crate::polarity_is_source as is_source;
@@ -160,6 +161,40 @@ impl Terms {
         let r = if k == APPLY { nf(self, a).zip(nf(self, b)).map(|(a, b)| self.intern((APPLY, a, b))) } else { nf(self, t) };
         self.keys.insert(t, r.unwrap_or(UNSEEN));
         r
+    }
+}
+
+/// Names fixed when an agent is first seen (`Params::memo_names`): a hash of its tag and of its
+/// inputs' names then, duplicators and normalizers transparent. A rewrite keeps a computation's
+/// value, so a name goes on meaning what it meant, and unlike a term read back it is never worked out
+/// again when an input is evaluated. A chip would make them in each rewrite, from the names the dying
+/// pair keeps for its inputs.
+#[derive(Default)]
+pub struct Names(HashMap<u32, u64>);
+
+fn mix(mut x: u64) -> u64 { x ^= x >> 30; x = x.wrapping_mul(0xbf58476d1ce4e5b9); x ^= x >> 27; x = x.wrapping_mul(0x94d049bb133111eb); x ^ x >> 31 }
+
+impl Names {
+    fn source(&mut self, net: &Net, r: Ref) -> u64 {
+        let a = net.get(r.0);
+        match a.tag {
+            Tag::Dn | Tag::Nrm => self.source(net, a.ports[0].unwrap()),
+            Tag::Unp => mix(self.source(net, a.ports[0].unwrap()) ^ (0x5500 + r.1 as u64)),
+            _ => self.of(net, r.0),
+        }
+    }
+    /// The name of an agent heading a computation or a value.
+    pub fn of(&mut self, net: &Net, id: u32) -> u64 {
+        if let Some(&n) = self.0.get(&id) { return n; }
+        // A cycle back here meets a name no other agent has.
+        self.0.insert(id, mix(0xC1C1E ^ (id as u64) << 20 ^ self.0.len() as u64));
+        let a = net.get(id);
+        let ins: &[usize] = match a.tag { Tag::L => &[], Tag::S => &[1], Tag::F | Tag::P | Tag::Pair => &[1, 2], _ => &[0, 1] };
+        // A suspension and an apply are the same application at two stages.
+        let kind = if a.tag == Tag::A { Tag::P } else { a.tag };
+        let n = ins.iter().fold(mix(kind as u64 + 1), |h, &q| mix(h.rotate_left(17) ^ self.source(net, a.ports[q].unwrap())));
+        self.0.insert(id, n);
+        n
     }
 }
 
@@ -473,12 +508,15 @@ impl Lattice {
         // Block-local: only twins in one 2×2×2 block of the lattice cut at this clock's offset.
         let g = super::hash(u32::MAX, self.tick());
         let o = [g as i64 & 1, g as i64 >> 8 & 1, if self.p.depth > 1 { g as i64 >> 16 & 1 } else { 0 }];
-        let mut keys: HashMap<(u32, [i64; 3]), u32> = HashMap::new();
-        let key: HashMap<u32, u32> = comps.iter().map(|h| {
+        // Equal terms, or with `memo_names` equal names.
+        let mut keys: HashMap<(u64, [i64; 3]), u32> = HashMap::new();
+        let mut key: HashMap<u32, u32> = HashMap::new();
+        for h in &comps {
             let c = if self.p.memo_local { corner(self, h.site, o) } else { [0; 3] };
+            let x = if self.p.memo_names { self.names.of(&self.shadow, h.id) } else { h.term as u64 };
             let n = keys.len() as u32;
-            (h.id, *keys.entry((h.term, c)).or_insert(n))
-        }).collect();
+            key.insert(h.id, *keys.entry((x, c)).or_insert(n));
+        }
         let r = if self.p.memo_local { 3 } else { self.p.memo };
         for (k, d) in plan(self, &terms, &comps, &|h| key.get(&h.id).copied(), r) {
             if log {

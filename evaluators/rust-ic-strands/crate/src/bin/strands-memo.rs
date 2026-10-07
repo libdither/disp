@@ -2,7 +2,8 @@
 //! what merging them would save.
 //!   strands-memo TERM [--every N] [--seed S] [--ideal] [--keys] [key=value...]
 //!   strands-memo TERM --run [--seed S] [--budget PROPOSALS] memo=R [key=value...]
-//! `--run` just runs to the answer (`memo=R` merging, Params::memo) and prints one line of counts.
+//! `--run` just runs to the answer (`memo=R` merging, Params::memo; `memolocal=1`, `memonames=1`)
+//! and prints one line of counts; `MEMO_LOG=1` lists every merge. TERM may be `@file`.
 //! TERM as `strands-run` takes it; the lattice is sized as the player sizes it and runs `latest`.
 //! Every N clocks it reads every output the answer depends on as a term (duplicators transparent)
 //! and prints, for each radius, how many computations (P, A, T1, Sel) and values (L, S, F) have an
@@ -18,7 +19,9 @@ use rust_ic_strands::lattice::{latest, Lattice, Params};
 
 const RADII: [u32; 6] = [1, 2, 4, 8, 16, u32::MAX];
 
+/// A term as `strands-run` reads it, or from a file with `@path`.
 fn parse(src: &str) -> Term {
+    if let Some(path) = src.strip_prefix('@') { return parse(std::fs::read_to_string(path).expect("term file").trim()); }
     match src.split_once(':') {
         Some((name, n)) if term::workload(name, 0).is_some() => term::workload(name, n.parse().unwrap()).unwrap(),
         _ => term::workload(src, 0).unwrap_or_else(|| term::parse(src).expect("bad term")),

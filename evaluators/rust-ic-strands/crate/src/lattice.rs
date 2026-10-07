@@ -124,6 +124,8 @@ pub struct Params {
     pub memo: u32,
     pub memo_every: u32,
     pub memo_local: bool,
+    /// Equal means equal names fixed when an agent is first seen (`memo::Names`), not equal terms.
+    pub memo_names: bool,
 }
 
 impl Params {
@@ -172,6 +174,7 @@ impl Params {
             "memo" => self.memo = n()? as u32,
             "memoevery" => self.memo_every = n()? as u32,
             "memolocal" => self.memo_local = on,
+            "memonames" => self.memo_names = on,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -187,7 +190,7 @@ impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
-                 strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false }
+                 strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false }
     }
 }
 
@@ -307,6 +310,8 @@ pub struct Lattice {
     /// Where to write the whole lattice's state after every clock, for the chip's lattice-level check.
     pub dumps: Option<Box<dyn std::io::Write>>,
     pub fields: Fields,
+    /// Each agent's name, by id, once the memo detector has seen it (`Params::memo_names`).
+    pub names: memo::Names,
 }
 
 /// The random bits one turn may use, one field per decision, so that a chip can draw them all
@@ -602,6 +607,7 @@ impl Lattice {
             vector_sample: 1,
             dumps: None,
             fields: Fields::new(&p, n),
+            names: Default::default(),
         }
     }
 
@@ -2090,6 +2096,7 @@ impl Lattice {
             ends += (ARITY * self.ks..self.ends).filter(|&e| self.mate_of(s, e as u8) != NONE).count() as u64;
         }
         self.shadow = net;
+        self.names = Default::default();
         self.stats.strands = ends / 2;
         self.stats.peak_strands = self.stats.peak_strands.max(self.stats.strands);
     }

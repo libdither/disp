@@ -632,6 +632,112 @@ the chip nor the GPU runs these settings, and the GPU says so (`tables.rs` `gpu_
 a field of one bit for each label, spread one hop a clock, could stand in for that (untested). The
 player takes such settings from its link, `#src=fib%202&set=trees=4`.
 
+## Memo radius: merging equal computations (tried, not kept; `memo=r`)
+
+The eager evaluator memoizes `apply(f, x)` by global ids, which a lattice does not have. The local
+version is a radius: two equal computations closer than r sites are merged, one computing and the
+other getting a copy of its result through a duplicator, and farther ones are both computed. r = 0
+is the plain net, r = ∞ a memo table, which would need addresses. Equal means equal terms as they
+read back (`memo.rs` `Terms` interns every output of the abstract net, duplicators transparent), so
+a suspension `P(f, x)` built in two places from copies of one `x` is the other's twin. Merging two
+suspensions is call by need across places, and `Dn·P` (force once, copy the value) does the rest.
+Twins at different stages of evaluation read differently and are missed.
+
+**How many twins there are.** `strands-memo TERM --every N --keys --ideal` reads every computation
+the answer depends on (P, A, T1, Sel) every N clocks, counts those with an equal twin within each
+radius, and estimates what merging them then would save: the idealised lazy machine (Fork, above)
+run on from the net as it is, with and without the merges. `latest`, lattices sized as the player
+sizes them, seed 1, every 100 clocks (200 for disp):
+
+| program | computations alive | share of the time with a twin within 1 · 2 · 4 · ∞ sites | saved by merging then, at most |
+|---|---|---|---|
+| fib(3) | 14 | 7% · 17% · 27% · 32% | 21% of the work left |
+| fib(4) | 21 | 8% · 19% · 27% · 37% | 22% |
+| exp(1) | 7 | 3% · 4% · 4% · 4% | 9% |
+| sort(2) | 13 | 0% · 1% · 4% · 6% | 10% |
+| disp `fib 3` | 15 | 1% · 3% · 7% · 16% | 9% |
+| disp `fib 4` | 22 | 3% · 10% · 18% · 28% | 9% |
+
+- Few computations are alive at once, and most of the time none has a twin. When there is one, it
+  can carry a fifth of the work left.
+- Counted by a memo key instead (function and argument worked out to values, as the eager
+  evaluator's memo sees them), there are 1.5× (lambada fib) to 2–3× (disp fib) as many twins: on
+  disp fib most twins differ only in how far an input has been evaluated, and terms miss them.
+- Samples 100 clocks apart miss twins that come and go between them: merging (below) finds 14 to
+  40 within one site in a run.
+
+**Merging them with a central detector** (`memo=r`, every 8 clocks, `memoevery`): the twins within r
+are merged pair by pair. A fresh duplicator beside the one kept (a running computation rather than
+a suspension) takes its output and hands one copy to its reader and the other, along a new wire, to
+the dropped one's reader; erasers in or beside the dropped one's site take its inputs, and
+collection does the rest. Seats and wires are planned first (free lanes, at most 8 pairings a site),
+and a merge with no room waits. The abstract net changes alike, and `tests/memo.rs` checks every
+invariant and the projection after every clock and every merge. Against `latest`, 2 seeds, every
+answer the oracle's and every projection exact:
+
+| program | clocks, rewrites without | rewrites at r = 1 · 2 · 4 · 8 · 16 | clocks at r = 1 · 2 · 4 · 8 · 16 | peak sites at r = 1 · 4 · 16 |
+|---|---|---|---|---|
+| fib(3) | 14.2k, 8.1k | −25% · −16% · −29% · −28% · −30% | −8% · −4% · −9% · −12% · −10% | 0% · +2% · +2% |
+| fib(4) | 20.5k, 15.6k | −18% · −27% · −26% · −34% · −36% | −7% · −9% · −6% · −6% · −9% | −5% · −6% · −6% |
+| exp(1) | 11.9k, 4.3k | −2% · −3% · −3% · −4% · −4% | −1% · +6% · +7% · +9% · +9% | 0% · +3% · +4% |
+| sort(2) | 21.0k, 10.9k | −1% · −3% · −11% · −5% · −8% | +2% · −1% · −4% · −1% · −2% | −10% · −11% · −8% |
+| disp `fib 3` | 24.1k, 9.0k | −12% · −9% · −16% · −16% · −16% | −7% · +1% · −2% · −3% · −4% | −1% · −6% · −6% |
+| disp `fib 4` | 39.1k, 18.2k | −21% · −23% · −25% · −27% · −27% | −7% · −9% · −7% · −10% · −11% | −8% · −22% · −21% |
+
+- **On fib it saves a fifth to a third of the rewrites, most of it within a site or two:** twins
+  are born close. `MEMO_LOG=1` lists each merge (what the twins' inputs share, how far apart they
+  are, how big). Lambada fib's are mostly equal code built apart applied to the two copies of one
+  argument, as the S rule's two halves `(s c)(b c)` are when `s` and `b` are equal, born one or two
+  sites apart. Disp fib's are most often applications whose function and argument are both equal
+  values built apart, 1 to 6 sites apart.
+- **It saves work, not time.** Clocks fall at most 12% on fib, about the seed noise. Twins run side
+  by side (fork), so a merge takes work off a parallel branch, not off the longest chain. As with
+  caching what a program throws away (Fork, above), the lattice has room and time to spare.
+- Elsewhere there is little to merge (exp, sort: 1–11% of rewrites), and exp(1) takes 6–9% more
+  clocks.
+- Where the matter peaks during the run (fib(4), disp fib) the peak falls too, by up to a fifth of
+  the sites, as the dropped twins' matter goes.
+
+**Can the detector be local?** With `memolocal=1` only computations in one 2×2×2 block of a cut at
+the clock's offset are compared, every clock (`memoevery=1`), and the merge stays inside the block:
+its three agents and five wires get the block's 8 sites, as a rewrite gets its square. With
+`memonames=1` they are compared by names instead of terms (below). Rewrites and clocks against
+`latest`, 2 seeds, every answer the oracle's:
+
+| program | central, r = 16 | terms, in a block | names, in a block |
+|---|---|---|---|
+| fib(3) | −30%, −10% | −23%, −9% | −17%, −10% |
+| fib(4) | −36%, −9% | −21%, −6% | −23%, −8% |
+| exp(1) | −4%, +9% | −5%, +8% | −1%, 0% |
+| sort(2) | −8%, −2% | −8%, −4% | −5%, −4% |
+| disp `fib 3` | −16%, −4% | −12%, −2% | −12%, −4% |
+| disp `fib 4` | −27%, −11% | −26%, −10% | −18%, −5% |
+
+A block keeps between half and all of what the central detector gets at r = 16, by terms or by
+names. What a chip would need for it:
+- **Names, not terms.** A term read back changes whenever an input is evaluated, and so does every
+  reader's up to the root: a wave of hashing along every chain of readers after every rewrite. A
+  name fixed when an agent is made never changes: a hash of its tag and its inputs' names
+  (duplicators transparent; a suspension and an apply count as one application), and it goes on
+  meaning what it meant, since a rewrite keeps a computation's value (`memo.rs` `Names`, here given
+  when the detector first sees an agent). A rewrite would make its fresh agents' names from the
+  names the dying pair keeps for its inputs, inside its square; collection needs none. So every
+  agent keeps its two inputs' names.
+- **Bits.** A wrong merge is a wrong answer, so names must not collide. A run compares about 10^7
+  pairs (a few hundred busy blocks for tens of thousands of clocks); 48-bit names make a collision a
+  10^-7 chance a run, 32-bit ones 10^-3. Two names an agent and two agents a site is about 190 bits
+  more a site, on the 95 it has now, and a hasher in the rewrite stage and comparators in every
+  block.
+- **A cheaper piece.** Most of lambada fib's twins come from one S rule, whose `(s c)` and `(b c)`
+  are twins exactly when `s` and `b` have one name. An S rule that compares the two names it holds
+  could build `(s c)` once and copy it, with no comparison in the block and no merge move. That
+  leaves disp fib's twins, which are born apart.
+
+So the idea holds for work but not for time: equal computations are born close enough that a block
+catches most of them, but they run side by side anyway, and catching them would triple a site.
+Memo stays the optimizer's job (research/OPTIMIZER.typ). The detector is central and CPU only; the
+GPU refuses it (`tables.rs` `gpu_unfit`).
+
 ## Adding binary numbers
 
 disp numbers are unary, so `add a b` takes a steps one after another, each about 0.8k rewrites
@@ -925,7 +1031,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~8 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, handover, reading back
+cargo test --release                                  # ~8 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, handover, reading back, merging equal computations
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -955,4 +1061,7 @@ their wire lengths every N proposals, and `WHO=1` adds what each one is waiting 
 how the 2D jam was diagnosed. `strands-run --mix N` prints how mixed the root's segments are,
 sampled every N clocks, and how many agents carry the tree label their reader gives them (Keeping
 the term's parts apart, above); `strands-run` takes `key=value` settings as `strands-sweep` spells
-them, applied after the flags (`--latest trees=4`).
+them, applied after the flags (`--latest trees=4`). `strands-memo TERM --every N --keys --ideal`
+prints the census of equal computations (Memo radius, above) on a lattice sized as the player sizes
+it, and `strands-memo TERM --run memo=R` one line of counts for a run (`@file` reads the term from a
+file; `MEMO_LOG=1` lists the merges).

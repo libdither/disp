@@ -27,8 +27,8 @@ fn merging_keeps_the_answer() {
     let (mut merged, mut checked) = (0, 0);
     for (i, t) in terms.iter().enumerate() {
         let Ok(want) = oracle::nf(t.clone(), &mut Fuel(100_000)) else { continue };
-        for (r, memo_local) in [(2, false), (16, false), (1, true)] {
-            let p = Params { w: 16, h: 16, depth: 4, memo: r, memo_every: 2, memo_local, seed: i as u64 + 1, ..latest() };
+        for (r, memo_local, memo_names) in [(2, false, false), (16, false, false), (1, true, false), (1, true, true)] {
+            let p = Params { w: 16, h: 16, depth: 4, memo: r, memo_every: 2, memo_local, memo_names, seed: i as u64 + 1, ..latest() };
             let Some(mut l) = lattice(t, p) else { continue };
             l.check_every = 1;
             assert!(l.run(50_000_000), "term {i} did not finish at radius {r}");
@@ -38,7 +38,7 @@ fn merging_keeps_the_answer() {
             checked += 1;
         }
     }
-    assert!(checked >= 60 && merged >= 5, "{checked} runs, {merged} merges");
+    assert!(checked >= 120 && merged >= 5, "{checked} runs, {merged} merges");
 }
 
 /// A term built apart and the same term with its equal parts shared through duplicators read back
