@@ -345,7 +345,7 @@ function syncUI() {
     : e?.work ? `<b>${e.name}</b>: ${e.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
       + (e.work.n > 0 ? ` <i>${e.name}:n</i> sets n.` : "")
     : e ? "A random tree-calculus term: <i>random:seed:depth</i>."
-    : /^[LSF@(),\s]+$|^[012\s]+$/.test(input) ? "A term of your own: L, S(x), F(x,y), @(f,x), or ternary digits, several applied left to right."
+    : /^[LSF@(),\s]+$|^[012]+\s[012\s]+$/.test(input) ? "A term of your own: L, S(x), F(x,y), @(f,x), or ternary digits, several applied left to right."
     : "Ordinary disp code, compiled in your browser with the prelude, <i>lib/list.disp</i> and <i>programs/programs.disp</i> in scope.";
 }
 /// Highlight entry i of the menu (-1: none).
@@ -380,7 +380,8 @@ const compiled = new Map();
 /// the engine. Benchmarks and terms go to the engine as they are, and a disp program called with
 /// literal arguments takes its tree from programs.js.
 function plan(input) {
-  if (withString(input, (p, n) => E.strands_probe(p, n)) >= 0) return { src: input };
+  // A number alone is a disp number, though 10 or 212 would also read as ternary digits.
+  if (!/^\d+$/.test(input) && withString(input, (p, n) => E.strands_probe(p, n)) >= 0) return { src: input };
   const [, name, args] = input.match(/^(\w+)\s*(.*)$/s) ?? [], d = DISP.find(p => p.name === name);
   if (d) try { return { src: [d.tree, ...parseArgs(args)].join(" "), kind: d.kind, call: input }; } catch {}
   return compiled.get(input) ?? null;

@@ -68,7 +68,7 @@ async function main() {
     type(P, text); key(P, "Enter"); await sleep(300);
     await check(P.$("banner").textContent.includes(msg) && P.v("running.call") === before, `"${text}" says "${P.$("banner").textContent}"`);
   }
-  for (const [text, expect] of [["is_even 1", "false"], ["add 1 (add 0 1)", "2"], ["is_nil []", "true"], ["map [0] succ", "[1]"], ["k-chain:2"]])
+  for (const [text, expect] of [["is_even 1", "false"], ["add 1 (add 0 1)", "2"], ["is_nil []", "true"], ["map [0] succ", "[1]"], ["10", "10"], ["k-chain:2"]])
     await run(P, text, expect);
 
   const names = P.w.StrandsDisp?.names ?? [], fib = names.find(n => n.name === "fib");
