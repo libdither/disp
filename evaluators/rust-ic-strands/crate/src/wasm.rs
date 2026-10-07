@@ -352,6 +352,13 @@ pub extern "C" fn seats_ptr() -> *const u32 { unsafe { SEATS.as_ptr() } }
 #[allow(static_mut_refs)]
 pub extern "C" fn seats_len() -> u32 { unsafe { SEATS.len() as u32 } }
 
+/// Every agent and its wiring (readback.rs `wires`), into the seats, 6 numbers each; returns how many agents.
+#[no_mangle]
+pub extern "C" fn strands_net() -> u32 { put_seats(readback::wires(&st().l)) / 6 }
+/// Times the abstract net was renumbered (a GPU handing a run back, or a saved state put back).
+#[no_mangle]
+pub extern "C" fn strands_renumbered() -> u32 { unsafe { HANDED_BACK as u32 } }
+
 /// The agents the agent in a seat depends on (readback.rs `subtree`), into the seats; returns how many.
 #[no_mangle]
 pub extern "C" fn strands_subtree(site: u32, slot: u32) -> u32 {

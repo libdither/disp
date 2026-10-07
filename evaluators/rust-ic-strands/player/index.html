@@ -165,6 +165,7 @@
         </div>
         <div class="corner-left"><span id="speedbox" data-tip="speed"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l4-4"/></svg><input id="speed" type="range" min="0" max="100" value="45" aria-label="speed"></span></div>
         <div class="corner-right">
+          <button class="mpi on" id="segments" aria-pressed="true" data-tip="segments: colour each agent by where it is in the term, split at every application, nested ones again (C)" aria-label="segments"><svg class="ico stroke" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5V12l6 6"/><path d="M12 12l-7.5 4"/></svg></button>
           <button class="mpi on" id="moves" aria-pressed="true" data-tip="moves: after a step, a faint arrow for each agent that moved" aria-label="moves"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 19 L11 12"/><path d="M7 12 H11 V16"/><path d="M13 7 H20"/><path d="M17 4 L20 7 L17 10"/></svg></button>
           <button class="mpi" id="viewMode" aria-label="view"></button>
           <button class="mpi" id="engine" aria-pressed="false" data-tip="running on the CPU; click for the GPU (G)" aria-label="run on the GPU"><svg class="ico stroke" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2.5v3.5M15 2.5v3.5M9 18v3.5M15 18v3.5M2.5 9h3.5M2.5 15h3.5M18 9h3.5M18 15h3.5"/></svg></button>
@@ -272,6 +273,7 @@
 <script src="programs.js"></script>
 <script src="three.min.js"></script>
 <script src="timeline.js"></script>
+<script src="net.js"></script>
 <!-- the disp compiler, loaded the first time something needs compiling (dispCompiler) -->
 <script id="compilerJs" type="text/plain" src="compiler.js"></script>
 <script>
@@ -405,7 +407,8 @@ function populate() {
     + `<span><span class="sw" style="background:none;border:2px solid #ffa94d"></span>called value</span><span><span class="sw" style="background:rgba(255,170,80,0.35)"></span>demand field</span>`
     + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
     + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;color:#b89ad8;width:auto;font-size:11px">→</span>a move in a stepped clock</span>`
-    + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`;
+    + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`
+    + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, not its kind</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
   if (q.get("view")) viewMode = q.get("view");
@@ -657,6 +660,7 @@ function draw() {
   if (!L) return;
   const V = views();
   pickSync();
+  const segs = showSegments && (netSync(), NET.seg);
   // With something picked, everything else is dimmed.
   const pk = PICK.on ? PICK.marks : null, dim = pk ? 0.35 : 1;
   if (viewMode === "layers" && performance.now() - (lay.checked ?? 0) > 500) {
@@ -715,8 +719,9 @@ function draw() {
     }
   }
   ctx.lineCap = "round";
-  ctx.strokeStyle = `rgba(120,150,190,${0.55 * dim})`; ctx.lineWidth = lw(1.1); ctx.stroke(strands);
-  if (detail) { ctx.strokeStyle = `rgba(150,175,210,${0.45 * dim})`; ctx.lineWidth = lw(0.9); ctx.stroke(board); }
+  ctx.strokeStyle = `rgba(120,150,190,${(segs ? 0.25 : 0.55) * dim})`; ctx.lineWidth = lw(1.1); ctx.stroke(strands);
+  if (detail) { ctx.strokeStyle = `rgba(150,175,210,${(segs ? 0.2 : 0.45) * dim})`; ctx.lineWidth = lw(0.9); ctx.stroke(board); }
+  if (segs) for (const [css, path] of segWires(V)) { ctx.strokeStyle = css; ctx.lineWidth = lw(1.3); ctx.stroke(path); }
   // in side-by-side panels, a strand to the layer above or below shows as a small arrowhead
   for (const [s, e, f] of updown) {
     const [x, y] = endPos(s, e), h = S * 0.12;
@@ -736,6 +741,7 @@ function draw() {
   // the picks' wires: every input of a picked agent to what feeds it, and dashed, where a root's value goes
   if (pk) {
     const lit = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
+    if (segs) lit[0] = lit[1] = new Path2D();
     for (const seat of PICK.lit) {
       const b = pk[seat], t = V.tags[seat], s = siteOf(seat), k = slotOf(seat);
       if (!t) continue;
@@ -770,9 +776,9 @@ function draw() {
     const t = V.tags[s * L.ks + k]; if (!t) continue;
     const [x, y] = slotPos(s, k), b = pk ? pk[s * L.ks + k] : 0;
     ctx.globalAlpha = pk && !b ? 0.14 : dead(s, k) ? (b ? 0.6 : 0.28) : 1;
-    ctx.fillStyle = COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+    ctx.fillStyle = segs ? segAt(s * L.ks + k)?.css ?? "#4a5465" : COLOR[t]; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
     if (V.want[s * L.ks + k]) { ctx.strokeStyle = isConsumer(t) ? "#56c8ff" : "#ffa94d"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.45, 0, 7); ctx.stroke(); }
-    if (b && rad * view.s > 1) {
+    if (b && rad * view.s > 1 && !(segs && !(b & 26))) {
       const ring = rings[b & 16 ? 2 : b & 3 ? 0 : 1];
       ring.moveTo(x + rad * 1.2, y); ring.arc(x, y, rad * 1.2, 0, 7);
       if (b & 10) { rings[3].moveTo(x + rad * 1.9, y); rings[3].arc(x, y, rad * 1.9, 0, 7); }
@@ -895,6 +901,7 @@ function instanced(name, geometry, material, count) {
 function draw3d() {
   if (!L || (!V3.ready && !init3d())) return;
   const T = V3.T, V = views();
+  if (showSegments && netSync()) V3.dirty = true;
   if (!V3.fitted) {
     // World coordinates are centred once per load, on where matter starts out.
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -926,7 +933,7 @@ function draw3d() {
         const p = end3(s, k * 3, faces); // the principal port; the sphere sits just below it
         m4.makeTranslation(p[0], p[1] - 0.17, p[2]); agentsMesh.setMatrixAt(na, m4);
         const b = pk ? pk[s * L.ks + k] : 0;
-        col.set(COLOR[t]); if (dead(s, k)) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
+        col.set(showSegments ? segAt(s * L.ks + k)?.css ?? "#4a5465" : COLOR[t]); if (dead(s, k)) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
         V3.agentSeat[na] = s * L.ks + k; agentsMesh.setColorAt(na++, col);
         if (isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k) && (!pk || b)) { haloMesh.setMatrixAt(nw++, m4); fx += p[0]; fy += p[1]; fz += p[2]; }
       }
@@ -1414,16 +1421,22 @@ function termHTML(root, ctx, limit) {
       const x = q.shift(); shown.add(x);
       q.push(...(x.pair || (x.erase ? [x.erase] : x.args ? [x.head, ...x.args] : [])));
     }
-    const tag = (x, cls, inner, title) => { ctx.nodes.push(x.ast); const f = ctx.focus === x.ast ? " fx" : "";
-      return `<span class="${cls}${f}" data-n="${ctx.block}:${ctx.nodes.length - 1}"${title ? ` title="${esc(title)}"` : ""}>${inner}</span>`; };
+    // With segments on, a part of the term that is a segment of its own is tinted in its colour.
+    let up = null;
+    const tag = (x, cls, inner, title, sg) => { ctx.nodes.push(x.ast); const f = ctx.focus === x.ast ? " fx" : "";
+      return `<span class="${cls}${f}" data-n="${ctx.block}:${ctx.nodes.length - 1}"${title ? ` title="${esc(title)}"` : ""}${sg ? ` style="background:${sg.tint}"` : ""}>${inner}</span>`; };
     const out = (x, paren) => {
-      if (!shown.has(x)) return tag(x, "el", "…", "more: click to light its agents");
-      if (x.atom) return tag(x, x.atom.cls, esc(x.atom.text), x.atom.title);
-      if (x.ref) return tag(x, "sh", x.ref, "shared: computed once, read in several places");
-      if (x.pair) return tag(x, "", `⟨${out(x.pair[0])}, ${out(x.pair[1])}⟩`, "the arms of a pending choice");
-      if (x.erase) return tag(x, "", `<span class="er">erasing</span> ${out(x.erase, true)}`);
-      const s = tag(x, (x.value ? "v" : "") + (x.hot ? " w" : ""), [out(x.head, true), ...x.args.map(a => out(a, true))].join(" "), x.hot ? "being computed now" : "");
-      return paren ? `(${s})` : s;
+      const outer = up, sg = showSegments && x.ast.seat !== NOWHERE ? segAt(x.ast.seat) ?? outer : outer, own = sg !== outer ? sg : null;
+      up = sg;
+      let s;
+      if (!shown.has(x)) s = tag(x, "el", "…", "more: click to light its agents", own);
+      else if (x.atom) s = tag(x, x.atom.cls, esc(x.atom.text), x.atom.title, own);
+      else if (x.ref) s = tag(x, "sh", x.ref, "shared: computed once, read in several places", own);
+      else if (x.pair) s = tag(x, "", `⟨${out(x.pair[0])}, ${out(x.pair[1])}⟩`, "the arms of a pending choice", own);
+      else if (x.erase) s = tag(x, "", `<span class="er">erasing</span> ${out(x.erase, true)}`, "", own);
+      else { s = tag(x, (x.value ? "v" : "") + (x.hot ? " w" : ""), [out(x.head, true), ...x.args.map(a => out(a, true))].join(" "), x.hot ? "being computed now" : "", own); if (paren) s = `(${s})`; }
+      up = outer;
+      return s;
     };
     return out(d, false);
   };
@@ -1444,7 +1457,7 @@ function pickPanel(force) {
   if (!force && now - PICK.at < 250) return;
   PICK.at = now;
   PICK.notes = PICK.notes.filter(n => now - n.t < 6000);
-  const state = `${PICK.key}|${PICK.preview?.key}|${PICK.focus?.path}|${PICK.notes.length}|${namedFrom}`;
+  const state = `${PICK.key}|${PICK.preview?.key}|${PICK.focus?.path}|${PICK.notes.length}|${namedFrom}|${showSegments && NET.rev}`;
   if (!force && state === PICK.shown) return;
   PICK.shown = state;
   nameTable();
@@ -1761,7 +1774,28 @@ function setDetails(open) {
   $("side").hidden = !open; $("details").classList.toggle("on", open); $("details").setAttribute("aria-pressed", open);
   resize(); if (L) { panel(true); pickPanel(true); }
 }
-let showMoves = true;
+let showMoves = true, showSegments = true;
+/// Each wire in the colour of the segment whose output it carries, built again when the net changes.
+let segPaths = { key: "", list: [] };
+function segWires(V) {
+  const key = `${NET.rev}|${viewMode}|${lay?.x0},${lay?.y0},${lay?.w},${lay?.h}`;
+  if (key === segPaths.key) return segPaths.list;
+  const by = new Map();
+  for (let i = 0; i < NET.n; i++) {
+    if (NET.seg[i] < 0) continue;
+    const t = NET.tag[i], seat = NET.seat[i], css = NET.segs[NET.seg[i]].css;
+    for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) {
+      if (!by.has(css)) by.set(css, new Path2D());
+      follow(V, siteOf(seat), slotOf(seat) * 3 + p, by.get(css));
+    }
+  }
+  segPaths = { key, list: [...by] };
+  return segPaths.list;
+}
+function setSegments(on) {
+  showSegments = on; $("segments").classList.toggle("on", on); $("segments").setAttribute("aria-pressed", on);
+  V3.dirty = true; if (L) pickPanel(true);
+}
 $("play").onclick = () => setPlaying(!playing);
 $("step").onclick = e => stepOnce(e.shiftKey);
 $("next").onclick = () => stepOnce(true);
@@ -1771,6 +1805,7 @@ $("time").oninput = () => tlSeek(+$("time").value);
 $("reset").onclick = () => load();
 $("moves").onclick = () => { showMoves = !showMoves; $("moves").classList.toggle("on", showMoves); $("moves").setAttribute("aria-pressed", showMoves); V3.dirty = true; };
 $("details").onclick = () => setDetails($("side").hidden);
+$("segments").onclick = () => setSegments(!showSegments);
 $("closeSide").onclick = () => setDetails(false);
 $("src").oninput = () => { syncUI(); openMenu(true); };
 $("src").onclick = () => openMenu(true);
@@ -1804,6 +1839,7 @@ window.addEventListener("keydown", e => {
   else if (e.key === "Escape") { pinned = null; $("tip").hidden = true; V3.dirty = true; pickClear(); }
   else if (e.key === "v" || e.key === "V") nextView();
   else if (e.key === "d" || e.key === "D") setDetails($("side").hidden);
+  else if (e.key === "c" || e.key === "C") setSegments(!showSegments);
   else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
   else if (e.key === "g" || e.key === "G") setEngine(onGpu ? "cpu" : "gpu");
 });

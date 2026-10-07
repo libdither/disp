@@ -211,3 +211,32 @@ fn picks_are_found_again_after_a_hand_back() {
     }
     assert!(runs == 4 && same > 4 * (missed + other), "{runs} runs: {same} found again, {missed} missed, {other} others");
 }
+
+/// The wiring handed to the player's drawings is the abstract net's: every agent on the lattice once,
+/// in its seat, each wire seen the same from both ends, and an agent keeps its id as it moves.
+#[test]
+fn the_wiring_is_the_nets() {
+    for (name, t) in terms().into_iter().take(12) {
+        let Some(mut l) = load(&t, p()) else { continue };
+        let mut was: HashMap<u32, u32> = HashMap::new();
+        for clock in 0..300 {
+            let w = readback::wires(&l);
+            let rec: HashMap<u32, &[u32]> = w.chunks(6).map(|r| (r[0], r)).collect();
+            assert_eq!(rec.len() * 6, w.len(), "{name}: an agent twice");
+            assert_eq!(rec.len(), l.shadow.live_count(), "{name}, clock {clock}: agents missing");
+            for r in rec.values() {
+                assert_eq!(l.sids[r[1] as usize], r[0], "{name}: not in its seat");
+                assert_eq!(l.tags[r[1] as usize] as u32, r[2], "{name}: another tag");
+                for (q, &far) in r[3..].iter().enumerate() {
+                    if far == NOWHERE { continue; }
+                    assert_eq!(rec[&(far / 4)][3 + (far % 4) as usize], r[0] * 4 + q as u32, "{name}: a wire seen differently from its ends");
+                }
+            }
+            // Ids already seen still hold agents of the same kind, unless a rewrite used them up.
+            for r in rec.values() { if let Some(&tag) = was.get(&r[0]) { assert_eq!(tag, r[2], "{name}: an id changed hands"); } }
+            was = rec.values().map(|r| (r[0], r[2])).collect();
+            if l.readback().is_some() { break; }
+            l.chip_clock();
+        }
+    }
+}

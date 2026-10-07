@@ -251,6 +251,23 @@ pub fn subtree(net: &Net, root: u32) -> Vec<u32> {
     out
 }
 
+/// Every agent on the lattice and what each of its ports is wired to, for the player's drawings of
+/// the net: [id, seat, tag, far end of port 0, of port 1, of port 2] for each, a far end as
+/// id × 4 + port (NOWHERE if unwired). An id stays an agent's as it moves, until the net is renumbered.
+pub fn wires(l: &Lattice) -> Vec<u32> {
+    let mut v = vec![];
+    for &s in l.live() {
+        for k in 0..l.ks {
+            let i = s as usize * l.ks + k;
+            if l.tags[i] == 0 { continue; }
+            let Some(a) = live(&l.shadow, l.sids[i]) else { continue };
+            v.extend([l.sids[i], i as u32, l.tags[i] as u32]);
+            v.extend(a.ports.iter().map(|r| r.map_or(NOWHERE, |(b, p)| b * 4 + p as u32)));
+        }
+    }
+    v
+}
+
 /// Where each agent of the abstract net sits on the lattice (site × slots + slot), by its id.
 pub fn seats(l: &Lattice) -> Vec<u32> {
     let mut at = vec![NOWHERE; l.shadow.agents.len()];
