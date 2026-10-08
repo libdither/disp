@@ -25,8 +25,9 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   flash for about four clocks of the run as shown, at most 0.6 s, and the more fire at once the
   fainter each is, so a fast run is not buried in rings.
 - **Programs:** one input box takes ordinary disp code (`fib 2`, `add 2 (mul 2 2)`,
-  `map [1, 2] succ`), a benchmark program (`sort:1`) or a raw term. Its list (`▾` or `↓`) offers
-  each program with an example.
+  `map [1, 2] succ`, `relay_add 13 6`, where a program on binary numbers reads 13 and 6 as bit
+  trees), a benchmark program (`sort:1`) or a raw term. Its list (`▾` or `↓`) offers each program
+  with an example.
 - **Stepping:** `▸` or `→` runs on to the next clock where something happens, `⏭` or `shift →` to
   the next rewrite. The clock is summed up in a line over the input box (rewrites, steps, folds),
   told in words in the details, and drawn as a faint arrow for each agent that moved (the moves
@@ -168,7 +169,9 @@ back to disp's own printer:
 - lists, and strings as lists of code points, are cons forks ending in a leaf;
 - `true` is a leaf and `false` is a stem;
 - a binary number (`-> bits`) is a number tree (Adding binary numbers, below), read back as its
-  value. Its examples name the bits `b0` and `b1`, so they go through the compiler.
+  value. A number given to such a program is a perfect tree of 2^k bits, k the least that holds
+  every number given and each list's sum (room on top for a sum of many); `-> bits16` fixes 16
+  bits. Bit lists can still be written out, `ripple_add [b1, b0, b1, b1] [b0, b1, b1, b0]`.
 
 The benchmark programs (`fib`, `exp`, `sort`, …) come from the lambada suite and use their own
 encoding: binary numbers, least significant bit first. Their fib counts from fib 0 = 1, so its
@@ -747,8 +750,9 @@ parallel and local addition can be here:
   then its high half: `pair lo hi` is lo + 2^(bits in lo) × hi. One triage tells the three apart.
   A list of bits, least significant first, is a number tree (its nil is a `b0` on top), and so is
   a perfect tree of 2^k bits, so every adder takes either shape and the shape alone decides how
-  parallel it can be. Each gives `pair sum carry`, a number tree again; the player shows these as
-  numbers (`-> bits`).
+  parallel it can be. Each gives the sum as a number tree, `pair sum carry` for all but relay,
+  whose sum is a list of bits; the player shows these as numbers (`-> bits`) and reads a number
+  typed after a `-> bits` program as a tree (Running real disp code, above).
 - **A column** (`column`): bits x and y kill the carry (both 0), pass it on (they differ) or start
   one (both 1). `kind` picks a function of the carry in by that, so a column that kills or starts
   a carry knows its carry out before its carry in.
@@ -762,53 +766,107 @@ parallel and local addition can be here:
   Adding a binary number into one moves each column's carry one column up and no further, so no
   column waits on another (`save`: ripple's recursion with another column). The carries are done
   once at the end, by lookahead (`resolve`). `added` adds the numbers one by one by lookahead.
+- **Relay** (`relay_add`, `relay_add16`): ripple carry passing the rest on. An adder of x and y
+  takes k, the rest of the sum as a function of its carry out, then its carry in, and gives its
+  sum bits as a list ending in what k makes of its carry out: `pair s0 (pair s1 (… (k carry)))`,
+  a number tree of the sum shaped as a list. A column (`relay_column`) hands its carry out to k;
+  two adders of halves join by composition, `f xl yl (g xh yh k)` (`relay_join`), x and y split
+  once each by triage. No pair is built only to be taken apart again, and the carry is only a
+  wire. `relay` recurses as it goes, on any shape; `relay_for s` builds the adder for the shape
+  of s while compiling, a column and a join for each bit and no recursion left, so nothing is
+  copied but bits. `relay_add16` is `relay_for` a 16-bit tree (`-> bits16` in the player).
 
 Every carry going the whole way (2^n − 1 plus 1), clocks and rewrites, lattices sized as the
-player sizes them, 2 seeds, every answer the oracle's and decoded to the sum:
+player sizes them, 2 seeds, every answer the eager evaluator's:
 
 | adder | 2 bits | 4 bits | 8 bits | 16 bits |
 |---|---|---|---|---|
-| unary `add` | 14.0k, 3.0k | 56.2k, 12.2k | 910k, 198k (1 seed) | — |
-| ripple, list | 15.2k, 5.9k | 24.6k, 11.1k | 47.1k, 20.9k | 94.8k, 40.4k |
-| ripple, tree | 9.9k, 3.6k | 17.1k, 9.0k | 28.0k, 19.7k | 65.5k, 41.3k |
-| carry select, tree | 10.6k, 4.1k | 20.9k, 10.3k | 34.7k, 22.6k | 92.4k, 47.2k |
+| unary `add` | 14.0k, 3.0k | 56.1k, 12.2k | 909k, 198k | — |
+| ripple, list | 15.1k, 5.9k | 24.5k, 11.1k | 47.0k, 20.9k | 94.8k, 40.4k |
+| ripple, tree | 9.8k, 3.6k | 17.1k, 9.0k | 28.0k, 19.7k | 65.5k, 41.3k |
+| carry select, tree | 10.5k, 4.1k | 20.9k, 10.3k | 34.7k, 22.6k | 92.3k, 47.2k |
 | carry lookahead, tree | 11.3k, 4.0k | 19.2k, 10.0k | 36.4k, 22.2k | 62.4k, 46.2k |
+| relay, list | 6.3k, 2.4k | 10.7k, 4.0k | 19.3k, 7.5k | 34.5k, 14.7k |
+| relay, tree | 4.2k, 1.5k | 7.0k, 3.3k | 10.6k, 6.9k | 14.0k, 14.0k |
+| relay unrolled (`relay_for`), tree | 2.0k, 0.56k | 4.0k, 1.2k | 6.2k, 2.4k | 9.7k, 5.0k |
 
 16 bits on ordinary inputs, 51566 + 22995 (the longest run of columns passing a carry on is 4):
-ripple on a list 92.2k clocks, ripple on a tree 37.9k, carry lookahead 56.6k, carry select 65.6k
-(1 seed). Lookahead on a list takes 99.2k with every carry going the whole way (1 seed), no
-better than ripple on a list: the shape sets the depth, not the algorithm.
-- **Binary passes unary at 4 bits.** At 8 bits unary takes 19–32× the clocks and 9× the
-  rewrites, and 16 bits (65,535 steps) is out of reach.
-- **Work, not depth, sets the time.** Every binary adder does 2.5–3k rewrites a bit (two fifths
-  duplicators copying, a sixth erasers), so its work is linear in its bits, and its clocks grow
-  1.6–2.7× with each doubling of the bits, lookahead's too. What a tree buys is rewrites at once:
-  0.4 a clock on a list, 0.5–0.8 on a tree, 1.1 for ripple on a tree on ordinary inputs. A pair
-  is made 35–85 clocks before its reader is wanted, and fires 20–50 clocks after that.
+ripple on a list 92.2k clocks, ripple on a tree 37.9k, carry lookahead 56.6k, carry select 63.1k;
+relay on a list 36.9k, on a tree 14.4k, unrolled 8.4k. Lookahead on a list takes 99.2k with every
+carry going the whole way (1 seed), no better than ripple on a list. At 32 bits (1 seed, every
+carry the whole way) relay unrolled takes 17.1k clocks and 10.1k rewrites, relay 19.2k and 28.0k,
+ripple on a tree 85.8k and 84.4k. A run's CPU time follows: at 16 bits 194 s for ripple on a
+tree, 11 s for relay, 22 s for relay unrolled (its lattice is the biggest, 394 sites a side for 2.9k
+agents).
+- **Binary passes unary at 4 bits**, at 2 bits with relay. At 8 bits unary takes 19–32× the
+  clocks of the older adders and 9× their rewrites, 150× relay unrolled's clocks; 16 bits (65,535
+  steps) is out of reach.
+- **Copying the adder was most of the work.** `fix` hands each call a copy of the whole function,
+  which a duplicator copies a layer at a time as it is read: two fifths of every recursive adder's
+  rewrites, 2.5–3k a bit. Built while compiling, ripple carry as written takes 4.8k rewrites at 8
+  bits instead of 19.7k and 14.5k clocks instead of 28.0k (1 seed), duplicators falling from 39%
+  to 9%, and its code grows from 669 nodes to 2.5k.
+- **Reading a pair twice costs little; taking a result apart by triage costs time.**
+  `pair_fst x` and `pair_snd x` copy only the top of x: each throws the other half of its copy
+  away, and an eraser on a duplicator's output makes it a wire. Taking each pair apart once by
+  triage instead forces it, so a parent waits on its halves' results: ripple with `fix` takes 85k
+  clocks at 8 bits instead of 28k, and built while compiling 21–28k instead of 14.5k. Splitting x
+  and y, which are there from the start, by triage is fine.
+- **Passing the rest on beats returning `pair sum carry`.** Built while compiling, at 8 bits on
+  the idealised lazy machine (`bench.ts --ideal`; Fork, above): ripple with pairs 5.3k rewrites,
+  the halves as functions of the carry joined by projections 4.2k, relay 2.8k, and 2.6k with the
+  join's fork arm built as a tree (`s_of`, `k_of`), which the compiler routes the halves into with
+  fewer combinators than a lambda over five variables. On the lattice 14.5k, 10.2k, 7.1k and 6.2k
+  clocks.
+- **Now a tree's depth shows.** Relay unrolled on a list takes 13.1k clocks and 5.4k rewrites at 16
+  bits against 9.7k and 5.0k on a tree (the idealised machine: 438 rounds against 158), relay
+  34.5k against 14.0k. Relay unrolled's clocks grow 1.6–2× with each doubling of the bits, relay's
+  1.3–1.7×. Relay's sum is a list, so a run of columns passing the carry on still waits column by
+  column (65535 + 1 is 15 in a row): ordinary inputs are 13% faster.
+- **What is left**: per 16 bits 5.0k rewrites, a third erasers. A column takes about 130, half of
+  them erasing the unused entries of its table; a join about 200, mostly S and K rules routing xl,
+  xh, yl, yh and k into the halves (idealised machine).
+- **Tried, no better**: other columns, a digit x + y first or a token for kill, pass on or start
+  and one dispatch on it (2–9% more rewrites); columns that hand k both the sum bit and the carry
+  for k to pair (19% more, the join builds more); relay passing itself on as an argument rather
+  than holding it (the same).
 - **Laziness makes ripple carry skip.** The carry is only a wire, so every column starts at once,
   and a column that kills or starts a carry has its carry out at once. Only a run of columns
-  passing a carry on waits, one column after another. On a tree that makes plain ripple carry the
-  fastest adder: 1.5× faster than lookahead on ordinary inputs, and about as fast (65.5k against
-  62.4k) when every carry goes the whole way. Carry select gains the same way (92.4k → 65.6k), as
-  its picks wait only on carries still being passed on. On a list the walk down the list costs
-  the same either way.
+  passing a carry on waits, one column after another. Among the older adders that makes plain
+  ripple carry on a tree the fastest: 1.5× faster than lookahead on ordinary inputs, and about as
+  fast (65.5k against 62.4k) when every carry goes the whole way. Carry select gains the same way
+  (92.3k → 63.1k), as its picks wait only on carries still being passed on.
 - **Carry select is the slowest tree adder**: it sums every half twice, while the S rule already
   runs the halves side by side.
-- **Trees cost space**: at 16 bits 28–34k strands and 12–14k sites at the peak, against 7k and
-  4k for a list.
+- **Trees cost space**: at 16 bits 28–34k strands and 12–14k sites at the peak for the older
+  adders, 17k and 10k for relay unrolled, 8k and 3.6k for relay, against 2–7k and 1–4k on a list.
 
 A sum of four numbers below 64 as 8-bit trees (1 seed): `added` takes 112.9k clocks and 68.7k
 rewrites, three 8-bit lookahead adds end to end with no overlap (3 × 36.4k). `saved` takes 86.4k
 clocks, 23% fewer, as the saves overlap, but 98.3k rewrites, 43% more, for splitting the digits
 and the bigger program; it also holds less at the peak (40k strands and 16k sites, against 45k
-and 21k). On the player's example, three 3-bit lists, `saved` is the slower (50.4k clocks against
-33.9k): three numbers do not pay for the final lookahead.
+and 21k). On the player's example, 3, 1 and 3 as 4-bit trees, `saved` is the slower (49.3k clocks
+against 31.7k): three numbers do not pay for the final lookahead.
 
 The eager evaluator (`src/run.ts --stats`, steps beyond reading the inputs) needs 25–60× fewer
-steps than the lattice needs rewrites: equal trees are one node and equal applications one memo
-entry, and nothing is copied. On 2^n − 1 plus 1 a tree's halves are equal trees, so it adds 16
-bits in 0.7–1.0k steps on a tree against 1.8k on a list; on 51566 + 22995 it takes 1.5–1.8k
-either way. Unary 255 + 1 takes 8.5k.
+steps than the lattice needs rewrites for the older adders, 7–17× for relay unrolled: equal trees are
+one node and equal applications one memo entry, and nothing is copied. On 2^n − 1 plus 1 a tree's
+halves are equal trees, so it adds 16 bits in 0.7–1.0k steps on a tree against 1.8k on a list, and
+0.3k by relay; on 51566 + 22995 it takes 1.5–1.8k either way, 0.5–0.6k by relay. Unary 255 + 1
+takes 8.5k.
+
+`programs/bench.ts` measures all of this: it compiles disp expressions as the player does, runs
+each seed as a process of its own (`crate/src/bin/strands-bench.rs`, at most 4 at once, each
+memory-capped), checks the answers against the eager evaluator and prints a table (code size,
+agents, eager steps, clocks, rewrites and the shares of duplicators and erasers, peak strands and
+sites, CPU seconds). `--data` works out the outermost call's arguments first, so inputs are data;
+`--let` adds a definition worked out while compiling; `--ideal` runs the idealised lazy machine
+instead, in no time. The tables above:
+
+```sh
+npx tsx evaluators/rust-ic-strands/programs/bench.ts --adders add:unary,ripple_add:list,ripple_add:tree,select_add:tree,lookahead_add:tree,relay_add:list,relay_add:tree
+npx tsx evaluators/rust-ic-strands/programs/bench.ts --data --kind bits --let 'ru16 := {x, y} => relay_for (bit_tree 4 0) x y ({c} => c) b0' 'ru16 (bit_tree 4 65535) (bit_tree 4 1)'
+```
 
 The tests run with `npx tsx src/run.ts evaluators/rust-ic-strands/programs/programs.disp`.
 
@@ -1016,8 +1074,10 @@ reduction-state panel. It only reads; a run goes exactly as without it.
   more.
 - **Bits.** With a list of pairings, the number of strands per link costs only the log of the
   number of ends, so wider links are nearly free. Whether they help is untested.
-- **Adders are bound by work, not depth** (Adding binary numbers, above): two fifths of their
-  rewrites are duplicators copying. With less copying a tree's O(log n) depth might show.
+- **Adders** (Adding binary numbers, above): relay unrolled spends a third of its rewrites
+  erasing the unused entries of its columns' tables and most of the rest routing halves through
+  S and K rules. Its sum is a list, so a run of columns passing a carry on waits column by
+  column; lookahead over relay's columns (O(log n) deep) is untried.
 - **Superpositions that copy lazily** (Superpositions, above): a duplicator copying for one forces
   what it copies, arms a universe will not take included. A copy that leaves a suspension
   suspended would keep the oracle's laziness, at the price of computing it once per universe.
@@ -1170,6 +1230,7 @@ cargo run --release --bin strands-run -- fib:0 --grid 256 --latest              
 cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --budget 5000000000 --clean 100000
 cargo run --release --bin strands-run -- 'fib:&1{1,2}' --grid 300 --latest        # a superposed argument (Superpositions, above)
 cargo run --release --bin strands-sup -- CASES                                     # lines name|term[|want]: superposed against its universes alone
+cargo run --release --bin strands-bench -- CASES --seeds 2                         # lines name|term: one JSON line a run (programs/bench.ts drives it)
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 ```
 

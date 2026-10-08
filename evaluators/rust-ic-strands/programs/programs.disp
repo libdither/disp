@@ -1,6 +1,6 @@
 // Ordinary disp definitions over the prelude, compiled to trees for the strand-lattice player
 // (build-player.sh). Each `///` line documents the definition below it:
-//   /// <what it computes> -> <nat | bool | list | string | bits>; try: <arguments>
+//   /// <what it computes> -> <nat | bool | list | string | bits | bits16>; try: <arguments>
 // The suggested arguments are small: disp numbers are unary, and general compiled code takes
 // thousands of rewrites even for add 2 3, so these finish in about a minute in the browser.
 open use raw "../../../lib/prelude.disp" {}
@@ -59,7 +59,7 @@ ripple := fix ({self, x, y, c} => if (is_fork x) {
 	let hi := self (pair_snd x) (pair_snd y) (pair_snd lo)
 	pair (pair (pair_fst lo) (pair_fst hi)) (pair_snd hi)
 } else { column x y c })
-/// x + y by ripple carry, on bit lists or bit trees -> bits; try: [b1, b0, b1, b1] [b0, b1, b1, b0]
+/// x + y by ripple carry, on bit lists or bit trees -> bits; try: 13 6
 ripple_add := {x, y} => ripple x y b0
 
 /// the high half's sum after the low half's: pick the high sum by the low carry
@@ -76,7 +76,7 @@ both := fix ({self, x, y} => if (is_fork x) {
 	let f := column x y
 	pair (f b0) (f b1)
 })
-/// x + y by carry select, each half summed with carry 0 and carry 1 at once -> bits; try: (t (t b1 b0) (t b1 b1)) (t (t b0 b1) (t b1 b0))
+/// x + y by carry select, each half summed with carry 0 and carry 1 at once -> bits; try: 13 6
 select_add := {x, y} => pair_fst (both x y)
 
 /// the carry rule of x + y (its carry out for carry in b0 and for b1) and its sum as a function of the carry in
@@ -86,7 +86,7 @@ look := fix ({self, x, y} => if (is_fork x) {
 	let rule := pair (pick (pair_fst (pair_fst lo)) (pair_fst hi)) (pick (pair_snd (pair_fst lo)) (pair_fst hi))
 	pair rule ({c} => pair (pair_snd lo c) (pair_snd hi (pick c (pair_fst lo))))
 } else { kind (pair (pair b0 b0) ({c} => c)) (pair (pair b0 b1) flip) (pair (pair b1 b1) ({c} => c)) x y })
-/// x + y by carry lookahead, carry rules combined up the tree and carries sent back down -> bits; try: (t (t b1 b0) (t b1 b1)) (t (t b0 b1) (t b1 b0))
+/// x + y by carry lookahead, carry rules combined up the tree and carries sent back down -> bits; try: 13 6
 lookahead_add := {x, y} => {
 	let r := look x y
 	pair (pair_snd r b0) (pair_fst (pair_fst r))
@@ -120,10 +120,31 @@ resolve := {d} => {
 	let xy := undigit d
 	lookahead_add (pair_fst xy) (pair_snd xy)
 }
-/// the sum of number trees of one shape with room on top, each added in by lookahead -> bits; try: [[b1, b1, b0], [b1, b0, b0], [b1, b1, b0]]
+/// the sum of number trees of one shape with room on top, each added in by lookahead -> bits; try: [3, 1, 3]
 added := {xs} => reduce ({x, s} => pair_fst (lookahead_add x s)) (head xs) (tail xs)
-/// the sum of number trees of one shape with room on top, each saved into a digit tree and the carries done once at the end -> bits; try: [[b1, b1, b0], [b1, b0, b0], [b1, b1, b0]]
+/// the sum of number trees of one shape with room on top, each saved into a digit tree and the carries done once at the end -> bits; try: [3, 1, 3]
 saved := {xs} => pair_fst (resolve (reduce ({x, d} => pair_fst (save d x b0)) (head xs) (tail xs)))
+
+// Relay. An adder of x and y takes k, the rest of the sum as a function of this adder's carry out,
+// and its carry in c, and gives its sum bits as a list ending in what k makes of its carry out:
+// pair s0 (pair s1 (… (k carry))), a number tree of the sum. Two adders of halves join by
+// composition, f xl yl (g xh yh k), so no pair is built only to be read again, and the carry is
+// only a wire: a column that kills or starts a carry hands on b0 or b1 at once.
+/// x + y + c for bits, the carry out handed to k
+relay_column := kind ({k, c} => pair c (k b0)) ({k, c} => pair (flip c) (k c)) ({k, c} => pair c (k b1))
+/// S a b and K a as trees: S a b c = a c (b c), K a b = a
+s_of := {a, b} => t (t a) b
+k_of := {a} => t t a
+/// f (g yh k)
+relay_then := {f, g, yh, k} => f (g yh k)
+/// two adders of halves as one, f xl yl (g xh yh k) for x = pair xl xh and y = pair yl yh: split x, then y by a table whose fork arm, S (S (K relay_then) (f xl)) (K (g xh)), is built as a tree, which takes fewer rewrites than a lambda over xl, xh, yl, yh and k
+relay_join := {f, g} => triage t t ({xl, xh} => triage t t (s_of (s_of (k_of relay_then) (f xl)) (k_of (g xh))))
+/// the relay adder for number trees of the shape of s, built while compiling: a column and a join for each bit, no recursion left to copy
+relay_for := fix ({self, s} => triage relay_column ({_} => relay_column) ({l, h} => relay_join (self l) (self h)) s)
+/// the relay adder for any shape, recursing as it goes: relay_join's split with itself for f and g
+relay := fix ({self, x} => triage (relay_column b0) ({_} => relay_column b1) ({xl, xh} => triage t t (s_of (s_of (k_of relay_then) (self xl)) (k_of (self xh)))) x)
+/// x + y by relay, on bit trees or bit lists, the sum as a list of bits -> bits; try: 13 6
+relay_add := {x, y} => relay x y ({c} => c) b0
 
 half := fix ({self, n} => if (is_leaf n) then 0 else (if (is_leaf (nat_pred n)) then 0 else (succ (self (nat_pred (nat_pred n))))))
 low_bit := fix ({self, n} => if (is_leaf n) then b0 else (flip (self (nat_pred n))))
@@ -138,6 +159,10 @@ width := fix ({self, x} => if (is_fork x) then (add (self (pair_fst x)) (self (p
 shift := fix ({self, k, n} => if (is_leaf k) then n else (self (nat_pred k) (add n n)))
 /// a number tree as a unary number
 value := fix ({self, x} => if (is_fork x) then (add (self (pair_fst x)) (shift (width (pair_fst x)) (self (pair_snd x)))) else (if (is_leaf x) then 0 else 1))
+
+relay16 := relay_for (bit_tree 4 0)
+/// x + y for 16-bit number trees by relay, unrolled while compiling -> bits16; try: 51566 22995
+relay_add16 := {x, y} => relay16 x y ({c} => c) b0
 
 test add 3 4 = 7
 test mul 3 4 = 12
@@ -169,3 +194,9 @@ test value (added [bits 4 5, bits 4 6, bits 4 3]) = 14
 test value (saved [bit_tree 3 90, bit_tree 3 77, bit_tree 3 3, bit_tree 3 63]) = 233
 test value (added [bit_tree 3 90, bit_tree 3 77, bit_tree 3 3, bit_tree 3 63]) = 233
 test value (resolve (t (t (t b1) b0) (t b1 (t b1)))) = 22
+test value (relay_add (bit_tree 2 13) (bit_tree 2 6)) = 19
+test value (relay_add (bits 5 31) (bits 5 1)) = 32
+test value (relay_add (bit_tree 3 200) (bit_tree 3 100)) = 300
+test value (relay_add16 (bit_tree 4 51566) (bit_tree 4 22995)) = 74561
+test value (relay_add16 (bit_tree 4 65535) (bit_tree 4 1)) = 65536
+test value (relay_for (bits 4 0) (bits 4 13) (bits 4 6) ({c} => c) b0) = 19
