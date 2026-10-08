@@ -1,12 +1,13 @@
 <!doctype html><html><head><meta charset="utf-8"><title>firefox check</title></head>
 <body style="background:#0b0e14;color:#c8d3e0;font:13px ui-monospace,monospace">
 <!-- For firefox.sh: posts each line it has to say to /report, the last starting "ok" or "FAIL".
-     The hash is mode=check or mode=player, then settings. check: gpu-check.js's check on this
+     The hash is mode=check, player, pick, tail or perf, then settings. check: gpu-check.js's check on this
      browser's WebGPU. player: the player itself (index.html) from clock 0 on the CPU and then on
      the GPU, each to the answer; the GPU must not be much slower than the CPU. Then once more on
      the GPU, paused, stepped and handed to the CPU and back on the way, to the same answer.
      pick: computations picked in the player (shift+click), read back and followed as it runs, in
-     every view and, if there is one, on the GPU; the root must read back as the answer at the end. -->
+     every view and, if there is one, on the GPU; the root must read back as the answer at the end.
+     tail and perf: see their functions below. -->
 <script src="engine.js"></script>
 <script src="gpu.js"></script>
 <script src="gpu-check.js"></script>
@@ -143,7 +144,130 @@ async function pick() {
   return `ok picks followed to the answer ${answer} in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
 }
 
-(mode === "player" ? player() : mode === "pick" ? pick() : StrandsCheck.check(q.toString(), say))
+// perf: how long each part of a run takes in the player: to the answer, the cleanup after it (until
+// only the answer is left) and the cooling (until it has settled), and how fast it runs after a switch.
+// runs=cpu,gpu,cpu>gpu@500,gpu>cpu@0.3a>gpu@0.6a: each in a fresh page, starting on one engine and
+// switching at a clock, a fraction of the first run's answer clock (0.5a) or the answer; runs joined
+// by ";" follow each other in one page, restarted (so the GPU's estimates carry over); speed=0..100
+// is the speed slider; secs caps each run (what it got through is reported).
+async function perf() {
+  const runs = (q.get("runs") || "cpu,gpu,cpu>gpu@500,cpu>gpu@0.5a,cpu>gpu@answer,gpu>cpu@0.3a>gpu@0.6a").split(",");
+  const speed = +(q.get("speed") ?? 100), limit = +(q.get("secs") || 60) * 1000, after = 3000;
+  for (const k of ["runs", "speed", "secs"]) q.delete(k);
+  const f = document.createElement("iframe");
+  f.style.cssText = "width:1200px;height:800px";
+  document.body.append(f);
+  let ref = null, bad = "";
+  const rate = (c, t) => `${Math.round(c / (t / 1000))}/s`, secs = t => (t / 1000).toFixed(1);
+  for (const [r, page] of runs.entries()) {
+    f.src = `index.html?${r}#${q}&view=layers&play=0`;
+    await new Promise(res => f.onload = res);
+    const w = f.contentWindow, v = e => { try { return w.eval(e); } catch { return undefined; } };
+    for (let i = 0; i < 300 && !v("L"); i++) await sleep(100);
+    if (!v("L")) return "FAIL the player did not load";
+    w.document.getElementById("speed").value = speed;
+    for (const [part, spec] of page.split(";").entries()) {
+      const legs = spec.split(">").map((x, i) => { const [eng, when] = x.split("@"); return { eng, when: i ? when : null }; });
+      w.setPlaying(false);
+      await w.setEngine(legs[0].eng);
+      if (legs[0].eng === "gpu" && !v("onGpu")) return "FAIL no GPU: " + v("document.getElementById('sEngine').textContent");
+      if (part) { w.document.getElementById("reset").click(); for (let i = 0; i < 100 && v("stats()[1]") !== 0; i++) await sleep(50); }
+      const clockAt = when => when === "answer" ? null : when.endsWith("a") ? Math.round(parseFloat(when) * ref) : +when;
+      const mpc0 = v("G?.msPerClock"), samples = [], switches = [], t0 = performance.now();
+      w.setPlaying(true);
+      let leg = 1;
+      while (!v("settled") && performance.now() - t0 < limit) {
+        const s = { t: performance.now() - t0, c: v("stats()[1]"), fin: v("finished"), cl: v("cleaned"), n: v("G?.out?.at(-1)?.n ?? 0"), mpc: v("G?.msPerClock ?? 0"), fm: v("frameMs"), out: v("G?.out?.length ?? 0") };
+        samples.push(s);
+        const L2 = legs[leg];
+        if (L2 && (L2.when === "answer" ? s.fin : s.c >= clockAt(L2.when))) {
+          await w.setEngine(L2.eng);
+          switches.push({ to: L2.eng, t: performance.now() - t0, c: v("stats()[1]") });
+          leg++;
+        }
+        await sleep(20);
+      }
+      const end = performance.now() - t0, first = p => samples.find(p);
+      const [answer, coolAt, settleAt, clock, done] = [v("answerClock"), v("T.coolAt"), v("T.settleAt"), v("stats()[1]"), v("settled")];
+      w.setPlaying(false);
+      if (q.has("debug")) await say(`  engine: ${v("document.getElementById('sEngine').textContent")}; banner: ${v("document.getElementById('banner').textContent")}`);
+      // (a phase shorter than a poll counts from the next)
+      const ta = first(s => s.fin)?.t ?? end, tc = first(s => s.cl)?.t ?? (done ? end : end + 1), fin = done || ta < end, cl = tc <= end;
+      ref ??= fin ? answer : null;
+      let line = `${spec}` + (mpc0 ? ` (GPU estimate at the start ${mpc0.toFixed(2)} ms/clock)` : "") + ": "
+        + (fin ? `answer at ${answer} in ${secs(ta)} s` : `no answer in ${secs(end)} s (clock ${clock})`);
+      if (fin) line += cl ? `; cleanup ${coolAt - answer} clocks in ${secs(tc - ta)} s (${rate(coolAt - answer, tc - ta)}), to ${coolAt}`
+        : `; cleanup unfinished: ${clock - answer} clocks in ${secs(end - ta)} s (${rate(clock - answer, end - ta)})`;
+      if (cl) line += done ? `; cooling ${settleAt - coolAt} clocks in ${secs(end - tc)} s (${rate(settleAt - coolAt, end - tc)})`
+        : `; cooling unfinished: ${clock - coolAt} clocks in ${secs(end - tc)} s`;
+      if (done) line += `; settled at ${settleAt}`;
+      for (const sw of switches) {
+        // Up to `after` ms, within the part of the run (to the answer, cleanup, cooling) it switched in.
+        const stop = [ta, tc, end].find(x => x > sw.t) ?? end + 1;
+        const win = samples.filter(s => s.t >= sw.t && s.t <= Math.min(sw.t + after, stop)), z = win.at(-1);
+        const ns = win.filter((_, i) => i % 10 === 0).map(s => s.n).join(" ");
+        line += `\n  to the ${sw.to} at clock ${sw.c} (${secs(sw.t)} s): next ${secs(z.t - sw.t)} s ${rate(z.c - sw.c, z.t - sw.t)}`
+          + (sw.to === "gpu" ? `, stretch sizes ${ns}, ${z.mpc.toFixed(2)} ms/clock` : "")
+          + (q.has("debug") ? `; frames ${win.filter((_, i) => i % 10 === 0).map(s => Math.round(s.fm)).join(" ")} ms; out ${win.filter((_, i) => i % 10 === 0).map(s => s.out).join(" ")}` : "");
+      }
+      await say(line);
+      if (!done) bad ||= `FAIL ${spec} did not settle in ${limit / 1000} s`;
+    }
+  }
+  return bad || "ok perf";
+}
+
+// tail: the end of a run in the player. The clock the garbage is gone at (where cooling starts), the
+// clock cooling settles at and the sites then must be the same on the CPU and on the GPU, and again
+// after going back into the cleanup or the cooling and playing on, on either engine.
+async function tail() {
+  const limit = +(q.get("secs") || 120) * 1000;
+  q.delete("secs");
+  const f = document.createElement("iframe");
+  f.style.cssText = "width:1200px;height:800px";
+  document.body.append(f);
+  f.src = `index.html#${q}&view=layers&play=0`;
+  await new Promise(r => f.onload = r);
+  const w = f.contentWindow, v = e => w.eval(e);
+  for (let i = 0; i < 300 && !v("typeof L !== 'undefined' && L"); i++) await sleep(100);
+  if (!v("L")) return "FAIL the player did not load";
+  w.document.getElementById("speed").value = 100;
+  // The sites as a set: the engine's list of them is in no fixed order.
+  const sites = () => { const h = v("held()"), r = []; for (let i = 0; i < h.length; i += 12) r.push(Array.from(h.subarray(i, i + 12)).join(",")); return r.sort().join(";"); };
+  const toEnd = async eng => {
+    await w.setEngine(eng);
+    if (eng === "gpu" && !v("onGpu")) throw new Error("no GPU: " + v("document.getElementById('sEngine').textContent"));
+    const t0 = performance.now();
+    w.setPlaying(true);
+    while (!v("settled") && performance.now() - t0 < limit) await sleep(20);
+    w.setPlaying(false);
+    for (let i = 0; i < 100 && v("G?.busy"); i++) await sleep(20);
+    return { coolAt: v("T.coolAt"), settleAt: v("T.settleAt"), clock: v("clockNow()"), sites: sites(), secs: (performance.now() - t0) / 1000 };
+  };
+  const seek = async c => { v(`tlSeek(${c})`); for (let i = 0; i < 1000 && v("T.job") !== null; i++) await sleep(20); return v("clockNow()"); };
+  const same = (a, b, what) => a.coolAt === b.coolAt && a.settleAt === b.settleAt && a.clock === b.clock && a.sites === b.sites ? ""
+    : `FAIL ${what}: cooling from ${b.coolAt}, settled at ${b.settleAt}, ${b.clock}, sites ${a.sites === b.sites ? "the same" : "differ"}; against ${a.coolAt}, ${a.settleAt}, ${a.clock}`;
+  const restart = async () => { w.document.getElementById("reset").click(); for (let i = 0; i < 100 && v("clockNow()") !== 0; i++) await sleep(50); };
+  const cpu = await toEnd("cpu"), answer = v("answerClock");
+  await say(`on the CPU: answer seen at ${answer}, cooling from ${cpu.coolAt}, settled at ${cpu.settleAt} (${cpu.secs.toFixed(1)} s)`);
+  if (cpu.settleAt === null) return "FAIL the CPU did not settle";
+  await restart();
+  const gpu = await toEnd("gpu");
+  await say(`on the GPU: answer seen at ${v("answerClock")}, cooling from ${gpu.coolAt}, settled at ${gpu.settleAt} (${gpu.secs.toFixed(1)} s)`);
+  let bad = same(cpu, gpu, "the GPU's end");
+  if (bad) return bad;
+  for (const [eng, at] of [["gpu", Math.round((answer + cpu.coolAt) / 2)], ["cpu", Math.round((answer + cpu.coolAt) / 2)], ["cpu", cpu.coolAt + 50], ["gpu", cpu.coolAt - 3], ["gpu", Math.round(answer / 2)]]) {
+    if (q.has("debug")) await say(`seeking ${at} for the ${eng}`);
+    const from = await seek(at);
+    if (q.has("debug")) await say(`at ${from}: finished ${v("finished")} cleaned ${v("cleaned")} answer '${v("text(E.strands_answer())").slice(0, 40)}' done ${v("E.strands_clocks(0)")}`);
+    const again = await toEnd(eng);
+    if ((bad = same(cpu, again, `back to ${from}, then on the ${eng}`))) return bad;
+    await say(`back to ${from}, then on the ${eng}: the same end (${again.secs.toFixed(1)} s)`);
+  }
+  return `ok the same end on either engine and after going back: cooling from ${cpu.coolAt}, settled at ${cpu.settleAt}`;
+}
+
+(mode === "player" ? player() : mode === "pick" ? pick() : mode === "perf" ? perf() : mode === "tail" ? tail() : StrandsCheck.check(q.toString(), say))
   .catch(e => "FAIL " + (e.stack || e))
   .then(say);
 </script></body></html>

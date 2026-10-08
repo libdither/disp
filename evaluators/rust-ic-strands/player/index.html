@@ -600,11 +600,11 @@ function start(p, input) {
     side = Math.ceil(side * 1.4);
   }
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return false; }
-  if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); }
+  if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); gpuEstimate(); }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
   L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
   running = p.call ? { kind: p.kind, call: p.call } : null;
-  finished = false; cleaned = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
+  finished = false; cleaned = false; cleanSeen = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   tlReset();
   refreshGarbage(true); layoutLayers();
   $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
@@ -1816,33 +1816,38 @@ $("pick").addEventListener("pointerdown", e => {
 // ---- the loop ------------------------------------------------------------------------------------------
 function proposalsPerFrame() { const v = +$("speed").value; return v >= 100 ? Infinity : Math.round(Math.pow(10, 1 + v / 100 * 6)); }
 const stats = () => new Float64Array(E.memory.buffer, E.stats_ptr(), 17);
+/// How long a frame takes while playing on the GPU (ms), smoothed.
+let frameMs = 1000 / 60, frameAt = 0;
 function frame() {
+  const now = performance.now();
+  if (playing && onGpu && frameAt) frameMs = 0.9 * frameMs + 0.1 * Math.min(200, now - frameAt);
+  frameAt = now;
   if (T.job) tlPump();
-  // Cooling runs on the CPU: the GPU's tables hold the temperature the run started at.
-  else if (L && playing && !settled && !G?.busy && onGpu && !cleaned) gpuStep();
-  else if (L && playing && !settled && !G?.busy) {
-    const want = proposalsPerFrame(), t0 = performance.now();
-    let ran = 0;
-    while (ran < want) {
-      // After the answer, about one clock at a time, so the moment the garbage is gone is not overshot.
-      const chunk = Math.min(want - ran, finished ? Math.max(200, E.live_len()) : 200000);
-      // Short of the clock the run once cooled at, clocks that stop there, to cool there again.
-      if (T.coolAt !== null && stats()[1] <= T.coolAt) {
-        const fin = tlClocks(Math.max(1, Math.round(chunk / Math.max(1, E.live_len())))) === 1;
-        if (!finished && fin) { finished = true; answerClock = stats()[1]; }
-      }
-      else if (!finished) { finished = E.strands_run(chunk) === 1; if (finished) answerClock = stats()[1]; }
-      else E.strands_run_on(chunk);
-      ran += chunk;
-      if (finished && afterAnswer()) break;
-      if (performance.now() - t0 > 14) break;
-    }
-    afterRun();
-  }
+  // Cooling runs on the CPU: the GPU's tables hold the temperature the run started at. So does the
+  // rest of a cleanup the GPU saw finish within its last stretch, so the CPU finds the clock.
+  else if (L && playing && !settled && !G?.busy && onGpu && !cleaned && !cleanSeen) gpuStep();
+  else if (L && playing && !settled && !G?.busy) { cpuRun(); afterRun(); }
   if (L) refreshGarbage(playing);
   draw(); panel(false);
   if (pinned != null && L) { const tip = $("tip"); if (!tip.hidden) tip.innerHTML = tipHTML(pinned); }
   requestAnimationFrame(frame);
+}
+// The CPU's part of a frame: the proposals the speed asks for, for at most 14 ms. Before the answer
+// in long runs; after it a clock at a time, so the clock the garbage is gone at (where cooling starts)
+// and the clock cooling settles at are exact, whichever engine ran up to them.
+function cpuRun() {
+  const want = proposalsPerFrame(), t0 = performance.now(), p0 = E.strands_now(1);
+  while (!settled && E.strands_now(1) - p0 < want && performance.now() - t0 < 14) {
+    const chunk = Math.min(want - (E.strands_now(1) - p0), 200000);
+    if (!finished) {
+      // Short of the clock the run once cooled at, clocks that stop there, to cool there again; in a
+      // stretch the GPU saw the garbage go in, a clock at a time, to see the answer as it comes.
+      const fin = cleanSeen ? tlClocks(1) : T.coolAt !== null ? tlClocks(Math.max(1, Math.round(chunk / Math.max(1, E.live_len())))) : E.strands_run(chunk);
+      if (fin === 1) { finished = true; answerClock = clockNow(); afterAnswer(); }
+    }
+    else if (!cleaned) { tlClocks(1); afterAnswer(); }
+    else { tlClocks(1); settleCheck(); }
+  }
 }
 // After clocks ran (on either side): the rewrites to flash, a point on the chart, the speed. A
 // rewrite's ring lasts about four clocks of the run as shown, at most 600 ms, so running fast it is
@@ -1857,12 +1862,18 @@ function afterRun() {
   const st = stats();
   if (!hist.length || st[1] !== hist[hist.length - 1].sw) { hist.push({ sw: st[1], fires: st[2], strands: st[7], t: now }); if (hist.length > 3000) hist.splice(0, 1500); }
   tlNote();
-  // Cooled: once at the coldest, done when the wire has not got shorter for 300 clocks.
-  if (cleaned && !settled && E.strands_temp() <= 0.05 + 1e-9) {
-    if (!T.shortest || st[7] < T.shortest.strands) T.shortest = { strands: st[7], clock: st[1] };
-    else if (st[1] - T.shortest.clock >= 300) { settled = true; T.settleAt = st[1]; T.shortest = null; }
-  }
   if (settled) setPlaying(false);
+}
+/// After a clock of cooling: done once at the coldest the wire has not got shorter for 300 clocks,
+/// or at the clock the run once settled at.
+function settleCheck() {
+  const c = clockNow(), strands = E.strands_now(2);
+  if (T.settleAt !== null) settled = c >= T.settleAt;
+  else if (E.strands_temp() <= 0.05 + 1e-9) {
+    if (!T.shortest || strands < T.shortest.strands) T.shortest = { strands, clock: c };
+    else if (c - T.shortest.clock >= 300) { settled = true; T.settleAt = c; T.shortest = null; }
+  }
+  return settled;
 }
 // Clocks per second over about the last second of running.
 function rate() {
@@ -1877,6 +1888,9 @@ function rate() {
 // The engine stays the record of the run: a GPU stretch starts from its sites and ends by putting
 // the GPU's back, with what the turns did, so either side can take over at any clock.
 let onGpu = false, G = null;
+/// The GPU saw the garbage go within its last stretch and put back the engine's state from before
+/// it: the CPU runs the rest of the cleanup, a clock at a time, to find the clock it went at.
+let cleanSeen = false;
 /// The shader for the loaded settings, or why the GPU cannot run them.
 let gpuCode = null, gpuWhy = "";
 const SEED = 7;
@@ -1891,13 +1905,13 @@ async function setEngine(want, why) {
       $("engine").disabled = true; $("sEngine").textContent = "compiling the GPU kernels…"; banner("compiling the GPU kernels…");
       try {
         G?.kernels.device.destroy();
-        G = { code, kernels: await StrandsGPU.open(code), grid: null, busy: false, load: 0, at: -1, out: [], gen: 0, latency: undefined,
-              msPerClock: 0.3, tSum: 3, nSum: 10, last: 0 };
+        G = { code, kernels: await StrandsGPU.open(code), grid: null, busy: false, load: 0, at: -1, out: [], gen: 0, latency: undefined, last: 0 };
+        gpuEstimate();
       }
       catch (e) { G = null; return setEngine("cpu", "no GPU: " + e.message); }
       finally { $("engine").disabled = false; }
     }
-    onGpu = true; dropGpu();
+    onGpu = true; dropGpu(); frameMs = 1000 / 60;
   } else if (want === "cpu") { onGpu = false; dropGpu(); }
   $("engine").classList.toggle("on", onGpu); $("engine").setAttribute("aria-pressed", onGpu);
   $("engine").dataset.tip = onGpu ? "running on the GPU; click for the CPU (G)" : "running on the CPU; click for the GPU (G)";
@@ -1905,12 +1919,17 @@ async function setEngine(want, why) {
   if (why) banner(why, true);
   panel(true);
 }
+/// The rate the engine takes the GPU's clocks back at, as ms a clock, and the proposals a clock makes,
+/// started afresh for each run.
+function gpuEstimate() { if (G) Object.assign(G, { msPerClock: 0.3, tSum: 3, nSum: 10, perClock: 0 }); }
 // The GPU runs stretches of clocks ahead of the engine, as many as cover how long reading one back
 // takes (in Firefox up to ~100 ms, as its WebGPU looks for finished work on a timer; on Dawn under
 // 1 ms), and the engine takes them back in turn, one a frame. A stretch is as many clocks as the
-// speed asks for (proposals per frame over the sites taking turns), at most about 25 ms of GPU
-// work at the rate the engine has been taking clocks back. Whatever else touches the engine drops
-// the stretches still out (`dropGpu`), and the GPU starts again from the engine's sites.
+// speed asks for (proposals per frame over those a clock makes, as the CPU runs), at most `span` ms at the rate
+// the engine has been taking clocks back: 25 ms, or 1.5 frames if frames are slower, so a stretch
+// always holds more than a frame's worth and the rate can grow until the GPU is what limits it.
+// Whatever else touches the engine drops the stretches still out (`dropGpu`), and the GPU starts
+// again from the engine's sites. After the answer the same, the garbage counted after each stretch.
 async function gpuStep() {
   G.busy = true;
   const load = G.load, gen = G.gen;
@@ -1920,12 +1939,13 @@ async function gpuStep() {
     const grid = G.grid ||= new StrandsGPU.Grid(G.kernels, L.w, L.h, L.depth, 64);
     if (G.latency === undefined) G.latency = await StrandsGPU.latency(G.kernels.device);
     if (load !== G.load || gen !== G.gen) return;
-    if (!G.out.length && G.at !== stats()[1]) { grid.upload(held()); G.at = stats()[1]; }
-    // After the answer, one short stretch at a time, so the moment the garbage is gone is not overshot.
-    const depth = finished ? 1 : Math.max(2, Math.ceil(G.latency / 25) + 1);
+    if (!G.out.length && G.at !== clockNow()) { grid.upload(held()); G.at = clockNow(); }
+    const span = Math.max(25, 1.5 * frameMs);
+    const n0 = Math.max(1, Math.min(Math.ceil(proposalsPerFrame() / (G.perClock || Math.max(1, E.live_len()))), Math.round(span / G.msPerClock)));
+    // Enough out to cover a readback and then some, each taken back no sooner than a frame after the one before.
+    const depth = Math.ceil(G.latency / Math.max(frameMs, n0 * G.msPerClock)) + 2;
     while (G.out.length < depth) {
-      let n = Math.max(1, Math.min(Math.round(proposalsPerFrame() / Math.max(1, E.live_len())), Math.round(25 / G.msPerClock)));
-      if (finished) n = Math.min(n, 8);
+      let n = n0;
       // No further than the clock the run once cooled at: cooling runs on the CPU.
       if (T.coolAt !== null) { if (G.at >= T.coolAt) break; n = Math.min(n, T.coolAt - G.at); }
       G.out.push({ n, back: grid.stretch(G.at, SEED, n) });
@@ -1938,14 +1958,25 @@ async function gpuStep() {
     if (gen !== G.gen) return;
     // More sites held anything than the copy had room for: again, from the engine's sites.
     if (!r) return dropGpu();
-    const now = performance.now();
-    if (G.last) { G.tSum = 0.9 * G.tSum + (now - G.last); G.nSum = 0.9 * G.nSum + s.n; G.msPerClock = Math.max(0.02, G.tSum / G.nSum); }
+    // A wait far longer than a readback (a hidden tab, a slow frame) counts as one readback.
+    const now = performance.now(), dt = Math.min(now - G.last, 2 * G.latency + 4 * frameMs);
+    if (G.last) { G.tSum = 0.9 * G.tSum + dt; G.nSum = 0.9 * G.nSum + s.n; G.msPerClock = Math.max(0.02, G.tSum / G.nSum); }
     G.last = now;
-    const k = r.held.length, w = new Uint32Array(E.memory.buffer, E.words_ptr(k + r.tally.length + r.fires.length), k + r.tally.length + r.fires.length);
+    // Until cooling has started, the state before this stretch, should the garbage be gone by its end.
+    const before = T.coolAt === null && L.gc ? E.save_state() : -1, was = finished;
+    // The room first: making it may grow the memory, which detaches the old buffer.
+    const k = r.held.length, len = k + r.tally.length + r.fires.length, p = E.words_ptr(len), w = new Uint32Array(E.memory.buffer, p, len);
     w.set(r.held); w.set(r.tally, k); w.set(r.fires, k + r.tally.length);
-    const fin = E.strands_gpu_ran(s.n, k, r.fires.length) === 1;
-    if (!finished && fin) { finished = true; answerClock = stats()[1]; dropGpu(); }
-    if (finished) afterAnswer();
+    const p0 = E.strands_now(1), fin = E.strands_gpu_ran(s.n, k, r.fires.length) === 1;
+    G.perClock = Math.max(1, (E.strands_now(1) - p0) / s.n);
+    if (!finished && fin) { finished = true; answerClock = clockNow(); }
+    if (finished && before >= 0 && E.strands_garbage_left() === 0) {
+      // Gone within this stretch: back to its start, and the CPU, which runs the same clocks bit for
+      // bit, finds the clock.
+      E.restore_state(before); dropGpu(); cleanSeen = true; finished = was;
+    }
+    else if (finished) afterAnswer();
+    if (before >= 0) E.drop_state(before);
     afterRun(); V3.dirty = true;
   } catch (e) { dropGpu(); setEngine("cpu", "the GPU failed: " + e.message); }
   finally { G.busy = false; }
@@ -1957,16 +1988,19 @@ function dropGpu() {
   G.out = []; G.gen++; G.at = -1; G.last = 0;
 }
 
-// Once the answer is in: done when there is no garbage left (or nothing collects it).
+// Once the answer is in: done when there is no garbage left (or nothing collects it), or at the
+// clock the run once cooled at.
 function afterAnswer() {
   if (!L.gc) { cleaned = true; return true; }
-  refreshGarbage(true);
-  if (garbageCount === 0 || stats()[1] - answerClock > 200000) {
+  const c = clockNow();
+  if (T.coolAt !== null) return cleaned = c >= T.coolAt;
+  garbageCount = E.strands_garbage_left();
+  if (garbageCount === 0 || c - answerClock > 200000) {
     // Only the answer left: it cools and contracts, from this clock on in every replay too.
-    if (T.coolAt === null) { T.coolAt = stats()[1]; E.strands_cool(); }
-    cleaned = true; return true;
+    T.coolAt = c; E.strands_cool();
+    cleaned = true; cleanSeen = false;
   }
-  return false;
+  return cleaned;
 }
 /// A move that changes the net: a rewrite, or in the graph view garbage collected too.
 const changesNet = e => e[0] === 5 || viewMode === "graph" && e[0] >= 6 && e[0] <= 8;
@@ -2010,7 +2044,7 @@ function panel(force) {
     ? (garbageCount ? `answer in ${fmt(answerClock)} clocks · ${garbageCount} garbage left`
       : settled ? `done in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}` : `answer at ${fmt(answerClock)} clocks · contracting (temperature ${E.strands_temp().toFixed(2)})`)
     : `answer in at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
-  if (running) { $("decoded").textContent = `${running.call} = ${decodeAs(running.kind, parseTree(ans))}`; }
+  if (running) { $("decoded").textContent = ans ? `${running.call} = ${decodeAs(running.kind, parseTree(ans))}` : ""; }
   else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
   $("answer").textContent = ans;
   $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)
