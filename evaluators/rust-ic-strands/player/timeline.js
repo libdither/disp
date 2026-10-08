@@ -6,10 +6,10 @@
 // stepping back costs little, a jump costs a replay of about a tenth of its length, and a larger
 // budget only makes the spacing finer. Cooling, once only the answer is left, starts at a clock
 // the run records, and every replay or step through that clock cools there too.
-const T = { saved: [], frontier: 0, budget: 64 << 20, coolAt: null, settleAt: null, job: null, savedAt: 0, drawn: "" };
+const T = { saved: [], frontier: 0, budget: 64 << 20, coolAt: null, settleAt: null, shortest: null, job: null, savedAt: 0, drawn: "" };
 let settled = false;
 
-const clockNow = () => stats()[1];
+const clockNow = () => E.strands_now(0);
 /// The clocks wanted between saved states at distance d from the clock on show.
 const gapAt = d => Math.max(1, d / 8);
 /// The last saved state at or before clock c (its index; -1 if none).
@@ -21,7 +21,7 @@ function tlIndex(c) {
 
 /// A new run: nothing saved but its start.
 function tlReset() {
-  T.saved = []; T.frontier = 0; T.coolAt = null; T.settleAt = null; T.job = null; settled = false;
+  T.saved = []; T.frontier = 0; T.coolAt = null; T.settleAt = null; T.shortest = null; T.job = null; settled = false;
   tlSave(); tlShow();
 }
 function tlSave() {
@@ -81,6 +81,7 @@ function tlSeek(target) {
   const c = clockNow(), s = T.saved[tlIndex(target)];
   if (!(target >= c && s.clock <= c) && s.clock !== c) E.restore_state(s.id);
   T.job = { target };
+  tlPhase();
   tlPump();
 }
 /// Run a seek on for about 20 ms; done when the target is reached.
@@ -92,14 +93,22 @@ function tlPump() {
     if (clockNow() - (i >= 0 ? T.saved[i].clock : -Infinity) >= gapAt(target - clockNow())) tlSave();
   }
   if (clockNow() >= target) { T.job = null; tlThin(target); tlArrived(); }
-  else { refreshGarbage(true); V3.dirty = true; tlShow(); }
+  else { tlPhase(); refreshGarbage(true); V3.dirty = true; tlShow(); }
 }
-/// The player's view of a clock it jumped to.
-function tlArrived() {
+/// Where the run is at the clock on show: answered, cleaned up, settled (a seek passes through
+/// clocks before the answer, which the player must not show as answered).
+function tlPhase() {
   const c = clockNow();
   finished = E.strands_clocks(0) === 1;
   cleaned = T.coolAt !== null && c >= T.coolAt;
   settled = T.settleAt !== null && c >= T.settleAt;
+  cleanSeen = false;
+  if (T.shortest && T.shortest.clock > c) T.shortest = null;
+}
+/// The player's view of a clock it jumped to.
+function tlArrived() {
+  const c = clockNow();
+  tlPhase();
   hist = hist.filter(h => h.sw <= c); bursts = [];
   E.fire_log_clear();
   refreshGarbage(true); showStory(); panel(true); V3.dirty = true; tlShow();

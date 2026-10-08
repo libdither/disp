@@ -78,8 +78,8 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   once (`Lattice::cool`), idle agents trade places rather than crowd into one site, and a flip that
   leaves a U-turn snaps it in the same move. So the wire straightens and the answer contracts as far
   as it will go, in a few hundred clocks (disp `add 2 3`: 17–43 strands of wire become 10 or 11, and
-  10 is as short as it gets; Contracting the answer, below). The clock it began at is recorded, and
-  replays cool there too.
+  10 is as short as it gets; Contracting the answer, below). The clock it began at (the first with no
+  garbage left, the same on either engine) is recorded, and replays cool there too.
 
 ## The machine
 
@@ -1273,6 +1273,43 @@ in turn, one a frame. Anything else that touches the engine drops the stretches 
 GPU starts again from the engine's sites; a stretch whose sites did not fit its copy runs again,
 as a run is fixed by its sites, clocks and seed. Waiting for each stretch instead, the player ran
 15 clocks a second in Floorp, its estimate of a clock's cost swallowed by the wait.
+
+After the answer it runs the same way. It used to take back one stretch of at most 8 clocks at a
+time, each waiting out a readback, so the cleanup (until only the answer is left) ran 10 to 20
+clocks a second. The waits also pushed the estimate of a clock's cost to ~100 ms, and the estimate
+outlived the run and a switch to the CPU, so the next time the GPU took over it ran stretches of
+1 clock, which stayed at 1 wherever a frame took more than 25 ms (20 to 350 clocks a second). Now
+the engine counts the garbage after each stretch (`strands_garbage_left`, a walk over the root's
+piece of the net, about 4% of a clock); a stretch that ends with none is undone (the state from
+before it put back) and the CPU, which runs the same clocks bit for bit, runs it again a clock at a
+time to find the clock the garbage went at. The CPU counts after every clock too, so cooling starts
+at the same clock whichever engine ran, and settles at the same clock, which it checks after every
+clock while running as many as the speed allows (it ran one chunk a frame, 14 s for an answer of
+more than 200 sites). A stretch holds at most 25 ms or 1.5 frames of clocks (frames timed on the
+GPU), so slow frames no longer shrink it; the estimate starts afresh with each run; and at a speed
+below the top a stretch is the clocks the CPU would run, from the proposals a clock makes (it was
+proposals over sites in use, fewer, as sites a turn changed sit the clock out; so at the default speed the GPU took 33 s to the CPU's
+27 s for disp `add 3 4`; now 27.5 s). And making room for a stretch's words could grow the
+engine's memory after the player had taken its buffer, which failed the GPU back to the CPU at
+random. `player/firefox.sh tail` checks that the end of a run (where cooling starts and settles,
+and every site then) is the same on either engine and after going back into the cleanup or the
+cooling; `player/firefox.sh perf` times it. In headless Firefox, before and after:
+
+| | disp `add 3 4` | fib(1) | sort(1) | disp `fib 2` |
+|---|---|---|---|---|
+| cleanup on the GPU | 25–37 s → 0.1 s | 90–120 s → 0.1 s | ~9 min → 0.7 s | 30–37 s → 0.1 s |
+| cleanup on the CPU | 0.2 → 0.1 s | 1.3 → 0.6 s | 70–90 → 40–50 s | 0.5 → 0.1 s |
+| cooling (the old schedule, 834–931 clocks) | 1.0 s → a frame | 0.3 s → a frame | 0.4 s → a frame | 0.2 s → a frame |
+| clocks a second on the GPU after a switch, in the run after one on the GPU | 320–350 → 6,500 | 45 → 4,400–6,400 | 22 → 1,000–1,700 | 42 → 6,500 |
+
+The CPU's cleanup of sort(1) is the CPU's clock itself (~2.5 ms on 6,600 sites in use) and drawing
+the 490×490×8 lattice each frame.
+
+Cooling stays on the CPU. On the GPU it would need a second acceptance table (the only place the
+temperature enters, `Energy::new`'s `accept`), for 0.05, now that cooling drops there at once, and
+the passing and corner-cutting moves behind a mode bit (Contracting the answer, above). It would gain
+nothing: by the time it cools, the answer holds 5 to 10 sites on these programs, and a few hundred
+clocks of cooling take a few ms on the CPU, less than one readback in Firefox.
 
 `player/gpu-check.js` hands a run back and forth between GPU and CPU in batches of varying size,
 the GPU's stretches out several at a time and sometimes too short of room, and it must match one

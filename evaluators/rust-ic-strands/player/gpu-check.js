@@ -13,7 +13,8 @@ window.StrandsCheck = (() => {
     E.held = () => { const p = E.strands_held(); return new Uint32Array(E.memory.buffer, p, E.words_len()).slice(); };
     /// After a GPU stretch of n clocks: its sites and counts into the engine; 1 once the answer is in.
     E.ran = (n, r) => {
-      const k = r.held.length, w = new Uint32Array(E.memory.buffer, E.words_ptr(k + r.tally.length + r.fires.length), k + r.tally.length + r.fires.length);
+      // The room first: making it may grow the memory, which detaches the old buffer.
+      const k = r.held.length, len = k + r.tally.length + r.fires.length, p = E.words_ptr(len), w = new Uint32Array(E.memory.buffer, p, len);
       w.set(r.held); w.set(r.tally, k); w.set(r.fires, k + r.tally.length);
       return E.strands_gpu_ran(n, k, r.fires.length);
     };

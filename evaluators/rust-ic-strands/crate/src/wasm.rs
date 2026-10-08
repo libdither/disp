@@ -129,6 +129,34 @@ pub extern "C" fn strands_garbage() -> u32 { unsafe { st().l.garbage(&mut MARKS)
 #[allow(static_mut_refs)]
 pub extern "C" fn garbage_ptr() -> *const u8 { unsafe { MARKS.as_ptr() } }
 
+/// Agents reached from the root this time (`SEEN.1[id] == SEEN.0`), kept between calls.
+static mut SEEN: (u32, Vec<u32>) = (0, Vec::new());
+/// How many agents `strands_garbage` would mark, without marking them: a walk over the root's piece
+/// of the net and the sites in use, cheap enough to ask after every clock.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn strands_garbage_left() -> u32 {
+    let l = &st().l;
+    let (stamp, seen) = unsafe { &mut SEEN };
+    *stamp = stamp.wrapping_add(1);
+    if *stamp == 0 { seen.fill(0); *stamp = 1; }
+    if seen.len() < l.shadow.agents.len() { seen.resize(l.shadow.agents.len(), 0); }
+    let slots = || l.live().iter().flat_map(|&s| (0..l.ks).map(move |k| s as usize * l.ks + k)).filter(|&i| l.tags[i] != 0);
+    let mut stack: Vec<u32> = slots().filter(|&i| l.tags[i] as u32 == code(Tag::Out)).map(|i| l.sids[i]).collect();
+    for &id in &stack { seen[id as usize] = *stamp; }
+    while let Some(id) = stack.pop() {
+        for p in l.shadow.get(id).ports.iter().flatten() {
+            if seen[p.0 as usize] != *stamp { seen[p.0 as usize] = *stamp; stack.push(p.0); }
+        }
+    }
+    slots().filter(|&i| seen[l.sids[i] as usize] != *stamp).count() as u32
+}
+
+/// The clock, the proposals made and the strands of wire, without working out the other counts
+/// (`stats_ptr` walks every agent ever made).
+#[no_mangle]
+pub extern "C" fn strands_now(i: u32) -> f64 { let x = &st().l.stats; [x.clocks, x.proposals as f64, x.strands as f64][i as usize % 3] }
+
 /// "A·F → T1 Pair" for rule i.
 #[no_mangle]
 pub extern "C" fn rule_text(i: u32) -> u32 {

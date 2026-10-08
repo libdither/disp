@@ -5,6 +5,8 @@
 #   player/firefox.sh player 'src=add 3 4'          the player from clock 0, on the CPU then the GPU
 #   player/firefox.sh input                         the player's input box, on the CPU (input-check.html)
 #   player/firefox.sh pick 'p=disp:fib&a=2'         computations picked in the player, followed to the answer
+#   player/firefox.sh tail 'src=fib:1'              the end of a run (cleanup, cooling) the same on either engine and after going back
+#   player/firefox.sh perf 'src=fib:1&runs=cpu,gpu,cpu>gpu@0.5a'   times the answer, cleanup and cooling, and switches
 # Each run has a profile of its own; the page posts what it finds to a small server here. Exits
 # non-zero unless the last line starts with "ok".
 set -euo pipefail
