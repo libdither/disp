@@ -385,9 +385,24 @@ let garbage = null, garbageCount = 0, lastGarbage = 0, story = [], hover = null,
 
 // ---- programs: disp definitions in, disp values out -----------------------------------------
 const nat = n => "20".repeat(n) + "0";
+/// n as a perfect number tree of 2^k bits (programs.disp, binary numbers): b0 = t, b1 = t t, a pair its low half then its high half.
+const bitTree = (n, k) => { if (!k) return n & 1n ? "10" : "0"; const w = 1n << BigInt(2 ** (k - 1)); return "2" + bitTree(n % w, k - 1) + bitTree(n / w, k - 1); };
+/// The k whose 2^k bits hold every number in the arguments, and the sum of each list's (room on top for a sum of many).
+function bitsWidth(src) {
+  let need = 0n, depth = 0, sum = 0n, k = 0;
+  for (const [m] of src.matchAll(/\[|\]|\d+/g)) {
+    if (m === "[") { if (!depth++) sum = 0n; }
+    else if (m === "]") { if (!--depth && sum > need) need = sum; }
+    else if (depth) sum += BigInt(m); else if (BigInt(m) > need) need = BigInt(m);
+  }
+  while (1n << BigInt(2 ** k) <= need) k++;
+  return k;
+}
 // Arguments as disp literals, encoded the way disp builds them: a number n is n forks over a leaf,
 // [lists] and "strings" (code points) are cons forks ending in a leaf, true = t, false = t t.
-function parseArgs(src) {
+// For a program on binary numbers (`-> bits`, k given) a number is a number tree of 2^k bits, cut to
+// the program's width if it has one (`-> bits16`).
+function parseArgs(src, k) {
   let i = 0;
   const skip = () => { while (i < src.length && /[\s,]/.test(src[i])) i++; };
   const value = () => {
@@ -413,7 +428,7 @@ function parseArgs(src) {
     const m = src.slice(i).match(/^(\d+|true|false|t)/);
     if (!m) throw `can't read "${src.slice(i, i + 10)}"`;
     i += m[0].length;
-    return m[0] === "true" || m[0] === "t" ? "0" : m[0] === "false" ? "10" : nat(+m[0]);
+    return m[0] === "true" || m[0] === "t" ? "0" : m[0] === "false" ? "10" : k === undefined ? nat(+m[0]) : bitTree(BigInt(m[0]), k);
   };
   const out = []; skip();
   while (i < src.length) { out.push(value()); skip(); }
@@ -557,7 +572,7 @@ function plan(input) {
   // A number alone is a disp number, though 10 or 212 would also read as ternary digits.
   if (!/^\d+$/.test(input) && withString(input, (p, n) => E.strands_probe(p, n)) >= 0) return { src: input };
   const [, name, args] = input.match(/^(\w+)\s*(.*)$/s) ?? [], d = DISP.find(p => p.name === name);
-  if (d) try { return { src: [d.tree, ...parseArgs(args)].join(" "), kind: d.kind, call: input }; } catch {}
+  if (d) try { return { src: [d.tree, ...parseArgs(args, d.kind !== "bits" ? undefined : d.width ? Math.log2(d.width) : bitsWidth(args))].join(" "), kind: d.kind, call: input }; } catch {}
   return compiled.get(input) ?? null;
 }
 async function compile(input) {

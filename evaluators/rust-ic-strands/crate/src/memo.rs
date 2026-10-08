@@ -299,13 +299,16 @@ pub fn merge_net(net: &mut Net, k: u32, d: u32) -> (u32, [u32; 2]) {
 /// The idealised lazy machine (README "Fork"): demand arrives at once, every wanted rewrite fires
 /// at once, and erasers collect as on the lattice. `want` is by agent id. Rewrites and collections
 /// until the root reads back as a value, or None if it gets stuck or runs past `rounds`.
-pub fn ideal(net: &mut Net, want: &mut Vec<bool>, fork: bool, rounds: u64) -> Option<u64> {
+pub fn ideal(net: &mut Net, want: &mut Vec<bool>, fork: bool, rounds: u64) -> Option<u64> { ideal_depth(net, want, fork, rounds).map(|w| w.0) }
+
+/// `ideal`, also giving the rounds it took: the depth of the computation.
+pub fn ideal_depth(net: &mut Net, want: &mut Vec<bool>, fork: bool, rounds: u64) -> Option<(u64, u64)> {
     let out = net.agents.iter().position(|a| matches!(a, Some(a) if a.tag == Tag::Out))? as u32;
     let mut work = 0;
     let mut live: Vec<u32> = (0..net.agents.len() as u32).filter(|&i| net.agents[i as usize].is_some()).collect();
     let tag = |net: &Net, i: u32| net.agents[i as usize].as_ref().map(|a| a.tag);
-    for _ in 0..rounds {
-        if net.readback(net.get(out).ports[0]).is_some() { return Some(work); }
+    for round in 0..rounds {
+        if net.readback(net.get(out).ports[0]).is_some() { return Some((work, round)); }
         want.resize(net.agents.len(), false);
         let mut stack: Vec<u32> = live.iter().copied().filter(|&i| want[i as usize] && tag(net, i).is_some_and(|t| t.is_consumer() && t != Tag::Eps)).collect();
         while let Some(c) = stack.pop() {
