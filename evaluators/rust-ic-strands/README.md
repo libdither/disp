@@ -56,7 +56,8 @@ rules, below), with the field drawn as an amber tint and called values ringed in
     balls for applications, octahedra for choices, a ring for a suspension, a Y, a ×, the root a
     ring around a ball; one instanced mesh a kind) a few pixels wide however far away. It opens
     fitted at a slant across the net's long side (`F` again); drag to orbit, right-drag to pan, the wheel
-    zooms toward the pointer; spread or isolate layers, or follow the action.
+    zooms toward the pointer; spread the layers apart (past where the slider starts, every site too:
+    agents keep their size and the wires between them lengthen), isolate a layer, or follow the action.
     `build-three.sh` rebuilds its bundled `three.min.js` (three 0.186.1 with its wide lines, MIT).
   - *graph* (`player/graph.js`): the lattice left out, only who is wired to whom. Springs along
     wires, a push between nodes that crowd, and a pull that hangs what feeds an input below its
@@ -75,8 +76,9 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   on, saving more densely near the target, so stepping back costs a few clocks of replay and a jump a
   tenth of its length.
 - **At the end** the run cools: once only the answer is left, the temperature drops to 0.05 at
-  once (`Lattice::cool`), idle agents trade places rather than crowd into one site, and a flip that
-  leaves a U-turn snaps it in the same move. So the wire straightens and the answer contracts as far
+  once (`Lattice::cool`), every turn takes a move that lowers the energy if its site has one,
+  idle agents trade places rather than crowd into one site, and a flip that leaves a U-turn snaps
+  it in the same move. So the wire straightens and the answer contracts as far
   as it will go, in a few hundred clocks (disp `add 2 3`: 17–43 strands of wire become 10 or 11, and
   10 is as short as it gets; Contracting the answer, below). The clock it began at (the first with no
   garbage left, the same on either engine) is recorded, and replays cool there too.
@@ -1035,7 +1037,7 @@ it is at 0.05 and the wire has not got shorter for 300 clocks: never under 834 c
 spent getting cold. At low temperature most proposals are refused, so turns that pick their move
 instead of drawing one looked like the way to speed it up.
 
-Now the temperature drops to 0.05 at once, and while cooling two moves change:
+Now the temperature drops to 0.05 at once, turns are greedy (below), and while cooling two moves change:
 - **Passing**: an idle agent stepping into a site that holds an idle agent trades places with it
   (an exchange, as into a full site). Without it a value whose wire runs straight through a
   neighbour's site is stuck, since every way round goes uphill first.
@@ -1058,11 +1060,11 @@ least 684 strands), averaged over its 5 runs:
 | 0.05 at once | 442 | 112 | +0.5% | 1004 |
 | 0.05 at once, passing | 551 | 202 | −3.5% | 840 |
 | 0.05 at once, cutting corners | 427 | 88 | −0.4% | 962 |
-| **0.05 at once, passing and cutting corners (now)** | **496** | **160** | **−4.0%** | **819** |
+| 0.05 at once, passing and cutting corners | 496 | 160 | −4.0% | 819 |
 | halve every 100, passing and cutting corners | 920 | 220 | −5.5% | 794 |
 | best move (`coolgreedy=1`) | 334 | 26 | +4.9% | 1000 |
 | best move, no passing | 330 | 25 | +9.9% | 1065 |
-| any move down, else any level one (`coolgreedy=2`) | 378 | 63 | −1.7% | 857 |
+| **any move down, else any level one (`coolgreedy=2`, now)** | **378** | **63** | **−1.7%** | **857** |
 | halve every 1000, passing and cutting corners | 5623 | 586 | −6.6% | 755 |
 | halve every 1000 | 5623 | 459 | −2.3% | 886 |
 
@@ -1082,8 +1084,11 @@ least 684 strands), averaged over its 5 runs:
   Passing helps (+9.9% without it); the rest needs level moves picked by the dice, which is
   randomness again. Taking any move
   down, else any level one (`coolgreedy=2`), is within 1% 2.5× sooner than now and ends 1.7%
-  shorter than before, but 2.4% longer than now. So randomness is worth keeping here: the refused
-  proposals cost few clocks, the schedule cost many.
+  shorter than before, but 2.4% longer than random turns. So randomness is not what made cooling
+  slow (the schedule was), but greedy turns are the default now (`coolgreedy=0` for random ones):
+  in the player speed matters more than the last few strands. Measured again from the same states
+  (10 programs × 3 seeds): done after 382 clocks against 491 and within 1% after 67 against 146,
+  for answers 2.5% longer on average, the worst a small answer 31% (a few strands) longer.
 - **A slow anneal** (halving every 1000 clocks) is the best shape found, 2.7% shorter than now
   at 11× the clocks.
 - **The player's rule** waits 300 clocks for a shorter wire. With 100 instead, cooling is done after
