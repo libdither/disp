@@ -73,10 +73,12 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   distance. Any clock reached is shown by putting back the nearest saved state before it and running
   on, saving more densely near the target, so stepping back costs a few clocks of replay and a jump a
   tenth of its length.
-- **At the end** the run cools: once only the answer is left, the temperature halves every 100
-  clocks down to 0.05 (`Lattice::cool`), so the wire straightens and the answer contracts as far as
-  it will go (disp `add 2 3`: 32 strands of wire become 11, one a wire). The clock it began at is
-  recorded, and replays cool there too.
+- **At the end** the run cools: once only the answer is left, the temperature drops to 0.05 at
+  once (`Lattice::cool`), idle agents trade places rather than crowd into one site, and a flip that
+  leaves a U-turn snaps it in the same move. So the wire straightens and the answer contracts as far
+  as it will go, in a few hundred clocks (disp `add 2 3`: 17–43 strands of wire become 10 or 11, and
+  10 is as short as it gets; Contracting the answer, below). The clock it began at is recorded, and
+  replays cool there too.
 
 ## The machine
 
@@ -967,6 +969,80 @@ reduction-state panel. It only reads; a run goes exactly as without it.
   a *where*, and what is being computed underlined in blue. A program's answer, as far as it is
   built, reads `succ (…)` or `cons x (…)`. Clicking part of a term lights its agents.
 
+## Contracting the answer
+
+Once only the answer is left, the run cools so that the answer contracts (`Lattice::cool`). It used
+to halve the temperature every 100 clocks, from 2 down to 0.05, and the player calls it done once
+it is at 0.05 and the wire has not got shorter for 300 clocks: never under 834 clocks, 532 of them
+spent getting cold. At low temperature most proposals are refused, so turns that pick their move
+instead of drawing one looked like the way to speed it up.
+
+Now the temperature drops to 0.05 at once, and while cooling two moves change:
+- **Passing**: an idle agent stepping into a site that holds an idle agent trades places with it
+  (an exchange, as into a full site). Without it a value whose wire runs straight through a
+  neighbour's site is stuck, since every way round goes uphill first.
+- **Cutting corners**: a flip that leaves a U-turn (the wire went round three sides of a square) is
+  made whatever its energy, and the U-turn folds in the same move, inside the flip's square.
+
+`strands-run --fit --clean N --cool M --vary SETTINGS ...` measures this: it runs on until only the
+answer is left, then cools from that same state once per setting. Below: 10 programs × 5 seeds
+(lambada `fib:1`, `fib:2`, `sort:1`, `exp:1`; disp `add 2 3`, `fib 2`, `rev [1, 2]`, `greet "a"`,
+`doubled [1, 2, 3]`, `ripple_add [b1, b0, b1, b1] [b0, b1, b1, b0]`) on grids sized as the player
+sizes them. *Done* is the player's rule, in clocks after cooling began; *1%* is when the wire first
+got within 1% of its length when done; *length* is the strands when done against the old cooling
+from the same state, averaged over the 50 runs; *greet* is `greet "a"` alone (686 agents, so at
+least 684 strands), averaged over its 5 runs:
+
+| cooling | done | 1% | length | greet |
+|---|---|---|---|---|
+| halve every 100 clocks (before) | 860 | 152 | ±0 | 950 |
+| halve every 25 | 551 | 153 | +2.7% | 992 |
+| 0.05 at once | 442 | 112 | +0.5% | 1004 |
+| 0.05 at once, passing | 551 | 202 | −3.5% | 840 |
+| 0.05 at once, cutting corners | 427 | 88 | −0.4% | 962 |
+| **0.05 at once, passing and cutting corners (now)** | **496** | **160** | **−4.0%** | **819** |
+| halve every 100, passing and cutting corners | 920 | 220 | −5.5% | 794 |
+| best move (`coolgreedy=1`) | 334 | 26 | +4.9% | 1000 |
+| best move, no passing | 330 | 25 | +9.9% | 1065 |
+| any move down, else any level one (`coolgreedy=2`) | 378 | 63 | −1.7% | 857 |
+| halve every 1000, passing and cutting corners | 5623 | 586 | −6.6% | 755 |
+| halve every 1000 | 5623 | 459 | −2.3% | 886 |
+
+- **The schedule was the cost**, not the moving: 532 clocks to get cold and 300 to be sure.
+  Dropping to 0.05 at once halves that and keeps the length on average, but freezes some answers
+  in worse shapes (up to +40%). Passing and cutting corners undo that and shorten most answers:
+  20 of the 50 runs end over 5% shorter, 8 end 1–4 strands longer. On the 45 small answers it is
+  done after 378 clocks instead of 834. `greet "a"` is as short as the old cooling ever got it
+  within 71–160 clocks instead of 460–1190, then keeps going down to 819, so it is done later
+  (about 1570 clocks against 1090).
+- **Less random moves are faster, but freeze.** A greedy turn (`coolgreedy=1`, `Lattice::best_move`)
+  looks at every move its site could make inside its block without reading a site an earlier turn
+  changed, and makes the best: a fold or a flip that leaves a U-turn, else the step, exchange or
+  flip that lowers the energy most, ties to the dice. It is within 1% after 26 clocks (without
+  passing nothing moves at all after about 50), but it ends 5% longer, one run 64%: steepest
+  descent parks values on each other's wire paths, where only a level or uphill move gets round.
+  Passing helps (+9.9% without it); the rest needs level moves picked by the dice, which is
+  randomness again. Taking any move
+  down, else any level one (`coolgreedy=2`), is within 1% 2.5× sooner than now and ends 1.7%
+  shorter than before, but 2.4% longer than now. So randomness is worth keeping here: the refused
+  proposals cost few clocks, the schedule cost many.
+- **A slow anneal** (halving every 1000 clocks) is the best shape found, 2.7% shorter than now
+  at 11× the clocks.
+- **The player's rule** waits 300 clocks for a shorter wire. With 100 instead, cooling is done after
+  225 clocks on average (median 135), and 12 of the 50 runs stop short of where they would end
+  (small answers by a strand, `greet "a"` by up to 3%); with 200, after 371, 6 runs short.
+- **On the CPU** (cooling never runs on the GPU) a contraction takes under 15 ms for the small
+  answers and 0.6 s for `greet "a"`, which goes further than before (0.3 s).
+- **On a chip or GPU** cooling needs no new state per site: the clock it began is saved with the
+  run. Now's cooling is a mode bit: the acceptance table for 0.05 (accept one quarter unit uphill at
+  441/65536, two at 2/65536, nothing more), one more case in the exchange test (an idle mover and an
+  idle agent there), and a flip that skips its acceptance and folds from its far corner when it
+  leaves a U-turn, inside its own square. Greedy turns need every candidate move (steps or
+  exchanges of up to 2 agents across 3 faces, a fold or flip for each used strand end) weighed from
+  the state at the start of the clock, those reading a site an earlier turn in the block changed
+  masked off, and one picked by its key and then the dice: no new state, but about 20 move
+  evaluators per site instead of one.
+
 ## Things tried that did not help, and why
 
 - **Pressure** from blocked rewrites (a diffusing field agents drift down): no measurable change
@@ -1161,7 +1237,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~9 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, handover, reading back, merging equal computations, superpositions
+cargo test --release                                  # ~10 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, cooling, handover, reading back, merging equal computations, superpositions
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -1186,7 +1262,11 @@ answer), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's C
 (`copies=16&clocks=512` for many copies side by side, `demand=0&fork=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
 `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
-answer is left; `PIECES=1` lists the connected pieces of the net at the end.
+answer is left; `PIECES=1` lists the connected pieces of the net at the end. With `--cool M` it
+then cools for M clocks and reports when the player would call it done and how short the answer
+got, once for each `--vary 'key=value ...'` from the same state (`coolhalf`, `coolmin`, `coolpass`,
+`coolcut`, `coolgreedy`; Contracting the answer, above); `WIRES=1` lists every agent's wires at the
+end. `--fit` sizes the grid as the player does, and a term may be `@file`.
 `strands-run --profile` prints what wanted readers spend their time waiting on, how crowded it
 is where walkers go, and what switchboards hold; `--progress N` prints the wanted readers and
 their wire lengths every N proposals, and `WHO=1` adds what each one is waiting on, which is

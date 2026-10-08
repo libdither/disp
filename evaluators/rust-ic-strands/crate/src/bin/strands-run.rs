@@ -1,5 +1,8 @@
 //! Run terms on the strand lattice and compare with the oracle.
-//!   strands-run <term | workload[:n]> [--k K] [--lanes L] [--grid N] [--3d] [--temp T] [--seed S] [--share N]
+//!   strands-run <term | workload[:n] | @file> [--k K] [--lanes L] [--grid N | --fit] [--temp T] [--seed S] [--share N]
+//! `--fit` sizes the grid as the player does. `--clean N --cool M` runs on until only the answer is
+//! left, then cools for M clocks and reports how fast and how far the answer contracted; each
+//! `--vary 'key=value ...'` cools again from the same state with those settings.
 //! A term may hold superpositions (`&1{a,b}`, `fib:&1{2,3}`); its answer is then checked universe by
 //! universe and shown collapsed (rust-ca-lattice sup.rs).
 
@@ -18,6 +21,9 @@ fn main() {
     let mut profile = false;
     let mut clean = 0f64;
     let mut mix = 0f64;
+    let mut fit = false;
+    let mut cool = 0f64;
+    let mut vary = vec![];
     let mut sets = vec![];
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -68,6 +74,9 @@ fn main() {
             "--share" => p.share = it.next().unwrap().parse().unwrap(),
             "--demand" => { p.calls = true; p.set("field", rust_ic_strands::lattice::DEMAND).unwrap(); }
             "--mix" => mix = it.next().unwrap().parse().unwrap(),
+            "--fit" => fit = true,
+            "--cool" => cool = it.next().unwrap().parse().unwrap(),
+            "--vary" => vary.push(it.next().unwrap().clone()),
             _ if a.contains('=') => sets.push(a.clone()),
             _ => src = Some(a.clone()),
         }
@@ -75,6 +84,7 @@ fn main() {
     // key=value settings (`Params::set`) go last, so they change whatever the flags chose.
     for kv in &sets { let (k, v) = kv.split_once('=').unwrap(); p.set(k, v).unwrap_or_else(|e| panic!("{e}")); }
     let src = src.expect("term");
+    let src = match src.strip_prefix('@') { Some(path) => std::fs::read_to_string(path).expect("term file").trim().to_string(), None => src };
     let t: STerm = match src.split_once(':') {
         Some((name, n)) if n.starts_with('&') && term::workload_sup(name, n).is_some() => term::workload_sup(name, n).unwrap().expect("bad superposition"),
         Some((name, n)) if term::workload(name, 0).is_some() => (&term::workload(name, n.parse().unwrap()).unwrap()).into(),
@@ -84,8 +94,20 @@ fn main() {
     let want = sup::oracle_answers(&t, 100_000_000).map(|u| sup::show(&sup::collapse(&u, &labels)));
     let (net, out) = rust_ic_strands::share::net_sup(&t, p.share);
     let agents = net.live_count();
-    let mut l = Lattice::load(p, net, out).expect("load");
-    println!("loaded {agents} agents");
+    let mut l = if fit {
+        // As the player sizes it: side ceil(√agents · 7, or 8 in 2D) + 16, growing ×1.4 until the drawing fits.
+        let mut side = ((net.agents.len() as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16;
+        let mut net = Some(net);
+        loop {
+            let (net, out) = net.take().map_or_else(|| rust_ic_strands::share::net_sup(&t, p.share), |n| (n, out));
+            match Lattice::load(Params { w: side, h: side, ..p }, net, out) {
+                Ok(l) => break l,
+                Err(e) if e.starts_with("the drawing") => side = (side as f64 * 1.4).ceil() as u32,
+                Err(e) => panic!("{e}"),
+            }
+        }
+    } else { Lattice::load(p, net, out).expect("load") };
+    println!("loaded {agents} agents on {}x{}x{}", l.p.w, l.p.h, l.p.depth);
     l.check_every = check;
     if let Ok(path) = std::env::var("VECTORS") {
         let mut w = std::io::BufWriter::new(std::fs::File::create(path).expect("vectors file"));
@@ -191,6 +213,7 @@ fn main() {
             left = l.garbage(&mut marks);
         }
         println!("after {:.0} more clocks: {left} agents of garbage left", l.stats.clocks - c0);
+        if cool > 0.0 && left == 0 { contract(&mut l, cool, &vary); }
     }
     let ans = l.read_answer().map(|a| sup::show(&if labels.is_empty() { a } else { sup::collapse(&a.universes(&labels), &labels) }));
     let proj = l.check_projection();
@@ -236,4 +259,88 @@ fn main() {
     let blocked: Vec<String> = s.blocked_rule.iter().enumerate().filter(|(_, &n)| n > 0)
         .map(|(i, n)| format!("{}·{} {n}", rust_ca_lattice::rules::rule(i).consumer.name(), rust_ca_lattice::rules::rule(i).producer.name())).collect();
     println!("blocked by lanes {}; by rule: {}", s.blocked_lanes, blocked.join(", "));
+}
+
+/// Cool for `clocks` clocks from the state at hand, once with each set of `key=value` settings
+/// (`vary`; none: as configured), and report how the answer contracted: when the player would call
+/// it done (at the coldest, and the wire no shorter for 300 clocks; also for 100 and 200, and when
+/// nothing has moved for 16 clocks), when the wire first got within 5% and 1% of its length then and
+/// as short as the first setting got it, and where it ended. `CURVE=n` prints the strands every n
+/// clocks; a `row` line per setting has the numbers tab-separated.
+fn contract(l: &mut Lattice, clocks: f64, vary: &[String]) {
+    assert!(l.p.margolus, "contraction is measured in chip clocks");
+    let (held, stats, p, temp) = (l.held_sites(), l.stats.clone(), l.p, l.p.temp);
+    let want = l.readback().map(|t| rust_ca_lattice::oracle::show(&t));
+    let curve = std::env::var("CURVE").ok().map(|v| v.parse::<f64>().expect("CURVE=clocks"));
+    let none = [String::new()];
+    let mut reference = None;
+    for v in if vary.is_empty() { &none[..] } else { vary } {
+        l.put_sites(&held);
+        l.stats = stats.clone();
+        l.cooling = None;
+        l.p = p;
+        for kv in v.split_whitespace() { let (k, x) = kv.split_once('=').expect("key=value"); l.p.set(k, x).unwrap_or_else(|e| panic!("{e}")); }
+        l.p.temp = temp;
+        l.e = rust_ic_strands::lattice::Energy::new(&l.p);
+        let (c0, s0, live0, t0) = (l.stats.clocks, l.stats.strands, l.live_sites(), std::time::Instant::now());
+        l.cool();
+        let moves = |l: &Lattice| l.stats.hops + l.stats.swaps + l.stats.folds + l.stats.flips;
+        let mut seen = vec![(l.stats.strands, l.live_sites())];
+        // Done by the player's rule: (clock, strands, sites, seconds); by 100 and 200 clocks, and by
+        // 16 clocks of nothing moving: (clock, strands).
+        let (mut shortest, mut done, mut windows, mut still, mut quiet) = ((u64::MAX, 0f64), None, [None; 2], 0, None);
+        while l.stats.clocks - c0 < clocks {
+            let m0 = moves(l);
+            l.run_on(l.stats.proposals + 1);
+            seen.push((l.stats.strands, l.live_sites()));
+            let c = l.stats.clocks - c0;
+            if curve.is_some_and(|k| c % k == 0.0) { println!("curve [{v}] {c} {} {} {:.3}", l.stats.strands, l.live_sites(), l.p.temp); }
+            if l.p.temp > l.p.cool_min + 1e-9 { continue; }
+            if l.stats.strands < shortest.0 { shortest = (l.stats.strands, c); }
+            else if done.is_none() && c - shortest.1 >= 300.0 { done = Some((c, l.stats.strands, l.live_sites(), t0.elapsed().as_secs_f64())); }
+            for (x, w) in windows.iter_mut().zip([100.0, 200.0]) { if x.is_none() && c - shortest.1 >= w { *x = Some((c, l.stats.strands)); } }
+            still = if moves(l) == m0 { still + 1 } else { 0 };
+            if quiet.is_none() && still >= 16 { quiet = Some((c, l.stats.strands)); }
+        }
+        let secs = t0.elapsed().as_secs_f64();
+        if std::env::var("WIRES").is_ok() { wires(l); }
+        let (end, live) = *seen.last().unwrap();
+        let (c, n, sites, dsecs) = done.unwrap_or((-1.0, end, live, secs));
+        let first = |x: f64| seen.iter().position(|&(m, _)| m as f64 <= x).map_or(-1, |c| c as i64);
+        let reference = *reference.get_or_insert(n) as f64;
+        let right = l.readback().map(|t| rust_ca_lattice::oracle::show(&t)) == want;
+        let at = |x: Option<(f64, u64)>| x.map_or("-1\t0".to_string(), |(c, n)| format!("{c:.0}\t{n}"));
+        println!("contract [{v}]: from {s0} strands {live0} sites; done at clock {c:.0} with {n} strands {sites} sites ({dsecs:.3}s); within 5% at {}, 1% at {}, \
+            as short as the first setting at {}; done by 100, 200 clocks, 16 still: {}; after {clocks:.0} clocks {end} strands {live} sites{}",
+            first(n as f64 * 1.05), first(n as f64 * 1.01), first(reference), [windows[0], windows[1], quiet].map(at).join(" ").replace('\t', "/"),
+            if right { "" } else { "; ANSWER CHANGED" });
+        println!("row\t{v}\t{}\t{s0}\t{live0}\t{c:.0}\t{n}\t{sites}\t{}\t{}\t{}\t{end}\t{live}\t{dsecs:.4}\t{secs:.4}\t{right}\t{}", p.seed,
+            first(n as f64 * 1.05), first(n as f64 * 1.01), first(reference), [windows[0], windows[1], quiet].map(at).join("\t"));
+    }
+}
+
+/// Every agent left and its wires: where each leads and through which sites.
+fn wires(l: &Lattice) {
+    let xyz = |s: u32| (s % l.p.w, (s / l.p.w) % l.p.h, s / (l.p.w * l.p.h));
+    let ports = 3 * l.ks;
+    for &s in l.live() {
+        for k in 0..l.ks {
+            let t = l.tag(s, k);
+            if t == 0 { continue; }
+            let tg = rust_ic_strands::lattice::tag_of(t);
+            let mut line = format!("  {} {:?} pairs {}:", tg.name(), xyz(s), l.pairs(s));
+            for q in 0..tg.arity() {
+                let (mut x, mut m, mut path) = (s, l.mate_of(s, (k * 3 + q) as u8), vec![]);
+                while m != rust_ic_strands::lattice::NONE && m as usize >= ports {
+                    let (f, i) = ((m as usize - ports) / l.p.lanes, (m as usize - ports) % l.p.lanes);
+                    x = l.nb(x, f);
+                    path.push(xyz(x));
+                    m = l.mate_of(x, (ports + (f ^ 1) * l.p.lanes + i) as u8);
+                }
+                let (k2, q2) = (m as usize / 3, m as usize % 3);
+                line += &format!(" [{q}] -> {}.{q2} via {} {:?}", rust_ic_strands::lattice::tag_of(l.tag(x, k2)).name(), path.len(), path);
+            }
+            println!("{line}");
+        }
+    }
 }

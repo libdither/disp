@@ -127,6 +127,18 @@ pub struct Params {
     pub memo_local: bool,
     /// Equal means equal names fixed when an agent is first seen (`memo::Names`), not equal terms.
     pub memo_names: bool,
+    /// Cooling (`Lattice::cool`): the clocks over which the temperature halves (0: it drops at
+    /// once) and the temperature it stops at.
+    pub cool_half: f64,
+    pub cool_min: f64,
+    /// While cooling, an idle agent stepping into a site holding an idle agent trades places with
+    /// it instead, so agents get past each other rather than wrap their wires around.
+    pub cool_pass: bool,
+    /// While cooling, a flip that leaves U-turns is made whatever its energy, and they fold at once.
+    pub cool_cut: bool,
+    /// While cooling, every turn makes the best move it can (`Lattice::best_move`): 1 the one that
+    /// lowers the energy most; 2 any that lowers it, else any that leaves it as it is (0: turns as ever).
+    pub cool_greedy: u8,
 }
 
 impl Params {
@@ -176,6 +188,11 @@ impl Params {
             "memoevery" => self.memo_every = n()? as u32,
             "memolocal" => self.memo_local = on,
             "memonames" => self.memo_names = on,
+            "coolhalf" => self.cool_half = f()?,
+            "coolmin" => self.cool_min = f()?,
+            "coolpass" => self.cool_pass = on,
+            "coolcut" => self.cool_cut = on,
+            "coolgreedy" => self.cool_greedy = n()? as u8,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -191,7 +208,8 @@ impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
-                 strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false }
+                 strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
+                 cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 0 }
     }
 }
 
@@ -380,6 +398,14 @@ impl Energy {
     }
 }
 
+/// Where an agent port's wire goes when the agent steps: a loop to another of its ports, through
+/// the strand it steps along (lane), or dragged one strand longer.
+#[derive(Clone, Copy)]
+enum Plan { SelfLoop(usize), Through(usize), Drag }
+
+/// A wire's corner a flip can turn (`Lattice::corner`).
+struct Corner { f1: usize, i: usize, f2: usize, j: usize, x: u32, z: u32, w: u32, c: usize, d: usize }
+
 /// The state of a few sites, kept while a move is tried.
 struct Saved {
     sites: Vec<(u32, Vec<u8>, Vec<u8>, Vec<u32>, Vec<bool>, u8, u8, Vec<u8>, Vec<u8>)>,
@@ -465,11 +491,10 @@ pub fn chip() -> Params {
              pairs: 8, active: 0.5, ..Params::default() }
 }
 
-/// Clocks over which cooling halves the temperature, and the temperature it stops at.
-pub const COOL_HALF: f64 = 100.0;
-pub const COOL_MIN: f64 = 0.05;
 /// The temperature `clocks` after cooling began at t0.
-pub fn cooled(t0: f64, clocks: f64) -> f64 { (t0 * 0.5f64.powf(clocks / COOL_HALF)).max(COOL_MIN) }
+pub fn cooled(p: &Params, t0: f64, clocks: f64) -> f64 {
+    if p.cool_half == 0.0 { p.cool_min } else { (t0 * 0.5f64.powf(clocks / p.cool_half)).max(p.cool_min) }
+}
 
 /// The current design: the chip's schedule with the demand field and forking S rules. The player
 /// and the GPU run it; hw/ builds `chip`.
@@ -716,13 +741,14 @@ impl Lattice {
         r
     }
 
-    /// What the clock contributes to random words: the clock, mixed with the seed.
-    /// Start cooling: from now on the temperature halves every `COOL_HALF` clocks down to
-    /// `COOL_MIN`, so wire straightens and the answer contracts as far as it will go.
+    /// Start cooling: from the next clock on the temperature is `cool_min` (or halves down to it
+    /// every `cool_half` clocks), and idle agents pass each other and corners are cut (`cool_pass`,
+    /// `cool_cut`), so the answer contracts as far as it will go.
     pub fn cool(&mut self) { if self.cooling.is_none() { self.cooling = Some((self.stats.clocks, self.p.temp)); } }
     /// Run at temperature t from the next move on.
     pub fn set_temp(&mut self, t: f64) { if self.p.temp != t { self.p.temp = t; self.e = Energy::new(&self.p); } }
 
+    /// What the clock contributes to random words: the clock, mixed with the seed.
     pub fn tick(&self) -> u32 { self.stats.clocks as u32 ^ (self.p.seed as u32).wrapping_mul(0x9E37_79B9) }
 
     /// A site's coordinates packed into the key of its random words.
@@ -1165,27 +1191,32 @@ impl Lattice {
             let m = self.mate_of(s, self.ae(k, 0));
             self.is_strand(m) && self.face(m) == f
         };
-        let Some(k2) = self.free_slot(t) else {
+        // While cooling with `cool_pass`, an idle agent stepping in with an idle agent trades places with it.
+        let pass = self.cooling.is_some() && self.p.cool_pass && self.idle(s, k) && self.idle_at(t) > 0;
+        let Some(k2) = self.free_slot(t).filter(|_| !pass) else {
             if walker { self.stats.walk_fail[0] += 1; }
             let ok = may_swap && self.swap(s, k, f);
             if ok && walker { self.stats.walk_swap += 1; }
             return ok;
         };
+        self.step_to(s, k, f, k2, walker)
+    }
+
+    /// Agent k of s steps across face f into free slot k2 there, if the energy allows.
+    fn step_to(&mut self, s: u32, k: usize, f: usize, k2: usize, walker: bool) -> bool {
         let along = { let m = self.mate_of(s, self.ae(k, 0)); self.is_strand(m) && self.face(m) == f };
         let (tag, want) = (self.tag(s, k) as u32, self.want[s as usize * self.ks + k] as u32);
         let ok = self.hop_to(s, k, f, k2, true, walker).is_some();
-        if ok { self.note([EV_STEP, s, t, tag, 0, along as u32, want, 0]); }
+        if ok { self.note([EV_STEP, s, self.nb(s, f), tag, 0, along as u32, want, 0]); }
         ok
     }
 
-    /// The step itself, into slot k2 of the neighbour. With `metropolis`, the energy decides;
-    /// without, the step is made if it fits and its energy change is returned.
-    fn hop_to(&mut self, s: u32, k: usize, f: usize, k2: usize, metropolis: bool, walker: bool) -> Option<i32> {
+    /// What a step of agent k from s across face f would do: where each port's wire goes, the free
+    /// strands dragged wires take, the loops that land in the neighbour, and the energy change; None
+    /// when there are not enough free strands.
+    fn step_plan(&self, s: u32, k: usize, f: usize) -> Option<([Plan; ARITY], Vec<usize>, usize, i32)> {
         let t = self.nb(s, f);
         let a = tag_of(self.tag(s, k)).arity();
-        // Where each port's wire goes after the step.
-        #[derive(Clone, Copy)]
-        enum Plan { SelfLoop(usize), Through(usize), Drag }
         let mut plan = [Plan::Drag; ARITY];
         let mut need = 0;
         let mut de = 0i32;
@@ -1207,10 +1238,9 @@ impl Lattice {
         // freed ones are cleared).
         let mut lanes: Vec<usize> = (0..a).filter_map(|q| match plan[q] { Plan::Through(i) => Some(i), _ => None }).collect();
         lanes.extend((0..self.p.lanes).filter(|&i| self.mate_of(s, self.se(f, i)) == NONE));
-        if lanes.len() < need { if walker { self.stats.walk_fail[1] += 1; } return None; }
+        if lanes.len() < need { return None; }
         lanes.truncate(need);
         let loops = (0..a).filter(|&q| matches!(plan[q], Plan::SelfLoop(_))).count() / 2;
-        if metropolis && !self.room(t, need + loops) { return None; }
         de += self.e.crowd * (self.occ[t as usize] as i32 - (self.occ[s as usize] as i32 - 1));
         if self.e.idle != 0 && self.idle(s, k) {
             de += self.e.idle * (self.idle_at(t) as i32 - (self.idle_at(s) as i32 - 1));
@@ -1240,6 +1270,16 @@ impl Lattice {
             de += self.field_step_de(s, k, t, ps, -(through + loops as i32), pt, (need + loops) as i32);
         }
         if (self.e.strangers != 0 || self.labels()) && self.idle(s, k) { de += self.strangers_de(s, k, t); }
+        Some((plan, lanes, loops, de))
+    }
+
+    /// The step itself, into slot k2 of the neighbour. With `metropolis`, the energy decides;
+    /// without, the step is made if it fits and its energy change is returned.
+    fn hop_to(&mut self, s: u32, k: usize, f: usize, k2: usize, metropolis: bool, walker: bool) -> Option<i32> {
+        let t = self.nb(s, f);
+        let a = tag_of(self.tag(s, k)).arity();
+        let Some((plan, lanes, loops, de)) = self.step_plan(s, k, f) else { if walker { self.stats.walk_fail[1] += 1; } return None };
+        if metropolis && !self.room(t, lanes.len() + loops) { return None; }
         if metropolis && !self.accept(de) { if walker { self.stats.walk_fail[2] += 1; } return None; }
         if walker { self.stats.walk_ok += 1; }
 
@@ -1420,23 +1460,32 @@ impl Lattice {
         let residents: Vec<usize> = (0..self.p.k).filter(|&k| self.tag(t, k) != 0).collect();
         if residents.is_empty() { return false; }
         let kb = residents[self.cur.pick(Dice::RESIDENT, 3, residents.len())];
+        self.exchange(s, ka, f, kb, false).is_some()
+    }
+
+    /// Agent ka of s and agent kb of the neighbour across f trade places, if the energy allows;
+    /// returns the energy change. With `dry` nothing changes: only the energy change it would make,
+    /// or None if it does not fit.
+    fn exchange(&mut self, s: u32, ka: usize, f: usize, kb: usize, dry: bool) -> Option<i32> {
+        let t = self.nb(s, f);
         let (ta, tb) = (self.tag(s, ka) as u32, self.tag(t, kb) as u32);
         let kt = self.p.k;
         debug_assert!(self.tag(t, kt) == 0 && self.tag(s, kt) == 0, "transient slot busy");
         // Tried as two steps through the transient slot; if it does not go through, both sites
         // are put back exactly as they were (a chip simply would not write them).
-        let saved = self.save(&[s, t]);
-        let ok = (|| {
+        let (saved, op) = (self.save(&[s, t]), self.last_op);
+        let de = (|| {
             let d1 = self.hop_to(s, ka, f, kt, false, false)?;
             let d2 = self.hop_to(t, kb, f ^ 1, ka, false, false)?;
             self.relocate(t, kt, kb);
-            (self.room(s, 0) && self.room(t, 0) && self.accept(d1 + d2)).then_some(())
-        })().is_some();
-        if !ok { self.restore(saved); return false; }
+            (self.room(s, 0) && self.room(t, 0)).then_some(d1 + d2)
+        })();
+        if dry { self.restore(saved); self.last_op = op; return de; }
+        if !de.is_some_and(|de| self.accept(de)) { self.restore(saved); return None; }
         self.stats.swaps += 1;
         self.note([EV_SWAP, s, t, ta, tb, 0, 0, 0]);
         self.last_op = "swap";
-        true
+        de
     }
 
     /// Everything a move may change at these sites, to put back if the move does not happen.
@@ -1470,16 +1519,23 @@ impl Lattice {
         self.pulse_watch.truncate(v.watch);
     }
 
-    /// A wire leaving s on face f lane i and coming straight back on lane j snaps shut.
-    fn fold(&mut self, s: u32, e: u8) -> bool {
+    /// The U-turn a fold at s from strand end e would snap: the wire leaves s on face f lane i and
+    /// comes straight back on lane j. `may` says whether the move may look at a site.
+    fn fold_at(&self, s: u32, e: u8, may: impl Fn(&Self, u32) -> bool) -> Option<(u32, usize, usize, usize)> {
         let (f, i) = (self.face(e), self.lane(e));
         let t = self.nb(s, f);
-        if !self.inside(t) { return false; }
+        if !may(self, t) { return None; }
         let mt = self.mate_of(t, self.se(f ^ 1, i));
-        if !self.is_strand(mt) || self.face(mt) != (f ^ 1) { return false; }
+        if !self.is_strand(mt) || self.face(mt) != (f ^ 1) { return None; }
         let j = self.lane(mt);
+        if self.mate_of(s, self.se(f, i)) == self.se(f, j) { return None; }
+        Some((t, f, i, j))
+    }
+
+    /// A wire leaving s on face f lane i and coming straight back on lane j snaps shut.
+    fn fold(&mut self, s: u32, e: u8) -> bool {
+        let Some((t, f, i, j)) = self.fold_at(s, e, Self::inside) else { return false };
         let (a, b) = (self.mate_of(s, self.se(f, i)), self.mate_of(s, self.se(f, j)));
-        if a == self.se(f, j) { return false; }
         for x in [self.se(f, i), self.se(f, j)] { self.set(s, x, NONE); }
         for x in [self.se(f ^ 1, i), self.se(f ^ 1, j)] { self.set(t, x, NONE); }
         self.link(s, a, b);
@@ -1492,29 +1548,44 @@ impl Lattice {
         true
     }
 
-    /// A wire turning a corner at s (in on face f1, out on face f2, perpendicular) moves to
-    /// the opposite corner of the 2×2 square.
-    fn flip(&mut self, s: u32, e: u8) -> bool {
+    /// The square a flip at s from strand end e would turn the wire's corner across: the corner's
+    /// faces and lanes (in on f1 lane i, out on f2 lane j), its other three sites x (across f1),
+    /// z (across f2) and w, and the free lanes c (x to w) and d (w to z) the corner moves to.
+    fn corner(&self, s: u32, e: u8, may: impl Fn(&Self, u32) -> bool) -> Option<Corner> {
         let m = self.mate_of(s, e);
-        if !self.is_strand(m) { return false; }
+        if !self.is_strand(m) { return None; }
         let (f1, i, f2, j) = (self.face(e), self.lane(e), self.face(m), self.lane(m));
-        if f1 / 2 == f2 / 2 { return false; }
+        if f1 / 2 == f2 / 2 { return None; }
         let (x, z) = (self.nb(s, f1), self.nb(s, f2));
-        if x == u32::MAX || z == u32::MAX { return false; }
+        if x == u32::MAX || z == u32::MAX { return None; }
         let w = self.nb(x, f2);
-        if w == u32::MAX || w != self.nb(z, f1) { return false; }
-        if !self.inside(x) || !self.inside(z) || !self.inside(w) { return false; }
-        let Some(c) = self.free_lanes(x, f2, 1) else { return false };
+        if w == u32::MAX || w != self.nb(z, f1) { return None; }
+        if !may(self, x) || !may(self, z) || !may(self, w) { return None; }
+        let c = self.free_lanes(x, f2, 1)?[0];
         // W is X + f2 = Z + f1, so the step from W to Z is -f1.
-        let Some(d) = self.free_lanes(w, f1 ^ 1, 1) else { return false };
-        let (c, d) = (c[0], d[0]);
-        if !self.room(w, 1) { return false; }
-        // The corner's two strands move from links s–x and s–z to x–w and w–z.
-        let de = 2 * self.e.link * ((self.used_lanes(x, f2) + self.used_lanes(w, f1 ^ 1)) as i32
-            - (self.used_lanes(s, f1) + self.used_lanes(s, f2)) as i32 + 2)
-            + 2 * self.e.board * (self.pairs(w) as i32 - self.pairs(s) as i32 + 1)
-            + if self.fields.on { self.field_flip_de(s, self.pairs(s) as i32, w, self.pairs(w) as i32) } else { 0 };
-        if !self.accept(de) { return false; }
+        let d = self.free_lanes(w, f1 ^ 1, 1)?[0];
+        Some(Corner { f1, i, f2, j, x, z, w, c, d })
+    }
+
+    /// The energy change of turning a corner: its two strands move from links s–x and s–z to x–w
+    /// and w–z.
+    fn flip_de(&self, s: u32, k: &Corner) -> i32 {
+        2 * self.e.link * ((self.used_lanes(k.x, k.f2) + self.used_lanes(k.w, k.f1 ^ 1)) as i32
+            - (self.used_lanes(s, k.f1) + self.used_lanes(s, k.f2)) as i32 + 2)
+            + 2 * self.e.board * (self.pairs(k.w) as i32 - self.pairs(s) as i32 + 1)
+            + if self.fields.on { self.field_flip_de(s, self.pairs(s) as i32, k.w, self.pairs(k.w) as i32) } else { 0 }
+    }
+
+    /// A wire turning a corner at s (in on face f1, out on face f2, perpendicular) moves to
+    /// the opposite corner of the 2×2 square. With `cut`, a turn that leaves U-turns (`cuts`) is
+    /// made whatever its energy and they fold at once, from w.
+    fn flip(&mut self, s: u32, e: u8, cut: bool) -> bool {
+        let Some(k) = self.corner(s, e, Self::inside) else { return false };
+        if !self.room(k.w, 1) { return false; }
+        let cut = cut && self.cuts(&k) > 0;
+        if !cut && !self.accept(self.flip_de(s, &k)) { return false; }
+        let Corner { f1, i, f2, j, x, z, w, c, d } = k;
+        let m = self.mate_of(s, e);
         let a = self.mate_of(x, self.se(f1 ^ 1, i));
         let g = self.mate_of(z, self.se(f2 ^ 1, j));
         self.set(s, e, NONE);
@@ -1528,7 +1599,67 @@ impl Lattice {
         self.note([EV_FLIP, s, w, 0, 0, 0, 0, 0]);
         self.last_op = "flip";
         for y in [s, x, z, w] { self.refresh(y); }
+        if cut { for b in [self.se(f2 ^ 1, c), self.se(f1 ^ 1, d)] { if self.mate_of(w, b) != NONE { self.fold(w, b); } } }
         true
+    }
+
+    /// How many U-turns turning a corner leaves: at x when the wire came into x from w, at z when
+    /// it goes on from z to w.
+    fn cuts(&self, k: &Corner) -> usize {
+        let a = self.mate_of(k.x, self.se(k.f1 ^ 1, k.i));
+        let g = self.mate_of(k.z, self.se(k.f2 ^ 1, k.j));
+        (self.is_strand(a) && self.face(a) == k.f2) as usize + (self.is_strand(g) && self.face(g) == k.f1) as usize
+    }
+
+    /// A greedy turn while cooling (`Params::cool_greedy`). Of the moves site s can make inside its
+    /// block without looking at a site an earlier turn changed this clock (those a turn could
+    /// propose): a fold, or a flip that leaves U-turns to cut, else the step, exchange or flip that
+    /// lowers the energy most; or at level 2 any of these that lowers it, else any that leaves it
+    /// as it is. Ties go to the dice.
+    fn best_move(&mut self, s: u32) {
+        #[derive(Clone, Copy)]
+        enum Move { Fold(u8), Flip(u8), Step(usize, usize), Swap(usize, usize, usize) }
+        let free = |l: &Self, t: u32| t != u32::MAX && l.in_block(t) && !l.taken.contains(&t);
+        let any = self.p.cool_greedy >= 2;
+        let mut best = ((0, i32::MAX), vec![]);
+        let mut offer = |key: (i32, i32), m: Move| {
+            if key.0 == 0 && key.1 > if any { 0 } else { -1 } { return; }
+            let key = if any && key < (0, 0) { (-1, 0) } else { key };
+            if key < best.0 { best = (key, vec![m]); } else if key == best.0 { best.1.push(m); }
+        };
+        for k in 0..self.p.k {
+            if self.tag(s, k) == 0 { continue; }
+            for f in 0..self.faces {
+                let t = self.nb(s, f);
+                if !free(self, t) { continue; }
+                let pass = self.p.cool_pass && self.idle(s, k) && self.idle_at(t) > 0;
+                match self.free_slot(t).filter(|_| !pass) {
+                    Some(_) => {
+                        let Some((_, lanes, loops, de)) = self.step_plan(s, k, f) else { continue };
+                        if self.p.pairs == 0 || self.pairs(t) + lanes.len() + loops <= self.p.pairs { offer((0, de), Move::Step(k, f)); }
+                    }
+                    None => for kb in (0..self.p.k).filter(|&kb| self.tag(t, kb) != 0).collect::<Vec<_>>() {
+                        if let Some(de) = self.exchange(s, k, f, kb, true) { offer((0, de), Move::Swap(k, f, kb)); }
+                    },
+                }
+            }
+        }
+        for e in (ARITY * self.ks..self.ends).map(|e| e as u8) {
+            if self.mate_of(s, e) == NONE || !free(self, self.nb(s, self.face(e))) { continue; }
+            if self.fold_at(s, e, free).is_some() { offer((-1, -1), Move::Fold(e)); continue; }
+            let Some(k) = self.corner(s, e, free) else { continue };
+            if self.p.pairs != 0 && self.pairs(k.w) >= self.p.pairs { continue; }
+            let n = self.cuts(&k) as i32;
+            offer(if n > 0 { (-1, -n) } else { (0, self.flip_de(s, &k)) }, Move::Flip(e));
+        }
+        let moves = best.1;
+        if moves.is_empty() { return; }
+        match moves[self.cur.pick(Dice::METRO, 16, moves.len())] {
+            Move::Fold(e) => { self.fold(s, e); }
+            Move::Flip(e) => { self.flip(s, e, true); }
+            Move::Step(k, f) => { let k2 = self.free_slot(self.nb(s, f)).unwrap(); self.step_to(s, k, f, k2, false); }
+            Move::Swap(k, f, kb) => { self.exchange(s, k, f, kb, false); }
+        }
     }
 
     /// A consumer in site s whose principal meets a producer's principal, in s or across a
@@ -1886,7 +2017,8 @@ impl Lattice {
         self.cur = if self.p.margolus && self.p.block_moves { Dice(hash(self.key(s), self.tick())) } else { Dice(self.rand()) };
         if self.labels() && self.occ[s as usize] > 0 { self.relabel(s); }
         if self.p.gc && self.collect(s) || self.stale.get() { return; }
-        if self.p.active > 0.0 && self.cur.chance(Dice::ACTIVE, self.p.active) && self.active_turn(s) || self.stale.get() { return; }
+        let greedy = self.cooling.is_some() && self.p.cool_greedy > 0;
+        if !greedy && self.p.active > 0.0 && self.cur.chance(Dice::ACTIVE, self.p.active) && self.active_turn(s) || self.stale.get() { return; }
         if self.p.pressure != 0.0 {
             // Pressure fades, and arrives from neighbours one unit weaker.
             let from_nb = (0..self.faces).map(|f| self.nb(s, f)).filter(|&t| t != u32::MAX)
@@ -1906,6 +2038,7 @@ impl Lattice {
         }
         if self.stale.get() { return; }
         self.take_infect(s);
+        if greedy { self.best_move(s); return; }
         let d = self.cur;
         if d.chance(Dice::HOP, self.p.p_hop) && self.occ[s as usize] > 0 {
             let ks: Vec<usize> = (0..self.ks).filter(|&k| self.tag(s, k) != 0).collect();
@@ -1926,7 +2059,7 @@ impl Lattice {
                 .filter(|&e| self.mate_of(s, e) != NONE && self.in_block(self.nb(s, self.face(e)))).collect();
             if used.is_empty() { return; }
             let e = used[d.pick(Dice::WHERE, 5, used.len())];
-            if !self.fold(s, e) && !self.stale.get() { self.flip(s, e); }
+            if !self.fold(s, e) && !self.stale.get() { self.flip(s, e, self.cooling.is_some() && self.p.cool_cut); }
         }
     }
 
@@ -1934,7 +2067,7 @@ impl Lattice {
     /// holding matter picks one of its sites (preferring agents) and makes one move inside it,
     /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
-        if let Some((from, t0)) = self.cooling { self.set_temp(cooled(t0, self.stats.clocks - from)); }
+        if let Some((from, t0)) = self.cooling { self.set_temp(cooled(&self.p, t0, self.stats.clocks - from)); }
         if self.fields.on { self.update_fields(); }
         let b = self.p.block_side as u64;
         // Under a turn for every site, the offset and the order in each block are hashes of the

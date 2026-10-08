@@ -81,6 +81,31 @@ fn parts_kept_apart() {
     each_move_checked(&sets);
 }
 
+/// Cooling once only the answer is left (`Lattice::cool`), with turns as ever and greedy ones, every
+/// invariant re-checked after every clock: the answer and the projection stay exact.
+#[test]
+fn cooling_keeps_the_answer() {
+    let mut cooled = 0;
+    for (i, (t, want)) in corpus().iter().enumerate().step_by(8) {
+        for greedy in ["0", "1", "2"] {
+            let mut net = Net::new();
+            let root = net.build(t);
+            let (_, out) = net.drive(root);
+            let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..demand_and_fork(16, 4, &[("coolgreedy", greedy)]) }, net, out) else { continue };
+            assert!(l.run(50_000_000), "term {i} did not finish");
+            let mut marks = vec![];
+            for _ in 0..5000 { if l.garbage(&mut marks) == 0 { break; } let next = l.stats.proposals + 1; l.run_on(next); }
+            l.cool();
+            l.check_every = 1;
+            for _ in 0..200 { let next = l.stats.proposals + 1; l.run_on(next); }
+            assert_eq!(l.readback().map(|t| oracle::show(&t)).as_deref(), Some(want.as_str()), "term {i}, coolgreedy={greedy}: WRONG ANSWER");
+            l.check_projection().unwrap_or_else(|e| panic!("term {i}, coolgreedy={greedy}: {e}"));
+            cooled += 1;
+        }
+    }
+    assert!(cooled >= 30, "only {cooled} runs cooled");
+}
+
 /// The chip schedule with the demand field and forking S rules, and these settings (`Params::set`).
 fn demand_and_fork(w: u32, depth: u32, sets: &[(&str, &str)]) -> Params {
     let mut p = Params { w, h: w, depth, k: 2, lanes: 3, block: true, lazy: true, pulse: true, margolus: true, block_moves: true, gc: true,
