@@ -6,7 +6,8 @@ use rust_ca_lattice::oracle;
 use rust_ca_lattice::sup::{self, STerm};
 use rust_ic_mesh::term;
 
-struct State { l: Lattice, term: STerm, done: bool }
+/// `parts`: the reductions the input asked for, separated by `;` (`parse_all`), one term each.
+struct State { l: Lattice, term: STerm, parts: Vec<STerm>, done: bool }
 static mut STATE: Option<State> = None;
 static mut TEXT: Vec<u8> = Vec::new();
 static mut STATS: [f64; 24] = [0.0; 24];
@@ -41,6 +42,27 @@ fn parse(src: &str) -> Result<STerm, String> {
         return Ok((&rng.rand_term(depth.trim().parse().map_err(|_| "random:<seed>:<depth>")?)).into());
     }
     term::parse_sup(src)
+}
+
+/// Several reductions side by side, `a; b; c`, as one tuple `F(a, F(b, c))` under one root: the root's
+/// normalizer splits it into one normalizer a part at once, so the parts run in parallel, and their
+/// order stays the tuple's wherever the run goes (`Lattice::read_part` reads each). Returns the tuple
+/// and the parts.
+fn parse_all(src: &str) -> Result<(STerm, Vec<STerm>), String> {
+    let (mut parts, mut depth, mut from) = (vec![], 0i32, 0);
+    for (i, c) in src.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ';' if depth == 0 => { parts.push(&src[from..i]); from = i + 1; }
+            _ => {}
+        }
+    }
+    parts.push(&src[from..]);
+    let parts: Vec<STerm> = parts.into_iter().filter(|p| !p.trim().is_empty()).map(parse).collect::<Result<_, _>>()?;
+    let mut all = parts.last().ok_or("nothing to run")?.clone();
+    for p in parts.iter().rev().skip(1) { all = STerm::F(std::rc::Rc::new(p.clone()), std::rc::Rc::new(all)); }
+    Ok((all, parts))
 }
 
 /// An answer as the player shows it: as it is, or for a superposed input its universes over the
@@ -79,12 +101,12 @@ pub extern "C" fn strands_depth() -> u32 { next().depth }
 pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32 {
     std::panic::set_hook(Box::new(|info| { set_text(&format!("engine panic: {info}")); }));
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
-    let t = match parse(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
+    let (t, parts) = match parse_all(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
     let (net, out) = crate::share::net_sup(&t, p.share);
     match Lattice::load(p, net, out) {
-        Ok(l) => { unsafe { STATE = Some(State { l, term: t, done: false }); SAVED.clear(); } 0 }
+        Ok(l) => { unsafe { STATE = Some(State { l, term: t, parts, done: false }); SAVED.clear(); } 0 }
         Err(e) => { set_text(&e); 2 }
     }
 }
@@ -205,17 +227,34 @@ pub extern "C" fn strands_answer() -> u32 {
     match s.l.read_answer() { Some(a) => set_text(&sup::show(&collapsed(&s.term, &a))), None => set_text("") }
 }
 
+/// An answer as a benchmark number or list of numbers, each universe's for a superposed input.
+fn decode(t: &STerm) -> Option<String> {
+    if let STerm::Sup(l, a, b) = t { return Some(format!("&{l}{{{}, {}}}", decode(a)?, decode(b)?)); }
+    let t = t.plain()?;
+    term::read_nat(&t).map(|n| format!("{n}")).or_else(|| term::read_nat_list(&t).map(|xs| format!("{xs:?}")))
+}
+
 /// The answer as a benchmark number or list of numbers, each universe's for a superposed input.
 #[no_mangle]
 pub extern "C" fn strands_answer_decoded() -> u32 {
-    fn decode(t: &STerm) -> Option<String> {
-        if let STerm::Sup(l, a, b) = t { return Some(format!("&{l}{{{}, {}}}", decode(a)?, decode(b)?)); }
-        let t = t.plain()?;
-        term::read_nat(&t).map(|n| format!("{n}")).or_else(|| term::read_nat_list(&t).map(|xs| format!("{xs:?}")))
-    }
     let s = st();
     let Some(a) = s.l.read_answer() else { return set_text("") };
     set_text(&decode(&collapsed(&s.term, &a)).unwrap_or_default())
+}
+
+/// How many reductions the input asked for (`parse_all`).
+#[no_mangle]
+pub extern "C" fn strands_parts() -> u32 { st().parts.len() as u32 }
+
+/// Part i's answer once it is in, whatever the other parts are doing (else empty): as the engine
+/// prints trees, or with `decoded` as `strands_answer_decoded` gives it.
+#[no_mangle]
+pub extern "C" fn strands_part(i: u32, decoded: u32) -> u32 {
+    let s = st();
+    let Some(part) = s.parts.get(i as usize) else { return set_text("") };
+    let Some(a) = s.l.read_part(i as usize, s.parts.len()) else { return set_text("") };
+    let a = collapsed(part, &a);
+    set_text(&if decoded != 0 { decode(&a).unwrap_or_default() } else { sup::show(&a) })
 }
 
 /// The oracle's answer, universe by universe for a superposed input, collapsed as `strands_answer` is.
@@ -229,8 +268,8 @@ pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
-    match parse(src) {
-        Ok(t) => crate::share::net_sup(&t, next().share).0.agents.len() as i32,
+    match parse_all(src) {
+        Ok((t, _)) => crate::share::net_sup(&t, next().share).0.agents.len() as i32,
         Err(e) => { set_text(&e); -1 }
     }
 }

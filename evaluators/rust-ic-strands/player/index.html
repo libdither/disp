@@ -16,7 +16,7 @@
   .ico.stroke { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
   /* what the run says: top left, over the lattice */
   #hud { position:absolute; z-index:4; top:10px; left:14px; max-width:min(70%, 760px); pointer-events:none; }
-  #decoded { font-size:18px; color:var(--hot); word-break:break-word; }
+  #decoded { font-size:18px; color:var(--hot); word-break:break-word; } #decoded .at { font-size:12px; color:var(--fg-muted); }
   #badge { font-size:11.5px; color:var(--fg-muted); } #badge.ok { color:var(--ok); } #badge.bad { color:var(--warn); }
   #verdict { font-size:11px; color:var(--fg-faint); }
   #banner { position:absolute; z-index:6; top:12px; left:50%; transform:translateX(-50%); max-width:60%; padding:5px 12px; border-radius:9px;
@@ -490,9 +490,13 @@ function decodeAs(kind, t) {
 let entries = [], picked = -1;
 /// Benchmark sizes to offer where the engine's own (`n`) would take minutes.
 const SIZE = { fib: 1, exp: 1, sort: 1 };
-const DEFAULT = DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
+/// Unary addition against the binary relay adder (programs.disp), side by side on one lattice.
+const SIDE_BY_SIDE = "add 20 22; relay_add 20 22";
+const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
 function populate() {
   entries = [...DISP.map(p => ({ group: "disp programs", name: p.name, text: `${p.name} ${p.example}`, desc: p.desc, prog: p })),
+    ...(DISP.some(p => p.name === "relay_add") ? [{ group: "side by side (a; b)", name: "add; relay_add", text: SIDE_BY_SIDE,
+      desc: "unary and binary addition at once, each its own reduction", both: true }] : []),
     ...catalog.workloads.map(w => ({ group: "benchmarks (binary numbers)", name: w.name, text: w.n > 0 ? `${w.name}:${SIZE[w.name] ?? w.n}` : w.name, desc: w.desc, work: w })),
     { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" }];
   let group = "";
@@ -507,6 +511,9 @@ function populate() {
     + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, and its shape what kind it is; values stay grey, tinted toward their part</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
+  // The side-by-side example is a race of 10k against 75k clocks: it opens at full speed.
+  const speed = q.get("speed") ?? ($("src").value === SIDE_BY_SIDE ? 100 : null);
+  if (speed !== null) $("speed").value = speed;
   if (q.get("view")) viewMode = q.get("view");
   SETTINGS = (q.get("set") ?? "").split(",").filter(Boolean);
   syncUI();
@@ -519,6 +526,8 @@ function oldLink(q) {
 /// The entry the text calls: a benchmark as `name:n` or bare `name`, else the disp program its first
 /// word names, else while that word is being typed, the first entry it begins.
 function matchEntry(input) {
+  const exact = entries.findIndex(e => e.both && e.text === input.trim());
+  if (exact >= 0) return exact;
   const word = input.match(/^\s*([\w-]+)/)?.[1], rest = word ? input.trim().slice(word.length) : "";
   if (!word) return -1;
   const is = f => entries.findIndex(f);
@@ -531,7 +540,10 @@ function matchEntry(input) {
 function syncUI() {
   const input = $("src").value.trim(), i = matchEntry(input), e = entries[i];
   showPicked(i);
-  $("progInfo").innerHTML = e?.prog ? `<b>${e.name}</b>: ${e.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude.`
+  $("progInfo").innerHTML = splitParts(input).length > 1
+    ? "Several reductions side by side, separated by <i>;</i>: each part is read on its own (disp code, a benchmark or a term) and"
+      + " they run at once on one lattice, as a tuple under one root whose normalizer splits it into one a part. Each answer is shown as it comes in, with its clock."
+    : e?.prog ? `<b>${e.name}</b>: ${e.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude.`
       + ` Type any disp expression: arguments as literals (numbers, [lists], "strings") or calls of their own, like <i>${e.name} (add 1 1)</i>.`
     : e?.work ? `<b>${e.name}</b>: ${e.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
       + (e.work.n > 0 ? ` <i>${e.name}:n</i> sets n.` : "")
@@ -550,6 +562,7 @@ function showPicked(i) {
 /// Fill the input box with entry i, its argument selected for typing over.
 function choose(i) {
   const fill = entries[i].text, at = fill.search(/[\s:]/);
+  if (entries[i].both) { $("speed").value = 100; speedLabel(); }
   $("src").value = fill; syncUI();
   $("src").focus(); if (at > 0) $("src").setSelectionRange(at + 1, fill.length);
 }
@@ -584,12 +597,35 @@ async function compile(input) {
   compiled.set(input, p);
   return p;
 }
+/// The parts of `a; b; c`: split at each `;` outside brackets and strings.
+function splitParts(input) {
+  const parts = [];
+  let depth = 0, from = 0, quote = false;
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i];
+    if (quote) { if (c === "\\") i++; else if (c === '"') quote = false; }
+    else if (c === '"') quote = true;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === ";" && depth === 0) { parts.push(input.slice(from, i)); from = i + 1; }
+  }
+  parts.push(input.slice(from));
+  return parts.map(x => x.trim()).filter(Boolean);
+}
 let loads = 0;
 /// Load what the input box says, compiling it first if it needs that; `play` starts it once loaded.
+/// Several parts (`a; b`) are each planned or compiled on their own and go to the engine as one
+/// input, which runs them side by side (wasm.rs `parse_all`).
 async function load(play) {
-  const input = $("src").value.trim() || DEFAULT, seq = ++loads;
+  const input = $("src").value.trim() || DEFAULT, seq = ++loads, pieces = splitParts(input);
   let p;
-  try { p = plan(input) ?? await compile(input); }
+  try {
+    if (pieces.length > 1) {
+      const ps = [];
+      for (const piece of pieces) ps.push(plan(piece) ?? await compile(piece));
+      p = { src: ps.map(q => q.src).join(" ; "), call: input, parts: ps.map((q, i) => ({ kind: q.kind, call: q.call ?? pieces[i] })) };
+    } else p = plan(input) ?? await compile(input);
+  }
   catch (err) {
     if (seq !== loads) return;
     banner(String(err.message ?? err), true);
@@ -620,7 +656,7 @@ function start(p, input) {
   if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); gpuEstimate(); }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
   L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
-  running = p.call ? { kind: p.kind, call: p.call } : null;
+  running = p.parts ? { call: p.call, parts: p.parts, at: p.parts.map(() => null) } : p.call ? { kind: p.kind, call: p.call } : null;
   finished = false; cleaned = false; cleanSeen = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   tlReset();
   refreshGarbage(true); layoutLayers();
@@ -1863,6 +1899,7 @@ function cpuRun() {
       // stretch the GPU saw the garbage go in, a clock at a time, to see the answer as it comes.
       const fin = cleanSeen ? tlClocks(1) : T.coolAt !== null ? tlClocks(Math.max(1, Math.round(chunk / Math.max(1, E.live_len())))) : E.strands_run(chunk);
       if (fin === 1) { finished = true; answerClock = clockNow(); afterAnswer(); }
+      partsCheck();
     }
     else if (!cleaned) { tlClocks(1); afterAnswer(); }
     else { tlClocks(1); settleCheck(); }
@@ -1872,6 +1909,7 @@ function cpuRun() {
 // rewrite's ring lasts about four clocks of the run as shown, at most 600 ms, so running fast it is
 // gone in a frame or two; however many fire at once, together they are about as bright as a dozen.
 function afterRun() {
+  partsCheck();
   const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now(), r = rate();
   const life = Math.max(60, Math.min(600, r ? 4000 / r : 600)), room = 200 - bursts.length, every = Math.max(1, Math.ceil(fl.length / Math.max(1, room)));
   for (let i = 0; i < fl.length && bursts.length < 200; i += every) bursts.push({ s: fl[i], t: now, life });
@@ -2036,9 +2074,33 @@ function stepOnce(toRewrite) {
   } while ((toRewrite ? !story.some(changesNet) : !story.length) && performance.now() - t0 < 3000);
   if (finished) afterAnswer();
   E.fire_log_clear();
-  tlNote(); refreshGarbage(true); showStory(); panel(true); V3.dirty = true;
+  partsCheck(); tlNote(); refreshGarbage(true); showStory(); panel(true); V3.dirty = true;
 }
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
+/// With several reductions side by side, the clock each part's answer came in at (to the clocks a
+/// chunk or a GPU stretch runs), forgotten when the run goes back before it.
+function partsCheck() {
+  if (!running?.parts || !L) return;
+  const c = E.strands_now(0);
+  running.parts.forEach((_, i) => {
+    if (running.at[i] !== null && c < running.at[i]) running.at[i] = null;
+    if (running.at[i] === null && E.strands_part(i, 0)) running.at[i] = c;
+  });
+}
+/// A line for each part: its call, its answer once in (decoded by its kind) and the clock it came in at.
+function partsHTML() {
+  const done = running.at.filter(a => a !== null), first = done.length > 1 ? Math.min(...done) : null;
+  return running.parts.map((q, i) => {
+    const at = running.at[i];
+    let val = "…";
+    if (at !== null) {
+      const raw = text(E.strands_part(i, 0)), dec = q.kind ? "" : text(E.strands_part(i, 1));
+      val = q.kind ? decodeAs(q.kind, parseTree(raw)) : dec || decodeAs(undefined, parseTree(raw));
+    }
+    const when = at === null ? "" : ` <span class="at">· in at ${fmt(at)} clocks${at === first ? ", first" : ""}</span>`;
+    return `<div>${esc(q.call)} = ${esc(val)}${when}</div>`;
+  }).join("");
+}
 let lastPanel = 0;
 function panel(force) {
   if (!L) return;
@@ -2054,7 +2116,12 @@ function panel(force) {
   $("sPulse").textContent = fmt(st[14]); $("sExtent").textContent = fmt(st[15]); $("sGc").textContent = fmt(st[16]);
   chart();
   const badge = $("badge"), work = `${fmt(st[2])} rewrites` + (r ? ` · ${fmt(r)} clocks/s` : "") + (onGpu ? " on the GPU" : "");
-  if (!finished) { badge.className = ""; badge.textContent = `${playing ? "running" : "paused"} · ${work}`; $("decoded").textContent = running ? `${running.call} = …` : ""; $("answer").textContent = ""; $("verdict").textContent = ""; return; }
+  partsCheck();
+  if (!finished) {
+    badge.className = ""; badge.textContent = `${playing ? "running" : "paused"} · ${work}`;
+    if (running?.parts) $("decoded").innerHTML = partsHTML(); else $("decoded").textContent = running ? `${running.call} = …` : "";
+    $("answer").textContent = ""; $("verdict").textContent = ""; return;
+  }
   const ans = text(E.strands_answer());
   if (oracleText === null) oracleText = text(E.strands_oracle(200000));
   const ok = oracleText === "" ? null : ans === oracleText;
@@ -2063,7 +2130,8 @@ function panel(force) {
     ? (garbageCount ? `answer in ${fmt(answerClock)} clocks · ${garbageCount} garbage left`
       : settled ? `done in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}` : `answer at ${fmt(answerClock)} clocks · contracting (temperature ${E.strands_temp().toFixed(2)})`)
     : `answer in at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
-  if (running) { $("decoded").textContent = ans ? `${running.call} = ${decodeAs(running.kind, parseTree(ans))}` : ""; }
+  if (running?.parts) $("decoded").innerHTML = partsHTML();
+  else if (running) { $("decoded").textContent = ans ? `${running.call} = ${decodeAs(running.kind, parseTree(ans))}` : ""; }
   else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
   $("answer").textContent = ans;
   $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)

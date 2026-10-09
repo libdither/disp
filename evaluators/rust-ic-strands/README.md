@@ -26,8 +26,10 @@ rules, below), with the field drawn as an amber tint and called values ringed in
   fainter each is, so a fast run is not buried in rings.
 - **Programs:** one input box takes ordinary disp code (`fib 2`, `add 2 (mul 2 2)`,
   `map [1, 2] succ`, `relay_add 13 6`, where a program on binary numbers reads 13 and 6 as bit
-  trees), a benchmark program (`sort:1`) or a raw term. Its list (`▾` or `↓`) offers each program
-  with an example.
+  trees), a benchmark program (`sort:1`) or a raw term, and several of these separated by `;`,
+  which run side by side (Side by side, below). Its list (`▾` or `↓`) offers each program with an
+  example. With no link the player opens on `add 20 22; relay_add 20 22` at full speed; `speed=N`
+  in the link (0 to 100) sets the speed.
 - **Stepping:** `▸` or `→` runs on to the next clock where something happens, `⏭` or `shift →` to
   the next rewrite. The clock is summed up in a line over the input box (rewrites, steps, folds),
   told in words in the details, and drawn as a faint arrow for each agent that moved (the moves
@@ -873,6 +875,24 @@ npx tsx evaluators/rust-ic-strands/programs/bench.ts --data --kind bits --let 'r
 ```
 
 The tests run with `npx tsx src/run.ts evaluators/rust-ic-strands/programs/programs.disp`.
+
+## Side by side
+
+`a; b; c` in the input box runs each part as a reduction of its own, at once, on one lattice. The
+player reads each part on its own (disp code, a benchmark or a term) and the engine loads them as
+one tuple `F(a, F(b, c))` under one root (wasm.rs `parse_all`). The root's normalizer meets a fork
+first, so it splits at once into a normalizer for each part, and the parts run in parallel from
+there. A tuple rather than a root for each part keeps their order fixed by the tree's shape wherever
+the run goes, so a GPU stretch, which renumbers every agent, going back, cleaning up and the oracle's
+check all work as for one term. `Lattice::read_part` reads a part's answer as soon as it is a value,
+whatever the others are doing, and the player shows a line for each part with the clock its answer
+came in at (to within a chunk or a GPU stretch). Segments colour each part on its own: a fork whose
+two halves both hold applications splits its colour as an application does (`net.js`).
+
+The default, `add 20 22; relay_add 20 22` (player-sized lattice, seed 7): relay is in after 9.9k
+clocks and unary add after 74.9k. Alone (`bench.ts`, 2 seeds) they take 10.5k and 75.7k, so neither
+slows the other: there is room, and each normalizer only wants its own part. `tests/parts.rs` checks
+three parts against the oracle and that the small ones are in well before the big one.
 
 ## Superpositions
 

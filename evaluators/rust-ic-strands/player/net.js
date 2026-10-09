@@ -5,7 +5,8 @@
 // Segments: the term the root computes (or each pick's, if anything is picked) is a tree of
 // applications. At every application (an apply or a suspension, f x; a triage or a dispatch, t a b c;
 // the arms of a choice) the function and each argument become segments of their own, and so on down
-// through nested applications; values, sharing and the rest stay in the segment they are in. A
+// through nested applications, and so do the two halves of a fork that both hold applications (the
+// parts of `a; b`, or a list of calls); values, sharing and the rest stay in the segment they are in. A
 // segment's hue is the middle of its share of the hue circle, shared out among the parts of each
 // application by how many applications each holds, so nested segments take hues near their parent's;
 // its lightness alternates with how deep it is nested, so a part stands out from the whole around it.
@@ -86,7 +87,7 @@ function segment() {
   share(roots.filter(i => parent[i] === -1), 0, 1, 0, -1);
   for (const i of order) {
     const kids = kidsOf.get(i) ?? [];
-    if (SPLITS[NET.tag[i]]) share(kids, lo[i], hi[i], segs[seg[i]].depth + 1, seg[i]);
+    if (SPLITS[NET.tag[i]] || NET.tag[i] === 3 && kids.filter(c => weight[c] > 0).length > 1) share(kids, lo[i], hi[i], segs[seg[i]].depth + 1, seg[i]);
     else for (const c of kids) { lo[c] = lo[i]; hi[c] = hi[i]; seg[c] = seg[i]; }
   }
   for (const s of segs) {

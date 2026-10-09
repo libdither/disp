@@ -969,6 +969,19 @@ impl Lattice {
 
     /// The answer once the root reads a value tree, superpositions included.
     pub fn read_answer(&self) -> Option<STerm> {
+        let (s, k) = self.answer_top()?;
+        self.value_at(s, k)
+    }
+
+    /// The agent the root reads, if it is a value.
+    fn answer_top(&self) -> Option<(u32, usize)> {
+        let (s, k) = self.find_out()?;
+        let (s2, k2, p2, _) = self.follow(s, self.ae(k, 0));
+        (p2 == 0).then_some((s2, k2))
+    }
+
+    /// The value tree output by agent k of s, once every agent in it is a value.
+    fn value_at(&self, s: u32, k: usize) -> Option<STerm> {
         use std::rc::Rc;
         fn go(l: &Lattice, s: u32, k: usize, depth: u32) -> Option<Rc<STerm>> {
             if depth > 100_000 { return None; }
@@ -983,10 +996,23 @@ impl Lattice {
                 _ => return None,
             }))
         }
-        let (s, k) = self.find_out()?;
-        let (s2, k2, p2, _) = self.follow(s, self.ae(k, 0));
-        if p2 != 0 { return None; }
-        go(self, s2, k2, 0).map(|t| (*t).clone())
+        go(self, s, k, 0).map(|t| (*t).clone())
+    }
+
+    /// Part i of n of an answer that is a tuple `F(a, F(b, c))` (several reductions under one root,
+    /// wasm.rs `parse`), once that part is a value tree, whatever the other parts still are.
+    pub fn read_part(&self, i: usize, n: usize) -> Option<STerm> {
+        let (mut s, mut k) = self.answer_top()?;
+        if n < 2 { return self.value_at(s, k); }
+        // Into input q of the fork at (s, k).
+        let into = |s: u32, k: usize, q: usize| {
+            if tag_of(self.tag(s, k)) != Tag::F { return None; }
+            let (s2, k2, p2, _) = self.follow(s, self.ae(k, q));
+            (p2 == 0).then_some((s2, k2))
+        };
+        for _ in 0..i { (s, k) = into(s, k, 2)?; }
+        if i < n - 1 { (s, k) = into(s, k, 1)?; }
+        self.value_at(s, k)
     }
 
     /// Whether the run is over: the answer is in, or (eager) nothing is left to do.
