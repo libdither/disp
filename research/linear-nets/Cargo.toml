@@ -1,0 +1,18 @@
+[package]
+name = "linear-nets"
+version = "0.0.0"
+edition = "2021"
+description = "EXPERIMENTAL (research/LINEAR_TREE_NETS.md): the tree-calculus net with movement agents and code kept in a read-only table"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+rust-ca-lattice = { path = "../../evaluators/rust-ca-lattice/crate" }
+rust-ic-mesh = { path = "../../evaluators/rust-ic-mesh/crate" }
+rust-ic-strands = { path = "../../evaluators/rust-ic-strands/crate" }
+
+[profile.release]
+opt-level = 3
+debug = false
