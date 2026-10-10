@@ -125,10 +125,11 @@ fn port_q(e: u32) -> u32 { return (e - 3u * port_k(e)) & 3u; }
 
 // ---- tags --------------------------------------------------------------------------------------
 fn is_consumer(t: u32) -> bool { return t >= T_A && t <= T_NRM; }
-fn is_producer(t: u32) -> bool { return t >= T_L && t <= T_PAIR; }
+/// Values, suspensions, pairs and the movement agents (lattice.rs `code`: 15 to 20).
+fn is_producer(t: u32) -> bool { return (t >= T_L && t <= T_PAIR) || (t >= T_K && t <= T_W); }
 fn arity(t: u32) -> u32 {
-  if (t == T_L || t == T_EPS || t == T_OUT) { return 1u; }
-  if (t == T_S || t == T_NRM) { return 2u; }
+  if (t == T_L || t == T_EPS || t == T_OUT || t == T_I) { return 1u; }
+  if (t == T_S || t == T_NRM || t == T_K || t == T_W) { return 2u; }
   return 3u;
 }
 /// Wanted from the start: the normalizer, the root and erasers.

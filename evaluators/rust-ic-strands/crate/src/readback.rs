@@ -8,7 +8,9 @@
 //! - a triage on `a` with arms `⟨b,c⟩` is `@(F(a,b),c)`, as `A·F` made it from `@(F(a,b),c)`;
 //! - a dispatch on `z` with arms `⟨w,⟨x,b⟩⟩` is `@(F(F(w,x),b),z)`, as `T1·F` made it;
 //! - an unpair's outputs are its pair's parts, and a normalizer's result is its input;
-//! - a duplicator's outputs are both its input, read once and shared.
+//! - a duplicator's outputs are both its input, read once and shared;
+//! - a movement agent is the tree it stands for: `K y` is `F(L,y)`, `Sx s b` is `F(S(s),b)`, `B f g`
+//!   is `F(S(F(L,f)),g)`, `C f g` is `F(S(f),F(L,g))`, `I` is `F(F(L,L),L)` and `W s` is `F(S(s),s)`.
 
 use crate::lattice::Lattice;
 use crate::polarity_is_source as is_source;
@@ -139,11 +141,27 @@ impl<'a> Reader<'a> {
                 self.pairs.insert(id, pair);
                 self.project(id, p)
             }
+            Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.view(id, a.tag, ports),
             Tag::Eps | Tag::Out => node(id, Kind::Cut),
         };
         self.depth -= 1;
         self.on_path[id as usize] = false;
         r
+    }
+
+    /// A movement agent as the tree it stands for, every node its own.
+    fn view(&mut self, id: u32, t: Tag, ports: [Option<Ref>; 3]) -> Rd {
+        let n = |k: Kind| node(id, k);
+        let k = |x: Rd| n(Kind::Fork(n(Kind::Leaf), x));
+        match t {
+            Tag::K => k(self.source(ports[1])),
+            Tag::Sx => { let s = self.source(ports[1]); n(Kind::Fork(n(Kind::Stem(s)), self.source(ports[2]))) }
+            Tag::B => { let f = self.source(ports[1]); n(Kind::Fork(n(Kind::Stem(k(f))), self.source(ports[2]))) }
+            Tag::C => { let f = self.source(ports[1]); n(Kind::Fork(n(Kind::Stem(f)), k(self.source(ports[2])))) }
+            Tag::I => n(Kind::Fork(k(n(Kind::Leaf)), n(Kind::Leaf))),
+            Tag::W => { let s = self.source(ports[1]); n(Kind::Fork(n(Kind::Stem(s.clone())), s)) }
+            _ => unreachable!("not a movement agent"),
+        }
     }
 
     fn project(&self, unp: u32, p: u8) -> Rd {

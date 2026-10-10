@@ -4,7 +4,11 @@
 // their principal port; applications are disks, a suspended one hollow; choices (triage and its
 // second dispatch) are diamonds; the pair a choice carries is a pill, and the unpair a pill split in
 // two; a duplicator is a Y, an eraser a ×, a normalizer a hexagon; the root is a ring around a dot;
-// a superposition (one value standing for two) is two triangles overlapping.
+// a superposition (one value standing for two) is two triangles overlapping. A movement agent (loaded
+// code that acts when applied, `set=views=1`) is drawn as what it does, upright: B an arrow to the
+// right and C one to the left (they move the argument that way), I a short bar (it becomes a wire),
+// K a triangle crossed by an eraser's × (it keeps its value and erases the argument), Sx a fork (it
+// copies the argument to both sides) and W a fork of four prongs (it copies a result it works out once).
 
 /// A regular polygon [x0, y0, x1, y1, …] of n corners at radius r, the first at angle `from` (degrees, clockwise from east).
 const ngon = (n, r, from) => Array.from({ length: n }, (_, i) => [Math.cos((from + 360 * i / n) * Math.PI / 180) * r, Math.sin((from + 360 * i / n) * Math.PI / 180) * r]).flat();
@@ -23,7 +27,8 @@ const TRI = [0, -1.15, 0.98, 0.72, -0.98, 0.72], HALF = 0.13;
 /// Each kind's shape, by tag, in a circle of radius about 1 with its principal port on top (y grows
 /// downward, as on a canvas): `fill`, `cut` (holes, seen through) and `mark` (holes drawn dark, so a
 /// wire under them does not show) list polygons [x0, y0, x1, y1, …] and circles [cx, cy, r].
-/// `turn`: in the graph view, turned so the principal port faces its wire.
+/// `turn`: in the graph view, turned so the principal port faces its wire. `ink`: marks drawn dark over
+/// the shape even in icons (they lie over two of its parts, which a hole would not cut through).
 const SHAPE = [];
 SHAPE[1] = { fill: [TRI], turn: true };
 SHAPE[2] = { fill: [TRI], mark: [[0, 0.24, 0.3]], turn: true };
@@ -38,8 +43,18 @@ SHAPE[10] = { fill: [arms([-90, 30, 150], 1.12, 0.27)], turn: true };
 SHAPE[11] = { fill: [arms([45, 135, 225, 315], 1.02, 0.24)] };
 SHAPE[12] = { fill: [ngon(6, 1, -90)] };
 SHAPE[13] = { fill: [[0, 0, 1.12], [0, 0, 0.44]], cut: [[0, 0, 0.8]] };
+/// A polygon shrunk by k toward (0, cy).
+const shrink = (p, k, cy = 0) => p.map((v, i) => i % 2 ? (v - cy) * k + cy : v * k);
 // A superposition: one value standing for two, as two triangles overlapping, the overlap cut out.
 SHAPE[14] = { fill: [[-1.05, 0.72, -0.4, -1.15, 0, -0.4, 0.4, -1.15, 1.05, 0.72]], cut: [[0, 0.02, 0.36, 0.56, -0.36, 0.56]], turn: true };
+// Movement agents (lattice.rs `code` 15 to 20: K, Sx, B, C, I, W), upright in every view.
+SHAPE[15] = { fill: [shrink(TRI, 0.9), arms([45, 135, 225, 315], 1.14, 0.17)], mark: [arms([45, 135, 225, 315], 0.62, 0.11)], ink: true };
+SHAPE[16] = { fill: [[-0.14, -1.1, 0.14, -1.1, 0.14, -0.3, 0.8, -0.3, 0.8, 1, 0.5, 1, 0.5, 0, -0.5, 0, -0.5, 1, -0.8, 1, -0.8, -0.3, -0.14, -0.3]] };
+SHAPE[17] = { fill: [[-1.02, -0.3, 0.1, -0.3, 0.1, -0.82, 1.08, 0, 0.1, 0.82, 0.1, 0.3, -1.02, 0.3]] };
+SHAPE[18] = { fill: [SHAPE[17].fill[0].map((v, i) => i % 2 ? v : -v)] };
+SHAPE[19] = { fill: [[...arcPts(0.62, 0, 0.27, -90, 90, 6), ...arcPts(-0.62, 0, 0.27, 90, 270, 6)]] };
+SHAPE[20] = { fill: [[-0.12, -1.1, 0.12, -1.1, 0.12, -0.32, 0.98, -0.32, 0.98, 1, 0.76, 1, 0.76, -0.1, 0.43, -0.1, 0.43, 1, 0.21, 1, 0.21, -0.1,
+  -0.21, -0.1, -0.21, 1, -0.43, 1, -0.43, -0.1, -0.76, -0.1, -0.76, 1, -0.98, 1, -0.98, -0.32, -0.12, -0.32]] };
 /// A kind with no shape of its own yet.
 const SHAPE_ANY = { fill: [[0, 0, 0.9]] };
 /// The spark on a wire joining two agents about to rewrite (graph.js).
@@ -65,7 +80,7 @@ const RIMS = 64;
 for (const sh of [...SHAPE, SHAPE_ANY]) {
   if (!sh) continue;
   sh.fill = sh.fill.map(p => wind(p, false)); sh.cut = (sh.cut ?? []).map(p => wind(p, true));
-  sh.markCut = (sh.mark ?? []).map(p => wind(p, true)); sh.mark = (sh.mark ?? []).map(p => wind(p, false));
+  sh.markCut = sh.ink ? [] : (sh.mark ?? []).map(p => wind(p, true)); sh.mark = (sh.mark ?? []).map(p => wind(p, false));
   sh.rim = Float32Array.from({ length: RIMS }, (_, k) => {
     const a = 2 * Math.PI * k / RIMS;
     let t = 1.4; while (t > 0 && !sh.fill.some(p => insidePart(p, t * Math.cos(a), t * Math.sin(a)))) t -= 0.02;
@@ -107,7 +122,8 @@ function shapeSVG(t, colour, px = 15) {
     ? `M${f(p[0] + p[2])} ${f(p[1])}A${f(p[2])} ${f(p[2])} 0 1 ${hole ? 0 : 1} ${f(p[0] - p[2])} ${f(p[1])}A${f(p[2])} ${f(p[2])} 0 1 ${hole ? 0 : 1} ${f(p[0] + p[2])} ${f(p[1])}Z`
     : `M${p.map(f).join(" ").replace(/^(\S+ \S+) /, "$1L")}Z`;
   const d = sh.fill.map(p => part(p, false)).join("") + [...sh.cut, ...sh.markCut].map(p => part(p, true)).join("");
-  return `<svg class="kind" width="${px}" height="${px}" viewBox="-1.32 -1.32 2.64 2.64" aria-hidden="true"><path d="${d}" fill="${colour}"/></svg>`;
+  const ink = sh.ink ? `<path d="${sh.mark.map(p => part(p, false)).join("")}" fill="#0b0e14"/>` : "";
+  return `<svg class="kind" width="${px}" height="${px}" viewBox="-1.32 -1.32 2.64 2.64" aria-hidden="true"><path d="${d}" fill="${colour}"/>${ink}</svg>`;
 }
 
 /// Each kind's solid for the 3D view (three.js as T), about 1 across with its principal port on top
@@ -147,6 +163,12 @@ function shapeSolid(T, t) {
     case 12: g = flat(new T.CylinderGeometry(0.95, 0.95, 1.1, 6)); break;
     case 13: g = merge(new T.TorusGeometry(1.0, 0.2, 8, 28), new T.SphereGeometry(0.46, 12, 8)); face = true; break;
     case 14: g = merge(at(pyramid(0.78), -0.42, 0), at(pyramid(0.78), 0.42, 0)); break;
+    case 15: case 16: case 17: case 18: case 19: case 20: {
+      // A movement agent: its flat shape, cut out of a slab facing the viewer.
+      const slab = p => { const sh = new T.Shape(); for (let i = 0; i < p.length; i += 2) sh[i ? "lineTo" : "moveTo"](p[i] * 1.15, -p[i + 1] * 1.15);
+        return flat(new T.ExtrudeGeometry(sh, { depth: 0.45, bevelEnabled: false }).translate(0, 0, -0.225)); };
+      g = merge(...SHAPE[t].fill.map(slab)); face = true; break;
+    }
     default: g = new T.SphereGeometry(0.9, 12, 8);
   }
   g.computeBoundingSphere();

@@ -1,8 +1,11 @@
 //! Benchmark runs for `programs/bench.ts`: each line `name|term` (or `name|fib:2`) of a file runs to the answer on the
 //! current design (`latest`) on a lattice sized as the player sizes it, one JSON line a seed:
-//! side, agents at load, clocks, rewrites, peak strands and sites, wall time, the answer in ternary.
+//! side, agents at load (and how many are movement agents, `views=1`), clocks, rewrites, peak strands
+//! and sites, wall and CPU time, the share of rewrites whose two agents one rewrite made, the answer
+//! in ternary.
 //!   strands-bench <file> [--seeds N | --seed S] [--clocks MAX] [--rules] [--ideal] [key=value ...]
-//! `--rules` also counts the rewrites by consumer (Dn copies, Eps erases, …). `--ideal` runs the
+//! `--rules` also counts the rewrites by consumer (Dn copies, Eps erases, …) and by rule, and those
+//! whose two agents one rewrite made by rule. `--ideal` runs the
 //! idealised lazy machine instead (memo.rs: no lattice, every wanted rewrite at once): its work
 //! (rewrites and collections) and depth (rounds), in no time.
 
@@ -22,6 +25,14 @@ fn ternary(t: &STerm, out: &mut String) {
             _ => { out.push('?'); }
         }
     }
+}
+
+/// CPU seconds this process has used (user and system), from /proc; 0 where there is none.
+fn cpu() -> f64 {
+    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else { return 0.0 };
+    // Fields after the command's closing parenthesis: utime and stime are the 12th and 13th.
+    let f: Vec<&str> = stat.rsplit_once(')').map_or("", |x| x.1).split_whitespace().collect();
+    (f.get(11).and_then(|x| x.parse::<f64>().ok()).unwrap_or(0.0) + f.get(12).and_then(|x| x.parse::<f64>().ok()).unwrap_or(0.0)) / 100.0
 }
 
 fn main() {
@@ -46,13 +57,15 @@ fn main() {
             Some((w, arg)) if term::workload_sup(w, arg).is_some() => term::workload_sup(w, arg).unwrap(),
             _ => term::parse_sup(src),
         }.unwrap_or_else(|e| panic!("{name}: {e}"));
+        let mut p0 = latest();
+        for kv in &sets { let (k, v) = kv.split_once('=').unwrap(); p0.set(k, v).unwrap_or_else(|e| panic!("{e}")); }
         if ideal {
             // The idealised lazy machine (memo.rs): demand at once, every wanted rewrite at once.
             use rust_ca_lattice::rules::Tag;
-            let (mut net, _) = rust_ic_strands::share::net_sup(&t, 0);
+            let (mut net, _) = rust_ic_strands::share::net_for(&t, &Params { share: 0, ..p0 }).unwrap_or_else(|e| panic!("{name}: {e}"));
             let agents = net.live_count();
             let mut want: Vec<bool> = net.agents.iter().map(|a| matches!(a, Some(a) if matches!(a.tag, Tag::Nrm | Tag::Out | Tag::Eps))).collect();
-            let r = rust_ic_strands::lattice::memo::ideal_depth(&mut net, &mut want, latest().fork, 10_000_000);
+            let r = rust_ic_strands::lattice::memo::ideal_depth(&mut net, &mut want, p0.fork, 10_000_000);
             let mut answer = String::new();
             let o = net.agents.iter().position(|a| matches!(a, Some(a) if a.tag == Tag::Out)).unwrap() as u32;
             if let Some(a) = net.readback(net.get(o).ports[0]) { ternary(&(&a).into(), &mut answer); }
@@ -61,35 +74,42 @@ fn main() {
             continue;
         }
         for &seed in &seeds {
-            let mut p = Params { seed, ..latest() };
-            for kv in &sets { let (k, v) = kv.split_once('=').unwrap(); p.set(k, v).unwrap_or_else(|e| panic!("{e}")); }
+            let p = Params { seed, share: 0, ..p0 };
             // As the player: side ⌈√agents · 7⌉ + 16 (8 for one layer), ×1.4 until the drawing fits.
-            let agents = rust_ic_strands::share::net_sup(&t, 0).0.live_count();
+            let built = || rust_ic_strands::share::net_for(&t, &p).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let (agents, views) = { let n = built().0; (n.live_count(), n.agents.iter().flatten().filter(|a| a.tag.is_view()).count()) };
             let mut side = ((agents as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16;
             let mut l = None;
             for _ in 0..6 {
-                let (net, out) = rust_ic_strands::share::net_sup(&t, 0);
-                match Lattice::load(Params { w: side, h: side, ..p.clone() }, net, out) {
+                let (net, out) = built();
+                match Lattice::load(Params { w: side, h: side, ..p }, net, out) {
                     Ok(x) => { l = Some(x); break; }
                     Err(_) => side = (side as f64 * 1.4).ceil() as u32,
                 }
             }
             let Some(mut l) = l else { println!("{{\"name\":\"{name}\",\"seed\":{seed},\"error\":\"does not fit\"}}"); continue };
             if by_rule { l.trace_start(); }
-            let t0 = std::time::Instant::now();
+            let (t0, c0) = (std::time::Instant::now(), cpu());
             while !l.answered() && l.stats.clocks < max_clocks {
                 let next = l.stats.proposals + 20 * l.live().len().max(1) as u64;
                 l.run(next);
             }
-            let wall = t0.elapsed().as_secs_f64();
+            let (wall, cpu_s) = (t0.elapsed().as_secs_f64(), cpu() - c0);
             let mut answer = String::new();
             if let Some(a) = l.read_answer() { ternary(&a, &mut answer); }
             let s = &l.stats;
-            let mut counts = std::collections::BTreeMap::new();
-            for f in &l.trace.fires { *counts.entry(rule(f.1).consumer.name()).or_insert(0u64) += 1; }
-            let rules = counts.iter().map(|(k, n)| format!("\"{k}\":{n}")).collect::<Vec<_>>().join(",");
-            println!("{{\"name\":\"{name}\",\"seed\":{seed},\"side\":{side},\"agents\":{agents},\"done\":{},\"clocks\":{:.0},\"rewrites\":{},\"collected\":{},\"peak_strands\":{},\"peak_sites\":{},\"wall\":{wall:.3},\"rules\":{{{rules}}},\"answer\":\"{answer}\"}}",
-                !answer.is_empty(), s.clocks, s.fires, s.collected, s.peak_strands, s.peak_live);
+            let (mut counts, mut fired, mut together) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::new(), std::collections::BTreeMap::new());
+            let born = |id: u32| l.born.get(id as usize).copied().unwrap_or(0);
+            for f in &l.trace.fires {
+                let r = rule(f.1);
+                *counts.entry(r.consumer.name().to_string()).or_insert(0u64) += 1;
+                *fired.entry(format!("{}·{}", r.consumer.name(), r.producer.name())).or_insert(0u64) += 1;
+                if born(f.3) > 0 && born(f.3) == born(f.4) { *together.entry(format!("{}·{}", r.consumer.name(), r.producer.name())).or_insert(0u64) += 1; }
+            }
+            let json = |m: &std::collections::BTreeMap<_, u64>| m.iter().map(|(k, n)| format!("\"{k}\":{n}")).collect::<Vec<_>>().join(",");
+            let rules = format!("{}}},\"by_rule\":{{{}}},\"together_by_rule\":{{{}", json(&counts), json(&fired), json(&together));
+            println!("{{\"name\":\"{name}\",\"seed\":{seed},\"side\":{side},\"agents\":{agents},\"views\":{views},\"done\":{},\"clocks\":{:.0},\"rewrites\":{},\"collected\":{},\"together\":{},\"peak_strands\":{},\"peak_sites\":{},\"wall\":{wall:.3},\"cpu\":{cpu_s:.3},\"rules\":{{{rules}}},\"answer\":\"{answer}\"}}",
+                !answer.is_empty(), s.clocks, s.fires, s.collected, s.together, s.peak_strands, s.peak_live);
         }
     }
 }

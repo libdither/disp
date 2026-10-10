@@ -21,7 +21,7 @@ pub use field::{Channel, Fields, Source};
 pub mod memo;
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::sup::STerm;
-use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_RULES};
+use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_ALL_RULES, VIEW_TAGS};
 
 pub const NONE: u8 = u8::MAX;
 /// Ports per agent slot.
@@ -139,6 +139,9 @@ pub struct Params {
     /// While cooling, every turn makes the best move it can (`Lattice::best_move`): 1 the one that
     /// lowers the energy most; 2 any that lowers it, else any that leaves it as it is (0: turns as ever).
     pub cool_greedy: u8,
+    /// The loaded code's K, S, B, C, I and W shapes load as movement agents, each applied, copied or
+    /// erased in one rewrite (rules.rs `VIEW_RULES`). No superpositions, sharing, memo or chip.
+    pub views: bool,
 }
 
 impl Params {
@@ -193,6 +196,7 @@ impl Params {
             "coolpass" => self.cool_pass = on,
             "coolcut" => self.cool_cut = on,
             "coolgreedy" => self.cool_greedy = n()? as u8,
+            "views" => self.views = on,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -209,7 +213,7 @@ impl Default for Params {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
-                 cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2 }
+                 cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false }
     }
 }
 
@@ -243,6 +247,8 @@ pub struct Stats {
     pub collected: u64,
     /// Of those, dead computations replaced by erasers on their inputs.
     pub dead: u64,
+    /// Rewrites whose two agents one rewrite made (`Lattice::born`).
+    pub together: u64,
     /// Moves refused because a site's switchboard was full.
     pub capped: u64,
     /// Turns dropped for looking at a site an earlier move in the block changed this clock.
@@ -252,8 +258,17 @@ pub struct Stats {
     pub unmerged: u64,
 }
 
-#[inline] fn code(t: Tag) -> u8 { ALL_TAGS.iter().position(|x| *x == t).unwrap() as u8 + 1 }
-#[inline] pub fn tag_of(c: u8) -> Tag { ALL_TAGS[c as usize - 1] }
+/// A tag's number in a seat (0: empty): `ALL_TAGS`' from 1, then the movement agents' (`VIEW_TAGS`, 15
+/// to 20).
+#[inline] pub fn code(t: Tag) -> u8 { ALL_TAGS.iter().chain(&VIEW_TAGS).position(|x| *x == t).unwrap() as u8 + 1 }
+#[inline] pub fn tag_of(c: u8) -> Tag { let i = c as usize - 1; if i < ALL_TAGS.len() { ALL_TAGS[i] } else { VIEW_TAGS[i - ALL_TAGS.len()] } }
+
+/// A rewrite's entry in `fire_log`: its site (below 2^24), and in the top byte, for an apply reading a
+/// movement agent, 1 + the agent's place in `VIEW_TAGS` (the GPU logs the same, block.wgsl `log_fire`).
+pub fn fire_entry(site: u32, consumer: Tag, producer: Tag) -> u32 {
+    let applied = if consumer == Tag::A { VIEW_TAGS.iter().position(|&v| v == producer).map_or(0, |i| i as u32 + 1) } else { 0 };
+    site | applied << 24
+}
 
 /// Sites a rewrite may place fresh agents in (index 0 is the consumer's), and the fixed
 /// route of links between each pair of them.
@@ -278,6 +293,9 @@ pub struct Lattice {
     /// site*k + slot: the agent's superposition label (rules.rs `Lab`), a superposition's or a
     /// duplicator's copying for one; 0 for every other agent.
     pub sup_label: Vec<u8>,
+    /// Each agent's birth by id: the rewrite that made it (`Stats::fires` then, 1 for the first), 0
+    /// for one loaded or made by a collection.
+    pub born: Vec<u64>,
     /// Sites that hold (or recently held) an agent; stale entries drop out when drawn.
     agent_sites: Vec<u32>,
     in_agents: Vec<bool>,
@@ -307,7 +325,7 @@ pub struct Lattice {
     infect: std::cell::Cell<Option<(u32, usize)>>,
     /// Check every invariant every this many proposals (0: never).
     pub check_every: u64,
-    /// Sites where rewrites fired, for the player (cleared by whoever reads it).
+    /// Rewrites that fired, for the player (cleared by whoever reads it): `fire_entry`s.
     pub fire_log: Vec<u32>,
     /// How many sites held 0, 1, … pairings, summed over board_stats calls.
     pub pairs_hist: std::cell::RefCell<Vec<u64>>,
@@ -440,7 +458,8 @@ pub fn fresh_wanted(rule: &rust_ca_lattice::rules::Rule) -> [bool; 6] { fresh_wa
 
 /// `fresh_wanted`, and with `inputs` also consumers whose output feeds a wanted fresh
 /// computation's input (an apply's argument, a triage's or dispatch's arms). Only the S rule
-/// wires one: (s c)(b c), whose (b c) and the duplicator sharing c then start wanted.
+/// wires one: (s c)(b c), whose (b c) and the duplicator sharing c then start wanted; so do its
+/// views, `Sx` the same and `B`'s f (g c), whose (g c) starts wanted.
 pub fn fresh_wanted_in(rule: &rust_ca_lattice::rules::Rule, inputs: bool) -> [bool; 6] {
     let mut wanted = [false; 6];
     for (f, t) in rule.fresh.iter().enumerate() { wanted[f] = matches!(t, Tag::Nrm | Tag::Eps); }
@@ -608,6 +627,7 @@ impl Lattice {
             want: vec![false; n * ks],
             label: vec![0; n * ks],
             sup_label: vec![0; n * ks],
+            born: vec![],
             agent_sites: vec![],
             in_agents: vec![false; n],
             mate: vec![NONE; n * ends],
@@ -807,6 +827,7 @@ impl Lattice {
     /// is a straight run of links and no two wires share a link. Coordinates are scaled by
     /// `spread` to leave room around every agent.
     pub fn load(p: Params, net: Net, out: u32) -> Result<Lattice, String> {
+        if p.memo != 0 && net.agents.iter().flatten().any(|a| a.tag.is_view()) { return Err("movement agents run without merging equal computations".into()); }
         let mut l = Lattice::new(p);
         let n = net.agents.len();
         // Children of each node in the tree hanging from `out`, found depth first.
@@ -1868,7 +1889,7 @@ impl Lattice {
             self.stats.blocked_fires += 1;
             self.fields.blocked(s);
             if self.trace.on { *self.trace.blocked.entry(self.sids[s as usize * self.ks + kc]).or_insert(0) += 1; }
-            self.stats.blocked_rule.resize(N_RULES, 0);
+            self.stats.blocked_rule.resize(N_ALL_RULES, 0);
             self.stats.blocked_rule[ri] += 1;
             return false;
         };
@@ -1891,6 +1912,8 @@ impl Lattice {
         let (csid, psid) = (self.sids[s as usize * self.ks + kc], self.sids[sp as usize * self.ks + kp]);
         assert_eq!(self.shadow.get(csid).ports[0], Some((psid, 0)), "fired a pair the abstract net does not have");
         assert_eq!((self.shadow.get(csid).label, self.shadow.get(psid).label), (cl, pl), "fired with labels the abstract net does not have");
+        let (cborn, pborn) = (self.born.get(csid as usize).copied().unwrap_or(0), self.born.get(psid as usize).copied().unwrap_or(0));
+        if cborn > 0 && cborn == pborn { self.stats.together += 1; }
         let near: Vec<u32> = if self.trace.on { [csid, psid].iter().flat_map(|&a| self.shadow.get(a).ports.iter().flatten().map(|r| r.0).collect::<Vec<_>>()).collect() } else { vec![] };
         let fresh_sids = self.shadow.fire(csid, psid).1;
         if self.trace.on {
@@ -1898,6 +1921,8 @@ impl Lattice {
             self.tr_pairs(&ids, self.trace.fires.len() as i64);
             self.trace.fires.push((self.stats.clocks, ri, s, csid, psid));
         }
+        if let Some(&m) = fresh_sids.iter().max() { if self.born.len() <= m as usize { self.born.resize(m as usize + 1, 0); } }
+        for &x in &fresh_sids { self.born[x as usize] = self.stats.fires + 1; }
         let label = self.label[s as usize * self.ks + kc];
         for (site, k) in [(s, kc), (sp, kp)] {
             for q in 0..ARITY { self.set(site, self.ae(k, q), NONE); }
@@ -1941,7 +1966,7 @@ impl Lattice {
         self.fields.fired(s);
         self.last_op = "fire";
         self.note([EV_FIRE, s, sp, code(ct) as u32, code(pt) as u32, ri as u32, 0, 0]);
-        if self.fire_log.len() < 4096 { self.fire_log.push(s); }
+        if self.fire_log.len() < 4096 { self.fire_log.push(fire_entry(s, ct, pt)); }
         for &x in &region.sites { if x != u32::MAX { self.refresh(x); } }
         true
     }
@@ -2303,6 +2328,7 @@ impl Lattice {
             ends += (ARITY * self.ks..self.ends).filter(|&e| self.mate_of(s, e as u8) != NONE).count() as u64;
         }
         self.shadow = net;
+        self.born.clear();
         self.names = Default::default();
         self.stats.strands = ends / 2;
         self.stats.peak_strands = self.stats.peak_strands.max(self.stats.strands);

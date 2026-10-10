@@ -1018,6 +1018,102 @@ gets far and erasers collect it, but an argument that does not terminate could s
 finishes. None of the random terms did. A triage or dispatch on a superposition copies its arms the
 same way, both arms though only one is taken.
 
+## Movement agents (`views=1`)
+
+Applying a value takes it apart, so code used twice is copied first, a layer at a time: in the runs below
+about 37% of rewrites are duplicators, most of them copying code (research/LINEAR_TREE_NETS.md). And
+most of the S rules the compiler emits only move their argument: `{x} => succ (nat_pred x)` compiles to
+`△(△(△△ succ)) nat_pred`, which copies x and throws one copy away. With `views=1` the loader (rust-ca-lattice `Net::build_views`)
+loads the tree shapes of every plain value something is applied to (the program, the head of each
+application) as six more agent kinds, each a view of the tree it stands for. Arguments stay trees, and
+so does everything the run builds:
+
+| view | stands for | applied to c (`A·view`, one rewrite) |
+|---|---|---|
+| `K y` | `△△y` | y; c erased |
+| `Sx s b` | `△(△s)b` | `s c (b c)`, c copied |
+| `B f g` | `△(△(△△f))g` | `f (g c)`: c moves right, uncopied |
+| `C f g` | `△(△f)(△△g)` | `f c g`: c moves left, uncopied |
+| `I` | `△(△△△)△` | c, a plain wire (unforced, where the tree triages it first) |
+| `W s` | `△(△s)s` | `t t`, `t = s c` worked out once and copied |
+
+The other 30 rules (rules.rs `VIEW_RULES`, 36 in all, numbered after the 34): a duplicator copies a view
+in one rewrite and an eraser erases one in one, as they do a fork; a triage, dispatch or normalizer
+reading one spells it out, the reader again facing its tree, so reflection and the answer see plain
+trees. The kinds are numbered 15 to 20, after `ALL_TAGS`, so with the setting off every run is as
+before, bit for bit. Superpositions, sharing equal parts, merging equal computations and the chip's
+test vectors refuse views. The idealised machine (`strands-bench --ideal views=1`) gives exactly the
+prototype's numbers (lambada `fib(2)` 3,407 rewrites against 5,473, `sort(3)` 18,157 against 31,330).
+
+**On the GPU** the same kernels run them: a seat's tag is a byte already; the generated tables
+(tables.rs) hold the chip's 26 rules and the 36, numbered up to 61 (255 for none), with tags up to 20;
+`is_producer` and `arity` (prelude.wgsl) know the six kinds; and the log of rewrites says which agent an
+apply read (lattice.rs `fire_entry`, block.wgsl `log_fire`). In lockstep with the simulator
+(`crate/gpu.sh TERM --latest views=1 --check`), every site, field and count equal after every clock or
+batch: disp `add 2 3`, `relay_add 20 22`, `mul 2 2`, `fib 2`, `rev [1, 2]`, `add 20 22` and `greet "a"`,
+lambada `fib(1)`, `exp(1)` and `sort(1)` (up to 1.1M sites); and 76 small terms with every value loaded
+as views (`--every-view`), so that all 36 rules fire. The player hands a run with views back and forth
+between CPU and GPU site for site (`player/dawn.sh check 'src=add 2 3&set=views=1'`). Speed in the
+browser's engines (`player/dawn.sh bench`, a Radeon RX 6600 through Dawn, clocks a second to the answer,
+views against none): `add 20 22` 8,124 against 7,444 on the GPU and 4,983 against 3,357 on the CPU, so
+the answer comes in 5.3 s instead of 10.1 s on the GPU and 22 s on the CPU; lambada `fib(2)` 6,807
+against 6,044 on the GPU, 2,691 against 1,347 on the CPU; 16 copies of `add 2 3` side by side 3,956
+against 2,850 on the GPU, 296 against 157 on the CPU. The lattice is half the size, which the CPU feels
+more than the GPU.
+
+Lattices sized as the player sizes them, 2 seeds, every answer the same with and without views and
+checked (against the eager evaluator by `bench.ts --data`, against the oracle for the benchmarks); CPU
+seconds are `strands-bench` without `--rules`; Dn and Eps are the duplicators' and erasers' shares of
+rewrites (plain / views):
+
+| program | agents at load (views) | clocks | rewrites | peak live sites | peak strands | CPU s | Dn % | Eps % |
+|---|---|---|---|---|---|---|---|---|
+| disp `add 2 3` | 306 / 151 (55) | 10.5k / 5589 | 2149 / 1060 | 1323 / 686 | 2078 / 1122 | 3.10 / 0.86 | 37 / 37 | 9 / 9 |
+| disp `fib 2` | 721 / 330 (146) | 15.3k / 8436 | 4660 / 2222 | 2617 / 1204 | 4222 / 2355 | 8.48 / 2.54 | 36 / 35 | 21 / 22 |
+| disp `fib 3` | 723 / 332 (146) | 24.1k / 13.8k | 8980 / 4136 | 2738 / 1660 | 5971 / 3298 | 17.66 / 5.82 | 38 / 37 | 20 / 19 |
+| disp `mul 2 2` | 613 / 289 (116) | 18.6k / 9441 | 7630 / 3678 | 2272 / 1365 | 4360 / 2694 | 10.02 / 3.10 | 37 / 37 | 16 / 17 |
+| disp `rev [1, 2]` | 706 / 326 (134) | 16.8k / 10.2k | 5236 / 2560 | 2690 / 1450 | 4646 / 2785 | 9.39 / 3.38 | 36 / 36 | 19 / 19 |
+| disp `isort [2, 1]` | 1421 / 653 (281) | 33.4k / 18.6k | 9538 / 4486 | 5200 / 2244 | 8266 / 3598 | 34.36 / 9.86 | 39 / 38 | 18 / 19 |
+| disp `greet "a"` | 1064 / 615 (314) | 15.9k / 10.9k | 3978 / 2890 | 3163 / 1861 | 4814 / 2530 | 10.41 / 5.21 | 28 / 25 | 14 / 15 |
+| disp `relay_add 20 22` (8 bits) | 342 / 185 (58) | 10.5k / 5226 | 7033 / 3660 | 2286 / 1348 | 4922 / 2825 | 5.22 / 1.76 | 38 / 38 | 19 / 20 |
+| disp `add 20 22` | 380 / 225 (55) | 75.7k / 42.0k | 16.2k / 7994 | 1446 / 644 | 2325 / 1061 | 20.26 / 7.61 | 38 / 37 | 8 / 9 |
+| fib(1) | 722 / 365 (134) | 3192 / 1534 | 1296 / 580 | 3345 / 1448 | 5449 / 2308 | 2.73 / 0.67 | 37 / 36 | 17 / 20 |
+| fib(2) | 724 / 367 (134) | 10.4k / 5498 | 5246 / 2417 | 3841 / 1672 | 6190 / 2758 | 6.71 / 1.98 | 37 / 36 | 28 / 31 |
+| sort(1) | 1833 / 904 (341) | 1274 / 723 | 300 / 158 | 6738 / 2980 | 10.8k / 4869 | 2.38 / 0.66 | 35 / 35 | 6 / 7 |
+| exp(1) | 902 / 465 (179) | 11.9k / 7062 | 4343 / 2209 | 4076 / 1879 | 6801 / 3141 | 8.88 / 2.87 | 33 / 33 | 30 / 31 |
+
+Geometric means: 0.55× the clocks, 0.50× the rewrites, the agents at load, the peak live sites and the
+peak strands, 0.32× the CPU time.
+- **Clocks fall almost as much as rewrites** (1.5–2.1× per program against 1.4–2.2×): an application
+  is one rewrite deep instead of three, and the lattice is half the size.
+- **What the views do**, summed over the 13 programs (mean of the seeds): 12.7k of the 38k rewrites are
+  view rules. Applying: `A·B` 2447, `A·C` 546, `A·K` 502, `A·I` 181, `A·W` 108, `A·Sx` 80, so nearly every
+  S shape the compiler emits is a B or a C. Copying: `Dn·B` 3606, `Dn·K` 946, `Dn·C` 758, `Dn·I` 212,
+  `Dn·Sx` 164, `Dn·W` 120; erasing 2601. Spelling out is rare (`Nrm·K` 242, `T1·K` 160, `T1·C` 11, `Sel`
+  6, the rest none): code is run, almost never inspected.
+- **Duplicators are still 25–38% of the work.** Views halve the code to copy but do not stop copying
+  it: a recursive function is still copied a layer at a time before each use. A read-only code table
+  holding the program (tried, then dropped: every block unit would read one shared, program-sized
+  table) brought them to 4–11% and the clocks to 0.19×.
+- `tests/views.rs` (both crates): on the abstract net 15,884 runs (random terms, code applied to data,
+  code rich in the six shapes applied to values and applications, with the code in views and with every
+  value in views so triage and dispatch read them as data) against the oracle, every rule firing; on the
+  lattice 382 runs (39 re-checking every invariant after every move, every view read by every reader)
+  and disp programs, the root read back as the answer all along, 97 runs cleaned up to the bare answer
+  with every move checked, a saved state put back running on exactly, and the GPU's tables taking them.
+
+**In the player** (`#src=…&set=views=1`) each kind has a shape and colour of its own, upright in every
+view, that says what it does: B an orange arrow to the right and C a yellow one to the left (they move
+the argument that way), I a short sky-blue bar (it becomes a wire), K a red triangle crossed by an
+eraser's × (it keeps its value and erases the argument), Sx a green fork (it copies the argument to both
+sides) and W a fork of four prongs (it copies a result worked out once); the legend and a site's details
+name them. When an apply reads one, the rewrite's flash shows its letter, in its colour, in every view
+(over the agents it made, in the graph). The menu's group *movement agents* opens three runs with views
+on, each in its own view and slow enough to follow: a chain of seven B agents
+(`({x} => succ (succ (succ (succ (succ (succ (succ (succ x)))))))) 0`, 27 agents, the graph view), a
+chain of six C agents ending at an I (`({f} => f 1 2 3 4 5 6) ({a, b, c, d, e, g} => g)`, 52 agents, the
+graph view) and `relay_add 1 2` (158 agents, 41 B and 4 C applied, in 3D).
+
 ## Reading back
 
 `crate/src/readback.rs` reads what any piece of the net means right now, for the player's
@@ -1359,7 +1455,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~10 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, cooling, handover, reading back, merging equal computations, superpositions
+cargo test --release                                  # ~35 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, cooling, handover, reading back, merging equal computations, superpositions, movement agents
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -1367,6 +1463,7 @@ cargo run --release --bin strands-run -- fib:0 --grid 256 --chip --demand       
 cargo run --release --bin strands-run -- fib:0 --grid 256 --latest                 # the current design: the demand field and fork
 cargo run --release --bin strands-run -- fib:2 --grid 300 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8 --budget 5000000000 --clean 100000
 cargo run --release --bin strands-run -- 'fib:&1{1,2}' --grid 300 --latest        # a superposed argument (Superpositions, above)
+cargo run --release --bin strands-run -- fib:2 --fit --latest views=1               # movement agents (Movement agents, above)
 cargo run --release --bin strands-sup -- CASES                                     # lines name|term[|want]: superposed against its universes alone
 cargo run --release --bin strands-bench -- CASES --seeds 2                         # lines name|term: one JSON line a run (programs/bench.ts drives it)
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
@@ -1376,8 +1473,11 @@ cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1
 version match it (see [`hw/README.md`](hw/README.md)). `crate/gpu.sh TERM --grid N [--depth D]`
 runs a term on the GPU (`--check` in lockstep with the simulator, `--dense` without the tiles,
 `--vectors FILE...` replays recorded turns, `--latest` runs the current design, `key=value` changes
-a setting as `strands-sweep` spells it); `strands-hw --wgsl` prints its generated tables.
+a setting as `strands-sweep` spells it, `views=1` loads movement agents and `--every-view` every value
+as one; TERM may be `@FILE`); `strands-hw --wgsl` prints its generated tables.
 `player/dawn.sh check 'src=sort:1'` checks the browser's GPU path on the design the player shows
+(settings as keys, `lazy=0`, or as the player's link has them, `set=views=1`; `src=add 2 3` calls one
+of the player's programs on numbers)
 (`player/firefox.sh check` the same in Firefox; `player/firefox.sh player 'src=add 3 4'` times
 the player itself there, `player/firefox.sh input` checks its input box and compiler, and
 `player/firefox.sh pick 'p=disp:fib&a=2'` checks its picks and their reading back, followed to the

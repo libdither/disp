@@ -84,7 +84,8 @@ fn main() {
     // key=value settings (`Params::set`) go last, so they change whatever the flags chose.
     for kv in &sets { let (k, v) = kv.split_once('=').unwrap(); p.set(k, v).unwrap_or_else(|e| panic!("{e}")); }
     let src = src.expect("term");
-    let src = match src.strip_prefix('@') { Some(path) => std::fs::read_to_string(path).expect("term file").trim().to_string(), None => src };
+    // `@FILE` holds the term; `@(f,x)` is a term itself.
+    let src = match src.strip_prefix('@').filter(|path| !path.starts_with('(')) { Some(path) => std::fs::read_to_string(path).expect("term file").trim().to_string(), None => src };
     let t: STerm = match src.split_once(':') {
         Some((name, n)) if n.starts_with('&') && term::workload_sup(name, n).is_some() => term::workload_sup(name, n).unwrap().expect("bad superposition"),
         Some((name, n)) if term::workload(name, 0).is_some() => (&term::workload(name, n.parse().unwrap()).unwrap()).into(),
@@ -92,14 +93,14 @@ fn main() {
     };
     let labels = t.labels();
     let want = sup::oracle_answers(&t, 100_000_000).map(|u| sup::show(&sup::collapse(&u, &labels)));
-    let (net, out) = rust_ic_strands::share::net_sup(&t, p.share);
+    let (net, out) = rust_ic_strands::share::net_for(&t, &p).unwrap_or_else(|e| panic!("{e}"));
     let agents = net.live_count();
     let mut l = if fit {
         // As the player sizes it: side ceil(√agents · 7, or 8 in 2D) + 16, growing ×1.4 until the drawing fits.
         let mut side = ((net.agents.len() as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16;
         let mut net = Some(net);
         loop {
-            let (net, out) = net.take().map_or_else(|| rust_ic_strands::share::net_sup(&t, p.share), |n| (n, out));
+            let (net, out) = net.take().map_or_else(|| rust_ic_strands::share::net_for(&t, &p).unwrap(), |n| (n, out));
             match Lattice::load(Params { w: side, h: side, ..p }, net, out) {
                 Ok(l) => break l,
                 Err(e) if e.starts_with("the drawing") => side = (side as f64 * 1.4).ceil() as u32,
@@ -107,7 +108,9 @@ fn main() {
             }
         }
     } else { Lattice::load(p, net, out).expect("load") };
-    println!("loaded {agents} agents on {}x{}x{}", l.p.w, l.p.h, l.p.depth);
+    let views = l.shadow.agents.iter().flatten().filter(|a| a.tag.is_view()).count();
+    println!("loaded {agents} agents{} on {}x{}x{}", if p.views { format!(", {views} of them movement agents") } else { String::new() }, l.p.w, l.p.h, l.p.depth);
+    assert!(!p.views || std::env::var("VECTORS").is_err() && std::env::var("DUMPS").is_err(), "the chip has no movement agents: no test vectors or dumps with views=1");
     l.check_every = check;
     if let Ok(path) = std::env::var("VECTORS") {
         let mut w = std::io::BufWriter::new(std::fs::File::create(path).expect("vectors file"));

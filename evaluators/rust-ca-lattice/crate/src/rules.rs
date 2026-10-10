@@ -20,6 +20,9 @@
 //! Superpositions (`SUP_RULES`) add labels: every agent carries a small number, 0 for all but
 //! superpositions and the duplicators copying for them, and a rule says each fresh agent's.
 //!
+//! Movement agents (`VIEW_RULES`) add six values, each a view of a fixed tree shape found in loaded
+//! code, with plain template rules: no label, no payload.
+//!
 //! The two-level triage semantics are checked by `tests/stage1.rs`, which compares the ROM
 //! engine with an independent recursive normalizer.
 
@@ -44,6 +47,14 @@ pub enum Tag {
     Nrm, // normalizer: [p, res]
     // Inert.
     Out, // result sink: [in]
+    // Movement agents (`VIEW_RULES`), after the others so their numbers stay as they were: each
+    // stands for its tree.
+    K,  // △△y: [p, y]
+    Sx, // △(△s)b, the S rule: [p, s, b]
+    B,  // △(△(△△f))g, the argument going right only: [p, f, g]
+    C,  // △(△f)(△△g), the argument going left only: [p, f, g]
+    I,  // △(△△△)△: [p]
+    W,  // △(△s)s, both halves the same code: [p, s]
 }
 
 /// Every tag, in the order engines number them (from 1, 0 meaning none). `Sup` comes last so
@@ -53,17 +64,22 @@ pub const ALL_TAGS: [Tag; 14] = [
     Tag::A, Tag::T1, Tag::Sel, Tag::Unp, Tag::Dn, Tag::Eps, Tag::Nrm, Tag::Out, Tag::Sup,
 ];
 
+/// The movement agents' tags, numbered after `ALL_TAGS` (15 to 20) where an engine runs them: the
+/// abstract net and the strand lattice, on its CPU and GPU (the cascade and the chip keep 4 bits).
+pub const VIEW_TAGS: [Tag; 6] = [Tag::K, Tag::Sx, Tag::B, Tag::C, Tag::I, Tag::W];
+
 impl Tag {
     pub fn arity(self) -> usize {
         match self {
-            Tag::L | Tag::Eps | Tag::Out => 1,
-            Tag::S | Tag::Nrm => 2,
+            Tag::L | Tag::Eps | Tag::Out | Tag::I => 1,
+            Tag::S | Tag::Nrm | Tag::K | Tag::W => 2,
             _ => 3,
         }
     }
     pub fn is_producer(self) -> bool {
-        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup)
+        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup) || self.is_view()
     }
+    pub fn is_view(self) -> bool { matches!(self, Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W) }
     pub fn is_consumer(self) -> bool {
         matches!(self, Tag::A | Tag::T1 | Tag::Sel | Tag::Unp | Tag::Dn | Tag::Eps | Tag::Nrm)
     }
@@ -72,6 +88,7 @@ impl Tag {
             Tag::L => "L", Tag::S => "S", Tag::F => "F", Tag::P => "P", Tag::Pair => "Pair", Tag::Sup => "Sup",
             Tag::A => "A", Tag::T1 => "T1", Tag::Sel => "Sel", Tag::Unp => "Unp",
             Tag::Dn => "Dn", Tag::Eps => "Eps", Tag::Nrm => "Nrm", Tag::Out => "Out",
+            Tag::K => "K", Tag::Sx => "Sx", Tag::B => "B", Tag::C => "C", Tag::I => "I", Tag::W => "W",
         }
     }
 }
@@ -244,15 +261,117 @@ pub static SUP_RULES: &[Rule] = &[
                  (X(2, 0), C(1)), (X(3, 0), C(2))] },
 ];
 
-/// How many rules there are in all.
+/// How many rules there are in all, the movement agents' apart (`N_ALL_RULES`).
 pub const N_RULES: usize = RULES.len() + SUP_RULES.len();
 
-/// Rule i of `RULES` followed by `SUP_RULES`: the numbering `find_index` gives.
+/// Every rule, the movement agents' included: `rule`'s numbering runs to here.
+pub const N_ALL_RULES: usize = N_RULES + VIEW_RULES.len();
+
+/// Rule i of `RULES` followed by `SUP_RULES` and then `VIEW_RULES`: the numbering `find_index` gives.
 pub fn rule(i: usize) -> &'static Rule {
-    if i < RULES.len() { &RULES[i] } else { &SUP_RULES[i - RULES.len()] }
+    if i < RULES.len() { &RULES[i] } else if i < N_RULES { &SUP_RULES[i - RULES.len()] } else { &VIEW_RULES[i - N_RULES] }
 }
 
-/// Every rule, in `rule`'s numbering.
+/// Movement agents (research/LINEAR_TREE_NETS.md §4a): six views of fixed tree shapes the loader
+/// finds in code (net.rs `build_views`), each standing for its tree: `K y` = △△y, `Sx s b` = △(△s)b,
+/// `B f g` = △(△(△△f))g, `C f g` = △(△f)(△△g), `I` = △(△△△)△ and `W s` = △(△s)s. No payload: every
+/// rule is fixed by the two kinds meeting, as in `RULES`.
+/// - applying one is one rewrite, the tree's rules composed (A·F, T1, Unp·Pair) less the copy and
+///   erasure of an argument only one side reads: B and C move it, I passes it on unforced, and W
+///   works `s c` out once and copies the result;
+/// - a duplicator copies one and an eraser erases one in one rewrite, as they do a fork;
+/// - a triage, dispatch or normalizer reading one spells it out: the reader again, facing its tree
+///   (fresh agent 1 is the root). So reflection and the answer see plain trees.
+pub static VIEW_RULES: &[Rule] = &[
+    // ---- A·view: applied to c ----
+    // K y c = y, c erased.
+    Rule { consumer: A, producer: K, fresh: &[Eps], wires: &[(Px(1), C(2)), (X(0, 0), C(1))], ..PLAIN },
+    // Sx s b c = s c (b c), c copied. fresh: dn, a(s c), a(b c), a.
+    Rule { consumer: A, producer: Sx, fresh: &[Dn, A, A, A],
+        wires: &[(X(0, 0), C(1)), (X(1, 0), Px(1)), (X(1, 1), X(0, 2)), (X(2, 0), Px(2)), (X(2, 1), X(0, 1)),
+                 (X(3, 0), X(1, 2)), (X(3, 1), X(2, 2)), (X(3, 2), C(2))], ..PLAIN },
+    // B f g c = f (g c). fresh: a(f …), a(g c).
+    Rule { consumer: A, producer: B, fresh: &[A, A],
+        wires: &[(X(0, 0), Px(1)), (X(0, 1), X(1, 2)), (X(0, 2), C(2)), (X(1, 0), Px(2)), (X(1, 1), C(1))], ..PLAIN },
+    // C f g c = f c g. fresh: a(f c), a(… g).
+    Rule { consumer: A, producer: Tag::C, fresh: &[A, A],
+        wires: &[(X(0, 0), Px(1)), (X(0, 1), C(1)), (X(1, 0), X(0, 2)), (X(1, 1), Px(2)), (X(1, 2), C(2))], ..PLAIN },
+    // I c = c.
+    Rule { consumer: A, producer: I, fresh: &[], wires: &[(C(1), C(2))], ..PLAIN },
+    // W s c = t t, t = s c worked out once. fresh: a(s c), dn, a.
+    Rule { consumer: A, producer: W, fresh: &[A, Dn, A],
+        wires: &[(X(0, 0), Px(1)), (X(0, 1), C(1)), (X(1, 0), X(0, 2)), (X(2, 0), X(1, 1)), (X(2, 1), X(1, 2)), (X(2, 2), C(2))], ..PLAIN },
+    // ---- Dn·view: two copies in one rewrite, duplicators (of its label) on its children ----
+    Rule { consumer: Dn, producer: K, fresh: &[Dn, K, K], labels: &[LC, L0, L0], wires: COPY_ONE, ..PLAIN },
+    Rule { consumer: Dn, producer: Sx, fresh: &[Dn, Dn, Sx, Sx], labels: &[LC, LC, L0, L0], wires: COPY_TWO, ..PLAIN },
+    Rule { consumer: Dn, producer: B, fresh: &[Dn, Dn, B, B], labels: &[LC, LC, L0, L0], wires: COPY_TWO, ..PLAIN },
+    Rule { consumer: Dn, producer: Tag::C, fresh: &[Dn, Dn, Tag::C, Tag::C], labels: &[LC, LC, L0, L0], wires: COPY_TWO, ..PLAIN },
+    Rule { consumer: Dn, producer: I, fresh: &[I, I], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: W, fresh: &[Dn, W, W], labels: &[LC, L0, L0], wires: COPY_ONE, ..PLAIN },
+    // ---- Eps·view: erased in one rewrite, erasers on its children ----
+    Rule { consumer: Eps, producer: K, fresh: &[Eps], wires: &[(X(0, 0), Px(1))], ..PLAIN },
+    Rule { consumer: Eps, producer: Sx, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
+    Rule { consumer: Eps, producer: B, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
+    Rule { consumer: Eps, producer: Tag::C, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
+    Rule { consumer: Eps, producer: I, fresh: &[], wires: &[], ..PLAIN },
+    Rule { consumer: Eps, producer: W, fresh: &[Eps], wires: &[(X(0, 0), Px(1))], ..PLAIN },
+    // ---- T1·view: spelled out, the triage again on its tree ----
+    // △△y = F(L, y).
+    Rule { consumer: T1, producer: K, fresh: &[T1, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(1, 2), Px(1)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    // △(△s)b = F(S(s), b).
+    Rule { consumer: T1, producer: Sx, fresh: &[T1, F, S],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(1, 2), Px(2)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    // △(△(△△f))g = F(S(F(L, f)), g).
+    Rule { consumer: T1, producer: B, fresh: &[T1, F, S, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(3, 1), X(4, 0)), (X(3, 2), Px(1)), (X(1, 2), Px(2)),
+                 (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    // △(△f)(△△g) = F(S(f), F(L, g)).
+    Rule { consumer: T1, producer: Tag::C, fresh: &[T1, F, S, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(1, 2), X(3, 0)), (X(3, 1), X(4, 0)), (X(3, 2), Px(2)),
+                 (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    // △(△△△)△ = F(F(L, L), L).
+    Rule { consumer: T1, producer: I, fresh: &[T1, F, F, L, L, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(2, 2), X(4, 0)), (X(1, 2), X(5, 0)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    // △(△s)s = F(S(s), s), s read through a duplicator.
+    Rule { consumer: T1, producer: W, fresh: &[T1, F, S, Dn],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 1)), (X(1, 2), X(3, 2)), (X(3, 0), Px(1)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    // ---- Sel·view: spelled out the same way ----
+    Rule { consumer: Sel, producer: K, fresh: &[Sel, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(1, 2), Px(1)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    Rule { consumer: Sel, producer: Sx, fresh: &[Sel, F, S],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(1, 2), Px(2)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    Rule { consumer: Sel, producer: B, fresh: &[Sel, F, S, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(3, 1), X(4, 0)), (X(3, 2), Px(1)), (X(1, 2), Px(2)),
+                 (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    Rule { consumer: Sel, producer: Tag::C, fresh: &[Sel, F, S, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(1, 2), X(3, 0)), (X(3, 1), X(4, 0)), (X(3, 2), Px(2)),
+                 (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    Rule { consumer: Sel, producer: I, fresh: &[Sel, F, F, L, L, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(2, 2), X(4, 0)), (X(1, 2), X(5, 0)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    Rule { consumer: Sel, producer: W, fresh: &[Sel, F, S, Dn],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 1)), (X(1, 2), X(3, 2)), (X(3, 0), Px(1)), (X(0, 1), C(1)), (X(0, 2), C(2))], ..PLAIN },
+    // ---- Nrm·view: spelled out, to be normalized ----
+    Rule { consumer: Nrm, producer: K, fresh: &[Nrm, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(1, 2), Px(1)), (X(0, 1), C(1))], ..PLAIN },
+    Rule { consumer: Nrm, producer: Sx, fresh: &[Nrm, F, S],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(1, 2), Px(2)), (X(0, 1), C(1))], ..PLAIN },
+    Rule { consumer: Nrm, producer: B, fresh: &[Nrm, F, S, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(3, 1), X(4, 0)), (X(3, 2), Px(1)), (X(1, 2), Px(2)), (X(0, 1), C(1))], ..PLAIN },
+    Rule { consumer: Nrm, producer: Tag::C, fresh: &[Nrm, F, S, F, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(1, 2), X(3, 0)), (X(3, 1), X(4, 0)), (X(3, 2), Px(2)), (X(0, 1), C(1))], ..PLAIN },
+    Rule { consumer: Nrm, producer: I, fresh: &[Nrm, F, F, L, L, L],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(2, 2), X(4, 0)), (X(1, 2), X(5, 0)), (X(0, 1), C(1))], ..PLAIN },
+    Rule { consumer: Nrm, producer: W, fresh: &[Nrm, F, S, Dn],
+        wires: &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 1)), (X(1, 2), X(3, 2)), (X(3, 0), Px(1)), (X(0, 1), C(1))], ..PLAIN },
+];
+
+/// How Dn·S copies one child and Dn·F two: a duplicator on each child, its copies under the two copies.
+const COPY_ONE: &[(End, End)] = &[(X(0, 0), Px(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(2, 1)), (X(1, 0), C(1)), (X(2, 0), C(2))];
+const COPY_TWO: &[(End, End)] = &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
+                                  (X(2, 0), C(1)), (X(3, 0), C(2))];
+
+/// Every rule but the movement agents', in `rule`'s numbering.
 pub fn all_rules() -> impl Iterator<Item = &'static Rule> { RULES.iter().chain(SUP_RULES) }
 
 /// The rule for a plain consumer meeting a plain producer.
@@ -267,6 +386,9 @@ pub fn find_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<&'s
 pub fn find_index(consumer: Tag, producer: Tag) -> Option<usize> { find_index_labelled(consumer, 0, producer, 0) }
 
 pub fn find_index_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<usize> {
+    if producer.is_view() {
+        return VIEW_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer && r.applies(cl, pl)).map(|i| N_RULES + i);
+    }
     all_rules().position(|r| r.consumer == consumer && r.producer == producer && r.applies(cl, pl))
 }
 
@@ -279,33 +401,9 @@ pub fn validate() -> Result<(), String> {
         let rn = format!("{}·{}", r.consumer.name(), r.producer.name());
         if !r.consumer.is_consumer() { return Err(format!("{rn}: consumer tag isn't a consumer")); }
         if !r.producer.is_producer() { return Err(format!("{rn}: producer tag isn't a producer")); }
-        let mut expected: Vec<End> = vec![];
-        for i in 1..r.consumer.arity() { expected.push(C(i as u8)); }
-        for j in 1..r.producer.arity() { expected.push(Px(j as u8)); }
-        for (k, t) in r.fresh.iter().enumerate() {
-            if !matches!(t, L | S | F | Tag::P | Pair | Sup | A | T1 | Sel | Unp | Dn | Eps | Nrm) {
-                return Err(format!("{rn}: fresh[{k}] = {} not spawnable", t.name()));
-            }
-            for p in 0..t.arity() { expected.push(X(k as u8, p as u8)); }
-        }
-        let mut seen: Vec<End> = vec![];
-        for (a, b) in r.wires {
-            for e in [a, b] {
-                if seen.contains(e) { return Err(format!("{rn}: endpoint {e:?} used twice")); }
-                if !expected.contains(e) { return Err(format!("{rn}: endpoint {e:?} not a live port")); }
-                seen.push(*e);
-            }
-        }
-        if seen.len() != expected.len() {
-            return Err(format!("{rn}: {} endpoints wired, {} live ports", seen.len(), expected.len()));
-        }
-        if !r.labels.is_empty() && r.labels.len() != r.fresh.len() { return Err(format!("{rn}: labels for some fresh agents only")); }
-        for (k, t) in r.fresh.iter().enumerate() {
-            let lab = r.labels.get(k).copied().unwrap_or(L0);
-            if lab != L0 && !matches!(t, Dn | Sup) { return Err(format!("{rn}: fresh[{k}] = {} labelled", t.name())); }
-            if lab == LC && r.consumer != Dn || lab == LP && r.producer != Sup { return Err(format!("{rn}: fresh[{k}] labelled from a plain agent")); }
-            if *t == Sup && lab != LP { return Err(format!("{rn}: a fresh Sup without the superposition's label")); }
-        }
+        if let Some(t) = r.fresh.iter().find(|t| **t == Out || t.is_view()) { return Err(format!("{rn}: fresh {} not spawnable", t.name())); }
+        matching(r, &rn)?;
+        labelled(r, &rn)?;
         if r.when != When::Any && (r.consumer, r.producer) != (Dn, Sup) { return Err(format!("{rn}: only Dn·Sup looks at labels")); }
         for o in all_rules() {
             if std::ptr::eq(o, r) || (o.consumer, o.producer) != (r.consumer, r.producer) { continue; }
@@ -323,6 +421,63 @@ pub fn validate() -> Result<(), String> {
     }
     for c in [Unp, Eps, Dn] {
         if find(c, Pair).is_none() { return Err(format!("missing rule {}·Pair", c.name())); }
+    }
+    Ok(())
+}
+
+/// The movement agents' rules: each a perfect matching and labelled as `validate` checks, views made
+/// only by copying one, and exactly one rule for every reader of every view.
+pub fn validate_views() -> Result<(), String> {
+    for r in VIEW_RULES {
+        let rn = format!("{}·{}", r.consumer.name(), r.producer.name());
+        if !r.consumer.is_consumer() || !r.producer.is_view() { return Err(format!("{rn}: not a view rule")); }
+        if r.fresh.contains(&Out) { return Err(format!("{rn}: fresh Out not spawnable")); }
+        if r.consumer != Dn && r.fresh.iter().any(|t| t.is_view()) { return Err(format!("{rn}: makes a view without copying one")); }
+        if r.when != When::Any { return Err(format!("{rn}: only Dn·Sup looks at labels")); }
+        matching(r, &rn)?;
+        labelled(r, &rn)?;
+    }
+    for c in [A, T1, Sel, Nrm, Dn, Eps] {
+        for v in VIEW_TAGS {
+            let n = VIEW_RULES.iter().filter(|r| (r.consumer, r.producer) == (c, v)).count();
+            if n != 1 { return Err(format!("{n} rules for {}·{}", c.name(), v.name())); }
+        }
+    }
+    Ok(())
+}
+
+/// Labels go to duplicators and superpositions only, from an agent that has one, and a fresh
+/// superposition always has its label.
+fn labelled(r: &Rule, rn: &str) -> Result<(), String> {
+    if !r.labels.is_empty() && r.labels.len() != r.fresh.len() { return Err(format!("{rn}: labels for some fresh agents only")); }
+    for (k, t) in r.fresh.iter().enumerate() {
+        let lab = r.labels.get(k).copied().unwrap_or(L0);
+        if lab != L0 && !matches!(t, Dn | Sup) { return Err(format!("{rn}: fresh[{k}] = {} labelled", t.name())); }
+        if lab == LC && r.consumer != Dn || lab == LP && r.producer != Sup { return Err(format!("{rn}: fresh[{k}] labelled from a plain agent")); }
+        if *t == Sup && lab != LP { return Err(format!("{rn}: a fresh Sup without the superposition's label")); }
+    }
+    Ok(())
+}
+
+/// The wire endpoints of a rule are a perfect matching over its live ports.
+fn matching(r: &Rule, rn: &str) -> Result<(), String> {
+    let mut expected: Vec<End> = vec![];
+    for i in 1..r.consumer.arity() { expected.push(C(i as u8)); }
+    for j in 1..r.producer.arity() { expected.push(Px(j as u8)); }
+    for (k, t) in r.fresh.iter().enumerate() {
+        if *t == Out { return Err(format!("{rn}: fresh[{k}] = {} not spawnable", t.name())); }
+        for p in 0..t.arity() { expected.push(X(k as u8, p as u8)); }
+    }
+    let mut seen: Vec<End> = vec![];
+    for (a, b) in r.wires {
+        for e in [a, b] {
+            if seen.contains(e) { return Err(format!("{rn}: endpoint {e:?} used twice")); }
+            if !expected.contains(e) { return Err(format!("{rn}: endpoint {e:?} not a live port")); }
+            seen.push(*e);
+        }
+    }
+    if seen.len() != expected.len() {
+        return Err(format!("{rn}: {} endpoints wired, {} live ports", seen.len(), expected.len()));
     }
     Ok(())
 }
@@ -357,5 +512,11 @@ mod tests {
         super::validate().expect("rule ROM must validate");
         assert_eq!(super::RULES.len(), 26);
         assert_eq!(super::SUP_RULES.len(), 8);
+    }
+
+    #[test]
+    fn view_rules_are_well_formed() {
+        super::validate_views().expect("the movement agents' rules must validate");
+        assert_eq!(super::VIEW_RULES.len(), 36);
     }
 }

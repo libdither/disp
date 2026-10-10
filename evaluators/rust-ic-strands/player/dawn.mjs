@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 Object.assign(globalThis, globals);
 globalThis.window = globalThis;
 Object.defineProperty(globalThis, "navigator", { value: { gpu: create([]) }, configurable: true });
-for (const f of ["engine.js", "gpu.js", "gpu-check.js"]) vm.runInThisContext(readFileSync(join(here, f), "utf8"));
+for (const f of ["engine.js", "programs.js", "gpu.js", "gpu-check.js"]) vm.runInThisContext(readFileSync(join(here, f), "utf8"));
 const [mode = "check", hash = ""] = process.argv.slice(2);
 const v = await StrandsCheck[mode](hash, s => console.log(s)).catch(e => "FAIL " + (e.stack || e));
 if (mode === "check" || !v.startsWith("ok")) console.log(v);

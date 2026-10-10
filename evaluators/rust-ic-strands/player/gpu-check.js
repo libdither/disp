@@ -1,7 +1,8 @@
 // The player's GPU path (gpu.js) against its CPU engine, and the two's speeds; run in a browser by
 // gpu-check.html and in Node by dawn.mjs. A hash such as 'src=fib:1&lazy=0' picks the term; clocks,
 // copies and stretch shape the run; every other key changes a setting of the current design, which
-// the player runs (lattice.rs `latest`, `Params::set`: depth, seed, lazy, pairs, temp, demand, ...).
+// the player runs (lattice.rs `latest`, `Params::set`: depth, seed, lazy, pairs, temp, demand, views,
+// ...), as does `set=k=v,…` as in the player's links.
 window.StrandsCheck = (() => {
   const enc = new TextEncoder(), dec = new TextDecoder(), R = 12;
   async function engine() {
@@ -20,23 +21,31 @@ window.StrandsCheck = (() => {
     };
     return E;
   }
+  /// A call of one of the player's compiled programs on natural numbers (`add 2 3`), as the player
+  /// loads it (index.html `plan`: the program's tree, then each number in ternary); anything else as it is.
+  function term(src) {
+    const [, name, args] = src.match(/^(\w+)((\s+\d+)+)$/) ?? [], d = (window.DISP_PROGRAMS ?? []).find(p => p.name === name && p.kind === "nat");
+    return d ? [d.tree, ...args.trim().split(/\s+/).map(n => "20".repeat(+n) + "0")].join(" ") : src;
+  }
   function settings(hash) {
     const q = new URLSearchParams(hash), num = (k, d) => q.has(k) ? +q.get(k) : d, seed = num("seed", 7);
     const own = new Set(["src", "clocks", "copies", "stretch", "seed"]);
-    const sets = [...q.entries()].filter(([k]) => !own.has(k)).map(([k, v]) => `${k}=${v}`).concat(`seed=${seed}`);
+    // Settings as keys of their own (`lazy=0`), or as the player's link has them (`set=views=1,lazy=0`).
+    const sets = [...q.entries()].filter(([k]) => !own.has(k)).flatMap(([k, v]) => k === "set" ? v.split(",").filter(Boolean) : [`${k}=${v}`]).concat(`seed=${seed}`);
     const apply = E => {
       E.strands_settings();
       for (const kv of sets) if (E.withString(kv, (p, n) => E.strands_set(p, n))) throw new Error(E.text(E.text_len()));
     };
-    return { src: q.get("src") || "sort:1", seed, max: num("clocks", 1e9), copies: num("copies", 1), stretch: num("stretch", 256),
+    return { name: q.get("src") || "sort:1", src: term(q.get("src") || "sort:1"), seed, max: num("clocks", 1e9), copies: num("copies", 1), stretch: num("stretch", 256),
       make: (E, w, h, src) => { apply(E); return E.withString(src, (p, n) => E.strands_new(w, h, p, n)); }, apply };
   }
   /// An engine with the term loaded on a lattice sized as the player sizes it.
   async function loaded(S) {
     const E = await engine();
+    // The settings first, as the player has them when it sizes the lattice (views=1 loads fewer agents).
+    S.apply(E);
     const agents = E.withString(S.src, (p, n) => E.strands_probe(p, n));
     if (agents < 0) throw new Error(E.text(E.text_len()));
-    S.apply(E);
     S.depth = E.strands_depth();
     let side = Math.ceil(Math.sqrt(agents) * (S.depth > 1 ? 7 : 8)) + 16, rc = 2;
     for (let t = 0; t < 6 && rc === 2; t++) { rc = S.make(E, side, side, S.src); if (rc === 2) side = Math.ceil(side * 1.4); }
@@ -85,7 +94,7 @@ window.StrandsCheck = (() => {
     const S = settings(hash), a = await loaded(S), A = a.E, B = await engine();
     if (S.make(B, a.side, a.side, S.src) !== 0) return "FAIL load";
     const t0 = performance.now(), gpu = await kernels(B);
-    say(`${S.src} on ${a.side}×${a.side}×${S.depth}, ${a.agents} agents; GPU: ${gpu.name} (ready in ${secs(t0)})`);
+    say(`${S.name} on ${a.side}×${a.side}×${S.depth}, ${a.agents} agents; GPU: ${gpu.name} (ready in ${secs(t0)})`);
     const batches = [1, 7, 13, 64], grid = new StrandsGPU.Grid(gpu, a.side, a.side, S.depth, 64);
     let clocks = 0, stretch = 0, onGpu = 0, again = 0;
     while (clocks < S.max) {
@@ -138,7 +147,7 @@ window.StrandsCheck = (() => {
       }
       make = async () => { const E = await engine(); if (S.make(E, w, h, "L") !== 0) throw new Error("load"); E.ran(0, { held, tally: new Uint32Array(11), fires: new Uint32Array(0) }); return E; };
     }
-    let line = `${S.src}${S.copies > 1 ? " ×" + S.copies : ""} on ${w}×${h}×${S.depth}:`;
+    let line = `${S.name}${S.copies > 1 ? " ×" + S.copies : ""} on ${w}×${h}×${S.depth}:`;
     if (!/(^|&)cpu=0/.test(hash)) {
       const E = await make(), t0 = performance.now();
       let done = 0;

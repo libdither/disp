@@ -2,10 +2,16 @@
 //! rules, energies and probabilities, so the two cannot drift apart. hw/rtl gets the same as
 //! Verilog from `strands-hw`.
 use crate::lattice::{chip, fresh_wanted_in, Channel, Energy, Params, Source, NONE};
-use rust_ca_lattice::rules::{End, Tag, ALL_TAGS, RULES};
+use rust_ca_lattice::rules::{End, Rule, Tag, ALL_TAGS, RULES, VIEW_RULES, VIEW_TAGS};
 use std::fmt::Write;
 
-fn code(t: Tag) -> u32 { ALL_TAGS.iter().position(|x| *x == t).unwrap() as u32 + 1 }
+fn code(t: Tag) -> u32 { crate::lattice::code(t) as u32 }
+
+/// The GPU's rules, numbered as its tables have them: the chip's, then the movement agents'.
+fn rules() -> Vec<&'static Rule> { RULES.iter().chain(VIEW_RULES).collect() }
+
+/// The rule number for no rule.
+const NO_RULE: u32 = 255;
 
 /// An end of a rule wire in 8 bits: kind (0 fresh, 1 consumer aux, 2 producer aux) << 6, then the
 /// fresh agent << 3 and its port, or the aux port.
@@ -73,24 +79,24 @@ pub fn wgsl_for(p: &Params) -> String {
     writeln!(w, "const F_LEVEL: u32 = {}u; const F_CAP: u32 = {}u; const F_STEP: u32 = {}u; const F_DECAY: u32 = {}u;",
         c.level.min(if f.is_some() { c.cap() } else { 0 }), if f.is_some() { c.cap() } else { 0 }, c.step, c.decay).unwrap();
     writeln!(w, "const F_W: array<i32, 3> = array<i32, 3>({}, {}, {}); const F_WIRE: i32 = {};", fw[0], fw[1], fw[2], fw[3]).unwrap();
-    for t in ALL_TAGS {
+    for t in ALL_TAGS.into_iter().chain(VIEW_TAGS) {
         let name = match t { Tag::Pair => "PAIR".into(), Tag::Sel => "SEL".into(), Tag::Unp => "UNP".into(), Tag::Dn => "DN".into(),
                              Tag::Eps => "EPS".into(), Tag::Nrm => "NRM".into(), Tag::Out => "OUT".into(), _ => t.name().to_uppercase() };
         writeln!(w, "const T_{name}: u32 = {}u;", code(t)).unwrap();
     }
     writeln!(w, "const ACCEPT_LEN: i32 = {};", e.accept.len()).unwrap();
     array(w, "ACCEPT", &e.accept);
-    let nt = ALL_TAGS.len() as u32 + 1;
-    let mut rule_of = vec![31u32; (nt * nt) as usize];
-    for (i, r) in RULES.iter().enumerate() { rule_of[(code(r.consumer) * nt + code(r.producer)) as usize] = i as u32; }
-    writeln!(w, "const NRULES: u32 = {}u; const NTAGS: u32 = {nt}u;", RULES.len()).unwrap();
+    let (nt, rules) = ((ALL_TAGS.len() + VIEW_TAGS.len()) as u32 + 1, rules());
+    let mut rule_of = vec![NO_RULE; (nt * nt) as usize];
+    for (i, r) in rules.iter().enumerate() { rule_of[(code(r.consumer) * nt + code(r.producer)) as usize] = i as u32; }
+    writeln!(w, "const NRULES: u32 = {}u; const NTAGS: u32 = {nt}u; const NO_RULE: u32 = {NO_RULE}u;", rules.len()).unwrap();
     array(w, "RULE_OF", &rule_of);
-    array(w, "RULE_N", &RULES.iter().map(|r| r.fresh.len() as u32).collect::<Vec<_>>());
-    array(w, "RULE_NW", &RULES.iter().map(|r| r.wires.len() as u32).collect::<Vec<_>>());
-    array(w, "RULE_WANTED", &RULES.iter().map(|r| fresh_wanted_in(r, p.fork).iter().enumerate().fold(0, |m, (f, &b)| m | (b as u32) << f)).collect::<Vec<_>>());
-    let mut fresh = vec![0u32; RULES.len() * 6];
-    let (mut wa, mut wb) = (vec![0u32; RULES.len() * 9], vec![0u32; RULES.len() * 9]);
-    for (i, r) in RULES.iter().enumerate() {
+    array(w, "RULE_N", &rules.iter().map(|r| r.fresh.len() as u32).collect::<Vec<_>>());
+    array(w, "RULE_NW", &rules.iter().map(|r| r.wires.len() as u32).collect::<Vec<_>>());
+    array(w, "RULE_WANTED", &rules.iter().map(|r| fresh_wanted_in(r, p.fork).iter().enumerate().fold(0, |m, (f, &b)| m | (b as u32) << f)).collect::<Vec<_>>());
+    let mut fresh = vec![0u32; rules.len() * 6];
+    let (mut wa, mut wb) = (vec![0u32; rules.len() * 9], vec![0u32; rules.len() * 9]);
+    for (i, r) in rules.iter().enumerate() {
         assert!(r.fresh.len() <= 6 && r.wires.len() <= 9, "a rule outgrew the tables");
         for (f, t) in r.fresh.iter().enumerate() { fresh[i * 6 + f] = code(*t); }
         for (k, &(a, b)) in r.wires.iter().enumerate() { wa[i * 9 + k] = end(a); wb[i * 9 + k] = end(b); }
@@ -100,8 +106,8 @@ pub fn wgsl_for(p: &Params) -> String {
     array(w, "RULE_WB", &wb);
     w.push_str(r#"
 fn accept_thr(d: u32) -> u32 { if (d >= u32(ACCEPT_LEN)) { return 0u; } return ACCEPT[d]; }
-/// The rule for a consumer tag meeting a producer tag (31: none).
-fn rule_of(ct: u32, pt: u32) -> u32 { if (ct >= NTAGS || pt >= NTAGS) { return 31u; } return RULE_OF[ct * NTAGS + pt]; }
+/// The rule for a consumer tag meeting a producer tag (NO_RULE: none).
+fn rule_of(ct: u32, pt: u32) -> u32 { if (ct >= NTAGS || pt >= NTAGS) { return NO_RULE; } return RULE_OF[ct * NTAGS + pt]; }
 fn rule_n(ri: u32) -> u32 { if (ri >= NRULES) { return 0u; } return RULE_N[ri]; }
 fn rule_nw(ri: u32) -> u32 { if (ri >= NRULES) { return 0u; } return RULE_NW[ri]; }
 /// Bit f: fresh agent f starts out wanted.

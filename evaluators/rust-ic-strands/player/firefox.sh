@@ -8,7 +8,7 @@
 #   player/firefox.sh tail 'src=fib:1'              the end of a run (cleanup, cooling) the same on either engine and after going back
 #   player/firefox.sh perf 'src=fib:1&runs=cpu,gpu,cpu>gpu@0.5a'   times the answer, cleanup and cooling, and switches
 # Each run has a profile of its own; the page posts what it finds to a small server here. Exits
-# non-zero unless the last line starts with "ok".
+# non-zero on any line starting with "FAIL", zero once the last line starts with "ok".
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 ff=${FIREFOX:-$(command -v firefox || command -v floorp || true)}
@@ -54,8 +54,9 @@ shown=0
 while :; do
   n=$(wc -l < "$work/report")
   if [ "$n" -gt "$shown" ]; then sed -n "$((shown + 1)),${n}p" "$work/report"; shown=$n; fi
-  last=$(tail -1 "$work/report")
-  case "$last" in ok*) exit 0 ;; FAIL*) exit 1 ;; esac
+  # Any line starting FAIL ends the run (a failure's stack trace comes after it), else a last one starting ok.
+  command grep -q '^FAIL' "$work/report" && { sleep 0.5; sed -n "$((shown + 1)),\$p" "$work/report"; exit 1; }
+  case "$(tail -1 "$work/report")" in ok*) exit 0 ;; esac
   kill -0 "$browser" 2>/dev/null || { echo "FAIL the browser quit"; exit 1; }
   sleep 0.5
 done

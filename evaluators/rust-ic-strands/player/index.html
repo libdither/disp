@@ -332,10 +332,15 @@
 <script id="compilerJs" type="text/plain" src="compiler.js"></script>
 <script>
 "use strict";
-const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "Sup"];
-const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3];
+const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "Sup", "K", "Sx", "B", "C", "I", "W"];
+const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3, 2, 3, 3, 3, 1, 2];
+/// Movement agents (set=views=1, tags 15 to 20): loaded code standing for a tree shape, the tree each spells out as.
+const VIEW_TREE = { K: "△△y", Sx: "△(△s)b", B: "△(△(△△f))g", C: "△(△f)(△△g)", I: "△(△△△)△", W: "△(△s)s" };
+const isView = t => t >= 15 && t <= 20;
 const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage", Sel: "second dispatch",
-  Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root", Sup: "superposition" };
+  Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root", Sup: "superposition",
+  K: "K: keeps, erases its argument", Sx: "Sx: copies its argument to both sides", B: "B: moves its argument right",
+  C: "C: moves its argument left", I: "I: becomes a wire", W: "W: works out once, copies the result" };
 const DESC = {
   L: "a leaf △, the simplest value", S: "a stem △x: a value with one child", F: "a fork △xy: a value with two children",
   P: "a suspended application f a: it becomes a value once something needs it", Pair: "a pair carrying the arms of a pending choice",
@@ -343,10 +348,15 @@ const DESC = {
   T1: "looks at the shape of a value and picks one of its arms", Sel: "the second half of triage: picks among three arms by the shape of a value",
   Unp: "splits a pair into its two parts", Dn: "copies the value it reads for two readers, one layer at a time",
   Eps: "erases whatever it reads", Nrm: "drives its input all the way to a finished value", Out: "the root: the answer arrives here",
-  Sup: "a superposition &ℓ{a,b}: a in one universe and b in the other; whatever reads it splits in two" };
+  Sup: "a superposition &ℓ{a,b}: a in one universe and b in the other; whatever reads it splits in two",
+  ...Object.fromEntries(Object.entries({ K: "applied to c it gives y and erases c", Sx: "applied to c it gives s c (b c), c copied",
+    B: "applied to c it gives f (g c): c moves right, uncopied", C: "applied to c it gives f c g: c moves left, uncopied",
+    I: "applied to c it gives c, a plain wire", W: "applied to c it gives t t, t = s c worked out once and copied" })
+    .map(([v, d]) => [v, `a movement agent (set=views=1): loaded code standing for ${VIEW_TREE[v]}; ${d}, in one rewrite. A duplicator or eraser takes it whole; anything else reading it spells it out as its tree first`])) };
 const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right"], P: ["value", "function", "argument"], Pair: ["value", "first", "second"],
   A: ["operator", "argument", "result"], T1: ["subject", "arms", "result"], Sel: ["subject", "arms", "result"], Unp: ["pair", "first", "second"],
-  Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"], Sup: ["value", "first side", "second side"] };
+  Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"], Sup: ["value", "first side", "second side"],
+  K: ["value", "y"], Sx: ["value", "s", "b"], B: ["value", "f", "g"], C: ["value", "f", "g"], I: ["value"], W: ["value", "s"] };
 const MEANING = {
   "A·L": "apply(leaf, x) = stem x", "A·S": "apply(stem a, x) = fork a x", "A·F": "apply(fork a b, x) = triage a with arms ⟨b, x⟩",
   "A·P": "the operator is still suspended: force it first, then apply", "T1·L": "the subject a is a leaf: the result is b, and c is erased",
@@ -363,14 +373,21 @@ const MEANING = {
   "T1·Sup": "triage each side, with its own copy of the arms", "Sel·Sup": "dispatch on each side, with its own copy of the arms",
   "Nrm·Sup": "keep the superposition; normalize both sides", "Eps·Sup": "the superposition is erased; erasers move on to both sides",
   "Dn·Sup": "a copy for this superposition hands each copy its own side; any other copies both sides and superposes the copies",
-  "Dn·Pair": "copy the pair; two new duplicators copy its parts" };
+  "Dn·Pair": "copy the pair; two new duplicators copy its parts",
+  "A·K": "K y c = y: c is erased", "A·Sx": "Sx s b c = s c (b c): c is copied", "A·B": "B f g c = f (g c): c moves right, uncopied",
+  "A·C": "C f g c = f c g: c moves left, uncopied", "A·I": "I c = c: argument and result are wired together", "A·W": "W s c = t t: t = s c is worked out once, then copied",
+  ...Object.fromEntries(Object.keys(VIEW_TREE).flatMap(v => [[`Dn·${v}`, `two copies of the ${v} view in one rewrite; duplicators copy its children`],
+    [`Eps·${v}`, `the ${v} view is erased in one rewrite; erasers move on to its children`],
+    ...["T1", "Sel", "Nrm"].map(q => [`${q}·${v}`, `the ${v} view is spelled out as its tree ${VIEW_TREE[v]}, for the ${NAMES[q]} to read`])])) };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
-const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#f7768e"];
+// Movement agents in colours of what they do: K red (erases), Sx and W greens (copy), B orange and C yellow (move), I sky (a wire).
+const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#f7768e",
+  "#db4b4b", "#c3e88d", "#ff9e64", "#f4d35e", "#7dcfff", "#9ece6a"];
 const kindColor = t => COLOR[t] ?? "#8a96a8";
 /// A kind as its icon (shapes.js) and its name.
 const kindHTML = t => `${shapeSVG(t, kindColor(t))}${NAMES[TAGS[t]] ?? `agent of kind ${t}`}`;
 const isConsumer = t => t >= 6 && t <= 12;
-const isProducer = t => t >= 1 && t <= 5 || t === 14;
+const isProducer = t => t >= 1 && t <= 5 || t === 14 || isView(t);
 // Which ports are outputs (sources): a producer's principal, a computation's result, a duplicator's or unpair's two parts.
 const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0 : false;
 const DIRS = ["east", "west", "south", "north", "up a layer", "down a layer"];
@@ -492,12 +509,23 @@ let entries = [], picked = -1;
 const SIZE = { fib: 1, exp: 1, sort: 1 };
 /// Unary addition against the binary relay adder (programs.disp), side by side on one lattice.
 const SIDE_BY_SIDE = "add 20 22; relay_add 20 22";
+/// Movement agents at work (set=views=1): small runs with many B or C agents applied, each in a view and
+/// at a speed to watch them (the rewrite flash names the agent applied).
+const MOVERS = [
+  { name: "B chain", text: "({x} => succ (succ (succ (succ (succ (succ (succ (succ x)))))))) 0", view: "graph", speed: 8,
+    desc: "seven B agents in a row: each one applied hands its argument on to the right, uncopied" },
+  { name: "C chain", text: "({f} => f 1 2 3 4 5 6) ({a, b, c, d, e, g} => g)", view: "graph", speed: 10,
+    desc: "six C agents in a row: each one applied hands its argument on to the left, the last to an I, which becomes a wire" },
+  { name: "relay_add 1 2", text: "relay_add 1 2", view: "3d", speed: 35,
+    desc: "binary addition: forty B agents carry bits right, a few C, K, I, W and Sx along the way" },
+];
 const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
 function populate() {
   entries = [...DISP.map(p => ({ group: "disp programs", name: p.name, text: `${p.name} ${p.example}`, desc: p.desc, prog: p })),
     ...(DISP.some(p => p.name === "relay_add") ? [{ group: "side by side (a; b)", name: "add; relay_add", text: SIDE_BY_SIDE,
       desc: "unary and binary addition at once, each its own reduction", both: true }] : []),
     ...catalog.workloads.map(w => ({ group: "benchmarks (binary numbers)", name: w.name, text: w.n > 0 ? `${w.name}:${SIZE[w.name] ?? w.n}` : w.name, desc: w.desc, work: w })),
+    ...MOVERS.map(m => ({ group: "movement agents (views=1)", ...m, mover: true })),
     { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" }];
   let group = "";
   $("menu").innerHTML = entries.map((e, i) => (e.group !== group ? `<div class="grp">${group = e.group}</div>` : "")
@@ -559,8 +587,15 @@ function showPicked(i) {
   const o = m.querySelector(".on");
   if (o && !m.hidden) m.scrollTop = Math.min(Math.max(m.scrollTop, o.offsetTop + o.offsetHeight + 4 - m.clientHeight), o.offsetTop - 26);
 }
-/// Fill the input box with entry i, its argument selected for typing over.
+/// A movement agents example's settings: views on, its view and its speed.
+function moverSettings(e) {
+  SETTINGS = [...SETTINGS.filter(kv => !kv.startsWith("views=")), "views=1"];
+  setView(e.view); $("speed").value = e.speed; speedLabel();
+}
+/// Fill the input box with entry i, its argument selected for typing over; a movement agents example
+/// runs at once, with its settings.
 function choose(i) {
+  if (entries[i].mover) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
   const fill = entries[i].text, at = fill.search(/[\s:]/);
   if (entries[i].both) { $("speed").value = 100; speedLabel(); }
   $("src").value = fill; syncUI();
@@ -618,6 +653,8 @@ let loads = 0;
 /// input, which runs them side by side (wasm.rs `parse_all`).
 async function load(play) {
   const input = $("src").value.trim() || DEFAULT, seq = ++loads, pieces = splitParts(input);
+  // A movement agents example picked from the menu (clicked, or reached with the arrows) brings its settings.
+  if (entries[picked]?.mover && entries[picked].text === input) moverSettings(entries[picked]);
   let p;
   try {
     if (pieces.length > 1) {
@@ -670,7 +707,8 @@ function start(p, input) {
   if (onGpu && !gpuCode) setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
-  banner(`${input.length > 60 ? input.slice(0, 57) + "…" : input}: ${agents} agents on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
+  const views = new Uint8Array(E.memory.buffer, E.tags_ptr(), side * side * depth * L.ks).filter(isView).length;
+  banner(`${input.length > 60 ? input.slice(0, 57) + "…" : input}: ${agents} agents${views ? `, ${views} of them movement agents` : ""} on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
   return true;
 }
 
@@ -934,7 +972,8 @@ function draw() {
     for (let k = 0; k < L.ks; k++) {
       const seat = s * L.ks + k, t = V.tags[seat]; if (!t) continue;
       const [x, y] = slotPos(s, k), b = pk ? pk[seat] : 0, a = pk && !b ? 0.14 : dead(s, k) ? (b ? 0.6 : 0.28) : 1;
-      const fill = into(fills, segs ? toneAt(seat)?.css ?? "#4a5465" : kindColor(t), a);
+      // Movement agents keep their colour with segments on: it says what they do.
+      const fill = into(fills, segs && !isView(t) ? toneAt(seat)?.css ?? "#4a5465" : kindColor(t), a);
       if (px < 1.5) fill.path.rect(x - rad, y - rad, 2 * rad, 2 * rad); else shapeInto(fill.path, t, x, y, rad, 0, -1, holes, fill.marks);
       if (V.want[seat]) { const w = into(wants, isConsumer(t) ? "#56c8ff" : "#ffa94d", a).path; w.moveTo(x + rad * 1.45, y); w.arc(x, y, rad * 1.45, 0, 7); }
       if (b && px > 1 && !(segs && !(b & 26))) {
@@ -976,7 +1015,7 @@ function draw() {
     ctx.strokeStyle = "rgba(200,170,255,0.4)"; ctx.stroke(arrows);
     ctx.strokeStyle = "rgba(255,216,102,0.5)"; ctx.stroke(fired);
   }
-  // rewrites, as rings that fade (see afterRun)
+  // rewrites, as rings that fade (see afterRun); an apply reading a movement agent shows its letter
   const now = performance.now(); let keep = 0;
   ctx.lineWidth = lw(1.2);
   for (const b of bursts) {
@@ -984,9 +1023,20 @@ function draw() {
     const [ox, oy] = siteOrigin(b.s);
     ctx.strokeStyle = `rgba(255,216,102,${(1 - a) * b.alpha})`;
     ctx.beginPath(); ctx.arc(ox + S / 2, oy + S / 2, S * (0.5 + a * 1.3), 0, 7); ctx.stroke();
+    if (b.v) flashLetter(b.v, ox + S / 2, oy - S * 0.3, Math.max(S * 1.5, 14 / view.s), 1 - a);
   }
   bursts.length = keep;
   pickPanel(false);
+}
+/// The letter of movement agent v (1 + its place in K, Sx, B, C, I, W) at (x, y), size world units
+/// high, in its colour with a dark rim, fading with alpha.
+function flashLetter(v, x, y, size, alpha) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, alpha); ctx.font = `bold ${size}px ui-monospace,SFMono-Regular,Menlo,monospace`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+  ctx.lineWidth = size * 0.22; ctx.strokeStyle = "#0b0e14"; ctx.strokeText(TAGS[14 + v], x, y);
+  ctx.fillStyle = kindColor(14 + v); ctx.fillText(TAGS[14 + v], x, y);
+  ctx.restore();
 }
 function arrow(path, ax, ay, bx, by) {
   const a = Math.atan2(by - ay, bx - ax), h = S * 0.22;
@@ -1018,7 +1068,7 @@ function end3(s, e, faces) {
 /// An agent's radius, how far under its layer a floor lies, the side of a floor tile (in sites), the background.
 const R3 = 0.17, FLOOR3 = 0.4, BLOCK3 = 4, BG3 = 0x0b0e14;
 /// Agents' solids by tag (shapes.js `shapeSolid`), 0 for a kind with none of its own.
-const SOLIDS3 = 15, kind3 = t => t < SOLIDS3 ? t : 0;
+const SOLIDS3 = 21, kind3 = t => t < SOLIDS3 ? t : 0;
 /// An sRGB channel (0 to 1) as the linear one three.js works in.
 const lin3 = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 const rgb3 = hex => [hex >> 16 & 255, hex >> 8 & 255, hex & 255].map(c => lin3(c / 255));
@@ -1031,7 +1081,8 @@ function init3d() {
   const canvas = $("cv3");
   V3.T = T;
   // The frame is kept, so the canvas can be read between frames: only a change draws it again.
-  V3.renderer = new T.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  try { V3.renderer = new T.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true }); }
+  catch { if (!V3.noGL) banner("this browser gives no WebGL: the 3D view cannot draw", true); V3.noGL = true; return false; }
   V3.renderer.setPixelRatio(devicePixelRatio || 1);
   V3.scene = new T.Scene(); V3.scene.background = new T.Color(BG3); V3.scene.fog = new T.Fog(BG3, 1, 2);
   V3.camera = new T.PerspectiveCamera(40, 1, 0.1, 20000); V3.scene.add(V3.camera);
@@ -1109,6 +1160,14 @@ function label3(text) {
   const sp = new T.Sprite(new T.SpriteMaterial({ map, sizeAttenuation: false, depthTest: false, fog: false }));
   sp.center.set(1, 0.5); sp.renderOrder = 10; sp.userData.aspect = c.width / c.height; V3.scene.add(sp);
   return sp;
+}
+/// A movement agent's letter (v as in `flashLetter`) as a sprite material, the same size on screen however far.
+function letterMaterial3(v) {
+  const T = V3.T, c = document.createElement("canvas"), g = c.getContext("2d"), t = TAGS[14 + v];
+  c.width = c.height = 64; g.font = "bold 48px ui-monospace,SFMono-Regular,Menlo,monospace"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.lineJoin = "round"; g.lineWidth = 10; g.strokeStyle = "#0b0e14"; g.strokeText(t, 32, 34); g.fillStyle = kindColor(14 + v); g.fillText(t, 32, 34);
+  const map = new T.CanvasTexture(c); map.colorSpace = T.SRGBColorSpace;
+  return new T.SpriteMaterial({ map, sizeAttenuation: false, depthTest: false, transparent: true, fog: false });
 }
 /// Everything drawn, built again from the lattice.
 function build3d(V) {
@@ -1188,10 +1247,10 @@ function build3d(V) {
       const seat = s * ks + k, t = V.tags[seat]; if (!t) continue;
       const p = end3(s, k * 3, faces), b = pk ? pk[seat] : 0, gone = dead(s, k), g = segs ? segOf(seat) : -1;
       p[1] -= R3; // the principal port is on top of the agent
-      if (!segs) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
+      if (!segs || isView(t)) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
       if (gone) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
       const K = kinds[kind3(t)];
-      K.mesh.userData.seats[K.g.n] = seat; K.mesh.setColorAt(K.g.n, col); put(K.g, p, (gone ? 0.75 : 1) * (pk && !b ? 0.7 : 1) * R3);
+      K.mesh.userData.seats[K.g.n] = seat; K.mesh.setColorAt(K.g.n, col); put(K.g, p, (gone ? 0.75 : 1) * (pk && !b ? 0.7 : 1) * (isView(t) ? 1.3 : 1) * R3);
       if (V.want[seat] && !gone && (!pk || b)) {
         ring(p, 1.6, isConsumer(t) ? RING.want : RING.called);
         if (isConsumer(t)) { fx += p[0]; fy += p[1]; fz += p[2]; nf++; }
@@ -1294,6 +1353,18 @@ function bursts3(now) {
     mesh.setColorAt(n++, col.set(0xffd866).multiplyScalar((1 - a) * (b.alpha ?? 1)));
   }
   mesh.count = n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  // An apply reading a movement agent: its letter over the ring, drawn the same size on screen.
+  V3.letters ??= []; V3.letterMats ??= [];
+  let nl = 0;
+  for (const b of bursts) {
+    if (!b.v || (onlyZ >= 0 && Math.floor(b.s / plane) !== onlyZ) || nl >= 64) continue;
+    const mat = V3.letterMats[b.v] ??= letterMaterial3(b.v);
+    const sp = V3.letters[nl] ??= (() => { const x = new T.Sprite(mat.clone()); x.renderOrder = 11; V3.scene.add(x); return x; })();
+    if (sp.material.map !== mat.map) { sp.material.map = mat.map; sp.material.needsUpdate = true; }
+    const c = pos3(b.s), a = (now - b.t) / b.life;
+    sp.position.set(c[0], c[1] + 2 * R3 * V3.pitch, c[2]); sp.scale.set(0.045, 0.045, 1); sp.material.opacity = 1 - a; sp.visible = true; nl++;
+  }
+  for (let i = nl; i < V3.letters.length; i++) V3.letters[i].visible = false;
   const showing = n > 0 || V3.flashes > 0;
   V3.flashes = n;
   return showing;
@@ -1912,7 +1983,8 @@ function afterRun() {
   partsCheck();
   const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now(), r = rate();
   const life = Math.max(60, Math.min(600, r ? 4000 / r : 600)), room = 200 - bursts.length, every = Math.max(1, Math.ceil(fl.length / Math.max(1, room)));
-  for (let i = 0; i < fl.length && bursts.length < 200; i += every) bursts.push({ s: fl[i], t: now, life });
+  // Each entry is a site, and in its top byte the movement agent an apply read (lattice.rs `fire_entry`).
+  for (let i = 0; i < fl.length && bursts.length < 200; i += every) { const v = fl[i] >>> 24; bursts.push({ s: fl[i] & 0xFFFFFF, v, t: now, life: v ? Math.max(life, 900) : life }); }
   const alpha = 0.8 * Math.min(1, 12 / Math.max(1, bursts.length));
   for (const b of bursts) b.alpha = Math.min(b.alpha ?? 1, alpha);
   E.fire_log_clear();

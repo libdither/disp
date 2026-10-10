@@ -31,6 +31,8 @@ var<private> fr_fs_wa: array<u32, 9>;
 var<private> fr_fs_wb: array<u32, 9>;
 var<private> fr_fs_nw: u32;
 var<private> fr_fs_part: u32;
+/// An apply reading a movement agent: 1 + its place among them (lattice.rs `fire_entry`), else 0.
+var<private> fr_fs_view: u32;
 
 // ---- the candidate square under way (fp_*) ---------------------------------------------------
 var<private> fr_fp_fx: u32;
@@ -148,6 +150,7 @@ fn fr_setup() -> bool {
   let sp4 = inb(p, fr_fc_face); fr_fs_sp = select(p, sp4 & 7u, via);
   let SP = select(p, nbq(p, fr_fc_face) & 7u, via);
   let ct = gt(S, kc); let pt = gt(SP, kp); fr_fs_ri = rule_of(ct, pt); fr_fs_n = rule_n(fr_fs_ri);
+  fr_fs_view = select(0u, pt - T_K + 1u, ct == T_A && pt >= T_K && pt <= T_W);
   fr_fs_lane = lane(gm(S, ae(kc, 0u)));
   // rule_wires
   fr_fs_nw = rule_nw(fr_fs_ri);

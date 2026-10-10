@@ -21,6 +21,18 @@ pub fn net(t: &Term, min: usize) -> (Net, u32) {
     (net, out)
 }
 
+/// The net a run with these settings starts from: `net_sup`, or with `Params::views` its code in
+/// movement agents (`Net::build_views`), which takes no superpositions and no sharing.
+pub fn net_for(t: &STerm, p: &crate::lattice::Params) -> Result<(Net, u32), String> {
+    if !p.views { return Ok(net_sup(t, p.share)); }
+    if p.share != 0 { return Err("movement agents run without sharing equal parts (share=0)".into()); }
+    let t = t.plain().ok_or("movement agents run no superpositions")?;
+    let mut net = Net::new();
+    let root = net.build_views(&t);
+    let (_, out) = net.drive(root);
+    Ok((net, out))
+}
+
 /// `net` for a term that may hold superpositions; one that does is built whole, with no sharing.
 pub fn net_sup(t: &STerm, min: usize) -> (Net, u32) {
     if let Some(t) = t.plain() { return net(&t, min); }

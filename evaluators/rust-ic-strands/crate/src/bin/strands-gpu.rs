@@ -7,20 +7,22 @@
 //! `--bench` runs exactly `--clocks` clocks without looking for the answer and times the GPU alone;
 //! `--latest` runs the current design (lattice.rs `latest`: the chip's schedule with the demand field
 //! and forking S rules);
-//! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`).
+//! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`; `views=1` loads
+//! the code's shapes as movement agents; `--every-view` loads every value so, arguments too, so that
+//! readers meet views as data, and with `--check` counts the movement agents' rules that fired).
+//! TERM may be a workload, a term, or `@FILE` holding one.
 
-use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, Fuel};
-use rust_ca_lattice::rules::ALL_TAGS;
+use rust_ca_lattice::rules::{rule, N_RULES};
 use rust_ic_mesh::term;
 use rust_ic_strands::gpu::{Gpu, Grid, REC, SITE, TALLY};
-use rust_ic_strands::lattice::{chip, latest, Lattice, Params, OPS};
+use rust_ic_strands::lattice::{chip, latest, tag_of, Lattice, Params, OPS};
 use std::collections::BTreeMap;
 
 const SB: usize = 4 * SITE;
 
 fn end(m: u8) -> String { if m == 255 { "-".into() } else { m.to_string() } }
-fn tag(t: u8) -> String { if t == 0 { "-".into() } else { ALL_TAGS.get(t as usize - 1).map_or(t.to_string(), |t| t.name().into()) } }
+fn tag(t: u8) -> String { if t == 0 { "-".into() } else if t <= 20 { tag_of(t).name().into() } else { t.to_string() } }
 
 /// A site's 40 bytes, decoded.
 fn show(b: &[u8]) -> String {
@@ -137,7 +139,7 @@ fn main() {
     let start = |p: &Params| { let g = Gpu::new(p).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) }); println!("GPU: {}", g.name); g };
     if args.first().is_some_and(|a| a == "--vectors") { std::process::exit(if vectors(&start(&chip()), &args[1..]) { 0 } else { 1 }); }
     let mut p = chip();
-    let (mut src, mut check, mut dense, mut narrow, mut bench, mut batch, mut max) = (None, false, false, false, false, None, 1_000_000u64);
+    let (mut src, mut check, mut dense, mut narrow, mut bench, mut batch, mut max, mut every) = (None, false, false, false, false, None, 1_000_000u64, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().expect("a value").clone();
@@ -155,6 +157,7 @@ fn main() {
             "--dense" => dense = true,
             "--narrow" => narrow = true,
             "--bench" => bench = true,
+            "--every-view" => every = true,
             "--latest" => p = Params { w: p.w, h: p.h, depth: p.depth, seed: p.seed, ..latest() },
             _ => match a.split_once('=') {
                 Some((k, v)) => p.set(k, v).unwrap_or_else(|e| panic!("{e}")),
@@ -164,14 +167,19 @@ fn main() {
     }
     let gpu = start(&p);
     let src = src.expect("term");
+    // `@FILE` holds the term; `@(f,x)` is a term itself.
+    let src = match src.strip_prefix('@').filter(|path| !path.starts_with('(')) { Some(path) => std::fs::read_to_string(path).expect("term file").trim().to_string(), None => src };
     let t = match src.split_once(':') {
         Some((name, n)) if term::workload(name, 0).is_some() => term::workload(name, n.parse().unwrap()).unwrap(),
         _ => term::workload(&src, 0).unwrap_or_else(|| term::parse(&src).expect("bad term")),
     };
     let want = oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok().map(|w| oracle::show(&w));
-    let mut net = Net::new();
-    let root = net.build(&t);
-    let (_, out) = net.drive(root);
+    let (net, out) = if every {
+        let mut net = rust_ca_lattice::net::Net::new();
+        let root = net.build_every_view(&t);
+        let (_, out) = net.drive(root);
+        (net, out)
+    } else { rust_ic_strands::share::net_for(&(&t).into(), &p).unwrap_or_else(|e| panic!("{e}")) };
     let mut l = Lattice::load(p, net, out).expect("load");
     let show_ans = |l: &Lattice| l.readback().map(|t| oracle::show(&t)).unwrap_or("-".into());
     let want = want.as_deref().unwrap_or("?");
@@ -183,6 +191,7 @@ fn main() {
         // Compared after every batch (one clock unless --batch).
         let batch = batch.unwrap_or(1);
         let mut grid = Grid::new(&gpu, p.w, p.h, p.depth, batch);
+        if p.views || every { l.trace_start(); }
         let state = l.state_words();
         grid.upload(&state, field(&l).as_deref());
         if let Some(d) = compare(&p, &state, &grid.download()) { println!("upload differs: {d}"); std::process::exit(1); }
@@ -224,6 +233,11 @@ fn main() {
         println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
         println!("{c} clocks matched on all {} sites{}, and so did every count ({} rewrites, {} steps)  {:.2}s", l.sites(),
             if l.fields.on { " and their fields" } else { "" }, l.stats.fires, l.stats.hops, t0.elapsed().as_secs_f64());
+        if l.trace.on {
+            let mut by = BTreeMap::new();
+            for f in l.trace.fires.iter().filter(|f| f.1 >= N_RULES) { let r = rule(f.1); *by.entry(format!("{}·{}", r.consumer.name(), r.producer.name())).or_insert(0) += 1; }
+            println!("movement agents' rules: {}", by.iter().map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join(", "));
+        }
         return;
     }
     let batch = batch.unwrap_or(64);

@@ -69,6 +69,43 @@ impl Net {
         }
     }
 
+    /// `build`, with the code in movement agents (rules.rs `VIEW_RULES`): every plain value something is
+    /// applied to (the loaded program, each application's head) has its shapes loaded as views
+    /// (`view_shape`); arguments are data and stay trees, as does whatever the run builds.
+    pub fn build_views(&mut self, t: &crate::oracle::Term) -> u32 {
+        use crate::oracle::Term::*;
+        fn value(t: &crate::oracle::Term) -> bool { match t { L => true, S(a) => value(a), F(a, b) => value(a) && value(b), Ap(..) => false } }
+        fn go(net: &mut Net, t: &crate::oracle::Term, code: bool) -> u32 {
+            let (tag, kids): (Tag, Vec<(&crate::oracle::Term, bool)>) = match t {
+                Ap(f, x) => (Tag::P, vec![(f, value(f)), (x, false)]),
+                _ if code => { let (tag, kids) = view_shape(t); (tag, kids.into_iter().map(|k| (k, true)).collect()) }
+                L => (Tag::L, vec![]),
+                S(a) => (Tag::S, vec![(a, false)]),
+                F(a, b) => (Tag::F, vec![(a, false), (b, false)]),
+            };
+            let a = net.mk(tag);
+            for (q, (k, code)) in kids.into_iter().enumerate() {
+                let b = go(net, k, code);
+                net.link(a, q as u8 + 1, b, 0);
+            }
+            a
+        }
+        go(self, t, false)
+    }
+
+    /// `build`, every value in movement agents, arguments included: so readers meet views as data too
+    /// (the tests' and the GPU check's way to make every view rule fire).
+    pub fn build_every_view(&mut self, t: &crate::oracle::Term) -> u32 {
+        use crate::oracle::Term::*;
+        let (tag, kids): (Tag, Vec<&crate::oracle::Term>) = match t { Ap(f, x) => (Tag::P, vec![&**f, &**x]), _ => view_shape(t) };
+        let a = self.mk(tag);
+        for (q, k) in kids.into_iter().enumerate() {
+            let b = self.build_every_view(k);
+            self.link(a, q as u8 + 1, b, 0);
+        }
+        a
+    }
+
     /// Wrap a built term for normalization: Nrm drives it, Out holds the result.
     /// Returns (nrm, out).
     pub fn drive(&mut self, root: u32) -> (u32, u32) {
@@ -214,6 +251,28 @@ impl Net {
             )),
             _ => None, // a leftover consumer/suspension: not a normal form
         }
+    }
+}
+
+/// The agent a node of loaded code becomes, and its children: a view where its shape is one (K before
+/// the S shapes, B before C, both halves equal before a plain S rule), else its tree node.
+pub fn view_shape(t: &crate::oracle::Term) -> (Tag, Vec<&crate::oracle::Term>) {
+    use crate::oracle::Term::*;
+    match t {
+        L => (Tag::L, vec![]),
+        S(a) => (Tag::S, vec![&**a]),
+        F(a, b) => match (&**a, &**b) {
+            (L, y) => (Tag::K, vec![y]),
+            (S(s), g) => match (&**s, g) {
+                (F(l, f), g) if **l == L => (Tag::B, vec![&**f, g]),
+                (s, F(l, g)) if **l == L => (Tag::C, vec![s, &**g]),
+                (s, b) if s == b => (Tag::W, vec![s]),
+                (s, b) => (Tag::Sx, vec![s, b]),
+            },
+            (F(l, r), L) if **l == L && **r == L => (Tag::I, vec![]),
+            (a, b) => (Tag::F, vec![a, b]),
+        },
+        Ap(..) => unreachable!("code is a value"),
     }
 }
 

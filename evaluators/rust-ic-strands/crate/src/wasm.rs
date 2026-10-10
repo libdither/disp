@@ -104,7 +104,7 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let (t, parts) = match parse_all(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
-    let (net, out) = crate::share::net_sup(&t, p.share);
+    let (net, out) = match crate::share::net_for(&t, &p) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
     match Lattice::load(p, net, out) {
         Ok(l) => { unsafe { STATE = Some(State { l, term: t, parts, done: false }); SAVED.clear(); } 0 }
         Err(e) => { set_text(&e); 2 }
@@ -269,7 +269,7 @@ pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
 pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     match parse_all(src) {
-        Ok((t, _)) => crate::share::net_sup(&t, next().share).0.agents.len() as i32,
+        Ok((t, _)) => match crate::share::net_for(&t, next()) { Ok((n, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
         Err(e) => { set_text(&e); -1 }
     }
 }
@@ -392,7 +392,7 @@ pub extern "C" fn state_bytes(i: u32) -> u32 {
 // ---- reading the net back, and computations picked in the player (readback.rs) ----------------
 
 use crate::readback::{self, Fate, Selection, NOWHERE};
-use rust_ca_lattice::rules::{Tag, ALL_TAGS};
+use rust_ca_lattice::rules::Tag;
 
 /// Times a GPU handed a run back, each renumbering the abstract net.
 static mut HANDED_BACK: u64 = 0;
@@ -405,7 +405,7 @@ static mut SEATS: Vec<u32> = Vec::new();
 fn picked() -> &'static mut Selection { unsafe { PICKED.get_or_insert_with(Selection::default) } }
 #[allow(static_mut_refs)]
 fn put_seats(v: Vec<u32>) -> u32 { unsafe { SEATS = v; SEATS.len() as u32 } }
-fn code(t: Tag) -> u32 { ALL_TAGS.iter().position(|x| *x == t).unwrap() as u32 + 1 }
+fn code(t: Tag) -> u32 { crate::lattice::code(t) as u32 }
 /// The id of the agent in a seat.
 fn at_seat(site: u32, slot: u32) -> Option<u32> {
     let l = &st().l;

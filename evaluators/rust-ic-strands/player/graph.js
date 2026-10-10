@@ -306,7 +306,9 @@ function drawGraph() {
   const tones = new Map();
   /// Colour number `key` at opacity a, for use `slot`, mixed once a frame.
   const tone = (key, c, slot, a) => { let t = tones.get(key); if (!t) tones.set(key, t = []); return t[slot] ??= graphMix(c, a); };
-  const keyOf = i => segs ? 2 * NET.seg[i] + isValue(NET.tag[i]) : -2 - NET.tag[i], colourOf = i => segs ? netTone(i)?.rgb ?? GREY : KIND[NET.tag[i]];
+  // Movement agents keep their colour with segments on (it says what they do), and are drawn larger.
+  const own = i => !segs || isView(NET.tag[i]), big = t => isView(t) ? 1.45 : 1;
+  const keyOf = i => own(i) ? -2 - NET.tag[i] : 2 * NET.seg[i] + isValue(NET.tag[i]), colourOf = i => own(i) ? KIND[NET.tag[i]] : netTone(i)?.rgb ?? GREY;
   // Paths batched by colour, width (0 a fill) and dash, drawn lowest z first so what is lit lands on top.
   const batches = new Map();
   const into = (style, z, width, dash = false) => {
@@ -369,7 +371,7 @@ function drawGraph() {
     visible.push(i);
     const b = pk ? pk[seatOf(i)] : 0, lv = pk && !b ? 3 : gone(i) ? (b ? 2 : 1) : 0, style = tone(keyOf(i), colourOf(i), 4 + lv, NODE_A[lv]);
     level[i] = lv;
-    if (round) { const t = NET.tag[i], [ux, uy] = shapeOf(t).turn ? graphFacing(i) : [0, -1]; shapeInto(into(style, NODE_A[lv], 0), t, x[i], y[i], rad, ux, uy, holes, marks); }
+    if (round) { const t = NET.tag[i], [ux, uy] = shapeOf(t).turn ? graphFacing(i) : [0, -1]; shapeInto(into(style, NODE_A[lv], 0), t, x[i], y[i], rad * big(t), ux, uy, holes, marks); }
     else { let q = squares.get(style); if (!q) squares.set(style, q = { z: NODE_A[lv], at: [] }); q.at.push(i); }
   }
   flush();
@@ -395,15 +397,21 @@ function drawGraph() {
   if (view.s * rad > 3.5) {
     const dots = NODE_A.map(() => new Path2D());
     for (const i of visible) {
-      const t = NET.tag[i], [ux, uy] = graphFacing(i), k = rad * (shapeOf(t).turn ? rimAt(t, -Math.PI / 2) : rimAt(t, Math.atan2(uy, ux)));
+      const t = NET.tag[i], [ux, uy] = graphFacing(i), k = rad * big(t) * (shapeOf(t).turn ? rimAt(t, -Math.PI / 2) : rimAt(t, Math.atan2(uy, ux)));
       dots[level[i]].moveTo(x[i] + k * ux + rad * 0.24, y[i] + k * uy); dots[level[i]].arc(x[i] + k * ux, y[i] + k * uy, rad * 0.24, 0, 7);
     }
     dots.forEach((p, lv) => { ctx.globalAlpha = NODE_A[lv]; ctx.fillStyle = "#0b0e14"; ctx.fill(p); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = lw(0.7); ctx.stroke(p); });
     ctx.globalAlpha = 1;
   }
-  // rewrites are not flashed here; let their rings run out
+  // Rewrites are not flashed here, but an apply reading a movement agent shows its letter over what
+  // it made (the agents now seated in its site); let the rest run out.
   const now = performance.now(); let keep = 0;
-  for (const b of bursts) if (now - b.t < b.life) bursts[keep++] = b;
+  for (const b of bursts) {
+    const a = (now - b.t) / b.life; if (a >= 1) continue; bursts[keep++] = b;
+    if (!b.v) continue;
+    const i = Array.from({ length: L.ks }, (_, k) => NET.bySeat?.[b.s * L.ks + k]).find(j => j >= 0 && shown(j));
+    if (i !== undefined) flashLetter(b.v, x[i], y[i] - rad * 2.2, Math.max(rad * 2.4, 14 / view.s), 1 - a);
+  }
   bursts.length = keep;
   pickPanel(false);
 }

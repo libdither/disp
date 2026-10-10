@@ -154,7 +154,7 @@ fn turn() {
     // A rewrite that finds no room writes nothing, and the turn goes on to a move.
     let r = fire(pr.kc, pr.kp, pr.via, pr.face);
     if (r == 0u) { tally[T_BLOCKED]++; st = ST_MOVE; continue; }
-    if (r == 1u) { tally[T_FIRES]++; log_fire(site_at(corner, p)); }
+    if (r == 1u) { tally[T_FIRES]++; log_fire(site_at(corner, p) | (fr_fs_view << 24u)); }
     break;
   }
   // A pulse whose strand's mate changed during the turn is lost (only a touched position changes).

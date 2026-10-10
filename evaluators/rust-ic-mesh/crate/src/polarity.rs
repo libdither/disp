@@ -5,12 +5,13 @@
 //! the unique reader of the source it references (linearity), which is what makes the
 //! whole protocol lock-free: every remote operation on a source comes from one place.
 
-use rust_ca_lattice::rules::{all_rules, End, Rule, Tag, ALL_TAGS};
+use rust_ca_lattice::rules::{all_rules, End, Rule, Tag, ALL_TAGS, VIEW_RULES, VIEW_TAGS};
 
 /// Is port `p` of `tag` a source (value flows out of it)?
 pub const fn is_source(tag: Tag, p: usize) -> bool {
     match tag {
         Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup => p == 0,
+        Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => p == 0,
         Tag::A | Tag::T1 | Tag::Sel => p == 2,
         Tag::Nrm => p == 1,
         Tag::Unp | Tag::Dn => p == 1 || p == 2,
@@ -36,10 +37,10 @@ pub fn role(rule: &Rule, e: End) -> Role {
     if src { Role::Have } else { Role::Need }
 }
 
-/// The polarity lemma, checked over the whole ROM: every template wire pairs a `Have` with
+/// The polarity lemma, checked over the whole ROM, movement agents included: every template wire pairs a `Have` with
 /// a `Need`, so every rewrite keeps "one source, one sink" per wire.
 pub fn validate() -> Result<(), String> {
-    for r in all_rules() {
+    for r in all_rules().chain(VIEW_RULES) {
         for (a, b) in r.wires {
             if role(r, *a) == role(r, *b) {
                 return Err(format!(
@@ -49,7 +50,7 @@ pub fn validate() -> Result<(), String> {
             }
         }
     }
-    for t in ALL_TAGS {
+    for t in ALL_TAGS.into_iter().chain(VIEW_TAGS) {
         let sinks = (0..t.arity()).filter(|&p| !is_source(t, p)).count();
         if t.is_producer() && sinks != t.arity() - 1 {
             return Err(format!("{}: producers have exactly one source", t.name()));
