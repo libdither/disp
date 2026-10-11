@@ -1364,6 +1364,16 @@ least 684 strands), averaged over its 5 runs:
   Five ports would make every switchboard bigger, so this stayed an analysis.
 - **Lower temperature** with the idle repulsion (1.5): slower everywhere, before loads were
   packed (Loading packed, above).
+- **Copying a suspension** instead of forcing it once (call by name at `Dn·P`): nothing to choose.
+  Duplicators never meet a suspension in a run (0 on lambada `fib:1`, `fib:2`, `sort:1` and disp
+  `add 2 3`, `fib 2`, `rev [1, 2]`): sharing a computation's result is structural, a duplicator
+  waiting on its output.
+- **Alternating the blocks' offset** (0 on even clocks, 1 on odd ones, every axis), so an agent going
+  one way could step every clock: no run finishes. Two agents diagonally across a block boundary
+  are then never in one block, so their pair never reacts; offsets hashed per axis avoid that.
+- **Copies made ahead setting off toward their readers** (as called values, before demand reaches
+  them): 2.9× the clocks, as they crowd readers not yet ready for them.
+- **Unpairs splitting pairs before they are asked**, as duplicators copy ahead: no change.
 - **Fixed units** (research/COARSE_GRAINED_LATTICE.md, experiment 1): a function served by one
   agent that never moves, every occurrence of its code loaded as a reference holding the unit's
   number, each call walking to the unit and coming back as one agent holding the whole answer. One

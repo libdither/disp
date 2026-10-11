@@ -2723,7 +2723,7 @@ impl Lattice {
     /// step along its principal wire. False when the site holds no wanted consumer.
     fn active_turn(&mut self, s: u32) -> bool {
         let ks: Vec<usize> = (0..self.ks).filter(|&k| {
-            let (t, i) = (self.tag(s, k), s as usize * self.ks + k);
+            let t = self.tag(s, k);
             t != 0 && self.acts(s, k) && (tag_of(t).is_consumer() && tag_of(t) != Tag::Eps || self.p.calls && tag_of(t).is_producer())
         }).collect();
         if ks.is_empty() { return false; }
