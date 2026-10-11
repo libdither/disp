@@ -14,32 +14,39 @@
 #      TLS-insecure retry (a few author sites have self-signed certs; both are reported).
 #      LessWrong / Alignment Forum rate-limit HTML and are read through their GraphQL API;
 #      GitHub repo URLs read the raw README and mint heading slugs;
-#   3. classify: OK | BLOCKED (403/429) | NOT-FOUND | ERROR, plus the content type;
-#   4. extract text (pdftotext for PDFs, tag-stripping for HTML/markdown) and print the title;
-#   5. with -q, find the quote (whitespace-insensitive, `...` matches a gap, quotes and
-#      hyphenation tolerant) and print the fragment link: `<pdf-url>#page=N` for PDFs,
+#   3. classify: OK | BLOCKED (403/429) | NOT-FOUND | ERROR, plus the content type; a dead
+#      link (NOT-FOUND, ERROR, or a BLOCKED plain URL) falls back to the Wayback Machine's
+#      latest good capture, printed as `ARCHIVE: <url>` so a doc can link that instead;
+#   4. extract text (pdftotext for PDFs, tesseract OCR for pages without a text layer,
+#      tag-stripping for HTML/markdown) and print the title;
+#   5. with -q, find the quote (case- and whitespace-insensitive, `...` matches a gap; both
+#      sides fold ligatures, curly quotes, dashes, soft hyphens, and words hyphenated across
+#      lines) and print the fragment link: `<pdf-url>#page=N` for PDFs,
 #      `<url>#<nearest-preceding-id>` for HTML, `<repo-url>#<heading-slug>` for READMEs.
-# Downloads are cached under /tmp/verify-source/ so repeated quote lookups on one source
-# do not refetch. Set S2_API_KEY to lift Semantic Scholar's unauthenticated rate limit.
+# Downloads, extracted text, and OCR pages are cached under ~/.cache/verify-source/, so
+# repeated lookups on one source do not refetch; -g searches that cached text to find the
+# exact wording when a quote misses. Set S2_API_KEY to lift Semantic Scholar's rate limit.
 #
-# usage: scripts/verify-source.sh [-q 'quote'] [-n LINES] [-a] <url | doi | arxiv-id>
+# usage: scripts/verify-source.sh [-q 'quote'] [-g regex] [-n LINES] [-a] <url | doi | arxiv-id>
 #   -q  quote to locate (a distinctive 5–12 word phrase works best; `...` = any gap)
-#   -n  lines of extracted text to preview when no -q is given (default 12)
+#   -g  list every passage matching a case-insensitive regex, with its page or anchor
+#   -n  lines of extracted text to preview when no -q or -g is given (default 12)
 #   -a  for arXiv ids: fetch the abs page (HTML) instead of the PDF
 set -u
-QUOTE="" PREVIEW=12 ABS=0
-while getopts "q:n:a" o; do
+QUOTE="" GREP="" PREVIEW=12 ABS=0
+while getopts "q:g:n:a" o; do
   case "$o" in
     q) QUOTE="$OPTARG" ;;
+    g) GREP="$OPTARG" ;;
     n) PREVIEW="$OPTARG" ;;
     a) ABS=1 ;;
     *) exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
-[ $# -eq 1 ] || { echo "usage: $0 [-q quote] [-n lines] [-a] <url | doi | arxiv-id>" >&2; exit 2; }
+[ $# -eq 1 ] || { echo "usage: $0 [-q quote] [-g regex] [-n lines] [-a] <url | doi | arxiv-id>" >&2; exit 2; }
 ARG="$1"
-CACHE=/tmp/verify-source
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/verify-source"
 mkdir -p "$CACHE"
 UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 S2=https://api.semanticscholar.org/graph/v1/paper
@@ -109,6 +116,12 @@ case "$URL" in
     D="$(curl -sS --max-time 30 -A "$UA" "https://api.crossref.org/works?filter=alternative-id:$PII&rows=1" 2>/dev/null | jq -r '.message.items[0].DOI // empty')"
     [ -n "$D" ] && { DOI="$D"; echo "PII: $PII resolves to doi:$DOI"; } ;;
 esac
+# -g reruns skip resolution and read what an earlier run fetched for the same argument
+REC="$CACHE/$(printf '%s %s' "$ARG" "$ABS" | sha1sum | cut -c1-16).src" RECBASE=""
+if [ -n "$GREP" ] && [ -s "$REC" ]; then
+  { read -r URL; read -r RECBASE; } < "$REC"; DOI="" ARXIV=""
+  echo "CACHED: searching the text fetched earlier from $URL"
+fi
 OAPDF="" S2ARXIV="" XTITLE=""
 if [ -n "$DOI" ]; then
   if ! s2 "DOI:$DOI"; then
@@ -134,19 +147,19 @@ fetch() { # $1 = url; sets CODE CTYPE FINAL FILE INSECURE
   fi
   local jar="$CACHE/$key.jar" out W
   W='%{http_code}\t%{content_type}\t%{url_effective}'
-  out="$(curl -sSL --compressed --max-time 90 --retry 1 -A "$UA" -c "$jar" -b "$jar" \
+  out="$(curl -sSL --compressed --connect-timeout 20 --max-time 90 --retry 1 -A "$UA" -c "$jar" -b "$jar" \
         -H 'Accept: text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8' \
         -o "$FILE" -w "$W" "$1" 2>/dev/null)"
   local rc=$?
   if [ $rc -eq 60 ] || [ $rc -eq 35 ]; then
     INSECURE=1
-    out="$(curl -sSLk --max-time 90 -A "$UA" -c "$jar" -b "$jar" -o "$FILE" -w "$W" "$1" 2>/dev/null)"; rc=$?
+    out="$(curl -sSLk --connect-timeout 20 --max-time 90 -A "$UA" -c "$jar" -b "$jar" -o "$FILE" -w "$W" "$1" 2>/dev/null)"; rc=$?
   fi
   [ $rc -eq 0 ] || { CODE="000"; CTYPE="curl-exit-$rc"; FINAL="$1"; return 1; }
   IFS=$'\t' read -r CODE CTYPE FINAL <<< "$out"
   # some hosts block the browser agent and accept a plain one (WAF heuristics differ)
   if [ "$CODE" = 403 ] || [ "$CODE" = 429 ]; then
-    out="$(curl -sSL --compressed --max-time 90 -A 'curl/8.0' -o "$FILE" -w "$W" "$1" 2>/dev/null)" && IFS=$'\t' read -r CODE CTYPE FINAL <<< "$out"
+    out="$(curl -sSL --compressed --connect-timeout 20 --max-time 90 -A 'curl/8.0' -o "$FILE" -w "$W" "$1" 2>/dev/null)" && IFS=$'\t' read -r CODE CTYPE FINAL <<< "$out"
   fi
   CTYPE="${CTYPE%%;*}"
   # content-type lies are common; sniff PDFs
@@ -185,6 +198,23 @@ fetch_forum() { # LessWrong / Alignment Forum reject HTML fetches (429) but answ
   echo "ROUTE: $host GraphQL (HTML fetches are rate-limited)"
 }
 
+wayback() { # $1 = dead url — fetch the Wayback Machine's latest capture that answered 200
+  local u ts saved
+  u="$(printf '%s' "$1" | jq -sRr @uri)"; saved="$CACHE/$(printf '%s' "$1" | sha1sum | cut -c1-16).wayback"
+  ts="$(cat "$saved" 2>/dev/null)"
+  # the availability API is quick but misses many captures; the CDX index is slow but complete
+  [ -n "$ts" ] || ts="$(curl -sS --max-time 30 "https://archive.org/wayback/available?url=$u" 2>/dev/null | jq -r '.archived_snapshots.closest | select(.status == "200") | .timestamp' 2>/dev/null)"
+  [ -n "$ts" ] || ts="$(curl -sS --max-time 60 "https://web.archive.org/cdx/search/cdx?url=$u&filter=statuscode:200&fl=timestamp&limit=-1&fastLatest=true" 2>/dev/null | tail -n1)"
+  case "$ts" in [12][0-9][0-9][0-9]*) ;; *) echo "ARCHIVE: the Wayback Machine has no good capture of $1"; return 1 ;; esac
+  printf '%s\n' "$ts" > "$saved"
+  URL="https://web.archive.org/web/${ts}id_/$1"; fetch "$URL"
+  [ "$CODE" = 200 ] || { echo "ARCHIVE: Wayback Machine capture $ts did not load ($CODE)"; return 1; }
+  ARCHIVED="https://web.archive.org/web/$ts/$1"
+  echo "ARCHIVE: live copy unavailable; using the Wayback Machine capture of ${ts:0:4}-${ts:4:2}-${ts:6:2}: $ARCHIVED"
+  echo "STATUS: OK ($CODE, $CTYPE) $FINAL"
+}
+
+ARCHIVED=""
 case "$URL" in
   https://www.lesswrong.com/*|https://www.alignmentforum.org/*|https://lesswrong.com/*|https://alignmentforum.org/*|https://forum.effectivealtruism.org/*)
     fetch_forum "$URL" || fetch "$URL" ;;
@@ -207,53 +237,116 @@ case "$CODE" in
     elif [ -n "$DOI" ]; then
       echo "HINT: no open-access copy known; cite an author-hosted PDF or arXiv version, or the metadata above"
     else
-      echo "HINT: pass the DOI instead; Semantic Scholar may list an open-access copy"
+      wayback "$URL" || echo "HINT: pass the DOI instead; Semantic Scholar may list an open-access copy"
     fi ;;
-  404|410) echo "STATUS: NOT-FOUND ($CODE) $FINAL" ;;
-  *)       echo "STATUS: ERROR ($CODE $CTYPE) $FINAL" ;;
+  404|410) echo "STATUS: NOT-FOUND ($CODE) $FINAL"; wayback "$URL" ;;
+  *)       echo "STATUS: ERROR ($CODE $CTYPE) $FINAL"; wayback "$URL" ;;
 esac
 [ "$CODE" = "200" ] || exit 1
 
 # --- 3–5. extract, title, quote ---------------------------------------------------
+have() { # $1 = command, $2 = nixpkgs attribute — when not installed, borrow it from the nix store
+  command -v "$1" >/dev/null && return 0
+  local p; p="$(nix build --no-link --print-out-paths "nixpkgs#$2" 2>/dev/null)" || return 1
+  PATH="$PATH:$(printf '%s/bin:' $p)"
+  command -v "$1" >/dev/null
+}
+ocr_page() { # $1 = pdf, $2 = page, $3 = dir — tesseract's reading of one page, kept as $3/$2.txt
+  [ -s "$3/$2.txt" ] && return 0
+  # render at the scan's own resolution: resampling a 200 ppi bitonal scan to 300 costs words
+  local ppi; ppi="$(pdfimages -list -f "$2" -l "$2" "$1" 2>/dev/null | awk 'NR > 2 && $13 > p { p = $13 } END { print p ? (p > 400 ? 400 : p < 150 ? 150 : p) : 300 }')"
+  pdftoppm -f "$2" -l "$2" -r "${ppi:-300}" -gray -png -singlefile "$1" "$3/$2" 2>/dev/null &&
+    tesseract "$3/$2.png" "$3/$2.part" >/dev/null 2>&1 && mv "$3/$2.part.txt" "$3/$2.txt"
+  rm -f "$3/$2.png"
+}
+ocr() { # $1 = pdf, $2 = its pdftotext output, $3 = page cache — OCR the pages that have almost no text
+  local n thin
+  n="$(tr -cd '\f' < "$2" | wc -c)"
+  thin="$(awk -v n="$n" 'BEGIN { RS = "\f" } NR <= n { gsub(/[[:space:]]/, ""); if (length($0) < 200) print NR }' "$2")"
+  [ -n "$thin" ] || return 0
+  n="$(wc -w <<< "$thin")"
+  have pdftoppm poppler-utils && have tesseract tesseract || { echo "OCR: $n pages have little or no text layer, and tesseract is unavailable"; return 0; }
+  echo "OCR: $n pages have little or no text layer; reading them with tesseract (cached for later runs)"
+  mkdir -p "$3"; export -f ocr_page
+  printf '%s\n' $thin | OMP_THREAD_LIMIT=1 xargs -P 8 -I{} bash -c 'ocr_page "$@"' _ "$1" {} "$3"
+  python -I - "$2" "$3" <<'PY'
+import os, sys
+textfile, d = sys.argv[1:3]
+pages = open(textfile, encoding='utf-8', errors='replace').read().split('\f')
+for i, pg in enumerate(pages):
+    f = f'{d}/{i + 1}.txt'
+    if os.path.exists(f):
+        o = open(f, encoding='utf-8', errors='replace').read().replace('\f', '')
+        if len(o.split()) > len(pg.split()): pages[i] = o
+open(textfile, 'w', encoding='utf-8').write('\f'.join(pages))
+PY
+}
+
 TEXT="$FILE.txt"
 PDFTITLE=""
 if [ "$CTYPE" = "application/pdf" ]; then
   KIND=pdf
-  [ -s "$TEXT" ] || pdftotext "$FILE" "$TEXT" 2>/dev/null || { echo "ERROR: pdftotext failed"; exit 1; }
-  echo "PAGES: $(tr -cd '\f' < "$TEXT" | wc -c | awk '{print $1+1}')"
+  have pdftotext poppler-utils || { echo "ERROR: pdftotext not available"; exit 1; }
+  if [ ! -s "$TEXT" ]; then
+    pdftotext "$FILE" "$TEXT.part" 2>/dev/null || { echo "ERROR: pdftotext failed"; exit 1; }
+    ocr "$FILE" "$TEXT.part" "$FILE.ocr"
+    mv "$TEXT.part" "$TEXT"
+  elif [ -d "$FILE.ocr" ]; then
+    echo "OCR: $(ls "$FILE.ocr" | grep -c '\.txt$') pages with little or no text layer were read by tesseract (cached)"
+  fi
+  echo "PAGES: $(tr -cd '\f' < "$TEXT" | wc -c)"
   command -v pdfinfo >/dev/null && PDFTITLE="$(pdfinfo "$FILE" 2>/dev/null | sed -n 's/^Title: *//p')"
 elif [ -z "$KIND" ]; then
   KIND=html
 fi
 [ -n "$FRAGBASE" ] || FRAGBASE="$FINAL"
+# a raw `id_` capture keeps a PDF's #page=N working; an HTML capture reads better in the Wayback viewer
+[ -n "$ARCHIVED" ] && [ "$KIND" != pdf ] && FRAGBASE="$ARCHIVED"
+[ -n "$RECBASE" ] && FRAGBASE="$RECBASE"
+printf '%s\n%s\n' "$URL" "$FRAGBASE" > "$REC"
 
-python - "$KIND" "$FILE" "$TEXT" "$FRAGBASE" "$PREVIEW" "$QUOTE" "$PDFTITLE" <<'PY'
-import re, sys, html
+python -I - "$KIND" "$FILE" "$TEXT" "$FRAGBASE" "$PREVIEW" "$QUOTE" "$PDFTITLE" "$GREP" <<'PY'
+import re, sys
 from html.parser import HTMLParser
-kind, body, textfile, url, preview, quote, pdftitle = sys.argv[1:8]
+kind, body, textfile, url, preview, quote, pdftitle, grep = sys.argv[1:9]
 preview = int(preview)
 
+LIG = {'\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl', '\ufb03': 'ffi', '\ufb04': 'ffl', '\ufb05': 'st', '\ufb06': 'st'}
+TYPO = str.maketrans({**dict.fromkeys('\u2018\u2019\u201a\u201b\u2032', "'"), **dict.fromkeys('\u201c\u201d\u201e\u201f\u2033', '"'), **dict.fromkeys('\u2010\u2011\u2012\u2013\u2014\u2015\u2212', '-')})
+# a dash ending a line inside a word (OCR often reads hyphens as dashes), a soft hyphen, or a zero-width space is cut
+TOK = re.compile(r'(?P<cut>(?<=\w)[-\u2010-\u2015\u00ad][ \t]*\n\s*(?=\w)|[\u00ad\u200b])|(?P<space>\s+)|(?P<lig>[\ufb00-\ufb06])'
+                 r'|[^\s\u00ad\u200b\u2010-\u2015\ufb00-\ufb06-]+|.', re.S)
+
+def normalize(s, at=None): # fold typography to plain text; `at` collects each output char's source offset
+    out = []
+    for m in TOK.finditer(s):
+        k = m.lastgroup
+        r = '' if k == 'cut' else ' ' if k == 'space' else LIG[m.group()] if k == 'lig' else m.group().translate(TYPO)
+        out.append(r)
+        if at is not None: at.extend(range(m.start(), m.end()) if k is None else [m.start()] * len(r))
+    return ''.join(out)
+
 def norm(s):
-    return re.sub(r'\s+', ' ', s).strip()
+    return normalize(s).strip()
 
 def slug(h): # GitHub heading slug
     h = re.sub(r'[^\w\- ]', '', h.strip().lower())
     return re.sub(r' ', '-', h)
 
 if kind == 'pdf':
-    raw = open(textfile, encoding='utf-8', errors='replace').read()
-    pages = raw.split('\f')
-    lines = [l for l in raw.splitlines() if l.strip() and not l.lstrip().startswith('arXiv:')]
+    src = open(textfile, encoding='utf-8', errors='replace').read()
+    pages = [normalize(pg) for pg in src.split('\f')]
+    lines = [l for l in src.splitlines() if l.strip() and not l.lstrip().startswith('arXiv:')]
     print('TITLE:', norm(pdftitle) or (norm(' '.join(lines[:2]))[:160] if lines else '?'))
 elif kind == 'md':
-    full = open(body, encoding='utf-8', errors='replace').read()
-    heads = [(m.start(), slug(m.group(2))) for m in re.finditer(r'^(#{1,6})\s+(.+?)\s*#*$', full, re.M)]
-    first = next((m.group(1) for m in re.finditer(r'^#{1,6}\s+(.+?)\s*#*$', full, re.M)), '?')
+    src = open(body, encoding='utf-8', errors='replace').read()
+    heads = [(m.start(), slug(m.group(2))) for m in re.finditer(r'^(#{1,6})\s+(.+?)\s*#*$', src, re.M)]
+    first = next((m.group(1) for m in re.finditer(r'^#{1,6}\s+(.+?)\s*#*$', src, re.M)), '?')
     print('TITLE:', norm(first)[:160])
     class _P: pass
     p = _P(); p.ids = heads
     # emphasis and code markers hide phrases like `_best-first_`; blank them, keeping offsets
-    full = re.sub(r'[_*`]', ' ', full)
+    full = re.sub(r'[_*`]', ' ', src)
 else:
     class P(HTMLParser):
         def __init__(self):
@@ -277,20 +370,42 @@ else:
             if self.skip: return
             self.text.append(d); self.pos += len(d)
     p = P(); p.feed(open(body, encoding='utf-8', errors='replace').read())
-    full = ''.join(p.text)
+    full = src = ''.join(p.text)
     print('TITLE:', norm(p.title)[:160] or '?')
+if kind != 'pdf':
+    at = []; full = normalize(full, at)
+
+def anchor(s): # nearest id at or before normalized offset s
+    o = at[min(s, len(at) - 1)] if at else 0
+    a = None
+    for pos, i in p.ids:
+        if pos <= o: a = i
+        else: break
+    return a
 
 def quote_re(q):
     parts = [re.escape(norm(x)) for x in re.split(r'\.\.\.|…', q)]
     parts = [re.sub(r'\\\s', r'\\s+', x) for x in parts]
     parts = [x.replace(r'\ ', r'\s+') for x in parts]
-    # tolerate curly vs straight quotes and hyphenation at line breaks
-    parts = [x.replace("'", "['’]").replace('"', '["“”]') for x in parts]
+    # a hyphen may have been cut at a line break (`two-\ndimensional` reads `twodimensional`)
     parts = [re.sub(r'(\\-)', r'-?\\s*', x) for x in parts]
     return re.compile(r'.{0,120}?'.join(parts), re.I | re.S)
 
+if grep:
+    try: rx = re.compile(norm(grep), re.I)
+    except re.error: rx = re.compile(re.escape(norm(grep)), re.I)
+    if kind == 'pdf':
+        hits = [(f'page {i + 1}', pg, m) for i, pg in enumerate(pages) for m in rx.finditer(pg)]
+    else:
+        hits = [(f'#{a}' if (a := anchor(m.start())) else 'no anchor', full, m) for m in rx.finditer(full)]
+    hits = [h for h in hits if h[2].end() > h[2].start()]
+    print(f'GREP: /{grep}/ has {len(hits)} ' + ('match' if len(hits) == 1 else 'matches') + (', first 30 shown' if len(hits) > 30 else ''))
+    for where, t, m in hits[:30]:
+        s, e = m.span()
+        print(f'  {where}: ...{t[max(0, s - 80):e + 80]}...')
+    if not quote: sys.exit(0 if hits else 3)
+
 if not quote:
-    src = raw if kind == 'pdf' else full
     shown = 0
     for l in src.splitlines():
         if l.strip():
@@ -299,25 +414,23 @@ if not quote:
     sys.exit(0)
 
 rx = quote_re(quote)
+miss = "try a shorter distinctive phrase, or -g 'word' to see how the source words it"
 if kind == 'pdf':
     hits = [(i + 1, m) for i, pg in enumerate(pages) for m in [rx.search(pg)] if m]
     if not hits:
-        print('NO MATCH: quote not found in PDF text (try a shorter distinctive phrase)'); sys.exit(3)
+        print(f'NO MATCH: quote not found in PDF text ({miss})'); sys.exit(3)
     base = url.split('#')[0]
     for n, m in hits[:3]:
         pg = pages[n - 1]; s, e = m.span()
         print(f'MATCH: page {n}  fragment: {base}#page={n}')
-        print('   ...' + norm(pg[max(0, s - 100):e + 100]) + '...')
+        print('   ...' + pg[max(0, s - 100):e + 100] + '...')
 else:
     m = rx.search(full)
     if not m:
-        print('NO MATCH: quote not found in page text (try a shorter distinctive phrase)'); sys.exit(3)
+        print(f'NO MATCH: quote not found in page text ({miss})'); sys.exit(3)
     s, e = m.span()
-    anchor = None
-    for pos, i in p.ids:
-        if pos <= s: anchor = i
-        else: break
+    a = anchor(s)
     base = url.split('#')[0]
-    print('MATCH: ' + (f'anchor #{anchor}  fragment: {base}#{anchor}' if anchor else 'no id attribute precedes the match; link the page itself'))
-    print('   ...' + norm(full[max(0, s - 100):e + 100]) + '...')
+    print('MATCH: ' + (f'anchor #{a}  fragment: {base}#{a}' if a else 'no id attribute precedes the match; link the page itself'))
+    print('   ...' + full[max(0, s - 100):e + 100] + '...')
 PY
