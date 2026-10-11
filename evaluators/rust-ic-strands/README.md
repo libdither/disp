@@ -890,10 +890,12 @@ space on the lattice, depth and work on the idealised machine; growth exponents 
 - Work is linear for every adder. On the idealised machine, carry lookahead and select on a tree are
   O(log n) deep, as the textbook says, and so is ripple on a tree for ordinary inputs (laziness makes
   the carry a wire); lists are linear whatever the algorithm.
-- On the lattice the log depth mostly does not show: for the tree adders built with `fix`, a round of
-  the idealised machine costs about √(sites in use) clocks, one crossing of the area in use, and that
-  area grows as n^0.6–0.8. Relay on a tree stays compact and scales best (14k, 20k, 32k clocks at 16, 32,
-  64 bits). The model that fits is area and time (VLSI complexity), not depth alone.
+- On the lattice the log depth mostly does not show. Clocks ≈ 23·D + 0.7·W, with D the idealised
+  machine's rounds and W its rewrites, fits all 304 adder runs to ×1.2 and eight other programs to
+  ×1.1 (research/COARSE_GRAINED_LATTICE.md): a round costs about 23 clocks, plus 0.7 for each rewrite
+  running beside it, so a computation does at most about 1.4 rewrites a clock. The wide tree adders pay
+  that width cost; area (sites in use) adds a smaller term on trees only. Relay on a tree stays narrow and
+  scales best (14k, 20k, 32k clocks at 16, 32, 64 bits).
 - Binary on a tree beats unary already at N = 1; at N = 255 unary takes 909k clocks, 147× the unrolled
   relay. Movement agents scale every adder's clocks by 0.5–0.65× without changing the exponents.
 - Not measured, as the CPU simulator is too slow there: select and lookahead on 64-bit trees, unary
