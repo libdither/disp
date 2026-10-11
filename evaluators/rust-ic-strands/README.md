@@ -1525,7 +1525,9 @@ the player itself there, `player/firefox.sh input` checks its input box and comp
 answer), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
 (`copies=16&clocks=512` for many copies side by side, `demand=0&fork=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
-`strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
+`READDIST=1 strands-run ...` reports how far each read of a copy of a loaded value is from where that
+value was loaded, and from the last 4 places it was read (research/LINEAR_TREE_NETS.md, reading code
+without consuming it). `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end. With `--cool M` it
 then cools for M clocks and reports when the player would call it done and how short the answer
 got, once for each `--vary 'key=value ...'` from the same state (`coolhalf`, `coolmin`, `coolpass`,

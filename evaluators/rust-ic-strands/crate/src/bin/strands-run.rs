@@ -224,6 +224,14 @@ fn main() {
     println!("{} — answer {} (want {}) projection {:?}", if done { "DONE" } else { "UNFINISHED" },
         ans.as_deref().unwrap_or("-"), want.as_deref().unwrap_or("?"), proj.err());
     println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  collected {} ({} dead computations)  refused for a full switchboard {}  turns dropped for stale reads {}", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected, s.dead, s.capped, s.stale);
+    if !l.readdist.is_empty() {
+        let n: u64 = l.readdist.iter().sum();
+        let names = ["0", "1", "2", "3-4", "5-8", "9-16", "17-32", "33-64", ">64"];
+        let parts: Vec<String> = names.iter().zip(&l.readdist).map(|(k, v)| format!("{k}: {:.0}%", 100.0 * *v as f64 / n.max(1) as f64)).collect();
+        println!("READDIST {n} reads of loaded values, by sites to the nearest place one was loaded: {}", parts.join("  "));
+        let parts: Vec<String> = names.iter().chain(["first"].iter()).zip(&l.cachedist).map(|(k, v)| format!("{k}: {:.0}%", 100.0 * *v as f64 / n.max(1) as f64)).collect();
+        println!("CACHEDIST to the nearest of the last 4 places it was read: {}", parts.join("  "));
+    }
     println!("proposals {}  fires {} (blocked {})  swaps {}  hops {}  folds {}  flips {}  strands {} (peak {})  peak live sites {}  fullest site {}  {:.2}s",
         s.proposals, s.fires, s.blocked_fires, s.swaps, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_live, s.peak_site, dt);
     if l.fields.on {

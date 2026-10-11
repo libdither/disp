@@ -49,6 +49,32 @@ This note's analysis stands; what was built from it, and numbers measured since:
   net every use consumes a copy, so this gap can only close if code is read without being consumed
  .
 
+## Reading code without consuming it, on the lattice (2026-10-10)
+
+The copies-against-need gap above is about time only. Closing it means a use reads code without
+consuming it. Design iteration, then a measurement on the strand lattice:
+- **In an interaction net it cannot be done locally.** A value is met only at its principal port, by
+  one wire, and meeting it consumes it. A second reader needs a duplicator (a copy) or a shared store
+  (the code table). Rebuilding a node after reading it only moves the duplicator down a level.
+- **The lattice could do it as a cellular automaton**, with fan-in: persistent code nodes with a few
+  extra "tap" ports, references as wires from readers to taps, a read being a trip along the wire and
+  back (pulses go a strand a clock), and a copy made when a node's taps are full or its readers far.
+  But a reference is one wire: a read that needs both children of a node needs a second wire laid back
+  to the reader, which only walking agents can lay. And readers are far from the code.
+- **Measured** (`READDIST=1 strands-run TERM --latest --fit views=1`; every read of a copy of a loaded
+  value by an apply, triage or normalizer): reads are 9–64 sites from the nearest place that value was
+  loaded for 54–69% of reads, within 2 sites for 1–3% (lambada fib(1), fib(2), sort(1), exp(1); disp
+  `add 2 3`, `fib 2`, `rev [1, 2]`). Kept where it was last read instead (up to 4 places a value), the
+  next read is within 2 sites 13–21% of the time, 3–8 sites 37–43%, 9–32 sites 22–28%, a first use 13–21%.
+  Today a reader meets its value 1–4 strands away (median 2: the README's "Quiet stretches"), because
+  the copy is delivered to it, and a walker closes a gap at 0.12–0.28 strands a clock.
+- **So on this lattice, copying is how code gets to where it is used.** Reusing an instance would save
+  the duplicators' work (25–38% of rewrites with movement agents) but cost a trip of 3–16 sites per read
+  where a copy costs about 2 strands; the work saved does not pay for the travel. The copies that look
+  unneeded in time are needed in space. Reuse would win where a computation stays in place (a loop
+  using its function again where it is), or on a substrate with a cheap broadcast or a shared store (the
+  table, 0.19× the clocks), which is not a cellular automaton. Not built.
+
 ## 1. The answer
 
 **Where the copying comes from.** Applying a value takes it apart (A·F consumes the fork), so

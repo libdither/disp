@@ -287,6 +287,14 @@ pub struct Lattice {
     /// site*k + slot: 0 empty, else the agent's tag code.
     pub tags: Vec<u8>,
     pub sids: Vec<u32>,
+    /// READDIST (experimental): each loaded value's structural identity, inherited by its copies; where
+    /// each identity was loaded; and how far each read of a copy was from the nearest of those.
+    pub piece: std::collections::HashMap<u32, u64>,
+    pub homes: std::collections::HashMap<u64, Vec<u32>>,
+    pub readdist: Vec<u64>,
+    /// READDIST: the last few places each identity was read, and how far each read was from them.
+    pub lastread: std::collections::HashMap<u64, Vec<u32>>,
+    pub cachedist: Vec<u64>,
     pub want: Vec<bool>,
     /// site*k + slot: the agent's tree label, 3 bits (`relabel`).
     pub label: Vec<u8>,
@@ -624,6 +632,7 @@ impl Lattice {
             p, ks, faces, ends,
             tags: vec![0; n * ks],
             sids: vec![u32::MAX; n * ks],
+            piece: Default::default(), homes: Default::default(), readdist: vec![], lastread: Default::default(), cachedist: vec![],
             want: vec![false; n * ks],
             label: vec![0; n * ks],
             sup_label: vec![0; n * ks],
@@ -926,7 +935,36 @@ impl Lattice {
         l.shadow = net;
         l.label_tree();
         l.check_invariants().map_err(|e| format!("after loading: {e}"))?;
+        if std::env::var("READDIST").is_ok() { l.mark_pieces(); }
         Ok(l)
+    }
+
+    /// READDIST: give every loaded value a structural identity and note where it sits.
+    fn mark_pieces(&mut self) {
+        fn hash(l: &Lattice, id: u32, memo: &mut std::collections::HashMap<u32, Option<u64>>) -> Option<u64> {
+            if let Some(&h) = memo.get(&id) { return h; }
+            let a = l.shadow.get(id);
+            let h = if a.tag.is_producer() && !matches!(a.tag, Tag::P | Tag::Pair | Tag::Sup) {
+                let mut x: u64 = 0x9E37_79B9_7F4A_7C15 ^ (code(a.tag) as u64);
+                let mut ok = true;
+                for q in 1..a.tag.arity() {
+                    match a.ports[q].and_then(|(c, _)| hash(l, c, memo)) { Some(c) => x = (x ^ c).wrapping_mul(0x100_0000_01B3).rotate_left(17), None => ok = false }
+                }
+                ok.then_some(x)
+            } else { None };
+            memo.insert(id, h);
+            h
+        }
+        let mut memo = std::collections::HashMap::new();
+        for &s in &self.live.clone() {
+            for k in 0..self.ks {
+                if self.tags[s as usize * self.ks + k] == 0 { continue; }
+                let id = self.sids[s as usize * self.ks + k];
+                if let Some(h) = hash(self, id, &mut memo) { self.piece.insert(id, h); self.homes.entry(h).or_default().push(s); }
+            }
+        }
+        self.readdist = vec![0; 9];
+        self.cachedist = vec![0; 10];
     }
 
     /// Shortest path of links with a free lane, from site a to site b; lay strands on it.
@@ -1915,7 +1953,29 @@ impl Lattice {
         let (cborn, pborn) = (self.born.get(csid as usize).copied().unwrap_or(0), self.born.get(psid as usize).copied().unwrap_or(0));
         if cborn > 0 && cborn == pborn { self.stats.together += 1; }
         let near: Vec<u32> = if self.trace.on { [csid, psid].iter().flat_map(|&a| self.shadow.get(a).ports.iter().flatten().map(|r| r.0).collect::<Vec<_>>()).collect() } else { vec![] };
+        if !self.readdist.is_empty() {
+            if let Some(&h) = self.piece.get(&psid) {
+                if matches!(ct, Tag::A | Tag::T1 | Tag::Sel | Tag::Nrm) {
+                    let at = self.xyz(s);
+                    let d = self.homes[&h].iter().map(|&x| { let y = self.xyz(x); (at[0] - y[0]).abs() + (at[1] - y[1]).abs() + (at[2] - y[2]).abs() }).min().unwrap_or(0);
+                    let bucket = |d: i64| match d { 0 => 0, 1 => 1, 2 => 2, 3..=4 => 3, 5..=8 => 4, 9..=16 => 5, 17..=32 => 6, 33..=64 => 7, _ => 8 };
+                    self.readdist[bucket(d)] += 1;
+                    // Kept where it was last read (up to 4 places): how far is this read from those?
+                    let last = self.lastread.entry(h).or_default().clone();
+                    let dl = last.iter().map(|&x| { let y = self.xyz(x); (at[0] - y[0]).abs() + (at[1] - y[1]).abs() + (at[2] - y[2]).abs() }).min();
+                    match dl { Some(dl) => self.cachedist[bucket(dl)] += 1, None => self.cachedist[9] += 1 }
+                    let last = self.lastread.get_mut(&h).unwrap();
+                    last.push(s);
+                    if last.len() > 4 { last.remove(0); }
+                }
+            }
+        }
         let fresh_sids = self.shadow.fire(csid, psid).1;
+        if !self.readdist.is_empty() && ct == Tag::Dn {
+            if let Some(&h) = self.piece.get(&psid) {
+                for &x in &fresh_sids { if self.shadow.get(x).tag == pt { self.piece.insert(x, h); } }
+            }
+        }
         if self.trace.on {
             let ids: Vec<u32> = fresh_sids.iter().chain(near.iter()).copied().collect();
             self.tr_pairs(&ids, self.trace.fires.len() as i64);
