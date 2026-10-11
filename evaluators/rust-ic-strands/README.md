@@ -874,6 +874,31 @@ npx tsx evaluators/rust-ic-strands/programs/bench.ts --adders add:unary,ripple_a
 npx tsx evaluators/rust-ic-strands/programs/bench.ts --data --kind bits --let 'ru16 := {x, y} => relay_for (bit_tree 4 0) x y ({c} => c) b0' 'ru16 (bit_tree 4 65535) (bit_tree 4 1)'
 ```
 
+**How they scale, 1 to 64 bits** (inputs 2^n − 1 plus 1, no movement agents, 1–3 seeds; clocks and
+space on the lattice, depth and work on the idealised machine; growth exponents fitted for n ≥ 8):
+
+| adder | clocks | work | idealised depth |
+|---|---|---|---|
+| unary `add`, against N = a (to 512) | N^0.99 | N^0.99 | ≈ 145·N |
+| relay, tree | n^0.53 | n^1.02 | 55·log₂n + 2·n |
+| relay unrolled, tree | n^0.69 | n^1.02 | 15·log₂n + 2·n |
+| ripple, tree | n^0.89 (to 32) | n^1.05 | 144·log₂n + 6.7·n |
+| carry select, tree | n^1.3 (to 16) | n^1.07 | ≈ 163·log₂n |
+| carry lookahead, tree | n^0.84 (to 32) | n^1.05 | ≈ 165·log₂n |
+| each, on a list | n^0.87–1.07 | n^0.95–0.99 | 24–166·n |
+
+- Work is linear for every adder. On the idealised machine, carry lookahead and select on a tree are
+  O(log n) deep, as the textbook says, and so is ripple on a tree for ordinary inputs (laziness makes
+  the carry a wire); lists are linear whatever the algorithm.
+- On the lattice the log depth mostly does not show: for the tree adders built with `fix`, a round of
+  the idealised machine costs about √(sites in use) clocks, one crossing of the area in use, and that
+  area grows as n^0.6–0.8. Relay on a tree stays compact and scales best (14k, 20k, 32k clocks at 16, 32,
+  64 bits). The model that fits is area and time (VLSI complexity), not depth alone.
+- Binary on a tree beats unary already at N = 1; at N = 255 unary takes 909k clocks, 147× the unrolled
+  relay. Movement agents scale every adder's clocks by 0.5–0.65× without changing the exponents.
+- Not measured, as the CPU simulator is too slow there: select and lookahead on 64-bit trees, unary
+  beyond 512, unrolled relay on a 64-bit list (out of memory at load).
+
 The tests run with `npx tsx src/run.ts evaluators/rust-ic-strands/programs/programs.disp`.
 
 ## Side by side
@@ -1025,8 +1050,9 @@ about 37% of rewrites are duplicators, most of them copying code (research/LINEA
 most of the S rules the compiler emits only move their argument: `{x} => succ (nat_pred x)` compiles to
 `△(△(△△ succ)) nat_pred`, which copies x and throws one copy away. With `views=1` the loader (rust-ca-lattice `Net::build_views`)
 loads the tree shapes of every plain value something is applied to (the program, the head of each
-application) as six more agent kinds, each a view of the tree it stands for. Arguments stay trees, and
-so does everything the run builds:
+application) as six more agent kinds, each a view of the tree it stands for, except that a K shape stays
+a plain fork (Which shapes get labelled, below). Arguments stay trees, and so does everything the run
+builds:
 
 | view | stands for | applied to c (`A·view`, one rewrite) |
 |---|---|---|
@@ -1083,7 +1109,22 @@ rewrites (plain / views):
 | exp(1) | 902 / 465 (179) | 11.9k / 7062 | 4343 / 2209 | 4076 / 1879 | 6801 / 3141 | 8.88 / 2.87 | 33 / 33 | 30 / 31 |
 
 Geometric means: 0.55× the clocks, 0.50× the rewrites, the agents at load, the peak live sites and the
-peak strands, 0.32× the CPU time.
+peak strands, 0.32× the CPU time. (This table labels K shapes too; the loader no longer does, below.)
+
+**Which shapes get labelled.** Numbers and lists are K shapes all the way down (n is n forks over a
+leaf), so K views mostly labelled data: 253 of `greet "a"`'s 314 views were K shapes, most of them the
+characters of its strings. So the loader leaves a K shape a plain fork, and labels the code inside it.
+Against labelling K too, on the 13 programs above (2 seeds, every answer the same): 0.605× the plain
+clocks instead of 0.554×, 0.515× the rewrites instead of 0.501×, 0.545× the peak sites instead of 0.499×.
+Two ways of labelling only what is used did worse, in the prototype's idealised machine
+(research/LINEAR_TREE_NETS.md, geometric means over 27 programs, against 0.544× the rewrites for every
+shape): labelling only the code that will be applied, read off the code's structure (B's f and g, S's s
+and b, a triage's x and y arms, but not K's payload or C's second argument), 0.989×, as most code is
+passed around as a value before it is applied, through `fix`, currying and returned functions, in
+exactly the places data goes; and keeping every tree as it is with its shape as a 3-bit latent label
+that only an apply meeting it reads (a short unwrap agent fetching what sits two levels down), 0.762×,
+as the code is then copied node by node. A K-only latent label on top of this design would win back
+about a third of the K gap (0.554× the rewrites against 0.567× without, prototype).
 - **Clocks fall almost as much as rewrites** (1.5–2.1× per program against 1.4–2.2×): an application
   is one rewrite deep instead of three, and the lattice is half the size.
 - **What the views do**, summed over the 13 programs (mean of the seeds): 12.7k of the 38k rewrites are

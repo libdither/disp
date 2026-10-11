@@ -71,13 +71,16 @@ impl Net {
 
     /// `build`, with the code in movement agents (rules.rs `VIEW_RULES`): every plain value something is
     /// applied to (the loaded program, each application's head) has its shapes loaded as views
-    /// (`view_shape`); arguments are data and stay trees, as does whatever the run builds.
+    /// (`view_shape`); arguments are data and stay trees, as does whatever the run builds. A K shape
+    /// stays a plain fork: numbers and lists are K shapes all the way down, so a K view would mostly
+    /// label data, and code inside a K keeps its own views.
     pub fn build_views(&mut self, t: &crate::oracle::Term) -> u32 {
         use crate::oracle::Term::*;
         fn value(t: &crate::oracle::Term) -> bool { match t { L => true, S(a) => value(a), F(a, b) => value(a) && value(b), Ap(..) => false } }
         fn go(net: &mut Net, t: &crate::oracle::Term, code: bool) -> u32 {
             let (tag, kids): (Tag, Vec<(&crate::oracle::Term, bool)>) = match t {
                 Ap(f, x) => (Tag::P, vec![(f, value(f)), (x, false)]),
+                F(a, b) if code && **a == L => (Tag::F, vec![(a, true), (b, true)]),
                 _ if code => { let (tag, kids) = view_shape(t); (tag, kids.into_iter().map(|k| (k, true)).collect()) }
                 L => (Tag::L, vec![]),
                 S(a) => (Tag::S, vec![(a, false)]),

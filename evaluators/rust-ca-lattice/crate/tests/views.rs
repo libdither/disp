@@ -110,11 +110,14 @@ fn code_loads_as_views_and_data_as_trees() {
         v.sort();
         v.join(" ")
     };
-    // B (K L) I applied to K L: the argument is data.
+    // B (K L) I applied to K L: the argument is data, and a K shape stays a plain fork.
     let b = f2(s(k(k(Term::L))), i.clone());
-    assert_eq!(tags(&ap(b, k(Term::L))), "B F I K L L L P");
+    assert_eq!(tags(&ap(b, k(Term::L))), "B F F I L L L L P");
     // C L (K L), W (S L), Sx L (S L), each applied to a leaf.
-    assert_eq!(tags(&ap(f2(s(Term::L), k(k(Term::L))), Term::L)), "C K L L L P");
+    assert_eq!(tags(&ap(f2(s(Term::L), k(k(Term::L))), Term::L)), "C F L L L L P");
+    // A number inside code (K shapes all the way down) stays a plain tree; the code around it is a view.
+    let three = k(k(k(Term::L)));
+    assert_eq!(tags(&ap(f2(s(Term::L), k(three)), Term::L)), "C F F F L L L L L L P");
     assert_eq!(tags(&ap(f2(s(s(Term::L)), s(Term::L)), Term::L)), "L L P S W");
     assert_eq!(tags(&ap(f2(s(Term::L), s(Term::L)), Term::L)), "L L L P S Sx");
     // A value applied to nothing is data.
