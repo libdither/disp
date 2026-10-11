@@ -193,15 +193,17 @@ fn main() {
     if let Some(path) = trace {
         // One line per rewrite: clock, rule, site, when its pair first existed and the rewrite that
         // made it (-1: from the start or a collection), when its consumer was first wanted, and
-        // how often it found no room.
+        // how often it found no room, how far apart the pair was when ready, and the rewrites that made
+        // its consumer and its producer (-1: loaded, or made by a collection).
         let tr = &l.trace;
-        let mut out = String::from("clock,rule,site,active,cause,wanted,blocked,strands,sites\n");
+        let mut out = String::from("clock,rule,site,active,cause,wanted,blocked,strands,sites,cmade,pmade\n");
+        let made = |id: u32| l.born.get(id as usize).map_or(-1, |&b| b as i64 - 1);
         for &(c, ri, site, cs, ps) in &tr.fires {
             let (a, cause) = tr.active.get(&(cs, ps)).copied().unwrap_or((f64::NAN, -2));
             let w = tr.wanted.get(&cs).copied().unwrap_or(f64::NAN);
             let r = rust_ca_lattice::rules::rule(ri);
             let (len, d) = tr.apart.get(&(cs, ps)).map(|&(l, d)| (l as i64, d as i64)).unwrap_or((-1, -1));
-            out += &format!("{c},{}·{},{site},{a},{cause},{w},{},{len},{d}\n", r.consumer.name(), r.producer.name(), tr.blocked.get(&cs).copied().unwrap_or(0));
+            out += &format!("{c},{}·{},{site},{a},{cause},{w},{},{len},{d},{},{}\n", r.consumer.name(), r.producer.name(), tr.blocked.get(&cs).copied().unwrap_or(0), made(cs), made(ps));
         }
         std::fs::write(&path, out).expect("write trace");
     }
@@ -246,6 +248,8 @@ fn main() {
         }
     }
     println!("left on the lattice: {}", left.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", "));
+    let (b, a) = (l.stats.steps_by, l.stats.steps_along);
+    println!("STEPS wanted readers {} ({} along their wire), called values {} ({}), idle readers {} ({}), idle values {} ({})", b[0], a[0], b[1], a[1], b[2], a[2], b[3], a[3]);
     if std::env::var("PIECES").is_ok() {
         // Connected pieces of the abstract net that remain, with their agents and readers.
         let n = l.shadow.agents.len();

@@ -69,7 +69,7 @@ pub fn wgsl_for(p: &Params) -> String {
     writeln!(w, "const CH_ACTIVE: u32 = {}u; const CH_HOP: u32 = {}u; const CH_ALONG: u32 = {}u; const CH_SWAP: u32 = {}u;",
         chance(p.active), chance(p.p_hop), chance(0.7), chance(p.swap)).unwrap();
     // No cap: more pairings than a site's 33 ends can hold.
-    writeln!(w, "const PAIRS: u32 = {}u; const LAZY: bool = {}; const GC: bool = {};", if p.pairs == 0 { 31 } else { p.pairs }, p.lazy, p.gc).unwrap();
+    writeln!(w, "const PAIRS: u32 = {}u; const LAZY: bool = {}; const GC: bool = {}; const DN_ROOM: u32 = {}u;", if p.pairs == 0 { 31 } else { p.pairs }, p.lazy, p.gc, p.dn_room).unwrap();
     // The one field (field.rs), if any; with none, every field term is dead code.
     let f = p.fields.iter().find(|c| c.source != Source::NONE).copied();
     let c = f.unwrap_or(Channel::OFF);

@@ -8,8 +8,9 @@ an address**. It is the answer to two problems with the earlier spatial machines
   tile.
 
 Open `player/index.html` to watch it run (rebuild with `./build-player.sh`). It shows only the
-current design (`lattice.rs` `latest`: the chip's schedule with the demand field and forking S
-rules, below), with the field drawn as an amber tint and called values ringed in orange:
+current design (`lattice.rs` `latest`: the chip's schedule with the demand field, forking S rules
+and duplicators copying ahead where there is room, below), with the field drawn as an amber tint
+and called values ringed in orange:
 - **Layout**, as in the website's tree visualizer: the lattice fills the page with the answer at
   the top left, and the input box, time bar and transport sit at the bottom, speed in the left
   corner and round buttons in the right: the view (a pop-out of the four views and the segments
@@ -1209,6 +1210,58 @@ Every answer was the oracle's, as on 160 random terms (median 122 clocks against
 were room to move, but tension pulls a loaded term together anyway: a packed load starts where it
 would have ended up. Cooler runs keep it there. (Alone, 1.5 is about as fast as 2; see Things tried
 that did not help.) Tables above this section were measured with the old loading.
+
+## Copying ahead where there is room (`dnroom`)
+
+**Where the clocks go.** `TRACE=FILE strands-run` writes every rewrite with when its pair first
+existed, when its reader was first wanted, and the rewrites that made its two agents. Following each
+rewrite back to the one that made the later of its agents, from the answer to the load, on five
+programs (lambada `fib:1`, `fib:2`, disp `add 2 3`, `rev [1, 2]`, `relay_add 13 6`): 53–84% of
+that chain's clocks pass with the pair already wired together and its reader not yet asked for; 2–13%
+go to closing the gap between the two; the rest to wiring the pair up (after collections). Nearly
+all the waiting is at duplicators (`Dn·F`, `Dn·S`): a lazy copy is pulled a layer at a time, each
+layer a round trip from the reader back to the original. Three ways to look at that wait:
+- **Demand's travel is not it.** A probe (not local, not kept) that hands demand on to everything a
+  wanted reader waits on at once, every clock, saves 10% of the clocks.
+- **The program's depth mostly is.** On the idealised lazy machine (demand at once, every wanted
+  rewrite at once), copies made ahead of demand cut the rounds by 11–13% at most (disp `fib 2`
+  529 → 464, `isort [2, 1]` 1,067 → 929), and letting every reader run a few steps ahead of demand
+  (counted, so recursion cannot run away) cuts no more: what is needed is already wanted.
+- **Copying ahead on the lattice:** a duplicator meeting a value copies it whether or not anything has
+  asked for the copies. Copying a value is finite, so unlike running a computation ahead it cannot
+  run away, and such a duplicator passes no demand on until it is asked. Every duplicator doing it:
+  0.83× the clocks for 4.1× the rewrites (copies of code nothing reads, mostly), as the extra matter
+  crowds the lattice (pairs 6 strands apart when ready instead of 2). Counting layers ahead of demand
+  (a small counter per duplicator): 0.97×, 0.95×, 0.90× and 0.85× for 1.1×, 1.3×, 1.4× and 2.7× the
+  rewrites at 1, 2, 4 and 16 layers.
+
+**Only where there is room.** The waste only costs where it crowds, so a duplicator copies unasked
+only where its 2×2×2 block had at least `dnroom` sites without an agent at the start of the clock: a
+count every site of a block can see on a chip, and no state per agent. On the 7 programs of Loading
+packed:
+
+| `dnroom` | clocks | rewrites | peak sites |
+|---|---|---|---|
+| 0 (lazy, before) | 1 | 1 | 1 |
+| 4 | 0.83 | 2.21 | 1.21 |
+| **5 (now)** | **0.82** | **1.68** | **1.13** |
+| 6 | 0.86 | 1.32 | 1.10 |
+| 7 | 0.98 | 1.01 | 0.92 |
+
+At 5 it is as fast as copying everything ahead for under a quarter of the extra work. Measured again
+on 4 more seeds: 0.82× (every program 0.75–0.91×); with movement agents 0.84×; disp programs on
+`programs/bench.ts`, 2 seeds: `add 2 3` 9.0k → 7.7k clocks, `fib 3` 22.3k → 18.3k, `mul 2 2`
+16.9k → 13.9k, `rev [1, 2]` 14.9k → 12.4k, `isort [2, 1]` 31.5k → 25.2k, `relay_add 13 6` 13.6k →
+11.4k, `sum [1, 2]` 16.8k → 14.0k, `greet "a"` 14.5k → 12.0k, `doubled [1, 2, 3]` 24.9k → 21.0k, every
+answer the oracle's, for 1.4–2.0× the rewrites and 1.1–1.3× the peak sites. The GPU runs it bit for
+bit (`DN_ROOM`; `crate/gpu.sh`, `player/dawn.sh`). Tables above this section were measured without
+it.
+
+**Who walks.** A rewrite needs the two agents' principal ports to meet; wanted readers step toward
+what they read and called values toward their readers (`strands-run` prints `STEPS`). Readers take
+about 4× the steps values do, but values coming toward their readers is worth much: without it
+(`calls=0`) runs take 1.39× the clocks. More turns for either: 0.75 of turns active is 5% slower,
+every turn active livelocks (Things tried).
 
 ## Contracting the answer
 

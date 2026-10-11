@@ -142,6 +142,12 @@ pub struct Params {
     /// The loaded code's K, S, B, C, I and W shapes load as movement agents, each applied, copied or
     /// erased in one rewrite (rules.rs `VIEW_RULES`). No superpositions, sharing, memo or chip.
     pub views: bool,
+    /// A duplicator copies the value it meets before anything asks for the copies where its 2×2×2
+    /// block had at least this many sites without an agent at the start of the clock (`dnroom`; 0:
+    /// only when asked). Copying a value is finite, so it cannot run away as speculating a
+    /// computation can, and it only takes room nothing else is using; such duplicators walk and
+    /// react, but pass no demand on until they are asked.
+    pub dn_room: u8,
 }
 
 impl Params {
@@ -197,6 +203,7 @@ impl Params {
             "coolcut" => self.cool_cut = on,
             "coolgreedy" => self.cool_greedy = n()? as u8,
             "views" => self.views = on,
+            "dnroom" => self.dn_room = n()? as u8,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -213,7 +220,8 @@ impl Default for Params {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
-                 cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false }
+                 cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
+                 dn_room: 0 }
     }
 }
 
@@ -256,11 +264,17 @@ pub struct Stats {
     /// Computations dropped for a copy of an equal one (`Params::memo`), and merges with no room.
     pub merged: u64,
     pub unmerged: u64,
+    /// Steps by who took them: a wanted reader, a called value (wanted), an idle reader, an idle value;
+    /// and of each, those along its principal wire (toward what it reads, or what reads it).
+    pub steps_by: [u64; 4],
+    pub steps_along: [u64; 4],
 }
 
 /// A tag's number in a seat (0: empty): `ALL_TAGS`' from 1, then the movement agents' (`VIEW_TAGS`, 15
 /// to 20).
 #[inline] pub fn code(t: Tag) -> u8 { ALL_TAGS.iter().chain(&VIEW_TAGS).position(|x| *x == t).unwrap() as u8 + 1 }
+/// The tag in a seat, None if it is empty.
+#[inline] fn tag_of_or(c: u8) -> Option<Tag> { (c != 0).then(|| tag_of(c)) }
 #[inline] pub fn tag_of(c: u8) -> Tag { let i = c as usize - 1; if i < ALL_TAGS.len() { ALL_TAGS[i] } else { VIEW_TAGS[i - ALL_TAGS.len()] } }
 
 /// A rewrite's entry in `fire_log`: its site (below 2^24), and in the top byte, for an apply reading a
@@ -339,6 +353,8 @@ pub struct Lattice {
     pub pairs_hist: std::cell::RefCell<Vec<u64>>,
     /// In Margolus mode, the corner of the block the current move must stay inside.
     fence: Option<[i64; 3]>,
+    /// Sites of the current block without an agent at the start of the clock (`Params::dn_room`).
+    block_room: u8,
     /// Sites of the current block already changed this clock (moves must leave them alone),
     /// and the sites the move under way has changed.
     taken: Vec<u32>,
@@ -524,8 +540,9 @@ pub fn cooled(p: &Params, t0: f64, clocks: f64) -> f64 {
 }
 
 /// The current design: the chip's schedule with the demand field and forking S rules, loaded packed
-/// (no gaps) and run a little cooler. The player and the GPU run it; hw/ builds `chip`.
-pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p.fork = true; p.spread = 1; p.temp = 1.5; p }
+/// (no gaps) and run a little cooler, duplicators copying ahead where their block has room. The
+/// player and the GPU run it; hw/ builds `chip`.
+pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p.fork = true; p.spread = 1; p.temp = 1.5; p.dn_room = 5; p }
 
 /// The demand field (README "Fields"): a wanted reader or a demand pulse sets its site to 3, which
 /// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
@@ -661,6 +678,7 @@ impl Lattice {
             check_every: 0,
             fire_log: vec![],
             fence: None,
+            block_room: 0,
             pairs_hist: Default::default(),
             taken: vec![],
             touched: vec![],
@@ -694,8 +712,13 @@ impl Lattice {
         }
     }
 
-    /// Idle: anything but a wanted reader.
-    fn idle(&self, s: u32, k: usize) -> bool { self.tag(s, k) != 0 && !self.want[s as usize * self.ks + k] }
+    /// Idle: anything that does not act.
+    fn idle(&self, s: u32, k: usize) -> bool { self.tag(s, k) != 0 && !self.acts(s, k) }
+    /// Reacts and walks: wanted, or a duplicator in a block with room (`Params::dn_room`).
+    fn acts(&self, s: u32, k: usize) -> bool {
+        let i = s as usize * self.ks + k;
+        self.want[i] || self.p.dn_room > 0 && self.block_room >= self.p.dn_room && tag_of_or(self.tags[i]) == Some(Tag::Dn)
+    }
     fn idle_at(&self, s: u32) -> usize { (0..self.ks).filter(|&k| self.idle(s, k)).count() }
 
     /// Start tracing: the active pairs and wanted consumers there are now date from clock 0.
@@ -1272,7 +1295,7 @@ impl Lattice {
     fn hop(&mut self, s: u32, k: usize, f: usize, may_swap: bool) -> bool {
         let t = self.nb(s, f);
         if t == u32::MAX || !self.inside(t) { return false; }
-        let walker = self.p.lazy && self.want[s as usize * self.ks + k] && tag_of(self.tag(s, k)).is_consumer() && {
+        let walker = self.p.lazy && self.acts(s, k) && tag_of(self.tag(s, k)).is_consumer() && {
             let m = self.mate_of(s, self.ae(k, 0));
             self.is_strand(m) && self.face(m) == f
         };
@@ -1305,7 +1328,7 @@ impl Lattice {
         let mut plan = [Plan::Drag; ARITY];
         let mut need = 0;
         let mut de = 0i32;
-        let idle = (self.p.lazy && !self.want[s as usize * self.ks + k]) as usize;
+        let idle = (self.p.lazy && !self.acts(s, k)) as usize;
         for q in 0..a {
             let m = self.mate_of(s, self.ae(k, q));
             let w = if q == 0 { self.e.principal[idle] } else { self.e.aux[idle] };
@@ -1367,6 +1390,13 @@ impl Lattice {
         if metropolis && !self.room(t, lanes.len() + loops) { return None; }
         if metropolis && !self.accept(de) { if walker { self.stats.walk_fail[2] += 1; } return None; }
         if walker { self.stats.walk_ok += 1; }
+        {
+            let (t0, w) = (tag_of(self.tag(s, k)), self.want[s as usize * self.ks + k]);
+            let who = if t0.is_consumer() { if w { 0 } else { 2 } } else if w { 1 } else { 3 };
+            self.stats.steps_by[who] += 1;
+            let m = self.mate_of(s, self.ae(k, 0));
+            if self.is_strand(m) && self.face(m) == f { self.stats.steps_along[who] += 1; }
+        }
 
         // Where the through-wires land inside t (a wire may come back to another port of the
         // same agent: that becomes a loop in t).
@@ -1754,7 +1784,7 @@ impl Lattice {
         for k in 0..self.ks {
             let t = self.tag(s, k);
             if t == 0 || !tag_of(t).is_consumer() { continue; }
-            if self.p.lazy && !self.want[s as usize * self.ks + k] { continue; }
+            if self.p.lazy && !self.acts(s, k) { continue; }
             let m = self.mate_of(s, self.ae(k, 0));
             if m == NONE { continue; }
             let (site, m, face) = if self.is_strand(m) {
@@ -1769,7 +1799,7 @@ impl Lattice {
             if q == 0 && t2 != 0 && tag_of(t2).is_producer() { return Some((k, k2, face)); }
             // A wanted reader touching a pending computation's output wants it in turn (an
             // eraser does not: what it touches is garbage).
-            if self.p.lazy && q > 0 && t2 != 0 && tag_of(t2).is_consumer() && tag_of(t) != Tag::Eps {
+            if self.p.lazy && q > 0 && t2 != 0 && tag_of(t2).is_consumer() && tag_of(t) != Tag::Eps && self.want[s as usize * self.ks + k] {
                 self.infect.set(Some((site, k2)));
             }
         }
@@ -2199,6 +2229,7 @@ impl Lattice {
             let mut j = i;
             while j < cells.len() && cells[j].0 == cells[i].0 { j += 1; }
             self.fence = Some(cells[i].0);
+            if self.p.dn_room > 0 { self.block_room = (0..8).filter_map(|q| self.block_site(cells[i].0, q)).filter(|&t| self.occ[t as usize] == 0).count() as u8; }
             // A site with a reaction ready goes first; else an agent's site, mostly.
             let ready: Vec<u32> = cells[i..j].iter().map(|c| c.1).filter(|&s| self.occ[s as usize] > 0 && self.active_pair(s).is_some()).collect();
             self.infect.set(None);
@@ -2693,7 +2724,7 @@ impl Lattice {
     fn active_turn(&mut self, s: u32) -> bool {
         let ks: Vec<usize> = (0..self.ks).filter(|&k| {
             let (t, i) = (self.tag(s, k), s as usize * self.ks + k);
-            t != 0 && self.want[i] && (tag_of(t).is_consumer() && tag_of(t) != Tag::Eps || self.p.calls && tag_of(t).is_producer())
+            t != 0 && self.acts(s, k) && (tag_of(t).is_consumer() && tag_of(t) != Tag::Eps || self.p.calls && tag_of(t).is_producer())
         }).collect();
         if ks.is_empty() { return false; }
         if let Some((kc, kp, via)) = self.active_pair(s) {

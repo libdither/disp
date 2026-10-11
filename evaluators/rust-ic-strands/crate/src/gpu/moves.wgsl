@@ -31,7 +31,7 @@ struct Hop { ok: bool, de: i32 }
 /// must leave the neighbour room and pass the energy test.
 fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropolis: bool, metro: u32, vs: u32, vt: u32) -> Hop {
   let f1 = f ^ 1u;
-  let tg = gt(s0, k); let a = arity(tg); let wnt = gw(s0, k); let idl = LAZY && !wnt;
+  let tg = gt(s0, k); let a = arity(tg); let wnt = gw(s0, k); let idl = LAZY && !acts(s0, k);
   // Per port: plan (0 drag, 1 loop, 2 through), its lane or loop end, and a dragged wire's mate.
   var need = 0u; var de: i32 = 0; var pk = array<u32, 3>(0u, 0u, 0u); var pv = array<u32, 3>(0u, 0u, 0u);
   var dm = array<u32, 3>(NONE, NONE, NONE); var fail = false;
@@ -163,7 +163,7 @@ fn flip(s: u32, x: u32, z: u32, w: u32, e: u32, metro: u32) -> bool {
 /// Agent k at p is a wanted reader stepping along its principal wire across f (lattice.rs `hop`).
 fn walker(k: u32, f: u32) -> bool {
   let m = gm(p, ae(k, 0u));
-  return LAZY && gw(p, k) && is_consumer(gt(p, k)) && is_strand(m) && face(m) == f;
+  return LAZY && acts(p, k) && is_consumer(gt(p, k)) && is_strand(m) && face(m) == f;
 }
 
 /// Whether an earlier turn this clock changed position n (its low 3 bits).

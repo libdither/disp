@@ -55,7 +55,7 @@ fn active_pair(q: u32) -> Pair {
   var r = Pair(false, false, false, false, 0u, 0u, 0u, 0u, 0u, 0u);
   for (var k = 0u; k < 3u; k++) {
     let t = gt(q, k); let m = gm(q, ae(k, 0u));
-    var skip = t == 0u || !is_consumer(t) || (LAZY && !gw(q, k)) || m == NONE;
+    var skip = t == 0u || !is_consumer(t) || (LAZY && !acts(q, k)) || m == NONE;
     var sp = q; var mm = m; var f = 0u;
     if (!skip && is_strand(m)) {
       f = face(m); let nn = inb(q, f);
@@ -66,7 +66,7 @@ fn active_pair(q: u32) -> Pair {
       let k2 = port_k(mm); let qq = port_q(mm); let t2 = gt(sp, k2);
       if (qq == 0u && t2 != 0u && is_producer(t2)) {
         r.found = true; r.kc = k; r.kp = k2; r.via = is_strand(m); r.face = f; return r;
-      } else if (LAZY && qq != 0u && t2 != 0u && is_consumer(t2) && t != T_EPS) {
+      } else if (LAZY && qq != 0u && t2 != 0u && is_consumer(t2) && t != T_EPS && gw(q, k)) {
         r.inf = true; r.inf_pos = sp; r.inf_k = k2;
       }
     }
@@ -102,9 +102,10 @@ fn readers(s: u32) -> u32 {
   return m;
 }
 /// Bit k: slot k of position s holds an agent that walks along its principal wire on an active
-/// turn: a wanted reader, or (with `CALLS`) a called value.
+/// turn: a reader that acts, or (with `CALLS`) a called value.
 fn walkers(s: u32) -> u32 {
-  var m = readers(s);
+  var m = 0u;
+  for (var k = 0u; k < 3u; k++) { let t = gt(s, k); if (t != 0u && is_consumer(t) && t != T_EPS && acts(s, k)) { m |= 1u << k; } }
   if (CALLS) {
     let tags = sb[at(s, 8u)] >> 8u; let wants = sb[at(s, 9u)];
     for (var k = 0u; k < 3u; k++) {
@@ -185,6 +186,8 @@ fn set_pmates() { for (var q = 0u; q < 8u; q++) { set_pmate(q); } }
 fn run_block() {
   taken = 0u;
   set_pmates();
+  room = 0u;
+  if (DN_ROOM != 0u) { for (var q = 0u; q < 8u; q++) { if ((onl & (1u << q)) != 0u && occ(q) == 0u) { room++; } } }
   var cls: array<u32, 8>;
   for (var q = 0u; q < 8u; q++) {
     var c = 3u;

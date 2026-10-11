@@ -99,7 +99,11 @@ fn pairs(s: u32) -> u32 {
   for (var w = 0u; w < 8u; w++) { n += countOneBits(held(sb[at(s, w)])); }
   return n >> 1u;
 }
-fn idle(s: u32, k: u32) -> bool { return gt(s, k) != 0u && !gw(s, k); }
+fn idle(s: u32, k: u32) -> bool { return gt(s, k) != 0u && !acts(s, k); }
+/// Positions of the block under way without an agent as it stood before its first turn (lattice.rs `block_room`).
+var<private> room: u32;
+/// Reacts and walks: wanted, or a duplicator in a block with room (lattice.rs `acts`).
+fn acts(s: u32, k: u32) -> bool { return gw(s, k) || (DN_ROOM != 0u && room >= DN_ROOM && gt(s, k) == T_DN); }
 fn idle_at(s: u32) -> u32 { return u32(idle(s, 0u)) + u32(idle(s, 1u)) + u32(idle(s, 2u)); }
 /// Which of face f's four lanes hold a strand end: bytes 9 + 4f .. 12 + 4f, across two words.
 fn lanes_used(s: u32, f: u32) -> u32 {
