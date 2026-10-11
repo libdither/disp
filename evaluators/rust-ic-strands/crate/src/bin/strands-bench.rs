@@ -3,9 +3,7 @@
 //! side, agents at load (and how many are movement agents, `views=1`), clocks, rewrites, peak strands
 //! and sites, wall and CPU time, the share of rewrites whose two agents one rewrite made, the answer
 //! in ternary.
-//!   strands-bench <file> [--seeds N | --seed S] [--clocks MAX] [--rules] [--ideal] [--unit CODE ...] [key=value ...]
-//! `--unit CODE` (ternary, or `@FILE`) serves that function by a fixed unit (rules.rs `UNIT_RULES`;
-//! `unitd=` and `unitlat=` place and time it); each run then also gives the calls it answered.
+//!   strands-bench <file> [--seeds N | --seed S] [--clocks MAX] [--rules] [--ideal] [key=value ...]
 //! `--rules` also counts the rewrites by consumer (Dn copies, Eps erases, …) and by rule, and those
 //! whose two agents one rewrite made by rule. `--ideal` runs the
 //! idealised lazy machine instead (memo.rs: no lattice, every wanted rewrite at once): its work
@@ -40,15 +38,9 @@ fn cpu() -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (mut file, mut seeds, mut max_clocks, mut by_rule, mut sets, mut ideal) = (None, vec![1u64, 2], 5_000_000f64, false, vec![], false);
-    let mut units = vec![];
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--unit" => {
-                let u = it.next().unwrap();
-                let u = match u.strip_prefix('@') { Some(path) => std::fs::read_to_string(path).expect("unit file").trim().to_string(), None => u.clone() };
-                units.push(term::parse(&u).expect("bad unit code"));
-            }
             "--seeds" => seeds = (1..=it.next().unwrap().parse().unwrap()).collect(),
             "--seed" => seeds = vec![it.next().unwrap().parse().unwrap()],
             "--clocks" => max_clocks = it.next().unwrap().parse().unwrap(),
@@ -84,7 +76,7 @@ fn main() {
         for &seed in &seeds {
             let p = Params { seed, share: 0, ..p0 };
             // As the player: side ⌈√agents · 7⌉ + 16 (8 for one layer), ×1.4 until the drawing fits.
-            let built = || rust_ic_strands::share::net_with_units(&t, &p, &units).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let built = || rust_ic_strands::share::net_for(&t, &p).unwrap_or_else(|e| panic!("{name}: {e}"));
             let (agents, views) = { let n = built().0; (n.live_count(), n.agents.iter().flatten().filter(|a| a.tag.is_view()).count()) };
             let mut side = ((agents as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16;
             let mut l = None;
@@ -116,8 +108,7 @@ fn main() {
             }
             let json = |m: &std::collections::BTreeMap<_, u64>| m.iter().map(|(k, n)| format!("\"{k}\":{n}")).collect::<Vec<_>>().join(",");
             let rules = format!("{}}},\"by_rule\":{{{}}},\"together_by_rule\":{{{}", json(&counts), json(&fired), json(&together));
-            let served = l.units.iter().map(|u| u.served.to_string()).collect::<Vec<_>>().join(",");
-            println!("{{\"name\":\"{name}\",\"seed\":{seed},\"side\":{side},\"agents\":{agents},\"views\":{views},\"served\":[{served}],\"done\":{},\"clocks\":{:.0},\"rewrites\":{},\"collected\":{},\"together\":{},\"peak_strands\":{},\"peak_sites\":{},\"wall\":{wall:.3},\"cpu\":{cpu_s:.3},\"rules\":{{{rules}}},\"answer\":\"{answer}\"}}",
+            println!("{{\"name\":\"{name}\",\"seed\":{seed},\"side\":{side},\"agents\":{agents},\"views\":{views},\"done\":{},\"clocks\":{:.0},\"rewrites\":{},\"collected\":{},\"together\":{},\"peak_strands\":{},\"peak_sites\":{},\"wall\":{wall:.3},\"cpu\":{cpu_s:.3},\"rules\":{{{rules}}},\"answer\":\"{answer}\"}}",
                 !answer.is_empty(), s.clocks, s.fires, s.collected, s.together, s.peak_strands, s.peak_live);
         }
     }

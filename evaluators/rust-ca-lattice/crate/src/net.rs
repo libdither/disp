@@ -21,53 +21,6 @@ pub struct Agent {
 pub struct Net {
     pub agents: Vec<Option<Agent>>, // tombstoned arena; ids are indices
     pub ints: u64,                  // interaction count (the work ledger)
-    /// Each fixed unit's code, by its number (rules.rs `UNIT_RULES`), as `Tree`.
-    pub units: Vec<Tree>,
-    /// The tree each word holds.
-    pub words: std::collections::HashMap<u32, Tree>,
-}
-
-/// A value tree as bytes, root first (`L`, `S`, `F`): plain data, so a net can cross threads.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Tree(pub Box<[u8]>);
-
-impl Tree {
-    pub fn of(t: &crate::oracle::Term) -> Tree { Tree::within(t, usize::MAX).expect("a tree is a value") }
-    /// t as a tree, if it is a value of at most n nodes.
-    pub fn within(t: &crate::oracle::Term, n: usize) -> Option<Tree> {
-        fn go(t: &crate::oracle::Term, v: &mut Vec<u8>, n: usize) -> Option<()> {
-            use crate::oracle::Term::*;
-            if v.len() >= n { return None; }
-            match t { L => v.push(b'L'), S(a) => { v.push(b'S'); go(a, v, n)? } F(a, b) => { v.push(b'F'); go(a, v, n)?; go(b, v, n)? } Ap(..) => return None }
-            Some(())
-        }
-        let mut v = vec![];
-        go(t, &mut v, n)?;
-        Some(Tree(v.into()))
-    }
-    pub fn term(&self) -> crate::oracle::Term {
-        fn go(b: &[u8], i: &mut usize) -> crate::oracle::Term {
-            use crate::oracle::Term::*;
-            let c = b[*i];
-            *i += 1;
-            match c { b'L' => L, b'S' => S(std::rc::Rc::new(go(b, i))), _ => { let a = go(b, i); F(std::rc::Rc::new(a), std::rc::Rc::new(go(b, i))) } }
-        }
-        go(&self.0, &mut 0)
-    }
-    /// A word's label: the shape of its tree.
-    pub fn shape(&self) -> u8 {
-        match self.0[0] { b'L' => crate::rules::SHAPE_L, b'S' => crate::rules::SHAPE_S, _ => crate::rules::SHAPE_F }
-    }
-    /// Its children, for spelling it out.
-    pub fn children(&self) -> Vec<Tree> {
-        fn end(b: &[u8], i: usize) -> usize { match b[i] { b'L' => i + 1, b'S' => end(b, i + 1), _ => end(b, end(b, i + 1)) } }
-        let b = &self.0;
-        match b[0] {
-            b'L' => vec![],
-            b'S' => vec![Tree(b[1..].into())],
-            _ => { let m = end(b, 1); vec![Tree(b[1..m].into()), Tree(b[m..].into())] }
-        }
-    }
 }
 
 impl Net {
@@ -95,65 +48,6 @@ impl Net {
     }
 
     pub fn live_count(&self) -> usize { self.agents.iter().flatten().count() }
-
-    /// A word holding t.
-    pub fn word(&mut self, t: Tree) -> u32 {
-        let w = self.mk_labelled(Tag::Word, t.shape());
-        self.words.insert(w, t);
-        w
-    }
-
-    /// The value a source holds, if it is all values: trees, words and units' code.
-    pub fn value(&self, r: Option<Ref>) -> Option<crate::oracle::Term> {
-        use crate::oracle::Term;
-        use std::rc::Rc;
-        let (id, 0) = r? else { return None };
-        let a = self.agents.get(id as usize)?.as_ref()?;
-        match a.tag {
-            Tag::L => Some(Term::L),
-            Tag::S => Some(Term::S(Rc::new(self.value(a.ports[1])?))),
-            Tag::F => Some(Term::F(Rc::new(self.value(a.ports[1])?), Rc::new(self.value(a.ports[2])?))),
-            Tag::Word => self.words.get(&id).map(Tree::term),
-            Tag::Ref => self.units.get(a.label as usize).map(Tree::term),
-            _ => None,
-        }
-    }
-
-    /// Wire each request whose arguments are values to an idle unit of its number, as the lattice
-    /// does where the two meet. Returns how many docked.
-    pub fn dock(&mut self) -> usize {
-        let mut n = 0;
-        for r in 0..self.agents.len() as u32 {
-            let Some(a) = &self.agents[r as usize] else { continue };
-            if a.tag != Tag::Req || a.ports[0].is_some() { continue; }
-            let (label, pair) = (a.label, self.get(a.ports[1].expect("a request holds its arguments").0).ports);
-            if self.value(pair[1]).is_none() || self.value(pair[2]).is_none() { continue; }
-            let idle = (0..self.agents.len() as u32).find(|&u| matches!(&self.agents[u as usize], Some(x) if x.tag == Tag::Unit && x.label == label && x.ports[0].is_none()));
-            if let Some(u) = idle { self.link(r, 0, u, 0); n += 1; }
-        }
-        n
-    }
-
-    /// `build`, every subtree equal to a unit's code (`units`) loaded as a `Ref` to it.
-    pub fn build_units(&mut self, t: &crate::oracle::Term) -> u32 {
-        use crate::oracle::Term::*;
-        let longest = self.units.iter().map(|c| c.0.len()).max().unwrap_or(0);
-        if let Some(tree) = Tree::within(t, longest) {
-            if let Some(u) = self.units.iter().position(|c| *c == tree) { return self.mk_labelled(Tag::Ref, u as u8); }
-        }
-        let (tag, kids): (Tag, Vec<&crate::oracle::Term>) = match t {
-            L => (Tag::L, vec![]),
-            S(a) => (Tag::S, vec![&**a]),
-            F(a, b) => (Tag::F, vec![&**a, &**b]),
-            Ap(f, x) => (Tag::P, vec![&**f, &**x]),
-        };
-        let a = self.mk(tag);
-        for (q, k) in kids.into_iter().enumerate() {
-            let b = self.build_units(k);
-            self.link(a, q as u8 + 1, b, 0);
-        }
-        a
-    }
 
     /// Build a term as a producer tree (applications become inert `P` suspensions);
     /// returns the root id whose port 0 is the output.
@@ -263,32 +157,10 @@ impl Net {
         // Capture the external far-ends of every aux port BEFORE deleting the pair.
         let cx: Vec<Option<Ref>> = (0..3).map(|i| self.get(consumer).ports[i]).collect();
         let px: Vec<Option<Ref>> = (0..3).map(|i| self.get(producer).ports[i]).collect();
-        // What fresh words hold: the producer's tree whole (a copy) or its children (spelled out),
-        // or a unit's answer, worked out from the arguments the request's pair holds.
-        let held = match pt {
-            Tag::Word => self.words.remove(&producer),
-            Tag::Ref => self.units.get(pl as usize).cloned(),
-            Tag::Unit => {
-                let pair = self.get(cx[1].expect("a request holds its arguments").0);
-                let arg = |q: usize| self.value(pair.ports[q]).expect("a unit answers only values");
-                let call = crate::oracle::ap(crate::oracle::ap(self.units[pl as usize].term(), arg(1)), arg(2));
-                Some(Tree::of(&crate::oracle::nf(call, &mut crate::oracle::Fuel(1 << 32)).expect("a unit's answer within its fuel")))
-            }
-            _ => None,
-        };
         self.agents[consumer as usize] = None;
         self.agents[producer as usize] = None;
 
         let fresh: Vec<u32> = rule.fresh.iter().enumerate().map(|(k, t)| self.mk_labelled(*t, rule.label(k, cl, pl))).collect();
-        if let Some(t) = held {
-            let words: Vec<u32> = fresh.iter().copied().filter(|&x| self.get(x).tag == Tag::Word).collect();
-            let whole = matches!(ct, Tag::Dn | Tag::Nrm | Tag::Req);
-            let parts = if whole { vec![t; words.len()] } else { t.children() };
-            for (w, t) in words.into_iter().zip(parts) {
-                self.get_mut(w).label = t.shape();
-                self.words.insert(w, t);
-            }
-        }
 
         // A wire endpoint resolves to a fresh port or to an external target. An external
         // target may itself point back INTO the dying pair (a direct aux–aux wire between
@@ -380,7 +252,6 @@ impl Net {
                 std::rc::Rc::new(self.readback(a.ports[1])?),
                 std::rc::Rc::new(self.readback(a.ports[2])?),
             )),
-            Tag::Word => self.words.get(&id).map(Tree::term),
             _ => None, // a leftover consumer/suspension: not a normal form
         }
     }

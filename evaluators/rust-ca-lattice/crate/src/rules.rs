@@ -55,13 +55,6 @@ pub enum Tag {
     C,  // △(△f)(△△g), the argument going left only: [p, f, g]
     I,  // △(△△△)△: [p]
     W,  // △(△s)s, both halves the same code: [p, s]
-    // Fixed units (`UNIT_RULES`), after the movement agents: a function served by one agent that
-    // stays where it is, and the values it hands back.
-    Word, // a value held whole (a unit's answer), its shape in the label: [p]
-    Ref,  // a unit's code, by the unit's number in the label: [p]
-    Call, // a unit's function given its first argument: [p, a]
-    Req,  // a call on its way to its unit, the arguments in a pair: [p(unit), args, res]
-    Unit, // the unit, where it stays: [p]
 }
 
 /// Every tag, in the order engines number them (from 1, 0 meaning none). `Sup` comes last so
@@ -75,30 +68,20 @@ pub const ALL_TAGS: [Tag; 14] = [
 /// abstract net and the strand lattice, on its CPU and GPU (the cascade and the chip keep 4 bits).
 pub const VIEW_TAGS: [Tag; 6] = [Tag::K, Tag::Sx, Tag::B, Tag::C, Tag::I, Tag::W];
 
-/// The fixed units' tags, numbered after the movement agents (21 to 25) on the strand lattice's
-/// CPU, the only engine besides the abstract net that runs them.
-pub const UNIT_TAGS: [Tag; 5] = [Tag::Word, Tag::Ref, Tag::Call, Tag::Req, Tag::Unit];
-
-/// A word's label: the shape of the tree it holds.
-pub const SHAPE_L: u8 = 0;
-pub const SHAPE_S: u8 = 1;
-pub const SHAPE_F: u8 = 2;
-
 impl Tag {
     pub fn arity(self) -> usize {
         match self {
-            Tag::L | Tag::Eps | Tag::Out | Tag::I | Tag::Word | Tag::Ref | Tag::Unit => 1,
-            Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Call => 2,
+            Tag::L | Tag::Eps | Tag::Out | Tag::I => 1,
+            Tag::S | Tag::Nrm | Tag::K | Tag::W => 2,
             _ => 3,
         }
     }
     pub fn is_producer(self) -> bool {
-        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup | Tag::Word | Tag::Ref | Tag::Call | Tag::Unit) || self.is_view()
+        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup) || self.is_view()
     }
-    pub fn is_unit(self) -> bool { matches!(self, Tag::Word | Tag::Ref | Tag::Call | Tag::Req | Tag::Unit) }
     pub fn is_view(self) -> bool { matches!(self, Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W) }
     pub fn is_consumer(self) -> bool {
-        matches!(self, Tag::A | Tag::T1 | Tag::Sel | Tag::Unp | Tag::Dn | Tag::Eps | Tag::Nrm | Tag::Req)
+        matches!(self, Tag::A | Tag::T1 | Tag::Sel | Tag::Unp | Tag::Dn | Tag::Eps | Tag::Nrm)
     }
     pub fn name(self) -> &'static str {
         match self {
@@ -106,7 +89,6 @@ impl Tag {
             Tag::A => "A", Tag::T1 => "T1", Tag::Sel => "Sel", Tag::Unp => "Unp",
             Tag::Dn => "Dn", Tag::Eps => "Eps", Tag::Nrm => "Nrm", Tag::Out => "Out",
             Tag::K => "K", Tag::Sx => "Sx", Tag::B => "B", Tag::C => "C", Tag::I => "I", Tag::W => "W",
-            Tag::Word => "Word", Tag::Ref => "Ref", Tag::Call => "Call", Tag::Req => "Req", Tag::Unit => "Unit",
         }
     }
 }
@@ -131,7 +113,7 @@ pub enum Lab { Plain, Consumer, Producer }
 /// Which labels a rule is for. Only a duplicator meeting a superposition looks: the same label
 /// annihilates, a different one commutes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum When { Any, Same, Differ, Shape(u8) }
+pub enum When { Any, Same, Differ }
 
 /// One interaction: consumer×producer → fresh agents + wiring permutation.
 #[derive(Debug)]
@@ -152,7 +134,7 @@ impl Rule {
     }
     /// Whether it is the rule for these labels.
     pub fn applies(&self, c: u8, p: u8) -> bool {
-        match self.when { When::Any => true, When::Same => c == p, When::Differ => c != p, When::Shape(x) => p == x }
+        match self.when { When::Any => true, When::Same => c == p, When::Differ => c != p }
     }
 }
 
@@ -282,13 +264,12 @@ pub static SUP_RULES: &[Rule] = &[
 /// How many rules there are in all, the movement agents' apart (`N_ALL_RULES`).
 pub const N_RULES: usize = RULES.len() + SUP_RULES.len();
 
-/// Every rule, the movement agents' and the fixed units' included: `rule`'s numbering runs to here.
-pub const N_ALL_RULES: usize = N_RULES + VIEW_RULES.len() + UNIT_RULES.len();
+/// Every rule, the movement agents' included: `rule`'s numbering runs to here.
+pub const N_ALL_RULES: usize = N_RULES + VIEW_RULES.len();
 
-/// Rule i of `RULES` followed by `SUP_RULES`, `VIEW_RULES` and `UNIT_RULES`: the numbering `find_index` gives.
+/// Rule i of `RULES` followed by `SUP_RULES` and then `VIEW_RULES`: the numbering `find_index` gives.
 pub fn rule(i: usize) -> &'static Rule {
-    let v = N_RULES + VIEW_RULES.len();
-    if i < RULES.len() { &RULES[i] } else if i < N_RULES { &SUP_RULES[i - RULES.len()] } else if i < v { &VIEW_RULES[i - N_RULES] } else { &UNIT_RULES[i - v] }
+    if i < RULES.len() { &RULES[i] } else if i < N_RULES { &SUP_RULES[i - RULES.len()] } else { &VIEW_RULES[i - N_RULES] }
 }
 
 /// Movement agents (research/LINEAR_TREE_NETS.md §4a): six views of fixed tree shapes the loader
@@ -390,60 +371,6 @@ const COPY_ONE: &[(End, End)] = &[(X(0, 0), Px(1)), (X(0, 1), X(1, 1)), (X(0, 2)
 const COPY_TWO: &[(End, End)] = &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
                                   (X(2, 0), C(1)), (X(3, 0), C(2))];
 
-/// Fixed units (research/COARSE_GRAINED_LATTICE.md §3): a function `f` of two arguments, served by
-/// one `Unit` agent that never moves, where every call of `f` has to go. The loader puts a `Ref` (the
-/// unit's number) wherever `f`'s code was (net.rs `build_units`).
-/// - copying or erasing a `Ref` copies or erases the number, not the code; applying it gives a
-///   `Call` holding the argument, and applying that a `Req`: the call itself, which walks to its
-///   unit with both arguments (each normalized) in a pair and its result wire trailing behind;
-/// - at the unit the request docks (the lattice wires the two together once both arguments are
-///   values) and `Req·Unit` answers it: a `Word` holding the answer, the arguments erased, the unit
-///   in its place. The abstract net reads the arguments and works the answer out (net.rs `fire`);
-/// - a `Word` is a value held whole: copied, erased or normalized in one rewrite, and spelled out a
-///   layer at a time (its shape is its label) for an apply, triage or dispatch reading it, as the
-///   movement agents are. A triage or dispatch reading a `Ref` spells out the unit's code alike.
-///
-/// A request's principal and an idle unit's are free until the lattice docks them, so `Req` and
-/// `Unit` are the only fresh agents with an unwired port. Everything else is a plain template.
-pub static UNIT_RULES: &[Rule] = &[
-    // ---- Word ----
-    Rule { consumer: Dn, producer: Word, fresh: &[Word, Word], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Eps, producer: Word, fresh: &[], wires: &[], ..PLAIN },
-    Rule { consumer: Nrm, producer: Word, fresh: &[Word], wires: &[(X(0, 0), C(1))], ..PLAIN },
-    Rule { consumer: A, producer: Word, when: When::Shape(SHAPE_L), fresh: &[A, L], wires: SPELL_L, ..PLAIN },
-    Rule { consumer: A, producer: Word, when: When::Shape(SHAPE_S), fresh: &[A, S, Word], wires: SPELL_S, ..PLAIN },
-    Rule { consumer: A, producer: Word, when: When::Shape(SHAPE_F), fresh: &[A, F, Word, Word], wires: SPELL_F, ..PLAIN },
-    Rule { consumer: T1, producer: Word, when: When::Shape(SHAPE_L), fresh: &[T1, L], wires: SPELL_L, ..PLAIN },
-    Rule { consumer: T1, producer: Word, when: When::Shape(SHAPE_S), fresh: &[T1, S, Word], wires: SPELL_S, ..PLAIN },
-    Rule { consumer: T1, producer: Word, when: When::Shape(SHAPE_F), fresh: &[T1, F, Word, Word], wires: SPELL_F, ..PLAIN },
-    Rule { consumer: Sel, producer: Word, when: When::Shape(SHAPE_L), fresh: &[Sel, L], wires: SPELL_L, ..PLAIN },
-    Rule { consumer: Sel, producer: Word, when: When::Shape(SHAPE_S), fresh: &[Sel, S, Word], wires: SPELL_S, ..PLAIN },
-    Rule { consumer: Sel, producer: Word, when: When::Shape(SHAPE_F), fresh: &[Sel, F, Word, Word], wires: SPELL_F, ..PLAIN },
-    // ---- Ref: the unit's number ----
-    Rule { consumer: Dn, producer: Ref, fresh: &[Ref, Ref], labels: &[LP, LP], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Eps, producer: Ref, fresh: &[], wires: &[], ..PLAIN },
-    Rule { consumer: Nrm, producer: Ref, fresh: &[Ref], labels: &[LP], wires: &[(X(0, 0), C(1))], ..PLAIN },
-    // f c = Call(c), c normalized on the way.
-    Rule { consumer: A, producer: Ref, fresh: &[Call, Nrm], labels: &[LP, L0], wires: &[(X(0, 0), C(2)), (X(0, 1), X(1, 1)), (X(1, 0), C(1))], ..PLAIN },
-    // A unit's code is a fork: F(Word, Word), its two halves.
-    Rule { consumer: T1, producer: Ref, fresh: &[T1, F, Word, Word], wires: SPELL_F, ..PLAIN },
-    Rule { consumer: Sel, producer: Ref, fresh: &[Sel, F, Word, Word], wires: SPELL_F, ..PLAIN },
-    // ---- Call ----
-    Rule { consumer: Dn, producer: Call, fresh: &[Dn, Call, Call], labels: &[LC, LP, LP], wires: COPY_ONE, ..PLAIN },
-    Rule { consumer: Eps, producer: Call, fresh: &[Eps], wires: &[(X(0, 0), Px(1))], ..PLAIN },
-    // f a c = Req(⟨a, c⟩), c normalized on the way. fresh: req, pair, nrm.
-    Rule { consumer: A, producer: Call, fresh: &[Req, Pair, Nrm], labels: &[LP, L0, L0],
-        wires: &[(X(0, 1), X(1, 0)), (X(0, 2), C(2)), (X(1, 1), Px(1)), (X(1, 2), X(2, 1)), (X(2, 0), C(1))], ..PLAIN },
-    // ---- the unit answers ----
-    Rule { consumer: Req, producer: Unit, fresh: &[Unit, Word, Eps], labels: &[LP, L0, L0], wires: &[(X(1, 0), C(2)), (X(2, 0), C(1))], ..PLAIN },
-];
-
-/// How a reader meets a spelled-out value: the reader again, facing the tree's root (fresh agent 1),
-/// whose children are words (fresh agents 2 and 3).
-const SPELL_L: &[(End, End)] = &[(X(0, 0), X(1, 0)), (X(0, 1), C(1)), (X(0, 2), C(2))];
-const SPELL_S: &[(End, End)] = &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(0, 1), C(1)), (X(0, 2), C(2))];
-const SPELL_F: &[(End, End)] = &[(X(0, 0), X(1, 0)), (X(1, 1), X(2, 0)), (X(1, 2), X(3, 0)), (X(0, 1), C(1)), (X(0, 2), C(2))];
-
 /// Every rule but the movement agents', in `rule`'s numbering.
 pub fn all_rules() -> impl Iterator<Item = &'static Rule> { RULES.iter().chain(SUP_RULES) }
 
@@ -459,9 +386,6 @@ pub fn find_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<&'s
 pub fn find_index(consumer: Tag, producer: Tag) -> Option<usize> { find_index_labelled(consumer, 0, producer, 0) }
 
 pub fn find_index_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<usize> {
-    if producer.is_unit() {
-        return UNIT_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer && r.applies(cl, pl)).map(|i| N_RULES + VIEW_RULES.len() + i);
-    }
     if producer.is_view() {
         return VIEW_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer && r.applies(cl, pl)).map(|i| N_RULES + i);
     }
@@ -522,33 +446,6 @@ pub fn validate_views() -> Result<(), String> {
     Ok(())
 }
 
-/// The fixed units' rules: perfect matchings but for a fresh request's or unit's principal,
-/// labels only on what carries a unit's number, and exactly one rule for each reader of each.
-pub fn validate_units() -> Result<(), String> {
-    for r in UNIT_RULES {
-        let rn = format!("{}·{}", r.consumer.name(), r.producer.name());
-        if !r.consumer.is_consumer() || !r.producer.is_unit() { return Err(format!("{rn}: not a unit rule")); }
-        if r.fresh.iter().any(|t| *t == Out || t.is_view()) { return Err(format!("{rn}: makes what it may not")); }
-        if !matches!(r.when, When::Any) && !(r.producer == Word && matches!(r.when, When::Shape(_))) { return Err(format!("{rn}: only a word's shape is looked at")); }
-        if !r.labels.is_empty() && r.labels.len() != r.fresh.len() { return Err(format!("{rn}: labels for some fresh agents only")); }
-        for (k, t) in r.fresh.iter().enumerate() {
-            let lab = r.labels.get(k).copied().unwrap_or(L0);
-            if lab == LP && !matches!(t, Ref | Call | Req | Unit) { return Err(format!("{rn}: fresh[{k}] = {} given a unit's number", t.name())); }
-            if lab == LC && *t != Dn { return Err(format!("{rn}: fresh[{k}] = {} labelled", t.name())); }
-        }
-        let mut free = vec![];
-        for (k, t) in r.fresh.iter().enumerate() { if matches!(t, Req | Unit) { free.push(X(k as u8, 0)); } }
-        matching_but(r, &rn, &free)?;
-    }
-    for (c, p, shapes) in [(A, Word, 3), (T1, Word, 3), (Sel, Word, 3), (Dn, Word, 1), (Eps, Word, 1), (Nrm, Word, 1),
-                           (A, Ref, 1), (T1, Ref, 1), (Sel, Ref, 1), (Dn, Ref, 1), (Eps, Ref, 1), (Nrm, Ref, 1),
-                           (A, Call, 1), (Dn, Call, 1), (Eps, Call, 1), (Req, Unit, 1)] {
-        let n = UNIT_RULES.iter().filter(|r| (r.consumer, r.producer) == (c, p)).count();
-        if n != shapes { return Err(format!("{n} rules for {}·{}", c.name(), p.name())); }
-    }
-    Ok(())
-}
-
 /// Labels go to duplicators and superpositions only, from an agent that has one, and a fresh
 /// superposition always has its label.
 fn labelled(r: &Rule, rn: &str) -> Result<(), String> {
@@ -563,16 +460,13 @@ fn labelled(r: &Rule, rn: &str) -> Result<(), String> {
 }
 
 /// The wire endpoints of a rule are a perfect matching over its live ports.
-fn matching(r: &Rule, rn: &str) -> Result<(), String> { matching_but(r, rn, &[]) }
-
-/// `matching`, but for the ports in `free`, which stay unwired.
-fn matching_but(r: &Rule, rn: &str, free: &[End]) -> Result<(), String> {
+fn matching(r: &Rule, rn: &str) -> Result<(), String> {
     let mut expected: Vec<End> = vec![];
     for i in 1..r.consumer.arity() { expected.push(C(i as u8)); }
     for j in 1..r.producer.arity() { expected.push(Px(j as u8)); }
     for (k, t) in r.fresh.iter().enumerate() {
         if *t == Out { return Err(format!("{rn}: fresh[{k}] = {} not spawnable", t.name())); }
-        for p in 0..t.arity() { if !free.contains(&X(k as u8, p as u8)) { expected.push(X(k as u8, p as u8)); } }
+        for p in 0..t.arity() { expected.push(X(k as u8, p as u8)); }
     }
     let mut seen: Vec<End> = vec![];
     for (a, b) in r.wires {
@@ -625,7 +519,4 @@ mod tests {
         super::validate_views().expect("the movement agents' rules must validate");
         assert_eq!(super::VIEW_RULES.len(), 36);
     }
-
-    #[test]
-    fn unit_rules_are_well_formed() { super::validate_units().expect("the fixed units' rules must validate"); }
 }

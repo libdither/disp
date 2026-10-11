@@ -332,21 +332,15 @@
 <script id="compilerJs" type="text/plain" src="compiler.js"></script>
 <script>
 "use strict";
-const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "Sup", "K", "Sx", "B", "C", "I", "W",
-  "Word", "Ref", "Call", "Req", "Unit"];
-const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3, 2, 3, 3, 3, 1, 2, 1, 1, 2, 3, 1];
+const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "Sup", "K", "Sx", "B", "C", "I", "W"];
+const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3, 2, 3, 3, 3, 1, 2];
 /// Movement agents (set=views=1, tags 15 to 20): loaded code standing for a tree shape, the tree each spells out as.
 const VIEW_TREE = { K: "△△y", Sx: "△(△s)b", B: "△(△(△△f))g", C: "△(△f)(△△g)", I: "△(△△△)△", W: "△(△s)s" };
 const isView = t => t >= 15 && t <= 20;
-/// Fixed units' agents (unit=…, tags 21 to 25).
-const isUnitKind = t => t >= 21 && t <= 25;
-/// Kinds drawn in their own colour even with segments on, and larger: movement agents and fixed units'.
-const ownKind = t => isView(t) || isUnitKind(t);
 const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage", Sel: "second dispatch",
   Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root", Sup: "superposition",
   K: "K: keeps, erases its argument", Sx: "Sx: copies its argument to both sides", B: "B: moves its argument right",
-  C: "C: moves its argument left", I: "I: becomes a wire", W: "W: works out once, copies the result",
-  Word: "word: a value held whole", Ref: "unit reference", Call: "unit call, one argument given", Req: "request on its way to its unit", Unit: "fixed unit" };
+  C: "C: moves its argument left", I: "I: becomes a wire", W: "W: works out once, copies the result" };
 const DESC = {
   L: "a leaf △, the simplest value", S: "a stem △x: a value with one child", F: "a fork △xy: a value with two children",
   P: "a suspended application f a: it becomes a value once something needs it", Pair: "a pair carrying the arms of a pending choice",
@@ -358,17 +352,11 @@ const DESC = {
   ...Object.fromEntries(Object.entries({ K: "applied to c it gives y and erases c", Sx: "applied to c it gives s c (b c), c copied",
     B: "applied to c it gives f (g c): c moves right, uncopied", C: "applied to c it gives f c g: c moves left, uncopied",
     I: "applied to c it gives c, a plain wire", W: "applied to c it gives t t, t = s c worked out once and copied" })
-    .map(([v, d]) => [v, `a movement agent (set=views=1): loaded code standing for ${VIEW_TREE[v]}; ${d}, in one rewrite. A duplicator or eraser takes it whole; anything else reading it spells it out as its tree first`])),
-  Word: "a value held whole in one agent, as a unit hands its answer back: copied, erased or normalized in one rewrite, spelled out a layer at a time for whatever else reads it",
-  Ref: "where a function served by a fixed unit (unit=…) was loaded: the unit's number, not its code. Copying it copies the number; applying it starts a call",
-  Call: "a call of a unit's function with its first argument given; applying it to the second sends a request",
-  Req: "a call walking to its unit with its two arguments (each normalized on the way) and its result wire trailing behind; at the unit, the two are wired together once the arguments are values",
-  Unit: "a fixed unit: one agent that never moves and answers every call of its function, one at a time, unitlat clocks each (worked out by the CPU, as a hardened circuit would)" };
+    .map(([v, d]) => [v, `a movement agent (set=views=1): loaded code standing for ${VIEW_TREE[v]}; ${d}, in one rewrite. A duplicator or eraser takes it whole; anything else reading it spells it out as its tree first`])) };
 const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right"], P: ["value", "function", "argument"], Pair: ["value", "first", "second"],
   A: ["operator", "argument", "result"], T1: ["subject", "arms", "result"], Sel: ["subject", "arms", "result"], Unp: ["pair", "first", "second"],
   Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"], Sup: ["value", "first side", "second side"],
-  K: ["value", "y"], Sx: ["value", "s", "b"], B: ["value", "f", "g"], C: ["value", "f", "g"], I: ["value"], W: ["value", "s"],
-  Word: ["value"], Ref: ["value"], Call: ["value", "argument"], Req: ["unit", "arguments", "result"], Unit: ["requests"] };
+  K: ["value", "y"], Sx: ["value", "s", "b"], B: ["value", "f", "g"], C: ["value", "f", "g"], I: ["value"], W: ["value", "s"] };
 const MEANING = {
   "A·L": "apply(leaf, x) = stem x", "A·S": "apply(stem a, x) = fork a x", "A·F": "apply(fork a b, x) = triage a with arms ⟨b, x⟩",
   "A·P": "the operator is still suspended: force it first, then apply", "T1·L": "the subject a is a leaf: the result is b, and c is erased",
@@ -390,27 +378,18 @@ const MEANING = {
   "A·C": "C f g c = f c g: c moves left, uncopied", "A·I": "I c = c: argument and result are wired together", "A·W": "W s c = t t: t = s c is worked out once, then copied",
   ...Object.fromEntries(Object.keys(VIEW_TREE).flatMap(v => [[`Dn·${v}`, `two copies of the ${v} view in one rewrite; duplicators copy its children`],
     [`Eps·${v}`, `the ${v} view is erased in one rewrite; erasers move on to its children`],
-    ...["T1", "Sel", "Nrm"].map(q => [`${q}·${v}`, `the ${v} view is spelled out as its tree ${VIEW_TREE[v]}, for the ${NAMES[q]} to read`])])),
-  ...Object.fromEntries([["Dn·Word", "two copies of the word, in one rewrite"], ["Eps·Word", "the word is erased in one rewrite"], ["Nrm·Word", "a word is already finished"],
-      ["A·Word", "the word is spelled out a layer, for the apply to read"], ["T1·Word", "the word is spelled out a layer, for the triage to read"],
-      ["Sel·Word", "the word is spelled out a layer, for the dispatch to read"], ["Dn·Ref", "two copies of the unit's number: the code is not copied"],
-      ["Eps·Ref", "the reference is erased"], ["Nrm·Ref", "a unit's code is already finished"], ["A·Ref", "the call takes its first argument, normalized on the way"],
-      ["T1·Ref", "the unit's code is spelled out, for the triage to read"], ["Sel·Ref", "the unit's code is spelled out, for the dispatch to read"],
-      ["Dn·Call", "two copies of the call; a duplicator copies its argument"], ["Eps·Call", "the call is erased; an eraser moves on to its argument"],
-      ["A·Call", "the call has both arguments: a request sets off for the unit"],
-      ["Req·Unit", "the unit answers: a word holding the answer, the arguments erased; the unit is busy for unitlat clocks"]]) };
+    ...["T1", "Sel", "Nrm"].map(q => [`${q}·${v}`, `the ${v} view is spelled out as its tree ${VIEW_TREE[v]}, for the ${NAMES[q]} to read`])])) };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
 // Movement agents in colours of what they do: K red (erases), Sx and W greens (copy), B orange and C yellow (move), I sky (a wire).
-// Fixed units in golds: the unit, its references and calls darker, the requests walking to it pink, its words pale.
 const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#f7768e",
-  "#db4b4b", "#c3e88d", "#ff9e64", "#f4d35e", "#7dcfff", "#9ece6a", "#f1e3b5", "#d4a72c", "#c08a1e", "#ff6ac1", "#ffd23f"];
+  "#db4b4b", "#c3e88d", "#ff9e64", "#f4d35e", "#7dcfff", "#9ece6a"];
 const kindColor = t => COLOR[t] ?? "#8a96a8";
 /// A kind as its icon (shapes.js) and its name.
 const kindHTML = t => `${shapeSVG(t, kindColor(t))}${NAMES[TAGS[t]] ?? `agent of kind ${t}`}`;
-const isConsumer = t => t >= 6 && t <= 12 || t === 24;
-const isProducer = t => t >= 1 && t <= 5 || t === 14 || isView(t) || isUnitKind(t) && t !== 24;
+const isConsumer = t => t >= 6 && t <= 12;
+const isProducer = t => t >= 1 && t <= 5 || t === 14 || isView(t);
 // Which ports are outputs (sources): a producer's principal, a computation's result, a duplicator's or unpair's two parts.
-const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8 || t === 24) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0 : false;
+const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0 : false;
 const DIRS = ["east", "west", "south", "north", "up a layer", "down a layer"];
 const NONE = 255;
 const DISP = window.DISP_PROGRAMS || [];
@@ -540,24 +519,6 @@ const MOVERS = [
   { name: "relay_add 1 2", text: "relay_add 1 2", view: "3d", speed: 35,
     desc: "binary addition: forty B agents carry bits right, a few C, K, I, W and Sx along the way" },
 ];
-/// Fixed units (unit=NAME: that function served by one agent that stays put, rules.rs `UNIT_RULES`): four
-/// additions with their own copies of the adder against one adder unit near and far, far with its requests
-/// wandering rather than steering, and a slow one; then a unit reused through a recursion.
-const FOUR_ADDS = "relay_add 13 6; relay_add 5 9; relay_add 7 7; relay_add 2 11";
-const UNIT_EXAMPLES = [
-  { name: "copies", text: FOUR_ADDS, units: [], set: [], view: "oblique", speed: 100,
-    desc: "four binary additions, each with its own copy of relay_add, worked out on the lattice side by side" },
-  { name: "unit 4 sites away", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=4", "unitlat=20", "unitsteer=1"], view: "oblique", speed: 30,
-    desc: "the same four, relay_add served by one fixed unit 4 sites right of the program: each call walks there, its arguments stream along its wire, and its answer comes back as a word" },
-  { name: "unit 60 sites away", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=60", "unitlat=20", "unitsteer=1"], view: "oblique", speed: 40,
-    desc: "the unit 60 sites away: requests steer straight for it, about three clocks a site, so it still beats copying" },
-  { name: "unit 60 away, wandering", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=60", "unitlat=20", "unitsteer=0"], view: "oblique", speed: 80,
-    desc: "the same, the requests stepping wherever the dice say (unitsteer=0), drawn to the unit only by energy: some 50 clocks a site, about what copying costs" },
-  { name: "slow unit nearby", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=4", "unitlat=2000", "unitsteer=1"], view: "oblique", speed: 100,
-    desc: "the unit 4 sites away, but 2000 clocks a call: four calls queue for 8000 clocks, longer than the copies take side by side" },
-  { name: "mul, add as a unit", text: "mul 3 3", units: ["add"], set: ["unitd=8", "unitlat=20", "unitsteer=1"], view: "oblique", speed: 90,
-    desc: "3 × 3 by repeated addition: every add of the recursion goes to one unit; the recursion copies the unit's number, not add's code" },
-];
 const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
 function populate() {
   entries = [...DISP.map(p => ({ group: "disp programs", name: p.name, text: `${p.name} ${p.example}`, desc: p.desc, prog: p })),
@@ -565,7 +526,6 @@ function populate() {
       desc: "unary and binary addition at once, each its own reduction", both: true }] : []),
     ...catalog.workloads.map(w => ({ group: "benchmarks (binary numbers)", name: w.name, text: w.n > 0 ? `${w.name}:${SIZE[w.name] ?? w.n}` : w.name, desc: w.desc, work: w })),
     ...MOVERS.map(m => ({ group: "movement agents (views=1)", ...m, mover: true })),
-    ...(DISP.some(p => p.name === "relay_add") ? UNIT_EXAMPLES.map(u => ({ group: "fixed units (unit=…)", ...u, unitEx: true })) : []),
     { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" }];
   let group = "";
   $("menu").innerHTML = entries.map((e, i) => (e.group !== group ? `<div class="grp">${group = e.group}</div>` : "")
@@ -584,7 +544,6 @@ function populate() {
   if (speed !== null) $("speed").value = speed;
   if (q.get("view")) viewMode = q.get("view");
   SETTINGS = (q.get("set") ?? "").split(",").filter(Boolean);
-  UNITS = (q.get("unit") ?? "").split(",").filter(Boolean);
   syncUI();
 }
 /// Links from before the input box: p=disp:NAME&a=ARGS, p=WORKLOAD&n=N, p=random&n=N.
@@ -619,11 +578,6 @@ function syncUI() {
     : e ? "A random tree-calculus term: <i>random:seed:depth</i>."
     : /^[LSF@(),\s]+$|^[012]+\s[012\s]+$/.test(input) ? "A term of your own: L, S(x), F(x,y), @(f,x), or ternary digits, several applied left to right."
     : "Ordinary disp code, compiled in your browser with the prelude, <i>lib/list.disp</i> and <i>programs/programs.disp</i> in scope.";
-  if (UNITS.length) {
-    const kv = k => SETTINGS.find(x => x.startsWith(k + "="))?.split("=")[1];
-    $("progInfo").innerHTML += ` <b>Fixed unit${UNITS.length > 1 ? "s" : ""}:</b> ${UNITS.map(u => `<i>${u}</i>`).join(", ")} served by one agent `
-      + `${kv("unitd") ?? 8} sites right of the program, ${kv("unitlat") ?? 20} clocks a call: every call ${kv("unitsteer") === "0" ? "wanders" : "steers"} there, its arguments stream along its wire, and a word comes back (unit=, set=unitd=…,unitlat=…,unitsteer=…).`;
-  }
 }
 /// Highlight entry i of the menu (-1: none).
 function showPicked(i) {
@@ -638,16 +592,10 @@ function moverSettings(e) {
   SETTINGS = [...SETTINGS.filter(kv => !kv.startsWith("views=")), "views=1"];
   setView(e.view); $("speed").value = e.speed; speedLabel();
 }
-/// A fixed units example's settings: its units, where they stand and how slow they are, its view and speed.
-function unitSettings(e) {
-  UNITS = [...e.units];
-  SETTINGS = [...SETTINGS.filter(kv => !/^unit(d|lat|steer)=/.test(kv)), ...e.set];
-  setView(e.view); $("speed").value = e.speed; speedLabel();
-}
-/// Fill the input box with entry i, its argument selected for typing over; a movement agents or fixed
-/// units example runs at once, with its settings.
+/// Fill the input box with entry i, its argument selected for typing over; a movement agents example
+/// runs at once, with its settings.
 function choose(i) {
-  if (entries[i].mover || entries[i].unitEx) { $("src").value = entries[i].text; showPicked(i); if (entries[i].unitEx) unitSettings(entries[i]); syncUI(); showPicked(i); load(true); return; }
+  if (entries[i].mover) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
   const fill = entries[i].text, at = fill.search(/[\s:]/);
   if (entries[i].both) { $("speed").value = 100; speedLabel(); }
   $("src").value = fill; syncUI();
@@ -730,11 +678,6 @@ function start(p, input) {
   E.strands_settings();
   withString(`seed=${SEED}`, (p, n) => E.strands_set(p, n));
   for (const kv of SETTINGS) if (withString(kv, (p, n) => E.strands_set(p, n))) banner(text(E.text_len()), true);
-  for (const u of UNITS) {
-    const d = DISP.find(p => p.name === u);
-    if (!d) banner(`unit=${u}: no program of that name`, true);
-    else if (withString(d.tree, (p, n) => E.strands_unit(p, n))) banner(`unit=${u}: ${text(E.text_len())}`, true);
-  }
   const src = p.src, agents = withString(src, (p, n) => E.strands_probe(p, n));
   if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return false; }
   const depth = E.strands_depth();
@@ -760,7 +703,7 @@ function start(p, input) {
     + `a switchboard of 8 pairings × 2 ends × ${bits} bits, ${bits} bits saying which strand carries a pulse, and ${field} bits of demand field: `
     + `≈ ${5 * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
   $("clockName").textContent = "clocks (2×2×2 blocks)";
-  location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${SETTINGS.length ? "&set=" + SETTINGS.join(",") : ""}${UNITS.length ? "&unit=" + UNITS.join(",") : ""}${onGpu ? "&gpu=1" : ""}`;
+  location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${SETTINGS.length ? "&set=" + SETTINGS.join(",") : ""}${onGpu ? "&gpu=1" : ""}`;
   if (onGpu && !gpuCode) setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
@@ -1030,7 +973,7 @@ function draw() {
       const seat = s * L.ks + k, t = V.tags[seat]; if (!t) continue;
       const [x, y] = slotPos(s, k), b = pk ? pk[seat] : 0, a = pk && !b ? 0.14 : dead(s, k) ? (b ? 0.6 : 0.28) : 1;
       // Movement agents keep their colour with segments on: it says what they do.
-      const fill = into(fills, segs && !ownKind(t) ? toneAt(seat)?.css ?? "#4a5465" : kindColor(t), a);
+      const fill = into(fills, segs && !isView(t) ? toneAt(seat)?.css ?? "#4a5465" : kindColor(t), a);
       if (px < 1.5) fill.path.rect(x - rad, y - rad, 2 * rad, 2 * rad); else shapeInto(fill.path, t, x, y, rad, 0, -1, holes, fill.marks);
       if (V.want[seat]) { const w = into(wants, isConsumer(t) ? "#56c8ff" : "#ffa94d", a).path; w.moveTo(x + rad * 1.45, y); w.arc(x, y, rad * 1.45, 0, 7); }
       if (b && px > 1 && !(segs && !(b & 26))) {
@@ -1304,10 +1247,10 @@ function build3d(V) {
       const seat = s * ks + k, t = V.tags[seat]; if (!t) continue;
       const p = end3(s, k * 3, faces), b = pk ? pk[seat] : 0, gone = dead(s, k), g = segs ? segOf(seat) : -1;
       p[1] -= R3; // the principal port is on top of the agent
-      if (!segs || ownKind(t)) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
+      if (!segs || isView(t)) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
       if (gone) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
       const K = kinds[kind3(t)];
-      K.mesh.userData.seats[K.g.n] = seat; K.mesh.setColorAt(K.g.n, col); put(K.g, p, (gone ? 0.75 : 1) * (pk && !b ? 0.7 : 1) * (ownKind(t) ? 1.3 : 1) * R3);
+      K.mesh.userData.seats[K.g.n] = seat; K.mesh.setColorAt(K.g.n, col); put(K.g, p, (gone ? 0.75 : 1) * (pk && !b ? 0.7 : 1) * (isView(t) ? 1.3 : 1) * R3);
       if (V.want[seat] && !gone && (!pk || b)) {
         ring(p, 1.6, isConsumer(t) ? RING.want : RING.called);
         if (isConsumer(t)) { fx += p[0]; fy += p[1]; fz += p[2]; nf++; }
@@ -2082,8 +2025,6 @@ let gpuCode = null, gpuWhy = "";
 const SEED = 7;
 /// Settings on top of the current design, from the link's `set=key=value,…` (lattice.rs `Params::set`).
 let SETTINGS = [];
-/// The functions served by fixed units (link `unit=`, programs.js names).
-let UNITS = [];
 function held() { const p = E.strands_held(); return new Uint32Array(E.memory.buffer, p, E.words_len()).slice(); }
 async function setEngine(want, why) {
   if (want === "gpu" && !onGpu) {
