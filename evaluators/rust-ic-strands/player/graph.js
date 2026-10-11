@@ -307,7 +307,7 @@ function drawGraph() {
   /// Colour number `key` at opacity a, for use `slot`, mixed once a frame.
   const tone = (key, c, slot, a) => { let t = tones.get(key); if (!t) tones.set(key, t = []); return t[slot] ??= graphMix(c, a); };
   // Movement agents keep their colour with segments on (it says what they do), and are drawn larger.
-  const own = i => !segs || isView(NET.tag[i]), big = t => isView(t) ? 1.45 : 1;
+  const own = i => !segs || ownKind(NET.tag[i]), big = t => ownKind(t) ? 1.45 : 1;
   const keyOf = i => own(i) ? -2 - NET.tag[i] : 2 * NET.seg[i] + isValue(NET.tag[i]), colourOf = i => own(i) ? KIND[NET.tag[i]] : netTone(i)?.rgb ?? GREY;
   // Paths batched by colour, width (0 a fill) and dash, drawn lowest z first so what is lit lands on top.
   const batches = new Map();

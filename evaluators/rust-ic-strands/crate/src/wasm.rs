@@ -77,9 +77,26 @@ static mut NEXT: Option<Params> = None;
 #[allow(static_mut_refs)]
 fn next() -> &'static mut Params { unsafe { NEXT.get_or_insert_with(latest) } }
 
-/// Start the next run's settings over from the current design.
+/// The functions the next run serves by fixed units (rules.rs `UNIT_RULES`), as code.
+static mut UNITS: Vec<rust_ca_lattice::oracle::Term> = vec![];
+
+/// Start the next run's settings over from the current design, with no units.
 #[no_mangle]
-pub extern "C" fn strands_settings() { *next() = latest(); }
+#[allow(static_mut_refs)]
+pub extern "C" fn strands_settings() { *next() = latest(); unsafe { UNITS.clear(); } }
+
+/// Serve a function (its code, in ternary) by a fixed unit in the next run. Returns 0, or 1 with
+/// why in the text.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn strands_unit(src: *const u8, len: usize) -> i32 {
+    let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
+    match rust_ic_mesh::term::parse(src) {
+        Ok(t) if matches!(t, rust_ca_lattice::oracle::Term::F(..)) => { unsafe { UNITS.push(t); } 0 }
+        Ok(_) => { set_text("a unit's code is a fork"); 1 }
+        Err(e) => { set_text(&e); 1 }
+    }
+}
 
 /// Change one of the next run's settings, as `key=value` (lattice.rs `Params::set`). Returns 0, or
 /// 1 with why in the text.
@@ -104,7 +121,7 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let (t, parts) = match parse_all(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
-    let (net, out) = match crate::share::net_for(&t, &p) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
+    let (net, out) = match crate::share::net_with_units(&t, &p, unsafe { &UNITS }) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
     match Lattice::load(p, net, out) {
         Ok(l) => { unsafe { STATE = Some(State { l, term: t, parts, done: false }); SAVED.clear(); } 0 }
         Err(e) => { set_text(&e); 2 }
@@ -171,7 +188,8 @@ pub extern "C" fn strands_garbage_left() -> u32 {
             if seen[p.0 as usize] != *stamp { seen[p.0 as usize] = *stamp; stack.push(p.0); }
         }
     }
-    slots().filter(|&i| seen[l.sids[i] as usize] != *stamp).count() as u32
+    // A fixed unit belongs to no answer and stays.
+    slots().filter(|&i| seen[l.sids[i] as usize] != *stamp && l.tags[i] as u32 != code(Tag::Unit)).count() as u32
 }
 
 /// The clock, the proposals made and the strands of wire, without working out the other counts
@@ -269,7 +287,7 @@ pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
 pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     match parse_all(src) {
-        Ok((t, _)) => match crate::share::net_for(&t, next()) { Ok((n, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
+        Ok((t, _)) => match crate::share::net_with_units(&t, next(), unsafe { &UNITS }) { Ok((n, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
         Err(e) => { set_text(&e); -1 }
     }
 }
@@ -338,7 +356,7 @@ pub extern "C" fn strands_gpu_ran(clocks: u32, held: u32, fires: u32) -> u32 {
 /// superposition labels there, the counts, whether the answer was in, and the temperature and
 /// cooling (which change once the answer is left alone). Restoring one and running on repeats the
 /// run exactly, as a handover does.
-struct Saved { held: Vec<u32>, labels: Vec<u32>, stats: Stats, done: bool, temp: f64, cooling: Option<(f64, f64)> }
+struct Saved { held: Vec<u32>, labels: Vec<u32>, units: (Vec<(usize, rust_ca_lattice::net::Tree, Option<f64>)>, Vec<crate::lattice::UnitSite>), stats: Stats, done: bool, temp: f64, cooling: Option<(f64, f64)> }
 static mut SAVED: Vec<Option<Saved>> = Vec::new();
 
 /// Save the run as it is now; returns the saved state's number.
@@ -346,7 +364,7 @@ static mut SAVED: Vec<Option<Saved>> = Vec::new();
 #[allow(static_mut_refs)]
 pub extern "C" fn save_state() -> u32 {
     let s = st();
-    let v = Saved { held: s.l.held_sites(), labels: s.l.held_labels(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling };
+    let v = Saved { held: s.l.held_sites(), labels: s.l.held_labels(), units: s.l.held_units(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling };
     let saved = unsafe { &mut SAVED };
     match saved.iter().position(|x| x.is_none()) {
         Some(i) => { saved[i] = Some(v); i as u32 }
@@ -364,6 +382,7 @@ pub extern "C" fn restore_state(i: u32) {
     // in the net as it was at the last look (the first time since it).
     unsafe { if LOOKED_AT == HANDED_BACK { picked().remember(&s.l); } }
     s.l.put_sites_labelled(&v.held, &v.labels);
+    s.l.put_units(&v.units);
     unsafe { HANDED_BACK += 1; }
     s.l.stats = v.stats.clone();
     s.l.cooling = v.cooling;

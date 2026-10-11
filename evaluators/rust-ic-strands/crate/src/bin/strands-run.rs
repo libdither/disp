@@ -25,6 +25,7 @@ fn main() {
     let mut cool = 0f64;
     let mut vary = vec![];
     let mut sets = vec![];
+    let mut units: Vec<String> = vec![];
     while let Some(a) = it.next() {
         match a.as_str() {
             "--k" => p.k = it.next().unwrap().parse().unwrap(),
@@ -77,6 +78,7 @@ fn main() {
             "--fit" => fit = true,
             "--cool" => cool = it.next().unwrap().parse().unwrap(),
             "--vary" => vary.push(it.next().unwrap().clone()),
+            "--unit" => units.push(it.next().unwrap().clone()),
             _ if a.contains('=') => sets.push(a.clone()),
             _ => src = Some(a.clone()),
         }
@@ -93,17 +95,22 @@ fn main() {
     };
     let labels = t.labels();
     let want = sup::oracle_answers(&t, 100_000_000).map(|u| sup::show(&sup::collapse(&u, &labels)));
-    let (net, out) = rust_ic_strands::share::net_for(&t, &p).unwrap_or_else(|e| panic!("{e}"));
+    // `--unit CODE` (or `@FILE`): that function served by a fixed unit (rules.rs `UNIT_RULES`).
+    let units: Vec<rust_ca_lattice::oracle::Term> = units.iter().map(|u| {
+        let u = match u.strip_prefix('@') { Some(path) => std::fs::read_to_string(path).expect("unit file").trim().to_string(), None => u.clone() };
+        term::parse(&u).expect("bad unit code")
+    }).collect();
+    let (net, out) = rust_ic_strands::share::net_with_units(&t, &p, &units).unwrap_or_else(|e| panic!("{e}"));
     let agents = net.live_count();
     let mut l = if fit {
         // As the player sizes it: side ceil(√agents · 7, or 8 in 2D) + 16, growing ×1.4 until the drawing fits.
         let mut side = ((net.agents.len() as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16;
         let mut net = Some(net);
         loop {
-            let (net, out) = net.take().map_or_else(|| rust_ic_strands::share::net_for(&t, &p).unwrap(), |n| (n, out));
+            let (net, out) = net.take().map_or_else(|| rust_ic_strands::share::net_with_units(&t, &p, &units).unwrap(), |n| (n, out));
             match Lattice::load(Params { w: side, h: side, ..p }, net, out) {
                 Ok(l) => break l,
-                Err(e) if e.starts_with("the drawing") => side = (side as f64 * 1.4).ceil() as u32,
+                Err(e) if e.starts_with("the drawing") || e.starts_with("a unit") => side = (side as f64 * 1.4).ceil() as u32,
                 Err(e) => panic!("{e}"),
             }
         }

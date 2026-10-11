@@ -86,6 +86,7 @@ impl Terms {
                 Tag::F | Tag::P | Tag::Pair => &[1, 2],
                 Tag::A | Tag::T1 | Tag::Sel => &[0, 1],
                 Tag::Sup | Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => &[],
+                Tag::Word | Tag::Ref | Tag::Call | Tag::Req | Tag::Unit => &[],
                 _ => &[0],
             };
             if state == UNSEEN {
@@ -126,6 +127,8 @@ impl Terms {
                 Tag::Eps | Tag::Out => self.cut(),
                 // Movement agents are not merged (`Params::views` runs without memo).
                 Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.cut(),
+                // Nor are fixed units' agents (CPU runs with units have no memo).
+                Tag::Word | Tag::Ref | Tag::Call | Tag::Req | Tag::Unit => self.cut(),
             };
         }
         at[r.0 as usize][r.1 as usize]
@@ -405,7 +408,7 @@ pub fn wanted(l: &Lattice) -> Vec<bool> {
 /// The work the idealised machine still has to do from the lattice's net as it is, after the
 /// merges in `plan` (None: none).
 pub fn remaining(l: &Lattice, merges: Option<&[(Head, Head)]>, rounds: u64) -> Option<u64> {
-    let mut net = Net { agents: l.shadow.agents.clone(), ints: l.shadow.ints };
+    let mut net = Net { agents: l.shadow.agents.clone(), ints: l.shadow.ints, units: l.shadow.units.clone(), words: l.shadow.words.clone() };
     let mut want = wanted(l);
     for &(k, d) in merges.unwrap_or(&[]) {
         if net.agents[d.id as usize].is_none() || net.agents[k.id as usize].is_none() { continue; }

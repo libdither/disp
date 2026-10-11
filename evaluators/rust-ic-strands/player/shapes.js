@@ -55,6 +55,15 @@ SHAPE[18] = { fill: [SHAPE[17].fill[0].map((v, i) => i % 2 ? v : -v)] };
 SHAPE[19] = { fill: [[...arcPts(0.62, 0, 0.27, -90, 90, 6), ...arcPts(-0.62, 0, 0.27, 90, 270, 6)]] };
 SHAPE[20] = { fill: [[-0.12, -1.1, 0.12, -1.1, 0.12, -0.32, 0.98, -0.32, 0.98, 1, 0.76, 1, 0.76, -0.1, 0.43, -0.1, 0.43, 1, 0.21, 1, 0.21, -0.1,
   -0.21, -0.1, -0.21, 1, -0.43, 1, -0.43, -0.1, -0.76, -0.1, -0.76, 1, -0.98, 1, -0.98, -0.32, -0.12, -0.32]] };
+// Fixed units (lattice.rs `code` 21 to 25). A word is a value with a bar across it (held whole); a
+// reference a ring with a square hole (the unit's number), a call the same with a notch for the argument
+// it holds; a request an arrow pointing at its unit; the unit a square chip with pins.
+SHAPE[21] = { fill: [TRI], mark: [[-0.62, 0.12, 0.62, 0.12, 0.62, 0.44, -0.62, 0.44]], turn: true };
+SHAPE[22] = { fill: [[0, 0, 0.92]], cut: [[-0.36, -0.36, 0.36, -0.36, 0.36, 0.36, -0.36, 0.36]] };
+SHAPE[23] = { fill: [[...arcPts(0, 0, 0.92, -60, 240, 16), 0, 0.2]], cut: [[-0.3, -0.42, 0.3, -0.42, 0.3, 0.12, -0.3, 0.12]], turn: true };
+SHAPE[24] = { fill: [[0, -1.12, 0.95, 0.12, 0.42, 0.12, 0.42, 1, -0.42, 1, -0.42, 0.12, -0.95, 0.12]], turn: true };
+SHAPE[25] = { fill: [[-0.82, -0.82, 0.82, -0.82, 0.82, 0.82, -0.82, 0.82], ...[-0.45, 0, 0.45].flatMap(x => [[x - 0.11, -1.14, x + 0.11, -1.14, x + 0.11, 1.14, x - 0.11, 1.14],
+  [-1.14, x - 0.11, 1.14, x - 0.11, 1.14, x + 0.11, -1.14, x + 0.11]])], cut: [[-0.48, -0.48, 0.48, -0.48, 0.48, 0.48, -0.48, 0.48]] };
 /// A kind with no shape of its own yet.
 const SHAPE_ANY = { fill: [[0, 0, 0.9]] };
 /// The spark on a wire joining two agents about to rewrite (graph.js).

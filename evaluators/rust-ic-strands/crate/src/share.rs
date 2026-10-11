@@ -33,6 +33,23 @@ pub fn net_for(t: &STerm, p: &crate::lattice::Params) -> Result<(Net, u32), Stri
     Ok((net, out))
 }
 
+/// `net_for`, with fixed units for the functions in `units` (rules.rs `UNIT_RULES`): one `Unit` agent
+/// each, and every place the function's code occurs loaded as a `Ref` to it.
+pub fn net_with_units(t: &STerm, p: &crate::lattice::Params, units: &[Term]) -> Result<(Net, u32), String> {
+    if units.is_empty() { return net_for(t, p); }
+    if p.views || p.share != 0 || p.memo != 0 { return Err("fixed units run without movement agents, sharing or memo".into()); }
+    let t = t.plain().ok_or("fixed units run no superpositions")?;
+    let mut net = Net::new();
+    for (u, c) in units.iter().enumerate() {
+        if !matches!(c, Term::F(..)) { return Err("a unit's code is a fork".into()); }
+        net.units.push(rust_ca_lattice::net::Tree::of(c));
+        net.mk_labelled(rust_ca_lattice::rules::Tag::Unit, u as u8);
+    }
+    let root = net.build_units(&t);
+    let (_, out) = net.drive(root);
+    Ok((net, out))
+}
+
 /// `net` for a term that may hold superpositions; one that does is built whole, with no sharing.
 pub fn net_sup(t: &STerm, min: usize) -> (Net, u32) {
     if let Some(t) = t.plain() { return net(&t, min); }

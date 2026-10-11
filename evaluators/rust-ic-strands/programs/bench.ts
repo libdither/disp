@@ -16,6 +16,7 @@
 //     --widths LIST    at these widths (2,4,8,16), on --inputs max (2^n - 1 plus 1) and/or mixed
 //                      (51566 + 22995 cut to n bits)
 //     --no-lattice     compile and run eagerly only
+//     --print          print each expression's term (with --data: the function's code, then each argument)
 //     --ideal          the idealised lazy machine instead of the lattice (memo.rs: every wanted rewrite at
 //                      once): work (rewrites and collections) and depth (rounds), in no time
 // Columns: code (nodes of the compiled function, or of the whole term), agents at load, eager steps
@@ -39,7 +40,7 @@ const crate = join(here, "../crate")
 const NODE = 0x8000_0000
 
 const argv = process.argv.slice(2)
-const opt = { seeds: 2, jobs: 4, mem: "1500M", timeout: 3600, clocks: 0, data: false, lattice: true, ideal: false,
+const opt = { seeds: 2, jobs: 4, mem: "1500M", timeout: 3600, clocks: 0, data: false, lattice: true, ideal: false, print: false,
   kind: "", uses: [] as string[], lets: [] as string[], sets: [] as string[], json: "", adders: "", widths: "2,4,8,16", inputs: "max,mixed" }
 const exprs: string[] = []
 for (let i = 0; i < argv.length; i++) {
@@ -60,6 +61,7 @@ for (let i = 0; i < argv.length; i++) {
     case "--widths": opt.widths = next(); break
     case "--inputs": opt.inputs = next(); break
     case "--no-lattice": opt.lattice = false; break
+    case "--print": opt.print = true; break
     case "--ideal": opt.ideal = true; opt.seeds = 1; break
     default: exprs.push(a)
   }
@@ -189,6 +191,7 @@ type Run = { name: string; seed: number; side: number; agents: number; done: boo
 
 const cases = exprs.map(prepare)
 for (const k of cases) console.error(`${k.src}: ${k.code} nodes, eager ${k.steps} steps, answer ${show(k.kind, k.want)}`)
+if (opt.print) { for (const k of cases) console.log(k.term); process.exit(0) }
 
 async function lattice(): Promise<Map<Case, Run[]>> {
   const build = spawnSync("systemd-run", ["--user", "--scope", "-q", "-p", "MemoryMax=4G", "-p", "MemorySwapMax=256M", "timeout", "900",

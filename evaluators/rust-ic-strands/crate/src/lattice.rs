@@ -21,7 +21,7 @@ pub use field::{Channel, Fields, Source};
 pub mod memo;
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::sup::STerm;
-use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_ALL_RULES, VIEW_TAGS};
+use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_ALL_RULES, UNIT_TAGS, VIEW_TAGS};
 
 pub const NONE: u8 = u8::MAX;
 /// Ports per agent slot.
@@ -142,6 +142,12 @@ pub struct Params {
     /// The loaded code's K, S, B, C, I and W shapes load as movement agents, each applied, copied or
     /// erased in one rewrite (rules.rs `VIEW_RULES`). No superpositions, sharing, memo or chip.
     pub views: bool,
+    /// Fixed units (rules.rs `UNIT_RULES`, the net's `units`): how many sites right of the drawing
+    /// they stand, the clocks a unit takes per call (`unitlat`), and the energy a request saves for
+    /// each site it steps nearer its unit (`unitpull`).
+    pub unit_dist: u32,
+    pub unit_lat: u32,
+    pub unit_pull: f64,
 }
 
 impl Params {
@@ -197,6 +203,9 @@ impl Params {
             "coolcut" => self.cool_cut = on,
             "coolgreedy" => self.cool_greedy = n()? as u8,
             "views" => self.views = on,
+            "unitd" => self.unit_dist = n()? as u32,
+            "unitlat" => self.unit_lat = n()? as u32,
+            "unitpull" => self.unit_pull = f()?,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -213,7 +222,8 @@ impl Default for Params {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
-                 cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false }
+                 cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
+                 unit_dist: 8, unit_lat: 20, unit_pull: 6.0 }
     }
 }
 
@@ -260,8 +270,13 @@ pub struct Stats {
 
 /// A tag's number in a seat (0: empty): `ALL_TAGS`' from 1, then the movement agents' (`VIEW_TAGS`, 15
 /// to 20).
-#[inline] pub fn code(t: Tag) -> u8 { ALL_TAGS.iter().chain(&VIEW_TAGS).position(|x| *x == t).unwrap() as u8 + 1 }
-#[inline] pub fn tag_of(c: u8) -> Tag { let i = c as usize - 1; if i < ALL_TAGS.len() { ALL_TAGS[i] } else { VIEW_TAGS[i - ALL_TAGS.len()] } }
+#[inline] pub fn code(t: Tag) -> u8 { ALL_TAGS.iter().chain(&VIEW_TAGS).chain(&UNIT_TAGS).position(|x| *x == t).unwrap() as u8 + 1 }
+/// The tag in a seat, None if it is empty.
+#[inline] fn tag_of_or(c: u8) -> Option<Tag> { (c != 0).then(|| tag_of(c)) }
+#[inline] pub fn tag_of(c: u8) -> Tag {
+    let i = c as usize - 1;
+    if i < ALL_TAGS.len() { ALL_TAGS[i] } else if i < ALL_TAGS.len() + VIEW_TAGS.len() { VIEW_TAGS[i - ALL_TAGS.len()] } else { UNIT_TAGS[i - ALL_TAGS.len() - VIEW_TAGS.len()] }
+}
 
 /// A rewrite's entry in `fire_log`: its site (below 2^24), and in the top byte, for an apply reading a
 /// movement agent, 1 + the agent's place in `VIEW_TAGS` (the GPU logs the same, block.wgsl `log_fire`).
@@ -360,7 +375,14 @@ pub struct Lattice {
     pub fields: Fields,
     /// Each agent's name, by id, once the memo detector has seen it (`Params::memo_names`).
     pub names: memo::Names,
+    /// The fixed units, by number (rules.rs `UNIT_RULES`), and the clock each word a unit made is ready at.
+    pub units: Vec<UnitSite>,
+    pub ready: std::collections::HashMap<u32, f64>,
 }
+
+/// Where a fixed unit stands, the clock it is busy until, and the calls it has answered.
+#[derive(Clone, Debug)]
+pub struct UnitSite { pub site: u32, pub busy: f64, pub served: u64 }
 
 /// The random bits one turn may use, one field per decision, so that a chip can draw them all
 /// at once. Under blocks they are a hash of the site and the clock.
@@ -409,6 +431,7 @@ pub struct Energy {
     pub strangers: i32,
     pub trees: i32,
     pub garbage: i32,
+    pub unit_pull: i32,
     pub accept: Vec<u32>,
 }
 impl Energy {
@@ -420,14 +443,14 @@ impl Energy {
         Energy { principal: [q(p.w_principal), q(p.w_principal * p.idle_tension)], aux: [q(p.w_aux), q(p.w_aux * p.idle_tension)],
                  crowd: q(p.crowd), idle: q(p.idle_crowd), link: half(p.link_crowd), board: half(p.board_crowd),
                  pressure: q(p.pressure), repel: q(p.repel), strangers: q(p.strangers), trees: q(p.trees),
-                 garbage: q(p.garbage), accept }
+                 garbage: q(p.garbage), unit_pull: q(p.unit_pull), accept }
     }
 }
 
 /// Where an agent port's wire goes when the agent steps: a loop to another of its ports, through
 /// the strand it steps along (lane), or dragged one strand longer.
 #[derive(Clone, Copy)]
-enum Plan { SelfLoop(usize), Through(usize), Drag }
+enum Plan { SelfLoop(usize), Through(usize), Drag, Free }
 
 /// A wire's corner a flip can turn (`Lattice::corner`).
 struct Corner { f1: usize, i: usize, f2: usize, j: usize, x: u32, z: u32, w: u32, c: usize, d: usize }
@@ -578,6 +601,43 @@ impl Lattice {
     }
     #[inline] pub fn nb(&self, s: u32, f: usize) -> u32 { self.nb[s as usize][f] }
     fn note(&mut self, e: [u32; 8]) { if self.narrate { self.events.push(e); } }
+    /// Whether a fixed unit stands at s: only its requests may step in.
+    fn unit_site(&self, s: u32) -> bool { !self.units.is_empty() && self.units.iter().any(|u| u.site == s) }
+    /// Sites between s and t, along the lattice.
+    fn apart(&self, s: u32, t: u32) -> i64 { let (a, b) = (self.xyz(s), self.xyz(t)); (0..3).map(|i| (a[i] - b[i]).abs()).sum() }
+
+    /// Wire each idle unit to a request for it in its site or next to it, once the request's
+    /// arguments are values: then `Req·Unit` is an active pair and answers it.
+    fn dock_units(&mut self) {
+        for u in 0..self.units.len() {
+            let us = self.units[u].site;
+            if self.units[u].busy > self.stats.clocks { continue; }
+            let Some(ku) = (0..self.ks).find(|&k| tag_of_or(self.tag(us, k)) == Some(Tag::Unit)) else { continue };
+            if self.mate_of(us, self.ae(ku, 0)) != NONE { continue; }
+            let near = std::iter::once((us, None)).chain((0..self.faces).map(|f| (self.nb(us, f), Some(f))).filter(|&(t, _)| t != u32::MAX));
+            let ready = |l: &Lattice, t: u32, k: usize| {
+                if tag_of_or(l.tag(t, k)) != Some(Tag::Req) || l.sup_label[t as usize * l.ks + k] as usize != u || l.mate_of(t, l.ae(k, 0)) != NONE { return false; }
+                let pair = l.shadow.get(l.shadow.get(l.sids[t as usize * l.ks + k]).ports[1].unwrap().0).ports;
+                l.shadow.value(pair[1]).is_some() && l.shadow.value(pair[2]).is_some()
+            };
+            let Some((t, f, kr)) = near.flat_map(|(t, f)| (0..self.ks).map(move |k| (t, f, k))).find(|&(t, _, k)| ready(self, t, k)) else { continue };
+            match f {
+                None => self.link(us, self.ae(ku, 0), self.ae(kr, 0)),
+                Some(f) => {
+                    let Some(i) = (0..self.p.lanes).find(|&i| self.mate_of(us, self.se(f, i)) == NONE && self.mate_of(t, self.se(f ^ 1, i)) == NONE) else { continue };
+                    if self.p.pairs != 0 && (self.pairs(us) >= self.p.pairs || self.pairs(t) >= self.p.pairs) { continue; }
+                    self.link(us, self.ae(ku, 0), self.se(f, i));
+                    self.link(t, self.se(f ^ 1, i), self.ae(kr, 0));
+                    self.strand_count(1);
+                }
+            }
+            let (rs, usid) = (self.sids[t as usize * self.ks + kr], self.sids[us as usize * self.ks + ku]);
+            self.shadow.link(rs, 0, usid, 0);
+            self.refresh(us);
+            self.refresh(t);
+        }
+    }
+
     fn xyz(&self, s: u32) -> [i64; 3] {
         let (w, h) = (self.p.w, self.p.h);
         [(s % w) as i64, ((s / w) % h) as i64, (s / (w * h)) as i64]
@@ -674,6 +734,8 @@ impl Lattice {
             dumps: None,
             fields: Fields::new(&p, n),
             names: Default::default(),
+            units: vec![],
+            ready: Default::default(),
         }
     }
 
@@ -920,6 +982,16 @@ impl Lattice {
             at[id as usize] = (s, k);
         }
         l.out = at[out as usize];
+        // Fixed units stand unit_dist sites right of the drawing, a few rows apart, wired to nothing.
+        for (i, u) in (0..n as u32).filter(|&id| net.agents[id as usize].as_ref().is_some_and(|a| a.tag == Tag::Unit)).enumerate() {
+            let (x, y) = (ox + bw * spread - 1 + p.unit_dist as i64, oy + bh * spread / 2 + 4 * i as i64);
+            if x >= gw || y >= gh { return Err(format!("a unit {} sites right of the drawing is off the {gw}x{gh} grid", p.unit_dist)); }
+            let s = (z * gw * gh + y * gw + x) as u32;
+            l.place(s, 0, code(Tag::Unit), u);
+            l.sup_label[s as usize * l.ks] = net.get(u).label;
+            assert_eq!(net.get(u).label as usize, l.units.len(), "units numbered in order");
+            l.units.push(UnitSite { site: s, busy: 0.0, served: 0 });
+        }
         for &id in &order {
             let a = net.get(id);
             for q in 0..a.tag.arity() {
@@ -1052,6 +1124,7 @@ impl Lattice {
                 Tag::S => STerm::S(child(1)?),
                 Tag::F => STerm::F(child(1)?, child(2)?),
                 Tag::Sup => STerm::Sup(l.sup_label[s as usize * l.ks + k], child(1)?, child(2)?),
+                Tag::Word => return l.shadow.words.get(&l.sids[s as usize * l.ks + k]).map(|t| Rc::new(STerm::from(&t.term()))),
                 _ => return None,
             }))
         }
@@ -1075,10 +1148,17 @@ impl Lattice {
     }
 
     /// Whether the run is over: the answer is in, or (eager) nothing is left to do.
-    pub fn answered(&self) -> bool { self.p.lazy && self.read_answer().is_some() || self.shadow.active_pair().is_none() }
+    pub fn answered(&self) -> bool {
+        self.p.lazy && self.read_answer().is_some() || self.shadow.active_pair().is_none() && !self.calls_pending()
+    }
+
+    /// Whether a request is on its way to a unit, or a unit is still working on one.
+    fn calls_pending(&self) -> bool {
+        !self.units.is_empty() && (self.units.iter().any(|u| u.busy > self.stats.clocks) || self.shadow.agents.iter().flatten().any(|a| a.tag == Tag::Req))
+    }
 
     /// Agents carrying a superposition label: superpositions, and duplicators copying for them.
-    pub fn labelled(&self) -> usize { self.live.iter().map(|&s| (0..self.ks).filter(|&k| self.tag(s, k) != 0 && self.sup_label[s as usize * self.ks + k] != 0).count()).sum() }
+    pub fn labelled(&self) -> usize { self.live.iter().map(|&s| (0..self.ks).filter(|&k| self.tag(s, k) != 0 && !tag_of(self.tag(s, k)).is_unit() && self.sup_label[s as usize * self.ks + k] != 0).count()).sum() }
 
     /// The lattice must be the abstract net: same agents, every wire joining the ports the
     /// abstract net joins.
@@ -1094,6 +1174,10 @@ impl Lattice {
                 if a.tag != tag_of(t) { return Err("tag mismatch".into()); }
                 if a.label != self.sup_label[s as usize * self.ks + k] { return Err(format!("{} label: lattice {} vs abstract {}", a.tag.name(), self.sup_label[s as usize * self.ks + k], a.label)); }
                 for q in 0..a.tag.arity() {
+                    if self.mate_of(s, self.ae(k, q)) == NONE {
+                        if a.ports[q].is_some() { return Err(format!("{} port {q}: lattice free vs abstract {:?}", a.tag.name(), a.ports[q])); }
+                        continue;
+                    }
                     let (s2, k2, p2, _) = self.follow(s, self.ae(k, q));
                     let sid2 = self.sids[s2 as usize * self.ks + k2];
                     if a.ports[q] != Some((sid2, p2 as u8)) {
@@ -1128,7 +1212,8 @@ impl Lattice {
                 let t = self.tag(s, k);
                 if t == 0 { continue; }
                 for q in 0..tag_of(t).arity() {
-                    if self.mate_of(s, self.ae(k, q)) == NONE { return Err(format!("site {s}: {} port {q} unpaired", tag_of(t).name())); }
+                    let free = q == 0 && matches!(tag_of(t), Tag::Req | Tag::Unit);
+                    if self.mate_of(s, self.ae(k, q)) == NONE && !free { return Err(format!("site {s}: {} port {q} unpaired", tag_of(t).name())); }
                 }
             }
             let e = self.pulse_at[s as usize];
@@ -1272,6 +1357,7 @@ impl Lattice {
     fn hop(&mut self, s: u32, k: usize, f: usize, may_swap: bool) -> bool {
         let t = self.nb(s, f);
         if t == u32::MAX || !self.inside(t) { return false; }
+        if !self.units.is_empty() && (tag_of(self.tag(s, k)) == Tag::Unit || self.unit_site(t) && tag_of(self.tag(s, k)) != Tag::Req) { return false; }
         let walker = self.p.lazy && self.want[s as usize * self.ks + k] && tag_of(self.tag(s, k)).is_consumer() && {
             let m = self.mate_of(s, self.ae(k, 0));
             self.is_strand(m) && self.face(m) == f
@@ -1309,7 +1395,9 @@ impl Lattice {
         for q in 0..a {
             let m = self.mate_of(s, self.ae(k, q));
             let w = if q == 0 { self.e.principal[idle] } else { self.e.aux[idle] };
-            if !self.is_strand(m) && m as usize / ARITY == k {
+            if m == NONE {
+                plan[q] = Plan::Free;
+            } else if !self.is_strand(m) && m as usize / ARITY == k {
                 plan[q] = Plan::SelfLoop(m as usize % ARITY);
             } else if self.is_strand(m) && self.face(m) == f {
                 plan[q] = Plan::Through(self.lane(m));
@@ -1355,6 +1443,10 @@ impl Lattice {
             de += self.field_step_de(s, k, t, ps, -(through + loops as i32), pt, (need + loops) as i32);
         }
         if (self.e.strangers != 0 || self.labels()) && self.idle(s, k) { de += self.strangers_de(s, k, t); }
+        if !self.units.is_empty() && tag_of(self.tag(s, k)) == Tag::Req {
+            let u = self.units[self.sup_label[s as usize * self.ks + k] as usize].site;
+            de += self.e.unit_pull * (self.apart(t, u) - self.apart(s, u)) as i32;
+        }
         Some((plan, lanes, loops, de))
     }
 
@@ -1402,7 +1494,7 @@ impl Lattice {
                     li += 1;
                     news.push((q, m, j));
                 }
-                Plan::SelfLoop(_) => {}
+                Plan::SelfLoop(_) | Plan::Free => {}
             }
         }
         for q in 0..a { self.set(s, self.ae(k, q), NONE); }
@@ -1423,7 +1515,7 @@ impl Lattice {
                     let m = target[q];
                     self.link(t, self.ae(k2, q), m);
                 }
-                Plan::Drag => {}
+                Plan::Drag | Plan::Free => {}
             }
         }
         self.stats.hops += 1;
@@ -1533,6 +1625,7 @@ impl Lattice {
         self.want[i] = false;
         for q in 0..a {
             let m = mates[q];
+            if m == NONE { continue; }
             let m = if !self.is_strand(m) && m as usize / ARITY == from { self.ae(to, m as usize % ARITY) } else { m };
             self.link(s, self.ae(to, q), m);
         }
@@ -1553,6 +1646,7 @@ impl Lattice {
     /// or None if it does not fit.
     fn exchange(&mut self, s: u32, ka: usize, f: usize, kb: usize, dry: bool) -> Option<i32> {
         let t = self.nb(s, f);
+        if self.unit_site(s) || self.unit_site(t) { return None; }
         let (ta, tb) = (self.tag(s, ka) as u32, self.tag(t, kb) as u32);
         let kt = self.p.k;
         debug_assert!(self.tag(t, kt) == 0 && self.tag(s, kt) == 0, "transient slot busy");
@@ -1766,6 +1860,8 @@ impl Lattice {
             if self.is_strand(m) || m == NONE { continue; }
             let (k2, q) = (m as usize / ARITY, m as usize % ARITY);
             let t2 = self.tag(site, k2);
+            // A word a unit made is not there until the unit is done.
+            if q == 0 && t2 != 0 && !self.ready.is_empty() && self.ready.get(&self.sids[site as usize * self.ks + k2]).is_some_and(|&c| c > self.stats.clocks) { continue; }
             if q == 0 && t2 != 0 && tag_of(t2).is_producer() { return Some((k, k2, face)); }
             // A wanted reader touching a pending computation's output wants it in turn (an
             // eraser does not: what it touches is garbage).
@@ -1915,7 +2011,14 @@ impl Lattice {
                     }
                 }
             }
-            search(0, n, nloc, &mut loc, &mut used, &slots_at, &check, &mut best);
+            // A unit stays where it is: the fresh one takes the old one's seat.
+            if rule.producer == Tag::Unit {
+                loc[0] = ploc;
+                used[ploc] += 1;
+                search(1, n, nloc, &mut loc, &mut used, &slots_at, &check, &mut best);
+            } else {
+                search(0, n, nloc, &mut loc, &mut used, &slots_at, &check, &mut best);
+            }
             if let Some((_, loc)) = best {
                 let need = need_of(&loc);
                 chosen = Some((region, slots_at, loc, need, ploc));
@@ -1993,7 +2096,7 @@ impl Lattice {
             let (_, site, k) = seats[f];
             self.place(site, k, code(*t), fresh_sids[f]);
             self.label[site as usize * self.ks + k] = if *t == Tag::Eps { GARBAGE } else { label };
-            self.sup_label[site as usize * self.ks + k] = rule.label(f, cl, pl);
+            self.sup_label[site as usize * self.ks + k] = self.shadow.get(fresh_sids[f]).label;
             if self.p.lazy && wanted[f] { self.want[site as usize * self.ks + k] = true; self.tr_want(site, k); }
         }
         for (a, b) in links {
@@ -2019,6 +2122,12 @@ impl Lattice {
                 cur = self.se(f ^ 1, i);
             }
             self.link(site, cur, eb);
+        }
+        if rule.producer == Tag::Unit {
+            let u = &mut self.units[pl as usize];
+            u.busy = self.stats.clocks + self.p.unit_lat as f64;
+            u.served += 1;
+            self.ready.insert(fresh_sids[1], u.busy);
         }
         // Fresh agents take their labels from readers among them or next to them, the outermost first.
         if self.labels() { for _ in 0..2 { for &x in &region.sites { if x != u32::MAX { self.relabel(x); } } } }
@@ -2180,6 +2289,7 @@ impl Lattice {
     fn margolus_clock(&mut self) {
         if let Some((from, t0)) = self.cooling { self.set_temp(cooled(&self.p, t0, self.stats.clocks - from)); }
         if self.fields.on { self.update_fields(); }
+        if !self.units.is_empty() { self.dock_units(); }
         let b = self.p.block_side as u64;
         // Under a turn for every site, the offset and the order in each block are hashes of the
         // clock, the same everywhere on a chip.
@@ -2349,6 +2459,25 @@ impl Lattice {
             .filter(|&i| self.tags[i] != 0 && self.sup_label[i] != 0).flat_map(|i| [i as u32, self.sup_label[i] as u32]).collect()
     }
 
+    /// What `held_sites` leaves out of a run with fixed units: by seat, each word's tree and the clock
+    /// a unit's word is ready at; and the units.
+    pub fn held_units(&self) -> (Vec<(usize, rust_ca_lattice::net::Tree, Option<f64>)>, Vec<UnitSite>) {
+        let words = self.live.iter().flat_map(|&s| (0..self.ks).map(move |k| s as usize * self.ks + k))
+            .filter(|&i| self.tags[i] != 0 && tag_of(self.tags[i]) == Tag::Word)
+            .map(|i| (i, self.shadow.words[&self.sids[i]].clone(), self.ready.get(&self.sids[i]).copied())).collect();
+        (words, self.units.clone())
+    }
+
+    /// Put back what `held_units` gave, after `put_sites`.
+    pub fn put_units(&mut self, (words, units): &(Vec<(usize, rust_ca_lattice::net::Tree, Option<f64>)>, Vec<UnitSite>)) {
+        self.ready.clear();
+        for (i, t, r) in words {
+            self.shadow.words.insert(self.sids[*i], t.clone());
+            if let Some(r) = r { self.ready.insert(self.sids[*i], *r); }
+        }
+        self.units = units.clone();
+    }
+
     /// Become exactly these sites (as `held_sites` gives them), every other site empty with no
     /// field, then `adopt`.
     pub fn put_sites(&mut self, recs: &[u32]) { self.put_sites_labelled(recs, &[]) }
@@ -2368,7 +2497,7 @@ impl Lattice {
     /// The abstract net read back off the lattice (its agents renumbered) and the strand count,
     /// so a state made elsewhere (a GPU's) runs on here.
     pub fn adopt(&mut self) {
-        let mut net = Net { ints: self.shadow.ints, ..Net::new() };
+        let mut net = Net { ints: self.shadow.ints, units: self.shadow.units.clone(), ..Net::new() };
         let live = self.live.clone();
         for &s in &live {
             for k in 0..self.ks {
@@ -2381,6 +2510,7 @@ impl Lattice {
             for k in 0..self.ks {
                 if self.tag(s, k) == 0 { continue; }
                 for q in 0..tag_of(self.tag(s, k)).arity() {
+                    if self.mate_of(s, self.ae(k, q)) == NONE { continue; }
                     let (s2, k2, p2, _) = self.follow(s, self.ae(k, q));
                     net.link(self.sids[s as usize * self.ks + k], q as u8, self.sids[s2 as usize * self.ks + k2], p2 as u8);
                 }
@@ -2611,7 +2741,7 @@ impl Lattice {
         for &s in &self.live {
             for k in 0..self.ks {
                 let i = s as usize * self.ks + k;
-                if self.tags[i] != 0 && !reached[self.sids[i] as usize] { marks[i] = 1; count += 1; }
+                if self.tags[i] != 0 && !reached[self.sids[i] as usize] && tag_of(self.tags[i]) != Tag::Unit { marks[i] = 1; count += 1; }
             }
         }
         count

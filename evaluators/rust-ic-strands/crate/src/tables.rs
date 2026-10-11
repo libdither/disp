@@ -51,6 +51,7 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
 /// labels its 40-byte site has no room for (and whose rules its tables leave out).
 pub fn gpu_refuses(l: &crate::lattice::Lattice) -> Option<&'static str> {
     gpu_unfit(&l.p).or_else(|| (l.labelled() > 0).then_some("it runs no superpositions"))
+        .or_else(|| (!l.units.is_empty()).then_some("fixed units are served by the CPU"))
 }
 
 pub fn wgsl() -> String { wgsl_for(&chip()) }

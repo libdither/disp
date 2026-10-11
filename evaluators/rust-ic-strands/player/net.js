@@ -104,7 +104,7 @@ function hslRgb(h, s, l) {
   return [f(0), f(8), f(4)];
 }
 /// Values: leaf, stem, fork, and the movement agents (code standing for a tree).
-const isValue = t => t >= 1 && t <= 3 || t >= 15 && t <= 20;
+const isValue = t => t >= 1 && t <= 3 || t >= 15 && t <= 20 || t === 21 || t === 22;
 /// Agent i's colour with segments on, { css, rgb }: its segment's, or for a value the tinted grey;
 /// null if it is in no segment.
 function netTone(i) {

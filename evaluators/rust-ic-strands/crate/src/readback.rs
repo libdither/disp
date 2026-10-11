@@ -53,6 +53,16 @@ pub enum Kind {
 
 fn node(at: u32, kind: Kind) -> Rd { Rc::new(Node { at, kind }) }
 
+/// A tree one agent holds whole (a word, a unit's code), every node at that agent.
+fn tree(at: u32, t: &Term) -> Rd {
+    match t {
+        Term::L => node(at, Kind::Leaf),
+        Term::S(x) => node(at, Kind::Stem(tree(at, x))),
+        Term::F(x, y) => node(at, Kind::Fork(tree(at, x), tree(at, y))),
+        Term::Ap(f, x) => node(at, Kind::Apply(tree(at, f), tree(at, x))),
+    }
+}
+
 fn parts(r: &Rd) -> Option<(Rd, Rd)> {
     match &r.kind {
         Kind::Pair(a, b) => Some((a.clone(), b.clone())),
@@ -142,12 +152,22 @@ impl<'a> Reader<'a> {
                 self.project(id, p)
             }
             Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.view(id, a.tag, ports),
-            Tag::Eps | Tag::Out => node(id, Kind::Cut),
+            Tag::Word => match self.net.words.get(&id) { Some(t) => tree(id, &t.term()), None => node(id, Kind::Cut) },
+            Tag::Ref => self.code(id, a.label),
+            Tag::Call => { let f = self.code(id, a.label); node(id, Kind::Apply(f, self.source(ports[1]))) }
+            Tag::Req => match parts(&self.source(ports[1])) {
+                Some((x, y)) => { let f = self.code(id, a.label); node(id, Kind::Apply(node(NOWHERE, Kind::Apply(f, x)), y)) }
+                None => node(id, Kind::Cut),
+            },
+            Tag::Eps | Tag::Out | Tag::Unit => node(id, Kind::Cut),
         };
         self.depth -= 1;
         self.on_path[id as usize] = false;
         r
     }
+
+    /// Unit u's code, every node at the agent standing for it.
+    fn code(&self, id: u32, u: u8) -> Rd { self.net.units.get(u as usize).map_or(node(id, Kind::Cut), |c| tree(id, &c.term())) }
 
     /// A movement agent as the tree it stands for, every node its own.
     fn view(&mut self, id: u32, t: Tag, ports: [Option<Ref>; 3]) -> Rd {
