@@ -5,9 +5,16 @@
 //! FILE lines are `name|head|arg,arg|answer` in ternary (emit.ts); `--lambada` adds the lambada
 //! benchmarks, `--corpus` random terms, `--shapes` random code rich in the views' shapes; all are
 //! checked against the eager answer or the oracle. Modes are `+`-joined words: `base` (the 26
-//! rules), `views` (movement agents in code), `nobc` (views without B and C), `w`, `rom-code`
-//! (code read from the table), `rom-all` (inputs too), e.g. `views+w+rom-code`. The first mode
-//! is the baseline of the geometric means printed at the end.
+//! rules), `views` (movement agents in code), `nobc` (views without B and C), `w`, `nok` (no K views:
+//! K shapes stay plain forks), `pp` (views only along the principal path), `hints` (plain trees whose
+//! forks carry their shape as a latent label an apply reads), `rom-code` (code read from the table),
+//! `rom-all` (inputs too), and the table's native rules: `native` (an S rule peeking at its sides),
+//! `thru` (also through copies), `apply` (an apply reads table code and fires its rule in one step),
+//! `triage` (+ a triage reading its arms from the table), `head` (+ T1 reading a table head), with
+//! ablations `noK`, `noroute`; e.g. `views+w+rom-code`, `head+rom-all`. The first mode is the baseline
+//! of the geometric means printed at the end. Environment: CHECK=1 checks every invariant every round;
+//! LOCAL=1 prints the pairs one rewrite made together and the table size; REUSE=1 prints each piece of
+//! code's uses, copies and most uses close together; CHAIN=1 (2: K too) fires routing chains for free.
 
 mod net;
 mod run;
@@ -20,24 +27,32 @@ use std::rc::Rc;
 struct Case { name: String, head: Term, args: Vec<Term>, want: Option<Term> }
 
 #[derive(Clone, Copy)]
-struct Mode { shape: Shape, rom_code: bool, rom_data: bool }
+struct Mode { shape: Shape, rom_code: bool, rom_data: bool, native: u8, opts: u8, hints: bool }
 
 fn mode(m: &str) -> Mode {
     let has = |k: &str| m.split('+').any(|x| x == k);
     Mode {
-        shape: Shape { views: has("views"), w: has("w"), bc: !has("nobc") },
+        shape: Shape { views: has("views"), w: has("w"), bc: !has("nobc"), pp: has("pp"), nok: has("nok") },
         rom_code: has("rom-code") || has("rom-all"),
         rom_data: has("rom-all"),
+        opts: (has("noK") as u8) | (has("noroute") as u8) << 1,
+        hints: has("hints"),
+        native: if has("head") { 5 } else if has("triage") { 4 } else if has("apply") { 3 } else if has("thru") { 2 } else if has("native") { 1 } else { 0 },
     }
 }
 
 fn load(c: &Case, m: Mode) -> (Net, u32, usize) {
     let mut net = Net::new();
-    let plain = Shape { views: false, w: false, bc: false };
+    net.hints = m.hints;
+    let plain = Shape { views: false, w: false, bc: false, pp: false, nok: false };
     let head = net.value(&c.head, Origin::Code, m.shape, m.rom_code);
     let args: Vec<u32> = c.args.iter().map(|a| net.value(a, Origin::Data, plain, m.rom_data)).collect();
     let root = net.call(head, &args);
     let out = net.drive(root);
+    net.native = m.native;
+    net.hints = m.hints;
+    net.opts = m.opts;
+    net.check = std::env::var("CHECK").is_ok();
     let agents = net.live;
     net.made = 0;
     (net, out, agents)
@@ -153,6 +168,23 @@ fn main() {
                 println!("    collect dn->wire {} app {} unp {}; agents made {}", ledger.collect[0], ledger.collect[1], ledger.collect[2], net.made);
             }
             totals.push((m.to_string(), total, ledger.rounds, net.unfolds, net.made));
+            if std::env::var("REUSE").is_ok() {
+                // Per piece of code: uses in all, and the most uses within any window of w rounds.
+                let mut by: std::collections::HashMap<u32, Vec<u64>> = std::collections::HashMap::new();
+                for &(id, r) in &ledger.uses { by.entry(id).or_default().push(r); }
+                let total: usize = by.values().map(|v| v.len()).sum();
+                let peak = |w: u64| -> usize {
+                    by.values().map(|v| {
+                        let mut v = v.clone(); v.sort();
+                        let (mut best, mut j) = (0, 0);
+                        for i in 0..v.len() { while v[i] - v[j] >= w { j += 1; } best = best.max(i - j + 1); }
+                        best
+                    }).sum()
+                };
+                println!("    reuse: {} pieces, {} uses, {} copies made; most uses at once (window 1/4/16/64 rounds): {} / {} / {} / {}",
+                    by.len(), total, ledger.copies, peak(1), peak(4), peak(16), peak(64));
+            }
+            if std::env::var("LOCAL").is_ok() { println!("    pairs {} together {} ({}%), table {} entries", ledger.pairs, ledger.together, pct(ledger.together, ledger.pairs), net.rom.nodes.len()); }
             if check && m == "base" && sched != "all" {
                 // The same run on rust-ic-strands' own idealised machine must do the same work.
                 let mut t = c.args.iter().fold(c.head.clone(), |f, x| Term::Ap(Rc::new(f), Rc::new(x.clone())));

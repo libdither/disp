@@ -18,6 +18,37 @@ Terms used throughout:
 - **the abstract net**: `rust-ca-lattice` `Net::reduce`: every active pair fires, nothing is
   collected.
 
+## Status (2026-10-10): what was built, and what changed since
+
+This note's analysis stands; what was built from it, and numbers measured since:
+- **Movement agents are in the strand lattice** (`views=1`, rust-ic-strands README "Movement agents"),
+  on the CPU and the GPU, bit for bit, and in the player. On 13 programs: 0.55× the clocks and 0.50× the
+  rewrites. The loader no longer makes K views: numbers and lists are K shapes all the way down, so K
+  views mostly labelled data; without them 0.605× the clocks, 0.515× the rewrites.
+- **The code table (§4b) was built on the lattice and dropped.** It reached 0.19× the clocks and 0.31× the
+  rewrites, but every block unit would need its own program-sized table, so it cannot be a cellular
+  automaton. §4b and §5 step 2 are kept as a record; read them as the upper bound for free sharing.
+- **Corrected table numbers.** A counting bug (one-step applies not counted) had made the native table
+  rules look better. With an apply reading table code and firing its rule in one step (`apply`), a triage
+  reading its arms from the table (`triage`) and T1 reading a table head (`head`): 0.30×, 0.28×, 0.25× the
+  rewrites (27 programs, idealised machine), all with the invariants checked every round under both
+  schedules. 32–52% of the lattice's interactions were then between agents one rewrite made, against 0%.
+- **Native routing without a table does not work:** an S rule peeking at whether its sides are K-marked
+  (`native`) gives 0.96× (0.86× even seeing through copies in progress), as code is nearly always half
+  copied when it runs, and an interaction cannot see below the node it meets.
+- **Labelling only what is used** (`pp`: views only where the code's structure says they will be applied)
+  gives 0.989×: most code is passed around as a value (through `fix`, currying, returned functions)
+  before it is applied, in the places data goes. Plain trees with their shape as a 3-bit latent label an
+  apply reads (`hints`): 0.762×, as code is still copied node by node. `views` without K (`nok`): 0.567×;
+  with a latent label on K forks: 0.554×; every shape: 0.544×.
+- **Collapsing B/C chains into wires** would save little: routing applies are 6.4% of rewrites with views,
+  and 5% of those are chained; firing chained routing for free gives 0.540× against 0.544× (`CHAIN=1`).
+- **Copies against need** (`REUSE=1`): code is used 75,990 times and copied 109,171 times over the 27
+  programs, but at most 13,723 uses of a piece fall within 16 rounds of each other: 6–33% of copies per
+  program are ever needed at once (unary `add 7`: 1,935 copies, 125 needed; `fib 5`: 12,370, 952). In a
+  net every use consumes a copy, so this gap can only close if code is read without being consumed
+ .
+
 ## 1. The answer
 
 **Where the copying comes from.** Applying a value takes it apart (A·F consumes the fork), so

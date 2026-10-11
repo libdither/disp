@@ -21,6 +21,15 @@ pub struct Ledger {
     /// S-rule firings (T1·S) by what the stem holds and the pair's first arm: s = K f (B shape),
     /// b = K g (C shape), s and b the same tree (W shape), other.
     pub s_shapes: [u64; 4],
+    /// Pairs that fired, and those whose two agents one rewrite made together.
+    pub pairs: u64,
+    pub together: u64,
+    /// Each use of a piece of loaded code (an apply, triage or normalizer reading a copy of it): the
+    /// piece and the round; and each copy made of one (a duplicator reading it).
+    pub uses: Vec<(u32, u64)>,
+    pub copies: u64,
+    /// Routing rewrites fired at once and for free (CHAIN).
+    pub free: u64,
 }
 
 impl Ledger {
@@ -119,6 +128,12 @@ fn collect(net: &mut Net, e: u32, b: u32, q: u8, want: &mut Vec<bool>, live: &mu
             net.link(src.0, src.1, dst.0, dst.1);
             ledger.collect[0] += 1;
         }
+        Tag::SelRef | Tag::Unw if q == 1 => {
+            net.kill(e);
+            net.kill(b);
+            eps(net, a.ports[0].unwrap(), want);
+            ledger.collect[1] += 1;
+        }
         Tag::A | Tag::T1 | Tag::Sel if q == 2 => {
             net.kill(e);
             net.kill(b);
@@ -138,6 +153,69 @@ fn collect(net: &mut Net, e: u32, b: u32, q: u8, want: &mut Vec<bool>, live: &mu
     true
 }
 
+/// The new rules, before the 26 (and the table's plain unfold) get a turn: a table triage reading
+/// what it dispatches on, an apply reading table code, and the peeking S rule of modes 1 and 2.
+/// Returns the fresh agents and those an unfold made, if one of them fired.
+pub fn native_step(net: &mut Net, c: u32, b: u32, ledger: &mut Ledger) -> Option<(Vec<u32>, Vec<u32>)> {
+    let (ct, bt) = (net.get(c).tag, net.get(b).tag);
+    if ct == Tag::Unw {
+        let fresh = net.unwrap_step(c, b);
+        ledger.by_rule.entry("Unw".into()).or_default()[0] += 1;
+        ledger.rewrites += 1;
+        return Some((fresh, vec![]));
+    }
+    if ct == Tag::A && bt == Tag::F && net.hints {
+        if let Some(fresh) = net.hinted_apply(c, b) {
+            ledger.by_rule.entry("A·F hinted".into()).or_default()[0] += 1;
+            ledger.rewrites += 1;
+            return Some((fresh, vec![]));
+        }
+    }
+    if ct == Tag::SelRef {
+        let fresh = net.sel_ref(c, b);
+        ledger.by_rule.entry("SelRef".into()).or_default()[0] += 1;
+        ledger.rewrites += 1;
+        return Some((fresh, vec![]));
+    }
+    if ct == Tag::T1 && bt == Tag::Ref && net.native >= 5 {
+        let fresh = net.t1_ref(c, b);
+        ledger.by_rule.entry("T1·Ref native".into()).or_default()[0] += 1;
+        ledger.rewrites += 1;
+        return Some((fresh, vec![]));
+    }
+    if ct == Tag::A && bt == Tag::Ref && net.native >= 3 {
+        let fresh = net.native_apply(c, b)?;
+        ledger.by_rule.entry("A·Ref native".into()).or_default()[0] += 1;
+        ledger.rewrites += 1;
+        return Some((fresh, vec![]));
+    }
+    if ct == Tag::T1 && (net.native == 1 || net.native == 2) {
+        let (mut b, mut made) = (b, vec![]);
+        if bt == Tag::Ref && net.rom.nodes[net.get(b).rom as usize].0 == Tag::S { let (n, m) = net.unfold(b); b = n; made = m; }
+        if net.get(b).tag != Tag::S { return None; }
+        if let Some((fresh, extra)) = net.native_s(c, b) {
+            ledger.by_rule.entry("T1·S native".into()).or_default()[2] += 1;
+            ledger.rewrites += extra;
+            return Some((fresh, made));
+        }
+    }
+    None
+}
+
+/// Every port wired both ways, and every wire joins a port that supplies a value to one that needs it.
+pub fn check(net: &Net) -> Result<(), String> {
+    for (i, a) in net.agents.iter().enumerate() {
+        let Some(a) = a else { continue };
+        for p in 0..a.tag.arity() {
+            let Some((b, q)) = a.ports[p] else { return Err(format!("{}#{i} port {p} open", a.tag.name())) };
+            let Some(bb) = net.agents[b as usize].as_ref() else { return Err(format!("{}#{i} port {p} to a dead agent", a.tag.name())) };
+            if bb.ports[q as usize] != Some((i as u32, p as u8)) { return Err(format!("{}#{i} port {p} one-way", a.tag.name())); }
+            if a.tag.is_source(p) == bb.tag.is_source(q as usize) { return Err(format!("{}#{i}.{p} – {}#{b}.{q} joins two of a kind", a.tag.name(), bb.tag.name())); }
+        }
+    }
+    Ok(())
+}
+
 /// The idealised lazy machine. Returns whether the root read back as a tree within `max_rounds`.
 pub fn ideal(net: &mut Net, out: u32, fork: bool, max_rounds: u64, ledger: &mut Ledger) -> bool {
     let wanted_by_rule: Vec<Vec<bool>> = net.rules.iter().map(|r| fresh_wanted(r, fork)).collect();
@@ -155,12 +233,28 @@ pub fn ideal(net: &mut Net, out: u32, fork: bool, max_rounds: u64, ledger: &mut 
         let mut acted = false;
         for i in 0..live.len() {
             let c = live[i];
-            let Some(a) = net.agents[c as usize].as_ref() else { continue };
+            let Some(a) = net.agents[c as usize].clone() else { continue };
+            net.clock += 1;
             if !a.tag.is_consumer() || !want[c as usize] { continue; }
             let Some((b, q)) = a.ports[0] else { continue };
             let bt = net.tag(b).unwrap();
             if q == 0 && bt.is_producer() {
+                let code = net.get(b).code;
+                if code != u32::MAX {
+                    if matches!(a.tag, Tag::A | Tag::T1 | Tag::Sel | Tag::Nrm) { ledger.uses.push((code, round)); }
+                    if a.tag == Tag::Dn { ledger.copies += 1; }
+                }
+                let (bc, bp) = (net.birth(c), net.birth(b));
+                if bc == bp && bc > 0 { ledger.together += 1; }
+                ledger.pairs += 1;
                 if a.tag == Tag::T1 && bt == Tag::S { ledger.s_shapes[peek_s_shape(net, c, b)] += 1; }
+                if let Some((fresh, unfolded)) = native_step(net, c, b, ledger) {
+                    want.resize(net.agents.len(), false);
+                    for &x in &fresh { if net.tag(x).is_some_and(|t| t.is_consumer()) { want[x as usize] = true; } }
+                    live.extend(fresh.iter().chain(&unfolded).copied());
+                    acted = true;
+                    continue;
+                }
                 let f = net.fire(c, b);
                 ledger.count(net, &f);
                 want.resize(net.agents.len(), false);
@@ -168,11 +262,31 @@ pub fn ideal(net: &mut Net, out: u32, fork: bool, max_rounds: u64, ledger: &mut 
                     for (k, &x) in f.fresh.iter().enumerate() { want[x as usize] = wanted_by_rule[f.rule][k]; }
                 }
                 live.extend(f.fresh.iter().chain(&f.unfolded).copied());
+                // Chains compiled to direct connections (CHAIN=1, an upper bound): a wanted apply born
+                // facing a B, C or I (CHAIN=2: K too) fires at once, in this round and for free.
+                if let Ok(level) = std::env::var("CHAIN") {
+                    let mut todo: Vec<u32> = f.fresh.clone();
+                    while let Some(x) = todo.pop() {
+                        let Some(ax) = net.agents[x as usize].clone() else { continue };
+                        if ax.tag != Tag::A || !want[x as usize] { continue; }
+                        let Some((y, 0)) = ax.ports[0] else { continue };
+                        let yt = net.tag(y).unwrap();
+                        let routing = matches!(yt, Tag::B | Tag::C | Tag::I) || (level == "2" && yt == Tag::K);
+                        if !routing { continue; }
+                        let g = net.fire(x, y);
+                        ledger.free += 1;
+                        want.resize(net.agents.len(), false);
+                        for (k, &z) in g.fresh.iter().enumerate() { want[z as usize] = wanted_by_rule[g.rule][k]; }
+                        live.extend(g.fresh.iter().copied());
+                        todo.extend(g.fresh.iter().copied());
+                    }
+                }
             } else if a.tag == Tag::Eps && collect(net, c, b, q, &mut want, &mut live, ledger) {
             } else { continue; }
             acted = true;
         }
         live.retain(|&i| net.agents[i as usize].is_some());
+        if net.check { check(net).unwrap_or_else(|e| panic!("round {round}: {e}")); }
         if !acted { ledger.rounds = round; return false; }
     }
     false
@@ -189,6 +303,13 @@ pub fn all(net: &mut Net, budget: u64, ledger: &mut Ledger) -> bool {
         if ledger.rewrites >= budget { return false; }
         if net.get(c).tag == Tag::T1 && net.get(p).tag == Tag::S { ledger.s_shapes[peek_s_shape(net, c, p)] += 1; }
         let near: Vec<u32> = [c, p].iter().flat_map(|&x| net.get(x).ports).flatten().map(|r| r.0).filter(|&x| x != c && x != p).collect();
+        net.clock += 1;
+        if let Some((fresh, unfolded)) = native_step(net, c, p, ledger) {
+            if net.check { check(net).unwrap_or_else(|e| panic!("after a native rule: {e}")); }
+            todo.extend(near);
+            todo.extend(fresh.iter().chain(&unfolded));
+            continue;
+        }
         let f = net.fire(c, p);
         ledger.count(net, &f);
         todo.extend(near);
