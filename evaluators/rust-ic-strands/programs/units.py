@@ -3,7 +3,7 @@
 # clocks a call. Every run memory-capped and timed, its answer checked against the oracle; prints mean
 # clocks to the answer (and peak sites) per configuration. Run from anywhere, after
 # `cargo build --release` in crate/:
-#   python evaluators/rust-ic-strands/programs/units.py [--calls 1,4,8] [--dist 2,8,16,32,64,128] [--lat 20,500] [--seeds 2] [--jobs 4]
+#   python evaluators/rust-ic-strands/programs/units.py [--calls 1,4,8] [--dist 2,8,16,32,64,128] [--lat 20,500] [--seeds 2] [--jobs 4] [--set k=v ...]
 import argparse, concurrent.futures, os, re, statistics, subprocess, tempfile
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +16,7 @@ ap.add_argument("--dist", type=ints, default=[2, 8, 16, 32, 64, 128])
 ap.add_argument("--lat", type=ints, default=[20, 500])
 ap.add_argument("--seeds", type=int, default=2)
 ap.add_argument("--jobs", type=int, default=4)
+ap.add_argument("--set", action="append", default=[], help="a lattice setting for the unit runs, as strands-run spells it (unitsteer=0)")
 opt = ap.parse_args()
 
 # The calls, compiled as the player compiles them: the adder's code, then its two arguments.
@@ -40,7 +41,7 @@ def term(m):
     return path
 
 def run(m, d, lat, seed):
-    unit = [] if d is None else ["--unit", "@" + code, f"unitd={d}", f"unitlat={lat}"]
+    unit = [] if d is None else ["--unit", "@" + code, f"unitd={d}", f"unitlat={lat}", *opt.set]
     out = subprocess.run(["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=256M", "timeout", "1800",
                           run_bin, "@" + term(m), "--latest", "--fit", "--seed", str(seed), *unit], capture_output=True, text=True).stdout
     ans = re.search(r"DONE — answer (\S+) \(want (\S+)\)", out)

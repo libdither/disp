@@ -253,6 +253,13 @@ fn main() {
         }
     }
     println!("left on the lattice: {}", left.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", "));
+    if !l.calls.is_empty() {
+        // Where a unit's calls spend their clocks: walking there, waiting at the unit, coming back.
+        let mean = |f: &dyn Fn(&rust_ic_strands::lattice::CallTimes) -> f64| { let v: Vec<f64> = l.calls.iter().map(f).filter(|x| x.is_finite()).collect(); v.iter().sum::<f64>() / v.len().max(1) as f64 };
+        println!("UNITCALLS {} calls, set off {:.1} sites from the unit; clocks walking there {:.0}, docked to answered (arguments streaming in) {:.0}, answer to read {:.0}; arguments at most {:.1} sites from the unit when read (farthest {})",
+            l.calls.len(), mean(&|c| c.apart as f64), mean(&|c| c.docked - c.sent), mean(&|c| c.served - c.docked), mean(&|c| c.read - c.served),
+            mean(&|c| c.args_apart as f64), l.calls.iter().map(|c| c.args_apart).max().unwrap_or(0));
+    }
     if std::env::var("PIECES").is_ok() {
         // Connected pieces of the abstract net that remain, with their agents and readers.
         let n = l.shadow.agents.len();

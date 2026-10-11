@@ -564,6 +564,14 @@ files already have for faster code (inference: nothing there targets hardware).
 
 ### 1. One adder unit, many callers (needs a new agent kind; CPU simulator only)
 
+- **Status: built** (evaluators/rust-ic-strands README, "Fixed units"), with two changes to the plan
+  below: calls go to one unit in order of arrival through references that are copied as numbers, not
+  merges; and arguments stream to the unit along the request's wires instead of walking. Measured: a
+  call's cost is the walk, about 50 clocks a site at random (a third of the 0.13 strands a clock
+  assumed below) and under 4 steered toward the unit, so one unit beats copies out to 100–120 sites
+  wandering and 340–1,600 steered (8 to 1 calls of `relay_add` on 4-bit trees, 20 clocks a call).
+  The general lattice does stay nearly flat in m (6.1k to 7.8k clocks for 1 to 8 calls).
+
 - **Workload**: m independent 8-bit additions in one program (inputs worked out first, as
   `bench.ts --data` does), m = 1, 2, 4, …, 64.
 - **Configurations**: (i) `relay_add` as compiled, its code copied for each call; (ii) `relay_for` 8

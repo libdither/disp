@@ -541,19 +541,21 @@ const MOVERS = [
     desc: "binary addition: forty B agents carry bits right, a few C, K, I, W and Sx along the way" },
 ];
 /// Fixed units (unit=NAME: that function served by one agent that stays put, rules.rs `UNIT_RULES`): four
-/// additions with their own copies of the adder against one adder unit near and far, and a slow one;
-/// then a unit reused through a recursion.
+/// additions with their own copies of the adder against one adder unit near and far, far with its requests
+/// wandering rather than steering, and a slow one; then a unit reused through a recursion.
 const FOUR_ADDS = "relay_add 13 6; relay_add 5 9; relay_add 7 7; relay_add 2 11";
 const UNIT_EXAMPLES = [
   { name: "copies", text: FOUR_ADDS, units: [], set: [], view: "oblique", speed: 100,
     desc: "four binary additions, each with its own copy of relay_add, worked out on the lattice side by side" },
-  { name: "unit 4 sites away", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=4", "unitlat=20"], view: "oblique", speed: 40,
-    desc: "the same four, relay_add served by one fixed unit 4 sites right of the program: each call walks there, waits its turn and walks back with a word" },
-  { name: "unit 60 sites away", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=60", "unitlat=20"], view: "oblique", speed: 70,
-    desc: "the unit 60 sites away: the walk costs about what copying and working it out here does" },
-  { name: "slow unit nearby", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=4", "unitlat=2000"], view: "oblique", speed: 100,
+  { name: "unit 4 sites away", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=4", "unitlat=20", "unitsteer=1"], view: "oblique", speed: 30,
+    desc: "the same four, relay_add served by one fixed unit 4 sites right of the program: each call walks there, its arguments stream along its wire, and its answer comes back as a word" },
+  { name: "unit 60 sites away", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=60", "unitlat=20", "unitsteer=1"], view: "oblique", speed: 40,
+    desc: "the unit 60 sites away: requests steer straight for it, about three clocks a site, so it still beats copying" },
+  { name: "unit 60 away, wandering", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=60", "unitlat=20", "unitsteer=0"], view: "oblique", speed: 80,
+    desc: "the same, the requests stepping wherever the dice say (unitsteer=0), drawn to the unit only by energy: some 50 clocks a site, about what copying costs" },
+  { name: "slow unit nearby", text: FOUR_ADDS, units: ["relay_add"], set: ["unitd=4", "unitlat=2000", "unitsteer=1"], view: "oblique", speed: 100,
     desc: "the unit 4 sites away, but 2000 clocks a call: four calls queue for 8000 clocks, longer than the copies take side by side" },
-  { name: "mul, add as a unit", text: "mul 3 3", units: ["add"], set: ["unitd=8", "unitlat=20"], view: "oblique", speed: 90,
+  { name: "mul, add as a unit", text: "mul 3 3", units: ["add"], set: ["unitd=8", "unitlat=20", "unitsteer=1"], view: "oblique", speed: 90,
     desc: "3 × 3 by repeated addition: every add of the recursion goes to one unit; the recursion copies the unit's number, not add's code" },
 ];
 const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
@@ -620,7 +622,7 @@ function syncUI() {
   if (UNITS.length) {
     const kv = k => SETTINGS.find(x => x.startsWith(k + "="))?.split("=")[1];
     $("progInfo").innerHTML += ` <b>Fixed unit${UNITS.length > 1 ? "s" : ""}:</b> ${UNITS.map(u => `<i>${u}</i>`).join(", ")} served by one agent `
-      + `${kv("unitd") ?? 8} sites right of the program, ${kv("unitlat") ?? 20} clocks a call: every call walks there and back (unit=, set=unitd=…,unitlat=…).`;
+      + `${kv("unitd") ?? 8} sites right of the program, ${kv("unitlat") ?? 20} clocks a call: every call ${kv("unitsteer") === "0" ? "wanders" : "steers"} there, its arguments stream along its wire, and a word comes back (unit=, set=unitd=…,unitlat=…,unitsteer=…).`;
   }
 }
 /// Highlight entry i of the menu (-1: none).
@@ -639,7 +641,7 @@ function moverSettings(e) {
 /// A fixed units example's settings: its units, where they stand and how slow they are, its view and speed.
 function unitSettings(e) {
   UNITS = [...e.units];
-  SETTINGS = [...SETTINGS.filter(kv => !/^unit(d|lat)=/.test(kv)), ...e.set];
+  SETTINGS = [...SETTINGS.filter(kv => !/^unit(d|lat|steer)=/.test(kv)), ...e.set];
   setView(e.view); $("speed").value = e.speed; speedLabel();
 }
 /// Fill the input box with entry i, its argument selected for typing over; a movement agents or fixed

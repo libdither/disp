@@ -148,6 +148,9 @@ pub struct Params {
     pub unit_dist: u32,
     pub unit_lat: u32,
     pub unit_pull: f64,
+    /// A request steps toward its unit, as a wanted reader steps along its principal wire (`unitsteer`),
+    /// rather than any way the dice say.
+    pub unit_steer: bool,
 }
 
 impl Params {
@@ -206,6 +209,7 @@ impl Params {
             "unitd" => self.unit_dist = n()? as u32,
             "unitlat" => self.unit_lat = n()? as u32,
             "unitpull" => self.unit_pull = f()?,
+            "unitsteer" => self.unit_steer = on,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -223,7 +227,7 @@ impl Default for Params {
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 unit_dist: 8, unit_lat: 20, unit_pull: 6.0 }
+                 unit_dist: 8, unit_lat: 20, unit_pull: 6.0, unit_steer: true }
     }
 }
 
@@ -378,11 +382,20 @@ pub struct Lattice {
     /// The fixed units, by number (rules.rs `UNIT_RULES`), and the clock each word a unit made is ready at.
     pub units: Vec<UnitSite>,
     pub ready: std::collections::HashMap<u32, f64>,
+    /// Each call of a unit: when it set off and how far from its unit, when it docked, was answered,
+    /// and its word first read; and which call each live request and word belongs to.
+    pub calls: Vec<CallTimes>,
+    call_of: std::collections::HashMap<u32, usize>,
 }
 
-/// Where a fixed unit stands, the clock it is busy until, and the calls it has answered.
+/// One call of a fixed unit, in clocks (`Lattice::calls`); NaN until it happens.
 #[derive(Clone, Debug)]
-pub struct UnitSite { pub site: u32, pub busy: f64, pub served: u64 }
+pub struct CallTimes { pub sent: f64, pub apart: i64, pub docked: f64, pub served: f64, pub read: f64, pub args_apart: i64 }
+
+/// Where a fixed unit stands, the clock it is busy until, the clock the docked request's arguments
+/// have streamed in by, and the calls it has answered.
+#[derive(Clone, Debug)]
+pub struct UnitSite { pub site: u32, pub busy: f64, pub arrive: f64, pub served: u64 }
 
 /// The random bits one turn may use, one field per decision, so that a chip can draw them all
 /// at once. Under blocks they are a hash of the site and the clock.
@@ -603,6 +616,14 @@ impl Lattice {
     fn note(&mut self, e: [u32; 8]) { if self.narrate { self.events.push(e); } }
     /// Whether a fixed unit stands at s: only its requests may step in.
     fn unit_site(&self, s: u32) -> bool { !self.units.is_empty() && self.units.iter().any(|u| u.site == s) }
+    /// For a request at s (seat k) steering to its unit: a face of the block that brings it nearer.
+    fn toward_unit(&self, s: u32, k: usize) -> Option<usize> {
+        if !self.p.unit_steer || self.units.is_empty() { return None; }
+        if tag_of(self.tag(s, k)) != Tag::Req { return None; }
+        let u = self.units[self.sup_label[s as usize * self.ks + k] as usize].site;
+        let fs: Vec<usize> = (0..self.faces).filter(|&f| { let t = self.nb(s, f); t != u32::MAX && self.in_block(t) && self.apart(t, u) < self.apart(s, u) }).collect();
+        (!fs.is_empty()).then(|| fs[self.cur.pick(Dice::WHERE, 5, fs.len())])
+    }
     /// Sites between s and t, along the lattice.
     fn apart(&self, s: u32, t: u32) -> i64 { let (a, b) = (self.xyz(s), self.xyz(t)); (0..3).map(|i| (a[i] - b[i]).abs()).sum() }
 
@@ -621,6 +642,17 @@ impl Lattice {
                 l.shadow.value(pair[1]).is_some() && l.shadow.value(pair[2]).is_some()
             };
             let Some((t, f, kr)) = near.flat_map(|(t, f)| (0..self.ks).map(move |k| (t, f, k))).find(|&(t, _, k)| ready(self, t, k)) else { continue };
+            // The arguments stream to the unit along the request's wires, a site and a node a clock, as
+            // demand pulses travel: the unit starts once the longer has arrived.
+            let stream = {
+                let (pair_s, pair_k, _, to_pair) = self.follow(t, self.ae(kr, 1));
+                (1..3).map(|q| {
+                    let (_, _, _, len) = self.follow(pair_s, self.ae(pair_k, q));
+                    let nodes = self.shadow.value(self.shadow.get(self.sids[pair_s as usize * self.ks + pair_k]).ports[q]).map_or(0, |v| rust_ca_lattice::net::Tree::of(&v).0.len());
+                    to_pair + len + nodes
+                }).max().unwrap() as f64
+            };
+            self.units[u].arrive = self.stats.clocks + stream;
             match f {
                 None => self.link(us, self.ae(ku, 0), self.ae(kr, 0)),
                 Some(f) => {
@@ -633,6 +665,19 @@ impl Lattice {
             }
             let (rs, usid) = (self.sids[t as usize * self.ks + kr], self.sids[us as usize * self.ks + ku]);
             self.shadow.link(rs, 0, usid, 0);
+            if let Some(&c) = self.call_of.get(&rs) {
+                self.calls[c].docked = self.stats.clocks;
+                // How far the farthest agent of the arguments is from the unit as it reads them.
+                let mut args = std::collections::HashSet::new();
+                let mut stack = vec![self.shadow.get(rs).ports[1].unwrap().0];
+                while let Some(a) = stack.pop() {
+                    if !args.insert(a) { continue; }
+                    for q in 1..self.shadow.get(a).tag.arity() { if let Some((b, _)) = self.shadow.get(a).ports[q] { stack.push(b); } }
+                }
+                let far = self.live.iter().flat_map(|&x| (0..self.ks).map(move |k| (x, k))).filter(|&(x, k)| self.tag(x, k) != 0 && args.contains(&self.sids[x as usize * self.ks + k]))
+                    .map(|(x, _)| self.apart(x, us)).max().unwrap_or(0);
+                self.calls[c].args_apart = far;
+            }
             self.refresh(us);
             self.refresh(t);
         }
@@ -736,6 +781,8 @@ impl Lattice {
             names: Default::default(),
             units: vec![],
             ready: Default::default(),
+            calls: vec![],
+            call_of: Default::default(),
         }
     }
 
@@ -990,7 +1037,7 @@ impl Lattice {
             l.place(s, 0, code(Tag::Unit), u);
             l.sup_label[s as usize * l.ks] = net.get(u).label;
             assert_eq!(net.get(u).label as usize, l.units.len(), "units numbered in order");
-            l.units.push(UnitSite { site: s, busy: 0.0, served: 0 });
+            l.units.push(UnitSite { site: s, busy: 0.0, arrive: 0.0, served: 0 });
         }
         for &id in &order {
             let a = net.get(id);
@@ -1860,8 +1907,9 @@ impl Lattice {
             if self.is_strand(m) || m == NONE { continue; }
             let (k2, q) = (m as usize / ARITY, m as usize % ARITY);
             let t2 = self.tag(site, k2);
-            // A word a unit made is not there until the unit is done.
+            // A word a unit made is not there until the unit is done, and a unit answers once the arguments are in.
             if q == 0 && t2 != 0 && !self.ready.is_empty() && self.ready.get(&self.sids[site as usize * self.ks + k2]).is_some_and(|&c| c > self.stats.clocks) { continue; }
+            if q == 0 && t2 != 0 && tag_of(t2) == Tag::Unit && self.units[self.sup_label[site as usize * self.ks + k2] as usize].arrive > self.stats.clocks { continue; }
             if q == 0 && t2 != 0 && tag_of(t2).is_producer() { return Some((k, k2, face)); }
             // A wanted reader touching a pending computation's output wants it in turn (an
             // eraser does not: what it touches is garbage).
@@ -2123,6 +2171,16 @@ impl Lattice {
             }
             self.link(site, cur, eb);
         }
+        if !self.units.is_empty() {
+            let now = self.stats.clocks;
+            if (ct, pt) == (Tag::A, Tag::Call) {
+                let apart = self.apart(s, self.units[pl as usize].site);
+                self.call_of.insert(fresh_sids[0], self.calls.len());
+                self.calls.push(CallTimes { sent: now, apart, docked: f64::NAN, served: f64::NAN, read: f64::NAN, args_apart: -1 });
+            }
+            if pt == Tag::Unit { if let Some(c) = self.call_of.remove(&csid) { self.calls[c].served = now; self.call_of.insert(fresh_sids[1], c); } }
+            if pt == Tag::Word { if let Some(c) = self.call_of.remove(&psid) { self.calls[c].read = now; } }
+        }
         if rule.producer == Tag::Unit {
             let u = &mut self.units[pl as usize];
             u.busy = self.stats.clocks + self.p.unit_lat as f64;
@@ -2265,7 +2323,9 @@ impl Lattice {
             let k = ks[d.pick(Dice::AGENT, 5, ks.len())];
             // Mostly step along the principal wire; sometimes anywhere.
             let m = self.mate_of(s, self.ae(k, 0));
-            let f = if self.is_strand(m) && self.in_block(self.nb(s, self.face(m))) && d.chance(Dice::ALONG, 0.7) { self.face(m) }
+            let steer = if d.chance(Dice::ALONG, 0.7) { self.toward_unit(s, k) } else { None };
+            let f = if let Some(f) = steer { f }
+                else if self.is_strand(m) && self.in_block(self.nb(s, self.face(m))) && d.chance(Dice::ALONG, 0.7) { self.face(m) }
                 else {
                     // A block clipped by the edge of the lattice can leave no neighbour inside.
                     let fs: Vec<usize> = (0..self.faces).filter(|&f| self.nb(s, f) != u32::MAX && self.in_block(self.nb(s, f))).collect();
@@ -2833,7 +2893,8 @@ impl Lattice {
         self.take_infect(s);
         let k = ks[self.cur.pick(Dice::AGENT, 5, ks.len())];
         let m = self.mate_of(s, self.ae(k, 0));
-        if self.is_strand(m) { let may_swap = self.cur.chance(Dice::SWAP, self.p.swap); self.hop(s, k, self.face(m), may_swap); }
+        let f = if self.is_strand(m) { Some(self.face(m)) } else { self.toward_unit(s, k) };
+        if let Some(f) = f { let may_swap = self.cur.chance(Dice::SWAP, self.p.swap); self.hop(s, k, f, may_swap); }
         true
     }
 

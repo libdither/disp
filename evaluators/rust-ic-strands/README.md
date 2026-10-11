@@ -1160,7 +1160,7 @@ graph view) and `relay_add 1 2` (158 agents, 41 B and 4 C applied, in 3D).
 ## Fixed units (`unit=`)
 
 A function can be served by one agent that stays where it is, as hardened silicon would be
-(research/COARSE_GRAINED_LATTICE.md §3): every call walks to it and waits its turn, instead of
+(research/COARSE_GRAINED_LATTICE.md §3): every call goes to it and waits its turn, instead of
 copying the function's code to where it is needed and working it out there. CPU only.
 
 - **Loading** (`strands-run TERM --unit CODE`, the player's `unit=NAME`): every occurrence of the
@@ -1169,45 +1169,76 @@ copying the function's code to where it is needed and working it out there. CPU 
 - **The number is copied, not the code**: `Dn·Ref` gives two references, `Eps·Ref` erases one.
 - **A call** (functions of two arguments): applying a reference gives a `Call` holding the first
   argument; applying that sends a `Req`, the call itself, with both arguments in a pair (each behind
-  a normalizer) and its result wire trailing behind. A request pays `unitpull` (6) for each site it
-  steps away from its unit, so it walks there.
+  a normalizer) and its result wire trailing behind. A request steers for its unit (`unitsteer`,
+  on): its steps go toward it, as a wanted reader's go along its principal wire, and each site
+  nearer saves it `unitpull` (6).
 - **At the unit**: once a request is in the unit's site or next to it and both its arguments are
   values, the lattice wires the two free ports together across their shared link: the only wiring
-  that is not a rewrite. `Req·Unit` then leaves a `Word` holding the answer, erasers on the
-  arguments, and the unit in its seat, busy for `unitlat` clocks (default 20) and its word not
-  there until then. The abstract net works the answer out with the oracle, as a circuit would.
-  Only requests step into a unit's site, and the unit never moves.
+  that is not a rewrite. The arguments do not walk there: they stream along the request's wires, a
+  site and a node a clock, as demand pulses travel (an assumption: pulses carry one bit, a value
+  would need a trit a clock), and the unit answers once the longer is in. `Req·Unit` leaves a `Word`
+  holding the answer, erasers on the arguments, and the unit in its seat, busy for `unitlat` clocks
+  (default 20) and its word not there until then. The abstract net works the answer out with the
+  oracle, as a circuit would. Only requests step into a unit's site, and the unit never moves.
 - **A word** is a value held whole: copied, erased or normalized in one rewrite, and spelled out a
   layer at a time (its shape is its label) for an apply, triage or dispatch reading it, as the
   movement agents are. An answer can stay words. A word is the one agent with unbounded state; a
   chip's would be fixed width (an 8-bit sum fits a 9-bit register).
 
 `rules.rs` `UNIT_RULES` has the 22 rules; `tests/units.rs` (both crates) checks the answers against
-the oracle, and on the lattice the invariants and the abstract net after every clock.
+the oracle, and on the lattice the invariants and the abstract net after every clock. `strands-run`
+prints where a unit's calls spend their clocks (`UNITCALLS`).
 
 **Copies against one unit** (`programs/units.py`): m calls of `relay_add` on 4-bit trees side by
-side, each with its own copy of the adder or all served by one unit d sites away. Clocks to the
-answer, 2 seeds, every answer the oracle's:
+side, each with its own copy of the adder, or all served by one unit d sites away. Clocks to the
+answer, 2 seeds, every answer the oracle's. Copies take 6.1k, 6.9k and 7.8k clocks:
 
-| calls | copies | unit, 20 clocks a call: d = 2 · 8 · 16 · 32 · 64 · 128 | unit, 500 clocks a call: d = 2 · 8 · 16 · 32 · 64 · 128 |
+| calls | unit, 20 clocks a call: d = 2 · 8 · 32 · 128 · 512 | 500 a call | 20 a call, requests wandering (`unitsteer=0`): d = 2 · 8 · 32 · 128 |
 |---|---|---|---|
-| 1 | 6.1k | 466 · 588 · 917 · 2.1k · 3.8k · 6.5k | 936 · 1.1k · 1.4k · 2.6k · 4.3k · 7.0k |
-| 4 | 6.9k | 914 · 1.3k · 1.9k · 3.0k · 4.6k · 8.2k | 2.3k · 2.7k · 3.2k · 4.1k · 5.6k · 8.6k |
-| 8 | 7.8k | 1.7k · 1.9k · 2.5k · 3.5k · 5.6k · 9.4k | 4.5k · 4.7k · 5.1k · 5.8k · 7.8k · 10.6k |
+| 1 | 117 · 132 · 199 · 588 · 2.0k | 636 · 624 · 705 · 1.1k · 2.5k | 458 · 692 · 2.1k · 6.6k |
+| 4 | 398 · 471 · 733 · 1.8k · 6.3k | 2.2k · 2.2k · 2.4k · 3.0k · 7.9k | 964 · 1.3k · 3.0k · 8.0k |
+| 8 | 596 · 668 · 1.1k · 3.6k · 11.1k | 4.3k · 4.3k · 4.5k · 5.4k · 12.7k | 1.7k · 2.0k · 3.5k · 9.5k |
 
-- **Waiting wins near, copying far.** One unit is faster up to about 100–120 sites away at 20 clocks
-  a call. At 500 clocks a call the queue eats into that: about 90 sites for 4 calls, 64 for 8.
-- **The walk is what a unit costs**: about 48 clocks per site of distance, there and back (one call,
-  d = 2 to 128), so 24 a site each way, a third of the walking speed the coarse law assumed (0.13
-  strands a clock). A request drags two wires, and its word comes back pulled along by its reader.
-- **Space**: copies peak at 1.2k, 4.4k and 9.2k sites; the unit at 40–50, 190–450 and 440–1040.
+- **Waiting wins near, copying far.** With steering, one unit is faster than copies up to about
+  1,600 sites away for a single call, 550 for 4 calls and 340 for 8 (at 500 clocks a call, 430 and
+  250). With requests wandering it is about 100–120 sites.
+- **Space**: copies peak at 1.2k, 4.4k and 9.2k sites; one unit at 50–500, 180–1000 and 490–1700.
 - **Inside a recursion**, with `add` as a unit, every step copies the unit's number instead of add's
   code: `mul 3 3` 24.4k → 13.8k clocks, `sum [1, 2, 3, 4]` 32.6k → 16.8k, `fib 4` 36.6k → 23.4k
-  (one seed each).
+  (one seed each, before steering).
 
-In the player, the menu's "fixed units" group runs four of these calls with their own copies, with a
-unit 4 and 60 sites away, with a slow unit (2000 clocks a call) nearby, and `mul 3 3` with `add` as
-a unit.
+### Travelling faster
+
+Where a call's clocks go (`UNITCALLS`, 4 calls): almost all in the walk. Waiting at an idle unit is
+a clock or two, and the answer is read as soon as it is ready, because the reader of the result
+walks along behind the request.
+- **Wandering requests are slow, ~50 clocks a site.** A request has no principal wire to step along,
+  so its turn picks one of six directions, only one of which leads to the unit, and the energy
+  pull alone barely helps (4× the pull: −8 to −24%).
+- **Steering is about 13× faster**: under 4 clocks a site with the arguments' stream, about 0.35
+  sites a clock walking, for a lone request. The 2×2×2
+  block schedule caps any agent at about half a site a clock (a step must stay inside its block), so
+  this is near the limit for walking. A unit's direction is static, so a chip would hold it per site
+  (a routing table) or in the request (the unit's coordinates).
+- **Data should not walk.** Steered, a request leaves its arguments behind (at 128 sites they are
+  still where they were made when the unit reads them) and they stream instead, a clock a site.
+  Requiring them to arrive as agents instead (pulled along by tension) never finished: two argument
+  trees do not pack around a unit against the crowding energies.
+- **Many calls crowd one corridor.** 8 steered calls cost 19 clocks per extra site against 4 for
+  one: each call in flight keeps two wires (its arguments' and its result's) through every site of
+  its path, and a link has 4 lanes.
+- **Static fastlines** (not built): what is left is the walk itself and the lanes. A line of sites
+  that only carries requests would make a call two streams, there and back, about 2 clocks a site,
+  with no walking; an express link (an extra pair of faces joining two far sites, crossed in a phase
+  of its own outside the blocks, never folded or flipped) would cross L sites in a clock. Both are
+  static hardware, as routing channels and long lines are on an FPGA, and both trade lanes for
+  speed: a fastline is worth as many lanes as there are calls in flight on it. At a stream's speed a
+  call costs about 2 clocks a site, so one unit would beat copies out to about (copies' clocks −
+  calls × `unitlat`) / 2 sites: some 3,000 for the 4 calls above, if the lanes keep up (an estimate).
+
+In the player, the menu's "fixed units" group runs the four calls with their own copies, with a
+unit 4 and 60 sites away, 60 away with the requests wandering, a slow unit (2000 clocks a call)
+nearby, and `mul 3 3` with `add` as a unit.
 
 ## Reading back
 
