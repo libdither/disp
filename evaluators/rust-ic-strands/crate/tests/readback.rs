@@ -29,7 +29,9 @@ fn terms() -> Vec<(String, Term)> {
     v
 }
 
-fn p() -> Params { Params { w: 40, h: 40, depth: 8, ..latest() } }
+/// Loaded spread out and run hot, as before `latest` packed loads: packed, a loop can finish a
+/// round inside one hand-back stretch, and its next round, shaped the same, is taken for it.
+fn p() -> Params { Params { w: 40, h: 40, depth: 8, spread: 2, temp: 2.0, ..latest() } }
 
 /// The readback text read again: shared parts are bound where first read.
 fn parse(s: &str) -> Option<Term> {

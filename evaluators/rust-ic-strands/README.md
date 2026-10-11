@@ -1180,13 +1180,35 @@ reduction-state panel. It only reads; a run goes exactly as without it.
   wires that no other agent has in either net (then 6, 4, 3 within a clock's reach), and from
   those, neighbours whose own surroundings are unchanged. Seats alone fail, as look-alike agents
   move into each other's seats within a stretch. Against a CPU run that keeps its ids, after
-  stretches of 50 clocks, 89% of picks are found again and none is mistaken for another.
+  stretches of 50 clocks, 89% of picks are found again and none is mistaken for another, on
+  programs loaded spread out. Packed (as now), a loop can finish a whole round inside one stretch,
+  and its next round, shaped the same, is taken for the old one: a pick can then jump to its
+  look-alike.
 - **The details drawer** writes each pick as disp: applications as *f x y* (a fork *t a b* is an
   application of *t* too), numbers, lists and strings as literals, code equal to a known
   definition by its name (matched by a hash of its ternary form), other code over 6 nodes as
   ‹the definition it is a piece of› or ‹its size›, computations shared by duplicators as *x₁* in
   a *where*, and what is being computed underlined in blue. A program's answer, as far as it is
   built, reads `succ (…)` or `cons x (…)`. Clicking part of a term lights its agents.
+
+## Loading packed
+
+A term used to load with a free site between agents (`spread=2`) and run at temperature 2. Now it
+loads packed (`spread=1`) and runs at 1.5, part of `latest`. On 7 programs × 2 seeds (lambada
+`fib:1`, `fib:2`, `sort:1`, `exp:1`; disp `add 2 3`, `fib 2`, `rev [1, 2]`), geometric means
+against the old loading:
+
+| setting | clocks | rewrites | peak sites |
+|---|---|---|---|
+| packed | 0.89 | 1.05 | 0.70 |
+| temperature 1.5 | 0.98 | 0.99 | 0.93 |
+| **packed, temperature 1.5 (now)** | **0.83** | **1.02** | **0.66** |
+| packed, temperature 1.5, movement agents (`views=1`) | 0.85 | | 0.71 |
+
+Every answer was the oracle's, as on 160 random terms (median 122 clocks against 157). The gaps
+were room to move, but tension pulls a loaded term together anyway: a packed load starts where it
+would have ended up. Cooler runs keep it there. (Alone, 1.5 is about as fast as 2; see Things tried
+that did not help.) Tables above this section were measured with the old loading.
 
 ## Contracting the answer
 
@@ -1287,7 +1309,8 @@ least 684 strands), averaged over its 5 runs:
   - T1·F and Dn·F need 5-port builders.
 
   Five ports would make every switchboard bigger, so this stayed an analysis.
-- **Lower temperature** with the idle repulsion (1.5): slower everywhere.
+- **Lower temperature** with the idle repulsion (1.5): slower everywhere, before loads were
+  packed (Loading packed, above).
 - **Walker priority under random turns**: neutral at 50%, livelock at 100% (above). Under
   blocks 80% is already slower than 50%.
 - **Under blocks with one move per block**: a higher step rate is worse (wires need reshaping

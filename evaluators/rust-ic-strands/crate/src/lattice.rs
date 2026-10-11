@@ -523,9 +523,9 @@ pub fn cooled(p: &Params, t0: f64, clocks: f64) -> f64 {
     if p.cool_half == 0.0 { p.cool_min } else { (t0 * 0.5f64.powf(clocks / p.cool_half)).max(p.cool_min) }
 }
 
-/// The current design: the chip's schedule with the demand field and forking S rules. The player
-/// and the GPU run it; hw/ builds `chip`.
-pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p.fork = true; p }
+/// The current design: the chip's schedule with the demand field and forking S rules, loaded packed
+/// (no gaps) and run a little cooler. The player and the GPU run it; hw/ builds `chip`.
+pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p.fork = true; p.spread = 1; p.temp = 1.5; p }
 
 /// The demand field (README "Fields"): a wanted reader or a demand pulse sets its site to 3, which
 /// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
