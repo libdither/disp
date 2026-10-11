@@ -45,6 +45,7 @@ impl Tag {
         match t {
             T::L => L, T::S => S, T::F => F, T::P => P, T::Pair => Pair, T::A => A, T::T1 => T1, T::Sel => Sel, T::Unp => Unp,
             T::Dn => Dn, T::Eps => Eps, T::Nrm => Nrm, T::Out => Out, T::Sup => unreachable!("superpositions are not modelled here"),
+            T::K => K, T::Sx => Sx, T::B => B, T::C => C, T::I => I, T::W => W,
         }
     }
 }
