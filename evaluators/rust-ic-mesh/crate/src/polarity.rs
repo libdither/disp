@@ -15,7 +15,7 @@ pub const fn is_source(tag: Tag, p: usize) -> bool {
         Tag::A | Tag::T1 | Tag::Sel => p == 2,
         Tag::Nrm => p == 1,
         Tag::Unp | Tag::Dn => p == 1 || p == 2,
-        Tag::Eps | Tag::Out => false,
+        Tag::Eps | Tag::Out | Tag::Seam => false,
     }
 }
 

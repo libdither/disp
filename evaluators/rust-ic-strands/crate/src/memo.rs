@@ -85,7 +85,7 @@ impl Terms {
                 Tag::S => &[1],
                 Tag::F | Tag::P | Tag::Pair => &[1, 2],
                 Tag::A | Tag::T1 | Tag::Sel => &[0, 1],
-                Tag::Sup | Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => &[],
+                Tag::Sup | Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W | Tag::Seam => &[],
                 _ => &[0],
             };
             if state == UNSEEN {
@@ -126,6 +126,7 @@ impl Terms {
                 Tag::Eps | Tag::Out => self.cut(),
                 // Movement agents are not merged (`Params::views` runs without memo).
                 Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.cut(),
+                Tag::Seam => self.cut(),
             };
         }
         at[r.0 as usize][r.1 as usize]

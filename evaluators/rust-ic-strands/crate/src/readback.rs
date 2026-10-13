@@ -142,7 +142,7 @@ impl<'a> Reader<'a> {
                 self.project(id, p)
             }
             Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.view(id, a.tag, ports),
-            Tag::Eps | Tag::Out => node(id, Kind::Cut),
+            Tag::Eps | Tag::Out | Tag::Seam => node(id, Kind::Cut),
         };
         self.depth -= 1;
         self.on_path[id as usize] = false;

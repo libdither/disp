@@ -55,6 +55,9 @@ pub enum Tag {
     C,  // △(△f)(△△g), the argument going left only: [p, f, g]
     I,  // △(△△△)△: [p]
     W,  // △(△s)s, both halves the same code: [p, s]
+    /// A mark on a wire that reversible rewriting (rust-ic-strands rev.rs) leaves where a rule joins two
+    /// wires into one: interactions see straight through it. [a, b]
+    Seam,
 }
 
 /// Every tag, in the order engines number them (from 1, 0 meaning none). `Sup` comes last so
@@ -72,7 +75,7 @@ impl Tag {
     pub fn arity(self) -> usize {
         match self {
             Tag::L | Tag::Eps | Tag::Out | Tag::I => 1,
-            Tag::S | Tag::Nrm | Tag::K | Tag::W => 2,
+            Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Seam => 2,
             _ => 3,
         }
     }
@@ -89,6 +92,7 @@ impl Tag {
             Tag::A => "A", Tag::T1 => "T1", Tag::Sel => "Sel", Tag::Unp => "Unp",
             Tag::Dn => "Dn", Tag::Eps => "Eps", Tag::Nrm => "Nrm", Tag::Out => "Out",
             Tag::K => "K", Tag::Sx => "Sx", Tag::B => "B", Tag::C => "C", Tag::I => "I", Tag::W => "W",
+            Tag::Seam => "Seam",
         }
     }
 }
