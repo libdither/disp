@@ -2,7 +2,7 @@
 //! then with its token turned around back to the beginning, ends where it started; the tree calculus,
 //! derived as the two-way program `tc`, gives eager evaluation's answers, and its trace takes it back.
 use rust_ca_lattice::oracle::{Lcg, Term};
-use rust_ic_strands::iso::{bennett, decode, encode, library, nat, parse_call, run, show, tc_apply, Iso, Machine};
+use rust_ic_strands::iso::{bennett, decode, encode, library, nat, run, show, tc_apply, Iso};
 use std::rc::Rc;
 
 fn fork(a: Term, b: Term) -> Term { Term::F(Rc::new(a), Rc::new(b)) }
@@ -101,37 +101,6 @@ fn the_tree_calculus_derived() {
     }
     eprintln!("{tried} random applications agree with eager evaluation ({steps} steps)");
     assert!(tried > 200);
-}
-
-#[test]
-fn the_machine_runs_back_by_turning_its_token_around() {
-    let defs = library();
-    let mut rng = Lcg(11);
-    let mut report = vec![];
-    for src in ["add 2 3", "add' 2 5", "double 3", "snoc [1, 2] 3", "rev [1, 2, 3]", "revfast [1, 2, 3]", "rev' [2, 1]",
-                "tc F(L,L) L", "tc F(S(L),L) S(L)", "tc F(F(L,S(L)),L) S(L)", "bennett F(F(L,S(L)),L) F(L,L)", "run add 2 3", "dagger add", "dagger snoc"] {
-        let (main, input) = parse_call(&defs, src).unwrap();
-        let mut fuel = u64::MAX;
-        let want = run(&defs, &main, input.clone(), &mut fuel).unwrap();
-        let mut m = Machine::new(defs.clone(), &main, &input);
-        let (prog, nodes) = (m.live(), m.nodes());
-        let n = m.run(10_000_000).unwrap();
-        assert!(m.done(), "{src}: not at the end");
-        assert_eq!(m.payload(), want, "{src}");
-        assert_eq!((m.depth, m.live()), (0, prog), "{src}: definitions left laid out");
-        for _ in 0..20 {
-            let k = (rng.next() * n as f64) as u64;
-            m.flip(); m.run(k).unwrap(); m.flip(); m.run(k / 2).unwrap();
-        }
-        m.flip();
-        m.run(u64::MAX).unwrap();
-        assert!(m.done() && m.clock == 0, "{src}: not back at the beginning (clock {})", m.clock);
-        assert_eq!(m.payload(), input, "{src}: not the input");
-        assert_eq!((m.depth, m.live()), (0, prog), "{src}: not as it started");
-        assert!(m.nodes() <= nodes, "{src}: more tree nodes than at the start");
-        report.push(format!("{src}: {n} steps"));
-    }
-    eprintln!("{}", report.join("\n"));
 }
 
 /// A disp program as the player has it (player/programs.js, compiled by the real elaborator).

@@ -1401,7 +1401,7 @@ exactly; research/REVERSIBLE_PIPELINE.md says why one would want that.
   `relay_add 13 6`, copying makes 3,394 agents and uses up 2,390 (the adder copying itself, and the
   bits, as it splits them), erasing and clearing up use up 2,498 and make 1,213, and computing comes
   out even (3,179 made, 3,211 used up); 80% of the erasing is in the last fifth of the rounds.
-- **`player/rev.html`** (its "any disp code" engine) runs the whole input once, round by round, goes back to the
+- **`player/rev.html`** runs the whole input once, round by round, goes back to the
   start, and lets the bar under the net scrub through the run. It draws the net as the player's graph
   view does, with a receipt (a square) beside what each event that can be undone now made. Click a
   receipt to undo that event, or two agents about to meet to fire them. "A round at a time" (R) makes
@@ -1423,47 +1423,27 @@ program runs backward with nothing recorded, and the tree calculus itself is one
   pieces together by another, e.g. `((△, b), x), t ↔ b, ((△, x), t)`: every swap, regrouping, wrapping
   and unwrapping), *copy* (`a → (a, a)`; its inverse takes back a copy only from two equal halves), *on* a
   part, *then*, *choose* (by patterns), *loop*, *call* a definition, *run* a program that arrives as
-  data, *note* (words, for reading), and *forget*, the one step that cannot be taken back. A choice goes
-  forward by its arms' when-patterns and back by their gives-patterns, the first fitting arm winning
-  both ways (the "symmetric first-match" of reversible functional languages); a loop states what holds
-  on the way in and on no later round and on the way out and on no earlier round, as Janus's loops do.
+  data, *both* (two programs on the two halves at once), *note* (words, for reading), and *forget*,
+  the one step that cannot be taken back. A choice goes forward by its arms' when-patterns and back by
+  their gives-patterns, the first fitting arm winning both ways (the "symmetric first-match" of
+  reversible functional languages); a loop states what holds on the way in and on no later round and on
+  the way out and on no earlier round, as Janus's loops do.
   So every program has an inverse read off its text (`Iso::dagger`): `add` is `(a, b) → (a, a + b)`,
   `add'` subtracts.
 - **Programs as data.** `run` runs the program the left half of a tree holds on its right half, the
   program staying. `dagger`, itself a two-way program, works out any program's inverse with the program
   given as a tree; run backward it undoes that.
-- **The machine walks the program tree.** The token goes down into an instruction, through its parts in
-  order, and back up, carrying the tree it works on. Working on a part parks the rest of the tree at the
-  instruction until the token comes back up; a call lays a copy of its definition out under it while the
-  token is inside, and takes it away (it is only a copy) when the token leaves. Every step touches the
-  token, one instruction, at most a pattern's worth of tree nodes and the instruction's parked tree.
-  **Back is turning the token around**: it walks back the way it came, each instruction undoing its step.
 - **The tree calculus, derived** (`tc`): `((p, x), t) → (p x, t')`, p applied to x eagerly with the trace
   t' handed back. Its arms are the tree calculus's rules: `△ x` and `△a x` build (the trace says which);
   K (`△ △ b x = b`) is a rearrangement putting x on the trace; S (`△ (△c) b x = c x (b x)`) copies x and
   makes three applications; triage puts the arms it does not take on the trace. Each arm marks the trace
   so that going back the arms are told apart. disp's programs give the oracle's answers this way (eager
-  evaluation finishes on all of them tried) and run back to their input exactly:
-
-| run | steps | tree nodes held at most |
-|---|---|---|
-| `tc add 1 1` | 4,457 | 1,406 |
-| `tc fib 3` | 22,643 | 6,570 |
-| `bennett add 1 1` (trace cleaned up) | 8,929 | 1,425 |
-| `bijection rev rev [1, 2, 3]` (nothing left over) | 96,079 | 7,659 |
-
-  Held nodes are with copies shared (below). Copied node by node instead (`strands-iso --copy`), the
-  same runs hold 10,813 (`add 1 1`), 82,282 (`fib 3`) and 74,492 (`mul 2 2`, against 6,131).
+  evaluation finishes on all of them tried) and run back to their input exactly.
 - **What the trace is.** For `add 1 1`, 87% of the trace's nodes are arguments K threw away, not arms
   triage did not take (9,463 against 266), and 102 of the 116 pieces thrown away are copies of parts of
   the program itself: a recursive function copies itself at each call, and the base case's K throws the
   copy away. The trace has 10,828 nodes but 427 distinct subtrees (`fib 3`: 82,311 and 1,736;
   `tests/trace_shape.rs`).
-- **So copies share what they copy.** A copy is one more holder of the same nodes; taking a shared tree
-  apart copies only the layer it takes apart (its children stay shared), and putting a copy on the trace
-  puts a pointer there. This is the strand lattice's lazy duplication (and its un-copy) again. Steps are
-  the same and every run still goes back exactly; memory falls 8–12 times. What is left is about one
-  small entry per application: which rule it was, and pointers.
 - **What to do with the trace** is the caller's choice: keep it (all of it runs back), clean it up
   (`bennett`: run, copy the answer, run back; twice the steps, leaving the program, its arguments and
   the answer), or throw it away (`forget`: the run cannot go back past it). A disp program that is a
@@ -1473,122 +1453,14 @@ program runs backward with nothing recorded, and the tree calculus itself is one
 - **Keeping the program (`tck`)**: `((p, x), t) → ((p, p x), t')`. With the applied program kept beside
   its answer, going back reads the rule off it again, so the trace holds only what the data decides: K's
   dropped argument, the functions an S or a dispatch made on the way, and which way a dispatch went.
-  Its S rule works out `c x` and `b x` at once (a `both`, below), `c x` going on with the trace and `b x`
-  starting one of its own that then goes onto it. Against `tc` it holds 1,275 nodes at most for `add 1
-  1` (1,406), 5,760 for `fib 3` (6,570) and 5,350 for `mul 2 2` (6,131), for 26% more steps; with the
-  two sides one after the other in one trace it held 1,083, 4,808 and 4,428.
-- **The persistent machine** (`walk.rs`) runs the same programs without laying anything out. The program
-  is one tree of agents (the main program and the definitions it reaches, as `encode` writes them, a
-  note's words left out), planted once and never changed. The token sits at an instruction's root,
-  carrying the tree it works on and a stack: working on a part pushes the rest of the tree, a call pushes
-  where to come back to and goes to the definition's own root, and a call backward walks the same
-  definition backward. A rearrangement reuses the agents it takes apart for the ones it builds, so
-  agents are made only when the data grows, when a shared tree is taken apart, for a stack frame, and
-  for the code of a program run as data. `swap 1 2` makes 2 (its call's frame) and takes them away
-  again; `add 2 3` makes 14 and takes 10 away (5 is 4 agents more than 3); `revfast [1, 2, 3]` 4 and 4;
-  `tck add 1 1` 2,516 and 1,734 over 5,637 steps, the difference being the trace, while its program's
-  3,000-odd agents stay as they are. It gives what `run` gives and goes back to its exact start
-  (`tests/walk.rs`).
-- **Tokens split and come back together** (`Iso::Both`, `F a b → F (f a) (g b)`). At a `both` the token
-  becomes a fork: its pair waits with a hole for each half while a token of its own takes each. A half
-  done comes back into its hole, and with both back the fork is a token again. Each move (a token's
-  step, a fork opening, a half setting off or coming back, the fork closing) is undone by another, so
-  tokens move in any order and nothing records which went when: `tests/walk.rs` moves a random one each
-  time, turning time around now and then, and ends exactly at the input. `Walker::round` moves
-  everything that can move at a round's start (what the round makes waits); `step` moves one. `dagger`
-  inverts a `both`'s two sides with a `both`. Worked out eagerly, disp's programs give few tokens:
-
-| run | moves | rounds | tokens at most |
-|---|---|---|---|
-| `tck add 1 1` | 5,541 | 3,939 | 4 |
-| `tck fib 2` | 14,870 | 9,021 | 7 |
-| `tck relay_add`, 2 / 4 / 8 bits | 4,786 / 11,222 / 24,110 | 3,337 / 7,783 / 16,751 | 5 |
-
-  Relay's rounds double with its bits, where on the lazy net they grow by about 140 (Running backward,
-  above): its halves overlap only lazily, the high half starting before the low half's carry is known.
-- **Jets.** `jet f args` is `tck f args`, except that a program the library has a two-way definition
-  for, known by its tree (`Defs::with_jets`; disp's `add` and `rev` so far, `iso::JETTED`), runs as that
-  definition: disp's `.opt.disp` overrides, for this machine. `jet add 3 4` takes 53 moves where `tck
-  add 3 4` takes 11,845 (1 + 1: 29 against 5,541; 10 + 10: 137 against 33,909), and holds about 300
-  tree agents (mostly the program, kept as `tck` keeps it) where `tck` holds 805 to 3,405 on average.
-  `tests/walk.rs` checks 25 additions and 4 reversals against the tree calculus, forward and back: 1,287
-  moves against 302,474. A jet helps only at the top: inside another program (`fib` adding), `add`
-  would have to be known half applied, and `add a` is a 370-agent tree, `a` at its end, whose making
-  alone leaves 6,810 trace nodes when interpreted. Recognising the tree costs reading it once (296
-  agents).
-- **What a move needs beside it.** Whatever a token carries, a move reads only the top of it: about 3
-  tree agents (at most 8) for the library's `add`, about 7 (at most 27) for `tck` running disp's `add`,
-  though `tck` holds 805 to 3,405. A move takes the token 3 to 4 edges along the program's tree on
-  average; 12 to 16% of moves go further than 6 (calls and returns: at most 9 edges for `add`, 24 for
-  `tck`). On a lattice, then, what has to travel with the token is a pattern's worth of the top of its
-  tree, and a call is the long way round; the rest can stay where it was made.
-- **Sharing the program.** In a net an agent meets one other at a time, so two tokens at one node take
-  turns (`Walker::exclusive`): 1.2–1.7% more rounds on the runs above. A copy of `tck` (2,729 agents)
-  for each token instead would mean keeping 3 to 6 copies (8–16k agents), or, copying and merging as
-  needed, making 237 to 1,209 copies in a run. Copies of code stay equal, so making and merging them
-  loses nothing; it is only that taking turns costs far less.
-- **As an interaction net of raw trees** (`player/rawprog.js`, `player/inet.js`, `player/inet.html`).
-  Every agent is a leaf, a stem or a fork, save one walker and the root it hangs from: the program, the
-  tree it works on and the walker's stack are all raw trees, and every step is one meeting of the
-  walker with the agent its principal port faces, rewiring only their ports. Read this way, the
-  program needs a shape a walker can read one node at a time, never having to remember where it is, so
-  the two-way programs are compiled into one (`rawprog.js`): a leaf does nothing, `F p q` is p then q
-  (back out of a fork's left, go down its right), and a stem is a step named by the small tree under
-  it. The steps are one layer deep: swap, rotate and rotate back, a leaf or a stem added or dropped, a
-  part taken out (the rest onto the stack) or put back, a call, and a choice by the shape at one path,
-  its arms all two forks down so a walker climbing out knows which arm it was by the way it came out of
-  each. A rearrangement becomes the fewest such steps (a search): `add`'s two are a rotate, and a
-  rotate back with a leaf added on the right. The walker goes down into a node by turning its principal
-  port toward itself (the path kept in the nodes); a call copies the definition's number as stems,
-  climbs to the root leaving a frame at every node it climbs out of, counts along the library and,
-  done, follows the frames back down. `node player/inet.test.mjs` checks it against the two-way machine
-  (wires joined both ways after every meeting): `add 2 3` takes 584 meetings (the persistent machine
-  29 moves), making 95 agents and taking 92 away (stack frames and counts, and the answer's growth);
-  `rev [1, 2, 3]` 1,629, making 347. The page lays the net out by force (wires pull, agents push apart)
-  and colours an agent only by the tree it began in. It has no copy, loop, run or both yet, nor a
-  choice whose arms leave a different shape than they test; stepping back replays from the start.
-- **Its rules** are a table (`inet.js` `RULES`, listed in the page's sidebar as they fire): 104 rules,
-  all the walker's, one for each of its 59 states and the shape it meets (5 walk the program, 39 read
-  a step, 18 do steps on the tree, 26 make a choice, 16 make a call), a few also on what it remembers
-  (the step read, which part, a path of up to three turns, a shape, how far to climb back).
-- **Against the tree calculus's own net** (the strand lattice's 26 rules over 13 kinds of agent,
-  `rev.rs`): disp's `add 2 3` there takes 2,658 rewrites in 631 rounds (at most 12 at once), making
-  5,994 agents; here the library's two-way `add` takes 584 meetings one at a time, making 95.
-  `rev [1, 2, 3]`: 10,033 rewrites in 1,517 rounds (at most 29), making 22,811, against 1,629
-  meetings, making 347. The programs differ (the net runs disp's own trees; here a program written
-  two-way, compiled to steps), and so do the nets: there every application is an agent of its own,
-  code is copied for each use and used up, many pairs meet at once, and what is dropped is lost (going
-  back needs the log); here one walker reads code that stays, nothing is dropped, and one pair meets
-  at a time. To run disp's own trees here would take the tree calculus written two-way (`tck`), which
-  needs copy and both first.
-- **Why one walker.** In an interaction net a node is reached only through its principal port, so
-  reading a node means turning it toward the reader, and the whole path from the root to a walker is
-  turned toward that walker. A second walker could not pass through it: walkers working at once need
-  copies of the code they read. The tree calculus's net copies everything and runs wide; this one
-  copies nothing and runs alone; in between, a `both` would copy what its second half reads (and the
-  definitions it calls) and merge the copy back after.
+  Its S rule works out `c x` and `b x` at once (a `both`), `c x` going on with the trace and `b x`
+  starting one of its own that then goes onto it.
 - **A pattern's pieces are numbered by rank** among the letters their instruction uses, not by the
   letter's place in the alphabet (`x` was 23 forks deep). Programs are 2.5–3 times smaller as trees
   (`tc` with its definitions 6,250 → 2,450 agents, `rev` 1,220 → 390), and `dagger` still gives exactly
   the encoded inverse, since swapping a rearrangement's sides keeps the ranks.
-- **`player/rev.html`'s "persistent" engine** (the default) draws that program tree as it is: leaves,
-  stems and forks, nothing saying what they mean. Tokens move from root to root, each its own colour;
-  when a rule fires at a node its words flash over it, and the node keeps a ring in the colour of what
-  it did while the run is past it. A fork is a small green pair beside its `both`, a hole for each half
-  (dashed while away, wired to the token that has it; filled once back). A panel shows what each token
-  carries (one token: its stack too, each return point linked to its call's node); the bar, the run's
-  moves, each round as wide as its moves and as high as how many tokens there were. "A round at a time"
-  moves everything that can move at once; unticked, one at a time. `node player/record.mjs OUT.mp4`
-  records it as a captioned video.
-- **Its "drawn as instructions" engine** draws the program tree frame by frame: the
-  main program at the top, each laid-out call's copy whole underneath its call, linked to it; the token
-  on an edge with an arrow (blue going forward, pink going back); the tree it carries in a panel at the
-  top right; parked trees beside their instructions. Dragging the bar scrubs the run by turning the token
-  around; past a forget it replays from the input instead, and says so. The bar shows how many
-  definitions are laid out at each step and how many tree nodes are held.
-- `tests/iso.rs` checks the inverses, `dagger` and `run`, `tc` against eager evaluation on 400 random
-  applications and on disp's programs, and the machine back to its exact start after random scrubbing.
-  `strands-iso 'CALL'` runs one from the command line.
+- `tests/iso.rs` checks the inverses, `dagger` and `run`, and `tc` against eager evaluation on 400
+  random applications and on disp's programs.
 
 ## Things tried that did not help, and why
 
@@ -1645,6 +1517,16 @@ program runs backward with nothing recorded, and the tree calculus itself is one
   even.
 - **No demand pulses**: 40–66% slower under blocks.
 - **Eager evaluation** finishes fib(0) in 11k clocks, but with about 67× the rewrites.
+- **Machines that walk a program** (commit eca0073 has them): a token walking two-way programs laid
+  out as trees, a persistent version whose program never changes and whose tokens split at a `both`,
+  and the same as an interaction net of raw trees with one walker agent (104 rules). They run back
+  with nothing recorded and make few agents (`add 2 3`: 584 meetings making 95 agents, against the
+  tree-calculus net's 2,658 rewrites making 5,994), but everything happens where the walker is. In an
+  interaction net a node is read through its principal port, so reading turns the path from the root
+  toward the walker, and a second walker needs its own copy of the code: they ran one move at a time
+  where the net runs wide (`tck add 1 1`: 5,541 moves in 3,939 rounds, at most 4 tokens). Jets (a
+  program known by its tree run as a two-way definition, 53 moves for 3 + 4 against 11,845) helped
+  only at the top level.
 
 ## Open
 

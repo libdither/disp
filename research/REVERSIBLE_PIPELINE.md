@@ -74,15 +74,12 @@ such as b ↔ b × b). Its rearrangements by pattern do every swap and regroupin
 give different shapes, the reversible functional languages' rule that
 ["the leaf expression of any branch in a case expression must not match any leaf expression in a branch preceding it"](https://arxiv.org/pdf/2105.09929#page=2);
 a loop states tests for its first and last rounds, as Janus's loops do.
-- **The pipeline is a tree.** Programs, data, the library and the trace are all trees. The machine walks
-  the program tree itself (no separate circuit), a call laying a copy of its definition out under it
-  while the token is inside; `run` runs a program that arrives as data; `dagger`, a two-way program,
-  inverts programs given as trees. The persistent machine (`walk.rs`) lays out nothing: the program is
-  one tree of agents that never changes, and a call pushes where to come back to and sends the token to
-  the definition's own root.
-- **The machine needs no record.** Only the token's place and what it carries change, so turning it
-  around runs it back. Danos and Regnier's interaction abstract machine (the geometry of interaction's
-  token machine) is reversible for the same reason: it
+- **The pipeline is a tree.** Programs, data, the library and the trace are all trees. `run` runs a
+  program that arrives as data; `dagger`, a two-way program, inverts programs given as trees.
+- **A machine walking the program needs no record** (tried and removed, commit eca0073). Only the
+  token's place and what it carries change, so turning it around runs it back. Danos and Regnier's
+  interaction abstract machine (the geometry of interaction's token machine) is reversible for the
+  same reason: it
   ["needs no external garbage-collection"](https://www.pure.ed.ac.uk/ws/files/16874549/Reversible_irreversible_and_optimal_machines.pdf#page=4),
   where a machine that keeps results as it goes collects information that
   ["grows steadily at each step"](https://www.pure.ed.ac.uk/ws/files/16874549/Reversible_irreversible_and_optimal_machines.pdf#page=4).
@@ -94,8 +91,8 @@ a loop states tests for its first and last rounds, as Janus's loops do.
 - **What the trace holds, and sharing.** Mostly copies of code: a recursive function copies itself at
   each call and K throws the copy away at the base case (87% of `add 1 1`'s trace; 10,828 nodes, 427
   distinct). With copies sharing what they copy (a copy one more holder; a shared tree copied one layer
-  at a time only when taken apart, as the strand lattice's duplicators copy), the trace holds pointers
-  and memory falls 8–12 times (`add 1 1` 10,813 → 1,406 nodes, `fib 3` 82,282 → 6,570). What is left is
+  at a time only when taken apart, as the strand lattice's duplicators copy), the trace held pointers
+  and memory fell 8–12 times on the token machine (`add 1 1` 10,813 → 1,406 nodes, `fib 3` 82,282 → 6,570). What is left is
   about one small entry per application, saying which rule fired. Keeping the applied program instead of
   using it up (`tck`) lets that be read off the program, leaving only what the data decides: a third
   fewer entries and a quarter less memory, for 26% more steps. Staged uncomputing (pebbling) trades the
@@ -123,16 +120,11 @@ a loop states tests for its first and last rounds, as Janus's loops do.
 - **Open.** A smaller instruction set in the tree calculus's style (one operator, rules by shape) has
   not been found: the tree calculus's own building rules (`△ x = △x`, `△a x = △ a x`) are already
   two-way, but K, S and triage each need a replacement that keeps what they drop. Calling two-way code
-  from disp without the trace needs a way to mark it in the tree calculus's trees. The persistent
-  machine is the lattice design off the lattice: the program's agents never change, and agents are made
-  only when the data grows, a shared tree is taken apart, or a frame goes on the stack (`tck add 1 1`:
-  2,516 made and 1,734 taken away over 5,637 steps, the difference being the trace). What the lattice
-  would add is the token and its stack moving along strands. Tokens split at a `both` and come back
-  together, every move undone by another, so they move in any order with nothing recorded. But worked
-  out eagerly, disp's programs keep few tokens busy: relay's adder never has more than 5, and its rounds
-  double with its bits, where the lazy net's grow by about 140. Lazy evaluation is where disp's
-  parallelism is; a token machine that went to fetch values when needed, rather than working out
-  arguments first, would be the next thing to try.
+  from disp without the trace needs a way to mark it in the tree calculus's trees. The token machines
+  ran with few tokens busy (relay's adder never more than 5, its rounds doubling with its bits where
+  the lazy net's grow by about 140) and did everything where a token was: in a net, reading a node turns
+  it toward the reader, so a second reader needs its own copy of the code. Lazy evaluation is where
+  disp's parallelism is.
 
 ## How the stages decompose
 

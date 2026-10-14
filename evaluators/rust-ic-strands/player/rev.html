@@ -35,11 +35,7 @@
     <canvas id="cv"></canvas>
     <div id="hud"><div id="answer"></div><div id="status">loading…</div></div>
     <div id="dock">
-      <div><select id="engine" aria-label="engine" title="how it runs backward">
-          <option value="per">persistent: the program a fixed tree of agents, the token walking it</option>
-          <option value="iso">two-way programs, drawn as instructions: backward by turning the token around</option>
-          <option value="log">any disp code: backward by undoing a log of events</option></select>
-        <input id="src" spellcheck="false" aria-label="input">
+      <div><input id="src" spellcheck="false" aria-label="input">
         <select id="examples" aria-label="examples"></select></div>
       <canvas id="strip"></canvas>
       <div>
@@ -50,9 +46,9 @@
         <button id="playFwd" title="run forward (Space)">▶▶</button>
         <button id="toEnd" title="run to the end (End)">⏭</button>
         <label title="events a frame, from one every few frames to a thousand"><input id="speed" type="range" min="0" max="100" value="30" style="width:90px"><span id="speedLabel"></span></label>
-        <label id="roundOpt" title="▶ and ◀ step a whole round: everything that can act at a round's start acts at once (every active pair fires; every token moves), what a round makes waiting for the next. Unticked: one at a time (R)"><input id="byRound" type="checkbox" checked> a round at a time</label>
+        <label title="▶ and ◀ step a whole round: every active pair at a round's start fires at once, what a round makes waiting for the next. Unticked: one at a time (R)"><input id="byRound" type="checkbox" checked> a round at a time</label>
       </div>
-      <div id="logOpts">
+      <div>
         <label title="undo any event that can be undone now, picked at random, instead of the latest"><input id="any" type="checkbox"> undo in any order</label>
         <label title="erasers take values apart, as events (else they keep them whole)"><input id="erase" type="checkbox" checked> erasers erase</label>
         <label title="an eraser on a duplicator's copy turns the duplicator into a seam (and clears dead work)"><input id="collect" type="checkbox" checked> un-copy</label>
@@ -63,58 +59,6 @@
   <aside id="side">
     <h1>Running backward</h1>
     <p style="color:var(--fg)">Drag the bar at the bottom to scrub through the run, either way.</p>
-    <div id="aboutPer">
-    <p><b>The program is one tree</b> of leaves, stems and forks, the same agents any data is made of,
-      and it never changes while it runs. <b>A token walks it</b>, carrying the tree being worked on and
-      a stack.</p>
-    <p><b>Nothing here says what the program means.</b> What a node does is found out when the token
-      reaches it and a rule fires there: the rule's words flash over the node, and the node keeps a ring
-      in the colour of what it did (blue rearrange, purple copy or choose, green work on a part, orange
-      call). Run it back and the rings come off again.</p>
-    <p><b>A call copies nothing</b>: the token goes to the definition's node, leaving on its stack where
-      to come back to (the dashed line). Calling a definition backward walks the same tree backward.</p>
-    <p><b>Agents are made only on special occasions</b>: when the tree being worked on grows, when a
-      shared copy is taken apart, and for a frame on the stack. A rearrangement reuses the agents it took
-      apart.</p>
-    <p><b>As an interaction net of raw trees</b>, every agent a leaf, a stem or a fork and every move
-      spelled out as meetings of two of them: <a href="inet.html">inet.html</a>.</p>
-    <p><b>Tokens split and come back together.</b> At a <i>both</i> a token becomes a fork: the pair it
-      carried waits beside the node (green), with a hole for each half, and a token of its own takes each
-      half (a dashed wire from its hole to it). A half done goes back into its hole; with both back, the
-      fork is one token again.</p>
-    <p><b>No order is needed.</b> Every move is undone by another, and moves of different tokens touch
-      different agents, so tokens may move in any order and nothing records which went when. "A round at
-      a time" (R) moves everything that can move at a round's start; unticked, one moves at a time. Going
-      back, the halves do not wait for each other as they did coming, so the way back can differ from the
-      way there; it ends at the same start. The bar: the run's moves, each round as wide as its moves and
-      as high as how many tokens there were.</p>
-    </div>
-    <div id="aboutIso">
-    <p><b>Two-way programs are trees</b>, as everything here is: an instruction is a node, its parts are
-      its children (and as data each is an ordinary tree). <b>The token walks the program tree</b>: down
-      into an instruction, through its parts in order, back up, carrying the tree being worked on (beside
-      it).</p>
-    <p>The instructions lose nothing: <b>rearrange</b> takes the tree apart by one pattern and puts the
-      same pieces together by another; <b>copy</b>'s inverse takes back a copy only from two equal halves;
-      <b>on</b> works on one part while the rest waits parked beside the instruction; <b>then</b>,
-      <b>choose</b> (by patterns, the arms giving different shapes) and <b>loop</b>; <b>call</b> lays a
-      copy of a definition out underneath while the token is inside; <b>run</b> runs a program that
-      arrives as data. So every program has an inverse read off its text: <code>add'</code> subtracts,
-      and <code>dagger</code>, itself a two-way program, works inverses out on programs as trees.</p>
-    <p><b>Running backward is turning the token around</b>: it walks back the way it came, undoing each
-      step. Nothing is recorded anywhere.</p>
-    <p><b>The tree calculus is a library program</b>, <code>tc</code>: a tree applied to a tree, with a
-      trace handed back beside the answer. Its K rule is a rearrangement putting the dropped argument on
-      the trace; its S rule copies the argument and makes three applications; triage puts the arms it
-      does not take on the trace. So disp's programs run here, and back: <code>tc add 1 1</code>.</p>
-    <p><b>What to do with the trace</b> is a choice: keep it (everything runs back), clean it up
-      (<code>bennett</code>: run, copy the answer, run back; twice the steps, and what is left is the
-      program, its arguments and the answer), or throw it away (<code>forget</code>, the one step that
-      cannot be undone). A program written two-way has no trace to begin with.</p>
-    <p>The bar under the program: how many definitions are laid out after each step (amber) and how many
-      tree nodes are held (blue line).</p>
-    </div>
-    <div id="aboutLog">
     <p>The tree-calculus interaction net (the strand lattice's rules), run so that every step can be
       taken back exactly. Back at the start, every agent is in its place with its own id, wired as loaded.</p>
     <p><b>A round at a time</b> (R): ▶ fires every active pair (gold wire) at once, and what a round
@@ -137,30 +81,23 @@
       apart does: what later uses that wire depends on the event. <b>Un-copy</b>: an eraser that
       reaches a duplicator's copy turns the duplicator into a seam, and the value is never copied.
       It is what keeps the history small: without it, 1 + 1 takes 11 times the events.</p>
-    </div>
     <h2>Try</h2>
     <div id="tour"></div>
     <h2>Now</h2>
     <div id="counts"></div>
     <h2>Pointed at</h2>
     <div id="detail">point at something</div>
-    <div id="legendLog">
     <h2>Events</h2>
     <div class="legend" id="families"></div>
     <h2>Agents</h2>
     <div class="legend" id="legend"></div>
-    </div>
-    <div id="legendPer"><h2>Rings: what a node turned out to do</h2><div class="legend" id="legendPerBody"></div></div>
-    <div id="legendIso"><h2>The circuit</h2><div class="legend" id="legendIsoBody"></div></div>
-    <p style="margin-top:12px">Engines: <code>crate/src/walk.rs</code> (the persistent machine), <code>crate/src/iso.rs</code> (two-way programs) and <code>crate/src/rev.rs</code> (the log of events); the lattice player is <a href="index.html">here</a>.</p>
+    <p style="margin-top:12px">The engine: <code>crate/src/rev.rs</code>; the lattice player is <a href="index.html">here</a>.</p>
   </aside>
 </div>
 <script src="engine.js"></script>
 <script src="programs.js"></script>
 <script src="shapes.js"></script>
 <script src="kinds.js"></script>
-<script src="twoway.js"></script>
-<script src="persistent.js"></script>
 <script id="compilerJs" type="text/plain" src="compiler.js"></script>
 <script>
 "use strict";
@@ -178,27 +115,13 @@ const nameOf = t => t === SEAM ? "seam" : NAMES[TAGS[t]] ?? `kind ${t}`;
 
 /// Settings that each show one thing: [what it shows, the link's settings].
 const TOUR = [
-  ["persistent: both: the token splits in two, one for each half of its pair; the first done waits in its hole for the other, and they are one token again", "engine=per&src=both%20rev%20rev%20%5B1%2C%202%5D%20%5B3%2C%204%2C%205%5D&speed=10&play=1"],
-  ["persistent: add 2 3 on a program that never changes; what each node does shows only when its rule fires", "engine=per&src=add%202%203&speed=10&play=1"],
-  ["persistent: a loop reversing a list: the token walks round it, the list's agents rewired, not made again", "engine=per&src=revfast%20%5B1%2C%202%2C%203%5D&speed=10&play=1"],
-  ["persistent: add backward (subtraction) is add's tree walked backward", "engine=per&src=add'%202%205&speed=10&play=1"],
-  ["persistent: the tree calculus's S rule: c x and b x worked out by two tokens at once", "engine=per&src=tck%20F(S(F(L%2CL))%2CF(L%2CL))%20S(L)&speed=12&play=1"],
-  ["persistent: disp's add 1 1 on the tree calculus keeping its programs: up to four tokens, and what grows is the trace", "engine=per&src=tck%20add%201%201&speed=55&play=1"],
-  ["persistent: the same add as a jet: the tree calculus knows add's tree and runs the library's two-way add instead, 53 moves for 3 + 4 against 11,845", "engine=per&src=jet%20add%203%204&speed=8&play=1"],
-  ["two-way: the program is a tree, and the token walks it carrying (2, 3); drag the bar back and it walks back", "engine=iso&src=add%202%203&speed=14&play=1"],
-  ["two-way: dagger, a two-way program, works out add's inverse with add given as a tree", "engine=iso&src=dagger%20add&speed=40&play=1"],
-  ["the tree calculus's K rule, derived: the dropped argument is rearranged onto the trace", "engine=iso&src=tc%20F(L%2CF(L%2CL))%203&speed=8&play=1"],
-  ["the S rule, derived: the argument copied, then three applications (calls to tc)", "engine=iso&src=tc%20F(S(F(L%2CL))%2CF(L%2CL))%202&speed=18&play=1"],
-  ["disp's add 1 1 on the derived tree calculus: the answer, and the trace that takes it back", "engine=iso&src=tc%20add%201%201&speed=62&play=1"],
-  ["the trace cleaned up (bennett, twice the steps) or thrown away (forget: the end cannot go back)", "engine=iso&src=bennett%20add%201%201&speed=70&play=1"],
-  ["a disp program that is a bijection (rev), run with nothing left over: Bennett's two steps, the second with the inverse", "engine=iso&src=bijection%20rev%20rev%20%5B1%2C%202%2C%203%5D&speed=90&play=1"],
-  ["any code, by a log: receipts beside what each event made", "engine=log&src=share-tower%3A2&speed=22&play=1"],
-  ["by a log, a round at a time: relay_add 13 6, every gold pair firing at once. The adder copies itself and the bits as it splits them (purple), adds (blue), and its copies are taken apart at the end (red)", "engine=log&src=relay_add%2013%206&rounds=1&speed=18&play=1"],
-  ["the same, one rewrite at a time", "engine=log&src=relay_add%2013%206&rounds=0&speed=45&play=1"],
-  ["by a log: erasing is events too; undo them and the dropped arguments come back", "engine=log&src=k-chain%3A3&speed=18&play=1"],
-  ["by a log: a real program; at the end, ◀◀ with “any order” leaves gaps in the history", "engine=log&src=fib%202&any=1&speed=70&play=1"],
-  ["by a log: erasers keeping values whole: with every pair firing at once, what an eraser is about to collect gets copied and worked on anyway: 2.7× the events, 4,440 agents left over", "engine=log&src=add%201%201&erase=0&speed=30&play=1"],
-  ["by a log: no un-copy: duplicators copy what is then thrown away, 11× the events", "engine=log&src=add%201%201&collect=0&speed=30&play=1"],
+  ["receipts beside what each event made", "src=share-tower%3A2&speed=22&play=1"],
+  ["a round at a time: relay_add 13 6, every gold pair firing at once. The adder copies itself and the bits as it splits them (purple), adds (blue), and its copies are taken apart at the end (red)", "src=relay_add%2013%206&rounds=1&speed=18&play=1"],
+  ["the same, one rewrite at a time", "src=relay_add%2013%206&rounds=0&speed=45&play=1"],
+  ["erasing is events too; undo them and the dropped arguments come back", "src=k-chain%3A3&speed=18&play=1"],
+  ["a real program; at the end, ◀◀ with “any order” leaves gaps in the history", "src=fib%202&any=1&speed=70&play=1"],
+  ["erasers keeping values whole: with every pair firing at once, what an eraser is about to collect gets copied and worked on anyway: 2.7× the events, 4,440 agents left over", "src=add%201%201&erase=0&speed=30&play=1"],
+  ["no un-copy: duplicators copy what is then thrown away, 11× the events", "src=add%201%201&collect=0&speed=30&play=1"],
 ];
 const EXAMPLES = [
   ["share-tower:2", "a shared argument, used twice: copies and un-copies"],
@@ -247,14 +170,7 @@ function family(k) {
 const MEANING_OF = { "un-copy": "an eraser reached a duplicator's copy: the duplicator became a seam, its input wired to its other copy",
   "dead work": "an eraser reached a computation's result: erasers went on its inputs instead", "unpaired": "both halves of an unpair were erased: one eraser went on its input instead" };
 
-// ---- two-way programs (iso.rs) ---------------------------------------------------------------------
-/// Which engine runs: "per" (two-way programs on the persistent machine, the program one fixed tree of
-/// agents), "iso" (the same programs drawn as instructions) or "log" (any code, back by undoing a log of
-/// events).
-let engine = "per";
-/// The two-way engines' views (persistent.js, twoway.js); the log's is this page's own.
-const VIEWS = { per: PERV, iso: TWOV };
-const two = () => VIEWS[engine];
+/// A tree as the engine prints it (L, S(…), F(…, …)), as nested objects: k 0 leaf, 1 stem, 2 fork.
 function parseTreeText(src) {
   let i = 0;
   const go = () => {
@@ -264,14 +180,6 @@ function parseTreeText(src) {
     i++; const l = go(); i++; const r = go(); i++; return { k: 2, l, r };
   };
   return go();
-}
-const readNat = t => { let n = 0; while (t.k === 2 && t.l.k === 0) { n++; t = t.r; } return t.k === 0 ? n : null; };
-const readList = t => { const out = []; while (t.k === 2) { const x = readNat(t.l); if (x === null) return null; out.push(x); t = t.r; } return t.k === 0 ? out : null; };
-function readAs(how, t) {
-  const pair = how.match(/^\((\w+), (\w+)\)$/);
-  if (pair) { if (t.k !== 2) return null; const a = readAs(pair[1], t.l), b = readAs(pair[2], t.r); return a === null || b === null ? null : `(${a}, ${b})`; }
-  if (how === "n") return readNat(t);
-  const xs = readList(t); return xs && `[${xs.join(", ")}]`;
 }
 
 // ---- layout: springs along wires, what feeds an input hung below its reader -------------------------
@@ -418,31 +326,20 @@ function relax(steps) {
 }
 /// Whether the view keeps fitting the net as it grows and shrinks (until it is moved by hand).
 let follow = true;
-/// How far the view may zoom in when it fits the run (the video recorder raises it).
-let maxScale = 2.5;
+/// How far the view may zoom in when it fits the run.
+const maxScale = 2.5;
 /// Room kept free above and below what is fitted: the readout, and the dock.
 let fitMargins = [60, 170, 0, 0];
 function fit(glide = false) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  const tv = two();
-  if (tv) [x0, y0, x1, y1] = tv.box();
-  else for (const [, p] of POS) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
+  for (const [, p] of POS) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
   if (!isFinite(x0)) { x0 = y0 = -GSP; x1 = y1 = GSP; }
-  const pad = GSP, box = cv.getBoundingClientRect(), [top, bottom, left] = fitMargins;
-  // the persistent view's panel of what the token holds takes the page's right side
-  const right = Math.max(fitMargins[3], tv && !TWO_VIEW.panel ? tv.panel * box.width : 0);
+  const pad = GSP, box = cv.getBoundingClientRect(), [top, bottom, left, right] = fitMargins;
   // the room to fit into: the page less the margins
   const r = { width: box.width - left - right, height: box.height };
   x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
-  let s = Math.min(maxScale, (r.width - 30) / (x1 - x0), (r.height - top - bottom) / (y1 - y0));
-  let target = { s, ox: left + (r.width - (x1 - x0) * s) / 2 - x0 * s, oy: top + (r.height - top - bottom - (y1 - y0) * s) / 2 - y0 * s };
-  // A two-way program too wide to read whole: follow the token at a size its parts can be read.
-  const tp = tv ? tv.tokenAt() : null;
-  if (tp && s < tv.follow) {
-    s = tv.follow;
-    const fitsY = (y1 - y0) * s < r.height - top - bottom;
-    target = { s, ox: left + r.width / 2 - tp[0] * s, oy: fitsY ? top + (r.height - top - bottom - (y1 - y0) * s) / 2 - y0 * s : (r.height - bottom + top) / 2 - tp[1] * s };
-  }
+  const s = Math.min(maxScale, (r.width - 30) / (x1 - x0), (r.height - top - bottom) / (y1 - y0));
+  const target = { s, ox: left + (r.width - (x1 - x0) * s) / 2 - x0 * s, oy: top + (r.height - top - bottom - (y1 - y0) * s) / 2 - y0 * s };
   if (!glide) { view = target; return; }
   // A step of the way there: the scale geometrically, the offsets so the middle glides with it.
   const W2 = box.width / 2, H2 = box.height / 2;
@@ -457,11 +354,10 @@ const rate = () => 10 ** (+$("speed").value / 25 - 1.2);
 /// Where each round of the log's run began, as event numbers, then where the run ends: round r is the
 /// events from RND[r] up to RND[r + 1].
 let RND = [];
-const byRound = () => engine === "log" && $("byRound").checked && RND.length > 1;
+const byRound = () => $("byRound").checked && RND.length > 1;
 /// How many whole rounds are done when the first t events are.
 const roundsDone = t => { let r = 0; while (r + 1 < RND.length && RND[r + 1] <= t) r++; return r; };
 function forward(n) {
-  const tv = two(); if (tv) return tv.fwd ? tv.fwd(n) : tv.go(Math.min(tv.st.n, tv.st.clock + n));
   if (byRound()) {
     const r = roundsDone(evPos()), to = Math.min(RND.length - 1, r + n);
     if (RND[to] === evPos()) return 0;
@@ -470,7 +366,6 @@ function forward(n) {
   const k = E.rev_forward(n); if (k) dirty = true; return k;
 }
 function back(n) {
-  const tv = two(); if (tv) return tv.bwd ? tv.bwd(n) : tv.go(Math.max(0, tv.st.clock - n));
   if (byRound()) {
     const t = evPos(); if (!t) return 0;
     const r = roundsDone(t), to = Math.max(0, (RND[r] < t ? r + 1 : r) - n);
@@ -478,15 +373,15 @@ function back(n) {
   }
   const k = E.rev_back(n, $("any").checked ? 1 : 0); if (k) dirty = true; return k;
 }
-/// How long the run is, and where it is now: in steps (two-way), rounds or events (the log).
-const tlLength = () => two() ? two().st.n : byRound() ? RND.length - 1 : EV.n;
-function tlPos() { return two() ? two().st.clock : byRound() ? roundsDone(evPos()) : evPos(); }
+/// How long the run is, and where it is now: in rounds or events.
+const tlLength = () => byRound() ? RND.length - 1 : EV.n;
+function tlPos() { return byRound() ? roundsDone(evPos()) : evPos(); }
 /// How many events are done, the undone ones after them.
 function evPos() {
   for (let e = EV.n - 1; e >= 0; e--) if (EV.state[e] === 1 || EV.state[e] === 2) return e + 1;
   return 0;
 }
-function seek(t) { if (two()) two().go(t); else { E.rev_seek(byRound() ? RND[t] : t); dirty = true; } }
+function seek(t) { E.rev_seek(byRound() ? RND[t] : t); dirty = true; }
 function setMode(m) {
   mode = m; credit = 0;
   $("playFwd").classList.toggle("on", m === 1); $("playBack").classList.toggle("on", m === -1);
@@ -494,7 +389,6 @@ function setMode(m) {
 function sync() {
   if (!dirty) return;
   dirty = false;
-  if (two()) { two().sync(); two().hud(); return; }
   readNet(E.rev_net); readEvents(); place();
   RND = [...seats(E.rev_rounds())].filter(b => b < EV.n).concat([EV.n]);
   const t = E.rev_answer(); lastAnswer = t ? text(t) : "";
@@ -579,7 +473,6 @@ function direct(input) {
   return out.join(" ");
 }
 async function load() {
-  if (two()) return loadTwo();
   const input = $("src").value.trim() || EXAMPLES[0][0];
   $("status").textContent = "loading…"; $("status").className = "";
   calledDisp = false;
@@ -597,22 +490,14 @@ async function load() {
   POS.clear(); alpha = 1; dirty = true; setMode(0); loaded = null;
   sync(); loaded = { ...NET }; hudText();
   alpha = 0.3; relax(120); follow = true; fit();
-  location.hash = `engine=log&src=${encodeURIComponent(input)}&erase=${+$("erase").checked}&collect=${+$("collect").checked}&any=${+$("any").checked}&rounds=${+$("byRound").checked}&speed=${$("speed").value}`;
-}
-function loadTwo() {
-  const tv = two(), input = $("src").value.trim() || tv.examples[0][0];
-  const err = tv.load(input);
-  if (err) { $("status").textContent = err; $("status").className = "bad"; return; }
-  dirty = false; setMode(0); tv.hud();
-  follow = true; fit();
-  location.hash = `engine=${engine}&src=${encodeURIComponent(input)}&speed=${$("speed").value}`;
+  location.hash = `src=${encodeURIComponent(input)}&erase=${+$("erase").checked}&collect=${+$("collect").checked}&any=${+$("any").checked}&rounds=${+$("byRound").checked}&speed=${$("speed").value}`;
 }
 // ---- drawing ---------------------------------------------------------------------------------------
 let hover = null; // { agent: i } or { event: e }
 const lw = w => w / view.s;
 function receipts() {
   const out = [];
-  if (engine !== "log" || !$("receipts").checked) return out;
+  if (!$("receipts").checked) return out;
   for (let e = 0; e < EV.n; e++) {
     if (EV.state[e] !== 2) continue;
     let sx = 0, sy = 0, c = 0; const at = [];
@@ -627,7 +512,6 @@ function draw() {
   if (cv.width !== Math.round(r.width * d) || cv.height !== Math.round(r.height * d)) { cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#0b0e14"; ctx.fillRect(0, 0, cv.width, cv.height);
   ctx.setTransform(d * view.s, 0, 0, d * view.s, d * view.ox, d * view.oy);
-  if (two()) { two().draw(); drawStrip(); return; }
   const { n, id, tag, want, far } = NET, P = i => POS.get(id[i]);
   // wires; a wanted reader's principal wire blue; an active pair's gold
   const plain = new Path2D(), blue = new Path2D(), gold = new Path2D();
@@ -680,7 +564,7 @@ function drawStrip() {
   if (sv.width !== W || sv.height !== H) { sv.width = W; sv.height = H; }
   sctx.fillStyle = "#0b0e14"; sctx.fillRect(0, 0, W, H);
   const len = tlLength(), x = len ? tlPos() / len * W : 0;
-  if (two()) two().strip(W, H, d); else if (byRound()) drawRounds(W, H, d); else drawEvents(W, H, d);
+  if (byRound()) drawRounds(W, H, d); else drawEvents(W, H, d);
   sctx.fillStyle = "#ffffff"; sctx.fillRect(Math.min(W - 2 * d, Math.max(0, x - d)), 0, 2 * d, H);
 }
 function drawEvents(W, H, d) {
@@ -735,17 +619,15 @@ function agentHTML(i) {
   return `<div>${t === SEAM ? "" : shapeSVG(t, kindColor(t))}<b>${nameOf(t)}</b> (agent ${NET.id[i]})${NET.want[i] && isConsumer(t) ? ", wanted" : ""}</div><div>${desc}</div><div style="color:var(--fg-muted)">${by}</div>`;
 }
 function showDetail() {
-  if (two()) { $("detail").innerHTML = two().detail(hover); return; }
   $("detail").innerHTML = hover?.event !== undefined && hover.event < EV.n ? eventHTML(hover.event) : hover?.agent !== undefined && hover.agent < NET.n ? agentHTML(hover.agent) : "point at an agent or a receipt";
 }
 
 // ---- input -----------------------------------------------------------------------------------------
 function worldAt(cx, cy) { const r = cv.getBoundingClientRect(); return [(cx - r.left - view.ox) / view.s, (cy - r.top - view.oy) / view.s]; }
 function pointedAt(cx, cy) {
-  if (two()) return two().pointed(...worldAt(cx, cy));
   const [wx, wy] = worldAt(cx, cy), reach = Math.max(GRAD * 1.4, 7 / view.s) ** 2;
   let best = null, bd = reach;
-  if (engine === "log") for (const { e, x, y } of receipts()) { const dd = (x - wx) ** 2 + (y - wy) ** 2; if (dd < bd) { bd = dd; best = { event: e }; } }
+  for (const { e, x, y } of receipts()) { const dd = (x - wx) ** 2 + (y - wy) ** 2; if (dd < bd) { bd = dd; best = { event: e }; } }
   for (let i = 0; i < NET.n; i++) { const p = POS.get(NET.id[i]), dd = (p[0] - wx) ** 2 + (p[1] - wy) ** 2; if (dd < bd) { bd = dd; best = { agent: i }; } }
   return best;
 }
@@ -764,11 +646,6 @@ cv.addEventListener("pointerup", ev => {
   const was = drag; drag = null; cv.style.cursor = "grab";
   if (!was || was.moved) return;
   const at = pointedAt(ev.clientX, ev.clientY);
-  if (two()) {
-    // The token, clicked, turns around and runs the other way.
-    if (at?.token !== undefined) setMode(two().st.forward ? -1 : 1);
-    return;
-  }
   if (at?.event !== undefined) { if (E.rev_undo(at.event)) dirty = true; }
   else if (at?.agent !== undefined) { if (E.rev_fire(NET.id[at.agent])) dirty = true; }
   setMode(0); hover = null;
@@ -784,11 +661,11 @@ sv.addEventListener("pointerdown", ev => { scrubbing = true; sv.setPointerCaptur
 sv.addEventListener("pointerup", () => { scrubbing = false; });
 sv.addEventListener("pointermove", ev => {
   if (scrubbing) { scrubTo(ev); return; }
-  if (engine !== "log" || byRound()) return;
+  if (byRound()) return;
   const r = sv.getBoundingClientRect(), e = Math.min(EV.n - 1, Math.floor((ev.clientX - r.left) / r.width * EV.n));
   hover = e >= 0 ? { event: e } : null; showDetail();
 });
-sv.addEventListener("pointerleave", () => { if (engine === "log") { hover = null; showDetail(); } });
+sv.addEventListener("pointerleave", () => { hover = null; showDetail(); });
 $("stepFwd").onclick = () => { setMode(0); forward(1); };
 $("stepBack").onclick = () => { setMode(0); back(1); };
 $("playFwd").onclick = () => setMode(mode === 1 ? 0 : 1);
@@ -796,12 +673,6 @@ $("playBack").onclick = () => setMode(mode === -1 ? 0 : -1);
 $("toEnd").onclick = () => setMode(2);
 $("toStart").onclick = () => setMode(-2);
 $("src").addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
-function setEngine(e) {
-  engine = e; $("engine").value = e;
-  for (const [id, on] of [["aboutPer", e === "per"], ["aboutIso", e === "iso"], ["aboutLog", e === "log"], ["logOpts", e === "log"], ["roundOpt", e !== "iso"], ["legendLog", e === "log"], ["legendIso", e === "iso"], ["legendPer", e === "per"]]) $(id).hidden = !on;
-  $("examples").innerHTML = `<option value="">examples…</option>` + (VIEWS[e]?.examples ?? EXAMPLES).map(([s, d]) => `<option value="${s}">${s}: ${d}</option>`).join("");
-}
-$("engine").onchange = () => { setEngine($("engine").value); $("src").value = (two()?.examples ?? EXAMPLES)[0][0]; load(); };
 $("examples").onchange = () => { if ($("examples").value) { $("src").value = $("examples").value; $("examples").value = ""; load(); } };
 for (const id of ["erase", "collect"]) $(id).onchange = () => load();
 $("byRound").onchange = () => { dirty = true; };
@@ -810,8 +681,7 @@ document.addEventListener("keydown", ev => {
   if (ev.target === $("src")) return;
   const k = ev.key;
   if (k === "ArrowRight") { setMode(0); forward(1); } else if (k === "ArrowLeft") { setMode(0); back(1); }
-  else if (k === "t" && two()) setMode(two().st.forward ? -1 : 1);
-  else if ((k === "r" || k === "R") && engine !== "iso") { $("byRound").checked = !$("byRound").checked; dirty = true; }
+  else if (k === "r" || k === "R") { $("byRound").checked = !$("byRound").checked; dirty = true; }
   else if (k === " ") { ev.preventDefault(); setMode(ev.shiftKey ? (mode === -1 ? 0 : -1) : mode === 1 ? 0 : 1); }
   else if (k === "End") setMode(2); else if (k === "Home") setMode(-2); else if (k === "f") follow = true;
   else return;
@@ -827,7 +697,7 @@ function frame() {
     if (k && !(mode === 1 ? forward(k) : back(k))) setMode(0);
   }
   sync();
-  if (engine === "log") relax(NET.n > 3000 ? 1 : 3);
+  relax(NET.n > 3000 ? 1 : 3);
   if (follow) fit(true);
   draw();
   if (hover) showDetail();
@@ -840,15 +710,7 @@ function frame() {
   $("families").innerHTML = FAMILIES.map(([n, c, d]) => `<span title="${d}"><span class="sw" style="background:${c}"></span>${n}</span>`).join("");
   $("legend").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(t => `<span>${shapeSVG(t, kindColor(t))}${nameOf(t)}</span>`).join("")
     + `<span><svg class="kind" width="15" height="15" viewBox="-1.3 -1.3 2.6 2.6"><circle r=".55" fill="none" stroke="#fff" stroke-width=".25"/></svg>seam</span>`;
-  $("legendIsoBody").innerHTML = TWO_KIND.map(([n, c, d]) => `<span title="${d}"><span class="sw" style="background:none;border:1.5px solid ${c}"></span>${n}</span>`).join("")
-    + `<span><span class="sw" style="background:#56c8ff;border-radius:50%"></span>the token, going forward</span><span><span class="sw" style="background:#ff7edb;border-radius:50%"></span>going back</span>`
-    + `<span><span class="sw" style="background:none;border:1px solid #ffa94d"></span>a parked tree</span>`
-    + [1, 2, 3].map(t => `<span>${shapeSVG(t, kindColor(t))}${nameOf(t)}</span>`).join("");
-  $("legendPerBody").innerHTML = TWO_KIND.filter((_, i) => i !== 9).map(([n, c, d]) => `<span title="${d}"><span class="sw" style="background:none;border:1.5px solid ${c};border-radius:50%"></span>${n}</span>`).join("")
-    + `<span><span class="sw" style="background:#56c8ff;border-radius:50%"></span>the token, going forward</span><span><span class="sw" style="background:#ff7edb;border-radius:50%"></span>going back</span>`
-    + [1, 2, 3].map(t => `<span>${shapeSVG(t, kindColor(t))}${nameOf(t)}</span>`).join("");
-  // disp's programs that the library has two-way definitions for: `jet` calls run those instead
-  withString(["add", "rev"].map(n => `${n} #${(window.DISP_PROGRAMS || []).find(p => p.name === n)?.tree}`).join("\n"), (p, len) => E.iso_jets(p, len));
+  $("examples").innerHTML = `<option value="">examples…</option>` + EXAMPLES.map(([s, d]) => `<option value="${s}">${s}: ${d}</option>`).join("");
   $("tour").innerHTML = TOUR.map(([what, link], i) => `<p><a href="#${link}" data-t="${i}">${i + 1}.</a> ${what}</p>`).join("");
   for (const a of $("tour").querySelectorAll("a")) a.onclick = ev => { ev.preventDefault(); location.hash = a.getAttribute("href").slice(1); start(); };
   await start();
@@ -858,8 +720,7 @@ function frame() {
 /// Load what the link says and play it if it asks.
 async function start() {
   const q = new URLSearchParams(location.hash.slice(1));
-  setEngine(["iso", "log"].includes(q.get("engine")) ? q.get("engine") : "per");
-  $("src").value = q.get("src") ?? (two()?.examples ?? EXAMPLES)[0][0];
+  $("src").value = q.get("src") ?? EXAMPLES[0][0];
   for (const k of ["erase", "collect", "any"]) $(k).checked = q.has(k) ? q.get(k) === "1" : k !== "any";
   $("byRound").checked = q.get("rounds") !== "0";
   $("speed").value = q.get("speed") ?? 30;

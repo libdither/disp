@@ -1,7 +1,6 @@
 //! Interaction nets as strands on the links of a lattice (evaluators/rust-ic-strands).
 
 pub mod iso;
-pub mod walk;
 pub mod lattice;
 pub mod readback;
 pub mod rev;
