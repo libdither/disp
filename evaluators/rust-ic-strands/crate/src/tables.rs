@@ -37,6 +37,7 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if p.pressure != 0.0 || p.repel != 0.0 { return Some("it has no pressure or repulsion"); }
     if p.strangers != 0.0 || p.trees != 0.0 || p.garbage != 0.0 { return Some("it keeps no tree labels and does not look for strangers"); }
     if p.memo != 0 { return Some("merging equal computations is surgery by a central detector, on the CPU"); }
+    if p.phys { return Some("the substrate's records and undoing run on the CPU"); }
     let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
     if let Some(c) = fields.next() {
         if fields.next().is_some() { return Some("it keeps one field"); }

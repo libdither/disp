@@ -133,7 +133,27 @@ impl Fields {
     }
     pub fn fired(&mut self, s: u32) { if self.on { self.fired.push(s); } }
     pub fn blocked(&mut self, s: u32) { if self.on { self.blocked.push(s); } }
+    /// Every channel's sites with a value, the rewrites of the clock so far and the support, to put
+    /// back with `put` (the substrate's saved states).
+    pub fn snap(&self) -> FieldSnap {
+        FieldSnap { near: self.chans.iter().map(|c| c.near.iter().map(|&s| (s, c.value[s as usize])).collect()).collect(),
+                    fired: self.fired.clone(), blocked: self.blocked.clone(), support: self.support }
+    }
+    pub fn put(&mut self, f: &FieldSnap) {
+        for (c, near) in self.chans.iter_mut().zip(&f.near) {
+            for &s in &c.near { c.value[s as usize] = 0; }
+            c.near = near.iter().map(|&(s, _)| s).collect();
+            for &(s, v) in near { c.value[s as usize] = v; }
+        }
+        self.fired = f.fired.clone();
+        self.blocked = f.blocked.clone();
+        self.support = f.support;
+    }
 }
+
+/// The fields as `Fields::snap` keeps them.
+#[derive(Clone, Default)]
+pub struct FieldSnap { near: Vec<Vec<(u32, u8)>>, fired: Vec<u32>, blocked: Vec<u32>, support: u64 }
 
 impl Lattice {
     /// Every channel's new value at every site that has one or could get one: the most of its

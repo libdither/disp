@@ -7,8 +7,9 @@ an address**. It is the answer to two problems with the earlier spatial machines
 - `rust-ic-mesh` completes everything, but by using global addresses and a router in every
   tile.
 
-Open `player/index.html` to watch it run (rebuild with `./build-player.sh`), and `player/rev.html`
-to run programs backward (Running backward and Two-way programs, below). It shows only the
+Open `player/index.html` to watch it run (rebuild with `./build-player.sh`), `player/rev.html` to
+run programs backward (Running backward and Two-way programs, below), and `player/substrate.html`
+to run them as physics, every rewrite undoable at a price in heat (The substrate, below). It shows only the
 current design (`lattice.rs` `latest`: the chip's schedule with the demand field, forking S rules
 and duplicators copying ahead where there is room, below), with the field drawn as an amber tint
 and called values ringed in orange:
@@ -1408,9 +1409,9 @@ exactly; research/REVERSIBLE_PIPELINE.md says why one would want that.
   ▶ and ◀ step whole rounds and the bar show one column a round, its height how many rewrites fired
   together; unticked, ▶ is one rewrite. A program on binary numbers reads its numbers as bit trees
   (`relay_add 13 6`). From the player, the menu's "run it backward" opens it.
-- **Not yet on the lattice.** There each event's record has to sit somewhere wired to what it made,
-  but an agent's three ports are all in use: it needs a fourth port per agent, or receipts built of
-  several agents, and receipts are matter that what they made drags along.
+- **On the lattice** this is the substrate (below): every move local, each record tied to what it
+  made by a number and a bond. As matter wired to what it made, a record would need a fourth port per
+  agent, or receipts built of several agents, and receipts are matter that what they made drags along.
 
 ## Two-way programs (`iso.rs`)
 
@@ -1461,6 +1462,80 @@ program runs backward with nothing recorded, and the tree calculus itself is one
   the encoded inverse, since swapping a rearrangement's sides keeps the ranks.
 - `tests/iso.rs` checks the inverses, `dagger` and `run`, and `tc` against eager evaluation on 400
   random applications and on disp's programs.
+
+## The substrate: the lattice as physics (`substrate.rs`, `player/substrate.html`)
+
+`phys=1` runs the current design with every rewrite undoable while it is remembered, a drive that
+makes forward likelier than back, and heat for information lost. `player/substrate.html` is the
+lattice player with it on: a drive slider ("run backward" turns it round), "erase leaves",
+"forget", the bonds drawn, and a ledger. The lattice player's list opens it on the same input
+("run it as physics").
+- **Matter and what carries interactions.** Leaves, stems and forks are matter, code and data alike;
+  applications, choices, pairs and unpairs carry interactions; duplicators copy, erasers take apart.
+  Nothing walks a program: every pair whose principal ports meet rewrites where it is, inside one
+  2×2×2 block, so all that is ready works at once, and code that copies itself (the S rule's
+  duplicator) makes more places where work happens.
+- **Records.** A rewrite keeps a record of the two agents it used up (wanted bits and marks too),
+  and what it made carries the record's number. `Unp·Pair` makes nothing and joins two wires: its
+  record keeps the four ends, and both ends of each joined wire carry a mark. Collections keep
+  records as well: an un-copy (a duplicator becoming a wire), a computation nobody wants (an eraser
+  on its result puts erasers on its inputs), an unpair both of whose halves are erased.
+- **Undoing.** A rewrite can be undone while everything it made is still there and unused (none of
+  it consumed, no later join on its ports) and inside the 2×2×2 block the turn is in, with the near
+  end of each wire it joined: what it made goes and the agents it used come back with their ids,
+  wired as they were (`Lattice::undo`, seated as `fire` seats fresh agents). Undoing what came later
+  first, a run goes all the way back to the net as loaded.
+- **The drive.** A rewrite goes forward with chance min(1, e^(ε/T)) and is undone with
+  min(1, e^(−ε/T)) (`drive`, ε = 8, T = 1.5): Bennett's Brownian computer, in which
+  ["both forward and backward steps are possible, and would indeed occur equally often at equilibrium"](https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Bennett_1982.pdf#page=10)
+  and ["the drift velocity is proportional to the driving force, and hence the energy dissipated approaches zero only in the limit of zero speed"](https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Bennett_1982.pdf#page=1).
+  Each step forward is ε of heat and each step back takes ε back; with ε < 0 the run goes backward,
+  and driving it either way warms it.
+- **Bonds.** What one rewrite made drifts apart (a copy's two halves go to their readers), and an
+  undo needs it together. A kept record ties it: an agent pays `bond` (1) for every site it moves
+  away from another agent its rewrite made, or from the other near end of a join's wire. Driven
+  backward the bond pulls by −ε/T where that is above 1, and an undo that finds what it needs
+  apart steps the agent at hand toward the rest, as a reader walks to what it reads.
+- **Copying and erasing are decisions with prices.** A duplicator copies a layer at a time, each
+  new agent made from fuel; an un-copy gives it back. K and triage hand what they drop to an eraser
+  as before, but every step an eraser takes is a recorded rewrite, so what was dropped is in the
+  records, and it stops at a leaf. Taking the leaf is the decision (`erase`, a chance each time it
+  tries): no record, the leaf is gone for good, and so is every record that only it could have led
+  back through (what made the leaf, what made that, and on back). `forget` is the other decision: a
+  chance a turn that an agent forgets the record of what made it, with the same knock-on. A copy
+  goes back free because the system can see it is one; Jaynes on mixing gases:
+  ["When the gases are identical they still mix, but there is no entropy increase"](https://bayes.wustl.edu/etj/articles/gibbs.paradox.pdf#page=4).
+- **The ledger** (`substrate::Ledger`): heat is the drive's (ε a step forward, net) and a unit for
+  each leaf erased and each record forgotten. Agents are made from fuel and give it back when
+  unmade, so the fuel spent is the agents added plus the heat.
+- **Saved states** keep the whole run (`substrate::Snap`: sites, ids, the abstract net, the records),
+  and the settings are kept by clock (`Lattice::schedule`), so the time bar goes back and runs on
+  exactly, settings changing where they changed.
+
+`strands-phys 'CALL' [--back D]` runs a call forward, then with the drive at D until the net is the
+loaded one again (the player's grid, seed 1):
+
+| call (agents loaded) | plain lattice: clocks, rewrites | substrate forward (ε = 8): clocks, rewrites (undone on the way) | at the answer: agents, records | back to the loaded net (ε = −9): clocks | erasing every leaf: agents at the answer, leaves erased, records forgotten |
+|---|---|---|---|---|---|
+| `add 1 1` (300) | 4,646, 2,167 | 5,306, 3,109 (1,188) | 700, 2,470 | 59,152 | 297, 194, 2,287 |
+| `add 2 3` (306) | 7,882, 3,377 | 9,188, 3,957 (1,537) | 689, 3,101 | 90,215 | 351, 273, 3,384 |
+| `fib 2` (721) | 11,057, 6,535 | 11,937, 8,773 (4,485) | 1,553, 6,193 | 121,698 | 351, 807, 6,635 |
+| `relay_add 13 6` (326) | 4,962, 4,199 | 5,733, 4,997 (1,446) | 855, 4,264 | 68,385 | 13, 403, 4,089 |
+
+- **Forward costs about what the plain lattice does**: 8–17% more clocks and 17–43% more rewrites,
+  all of the extra being rewrites undone and done again on the way (without them it does fewer, its
+  erasers leaving the leaves). Keeping everything costs room: at the answer 2.2–2.6× the loaded
+  agents, most of it erasers each holding a leaf of what was dropped, and 2,500–6,200 records.
+- **Going back takes 10–12× the clocks forward**, nearly all of it what an undo needs coming back
+  together: of `add 1 1`'s undo tries, 535,718 found it apart and 751 found no room.
+- **Erasing every leaf** leaves about what the plain lattice leaves at the answer (all of `relay_add`'s
+  garbage goes), for heat: 194–807 leaves, and the 2,300–6,600 records only they led back through.
+  The run can then go back only as far as nothing was erased.
+- **What is not the net does not come back**: where agents sit and which values have been called are
+  not recorded, so back at the start the net is the loaded one by id and wiring, laid out otherwise.
+- `tests/substrate.rs`: 120 random terms forward to the oracle's answer (12 with every invariant
+  checked each clock), 40 forward and back to the loaded net agent for agent, the ledger balancing,
+  and saved states repeating the run exactly with the drive changed on the way.
 
 ## Things tried that did not help, and why
 
@@ -1517,6 +1592,15 @@ program runs backward with nothing recorded, and the tree calculus itself is one
   even.
 - **No demand pulses**: 40–66% slower under blocks.
 - **Eager evaluation** finishes fib(0) in 11k clocks, but with about 67× the rewrites.
+- **Holders instead of erasers** (the substrate's first try): K and triage handed what they dropped to
+  an inert holder that kept it whole, erasing being a holder's later choice. A holder stops at the top
+  of what it holds, so work inside it that was already wanted (a forked computation, a duplicator
+  copying ahead) went on: `add 1 1` ended with 5,615 agents against 700, in 6× the clocks. Erasers
+  that record what they take apart reach that work and stop it, and the choice moved to the leaves.
+- **Undoing with bonds as weak going back as forward, and only in 2×2 squares**: what a rewrite made
+  drifted up to 35 sites apart, and records with five or six products rarely fit a square, so the way
+  back stalled (`add 2 3` with 1,864 records left). Bonds pulling by −ε/T going back, a step toward the
+  rest when an undo finds it apart, and undos over the whole 2×2×2 block brought every run back.
 - **Machines that walk a program** (commit eca0073 has them): a token walking two-way programs laid
   out as trees, a persistent version whose program never changes and whose tokens split at a `both`,
   and the same as an interaction net of raw trees with one walker agent (104 rules). They run back
@@ -1529,6 +1613,16 @@ program runs backward with nothing recorded, and the tree calculus itself is one
   only at the top level.
 
 ## Open
+
+- **The substrate's records as matter.** They sit in a table under their numbers, and bonds use a
+  table of where each agent was put; a move looks up only the numbers its own agents carry. On a chip
+  each record would have to be held by what it made: a fourth port, or records built of agents
+  (research/REVERSIBLE_PIPELINE.md).
+- **Fuel and heat as fields.** The ledger is one account for the whole lattice. Fuel drawn from a
+  supply spreading in from the edges, and heat leaving there, would make copying wait for fuel and
+  erasing warm its neighbourhood.
+- **The substrate's way back** takes 10–12× the clocks forward, waiting for what an undo needs to come
+  together.
 
 - **The demand field and fork on the chip** (`hw/rtl`), so that `--chip` can include them (Fields
   and Fork, above). Fork is only the rule table's wanted bits.
@@ -1724,7 +1818,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~35 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, cooling, handover, reading back, merging equal computations, superpositions, movement agents
+cargo test --release                                  # ~35 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, cooling, handover, reading back, merging equal computations, superpositions, movement agents, the substrate forward and back
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -1736,6 +1830,7 @@ cargo run --release --bin strands-run -- fib:2 --fit --latest views=1           
 cargo run --release --bin strands-sup -- CASES                                     # lines name|term[|want]: superposed against its universes alone
 cargo run --release --bin strands-bench -- CASES --seeds 2                         # lines name|term: one JSON line a run (programs/bench.ts drives it)
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
+cargo run --release --bin strands-phys -- 'add 1 1' --back -9                    # the substrate: forward, then back to the loaded net (key=value settings too: erase=1, forget=0.01, drive=6)
 ```
 
 `--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip and the GPU

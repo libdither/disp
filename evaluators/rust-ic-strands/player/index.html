@@ -470,7 +470,8 @@ function populate() {
     ...catalog.workloads.map(w => ({ group: "benchmarks (binary numbers)", name: w.name, text: w.n > 0 ? `${w.name}:${SIZE[w.name] ?? w.n}` : w.name, desc: w.desc, work: w })),
     ...MOVERS.map(m => ({ group: "movement agents (views=1)", ...m, mover: true })),
     { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" },
-    { group: "other", name: "backward", text: "run it backward", desc: "the input on the abstract net, run so that every step can be undone (rev.html)", rev: true }];
+    { group: "other", name: "backward", text: "run it backward", desc: "the input on the abstract net, run so that every step can be undone (rev.html)", rev: true },
+    { group: "other", name: "substrate", text: "run it as physics", desc: "the input on this lattice with every rewrite recorded and undoable, a drive, and heat (substrate.html)", sub: true }];
   let group = "";
   $("menu").innerHTML = entries.map((e, i) => (e.group !== group ? `<div class="grp">${group = e.group}</div>` : "")
     + `<div class="opt" data-i="${i}" title="${e.desc}">${e.text}<span>${e.desc}</span></div>`).join("");
@@ -540,6 +541,7 @@ function moverSettings(e) {
 /// runs at once, with its settings.
 function choose(i) {
   if (entries[i].rev) { location.href = `rev.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
+  if (entries[i].sub) { location.href = `substrate.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
   if (entries[i].mover) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
   const fill = entries[i].text, at = fill.search(/[\s:]/);
   if (entries[i].both) { $("speed").value = 100; speedLabel(); }

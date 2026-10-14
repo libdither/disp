@@ -16,9 +16,11 @@
 
 #[path = "field.rs"]
 mod field;
-pub use field::{Channel, Fields, Source};
+pub use field::{Channel, FieldSnap, Fields, Source};
 #[path = "memo.rs"]
 pub mod memo;
+#[path = "substrate.rs"]
+pub mod substrate;
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::sup::STerm;
 use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_ALL_RULES, VIEW_TAGS};
@@ -148,6 +150,21 @@ pub struct Params {
     /// computation can, and it only takes room nothing else is using; such duplicators walk and
     /// react, but pass no demand on until they are asked.
     pub dn_room: u8,
+    /// The substrate (substrate.rs): every rewrite keeps a record and can be undone, and an eraser
+    /// takes a leaf only by deciding to (`erase`). On the CPU, without superpositions, movement agents
+    /// or memo.
+    pub phys: bool,
+    /// The drive ε: a rewrite forward is taken with chance min(1, e^(ε/T)), one undone with
+    /// min(1, e^(-ε/T)).
+    pub drive: f64,
+    /// Chance an eraser that reaches a leaf takes it, losing it for good, each time it tries.
+    pub erase: f64,
+    /// Chance a turn that an agent there forgets the record of what made it.
+    pub forget: f64,
+    /// Energy per site of distance between agents a kept record ties together (what one rewrite made;
+    /// the near ends of the wires one joined), so that they stay close enough to be undone. Driven
+    /// backward it pulls harder, by -ε/T where that is more than 1: undoing is what pays then.
+    pub bond: f64,
 }
 
 impl Params {
@@ -204,6 +221,11 @@ impl Params {
             "coolgreedy" => self.cool_greedy = n()? as u8,
             "views" => self.views = on,
             "dnroom" => self.dn_room = n()? as u8,
+            "phys" => self.phys = on,
+            "drive" => self.drive = f()?,
+            "erase" => self.erase = f()?,
+            "forget" => self.forget = f()?,
+            "bond" => self.bond = f()?,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -221,7 +243,7 @@ impl Default for Params {
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 dn_room: 0 }
+                 dn_room: 0, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0 }
     }
 }
 
@@ -268,6 +290,11 @@ pub struct Stats {
     /// and of each, those along its principal wire (toward what it reads, or what reads it).
     pub steps_by: [u64; 4],
     pub steps_along: [u64; 4],
+    /// Rewrites undone (the substrate), and undos tried that could not be: what they need was not in
+    /// one 2×2 square, or there was no room to rebuild.
+    pub unfires: u64,
+    pub undo_far: u64,
+    pub undo_full: u64,
 }
 
 /// A tag's number in a seat (0: empty): `ALL_TAGS`' from 1, then the movement agents' (`VIEW_TAGS`, 15
@@ -376,6 +403,11 @@ pub struct Lattice {
     pub fields: Fields,
     /// Each agent's name, by id, once the memo detector has seen it (`Params::memo_names`).
     pub names: memo::Names,
+    /// The substrate's records, marks and ledger (`Params::phys`).
+    pub sub: substrate::Sub,
+    /// The substrate's settings by clock: each entry (clock, drive, erase, forget, bond) takes effect
+    /// as that clock starts, so a run put back to an earlier clock and run on changes them where it did.
+    pub schedule: Vec<(f64, [f64; 4])>,
 }
 
 /// The random bits one turn may use, one field per decision, so that a chip can draw them all
@@ -425,6 +457,7 @@ pub struct Energy {
     pub strangers: i32,
     pub trees: i32,
     pub garbage: i32,
+    pub bond: i32,
     pub accept: Vec<u32>,
 }
 impl Energy {
@@ -436,7 +469,7 @@ impl Energy {
         Energy { principal: [q(p.w_principal), q(p.w_principal * p.idle_tension)], aux: [q(p.w_aux), q(p.w_aux * p.idle_tension)],
                  crowd: q(p.crowd), idle: q(p.idle_crowd), link: half(p.link_crowd), board: half(p.board_crowd),
                  pressure: q(p.pressure), repel: q(p.repel), strangers: q(p.strangers), trees: q(p.trees),
-                 garbage: q(p.garbage), accept }
+                 garbage: q(p.garbage), bond: if p.phys { (p.bond * (-p.drive / p.temp).max(1.0) * 4.0).round() as i32 } else { 0 }, accept }
     }
 }
 
@@ -550,7 +583,7 @@ pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p
 pub const DEMAND: &str = "src=reader+pulse,bits=2,level=3,step=1,decay=1,idle=4,called=-2,wire=0.5";
 
 /// Names of the moves, as numbered in test vectors.
-pub const OPS: &[&str] = &["", "hop", "swap", "fold", "flip", "fire", "collect", "erase unpair", "erase inputs"];
+pub const OPS: &[&str] = &["", "hop", "swap", "fold", "flip", "fire", "collect", "erase unpair", "erase inputs", "undo"];
 
 pub const EV_STEP: u32 = 1;
 pub const EV_SWAP: u32 = 2;
@@ -562,6 +595,9 @@ pub const EV_DEAD: u32 = 7;
 pub const EV_UNP: u32 = 8;
 pub const EV_CONTACT: u32 = 9;
 pub const EV_PULSE: u32 = 10;
+/// A rewrite undone (the substrate): its site, the site of what it made, the two agents it brings
+/// back and its record's kind.
+pub const EV_UNDO: u32 = 11;
 
 impl Lattice {
     pub fn sites(&self) -> u32 { self.p.w * self.p.h * self.p.depth }
@@ -692,6 +728,8 @@ impl Lattice {
             dumps: None,
             fields: Fields::new(&p, n),
             names: Default::default(),
+            sub: Default::default(),
+            schedule: vec![],
         }
     }
 
@@ -799,6 +837,8 @@ impl Lattice {
     pub fn cool(&mut self) { if self.cooling.is_none() { self.cooling = Some((self.stats.clocks, self.p.temp)); } }
     /// Run at temperature t from the next move on.
     pub fn set_temp(&mut self, t: f64) { if self.p.temp != t { self.p.temp = t; self.e = Energy::new(&self.p); } }
+    /// Run with drive d from the next move on (the substrate's bonds pull by it).
+    pub fn set_drive(&mut self, d: f64) { if self.p.drive != d { self.p.drive = d; self.e = Energy::new(&self.p); } }
 
     /// What the clock contributes to random words: the clock, mixed with the seed.
     pub fn tick(&self) -> u32 { self.stats.clocks as u32 ^ (self.p.seed as u32).wrapping_mul(0x9E37_79B9) }
@@ -833,6 +873,7 @@ impl Lattice {
         self.want[s as usize * self.ks + k] = matches!(t, Tag::Nrm | Tag::Out | Tag::Eps);
         self.tags[s as usize * self.ks + k] = tag;
         self.sids[s as usize * self.ks + k] = sid;
+        if self.p.phys { self.sub.seat(sid, s); }
         self.sup_label[s as usize * self.ks + k] = 0;
         self.tr_want(s, k);
         self.occ[s as usize] += 1;
@@ -860,6 +901,9 @@ impl Lattice {
     /// `spread` to leave room around every agent.
     pub fn load(p: Params, net: Net, out: u32) -> Result<Lattice, String> {
         if p.memo != 0 && net.agents.iter().flatten().any(|a| a.tag.is_view()) { return Err("movement agents run without merging equal computations".into()); }
+        if p.phys && (p.memo != 0 || net.agents.iter().flatten().any(|a| a.tag.is_view() || a.tag == Tag::Sup)) {
+            return Err("the substrate runs without superpositions, movement agents or merging".into());
+        }
         let mut l = Lattice::new(p);
         let n = net.agents.len();
         // Children of each node in the tree hanging from `out`, found depth first.
@@ -955,6 +999,7 @@ impl Lattice {
             }
         }
         for s in 0..l.sites() { l.refresh(s); }
+        l.sub.ledger.loaded = net.live_count() as u64;
         l.shadow = net;
         l.label_tree();
         l.check_invariants().map_err(|e| format!("after loading: {e}"))?;
@@ -1378,6 +1423,7 @@ impl Lattice {
             de += self.field_step_de(s, k, t, ps, -(through + loops as i32), pt, (need + loops) as i32);
         }
         if (self.e.strangers != 0 || self.labels()) && self.idle(s, k) { de += self.strangers_de(s, k, t); }
+        if self.e.bond != 0 { de += self.bond_de(s, k, t); }
         Some((plan, lanes, loops, de))
     }
 
@@ -1817,6 +1863,8 @@ impl Lattice {
         let ri = find_index_labelled(ct, cl, pt, pl).unwrap_or_else(|| panic!("no rule {}·{}", ct.name(), pt.name()));
         let rule = rule(ri);
         let n = rule.fresh.len();
+        // The substrate: an eraser takes a leaf only by deciding to; anything else is a step forward.
+        if self.p.phys && if (ct, pt) == (Tag::Eps, Tag::L) { self.unit() >= self.p.erase } else { !self.drive_allows(true) } { return false; }
 
         // Each dying aux port is joined to an end in this site (or to another dying aux port)
         // and, by the rule, to a fresh port or dying aux port. Walk each path to its two
@@ -2000,7 +2048,9 @@ impl Lattice {
                 }
             }
         }
+        let before = self.p.phys.then(|| self.sub_before(ri, csid, s as usize * self.ks + kc, psid, sp as usize * self.ks + kp));
         let fresh_sids = self.shadow.fire(csid, psid).1;
+        if let Some((gone, joined)) = before { self.sub_after(ri, gone, joined, &fresh_sids); }
         if !self.readdist.is_empty() && ct == Tag::Dn {
             if let Some(&h) = self.piece.get(&psid) {
                 for &x in &fresh_sids { if self.shadow.get(x).tag == pt { self.piece.insert(x, h); } }
@@ -2157,6 +2207,7 @@ impl Lattice {
         self.infect.set(None);
         self.cur = if self.p.margolus && self.p.block_moves { Dice(hash(self.key(s), self.tick())) } else { Dice(self.rand()) };
         if self.labels() && self.occ[s as usize] > 0 { self.relabel(s); }
+        if self.p.phys && self.occ[s as usize] > 0 && self.sub_turn(s) || self.stale.get() { return; }
         if self.p.gc && self.collect(s) || self.stale.get() { return; }
         let greedy = self.cooling.is_some() && self.p.cool_greedy > 0;
         if !greedy && self.p.active > 0.0 && self.cur.chance(Dice::ACTIVE, self.p.active) && self.active_turn(s) || self.stale.get() { return; }
@@ -2209,6 +2260,7 @@ impl Lattice {
     /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
         if let Some((from, t0)) = self.cooling { self.set_temp(cooled(&self.p, t0, self.stats.clocks - from)); }
+        if self.p.phys { self.scheduled(); }
         if self.fields.on { self.update_fields(); }
         let b = self.p.block_side as u64;
         // Under a turn for every site, the offset and the order in each block are hashes of the
@@ -2541,6 +2593,7 @@ impl Lattice {
             let (kd, q) = (md as usize / ARITY, md as usize % ARITY);
             let td = self.tag(d, kd);
             if td != 0 && matches!(tag_of(td), Tag::A | Tag::T1 | Tag::Sel) && q == 2 {
+                if self.p.phys && !self.drive_allows(true) { return false; }
                 self.erase_inputs(s, ke, d, kd, via);
                 return true;
             }
@@ -2548,7 +2601,9 @@ impl Lattice {
             if td == 0 || tag_of(td) != Tag::Dn || q == 0 { continue; }
             let (input, other) = (self.mate_of(d, self.ae(kd, 0)), self.mate_of(d, self.ae(kd, 3 - q)));
             if input == self.ae(kd, 3 - q) { continue; }
+            if self.p.phys && !self.drive_allows(true) { return false; }
             let (esid, dsid) = (self.sids[s as usize * self.ks + ke], self.sids[d as usize * self.ks + kd]);
+            let rec = self.p.phys.then(|| self.sub_uncopy(dsid, d as usize * self.ks + kd, esid, s as usize * self.ks + ke, q));
             let dn = self.shadow.get(dsid);
             let (src, dst) = (dn.ports[0].expect("wired"), dn.ports[3 - q].expect("wired"));
             assert_eq!(dn.ports[q], Some((esid, 0)), "collected a duplicator the abstract net does not have");
@@ -2568,6 +2623,7 @@ impl Lattice {
             self.remove(d, kd);
             self.refresh(s);
             self.refresh(d);
+            if let Some(rec) = rec { self.sub_collected(rec, &[]); }
             self.stats.collected += 1;
             self.last_op = "collect";
             self.note([EV_DUP, s, d, 0, 0, 0, 0, 0]);
@@ -2590,9 +2646,11 @@ impl Lattice {
             (s, m as usize / ARITY, Some((f, i)))
         } else { return false };
         if self.tag(s2, k2) != eps || (s2, k2) == (s, ke) { return false; }
+        if self.p.phys && !self.drive_allows(true) { return false; }
         let m0 = self.mate_of(d, self.ae(kd, 0));
         let sid = |l: &Self, x: u32, k: usize| l.sids[x as usize * l.ks + k];
         let (e1, e2, u) = (sid(self, s, ke), sid(self, s2, k2), sid(self, d, kd));
+        let rec = self.p.phys.then(|| self.sub_unpaired(u, d as usize * self.ks + kd, e1, s as usize * self.ks + ke, e2, s2 as usize * self.ks + k2, q));
         let src = self.shadow.get(u).ports[0].expect("wired");
         for x in [e1, e2, u] { self.shadow.agents[x as usize] = None; }
         let e = self.shadow.mk(Tag::Eps);
@@ -2615,6 +2673,7 @@ impl Lattice {
         self.place(d, kd, eps, e);
         self.label[d as usize * self.ks + kd] = GARBAGE;
         self.link(d, self.ae(kd, 0), m0);
+        if let Some(rec) = rec { self.sub_collected(rec, &[e]); }
         self.refresh(s);
         self.refresh(d);
         self.stats.collected += 1;
@@ -2679,6 +2738,7 @@ impl Lattice {
         let (m0, m1) = (self.mate_of(d, self.ae(kd, 0)), self.mate_of(d, self.ae(kd, 1)));
         let (esid, dsid) = (self.sids[s as usize * self.ks + ke], self.sids[d as usize * self.ks + kd]);
         let dead_tag = self.tag(d, kd) as u32;
+        let rec = self.p.phys.then(|| self.sub_dead(dsid, d as usize * self.ks + kd, esid, s as usize * self.ks + ke));
         let dead = self.shadow.get(dsid);
         assert_eq!(dead.ports[2], Some((esid, 0)), "collected a computation the abstract net does not have");
         let (src0, src1) = (dead.ports[0].expect("wired"), dead.ports[1].expect("wired"));
@@ -2703,6 +2763,7 @@ impl Lattice {
                 self.link(d, self.se(f ^ 1, i), m0);
             }
         }
+        if let Some(rec) = rec { self.sub_collected(rec, &[e0, e1]); }
         self.refresh(s);
         self.refresh(d);
         self.stats.collected += 1;

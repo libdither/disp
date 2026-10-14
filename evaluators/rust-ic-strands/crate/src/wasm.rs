@@ -7,7 +7,8 @@ use rust_ca_lattice::sup::{self, STerm};
 use rust_ic_mesh::term;
 
 /// `parts`: the reductions the input asked for, separated by `;` (`parse_all`), one term each.
-struct State { l: Lattice, term: STerm, parts: Vec<STerm>, done: bool }
+/// `start`: under the substrate, the abstract net as loaded, to tell when a run has come all the way back.
+struct State { l: Lattice, term: STerm, parts: Vec<STerm>, done: bool, start: Vec<Option<rust_ca_lattice::net::Agent>> }
 static mut STATE: Option<State> = None;
 static mut TEXT: Vec<u8> = Vec::new();
 static mut STATS: [f64; 24] = [0.0; 24];
@@ -105,8 +106,13 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
     let (net, out) = match crate::share::net_for(&t, &p) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
+    let start = if p.phys { net.agents.clone() } else { vec![] };
     match Lattice::load(p, net, out) {
-        Ok(l) => { unsafe { STATE = Some(State { l, term: t, parts, done: false }); SAVED.clear(); } 0 }
+        Ok(mut l) => {
+            if l.p.phys { l.schedule = vec![(0.0, [l.p.drive, l.p.erase, l.p.forget, l.p.bond])]; }
+            unsafe { STATE = Some(State { l, term: t, parts, done: false, start }); SAVED.clear(); }
+            0
+        }
         Err(e) => { set_text(&e); 2 }
     }
 }
@@ -338,7 +344,8 @@ pub extern "C" fn strands_gpu_ran(clocks: u32, held: u32, fires: u32) -> u32 {
 /// superposition labels there, the counts, whether the answer was in, and the temperature and
 /// cooling (which change once the answer is left alone). Restoring one and running on repeats the
 /// run exactly, as a handover does.
-struct Saved { held: Vec<u32>, labels: Vec<u32>, stats: Stats, done: bool, temp: f64, cooling: Option<(f64, f64)> }
+/// Under the substrate the whole run is kept instead (`snap`), ids and records included.
+struct Saved { held: Vec<u32>, labels: Vec<u32>, stats: Stats, done: bool, temp: f64, cooling: Option<(f64, f64)>, snap: Option<crate::lattice::substrate::Snap> }
 static mut SAVED: Vec<Option<Saved>> = Vec::new();
 
 /// Save the run as it is now; returns the saved state's number.
@@ -346,7 +353,8 @@ static mut SAVED: Vec<Option<Saved>> = Vec::new();
 #[allow(static_mut_refs)]
 pub extern "C" fn save_state() -> u32 {
     let s = st();
-    let v = Saved { held: s.l.held_sites(), labels: s.l.held_labels(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling };
+    let v = if s.l.p.phys { Saved { held: vec![], labels: vec![], stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: Some(s.l.snap()) } }
+        else { Saved { held: s.l.held_sites(), labels: s.l.held_labels(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: None } };
     let saved = unsafe { &mut SAVED };
     match saved.iter().position(|x| x.is_none()) {
         Some(i) => { saved[i] = Some(v); i as u32 }
@@ -360,6 +368,7 @@ pub extern "C" fn save_state() -> u32 {
 pub extern "C" fn restore_state(i: u32) {
     let s = st();
     let v = unsafe { SAVED[i as usize].as_ref().expect("a saved state") };
+    if let Some(snap) = &v.snap { s.l.put_snap(snap); s.done = v.done; return; }
     // Putting sites back numbers the agents afresh, as a GPU's hand-back does: picks are found again
     // in the net as it was at the last look (the first time since it).
     unsafe { if LOOKED_AT == HANDED_BACK { picked().remember(&s.l); } }
@@ -382,7 +391,43 @@ pub extern "C" fn drop_state(i: u32) { unsafe { SAVED[i as usize] = None; } }
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn state_bytes(i: u32) -> u32 {
-    unsafe { SAVED[i as usize].as_ref().map_or(0, |v| ((v.held.len() + v.labels.len()) * 4 + std::mem::size_of::<Saved>()) as u32) }
+    unsafe { SAVED[i as usize].as_ref().map_or(0, |v| ((v.held.len() + v.labels.len()) * 4 + std::mem::size_of::<Saved>() + v.snap.as_ref().map_or(0, |x| x.bytes())) as u32) }
+}
+
+// ---- the substrate (substrate.rs) -----------------------------------------------------------------
+
+/// The substrate's settings from this clock on (lattice.rs `Lattice::reset_schedule`): the drive ε,
+/// the chance an eraser takes a leaf, the chance a turn an agent forgets what made it, and the bond.
+#[no_mangle]
+pub extern "C" fn strands_substrate(drive: f64, erase: f64, forget: f64, bond: f64) { st().l.reset_schedule([drive, erase, forget, bond]); }
+
+/// 1 when a substrate run has come all the way back: no record left and the net exactly as loaded.
+#[no_mangle]
+pub extern "C" fn strands_at_start() -> u32 { let s = st(); (s.l.records_kept() == 0 && s.l.same_net(&s.start)) as u32 }
+
+/// Whether the answer is in now (not once: under the substrate it can be undone again).
+#[no_mangle]
+pub extern "C" fn strands_answered() -> u32 { st().l.answered() as u32 }
+
+/// The seats of agents kept records tie together, two by two, into the seats (`Lattice::bonds`).
+/// Returns how many pairs.
+#[no_mangle]
+pub extern "C" fn substrate_bonds() -> u32 { put_seats(st().l.bonds()) / 2 }
+
+static mut SUB: [f64; 20] = [0.0; 20];
+/// The substrate's account: heat in all, from the drive, leaves erased, records forgotten; rewrites
+/// forward and undone (records' ledger), un-copies kept, records kept now, erasers now, agents now
+/// and loaded, rewrites undone (stats), undos tried apart and without room, then the settings
+/// (drive, erase, forget, bond) and the temperature.
+#[no_mangle]
+#[allow(static_mut_refs)]
+pub extern "C" fn substrate_ptr() -> *const f64 {
+    let l = &st().l;
+    let g = &l.sub.ledger;
+    let v = [g.heat(), g.drive, g.erased as f64, g.forgot as f64, g.forward as f64, g.back as f64, g.uncopied as f64, l.records_kept() as f64,
+             l.erasers() as f64, l.shadow.live_count() as f64, g.loaded as f64, l.stats.unfires as f64, l.stats.undo_far as f64, l.stats.undo_full as f64,
+             l.p.drive, l.p.erase, l.p.forget, l.p.bond, l.p.temp, l.p.phys as u8 as f64];
+    unsafe { SUB = v; SUB.as_ptr() }
 }
 
 /// Start cooling the run (lattice.rs `cool`); the temperature it runs at now.

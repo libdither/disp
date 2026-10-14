@@ -61,6 +61,29 @@ ports now lead. What it showed:
   cannot be undone without undoing the copy. Garbage-free bijections (step 2) need a copy that reads
   the answer and leaves it in place, such as a token walking the tree.
 
+## On the lattice: the substrate
+
+`phys=1` (README section The substrate, `player/substrate.html`) puts step 1 on the strand lattice,
+every move still local:
+- **Records go with what they made.** A rewrite's record (what it used up, and the ends of the wires
+  it joined) carries a number that what it made carries too; an undo is a move like a rewrite, taken
+  where everything the record made sits inside one 2×2×2 block, and it brings the used-up agents back
+  with their ids. 40 random terms and disp's `add 1 1`, `add 2 3`, `fib 2` and `relay_add 13 6` run
+  forward to the answer and back to the loaded net, agent for agent. The records still sit in a table
+  under their numbers, not as matter (item 3 below).
+- **A drive instead of a direction.** Every move has its reverse, taken with Boltzmann chances around
+  a drive ε, as in Bennett's Brownian computer, where the computation is driven forward by
+  ["a weak driving force in the direction of forward computation"](https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Bennett_1982.pdf#page=1)
+  and pays ε a step in heat; with ε < 0 the run goes backward.
+- **Erasing is recorded until a leaf.** Erasers take values apart as recorded rewrites; only taking a
+  leaf loses anything, and that is a decision, with Landauer's price (a unit of heat) and the loss of
+  every record that only the leaf led back through. Un-copying is free. So the history is forgotten
+  by choice, where and when one likes, as item 4 asks.
+- **What it costs.** Forward about what the plain lattice takes (6–15% more clocks), 2.3× the agents
+  at the answer kept as what was dropped, and 2–3 thousand records a run; back 10–15× the clocks
+  forward, spent bringing what an undo needs together (records tie what they made, a bond that pulls
+  harder going backward).
+
 ## Native: two-way programs, no receipts at all
 
 Receipts exist only because the tree calculus's rules destroy information: K drops an argument,
@@ -196,6 +219,10 @@ seed each, lazy copying (`dnroom=0`) and copying ahead (`dnroom=5`):
 
 ## Rules, sketched (`rust-ca-lattice/crate/src/rules.rs` terms)
 
+The substrate (On the lattice, above) took the marks (as record numbers), un-copying, and forgetting as
+a separate act; instead of residue agents for originals it has erasers that record what they take
+apart and stop at leaves, and it needs no ghosts, since an un-copy's record keeps the duplicator.
+
 - **A mark per rewrite.** Each rule also makes a history token at its redex, labelled with the rule; the
   inverse rule needs it to fire, and consumes it. Tokens chain, so the backward run finds them in
   order, but each stays where its rewrite happened: local, as the rewrites are.
@@ -232,8 +259,9 @@ seed each, lazy copying (`dnroom=0`) and copying ahead (`dnroom=5`):
 2. **Garbage-free bijections** (natively, for programs written two-way: Native, above): compute, copy the answer, run backward to clear the history, then the
    inverse program on the copy, run backward again to clear the input: answer only. Needs the inverse,
    written or derived (a printer–parser pair written once, research/TREE_READBACK.md).
-3. **The lattice, logically reversible**: each event's record as matter on sites, wired to what it
-   made. An agent's three ports are all in use, so this needs a fourth port per agent (or records
+3. **The lattice, logically reversible**: done but for one thing (On the lattice, above): records
+   tie what they made by number and bond, and every undo is local, but the records themselves sit in a
+   table. As matter on sites, wired to what they made, they need a fourth port per agent (or records
    built of several agents); records are matter that what they made drags along.
 4. **The lattice, physically reversible**: moves as their own inverses on a block, energy from and to
    a demon per site rather than Metropolis acceptance, so each clock is a bijection on block states;
