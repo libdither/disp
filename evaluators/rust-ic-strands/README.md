@@ -1533,6 +1533,8 @@ loaded one again (the player's grid, seed 1):
   The run can then go back only as far as nothing was erased.
 - **What is not the net does not come back**: where agents sit and which values have been called are
   not recorded, so back at the start the net is the loaded one by id and wiring, laid out otherwise.
+- **A simpler core without the record table** (each rewrite's history kept as matter wired to what it
+  made) is weighed in research/REVERSIBLE_CORE.md.
 - `tests/substrate.rs`: 120 random terms forward to the oracle's answer (12 with every invariant
   checked each clock), 40 forward and back to the loaded net agent for agent, the ledger balancing,
   and saved states repeating the run exactly with the drive changed on the way.

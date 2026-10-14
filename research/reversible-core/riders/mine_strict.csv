@@ -1,0 +1,22 @@
+call                                           steps    rot rounds width frames forks stems shares rcpt K/leaf  ok
+CSV|fib 3|1490|354|635|634|154|10|ok|13|1794
+CSV|fib 4|2982|531|1269|1268|310|18|ok|26|3584
+CSV|fib 5|5347|710|2274|2273|558|30|ok|39|6421
+CSV|add 2 3|469|190|201|199|49|2|ok|7|564
+CSV|add 7 1|1329|530|566|564|144|2|ok|7|1589
+CSV|mul 2 2|1429|332|612|610|148|6|ok|14|1724
+CSV|is_even 3|474|228|198|197|48|4|ok|6|568
+CSV|sum [1, 2]|1183|325|502|501|124|6|ok|16|1421
+CSV|rev [1, 2]|938|294|396|395|99|6|ok|9|1118
+CSV|doubled [1, 2]|1339|354|569|568|148|6|ok|12|1575
+CSV|isort [2, 1]|1634|509|696|695|164|10|ok|9|1974
+CSV|size [5, 6, 7]|561|246|241|240|63|2|ok|6|673
+CSV|greet "a"|681|288|281|280|80|2|ok|7|770
+CSV|ripple_add (bit_tree 3 255) (bit_tree 3 1)|3679|332|1484|1482|411|14|ok|41|4211
+CSV|relay_add (bit_tree 3 255) (bit_tree 3 1)|1188|174|504|502|139|7|ok|25|1395
+CSV|ru8 (bit_tree 3 255) (bit_tree 3 1)|650|109|234|232|61|7|ok|18|748
+CSV|lookahead_add (bit_tree 3 255) (bit_tree 3 1)|4256|302|1643|1641|458|21|ok|65|4829
+CSV|ripple_add (bit_tree 4 65535) (bit_tree 4 1)|7750|420|3124|3122|867|30|ok|80|8858
+CSV|relay_add (bit_tree 4 65535) (bit_tree 4 1)|2536|237|1048|1046|291|15|ok|50|2959
+CSV|ru16 (bit_tree 4 65535) (bit_tree 4 1)|1406|151|482|480|125|15|ok|33|1608
+CSV|relay_add (bit_tree 4 51566) (bit_tree 4 22995)|2444|219|1062|1060|291|15|ok|50|2874

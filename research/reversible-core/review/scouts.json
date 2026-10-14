@@ -1,0 +1,409 @@
+{
+ "earlier": {
+  "designs": [
+   {
+    "name": "Two-way calculus (iso.rs Iso): rearrange by pattern, copy and un-copy, both",
+    "where": "eca0073:evaluators/rust-ic-strands/crate/src/iso.rs lines 1-470 (enum Iso, Pat, dagger, Defs::check, library, encode/decode, run). Still at HEAD in evaluators/rust-ic-strands/crate/src/iso.rs (565 lines: run, dagger, tc, tck, bennett, bijection); only the machines and jets were removed in 2a32736.",
+    "primitives": "Data, programs, library and traces are all trees (leaf L, stem S, fork F). Patterns: L, S(p), F(p,q), Var (a named piece, used exactly once on each side), Any (tests only). Instructions: Re(l,r) rearrange; Dup(false) copy / Dup(true) un-copy; On(path,f) work on one part (path of left/right/child); Seq; Case(when, body, gives) arms; Loop{from, body, until, again}; Call(def#, inverse?); Eval(inverse?) run a program that arrives as data; Forget; Note(words, f); Both(f,g). Programs are encoded as trees F(nat op, args), op 0..10; pattern pieces numbered by rank among the letters the instruction uses (programs 2.5-3x smaller: tc + defs 6,250 -> 2,450 agents).",
+    "rules": "Re l r: bind t against l, build r from the same pieces (Defs::check: same letters both sides, none repeated, no `_`); inverse Re r l. Example add (a,b)->(a,a+b): arm F(L,b): id, gives F(L,_); arm F(F(L,a),b): Re F(F(L,a),b)->F(L,F(a,b)); On right add; Re F(L,F(a,s))->F(F(L,a),F(L,s)), gives F(F(_,_),_). Dup false: a -> F a a. Dup true: F a b -> a only if a == b (structural equality), else error. On p f: f on the part at p, rest untouched. Seq: in order; dagger reverses order and inverts each. Case forward: first arm whose `when` fits; after the body the result must fit that arm's `gives` and no earlier arm's `gives` (symmetric first-match); dagger swaps when/gives and inverts bodies. Loop: `from` must fit on entry; run body; if `until` fits, exit; else run `again`, and `from` must NOT fit (Janus-style entry/exit assertions); dagger swaps from/until and inverts both parts. Call d v: body or its inverse. Eval: F p x -> F p (decode(p) x), backward runs dagger(decode p). Forget: F a t -> a (the only step with no inverse). Both f g: F a b -> F (f a) (g b); dagger = Both(f†, g†). dagger is itself a library program (inverts encoded programs; run backward it undoes that).",
+    "parallelism": "The calculus itself has one parallel construct, Both (independent halves). Plain two-way library programs run as one token: add 2 3 = 29 moves, rev [1,2,3] = 83, revfast [1,2,3,4] = 27 (loop: 4n+11 steps), dagger add = 181, dagger tck = 1,008 moves in 993 rounds (2 tokens at most), both rev rev [1,2] [3,4] = 100 moves in 51 rounds (2 tokens). All measured on the walk.rs machine (my rerun of eca0073).",
+    "locality": "Re and Case read a bounded pattern's worth of the top of the tree (about 3 agents, at most 8, for add). On reaches down a fixed path. Dup is O(1) only with shared pointers (else copies the whole tree); un-copy needs a whole-subtree equality test (O(1) only when both halves are the same pointer). Call is a global jump to definition number d; Eval decodes a whole tree. So the instruction set is local in data but not in code.",
+    "history_handling": "None needed: every program's inverse is read off its text, so running back records nothing. Copy is reversible only as 'un-copy from two equal halves'. Forget is the one place information is destroyed. One-way code embedded in it (tc) hands its losses back as an explicit trace tree.",
+    "good": "Tiny, uniform, physically suggestive: 'just moving things around' (Re) plus copy with a partial inverse (fuel/refund) plus one irreversible Forget (heat). Programs are data; dagger is a program; Bennett and bijection come for free as library combinators. Two-way-written algorithms cost about as many steps as one-way ones (revfast 4n+11). Computes exactly the injective functions without receipts.",
+    "bad": "Not 'one operator, rules by shape' like tree calculus: 11 instruction kinds, arbitrary-depth patterns, a symmetric first-match side condition the programmer must satisfy, loops with entry/exit assertions. Un-copy is an unbounded equality check. Calls are by global number. Two-way programs must be written two-way; disp code only gets in via tc/tck with a trace. No parallelism except explicit Both."
+   },
+   {
+    "name": "tc: the tree calculus derived as a two-way program with a trace (+ bennett, bijection, forget)",
+    "where": "eca0073:evaluators/rust-ic-strands/crate/src/iso.rs library() entry \"tc\", bennett(), bijection(), tc_apply(); kept at HEAD.",
+    "primitives": "State F (F p x) t (application with a trace t). Uses only Re, Dup, On, Case, Call(tc), Note. bennett(f) = Seq[Re x->F(x,L); f; On left Dup; Re F(F(y,c),t)->F(F(y,t),c); On left f†; Re F(F(x,L),c)->F(x,c)]. bijection: F(F f g) x -> F(F f g)(f x) via bennett(tc) then bennett(tc)† on g.",
+    "rules": "((p,x),t) -> (p x, t') eagerly, each arm marking the trace so going back the arm is known: △ x: F(F(L,x),t)->F(S(x),F(L,t)). △a x: F(F(S(a),x),t)->F(F(a,x),F(S(L),t)). K: F(F(F(L,b),x),t)->F(b,F(F(L,x),t)) (x goes onto the trace). S: On[l,r] Dup; Re F(F(F(S(c),b),F(x,y)),t)->F(F(F(c,x),t),F(b,y)); On left tc; Re F(F(p,t),F(b,y))->F(p,F(F(b,y),t)); On right tc; Re F(p,F(q,t))->F(F(p,q),t); tc; Re F(p,t)->F(p,F(F(S(L),L),t)). Triage leaf: ->F(w,F(F(F(L,L),F(y,b)),t)) (untaken arms y,b on trace). Triage stem u: y u, trace gets F(F(F(S(L),L),F(w,b)). Triage fork u v: b u v, trace gets F(F(F(F(L,L),L),F(w,y)).",
+    "parallelism": "Sequential (one token; tc has no Both). iso Machine steps: tc add 1 1 4,457; tc fib 3 22,643; bennett add 1 1 8,929 (2x); bijection rev rev [1,2,3] 96,079.",
+    "locality": "Each arm is a bounded Re on the top of the state plus recursive calls; the S rule's Dup copies x (pointer copy with sharing). Code is consumed by application, so recursion copies the function each call.",
+    "history_handling": "The trace is an ordinary tree beside the answer: keep it (all runs back), clean it (bennett: run, copy answer, run back; twice the steps), or Forget it (cannot go back past). For add 1 1, 87% of trace nodes are arguments K dropped (9,463 vs 266 from untaken triage arms), and 102 of the 116 dropped pieces are copies of the program itself (a recursive function copies itself per call; the base case's K drops the copy). Trace 10,828 nodes but 427 distinct subtrees (fib 3: 82,311 / 1,736). With copies sharing (rc pointers, one layer copied when taken apart) peak memory falls 8-12x: add 1 1 10,813 -> 1,406 nodes, fib 3 82,282 -> 6,570, mul 2 2 74,492 -> 6,131.",
+    "good": "All current disp code runs and runs back exactly (eager evaluation finished on all six programs tried, 300-1,500 applications). Shows history is overwhelmingly redundant: mostly copies of code that exist elsewhere, so un-copy/sharing removes most of it.",
+    "bad": "Eager, so work under K is done and then thrown on the trace. Trace grows with every application (one entry per rule fired). Code is consumed and copied per use. Fully sequential."
+   },
+   {
+    "name": "tck: the tree calculus keeping the program it applies",
+    "where": "eca0073:evaluators/rust-ic-strands/crate/src/iso.rs library() entry \"tck\", tck_apply(); kept at HEAD.",
+    "primitives": "State F (F p x) t -> F (F p (p x)) t'. Same instructions as tc plus Both for the S rule.",
+    "rules": "△ x: Re F(F(L,x),t)->F(F(L,S(x)),t) (no trace entry). △a x: On[l,l,child] Dup; Re F(F(S(F(a,b)),x),t)->F(F(S(a),F(b,x)),t) (no entry). K: On[l,l,r] Dup; Re F(F(F(L,F(b,c)),x),t)->F(F(F(L,b),c),F(x,t)) (only x goes on the trace). S: On[l,r] Dup; Re F(F(F(S(c),b),F(x,y)),t)->F(F(F(c,x),t),F(F(b,y),L)); Both(tck,tck) (c x continues the trace, b y starts its own); Re F(F(F(c,p),t),F(F(b,q),v))->F(F(F(p,q),F(v,t)),F(c,b)); On left tck; Re F(F(F(p,r),t),F(c,b))->F(F(F(S(c),b),r),F(p,t)) (the function p = c x goes on the trace). Triage leaf: On[l,l,l,l] Dup; Re F(F(F(F(F(w,v),y),b),L),t)->F(F(F(F(w,y),b),v),F(L,t)). Triage stem: Re ->F(F(F(y,u),t),F(w,b)); On left tck; Re F(F(F(y,r),t),F(w,b))->F(F(F(F(w,y),b),r),F(S(L),t)). Triage fork: Re ->F(F(F(b,u),t),F(F(w,y),v)); tck; Re ->F(F(F(p,v),t),F(F(w,y),b)); tck; Re F(F(F(p,r),t),F(F(w,y),b))->F(F(F(F(w,y),b),r),F(F(p,F(L,L)),t)). Going back, arms are told apart by the kept program (and for triage by the trace's top: L, S(_), F(_,_)).",
+    "parallelism": "Only the S rule's Both splits a token. Persistent walker by rounds (my rerun reproduces the README exactly): add 1 1 5,541 moves / 3,939 rounds / widest 4 / 4 tokens; add 2 3 8,693 / 6,197 / 4; fib 2 14,870 / 9,021 / 7; fib 3 28,021 / 15,743 / 7; mul 2 2 26,578 / 18,773 / 6; rev [1,2] 17,526 / 12,031 / 6; rev [1,2,3] 29,776 / 20,329 / 6; relay_add 3+1 at 2/4/8 bits 4,786/11,222/24,110 moves in 3,337/7,783/16,751 rounds, 5 tokens; relay 13+6 (4 bits) 7,551 rounds, 6 tokens; 255+1 (8 bits) 15,979 rounds, 9 tokens; 65535+1 (16 bits) 32,835 rounds, 9 tokens; 51566+22995 33,943 rounds, 8 tokens. Average 1.4-1.8 moves per round. Tree-calculus net (rev.rs by rounds, lazy, S halves both run), same programs and inputs: add 1 1 1,777 rewrites / 418 rounds / widest 12; add 2 3 2,658 / 631 / 12; fib 2 5,519 / 875 / 38; fib 3 10,254 / 1,324 / 36; mul 2 2 8,774 / 1,108 / 26; rev [1,2] 6,108 / 976 / 29; rev [1,2,3] 10,033 / 1,517 / 29; relay 3+1 at 2/4/8 bits 218/354/492 rounds, widest 21/41/77; 65535+1 685 rounds widest 144; 51566+22995 663 / 152. So walker rounds are 9.4x (add 1 1) to 51x (16-bit relay) the net's, and the gap grows: relay's walker rounds double per doubling of bits while the net adds ~140-190.",
+    "locality": "As tc, but code is never consumed: Dup copies only the piece the answer needs (a in △a x, b in K, w in triage leaf), shared by pointer. A move reads about 7 tree agents of its payload (at most 27) though tck holds 805-3,405.",
+    "history_handling": "Trace holds only what the data decides: K's dropped argument, the functions an S or a fork dispatch made on the way (c x, b u), and which way a dispatch went. Peak held: add 1 1 1,275 (tc 1,406), fib 3 5,760 (6,570), mul 2 2 5,350 (6,131), for 26% more steps; with the S halves sequential in one trace 1,083 / 4,808 / 4,428. Same keep / bennett / forget choices as tc.",
+    "good": "Program kept beside its answer: code is read, not consumed, which is the 'read without consuming' the net cannot do. A third fewer trace entries. The S rule's two halves are naturally independent (Both), giving the only parallelism the walker designs ever had.",
+    "bad": "Still eager and fork-join: parallelism is the nesting of S rules that are mostly movement in disguise (83-96% of S firings are B/C shapes per LINEAR_TREE_NETS.md, one half trivial), so 4-9 tokens. More steps (+26%). Trace still one entry per data-dependent decision."
+   },
+   {
+    "name": "iso Machine: one token walking a laid-out program",
+    "where": "eca0073:evaluators/rust-ic-strands/crate/src/iso.rs `Machine` (lines ~590-1000), bin strands-iso.rs, player 'drawn as instructions' engine (twoway.js). Removed in 2a32736.",
+    "primitives": "Program tree of instruction nodes PNode{op, kids, up, park}; data nodes DNode{kind L/S/F/Hole, kids, rc}; one token: at=(node, Down|Up), payload, forward flag, clock. Copies shared by reference count; own() copies one layer before mutating a shared node.",
+    "rules": "Forward, Down at n: Seq/Note -> first kid Down (Up if empty); Re -> rearrange payload, Up; Dup -> dup/un-dup, Up; On p -> split: park payload at n with a Hole at p, token takes the part, kid Down; Case -> first arm whose when fits, its kid Down; Loop -> check from, body Down; Call/Eval -> lay out a fresh copy of the definition (or the decoded program, the code parked) under n, Down; Forget -> drop right half, Up. Forward, Up from kid k of parent p: Seq -> next kid Down or p Up; On -> join part into the parked tree's hole, p Up; Case -> check gives fits and no earlier gives, p Up; Loop -> k=0: until fits ? p Up : again Down; k=1: from must not fit, body Down; Call/Eval -> unlay the copy (Eval re-forms F code result), p Up. Backward is the mirror (Up<->Down, Re r l, Dup(!v), when<->gives, from<->until); flip() turns the token around. Both is laid out as Seq(On left f, On right g).",
+    "parallelism": "One token, fully sequential (rounds = steps). tc add 1 1 4,457 steps; tc fib 3 22,643; tck add 1 1 5,637; bennett add 1 1 8,929; bijection rev rev [1,2,3] 96,079.",
+    "locality": "Each step touches the token, one instruction, at most a pattern's worth of tree nodes and that instruction's parked tree. But every call lays out a whole copy of a definition (O(definition size), non-local), and the token carries the whole data tree.",
+    "history_handling": "Nothing recorded: state is token place + direction + parked trees + laid-out copies; back is turning the token around. 'forgotten' counts Forgets; scrubbing past a Forget replays from the input.",
+    "good": "Simplest possible reversible execution: reversal is flipping one bit. Memory small with sharing (add 1 1 1,406 nodes held).",
+    "bad": "Sequential. Code is copied on every call (laid out then unlaid). A central program counter carrying all the data, the opposite of the physics direction."
+   },
+   {
+    "name": "Persistent walker with tokens that split at both (walk.rs)",
+    "where": "eca0073:evaluators/rust-ic-strands/crate/src/walk.rs (633 lines), tests/walk.rs, player/persistent.js ('persistent' engine of rev.html). Removed in 2a32736.",
+    "primitives": "Program = one raw tree of L/S/F agents in encode form (main + reached definitions as a list), planted once and never changed; instr map decodes each instruction node once. Token{at=(node,Down|Up), payload, stack, parity (inside an odd number of backward calls), born}. Stack frames: Park(tree with hole), Ret{call, inv}, Eval{call, inv, prog, code}, Half{fork, side}. Fork{node, pair (with a Hole per half away), halves [Away|Start|End]x2, stack, parity}. Actors = tokens and forks.",
+    "rules": "Token moves as the iso Machine except: On pushes Park(rest with hole) and join pops it; Call pushes Ret, flips parity by inv, jumps to the definition's own root (Down, or Up if inverse), so a backward call walks the same definition backward; leaving a definition root pops Ret/Eval and returns to the call node; Eval plants decoded code for the duration. Re reuses the agents the left pattern takes apart for the ones the right builds (only the excess is made/dropped). Dup shares (rc+1); un-dup checks equality. Both at Down: token becomes a Fork (payload pair owned, stack moved into the fork), both halves at Start. Fork move: a half waiting at its begin slot sets off as a new token with stack [Half{fork,side}] and a Hole left in the pair; when both halves are back at the end slot, the fork becomes a token again at the both node (Up). A half token reaching the both node's Up parks its payload into its hole (only if its stack is exactly [Half]). Every move is undone by another, so actors may move in any order. round(): every actor that can move at the round's start moves once (what the round makes waits); exclusive mode lets a program node serve one token per round.",
+    "parallelism": "Same numbers as tck above (they are this machine's): 4-9 tokens at most, widest round = tokens at most, 1.4-1.8 moves per round, rounds 9.4-51x the tree-calculus net's on the same programs. exclusive (tokens take turns at a shared program node): +1.2-1.8% rounds (add 1 1 3,988 vs 3,939; fib 3 16,002 vs 15,743). Plain two-way programs: 1 token (add 2 3 29 moves).",
+    "locality": "A move reads about 3 payload agents (at most 8) for library add, about 7 (at most 27) for tck. A move takes the token 3-4 edges along the program tree on average; 12-16% of moves go further than 6 edges (calls/returns: at most 9 edges for add, 24 for tck). Two tokens at one node would need code copies in a net: one tck copy is 2,729 agents; 3-6 live copies (8-16k agents) or 237-1,209 copies made in a run if copied and merged.",
+    "history_handling": "No record and no ordering record: tests move a random actor each time, flip time at random, and end exactly at the input. Control history lives in each token's stack (parked trees, return points, Half markers). Agents made only when data grows, when a shared tree is taken apart, for a frame, or for Eval code: swap 1 2 makes 2 / removes 2; add 2 3 makes 14 / removes 10; tck add 1 1 makes 2,516 / removes 1,734 over 5,637 steps (the difference is the trace) while the program's ~3,000 agents stay.",
+    "good": "A reversible concurrent system with no log of who moved when: every move is a bijection, any interleaving works. Code is persistent (never copied or consumed). Agents reused by rearrangement, so matter is conserved except growth and frames. Backward calls reuse the same code walked backward.",
+    "bad": "Still walkers: everything happens where a token is, and the token carries its data and stack. Parallelism only from Both and strict fork-join (a fork waits for both halves), so a handful of tokens; rounds grow linearly with relay's bits where the lazy net's grow logarithmically (its halves overlap only lazily, the high half starting before the low carry is known). Calls are long jumps. README's 'relay never more than 5 tokens however many bits' only holds for 3+1: other inputs reach 6-9."
+   },
+   {
+    "name": "Raw-tree walker interaction net (inet.js, 104 rules)",
+    "where": "eca0073:evaluators/rust-ic-strands/player/inet.js (rules), player/rawprog.js (compiler), player/inet.html, player/inet.test.mjs. Removed in 2a32736.",
+    "primitives": "Agents: L (1 port), S (2), F (3), Root (1), one walker W (7 ports: P faces what it meets, PB way back up the program, DB way back up the data tree, OTHER the other side, STACK, two hands R0 R1). Program, data and stack are all raw trees. Raw program form: L = nothing; F p q = p then q; S c = a step named by c: S L swap F a b->F b a; S(S L) rotate F(F a b) c->F a (F b c); S(S(S L)) rotate back; S(S(S(S n))) call n-th definition; S(S(F d L)) take part d (rest onto stack); S(S(F d (S L))) put part back; S(F L L) leaf x->F L x; S(F L (S L)) leaf back; S(F L (F L L)) stem x->S x; S(F (S L) L) stem back; armEnd, defEnd, noArm codes; choice S(F(F pin pout)(F(F armL armS)(F armF none))) with every arm two forks down. Library = chain F def (F def ... L), main first.",
+    "rules": "104 rules over 59 walker states (counted by executing the table): 5 walk the program (run·L turn up; run·F open down left; run·S open down to read a step; done·F↓l switch to right; done·F↓r close up), 39 read a step's code, 18 do steps on the tree (swap 1 meeting; rotate and rotate back 3 meetings each, rewiring forks via the hands; leaf/stem make agents; leaf back/stem back kill them; take puts the rest on the stack as a new F frame; put pops it), 26 make a choice (read the path, descend the data tree by DB to read one shape, enter the arm two forks down; on exit learn which arm from the two forks climbed out of, recheck the shape at the out-path), 16 make a call (push a frame per node climbed: a leaf under 0-3 stems saying left/right/child/call; at Root turn into the library; count down a stem chain one definition per F; enter; on defEnd climb to Root and pop frames back down). Movement is pointer reversal: going down turns the node's principal port toward the walker, the up-wire kept in the slot it went into (x.open). A rearrangement is compiled by search into the fewest one-layer steps (a step at depth d costs 1 + 2d for take/put): add's two Re's become a rotate, and a rotate back with a leaf added on the right.",
+    "parallelism": "One walker, one meeting at a time: rounds = meetings. add 2 3: 584 meetings, 95 agents made, 92 removed, 215 live at most; add 3 1: 824; snoc [1,2] 3: 474; rev [1,2,3]: 1,629 meetings, 347 made; rev' [3,2,1]: 1,632 (rerun of inet.test.mjs). About 20 meetings per persistent-walker move (add 2 3 is 29 moves there). Tree-calculus net on disp's own compiled programs: add 2 3 2,658 rewrites in 631 rounds (widest 12), making 5,994 agents; rev [1,2,3] 10,033 in 1,517 rounds (widest 29), making 22,811. So one sequential walker on a two-way-written program has about the same depth as the parallel net on compiled code, and makes 60x fewer agents (different programs, though).",
+    "locality": "Strictly local: every step is one meeting of the walker with the agent its principal port faces, rewiring only their ports. But a call is a long trip (climb to the root, count along the library, climb back following frames), and only one walker can exist: reading turns the whole root-to-walker path toward it, so a second walker could not pass and would need its own code copy.",
+    "history_handling": "The walker's way back is stored in the program itself by pointer reversal (each opened node remembers which child the walker went into), and in the data tree the same way via DB; the stack is a chain of F frames, a call's return path is one frame per node climbed. No backward rules were written: stepping back replayed from the start. No copy, loop, run or both yet; a choice's arms must leave the same shape they test.",
+    "good": "Everything is raw leaf/stem/fork plus one walker, rules are pairwise and local, and the walker's history costs no extra matter (it is the orientation of wires it passed). Very little matter made.",
+    "bad": "104 rules in 59 states against the net's 26 rules over 13 kinds. Exactly one walker, so zero parallelism. Calls cost O(depth + library index) meetings. Incomplete (no copy/both/loop, no backward rules)."
+   },
+   {
+    "name": "Jets: disp programs known by their tree run as two-way definitions",
+    "where": "eca0073:evaluators/rust-ic-strands/crate/src/iso.rs Defs::with_jets, Jet, JETTED = [(add,2),(rev,1)], jet_apply(); tests/walk.rs jets_give_what_the_tree_calculus_gives. Removed in 2a32736.",
+    "primitives": "Jet{tree (the program's literal tree), arity, def (library definition)}. Pat::lit(tree) makes a pattern only that tree fits.",
+    "rules": "jet_apply(k) = Case: for each jet of arity k<=2, an arm whose when = gives = the literal shape: k=1: F(F(lit(tree),_),_) with body On left On right Call(def) (((p,x),t) -> ((p, def x), t)); k=2: F(F(F(lit(tree),_),_),_) with body On left Seq[Re F(F(p,a),b)->F(p,F(a,b)); On right Call(def); Re F(p,F(a,r))->F(F(p,a),r)] (((p,a),b),t) -> (((p,a), a+b), t). Last arm `_` -> tck_apply(k).",
+    "parallelism": "Sequential, but tiny: jet add 3 4 53 moves vs tck 11,845; 1+1 29 vs 5,541; 10+10 137 vs 33,909; 25 additions + 4 reversals 1,287 moves vs 302,474.",
+    "locality": "Recognition is a whole-tree literal match (reading ~296 agents once), not local.",
+    "history_handling": "The jet arm keeps the program and the first argument, so it is reversible with no trace (when = gives); trace untouched.",
+    "good": "The .opt.disp idea for this machine: 100-250x fewer moves, ~300 tree agents held vs 805-3,405.",
+    "bad": "Only at the top level: inside another program (fib adding) add arrives half-applied, `add a` is a 370-agent tree with a at its end, whose making alone leaves 6,810 trace nodes when interpreted. Recognition is a big equality test."
+   }
+  ],
+  "measurements": "How measured: I extracted eca0073's evaluators/{rust-ic-strands,rust-ca-lattice,rust-ic-mesh} and bench/programs with `git archive` into /tmp/eca0073 (nothing in the repo touched), added /tmp/eca0073/evaluators/rust-ic-strands/crate/examples/measure.rs, and built and ran it under systemd-run MemoryMax and timeout. It runs (a) walk.rs Walker::round on `tck <disp program> args` (plus exclusive mode), (b) the single-token iso Machine, and (c) rev.rs Rev::round on the same disp term (abstract tree-calculus net, lazy, S halves both run). Each run took seconds. I also reran player/inet.test.mjs.\n\nReproduced exactly: README rows tck add 1 1 (5,541 moves / 3,939 rounds / 4 tokens), tck fib 2 (14,870 / 9,021 / 7), relay 2/4/8 bits (4,786/11,222/24,110 moves; 3,337/7,783/16,751 rounds; 5 tokens), net relay rows (1,449/3,501/7,595 rewrites; 218/354/492 rounds; widest 21/41/77), net add 2 3 (2,658 / 631 / 12), net rev [1,2,3] (10,033 / 1,517 / 29), inet add 2 3 (584 meetings, 95 made) and rev [1,2,3] (1,629, 347). This also shows the README's 4- and 8-bit relay rows all used 3 + 1, just widened.\n\nWalker against the tree-calculus net, same program and input (rounds; widest round):\n- add 1 1: walker 3,939; 4. Net 418; 12. Ratio 9.4x.\n- add 2 3: 6,197; 4 vs 631; 12. Ratio 9.8x.\n- fib 2: 9,021; 7 vs 875; 38. Ratio 10.3x.\n- fib 3: 15,743; 7 vs 1,324; 36. Ratio 11.9x.\n- mul 2 2: 18,773; 6 vs 1,108; 26. Ratio 16.9x.\n- rev [1,2]: 12,031; 6 vs 976; 29. Ratio 12.3x.\n- rev [1,2,3]: 20,329; 6 vs 1,517; 29. Ratio 13.4x.\n- relay 3+1 at 2/4/8 bits: 3,337 / 7,783 / 16,751 vs 218 / 354 / 492. Ratios 15x / 22x / 34x.\n- relay 13+6 (4 bits): 7,551; 6 tokens vs 354; 43.\n- relay 255+1 (8 bits): 15,979; 9 tokens vs 517; 74.\n- relay 65535+1 (16 bits): 32,835; 9 tokens vs 685; 144. Ratio 48x.\n- relay 51566+22995 (16 bits): 33,943; 8 tokens vs 663; 152. Ratio 51x.\n\nOther numbers:\n- Walker moves are 2.7-3.2x the net's rewrites, and 1.4-1.8 moves per round, against the net's 4.2-23.7 rewrites per round.\n- The single-token Machine's steps are about 1.02x the walker's moves, so splitting tokens at `both` gained only 1.4-1.8x.\n- Exclusive mode (one token per program node per round) costs 1.2-1.8% more rounds.\n\nOut-of-date docs to flag: research/REVERSIBLE_PIPELINE.md says \"relay's adder never more than 5\" tokens, and the eca0073 README says \"no more than five tokens, however many bits\". Both hold only for input 3 + 1; 13+6 reaches 6 tokens and 255+1 and 65535+1 reach 9. The tokens stay few and flat, so the conclusion stands.\n\nTakeaways for a 'history as resource' core:\n1. In the two walker designs that ran without a record, control history cost no extra matter. In walk.rs it was the token's stack: the rest of the tree parked aside, plus return points. In the inet it was the orientation of wires already passed (pointer reversal). Reversal was flipping direction, and in walk.rs any interleaving of token moves undid cleanly with no log.\n2. The data history (the tc/tck trace) is mostly copies of code (add 1 1: 10,828 trace nodes, 427 distinct). Sharing plus un-copy refunds almost all of it. What really remains is one entry per data-dependent decision (K's dropped argument, which triage arm ran, functions made on the way).\n3. Every walker design lost on parallelism for one structural reason. In an interaction net, reading turns the path toward the reader, so there is one reader per copy of the code, and eager fork-join `both` gave only 4-9 tokens. The lazy net's width (12-152) comes from demand-driven overlap and layer-at-a-time copying.\n\nUncommitted session files: none in the repo. Scratch files are only in /tmp/eca0073, /tmp/eca-inet and /tmp/citecheck.",
+  "verified_citations_in_repo": [
+   {
+    "claim": "[REVERSIBLE_PIPELINE] A view's complement (the residue that makes a lossy stage a bijection) must hold everything the view lacks (Foster, Pierce et al., lenses, TOPLAS)",
+    "url": "https://www.cis.upenn.edu/~bcpierce/papers/lenses-toplas-final.pdf#page=50",
+    "quote": "must include at least all information missing from the view"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Bennett 1973: a reversible computation keeps a history and makes an extra copy of the result",
+    "url": "https://mathweb.ucsd.edu/~sbuss/CourseWeb/Math268_2013W/Bennett_Reversibiity.pdf#page=2",
+    "quote": "extra copy"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Bennett 1973: intermediate results are cleaned up by running the first stage backward",
+    "url": "https://mathweb.ucsd.edu/~sbuss/CourseWeb/Math268_2013W/Bennett_Reversibiity.pdf#page=1",
+    "quote": "reversibly disposes of all the undesired intermediate results by retracing the steps of the first stage in backward order"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] James and Sabry: a reversible core plus a global garbage dump that absorbs unwanted results",
+    "url": "https://web.archive.org/web/20161007070937id_/http://www.cs.indiana.edu/~sabry/papers/information-effects.pdf#page=2",
+    "quote": "a global garbage dump (which absorbs the undesired results)"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] James and Sabry: making and erasing information become explicit effects",
+    "url": "https://web.archive.org/web/20161007070937id_/http://www.cs.indiana.edu/~sabry/papers/information-effects.pdf#page=1",
+    "quote": "exposes creation and erasure of information as explicit effect operations"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Bennett 1973: when the output determines the input, a reversible computation can leave no garbage",
+    "url": "https://mathweb.ucsd.edu/~sbuss/CourseWeb/Math268_2013W/Bennett_Reversibiity.pdf#page=5",
+    "quote": "many calculations in which the output uniquely determines the input"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Axelsen and Glück: reversible machines compute exactly the injective computable functions",
+    "url": "https://researchprofiles.ku.dk/en/publications/what-do-reversible-programs-compute/#main-content",
+    "quote": "can compute exactly all injective, computable functions"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Bennett 1982: a Brownian computer is driven forward by a weak force",
+    "url": "https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Bennett_1982.pdf#page=1",
+    "quote": "a weak driving force in the direction of forward computation"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] James and Sabry build their reversible language Pi from type isomorphisms",
+    "url": "https://web.archive.org/web/20161007070937id_/http://www.cs.indiana.edu/~sabry/papers/information-effects.pdf#page=1",
+    "quote": "the notion of type isomorphisms"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Pi has no copying: its isomorphisms leave out tautologies such as b <-> b x b",
+    "url": "https://web.archive.org/web/20161007070937id_/http://www.cs.indiana.edu/~sabry/papers/information-effects.pdf#page=3",
+    "quote": "do not include some familiar logical tautologies"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Reversible functional languages use symmetric first-match for case (arXiv 2105.09929, Join Inverse Rig Categories for Reversible Functional Programming)",
+    "url": "https://arxiv.org/pdf/2105.09929#page=2",
+    "quote": "the leaf expression of any branch in a case expression must not match any leaf expression in a branch preceding it"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Danos and Regnier: the interaction abstract machine (the GoI token machine) is reversible and needs no garbage collection",
+    "url": "https://www.pure.ed.ac.uk/ws/files/16874549/Reversible_irreversible_and_optimal_machines.pdf#page=4",
+    "quote": "needs no external garbage-collection"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Danos and Regnier: a machine that keeps results as it goes gathers information at every step",
+    "url": "https://www.pure.ed.ac.uk/ws/files/16874549/Reversible_irreversible_and_optimal_machines.pdf#page=4",
+    "quote": "grows steadily at each step"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] The pebble game: a value can only be removed by recomputing from its predecessor (Li and Vitanyi)",
+    "url": "https://arxiv.org/pdf/quant-ph/9703022#page=7",
+    "quote": "remove a pebble from node i, provided node i - 1 is pebbled at the time"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Time-space trade-off in reversible simulation: one end is exponential time with no extra space",
+    "url": "https://arxiv.org/pdf/quant-ph/0101133#page=9",
+    "quote": "the LMT-simulation using exponential time and no extra space"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Danos and Regnier's jumping machine skips the redundant steps a token machine walks again",
+    "url": "https://www.pure.ed.ac.uk/ws/files/16874549/Reversible_irreversible_and_optimal_machines.pdf#page=4",
+    "quote": "shortcuts redundant steps"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] rust-analyzer's lossless syntax tree keeps all trivia (the text<->AST residue)",
+    "url": "https://raw.githubusercontent.com/rust-lang/rust-analyzer/master/docs/book/src/contributing/syntax.md#design-goals",
+    "quote": "All comments and whitespace get preserved"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Landauer: a step is irreversible when its output does not determine its input",
+    "url": "https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Landauer_1961.pdf#page=4",
+    "quote": "if the output of a device does not uniquely define the inputs"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Landauer: each irreversible step costs about kT",
+    "url": "https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Landauer_1961.pdf#page=1",
+    "quote": "of the order of kT for each irreversible function"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Reversible combinatory logic (Di Pierro, Hankin, Wiklicky) stores what is needed to rebuild the redex",
+    "url": "https://www.doc.ic.ac.uk/~herbert/papers/mscs06.pdf#page=2",
+    "quote": "incorporates information useful to reconstruct the redex from the contractum"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] With that information, backward reduction in reversible CL is deterministic",
+    "url": "https://www.doc.ic.ac.uk/~herbert/papers/mscs06.pdf#page=6",
+    "quote": "backward reduction, is deterministic"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Reversible term rewriting records bindings only for erased variables",
+    "url": "https://arxiv.org/pdf/1710.02804#page=8",
+    "quote": "will record the bindings of erased variables"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Bennett's pebbling uses the least extra space for the most simulated steps (Li and Vitanyi)",
+    "url": "https://arxiv.org/pdf/quant-ph/9703022#page=1",
+    "quote": "uses least additional space for the greatest number of simulated steps"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Baker: on a reversible machine, garbage collection is a reversed subcomputation (the page has no anchor before the quote, so link the page itself)",
+    "url": "https://www.plover.com/~mjd/misc/hbaker-archive/ReverseGC.html",
+    "quote": "garbage collection for recycling storage can always be performed by a reversed (sub)computation"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Janus conditionals: going backward, an exit assertion acts as a test and a test as an assertion",
+    "url": "https://people.cs.rutgers.edu/~uli/cs516/spring2020/readings/ReversibleComputing-TheoreticalCompSci2010.pdf#page=5",
+    "quote": "in the backward direction an assertion acts as a test and a test as an assertion"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Abramsky: a built-in conditional rules out history-free reversibility in combinatory logic",
+    "url": "https://arxiv.org/pdf/1111.7154#page=24",
+    "quote": "this option is not open to us if we wish to retain reversibility"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Salikhmetov: when an interaction system is reversible",
+    "url": "https://arxiv.org/pdf/1806.07275#page=4",
+    "quote": "An interaction system is reversible if and only if no two different active pairs clash and each rule is connected"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Salikhmetov: whether reversible interaction combinators exist is open",
+    "url": "https://arxiv.org/pdf/1806.07275#page=6",
+    "quote": "there exists a reversible equivalent of interaction combinators"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Margolus 1984: a block rule that is a bijection on block states is reversible",
+    "url": "https://fab.cba.mit.edu/classes/862.16/notes/computation/Margolus-1984.pdf#page=6",
+    "quote": "Since each distinct initial state of a block is mapped onto a distinct final state, this rule is reversible"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Partitioned CA: the global dynamics is invertible when the block map is",
+    "url": "https://people.csail.mit.edu/nhm/ica.pdf#page=16",
+    "quote": "the global dynamics is invertible if f is invertible"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Creutz: demon dynamics on a partitioned lattice is deterministic and reversible",
+    "url": "https://www.latticeguy.net/mypubs/pub088.pdf#page=4",
+    "quote": "in addition to being deterministic, this dynamics is reversible"
+   },
+   {
+    "claim": "[REVERSIBLE_PIPELINE] Creutz: the demon algorithm reduces locally to Metropolis",
+    "url": "https://www.latticeguy.net/mypubs/pub070.pdf#page=2",
+    "quote": "will locally reduce to the Metropolis"
+   },
+   {
+    "claim": "[LINEAR_TREE_NETS] GoI token machine: the program is a fixed automaton a token walks, the word being all its state (Danos and Regnier)",
+    "url": "https://www.pure.ed.ac.uk/ws/files/16874549/Reversible_irreversible_and_optimal_machines.pdf#page=4",
+    "quote": "entering the automaton with a word at some given entry node"
+   },
+   {
+    "claim": "[LINEAR_TREE_NETS] A pure token machine pays for walking the same path again (Muroya and Ghica, dynamic GoI)",
+    "url": "https://arxiv.org/pdf/1703.10027#page=1",
+    "quote": "repeating the same moves of a token on the fixed graph"
+   },
+   {
+    "claim": "[LINEAR_TREE_NETS] The interaction abstract machine can be exponentially slower than environment machines (Accattoli, Dal Lago, Vanoni)",
+    "url": "https://arxiv.org/pdf/2010.12988#page=2",
+    "quote": "can be exponentially slower than environment machines"
+   },
+   {
+    "claim": "[LINEAR_TREE_NETS] In interaction nets, reading consumes (Hassan, Mackie, Sato): why a second walker needs its own code copy",
+    "url": "https://www.user.tu-berlin.de/o.runge/tfs/workshops/gtvmt08/Program/paper_38.pdf#page=13",
+    "quote": "interacting agents are consumed"
+   },
+   {
+    "claim": "[LINEAR_TREE_NETS] Multiport cells serve many readers but lose determinism (Mazza)",
+    "url": "https://lipn.univ-paris13.fr/~mazza/papers/mINSAndConcurrency-CONCUR05.pdf#page=4",
+    "quote": "can in general be involved in several active pairs"
+   },
+   {
+    "claim": "[rust-ic-strands README at HEAD] Bennett 1982: in a Brownian computer, steps forward and back balance at equilibrium",
+    "url": "https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Bennett_1982.pdf#page=10",
+    "quote": "both forward and backward steps are possible, and would indeed occur equally often at equilibrium"
+   },
+   {
+    "claim": "[rust-ic-strands README at HEAD] Jaynes: mixing identical gases raises no entropy (why un-copy of a known copy is free)",
+    "url": "https://bayes.wustl.edu/etj/articles/gibbs.paradox.pdf#page=4",
+    "quote": "When the gases are identical they still mix, but there is no entropy increase"
+   }
+  ]
+ },
+ "current": {
+  "designs": [
+   {
+    "name": "Plain tree-calculus net on the strand lattice (the 26-rule table, `latest` schedule)",
+    "where": "evaluators/rust-ca-lattice/crate/src/rules.rs (`RULES` 26, `SUP_RULES` 8); evaluators/rust-ic-strands/crate/src/lattice.rs (`fresh_wanted_in`, collection, `dnroom`); README sections 'The machine', 'Fork', 'Copying ahead where there is room'; research/LINEAR_TREE_NETS.md section 2",
+    "primitives": "Agents with at most 3 ports, port 0 principal. Values (producers): L leaf, S stem, F fork, P suspended application, Pair (carries triage arms), Sup (superposition). Mediators (consumers): A apply, T1 first-level triage, Sel second-level triage, Unp unpair, Dn duplicator (copies one layer), Eps eraser, Nrm normalizer; Out is the root sink. On the lattice: sites on a grid, up to L strands per link, a switchboard per site (at most 8 pairings of ends), up to K agents per site. Moves: step, exchange, fold, flip, rewrite. Each move fits in one 2x2 square, or one 2x2x2 block under the chip schedule. Acceptance is Metropolis on an energy: wire tension, crowded switchboards, idle agents repelling, temperature. Laziness comes from 'wanted' bits and demand pulses that travel one strand per clock.",
+    "rules": "A·L -> S; A·S -> F; A·F -> T1 + Pair (takes the code apart). T1·L is K: Unp + Eps, drops c. T1·S is the S rule: Unp, Dn, A, A, A; it copies c and is the only rule that makes a Dn. T1·F -> Unp, Sel, Pair, Pair. Sel·L/S/F dispatch and erase the two arms not taken. Unp·Pair is a double wire fusion that makes nothing. Dn·L/S/F copy one layer and leave Dn on the children. Dn·P forces once (call by need). Eps·x erases one layer. Nrm·x normalizes; x·P forces. Collection by contact (three extra rewrites): an eraser on a Dn output turns the Dn into a wire (un-copy); an eraser on an A/T1/Sel result puts erasers on its inputs (dead work); erasers on both Unp outputs become one eraser. 'Fork' is just two wanted bits in T1·S: both s c and b c start wanted. With `dnroom`=5, a Dn copies without being asked when its block had at least 5 empty sites.",
+    "parallelism": "Without fork, on the idealised lazy machine: 1.2-2.4 rewrites per step, and 74-92% of steps fire exactly one; on the lattice about one wanted reader walks at a time and a rewrite fires about one clock in ten. Fork: 4.2x fewer clocks (geomean over the disp programs), 38% fewer rewrites; fib(2) has 8 readers walking at once and fires a rewrite in a third of clocks. Steps come within about 1.6x of the longest dependent chain, at about 16 clocks per step, mostly walking. dnroom 5: 0.82x the clocks for 1.68x the rewrites. Strict rounds on the abstract net with fork (rev.rs `round`): README relay_add at 2/4/8/16 bits gives 1,449/3,501/7,595/15,727 events in 218/354/492/640 rounds, widest 21/41/77/150 (doubling the bits doubles the width and adds about 140 rounds). Measured this session: add 2 3 is 2,658 events / 631 rounds / widest 12 (mean 4.2); fib 3 is 10,254 / 1,324 / 36 (mean 7.7); relay_add 8-bit 255+1 is 7,484 / 517 / 74 (mean 14.5); relay_add 16-bit 65535+1 is 15,494 / 685 / 144 (mean 22.6).",
+    "locality": "Fully local. No addresses: a strand is one piece of wire seen from both sites. Every rewrite fits in a 2x2 square or 2x2x2 block, and demand moves one strand per clock. The chip RTL and the GPU match the simulator bit for bit. Rules are fixed templates, at most 6 fresh agents per rewrite.",
+    "history_handling": "None. Rewrites are irreversible and erasers destroy for good. Collection (un-copy, dead work, unpaired) is garbage collection, not a record. The player's going-back feature uses saved states plus hashed dice, so it replays rather than reverses.",
+    "good": "Complete, local, and cellular-automaton shaped, running on CPU, GPU and the chip design. Parallelism comes for free from the S rule copying its argument, so code that copies itself makes more places where work happens. Every answer is checked against the abstract net wire by wire. Tree calculus has no binders, so work is never repeated (call-by-need duplicators).",
+    "bad": "Most of the work is copying and erasing. Lazy machine, 27 programs, 351k rewrites: copying 34% (31 points of it on code), dispatch 33%, erasing 28% (at least 14 points on code), building 5%. The lattice measured 45% copying and 30% erasing on disp programs. 87-95% of Dn work copies the loaded program's code, and only 0.2-5% copies input data. 83-96% of S firings are movement in disguise (B or C shape: copy c, then erase one copy at once); only 9% use the argument twice. Code is used 75,990 times and copied 109,171 times, and only 6-33% of copies are ever needed at once. 53-84% of the critical chain's clocks pass with a pair already wired and waiting at a duplicator for demand (a lazy copy pulled one layer at a time)."
+   },
+   {
+    "name": "Movement agents (`views=1`): B, C, K, I, W, Sx as agents of their own",
+    "where": "rules.rs `VIEW_RULES` (36 rules, tags K, Sx, B, C, I, W numbered 15-20); rust-ca-lattice `Net::build_views`; README 'Movement agents'; research/LINEAR_TREE_NETS.md section 4a and Status",
+    "primitives": "Six producers, each standing for a fixed tree shape found in loaded code: K y = △△y, Sx s b = △(△s)b, B f g = △(△(△△f))g, C f g = △(△f)(△△g), I = △(△△△)△, W s = △(△s)s. They carry no payload and no label. Only the loader makes them, never the compiler or the run. K shapes are now left as plain forks, because numbers and lists are K shapes all the way down.",
+    "rules": "Applying one takes a single rewrite. A·K: y, and c goes to Eps. A·Sx: Dn on c plus three A. A·B: f (g c), so c moves right uncopied. A·C: f c g, so c moves left uncopied. A·I: a plain wire, unforced. A·W: s c is worked out once and the result copied. Dn·view copies the whole agent in one rewrite (Dn on its children); Eps·view erases it in one. T1, Sel or Nrm reading a view spells it out: the reader again, facing the tree, so reflection and the answer still see plain trees. The 36 rules are 6 apply, 6 copy, 6 erase and 18 spell-out, each checked as a perfect matching. The same split appears in linear combinatory algebras and director strings: B, C, K and I never copy; only Sx and W do.",
+    "parallelism": "Lazy machine, 27 programs: 0.55x the rewrites and 0.52x the rounds; K, Sx and I alone give 0.74x and 0.64x. An application is one rewrite deep instead of three. Lattice, 13 programs, K labelled: 0.55x clocks, 0.50x rewrites, 0.50x peak sites, 0.32x CPU time. Without K views (current): 0.605x clocks, 0.515x rewrites. relay_add 8-bit 255+1 on the lazy machine: 7,789 rewrites become 5,008 (views + W). Summed over 13 programs, view rules are 12.7k of 38k rewrites: A·B 2,447, Dn·B 3,606, erasing 2,601, spell-outs rare.",
+    "locality": "Local, with no payload and no address. Same block and switchboard constraints. GPU and lattice match bit for bit. The substrate refuses to load them (lattice.rs `load`: 'the substrate runs without superpositions, movement agents or merging'), and none of rev.rs's numbers use them.",
+    "history_handling": "None. They have never been combined with the log engine or the substrate.",
+    "good": "About halves rewrites, clocks, agents at load and lattice size. No compiler change, and the calculus is unchanged. It removes the copy-then-erase that bracket abstraction's S (K f) g shapes cause. Literature backs it: Turner's B and C, BCK/BCI linear and affine terms, director strings.",
+    "bad": "Duplicators are still 25-38% of the work: a recursive function is still copied one layer per use (Dn·B is the most common view rule). It adds 36 rules (62 in all), including 18 spell-out rules, which costs a wider rule field on the chip. It only applies to loaded code; values built at run time stay trees. Labelling only the code that will be applied does nothing (0.989x), because code travels as data through `fix` and currying."
+   },
+   {
+    "name": "Log engine (rev.rs): every rewrite is an undoable event",
+    "where": "evaluators/rust-ic-strands/crate/src/rev.rs; bin strands-rev; player/rev.html; README 'Running backward'; research/REVERSIBLE_PIPELINE.md 'Step 1'",
+    "primitives": "Event {kind, gone, made}. Kind is a rule number, Uncopy, Dead or Unpaired. `gone` holds each consumed agent as Was {id, tag, label, want} with three port links. A link is Inside (another consumed agent's port), Handle (the product port that took over its outside) or Free. Tag::Seam is an agent marking a wire a rule joined, so later users depend on that event; interactions see through seams. maker[id] gives the event that made each agent. Also an `undone` list for redo, and `rounds`.",
+    "rules": "fire(c, p, seams) applies the template and records it. collect_at turns an eraser's collections into events (un-copy: the Dn becomes a seam; dead work; unpaired). An event can be undone iff every agent it made is still alive. undo removes the products, brings the consumed agents back under the same ids, and rewires through the Handles. redo remakes the products with their old ids. seek(t) goes to any point. round() fires every rewrite present at the start of a round; anything made this round waits for the next (put_off); demand passes on within the round. `erase: false` keeps erased values whole.",
+    "parallelism": "Same as the plain net in strict rounds (above): add 2 3 in 631 rounds, widest 12; relay_add 2/4/8/16 bits in 218/354/492/640 rounds, widest 21/41/77/150. tests/rev.rs: 86 terms, 5,183 events in 1,233 rounds. 80% of erasing falls in the last fifth of the rounds; measured this session, erasing is 56-58% of the last fifth's events on relay_add.",
+    "locality": "Not spatial: it runs the abstract net. Ids are global names and a Handle is a pointer to a product port. The history is a global log indexed by event number.",
+    "history_handling": "Keeps everything. About 2.3 consumed agents per event, which is 15-40x the loaded program: add 1 1 is 1,936 events keeping 4,449 agents (300 loaded); fib 3 is 12,113 / 27,421; lambada sort:3 is 32,813 / 73,732. Un-copy as an event cuts the history 3.6-10x one rewrite at a time, and 11x by rounds (20,305 events without it). Erasing is fine once recorded: keeping values whole stores about as much (1,490 events plus 642 agents of residue, against 1,936 events and none). Most of a record is implied by the rule; what really needs storing is one receipt per event (rule, consumed labels, link to products) plus the seams it used.",
+    "good": "Small (about 500 lines) and exact: 86 terms go back to the loaded net agent for agent, in any causal order (an occurrence net). Seek and redo give a debugger and time travel. Rounds give the run's parallel time directly. It showed that erasing need not be avoided and that un-copy is the main lever.",
+    "bad": "The history is the cost and grows with the run. It is a global log, not matter. Bennett's 'copy the answer, then run back' fails as stated: Dn consumes the answer, so a non-consuming reader is needed. Most events are copying and erasing (56-62% by this session's count), so most of the history records copies that were later thrown away."
+   },
+   {
+    "name": "The substrate (`phys=1`): the lattice run as physics, with records, drive, bonds, and erasers that stop at leaves",
+    "where": "evaluators/rust-ic-strands/crate/src/substrate.rs; lattice.rs hooks (`sub_before`/`sub_after` around fire, `sub_uncopy`/`sub_dead`/`sub_unpaired` in collection, `sub_turn` per turn, `bond_de` in the step energy, the Eps·L gate at line ~1867); player/substrate.html; strands-phys; README 'The substrate'; REVERSIBLE_PIPELINE.md 'On the lattice'",
+    "primitives": "Record {kind: u16, gone: Vec<Was>, inner, made: an id range made..made+n, outer, joined: Vec<Joined>}. Kind is a rule number or one of the magic values UNCOPY=1000+q, DEAD=1010, UNPAIRED=1011. Was also carries marks. Sub {records: Vec<Option<Record>> by number; made_by: Vec<u64> by agent id; marks: HashMap<(id, port), Vec<u64>> (a stack of join records per port); seat_of: Vec<u32> (the last site of each agent id); ledger}. Params: drive ε (8), temperature T (1.5), erase (chance per try), forget (chance per turn), bond (1). Ledger: drive heat, leaves erased, records forgotten, forward and back counts, un-copies.",
+    "rules": "A forward rewrite or collection happens with chance min(1, e^(ε/T)) and writes a record; its products get the record's number in made_by, and joined ends get marks. Eps·L is the one irreversible step: it happens only with chance `erase`, keeps no record, and forgets every record that only that leaf led back through. A forget recursively walks makers and marks across the whole table. A turn at a site with agents (`sub_turn`): forget with some chance; then, with chance min(1, e^(-ε/T)), try to undo a record that one of its agents carries. An undo needs the products alive and unmarked, the joins intact, all consumed ids dead, and every product plus the near end of each joined wire inside the turn's 2x2x2 block. Then `rebuild` runs an exhaustive search for seats and lanes, and the agents return with their ids. If the pieces are apart, `gather` steps one agent toward the centroid of the others. Bond energy: an agent pays `bond` for every site it moves away from the other products of its maker record, or from the other end of a join; going backward it is scaled by -ε/T.",
+    "parallelism": "strands-phys, player grid, seed 1. Plain lattice clocks/rewrites, then substrate forward clocks/rewrites (undone on the way), then records at the answer, then clocks back to the loaded net at ε=-9. add 1 1: 4,646/2,167; 5,306/3,109 (1,188); 2,470 records; 59,152 back. add 2 3: 7,882/3,377; 9,188/3,957 (1,537); 3,101; 90,215. fib 2: 11,057/6,535; 11,937/8,773 (4,485); 6,193; 121,698. relay_add 13 6: 4,962/4,199; 5,733/4,997 (1,446); 4,264; 68,385. Forward costs 8-17% more clocks and 17-43% more rewrites, all of the extra being rewrites undone and redone. Going back takes 10-12x the forward clocks; for add 1 1, 535,718 undo tries found the pieces apart and 751 found no room. Erasing every leaf takes 194-807 leaves of heat and forgets 2,300-6,600 records.",
+    "locality": "Each move is local (block-confined), but the bookkeeping is not. (1) The record table is keyed by global numbers, and agents keep global ids that undo must restore. (2) `bond_de` reads seat_of, the coordinates of bonded agents wherever they are, to price a step: a distance read over any range. (3) `gather` steps toward the centroid of far agents' coordinates. (4) `forget` and `forget_gone` cascade through the whole table. (5) Undo needs a search over seatings in the block. The README 'Open' section itself admits that, as matter, records would need a 4th port per agent or receipts built of several agents, which what they made would drag along.",
+    "history_handling": "Every rewrite and every eraser step leaves a record until the eraser reaches a leaf. Taking the leaf costs one unit of heat (Landauer) and cuts off the chain of records only it led back through. Forgetting is a separate decision. Un-copy is recorded and free in heat, matching Jaynes: identical gases mix without entropy increase. Heat = drive (ε per net forward step) + leaves erased + records forgotten; fuel spent = agents added + heat. Where agents sit and which values were called are not recorded, so going back restores the net by id and wiring, laid out differently.",
+    "good": "It realises the physics story end to end: Bennett's Brownian computer drive, a Landauer price only where unique information goes, copies returned for free, a balanced ledger. Forward costs about what the plain lattice does. Runs come back to the loaded net agent for agent. Saved states replay exactly, with settings changeable per clock. Tested on 120 terms forward and 40 forward and back.",
+    "bad": "Over-designed: four mechanisms bolted onto the net rather than coming from it. (a) A side table of records keyed by numbers, plus made_by, a marks HashMap of per-port stacks, and seat_of. The records are not matter, yet a move must look them up. (b) Bonds: a second energy term that exists only to keep a record's products close enough to undo, priced from a global position table. (c) Gathering: a special walk toward a centroid when an undo finds its pieces apart. Even so, back takes 10-12x forward because products drift apart (a copy's halves go to their readers). (d) Special cases: four magic record kinds, an exhaustive seat search, the Eps·L gate, cascading forget. At the answer it holds 2.2-2.6x the loaded agents (mostly erasers each holding a leaf) and 2,500-6,200 records. It refuses movement agents and superpositions. Each record repeats what the rule already implies (which kinds were consumed and how they were wired)."
+   },
+   {
+    "name": "Code in a read-only table (`Ref k`)",
+    "where": "research/LINEAR_TREE_NETS.md sections 4b and 5, plus 'Reading code without consuming it'; prototype in research/linear-nets/; lattice version built and then dropped (README 'Movement agents', 'Duplicators are still 25-38% of the work')",
+    "primitives": "Ref k: an ordinary 1-principal agent holding an 8-9 bit entry number. The table is the loaded program hash-consed: 49-194 entries with views, 80-294 as plain trees. Each entry is (kind, k1, k2) and may itself be a view. Only loaded values are tabled.",
+    "rules": "δ·Ref k -> Ref k, Ref k: copies any size in one rewrite. ε·Ref k -> nothing. A, T1, Sel or Nrm meeting Ref k gets a fresh node of entry k's kind with children Ref k1 and Ref k2, in the same rewrite. That allows up to 8 fresh agents per rewrite instead of 6.",
+    "parallelism": "Lazy machine, 27 programs: the table alone gives 0.59x the rewrites (0.82x counting table reads) and 0.89x the rounds. Views + W + table: 0.28x the rewrites (0.39x with reads), 0.49x the rounds, 0.14x the peak agents, 0.035x the agents at load (fib 3: 723 agents become 11 plus 81 entries). Duplicators fall to 4-15% of the work. relay_add 8-bit 255+1: 7,789 rewrites / 258 rounds become 2,343 (+900 reads) / 127; 16-bit 65535+1: 15,986 / 327 become 4,868 / 168. On the lattice: 0.19x the clocks, 0.31x the rewrites, duplicators 4-11%.",
+    "locality": "An entry number names a piece of code, not a place, so it is not a pointer to a location. But every block unit would need its own program-sized table, shared and read-only, so it is not a cellular automaton; dropped for that reason. The alternative, reusing instances in place, was measured: 54-69% of reads are 9-64 sites from the nearest loaded copy of the value, and 1-3% are within 2 sites. Copies arrive 1-4 strands from their reader, and a walker covers 0.12-0.28 strands per clock, so travel costs more than the copying it would save.",
+    "history_handling": "None. It shows that the code being copied and erased is the same few dozen entries over and over.",
+    "good": "Gives the upper bound for free sharing of code: the biggest single gain measured (0.19x clocks). Has precedent in HVM2's REF nodes and in Geometry of Interaction / environment machines (code fixed and never consumed).",
+    "bad": "A non-local shared store; the dropped design. Tables only loaded code, not run-time closures. Readback and the projection check must expand Refs. The lattice no longer holds the whole program."
+   },
+   {
+    "name": "Two-way calculus (iso.rs) and its token machines (walk.rs, raw-tree walker net; deleted in 2a32736, kept in eca0073)",
+    "where": "evaluators/rust-ic-strands/crate/src/iso.rs (565 lines remain: Iso, dagger, run, tc, tck, bennett, bijection); `git show eca0073` for iso Machine, walk.rs, player/inet.js, rawprog.js, persistent.js; README 'Two-way programs' and 'Things tried: Machines that walk a program'; REVERSIBLE_PIPELINE.md 'Native'",
+    "primitives": "Everything is a tree: data, programs (encode/decode), the library, the trace. Instructions: Re(pattern, pattern) rearrange; Dup (a -> F a a; its inverse only takes back from two equal halves); On(path); Seq; Case with when/gives patterns (symmetric first match); Loop with Janus-style entry and exit tests; Call; Eval (run a program given as data); Both (two halves at once); Note; Forget (the only lossy step). Token machines: a token carrying a tree plus a stack walks a program tree that never changes. The raw-tree walker net has one walker agent among leaves, stems and forks, with 104 rules over 59 walker states.",
+    "rules": "dagger reads off the inverse: reverse a Seq, swap Re's sides, flip Dup, swap Case when/gives, swap Loop tests. tc derives the tree calculus: K moves the dropped argument onto the trace, S copies its argument and makes three applications, triage puts the arms not taken onto the trace, and each arm marks the trace. tck keeps the applied program next to the answer, so the trace holds only what the data decides. At a Both, tokens split into a fork with two holes and join when both halves return; every move is undone by another, so tokens move in any order with nothing recorded.",
+    "parallelism": "Low. Moves / rounds / most tokens at once: tck add 1 1 is 5,541 / 3,939 / 4; tck fib 2 is 14,870 / 9,021 / 7; tck relay_add at 2/4/8 bits is 4,786/11,222/24,110 moves in 3,337/7,783/16,751 rounds, at most 5 tokens. That is about 1.4-1.6 moves per round, and relay's rounds double with its bits, against the net's +140 rounds per doubling and 4-23 events per round. The raw-tree walker net runs one meeting at a time: add 2 3 takes 584 meetings making 95 agents, against the tree-calculus net's 2,658 rewrites in 631 rounds making 5,994; rev [1, 2, 3] takes 1,629 meetings making 347, against 10,033 rewrites in 1,517 rounds (widest 29) making 22,811. Jets: add 3 4 takes 53 moves against 11,845, but only at top level. Two tokens at one node take turns, costing 1.2-1.7% more rounds.",
+    "locality": "A move reads only the top of the token's tree: about 3 agents (at most 8) for the library's add, and about 7 (at most 27) for tck. A move goes 3-4 edges along the program tree on average; 12-16% go further than 6 (calls and returns, up to 24 edges). But the program exists in one place and every token goes to it. In an interaction net, reading a node turns its principal port toward the reader, so the whole root-to-walker path faces that walker and a second walker needs its own copy of the code.",
+    "history_handling": "No log at all. Running back means turning the token around. The trace is an ordinary tree the caller can keep, clean up (bennett: twice the steps), or throw away (forget). What the trace holds: for add 1 1, 87% is arguments K dropped (9,463 nodes against 266 for untaken arms), and 102 of the 116 dropped pieces are copies of the program itself. It has 10,828 nodes but only 427 distinct subtrees (fib 3: 82,311 and 1,736). With copies sharing what they copy, memory falls 8-12x (add 1 1: 10,813 -> 1,406 nodes), leaving about one small entry per application. tck cuts a third of the entries for 26% more steps.",
+    "good": "This is the design that 'just moved things around'. Every step loses nothing, and inverses come from the text (add' subtracts). Programs, inverses and traces are all trees. Bijections run with nothing left over. The persistent machine makes agents only when data grows: add 2 3 makes 14 and removes 10. It shows that a large share of history is redundant copies of code.",
+    "bad": "Sequential in practice. It evaluates eagerly, and tokens split only at an explicit Both, so it peaks at 4-7 tokens. Everything happens where a walker is. The shared program is a non-local hub, and two walkers need two copies. The tree calculus has to be interpreted (tc/tck) to run disp's own trees, with an expensive trace. The walker net needed a 104-rule state machine and programs compiled to one-layer steps. Removed for being non-local and narrow."
+   }
+  ],
+  "measurements": "I ran this session's numbers on the log engine (rev.rs) using strict rounds on the abstract net with fork on. I used strands-rev --rounds plus a scratch probe at /tmp/revprobe/rounds, which links the crate and changes no repo files. The calls were compiled ones from research/linear-nets/calls.txt.\n\nadd 2 3 matches the README exactly: 2,658 events in 631 rounds, widest 12.\n\n| call | events | rounds | widest | mean per round | rounds with 2 or fewer events |\n|---|---|---|---|---|---|\n| add 2 3 | 2,658 | 631 | 12 | 4.2 | 25% |\n| fib 3 | 10,254 | 1,324 | 36 | 7.7 | 8% |\n| relay_add 8-bit 255+1 | 7,484 | 517 | 74 | 14.5 | 4% |\n| relay_add 16-bit 65535+1 | 15,494 | 685 | 144 | 22.6 | 4% |\n\nEvents by kind:\n\n| call | copying (Dn·x) | erasing and collecting (Eps·x, un-copy, dead work) | dispatch (A·F, T1, Sel, Unp·Pair, A·P) | building (A·L, A·S) |\n|---|---|---|---|---|\n| add 2 3 | 29% | 27% | 38% | 6% |\n| relay8 | 33% | 28% | 33% | 5% |\n| relay16 | 34% | 27% | 33% | 5% |\n| fib 3 | 33% | 29% | 32% | 5% |\n\nThese match LINEAR_TREE_NETS.md's lazy-machine split (34/28/33/5).\n\n**New finding: copying and erasing add width, not depth.** I took the longest causal chain, following the event that made each consumed agent. Counting copy and erase events as free shortens that chain only 5-11%:\n\n| call | causal chain, all events | copy + erase free | dispatch only |\n|---|---|---|---|\n| add 2 3 | 442 | 407 | 365 |\n| relay8 | 317 | 301 | 272 |\n| relay16 | 411 | 389 | 353 |\n| fib 3 | 826 | 737 | 671 |\n\nSo about 60% of the events, and of the history, is copying and erasing, yet it sits mostly beside the critical path. The causal chain is 61-70% of the rounds; the rest is waiting for demand, which my maker-based chain does not capture.\n\nOver time, the first four fifths of the rounds are about 30-42% copying, 37-46% dispatch and 13-20% erasing. The last fifth is 56-58% erasing on add and relay (fib 3's erasing starts earlier: 47% in the fourth fifth).\n\n**Two different 'rounds' in the docs; do not compare them across.**\n- The lazy machine (memo.rs `ideal_depth`) stops when the root reads back as a value, and an old consumer can meet a producer made in the same round. relay_add 8-bit 255+1 takes 258 rounds there.\n- rev.rs rounds are strict and run through cleanup: 517 for the same call.\n- The README's relay table (8 bits: 492 rounds, widest 77) used other inputs than my 255+1 run (517 / 74).\n\n**Notes for the 'history as a resource' question, all from the repo's own measurements:**\n- 75-84% of lattice rewrites lose nothing.\n- 90-98% of erased agents were copies; real loss is 25-112 agents per run, against 2,100-9,400 rewrites.\n- The two-way calculus's trace is 87% arguments K dropped, mostly copies of the program's own code: 10,828 nodes but 427 distinct.\n- Meanwhile duplicators keep making new copies of that same code, and only 6-33% of copies are needed at once.\n\nSo the discarded copies the history holds are largely the same code the run keeps re-copying.\n\n**Doc drift spotted:**\n- REVERSIBLE_PIPELINE.md says the substrate costs '6-15% more clocks' forward and '10-15x' back. The README and the commit say 8-17% and 10-12x.\n- LINEAR_TREE_NETS.md sections 4b/5 step 2 recommend the table, which was since dropped; its Status block says so.\n- The README movement-agents table still labels K shapes, which it flags itself.\n- REVERSIBLE_PIPELINE's 'Rules, sketched' section is half superseded by the substrate, which it also flags.\n\nScratch files are only under /tmp/revprobe, none in the repo.\n\nAutomation opportunity: strands-rev could print the per-round kind mix and the causal-chain depth (with copy and erase free) itself, instead of needing a scratch crate.",
+  "verified_citations_in_repo": [
+   {
+    "claim": "Bennett's Brownian computer: both directions occur, with drift set by a weak driving force (used for the substrate's drive)",
+    "url": "https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Bennett_1982.pdf#page=10",
+    "quote": "both forward and backward steps are possible, and would indeed occur equally often at equilibrium"
+   },
+   {
+    "claim": "Mixing identical copies costs no entropy (the substrate's free un-copy)",
+    "url": "https://bayes.wustl.edu/etj/articles/gibbs.paradox.pdf#page=4",
+    "quote": "When the gases are identical they still mix, but there is no entropy increase"
+   },
+   {
+    "claim": "Token machines in the Geometry of Interaction are reversible without collecting a history",
+    "url": "https://www.pure.ed.ac.uk/ws/files/16874549/Reversible_irreversible_and_optimal_machines.pdf#page=4",
+    "quote": "needs no external garbage-collection"
+   },
+   {
+    "claim": "Interaction nets are not reversible as they stand; the condition for reversibility",
+    "url": "https://arxiv.org/pdf/1806.07275#page=4",
+    "quote": "An interaction system is reversible if and only if no two different active pairs clash and each rule is connected"
+   },
+   {
+    "claim": "Margolus block partitioning makes a cellular automaton reversible when the block rule is a bijection",
+    "url": "https://fab.cba.mit.edu/classes/862.16/notes/computation/Margolus-1984.pdf#page=6",
+    "quote": "Since each distinct initial state of a block is mapped onto a distinct final state, this rule is reversible"
+   },
+   {
+    "claim": "Creutz demons give deterministic reversible dynamics in place of Metropolis temperature",
+    "url": "https://www.latticeguy.net/mypubs/pub088.pdf#page=4",
+    "quote": "in addition to being deterministic, this dynamics is reversible"
+   },
+   {
+    "claim": "Information effects: a reversible core with creation and erasure as explicit effects",
+    "url": "https://web.archive.org/web/20161007070937id_/http://www.cs.indiana.edu/~sabry/papers/information-effects.pdf#page=1",
+    "quote": "exposes creation and erasure of information as explicit effect operations"
+   },
+   {
+    "claim": "Reversible combinatory logic records what is needed to rebuild the redex (one receipt per step)",
+    "url": "https://www.doc.ic.ac.uk/~herbert/papers/mscs06.pdf#page=2",
+    "quote": "incorporates information useful to reconstruct the redex from the contractum"
+   },
+   {
+    "claim": "Lafont questioned treating erasing and duplication as atomic",
+    "url": "https://dcreager.net/pdf/Lafont1997.pdf#page=2",
+    "quote": "is it reasonable to consider erasing and duplication as atomic operations"
+   },
+   {
+    "claim": "HVM2 REF nodes: a closed definition expanded in one interaction (precedent for the code table)",
+    "url": "https://raw.githubusercontent.com/HigherOrderCO/HVM2/main/paper/HVM2.pdf#page=5",
+    "quote": "they represent an immutable net that is expanded in a single interaction"
+   },
+   {
+    "claim": "Pure token machines pay in time",
+    "url": "https://arxiv.org/pdf/2010.12988#page=2",
+    "quote": "can be exponentially slower than environment machines"
+   }
+  ]
+ }
+}

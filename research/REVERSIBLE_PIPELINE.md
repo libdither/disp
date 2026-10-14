@@ -79,10 +79,13 @@ every move still local:
   leaf loses anything, and that is a decision, with Landauer's price (a unit of heat) and the loss of
   every record that only the leaf led back through. Un-copying is free. So the history is forgotten
   by choice, where and when one likes, as item 4 asks.
-- **What it costs.** Forward about what the plain lattice takes (6–15% more clocks), 2.3× the agents
-  at the answer kept as what was dropped, and 2–3 thousand records a run; back 10–15× the clocks
+- **What it costs.** Forward about what the plain lattice takes (8–17% more clocks), 2.2–2.6× the
+  agents at the answer kept as what was dropped, and 2,500–6,200 records a run; back 10–12× the clocks
   forward, spent bringing what an undo needs together (records tie what they made, a bond that pulls
   harder going backward).
+- **A simpler core** is weighed in research/REVERSIBLE_CORE.md: the history kept as matter wired to
+  what it made (footprints), with no numbers or tables, and a reader that lets Bennett's cleanup run
+  inside the net.
 
 ## Native: two-way programs, no receipts at all
 
@@ -144,10 +147,10 @@ a loop states tests for its first and last rounds, as Janus's loops do.
   not been found: the tree calculus's own building rules (`△ x = △x`, `△a x = △ a x`) are already
   two-way, but K, S and triage each need a replacement that keeps what they drop. Calling two-way code
   from disp without the trace needs a way to mark it in the tree calculus's trees. The token machines
-  ran with few tokens busy (relay's adder never more than 5, its rounds doubling with its bits where
-  the lazy net's grow by about 140) and did everything where a token was: in a net, reading a node turns
-  it toward the reader, so a second reader needs its own copy of the code. Lazy evaluation is where
-  disp's parallelism is.
+  ran with few tokens busy (relay's adder at most 5 to 9 depending on the input, its rounds doubling
+  with its bits where the lazy net's grow by about 140) and did everything where a token was: in a net,
+  reading a node turns it toward the reader, so a second reader needs its own copy of the code. Lazy
+  evaluation is where disp's parallelism is.
 
 ## How the stages decompose
 
