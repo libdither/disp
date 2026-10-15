@@ -223,8 +223,8 @@ fn the_wiring_is_the_nets() {
         let mut was: HashMap<u32, u32> = HashMap::new();
         for clock in 0..300 {
             let w = readback::wires(&l);
-            let rec: HashMap<u32, &[u32]> = w.chunks(6).map(|r| (r[0], r)).collect();
-            assert_eq!(rec.len() * 6, w.len(), "{name}: an agent twice");
+            let rec: HashMap<u32, &[u32]> = w.chunks(7).map(|r| (r[0], r)).collect();
+            assert_eq!(rec.len() * 7, w.len(), "{name}: an agent twice");
             assert_eq!(rec.len(), l.shadow.live_count(), "{name}, clock {clock}: agents missing");
             for r in rec.values() {
                 assert_eq!(l.sids[r[1] as usize], r[0], "{name}: not in its seat");

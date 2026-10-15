@@ -26,7 +26,7 @@
 //!   forgotten and every leaf erased. Agents are made from fuel and give it back when unmade, so the
 //!   fuel spent is the agents added plus the heat.
 
-use super::{code, Energy, FieldSnap, Lattice, Params, Region, Stats, ARITY, NONE};
+use super::{code, Energy, FieldSnap, Lattice, Params, Region, Stats, NONE};
 use rust_ca_lattice::net::{Agent, Ref};
 use rust_ca_lattice::rules::{rule, End, Tag};
 use std::collections::HashMap;
@@ -136,13 +136,13 @@ impl Lattice {
         (e != 0 && self.sub.records.get(e as usize).is_some_and(|r| r.is_some())).then_some(e)
     }
     fn alive(&self, id: u32) -> bool { self.shadow.agents.get(id as usize).is_some_and(|a| a.is_some()) }
-    fn marked(&self, id: u32) -> bool { (0..ARITY as u8).any(|q| self.sub.marks.get(&(id, q)).is_some_and(|v| !v.is_empty())) }
+    fn marked(&self, id: u32) -> bool { (0..self.ar as u8).any(|q| self.sub.marks.get(&(id, q)).is_some_and(|v| !v.is_empty())) }
 
     /// Agent `id` (at seat i) as it is, its marks taken off the ports.
     fn was(&mut self, id: u32, i: usize) -> Was {
         let a = self.shadow.get(id);
         let (tag, sup) = (a.tag, a.label);
-        let marks = (0..ARITY as u8).filter_map(|q| self.sub.marks.remove(&(id, q)).filter(|v| !v.is_empty()).map(|v| (q, v))).collect();
+        let marks = (0..self.ar as u8).filter_map(|q| self.sub.marks.remove(&(id, q)).filter(|v| !v.is_empty()).map(|v| (q, v))).collect();
         Was { id, tag, sup, want: self.want[i], label: self.label[i], marks }
     }
 
@@ -154,7 +154,7 @@ impl Lattice {
             let r = self.sub.records[e as usize].as_ref().unwrap();
             out.extend((r.made..r.made + r.n as u32).filter(|&x| x != id));
         }
-        for q in 0..ARITY as u8 {
+        for q in 0..self.ar as u8 {
             let Some(&e) = self.sub.marks.get(&(id, q)).and_then(|v| v.last()) else { continue };
             let Some(Some(r)) = self.sub.records.get(e as usize) else { continue };
             if r.joined.iter().any(|j| j.a == (id, q)) { out.extend(r.joined.iter().map(|j| j.a.0).filter(|&x| x != id)); }
@@ -311,7 +311,7 @@ impl Lattice {
         let mut tries: Vec<u64> = vec![];
         for &id in &here {
             if let Some(e) = self.maker(id) { tries.push(e); }
-            for q in 0..ARITY as u8 {
+            for q in 0..self.ar as u8 {
                 if let Some(&e) = self.sub.marks.get(&(id, q)).and_then(|v| v.last()) {
                     if self.sub.records.get(e as usize).is_some_and(|r| r.is_some()) { tries.push(e); }
                 }
@@ -435,7 +435,7 @@ impl Lattice {
             if !self.rebuild(&region, plan) { full = true; continue; }
             // The abstract net: what was made goes, what was used up comes back, wired as it was.
             for &x in &products { self.shadow.agents[x as usize] = None; }
-            for w in &rec.gone { self.shadow.agents[w.id as usize] = Some(Agent { tag: w.tag, label: w.sup, ports: [None; 3] }); }
+            for w in &rec.gone { self.shadow.agents[w.id as usize] = Some(Agent { tag: w.tag, label: w.sup, ports: [None; 4] }); }
             let id = |g: (u8, u8)| rec.gone[g.0 as usize].id;
             for &(a, b) in &rec.inner { self.shadow.link(id(a), a.1, id(b), b.1); }
             for &(a, b) in &loops { self.shadow.link(id(a), a.1, id(b), b.1); }
@@ -537,7 +537,7 @@ impl Lattice {
         // Pairings each site keeps once the dying agents and cleared ends are gone.
         let mut lost: Vec<(u32, u8, u8)> = vec![];
         let mut lose = |l: &Self, x: u32, e: u8| { let m = l.mate_of(x, e); if m != NONE && !lost.contains(&(x, e.min(m), e.max(m))) { lost.push((x, e.min(m), e.max(m))); } };
-        for &(l, k) in &plan.dying { for q in 0..ARITY { lose(self, region.sites[l], self.ae(k, q)); } }
+        for &(l, k) in &plan.dying { for q in 0..self.ar { lose(self, region.sites[l], self.ae(k, q)); } }
         for &(x, e) in plan.clear.iter().chain(&plan.cut) { lose(self, x, e); }
         let left: Vec<usize> = region.sites.iter().map(|&x| if x == u32::MAX || self.p.pairs == 0 { 0 } else { self.pairs(x) - lost.iter().filter(|l| l.0 == x).count() }).collect();
         let at = |t: T, loc: &[usize]| match t { T::New(i, _) => loc[i], T::Stay(l, _) => l };
@@ -591,7 +591,7 @@ impl Lattice {
         for _ in &plan.freed { self.strand_count(-1); }
         for &(l, k) in &plan.dying {
             let x = region.sites[l];
-            for q in 0..ARITY { self.set(x, self.ae(k, q), NONE); }
+            for q in 0..self.ar { self.set(x, self.ae(k, q), NONE); }
             self.remove(x, k);
         }
         let mut lanes: HashMap<(u32, usize), Vec<usize>> = HashMap::new();
@@ -607,7 +607,7 @@ impl Lattice {
             self.label[i] = w.label;
         }
         for &(a, b) in &plan.links {
-            let end_at = |t: T| match t { T::New(i, q) => (seats[i].0, (seats[i].1 * ARITY + q) as u8), T::Stay(l, m) => (l, m) };
+            let end_at = |t: T| match t { T::New(i, q) => (seats[i].0, (seats[i].1 * self.ar + q) as u8), T::Stay(l, m) => (l, m) };
             let ((la, ea), (lb, eb)) = (end_at(a), end_at(b));
             if la == lb { self.link(region.sites[la], ea, eb); continue; }
             let mut cur = ea;

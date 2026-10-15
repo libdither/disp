@@ -6,7 +6,7 @@
 //! (it hashes the whole abstract net) and the merge is surgery on the lattice, kept inside one
 //! 2×2×2 block with `Params::memo_local` but still not a chip's move, so only the CPU runs it.
 
-use super::{code, Lattice, ARITY, GARBAGE, NONE};
+use super::{code, Lattice, GARBAGE, NONE};
 use crate::polarity_is_source as is_source;
 use rust_ca_lattice::net::{Net, Ref};
 use rust_ca_lattice::oracle::{self, Fuel, Term};
@@ -127,6 +127,7 @@ impl Terms {
                 // Movement agents are not merged (`Params::views` runs without memo).
                 Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.cut(),
                 Tag::Seam => self.cut(),
+                _ => self.cut(),
             };
         }
         at[r.0 as usize][r.1 as usize]
@@ -554,17 +555,17 @@ impl Lattice {
         let (kq, dq) = (out_port(k.tag).unwrap() as usize, out_port(d.tag).unwrap() as usize);
         let kout = self.ae(kk, kq);
         let mk = self.mate_of(sk, kout);
-        let md: Vec<u8> = (0..ARITY).map(|q| self.mate_of(sd, self.ae(kd, q))).collect();
-        let ins: Vec<usize> = (0..ARITY).filter(|&q| q != dq).collect();
+        let md: Vec<u8> = (0..self.ar).map(|q| self.mate_of(sd, self.ae(kd, q))).collect();
+        let ins: Vec<usize> = (0..self.ar).filter(|&q| q != dq).collect();
         let reach = apart(self, sk, sd) + 8;
         let mut pl = Planner { fence, ..Planner::default() };
-        pl.add(sd, -(ARITY as i32));
+        pl.add(sd, -(self.ar as i32));
         pl.add(sk, -1);
         pl.freed.push((sd, kd));
         let Some((dn_at, dn_paths)) = pl.seat(self, &[sk, sk, sd], reach) else { return false };
         let Some((e0_at, e0_path)) = pl.seat(self, &[sd], 2) else { return false };
         let Some((e1_at, e1_path)) = pl.seat(self, &[sd], 2) else { return false };
-        for q in 0..ARITY { let m = md[q]; self.set(sd, self.ae(kd, q), NONE); self.set(sd, m, NONE); }
+        for q in 0..self.ar { let m = md[q]; self.set(sd, self.ae(kd, q), NONE); self.set(sd, m, NONE); }
         self.remove(sd, kd);
         self.set(sk, kout, NONE);
         self.set(sk, mk, NONE);

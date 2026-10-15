@@ -51,6 +51,7 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
 /// Why the GPU cannot run this lattice: its configuration (`gpu_unfit`), or superpositions, whose
 /// labels its 40-byte site has no room for (and whose rules its tables leave out).
 pub fn gpu_refuses(l: &crate::lattice::Lattice) -> Option<&'static str> {
+    if l.p.resid > 0 { return Some("keeping history runs on the CPU"); }
     gpu_unfit(&l.p).or_else(|| (l.labelled() > 0).then_some("it runs no superpositions"))
 }
 

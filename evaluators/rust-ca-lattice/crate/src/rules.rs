@@ -58,6 +58,44 @@ pub enum Tag {
     /// A mark on a wire that reversible rewriting (rust-ic-strands rev.rs) leaves where a rule joins two
     /// wires into one: interactions see straight through it. [a, b]
     Seam,
+    // Keeping history (`RESID_RULES`, research/reversible-core/residual.py): each apply leaves what it
+    // would have dropped, its residual, on a fourth port, and a residual applied backward to its result
+    // gives back the function and the argument.
+    RA,    // apply: [p(function), arg, out, residual]
+    RT1,   // triage on a: [p(a), ⟨b,c⟩, out, residual]
+    RSel,  // dispatch on the argument: [p(c), Arms3(w,x,b), out, residual]
+    SL,    // dispatch, the argument a leaf, reading the arms: [p(arms), out, residual]
+    SS,    // the argument a stem: [p(arms), u, out, residual]
+    SF,    // the argument a fork: [p(arms), ⟨u,v⟩, out, residual]
+    T1s,   // the S rule looking at s for B: [p(s), ⟨b,c⟩, out, residual]
+    T1sf,  // at s's left child: [p, ⟨s's right child, ⟨b,c⟩⟩, out, residual]
+    T1sc0, // opening ⟨b,c⟩ to look at b for C: [p(⟨b,c⟩), s, out, residual]
+    T1sc,  // at b: [p(b), ⟨s,c⟩, out, residual]
+    T1scf, // at b's left child: [p, ⟨b's right child, ⟨s,c⟩⟩, out, residual]
+    TSb,   // the S rule proper, once ⟨s,c⟩ is read: [p(⟨s,c⟩), b, out, residual]
+    UA,    // un-apply: [p(residual), result, argument out, function out]
+    UAr,   // un-apply of a constructor, reading the result: [p(result), argument out, function out]
+    USel,  // dispatch run back: [p(argument's head), Arms3(d, r, result), argument out, function out]
+    USL,   // [p(arms), argument out, function out]
+    USS,   // [p(arms), j, argument out, function out]
+    USF,   // [p(arms), ⟨j₁,j₂⟩, argument out, function out]
+    Mg,    // merge, a copy run back: [p(copy), copy, value out]
+    MgL,   // having read a leaf: [p(other copy), value out]
+    MgS,   // having read a stem: [p(other copy), child, value out]
+    MgF,   // having read a fork: [p(other copy), left, right, value out]
+    Arms3, // a triage's three arms: [p, w, x, b]
+    Rk,    // residual △△c: [p, c]
+    Rs,    // residual △(△j₁)(△j₂j₃): [p, j₁, j₂, j₃]
+    Rt,    // residual △(△hd)r: [p, h, d, r]
+    Rb,    // residual △(△j₁j₂): [p, j₁, j₂]
+    Rc,    // residual △(△(△j₁j₂)): [p, j₁, j₂]
+    /// Holds a wire shut until opened (`Lattice::open_gates`): what runs back waits behind gates
+    /// while the answer is worked out. [in, out]
+    Gate,
+    /// Running back, a fork or stem of the loaded term that holds applications, taken apart so each
+    /// part runs back on its own (resid.rs). [p, left, right] and [p, child]
+    Fm,
+    Sm,
 }
 
 /// Every tag, in the order engines number them (from 1, 0 meaning none). `Sup` comes last so
@@ -71,20 +109,34 @@ pub const ALL_TAGS: [Tag; 14] = [
 /// abstract net and the strand lattice, on its CPU and GPU (the cascade and the chip keep 4 bits).
 pub const VIEW_TAGS: [Tag; 6] = [Tag::K, Tag::Sx, Tag::B, Tag::C, Tag::I, Tag::W];
 
+/// The tags of keeping history (`RESID_RULES`), numbered after the movement agents' where the strand
+/// lattice runs them (its CPU only).
+pub const RESID_TAGS: [Tag; 31] = [
+    Tag::RA, Tag::RT1, Tag::RSel, Tag::SL, Tag::SS, Tag::SF, Tag::T1s, Tag::T1sf, Tag::T1sc0, Tag::T1sc, Tag::T1scf, Tag::TSb,
+    Tag::UA, Tag::UAr, Tag::USel, Tag::USL, Tag::USS, Tag::USF, Tag::Mg, Tag::MgL, Tag::MgS, Tag::MgF,
+    Tag::Arms3, Tag::Rk, Tag::Rs, Tag::Rt, Tag::Rb, Tag::Rc, Tag::Gate, Tag::Fm, Tag::Sm,
+];
+
 impl Tag {
     pub fn arity(self) -> usize {
         match self {
             Tag::L | Tag::Eps | Tag::Out | Tag::I => 1,
-            Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Seam => 2,
+            Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Seam | Tag::MgL | Tag::Rk | Tag::Gate | Tag::Sm => 2,
+            Tag::RA | Tag::RT1 | Tag::RSel | Tag::SS | Tag::SF | Tag::T1s | Tag::T1sf | Tag::T1sc0 | Tag::T1sc | Tag::T1scf
+            | Tag::TSb | Tag::UA | Tag::USel | Tag::USS | Tag::USF | Tag::MgF | Tag::Arms3 | Tag::Rs | Tag::Rt => 4,
             _ => 3,
         }
     }
     pub fn is_producer(self) -> bool {
-        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup) || self.is_view()
+        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup | Tag::Arms3 | Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc)
+            || self.is_view()
     }
     pub fn is_view(self) -> bool { matches!(self, Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W) }
+    /// Keeping history's (`RESID_RULES`).
+    pub fn is_resid(self) -> bool { RESID_TAGS.contains(&self) }
     pub fn is_consumer(self) -> bool {
         matches!(self, Tag::A | Tag::T1 | Tag::Sel | Tag::Unp | Tag::Dn | Tag::Eps | Tag::Nrm)
+            || self.is_resid() && !self.is_producer() && self != Tag::Gate
     }
     pub fn name(self) -> &'static str {
         match self {
@@ -93,6 +145,12 @@ impl Tag {
             Tag::Dn => "Dn", Tag::Eps => "Eps", Tag::Nrm => "Nrm", Tag::Out => "Out",
             Tag::K => "K", Tag::Sx => "Sx", Tag::B => "B", Tag::C => "C", Tag::I => "I", Tag::W => "W",
             Tag::Seam => "Seam",
+            Tag::RA => "A+", Tag::RT1 => "T1+", Tag::RSel => "Sel+", Tag::SL => "SL+", Tag::SS => "SS+", Tag::SF => "SF+",
+            Tag::T1s => "T1s+", Tag::T1sf => "T1sf+", Tag::T1sc0 => "T1sc0+", Tag::T1sc => "T1sc+", Tag::T1scf => "T1scf+", Tag::TSb => "TSb+",
+            Tag::UA => "A-", Tag::UAr => "Ar-", Tag::USel => "Sel-", Tag::USL => "SL-", Tag::USS => "SS-", Tag::USF => "SF-",
+            Tag::Mg => "Dn-", Tag::MgL => "DnL-", Tag::MgS => "DnS-", Tag::MgF => "DnF-",
+            Tag::Arms3 => "Arms3", Tag::Rk => "Rk", Tag::Rs => "Rs", Tag::Rt => "Rt", Tag::Rb => "Rb", Tag::Rc => "Rc", Tag::Gate => "Gate",
+            Tag::Fm => "F-", Tag::Sm => "S-",
         }
     }
 }
@@ -268,13 +326,103 @@ pub static SUP_RULES: &[Rule] = &[
 /// How many rules there are in all, the movement agents' apart (`N_ALL_RULES`).
 pub const N_RULES: usize = RULES.len() + SUP_RULES.len();
 
-/// Every rule, the movement agents' included: `rule`'s numbering runs to here.
+/// Every rule but keeping history's, the movement agents' included.
 pub const N_ALL_RULES: usize = N_RULES + VIEW_RULES.len();
 
-/// Rule i of `RULES` followed by `SUP_RULES` and then `VIEW_RULES`: the numbering `find_index` gives.
+/// Every rule: `rule`'s numbering runs to here.
+pub const N_EVERY_RULE: usize = N_ALL_RULES + RESID_RULES.len();
+
+/// Rule i of `RULES` followed by `SUP_RULES`, `VIEW_RULES` and `RESID_RULES`: the numbering `find_index` gives.
 pub fn rule(i: usize) -> &'static Rule {
-    if i < RULES.len() { &RULES[i] } else if i < N_RULES { &SUP_RULES[i - RULES.len()] } else { &VIEW_RULES[i - N_RULES] }
+    if i < RULES.len() { &RULES[i] } else if i < N_RULES { &SUP_RULES[i - RULES.len()] }
+    else if i < N_ALL_RULES { &VIEW_RULES[i - N_RULES] } else { &RESID_RULES[i - N_ALL_RULES] }
 }
+
+/// Keeping history (research/reversible-core/residual.py, where these are checked against an oracle and
+/// run back to the very agents loaded; `python residual.py --rust` writes them): an apply leaves on its fourth port what it
+/// would have dropped, as a tree whose layout says which case fired (the j's are the residuals of the
+/// applies a step starts):
+///
+/// ```text
+/// △ z         = △z         residual △
+/// △x z        = △xz        residual △
+/// △△b c       = b          residual Rk(c)          = △△c
+/// △(△s)b c    = s c (b c)  residual Rs(j₁, j₂, j₃)  = △(△j₁)(△j₂j₃)
+/// △(△wx)b △   = w          residual Rt(△, x, b)    = △(△△x)b
+/// △(△wx)b △u  = x u        residual Rt(△j, w, b)   = △(△(△j)w)b
+/// △(△wx)b △uv = b u v      residual Rt(△j₁j₂, w, x) = △(△(△j₁j₂)w)x
+/// B f g c     = f (g c)    residual Rb(j₁, j₂)      = △(△j₁j₂)        B f g = △(△(△△f))g
+/// C f g c     = f c g      residual Rc(j₁, j₂)      = △(△(△j₁j₂))     C f g = △(△f)(△△g)
+/// ```
+///
+/// The S rule looks at its function for B and C first and sends the argument only to the side that
+/// uses it. Running back is done by the same walkers turned round: `UA` un-applies (a residual read as
+/// the function, the result as the argument), `USel` dispatches back and `Mg` merges two copies; `UAr`
+/// and `MgL`/`MgS`/`MgF` are the second reads undoing a creation needs; `Fm` and `Sm` take apart a
+/// fork or stem of the loaded term that holds applications (the last two rules, not the model's). Three moves that are not
+/// interactions finish the job (`Lattice::collect`): an un-apply meeting an apply that never ran, a
+/// merge meeting the duplicator its two copies came from, and an eraser on both outputs of an apply
+/// that never ran. Duplicators, unpairs and erasers are `RULES`'.
+pub static RESID_RULES: &[Rule] = &[
+    // ---- forward ----
+    Rule { consumer: RA, producer: L, fresh: &[S, L], wires: &[(X(0, 1), C(1)), (X(0, 0), C(2)), (X(1, 0), C(3))], ..PLAIN },
+    Rule { consumer: RA, producer: S, fresh: &[F, L], wires: &[(X(0, 1), Px(1)), (X(0, 2), C(1)), (X(0, 0), C(2)), (X(1, 0), C(3))], ..PLAIN },
+    Rule { consumer: RA, producer: F, fresh: &[RT1, Pair], wires: &[(X(0, 0), Px(1)), (X(1, 1), Px(2)), (X(1, 2), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: RT1, producer: L, fresh: &[Unp, Rk], wires: &[(X(0, 0), C(1)), (X(0, 1), C(2)), (X(0, 2), X(1, 1)), (X(1, 0), C(3))], ..PLAIN },
+    Rule { consumer: RT1, producer: F, fresh: &[Unp, RSel, Arms3], wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 3)), (X(0, 2), X(1, 0)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(2, 2), Px(2)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: RSel, producer: L, fresh: &[SL], wires: &[(X(0, 0), C(1)), (X(0, 1), C(2)), (X(0, 2), C(3))], ..PLAIN },
+    Rule { consumer: SL, producer: Arms3, fresh: &[Rt, L], wires: &[(Px(1), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), Px(2)), (X(0, 3), Px(3)), (X(0, 0), C(2))], ..PLAIN },
+    Rule { consumer: RSel, producer: S, fresh: &[SS], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: SS, producer: Arms3, fresh: &[RA, Rt, S], wires: &[(X(0, 0), Px(2)), (X(0, 1), C(1)), (X(0, 2), C(2)), (X(0, 3), X(2, 1)), (X(1, 1), X(2, 0)), (X(1, 2), Px(1)), (X(1, 3), Px(3)), (X(1, 0), C(3))], ..PLAIN },
+    Rule { consumer: RSel, producer: F, fresh: &[SF, Pair], wires: &[(X(1, 1), Px(1)), (X(1, 2), Px(2)), (X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: SF, producer: Arms3, fresh: &[Unp, RA, RA, Rt, F], wires: &[(X(0, 0), C(1)), (X(1, 0), Px(3)), (X(1, 1), X(0, 1)), (X(1, 2), X(2, 0)), (X(2, 1), X(0, 2)), (X(2, 2), C(2)), (X(1, 3), X(4, 1)), (X(2, 3), X(4, 2)), (X(3, 1), X(4, 0)), (X(3, 2), Px(1)), (X(3, 3), Px(2)), (X(3, 0), C(3))], ..PLAIN },
+    Rule { consumer: RT1, producer: S, fresh: &[T1s], wires: &[(X(0, 0), Px(1)), (X(0, 1), C(1)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1s, producer: L, fresh: &[L, T1sc0], wires: &[(X(1, 0), C(1)), (X(1, 1), X(0, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1s, producer: S, fresh: &[S, T1sc0], wires: &[(X(0, 1), Px(1)), (X(1, 0), C(1)), (X(1, 1), X(0, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1s, producer: F, fresh: &[T1sf, Pair], wires: &[(X(0, 0), Px(1)), (X(1, 1), Px(2)), (X(1, 2), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sf, producer: L, fresh: &[Unp, Unp, RA, RA, Rb], wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 0)), (X(0, 2), X(1, 0)), (X(1, 1), X(2, 0)), (X(1, 2), X(2, 1)), (X(2, 2), X(3, 1)), (X(3, 2), C(2)), (X(2, 3), X(4, 1)), (X(3, 3), X(4, 2)), (X(4, 0), C(3))], ..PLAIN },
+    Rule { consumer: T1sf, producer: S, fresh: &[Unp, S, F, T1sc0], wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 2)), (X(0, 2), X(3, 0)), (X(1, 1), Px(1)), (X(2, 1), X(1, 0)), (X(3, 1), X(2, 0)), (X(3, 2), C(2)), (X(3, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sf, producer: F, fresh: &[Unp, F, F, T1sc0], wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 2)), (X(0, 2), X(3, 0)), (X(1, 1), Px(1)), (X(1, 2), Px(2)), (X(2, 1), X(1, 0)), (X(3, 1), X(2, 0)), (X(3, 2), C(2)), (X(3, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sc0, producer: Pair, fresh: &[T1sc, Pair], wires: &[(X(0, 0), Px(1)), (X(1, 1), C(1)), (X(1, 2), Px(2)), (X(0, 1), X(1, 0)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sc, producer: L, fresh: &[L, TSb], wires: &[(X(1, 0), C(1)), (X(1, 1), X(0, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sc, producer: S, fresh: &[S, TSb], wires: &[(X(0, 1), Px(1)), (X(1, 0), C(1)), (X(1, 1), X(0, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sc, producer: F, fresh: &[T1scf, Pair], wires: &[(X(0, 0), Px(1)), (X(1, 1), Px(2)), (X(1, 2), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1scf, producer: L, fresh: &[Unp, Unp, RA, RA, Rc], wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 1)), (X(0, 2), X(1, 0)), (X(1, 1), X(2, 0)), (X(1, 2), X(2, 1)), (X(2, 2), X(3, 0)), (X(3, 2), C(2)), (X(2, 3), X(4, 1)), (X(3, 3), X(4, 2)), (X(4, 0), C(3))], ..PLAIN },
+    Rule { consumer: T1scf, producer: S, fresh: &[Unp, S, F, TSb], wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 2)), (X(0, 2), X(3, 0)), (X(1, 1), Px(1)), (X(2, 1), X(1, 0)), (X(3, 1), X(2, 0)), (X(3, 2), C(2)), (X(3, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1scf, producer: F, fresh: &[Unp, F, F, TSb], wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 2)), (X(0, 2), X(3, 0)), (X(1, 1), Px(1)), (X(1, 2), Px(2)), (X(2, 1), X(1, 0)), (X(3, 1), X(2, 0)), (X(3, 2), C(2)), (X(3, 3), C(3))], ..PLAIN },
+    Rule { consumer: TSb, producer: Pair, fresh: &[Dn, RA, RA, RA, Rs], wires: &[(X(2, 0), Px(1)), (X(1, 0), C(1)), (X(0, 0), Px(2)), (X(0, 1), X(1, 1)), (X(0, 2), X(2, 1)), (X(1, 2), X(3, 1)), (X(2, 2), X(3, 0)), (X(3, 2), C(2)), (X(4, 1), X(2, 3)), (X(4, 2), X(1, 3)), (X(4, 3), X(3, 3)), (X(4, 0), C(3))], ..PLAIN },
+    // ---- backward ----
+    Rule { consumer: UA, producer: L, fresh: &[UAr], wires: &[(X(0, 0), C(1)), (X(0, 1), C(2)), (X(0, 2), C(3))], ..PLAIN },
+    Rule { consumer: UAr, producer: S, fresh: &[L], wires: &[(Px(1), C(1)), (X(0, 0), C(2))], ..PLAIN },
+    Rule { consumer: UAr, producer: F, fresh: &[S], wires: &[(X(0, 1), Px(1)), (Px(2), C(1)), (X(0, 0), C(2))], ..PLAIN },
+    Rule { consumer: UA, producer: Rk, fresh: &[F, L], wires: &[(Px(1), C(2)), (X(0, 1), X(1, 0)), (X(0, 2), C(1)), (X(0, 0), C(3))], ..PLAIN },
+    Rule { consumer: UA, producer: Rs, fresh: &[UA, UA, UA, Mg, F, S], wires: &[(X(0, 0), Px(3)), (X(0, 1), C(1)), (X(0, 2), X(2, 1)), (X(0, 3), X(1, 1)), (X(1, 0), Px(1)), (X(2, 0), Px(2)), (X(1, 2), X(3, 0)), (X(2, 2), X(3, 1)), (X(3, 2), C(2)), (X(1, 3), X(5, 1)), (X(2, 3), X(4, 2)), (X(4, 1), X(5, 0)), (X(4, 0), C(3))], ..PLAIN },
+    Rule { consumer: UA, producer: Rt, fresh: &[USel, Arms3], wires: &[(X(0, 0), Px(1)), (X(0, 1), X(1, 0)), (X(1, 1), Px(2)), (X(1, 2), Px(3)), (X(1, 3), C(1)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: USel, producer: L, fresh: &[USL], wires: &[(X(0, 0), C(1)), (X(0, 1), C(2)), (X(0, 2), C(3))], ..PLAIN },
+    Rule { consumer: USL, producer: Arms3, fresh: &[L, F, F], wires: &[(X(0, 0), C(1)), (X(2, 1), Px(3)), (X(2, 2), Px(1)), (X(1, 1), X(2, 0)), (X(1, 2), Px(2)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: USel, producer: S, fresh: &[USS], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: USS, producer: Arms3, fresh: &[UA, S, F, F], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(3)), (X(0, 2), X(1, 1)), (X(0, 3), X(3, 2)), (X(1, 0), C(2)), (X(3, 1), Px(1)), (X(2, 1), X(3, 0)), (X(2, 2), Px(2)), (X(2, 0), C(3))], ..PLAIN },
+    Rule { consumer: USel, producer: F, fresh: &[USF, Pair], wires: &[(X(1, 1), Px(1)), (X(1, 2), Px(2)), (X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    Rule { consumer: USF, producer: Arms3, fresh: &[Unp, UA, UA, F, F, F], wires: &[(X(0, 0), C(1)), (X(2, 0), X(0, 2)), (X(2, 1), Px(3)), (X(2, 2), X(3, 2)), (X(2, 3), X(1, 1)), (X(1, 0), X(0, 1)), (X(1, 2), X(3, 1)), (X(1, 3), X(4, 2)), (X(3, 0), C(2)), (X(5, 1), Px(1)), (X(5, 2), Px(2)), (X(4, 1), X(5, 0)), (X(4, 0), C(3))], ..PLAIN },
+    Rule { consumer: UA, producer: Rb, fresh: &[UA, UA, F, S, F, L], wires: &[(X(0, 0), Px(2)), (X(0, 1), C(1)), (X(0, 2), X(1, 1)), (X(0, 3), X(4, 2)), (X(1, 0), Px(1)), (X(1, 2), C(2)), (X(1, 3), X(2, 2)), (X(2, 1), X(3, 0)), (X(3, 1), X(4, 0)), (X(4, 1), X(5, 0)), (X(2, 0), C(3))], ..PLAIN },
+    Rule { consumer: UA, producer: Rc, fresh: &[UA, UA, F, S, F, L], wires: &[(X(0, 0), Px(2)), (X(0, 1), C(1)), (X(0, 2), X(4, 2)), (X(0, 3), X(1, 1)), (X(1, 0), Px(1)), (X(1, 2), C(2)), (X(1, 3), X(3, 1)), (X(2, 1), X(3, 0)), (X(2, 2), X(4, 0)), (X(4, 1), X(5, 0)), (X(2, 0), C(3))], ..PLAIN },
+    Rule { consumer: Mg, producer: L, fresh: &[MgL], wires: &[(X(0, 0), C(1)), (X(0, 1), C(2))], ..PLAIN },
+    Rule { consumer: MgL, producer: L, fresh: &[L], wires: &[(X(0, 0), C(1))], ..PLAIN },
+    Rule { consumer: Mg, producer: S, fresh: &[MgS], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), C(2))], ..PLAIN },
+    Rule { consumer: MgS, producer: S, fresh: &[Mg, S], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), X(1, 1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Mg, producer: F, fresh: &[MgF], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), Px(2)), (X(0, 3), C(2))], ..PLAIN },
+    Rule { consumer: MgF, producer: F, fresh: &[Mg, Mg, F], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(1, 0), C(2)), (X(1, 1), Px(2)), (X(0, 2), X(2, 1)), (X(1, 2), X(2, 2)), (X(2, 0), C(3))], ..PLAIN },
+    // ---- erasing history ----
+    Rule { consumer: Eps, producer: Arms3, fresh: &[Eps, Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(2, 0), Px(3))], ..PLAIN },
+    Rule { consumer: Eps, producer: Rk, fresh: &[Eps], wires: &[(X(0, 0), Px(1))], ..PLAIN },
+    Rule { consumer: Eps, producer: Rs, fresh: &[Eps, Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(2, 0), Px(3))], ..PLAIN },
+    Rule { consumer: Eps, producer: Rt, fresh: &[Eps, Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(2, 0), Px(3))], ..PLAIN },
+    Rule { consumer: Eps, producer: Rb, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
+    Rule { consumer: Eps, producer: Rc, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
+    // ---- a value of the loaded term holding applications, taken apart running back (resid.rs) ----
+    Rule { consumer: Fm, producer: F, fresh: &[], wires: &[(C(1), Px(1)), (C(2), Px(2))], ..PLAIN },
+    Rule { consumer: Sm, producer: S, fresh: &[], wires: &[(C(1), Px(1))], ..PLAIN },
+];
 
 /// Movement agents (research/LINEAR_TREE_NETS.md §4a): six views of fixed tree shapes the loader
 /// finds in code (net.rs `build_views`), each standing for its tree: `K y` = △△y, `Sx s b` = △(△s)b,
@@ -390,6 +538,9 @@ pub fn find_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<&'s
 pub fn find_index(consumer: Tag, producer: Tag) -> Option<usize> { find_index_labelled(consumer, 0, producer, 0) }
 
 pub fn find_index_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<usize> {
+    if consumer.is_resid() || producer.is_resid() {
+        return RESID_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer).map(|i| N_ALL_RULES + i);
+    }
     if producer.is_view() {
         return VIEW_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer && r.applies(cl, pl)).map(|i| N_RULES + i);
     }
@@ -446,6 +597,20 @@ pub fn validate_views() -> Result<(), String> {
             let n = VIEW_RULES.iter().filter(|r| (r.consumer, r.producer) == (c, v)).count();
             if n != 1 { return Err(format!("{n} rules for {}·{}", c.name(), v.name())); }
         }
+    }
+    Ok(())
+}
+
+/// Keeping history's rules: each a perfect matching, plain, and one for every pair of kinds.
+pub fn validate_resid() -> Result<(), String> {
+    for r in RESID_RULES {
+        let rn = format!("{}·{}", r.consumer.name(), r.producer.name());
+        if !r.consumer.is_consumer() || !r.producer.is_producer() { return Err(format!("{rn}: not a consumer meeting a producer")); }
+        if !r.labels.is_empty() || r.when != When::Any { return Err(format!("{rn}: labelled")); }
+        if r.fresh.len() > 6 { return Err(format!("{rn}: more than six fresh agents")); }
+        if r.fresh.iter().any(|t| matches!(t, Out | Gate) || t.is_view()) { return Err(format!("{rn}: fresh agent not spawnable")); }
+        matching(r, &rn)?;
+        if RESID_RULES.iter().filter(|o| (o.consumer, o.producer) == (r.consumer, r.producer)).count() != 1 { return Err(format!("{rn}: two rules")); }
     }
     Ok(())
 }
@@ -522,5 +687,11 @@ mod tests {
     fn view_rules_are_well_formed() {
         super::validate_views().expect("the movement agents' rules must validate");
         assert_eq!(super::VIEW_RULES.len(), 36);
+    }
+
+    #[test]
+    fn resid_rules_are_well_formed() {
+        super::validate_resid().expect("keeping history's rules must validate");
+        assert_eq!(super::RESID_RULES.len(), 54);
     }
 }

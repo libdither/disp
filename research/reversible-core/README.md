@@ -4,6 +4,16 @@ Working files of the review in research/REVERSIBLE_CORE.md (archived: no design 
 Python models of the abstract tree-calculus net, with no lattice and their own round scheduler, so
 only their ratios carry over. Run them with `python` from their own folder.
 
+- `residual.py`: keeping history, the design the lattice now runs (`resid=1`, rust-ic-strands README
+  "Keeping history"). An apply leaves what it would have dropped as a residual tree, and un-apply
+  takes the residual and the result back to the function and the argument. It has the oracle, the
+  forward and backward rule tables sized for the lattice, an interpreter (eager, and lazy with the
+  undo-by-meeting moves), and the checks: forward against the oracle, back to the very agents
+  loaded, both in one net, history erased. `python residual.py [--quick]` runs the checks;
+  `--rust` writes the lattice's table (rules.rs `RESID_RULES`).
+- `rule_audit.py`: which rules of a table could run backward with nothing beyond the net, by
+  Salikhmetov's test (connected right sides, no two alike); `residual.py` imports it for its tables.
+
 - `footprints/`: the footprint net (a rewrite fuses its pair into a footprint that what it made is
   wired back to; undo is a product meeting its footprint) beside today's 26-rule table under the same
   scheduler. `python run.py 'add 2 3'`; `calls.txt` lists the 21 compiled disp calls (from

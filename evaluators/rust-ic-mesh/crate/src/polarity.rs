@@ -5,7 +5,7 @@
 //! the unique reader of the source it references (linearity), which is what makes the
 //! whole protocol lock-free: every remote operation on a source comes from one place.
 
-use rust_ca_lattice::rules::{all_rules, End, Rule, Tag, ALL_TAGS, VIEW_RULES, VIEW_TAGS};
+use rust_ca_lattice::rules::{all_rules, End, Rule, Tag, ALL_TAGS, RESID_RULES, RESID_TAGS, VIEW_RULES, VIEW_TAGS};
 
 /// Is port `p` of `tag` a source (value flows out of it)?
 pub const fn is_source(tag: Tag, p: usize) -> bool {
@@ -16,6 +16,13 @@ pub const fn is_source(tag: Tag, p: usize) -> bool {
         Tag::Nrm => p == 1,
         Tag::Unp | Tag::Dn => p == 1 || p == 2,
         Tag::Eps | Tag::Out | Tag::Seam => false,
+        Tag::Arms3 | Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc => p == 0,
+        Tag::RA | Tag::RT1 | Tag::RSel | Tag::SS | Tag::SF | Tag::T1s | Tag::T1sf | Tag::T1sc0 | Tag::T1sc | Tag::T1scf | Tag::TSb
+        | Tag::UA | Tag::USel | Tag::USS | Tag::USF => p == 2 || p == 3,
+        Tag::SL | Tag::UAr | Tag::USL | Tag::Fm => p == 1 || p == 2,
+        Tag::Mg | Tag::MgS => p == 2,
+        Tag::MgL | Tag::Gate | Tag::Sm => p == 1,
+        Tag::MgF => p == 3,
     }
 }
 
@@ -40,7 +47,7 @@ pub fn role(rule: &Rule, e: End) -> Role {
 /// The polarity lemma, checked over the whole ROM, movement agents included: every template wire pairs a `Have` with
 /// a `Need`, so every rewrite keeps "one source, one sink" per wire.
 pub fn validate() -> Result<(), String> {
-    for r in all_rules().chain(VIEW_RULES) {
+    for r in all_rules().chain(VIEW_RULES).chain(RESID_RULES) {
         for (a, b) in r.wires {
             if role(r, *a) == role(r, *b) {
                 return Err(format!(
@@ -50,7 +57,7 @@ pub fn validate() -> Result<(), String> {
             }
         }
     }
-    for t in ALL_TAGS.into_iter().chain(VIEW_TAGS) {
+    for t in ALL_TAGS.into_iter().chain(VIEW_TAGS).chain(RESID_TAGS.into_iter().filter(|&t| t != Tag::Gate)) {
         let sinks = (0..t.arity()).filter(|&p| !is_source(t, p)).count();
         if t.is_producer() && sinks != t.arity() - 1 {
             return Err(format!("{}: producers have exactly one source", t.name()));

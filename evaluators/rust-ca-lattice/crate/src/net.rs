@@ -3,7 +3,7 @@
 //! engine against the independent oracle, and the lattice co-maintains it as the shadow
 //! net for projection checks (CASCADE_CELL_DESIGN.md §9).
 //!
-//! Thanks to the ≤3-port lowered alphabet, ports are a fixed `[Option<Ref>; 3]`.
+//! Ports are a fixed `[Option<Ref>; 4]`: three for the lowered alphabet, four for keeping history's.
 
 use crate::rules::{find_labelled, End, Rule, Tag};
 
@@ -14,7 +14,7 @@ pub struct Agent {
     pub tag: Tag,
     /// A superposition's label, or a duplicator's (rules.rs `Lab`); 0 for everything else.
     pub label: u8,
-    pub ports: [Option<Ref>; 3],
+    pub ports: [Option<Ref>; 4],
 }
 
 #[derive(Default)]
@@ -28,7 +28,7 @@ impl Net {
 
     pub fn mk(&mut self, tag: Tag) -> u32 { self.mk_labelled(tag, 0) }
     pub fn mk_labelled(&mut self, tag: Tag, label: u8) -> u32 {
-        self.agents.push(Some(Agent { tag, label, ports: [None; 3] }));
+        self.agents.push(Some(Agent { tag, label, ports: [None; 4] }));
         (self.agents.len() - 1) as u32
     }
     pub fn get(&self, id: u32) -> &Agent { self.agents[id as usize].as_ref().expect("live agent") }
@@ -155,8 +155,8 @@ impl Net {
         self.ints += 1;
 
         // Capture the external far-ends of every aux port BEFORE deleting the pair.
-        let cx: Vec<Option<Ref>> = (0..3).map(|i| self.get(consumer).ports[i]).collect();
-        let px: Vec<Option<Ref>> = (0..3).map(|i| self.get(producer).ports[i]).collect();
+        let cx: Vec<Option<Ref>> = (0..4).map(|i| self.get(consumer).ports[i]).collect();
+        let px: Vec<Option<Ref>> = (0..4).map(|i| self.get(producer).ports[i]).collect();
         self.agents[consumer as usize] = None;
         self.agents[producer as usize] = None;
 
@@ -206,6 +206,18 @@ impl Net {
             }
         }
         (rule, fresh)
+    }
+
+    /// Take out agents a and b and join, for each (p, q), what was at a's port p with what was at
+    /// b's port q: the moves keeping history makes that are not interactions (an un-apply meeting
+    /// an apply that never ran, a merge meeting its duplicator), and opening a gate (a with itself).
+    pub fn cancel(&mut self, a: u32, b: u32, joins: &[(u8, u8)]) {
+        let ends: Vec<(Ref, Ref)> = joins.iter().map(|&(p, q)| {
+            (self.get(a).ports[p as usize].expect("wired"), self.get(b).ports[q as usize].expect("wired"))
+        }).collect();
+        self.agents[a as usize] = None;
+        self.agents[b as usize] = None;
+        for (x, y) in ends { self.fuse(x, y); }
     }
 
     /// Fire until no active pair remains. Returns true when quiescent within budget.

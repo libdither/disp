@@ -105,16 +105,60 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let (t, parts) = match parse_all(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
-    let (net, out) = match crate::share::net_for(&t, &p) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
+    let (net, out, resid) = match net_for(&t, &p) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
     let start = if p.phys { net.agents.clone() } else { vec![] };
     match Lattice::load(p, net, out) {
         Ok(mut l) => {
             if l.p.phys { l.schedule = vec![(0.0, [l.p.drive, l.p.erase, l.p.forget, l.p.bond])]; }
+            l.resid = resid;
             unsafe { STATE = Some(State { l, term: t, parts, done: false, start }); SAVED.clear(); }
             0
         }
         Err(e) => { set_text(&e); 2 }
     }
+}
+
+/// The net for a term with the next run's settings: keeping history, the term as `f a₁ … aₙ` with
+/// its gates and roots (resid.rs); else as `share::net_for` builds it.
+fn net_for(t: &STerm, p: &Params) -> Result<(rust_ca_lattice::net::Net, u32, crate::resid::Parts), String> {
+    if p.resid == 0 { return crate::share::net_for(t, p).map(|(n, o)| (n, o, Default::default())); }
+    Ok(crate::resid::net(&t.plain().ok_or("keeping history runs no superpositions")?, p.resid == 1))
+}
+
+/// Ports a slot's switchboard has: 3, or 4 keeping history.
+#[no_mangle]
+pub extern "C" fn ports_per_slot() -> u32 { st().l.ar as u32 }
+
+/// Keeping history: 0 not; 1 working the answer out, its history kept behind gates; 2 running back.
+#[no_mangle]
+pub extern "C" fn strands_resid_phase() -> u32 {
+    let l = &st().l;
+    if l.p.resid != 1 { 0 } else if l.gates_shut() && l.stats.clocks < l.open_at { 1 } else { 2 }
+}
+
+/// Open the gates on the next clock, so the run goes back to the program and its arguments. Returns 1
+/// if there were gates to open.
+#[no_mangle]
+pub extern "C" fn strands_run_back() -> u32 {
+    let s = st();
+    if s.l.p.resid != 1 || !s.l.gates_shut() || s.l.open_at != f64::INFINITY { return 0; }
+    s.l.open_at = s.l.stats.clocks;
+    s.done = false;
+    1
+}
+
+/// Keeping history, as JSON: the agents of the history kept, the term's values worked back to so far
+/// (in its order, null for one not back yet), whether they are all back as loaded, and the clock the
+/// gates open at (null until chosen).
+#[no_mangle]
+pub extern "C" fn strands_resid_text() -> u32 {
+    use crate::resid::Role;
+    let l = &st().l;
+    let back: Vec<Option<STerm>> = (0..l.resid.values.len()).map(|i| l.resid_read(Role::Part(i as u32))).collect();
+    let loaded = back.iter().zip(&l.resid.values).all(|(b, v)| b.as_ref().and_then(|b| b.plain()).as_ref() == Some(v));
+    let shown: Vec<String> = back.iter().map(|b| b.as_ref().map_or("null".into(), |t| format!("\"{}\"", sup::show(t)))).collect();
+    let opened = if l.open_at.is_finite() { format!("{}", l.open_at) } else { "null".into() };
+    set_text(&format!("{{\"history\":{},\"values\":[{}],\"loaded\":{loaded},\"opened\":{opened}}}", l.resid_history(), shown.join(",")))
 }
 
 /// Make `n` more proposals (stopping when the answer is in). Returns 1 once finished.
@@ -275,7 +319,7 @@ pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
 pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     match parse_all(src) {
-        Ok((t, _)) => match crate::share::net_for(&t, next()) { Ok((n, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
+        Ok((t, _)) => match net_for(&t, next()) { Ok((n, _, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
         Err(e) => { set_text(&e); -1 }
     }
 }
@@ -353,7 +397,7 @@ static mut SAVED: Vec<Option<Saved>> = Vec::new();
 #[allow(static_mut_refs)]
 pub extern "C" fn save_state() -> u32 {
     let s = st();
-    let v = if s.l.p.phys { Saved { held: vec![], labels: vec![], stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: Some(s.l.snap()) } }
+    let v = if s.l.p.phys || s.l.p.resid > 0 { Saved { held: vec![], labels: vec![], stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: Some(s.l.snap()) } }
         else { Saved { held: s.l.held_sites(), labels: s.l.held_labels(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: None } };
     let saved = unsafe { &mut SAVED };
     match saved.iter().position(|x| x.is_none()) {
@@ -368,7 +412,8 @@ pub extern "C" fn save_state() -> u32 {
 pub extern "C" fn restore_state(i: u32) {
     let s = st();
     let v = unsafe { SAVED[i as usize].as_ref().expect("a saved state") };
-    if let Some(snap) = &v.snap { s.l.put_snap(snap); s.done = v.done; return; }
+    // Keeping history, whether it is over turns on the clock the gates open at, which may be set since.
+    if let Some(snap) = &v.snap { s.l.put_snap(snap); s.done = if s.l.p.resid == 1 { s.l.answered() } else { v.done }; return; }
     // Putting sites back numbers the agents afresh, as a GPU's hand-back does: picks are found again
     // in the net as it was at the last look (the first time since it).
     unsafe { if LOOKED_AT == HANDED_BACK { picked().remember(&s.l); } }
@@ -484,7 +529,7 @@ pub extern "C" fn seats_len() -> u32 { unsafe { SEATS.len() as u32 } }
 
 /// Every agent and its wiring (readback.rs `wires`), into the seats, 6 numbers each; returns how many agents.
 #[no_mangle]
-pub extern "C" fn strands_net() -> u32 { put_seats(readback::wires(&st().l)) / 6 }
+pub extern "C" fn strands_net() -> u32 { put_seats(readback::wires(&st().l)) / 7 }
 /// Times the abstract net was renumbered (a GPU handing a run back, or a saved state put back).
 #[no_mangle]
 pub extern "C" fn strands_renumbered() -> u32 { unsafe { HANDED_BACK as u32 } }

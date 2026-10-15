@@ -23,11 +23,14 @@ pub mod memo;
 pub mod substrate;
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::sup::STerm;
-use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_ALL_RULES, VIEW_TAGS};
+use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, VIEW_TAGS};
 
 pub const NONE: u8 = u8::MAX;
 /// Ports per agent slot.
+/// Ports per agent slot: 3, or 4 keeping history (`Params::resid`).
 pub const ARITY: usize = 3;
+/// The most ports an agent has.
+pub const MAX_ARITY: usize = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
@@ -165,6 +168,10 @@ pub struct Params {
     /// the near ends of the wires one joined), so that they stay close enough to be undone. Driven
     /// backward it pulls harder, by -ε/T where that is more than 1: undoing is what pays then.
     pub bond: f64,
+    /// Keep history (rules.rs `RESID_RULES`): each apply leaves what it would have dropped on a fourth
+    /// port. 1: the history is kept, and what runs it back waits behind gates (`Lattice::open_gates`);
+    /// 2: the history is erased as it is made. Load with `resid::net` (wasm.rs does). CPU only.
+    pub resid: u8,
 }
 
 impl Params {
@@ -226,6 +233,7 @@ impl Params {
             "erase" => self.erase = f()?,
             "forget" => self.forget = f()?,
             "bond" => self.bond = f()?,
+            "resid" => self.resid = n()? as u8,
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -243,7 +251,7 @@ impl Default for Params {
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 dn_room: 0, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0 }
+                 dn_room: 0, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0 }
     }
 }
 
@@ -298,11 +306,15 @@ pub struct Stats {
 }
 
 /// A tag's number in a seat (0: empty): `ALL_TAGS`' from 1, then the movement agents' (`VIEW_TAGS`, 15
-/// to 20).
-#[inline] pub fn code(t: Tag) -> u8 { ALL_TAGS.iter().chain(&VIEW_TAGS).position(|x| *x == t).unwrap() as u8 + 1 }
+/// to 20), then keeping history's (`RESID_TAGS`, 21 on).
+#[inline] pub fn code(t: Tag) -> u8 { ALL_TAGS.iter().chain(&VIEW_TAGS).chain(&RESID_TAGS).position(|x| *x == t).unwrap() as u8 + 1 }
 /// The tag in a seat, None if it is empty.
 #[inline] fn tag_of_or(c: u8) -> Option<Tag> { (c != 0).then(|| tag_of(c)) }
-#[inline] pub fn tag_of(c: u8) -> Tag { let i = c as usize - 1; if i < ALL_TAGS.len() { ALL_TAGS[i] } else { VIEW_TAGS[i - ALL_TAGS.len()] } }
+#[inline] pub fn tag_of(c: u8) -> Tag {
+    let i = c as usize - 1;
+    let v = ALL_TAGS.len() + VIEW_TAGS.len();
+    if i < ALL_TAGS.len() { ALL_TAGS[i] } else if i < v { VIEW_TAGS[i - ALL_TAGS.len()] } else { RESID_TAGS[i - v] }
+}
 
 /// A rewrite's entry in `fire_log`: its site (below 2^24), and in the top byte, for an apply reading a
 /// movement agent, 1 + the agent's place in `VIEW_TAGS` (the GPU logs the same, block.wgsl `log_fire`).
@@ -323,6 +335,8 @@ pub struct Lattice {
     /// Slots per site in storage: the K real ones and one transient slot, used only inside
     /// an exchange move, never at rest.
     pub ks: usize,
+    /// Ports per slot on the switchboard (`self.ar`, or 4 keeping history).
+    pub ar: usize,
     pub faces: usize,
     pub ends: usize,
     /// site*k + slot: 0 empty, else the agent's tag code.
@@ -408,6 +422,10 @@ pub struct Lattice {
     /// The substrate's settings by clock: each entry (clock, drive, erase, forget, bond) takes effect
     /// as that clock starts, so a run put back to an earlier clock and run on changes them where it did.
     pub schedule: Vec<(f64, [f64; 4])>,
+    /// Keeping history (`Params::resid`): the gates and roots the loader made (resid.rs), and the
+    /// clock the gates open at, so a run put back to an earlier clock and run on opens them there.
+    pub resid: crate::resid::Parts,
+    pub open_at: f64,
 }
 
 /// The random bits one turn may use, one field per decision, so that a chip can draw them all
@@ -537,7 +555,9 @@ pub fn fresh_wanted_in(rule: &rust_ca_lattice::rules::Rule, inputs: bool) -> [bo
                     End::Fresh(g, _) if rule.fresh[g as usize] == Tag::Sup => rule.wires.iter()
                         .find_map(|&(a, b)| if a == End::Fresh(g, 0) { Some(b) } else if b == End::Fresh(g, 0) { Some(a) } else { None })
                         .is_some_and(read_by),
-                    End::Fresh(g, 1) if inputs => matches!(rule.fresh[g as usize], Tag::A | Tag::T1 | Tag::Sel) && wanted[g as usize],
+                    // Running back, both inputs of an un-apply or merge are read: what feeds the second is wanted too.
+                    End::Fresh(g, 1) if matches!(rule.fresh[g as usize], Tag::UA | Tag::Mg) => wanted[g as usize],
+                    End::Fresh(g, 1) if inputs => matches!(rule.fresh[g as usize], Tag::A | Tag::T1 | Tag::Sel | Tag::RA) && wanted[g as usize],
                     y => read_by(y),
                 };
                 if feeds { wanted[f as usize] = true; changed = true; }
@@ -555,6 +575,13 @@ pub fn label_from(reader: Tag, label: u8, q: usize) -> u8 {
     if reader == Tag::Eps || label == GARBAGE { return GARBAGE; }
     if !crate::readback::splits(reader) { return label; }
     label ^ (1 + (0..q).filter(|&r| !crate::polarity_is_source(reader, r)).count() as u8)
+}
+
+/// Whether a wanted reader touching output q of a computation leaves it alone: an un-apply reading
+/// the residual of an apply that never ran, and a merge reading a duplicator's copy, wait for their
+/// other input to come from the same agent, and then both go (`Lattice::collect_resid`).
+pub fn waits(reader: Tag, read: Tag, q: usize) -> bool {
+    matches!((reader, read, q), (Tag::UA, Tag::RA, 3) | (Tag::Mg, Tag::Dn, 1 | 2))
 }
 
 /// The tree label of garbage, apart from the four of the root's computation.
@@ -604,11 +631,11 @@ impl Lattice {
     /// Sites holding an agent or a strand.
     pub fn live(&self) -> &[u32] { &self.live }
     fn in_live(&self, s: u32) -> bool { self.live_pos[s as usize] != u32::MAX }
-    #[inline] fn ae(&self, k: usize, p: usize) -> u8 { (k * ARITY + p) as u8 }
-    #[inline] fn se(&self, f: usize, i: usize) -> u8 { (ARITY * self.ks + f * self.p.lanes + i) as u8 }
-    #[inline] fn is_strand(&self, e: u8) -> bool { e != NONE && e as usize >= ARITY * self.ks }
-    #[inline] fn face(&self, e: u8) -> usize { (e as usize - ARITY * self.ks) / self.p.lanes }
-    #[inline] fn lane(&self, e: u8) -> usize { (e as usize - ARITY * self.ks) % self.p.lanes }
+    #[inline] fn ae(&self, k: usize, p: usize) -> u8 { (k * self.ar + p) as u8 }
+    #[inline] fn se(&self, f: usize, i: usize) -> u8 { (self.ar * self.ks + f * self.p.lanes + i) as u8 }
+    #[inline] fn is_strand(&self, e: u8) -> bool { e != NONE && e as usize >= self.ar * self.ks }
+    #[inline] fn face(&self, e: u8) -> usize { (e as usize - self.ar * self.ks) / self.p.lanes }
+    #[inline] fn lane(&self, e: u8) -> usize { (e as usize - self.ar * self.ks) % self.p.lanes }
     #[inline] pub fn mate_of(&self, s: u32, e: u8) -> u8 { self.mate[s as usize * self.ends + e as usize] }
     #[inline] fn set(&mut self, s: u32, e: u8, m: u8) {
         let old = std::mem::replace(&mut self.mate[s as usize * self.ends + e as usize], m);
@@ -666,7 +693,8 @@ impl Lattice {
     pub fn new(p: Params) -> Lattice {
         let faces = if p.depth > 1 { 6 } else { 4 };
         let ks = p.k + 1;
-        let ends = ARITY * ks + faces * p.lanes;
+        let ar = if p.resid > 0 { 4 } else { ARITY };
+        let ends = ar * ks + faces * p.lanes;
         assert!(ends < 255, "a site's switchboard has fewer than 255 ends");
         let n = (p.w * p.h * p.depth) as usize;
         let nb = (0..n as u32).map(|s| {
@@ -682,7 +710,7 @@ impl Lattice {
             r
         }).collect();
         Lattice {
-            p, ks, faces, ends,
+            p, ks, ar, faces, ends,
             tags: vec![0; n * ks],
             sids: vec![u32::MAX; n * ks],
             piece: Default::default(), homes: Default::default(), readdist: vec![], lastread: Default::default(), cachedist: vec![],
@@ -730,13 +758,15 @@ impl Lattice {
             names: Default::default(),
             sub: Default::default(),
             schedule: vec![],
+            resid: Default::default(),
+            open_at: f64::INFINITY,
         }
     }
 
     /// Keep the list of sites worth proposing moves at: those holding an agent or a strand.
     fn refresh(&mut self, s: u32) {
         let base = s as usize * self.ends;
-        let used = self.occ[s as usize] > 0 || self.mate[base + ARITY * self.ks..base + self.ends].iter().any(|&m| m != NONE);
+        let used = self.occ[s as usize] > 0 || self.mate[base + self.ar * self.ks..base + self.ends].iter().any(|&m| m != NONE);
         let pos = self.live_pos[s as usize];
         if used && pos == u32::MAX {
             self.live_pos[s as usize] = self.live.len() as u32;
@@ -904,6 +934,9 @@ impl Lattice {
         if p.phys && (p.memo != 0 || net.agents.iter().flatten().any(|a| a.tag.is_view() || a.tag == Tag::Sup)) {
             return Err("the substrate runs without superpositions, movement agents or merging".into());
         }
+        if p.resid > 0 && (p.phys || p.memo != 0 || p.views || net.agents.iter().flatten().any(|a| matches!(a.tag, Tag::Sup | Tag::P))) {
+            return Err("keeping history runs without the substrate, merging, movement agents, superpositions or suspensions".into());
+        }
         let mut l = Lattice::new(p);
         let n = net.agents.len();
         // Children of each node in the tree hanging from `out`, found depth first.
@@ -928,8 +961,10 @@ impl Lattice {
         // past the lower one's box (side by side) or the lower one starts under the right
         // one's box (stacked). Each node picks whichever keeps its box squarest.
         let mut size = vec![(0i64, 0i64); n];
-        // (below child, right child, stacked)
+        // (below child, right child, stacked); a third child (an agent keeping history has three
+        // ports besides the one it hangs from) to the right of the right child's box.
         let mut arr = vec![(u32::MAX, u32::MAX, false); n];
+        let mut third = vec![u32::MAX; n];
         let score = |(w, h): (i64, i64)| (w.max(h), w * h);
         for &id in order.iter().rev() {
             let k = kids(id);
@@ -946,10 +981,20 @@ impl Lattice {
             match k.len() {
                 0 => options.push((None, None, false)),
                 1 => { options.push((Some(k[0]), None, false)); options.push((None, Some(k[0]), false)); }
-                _ => for (b, r) in [(k[0], k[1]), (k[1], k[0])] {
+                2 => for (b, r) in [(k[0], k[1]), (k[1], k[0])] {
                     options.push((Some(b), Some(r), false));
                     options.push((Some(b), Some(r), true));
                 },
+                _ => {}
+            }
+            if k.len() == 3 {
+                let with_third = |b: u32, r: u32, t: u32| { let (w, h) = combine(Some(b), Some(r), false); let (tw, th) = size[t as usize]; (w + tw.max(1), h.max(th.max(1))) };
+                let (b, r, t) = [(0, 1, 2), (1, 0, 2), (0, 2, 1), (2, 0, 1), (1, 2, 0), (2, 1, 0)].into_iter().map(|(i, j, l)| (k[i], k[j], k[l]))
+                    .min_by_key(|&(b, r, t)| score(with_third(b, r, t))).unwrap();
+                size[id as usize] = with_third(b, r, t);
+                arr[id as usize] = (b, r, false);
+                third[id as usize] = t;
+                continue;
             }
             let best = options.into_iter().min_by_key(|&(b, r, st)| score(combine(b, r, st))).unwrap();
             size[id as usize] = combine(best.0, best.1, best.2);
@@ -967,6 +1012,8 @@ impl Lattice {
                 let bw = if below == u32::MAX { 1 } else { size[below as usize].0.max(1) };
                 if below != u32::MAX { pos[below as usize] = (x, y + 1); }
                 if right != u32::MAX { pos[right as usize] = (x + bw, y); }
+                let t = third[id as usize];
+                if t != u32::MAX { pos[t as usize] = (x + bw + size[right as usize].0.max(1), y); }
             }
         }
         let spread = p.spread.max(1) as i64;
@@ -1082,7 +1129,7 @@ impl Lattice {
             m = self.mate_of(s, self.se(f ^ 1, i));
             len += 1;
         }
-        (s, m as usize / ARITY, m as usize % ARITY, len)
+        (s, m as usize / self.ar, m as usize % self.ar, len)
     }
 
     /// The root moves like any agent; find it.
@@ -1094,14 +1141,172 @@ impl Lattice {
     /// The answer as a plain term, once the root reads a value tree with no superposition in it.
     pub fn readback(&self) -> Option<rust_ca_lattice::oracle::Term> { self.read_answer()?.plain() }
 
-    /// The answer once the root reads a value tree, superpositions included.
+    /// The answer once the root reads a value tree, superpositions included. Keeping history, the
+    /// answer while the gates are shut, and the term's first value worked back to once they are open.
     pub fn read_answer(&self) -> Option<STerm> {
+        if self.p.resid == 1 && !self.gates_shut() { return self.resid_read(crate::resid::Role::Part(0)); }
         let (s, k) = self.answer_top()?;
         self.value_at(s, k)
     }
 
-    /// The agent the root reads, if it is a value.
+    /// Where agent `sid` sits.
+    fn seat_of_sid(&self, sid: u32) -> Option<(u32, usize)> {
+        self.live.iter().find_map(|&s| (0..self.ks).find(|&k| self.tags[s as usize * self.ks + k] != 0 && self.sids[s as usize * self.ks + k] == sid).map(|k| (s, k)))
+    }
+
+    /// Whether the gates keeping history are still shut.
+    pub fn gates_shut(&self) -> bool { self.resid.gates.iter().any(|&(g, _)| self.shadow.agents.get(g as usize).is_some_and(|a| a.is_some())) }
+
+    /// What a gate (shut) or root (keeping history, resid.rs) holds, once it is a value tree.
+    pub fn resid_read(&self, role: crate::resid::Role) -> Option<STerm> {
+        let (sid, gate) = match self.resid.gates.iter().find(|g| g.1 == role) {
+            Some(&(g, _)) => (g, true),
+            None => (self.resid.roots.iter().find(|r| r.1 == role)?.0, false),
+        };
+        let (s, k) = self.seat_of_sid(sid)?;
+        if gate && tag_of(self.tag(s, k)) != Tag::Gate { return None; }
+        let (s2, k2, p2, _) = self.follow(s, self.ae(k, 0));
+        if p2 != 0 { return None; }
+        self.value_at(s2, k2)
+    }
+
+    /// The agents of every residual behind a shut gate (a value counts its own and its children's, a
+    /// computation or copy not yet made counts one).
+    pub fn resid_history(&self) -> usize {
+        fn count(net: &Net, r: Option<(u32, u8)>) -> usize {
+            let Some((id, p)) = r else { return 0 };
+            let Some(a) = net.agents.get(id as usize).and_then(|a| a.as_ref()) else { return 0 };
+            if p != 0 || !a.tag.is_producer() { return 1; }
+            1 + (1..a.tag.arity()).map(|q| count(net, a.ports[q])).sum::<usize>()
+        }
+        self.resid.gates.iter().filter(|g| matches!(g.1, crate::resid::Role::History(_)))
+            .filter_map(|&(g, _)| self.shadow.agents.get(g as usize)?.as_ref().map(|a| count(&self.shadow, a.ports[0]))).sum()
+    }
+
+    /// Open every gate keeping history shut: each goes, joining what it held to what waited behind
+    /// it, so the un-applies start. Returns how many there were.
+    pub fn open_gates(&mut self) -> usize {
+        let gate = code(Tag::Gate);
+        let mut n = 0;
+        for s in self.live.clone() {
+            for k in 0..self.ks {
+                if self.tag(s, k) != gate { continue; }
+                let (m0, m1) = (self.mate_of(s, self.ae(k, 0)), self.mate_of(s, self.ae(k, 1)));
+                let sid = self.sids[s as usize * self.ks + k];
+                self.shadow.cancel(sid, sid, &[(0, 1)]);
+                for q in 0..2 { self.set(s, self.ae(k, q), NONE); }
+                self.remove(s, k);
+                self.link(s, m0, m1);
+                self.refresh(s);
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Keeping history's moves that are not interactions (rules.rs `RESID_RULES`), each two agents in
+    /// one site undoing each other: an un-apply whose residual and result are the outputs of an apply
+    /// that never ran (both go, the function and argument come back out); a merge whose two copies are
+    /// one duplicator's (both go, the original comes back out); and, with the history being erased, an
+    /// eraser on the output of an apply that never ran (`erase_apply`). An un-apply or merge waiting on
+    /// one asks for its other input (`ask_second`).
+    fn collect_resid(&mut self, s: u32) -> bool {
+        let at = |l: &Self, k: usize, q: usize| -> Option<(usize, usize)> {
+            let m = l.mate_of(s, l.ae(k, q));
+            (m != NONE && !l.is_strand(m)).then(|| (m as usize / l.ar, m as usize % l.ar))
+        };
+        for k in 0..self.p.k {
+            let t = self.tag(s, k);
+            if t == 0 { continue; }
+            match tag_of(t) {
+                Tag::UA => {
+                    let Some((j, 3)) = at(self, k, 0) else { continue };
+                    if tag_of(self.tag(s, j)) != Tag::RA { continue; }
+                    if at(self, k, 1) == Some((j, 2)) {
+                        self.cancel_pair(s, k, j, &[(3, 0), (2, 1)], "un-apply·apply");
+                        return true;
+                    }
+                    // Waiting on its result: ask for it, or for the apply if the result is a value already.
+                    if self.want[s as usize * self.ks + k] { self.ask_second(s, k, (s, j)); }
+                }
+                Tag::Mg => {
+                    let Some((d, q)) = at(self, k, 0) else { continue };
+                    if tag_of(self.tag(s, d)) != Tag::Dn || q == 0 { continue; }
+                    if at(self, k, 1) == Some((d, 3 - q)) {
+                        self.cancel_pair(s, k, d, &[(2, 0)], "merge·copy");
+                        return true;
+                    }
+                    if self.want[s as usize * self.ks + k] { self.ask_second(s, k, (s, d)); }
+                }
+                Tag::Eps if self.p.resid == 2 => {
+                    let Some((j, 2)) = at(self, k, 0) else { continue };
+                    if tag_of(self.tag(s, j)) != Tag::RA { continue; }
+                    self.erase_apply(s, j);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// An un-apply or merge k at s whose first input waits on agent `first` (an apply that never ran,
+    /// a duplicator's copy): what feeds its second input is wanted, unless it is a value, when `first`
+    /// is (the two do not come from the same agent after all). Reads along the wire, as a demand
+    /// pulse would carry it.
+    fn ask_second(&mut self, s: u32, k: usize, first: (u32, usize)) {
+        let (s2, k2, p2, _) = self.follow(s, self.ae(k, 1));
+        let t2 = self.tag(s2, k2);
+        if t2 == 0 { return; }
+        let at = if p2 == 0 && tag_of(t2).is_producer() { first } else if p2 > 0 && tag_of(t2).is_consumer() { (s2, k2) } else { return };
+        let i = at.0 as usize * self.ks + at.1;
+        if !self.want[i] { self.want[i] = true; self.tr_want(at.0, at.1); }
+    }
+
+    /// Agents ka and kb of s go; for each (p, q) what was at ka's port p is joined to what was at kb's port q.
+    fn cancel_pair(&mut self, s: u32, ka: usize, kb: usize, joins: &[(usize, usize)], what: &'static str) {
+        let (sa, sb) = (self.sids[s as usize * self.ks + ka], self.sids[s as usize * self.ks + kb]);
+        let ends: Vec<(u8, u8)> = joins.iter().map(|&(p, q)| (self.mate_of(s, self.ae(ka, p)), self.mate_of(s, self.ae(kb, q)))).collect();
+        let j: Vec<(u8, u8)> = joins.iter().map(|&(p, q)| (p as u8, q as u8)).collect();
+        self.shadow.cancel(sa, sb, &j);
+        for k in [ka, kb] {
+            for q in 0..tag_of(self.tag(s, k)).arity() { self.set(s, self.ae(k, q), NONE); }
+            self.remove(s, k);
+        }
+        for (x, y) in ends { self.link(s, x, y); }
+        self.refresh(s);
+        self.stats.collected += 1;
+        self.last_op = what;
+        self.note([EV_DUP, s, s, 0, 0, 0, 0, 0]);
+    }
+
+    /// An eraser at s reads the output of apply j there, which never ran, and the history is being erased
+    /// (its residual port leads to an eraser too): the apply goes, the eraser on its output taking its
+    /// argument and the one on its residual its function, along the wires they came by.
+    fn erase_apply(&mut self, s: u32, j: usize) {
+        let m: Vec<u8> = (0..4).map(|q| self.mate_of(s, self.ae(j, q))).collect();
+        let ra = self.sids[s as usize * self.ks + j];
+        self.shadow.cancel(ra, ra, &[(2, 1), (3, 0)]);
+        for q in 0..4 { self.set(s, self.ae(j, q), NONE); }
+        self.remove(s, j);
+        self.link(s, m[2], m[1]);
+        self.link(s, m[3], m[0]);
+        self.refresh(s);
+        self.stats.collected += 1;
+        self.stats.dead += 1;
+        self.last_op = "erase inputs";
+        self.note([EV_DEAD, s, s, code(Tag::Eps) as u32, code(Tag::RA) as u32, 0, 0, 0]);
+    }
+
+    /// The agent the root reads, if it is a value (keeping history, what the answer's gate holds).
     fn answer_top(&self) -> Option<(u32, usize)> {
+        if self.p.resid == 1 {
+            let &(g, _) = self.resid.gates.iter().find(|g| g.1 == crate::resid::Role::Answer)?;
+            let (s, k) = self.seat_of_sid(g)?;
+            if tag_of(self.tag(s, k)) != Tag::Gate { return None; }
+            let (s2, k2, p2, _) = self.follow(s, self.ae(k, 0));
+            return (p2 == 0).then_some((s2, k2));
+        }
         let (s, k) = self.find_out()?;
         let (s2, k2, p2, _) = self.follow(s, self.ae(k, 0));
         (p2 == 0).then_some((s2, k2))
@@ -1142,8 +1347,15 @@ impl Lattice {
         self.value_at(s, k)
     }
 
-    /// Whether the run is over: the answer is in, or (eager) nothing is left to do.
-    pub fn answered(&self) -> bool { self.p.lazy && self.read_answer().is_some() || self.shadow.active_pair().is_none() }
+    /// Whether the run is over: the answer is in, or (eager) nothing is left to do. Keeping history,
+    /// once a clock to open the gates at is set (at any clock of a replay): the function and every
+    /// argument worked back to.
+    pub fn answered(&self) -> bool {
+        if self.p.resid == 1 && (self.open_at.is_finite() || !self.gates_shut()) {
+            return self.resid.roots.iter().all(|&(_, r)| self.resid_read(r).is_some());
+        }
+        self.p.lazy && self.read_answer().is_some() || self.shadow.active_pair().is_none()
+    }
 
     /// Agents carrying a superposition label: superpositions, and duplicators copying for them.
     pub fn labelled(&self) -> usize { self.live.iter().map(|&s| (0..self.ks).filter(|&k| self.tag(s, k) != 0 && self.sup_label[s as usize * self.ks + k] != 0).count()).sum() }
@@ -1182,9 +1394,9 @@ impl Lattice {
                 if m == NONE { continue; }
                 if self.mate_of(s, m) != e { return Err(format!("site {s}: {e}->{m} not mutual")); }
                 if !self.is_strand(e) {
-                    let k = e as usize / ARITY;
+                    let k = e as usize / self.ar;
                     let t = self.tag(s, k);
-                    if t == 0 || e as usize % ARITY >= tag_of(t).arity() { return Err(format!("site {s}: dead port {e} paired")); }
+                    if t == 0 || e as usize % self.ar >= tag_of(t).arity() { return Err(format!("site {s}: dead port {e} paired")); }
                 } else {
                     let t = self.nb(s, self.face(e));
                     if t == u32::MAX { return Err(format!("site {s}: strand off the edge")); }
@@ -1288,7 +1500,7 @@ impl Lattice {
     pub fn board_stats(&self) -> [u64; 8] {
         let mut c = [0u64; 8];
         self.pairs_hist.borrow_mut().resize(16, 0);
-        let ports = (ARITY * self.ks) as u8;
+        let ports = (self.ar * self.ks) as u8;
         for &s in &self.live {
             c[6] += 1;
             let used = (0..self.ends as u8).filter(|&e| self.mate_of(s, e) != NONE).count() / 2;
@@ -1367,18 +1579,18 @@ impl Lattice {
     /// What a step of agent k from s across face f would do: where each port's wire goes, the free
     /// strands dragged wires take, the loops that land in the neighbour, and the energy change; None
     /// when there are not enough free strands.
-    fn step_plan(&self, s: u32, k: usize, f: usize) -> Option<([Plan; ARITY], Vec<usize>, usize, i32)> {
+    fn step_plan(&self, s: u32, k: usize, f: usize) -> Option<([Plan; MAX_ARITY], Vec<usize>, usize, i32)> {
         let t = self.nb(s, f);
         let a = tag_of(self.tag(s, k)).arity();
-        let mut plan = [Plan::Drag; ARITY];
+        let mut plan = [Plan::Drag; MAX_ARITY];
         let mut need = 0;
         let mut de = 0i32;
         let idle = (self.p.lazy && !self.acts(s, k)) as usize;
         for q in 0..a {
             let m = self.mate_of(s, self.ae(k, q));
             let w = if q == 0 { self.e.principal[idle] } else { self.e.aux[idle] };
-            if !self.is_strand(m) && m as usize / ARITY == k {
-                plan[q] = Plan::SelfLoop(m as usize % ARITY);
+            if !self.is_strand(m) && m as usize / self.ar == k {
+                plan[q] = Plan::SelfLoop(m as usize % self.ar);
             } else if self.is_strand(m) && self.face(m) == f {
                 plan[q] = Plan::Through(self.lane(m));
                 de -= w;
@@ -1446,7 +1658,7 @@ impl Lattice {
 
         // Where the through-wires land inside t (a wire may come back to another port of the
         // same agent: that becomes a loop in t).
-        let mut target = [NONE; ARITY];
+        let mut target = [NONE; MAX_ARITY];
         for q in 0..a {
             if let Plan::Through(i) = plan[q] {
                 let mt = self.mate_of(t, self.se(f ^ 1, i));
@@ -1513,7 +1725,7 @@ impl Lattice {
     /// (`Params::strangers`, `trees`, `garbage`): agents in the site or a neighbouring one that its
     /// wires do not reach within two strands.
     fn strangers_de(&self, s: u32, k: usize, t: u32) -> i32 {
-        let mut kin = [(u32::MAX, usize::MAX); ARITY];
+        let mut kin = [(u32::MAX, usize::MAX); MAX_ARITY];
         for q in 0..tag_of(self.tag(s, k)).arity() { if let Some((x, k2, _)) = self.reach(s, self.ae(k, q), 2) { kin[q] = (x, k2); } }
         let own = self.label[s as usize * self.ks + k];
         let around = |x: u32| -> i32 {
@@ -1537,7 +1749,7 @@ impl Lattice {
         let mut m = self.mate_of(s, e);
         for _ in 0..=n {
             if m == NONE { return None; }
-            if !self.is_strand(m) { return Some((s, m as usize / ARITY, m as usize % ARITY)); }
+            if !self.is_strand(m) { return Some((s, m as usize / self.ar, m as usize % self.ar)); }
             let (f, i) = (self.face(m), self.lane(m));
             s = self.nb(s, f);
             m = self.mate_of(s, self.se(f ^ 1, i));
@@ -1609,7 +1821,7 @@ impl Lattice {
         self.want[i] = false;
         for q in 0..a {
             let m = mates[q];
-            let m = if !self.is_strand(m) && m as usize / ARITY == from { self.ae(to, m as usize % ARITY) } else { m };
+            let m = if !self.is_strand(m) && m as usize / self.ar == from { self.ae(to, m as usize % self.ar) } else { m };
             self.link(s, self.ae(to, q), m);
         }
     }
@@ -1805,7 +2017,7 @@ impl Lattice {
                 }
             }
         }
-        for e in (ARITY * self.ks..self.ends).map(|e| e as u8) {
+        for e in (self.ar * self.ks..self.ends).map(|e| e as u8) {
             if self.mate_of(s, e) == NONE || !free(self, self.nb(s, self.face(e))) { continue; }
             if self.fold_at(s, e, free).is_some() { offer((-1, -1), Move::Fold(e)); continue; }
             let Some(k) = self.corner(s, e, free) else { continue };
@@ -1840,12 +2052,13 @@ impl Lattice {
                 (n, self.mate_of(n, self.se(f ^ 1, self.lane(m))), Some(f))
             } else { (s, m, None) };
             if self.is_strand(m) || m == NONE { continue; }
-            let (k2, q) = (m as usize / ARITY, m as usize % ARITY);
+            let (k2, q) = (m as usize / self.ar, m as usize % self.ar);
             let t2 = self.tag(site, k2);
             if q == 0 && t2 != 0 && tag_of(t2).is_producer() { return Some((k, k2, face)); }
             // A wanted reader touching a pending computation's output wants it in turn (an
             // eraser does not: what it touches is garbage).
-            if self.p.lazy && q > 0 && t2 != 0 && tag_of(t2).is_consumer() && tag_of(t) != Tag::Eps && self.want[s as usize * self.ks + k] {
+            if self.p.lazy && q > 0 && t2 != 0 && tag_of(t2).is_consumer() && tag_of(t) != Tag::Eps && self.want[s as usize * self.ks + k]
+                && !waits(tag_of(t), tag_of(t2), q) {
                 self.infect.set(Some((site, k2)));
             }
         }
@@ -1869,13 +2082,13 @@ impl Lattice {
         // Each dying aux port is joined to an end in this site (or to another dying aux port)
         // and, by the rule, to a fresh port or dying aux port. Walk each path to its two
         // terminals: fresh ports and ends that stay.
-        let mut dying_mate = [[(0usize, NONE); ARITY]; 2];
+        let mut dying_mate = [[(0usize, NONE); MAX_ARITY]; 2];
         for (side, (site, loc, k, t)) in [(s, 0, kc, ct), (sp, ploc, kp, pt)].into_iter().enumerate() {
             for q in 1..t.arity() { dying_mate[side][q] = (loc, self.mate_of(site, self.ae(k, q))); }
         }
         let as_dying = |(loc, m): (usize, u8)| -> Option<End> {
             if self.is_strand(m) { return None; }
-            let (k, q) = (m as usize / ARITY, m as usize % ARITY);
+            let (k, q) = (m as usize / self.ar, m as usize % self.ar);
             if loc == 0 && k == kc && q > 0 { Some(End::CAux(q as u8)) }
             else if loc == ploc && k == kp && q > 0 { Some(End::PAux(q as u8)) } else { None }
         };
@@ -1913,7 +2126,7 @@ impl Lattice {
         // Pairings each site loses with the dying pair, before the rewrite wires anything.
         let mut lost: Vec<(u32, u8, u8)> = vec![];
         for (site, k) in if self.p.pairs == 0 { vec![] } else { vec![(s, kc), (sp, kp)] } {
-            for q in 0..ARITY {
+            for q in 0..self.ar {
                 let (e, m) = (self.ae(k, q), self.mate_of(site, self.ae(k, q)));
                 if m != NONE && !lost.contains(&(site, e.min(m), e.max(m))) { lost.push((site, e.min(m), e.max(m))); }
             }
@@ -2005,7 +2218,7 @@ impl Lattice {
             self.stats.blocked_fires += 1;
             self.fields.blocked(s);
             if self.trace.on { *self.trace.blocked.entry(self.sids[s as usize * self.ks + kc]).or_insert(0) += 1; }
-            self.stats.blocked_rule.resize(N_ALL_RULES, 0);
+            self.stats.blocked_rule.resize(N_EVERY_RULE, 0);
             self.stats.blocked_rule[ri] += 1;
             return false;
         };
@@ -2065,7 +2278,7 @@ impl Lattice {
         for &x in &fresh_sids { self.born[x as usize] = self.stats.fires + 1; }
         let label = self.label[s as usize * self.ks + kc];
         for (site, k) in [(s, kc), (sp, kp)] {
-            for q in 0..ARITY { self.set(site, self.ae(k, q), NONE); }
+            for q in 0..self.ar { self.set(site, self.ae(k, q), NONE); }
             self.remove(site, k);
         }
         let wanted = fresh_wanted_in(rule, self.p.fork);
@@ -2078,7 +2291,7 @@ impl Lattice {
         }
         for (a, b) in links {
             let end_at = |t: T| match t {
-                T::Fresh(f, q) => (seats[f].0, (seats[f].2 * ARITY + q) as u8),
+                T::Fresh(f, q) => (seats[f].0, (seats[f].2 * self.ar + q) as u8),
                 T::Stay(l, m) => (if l == 0 { 0 } else { ploc }, m),
             };
             let ((la, ea), (lb, eb)) = (end_at(a), end_at(b));
@@ -2180,6 +2393,7 @@ impl Lattice {
         self.stats.proposals += 1;
         if self.live.is_empty() { return; }
         self.stats.clocks += self.busiest_share();
+        if self.stats.clocks >= self.open_at { self.open_gates(); }
         if self.p.pulse && self.stats.clocks >= self.next_pulse {
             self.next_pulse += 1.0;
             self.step_pulses();
@@ -2209,6 +2423,7 @@ impl Lattice {
         if self.labels() && self.occ[s as usize] > 0 { self.relabel(s); }
         if self.p.phys && self.occ[s as usize] > 0 && self.sub_turn(s) || self.stale.get() { return; }
         if self.p.gc && self.collect(s) || self.stale.get() { return; }
+        if self.p.resid > 0 && self.collect_resid(s) { return; }
         let greedy = self.cooling.is_some() && self.p.cool_greedy > 0;
         if !greedy && self.p.active > 0.0 && self.cur.chance(Dice::ACTIVE, self.p.active) && self.active_turn(s) || self.stale.get() { return; }
         if self.p.pressure != 0.0 {
@@ -2247,7 +2462,7 @@ impl Lattice {
             let may_swap = d.chance(Dice::SWAP, self.p.swap);
             self.hop(s, k, f, may_swap);
         } else {
-            let used: Vec<u8> = (0..self.faces * self.p.lanes).map(|x| (ARITY * self.ks + x) as u8)
+            let used: Vec<u8> = (0..self.faces * self.p.lanes).map(|x| (self.ar * self.ks + x) as u8)
                 .filter(|&e| self.mate_of(s, e) != NONE && self.in_block(self.nb(s, self.face(e)))).collect();
             if used.is_empty() { return; }
             let e = used[d.pick(Dice::WHERE, 5, used.len())];
@@ -2260,6 +2475,7 @@ impl Lattice {
     /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
         if let Some((from, t0)) = self.cooling { self.set_temp(cooled(&self.p, t0, self.stats.clocks - from)); }
+        if self.stats.clocks >= self.open_at { self.open_gates(); }
         if self.p.phys { self.scheduled(); }
         if self.fields.on { self.update_fields(); }
         let b = self.p.block_side as u64;
@@ -2468,7 +2684,7 @@ impl Lattice {
                     net.link(self.sids[s as usize * self.ks + k], q as u8, self.sids[s2 as usize * self.ks + k2], p2 as u8);
                 }
             }
-            ends += (ARITY * self.ks..self.ends).filter(|&e| self.mate_of(s, e as u8) != NONE).count() as u64;
+            ends += (self.ar * self.ks..self.ends).filter(|&e| self.mate_of(s, e as u8) != NONE).count() as u64;
         }
         self.shadow = net;
         self.born.clear();
@@ -2509,7 +2725,7 @@ impl Lattice {
         if self.pulse_at[s as usize] != NONE { return; }
         for k in 0..self.ks {
             let t = self.tag(s, k);
-            if t == 0 || !tag_of(t).is_consumer() || tag_of(t) == Tag::Eps || !self.want[s as usize * self.ks + k] { continue; }
+            if t == 0 || !tag_of(t).is_consumer() || matches!(tag_of(t), Tag::Eps | Tag::Mg) || !self.want[s as usize * self.ks + k] { continue; }
             let m = self.mate_of(s, self.ae(k, 0));
             if self.is_strand(m) {
                 self.pulse_at[s as usize] = m;
@@ -2538,10 +2754,10 @@ impl Lattice {
                 let a = arrive.entry(t).or_insert((f ^ 1, m));
                 if f ^ 1 < a.0 { *a = (f ^ 1, m); }
             } else if m != NONE {
-                let (k, q) = (m as usize / ARITY, m as usize % ARITY);
+                let (k, q) = (m as usize / self.ar, m as usize % self.ar);
                 let tg = self.tag(t, k);
                 if self.p.calls && q == 0 && tg != 0 && tag_of(tg).is_producer() { self.want[t as usize * self.ks + k] = true; }
-                if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !self.want[t as usize * self.ks + k] {
+                if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !self.want[t as usize * self.ks + k] && !(tag_of(tg) == Tag::RA && q == 3) {
                     self.want[t as usize * self.ks + k] = true;
                     self.tr_want(t, k);
                     self.stats.pulses += 1;
@@ -2568,7 +2784,7 @@ impl Lattice {
             if t == 0 || !tag_of(t).is_consumer() || tag_of(t) == Tag::Eps || !self.want[s as usize * self.ks + k] { continue; }
             let m = self.mate_of(s, self.ae(k, 0));
             if m == NONE || self.is_strand(m) { continue; }
-            let k2 = m as usize / ARITY;
+            let k2 = m as usize / self.ar;
             if self.tag(s, k2) != 0 && tag_of(self.tag(s, k2)).is_producer() { self.want[s as usize * self.ks + k2] = true; }
         }
     }
@@ -2590,7 +2806,7 @@ impl Lattice {
                 (n, self.mate_of(n, self.se(f ^ 1, i)), Some((f, i)))
             } else { (s, m, None) };
             if md == NONE || self.is_strand(md) { continue; }
-            let (kd, q) = (md as usize / ARITY, md as usize % ARITY);
+            let (kd, q) = (md as usize / self.ar, md as usize % self.ar);
             let td = self.tag(d, kd);
             if td != 0 && matches!(tag_of(td), Tag::A | Tag::T1 | Tag::Sel) && q == 2 {
                 if self.p.phys && !self.drive_allows(true) { return false; }
@@ -2617,7 +2833,7 @@ impl Lattice {
                 self.strand_count(-1);
             }
             self.set(s, self.ae(ke, 0), NONE);
-            for p in 0..ARITY { self.set(d, self.ae(kd, p), NONE); }
+            for p in 0..self.ar { self.set(d, self.ae(kd, p), NONE); }
             self.link(d, input, other);
             self.remove(s, ke);
             self.remove(d, kd);
@@ -2638,12 +2854,12 @@ impl Lattice {
         let other = self.mate_of(d, self.ae(kd, 3 - q));
         let eps = code(Tag::Eps);
         let (s2, k2, via2) = if other != NONE && !self.is_strand(other) {
-            (d, other as usize / ARITY, None)
+            (d, other as usize / self.ar, None)
         } else if self.is_strand(other) && self.nb(d, self.face(other)) == s {
             let (f, i) = (self.face(other), self.lane(other));
             let m = self.mate_of(s, self.se(f ^ 1, i));
             if m == NONE || self.is_strand(m) { return false; }
-            (s, m as usize / ARITY, Some((f, i)))
+            (s, m as usize / self.ar, Some((f, i)))
         } else { return false };
         if self.tag(s2, k2) != eps || (s2, k2) == (s, ke) { return false; }
         if self.p.phys && !self.drive_allows(true) { return false; }
@@ -2668,7 +2884,7 @@ impl Lattice {
             self.strand_count(-1);
         }
         for (x, k) in [(s, ke), (s2, k2)] { self.set(x, self.ae(k, 0), NONE); self.remove(x, k); }
-        for p in 0..ARITY { self.set(d, self.ae(kd, p), NONE); }
+        for p in 0..self.ar { self.set(d, self.ae(kd, p), NONE); }
         self.remove(d, kd);
         self.place(d, kd, eps, e);
         self.label[d as usize * self.ks + kd] = GARBAGE;
@@ -2749,7 +2965,7 @@ impl Lattice {
         self.shadow.link(e1, 0, src1.0, src1.1);
         self.tr_pairs(&[e0, e1, src0.0, src1.0], -1);
         self.set(s, self.ae(ke, 0), NONE);
-        for p in 0..ARITY { self.set(d, self.ae(kd, p), NONE); }
+        for p in 0..self.ar { self.set(d, self.ae(kd, p), NONE); }
         self.remove(s, ke);
         self.remove(d, kd);
         self.place(d, kd, code(Tag::Eps), e1);

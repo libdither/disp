@@ -32,17 +32,17 @@ function graphSync() {
   }
   // New agents start where their placed neighbours are: below a reader they feed, above what they read.
   const queue = [];
-  for (let i = 0; i < n; i++) if (!at[i]) for (let q = 0; q < 3; q++) { const f = NET.far[3 * i + q]; if (f >= 0 && at[f >> 2]) { queue.push(i); break; } }
+  for (let i = 0; i < n; i++) if (!at[i]) for (let q = 0; q < 4; q++) { const f = NET.far[4 * i + q]; if (f >= 0 && at[f >> 2]) { queue.push(i); break; } }
   for (let h = 0; h < queue.length; h++) {
     const i = queue[h]; if (at[i]) continue;
     let sx = 0, sy = 0, c = 0;
-    for (let q = 0; q < 3; q++) {
-      const f = NET.far[3 * i + q], j = f >> 2; if (f < 0 || j === i || !at[j]) continue;
+    for (let q = 0; q < 4; q++) {
+      const f = NET.far[4 * i + q], j = f >> 2; if (f < 0 || j === i || !at[j]) continue;
       sx += x[j]; sy += y[j] + (isSource(NET.tag[i], q) ? 0.6 : -0.6) * GSP; c++;
     }
     if (!c) continue;
     x[i] = sx / c + graphJitter(NET.id[i], 0) * GSP * 0.5; y[i] = sy / c + graphJitter(NET.id[i], 1) * GSP * 0.2; at[i] = 1;
-    for (let q = 0; q < 3; q++) { const f = NET.far[3 * i + q]; if (f >= 0 && !at[f >> 2]) queue.push(f >> 2); }
+    for (let q = 0; q < 4; q++) { const f = NET.far[4 * i + q]; if (f >= 0 && !at[f >> 2]) queue.push(f >> 2); }
   }
   graphHang(at, x, y, kept > 0);
   const changed = (n - kept) + (GRAPH.n - kept), fresh = kept === 0;
@@ -64,8 +64,8 @@ function graphRematch(old) {
   }
   for (let h = 0; h < queue.length; h++) {
     const i = queue[h], j = old[i];
-    for (let q = 0; q < 3; q++) {
-      const f = NET.far[3 * i + q], g = GRAPH.far[3 * j + q], a = f >> 2, b = g >> 2;
+    for (let q = 0; q < 4; q++) {
+      const f = NET.far[4 * i + q], g = GRAPH.far[4 * j + q], a = f >> 2, b = g >> 2;
       if (f < 0 || g < 0 || (f & 3) !== (g & 3) || old[a] >= 0 || taken[b] || NET.tag[a] !== GRAPH.tag[b]) continue;
       old[a] = b; taken[b] = 1; queue.push(a);
     }
@@ -81,7 +81,7 @@ function graphHang(at, x, y, beside) {
   for (let i = 0; i < n; i++) {
     if (at[i]) continue;
     let read = false;
-    for (let q = 0; q < 3; q++) { const f = NET.far[3 * i + q]; if (f >= 0 && isSource(NET.tag[i], q) && !at[f >> 2]) read = true; }
+    for (let q = 0; q < 4; q++) { const f = NET.far[4 * i + q]; if (f >= 0 && isSource(NET.tag[i], q) && !at[f >> 2]) read = true; }
     if (!read) starts.push(i);
   }
   starts.sort((a, b) => (NET.tag[b] === 13) - (NET.tag[a] === 13));
@@ -148,8 +148,8 @@ function graphHang(at, x, y, beside) {
 /// fires once they meet), 2 a's principal port, 4 b's.
 function graphWires() {
   const n = NET.n, wa = [], wb = [], src = [], flag = [], deg = new Uint8Array(n);
-  for (let i = 0; i < n; i++) for (let q = 0; q < 3; q++) {
-    const f = NET.far[3 * i + q], j = f >> 2, p = f & 3;
+  for (let i = 0; i < n; i++) for (let q = 0; q < 4; q++) {
+    const f = NET.far[4 * i + q], j = f >> 2, p = f & 3;
     if (f < 0 || j === i) continue;
     deg[i]++;
     if (j < i) continue;
@@ -270,7 +270,7 @@ function graphAgentAt(cx, cy) {
 
 /// Which way node i's principal wire leaves it, as a unit vector (up if it has none).
 function graphFacing(i) {
-  const { x, y } = GRAPH, f = NET.far[3 * i], j = f >> 2;
+  const { x, y } = GRAPH, f = NET.far[4 * i], j = f >> 2;
   if (f < 0 || j === i) return [0, -1];
   const dx = x[j] - x[i], dy = y[j] - y[i], d = Math.hypot(dx, dy);
   return d > 1e-6 ? [dx / d, dy / d] : [0, -1];

@@ -55,6 +55,22 @@ SHAPE[18] = { fill: [SHAPE[17].fill[0].map((v, i) => i % 2 ? v : -v)] };
 SHAPE[19] = { fill: [[...arcPts(0.62, 0, 0.27, -90, 90, 6), ...arcPts(-0.62, 0, 0.27, 90, 270, 6)]] };
 SHAPE[20] = { fill: [[-0.12, -1.1, 0.12, -1.1, 0.12, -0.32, 0.98, -0.32, 0.98, 1, 0.76, 1, 0.76, -0.1, 0.43, -0.1, 0.43, 1, 0.21, 1, 0.21, -0.1,
   -0.21, -0.1, -0.21, 1, -0.43, 1, -0.43, -0.1, -0.76, -0.1, -0.76, 1, -0.98, 1, -0.98, -0.32, -0.12, -0.32]] };
+// Keeping history (set=resid=1): forward walkers as apply, triage and dispatch are; walkers back the same,
+// holed; a merge, a copy run back, is the duplicator's Y upside down; a triage's arms a pill like a pair;
+// residuals triangles like values, a hole per child; a gate a bar across its wire.
+SHAPE[21] = SHAPE[6];
+for (const t of [22, 27, 28, 29, 30, 31, 32]) SHAPE[t] = SHAPE[7];
+for (const t of [23, 24, 25, 26]) SHAPE[t] = SHAPE[8];
+SHAPE[33] = SHAPE[34] = { fill: [[0, 0, 0.95]], cut: [[0, 0, 0.42]] };
+for (const t of [35, 36, 37, 38]) SHAPE[t] = { fill: SHAPE[8].fill, cut: [[0, 0, 0.3]] };
+for (const t of [39, 40, 41, 42]) SHAPE[t] = { fill: [arms([90, 210, 330], 1.12, 0.27)], turn: true };
+SHAPE[43] = SHAPE[5];
+SHAPE[44] = SHAPE[2];
+SHAPE[45] = SHAPE[46] = { fill: [TRI], mark: [[-0.42, 0.42, 0.17], [0, 0.42, 0.17], [0.42, 0.42, 0.17]], turn: true };
+SHAPE[47] = SHAPE[48] = SHAPE[3];
+SHAPE[49] = { fill: [[-1.05, -0.28, 1.05, -0.28, 1.05, 0.28, -1.05, 0.28]] };
+// Taking a loaded fork or stem apart, running back: the unpair's split pill.
+SHAPE[50] = SHAPE[51] = SHAPE[9];
 /// A kind with no shape of its own yet.
 const SHAPE_ANY = { fill: [[0, 0, 0.9]] };
 /// The spark on a wire joining two agents about to rewrite (graph.js).

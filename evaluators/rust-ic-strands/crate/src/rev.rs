@@ -101,7 +101,7 @@ impl Alloc<'_> {
         let Some(id) = self.reuse.next() else { return self.net.mk_labelled(tag, label) };
         if self.net.agents.len() <= id as usize { self.net.agents.resize(id as usize + 1, None); }
         assert!(self.net.agents[id as usize].is_none(), "redoing onto a live agent");
-        self.net.agents[id as usize] = Some(Agent { tag, label, ports: [None; 3] });
+        self.net.agents[id as usize] = Some(Agent { tag, label, ports: [None; 4] });
         id
     }
     /// A seam joining two outside ports.
@@ -289,7 +289,7 @@ impl Rev {
         })).collect();
         for &m in &ev.made { self.net.agents[m as usize] = None; }
         for (was, _) in &ev.gone {
-            self.net.agents[was.id as usize] = Some(Agent { tag: was.tag, label: was.label, ports: [None; 3] });
+            self.net.agents[was.id as usize] = Some(Agent { tag: was.tag, label: was.label, ports: [None; 4] });
             self.want[was.id as usize] = was.want;
         }
         for (i, (was, links)) in ev.gone.iter().enumerate() {

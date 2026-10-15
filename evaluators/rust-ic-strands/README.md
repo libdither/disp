@@ -1539,6 +1539,69 @@ loaded one again (the player's grid, seed 1):
   checked each clock), 40 forward and back to the loaded net agent for agent, the ledger balancing,
   and saved states repeating the run exactly with the drive changed on the way.
 
+## Keeping history: running it back exactly (`resid=1`, `resid.rs`)
+
+`resid=1` loads a term so that every application in it keeps what it would have dropped, its
+residual, on a fourth port. The lattice player keeps the history by default. Once the answer is in,
+"run it back" (⏪) opens the gates, and the history takes the answer back to the term's values: the
+very agents loaded. A link with `set=resid=0` runs without it, and so do terms with superpositions and
+the movement agents' examples. The rule table (rules.rs `RESID_RULES`, 54 rules) is written by, and
+checked in, the model in research/reversible-core/residual.py, except for the two that take a loaded
+value apart.
+- **What is kept.** Each step leaves a tree saying which case fired: a constructor △; K Rk(c) = △△c;
+  the S rule Rs(j₁, j₂, j₃) = △(△j₁)(△j₂j₃); a triage Rt(h, d, r) = △(△hd)r; B Rb(j₁, j₂) = △(△j₁j₂);
+  C Rc(j₁, j₂) = △(△(△j₁j₂)). The j's are the residuals of the applies the step starts. Rk to Rc are
+  one agent each, standing for their trees as movement agents stand for code. The S rule first looks
+  whether its function is B or C, so an argument only one side reads is neither copied nor dropped.
+- **Running back is the same walkers turned round.** `A-` un-applies: an apply with its ports in
+  reverse order (residual, result, argument out, function out). `Sel-` dispatches back and `Dn-`
+  merges two copies. `Ar-` and `DnL-`/`DnS-`/`DnF-` are the second reads needed to take apart what a
+  constructor or a copy made. Undoing K is one rewrite.
+- **Work never done is undone by meeting** (`Lattice::collect_resid`): three moves that are not
+  interactions.
+  - An un-apply whose residual and result both come from one apply that never ran goes with it, and
+    the function and argument come back out.
+  - A merge whose two copies come from one duplicator goes with it, and the original comes back out.
+  - Erasers on both outputs of an apply that never ran take its inputs instead.
+
+  An un-apply or merge waiting on one of these asks for its other input. If that input turns out to
+  be a value, it asks for the agent it waits on instead.
+- **Any term** (resid.rs): every application is an apply with its residual behind a gate, and the
+  run back, built at load, is the term's mirror. There is an un-apply for each application, which
+  hands what it gives back to the mirrors of its function and argument. A fork or stem of the term
+  that holds applications (a tuple of reductions side by side, say) is taken apart (`F-`, `S-`). Each
+  value of the term that holds no application comes back at a root of its own, in the term's order.
+- **Gates.** The answer and each residual wait behind a `Gate`, and the run back waits behind the
+  gates. "Run it back" sets the clock the gates open at (`Lattice::open_at`), so the
+  time bar replays the opening where it happened.
+- **Erasing it instead** (`resid=2`): each residual goes to an eraser as it is made, and only the
+  answer is left.
+- Agents have 4 ports here (`Lattice::ar`), 3 everywhere else. CPU only, without the substrate,
+  merging, movement agents, superpositions or suspensions.
+
+`strands-resid 'CALL' dnroom=0` (`--forget` for `resid=2`) runs a call there and back, with the
+player's settings for these examples:
+
+| call (agents loaded) | forward: clocks, rewrites | history at the answer (agents) | back: clocks, rewrites, moves | erased instead: clocks, rewrites |
+|---|---|---|---|---|
+| `add 2 3` (316) | 22,326, 2,176 | 730 | 14,091, 2,581, 16 | 20,535, 2,465 |
+| `is_even 4` (260) | 30,909, 2,938 | 942 | 11,440, 3,443, 41 | 29,379, 3,509 |
+| `rev [1, 2, 3]` (720) | 58,555, 8,559 | 2,857 | 50,222, 10,581, 130 | 52,615, 9,904 |
+| `relay_add 3 5` (335) | 13,307, 3,089 | 799 | 16,880, 4,174, 94 | 11,629, 3,946 |
+
+- **Every run ends where it started**: the term's values as loaded, and nothing else. `tests/resid.rs`
+  runs 90 terms forward to the oracle's answer and back, once with copying ahead and forking on and
+  once fully lazy: random terms (applications all through), random trees applied to random trees,
+  and tuples of random terms. A further 60 with the history erased leave only the answer.
+- **Running back takes 1.2–1.35× the forward rewrites**, in 0.4–1.3× the clocks. The extra is mostly
+  the merges: copying takes one rewrite a layer, and merging takes two, since a merge has to read both
+  copies. Keeping the history costs 2.3–4× the loaded agents at the answer.
+- **Copying ahead (`dnroom=5`)** makes the forward run faster in clocks. But the history then keeps
+  everything copied ahead (`add 2 3`: 888 agents), and running back merges it a layer at a time.
+- **What keeping it costs**: the net holds 3–5× the agents, and every apply drags a fourth wire. At
+  the current design's settings, `add 5 6` takes 34k clocks forward against the plain lattice's 16.5k,
+  and 4–5× the time on the CPU. The GPU does not run it.
+
 ## Things tried that did not help, and why
 
 - **Pressure** from blocked rewrites (a diffusing field agents drift down): no measurable change

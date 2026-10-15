@@ -34,26 +34,26 @@ function netSync(force) {
 }
 
 function netRead() {
-  const n = E.strands_net(), w = new Uint32Array(E.memory.buffer, E.seats_ptr(), 6 * n).slice(), seats = L.w * L.h * L.depth * L.ks;
+  const n = E.strands_net(), w = new Uint32Array(E.memory.buffer, E.seats_ptr(), 7 * n).slice(), seats = L.w * L.h * L.depth * L.ks;
   if (!NET.bySeat || NET.bySeat.length !== seats) NET.bySeat = new Int32Array(seats).fill(-1);
   else if (NET.seat) for (const s of NET.seat) NET.bySeat[s] = -1;
   NET.renumbered = E.strands_renumbered();
-  NET.n = n; NET.id = new Uint32Array(n); NET.seat = new Uint32Array(n); NET.tag = new Uint8Array(n); NET.far = new Int32Array(3 * n);
+  NET.n = n; NET.id = new Uint32Array(n); NET.seat = new Uint32Array(n); NET.tag = new Uint8Array(n); NET.far = new Int32Array(4 * n);
   NET.index = new Map();
   for (let i = 0; i < n; i++) {
-    NET.id[i] = w[6 * i]; NET.seat[i] = w[6 * i + 1]; NET.tag[i] = w[6 * i + 2];
+    NET.id[i] = w[7 * i]; NET.seat[i] = w[7 * i + 1]; NET.tag[i] = w[7 * i + 2];
     NET.index.set(NET.id[i], i); NET.bySeat[NET.seat[i]] = i;
   }
-  for (let i = 0; i < n; i++) for (let q = 0; q < 3; q++) {
-    const far = w[6 * i + 3 + q], j = far === NOWHERE ? undefined : NET.index.get(far >>> 2);
-    NET.far[3 * i + q] = j === undefined ? -1 : j * 4 + (far & 3);
+  for (let i = 0; i < n; i++) for (let q = 0; q < 4; q++) {
+    const far = w[7 * i + 3 + q], j = far === NOWHERE ? undefined : NET.index.get(far >>> 2);
+    NET.far[4 * i + q] = j === undefined ? -1 : j * 4 + (far & 3);
   }
 }
 
 /// What feeds agent i's inputs, in the order a term reads them (f before x).
 function netInputs(i) {
   const t = NET.tag[i], out = [];
-  for (let q = 0; q < ARITY[t]; q++) { const f = NET.far[3 * i + q]; if (f >= 0 && !isSource(t, q)) out.push(f >> 2); }
+  for (let q = 0; q < ARITY[t]; q++) { const f = NET.far[4 * i + q]; if (f >= 0 && !isSource(t, q)) out.push(f >> 2); }
   return out;
 }
 

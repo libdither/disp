@@ -3,6 +3,7 @@
 pub mod iso;
 pub mod lattice;
 pub mod readback;
+pub mod resid;
 pub mod rev;
 pub mod share;
 pub mod tables;

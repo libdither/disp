@@ -92,7 +92,7 @@ impl<'a> Reader<'a> {
         match a.tag {
             Tag::Out | Tag::Unp => self.source(a.ports[0]),
             Tag::Eps => { let x = self.source(a.ports[0]); node(id, Kind::Erased(x)) }
-            t => self.source(Some((id, (0..3).find(|&q| is_source(t, q)).unwrap() as u8))),
+            t => self.source(Some((id, (0..4).find(|&q| is_source(t, q)).unwrap() as u8))),
         }
     }
 
@@ -143,6 +143,10 @@ impl<'a> Reader<'a> {
             }
             Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.view(id, a.tag, ports),
             Tag::Eps | Tag::Out | Tag::Seam => node(id, Kind::Cut),
+            Tag::RA if p == 2 => { let f = self.source(ports[0]); let x = self.source(ports[1]); node(id, Kind::Apply(f, x)) }
+            Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc => self.residual(id, a.tag, ports),
+            Tag::Gate => self.source(ports[0]),
+            _ => node(id, Kind::Cut),
         };
         self.depth -= 1;
         self.on_path[id as usize] = false;
@@ -150,7 +154,7 @@ impl<'a> Reader<'a> {
     }
 
     /// A movement agent as the tree it stands for, every node its own.
-    fn view(&mut self, id: u32, t: Tag, ports: [Option<Ref>; 3]) -> Rd {
+    fn view(&mut self, id: u32, t: Tag, ports: [Option<Ref>; 4]) -> Rd {
         let n = |k: Kind| node(id, k);
         let k = |x: Rd| n(Kind::Fork(n(Kind::Leaf), x));
         match t {
@@ -161,6 +165,20 @@ impl<'a> Reader<'a> {
             Tag::I => n(Kind::Fork(k(n(Kind::Leaf)), n(Kind::Leaf))),
             Tag::W => { let s = self.source(ports[1]); n(Kind::Fork(n(Kind::Stem(s.clone())), s)) }
             _ => unreachable!("not a movement agent"),
+        }
+    }
+
+    /// A residual as the tree it stands for (rules.rs `RESID_RULES`).
+    fn residual(&mut self, id: u32, t: Tag, ports: [Option<Ref>; 4]) -> Rd {
+        let n = |k: Kind| node(id, k);
+        let mut kid = |q: usize| self.source(ports[q]);
+        match t {
+            Tag::Rk => { let c = kid(1); n(Kind::Fork(n(Kind::Leaf), c)) }
+            Tag::Rs => { let (a, b, c) = (kid(1), kid(2), kid(3)); n(Kind::Fork(n(Kind::Stem(a)), n(Kind::Fork(b, c)))) }
+            Tag::Rt => { let (h, d, r) = (kid(1), kid(2), kid(3)); n(Kind::Fork(n(Kind::Fork(h, d)), r)) }
+            Tag::Rb => { let (a, b) = (kid(1), kid(2)); n(Kind::Stem(n(Kind::Fork(a, b)))) }
+            Tag::Rc => { let (a, b) = (kid(1), kid(2)); n(Kind::Stem(n(Kind::Stem(n(Kind::Fork(a, b)))))) }
+            _ => unreachable!("not a residual"),
         }
     }
 
@@ -297,7 +315,7 @@ pub fn subtree(net: &Net, root: u32) -> Vec<u32> {
 }
 
 /// Every agent on the lattice and what each of its ports is wired to, for the player's drawings of
-/// the net: [id, seat, tag, far end of port 0, of port 1, of port 2] for each, a far end as
+/// the net: [id, seat, tag, far end of port 0, of port 1, of port 2, of port 3] for each, a far end as
 /// id × 4 + port (NOWHERE if unwired). An id stays an agent's as it moves, until the net is renumbered.
 pub fn wires(l: &Lattice) -> Vec<u32> {
     let mut v = vec![];
@@ -404,8 +422,8 @@ pub struct Root {
     /// The output it stands for, or None for all of them.
     pub out: Option<u8>,
     /// Its ports at the last look, and the tags of the agents there.
-    ports: [Option<Ref>; 3],
-    next: [Option<Tag>; 3],
+    ports: [Option<Ref>; 4],
+    next: [Option<Tag>; 4],
     /// What reads on from its readers that only pass its value on (duplicators, normalizers and
     /// pairs), in case both are rewritten between looks.
     beyond: Vec<Ref>,
@@ -436,7 +454,7 @@ pub struct Report {
 fn live(net: &Net, id: u32) -> Option<&Agent> { net.agents.get(id as usize)?.as_ref() }
 
 fn outputs(tag: Tag, out: Option<u8>) -> Vec<usize> {
-    match out { Some(p) => vec![p as usize], None => (0..3).filter(|&q| is_source(tag, q)).collect() }
+    match out { Some(p) => vec![p as usize], None => (0..4).filter(|&q| is_source(tag, q)).collect() }
 }
 
 fn root(net: &Net, id: u32, out: Option<u8>) -> Option<Root> {
