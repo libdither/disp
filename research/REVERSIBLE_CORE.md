@@ -86,7 +86,7 @@ Each entry gives the claim, its source, and what it means for disp.
 
 ### Reversible combinators, interaction nets and token machines
 
-- **Reversible combinators work when every rule uses each variable once on each side**: ["each variable which occurs does so exactly once in r and exactly once in s"](https://arxiv.org/pdf/1111.7154#page=6).
+- **Abramsky's reversible combinators are automata walked by a token, not reductions.** The automaton a combinator compiles to has rules in which ["each variable which occurs does so exactly once in r and exactly once in s"](https://arxiv.org/pdf/1111.7154#page=6); the run is reversible, ["not in the simplistic sense that application between combinators is itself reversible"](https://arxiv.org/pdf/1806.06759#page=4) (research/RULES_TO_LATTICE.md §7).
   - Copying can be a tag on the question instead of a copy: ["using the copy-tag field of !b to split its address space into two"](https://arxiv.org/pdf/1111.7154#page=18).
   - A built-in conditional breaks this: ["this option is not open to us if we wish to retain reversibility"](https://arxiv.org/pdf/1111.7154#page=24). Tree calculus loses information exactly at K and at triage.
 - **Reversible combinatory logic records, per step, what** ["incorporates information useful to reconstruct the redex from the contractum"](https://www.doc.ic.ac.uk/~herbert/papers/mscs06.pdf#page=2). ["An important property of rCL is that reductions always increase the length of the history term"](https://www.doc.ic.ac.uk/~herbert/papers/mscs06.pdf#page=8).

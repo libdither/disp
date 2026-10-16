@@ -28,6 +28,14 @@ very agents loaded.
 LazyNet runs it all lazily: a copy stays a link until read, and work never done is undone by joining
 the agent with its reverse.
 
+Run as the player runs it (`Run`), the net at rest is one tree at a root: the term as a tree ⌜t⌝
+(`quote`), or the answer and the history bundled in a fork. Dropping the walker E on ⌜t⌝ runs it;
+turning the bundle into E⁻ (E with its ports reversed) runs it back to ⌜t⌝. With forgetting on, what
+the applies drop (K's argument, the arms a triage does not take) is erased as it is made and holes
+are left: run back, the term comes back with holes just where nothing in the run looked. Laziness
+means little is ever made only to be dropped, so forgetting saves little: the history is almost all
+which rule fired.
+
     python residual.py [--quick]     the checks
     python residual.py --rust        the lattice's table, as rules.rs `RESID_RULES` (S looking for B and C)
 """
@@ -147,12 +155,14 @@ def unapp(r, j):
 # T1sc, T1scf and their reverses) each read one more thing, so that no rule makes more than six agents.
 
 SPELL = {'Rk': lambda c: F(L, c), 'Rs': lambda a, b, c: F(S(a), F(b, c)), 'Rt': lambda h, d, r: F(F(h, d), r),
-         'Rb': lambda a, b: S(F(a, b)), 'Rc': lambda a, b: S(S(F(a, b)))}
-AR = {'L': 1, 'S': 2, 'F': 3, 'Pair': 3, 'Arms3': 4, 'Rk': 2, 'Rs': 4, 'Rt': 4, 'Rb': 3, 'Rc': 3,
+         'Rb': lambda a, b: S(F(a, b)), 'Rc': lambda a, b: S(S(F(a, b))), 'Ha': lambda j, f, x: F(j, F(f, x)),
+         'Rh': lambda f, x: S(S(S(F(f, x)))), 'Rq': lambda a: S(S(S(S(a))))}
+AR = {'L': 1, 'S': 2, 'F': 3, 'Pair': 3, 'Arms3': 4, 'Rk': 2, 'Rs': 4, 'Rt': 4, 'Rb': 3, 'Rc': 3, 'Ha': 4, '?': 1,
       'A': 4, 'T1': 4, 'Sel': 4, 'SL': 3, 'SS': 4, 'SF': 4, 'TSs': 4, 'TSb': 4,
       'T1s': 4, 'T1sf': 4, 'T1sc0': 4, 'T1sc': 4, 'T1scf': 4, 'Unp': 3, 'Dn': 3, 'Eps': 1, 'Out': 1,
-      'A⁻': 4, 'A⁻r': 3, 'Sel⁻': 4, 'SL⁻': 3, 'SS⁻': 4, 'SF⁻': 4, 'Dn⁻': 3, 'Dn⁻L': 2, 'Dn⁻S': 3, 'Dn⁻F': 4}
-VALUES = {'L', 'S', 'F', 'Pair', 'Arms3', *SPELL}
+      'A⁻': 4, 'A⁻r': 3, 'Sel⁻': 4, 'SL⁻': 3, 'SS⁻': 4, 'SF⁻': 4, 'Dn⁻': 3, 'Dn⁻L': 2, 'Dn⁻S': 3, 'Dn⁻F': 4,
+      'E': 3, 'E⁻': 3, 'F!': 2, 'Nrm': 2, 'Go': 1, 'Back': 1, 'Rh': 3, 'Rq': 2, 'Unarm': 2}
+VALUES = {'L', 'S', 'F', 'Pair', 'Arms3', '?', *SPELL}
 audit.ARITY.update(AR)
 
 
@@ -186,7 +196,7 @@ MERGE = [
 ]
 
 ERASE = [R('Eps', k, ' '.join(f'e{i}:Eps' for i in range(1, AR[k])), ' '.join(f'e{i}.0=p{i}' for i in range(1, AR[k])))
-         for k in ['L', 'S', 'F', 'Pair', 'Arms3', *SPELL]]
+         for k in ['L', 'S', 'F', 'Pair', 'Arms3', '?', *SPELL]]
 
 UNPAIR = R('Unp', 'Pair', '', 'c1=p1 c2=p2')
 
@@ -286,8 +296,81 @@ def fold(j):
 FORWARD = FORWARD_BASE + SHORT_S
 FORWARD_PLAIN = FORWARD_BASE + PLAIN_S
 
+# ---- running a term and running it back. At rest the net is one tree at a root: the term ⌜t⌝, or
+# the answer and the history bundled in a fork. E [⌜t⌝, value out, history out] runs a term and E⁻
+# [history, value, ⌜t⌝ out] (E's ports reversed) runs it back; the history of an application is
+# Ha(residual, the function's history, the argument's) = △j(△hf hx), of a value △.
+RUN = [
+    R('E', 'S', 'h:L', 'p1=c1 h.0=c2'),
+    R('E', 'F', 'a:A f:E x:E h:Ha', 'f.0=p1 x.0=p2 a.0=f.1 a.1=x.1 a.2=c1 a.3=h.1 h.2=f.2 h.3=x.2 h.0=c2'),
+]
+RUN_BACK = [
+    R('E⁻', 'L', 's:S', 's.1=c1 s.0=c2'),
+    R('E⁻', 'Ha', 'u:A⁻ f:E⁻ x:E⁻ q:F', 'u.0=p1 u.1=c1 u.3=f.1 u.2=x.1 f.0=p2 x.0=p3 f.2=q.1 x.2=q.2 q.0=c2'),
+]
+
+# Forgetting: all an apply ever drops is K's argument (Rk's) and the two arms a triage does not take
+# (Rt's). With forgetting on, the rules that make Rk or Rt hand it up through a forgetter F! [residual,
+# up], which erases those and leaves holes ? in their place. A hole merged with a copy is that copy,
+# and an un-apply of a constructor whose result is a hole gives back holes. Run again, a hole is an
+# unknown: what reads it gives a hole, keeping the rest of what it was given to give it back with
+# (Rh(f, x), the function and argument; Rq(arms), a triage's arms read on a hole), and the S rule
+# looking for B or C reads a hole as neither. Anything else would wait on it (`inert`).
+FORGET = [
+    R('F!', 'Rk', 'k:Rk h:? e:Eps', 'k.0=c1 k.1=h.0 e.0=p1'),
+    R('F!', 'Rt', 't:Rt a:? b:? d:Eps e:Eps', 't.0=c1 t.1=p1 t.2=a.0 t.3=b.0 d.0=p2 e.0=p3'),
+]
+# The normalizer reads a tree in whole (forcing what it waits on); a click turns the root into Go or
+# Back, which drops the walker on the tree there, a normalizer after it and a root again.
+NORMAL = [
+    R('Nrm', 'L', 'l:L', 'l.0=c1'),
+    R('Nrm', 'S', 'n:Nrm s:S', 'n.0=p1 n.1=s.1 s.0=c1'),
+    R('Nrm', 'F', 'm:Nrm n:Nrm f:F', 'm.0=p1 n.0=p2 m.1=f.1 n.1=f.2 f.0=c1'),
+    R('Nrm', '?', 'h:?', 'h.0=c1'),
+]
+TRIGGERS = [
+    R('Go', 'S', 'q:S e:E n:Nrm b:F o:Out', 'q.1=p1 e.0=q.0 e.1=n.0 n.1=b.1 e.2=b.2 b.0=o.0'),
+    R('Go', 'F', 'q:F e:E n:Nrm b:F o:Out', 'q.1=p1 q.2=p2 e.0=q.0 e.1=n.0 n.1=b.1 e.2=b.2 b.0=o.0'),
+    R('Back', 'F', 'u:E⁻ n:Nrm o:Out', 'u.0=p2 u.1=p1 u.2=n.0 n.1=o.0'),
+]
+HOLES = [
+    R('Dn', '?', 'x:? y:?', 'x.0=c1 y.0=c2'),
+    R('Dn⁻', '?', '', 'c1=c2'),
+    R('Dn⁻L', '?', 'l:L', 'l.0=c1'),
+    R('Dn⁻S', '?', 's:S', 's.1=c1 s.0=c2'),
+    R('Dn⁻F', '?', 'f:F', 'f.1=c1 f.2=c2 f.0=c3'),
+    R('A⁻r', '?', 'x:? f:?', 'x.0=c1 f.0=c2'),
+    R('A', '?', 'r:? h:Rh f:?', 'r.0=c2 h.1=f.0 h.2=c1 h.0=c3'),
+    R('T1', '?', 'u:Unp t:F a:? r:? h:Rh', 'u.0=c1 t.1=a.0 t.2=u.1 h.1=t.0 h.2=u.2 r.0=c2 h.0=c3'),
+    R('Sel', '?', 'r:? q:Rq', 'q.1=c1 r.0=c2 q.0=c3'),
+    R('A⁻', 'Rh', 'e:Eps', 'e.0=c1 p1=c3 p2=c2'),
+    R('A⁻', 'Rq', 'u:Unarm z:? e:Eps', 'e.0=c1 z.0=c2 u.0=p1 u.1=c3'),
+    R('Unarm', 'Arms3', 'f:F g:F', 'g.1=p1 g.2=p2 f.1=g.0 f.2=p3 f.0=c1'),
+    R('T1s', '?', 'l:? k:T1sc0', 'k.0=c1 k.1=l.0 k.2=c2 k.3=c3'),
+    R('T1sf', '?', 'u:Unp l:? f:F k:T1sc0', 'u.0=c1 u.1=f.2 u.2=k.0 f.1=l.0 k.1=f.0 k.2=c2 k.3=c3'),
+    R('T1sc', '?', 'l:? k:TSb', 'k.0=c1 k.1=l.0 k.2=c2 k.3=c3'),
+    R('T1scf', '?', 'u:Unp l:? f:F k:TSb', 'u.0=c1 u.1=f.2 u.2=k.0 f.1=l.0 k.1=f.0 k.2=c2 k.3=c3'),
+]
+
+
+def inert(c, p, rules):
+    """Whether c and p meet without a rule because p is a hole c would have to read."""
+    return p == '?' and (c, p) not in rules
+
+
+def forgetting(r):
+    """r, the residual it makes handed up through a forgetter."""
+    i, g = next(i for i, k in enumerate(r['fresh']) if k in ('Rk', 'Rt')), len(r['fresh'])
+    up = lambda e: ('X', g, 1) if e == ('X', i, 0) else e
+    return dict(r, name=r['name'] + ' forgetting', fresh=r['fresh'] + ['F!'],
+                wires=[(up(a), up(b)) for a, b in r['wires']] + [(('X', i, 0), ('X', g, 0))])
+
+
+FORGETTING = [forgetting(r) for r in FORWARD if {'Rk', 'Rt'} & set(r['fresh'])]
+WALKS = RUN + RUN_BACK + FORGET + HOLES + NORMAL + TRIGGERS
+
 TWIN = {'A⁻': 'A', 'Sel⁻': 'Sel', 'SL⁻': 'SL', 'SS⁻': 'SS', 'SF⁻': 'SF', 'Dn⁻': 'Dn'}
-assert all(max(AR[k] for k in [r['c'], r['p'], *r['fresh']]) <= 4 and len(r['fresh']) <= 6 for r in FORWARD + PLAIN_S + BACKWARD + ERASE)
+assert all(max(AR[k] for k in [r['c'], r['p'], *r['fresh']]) <= 4 and len(r['fresh']) <= 6 for r in FORWARD + PLAIN_S + BACKWARD + ERASE + WALKS + FORGETTING)
 
 
 # ---- a small interaction-net interpreter ----
@@ -373,10 +456,13 @@ class Need(Exception):
     def __init__(self, i): self.i = i
 
 
-LAZY = {'A', 'A⁻', 'Dn'}
-MOVES = {'un-apply·apply', 'merge·copy', 'Eps·copy (un-copy)', 'dead work'}
-LAZY_OUT = {('A', 2), ('A', 3), ('A⁻', 2), ('A⁻', 3), ('Dn', 1), ('Dn', 2)}
-READERS = {'T1', 'Sel', 'SL', 'SS', 'SF', 'TSs', 'TSb', 'T1s', 'T1sf', 'T1sc0', 'T1sc', 'T1scf', 'Unp',
+LAZY = {'A', 'A⁻', 'Dn', 'E', 'E⁻'}
+MOVES = {'un-apply·apply', 'merge·copy', 'Eps·copy (un-copy)', 'dead work', 'un-run·run', 'un-apply·forgotten apply',
+         'un-run·forgotten run'}
+LAZY_OUT = {('A', 2), ('A', 3), ('A⁻', 2), ('A⁻', 3), ('Dn', 1), ('Dn', 2), ('E', 1), ('E', 2), ('E⁻', 2)}
+# A walker turned round, the twin it can meet unrun (its port 0 on the twin's last port) and the twin's output.
+UNRUN = {'A⁻': ('A', 3, 2), 'E⁻': ('E', 2, 1)}
+READERS = {'T1', 'Sel', 'SL', 'SS', 'SF', 'TSs', 'TSb', 'T1s', 'T1sf', 'T1sc0', 'T1sc', 'T1scf', 'Unp', 'Nrm', 'Unarm',
            'A⁻r', 'Sel⁻', 'SL⁻', 'SS⁻', 'SF⁻', 'Dn⁻L', 'Dn⁻S', 'Dn⁻F'}
 
 
@@ -385,7 +471,8 @@ class LazyNet(Net):
     argument stays an apply that never ran and a dropped copy stays a link to its duplicator. Three
     moves join two agents that are not an active pair, each the undoing of work never done:
     - an un-apply whose residual and result wires both lead to one apply that never ran: both go,
-      the function and argument come back out;
+      the function and argument come back out (the same for E⁻ and an E that never ran); with a
+      hole for the result (the apply's output was forgotten), both go and the hole takes its place;
     - a merge whose two copies lead to one duplicator: both go, the original comes back out;
     - an eraser on a copy: the duplicator goes, the other copy reads the original (un-copy); an
       eraser on both outputs of an apply that never ran erases its function and argument instead."""
@@ -403,10 +490,11 @@ class LazyNet(Net):
         return x[1] == 0 and (k in READERS or (k in LAZY and x[0] in self.wanted))
 
     def facing_unrun(self, i):
-        """The apply that never ran, if i is an un-apply reading its residual: i must learn what its
-        result is before running it, since if the result is that apply's own output both just go."""
-        e = self.link.get((i, 0))
-        if self.kind.get(i) == 'A⁻' and e and e[1] == 3 and self.kind.get(e[0]) == 'A': return e[0]
+        """The apply (or E) that never ran, if i is an un-apply (E⁻) reading its residual (history):
+        i must learn what its result is before running it, since if the result is that apply's own
+        output both just go."""
+        e, k = self.link.get((i, 0)), self.kind.get(i)
+        if k in UNRUN and e and e[1] == UNRUN[k][1] and self.kind.get(e[0]) == UNRUN[k][0]: return e[0]
 
     def join(self, a, b):
         super().join(a, b)
@@ -428,9 +516,9 @@ class LazyNet(Net):
         """A wanted un-apply facing an apply that never ran: ask for its result; run the apply only
         once the result turns out to be something else."""
         j, r = self.facing_unrun(i), self.link.get((i, 1))
-        if r is None or r == (j, 2): return
+        if r is None or r == (j, UNRUN[self.kind[i]][2]): return
         if (self.kind.get(r[0]), r[1]) in LAZY_OUT: self.want(r[0])
-        elif r[1] == 0 and self.kind.get(r[0]) in VALUES: self.want(j)
+        elif r[1] == 0 and self.kind.get(r[0]) in VALUES - {'?'}: self.want(j)
 
     def drop(self, *ids):
         for i in ids:
@@ -447,10 +535,14 @@ class LazyNet(Net):
     def check_moves(self, i):
         k, at = self.kind.get(i), lambda q: self.link.get((i, q))
         kind = lambda e: e and self.kind.get(e[0])
-        if k == 'A⁻' and at(0) and at(0)[1] == 3 and kind(at(0)) == 'A' and at(1) == (at(0)[0], 2):
-            j = at(0)[0]
-            self.move('un-apply·apply', [i, j], [((j, 0), (i, 3)), ((j, 1), (i, 2))])
-        elif k == 'A⁻' and i in self.wanted and self.facing_unrun(i):
+        j = self.facing_unrun(i)
+        hole = j and at(1) and at(1)[1] == 0 and kind(at(1)) == '?'
+        if j and (hole or at(1) == (j, UNRUN[k][2])):
+            # The twin's inputs come back out of i's outputs; what read the twin's output reads the hole.
+            back = [((j, q), (i, AR[k] - 1 - q)) for q in range(AR[k] - 2)]
+            name = 'un-apply·{}apply' if k == 'A⁻' else 'un-run·{}run'
+            self.move(name.format('forgotten ' if hole else ''), [i, j], back + ([((j, UNRUN[k][2]), (i, 1))] if hole else []))
+        elif i in self.wanted and j:
             self.settle(i)
         elif k == 'Dn⁻' and kind(at(0)) == 'Dn' and at(0)[1] in (1, 2):
             d = at(0)[0]
@@ -480,6 +572,7 @@ class LazyNet(Net):
             if r is None:
                 a, b = b, a
                 r = self.rules.get((self.kind[a], self.kind[b]))
+            if r is None and (inert(self.kind[a], self.kind[b], self.rules) or inert(self.kind[b], self.kind[a], self.rules)): continue
             if r is None: raise Stuck(f'no rule for {self.kind[a]}·{self.kind[b]}')
             if self.kind[a] in LAZY and a not in self.wanted: continue
             fuel -= 1
@@ -668,6 +761,116 @@ def linked(prog, args, short):
                 left=cut.live() - Counter(built(r)))
 
 
+def plain(t): return t[0] != 'Ap' and all(plain(k) for k in t[1:])
+
+
+def quote(t):
+    """t as the tree E runs: a value v is △v, an application f x is △⌜f⌝⌜x⌝, and a stem or fork that
+    holds applications is △ applied to its children."""
+    if plain(t): return S(t)
+    if t[0] == 'Ap': return F(quote(t[1]), quote(t[2]))
+    return quote(('Ap', L, t[1]) if t[0] == 'S' else ('Ap', ('Ap', L, t[1]), t[2]))
+
+
+def unquote(q): return q[1] if q[0] == 'S' else ('Ap', unquote(q[1]), unquote(q[2]))
+
+
+def fill(t, hole):
+    """t with each hole replaced by hole()."""
+    return hole() if t == ('?',) else (t[0], *(fill(k, hole) for k in t[1:]))
+
+
+def within(q, full):
+    """Whether q is full with some of its subtrees holes."""
+    return q == ('?',) or q[0] == full[0] and len(q) == len(full) and all(within(a, b) for a, b in zip(q[1:], full[1:]))
+
+
+class Run:
+    """A term on a LazyNet as the player has it: ⌜t⌝ at a root, and a click turning the root into Go
+    (run: the answer and history bundled in a fork) or Back (run back: ⌜t⌝ again)."""
+
+    def __init__(self, t, forget=False):
+        self.net = LazyNet(FORWARD + BACKWARD + ERASE + WALKS)
+        self.net.agent('Out', [self.net.tree(quote(t))])
+        self.forget(forget)
+
+    def forget(self, on):
+        self.net.rules.update({(r['c'], r['p']): r for r in (FORGETTING if on else FORWARD)})
+
+    def root(self): return next(i for i, k in self.net.kind.items() if k == 'Out')
+
+    def click(self, trigger):
+        """The root turned into the trigger; run until nothing is left to do; the tree at the root."""
+        n, o = self.net, self.root()
+        n.kind[o] = trigger
+        n.todo.append((o, n.link[(o, 0)][0]))
+        n.run()
+        return n.link[(self.root(), 0)][0]
+
+    def run(self):
+        """The answer."""
+        b = self.click('Go')
+        return self.net.read(self.net.link[(b, 1)])
+
+    def back(self):
+        self.click('Back')
+        return self.net.read(self.net.link[(self.root(), 0)])
+
+    def history(self):
+        b = self.net.link[(self.root(), 0)][0]
+        return self.net.count(self.net.link[(b, 2)])
+
+
+def mixed_terms(n):
+    """Random terms with applications anywhere, stems and forks holding them too, each finishing."""
+    rng, out = Lcg(20261015), []
+    def term(d):
+        x = rng.next()
+        if d == 0 or x < 0.25: return L
+        if x < 0.4: return S(term(d - 1))
+        if x < 0.55: return F(term(d - 1), term(d - 1))
+        return ('Ap', term(d - 1), term(d - 1))
+    while len(out) < n:
+        t = term(3 + len(out) % 4)
+        if plain(t): continue
+        try: out.append((f'mixed {len(out)}', t, nf(t, Fuel(5000))))
+        except OutOfFuel: pass
+    return out
+
+
+def runs(cases):
+    """Each term run and run back, twice: the oracle's answer, then exactly ⌜t⌝ with nothing else left.
+    Then forgetting: the oracle's answer, and back ⌜t⌝ with holes, nothing else left, any trees in the
+    holes giving the same answer; run again (not forgetting) and back, the same tree with holes."""
+    rng, stats = Lcg(7), Counter()
+    rand = lambda: nf(rng.term(3), Fuel(10**5)) if rng.next() < 0.9 else L
+    for name, t, want in cases:
+        q = quote(t)
+        r = Run(t)
+        for _ in range(2):
+            assert r.run() == want, f'{name}: answer'
+            stats['history'] += r.history()
+            assert r.back() == q, f'{name}: not back'
+            assert r.net.live() == Counter(built(q)), f'{name}: left over {r.net.live() - Counter(built(q))}'
+        r = Run(t, forget=True)
+        assert r.run() == want, f'{name}: answer forgetting'
+        stats['forgetting'] += r.history()
+        got = r.back()
+        assert within(got, q), f'{name}: back forgetting is not the term with holes'
+        assert r.net.live() == Counter(built(got)), f'{name}: left over forgetting {r.net.live() - Counter(built(got))}'
+        for hole in (lambda: L, lambda: S(L), rand):
+            try: assert nf(unquote(fill(got, hole)), Fuel(10**6)) == want, f'{name}: holes matter'
+            except OutOfFuel: pass
+        r.forget(False)
+        assert r.run() == want and r.back() == got, f'{name}: run again from the holes'
+        holes = built(got).count('?')
+        stats['term'] += size(q)
+        stats['holes'] += holes
+        stats['lost'] += size(q) - size(got) + holes
+        stats['moves'] += sum(n for k, n in r.net.fired.items() if k in MOVES)
+    return stats
+
+
 def canon(r, kmap):
     """A rule as wired, its agents renamed by kmap; the same for two rules means the same rule."""
     n, name = len(r['fresh']), lambda k: kmap.get(k, k)
@@ -685,17 +888,20 @@ def _ap(f, args):
     return f
 
 
-RUST_NAME = {'A': 'RA', 'T1': 'RT1', 'Sel': 'RSel', 'A⁻': 'UA', 'A⁻r': 'UAr', 'Sel⁻': 'USel', 'SL⁻': 'USL', 'SS⁻': 'USS',
-             'SF⁻': 'USF', 'Dn⁻': 'Mg', 'Dn⁻L': 'MgL', 'Dn⁻S': 'MgS', 'Dn⁻F': 'MgF'}
+RUST_NAME = {'A': 'RA', 'T1': 'RT1', 'Sel': 'RSel', 'Unarm': 'UArms', 'A⁻': 'UA', 'A⁻r': 'UAr', 'Sel⁻': 'USel', 'SL⁻': 'USL', 'SS⁻': 'USS',
+             'SF⁻': 'USF', 'Dn⁻': 'Mg', 'Dn⁻L': 'MgL', 'Dn⁻S': 'MgS', 'Dn⁻F': 'MgF', 'E': 'Ev', 'E⁻': 'UEv', 'F!': 'Fg', '?': 'Hole'}
 
 
 def rust():
-    """FORWARD, BACKWARD and the erasers for the new values, as rules.rs `Rule` literals; the rules the
-    lattice already has (duplicators, unpairs, erasers of trees and pairs) left out."""
-    have = {('Unp', 'Pair'), ('Dn', 'L'), ('Dn', 'S'), ('Dn', 'F'), ('Eps', 'L'), ('Eps', 'S'), ('Eps', 'F'), ('Eps', 'Pair')}
+    """The tables as rules.rs `Rule` literals, `RESID_RULES` then `FORGET_RULES`; the rules the lattice
+    already has (duplicators, unpairs, normalizers and erasers of trees and pairs) left out."""
+    have = {('Unp', 'Pair'), ('Dn', 'L'), ('Dn', 'S'), ('Dn', 'F'), ('Eps', 'L'), ('Eps', 'S'), ('Eps', 'F'), ('Eps', 'Pair'),
+            ('Nrm', 'L'), ('Nrm', 'S'), ('Nrm', 'F')}
     name = lambda k: RUST_NAME.get(k, k)
     end = lambda e: f'X({e[1]}, {e[2]})' if e[0] == 'X' else f'C({e[1]})' if e[0] == 'C' else f'Px({e[1]})'
-    for group, rules in [('forward', FORWARD), ('backward', BACKWARD), ('erasing history', ERASE)]:
+    for group, rules in [('forward', FORWARD), ('backward', BACKWARD), ('erasing history', ERASE),
+                         ('running and running back', RUN + RUN_BACK + NORMAL + TRIGGERS), ('forgetting', FORGET + HOLES),
+                         ('FORGET_RULES', FORGETTING)]:
         print(f'    // ---- {group} ----')
         for r in rules:
             if (r['c'], r['p']) in have: continue
@@ -736,6 +942,21 @@ def main():
         print(f"{name:16} {d['answer']:6}   {row}")
     print(f'moves that are not active pairs: {dict(moves)}')
     print(f'run back to the very agents loaded: {"every run" if not inexact else "not " + ", ".join(inexact)}')
+
+    print('\nrun (E) and run back (E⁻), one tree at a root at rest; then forgetting what the applies drop:')
+    cases = mixed_terms(60 if quick else 300) + [(n, _ap(p, a), nf(_ap(p, a), Fuel(10**7))) for n, p, a in progs]
+    st = runs(cases)
+    print(f'  {len(cases)} terms run and run back twice: the oracle\'s answer, then the very tree loaded, nothing else left.')
+    print(f'  Forgetting: back the term with {st["holes"]} holes in place of {st["lost"]} of its {st["term"]} agents, any trees in them')
+    print('  giving the same answer; run again from there and back, the same tree with holes.')
+    print(f"  {'program':16} {'term':>5} {'live after the answer, kept':>28} {'forgetting':>11}")
+    for name, t, want in cases[-len(progs):]:
+        live = []
+        for forget in (False, True):
+            r = Run(t, forget)
+            r.run()
+            live.append(sum(r.net.live().values()))
+        print(f'  {name:16} {size(quote(t)):5} {live[0]:28} {live[1]:11}')
 
     print('\nbackward rules that are a forward rule with the walker turned round (A⁻→A, Sel⁻→Sel, …, Dn⁻→Dn):')
     twin = lambda r, q: (TWIN.get(r['c'], r['c']), r['p'], sorted(TWIN.get(k, k) for k in r['fresh'])) == (q['c'], q['p'], sorted(q['fresh']))

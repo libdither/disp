@@ -9,8 +9,11 @@ only their ratios carry over. Run them with `python` from their own folder.
   takes the residual and the result back to the function and the argument. It has the oracle, the
   forward and backward rule tables sized for the lattice, an interpreter (eager, and lazy with the
   undo-by-meeting moves), and the checks: forward against the oracle, back to the very agents
-  loaded, both in one net, history erased. `python residual.py [--quick]` runs the checks;
-  `--rust` writes the lattice's table (rules.rs `RESID_RULES`).
+  loaded, both in one net, history erased. `Run` drives it as the player does: the term as a tree at
+  a root, a click turning the root into the walker that runs it (`E`) or runs it back (`E⁻`); and
+  forgetting what the applies drop, which brings the term back with holes that any trees fill
+  without changing the answer. `python residual.py [--quick]` runs the checks (`--quick`: 24 s);
+  `--rust` writes the lattice's tables (rules.rs `RESID_RULES`, `FORGET_RULES`).
 - `rule_audit.py`: which rules of a table could run backward with nothing beyond the net, by
   Salikhmetov's test (connected right sides, no two alike); `residual.py` imports it for its tables.
 

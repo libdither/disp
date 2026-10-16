@@ -1,108 +1,140 @@
-//! Keeping history on the strand lattice (`Params::resid`, rules.rs `RESID_RULES`): every application
-//! of the loaded term is an apply that leaves what it would have dropped, and behind gates waits the
-//! run back, built as the term's mirror (research/reversible-core/residual.py is the model this runs).
+//! Keeping history on the strand lattice (`Params::resid`, rules.rs `RESID_RULES`), as
+//! research/reversible-core/residual.py models it. At rest the lattice holds one tree at its root:
+//! the term (each value v as △v, each application f x as △⌜f⌝⌜x⌝), or the answer and the history
+//! bundled in a fork. A click turns the root into `Go`, which runs the term (the walker `Ev` makes an
+//! apply of each application, each leaving what it would have dropped), or into `Back`, which runs the
+//! answer and history back to the term (`UEv`). The term loads with `Go` at its root.
 //!
-//! The net for a term t with the history kept:
-//! - forward, t as it is, every application an apply (`A+`) whose residual goes into a gate, and a
-//!   normalizer reading the answer into a gate;
-//! - behind the gates, t's mirror: an un-apply (`A-`) for each application, reading its residual and
-//!   what came of it and handing what it gives back to the mirrors of its function and argument; a
-//!   fork or stem of t holding applications taken apart (`Fm`, `Sm`); and every value of t that holds
-//!   none read out at a root (`Nrm`, `Out`), in the order t has them.
-//!
-//! Opening the gates (`Lattice::open_gates`) sets the run back going. With the history erased instead,
-//! each residual goes to an eraser as it is made and the answer to `Out`.
+//! With forgetting on (`Lattice::forget`), what the applies drop is erased as they go and holes are
+//! left: run back, the term comes back with holes just where nothing in the run looked. With the
+//! history erased instead (`resid=2`), each residual goes to an eraser as it is made and the answer to
+//! `Out`, and nothing runs back.
 
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::Term;
 use rust_ca_lattice::rules::Tag;
+use std::rc::Rc;
 
-/// What a gate holds shut, or a root reads: the answer, application i's residual (in the order the
-/// term has its applications), value i of the term (in its order).
+/// A tree that may have holes: what the root holds once a run back is over.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Tree { L, S(Box<Tree>), F(Box<Tree>, Box<Tree>), Hole }
+
+impl Tree {
+    pub fn from(t: &Term) -> Tree {
+        match t {
+            Term::L => Tree::L,
+            Term::S(a) => Tree::S(Box::new(Tree::from(a))),
+            Term::F(a, b) => Tree::F(Box::new(Tree::from(a)), Box::new(Tree::from(b))),
+            Term::Ap(..) => unreachable!("a tree holds no application"),
+        }
+    }
+
+    pub fn show(&self) -> String {
+        match self {
+            Tree::L => "L".into(),
+            Tree::S(a) => format!("S({})", a.show()),
+            Tree::F(a, b) => format!("F({},{})", a.show(), b.show()),
+            Tree::Hole => "?".into(),
+        }
+    }
+
+    pub fn holes(&self) -> usize {
+        match self { Tree::L => 0, Tree::S(a) => a.holes(), Tree::F(a, b) => a.holes() + b.holes(), Tree::Hole => 1 }
+    }
+
+    /// Whether this is `full` with some of its subtrees holes.
+    pub fn within(&self, full: &Tree) -> bool {
+        match (self, full) {
+            (Tree::Hole, _) | (Tree::L, Tree::L) => true,
+            (Tree::S(a), Tree::S(b)) => a.within(b),
+            (Tree::F(a, b), Tree::F(c, d)) => a.within(c) && b.within(d),
+            _ => false,
+        }
+    }
+
+    /// The term this tree stands for, each hole filled by `hole`.
+    pub fn unquote(&self, hole: &Term) -> Term {
+        match self {
+            Tree::S(v) => v.filled(hole),
+            Tree::F(f, x) => Term::Ap(Rc::new(f.unquote(hole)), Rc::new(x.unquote(hole))),
+            _ => unreachable!("not a term as a tree"),
+        }
+    }
+
+    fn filled(&self, hole: &Term) -> Term {
+        match self {
+            Tree::L => Term::L,
+            Tree::S(a) => Term::S(Rc::new(a.filled(hole))),
+            Tree::F(a, b) => Term::F(Rc::new(a.filled(hole)), Rc::new(b.filled(hole))),
+            Tree::Hole => hole.clone(),
+        }
+    }
+
+    /// The term's values as this tree has them, in order.
+    pub fn values(&self) -> Vec<&Tree> {
+        match self { Tree::S(v) => vec![&**v], Tree::F(f, x) => [f.values(), x.values()].concat(), _ => vec![] }
+    }
+}
+
+/// A click, at a clock (`Lattice::edits`): the root turned into `Back` or `Go`, forgetting on or off.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Role { Answer, History(u32), Part(u32) }
+pub enum Edit { Back, Go, Forget(bool) }
 
-/// The gates and roots of a loaded net, by agent id, and the term's values, to compare what comes back.
-#[derive(Clone, Debug, Default)]
-pub struct Parts { pub gates: Vec<(u32, Role)>, pub roots: Vec<(u32, Role)>, pub values: Vec<Term> }
+/// The term as loaded, as a tree, to compare what comes back with.
+#[derive(Clone, Debug)]
+pub struct Parts { pub term: Tree }
 
-/// The term as built: a value holding no application (its number), an application (its apply and
-/// number), or a fork or stem holding applications.
-enum Built { Value(u32), Apply(u32, u32, Box<Built>, Box<Built>), Stem(Box<Built>), Fork(Box<Built>, Box<Built>) }
+impl Default for Parts { fn default() -> Self { Parts { term: Tree::L } } }
 
 fn plain(t: &Term) -> bool {
     match t { Term::L => true, Term::S(a) => plain(a), Term::F(a, b) => plain(a) && plain(b), Term::Ap(..) => false }
 }
 
-/// The net for t, with the history kept behind gates or erased as it is made. Returns the net, the root
-/// to lay it out from, and its gates and roots.
-pub fn net(t: &Term, keep: bool) -> (Net, u32, Parts) {
-    let mut net = Net::new();
-    let mut parts = Parts::default();
-    let (mut applies, mut at) = (0u32, (0u32, 0u8));
-    let built = build(&mut net, t, keep, &mut applies, &mut parts.values, &mut at);
-    let nrm = net.mk(Tag::Nrm);
-    net.link(nrm, 0, at.0, at.1);
-    if !keep {
-        let out = net.mk(Tag::Out);
-        net.link(nrm, 1, out, 0);
-        parts.roots.push((out, Role::Answer));
-        return (net, out, parts);
-    }
-    let answer = gate(&mut net, (nrm, 1), Role::Answer, &mut parts);
-    unbuild(&mut net, (answer, 1), &built, &mut parts);
-    let out = parts.roots[0].0;
-    (net, out, parts)
-}
-
-/// t built forward; `at` is set to the port giving its value.
-fn build(net: &mut Net, t: &Term, keep: bool, applies: &mut u32, values: &mut Vec<Term>, at: &mut (u32, u8)) -> Built {
-    if plain(t) {
-        *at = (net.build(t), 0);
-        values.push(t.clone());
-        return Built::Value(values.len() as u32 - 1);
-    }
-    let mut kid = |net: &mut Net, t: &Term, into: (u32, u8)| { let mut a = (0, 0); let b = build(net, t, keep, applies, values, &mut a); net.link(into.0, into.1, a.0, a.1); b };
+/// t as a tree: a value v is △v, an application f x is △⌜f⌝⌜x⌝, and a stem or fork that holds
+/// applications is △ applied to its children.
+pub fn quote(t: &Term) -> Term {
+    let ap = |f: Term, x: Term| Term::Ap(Rc::new(f), Rc::new(x));
     match t {
-        Term::Ap(f, x) => {
-            let ra = net.mk(Tag::RA);
-            let (bf, bx) = (kid(net, f, (ra, 0)), kid(net, x, (ra, 1)));
-            if !keep { let e = net.mk(Tag::Eps); net.link(ra, 3, e, 0); }
-            *at = (ra, 2);
-            *applies += 1;
-            Built::Apply(ra, *applies - 1, Box::new(bf), Box::new(bx))
-        }
-        Term::S(c) => { let s = net.mk(Tag::S); let b = kid(net, c, (s, 1)); *at = (s, 0); Built::Stem(Box::new(b)) }
-        Term::F(l, r) => { let f = net.mk(Tag::F); let (bl, br) = (kid(net, l, (f, 1)), kid(net, r, (f, 2))); *at = (f, 0); Built::Fork(Box::new(bl), Box::new(br)) }
+        t if plain(t) => Term::S(Rc::new(t.clone())),
+        Term::Ap(f, x) => Term::F(Rc::new(quote(f)), Rc::new(quote(x))),
+        Term::S(c) => quote(&ap(Term::L, (**c).clone())),
+        Term::F(a, b) => quote(&ap(ap(Term::L, (**a).clone()), (**b).clone())),
         Term::L => unreachable!("a leaf is plain"),
     }
 }
 
-/// The mirror of what was built, reading what comes back at `from`.
-fn unbuild(net: &mut Net, from: (u32, u8), b: &Built, parts: &mut Parts) {
-    match b {
-        Built::Value(i) => {
-            let (n, o) = (net.mk(Tag::Nrm), net.mk(Tag::Out));
-            net.link(n, 0, from.0, from.1);
-            net.link(n, 1, o, 0);
-            parts.roots.push((o, Role::Part(*i)));
-        }
-        Built::Apply(ra, i, f, x) => {
-            let h = gate(net, (*ra, 3), Role::History(*i), parts);
-            let ua = net.mk(Tag::UA);
-            net.link(ua, 0, h, 1);
-            net.link(ua, 1, from.0, from.1);
-            unbuild(net, (ua, 3), f, parts);
-            unbuild(net, (ua, 2), x, parts);
-        }
-        Built::Stem(c) => { let m = net.mk(Tag::Sm); net.link(m, 0, from.0, from.1); unbuild(net, (m, 1), c, parts); }
-        Built::Fork(l, r) => { let m = net.mk(Tag::Fm); net.link(m, 0, from.0, from.1); unbuild(net, (m, 1), l, parts); unbuild(net, (m, 2), r, parts); }
+/// The net for t, with the history kept (the term as a tree under `Go`) or erased as it is made.
+/// Returns the net, the root to lay it out from, and the term as loaded.
+pub fn net(t: &Term, keep: bool) -> (Net, u32, Parts) {
+    let mut net = Net::new();
+    if keep {
+        let q = quote(t);
+        let top = net.build(&q);
+        let go = net.mk(Tag::Go);
+        net.link(go, 0, top, 0);
+        return (net, go, Parts { term: Tree::from(&q) });
     }
+    let at = erasing(&mut net, t);
+    let (nrm, out) = (net.mk(Tag::Nrm), net.mk(Tag::Out));
+    net.link(nrm, 0, at.0, at.1);
+    net.link(nrm, 1, out, 0);
+    (net, out, Parts::default())
 }
 
-fn gate(net: &mut Net, from: (u32, u8), role: Role, parts: &mut Parts) -> u32 {
-    let g = net.mk(Tag::Gate);
-    net.link(g, 0, from.0, from.1);
-    parts.gates.push((g, role));
-    g
+/// t built with every application an apply whose residual goes to an eraser; the port giving its value.
+fn erasing(net: &mut Net, t: &Term) -> (u32, u8) {
+    if plain(t) { return (net.build(t), 0); }
+    let kid = |net: &mut Net, t: &Term, into: (u32, u8)| { let a = erasing(net, t); net.link(into.0, into.1, a.0, a.1); };
+    match t {
+        Term::Ap(f, x) => {
+            let (ra, e) = (net.mk(Tag::RA), net.mk(Tag::Eps));
+            kid(net, f, (ra, 0));
+            kid(net, x, (ra, 1));
+            net.link(ra, 3, e, 0);
+            (ra, 2)
+        }
+        Term::S(c) => { let s = net.mk(Tag::S); kid(net, c, (s, 1)); (s, 0) }
+        Term::F(l, r) => { let f = net.mk(Tag::F); kid(net, l, (f, 1)); kid(net, r, (f, 2)); (f, 0) }
+        Term::L => unreachable!("a leaf is plain"),
+    }
 }

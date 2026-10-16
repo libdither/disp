@@ -118,8 +118,8 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     }
 }
 
-/// The net for a term with the next run's settings: keeping history, the term as `f a₁ … aₙ` with
-/// its gates and roots (resid.rs); else as `share::net_for` builds it.
+/// The net for a term with the next run's settings: keeping history, the term as a tree under a click
+/// to run it (resid.rs); else as `share::net_for` builds it.
 fn net_for(t: &STerm, p: &Params) -> Result<(rust_ca_lattice::net::Net, u32, crate::resid::Parts), String> {
     if p.resid == 0 { return crate::share::net_for(t, p).map(|(n, o)| (n, o, Default::default())); }
     Ok(crate::resid::net(&t.plain().ok_or("keeping history runs no superpositions")?, p.resid == 1))
@@ -129,36 +129,58 @@ fn net_for(t: &STerm, p: &Params) -> Result<(rust_ca_lattice::net::Net, u32, cra
 #[no_mangle]
 pub extern "C" fn ports_per_slot() -> u32 { st().l.ar as u32 }
 
-/// Keeping history: 0 not; 1 working the answer out, its history kept behind gates; 2 running back.
+/// Keeping history: 0 not; 1 the root holding (or working out) the answer and history; 2 the term run back.
 #[no_mangle]
 pub extern "C" fn strands_resid_phase() -> u32 {
     let l = &st().l;
-    if l.p.resid != 1 { 0 } else if l.gates_shut() && l.stats.clocks < l.open_at { 1 } else { 2 }
+    if l.p.resid != 1 { 0 } else if l.holds_term() { 2 } else { 1 }
 }
 
-/// Open the gates on the next clock, so the run goes back to the program and its arguments. Returns 1
-/// if there were gates to open.
+/// The root's seat (site × slots + slot), -1 if there is none.
 #[no_mangle]
-pub extern "C" fn strands_run_back() -> u32 {
+pub extern "C" fn strands_root_seat() -> i32 { let l = &st().l; l.find_out().map_or(-1, |(s, k)| (s as usize * l.ks + k) as i32) }
+
+/// Keeping history, whether the walker on the root is done (a click there would take).
+#[no_mangle]
+pub extern "C" fn strands_resid_rest() -> u32 { let l = &st().l; (l.p.resid == 1 && l.at_rest()) as u32 }
+
+/// Keeping history, a click on the root once the walker there is done: the answer and history run
+/// back (returns 1), or the term run again (2); 0 if it is not done. What the run did after this
+/// clock (put back here) is forgotten.
+#[no_mangle]
+pub extern "C" fn strands_click() -> u32 {
     let s = st();
-    if s.l.p.resid != 1 || !s.l.gates_shut() || s.l.open_at != f64::INFINITY { return 0; }
-    s.l.open_at = s.l.stats.clocks;
+    if s.l.p.resid != 1 || !s.l.at_rest() { return 0; }
+    let back = !s.l.holds_term();
+    s.l.edit(if back { crate::resid::Edit::Back } else { crate::resid::Edit::Go });
+    s.done = false;
+    if back { 1 } else { 2 }
+}
+
+/// Keeping history, forgetting what the applies drop turned on or off from this clock (forgetting
+/// what the run did after it).
+#[no_mangle]
+pub extern "C" fn strands_forget(on: u32) -> u32 {
+    let s = st();
+    if s.l.p.resid != 1 { return 0; }
+    s.l.edit(crate::resid::Edit::Forget(on != 0));
     s.done = false;
     1
 }
 
-/// Keeping history, as JSON: the agents of the history kept, the term's values worked back to so far
-/// (in its order, null for one not back yet), whether they are all back as loaded, and the clock the
-/// gates open at (null until chosen).
+/// Keeping history, as JSON: the agents of the history at the root; run back, the term's values so far
+/// (in its order, null for one not back yet, ? for a hole), whether they are all back as loaded and
+/// how many holes; whether the applies forget what they drop; the clock of the last click.
 #[no_mangle]
 pub extern "C" fn strands_resid_text() -> u32 {
-    use crate::resid::Role;
     let l = &st().l;
-    let back: Vec<Option<STerm>> = (0..l.resid.values.len()).map(|i| l.resid_read(Role::Part(i as u32))).collect();
-    let loaded = back.iter().zip(&l.resid.values).all(|(b, v)| b.as_ref().and_then(|b| b.plain()).as_ref() == Some(v));
-    let shown: Vec<String> = back.iter().map(|b| b.as_ref().map_or("null".into(), |t| format!("\"{}\"", sup::show(t)))).collect();
-    let opened = if l.open_at.is_finite() { format!("{}", l.open_at) } else { "null".into() };
-    set_text(&format!("{{\"history\":{},\"values\":[{}],\"loaded\":{loaded},\"opened\":{opened}}}", l.resid_history(), shown.join(",")))
+    let back = l.term_values();
+    let loaded = l.read_term().as_ref() == Some(&l.resid.term);
+    let holes: usize = back.iter().flatten().map(|t| t.holes()).sum();
+    let shown: Vec<String> = back.iter().map(|b| b.as_ref().map_or("null".into(), |t| format!("\"{}\"", t.show()))).collect();
+    let clicked = l.clicked_at().map_or("null".into(), |c| format!("{c}"));
+    set_text(&format!("{{\"history\":{},\"values\":[{}],\"loaded\":{loaded},\"holes\":{holes},\"forgetting\":{},\"clicked\":{clicked}}}",
+                      l.resid_history(), shown.join(","), l.forgetting))
 }
 
 /// Make `n` more proposals (stopping when the answer is in). Returns 1 once finished.
@@ -412,8 +434,13 @@ pub extern "C" fn save_state() -> u32 {
 pub extern "C" fn restore_state(i: u32) {
     let s = st();
     let v = unsafe { SAVED[i as usize].as_ref().expect("a saved state") };
-    // Keeping history, whether it is over turns on the clock the gates open at, which may be set since.
-    if let Some(snap) = &v.snap { s.l.put_snap(snap); s.done = if s.l.p.resid == 1 { s.l.answered() } else { v.done }; return; }
+    // Keeping history, whether it is over turns on the clicks to come, which may be made since.
+    if let Some(snap) = &v.snap {
+        s.l.put_snap(snap);
+        if s.l.p.resid == 1 { s.l.resync_edits(); }
+        s.done = if s.l.p.resid == 1 { s.l.answered() } else { v.done };
+        return;
+    }
     // Putting sites back numbers the agents afresh, as a GPU's hand-back does: picks are found again
     // in the net as it was at the last look (the first time since it).
     unsafe { if LOOKED_AT == HANDED_BACK { picked().remember(&s.l); } }

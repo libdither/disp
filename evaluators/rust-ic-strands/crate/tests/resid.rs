@@ -1,11 +1,12 @@
-//! Keeping history on the lattice (resid.rs, rules.rs `RESID_RULES`): forward the oracle's answers;
-//! the gates opened, back to the term's values with nothing else left; with the history erased as it
-//! is made, nothing left but the answer.
+//! Keeping history on the lattice (resid.rs, rules.rs `RESID_RULES`): run to the oracle's answer, then
+//! a click on the root runs it back to the very tree loaded with nothing else left, and run again and
+//! back the same. Forgetting what the applies drop: back the term with holes, any trees in them giving
+//! the same answer. With the history erased as it is made, nothing left but the answer.
 
 use rust_ca_lattice::oracle::{self, f2, Fuel, Lcg, Term};
 use rust_ca_lattice::rules::Tag;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
-use rust_ic_strands::resid::{self, Role};
+use rust_ic_strands::resid::{self, Edit, Tree};
 
 /// Random terms (applications all through), random trees applied to one or two random trees, and
 /// tuples of random terms, each finishing under the oracle.
@@ -42,7 +43,18 @@ fn load(t: &Term, p: Params) -> Lattice {
 
 fn show(t: &Term) -> String { oracle::show(t) }
 
-fn others(l: &Lattice) -> Vec<Tag> { l.shadow.agents.iter().flatten().map(|a| a.tag).filter(|t| !matches!(t, Tag::L | Tag::S | Tag::F | Tag::Out)).collect() }
+/// The agents left that are not a tree's or the root.
+fn others(l: &Lattice) -> Vec<Tag> {
+    l.shadow.agents.iter().flatten().map(|a| a.tag).filter(|t| !matches!(t, Tag::L | Tag::S | Tag::F | Tag::Out | Tag::Hole)).collect()
+}
+
+fn answer(l: &Lattice) -> Option<String> { l.read_answer().and_then(|a| a.plain()).map(|a| show(&a)) }
+
+/// A click on the root, then the run on to rest.
+fn click(l: &mut Lattice, e: Edit) -> bool {
+    l.edit(e);
+    l.run(l.stats.proposals + 40_000_000)
+}
 
 #[test]
 fn forward_then_back() { round_trips(params) }
@@ -51,26 +63,59 @@ fn forward_then_back() { round_trips(params) }
 fn forward_then_back_lazy() { round_trips(lazy) }
 
 fn round_trips(params: fn(bool, u64) -> Params) {
-    let (mut fwd, mut back, mut n) = (0u64, 0u64, 0);
+    let (mut fwd, mut all, mut n) = (0u64, 0u64, 0);
     for (i, (t, want)) in corpus(90).iter().enumerate() {
         let mut l = load(t, params(true, i as u64 + 1));
         if i % 10 == 0 { l.check_every = 1; }
         assert!(l.run(20_000_000), "term {i}: no answer");
-        assert_eq!(l.read_answer().and_then(|a| a.plain()).map(|a| show(&a)), Some(show(want)), "term {i}: WRONG ANSWER for {}", show(t));
+        assert_eq!(answer(&l), Some(show(want)), "term {i}: WRONG ANSWER for {}", show(t));
         l.check_projection().unwrap_or_else(|e| panic!("term {i}: {e}"));
         fwd += l.stats.fires;
-        l.open_at = l.stats.clocks;
-        assert!(l.run(l.stats.proposals + 40_000_000), "term {i}: not back: {}", show(t));
-        for (j, v) in l.resid.values.iter().enumerate() {
-            assert_eq!(l.resid_read(Role::Part(j as u32)).and_then(|a| a.plain()).map(|a| show(&a)), Some(show(v)), "term {i}: value {j} not back: {}", show(t));
+        for round in 0..2 {
+            assert!(click(&mut l, Edit::Back), "term {i}: not back: {}", show(t));
+            assert_eq!(l.read_term().as_ref(), Some(&l.resid.term), "term {i}: not back as loaded: {}", show(t));
+            l.check_projection().unwrap_or_else(|e| panic!("term {i}: {e}"));
+            l.check_invariants().unwrap_or_else(|e| panic!("term {i}: {e}"));
+            assert!(others(&l).is_empty(), "term {i}: left over {:?}", others(&l));
+            if round == 0 {
+                assert!(click(&mut l, Edit::Go), "term {i}: no answer run again");
+                assert_eq!(answer(&l), Some(show(want)), "term {i}: WRONG ANSWER run again");
+            }
         }
-        l.check_projection().unwrap_or_else(|e| panic!("term {i}: {e}"));
-        l.check_invariants().unwrap_or_else(|e| panic!("term {i}: {e}"));
-        assert!(others(&l).is_empty(), "term {i}: left over {:?}", others(&l));
-        back += l.stats.fires;
+        all += l.stats.fires;
         n += 1;
     }
-    eprintln!("{n} terms: rewrites forward {fwd}, forward and back {back}");
+    eprintln!("{n} terms: rewrites forward {fwd}, forward, back, again and back {all}");
+}
+
+#[test]
+fn forgetting() {
+    let (mut holes, mut agents) = (0, 0);
+    for (i, (t, want)) in corpus(60).iter().enumerate() {
+        let mut l = load(t, params(true, i as u64 + 1));
+        l.edit(Edit::Forget(true));
+        assert!(l.run(20_000_000), "term {i}: no answer");
+        assert_eq!(answer(&l), Some(show(want)), "term {i}: WRONG ANSWER forgetting");
+        assert!(click(&mut l, Edit::Back), "term {i}: not back forgetting: {}", show(t));
+        let got = l.read_term().unwrap();
+        assert!(got.within(&l.resid.term), "term {i}: back {} is not the term with holes", got.show());
+        assert!(others(&l).is_empty(), "term {i}: left over {:?}", others(&l));
+        for hole in [Term::L, Term::S(Term::L.into())] {
+            assert_eq!(oracle::nf(got.unquote(&hole), &mut Fuel(1_000_000)).ok().map(|a| show(&a)), Some(show(want)), "term {i}: the holes matter");
+        }
+        l.edit(Edit::Forget(false));
+        assert!(click(&mut l, Edit::Go), "term {i}: no answer from the holes");
+        assert_eq!(answer(&l), Some(show(want)), "term {i}: WRONG ANSWER from the holes");
+        assert!(click(&mut l, Edit::Back), "term {i}: not back again");
+        assert_eq!(l.read_term().as_ref(), Some(&got), "term {i}: back again not the same holes");
+        holes += got.holes();
+        agents += size(&l.resid.term);
+    }
+    eprintln!("forgetting: {holes} holes over {agents} agents of the terms as loaded");
+}
+
+fn size(t: &Tree) -> usize {
+    match t { Tree::L | Tree::Hole => 1, Tree::S(a) => 1 + size(a), Tree::F(a, b) => 1 + size(a) + size(b) }
 }
 
 #[test]

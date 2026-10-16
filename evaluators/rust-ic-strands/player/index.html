@@ -78,6 +78,12 @@
     transition:opacity .18s, color .18s, background .18s; }
   .tbtn:hover { color:var(--accent); background:rgba(86,200,255,.12); }
   .tbtn:disabled { cursor:default; } .tbtn:disabled:hover { color:var(--fg-muted); background:none; }
+  .tbtn.on { color:#db4b4b; } .tbtn.again svg { transform:scaleX(-1); }
+  /* keeping history, the root once a click there would take: pink runs it back, green runs it again */
+  #rootMark { position:fixed; width:30px; height:30px; margin:-15px 0 0 -15px; border:2px solid #ff6ac1; border-radius:50%;
+    pointer-events:none; animation:rootPulse 1.3s ease-in-out infinite; z-index:5; box-shadow:0 0 10px 2px rgba(255,106,193,.7); }
+  #rootMark.again { border-color:#6ee07a; box-shadow:0 0 10px 2px rgba(110,224,122,.7); }
+  @keyframes rootPulse { 0%, 100% { transform:scale(.75); opacity:.95; } 50% { transform:scale(1.2); opacity:.45; } }
   .tbtn.play { color:var(--g2); padding:2px; } .tbtn.play .ico { width:26px; height:26px; } .tbtn.play:hover { color:var(--accent); }
   .mpi { width:30px; height:30px; display:inline-grid; place-items:center; padding:0; border-radius:50%; border:1px solid var(--border-strong);
     background:var(--bg-elev); color:var(--fg-muted); transition:opacity .18s, border-color .18s, color .18s, background .18s; }
@@ -154,6 +160,7 @@
   .tm .wh { color:var(--fg-muted); margin-top:3px; }
   .pkn { color:#ffb3e8; font-size:11.5px; margin:4px 0; }
 </style></head><body>
+<div id="rootMark" hidden></div>
 <div id="wrap">
   <div id="stage">
     <canvas id="cv"></canvas><canvas id="cv3" hidden></canvas>
@@ -187,7 +194,8 @@
         <div class="tside tright">
           <button class="tbtn" id="step" data-tip="one clock on (→)" aria-label="one clock on"><svg class="ico" viewBox="0 0 24 24"><path d="M8.5 6 L16 12 L8.5 18 Z"/></svg></button>
           <button class="tbtn" id="next" data-tip="on to the next rewrite (shift →)" aria-label="on to the next rewrite"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6 L14 12 L6 18 Z"/><rect x="15.8" y="6" width="2.2" height="12" rx="0.6"/></svg></button>
-          <button class="tbtn" id="runBack" hidden data-tip="run it back, once the answer is in: open the gates, and the history takes the answer back to the program and its arguments" aria-label="run it back"><svg class="ico" viewBox="0 0 24 24"><path d="M12 6 L4 12 L12 18 Z"/><path d="M20 6 L12 12 L20 18 Z"/></svg></button>
+          <button class="tbtn" id="runBack" hidden data-tip="run it back, once the answer is in (or once back, run it again): the same as clicking the root ◎ on the lattice" aria-label="run it back"><svg class="ico" viewBox="0 0 24 24"><path d="M12 6 L4 12 L12 18 Z"/><path d="M20 6 L12 12 L20 18 Z"/></svg></button>
+          <button class="tbtn" id="forget" hidden aria-pressed="false" data-tip="forget what the applies drop, from this clock on (K's argument, the arms a triage does not take): run back, the term comes back with holes where nothing looked" aria-label="forget"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M6 6 L18 18"/><path d="M18 6 L6 18"/><circle cx="12" cy="12" r="2.4"/></svg></button>
           <button class="tbtn" id="reset" data-tip="restart (R)" aria-label="restart"><svg class="ico stroke" viewBox="0 0 24 24"><polyline points="3 5 3 10.5 8.5 10.5"/><path d="M5.2 15.5 a8 8 0 1 0 1.9 -8.4 L3 10.5"/></svg></button>
         </div>
         <div class="corner-left"><span id="speedbox" data-tip="speed"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l4-4"/></svg><input id="speed" type="range" min="0" max="100" value="45" aria-label="speed"></span></div>
@@ -466,19 +474,22 @@ const MOVERS = [
   { name: "relay_add 1 2", text: "relay_add 1 2", view: "3d", speed: 35,
     desc: "binary addition: forty B agents carry bits right, a few C, K, I, W and Sx along the way" },
 ];
-/// Keeping history (resid=1, the default; research/reversible-core/residual.py): every apply leaves what it
-/// would have dropped behind a gate; once the answer is in, "run it back" opens the gates and the history takes
-/// it back to the term's values, as they were loaded. These examples are small runs to watch, each with its own
-/// settings (`set`): copies made only when asked (dnroom=0), so the history is smallest.
+/// Keeping history (resid=1, the default; research/reversible-core/residual.py): the term is loaded as a tree
+/// and run, every apply leaving what it would have dropped in the history bundled with the answer at the root;
+/// a click on the root runs it back to the tree, and once back, runs it again. These examples are small runs to
+/// watch, each with its own settings (`set`): copies made only when asked (dnroom=0), so the history is
+/// smallest; `forget` turns forgetting on as it loads.
 const HISTORY = [
   { name: "K, forward and back", text: "@(@(F(L,L),S(L)),F(L,L))", view: "graph", speed: 12, set: ["resid=1", "dnroom=0"],
-    desc: "△△(△△) applied to △(△)△: K keeps its first argument and puts the second in its residual; run back, the residual gives it back" },
+    desc: "△△(△△) applied to △(△)△: K keeps its first argument and puts the second in its residual; click the root to run it back, and the residual gives it back" },
   { name: "add 1 2", text: "add 1 2", view: "graph", speed: 30, set: ["resid=1", "dnroom=0"],
-    desc: "unary addition keeping its history; run it back to see add, 1 and 2 come back" },
+    desc: "unary addition keeping its history; click the root to run it back and see add, 1 and 2 come back" },
+  { name: "add 1 2, forgetting", text: "add 1 2", view: "graph", speed: 30, set: ["resid=1", "dnroom=0"], forget: true,
+    desc: "the same, forgetting what the applies drop: run back, add, 1 and 2 come back with holes just where nothing looked" },
   { name: "relay_add 1 2", text: "relay_add 1 2", view: "3d", speed: 40, set: ["resid=1", "dnroom=0"],
     desc: "binary addition keeping its history, then back" },
   { name: "add 1 2, history erased", text: "add 1 2", view: "graph", speed: 30, set: ["resid=2", "dnroom=0"],
-    desc: "the same, each residual erased as it is made: only the answer is left" },
+    desc: "the same, each residual erased as it is made: only the answer is left, and nothing to run back" },
 ];
 const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
 function populate() {
@@ -674,7 +685,8 @@ function start(p, input) {
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
   L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), ar: E.ports_per_slot ? E.ports_per_slot() : 3, faces: depth > 1 ? 6 : 4, gc: true };
   running = p.parts ? { call: p.call, parts: p.parts, at: p.parts.map(() => null) } : p.call ? { kind: p.kind, call: p.call } : null;
-  $("runBack").hidden = !residPhase(); $("runBack").disabled = true;
+  $("runBack").hidden = $("forget").hidden = !residPhase(); $("runBack").disabled = true;
+  if (residPhase() && entries[picked]?.forget && entries[picked].text === input) E.strands_forget(1);
   finished = false; cleaned = false; cleanSeen = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   tlReset();
   refreshGarbage(true); layoutLayers();
@@ -690,7 +702,7 @@ function start(p, input) {
   fitContent(); draw(); panel(true); showStory();
   const views = new Uint8Array(E.memory.buffer, E.tags_ptr(), side * side * depth * L.ks).filter(isView).length;
   banner(`${input.length > 60 ? input.slice(0, 57) + "…" : input}: ${agents} agents${views ? `, ${views} of them movement agents` : ""} on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`
-    + (residPhase() ? ", its history kept to run it back" : without ? `, run without keeping its history (${without})` : ""));
+    + (residPhase() ? ", its history kept: click the root ◎ once the answer is in to run it back" : without ? `, run without keeping its history (${without})` : ""));
   return true;
 }
 
@@ -1091,6 +1103,7 @@ function init3d() {
     if (!down || Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) { down = null; return; }
     down = null;
     if (e.shiftKey) { pickAt(e.clientX, e.clientY); return; }
+    if (clickRoot(e.clientX, e.clientY)) return;
     const s = pick3(e.clientX, e.clientY);
     pinned = s == null || pinned === s ? null : s;
     showTip(pinned, e.clientX, e.clientY, pinned != null); V3.dirty = true;
@@ -1939,7 +1952,7 @@ function frame() {
   else if (L && playing && !settled && !G?.busy && onGpu && !cleaned && !cleanSeen) gpuStep();
   else if (L && playing && !settled && !G?.busy) { cpuRun(); afterRun(); }
   if (L) refreshGarbage(playing);
-  draw(); panel(false);
+  draw(); panel(false); if (L) markRoot();
   if (pinned != null && L) { const tip = $("tip"); if (!tip.hidden) tip.innerHTML = tipHTML(pinned); }
   requestAnimationFrame(frame);
 }
@@ -2106,8 +2119,14 @@ function dropGpu() {
 // clock the run once cooled at.
 function afterAnswer() {
   if (!L.gc) { cleaned = true; return true; }
-  // Keeping history, the answer waits behind its gate for the run back: no cooling, the run pauses.
-  if (residPhase() === 1) { cleaned = settled = true; setPlaying(false); return true; }
+  // Keeping history, the answer (or the term run back) waits at the root for a click: no cooling, the run pauses.
+  if (residPhase()) {
+    cleaned = settled = true; setPlaying(false);
+    // The root is where the next click goes: in view, clear of the panel and the dock.
+    const at = rootScreen(), r = (viewMode === "3d" ? $("cv3") : cv).getBoundingClientRect();
+    if (!at || at[0] < r.left + 20 || at[0] > r.right - 20 || at[1] < r.top + 130 || at[1] > r.bottom - 150) { fitContent(); V3.dirty = true; }
+    return true;
+  }
   const c = clockNow();
   if (T.coolAt !== null) return cleaned = c >= T.coolAt;
   garbageCount = E.strands_garbage_left();
@@ -2164,7 +2183,12 @@ let lastPanel = 0;
 function panel(force) {
   if (!L) return;
   const now = performance.now(); if (!force && now - lastPanel < 200) return; lastPanel = now;
-  $("runBack").disabled = !(finished && residPhase() === 1);
+  if (residPhase()) {
+    const rest = finished || !!E.strands_resid_rest(), again = residPhase() === 2, on = JSON.parse(text(E.strands_resid_text())).forgetting;
+    $("runBack").disabled = !rest; $("runBack").classList.toggle("again", again);
+    $("runBack").setAttribute("aria-label", again ? "run it again" : "run it back");
+    $("forget").classList.toggle("on", on); $("forget").setAttribute("aria-pressed", on);
+  }
   const st = stats();
   $("sSweep").textContent = fmt(st[1]); $("sFires").innerHTML = `<b>${fmt(st[2])}</b>`;
   const r = rate();
@@ -2187,7 +2211,7 @@ function panel(force) {
   if (oracleText === null) oracleText = text(E.strands_oracle(200000));
   const ok = oracleText === "" ? null : ans === oracleText;
   badge.className = ok === false ? "bad" : settled ? "ok" : "";
-  badge.textContent = ok === false ? "wrong answer" : cleaned
+  badge.textContent = ok === false ? "wrong answer" : residPhase() === 1 ? `answer at ${fmt(answerClock)} clocks` : cleaned
     ? (garbageCount ? `answer in ${fmt(answerClock)} clocks · ${garbageCount} garbage left`
       : settled ? `done in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}` : `answer at ${fmt(answerClock)} clocks · contracting (temperature ${E.strands_temp().toFixed(2)})`)
     : `answer in at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
@@ -2196,27 +2220,73 @@ function panel(force) {
   else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
   $("answer").textContent = ans;
   $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)
-    + (residPhase() === 1 ? `; its history, ${fmt(JSON.parse(text(E.strands_resid_text())).history)} agents, waits behind gates: run it back (⏪)`
+    + (residPhase() === 1 ? `; its history, ${fmt(JSON.parse(text(E.strands_resid_text())).history)} agents, is bundled with it at the root: click the root ◎ (or ⏪) to run it back`
       : cleaned && !garbageCount && L.gc ? (settled ? "; only the answer is left on the lattice, contracted" : "; only the answer is left, cooling so it contracts") : "");
 }
-/// Keeping history: 0 not, 1 the answer being worked out (or in, its history behind gates), 2 running back.
+/// Keeping history: 0 not, 1 the root holding (or working out) the answer and history, 2 the term run back.
 const residPhase = () => E.strands_resid_phase ? E.strands_resid_phase() : 0;
-/// Running back: what has come back so far, and once all of it, whether it is the program and arguments loaded.
+/// Running back: what has come back so far, and once all of it, whether it is the term as loaded, holes and all.
 function residPanel(badge, st) {
   const r = JSON.parse(text(E.strands_resid_text())), call = running?.call ?? "the term", cut = t => t.length > 120 ? t.slice(0, 117) + "…" : t;
-  const back = r.values.filter(v => v !== null).length;
-  badge.className = finished ? (r.loaded ? "ok" : "bad") : "";
-  badge.textContent = finished ? (r.loaded ? `back at the start, ${fmt(answerClock - r.opened)} clocks after the gates opened` : "back, but not as loaded")
+  const back = r.values.filter(v => v !== null).length, holes = r.holes ? ` but for ${r.holes} hole${r.holes > 1 ? "s" : ""} (?)` : "";
+  badge.className = finished ? (r.loaded || r.holes ? "ok" : "bad") : "";
+  badge.textContent = finished ? (r.loaded || r.holes ? `back at the start${holes}, ${fmt(answerClock - r.clicked)} clocks after the click` : "back, but not as loaded")
     : `${playing ? "running back" : "paused running back"} · ${back} of the term's ${r.values.length} values back · ${fmt(st[2])} rewrites`;
   $("decoded").textContent = finished ? `${call}, back` : `${call}: running back …`;
   $("answer").textContent = r.values.map((v, i) => `${i + 1}. ${v === null ? "…" : cut(v)}`).join("\n");
-  $("verdict").textContent = finished ? (r.loaded ? `the term's ${r.values.length} values (programs and data), exactly as loaded: nothing else is left` : "not what was loaded")
+  $("verdict").textContent = finished
+    ? (r.loaded ? `the term's ${r.values.length} values (programs and data), exactly as loaded: nothing else is left; click the root ◎ (or ⏪) to run it again`
+      : r.holes ? `the term's ${r.values.length} values with ${r.holes} hole${r.holes > 1 ? "s" : ""} where what the run dropped was forgotten and nothing else looked; any trees there give the same answer. Click the root ◎ to run it again`
+      : "not what was loaded")
     : "the un-applies take each step back, last apply first";
 }
-$("runBack").onclick = () => {
-  if (!E.strands_run_back()) return;
+/// Keeping history, a click on the root (or ⏪) once the walker there is done: run back, or run again.
+function residClick() {
+  const c = clockNow();
+  if (!E.strands_click()) return false;
+  tlBranch(c);
   finished = cleaned = settled = false; T.coolAt = T.settleAt = null;
-  setPlaying(true); panel(true);
+  setPlaying(true); panel(true); return true;
+}
+/// Where the root is on the screen (client coordinates), in whichever view; null if it is not drawn.
+function rootScreen() {
+  const seat = E.strands_root_seat();
+  if (!L || seat < 0) return null;
+  const s = Math.floor(seat / L.ks), k = seat % L.ks;
+  if (viewMode === "3d") {
+    if (!V3.ready || !V3.camera) return null;
+    const r = $("cv3").getBoundingClientRect(), v = new V3.T.Vector3(...pos3(s)).project(V3.camera);
+    return v.z > 1 ? null : [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
+  }
+  const r = cv.getBoundingClientRect();
+  let x, y;
+  if (viewMode === "graph") {
+    graphSync();
+    const i = NET.seat.indexOf(seat);
+    if (i < 0) return null;
+    [x, y] = [GRAPH.x[i], GRAPH.y[i]];
+  } else [x, y] = slotPos(s, k);
+  return [r.left + view.ox + x * view.s, r.top + view.oy + y * view.s];
+}
+/// Keeping history, a ring on the root while a click there would take.
+function markRoot() {
+  const m = $("rootMark"), at = residPhase() && !$("runBack").disabled ? rootScreen() : null;
+  m.hidden = !at;
+  if (!at) return;
+  m.style.left = `${at[0]}px`; m.style.top = `${at[1]}px`; m.classList.toggle("again", residPhase() === 2);
+}
+/// Whether a plain click at (cx, cy) landed on the root (or its ring), keeping history, and so ran it back or again.
+function clickRoot(cx, cy) {
+  if (!L || !residPhase()) return false;
+  const at = rootScreen(), seat = agentAt(cx, cy);
+  return (at && Math.hypot(cx - at[0], cy - at[1]) < 18 || seat != null && seat === E.strands_root_seat()) && residClick();
+}
+$("runBack").onclick = () => residClick();
+$("forget").onclick = () => {
+  const c = clockNow(), on = !$("forget").classList.contains("on");
+  if (!E.strands_forget(on ? 1 : 0)) return;
+  tlBranch(c); panel(true);
+  banner(on ? "forgetting from this clock: what the applies drop is erased, and holes are left in its place" : "no longer forgetting from this clock");
 };
 function chart() {
   const c = $("chart"), g = c.getContext("2d"), W = c.width, H = c.height; g.clearRect(0, 0, W, H);
@@ -2247,6 +2317,7 @@ cv.addEventListener("pointermove", e => {
 });
 cv.addEventListener("pointerup", e => {
   if (drag && !drag.moved && e.shiftKey) pickAt(e.clientX, e.clientY);
+  else if (drag && !drag.moved && clickRoot(e.clientX, e.clientY)) {}
   else if (drag && !drag.moved) {
     const s = siteAt(e.clientX, e.clientY);
     pinned = s == null || pinned === s ? null : s;

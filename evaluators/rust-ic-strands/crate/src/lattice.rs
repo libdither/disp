@@ -23,7 +23,7 @@ pub mod memo;
 pub mod substrate;
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::sup::STerm;
-use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, VIEW_TAGS};
+use rust_ca_lattice::rules::{find_forgetting, find_index_labelled, meets, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, VIEW_TAGS};
 
 pub const NONE: u8 = u8::MAX;
 /// Ports per agent slot.
@@ -169,8 +169,9 @@ pub struct Params {
     /// backward it pulls harder, by -ε/T where that is more than 1: undoing is what pays then.
     pub bond: f64,
     /// Keep history (rules.rs `RESID_RULES`): each apply leaves what it would have dropped on a fourth
-    /// port. 1: the history is kept, and what runs it back waits behind gates (`Lattice::open_gates`);
-    /// 2: the history is erased as it is made. Load with `resid::net` (wasm.rs does). CPU only.
+    /// port. 1: the history is kept, the term loaded as a tree and run and run back by clicks on the
+    /// root (resid.rs, `Lattice::edits`); 2: the history is erased as it is made. Load with
+    /// `resid::net` (wasm.rs does). CPU only, and with pressure 3 unless it is set.
     pub resid: u8,
 }
 
@@ -422,10 +423,15 @@ pub struct Lattice {
     /// The substrate's settings by clock: each entry (clock, drive, erase, forget, bond) takes effect
     /// as that clock starts, so a run put back to an earlier clock and run on changes them where it did.
     pub schedule: Vec<(f64, [f64; 4])>,
-    /// Keeping history (`Params::resid`): the gates and roots the loader made (resid.rs), and the
-    /// clock the gates open at, so a run put back to an earlier clock and run on opens them there.
+    /// Keeping history (`Params::resid`): the term as loaded (resid.rs); the clicks by clock, each made
+    /// as that clock starts, so a run put back to an earlier clock and run on makes them where it did
+    /// (`next_edit` the first not made yet; `branched` once a click since the run was put back has
+    /// dropped the ones it made later); and whether what the applies drop is forgotten.
     pub resid: crate::resid::Parts,
-    pub open_at: f64,
+    pub edits: Vec<(f64, crate::resid::Edit)>,
+    next_edit: usize,
+    branched: bool,
+    pub forgetting: bool,
 }
 
 /// The random bits one turn may use, one field per decision, so that a chip can draw them all
@@ -556,7 +562,7 @@ pub fn fresh_wanted_in(rule: &rust_ca_lattice::rules::Rule, inputs: bool) -> [bo
                         .find_map(|&(a, b)| if a == End::Fresh(g, 0) { Some(b) } else if b == End::Fresh(g, 0) { Some(a) } else { None })
                         .is_some_and(read_by),
                     // Running back, both inputs of an un-apply or merge are read: what feeds the second is wanted too.
-                    End::Fresh(g, 1) if matches!(rule.fresh[g as usize], Tag::UA | Tag::Mg) => wanted[g as usize],
+                    End::Fresh(g, 1) if matches!(rule.fresh[g as usize], Tag::UA | Tag::UEv | Tag::Mg) => wanted[g as usize],
                     End::Fresh(g, 1) if inputs => matches!(rule.fresh[g as usize], Tag::A | Tag::T1 | Tag::Sel | Tag::RA) && wanted[g as usize],
                     y => read_by(y),
                 };
@@ -581,8 +587,11 @@ pub fn label_from(reader: Tag, label: u8, q: usize) -> u8 {
 /// the residual of an apply that never ran, and a merge reading a duplicator's copy, wait for their
 /// other input to come from the same agent, and then both go (`Lattice::collect_resid`).
 pub fn waits(reader: Tag, read: Tag, q: usize) -> bool {
-    matches!((reader, read, q), (Tag::UA, Tag::RA, 3) | (Tag::Mg, Tag::Dn, 1 | 2))
+    matches!((reader, read, q), (Tag::UA, Tag::RA, 3) | (Tag::UEv, Tag::Ev, 2) | (Tag::Mg, Tag::Dn, 1 | 2))
 }
+
+/// The root, or a click turning it into a walker (resid.rs).
+pub fn is_root(t: Tag) -> bool { matches!(t, Tag::Out | Tag::Go | Tag::Back) }
 
 /// The tree label of garbage, apart from the four of the root's computation.
 pub const GARBAGE: u8 = 4;
@@ -759,7 +768,10 @@ impl Lattice {
             sub: Default::default(),
             schedule: vec![],
             resid: Default::default(),
-            open_at: f64::INFINITY,
+            edits: vec![],
+            next_edit: 0,
+            branched: false,
+            forgetting: false,
         }
     }
 
@@ -900,7 +912,7 @@ impl Lattice {
             self.agent_sites.push(s);
         }
         let t = tag_of(tag);
-        self.want[s as usize * self.ks + k] = matches!(t, Tag::Nrm | Tag::Out | Tag::Eps);
+        self.want[s as usize * self.ks + k] = matches!(t, Tag::Nrm | Tag::Eps) || is_root(t);
         self.tags[s as usize * self.ks + k] = tag;
         self.sids[s as usize * self.ks + k] = sid;
         if self.p.phys { self.sub.seat(sid, s); }
@@ -929,7 +941,7 @@ impl Lattice {
     /// subtree goes directly below it, its heavier one to the right of that, so every wire
     /// is a straight run of links and no two wires share a link. Coordinates are scaled by
     /// `spread` to leave room around every agent.
-    pub fn load(p: Params, net: Net, out: u32) -> Result<Lattice, String> {
+    pub fn load(mut p: Params, net: Net, out: u32) -> Result<Lattice, String> {
         if p.memo != 0 && net.agents.iter().flatten().any(|a| a.tag.is_view()) { return Err("movement agents run without merging equal computations".into()); }
         if p.phys && (p.memo != 0 || net.agents.iter().flatten().any(|a| a.tag.is_view() || a.tag == Tag::Sup)) {
             return Err("the substrate runs without superpositions, movement agents or merging".into());
@@ -937,6 +949,9 @@ impl Lattice {
         if p.resid > 0 && (p.phys || p.memo != 0 || p.views || net.agents.iter().flatten().any(|a| matches!(a.tag, Tag::Sup | Tag::P))) {
             return Err("keeping history runs without the substrate, merging, movement agents, superpositions or suspensions".into());
         }
+        // Keeping history, the walkers running back are made inside the history, packed tight, and their
+        // rules make the most agents: a rewrite blocked for room pushes what is around it away.
+        if p.resid > 0 && p.pressure == 0.0 { p.pressure = 3.0; }
         let mut l = Lattice::new(p);
         let n = net.agents.len();
         // Children of each node in the tree hanging from `out`, found depth first.
@@ -1134,43 +1149,92 @@ impl Lattice {
 
     /// The root moves like any agent; find it.
     pub fn find_out(&self) -> Option<(u32, usize)> {
-        let out = code(Tag::Out);
-        self.live.iter().find_map(|&s| (0..self.ks).find(|&k| self.tag(s, k) == out).map(|k| (s, k)))
+        self.live.iter().find_map(|&s| (0..self.ks).find(|&k| self.tag(s, k) != 0 && is_root(tag_of(self.tag(s, k)))).map(|k| (s, k)))
     }
 
     /// The answer as a plain term, once the root reads a value tree with no superposition in it.
     pub fn readback(&self) -> Option<rust_ca_lattice::oracle::Term> { self.read_answer()?.plain() }
 
     /// The answer once the root reads a value tree, superpositions included. Keeping history, the
-    /// answer while the gates are shut, and the term's first value worked back to once they are open.
+    /// answer bundled at the root with its history, once in.
     pub fn read_answer(&self) -> Option<STerm> {
-        if self.p.resid == 1 && !self.gates_shut() { return self.resid_read(crate::resid::Role::Part(0)); }
         let (s, k) = self.answer_top()?;
         self.value_at(s, k)
     }
 
-    /// Where agent `sid` sits.
-    fn seat_of_sid(&self, sid: u32) -> Option<(u32, usize)> {
-        self.live.iter().find_map(|&s| (0..self.ks).find(|&k| self.tags[s as usize * self.ks + k] != 0 && self.sids[s as usize * self.ks + k] == sid).map(|k| (s, k)))
+    /// Keeping history, what the root holds or will once the walker on it is done: the term as a tree
+    /// (run back) or the answer and history (run, as loaded).
+    pub fn holds_term(&self) -> bool {
+        self.edits[..self.next_edit].iter().rev().find_map(|e| match e.1 { crate::resid::Edit::Back => Some(true), crate::resid::Edit::Go => Some(false), _ => None }) == Some(true)
     }
 
-    /// Whether the gates keeping history are still shut.
-    pub fn gates_shut(&self) -> bool { self.resid.gates.iter().any(|&(g, _)| self.shadow.agents.get(g as usize).is_some_and(|a| a.is_some())) }
+    /// Keeping history, whether the walker on the root is done: the answer in, or run back, the term.
+    pub fn at_rest(&self) -> bool { if self.holds_term() { self.read_term().is_some() } else { self.read_answer().is_some() } }
 
-    /// What a gate (shut) or root (keeping history, resid.rs) holds, once it is a value tree.
-    pub fn resid_read(&self, role: crate::resid::Role) -> Option<STerm> {
-        let (sid, gate) = match self.resid.gates.iter().find(|g| g.1 == role) {
-            Some(&(g, _)) => (g, true),
-            None => (self.resid.roots.iter().find(|r| r.1 == role)?.0, false),
-        };
-        let (s, k) = self.seat_of_sid(sid)?;
-        if gate && tag_of(self.tag(s, k)) != Tag::Gate { return None; }
+    /// The clock of the last click on the root made by now, if any.
+    pub fn clicked_at(&self) -> Option<f64> {
+        self.edits[..self.next_edit].iter().rev().find(|e| e.1 != crate::resid::Edit::Forget(true) && e.1 != crate::resid::Edit::Forget(false)).map(|e| e.0)
+    }
+
+    /// The agent the root reads, if it reads one at its principal port.
+    fn root_reads(&self) -> Option<(u32, usize)> {
+        let (s, k) = self.find_out()?;
+        if tag_of(self.tag(s, k)) != Tag::Out { return None; }
         let (s2, k2, p2, _) = self.follow(s, self.ae(k, 0));
-        if p2 != 0 { return None; }
-        self.value_at(s2, k2)
+        (p2 == 0).then_some((s2, k2))
     }
 
-    /// The agents of every residual behind a shut gate (a value counts its own and its children's, a
+    /// Keeping history, the fork bundling the answer and the history at the root.
+    fn bundle(&self) -> Option<(u32, usize)> {
+        if self.p.resid != 1 || self.holds_term() { return None; }
+        let (s, k) = self.root_reads()?;
+        (tag_of(self.tag(s, k)) == Tag::F).then_some((s, k))
+    }
+
+    /// Keeping history, the term back at the root as a tree, holes and all, once it is all there.
+    pub fn read_term(&self) -> Option<crate::resid::Tree> {
+        if !self.holds_term() { return None; }
+        let (s, k) = self.root_reads()?;
+        self.tree_at(s, k)
+    }
+
+    /// Keeping history, the term's values back at the root so far, in the order of the term as loaded.
+    pub fn term_values(&self) -> Vec<Option<crate::resid::Tree>> {
+        use crate::resid::Tree;
+        fn walk(l: &Lattice, at: Option<(u32, usize)>, shape: &Tree, out: &mut Vec<Option<Tree>>) {
+            let kid = |q: usize| at.and_then(|(s, k)| { let (s2, k2, p2, _) = l.follow(s, l.ae(k, q)); (p2 == 0).then_some((s2, k2)) });
+            let tag = at.map(|(s, k)| tag_of(l.tag(s, k)));
+            match shape {
+                Tree::S(_) => out.push(if tag == Some(Tag::S) { kid(1).and_then(|(s, k)| l.tree_at(s, k)) } else { None }),
+                Tree::F(f, x) => {
+                    let ok = tag == Some(Tag::F);
+                    walk(l, if ok { kid(1) } else { None }, f, out);
+                    walk(l, if ok { kid(2) } else { None }, x, out);
+                }
+                _ => {}
+            }
+        }
+        let mut out = vec![];
+        walk(self, if self.holds_term() { self.root_reads() } else { None }, &self.resid.term, &mut out);
+        out
+    }
+
+    /// The tree output by agent k of s, holes and all, once every agent in it is a value.
+    fn tree_at(&self, s: u32, k: usize) -> Option<crate::resid::Tree> {
+        use crate::resid::Tree;
+        let t = self.tag(s, k);
+        if t == 0 { return None; }
+        let kid = |q: usize| { let (s2, k2, p2, _) = self.follow(s, self.ae(k, q)); if p2 != 0 { None } else { self.tree_at(s2, k2).map(Box::new) } };
+        Some(match tag_of(t) {
+            Tag::L => Tree::L,
+            Tag::S => Tree::S(kid(1)?),
+            Tag::F => Tree::F(kid(1)?, kid(2)?),
+            Tag::Hole => Tree::Hole,
+            _ => return None,
+        })
+    }
+
+    /// The agents of the history bundled at the root (a value counts its own and its children's, a
     /// computation or copy not yet made counts one).
     pub fn resid_history(&self) -> usize {
         fn count(net: &Net, r: Option<(u32, u8)>) -> usize {
@@ -1179,37 +1243,53 @@ impl Lattice {
             if p != 0 || !a.tag.is_producer() { return 1; }
             1 + (1..a.tag.arity()).map(|q| count(net, a.ports[q])).sum::<usize>()
         }
-        self.resid.gates.iter().filter(|g| matches!(g.1, crate::resid::Role::History(_)))
-            .filter_map(|&(g, _)| self.shadow.agents.get(g as usize)?.as_ref().map(|a| count(&self.shadow, a.ports[0]))).sum()
+        let Some((s, k)) = self.bundle() else { return 0 };
+        self.shadow.agents[self.sids[s as usize * self.ks + k] as usize].as_ref().map_or(0, |a| count(&self.shadow, a.ports[2]))
     }
 
-    /// Open every gate keeping history shut: each goes, joining what it held to what waited behind
-    /// it, so the un-applies start. Returns how many there were.
-    pub fn open_gates(&mut self) -> usize {
-        let gate = code(Tag::Gate);
-        let mut n = 0;
-        for s in self.live.clone() {
-            for k in 0..self.ks {
-                if self.tag(s, k) != gate { continue; }
-                let (m0, m1) = (self.mate_of(s, self.ae(k, 0)), self.mate_of(s, self.ae(k, 1)));
-                let sid = self.sids[s as usize * self.ks + k];
-                self.shadow.cancel(sid, sid, &[(0, 1)]);
-                for q in 0..2 { self.set(s, self.ae(k, q), NONE); }
-                self.remove(s, k);
-                self.link(s, m0, m1);
-                self.refresh(s);
-                n += 1;
+    /// Keeping history, a click at the clock now (resid.rs `Edit`). The first since the run was put back
+    /// drops the clicks it made later: from here it runs on another way.
+    pub fn edit(&mut self, e: crate::resid::Edit) {
+        if !std::mem::replace(&mut self.branched, true) { self.edits.truncate(self.next_edit); }
+        self.edits.push((self.stats.clocks, e));
+    }
+
+    /// The clicks due by now, as a clock starts: the root turned into the walker it asks for, or
+    /// forgetting turned on or off.
+    fn make_edits(&mut self) {
+        while let Some(&(at, e)) = self.edits.get(self.next_edit) {
+            if at > self.stats.clocks { return; }
+            self.next_edit += 1;
+            match e {
+                crate::resid::Edit::Forget(on) => self.forgetting = on,
+                crate::resid::Edit::Back | crate::resid::Edit::Go => {
+                    let Some((s, k)) = self.find_out() else { continue };
+                    let t = if e == crate::resid::Edit::Back { Tag::Back } else { Tag::Go };
+                    let sid = self.sids[s as usize * self.ks + k];
+                    self.shadow.agents[sid as usize].as_mut().unwrap().tag = t;
+                    self.remove(s, k);
+                    self.place(s, k, code(t), sid);
+                    self.refresh(s);
+                }
             }
         }
-        n
+    }
+
+    /// After a run is put back to an earlier clock: which clicks it has made, and so whether it forgets.
+    pub fn resync_edits(&mut self) {
+        self.branched = false;
+        self.next_edit = self.edits.partition_point(|e| e.0 < self.stats.clocks);
+        self.forgetting = self.edits[..self.next_edit].iter().rev().find_map(|e| match e.1 { crate::resid::Edit::Forget(on) => Some(on), _ => None }).unwrap_or(false);
     }
 
     /// Keeping history's moves that are not interactions (rules.rs `RESID_RULES`), each two agents in
-    /// one site undoing each other: an un-apply whose residual and result are the outputs of an apply
-    /// that never ran (both go, the function and argument come back out); a merge whose two copies are
-    /// one duplicator's (both go, the original comes back out); and, with the history being erased, an
-    /// eraser on the output of an apply that never ran (`erase_apply`). An un-apply or merge waiting on
-    /// one asks for its other input (`ask_second`).
+    /// one site undoing each other: an un-apply (`UEv`) whose residual (history) and result are the
+    /// outputs of an apply (`Ev`) that never ran, both going and the function and argument (the tree)
+    /// coming back out, and the same with a hole for the result, the apply's output forgotten, which
+    /// what read it reads instead; a merge whose two copies are one duplicator's (both go, the original
+    /// comes back out); and, with the history being erased, an eraser on the output of an apply that
+    /// never ran (`erase_apply`). An un-apply or merge waiting on one asks for its other input
+    /// (`ask_second`).
     fn collect_resid(&mut self, s: u32) -> bool {
         let at = |l: &Self, k: usize, q: usize| -> Option<(usize, usize)> {
             let m = l.mate_of(s, l.ae(k, q));
@@ -1219,11 +1299,20 @@ impl Lattice {
             let t = self.tag(s, k);
             if t == 0 { continue; }
             match tag_of(t) {
-                Tag::UA => {
-                    let Some((j, 3)) = at(self, k, 0) else { continue };
-                    if tag_of(self.tag(s, j)) != Tag::RA { continue; }
-                    if at(self, k, 1) == Some((j, 2)) {
-                        self.cancel_pair(s, k, j, &[(3, 0), (2, 1)], "un-apply·apply");
+                w @ (Tag::UA | Tag::UEv) => {
+                    // The twin, its port the walker reads, its output; the joins giving its inputs back.
+                    let (twin, last, out, back): (Tag, usize, usize, &[(usize, usize)]) =
+                        if w == Tag::UA { (Tag::RA, 3, 2, &[(3, 0), (2, 1)]) } else { (Tag::Ev, 2, 1, &[(2, 0)]) };
+                    let Some((j, q)) = at(self, k, 0) else { continue };
+                    if q != last || tag_of(self.tag(s, j)) != twin { continue; }
+                    if at(self, k, 1) == Some((j, out)) {
+                        self.cancel_pair(s, k, j, back, if w == Tag::UA { "un-apply·apply" } else { "un-run·run" });
+                        return true;
+                    }
+                    let (s2, k2, p2, _) = self.follow(s, self.ae(k, 1));
+                    if p2 == 0 && self.tag(s2, k2) == code(Tag::Hole) {
+                        let joins: Vec<(usize, usize)> = back.iter().copied().chain([(1, out)]).collect();
+                        self.cancel_pair(s, k, j, &joins, if w == Tag::UA { "un-apply·forgotten apply" } else { "un-run·forgotten run" });
                         return true;
                     }
                     // Waiting on its result: ask for it, or for the apply if the result is a value already.
@@ -1298,13 +1387,11 @@ impl Lattice {
         self.note([EV_DEAD, s, s, code(Tag::Eps) as u32, code(Tag::RA) as u32, 0, 0, 0]);
     }
 
-    /// The agent the root reads, if it is a value (keeping history, what the answer's gate holds).
+    /// The agent the root reads, if it is a value (keeping history, the answer bundled there).
     fn answer_top(&self) -> Option<(u32, usize)> {
         if self.p.resid == 1 {
-            let &(g, _) = self.resid.gates.iter().find(|g| g.1 == crate::resid::Role::Answer)?;
-            let (s, k) = self.seat_of_sid(g)?;
-            if tag_of(self.tag(s, k)) != Tag::Gate { return None; }
-            let (s2, k2, p2, _) = self.follow(s, self.ae(k, 0));
+            let (s, k) = self.bundle()?;
+            let (s2, k2, p2, _) = self.follow(s, self.ae(k, 1));
             return (p2 == 0).then_some((s2, k2));
         }
         let (s, k) = self.find_out()?;
@@ -1348,11 +1435,10 @@ impl Lattice {
     }
 
     /// Whether the run is over: the answer is in, or (eager) nothing is left to do. Keeping history,
-    /// once a clock to open the gates at is set (at any clock of a replay): the function and every
-    /// argument worked back to.
+    /// with no click still to come (at a clock of a replay): the answer in, or run back, the term.
     pub fn answered(&self) -> bool {
-        if self.p.resid == 1 && (self.open_at.is_finite() || !self.gates_shut()) {
-            return self.resid.roots.iter().all(|&(_, r)| self.resid_read(r).is_some());
+        if self.p.resid == 1 {
+            return self.next_edit == self.edits.len() && self.at_rest();
         }
         self.p.lazy && self.read_answer().is_some() || self.shadow.active_pair().is_none()
     }
@@ -1781,7 +1867,7 @@ impl Lattice {
         let mut seat = std::collections::HashMap::new();
         for &s in &self.live { for k in 0..self.ks { if self.tag(s, k) != 0 { seat.insert(self.sids[s as usize * self.ks + k], s as usize * self.ks + k); } } }
         let mut stack: Vec<(u32, u8)> = self.shadow.agents.iter().enumerate()
-            .filter(|(_, a)| a.as_ref().is_some_and(|a| a.tag == Tag::Out)).map(|(i, _)| (i as u32, 0)).collect();
+            .filter(|(_, a)| a.as_ref().is_some_and(|a| is_root(a.tag))).map(|(i, _)| (i as u32, 0)).collect();
         let mut seen = vec![false; self.shadow.agents.len()];
         let mut out = vec![];
         while let Some((id, l)) = stack.pop() {
@@ -2054,7 +2140,7 @@ impl Lattice {
             if self.is_strand(m) || m == NONE { continue; }
             let (k2, q) = (m as usize / self.ar, m as usize % self.ar);
             let t2 = self.tag(site, k2);
-            if q == 0 && t2 != 0 && tag_of(t2).is_producer() { return Some((k, k2, face)); }
+            if q == 0 && t2 != 0 && tag_of(t2).is_producer() && meets(tag_of(t), tag_of(t2)) { return Some((k, k2, face)); }
             // A wanted reader touching a pending computation's output wants it in turn (an
             // eraser does not: what it touches is garbage).
             if self.p.lazy && q > 0 && t2 != 0 && tag_of(t2).is_consumer() && tag_of(t) != Tag::Eps && self.want[s as usize * self.ks + k]
@@ -2074,6 +2160,7 @@ impl Lattice {
         let (ct, pt) = (tag_of(self.tag(s, kc)), tag_of(self.tag(sp, kp)));
         let (cl, pl) = (self.sup_label[s as usize * self.ks + kc], self.sup_label[sp as usize * self.ks + kp]);
         let ri = find_index_labelled(ct, cl, pt, pl).unwrap_or_else(|| panic!("no rule {}·{}", ct.name(), pt.name()));
+        let ri = if self.forgetting { find_forgetting(ct, pt).unwrap_or(ri) } else { ri };
         let rule = rule(ri);
         let n = rule.fresh.len();
         // The substrate: an eraser takes a leaf only by deciding to; anything else is a step forward.
@@ -2262,7 +2349,7 @@ impl Lattice {
             }
         }
         let before = self.p.phys.then(|| self.sub_before(ri, csid, s as usize * self.ks + kc, psid, sp as usize * self.ks + kp));
-        let fresh_sids = self.shadow.fire(csid, psid).1;
+        let fresh_sids = self.shadow.fire_rule(csid, psid, rule);
         if let Some((gone, joined)) = before { self.sub_after(ri, gone, joined, &fresh_sids); }
         if !self.readdist.is_empty() && ct == Tag::Dn {
             if let Some(&h) = self.piece.get(&psid) {
@@ -2393,7 +2480,7 @@ impl Lattice {
         self.stats.proposals += 1;
         if self.live.is_empty() { return; }
         self.stats.clocks += self.busiest_share();
-        if self.stats.clocks >= self.open_at { self.open_gates(); }
+        self.make_edits();
         if self.p.pulse && self.stats.clocks >= self.next_pulse {
             self.next_pulse += 1.0;
             self.step_pulses();
@@ -2475,7 +2562,7 @@ impl Lattice {
     /// or with `block_moves` gives every site a turn.
     fn margolus_clock(&mut self) {
         if let Some((from, t0)) = self.cooling { self.set_temp(cooled(&self.p, t0, self.stats.clocks - from)); }
-        if self.stats.clocks >= self.open_at { self.open_gates(); }
+        self.make_edits();
         if self.p.phys { self.scheduled(); }
         if self.fields.on { self.update_fields(); }
         let b = self.p.block_side as u64;
@@ -2757,7 +2844,7 @@ impl Lattice {
                 let (k, q) = (m as usize / self.ar, m as usize % self.ar);
                 let tg = self.tag(t, k);
                 if self.p.calls && q == 0 && tg != 0 && tag_of(tg).is_producer() { self.want[t as usize * self.ks + k] = true; }
-                if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !self.want[t as usize * self.ks + k] && !(tag_of(tg) == Tag::RA && q == 3) {
+                if q > 0 && tg != 0 && tag_of(tg).is_consumer() && !self.want[t as usize * self.ks + k] && !waits(Tag::UA, tag_of(tg), q) && !waits(Tag::UEv, tag_of(tg), q) {
                     self.want[t as usize * self.ks + k] = true;
                     self.tr_want(t, k);
                     self.stats.pulses += 1;
@@ -2904,7 +2991,7 @@ impl Lattice {
     pub fn garbage(&self, marks: &mut Vec<u8>) -> usize {
         let n = self.shadow.agents.len();
         let mut reached = vec![false; n];
-        let mut stack: Vec<usize> = (0..n).filter(|&i| matches!(&self.shadow.agents[i], Some(a) if a.tag == Tag::Out)).collect();
+        let mut stack: Vec<usize> = (0..n).filter(|&i| matches!(&self.shadow.agents[i], Some(a) if is_root(a.tag))).collect();
         for &i in &stack { reached[i] = true; }
         while let Some(i) = stack.pop() {
             for p in self.shadow.agents[i].as_ref().unwrap().ports.iter().flatten() {

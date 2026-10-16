@@ -1,17 +1,21 @@
 // Every kind of agent, as the player numbers them (lattice.rs `code`): names, ports, what each rule
 // does, colours. Shared by index.html and rev.html.
 const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "Sup", "K", "Sx", "B", "C", "I", "W",
-  // Keeping history (set=resid=1, tags 21 on, rules.rs `RESID_TAGS`): walkers forward, walkers back, residuals, gates.
+  // Keeping history (set=resid=1, tags 21 on, rules.rs `RESID_TAGS`): walkers forward, walkers back, residuals,
+  // running and running back a term given as a tree, forgetting.
   "A+", "T1+", "Sel+", "SL+", "SS+", "SF+", "T1s+", "T1sf+", "T1sc0+", "T1sc+", "T1scf+", "TSb+",
-  "A-", "Ar-", "Sel-", "SL-", "SS-", "SF-", "Dn-", "DnL-", "DnS-", "DnF-", "Arms3", "Rk", "Rs", "Rt", "Rb", "Rc", "Gate", "F-", "S-"];
+  "A-", "Ar-", "Sel-", "SL-", "SS-", "SF-", "Dn-", "DnL-", "DnS-", "DnF-", "Arms3", "Rk", "Rs", "Rt", "Rb", "Rc",
+  "H", "E", "E-", "F!", "?", "Go", "Back", "Rh", "Rq", "Arms-"];
 const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3, 2, 3, 3, 3, 1, 2,
-  4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 3, 4, 4, 3, 2, 3, 4, 4, 2, 4, 4, 3, 3, 2, 3, 2];
-/// Keeping history (set=resid=1): the walkers that work the answer out leaving a residual (21 to 32), the
-/// walkers that run it back (33 to 42, and 50, 51 taking apart a loaded value that holds applications), the arms a
-/// triage carries (43), the residuals (44 to 48), the gates (49).
-const isForward = t => t >= 21 && t <= 32, isBackward = t => t >= 33 && t <= 42 || t === 50 || t === 51, isResidual = t => t >= 44 && t <= 48;
+  4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 3, 4, 4, 3, 2, 3, 4, 4, 2, 4, 4, 3, 3, 4, 3, 3, 2, 1, 1, 1, 3, 2, 2];
+/// Keeping history (set=resid=1): the walkers that work the answer out leaving a residual (21 to 32, E 50 and
+/// the click Go 54), the walkers that run it back (33 to 42, E- 51, the click Back 55 and Arms- 58), the arms
+/// a triage carries (43), the residuals and histories (44 to 49, 56, 57), the forgetter (52) and the hole (53).
+const isForward = t => t >= 21 && t <= 32 || t === 50 || t === 54, isBackward = t => t >= 33 && t <= 42 || t === 51 || t === 55 || t === 58;
+const isResidual = t => t >= 44 && t <= 49 || t === 56 || t === 57;
 /// What each residual stands for, as a tree.
-const RESIDUAL_TREE = { Rk: "△△c", Rs: "△(△j₁)(△j₂j₃)", Rt: "△(△hd)r", Rb: "△(△j₁j₂)", Rc: "△(△(△j₁j₂))" };
+const RESIDUAL_TREE = { Rk: "△△c", Rs: "△(△j₁)(△j₂j₃)", Rt: "△(△hd)r", Rb: "△(△j₁j₂)", Rc: "△(△(△j₁j₂))", H: "△j(△h_f h_x)",
+  Rh: "△(△(△(△fx)))", Rq: "△(△(△(△a)))" };
 /// Movement agents (set=views=1, tags 15 to 20): loaded code standing for a tree shape, the tree each spells out as.
 const VIEW_TREE = { K: "△△y", Sx: "△(△s)b", B: "△(△(△△f))g", C: "△(△f)(△△g)", I: "△(△△△)△", W: "△(△s)s" };
 const isView = t => t >= 15 && t <= 20;
@@ -27,7 +31,9 @@ const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pa
   "SL-": "dispatch on a leaf run back", "SS-": "dispatch on a stem run back", "SF-": "dispatch on a fork run back",
   "Dn-": "merge (a copy run back)", "DnL-": "merge, having read a leaf", "DnS-": "merge, having read a stem", "DnF-": "merge, having read a fork",
   Arms3: "a triage's three arms", Rk: "residual of K", Rs: "residual of the S rule", Rt: "residual of a triage", Rb: "residual of B", Rc: "residual of C",
-  Gate: "gate", "F-": "a loaded fork taken apart", "S-": "a loaded stem taken apart" };
+  H: "history of an application", E: "run: works a term given as a tree out", "E-": "run back: works the history back to the term",
+  "F!": "forgetter", "?": "hole: something forgotten", Go: "the root, clicked: run", Back: "the root, clicked: run back",
+  Rh: "residual of reading a hole", Rq: "residual of a dispatch on a hole", "Arms-": "arms back into a triage" };
 const DESC = {
   L: "a leaf △, the simplest value", S: "a stem △x: a value with one child", F: "a fork △xy: a value with two children",
   P: "a suspended application f a: it becomes a value once something needs it", Pair: "a pair carrying the arms of a pending choice",
@@ -45,8 +51,14 @@ const DESC = {
   "A-": "un-apply: reads a residual as the function and the result as the argument, and gives back the argument and the function the apply had; an un-apply meeting an apply that never ran just joins them up",
   "Ar-": "the un-apply of a stem or fork built by applying a leaf or stem: takes the result apart", "Sel-": "picks how a triage is run back by the argument's head kept in its residual",
   "Dn-": "a merge: the two copies a duplicator made, read back into one (when they meet the duplicator itself, both just go)",
-  Arms3: "a triage's three arms w, x, b, carried to the dispatch", Gate: "holds a wire shut: the answer and each apply's residual wait here until the run is taken back",
-  "F-": "running back, a fork of the loaded term that holds applications, taken apart so each part runs back on its own", "S-": "running back, a stem of the loaded term that holds an application, taken apart",
+  Arms3: "a triage's three arms w, x, b, carried to the dispatch",
+  E: "runs a term given as a tree (△v a value, △⌜f⌝⌜x⌝ an application): each application becomes an apply, and its history (H) is kept beside the answer",
+  "E-": "runs the answer and its history back to the term as a tree: for each application an un-apply of its residual and result",
+  "F!": "forgetting is on: erases what an apply dropped (K's argument, a triage's arms not taken) and leaves a hole in its place",
+  "?": "a hole: something forgotten. A merge of a hole and a copy gives the copy; run again, what reads a hole gives a hole",
+  Go: "the root, clicked: drops E on the term here, to run it", Back: "the root, clicked: drops E- on the answer and history here, to run them back",
+  H: "the history of an application of the loaded term: its residual, and the histories of its function and argument",
+  "Arms-": "running back a dispatch on a hole: the arms it kept, as the triage they were",
   ...Object.fromEntries(Object.entries(RESIDUAL_TREE).map(([r, t]) => [r, `a residual: what a step would have dropped, standing for the tree ${t}; read back as the function by an un-apply`])) };
 const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right"], P: ["value", "function", "argument"], Pair: ["value", "first", "second"],
   A: ["operator", "argument", "result"], T1: ["subject", "arms", "result"], Sel: ["subject", "arms", "result"], Unp: ["pair", "first", "second"],
@@ -60,7 +72,9 @@ const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right
   "SL-": ["arms", "argument", "function"], "SS-": ["arms", "j", "argument", "function"], "SF-": ["arms", "⟨j₁, j₂⟩", "argument", "function"],
   "Dn-": ["copy", "copy", "value"], "DnL-": ["other copy", "value"], "DnS-": ["other copy", "child", "value"], "DnF-": ["other copy", "left", "right", "value"],
   Arms3: ["value", "w", "x", "b"], Rk: ["value", "c"], Rs: ["value", "j₁", "j₂", "j₃"], Rt: ["value", "h", "d", "r"], Rb: ["value", "j₁", "j₂"], Rc: ["value", "j₁", "j₂"],
-  Gate: ["in", "out"], "F-": ["fork", "left", "right"], "S-": ["stem", "child"] };
+  H: ["value", "residual", "function's history", "argument's history"], E: ["term", "value", "history"], "E-": ["history", "value", "term"],
+  "F!": ["residual", "up"], "?": ["value"], Go: ["term"], Back: ["answer and history"], Rh: ["value", "function", "argument"], Rq: ["value", "arms"],
+  "Arms-": ["arms", "triage"] };
 const MEANING = {
   "A·L": "apply(leaf, x) = stem x", "A·S": "apply(stem a, x) = fork a x", "A·F": "apply(fork a b, x) = triage a with arms ⟨b, x⟩",
   "A·P": "the operator is still suspended: force it first, then apply", "T1·L": "the subject a is a leaf: the result is b, and c is erased",
@@ -94,22 +108,35 @@ const MEANING = {
   "A-·Rt": "the step was a triage: dispatch back on the argument's head", "A-·Rb": "the step was B: un-apply both applies", "A-·Rc": "the step was C: un-apply both applies",
   "Dn-·L": "merge: the first copy is a leaf", "Dn-·S": "merge: the first copy is a stem", "Dn-·F": "merge: the first copy is a fork",
   "DnL-·L": "merge: both copies leaves, one leaf", "DnS-·S": "merge: both copies stems, one stem; merge the children", "DnF-·F": "merge: both copies forks, one fork; merge the children",
-  "F-·F": "the loaded fork's two parts, each back to where it runs back", "S-·S": "the loaded stem's child, back to where it runs back" };
+  "E·S": "a value of the term: out as it is; its history △", "E·F": "an application of the term: an apply of its two parts run; its history H",
+  "E-·L": "a value: back into the term as △v", "E-·H": "an application: un-apply its residual and result, and run the function's and argument's histories back",
+  "Go·S": "run the term here; the answer and history, bundled, at a new root", "Go·F": "run the term here; the answer and history, bundled, at a new root",
+  "Back·F": "run the answer and history bundled here back to the term, at a new root",
+  "F!·Rk": "forget K's dropped argument: a hole in its place", "F!·Rt": "forget a triage's arms not taken: holes in their place",
+  "Dn·?": "two copies of a hole", "Nrm·?": "a hole is as finished as it gets", "Dn-·?": "merge: a hole and a copy give the copy",
+  "DnL-·?": "merge: a leaf and a hole give the leaf", "DnS-·?": "merge: a stem and a hole give the stem", "DnF-·?": "merge: a fork and a hole give the fork",
+  "Ar-·?": "the result was forgotten: the function and argument are holes too",
+  "A+·?": "applying a hole gives a hole; Rh keeps the argument", "T1+·?": "a triage on a hole gives a hole; Rh keeps the rest",
+  "Sel+·?": "a dispatch on a hole gives a hole; Rq keeps the arms", "A-·Rh": "give back the function and argument Rh kept",
+  "A-·Rq": "give back the arms Rq kept as the triage, and a hole for the argument", "Arms-·Arms3": "the arms w, x, b as the triage △(△wx)b",
+  "T1s+·?": "the S rule: a hole is not B", "T1sf+·?": "the S rule: a hole is not B", "T1sc+·?": "the S rule: a hole is not C", "T1scf+·?": "the S rule: a hole is not C" };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
 // Movement agents in colours of what they do: K red (erases), Sx and W greens (copy), B orange and C yellow (move), I sky (a wire).
-// Keeping history: walkers forward as apply and triage are, walkers back in pinks, residuals amber, gates white.
+// Keeping history: walkers forward as apply and triage are, walkers back in pinks, residuals and histories amber,
+// the forgetter red, a hole white, the clicked root green (run) or pink (run back).
 const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#f7768e",
   "#db4b4b", "#c3e88d", "#ff9e64", "#f4d35e", "#7dcfff", "#9ece6a",
   "#56c8ff", "#4fd6be", "#2bb5a0", "#2bb5a0", "#2bb5a0", "#2bb5a0", "#4fd6be", "#4fd6be", "#4fd6be", "#4fd6be", "#4fd6be", "#4fd6be",
   "#ff6ac1", "#ff8fd0", "#e05fb0", "#e05fb0", "#e05fb0", "#e05fb0", "#e07cff", "#e07cff", "#e07cff", "#e07cff", "#c792ea",
-  "#ffc777", "#ffc777", "#ffc777", "#ffc777", "#ffc777", "#ffffff", "#e05fb0", "#e05fb0"];
+  "#ffc777", "#ffc777", "#ffc777", "#ffc777", "#ffc777",
+  "#ffc777", "#56c8ff", "#ff6ac1", "#db4b4b", "#ffffff", "#6ee07a", "#ff6ac1", "#ffc777", "#ffc777", "#e05fb0"];
 const kindColor = t => COLOR[t] ?? "#8a96a8";
 /// A kind as its icon (shapes.js) and its name.
 const kindHTML = t => `${shapeSVG(t, kindColor(t))}${NAMES[TAGS[t]] ?? `agent of kind ${t}`}`;
-const isConsumer = t => t >= 6 && t <= 12 || t >= 21 && t <= 42 || t === 50 || t === 51;
-const isProducer = t => t >= 1 && t <= 5 || t === 14 || isView(t) || t >= 43 && t <= 48;
+const isConsumer = t => t >= 6 && t <= 12 || t >= 21 && t <= 42 || [50, 51, 52, 54, 55, 58].includes(t);
+const isProducer = t => t >= 1 && t <= 5 || t === 14 || isView(t) || t >= 43 && t <= 49 || t === 53 || t === 56 || t === 57;
 // Which ports are outputs (sources): a producer's principal, a computation's result (and residual), a
-// duplicator's or unpair's two parts, a merge's value, a gate's far side.
-const OUTS = { 24: [1, 2], 34: [1, 2], 36: [1, 2], 39: [2], 40: [1], 41: [2], 42: [3], 49: [1], 50: [1, 2], 51: [1] };
+// duplicator's or unpair's two parts, a merge's value, what a run gives or runs back to.
+const OUTS = { 24: [1, 2], 34: [1, 2], 36: [1, 2], 39: [2], 40: [1], 41: [2], 42: [3], 50: [1, 2], 51: [2], 52: [1], 54: [], 55: [], 58: [1] };
 const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0
   : OUTS[t] ? OUTS[t].includes(p) : t >= 21 && t <= 42 ? p >= 2 : false;

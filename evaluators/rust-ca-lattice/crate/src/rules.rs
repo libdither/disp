@@ -89,13 +89,18 @@ pub enum Tag {
     Rt,    // residual △(△hd)r: [p, h, d, r]
     Rb,    // residual △(△j₁j₂): [p, j₁, j₂]
     Rc,    // residual △(△(△j₁j₂)): [p, j₁, j₂]
-    /// Holds a wire shut until opened (`Lattice::open_gates`): what runs back waits behind gates
-    /// while the answer is worked out. [in, out]
-    Gate,
-    /// Running back, a fork or stem of the loaded term that holds applications, taken apart so each
-    /// part runs back on its own (resid.rs). [p, left, right] and [p, child]
-    Fm,
-    Sm,
+    Ha,    // the history of an application, △j(△hf hx): [p, its residual, the function's, the argument's]
+    Ev,    // runs a term given as a tree (△v a value, △⌜f⌝⌜x⌝ an application): [p(⌜t⌝), value out, history out]
+    UEv,   // runs it back, Ev's ports reversed: [p(history), value, ⌜t⌝ out]
+    Fg,    // forgets what an apply dropped, leaving holes: [p(Rk or Rt), up]
+    Hole,  // what was forgotten: [p]
+    Rh,    // residual of an apply or triage that read a hole, the function and argument it had: [p, f, x]
+    Rq,    // residual of a dispatch that read a hole, the arms it had: [p, Arms3]
+    UArms, // running Rq back, the arms as the triage they were: [p(Arms3), out]
+    /// A click on the root: Go drops `Ev` on the term there, Back drops `UEv` on the answer and
+    /// history bundled there (each with a normalizer after it and a root again). [p]
+    Go,
+    Back,
 }
 
 /// Every tag, in the order engines number them (from 1, 0 meaning none). `Sup` comes last so
@@ -111,24 +116,26 @@ pub const VIEW_TAGS: [Tag; 6] = [Tag::K, Tag::Sx, Tag::B, Tag::C, Tag::I, Tag::W
 
 /// The tags of keeping history (`RESID_RULES`), numbered after the movement agents' where the strand
 /// lattice runs them (its CPU only).
-pub const RESID_TAGS: [Tag; 31] = [
+pub const RESID_TAGS: [Tag; 38] = [
     Tag::RA, Tag::RT1, Tag::RSel, Tag::SL, Tag::SS, Tag::SF, Tag::T1s, Tag::T1sf, Tag::T1sc0, Tag::T1sc, Tag::T1scf, Tag::TSb,
     Tag::UA, Tag::UAr, Tag::USel, Tag::USL, Tag::USS, Tag::USF, Tag::Mg, Tag::MgL, Tag::MgS, Tag::MgF,
-    Tag::Arms3, Tag::Rk, Tag::Rs, Tag::Rt, Tag::Rb, Tag::Rc, Tag::Gate, Tag::Fm, Tag::Sm,
+    Tag::Arms3, Tag::Rk, Tag::Rs, Tag::Rt, Tag::Rb, Tag::Rc, Tag::Ha, Tag::Ev, Tag::UEv, Tag::Fg, Tag::Hole, Tag::Go, Tag::Back,
+    Tag::Rh, Tag::Rq, Tag::UArms,
 ];
 
 impl Tag {
     pub fn arity(self) -> usize {
         match self {
-            Tag::L | Tag::Eps | Tag::Out | Tag::I => 1,
-            Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Seam | Tag::MgL | Tag::Rk | Tag::Gate | Tag::Sm => 2,
+            Tag::L | Tag::Eps | Tag::Out | Tag::I | Tag::Hole | Tag::Go | Tag::Back => 1,
+            Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Seam | Tag::MgL | Tag::Rk | Tag::Fg | Tag::Rq | Tag::UArms => 2,
             Tag::RA | Tag::RT1 | Tag::RSel | Tag::SS | Tag::SF | Tag::T1s | Tag::T1sf | Tag::T1sc0 | Tag::T1sc | Tag::T1scf
-            | Tag::TSb | Tag::UA | Tag::USel | Tag::USS | Tag::USF | Tag::MgF | Tag::Arms3 | Tag::Rs | Tag::Rt => 4,
+            | Tag::TSb | Tag::UA | Tag::USel | Tag::USS | Tag::USF | Tag::MgF | Tag::Arms3 | Tag::Rs | Tag::Rt | Tag::Ha => 4,
             _ => 3,
         }
     }
     pub fn is_producer(self) -> bool {
-        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup | Tag::Arms3 | Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc)
+        matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup | Tag::Arms3 | Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc
+                 | Tag::Ha | Tag::Hole | Tag::Rh | Tag::Rq)
             || self.is_view()
     }
     pub fn is_view(self) -> bool { matches!(self, Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W) }
@@ -136,7 +143,7 @@ impl Tag {
     pub fn is_resid(self) -> bool { RESID_TAGS.contains(&self) }
     pub fn is_consumer(self) -> bool {
         matches!(self, Tag::A | Tag::T1 | Tag::Sel | Tag::Unp | Tag::Dn | Tag::Eps | Tag::Nrm)
-            || self.is_resid() && !self.is_producer() && self != Tag::Gate
+            || self.is_resid() && !self.is_producer()
     }
     pub fn name(self) -> &'static str {
         match self {
@@ -149,8 +156,9 @@ impl Tag {
             Tag::T1s => "T1s+", Tag::T1sf => "T1sf+", Tag::T1sc0 => "T1sc0+", Tag::T1sc => "T1sc+", Tag::T1scf => "T1scf+", Tag::TSb => "TSb+",
             Tag::UA => "A-", Tag::UAr => "Ar-", Tag::USel => "Sel-", Tag::USL => "SL-", Tag::USS => "SS-", Tag::USF => "SF-",
             Tag::Mg => "Dn-", Tag::MgL => "DnL-", Tag::MgS => "DnS-", Tag::MgF => "DnF-",
-            Tag::Arms3 => "Arms3", Tag::Rk => "Rk", Tag::Rs => "Rs", Tag::Rt => "Rt", Tag::Rb => "Rb", Tag::Rc => "Rc", Tag::Gate => "Gate",
-            Tag::Fm => "F-", Tag::Sm => "S-",
+            Tag::Arms3 => "Arms3", Tag::Rk => "Rk", Tag::Rs => "Rs", Tag::Rt => "Rt", Tag::Rb => "Rb", Tag::Rc => "Rc", Tag::Ha => "H",
+            Tag::Ev => "E", Tag::UEv => "E-", Tag::Fg => "F!", Tag::Hole => "?", Tag::Go => "Go", Tag::Back => "Back",
+            Tag::Rh => "Rh", Tag::Rq => "Rq", Tag::UArms => "Arms-",
         }
     }
 }
@@ -330,12 +338,22 @@ pub const N_RULES: usize = RULES.len() + SUP_RULES.len();
 pub const N_ALL_RULES: usize = N_RULES + VIEW_RULES.len();
 
 /// Every rule: `rule`'s numbering runs to here.
-pub const N_EVERY_RULE: usize = N_ALL_RULES + RESID_RULES.len();
+pub const N_EVERY_RULE: usize = N_ALL_RULES + RESID_RULES.len() + FORGET_RULES.len();
 
-/// Rule i of `RULES` followed by `SUP_RULES`, `VIEW_RULES` and `RESID_RULES`: the numbering `find_index` gives.
+/// Rule i of `RULES` followed by `SUP_RULES`, `VIEW_RULES`, `RESID_RULES` and `FORGET_RULES`: the numbering `find_index` gives.
 pub fn rule(i: usize) -> &'static Rule {
     if i < RULES.len() { &RULES[i] } else if i < N_RULES { &SUP_RULES[i - RULES.len()] }
-    else if i < N_ALL_RULES { &VIEW_RULES[i - N_RULES] } else { &RESID_RULES[i - N_ALL_RULES] }
+    else if i < N_ALL_RULES { &VIEW_RULES[i - N_RULES] }
+    else if i < N_ALL_RULES + RESID_RULES.len() { &RESID_RULES[i - N_ALL_RULES] } else { &FORGET_RULES[i - N_ALL_RULES - RESID_RULES.len()] }
+}
+
+/// Whether a consumer and a producer whose principals touch interact: a hole is an unknown, which
+/// what has no rule for it waits on.
+pub fn meets(consumer: Tag, producer: Tag) -> bool { producer != Tag::Hole || find_index(consumer, producer).is_some() }
+
+/// The number of the rule forgetting uses for a pair, if it has its own.
+pub fn find_forgetting(consumer: Tag, producer: Tag) -> Option<usize> {
+    FORGET_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer).map(|i| N_ALL_RULES + RESID_RULES.len() + i)
 }
 
 /// Keeping history (research/reversible-core/residual.py, where these are checked against an oracle and
@@ -358,11 +376,19 @@ pub fn rule(i: usize) -> &'static Rule {
 /// The S rule looks at its function for B and C first and sends the argument only to the side that
 /// uses it. Running back is done by the same walkers turned round: `UA` un-applies (a residual read as
 /// the function, the result as the argument), `USel` dispatches back and `Mg` merges two copies; `UAr`
-/// and `MgL`/`MgS`/`MgF` are the second reads undoing a creation needs; `Fm` and `Sm` take apart a
-/// fork or stem of the loaded term that holds applications (the last two rules, not the model's). Three moves that are not
-/// interactions finish the job (`Lattice::collect`): an un-apply meeting an apply that never ran, a
-/// merge meeting the duplicator its two copies came from, and an eraser on both outputs of an apply
-/// that never ran. Duplicators, unpairs and erasers are `RULES`'.
+/// and `MgL`/`MgS`/`MgF` are the second reads undoing a creation needs.
+///
+/// A term is loaded as a tree, △v a value and △⌜f⌝⌜x⌝ an application, under a root. `Ev` runs it,
+/// making an apply of each application and the history of each, `Ha`; `UEv` (Ev's ports reversed)
+/// runs the answer and history back to the tree. A click turns the root into `Go` or `Back`, which
+/// drop them. Forgetting (`FORGET_RULES`) leaves `Hole`s for what the applies dropped; a hole merged
+/// with a copy is that copy. Run again, a hole is an unknown: what reads it gives a hole, keeping in
+/// `Rh` or `Rq` the rest of what it was given, to give it back with.
+///
+/// Moves that are not interactions finish the job (`Lattice::collect_resid`): an un-apply (or `UEv`)
+/// meeting an apply (an `Ev`) that never ran, with its output or a hole for it; a merge meeting the
+/// duplicator its two copies came from; and an eraser on both outputs of an apply that never ran.
+/// Duplicators, unpairs, normalizers and erasers of trees are `RULES`'.
 pub static RESID_RULES: &[Rule] = &[
     // ---- forward ----
     Rule { consumer: RA, producer: L, fresh: &[S, L], wires: &[(X(0, 1), C(1)), (X(0, 0), C(2)), (X(1, 0), C(3))], ..PLAIN },
@@ -414,14 +440,53 @@ pub static RESID_RULES: &[Rule] = &[
     Rule { consumer: MgF, producer: F, fresh: &[Mg, Mg, F], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(1, 0), C(2)), (X(1, 1), Px(2)), (X(0, 2), X(2, 1)), (X(1, 2), X(2, 2)), (X(2, 0), C(3))], ..PLAIN },
     // ---- erasing history ----
     Rule { consumer: Eps, producer: Arms3, fresh: &[Eps, Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(2, 0), Px(3))], ..PLAIN },
+    Rule { consumer: Eps, producer: Hole, fresh: &[], wires: &[], ..PLAIN },
     Rule { consumer: Eps, producer: Rk, fresh: &[Eps], wires: &[(X(0, 0), Px(1))], ..PLAIN },
     Rule { consumer: Eps, producer: Rs, fresh: &[Eps, Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(2, 0), Px(3))], ..PLAIN },
     Rule { consumer: Eps, producer: Rt, fresh: &[Eps, Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(2, 0), Px(3))], ..PLAIN },
     Rule { consumer: Eps, producer: Rb, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
     Rule { consumer: Eps, producer: Rc, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
-    // ---- a value of the loaded term holding applications, taken apart running back (resid.rs) ----
-    Rule { consumer: Fm, producer: F, fresh: &[], wires: &[(C(1), Px(1)), (C(2), Px(2))], ..PLAIN },
-    Rule { consumer: Sm, producer: S, fresh: &[], wires: &[(C(1), Px(1))], ..PLAIN },
+    Rule { consumer: Eps, producer: Ha, fresh: &[Eps, Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(2, 0), Px(3))], ..PLAIN },
+    Rule { consumer: Eps, producer: Rh, fresh: &[Eps, Eps], wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2))], ..PLAIN },
+    Rule { consumer: Eps, producer: Rq, fresh: &[Eps], wires: &[(X(0, 0), Px(1))], ..PLAIN },
+    // ---- running and running back ----
+    Rule { consumer: Ev, producer: S, fresh: &[L], wires: &[(Px(1), C(1)), (X(0, 0), C(2))], ..PLAIN },
+    Rule { consumer: Ev, producer: F, fresh: &[RA, Ev, Ev, Ha], wires: &[(X(1, 0), Px(1)), (X(2, 0), Px(2)), (X(0, 0), X(1, 1)), (X(0, 1), X(2, 1)), (X(0, 2), C(1)), (X(0, 3), X(3, 1)), (X(3, 2), X(1, 2)), (X(3, 3), X(2, 2)), (X(3, 0), C(2))], ..PLAIN },
+    Rule { consumer: UEv, producer: L, fresh: &[S], wires: &[(X(0, 1), C(1)), (X(0, 0), C(2))], ..PLAIN },
+    Rule { consumer: UEv, producer: Ha, fresh: &[UA, UEv, UEv, F], wires: &[(X(0, 0), Px(1)), (X(0, 1), C(1)), (X(0, 3), X(1, 1)), (X(0, 2), X(2, 1)), (X(1, 0), Px(2)), (X(2, 0), Px(3)), (X(1, 2), X(3, 1)), (X(2, 2), X(3, 2)), (X(3, 0), C(2))], ..PLAIN },
+    Rule { consumer: Nrm, producer: Hole, fresh: &[Hole], wires: &[(X(0, 0), C(1))], ..PLAIN },
+    Rule { consumer: Go, producer: S, fresh: &[S, Ev, Nrm, F, Out], wires: &[(X(0, 1), Px(1)), (X(1, 0), X(0, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 1)), (X(1, 2), X(3, 2)), (X(3, 0), X(4, 0))], ..PLAIN },
+    Rule { consumer: Go, producer: F, fresh: &[F, Ev, Nrm, F, Out], wires: &[(X(0, 1), Px(1)), (X(0, 2), Px(2)), (X(1, 0), X(0, 0)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 1)), (X(1, 2), X(3, 2)), (X(3, 0), X(4, 0))], ..PLAIN },
+    Rule { consumer: Back, producer: F, fresh: &[UEv, Nrm, Out], wires: &[(X(0, 0), Px(2)), (X(0, 1), Px(1)), (X(0, 2), X(1, 0)), (X(1, 1), X(2, 0))], ..PLAIN },
+    // ---- forgetting ----
+    Rule { consumer: Fg, producer: Rk, fresh: &[Rk, Hole, Eps], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(2, 0), Px(1))], ..PLAIN },
+    Rule { consumer: Fg, producer: Rt, fresh: &[Rt, Hole, Hole, Eps, Eps], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), X(1, 0)), (X(0, 3), X(2, 0)), (X(3, 0), Px(2)), (X(4, 0), Px(3))], ..PLAIN },
+    Rule { consumer: Dn, producer: Hole, fresh: &[Hole, Hole], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Mg, producer: Hole, fresh: &[], wires: &[(C(1), C(2))], ..PLAIN },
+    Rule { consumer: MgL, producer: Hole, fresh: &[L], wires: &[(X(0, 0), C(1))], ..PLAIN },
+    Rule { consumer: MgS, producer: Hole, fresh: &[S], wires: &[(X(0, 1), C(1)), (X(0, 0), C(2))], ..PLAIN },
+    Rule { consumer: MgF, producer: Hole, fresh: &[F], wires: &[(X(0, 1), C(1)), (X(0, 2), C(2)), (X(0, 0), C(3))], ..PLAIN },
+    Rule { consumer: UAr, producer: Hole, fresh: &[Hole, Hole], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: RA, producer: Hole, fresh: &[Hole, Rh, Hole], wires: &[(X(0, 0), C(2)), (X(1, 1), X(2, 0)), (X(1, 2), C(1)), (X(1, 0), C(3))], ..PLAIN },
+    Rule { consumer: RT1, producer: Hole, fresh: &[Unp, F, Hole, Hole, Rh], wires: &[(X(0, 0), C(1)), (X(1, 1), X(2, 0)), (X(1, 2), X(0, 1)), (X(4, 1), X(1, 0)), (X(4, 2), X(0, 2)), (X(3, 0), C(2)), (X(4, 0), C(3))], ..PLAIN },
+    Rule { consumer: RSel, producer: Hole, fresh: &[Hole, Rq], wires: &[(X(1, 1), C(1)), (X(0, 0), C(2)), (X(1, 0), C(3))], ..PLAIN },
+    Rule { consumer: UA, producer: Rh, fresh: &[Eps], wires: &[(X(0, 0), C(1)), (Px(1), C(3)), (Px(2), C(2))], ..PLAIN },
+    Rule { consumer: UA, producer: Rq, fresh: &[UArms, Hole, Eps], wires: &[(X(2, 0), C(1)), (X(1, 0), C(2)), (X(0, 0), Px(1)), (X(0, 1), C(3))], ..PLAIN },
+    Rule { consumer: UArms, producer: Arms3, fresh: &[F, F], wires: &[(X(1, 1), Px(1)), (X(1, 2), Px(2)), (X(0, 1), X(1, 0)), (X(0, 2), Px(3)), (X(0, 0), C(1))], ..PLAIN },
+    Rule { consumer: T1s, producer: Hole, fresh: &[Hole, T1sc0], wires: &[(X(1, 0), C(1)), (X(1, 1), X(0, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sf, producer: Hole, fresh: &[Unp, Hole, F, T1sc0], wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 2)), (X(0, 2), X(3, 0)), (X(2, 1), X(1, 0)), (X(3, 1), X(2, 0)), (X(3, 2), C(2)), (X(3, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1sc, producer: Hole, fresh: &[Hole, TSb], wires: &[(X(1, 0), C(1)), (X(1, 1), X(0, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: T1scf, producer: Hole, fresh: &[Unp, Hole, F, TSb], wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 2)), (X(0, 2), X(3, 0)), (X(2, 1), X(1, 0)), (X(3, 1), X(2, 0)), (X(3, 2), C(2)), (X(3, 3), C(3))], ..PLAIN },
+];
+
+/// Forgetting (`Lattice::forget`): the rules that make `Rk` or `Rt`, the residual handed up through a
+/// forgetter `Fg`, which erases what the apply dropped and leaves holes. Used in place of
+/// `RESID_RULES`' while forgetting is on (`find_forgetting`).
+pub static FORGET_RULES: &[Rule] = &[
+    Rule { consumer: RT1, producer: L, fresh: &[Unp, Rk, Fg], wires: &[(X(0, 0), C(1)), (X(0, 1), C(2)), (X(0, 2), X(1, 1)), (X(2, 1), C(3)), (X(1, 0), X(2, 0))], ..PLAIN },
+    Rule { consumer: SL, producer: Arms3, fresh: &[Rt, L, Fg], wires: &[(Px(1), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), Px(2)), (X(0, 3), Px(3)), (X(2, 1), C(2)), (X(0, 0), X(2, 0))], ..PLAIN },
+    Rule { consumer: SS, producer: Arms3, fresh: &[RA, Rt, S, Fg], wires: &[(X(0, 0), Px(2)), (X(0, 1), C(1)), (X(0, 2), C(2)), (X(0, 3), X(2, 1)), (X(1, 1), X(2, 0)), (X(1, 2), Px(1)), (X(1, 3), Px(3)), (X(3, 1), C(3)), (X(1, 0), X(3, 0))], ..PLAIN },
+    Rule { consumer: SF, producer: Arms3, fresh: &[Unp, RA, RA, Rt, F, Fg], wires: &[(X(0, 0), C(1)), (X(1, 0), Px(3)), (X(1, 1), X(0, 1)), (X(1, 2), X(2, 0)), (X(2, 1), X(0, 2)), (X(2, 2), C(2)), (X(1, 3), X(4, 1)), (X(2, 3), X(4, 2)), (X(3, 1), X(4, 0)), (X(3, 2), Px(1)), (X(3, 3), Px(2)), (X(5, 1), C(3)), (X(3, 0), X(5, 0))], ..PLAIN },
 ];
 
 /// Movement agents (research/LINEAR_TREE_NETS.md §4a): six views of fixed tree shapes the loader
@@ -601,16 +666,20 @@ pub fn validate_views() -> Result<(), String> {
     Ok(())
 }
 
-/// Keeping history's rules: each a perfect matching, plain, and one for every pair of kinds.
+/// Keeping history's rules: each a perfect matching, plain, and one for every pair of kinds; forgetting's
+/// each in place of one of them.
 pub fn validate_resid() -> Result<(), String> {
-    for r in RESID_RULES {
+    for r in FORGET_RULES {
+        if !RESID_RULES.iter().any(|o| (o.consumer, o.producer) == (r.consumer, r.producer)) { return Err(format!("{}·{}: forgets nothing", r.consumer.name(), r.producer.name())); }
+    }
+    for r in RESID_RULES.iter().chain(FORGET_RULES) {
         let rn = format!("{}·{}", r.consumer.name(), r.producer.name());
         if !r.consumer.is_consumer() || !r.producer.is_producer() { return Err(format!("{rn}: not a consumer meeting a producer")); }
         if !r.labels.is_empty() || r.when != When::Any { return Err(format!("{rn}: labelled")); }
         if r.fresh.len() > 6 { return Err(format!("{rn}: more than six fresh agents")); }
-        if r.fresh.iter().any(|t| matches!(t, Out | Gate) || t.is_view()) { return Err(format!("{rn}: fresh agent not spawnable")); }
+        if r.fresh.iter().any(|t| *t == Out && !matches!(r.consumer, Go | Back) || t.is_view()) { return Err(format!("{rn}: fresh agent not spawnable")); }
         matching(r, &rn)?;
-        if RESID_RULES.iter().filter(|o| (o.consumer, o.producer) == (r.consumer, r.producer)).count() != 1 { return Err(format!("{rn}: two rules")); }
+        if RESID_RULES.iter().filter(|o| (o.consumer, o.producer) == (r.consumer, r.producer)).count() > 1 { return Err(format!("{rn}: two rules")); }
     }
     Ok(())
 }
@@ -634,7 +703,6 @@ fn matching(r: &Rule, rn: &str) -> Result<(), String> {
     for i in 1..r.consumer.arity() { expected.push(C(i as u8)); }
     for j in 1..r.producer.arity() { expected.push(Px(j as u8)); }
     for (k, t) in r.fresh.iter().enumerate() {
-        if *t == Out { return Err(format!("{rn}: fresh[{k}] = {} not spawnable", t.name())); }
         for p in 0..t.arity() { expected.push(X(k as u8, p as u8)); }
     }
     let mut seen: Vec<End> = vec![];
@@ -692,6 +760,6 @@ mod tests {
     #[test]
     fn resid_rules_are_well_formed() {
         super::validate_resid().expect("keeping history's rules must validate");
-        assert_eq!(super::RESID_RULES.len(), 54);
+        assert_eq!((super::RESID_RULES.len(), super::FORGET_RULES.len()), (82, 4));
     }
 }

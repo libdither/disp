@@ -45,6 +45,15 @@ function tlThin(head) {
   }
 }
 
+/// A click changed the run from clock c on (keeping history, wasm.rs `strands_click`): what the
+/// timeline held past c was another run's.
+function tlBranch(c) {
+  for (const s of T.saved.filter(s => s.clock > c)) E.drop_state(s.id);
+  T.saved = T.saved.filter(s => s.clock <= c);
+  T.frontier = c; T.coolAt = T.settleAt = null; T.shortest = null;
+  tlShow();
+}
+
 /// After clocks ran forward on show: the furthest clock reached, and a saved state (while playing,
 /// at most every 100 ms; stepping back from there replays at most that much, saving as it goes).
 function tlNote() {

@@ -152,6 +152,12 @@ impl Net {
         let (ct, pt, cl, pl) = (c.tag, p.tag, c.label, p.label);
         let rule = find_labelled(ct, cl, pt, pl).unwrap_or_else(|| panic!(
             "no rule for {}·{} — reachable-plane invariant violated", ct.name(), pt.name()));
+        (rule, self.fire_rule(consumer, producer, rule))
+    }
+
+    /// `fire` with the rule given (keeping history's forgetting picks its own); the fresh agents.
+    pub fn fire_rule(&mut self, consumer: u32, producer: u32, rule: &'static Rule) -> Vec<u32> {
+        let (cl, pl) = (self.get(consumer).label, self.get(producer).label);
         self.ints += 1;
 
         // Capture the external far-ends of every aux port BEFORE deleting the pair.
@@ -205,12 +211,13 @@ impl Net {
                 (R::Ext(t1), R::Ext(t2)) => self.fuse(t1, t2),
             }
         }
-        (rule, fresh)
+        fresh
     }
 
     /// Take out agents a and b and join, for each (p, q), what was at a's port p with what was at
     /// b's port q: the moves keeping history makes that are not interactions (an un-apply meeting
-    /// an apply that never ran, a merge meeting its duplicator), and opening a gate (a with itself).
+    /// an apply that never ran, a merge meeting its duplicator), and an apply that never ran spliced
+    /// out (a with itself).
     pub fn cancel(&mut self, a: u32, b: u32, joins: &[(u8, u8)]) {
         let ends: Vec<(Ref, Ref)> = joins.iter().map(|&(p, q)| {
             (self.get(a).ports[p as usize].expect("wired"), self.get(b).ports[q as usize].expect("wired"))

@@ -90,7 +90,7 @@ impl<'a> Reader<'a> {
     pub fn meaning(&mut self, id: u32) -> Rd {
         let Some(a) = self.agent(id) else { return node(id, Kind::Cut) };
         match a.tag {
-            Tag::Out | Tag::Unp => self.source(a.ports[0]),
+            Tag::Out | Tag::Go | Tag::Back | Tag::Unp => self.source(a.ports[0]),
             Tag::Eps => { let x = self.source(a.ports[0]); node(id, Kind::Erased(x)) }
             t => self.source(Some((id, (0..4).find(|&q| is_source(t, q)).unwrap() as u8))),
         }
@@ -144,8 +144,7 @@ impl<'a> Reader<'a> {
             Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W => self.view(id, a.tag, ports),
             Tag::Eps | Tag::Out | Tag::Seam => node(id, Kind::Cut),
             Tag::RA if p == 2 => { let f = self.source(ports[0]); let x = self.source(ports[1]); node(id, Kind::Apply(f, x)) }
-            Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc => self.residual(id, a.tag, ports),
-            Tag::Gate => self.source(ports[0]),
+            Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc | Tag::Ha | Tag::Rh | Tag::Rq => self.residual(id, a.tag, ports),
             _ => node(id, Kind::Cut),
         };
         self.depth -= 1;
@@ -168,7 +167,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// A residual as the tree it stands for (rules.rs `RESID_RULES`).
+    /// A residual (or an application's history) as the tree it stands for (rules.rs `RESID_RULES`).
     fn residual(&mut self, id: u32, t: Tag, ports: [Option<Ref>; 4]) -> Rd {
         let n = |k: Kind| node(id, k);
         let mut kid = |q: usize| self.source(ports[q]);
@@ -178,6 +177,9 @@ impl<'a> Reader<'a> {
             Tag::Rt => { let (h, d, r) = (kid(1), kid(2), kid(3)); n(Kind::Fork(n(Kind::Fork(h, d)), r)) }
             Tag::Rb => { let (a, b) = (kid(1), kid(2)); n(Kind::Stem(n(Kind::Fork(a, b)))) }
             Tag::Rc => { let (a, b) = (kid(1), kid(2)); n(Kind::Stem(n(Kind::Stem(n(Kind::Fork(a, b)))))) }
+            Tag::Ha => { let (j, f, x) = (kid(1), kid(2), kid(3)); n(Kind::Fork(j, n(Kind::Fork(f, x)))) }
+            Tag::Rh => { let (f, x) = (kid(1), kid(2)); n(Kind::Stem(n(Kind::Stem(n(Kind::Stem(n(Kind::Fork(f, x)))))))) }
+            Tag::Rq => { let a = kid(1); n(Kind::Stem(n(Kind::Stem(n(Kind::Stem(n(Kind::Stem(a)))))))) }
             _ => unreachable!("not a residual"),
         }
     }
