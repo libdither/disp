@@ -1,5 +1,6 @@
-//! Keeping history on the strand lattice (`Params::resid`, rules.rs `RESID_RULES`), as
-//! research/reversible-core/residual.py models it. At rest the lattice holds one tree at its root:
+//! Keeping history on the strand lattice (`Params::resid`, rules.rs `RESID_RULES`), as a Python model
+//! of the net had it (research/reversible-core/residual.py, in git at 8a287ab). At rest the lattice
+//! holds one tree at its root:
 //! the term (each value v as △v, each application f x as △⌜f⌝⌜x⌝), or the answer and the history
 //! bundled in a fork. A click turns the root into `Go`, which runs the term (the walker `Ev` makes an
 //! apply of each application, each leaving what it would have dropped), or into `Back`, which runs the

@@ -1,6 +1,6 @@
 # A reversible core: footprints and a reader
 
-**Status (2026-10-15): archived.** No design from this review was adopted; a later one was: keeping history (research/reversible-core/residual.py, run on the lattice as `resid=1`, rust-ic-strands README "Keeping history").
+**Status (2026-10-15): archived.** No design from this review was adopted; a later one was: keeping history (run on the lattice as `resid=1`, rust-ic-strands README "Keeping history"; its Python model, research/reversible-core/residual.py, is in git at 8a287ab).
 
 **Status at the time (2026-10-14): no design adopted.** The review did not find a core that is both
 simple and history-free; it is kept for its map of the literature (every quote fetch-verified), its

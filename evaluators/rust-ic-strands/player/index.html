@@ -77,13 +77,6 @@
   .tbtn { border:none; background:none; color:var(--fg-muted); display:inline-grid; place-items:center; padding:3px; border-radius:6px;
     transition:opacity .18s, color .18s, background .18s; }
   .tbtn:hover { color:var(--accent); background:rgba(86,200,255,.12); }
-  .tbtn:disabled { cursor:default; } .tbtn:disabled:hover { color:var(--fg-muted); background:none; }
-  .tbtn.on { color:#db4b4b; } .tbtn.again svg { transform:scaleX(-1); }
-  /* keeping history, the root once a click there would take: pink runs it back, green runs it again */
-  #rootMark { position:fixed; width:30px; height:30px; margin:-15px 0 0 -15px; border:2px solid #ff6ac1; border-radius:50%;
-    pointer-events:none; animation:rootPulse 1.3s ease-in-out infinite; z-index:5; box-shadow:0 0 10px 2px rgba(255,106,193,.7); }
-  #rootMark.again { border-color:#6ee07a; box-shadow:0 0 10px 2px rgba(110,224,122,.7); }
-  @keyframes rootPulse { 0%, 100% { transform:scale(.75); opacity:.95; } 50% { transform:scale(1.2); opacity:.45; } }
   .tbtn.play { color:var(--g2); padding:2px; } .tbtn.play .ico { width:26px; height:26px; } .tbtn.play:hover { color:var(--accent); }
   .mpi { width:30px; height:30px; display:inline-grid; place-items:center; padding:0; border-radius:50%; border:1px solid var(--border-strong);
     background:var(--bg-elev); color:var(--fg-muted); transition:opacity .18s, border-color .18s, color .18s, background .18s; }
@@ -105,7 +98,6 @@
   #speedbox { display:flex; align-items:center; gap:5px; color:var(--fg-faint); } #speedbox .ico { width:15px; height:15px; } #speed { width:84px; }
   #dock .tbtn, #dock .mpi, #speedbox, #timebar { opacity:.55; transition:opacity .18s; }
   #dock:hover .tbtn, #dock:hover .mpi, #dock:hover #speedbox, #dock:hover #timebar, #dock:focus-within .tbtn, #dock:focus-within .mpi { opacity:1; }
-  #dock .tbtn:disabled, #dock:hover .tbtn:disabled { opacity:.2; }
   #dock .mpi:disabled { opacity:.3; }
   /* one styled tip for every control, from its data-tip */
   [data-tip] { position:relative; }
@@ -160,7 +152,6 @@
   .tm .wh { color:var(--fg-muted); margin-top:3px; }
   .pkn { color:#ffb3e8; font-size:11.5px; margin:4px 0; }
 </style></head><body>
-<div id="rootMark" hidden></div>
 <div id="wrap">
   <div id="stage">
     <canvas id="cv"></canvas><canvas id="cv3" hidden></canvas>
@@ -194,8 +185,6 @@
         <div class="tside tright">
           <button class="tbtn" id="step" data-tip="one clock on (→)" aria-label="one clock on"><svg class="ico" viewBox="0 0 24 24"><path d="M8.5 6 L16 12 L8.5 18 Z"/></svg></button>
           <button class="tbtn" id="next" data-tip="on to the next rewrite (shift →)" aria-label="on to the next rewrite"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6 L14 12 L6 18 Z"/><rect x="15.8" y="6" width="2.2" height="12" rx="0.6"/></svg></button>
-          <button class="tbtn" id="runBack" hidden data-tip="run it back, once the answer is in (or once back, run it again): the same as clicking the root ◎ on the lattice" aria-label="run it back"><svg class="ico" viewBox="0 0 24 24"><path d="M12 6 L4 12 L12 18 Z"/><path d="M20 6 L12 12 L20 18 Z"/></svg></button>
-          <button class="tbtn" id="forget" hidden aria-pressed="false" data-tip="forget what the applies drop, from this clock on (K's argument, the arms a triage does not take): run back, the term comes back with holes where nothing looked" aria-label="forget"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M6 6 L18 18"/><path d="M18 6 L6 18"/><circle cx="12" cy="12" r="2.4"/></svg></button>
           <button class="tbtn" id="reset" data-tip="restart (R)" aria-label="restart"><svg class="ico stroke" viewBox="0 0 24 24"><polyline points="3 5 3 10.5 8.5 10.5"/><path d="M5.2 15.5 a8 8 0 1 0 1.9 -8.4 L3 10.5"/></svg></button>
         </div>
         <div class="corner-left"><span id="speedbox" data-tip="speed"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l4-4"/></svg><input id="speed" type="range" min="0" max="100" value="45" aria-label="speed"></span></div>
@@ -461,9 +450,8 @@ function decodeAs(kind, t) {
 let entries = [], picked = -1;
 /// Benchmark sizes to offer where the engine's own (`n`) would take minutes.
 const SIZE = { fib: 1, exp: 1, sort: 1 };
-/// Unary addition against the binary relay adder (programs.disp), side by side on one lattice: small
-/// enough that keeping the history (the default) and running it back takes a minute or so.
-const SIDE_BY_SIDE = "add 5 6; relay_add 5 6";
+/// Unary addition against the binary relay adder (programs.disp), side by side on one lattice.
+const SIDE_BY_SIDE = "add 20 22; relay_add 20 22";
 /// Movement agents at work (set=views=1): small runs with many B or C agents applied, each in a view and
 /// at a speed to watch them (the rewrite flash names the agent applied).
 const MOVERS = [
@@ -474,23 +462,6 @@ const MOVERS = [
   { name: "relay_add 1 2", text: "relay_add 1 2", view: "3d", speed: 35,
     desc: "binary addition: forty B agents carry bits right, a few C, K, I, W and Sx along the way" },
 ];
-/// Keeping history (resid=1, the default; research/reversible-core/residual.py): the term is loaded as a tree
-/// and run, every apply leaving what it would have dropped in the history bundled with the answer at the root;
-/// a click on the root runs it back to the tree, and once back, runs it again. These examples are small runs to
-/// watch, each with its own settings (`set`): copies made only when asked (dnroom=0), so the history is
-/// smallest; `forget` turns forgetting on as it loads.
-const HISTORY = [
-  { name: "K, forward and back", text: "@(@(F(L,L),S(L)),F(L,L))", view: "graph", speed: 12, set: ["resid=1", "dnroom=0"],
-    desc: "△△(△△) applied to △(△)△: K keeps its first argument and puts the second in its residual; click the root to run it back, and the residual gives it back" },
-  { name: "add 1 2", text: "add 1 2", view: "graph", speed: 30, set: ["resid=1", "dnroom=0"],
-    desc: "unary addition keeping its history; click the root to run it back and see add, 1 and 2 come back" },
-  { name: "add 1 2, forgetting", text: "add 1 2", view: "graph", speed: 30, set: ["resid=1", "dnroom=0"], forget: true,
-    desc: "the same, forgetting what the applies drop: run back, add, 1 and 2 come back with holes just where nothing looked" },
-  { name: "relay_add 1 2", text: "relay_add 1 2", view: "3d", speed: 40, set: ["resid=1", "dnroom=0"],
-    desc: "binary addition keeping its history, then back" },
-  { name: "add 1 2, history erased", text: "add 1 2", view: "graph", speed: 30, set: ["resid=2", "dnroom=0"],
-    desc: "the same, each residual erased as it is made: only the answer is left, and nothing to run back" },
-];
 const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
 function populate() {
   entries = [...DISP.map(p => ({ group: "disp programs", name: p.name, text: `${p.name} ${p.example}`, desc: p.desc, prog: p })),
@@ -498,7 +469,6 @@ function populate() {
       desc: "unary and binary addition at once, each its own reduction", both: true }] : []),
     ...catalog.workloads.map(w => ({ group: "benchmarks (binary numbers)", name: w.name, text: w.n > 0 ? `${w.name}:${SIZE[w.name] ?? w.n}` : w.name, desc: w.desc, work: w })),
     ...MOVERS.map(m => ({ group: "movement agents (views=1)", ...m, mover: true })),
-    ...HISTORY.map(h => ({ group: "running it back", ...h, resid: true })),
     { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" },
     { group: "other", name: "backward", text: "run it backward", desc: "the input on the abstract net, run so that every step can be undone (rev.html)", rev: true },
     { group: "other", name: "substrate", text: "run it as physics", desc: "the input on this lattice with every rewrite recorded and undoable, a drive, and heat (substrate.html)", sub: true }];
@@ -514,7 +484,7 @@ function populate() {
     + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, and its shape what kind it is; values stay grey, tinted toward their part</span>`;
   const q = new URLSearchParams(location.hash.slice(1));
   $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
-  // The side-by-side example opens at full speed.
+  // The side-by-side example is a race of 10k against 75k clocks: it opens at full speed.
   const speed = q.get("speed") ?? ($("src").value === SIDE_BY_SIDE ? 100 : null);
   if (speed !== null) $("speed").value = speed;
   if (q.get("view")) viewMode = q.get("view");
@@ -564,12 +534,7 @@ function showPicked(i) {
 }
 /// A movement agents example's settings: views on, its view and its speed.
 function moverSettings(e) {
-  SETTINGS = [...SETTINGS.filter(kv => !/^(views|resid)=/.test(kv)), "views=1", "resid=0"];
-  setView(e.view); $("speed").value = e.speed; speedLabel();
-}
-/// A keeping history example's settings: its own (resid=1 or 2), its view and its speed.
-function residSettings(e) {
-  SETTINGS = [...SETTINGS.filter(kv => !["resid", "dnroom", "views"].includes(kv.split("=")[0])), ...e.set];
+  SETTINGS = [...SETTINGS.filter(kv => !kv.startsWith("views=")), "views=1"];
   setView(e.view); $("speed").value = e.speed; speedLabel();
 }
 /// Fill the input box with entry i, its argument selected for typing over; a movement agents example
@@ -577,7 +542,7 @@ function residSettings(e) {
 function choose(i) {
   if (entries[i].rev) { location.href = `rev.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
   if (entries[i].sub) { location.href = `substrate.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
-  if (entries[i].mover || entries[i].resid) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
+  if (entries[i].mover) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
   const fill = entries[i].text, at = fill.search(/[\s:]/);
   if (entries[i].both) { $("speed").value = 100; speedLabel(); }
   $("src").value = fill; syncUI();
@@ -635,9 +600,8 @@ let loads = 0;
 /// input, which runs them side by side (wasm.rs `parse_all`).
 async function load(play) {
   const input = $("src").value.trim() || DEFAULT, seq = ++loads, pieces = splitParts(input);
-  // A movement agents or keeping history example picked from the menu (clicked, or reached with the arrows) brings its settings.
+  // A movement agents example picked from the menu (clicked, or reached with the arrows) brings its settings.
   if (entries[picked]?.mover && entries[picked].text === input) moverSettings(entries[picked]);
-  if (entries[picked]?.resid && entries[picked].text === input) residSettings(entries[picked]);
   let p;
   try {
     if (pieces.length > 1) {
@@ -660,16 +624,8 @@ function start(p, input) {
   // with the link's settings on top (`set=share=8` builds equal parts of the program once, share.rs).
   E.strands_settings();
   withString(`seed=${SEED}`, (p, n) => E.strands_set(p, n));
-  // The history is kept (resid=1) unless the link says otherwise, or asks for what runs without it.
-  const keep = !SETTINGS.some(kv => /^(resid|views|phys)=/.test(kv));
-  for (const kv of keep ? [...SETTINGS, "resid=1"] : SETTINGS) if (withString(kv, (p, n) => E.strands_set(p, n))) banner(text(E.text_len()), true);
-  const src = p.src;
-  let agents = withString(src, (p, n) => E.strands_probe(p, n)), without = "";
-  if (agents < 0 && keep) {
-    without = text(E.text_len());
-    withString("resid=0", (p, n) => E.strands_set(p, n));
-    agents = withString(src, (p, n) => E.strands_probe(p, n));
-  }
+  for (const kv of SETTINGS) if (withString(kv, (p, n) => E.strands_set(p, n))) banner(text(E.text_len()), true);
+  const src = p.src, agents = withString(src, (p, n) => E.strands_probe(p, n));
   if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return false; }
   const depth = E.strands_depth();
   let side = Math.ceil(Math.sqrt(agents) * (depth > 1 ? 7 : 8)) + 16;
@@ -683,10 +639,8 @@ function start(p, input) {
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return false; }
   if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); gpuEstimate(); }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
-  L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), ar: E.ports_per_slot ? E.ports_per_slot() : 3, faces: depth > 1 ? 6 : 4, gc: true };
+  L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
   running = p.parts ? { call: p.call, parts: p.parts, at: p.parts.map(() => null) } : p.call ? { kind: p.kind, call: p.call } : null;
-  $("runBack").hidden = $("forget").hidden = !residPhase(); $("runBack").disabled = true;
-  if (residPhase() && entries[picked]?.forget && entries[picked].text === input) E.strands_forget(1);
   finished = false; cleaned = false; cleanSeen = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   tlReset();
   refreshGarbage(true); layoutLayers();
@@ -701,8 +655,7 @@ function start(p, input) {
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
   const views = new Uint8Array(E.memory.buffer, E.tags_ptr(), side * side * depth * L.ks).filter(isView).length;
-  banner(`${input.length > 60 ? input.slice(0, 57) + "…" : input}: ${agents} agents${views ? `, ${views} of them movement agents` : ""} on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`
-    + (residPhase() ? ", its history kept: click the root ◎ once the answer is in to run it back" : without ? `, run without keeping its history (${without})` : ""));
+  banner(`${input.length > 60 ? input.slice(0, 57) + "…" : input}: ${agents} agents${views ? `, ${views} of them movement agents` : ""} on ${side}×${side}${depth > 1 ? "×" + depth : ""} sites`);
   return true;
 }
 
@@ -738,7 +691,7 @@ function slotPos(s, k) {
   return [ox + S * (0.32 + 0.36 * k), oy + S / 2];
 }
 // Ports sit on the agent's rim: the principal on top, the others lower left and lower right.
-const PORT_ANGLE = [-Math.PI / 2, Math.PI * 5 / 6, Math.PI / 6, Math.PI / 2];
+const PORT_ANGLE = [-Math.PI / 2, Math.PI * 5 / 6, Math.PI / 6];
 function portPos(s, k, p) { const [x, y] = slotPos(s, k), r = agentRadius(); return [x + r * Math.cos(PORT_ANGLE[p]), y + r * Math.sin(PORT_ANGLE[p])]; }
 // Where strand i on face f meets the edge of a site.
 function lanePos(s, f, i) {
@@ -753,15 +706,15 @@ function lanePos(s, f, i) {
   }
 }
 function endPos(s, e) {
-  if (e < L.ar * L.ks) return portPos(s, Math.floor(e / L.ar), e % L.ar);
-  const x = e - L.ar * L.ks; return lanePos(s, Math.floor(x / L.lanes), x % L.lanes);
+  if (e < 3 * L.ks) return portPos(s, Math.floor(e / 3), e % 3);
+  const x = e - 3 * L.ks; return lanePos(s, Math.floor(x / L.lanes), x % L.lanes);
 }
 function neighbor(s, f) {
   const [x, y, z] = siteXYZ(s), at = (x, y, z) => z * L.w * L.h + y * L.w + x;
   switch (f) { case 0: return at(x + 1, y, z); case 1: return at(x - 1, y, z); case 2: return at(x, y + 1, z);
     case 3: return at(x, y - 1, z); case 4: return at(x, y, z + 1); default: return at(x, y, z - 1); }
 }
-const faceOf = e => Math.floor((e - L.ar * L.ks) / L.lanes);
+const faceOf = e => Math.floor((e - 3 * L.ks) / L.lanes);
 function views() {
   const b = E.memory.buffer, n = L.w * L.h * L.depth;
   return { tags: new Uint8Array(b, E.tags_ptr(), n * L.ks), want: new Uint8Array(b, E.want_ptr(), n * L.ks),
@@ -776,9 +729,9 @@ function walk(V, s, e, onPair) {
     const m = V.mate[site * L.ends + cur];
     if (m === NONE) return null;
     if (onPair) onPair(site, cur, m);
-    if (m < L.ar * L.ks) return { site, end: m, len };
-    const x = m - L.ar * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes;
-    site = neighbor(site, f); cur = L.ar * L.ks + (f ^ 1) * L.lanes + i; len++;
+    if (m < 3 * L.ks) return { site, end: m, len };
+    const x = m - 3 * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes;
+    site = neighbor(site, f); cur = 3 * L.ks + (f ^ 1) * L.lanes + i; len++;
   }
   return null;
 }
@@ -869,7 +822,7 @@ function draw() {
   }
   // strands between sites, and switchboard pairings inside them
   const strands = new Path2D(), board = new Path2D(), updown = [];
-  const base = L.ar * L.ks;
+  const base = 3 * L.ks;
   for (const s of sites) {
     for (let e = 0; e < L.ends; e++) {
       const m = V.mate[s * L.ends + e];
@@ -906,7 +859,7 @@ function draw() {
   const hot = new Path2D();
   for (const s of V.live) for (let k = 0; k < L.ks; k++) {
     const t = V.tags[s * L.ks + k];
-    if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) follow(V, s, k * L.ar, hot);
+    if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) follow(V, s, k * 3, hot);
   }
   ctx.globalCompositeOperation = "lighter";
   ctx.strokeStyle = `rgba(86,200,255,${0.9 * dim})`; ctx.lineWidth = lw(2.2); ctx.stroke(hot);
@@ -919,7 +872,7 @@ function draw() {
       if (!t) continue;
       // With segments on, the segment colours stand for the pinks.
       const path = b & 16 ? lit[2] : segs ? null : b & 1 ? lit[0] : lit[1];
-      for (let p = 0; p < ARITY[t]; p++) { const into = isSource(t, p) ? (b & 10 ? lit[3] : null) : path; if (into) follow(V, s, k * L.ar + p, into); }
+      for (let p = 0; p < ARITY[t]; p++) { const into = isSource(t, p) ? (b & 10 ? lit[3] : null) : path; if (into) follow(V, s, k * 3 + p, into); }
     }
     ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(255,155,230,0.7)"; ctx.lineWidth = lw(1.8); ctx.stroke(lit[1]);
@@ -933,7 +886,7 @@ function draw() {
     const lit = new Path2D();
     for (let k = 0; k < L.ks; k++) {
       const t = V.tags[pinned * L.ks + k]; if (!t) continue;
-      for (let p = 0; p < ARITY[t]; p++) { const far = follow(V, pinned, k * L.ar + p, lit); if (far) ends.push(far); }
+      for (let p = 0; p < ARITY[t]; p++) { const far = follow(V, pinned, k * 3 + p, lit); if (far) ends.push(far); }
     }
     ctx.strokeStyle = "rgba(255,170,70,0.95)"; ctx.lineWidth = lw(2.6); ctx.stroke(lit);
     const [ox, oy] = siteOrigin(pinned);
@@ -984,8 +937,8 @@ function draw() {
   ctx.globalAlpha = 1;
   if (pk) [[PINK, 1.1], ["rgba(255,155,230,0.8)", 1.1], ["#ffffff", 1.6], [PINK, 2]].forEach(([c, w], i) => { ctx.strokeStyle = c; ctx.lineWidth = lw(w); ctx.stroke(rings[i]); });
   for (const far of ends) {
-    if (far.end >= L.ar * L.ks) continue;
-    const [x, y] = slotPos(far.site, Math.floor(far.end / L.ar));
+    if (far.end >= 3 * L.ks) continue;
+    const [x, y] = slotPos(far.site, Math.floor(far.end / 3));
     ctx.strokeStyle = "rgba(255,170,70,0.95)"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.7, 0, 7); ctx.stroke();
   }
   // demand pulses, each on the strand end it is about to cross
@@ -1051,12 +1004,12 @@ function pos3(s) { const [x, y, z] = siteXYZ(s); return [(x - V3.cx) * V3.pitch,
 const FACE3 = () => { const h = V3.pitch / 2; return [[h, 0, 0], [-h, 0, 0], [0, 0, h], [0, 0, -h], [0, V3.gap / 2, 0], [0, -V3.gap / 2, 0]]; };
 function end3(s, e, faces) {
   const c = pos3(s);
-  if (e < L.ar * L.ks) {
-    const k = Math.floor(e / L.ar), p = e % L.ar, dx = L.k === 1 ? 0 : (k - (L.k - 1) / 2) * 0.36;
-    const po = [[0, 0.17, 0], [-0.14, -0.09, 0], [0.14, -0.09, 0], [0, -0.17, 0]][p];
+  if (e < 3 * L.ks) {
+    const k = Math.floor(e / 3), p = e % 3, dx = L.k === 1 ? 0 : (k - (L.k - 1) / 2) * 0.36;
+    const po = [[0, 0.17, 0], [-0.14, -0.09, 0], [0.14, -0.09, 0]][p];
     return [c[0] + dx + po[0], c[1] + po[1], c[2] + po[2]];
   }
-  const x = e - L.ar * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes, off = (i - (L.lanes - 1) / 2) * 0.13, fd = faces[f];
+  const x = e - 3 * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes, off = (i - (L.lanes - 1) / 2) * 0.13, fd = faces[f];
   const perp = f < 2 ? [0, 0, off] : f < 4 ? [off, 0, 0] : [off * 0.7, 0, off * 0.7];
   return [c[0] + fd[0] + perp[0], c[1] + fd[1] + perp[1], c[2] + fd[2] + perp[2]];
 }
@@ -1103,7 +1056,6 @@ function init3d() {
     if (!down || Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) { down = null; return; }
     down = null;
     if (e.shiftKey) { pickAt(e.clientX, e.clientY); return; }
-    if (clickRoot(e.clientX, e.clientY)) return;
     const s = pick3(e.clientX, e.clientY);
     pinned = s == null || pinned === s ? null : s;
     showTip(pinned, e.clientX, e.clientY, pinned != null); V3.dirty = true;
@@ -1183,16 +1135,16 @@ function build3d(V) {
   const segOf = seat => { const j = segs ? NET.bySeat[seat] : -1; return j >= 0 && NET.seg[j] >= 0 ? 2 * NET.seg[j] + isValue(NET.tag[j]) : -1; };
   if (segs) for (const s of V.live) for (let k = 0; k < ks; k++) {
     const t = V.tags[s * ks + k], g = t ? segOf(s * ks + k) : -1;
-    if (g >= 0) for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) walk(V, s, k * L.ar + p, stamp(wseg, g));
+    if (g >= 0) for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) walk(V, s, k * 3 + p, stamp(wseg, g));
   }
   for (const s of V.live) for (let k = 0; k < ks; k++) {
     const t = V.tags[s * ks + k];
-    if (t && isConsumer(t) && V.want[s * ks + k] && !dead(s, k)) walk(V, s, k * L.ar, stamp(wlit, 1));
+    if (t && isConsumer(t) && V.want[s * ks + k] && !dead(s, k)) walk(V, s, k * 3, stamp(wlit, 1));
   }
-  if (pinned != null) for (let k = 0; k < ks; k++) { const t = V.tags[pinned * ks + k]; for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * L.ar + p, stamp(wlit, 2)); }
+  if (pinned != null) for (let k = 0; k < ks; k++) { const t = V.tags[pinned * ks + k]; for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * 3 + p, stamp(wlit, 2)); }
   if (pk) for (const seat of PICK.lit) {
     const b = pk[seat], t = V.tags[seat], code = b & 16 ? 5 : b & 1 ? 3 : 4;
-    for (let p = 0; p < ARITY[t]; p++) if (!isSource(t, p)) walk(V, siteOf(seat), slotOf(seat) * L.ar + p, stamp(wlit, code));
+    for (let p = 0; p < ARITY[t]; p++) if (!isSource(t, p)) walk(V, siteOf(seat), slotOf(seat) * 3 + p, stamp(wlit, code));
   }
   // every pairing as a short curve through its site, so each wire is one path; with a pick, the rest dimmed
   const wires = V3.wires.userData.w, hot = V3.hot.userData.w, rgb = [0, 0, 0], q = [0, 0, 0];
@@ -1241,7 +1193,7 @@ function build3d(V) {
     m4.makeScale(V3.pitch, 1, V3.pitch).setPosition(c[0], c[1], c[2]); cells.setMatrixAt(i, m4); V3.cellSite[i] = s;
     for (let k = 0; k < ks; k++) {
       const seat = s * ks + k, t = V.tags[seat]; if (!t) continue;
-      const p = end3(s, k * L.ar, faces), b = pk ? pk[seat] : 0, gone = dead(s, k), g = segs ? segOf(seat) : -1;
+      const p = end3(s, k * 3, faces), b = pk ? pk[seat] : 0, gone = dead(s, k), g = segs ? segOf(seat) : -1;
       p[1] -= R3; // the principal port is on top of the agent
       if (!segs || isView(t)) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
       if (gone) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
@@ -1507,11 +1459,11 @@ function tipHTML(site) {
       + (called ? `<span class="chip" style="color:#ffa94d">called: walking to its reader</span>` : "")
       + (DESC[name] ? `<div class="tp">${DESC[name]}.</div>` : "");
     for (let p = 0; p < ARITY[t]; p++) {
-      const far = walk(V, site, k * L.ar + p), out = isSource(t, p);
+      const far = walk(V, site, k * 3 + p), out = isSource(t, p);
       let w;
       if (!far) w = "unwired";
       else {
-        const ft = V.tags[far.site * L.ks + Math.floor(far.end / L.ar)], fp = far.end % L.ar, fn = TAGS[ft];
+        const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3, fn = TAGS[ft];
         const where = far.site === site ? "in this site" : `${far.len} strand${far.len === 1 ? "" : "s"} away at ${at(far.site)}`;
         w = `${out ? "read by" : "reads"} the ${PORTS[fn]?.[fp] ?? `port ${fp}`} of ${kindHTML(ft)}, ${where}`;
       }
@@ -1525,10 +1477,10 @@ function tipHTML(site) {
   for (let f = 0; f < L.faces; f++) {
     let n = 0;
     for (let i = 0; i < L.lanes; i++) {
-      const e = L.ar * L.ks + f * L.lanes + i, m = V.mate[site * L.ends + e];
+      const e = 3 * L.ks + f * L.lanes + i, m = V.mate[site * L.ends + e];
       if (m === NONE) continue;
       n++;
-      if (m >= L.ar * L.ks && m > e) through.push(`${DIRS[f]} ↔ ${DIRS[faceOf(m)]}`);
+      if (m >= 3 * L.ks && m > e) through.push(`${DIRS[f]} ↔ ${DIRS[faceOf(m)]}`);
     }
     if (n) links.push(`${DIRS[f]} ${n}/${L.lanes}`);
   }
@@ -1542,13 +1494,13 @@ function tipHTML(site) {
 // What a consumer is doing, in words.
 function status(V, site, k, t, wanted, gone) {
   if (gone) return "Garbage: the answer no longer depends on it. An eraser will collect it.";
-  const far = walk(V, site, k * L.ar);
+  const far = walk(V, site, k * 3);
   if (!far) return "";
-  const ft = V.tags[far.site * L.ks + Math.floor(far.end / L.ar)], fp = far.end % L.ar;
+  const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3;
   if (t === 11) return isProducer(ft) && fp === 0 ? "It erases that value when they meet." : "Garbage leads here: it collects the computation when it touches its output.";
   if (!wanted) return "Not wanted yet: it waits until something needs its result.";
   if (isProducer(ft) && fp === 0) return far.len <= 1 ? "Its value is within reach: it rewrites on its next turn, if its square has room." : `Its value is ${far.len} strands away: it walks along the wire toward it.`;
-  const fw = V.want[far.site * L.ks + Math.floor(far.end / L.ar)];
+  const fw = V.want[far.site * L.ks + Math.floor(far.end / 3)];
   return fw ? "Its input is still being computed by another wanted computation." : "Its input is another computation nobody has asked for yet: a demand pulse is on the way.";
 }
 function siteAt(clientX, clientY) {
@@ -1952,7 +1904,7 @@ function frame() {
   else if (L && playing && !settled && !G?.busy && onGpu && !cleaned && !cleanSeen) gpuStep();
   else if (L && playing && !settled && !G?.busy) { cpuRun(); afterRun(); }
   if (L) refreshGarbage(playing);
-  draw(); panel(false); if (L) markRoot();
+  draw(); panel(false);
   if (pinned != null && L) { const tip = $("tip"); if (!tip.hidden) tip.innerHTML = tipHTML(pinned); }
   requestAnimationFrame(frame);
 }
@@ -2119,14 +2071,6 @@ function dropGpu() {
 // clock the run once cooled at.
 function afterAnswer() {
   if (!L.gc) { cleaned = true; return true; }
-  // Keeping history, the answer (or the term run back) waits at the root for a click: no cooling, the run pauses.
-  if (residPhase()) {
-    cleaned = settled = true; setPlaying(false);
-    // The root is where the next click goes: in view, clear of the panel and the dock.
-    const at = rootScreen(), r = (viewMode === "3d" ? $("cv3") : cv).getBoundingClientRect();
-    if (!at || at[0] < r.left + 20 || at[0] > r.right - 20 || at[1] < r.top + 130 || at[1] > r.bottom - 150) { fitContent(); V3.dirty = true; }
-    return true;
-  }
   const c = clockNow();
   if (T.coolAt !== null) return cleaned = c >= T.coolAt;
   garbageCount = E.strands_garbage_left();
@@ -2183,12 +2127,6 @@ let lastPanel = 0;
 function panel(force) {
   if (!L) return;
   const now = performance.now(); if (!force && now - lastPanel < 200) return; lastPanel = now;
-  if (residPhase()) {
-    const rest = finished || !!E.strands_resid_rest(), again = residPhase() === 2, on = JSON.parse(text(E.strands_resid_text())).forgetting;
-    $("runBack").disabled = !rest; $("runBack").classList.toggle("again", again);
-    $("runBack").setAttribute("aria-label", again ? "run it again" : "run it back");
-    $("forget").classList.toggle("on", on); $("forget").setAttribute("aria-pressed", on);
-  }
   const st = stats();
   $("sSweep").textContent = fmt(st[1]); $("sFires").innerHTML = `<b>${fmt(st[2])}</b>`;
   const r = rate();
@@ -2201,7 +2139,6 @@ function panel(force) {
   chart();
   const badge = $("badge"), work = `${fmt(st[2])} rewrites` + (r ? ` · ${fmt(r)} clocks/s` : "") + (onGpu ? " on the GPU" : "");
   partsCheck();
-  if (residPhase() === 2) { residPanel(badge, st); return; }
   if (!finished) {
     badge.className = ""; badge.textContent = `${playing ? "running" : "paused"} · ${work}`;
     if (running?.parts) $("decoded").innerHTML = partsHTML(); else $("decoded").textContent = running ? `${running.call} = …` : "";
@@ -2211,7 +2148,7 @@ function panel(force) {
   if (oracleText === null) oracleText = text(E.strands_oracle(200000));
   const ok = oracleText === "" ? null : ans === oracleText;
   badge.className = ok === false ? "bad" : settled ? "ok" : "";
-  badge.textContent = ok === false ? "wrong answer" : residPhase() === 1 ? `answer at ${fmt(answerClock)} clocks` : cleaned
+  badge.textContent = ok === false ? "wrong answer" : cleaned
     ? (garbageCount ? `answer in ${fmt(answerClock)} clocks · ${garbageCount} garbage left`
       : settled ? `done in ${fmt(st[1])} clocks · answer at ${fmt(answerClock)}` : `answer at ${fmt(answerClock)} clocks · contracting (temperature ${E.strands_temp().toFixed(2)})`)
     : `answer in at ${fmt(answerClock)} clocks · collecting ${garbageCount} garbage`;
@@ -2220,74 +2157,8 @@ function panel(force) {
   else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
   $("answer").textContent = ans;
   $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)
-    + (residPhase() === 1 ? `; its history, ${fmt(JSON.parse(text(E.strands_resid_text())).history)} agents, is bundled with it at the root: click the root ◎ (or ⏪) to run it back`
-      : cleaned && !garbageCount && L.gc ? (settled ? "; only the answer is left on the lattice, contracted" : "; only the answer is left, cooling so it contracts") : "");
+    + (cleaned && !garbageCount && L.gc ? (settled ? "; only the answer is left on the lattice, contracted" : "; only the answer is left, cooling so it contracts") : "");
 }
-/// Keeping history: 0 not, 1 the root holding (or working out) the answer and history, 2 the term run back.
-const residPhase = () => E.strands_resid_phase ? E.strands_resid_phase() : 0;
-/// Running back: what has come back so far, and once all of it, whether it is the term as loaded, holes and all.
-function residPanel(badge, st) {
-  const r = JSON.parse(text(E.strands_resid_text())), call = running?.call ?? "the term", cut = t => t.length > 120 ? t.slice(0, 117) + "…" : t;
-  const back = r.values.filter(v => v !== null).length, holes = r.holes ? ` but for ${r.holes} hole${r.holes > 1 ? "s" : ""} (?)` : "";
-  badge.className = finished ? (r.loaded || r.holes ? "ok" : "bad") : "";
-  badge.textContent = finished ? (r.loaded || r.holes ? `back at the start${holes}, ${fmt(answerClock - r.clicked)} clocks after the click` : "back, but not as loaded")
-    : `${playing ? "running back" : "paused running back"} · ${back} of the term's ${r.values.length} values back · ${fmt(st[2])} rewrites`;
-  $("decoded").textContent = finished ? `${call}, back` : `${call}: running back …`;
-  $("answer").textContent = r.values.map((v, i) => `${i + 1}. ${v === null ? "…" : cut(v)}`).join("\n");
-  $("verdict").textContent = finished
-    ? (r.loaded ? `the term's ${r.values.length} values (programs and data), exactly as loaded: nothing else is left; click the root ◎ (or ⏪) to run it again`
-      : r.holes ? `the term's ${r.values.length} values with ${r.holes} hole${r.holes > 1 ? "s" : ""} where what the run dropped was forgotten and nothing else looked; any trees there give the same answer. Click the root ◎ to run it again`
-      : "not what was loaded")
-    : "the un-applies take each step back, last apply first";
-}
-/// Keeping history, a click on the root (or ⏪) once the walker there is done: run back, or run again.
-function residClick() {
-  const c = clockNow();
-  if (!E.strands_click()) return false;
-  tlBranch(c);
-  finished = cleaned = settled = false; T.coolAt = T.settleAt = null;
-  setPlaying(true); panel(true); return true;
-}
-/// Where the root is on the screen (client coordinates), in whichever view; null if it is not drawn.
-function rootScreen() {
-  const seat = E.strands_root_seat();
-  if (!L || seat < 0) return null;
-  const s = Math.floor(seat / L.ks), k = seat % L.ks;
-  if (viewMode === "3d") {
-    if (!V3.ready || !V3.camera) return null;
-    const r = $("cv3").getBoundingClientRect(), v = new V3.T.Vector3(...pos3(s)).project(V3.camera);
-    return v.z > 1 ? null : [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
-  }
-  const r = cv.getBoundingClientRect();
-  let x, y;
-  if (viewMode === "graph") {
-    graphSync();
-    const i = NET.seat.indexOf(seat);
-    if (i < 0) return null;
-    [x, y] = [GRAPH.x[i], GRAPH.y[i]];
-  } else [x, y] = slotPos(s, k);
-  return [r.left + view.ox + x * view.s, r.top + view.oy + y * view.s];
-}
-/// Keeping history, a ring on the root while a click there would take.
-function markRoot() {
-  const m = $("rootMark"), at = residPhase() && !$("runBack").disabled ? rootScreen() : null;
-  m.hidden = !at;
-  if (!at) return;
-  m.style.left = `${at[0]}px`; m.style.top = `${at[1]}px`; m.classList.toggle("again", residPhase() === 2);
-}
-/// Whether a plain click at (cx, cy) landed on the root (or its ring), keeping history, and so ran it back or again.
-function clickRoot(cx, cy) {
-  if (!L || !residPhase()) return false;
-  const at = rootScreen(), seat = agentAt(cx, cy);
-  return (at && Math.hypot(cx - at[0], cy - at[1]) < 18 || seat != null && seat === E.strands_root_seat()) && residClick();
-}
-$("runBack").onclick = () => residClick();
-$("forget").onclick = () => {
-  const c = clockNow(), on = !$("forget").classList.contains("on");
-  if (!E.strands_forget(on ? 1 : 0)) return;
-  tlBranch(c); panel(true);
-  banner(on ? "forgetting from this clock: what the applies drop is erased, and holes are left in its place" : "no longer forgetting from this clock");
-};
 function chart() {
   const c = $("chart"), g = c.getContext("2d"), W = c.width, H = c.height; g.clearRect(0, 0, W, H);
   if (hist.length < 3) return;
@@ -2317,7 +2188,6 @@ cv.addEventListener("pointermove", e => {
 });
 cv.addEventListener("pointerup", e => {
   if (drag && !drag.moved && e.shiftKey) pickAt(e.clientX, e.clientY);
-  else if (drag && !drag.moved && clickRoot(e.clientX, e.clientY)) {}
   else if (drag && !drag.moved) {
     const s = siteAt(e.clientX, e.clientY);
     pinned = s == null || pinned === s ? null : s;
@@ -2359,7 +2229,7 @@ function segWires(V) {
     const t = NET.tag[i], seat = NET.seat[i], css = netTone(i).css;
     for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) {
       if (!by.has(css)) by.set(css, new Path2D());
-      follow(V, siteOf(seat), slotOf(seat) * L.ar + p, by.get(css));
+      follow(V, siteOf(seat), slotOf(seat) * 3 + p, by.get(css));
     }
   }
   segPaths = { key, list: [...by] };

@@ -58,7 +58,7 @@ pub enum Tag {
     /// A mark on a wire that reversible rewriting (rust-ic-strands rev.rs) leaves where a rule joins two
     /// wires into one: interactions see straight through it. [a, b]
     Seam,
-    // Keeping history (`RESID_RULES`, research/reversible-core/residual.py): each apply leaves what it
+    // Keeping history (`RESID_RULES`): each apply leaves what it
     // would have dropped, its residual, on a fourth port, and a residual applied backward to its result
     // gives back the function and the argument.
     RA,    // apply: [p(function), arg, out, residual]
@@ -356,8 +356,8 @@ pub fn find_forgetting(consumer: Tag, producer: Tag) -> Option<usize> {
     FORGET_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer).map(|i| N_ALL_RULES + RESID_RULES.len() + i)
 }
 
-/// Keeping history (research/reversible-core/residual.py, where these are checked against an oracle and
-/// run back to the very agents loaded; `python residual.py --rust` writes them): an apply leaves on its fourth port what it
+/// Keeping history (written and checked against an oracle by a Python model of the net,
+/// research/reversible-core/residual.py, in git at 8a287ab): an apply leaves on its fourth port what it
 /// would have dropped, as a tree whose layout says which case fired (the j's are the residuals of the
 /// applies a step starts):
 ///

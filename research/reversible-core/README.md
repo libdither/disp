@@ -4,18 +4,11 @@ Working files of the review in research/REVERSIBLE_CORE.md (archived: no design 
 Python models of the abstract tree-calculus net, with no lattice and their own round scheduler, so
 only their ratios carry over. Run them with `python` from their own folder.
 
-- `residual.py`: keeping history, the design the lattice now runs (`resid=1`, rust-ic-strands README
-  "Keeping history"). An apply leaves what it would have dropped as a residual tree, and un-apply
-  takes the residual and the result back to the function and the argument. It has the oracle, the
-  forward and backward rule tables sized for the lattice, an interpreter (eager, and lazy with the
-  undo-by-meeting moves), and the checks: forward against the oracle, back to the very agents
-  loaded, both in one net, history erased. `Run` drives it as the player does: the term as a tree at
-  a root, a click turning the root into the walker that runs it (`E`) or runs it back (`E⁻`); and
-  forgetting what the applies drop, which brings the term back with holes that any trees fill
-  without changing the answer. `python residual.py [--quick]` runs the checks (`--quick`: 24 s);
-  `--rust` writes the lattice's tables (rules.rs `RESID_RULES`, `FORGET_RULES`).
+- `residual.py` (deleted; in git at 8a287ab): the Python model of keeping history, the design the
+  lattice runs as `resid=1` (rust-ic-strands README "Keeping history"), which wrote rules.rs
+  `RESID_RULES` and `FORGET_RULES`.
 - `rule_audit.py`: which rules of a table could run backward with nothing beyond the net, by
-  Salikhmetov's test (connected right sides, no two alike); `residual.py` imports it for its tables.
+  Salikhmetov's test (connected right sides, no two alike).
 
 - `footprints/`: the footprint net (a rewrite fuses its pair into a footprint that what it made is
   wired back to; undo is a product meeting its footprint) beside today's 26-rule table under the same

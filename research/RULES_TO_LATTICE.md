@@ -16,7 +16,7 @@ copying it). Delete once its conclusions live in code or in a `.typ` paper.
 ## 1. Stage 0: the rewrite function
 
 Tree calculus has one constructor, △, and apply is a recursive function on two trees that returns a tree or
-runs forever (research/reversible-core/residual.py `app`, rust-ca-lattice `oracle.rs`):
+runs forever (rust-ca-lattice `oracle.rs`; research/reversible-core/residual.py `app`, in git at 8a287ab):
 
 ```text
 apply(△, z)               = △z
@@ -136,7 +136,7 @@ Read as a recipe, the sequence turns each property of the base function into age
 
 Plain: 14 kinds, 26 rules. Keeping history: 38 more kinds and 86 more rules (rules.rs `RESID_RULES` and
 `FORGET_RULES`). The running-back half is mechanical: it is the same recipe applied to the inverse function
-(residual.py `unapp`), so every forward frame gets a mirror.
+(residual.py `unapp`, at 8a287ab), so every forward frame gets a mirror.
 
 So the size of the "pantheon" measures how far the base function is from three properties:
 - **depth one**: every rule looks at one constructor of one value (no chains of frames);
@@ -266,7 +266,7 @@ paper, treecalcul.us, arXiv).
 
 ## 8. Where that leaves disp
 
-**Our own rules against Salikhmetov's test** (rule_audit.py on residual.py's tables):
+**Our own rules against Salikhmetov's test** (rule_audit.py on residual.py's tables, at 8a287ab):
 
 | table | rules | connected | right sides alike | not connected |
 |---|---|---|---|---|

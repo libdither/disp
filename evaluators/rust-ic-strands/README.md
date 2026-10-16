@@ -1542,12 +1542,13 @@ loaded one again (the player's grid, seed 1):
 ## Keeping history: running it back exactly (`resid=1`, `resid.rs`)
 
 `resid=1` loads the term as a tree at the root, and runs it so that every application keeps what it
-would have dropped, its residual, on a fourth port. The lattice player keeps the history by default.
-The answer comes in bundled with the history at the root. A click on the root (or ⏪) runs it back to
-the term as loaded; once back, a click runs it again. A link with `set=resid=0` runs without it, and
-so do terms with superpositions and the movement agents' examples. The rule tables (rules.rs
-`RESID_RULES`, `FORGET_RULES`) are written by, and checked in, the model in
-research/reversible-core/residual.py.
+would have dropped, its residual, on a fourth port. The answer comes in bundled with the history at
+the root. A click on the root runs it back to the term as loaded; once back, a click runs it again.
+It runs from `strands-resid` and `tests/resid.rs`; terms with superpositions or movement agents run
+without it. The player ran it (by default, with a clickable root and a forget toggle) until it went
+back to the plain lattice; that page is in git at 8a287ab. The rule tables (rules.rs `RESID_RULES`,
+`FORGET_RULES`) were written by, and checked in, a Python model of the net,
+research/reversible-core/residual.py, also kept at 8a287ab.
 - **The term as a tree.** A value v is △v and an application f x is △⌜f⌝⌜x⌝. A stem or fork that
   holds applications is △ applied to its children. The term loads with `Go` at its root, which drops
   the walker `E` on it, with a normalizer after it and a root again. `E` makes an apply of each
@@ -1575,7 +1576,7 @@ research/reversible-core/residual.py.
 
   An un-apply or merge waiting on one of these asks for its other input. If that input turns out to
   be a value, it asks for the agent it waits on instead.
-- **Forgetting** (the dock's × toggle, from the clock it is clicked at). All an apply ever drops is
+- **Forgetting** (`Edit::Forget`, from the clock it is made at). All an apply ever drops is
   K's argument and the two arms a triage does not take. With forgetting on, the rules that make Rk
   or Rt (`FORGET_RULES`) hand it up through a forgetter `F!`, which erases what was dropped and leaves
   holes `?` in its place.
@@ -1599,7 +1600,7 @@ research/reversible-core/residual.py.
   Without it `rev [1, 2, 3]` stalls running back, its six-agent rewrites blocked for room.
 
 `strands-resid 'CALL' dnroom=0` runs a call there and back (`--forgetting` forgetting from the start,
-`--erase` with `resid=2`), with the player's settings for these examples:
+`--erase` with `resid=2`), with copies made only when asked, as the player's examples had them:
 
 | call (agents loaded) | forward: clocks, rewrites | history at the answer (agents) | back: clocks, rewrites, moves | forgetting: history, back clocks, holes | erased instead: clocks, rewrites |
 |---|---|---|---|---|---|
