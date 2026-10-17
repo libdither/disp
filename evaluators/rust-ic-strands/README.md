@@ -1395,6 +1395,33 @@ is sites in use per agent of the answer (2 agents a site is 0.5):
   (`crate/gpu.sh fib:0 --grid 232 --depth 8 --check --latest`, `sort:1`, two-way `add 2 3` and
   `twice`), and handed back and forth with the player.
 
+**The room field** (now in `latest`, `lattice.rs` `ROOM`): a second field channel whose source is a
+rewrite that found no room. It sets its site to 6, which falls by one a hop and a clock, and every
+agent, idle, called or wanted, pays 3 a unit to climb it, so matter drifts away from a rewrite that
+is waiting for room, as `press` did on the CPU but as a field the GPU keeps. It matters where
+rewrites are big and many walkers crowd them, in two-way programs: on the 12-call mirror it halves
+the clocks and cuts rewrites blocked for room from 101,000 to 26,000. Clocks to the answer, 4 seeds:
+
+| workload | before | cold storage | and the room field (now) |
+|---|---|---|---|
+| fib:0, fib:1, fib:2 | 1,750, 1,914, 6,686 | 1,582, 1,958, 5,948 | 1,684, 1,990, 5,918 |
+| exp:1, sort:1 | 7,676, 889 | 6,902, 906 | 6,871, 891 |
+| disp `add 2 3`, `add 3 4`, `fib 2` | 7,709, 10,225, 10,512 | 6,900, 9,416, 10,665 | 7,016, 9,911, 10,204 |
+| two-way `add 5 6`, `sub 2 5`, `twice` | 4,091, 2,970, 574 | 3,840, 2,983, 558 | 3,713, 2,866, 545 |
+| two-way `mirror (△, △△)`, `[swap; flip]` | 12,135, 15,615 | 10,651, 16,291 | 10,564, 13,616 |
+| two-way `mirror [uniti; (swap \| id)]` | 52,536 | 47,231 | 25,128 |
+
+- Tuned among reaches 3, 6 and 7, weights 2 to 5, fading 1 or 2 a clock, and pushing walkers or not:
+  reach 3 gains a third as much, sparing walkers loses a fifth of the gain, and the rest is within
+  noise. Folded into the demand field as one more source it gains nothing (the demand field draws
+  called values in, where this pushes everything out). `press=3` on top of cold storage gains about
+  half as much on the mirrors and loses 4–7% on tree calculus.
+- On the GPU: the room field's value rides in the pulse word's next byte above the demand field, and
+  a rewrite without room sets the bit above that, the source the next clock (field.rs
+  `Fields::word`, the same word in handovers). Bit for bit with the simulator, by one clock and in
+  batches (two-way `add 2 3`, `mirror (△, △△)` with thousands of blocked rewrites, `fib:0`), and
+  handed back and forth with the player (Dawn, Firefox).
+
 ## Running backward (`rev.rs`, `player/rev.html`)
 
 `crate/src/rev.rs` runs the abstract net (not yet the lattice) so that every step can be undone
@@ -1978,7 +2005,10 @@ a block works out its sites' field at the start of its turns, from its own and i
 words of the clock before, right after their pulse phase. A block holding only field stays busy,
 and a field high enough to reach across a face puts the neighbour's block on the next clock's
 list. `tables.rs` `gpu_unfit` takes one field of up to 4 bits, set by wanted readers and demand
-pulses. Working out the field makes a GPU clock about a fifth dearer: on fib(1) with the field's
+pulses, and a second, the room field (Cold storage, above), set by rewrites that found no room:
+its value rides in the pulse word's next byte, and a rewrite without room sets the bit above it,
+which is the room field's source the next clock (field.rs `Fields::word`, the same word in
+handovers). Working out the field makes a GPU clock about a fifth dearer: on fib(1) with the field's
 weights set to zero, so that the run is the same, 94 µs a clock against 79. The cost is spread
 about evenly over computing it, the blocks holding only field and marking the blocks a strong
 field reaches, so there is no one piece to cut. Called values walking add turns too. So on the

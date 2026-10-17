@@ -660,10 +660,12 @@ pub fn cooled(p: &Params, t0: f64, clocks: f64) -> f64 {
 /// The current design: the chip's schedule with the demand field and forking S rules, loaded packed
 /// (no gaps) and run a little cooler, duplicators copying ahead where their block has room, and idle
 /// matter packing two to a site where the field is cold (all crowding off there once cooling, and no
-/// passing, so the answer packs too). The player and the GPU run it; hw/ builds `chip`.
+/// passing, so the answer packs too), and the room field clearing space around rewrites that found
+/// none. The player and the GPU run it; hw/ builds `chip`.
 pub fn latest() -> Params {
     let mut p = chip();
     p.set("demand", "1").unwrap();
+    p.set("field", ROOM).unwrap();
     p.fork = true; p.spread = 1; p.temp = 1.5; p.dn_room = 5;
     p.cold = true; p.cold_terms = 8; p.cool_pass = false;
     p
@@ -673,6 +675,11 @@ pub fn latest() -> Params {
 /// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
 /// and wire that idle matter lays down pays crowding times the field. Used with `calls`.
 pub const DEMAND: &str = "src=reader+pulse,bits=2,level=3,step=1,decay=1,idle=4,called=-2,wire=0.5";
+
+/// The room field (README "Cold storage"): a rewrite that found no room sets its site to 6, which falls by
+/// one a hop and a clock, and every agent pays 3 a unit to climb it, so matter drifts away from where a
+/// rewrite is waiting for room.
+pub const ROOM: &str = "src=blocked,bits=3,level=6,step=1,decay=1,idle=3,called=3,wanted=3";
 
 /// Names of the moves, as numbered in test vectors.
 pub const OPS: &[&str] = &["", "hop", "swap", "fold", "flip", "fire", "collect", "erase unpair", "erase inputs", "undo"];
@@ -2811,9 +2818,9 @@ impl Lattice {
     /// field (`site_bytes().words` + 2 words).
     pub fn held_sites(&self) -> Vec<u32> {
         let mut sites = self.live.clone();
-        sites.extend(self.fields.near().iter().filter(|&&s| !self.in_live(s)));
+        sites.extend(self.fields.held().into_iter().filter(|&s| !self.in_live(s)));
         let v = self.state_words_of(&sites);
-        sites.iter().zip(v.chunks(self.site_bytes().words)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied()).chain([self.fields.value(s) as u32])).collect()
+        sites.iter().zip(v.chunks(self.site_bytes().words)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied()).chain([self.fields.word(s)])).collect()
     }
 
     /// The seats of agents carrying a superposition label and their labels, [seat, label] each:
@@ -2831,8 +2838,8 @@ impl Lattice {
     pub fn put_sites_labelled(&mut self, recs: &[u32], labels: &[u32]) {
         let (empty, n) = (self.site_bytes().empty(), self.site_bytes().words);
         for s in self.live.clone() { self.set_site_words(s, &empty); }
-        for s in self.fields.near().to_vec() { self.fields.set_value(s, 0); }
-        for r in recs.chunks(n + 2) { self.set_site_words(r[0], &r[1..n + 1]); self.fields.set_value(r[0], r[n + 1] as u8); }
+        for s in self.fields.held() { self.fields.set_word(s, 0); }
+        for r in recs.chunks(n + 2) { self.set_site_words(r[0], &r[1..n + 1]); self.fields.set_word(r[0], r[n + 1]); }
         for l in labels.chunks(2) { self.sup_label[l[0] as usize] = l[1] as u8; }
         self.agent_sites = self.live.iter().copied().filter(|&s| self.occ[s as usize] > 0).collect();
         self.pulse_sites = self.live.iter().copied().filter(|&s| self.pulse_at[s as usize] != NONE).collect();

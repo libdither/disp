@@ -199,8 +199,8 @@ fn main() {
     let layout = l.site_bytes();
     let want = want.as_deref().unwrap_or("?");
     assert!(!dense || !l.fields.on, "--dense keeps no field");
-    // The simulator's demand field, a value a site, if it keeps one.
-    let field = |l: &Lattice| l.fields.on.then(|| (0..l.sites()).map(|s| l.fields.value(s)).collect::<Vec<u8>>());
+    // The simulator's fields, a word a site (field.rs `Fields::word`), if it keeps any.
+    let field = |l: &Lattice| l.fields.on.then(|| (0..l.sites()).map(|s| l.fields.word(s)).collect::<Vec<u32>>());
     let t0 = std::time::Instant::now();
     if check {
         // Compared after every batch (one clock unless --batch).

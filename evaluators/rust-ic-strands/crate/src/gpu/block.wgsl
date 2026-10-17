@@ -156,7 +156,7 @@ fn turn() {
     }
     // A rewrite that finds no room writes nothing, and the turn goes on to a move.
     let r = fire(pr.kc, pr.kp, pr.via, pr.face);
-    if (r == 0u) { tally[T_BLOCKED]++; st = ST_MOVE; continue; }
+    if (r == 0u) { tally[T_BLOCKED]++; blk |= 1u << p; st = ST_MOVE; continue; }
     if (r == 1u) { tally[T_FIRES]++; log_fire(site_at(corner, p) | (fr_fs_view << 24u)); }
     break;
   }
@@ -227,7 +227,9 @@ fn invocation(g: vec3<u32>, n: vec3<u32>, size: u32) -> u32 { return g.x + g.y *
 
 fn nsites() -> u32 { return clk.w * clk.h * clk.d; }
 /// A site's pulse word after the previous clock's turns: the strand end its pulse sits on (low
-/// byte, NONE without one) and its demand field (the next byte; lattice.rs `update_fields`).
+/// byte, NONE without one), its demand field (the next byte; lattice.rs `update_fields`), its room
+/// field (the next), and whether a rewrite there found no room (bit 24, the room field's source).
+/// Above the pulse it is field.rs `Fields::word`.
 fn pul_read(s: u32) -> u32 { return pul[(clk.par ^ 1u) * nsites() + s]; }
 /// A site's pulse word in the buffer this clock's turns write.
 fn pul_here(s: u32) -> u32 { return pul[clk.par * nsites() + s]; }
@@ -237,24 +239,30 @@ const QUIET: u32 = 0xFFu;
 fn pw_end(w: u32) -> u32 { return w & 0xFFu; }
 fn pw_field(w: u32) -> u32 { return (w >> 8u) & 0xFFu; }
 
-/// Bits 4q .. 4q + 3: position q's demand field this clock.
+/// Bits 4q .. 4q + 3: position q's demand field this clock; and its room field.
 var<private> fld: u32;
+var<private> fld2: u32;
 fn fld_at(q: u32) -> u32 { return (fld >> (4u * (q & 7u))) & 15u; }
-/// Site s's demand field this clock (lattice.rs `update_fields`): `src` if it is a source (a
-/// wanted reader or a demand pulse there), its own value of the clock before less the fade, and
-/// each neighbour's less the falloff, whichever is most.
-fn field_of(s: u32, src: bool) -> u32 {
+fn fld2_at(q: u32) -> u32 { return (fld2 >> (4u * (q & 7u))) & 15u; }
+/// Bit q: a rewrite at position q found no room this clock.
+var<private> blk: u32;
+/// Site s's value this clock of the field at bit `sh` of the pulse word (lattice.rs `update_fields`):
+/// `level` if it is a source, its own value of the clock before less the fade, and each
+/// neighbour's less the falloff, whichever is most.
+fn chan_of(s: u32, src: bool, sh: u32, level: u32, decay: u32, step: u32, cap: u32) -> u32 {
   let x = s % clk.w; let y = (s / clk.w) % clk.h; let z = s / (clk.w * clk.h);
   let on = array<bool, 6>(x + 1u < clk.w, x > 0u, y + 1u < clk.h, y > 0u, z + 1u < clk.d, z > 0u);
   let nb = array<u32, 6>(s + 1u, s - 1u, s + clk.w, s - clk.w, s + clk.w * clk.h, s - clk.w * clk.h);
   var fs: array<u32, 6>;
-  for (var f = 0u; f < 6u; f++) { fs[f] = select(0u, pw_field(pul_read(select(s, nb[f], on[f]))), on[f]); }
-  var v = select(0u, F_LEVEL, src);
-  let own = pw_field(pul_read(s));
-  if (F_DECAY != NONE && own > F_DECAY) { v = max(v, own - F_DECAY); }
-  for (var f = 0u; f < 6u; f++) { if (F_STEP != NONE && fs[f] > F_STEP) { v = max(v, fs[f] - F_STEP); } }
-  return min(v, F_CAP);
+  for (var f = 0u; f < 6u; f++) { fs[f] = select(0u, (pul_read(select(s, nb[f], on[f])) >> sh) & 0xFFu, on[f]); }
+  var v = select(0u, level, src);
+  let own = (pul_read(s) >> sh) & 0xFFu;
+  if (decay != NONE && own > decay) { v = max(v, own - decay); }
+  for (var f = 0u; f < 6u; f++) { if (step != NONE && fs[f] > step) { v = max(v, fs[f] - step); } }
+  return min(v, cap);
 }
+/// The demand field (a wanted reader or a demand pulse its source).
+fn field_of(s: u32, src: bool) -> u32 { return chan_of(s, src, 8u, F_LEVEL, F_DECAY, F_STEP, F_CAP); }
 /// The corner of block b at this clock's offset (a hash of the clock).
 fn block_corner(b: vec3<i32>) -> vec3<i32> {
   let o = hash(0xFFFFFFFFu, clk.tick).x;
@@ -307,7 +315,15 @@ fn block_turns(b: vec3<i32>) {
       fld |= field_of(sx[q], src) << (4u * q);
     }
   }
-  if (any == 0u && here == 0u && (!FIELD || (before == 0u && fld == 0u))) { return; }
+  // The room field, a rewrite that found no room there the clock before its source.
+  fld2 = 0u; blk = 0u;
+  if (FIELD2) {
+    for (var q = 0u; q < 8u; q++) {
+      if ((onl & (1u << q)) == 0u) { continue; }
+      fld2 |= chan_of(sx[q], ((pul_read(sx[q]) >> 24u) & 1u) != 0u, 16u, F2_LEVEL, F2_DECAY, F2_STEP, F2_CAP) << (4u * q);
+    }
+  }
+  if (any == 0u && here == 0u && (!FIELD || (before == 0u && fld == 0u)) && (!FIELD2 || (before == 0u && fld2 == 0u))) { return; }
   taken = 0u;
   if (any != 0u) { run_block(); }
   var held = before;
@@ -315,17 +331,18 @@ fn block_turns(b: vec3<i32>) {
     if ((onl & (1u << q)) != 0u) {
       let s = sx[q];
       if (((taken | dirty) & (1u << q)) != 0u) { store(s, get_site(q)); }
-      set_pul(s, gpul(q) | (fld_at(q) << 8u));
+      set_pul(s, gpul(q) | (fld_at(q) << 8u) | (fld2_at(q) << 16u) | (((blk >> q) & 1u) << 24u));
       for (var i = 0u; i < SW; i++) { if (sb[at(q, i)] != EMPTY[i]) { held |= 1u << q; } }
-      if (fld_at(q) != 0u) { held |= 1u << q; }
+      if (fld_at(q) != 0u || fld2_at(q) != 0u || ((blk >> q) & 1u) != 0u) { held |= 1u << q; }
     }
   }
   if (clk.next != NO_LIST) {
     mark_next(c, held);
     // A field strong enough to reach a neighbour next clock puts the neighbour's block on the list.
-    if (FIELD && F_STEP != NONE) {
+    if ((FIELD && F_STEP != NONE) || (FIELD2 && F2_STEP != NONE)) {
       for (var q = 0u; q < 8u; q++) {
-        if ((onl & (1u << q)) == 0u || fld_at(q) <= F_STEP) { continue; }
+        let reach = (FIELD && F_STEP != NONE && fld_at(q) > F_STEP) || (FIELD2 && F2_STEP != NONE && fld2_at(q) > F2_STEP);
+        if ((onl & (1u << q)) == 0u || !reach) { continue; }
         for (var f = 0u; f < 6u; f++) { if (onlat(q, f)) { mark_next_site(site_at(c, q) + face_step(f)); } }
       }
     }

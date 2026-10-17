@@ -1,7 +1,8 @@
 // The chip's block schedule on WebGPU: crate/src/gpu/mod.rs's `Grid` for the browser, running the
 // shader the engine makes for the loaded configuration (tables.rs `shader`). A grid moves a run's
 // sites as the engine's `strands_held` gives them: each site's index, its words (`site_words`: 10, or
-// 11 with 4 ports a slot) and its demand field (which rides in the site's pulse word, above the pulse).
+// 11 with 4 ports a slot) and its fields (the demand and room fields, which ride in the site's pulse word,
+// above the pulse; field.rs `Fields::word`).
 window.StrandsGPU = (() => {
   const STRIDE = 256, CLOCK = 80;
   // busy.wgsl `counts`: the list lengths, the tally (`T_*`), then the rewrites' count and sites;
@@ -58,7 +59,7 @@ window.StrandsGPU = (() => {
   class Grid {
     constructor(gpu, w, h, d, batch) {
       // `busyHint`: about how many blocks are busy, which sets how many workgroups share them out.
-      // A gathered site is its index, its words and its field (busy.wgsl `busy_gather`).
+      // A gathered site is its index, its words and its fields (busy.wgsl `busy_gather`, field.rs `Fields::word`).
       const site = gpu.site, rec = site + 2;
       Object.assign(this, { gpu, w, h, d, batch, site, rec, seeded: false, busyHint: 64, cap: rec * 4096 });
       const dev = gpu.device, n = w * h * d, buf = (bytes, usage) => dev.createBuffer({ size: Math.max(4, bytes), usage });

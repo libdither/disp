@@ -45,8 +45,15 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if p.cold && p.cold_terms & 7 != 0 || p.heat_crowd != 0.0 { return Some("its cold sites drop idle crowding only, and it has no heat crowding"); }
     if p.phys { return Some("the substrate's records and undoing run on the CPU"); }
     let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
+    if let Some(c) = fields.nth(1) {
+        if c.source.0 != Source::BLOCKED { return Some("its second field's source is rewrites without room"); }
+        if c.wire_step != NONE && c.wire_step < c.step { return Some("its fields spread alike along wires and through space"); }
+        if c.bits > 4 { return Some("its fields have at most 4 bits"); }
+        if c.wire != 0.0 { return Some("its second field weighs no wire"); }
+        if fields.next().is_some() { return Some("it keeps two fields"); }
+    }
+    let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
     if let Some(c) = fields.next() {
-        if fields.next().is_some() { return Some("it keeps one field"); }
         if c.source.0 & !(Source::READER | Source::PULSE) != 0 { return Some("its field's sources are wanted readers and demand pulses"); }
         if c.wire_step != NONE && c.wire_step < c.step { return Some("its field spreads alike along wires and through space"); }
         if c.bits > 4 { return Some("its field has at most 4 bits"); }
@@ -88,6 +95,13 @@ pub fn wgsl_for(p: &Params) -> String {
     writeln!(w, "const F_LEVEL: u32 = {}u; const F_CAP: u32 = {}u; const F_STEP: u32 = {}u; const F_DECAY: u32 = {}u;",
         c.level.min(if f.is_some() { c.cap() } else { 0 }), if f.is_some() { c.cap() } else { 0 }, c.step, c.decay).unwrap();
     writeln!(w, "const F_W: array<i32, 3> = array<i32, 3>({}, {}, {}); const F_WIRE: i32 = {};", fw[0], fw[1], fw[2], fw[3]).unwrap();
+    // The second field, the room field (rewrites without room its source), if any: in the pulse word above the first.
+    let f2 = p.fields.iter().filter(|c| c.source != Source::NONE).nth(1).copied();
+    let c2 = f2.unwrap_or(Channel::OFF);
+    let fw2 = c2.weights();
+    writeln!(w, "const FIELD2: bool = {}; const F2_LEVEL: u32 = {}u; const F2_CAP: u32 = {}u; const F2_STEP: u32 = {}u; const F2_DECAY: u32 = {}u;",
+        f2.is_some(), c2.level.min(if f2.is_some() { c2.cap() } else { 0 }), if f2.is_some() { c2.cap() } else { 0 }, c2.step, c2.decay).unwrap();
+    writeln!(w, "const F2_W: array<i32, 3> = array<i32, 3>({}, {}, {});", fw2[0], fw2[1], fw2[2]).unwrap();
     for t in ALL_TAGS.into_iter().chain(VIEW_TAGS) {
         let name = match t { Tag::Pair => "PAIR".into(), Tag::Sel => "SEL".into(), Tag::Unp => "UNP".into(), Tag::Dn => "DN".into(),
                              Tag::Eps => "EPS".into(), Tag::Nrm => "NRM".into(), Tag::Out => "OUT".into(), _ => t.name().to_uppercase() };

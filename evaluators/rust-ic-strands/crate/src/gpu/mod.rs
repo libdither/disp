@@ -188,12 +188,13 @@ impl<'g> Grid<'g> {
     fn sites(&self) -> usize { (self.w * self.h * self.d) as usize }
     fn blocks(&self) -> u32 { (self.w / 2 + 1) * (self.h / 2 + 1) * (self.d / 2 + 1) }
 
-    /// Load a state of `site.words` words per site, and its demand field (a value a site) if it keeps
-    /// one: each site's pulse word (its pulse, byte 39, its field above it) goes to both pulse buffers.
-    pub fn upload(&mut self, state: &[u32], field: Option<&[u8]>) {
+    /// Load a state of `site.words` words per site, and its fields (field.rs `Fields::word`, a word a
+    /// site) if it keeps any: each site's pulse word (its pulse, byte 39, its fields above it) goes to
+    /// both pulse buffers.
+    pub fn upload(&mut self, state: &[u32], field: Option<&[u32]>) {
         let (sw, empty) = (self.gpu.site.words, self.gpu.site.empty());
         assert_eq!(state.len(), self.sites() * sw, "a state of {sw} words per site");
-        let fv = |i: usize| field.map_or(0, |f| f[i] as u32);
+        let fv = |i: usize| field.map_or(0, |f| f[i]);
         let pul: Vec<u32> = state.chunks(sw).enumerate().map(|(i, s)| (s[SiteBytes::PULSE / 4] >> 24) | fv(i) << 8).collect();
         let q = &self.gpu.queue;
         q.write_buffer(&self.sites, 0, bytemuck::cast_slice(state));
@@ -207,22 +208,22 @@ impl<'g> Grid<'g> {
 
     pub fn download(&self) -> Vec<u32> { self.gpu.read(&self.sites, 0, &self.staging, self.sites() * self.gpu.site.words) }
 
-    /// The demand field after the last `run`, a value a site.
-    pub fn download_field(&self) -> Vec<u8> {
+    /// The fields after the last `run`, a word a site (field.rs `Fields::word`).
+    pub fn download_field(&self) -> Vec<u32> {
         let n = self.sites();
-        self.gpu.read(&self.pul, self.last_par * n, &self.staging, n).iter().map(|w| (w >> 8) as u8).collect()
+        self.gpu.read(&self.pul, self.last_par * n, &self.staging, n).iter().map(|w| w >> 8).collect()
     }
 
     /// The sites holding anything or a field after the last `run` that gathered: their indices,
     /// their `site.words` words each, and their fields.
-    pub fn gathered(&mut self) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
+    pub fn gathered(&mut self) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
         let sw = self.gpu.site.words;
         let n = self.gpu.read(&self.counts, 3, &self.staging, 1)[0] as usize;
         let v = self.gpu.read(&self.gathered, 0, &self.staging, n * (sw + 2));
         self.busy_hint = n as u32;
         let idx = v.chunks(sw + 2).map(|r| r[0]).collect();
         let words = v.chunks(sw + 2).flat_map(|r| r[1..=sw].iter().copied()).collect();
-        let field = v.chunks(sw + 2).map(|r| r[sw + 1] as u8).collect();
+        let field = v.chunks(sw + 2).map(|r| r[sw + 1]).collect();
         (idx, words, field)
     }
 

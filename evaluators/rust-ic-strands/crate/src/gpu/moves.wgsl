@@ -31,7 +31,7 @@ struct Hop { ok: bool, de: i32 }
 /// Agent k of slot s0 steps across face f into slot k2 of the neighbour t0, the result built in
 /// slots so and to (which may be s0 and t0) if the step can be made. With `metropolis`, the step
 /// must leave the neighbour room and pass the energy test.
-fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropolis: bool, metro: u32, vs: u32, vt: u32) -> Hop {
+fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropolis: bool, metro: u32, vs: u32, vt: u32, vs2: u32, vt2: u32) -> Hop {
   let f1 = f ^ 1u;
   let tg = gt(s0, k); let a = arity(tg); let wnt = gw(s0, k); let idl = LAZY && !acts(s0, k);
   // Per port: plan (0 drag, 1 loop, 2 through), its lane or loop end, and a dragged wire's mate.
@@ -83,6 +83,10 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
       let ds = -(i32(through) + i32(loops)); let dt = i32(need) + i32(loops);
       de += F_WIRE * (i32(vs) * ((ps + ds) * (ps + ds) - ps * ps) + i32(vt) * ((pti + dt) * (pti + dt) - pti * pti));
     }
+  }
+  if (FIELD2) {
+    // The room field, by what the agent is (it weighs no wire).
+    de += F2_W[select(select(2u, 1u, is_producer(tg)), 0u, !wnt)] * (i32(vt2) - i32(vs2));
   }
   if (metropolis && !accept(de, metro)) { fail = true; }
   if (fail) { return Hop(false, de); }
@@ -255,7 +259,7 @@ fn move_stage(active_mode: bool, act_k: u32) {
       let second = half == 1u;
       let h = hop_to(select(p, xt, second), select(t, xs, second), select(xs, xt, second), select(xt, xs, second),
                      select(k, kb, second), f ^ u32(second), select(select(fsl & 3u, 2u, full), k, second), !full, d_metro(),
-                     fld_at(select(p, t, second)), fld_at(select(t, p, second)));
+                     fld_at(select(p, t, second)), fld_at(select(t, p, second)), fld2_at(select(p, t, second)), fld2_at(select(t, p, second)));
       if (!h.ok) { break; }
       if (!second) {
         de = h.de;

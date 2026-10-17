@@ -132,6 +132,30 @@ impl Fields {
         if old == 0 && v != 0 { c.near.push(s); }
         if old != 0 && v == 0 { c.near.retain(|&x| x != s); }
     }
+    /// Site s's fields as a GPU keeps them in its pulse word (above the pulse): the first channel, the second
+    /// above it, and above both whether a rewrite there found no room this clock (a source next clock).
+    pub fn word(&self, s: u32) -> u32 {
+        let v = |c: usize| self.chans.get(c).map_or(0, |c| c.value[s as usize] as u32);
+        v(0) | v(1) << 8 | (self.blocked.contains(&s) as u32) << 16
+    }
+    /// Set site s's fields from `word`'s format (handing a run over from a GPU).
+    pub fn set_word(&mut self, s: u32, w: u32) {
+        for (c, ch) in self.chans.iter_mut().take(2).enumerate() {
+            let v = (w >> (8 * c)) as u8;
+            let old = std::mem::replace(&mut ch.value[s as usize], v);
+            if old == 0 && v != 0 { ch.near.push(s); }
+            if old != 0 && v == 0 { ch.near.retain(|&x| x != s); }
+        }
+        self.blocked.retain(|&x| x != s);
+        if w >> 16 & 1 != 0 { self.blocked.push(s); }
+    }
+    /// The sites `word` is not 0 at.
+    pub fn held(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.chans.iter().take(2).flat_map(|c| c.near.iter().copied()).chain(self.blocked.iter().copied()).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
     pub fn fired(&mut self, s: u32) { if self.on { self.fired.push(s); } }
     pub fn blocked(&mut self, s: u32) { if self.on { self.blocked.push(s); } }
     /// Every channel's sites with a value, the rewrites of the clock so far and the support, to put
