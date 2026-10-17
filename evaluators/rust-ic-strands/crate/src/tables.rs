@@ -97,14 +97,13 @@ pub fn wgsl_for(p: &Params) -> String {
     writeln!(w, "const AR: u32 = {ar}u; const A_ENDS: u32 = {}u; const NE: u32 = {}u; const SW: u32 = {}u;", 3 * ar, sb.ends, sb.words).unwrap();
     writeln!(w, "const B_TAG: u32 = {}u; const B_WANT: u32 = {}u; const B_PUL: u32 = {}u;", sb.tags, sb.want, SiteBytes::PULSE).unwrap();
     writeln!(w, "const EMPTY: Site = Site({});", sb.empty().iter().map(|v| format!("0x{v:08X}u")).collect::<Vec<_>>().join(", ")).unwrap();
-    // Two-way programs' tags (numbered from TWO_P): the opcodes, producers, then the walkers, consumers.
-    let (tp, tc) = (code(TWO_TAGS[0]), code(TWO_TAGS[0]) + TWO_TAGS.iter().take_while(|t| t.is_producer()).count() as u32);
-    assert!(TWO_TAGS.iter().enumerate().all(|(i, t)| code(*t) == tp + i as u32 && t.is_producer() == (code(*t) < tc) && t.is_consumer() != t.is_producer()),
-            "two-way programs' producers, then their consumers");
-    let mut two_ar = [0u32; 2];
+    // Two-way programs' tags (numbered from TWO_P): walkers all, programs being trees.
+    let tp = code(TWO_TAGS[0]);
+    assert!(TWO_TAGS.iter().enumerate().all(|(i, t)| code(*t) == tp + i as u32 && t.is_consumer()), "two-way programs' walkers, numbered in a row");
+    let mut two_ar = vec![0u32; TWO_TAGS.len().div_ceil(16)];
     for (i, t) in TWO_TAGS.iter().enumerate() { two_ar[i / 16] |= (t.arity() as u32 - 1) << (2 * (i % 16)); }
-    writeln!(w, "const TWO: bool = {}; const TWO_P: u32 = {tp}u; const TWO_C: u32 = {tc}u; const TWO_END: u32 = {}u; const TWO_AR0: u32 = {}u; const TWO_AR1: u32 = {}u;",
-        p.two, tp + TWO_TAGS.len() as u32, two_ar[0], two_ar[1]).unwrap();
+    writeln!(w, "const TWO: bool = {}; const TWO_P: u32 = {tp}u; const TWO_END: u32 = {}u;", p.two, tp + TWO_TAGS.len() as u32).unwrap();
+    array(w, "TWO_AR", &two_ar);
     // The rule table is indexed by tag, two-way programs' following the movement agents'.
     let rules = rules(p);
     let tix = |t: u32| if t >= tp { t - tp + BASE_TAGS } else { t };

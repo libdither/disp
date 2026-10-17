@@ -319,34 +319,43 @@
         rewrite; one whose value is used up by a rewrite drops out.</p>
     </details>
     <details class="how"><summary>two-way programs (two:)</summary>
-      <p><b>Programs.</b> A two-way program is a tree of opcodes (squares, programs as data), each a bijection on
-        trees: <i>swap</i> (u, v) ↔ (v, u), <i>assocl</i> and <i>assocr</i> regroup, <i>s2f</i> △t → (△, t) and
-        <i>f2s</i> back, <i>uniti</i> x → (△, x) and <i>unite</i> back, <i>copy</i> x → (x, x) and <i>merge</i> back,
-        <i>flip</i>, <i>eval</i>; and nodes that hold parts: <i>a; b</i>, <i>(a | b)</i> on the two halves,
-        <i>cond(a, b)</i>, <i>loop(c)</i>. A choice is a pair whose tag says the side: (△, v) the left, (△△, v) the
-        right. <i>cond</i> runs a on the left and b on the right, keeping the tag; <i>loop</i> runs c while it gives the
-        left side; <i>flip</i> swaps the sides. Numbers are 0 = (△, △) and n + 1 = (△△, n).</p>
+      <p><b>Programs are trees.</b> A two-way program is a △ tree like any value, each of its instructions a
+        bijection on trees. An instruction is k stems on a leaf, or on a fork of its two parts:
+        k = 0: the leaf is <i>id</i>, the fork (a, b) is <i>a; b</i>; 1: <i>swap</i> (u, v) ↔ (v, u), or <i>(a | b)</i>
+        on the two halves at once; 2: <i>flip</i>, or <i>cond(a, b)</i>; 3: <i>assocl</i>, or <i>loop(a)</i>; then
+        <i>assocr</i>, <i>uniti</i> x → (△, x), <i>unite</i>, <i>copy</i> x → (x, x), <i>merge</i>, <i>eval</i>,
+        <i>uneval</i>, <i>triage</i>, <i>untriage</i>, <i>s2f</i> △t → (△, t) and <i>f2s</i>, 4 to 14 stems, each next
+        to its inverse. A choice is a pair whose tag says the side: (△, v) the left, (△△, v) the right. <i>cond</i>
+        runs a on the left and b on the right, keeping the tag; <i>loop</i> runs a while it gives the left side;
+        <i>flip</i> swaps the sides. Numbers are 0 = (△, △) and n + 1 = (△△, n).</p>
       <p><b>Running.</b> A run (the disk with ▶) has four ports: the program, the input, the program handed back, and
-        the result. It reacts when an opcode meets its program port, and every rule hands the opcode or its node back
-        out, so once a run is done its program is whole again beside the result. That is why a loop needs no copy of
-        its body: each round's run hands the body back for the next.</p>
-      <p><b>Most of it is wiring.</b> A run meeting <i>swap</i> leaves a splitter (the split pill) that takes the input
+        the result. It reads its program a node at a time: a stem sends it on to read the next (still a run's disk),
+        and each node goes back out as it is read, so once a run is done its program is whole again beside the result.
+        That is why a loop needs no copy of its body: each round's run hands the body back for the next.</p>
+      <p><b>Most of it is wiring.</b> A run reading <i>swap</i> leaves a splitter (the split pill) that takes the input
         fork apart and a fresh fork that joins the halves crossed; <i>assocl</i> and <i>assocr</i> are two splitters and
         two forks; <i>a; b</i> becomes two runs in a row, the first's result the second's input and their programs
         joined again as they come back; <i>(a | b)</i> a splitter and two runs side by side; <i>eval</i> a splitter and
         a run of the first half on the second; <i>copy</i> a duplicator. None of these waits for data: the walkers they
-        leave meet it wherever it is.</p>
-      <p><b>Reading data.</b> Only four steps decide something, and they leave a walker that reads: cond's (the whole
-        diamond) reads the tag and starts a run of a or of b, the other coming back untouched; loop's (the holed
-        diamonds) take each round's state apart and read its tag, to run the body again or let the result out; flip's
-        (the split diamond) turns △ into △△ and back; and merge's (the upside-down Y) read the two halves a layer at a
-        time, joining them into one tree.</p>
+        leave meet it wherever it is, and a run reads the next instruction while the data is still on its way.</p>
+      <p><b>Reading data.</b> Five steps decide something, and leave a walker that reads: cond's (the whole diamond)
+        reads the tag and starts a run of a or of b, the other coming back untouched; loop's (the holed diamonds) take
+        each round's state apart and read its tag, to run the body again or let the result out; flip's (the split
+        diamond) turns △ into △△ and back; merge's (the upside-down Y) read the two halves a layer at a time, joining
+        them into one tree; and <i>triage</i> (green) tells a leaf, stem and fork apart: △ → (△, (△, △)),
+        △t → (△, (△△, t)), △ab → (△△, (a, b)), so a cond can choose by the shape of any tree.</p>
+      <p><b>Programs about programs.</b> A program being a tree, everything that works on trees works on programs:
+        copy, merge, triage. <i>twice</i> copies p into (p, p), which is the program p; p, and runs it with eval.
+        <i>mirror</i> swaps every fork's parts: on a fork it calls itself on both parts at once, through eval on copies
+        of itself merged back afterwards (recursion that branches), and run on a program it gives another program.</p>
       <p><b>Partial and eager.</b> Where no rule fits (a swap of a leaf, a merge of two different halves) the walker
         waits for good, and the run is <i>stuck</i>, as the reference interpreter is. Every walker is wanted from the
         start, since in a bijection every step's result is used: there is no garbage, and no eraser.</p>
-      <p><b>Running back.</b> The inverse of a program is read off its text (<i>~p</i>: each opcode's inverse, a
-        sequence's steps reversed) and run forward on the result: <i>sub</i> is <i>~add</i>. Nothing is recorded, and
-        the net has no rules for going backward.</p>
+      <p><b>Running back.</b> The inverse of a program is read off its text (<i>~p</i>: each instruction's inverse, a
+        sequence's steps reversed) and run forward on the result: <i>sub</i> is <i>~add</i>. A program that arrives as
+        data is inverted as it runs: <i>uneval</i>, eval's inverse, sends it through a walker (the pink disks) that
+        makes its inverse a node at a time, runs that, and inverts it back. Nothing is recorded, and the net has no
+        rules for going backward.</p>
     </details>
   </div>
 </div>
@@ -496,16 +505,21 @@ const MOVERS = [
 const TWO_WAY = [
   { name: "add", text: "two: add 2 3", desc: "(a, b) → (a, a + b), a loop over a, numbers as (△, △) for 0 and (△△, n) for n + 1; the program comes back beside the result" },
   { name: "sub", text: "two: sub 2 5", desc: "add's inverse, read off its text and run forward: (a, c) → (a, c − a), with nothing recorded" },
-  { name: "eval", text: "two: eval @ ([add], (2, 3))", desc: "a program as data: eval runs it on the other half and hands it back" },
+  { name: "eval", text: "two: eval @ ([add], (2, 3))", desc: "a program as data, a tree like any other: eval runs it on the other half and hands it back" },
+  { name: "twice", text: "two: twice @ ([succ], 3)", desc: "a program made by a program: copy turns p into (p, p), which is the program p; p, and eval runs it: (p, x) → (p, p (p x))" },
+  { name: "~twice", text: "two: ~twice @ ([succ], 5)", desc: "twice run back: uneval inverts the program it is given as it runs it (the pink disks)" },
+  { name: "mirror", text: "two: mirror (△, △△)", desc: "recursion that branches: triage tells a leaf, stem and fork apart, and on a fork mirror calls itself on both parts at once, its copies merged back" },
+  { name: "mirror a program", text: "two: mirror [swap; flip]", desc: "mirror run on a program gives a program: a; b becomes b′; a′, here flip; swap (slow: a call for each of its 6 nodes, each copying mirror)" },
   { name: "cond", text: "two: cond(swap, copy) @ (△△, (△, △△))", desc: "a choice: the tag △△ picks copy, and is kept, so the choice can be undone" },
   { name: "copy; merge", text: "two: copy; merge @ (△△, (△, △))", desc: "copy and its inverse, merge, which reads both copies layer by layer: back where it started" },
   { name: "stuck", text: "two: swap @ △", desc: "a program is a partial bijection: there is no swap of a leaf, so its splitter waits for good" },
 ];
 const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
 /// The kinds a run can hold, for the legend: tree calculus's (with superpositions and movement agents), keeping
-/// history's, or a two-way program's (its values, duplicators copying programs, the root, its opcodes and walkers).
+/// history's, or a two-way program's (its values, programs included, duplicators, the root and its walkers, the run
+/// once for all its reading states).
 const span = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
-const KINDS = { tree: span(1, 20), resid: span(1, 58), two: [1, 2, 3, 10, 13, ...span(59, 85)] };
+const KINDS = { tree: span(1, 20), resid: span(1, 58), two: [1, 2, 3, 10, 13, 59, ...span(74, 94)] };
 /// The legend's entries after the kinds.
 let LEGEND_REST = "";
 function legend(kinds) { $("legend").innerHTML = kinds.map(t => `<span>${kindHTML(t)}</span>`).join("") + LEGEND_REST; }
@@ -566,8 +580,9 @@ function syncUI() {
       + " they run at once on one lattice, as a tuple under one root whose normalizer splits it into one a part. Each answer is shown as it comes in, with its clock."
     : e?.prog ? `<b>${e.name}</b>: ${e.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude.`
       + ` Type any disp expression: arguments as literals (numbers, [lists], "strings") or calls of their own, like <i>${e.name} (add 1 1)</i>.`
-    : e?.two ? `<b>A two-way program</b>${e.text === input ? `: ${e.desc}` : ""}. <i>two: PROG @ VALUE</i>, or <i>two: add A B</i>, <i>sub A C</i>, <i>succ N</i>, <i>pred N</i>.`
-      + " PROG: swap, assocl, assocr, s2f, f2s, uniti, unite, copy, merge, eval, flip, <i>a; b</i>, <i>(a | b)</i>, <i>cond(a, b)</i>, <i>loop(a)</i>, <i>~a</i> (a's inverse)."
+    : e?.two ? `<b>A two-way program</b>${e.text === input ? `: ${e.desc}` : ""}. <i>two: PROG @ VALUE</i>, or <i>two: add A B</i>, <i>sub A C</i>, <i>succ N</i>, <i>pred N</i>, <i>mirror VALUE</i>.`
+      + " PROG: id, swap, flip, assocl, assocr, uniti, unite, copy, merge, eval, uneval, triage, untriage, s2f, f2s, <i>a; b</i>, <i>(a | b)</i>, <i>cond(a, b)</i>, <i>loop(a)</i>, <i>~a</i> (a's inverse),"
+      + " and succ, pred, add, sub, twice, call, mirror."
       + " VALUE: △ (or t), △v, (u, v), a number, [PROG]. How it runs: <i>two-way programs</i> in the details (D)."
     : e?.work ? `<b>${e.name}</b>: ${e.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
       + (e.work.n > 0 ? ` <i>${e.name}:n</i> sets n.` : "")
@@ -699,7 +714,7 @@ function start(p, input) {
   tlReset();
   refreshGarbage(true); layoutLayers();
   $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
-  const ends = L.ar * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), field = E.field_bits(), tag = L.ar === 4 ? 6 : 4;
+  const ends = L.ar * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), field = E.field_bits(), tag = L.ar === 3 ? 4 : /^\s*two:/.test(src) ? 7 : 6;
   $("bits").textContent = (L.ar === 4 ? "The chip's schedule with the demand field, running a two-way program eagerly, 4 ports an agent. "
     : "The chip's schedule with the demand field, and S rules that fork. ")
     + `A site is ${L.k} agent tags (${tag} bits each, plus a wanted bit, which on a value means called), `

@@ -115,11 +115,14 @@ r=$(gpu fib:0 --grid 232 --depth 8 --seed 2 --check --batch 13 --latest | tail -
 printf "   %-28s %s\n" "fib:0, current design, by 13" "$r"
 r=$(gpu sort:1 --grid 490 --depth 8 --seed 1 --check --batch 32 --latest | tail -1) || fail=1
 printf "   %-28s %s\n" "sort:1, current design, by 32" "$r"
-# Two-way programs, 4 ports a slot: every opcode, a loop, eval, a stuck walker, by one clock and by 8.
-for run in 'two:add 2 3' 'two:sub 2 5' 'two:eval @ ([swap], (△, △△))' 'two:cond(swap, copy) @ (△△, (△, △△))' 'two:copy; merge @ (△△, (△, △))' 'two:merge @ ((△, △), (△, △△))'; do
+# Two-way programs, 4 ports a slot, programs as trees: a loop, eval and its inverse (a program inverted as it
+# runs), triage, a stuck walker, by one clock and by 8; and recursion that branches (mirror) on a bigger grid.
+for run in 'two:add 2 3' 'two:sub 2 5' 'two:twice @ ([succ], 2)' 'two:~twice @ ([succ], 4)' 'two:cond(swap, copy) @ (△△, (△, △△))' 'two:triage; untriage @ (△△, △)' 'two:merge @ ((△, △), (△, △△))'; do
   r=$(gpu "$run" --grid 72 --seed 2 --check --latest | tail -1) || fail=1
   printf "   %-28s %s\n" "$run" "$r"
 done
+r=$(gpu 'two:mirror (△, △△)' --grid 128 --seed 2 --check --latest | tail -1) || fail=1
+printf "   %-28s %s\n" "two:mirror (△, △△)" "$r"
 r=$(gpu 'two:add 1 2' --grid 64 --seed 4 --check --batch 8 --latest | tail -1) || fail=1
 printf "   %-28s %s\n" "two:add 1 2, by 8" "$r"
 [ $fail = 0 ] || { echo "   the GPU differs from the simulator"; exit 1; }

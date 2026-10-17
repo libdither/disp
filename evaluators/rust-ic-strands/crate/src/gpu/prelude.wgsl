@@ -130,13 +130,12 @@ fn port_k(e: u32) -> u32 { if (AR == 4u) { return min(e >> 2u, 2u); } return sel
 fn port_q(e: u32) -> u32 { return (e - AR * port_k(e)) & 3u; }
 
 // ---- tags --------------------------------------------------------------------------------------
-/// Readers, and two-way programs' walkers (lattice.rs `code`: TWO_C on).
-fn is_consumer(t: u32) -> bool { return (t >= T_A && t <= T_NRM) || (TWO && t >= TWO_C && t < TWO_END); }
-/// Values, suspensions, pairs and the movement agents (lattice.rs `code`: 15 to 20), and two-way
-/// programs' opcodes (TWO_P on).
-fn is_producer(t: u32) -> bool { return (t >= T_L && t <= T_PAIR) || (t >= T_K && t <= T_W) || (TWO && t >= TWO_P && t < TWO_C); }
+/// Readers, and two-way programs' walkers (lattice.rs `code`: TWO_P on).
+fn is_consumer(t: u32) -> bool { return (t >= T_A && t <= T_NRM) || (TWO && t >= TWO_P && t < TWO_END); }
+/// Values, suspensions, pairs and the movement agents (lattice.rs `code`: 15 to 20).
+fn is_producer(t: u32) -> bool { return (t >= T_L && t <= T_PAIR) || (t >= T_K && t <= T_W); }
 fn arity(t: u32) -> u32 {
-  if (TWO && t >= TWO_P) { let i = t - TWO_P; return 1u + ((select(TWO_AR0, TWO_AR1, i >= 16u) >> (2u * (i & 15u))) & 3u); }
+  if (TWO && t >= TWO_P && t < TWO_END) { let i = t - TWO_P; return 1u + ((TWO_AR[i >> 4u] >> (2u * (i & 15u))) & 3u); }
   if (t == T_L || t == T_EPS || t == T_OUT || t == T_I) { return 1u; }
   if (t == T_S || t == T_NRM || t == T_K || t == T_W) { return 2u; }
   return 3u;

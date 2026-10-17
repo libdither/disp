@@ -389,3 +389,12 @@ lattice"). It takes sketch B's base and leaves its pattern clauses for later:
 - **On the GPU and in the player** (2026-10-16): the GPU kernels take 4 ports a slot (44-byte sites) and
   run it bit for bit with the simulator; the player loads `two: PROG @ VALUE` and explains the rules in its
   details. At these sizes (under 300 sites) a GPU clock costs about what a CPU clock does.
+- **Programs as trees** (2026-10-17): a program is now a △ tree like any value, an instruction k stems on
+  a leaf or on a fork of its parts, and `Run` reads it a stem at a time (`R1` … `R14`), handing each node
+  back as it reads it. So the base's own case analysis works on programs: `triage` (a leaf, stem or fork
+  as a choice, tree calculus's triage made a bijection) and merging programs come free, eval runs
+  programs made at run time, and `uneval` inverts the program it is given as it runs (`Dg0`, a node at a
+  time). Recursion that branches works forward and back (`mirror`, through eval on copies of itself),
+  bit for bit on the GPU. The price: 1.7× the rewrites of instructions as agents but 25–30% more clocks,
+  the runs reading ahead while data travels; and programs copying themselves crowd the lattice enough to
+  jam the 6-fresh rules on one seed in 8, which pressure (CPU only) clears.

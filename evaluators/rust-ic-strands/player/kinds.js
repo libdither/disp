@@ -6,14 +6,18 @@ const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "
   "A+", "T1+", "Sel+", "SL+", "SS+", "SF+", "T1s+", "T1sf+", "T1sc0+", "T1sc+", "T1scf+", "TSb+",
   "A-", "Ar-", "Sel-", "SL-", "SS-", "SF-", "Dn-", "DnL-", "DnS-", "DnF-", "Arms3", "Rk", "Rs", "Rt", "Rb", "Rc",
   "H", "E", "E-", "F!", "?", "Go", "Back", "Rh", "Rq", "Arms-",
-  // Two-way programs (two:, tags 59 on, rules.rs `TWO_TAGS`): the opcodes a program is a tree of, then the walkers.
-  "swap", "assocl", "assocr", "s2f", "f2s", "uniti", "unite", "copy", "merge", "eval", "flip", "seq", "par", "cond", "loop",
-  "R", "Sp", "SpS", "Eat", "Cd", "Lk", "Lk2", "Fl", "Mrg", "MrgL", "MrgS", "MrgF"];
+  // Two-way programs (two:, tags 59 on, rules.rs `TWO_TAGS`): walkers all, programs being trees. The run, and
+  // the run having read 1 to 14 stems of an instruction; splitters, cond, loop, flip and merge; triage; inverting.
+  "R", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14",
+  "Sp", "SpS", "Eat", "Cd", "Lk", "Lk2", "Fl", "Mrg", "MrgL", "MrgS", "MrgF", "Tr", "Ut", "Ut2", "IsF", "Dg0", "Dg1", "Dg2", "Dg3", "DgE", "DgO"];
 const ARITY = [0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2, 1, 3, 2, 3, 3, 3, 1, 2,
   4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 3, 4, 4, 3, 2, 3, 4, 4, 2, 4, 4, 3, 3, 4, 3, 3, 2, 1, 1, 1, 3, 2, 2,
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 2, 4, 3, 2, 1, 4, 4, 4, 2, 3, 2, 3, 4];
-/// Two-way programs (two:): the opcodes, programs as data (59 to 73), and the walkers that run them (74 to 85).
-const isOpcode = t => t >= 59 && t <= 73, isTwoWalker = t => t >= 74 && t <= 85;
+  ...Array(15).fill(4), 3, 2, 1, 4, 4, 4, 2, 3, 2, 3, 4, 2, 3, 3, 2, ...Array(6).fill(2)];
+/// Two-way programs (two:): the walkers that run them (59 to 94), the run and its reading an instruction first (59 to 73).
+const isTwoWalker = t => t >= 59 && t <= 94, isRun = t => t >= 59 && t <= 73;
+/// A two-way program's instructions, as many stems on a leaf as their place here (rules.rs `TWO_RULES`), and those on a fork.
+const INSTR = ["id", "swap", "flip", "assocl", "assocr", "uniti", "unite", "copy", "merge", "eval", "uneval", "triage", "untriage", "s2f", "f2s"];
+const INSTR_FORK = ["a; b", "(a | b)", "cond(a, b)", "loop(a)"];
 /// Keeping history (set=resid=1): the walkers that work the answer out leaving a residual (21 to 32, E 50 and
 /// the click Go 54), the walkers that run it back (33 to 42, E- 51, the click Back 55 and Arms- 58), the arms
 /// a triage carries (43), the residuals and histories (44 to 49, 56, 57), the forgetter (52) and the hole (53).
@@ -40,14 +44,13 @@ const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pa
   H: "history of an application", E: "run: works a term given as a tree out", "E-": "run back: works the history back to the term",
   "F!": "forgetter", "?": "hole: something forgotten", Go: "the root, clicked: run", Back: "the root, clicked: run back",
   Rh: "residual of reading a hole", Rq: "residual of a dispatch on a hole", "Arms-": "arms back into a triage",
-  swap: "swap: (u, v) ↔ (v, u)", assocl: "regroup: (u, (v, w)) → ((u, v), w)", assocr: "regroup: ((u, v), w) → (u, (v, w))",
-  s2f: "stem to fork: △t → (△, t)", f2s: "fork to stem: (△, t) → △t", uniti: "add a leaf: x → (△, x)", unite: "drop a leaf: (△, x) → x",
-  copy: "copy: x → (x, x)", merge: "merge: (x, x) → x", eval: "eval: (q, z) → (q, q z)", flip: "flip a choice: (△, v) ↔ (△△, v)",
-  seq: "a; b: a, then b", par: "(a | b): (u, v) → (a u, b v)", cond: "cond(a, b): a on a leaf's side, b on the other",
-  loop: "loop(c): c again while it gives the left side", R: "run: a program on a tree", Sp: "splitter: a fork taken apart",
-  SpS: "splitter: a stem taken apart", Eat: "eats a leaf", Cd: "cond, reading the tag", Lk: "loop, reading the state", Lk2: "loop, reading its tag",
-  Fl: "flip, reading the tag", Mrg: "merge, reading the first half", MrgL: "merge, having read a leaf", MrgS: "merge, having read a stem",
-  MrgF: "merge, having read a fork" };
+  R: "run: a program on a tree",
+  ...Object.fromEntries(INSTR.slice(1).map((_, i) => [`R${i + 1}`, `run, ${i + 1} stem${i ? "s" : ""} of an instruction read`])),
+  Sp: "splitter: a fork taken apart", SpS: "splitter: a stem taken apart", Eat: "eats a leaf", Cd: "cond, reading the tag", Lk: "loop, reading the state",
+  Lk2: "loop, reading its tag", Fl: "flip, reading the tag", Mrg: "merge, reading the first half", MrgL: "merge, having read a leaf",
+  MrgS: "merge, having read a stem", MrgF: "merge, having read a fork", Tr: "triage", Ut: "untriage, reading the outer tag",
+  Ut2: "untriage, reading the inner tag", IsF: "fork check", Dg0: "a program's inverse, made as it is read", Dg1: "inverting, 1 stem read",
+  Dg2: "inverting, 2 stems read", Dg3: "inverting, 3 stems read", DgE: "inverting, an even number of stems read", DgO: "inverting, an odd number of stems read" };
 const DESC = {
   L: "a leaf △, the simplest value", S: "a stem △x: a value with one child", F: "a fork △xy: a value with two children",
   P: "a suspended application f a: it becomes a value once something needs it", Pair: "a pair carrying the arms of a pending choice",
@@ -74,17 +77,19 @@ const DESC = {
   H: "the history of an application of the loaded term: its residual, and the histories of its function and argument",
   "Arms-": "running back a dispatch on a hole: the arms it kept, as the triage they were",
   ...Object.fromEntries(Object.entries(RESIDUAL_TREE).map(([r, t]) => [r, `a residual: what a step would have dropped, standing for the tree ${t}; read back as the function by an un-apply`])),
-  ...Object.fromEntries(["swap", "assocl", "assocr", "s2f", "f2s", "uniti", "unite", "copy", "merge", "eval", "flip"].map(o =>
-    [o, `an opcode of a two-way program, a bijection on trees: ${NAMES[o]}. Data until a run (R) meets it`])),
-  seq: "a two-way program: a, then b on what a gives. A run meeting it becomes two runs in a row, rewired", par: "a two-way program: a on the left half and b on the right, at once",
-  cond: "a two-way program: on (t, y), a on y if t is a leaf, else b; t is kept, so the choice can be undone", loop: "a two-way program: the input goes in as (△△, x); the body c runs while it gives a left side (△, s), and its right side (△△, y) gives y",
-  R: "runs the program on its first port on the tree on its second, and hands the program back on its third beside the result on its fourth. Meeting an opcode it rewires the tree around splitters and new runs, or leaves a walker to read data (cond, loop, flip, merge)",
+  R: "runs the program on its first port on the tree on its second, reading the program a node at a time, and hands the program back on its third beside the result on its fourth. A leaf is id and a fork (a, b) runs a then b; a stem starts an instruction, read on by R1, R2, …",
+  ...Object.fromEntries(INSTR.slice(1).map((_, i) => [`R${i + 1}`, `a run that has read ${i + 1} stem${i ? "s" : ""} of an instruction: a leaf under ${i ? "them" : "it"} is ${INSTR[i + 1]}${INSTR_FORK[i + 1] ? `, a fork ${INSTR_FORK[i + 1]}` : ""}${i < 13 ? ", and another stem reads on" : ""}`])),
   Sp: "takes a fork apart: each child goes straight to its reader", SpS: "takes a stem apart: its child goes straight to its reader",
   Eat: "eats a leaf, and is stuck on anything else", Cd: "reads cond's tag: a leaf runs a on y, anything else b; the tag and the program come back",
   Lk: "takes the loop's state apart to read its tag", Lk2: "reads the loop's tag: a left side runs the body again, a right side ends the loop",
   Fl: "flips a choice's tag: △ becomes △△ and △△ becomes △", Mrg: "merges two halves into one tree, one layer at a time: stuck where they differ",
   MrgL: "a merge whose first half was a leaf: the second must be one too", MrgS: "a merge whose first half was a stem: the second must be one too",
-  MrgF: "a merge whose first half was a fork: the second must be one too" };
+  MrgF: "a merge whose first half was a fork: the second must be one too",
+  Tr: "triage: tells a leaf, stem and fork apart as a choice, △ → (△, (△, △)), △t → (△, (△△, t)), △ab → (△△, (a, b)), so a program can choose by the shape of any tree, a program's included",
+  Ut: "untriage, triage's inverse, reading the outer tag: a leaf opens the inner choice (Ut2), △△ lets the fork under it through",
+  Ut2: "untriage reading the inner tag: (△, △) gives a leaf, (△△, t) the stem △t", IsF: "lets a fork through, and is stuck on anything else",
+  Dg0: "makes the inverse of the program it reads, a node at a time, for uneval: a; b becomes b⁻¹; a⁻¹, each instruction its partner (3 with 4, 5 with 6, …), swap and flip themselves",
+  ...Object.fromEntries(["Dg1", "Dg2", "Dg3", "DgE", "DgO"].map(d => [d, `an instruction being inverted, ${NAMES[d].slice(11)}: one stem is held back, so the end can give one fewer or one more`])) };
 const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right"], P: ["value", "function", "argument"], Pair: ["value", "first", "second"],
   A: ["operator", "argument", "result"], T1: ["subject", "arms", "result"], Sel: ["subject", "arms", "result"], Unp: ["pair", "first", "second"],
   Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"], Sup: ["value", "first side", "second side"],
@@ -100,12 +105,13 @@ const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right
   H: ["value", "residual", "function's history", "argument's history"], E: ["term", "value", "history"], "E-": ["history", "value", "term"],
   "F!": ["residual", "up"], "?": ["value"], Go: ["term"], Back: ["answer and history"], Rh: ["value", "function", "argument"], Rq: ["value", "arms"],
   "Arms-": ["arms", "triage"],
-  ...Object.fromEntries(["swap", "assocl", "assocr", "s2f", "f2s", "uniti", "unite", "copy", "merge", "eval", "flip"].map(o => [o, ["program"]])),
-  seq: ["program", "a", "b"], par: ["program", "a (left)", "b (right)"], cond: ["program", "a (on a leaf)", "b (otherwise)"], loop: ["program", "body"],
   R: ["program", "input", "program out", "result"], Sp: ["fork", "left", "right"], SpS: ["stem", "child"], Eat: ["leaf"],
   Cd: ["tag", "⟨a, b⟩", "y", "⟨program, result⟩"], Lk: ["state", "program", "program out", "result"], Lk2: ["tag", "⟨program, rest⟩", "program out", "result"],
   Fl: ["tag", "tag out"], Mrg: ["first", "second", "merged"], MrgL: ["second", "merged"], MrgS: ["second", "first's child", "merged"],
-  MrgF: ["second", "first's left", "first's right", "merged"] };
+  MrgF: ["second", "first's left", "first's right", "merged"],
+  ...Object.fromEntries(INSTR.slice(1).map((_, i) => [`R${i + 1}`, ["program", "input", "program out", "result"]])),
+  Tr: ["tree", "choice"], Ut: ["outer tag", "rest", "tree"], Ut2: ["inner tag", "rest", "tree"], IsF: ["tree", "fork"],
+  ...Object.fromEntries(["Dg0", "Dg1", "Dg2", "Dg3", "DgE", "DgO"].map(d => [d, ["program", "inverse"]])) };
 const MEANING = {
   "A·L": "apply(leaf, x) = stem x", "A·S": "apply(stem a, x) = fork a x", "A·F": "apply(fork a b, x) = triage a with arms ⟨b, x⟩",
   "A·P": "the operator is still suspended: force it first, then apply", "T1·L": "the subject a is a leaf: the result is b, and c is erased",
@@ -151,21 +157,31 @@ const MEANING = {
   "Sel+·?": "a dispatch on a hole gives a hole; Rq keeps the arms", "A-·Rh": "give back the function and argument Rh kept",
   "A-·Rq": "give back the arms Rq kept as the triage, and a hole for the argument", "Arms-·Arms3": "the arms w, x, b as the triage △(△wx)b",
   "T1s+·?": "the S rule: a hole is not B", "T1sf+·?": "the S rule: a hole is not B", "T1sc+·?": "the S rule: a hole is not C", "T1scf+·?": "the S rule: a hole is not C",
-  "R·L": "the identity: the input is the result, and the leaf goes back as the program", "R·swap": "split (u, v) and join it again as (v, u)",
-  "R·assocl": "split (u, (v, w)) twice and join ((u, v), w)", "R·assocr": "split ((u, v), w) twice and join (u, (v, w))",
-  "R·s2f": "split the stem △t and join (△, t)", "R·f2s": "split (△, t), eat the leaf and join △t", "R·uniti": "join (△, x)",
-  "R·unite": "split (△, x) and eat the leaf", "R·copy": "a duplicator copies x into (x, x)", "R·merge": "split (x, y) and merge the halves, stuck if they differ",
-  "R·eval": "split (q, z) and run q on z: q comes back beside its result", "R·seq": "run a, then b on what a gives: two runs in a row, the programs joined again as they come back",
-  "R·par": "split (u, v) and run a on u and b on v at once", "R·cond": "split (t, y): a cond walker reads t", "R·loop": "the input goes in as (△△, x): a loop walker reads what each round gives",
-  "R·flip": "split (t, v): a flip walker reads t", "Sp·F": "the fork comes apart: each child is wired to its reader", "SpS·S": "the stem comes apart", "Eat·L": "the leaf is eaten",
+  "R·L": "id: the input is the result, and the leaf goes back as the program",
+  "R·F": "a; b: run a, then b on what a gives, two runs in a row; the programs they give back join in the fork again",
+  ...Object.fromEntries(INSTR.slice(0, 14).map((_, k) => [`${k ? `R${k}` : "R"}·S`, `one more stem of an instruction: read on (R${k + 1}), the stem going back into the program`])),
+  ...Object.fromEntries(Object.entries({ 1: "swap: split (u, v) and join (v, u)", 2: "flip: split (t, v): a flip walker reads t",
+    3: "assocl: split (u, (v, w)) twice and join ((u, v), w)", 4: "assocr: split ((u, v), w) twice and join (u, (v, w))", 5: "uniti: join (△, x)",
+    6: "unite: split (△, x) and eat the leaf", 7: "copy: a duplicator copies x into (x, x)", 8: "merge: split (x, y) and merge the halves, stuck if they differ",
+    9: "eval: split (q, z) and run q on z; q comes back beside its result", 10: "uneval: split (q, w), invert q, run it on w, and invert what comes back into q again",
+    11: "triage: a triage walker reads x", 12: "untriage: split (t, y): an untriage walker reads t", 13: "s2f: split the stem △t and join (△, t)",
+    14: "f2s: split (△, t), eat the leaf and join △t" }).map(([k, m]) => [`R${k}·L`, `${m}; the leaf goes back into the program`])),
+  "R1·F": "(a | b): split (u, v) and run a on u and b on v at once", "R2·F": "cond(a, b): split (t, y): a cond walker reads t",
+  "R3·F": "loop(a): the input goes in as (△△, x), a loop walker reading what each round gives; the fork goes back at once, a joining it at the end",
+  "Sp·F": "the fork comes apart: each child is wired to its reader", "SpS·S": "the stem comes apart", "Eat·L": "the leaf is eaten",
   "Cd·L": "the tag is a leaf: run a on y; b comes back untouched", "Cd·S": "the tag is a stem: run b on y; a comes back untouched", "Cd·F": "the tag is a fork: run b on y; a comes back untouched",
-  "Lk·F": "the state (t, y) comes apart: read its tag t", "Lk2·L": "a left side (△, y): run the body again on it", "Lk2·S": "a right side (△△, y): the loop is done, and y is its result",
+  "Lk·F": "the state (t, y) comes apart: read its tag t", "Lk2·L": "a left side (△, y): run the body again on it", "Lk2·S": "a right side (△△, y): the loop is done, y its result and the body back in the loop's fork",
   "Fl·L": "△ becomes △△", "Fl·S": "△△ becomes △", "Mrg·L": "the first half is a leaf: read the second", "Mrg·S": "the first half is a stem: read the second",
   "Mrg·F": "the first half is a fork: read the second", "MrgL·L": "both halves leaves: one leaf", "MrgS·S": "both halves stems: one stem; merge their children",
   "MrgF·F": "both halves forks: one fork; merge their children",
-  ...Object.fromEntries(["swap", "assocl", "assocr", "s2f", "f2s", "uniti", "unite", "copy", "merge", "eval", "flip"].map(o => [`Dn·${o}`, `two copies of ${o}`])),
-  "Dn·seq": "copy the node; duplicators copy both parts", "Dn·par": "copy the node; duplicators copy both parts", "Dn·cond": "copy the node; duplicators copy both parts",
-  "Dn·loop": "copy the loop; a duplicator copies its body" };
+  "Tr·L": "a leaf: (△, (△, △))", "Tr·S": "a stem △t: (△, (△△, t))", "Tr·F": "a fork △ab: (△△, (a, b))",
+  "Ut·L": "the outer tag is △: read the inner choice", "Ut·S": "the outer tag is △△: what it holds must be a fork", "Ut2·L": "(△, (△, △)) was a leaf",
+  "Ut2·S": "(△, (△△, t)) was the stem △t", "IsF·F": "a fork, as untriage wants",
+  "Dg0·L": "id is its own inverse", "Dg0·F": "(a; b)⁻¹ = b⁻¹; a⁻¹: the parts invert crossed over", "Dg0·S": "an instruction: hold its first stem back and read on",
+  ...Object.fromEntries([["Dg1", "Dg2"], ["Dg2", "Dg3"], ["Dg3", "DgE"], ["DgE", "DgO"], ["DgO", "DgE"]].map(([d, e]) => [`${d}·S`, `another stem: the one held back goes out, and this one is held back (${e})`])),
+  "Dg1·L": "swap is its own inverse", "Dg2·L": "flip is its own inverse", "Dg1·F": "(a | b)⁻¹ = (a⁻¹ | b⁻¹)", "Dg2·F": "cond(a, b)⁻¹ = cond(a⁻¹, b⁻¹)",
+  "Dg3·F": "loop(a)⁻¹ = loop(a⁻¹)", "Dg3·L": "assocl's inverse is assocr: one stem more", "DgO·L": "an odd instruction's inverse is the next: one stem more",
+  "DgE·L": "an even instruction's inverse is the one before: the stem held back is dropped" };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
 // Movement agents in colours of what they do: K red (erases), Sx and W greens (copy), B orange and C yellow (move), I sky (a wire).
 // Keeping history: walkers forward as apply and triage are, walkers back in pinks, residuals and histories amber,
@@ -176,18 +192,20 @@ const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#
   "#ff6ac1", "#ff8fd0", "#e05fb0", "#e05fb0", "#e05fb0", "#e05fb0", "#e07cff", "#e07cff", "#e07cff", "#e07cff", "#c792ea",
   "#ffc777", "#ffc777", "#ffc777", "#ffc777", "#ffc777",
   "#ffc777", "#56c8ff", "#ff6ac1", "#db4b4b", "#ffffff", "#6ee07a", "#ff6ac1", "#ffc777", "#ffc777", "#e05fb0",
-  // Two-way programs: opcodes, programs as data, in pale violets (the nodes that hold parts deeper); the run sky blue as
-  // an apply is, splitters teal, eating a leaf an eraser's grey, the walkers that read data warm, merges violet.
-  ...Array(11).fill("#c4b5f0"), "#a898e0", "#a898e0", "#a898e0", "#a898e0",
-  "#56c8ff", "#4fd6be", "#4fd6be", "#8a96a8", "#f4d35e", "#ff9e64", "#ff9e64", "#ff6ac1", "#e07cff", "#e07cff", "#e07cff", "#e07cff"];
+  // Two-way programs (their programs trees, in greys): the run sky blue as an apply is, splitters teal, eating a leaf
+  // an eraser's grey, the walkers that read data warm, merges violet, triage green, inverting pink as running back is.
+  ...Array(15).fill("#56c8ff"), "#4fd6be", "#4fd6be", "#8a96a8", "#f4d35e", "#ff9e64", "#ff9e64", "#ff6ac1", "#e07cff", "#e07cff", "#e07cff", "#e07cff",
+  "#9ece6a", "#c3e88d", "#c3e88d", "#8a96a8", ...Array(6).fill("#e05fb0")];
 const kindColor = t => COLOR[t] ?? "#8a96a8";
 /// A kind as its icon (shapes.js) and its name.
 const kindHTML = t => `${shapeSVG(t, kindColor(t))}${NAMES[TAGS[t]] ?? `agent of kind ${t}`}`;
 const isConsumer = t => t >= 6 && t <= 12 || t >= 21 && t <= 42 || [50, 51, 52, 54, 55, 58].includes(t) || isTwoWalker(t);
-const isProducer = t => t >= 1 && t <= 5 || t === 14 || isView(t) || t >= 43 && t <= 49 || t === 53 || t === 56 || t === 57 || isOpcode(t);
+const isProducer = t => t >= 1 && t <= 5 || t === 14 || isView(t) || t >= 43 && t <= 49 || t === 53 || t === 56 || t === 57;
 // Which ports are outputs (sources): a producer's principal, a computation's result (and residual), a
 // duplicator's or unpair's two parts, a merge's value, what a run gives or runs back to.
 const OUTS = { 24: [1, 2], 34: [1, 2], 36: [1, 2], 39: [2], 40: [1], 41: [2], 42: [3], 50: [1, 2], 51: [2], 52: [1], 54: [], 55: [], 58: [1],
-  74: [2, 3], 75: [1, 2], 76: [1], 77: [], 78: [3], 79: [2, 3], 80: [2, 3], 81: [1], 82: [2], 83: [1], 84: [2], 85: [3] };
+  ...Object.fromEntries(Array.from({ length: 15 }, (_, i) => [59 + i, [2, 3]])),
+  74: [1, 2], 75: [1], 76: [], 77: [3], 78: [2, 3], 79: [2, 3], 80: [1], 81: [2], 82: [1], 83: [2], 84: [3], 85: [1], 86: [2], 87: [2], 88: [1],
+  89: [1], 90: [1], 91: [1], 92: [1], 93: [1], 94: [1] };
 const isSource = (t, p) => isProducer(t) ? p === 0 : (t >= 6 && t <= 8) ? p === 2 : t === 12 ? p === 1 : (t === 9 || t === 10) ? p > 0
   : OUTS[t] ? OUTS[t].includes(p) : t >= 21 && t <= 42 ? p >= 2 : false;

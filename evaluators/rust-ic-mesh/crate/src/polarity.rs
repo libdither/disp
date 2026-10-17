@@ -23,14 +23,13 @@ pub const fn is_source(tag: Tag, p: usize) -> bool {
         Tag::Mg | Tag::MgS | Tag::UEv => p == 2,
         Tag::MgL | Tag::Fg | Tag::UArms => p == 1,
         Tag::MgF => p == 3,
-        Tag::Swap | Tag::AssocL | Tag::AssocR | Tag::StemFork | Tag::ForkStem | Tag::Uniti | Tag::Unite | Tag::Copy | Tag::Merge
-        | Tag::Eval | Tag::Flip | Tag::Seq | Tag::Par | Tag::Cond | Tag::Loop => p == 0,
-        Tag::Run | Tag::Lk | Tag::Lk2 => p == 2 || p == 3,
+        Tag::Run | Tag::R1 | Tag::R2 | Tag::R3 | Tag::R4 | Tag::R5 | Tag::R6 | Tag::R7 | Tag::R8 | Tag::R9 | Tag::R10 | Tag::R11
+        | Tag::R12 | Tag::R13 | Tag::R14 | Tag::Lk | Tag::Lk2 => p == 2 || p == 3,
         Tag::Split => p == 1 || p == 2,
-        Tag::SplitS | Tag::MrgL | Tag::Fl => p == 1,
+        Tag::SplitS | Tag::MrgL | Tag::Fl | Tag::Tr | Tag::IsF | Tag::Dg0 | Tag::Dg1 | Tag::Dg2 | Tag::Dg3 | Tag::DgE | Tag::DgO => p == 1,
         Tag::Eat => false,
         Tag::Cd | Tag::MrgF => p == 3,
-        Tag::Mrg | Tag::MrgS => p == 2,
+        Tag::Mrg | Tag::MrgS | Tag::Ut | Tag::Ut2 => p == 2,
     }
 }
 

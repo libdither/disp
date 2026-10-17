@@ -101,24 +101,11 @@ pub enum Tag {
     /// history bundled there (each with a normalizer after it and a root again). [p]
     Go,
     Back,
-    // Two-way programs (`TWO_RULES`): a program is a tree of these opcodes (a leaf is the identity), and
-    // `Run` runs it on a tree, handing the program back with the result. Every opcode is a bijection.
-    Swap,     // (u, v) ↔ (v, u): [p]
-    AssocL,   // (u, (v, w)) → ((u, v), w): [p]
-    AssocR,   // ((u, v), w) → (u, (v, w)): [p]
-    StemFork, // △t → (△, t): [p]
-    ForkStem, // (△, t) → △t: [p]
-    Uniti,    // x → (△, x): [p]
-    Unite,    // (△, x) → x: [p]
-    Copy,     // x → (x, x): [p]
-    Merge,    // (x, x) → x, stuck on two different halves: [p]
-    Eval,     // (q, z) → (q, q z), the program q handed back: [p]
-    Flip,     // (△, v) ↔ (△△, v): the two sides of a choice swapped: [p]
-    Seq,      // a then b: [p, a, b]
-    Par,      // (u, v) → (a u, b v), the two at once: [p, a, b]
-    Cond,     // (t, y) → (t, a y) if t is a leaf, else (t, b y): [p, a, b]
-    Loop,     // x as (△△, x), then c while it gives (△, s), until it gives (△△, y): y: [p, c]
+    // Two-way programs (`TWO_RULES`): a program is a tree, and `Run` runs it on a tree, reading it a node at a
+    // time and handing it back with the result. Every step is a bijection.
     Run,      // runs a program: [p(program), x, program out, result]
+    // `Run` having read k stems of an instruction, k from 1 to 14: the same ports.
+    R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14,
     Split,    // takes a fork apart: [p(fork), left, right]
     SplitS,   // takes a stem apart: [p(stem), child]
     Eat,      // eats a leaf, stuck on anything else: [p]
@@ -130,6 +117,13 @@ pub enum Tag {
     MrgL,     // having read a leaf: [p(b), out]
     MrgS,     // a stem: [p(b), child, out]
     MrgF,     // a fork: [p(b), left, right, out]
+    Tr,       // triage: △ → (△, (△, △)), △t → (△, (△△, t)), △ab → (△△, (a, b)): [p, out]
+    Ut,       // its inverse, reading the first tag: [p(tag), rest, out]
+    Ut2,      // ... and the second: [p(tag), rest, out]
+    IsF,      // lets a fork through, stuck on anything else: [p, out]
+    // The inverse of a program, made as it is read (`Dg0` at a node, `Dg1` to `Dg3` and `DgE`/`DgO` having
+    // read that many stems or an even or odd number beyond): [p(program), inverse out]
+    Dg0, Dg1, Dg2, Dg3, DgE, DgO,
 }
 
 /// Every tag, in the order engines number them (from 1, 0 meaning none). `Sup` comes last so
@@ -145,10 +139,10 @@ pub const VIEW_TAGS: [Tag; 6] = [Tag::K, Tag::Sx, Tag::B, Tag::C, Tag::I, Tag::W
 
 /// The tags of two-way programs (`TWO_RULES`), numbered after keeping history's where the strand lattice
 /// runs them.
-pub const TWO_TAGS: [Tag; 27] = [
-    Tag::Swap, Tag::AssocL, Tag::AssocR, Tag::StemFork, Tag::ForkStem, Tag::Uniti, Tag::Unite, Tag::Copy, Tag::Merge, Tag::Eval, Tag::Flip,
-    Tag::Seq, Tag::Par, Tag::Cond, Tag::Loop,
-    Tag::Run, Tag::Split, Tag::SplitS, Tag::Eat, Tag::Cd, Tag::Lk, Tag::Lk2, Tag::Fl, Tag::Mrg, Tag::MrgL, Tag::MrgS, Tag::MrgF,
+pub const TWO_TAGS: [Tag; 36] = [
+    Tag::Run, Tag::R1, Tag::R2, Tag::R3, Tag::R4, Tag::R5, Tag::R6, Tag::R7, Tag::R8, Tag::R9, Tag::R10, Tag::R11, Tag::R12, Tag::R13, Tag::R14,
+    Tag::Split, Tag::SplitS, Tag::Eat, Tag::Cd, Tag::Lk, Tag::Lk2, Tag::Fl, Tag::Mrg, Tag::MrgL, Tag::MrgS, Tag::MrgF,
+    Tag::Tr, Tag::Ut, Tag::Ut2, Tag::IsF, Tag::Dg0, Tag::Dg1, Tag::Dg2, Tag::Dg3, Tag::DgE, Tag::DgO,
 ];
 
 /// The tags of keeping history (`RESID_RULES`), numbered after the movement agents' where the strand
@@ -163,11 +157,10 @@ pub const RESID_TAGS: [Tag; 38] = [
 impl Tag {
     pub fn arity(self) -> usize {
         match self {
-            Tag::L | Tag::Eps | Tag::Out | Tag::I | Tag::Hole | Tag::Go | Tag::Back
-            | Tag::Swap | Tag::AssocL | Tag::AssocR | Tag::StemFork | Tag::ForkStem | Tag::Uniti | Tag::Unite | Tag::Copy
-            | Tag::Merge | Tag::Eval | Tag::Flip | Tag::Eat => 1,
-            Tag::Loop | Tag::SplitS | Tag::MrgL | Tag::Fl => 2,
-            Tag::Run | Tag::Cd | Tag::Lk | Tag::Lk2 | Tag::MrgF => 4,
+            Tag::L | Tag::Eps | Tag::Out | Tag::I | Tag::Hole | Tag::Go | Tag::Back | Tag::Eat => 1,
+            Tag::SplitS | Tag::MrgL | Tag::Fl | Tag::Tr | Tag::IsF | Tag::Dg0 | Tag::Dg1 | Tag::Dg2 | Tag::Dg3 | Tag::DgE | Tag::DgO => 2,
+            Tag::Run | Tag::R1 | Tag::R2 | Tag::R3 | Tag::R4 | Tag::R5 | Tag::R6 | Tag::R7 | Tag::R8 | Tag::R9 | Tag::R10 | Tag::R11
+            | Tag::R12 | Tag::R13 | Tag::R14 | Tag::Cd | Tag::Lk | Tag::Lk2 | Tag::MrgF => 4,
             Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Seam | Tag::MgL | Tag::Rk | Tag::Fg | Tag::Rq | Tag::UArms => 2,
             Tag::RA | Tag::RT1 | Tag::RSel | Tag::SS | Tag::SF | Tag::T1s | Tag::T1sf | Tag::T1sc0 | Tag::T1sc | Tag::T1scf
             | Tag::TSb | Tag::UA | Tag::USel | Tag::USS | Tag::USF | Tag::MgF | Tag::Arms3 | Tag::Rs | Tag::Rt | Tag::Ha => 4,
@@ -177,8 +170,6 @@ impl Tag {
     pub fn is_producer(self) -> bool {
         matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup | Tag::Arms3 | Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc
                  | Tag::Ha | Tag::Hole | Tag::Rh | Tag::Rq)
-            || matches!(self, Tag::Swap | Tag::AssocL | Tag::AssocR | Tag::StemFork | Tag::ForkStem | Tag::Uniti | Tag::Unite
-                        | Tag::Copy | Tag::Merge | Tag::Eval | Tag::Flip | Tag::Seq | Tag::Par | Tag::Cond | Tag::Loop)
             || self.is_view()
     }
     pub fn is_view(self) -> bool { matches!(self, Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W) }
@@ -204,11 +195,13 @@ impl Tag {
             Tag::Arms3 => "Arms3", Tag::Rk => "Rk", Tag::Rs => "Rs", Tag::Rt => "Rt", Tag::Rb => "Rb", Tag::Rc => "Rc", Tag::Ha => "H",
             Tag::Ev => "E", Tag::UEv => "E-", Tag::Fg => "F!", Tag::Hole => "?", Tag::Go => "Go", Tag::Back => "Back",
             Tag::Rh => "Rh", Tag::Rq => "Rq", Tag::UArms => "Arms-",
-            Tag::Swap => "swap", Tag::AssocL => "assocl", Tag::AssocR => "assocr", Tag::StemFork => "s2f", Tag::ForkStem => "f2s",
-            Tag::Uniti => "uniti", Tag::Unite => "unite", Tag::Copy => "copy", Tag::Merge => "merge", Tag::Eval => "eval", Tag::Flip => "flip",
-            Tag::Seq => "seq", Tag::Par => "par", Tag::Cond => "cond", Tag::Loop => "loop",
-            Tag::Run => "R", Tag::Split => "Sp", Tag::SplitS => "SpS", Tag::Eat => "Eat", Tag::Cd => "Cd", Tag::Lk => "Lk", Tag::Lk2 => "Lk2", Tag::Fl => "Fl",
+            Tag::Run => "R", Tag::R1 => "R1", Tag::R2 => "R2", Tag::R3 => "R3", Tag::R4 => "R4", Tag::R5 => "R5", Tag::R6 => "R6",
+            Tag::R7 => "R7", Tag::R8 => "R8", Tag::R9 => "R9", Tag::R10 => "R10", Tag::R11 => "R11", Tag::R12 => "R12", Tag::R13 => "R13",
+            Tag::R14 => "R14",
+            Tag::Split => "Sp", Tag::SplitS => "SpS", Tag::Eat => "Eat", Tag::Cd => "Cd", Tag::Lk => "Lk", Tag::Lk2 => "Lk2", Tag::Fl => "Fl",
             Tag::Mrg => "Mrg", Tag::MrgL => "MrgL", Tag::MrgS => "MrgS", Tag::MrgF => "MrgF",
+            Tag::Tr => "Tr", Tag::Ut => "Ut", Tag::Ut2 => "Ut2", Tag::IsF => "IsF",
+            Tag::Dg0 => "Dg0", Tag::Dg1 => "Dg1", Tag::Dg2 => "Dg2", Tag::Dg3 => "Dg3", Tag::DgE => "DgE", Tag::DgO => "DgO",
         }
     }
 }
@@ -547,72 +540,118 @@ pub static FORGET_RULES: &[Rule] = &[
     Rule { consumer: SF, producer: Arms3, fresh: &[Unp, RA, RA, Rt, F, Fg], wires: &[(X(0, 0), C(1)), (X(1, 0), Px(3)), (X(1, 1), X(0, 1)), (X(1, 2), X(2, 0)), (X(2, 1), X(0, 2)), (X(2, 2), C(2)), (X(1, 3), X(4, 1)), (X(2, 3), X(4, 2)), (X(3, 1), X(4, 0)), (X(3, 2), Px(1)), (X(3, 3), Px(2)), (X(5, 1), C(3)), (X(3, 0), X(5, 0))], ..PLAIN },
 ];
 
-/// Two-way programs: a program is a tree whose nodes are opcodes (a leaf is the identity), every one a
-/// bijection on trees, and `Run` [program, x, program out, result] runs it, handing the program back with
-/// the result. Sequence, parallel, swap, regrouping, stem↔fork, a leaf added or dropped, and eval are
-/// wiring around `Split` (a fork taken apart); `Cond` reads a tag it keeps, `Loop` reads the state it
-/// left, and `Merge` reads two halves to check they are one tree. A choice is a sum, as in James and
-/// Sabry's Π: (△, v) its left, (△△, v) its right; `Cond` is Π's ⊕, `Flip` its swap, and `Loop` its trace. Running back is running the inverse
-/// program, read off the program's text, forward. Duplicators copy trees and programs as everywhere.
+/// Two-way programs: a program is a tree, run by `Run` [program, x, program out, result], which reads it a
+/// node at a time and hands it back with the result, so a loop runs its body again without copying it. An
+/// instruction is k stems on a leaf (an instruction with no parts) or on a fork of its two parts:
+///
+/// | k | on a leaf | on a fork (a, b) |
+/// |---|---|---|
+/// | 0 | id | a; b |
+/// | 1 | swap: (u, v) ↔ (v, u) | (a \| b): (u, v) → (a u, b v) |
+/// | 2 | flip: (△, v) ↔ (△△, v) | cond(a, b): (t, y) → (t, a y) for a leaf t, else (t, b y) |
+/// | 3, 4 | assocl, assocr: (u, (v, w)) ↔ ((u, v), w) | loop(a), b kept as it is: x as (△△, x), then a while it gives (△, s), until (△△, y): y |
+/// | 5, 6 | uniti, unite: x ↔ (△, x) | |
+/// | 7, 8 | copy, merge: x ↔ (x, x), merge stuck on two different halves | |
+/// | 9, 10 | eval, uneval: (q, z) ↔ (q, q z), the program q handed back | |
+/// | 11, 12 | triage, untriage: △ ↔ (△, (△, △)), △t ↔ (△, (△△, t)), △ab ↔ (△△, (a, b)) | |
+/// | 13, 14 | s2f, f2s: △t ↔ (△, t) | |
+///
+/// From 3 on, instructions pair up as each other's inverses (3 with 4, 5 with 6, …), and swap and flip are
+/// their own, so a program's inverse is made as it is read (`Dg0`). Programs being trees, copying, merging
+/// and taking them apart is what it is for any tree. A choice is a sum, as in James and Sabry's Π: (△, v)
+/// its left, (△△, v) its right; `cond` is Π's ⊕, `flip` its swap, and `loop` its trace. Running back is
+/// running the inverse program forward.
+macro_rules! read_stem {
+    ($r:ident, $next:ident) => {
+        Rule { consumer: $r, producer: S, fresh: &[S, $next], wires: &[(X(0, 0), C(2)), (X(0, 1), X(1, 2)), (X(1, 0), Px(1)), (X(1, 1), C(1)), (X(1, 3), C(3))], ..PLAIN }
+    };
+}
+/// A stem of an instruction being inverted: the one held back goes out, and this one is held back.
+macro_rules! dagger_stem {
+    ($d:ident, $next:ident) => {
+        Rule { consumer: $d, producer: S, fresh: &[S, $next], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 1)), (X(1, 0), Px(1))], ..PLAIN }
+    };
+}
 pub static TWO_RULES: &[Rule] = &[
-    // ---- Run meets an opcode ----
+    // ---- Run reading an instruction: a leaf is id, a fork a; b, and a stem one more of k ----
     Rule { consumer: Run, producer: L, fresh: &[L], wires: &[(X(0, 0), C(2)), (C(1), C(3))], ..PLAIN },
-    Rule { consumer: Run, producer: Swap, fresh: &[Split, F, Swap],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 2)), (X(0, 2), X(1, 1)), (X(1, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
-    // (u, (v, w)) → ((u, v), w)
-    Rule { consumer: Run, producer: AssocL, fresh: &[Split, Split, F, F, AssocL],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 1)), (X(0, 2), X(1, 0)), (X(1, 1), X(3, 2)), (X(1, 2), X(2, 2)), (X(2, 1), X(3, 0)),
-                 (X(2, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
-    // ((u, v), w) → (u, (v, w))
-    Rule { consumer: Run, producer: AssocR, fresh: &[Split, Split, F, F, AssocR],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(3, 2)), (X(1, 1), X(2, 1)), (X(1, 2), X(3, 1)), (X(3, 0), X(2, 2)),
-                 (X(2, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
-    // △t → (△, t)
-    Rule { consumer: Run, producer: StemFork, fresh: &[SplitS, F, L, StemFork],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 2)), (X(1, 1), X(2, 0)), (X(1, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
-    // (△, t) → △t
-    Rule { consumer: Run, producer: ForkStem, fresh: &[Split, Eat, S, ForkStem],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(2, 1)), (X(2, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
-    Rule { consumer: Run, producer: Uniti, fresh: &[F, L, Uniti],
-        wires: &[(X(0, 1), X(1, 0)), (X(0, 2), C(1)), (X(0, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
-    Rule { consumer: Run, producer: Unite, fresh: &[Split, Eat, Unite],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(3)), (X(2, 0), C(2))], ..PLAIN },
-    Rule { consumer: Run, producer: Copy, fresh: &[Dn, F, Copy],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(1, 2)), (X(1, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
-    Rule { consumer: Run, producer: Merge, fresh: &[Split, Mrg, Merge],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 1)), (X(1, 2), C(3)), (X(2, 0), C(2))], ..PLAIN },
-    // (q, z) → (q, q z): a Run of q on z
-    Rule { consumer: Run, producer: Eval, fresh: &[Split, Run, F, Eval],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 1)), (X(1, 2), X(2, 1)), (X(1, 3), X(2, 2)), (X(2, 0), C(3)),
-                 (X(3, 0), C(2))], ..PLAIN },
-    Rule { consumer: Run, producer: Seq, fresh: &[Run, Run, Seq],
+    Rule { consumer: Run, producer: F, fresh: &[Run, Run, F],
         wires: &[(X(0, 0), Px(1)), (X(0, 1), C(1)), (X(0, 2), X(2, 1)), (X(0, 3), X(1, 1)), (X(1, 0), Px(2)), (X(1, 2), X(2, 2)),
                  (X(1, 3), C(3)), (X(2, 0), C(2))], ..PLAIN },
-    Rule { consumer: Run, producer: Par, fresh: &[Split, Run, Run, F, Par],
+    read_stem!(Run, R1), read_stem!(R1, R2), read_stem!(R2, R3), read_stem!(R3, R4), read_stem!(R4, R5), read_stem!(R5, R6),
+    read_stem!(R6, R7), read_stem!(R7, R8), read_stem!(R8, R9), read_stem!(R9, R10), read_stem!(R10, R11), read_stem!(R11, R12),
+    read_stem!(R12, R13), read_stem!(R13, R14),
+    // ---- k stems on a leaf: the leaf goes back out, and the instruction runs ----
+    // swap
+    Rule { consumer: R1, producer: L, fresh: &[Split, F, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 2)), (X(0, 2), X(1, 1)), (X(1, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    // flip
+    Rule { consumer: R2, producer: L, fresh: &[Split, Fl, F, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(1, 1), X(2, 1)), (X(0, 2), X(2, 2)), (X(2, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
+    // assocl: (u, (v, w)) → ((u, v), w)
+    Rule { consumer: R3, producer: L, fresh: &[Split, Split, F, F, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 1)), (X(0, 2), X(1, 0)), (X(1, 1), X(3, 2)), (X(1, 2), X(2, 2)), (X(2, 1), X(3, 0)),
+                 (X(2, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
+    // assocr: ((u, v), w) → (u, (v, w))
+    Rule { consumer: R4, producer: L, fresh: &[Split, Split, F, F, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(3, 2)), (X(1, 1), X(2, 1)), (X(1, 2), X(3, 1)), (X(3, 0), X(2, 2)),
+                 (X(2, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
+    // uniti
+    Rule { consumer: R5, producer: L, fresh: &[F, L, L],
+        wires: &[(X(0, 1), X(1, 0)), (X(0, 2), C(1)), (X(0, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    // unite
+    Rule { consumer: R6, producer: L, fresh: &[Split, Eat, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    // copy
+    Rule { consumer: R7, producer: L, fresh: &[Dn, F, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(1, 2)), (X(1, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    // merge
+    Rule { consumer: R8, producer: L, fresh: &[Split, Mrg, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 1)), (X(1, 2), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    // eval: (q, z) → (q, q z), a Run of q on z
+    Rule { consumer: R9, producer: L, fresh: &[Split, Run, F, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 1)), (X(1, 2), X(2, 1)), (X(1, 3), X(2, 2)), (X(2, 0), C(3)),
+                 (X(3, 0), C(2))], ..PLAIN },
+    // uneval: (q, w) → (q, q† w), q inverted to run and inverted back again
+    Rule { consumer: R10, producer: L, fresh: &[L, Split, Dg0, Run, Dg0, F],
+        wires: &[(X(0, 0), C(2)), (X(1, 0), C(1)), (X(1, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(1, 2), X(3, 1)), (X(3, 2), X(4, 0)),
+                 (X(4, 1), X(5, 1)), (X(3, 3), X(5, 2)), (X(5, 0), C(3))], ..PLAIN },
+    // triage
+    Rule { consumer: R11, producer: L, fresh: &[L, Tr], wires: &[(X(0, 0), C(2)), (X(1, 0), C(1)), (X(1, 1), C(3))], ..PLAIN },
+    // untriage: (t, y), Ut reading t
+    Rule { consumer: R12, producer: L, fresh: &[L, Split, Ut],
+        wires: &[(X(0, 0), C(2)), (X(1, 0), C(1)), (X(1, 1), X(2, 0)), (X(1, 2), X(2, 1)), (X(2, 2), C(3))], ..PLAIN },
+    // s2f: △t → (△, t)
+    Rule { consumer: R13, producer: L, fresh: &[SplitS, F, L, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 2)), (X(1, 1), X(2, 0)), (X(1, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
+    // f2s: (△, t) → △t
+    Rule { consumer: R14, producer: L, fresh: &[Split, Eat, S, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(2, 1)), (X(2, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
+    // ---- k stems on a fork ----
+    // (a | b)
+    Rule { consumer: R1, producer: F, fresh: &[Split, Run, Run, F, F],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(2, 1)), (X(1, 0), Px(1)), (X(2, 0), Px(2)), (X(1, 2), X(4, 1)),
                  (X(2, 2), X(4, 2)), (X(1, 3), X(3, 1)), (X(2, 3), X(3, 2)), (X(3, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
-    // (t, y): Cd reads t; its ⟨program, result⟩ comes apart at the outputs
-    Rule { consumer: Run, producer: Cond, fresh: &[Split, Cd, Pair, Unp],
+    // cond(a, b) on (t, y): Cd reads t; its ⟨program, result⟩ comes apart at the outputs
+    Rule { consumer: R2, producer: F, fresh: &[Split, Cd, Pair, Unp],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 2)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(2, 2), Px(2)),
                  (X(1, 3), X(3, 0)), (X(3, 1), C(2)), (X(3, 2), C(3))], ..PLAIN },
-    // x enters as (△△, x)
-    Rule { consumer: Run, producer: Loop, fresh: &[Run, Lk, F, S, L],
+    // loop(a): x enters as (△△, x); the fork goes back out at once with b, a joining it when the loop ends
+    Rule { consumer: R3, producer: F, fresh: &[Run, Lk, F, S, L, F],
         wires: &[(X(0, 0), Px(1)), (X(0, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(3, 1), X(4, 0)), (X(2, 2), C(1)), (X(0, 2), X(1, 1)),
-                 (X(0, 3), X(1, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
-    Rule { consumer: Run, producer: Flip, fresh: &[Split, Fl, F, Flip],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(1, 1), X(2, 1)), (X(0, 2), X(2, 2)), (X(2, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
+                 (X(0, 3), X(1, 0)), (X(1, 2), X(5, 1)), (X(1, 3), C(3)), (X(5, 0), C(2)), (X(5, 2), Px(2))], ..PLAIN },
     // ---- taking apart, eating a leaf ----
     Rule { consumer: Split, producer: F, fresh: &[], wires: &[(C(1), Px(1)), (C(2), Px(2))], ..PLAIN },
     Rule { consumer: SplitS, producer: S, fresh: &[], wires: &[(C(1), Px(1))], ..PLAIN },
     Rule { consumer: Eat, producer: L, fresh: &[], wires: &[], ..PLAIN },
-    // ---- Cd [tag, ⟨a, b⟩, y, out]: a on y for a leaf, b otherwise; the tag and the other branch kept ----
-    Rule { consumer: Cd, producer: L, fresh: &[Unp, Run, Cond, F, L, Pair],
+    // ---- Cd [tag, ⟨a, b⟩, y, out]: a on y for a leaf, b otherwise; the tag and the other part kept ----
+    Rule { consumer: Cd, producer: L, fresh: &[Unp, Run, F, F, L, Pair],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(2, 2)), (X(1, 1), C(2)), (X(1, 2), X(2, 1)), (X(1, 3), X(3, 2)),
                  (X(3, 1), X(4, 0)), (X(5, 1), X(2, 0)), (X(5, 2), X(3, 0)), (X(5, 0), C(3))], ..PLAIN },
-    Rule { consumer: Cd, producer: S, fresh: &[Unp, Run, Cond, F, S, Pair],
+    Rule { consumer: Cd, producer: S, fresh: &[Unp, Run, F, F, S, Pair],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 1)), (X(0, 2), X(1, 0)), (X(1, 1), C(2)), (X(1, 2), X(2, 2)), (X(1, 3), X(3, 2)),
                  (X(3, 1), X(4, 0)), (X(4, 1), Px(1)), (X(5, 1), X(2, 0)), (X(5, 2), X(3, 0)), (X(5, 0), C(3))], ..PLAIN },
-    Rule { consumer: Cd, producer: F, fresh: &[Unp, Run, Cond, F, F, Pair],
+    Rule { consumer: Cd, producer: F, fresh: &[Unp, Run, F, F, F, Pair],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 1)), (X(0, 2), X(1, 0)), (X(1, 1), C(2)), (X(1, 2), X(2, 2)), (X(1, 3), X(3, 2)),
                  (X(3, 1), X(4, 0)), (X(4, 1), Px(1)), (X(4, 2), Px(2)), (X(5, 1), X(2, 0)), (X(5, 2), X(3, 0)), (X(5, 0), C(3))], ..PLAIN },
     // ---- Lk [state, program, program out, result]: the state (t, y) read; Lk2 reads t ----
@@ -622,9 +661,9 @@ pub static TWO_RULES: &[Rule] = &[
     Rule { consumer: Lk2, producer: L, fresh: &[Unp, F, L, Run, Lk],
         wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 0)), (X(0, 2), X(1, 2)), (X(1, 1), X(2, 0)), (X(3, 1), X(1, 0)), (X(3, 2), X(4, 1)),
                  (X(3, 3), X(4, 0)), (X(4, 2), C(2)), (X(4, 3), C(3))], ..PLAIN },
-    // (△△, y): out with y
-    Rule { consumer: Lk2, producer: S, fresh: &[Unp, Eat, Loop],
-        wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 1)), (X(0, 2), C(3)), (X(1, 0), Px(1)), (X(2, 0), C(2))], ..PLAIN },
+    // (△△, y): out with y, and the body back into the loop's fork
+    Rule { consumer: Lk2, producer: S, fresh: &[Unp, Eat],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), C(2)), (X(0, 2), C(3)), (X(1, 0), Px(1))], ..PLAIN },
     // ---- Fl [tag, tag out]: △ ↔ △△ ----
     Rule { consumer: Fl, producer: L, fresh: &[S, L], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0))], ..PLAIN },
     Rule { consumer: Fl, producer: S, fresh: &[Eat, L], wires: &[(X(0, 0), Px(1)), (X(1, 0), C(1))], ..PLAIN },
@@ -636,29 +675,43 @@ pub static TWO_RULES: &[Rule] = &[
     Rule { consumer: Mrg, producer: F, fresh: &[MrgF], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), Px(2)), (X(0, 3), C(2))], ..PLAIN },
     Rule { consumer: MrgF, producer: F, fresh: &[Mrg, Mrg, F],
         wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(1, 0), C(2)), (X(1, 1), Px(2)), (X(0, 2), X(2, 1)), (X(1, 2), X(2, 2)), (X(2, 0), C(3))], ..PLAIN },
-    // ---- duplicators copy programs ----
-    Rule { consumer: Dn, producer: Swap, fresh: &[Swap, Swap], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: AssocL, fresh: &[AssocL, AssocL], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: AssocR, fresh: &[AssocR, AssocR], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: StemFork, fresh: &[StemFork, StemFork], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: ForkStem, fresh: &[ForkStem, ForkStem], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Uniti, fresh: &[Uniti, Uniti], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Unite, fresh: &[Unite, Unite], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Copy, fresh: &[Copy, Copy], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Merge, fresh: &[Merge, Merge], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Eval, fresh: &[Eval, Eval], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Flip, fresh: &[Flip, Flip], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Loop, fresh: &[Dn, Loop, Loop],
-        wires: &[(X(0, 0), Px(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(2, 1)), (X(1, 0), C(1)), (X(2, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Seq, fresh: &[Dn, Dn, Seq, Seq],
-        wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
-                 (X(2, 0), C(1)), (X(3, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Par, fresh: &[Dn, Dn, Par, Par],
-        wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
-                 (X(2, 0), C(1)), (X(3, 0), C(2))], ..PLAIN },
-    Rule { consumer: Dn, producer: Cond, fresh: &[Dn, Dn, Cond, Cond],
-        wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
-                 (X(2, 0), C(1)), (X(3, 0), C(2))], ..PLAIN },
+    // ---- Tr [x, out]: triage ----
+    Rule { consumer: Tr, producer: L, fresh: &[F, L, F, L, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(2, 0)), (X(2, 1), X(3, 0)), (X(2, 2), X(4, 0))], ..PLAIN },
+    Rule { consumer: Tr, producer: S, fresh: &[F, L, F, S, L],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(2, 0)), (X(2, 1), X(3, 0)), (X(3, 1), X(4, 0)), (X(2, 2), Px(1))], ..PLAIN },
+    Rule { consumer: Tr, producer: F, fresh: &[F, S, L, F],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(1, 1), X(2, 0)), (X(0, 2), X(3, 0)), (X(3, 1), Px(1)), (X(3, 2), Px(2))], ..PLAIN },
+    // ---- Ut [tag, rest, out]: untriage; a leaf tag opens a second (Ut2), △△ wants a fork (IsF) ----
+    Rule { consumer: Ut, producer: L, fresh: &[Split, Ut2], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 1)), (X(1, 2), C(2))], ..PLAIN },
+    Rule { consumer: Ut, producer: S, fresh: &[Eat, IsF], wires: &[(X(0, 0), Px(1)), (X(1, 0), C(1)), (X(1, 1), C(2))], ..PLAIN },
+    Rule { consumer: Ut2, producer: L, fresh: &[Eat, L], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Ut2, producer: S, fresh: &[Eat, S], wires: &[(X(0, 0), Px(1)), (X(1, 1), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: IsF, producer: F, fresh: &[F], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), Px(2))], ..PLAIN },
+    // ---- Dg [program, inverse out]: a program's inverse, made as it is read ----
+    Rule { consumer: Dg0, producer: L, fresh: &[L], wires: &[(X(0, 0), C(1))], ..PLAIN },
+    // (a; b)† = b†; a†
+    Rule { consumer: Dg0, producer: F, fresh: &[F, Dg0, Dg0],
+        wires: &[(X(0, 0), C(1)), (X(1, 0), Px(2)), (X(1, 1), X(0, 1)), (X(2, 0), Px(1)), (X(2, 1), X(0, 2))], ..PLAIN },
+    // the first stem is held back, so that the end can give one fewer
+    Rule { consumer: Dg0, producer: S, fresh: &[Dg1], wires: &[(X(0, 0), Px(1)), (X(0, 1), C(1))], ..PLAIN },
+    dagger_stem!(Dg1, Dg2), dagger_stem!(Dg2, Dg3), dagger_stem!(Dg3, DgE), dagger_stem!(DgE, DgO), dagger_stem!(DgO, DgE),
+    // swap and flip are their own inverses
+    Rule { consumer: Dg1, producer: L, fresh: &[S, L], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0))], ..PLAIN },
+    Rule { consumer: Dg2, producer: L, fresh: &[S, L], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0))], ..PLAIN },
+    // (a | b)† = (a† | b†), cond(a, b)† = cond(a†, b†)
+    Rule { consumer: Dg1, producer: F, fresh: &[S, F, Dg0, Dg0],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(2, 0), Px(1)), (X(2, 1), X(1, 1)), (X(3, 0), Px(2)), (X(3, 1), X(1, 2))], ..PLAIN },
+    Rule { consumer: Dg2, producer: F, fresh: &[S, F, Dg0, Dg0],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(2, 0), Px(1)), (X(2, 1), X(1, 1)), (X(3, 0), Px(2)), (X(3, 1), X(1, 2))], ..PLAIN },
+    // loop(a)† = loop(a†), b kept
+    Rule { consumer: Dg3, producer: F, fresh: &[S, F, Dg0],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(2, 0), Px(1)), (X(2, 1), X(1, 1)), (X(1, 2), Px(2))], ..PLAIN },
+    // an odd instruction from 3 on: the next, two stems more than went out
+    Rule { consumer: Dg3, producer: L, fresh: &[S, S, L], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(1, 1), X(2, 0))], ..PLAIN },
+    Rule { consumer: DgO, producer: L, fresh: &[S, S, L], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(1, 1), X(2, 0))], ..PLAIN },
+    // an even one: the one before, the stem held back dropped
+    Rule { consumer: DgE, producer: L, fresh: &[L], wires: &[(X(0, 0), C(1))], ..PLAIN },
 ];
 
 /// Movement agents (research/LINEAR_TREE_NETS.md §4a): six views of fixed tree shapes the loader
@@ -949,7 +1002,7 @@ mod tests {
     #[test]
     fn two_rules_are_well_formed() {
         super::validate_two().expect("two-way programs' rules must validate");
-        assert_eq!(super::TWO_RULES.len(), 48);
+        assert_eq!(super::TWO_RULES.len(), 74);
     }
 
     #[test]

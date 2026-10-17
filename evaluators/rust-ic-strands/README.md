@@ -32,7 +32,7 @@ and called values ringed in orange:
   trees), a benchmark program (`sort:1`) or a raw term, and several of these separated by `;`,
   which run side by side (Side by side, below); or, after `two:`, a two-way program on a value
   (`two: add 2 3`, `two: cond(swap, copy) @ (△△, (△, △△))`; Two-way programs on the lattice, below),
-  which the details explain, its opcodes squares and its runs disks with a ▶. Its list (`▾` or `↓`)
+  which the details explain, its programs trees and its runs disks with a ▶. Its list (`▾` or `↓`)
   offers each program with an example. With no link the player opens on `add 20 22; relay_add 20 22` at full speed; `speed=N`
   in the link (0 to 100) sets the speed.
 - **Stepping:** `▸` or `→` runs on to the next clock where something happens, `⏭` or `shift →` to
@@ -1468,28 +1468,52 @@ program runs backward with nothing recorded, and the tree calculus itself is one
 ## Two-way programs on the lattice (`two=1`, `twoway.rs`)
 
 A base where every program is a bijection, run on the lattice directly (research/RULES_TO_LATTICE.md,
-sketch B). A program is a tree of opcodes; `Run` [program, x, program out, result] runs it on a tree and
-hands the program back beside the result, so a loop runs its body again without copying it. Running back
-is running the inverse program, read off the text (`Prog::dagger`), forward: the net has no rules for
-going backward.
-- **Opcodes** (rules.rs `TWO_RULES`, 48 rules): the identity (a leaf), swap, regrouping both ways, stem ↔
-  fork with a leaf, a leaf added or dropped, copy and its inverse merge (stuck on two different halves),
-  eval (a program that arrives as data, handed back), flip, sequence, parallel, cond and loop. A choice
-  is a sum as in James and Sabry's Π: (△, v) its left side, (△△, v) its right; `cond` is Π's ⊕ (the
-  side kept), `flip` its swap, and `loop` its trace.
+sketch B). **A program is a △ tree**, like any value: `Run` [program, x, program out, result] reads it a
+node at a time and hands each node back as it reads it, so the program is whole again beside the result,
+and a loop runs its body again without copying it. Running back is running the inverse program forward:
+the net has no rules for going backward.
+- **Instructions** (rules.rs `TWO_RULES`, 74 rules): an instruction is k stems on a leaf (one with no
+  parts) or on a fork of its two parts.
+
+  | k | on a leaf | on a fork (a, b) |
+  |---|---|---|
+  | 0 | id | a; b |
+  | 1 | swap | (a \| b), the halves at once |
+  | 2 | flip, the sides of a choice swapped | cond(a, b) |
+  | 3, 4 | assocl, assocr: regrouping | loop(a), b kept as it is |
+  | 5, 6 | uniti, unite: a leaf added or dropped | |
+  | 7, 8 | copy, merge (stuck on two different halves) | |
+  | 9, 10 | eval: (q, z) → (q, q z), and uneval: (q, w) → (q, q⁻¹ w) | |
+  | 11, 12 | triage: △ → (△, (△, △)), △t → (△, (△△, t)), △ab → (△△, (a, b)), and untriage | |
+  | 13, 14 | s2f, f2s: △t ↔ (△, t) | |
+
+  From 3 on each instruction sits next to its inverse. A choice is a sum as in James and Sabry's Π:
+  (△, v) its left side, (△△, v) its right; `cond` is Π's ⊕ (the side kept), `flip` its swap, and `loop`
+  its trace. `Run` having read k stems is `R1` … `R14`: a stem is one rewrite, and the walkers read the
+  next instruction while the data is still on its way.
 - **Most of it is wiring.** Sequence, parallel, swap, regrouping, stem ↔ fork, the leaf moves and eval
-  are `Run` rewiring around `Split` (a fork taken apart). Only cond, loop, flip and merge read a tag or a
-  value with frames of their own: 12 walker kinds beside the 15 opcodes, all of at most 4 ports.
+  are `Run` rewiring around `Split` (a fork taken apart). Only cond, loop, flip, merge and triage read a
+  tag or a value with walkers of their own, all of at most 4 ports.
+- **Programs about programs.** Programs being trees, copying, merging and taking them apart (triage) is
+  what it is for any tree, and eval runs a program made at run time. `twice` copies p into (p, p), which
+  is the program p; p, and runs it. `mirror` swaps the parts of every fork: it is passed itself, tells a
+  leaf, stem and fork apart by triage, and on a fork calls itself on both parts at once through eval,
+  merging its copies back (recursion that branches); run on a program it gives a program.
+- **Inverting while running.** `uneval` runs a program that arrives as data backward: `Dg0` makes its
+  inverse a node at a time (a; b becomes b⁻¹; a⁻¹, each instruction its partner, one stem held back so
+  the end can give one fewer or one more), `Run` runs that, and a second `Dg0` turns what comes back into
+  the program again. So `~twice` and `~call` (mirror backward) run too.
 - **Partial**: where no rule fits (a swap of a leaf, a merge of two different halves) the walker waits,
   and the run leaves it behind (`twoway::leftovers`).
 - **Eager**: every walker is wanted from the start, so it gets the wire pull and turns of a wanted
-  reader; marking them wanted made `add` 5× faster in clocks. With no garbage, cooling starts at the
-  answer, so `Lattice::run` looks for it after every clock, as a GPU stretch replayed a clock at a time
-  does, and the end of a run is the same on either engine.
-- **As text** (`twoway::parse_run`): `PROG @ VALUE`, PROG as `Prog::show` writes it (opcodes by name,
-  `a; b`, `(a | b)`, `cond(a, b)`, `loop(a)`, `~a` for the inverse), VALUE `△` (or `t`), `△v`, `(u, v)`,
-  a number or `[PROG]`; or `add A B`, `sub A C`, `succ N`, `pred N`. The player takes it after `two:`
-  and `strands-gpu` as `two:RUN`.
+  reader. With no garbage, cooling starts at the answer, so `Lattice::run` looks for it after every
+  clock, as a GPU stretch replayed a clock at a time does, and the end of a run is the same on either
+  engine.
+- **As text** (`twoway::parse_run`): `PROG @ VALUE`, PROG as `Prog::show` writes it (instructions by
+  name, `a; b`, `(a | b)`, `cond(a, b)`, `loop(a)`, `~a` for the inverse, and the library's `succ`,
+  `pred`, `add`, `sub`, `twice`, `call`, `mirror`), VALUE `△` (or `t`), `△v`, `(u, v)`, a number or
+  `[PROG]` (the program's tree); or `add A B`, `sub A C`, `succ N`, `pred N`, `mirror VALUE`. The
+  player takes it after `two:` and `strands-gpu` as `two:RUN`.
 
 `strands-two add A B` runs `twoway::add` ((a, b) → (a, a + b), numbers as Π's μx. 1 + x, a loop over
 a) and its inverse, beside disp's `add` on the plain lattice (current design), mean of 8 seeds for the
@@ -1497,32 +1521,44 @@ two-way runs:
 
 | call | two-way: clocks forward, back | rewrites | tree calculus: clocks | rewrites |
 |---|---|---|---|---|
-| `add 2 3` | 1,534, 2,102 | 240 | 7,882 | 3,377 |
-| `add 5 6` | 3,187, 4,181 | 483 | 16,526 | 6,441 |
-| `add 10 4` | 5,528, 7,561 | 888 | 31,064 | 11,812 |
+| `add 2 3` | 2,004, 3,043 | 409 | 7,882 | 3,377 |
+| `add 5 6` | 3,999, 6,230 | 814 | 16,526 | 6,441 |
+| `add 10 4` | 7,100, 10,553 | 1,489 | 31,064 | 11,812 |
 
-- **5× fewer clocks and 13–14× fewer rewrites** than tree calculus, in about a fifteenth of the CPU
-  time and a quarter of the sites, and the run back is the same machine.
+- **4× fewer clocks and 8× fewer rewrites** than tree calculus, and the run back is the same machine.
+- **What reading programs as trees costs**: with each instruction an agent of its own (before
+  2026-10-17) the same runs took 1,534, 3,187 and 5,528 clocks forward and 240, 483 and 888 rewrites:
+  trees take 1.7× the rewrites but only 25–30% more clocks forward (40–50% back, whose instructions sit
+  deeper), the runs reading ahead while data travels. Instructions as agents again, standing for their
+  trees as the movement agents do (spelled out when read as data), would win it back.
 - **What a round costs**: about 500 clocks, nearly all waiting. A pair becomes ready 4–6 strands apart
   and fires 15–60 clocks later (`--profile`): data hops from walker to walker as it goes through the
   15–20 steps of a round one after another. Neither the lattice's settings (temperature, wire weights,
   crowding) nor a balanced sequence changed that by more than noise.
-- `tests/twoway.rs`: `add` and its inverse against the reference interpreter and on the lattice, and
-  120 random programs of every opcode but loop and eval: the lattice gives what the reference gives,
-  hands the program back and runs back to the input, and is stuck where the reference is (2 s).
+- **Crowding**: a program copying itself fills the lattice around its calls, and the biggest rules
+  (cond's and par's, 6 and 5 fresh agents) need most of a 2×2 square empty. `mirror [uniti; (swap | id)]`
+  (12 calls, 17,411 rewrites) took 38,000 to 125,000 clocks over 8 seeds and jammed on one (seed 7, the
+  player's: no rewrite for 30,000 clocks, three pairs ready side by side); with pressure (`press=3`,
+  which pushes agents away from a rewrite blocked for room; the CPU's only) seeds 2, 3 and 7 took 27,000
+  to 39,000. `mirror [swap; flip]` (6 calls) finished on all 8 seeds in 14,000 to 18,000 clocks without it.
+- `tests/twoway.rs`: `add` and its inverse against the reference interpreter and on the lattice; 120
+  random programs of every instruction but loop and eval (the lattice gives what the reference gives,
+  hands the program back and runs back to the input, and is stuck where the reference is); every
+  program's tree reading back as it and inverted as its text is; `twice` and its inverse; `mirror`,
+  forward and back on the reference, and forward on a program on the lattice (16 s in all).
 - **On the GPU** (On a GPU, below: 44-byte sites): bit for bit with the simulator in lockstep
-  (`crate/gpu.sh 'two:add 2 3' --grid 72 --latest --check`, every opcode, a loop, eval and stuck
-  walkers, in `hw/validate.sh`), and handed back and forth with the player's CPU engine
-  (`player/dawn.sh check 'src=two: add 2 3'`, `player/firefox.sh tail …`). A clock of `add 10 4`
-  takes 165 µs on a Radeon RX 6600 against about 170 µs on the CPU: at under 300 sites in use, the
-  GPU has nothing to gain from.
-- **In the player** (`two: …` in the input box, a group of examples in its list): opcodes are squares
-  (a hole for each part a node holds), a run a disk with a ▶, splitters the unpair's pill, the walkers
-  that read data diamonds, merges an upside-down Y; a run splits its segment between its program and
-  its input; and the details explain the rules (two-way programs).
-- Not yet: recursion that branches (programs copying themselves and running the copies through eval,
-  which needs merges of programs and an inverse of eval), and tree calculus as a guest (iso.rs's `tc`
-  compiled to these opcodes).
+  (`crate/gpu.sh 'two:add 2 3' --grid 72 --latest --check`; a loop, eval, uneval, triage, stuck
+  walkers, and mirror's 11,292 clocks on a 128² grid, in `hw/validate.sh`), and handed back and forth
+  with the player's CPU engine (`player/dawn.sh check 'src=two: add 2 3'`, `player/firefox.sh tail …`).
+  A clock of `add 10 4` took 165 µs on a Radeon RX 6600 against about 170 µs on the CPU: at under 300
+  sites in use, the GPU has nothing to gain from.
+- **In the player** (`two: …` in the input box, a group of examples in its list): programs are trees
+  drawn as values are, a run a disk with a ▶ (also while it reads an instruction), splitters the
+  unpair's pill, the walkers that read data diamonds, merges an upside-down Y, inverting the run back's
+  disk; a run splits its segment between its program and its input; and the details explain the rules
+  (two-way programs).
+- Not yet: tree calculus as a guest (iso.rs's `tc` compiled to these instructions), and instructions as
+  agents standing for their trees.
 
 ## The substrate: the lattice as physics (`substrate.rs`, `player/substrate.html`)
 

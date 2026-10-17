@@ -139,8 +139,8 @@ fn two_new(w: u32, h: u32, run: &str) -> i32 {
 fn two_answer(s: &State, decoded: bool) -> String {
     let (prog, _) = s.two.as_ref().unwrap();
     match twoway::answer(&s.l.shadow) {
-        Some((q, y)) if q == *prog => if decoded { y.decoded() } else { y.show() },
-        Some((q, _)) => format!("the program came back changed: {}", q.show()),
+        Some((q, y)) if q == prog.code() => if decoded { y.decoded() } else { y.show() },
+        Some((q, _)) => format!("the program came back changed: {}", twoway::Prog::of(&q).map_or(q.show(), |p| p.show())),
         None => "stuck".into(),
     }
 }

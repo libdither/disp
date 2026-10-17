@@ -72,7 +72,7 @@ fn main() {
             let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
             let (x, y) = (Val::f(nat(a), nat(b)), Val::f(nat(a), nat(a + b)));
             println!("two-way add {a} {b}:  {}", two(&twoway::add(), &x, &y, &base, profile));
-            println!("  and back (sub):  {}", two(&twoway::add().dagger().unwrap(), &y, &x, &base, false));
+            println!("  and back (sub):  {}", two(&twoway::add().dagger(), &y, &x, &base, false));
             let src = call("add", &[a, b]);
             let t = term::parse_sup(&src).unwrap().plain().unwrap();
             let want = oracle::nf(t.clone(), &mut oracle::Fuel(10_000_000)).ok();
