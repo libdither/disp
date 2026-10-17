@@ -7,6 +7,7 @@ pub mod resid;
 pub mod rev;
 pub mod share;
 pub mod tables;
+pub mod twoway;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 #[cfg(target_arch = "wasm32")]

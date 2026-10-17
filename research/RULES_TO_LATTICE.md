@@ -365,3 +365,24 @@ Experiments, in order, all in the Python model first:
    unnecessary; add `trace`/`untrace` as per-call operations.
 4. **Feedback loops on the lattice**: a tail loop whose frame re-creates itself, measured against the same
    loop by copying.
+
+## 10. Sketch B, first version on the lattice (2026-10-15)
+
+Built as rust-ic-strands `two=1` (twoway.rs, rules.rs `TWO_RULES`; README "Two-way programs on the
+lattice"). It takes sketch B's base and leaves its pattern clauses for later:
+- **The base is Πᵒ on trees**: fifteen opcodes, each a bijection (swap, regrouping, stem ↔ fork, a leaf
+  added or dropped, copy and merge, eval, flip, sequence, parallel, cond as Π's ⊕, loop as its trace),
+  and one walker, `Run`, that runs a program on a tree and hands the program back. Running back is the
+  inverse program run forward, so the table has no backward rules.
+- **The step down is mostly wiring.** With four ports, `Run` meeting sequence, parallel, swap, regrouping
+  or eval rewires the program's parts to new `Run`s and a `Split` that takes a fork apart; nothing waits
+  in a frame. Only the steps that read data to decide (cond, loop, flip, merge) have frames. 48 rules and
+  27 kinds (15 of them the opcodes), against 82 rules and 38 kinds for keeping tree calculus's history.
+- **The recipe's three properties, checked**: depth one (every opcode reads one constructor at a time,
+  regrouping two), linear (copy and merge are the only non-linear steps, and they are explicit), and
+  one-to-one at the level of programs (every program has an inverse). The table itself is not one-to-one
+  as a net: a rewrite does not leave a footprint, so the lattice cannot run backward by itself; programs
+  do.
+- **First numbers**: unary `add` is 5× fewer clocks and 13–14× fewer rewrites than tree calculus's `add`
+  on the same lattice, and every round of its loop waits on data hopping 4–6 strands from walker to
+  walker. Speed now depends on how far apart consecutive steps sit, not on how many rewrites there are.

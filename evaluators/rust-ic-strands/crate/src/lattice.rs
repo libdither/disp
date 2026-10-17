@@ -23,14 +23,16 @@ pub mod memo;
 pub mod substrate;
 use rust_ca_lattice::net::Net;
 use rust_ca_lattice::sup::STerm;
-use rust_ca_lattice::rules::{find_forgetting, find_index_labelled, meets, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, VIEW_TAGS};
+use rust_ca_lattice::rules::{find_forgetting, find_index_labelled, meets, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, TWO_TAGS, VIEW_TAGS};
 
 pub const NONE: u8 = u8::MAX;
-/// Ports per agent slot.
-/// Ports per agent slot: 3, or 4 keeping history (`Params::resid`).
+/// Ports per agent slot: 3, or 4 keeping history or running two-way programs (`ports`).
 pub const ARITY: usize = 3;
 /// The most ports an agent has.
 pub const MAX_ARITY: usize = 4;
+
+/// Ports per agent slot for these settings: 4 keeping history or running two-way programs, else 3.
+pub fn ports(p: &Params) -> usize { if p.resid > 0 || p.two { MAX_ARITY } else { ARITY } }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
@@ -173,6 +175,8 @@ pub struct Params {
     /// root (resid.rs, `Lattice::edits`); 2: the history is erased as it is made. Load with
     /// `resid::net` (wasm.rs does). CPU only, and with pressure 3 unless it is set.
     pub resid: u8,
+    /// Two-way programs (rules.rs `TWO_RULES`, twoway.rs): agents of 4 ports, run eagerly.
+    pub two: bool,
 }
 
 impl Params {
@@ -235,6 +239,7 @@ impl Params {
             "forget" => self.forget = f()?,
             "bond" => self.bond = f()?,
             "resid" => self.resid = n()? as u8,
+            "two" => { self.two = n()? != 0; if self.two { self.lazy = false; } }
             "demand" => if on { self.calls = true; self.set("field", DEMAND)?; } else { self.calls = false; self.fields = [Channel::OFF; 4]; },
             "field" => {
                 let c = Channel::parse(v)?;
@@ -252,7 +257,7 @@ impl Default for Params {
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 dn_room: 0, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0 }
+                 dn_room: 0, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
     }
 }
 
@@ -307,14 +312,16 @@ pub struct Stats {
 }
 
 /// A tag's number in a seat (0: empty): `ALL_TAGS`' from 1, then the movement agents' (`VIEW_TAGS`, 15
-/// to 20), then keeping history's (`RESID_TAGS`, 21 on).
-#[inline] pub fn code(t: Tag) -> u8 { ALL_TAGS.iter().chain(&VIEW_TAGS).chain(&RESID_TAGS).position(|x| *x == t).unwrap() as u8 + 1 }
+/// to 20), then keeping history's (`RESID_TAGS`, 21 to 58), then two-way programs' (`TWO_TAGS`, 59 on).
+#[inline] pub fn code(t: Tag) -> u8 {
+    ALL_TAGS.iter().chain(&VIEW_TAGS).chain(&RESID_TAGS).chain(&TWO_TAGS).position(|x| *x == t).unwrap() as u8 + 1
+}
 /// The tag in a seat, None if it is empty.
 #[inline] fn tag_of_or(c: u8) -> Option<Tag> { (c != 0).then(|| tag_of(c)) }
 #[inline] pub fn tag_of(c: u8) -> Tag {
     let i = c as usize - 1;
-    let v = ALL_TAGS.len() + VIEW_TAGS.len();
-    if i < ALL_TAGS.len() { ALL_TAGS[i] } else if i < v { VIEW_TAGS[i - ALL_TAGS.len()] } else { RESID_TAGS[i - v] }
+    let (v, r) = (ALL_TAGS.len() + VIEW_TAGS.len(), ALL_TAGS.len() + VIEW_TAGS.len() + RESID_TAGS.len());
+    if i < ALL_TAGS.len() { ALL_TAGS[i] } else if i < v { VIEW_TAGS[i - ALL_TAGS.len()] } else if i < r { RESID_TAGS[i - v] } else { TWO_TAGS[i - r] }
 }
 
 /// A rewrite's entry in `fire_log`: its site (below 2^24), and in the top byte, for an apply reading a
@@ -702,7 +709,7 @@ impl Lattice {
     pub fn new(p: Params) -> Lattice {
         let faces = if p.depth > 1 { 6 } else { 4 };
         let ks = p.k + 1;
-        let ar = if p.resid > 0 { 4 } else { ARITY };
+        let ar = ports(&p);
         let ends = ar * ks + faces * p.lanes;
         assert!(ends < 255, "a site's switchboard has fewer than 255 ends");
         let n = (p.w * p.h * p.depth) as usize;
@@ -912,7 +919,8 @@ impl Lattice {
             self.agent_sites.push(s);
         }
         let t = tag_of(tag);
-        self.want[s as usize * self.ks + k] = matches!(t, Tag::Nrm | Tag::Eps) || is_root(t);
+        // Two-way programs run eagerly: every walker will fire, so every one is wanted from the start.
+        self.want[s as usize * self.ks + k] = matches!(t, Tag::Nrm | Tag::Eps) || is_root(t) || self.p.two && t.is_consumer();
         self.tags[s as usize * self.ks + k] = tag;
         self.sids[s as usize * self.ks + k] = sid;
         if self.p.phys { self.sub.seat(sid, s); }
@@ -945,6 +953,9 @@ impl Lattice {
         if p.memo != 0 && net.agents.iter().flatten().any(|a| a.tag.is_view()) { return Err("movement agents run without merging equal computations".into()); }
         if p.phys && (p.memo != 0 || net.agents.iter().flatten().any(|a| a.tag.is_view() || a.tag == Tag::Sup)) {
             return Err("the substrate runs without superpositions, movement agents or merging".into());
+        }
+        if p.two && (p.resid > 0 || p.lazy || p.phys || p.memo != 0 || p.views) {
+            return Err("two-way programs run eagerly, without keeping history, the substrate, merging or movement agents".into());
         }
         if p.resid > 0 && (p.phys || p.memo != 0 || p.views || net.agents.iter().flatten().any(|a| matches!(a.tag, Tag::Sup | Tag::P))) {
             return Err("keeping history runs without the substrate, merging, movement agents, superpositions or suspensions".into());
@@ -3108,9 +3119,11 @@ impl Lattice {
         assert!(!self.p.margolus || self.p.block, "Margolus blocks need block rewrites");
         let (mut next_check, mut next_inv) = (0, 0);
         while self.stats.proposals < max_proposals {
+            // Two-way programs, which leave no garbage, start cooling at the answer: seen at its clock, as
+            // a GPU's stretch, replayed a clock at a time, sees it (the player's `cpuRun`).
             if self.stats.proposals >= next_check {
                 if self.answered() { return true; }
-                next_check = self.stats.proposals + 50 * self.live.len().max(1) as u64;
+                next_check = self.stats.proposals + if self.p.two { 1 } else { 50 * self.live.len().max(1) as u64 };
             }
             if self.p.margolus { self.margolus_clock(); } else { self.propose(); }
             if self.check_every > 0 && self.stats.proposals >= next_inv {

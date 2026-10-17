@@ -101,6 +101,35 @@ pub enum Tag {
     /// history bundled there (each with a normalizer after it and a root again). [p]
     Go,
     Back,
+    // Two-way programs (`TWO_RULES`): a program is a tree of these opcodes (a leaf is the identity), and
+    // `Run` runs it on a tree, handing the program back with the result. Every opcode is a bijection.
+    Swap,     // (u, v) ↔ (v, u): [p]
+    AssocL,   // (u, (v, w)) → ((u, v), w): [p]
+    AssocR,   // ((u, v), w) → (u, (v, w)): [p]
+    StemFork, // △t → (△, t): [p]
+    ForkStem, // (△, t) → △t: [p]
+    Uniti,    // x → (△, x): [p]
+    Unite,    // (△, x) → x: [p]
+    Copy,     // x → (x, x): [p]
+    Merge,    // (x, x) → x, stuck on two different halves: [p]
+    Eval,     // (q, z) → (q, q z), the program q handed back: [p]
+    Flip,     // (△, v) ↔ (△△, v): the two sides of a choice swapped: [p]
+    Seq,      // a then b: [p, a, b]
+    Par,      // (u, v) → (a u, b v), the two at once: [p, a, b]
+    Cond,     // (t, y) → (t, a y) if t is a leaf, else (t, b y): [p, a, b]
+    Loop,     // x as (△△, x), then c while it gives (△, s), until it gives (△△, y): y: [p, c]
+    Run,      // runs a program: [p(program), x, program out, result]
+    Split,    // takes a fork apart: [p(fork), left, right]
+    SplitS,   // takes a stem apart: [p(stem), child]
+    Eat,      // eats a leaf, stuck on anything else: [p]
+    Cd,       // `Cond` reading the tag: [p(tag), ⟨a, b⟩, y, ⟨program, result⟩ out]
+    Lk,       // `Loop` reading the state: [p(state), program, program out, result]
+    Lk2,      // ... and its tag: [p(tag), ⟨program, rest⟩, program out, result]
+    Fl,       // `Flip` reading the tag: [p(tag), tag out]
+    Mrg,      // merge, reading the first half: [p(a), b, out]
+    MrgL,     // having read a leaf: [p(b), out]
+    MrgS,     // a stem: [p(b), child, out]
+    MrgF,     // a fork: [p(b), left, right, out]
 }
 
 /// Every tag, in the order engines number them (from 1, 0 meaning none). `Sup` comes last so
@@ -114,6 +143,14 @@ pub const ALL_TAGS: [Tag; 14] = [
 /// abstract net and the strand lattice, on its CPU and GPU (the cascade and the chip keep 4 bits).
 pub const VIEW_TAGS: [Tag; 6] = [Tag::K, Tag::Sx, Tag::B, Tag::C, Tag::I, Tag::W];
 
+/// The tags of two-way programs (`TWO_RULES`), numbered after keeping history's where the strand lattice
+/// runs them.
+pub const TWO_TAGS: [Tag; 27] = [
+    Tag::Swap, Tag::AssocL, Tag::AssocR, Tag::StemFork, Tag::ForkStem, Tag::Uniti, Tag::Unite, Tag::Copy, Tag::Merge, Tag::Eval, Tag::Flip,
+    Tag::Seq, Tag::Par, Tag::Cond, Tag::Loop,
+    Tag::Run, Tag::Split, Tag::SplitS, Tag::Eat, Tag::Cd, Tag::Lk, Tag::Lk2, Tag::Fl, Tag::Mrg, Tag::MrgL, Tag::MrgS, Tag::MrgF,
+];
+
 /// The tags of keeping history (`RESID_RULES`), numbered after the movement agents' where the strand
 /// lattice runs them (its CPU only).
 pub const RESID_TAGS: [Tag; 38] = [
@@ -126,7 +163,11 @@ pub const RESID_TAGS: [Tag; 38] = [
 impl Tag {
     pub fn arity(self) -> usize {
         match self {
-            Tag::L | Tag::Eps | Tag::Out | Tag::I | Tag::Hole | Tag::Go | Tag::Back => 1,
+            Tag::L | Tag::Eps | Tag::Out | Tag::I | Tag::Hole | Tag::Go | Tag::Back
+            | Tag::Swap | Tag::AssocL | Tag::AssocR | Tag::StemFork | Tag::ForkStem | Tag::Uniti | Tag::Unite | Tag::Copy
+            | Tag::Merge | Tag::Eval | Tag::Flip | Tag::Eat => 1,
+            Tag::Loop | Tag::SplitS | Tag::MrgL | Tag::Fl => 2,
+            Tag::Run | Tag::Cd | Tag::Lk | Tag::Lk2 | Tag::MrgF => 4,
             Tag::S | Tag::Nrm | Tag::K | Tag::W | Tag::Seam | Tag::MgL | Tag::Rk | Tag::Fg | Tag::Rq | Tag::UArms => 2,
             Tag::RA | Tag::RT1 | Tag::RSel | Tag::SS | Tag::SF | Tag::T1s | Tag::T1sf | Tag::T1sc0 | Tag::T1sc | Tag::T1scf
             | Tag::TSb | Tag::UA | Tag::USel | Tag::USS | Tag::USF | Tag::MgF | Tag::Arms3 | Tag::Rs | Tag::Rt | Tag::Ha => 4,
@@ -136,14 +177,18 @@ impl Tag {
     pub fn is_producer(self) -> bool {
         matches!(self, Tag::L | Tag::S | Tag::F | Tag::P | Tag::Pair | Tag::Sup | Tag::Arms3 | Tag::Rk | Tag::Rs | Tag::Rt | Tag::Rb | Tag::Rc
                  | Tag::Ha | Tag::Hole | Tag::Rh | Tag::Rq)
+            || matches!(self, Tag::Swap | Tag::AssocL | Tag::AssocR | Tag::StemFork | Tag::ForkStem | Tag::Uniti | Tag::Unite
+                        | Tag::Copy | Tag::Merge | Tag::Eval | Tag::Flip | Tag::Seq | Tag::Par | Tag::Cond | Tag::Loop)
             || self.is_view()
     }
     pub fn is_view(self) -> bool { matches!(self, Tag::K | Tag::Sx | Tag::B | Tag::C | Tag::I | Tag::W) }
     /// Keeping history's (`RESID_RULES`).
     pub fn is_resid(self) -> bool { RESID_TAGS.contains(&self) }
+    /// Two-way programs' (`TWO_RULES`).
+    pub fn is_two(self) -> bool { TWO_TAGS.contains(&self) }
     pub fn is_consumer(self) -> bool {
         matches!(self, Tag::A | Tag::T1 | Tag::Sel | Tag::Unp | Tag::Dn | Tag::Eps | Tag::Nrm)
-            || self.is_resid() && !self.is_producer()
+            || (self.is_resid() || self.is_two()) && !self.is_producer()
     }
     pub fn name(self) -> &'static str {
         match self {
@@ -159,6 +204,11 @@ impl Tag {
             Tag::Arms3 => "Arms3", Tag::Rk => "Rk", Tag::Rs => "Rs", Tag::Rt => "Rt", Tag::Rb => "Rb", Tag::Rc => "Rc", Tag::Ha => "H",
             Tag::Ev => "E", Tag::UEv => "E-", Tag::Fg => "F!", Tag::Hole => "?", Tag::Go => "Go", Tag::Back => "Back",
             Tag::Rh => "Rh", Tag::Rq => "Rq", Tag::UArms => "Arms-",
+            Tag::Swap => "swap", Tag::AssocL => "assocl", Tag::AssocR => "assocr", Tag::StemFork => "s2f", Tag::ForkStem => "f2s",
+            Tag::Uniti => "uniti", Tag::Unite => "unite", Tag::Copy => "copy", Tag::Merge => "merge", Tag::Eval => "eval", Tag::Flip => "flip",
+            Tag::Seq => "seq", Tag::Par => "par", Tag::Cond => "cond", Tag::Loop => "loop",
+            Tag::Run => "R", Tag::Split => "Sp", Tag::SplitS => "SpS", Tag::Eat => "Eat", Tag::Cd => "Cd", Tag::Lk => "Lk", Tag::Lk2 => "Lk2", Tag::Fl => "Fl",
+            Tag::Mrg => "Mrg", Tag::MrgL => "MrgL", Tag::MrgS => "MrgS", Tag::MrgF => "MrgF",
         }
     }
 }
@@ -338,18 +388,26 @@ pub const N_RULES: usize = RULES.len() + SUP_RULES.len();
 pub const N_ALL_RULES: usize = N_RULES + VIEW_RULES.len();
 
 /// Every rule: `rule`'s numbering runs to here.
-pub const N_EVERY_RULE: usize = N_ALL_RULES + RESID_RULES.len() + FORGET_RULES.len();
+pub const N_EVERY_RULE: usize = N_ALL_RULES + RESID_RULES.len() + FORGET_RULES.len() + TWO_RULES.len();
 
-/// Rule i of `RULES` followed by `SUP_RULES`, `VIEW_RULES`, `RESID_RULES` and `FORGET_RULES`: the numbering `find_index` gives.
+/// Where two-way programs' rules start in `rule`'s numbering.
+pub const TWO_BASE: usize = N_ALL_RULES + RESID_RULES.len() + FORGET_RULES.len();
+
+/// Rule i of `RULES` followed by `SUP_RULES`, `VIEW_RULES`, `RESID_RULES`, `FORGET_RULES` and `TWO_RULES`: the
+/// numbering `find_index` gives.
 pub fn rule(i: usize) -> &'static Rule {
     if i < RULES.len() { &RULES[i] } else if i < N_RULES { &SUP_RULES[i - RULES.len()] }
     else if i < N_ALL_RULES { &VIEW_RULES[i - N_RULES] }
-    else if i < N_ALL_RULES + RESID_RULES.len() { &RESID_RULES[i - N_ALL_RULES] } else { &FORGET_RULES[i - N_ALL_RULES - RESID_RULES.len()] }
+    else if i < N_ALL_RULES + RESID_RULES.len() { &RESID_RULES[i - N_ALL_RULES] }
+    else if i < TWO_BASE { &FORGET_RULES[i - N_ALL_RULES - RESID_RULES.len()] } else { &TWO_RULES[i - TWO_BASE] }
 }
 
 /// Whether a consumer and a producer whose principals touch interact: a hole is an unknown, which
-/// what has no rule for it waits on.
-pub fn meets(consumer: Tag, producer: Tag) -> bool { producer != Tag::Hole || find_index(consumer, producer).is_some() }
+/// what has no rule for it waits on, and a two-way program is a partial bijection, stuck where it has
+/// no rule (a swap on a leaf, a merge of two different halves).
+pub fn meets(consumer: Tag, producer: Tag) -> bool {
+    !(producer == Tag::Hole || consumer.is_two() || producer.is_two()) || find_index(consumer, producer).is_some()
+}
 
 /// The number of the rule forgetting uses for a pair, if it has its own.
 pub fn find_forgetting(consumer: Tag, producer: Tag) -> Option<usize> {
@@ -489,6 +547,120 @@ pub static FORGET_RULES: &[Rule] = &[
     Rule { consumer: SF, producer: Arms3, fresh: &[Unp, RA, RA, Rt, F, Fg], wires: &[(X(0, 0), C(1)), (X(1, 0), Px(3)), (X(1, 1), X(0, 1)), (X(1, 2), X(2, 0)), (X(2, 1), X(0, 2)), (X(2, 2), C(2)), (X(1, 3), X(4, 1)), (X(2, 3), X(4, 2)), (X(3, 1), X(4, 0)), (X(3, 2), Px(1)), (X(3, 3), Px(2)), (X(5, 1), C(3)), (X(3, 0), X(5, 0))], ..PLAIN },
 ];
 
+/// Two-way programs: a program is a tree whose nodes are opcodes (a leaf is the identity), every one a
+/// bijection on trees, and `Run` [program, x, program out, result] runs it, handing the program back with
+/// the result. Sequence, parallel, swap, regrouping, stem↔fork, a leaf added or dropped, and eval are
+/// wiring around `Split` (a fork taken apart); `Cond` reads a tag it keeps, `Loop` reads the state it
+/// left, and `Merge` reads two halves to check they are one tree. A choice is a sum, as in James and
+/// Sabry's Π: (△, v) its left, (△△, v) its right; `Cond` is Π's ⊕, `Flip` its swap, and `Loop` its trace. Running back is running the inverse
+/// program, read off the program's text, forward. Duplicators copy trees and programs as everywhere.
+pub static TWO_RULES: &[Rule] = &[
+    // ---- Run meets an opcode ----
+    Rule { consumer: Run, producer: L, fresh: &[L], wires: &[(X(0, 0), C(2)), (C(1), C(3))], ..PLAIN },
+    Rule { consumer: Run, producer: Swap, fresh: &[Split, F, Swap],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 2)), (X(0, 2), X(1, 1)), (X(1, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    // (u, (v, w)) → ((u, v), w)
+    Rule { consumer: Run, producer: AssocL, fresh: &[Split, Split, F, F, AssocL],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 1)), (X(0, 2), X(1, 0)), (X(1, 1), X(3, 2)), (X(1, 2), X(2, 2)), (X(2, 1), X(3, 0)),
+                 (X(2, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
+    // ((u, v), w) → (u, (v, w))
+    Rule { consumer: Run, producer: AssocR, fresh: &[Split, Split, F, F, AssocR],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(3, 2)), (X(1, 1), X(2, 1)), (X(1, 2), X(3, 1)), (X(3, 0), X(2, 2)),
+                 (X(2, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
+    // △t → (△, t)
+    Rule { consumer: Run, producer: StemFork, fresh: &[SplitS, F, L, StemFork],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 2)), (X(1, 1), X(2, 0)), (X(1, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
+    // (△, t) → △t
+    Rule { consumer: Run, producer: ForkStem, fresh: &[Split, Eat, S, ForkStem],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(2, 1)), (X(2, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
+    Rule { consumer: Run, producer: Uniti, fresh: &[F, L, Uniti],
+        wires: &[(X(0, 1), X(1, 0)), (X(0, 2), C(1)), (X(0, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    Rule { consumer: Run, producer: Unite, fresh: &[Split, Eat, Unite],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    Rule { consumer: Run, producer: Copy, fresh: &[Dn, F, Copy],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(1, 2)), (X(1, 0), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    Rule { consumer: Run, producer: Merge, fresh: &[Split, Mrg, Merge],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 1)), (X(1, 2), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    // (q, z) → (q, q z): a Run of q on z
+    Rule { consumer: Run, producer: Eval, fresh: &[Split, Run, F, Eval],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 1)), (X(1, 2), X(2, 1)), (X(1, 3), X(2, 2)), (X(2, 0), C(3)),
+                 (X(3, 0), C(2))], ..PLAIN },
+    Rule { consumer: Run, producer: Seq, fresh: &[Run, Run, Seq],
+        wires: &[(X(0, 0), Px(1)), (X(0, 1), C(1)), (X(0, 2), X(2, 1)), (X(0, 3), X(1, 1)), (X(1, 0), Px(2)), (X(1, 2), X(2, 2)),
+                 (X(1, 3), C(3)), (X(2, 0), C(2))], ..PLAIN },
+    Rule { consumer: Run, producer: Par, fresh: &[Split, Run, Run, F, Par],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(2, 1)), (X(1, 0), Px(1)), (X(2, 0), Px(2)), (X(1, 2), X(4, 1)),
+                 (X(2, 2), X(4, 2)), (X(1, 3), X(3, 1)), (X(2, 3), X(3, 2)), (X(3, 0), C(3)), (X(4, 0), C(2))], ..PLAIN },
+    // (t, y): Cd reads t; its ⟨program, result⟩ comes apart at the outputs
+    Rule { consumer: Run, producer: Cond, fresh: &[Split, Cd, Pair, Unp],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(1, 2)), (X(1, 1), X(2, 0)), (X(2, 1), Px(1)), (X(2, 2), Px(2)),
+                 (X(1, 3), X(3, 0)), (X(3, 1), C(2)), (X(3, 2), C(3))], ..PLAIN },
+    // x enters as (△△, x)
+    Rule { consumer: Run, producer: Loop, fresh: &[Run, Lk, F, S, L],
+        wires: &[(X(0, 0), Px(1)), (X(0, 1), X(2, 0)), (X(2, 1), X(3, 0)), (X(3, 1), X(4, 0)), (X(2, 2), C(1)), (X(0, 2), X(1, 1)),
+                 (X(0, 3), X(1, 0)), (X(1, 2), C(2)), (X(1, 3), C(3))], ..PLAIN },
+    Rule { consumer: Run, producer: Flip, fresh: &[Split, Fl, F, Flip],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(1, 1), X(2, 1)), (X(0, 2), X(2, 2)), (X(2, 0), C(3)), (X(3, 0), C(2))], ..PLAIN },
+    // ---- taking apart, eating a leaf ----
+    Rule { consumer: Split, producer: F, fresh: &[], wires: &[(C(1), Px(1)), (C(2), Px(2))], ..PLAIN },
+    Rule { consumer: SplitS, producer: S, fresh: &[], wires: &[(C(1), Px(1))], ..PLAIN },
+    Rule { consumer: Eat, producer: L, fresh: &[], wires: &[], ..PLAIN },
+    // ---- Cd [tag, ⟨a, b⟩, y, out]: a on y for a leaf, b otherwise; the tag and the other branch kept ----
+    Rule { consumer: Cd, producer: L, fresh: &[Unp, Run, Cond, F, L, Pair],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0)), (X(0, 2), X(2, 2)), (X(1, 1), C(2)), (X(1, 2), X(2, 1)), (X(1, 3), X(3, 2)),
+                 (X(3, 1), X(4, 0)), (X(5, 1), X(2, 0)), (X(5, 2), X(3, 0)), (X(5, 0), C(3))], ..PLAIN },
+    Rule { consumer: Cd, producer: S, fresh: &[Unp, Run, Cond, F, S, Pair],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 1)), (X(0, 2), X(1, 0)), (X(1, 1), C(2)), (X(1, 2), X(2, 2)), (X(1, 3), X(3, 2)),
+                 (X(3, 1), X(4, 0)), (X(4, 1), Px(1)), (X(5, 1), X(2, 0)), (X(5, 2), X(3, 0)), (X(5, 0), C(3))], ..PLAIN },
+    Rule { consumer: Cd, producer: F, fresh: &[Unp, Run, Cond, F, F, Pair],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 1)), (X(0, 2), X(1, 0)), (X(1, 1), C(2)), (X(1, 2), X(2, 2)), (X(1, 3), X(3, 2)),
+                 (X(3, 1), X(4, 0)), (X(4, 1), Px(1)), (X(4, 2), Px(2)), (X(5, 1), X(2, 0)), (X(5, 2), X(3, 0)), (X(5, 0), C(3))], ..PLAIN },
+    // ---- Lk [state, program, program out, result]: the state (t, y) read; Lk2 reads t ----
+    Rule { consumer: Lk, producer: F, fresh: &[Lk2, Pair],
+        wires: &[(X(0, 0), Px(1)), (X(0, 1), X(1, 0)), (X(1, 1), C(1)), (X(1, 2), Px(2)), (X(0, 2), C(2)), (X(0, 3), C(3))], ..PLAIN },
+    // a leaf: round again on (△, y)
+    Rule { consumer: Lk2, producer: L, fresh: &[Unp, F, L, Run, Lk],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(3, 0)), (X(0, 2), X(1, 2)), (X(1, 1), X(2, 0)), (X(3, 1), X(1, 0)), (X(3, 2), X(4, 1)),
+                 (X(3, 3), X(4, 0)), (X(4, 2), C(2)), (X(4, 3), C(3))], ..PLAIN },
+    // (△△, y): out with y
+    Rule { consumer: Lk2, producer: S, fresh: &[Unp, Eat, Loop],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), X(2, 1)), (X(0, 2), C(3)), (X(1, 0), Px(1)), (X(2, 0), C(2))], ..PLAIN },
+    // ---- Fl [tag, tag out]: △ ↔ △△ ----
+    Rule { consumer: Fl, producer: L, fresh: &[S, L], wires: &[(X(0, 0), C(1)), (X(0, 1), X(1, 0))], ..PLAIN },
+    Rule { consumer: Fl, producer: S, fresh: &[Eat, L], wires: &[(X(0, 0), Px(1)), (X(1, 0), C(1))], ..PLAIN },
+    // ---- Mrg [a, b, out]: one tree out of two equal ones ----
+    Rule { consumer: Mrg, producer: L, fresh: &[MrgL], wires: &[(X(0, 0), C(1)), (X(0, 1), C(2))], ..PLAIN },
+    Rule { consumer: MrgL, producer: L, fresh: &[L], wires: &[(X(0, 0), C(1))], ..PLAIN },
+    Rule { consumer: Mrg, producer: S, fresh: &[MrgS], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), C(2))], ..PLAIN },
+    Rule { consumer: MrgS, producer: S, fresh: &[Mrg, S], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), X(1, 1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Mrg, producer: F, fresh: &[MrgF], wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(0, 2), Px(2)), (X(0, 3), C(2))], ..PLAIN },
+    Rule { consumer: MrgF, producer: F, fresh: &[Mrg, Mrg, F],
+        wires: &[(X(0, 0), C(1)), (X(0, 1), Px(1)), (X(1, 0), C(2)), (X(1, 1), Px(2)), (X(0, 2), X(2, 1)), (X(1, 2), X(2, 2)), (X(2, 0), C(3))], ..PLAIN },
+    // ---- duplicators copy programs ----
+    Rule { consumer: Dn, producer: Swap, fresh: &[Swap, Swap], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: AssocL, fresh: &[AssocL, AssocL], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: AssocR, fresh: &[AssocR, AssocR], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: StemFork, fresh: &[StemFork, StemFork], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: ForkStem, fresh: &[ForkStem, ForkStem], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Uniti, fresh: &[Uniti, Uniti], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Unite, fresh: &[Unite, Unite], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Copy, fresh: &[Copy, Copy], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Merge, fresh: &[Merge, Merge], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Eval, fresh: &[Eval, Eval], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Flip, fresh: &[Flip, Flip], wires: &[(X(0, 0), C(1)), (X(1, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Loop, fresh: &[Dn, Loop, Loop],
+        wires: &[(X(0, 0), Px(1)), (X(0, 1), X(1, 1)), (X(0, 2), X(2, 1)), (X(1, 0), C(1)), (X(2, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Seq, fresh: &[Dn, Dn, Seq, Seq],
+        wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
+                 (X(2, 0), C(1)), (X(3, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Par, fresh: &[Dn, Dn, Par, Par],
+        wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
+                 (X(2, 0), C(1)), (X(3, 0), C(2))], ..PLAIN },
+    Rule { consumer: Dn, producer: Cond, fresh: &[Dn, Dn, Cond, Cond],
+        wires: &[(X(0, 0), Px(1)), (X(1, 0), Px(2)), (X(0, 1), X(2, 1)), (X(1, 1), X(2, 2)), (X(0, 2), X(3, 1)), (X(1, 2), X(3, 2)),
+                 (X(2, 0), C(1)), (X(3, 0), C(2))], ..PLAIN },
+];
+
 /// Movement agents (research/LINEAR_TREE_NETS.md §4a): six views of fixed tree shapes the loader
 /// finds in code (net.rs `build_views`), each standing for its tree: `K y` = △△y, `Sx s b` = △(△s)b,
 /// `B f g` = △(△(△△f))g, `C f g` = △(△f)(△△g), `I` = △(△△△)△ and `W s` = △(△s)s. No payload: every
@@ -603,6 +775,9 @@ pub fn find_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<&'s
 pub fn find_index(consumer: Tag, producer: Tag) -> Option<usize> { find_index_labelled(consumer, 0, producer, 0) }
 
 pub fn find_index_labelled(consumer: Tag, cl: u8, producer: Tag, pl: u8) -> Option<usize> {
+    if consumer.is_two() || producer.is_two() {
+        return TWO_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer).map(|i| TWO_BASE + i);
+    }
     if consumer.is_resid() || producer.is_resid() {
         return RESID_RULES.iter().position(|r| r.consumer == consumer && r.producer == producer).map(|i| N_ALL_RULES + i);
     }
@@ -684,6 +859,20 @@ pub fn validate_resid() -> Result<(), String> {
     Ok(())
 }
 
+/// Two-way programs' rules: each a perfect matching, plain, at most six fresh agents, one for every pair of kinds.
+pub fn validate_two() -> Result<(), String> {
+    for r in TWO_RULES {
+        let rn = format!("{}·{}", r.consumer.name(), r.producer.name());
+        if !r.consumer.is_consumer() || !r.producer.is_producer() { return Err(format!("{rn}: not a consumer meeting a producer")); }
+        if !r.labels.is_empty() || r.when != When::Any { return Err(format!("{rn}: labelled")); }
+        if r.fresh.len() > 6 { return Err(format!("{rn}: more than six fresh agents")); }
+        if r.fresh.iter().any(|t| *t == Out || t.is_view() || t.is_resid()) { return Err(format!("{rn}: fresh agent not spawnable")); }
+        matching(r, &rn)?;
+        if TWO_RULES.iter().filter(|o| (o.consumer, o.producer) == (r.consumer, r.producer)).count() > 1 { return Err(format!("{rn}: two rules")); }
+    }
+    Ok(())
+}
+
 /// Labels go to duplicators and superpositions only, from an agent that has one, and a fresh
 /// superposition always has its label.
 fn labelled(r: &Rule, rn: &str) -> Result<(), String> {
@@ -755,6 +944,12 @@ mod tests {
     fn view_rules_are_well_formed() {
         super::validate_views().expect("the movement agents' rules must validate");
         assert_eq!(super::VIEW_RULES.len(), 36);
+    }
+
+    #[test]
+    fn two_rules_are_well_formed() {
+        super::validate_two().expect("two-way programs' rules must validate");
+        assert_eq!(super::TWO_RULES.len(), 48);
     }
 
     #[test]

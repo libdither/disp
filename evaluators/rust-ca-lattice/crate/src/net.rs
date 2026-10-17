@@ -128,7 +128,7 @@ impl Net {
             let Some((nid, np)) = a.ports[0] else { continue };
             if np != 0 { continue; }
             let n = self.get(nid);
-            if n.tag.is_consumer() { return Some((nid, id as u32)); }
+            if n.tag.is_consumer() && crate::rules::meets(n.tag, a.tag) { return Some((nid, id as u32)); }
         }
         None
     }
