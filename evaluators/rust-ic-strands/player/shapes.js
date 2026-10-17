@@ -81,6 +81,21 @@ SHAPE[55] = { fill: [[0, 0, 1.12], shrink(BACK_TIP, 0.8)], cut: [[0, 0, 0.8]] };
 SHAPE[56] = SHAPE[3];
 SHAPE[57] = SHAPE[2];
 SHAPE[58] = { fill: SHAPE[9].fill, cut: [[0, 0, 0.25]], turn: true };
+// Two-way programs (two:): an opcode, a program as data, is a square pointing at its principal port, a
+// node holding parts with a hole for each (seq, par, cond two, loop one); a run is a disk with a ▶ cut out;
+// splitters are the unpair's split pill, eating a leaf an eraser's ×; the walkers that read data are
+// choices' diamonds (cond whole, loop holed, flip split), merges the Y upside down.
+const SQ = [-0.82, -0.82, 0.82, -0.82, 0.82, 0.82, -0.82, 0.82];
+for (let t = 59; t <= 69; t++) SHAPE[t] = { fill: [SQ], turn: true };
+for (const t of [70, 71, 72]) SHAPE[t] = { fill: [SQ], mark: [[-0.36, 0.3, 0.22], [0.36, 0.3, 0.22]], turn: true };
+SHAPE[73] = { fill: [SQ], mark: [[0, 0.24, 0.28]], turn: true };
+SHAPE[74] = SHAPE[50];
+SHAPE[75] = SHAPE[76] = SHAPE[9];
+SHAPE[77] = SHAPE[11];
+SHAPE[78] = SHAPE[7];
+SHAPE[79] = SHAPE[80] = { fill: SHAPE[7].fill, cut: [[0, 0, 0.3]] };
+SHAPE[81] = SHAPE[8];
+for (const t of [82, 83, 84, 85]) SHAPE[t] = SHAPE[39];
 /// A kind with no shape of its own yet.
 const SHAPE_ANY = { fill: [[0, 0, 0.9]] };
 /// The spark on a wire joining two agents about to rewrite (graph.js).

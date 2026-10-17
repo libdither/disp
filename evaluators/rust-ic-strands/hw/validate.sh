@@ -9,8 +9,9 @@
 #                 and the lattice in lockstep with the simulator, its pulse phases fused into the
 #                 next clock's turns and only the blocks holding something run; every count of what
 #                 the turns did matches too, also under settings other than the chip's, with the
-#                 demand field (its value at every site compared too), and with the current design
-#                 (lattice.rs `latest`: the demand field and forking S rules)
+#                 demand field (its value at every site compared too), with the current design
+#                 (lattice.rs `latest`: the demand field and forking S rules), and running two-way
+#                 programs (4 ports a slot, 44-byte sites)
 #   6. browser    the player's WebGPU path (player/gpu.js) on Dawn, Chrome's WebGPU (player/dawn.sh),
 #                 and on Firefox's if Firefox or Floorp is installed (player/firefox.sh): a run of the
 #                 design the player shows (`latest`) handed back and forth between GPU and CPU, with
@@ -114,12 +115,19 @@ r=$(gpu fib:0 --grid 232 --depth 8 --seed 2 --check --batch 13 --latest | tail -
 printf "   %-28s %s\n" "fib:0, current design, by 13" "$r"
 r=$(gpu sort:1 --grid 490 --depth 8 --seed 1 --check --batch 32 --latest | tail -1) || fail=1
 printf "   %-28s %s\n" "sort:1, current design, by 32" "$r"
+# Two-way programs, 4 ports a slot: every opcode, a loop, eval, a stuck walker, by one clock and by 8.
+for run in 'two:add 2 3' 'two:sub 2 5' 'two:eval @ ([swap], (△, △△))' 'two:cond(swap, copy) @ (△△, (△, △△))' 'two:copy; merge @ (△△, (△, △))' 'two:merge @ ((△, △), (△, △△))'; do
+  r=$(gpu "$run" --grid 72 --seed 2 --check --latest | tail -1) || fail=1
+  printf "   %-28s %s\n" "$run" "$r"
+done
+r=$(gpu 'two:add 1 2' --grid 64 --seed 4 --check --batch 8 --latest | tail -1) || fail=1
+printf "   %-28s %s\n" "two:add 1 2, by 8" "$r"
 [ $fail = 0 ] || { echo "   the GPU differs from the simulator"; exit 1; }
 done_
 
 stage "browser"
 cap 6G 900 "$HW/../build-player.sh" >/dev/null
-for h in 'src=sort:1' 'src=fib:0&lazy=0&pairs=0&temp=1.5&board=0&link=1'; do
+for h in 'src=sort:1' 'src=fib:0&lazy=0&pairs=0&temp=1.5&board=0&link=1' 'src=two: add 2 3'; do
   r=$(cap 8G 1800 "$HW/../player/dawn.sh" check "$h" 2>&1 | tail -1) || fail=1
   printf "   %-28s %s\n" "$h" "$r"
 done

@@ -2,14 +2,14 @@
 //! lattice's sites in one storage buffer, a batch of clocks per submission, each clock one dispatch
 //! over the blocks holding something (`busy.wgsl`).
 
-use crate::lattice::Params;
+use crate::lattice::{ports, Params, SiteBytes};
 use std::num::NonZeroU64;
 use wgpu::{BufferUsages as U, ShaderStages};
 
-/// Words per site (bytes as lattice.rs `dump_state`).
+/// Words per site of the chip's configuration, which recorded turns and blocks are in (lattice.rs `SiteBytes`).
 pub const SITE: usize = 10;
 /// Words per recorded turn or block (block.wgsl `REC`).
-pub const REC: usize = 93;
+pub const REC: usize = 13 + 8 * SITE;
 /// Bytes between two `Clock` entries of the uniform buffer.
 const STRIDE: u64 = 256;
 /// Bytes of a `Clock`.
@@ -34,6 +34,8 @@ pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub name: String,
+    /// The layout of a site (lattice.rs `SiteBytes`): 10 words, or 11 with 4 ports a slot.
+    pub site: SiteBytes,
     layout: wgpu::BindGroupLayout,
     turns: wgpu::ComputePipeline,
     pulses: wgpu::ComputePipeline,
@@ -75,7 +77,7 @@ impl Gpu {
             turns: pipeline("turns", &run_layout), pulses: pipeline("pulses", &run_layout), vectors: pipeline("vectors", &run_layout),
             seed_busy: pipeline("seed_busy", &run_layout), clock_turns: pipeline("clock_turns", &run_layout),
             busy_pulses: pipeline("busy_pulses", &run_layout), busy_gather: pipeline("busy_gather", &run_layout),
-            name: format!("{} ({:?}, {})", info.name, info.backend, info.driver_info), device, queue, layout,
+            name: format!("{} ({:?}, {})", info.name, info.backend, info.driver_info), site: SiteBytes::of(ports(p)), device, queue, layout,
         };
         if let Some(e) = pollster::block_on(scope.pop()) { return Err(format!("shader: {e}")); }
         Ok(gpu)
@@ -108,10 +110,11 @@ impl Gpu {
         v
     }
 
-    /// Replay records (REC words each, block.wgsl `vectors`) in place: each record's sites become
-    /// the sites after its turn or block, and its last two words the turn's touched positions and
-    /// whether it was dropped.
+    /// Replay records (REC words each, block.wgsl `vectors`; the chip's configuration) in place: each
+    /// record's sites become the sites after its turn or block, and its last two words the turn's
+    /// touched positions and whether it was dropped.
     pub fn replay(&self, recs: &mut [u32]) {
+        assert_eq!(self.site.words, SITE, "recorded turns and blocks are the chip's");
         let n = (recs.len() / REC).min(RECS_PER_DISPATCH);
         if n == 0 { return; }
         let clocks = self.buffer(STRIDE, U::UNIFORM | U::COPY_DST);
@@ -168,11 +171,11 @@ pub struct Grid<'g> {
 impl<'g> Grid<'g> {
     /// A w×h×d lattice running up to `batch` clocks per submission.
     pub fn new(gpu: &'g Gpu, w: u32, h: u32, d: u32, batch: usize) -> Grid<'g> {
-        let n = (w * h * d) as u64;
+        let (n, sw) = ((w * h * d) as u64, gpu.site.words as u64);
         let blocks = ((w / 2 + 1) * (h / 2 + 1) * (d / 2 + 1)) as u64;
-        let sites = gpu.buffer(n * SITE as u64 * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
-        let gathered = gpu.buffer(n * (SITE as u64 + 2) * 4, U::STORAGE | U::COPY_SRC);
-        let staging = gpu.buffer((n * (SITE as u64 + 2)).max(COUNTS as u64) * 4, U::MAP_READ | U::COPY_DST);
+        let sites = gpu.buffer(n * sw * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
+        let gathered = gpu.buffer(n * (sw + 2) * 4, U::STORAGE | U::COPY_SRC);
+        let staging = gpu.buffer((n * (sw + 2)).max(COUNTS as u64) * 4, U::MAP_READ | U::COPY_DST);
         let pul = gpu.buffer(2 * n * 4, U::STORAGE | U::COPY_DST | U::COPY_SRC);
         let marks = gpu.buffer(blocks * 4, U::STORAGE | U::COPY_DST);
         let busy = gpu.buffer(3 * blocks * 4, U::STORAGE);
@@ -185,24 +188,24 @@ impl<'g> Grid<'g> {
     fn sites(&self) -> usize { (self.w * self.h * self.d) as usize }
     fn blocks(&self) -> u32 { (self.w / 2 + 1) * (self.h / 2 + 1) * (self.d / 2 + 1) }
 
-    /// Load a state of `SITE` words per site, and its demand field (a value a site) if it keeps one:
-    /// each site's pulse word (its pulse, its field above it) goes to both pulse buffers.
+    /// Load a state of `site.words` words per site, and its demand field (a value a site) if it keeps
+    /// one: each site's pulse word (its pulse, byte 39, its field above it) goes to both pulse buffers.
     pub fn upload(&mut self, state: &[u32], field: Option<&[u8]>) {
-        assert_eq!(state.len(), self.sites() * SITE, "a state of {SITE} words per site");
-        const EMPTY: [u32; SITE] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
+        let (sw, empty) = (self.gpu.site.words, self.gpu.site.empty());
+        assert_eq!(state.len(), self.sites() * sw, "a state of {sw} words per site");
         let fv = |i: usize| field.map_or(0, |f| f[i] as u32);
-        let pul: Vec<u32> = state.chunks(SITE).enumerate().map(|(i, s)| (s[9] >> 24) | fv(i) << 8).collect();
+        let pul: Vec<u32> = state.chunks(sw).enumerate().map(|(i, s)| (s[SiteBytes::PULSE / 4] >> 24) | fv(i) << 8).collect();
         let q = &self.gpu.queue;
         q.write_buffer(&self.sites, 0, bytemuck::cast_slice(state));
         q.write_buffer(&self.pul, 0, bytemuck::cast_slice(&pul));
         q.write_buffer(&self.pul, pul.len() as u64 * 4, bytemuck::cast_slice(&pul));
         q.write_buffer(&self.counts, 0, bytemuck::cast_slice(&[0u32; 16]));
         q.write_buffer(&self.marks, 0, bytemuck::cast_slice(&vec![0u32; self.blocks() as usize]));
-        self.busy_hint = state.chunks(SITE).enumerate().filter(|(i, s)| *s != EMPTY || fv(*i) != 0).count() as u32;
+        self.busy_hint = state.chunks(sw).enumerate().filter(|(i, s)| *s != &empty[..] || fv(*i) != 0).count() as u32;
         self.seeded = false;
     }
 
-    pub fn download(&self) -> Vec<u32> { self.gpu.read(&self.sites, 0, &self.staging, self.sites() * SITE) }
+    pub fn download(&self) -> Vec<u32> { self.gpu.read(&self.sites, 0, &self.staging, self.sites() * self.gpu.site.words) }
 
     /// The demand field after the last `run`, a value a site.
     pub fn download_field(&self) -> Vec<u8> {
@@ -211,14 +214,15 @@ impl<'g> Grid<'g> {
     }
 
     /// The sites holding anything or a field after the last `run` that gathered: their indices,
-    /// their `SITE` words each, and their fields.
+    /// their `site.words` words each, and their fields.
     pub fn gathered(&mut self) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
+        let sw = self.gpu.site.words;
         let n = self.gpu.read(&self.counts, 3, &self.staging, 1)[0] as usize;
-        let v = self.gpu.read(&self.gathered, 0, &self.staging, n * (SITE + 2));
+        let v = self.gpu.read(&self.gathered, 0, &self.staging, n * (sw + 2));
         self.busy_hint = n as u32;
-        let idx = v.chunks(SITE + 2).map(|r| r[0]).collect();
-        let words = v.chunks(SITE + 2).flat_map(|r| r[1..=SITE].iter().copied()).collect();
-        let field = v.chunks(SITE + 2).map(|r| r[SITE + 1] as u8).collect();
+        let idx = v.chunks(sw + 2).map(|r| r[0]).collect();
+        let words = v.chunks(sw + 2).flat_map(|r| r[1..=sw].iter().copied()).collect();
+        let field = v.chunks(sw + 2).map(|r| r[sw + 1] as u8).collect();
         (idx, words, field)
     }
 

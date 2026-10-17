@@ -234,7 +234,7 @@ async function tail() {
   if (!v("L")) return "FAIL the player did not load";
   w.document.getElementById("speed").value = 100;
   // The sites as a set: the engine's list of them is in no fixed order.
-  const sites = () => { const h = v("held()"), r = []; for (let i = 0; i < h.length; i += 12) r.push(Array.from(h.subarray(i, i + 12)).join(",")); return r.sort().join(";"); };
+  const sites = () => { const h = v("held()"), n = v("E.site_words()") + 2, r = []; for (let i = 0; i < h.length; i += n) r.push(Array.from(h.subarray(i, i + n)).join(",")); return r.sort().join(";"); };
   const toEnd = async eng => {
     await w.setEngine(eng);
     if (eng === "gpu" && !v("onGpu")) throw new Error("no GPU: " + v("document.getElementById('sEngine').textContent"));

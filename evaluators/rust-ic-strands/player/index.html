@@ -318,6 +318,36 @@
         <i>where</i>, and what is being computed underlined in blue. Picks follow their agents as they move and
         rewrite; one whose value is used up by a rewrite drops out.</p>
     </details>
+    <details class="how"><summary>two-way programs (two:)</summary>
+      <p><b>Programs.</b> A two-way program is a tree of opcodes (squares, programs as data), each a bijection on
+        trees: <i>swap</i> (u, v) ↔ (v, u), <i>assocl</i> and <i>assocr</i> regroup, <i>s2f</i> △t → (△, t) and
+        <i>f2s</i> back, <i>uniti</i> x → (△, x) and <i>unite</i> back, <i>copy</i> x → (x, x) and <i>merge</i> back,
+        <i>flip</i>, <i>eval</i>; and nodes that hold parts: <i>a; b</i>, <i>(a | b)</i> on the two halves,
+        <i>cond(a, b)</i>, <i>loop(c)</i>. A choice is a pair whose tag says the side: (△, v) the left, (△△, v) the
+        right. <i>cond</i> runs a on the left and b on the right, keeping the tag; <i>loop</i> runs c while it gives the
+        left side; <i>flip</i> swaps the sides. Numbers are 0 = (△, △) and n + 1 = (△△, n).</p>
+      <p><b>Running.</b> A run (the disk with ▶) has four ports: the program, the input, the program handed back, and
+        the result. It reacts when an opcode meets its program port, and every rule hands the opcode or its node back
+        out, so once a run is done its program is whole again beside the result. That is why a loop needs no copy of
+        its body: each round's run hands the body back for the next.</p>
+      <p><b>Most of it is wiring.</b> A run meeting <i>swap</i> leaves a splitter (the split pill) that takes the input
+        fork apart and a fresh fork that joins the halves crossed; <i>assocl</i> and <i>assocr</i> are two splitters and
+        two forks; <i>a; b</i> becomes two runs in a row, the first's result the second's input and their programs
+        joined again as they come back; <i>(a | b)</i> a splitter and two runs side by side; <i>eval</i> a splitter and
+        a run of the first half on the second; <i>copy</i> a duplicator. None of these waits for data: the walkers they
+        leave meet it wherever it is.</p>
+      <p><b>Reading data.</b> Only four steps decide something, and they leave a walker that reads: cond's (the whole
+        diamond) reads the tag and starts a run of a or of b, the other coming back untouched; loop's (the holed
+        diamonds) take each round's state apart and read its tag, to run the body again or let the result out; flip's
+        (the split diamond) turns △ into △△ and back; and merge's (the upside-down Y) read the two halves a layer at a
+        time, joining them into one tree.</p>
+      <p><b>Partial and eager.</b> Where no rule fits (a swap of a leaf, a merge of two different halves) the walker
+        waits for good, and the run is <i>stuck</i>, as the reference interpreter is. Every walker is wanted from the
+        start, since in a bijection every step's result is used: there is no garbage, and no eraser.</p>
+      <p><b>Running back.</b> The inverse of a program is read off its text (<i>~p</i>: each opcode's inverse, a
+        sequence's steps reversed) and run forward on the result: <i>sub</i> is <i>~add</i>. Nothing is recorded, and
+        the net has no rules for going backward.</p>
+    </details>
   </div>
 </div>
 <script src="engine.js"></script>
@@ -462,26 +492,43 @@ const MOVERS = [
   { name: "relay_add 1 2", text: "relay_add 1 2", view: "3d", speed: 35,
     desc: "binary addition: forty B agents carry bits right, a few C, K, I, W and Sx along the way" },
 ];
+/// Two-way programs (`two:`, twoway.rs `parse_run`): every program a bijection, run eagerly with 4 ports a slot.
+const TWO_WAY = [
+  { name: "add", text: "two: add 2 3", desc: "(a, b) → (a, a + b), a loop over a, numbers as (△, △) for 0 and (△△, n) for n + 1; the program comes back beside the result" },
+  { name: "sub", text: "two: sub 2 5", desc: "add's inverse, read off its text and run forward: (a, c) → (a, c − a), with nothing recorded" },
+  { name: "eval", text: "two: eval @ ([add], (2, 3))", desc: "a program as data: eval runs it on the other half and hands it back" },
+  { name: "cond", text: "two: cond(swap, copy) @ (△△, (△, △△))", desc: "a choice: the tag △△ picks copy, and is kept, so the choice can be undone" },
+  { name: "copy; merge", text: "two: copy; merge @ (△△, (△, △))", desc: "copy and its inverse, merge, which reads both copies layer by layer: back where it started" },
+  { name: "stuck", text: "two: swap @ △", desc: "a program is a partial bijection: there is no swap of a leaf, so its splitter waits for good" },
+];
 const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.some(p => p.name === "fib") ? "fib 2" : "share-tower:4";
+/// The kinds a run can hold, for the legend: tree calculus's (with superpositions and movement agents), keeping
+/// history's, or a two-way program's (its values, duplicators copying programs, the root, its opcodes and walkers).
+const span = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+const KINDS = { tree: span(1, 20), resid: span(1, 58), two: [1, 2, 3, 10, 13, ...span(59, 85)] };
+/// The legend's entries after the kinds.
+let LEGEND_REST = "";
+function legend(kinds) { $("legend").innerHTML = kinds.map(t => `<span>${kindHTML(t)}</span>`).join("") + LEGEND_REST; }
 function populate() {
   entries = [...DISP.map(p => ({ group: "disp programs", name: p.name, text: `${p.name} ${p.example}`, desc: p.desc, prog: p })),
     ...(DISP.some(p => p.name === "relay_add") ? [{ group: "side by side (a; b)", name: "add; relay_add", text: SIDE_BY_SIDE,
       desc: "unary and binary addition at once, each its own reduction", both: true }] : []),
     ...catalog.workloads.map(w => ({ group: "benchmarks (binary numbers)", name: w.name, text: w.n > 0 ? `${w.name}:${SIZE[w.name] ?? w.n}` : w.name, desc: w.desc, work: w })),
     ...MOVERS.map(m => ({ group: "movement agents (views=1)", ...m, mover: true })),
+    ...TWO_WAY.map(e => ({ group: "two-way programs (two:)", ...e, two: true })),
     { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" },
     { group: "other", name: "backward", text: "run it backward", desc: "the input on the abstract net, run so that every step can be undone (rev.html)", rev: true },
     { group: "other", name: "substrate", text: "run it as physics", desc: "the input on this lattice with every rewrite recorded and undoable, a drive, and heat (substrate.html)", sub: true }];
   let group = "";
   $("menu").innerHTML = entries.map((e, i) => (e.group !== group ? `<div class="grp">${group = e.group}</div>` : "")
     + `<div class="opt" data-i="${i}" title="${e.desc}">${e.text}<span>${e.desc}</span></div>`).join("");
-  $("legend").innerHTML = TAGS.map((_, t) => t ? `<span>${kindHTML(t)}</span>` : "").join("")
-    + `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
+  LEGEND_REST = `<span><span class="sw" style="background:none;border:2px solid #56c8ff"></span>wanted reader</span><span><span class="sw" style="background:#56c8ff;border-radius:2px;height:3px"></span>its principal wire</span>`
     + `<span><span class="sw" style="background:none;border:2px solid #ffa94d"></span>called value</span><span><span class="sw" style="background:rgba(255,170,80,0.35)"></span>demand field</span>`
     + `<span><span class="sw" style="background:#fff;box-shadow:0 0 6px #fff"></span>demand pulse</span><span><span class="sw" style="background:#ffd866;opacity:.3"></span>garbage (dimmed)</span>`
     + `<span><span class="sw" style="background:#0b0e14;border:2px solid #fff;width:6px;height:6px"></span>principal port</span><span><span class="sw" style="background:none;color:#b89ad8;width:auto;font-size:11px">→</span>a move in a stepped clock</span>`
     + `<span><span class="sw" style="background:#ffaa46;border-radius:2px;height:3px"></span>selected site's wires</span>`
     + `<span style="grid-column:1/-1"><span class="sw" style="background:conic-gradient(hsl(200,75%,66%),hsl(320,75%,50%),hsl(80,75%,66%),hsl(200,75%,66%))"></span>with segments on (C), colour is where an agent is in the term, and its shape what kind it is; values stay grey, tinted toward their part</span>`;
+  legend(KINDS.tree);
   const q = new URLSearchParams(location.hash.slice(1));
   $("src").value = q.get("src") ?? oldLink(q) ?? DEFAULT;
   // The side-by-side example is a race of 10k against 75k clocks: it opens at full speed.
@@ -499,8 +546,9 @@ function oldLink(q) {
 /// The entry the text calls: a benchmark as `name:n` or bare `name`, else the disp program its first
 /// word names, else while that word is being typed, the first entry it begins.
 function matchEntry(input) {
-  const exact = entries.findIndex(e => e.both && e.text === input.trim());
+  const exact = entries.findIndex(e => (e.both || e.two) && e.text === input.trim());
   if (exact >= 0) return exact;
+  if (/^two:/.test(input.trim())) return entries.findIndex(e => e.two);
   const word = input.match(/^\s*([\w-]+)/)?.[1], rest = word ? input.trim().slice(word.length) : "";
   if (!word) return -1;
   const is = f => entries.findIndex(f);
@@ -518,6 +566,9 @@ function syncUI() {
       + " they run at once on one lattice, as a tuple under one root whose normalizer splits it into one a part. Each answer is shown as it comes in, with its clock."
     : e?.prog ? `<b>${e.name}</b>: ${e.desc}. Ordinary disp, compiled from <i>programs/programs.disp</i> with the prelude.`
       + ` Type any disp expression: arguments as literals (numbers, [lists], "strings") or calls of their own, like <i>${e.name} (add 1 1)</i>.`
+    : e?.two ? `<b>A two-way program</b>${e.text === input ? `: ${e.desc}` : ""}. <i>two: PROG @ VALUE</i>, or <i>two: add A B</i>, <i>sub A C</i>, <i>succ N</i>, <i>pred N</i>.`
+      + " PROG: swap, assocl, assocr, s2f, f2s, uniti, unite, copy, merge, eval, flip, <i>a; b</i>, <i>(a | b)</i>, <i>cond(a, b)</i>, <i>loop(a)</i>, <i>~a</i> (a's inverse)."
+      + " VALUE: △ (or t), △v, (u, v), a number, [PROG]. How it runs: <i>two-way programs</i> in the details (D)."
     : e?.work ? `<b>${e.name}</b>: ${e.desc}. A benchmark from the lambada suite: its numbers are binary (least significant bit first), and its fib counts from fib 0 = 1.`
       + (e.work.n > 0 ? ` <i>${e.name}:n</i> sets n.` : "")
     : e ? "A random tree-calculus term: <i>random:seed:depth</i>."
@@ -538,11 +589,11 @@ function moverSettings(e) {
   setView(e.view); $("speed").value = e.speed; speedLabel();
 }
 /// Fill the input box with entry i, its argument selected for typing over; a movement agents example
-/// runs at once, with its settings.
+/// runs at once, with its settings, and so does a two-way program.
 function choose(i) {
   if (entries[i].rev) { location.href = `rev.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
   if (entries[i].sub) { location.href = `substrate.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
-  if (entries[i].mover) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
+  if (entries[i].mover || entries[i].two) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
   const fill = entries[i].text, at = fill.search(/[\s:]/);
   if (entries[i].both) { $("speed").value = 100; speedLabel(); }
   $("src").value = fill; syncUI();
@@ -579,8 +630,10 @@ async function compile(input) {
   compiled.set(input, p);
   return p;
 }
-/// The parts of `a; b; c`: split at each `;` outside brackets and strings.
+/// The parts of `a; b; c`: split at each `;` outside brackets and strings. A two-way program is one run,
+/// its `;` a sequence.
 function splitParts(input) {
+  if (/^\s*two:/.test(input)) return [input.trim()];
   const parts = [];
   let depth = 0, from = 0, quote = false;
   for (let i = 0; i < input.length; i++) {
@@ -639,16 +692,19 @@ function start(p, input) {
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return false; }
   if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); gpuEstimate(); }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
-  L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
+  L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ar: E.ports_per_slot(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
+  legend(L.ar === 3 ? KINDS.tree : /^\s*two:/.test(src) ? KINDS.two : KINDS.resid);
   running = p.parts ? { call: p.call, parts: p.parts, at: p.parts.map(() => null) } : p.call ? { kind: p.kind, call: p.call } : null;
   finished = false; cleaned = false; cleanSeen = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   tlReset();
   refreshGarbage(true); layoutLayers();
   $("layer3d").innerHTML = `<option value="all">all layers</option>` + Array.from({ length: depth }, (_, z) => `<option value="${z}">layer ${z}</option>`).join("");
-  const ends = 3 * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), field = E.field_bits();
-  $("bits").textContent = `The chip's schedule with the demand field, and S rules that fork. A site is ${L.k} agent tags (4 bits each, plus a wanted bit, which on a value means called), `
+  const ends = L.ar * L.k + L.faces * L.lanes, bits = Math.ceil(Math.log2(ends + 1)), field = E.field_bits(), tag = L.ar === 4 ? 6 : 4;
+  $("bits").textContent = (L.ar === 4 ? "The chip's schedule with the demand field, running a two-way program eagerly, 4 ports an agent. "
+    : "The chip's schedule with the demand field, and S rules that fork. ")
+    + `A site is ${L.k} agent tags (${tag} bits each, plus a wanted bit, which on a value means called), `
     + `a switchboard of 8 pairings × 2 ends × ${bits} bits, ${bits} bits saying which strand carries a pulse, and ${field} bits of demand field: `
-    + `≈ ${5 * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
+    + `≈ ${(tag + 1) * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
   $("clockName").textContent = "clocks (2×2×2 blocks)";
   location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${SETTINGS.length ? "&set=" + SETTINGS.join(",") : ""}${onGpu ? "&gpu=1" : ""}`;
   if (onGpu && !gpuCode) setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
@@ -691,7 +747,7 @@ function slotPos(s, k) {
   return [ox + S * (0.32 + 0.36 * k), oy + S / 2];
 }
 // Ports sit on the agent's rim: the principal on top, the others lower left and lower right.
-const PORT_ANGLE = [-Math.PI / 2, Math.PI * 5 / 6, Math.PI / 6];
+const PORT_ANGLE = [-Math.PI / 2, Math.PI * 5 / 6, Math.PI / 6, Math.PI / 2];
 function portPos(s, k, p) { const [x, y] = slotPos(s, k), r = agentRadius(); return [x + r * Math.cos(PORT_ANGLE[p]), y + r * Math.sin(PORT_ANGLE[p])]; }
 // Where strand i on face f meets the edge of a site.
 function lanePos(s, f, i) {
@@ -706,15 +762,15 @@ function lanePos(s, f, i) {
   }
 }
 function endPos(s, e) {
-  if (e < 3 * L.ks) return portPos(s, Math.floor(e / 3), e % 3);
-  const x = e - 3 * L.ks; return lanePos(s, Math.floor(x / L.lanes), x % L.lanes);
+  if (e < L.ar * L.ks) return portPos(s, Math.floor(e / L.ar), e % L.ar);
+  const x = e - L.ar * L.ks; return lanePos(s, Math.floor(x / L.lanes), x % L.lanes);
 }
 function neighbor(s, f) {
   const [x, y, z] = siteXYZ(s), at = (x, y, z) => z * L.w * L.h + y * L.w + x;
   switch (f) { case 0: return at(x + 1, y, z); case 1: return at(x - 1, y, z); case 2: return at(x, y + 1, z);
     case 3: return at(x, y - 1, z); case 4: return at(x, y, z + 1); default: return at(x, y, z - 1); }
 }
-const faceOf = e => Math.floor((e - 3 * L.ks) / L.lanes);
+const faceOf = e => Math.floor((e - L.ar * L.ks) / L.lanes);
 function views() {
   const b = E.memory.buffer, n = L.w * L.h * L.depth;
   return { tags: new Uint8Array(b, E.tags_ptr(), n * L.ks), want: new Uint8Array(b, E.want_ptr(), n * L.ks),
@@ -729,9 +785,9 @@ function walk(V, s, e, onPair) {
     const m = V.mate[site * L.ends + cur];
     if (m === NONE) return null;
     if (onPair) onPair(site, cur, m);
-    if (m < 3 * L.ks) return { site, end: m, len };
-    const x = m - 3 * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes;
-    site = neighbor(site, f); cur = 3 * L.ks + (f ^ 1) * L.lanes + i; len++;
+    if (m < L.ar * L.ks) return { site, end: m, len };
+    const x = m - L.ar * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes;
+    site = neighbor(site, f); cur = L.ar * L.ks + (f ^ 1) * L.lanes + i; len++;
   }
   return null;
 }
@@ -822,7 +878,7 @@ function draw() {
   }
   // strands between sites, and switchboard pairings inside them
   const strands = new Path2D(), board = new Path2D(), updown = [];
-  const base = 3 * L.ks;
+  const base = L.ar * L.ks;
   for (const s of sites) {
     for (let e = 0; e < L.ends; e++) {
       const m = V.mate[s * L.ends + e];
@@ -859,7 +915,7 @@ function draw() {
   const hot = new Path2D();
   for (const s of V.live) for (let k = 0; k < L.ks; k++) {
     const t = V.tags[s * L.ks + k];
-    if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) follow(V, s, k * 3, hot);
+    if (t && isConsumer(t) && V.want[s * L.ks + k] && !dead(s, k)) follow(V, s, k * L.ar, hot);
   }
   ctx.globalCompositeOperation = "lighter";
   ctx.strokeStyle = `rgba(86,200,255,${0.9 * dim})`; ctx.lineWidth = lw(2.2); ctx.stroke(hot);
@@ -872,7 +928,7 @@ function draw() {
       if (!t) continue;
       // With segments on, the segment colours stand for the pinks.
       const path = b & 16 ? lit[2] : segs ? null : b & 1 ? lit[0] : lit[1];
-      for (let p = 0; p < ARITY[t]; p++) { const into = isSource(t, p) ? (b & 10 ? lit[3] : null) : path; if (into) follow(V, s, k * 3 + p, into); }
+      for (let p = 0; p < ARITY[t]; p++) { const into = isSource(t, p) ? (b & 10 ? lit[3] : null) : path; if (into) follow(V, s, k * L.ar + p, into); }
     }
     ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(255,155,230,0.7)"; ctx.lineWidth = lw(1.8); ctx.stroke(lit[1]);
@@ -886,7 +942,7 @@ function draw() {
     const lit = new Path2D();
     for (let k = 0; k < L.ks; k++) {
       const t = V.tags[pinned * L.ks + k]; if (!t) continue;
-      for (let p = 0; p < ARITY[t]; p++) { const far = follow(V, pinned, k * 3 + p, lit); if (far) ends.push(far); }
+      for (let p = 0; p < ARITY[t]; p++) { const far = follow(V, pinned, k * L.ar + p, lit); if (far) ends.push(far); }
     }
     ctx.strokeStyle = "rgba(255,170,70,0.95)"; ctx.lineWidth = lw(2.6); ctx.stroke(lit);
     const [ox, oy] = siteOrigin(pinned);
@@ -937,8 +993,8 @@ function draw() {
   ctx.globalAlpha = 1;
   if (pk) [[PINK, 1.1], ["rgba(255,155,230,0.8)", 1.1], ["#ffffff", 1.6], [PINK, 2]].forEach(([c, w], i) => { ctx.strokeStyle = c; ctx.lineWidth = lw(w); ctx.stroke(rings[i]); });
   for (const far of ends) {
-    if (far.end >= 3 * L.ks) continue;
-    const [x, y] = slotPos(far.site, Math.floor(far.end / 3));
+    if (far.end >= L.ar * L.ks) continue;
+    const [x, y] = slotPos(far.site, Math.floor(far.end / L.ar));
     ctx.strokeStyle = "rgba(255,170,70,0.95)"; ctx.lineWidth = lw(1.4); ctx.beginPath(); ctx.arc(x, y, rad * 1.7, 0, 7); ctx.stroke();
   }
   // demand pulses, each on the strand end it is about to cross
@@ -1004,12 +1060,12 @@ function pos3(s) { const [x, y, z] = siteXYZ(s); return [(x - V3.cx) * V3.pitch,
 const FACE3 = () => { const h = V3.pitch / 2; return [[h, 0, 0], [-h, 0, 0], [0, 0, h], [0, 0, -h], [0, V3.gap / 2, 0], [0, -V3.gap / 2, 0]]; };
 function end3(s, e, faces) {
   const c = pos3(s);
-  if (e < 3 * L.ks) {
-    const k = Math.floor(e / 3), p = e % 3, dx = L.k === 1 ? 0 : (k - (L.k - 1) / 2) * 0.36;
-    const po = [[0, 0.17, 0], [-0.14, -0.09, 0], [0.14, -0.09, 0]][p];
+  if (e < L.ar * L.ks) {
+    const k = Math.floor(e / L.ar), p = e % L.ar, dx = L.k === 1 ? 0 : (k - (L.k - 1) / 2) * 0.36;
+    const po = [[0, 0.17, 0], [-0.14, -0.09, 0], [0.14, -0.09, 0], [0, -0.17, 0]][p];
     return [c[0] + dx + po[0], c[1] + po[1], c[2] + po[2]];
   }
-  const x = e - 3 * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes, off = (i - (L.lanes - 1) / 2) * 0.13, fd = faces[f];
+  const x = e - L.ar * L.ks, f = Math.floor(x / L.lanes), i = x % L.lanes, off = (i - (L.lanes - 1) / 2) * 0.13, fd = faces[f];
   const perp = f < 2 ? [0, 0, off] : f < 4 ? [off, 0, 0] : [off * 0.7, 0, off * 0.7];
   return [c[0] + fd[0] + perp[0], c[1] + fd[1] + perp[1], c[2] + fd[2] + perp[2]];
 }
@@ -1135,16 +1191,16 @@ function build3d(V) {
   const segOf = seat => { const j = segs ? NET.bySeat[seat] : -1; return j >= 0 && NET.seg[j] >= 0 ? 2 * NET.seg[j] + isValue(NET.tag[j]) : -1; };
   if (segs) for (const s of V.live) for (let k = 0; k < ks; k++) {
     const t = V.tags[s * ks + k], g = t ? segOf(s * ks + k) : -1;
-    if (g >= 0) for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) walk(V, s, k * 3 + p, stamp(wseg, g));
+    if (g >= 0) for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) walk(V, s, k * L.ar + p, stamp(wseg, g));
   }
   for (const s of V.live) for (let k = 0; k < ks; k++) {
     const t = V.tags[s * ks + k];
-    if (t && isConsumer(t) && V.want[s * ks + k] && !dead(s, k)) walk(V, s, k * 3, stamp(wlit, 1));
+    if (t && isConsumer(t) && V.want[s * ks + k] && !dead(s, k)) walk(V, s, k * L.ar, stamp(wlit, 1));
   }
-  if (pinned != null) for (let k = 0; k < ks; k++) { const t = V.tags[pinned * ks + k]; for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * 3 + p, stamp(wlit, 2)); }
+  if (pinned != null) for (let k = 0; k < ks; k++) { const t = V.tags[pinned * ks + k]; for (let p = 0; p < ARITY[t]; p++) walk(V, pinned, k * L.ar + p, stamp(wlit, 2)); }
   if (pk) for (const seat of PICK.lit) {
     const b = pk[seat], t = V.tags[seat], code = b & 16 ? 5 : b & 1 ? 3 : 4;
-    for (let p = 0; p < ARITY[t]; p++) if (!isSource(t, p)) walk(V, siteOf(seat), slotOf(seat) * 3 + p, stamp(wlit, code));
+    for (let p = 0; p < ARITY[t]; p++) if (!isSource(t, p)) walk(V, siteOf(seat), slotOf(seat) * L.ar + p, stamp(wlit, code));
   }
   // every pairing as a short curve through its site, so each wire is one path; with a pick, the rest dimmed
   const wires = V3.wires.userData.w, hot = V3.hot.userData.w, rgb = [0, 0, 0], q = [0, 0, 0];
@@ -1193,7 +1249,7 @@ function build3d(V) {
     m4.makeScale(V3.pitch, 1, V3.pitch).setPosition(c[0], c[1], c[2]); cells.setMatrixAt(i, m4); V3.cellSite[i] = s;
     for (let k = 0; k < ks; k++) {
       const seat = s * ks + k, t = V.tags[seat]; if (!t) continue;
-      const p = end3(s, k * 3, faces), b = pk ? pk[seat] : 0, gone = dead(s, k), g = segs ? segOf(seat) : -1;
+      const p = end3(s, k * L.ar, faces), b = pk ? pk[seat] : 0, gone = dead(s, k), g = segs ? segOf(seat) : -1;
       p[1] -= R3; // the principal port is on top of the agent
       if (!segs || isView(t)) col.copy(V3.kind[t]); else if (g >= 0) col.setRGB(...segRgb[g]); else col.set(0x4a5465);
       if (gone) col.lerp(bg, b ? 0.4 : 0.72); if (pk && !b) col.lerp(bg, 0.82);
@@ -1459,11 +1515,11 @@ function tipHTML(site) {
       + (called ? `<span class="chip" style="color:#ffa94d">called: walking to its reader</span>` : "")
       + (DESC[name] ? `<div class="tp">${DESC[name]}.</div>` : "");
     for (let p = 0; p < ARITY[t]; p++) {
-      const far = walk(V, site, k * 3 + p), out = isSource(t, p);
+      const far = walk(V, site, k * L.ar + p), out = isSource(t, p);
       let w;
       if (!far) w = "unwired";
       else {
-        const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3, fn = TAGS[ft];
+        const ft = V.tags[far.site * L.ks + Math.floor(far.end / L.ar)], fp = far.end % L.ar, fn = TAGS[ft];
         const where = far.site === site ? "in this site" : `${far.len} strand${far.len === 1 ? "" : "s"} away at ${at(far.site)}`;
         w = `${out ? "read by" : "reads"} the ${PORTS[fn]?.[fp] ?? `port ${fp}`} of ${kindHTML(ft)}, ${where}`;
       }
@@ -1477,10 +1533,10 @@ function tipHTML(site) {
   for (let f = 0; f < L.faces; f++) {
     let n = 0;
     for (let i = 0; i < L.lanes; i++) {
-      const e = 3 * L.ks + f * L.lanes + i, m = V.mate[site * L.ends + e];
+      const e = L.ar * L.ks + f * L.lanes + i, m = V.mate[site * L.ends + e];
       if (m === NONE) continue;
       n++;
-      if (m >= 3 * L.ks && m > e) through.push(`${DIRS[f]} ↔ ${DIRS[faceOf(m)]}`);
+      if (m >= L.ar * L.ks && m > e) through.push(`${DIRS[f]} ↔ ${DIRS[faceOf(m)]}`);
     }
     if (n) links.push(`${DIRS[f]} ${n}/${L.lanes}`);
   }
@@ -1494,13 +1550,13 @@ function tipHTML(site) {
 // What a consumer is doing, in words.
 function status(V, site, k, t, wanted, gone) {
   if (gone) return "Garbage: the answer no longer depends on it. An eraser will collect it.";
-  const far = walk(V, site, k * 3);
+  const far = walk(V, site, k * L.ar);
   if (!far) return "";
-  const ft = V.tags[far.site * L.ks + Math.floor(far.end / 3)], fp = far.end % 3;
+  const ft = V.tags[far.site * L.ks + Math.floor(far.end / L.ar)], fp = far.end % L.ar;
   if (t === 11) return isProducer(ft) && fp === 0 ? "It erases that value when they meet." : "Garbage leads here: it collects the computation when it touches its output.";
   if (!wanted) return "Not wanted yet: it waits until something needs its result.";
   if (isProducer(ft) && fp === 0) return far.len <= 1 ? "Its value is within reach: it rewrites on its next turn, if its square has room." : `Its value is ${far.len} strands away: it walks along the wire toward it.`;
-  const fw = V.want[far.site * L.ks + Math.floor(far.end / 3)];
+  const fw = V.want[far.site * L.ks + Math.floor(far.end / L.ar)];
   return fw ? "Its input is still being computed by another wanted computation." : "Its input is another computation nobody has asked for yet: a demand pulse is on the way.";
 }
 function siteAt(clientX, clientY) {
@@ -1984,7 +2040,7 @@ async function setEngine(want, why) {
       $("engine").disabled = true; $("sEngine").textContent = "compiling the GPU kernels…"; banner("compiling the GPU kernels…");
       try {
         G?.kernels.device.destroy();
-        G = { code, kernels: await StrandsGPU.open(code), grid: null, busy: false, load: 0, at: -1, out: [], gen: 0, latency: undefined, last: 0 };
+        G = { code, kernels: await StrandsGPU.open(code, E.site_words()), grid: null, busy: false, load: 0, at: -1, out: [], gen: 0, latency: undefined, last: 0 };
         gpuEstimate();
       }
       catch (e) { G = null; return setEngine("cpu", "no GPU: " + e.message); }
@@ -2229,7 +2285,7 @@ function segWires(V) {
     const t = NET.tag[i], seat = NET.seat[i], css = netTone(i).css;
     for (let p = 0; p < ARITY[t]; p++) if (isSource(t, p)) {
       if (!by.has(css)) by.set(css, new Path2D());
-      follow(V, siteOf(seat), slotOf(seat) * 3 + p, by.get(css));
+      follow(V, siteOf(seat), slotOf(seat) * L.ar + p, by.get(css));
     }
   }
   segPaths = { key, list: [...by] };

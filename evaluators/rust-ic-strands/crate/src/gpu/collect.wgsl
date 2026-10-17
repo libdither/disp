@@ -29,7 +29,7 @@ fn co_collect(ke: u32) -> co_Out {
       // erase_inputs: the dead computation's two inputs each get an eraser.
       let m0 = gm(D, ae(kd, 0u)); let m1 = gm(D, ae(kd, 1u));
       sm(S, ae(ke, 0u), NONE);
-      for (var pp = 0u; pp < 3u; pp++) { sm(D, ae(kd, pp), NONE); }
+      for (var pp = 0u; pp < AR; pp++) { sm(D, ae(kd, pp), NONE); }
       stg(S, ke, 0u); sw(S, ke, false);
       stg(D, kd, 0u); sw(D, kd, false);
       stg(D, kd, T_EPS); sw(D, kd, true);
@@ -56,7 +56,7 @@ fn co_collect(ke: u32) -> co_Out {
         sm(D, only(via2, se(f2, i2)), NONE); sm(S, only(via2, se(f2 ^ 1u, i2)), NONE);
         sm(S, ae(ke, 0u), NONE); stg(S, ke, 0u); sw(S, ke, false);
         sm(S2, ae(k2, 0u), NONE); stg(S2, k2, 0u); sw(S2, k2, false);
-        for (var pp = 0u; pp < 3u; pp++) { sm(D, ae(kd, pp), NONE); }
+        for (var pp = 0u; pp < AR; pp++) { sm(D, ae(kd, pp), NONE); }
         stg(D, kd, 0u); sw(D, kd, false);
         stg(D, kd, T_EPS); sw(D, kd, true);
         lk(D, ae(kd, 0u), m0);
@@ -69,7 +69,7 @@ fn co_collect(ke: u32) -> co_Out {
       if (input_ != ae(kd, (3u - q) & 3u)) {
         sm(S, only(via, se(f, i)), NONE); sm(D, only(via, se(f ^ 1u, i)), NONE);
         sm(S, ae(ke, 0u), NONE);
-        for (var pp = 0u; pp < 3u; pp++) { sm(D, ae(kd, pp), NONE); }
+        for (var pp = 0u; pp < AR; pp++) { sm(D, ae(kd, pp), NONE); }
         lk(D, input_, other);
         stg(S, ke, 0u); sw(S, ke, false);
         stg(D, kd, 0u); sw(D, kd, false);

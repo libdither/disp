@@ -92,7 +92,7 @@ impl<'a> Reader<'a> {
         match a.tag {
             Tag::Out | Tag::Go | Tag::Back | Tag::Unp => self.source(a.ports[0]),
             Tag::Eps => { let x = self.source(a.ports[0]); node(id, Kind::Erased(x)) }
-            t => self.source(Some((id, (0..4).find(|&q| is_source(t, q)).unwrap() as u8))),
+            t => match (0..4).find(|&q| is_source(t, q)) { Some(q) => self.source(Some((id, q as u8))), None => node(id, Kind::Cut) },
         }
     }
 

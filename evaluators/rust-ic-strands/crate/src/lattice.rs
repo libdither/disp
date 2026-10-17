@@ -34,6 +34,29 @@ pub const MAX_ARITY: usize = 4;
 /// Ports per agent slot for these settings: 4 keeping history or running two-way programs, else 3.
 pub fn ports(p: &Params) -> usize { if p.resid > 0 || p.two { MAX_ARITY } else { ARITY } }
 
+/// Where a site's bytes sit in `state_words` (2 agents and 4 strands a link): the mates of its ends from
+/// byte 0, then its three slots' tags, their wanted bits, and the strand end its pulse is on, at byte 39
+/// either way. 40 bytes with 3 ports a slot (the chip's), 44 with 4.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SiteBytes { pub ar: usize, pub ends: usize, pub tags: usize, pub want: usize, pub words: usize }
+impl SiteBytes {
+    pub const PULSE: usize = 39;
+    pub fn of(ar: usize) -> SiteBytes {
+        let ends = 3 * ar + 24;
+        if ar == ARITY { SiteBytes { ar, ends, tags: 33, want: 36, words: 10 } } else { SiteBytes { ar, ends, tags: 36, want: 40, words: 11 } }
+    }
+    /// A site holding nothing.
+    pub fn empty(self) -> Vec<u32> { self.pack(&[NONE; 36][..self.ends], [0; 3], [false; 3], NONE) }
+    pub fn pack(self, mates: &[u8], tags: [u8; 3], want: [bool; 3], pulse: u8) -> Vec<u32> {
+        let mut b = vec![NONE; 4 * self.words];
+        b[..mates.len()].copy_from_slice(mates);
+        for k in 0..3 { b[self.tags + k] = tags[k]; b[self.want + k] = want[k] as u8; }
+        b[Self::PULSE] = pulse;
+        if self.words == 11 { b[43] = 0; }
+        b.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
     pub w: u32,
@@ -2704,19 +2727,20 @@ impl Lattice {
         self.margolus_clock();
     }
 
-    /// Every site as 10 words, the bytes of `dump_state` (a 2D lattice's missing faces read as no end).
+    /// The layout of a site in `state_words`.
+    pub fn site_bytes(&self) -> SiteBytes { SiteBytes::of(self.ar) }
+    /// Every site as `site_bytes().words` words (a 2D lattice's missing faces read as no end).
     pub fn state_words(&self) -> Vec<u32> { self.state_words_of(&(0..self.sites()).collect::<Vec<_>>()) }
     /// Just these sites, in `state_words`' format.
     pub fn state_words_of(&self, sites: &[u32]) -> Vec<u32> {
-        assert!(self.ks == 3 && self.p.lanes == 4, "a 40-byte site has 3 slots and 4 lanes");
-        let mut v = Vec::with_capacity(sites.len() * 10);
+        assert!(self.ks == 3 && self.p.lanes == 4, "a site in words has 3 slots and 4 lanes");
+        let sb = self.site_bytes();
+        let mut v = Vec::with_capacity(sites.len() * sb.words);
         for &s in sites {
             let s = s as usize;
-            let mut b = [NONE; 40];
-            b[..self.ends].copy_from_slice(&self.mate[s * self.ends..(s + 1) * self.ends]);
-            for k in 0..3 { b[33 + k] = self.tags[s * 3 + k]; b[36 + k] = self.want[s * 3 + k] as u8; }
-            b[39] = self.pulse_at[s];
-            v.extend(b.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())));
+            let tags = [0, 1, 2].map(|k| self.tags[s * 3 + k]);
+            let want = [0, 1, 2].map(|k| self.want[s * 3 + k]);
+            v.extend(sb.pack(&self.mate[s * self.ends..(s + 1) * self.ends], tags, want, self.pulse_at[s]));
         }
         v
     }
@@ -2724,23 +2748,24 @@ impl Lattice {
     /// Take every site from `state_words`' format, rebuilding what is derived from it so the lattice
     /// reads back; agent ids and the abstract net are not restored until `adopt`.
     pub fn set_state_words(&mut self, v: &[u32]) {
-        assert!(v.len() == self.sites() as usize * 10, "a state of 10 words per site");
-        for s in 0..self.sites() { self.set_site_words(s, &v[s as usize * 10..s as usize * 10 + 10]); }
+        let n = self.site_bytes().words;
+        assert!(v.len() == self.sites() as usize * n, "a state of {n} words per site");
+        for s in 0..self.sites() { self.set_site_words(s, &v[s as usize * n..(s as usize + 1) * n]); }
         self.agent_sites = (0..self.sites()).filter(|&s| self.occ[s as usize] > 0).collect();
         self.pulse_sites = (0..self.sites()).filter(|&s| self.pulse_at[s as usize] != NONE).collect();
     }
 
     /// The sites holding anything or a field, each as its index, its words of `state_words` and its
-    /// field (12 words).
+    /// field (`site_bytes().words` + 2 words).
     pub fn held_sites(&self) -> Vec<u32> {
         let mut sites = self.live.clone();
         sites.extend(self.fields.near().iter().filter(|&&s| !self.in_live(s)));
         let v = self.state_words_of(&sites);
-        sites.iter().zip(v.chunks(10)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied()).chain([self.fields.value(s) as u32])).collect()
+        sites.iter().zip(v.chunks(self.site_bytes().words)).flat_map(|(&s, w)| std::iter::once(s).chain(w.iter().copied()).chain([self.fields.value(s) as u32])).collect()
     }
 
     /// The seats of agents carrying a superposition label and their labels, [seat, label] each:
-    /// what `held_sites` leaves out (the chip's 40-byte site has no room for them).
+    /// what `held_sites` leaves out (a site in words has no room for them).
     pub fn held_labels(&self) -> Vec<u32> {
         self.live.iter().flat_map(|&s| (0..self.ks).map(move |k| s as usize * self.ks + k))
             .filter(|&i| self.tags[i] != 0 && self.sup_label[i] != 0).flat_map(|i| [i as u32, self.sup_label[i] as u32]).collect()
@@ -2752,10 +2777,10 @@ impl Lattice {
 
     /// `put_sites`, with the superposition labels `held_labels` gave.
     pub fn put_sites_labelled(&mut self, recs: &[u32], labels: &[u32]) {
-        const EMPTY: [u32; 10] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
-        for s in self.live.clone() { self.set_site_words(s, &EMPTY); }
+        let (empty, n) = (self.site_bytes().empty(), self.site_bytes().words);
+        for s in self.live.clone() { self.set_site_words(s, &empty); }
         for s in self.fields.near().to_vec() { self.fields.set_value(s, 0); }
-        for r in recs.chunks(12) { self.set_site_words(r[0], &r[1..11]); self.fields.set_value(r[0], r[11] as u8); }
+        for r in recs.chunks(n + 2) { self.set_site_words(r[0], &r[1..n + 1]); self.fields.set_value(r[0], r[n + 1] as u8); }
         for l in labels.chunks(2) { self.sup_label[l[0] as usize] = l[1] as u8; }
         self.agent_sites = self.live.iter().copied().filter(|&s| self.occ[s as usize] > 0).collect();
         self.pulse_sites = self.live.iter().copied().filter(|&s| self.pulse_at[s as usize] != NONE).collect();
@@ -2794,15 +2819,15 @@ impl Lattice {
     /// Take one site from `state_words`' format, enough for `readback` (the lists of agent and
     /// pulse sites are left to `set_state_words`).
     pub fn set_site_words(&mut self, s: u32, w: &[u32]) {
-        assert!(self.ks == 3 && self.p.lanes == 4 && w.len() == 10, "a site of 10 words");
+        let sb = self.site_bytes();
+        assert!(self.ks == 3 && self.p.lanes == 4 && w.len() == sb.words, "a site of {} words", sb.words);
         let i = s as usize;
-        let mut b = [0u8; 40];
-        for (c, x) in b.chunks_mut(4).zip(w) { c.copy_from_slice(&x.to_le_bytes()); }
+        let b: Vec<u8> = w.iter().flat_map(|x| x.to_le_bytes()).collect();
         self.mate[i * self.ends..(i + 1) * self.ends].copy_from_slice(&b[..self.ends]);
-        for k in 0..3 { self.tags[i * 3 + k] = b[33 + k]; self.want[i * 3 + k] = b[36 + k] != 0; self.sids[i * 3 + k] = u32::MAX; self.label[i * 3 + k] = 0; self.sup_label[i * 3 + k] = 0; }
-        self.occ[i] = b[33..36].iter().filter(|&&t| t != 0).count() as u8;
+        for k in 0..3 { self.tags[i * 3 + k] = b[sb.tags + k]; self.want[i * 3 + k] = b[sb.want + k] != 0; self.sids[i * 3 + k] = u32::MAX; self.label[i * 3 + k] = 0; self.sup_label[i * 3 + k] = 0; }
+        self.occ[i] = b[sb.tags..sb.tags + 3].iter().filter(|&&t| t != 0).count() as u8;
         self.in_agents[i] = self.occ[i] > 0;
-        self.pulse_at[i] = b[39];
+        self.pulse_at[i] = b[SiteBytes::PULSE];
         self.refresh(s);
     }
 

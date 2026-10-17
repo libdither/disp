@@ -4,7 +4,9 @@
 // the player runs (lattice.rs `latest`, `Params::set`: depth, seed, lazy, pairs, temp, demand, views,
 // ...), as does `set=k=v,…` as in the player's links.
 window.StrandsCheck = (() => {
-  const enc = new TextEncoder(), dec = new TextDecoder(), R = 12;
+  // R: words of a held site (its index, its words, its field), set once a term is loaded (wasm.rs `site_words`).
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  let R = 12;
   async function engine() {
     const bytes = Uint8Array.from(atob(window.STRANDS_WASM), c => c.charCodeAt(0));
     const E = { ...(await WebAssembly.instantiate(bytes, {})).instance.exports };
@@ -50,11 +52,12 @@ window.StrandsCheck = (() => {
     let side = Math.ceil(Math.sqrt(agents) * (S.depth > 1 ? 7 : 8)) + 16, rc = 2;
     for (let t = 0; t < 6 && rc === 2; t++) { rc = S.make(E, side, side, S.src); if (rc === 2) side = Math.ceil(side * 1.4); }
     if (rc !== 0) throw new Error("load: " + E.text(E.text_len()));
+    R = E.site_words() + 2;
     return { E, side, w: side, h: side, agents };
   }
   async function kernels(E) {
     if (!E.strands_gpu_shader()) throw new Error("the GPU cannot run these settings: " + E.text(E.text_len()));
-    return StrandsGPU.open(E.text(E.text_len()));
+    return StrandsGPU.open(E.text(E.text_len()), E.site_words());
   }
   // Sites by index, so two engines' lists compare whatever their order.
   function byIndex(held) {
@@ -105,7 +108,7 @@ window.StrandsCheck = (() => {
         grid.upload(B.held());
         const sizes = [];
         for (let c = 0; c < n;) { const m = Math.min(batches[(stretch + c) % 4], n - c); sizes.push(m); c += m; }
-        if (stretch % 7 === 4) grid.cap = 8 * StrandsGPU.REC;
+        if (stretch % 7 === 4) grid.cap = 8 * grid.rec;
         again += await pipeline(grid, B, first, S.seed, sizes, 1 + stretch % 4);
         onGpu += n;
       }

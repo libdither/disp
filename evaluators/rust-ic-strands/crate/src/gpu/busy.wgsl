@@ -75,7 +75,7 @@ fn seed_busy(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroup
   if (s >= nsites()) { return; }
   next_clock();
   var held = false;
-  for (var k = 0u; k < 10u; k++) { if (sites[s * 10u + k] != EMPTY[k]) { held = true; } }
+  for (var k = 0u; k < SW; k++) { if (sites[s * SW + k] != EMPTY[k]) { held = true; } }
   // An upload writes both pulse buffers alike, so either holds the field.
   let fv = pw_field(pul_read(s));
   if (held || fv != 0u) { mark_next_site(s); }
@@ -112,7 +112,7 @@ fn busy_pulses(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nw
 }
 
 /// The sites holding anything or a field (all in the busy blocks of the clock whose list is
-/// `list`), each as its index, its 10 words and its field, appended to `recs` (their count in
+/// `list`), each as its index, its SW words and its field, appended to `recs` (their count in
 /// counts[3]).
 @compute @workgroup_size(64)
 fn busy_gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
@@ -123,13 +123,13 @@ fn busy_gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nw
       let s = site_at(c, q);
       if (s == 0xFFFFFFFFu) { continue; }
       var held = false;
-      for (var k = 0u; k < 10u; k++) { if (sites[s * 10u + k] != EMPTY[k]) { held = true; } }
+      for (var k = 0u; k < SW; k++) { if (sites[s * SW + k] != EMPTY[k]) { held = true; } }
       let fv = pw_field(pul_read(s));
       if (held || fv != 0u) {
-        let j = atomicAdd(&counts[3], 1u) * 12u;
+        let j = atomicAdd(&counts[3], 1u) * (SW + 2u);
         recs[j] = s;
-        for (var k = 0u; k < 10u; k++) { recs[j + 1u + k] = sites[s * 10u + k]; }
-        recs[j + 11u] = fv;
+        for (var k = 0u; k < SW; k++) { recs[j + 1u + k] = sites[s * SW + k]; }
+        recs[j + 1u + SW] = fv;
       }
     }
   }

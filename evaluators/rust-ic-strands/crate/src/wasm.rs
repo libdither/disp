@@ -2,13 +2,15 @@
 //! player draws straight from the lattice's own arrays.
 
 use crate::lattice::{latest, Lattice, Params, Stats};
+use crate::twoway::{self, Prog, Val};
 use rust_ca_lattice::oracle;
 use rust_ca_lattice::sup::{self, STerm};
 use rust_ic_mesh::term;
 
 /// `parts`: the reductions the input asked for, separated by `;` (`parse_all`), one term each.
 /// `start`: under the substrate, the abstract net as loaded, to tell when a run has come all the way back.
-struct State { l: Lattice, term: STerm, parts: Vec<STerm>, done: bool, start: Vec<Option<rust_ca_lattice::net::Agent>> }
+/// `two`: a two-way program and the value it runs on (`two:` input), instead of a term.
+struct State { l: Lattice, term: STerm, parts: Vec<STerm>, done: bool, start: Vec<Option<rust_ca_lattice::net::Agent>>, two: Option<(Prog, Val)> }
 static mut STATE: Option<State> = None;
 static mut TEXT: Vec<u8> = Vec::new();
 static mut STATS: [f64; 24] = [0.0; 24];
@@ -102,6 +104,7 @@ pub extern "C" fn strands_depth() -> u32 { next().depth }
 pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32 {
     std::panic::set_hook(Box::new(|info| { set_text(&format!("engine panic: {info}")); }));
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
+    if let Some(run) = src.trim().strip_prefix("two:") { return two_new(w, h, run); }
     let (t, parts) = match parse_all(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
@@ -111,10 +114,34 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
         Ok(mut l) => {
             if l.p.phys { l.schedule = vec![(0.0, [l.p.drive, l.p.erase, l.p.forget, l.p.bond])]; }
             l.resid = resid;
-            unsafe { STATE = Some(State { l, term: t, parts, done: false, start }); SAVED.clear(); }
+            unsafe { STATE = Some(State { l, term: t, parts, done: false, start, two: None }); SAVED.clear(); }
             0
         }
         Err(e) => { set_text(&e); 2 }
+    }
+}
+
+/// A two-way program on a value (twoway.rs `parse_run`), run eagerly with 4 ports a slot.
+#[allow(static_mut_refs)]
+fn two_new(w: u32, h: u32, run: &str) -> i32 {
+    let (prog, x) = match twoway::parse_run(run) { Ok(r) => r, Err(e) => { set_text(&e); return 1; } };
+    let mut p = Params { w, h, ..*next() };
+    if let Err(e) = p.set("two", "1") { set_text(&e); return 1; }
+    let (net, out) = twoway::net(&prog, &x);
+    match Lattice::load(p, net, out) {
+        Ok(l) => { unsafe { STATE = Some(State { l, term: STerm::L, parts: vec![], done: false, start: vec![], two: Some((prog, x)) }); SAVED.clear(); } 0 }
+        Err(e) => { set_text(&e); 2 }
+    }
+}
+
+/// A two-way run's answer once it has finished: the result, if the program came back as it went in;
+/// "stuck" where no rule fits (a swap of a leaf, a merge of two different halves).
+fn two_answer(s: &State, decoded: bool) -> String {
+    let (prog, _) = s.two.as_ref().unwrap();
+    match twoway::answer(&s.l.shadow) {
+        Some((q, y)) if q == *prog => if decoded { y.decoded() } else { y.show() },
+        Some((q, _)) => format!("the program came back changed: {}", q.show()),
+        None => "stuck".into(),
     }
 }
 
@@ -125,7 +152,7 @@ fn net_for(t: &STerm, p: &Params) -> Result<(rust_ca_lattice::net::Net, u32, cra
     Ok(crate::resid::net(&t.plain().ok_or("keeping history runs no superpositions")?, p.resid == 1))
 }
 
-/// Ports a slot's switchboard has: 3, or 4 keeping history.
+/// Ports a slot's switchboard has: 3, or 4 keeping history or running two-way programs.
 #[no_mangle]
 pub extern "C" fn ports_per_slot() -> u32 { st().l.ar as u32 }
 
@@ -296,6 +323,7 @@ pub extern "C" fn stats_ptr() -> *const f64 {
 #[no_mangle]
 pub extern "C" fn strands_answer() -> u32 {
     let s = st();
+    if s.two.is_some() { return set_text(&if s.done { two_answer(s, false) } else { String::new() }); }
     match s.l.read_answer() { Some(a) => set_text(&sup::show(&collapsed(&s.term, &a))), None => set_text("") }
 }
 
@@ -310,6 +338,7 @@ fn decode(t: &STerm) -> Option<String> {
 #[no_mangle]
 pub extern "C" fn strands_answer_decoded() -> u32 {
     let s = st();
+    if s.two.is_some() { return set_text(&if s.done { two_answer(s, true) } else { String::new() }); }
     let Some(a) = s.l.read_answer() else { return set_text("") };
     set_text(&decode(&collapsed(&s.term, &a)).unwrap_or_default())
 }
@@ -332,6 +361,7 @@ pub extern "C" fn strands_part(i: u32, decoded: u32) -> u32 {
 /// The oracle's answer, universe by universe for a superposed input, collapsed as `strands_answer` is.
 #[no_mangle]
 pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
+    if let Some((prog, x)) = &st().two { return set_text(&prog.run(x, &mut (fuel as u64)).map_or("stuck".into(), |y| y.show())); }
     let t = &st().term;
     match sup::oracle_answers(t, fuel as u64 * 1000) { Some(u) => set_text(&sup::show(&sup::collapse(&u, &t.labels()))), None => set_text("") }
 }
@@ -340,6 +370,9 @@ pub extern "C" fn strands_oracle(fuel: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
+    if let Some(run) = src.trim().strip_prefix("two:") {
+        return match twoway::parse_run(run) { Ok((prog, x)) => twoway::net(&prog, &x).0.agents.len() as i32, Err(e) => { set_text(&e); -1 } };
+    }
     match parse_all(src) {
         Ok((t, _)) => match net_for(&t, next()) { Ok((n, _, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
         Err(e) => { set_text(&e); -1 }
@@ -380,7 +413,11 @@ pub extern "C" fn words_ptr(n: u32) -> *mut u32 { unsafe { WORDS.resize(n as usi
 #[allow(static_mut_refs)]
 pub extern "C" fn words_len() -> u32 { unsafe { WORDS.len() as u32 } }
 
-/// The sites holding anything or a field (each its index, its 10 words, its field), into the words.
+/// Words a site takes in `strands_held` (lattice.rs `SiteBytes`): 10, or 11 with 4 ports a slot.
+#[no_mangle]
+pub extern "C" fn site_words() -> u32 { st().l.site_bytes().words as u32 }
+
+/// The sites holding anything or a field (each its index, its `site_words` words, its field), into the words.
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn strands_held() -> *const u32 { unsafe { WORDS = st().l.held_sites(); WORDS.as_ptr() } }

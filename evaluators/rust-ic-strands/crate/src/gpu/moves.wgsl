@@ -6,11 +6,13 @@
 /// x * x of x's low 5 bits, as the RTL's 5-bit input truncates it.
 fn sq(x: u32) -> u32 { let y = x & 31u; return y * y; }
 
-/// Bit i - 9 for each strand end i of slot s that has a mate.
+/// Bit i - A_ENDS for each strand end i of slot s that has a mate (from the words holding them).
+const STRAND_W0: u32 = A_ENDS >> 2u;
+const STRAND_W1: u32 = (NE + 3u) >> 2u;
 fn mv_strands(s: u32) -> u32 {
   var u = 0u;
-  for (var w = 2u; w < 9u; w++) { u |= held(sb[at(s, w)]) << (4u * w - 8u); }
-  return (u >> 1u) & 0xFFFFFFu;
+  for (var w = STRAND_W0; w < STRAND_W1; w++) { u |= held(sb[at(s, w)]) << (4u * w - (A_ENDS & ~3u)); }
+  return (u >> (A_ENDS & 3u)) & 0xFFFFFFu;
 }
 
 /// The place of x's set bit n (from 0, lowest first), found by halves.
@@ -33,25 +35,25 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
   let f1 = f ^ 1u;
   let tg = gt(s0, k); let a = arity(tg); let wnt = gw(s0, k); let idl = LAZY && !acts(s0, k);
   // Per port: plan (0 drag, 1 loop, 2 through), its lane or loop end, and a dragged wire's mate.
-  var need = 0u; var de: i32 = 0; var pk = array<u32, 3>(0u, 0u, 0u); var pv = array<u32, 3>(0u, 0u, 0u);
-  var dm = array<u32, 3>(NONE, NONE, NONE); var fail = false;
-  for (var q = 0u; q < 3u; q++) {
+  var need = 0u; var de: i32 = 0; var pk = array<u32, 4>(0u, 0u, 0u, 0u); var pv = array<u32, 4>(0u, 0u, 0u, 0u);
+  var dm = array<u32, 4>(NONE, NONE, NONE, NONE); var fail = false;
+  for (var q = 0u; q < AR; q++) {
     if (q < a) {
       let m = gm(s0, ae(k, q));
       let w = select(select(E_AUX, E_AUX_IDLE, idl), select(E_PRINCIPAL, E_PRINCIPAL_IDLE, idl), q == 0u);
-      if (m < 9u && port_k(m) == k) { pk[q] = 1u; pv[q] = port_q(m); }
+      if (m < A_ENDS && port_k(m) == k) { pk[q] = 1u; pv[q] = port_q(m); }
       else if (is_strand(m) && face(m) == f) { pk[q] = 2u; pv[q] = lane(m); de -= w; }
       else { need++; de += w; dm[q] = m; }
     }
   }
   // Through lanes in port order, then free lanes, 2 bits each.
   var nl = 0u; var lanes = 0u;
-  for (var q = 0u; q < 3u; q++) { if (q < a && pk[q] == 2u) { lanes |= pv[q] << (2u * nl); nl++; } }
+  for (var q = 0u; q < AR; q++) { if (q < a && pk[q] == 2u) { lanes |= pv[q] << (2u * nl); nl++; } }
   let fu = lanes_used(s0, f);
   for (var i = 0u; i < 4u; i++) { if (((fu >> i) & 1u) == 0u) { lanes |= i << (2u * nl); nl++; } }
   if (nl < need) { fail = true; }
   var loops = 0u; var through = 0u;
-  for (var q = 0u; q < 3u; q++) {
+  for (var q = 0u; q < AR; q++) {
     if (q < a) {
       if (pk[q] == 1u) { loops++; }
       if (pk[q] == 2u) { through++; }
@@ -82,7 +84,7 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
   if (fail) { return Hop(false, de); }
   // Where the through-wires land inside the neighbour: a wire coming back to another port of the
   // agent becomes a loop.
-  var tgt = array<u32, 3>(NONE, NONE, NONE);
+  var tgt = array<u32, 4>(NONE, NONE, NONE, NONE);
   for (var q = 0u; q < rolled(a); q++) {
     if (pk[q] == 2u) {
       let mt = gm(t0, se(f1, pv[q]));
@@ -94,7 +96,7 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
   }
   if (so != s0) { copy(so, s0); }
   if (to != t0) { copy(to, t0); }
-  var li = 0u; var dj = array<u32, 3>(0u, 0u, 0u);
+  var li = 0u; var dj = array<u32, 4>(0u, 0u, 0u, 0u);
   for (var q = 0u; q < rolled(a); q++) {
     sm(so, only(pk[q] == 2u, se(f, pv[q])), NONE);
     sm(to, only(pk[q] == 2u, se(f1, pv[q])), NONE);
@@ -117,14 +119,14 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
 /// Move the agent in slot `from_` of site s to the empty slot `to`, keeping its wires.
 fn relocate(s: u32, from_: u32, to: u32) {
   let tg = gt(s, from_); let wnt = gw(s, from_); let a = arity(tg);
-  var mates = array<u32, 3>(NONE, NONE, NONE);
-  for (var q = 0u; q < 3u; q++) { mates[q] = gm(s, ae(from_, q)); }
-  for (var q = 0u; q < 3u; q++) { sm(s, only(q < a, ae(from_, q)), NONE); }
+  var mates = array<u32, 4>(NONE, NONE, NONE, NONE);
+  for (var q = 0u; q < AR; q++) { mates[q] = gm(s, ae(from_, q)); }
+  for (var q = 0u; q < AR; q++) { sm(s, only(q < a, ae(from_, q)), NONE); }
   stg(s, to, tg); sw(s, to, wnt);
   stg(s, from_, 0u); sw(s, from_, false);
-  for (var q = 0u; q < 3u; q++) {
+  for (var q = 0u; q < AR; q++) {
     var m = mates[q];
-    if (m < 9u && port_k(m) == from_) { m = ae(to, port_q(m)); }
+    if (m < A_ENDS && port_k(m) == from_) { m = ae(to, port_q(m)); }
     lk(s, only(q < a, ae(to, q)), only(q < a, m));
   }
 }
@@ -197,7 +199,7 @@ fn move_stage(active_mode: bool, act_k: u32) {
     let n = countOneBits(used);
     if (n != 0u) {
       reshape = true;
-      e = 9u + nth_bit(used, pick5(d_where(), n)); f = face(e);
+      e = A_ENDS + nth_bit(used, pick5(d_where(), n)); f = face(e);
     }
   }
   tn = inb(p, f); let m = gm(p, e); let f2 = face(m);

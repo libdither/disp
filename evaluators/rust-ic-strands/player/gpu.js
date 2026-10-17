@@ -1,20 +1,23 @@
 // The chip's block schedule on WebGPU: crate/src/gpu/mod.rs's `Grid` for the browser, running the
 // shader the engine makes for the loaded configuration (tables.rs `shader`). A grid moves a run's
-// sites as the engine's `strands_held` gives them: each site's index, its 10 words and its demand
-// field (which rides in the site's pulse word, above the pulse).
+// sites as the engine's `strands_held` gives them: each site's index, its words (`site_words`: 10, or
+// 11 with 4 ports a slot) and its demand field (which rides in the site's pulse word, above the pulse).
 window.StrandsGPU = (() => {
-  const SITE = 10, REC = SITE + 2, STRIDE = 256, CLOCK = 80;
+  const STRIDE = 256, CLOCK = 80;
   // busy.wgsl `counts`: the list lengths, the tally (`T_*`), then the rewrites' count and sites;
   // `NO_LIST`: a clock that fills no busy list.
   const TALLY = 11, FIRES_MAX = 4096, COUNTS = 16 + FIRES_MAX, NO_LIST = 3;
-  const EMPTY = [~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, ~0 >>> 0, 0xFF, 0xFF000000];
+  /// A site of `site` words holding nothing (lattice.rs `SiteBytes::empty`): every end unpaired, no tags or
+  /// wanted bits, and no pulse (byte 39, in word 9 either way).
+  const emptySite = site => { const b = new Uint8Array(4 * site); b.fill(255, 0, site === 10 ? 33 : 36); b[39] = 255; return new Uint32Array(b.buffer); };
   const groups = n => { const g = Math.max(1, Math.ceil(n / 64)); return [Math.min(g, 65535), Math.ceil(g / 65535)]; };
   // Invocations in a workgroup of the turn kernel (prelude.wgsl `WG`).
   const WG = 16;
   const S = GPUBufferUsage;
 
-  /// The kernels for one shader. Throws with the reason when the browser or GPU cannot run them.
-  async function open(code) {
+  /// The kernels for one shader, whose sites are `site` words. Throws with the reason when the browser or
+  /// GPU cannot run them.
+  async function open(code, site = 10) {
     if (!navigator.gpu) throw new Error("this browser has no WebGPU");
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!adapter) throw new Error("WebGPU found no GPU");
@@ -35,7 +38,7 @@ window.StrandsGPU = (() => {
     const err = await device.popErrorScope();
     if (err) throw new Error("the kernels do not build: " + err.message);
     const a = adapter.info || {};
-    return { device, layout, pipes, name: [a.vendor, a.architecture, a.description].filter(Boolean).join(" ") || "a GPU" };
+    return { device, layout, pipes, site, name: [a.vendor, a.architecture, a.description].filter(Boolean).join(" ") || "a GPU" };
   }
 
   /// How long reading a buffer back takes with nothing to wait for, the slowest of a few (ms): in
@@ -55,12 +58,14 @@ window.StrandsGPU = (() => {
   class Grid {
     constructor(gpu, w, h, d, batch) {
       // `busyHint`: about how many blocks are busy, which sets how many workgroups share them out.
-      Object.assign(this, { gpu, w, h, d, batch, seeded: false, busyHint: 64, cap: REC * 4096 });
+      // A gathered site is its index, its words and its field (busy.wgsl `busy_gather`).
+      const site = gpu.site, rec = site + 2;
+      Object.assign(this, { gpu, w, h, d, batch, site, rec, seeded: false, busyHint: 64, cap: rec * 4096 });
       const dev = gpu.device, n = w * h * d, buf = (bytes, usage) => dev.createBuffer({ size: Math.max(4, bytes), usage });
       this.nb = [(w >> 1) + 1, (h >> 1) + 1, (d >> 1) + 1];
       const blocks = this.blocks();
-      this.sites = buf(n * SITE * 4, S.STORAGE | S.COPY_DST | S.COPY_SRC);
-      this.gathered = buf(n * REC * 4, S.STORAGE | S.COPY_SRC);
+      this.sites = buf(n * site * 4, S.STORAGE | S.COPY_DST | S.COPY_SRC);
+      this.gathered = buf(n * rec * 4, S.STORAGE | S.COPY_SRC);
       this.pul = buf(2 * n * 4, S.STORAGE | S.COPY_DST);
       this.marks = buf(blocks * 4, S.STORAGE | S.COPY_DST);
       this.busy = buf(3 * blocks * 4, S.STORAGE);
@@ -76,21 +81,21 @@ window.StrandsGPU = (() => {
     /// Load these sites, every other site empty with no field; each site's pulse word goes to both
     /// pulse buffers.
     upload(held) {
-      const n = this.w * this.h * this.d, q = this.gpu.device.queue;
-      const state = new Uint32Array(n * SITE), pul = new Uint32Array(2 * n);
-      for (let s = 0; s < n; s++) state.set(EMPTY, s * SITE);
+      const n = this.w * this.h * this.d, q = this.gpu.device.queue, { site, rec } = this, empty = emptySite(site);
+      const state = new Uint32Array(n * site), pul = new Uint32Array(2 * n);
+      for (let s = 0; s < n; s++) state.set(empty, s * site);
       pul.fill(0xFF);
-      for (let i = 0; i < held.length; i += REC) {
+      for (let i = 0; i < held.length; i += rec) {
         const s = held[i];
-        state.set(held.subarray(i + 1, i + 1 + SITE), s * SITE);
-        pul[s] = pul[n + s] = (held[i + SITE] >>> 24) | (held[i + SITE + 1] << 8);
+        state.set(held.subarray(i + 1, i + 1 + site), s * site);
+        pul[s] = pul[n + s] = (held[i + 10] >>> 24) | (held[i + 1 + site] << 8);
       }
       q.writeBuffer(this.sites, 0, state);
       q.writeBuffer(this.pul, 0, pul);
       q.writeBuffer(this.counts, 0, new Uint32Array(16));
       q.writeBuffer(this.marks, 0, new Uint32Array(this.blocks()));
       this.seeded = false;
-      this.busyHint = held.length / REC;
+      this.busyHint = held.length / rec;
       this.cap = Math.max(this.cap, 2 * held.length);
     }
 
@@ -146,7 +151,7 @@ window.StrandsGPU = (() => {
     /// holding anything as `cap` has room for, copied out in the queue, which then starts the tally
     /// afresh; so runs submitted after it do not touch the copy.
     copyOut() {
-      const dev = this.gpu.device, room = Math.min(this.cap, this.w * this.h * this.d * REC);
+      const dev = this.gpu.device, room = Math.min(this.cap, this.w * this.h * this.d * this.rec);
       const staging = dev.createBuffer({ size: (COUNTS + room) * 4, usage: S.MAP_READ | S.COPY_DST });
       const enc = dev.createCommandEncoder();
       enc.copyBufferToBuffer(this.counts, 0, staging, 0, COUNTS * 4);
@@ -156,7 +161,7 @@ window.StrandsGPU = (() => {
       return staging.mapAsync(GPUMapMode.READ).then(() => {
         const v = new Uint32Array(staging.getMappedRange().slice(0));
         staging.destroy();
-        const n = v[3] * REC;
+        const n = v[3] * this.rec;
         this.cap = Math.max(this.cap, Math.ceil(n * 1.5));
         this.busyHint = v[3];
         const fires = Math.min(v[4 + TALLY], FIRES_MAX);
@@ -183,5 +188,5 @@ window.StrandsGPU = (() => {
       return this.copyOut().then(c => c.n <= c.room ? c : null);
     }
   }
-  return { open, latency, Grid, TALLY, REC };
+  return { open, latency, Grid, TALLY };
 })();

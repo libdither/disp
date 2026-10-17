@@ -30,8 +30,10 @@ and called values ringed in orange:
 - **Programs:** one input box takes ordinary disp code (`fib 2`, `add 2 (mul 2 2)`,
   `map [1, 2] succ`, `relay_add 13 6`, where a program on binary numbers reads 13 and 6 as bit
   trees), a benchmark program (`sort:1`) or a raw term, and several of these separated by `;`,
-  which run side by side (Side by side, below). Its list (`▾` or `↓`) offers each program with an
-  example. With no link the player opens on `add 20 22; relay_add 20 22` at full speed; `speed=N`
+  which run side by side (Side by side, below); or, after `two:`, a two-way program on a value
+  (`two: add 2 3`, `two: cond(swap, copy) @ (△△, (△, △△))`; Two-way programs on the lattice, below),
+  which the details explain, its opcodes squares and its runs disks with a ▶. Its list (`▾` or `↓`)
+  offers each program with an example. With no link the player opens on `add 20 22; relay_add 20 22` at full speed; `speed=N`
   in the link (0 to 100) sets the speed.
 - **Stepping:** `▸` or `→` runs on to the next clock where something happens, `⏭` or `shift →` to
   the next rewrite. The clock is summed up in a line over the input box (rewrites, steps, folds),
@@ -1486,7 +1488,8 @@ going backward.
   does, and the end of a run is the same on either engine.
 - **As text** (`twoway::parse_run`): `PROG @ VALUE`, PROG as `Prog::show` writes it (opcodes by name,
   `a; b`, `(a | b)`, `cond(a, b)`, `loop(a)`, `~a` for the inverse), VALUE `△` (or `t`), `△v`, `(u, v)`,
-  a number or `[PROG]`; or `add A B`, `sub A C`, `succ N`, `pred N`.
+  a number or `[PROG]`; or `add A B`, `sub A C`, `succ N`, `pred N`. The player takes it after `two:`
+  and `strands-gpu` as `two:RUN`.
 
 `strands-two add A B` runs `twoway::add` ((a, b) → (a, a + b), numbers as Π's μx. 1 + x, a loop over
 a) and its inverse, beside disp's `add` on the plain lattice (current design), mean of 8 seeds for the
@@ -1507,6 +1510,16 @@ two-way runs:
 - `tests/twoway.rs`: `add` and its inverse against the reference interpreter and on the lattice, and
   120 random programs of every opcode but loop and eval: the lattice gives what the reference gives,
   hands the program back and runs back to the input, and is stuck where the reference is (2 s).
+- **On the GPU** (On a GPU, below: 44-byte sites): bit for bit with the simulator in lockstep
+  (`crate/gpu.sh 'two:add 2 3' --grid 72 --latest --check`, every opcode, a loop, eval and stuck
+  walkers, in `hw/validate.sh`), and handed back and forth with the player's CPU engine
+  (`player/dawn.sh check 'src=two: add 2 3'`, `player/firefox.sh tail …`). A clock of `add 10 4`
+  takes 165 µs on a Radeon RX 6600 against about 170 µs on the CPU: at under 300 sites in use, the
+  GPU has nothing to gain from.
+- **In the player** (`two: …` in the input box, a group of examples in its list): opcodes are squares
+  (a hole for each part a node holds), a run a disk with a ▶, splitters the unpair's pill, the walkers
+  that read data diamonds, merges an upside-down Y; a run splits its segment between its program and
+  its input; and the details explain the rules (two-way programs).
 - Not yet: recursion that branches (programs copying themselves and running the copies through eval,
   which needs merges of programs and an inverse of eval), and tree calculus as a guest (iso.rs's `tc`
   compiled to these opcodes).
@@ -1787,6 +1800,14 @@ same semantics as `hw/rtl`, ported stage by stage, and nothing else. A thread ru
 and the block only reads and writes its own 8 sites, so whatever runs on the GPU still runs on the
 chip. It matches the simulator bit for bit: `hw/validate.sh` replays every recorded turn and block
 through it, and runs it in lockstep with the simulator.
+
+**Three ports a slot or four.** A site is 40 bytes with the chip's 3 ports a slot (33 ends) and 44
+with two-way programs' 4 (36 ends; Two-way programs on the lattice, above): lattice.rs `SiteBytes`,
+the pulse at byte 39 either way. The kernels name ends, slots and bytes through constants the tables
+generate (`AR`, `A_ENDS`, `NE`, `SW`, `B_TAG`, `B_WANT`), a rewrite's dying aux ports number
+2 × (AR − 1) and its wires up to 12, and two-way programs add their rules, tags and arities, and
+`meets`, so a walker with no rule for what it reads waits as it does on the CPU. With 3 ports it
+computes what it did before: every recorded turn and block still replays without a mismatch.
 
 Its speed comes from locality. A clock moves anything at most one site, inside its block, so a
 clock need run only the blocks holding something: its busy list. Each block makes the next clock's

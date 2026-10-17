@@ -10,7 +10,7 @@ struct Clock { w: u32, h: u32, d: u32, tick: u32, nbx: u32, nby: u32, nbz: u32, 
                tick_next: u32, stamp: u32, next: u32, clear: u32, zero: u32, pad1: u32, par: u32, fused: u32,
                list: u32, pad2: u32, pad3: u32, pad4: u32 }
 @group(0) @binding(0) var<uniform> clk: Clock;
-/// Every site, 10 words each, at x + w * (y + h * z).
+/// Every site, SW words each, at x + w * (y + h * z).
 @group(0) @binding(1) var<storage, read_write> sites: array<u32>;
 /// Every site's pulse once a clock's turns are done, in two buffers by the clock's parity: a pulse
 /// phase reads its neighbours' from the clock before while the turns write this clock's.
@@ -64,7 +64,7 @@ fn active_pair(q: u32) -> Pair {
     }
     if (!skip && !is_strand(mm) && mm != NONE) {
       let k2 = port_k(mm); let qq = port_q(mm); let t2 = gt(sp, k2);
-      if (qq == 0u && t2 != 0u && is_producer(t2)) {
+      if (qq == 0u && t2 != 0u && is_producer(t2) && meets(t, t2)) {
         r.found = true; r.kc = k; r.kp = k2; r.via = is_strand(m); r.face = f; return r;
       } else if (LAZY && qq != 0u && t2 != 0u && is_consumer(t2) && t != T_EPS && gw(q, k)) {
         r.inf = true; r.inf_pos = sp; r.inf_k = k2;
@@ -90,10 +90,12 @@ fn noted_pair(q: u32) -> Pair {
 }
 
 fn vwanted_reader(s: Site, k: u32) -> bool { let t = vgt(s, k); return t != 0u && is_consumer(t) && t != T_EPS && vgw(s, k); }
-/// Bit k: slot k of position s holds a wanted reader (its tags are word 8's top three bytes, its
-/// wanted bits word 9's low three).
+/// A site's three tags, and its three wanted bits, a byte each from the low byte up.
+fn tag_bytes(s: u32) -> u32 { return sb[at(s, B_TAG >> 2u)] >> ((B_TAG & 3u) * 8u); }
+fn want_bytes(s: u32) -> u32 { return sb[at(s, B_WANT >> 2u)] >> ((B_WANT & 3u) * 8u); }
+/// Bit k: slot k of position s holds a wanted reader.
 fn readers(s: u32) -> u32 {
-  let tags = sb[at(s, 8u)] >> 8u; let wants = sb[at(s, 9u)];
+  let tags = tag_bytes(s); let wants = want_bytes(s);
   var m = 0u;
   for (var k = 0u; k < 3u; k++) {
     let t = (tags >> (8u * k)) & 0xFFu;
@@ -107,7 +109,7 @@ fn walkers(s: u32) -> u32 {
   var m = 0u;
   for (var k = 0u; k < 3u; k++) { let t = gt(s, k); if (t != 0u && is_consumer(t) && t != T_EPS && acts(s, k)) { m |= 1u << k; } }
   if (CALLS) {
-    let tags = sb[at(s, 8u)] >> 8u; let wants = sb[at(s, 9u)];
+    let tags = tag_bytes(s); let wants = want_bytes(s);
     for (var k = 0u; k < 3u; k++) {
       let t = (tags >> (8u * k)) & 0xFFu;
       if (t != 0u && is_producer(t) && ((wants >> (8u * k)) & 0xFFu) != 0u) { m |= 1u << k; }
@@ -218,8 +220,8 @@ fn site_at(c: vec3<i32>, q: u32) -> u32 {
   if (x < 0 || y < 0 || z < 0 || u32(x) >= clk.w || u32(y) >= clk.h || u32(z) >= clk.d) { return 0xFFFFFFFFu; }
   return u32(x) + clk.w * (u32(y) + clk.h * u32(z));
 }
-fn load(s: u32) -> Site { var t: Site; for (var i = 0u; i < 10u; i++) { t[i] = sites[s * 10u + i]; } return t; }
-fn store(s: u32, t: Site) { for (var i = 0u; i < 10u; i++) { sites[s * 10u + i] = t[i]; } }
+fn load(s: u32) -> Site { var t: Site; for (var i = 0u; i < SW; i++) { t[i] = sites[s * SW + i]; } return t; }
+fn store(s: u32, t: Site) { for (var i = 0u; i < SW; i++) { sites[s * SW + i] = t[i]; } }
 /// Invocation g's index in a dispatch of n workgroups of `size`.
 fn invocation(g: vec3<u32>, n: vec3<u32>, size: u32) -> u32 { return g.x + g.y * n.x * size; }
 
@@ -264,7 +266,7 @@ fn block_corner(b: vec3<i32>) -> vec3<i32> {
 fn stage(q: u32, t: Site) -> u32 {
   let on = (onl & (1u << q)) != 0u;
   var any = 0u;
-  for (var i = 0u; i < 10u; i++) { let v = select(EMPTY[i], t[i], on); if (v != EMPTY[i]) { any = 1u << q; } sb[at(q, i)] = v; }
+  for (var i = 0u; i < SW; i++) { let v = select(EMPTY[i], t[i], on); if (v != EMPTY[i]) { any = 1u << q; } sb[at(q, i)] = v; }
   return any;
 }
 
@@ -314,7 +316,7 @@ fn block_turns(b: vec3<i32>) {
       let s = sx[q];
       if (((taken | dirty) & (1u << q)) != 0u) { store(s, get_site(q)); }
       set_pul(s, gpul(q) | (fld_at(q) << 8u));
-      for (var i = 0u; i < 10u; i++) { if (sb[at(q, i)] != EMPTY[i]) { held |= 1u << q; } }
+      for (var i = 0u; i < SW; i++) { if (sb[at(q, i)] != EMPTY[i]) { held |= 1u << q; } }
       if (fld_at(q) != 0u) { held |= 1u << q; }
     }
   }
@@ -389,7 +391,7 @@ fn pulse_step(old: Site, pes: array<u32, 6>) -> Site {
 fn pulse_at(q: u32, s: u32) -> u32 {
   let t = get_site(q); let u = pulse_step(t, neighbour_pulses(s));
   var changed = false;
-  for (var i = 0u; i < 10u; i++) { if (u[i] != t[i]) { changed = true; } }
+  for (var i = 0u; i < SW; i++) { if (u[i] != t[i]) { changed = true; } }
   if (changed) { put_site(q, u); }
   return u32(changed) << q;
 }
@@ -397,7 +399,7 @@ fn site_pulse(s: u32) {
   let old = load(s);
   let t = pulse_step(old, neighbour_pulses(s));
   var changed = false;
-  for (var i = 0u; i < 10u; i++) { if (t[i] != old[i]) { changed = true; } }
+  for (var i = 0u; i < SW; i++) { if (t[i] != old[i]) { changed = true; } }
   if (changed) { store(s, t); }
 }
 /// Every site's pulse phase.
@@ -409,9 +411,9 @@ fn pulses(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) 
 
 /// A recorded turn or block (lattice.rs test vectors), REC words: kind (0 turn, 1 block), the
 /// clock's tick, the corner (3, signed), the lattice's size (3), the valid positions, the turn's
-/// position and the positions taken before it, the 8 sites before (80 words, replaced by after),
+/// position and the positions taken before it, the 8 sites before (8 SW words, replaced by after),
 /// then the turn's touched positions and whether it was dropped.
-const REC: u32 = 93u;
+const REC: u32 = 13u + 8u * SW;
 @compute @workgroup_size(WG)
 fn vectors(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>, @builtin(local_invocation_index) l: u32) {
   lid = l;
@@ -420,10 +422,10 @@ fn vectors(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups)
   let b = r * REC;
   tick = recs[b + 1u];
   edges(vec3<i32>(i32(recs[b + 2u]), i32(recs[b + 3u]), i32(recs[b + 4u])), recs[b + 5u], recs[b + 6u], recs[b + 7u]);
-  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { sb[at(q, i)] = recs[b + 11u + q * 10u + i]; } }
+  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < SW; i++) { sb[at(q, i)] = recs[b + 11u + q * SW + i]; } }
   if (recs[b] == 0u) { taken = recs[b + 10u]; p = recs[b + 9u]; note_pair(p); set_pmates(); turn(); }
   else { run_block(); }
-  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < 10u; i++) { recs[b + 11u + q * 10u + i] = sb[at(q, i)]; } }
-  recs[b + 91u] = touched;
-  recs[b + 92u] = u32(stale);
+  for (var q = 0u; q < 8u; q++) { for (var i = 0u; i < SW; i++) { recs[b + 11u + q * SW + i] = sb[at(q, i)]; } }
+  recs[b + 11u + 8u * SW] = touched;
+  recs[b + 12u + 8u * SW] = u32(stale);
 }

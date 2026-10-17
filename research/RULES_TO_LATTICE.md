@@ -386,3 +386,6 @@ lattice"). It takes sketch B's base and leaves its pattern clauses for later:
 - **First numbers**: unary `add` is 5× fewer clocks and 13–14× fewer rewrites than tree calculus's `add`
   on the same lattice, and every round of its loop waits on data hopping 4–6 strands from walker to
   walker. Speed now depends on how far apart consecutive steps sit, not on how many rewrites there are.
+- **On the GPU and in the player** (2026-10-16): the GPU kernels take 4 ports a slot (44-byte sites) and
+  run it bit for bit with the simulator; the player loads `two: PROG @ VALUE` and explains the rules in its
+  details. At these sizes (under 300 sites) a GPU clock costs about what a CPU clock does.

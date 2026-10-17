@@ -10,35 +10,40 @@
 //! `key=value` changes a parameter of the chip's configuration (lattice.rs `Params::set`; `views=1` loads
 //! the code's shapes as movement agents; `--every-view` loads every value so, arguments too, so that
 //! readers meet views as data, and with `--check` counts the movement agents' rules that fired).
-//! TERM may be a workload, a term, or `@FILE` holding one.
+//! TERM may be a workload, a term, or `@FILE` holding one; or `two:RUN`, a two-way program on a value as
+//! twoway.rs `parse_run` reads it (`two:add 2 3`, `'two:swap; swap @ (△, △△)'`), run with 4 ports a slot.
 
 use rust_ca_lattice::oracle::{self, Fuel};
 use rust_ca_lattice::rules::{rule, N_RULES};
 use rust_ic_mesh::term;
 use rust_ic_strands::gpu::{Gpu, Grid, REC, SITE, TALLY};
-use rust_ic_strands::lattice::{chip, latest, tag_of, Lattice, Params, OPS};
+use rust_ic_strands::lattice::{chip, latest, tag_of, Lattice, Params, SiteBytes, OPS};
+use rust_ic_strands::twoway;
 use std::collections::BTreeMap;
 
+/// Bytes of a recorded site (the chip's).
 const SB: usize = 4 * SITE;
 
 fn end(m: u8) -> String { if m == 255 { "-".into() } else { m.to_string() } }
-fn tag(t: u8) -> String { if t == 0 { "-".into() } else if t <= 20 { tag_of(t).name().into() } else { t.to_string() } }
+fn tag(t: u8) -> String { if t == 0 { "-".into() } else { tag_of(t).name().into() } }
 
-/// A site's 40 bytes, decoded.
-fn show(b: &[u8]) -> String {
-    let mates: String = (0..33).filter(|&e| b[e] != 255).map(|e| format!(" {e}:{}", b[e])).collect();
-    format!("mates{mates} | tags {} {} {} | want {} {} {} | pulse {}", tag(b[33]), tag(b[34]), tag(b[35]), b[36], b[37], b[38], end(b[39]))
+/// A site's bytes, decoded.
+fn show(l: SiteBytes, b: &[u8]) -> String {
+    let mates: String = (0..l.ends).filter(|&e| b[e] != 255).map(|e| format!(" {e}:{}", b[e])).collect();
+    let (t, w) = (l.tags, l.want);
+    format!("mates{mates} | tags {} {} {} | want {} {} {} | pulse {}", tag(b[t]), tag(b[t + 1]), tag(b[t + 2]), b[w], b[w + 1], b[w + 2], end(b[SiteBytes::PULSE]))
 }
 /// The fields two sites differ in, as `field want→got`.
-fn diff(a: &[u8], b: &[u8]) -> String {
-    (0..SB).filter(|&i| a[i] != b[i]).map(|i| match i {
-        0..33 => format!("end {i} {}→{}", end(a[i]), end(b[i])),
-        33..36 => format!("tag {} {}→{}", i - 33, tag(a[i]), tag(b[i])),
-        36..39 => format!("want {} {}→{}", i - 36, a[i], b[i]),
+fn diff(l: SiteBytes, a: &[u8], b: &[u8]) -> String {
+    (0..4 * l.words).filter(|&i| a[i] != b[i]).map(|i| match i {
+        _ if i < l.ends => format!("end {i} {}→{}", end(a[i]), end(b[i])),
+        _ if (l.tags..l.tags + 3).contains(&i) => format!("tag {} {}→{}", i - l.tags, tag(a[i]), tag(b[i])),
+        _ if (l.want..l.want + 3).contains(&i) => format!("want {} {}→{}", i - l.want, a[i], b[i]),
         _ => format!("pulse {}→{}", end(a[i]), end(b[i])),
     }).collect::<Vec<_>>().join(", ")
 }
 fn bytes(w: &[u32]) -> Vec<u8> { w.iter().flat_map(|x| x.to_le_bytes()).collect() }
+
 
 /// The simulator's counts in the order of the GPU's tally (tiles.wgsl `T_*`).
 const COUNTED: [&str; TALLY] = ["turns", "rewrites", "rewrites without room", "steps", "exchanges", "folds", "flips", "collected",
@@ -93,7 +98,7 @@ fn vectors(gpu: &Gpu, files: &[String]) -> bool {
             let mut why = String::new();
             for q in 0..8 {
                 let (a, b) = (&r.after[q * SB..(q + 1) * SB], &got[q * SB..(q + 1) * SB]);
-                if a != b { why += &format!("  site {q}: {}\n    want {}\n    got  {}\n", diff(a, b), show(a), show(b)); }
+                if a != b { why += &format!("  site {q}: {}\n    want {}\n    got  {}\n", diff(gpu.site, a, b), show(gpu.site, a), show(gpu.site, b)); }
             }
             if r.kind == b'T' {
                 if g[91] != r.touched as u32 { why += &format!("  touched want {:02x} got {:02x}\n", r.touched, g[91]); }
@@ -108,7 +113,7 @@ fn vectors(gpu: &Gpu, files: &[String]) -> bool {
                 if shown < 5 {
                     shown += 1;
                     println!("MISMATCH record {} ({kind}) clock {} corner {},{},{} pos {} taken {:02x}\n{why}", i + 1, r.clock, r.corner[0], r.corner[1], r.corner[2], r.pos, r.taken);
-                    for q in 0..8 { println!("  before {q}: {}", show(&r.before[q * SB..(q + 1) * SB])); }
+                    for q in 0..8 { println!("  before {q}: {}", show(gpu.site, &r.before[q * SB..(q + 1) * SB])); }
                 }
             }
         }
@@ -121,15 +126,15 @@ fn vectors(gpu: &Gpu, files: &[String]) -> bool {
 }
 
 /// The first few sites two states differ in, with their coordinates.
-fn compare(p: &Params, want: &[u32], got: &[u32]) -> Option<String> {
+fn compare(p: &Params, l: SiteBytes, want: &[u32], got: &[u32]) -> Option<String> {
     if want == got { return None; }
-    let (a, b) = (bytes(want), bytes(got));
-    let differ: Vec<usize> = (0..want.len() / SITE).filter(|&s| a[s * SB..(s + 1) * SB] != b[s * SB..(s + 1) * SB]).collect();
+    let (a, b, n) = (bytes(want), bytes(got), 4 * l.words);
+    let differ: Vec<usize> = (0..want.len() / l.words).filter(|&s| a[s * n..(s + 1) * n] != b[s * n..(s + 1) * n]).collect();
     let mut r = format!("{} sites differ", differ.len());
     for &s in differ.iter().take(4) {
         let (x, y, z) = (s as u32 % p.w, s as u32 / p.w % p.h, s as u32 / (p.w * p.h));
-        let (sa, sb) = (&a[s * SB..(s + 1) * SB], &b[s * SB..(s + 1) * SB]);
-        r += &format!("\n  site ({x}, {y}, {z}): {}\n    cpu {}\n    gpu {}", diff(sa, sb), show(sa), show(sb));
+        let (sa, sb) = (&a[s * n..(s + 1) * n], &b[s * n..(s + 1) * n]);
+        r += &format!("\n  site ({x}, {y}, {z}): {}\n    cpu {}\n    gpu {}", diff(l, sa, sb), show(l, sa), show(l, sb));
     }
     Some(r)
 }
@@ -165,23 +170,33 @@ fn main() {
             },
         }
     }
-    let gpu = start(&p);
     let src = src.expect("term");
+    // A two-way program runs eagerly with 4 ports a slot, its answer the program handed back and the result.
+    let two = src.strip_prefix("two:").map(|r| twoway::parse_run(r).unwrap_or_else(|e| panic!("{e}")));
+    if two.is_some() { p.set("two", "1").unwrap(); }
+    let gpu = start(&p);
     // `@FILE` holds the term; `@(f,x)` is a term itself.
     let src = match src.strip_prefix('@').filter(|path| !path.starts_with('(')) { Some(path) => std::fs::read_to_string(path).expect("term file").trim().to_string(), None => src };
     let t = match src.split_once(':') {
+        _ if two.is_some() => oracle::Term::L,
         Some((name, n)) if term::workload(name, 0).is_some() => term::workload(name, n.parse().unwrap()).unwrap(),
         _ => term::workload(&src, 0).unwrap_or_else(|| term::parse(&src).expect("bad term")),
     };
-    let want = oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok().map(|w| oracle::show(&w));
-    let (net, out) = if every {
+    let want = match &two {
+        Some((prog, x)) => prog.run(x, &mut 1_000_000).map(|y| y.show()),
+        None => oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok().map(|w| oracle::show(&w)),
+    };
+    let (net, out) = if let Some((prog, x)) = &two { twoway::net(prog, x) } else if every {
         let mut net = rust_ca_lattice::net::Net::new();
         let root = net.build_every_view(&t);
         let (_, out) = net.drive(root);
         (net, out)
     } else { rust_ic_strands::share::net_for(&(&t).into(), &p).unwrap_or_else(|e| panic!("{e}")) };
     let mut l = Lattice::load(p, net, out).expect("load");
-    let show_ans = |l: &Lattice| l.readback().map(|t| oracle::show(&t)).unwrap_or("-".into());
+    let show_ans = |l: &Lattice| if two.is_some() { twoway::answer(&l.shadow).map_or("-".into(), |(_, y)| y.show()) }
+                                 else { l.readback().map(|t| oracle::show(&t)).unwrap_or("-".into()) };
+    let answered = |l: &Lattice| if two.is_some() { twoway::answer(&l.shadow).is_some() } else { l.readback().is_some() };
+    let layout = l.site_bytes();
     let want = want.as_deref().unwrap_or("?");
     assert!(!dense || !l.fields.on, "--dense keeps no field");
     // The simulator's demand field, a value a site, if it keeps one.
@@ -194,9 +209,9 @@ fn main() {
         if p.views || every { l.trace_start(); }
         let state = l.state_words();
         grid.upload(&state, field(&l).as_deref());
-        if let Some(d) = compare(&p, &state, &grid.download()) { println!("upload differs: {d}"); std::process::exit(1); }
+        if let Some(d) = compare(&p, layout, &state, &grid.download()) { println!("upload differs: {d}"); std::process::exit(1); }
         let mut c = 0;
-        while c < max && !(l.readback().is_some() || l.shadow.active_pair().is_none()) {
+        while c < max && !(answered(&l) || l.shadow.active_pair().is_none()) {
             let n = (batch as u64).min(max - c);
             let before = counted(&l);
             l.fire_log.clear();
@@ -204,7 +219,7 @@ fn main() {
             for _ in 0..n { l.chip_clock(); }
             grid.run(c, p.seed, n as usize, dense, false);
             c += n;
-            if let Some(d) = compare(&p, &l.state_words(), &grid.download()) {
+            if let Some(d) = compare(&p, layout, &l.state_words(), &grid.download()) {
                 println!("clock {c} differs (after {} matching): {d}", c - n);
                 std::process::exit(1);
             }
@@ -229,7 +244,7 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        let done = l.readback().is_some() || l.shadow.active_pair().is_none();
+        let done = answered(&l) || l.shadow.active_pair().is_none();
         println!("{} — answer {} (want {want})", if done { "DONE" } else { "UNFINISHED" }, show_ans(&l));
         println!("{c} clocks matched on all {} sites{}, and so did every count ({} rewrites, {} steps)  {:.2}s", l.sites(),
             if l.fields.on { " and their fields" } else { "" }, l.stats.fires, l.stats.hops, t0.elapsed().as_secs_f64());
@@ -262,8 +277,8 @@ fn main() {
     }
     // The answer is looked for after every batch, among the sites holding anything (`--dense`:
     // everywhere); a site that held something at the last look and is not among them is empty now.
-    const EMPTY: [u32; SITE] = [!0, !0, !0, !0, !0, !0, !0, !0, 0xFF, 0xFF00_0000];
-    let (mut c, mut done, mut looking) = (0u64, l.readback().is_some(), 0f64);
+    let (empty, sw) = (layout.empty(), layout.words);
+    let (mut c, mut done, mut looking) = (0u64, answered(&l), 0f64);
     let mut prev: std::collections::HashSet<u32> = l.live().iter().copied().collect();
     while c < max && !done {
         let n = (batch as u64).min(max - c);
@@ -273,11 +288,13 @@ fn main() {
         if dense { l.set_state_words(&grid.download()); } else {
             let (idx, words, _) = grid.gathered();
             let now: std::collections::HashSet<u32> = idx.iter().copied().collect();
-            for &s in prev.difference(&now) { l.set_site_words(s, &EMPTY); }
-            for (j, &s) in idx.iter().enumerate() { l.set_site_words(s, &words[j * SITE..(j + 1) * SITE]); }
+            for &s in prev.difference(&now) { l.set_site_words(s, &empty); }
+            for (j, &s) in idx.iter().enumerate() { l.set_site_words(s, &words[j * sw..(j + 1) * sw]); }
             prev = now;
         }
-        done = l.readback().is_some();
+        // The abstract net is what a two-way run is read from: rebuilt from the sites.
+        if two.is_some() { l.adopt(); }
+        done = answered(&l);
         looking += t1.elapsed().as_secs_f64();
     }
     let dt = t0.elapsed().as_secs_f64();

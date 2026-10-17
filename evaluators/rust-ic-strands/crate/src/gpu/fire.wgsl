@@ -16,8 +16,8 @@ var<private> fr_fc_face: u32;
 var<private> fr_fs_ri: u32;
 var<private> fr_fs_n: u32;
 var<private> fr_fs_nl: u32;
-var<private> fr_fs_la: array<u32, 9>;
-var<private> fr_fs_lb: array<u32, 9>;
+var<private> fr_fs_la: array<u32, MAXW>;
+var<private> fr_fs_lb: array<u32, MAXW>;
 var<private> fr_fs_sp: u32;
 var<private> fr_fs_lane: u32;
 var<private> fr_fs_nreg: u32;
@@ -26,11 +26,12 @@ var<private> fr_fs_regs: u32;
 var<private> fr_fs_lost_s: u32;
 var<private> fr_fs_lost_sp: u32;
 /// The rule's wires, read from the table once, and the other end of each dying aux port's wire
-/// (8 bits each).
-var<private> fr_fs_wa: array<u32, 9>;
-var<private> fr_fs_wb: array<u32, 9>;
+/// (8 bits each, by `fr_aux_index`).
+var<private> fr_fs_wa: array<u32, MAXW>;
+var<private> fr_fs_wb: array<u32, MAXW>;
 var<private> fr_fs_nw: u32;
-var<private> fr_fs_part: u32;
+var<private> fr_fs_part: vec2<u32>;
+fn fr_part(a: u32) -> u32 { return extractBits(fr_fs_part[a >> 2u], 8u * (a & 3u), 8u); }
 /// An apply reading a movement agent: 1 + its place among them (lattice.rs `fire_entry`), else 0.
 var<private> fr_fs_view: u32;
 
@@ -106,7 +107,7 @@ fn fr_end(t: u32, seat: u32) -> u32 {
 fn fr_need_add(loc: u32) -> vec2<u32> {
   // Counted 8 bits per edge and per site: a link adds at most 3, so no count carries.
   var nd = 0u; var add = 0u;
-  for (var j = 0u; j < 9u; j++) {
+  for (var j = 0u; j < MAXW; j++) {
     if (j >= fr_fs_nl) { break; }
     let la = fr_at(fr_fs_la[j], loc); let lb = fr_at(fr_fs_lb[j], loc);
     let r = fr_route(la, lb);
@@ -127,7 +128,7 @@ fn fr_need_add(loc: u32) -> vec2<u32> {
 // ---- the setup (strands_fire_setup) -----------------------------------------------------------------
 /// The other end of the rule wire that has end e.
 fn fr_partner(e: u32) -> u32 {
-  for (var w = 0u; w < 9u; w++) {
+  for (var w = 0u; w < MAXW; w++) {
     if (w < fr_fs_nw) {
       if (fr_fs_wa[w] == e) { return fr_fs_wb[w]; }
       if (fr_fs_wb[w] == e) { return fr_fs_wa[w]; }
@@ -135,9 +136,10 @@ fn fr_partner(e: u32) -> u32 {
   }
   return 0xFFu;
 }
-/// A dying aux port, by index: the consumer's 1 and 2, then the producer's 1 and 2.
-fn fr_aux_end(a: u32) -> u32 { return (select(1u, 2u, (a & 2u) != 0u) << 6u) | select(1u, 2u, (a & 1u) != 0u); }
-fn fr_aux_index(e: u32) -> u32 { return ((e >> 6u) & 2u) | ((e >> 1u) & 1u); }
+/// A dying aux port, by index: the consumer's 1 .. AR - 1, then the producer's.
+const NAUX: u32 = 2u * (AR - 1u);
+fn fr_aux_end(a: u32) -> u32 { let p = a >= AR - 1u; return (select(1u, 2u, p) << 6u) | (a - select(0u, AR - 1u, p) + 1u); }
+fn fr_aux_index(e: u32) -> u32 { return min(select(0u, AR - 1u, (e >> 6u) == 2u) + (e & 63u) - 1u, NAUX - 1u); }
 /// Orientation oi of a square: its faces fx and fy, in lattice.rs `regions` order.
 fn fr_fx(oi: u32) -> u32 { if (oi < 4u) { return oi / 2u; } if (oi < 8u) { return (oi - 4u) / 2u; } return 2u + (oi - 8u) / 2u; }
 fn fr_fy(oi: u32) -> u32 { if (oi < 4u) { return 2u + oi % 2u; } return 4u + oi % 2u; }
@@ -154,45 +156,47 @@ fn fr_setup() -> bool {
   fr_fs_lane = lane(gm(S, ae(kc, 0u)));
   // rule_wires
   fr_fs_nw = rule_nw(fr_fs_ri);
-  for (var w = 0u; w < 9u; w++) { fr_fs_wa[w] = rule_wa(fr_fs_ri, w); fr_fs_wb[w] = rule_wb(fr_fs_ri, w); }
-  fr_fs_part = 0u;
-  for (var w = 0u; w < 4u; w++) { fr_fs_part |= fr_partner(fr_aux_end(w)) << (8u * w); }
-  var dmc = array<u32, 4>(NONE, gm(S, ae(kc, 1u)), gm(S, ae(kc, 2u)), NONE);
-  var dmp = array<u32, 4>(NONE, gm(SP, ae(kp, 1u)), gm(SP, ae(kp, 2u)), NONE);
-  if (arity(ct) < 3u) { dmc[2] = NONE; } if (arity(ct) < 2u) { dmc[1] = NONE; }
-  if (arity(pt) < 3u) { dmp[2] = NONE; } if (arity(pt) < 2u) { dmp[1] = NONE; }
+  for (var w = 0u; w < MAXW; w++) { fr_fs_wa[w] = rule_wa(fr_fs_ri, w); fr_fs_wb[w] = rule_wb(fr_fs_ri, w); }
+  fr_fs_part = vec2<u32>(0u, 0u);
+  for (var w = 0u; w < NAUX; w++) { fr_fs_part[w >> 2u] |= fr_partner(fr_aux_end(w)) << (8u * (w & 3u)); }
+  var dmc = array<u32, 4>(NONE, NONE, NONE, NONE);
+  var dmp = array<u32, 4>(NONE, NONE, NONE, NONE);
+  for (var q = 1u; q < AR; q++) {
+    if (q < arity(ct)) { dmc[q] = gm(S, ae(kc, q)); }
+    if (q < arity(pt)) { dmp[q] = gm(SP, ae(kp, q)); }
+  }
   // Where the path from each dying aux port ends: through its mate while that is another dying
   // aux port, and on along that port's rule wire, to a fresh port or an end that stays.
-  var term = array<u32, 4>(0u, 0u, 0u, 0u);
-  for (var j = 0u; j < 4u; j++) {
+  var term = array<u32, 6>(0u, 0u, 0u, 0u, 0u, 0u);
+  for (var j = 0u; j < NAUX; j++) {
     var e = fr_aux_end(j); var x = 0u;
-    for (var it = 0u; it < 6u; it++) {
+    for (var it = 0u; it < NAUX + 2u; it++) {
       if ((e >> 6u) == 0u) { x = e & 63u; break; }
       var m = dmp[e & 3u]; if ((e >> 6u) == 1u) { m = dmc[e & 3u]; }
       var d = 0xFFu;
-      if (m < 9u) {
+      if (m < A_ENDS) {
         let k = port_k(m); let q = port_q(m);
         if (!((e >> 6u) == 2u && via) && k == kc && q != 0u) { d = (1u << 6u) | q; }
         else if (((e >> 6u) == 2u || !via) && k == kp && q != 0u) { d = (2u << 6u) | q; }
       }
       if (d == 0xFFu) { x = 0x100u | select(0u, 0x80u, (e >> 6u) == 2u && via) | (m & 63u); break; }
-      e = extractBits(fr_fs_part, 8u * fr_aux_index(d), 8u);
+      e = fr_part(fr_aux_index(d));
     }
     term[j] = x;
   }
   // Each rule wire becomes a link between its ends' terminals, once, in the rule's order.
-  var wa: array<u32, 9>; var wb: array<u32, 9>;
-  for (var w = 0u; w < 9u; w++) {
+  var wa: array<u32, MAXW>; var wb: array<u32, MAXW>;
+  for (var w = 0u; w < MAXW; w++) {
     let a = fr_fs_wa[w]; wa[w] = select(term[fr_aux_index(a)], a & 63u, (a >> 6u) == 0u);
     let b = fr_fs_wb[w]; wb[w] = select(term[fr_aux_index(b)], b & 63u, (b >> 6u) == 0u);
   }
-  fr_fs_nl = 0u; fr_fs_la = array<u32, 9>(); fr_fs_lb = array<u32, 9>();
-  for (var w = 0u; w < 9u; w++) {
+  fr_fs_nl = 0u; fr_fs_la = array<u32, MAXW>(); fr_fs_lb = array<u32, MAXW>();
+  for (var w = 0u; w < MAXW; w++) {
     var dup = !(w < fr_fs_nw);
     for (var l = 0u; l < w; l++) {
       if ((wa[l] == wa[w] && wb[l] == wb[w]) || (wa[l] == wb[w] && wb[l] == wa[w])) { dup = true; }
     }
-    if (!dup && fr_fs_nl < 9u) { fr_fs_la[fr_fs_nl] = wa[w]; fr_fs_lb[fr_fs_nl] = wb[w]; }
+    if (!dup && fr_fs_nl < MAXW) { fr_fs_la[fr_fs_nl] = wa[w]; fr_fs_lb[fr_fs_nl] = wb[w]; }
     fr_fs_nl = (fr_fs_nl + u32(!dup)) & 15u;
   }
   // The squares to try: the twelve orientations from a random one, in the simulator's order of
@@ -221,13 +225,13 @@ fn fr_setup() -> bool {
   }
   // Pairings the dying pair takes with it, per site (a pairing between two dying ports once).
   fr_fs_lost_s = 0u; fr_fs_lost_sp = 0u;
-  for (var j = 0u; j < 6u; j++) {
-    let k = select(kp, kc, j < 3u); let q = j % 3u; let at_s = j < 3u || !via;
+  for (var j = 0u; j < 2u * AR; j++) {
+    let k = select(kp, kc, j < AR); let q = j % AR; let at_s = j < AR || !via;
     let m = gm(select(SP, S, at_s), ae(k, q));
-    var dying = m < 9u && port_k(m) == kp;
-    if (at_s) { dying = m < 9u && (port_k(m) == kc || (!via && port_k(m) == kp)); }
+    var dying = m < A_ENDS && port_k(m) == kp;
+    if (at_s) { dying = m < A_ENDS && (port_k(m) == kc || (!via && port_k(m) == kp)); }
     if (m != NONE && (!dying || m > ae(k, q))) {
-      if (at_s) { fr_fs_lost_s = (fr_fs_lost_s + 1u) & 7u; } else { fr_fs_lost_sp = (fr_fs_lost_sp + 1u) & 7u; }
+      if (at_s) { fr_fs_lost_s = (fr_fs_lost_s + 1u) & 15u; } else { fr_fs_lost_sp = (fr_fs_lost_sp + 1u) & 15u; }
     }
   }
   return fs_stale;
@@ -329,8 +333,8 @@ fn fr_init(best_code: u32) {
     if (l == 1u) { fr_set_lanes(2u, fr_lanes_for(lanes_used(Y, fr_fp_fy), (bneed >> 8u) & 15u)); }
     if (l == 2u) { fr_set_lanes(3u, fr_lanes_for(lanes_used(Y, fr_fp_fx), (bneed >> 12u) & 15u)); }
     // The pair goes: its ports and slots empty.
-    for (var e = 0u; e < 9u; e++) {
-      if ((l == 0u && e / 3u == fr_fc_kc) || (l == ploc && e / 3u == fr_fc_kp)) { sm(Y, e, NONE); }
+    for (var e = 0u; e < A_ENDS; e++) {
+      if ((l == 0u && e / AR == fr_fc_kc) || (l == ploc && e / AR == fr_fc_kp)) { sm(Y, e, NONE); }
     }
     for (var e = 0u; e < 3u; e++) {
       if ((l == 0u && e == fr_fc_kc) || (l == ploc && e == fr_fc_kp)) { stg(Y, e, 0u); sw(Y, e, false); }

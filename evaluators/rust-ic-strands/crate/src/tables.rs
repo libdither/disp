@@ -1,14 +1,17 @@
 //! The chip configuration's constants as WGSL (the GPU kernel's tables), from the simulator's own
 //! rules, energies and probabilities, so the two cannot drift apart. hw/rtl gets the same as
 //! Verilog from `strands-hw`.
-use crate::lattice::{chip, fresh_wanted_in, Channel, Energy, Params, Source, NONE};
-use rust_ca_lattice::rules::{End, Rule, Tag, ALL_TAGS, RULES, VIEW_RULES, VIEW_TAGS};
+use crate::lattice::{chip, fresh_wanted_in, ports, Channel, Energy, Params, SiteBytes, Source, NONE};
+use rust_ca_lattice::rules::{End, Rule, Tag, ALL_TAGS, RULES, TWO_RULES, TWO_TAGS, VIEW_RULES, VIEW_TAGS};
 use std::fmt::Write;
 
 fn code(t: Tag) -> u32 { crate::lattice::code(t) as u32 }
 
-/// The GPU's rules, numbered as its tables have them: the chip's, then the movement agents'.
-fn rules() -> Vec<&'static Rule> { RULES.iter().chain(VIEW_RULES).collect() }
+/// The GPU's rules, numbered as its tables have them: the chip's, the movement agents', then two-way programs'.
+fn rules(p: &Params) -> Vec<&'static Rule> { RULES.iter().chain(VIEW_RULES).chain(if p.two { TWO_RULES } else { &[] }).collect() }
+
+/// Tags numbered below this are the chip's and the movement agents' (`ALL_TAGS`, `VIEW_TAGS`, from 1).
+const BASE_TAGS: u32 = (ALL_TAGS.len() + VIEW_TAGS.len()) as u32 + 1;
 
 /// The rule number for no rule.
 const NO_RULE: u32 = 255;
@@ -29,8 +32,10 @@ fn array(w: &mut String, name: &str, vals: &[u32]) {
 }
 
 /// Why the GPU kernels cannot run a configuration: they are the chip's block schedule on its
-/// 40-byte site, with pulses; energies, probabilities and switches come from the tables.
+/// 40-byte site (44 with two-way programs' 4 ports a slot), with pulses; energies, probabilities and
+/// switches come from the tables.
 pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
+    if p.resid > 0 { return Some("keeping history runs on the CPU"); }
     if !(p.margolus && p.block_moves && p.block && p.block_side == 2) { return Some("it runs only 2×2×2 blocks with a turn for every site"); }
     if p.k != 2 || p.lanes != 4 { return Some("its site holds 2 agents and 4 strands per link"); }
     if !p.pulse { return Some("demand always travels as pulses there"); }
@@ -51,7 +56,6 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
 /// Why the GPU cannot run this lattice: its configuration (`gpu_unfit`), or superpositions, whose
 /// labels its 40-byte site has no room for (and whose rules its tables leave out).
 pub fn gpu_refuses(l: &crate::lattice::Lattice) -> Option<&'static str> {
-    if l.p.resid > 0 { return Some("keeping history runs on the CPU"); }
     gpu_unfit(&l.p).or_else(|| (l.labelled() > 0).then_some("it runs no superpositions"))
 }
 
@@ -88,36 +92,59 @@ pub fn wgsl_for(p: &Params) -> String {
     }
     writeln!(w, "const ACCEPT_LEN: i32 = {};", e.accept.len()).unwrap();
     array(w, "ACCEPT", &e.accept);
-    let (nt, rules) = ((ALL_TAGS.len() + VIEW_TAGS.len()) as u32 + 1, rules());
+    // A site's layout (lattice.rs `SiteBytes`): agent ports first, AR to a slot, then the strand ends.
+    let (ar, sb) = (ports(p) as u32, SiteBytes::of(ports(p)));
+    writeln!(w, "const AR: u32 = {ar}u; const A_ENDS: u32 = {}u; const NE: u32 = {}u; const SW: u32 = {}u;", 3 * ar, sb.ends, sb.words).unwrap();
+    writeln!(w, "const B_TAG: u32 = {}u; const B_WANT: u32 = {}u; const B_PUL: u32 = {}u;", sb.tags, sb.want, SiteBytes::PULSE).unwrap();
+    writeln!(w, "const EMPTY: Site = Site({});", sb.empty().iter().map(|v| format!("0x{v:08X}u")).collect::<Vec<_>>().join(", ")).unwrap();
+    // Two-way programs' tags (numbered from TWO_P): the opcodes, producers, then the walkers, consumers.
+    let (tp, tc) = (code(TWO_TAGS[0]), code(TWO_TAGS[0]) + TWO_TAGS.iter().take_while(|t| t.is_producer()).count() as u32);
+    assert!(TWO_TAGS.iter().enumerate().all(|(i, t)| code(*t) == tp + i as u32 && t.is_producer() == (code(*t) < tc) && t.is_consumer() != t.is_producer()),
+            "two-way programs' producers, then their consumers");
+    let mut two_ar = [0u32; 2];
+    for (i, t) in TWO_TAGS.iter().enumerate() { two_ar[i / 16] |= (t.arity() as u32 - 1) << (2 * (i % 16)); }
+    writeln!(w, "const TWO: bool = {}; const TWO_P: u32 = {tp}u; const TWO_C: u32 = {tc}u; const TWO_END: u32 = {}u; const TWO_AR0: u32 = {}u; const TWO_AR1: u32 = {}u;",
+        p.two, tp + TWO_TAGS.len() as u32, two_ar[0], two_ar[1]).unwrap();
+    // The rule table is indexed by tag, two-way programs' following the movement agents'.
+    let rules = rules(p);
+    let tix = |t: u32| if t >= tp { t - tp + BASE_TAGS } else { t };
+    let nt = BASE_TAGS + if p.two { TWO_TAGS.len() as u32 } else { 0 };
     let mut rule_of = vec![NO_RULE; (nt * nt) as usize];
-    for (i, r) in rules.iter().enumerate() { rule_of[(code(r.consumer) * nt + code(r.producer)) as usize] = i as u32; }
-    writeln!(w, "const NRULES: u32 = {}u; const NTAGS: u32 = {nt}u; const NO_RULE: u32 = {NO_RULE}u;", rules.len()).unwrap();
+    for (i, r) in rules.iter().enumerate() { rule_of[(tix(code(r.consumer)) * nt + tix(code(r.producer))) as usize] = i as u32; }
+    let maxw = rules.iter().map(|r| r.wires.len()).max().unwrap().max(9);
+    writeln!(w, "const NRULES: u32 = {}u; const NTAGS: u32 = {nt}u; const BASE_TAGS: u32 = {BASE_TAGS}u; const NO_RULE: u32 = {NO_RULE}u; const MAXW: u32 = {maxw}u;",
+        rules.len()).unwrap();
     array(w, "RULE_OF", &rule_of);
     array(w, "RULE_N", &rules.iter().map(|r| r.fresh.len() as u32).collect::<Vec<_>>());
     array(w, "RULE_NW", &rules.iter().map(|r| r.wires.len() as u32).collect::<Vec<_>>());
     array(w, "RULE_WANTED", &rules.iter().map(|r| fresh_wanted_in(r, p.fork).iter().enumerate().fold(0, |m, (f, &b)| m | (b as u32) << f)).collect::<Vec<_>>());
     let mut fresh = vec![0u32; rules.len() * 6];
-    let (mut wa, mut wb) = (vec![0u32; rules.len() * 9], vec![0u32; rules.len() * 9]);
+    let (mut wa, mut wb) = (vec![0u32; rules.len() * maxw], vec![0u32; rules.len() * maxw]);
     for (i, r) in rules.iter().enumerate() {
-        assert!(r.fresh.len() <= 6 && r.wires.len() <= 9, "a rule outgrew the tables");
+        assert!(r.fresh.len() <= 6 && r.wires.len() <= 12, "a rule outgrew the tables");
         for (f, t) in r.fresh.iter().enumerate() { fresh[i * 6 + f] = code(*t); }
-        for (k, &(a, b)) in r.wires.iter().enumerate() { wa[i * 9 + k] = end(a); wb[i * 9 + k] = end(b); }
+        for (k, &(a, b)) in r.wires.iter().enumerate() { wa[i * maxw + k] = end(a); wb[i * maxw + k] = end(b); }
     }
     array(w, "RULE_FRESH", &fresh);
     array(w, "RULE_WA", &wa);
     array(w, "RULE_WB", &wb);
     w.push_str(r#"
 fn accept_thr(d: u32) -> u32 { if (d >= u32(ACCEPT_LEN)) { return 0u; } return ACCEPT[d]; }
+/// A tag's place in the rule table: two-way programs' follow the movement agents' (NTAGS: none).
+fn tix(t: u32) -> u32 { if (TWO && t >= TWO_P) { return t - TWO_P + BASE_TAGS; } if (t >= BASE_TAGS) { return NTAGS; } return t; }
 /// The rule for a consumer tag meeting a producer tag (NO_RULE: none).
-fn rule_of(ct: u32, pt: u32) -> u32 { if (ct >= NTAGS || pt >= NTAGS) { return NO_RULE; } return RULE_OF[ct * NTAGS + pt]; }
+fn rule_of(ct: u32, pt: u32) -> u32 { let c = tix(ct); let q = tix(pt); if (c >= NTAGS || q >= NTAGS) { return NO_RULE; } return RULE_OF[c * NTAGS + q]; }
+/// Whether a consumer and a producer whose principals touch interact (rules.rs `meets`): a two-way
+/// program is stuck where it has no rule.
+fn meets(ct: u32, pt: u32) -> bool { return !TWO || (ct < TWO_P && pt < TWO_P) || rule_of(ct, pt) != NO_RULE; }
 fn rule_n(ri: u32) -> u32 { if (ri >= NRULES) { return 0u; } return RULE_N[ri]; }
 fn rule_nw(ri: u32) -> u32 { if (ri >= NRULES) { return 0u; } return RULE_NW[ri]; }
 /// Bit f: fresh agent f starts out wanted.
 fn rule_wanted(ri: u32) -> u32 { if (ri >= NRULES) { return 0u; } return RULE_WANTED[ri]; }
 fn rule_fresh(ri: u32, f: u32) -> u32 { if (ri >= NRULES || f >= 6u) { return 0u; } return RULE_FRESH[ri * 6u + f]; }
 /// The two ends of wire k of a rule (see src/tables.rs `end`).
-fn rule_wa(ri: u32, k: u32) -> u32 { if (ri >= NRULES || k >= 9u) { return 0u; } return RULE_WA[ri * 9u + k]; }
-fn rule_wb(ri: u32, k: u32) -> u32 { if (ri >= NRULES || k >= 9u) { return 0u; } return RULE_WB[ri * 9u + k]; }
+fn rule_wa(ri: u32, k: u32) -> u32 { if (ri >= NRULES || k >= MAXW) { return 0u; } return RULE_WA[ri * MAXW + k]; }
+fn rule_wb(ri: u32, k: u32) -> u32 { if (ri >= NRULES || k >= MAXW) { return 0u; } return RULE_WB[ri * MAXW + k]; }
 "#);
     v
 }

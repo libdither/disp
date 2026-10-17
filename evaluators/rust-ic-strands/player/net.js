@@ -14,8 +14,10 @@
 // the colour is on applications and the agents that carry them out.
 const NET = { key: "", segKey: "", at: 0, rev: 0, n: 0, id: null, seat: null, tag: null, far: null, index: new Map(), bySeat: null,
   seg: null, segs: [], renumbered: 0 };
-/// Applications and the arms of a choice: P, Pair, A, T1, Sel.
+/// Applications and the arms of a choice: P, Pair, A, T1, Sel; and a two-way program's run, its program and
+/// its input (74).
 const SPLITS = [false, false, false, false, true, true, true, true, true, false, false, false, false, false];
+SPLITS[74] = true;
 
 /// Bring NET up to date with the lattice and the picks: while playing, a big net at most every 120 ms
 /// (a small one every frame), unless forced. True if anything changed.
@@ -103,8 +105,8 @@ function hslRgb(h, s, l) {
   const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
   return [f(0), f(8), f(4)];
 }
-/// Values: leaf, stem, fork, and the movement agents (code standing for a tree).
-const isValue = t => t >= 1 && t <= 3 || t >= 15 && t <= 20;
+/// Values: leaf, stem, fork, the movement agents (code standing for a tree) and two-way programs' opcodes.
+const isValue = t => t >= 1 && t <= 3 || t >= 15 && t <= 20 || t >= 59 && t <= 73;
 /// Agent i's colour with segments on, { css, rgb }: its segment's, or for a value the tinted grey;
 /// null if it is in no segment.
 function netTone(i) {
