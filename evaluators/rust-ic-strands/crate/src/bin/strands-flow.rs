@@ -7,7 +7,7 @@
 //! Per workload and variant, means over the seeds: clocks to the answer, then to its garbage gone,
 //! then to contracted (the player's rule: no shorter wire for 300 clocks at the coldest), the
 //! strands and sites per agent left, rewrites blocked for room, and runs that jammed (no rewrite
-//! for 30,000 clocks) or gave a wrong answer. `FIXED=1` cools for all C clocks instead.
+//! for 30,000 clocks) or gave a wrong answer. `FIXED=1` cools for all C clocks instead; `CLEAN=1` traces the garbage.
 
 use rust_ca_lattice::oracle;
 use rust_ic_mesh::term;
@@ -70,7 +70,17 @@ fn run(work: &str, vary: &str, seed: u64, cool: f64) -> Out {
         o.wrong = match two { Some(_) => twoway::read(&l.shadow, out).map(|(_, y)| y) != want_two, None => l.readback() != want_tc };
         // Its garbage away (tree calculus; a two-way run leaves none).
         let (c0, mut marks) = (l.stats.clocks, vec![]);
-        while l.p.gc && l.garbage(&mut marks) > 0 && l.stats.clocks - c0 < 200_000.0 { let n = l.stats.proposals + l.live_sites() as u64; l.run_on(n); }
+        let trace = std::env::var("CLEAN").is_ok();
+        let mut next = c0;
+        while l.p.gc && l.garbage(&mut marks) > 0 && l.stats.clocks - c0 < 200_000.0 {
+            if trace && l.stats.clocks >= next {
+                let erasers = l.shadow.agents.iter().flatten().filter(|a| a.tag == rust_ca_lattice::rules::Tag::Eps).count();
+                eprintln!("{work} seed {seed} clean +{:.0}: {} agents of garbage, {erasers} erasers, {} sites", l.stats.clocks - c0, l.garbage(&mut marks), l.live_sites());
+                next += 250.0;
+            }
+            let n = l.stats.proposals + l.live_sites() as u64;
+            l.run_on(n);
+        }
         o.clean = l.stats.clocks - c0;
         // Contracted, by the player's rule.
         let c1 = l.stats.clocks;
