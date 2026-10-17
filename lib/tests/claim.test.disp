@@ -1,0 +1,82 @@
+// Companion to lib/claim.disp and research/CLAIMS_OVER_TREES.md §9. Claims and
+// lenses on a finite type, a higher-order claim made refutable, and the first
+// certified rewrites: id and shift agree at Nat -> Nat, and two spellings of
+// doubling agree, each stated as a lens from a finite symbolic claim into the
+// honest one and cross-checked against the confirmer's search. The rule lenses
+// used — finite cover (`over`), case split (the confirmer's `table`), generic
+// run (`run`, sound by the run lemma), induction (`step_with_ih`, sound by the
+// decreasing measure) and composition (`lens_then`) — are the trusted part.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../claim.disp" {}
+open use raw "fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "confirmer.test.disp" {}
+
+all_trees := Trees.as_items
+by_search := honest all_trees
+
+// ---- claims and lenses at Bool -> Bool
+bool_fn := {v, x} => if (Bool x) { Bool (v x) } else { true }
+// a cover of all trees by two challenges: every tree goes to a listed one that fails whenever it does
+bool_cover := lens ({w} => w) ({_w, x} => if (Bool x) { x } else { true })
+bad_cover := lens ({w} => w) ({_w, _x} => true)
+half_bad := {x} => if (x) { true } else { pair x x }
+// if v maps Bool to Bool, so does "not after v"; a challenge comes back unchanged
+post_not := lens ({v} => {x} => not (v x)) ({_v, x} => x)
+test by_search bool_fn not 60 = "Open"
+test by_search bool_fn ({x} => pair x x) 60 = refuted true
+test over bool_fn not [true, false] = "Proved"
+test over bool_fn half_bad [true, false] = refuted false
+test by_search (lens_holds bool_fn bool_fn bool_cover) half_bad 60 = "Open"
+test by_search (lens_holds bool_fn bool_fn bad_cover) half_bad 60 = refuted false
+test by_search (lens_holds bool_fn bool_fn (lens_then bool_cover post_not)) not 60 = "Open"
+
+// ---- A => B: a member of a function type is a lens, so a higher-order claim is refutable
+nat_fn := {g, x} => if (NatR x) { NatR (g x) } else { true }
+is_nat := {w, _c} => NatR w
+// every challenge is a tree offered as a Nat -> Nat function, with the trivial challenge of Nat
+offered := all_trees.s_map({g} => pair g t)
+test honest offered (implies nat_fn is_nat) (lens ({g} => g 3) ({_g, _y} => 3)) 40 = "Open"
+test honest offered (implies nat_fn is_nat) (lens ({g} => g) ({_g, _y} => 3)) 40 = refuted (pair (t t) t)
+
+// ---- counterexample-guided search
+bool_id := {v, x} => if (Bool x) { v x == x } else { true }
+test cegis all_trees bool_id candidates [] 30 = pair idfns.head [false, true]
+
+// ---- the certified rewrite: id and shift agree at Nat -> Nat
+// the honest claim: no witness, a tree as challenge
+eq_nat := {fn, gn} => {_w, x} => if (NatR x) { fn x == gn x } else { true }
+// the symbolic claim: a case of Nat's split as challenge; both sides run once and are judged equal at Nat
+sym_eq := {fn, gn} => {_w, v} => (and_then (run fn v) ({a} => and_then (run gn v) ({b} => member_same NatR a b))) == "Yes"
+// Nat's split from the confirmer's table, and the back map that sends a tree to its case
+nat_cases := (table NatR ({step} => in_sym NatR [step])).snd
+case_of := {_w, x} => if (is_zero x) { nat_cases.head } else { nat_cases.tail.head }
+split_lens := lens ({w} => w) case_of
+// the certificate's verdict: a ground case that fails is a counterexample; a symbolic case that fails leaves the claim open
+certify := {claim, cases} => {
+	let v := over claim t cases
+	if (not v.is_refuted) { v }
+	else if (v.snd.is_known) { refuted v.snd.snd }
+	else { open_on (pair "case not settled" v.snd) }
+}
+test certify (sym_eq id shift) nat_cases = "Proved"
+test by_search (lens_holds (sym_eq id shift) (eq_nat id shift) split_lens) t 80 = "Open"
+test agree (certify (sym_eq id shift) nat_cases) (eq_arrow NatR id shift) = true
+test certify (sym_eq id succ) nat_cases = refuted zero
+// a pair that needs induction is not settled by one symbolic run, and nothing is refuted
+test certify (sym_eq (fix dbl_step) (fix dbl_step_pairs)) nat_cases = open_on (pair "case not settled" nat_cases.tail.head)
+
+// ---- induction: one layer of each step function, recursive calls named by one token
+ind_eq := {step_f, step_g} => {_w, v} => (and_then (step_with_ih step_f v) ({a} => and_then (step_with_ih step_g v) ({b} => member_same NatR a b))) == "Yes"
+// the law needs the claim at the predecessor as well: the back map returns the case and the smaller tree
+ind_holds := {from, to} => {w, x} =>
+	if ((NatR x) && (not (is_zero x))) { if ((from w (case_of w x)) && (to w (nat_pred x))) { to w x } else { true } } else { true }
+test certify (ind_eq dbl_step dbl_step_pairs) nat_cases = "Proved"
+test by_search (ind_holds (ind_eq dbl_step dbl_step_pairs) (eq_nat (fix dbl_step) (fix dbl_step_pairs))) t 80 = "Open"
+test agree (certify (ind_eq dbl_step dbl_step_pairs) nat_cases) (eq_by_induction dbl_step dbl_step_pairs) = true
+test certify (ind_eq dbl_step ({_d, n} => pair n n)) nat_cases = refuted zero
+// two non-total functions are never certified equal: the loop runs the fuel out
+test certify (ind_eq loop_f_step loop_g_step) nat_cases = open_on (pair "case not settled" nat_cases.tail.head)

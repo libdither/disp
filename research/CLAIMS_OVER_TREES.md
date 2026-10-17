@@ -1,6 +1,6 @@
 # Claims over all trees: the most general form, and optimization as removing quantifiers
 
-Design analysis, 2026-09-27. Nothing here is landed. This replaces two earlier versions of
+Design analysis, 2026-09-27; §9 (2026-10-06) is what landed from it. This replaces two earlier versions of
 this note: one built on type codes, and one with explicit domains and tags inside the
 machine. Each version removed something the checker had to be told; this one follows that
 pattern to its end.
@@ -389,3 +389,60 @@ untouched underneath, proves the run never ends. An earlier version of this note
   to strict (every piece of the input used once) or loose (the input decided once). And
   whether specs ask for total correctness by default, which in this form means asking for a
   witness: a step bound or a measure.
+
+## 9. Landed: claims as games, checkers as lenses (2026-10-06)
+
+`lib/claim.disp` is §1 with the quantifier prefix fixed to one shape, and
+`lib/tests/claim.test.disp` runs everything below.
+
+A claim is `{witness, challenge} => Bool`, and it holds when some witness passes every
+challenge. Every prefix of §3 has this shape once witnesses may be functions, which they
+are, since programs are trees: "for every x some budget n" becomes "some bound function,
+for every x". That is Gödel's Dialectica form, and it is what §4's "a step bound removes a
+quantifier" was doing. `honest` searches a source of challenges for one the witness fails
+and can only refute; `over` runs a listed source and can run out, which is the only way
+search proves anything.
+
+A checker, a typing rule or an optimization is a LENS between claims: witnesses go
+forward, challenges come back (`lens fwd back`). Its law, `lens_holds`, says that a
+witness passing the pulled-back challenge is carried to a witness passing the challenge;
+read backwards, every counterexample to the target claim pulls back to a counterexample
+to the source claim. The law is itself a claim, so the honest check refutes a wrong lens
+with a concrete tree. This is the morphism of
+[de Paiva's Dialectica categories](https://www.cl.cam.ac.uk/techreports/UCAM-CL-TR-213.pdf#page=1),
+and it is what §7's "agreement with the honest run" becomes once the shortcut has to say
+how it agrees.
+
+Consequences, each pinned in the test root:
+
+- **A member of a function type is a lens.** `implies A B` tests a pair (f, F) at a
+  challenge (u, y): if u passes the challenge `F u y` of A, then `f u` passes y at B. F
+  says which point of the argument the result relied on, so a higher-order claim is tested
+  at one point of its argument and becomes refutable by search (`{g} => g` at
+  (Nat -> Nat) -> Nat is refuted at g = succ with the challenge 3). §6's origins are how
+  F would be computed instead of written: the points at which a run applied its argument.
+- **The rule lenses.** `certify` reads a finite symbolic claim as a certificate of the
+  honest one. The rules it rests on are the trusted part: a finite cover (`over` exhausts
+  a list), a case split (the confirmer's `table`, with `case_of` as the back map), a
+  generic run (the confirmer's `run`, sound by the run lemma), induction (`step_with_ih`:
+  the back map also returns the predecessor, and the law `ind_holds` assumes the claim
+  there) and composition (`lens_then`). `id` and `shift` are certified equal at
+  Nat -> Nat, two spellings of doubling are certified equal by induction, and both
+  verdicts agree with the confirmer's search. A wrong pair is refuted at the ground case;
+  a pair that needs induction, or two non-total functions, leave the certificate
+  unsettled and the claim open.
+- **Counterexamples are prices** *(draft: an analogy the tests do not pin)*. `cegis` keeps the challenges that refuted earlier
+  candidates and tries them first on later ones: the kept set is the binding constraints,
+  which is [counterexample-guided synthesis](https://people.csail.mit.edu/asolar/papers/Solar-Lezama09.pdf#page=8),
+  and the backward pass of a learner (the
+  [request function](https://arxiv.org/pdf/1711.10455#page=4); in
+  `~/Projects/libdither/learner-theory`, a stage sends goods forward and gets prices back)
+  has the same shape. The strands reducer's want bit (`evaluators/rust-ic-strands`) is the
+  same backward wire at run time: only demanded consumers fire, and the one speculation is
+  the S rule starting its second half early.
+
+What stays open: the lens laws are for-all claims, so trust stops at the five rules,
+proved by hand; a true claim with no computable witness stays open forever; transport
+along an equality is licensed only for claims that never inspect the tree being swapped;
+and the backward maps are hand-written here, so deriving them from a run's origins (§6)
+is the next step.

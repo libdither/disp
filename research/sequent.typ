@@ -1226,7 +1226,7 @@ meet, and spines are exactly the partial proof objects a search extends. The
 missing ingredient is guidance about which branch to grow, and that is the
 `GOALS.md` endgame in one line: neural-guided synthesis is a learned heuristic
 for enumerating the harvest, the half of the naive filter that no theorem makes
-cheap (`research/LOCAL_SYNTH.md` for the design). Checking and synthesis are one set,
+cheap (`archive/LOCAL_SYNTH.md` for the design). Checking and synthesis are one set,
 queried from opposite ends.
 
 = Appendix: the dictionary
@@ -1259,7 +1259,7 @@ The story in compressed form. "Where" points into this document.
     [identity type], [`Eq`: `refl` right rule, J left rule via respond], [§6],
     [observational equality of values], [`relation.disp` pointwise licenses, currently probe-sampled; observer restriction is the open design], [§6],
     [subject reduction], [spec-set vs decided-set drift; `ACTIVE_BUGS.md` is the ledger], [§6],
-    [inhabitation / proof search], [synthesis; the query the checker refuses; `GOALS.md`, `research/LOCAL_SYNTH.md`], [§7],
+    [inhabitation / proof search], [synthesis; the query the checker refuses; `GOALS.md`, `archive/LOCAL_SYNTH.md`], [§7],
   ),
   caption: [The dictionary.],
 ) <tab-dictionary>
@@ -1314,6 +1314,6 @@ copatterns (a `respond` is a copattern table over frames). In-repo:
 `archive/live-kernel/TYPE_THEORY.typ` §2.6, §2.7, §5 through §7, §12 (especially §12.7 and §12.19),
 §17; `archive/live-kernel/NEGATIVE_TYPES.md`;
 `archive/live-kernel/KERNEL_DESIGN.md` § Telescopes; `MODULES.md`;
-`GOALS.md` and `research/LOCAL_SYNTH.md`;
+`GOALS.md` and `archive/LOCAL_SYNTH.md`;
 `research/interaction-combinator/EMBEDDING_THEOREM.md`;
 `research/effects-and-coeffects.typ`.

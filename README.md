@@ -268,6 +268,7 @@ The 🧑/🤖 column estimates who typed the words; git does not record the spli
 | [`EVALUATOR.md`](EVALUATOR.md) | The reduction-backend subsystem: the `Session` ABI, the five backends, the differential-oracle discipline. | 🤖 | 6/10 |
 | [`archive/live-kernel/KERNEL_DESIGN.md`](archive/live-kernel/KERNEL_DESIGN.md) | Tree-calculus implementation idioms for the archived kernel: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 6/10 |
 | [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. | 🤖 | 7/10 |
+| [`research/CLAIMS_OVER_TREES.md`](research/CLAIMS_OVER_TREES.md) | The claim layer: a claim is a test on bounded runs under quantifiers over all trees; optimizations remove quantifiers; §9 the landed lens form. | 🤖 | 7/10 |
 
 The kernel is source code written to be read: the type system is a library, so these files are the type theory's implementation and its documentation at once.
 
@@ -277,6 +278,7 @@ The kernel is source code written to be read: the type system is a library, so t
 | [`lib/kernel/kernel.disp`](lib/kernel/kernel.disp) | The checker: lazy hypotheses with provenance, the respond face, the tier tables (Guard/Meta/Enum/Trials/TwoFace), quotients, the typed equation ledger. | 🤖 | 7/10 |
 | [`lib/kernel/types.disp`](lib/kernel/types.disp) | The library types split out of the checker: everything the checker itself does not need to exist. | 🤖 | 7/10 |
 | [`lib/kernel/prelude.disp`](lib/kernel/prelude.disp) | The barrel: raw pass, then the checked re-open of the kernel surface. | 🤖 | 7/10 |
+| [`lib/claim.disp`](lib/claim.disp) | Claims and lenses: the honest search, the finite check, the lens law, implication between claims, counterexample-guided search. | 🤖 | 7/10 |
 
 The previous kernel's fragments (`cut`, `engine`, `cells`, `base`, `positive`, `generic`, `universe` — the two-op trusted core the example section teaches) live intact under [`archive/live-kernel/kernel/`](archive/live-kernel/kernel/).
 
@@ -294,13 +296,16 @@ src/                        -- the host implementation (TypeScript; an accelerat
 
 lib/                        -- the language, written in itself
   prelude.disp              --   the raw substrate: booleans, pairs, wait/fix, triage, tree_eq
+  list.disp, machine.disp   --   lists; the evaluator's loop as a resumable value
+  stream.disp, verdict.disp --   coalgebra streams, budgets and endings; Proved / Refuted / Open
+  claim.disp                --   claims (witness vs. challenge), the honest search, lenses between claims
   kernel/                   --   the type system: checker + library types + barrel, and its test pins
-  tests/                    --   substrate-level tests (prelude, tree_eq)
+  tests/                    --   substrate-level tests, the refuter and confirmer, the certified rewrites (claim.test.disp)
 
 evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers)
 test/                       -- vitest harness + host unit tests
 bench/                      -- evaluator benchmarks
-research/                   -- research notes and unbuilt designs (OPTIMIZER.typ, LOCAL_SYNTH.md, AC_IDEA.md, NATIVE_BOOTSTRAP_PLAN.typ)
+research/                   -- research notes and unbuilt designs (OPTIMIZER.typ, CLAIMS_OVER_TREES.md, AC_IDEA.md, NATIVE_BOOTSTRAP_PLAN.typ)
 archive/                    -- retired work kept loadable: live-kernel/ (the previous kernel, its std/, tests/ and TYPE_THEORY.typ), superseded proposals
 editors/                    -- editor support (vscode-disp)
 *.md, *.typ                 -- docs for what runs today: the kernel, the host pipeline, the evaluator (rated in the Documentation table above)

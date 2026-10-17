@@ -1,5 +1,7 @@
 # LOCAL_SYNTH.md — `synth`: one in-scope, user-defined term synthesizer
 
+> **Archived 2026-10-06.** Designed against the retired kernel (`param_apply`, `at`, `check`). Its one idea — synthesis is the converse of checking — survives as the witness half of a claim: `lib/claim.disp`'s `cegis` searches witnesses while `honest` searches challenges (`research/CLAIMS_OVER_TREES.md` §9).
+
 > **Status (2026-06-29): design / idea, not built.** Captures a design developed in dialogue.
 > The dual of `param_apply` (`check`): where `check` *verifies* a term against a type, `synth`
 > *produces* a term of a type:

@@ -1,0 +1,36 @@
+// A claim is a test of a witness against a challenge, and holds when some witness
+// passes every challenge (research/CLAIMS_OVER_TREES.md §9). The honest check
+// searches a source of challenges for one the witness fails; a listed source can
+// run out, which is the only way search proves anything. A lens between claims
+// carries witnesses forward and challenges back: a certified checker is a lens
+// into the honest claim, and its law — pass the pulled-back challenge, pass the
+// challenge — is itself a claim the honest check can refute. A claim is a program
+// {witness, challenge} => Bool.
+open use raw "prelude.disp" {}
+open use raw "list.disp" {}
+open use raw "verdict.disp" {}
+open use raw "stream.disp" {}
+
+honest :: {source : Items Tree, claim : Claim, w : Tree, budget : Nat} -> Verdict :=>
+	verdict (source.s_filter({c} => not (claim w c)).bounded(budget))
+over :: {claim : Claim, w : Tree, challenges : List Tree} -> Verdict :=>
+	verdict (settle (stopping_filter (stopping_list challenges) ({c} => not (claim w c))))
+
+lens :: {fwd : W -> V, back : W -> D -> C} -> Lens :=> pair fwd back
+lens_fwd :: Lens -> W -> V := pair_fst
+lens_back :: Lens -> W -> D -> C := pair_snd
+// the lens law at one point: a witness that passes the pulled-back challenge is carried to one that passes the challenge
+lens_holds :: {from : Claim, to : Claim, l : Lens} -> Claim :=> {w, d} => if (from w (l.lens_back w d)) { to (l.lens_fwd w) d } else { true }
+// lenses compose: forward maps in order, backward maps in reverse
+lens_then :: {l : Lens, m : Lens} -> Lens :=> lens ({w} => m.lens_fwd (l.lens_fwd w)) ({w, e} => l.lens_back w (m.lens_back (l.lens_fwd w) e))
+// A => B between claims: a witness is a lens (f, F), a challenge is a witness of A with a challenge of B
+implies :: {A : Claim, B : Claim} -> Claim :=> {fF, uy} => if (A uy.fst (fF.lens_back uy.fst uy.snd)) { B (fF.lens_fwd uy.fst) uy.snd } else { true }
+
+// counterexample-guided search: challenges that refuted earlier candidates are tried first on later ones
+rec cegis :: {source : Items Tree, claim : Claim, pool : List Tree, kept : List Tree, budget : Nat} -> Pair Tree (List Tree) :=>
+	if (pool.is_nil) { pair "None" kept }
+	else if (not (kept.all({c} => claim pool.head c))) { cegis source claim pool.tail kept budget }
+	else {
+		let v := honest source claim pool.head budget
+		if (v.is_refuted) { cegis source claim pool.tail (cons v.snd kept) budget } else { pair pool.head kept }
+	}
