@@ -1344,6 +1344,57 @@ least 684 strands), averaged over its 5 runs:
   masked off, and one picked by its key and then the dice: no new state, but about 20 move
   evaluators per site instead of one.
 
+## Cold storage: packing what nothing reads (`cold=1`)
+
+Every crowding term in the energy favours sparse matter: an agent pays `crowd` for each agent it
+shares a site with, idle agents pay `idle_crowd` (10) to share one, and switchboards pay for their
+pairings. That keeps seats free for traffic, but it holds everywhere, so stored data never packs, and
+cooling (above) freezes the answer in a sparse shape: at the cooling temperature every step that
+would shorten a long wire costs more than it can pay (`Lattice::probe_step` on the stuck ones: +45
+for entering a site holding an idle agent, +1 to +7 for the rest).
+
+**Cold sites**: where the demand field is 0, nothing is reacting near. There (`cold=1`, now in
+`latest`):
+- while the run goes on, two idle agents may share a site for free (`coldterms=8`, the idle crowding
+  only);
+- once cooling has begun, every kind of crowding is off (`coolterms=15`), and idle agents no longer
+  pass each other (`coolpass=0`: passing turned a step into a full site into a trade, so two never
+  ended up sharing one).
+
+`strands-flow` runs each workload from load to its answer, its garbage gone and the answer
+contracted (the player's rule), over seeds in parallel. Means of 3–4 seeds, before and now; *sites*
+is sites in use per agent of the answer (2 agents a site is 0.5):
+
+| workload | clocks to the answer | garbage gone | sites | strands |
+|---|---|---|---|---|
+| fib:0 | 1,738 → 1,553 | 1,081 → 1,077 | 0.80 → 0.60 | 0.60 → 0.60 |
+| fib:2 | 6,647 → 5,928 | 459 → 625 | 0.86 → 0.57 | 0.76 → 0.52 |
+| exp:1 | 7,666 → 7,002 | 683 → 553 | 0.86 → 0.57 | 0.86 → 0.71 |
+| sort:1 | 889 → 906 | 3,726 → 3,705 | 0.86 → 0.57 | 0.79 → 0.57 |
+| disp `add 3 4` | 10,225 → 9,416 | 383 → 316 | 0.94 → 0.53 | 0.98 → 0.53 |
+| disp `fib 2` | 10,527 → 10,520 | 482 → 323 | 0.75 → 0.50 | 0.50 → 0.50 |
+| two-way `add 5 6` | 4,091 → 3,840 | | 1.38 → 0.53 | 1.71 → 0.80 |
+| two-way `mirror [swap; flip]` | 15,615 → 16,291 | | 1.71 → 0.67 | 2.11 → 1.13 |
+| two-way `mirror [uniti; (swap \| id)]`, 8 seeds | 68,533 (1 jammed) → 50,118 (none) | | 1.31 → 0.54 | 1.64 → 0.82 |
+
+- **Answers pack to near the limit**: 0.5–0.67 sites an agent, against 0.75–1.71. Two-way `add 5 6`
+  went from 181 sites holding one agent and 73 holding only wire to 87 holding two and 2 only wire.
+  It takes longer to settle (693 clocks of cooling against 243), since it goes much further.
+- **Runs are as fast or faster**, 8–15% on most: stored matter packed leaves more room near the
+  reactions, and the 12-call mirror that jammed on one seed in 8 no longer does, without pressure.
+- **What did not help**: a reward for idle agents sharing a cold site (`compact`; it pairs agents
+  that are not wired together and lengthens the wires between partners); every crowding term off in
+  cold sites during the run (`coldterms=15`: tree calculus 12–30% slower, the switchboard term the
+  cost); heat reaching further (3 or 4 bits, falling slower along wires than through space: two-way
+  runs, all of whose walkers are sources, heat nearly everything and block up to 10× more rewrites);
+  crowding that grows with the field (`heatcrowd`); a pull toward the root while cooling (a field
+  from the root: more wire-only sites, not fewer); best-move cooling turns (`coolgreedy=1`: done
+  sooner, answers twice as loose).
+- **On the GPU** the run's part is one term: the idle crowding of each site, or none where its
+  field is 0 (`COLD_IDLE`); cooling runs on the CPU as before. Bit for bit with the simulator
+  (`crate/gpu.sh fib:0 --grid 232 --depth 8 --check --latest`, `sort:1`, two-way `add 2 3` and
+  `twice`), and handed back and forth with the player.
+
 ## Running backward (`rev.rs`, `player/rev.html`)
 
 `crate/src/rev.rs` runs the abstract net (not yet the lattice) so that every step can be undone

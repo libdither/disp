@@ -175,7 +175,7 @@ fn picked_computations_keep_their_meaning() {
 fn picks_are_found_again_after_a_hand_back() {
     let mut rng = Lcg(77);
     let (mut runs, mut same, mut missed, mut other) = (0, 0, 0, 0);
-    for _ in 0..400 {
+    for _ in 0..2000 {
         let t = rng.rand_term(9);
         let Some(mut a) = load(&t, p()) else { continue };
         for _ in 0..100 { a.chip_clock(); }

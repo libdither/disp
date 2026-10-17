@@ -10,7 +10,7 @@ use super::{tag_of, Lattice, Params, NONE};
 use rust_ca_lattice::rules::Tag;
 
 /// What sets a channel at a site, any of: a wanted reader there, a demand pulse there, a rewrite or
-/// a rewrite without room there during the clock before, or its switchboard's pairings.
+/// a rewrite without room there during the clock before, its switchboard's pairings, or the root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Source(pub u8);
 impl Source {
@@ -20,6 +20,7 @@ impl Source {
     pub const FIRE: u8 = 4;
     pub const BLOCKED: u8 = 8;
     pub const LOAD: u8 = 16;
+    pub const ROOT: u8 = 32;
     fn has(self, b: u8) -> bool { self.0 & b != 0 }
 }
 
@@ -62,7 +63,7 @@ impl Channel {
                 "src" => for name in v.split('+') {
                     c.source.0 |= match name {
                         "reader" => Source::READER, "pulse" => Source::PULSE,
-                        "fire" => Source::FIRE, "blocked" => Source::BLOCKED, "load" => Source::LOAD,
+                        "fire" => Source::FIRE, "blocked" => Source::BLOCKED, "load" => Source::LOAD, "root" => Source::ROOT,
                         _ => return Err(format!("field {spec}: no source {name}")),
                     };
                 },
@@ -163,6 +164,7 @@ impl Lattice {
             let i = s as usize * self.ks + k;
             self.tags[i] != 0 && tag_of(self.tags[i]).is_consumer() && tag_of(self.tags[i]) != Tag::Eps && self.want[i]
         })).collect();
+        let roots: Vec<u32> = self.live.iter().copied().filter(|&s| (0..self.ks).any(|k| self.tags[s as usize * self.ks + k] != 0 && super::is_root(tag_of(self.tags[s as usize * self.ks + k])))).collect();
         let pulses: Vec<u32> = self.pulse_sites.iter().copied().filter(|&s| self.pulse_at[s as usize] != NONE).collect();
         let (fired, blocked) = (std::mem::take(&mut self.fields.fired), std::mem::take(&mut self.fields.blocked));
         for c in 0..self.fields.chans.len() {
@@ -170,7 +172,7 @@ impl Lattice {
             let cap = spec.cap();
             let lvl = spec.level.min(cap);
             let mut src: Vec<(u32, u8)> = vec![];
-            for (b, sites) in [(Source::READER, &readers), (Source::PULSE, &pulses), (Source::FIRE, &fired), (Source::BLOCKED, &blocked)] {
+            for (b, sites) in [(Source::READER, &readers), (Source::PULSE, &pulses), (Source::FIRE, &fired), (Source::BLOCKED, &blocked), (Source::ROOT, &roots)] {
                 if spec.source.has(b) { src.extend(sites.iter().map(|&s| (s, lvl))); }
             }
             if spec.source.has(Source::LOAD) { src.extend(self.live.iter().map(|&s| (s, (self.pairs(s) as u8).min(cap))).filter(|&(_, v)| v > 0)); }

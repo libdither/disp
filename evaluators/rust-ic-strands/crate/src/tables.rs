@@ -42,6 +42,7 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if p.pressure != 0.0 || p.repel != 0.0 { return Some("it has no pressure or repulsion"); }
     if p.strangers != 0.0 || p.trees != 0.0 || p.garbage != 0.0 { return Some("it keeps no tree labels and does not look for strangers"); }
     if p.memo != 0 { return Some("merging equal computations is surgery by a central detector, on the CPU"); }
+    if p.cold && p.cold_terms & 7 != 0 || p.heat_crowd != 0.0 { return Some("its cold sites drop idle crowding only, and it has no heat crowding"); }
     if p.phys { return Some("the substrate's records and undoing run on the CPU"); }
     let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
     if let Some(c) = fields.next() {
@@ -72,6 +73,8 @@ pub fn wgsl_for(p: &Params) -> String {
     writeln!(w, "const E_PRINCIPAL: i32 = {}; const E_PRINCIPAL_IDLE: i32 = {}; const E_AUX: i32 = {}; const E_AUX_IDLE: i32 = {};",
         e.principal[0], e.principal[1], e.aux[0], e.aux[1]).unwrap();
     writeln!(w, "const E_CROWD: i32 = {}; const E_IDLE: i32 = {}; const E_LINK: i32 = {}; const E_BOARD: i32 = {};", e.crowd, e.idle, e.link, e.board).unwrap();
+    // Cold sites (lattice.rs `Params::cold`): where the field is 0, two idle agents gain `compact` instead of paying `idle_crowd`.
+    writeln!(w, "const COLD_IDLE: bool = {}; const E_COMPACT: i32 = {};", p.cold && p.cold_terms & 8 != 0, e.compact).unwrap();
     writeln!(w, "const CH_ACTIVE: u32 = {}u; const CH_HOP: u32 = {}u; const CH_ALONG: u32 = {}u; const CH_SWAP: u32 = {}u;",
         chance(p.active), chance(p.p_hop), chance(0.7), chance(p.swap)).unwrap();
     // No cap: more pairings than a site's 33 ends can hold.

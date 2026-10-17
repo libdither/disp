@@ -124,6 +124,18 @@ pub struct Params {
     /// Energy for each pair of idle agents (anything but a wanted reader) sharing a site:
     /// idle matter keeps a seat free, so wanted readers can walk through it and rewrites have room.
     pub idle_crowd: f64,
+    /// Cold sites: where the first field channel is 0 (nothing reacting near), crowding of every kind is
+    /// off (`crowd`, `link_crowd`, `board_crowd`), and two idle agents sharing a site gain `compact`
+    /// instead of paying `idle_crowd`: stored matter packs, and spreads again where reactions heat it.
+    pub cold: bool,
+    /// Which crowding goes in cold sites while the run goes on: 1 `crowd`, 2 `link_crowd`, 4 `board_crowd`,
+    /// 8 `idle_crowd`; and which once cooling has begun.
+    pub cold_terms: u8,
+    pub cool_terms: u8,
+    pub compact: f64,
+    /// Agents sharing a site where reactions heat it repel the more: `crowd` grows by this per unit of
+    /// the first field channel there.
+    pub heat_crowd: f64,
     /// Energy c·p²/2 on a site whose switchboard holds p pairings.
     pub board_crowd: f64,
     /// Most pairings a site's switchboard holds (0: no limit). A move that would overfill a
@@ -235,6 +247,11 @@ impl Params {
             "gc" => self.gc = on,
             "link" => self.link_crowd = f()?,
             "idlecrowd" => self.idle_crowd = f()?,
+            "compact" => self.compact = f()?,
+            "heatcrowd" => self.heat_crowd = f()?,
+            "cold" => self.cold = on,
+            "coldterms" => self.cold_terms = n()? as u8,
+            "coolterms" => self.cool_terms = n()? as u8,
             "board" => self.board_crowd = f()?,
             "pairs" => self.pairs = n()?,
             "agents" => self.agent_turns = f()?,
@@ -277,7 +294,7 @@ impl Params {
 impl Default for Params {
     fn default() -> Self {
         Params { w: 32, h: 32, depth: 1, k: 8, lanes: 4, w_principal: 3.0, w_aux: 1.0, crowd: 0.5, repel: 0.0, pressure: 0.0, pressure_peak: 6, temp: 0.6,
-                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
+                 p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, cold: false, cold_terms: 15, cool_terms: 15, compact: 0.0, heat_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
                  dn_room: 0, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
@@ -504,6 +521,8 @@ pub struct Energy {
     pub aux: [i32; 2],
     pub crowd: i32,
     pub idle: i32,
+    pub compact: i32,
+    pub heat_crowd: i32,
     pub link: i32,
     pub board: i32,
     pub pressure: i32,
@@ -521,7 +540,7 @@ impl Energy {
         let accept = (0..).map(|d: i32| (65536.0 * (-(d as f64) / (4.0 * p.temp)).exp()).floor().min(65535.0) as u32)
             .take_while(|&a| a > 0).collect();
         Energy { principal: [q(p.w_principal), q(p.w_principal * p.idle_tension)], aux: [q(p.w_aux), q(p.w_aux * p.idle_tension)],
-                 crowd: q(p.crowd), idle: q(p.idle_crowd), link: half(p.link_crowd), board: half(p.board_crowd),
+                 crowd: q(p.crowd), idle: q(p.idle_crowd), compact: q(p.compact), heat_crowd: q(p.heat_crowd), link: half(p.link_crowd), board: half(p.board_crowd),
                  pressure: q(p.pressure), repel: q(p.repel), strangers: q(p.strangers), trees: q(p.trees),
                  garbage: q(p.garbage), bond: if p.phys { (p.bond * (-p.drive / p.temp).max(1.0) * 4.0).round() as i32 } else { 0 }, accept }
     }
@@ -639,9 +658,16 @@ pub fn cooled(p: &Params, t0: f64, clocks: f64) -> f64 {
 }
 
 /// The current design: the chip's schedule with the demand field and forking S rules, loaded packed
-/// (no gaps) and run a little cooler, duplicators copying ahead where their block has room. The
-/// player and the GPU run it; hw/ builds `chip`.
-pub fn latest() -> Params { let mut p = chip(); p.set("demand", "1").unwrap(); p.fork = true; p.spread = 1; p.temp = 1.5; p.dn_room = 5; p }
+/// (no gaps) and run a little cooler, duplicators copying ahead where their block has room, and idle
+/// matter packing two to a site where the field is cold (all crowding off there once cooling, and no
+/// passing, so the answer packs too). The player and the GPU run it; hw/ builds `chip`.
+pub fn latest() -> Params {
+    let mut p = chip();
+    p.set("demand", "1").unwrap();
+    p.fork = true; p.spread = 1; p.temp = 1.5; p.dn_room = 5;
+    p.cold = true; p.cold_terms = 8; p.cool_pass = false;
+    p
+}
 
 /// The demand field (README "Fields"): a wanted reader or a demand pulse sets its site to 3, which
 /// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
@@ -830,6 +856,16 @@ impl Lattice {
         self.want[i] || self.p.dn_room > 0 && self.block_room >= self.p.dn_room && tag_of_or(self.tags[i]) == Some(Tag::Dn)
     }
     fn idle_at(&self, s: u32) -> usize { (0..self.ks).filter(|&k| self.idle(s, k)).count() }
+    /// The energy of two idle agents sharing site s: `idle_crowd`, or with `compact` where the field is cold, `-compact`.
+    fn idle_pair_e(&self, s: u32) -> i32 { if self.cold(s, 8) { -self.e.compact } else { self.e.idle } }
+    /// Nothing reacting near site s, for crowding of kind `term` (`Params::cold`, `cold_terms`).
+    fn cold(&self, s: u32, term: u8) -> bool {
+        self.p.cold && if self.cooling.is_some() { self.p.cool_terms } else { self.p.cold_terms } & term != 0 && self.fields.value(s) == 0
+    }
+    /// What an agent pays per agent it shares site s with: `crowd`, none where it is cold, more where it is hot (`heat_crowd`).
+    fn crowd_at(&self, s: u32) -> i32 { self.warm(self.e.crowd, s, 1) + self.e.heat_crowd * self.fields.value(s) as i32 }
+    /// A crowding weight of kind `term` at site s: none where it is cold.
+    fn warm(&self, w: i32, s: u32, term: u8) -> i32 { if self.cold(s, term) { 0 } else { w } }
 
     /// Start tracing: the active pairs and wanted consumers there are now date from clock 0.
     pub fn trace_start(&mut self) {
@@ -924,6 +960,21 @@ impl Lattice {
         let ok = self.p.pairs == 0 || self.pairs(s) + extra <= self.p.pairs;
         if !ok { self.stats.capped += 1; }
         ok
+    }
+
+    /// Why agent k of s does not step along its principal wire: "slot" (no free slot there), "lanes" (not
+    /// enough free strands for the wires it drags), "pairs" (the switchboard there is full), or the
+    /// energy change (strands-flow's diagnosis of stuck contractions).
+    pub fn probe_step(&self, s: u32, k: usize) -> String {
+        let m = self.mate_of(s, self.ae(k, 0));
+        if !self.is_strand(m) { return "no principal strand".into(); }
+        let f = self.face(m);
+        let t = self.nb(s, f);
+        if self.free_slot(t).is_none() { return format!("slot ({} idle there)", self.idle_at(t)); }
+        match self.step_plan(s, k, f) {
+            None => "lanes".into(),
+            Some((_, lanes, loops, de)) => if self.p.pairs != 0 && self.pairs(t) + lanes.len() + loops > self.p.pairs { "pairs".into() } else { format!("de {de}") },
+        }
     }
 
     fn used_lanes(&self, s: u32, f: usize) -> usize { (0..self.p.lanes).filter(|&i| self.mate_of(s, self.se(f, i)) != NONE).count() }
@@ -1726,21 +1777,21 @@ impl Lattice {
         if lanes.len() < need { return None; }
         lanes.truncate(need);
         let loops = (0..a).filter(|&q| matches!(plan[q], Plan::SelfLoop(_))).count() / 2;
-        de += self.e.crowd * (self.occ[t as usize] as i32 - (self.occ[s as usize] as i32 - 1));
-        if self.e.idle != 0 && self.idle(s, k) {
-            de += self.e.idle * (self.idle_at(t) as i32 - (self.idle_at(s) as i32 - 1));
+        de += self.crowd_at(t) * self.occ[t as usize] as i32 - self.crowd_at(s) * (self.occ[s as usize] as i32 - 1);
+        if (self.e.idle != 0 || self.p.cold) && self.idle(s, k) {
+            de += self.idle_pair_e(t) * self.idle_at(t) as i32 - self.idle_pair_e(s) * (self.idle_at(s) as i32 - 1);
         }
         let through = (0..a).filter(|&q| matches!(plan[q], Plan::Through(_))).count() as i32;
         if self.e.link != 0 {
             let n = self.used_lanes(s, f) as i32;
             let n2 = n - through + need as i32;
-            de += self.e.link * (n2 * n2 - n * n);
+            de += self.warm(self.warm(self.e.link, s, 2), t, 2) * (n2 * n2 - n * n);
         }
         if self.e.board != 0 {
             let sq = |x: i32| x * x;
             let (ps, pt) = (self.pairs(s) as i32, self.pairs(t) as i32);
             let (ds, dt) = (-(through + loops as i32), (need + loops) as i32);
-            de += self.e.board * (sq(ps + ds) - sq(ps) + sq(pt + dt) - sq(pt));
+            de += self.warm(self.e.board, s, 4) * (sq(ps + ds) - sq(ps)) + self.warm(self.e.board, t, 4) * (sq(pt + dt) - sq(pt));
         }
         if self.e.pressure != 0 {
             de += self.e.pressure * (self.press[t as usize] as i32 - self.press[s as usize] as i32);
@@ -2063,9 +2114,10 @@ impl Lattice {
     /// The energy change of turning a corner: its two strands move from links s–x and s–z to x–w
     /// and w–z.
     fn flip_de(&self, s: u32, k: &Corner) -> i32 {
-        2 * self.e.link * ((self.used_lanes(k.x, k.f2) + self.used_lanes(k.w, k.f1 ^ 1)) as i32
+        let link = [s, k.x, k.z, k.w].into_iter().fold(self.e.link, |w, x| self.warm(w, x, 2));
+        2 * link * ((self.used_lanes(k.x, k.f2) + self.used_lanes(k.w, k.f1 ^ 1)) as i32
             - (self.used_lanes(s, k.f1) + self.used_lanes(s, k.f2)) as i32 + 2)
-            + 2 * self.e.board * (self.pairs(k.w) as i32 - self.pairs(s) as i32 + 1)
+            + self.warm(self.e.board, k.w, 4) * (2 * self.pairs(k.w) as i32 + 1) - self.warm(self.e.board, s, 4) * (2 * self.pairs(s) as i32 - 1)
             + if self.fields.on { self.field_flip_de(s, self.pairs(s) as i32, k.w, self.pairs(k.w) as i32) } else { 0 }
     }
 
