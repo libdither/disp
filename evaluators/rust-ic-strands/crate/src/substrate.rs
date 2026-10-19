@@ -113,7 +113,7 @@ impl Sub {
 }
 
 /// How an undo went: done, not done because what it needs is not in one 2×2 square, or not done.
-enum Undo { Done, Far, No }
+pub(super) enum Undo { Done, Far, No }
 
 /// Where a wire of a rebuild ends: a port of a new agent, or an end that stays (region site, end).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -134,11 +134,11 @@ struct Rebuild {
 
 impl Lattice {
     /// The live record of what made agent `id`, if any.
-    fn maker(&self, id: u32) -> Option<u64> {
+    pub(super) fn maker(&self, id: u32) -> Option<u64> {
         let e = *self.sub.made_by.get(id as usize)?;
         (e != 0 && self.sub.records.get(e as usize).is_some_and(|r| r.is_some())).then_some(e)
     }
-    fn alive(&self, id: u32) -> bool { self.shadow.agents.get(id as usize).is_some_and(|a| a.is_some()) }
+    pub(super) fn alive(&self, id: u32) -> bool { self.shadow.agents.get(id as usize).is_some_and(|a| a.is_some()) }
     fn marked(&self, id: u32) -> bool { (0..self.ar as u8).any(|q| self.sub.marks.get(&(id, q)).is_some_and(|v| !v.is_empty())) }
 
     /// Agent `id` (at seat i) as it is, its marks taken off the ports.
@@ -183,6 +183,8 @@ impl Lattice {
 
     /// Chance a step forward is taken (`forward`) or a step back, by the drive.
     pub(super) fn drive_allows(&mut self, forward: bool) -> bool {
+        // Run thermodynamically, the energy banks decide (thermo.rs).
+        if self.p.thermo { return true; }
         let x = if forward { self.p.drive } else { -self.p.drive } / self.p.temp.max(1e-9);
         x >= 0.0 || self.unit() < x.exp()
     }
@@ -378,7 +380,7 @@ impl Lattice {
     }
 
     /// Undo record e, if it can be undone in a 2×2 square at s.
-    fn undo(&mut self, s: u32, e: u64) -> Undo {
+    pub(super) fn undo(&mut self, s: u32, e: u64) -> Undo {
         if !self.undoable(e) { return Undo::No; }
         let rec = self.sub.records[e as usize].clone().unwrap();
         let products: Vec<u32> = (rec.made..rec.made + rec.n as u32).collect();

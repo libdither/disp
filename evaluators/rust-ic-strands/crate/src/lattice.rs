@@ -24,6 +24,8 @@ pub use field::{Channel, FieldSnap, Fields, Source};
 pub mod ideal;
 #[path = "substrate.rs"]
 pub mod substrate;
+#[path = "thermo.rs"]
+pub mod thermo;
 use tree_net::net::Net;
 use tree_net::sup::STerm;
 use tree_net::rules::{find_forgetting, find_index_labelled, meets, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, TWO_TAGS, VIEW_TAGS};
@@ -172,6 +174,13 @@ pub struct Params {
     /// takes a leaf only by deciding to (`erase`). On the CPU, without superpositions, movement agents
     /// or memo.
     pub phys: bool,
+    /// Run thermodynamically (thermo.rs): moves proposed so that each one's reverse is as likely, their
+    /// energy paid from and to a bank of heat at each site rather than accepted at a temperature, heat
+    /// passing between banks and to the substrate and empty space (the bath, at `temp`), and each rewrite
+    /// forward bringing `drive` of fuel into its bank. Needs `phys`; no fields, pulses or blocks.
+    pub thermo: bool,
+    /// Run thermodynamically, the fuel a reader's step along its principal wire brings in (thermo.rs).
+    pub walk: f64,
     /// The drive ε: a rewrite forward is taken with chance min(1, e^(ε/T)), one undone with
     /// min(1, e^(-ε/T)).
     pub drive: f64,
@@ -242,6 +251,8 @@ impl Params {
             "epswalk" => self.eps_walk = on,
             "field0" | "field1" => { let c = Channel::parse(v)?; self.fields[(k == "field1") as usize] = c; }
             "phys" => self.phys = on,
+            "thermo" => { self.thermo = on; if on { self.phys = true; } }
+            "walk" => self.walk = f()?,
             "drive" => self.drive = f()?,
             "erase" => self.erase = f()?,
             "forget" => self.forget = f()?,
@@ -265,7 +276,7 @@ impl Default for Params {
                  p_hop: 0.5, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, cold: false, cold_terms: 15, cool_terms: 15, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, fields: [Channel::OFF; 4],
                  
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 dn_room: 0, eps_walk: false, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
+                 dn_room: 0, eps_walk: false, phys: false, thermo: false, walk: 8.0, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
     }
 }
 
@@ -406,6 +417,8 @@ pub struct Lattice {
     track: bool,
     /// The turn under way looked at a site an earlier move this clock changed, so it is dropped.
     stale: std::cell::Cell<bool>,
+    /// Every move is accepted whatever its energy: thermo.rs makes it, then its bank decides.
+    force: bool,
     /// Record every move in `events`, for a player stepping one move at a time.
     pub narrate: bool,
     /// [kind (EV_*), site, other site, tag, other tag, detail, detail, 0] per recorded move.
@@ -420,6 +433,8 @@ pub struct Lattice {
     pub fields: Fields,
     /// The substrate's records, marks and ledger (`Params::phys`).
     pub sub: substrate::Sub,
+    /// Run thermodynamically: the banks and the account (`Params::thermo`).
+    pub th: thermo::Thermo,
     /// The substrate's settings by clock: each entry (clock, drive, erase, forget, bond) takes effect
     /// as that clock starts, so a run put back to an earlier clock and run on changes them where it did.
     pub schedule: Vec<(f64, [f64; 4])>,
@@ -604,6 +619,16 @@ pub fn latest() -> Params {
     p
 }
 
+/// `latest` run thermodynamically (thermo.rs): every move a random event paid from a bank of heat at its
+/// site, the bath at `temp` and `drive` the fuel a rewrite brings. What has no place in that goes: the
+/// blocks (events at random sites in continuous time), pulses, the fields and called values (energy
+/// that changes with no move), pressure, cold storage and copying ahead. Cooler than `latest`: at 1.5
+/// wires swell faster than readers reel them in.
+pub fn thermal() -> Params {
+    Params { thermo: true, phys: true, margolus: false, block_moves: false, pulse: false, cold: false, calls: false, dn_room: 0,
+             fields: [Channel::OFF; 4], temp: 0.75, ..latest() }
+}
+
 /// The demand field (README "Fields"): a wanted reader or a demand pulse sets its site to 3, which
 /// falls by one a hop and a clock; an idle agent pays 4 a unit to climb it, a called value gains 2,
 /// and wire that idle matter lays down pays crowding times the field. Used with `calls`.
@@ -751,6 +776,7 @@ impl Lattice {
             touched: vec![],
             track: false,
             stale: std::cell::Cell::new(false),
+            force: false,
             narrate: false,
             events: vec![],
             trace: Trace::default(),
@@ -759,6 +785,7 @@ impl Lattice {
             dumps: None,
             fields: Fields::new(&p, n),
             sub: Default::default(),
+            th: thermo::Thermo::new(n),
             schedule: vec![],
             resid: Default::default(),
             edits: vec![],
@@ -778,11 +805,13 @@ impl Lattice {
             self.live_pos[s as usize] = self.live.len() as u32;
             self.live.push(s);
             self.stats.peak_live = self.stats.peak_live.max(self.live.len() as u64);
+            if self.th.warm { self.bank_from_bath(s); }
         } else if !used && pos != u32::MAX {
             let last = *self.live.last().unwrap();
             self.live.swap_remove(pos as usize);
             if last != s { self.live_pos[last as usize] = pos; }
             self.live_pos[s as usize] = u32::MAX;
+            if self.th.warm { self.bank_to_bath(s); }
         }
     }
 
@@ -885,7 +914,15 @@ impl Lattice {
     /// Run at temperature t from the next move on.
     pub fn set_temp(&mut self, t: f64) { if self.p.temp != t { self.p.temp = t; self.e = Energy::new(&self.p); } }
     /// Run with drive d from the next move on (the substrate's bonds pull by it).
-    pub fn set_drive(&mut self, d: f64) { if self.p.drive != d { self.p.drive = d; self.e = Energy::new(&self.p); } }
+    /// Run thermodynamically, what the change does to the energy (the bonds' strength follows the drive)
+    /// is work done on the lattice, counted with the fuel.
+    pub fn set_drive(&mut self, d: f64) {
+        if self.p.drive == d { return; }
+        let e0 = if self.p.thermo && self.th.warm { self.energy() } else { 0 };
+        self.p.drive = d;
+        self.e = Energy::new(&self.p);
+        if self.p.thermo && self.th.warm { self.th.ledger.fuel += self.energy() - e0; }
+    }
 
     /// What the clock contributes to random words: the clock, mixed with the seed.
     pub fn tick(&self) -> u32 { self.stats.clocks as u32 ^ (self.p.seed as u32).wrapping_mul(0x9E37_79B9) }
@@ -965,6 +1002,10 @@ impl Lattice {
     pub fn load(mut p: Params, net: Net, out: u32) -> Result<Lattice, String> {
         if p.phys && net.agents.iter().flatten().any(|a| a.tag.is_view() || a.tag == Tag::Sup) {
             return Err("the substrate runs without superpositions or movement agents".into());
+        }
+        if p.thermo && (p.margolus || p.pulse || p.cold || p.calls || p.pressure != 0.0 || p.dn_room > 0 || p.eps_walk
+                        || p.fields.iter().any(|c| c.source != Source::NONE)) {
+            return Err("run thermodynamically, there are no blocks, pulses, fields, called values, pressure or copying ahead (`thermal`)".into());
         }
         if p.two && (p.resid > 0 || p.lazy || p.views) {
             return Err("two-way programs run eagerly, without keeping history or movement agents".into());
@@ -1623,7 +1664,7 @@ impl Lattice {
     /// Metropolis, in integers: a move raising the energy by de quarter units is accepted with
     /// probability accept[de] / 65536.
     fn accept(&mut self, de: i32) -> bool {
-        de <= 0 || (de as usize) < self.e.accept.len() && (self.cur.bits(Dice::METRO, 16) as u32) < self.e.accept[de as usize]
+        self.force || de <= 0 || (de as usize) < self.e.accept.len() && (self.cur.bits(Dice::METRO, 16) as u32) < self.e.accept[de as usize]
     }
 
     /// Agent k of site s steps across face f into a free slot there; if there is none, it
