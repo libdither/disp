@@ -1871,6 +1871,7 @@ impl Lattice {
             self.occ[x as usize] = occ;
             self.pulse_at[x as usize] = pulse;
             self.refresh(x);
+            if self.p.phys { for k in 0..self.p.k { if self.tags[a + k] != 0 { self.sub.seat(self.sids[a + k], x); } } }
         }
         self.stats.strands = v.strands;
         self.stats.hops = v.hops;
