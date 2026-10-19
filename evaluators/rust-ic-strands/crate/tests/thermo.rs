@@ -3,7 +3,7 @@
 //! goes back.
 
 use tree_net::net::Agent;
-use rust_ic_strands::lattice::{thermal, Lattice, Params};
+use rust_ic_strands::lattice::{tag_of, thermal, Lattice, Params};
 use rust_ic_strands::twoway::{self, add, nat, Prog, Val};
 
 fn load(p: &Prog, x: &Val, seed: u64) -> (Lattice, Vec<Option<Agent>>, u32) {
@@ -58,24 +58,44 @@ fn banks_settle_at_the_bath() {
     assert!((mean / want - 1.0).abs() < 0.1, "mean bank {mean:.2} quanta, the bath's {want:.2}");
 }
 
-/// With no drive and no walking fuel nothing is pushed: every kind of move takes heat from its bank as
-/// often as it gives heat back (each is the other's reverse), and wires fold as often as they unfold.
+/// With no drive, and the supply filling half the slots, nothing is pushed: every kind of move takes
+/// heat from its bank as often as it gives heat back (each is the other's reverse), and wires fold as
+/// often as they unfold.
 #[test]
 fn moves_balance_with_nothing_driving() {
     let (mut l, _, _) = load(&add(), &Val::f(nat(1), nat(1)), 7);
     l.p.drive = 0.0;
-    l.p.walk = 0.0;
     l.run_events(2_000_000);
     let g0 = l.th.ledger.clone();
     l.run_events(6_000_000);
     let g = &l.th.ledger;
-    let n = |a: &[u64; 9], b: &[u64; 9], k: usize| (a[k] - b[k]) as f64;
+    let n = |a: &[u64; 10], b: &[u64; 10], k: usize| (a[k] - b[k]) as f64;
     let pairs = [("hop", n(&g.up, &g0.up, 0), n(&g.down, &g0.down, 0)), ("exchange", n(&g.up, &g0.up, 1), n(&g.down, &g0.down, 1)),
                  ("flip", n(&g.up, &g0.up, 2), n(&g.down, &g0.down, 2)), ("unfold, fold", n(&g.made, &g0.made, 4), n(&g.made, &g0.made, 3))];
     for (what, a, b) in pairs {
         eprintln!("{what}: {a} against {b}");
         assert!(a + b > 50.0 && (a - b).abs() <= 0.05 * (a + b) + 4.0 * (a + b).sqrt(), "{what}: {a} against {b}");
     }
+}
+
+/// Slots run emptier at sites with a wanted reader than elsewhere: the work draws fuel to it.
+#[test]
+fn fuel_runs_low_where_the_work_is() {
+    let (mut l, _, _) = load(&add(), &Val::f(nat(1), nat(1)), 9);
+    let (k, ks) = (l.p.k, l.ks);
+    let (mut near, mut far) = ((0.0, 0.0), (0.0, 0.0));
+    for _ in 0..100 {
+        l.run_events(50_000);
+        for &s in l.live() {
+            let full = l.th.fuel[s as usize].count_ones() as f64;
+            let reader = (0..k).any(|i| { let t = l.tag(s, i); t != 0 && tag_of(t).is_consumer() && l.want[s as usize * ks + i] });
+            let at = if reader { &mut near } else { &mut far };
+            *at = (at.0 + full, at.1 + 1.0);
+        }
+    }
+    let (near, far) = (near.0 / near.1, far.0 / far.1);
+    eprintln!("full slots where readers are {near:.2}, elsewhere {far:.2}");
+    assert!(near < 0.9 * far, "full slots where readers are {near:.2}, elsewhere {far:.2}");
 }
 
 /// Forward to the answer, then the drive turned round: the answer is taken back and a tenth of the

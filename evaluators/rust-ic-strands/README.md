@@ -1578,60 +1578,65 @@ random, and is 1/N of a clock for N live sites.
   substrate under every site (a bank takes the bath's temperature at once, the substrate being a good
   sink as a chip's is) and the empty space around (a site matter moves into gets a bank at the bath's
   temperature, and one it leaves gives its heat back).
-- **Fuel.** A rewrite brings `drive` into its bank whatever seating its products costs (that comes
-  with the fuel and the record keeps it, so every step is driven by the same ε, as in Bennett's
-  computer), and an undo gives it back. A wanted reader walks as a motor protein does: a step along
-  its principal wire brings `walk` (8) of fuel, any other step of it gives that back. Every step a
-  reader takes pays this, or a step forward and a plain hop back would turn fuel into heat for nothing.
+- **Fuel is local.** A site has 4 slots, each holding a quantum of fuel or not. A rewrite uses one
+  from its consumer's site and brings `drive` into the bank whatever seating its products cost (that
+  comes with the fuel and the record keeps it, so every step is driven by the same ε, as in Bennett's
+  computer); an undo makes one. A wanted reader walks as a motor protein does: a step along its
+  principal wire uses a quantum, any other step of it makes one, in a slot of the lower-numbered of
+  its two sites, so a step and its reverse use the same slot (readers move only by hops, or a step
+  forward and an exchange back would turn fuel into heat for nothing). The supply is the substrate
+  under every site, filling a slot with chance `supply` (0.5), and quanta pass between live
+  neighbours, so a quantum's pull is `drive` + T ln(supply / (1 − supply)) where nothing uses fuel and
+  less where the work empties the slots faster than the supply fills them: there fuel flows in from
+  around, so demand draws fuel to it and the drive is local.
 - **The ledger is exact**: the lattice's energy, the banks', the bath's and the fuel's add up to the
   same after every event (`energy_kept`), turning the drive round included (the bonds strengthen by
   −ε/T as on the substrate, and what that does to the energy is counted as work).
 
-`strands-thermo` runs a two-way program over drives × temperatures × seeds. `add 0 1`, 4 seeds a
-cell: clocks to the answer, and heat to the bath per rewrite kept at the answer (energy units):
+`strands-thermo` runs a two-way program over drives × temperatures × seeds (`supply=` and other
+settings as `key=value`). `add 0 1` at T = 0.75, 4 seeds a cell: clocks to the answer, then heat to
+the bath and heat undos borrowed from it, a rewrite kept at the answer (energy units):
 
-| drive | T = 0.5 | T = 0.75 | T = 1 |
+| drive | supply 0.1 | supply 0.5 | supply 0.9 |
 |---|---|---|---|
-| 2 | 31,507, 169 | 28,136, 168 | 41,122, 253 |
-| 4 | 22,567, 124 | 24,274, 151 | 31,305, 180 |
-| 8 | 21,681, 114 | 22,237, 131 | 26,364, 157 |
-| 16 | 23,695, 128 | 22,684, 138 | 24,849, 147 |
+| 2 | none of 4 in 300M events | none of 4 | 275,677; 18, 29 |
+| 4 | 873,566; 27, 113 | 267,671; 31, 29 | 110,413; 30, 10 |
+| 8 | 120,837; 61, 18 | 33,522; 99, 10 | 20,013; 114, 5 |
+| 16 | 114,728; 185, 12 | 46,635; 345, 8 | 29,871; 445, 4 |
 
-and the walk's fuel at drive 8, T = 0.75, 8 seeds:
-
-| walk | clocks | heat a rewrite |
-|---|---|---|
-| 2 | 474,779 | 21 |
-| 4 | 188,529 | 36 |
-| 8 | 22,978 | 134 |
-| 16 | 30,748 | 521 |
-
-- **Getting there sets the pace, not the rewrites.** The drive moves the clocks by under 2×, and
-  the heat a rewrite is 8–130× the drive: nearly all of it is walking.
-- **Walking is the speed-for-heat knob, with a threshold.** A step can drag each of the reader's
+- **Getting there sets the pace, and the heat.** Nearly all the fuel goes on walking: the heat a
+  rewrite is 7–28× the drive.
+- **The drive is the speed-for-heat knob, with a threshold.** A step can drag each of the reader's
   other wires a strand longer (a strand is 2 units: three of them against the principal's one, 4 net
-  for a reader with four ports), so below about 4 a step is uphill and goes only on heat: walk 2
-  takes 20× the clocks of walk 8 for 15% of the heat. Walk 16 is slower than 8 and nearly four times
-  as hot (not looked into).
-- **Neither hotter nor colder is faster.** At 1.5 (the plain design's temperature) wires swell faster
-  than readers reel them in: `add 1 1` finishes on none of 4 seeds in 150M events, against 72,011
-  clocks at 0.75; 0.5–0.75 is fastest above.
+  for a reader with four ports), so with a pull below about 4 a step is uphill and goes only on
+  heat: at supply 0.9, drive 2 (a pull of 3.6) takes 14× the clocks of drive 8 for a sixth of the
+  heat, and at 0.5 it does not finish. Drive 16 is three to four times as hot as 8, and slower but
+  where fuel is scarce (not looked into).
+- **The supply sets the rate.** At drive 8, supply 0.9 runs 6× as fast as 0.1, for under twice the
+  heat: a step waits for a quantum where its slot is empty, and fuel runs low where the readers are
+  (1.64 full slots of 4 at sites with a wanted reader, 1.98 elsewhere, at 0.5).
+- **Neither hotter nor colder is faster.** At drive 8, supply 0.5: 33,051 clocks at T = 0.5, 33,522
+  at 0.75, 43,013 at 1. At 1.5 (the plain design's temperature) wires swell faster than readers reel
+  them in: `add 1 1` finishes on none of 4 seeds in 150M events, against 88,003 clocks at 0.75.
+- **Before fuel was local** a reader's step brought a fixed `walk` of fuel from nowhere and the
+  drive went only to rewrites: the drive moved the clocks by under 2×, and walk 2 took 20× the clocks
+  of walk 8 for 15% of the heat, the same threshold.
 - **How it got here.** With heat leaving only at the edge of the matter, banks ran at 2.3× the bath's
   temperature and wires swelled: the substrate under every site fixed that. Charging seating to the
   drive put back nearly every rewrite that made agents (a seq split `Run·F` costs 15–50 units to seat).
   And a refused move left the substrate's seats where the move had put them (`Lattice::restore` now
   puts them back), which bonds made visible.
 - **Not right yet.** An undo is not the exact reverse of a rewrite (proposed from the products' sites,
-  which have moved since), so undos borrow what their bank is short of from the bath: 7–41 units a
-  rewrite above, 6–16% of the heat. Run back, the answer goes and records fall, but a rewrite
+  which have moved since), so undos borrow what their bank is short of from the bath: 4–113 units a
+  rewrite above, most where the push is weakest (at supply 0.1, drive 4, four times the heat). Run back, the answer goes and records fall, but a rewrite
   with up to five products needs all of them in one 2×2 square again, and that stalls well short of
   the start. Nothing yet checks the time spent in each state against exact enumeration on a tiny
   lattice, or the fluctuation theorems.
-- `tests/thermo.rs` (10 s): energy kept exactly until every kind of event has happened; with nothing
+- `tests/thermo.rs` (12 s): energy kept exactly until every kind of event has happened; with nothing
   driving, every kind of move taking heat from its bank as often as giving it (within 5%) and wires
   folding as often as unfolding; `add 0 1` and `add 1 0` giving the reference's answers; banks within
-  10% of the bath's mean after the answer; and turned round, the answer gone and a tenth of the
-  rewrites undone, energy kept.
+  10% of the bath's mean after the answer; slots emptier where readers are than elsewhere; and turned
+  round, the answer gone and a tenth of the rewrites undone, energy kept.
 
 ### Keeping history: running it back exactly (`resid=1`, `resid.rs`)
 
@@ -2047,7 +2052,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~65 s: corpus in 5 configurations, per-move invariants, collection, cooling as latest cools, handover, reading back, superpositions, movement agents, the substrate forward and back, keeping history, two-way programs (13 s), running backward, run thermodynamically (11 s)
+cargo test --release                                  # ~65 s: corpus in 5 configurations, per-move invariants, collection, cooling as latest cools, handover, reading back, superpositions, movement agents, the substrate forward and back, keeping history, two-way programs (13 s), running backward, run thermodynamically (12 s)
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -2060,7 +2065,7 @@ cargo run --release --bin strands-sup -- CASES                                  
 cargo run --release --bin strands-bench -- CASES --seeds 2                         # lines name|term: one JSON line a run (programs/bench.ts drives it)
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 cargo run --release --bin strands-phys -- 'add 1 1' --back -9                    # the substrate: forward, then back to the loaded net (key=value settings too: erase=1, forget=0.01, drive=6)
-cargo run --release --bin strands-thermo -- --work 'add 0 1' --drive 4,8,16 --temp 0.5,0.75,1   # run thermodynamically: clocks and heat a rewrite (key=value settings too: walk=4)
+cargo run --release --bin strands-thermo -- --work 'add 0 1' --drive 4,8,16 --temp 0.5,0.75,1   # run thermodynamically: clocks and heat a rewrite (key=value settings too: supply=0.9)
 ```
 
 `--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip and the GPU

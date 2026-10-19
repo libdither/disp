@@ -177,10 +177,12 @@ pub struct Params {
     /// Run thermodynamically (thermo.rs): moves proposed so that each one's reverse is as likely, their
     /// energy paid from and to a bank of heat at each site rather than accepted at a temperature, heat
     /// passing between banks and to the substrate and empty space (the bath, at `temp`), and each rewrite
-    /// forward bringing `drive` of fuel into its bank. Needs `phys`; no fields, pulses or blocks.
+    /// forward or reader's step using a quantum of fuel from its site, `drive` into its bank. Needs
+    /// `phys`; no fields, pulses or blocks.
     pub thermo: bool,
-    /// Run thermodynamically, the fuel a reader's step along its principal wire brings in (thermo.rs).
-    pub walk: f64,
+    /// Run thermodynamically, the chance the supply under a site fills a slot of fuel there (thermo.rs):
+    /// a quantum used brings `drive`, and at this fill the fuel's pull is `drive` + T ln(supply / (1 − supply)).
+    pub supply: f64,
     /// The drive ε: a rewrite forward is taken with chance min(1, e^(ε/T)), one undone with
     /// min(1, e^(-ε/T)).
     pub drive: f64,
@@ -252,7 +254,7 @@ impl Params {
             "field0" | "field1" => { let c = Channel::parse(v)?; self.fields[(k == "field1") as usize] = c; }
             "phys" => self.phys = on,
             "thermo" => { self.thermo = on; if on { self.phys = true; } }
-            "walk" => self.walk = f()?,
+            "supply" => self.supply = f()?,
             "drive" => self.drive = f()?,
             "erase" => self.erase = f()?,
             "forget" => self.forget = f()?,
@@ -276,7 +278,7 @@ impl Default for Params {
                  p_hop: 0.5, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, cold: false, cold_terms: 15, cool_terms: 15, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, fields: [Channel::OFF; 4],
                  
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 dn_room: 0, eps_walk: false, phys: false, thermo: false, walk: 8.0, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
+                 dn_room: 0, eps_walk: false, phys: false, thermo: false, supply: 0.5, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
     }
 }
 
@@ -620,7 +622,7 @@ pub fn latest() -> Params {
 }
 
 /// `latest` run thermodynamically (thermo.rs): every move a random event paid from a bank of heat at its
-/// site, the bath at `temp` and `drive` the fuel a rewrite brings. What has no place in that goes: the
+/// site, the bath at `temp`, and fuel in slots at each site, `drive` a quantum, filled by a `supply`. What has no place in that goes: the
 /// blocks (events at random sites in continuous time), pulses, the fields and called values (energy
 /// that changes with no move), pressure, cold storage and copying ahead. Cooler than `latest`: at 1.5
 /// wires swell faster than readers reel them in.
@@ -805,13 +807,13 @@ impl Lattice {
             self.live_pos[s as usize] = self.live.len() as u32;
             self.live.push(s);
             self.stats.peak_live = self.stats.peak_live.max(self.live.len() as u64);
-            if self.th.warm { self.bank_from_bath(s); }
+            if self.th.warm { self.enters(s); }
         } else if !used && pos != u32::MAX {
             let last = *self.live.last().unwrap();
             self.live.swap_remove(pos as usize);
             if last != s { self.live_pos[last as usize] = pos; }
             self.live_pos[s as usize] = u32::MAX;
-            if self.th.warm { self.bank_to_bath(s); }
+            if self.th.warm { self.leaves(s); }
         }
     }
 

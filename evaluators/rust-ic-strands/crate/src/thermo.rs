@@ -3,8 +3,9 @@
 //! are those of a physical system with local detailed balance.
 //!
 //! - **Events.** Each event draws a live site, a kind, and the kind's parameters from fixed ranges: a
-//!   hop (slot, face), an exchange (two slots, face), a flip (strand end), a fold or unfold (any end,
-//!   face), a reaction (slot), or heat passing (face, or down). Draws that name nothing to do are null events.
+//!   hop (slot, face, fuel slot), an exchange (two slots, face), a flip (strand end), a fold or unfold
+//!   (any end, face), a reaction (slot, fuel slot), heat passing (face, or down), or fuel passing (fuel
+//!   slot, face or down, fuel slot). Draws that name nothing to do are null events.
 //!   A hop's reverse is the hop back, a flip's the flip from the opposite corner, a fold's the unfold
 //!   of the same end and face, so every move is proposed as often as its reverse. Each live site has
 //!   its own events at the same rate, so a move that changes how many sites are live needs no
@@ -21,21 +22,29 @@
 //!   along all its length when a rewrite turns an aux end into a principal one). The bonds strengthen
 //!   as the drive turns negative, as on the substrate; what that does to the energy is work done on
 //!   the lattice, counted with the fuel.
+//! - **Fuel.** A site has `SLOTS` slots, each holding a quantum of fuel or not. Used, a quantum brings
+//!   `drive` into the bank; made, it takes that. The supply is the substrate under every site: a fuel
+//!   event there sets a slot full with chance `supply` (or a quantum passes to a free slot of a live
+//!   neighbour), so with nothing using it a quantum's pull is `drive` + T ln(supply / (1 − supply)).
+//!   Where the work is, slots empty faster than the supply refills them and fuel flows in from around:
+//!   demand draws fuel to it, and the drive is local.
 //! - **Walking.** A wanted reader gets to what it reads as a motor protein does: its step one strand
-//!   along its principal wire (a hop, or its half of an exchange) brings `walk` of fuel into the bank,
-//!   and any other step of it gives that fuel back. A step and its reverse are proposed as often, so the
-//!   walk is driven by its fuel, not by how it is proposed; and every step of a reader pays it, or a
-//!   step forward and a hop back would turn fuel into heat for nothing.
+//!   along its principal wire uses a quantum from a slot of the lower-numbered of its two sites, and
+//!   any other step of it makes one there, so a step and its reverse use the same slot. A step and its
+//!   reverse are proposed as often, so the walk is driven by its fuel, not by how it is proposed; and a
+//!   reader moves only by hops, or a step forward and an exchange back would turn fuel into heat for
+//!   nothing.
 //! - **Heat.** A heat event moves one quarter unit from a bank to a live neighbour's, or to or from
 //!   empty space (the bath, at `temp`), which takes heat freely and gives a quantum with chance
 //!   e^(−1/4T); or the bank meets the substrate under its site, a good sink as a chip's is, and takes
 //!   the bath's temperature at once.
-//! - **Rewrites.** A reaction fires a pair in reach, its fresh agents seated as on the plain lattice.
-//!   Seating costs what the layout makes it; that cost comes with the fuel and its record keeps it, so
-//!   every rewrite brings `drive` into the consumer site's bank whatever its seating, as every step of
-//!   Bennett's Brownian computer is driven by the same ε. An undo is tried when the bank of the site the
-//!   rewrite paid holds the drive, and takes back the drive and the seating the record kept, plus what
-//!   the undo's own layout adds; whatever the bank is short of after all (the products moved since)
+//! - **Rewrites.** A reaction fires a pair in reach using the quantum in a slot of the consumer's
+//!   site, its fresh agents seated as on the plain lattice. Seating costs what the layout makes it; that
+//!   cost comes with the fuel and its record keeps it, so every rewrite brings `drive` into the
+//!   consumer site's bank whatever its seating, as every step of Bennett's Brownian computer is driven
+//!   by the same ε. An undo is tried when a slot of the site the rewrite paid is free and its bank holds
+//!   the drive; it makes a quantum there and takes back the drive and the seating the record kept, plus
+//!   what the undo's own layout adds; whatever the bank is short of after all (the products moved since)
 //!   comes from the bath and is counted (`borrowed`). These two are not exactly balanced: a rewrite is
 //!   proposed from its consumer's slot, an undo from its products' sites (or, for one that left
 //!   nothing, the site it happened at).
@@ -45,29 +54,34 @@ use super::{substrate::Undo, Lattice, NONE};
 use std::collections::HashMap;
 
 /// The kinds of event, for the counts.
-pub const KINDS: [&str; 9] = ["hop", "exchange", "flip", "fold", "unfold", "fire", "undo", "heat", "walk"];
+pub const KINDS: [&str; 10] = ["hop", "exchange", "flip", "fold", "unfold", "fire", "undo", "heat", "walk", "fuel"];
+
+/// Slots for fuel a site has.
+pub const SLOTS: usize = 4;
 
 #[derive(Clone, Debug, Default)]
 pub struct Ledger {
-    /// Fuel brought in: the drive and seating a rewrite forward, the walk a reader's step forward, less
-    /// what an undo or a step back gives back (quarter units).
+    /// Fuel used: the drive of every quantum used, and the seating of every rewrite, less what making
+    /// a quantum (an undo, a reader's step back) gives back (quarter units).
     pub fuel: i64,
     /// Heat given to the bath, less heat taken from it.
     pub to_bath: i64,
     /// Heat undos took from the bath because their bank was short (counted in `to_bath` too).
     pub borrowed: i64,
     /// Events tried and moves made, by kind (`KINDS`).
-    pub tried: [u64; 9],
-    pub made: [u64; 9],
+    pub tried: [u64; 10],
+    pub made: [u64; 10],
     /// Moves made that took heat from their bank, and that gave it heat, by kind.
-    pub up: [u64; 9],
-    pub down: [u64; 9],
+    pub up: [u64; 10],
+    pub down: [u64; 10],
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Thermo {
     /// By site: the heat its bank holds, in quarter units.
     pub bank: Vec<u32>,
+    /// By site: which of its `SLOTS` hold a quantum of fuel (a bit each).
+    pub fuel: Vec<u8>,
     pub ledger: Ledger,
     /// By record: the site whose bank its rewrite paid, and the energy the rewrite added.
     paid: HashMap<u64, (u32, i32)>,
@@ -76,7 +90,7 @@ pub struct Thermo {
 }
 
 impl Thermo {
-    pub fn new(sites: usize) -> Thermo { Thermo { bank: vec![0; sites], ..Default::default() } }
+    pub fn new(sites: usize) -> Thermo { Thermo { bank: vec![0; sites], fuel: vec![0; sites], ..Default::default() } }
 }
 
 impl Lattice {
@@ -165,13 +179,22 @@ impl Lattice {
         n
     }
 
-    /// Empty space is the bath: a site matter moves into has a bank at the bath's temperature, and one
-    /// it leaves gives its heat back.
-    pub(super) fn bank_from_bath(&mut self, s: u32) {
+    /// Slots of fuel as the supply fills them: each full with chance `supply`.
+    fn fuel_draw(&mut self) -> u8 { (0..SLOTS).filter(|_| self.unit() < self.p.supply).fold(0, |m, i| m | 1 << i) }
+
+    /// Empty space is the bath and the supply: a site matter moves into has a bank at the bath's
+    /// temperature and slots as the supply fills them; one it leaves gives its heat back.
+    pub(super) fn enters(&mut self, s: u32) {
         let b = self.bank_draw();
         self.th.ledger.to_bath -= b as i64 - std::mem::replace(&mut self.th.bank[s as usize], b) as i64;
+        self.th.fuel[s as usize] = self.fuel_draw();
     }
-    pub(super) fn bank_to_bath(&mut self, s: u32) { self.th.ledger.to_bath += std::mem::take(&mut self.th.bank[s as usize]) as i64; }
+    pub(super) fn leaves(&mut self, s: u32) {
+        self.th.ledger.to_bath += std::mem::take(&mut self.th.bank[s as usize]) as i64;
+        self.th.fuel[s as usize] = 0;
+    }
+
+    fn has_fuel(&self, s: u32, i: usize) -> bool { self.th.fuel[s as usize] >> i & 1 == 1 }
 
     /// Run events until the answer is in, at most `max` of them. Whether it is in.
     pub fn run_thermo(&mut self, max: u64) -> bool {
@@ -190,12 +213,7 @@ impl Lattice {
     pub fn event(&mut self) {
         if !self.th.warm {
             self.th.warm = true;
-            for i in 0..self.live.len() {
-                let s = self.live[i];
-                let b = self.bank_draw();
-                self.th.bank[s as usize] += b;
-                self.th.ledger.to_bath -= b as i64;
-            }
+            for i in 0..self.live.len() { self.enters(self.live[i]); }
         }
         let n = self.live.len();
         if n == 0 { return; }
@@ -204,44 +222,46 @@ impl Lattice {
         let i = self.below(n);
         let s = self.live[i];
         let x = self.unit();
-        let kind = if x < 0.50 { 0 } else if x < 0.55 { 1 } else if x < 0.70 { 2 } else if x < 0.80 { 3 } else if x < 0.88 { 5 } else { 7 };
+        let kind = if x < 0.45 { 0 } else if x < 0.50 { 1 } else if x < 0.65 { 2 } else if x < 0.75 { 3 } else if x < 0.83 { 5 } else if x < 0.93 { 7 } else { 9 };
         match kind {
             0 => self.ev_hop(s),
             1 => self.ev_exchange(s),
             2 => self.ev_flip(s),
             3 => self.ev_fold(s),
             5 => self.ev_react(s),
-            _ => self.ev_heat(s),
+            7 => self.ev_heat(s),
+            _ => self.ev_fuel(s),
         }
     }
 
     /// A move made tentatively at these sites: keep it if the bank of the lowest-numbered one pays its
-    /// energy, else put the sites back.
-    fn settle(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64) { self.settle_fuel(kind, sites, saved, e0, 0); }
+    /// energy, else put the sites back. Whether it is kept.
+    fn settle(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64) -> bool { self.settle_fuel(kind, sites, saved, e0, 0) }
 
     /// `settle`, with `fuel` brought into the paying bank (taken from it, if negative).
-    fn settle_fuel(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64, fuel: i64) {
+    fn settle_fuel(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64, fuel: i64) -> bool {
         let de = self.energy_of(sites) - e0 - fuel;
         let payer = *sites.iter().min().unwrap() as usize;
-        if de > self.th.bank[payer] as i64 { self.restore(saved); return; }
+        if de > self.th.bank[payer] as i64 { self.restore(saved); return false; }
         self.th.bank[payer] = (self.th.bank[payer] as i64 - de) as u32;
         self.th.ledger.fuel += fuel;
         self.th.ledger.made[kind] += 1;
         if de > 0 { self.th.ledger.up[kind] += 1; } else if de < 0 { self.th.ledger.down[kind] += 1; }
+        true
     }
 
-    /// The fuel the agent at slot k of s brings stepping across face f: a wanted reader walks as a motor
-    /// protein does, `walk` of fuel for a step along its principal wire and that fuel given back for any
-    /// other step; anything else steps for nothing.
-    fn walk_fuel(&self, s: u32, k: usize, f: usize) -> Option<i64> {
+    /// Whether the agent at slot k of s walks stepping across face f, and which way: a wanted reader
+    /// walks as a motor protein does, forward along its principal wire, back any other way.
+    fn walks(&self, s: u32, k: usize, f: usize) -> Option<bool> {
         let t = self.tag(s, k);
         if t == 0 || !super::tag_of(t).is_consumer() || !self.want[s as usize * self.ks + k] { return None; }
         let m = self.mate_of(s, self.ae(k, 0));
-        let fuel = (self.p.walk * 4.0).round() as i64;
-        Some(if self.is_strand(m) && self.face(m) == f { fuel } else { -fuel })
+        Some(self.is_strand(m) && self.face(m) == f)
     }
 
-    /// A hop, or for a wanted reader a walk (`walk_fuel`).
+    /// A hop. A wanted reader's is a walk: a step forward uses a quantum of fuel from a slot at the
+    /// lower-numbered of the two sites, and a step back makes one there (`walks`), so a step and the
+    /// step undoing it use the same slot.
     fn ev_hop(&mut self, s: u32) {
         let (k, f) = (self.below(self.p.k), self.below(self.faces));
         if self.tag(s, k) == 0 { return; }
@@ -250,28 +270,33 @@ impl Lattice {
         let Some(k2) = self.free_slot(t) else { return };
         let Some((_, lanes, loops, _)) = self.step_plan(s, k, f) else { return };
         if !self.room(t, lanes.len() + loops) { return; }
-        let walk = self.walk_fuel(s, k, f);
+        let walk = self.walks(s, k, f);
+        let (q, i) = (s.min(t), self.below(SLOTS));
+        if walk.is_some_and(|forward| forward != self.has_fuel(q, i)) { return; }
         let kind = if walk.is_some() { 8 } else { 0 };
         self.th.ledger.tried[kind] += 1;
+        let drive = (self.p.drive * 4.0).round() as i64;
         let sites = [s, t];
         let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
         if self.hop_to(s, k, f, k2, false, false).is_none() { self.restore(saved); return; }
-        self.settle_fuel(kind, &sites, saved, e0, walk.unwrap_or(0));
+        let fuel = match walk { Some(true) => drive, Some(false) => -drive, None => 0 };
+        if self.settle_fuel(kind, &sites, saved, e0, fuel) && walk.is_some() { self.th.fuel[q as usize] ^= 1 << i; }
     }
 
+    /// Two agents in neighbouring sites trade places; readers walk only by hops.
     fn ev_exchange(&mut self, s: u32) {
         let (ka, f, kb) = (self.below(self.p.k), self.below(self.faces), self.below(self.p.k));
         let t = self.nb(s, f);
         if self.tag(s, ka) == 0 || t == u32::MAX || !self.inside(t) || self.tag(t, kb) == 0 { return; }
+        if self.walks(s, ka, f).is_some() || self.walks(t, kb, f ^ 1).is_some() { return; }
         self.th.ledger.tried[1] += 1;
-        let fuel = self.walk_fuel(s, ka, f).unwrap_or(0) + self.walk_fuel(t, kb, f ^ 1).unwrap_or(0);
         let sites = [s, t];
         let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
         self.force = true;
         let done = self.exchange(s, ka, f, kb, false).is_some();
         self.force = false;
         if !done { return; }
-        self.settle_fuel(1, &sites, saved, e0, fuel);
+        self.settle(1, &sites, saved, e0);
     }
 
     fn ev_flip(&mut self, s: u32) {
@@ -298,7 +323,7 @@ impl Lattice {
         let sites = [s, t];
         if self.is_strand(m) && self.face(m) == f && self.fold_at(s, m, Self::inside).is_some() {
             self.th.ledger.tried[3] += 1;
-                let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
+            let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
             self.fold(s, m);
             self.settle(3, &sites, saved, e0);
             return;
@@ -320,23 +345,25 @@ impl Lattice {
         self.settle(4, &sites, saved, e0);
     }
 
-    /// A reaction at slot k of s: fire the pair the consumer there is in, or undo what made what is there.
+    /// A reaction at slot k of s, with fuel slot i there: fire the pair the consumer there is in, using
+    /// the quantum in slot i, or undo what made what is there, making one in the slot the rewrite used.
     fn ev_react(&mut self, s: u32) {
-        let k = self.below(self.p.k);
+        let (k, i) = (self.below(self.p.k), self.below(SLOTS));
         let drive = (self.p.drive * 4.0).round() as i64;
         if self.tag(s, k) == 0 {
             // A rewrite that left nothing behind is undone from the site it happened at.
-            if let Some(e) = self.sub.bare.get(&s).and_then(|v| v.last().copied()) { self.try_undo(s, e, drive); }
+            if let Some(e) = self.sub.bare.get(&s).and_then(|v| v.last().copied()) { self.try_undo(s, e, i, drive); }
             return;
         }
         if let Some((kc, kp, via)) = self.active_pair(s).filter(|&(kc, _, _)| kc == k) {
-            if (self.th.bank[s as usize] as i64) < -drive { return; }
+            if !self.has_fuel(s, i) || (self.th.bank[s as usize] as i64) < -drive { return; }
             self.th.ledger.tried[5] += 1;
             let (e0, n0) = (self.energy(), self.sub.records.len());
             if !self.fire(s, kc, kp, via) { return; }
             let de = self.energy() - e0;
             let e = self.sub.records.len().max(n0) as u64 - 1;
             self.th.paid.insert(e, (s, de as i32));
+            self.th.fuel[s as usize] &= !(1 << i);
             self.charge(s, -drive);
             self.th.ledger.fuel += drive + de;
             self.th.ledger.made[5] += 1;
@@ -348,19 +375,21 @@ impl Lattice {
         tries.extend((0..self.ar as u8).filter_map(|q| self.sub.marks.get(&(id, q)).and_then(|v| v.last().copied())));
         if tries.is_empty() { return; }
         let e = tries[self.below(tries.len())];
-        self.try_undo(s, e, drive);
+        self.try_undo(s, e, i, drive);
     }
 
-    /// Undo record e from site s, if the bank its rewrite paid holds the drive.
-    fn try_undo(&mut self, s: u32, e: u64, drive: i64) {
+    /// Undo record e from site s, if fuel slot i of the site its rewrite paid is free for the quantum
+    /// the undo makes and that site's bank holds the drive.
+    fn try_undo(&mut self, s: u32, e: u64, i: usize, drive: i64) {
         if !self.undoable(e) { return; }
         let (payer, de_fire) = self.th.paid.get(&e).copied().unwrap_or((s, 0));
-        if (self.th.bank[payer as usize] as i64) < drive { return; }
+        if self.has_fuel(payer, i) || (self.th.bank[payer as usize] as i64) < drive { return; }
         self.th.ledger.tried[6] += 1;
         let e0 = self.energy();
         if !matches!(self.undo(s, e), Undo::Done) { return; }
         let de = self.energy() - e0;
         self.th.paid.remove(&e);
+        self.th.fuel[payer as usize] |= 1 << i;
         self.charge(payer, de + drive + de_fire as i64);
         self.th.ledger.fuel -= drive + de_fire as i64;
         self.th.ledger.made[6] += 1;
@@ -405,5 +434,23 @@ impl Lattice {
             self.th.ledger.to_bath -= 1;
             self.th.ledger.made[7] += 1;
         }
+    }
+
+    /// A quantum of fuel from slot i of s across face f into slot j of a live neighbour, or (f = faces)
+    /// slot i taking what the supply under the site gives it: full with chance `supply`.
+    fn ev_fuel(&mut self, s: u32) {
+        let (i, f) = (self.below(SLOTS), self.below(self.faces + 1));
+        self.th.ledger.tried[9] += 1;
+        if f == self.faces {
+            let full = self.unit() < self.p.supply;
+            self.th.fuel[s as usize] = self.th.fuel[s as usize] & !(1 << i) | (full as u8) << i;
+            self.th.ledger.made[9] += 1;
+            return;
+        }
+        let (t, j) = (self.nb(s, f), self.below(SLOTS));
+        if t == u32::MAX || self.live_pos[t as usize] == u32::MAX || !self.has_fuel(s, i) || self.has_fuel(t, j) { return; }
+        self.th.fuel[s as usize] &= !(1 << i);
+        self.th.fuel[t as usize] |= 1 << j;
+        self.th.ledger.made[9] += 1;
     }
 }
