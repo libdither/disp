@@ -28,15 +28,18 @@
 # exact wording when a quote misses. Set S2_API_KEY to lift Semantic Scholar's rate limit.
 #
 # usage: scripts/verify-source.sh [-q 'quote'] [-g regex] [-n LINES] [-a] <url | doi | arxiv-id>
+#        scripts/verify-source.sh -Q FILE      (each line `quote<TAB>source`; prints one ok/MISS line each)
 #   -q  quote to locate (a distinctive 5–12 word phrase works best; `...` = any gap)
 #   -g  list every passage matching a case-insensitive regex, with its page or anchor
 #   -n  lines of extracted text to preview when no -q or -g is given (default 12)
 #   -a  for arXiv ids: fetch the abs page (HTML) instead of the PDF
+#   -Q  check every `quote<TAB>source` line of FILE (blank lines and `#` lines skipped); exits 1 on any miss
 set -u
-QUOTE="" GREP="" PREVIEW=12 ABS=0
-while getopts "q:g:n:a" o; do
+QUOTE="" GREP="" PREVIEW=12 ABS=0 BATCH=""
+while getopts "q:g:n:aQ:" o; do
   case "$o" in
     q) QUOTE="$OPTARG" ;;
+    Q) BATCH="$OPTARG" ;;
     g) GREP="$OPTARG" ;;
     n) PREVIEW="$OPTARG" ;;
     a) ABS=1 ;;
@@ -44,6 +47,19 @@ while getopts "q:g:n:a" o; do
   esac
 done
 shift $((OPTIND - 1))
+if [ -n "$BATCH" ]; then
+  miss=0
+  while IFS=$'\t' read -r q src || [ -n "$q" ]; do
+    case "$q" in ''|'#'*) continue ;; esac
+    out="$("$0" -q "$q" "$src" 2>&1)"
+    if frag="$(grep -m1 '^MATCH:' <<< "$out")"; then
+      printf 'ok    %s  %s\n' "${frag#*fragment: }" "$q"
+    else
+      miss=1; printf 'MISS  %s  %s  (%s)\n' "$src" "$q" "$(grep -m1 -E '^(STATUS|NO MATCH|HINT)' <<< "$out" | cut -c1-100)"
+    fi
+  done < "$BATCH"
+  exit $miss
+fi
 [ $# -eq 1 ] || { echo "usage: $0 [-q quote] [-g regex] [-n lines] [-a] <url | doi | arxiv-id>" >&2; exit 2; }
 ARG="$1"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/verify-source"
@@ -329,6 +345,14 @@ def normalize(s, at=None): # fold typography to plain text; `at` collects each o
 def norm(s):
     return normalize(s).strip()
 
+def read_text(path): # a page's text, decoded by the charset it declares (Shift_JIS, EUC-JP, …), else UTF-8
+    raw = open(path, 'rb').read()
+    m = re.search(rb'<meta[^>]+charset=["\']?([\w-]+)', raw[:8192], re.I)
+    for enc in ([m.group(1).decode('ascii', 'replace')] if m else []) + ['utf-8']:
+        try: return raw.decode(enc)
+        except (LookupError, UnicodeDecodeError): pass
+    return raw.decode('utf-8', 'replace')
+
 def slug(h): # GitHub heading slug
     h = re.sub(r'[^\w\- ]', '', h.strip().lower())
     return re.sub(r' ', '-', h)
@@ -339,7 +363,7 @@ if kind == 'pdf':
     lines = [l for l in src.splitlines() if l.strip() and not l.lstrip().startswith('arXiv:')]
     print('TITLE:', norm(pdftitle) or (norm(' '.join(lines[:2]))[:160] if lines else '?'))
 elif kind == 'md':
-    src = open(body, encoding='utf-8', errors='replace').read()
+    src = read_text(body)
     heads = [(m.start(), slug(m.group(2))) for m in re.finditer(r'^(#{1,6})\s+(.+?)\s*#*$', src, re.M)]
     first = next((m.group(1) for m in re.finditer(r'^#{1,6}\s+(.+?)\s*#*$', src, re.M)), '?')
     print('TITLE:', norm(first)[:160])
@@ -369,19 +393,21 @@ else:
             if self.in_title: self.title += d
             if self.skip: return
             self.text.append(d); self.pos += len(d)
-    p = P(); p.feed(open(body, encoding='utf-8', errors='replace').read())
+    p = P(); p.feed(read_text(body))
     full = src = ''.join(p.text)
     print('TITLE:', norm(p.title)[:160] or '?')
 if kind != 'pdf':
     at = []; full = normalize(full, at)
 
-def anchor(s): # nearest id at or before normalized offset s
+GENERATED = re.compile(r'\d{4,}|[0-9a-f]{8,}|^ref-link|-d\d+e\d+')
+def anchor(s): # nearest id at or before normalized offset s; one that looks generated only if no stable one precedes it
     o = at[min(s, len(at) - 1)] if at else 0
-    a = None
+    a = stable = None
     for pos, i in p.ids:
-        if pos <= o: a = i
-        else: break
-    return a
+        if pos > o: break
+        a = i
+        if not GENERATED.search(i): stable = i
+    return stable or a
 
 def quote_re(q):
     parts = [re.escape(norm(x)) for x in re.split(r'\.\.\.|…', q)]
