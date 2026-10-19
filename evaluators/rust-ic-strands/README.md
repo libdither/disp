@@ -9,9 +9,10 @@ an address**. It is the answer to two problems with the earlier spatial machines
 
 Open `player/index.html` to watch it run (rebuild with `./build-player.sh`); with `phys=1` (its list's
 "run it as physics") it runs them as physics, every rewrite undoable at a price in heat (The substrate,
-below). `player/rev.html` runs the abstract net backward (Running backward, below). It shows only the
-current design (`lattice.rs` `latest`: the chip's schedule with the demand field, forking S rules
-and duplicators copying ahead where there is room, below), with the field drawn as an amber tint
+below). `player/rev.html` runs the abstract net backward (Running it backward, below). It shows only the
+current design (`lattice.rs` `latest`: the chip's schedule with the demand field, forking S rules,
+duplicators copying ahead where there is room, idle matter packing where nothing reacts and a room
+field around rewrites that found none, below), with the demand field drawn as an amber tint
 and called values ringed in orange:
 - **Layout**, as in the website's tree visualizer: the lattice fills the page with the answer at
   the top left, and the input box, time bar and transport sit at the bottom, speed in the left
@@ -83,12 +84,13 @@ and called values ringed in orange:
   on, saving more densely near the target, so stepping back costs a few clocks of replay and a jump a
   tenth of its length.
 - **At the end** the run cools: once only the answer is left, the temperature drops to 0.05 at
-  once (`Lattice::cool`), every turn takes a move that lowers the energy if its site has one,
-  idle agents trade places rather than crowd into one site, and a flip that leaves a U-turn snaps
-  it in the same move. So the wire straightens and the answer contracts as far
-  as it will go, in a few hundred clocks (disp `add 2 3`: 17–43 strands of wire become 10 or 11, and
-  10 is as short as it gets; Contracting the answer, below). The clock it began at (the first with no
-  garbage left, the same on either engine) is recorded, and replays cool there too.
+  once (`Lattice::cool`), every turn takes a move that lowers the energy if its site has one, every
+  kind of crowding is off where nothing reacts (so idle agents pack two to a site), and a flip that
+  leaves a U-turn snaps it in the same move. So the wire straightens and the answer contracts, in a
+  few dozen to a few hundred clocks (disp `add 2 3`: the answer's 12 agents end in 6 sites with 7–8
+  strands of wire, against 10–11 strands in 11 sites when idle agents traded places instead;
+  Contracting the answer and Cold storage, below). The clock it began at (the first with no garbage
+  left, the same on either engine) is recorded, and replays cool there too.
 
 ## The machine
 
@@ -146,8 +148,13 @@ and called values ringed in orange:
   None needs room, so all can always happen. Without them, lazy evaluation leaves erasers
   parked on garbage nobody wants, and it crowds out the reactions that matter. With them the
   machine cleans up completely: run on past the answer (`run_on`, `strands-run --clean`, and the
-  player does it by itself) and only the answer is left on the lattice, usually within a few
-  dozen clocks.
+  player does it by itself) and only the answer is left on the lattice. That takes hundreds to
+  thousands of clocks (fib:0 about 1,100, sort:1 about 3,700): the garbage is mostly stored values,
+  chains about a hundred agents deep, and an eraser closes the gap to each next piece by random hops.
+  With erasers taking a wanted reader's walking turn (`epswalk=1`, CPU only) it takes 30–60% fewer
+  clocks, and the answer comes 1–6% sooner (fib:0 1,076 → 436, sort:1 3,774 → 2,339, disp `add 3 4`
+  260 → 192). An erasure wave along the garbage's wires, a strand a clock with no walking, could at
+  best take 2–3× fewer again (`strands-flow` with `CLEAN=1 CENSUS=1` works out that bound: sort:1 716).
 
 Every rewrite and every collection is replayed on the abstract net, and a rewrite must be a
 pair the net has. At the end, the lattice is compared with the abstract net wire by wire.
@@ -424,11 +431,11 @@ pulses run along them. Matter not wired to a reaction cannot know it is there, a
 way. A *field* adds a channel through space. Every site, empty or not, keeps a few small numbers
 and recomputes them each clock from what it holds, its own numbers and its face neighbours'
 numbers of the clock before, the way pulses move (`crate/src/field.rs`, `--field`). A channel has:
-- sources: a wanted reader, a demand pulse, a rewrite, a rewrite without room, or the
-  switchboard's pairings;
-- a falloff per hop through space and per hop across a face that carries a strand, and a fade
-  per clock: a site takes the most of its source, each neighbour's value less the hop's falloff,
-  and its own value less the fade;
+- sources: a wanted reader, a demand pulse, or a rewrite without room (the room field, Cold
+  storage); rewrites, the switchboard's pairings and the root as sources, and a smaller falloff
+  across faces carrying a strand, were tried and removed in ee0ba4a;
+- a falloff per hop and a fade per clock: a site takes the most of its source, each neighbour's
+  value less the falloff, and its own value less the fade;
 - weights: energy per unit of the channel climbed by an idle agent, a called value and a wanted
   computation, and for wire that an idle agent drags or a flip moves (switchboard crowding times
   the channel).
@@ -549,208 +556,6 @@ The demand field still matters with fork: without it the runs above take 30–68
 without called values walking 20–37%. Wanting every computation's inputs, not only the S rule's,
 gains nothing more in the ideal model: the S rule is the only rule that wires a computation to
 another's input.
-
-**Caching what a program throws away (tried, not kept).** The eager evaluator is fast by caching:
-equal trees are one node, so copying is free, and `apply(f, x)` facts are memoized and kept
-across runs with what they cost. A net has neither: a duplicator copies a value one layer at a
-time as it is read (on disp programs 45% of rewrites copy and 30% erase), and equal computations
-built apart both run; only a shared suspension runs once (`Dn·P`). What does carry over is the S
-rule's choice, as a fact about code: for each S node of the loaded program, its `(b c)` is needed
-nearly always or nearly never. Learned on a smaller input and kept with the program as a mark that
-copies inherit, like the memo snapshot (fib(1) for fib(2), exp(0) for exp(1), sort(1) for sort(2)),
-no fork at marked nodes takes 13–29% fewer rewrites than forking everywhere on the lattice, but no
-fewer clocks (exp(1) 8% more): the lattice has room and time to spare, so waste costs energy, not
-time. It would take a new agent tag, an S that does not fork. Marks from the code's shape alone (`s` is K or `K (K w)`, the
-eager evaluator's own shortcut) remove almost nothing.
-
-**Sharing equal parts of the program (tried, not kept; `share=N`).** Built with every part of at
-least N agents that occurs more than once built once and read through duplicators (`share.rs`, as
-if the program had named it), a disp program loads with 20–69% fewer agents and gives the same
-answers (`tests/share.rs`). It runs slower: a shared part sits in one place and its readers are
-spread over the drawing, so its copies travel along long wires, and code that was laid out ready
-is now copied a layer at a time as it is read. On the disp programs, `--latest`, 2 seeds, grids
-sized as the player sizes them (sharing parts of 8 or more agents · of 24 or more; 0% where no
-part that big repeats):
-
-| program | agents at load | clocks | rewrites | peak sites |
-|---|---|---|---|---|
-| disp `add 2 3` | −35% · 0% | +33% · 0% | +9% · 0% | +68% · 0% |
-| disp `mul 2 2` | −58% · −29% | +31% · +24% | +7% · +6% | +59% · +160% |
-| disp `fib 2` | −61% · −32% | +81% · +63% | +11% · +11% | +221% · +271% |
-| disp `is_even 3` | −23% · 0% | +16% · 0% | +4% · 0% | +49% · 0% |
-| disp `sum [1, 2]` | −52% · −20% | +47% · +24% | +6% · +2% | +226% · +154% |
-| disp `size [5, 6, 7]` | −28% · 0% | +27% · 0% | +2% · 0% | +73% · 0% |
-| disp `rev [1, 2]` | −55% · −38% | +29% · +24% | +7% · +4% | +64% · +56% |
-| disp `doubled [1, 2]` | −53% · −20% | +32% · +19% | +8% · +5% | +207% · +154% |
-| disp `greet "a"` | −56% · −47% | +20% · +1% | +17% · +14% | +25% · −28% |
-
-Sharing parts of 3 or more is worse again (`doubled` unfinished in 900 s, `is_even` too tangled to
-lay out). A disp program is code, a value, applied to its arguments: there is no computation in it
-to share, so all that sharing saves is room at load, paid for in copying and in distance. On a
-lattice a part used in two places is a wire between them. `set=share=8` in the player's link shows
-the shared parts once, behind their duplicators, in the graph view and as `x₁` in the details.
-
-**Leases (tried, not kept).** Demand recomputed every step from the normalizer stops a
-thrown-away `(b c)` at once, rather than when erasers reach it: in the ideal model fib(2)'s extra
-rewrites fall from 38% to 4%, but much of the speed goes too (size-self 10.9× fewer steps → 2.6×),
-since an argument loses its lease while it sits in a pair waiting to be triaged. Letting leases
-pass through pairs recovers some. It also needs demand sent again and again: more pulses and
-state.
-
-**Keeping the term's parts apart (tried, not kept).** The player colours agents by segment (the
-parts of the term the root computes, split at every application), but on the lattice the parts
-interleave. Three energies, all off by default, push them apart. Each uses only what an agent's
-site and its neighbours hold, and an idle agent pays it as it steps:
-- *strangers* (`strangers=w`): w for every agent in its site or a neighbouring one that is not at
-  the end of one of its wires within two strands (`reach`), as in a force-directed drawing of a
-  graph;
-- *tree labels* (`trees=w`): w for every such stranger with another label. Every agent carries a
-  2-bit label its reader gives it (`label_from`): an application's function and argument get labels
-  different from each other and from the application's, and anything else's inputs share its label.
-  Labels are set from the root down when a term is loaded, and a rewrite's fresh agents take the
-  consumer's. On every turn, an agent whose reader is in its site or one strand away takes the
-  label that reader gives (`relabel`), so labels follow the tree wherever readers touch what they
-  read. Then 88–97% of the agents the root's computation reaches carry the label their reader gives
-  them;
-- *garbage* (`garbage=w`): what an eraser reads takes a fifth label, passed down the garbage the
-  same way, and a garbage stranger next to a live agent costs w more.
-
-To measure it, `readback.rs` `mixing` cuts the root's term into the player's segments and counts
-the pairs of agents in one site or in neighbouring sites that belong to different segments, over
-the share expected if the same agents were scattered at random (1: as mixed as chance, 0: every
-segment apart). `strands-run --mix 50` averages it over a run, sampled every 50 clocks. On the ten
-disp programs (lattices sized as the player sizes them, 2 seeds each, every answer checked), against
-the current design, geometric means of the clocks to the answer, the rewrites, and peak strands and
-sites:
-
-| setting | mixing | clocks | rewrites | peak strands | peak sites |
-|---|---|---|---|---|---|
-| the current design | 0.30 | | | | |
-| `strangers=1` | 0.29 | −1% | +1% | +2% | +3% |
-| `strangers=3` | 0.23 | +4% | +3% | +8% | +13% |
-| `trees=4` | 0.19 | +2% | +1% | +2% | +3% |
-| `trees=4 garbage=4` | 0.19 | +3% | +1% | +4% | +3% |
-
-Tree labels make the parts about a third less mixed at every depth of the term (cut at the root's
-first application, 0.29 → 0.19), for the price of seed noise: per program the clocks move between
-−7% and +6%. Weaker labels (`trees=2`) separate less (about 0.23) and stronger ones (`trees=8`) a
-little more (about 0.18) for 6% more clocks. Repelling every stranger separates less and spreads
-matter out (13% more sites): what keeps parts apart is knowing which part an agent is in, not
-keeping clear of everything. Garbage labels add nothing measurable. Separation gains no speed
-either, as with the demand field (only the reader's partner is related, Fields above): rewrites
-happen where parts meet, and walkers and called values do not pay. So the parts can be kept apart
-for 2 bits an agent (3 with garbage), but not faster. In the player the difference is hard to see:
-most of a picture is the program's code, one long value, and the parts being computed are a small
-knot at its end. Moves read sites two away (the neighbours of the site a step goes to), so neither
-the chip nor the GPU runs these settings, and the GPU says so (`tables.rs` `gpu_unfit`); on a chip
-a field of one bit for each label, spread one hop a clock, could stand in for that (untested). The
-player takes such settings from its link, `#src=fib%202&set=trees=4`.
-
-## Memo radius: merging equal computations (tried, not kept; `memo=r`)
-
-The eager evaluator memoizes `apply(f, x)` by global ids, which a lattice does not have. The local
-version is a radius: two equal computations closer than r sites are merged, one computing and the
-other getting a copy of its result through a duplicator, and farther ones are both computed. r = 0
-is the plain net, r = ∞ a memo table, which would need addresses. Equal means equal terms as they
-read back (`memo.rs` `Terms` interns every output of the abstract net, duplicators transparent), so
-a suspension `P(f, x)` built in two places from copies of one `x` is the other's twin. Merging two
-suspensions is call by need across places, and `Dn·P` (force once, copy the value) does the rest.
-Twins at different stages of evaluation read differently and are missed.
-
-**How many twins there are.** `strands-memo TERM --every N --keys --ideal` reads every computation
-the answer depends on (P, A, T1, Sel) every N clocks, counts those with an equal twin within each
-radius, and estimates what merging them then would save: the idealised lazy machine (Fork, above)
-run on from the net as it is, with and without the merges. `latest`, lattices sized as the player
-sizes them, seed 1, every 100 clocks (200 for disp):
-
-| program | computations alive | share of the time with a twin within 1 · 2 · 4 · ∞ sites | saved by merging then, at most |
-|---|---|---|---|
-| fib(3) | 14 | 7% · 17% · 27% · 32% | 21% of the work left |
-| fib(4) | 21 | 8% · 19% · 27% · 37% | 22% |
-| exp(1) | 7 | 3% · 4% · 4% · 4% | 9% |
-| sort(2) | 13 | 0% · 1% · 4% · 6% | 10% |
-| disp `fib 3` | 15 | 1% · 3% · 7% · 16% | 9% |
-| disp `fib 4` | 22 | 3% · 10% · 18% · 28% | 9% |
-
-- Few computations are alive at once, and most of the time none has a twin. When there is one, it
-  can carry a fifth of the work left.
-- Counted by a memo key instead (function and argument worked out to values, as the eager
-  evaluator's memo sees them), there are 1.5× (lambada fib) to 2–3× (disp fib) as many twins: on
-  disp fib most twins differ only in how far an input has been evaluated, and terms miss them.
-- Samples 100 clocks apart miss twins that come and go between them: merging (below) finds 14 to
-  40 within one site in a run.
-
-**Merging them with a central detector** (`memo=r`, every 8 clocks, `memoevery`): the twins within r
-are merged pair by pair. A fresh duplicator beside the one kept (a running computation rather than
-a suspension) takes its output and hands one copy to its reader and the other, along a new wire, to
-the dropped one's reader; erasers in or beside the dropped one's site take its inputs, and
-collection does the rest. Seats and wires are planned first (free lanes, at most 8 pairings a site),
-and a merge with no room waits. The abstract net changes alike, and `tests/memo.rs` checks every
-invariant and the projection after every clock and every merge. Against `latest`, 2 seeds, every
-answer the oracle's and every projection exact:
-
-| program | clocks, rewrites without | rewrites at r = 1 · 2 · 4 · 8 · 16 | clocks at r = 1 · 2 · 4 · 8 · 16 | peak sites at r = 1 · 4 · 16 |
-|---|---|---|---|---|
-| fib(3) | 14.2k, 8.1k | −25% · −16% · −29% · −28% · −30% | −8% · −4% · −9% · −12% · −10% | 0% · +2% · +2% |
-| fib(4) | 20.5k, 15.6k | −18% · −27% · −26% · −34% · −36% | −7% · −9% · −6% · −6% · −9% | −5% · −6% · −6% |
-| exp(1) | 11.9k, 4.3k | −2% · −3% · −3% · −4% · −4% | −1% · +6% · +7% · +9% · +9% | 0% · +3% · +4% |
-| sort(2) | 21.0k, 10.9k | −1% · −3% · −11% · −5% · −8% | +2% · −1% · −4% · −1% · −2% | −10% · −11% · −8% |
-| disp `fib 3` | 24.1k, 9.0k | −12% · −9% · −16% · −16% · −16% | −7% · +1% · −2% · −3% · −4% | −1% · −6% · −6% |
-| disp `fib 4` | 39.1k, 18.2k | −21% · −23% · −25% · −27% · −27% | −7% · −9% · −7% · −10% · −11% | −8% · −22% · −21% |
-
-- **On fib it saves a fifth to a third of the rewrites, most of it within a site or two:** twins
-  are born close. `MEMO_LOG=1` lists each merge (what the twins' inputs share, how far apart they
-  are, how big). Lambada fib's are mostly equal code built apart applied to the two copies of one
-  argument, as the S rule's two halves `(s c)(b c)` are when `s` and `b` are equal, born one or two
-  sites apart. Disp fib's are most often applications whose function and argument are both equal
-  values built apart, 1 to 6 sites apart.
-- **It saves work, not time.** Clocks fall at most 12% on fib, about the seed noise. Twins run side
-  by side (fork), so a merge takes work off a parallel branch, not off the longest chain. As with
-  caching what a program throws away (Fork, above), the lattice has room and time to spare.
-- Elsewhere there is little to merge (exp, sort: 1–11% of rewrites), and exp(1) takes 6–9% more
-  clocks.
-- Where the matter peaks during the run (fib(4), disp fib) the peak falls too, by up to a fifth of
-  the sites, as the dropped twins' matter goes.
-
-**Can the detector be local?** With `memolocal=1` only computations in one 2×2×2 block of a cut at
-the clock's offset are compared, every clock (`memoevery=1`), and the merge stays inside the block:
-its three agents and five wires get the block's 8 sites, as a rewrite gets its square. With
-`memonames=1` they are compared by names instead of terms (below). Rewrites and clocks against
-`latest`, 2 seeds, every answer the oracle's:
-
-| program | central, r = 16 | terms, in a block | names, in a block |
-|---|---|---|---|
-| fib(3) | −30%, −10% | −23%, −9% | −17%, −10% |
-| fib(4) | −36%, −9% | −21%, −6% | −23%, −8% |
-| exp(1) | −4%, +9% | −5%, +8% | −1%, 0% |
-| sort(2) | −8%, −2% | −8%, −4% | −5%, −4% |
-| disp `fib 3` | −16%, −4% | −12%, −2% | −12%, −4% |
-| disp `fib 4` | −27%, −11% | −26%, −10% | −18%, −5% |
-
-A block keeps between half and all of what the central detector gets at r = 16, by terms or by
-names. What a chip would need for it:
-- **Names, not terms.** A term read back changes whenever an input is evaluated, and so does every
-  reader's up to the root: a wave of hashing along every chain of readers after every rewrite. A
-  name fixed when an agent is made never changes: a hash of its tag and its inputs' names
-  (duplicators transparent; a suspension and an apply count as one application), and it goes on
-  meaning what it meant, since a rewrite keeps a computation's value (`memo.rs` `Names`, here given
-  when the detector first sees an agent). A rewrite would make its fresh agents' names from the
-  names the dying pair keeps for its inputs, inside its square; collection needs none. So every
-  agent keeps its two inputs' names.
-- **Bits.** A wrong merge is a wrong answer, so names must not collide. A run compares about 10^7
-  pairs (a few hundred busy blocks for tens of thousands of clocks); 48-bit names make a collision a
-  10^-7 chance a run, 32-bit ones 10^-3. Two names an agent and two agents a site is about 190 bits
-  more a site, on the 95 it has now, and a hasher in the rewrite stage and comparators in every
-  block.
-- **A cheaper piece.** Most of lambada fib's twins come from one S rule, whose `(s c)` and `(b c)`
-  are twins exactly when `s` and `b` have one name. An S rule that compares the two names it holds
-  could build `(s c)` once and copy it, with no comparison in the block and no merge move. That
-  leaves disp fib's twins, which are born apart.
-
-So the idea holds for work but not for time: equal computations are born close enough that a block
-catches most of them, but they run side by side anyway, and catching them would triple a site.
-Memo stays the optimizer's job (research/OPTIMIZER.typ). The detector is central and CPU only; the
-GPU refuses it (`tables.rs` `gpu_unfit`).
 
 ## Adding binary numbers
 
@@ -952,7 +757,8 @@ else, and a duplicator of label 0 is a plain copy. A rule says the label of each
 
 `Unp·Sup` cannot happen: an unpair reads a triage's or dispatch's arms, and those only ever carry a
 pair that `A·F` or `T1·F` made, or a duplicator's copy of one. The 8 rules are kept apart from the
-other 26, which are all that the cascade's 5-bit rule numbers, the chip and the GPU hold. A net
+other 26, which are all that the cascade's 5-bit rule numbers and the chip hold; the GPU's tables
+hold 62 (with the movement agents' rules, `tests/views.rs`) and the two-way rules beside them. A net
 with superpositions runs on the abstract net and on the lattice's CPU; the GPU refuses it
 (`tables.rs` `gpu_refuses`: its 40-byte site has no room for labels), so the player stays on the
 CPU for it.
@@ -1335,10 +1141,10 @@ least 684 strands), averaged over its 5 runs:
 - **On the CPU** (cooling never runs on the GPU) a contraction takes under 15 ms for the small
   answers and 0.6 s for `greet "a"`, which goes further than before (0.3 s).
 - **On a chip or GPU** cooling needs no new state per site: the clock it began is saved with the
-  run. Now's cooling is a mode bit: the acceptance table for 0.05 (accept one quarter unit uphill at
-  441/65536, two at 2/65536, nothing more), one more case in the exchange test (an idle mover and an
-  idle agent there), and a flip that skips its acceptance and folds from its far corner when it
-  leaves a U-turn, inside its own square. Greedy turns need every candidate move (steps or
+  run. Cooling as `latest` has it (greedy turns, no passing: Cold storage, below) needs the
+  acceptance table for 0.05 (accept one quarter unit uphill at 441/65536, two at 2/65536, nothing
+  more), crowding off in cold sites, and a flip that skips its acceptance and folds from its far
+  corner when it leaves a U-turn, inside its own square. Greedy turns need every candidate move (steps or
   exchanges of up to 2 agents across 3 faces, a fold or flip for each used strand end) weighed from
   the state at the start of the clock, those reading a site an earlier turn in the block changed
   masked off, and one picked by its key and then the dice: no new state, but about 20 move
@@ -1382,7 +1188,7 @@ is sites in use per agent of the answer (2 agents a site is 0.5):
   It takes longer to settle (693 clocks of cooling against 243), since it goes much further.
 - **Runs are as fast or faster**, 8–15% on most: stored matter packed leaves more room near the
   reactions, and the 12-call mirror that jammed on one seed in 8 no longer does, without pressure.
-- **What did not help**: a reward for idle agents sharing a cold site (`compact`; it pairs agents
+- **What did not help** (`compact` and `heatcrowd` removed in ee0ba4a): a reward for idle agents sharing a cold site (`compact`; it pairs agents
   that are not wired together and lengthens the wires between partners); every crowding term off in
   cold sites during the run (`coldterms=15`: tree calculus 12–30% slower, the switchboard term the
   cost); heat reaching further (3 or 4 bits, falling slower along wires than through space: two-way
@@ -1422,7 +1228,20 @@ the clocks and cuts rewrites blocked for room from 101,000 to 26,000. Clocks to 
   batches (two-way `add 2 3`, `mirror (△, △△)` with thousands of blocked rewrites, `fib:0`), and
   handed back and forth with the player (Dawn, Firefox).
 
-## Running backward (`rev.rs`, `player/rev.html`)
+## Running it backward
+
+Four ways, each keeping a different amount of what a run would otherwise lose:
+
+| way | what can be undone | where it runs | what it keeps |
+|---|---|---|---|
+| the abstract net, every rewrite an event (`rev.rs`, `player/rev.html`) | every rewrite, in any causal order | the abstract net, CPU | a history 15–40× the loaded program |
+| two-way programs (`iso.rs`; on the lattice `two=1`, `twoway.rs`) | the program: every instruction a bijection, run back by its inverse | the lattice: CPU, GPU, player | nothing: the inverse program takes the result back |
+| the substrate (`substrate.rs`, `phys=1`) | every lattice rewrite while its record is kept, driven by ε | the lattice: CPU, player | records: at the answer 2.2–2.6× the loaded agents, 2,500–6,200 records |
+| keeping history (`resid=1`, `resid.rs`) | a tree-calculus run, each apply's residual kept in the net | the lattice: CPU | 2.4–4× the loaded agents at the answer |
+
+What a physical machine would need of each is weighed in research/REVERSIBLE_PIPELINE.md.
+
+### The abstract net, every rewrite an event (`rev.rs`, `player/rev.html`)
 
 `crate/src/rev.rs` runs the abstract net (not yet the lattice) so that every step can be undone
 exactly; research/REVERSIBLE_PIPELINE.md says why one would want that.
@@ -1493,7 +1312,7 @@ exactly; research/REVERSIBLE_PIPELINE.md says why one would want that.
   made by a number and a bond. As matter wired to what it made, a record would need a fourth port per
   agent, or receipts built of several agents, and receipts are matter that what they made drags along.
 
-## Two-way programs (`iso.rs`)
+### Two-way programs (`iso.rs`)
 
 The log of events above works for any program, at the price of a history 15–40 times the program.
 `crate/src/iso.rs` is the other way round: a calculus on trees in which no step loses anything, so a
@@ -1543,7 +1362,7 @@ program runs backward with nothing recorded, and the tree calculus itself is one
 - `tests/iso.rs` checks the inverses, `dagger` and `run`, and `tc` against eager evaluation on 400
   random applications and on disp's programs.
 
-## Two-way programs on the lattice (`two=1`, `twoway.rs`)
+### Two-way programs on the lattice (`two=1`, `twoway.rs`)
 
 A base where every program is a bijection, run on the lattice directly (research/RULES_TO_LATTICE.md,
 sketch B). **A program is a △ tree**, like any value: `Run` [program, x, program out, result] reads it a
@@ -1619,6 +1438,8 @@ two-way runs:
   player's: no rewrite for 30,000 clocks, three pairs ready side by side); with pressure (`press=3`,
   which pushes agents away from a rewrite blocked for room; the CPU's only) seeds 2, 3 and 7 took 27,000
   to 39,000. `mirror [swap; flip]` (6 calls) finished on all 8 seeds in 14,000 to 18,000 clocks without it.
+  Cold storage and the room field (`latest` since 2026-10-17, GPU included) took the 12-call mirror to
+  25,000 clocks on average with no jam on any seed (Cold storage, below).
 - `tests/twoway.rs`: `add` and its inverse against the reference interpreter and on the lattice; 120
   random programs of every instruction but loop and eval (the lattice gives what the reference gives,
   hands the program back and runs back to the input, and is stuck where the reference is); every
@@ -1638,7 +1459,7 @@ two-way runs:
 - Not yet: tree calculus as a guest (iso.rs's `tc` compiled to these instructions), and instructions as
   agents standing for their trees.
 
-## The substrate: the lattice as physics (`substrate.rs`, the player with `phys=1`)
+### The substrate: the lattice as physics (`substrate.rs`, the player with `phys=1`)
 
 `phys=1` runs the current design with every rewrite undoable while it is remembered, a drive that
 makes forward likelier than back, and heat for information lost. The player runs it with `phys=1`
@@ -1714,7 +1535,7 @@ loaded one again (the player's grid, seed 1):
   checked each clock), 40 forward and back to the loaded net agent for agent, the ledger balancing,
   and saved states repeating the run exactly with the drive changed on the way.
 
-## Keeping history: running it back exactly (`resid=1`, `resid.rs`)
+### Keeping history: running it back exactly (`resid=1`, `resid.rs`)
 
 `resid=1` loads the term as a tree at the root, and runs it so that every application keeps what it
 would have dropped, its residual, on a fourth port. The answer comes in bundled with the history at
@@ -1801,17 +1622,54 @@ research/reversible-core/residual.py, also kept at 8a287ab.
 
 ## Things tried that did not help, and why
 
+Those whose code was removed name the commit that still has it; their full write-ups and tables are in
+that commit's README.
+
+- **Caching what a program throws away.** What carries over between runs is the S rule's choice, as a
+  fact about code: for each S node of the loaded program, its `(b c)` is needed nearly always or
+  nearly never. Learned on a smaller input and kept as a mark that copies inherit (fib(1) for
+  fib(2), exp(0) for exp(1), sort(1) for sort(2)), no fork at marked nodes takes 13–29% fewer
+  rewrites than forking everywhere, but no fewer clocks (exp(1) 8% more): the lattice has room and
+  time to spare, so waste costs energy, not time. Marks from the code's shape alone remove almost
+  nothing.
+- **Sharing equal parts of the program** (`share=N`, removed in ee0ba4a, kept in fc4ea6b): built
+  once and read through duplicators, a disp program loads with 20–69% fewer agents, but takes
+  16–81% more clocks and up to 3.7× the peak sites. A shared part sits in one place and its readers
+  are spread over the drawing, so its copies travel along long wires, and code laid out ready is
+  copied a layer at a time instead. A disp program has no computation in it to share.
+- **Leases**: demand recomputed every step from the normalizer stops a thrown-away `(b c)` at once,
+  rather than when erasers reach it. In the ideal model fib(2)'s extra rewrites fall from 38% to 4%,
+  but much of the speed goes too (size-self 10.9× fewer steps → 2.6×), since an argument loses its
+  lease while it sits in a pair waiting to be triaged. It also needs demand sent again and again.
+- **Keeping the term's parts apart** (`strangers`, `trees`, `garbage`, removed in ee0ba4a, kept in
+  fc4ea6b): energies pushing apart agents of different segments of the term, with a 2-bit tree label
+  an agent's reader gives it. Tree labels made the parts a third less mixed (0.29 → 0.19 on the ten
+  disp programs) for seed noise in clocks (−7% to +6%); repelling every stranger separated less and
+  spread matter out (13% more sites). Separation gains no speed: rewrites happen where parts meet.
+- **Merging equal computations within a radius** (`memo=r`, removed in ee0ba4a, kept in fc4ea6b): a
+  central detector merged twins (equal terms as they read back) closer than r sites, one computing
+  and the other reading a copy through a fresh duplicator. On fib it saved a fifth to a third of the
+  rewrites, most of it within a site or two, since twins are born close; but clocks fell at most 12%
+  (seed noise), since twins run side by side (fork) and a merge takes work off a parallel branch,
+  not off the longest chain. Elsewhere there was little to merge (exp, sort: 1–11% of rewrites). A
+  detector confined to one 2×2×2 block kept half to all of that, but by names fixed when agents are
+  made, which would cost about 190 more bits a site to keep collisions rare. Memo stays the
+  optimizer's job (research/OPTIMIZER.typ). The idealised lazy machine it used is in `ideal.rs`.
 - **Pressure** from blocked rewrites (a diffusing field agents drift down): no measurable change
   on the corpus or on fib. Wire tension holds neighbours in place at least as strongly. A field that
-  works centres on demand instead, and spares the reader's partner (Fields, above).
-- **Short-range repulsion between all agents in neighbouring sites**: same. (The repulsion that
-  works is narrower: same site only, idle agents only.)
+  works centres on demand instead, and spares the reader's partner (Fields, above). Later, with
+  bigger rules, it did help: it cleared the two-way mirror's jams (`press=3`, Two-way programs on the
+  lattice), and keeping history runs with it on (`resid`, 3 by default). The room field (Cold storage)
+  is its successor in `latest`, on the GPU too.
+- **Short-range repulsion between all agents in neighbouring sites** (`repel`, removed in ee0ba4a):
+  same. (The repulsion that works is narrower: same site only, idle agents only.)
 - **Stronger crowding of every agent**: 4–21% fewer clocks at crowding 3; tension still packs
   everything.
 - **Calling values**: letting a demand pulse that reaches a value mark it active, so it also
   passes through idle matter toward its reader. Within seed noise, and blocked rewrites roughly
   tripled as called values crowd in around their readers. Today it saves
-  about 20% on its own, and with the demand field it is part of the largest gain (Fields, above).
+  about 20% on its own, and with the demand field it is part of the largest gain (Fields, above):
+  `latest` calls values (`demand=1` sets `calls`).
 - **Weak or no tension on idle matter**: wires grow without bound and the reaction zone still
   congests.
 - **Splitting big rules** so each step creates at most two agents, with a temporary "builder"
@@ -1822,7 +1680,7 @@ research/reversible-core/residual.py, also kept at 8a287ab.
 
   Five ports would make every switchboard bigger, so this stayed an analysis.
 - **Lower temperature** with the idle repulsion (1.5): slower everywhere, before loads were
-  packed (Loading packed, above).
+  packed (Loading packed, above). Once they were, 1.5 became `latest`'s temperature.
 - **Copying a suspension** instead of forcing it once (call by name at `Dn·P`): nothing to choose.
   Duplicators never meet a suspension in a run (0 on lambada `fib:1`, `fib:2`, `sort:1` and disp
   `add 2 3`, `fib 2`, `rev [1, 2]`): sharing a computation's result is structural, a duplicator
@@ -1841,6 +1699,7 @@ research/reversible-core/residual.py, also kept at 8a287ab.
   out because it is not local: a number standing for a place is a pointer (the lattice looked the
   unit up in a table to steer calls to it), the unit read its arguments and worked out its answer
   through the abstract net, and arguments made to travel as agents never packed around the unit.
+  Removed in dc6ab4f; the code is kept in aed83b0.
 - **Walker priority under random turns**: neutral at 50%, livelock at 100% (above). Under
   blocks 80% is already slower than 50%.
 - **Under blocks with one move per block**: a higher step rate is worse (wires need reshaping
@@ -2064,7 +1923,7 @@ the 490×490×8 lattice each frame.
 
 Cooling stays on the CPU. On the GPU it would need a second acceptance table (the only place the
 temperature enters, `Energy::new`'s `accept`), for 0.05, now that cooling drops there at once, and
-the passing and corner-cutting moves behind a mode bit (Contracting the answer, above). It would gain
+the greedy turns and corner-cutting flips behind a mode bit (Contracting the answer, above). It would gain
 nothing: by the time it cools, the answer holds 5 to 10 sites on these programs, and a few hundred
 clocks of cooling take a few ms on the CPU, less than one readback in Firefox.
 
@@ -2091,7 +1950,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~35 s: corpus in 6 configurations (one with the demand field, one keeping the parts apart), per-move invariants, collection, cooling, handover, reading back, merging equal computations, superpositions, movement agents, the substrate forward and back
+cargo test --release                                  # ~50 s: corpus in 5 configurations, per-move invariants, collection, cooling as latest cools, handover, reading back, superpositions, movement agents, the substrate forward and back, keeping history, two-way programs (14 s), running backward
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -2121,9 +1980,7 @@ the player itself there, `player/firefox.sh input` checks its input box and comp
 answer), and `player/dawn.sh bench 'src=fib:1'` times it against the browser's CPU engine
 (`copies=16&clocks=512` for many copies side by side, `demand=0&fork=0` for the chip's schedule alone). `TRACE=file strands-run ...` writes when each rewrite's pair
 first existed, when its reader was first wanted, when it fired and how far apart the pair was.
-`READDIST=1 strands-run ...` reports how far each read of a copy of a loaded value is from where that
-value was loaded, and from the last 4 places it was read (research/LINEAR_TREE_NETS.md, reading code
-without consuming it). `strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
+`strands-run --clean N` runs on past the answer (up to N clocks) and reports when only the
 answer is left; `PIECES=1` lists the connected pieces of the net at the end. With `--cool M` it
 then cools for M clocks and reports when the player would call it done and how short the answer
 got, once for each `--vary 'key=value ...'` from the same state (`coolhalf`, `coolmin`, `coolpass`,
@@ -2132,10 +1989,7 @@ end. `--fit` sizes the grid as the player does, and a term may be `@file`.
 `strands-run --profile` prints what wanted readers spend their time waiting on, how crowded it
 is where walkers go, and what switchboards hold; `--progress N` prints the wanted readers and
 their wire lengths every N proposals, and `WHO=1` adds what each one is waiting on, which is
-how the 2D jam was diagnosed. `strands-run --mix N` prints how mixed the root's segments are,
-sampled every N clocks, and how many agents carry the tree label their reader gives them (Keeping
-the term's parts apart, above); `strands-run` takes `key=value` settings as `strands-sweep` spells
-them, applied after the flags (`--latest trees=4`). `strands-memo TERM --every N --keys --ideal`
-prints the census of equal computations (Memo radius, above) on a lattice sized as the player sizes
-it, and `strands-memo TERM --run memo=R` one line of counts for a run (`@file` reads the term from a
-file; `MEMO_LOG=1` lists the merges).
+how the 2D jam was diagnosed. `strands-run` takes `key=value` settings as `strands-sweep` spells
+them, applied after the flags (`--latest epswalk=1`). `strands-flow` runs workloads × settings ×
+seeds in parallel, from load to the answer, its garbage gone and the answer contracted (Cold
+storage, above); `player/firefox.sh phys 'src=add 1 1'` runs the player as physics there and back.

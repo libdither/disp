@@ -79,19 +79,23 @@ fn demand_field_and_fork() {
 fn cooling_keeps_the_answer() {
     let mut cooled = 0;
     for (i, (t, want)) in corpus().iter().enumerate().step_by(8) {
-        for greedy in ["0", "1", "2"] {
+        // Turns as ever, greedy ones passing, and greedy ones as `latest` cools: cold sites, no passing.
+        let ways: [&[(&str, &str)]; 3] = [&[("coolgreedy", "0")], &[("coolgreedy", "2")],
+                                          &[("coolgreedy", "2"), ("cold", "1"), ("coldterms", "8"), ("coolpass", "0")]];
+        for sets in ways {
+            let greedy = format!("{sets:?}");
             let mut net = Net::new();
             let root = net.build(t);
             let (_, out) = net.drive(root);
-            let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..demand_and_fork(16, 4, &[("coolgreedy", greedy)]) }, net, out) else { continue };
+            let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..demand_and_fork(16, 4, sets) }, net, out) else { continue };
             assert!(l.run(50_000_000), "term {i} did not finish");
             let mut marks = vec![];
             for _ in 0..5000 { if l.garbage(&mut marks) == 0 { break; } let next = l.stats.proposals + 1; l.run_on(next); }
             l.cool();
             l.check_every = 1;
             for _ in 0..200 { let next = l.stats.proposals + 1; l.run_on(next); }
-            assert_eq!(l.readback().map(|t| oracle::show(&t)).as_deref(), Some(want.as_str()), "term {i}, coolgreedy={greedy}: WRONG ANSWER");
-            l.check_projection().unwrap_or_else(|e| panic!("term {i}, coolgreedy={greedy}: {e}"));
+            assert_eq!(l.readback().map(|t| oracle::show(&t)).as_deref(), Some(want.as_str()), "term {i}, {greedy}: WRONG ANSWER");
+            l.check_projection().unwrap_or_else(|e| panic!("term {i}, {greedy}: {e}"));
             cooled += 1;
         }
     }

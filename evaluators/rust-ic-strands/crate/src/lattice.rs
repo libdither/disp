@@ -5,14 +5,17 @@
 //! ends. A wire is therefore a path: agent port, switchboard, strand, switchboard, ...,
 //! agent port. Crossing is free: two wires just pass through the same switchboard.
 //!
-//! Every move reads and writes at most a 2×2 block of sites:
+//! Every move reads and writes at most a 2×2 square of sites (with blocks, one 2×2×2 block):
 //! - hop: an agent steps to a neighbouring site, eating the strand it walked along and
 //!   dragging its other wires one strand longer;
+//! - exchange: stepping into a full site, an agent may trade places with one there;
 //! - fold: a wire that leaves a site and comes straight back (a U-turn) snaps shut;
 //! - flip: a wire's corner turns to the other side of its 2×2 square;
-//! - fire: a rewrite happens inside one site once both reactants are in it.
-//! Moves are proposed at random and accepted by an energy (wire tension, heavier on
-//! principal wires so reactants find each other, plus crowding pressure), Metropolis-style.
+//! - fire: a rewrite, once the two reactants are in one site or one strand apart, its fresh
+//!   agents seated in a 2×2 square in any plane.
+//! Moves are proposed at random and accepted by an energy (wire tension, heavier on principal
+//! wires so reactants find each other, crowding of sites, links and switchboards, and the fields),
+//! Metropolis-style.
 
 #[path = "field.rs"]
 mod field;
@@ -874,8 +877,9 @@ impl Lattice {
     }
 
     /// Start cooling: from the next clock on the temperature is `cool_min` (or halves down to it
-    /// every `cool_half` clocks), and idle agents pass each other and corners are cut (`cool_pass`,
-    /// `cool_cut`), so the answer contracts as far as it will go.
+    /// every `cool_half` clocks), turns are greedy (`cool_greedy`), corners are cut (`cool_cut`),
+    /// crowding goes in cold sites (`cool_terms`), and with `cool_pass` idle agents pass each other,
+    /// so the answer contracts.
     pub fn cool(&mut self) { if self.cooling.is_none() { self.cooling = Some((self.stats.clocks, self.p.temp)); } }
     /// Run at temperature t from the next move on.
     pub fn set_temp(&mut self, t: f64) { if self.p.temp != t { self.p.temp = t; self.e = Energy::new(&self.p); } }
