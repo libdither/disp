@@ -1,6 +1,7 @@
 # Linear tree nets: moving and reading code instead of copying it
 
-Design analysis with a prototype, 2026-10-09. Nothing here is landed in an evaluator. The
+Design analysis with a prototype, 2026-10-09. Its movement agents landed in rust-ic-strands as
+`views=1` (5a3158d, README "Movement agents"); the rest is not in an evaluator. The
 prototype is `research/linear-nets/` (experimental, a crate of its own that only reads the
 evaluators' code); how to rerun every number is at the end.
 

@@ -42,50 +42,20 @@ far is the strand lattice from running that way, and what would it take?
   Nothing more is possible: reversible machines
   ["can compute exactly all injective, computable functions"](https://researchprofiles.ku.dk/en/publications/what-do-reversible-programs-compute/#main-content).
 
-## Step 1, done: the net run backward
+## Step 1, done: the net run backward, and on the lattice
 
-`evaluators/rust-ic-strands/crate/src/rev.rs` (README section Running backward, `player/rev.html`)
-runs the abstract net with every rewrite an event that keeps the agents it used up and where their
-ports now lead. What it showed:
-- **Exact, in any causal order.** An event can be undone while everything it made is still there;
-  86 terms run forward, partly back, forward again and then back in random order all come back to
-  the loaded net, agent for agent.
-- **Erasing need not be avoided.** Once each erasing step is recorded, nothing is lost, and keeping
-  erased values whole stores about as much (1 + 1: 1,490 events and 642 agents of residue, against
-  1,936 events and none). The sketch below expected residue to be the way; it is not needed.
-- **Un-copy is the lever**: as recorded events, the lattice's collection cuts the history 3.6–10×.
-- **The history is 15–40× the loaded program** (about 2.3 used-up agents an event). Shrinking it is
-  the next problem: Bennett's pebbling, or forgetting on purpose.
-- **Bennett's copy needs a reader that does not consume.** Copying the answer out and running
-  backward fails as stated: the duplicator uses the answer up, so the steps that made the answer
-  cannot be undone without undoing the copy. Garbage-free bijections (step 2) need a copy that reads
-  the answer and leaves it in place, such as a token walking the tree.
-
-## On the lattice: the substrate
-
-`phys=1` (README section The substrate, `player/substrate.html`) puts step 1 on the strand lattice,
-every move still local:
-- **Records go with what they made.** A rewrite's record (what it used up, and the ends of the wires
-  it joined) carries a number that what it made carries too; an undo is a move like a rewrite, taken
-  where everything the record made sits inside one 2×2×2 block, and it brings the used-up agents back
-  with their ids. 40 random terms and disp's `add 1 1`, `add 2 3`, `fib 2` and `relay_add 13 6` run
-  forward to the answer and back to the loaded net, agent for agent. The records still sit in a table
-  under their numbers, not as matter (item 3 below).
-- **A drive instead of a direction.** Every move has its reverse, taken with Boltzmann chances around
-  a drive ε, as in Bennett's Brownian computer, where the computation is driven forward by
-  ["a weak driving force in the direction of forward computation"](https://sites.pitt.edu/~jdnorton/lectures/Rotman_Summer_School_2013/thermo_computing_docs/Bennett_1982.pdf#page=1)
-  and pays ε a step in heat; with ε < 0 the run goes backward.
-- **Erasing is recorded until a leaf.** Erasers take values apart as recorded rewrites; only taking a
-  leaf loses anything, and that is a decision, with Landauer's price (a unit of heat) and the loss of
-  every record that only the leaf led back through. Un-copying is free. So the history is forgotten
-  by choice, where and when one likes, as item 4 asks.
-- **What it costs.** Forward about what the plain lattice takes (8–17% more clocks), 2.2–2.6× the
-  agents at the answer kept as what was dropped, and 2,500–6,200 records a run; back 10–12× the clocks
-  forward, spent bringing what an undo needs together (records tie what they made, a bond that pulls
-  harder going backward).
-- **A simpler core** is weighed in research/REVERSIBLE_CORE.md: the history kept as matter wired to
-  what it made (footprints), with no numbers or tables, and a reader that lets Bennett's cleanup run
-  inside the net.
+The measurements are in rust-ic-strands' README, chapter "Running it backward":
+- **The net run backward** (`rev.rs`, `player/rev.html`): every rewrite an event, exact in any causal
+  order; erasing need not be avoided; un-copy (the lattice's collection, as events) cuts the history
+  3.6–10×, which is still 15–40× the loaded program. Bennett's copy needs a reader that does not
+  consume: the duplicator uses the answer up.
+- **On the lattice, the substrate** (`phys=1`; the player with `phys=1`): records go with what they
+  made, every move has its reverse around a drive ε as in Bennett's Brownian computer, erasing is
+  recorded until a leaf. Forward 8–17% more clocks than the plain lattice, back 10–12×; the records
+  still sit in a table. A simpler core with the history as matter (footprints) was weighed in a review
+  kept in git (research/REVERSIBLE_CORE.md at d7e3b96).
+- **Keeping history** (`resid=1`): each apply leaves its residual on a fourth port, and the run comes
+  back to the term exactly, the history 2.4–4× the loaded agents.
 
 ## Native: two-way programs, no receipts at all
 
@@ -102,7 +72,7 @@ give different shapes, the reversible functional languages' rule that
 a loop states tests for its first and last rounds, as Janus's loops do.
 - **The pipeline is a tree.** Programs, data, the library and the trace are all trees. `run` runs a
   program that arrives as data; `dagger`, a two-way program, inverts programs given as trees.
-- **A machine walking the program needs no record** (tried and removed, commit eca0073). Only the
+- **A machine walking the program needs no record** (tried and removed, commit 2a32736). Only the
   token's place and what it carries change, so turning it around runs it back. Danos and Regnier's
   interaction abstract machine (the geometry of interaction's token machine) is reversible for the
   same reason: it
@@ -262,10 +232,11 @@ apart and stop at leaves, and it needs no ghosts, since an un-copy's record keep
 2. **Garbage-free bijections** (natively, for programs written two-way: Native, above): compute, copy the answer, run backward to clear the history, then the
    inverse program on the copy, run backward again to clear the input: answer only. Needs the inverse,
    written or derived (a printer–parser pair written once, research/TREE_READBACK.md).
-3. **The lattice, logically reversible**: done but for one thing (On the lattice, above): records
-   tie what they made by number and bond, and every undo is local, but the records themselves sit in a
-   table. As matter on sites, wired to what they made, they need a fourth port per agent (or records
-   built of several agents); records are matter that what they made drags along.
+3. **The lattice, logically reversible**: done but for one thing (Step 1, above): records tie what
+   they made by number and bond, and every undo is local, but the records themselves sit in a table.
+   As matter on sites, wired to what they made, they need a fourth port per agent (keeping history
+   has one now) or records built of several agents; records are matter that what they made drags
+   along.
 4. **The lattice, physically reversible**: moves as their own inverses on a block, energy from and to
    a demon per site rather than Metropolis acceptance, so each clock is a bijection on block states;
    collection and cooling as a separate forgetting phase. The block schedule is Margolus's, made for

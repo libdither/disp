@@ -10,7 +10,7 @@ Research note, 2026-10-15. Two parts:
 
 Earlier notes this builds on: research/interaction-combinator/tc-net.typ (the net, as a paper),
 research/interaction-combinator/SPATIAL_IC.md and EMBEDDING_THEOREM.md (net to grid), research/REVERSIBLE_CORE.md
-(reversibility; its literature map is not repeated here), research/LINEAR_TREE_NETS.md (reading code without
+(reversibility, in git at d7e3b96; its literature map is not repeated here), research/LINEAR_TREE_NETS.md (reading code without
 copying it). Delete once its conclusions live in code or in a `.typ` paper.
 
 ## 1. Stage 0: the rewrite function
@@ -167,7 +167,7 @@ apply, even for the constructor cases, whose residual is just "a constructor fir
 **Running back must be local too.** Reading a rule right to left means finding its right side, a small
 subnet, intact. On the lattice those agents drift apart as soon as they are made, so the substrate's undo
 waited for them to gather (10–12× the forward clocks). The repo's two working answers both make every
-backward step two agents on one wire: footprints (research/REVERSIBLE_CORE.md: the used pair stays fused,
+backward step two agents on one wire: footprints (research/REVERSIBLE_CORE.md at d7e3b96: the used pair stays fused,
 and products return to it along a back wire) and the residual walkers built here (`A-` meets a residual
 and a result). The mirror walkers are the price of that locality, paid per kind of rule.
 
@@ -180,7 +180,7 @@ Tree calculus on the lattice picks the first and third and copies code layer by 
 6–33% of copies are ever needed at once). A code table picks the first two and is not a cellular automaton.
 Circuits and resident machines pick the last two, and code is hardware. Riders (code read in place by
 pointers) showed the cost of the middle corner in reverse: callers sharing code share its history, so
-undo without ids becomes last-in-first-out across unrelated calls (research/REVERSIBLE_CORE.md §4). So
+undo without ids becomes last-in-first-out across unrelated calls (research/REVERSIBLE_CORE.md §4, at d7e3b96). So
 copies are not only a cost: they are what give each call a private history and its own place to run.
 
 **Loops without copying.** A linear system can run forever: a Turing machine never copies a cell, and a
@@ -266,7 +266,7 @@ paper, treecalcul.us, arXiv).
 
 ## 8. Where that leaves disp
 
-**Our own rules against Salikhmetov's test** (rule_audit.py on residual.py's tables, at 8a287ab):
+**Our own rules against Salikhmetov's test** (rule_audit.py, in git at d7e3b96, on residual.py's tables at 8a287ab):
 
 | table | rules | connected | right sides alike | not connected |
 |---|---|---|---|---|
@@ -318,7 +318,7 @@ Swap the base for one whose rules are bijections, and run tree calculus inside i
 - **Reflection**: `run` interprets a program given as a tree, handing the program back with the result
   (R-WHILE's rule); the meta-circular Πᵒ interpreter shows loops can re-enter it without copying.
 
-The repo has built this language already: iso.rs (deleted in 2a32736, kept in eca0073) had rearrange,
+The repo has built this language already: iso.rs (its walking machines deleted in 2a32736, kept in eca0073) had rearrange,
 copy, choose, loop, call, `run`, `both`, `dagger` and `forget`, with tree calculus derived as `tc` and `tck`.
 What sank it was the step down: a single walker, 9.4–51× the net's rounds, which Lafont's remark above
 predicts. **What is new here is the step down**, by the recipe of sections 2–3 applied to iso.rs's
@@ -357,10 +357,12 @@ question.
   net for one; a universal reversible interaction system is an open problem.
 
 Experiments, in order, all in the Python model first:
-1. **Sketch B's net.** Turn iso.rs's interpreter into frames (section 2's recipe), run the repo's two-way
+1. **Sketch B's net** (done: section 10). Turn iso.rs's interpreter into frames (section 2's recipe), run the repo's two-way
    programs (`add`, `tc` on the 21 compiled calls) with demand, and count parallel rounds against the tree
    calculus net. Pass: within 2× its rounds on `tc`. This decides between the sketches.
-2. **Audit it.** Run rule_audit.py's connectivity and look-alike checks on the new table; count kinds.
+2. **Audit it** (done, 2026-10-18: rust-ca-lattice `cargo run --example clash`). Of the 74 two-way rules,
+   21 leave their products in two pieces and 11 fall in 6 groups whose products look alike; the tree
+   calculus's 26: 5 and 2.
 3. **Sketch A's cleanups**, if B fails: connect the five forward rules and see which mirror walkers become
    unnecessary; add `trace`/`untrace` as per-call operations.
 4. **Feedback loops on the lattice**: a tail loop whose frame re-creates itself, measured against the same
@@ -377,7 +379,7 @@ lattice"). It takes sketch B's base and leaves its pattern clauses for later:
 - **The step down is mostly wiring.** With four ports, `Run` meeting sequence, parallel, swap, regrouping
   or eval rewires the program's parts to new `Run`s and a `Split` that takes a fork apart; nothing waits
   in a frame. Only the steps that read data to decide (cond, loop, flip, merge) have frames. 48 rules and
-  27 kinds (15 of them the opcodes), against 82 rules and 38 kinds for keeping tree calculus's history.
+  27 kinds then (15 of them the opcodes; 74 and 36 once programs became trees, below), against 82 rules and 38 kinds for keeping tree calculus's history.
 - **The recipe's three properties, checked**: depth one (every opcode reads one constructor at a time,
   regrouping two), linear (copy and merge are the only non-linear steps, and they are explicit), and
   one-to-one at the level of programs (every program has an inverse). The table itself is not one-to-one
@@ -397,4 +399,5 @@ lattice"). It takes sketch B's base and leaves its pattern clauses for later:
   time). Recursion that branches works forward and back (`mirror`, through eval on copies of itself),
   bit for bit on the GPU. The price: 1.7× the rewrites of instructions as agents but 25–30% more clocks,
   the runs reading ahead while data travels; and programs copying themselves crowd the lattice enough to
-  jam the 6-fresh rules on one seed in 8, which pressure (CPU only) clears.
+  jam the 6-fresh rules on one seed in 8, which pressure (CPU only) cleared, and cold storage with the room
+  field (GPU too) since 2026-10-17.
