@@ -1346,7 +1346,7 @@ program runs backward with nothing recorded, and the tree calculus itself is one
   triage did not take (9,463 against 266), and 102 of the 116 pieces thrown away are copies of parts of
   the program itself: a recursive function copies itself at each call, and the base case's K throws the
   copy away. The trace has 10,828 nodes but 427 distinct subtrees (`fib 3`: 82,311 and 1,736;
-  `tests/trace_shape.rs`).
+  `tests/trace_shape.rs`, removed in ee0ba4a).
 - **What to do with the trace** is the caller's choice: keep it (all of it runs back), clean it up
   (`bennett`: run, copy the answer, run back; twice the steps, leaving the program, its arguments and
   the answer), or throw it away (`forget`: the run cannot go back past it). A disp program that is a

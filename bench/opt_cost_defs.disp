@@ -7,7 +7,7 @@
 open use "../lib/prelude.disp"
 open use "../archive/live-kernel/kernel/prelude.disp"
 open use "../archive/live-kernel/std/list.disp"
-open use "../archive/live-kernel/std/nat/arith.disp"
+open use "../archive/live-kernel/std/nat.disp"
 
 my_list_disp := fix ({self, motive, cases, target} =>
   if (is_leaf target) then cases.nil

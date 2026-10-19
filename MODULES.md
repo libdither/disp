@@ -236,6 +236,9 @@ is its own definitions, its `open`s, and its givens. Consequences:
 
 ## The kernel bootstrap
 
+This describes the retired kernel, now in `archive/live-kernel/kernel/` (`cut.disp`, `engine.disp` and
+their barrel); the kernel in `lib/kernel/` is laid out differently.
+
 Value dependencies between fragments are acyclic by construction, so they
 become honest imports. Annotation dependencies are mutually recursive, so
 they become givens, filled by the barrel. Each fragment gets a header:

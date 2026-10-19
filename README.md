@@ -227,7 +227,7 @@ Working today:
 - The full pipeline: parser, elaborator, and tree-calculus evaluation (`src/`), with the surface grammar specified in [`SYNTAX.typ`](SYNTAX.typ).
 - The kernel (`lib/kernel/`): a self-contained checker where hypotheses are ordinary trees and legitimacy comes from provenance (a session ledger plus history replay), with three interchangeable checking tiers (static certification, a value-level walk simulator, extensional trials) behind one table interface, quotients, a typed equation ledger, and machine-checked induction proofs. Roughly 1,300 pins across `lib/kernel/*.test.disp` and `lib/tests/`.
 - The previous kernel and its world, retired intact to `archive/live-kernel/` (`kernel/` two-op trusted core, `std/`, and its ~1,200-pin test corpus): still loadable from the archive, no longer part of the maintained surface. The example section above teaches it pending a rewrite.
-- Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, about twice as fast as the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests.
+- Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, about twice as fast as the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests. Beside them, `rust-ic-strands` runs the net on a lattice where wires are physical (CPU, GPU, a browser player, a chip design), on the rules in `tree-net`.
 - A first end-to-end slice of the optimizer: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (archived at `archive/live-kernel/tests/opt_q1_*.test.disp`).
 
 Designed but not built: the optimizer itself ([`research/OPTIMIZER.typ`](research/OPTIMIZER.typ)), effects as a library, cost as a typing-level resource, cubical path types, and the neural proposer. The open research risks, most sharply whether a decidable fragment of behavioral equivalence is rich enough to license the rewrites an optimizer needs, are catalogued as falsifiable questions in [`FOUNDATIONS.md`](FOUNDATIONS.md) §V.
@@ -302,7 +302,7 @@ lib/                        -- the language, written in itself
   kernel/                   --   the type system: checker + library types + barrel, and its test pins
   tests/                    --   substrate-level tests, the refuter and confirmer, the certified rewrites (claim.test.disp)
 
-evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers)
+evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers), and the strand lattice (rust-ic-strands, on tree-net)
 test/                       -- vitest harness + host unit tests
 bench/                      -- evaluator benchmarks
 research/                   -- research notes and unbuilt designs (OPTIMIZER.typ, CLAIMS_OVER_TREES.md, AC_IDEA.md, NATIVE_BOOTSTRAP_PLAN.typ)

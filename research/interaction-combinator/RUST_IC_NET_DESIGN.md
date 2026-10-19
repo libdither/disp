@@ -533,4 +533,4 @@ Atkey *QTT* + McBride *I Got Plenty o' Nuttin'* (quantitative types), Petricek�
 **BOHM**, Pedicini–Quaglia **PELCR**, **Lambdascope**; Arvind–Nikhil *Id/pH* (lenient
 dataflow); Blelloch–Greiner (work-span cost semantics). Internal: `tc-net.typ`,
 `research/OPTIMIZER.typ`, `research/effects-and-coeffects.typ`,
-`research/one-offs/MODAL_TYPES_INVESTIGATION.md`, `src/eval/types.ts`, the `rust-eager` crate + seam.
+`archive/one-offs/MODAL_TYPES_INVESTIGATION.md`, `src/eval/types.ts`, the `rust-eager` crate + seam.

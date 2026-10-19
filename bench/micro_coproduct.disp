@@ -10,7 +10,7 @@
 
 open use "../lib/prelude.disp"
 open use "../archive/live-kernel/kernel/prelude.disp"
-open use "../archive/live-kernel/std/nat/arith.disp"
+open use "../archive/live-kernel/std/nat.disp"
 
 let N := 100
 

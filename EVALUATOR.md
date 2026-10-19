@@ -105,6 +105,9 @@ rust-ic-net is the literal materialization.
   self-contained folder per *foreign project*
   (`lambada/`, `rust-eager/`, `rust-ic-net/`) — each just a `build.sh` + gitignored
   `artifacts/` (+ a `vendor/` only for multi-file upstreams), **excluded from the TS build**.
+  Beside them, not registered as backends: `rust-ic-strands/` (the net on a lattice where
+  wires are physical: a CPU simulator, GPU kernels, a browser player and a chip design) and
+  `tree-net/` (the rules, abstract net and oracle it shares).
   *(Deferred: an optional `src/eval/impl/` reshuffle grouping each evaluator's internals — a
   pure file-move, no functional value.)*
 - **Graceful degradation:** the registry registers `eager`+`naive` unconditionally and each

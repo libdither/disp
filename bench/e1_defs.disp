@@ -4,7 +4,7 @@
 // the runner picks argument sizes.
 
 open use "../archive/live-kernel/kernel/prelude.disp"
-open use "../archive/live-kernel/std/nat/arith.disp"
+open use "../archive/live-kernel/std/nat.disp"
 
 e1_add := add
 e1_param_apply := param_apply

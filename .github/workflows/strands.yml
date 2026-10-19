@@ -1,0 +1,41 @@
+name: Strand lattice
+
+# rust-ic-strands' own tests and the tree-net crate under it (the CPU simulator; the GPU and player
+# checks need a GPU and a browser, and run locally: hw/validate.sh, player/dawn.sh, player/firefox.sh).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'evaluators/rust-ic-strands/crate/**'
+      - 'evaluators/rust-ic-strands/player/programs.js'
+      - 'evaluators/tree-net/**'
+      - '.github/workflows/strands.yml'
+  pull_request:
+    paths:
+      - 'evaluators/rust-ic-strands/crate/**'
+      - 'evaluators/rust-ic-strands/player/programs.js'
+      - 'evaluators/tree-net/**'
+      - '.github/workflows/strands.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: strands-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            evaluators/tree-net/crate
+            evaluators/rust-ic-strands/crate
+      - name: tree-net
+        run: cargo test --release
+        working-directory: evaluators/tree-net/crate
+      - name: rust-ic-strands
+        run: cargo test --release
+        working-directory: evaluators/rust-ic-strands/crate
