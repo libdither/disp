@@ -19,6 +19,13 @@
   #decoded { font-size:18px; color:var(--hot); word-break:break-word; } #decoded .at { font-size:12px; color:var(--fg-muted); }
   #badge { font-size:11.5px; color:var(--fg-muted); } #badge.ok { color:var(--ok); } #badge.bad { color:var(--warn); }
   #verdict { font-size:11px; color:var(--fg-faint); }
+  #ledger { font-size:11.5px; color:var(--fg-muted); margin-top:3px; } #ledger b { color:#ff9e64; font-weight:normal; } #ledger i { color:#b39cff; font-style:normal; }
+  /* the substrate's settings, under the time bar */
+  #subrow { display:flex; gap:12px; align-items:center; justify-content:center; flex-wrap:wrap; font:11.5px var(--body); color:var(--fg-muted); margin:2px auto 4px; }
+  #subrow label { display:inline-flex; gap:5px; align-items:center; }
+  #subrow input[type=range] { width:96px; padding:0; } #subrow .val { font:11px var(--mono); color:var(--fg); min-width:2.6em; }
+  #subrow button { font-size:11.5px; padding:2px 9px; border-radius:12px; } #subrow button.on { border-color:#b39cff; color:#b39cff; }
+  #subrow[hidden], .phys[hidden] { display:none; }
   #banner { position:absolute; z-index:6; top:12px; left:50%; transform:translateX(-50%); max-width:60%; padding:5px 12px; border-radius:9px;
     border:1px solid var(--border-strong); background:rgba(11,14,20,.92); font-size:12px; pointer-events:none; opacity:0; transition:opacity .4s; }
   /* the 3D view's controls, top right, in the dock's style; their tips open downward */
@@ -155,7 +162,7 @@
 <div id="wrap">
   <div id="stage">
     <canvas id="cv"></canvas><canvas id="cv3" hidden></canvas>
-    <div id="hud"><div id="decoded"></div><div id="badge">loading</div><div id="verdict"></div></div>
+    <div id="hud"><div id="decoded"></div><div id="badge">loading</div><div id="verdict"></div><div id="ledger" hidden></div></div>
     <div id="bar3d" hidden>
       <label class="gap3" data-tip="spacing between the layers, and past where it starts between every site too"><svg class="ico stroke" viewBox="0 0 24 24"><path d="M12 3.5 3.5 8l8.5 4.5L20.5 8z"/><path d="M3.5 12.5 12 17l8.5-4.5"/><path d="M3.5 16.5 12 21l8.5-4.5"/></svg><input id="gap3d" type="range" min="10" max="120" value="30" aria-label="spacing between the layers and the sites"></label>
       <select id="layer3d" aria-label="layers shown"><option value="all">all layers</option></select>
@@ -169,10 +176,19 @@
         <span class="info"><button type="button" class="mini info-btn" aria-label="what can I type here?">i</button>
           <span class="info-pop" role="tooltip"><p id="progInfo"></p>
             <p><kbd>Enter</kbd> loads · <kbd>↓</kbd> lists the programs · <kbd>space</kbd> plays · <kbd>←</kbd> <kbd>→</kbd> a clock,
-              with <kbd>shift</kbd> a rewrite · <kbd>R</kbd> restarts · <kbd>V</kbd> view · <kbd>G</kbd> GPU · <kbd>D</kbd> details · <kbd>F</kbd> fit</p>
+              with <kbd>shift</kbd> a rewrite · <kbd>R</kbd> restarts<span class="phys" hidden> · <kbd>B</kbd> turns the drive round</span> · <kbd>V</kbd> view · <kbd>G</kbd> GPU · <kbd>D</kbd> details · <kbd>F</kbd> fit</p>
             <p>Drag to pan, wheel to zoom. Click a site to see what is in it. <kbd>shift</kbd>+click an agent to read what it computes,
               as disp, in the details (hold <kbd>shift</kbd> to preview); <kbd>Esc</kbd> lets go.</p></span></span>
         <div id="menu" hidden></div>
+      </div>
+      <div id="subrow" hidden>
+        <label data-tip="the drive ε: a rewrite goes forward with chance min(1, e^(ε/T)) and is undone with min(1, e^(−ε/T)), T = 1.5; below 0 the run goes backward">drive
+          <input id="drive" type="range" min="-12" max="12" step="0.5" value="8" aria-label="drive"><span class="val" id="driveV">8</span></label>
+        <button id="flip" data-tip="turn the drive round (B): to −9 to run back, to +8 to run forward">run backward</button>
+        <label data-tip="an eraser takes a leaf only by deciding to: ticked, it always does, and the leaf is gone for good (heat), and with it every record that only it could have led back through"><input id="erase" type="checkbox"> erase leaves</label>
+        <label data-tip="chance a turn that an agent forgets the record of what made it: a unit of heat, and nothing before it can be undone">forget
+          <input id="forget" type="range" min="0" max="100" value="0" aria-label="forget"><span class="val" id="forgetV">0</span></label>
+        <button id="bondsBtn" data-tip="draw the bonds of the records kept: what one rewrite made, tied together until it is undone or forgotten">bonds</button>
       </div>
       <div id="timebar"><div id="timeline"><canvas id="ticks"></canvas><input id="time" type="range" min="0" max="0" value="0" aria-label="every clock reached so far"></div>
         <span id="timev"></span></div>
@@ -206,11 +222,15 @@
     <div id="tip" hidden></div>
   </div>
   <div id="side" hidden>
-    <div class="sidehead"><h1>interaction nets as strands on a lattice</h1><button id="closeSide" aria-label="close (D)">×</button></div>
-    <div class="note">No addresses and no routing. A wire is a path of <i>strands</i> laid along the links between
+    <div class="sidehead"><h1 id="sideTitle">interaction nets as strands on a lattice</h1><button id="closeSide" aria-label="close (D)">×</button></div>
+    <div class="note" id="notePlain">No addresses and no routing. A wire is a path of <i>strands</i> laid along the links between
       neighbouring sites; strand i of a link is the same wire from both sides. Each site holds a bead or two (agents)
       and a little switchboard joining the strand ends that meet there. Every move is a random local proposal,
       accepted by an energy: wires pull like springs, crowding pushes, heat jiggles.</div>
+    <div class="note phys" hidden>The tree calculus's interaction net on the strand lattice, run as physics. Matter (leaves, stems,
+      forks) and the agents that carry interactions meet in pairs, locally, with no one steering. Every rewrite keeps a
+      record and can be undone while what it made is still there and close together; a drive makes forward likelier
+      than back. Copying draws on fuel, undoing gives it back, and losing information is heat.</div>
     <div id="answer"></div>
 
     <h3>reduction state</h3>
@@ -227,6 +247,23 @@
     <canvas class="chart" id="chart" width="680" height="160"></canvas>
     <div class="note"><span style="color:#ffd866">■</span> rewrites per clock &nbsp;<span style="color:#56c8ff">■</span> strands in use</div>
 
+<div class="phys" hidden>
+    <h3>the ledger</h3>
+    <div class="row"><span class="k">heat in all</span><span class="v" id="lHeat">0</span></div>
+    <div class="row"><span class="k">…from the drive, ε a step forward net</span><span class="v" id="lDrive">0</span></div>
+    <div class="row"><span class="k">…leaves erased · records forgotten</span><span class="v" id="lLost">0</span></div>
+    <div class="row"><span class="k">fuel spent (agents added + heat)</span><span class="v" id="lFuel">0</span></div>
+    <div class="row"><span class="k">agents now (loaded)</span><span class="v" id="lAgents">0</span></div>
+    <div class="row"><span class="k">records kept (history)</span><span class="v" id="lRecords">0</span></div>
+    <div class="row"><span class="k">rewrites forward · undone</span><span class="v" id="lSteps">0</span></div>
+    <div class="row"><span class="k">un-copies kept</span><span class="v" id="lUncopy">0</span></div>
+    <div class="row"><span class="k">erasers holding what was dropped</span><span class="v" id="lErasers">0</span></div>
+    <div class="row"><span class="k">undos tried with what they need apart</span><span class="v" id="lFar">0</span></div>
+    <canvas class="chart" id="heatChart" width="680" height="160"></canvas>
+    <div class="note"><span style="color:#ff9e64">■</span> heat &nbsp;<span style="color:#b39cff">■</span> records kept &nbsp;<span style="color:#8a96a8">■</span> agents</div>
+
+</div>
+
     <h3>matter</h3>
     <div class="row"><span class="k">agents (of them garbage)</span><span class="v" id="sAgents">0</span></div>
     <div class="row"><span class="k">strands (peak)</span><span class="v" id="sStrands">0</span></div>
@@ -242,6 +279,44 @@
     <div class="legend" id="legend"></div>
 
     <details class="how" open><summary>how it works</summary>
+<div class="phys" hidden>
+      <p><b>Matter and what carries interactions.</b> Leaves, stems and forks are the matter: data and code alike.
+        Applications, choices, pairs, duplicators and erasers carry the interactions between them. Two agents rewrite
+        when their principal ports meet, in one 2×2 square of the lattice, with no walker and nothing global: every
+        reaction that is ready happens where it is, so the net works on many things at once, and a function that copies
+        itself (the S rule's duplicator) makes more places where work happens.</p>
+      <p><b>Every rewrite keeps a record</b> of the two agents it used up, and what it made carries the record's number.
+        A rule that joins two wires into one (a pair coming apart, an un-copy) marks the two ends it joined. A record
+        ties what its rewrite made together (the bonds, drawn faint violet), so it stays close.</p>
+      <p><b>Undoing.</b> While everything a rewrite made is still there, unused, and lies in one 2×2 square, the rewrite
+        can be undone: what it made goes and the two agents come back, with their own ids, wired as they were. A flash
+        in blue is a rewrite undone. Undoing what came later first, a run can go all the way back to the net as loaded.</p>
+      <p><b>The drive.</b> A rewrite forward is taken with chance min(1, e<sup>ε/T</sup>), and undone with chance
+        min(1, e<sup>−ε/T</sup>) (T = 1.5). With ε = 8 most rewrites stay done and the run goes forward about as fast as
+        the plain lattice; with ε near 0 it wanders back and forth; with ε below 0 it runs backward, and the bonds pull
+        harder (by −ε/T), drawing apart products back together so they can be undone. Each step forward gives ε of heat
+        and each step back takes it back: the drive is what forward costs.</p>
+      <p><b>Copying and erasing are decisions with prices.</b> A duplicator copies a value a layer at a time, each new
+        agent made from fuel; an un-copy (an eraser reaching a copy nobody wants) gives it back. K and triage drop what
+        they do not take, as an eraser: it takes the value apart, but every step of that is a recorded rewrite, so what was
+        dropped is still in the records. At a leaf it stops. Taking the leaf is the decision ("erase leaves"): the leaf is
+        gone for good, a unit of heat, and every record that only it could have led back through is forgotten too.</p>
+      <p><b>Forgetting.</b> A record can just be forgotten ("forget"): a unit of heat, and from then on nothing it used up
+        can come back, so neither can anything before that. Keeping every record costs room (the history grows with the
+        run); forgetting costs heat and the way back. Which information counts as lost depends on what the system still
+        holds: a copy it can see is a copy is given back free.</p>
+      <p><b>The ledger.</b> Agents are made from fuel and give it back when unmade, so the fuel spent is the agents added
+        plus the heat: the drive's, and a unit for every leaf erased and every record forgotten.</p>
+      <p><b>The lattice.</b> A wire is a path of <i>strands</i> along the links between neighbouring sites; each site holds
+        two agents and a switchboard joining the strand ends that meet there. Agents step, wires fold and flip, all by
+        random local proposals accepted by an energy (wires pull like springs, crowding pushes, the bonds pull). Every
+        clock the lattice is cut into 2×2×2 blocks and each site takes a turn. A wanted reader sends a demand pulse along
+        its principal wire; nothing reacts until wanted.</p>
+      <p><b>Going back on the time bar</b> is exact: the run is saved at some clocks, ids and records included, and a
+        clock is shown by putting back the nearest saved state before it and running on, the settings changing where
+        they changed. Changing a setting starts a new future from the clock on show.</p>
+      <p><b>The rest is the plain lattice</b>, below.</p>
+</div>
       <p><b>Step.</b> An agent moves to a neighbouring site. The strand it walks along is eaten; its other wires are
         dragged one strand longer. Wanted readers mostly step along their principal wire, toward what they need. After
         a clock stepped by hand, a faint arrow marks each agent that moved in it (the moves toggle).</p>
@@ -522,7 +597,10 @@ const span = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 const KINDS = { tree: span(1, 20), two: [1, 2, 3, 10, 13, 59, ...span(74, 94)] };
 /// The legend's entries after the kinds.
 let LEGEND_REST = "";
-function legend(kinds) { $("legend").innerHTML = kinds.map(t => `<span>${kindHTML(t)}</span>`).join("") + LEGEND_REST; }
+function legend(kinds) { $("legend").innerHTML = kinds.map(t => `<span>${kindHTML(t)}</span>`).join("") + LEGEND_REST + (PHYS ? LEGEND_PHYS : ""); }
+/// The substrate's (phys=1): a rewrite undone flashes blue, and a kept record's bond is drawn.
+const LEGEND_PHYS = `<span><span class="sw" style="background:none;border:2px solid #7fd0ff"></span>a rewrite undone</span>`
+  + `<span><span class="sw" style="background:#b39cff;border-radius:2px;height:3px"></span>a kept record's bond</span>`;
 function populate() {
   entries = [...DISP.map(p => ({ group: "disp programs", name: p.name, text: `${p.name} ${p.example}`, desc: p.desc, prog: p })),
     ...(DISP.some(p => p.name === "relay_add") ? [{ group: "side by side (a; b)", name: "add; relay_add", text: SIDE_BY_SIDE,
@@ -532,7 +610,7 @@ function populate() {
     ...TWO_WAY.map(e => ({ group: "two-way programs (two:)", ...e, two: true })),
     { group: "other", name: "random", text: "random:4:6", desc: "a random tree-calculus term, random:seed:depth" },
     { group: "other", name: "backward", text: "run it backward", desc: "the input on the abstract net, run so that every step can be undone (rev.html)", rev: true },
-    { group: "other", name: "substrate", text: "run it as physics", desc: "the input on this lattice with every rewrite recorded and undoable, a drive, and heat (substrate.html)", sub: true }];
+    { group: "other", name: "substrate", text: "run it as physics, or plainly again", desc: "the input on this lattice with every rewrite recorded and undoable, a drive, and heat (phys=1); picked again, the plain lattice", sub: true }];
   let group = "";
   $("menu").innerHTML = entries.map((e, i) => (e.group !== group ? `<div class="grp">${group = e.group}</div>` : "")
     + `<div class="opt" data-i="${i}" title="${e.desc}">${e.text}<span>${e.desc}</span></div>`).join("");
@@ -550,6 +628,12 @@ function populate() {
   if (speed !== null) $("speed").value = speed;
   if (q.get("view")) viewMode = q.get("view");
   SETTINGS = (q.get("set") ?? "").split(",").filter(Boolean);
+  if (q.has("drive")) $("drive").value = q.get("drive");
+  if (q.has("erase")) $("erase").checked = q.get("erase") === "1";
+  if (q.has("forget")) $("forget").value = q.get("forget");
+  if (q.get("bonds") === "1") showBonds = true;
+  setPhys(q.get("phys") === "1");
+  if (PHYS && !q.get("src")) $("src").value = "add 2 3";
   syncUI();
 }
 /// Links from before the input box: p=disp:NAME&a=ARGS, p=WORKLOAD&n=N, p=random&n=N.
@@ -607,7 +691,7 @@ function moverSettings(e) {
 /// runs at once, with its settings, and so does a two-way program.
 function choose(i) {
   if (entries[i].rev) { location.href = `rev.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
-  if (entries[i].sub) { location.href = `substrate.html#src=${encodeURIComponent(running?.call ?? ($("src").value.trim() || DEFAULT))}`; return; }
+  if (entries[i].sub) { $("src").value = running?.call ?? ($("src").value.trim() || DEFAULT); openMenu(false); setPhys(!PHYS); load(true); return; }
   if (entries[i].mover || entries[i].two) { $("src").value = entries[i].text; syncUI(); showPicked(i); load(true); return; }
   const fill = entries[i].text, at = fill.search(/[\s:]/);
   if (entries[i].both) { $("speed").value = 100; speedLabel(); }
@@ -693,6 +777,7 @@ function start(p, input) {
   E.strands_settings();
   withString(`seed=${SEED}`, (p, n) => E.strands_set(p, n));
   for (const kv of SETTINGS) if (withString(kv, (p, n) => E.strands_set(p, n))) banner(text(E.text_len()), true);
+  if (PHYS) for (const kv of ["phys=1", `drive=${SUB.drive}`, `erase=${SUB.erase}`, `forget=${SUB.forget}`]) withString(kv, (p, n) => E.strands_set(p, n));
   const src = p.src, agents = withString(src, (p, n) => E.strands_probe(p, n));
   if (agents < 0) { banner("can't read that term: " + text(E.text_len()), true); return false; }
   const depth = E.strands_depth();
@@ -707,7 +792,7 @@ function start(p, input) {
   if (rc !== 0) { banner("load failed: " + text(E.text_len()), true); return false; }
   if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); gpuEstimate(); }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
-  L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ar: E.ports_per_slot(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
+  L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ar: E.ports_per_slot(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: !PHYS };
   legend(/^\s*two:/.test(src) ? KINDS.two : KINDS.tree);
   running = p.parts ? { call: p.call, parts: p.parts, at: p.parts.map(() => null) } : p.call ? { kind: p.kind, call: p.call } : null;
   finished = false; cleaned = false; cleanSeen = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
@@ -719,9 +804,11 @@ function start(p, input) {
     : "The chip's schedule with the demand field, and S rules that fork. ")
     + `A site is ${L.k} agent tags (${tag} bits each, plus a wanted bit, which on a value means called), `
     + `a switchboard of 8 pairings × 2 ends × ${bits} bits, ${bits} bits saying which strand carries a pulse, and ${field} bits of demand field: `
-    + `≈ ${(tag + 1) * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`;
+    + `≈ ${(tag + 1) * L.k + 16 * bits + bits + field} bits. Moves touch at most one 2×2×2 block.`
+    + (PHYS ? " Run as physics, every rewrite is recorded: each agent also carries the number of the record of what made it, and the ends of a joined wire a mark. "
+      + "Undos touch at most one 2×2×2 block too. The records sit in one table under their numbers, looked up only by a move at a site holding an agent that carries one." : "");
   $("clockName").textContent = "clocks (2×2×2 blocks)";
-  location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${SETTINGS.length ? "&set=" + SETTINGS.join(",") : ""}${onGpu ? "&gpu=1" : ""}`;
+  location.hash = `src=${encodeURIComponent(input)}&view=${viewMode}${SETTINGS.length ? "&set=" + SETTINGS.join(",") : ""}${onGpu ? "&gpu=1" : ""}${PHYS ? "&phys=1" + subHash() : ""}`;
   if (onGpu && !gpuCode) setEngine("cpu", "the GPU cannot run these settings: " + gpuWhy);
   V3.dirty = true; V3.fitted = false;
   fitContent(); draw(); panel(true); showStory();
@@ -853,6 +940,7 @@ function draw() {
   if (!L) return;
   pickSync();
   const segs = showSegments && (netSync(), NET.seg);
+  const bonds = PHYS && showBonds ? seatsOut(2 * E.substrate_bonds()) : null;
   // The views after the calls that may grow the engine's memory, which detaches the old buffer.
   const V = views();
   // With something picked, everything else is dimmed.
@@ -926,6 +1014,12 @@ function draw() {
   ctx.lineJoin = "round"; ctx.lineWidth = lw(1.2);
   ctx.strokeStyle = "#7fd0ff"; ctx.stroke(chevrons[0]); ctx.strokeStyle = "#ffb070"; ctx.stroke(chevrons[1]);
   ctx.lineJoin = "miter";
+  // the bonds of the records kept, each between two agents one rewrite made
+  if (bonds) {
+    const path = new Path2D();
+    for (let i = 0; i + 1 < bonds.length; i += 2) { const [ax, ay] = slotPos(siteOf(bonds[i]), slotOf(bonds[i])), [bx, by] = slotPos(siteOf(bonds[i + 1]), slotOf(bonds[i + 1])); path.moveTo(ax, ay); path.lineTo(bx, by); }
+    ctx.strokeStyle = `rgba(179,156,255,${0.55 * dim})`; ctx.lineWidth = lw(1.1); ctx.setLineDash([lw(2), lw(2)]); ctx.stroke(path); ctx.setLineDash([]);
+  }
   // the principal wire of every wanted reader, followed end to end
   const hot = new Path2D();
   for (const s of V.live) for (let k = 0; k < L.ks; k++) {
@@ -1040,7 +1134,7 @@ function draw() {
   for (const b of bursts) {
     const a = (now - b.t) / b.life; if (a >= 1) continue; bursts[keep++] = b;
     const [ox, oy] = siteOrigin(b.s);
-    ctx.strokeStyle = `rgba(255,216,102,${(1 - a) * b.alpha})`;
+    ctx.strokeStyle = b.undo ? `rgba(127,208,255,${(1 - a) * b.alpha})` : `rgba(255,216,102,${(1 - a) * b.alpha})`;
     ctx.beginPath(); ctx.arc(ox + S / 2, oy + S / 2, S * (0.5 + a * 1.3), 0, 7); ctx.stroke();
     if (b.v) flashLetter(b.v, ox + S / 2, oy - S * 0.3, Math.max(S * 1.5, 14 / view.s), 1 - a);
   }
@@ -1369,7 +1463,7 @@ function bursts3(now) {
     if (onlyZ >= 0 && Math.floor(b.s / plane) !== onlyZ) continue;
     const a = (now - b.t) / b.life, c = pos3(b.s), r = (0.5 + 1.3 * a) * V3.pitch;
     m4.makeScale(r, 1, r).setPosition(c[0], c[1] - FLOOR3 / 2, c[2]); mesh.setMatrixAt(n, m4);
-    mesh.setColorAt(n++, col.set(0xffd866).multiplyScalar((1 - a) * (b.alpha ?? 1)));
+    mesh.setColorAt(n++, col.set(b.undo ? 0x7fd0ff : 0xffd866).multiplyScalar((1 - a) * (b.alpha ?? 1)));
   }
   mesh.count = n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   // An apply reading a movement agent: its letter over the ring, drawn the same size on screen.
@@ -1501,6 +1595,7 @@ function sentence(ev) {
     case 8: return `<b>Garbage.</b> Both parts of the unpair at ${at(t)} were being erased, so it became one eraser on the pair.`;
     case 9: return `<b>Demand.</b> A wanted reader at ${at(s)} touched the output of ${who(a)} at ${at(t)}: that computation is wanted now.`;
     case 10: return `<b>Demand.</b> A pulse reached the output of ${who(a)} at ${at(t)}: that computation is wanted now.`;
+    case 11: return `<b>Undone.</b> At ${at(s)} the rewrite that made what was there was undone: the ${NAMES[TAGS[a]]} and the ${NAMES[TAGS[b]] ?? "agent"} it used up are back, as they were.`;
   }
   return "";
 }
@@ -1510,11 +1605,11 @@ function showStory() {
   el.hidden = false;
   // In the dock, the clock in one line: how many of each kind of move.
   const n = k => story.filter(e => k.includes(e[0])).length, parts = [];
-  for (const [k, one, many] of [[[5], "rewrite", "rewrites"], [[6, 7, 8], "garbage collection", "garbage collections"], [[9, 10], "demand", "demands"],
+  for (const [k, one, many] of [[[5], "rewrite", "rewrites"], [[11], "undone", "undone"], [[6, 7, 8], "garbage collection", "garbage collections"], [[9, 10], "demand", "demands"],
       [[1], "step", "steps"], [[2], "exchange", "exchanges"], [[3, 4], "fold or flip", "folds and flips"]]) { const c = n(k); if (c) parts.push(`${c} ${c === 1 ? one : many}`); }
   $("storyline").textContent = `clock ${fmt(stats()[1])}: ${parts.join(" · ")}`;
   // Rewrites first, then garbage and demand, then exchanges, steps and wire reshaping.
-  const rank = [9, 4, 3, 6, 7, 0, 1, 1, 1, 2, 2];
+  const rank = [9, 4, 3, 6, 7, 0, 1, 1, 1, 2, 2, 0];
   const shown = [...story].sort((x, y) => rank[x[0]] - rank[y[0]]).slice(0, 6).map(sentence).join("<br>");
   el.innerHTML = (story.length > 6 ? `<div class="note">${story.length} moves this clock; the six that matter most:</div>` : "") + shown;
 }
@@ -1984,6 +2079,16 @@ function frame() {
 // and the clock cooling settles at are exact, whichever engine ran up to them.
 function cpuRun() {
   const want = proposalsPerFrame(), t0 = performance.now(), p0 = E.strands_now(1);
+  if (PHYS) {
+    // Run as physics: going forward the run pauses the first time the answer is in; going back, once it
+    // is all the way back at the net as loaded.
+    while (E.strands_now(1) - p0 < want && performance.now() - t0 < 14) {
+      tlClocks(Math.max(1, Math.round(Math.min(want - (E.strands_now(1) - p0), 200000) / Math.max(1, E.live_len()))));
+      partsCheck();
+      if (subCheck()) break;
+    }
+    return;
+  }
   while (!settled && E.strands_now(1) - p0 < want && performance.now() - t0 < 14) {
     const chunk = Math.min(want - (E.strands_now(1) - p0), 200000);
     if (!finished) {
@@ -2005,12 +2110,13 @@ function afterRun() {
   const fl = new Uint32Array(E.memory.buffer, E.fire_log_ptr(), E.fire_log_len()), now = performance.now(), r = rate();
   const life = Math.max(60, Math.min(600, r ? 4000 / r : 600)), room = 200 - bursts.length, every = Math.max(1, Math.ceil(fl.length / Math.max(1, room)));
   // Each entry is a site, and in its top byte the movement agent an apply read (lattice.rs `fire_entry`).
-  for (let i = 0; i < fl.length && bursts.length < 200; i += every) { const v = fl[i] >>> 24; bursts.push({ s: fl[i] & 0xFFFFFF, v, t: now, life: v ? Math.max(life, 900) : life }); }
+  for (let i = 0; i < fl.length && bursts.length < 200; i += every) { const undo = fl[i] >>> 31 === 1, v = undo ? 0 : fl[i] >>> 24; bursts.push({ s: fl[i] & 0xFFFFFF, v, undo, t: now, life: v ? Math.max(life, 900) : life }); }
   const alpha = 0.8 * Math.min(1, 12 / Math.max(1, bursts.length));
   for (const b of bursts) b.alpha = Math.min(b.alpha ?? 1, alpha);
   E.fire_log_clear();
   const st = stats();
-  if (!hist.length || st[1] !== hist[hist.length - 1].sw) { hist.push({ sw: st[1], fires: st[2], strands: st[7], t: now }); if (hist.length > 3000) hist.splice(0, 1500); }
+  const su = PHYS ? subStats() : null;
+  if (!hist.length || st[1] !== hist[hist.length - 1].sw) { hist.push({ sw: st[1], fires: st[2], strands: st[7], t: now, ...(su ? { heat: su[0], records: su[7], agents: su[9] } : {}) }); if (hist.length > 3000) hist.splice(0, 1500); }
   tlNote();
   if (settled) setPlaying(false);
 }
@@ -2153,7 +2259,7 @@ function afterAnswer() {
   return cleaned;
 }
 /// A move that changes the net: a rewrite, or in the graph view garbage collected too.
-const changesNet = e => e[0] === 5 || viewMode === "graph" && e[0] >= 6 && e[0] <= 8;
+const changesNet = e => e[0] === 5 || e[0] === 11 || viewMode === "graph" && e[0] >= 6 && e[0] <= 8;
 /// Steps by rewrites: with shift, or always in the graph view.
 const byRewrite = e => e.shiftKey || viewMode === "graph";
 function stepOnce(toRewrite) {
@@ -2208,6 +2314,7 @@ function panel(force) {
   $("sWalk").textContent = `${fmt(st[12])} · ${fmt(st[13])}`;
   $("sPulse").textContent = fmt(st[14]); $("sExtent").textContent = fmt(st[15]); $("sGc").textContent = fmt(st[16]);
   chart();
+  if (PHYS) { physPanel(st, r); return; }
   const badge = $("badge"), work = `${fmt(st[2])} rewrites` + (r ? ` · ${fmt(r)} clocks/s` : "") + (onGpu ? " on the GPU" : "");
   partsCheck();
   if (!finished) {
@@ -2288,7 +2395,105 @@ function setDetails(open) {
   $("side").hidden = !open; $("details").classList.toggle("on", open); $("details").setAttribute("aria-pressed", open);
   resize(); if (L) { panel(true); pickPanel(true); }
 }
-let showMoves = true, showSegments = true;
+let showMoves = true, showSegments = true, showBonds = false;
+/// Running as physics (phys=1, the substrate): every rewrite recorded and undoable, a drive, and heat.
+let PHYS = false;
+/// The substrate's settings in force: the drive, whether erasers take leaves, the chance to forget.
+const SUB = { drive: 8, erase: 0, forget: 0 };
+const forgetOf = v => v <= 0 ? 0 : 10 ** (v / 25 - 5), forgetSlider = f => f <= 0 ? 0 : Math.round(25 * (Math.log10(f) + 5));
+const subHash = () => `&drive=${SUB.drive}&erase=${SUB.erase}&forget=${$("forget").value}${showBonds ? "&bonds=1" : ""}`;
+/// Turn running as physics on or off: its controls, ledger and help show only then.
+function setPhys(on) {
+  PHYS = on;
+  for (const el of document.querySelectorAll(".phys, #subrow, #ledger")) el.hidden = !on;
+  $("notePlain").hidden = on;
+  $("sideTitle").textContent = on ? "the substrate: the strand lattice as physics" : "interaction nets as strands on a lattice";
+  subApply(false, true);
+}
+/// Take the settings from the controls; with `cut`, from the clock on show on: the future the time bar
+/// had after it goes (`show`: only show what is in force).
+function subApply(cut, show) {
+  SUB.drive = +$("drive").value; SUB.erase = $("erase").checked ? 1 : 0; SUB.forget = forgetOf(+$("forget").value);
+  $("driveV").textContent = (SUB.drive > 0 ? "+" : "") + SUB.drive;
+  $("forgetV").textContent = SUB.forget ? SUB.forget.toPrecision(1) : "0";
+  $("flip").textContent = SUB.drive < 0 ? "run forward" : "run backward";
+  $("flip").classList.toggle("on", SUB.drive < 0);
+  $("bondsBtn").classList.toggle("on", showBonds);
+  if (!L || show || !PHYS) return;
+  E.strands_substrate(SUB.drive, SUB.erase, SUB.forget, 1);
+  if (cut) tlCut();
+  location.hash = location.hash.replace(/&drive=.*$/, "") + subHash();
+  panel(true);
+}
+/// The run goes on from the clock on show with new settings: what the time bar had after it is gone.
+function tlCut() {
+  const c = clockNow();
+  for (let i = T.saved.length - 1; i >= 0 && T.saved[i].clock > c; i--) { E.drop_state(T.saved[i].id); T.saved.splice(i, 1); }
+  T.frontier = c; T.drawn = ""; tlShow();
+}
+/// Turn the drive round and play: forward runs back, back runs forward.
+function flipDrive() { if (!PHYS) return; $("drive").value = +$("drive").value >= 0 ? -9 : 8; subApply(true); setPlaying(true); }
+/// After clocks ran as physics: the answer in for the first time since loading or coming back to the start
+/// (going forward), or the start reached, or nothing left to undo (going back): pause the run. True if it paused.
+function subCheck() {
+  if (SUB.drive >= 0 && !finished && E.strands_answered()) {
+    finished = true; answerClock = clockNow();
+    setPlaying(false); fitContent();
+    banner("the answer is in: \u201crun backward\u201d takes it all back; \u201cerase leaves\u201d gets rid of what was dropped, at a price in heat"); return true;
+  }
+  if (SUB.drive < 0 && E.strands_at_start()) { finished = false; setPlaying(false); fitContent(); banner("back at the start: the net as loaded, every agent by its id"); return true; }
+  if (SUB.drive < 0 && subStats()[7] === 0) { setPlaying(false); banner("nothing left that can be undone: what came before was erased or forgotten"); return true; }
+  return false;
+}
+/// The substrate's account (wasm.rs `substrate_ptr`).
+const subStats = () => new Float64Array(E.memory.buffer, E.substrate_ptr(), 20).slice();
+/// The panel run as physics: the ledger, the settings in force at the clock on show, and the badge.
+function physPanel(st, r) {
+  const su = subStats();
+  $("lHeat").innerHTML = `<b>${fmt(su[0])}</b>`; $("lDrive").textContent = fmt(su[1]); $("lLost").textContent = `${fmt(su[2])} · ${fmt(su[3])}`;
+  $("lFuel").textContent = fmt(su[9] - su[10] + su[0]); $("lAgents").textContent = `${fmt(su[9])} (${fmt(su[10])})`; $("lRecords").textContent = fmt(su[7]);
+  $("lSteps").textContent = `${fmt(su[4])} · ${fmt(su[5])}`; $("lUncopy").textContent = fmt(su[6]); $("lErasers").textContent = fmt(su[8]); $("lFar").textContent = fmt(su[12]);
+  $("ledger").innerHTML = `heat <b>${fmt(su[0])}</b> · records kept <i>${fmt(su[7])}</i> · rewrites undone ${fmt(su[11])} · agents ${fmt(su[9])}`;
+  heatChart();
+  // The settings in force at the clock on show (a seek may have gone back past a change).
+  if (document.activeElement?.type !== "range" && (su[14] !== SUB.drive || su[15] !== SUB.erase || su[16] !== SUB.forget)) {
+    $("drive").value = su[14]; $("erase").checked = su[15] > 0; $("forget").value = forgetSlider(su[16]); subApply(false, true);
+    Object.assign(SUB, { drive: su[14], erase: su[15], forget: su[16] });
+  }
+  const badge = $("badge"), back = SUB.drive < 0, work = `${fmt(st[2])} rewrites, ${fmt(su[11])} undone` + (r ? ` · ${fmt(r)} clocks/s` : "");
+  const state = playing ? (back ? "running backward" : "running") : "paused";
+  partsCheck();
+  if (!E.strands_answered()) {
+    badge.className = ""; badge.textContent = `${state} · ${work}`;
+    if (running?.parts) $("decoded").innerHTML = partsHTML(); else $("decoded").textContent = running ? `${running.call} = …` : "";
+    $("answer").textContent = "";
+    $("verdict").textContent = E.strands_at_start() ? "at the start: the net as loaded, every agent by its id and wired as it was (where agents sit, and which values have been called, are not part of it)" : "";
+    return;
+  }
+  const ans = text(E.strands_answer());
+  if (oracleText === null) oracleText = text(E.strands_oracle(200000));
+  const ok = oracleText === "" ? null : ans === oracleText;
+  badge.className = ok === false ? "bad" : "ok";
+  badge.textContent = ok === false ? "wrong answer" : `answer in (first at ${fmt(answerClock)} clocks) · ${state} · ${work}`;
+  if (running?.parts) $("decoded").innerHTML = partsHTML();
+  else if (running) { $("decoded").textContent = ans ? `${running.call} = ${decodeAs(running.kind, parseTree(ans))}` : ""; }
+  else { const decd = text(E.strands_answer_decoded()); $("decoded").textContent = decd ? `= ${decd}` : ""; }
+  $("answer").textContent = ans;
+  $("verdict").textContent = (ok === null ? "the oracle ran out of fuel" : ok ? "matches the independent recursive oracle" : "does not match the oracle: " + oracleText)
+    + (garbageCount ? `; ${fmt(garbageCount)} agents of what was dropped kept` : "; only the answer is left");
+}
+/// Heat, records kept and agents over the clocks run.
+function heatChart() {
+  const c = $("heatChart"), g = c.getContext("2d"), W = c.width, H = c.height; g.clearRect(0, 0, W, H);
+  const h = hist.filter(x => x.heat !== undefined); if (h.length < 3) return;
+  const n = Math.min(h.length, 300), xs = h.slice(h.length - n);
+  for (const [key, css] of [["agents", "#8a96a8"], ["records", "#b39cff"], ["heat", "#ff9e64"]]) {
+    const m = Math.max(1, ...xs.map(x => x[key]));
+    g.strokeStyle = css; g.lineWidth = 2; g.beginPath();
+    xs.forEach((x, i) => { const px = i / (n - 1) * W, py = H - 4 - (H - 10) * x[key] / m; i ? g.lineTo(px, py) : g.moveTo(px, py); });
+    g.stroke();
+  }
+}
 /// Each wire in the colour of the segment whose output it carries, built again when the net changes.
 let segPaths = { key: "", list: [] };
 function segWires(V) {
@@ -2336,6 +2541,11 @@ $("drop").onmousedown = $("menu").onmousedown = e => e.preventDefault();
 $("drop").onclick = () => { $("src").focus(); openMenu($("menu").hidden); };
 $("menu").onclick = e => { const o = e.target.closest(".opt"); if (o) { choose(+o.dataset.i); openMenu(false); } };
 $("speed").oninput = speedLabel;
+$("drive").oninput = () => subApply(true);
+$("erase").onchange = () => subApply(true);
+$("forget").oninput = () => subApply(true);
+$("flip").onclick = flipDrive;
+$("bondsBtn").onclick = () => { showBonds = !showBonds; subApply(false, true); location.hash = location.hash.replace(/&drive=.*$/, "") + subHash(); };
 const nextView = () => { const modes = ["oblique", "layers", "3d", "graph"]; setView(modes[(modes.indexOf(viewMode) + 1) % modes.length]); };
 /// The views and colour toggles, popped out above the view button.
 function openViews(open) { $("viewPop").hidden = !open; $("viewMode").setAttribute("aria-expanded", open); $("viewMode").classList.toggle("open", open); }
@@ -2372,6 +2582,7 @@ window.addEventListener("keydown", e => {
   else if (e.key === "c" || e.key === "C") setSegments(!showSegments);
   else if (e.key === "r" || e.key === "R") load(); else if (e.key === "f" || e.key === "F") fitContent();
   else if (e.key === "g" || e.key === "G") setEngine(onGpu ? "cpu" : "gpu");
+  else if (e.key === "b" || e.key === "B") flipDrive();
 });
 window.addEventListener("resize", resize);
 let bt = 0; function banner(m, bad) { const b = $("banner"); b.textContent = m; b.style.opacity = 1; b.style.color = bad ? "var(--warn)" : "var(--fg)"; clearTimeout(bt); bt = setTimeout(() => b.style.opacity = 0, bad ? 6000 : 3500); }

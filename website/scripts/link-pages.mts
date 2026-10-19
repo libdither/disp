@@ -1,6 +1,6 @@
 // Every HTML page tracked in the repo outside website/, with the local files it loads, linked into
 // static/repo/ at its repo path (a symlink each: live in dev, copied as files by the build), and
-// static/repo/pages.json listing them for the /pages/ route.
+// static/repo/pages.json listing them for the /pages/ route. Test harnesses (`*-check.html`) are left out.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, normalize, relative } from 'node:path'
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../..', import.meta.url))
 const out = fileURLToPath(new URL('../static/repo', import.meta.url))
 const tracked = new Set(execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean))
-const pages = [...tracked].filter((f) => f.endsWith('.html') && !f.startsWith('website/')).sort()
+const pages = [...tracked].filter((f) => f.endsWith('.html') && !f.startsWith('website/') && !f.endsWith('-check.html')).sort()
 
 rmSync(out, { recursive: true, force: true })
 const link = (file: string) => {

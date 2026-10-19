@@ -6,6 +6,7 @@
 #   player/firefox.sh input                         the player's input box, on the CPU (input-check.html)
 #   player/firefox.sh pick 'p=disp:fib&a=2'         computations picked in the player, followed to the answer
 #   player/firefox.sh tail 'src=fib:1'              the end of a run (cleanup, cooling) the same on either engine and after going back
+#   player/firefox.sh phys 'src=add 1 1'           run as physics (phys=1) to the answer, then the drive turned round, back to the loaded net
 #   player/firefox.sh perf 'src=fib:1&runs=cpu,gpu,cpu>gpu@0.5a'   times the answer, cleanup and cooling, and switches
 # Each run has a profile of its own; the page posts what it finds to a small server here. Exits
 # non-zero on any line starting with "FAIL", zero once the last line starts with "ok".

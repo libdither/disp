@@ -7,9 +7,9 @@ an address**. It is the answer to two problems with the earlier spatial machines
 - `rust-ic-mesh` completes everything, but by using global addresses and a router in every
   tile.
 
-Open `player/index.html` to watch it run (rebuild with `./build-player.sh`), `player/rev.html` to
-run programs backward (Running backward and Two-way programs, below), and `player/substrate.html`
-to run them as physics, every rewrite undoable at a price in heat (The substrate, below). It shows only the
+Open `player/index.html` to watch it run (rebuild with `./build-player.sh`); with `phys=1` (its list's
+"run it as physics") it runs them as physics, every rewrite undoable at a price in heat (The substrate,
+below). `player/rev.html` runs the abstract net backward (Running backward, below). It shows only the
 current design (`lattice.rs` `latest`: the chip's schedule with the demand field, forking S rules
 and duplicators copying ahead where there is room, below), with the field drawn as an amber tint
 and called values ringed in orange:
@@ -1638,13 +1638,13 @@ two-way runs:
 - Not yet: tree calculus as a guest (iso.rs's `tc` compiled to these instructions), and instructions as
   agents standing for their trees.
 
-## The substrate: the lattice as physics (`substrate.rs`, `player/substrate.html`)
+## The substrate: the lattice as physics (`substrate.rs`, the player with `phys=1`)
 
 `phys=1` runs the current design with every rewrite undoable while it is remembered, a drive that
-makes forward likelier than back, and heat for information lost. `player/substrate.html` is the
-lattice player with it on: a drive slider ("run backward" turns it round), "erase leaves",
-"forget", the bonds drawn, and a ledger. The lattice player's list opens it on the same input
-("run it as physics").
+makes forward likelier than back, and heat for information lost. The player runs it with `phys=1`
+(its list's "run it as physics, or plainly again" turns it on and off): a drive slider ("run backward",
+or B, turns it round), "erase leaves", "forget", the bonds drawn, and a ledger.
+`player/firefox.sh phys 'src=add 1 1'` runs it to the answer and back to the loaded net.
 - **Matter and what carries interactions.** Leaves, stems and forks are matter, code and data alike;
   applications, choices, pairs and unpairs carry interactions; duplicators copy, erasers take apart.
   Nothing walks a program: every pair whose principal ports meet rewrites where it is, inside one
