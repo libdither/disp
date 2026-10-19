@@ -14,15 +14,19 @@ fn load(p: &Prog, x: &Val, seed: u64) -> (Lattice, Vec<Option<Agent>>, u32) {
     (l, start, out)
 }
 
-/// The lattice's energy, the banks', the bath's and the fuel's add up to the same after every event.
+/// The lattice's energy, the banks', the bath's and the fuel's add up to the same (looked at every 64
+/// events: a slip stays in the sum), until every kind of event has happened.
 #[test]
 fn energy_is_kept() {
     let (mut l, _, _) = load(&add(), &Val::f(nat(1), nat(1)), 1);
     let kept = l.energy_kept();
-    for i in 0..150_000 {
+    for i in 0..3_000_000 {
         l.event();
-        assert_eq!(l.energy_kept(), kept, "event {i}: energy not kept (ledger {:?})", l.th.ledger);
+        if i % 64 > 0 { continue; }
+        assert_eq!(l.energy_kept(), kept, "by event {i}: energy not kept (ledger {:?})", l.th.ledger);
+        if l.th.ledger.made.iter().all(|&n| n > 0) { break; }
     }
+    assert_eq!(l.energy_kept(), kept);
     assert!(l.th.ledger.made.iter().all(|&n| n > 0), "every kind of event happened: tried {:?}, made {:?}", l.th.ledger.tried, l.th.ledger.made);
 }
 
@@ -52,6 +56,26 @@ fn banks_settle_at_the_bath() {
     }
     let (mean, want) = (sum / n, l.bank_mean());
     assert!((mean / want - 1.0).abs() < 0.1, "mean bank {mean:.2} quanta, the bath's {want:.2}");
+}
+
+/// With no drive and no walking fuel nothing is pushed: every kind of move takes heat from its bank as
+/// often as it gives heat back (each is the other's reverse), and wires fold as often as they unfold.
+#[test]
+fn moves_balance_with_nothing_driving() {
+    let (mut l, _, _) = load(&add(), &Val::f(nat(1), nat(1)), 7);
+    l.p.drive = 0.0;
+    l.p.walk = 0.0;
+    l.run_events(2_000_000);
+    let g0 = l.th.ledger.clone();
+    l.run_events(6_000_000);
+    let g = &l.th.ledger;
+    let n = |a: &[u64; 9], b: &[u64; 9], k: usize| (a[k] - b[k]) as f64;
+    let pairs = [("hop", n(&g.up, &g0.up, 0), n(&g.down, &g0.down, 0)), ("exchange", n(&g.up, &g0.up, 1), n(&g.down, &g0.down, 1)),
+                 ("flip", n(&g.up, &g0.up, 2), n(&g.down, &g0.down, 2)), ("unfold, fold", n(&g.made, &g0.made, 4), n(&g.made, &g0.made, 3))];
+    for (what, a, b) in pairs {
+        eprintln!("{what}: {a} against {b}");
+        assert!(a + b > 50.0 && (a - b).abs() <= 0.05 * (a + b) + 4.0 * (a + b).sqrt(), "{what}: {a} against {b}");
+    }
 }
 
 /// Forward to the answer, then the drive turned round: the answer is taken back and a tenth of the

@@ -6,9 +6,11 @@
 //!   hop (slot, face), an exchange (two slots, face), a flip (strand end), a fold or unfold (any end,
 //!   face), a reaction (slot), or heat passing (face, or down). Draws that name nothing to do are null events.
 //!   A hop's reverse is the hop back, a flip's the flip from the opposite corner, a fold's the unfold
-//!   of the same end and face, so every move is proposed as often as its reverse, but for the number of
-//!   live sites, which a Hastings factor corrects. Lanes and slots are taken first free, so states are
-//!   counted up to which lane or slot holds what.
+//!   of the same end and face, so every move is proposed as often as its reverse. Each live site has
+//!   its own events at the same rate, so a move that changes how many sites are live needs no
+//!   correction for it (a Hastings factor would bias the time spent in a state by one over that
+//!   number). Lanes and slots are taken first free, so states are counted up to which lane or slot
+//!   holds what.
 //! - **Energy.** A move is made, the energy of the sites it touched is counted again, and the change is
 //!   paid from the bank of one of them (the lowest numbered, the same for a move and its reverse); a
 //!   bank that cannot pay puts the move back. The energy is `energy_of`: every strand costs the mean of
@@ -57,6 +59,9 @@ pub struct Ledger {
     /// Events tried and moves made, by kind (`KINDS`).
     pub tried: [u64; 9],
     pub made: [u64; 9],
+    /// Moves made that took heat from their bank, and that gave it heat, by kind.
+    pub up: [u64; 9],
+    pub down: [u64; 9],
 }
 
 #[derive(Clone, Debug, Default)]
@@ -211,19 +216,18 @@ impl Lattice {
     }
 
     /// A move made tentatively at these sites: keep it if the bank of the lowest-numbered one pays its
-    /// energy and the Hastings factor for the live sites allows it, else put the sites back.
-    fn settle(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64, live0: usize) { self.settle_fuel(kind, sites, saved, e0, live0, 0); }
+    /// energy, else put the sites back.
+    fn settle(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64) { self.settle_fuel(kind, sites, saved, e0, 0); }
 
     /// `settle`, with `fuel` brought into the paying bank (taken from it, if negative).
-    fn settle_fuel(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64, live0: usize, fuel: i64) {
-        let live1 = self.live.len();
-        if live1 > live0 && self.unit() >= live0 as f64 / live1 as f64 { self.restore(saved); return; }
+    fn settle_fuel(&mut self, kind: usize, sites: &[u32], saved: super::Saved, e0: i64, fuel: i64) {
         let de = self.energy_of(sites) - e0 - fuel;
         let payer = *sites.iter().min().unwrap() as usize;
         if de > self.th.bank[payer] as i64 { self.restore(saved); return; }
         self.th.bank[payer] = (self.th.bank[payer] as i64 - de) as u32;
         self.th.ledger.fuel += fuel;
         self.th.ledger.made[kind] += 1;
+        if de > 0 { self.th.ledger.up[kind] += 1; } else if de < 0 { self.th.ledger.down[kind] += 1; }
     }
 
     /// The fuel the agent at slot k of s brings stepping across face f: a wanted reader walks as a motor
@@ -249,10 +253,10 @@ impl Lattice {
         let walk = self.walk_fuel(s, k, f);
         let kind = if walk.is_some() { 8 } else { 0 };
         self.th.ledger.tried[kind] += 1;
-        let (sites, live0) = ([s, t], self.live.len());
+        let sites = [s, t];
         let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
         if self.hop_to(s, k, f, k2, false, false).is_none() { self.restore(saved); return; }
-        self.settle_fuel(kind, &sites, saved, e0, live0, walk.unwrap_or(0));
+        self.settle_fuel(kind, &sites, saved, e0, walk.unwrap_or(0));
     }
 
     fn ev_exchange(&mut self, s: u32) {
@@ -261,13 +265,13 @@ impl Lattice {
         if self.tag(s, ka) == 0 || t == u32::MAX || !self.inside(t) || self.tag(t, kb) == 0 { return; }
         self.th.ledger.tried[1] += 1;
         let fuel = self.walk_fuel(s, ka, f).unwrap_or(0) + self.walk_fuel(t, kb, f ^ 1).unwrap_or(0);
-        let (sites, live0) = ([s, t], self.live.len());
+        let sites = [s, t];
         let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
         self.force = true;
         let done = self.exchange(s, ka, f, kb, false).is_some();
         self.force = false;
         if !done { return; }
-        self.settle_fuel(1, &sites, saved, e0, live0, fuel);
+        self.settle_fuel(1, &sites, saved, e0, fuel);
     }
 
     fn ev_flip(&mut self, s: u32) {
@@ -276,13 +280,12 @@ impl Lattice {
         let Some(c) = self.corner(s, e, Self::inside) else { return };
         let sites = [s, c.x, c.z, c.w];
         self.th.ledger.tried[2] += 1;
-        let live0 = self.live.len();
         let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
         self.force = true;
         let done = self.flip(s, e, false);
         self.force = false;
         if !done { self.restore(saved); return; }
-        self.settle(2, &sites, saved, e0, live0);
+        self.settle(2, &sites, saved, e0);
     }
 
     /// From end a of s along face f: fold the U-turn its wire makes there, or make one.
@@ -295,17 +298,15 @@ impl Lattice {
         let sites = [s, t];
         if self.is_strand(m) && self.face(m) == f && self.fold_at(s, m, Self::inside).is_some() {
             self.th.ledger.tried[3] += 1;
-            let live0 = self.live.len();
-            let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
+                let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
             self.fold(s, m);
-            self.settle(3, &sites, saved, e0, live0);
+            self.settle(3, &sites, saved, e0);
             return;
         }
         // Unfold: the wire a–m at s takes a detour to t and back, on two free lanes.
         let Some(l) = self.free_lanes(s, f, 2) else { return };
         if !self.room(s, 1) || !self.room(t, 1) { return; }
         self.th.ledger.tried[4] += 1;
-        let live0 = self.live.len();
         let (saved, e0) = (self.save(&sites), self.energy_of(&sites));
         let (i, j) = (l[0], l[1]);
         self.set(s, a, NONE);
@@ -316,7 +317,7 @@ impl Lattice {
         self.strand_count(2);
         self.refresh(s);
         self.refresh(t);
-        self.settle(4, &sites, saved, e0, live0);
+        self.settle(4, &sites, saved, e0);
     }
 
     /// A reaction at slot k of s: fire the pair the consumer there is in, or undo what made what is there.

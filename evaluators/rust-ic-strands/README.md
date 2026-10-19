@@ -1567,7 +1567,9 @@ random, and is 1/N of a clock for N live sites.
 
 - **Every move is proposed as often as its reverse**: a hop and the hop back, an exchange and the
   exchange back, a flip and the flip from the opposite corner, a fold and an unfold (a U-turn made in
-  a wire); a Hastings factor corrects for the live sites changing in number.
+  a wire). Each live site has its own events at the same rate, so the live sites changing in number
+  needs no correction (a Hastings factor for it, tried first, biases the time spent in a state by one
+  over that number).
 - **The energy is a function of the state**: every strand costs the mean of `w_principal` and `w_aux`
   (the plain lattice's weight, seen from the end that drags a wire, is not one), plus crowding, plus
   `bond` a site of the distance between agents a kept record ties together.
@@ -1590,42 +1592,46 @@ cell: clocks to the answer, and heat to the bath per rewrite kept at the answer 
 
 | drive | T = 0.5 | T = 0.75 | T = 1 |
 |---|---|---|---|
-| 2 | 30,533, 172 | 29,414, 182 | 39,406, 236 |
-| 4 | 28,452, 132 | 24,556, 145 | 28,450, 177 |
-| 8 | 24,327, 126 | 20,889, 130 | 25,456, 153 |
-| 16 | 24,225, 129 | 18,636, 116 | 26,691, 170 |
+| 2 | 31,507, 169 | 28,136, 168 | 41,122, 253 |
+| 4 | 22,567, 124 | 24,274, 151 | 31,305, 180 |
+| 8 | 21,681, 114 | 22,237, 131 | 26,364, 157 |
+| 16 | 23,695, 128 | 22,684, 138 | 24,849, 147 |
 
 and the walk's fuel at drive 8, T = 0.75, 8 seeds:
 
 | walk | clocks | heat a rewrite |
 |---|---|---|
-| 2 | 489,454 | 21 |
-| 4 | 181,939 | 37 |
-| 8 | 21,138 | 127 |
-| 16 | 28,455 | 476 |
+| 2 | 474,779 | 21 |
+| 4 | 188,529 | 36 |
+| 8 | 22,978 | 134 |
+| 16 | 30,748 | 521 |
 
 - **Getting there sets the pace, not the rewrites.** The drive moves the clocks by under 2×, and
-  the heat a rewrite is 7–120× the drive: nearly all of it is walking.
+  the heat a rewrite is 8–130× the drive: nearly all of it is walking.
 - **Walking is the speed-for-heat knob, with a threshold.** A step can drag each of the reader's
   other wires a strand longer (a strand is 2 units: three of them against the principal's one, 4 net
-  for a reader with four ports), so below about 4 a step is uphill and goes only on heat: walk 2 takes 23× the clocks of walk 8 for a sixth
-  of the heat. Walk 16 is slower than 8 and nearly four times as hot (not looked into).
+  for a reader with four ports), so below about 4 a step is uphill and goes only on heat: walk 2
+  takes 20× the clocks of walk 8 for 15% of the heat. Walk 16 is slower than 8 and nearly four times
+  as hot (not looked into).
 - **Neither hotter nor colder is faster.** At 1.5 (the plain design's temperature) wires swell faster
-  than readers reel them in: `add 1 1` finishes on none of 4 seeds in 150M events, against 66,111
-  clocks at 0.75, which is fastest above.
+  than readers reel them in: `add 1 1` finishes on none of 4 seeds in 150M events, against 72,011
+  clocks at 0.75; 0.5–0.75 is fastest above.
 - **How it got here.** With heat leaving only at the edge of the matter, banks ran at 2.3× the bath's
   temperature and wires swelled: the substrate under every site fixed that. Charging seating to the
   drive put back nearly every rewrite that made agents (a seq split `Run·F` costs 15–50 units to seat).
   And a refused move left the substrate's seats where the move had put them (`Lattice::restore` now
   puts them back), which bonds made visible.
 - **Not right yet.** An undo is not the exact reverse of a rewrite (proposed from the products' sites,
-  which have moved since), so undos borrow what their bank is short of from the bath: 7–42 units a
-  rewrite above, 6–18% of the heat. Run back, the answer goes and records fall, but a rewrite
+  which have moved since), so undos borrow what their bank is short of from the bath: 7–41 units a
+  rewrite above, 6–16% of the heat. Run back, the answer goes and records fall, but a rewrite
   with up to five products needs all of them in one 2×2 square again, and that stalls well short of
-  the start. Nothing yet tests balance between pairs of states or the fluctuation theorems.
-- `tests/thermo.rs` (11 s): energy kept exactly over 150,000 events with every kind happening, `add 0
-  1` and `add 1 0` giving the reference's answers, banks within 10% of the bath's mean after the
-  answer, and turned round the answer gone and a tenth of the rewrites undone, energy kept.
+  the start. Nothing yet checks the time spent in each state against exact enumeration on a tiny
+  lattice, or the fluctuation theorems.
+- `tests/thermo.rs` (10 s): energy kept exactly until every kind of event has happened; with nothing
+  driving, every kind of move taking heat from its bank as often as giving it (within 5%) and wires
+  folding as often as unfolding; `add 0 1` and `add 1 0` giving the reference's answers; banks within
+  10% of the bath's mean after the answer; and turned round, the answer gone and a tenth of the
+  rewrites undone, energy kept.
 
 ### Keeping history: running it back exactly (`resid=1`, `resid.rs`)
 
