@@ -1,8 +1,8 @@
 // Every kind of agent, as the player numbers them (lattice.rs `code`): names, ports, what each rule
 // does, colours. Shared by index.html and rev.html.
 const TAGS = [null, "L", "S", "F", "P", "Pair", "A", "T1", "Sel", "Unp", "Dn", "Eps", "Nrm", "Out", "Sup", "K", "Sx", "B", "C", "I", "W",
-  // Keeping history (set=resid=1, tags 21 on, rules.rs `RESID_TAGS`): walkers forward, walkers back, residuals,
-  // running and running back a term given as a tree, forgetting.
+  // Keeping history (tags 21 to 58, rules.rs `RESID_TAGS`), which the player does not run (strands-resid does):
+  // named here only to keep the numbering.
   "A+", "T1+", "Sel+", "SL+", "SS+", "SF+", "T1s+", "T1sf+", "T1sc0+", "T1sc+", "T1scf+", "TSb+",
   "A-", "Ar-", "Sel-", "SL-", "SS-", "SF-", "Dn-", "DnL-", "DnS-", "DnF-", "Arms3", "Rk", "Rs", "Rt", "Rb", "Rc",
   "H", "E", "E-", "F!", "?", "Go", "Back", "Rh", "Rq", "Arms-",
@@ -18,32 +18,12 @@ const isTwoWalker = t => t >= 59 && t <= 94, isRun = t => t >= 59 && t <= 73;
 /// A two-way program's instructions, as many stems on a leaf as their place here (rules.rs `TWO_RULES`), and those on a fork.
 const INSTR = ["id", "swap", "flip", "assocl", "assocr", "uniti", "unite", "copy", "merge", "eval", "uneval", "triage", "untriage", "s2f", "f2s"];
 const INSTR_FORK = ["a; b", "(a | b)", "cond(a, b)", "loop(a)"];
-/// Keeping history (set=resid=1): the walkers that work the answer out leaving a residual (21 to 32, E 50 and
-/// the click Go 54), the walkers that run it back (33 to 42, E- 51, the click Back 55 and Arms- 58), the arms
-/// a triage carries (43), the residuals and histories (44 to 49, 56, 57), the forgetter (52) and the hole (53).
-const isForward = t => t >= 21 && t <= 32 || t === 50 || t === 54, isBackward = t => t >= 33 && t <= 42 || t === 51 || t === 55 || t === 58;
-const isResidual = t => t >= 44 && t <= 49 || t === 56 || t === 57;
-/// What each residual stands for, as a tree.
-const RESIDUAL_TREE = { Rk: "△△c", Rs: "△(△j₁)(△j₂j₃)", Rt: "△(△hd)r", Rb: "△(△j₁j₂)", Rc: "△(△(△j₁j₂))", H: "△j(△h_f h_x)",
-  Rh: "△(△(△(△fx)))", Rq: "△(△(△(△a)))" };
-/// Movement agents (set=views=1, tags 15 to 20): loaded code standing for a tree shape, the tree each spells out as.
 const VIEW_TREE = { K: "△△y", Sx: "△(△s)b", B: "△(△(△△f))g", C: "△(△f)(△△g)", I: "△(△△△)△", W: "△(△s)s" };
 const isView = t => t >= 15 && t <= 20;
 const NAMES = { L: "leaf", S: "stem", F: "fork", P: "suspended apply", Pair: "pair", A: "apply", T1: "triage", Sel: "second dispatch",
   Unp: "unpair", Dn: "duplicator", Eps: "eraser", Nrm: "normalizer", Out: "root", Sup: "superposition",
   K: "K: keeps, erases its argument", Sx: "Sx: copies its argument to both sides", B: "B: moves its argument right",
   C: "C: moves its argument left", I: "I: becomes a wire", W: "W: works out once, copies the result",
-  "A+": "apply, keeping history", "T1+": "triage, keeping history", "Sel+": "dispatch, keeping history",
-  "SL+": "dispatch on a leaf, reading the arms", "SS+": "dispatch on a stem, reading the arms", "SF+": "dispatch on a fork, reading the arms",
-  "T1s+": "S rule looking for B", "T1sf+": "S rule looking for B, a level down", "T1sc0+": "S rule opening its arms", "T1sc+": "S rule looking for C",
-  "T1scf+": "S rule looking for C, a level down", "TSb+": "S rule, copying its argument",
-  "A-": "un-apply", "Ar-": "un-apply of a constructor, reading the result", "Sel-": "dispatch run back",
-  "SL-": "dispatch on a leaf run back", "SS-": "dispatch on a stem run back", "SF-": "dispatch on a fork run back",
-  "Dn-": "merge (a copy run back)", "DnL-": "merge, having read a leaf", "DnS-": "merge, having read a stem", "DnF-": "merge, having read a fork",
-  Arms3: "a triage's three arms", Rk: "residual of K", Rs: "residual of the S rule", Rt: "residual of a triage", Rb: "residual of B", Rc: "residual of C",
-  H: "history of an application", E: "run: works a term given as a tree out", "E-": "run back: works the history back to the term",
-  "F!": "forgetter", "?": "hole: something forgotten", Go: "the root, clicked: run", Back: "the root, clicked: run back",
-  Rh: "residual of reading a hole", Rq: "residual of a dispatch on a hole", "Arms-": "arms back into a triage",
   R: "run: a program on a tree",
   ...Object.fromEntries(INSTR.slice(1).map((_, i) => [`R${i + 1}`, `run, ${i + 1} stem${i ? "s" : ""} of an instruction read`])),
   Sp: "splitter: a fork taken apart", SpS: "splitter: a stem taken apart", Eat: "eats a leaf", Cd: "cond, reading the tag", Lk: "loop, reading the state",
@@ -63,20 +43,6 @@ const DESC = {
     B: "applied to c it gives f (g c): c moves right, uncopied", C: "applied to c it gives f c g: c moves left, uncopied",
     I: "applied to c it gives c, a plain wire", W: "applied to c it gives t t, t = s c worked out once and copied" })
     .map(([v, d]) => [v, `a movement agent (set=views=1): loaded code standing for ${VIEW_TREE[v]}; ${d}, in one rewrite. A duplicator or eraser takes it whole; anything else reading it spells it out as its tree first`])),
-  "A+": "applies the function it reads to an argument, and puts what it would have dropped (its residual) out on a fourth port",
-  "T1+": "triage keeping history: what a K step drops goes into its residual instead of an eraser", "Sel+": "dispatch keeping history: the two arms not taken go into its residual",
-  "A-": "un-apply: reads a residual as the function and the result as the argument, and gives back the argument and the function the apply had; an un-apply meeting an apply that never ran just joins them up",
-  "Ar-": "the un-apply of a stem or fork built by applying a leaf or stem: takes the result apart", "Sel-": "picks how a triage is run back by the argument's head kept in its residual",
-  "Dn-": "a merge: the two copies a duplicator made, read back into one (when they meet the duplicator itself, both just go)",
-  Arms3: "a triage's three arms w, x, b, carried to the dispatch",
-  E: "runs a term given as a tree (△v a value, △⌜f⌝⌜x⌝ an application): each application becomes an apply, and its history (H) is kept beside the answer",
-  "E-": "runs the answer and its history back to the term as a tree: for each application an un-apply of its residual and result",
-  "F!": "forgetting is on: erases what an apply dropped (K's argument, a triage's arms not taken) and leaves a hole in its place",
-  "?": "a hole: something forgotten. A merge of a hole and a copy gives the copy; run again, what reads a hole gives a hole",
-  Go: "the root, clicked: drops E on the term here, to run it", Back: "the root, clicked: drops E- on the answer and history here, to run them back",
-  H: "the history of an application of the loaded term: its residual, and the histories of its function and argument",
-  "Arms-": "running back a dispatch on a hole: the arms it kept, as the triage they were",
-  ...Object.fromEntries(Object.entries(RESIDUAL_TREE).map(([r, t]) => [r, `a residual: what a step would have dropped, standing for the tree ${t}; read back as the function by an un-apply`])),
   R: "runs the program on its first port on the tree on its second, reading the program a node at a time, and hands the program back on its third beside the result on its fourth. A leaf is id and a fork (a, b) runs a then b; a stem starts an instruction, read on by R1, R2, …",
   ...Object.fromEntries(INSTR.slice(1).map((_, i) => [`R${i + 1}`, `a run that has read ${i + 1} stem${i ? "s" : ""} of an instruction: a leaf under ${i ? "them" : "it"} is ${INSTR[i + 1]}${INSTR_FORK[i + 1] ? `, a fork ${INSTR_FORK[i + 1]}` : ""}${i < 13 ? ", and another stem reads on" : ""}`])),
   Sp: "takes a fork apart: each child goes straight to its reader", SpS: "takes a stem apart: its child goes straight to its reader",
@@ -94,17 +60,6 @@ const PORTS = { L: ["value"], S: ["value", "child"], F: ["value", "left", "right
   A: ["operator", "argument", "result"], T1: ["subject", "arms", "result"], Sel: ["subject", "arms", "result"], Unp: ["pair", "first", "second"],
   Dn: ["value", "copy 1", "copy 2"], Eps: ["input"], Nrm: ["input", "result"], Out: ["answer"], Sup: ["value", "first side", "second side"],
   K: ["value", "y"], Sx: ["value", "s", "b"], B: ["value", "f", "g"], C: ["value", "f", "g"], I: ["value"], W: ["value", "s"],
-  "A+": ["function", "argument", "result", "residual"], "T1+": ["subject", "⟨b, c⟩", "result", "residual"], "Sel+": ["subject", "arms", "result", "residual"],
-  "SL+": ["arms", "result", "residual"], "SS+": ["arms", "u", "result", "residual"], "SF+": ["arms", "⟨u, v⟩", "result", "residual"],
-  "T1s+": ["s", "⟨b, c⟩", "result", "residual"], "T1sf+": ["s's left", "⟨s's right, ⟨b, c⟩⟩", "result", "residual"], "T1sc0+": ["⟨b, c⟩", "s", "result", "residual"],
-  "T1sc+": ["b", "⟨s, c⟩", "result", "residual"], "T1scf+": ["b's left", "⟨b's right, ⟨s, c⟩⟩", "result", "residual"], "TSb+": ["⟨s, c⟩", "b", "result", "residual"],
-  "A-": ["residual", "result", "argument", "function"], "Ar-": ["result", "argument", "function"], "Sel-": ["argument's head", "arms", "argument", "function"],
-  "SL-": ["arms", "argument", "function"], "SS-": ["arms", "j", "argument", "function"], "SF-": ["arms", "⟨j₁, j₂⟩", "argument", "function"],
-  "Dn-": ["copy", "copy", "value"], "DnL-": ["other copy", "value"], "DnS-": ["other copy", "child", "value"], "DnF-": ["other copy", "left", "right", "value"],
-  Arms3: ["value", "w", "x", "b"], Rk: ["value", "c"], Rs: ["value", "j₁", "j₂", "j₃"], Rt: ["value", "h", "d", "r"], Rb: ["value", "j₁", "j₂"], Rc: ["value", "j₁", "j₂"],
-  H: ["value", "residual", "function's history", "argument's history"], E: ["term", "value", "history"], "E-": ["history", "value", "term"],
-  "F!": ["residual", "up"], "?": ["value"], Go: ["term"], Back: ["answer and history"], Rh: ["value", "function", "argument"], Rq: ["value", "arms"],
-  "Arms-": ["arms", "triage"],
   R: ["program", "input", "program out", "result"], Sp: ["fork", "left", "right"], SpS: ["stem", "child"], Eat: ["leaf"],
   Cd: ["tag", "⟨a, b⟩", "y", "⟨program, result⟩"], Lk: ["state", "program", "program out", "result"], Lk2: ["tag", "⟨program, rest⟩", "program out", "result"],
   Fl: ["tag", "tag out"], Mrg: ["first", "second", "merged"], MrgL: ["second", "merged"], MrgS: ["second", "first's child", "merged"],
@@ -134,29 +89,6 @@ const MEANING = {
   ...Object.fromEntries(Object.keys(VIEW_TREE).flatMap(v => [[`Dn·${v}`, `two copies of the ${v} view in one rewrite; duplicators copy its children`],
     [`Eps·${v}`, `the ${v} view is erased in one rewrite; erasers move on to its children`],
     ...["T1", "Sel", "Nrm"].map(q => [`${q}·${v}`, `the ${v} view is spelled out as its tree ${VIEW_TREE[v]}, for the ${NAMES[q]} to read`])])),
-  "A+·L": "apply(leaf, x) = stem x; residual △", "A+·S": "apply(stem a, x) = fork a x; residual △", "A+·F": "apply(fork a b, x) = triage a with ⟨b, x⟩, keeping history",
-  "T1+·L": "K: the result is b; c goes into the residual Rk(c) instead of an eraser", "T1+·S": "the S rule: first look whether it is B or C",
-  "T1+·F": "dispatch on c with arms ⟨w, x, b⟩", "Sel+·L": "c is a leaf: read the arms", "Sel+·S": "c is a stem: read the arms", "Sel+·F": "c is a fork: read the arms",
-  "SL+·Arms3": "the result is w; residual Rt(△, x, b)", "SS+·Arms3": "the result is x u; residual Rt(△j, w, b)", "SF+·Arms3": "the result is b u v; residual Rt(△j₁j₂, w, x)",
-  "T1sf+·L": "B f g c = f (g c): c goes to the side that uses it, uncopied; residual Rb", "T1scf+·L": "C f g c = f c g: c goes to the side that uses it, uncopied; residual Rc",
-  "TSb+·Pair": "the S rule: s c (b c), c copied; residual Rs(j₁, j₂, j₃)",
-  "A-·L": "the step was a constructor: take the result apart", "Ar-·S": "the result was a stem △z: the function was △, the argument z", "Ar-·F": "the result was a fork △xz: the function was △x, the argument z",
-  "A-·Rk": "the step was K: the function was △△(result), the argument c", "A-·Rs": "the step was the S rule: un-apply its three applies, merge the two copies of c",
-  "A-·Rt": "the step was a triage: dispatch back on the argument's head", "A-·Rb": "the step was B: un-apply both applies", "A-·Rc": "the step was C: un-apply both applies",
-  "Dn-·L": "merge: the first copy is a leaf", "Dn-·S": "merge: the first copy is a stem", "Dn-·F": "merge: the first copy is a fork",
-  "DnL-·L": "merge: both copies leaves, one leaf", "DnS-·S": "merge: both copies stems, one stem; merge the children", "DnF-·F": "merge: both copies forks, one fork; merge the children",
-  "E·S": "a value of the term: out as it is; its history △", "E·F": "an application of the term: an apply of its two parts run; its history H",
-  "E-·L": "a value: back into the term as △v", "E-·H": "an application: un-apply its residual and result, and run the function's and argument's histories back",
-  "Go·S": "run the term here; the answer and history, bundled, at a new root", "Go·F": "run the term here; the answer and history, bundled, at a new root",
-  "Back·F": "run the answer and history bundled here back to the term, at a new root",
-  "F!·Rk": "forget K's dropped argument: a hole in its place", "F!·Rt": "forget a triage's arms not taken: holes in their place",
-  "Dn·?": "two copies of a hole", "Nrm·?": "a hole is as finished as it gets", "Dn-·?": "merge: a hole and a copy give the copy",
-  "DnL-·?": "merge: a leaf and a hole give the leaf", "DnS-·?": "merge: a stem and a hole give the stem", "DnF-·?": "merge: a fork and a hole give the fork",
-  "Ar-·?": "the result was forgotten: the function and argument are holes too",
-  "A+·?": "applying a hole gives a hole; Rh keeps the argument", "T1+·?": "a triage on a hole gives a hole; Rh keeps the rest",
-  "Sel+·?": "a dispatch on a hole gives a hole; Rq keeps the arms", "A-·Rh": "give back the function and argument Rh kept",
-  "A-·Rq": "give back the arms Rq kept as the triage, and a hole for the argument", "Arms-·Arms3": "the arms w, x, b as the triage △(△wx)b",
-  "T1s+·?": "the S rule: a hole is not B", "T1sf+·?": "the S rule: a hole is not B", "T1sc+·?": "the S rule: a hole is not C", "T1scf+·?": "the S rule: a hole is not C",
   "R·L": "id: the input is the result, and the leaf goes back as the program",
   "R·F": "a; b: run a, then b on what a gives, two runs in a row; the programs they give back join in the fork again",
   ...Object.fromEntries(INSTR.slice(0, 14).map((_, k) => [`${k ? `R${k}` : "R"}·S`, `one more stem of an instruction: read on (R${k + 1}), the stem going back into the program`])),
@@ -184,8 +116,8 @@ const MEANING = {
   "DgE·L": "an even instruction's inverse is the one before: the stem held back is dropped" };
 // Values (leaf, stem, fork) in greys: the colours are for applications and what carries them out.
 // Movement agents in colours of what they do: K red (erases), Sx and W greens (copy), B orange and C yellow (move), I sky (a wire).
-// Keeping history: walkers forward as apply and triage are, walkers back in pinks, residuals and histories amber,
-// the forgetter red, a hole white, the clicked root green (run) or pink (run back).
+// Keeping history (21 to 58, not run here): walkers forward as apply and triage are, walkers back in pinks,
+// residuals and histories amber.
 const COLOR = ["#000", "#dfe4ea", "#aab3bf", "#7c8694", "#e86bd8", "#c792ea", "#56c8ff", "#4fd6be", "#2bb5a0", "#7a8cff", "#9d7cff", "#8a96a8", "#6ee07a", "#ffffff", "#f7768e",
   "#db4b4b", "#c3e88d", "#ff9e64", "#f4d35e", "#7dcfff", "#9ece6a",
   "#56c8ff", "#4fd6be", "#2bb5a0", "#2bb5a0", "#2bb5a0", "#2bb5a0", "#4fd6be", "#4fd6be", "#4fd6be", "#4fd6be", "#4fd6be", "#4fd6be",

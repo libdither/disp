@@ -39,11 +39,11 @@ struct Run { clocks: f64, fires: u64, first_fork: Option<u64>, forks: u64, copie
 /// The lattice run to the answer: the current design on a lattice sized as the player sizes it
 /// (side ⌈√agents · 7⌉ + 16, 8 layers, ×1.4 until the drawing fits).
 fn lattice_run(t: &STerm, want: &[(u32, Term)], seed: u64, max_clocks: f64, trace: bool) -> Result<Run, String> {
-    let agents = rust_ic_strands::share::net_sup(t, 0).0.live_count();
+    let agents = rust_ic_strands::load::net_sup(t).0.live_count();
     let mut side = ((agents as f64).sqrt() * 7.0).ceil() as u32 + 16;
     let mut l = None;
     for _ in 0..6 {
-        let (net, out) = rust_ic_strands::share::net_sup(t, 0);
+        let (net, out) = rust_ic_strands::load::net_sup(t);
         match Lattice::load(Params { w: side, h: side, seed, ..latest() }, net, out) {
             Ok(x) => { l = Some(x); break; }
             Err(_) => side = (side as f64 * 1.4).ceil() as u32,

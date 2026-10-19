@@ -5,7 +5,7 @@
 use rust_ca_lattice::oracle::{self, f2, Fuel, Term};
 use rust_ic_mesh::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
-use rust_ic_strands::share;
+use rust_ic_strands::load;
 
 #[test]
 fn parts_finish_on_their_own_and_each_is_its_answer() {
@@ -14,9 +14,9 @@ fn parts_finish_on_their_own_and_each_is_its_answer() {
     let tuple = parts.iter().rev().skip(1).fold(parts.last().unwrap().clone(), |acc, p| f2(p.clone(), acc));
     // A grid as the player sizes it, grown until the drawing fits.
     let t = (&tuple).into();
-    let mut side = ((share::net_sup(&t, 0).0.agents.len() as f64).sqrt() * 7.0).ceil() as u32 + 16;
+    let mut side = ((load::net_sup(&t).0.agents.len() as f64).sqrt() * 7.0).ceil() as u32 + 16;
     let mut l = loop {
-        let (net, out) = share::net_sup(&t, 0);
+        let (net, out) = load::net_sup(&t);
         match Lattice::load(Params { w: side, h: side, ..latest() }, net, out) { Ok(l) => break l, Err(_) => side = side * 7 / 5 }
     };
     let n = parts.len();

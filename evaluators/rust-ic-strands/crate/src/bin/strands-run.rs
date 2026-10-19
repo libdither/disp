@@ -20,7 +20,6 @@ fn main() {
     let mut progress = 0u64;
     let mut profile = false;
     let mut clean = 0f64;
-    let mut mix = 0f64;
     let mut fit = false;
     let mut cool = 0f64;
     let mut vary = vec![];
@@ -41,7 +40,6 @@ fn main() {
             "--press" => p.pressure = it.next().unwrap().parse().unwrap(),
             "--wp" => p.w_principal = it.next().unwrap().parse().unwrap(),
             "--wa" => p.w_aux = it.next().unwrap().parse().unwrap(),
-            "--fill" => p.init_fill = it.next().unwrap().parse().unwrap(),
             "--seed" => p.seed = it.next().unwrap().parse().unwrap(),
             "--budget" => budget = it.next().unwrap().parse().unwrap(),
             "--check" => check = it.next().unwrap().parse().unwrap(),
@@ -67,13 +65,10 @@ fn main() {
             "--active" => p.active = it.next().unwrap().parse().unwrap(),
             "--swap" => p.swap = it.next().unwrap().parse().unwrap(),
             "--agents" => p.agent_turns = it.next().unwrap().parse().unwrap(),
-            "--repel" => p.repel = it.next().unwrap().parse().unwrap(),
             "--field" => p.set("field", &it.next().unwrap()).unwrap_or_else(|e| panic!("{e}")),
             "--calls" => p.calls = true,
             "--fork" => p.fork = true,
-            "--share" => p.share = it.next().unwrap().parse().unwrap(),
             "--demand" => { p.calls = true; p.set("field", rust_ic_strands::lattice::DEMAND).unwrap(); }
-            "--mix" => mix = it.next().unwrap().parse().unwrap(),
             "--fit" => fit = true,
             "--cool" => cool = it.next().unwrap().parse().unwrap(),
             "--vary" => vary.push(it.next().unwrap().clone()),
@@ -93,14 +88,14 @@ fn main() {
     };
     let labels = t.labels();
     let want = sup::oracle_answers(&t, 100_000_000).map(|u| sup::show(&sup::collapse(&u, &labels)));
-    let (net, out) = rust_ic_strands::share::net_for(&t, &p).unwrap_or_else(|e| panic!("{e}"));
+    let (net, out) = rust_ic_strands::load::net_for(&t, &p).unwrap_or_else(|e| panic!("{e}"));
     let agents = net.live_count();
     let mut l = if fit {
         // As the player sizes it: side ceil(√agents · 7, or 8 in 2D) + 16, growing ×1.4 until the drawing fits.
         let mut side = ((net.agents.len() as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16;
         let mut net = Some(net);
         loop {
-            let (net, out) = net.take().map_or_else(|| rust_ic_strands::share::net_for(&t, &p).unwrap(), |n| (n, out));
+            let (net, out) = net.take().map_or_else(|| rust_ic_strands::load::net_for(&t, &p).unwrap(), |n| (n, out));
             match Lattice::load(Params { w: side, h: side, ..p }, net, out) {
                 Ok(l) => break l,
                 Err(e) if e.starts_with("the drawing") => side = (side as f64 * 1.4).ceil() as u32,
@@ -164,20 +159,6 @@ fn main() {
         println!("full sites walkers head into hold: two idle agents {:.0}%, one idle {:.0}%, no idle {:.0}%; the walker's own partner {:.0}%",
             100.0 * crowd[4] as f64 / full, 100.0 * crowd[5] as f64 / full, 100.0 * crowd[6] as f64 / full, 100.0 * crowd[7] as f64 / full);
         fin
-    } else if mix > 0.0 {
-        // How mixed the root's segments are (readback.rs `mixing`), sampled every `mix` clocks.
-        let (mut fin, mut sum, mut n, mut right) = (false, [0f64; 4], 0, 0f64);
-        while l.stats.proposals < budget && !fin {
-            let c0 = l.stats.clocks;
-            while l.stats.clocks - c0 < mix && !fin { fin = l.run((l.stats.proposals + l.live_sites() as u64).min(budget)); }
-            for (a, m) in sum.iter_mut().zip(rust_ic_strands::readback::mixing(&l, &[1, 2, 3, u32::MAX])) { *a += m; }
-            let (r, of) = l.labels_right();
-            right += r as f64 / of.max(1) as f64;
-            n += 1;
-        }
-        println!("mixing at segment depth 1, 2, 3, all: {}; tree labels right {:.0}%", sum.iter().map(|a| format!("{:.3}", a / n.max(1) as f64)).collect::<Vec<_>>().join(" "),
-            100.0 * right / n.max(1) as f64);
-        fin
     } else if progress == 0 { l.run(budget) } else {
         let mut fin = false;
         while l.stats.proposals < budget && !fin {
@@ -226,14 +207,6 @@ fn main() {
     println!("{} — answer {} (want {}) projection {:?}", if done { "DONE" } else { "UNFINISHED" },
         ans.as_deref().unwrap_or("-"), want.as_deref().unwrap_or("?"), proj.err());
     println!("clocks {:.0}  walker steps ok {} / no seat {} / no lane {} / energy {}  demand by pulse {}  collected {} ({} dead computations)  refused for a full switchboard {}  turns dropped for stale reads {}", s.clocks, s.walk_ok, s.walk_fail[0], s.walk_fail[1], s.walk_fail[2], s.pulses, s.collected, s.dead, s.capped, s.stale);
-    if !l.readdist.is_empty() {
-        let n: u64 = l.readdist.iter().sum();
-        let names = ["0", "1", "2", "3-4", "5-8", "9-16", "17-32", "33-64", ">64"];
-        let parts: Vec<String> = names.iter().zip(&l.readdist).map(|(k, v)| format!("{k}: {:.0}%", 100.0 * *v as f64 / n.max(1) as f64)).collect();
-        println!("READDIST {n} reads of loaded values, by sites to the nearest place one was loaded: {}", parts.join("  "));
-        let parts: Vec<String> = names.iter().chain(["first"].iter()).zip(&l.cachedist).map(|(k, v)| format!("{k}: {:.0}%", 100.0 * *v as f64 / n.max(1) as f64)).collect();
-        println!("CACHEDIST to the nearest of the last 4 places it was read: {}", parts.join("  "));
-    }
     println!("proposals {}  fires {} (blocked {})  swaps {}  hops {}  folds {}  flips {}  strands {} (peak {})  peak live sites {}  fullest site {}  {:.2}s",
         s.proposals, s.fires, s.blocked_fires, s.swaps, s.hops, s.folds, s.flips, s.strands, s.peak_strands, s.peak_live, s.peak_site, dt);
     if l.fields.on {

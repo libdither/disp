@@ -65,7 +65,7 @@ fn hop_to(s0: u32, t0: u32, so: u32, to: u32, k: u32, f: u32, k2: u32, metropoli
   de += E_CROWD * (i32(occ(t0)) - (i32(occ(s0)) - 1));
   if ((E_IDLE != 0 || COLD_IDLE) && idle(s0, k)) {
     // Two idle agents sharing a site: idle crowding, or where nothing reacts near (a cold site) `compact` gained.
-    let ws = select(E_IDLE, -E_COMPACT, COLD_IDLE && vs == 0u); let wt = select(E_IDLE, -E_COMPACT, COLD_IDLE && vt == 0u);
+    let ws = select(E_IDLE, 0, COLD_IDLE && vs == 0u); let wt = select(E_IDLE, 0, COLD_IDLE && vt == 0u);
     de += wt * i32(idle_at(t0)) - ws * (i32(idle_at(s0)) - 1);
   }
   if (E_LINK != 0) { let n = i32(countOneBits(fu)); let n2 = n - i32(through) + i32(need); de += E_LINK * (n2 * n2 - n * n); }

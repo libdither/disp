@@ -519,7 +519,7 @@ const DEFAULT = DISP.some(p => p.name === "relay_add") ? SIDE_BY_SIDE : DISP.som
 /// history's, or a two-way program's (its values, programs included, duplicators, the root and its walkers, the run
 /// once for all its reading states).
 const span = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
-const KINDS = { tree: span(1, 20), resid: span(1, 58), two: [1, 2, 3, 10, 13, 59, ...span(74, 94)] };
+const KINDS = { tree: span(1, 20), two: [1, 2, 3, 10, 13, 59, ...span(74, 94)] };
 /// The legend's entries after the kinds.
 let LEGEND_REST = "";
 function legend(kinds) { $("legend").innerHTML = kinds.map(t => `<span>${kindHTML(t)}</span>`).join("") + LEGEND_REST; }
@@ -708,7 +708,7 @@ function start(p, input) {
   if (G) { if (!G.busy) G.grid?.destroy(); G.grid = null; G.load++; dropGpu(); gpuEstimate(); }
   [gpuCode, gpuWhy] = E.strands_gpu_shader() ? [text(E.text_len()), ""] : [null, text(E.text_len())];
   L = { w: side, h: side, depth, k: E.lattice_shape(1), lanes: E.lattice_shape(2), ks: E.slots_per_site(), ar: E.ports_per_slot(), ends: E.ends_per_site(), faces: depth > 1 ? 6 : 4, gc: true };
-  legend(L.ar === 3 ? KINDS.tree : /^\s*two:/.test(src) ? KINDS.two : KINDS.resid);
+  legend(/^\s*two:/.test(src) ? KINDS.two : KINDS.tree);
   running = p.parts ? { call: p.call, parts: p.parts, at: p.parts.map(() => null) } : p.call ? { kind: p.kind, call: p.call } : null;
   finished = false; cleaned = false; cleanSeen = false; answerClock = 0; oracleText = null; hist = []; bursts = []; story = []; pinned = null; $("tip").hidden = true;
   tlReset();

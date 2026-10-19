@@ -33,7 +33,7 @@ fn forward_then_backward_restores_the_net() {
     let (mut runs, mut events, mut residue) = (0, 0, 0);
     for (name, t) in terms() {
         let Ok(want) = oracle::nf(t.clone(), &mut Fuel(2_000_000)) else { continue };
-        let (net, _) = rust_ic_strands::share::net(&t, 0);
+        let (net, _) = rust_ic_strands::load::net(&t);
         let start = Net { agents: net.agents.clone(), ..Net::new() };
         let mut r = Rev::new(net, true);
         r.erase = runs % 2 == 0;
@@ -70,7 +70,7 @@ fn rounds_fire_every_pair_at_once() {
     let (mut runs, mut events, mut rounds) = (0, 0, 0);
     for (name, t) in terms() {
         let Ok(want) = oracle::nf(t.clone(), &mut Fuel(2_000_000)) else { continue };
-        let (net, _) = rust_ic_strands::share::net(&t, 0);
+        let (net, _) = rust_ic_strands::load::net(&t);
         let start = Net { agents: net.agents.clone(), ..Net::new() };
         let mut r = Rev::new(net, true);
         while r.round() > 0 { assert!(r.rounds.len() < 100_000, "{name}: no end"); }

@@ -1,6 +1,6 @@
 //! EXPERIMENTAL: two schedules for `net.rs`, with the work ledger split by rule and by where the
 //! value a rewrite reads came from.
-//! - `ideal`: the strand lattice's idealised lazy machine (rust-ic-strands memo.rs `ideal_depth`,
+//! - `ideal`: the strand lattice's idealised lazy machine (rust-ic-strands ideal.rs `ideal_depth`,
 //!   README "Fork"): demand at once, every wanted rewrite at once a round, erasers collecting as
 //!   on the lattice, the S rule's two halves both wanted. Its rewrites are the lattice's rewrites.
 //! - `all`: the abstract net (rust-ca-lattice net.rs `reduce`): every active pair fires, no

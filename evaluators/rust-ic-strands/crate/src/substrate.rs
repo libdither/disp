@@ -65,7 +65,7 @@ pub struct Joined { pub a: Ref, pub b: Ref, pub pa: (u8, u8), pub pb: (u8, u8) }
 
 /// An agent as it was when a rewrite used it up.
 #[derive(Clone, Debug)]
-pub struct Was { pub id: u32, pub tag: Tag, pub sup: u8, pub want: bool, pub label: u8, pub marks: Vec<(u8, Vec<u64>)> }
+pub struct Was { pub id: u32, pub tag: Tag, pub sup: u8, pub want: bool, pub marks: Vec<(u8, Vec<u64>)> }
 
 /// The energy account.
 #[derive(Clone, Debug, Default)]
@@ -143,7 +143,7 @@ impl Lattice {
         let a = self.shadow.get(id);
         let (tag, sup) = (a.tag, a.label);
         let marks = (0..self.ar as u8).filter_map(|q| self.sub.marks.remove(&(id, q)).filter(|v| !v.is_empty()).map(|v| (q, v))).collect();
-        Was { id, tag, sup, want: self.want[i], label: self.label[i], marks }
+        Was { id, tag, sup, want: self.want[i], marks }
     }
 
     /// The agents a kept record ties agent `id` to: the others its maker made, and the near ends of
@@ -604,7 +604,6 @@ impl Lattice {
             let i = x as usize * self.ks + k;
             self.sup_label[i] = w.sup;
             self.want[i] = w.want;
-            self.label[i] = w.label;
         }
         for &(a, b) in &plan.links {
             let end_at = |t: T| match t { T::New(i, q) => (seats[i].0, (seats[i].1 * self.ar + q) as u8), T::Stay(l, m) => (l, m) };
@@ -622,7 +621,6 @@ impl Lattice {
             }
             self.link(site, cur, eb);
         }
-        if self.labels() { for _ in 0..2 { for &x in &region.sites { if x != u32::MAX { self.relabel(x); } } } }
         for &x in &region.sites { if x != u32::MAX { self.refresh(x); } }
         true
     }
@@ -682,7 +680,7 @@ pub struct Snap {
     next_pulse: f64,
     sites: Vec<u32>,
     mate: Vec<u8>,
-    seats: Vec<(u8, u32, bool, u8, u8)>,
+    seats: Vec<(u8, u32, bool, u8)>,
     pulse: Vec<u8>,
     press: Vec<u8>,
     shadow: Vec<Option<Agent>>,
@@ -708,7 +706,7 @@ impl Lattice {
         let mut seats = Vec::with_capacity(sites.len() * self.ks);
         for &x in &sites {
             mate.extend_from_slice(&self.mate[x as usize * self.ends..(x as usize + 1) * self.ends]);
-            for k in 0..self.ks { let i = x as usize * self.ks + k; seats.push((self.tags[i], self.sids[i], self.want[i], self.label[i], self.sup_label[i])); }
+            for k in 0..self.ks { let i = x as usize * self.ks + k; seats.push((self.tags[i], self.sids[i], self.want[i], self.sup_label[i])); }
         }
         Snap { p: self.p, stats: self.stats.clone(), cooling: self.cooling, rng: self.rng, next_pulse: self.next_pulse,
                pulse: sites.iter().map(|&x| self.pulse_at[x as usize]).collect(), press: sites.iter().map(|&x| self.press[x as usize]).collect(),
@@ -721,7 +719,7 @@ impl Lattice {
         for x in self.live.clone() {
             let (m, a) = (x as usize * self.ends, x as usize * self.ks);
             self.mate[m..m + self.ends].fill(NONE);
-            for i in a..a + self.ks { self.tags[i] = 0; self.sids[i] = u32::MAX; self.want[i] = false; self.label[i] = 0; self.sup_label[i] = 0; }
+            for i in a..a + self.ks { self.tags[i] = 0; self.sids[i] = u32::MAX; self.want[i] = false; self.sup_label[i] = 0; }
             self.pulse_at[x as usize] = NONE;
             self.press[x as usize] = 0;
             self.occ[x as usize] = 0;
@@ -733,8 +731,8 @@ impl Lattice {
             self.mate[m..m + self.ends].copy_from_slice(&v.mate[j * self.ends..(j + 1) * self.ends]);
             let mut occ = 0;
             for k in 0..self.ks {
-                let (t, sid, w, l, sl) = v.seats[j * self.ks + k];
-                self.tags[a + k] = t; self.sids[a + k] = sid; self.want[a + k] = w; self.label[a + k] = l; self.sup_label[a + k] = sl;
+                let (t, sid, w, sl) = v.seats[j * self.ks + k];
+                self.tags[a + k] = t; self.sids[a + k] = sid; self.want[a + k] = w; self.sup_label[a + k] = sl;
                 occ += (t != 0) as u8;
             }
             self.occ[x as usize] = occ;

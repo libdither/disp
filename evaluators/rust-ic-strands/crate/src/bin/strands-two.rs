@@ -76,7 +76,7 @@ fn main() {
             let src = call("add", &[a, b]);
             let t = term::parse_sup(&src).unwrap().plain().unwrap();
             let want = oracle::nf(t.clone(), &mut oracle::Fuel(10_000_000)).ok();
-            let (net, out) = rust_ic_strands::share::net_for(&(&t).into(), &plain).unwrap();
+            let (net, out) = rust_ic_strands::load::net_for(&(&t).into(), &plain).unwrap();
             let n = net.live_count();
             let w = side(n);
             let mut l = Lattice::load(Params { w, h: w, ..plain }, net, out).unwrap();

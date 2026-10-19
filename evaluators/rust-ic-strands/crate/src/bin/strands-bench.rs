@@ -62,10 +62,10 @@ fn main() {
         if ideal {
             // The idealised lazy machine (memo.rs): demand at once, every wanted rewrite at once.
             use rust_ca_lattice::rules::Tag;
-            let (mut net, _) = rust_ic_strands::share::net_for(&t, &Params { share: 0, ..p0 }).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let (mut net, _) = rust_ic_strands::load::net_for(&t, &p0).unwrap_or_else(|e| panic!("{name}: {e}"));
             let agents = net.live_count();
             let mut want: Vec<bool> = net.agents.iter().map(|a| matches!(a, Some(a) if matches!(a.tag, Tag::Nrm | Tag::Out | Tag::Eps))).collect();
-            let r = rust_ic_strands::lattice::memo::ideal_depth(&mut net, &mut want, p0.fork, 10_000_000);
+            let r = rust_ic_strands::lattice::ideal::ideal_depth(&mut net, &mut want, p0.fork, 10_000_000);
             let mut answer = String::new();
             let o = net.agents.iter().position(|a| matches!(a, Some(a) if a.tag == Tag::Out)).unwrap() as u32;
             if let Some(a) = net.readback(net.get(o).ports[0]) { ternary(&(&a).into(), &mut answer); }
@@ -74,9 +74,9 @@ fn main() {
             continue;
         }
         for &seed in &seeds {
-            let p = Params { seed, share: 0, ..p0 };
+            let p = Params { seed, ..p0 };
             // As the player: side ⌈√agents · 7⌉ + 16 (8 for one layer), ×1.4 until the drawing fits.
-            let built = || rust_ic_strands::share::net_for(&t, &p).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let built = || rust_ic_strands::load::net_for(&t, &p).unwrap_or_else(|e| panic!("{name}: {e}"));
             let (agents, views) = { let n = built().0; (n.live_count(), n.agents.iter().flatten().filter(|a| a.tag.is_view()).count()) };
             let mut side = ((agents as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16;
             let mut l = None;

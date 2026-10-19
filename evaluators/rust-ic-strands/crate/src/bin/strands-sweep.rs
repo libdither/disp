@@ -29,7 +29,7 @@ fn main() {
         let t0 = std::time::Instant::now();
         let (mut done, mut wrong, mut stuck, mut clocks, mut fires, mut collected, mut unloadable) = (0, 0, 0, vec![], 0u64, 0u64, 0);
         for (i, (t, want)) in corpus.iter().enumerate() {
-            let (net, out) = rust_ic_strands::share::net(t, p.share);
+            let (net, out) = rust_ic_strands::load::net(t);
             let Ok(mut l) = Lattice::load(Params { seed: i as u64 + 1, ..p }, net, out) else { unloadable += 1; continue };
             let fin = l.run(budget);
             fires += l.stats.fires;

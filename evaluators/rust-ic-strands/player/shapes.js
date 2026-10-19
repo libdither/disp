@@ -55,7 +55,8 @@ SHAPE[18] = { fill: [SHAPE[17].fill[0].map((v, i) => i % 2 ? v : -v)] };
 SHAPE[19] = { fill: [[...arcPts(0.62, 0, 0.27, -90, 90, 6), ...arcPts(-0.62, 0, 0.27, 90, 270, 6)]] };
 SHAPE[20] = { fill: [[-0.12, -1.1, 0.12, -1.1, 0.12, -0.32, 0.98, -0.32, 0.98, 1, 0.76, 1, 0.76, -0.1, 0.43, -0.1, 0.43, 1, 0.21, 1, 0.21, -0.1,
   -0.21, -0.1, -0.21, 1, -0.43, 1, -0.43, -0.1, -0.76, -0.1, -0.76, 1, -0.98, 1, -0.98, -0.32, -0.12, -0.32]] };
-// Keeping history (set=resid=1): forward walkers as apply, triage and dispatch are; walkers back the same,
+// Keeping history (21 to 58, which the player does not run; two-way programs reuse some of these): forward
+// walkers as apply, triage and dispatch are; walkers back the same,
 // holed; a merge, a copy run back, is the duplicator's Y upside down; a triage's arms a pill like a pair;
 // residuals and histories triangles like values, a hole per child; running a term a disk with a ▶ cut out,
 // running it back one with a ◀; the forgetter an eraser's × with a hole; a hole a hollow triangle; the clicked

@@ -153,7 +153,7 @@ fn run(work: &str, vary: &str, seed: u64, cool: f64) -> Out {
             _ => term::parse_sup(&src).expect("bad term").plain().expect("no superpositions"),
         };
         let want = oracle::nf(t.clone(), &mut oracle::Fuel(100_000_000)).ok();
-        let (net, out) = rust_ic_strands::share::net_for(&(&t).into(), &p).unwrap_or_else(|e| panic!("{e}"));
+        let (net, out) = rust_ic_strands::load::net_for(&(&t).into(), &p).unwrap_or_else(|e| panic!("{e}"));
         (net, out, want, None)
     };
     let agents = net.live_count();

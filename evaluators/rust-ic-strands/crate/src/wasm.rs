@@ -108,12 +108,11 @@ pub extern "C" fn strands_new(w: u32, h: u32, src: *const u8, len: usize) -> i32
     let (t, parts) = match parse_all(src) { Ok(t) => t, Err(e) => { set_text(&e); return 1; } };
     let p = Params { w, h, ..*next() };
     if p.margolus && !p.block { set_text("2×2×2 blocks need rewrites inside one 2×2 block"); return 3; }
-    let (net, out, resid) = match net_for(&t, &p) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
+    let (net, out) = match net_for(&t, &p) { Ok(n) => n, Err(e) => { set_text(&e); return 1; } };
     let start = if p.phys { net.agents.clone() } else { vec![] };
     match Lattice::load(p, net, out) {
         Ok(mut l) => {
             if l.p.phys { l.schedule = vec![(0.0, [l.p.drive, l.p.erase, l.p.forget, l.p.bond])]; }
-            l.resid = resid;
             unsafe { STATE = Some(State { l, term: t, parts, done: false, start, two: None }); SAVED.clear(); }
             0
         }
@@ -145,70 +144,16 @@ fn two_answer(s: &State, decoded: bool) -> String {
     }
 }
 
-/// The net for a term with the next run's settings: keeping history, the term as a tree under a click
-/// to run it (resid.rs); else as `share::net_for` builds it.
-fn net_for(t: &STerm, p: &Params) -> Result<(rust_ca_lattice::net::Net, u32, crate::resid::Parts), String> {
-    if p.resid == 0 { return crate::share::net_for(t, p).map(|(n, o)| (n, o, Default::default())); }
-    Ok(crate::resid::net(&t.plain().ok_or("keeping history runs no superpositions")?, p.resid == 1))
+/// The net for a term with the next run's settings, as `load::net_for` builds it. Keeping history runs
+/// only on the CPU (strands-resid).
+fn net_for(t: &STerm, p: &Params) -> Result<(rust_ca_lattice::net::Net, u32), String> {
+    if p.resid > 0 { return Err("keeping history runs on the CPU only (strands-resid)".into()); }
+    crate::load::net_for(t, p)
 }
 
 /// Ports a slot's switchboard has: 3, or 4 keeping history or running two-way programs.
 #[no_mangle]
 pub extern "C" fn ports_per_slot() -> u32 { st().l.ar as u32 }
-
-/// Keeping history: 0 not; 1 the root holding (or working out) the answer and history; 2 the term run back.
-#[no_mangle]
-pub extern "C" fn strands_resid_phase() -> u32 {
-    let l = &st().l;
-    if l.p.resid != 1 { 0 } else if l.holds_term() { 2 } else { 1 }
-}
-
-/// The root's seat (site × slots + slot), -1 if there is none.
-#[no_mangle]
-pub extern "C" fn strands_root_seat() -> i32 { let l = &st().l; l.find_out().map_or(-1, |(s, k)| (s as usize * l.ks + k) as i32) }
-
-/// Keeping history, whether the walker on the root is done (a click there would take).
-#[no_mangle]
-pub extern "C" fn strands_resid_rest() -> u32 { let l = &st().l; (l.p.resid == 1 && l.at_rest()) as u32 }
-
-/// Keeping history, a click on the root once the walker there is done: the answer and history run
-/// back (returns 1), or the term run again (2); 0 if it is not done. What the run did after this
-/// clock (put back here) is forgotten.
-#[no_mangle]
-pub extern "C" fn strands_click() -> u32 {
-    let s = st();
-    if s.l.p.resid != 1 || !s.l.at_rest() { return 0; }
-    let back = !s.l.holds_term();
-    s.l.edit(if back { crate::resid::Edit::Back } else { crate::resid::Edit::Go });
-    s.done = false;
-    if back { 1 } else { 2 }
-}
-
-/// Keeping history, forgetting what the applies drop turned on or off from this clock (forgetting
-/// what the run did after it).
-#[no_mangle]
-pub extern "C" fn strands_forget(on: u32) -> u32 {
-    let s = st();
-    if s.l.p.resid != 1 { return 0; }
-    s.l.edit(crate::resid::Edit::Forget(on != 0));
-    s.done = false;
-    1
-}
-
-/// Keeping history, as JSON: the agents of the history at the root; run back, the term's values so far
-/// (in its order, null for one not back yet, ? for a hole), whether they are all back as loaded and
-/// how many holes; whether the applies forget what they drop; the clock of the last click.
-#[no_mangle]
-pub extern "C" fn strands_resid_text() -> u32 {
-    let l = &st().l;
-    let back = l.term_values();
-    let loaded = l.read_term().as_ref() == Some(&l.resid.term);
-    let holes: usize = back.iter().flatten().map(|t| t.holes()).sum();
-    let shown: Vec<String> = back.iter().map(|b| b.as_ref().map_or("null".into(), |t| format!("\"{}\"", t.show()))).collect();
-    let clicked = l.clicked_at().map_or("null".into(), |c| format!("{c}"));
-    set_text(&format!("{{\"history\":{},\"values\":[{}],\"loaded\":{loaded},\"holes\":{holes},\"forgetting\":{},\"clicked\":{clicked}}}",
-                      l.resid_history(), shown.join(","), l.forgetting))
-}
 
 /// Make `n` more proposals (stopping when the answer is in). Returns 1 once finished.
 #[no_mangle]
@@ -374,7 +319,7 @@ pub extern "C" fn strands_probe(src: *const u8, len: usize) -> i32 {
         return match twoway::parse_run(run) { Ok((prog, x)) => twoway::net(&prog, &x).0.agents.len() as i32, Err(e) => { set_text(&e); -1 } };
     }
     match parse_all(src) {
-        Ok((t, _)) => match net_for(&t, next()) { Ok((n, _, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
+        Ok((t, _)) => match net_for(&t, next()) { Ok((n, _)) => n.agents.len() as i32, Err(e) => { set_text(&e); -1 } },
         Err(e) => { set_text(&e); -1 }
     }
 }
@@ -456,7 +401,7 @@ static mut SAVED: Vec<Option<Saved>> = Vec::new();
 #[allow(static_mut_refs)]
 pub extern "C" fn save_state() -> u32 {
     let s = st();
-    let v = if s.l.p.phys || s.l.p.resid > 0 { Saved { held: vec![], labels: vec![], stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: Some(s.l.snap()) } }
+    let v = if s.l.p.phys { Saved { held: vec![], labels: vec![], stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: Some(s.l.snap()) } }
         else { Saved { held: s.l.held_sites(), labels: s.l.held_labels(), stats: s.l.stats.clone(), done: s.done, temp: s.l.p.temp, cooling: s.l.cooling, snap: None } };
     let saved = unsafe { &mut SAVED };
     match saved.iter().position(|x| x.is_none()) {
@@ -471,11 +416,9 @@ pub extern "C" fn save_state() -> u32 {
 pub extern "C" fn restore_state(i: u32) {
     let s = st();
     let v = unsafe { SAVED[i as usize].as_ref().expect("a saved state") };
-    // Keeping history, whether it is over turns on the clicks to come, which may be made since.
     if let Some(snap) = &v.snap {
         s.l.put_snap(snap);
-        if s.l.p.resid == 1 { s.l.resync_edits(); }
-        s.done = if s.l.p.resid == 1 { s.l.answered() } else { v.done };
+        s.done = v.done;
         return;
     }
     // Putting sites back numbers the agents afresh, as a GPU's hand-back does: picks are found again
@@ -680,7 +623,7 @@ pub extern "C" fn rev_new(src: *const u8, len: usize, erase: u32, collect: u32, 
     std::panic::set_hook(Box::new(|info| { set_text(&format!("engine panic: {info}")); }));
     let src = unsafe { std::str::from_utf8(std::slice::from_raw_parts(src, len)).unwrap_or("") };
     let t = match parse(src) { Ok(t) => t, Err(e) => { set_text(&e); return -1; } };
-    let (net, _) = crate::share::net_sup(&t, 0);
+    let (net, _) = crate::load::net_sup(&t);
     let mut r = crate::rev::Rev::new(net, true);
     r.erase = erase != 0;
     r.collect = collect != 0;

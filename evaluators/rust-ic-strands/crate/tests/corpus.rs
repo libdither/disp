@@ -73,14 +73,6 @@ fn demand_field_and_fork() {
     each_move_checked(&[]);
 }
 
-/// Keeping the term's parts apart (README): strangers repelled, tree labels and garbage labels.
-#[test]
-fn parts_kept_apart() {
-    let sets = [("strangers", "1"), ("trees", "4"), ("garbage", "4")];
-    all_finish(demand_and_fork(48, 6, &sets));
-    each_move_checked(&sets);
-}
-
 /// Cooling once only the answer is left (`Lattice::cool`), with turns as ever and greedy ones, every
 /// invariant re-checked after every clock: the answer and the projection stay exact.
 #[test]

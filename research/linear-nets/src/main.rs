@@ -193,7 +193,7 @@ fn main() {
                 let root = bn.build(&t);
                 bn.drive(root);
                 let mut want: Vec<bool> = bn.agents.iter().map(|a| matches!(a, Some(a) if matches!(a.tag, rust_ca_lattice::rules::Tag::Nrm | rust_ca_lattice::rules::Tag::Out | rust_ca_lattice::rules::Tag::Eps))).collect();
-                let r = rust_ic_strands::lattice::memo::ideal_depth(&mut bn, &mut want, true, 10_000_000);
+                let r = rust_ic_strands::lattice::ideal::ideal_depth(&mut bn, &mut want, true, 10_000_000);
                 println!("    strands ideal_depth: {:?} (ours {} rewrites, {} rounds)", r, total, ledger.rounds);
             }
         }

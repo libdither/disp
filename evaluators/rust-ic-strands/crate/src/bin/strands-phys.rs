@@ -54,7 +54,7 @@ fn main() {
     let src = src.expect("a program call or a term");
     let text = call(&src).unwrap_or(src.clone());
     let t: STerm = term::parse_sup(&text).unwrap_or_else(|e| panic!("{e}"));
-    let (net, out) = rust_ic_strands::share::net_for(&t, &p).unwrap();
+    let (net, out) = rust_ic_strands::load::net_for(&t, &p).unwrap();
     let n = net.live_count();
     let side = if grid > 0 { grid } else { ((n as f64).sqrt() * if p.depth > 1 { 7.0 } else { 8.0 }).ceil() as u32 + 16 };
     p.w = side;

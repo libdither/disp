@@ -1,7 +1,7 @@
 //! The chip configuration's constants as WGSL (the GPU kernel's tables), from the simulator's own
 //! rules, energies and probabilities, so the two cannot drift apart. hw/rtl gets the same as
 //! Verilog from `strands-hw`.
-use crate::lattice::{chip, fresh_wanted_in, ports, Channel, Energy, Params, SiteBytes, Source, NONE};
+use crate::lattice::{chip, fresh_wanted_in, ports, Channel, Energy, Params, SiteBytes, Source};
 use rust_ca_lattice::rules::{End, Rule, Tag, ALL_TAGS, RULES, TWO_RULES, TWO_TAGS, VIEW_RULES, VIEW_TAGS};
 use std::fmt::Write;
 
@@ -39,16 +39,13 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if !(p.margolus && p.block_moves && p.block && p.block_side == 2) { return Some("it runs only 2×2×2 blocks with a turn for every site"); }
     if p.k != 2 || p.lanes != 4 { return Some("its site holds 2 agents and 4 strands per link"); }
     if !p.pulse { return Some("demand always travels as pulses there"); }
-    if p.pressure != 0.0 || p.repel != 0.0 { return Some("it has no pressure or repulsion"); }
-    if p.strangers != 0.0 || p.trees != 0.0 || p.garbage != 0.0 { return Some("it keeps no tree labels and does not look for strangers"); }
-    if p.memo != 0 { return Some("merging equal computations is surgery by a central detector, on the CPU"); }
-    if p.cold && p.cold_terms & 7 != 0 || p.heat_crowd != 0.0 { return Some("its cold sites drop idle crowding only, and it has no heat crowding"); }
+    if p.pressure != 0.0 { return Some("it has no pressure"); }
+    if p.cold && p.cold_terms & 7 != 0 { return Some("its cold sites drop idle crowding only"); }
     if p.phys { return Some("the substrate's records and undoing run on the CPU"); }
     if p.eps_walk { return Some("its erasers take no walking turns"); }
     let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
     if let Some(c) = fields.nth(1) {
         if c.source.0 != Source::BLOCKED { return Some("its second field's source is rewrites without room"); }
-        if c.wire_step != NONE && c.wire_step < c.step { return Some("its fields spread alike along wires and through space"); }
         if c.bits > 4 { return Some("its fields have at most 4 bits"); }
         if c.wire != 0.0 { return Some("its second field weighs no wire"); }
         if fields.next().is_some() { return Some("it keeps two fields"); }
@@ -56,7 +53,6 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
     if let Some(c) = fields.next() {
         if c.source.0 & !(Source::READER | Source::PULSE) != 0 { return Some("its field's sources are wanted readers and demand pulses"); }
-        if c.wire_step != NONE && c.wire_step < c.step { return Some("its field spreads alike along wires and through space"); }
         if c.bits > 4 { return Some("its field has at most 4 bits"); }
     }
     None
@@ -82,7 +78,7 @@ pub fn wgsl_for(p: &Params) -> String {
         e.principal[0], e.principal[1], e.aux[0], e.aux[1]).unwrap();
     writeln!(w, "const E_CROWD: i32 = {}; const E_IDLE: i32 = {}; const E_LINK: i32 = {}; const E_BOARD: i32 = {};", e.crowd, e.idle, e.link, e.board).unwrap();
     // Cold sites (lattice.rs `Params::cold`): where the field is 0, two idle agents gain `compact` instead of paying `idle_crowd`.
-    writeln!(w, "const COLD_IDLE: bool = {}; const E_COMPACT: i32 = {};", p.cold && p.cold_terms & 8 != 0, e.compact).unwrap();
+    writeln!(w, "const COLD_IDLE: bool = {};", p.cold && p.cold_terms & 8 != 0).unwrap();
     writeln!(w, "const CH_ACTIVE: u32 = {}u; const CH_HOP: u32 = {}u; const CH_ALONG: u32 = {}u; const CH_SWAP: u32 = {}u;",
         chance(p.active), chance(p.p_hop), chance(0.7), chance(p.swap)).unwrap();
     // No cap: more pairings than a site's 33 ends can hold.

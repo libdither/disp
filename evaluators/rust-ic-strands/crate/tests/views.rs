@@ -10,12 +10,12 @@ use rust_ca_lattice::net::Net;
 use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Lcg, Term};
 use rust_ca_lattice::rules::{Tag, N_RULES, VIEW_RULES};
 use rust_ic_strands::lattice::{latest, Lattice, Params};
-use rust_ic_strands::{readback, share, tables};
+use rust_ic_strands::{load, readback, tables};
 
 fn views() -> Params { let mut p = latest(); p.set("views", "1").unwrap(); p }
 
 fn load(t: &Term, p: Params) -> Option<Lattice> {
-    let (net, out) = share::net_for(&t.into(), &p).ok()?;
+    let (net, out) = load::net_for(&t.into(), &p).ok()?;
     Lattice::load(p, net, out).ok()
 }
 
@@ -29,7 +29,7 @@ fn load_every(t: &Term, p: Params) -> Option<Lattice> {
 
 /// `load` on a lattice sized as the player sizes it: side ⌈√agents · 7⌉ + 16, ×1.4 until the drawing fits.
 fn fit(t: &Term, p: Params) -> Lattice {
-    let (net, _) = share::net_for(&t.into(), &p).unwrap();
+    let (net, _) = load::net_for(&t.into(), &p).unwrap();
     let mut side = ((net.agents.len() as f64).sqrt() * 7.0).ceil() as u32 + 16;
     loop {
         if let Some(l) = load(t, Params { w: side, h: side, ..p }) { return l; }
@@ -170,7 +170,7 @@ fn disp_programs_and_benchmarks_with_views() {
             let (got, proj) = run(&mut l);
             assert_eq!(got.as_deref(), Some(want.as_str()), "{name}, seed {seed}");
             proj.unwrap_or_else(|e| panic!("{name}: {e}"));
-            let net = share::net_for(&(&t).into(), &views()).unwrap().0;
+            let net = load::net_for(&(&t).into(), &views()).unwrap().0;
             format!("{name} seed {seed}: {:.0} clocks, {} rewrites, {} agents at load, {} of them views", l.stats.clocks, l.stats.fires,
                 net.live_count(), net.agents.iter().flatten().filter(|a| a.tag.is_view()).count())
         }))).collect();
@@ -261,15 +261,8 @@ fn what_takes_no_views_refuses_them() {
     let l = fit(&t, views());
     assert!(tables::gpu_refuses(&l).is_none() && tables::gpu_unfit(&views()).is_none(), "the GPU runs movement agents");
     assert!(tables::wgsl_for(&views()).contains("const NRULES: u32 = 62u;"));
-    assert!(share::net_for(&rust_ic_mesh::term::parse_sup("@(&1{L,S(L)},L)").unwrap(), &views()).is_err());
-    let mut shared = views();
-    shared.set("share", "8").unwrap();
-    assert!(share::net_for(&(&t).into(), &shared).is_err());
-    let mut memo = views();
-    memo.set("memo", "2").unwrap();
-    let (net, out) = share::net_for(&(&t).into(), &memo).unwrap();
-    assert!(Lattice::load(Params { w: 128, h: 128, ..memo }, net, out).is_err());
+    assert!(load::net_for(&rust_ic_mesh::term::parse_sup("@(&1{L,S(L)},L)").unwrap(), &views()).is_err());
     // Off, nothing changes: no views.
-    let (net, _) = share::net_for(&(&t).into(), &latest()).unwrap();
+    let (net, _) = load::net_for(&(&t).into(), &latest()).unwrap();
     assert!(!net.agents.iter().flatten().any(|a| a.tag.is_view()));
 }

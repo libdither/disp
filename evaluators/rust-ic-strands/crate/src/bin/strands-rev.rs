@@ -23,7 +23,7 @@ fn main() {
         _ => term::workload(&src, 0).unwrap_or_else(|| term::parse(&src).expect("bad term")),
     };
     let want = oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok();
-    let (net, _) = rust_ic_strands::share::net(&t, 0);
+    let (net, _) = rust_ic_strands::load::net(&t);
     let loaded = Net { agents: net.agents.clone(), ..Net::new() };
     let at_load = loaded.live_count();
     let mut r = Rev::new(net, true);

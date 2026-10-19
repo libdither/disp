@@ -9,10 +9,10 @@ use rust_ca_lattice::rules::{N_RULES, RULES, SUP_RULES};
 use rust_ca_lattice::sup::{self, STerm};
 use rust_ic_mesh::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
-use rust_ic_strands::{readback, share, tables};
+use rust_ic_strands::{load, readback, tables};
 
 fn load(t: &STerm, p: Params) -> Option<Lattice> {
-    let (net, out) = share::net_sup(t, 0);
+    let (net, out) = load::net_sup(t);
     Lattice::load(p, net, out).ok()
 }
 

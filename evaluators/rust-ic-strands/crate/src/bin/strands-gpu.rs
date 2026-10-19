@@ -191,7 +191,7 @@ fn main() {
         let root = net.build_every_view(&t);
         let (_, out) = net.drive(root);
         (net, out)
-    } else { rust_ic_strands::share::net_for(&(&t).into(), &p).unwrap_or_else(|e| panic!("{e}")) };
+    } else { rust_ic_strands::load::net_for(&(&t).into(), &p).unwrap_or_else(|e| panic!("{e}")) };
     let mut l = Lattice::load(p, net, out).expect("load");
     let show_ans = |l: &Lattice| if two.is_some() { twoway::answer(&l.shadow).map_or("-".into(), |(_, y)| y.show()) }
                                  else { l.readback().map(|t| oracle::show(&t)).unwrap_or("-".into()) };
