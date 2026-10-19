@@ -1239,7 +1239,7 @@ Four ways, each keeping a different amount of what a run would otherwise lose:
 |---|---|---|---|
 | the abstract net, every rewrite an event (`rev.rs`, `player/rev.html`) | every rewrite, in any causal order | the abstract net, CPU | a history 15–40× the loaded program |
 | two-way programs (`iso.rs`; on the lattice `two=1`, `twoway.rs`) | the program: every instruction a bijection, run back by its inverse | the lattice: CPU, GPU, player | nothing: the inverse program takes the result back |
-| the substrate (`substrate.rs`, `phys=1`) | every lattice rewrite while its record is kept, driven by ε | the lattice: CPU, player | records: at the answer 2.2–2.6× the loaded agents, 2,500–6,200 records |
+| the substrate (`substrate.rs`, `phys=1`) | every lattice rewrite while its record is kept, driven by ε; tree calculus and two-way programs | the lattice: CPU, player | records: at the answer 2.2–2.6× the loaded agents, 2,500–6,200 records |
 | keeping history (`resid=1`, `resid.rs`) | a tree-calculus run, each apply's residual kept in the net | the lattice: CPU | 2.4–4× the loaded agents at the answer |
 
 What a physical machine would need of each is weighed in research/REVERSIBLE_PIPELINE.md.
@@ -1459,6 +1459,27 @@ two-way runs:
   unpair's pill, the walkers that read data diamonds, merges an upside-down Y, inverting the run back's
   disk; a run splits its segment between its program and its input; and the details explain the rules
   (two-way programs).
+- **As physics** (`two=1 phys=1`, the player's `two:` with `phys=1`): the substrate's records work for
+  the two-way rules as they are. Forward gives the reference's result, and with the drive turned round
+  the run comes all the way back to the net as loaded (`tests/twoway.rs`, 8 programs). One fix was
+  needed: a rewrite that leaves nothing behind (`Eat` eating a leaf: a closed pair annihilating) has no
+  agent carrying its record's number, so no turn ever found the record and everything before it stayed
+  stuck. Such records are now kept by site (`Sub::bare`), and turns there try them. Clocks to the
+  answer against the drive (3 seeds, T = 1.5; *ideal* is 1/(1 − e^(−ε/T)), the slowdown of a walk
+  with that bias):
+
+  | drive ε (ε/T) | ideal | `add 5 6` | `twice @ ([succ], 3)` | `mirror (△, △△)` |
+  |---|---|---|---|---|
+  | plain lattice | 1 | 3,792 | 576 | 10,971 |
+  | 8 (5.3) | 1.005 | 4,061 (1.07×) | 602 (1.05×) | 11,211 (1.02×) |
+  | 3 (2) | 1.16 | 5,360 (1.41×) | 720 (1.25×) | over 300 s |
+  | 1.5 (1) | 1.58 | 13,966 (3.7×) | 1,228 (2.1×) | over 300 s |
+  | 0.75 (0.5) | 2.5 | over 300 s | 14,049 (24×) | over 300 s |
+
+  Below ε ≈ 3 the runs slow far more than the bias alone predicts: an undo is tried whenever a
+  rewrite's products sit together, which is right after it fired, while going forward waits for
+  partners to meet. Going back takes 5–100× the clocks forward (`add 1 2`, `twice`, six random
+  programs), most of it waiting for products to come together.
 - Not yet: tree calculus as a guest (iso.rs's `tc` compiled to these instructions), and instructions as
   agents standing for their trees.
 

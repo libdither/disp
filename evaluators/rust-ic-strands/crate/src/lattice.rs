@@ -771,7 +771,8 @@ impl Lattice {
     /// Keep the list of sites worth proposing moves at: those holding an agent or a strand.
     fn refresh(&mut self, s: u32) {
         let base = s as usize * self.ends;
-        let used = self.occ[s as usize] > 0 || self.mate[base + self.ar * self.ks..base + self.ends].iter().any(|&m| m != NONE);
+        let used = self.occ[s as usize] > 0 || self.mate[base + self.ar * self.ks..base + self.ends].iter().any(|&m| m != NONE)
+            || self.p.phys && self.sub.bare.contains_key(&s);
         let pos = self.live_pos[s as usize];
         if used && pos == u32::MAX {
             self.live_pos[s as usize] = self.live.len() as u32;
@@ -965,8 +966,8 @@ impl Lattice {
         if p.phys && net.agents.iter().flatten().any(|a| a.tag.is_view() || a.tag == Tag::Sup) {
             return Err("the substrate runs without superpositions or movement agents".into());
         }
-        if p.two && (p.resid > 0 || p.lazy || p.phys || p.views) {
-            return Err("two-way programs run eagerly, without keeping history, the substrate or movement agents".into());
+        if p.two && (p.resid > 0 || p.lazy || p.views) {
+            return Err("two-way programs run eagerly, without keeping history or movement agents".into());
         }
         if p.resid > 0 && (p.phys || p.views || net.agents.iter().flatten().any(|a| matches!(a.tag, Tag::Sup | Tag::P))) {
             return Err("keeping history runs without the substrate, movement agents, superpositions or suspensions".into());
@@ -2233,7 +2234,7 @@ impl Lattice {
         let near: Vec<u32> = if self.trace.on { [csid, psid].iter().flat_map(|&a| self.shadow.get(a).ports.iter().flatten().map(|r| r.0).collect::<Vec<_>>()).collect() } else { vec![] };
         let before = self.p.phys.then(|| self.sub_before(ri, csid, s as usize * self.ks + kc, psid, sp as usize * self.ks + kp));
         let fresh_sids = self.shadow.fire_rule(csid, psid, rule);
-        if let Some((gone, joined)) = before { self.sub_after(ri, gone, joined, &fresh_sids); }
+        if let Some((gone, joined)) = before { self.sub_after(ri, gone, joined, &fresh_sids, s); }
         if self.trace.on {
             let ids: Vec<u32> = fresh_sids.iter().chain(near.iter()).copied().collect();
             self.tr_pairs(&ids, self.trace.fires.len() as i64);
@@ -2380,7 +2381,7 @@ impl Lattice {
     fn turn(&mut self, s: u32) {
         self.infect.set(None);
         self.cur = if self.p.margolus && self.p.block_moves { Dice(hash(self.key(s), self.tick())) } else { Dice(self.rand()) };
-        if self.p.phys && self.occ[s as usize] > 0 && self.sub_turn(s) || self.stale.get() { return; }
+        if self.p.phys && (self.occ[s as usize] > 0 || self.sub.bare.contains_key(&s)) && self.sub_turn(s) || self.stale.get() { return; }
         if self.p.gc && self.collect(s) || self.stale.get() { return; }
         if self.p.resid > 0 && self.collect_resid(s) { return; }
         let greedy = self.cooling.is_some() && self.p.cool_greedy > 0;

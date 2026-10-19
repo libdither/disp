@@ -127,8 +127,13 @@ fn two_new(w: u32, h: u32, run: &str) -> i32 {
     let mut p = Params { w, h, ..*next() };
     if let Err(e) = p.set("two", "1") { set_text(&e); return 1; }
     let (net, out) = twoway::net(&prog, &x);
+    let start = if p.phys { net.agents.clone() } else { vec![] };
     match Lattice::load(p, net, out) {
-        Ok(l) => { unsafe { STATE = Some(State { l, term: STerm::L, parts: vec![], done: false, start: vec![], two: Some((prog, x)) }); SAVED.clear(); } 0 }
+        Ok(mut l) => {
+            if l.p.phys { l.schedule = vec![(0.0, [l.p.drive, l.p.erase, l.p.forget, l.p.bond])]; }
+            unsafe { STATE = Some(State { l, term: STerm::L, parts: vec![], done: false, start, two: Some((prog, x)) }); SAVED.clear(); }
+            0
+        }
         Err(e) => { set_text(&e); 2 }
     }
 }

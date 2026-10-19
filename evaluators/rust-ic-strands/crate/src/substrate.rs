@@ -100,6 +100,9 @@ pub struct Sub {
     pub ledger: Ledger,
     /// By agent id: the site it was last put in.
     pub seat_of: Vec<u32>,
+    /// By site: records of rewrites there that left nothing behind (no agent made, no wire joined, as when
+    /// a two-way `Eat` eats a leaf), which no agent's number leads back to, so a turn there looks for them.
+    pub bare: HashMap<u32, Vec<u64>>,
 }
 
 impl Sub {
@@ -202,7 +205,7 @@ impl Lattice {
 
     /// Just after: keep the record and number what it made; an eraser taking a leaf instead counts the
     /// heat and forgets whatever could only have led back through the two.
-    pub(super) fn sub_after(&mut self, ri: usize, gone: Vec<Was>, joined: Vec<Joined>, fresh: &[u32]) {
+    pub(super) fn sub_after(&mut self, ri: usize, gone: Vec<Was>, joined: Vec<Joined>, fresh: &[u32], site: u32) {
         let r = rule(ri);
         let top = fresh.iter().copied().max().map_or(0, |m| m as usize + 1).max(self.shadow.agents.len());
         if self.sub.made_by.len() < top { self.sub.made_by.resize(top, 0); }
@@ -217,6 +220,7 @@ impl Lattice {
         if self.sub.records.is_empty() { self.sub.records.push(None); }
         for &x in fresh { self.sub.made_by[x as usize] = e; }
         for j in &joined { for end in [j.a, j.b] { self.sub.marks.entry((end.0, end.1)).or_default().push(e); } }
+        if fresh.is_empty() && joined.is_empty() { self.sub.bare.entry(site).or_default().push(e); }
         let made = fresh.first().copied().unwrap_or(0);
         debug_assert!(fresh.iter().enumerate().all(|(i, &x)| x == made + i as u32), "fresh agents numbered in a row");
         let outer = r.wires.iter().filter_map(|&(x, y)| match (x, y) {
@@ -302,13 +306,19 @@ impl Lattice {
     /// of them took part in may be undone. True if the turn is used up.
     pub(super) fn sub_turn(&mut self, s: u32) -> bool {
         let here: Vec<u32> = (0..self.p.k).filter(|&k| self.tag(s, k) != 0).map(|k| self.sids[s as usize * self.ks + k]).collect();
-        if here.is_empty() { return false; }
-        if self.p.forget > 0.0 && self.unit() < self.p.forget {
+        if here.is_empty() && !self.sub.bare.contains_key(&s) { return false; }
+        if !here.is_empty() && self.p.forget > 0.0 && self.unit() < self.p.forget {
             let id = here[self.below(here.len())];
             if let Some(e) = self.maker(id) { self.forget(e); }
         }
         if !self.drive_allows(false) { return false; }
         let mut tries: Vec<u64> = vec![];
+        if let Some(v) = self.sub.bare.get_mut(&s) {
+            let records = &self.sub.records;
+            v.retain(|&e| records.get(e as usize).is_some_and(|r| r.is_some()));
+            tries.extend(v.iter().copied());
+            if v.is_empty() { self.sub.bare.remove(&s); }
+        }
         for &id in &here {
             if let Some(e) = self.maker(id) { tries.push(e); }
             for q in 0..self.ar as u8 {
@@ -455,7 +465,8 @@ impl Lattice {
             if rec.kind >= UNCOPY && rec.kind < DEAD { self.sub.ledger.uncopied -= 1; }
             self.stats.unfires += 1;
             self.last_op = "undo";
-            self.note([super::EV_UNDO, s, region.sites[seat[&wanted[0]].0], code(rec.gone[0].tag) as u32, code(rec.gone[1].tag) as u32, rec.kind as u32, 0, 0]);
+            let at = wanted.first().map_or(s, |w| region.sites[seat[w].0]);
+            self.note([super::EV_UNDO, s, at, code(rec.gone[0].tag) as u32, code(rec.gone[1].tag) as u32, rec.kind as u32, 0, 0]);
             if self.fire_log.len() < 4096 { self.fire_log.push(s | 1 << 31); }
             return Undo::Done;
         }

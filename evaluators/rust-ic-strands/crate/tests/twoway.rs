@@ -163,3 +163,33 @@ fn programs_as_text() {
     assert_eq!(parse_run("mirror (△, △△)").unwrap(), (call(), Val::f(mirror().code(), Val::f(Val::L, Val::s(Val::L)))));
     assert!(parse_run("frob @ △").is_err());
 }
+
+/// Run as physics (the substrate, `phys=1`): every rewrite recorded and undoable, driven forward by ε.
+/// A two-way program gives the reference's result and hands the program back; with the drive turned
+/// round it comes all the way back to the net as loaded, every agent by its id.
+#[test]
+fn on_the_substrate_there_and_back() {
+    let mut rng = Lcg(5);
+    let mut cases: Vec<(Prog, Val)> = vec![(add(), Val::f(nat(1), nat(2))), (twice(), Val::f(twoway::succ().code(), nat(1)))];
+    while cases.len() < 8 {
+        let (p, x) = (rand_prog(&mut rng, 3, false), rand_val(&mut rng, 3));
+        if p.run(&x, &mut 1000).is_some() { cases.push((p, x)); }
+    }
+    let mut report = vec![];
+    for (i, (p, x)) in cases.iter().enumerate() {
+        let want = p.run(x, &mut 1000).expect("the reference runs");
+        let (net, out) = twoway::net(p, x);
+        let start = net.agents.clone();
+        let side = ((net.live_count() as f64).sqrt() * 7.0).ceil() as u32 + 16;
+        let mut l = Lattice::load(Params { w: side, h: side, phys: true, ..params(i as u64 + 1) }, net, out).expect("load");
+        assert!(l.run(100_000_000), "{} on {}: no result", p.show(), x.show());
+        assert_eq!(twoway::read(&l.shadow, out), Some((p.code(), want)), "{} on {}", p.show(), x.show());
+        let forward = l.stats.clocks;
+        l.set_drive(-6.0);
+        let stop = l.stats.proposals + 400_000_000;
+        while !l.same_net(&start) && l.stats.proposals < stop { let next = l.stats.proposals + 2_000; l.run_on(next); }
+        assert!(l.same_net(&start), "{} on {}: not back at the start ({} records left)", p.show(), x.show(), l.records_kept());
+        report.push(format!("{}: forward {forward:.0} clocks, back by {:.0}, {} undone", p.show(), l.stats.clocks, l.stats.unfires));
+    }
+    eprintln!("{}", report.join("\n"));
+}
