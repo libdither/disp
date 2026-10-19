@@ -178,14 +178,6 @@ pub extern "C" fn strands_step(max_proposals: u32) -> u32 {
 #[no_mangle] pub extern "C" fn events_ptr() -> *const u32 { st().l.events.as_ptr() as *const u32 }
 #[no_mangle] pub extern "C" fn events_len() -> u32 { st().l.events.len() as u32 }
 
-/// After the answer: keep running so erasers collect the garbage.
-#[no_mangle]
-pub extern "C" fn strands_run_on(n: u32) {
-    let l = &mut st().l;
-    let target = l.stats.proposals + n as u64;
-    l.run_on(target);
-}
-
 static mut MARKS: Vec<u8> = Vec::new();
 /// Mark every agent the answer no longer depends on; returns how many there are.
 #[no_mangle]
@@ -288,9 +280,6 @@ pub extern "C" fn strands_answer_decoded() -> u32 {
     set_text(&decode(&collapsed(&s.term, &a)).unwrap_or_default())
 }
 
-/// How many reductions the input asked for (`parse_all`).
-#[no_mangle]
-pub extern "C" fn strands_parts() -> u32 { st().parts.len() as u32 }
 
 /// Part i's answer once it is in, whatever the other parts are doing (else empty): as the engine
 /// prints trees, or with `decoded` as `strands_answer_decoded` gives it.
@@ -713,9 +702,3 @@ pub extern "C" fn rev_kind_name(k: u32) -> u32 {
 /// The value at the root if it is one, as the engine prints trees, in the text. Returns its length (0 if no value yet).
 #[no_mangle]
 pub extern "C" fn rev_answer() -> u32 { set_text(&rv().0.answer().map_or(String::new(), |t| sup::show(&STerm::from(&t)))) }
-/// Whether nothing is left to do forward (1) and whether every event is undone and the net is as loaded (2).
-#[no_mangle]
-pub extern "C" fn rev_state() -> u32 {
-    let r = &rv().0;
-    r.idle() as u32 | if r.live_events() == 0 { 2 } else { 0 }
-}
