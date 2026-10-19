@@ -190,6 +190,8 @@ pub struct Params {
     /// computation can, and it only takes room nothing else is using; such duplicators walk and
     /// react, but pass no demand on until they are asked.
     pub dn_room: u8,
+    /// Erasers take a wanted consumer's turn too (`active`): step along the principal wire toward what they erase.
+    pub eps_walk: bool,
     /// The substrate (substrate.rs): every rewrite keeps a record and can be undone, and an eraser
     /// takes a leaf only by deciding to (`erase`). On the CPU, without superpositions, movement agents
     /// or memo.
@@ -273,6 +275,8 @@ impl Params {
             "coolgreedy" => self.cool_greedy = n()? as u8,
             "views" => self.views = on,
             "dnroom" => self.dn_room = n()? as u8,
+            "epswalk" => self.eps_walk = on,
+            "field0" | "field1" => { let c = Channel::parse(v)?; self.fields[(k == "field1") as usize] = c; }
             "phys" => self.phys = on,
             "drive" => self.drive = f()?,
             "erase" => self.erase = f()?,
@@ -297,7 +301,7 @@ impl Default for Params {
                  p_hop: 0.5, init_fill: 1, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, cold: false, cold_terms: 15, cool_terms: 15, compact: 0.0, heat_crowd: 0.0, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, share: 0, fields: [Channel::OFF; 4],
                  strangers: 0.0, trees: 0.0, garbage: 0.0, memo: 0, memo_every: 8, memo_local: false, memo_names: false,
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 dn_room: 0, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
+                 dn_room: 0, eps_walk: false, phys: false, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
     }
 }
 
@@ -3183,7 +3187,7 @@ impl Lattice {
     fn active_turn(&mut self, s: u32) -> bool {
         let ks: Vec<usize> = (0..self.ks).filter(|&k| {
             let t = self.tag(s, k);
-            t != 0 && self.acts(s, k) && (tag_of(t).is_consumer() && tag_of(t) != Tag::Eps || self.p.calls && tag_of(t).is_producer())
+            t != 0 && self.acts(s, k) && (tag_of(t).is_consumer() && (tag_of(t) != Tag::Eps || self.p.eps_walk) || self.p.calls && tag_of(t).is_producer())
         }).collect();
         if ks.is_empty() { return false; }
         if let Some((kc, kp, via)) = self.active_pair(s) {

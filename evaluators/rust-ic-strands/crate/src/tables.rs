@@ -44,6 +44,7 @@ pub fn gpu_unfit(p: &Params) -> Option<&'static str> {
     if p.memo != 0 { return Some("merging equal computations is surgery by a central detector, on the CPU"); }
     if p.cold && p.cold_terms & 7 != 0 || p.heat_crowd != 0.0 { return Some("its cold sites drop idle crowding only, and it has no heat crowding"); }
     if p.phys { return Some("the substrate's records and undoing run on the CPU"); }
+    if p.eps_walk { return Some("its erasers take no walking turns"); }
     let mut fields = p.fields.iter().filter(|c| c.source != Source::NONE);
     if let Some(c) = fields.nth(1) {
         if c.source.0 != Source::BLOCKED { return Some("its second field's source is rewrites without room"); }

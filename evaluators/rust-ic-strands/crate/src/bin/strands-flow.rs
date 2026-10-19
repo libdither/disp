@@ -7,7 +7,8 @@
 //! Per workload and variant, means over the seeds: clocks to the answer, then to its garbage gone,
 //! then to contracted (the player's rule: no shorter wire for 300 clocks at the coldest), the
 //! strands and sites per agent left, rewrites blocked for room, and runs that jammed (no rewrite
-//! for 30,000 clocks) or gave a wrong answer. `FIXED=1` cools for all C clocks instead; `CLEAN=1` traces the garbage.
+//! for 30,000 clocks) or gave a wrong answer. `FIXED=1` cools for all C clocks instead; `CLEAN=1` traces the garbage, and `CENSUS=1` with it says
+//! what the garbage is and how soon an erasure wave along its wires could clear it.
 
 use rust_ca_lattice::oracle;
 use rust_ic_mesh::term;
@@ -27,6 +28,110 @@ fn disp_call(name: &str, nums: &[usize]) -> String {
 
 #[derive(Clone, Default, Debug)]
 struct Out { shape: [f64; 8], answer: f64, clean: f64, contract: f64, strands: f64, sites: f64, agents: f64, blocked: f64, jam: bool, wrong: bool, secs: f64 }
+
+/// What the garbage is: agents by tag (wanted ones in brackets), what each eraser reads and how far, and
+/// garbage agents facing each other principal to principal.
+fn census(l: &Lattice, marks: &[u8]) {
+    use rust_ic_strands::lattice::tag_of;
+    use rust_ca_lattice::rules::Tag;
+    let mut by: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+    let mut eps: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+    let mut facing: std::collections::BTreeMap<String, usize> = Default::default();
+    for &s in l.live() {
+        for k in 0..l.p.k {
+            let i = s as usize * l.ks + k;
+            if marks[i] == 0 { continue; }
+            let t = tag_of(l.tags[i]);
+            let e = by.entry(t.name().to_string()).or_default();
+            e.0 += 1;
+            if l.want[i] { e.1 += 1; }
+            let (d, kd, q, len) = l.follow(s, (k * l.ar) as u8);
+            let td = tag_of(l.tags[d as usize * l.ks + kd]);
+            if t == Tag::Eps {
+                let e = eps.entry(format!("{}.{q}", td.name())).or_default();
+                e.0 += 1;
+                e.1 += len;
+            } else if q == 0 && (s, k) < (d, kd) {
+                *facing.entry(format!("{}-{}{}", t.name(), td.name(), if l.want[i] || l.want[d as usize * l.ks + kd] { " wanted" } else { "" })).or_default() += 1;
+            }
+        }
+    }
+    eprintln!("    garbage (wanted): {}", by.iter().map(|(t, (n, w))| format!("{t} {n} ({w})")).collect::<Vec<_>>().join(", "));
+    eprintln!("    erasers read (mean strands): {}", eps.iter().map(|(t, (n, len))| format!("{t} {n} ({:.1})", *len as f64 / *n as f64)).collect::<Vec<_>>().join(", "));
+    eprintln!("    facing: {}", facing.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", "));
+    // An erasure wave's clocks: one a strand along the wires and one an agent, from every eraser at once;
+    // a duplicator or unpair passes it on to its input once both outputs are reached.
+    let at: std::collections::HashMap<u32, (u32, usize)> = l.live().iter().flat_map(|&s| (0..l.p.k).map(move |k| (s, k)))
+        .filter(|&(s, k)| marks[s as usize * l.ks + k] != 0).map(|(s, k)| (l.sids[s as usize * l.ks + k], (s, k))).collect();
+    let mut heap = std::collections::BinaryHeap::new();
+    let mut best: std::collections::HashMap<u32, (usize, usize)> = Default::default();
+    let mut half: std::collections::HashMap<u32, usize> = Default::default();
+    let reach = |s: u32, k: usize, p: usize, t: usize, d: usize, heap: &mut std::collections::BinaryHeap<std::cmp::Reverse<(usize, usize, u32, usize)>>| {
+        let (s2, k2, q2, len) = l.follow(s, (k * l.ar + p) as u8);
+        heap.push(std::cmp::Reverse((t + len + 1, d + 1, l.sids[s2 as usize * l.ks + k2], q2)));
+    };
+    for (&_id, &(s, k)) in &at { if tag_of(l.tags[s as usize * l.ks + k]) == Tag::Eps { reach(s, k, 0, 0, 0, &mut heap); } }
+    while let Some(std::cmp::Reverse((t, d, id, q))) = heap.pop() {
+        let Some(&(s, k)) = at.get(&id) else { continue };
+        let tg = tag_of(l.tags[s as usize * l.ks + k]);
+        let ins: Vec<usize> = match tg {
+            _ if tg.is_producer() && q == 0 => (1..tg.arity()).collect(),
+            Tag::A | Tag::T1 | Tag::Sel if q == 2 => vec![0, 1],
+            Tag::Dn | Tag::Unp if q == 9 => vec![0],
+            Tag::Dn | Tag::Unp if q > 0 && q != 9 => match half.insert(id, t) { Some(t0) if !best.contains_key(&id) => { let t = t.max(t0); best.insert(id, (t, d)); heap.push(std::cmp::Reverse((t, d, id, 9))); continue } _ => continue },
+            _ => continue,
+        };
+        if q != 9 && best.contains_key(&id) { continue; }
+        best.entry(id).or_insert((t, d));
+        for p in ins { reach(s, k, p, t, d, &mut heap); }
+    }
+    let n = at.values().filter(|&&(s, k)| tag_of(l.tags[s as usize * l.ks + k]) != Tag::Eps).count();
+    // What the agents it does not reach have on their principal port.
+    let mut miss: std::collections::BTreeMap<String, usize> = Default::default();
+    for (&id, &(s, k)) in &at {
+        if best.contains_key(&id) || tag_of(l.tags[s as usize * l.ks + k]) == Tag::Eps { continue; }
+        let (s2, k2, q2, _) = l.follow(s, (k * l.ar) as u8);
+        let j = s2 as usize * l.ks + k2;
+        *miss.entry(format!("{}.0-{}.{q2}{}", tag_of(l.tags[s as usize * l.ks + k]).name(), tag_of(l.tags[j]).name(), if marks[j] == 0 { " live" } else { "" })).or_default() += 1;
+    }
+    let mut miss: Vec<_> = miss.into_iter().collect();
+    miss.sort_by_key(|m| std::cmp::Reverse(m.1));
+    eprintln!("    unreached by what their principal reads: {}", miss.iter().take(12).map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", "));
+    // Duplicators and unpairs the wave reached on one output: what reads the other.
+    let mut halfway: std::collections::BTreeMap<String, usize> = Default::default();
+    for (&id, _) in half.iter().filter(|(id, _)| !best.contains_key(id)) {
+        let (s, k) = at[&id];
+        for q in 1..3 {
+            let (s2, k2, q2, len) = l.follow(s, (k * l.ar + q) as u8);
+            let j = s2 as usize * l.ks + k2;
+            let reached = best.contains_key(&l.sids[j]) || tag_of(l.tags[j]) == Tag::Eps;
+            *halfway.entry(format!("{}{}.{q2}{}", if reached { "reached " } else { "" }, tag_of(l.tags[j]).name(), if len > 1 { " far" } else { "" })).or_default() += 1;
+        }
+    }
+    eprintln!("    half-reached duplicators: {}, their outputs: {}", half.len() - half.keys().filter(|id| best.contains_key(id)).count(), halfway.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", "));
+    // Walk up from each unreached agent (to what reads its output) to the first agent that is not a plain
+    // value or a duplicator: what holds the garbage the wave does not reach.
+    let mut tops: std::collections::BTreeMap<String, usize> = Default::default();
+    for (&id, &(s0, k0)) in &at {
+        if best.contains_key(&id) || tag_of(l.tags[s0 as usize * l.ks + k0]) == Tag::Eps { continue; }
+        let (mut s, mut k, mut seen) = (s0, k0, std::collections::HashSet::new());
+        let top = loop {
+            if !seen.insert((s, k)) { break "cycle".to_string(); }
+            let tg = tag_of(l.tags[s as usize * l.ks + k]);
+            let out = if tg.is_producer() { 0 } else if tg == Tag::Dn { 1 } else { 2 };
+            let (s2, k2, q2, _) = l.follow(s, (k * l.ar + out) as u8);
+            let t2 = tag_of(l.tags[s2 as usize * l.ks + k2]);
+            if !(t2.is_producer() && q2 > 0 || t2 == Tag::Dn && q2 == 0) {
+                let j = s2 as usize * l.ks + k2;
+                break format!("{}.{q2}{}{}", t2.name(), if l.want[j] { " wanted" } else { "" }, if best.contains_key(&l.sids[j]) { " reached" } else { "" });
+            }
+            (s, k) = (s2, k2);
+        };
+        *tops.entry(top).or_default() += 1;
+    }
+    eprintln!("    unreached garbage hangs from: {}", tops.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", "));
+    eprintln!("    wave: reaches {} of {n}, the last at clock {} (depth {} agents)", best.len(), best.values().map(|b| b.0).max().unwrap_or(0), best.values().map(|b| b.1).max().unwrap_or(0));
+}
 
 /// The run: load, run to the answer, run its garbage away, cool it till it is done contracting.
 fn run(work: &str, vary: &str, seed: u64, cool: f64) -> Out {
@@ -76,6 +181,7 @@ fn run(work: &str, vary: &str, seed: u64, cool: f64) -> Out {
             if trace && l.stats.clocks >= next {
                 let erasers = l.shadow.agents.iter().flatten().filter(|a| a.tag == rust_ca_lattice::rules::Tag::Eps).count();
                 eprintln!("{work} seed {seed} clean +{:.0}: {} agents of garbage, {erasers} erasers, {} sites", l.stats.clocks - c0, l.garbage(&mut marks), l.live_sites());
+                if std::env::var("CENSUS").is_ok() { census(&l, &marks); }
                 next += 250.0;
             }
             let n = l.stats.proposals + l.live_sites() as u64;
