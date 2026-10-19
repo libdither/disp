@@ -1935,8 +1935,7 @@ the GPU's stretches out several at a time and sometimes too short of room, and i
 that stays on the CPU, site for site and count for count. `player/dawn.sh` runs it in Node on
 Dawn on the machine's own GPU (`check`, or `bench` for speeds); `player/firefox.sh` runs it in
 headless Firefox or Floorp (`check`), and runs the player itself there from clock 0 on each engine
-(`player`); `player/check.mjs` runs it in headless Chromium, which here only gets SwiftShader, a
-GPU emulated on the CPU. The kernels need 8 KB of workgroup memory, within WebGPU's default of
+(`player`); `player/gpu-check.html` runs it in whatever browser opens it. The kernels need 8 KB of workgroup memory, within WebGPU's default of
 16 KB.
 
 In Floorp (Firefox 154), the player reaches the answer of disp `add 3 4` in 3.2 s on the GPU
