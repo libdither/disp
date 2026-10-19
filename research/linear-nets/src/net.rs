@@ -1,4 +1,4 @@
-//! EXPERIMENTAL: disp's tree-calculus interaction net (evaluators/rust-ca-lattice rules.rs) with
+//! EXPERIMENTAL: disp's tree-calculus interaction net (evaluators/tree-net rules.rs) with
 //! two additions, each a strict superset of the 26 rules, for research/LINEAR_TREE_NETS.md:
 //! - movement agents: views of fixed tree shapes the loader finds in code, each with a one-step
 //!   apply rule: `K y` = △△y, `Sx s b` = △(△s)b (the S rule), `B f g` = △(△(△△f))g (moves the
@@ -11,7 +11,7 @@
 //!   else reading it gets node k with its children as fresh `Ref`s (an "unfold", free here, as
 //!   it is a table lookup inside the rewrite), so the table is never consumed.
 
-use rust_ca_lattice::oracle::Term;
+use tree_net::oracle::Term;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -24,7 +24,7 @@ impl Tag {
     pub fn arity(self) -> usize { match self { L | Eps | Out | I | Ref => 1, S | Nrm | K | W | SelRef | Unw => 2, _ => 3 } }
     pub fn is_producer(self) -> bool { matches!(self, L | S | F | P | Pair | K | Sx | B | C | I | W | Ref) }
     pub fn is_consumer(self) -> bool { matches!(self, A | T1 | Sel | Unp | Dn | Eps | Nrm | SelRef | Unw) }
-    /// Port p carries a value out (rust-ic-mesh polarity.rs, extended to the new agents).
+    /// Port p carries a value out (tree-net polarity.rs, extended to the new agents).
     pub fn is_source(self, p: usize) -> bool {
         match self {
             A | T1 | Sel => p == 2,
@@ -40,8 +40,8 @@ impl Tag {
             Dn => "Dn", Eps => "Eps", Nrm => "Nrm", Out => "Out", K => "K", Sx => "Sx", B => "B", C => "C", I => "I", W => "W", Ref => "Ref", SelRef => "SelRef", Unw => "Unw",
         }
     }
-    fn from_base(t: rust_ca_lattice::rules::Tag) -> Tag {
-        use rust_ca_lattice::rules::Tag as T;
+    fn from_base(t: tree_net::rules::Tag) -> Tag {
+        use tree_net::rules::Tag as T;
         match t {
             T::L => L, T::S => S, T::F => F, T::P => P, T::Pair => Pair, T::A => A, T::T1 => T1, T::Sel => Sel, T::Unp => Unp,
             T::Dn => Dn, T::Eps => Eps, T::Nrm => Nrm, T::Out => Out, T::Sup => unreachable!("superpositions are not modelled here"),
@@ -78,8 +78,8 @@ fn rule(consumer: Tag, producer: Tag, fresh: &[Tag], wires: &[(End, End)], keep:
 /// The 26 rules of rules.rs, then the movement agents' rules. `Ref` has no template rules:
 /// `Net::fire` handles it.
 pub fn all_rules() -> Vec<Rule> {
-    let mut out: Vec<Rule> = rust_ca_lattice::rules::RULES.iter().map(|r| {
-        use rust_ca_lattice::rules::End as E;
+    let mut out: Vec<Rule> = tree_net::rules::RULES.iter().map(|r| {
+        use tree_net::rules::End as E;
         let end = |e: &E| match *e { E::CAux(i) => Cx(i), E::PAux(j) => Px(j), E::Fresh(k, p) => X(k, p) };
         let (c, p) = (Tag::from_base(r.consumer), Tag::from_base(r.producer));
         Rule { consumer: c, producer: p, fresh: r.fresh.iter().map(|t| Tag::from_base(*t)).collect(),
@@ -133,7 +133,7 @@ pub fn all_rules() -> Vec<Rule> {
 }
 
 /// Every rule's wires are a perfect matching of the live ports, and every wire joins a port that
-/// supplies a value reference to one that needs it (rust-ic-mesh polarity.rs's lemma).
+/// supplies a value reference to one that needs it (tree-net polarity.rs's lemma).
 pub fn validate(rules: &[Rule]) -> Result<(), String> {
     for r in rules {
         let n = r.name();

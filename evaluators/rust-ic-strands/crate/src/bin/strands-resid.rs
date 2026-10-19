@@ -5,8 +5,8 @@
 //! anything else is read as a term `f a₁ … aₙ`. With `--forgetting` what the applies drop is
 //! forgotten (the term comes back with holes); with `--erase` the history is erased as it is made.
 
-use rust_ca_lattice::oracle;
-use rust_ic_mesh::term;
+use tree_net::oracle;
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::resid::{self, Edit};
 
@@ -74,7 +74,7 @@ fn main() {
     let blocked = |l: &Lattice, before: &[u64]| {
         if std::env::var("RESID_BLOCKED").is_err() { return; }
         let mut by: Vec<(u64, String)> = l.stats.blocked_rule.iter().enumerate().map(|(i, &n)| (n - before.get(i).copied().unwrap_or(0), i)).filter(|x| x.0 > 0)
-            .map(|(n, i)| { let r = rust_ca_lattice::rules::rule(i); (n, format!("{}·{} ({} fresh)", r.consumer.name(), r.producer.name(), r.fresh.len())) }).collect();
+            .map(|(n, i)| { let r = tree_net::rules::rule(i); (n, format!("{}·{} ({} fresh)", r.consumer.name(), r.producer.name(), r.fresh.len())) }).collect();
         by.sort_by(|a, b| b.0.cmp(&a.0));
         println!("  blocked by rule: {:?}", &by[..by.len().min(12)]);
     };
@@ -90,7 +90,7 @@ fn main() {
         Some(t) if t.within(&l.resid.term) => format!("as loaded but for {} holes", t.holes()),
         _ => "NOT as loaded".into(),
     };
-    use rust_ca_lattice::rules::Tag;
+    use tree_net::rules::Tag;
     let left = l.shadow.agents.iter().flatten().filter(|a| !matches!(a.tag, Tag::L | Tag::S | Tag::F | Tag::Out | Tag::Hole)).count();
     println!("  back: {}, {:.0} clocks, {} rewrites, {} moves, {:.1}s; the term {shape}, {left} other agents left",
              if back { "done" } else { "NOT done" }, l.stats.clocks - c0, l.stats.fires - f0, l.stats.collected - m0, t1.elapsed().as_secs_f64());

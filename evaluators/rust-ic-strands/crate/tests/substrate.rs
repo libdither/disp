@@ -2,8 +2,8 @@
 //! triage keeping what they drop. Forward it gives the oracle's answers; with the drive turned
 //! round it runs back; the ledger balances.
 
-use rust_ca_lattice::net::{Agent, Net};
-use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
+use tree_net::net::{Agent, Net};
+use tree_net::oracle::{self, Fuel, Lcg, Term};
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 
 fn corpus(n: usize) -> Vec<(Term, String)> {

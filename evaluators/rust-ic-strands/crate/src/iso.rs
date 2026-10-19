@@ -16,7 +16,7 @@
 //! handing back with the answer a trace of what it dropped. K moves its argument onto the trace, the
 //! S rule copies its argument, and triage moves the arms it does not take onto the trace. With the
 //! trace kept, any disp program runs both ways; `bennett` cleans the trace up again.
-use rust_ca_lattice::oracle::Term;
+use tree_net::oracle::Term;
 use std::rc::Rc;
 
 pub(crate) fn fork(a: Term, b: Term) -> Term { Term::F(Rc::new(a), Rc::new(b)) }
@@ -505,7 +505,7 @@ pub fn decode_pat(t: &Term) -> Option<Pat> {
 
 // ---- running on trees ------------------------------------------------------------------------------
 
-pub fn show(t: &Term) -> String { rust_ca_lattice::sup::show(&t.into()) }
+pub fn show(t: &Term) -> String { tree_net::sup::show(&t.into()) }
 
 fn with_part(t: &Term, path: &[Dir], f: &mut dyn FnMut(Term) -> Result<Term, String>) -> Result<Term, String> {
     let Some((d, rest)) = path.split_first() else { return f(t.clone()) };

@@ -2,7 +2,7 @@
 //! gives what the reference interpreter gives and hands the program back, and the inverse program takes
 //! the result back to the input.
 
-use rust_ca_lattice::oracle::Lcg;
+use tree_net::oracle::Lcg;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::twoway::{self, add, call, cond, lp, mirror, nat, par, seq, twice, Prog, Val};
 

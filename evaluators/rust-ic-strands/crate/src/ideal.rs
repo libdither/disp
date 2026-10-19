@@ -3,8 +3,8 @@
 //! best, by rounds (the computation's depth) and rewrites.
 
 use crate::polarity_is_source as is_source;
-use rust_ca_lattice::net::{Net, Ref};
-use rust_ca_lattice::rules::Tag;
+use tree_net::net::{Net, Ref};
+use tree_net::rules::Tag;
 
 /// The idealised lazy machine (README "Fork"): demand arrives at once, every wanted rewrite fires
 /// at once, and erasers collect as on the lattice. `want` is by agent id. Rewrites and collections

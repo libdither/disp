@@ -2,7 +2,7 @@
 //! many clocks they take.
 //!   strands-sweep "k=8 lanes=4" "k=6 lanes=3 temp=1.0" ...
 
-use rust_ca_lattice::oracle::{self, Fuel, Lcg};
+use tree_net::oracle::{self, Fuel, Lcg};
 use rust_ic_strands::lattice::{Lattice, Params};
 
 fn parse(spec: &str) -> Params {

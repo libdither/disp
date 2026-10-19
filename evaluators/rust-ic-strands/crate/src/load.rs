@@ -1,8 +1,8 @@
 //! The net a run starts from: the loaded term built as agents and wrapped for normalization.
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::Term;
-use rust_ca_lattice::sup::STerm;
+use tree_net::net::Net;
+use tree_net::oracle::Term;
+use tree_net::sup::STerm;
 
 /// The term built and wrapped for normalization (`Net::drive`): the net and its root `Out`.
 pub fn net(t: &Term) -> (Net, u32) {
@@ -27,7 +27,7 @@ pub fn net_for(t: &STerm, p: &crate::lattice::Params) -> Result<(Net, u32), Stri
 pub fn net_sup(t: &STerm) -> (Net, u32) {
     if let Some(t) = t.plain() { return net(&t); }
     let mut net = Net::new();
-    let root = rust_ca_lattice::sup::build(&mut net, t);
+    let root = tree_net::sup::build(&mut net, t);
     let (_, out) = net.drive(root);
     (net, out)
 }

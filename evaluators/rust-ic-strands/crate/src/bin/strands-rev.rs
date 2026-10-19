@@ -5,10 +5,10 @@
 //! --keep: erasers keep values whole instead of taking them apart (as events); --no-collect: no un-copy
 //! or dead-work collection; --residue: what the net holds besides the answer; --rounds: run by rounds,
 //! every rewrite there is at once, and say how many rounds and how many events the widest had.
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::{self, Fuel, Lcg};
-use rust_ca_lattice::rules::Tag;
-use rust_ic_mesh::term;
+use tree_net::net::Net;
+use tree_net::oracle::{self, Fuel, Lcg};
+use tree_net::rules::Tag;
+use tree_net::term;
 use rust_ic_strands::rev::Rev;
 use std::collections::BTreeMap;
 

@@ -6,8 +6,8 @@
 //! anything else is read as a term. key=value sets a parameter (`Params::set`) over the current
 //! design with the substrate on.
 
-use rust_ca_lattice::sup::STerm;
-use rust_ic_mesh::term;
+use tree_net::sup::STerm;
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 
 /// A disp program call as the player builds it (rev.html `direct`), as a term; else None.
@@ -63,10 +63,10 @@ fn main() {
     let mut l = Lattice::load(p, net, out).unwrap_or_else(|e| panic!("{e}"));
     let t0 = std::time::Instant::now();
     let done = l.run(budget);
-    let answer = l.readback().map(|a| rust_ca_lattice::oracle::show(&a)).unwrap_or_default();
+    let answer = l.readback().map(|a| tree_net::oracle::show(&a)).unwrap_or_default();
     let g = &l.sub.ledger;
     println!("{src}: {} agents loaded on {side}x{side}x{}, {}", n, l.p.depth, if done { "answered" } else { "NOT answered" });
-    println!("  read {:?}, abstract net quiet: {}", l.read_answer().map(|a| rust_ca_lattice::sup::show(&a).chars().take(80).collect::<String>()), l.shadow.active_pair().is_none());
+    println!("  read {:?}, abstract net quiet: {}", l.read_answer().map(|a| tree_net::sup::show(&a).chars().take(80).collect::<String>()), l.shadow.active_pair().is_none());
     println!("  answer {}", answer.chars().take(80).collect::<String>());
     println!("  {:.0} clocks, {} rewrites ({} undone on the way), {} un-copies, {:.1}s", l.stats.clocks, l.stats.fires, l.stats.unfires, g.uncopied, t0.elapsed().as_secs_f64());
     println!("  records kept {}, erasers {}, agents now {}, heat {:.0} (drive {:.0}, erased {}, forgotten {})", l.records_kept(), l.erasers(), l.shadow.live_count(), g.heat(), g.drive, g.erased, g.forgot);
@@ -76,7 +76,7 @@ fn main() {
         println!("  agents by kind (wanted): {}", by.iter().map(|(k, (n, w))| format!("{k} {n} ({w})")).collect::<Vec<_>>().join(", "));
         let mut kinds: std::collections::BTreeMap<u16, usize> = Default::default();
         for r in l.sub.records.iter().flatten() { *kinds.entry(r.kind).or_default() += 1; }
-        println!("  records by kind: {}", kinds.iter().map(|(k, n)| format!("{} {n}", if *k < 1000 { rust_ca_lattice::rules::rule(*k as usize).consumer.name().to_string() + "·" + rust_ca_lattice::rules::rule(*k as usize).producer.name() } else { format!("#{k}") })).collect::<Vec<_>>().join(", "));
+        println!("  records by kind: {}", kinds.iter().map(|(k, n)| format!("{} {n}", if *k < 1000 { tree_net::rules::rule(*k as usize).consumer.name().to_string() + "·" + tree_net::rules::rule(*k as usize).producer.name() } else { format!("#{k}") })).collect::<Vec<_>>().join(", "));
     }
     if let Some(d) = back {
         if let Some(b) = back_bond { l.p.bond = b; }

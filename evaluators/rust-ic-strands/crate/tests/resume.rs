@@ -1,8 +1,8 @@
 //! A state taken off one lattice and put into another, as the browser player does when it hands a
 //! run between its CPU and its GPU, runs on exactly as if it had never left, in the current design too.
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
+use tree_net::net::Net;
+use tree_net::oracle::{self, Fuel, Lcg, Term};
 use rust_ic_strands::lattice::{chip, latest, Lattice, Params};
 
 fn load(t: &Term, p: Params) -> Option<Lattice> {

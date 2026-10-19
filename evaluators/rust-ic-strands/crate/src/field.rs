@@ -7,7 +7,7 @@
 //! down by an idle agent's step or by a flip pays per pairing it adds where a channel is high.
 
 use super::{tag_of, Lattice, Params, NONE};
-use rust_ca_lattice::rules::Tag;
+use tree_net::rules::Tag;
 
 /// What sets a channel at a site, any of: a wanted reader there, a demand pulse there, or a rewrite
 /// without room there during the clock before.

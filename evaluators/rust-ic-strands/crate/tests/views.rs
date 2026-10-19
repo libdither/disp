@@ -6,9 +6,9 @@
 //! garbage holding views is collected; a saved state put back runs on exactly; the GPU takes them,
 //! and what takes no views refuses them.
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::{self, ap, f2, s, Fuel, Lcg, Term};
-use rust_ca_lattice::rules::{Tag, N_RULES, VIEW_RULES};
+use tree_net::net::Net;
+use tree_net::oracle::{self, ap, f2, s, Fuel, Lcg, Term};
+use tree_net::rules::{Tag, N_RULES, VIEW_RULES};
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::{load, readback, tables};
 
@@ -107,7 +107,7 @@ fn disp(name: &str, args: &[&str]) -> Term {
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../player/programs.js")).expect("player/programs.js");
     let at = src.find(&format!("\"name\": \"{name}\"")).unwrap_or_else(|| panic!("no program {name}"));
     let tree = src[at..].split("\"tree\": \"").nth(1).unwrap().split('"').next().unwrap();
-    let t = |x: &str| rust_ic_mesh::term::ternary(x).unwrap();
+    let t = |x: &str| tree_net::term::ternary(x).unwrap();
     args.iter().fold(t(tree), |f, x| ap(f, t(x)))
 }
 fn nat(n: usize) -> String { "20".repeat(n) + "0" }
@@ -157,8 +157,8 @@ fn disp_programs_and_benchmarks_with_views() {
         ("fib 3", || disp("fib", &[&nat(3)])),
         ("is_even 3", || disp("is_even", &[&nat(3)])),
         ("mul 2 2", || disp("mul", &[&nat(2), &nat(2)])),
-        ("fib:1", || rust_ic_mesh::term::workload("fib", 1).unwrap()),
-        ("sort:1", || rust_ic_mesh::term::workload("sort", 1).unwrap()),
+        ("fib:1", || tree_net::term::workload("fib", 1).unwrap()),
+        ("sort:1", || tree_net::term::workload("sort", 1).unwrap()),
     ];
     let lines: Vec<String> = std::thread::scope(|sc| {
         let runs: Vec<_> = cases.iter().enumerate().flat_map(|(i, &(name, make))| [1, 2].map(|seed| sc.spawn(move || {
@@ -196,7 +196,7 @@ fn garbage_is_collected_with_views() {
         assert_eq!(l.readback().map(|t| oracle::show(&t)), got, "term {i}");
         assert_eq!(got, nf(t), "term {i}");
         l.check_projection().unwrap_or_else(|e| panic!("term {i}: {e}"));
-        erased += l.trace.fires.iter().filter(|f| f.1 >= N_RULES && rust_ca_lattice::rules::rule(f.1).consumer == Tag::Eps).count();
+        erased += l.trace.fires.iter().filter(|f| f.1 >= N_RULES && tree_net::rules::rule(f.1).consumer == Tag::Eps).count();
         runs += 1;
     }
     println!("{runs} runs cleaned up, {erased} views erased");
@@ -261,7 +261,7 @@ fn what_takes_no_views_refuses_them() {
     let l = fit(&t, views());
     assert!(tables::gpu_refuses(&l).is_none() && tables::gpu_unfit(&views()).is_none(), "the GPU runs movement agents");
     assert!(tables::wgsl_for(&views()).contains("const NRULES: u32 = 62u;"));
-    assert!(load::net_for(&rust_ic_mesh::term::parse_sup("@(&1{L,S(L)},L)").unwrap(), &views()).is_err());
+    assert!(load::net_for(&tree_net::term::parse_sup("@(&1{L,S(L)},L)").unwrap(), &views()).is_err());
     // Off, nothing changes: no views.
     let (net, _) = load::net_for(&(&t).into(), &latest()).unwrap();
     assert!(!net.agents.iter().flatten().any(|a| a.tag.is_view()));

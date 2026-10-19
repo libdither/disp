@@ -11,9 +11,9 @@
 //! history erased instead (`resid=2`), each residual goes to an eraser as it is made and the answer to
 //! `Out`, and nothing runs back.
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::Term;
-use rust_ca_lattice::rules::Tag;
+use tree_net::net::Net;
+use tree_net::oracle::Term;
+use tree_net::rules::Tag;
 use std::rc::Rc;
 
 /// A tree that may have holes: what the root holds once a run back is over.

@@ -11,9 +11,9 @@
 //! ⊕ (the side kept, a program for each), `flip` its swap, and `loop` its trace: x goes in as (△△, x),
 //! the body runs while it gives a left side (△, s), and its right side (△△, y) gives y.
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::Term;
-use rust_ca_lattice::rules::Tag;
+use tree_net::net::Net;
+use tree_net::oracle::Term;
+use tree_net::rules::Tag;
 use std::rc::Rc;
 
 /// A two-way program as written; `code` is the tree that runs.

@@ -24,9 +24,9 @@ pub use field::{Channel, FieldSnap, Fields, Source};
 pub mod ideal;
 #[path = "substrate.rs"]
 pub mod substrate;
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::sup::STerm;
-use rust_ca_lattice::rules::{find_forgetting, find_index_labelled, meets, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, TWO_TAGS, VIEW_TAGS};
+use tree_net::net::Net;
+use tree_net::sup::STerm;
+use tree_net::rules::{find_forgetting, find_index_labelled, meets, rule, End, Tag, ALL_TAGS, N_EVERY_RULE, RESID_TAGS, TWO_TAGS, VIEW_TAGS};
 
 pub const NONE: u8 = u8::MAX;
 /// Ports per agent slot: 3, or 4 keeping history or running two-way programs (`ports`).
@@ -530,13 +530,13 @@ pub struct Trace {
 /// Which fresh agents of a rule start out wanted: erasers and normalizers, and consumers whose
 /// output feeds the dying consumer's reader (wanted, or it would not have fired) or a wanted
 /// fresh consumer, directly or as a side of a fresh superposition.
-pub fn fresh_wanted(rule: &rust_ca_lattice::rules::Rule) -> [bool; 6] { fresh_wanted_in(rule, false) }
+pub fn fresh_wanted(rule: &tree_net::rules::Rule) -> [bool; 6] { fresh_wanted_in(rule, false) }
 
 /// `fresh_wanted`, and with `inputs` also consumers whose output feeds a wanted fresh
 /// computation's input (an apply's argument, a triage's or dispatch's arms). Only the S rule
 /// wires one: (s c)(b c), whose (b c) and the duplicator sharing c then start wanted; so do its
 /// views, `Sx` the same and `B`'s f (g c), whose (g c) starts wanted.
-pub fn fresh_wanted_in(rule: &rust_ca_lattice::rules::Rule, inputs: bool) -> [bool; 6] {
+pub fn fresh_wanted_in(rule: &tree_net::rules::Rule, inputs: bool) -> [bool; 6] {
     let mut wanted = [false; 6];
     for (f, t) in rule.fresh.iter().enumerate() { wanted[f] = matches!(t, Tag::Nrm | Tag::Eps); }
     loop {
@@ -1145,7 +1145,7 @@ impl Lattice {
     }
 
     /// The answer as a plain term, once the root reads a value tree with no superposition in it.
-    pub fn readback(&self) -> Option<rust_ca_lattice::oracle::Term> { self.read_answer()?.plain() }
+    pub fn readback(&self) -> Option<tree_net::oracle::Term> { self.read_answer()?.plain() }
 
     /// The answer once the root reads a value tree, superpositions included. Keeping history, the
     /// answer bundled at the root with its history, once in.

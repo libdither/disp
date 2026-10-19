@@ -2,8 +2,8 @@
 //! tuple `F(a, F(b, c))` runs on the lattice, each part is read back as soon as it is in
 //! (`Lattice::read_part`), and each is the oracle's answer for that part alone.
 
-use rust_ca_lattice::oracle::{self, f2, Fuel, Term};
-use rust_ic_mesh::term;
+use tree_net::oracle::{self, f2, Fuel, Term};
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::load;
 

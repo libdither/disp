@@ -3,14 +3,14 @@
 
 use crate::lattice::{latest, Lattice, Params, Stats};
 use crate::twoway::{self, Prog, Val};
-use rust_ca_lattice::oracle;
-use rust_ca_lattice::sup::{self, STerm};
-use rust_ic_mesh::term;
+use tree_net::oracle;
+use tree_net::sup::{self, STerm};
+use tree_net::term;
 
 /// `parts`: the reductions the input asked for, separated by `;` (`parse_all`), one term each.
 /// `start`: under the substrate, the abstract net as loaded, to tell when a run has come all the way back.
 /// `two`: a two-way program and the value it runs on (`two:` input), instead of a term.
-struct State { l: Lattice, term: STerm, parts: Vec<STerm>, done: bool, start: Vec<Option<rust_ca_lattice::net::Agent>>, two: Option<(Prog, Val)> }
+struct State { l: Lattice, term: STerm, parts: Vec<STerm>, done: bool, start: Vec<Option<tree_net::net::Agent>>, two: Option<(Prog, Val)> }
 static mut STATE: Option<State> = None;
 static mut TEXT: Vec<u8> = Vec::new();
 static mut STATS: [f64; 24] = [0.0; 24];
@@ -146,7 +146,7 @@ fn two_answer(s: &State, decoded: bool) -> String {
 
 /// The net for a term with the next run's settings, as `load::net_for` builds it. Keeping history runs
 /// only on the CPU (strands-resid).
-fn net_for(t: &STerm, p: &Params) -> Result<(rust_ca_lattice::net::Net, u32), String> {
+fn net_for(t: &STerm, p: &Params) -> Result<(tree_net::net::Net, u32), String> {
     if p.resid > 0 { return Err("keeping history runs on the CPU only (strands-resid)".into()); }
     crate::load::net_for(t, p)
 }
@@ -226,7 +226,7 @@ pub extern "C" fn strands_now(i: u32) -> f64 { let x = &st().l.stats; [x.clocks,
 /// "A·F → T1 Pair" for rule i.
 #[no_mangle]
 pub extern "C" fn rule_text(i: u32) -> u32 {
-    let r = rust_ca_lattice::rules::rule(i as usize);
+    let r = tree_net::rules::rule(i as usize);
     let fresh: Vec<&str> = r.fresh.iter().map(|t| t.name()).collect();
     set_text(&format!("{}·{} → {}", r.consumer.name(), r.producer.name(), if fresh.is_empty() { "nothing".to_string() } else { fresh.join(" ") }))
 }
@@ -489,7 +489,7 @@ pub extern "C" fn substrate_ptr() -> *const f64 {
 // ---- reading the net back, and computations picked in the player (readback.rs) ----------------
 
 use crate::readback::{self, Fate, Selection, NOWHERE};
-use rust_ca_lattice::rules::Tag;
+use tree_net::rules::Tag;
 
 /// Times a GPU handed a run back, each renumbering the abstract net.
 static mut HANDED_BACK: u64 = 0;

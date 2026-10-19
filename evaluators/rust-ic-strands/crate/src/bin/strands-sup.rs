@@ -11,11 +11,11 @@
 //! superposed candidates reads them off.
 //!   strands-sup <file> [--seeds N] [--no-lattice] [--clocks MAX]
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::{self, Term};
-use rust_ca_lattice::rules::{all_rules, rule, Tag, When, N_RULES, RULES};
-use rust_ca_lattice::sup::{self, STerm};
-use rust_ic_mesh::term;
+use tree_net::net::Net;
+use tree_net::oracle::{self, Term};
+use tree_net::rules::{all_rules, rule, Tag, When, N_RULES, RULES};
+use tree_net::sup::{self, STerm};
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 
 /// Rewrites to quiescence on the abstract net, those of each rule, and the answer.

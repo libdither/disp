@@ -14,10 +14,10 @@
 
 use crate::lattice::Lattice;
 use crate::polarity_is_source as is_source;
-use rust_ca_lattice::net::{Agent, Net, Ref};
-use rust_ca_lattice::oracle::Term;
-use rust_ca_lattice::sup::STerm;
-use rust_ca_lattice::rules::Tag;
+use tree_net::net::{Agent, Net, Ref};
+use tree_net::oracle::Term;
+use tree_net::sup::STerm;
+use tree_net::rules::Tag;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 

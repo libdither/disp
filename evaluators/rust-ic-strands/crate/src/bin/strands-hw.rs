@@ -1,7 +1,7 @@
 //! Writes `hw/rtl/strands_tables.vh`: the rules, the chip's energies and probabilities, and the
 //! acceptance table, from the simulator's own definitions, so the chip and the simulator cannot
 //! drift apart on them.
-use rust_ca_lattice::rules::{End, Tag, ALL_TAGS, RULES};
+use tree_net::rules::{End, Tag, ALL_TAGS, RULES};
 use rust_ic_strands::lattice::{chip, fresh_wanted, Energy};
 use std::fmt::Write;
 

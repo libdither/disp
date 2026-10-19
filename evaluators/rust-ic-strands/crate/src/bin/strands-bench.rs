@@ -9,9 +9,9 @@
 //! idealised lazy machine instead (memo.rs: no lattice, every wanted rewrite at once): its work
 //! (rewrites and collections) and depth (rounds), in no time.
 
-use rust_ca_lattice::rules::rule;
-use rust_ca_lattice::sup::STerm;
-use rust_ic_mesh::term;
+use tree_net::rules::rule;
+use tree_net::sup::STerm;
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 
 /// Ternary preorder: 0 a leaf, 1 a stem, 2 a fork.
@@ -61,7 +61,7 @@ fn main() {
         for kv in &sets { let (k, v) = kv.split_once('=').unwrap(); p0.set(k, v).unwrap_or_else(|e| panic!("{e}")); }
         if ideal {
             // The idealised lazy machine (memo.rs): demand at once, every wanted rewrite at once.
-            use rust_ca_lattice::rules::Tag;
+            use tree_net::rules::Tag;
             let (mut net, _) = rust_ic_strands::load::net_for(&t, &p0).unwrap_or_else(|e| panic!("{name}: {e}"));
             let agents = net.live_count();
             let mut want: Vec<bool> = net.agents.iter().map(|a| matches!(a, Some(a) if matches!(a.tag, Tag::Nrm | Tag::Out | Tag::Eps))).collect();

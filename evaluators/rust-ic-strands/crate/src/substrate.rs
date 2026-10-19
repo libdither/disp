@@ -27,8 +27,8 @@
 //!   fuel spent is the agents added plus the heat.
 
 use super::{code, Energy, FieldSnap, Lattice, Params, Region, Stats, NONE};
-use rust_ca_lattice::net::{Agent, Ref};
-use rust_ca_lattice::rules::{rule, End, Tag};
+use tree_net::net::{Agent, Ref};
+use tree_net::rules::{rule, End, Tag};
 use std::collections::HashMap;
 
 /// A record's kind for an un-copy: this plus the copy the holder or eraser was on.

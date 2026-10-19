@@ -16,4 +16,3 @@ One line per script. Every disp run here is memory-capped and timed; see `CLAUDE
 - `npm test` — the vitest harness over the `.disp` suites (`test:watch` for the watcher); `npm run disp <file>` runs one file through `src/run.ts`.
 - `npm run bench`, `bench:eval`, `bench:evaluators`, `bench:ic-net` — evaluator step and timing benchmarks under `bench/`.
 - `research/interaction-combinator/check.sh` — the one gate for cascade-engine work: crate tests, model-cost census against its baseline, then bundle regen and validation.
-- `research/interaction-combinator/regen.sh` — regenerate and validate the lattice bundle that `lattice_player.html` replays, after any engine change.

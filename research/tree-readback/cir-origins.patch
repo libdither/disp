@@ -1,0 +1,54 @@
+--- a/src/elab/cir.ts	2026-10-09 16:06:20.953876135 -0700
++++ b/src/elab/cir.ts	2026-10-11 09:38:54.397987691 -0700
+@@ -20,6 +20,25 @@
+ export const I_CIR: Cir = { tag: "I" }
+ export const cap = (f: Cir, x: Cir): Cir => ({ tag: "app", f, x })
+ 
++// PROBE: where each emitted tree came from. An abstraction result remembers the binders and the
++// lowered body it abstracts; cirToTree records tree -> those origins.
++export type Origin = { vars: string[]; body: Cir }
++export const ORIGINS: { on: boolean; map: Map<Tree, Array<Origin | { app: Cir }>> } = { on: false, map: new Map() }
++const ORIG = new WeakMap<object, Origin>()
++export const originOf = (c: Cir): Origin | undefined => ORIG.get(c)
++function tagged(r: Cir, o: Origin): Cir {
++  if (!ORIGINS.on) return r
++  // Copy shared sentinels/nodes so tagging one place does not tag another.
++  const c = { ...r } as Cir
++  ORIG.set(c, o)
++  return c
++}
++function note(t: Tree, o: Origin | { app: Cir }) {
++  if (!ORIGINS.on) return
++  const l = ORIGINS.map.get(t)
++  if (l) { if (l.length < 8) l.push(o) } else ORIGINS.map.set(t, [o])
++}
++
+ export function containsFree(e: Cir, name: string): boolean {
+   switch (e.tag) {
+     case "lit": case "S": case "K": case "I": return false
+@@ -62,6 +81,11 @@
+ //   S (K p) (K q)          → K (p q)    (K-composition — evaluates at compile time)
+ // The lam case is nested abstraction, innermost binder first.
+ function abstractName(name: string, body: Cir): Cir {
++  const inner = ORIG.get(body)
++  const o: Origin = inner && body.tag !== "lam" ? { vars: [name, ...inner.vars], body: inner.body } : { vars: [name], body }
++  return tagged(abstractNameRaw(name, body), o)
++}
++function abstractNameRaw(name: string, body: Cir): Cir {
+   if (!containsFree(body, name)) return cap(K, body)
+   switch (body.tag) {
+     case "var": return I_CIR
+@@ -97,6 +121,13 @@
+ }
+ 
+ export function cirToTree(e: Cir): Tree {
++  const t = cirToTreeRaw(e)
++  const o = ORIG.get(e)
++  if (o) note(t, o)
++  else if (e.tag === "app" && !(e.f.tag === "app" && (e.f.f.tag === "S" || e.f.f.tag === "K")) && !["K", "I", "S"].includes(e.f.tag)) note(t, { app: e })
++  return t
++}
++function cirToTreeRaw(e: Cir): Tree {
+   switch (e.tag) {
+     case "lit": return e.t
+     case "var": throw new Error(`cirToTree: unresolved free variable ${e.name}`)

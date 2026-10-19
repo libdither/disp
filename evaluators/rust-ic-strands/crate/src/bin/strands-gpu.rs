@@ -13,9 +13,9 @@
 //! TERM may be a workload, a term, or `@FILE` holding one; or `two:RUN`, a two-way program on a value as
 //! twoway.rs `parse_run` reads it (`two:add 2 3`, `'two:swap; swap @ (△, △△)'`), run with 4 ports a slot.
 
-use rust_ca_lattice::oracle::{self, Fuel};
-use rust_ca_lattice::rules::{rule, N_RULES};
-use rust_ic_mesh::term;
+use tree_net::oracle::{self, Fuel};
+use tree_net::rules::{rule, N_RULES};
+use tree_net::term;
 use rust_ic_strands::gpu::{Gpu, Grid, REC, SITE, TALLY};
 use rust_ic_strands::lattice::{chip, latest, tag_of, Lattice, Params, SiteBytes, OPS};
 use rust_ic_strands::twoway;
@@ -187,7 +187,7 @@ fn main() {
         None => oracle::nf(t.clone(), &mut Fuel(100_000_000)).ok().map(|w| oracle::show(&w)),
     };
     let (net, out) = if let Some((prog, x)) = &two { twoway::net(prog, x) } else if every {
-        let mut net = rust_ca_lattice::net::Net::new();
+        let mut net = tree_net::net::Net::new();
         let root = net.build_every_view(&t);
         let (_, out) = net.drive(root);
         (net, out)

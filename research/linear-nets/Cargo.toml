@@ -9,8 +9,7 @@ publish = false
 [workspace]
 
 [dependencies]
-rust-ca-lattice = { path = "../../evaluators/rust-ca-lattice/crate" }
-rust-ic-mesh = { path = "../../evaluators/rust-ic-mesh/crate" }
+tree-net = { path = "../../evaluators/tree-net/crate" }
 rust-ic-strands = { path = "../../evaluators/rust-ic-strands/crate" }
 
 [profile.release]

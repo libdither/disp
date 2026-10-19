@@ -190,7 +190,7 @@ seed each, lazy copying (`dnroom=0`) and copying ahead (`dnroom=5`):
   ["uses least additional space for the greatest number of simulated steps"](https://arxiv.org/pdf/quant-ph/9703022#page=1),
   trades time for that space; for a bijective program it can go to zero.
 
-## Rules, sketched (`rust-ca-lattice/crate/src/rules.rs` terms)
+## Rules, sketched (`tree-net/crate/src/rules.rs` terms)
 
 The substrate (On the lattice, above) took the marks (as record numbers), un-copying, and forgetting as
 a separate act; instead of residue agents for originals it has erasers that record what they take

@@ -2,7 +2,7 @@
 
 Research note, 2026-10-15. Two parts:
 1. **The design sequence as the repo does it** (sections 1–5): tree calculus's apply, a recursive function
-   on two trees, becomes an interaction net (rust-ca-lattice `rules.rs`), which becomes the strand lattice
+   on two trees, becomes an interaction net (tree-net `rules.rs`), which becomes the strand lattice
    (rust-ic-strands). Each step is a recipe with a price, and the agents the repo has are what the recipes
    produce. Facts come from the code; nothing here is new machinery.
 2. **What a better base would look like** (sections 6–9): which properties of the base rewrite system set
@@ -16,7 +16,7 @@ copying it). Delete once its conclusions live in code or in a `.typ` paper.
 ## 1. Stage 0: the rewrite function
 
 Tree calculus has one constructor, △, and apply is a recursive function on two trees that returns a tree or
-runs forever (rust-ca-lattice `oracle.rs`; research/reversible-core/residual.py `app`, in git at 8a287ab):
+runs forever (tree-net `oracle.rs`; research/reversible-core/residual.py `app`, in git at 8a287ab):
 
 ```text
 apply(△, z)               = △z
@@ -360,7 +360,7 @@ Experiments, in order, all in the Python model first:
 1. **Sketch B's net** (done: section 10). Turn iso.rs's interpreter into frames (section 2's recipe), run the repo's two-way
    programs (`add`, `tc` on the 21 compiled calls) with demand, and count parallel rounds against the tree
    calculus net. Pass: within 2× its rounds on `tc`. This decides between the sketches.
-2. **Audit it** (done, 2026-10-18: rust-ca-lattice `cargo run --example clash`). Of the 74 two-way rules,
+2. **Audit it** (done, 2026-10-18: tree-net `cargo run --example clash`). Of the 74 two-way rules,
    21 leave their products in two pieces and 11 fall in 6 groups whose products look alike; the tree
    calculus's 26: 5 and 2.
 3. **Sketch A's cleanups**, if B fails: connect the five forward rules and see which mirror walkers become

@@ -2,8 +2,8 @@
 //! reports. Every run must finish with the oracle's answer and project exactly onto the
 //! abstract net; a few runs re-check every invariant after every single move.
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
+use tree_net::net::Net;
+use tree_net::oracle::{self, Fuel, Lcg, Term};
 use rust_ic_strands::lattice::{Lattice, Params, DEMAND};
 
 fn corpus() -> Vec<(Term, String)> {
@@ -156,7 +156,7 @@ fn collection_keeps_the_projection_exact() {
         l.check_projection().unwrap();
         Some((l.stats.collected, answer))
     };
-    let tower = rust_ic_mesh::term::workload("share-tower", 3).unwrap();
+    let tower = tree_net::term::workload("share-tower", 3).unwrap();
     let want = oracle::show(&oracle::nf(tower.clone(), &mut Fuel(100_000)).unwrap());
     for margolus in [false, true] {
         let (collected, got) = run_checked(&tower, Params { w: 24, h: 24, ..p(margolus) }).expect("load");
@@ -198,7 +198,7 @@ fn invariants_hold_after_every_move() {
                  board_crowd: 0.5, idle_crowd: 10.0, pairs: 6, w: 16, h: 16, ..base() },
     ];
     for src in terms {
-        let t = rust_ic_mesh::term::parse(src).unwrap();
+        let t = tree_net::term::parse(src).unwrap();
         let want = oracle::show(&oracle::nf(t.clone(), &mut Fuel(10_000)).unwrap());
         for p in configs {
             let (done, got, proj) = run(&t, p, 1);

@@ -4,10 +4,10 @@
 //! left, then cools for M clocks and reports how fast and how far the answer contracted; each
 //! `--vary 'key=value ...'` cools again from the same state with those settings.
 //! A term may hold superpositions (`&1{a,b}`, `fib:&1{2,3}`); its answer is then checked universe by
-//! universe and shown collapsed (rust-ca-lattice sup.rs).
+//! universe and shown collapsed (tree-net sup.rs).
 
-use rust_ca_lattice::sup::{self, STerm};
-use rust_ic_mesh::term;
+use tree_net::sup::{self, STerm};
+use tree_net::term;
 use rust_ic_strands::lattice::{Lattice, Params};
 
 fn main() {
@@ -182,7 +182,7 @@ fn main() {
         for &(c, ri, site, cs, ps) in &tr.fires {
             let (a, cause) = tr.active.get(&(cs, ps)).copied().unwrap_or((f64::NAN, -2));
             let w = tr.wanted.get(&cs).copied().unwrap_or(f64::NAN);
-            let r = rust_ca_lattice::rules::rule(ri);
+            let r = tree_net::rules::rule(ri);
             let (len, d) = tr.apart.get(&(cs, ps)).map(|&(l, d)| (l as i64, d as i64)).unwrap_or((-1, -1));
             out += &format!("{c},{}·{},{site},{a},{cause},{w},{},{len},{d},{},{}\n", r.consumer.name(), r.producer.name(), tr.blocked.get(&cs).copied().unwrap_or(0), made(cs), made(ps));
         }
@@ -245,7 +245,7 @@ fn main() {
         for (k, c) in pieces { println!("  {c} × [{k}]"); }
     }
     let blocked: Vec<String> = s.blocked_rule.iter().enumerate().filter(|(_, &n)| n > 0)
-        .map(|(i, n)| format!("{}·{} {n}", rust_ca_lattice::rules::rule(i).consumer.name(), rust_ca_lattice::rules::rule(i).producer.name())).collect();
+        .map(|(i, n)| format!("{}·{} {n}", tree_net::rules::rule(i).consumer.name(), tree_net::rules::rule(i).producer.name())).collect();
     println!("blocked by lanes {}; by rule: {}", s.blocked_lanes, blocked.join(", "));
 }
 
@@ -258,7 +258,7 @@ fn main() {
 fn contract(l: &mut Lattice, clocks: f64, vary: &[String]) {
     assert!(l.p.margolus, "contraction is measured in chip clocks");
     let (held, stats, p, temp) = (l.held_sites(), l.stats.clone(), l.p, l.p.temp);
-    let want = l.readback().map(|t| rust_ca_lattice::oracle::show(&t));
+    let want = l.readback().map(|t| tree_net::oracle::show(&t));
     let curve = std::env::var("CURVE").ok().map(|v| v.parse::<f64>().expect("CURVE=clocks"));
     let none = [String::new()];
     let mut reference = None;
@@ -296,7 +296,7 @@ fn contract(l: &mut Lattice, clocks: f64, vary: &[String]) {
         let (c, n, sites, dsecs) = done.unwrap_or((-1.0, end, live, secs));
         let first = |x: f64| seen.iter().position(|&(m, _)| m as f64 <= x).map_or(-1, |c| c as i64);
         let reference = *reference.get_or_insert(n) as f64;
-        let right = l.readback().map(|t| rust_ca_lattice::oracle::show(&t)) == want;
+        let right = l.readback().map(|t| tree_net::oracle::show(&t)) == want;
         let at = |x: Option<(f64, u64)>| x.map_or("-1\t0".to_string(), |(c, n)| format!("{c:.0}\t{n}"));
         println!("contract [{v}]: from {s0} strands {live0} sites; done at clock {c:.0} with {n} strands {sites} sites ({dsecs:.3}s); within 5% at {}, 1% at {}, \
             as short as the first setting at {}; done by 100, 200 clocks, 16 still: {}; after {clocks:.0} clocks {end} strands {live} sites{}",

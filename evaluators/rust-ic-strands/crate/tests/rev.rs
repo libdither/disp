@@ -1,16 +1,16 @@
 //! Reversible rewriting (src/rev.rs): run forward to the answer, then undo every event, in random order
 //! among those that can be undone; the net must come back exactly as it was loaded. On the way, part of
 //! the run is undone and run again.
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
-use rust_ca_lattice::rules::Tag;
+use tree_net::net::Net;
+use tree_net::oracle::{self, Fuel, Lcg, Term};
+use tree_net::rules::Tag;
 use rust_ic_strands::rev::Rev;
 
 fn terms() -> Vec<(String, Term)> {
     let mut rng = Lcg(91);
     let mut v: Vec<(String, Term)> = (0..80).map(|i| (format!("corpus {i}"), rng.rand_term(4 + (i % 3) as u32))).collect();
     for (name, n) in [("share-tower", 3), ("s-rule", 0), ("disp-t", 0), ("convoy", 3), ("fib", 0), ("sort", 0)] {
-        if let Some(t) = rust_ic_mesh::term::workload(name, n) { v.push((name.into(), t)); }
+        if let Some(t) = tree_net::term::workload(name, n) { v.push((name.into(), t)); }
     }
     v
 }

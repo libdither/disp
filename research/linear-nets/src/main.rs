@@ -21,7 +21,7 @@ mod run;
 
 use net::{Net, Origin, Shape};
 use run::Ledger;
-use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
+use tree_net::oracle::{self, Fuel, Lcg, Term};
 use std::rc::Rc;
 
 struct Case { name: String, head: Term, args: Vec<Term>, want: Option<Term> }
@@ -83,13 +83,13 @@ fn main() {
     if let Some(f) = calls {
         for line in std::fs::read_to_string(f).expect("calls file").lines().filter(|l| !l.trim().is_empty()) {
             let p: Vec<&str> = line.split('|').collect();
-            let t = |s: &str| rust_ic_mesh::term::ternary(s).expect("ternary");
+            let t = |s: &str| tree_net::term::ternary(s).expect("ternary");
             cases.push(Case { name: p[0].into(), head: t(p[1]), args: p[2].split(',').filter(|s| !s.is_empty()).map(t).collect(), want: Some(t(p[3])) });
         }
     }
     if lambada {
         for (w, n) in [("fib", 2u64), ("fib", 3), ("fib", 4), ("exp", 1), ("sort", 2), ("sort", 3)] {
-            let Some(Term::Ap(h, a)) = rust_ic_mesh::term::workload(w, n) else { unreachable!() };
+            let Some(Term::Ap(h, a)) = tree_net::term::workload(w, n) else { unreachable!() };
             let want = oracle::nf(Term::Ap(h.clone(), a.clone()), &mut Fuel(50_000_000)).ok();
             cases.push(Case { name: format!("lambada {w}({n})"), head: (*h).clone(), args: vec![(*a).clone()], want });
         }
@@ -189,10 +189,10 @@ fn main() {
                 // The same run on rust-ic-strands' own idealised machine must do the same work.
                 let mut t = c.args.iter().fold(c.head.clone(), |f, x| Term::Ap(Rc::new(f), Rc::new(x.clone())));
                 if let Term::Ap(..) = t {} else { t = c.head.clone(); }
-                let mut bn = rust_ca_lattice::net::Net::new();
+                let mut bn = tree_net::net::Net::new();
                 let root = bn.build(&t);
                 bn.drive(root);
-                let mut want: Vec<bool> = bn.agents.iter().map(|a| matches!(a, Some(a) if matches!(a.tag, rust_ca_lattice::rules::Tag::Nrm | rust_ca_lattice::rules::Tag::Out | rust_ca_lattice::rules::Tag::Eps))).collect();
+                let mut want: Vec<bool> = bn.agents.iter().map(|a| matches!(a, Some(a) if matches!(a.tag, tree_net::rules::Tag::Nrm | tree_net::rules::Tag::Out | tree_net::rules::Tag::Eps))).collect();
                 let r = rust_ic_strands::lattice::ideal::ideal_depth(&mut bn, &mut want, true, 10_000_000);
                 println!("    strands ideal_depth: {:?} (ours {} rewrites, {} rounds)", r, total, ledger.rounds);
             }

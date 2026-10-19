@@ -2,7 +2,7 @@
 //! rules, energies and probabilities, so the two cannot drift apart. hw/rtl gets the same as
 //! Verilog from `strands-hw`.
 use crate::lattice::{chip, fresh_wanted_in, ports, Channel, Energy, Params, SiteBytes, Source};
-use rust_ca_lattice::rules::{End, Rule, Tag, ALL_TAGS, RULES, TWO_RULES, TWO_TAGS, VIEW_RULES, VIEW_TAGS};
+use tree_net::rules::{End, Rule, Tag, ALL_TAGS, RULES, TWO_RULES, TWO_TAGS, VIEW_RULES, VIEW_TAGS};
 use std::fmt::Write;
 
 fn code(t: Tag) -> u32 { crate::lattice::code(t) as u32 }

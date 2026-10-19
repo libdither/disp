@@ -6,7 +6,7 @@ prototype is `research/linear-nets/` (experimental, a crate of its own that only
 evaluators' code); how to rerun every number is at the end.
 
 Terms used throughout:
-- **the net**: disp's tree-calculus interaction net, `evaluators/rust-ca-lattice/crate/src/rules.rs`
+- **the net**: disp's tree-calculus interaction net, `evaluators/tree-net/crate/src/rules.rs`
   (26 rules, plus 8 for superpositions). Values are L (leaf), S (stem), F (fork); A applies,
   T1 and Sel are the two levels of triage, Pair/Unp carry triage arms, Dn duplicates, Eps
   erases, Nrm normalizes, P is a suspended application.
@@ -16,7 +16,7 @@ Terms used throughout:
   README's "Fork" section): only demanded rewrites fire, all of them at once each round, erasers
   collect garbage as on the lattice, and the S rule's two halves both run. Its rewrites are the
   rewrites the lattice does; its rounds are the run's parallel depth.
-- **the abstract net**: `rust-ca-lattice` `Net::reduce`: every active pair fires, nothing is
+- **the abstract net**: tree-net's `Net::reduce`: every active pair fires, nothing is
   collected.
 
 ## Status (2026-10-10): what was built, and what changed since
@@ -363,7 +363,7 @@ because each application is one step deep instead of three. On the abstract net 
 give 0.13×.
 
 **Lattice cost.** 6 agent kinds (14 → 20), 36 rules (26 → 62: the 5-bit rule field of the
-cascade, rust-ca-lattice's cellular engine, needs 6 bits, 7 with superpositions; the copy rules
+cascade, rust-ca-lattice's cellular engine (archived, in git at 81489e5), needed 6 bits, 7 with superpositions; the copy rules
 carry labels as Dn·F's do). At most 6 fresh agents a rewrite (spelling out `I`), as now.
 Everything stays local: no payload, no address.
 

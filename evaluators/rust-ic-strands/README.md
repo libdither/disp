@@ -7,6 +7,9 @@ an address**. It is the answer to two problems with the earlier spatial machines
 - `rust-ic-mesh` completes everything, but by using global addresses and a router in every
   tile.
 
+Both are archived (in git at 81489e5); what they shared with this one, the rules, the abstract net, the
+oracle and term parsing, is `evaluators/tree-net`.
+
 Open `player/index.html` to watch it run (rebuild with `./build-player.sh`); with `phys=1` (its list's
 "run it as physics") it runs them as physics, every rewrite undoable at a price in heat (The substrate,
 below). `player/rev.html` runs the abstract net backward (Running it backward, below). It shows only the
@@ -741,7 +744,7 @@ value was done once for both. The label ℓ (1 to 255) names the choice: the sam
 same side everywhere, so a term holding n labels stands for 2ⁿ plain terms, its universes, and
 its answer collapses to theirs. That is how a search can run many candidates as one.
 
-**The rules** (rust-ca-lattice `rules.rs` `SUP_RULES`). A new value `Sup` [value, first side,
+**The rules** (tree-net `rules.rs` `SUP_RULES`). A new value `Sup` [value, first side,
 second side], and a label on every agent: a superposition's, or a duplicator's; 0 for everything
 else, and a duplicator of label 0 is a plain copy. A rule says the label of each agent it makes
 (none, the consumer's or the producer's). Writing `Dn_ℓ` for a duplicator of label ℓ:
@@ -778,7 +781,7 @@ of the input's labels whose universes differ (`sup::collapse`), so it equals the
 collapsed the same way, exactly when every universe agrees; `-> nat` and the other kinds decode
 each side.
 
-**Checked** (rust-ca-lattice `tests/sup.rs`, `crate/tests/sup.rs`): random terms with
+**Checked** (tree-net `tests/sup.rs`, `crate/tests/sup.rs`): random terms with
 superpositions in random places, with 1 to 3 labels so that labels repeat (and must stay
 correlated), run to the answer and collapsed, against the oracle run on every choice. On the
 abstract net 2384 terms, 7710 universes; on the lattice in the current design 120 terms, 354
@@ -861,7 +864,7 @@ same way, both arms though only one is taken.
 Applying a value takes it apart, so code used twice is copied first, a layer at a time: in the runs below
 about 37% of rewrites are duplicators, most of them copying code (research/LINEAR_TREE_NETS.md). And
 most of the S rules the compiler emits only move their argument: `{x} => succ (nat_pred x)` compiles to
-`△(△(△△ succ)) nat_pred`, which copies x and throws one copy away. With `views=1` the loader (rust-ca-lattice `Net::build_views`)
+`△(△(△△ succ)) nat_pred`, which copies x and throws one copy away. With `views=1` the loader (tree-net `Net::build_views`)
 loads the tree shapes of every plain value something is applied to (the program, the head of each
 application) as six more agent kinds, each a view of the tree it stands for, except that a K shape stays
 a plain fork (Which shapes get labelled, below). Arguments stay trees, and so does everything the run

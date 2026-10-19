@@ -3,7 +3,7 @@
 //! - `ideal`: the strand lattice's idealised lazy machine (rust-ic-strands ideal.rs `ideal_depth`,
 //!   README "Fork"): demand at once, every wanted rewrite at once a round, erasers collecting as
 //!   on the lattice, the S rule's two halves both wanted. Its rewrites are the lattice's rewrites.
-//! - `all`: the abstract net (rust-ca-lattice net.rs `reduce`): every active pair fires, no
+//! - `all`: the abstract net (tree-net net.rs `reduce`): every active pair fires, no
 //!   collection, so a copy that is thrown away is still made in full.
 
 use crate::net::{End, Fired, Net, Origin, Rule, Tag};
@@ -82,8 +82,8 @@ fn value_at(net: &Net, mut p: Option<(u32, u8)>) -> Option<u32> {
 }
 
 /// The tree a port leads to, through duplicators, when it is all values (at most `budget` nodes).
-fn tree_at(net: &Net, p: Option<(u32, u8)>, budget: &mut u32) -> Option<rust_ca_lattice::oracle::Term> {
-    use rust_ca_lattice::oracle::Term;
+fn tree_at(net: &Net, p: Option<(u32, u8)>, budget: &mut u32) -> Option<tree_net::oracle::Term> {
+    use tree_net::oracle::Term;
     if *budget == 0 { return None; }
     *budget -= 1;
     let id = value_at(net, p)?;

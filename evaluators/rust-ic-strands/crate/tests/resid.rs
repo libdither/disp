@@ -3,8 +3,8 @@
 //! back the same. Forgetting what the applies drop: back the term with holes, any trees in them giving
 //! the same answer. With the history erased as it is made, nothing left but the answer.
 
-use rust_ca_lattice::oracle::{self, f2, Fuel, Lcg, Term};
-use rust_ca_lattice::rules::Tag;
+use tree_net::oracle::{self, f2, Fuel, Lcg, Term};
+use tree_net::rules::Tag;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::resid::{self, Edit, Tree};
 

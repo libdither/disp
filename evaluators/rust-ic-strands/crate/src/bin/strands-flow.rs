@@ -10,8 +10,8 @@
 //! for 30,000 clocks) or gave a wrong answer. `FIXED=1` cools for all C clocks instead; `CLEAN=1` traces the garbage, and `CENSUS=1` with it says
 //! what the garbage is and how soon an erasure wave along its wires could clear it.
 
-use rust_ca_lattice::oracle;
-use rust_ic_mesh::term;
+use tree_net::oracle;
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::twoway;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -33,7 +33,7 @@ struct Out { shape: [f64; 8], answer: f64, clean: f64, contract: f64, strands: f
 /// garbage agents facing each other principal to principal.
 fn census(l: &Lattice, marks: &[u8]) {
     use rust_ic_strands::lattice::tag_of;
-    use rust_ca_lattice::rules::Tag;
+    use tree_net::rules::Tag;
     let mut by: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
     let mut eps: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
     let mut facing: std::collections::BTreeMap<String, usize> = Default::default();
@@ -179,7 +179,7 @@ fn run(work: &str, vary: &str, seed: u64, cool: f64) -> Out {
         let mut next = c0;
         while l.p.gc && l.garbage(&mut marks) > 0 && l.stats.clocks - c0 < 200_000.0 {
             if trace && l.stats.clocks >= next {
-                let erasers = l.shadow.agents.iter().flatten().filter(|a| a.tag == rust_ca_lattice::rules::Tag::Eps).count();
+                let erasers = l.shadow.agents.iter().flatten().filter(|a| a.tag == tree_net::rules::Tag::Eps).count();
                 eprintln!("{work} seed {seed} clean +{:.0}: {} agents of garbage, {erasers} erasers, {} sites", l.stats.clocks - c0, l.garbage(&mut marks), l.live_sites());
                 if std::env::var("CENSUS").is_ok() { census(&l, &marks); }
                 next += 250.0;

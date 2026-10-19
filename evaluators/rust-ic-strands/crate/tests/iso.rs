@@ -1,7 +1,7 @@
 //! Two-way programs (src/iso.rs): every program's inverse undoes it; the machine, run to the end and
 //! then with its token turned around back to the beginning, ends where it started; the tree calculus,
 //! derived as the two-way program `tc`, gives eager evaluation's answers, and its trace takes it back.
-use rust_ca_lattice::oracle::{Lcg, Term};
+use tree_net::oracle::{Lcg, Term};
 use rust_ic_strands::iso::{bennett, decode, encode, library, nat, run, show, tc_apply, Iso};
 use std::rc::Rc;
 
@@ -110,7 +110,7 @@ fn disp(name: &str) -> Term {
     let tree = &js[at..];
     let start = tree.find("\"tree\": \"").unwrap() + 9;
     let end = start + tree[start..].find('"').unwrap();
-    rust_ic_mesh::term::ternary(&tree[start..end]).unwrap()
+    tree_net::term::ternary(&tree[start..end]).unwrap()
 }
 
 #[test]

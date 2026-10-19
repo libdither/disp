@@ -17,8 +17,8 @@
 //! - dead work: an eraser on an apply's, triage's or dispatch's result; erasers go on its inputs instead;
 //! - an unpair whose two outputs are both erased: one eraser on its input instead.
 use crate::lattice::fresh_wanted_in;
-use rust_ca_lattice::net::{Agent, Net, Ref};
-use rust_ca_lattice::rules::{find_index_labelled, rule, End, Tag};
+use tree_net::net::{Agent, Net, Ref};
+use tree_net::rules::{find_index_labelled, rule, End, Tag};
 
 /// An agent as a rewrite consumed it, and whether it was wanted then.
 #[derive(Clone, Debug)]
@@ -481,9 +481,9 @@ impl Rev {
     pub fn root(&self) -> Option<u32> { self.net.agents.iter().position(|a| matches!(a, Some(a) if a.tag == Tag::Out)).map(|i| i as u32) }
 
     /// The value at the root, read through seams, if it is a value tree.
-    pub fn answer(&self) -> Option<rust_ca_lattice::oracle::Term> { self.value(self.follow((self.root()?, 0)).0) }
-    fn value(&self, r: Option<Ref>) -> Option<rust_ca_lattice::oracle::Term> {
-        use rust_ca_lattice::oracle::Term;
+    pub fn answer(&self) -> Option<tree_net::oracle::Term> { self.value(self.follow((self.root()?, 0)).0) }
+    fn value(&self, r: Option<Ref>) -> Option<tree_net::oracle::Term> {
+        use tree_net::oracle::Term;
         use std::rc::Rc;
         let (id, 0) = r? else { return None };
         let kid = |q: usize| self.value(self.follow((id, q as u8)).0);

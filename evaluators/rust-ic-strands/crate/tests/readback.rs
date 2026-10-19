@@ -2,9 +2,9 @@
 //! independent oracle, is the final answer; and a picked computation, followed through rewrites
 //! and through hand-overs that renumber the net (as from a GPU), still reduces to what it did.
 
-use rust_ca_lattice::net::Net;
-use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
-use rust_ca_lattice::rules::Tag;
+use tree_net::net::Net;
+use tree_net::oracle::{self, Fuel, Lcg, Term};
+use tree_net::rules::Tag;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::readback::{self, Fate, Reader, Selection, NOWHERE};
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ fn terms() -> Vec<(String, Term)> {
     let mut rng = Lcg(20260730);
     let mut v: Vec<(String, Term)> = (0..60).map(|i| (format!("corpus {i}"), rng.rand_term(4 + i % 3))).collect();
     for (name, n) in [("share-tower", 3), ("s-rule", 0), ("disp-t", 0), ("convoy", 3)] {
-        v.push((name.into(), rust_ic_mesh::term::workload(name, n).unwrap()));
+        v.push((name.into(), tree_net::term::workload(name, n).unwrap()));
     }
     v
 }

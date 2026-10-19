@@ -13,4 +13,4 @@ pub mod gpu;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
-pub(crate) fn polarity_is_source(t: rust_ca_lattice::rules::Tag, p: usize) -> bool { rust_ic_mesh::polarity::is_source(t, p) }
+pub(crate) fn polarity_is_source(t: tree_net::rules::Tag, p: usize) -> bool { tree_net::polarity::is_source(t, p) }

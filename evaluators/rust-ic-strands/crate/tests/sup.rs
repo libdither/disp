@@ -4,10 +4,10 @@
 //! means the answer all along; a run saved and put back with its labels repeats exactly; and the
 //! GPU refuses them.
 
-use rust_ca_lattice::oracle::{self, Fuel, Lcg, Term};
-use rust_ca_lattice::rules::{N_RULES, RULES, SUP_RULES};
-use rust_ca_lattice::sup::{self, STerm};
-use rust_ic_mesh::term;
+use tree_net::oracle::{self, Fuel, Lcg, Term};
+use tree_net::rules::{N_RULES, RULES, SUP_RULES};
+use tree_net::sup::{self, STerm};
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::{load, readback, tables};
 

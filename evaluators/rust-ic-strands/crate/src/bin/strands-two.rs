@@ -5,8 +5,8 @@
 //! `--profile`: for the two-way run, each rule's rewrites, how long its pairs waited between becoming
 //! ready and firing, and how far apart they were then.
 
-use rust_ca_lattice::oracle;
-use rust_ic_mesh::term;
+use tree_net::oracle;
+use tree_net::term;
 use rust_ic_strands::lattice::{latest, Lattice, Params};
 use rust_ic_strands::twoway::{self, nat, Prog, Val};
 
@@ -34,7 +34,7 @@ fn two(p: &Prog, x: &Val, want: &Val, base: &Params, profile: bool) -> String {
     if profile {
         let mut by: std::collections::BTreeMap<String, (u64, f64, f64)> = Default::default();
         for &(clock, ri, _, c, p) in &l.trace.fires {
-            let r = rust_ca_lattice::rules::rule(ri);
+            let r = tree_net::rules::rule(ri);
             let e = by.entry(format!("{}·{}", r.consumer.name(), r.producer.name())).or_default();
             e.0 += 1;
             if let Some(&(made, _)) = l.trace.active.get(&(c, p)) { e.1 += clock - made; }
