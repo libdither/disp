@@ -15,10 +15,11 @@ fn load(p: &Prog, x: &Val, seed: u64) -> (Lattice, Vec<Option<Agent>>, u32) {
 }
 
 /// The lattice's energy, the banks', the bath's and the fuel's add up to the same (looked at every 64
-/// events: a slip stays in the sum), until every kind of event has happened.
+/// events: a slip stays in the sum), until every kind of event has happened, the hard layer slipping too.
 #[test]
 fn energy_is_kept() {
     let (mut l, _, _) = load(&add(), &Val::f(nat(1), nat(1)), 1);
+    l.p.barrier = 8.0;
     let kept = l.energy_kept();
     for i in 0..3_000_000 {
         l.event();
@@ -69,7 +70,7 @@ fn moves_balance_with_nothing_driving() {
     let g0 = l.th.ledger.clone();
     l.run_events(6_000_000);
     let g = &l.th.ledger;
-    let n = |a: &[u64; 10], b: &[u64; 10], k: usize| (a[k] - b[k]) as f64;
+    let n = |a: &[u64], b: &[u64], k: usize| (a[k] - b[k]) as f64;
     let pairs = [("hop", n(&g.up, &g0.up, 0), n(&g.down, &g0.down, 0)), ("exchange", n(&g.up, &g0.up, 1), n(&g.down, &g0.down, 1)),
                  ("flip", n(&g.up, &g0.up, 2), n(&g.down, &g0.down, 2)), ("unfold, fold", n(&g.made, &g0.made, 4), n(&g.made, &g0.made, 3))];
     for (what, a, b) in pairs {
@@ -96,6 +97,28 @@ fn fuel_runs_low_where_the_work_is() {
     let (near, far) = (near.0 / near.1, far.0 / far.1);
     eprintln!("full slots where readers are {near:.2}, elsewhere {far:.2}");
     assert!(near < 0.9 * far, "full slots where readers are {near:.2}, elsewhere {far:.2}");
+}
+
+/// The hard layer slipping rewires the lattice and the abstract net alike, through every rewrite and
+/// undo after it, and keeps the energy: runs at a barrier of 6 kT, the two nets compared after every
+/// slip, rewrite and undo.
+#[test]
+fn slips_rewire_both_nets_alike() {
+    for seed in 1..=3 {
+        let (mut l, _, _) = load(&add(), &Val::f(nat(0), nat(1)), seed);
+        l.p.barrier = 6.0;
+        let kept = l.energy_kept();
+        for i in 0..3_000_000 {
+            let before = l.th.ledger.made;
+            l.event();
+            if [5, 6, 10].iter().all(|&k| l.th.ledger.made[k] == before[k]) { continue; }
+            l.check_projection().unwrap_or_else(|e| panic!("seed {seed}, event {i}: {e}"));
+            if l.shadow.active_pair().is_none() { break; }
+        }
+        assert_eq!(l.energy_kept(), kept);
+        assert!(l.th.ledger.made[10] > 0, "seed {seed}: no slips");
+        eprintln!("seed {seed}: slips drawn {}, landed {}", l.th.ledger.tried[10], l.th.ledger.made[10]);
+    }
 }
 
 /// Forward to the answer, then the drive turned round: the answer is taken back and a tenth of the

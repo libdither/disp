@@ -48,16 +48,37 @@
 //!   comes from the bath and is counted (`borrowed`). These two are not exactly balanced: a rewrite is
 //!   proposed from its consumer's slot, an undo from its products' sites (or, for one that left
 //!   nothing, the site it happened at).
-//! - **Time.** A live site has one event per unit of time on average: each event is 1/N of a clock.
+//! - **Errors.** The hard layer (the switchboards' pairings) is held by a barrier of `barrier` kT, so an
+//!   event is a slip with chance e^(−barrier): two pairings at the site trade partners and two wires
+//!   trade halves, in the lattice and the abstract net alike. The slip itself costs no energy and the
+//!   slip back is as likely, but what it rewired can no longer be taken back: the records of the four
+//!   agents it touched are forgotten, their bonds' energy going to the bank. What it does to the
+//!   program is anyone's guess; a pair a slip has wired into a vicious circle never fires.
+//! - **Time.** A live site has one event per unit of time on average: each event is 1/N of a clock;
+//!   a `Medium` says how long that is, and how many joules an energy unit (1/T kT).
 
 use super::{substrate::Undo, Lattice, NONE};
 use std::collections::HashMap;
 
 /// The kinds of event, for the counts.
-pub const KINDS: [&str; 10] = ["hop", "exchange", "flip", "fold", "unfold", "fire", "undo", "heat", "walk", "fuel"];
+pub const KINDS: [&str; 11] = ["hop", "exchange", "flip", "fold", "unfold", "fire", "undo", "heat", "walk", "fuel", "slip"];
 
 /// Slots for fuel a site has.
 pub const SLOTS: usize = 4;
+
+/// What a lattice might be built of (the hardware survey, README "Run thermodynamically"): the time a
+/// site takes an event, the temperature, and the barrier holding its hard layer (switchboards), in kT.
+pub struct Medium { pub name: &'static str, pub what: &'static str, pub tau: f64, pub kelvin: f64, pub barrier: f64 }
+
+pub const MEDIA: [Medium; 4] = [
+    Medium { name: "cmos", what: "magnetic junctions for noise, CMOS registers", tau: 1e-9, kelvin: 300.0, barrier: 40.0 },
+    Medium { name: "dna", what: "DNA on origami: a walker's hop, a 20-pair duplex", tau: 300.0, kelvin: 300.0, barrier: 47.0 },
+    Medium { name: "molecular", what: "an enzyme's turnover, covalent bonds", tau: 1e-3, kelvin: 300.0, barrier: 100.0 },
+    Medium { name: "colloid", what: "a bead's hop, DNA-coated bonds between beads", tau: 1.0, kelvin: 300.0, barrier: 6.0 },
+];
+
+/// Boltzmann's constant, J/K.
+pub const K_B: f64 = 1.380649e-23;
 
 #[derive(Clone, Debug, Default)]
 pub struct Ledger {
@@ -69,11 +90,11 @@ pub struct Ledger {
     /// Heat undos took from the bath because their bank was short (counted in `to_bath` too).
     pub borrowed: i64,
     /// Events tried and moves made, by kind (`KINDS`).
-    pub tried: [u64; 10],
-    pub made: [u64; 10],
+    pub tried: [u64; 11],
+    pub made: [u64; 11],
     /// Moves made that took heat from their bank, and that gave it heat, by kind.
-    pub up: [u64; 10],
-    pub down: [u64; 10],
+    pub up: [u64; 11],
+    pub down: [u64; 11],
 }
 
 #[derive(Clone, Debug, Default)]
@@ -221,6 +242,7 @@ impl Lattice {
         self.stats.clocks += 1.0 / n as f64;
         let i = self.below(n);
         let s = self.live[i];
+        if self.p.barrier > 0.0 && self.unit() < (-self.p.barrier).exp() { self.ev_slip(s); return; }
         let x = self.unit();
         let kind = if x < 0.45 { 0 } else if x < 0.50 { 1 } else if x < 0.65 { 2 } else if x < 0.75 { 3 } else if x < 0.83 { 5 } else if x < 0.93 { 7 } else { 9 };
         match kind {
@@ -361,8 +383,8 @@ impl Lattice {
             let (e0, n0) = (self.energy(), self.sub.records.len());
             if !self.fire(s, kc, kp, via) { return; }
             let de = self.energy() - e0;
-            let e = self.sub.records.len().max(n0) as u64 - 1;
-            self.th.paid.insert(e, (s, de as i32));
+            // A rewrite a slip has wired into itself keeps no record.
+            if self.sub.records.len() > n0 { self.th.paid.insert(self.sub.records.len() as u64 - 1, (s, de as i32)); }
             self.th.fuel[s as usize] &= !(1 << i);
             self.charge(s, -drive);
             self.th.ledger.fuel += drive + de;
@@ -452,5 +474,43 @@ impl Lattice {
         self.th.fuel[s as usize] &= !(1 << i);
         self.th.fuel[t as usize] |= 1 << j;
         self.th.ledger.made[9] += 1;
+    }
+
+    /// The hard layer slips (`Params::barrier`): two pairings at s trade partners, so two wires through s
+    /// trade halves, and the abstract net is rewired with them. It costs no energy and the slip back is
+    /// as likely; one wire through s twice is left alone (it would close a loop of bare strand).
+    fn ev_slip(&mut self, s: u32) {
+        let (a, c) = (self.below(self.ends) as u8, self.below(self.ends) as u8);
+        let (b, d) = (self.mate_of(s, a), self.mate_of(s, c));
+        self.th.ledger.tried[10] += 1;
+        if b == NONE || d == NONE || c == a || c == b { return; }
+        let [ra, rb, rc, rd] = [a, b, c, d].map(|e| self.reach(s, e));
+        if ra == rc || ra == rd { return; }
+        for e in [a, b, c, d] { self.set(s, e, NONE); }
+        self.link(s, a, d);
+        self.link(s, c, b);
+        let id = |r: (u32, usize, usize)| (self.sids[r.0 as usize * self.ks + r.1], r.2 as u8);
+        let ([ia, ib, ic, idd], [pa, pb, pc, pd]) = ([ra, rb, rc, rd].map(|r| id(r).0), [ra, rb, rc, rd].map(|r| id(r).1));
+        self.shadow.link(ia, pa, idd, pd);
+        self.shadow.link(ic, pc, ib, pb);
+        // What it rewired can no longer be taken back: their records go, as forgetting takes them,
+        // and the bonds they held give their energy to the bank.
+        let e0 = self.energy();
+        for x in [ia, ib, ic, idd] {
+            let mut es: Vec<u64> = self.maker(x).into_iter().collect();
+            for q in 0..self.ar as u8 { es.extend(self.sub.marks.get(&(x, q)).into_iter().flatten().copied()); }
+            for e in es { self.forget(e); }
+        }
+        let de = self.energy() - e0;
+        self.charge(s, de);
+        self.th.ledger.made[10] += 1;
+    }
+
+    /// The agent port at the far end of the wire through end e of s, going e's way: (site, slot, port).
+    fn reach(&self, s: u32, e: u8) -> (u32, usize, usize) {
+        if !self.is_strand(e) { return (s, e as usize / self.ar, e as usize % self.ar); }
+        let f = self.face(e);
+        let (t, k, q, _) = self.follow(self.nb(s, f), self.se(f ^ 1, self.lane(e)));
+        (t, k, q)
     }
 }

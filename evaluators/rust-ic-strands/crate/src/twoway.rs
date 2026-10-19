@@ -232,9 +232,14 @@ pub fn net(p: &Prog, x: &Val) -> (Net, u32) {
 }
 
 /// What a net holds at the agent `id`'s output, if it is a tree through and through.
-pub fn read_val(net: &Net, id: u32) -> Option<Val> {
+pub fn read_val(net: &Net, id: u32) -> Option<Val> { read_within(net, id, net.agents.len()) }
+
+/// `read_val`, no deeper than `depth`: a tree is no deeper than the net has agents, and a net the hard
+/// layer's slips rewired may hold a cycle.
+fn read_within(net: &Net, id: u32, depth: usize) -> Option<Val> {
     let a = net.agents.get(id as usize)?.as_ref()?;
-    let kid = |q: usize| -> Option<Val> { let (k, p) = a.ports[q]?; if p != 0 { return None; } read_val(net, k) };
+    let depth = depth.checked_sub(1)?;
+    let kid = |q: usize| -> Option<Val> { let (k, p) = a.ports[q]?; if p != 0 { return None; } read_within(net, k, depth) };
     Some(match a.tag {
         Tag::L => Val::L,
         Tag::S => Val::s(kid(1)?),

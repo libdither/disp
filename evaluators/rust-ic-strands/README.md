@@ -1593,8 +1593,8 @@ random, and is 1/N of a clock for N live sites.
   same after every event (`energy_kept`), turning the drive round included (the bonds strengthen by
   −ε/T as on the substrate, and what that does to the energy is counted as work).
 
-`strands-thermo` runs a two-way program over drives × temperatures × seeds (`supply=` and other
-settings as `key=value`). `add 0 1` at T = 0.75, 4 seeds a cell: clocks to the answer, then heat to
+`strands-thermo` runs a two-way program over drives × temperatures × seeds (`supply=`, `barrier=`
+and other settings as `key=value`; `--medium` for physical units). `add 0 1` at T = 0.75, 4 seeds a cell: clocks to the answer, then heat to
 the bath and heat undos borrowed from it, a rewrite kept at the answer (energy units):
 
 | drive | supply 0.1 | supply 0.5 | supply 0.9 |
@@ -1621,6 +1621,45 @@ the bath and heat undos borrowed from it, a rewrite kept at the answer (energy u
 - **Before fuel was local** a reader's step brought a fixed `walk` of fuel from nowhere and the
   drive went only to rewrites: the drive moved the clocks by under 2×, and walk 2 took 20× the clocks
   of walk 8 for 15% of the heat, the same threshold.
+
+**Errors.** `barrier=B` (kT) holds the hard layer, the switchboards' pairings: an event is a slip
+with chance e^(−B), two pairings at the site trading partners so two wires trade halves (about one
+slip drawn in 176 lands; most name an end with nothing on it). The slip costs nothing, but what it
+rewired can no longer be undone, so the records of the four agents it touched are forgotten; a pair
+it wires into itself, or with no rule, stays as it is. `add 0 1`, drive 8, 16 seeds:
+
+| barrier | slips a run | wrong answers | jammed |
+|---|---|---|---|
+| 6 kT | 98 | 16 | 0 |
+| 10 kT | 13.6 | 12 | 4 |
+| 12 kT | 0.6 | 7 | 0 |
+| 14 kT | 0.2 | 2 | 0 |
+| 16 kT | 0 | 0 | 0 |
+
+- **Every slip spoils the answer.** At 12 kT, 45% of runs should see one (0.6 a run) and 7 of 16
+  went wrong; at 14, 18% and 2. Nothing corrects it: a slip rewires the program itself.
+- **So the barrier has to make slips rare over the whole run.** Under one slip in 10^21 events (10^12
+  sites for a second, an event a nanosecond) needs e^(−B) under 2×10^(−19), about 43 kT; for a day,
+  about 55 (arithmetic from the 1 in 176).
+
+**Media** (`--medium`, thermo.rs `MEDIA`): what a clock is and what holds the hard layer, from the
+hardware survey. `add 0 1` at drive 8 (10.7 kT a quantum at T = 0.75, against ATP's
+["∼20 kBT"](https://pmc.ncbi.nlm.nih.gov/articles/PMC1852353/#sec8)), 8 seeds:
+
+| medium | an event | hard barrier | `add 0 1` takes | wrong |
+|---|---|---|---|---|
+| CMOS registers, magnetic junctions for noise | 1 ns (["between picoseconds and nanoseconds"](https://arxiv.org/pdf/1809.04028#page=1)) | 40 kT (["would retain a 0 (or a 1) for ∼ 10 years"](https://arxiv.org/pdf/1809.04028#page=1)) | 39 µs | 0 |
+| DNA on origami | 5 min, a walker's step (["roughly 5 min per step"](https://www.dna.caltech.edu/Papers/CargoSorting2017.pdf#page=5)) | 47 kT, 20 base pairs at ["approximately 1.4 kcal/mol"](https://www.dna.caltech.edu/Papers/Toehold_Exchange2009supp.pdf#page=13) each | 137 days | 0 |
+| fuelled molecular machines | 1 ms, an enzyme's turnover (["between 50 and 5,000 s-1"](https://pmc.ncbi.nlm.nih.gov/articles/PMC2582308/#kwd-group1)) | 100 kT (["the typical strength of covalent bonds"](https://fab.cba.mit.edu/classes/863.18/notes/computation/Bennett-1982.pdf#page=8)) | 39 s | 0 |
+| colloids | about 1 s (["the barrier is about 2.2 kB T . In this situation the jumping time falls to ∼ 10 s"](https://arxiv.org/pdf/1503.06537#page=7)) | 6 kT, DNA-coated beads (["up to 6 kBT"](https://pmc.ncbi.nlm.nih.gov/articles/PMC3179119/#abstract1)) | 11 h | 8 (133 slips a run) |
+
+- **The lattice is the same in every medium**: only the clock and the barrier differ, so the speed
+  is the event time's, the heat a rewrite is 155 kT everywhere it holds (6.4×10⁻¹⁹ J at 300 K), and
+  colloids' bonds are too weak to hold a program.
+- **One event time a medium is a simplification.** A medium's moves have rates of their own (DNA's
+  branch migration takes ["12 μs"](https://pmc.ncbi.nlm.nih.gov/articles/PMC3905871/#sec24) to
+  ["125 µs/step"](https://www.dna.caltech.edu/Papers/Toehold_Exchange2009.pdf#page=12), its walkers
+  minutes); a rate and barrier for each kind of move is not in yet.
 - **How it got here.** With heat leaving only at the edge of the matter, banks ran at 2.3× the bath's
   temperature and wires swelled: the substrate under every site fixed that. Charging seating to the
   drive put back nearly every rewrite that made agents (a seq split `Run·F` costs 15–50 units to seat).
@@ -1632,11 +1671,12 @@ the bath and heat undos borrowed from it, a rewrite kept at the answer (energy u
   with up to five products needs all of them in one 2×2 square again, and that stalls well short of
   the start. Nothing yet checks the time spent in each state against exact enumeration on a tiny
   lattice, or the fluctuation theorems.
-- `tests/thermo.rs` (12 s): energy kept exactly until every kind of event has happened; with nothing
+- `tests/thermo.rs` (13 s): energy kept exactly until every kind of event, slips too, has happened; with nothing
   driving, every kind of move taking heat from its bank as often as giving it (within 5%) and wires
   folding as often as unfolding; `add 0 1` and `add 1 0` giving the reference's answers; banks within
-  10% of the bath's mean after the answer; slots emptier where readers are than elsewhere; and turned
-  round, the answer gone and a tenth of the rewrites undone, energy kept.
+  10% of the bath's mean after the answer; slots emptier where readers are than elsewhere; slips at
+  6 kT rewiring the lattice and the abstract net alike through every rewrite and undo after them,
+  energy kept; and turned round, the answer gone and a tenth of the rewrites undone, energy kept.
 
 ### Keeping history: running it back exactly (`resid=1`, `resid.rs`)
 
@@ -2052,7 +2092,7 @@ whose size the GPU reads from a buffer). Dawn checks every indirect dispatch on 
 From `crate/` (memory-cap long runs, see `AGENTS.md`):
 
 ```sh
-cargo test --release                                  # ~65 s: corpus in 5 configurations, per-move invariants, collection, cooling as latest cools, handover, reading back, superpositions, movement agents, the substrate forward and back, keeping history, two-way programs (13 s), running backward, run thermodynamically (12 s)
+cargo test --release                                  # ~65 s: corpus in 5 configurations, per-move invariants, collection, cooling as latest cools, handover, reading back, superpositions, movement agents, the substrate forward and back, keeping history, two-way programs (13 s), running backward, run thermodynamically (13 s)
 cargo run --release --bin strands-run -- disp-t --k 2 --lanes 3 --block --lazy --temp 2
 cargo run --release --bin strands-run -- fib:0 --grid 256 --depth 8 --k 2 --lanes 4 --block --lazy --temp 2 --swap 1 --agents 0.8 --pulse --gc --idle-crowd 10 --board 0.5 --pairs 8
 cargo run --release --bin strands-run -- fib:0 --grid 256 --chip                   # the chip's schedule (blocks)
@@ -2065,7 +2105,7 @@ cargo run --release --bin strands-sup -- CASES                                  
 cargo run --release --bin strands-bench -- CASES --seeds 2                         # lines name|term: one JSON line a run (programs/bench.ts drives it)
 cargo run --release --bin strands-sweep -- "k=2 lanes=2 temp=2.0 grid=48 block=1" "k=2 lanes=3 temp=2.0 grid=48 depth=6 block=1 lazy=1 pulse=1 swap=1 agents=0.8 gc=1 idlecrowd=10 board=0.5 pairs=8"
 cargo run --release --bin strands-phys -- 'add 1 1' --back -9                    # the substrate: forward, then back to the loaded net (key=value settings too: erase=1, forget=0.01, drive=6)
-cargo run --release --bin strands-thermo -- --work 'add 0 1' --drive 4,8,16 --temp 0.5,0.75,1   # run thermodynamically: clocks and heat a rewrite (key=value settings too: supply=0.9)
+cargo run --release --bin strands-thermo -- --work 'add 0 1' --drive 4,8,16 --temp 0.5,0.75,1   # run thermodynamically: clocks and heat a rewrite (key=value settings too: supply=0.9 barrier=12; --medium dna)
 ```
 
 `--chip` is the configuration `hw/` builds; `hw/validate.sh` checks that the chip and the GPU

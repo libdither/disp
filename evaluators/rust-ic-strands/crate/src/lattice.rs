@@ -183,6 +183,9 @@ pub struct Params {
     /// Run thermodynamically, the chance the supply under a site fills a slot of fuel there (thermo.rs):
     /// a quantum used brings `drive`, and at this fill the fuel's pull is `drive` + T ln(supply / (1 − supply)).
     pub supply: f64,
+    /// Run thermodynamically, the barrier holding the hard layer (switchboards), in kT: each event at a
+    /// site is a slip with chance e^(−barrier), two of its pairings trading partners (0: no slips).
+    pub barrier: f64,
     /// The drive ε: a rewrite forward is taken with chance min(1, e^(ε/T)), one undone with
     /// min(1, e^(-ε/T)).
     pub drive: f64,
@@ -255,6 +258,7 @@ impl Params {
             "phys" => self.phys = on,
             "thermo" => { self.thermo = on; if on { self.phys = true; } }
             "supply" => self.supply = f()?,
+            "barrier" => self.barrier = f()?,
             "drive" => self.drive = f()?,
             "erase" => self.erase = f()?,
             "forget" => self.forget = f()?,
@@ -278,7 +282,7 @@ impl Default for Params {
                  p_hop: 0.5, spread: 2, block: false, lazy: false, idle_tension: 1.0, active: 0.0, swap: 0.0, agent_turns: 0.0, pulse: false, margolus: false, block_moves: false, block_side: 2, gc: false, link_crowd: 0.0, idle_crowd: 0.0, cold: false, cold_terms: 15, cool_terms: 15, board_crowd: 0.0, pairs: 0, seed: 1, calls: false, fork: false, fields: [Channel::OFF; 4],
                  
                  cool_half: 0.0, cool_min: 0.05, cool_pass: true, cool_cut: true, cool_greedy: 2, views: false,
-                 dn_room: 0, eps_walk: false, phys: false, thermo: false, supply: 0.5, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
+                 dn_room: 0, eps_walk: false, phys: false, thermo: false, supply: 0.5, barrier: 0.0, drive: 8.0, erase: 0.0, forget: 0.0, bond: 1.0, resid: 0, two: false }
     }
 }
 
@@ -2104,7 +2108,13 @@ impl Lattice {
         let (sp, ploc) = match via { None => (s, 0), Some(f) => (self.nb(s, f), f + 1) };
         let (ct, pt) = (tag_of(self.tag(s, kc)), tag_of(self.tag(sp, kp)));
         let (cl, pl) = (self.sup_label[s as usize * self.ks + kc], self.sup_label[sp as usize * self.ks + kp]);
-        let ri = find_index_labelled(ct, cl, pt, pl).unwrap_or_else(|| panic!("no rule {}·{}", ct.name(), pt.name()));
+        // Only a slip of the hard layer brings a pair with no rule together, or wires an aux port of a
+        // pair back into it (a vicious circle, or a rewrite no record could undo): it stays as it is.
+        let Some(ri) = find_index_labelled(ct, cl, pt, pl) else { assert!(self.p.barrier > 0.0, "no rule {}·{}", ct.name(), pt.name()); return false };
+        if self.p.barrier > 0.0 {
+            let pair = [self.sids[s as usize * self.ks + kc], self.sids[sp as usize * self.ks + kp]];
+            if pair.iter().any(|&x| self.shadow.get(x).ports[1..].iter().flatten().any(|t| pair.contains(&t.0))) { return false; }
+        }
         let ri = if self.forgetting { find_forgetting(ct, pt).unwrap_or(ri) } else { ri };
         let rule = rule(ri);
         let n = rule.fresh.len();
