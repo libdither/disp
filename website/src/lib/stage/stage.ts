@@ -404,15 +404,94 @@ export class Stage {
     return g
   }
 
-  /** The view box, whole and centred in the drawing's box, of which the camera sees the window. */
-  private fit() {
-    const { fullW, fullH, x, y, w, h } = this.win
+  // ---- what the camera sees: the view box fitted whole and centred in the drawing's box, zoomed k times
+  // about a centre moved by (x, y) world units, of which the canvas shows the window ----
+  private zoom = { k: 1, x: 0, y: 0 }
+  private zoomTo = { k: 1, x: 0, y: 0 }
+  private lastFrame = 0
+  /** Told when the drawing comes to be zoomed in, or back to fitting whole. */
+  onZoom: ((zoomed: boolean) => void) | null = null
+  /** Told what the whole box shows, as an SVG view box (y down), so a backdrop can follow the zoom. */
+  onView: ((x: number, y: number, w: number, h: number) => void) | null = null
+  get zoomed() {
+    return this.zoomTo.k > 1.001
+  }
+
+  /** The fitted view: its scale (box pixels a world unit), centre and half size in world units. */
+  private base() {
+    const { fullW, fullH } = this.win
     const { x0, y0, x1, y1 } = this.view
     const s = Math.min(fullW / (x1 - x0), fullH / (y1 - y0))
-    const left = (x0 + x1) / 2 - fullW / s / 2
-    const top = (y0 + y1) / 2 + fullH / s / 2
-    Object.assign(this.camera, { left: left + x / s, right: left + (x + w) / s, top: top - y / s, bottom: top - (y + h) / s })
+    return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hw: fullW / s / 2, hh: fullH / s / 2 }
+  }
+  /** Zoomed out to fitting whole, the centre comes home; never further out than that. */
+  private clamp(z: { k: number; x: number; y: number }) {
+    const b = this.base()
+    z.k = Math.min(24, Math.max(1, z.k))
+    const mx = b.hw * (1 - 1 / z.k)
+    const my = b.hh * (1 - 1 / z.k)
+    z.x = Math.min(mx, Math.max(-mx, z.x))
+    z.y = Math.min(my, Math.max(-my, z.y))
+    return z
+  }
+  /** The world rectangle the whole box shows at a zoom: left, top, and world units per box pixel. */
+  private boxView(z: { k: number; x: number; y: number }) {
+    const b = this.base()
+    const hw = b.hw / z.k
+    const hh = b.hh / z.k
+    return { left: b.cx + z.x - hw, top: b.cy + z.y + hh, ux: (2 * hw) / this.win.fullW, uy: (2 * hh) / this.win.fullH }
+  }
+  private fit() {
+    this.clamp(this.zoom)
+    this.clamp(this.zoomTo)
+    const { x, y, w, h, fullW, fullH } = this.win
+    const v = this.boxView(this.zoom)
+    Object.assign(this.camera, { left: v.left + x * v.ux, right: v.left + (x + w) * v.ux, top: v.top - y * v.uy, bottom: v.top - (y + h) * v.uy })
     this.camera.updateProjectionMatrix()
+    this.onView?.(v.left, -v.top, fullW * v.ux, fullH * v.uy)
+  }
+  /** Where a point of the screen falls in the drawing's box, in box pixels. */
+  private boxAt(clientX: number, clientY: number): [number, number] {
+    const r = this.canvas.getBoundingClientRect()
+    return [clientX - r.left + this.win.x, clientY - r.top + this.win.y]
+  }
+  private zoomChanged(was: boolean) {
+    if (was !== this.zoomed) this.onZoom?.(this.zoomed)
+    this.fit()
+    this.wake()
+  }
+
+  /** Zoom by a factor about a point of the screen, which stays where it is; `smooth`, eased there. */
+  zoomBy(factor: number, clientX: number, clientY: number, smooth = false) {
+    const was = this.zoomed
+    const [bx, by] = this.boxAt(clientX, clientY)
+    const v = this.boxView(this.zoomTo)
+    const wx = v.left + bx * v.ux
+    const wy = v.top - by * v.uy
+    const b = this.base()
+    const k = Math.min(24, Math.max(1, this.zoomTo.k * factor))
+    const hw = b.hw / k
+    const hh = b.hh / k
+    const ux = (2 * hw) / this.win.fullW
+    const uy = (2 * hh) / this.win.fullH
+    this.zoomTo = this.clamp({ k, x: wx - bx * ux + hw - b.cx, y: wy + by * uy - hh - b.cy })
+    if (!smooth) this.zoom = { ...this.zoomTo }
+    this.zoomChanged(was)
+  }
+  /** Move the drawing with the pointer, by screen pixels. */
+  panBy(dx: number, dy: number) {
+    const was = this.zoomed
+    const v = this.boxView(this.zoomTo)
+    this.zoomTo = this.clamp({ k: this.zoomTo.k, x: this.zoomTo.x - dx * v.ux, y: this.zoomTo.y + dy * v.uy })
+    this.zoom = { ...this.zoomTo }
+    this.zoomChanged(was)
+  }
+  /** Back to fitting the whole drawing, eased there unless `now`. */
+  fitAll(now = false) {
+    const was = this.zoomed
+    this.zoomTo = { k: 1, x: 0, y: 0 }
+    if (now) this.zoom = { ...this.zoomTo }
+    this.zoomChanged(was)
   }
 
   setWindow(win: Pane) {
@@ -422,6 +501,8 @@ export class Stage {
     this.renderer.setPixelRatio(win.ratio)
     this.renderer.setSize(Math.max(1, win.w), Math.max(1, win.h), false)
     this.fit()
+    // resizing clears the canvas: draw it again now, in the same frame, so it never shows blank
+    this.draw()
     this.wake()
   }
 
@@ -448,7 +529,8 @@ export class Stage {
       if (!l.hit || l.mode === 2) continue
       const { p, life } = this.place(l, now)
       const d = Math.hypot(p[0] - x, p[1] - y)
-      if (d < l.hit * life && d < bestD) {
+      // a node is easier to hit when it is drawn small
+      if (d < l.hit * life * Math.max(1, 1.6 / Math.sqrt(this.zoom.k)) && d < bestD) {
         best = k
         bestD = d
       }
@@ -459,10 +541,11 @@ export class Stage {
   private wake = () => {
     if (this.running || !this.visible || document.hidden) return
     this.running = true
+    this.lastFrame = this.now()
     this.raf = requestAnimationFrame(this.frame)
   }
 
-  private frame = () => {
+  private draw() {
     const now = this.now()
     this.uniforms.uNow.value = now
     const [px, py] = this.swayAt
@@ -471,9 +554,29 @@ export class Stage {
     this.inner.position.set(-px, -py, 0)
     this.pivot.rotation.z = ang
     this.renderer.render(this.scene, this.camera)
-    // keep drawing while anything moves: a glide, a growth, a fade-in, a lean, a pulse
+  }
+
+  private frame = () => {
+    const now = this.now()
+    // an eased zoom closes on its target
+    const z = this.zoom
+    const t = this.zoomTo
+    const easing = Math.abs(t.k - z.k) > 1e-4 * t.k || Math.abs(t.x - z.x) + Math.abs(t.y - z.y) > 1e-3
+    if (easing) {
+      const a = 1 - Math.exp(-(now - this.lastFrame) / 0.07)
+      z.k += (t.k - z.k) * a
+      z.x += (t.x - z.x) * a
+      z.y += (t.y - z.y) * a
+      this.fit()
+    } else if (z.k !== t.k || z.x !== t.x || z.y !== t.y) {
+      this.zoom = { ...t }
+      this.fit()
+    }
+    this.lastFrame = now
+    this.draw()
+    // keep drawing while anything moves: a glide, a growth, a fade-in, a lean, a pulse, a zoom
     const settle = this.moveStart + Math.max(this.timing.move, this.timing.grow + 0.3, this.timing.shrink, 0.6)
-    const busy = now < settle || !!this.sway || this.pulsing
+    const busy = now < settle || !!this.sway || this.pulsing || easing
     if (busy && this.visible && !document.hidden) this.raf = requestAnimationFrame(this.frame)
     else this.running = false
   }

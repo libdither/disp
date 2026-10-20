@@ -600,45 +600,92 @@
   let fontGen = $state(0);
   let tip = $state<{ text: string; x: number; y: number } | null>(null);
   let pointer = $state(false);
+  /** Clicked into: scrolling and pinching zoom the tree itself, not the page. */
+  let engaged = $state(false);
+  let zoomed = $state(false);
+  let hint = $state(false);
+  /** The hill's view box, which follows the tree's zoom. */
+  let groundBox = $state<string | null>(null);
 
-  /** The canvas covers the part of the drawing's box that is on screen. Unzoomed, that is all of it; when
-   * the page is pinch-zoomed (the visual viewport scaled), it is only the part the zoom shows, drawn with
-   * as many pixels as the zoom gives it, so the tree stays as sharp as the SVG it replaced. Ctrl+scroll
-   * zoom changes the device pixel ratio, which is read here too. */
-  function placeCanvas() {
+  // ---- the page's own zoom. The canvas covers the part of the drawing's box that is on screen: unzoomed, all
+  // of it; when the page is pinch-zoomed (the visual viewport scaled), the part the zoom shows and a margin
+  // round it, drawn with as many pixels as the zoom gives, so the tree stays as sharp as the SVG it
+  // replaced. While a pinch goes on, the browser stretches what is drawn; it is drawn again, sharp, when the
+  // pinch settles, or at once if the view leaves what is drawn. Ctrl+scroll zoom changes the device pixel
+  // ratio, read here too ----
+  let cover: { x: number; y: number; w: number; h: number; scale: number } | null = null;
+  function placeCanvas(settled: boolean) {
     if (!host || !canvas || !stage) return;
     const r = host.getBoundingClientRect();
     const fullW = host.clientWidth;
     const fullH = host.clientHeight;
     if (!fullW || !fullH) return;
-    let x = 0;
-    let y = 0;
-    let w = fullW;
-    let h = fullH;
-    let zoom = 1;
+    let box = { x: 0, y: 0, w: fullW, h: fullH };
     const vv = window.visualViewport;
-    if (vv && vv.scale > 1.01) {
-      zoom = vv.scale;
+    const scale = vv && vv.scale > 1.01 ? vv.scale : 1;
+    if (vv && scale > 1) {
       const left = Math.max(r.left, vv.offsetLeft);
       const top = Math.max(r.top, vv.offsetTop);
       const right = Math.min(r.right, vv.offsetLeft + vv.width);
       const bottom = Math.min(r.bottom, vv.offsetTop + vv.height);
-      if (right - left < 1 || bottom - top < 1) {
-        canvas.style.visibility = "hidden";
-        return;
-      }
-      x = left - r.left;
-      y = top - r.top;
-      w = right - left;
-      h = bottom - top;
+      if (right - left < 1 || bottom - top < 1) return;
+      const seen = { x: left - r.left, y: top - r.top, w: right - left, h: bottom - top };
+      const c = cover;
+      const inside = !!c && seen.x >= c.x && seen.y >= c.y && seen.x + seen.w <= c.x + c.w && seen.y + seen.h <= c.y + c.h;
+      if (!settled && inside && scale < c!.scale * 1.5 && scale > c!.scale / 1.5) return;
+      const m = 0.3 * Math.max(seen.w, seen.h);
+      const x0 = Math.max(0, seen.x - m);
+      const y0 = Math.max(0, seen.y - m);
+      box = { x: x0, y: y0, w: Math.min(fullW, seen.x + seen.w + m) - x0, h: Math.min(fullH, seen.y + seen.h + m) - y0 };
     }
-    canvas.style.visibility = "";
-    canvas.style.left = `${x}px`;
-    canvas.style.top = `${y}px`;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-    const ratio = Math.min((window.devicePixelRatio || 1) * zoom, 4096 / w, 4096 / h);
-    stage.setWindow({ fullW, fullH, x, y, w, h, ratio });
+    cover = { ...box, scale };
+    canvas.style.left = `${box.x}px`;
+    canvas.style.top = `${box.y}px`;
+    canvas.style.width = `${box.w}px`;
+    canvas.style.height = `${box.h}px`;
+    const ratio = Math.min((window.devicePixelRatio || 1) * scale, 4096 / box.w, 4096 / box.h, Math.sqrt(16e6 / (box.w * box.h)));
+    stage.setWindow({ fullW, fullH, ...box, ratio });
+  }
+
+  // ---- zooming the tree itself, once it has been clicked into (as a map on a page waits for a click):
+  // scroll or pinch zooms about the pointer, a drag moves it, zooming out far enough fits it whole again ----
+  const pointers = new Map<number, { x: number; y: number }>();
+  let gesture: "tap" | "pan" | "pinch" | null = null;
+  let downAt: { x: number; y: number } | null = null;
+  let lastHint = 0;
+  let hintTimer: ReturnType<typeof setTimeout> | undefined;
+  function onWheel(e: WheelEvent) {
+    if (!stage) return;
+    if (!engaged) {
+      // the page scrolls; now and then, say how to zoom the tree instead
+      if (!e.ctrlKey && performance.now() - lastHint > 8000) {
+        lastHint = performance.now();
+        hint = true;
+        clearTimeout(hintTimer);
+        hintTimer = setTimeout(() => (hint = false), 1600);
+      }
+      return;
+    }
+    e.preventDefault();
+    tip = null;
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const dx = e.deltaX * unit;
+    const dy = e.deltaY * unit;
+    // a pinch on a touchpad comes as ctrl+scroll; a mouse wheel in big steps; a touchpad's two fingers in small ones
+    if (e.ctrlKey) stage.zoomBy(Math.exp(-dy * 0.01), e.clientX, e.clientY);
+    else if (e.deltaMode !== 0 || (dx === 0 && Math.abs(dy) >= 50)) stage.zoomBy(Math.exp(-dy * 0.0025), e.clientX, e.clientY, true);
+    else stage.panBy(-dx, -dy);
+  }
+  /** Safari's pinch on a touchpad, which comes as gesture events. */
+  let gestureScale = 1;
+  function onGesture(e: Event & { scale?: number; clientX?: number; clientY?: number }) {
+    if (!engaged || !stage) return;
+    e.preventDefault();
+    if (e.type === "gesturestart") gestureScale = 1;
+    else {
+      stage.zoomBy((e.scale ?? 1) / gestureScale, e.clientX ?? 0, e.clientY ?? 0);
+      gestureScale = e.scale ?? 1;
+    }
   }
 
   onMount(() => {
@@ -650,17 +697,22 @@
       failed = true;
       return;
     }
+    stage.onZoom = (z) => (zoomed = z);
+    stage.onView = (x, y, w, h) => (groundBox = `${x} ${y} ${w} ${h}`);
     ready = true;
-    placeCanvas();
+    placeCanvas(true);
     // strings drawn before the font arrived are drawn again in it
     document.fonts?.ready.then(() => {
       stage?.refont(family);
       fontGen++;
     });
     let raf = 0;
+    let settle: ReturnType<typeof setTimeout> | undefined;
     const place = () => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(placeCanvas);
+      raf = requestAnimationFrame(() => placeCanvas(false));
+      clearTimeout(settle);
+      settle = setTimeout(() => placeCanvas(true), 160);
     };
     const vv = window.visualViewport;
     vv?.addEventListener("resize", place);
@@ -669,12 +721,26 @@
     window.addEventListener("scroll", place, { passive: true });
     const ro = new ResizeObserver(place);
     ro.observe(host!);
+    const letGo = (e: KeyboardEvent) => {
+      if (engaged && e.key === "Escape") engaged = false;
+    };
+    window.addEventListener("keydown", letGo);
+    const c = canvas!;
+    c.addEventListener("wheel", onWheel, { passive: false });
+    c.addEventListener("gesturestart", onGesture as EventListener, { passive: false });
+    c.addEventListener("gesturechange", onGesture as EventListener, { passive: false });
     return () => {
       cancelAnimationFrame(raf);
+      clearTimeout(settle);
+      clearTimeout(hintTimer);
       vv?.removeEventListener("resize", place);
       vv?.removeEventListener("scroll", place);
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place);
+      window.removeEventListener("keydown", letGo);
+      c.removeEventListener("wheel", onWheel);
+      c.removeEventListener("gesturestart", onGesture as EventListener);
+      c.removeEventListener("gesturechange", onGesture as EventListener);
       ro.disconnect();
       stage?.dispose();
       stage = null;
@@ -687,6 +753,11 @@
     if (!ready || !host) return;
     const raf = requestAnimationFrame(() => (palette = readPalette(host!)));
     return () => cancelAnimationFrame(raf);
+  });
+  // a new run starts fitted whole
+  $effect(() => {
+    void epoch;
+    if (ready) stage?.fitAll(true);
   });
   $effect(() => {
     void fontGen;
@@ -704,33 +775,79 @@
     const key = stage?.pick(e.clientX, e.clientY);
     return (key && byKey.get(key)) || null;
   }
-  function onMove(e: PointerEvent) {
+  function hover(e: PointerEvent) {
     const n = hovered(e);
     stage?.setHover(n?.key ?? null);
     pointer = !!n && clickable(n);
     const r = host!.getBoundingClientRect();
     tip = n?.tip ? { text: n.tip, x: e.clientX - r.left, y: e.clientY - r.top } : null;
   }
-  function onLeave() {
-    stage?.setHover(null);
-    pointer = false;
-    tip = null;
+  function onDown(e: PointerEvent) {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      gesture = "tap";
+      downAt = { x: e.clientX, y: e.clientY };
+    } else if (engaged) gesture = "pinch";
+    if (engaged) canvas?.setPointerCapture(e.pointerId);
   }
-  let down: { x: number; y: number } | null = null;
+  function onMove(e: PointerEvent) {
+    const p = pointers.get(e.pointerId);
+    if (!p) return hover(e);
+    const px = p.x;
+    const py = p.y;
+    p.x = e.clientX;
+    p.y = e.clientY;
+    if (!engaged || !stage) return;
+    if (pointers.size >= 2) {
+      // two fingers: the midpoint moves the tree, the spread zooms it about the midpoint
+      const other = [...pointers.entries()].find(([id]) => id !== e.pointerId)![1];
+      const d0 = Math.hypot(px - other.x, py - other.y);
+      const d1 = Math.hypot(p.x - other.x, p.y - other.y);
+      const mx = (p.x + other.x) / 2;
+      const my = (p.y + other.y) / 2;
+      stage.panBy((p.x - px) / 2, (p.y - py) / 2);
+      if (d0 > 0) stage.zoomBy(d1 / d0, mx, my);
+      gesture = "pinch";
+      tip = null;
+      return;
+    }
+    if (gesture === "tap" && downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) gesture = "pan";
+    if (gesture === "pan") {
+      stage.panBy(e.clientX - px, e.clientY - py);
+      tip = null;
+    }
+  }
   function onUp(e: PointerEvent) {
-    const d = down;
-    down = null;
-    if (!d || Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 5) return;
+    const had = pointers.delete(e.pointerId);
+    const g = gesture;
+    if (pointers.size === 0) gesture = null;
+    if (!had || g !== "tap") return;
+    engaged = true;
     const n = hovered(e);
     if (n && clickable(n)) {
       click(n);
       tip = null;
     }
   }
+  function onCancel(e: PointerEvent) {
+    pointers.delete(e.pointerId);
+    if (pointers.size === 0) gesture = null;
+  }
+  function onLeave() {
+    stage?.setHover(null);
+    pointer = false;
+    tip = null;
+  }
 </script>
 
-<div class="stage" bind:this={host} style="aspect-ratio: {W} / {height}">
-  <svg class="ground" viewBox="0 0 {W} {height}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+<svelte:document
+  onpointerdown={(e) => {
+    if (engaged && host && !host.contains(e.target as globalThis.Node)) engaged = false;
+  }}
+/>
+
+<div class="stage" class:engaged bind:this={host} style="aspect-ratio: {W} / {height}">
+  <svg class="ground" viewBox={groundBox ?? `0 0 ${W} ${height}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
     <ellipse cx={W / 2} cy={height - 22} rx={W * 0.36} ry="16" class="hill back" />
     <ellipse cx={W / 2 - 30} cy={height - 16} rx={W * 0.3} ry="13" class="hill front" />
     <g class="grass">
@@ -744,12 +861,23 @@
   <canvas
     bind:this={canvas}
     class:pointer
+    class:grab={engaged && !pointer}
+    style:touch-action={engaged ? "none" : "manipulation"}
     aria-label="the run, as a tree"
     onpointermove={onMove}
     onpointerleave={onLeave}
-    onpointerdown={(e) => (down = { x: e.clientX, y: e.clientY })}
+    onpointerdown={onDown}
     onpointerup={onUp}
+    onpointercancel={onCancel}
   ></canvas>
+  {#if zoomed}
+    <button type="button" class="refit" onclick={() => stage?.fitAll()} aria-label="fit the whole tree" title="fit the whole tree">⤢</button>
+  {/if}
+  {#if engaged}
+    <p class="zoomnote">scroll or pinch to zoom the tree, drag to move it · Esc lets go</p>
+  {:else if hint}
+    <p class="zoomnote hint">click the tree to zoom into it</p>
+  {/if}
   {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px">{tip.text}</div>{/if}
   {#if failed}<p class="nogl">This browser gives no WebGL, so the run cannot be drawn here.</p>{/if}
 </div>
@@ -774,6 +902,63 @@
   }
   canvas.pointer {
     cursor: pointer;
+  }
+  canvas.grab {
+    cursor: grab;
+  }
+  .stage.engaged {
+    outline: 1.5px solid color-mix(in oklab, var(--g2) 45%, transparent);
+    outline-offset: 3px;
+    border-radius: 8px;
+  }
+  .refit {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 3;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev);
+    color: var(--g2);
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  .refit:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .zoomnote {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    margin: 0;
+    z-index: 2;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--fg-faint);
+    pointer-events: none;
+  }
+  .zoomnote.hint {
+    top: 45%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 0.25rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elev);
+    color: var(--fg-muted);
+    font-size: 0.78rem;
+    animation: hintIn 0.2s ease;
+  }
+  @keyframes hintIn {
+    from {
+      opacity: 0;
+    }
   }
   .hill.back {
     fill: color-mix(in oklab, var(--g1) 16%, var(--bg-elev));

@@ -15,8 +15,8 @@ export interface Glyphs {
   pad: number
 }
 
-/** The size strings are drawn at: big enough that the mipmaps read well at any zoom. */
-export const ATLAS_PX = 48
+/** The size strings are drawn at: big enough to stay sharp zoomed in, small enough that a few hundred fit. */
+export const ATLAS_PX = 64
 
 export class Atlas {
   readonly size = 2048
