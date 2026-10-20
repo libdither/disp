@@ -6,6 +6,8 @@
   // clicked application waits on), and a dot that has run flips. ◂ takes the last action back. The
   // engine is machine.ts over core.ts.
   import { onDestroy } from "svelte";
+  import { fade } from "svelte/transition";
+  import { backOut } from "svelte/easing";
   import Grove from "./Grove.svelte";
   import { flipProg, show, size, type V } from "./core";
   import { parseProg, parseVal, progLabel, progText, valText, type Reads } from "./text";
@@ -74,6 +76,41 @@
     const i = preset < 0 ? (d === 1 ? 0 : PRESETS.length - 1) : preset + d;
     if (i >= 0 && i < PRESETS.length) pick(i);
   }
+
+  // ---- the cassette, as TreeVis has it: a chip wearing the example's symbol opens into a tape of every
+  // example, the first at the bottom; press anywhere on the tape and its thumb jumps there, drag and it
+  // scrubs, loading each example it passes ----
+  const CELLW = 34;
+  const CELLH = 28;
+  let cassetteOpen = $state(false);
+  let cassetteWrapEl: HTMLDivElement | undefined = $state();
+  let tapeEl: HTMLDivElement | undefined = $state();
+  let selDragging = $state(false);
+  const selY = $derived(Math.max(0, preset) * CELLH);
+  const chip = $derived(preset >= 0 ? PRESETS[preset] : { sym: "✎", sub: undefined, name: "your own" });
+  function cellAtY(clientY: number): number {
+    if (!tapeEl) return preset;
+    const r = tapeEl.getBoundingClientRect();
+    return Math.max(0, Math.min(PRESETS.length - 1, Math.floor((r.bottom - 3 - clientY) / CELLH)));
+  }
+  function tapeDown(e: PointerEvent) {
+    selDragging = true;
+    tapeEl?.setPointerCapture(e.pointerId);
+    const i = cellAtY(e.clientY);
+    if (i !== preset) pick(i);
+  }
+  function tapeMove(e: PointerEvent) {
+    if (!selDragging) return;
+    const i = cellAtY(e.clientY);
+    if (i !== preset) pick(i);
+  }
+  const tapeUp = () => (selDragging = false);
+  /** The thumb rises out of the chip to its cell as the tape unfurls. */
+  const selectorIn = (_n: Element, { duration = 300 } = {}) => ({
+    duration,
+    easing: backOut,
+    css: (t: number) => `opacity: ${t}; transform: translateY(${-selY * t}px)`
+  });
 
   // ---- moving the tree ----
 
@@ -237,6 +274,12 @@
 {#snippet icoPrograms()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M8 5 L3 12 L8 19" /><path d="M16 5 L21 12 L16 19" /><path d="M13.5 4 L10.5 20" /></svg>{/snippet}
 {#snippet icoLabels()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M20.4 13.4 l-7 7 a2 2 0 0 1 -2.8 0 L2.5 12 V2.5 h9.5 l8.4 8.4 a2 2 0 0 1 0 2.5 Z" /><circle cx="7.3" cy="7.3" r="1.15" fill="currentColor" stroke="none" /></svg>{/snippet}
 
+<svelte:document
+  onpointerdown={(e) => {
+    if (cassetteOpen && cassetteWrapEl && !cassetteWrapEl.contains(e.target as globalThis.Node)) cassetteOpen = false;
+  }}
+/>
+
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
   class="vis lab"
@@ -248,12 +291,6 @@
     if ((e.target as HTMLElement).closest("button")) e.preventDefault();
   }}
 >
-  <div class="presets">
-    {#each PRESETS as p, i}
-      <button type="button" class="pill" class:on={preset === i} onclick={() => pick(i)}>{p.name}</button>
-    {/each}
-  </div>
-
   {#if compiled.err !== null && !m}
     <p class="err">{compiled.err}</p>
   {:else if m}
@@ -331,6 +368,55 @@
   {#if preset >= 0}<p class="tip-line">{PRESETS[preset].tip}</p>{/if}
 
   <div class="bottombar">
+    <div class="cassette-wrap corner-left" bind:this={cassetteWrapEl}>
+      <button
+        type="button"
+        class="cassette-chip"
+        class:open={cassetteOpen}
+        onclick={() => (cassetteOpen = !cassetteOpen)}
+        aria-haspopup="true"
+        aria-expanded={cassetteOpen}
+        aria-label={`examples — now: ${chip.name}`}
+        data-tip={`examples — now: ${chip.name}`}
+        ><span class="glyph">{chip.sym}{#if chip.sub}<sub>{chip.sub}</sub>{/if}</span></button
+      >
+      {#if cassetteOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="cassette-tape"
+          class:grabbing={selDragging}
+          bind:this={tapeEl}
+          role="slider"
+          aria-orientation="vertical"
+          tabindex="-1"
+          aria-label="examples"
+          aria-valuemin="0"
+          aria-valuemax={PRESETS.length - 1}
+          aria-valuenow={Math.max(0, preset)}
+          aria-valuetext={chip.name}
+          style="width: {CELLW + 6}px"
+          out:fade={{ duration: 150 }}
+          onpointerdown={tapeDown}
+          onpointermove={tapeMove}
+          onpointerup={tapeUp}
+          onpointercancel={tapeUp}
+        >
+          {#each PRESETS as p, i}
+            <div class="tcell" class:on={i === preset} style="height: {CELLH}px; --ci: {i}" data-tip={p.name}>
+              {p.sym}{#if p.sub}<sub>{p.sub}</sub>{/if}
+            </div>
+          {/each}
+          {#if preset >= 0}
+            <div
+              class="selector"
+              style="width: {CELLW}px; height: {CELLH}px; transform: translateY({-selY}px)"
+              aria-hidden="true"
+              in:selectorIn={{ duration: 300 }}
+            ></div>
+          {/if}
+        </div>
+      {/if}
+    </div>
     <div class="tside tleft">
       <button class="tbtn" onclick={() => cyclePreset(-1)} aria-label="previous example">{@render icoPrev()}</button>
       <button class="tbtn" onclick={back} disabled={historyLen === 0} aria-label="undo the last step">{@render icoBack()}</button>
@@ -408,31 +494,6 @@
     background: var(--bg-panel);
     padding: 1rem 1.1rem;
     margin: 1.4rem 0 0.6rem;
-  }
-  .presets {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    justify-content: center;
-  }
-  .pill {
-    font: inherit;
-    font-size: 0.78rem;
-    color: var(--fg-muted);
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.12rem 0.6rem;
-    cursor: pointer;
-  }
-  .pill:hover {
-    border-color: var(--border-strong);
-    color: var(--fg);
-  }
-  .pill.on {
-    border-color: var(--g2);
-    color: var(--g2);
-    background: color-mix(in oklab, var(--g1) 12%, var(--bg-elev));
   }
   .err {
     color: var(--err);
@@ -659,6 +720,12 @@
   .tright {
     justify-self: start;
   }
+  .corner-left {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
   .corner-right {
     position: absolute;
     right: 0;
@@ -771,6 +838,138 @@
     opacity: 1;
     visibility: visible;
   }
+  .corner-left [data-tip]::after {
+    right: auto;
+    left: 0;
+  }
+  .cassette-tape .tcell::after {
+    right: auto;
+    left: calc(100% + 9px);
+    bottom: auto;
+    top: 50%;
+    transform: translate(0, -50%);
+  }
+  .cassette-tape .tcell.on::after {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* ---- the cassette: a chip in the bar; the tape pops up above it (as in TreeVis) ---- */
+  .cassette-wrap {
+    display: inline-flex;
+  }
+  .cassette-chip {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev);
+    color: var(--g2);
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+    opacity: 0.6;
+    transition:
+      opacity 0.2s ease,
+      border-color 0.2s ease,
+      color 0.2s ease;
+  }
+  .vis:hover .cassette-chip,
+  .cassette-chip.open {
+    opacity: 1;
+  }
+  .cassette-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .cassette-chip .glyph {
+    display: inline-flex;
+    align-items: center;
+    transition: transform 0.2s ease;
+  }
+  .cassette-chip:hover .glyph {
+    transform: scale(1.06);
+  }
+  .cassette-chip sub,
+  .tcell sub {
+    font-size: 0.6em;
+    margin-left: 0.03em;
+  }
+  /* a column of every example and a draggable thumb, expanding upward out of the chip: the first example
+     at the bottom. The whole tape is the slider's track. */
+  .cassette-tape {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: stretch;
+    box-sizing: border-box;
+    padding: 3px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev);
+    box-shadow: 0 12px 26px -14px color-mix(in oklab, var(--fg) 48%, transparent);
+    animation: tapeReveal 0.2s ease;
+    cursor: pointer;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .cassette-tape.grabbing {
+    cursor: grabbing;
+  }
+  @keyframes tapeReveal {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  /* the cells stagger in bottom to top as the tape unfurls */
+  @keyframes cellIn {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.6);
+    }
+  }
+  .tcell {
+    position: relative;
+    flex: none;
+    width: 100%;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    animation: cellIn 0.3s calc(var(--ci, 0) * 24ms) both cubic-bezier(0.34, 1.6, 0.5, 1);
+  }
+  .tcell.on {
+    color: var(--g2);
+    font-weight: 650;
+    transition: color 0.15s ease;
+  }
+  /* the thumb: it rests on the bottom cell and rides up to the chosen one, snapping with an overshoot */
+  .selector {
+    position: absolute;
+    left: 3px;
+    bottom: 3px;
+    border-radius: 7px;
+    border: 1.5px solid var(--g2);
+    background: color-mix(in oklab, var(--g1) 16%, transparent);
+    box-shadow: 0 1px 6px -2px color-mix(in oklab, var(--g2) 70%, transparent);
+    pointer-events: none;
+    transition: transform 0.24s cubic-bezier(0.34, 1.7, 0.5, 1);
+  }
+
   @media (max-width: 700px) {
     .corner-right {
       position: static;

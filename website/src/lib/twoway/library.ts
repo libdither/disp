@@ -112,6 +112,9 @@ for (const d of LIBRARY) {
 
 export interface Preset {
   name: string
+  /** What the example selector shows for it: a symbol, and a letter under it. */
+  sym: string
+  sub?: string
   prog: string
   input: string
   reads: Reads
@@ -121,6 +124,7 @@ export interface Preset {
 export const PRESETS: Preset[] = [
   {
     name: 'cross',
+    sym: '×',
     prog: 'cross',
     input: '((T, F), T)',
     reads: 'bool',
@@ -128,6 +132,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'sink',
+    sym: '⇅',
     prog: 'sink',
     input: '△(T, F)',
     reads: 'tree',
@@ -135,6 +140,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'rot',
+    sym: '↻',
     prog: 'rot',
     input: '((T, F), T)',
     reads: 'bool',
@@ -142,6 +148,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'not',
+    sym: '¬',
     prog: 'not',
     input: 'T',
     reads: 'bool',
@@ -149,32 +156,37 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'cnot',
+    sym: '⊕',
     prog: 'cnot',
     input: '(T, F)',
     reads: 'bool',
     tip: 'cnot = when(not). tri looks at the left part, takes its stem off while the branch runs, and puts it back: the left is T, so not runs on the right.'
   },
-  { name: 'toffoli', prog: 'toffoli', input: '((T, T), F)', reads: 'bool', tip: 'Two controls: tri opens the pair of controls, and cnot runs on the rest when the first is T.' },
+  { name: 'toffoli', sym: '⊕', sub: '2', prog: 'toffoli', input: '((T, T), F)', reads: 'bool', tip: 'Two controls: tri opens the pair of controls, and cnot runs on the rest when the first is T.' },
   {
     name: 'add',
+    sym: '+',
     prog: 'add',
     input: '(3, 2)',
     reads: 'nat',
     tip: 'Numbers counted in stems. tri takes a stem off a, adds the rest, puts a stem on b, and puts the stem back on a: one stem per step down.'
   },
-  { name: 'sub', prog: 'add†', input: '(3, 5)', reads: 'nat', tip: 'add run backward. Each move undoes itself: stem† takes a stem off b, and tri still reads a to know how many.' },
-  { name: 'mirror', prog: 'mirror', input: '((△, △△), (△△△, △))', reads: 'tree', tip: 'map runs on a fork’s two halves at once, so every level of the tree mirrors in the same round.' },
+  { name: 'sub', sym: '−', prog: 'add†', input: '(3, 5)', reads: 'nat', tip: 'add run backward. Each move undoes itself: stem† takes a stem off b, and tri still reads a to know how many.' },
+  { name: 'mirror', sym: '⇋', prog: 'mirror', input: '((△, △△), (△△△, △))', reads: 'tree', tip: 'map runs on a fork’s two halves at once, so every level of the tree mirrors in the same round.' },
   {
     name: 'notw',
+    sym: '¬',
+    sub: 'w',
     prog: 'notw',
     input: '0b10110010',
     reads: 'bits',
     tip: 'A word is a balanced tree with each bit in a stem. map splits every fork at once, so all 8 bits flip in the same round.'
   },
-  { name: 'cnotw', prog: 'cnotw', input: '<0b10110010, 0b01101100>', reads: 'regs', tip: 'Two registers stored bit by bit: cnot at every leaf, all at once.' },
-  { name: 'copy', prog: 'copy', input: '(△△, (△, △))', reads: 'tree', tip: 'Copying is a program: dup fills an empty place with x by walking x, stem by stem and fork by fork.' },
+  { name: 'cnotw', sym: '⊕', sub: 'w', prog: 'cnotw', input: '<0b10110010, 0b01101100>', reads: 'regs', tip: 'Two registers stored bit by bit: cnot at every leaf, all at once.' },
+  { name: 'copy', sym: '⧉', prog: 'copy', input: '(△△, (△, △))', reads: 'tree', tip: 'Copying is a program: dup fills an empty place with x by walking x, stem by stem and fork by fork.' },
   {
     name: 'run a program',
+    sym: '▷',
     prog: 'first(unit) ; eval',
     input: '([add], (2, 7))',
     reads: 'nat',
@@ -182,6 +194,8 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'addw',
+    sym: '+',
+    sub: 'w',
     prog: 'addw',
     input: '<0b1011, 0b0110>',
     reads: 'regs',

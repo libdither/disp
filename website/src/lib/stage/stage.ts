@@ -84,6 +84,18 @@ export interface Drawing {
   /** The box that is fitted to the canvas, whole and centred. */
   view: { x0: number; y0: number; x1: number; y1: number }
 }
+/** The part of the drawing's box the canvas covers, in CSS pixels of the box (which is fullW by fullH),
+ * and how many device pixels it gets for each: the whole box, or only the part a pinch zoom shows,
+ * drawn as sharp as the zoom makes it. */
+export interface Pane {
+  fullW: number
+  fullH: number
+  x: number
+  y: number
+  w: number
+  h: number
+  ratio: number
+}
 /** Seconds each change takes; 0 for none. */
 export interface Timing {
   move: number
@@ -136,7 +148,7 @@ export class Stage {
   private running = false
   private visible = true
   private hovered: string | null = null
-  private resizeObs: ResizeObserver
+  private win: Pane = { fullW: 1, fullH: 1, x: 0, y: 0, w: 1, h: 1, ratio: 1 }
   private interObs: IntersectionObserver
   /** The angle (radians) the whole drawing leans by at a time, about `swayAt`; none, upright. */
   sway: ((t: number) => number) | null = null
@@ -144,7 +156,6 @@ export class Stage {
 
   constructor(readonly canvas: HTMLCanvasElement, fontFamily: string) {
     this.renderer = new WebGLRenderer({ canvas, antialias: false, alpha: true, premultipliedAlpha: true })
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
     this.renderer.setClearColor(0x000000, 0)
     this.atlas = new Atlas(fontFamily)
     this.uniforms = {
@@ -167,15 +178,12 @@ export class Stage {
     this.scene.add(this.pivot)
     this.pivot.add(this.inner)
     this.camera.position.z = 10
-    this.resizeObs = new ResizeObserver(() => this.resize())
-    this.resizeObs.observe(canvas)
     this.interObs = new IntersectionObserver((es) => {
       this.visible = es.some((e) => e.isIntersecting)
       this.wake()
     })
     this.interObs.observe(canvas)
     document.addEventListener('visibilitychange', this.wake)
-    this.resize()
   }
 
   private now = () => (performance.now() - this.t0) / 1000
@@ -396,23 +404,23 @@ export class Stage {
     return g
   }
 
-  /** The view box, whole and centred in the canvas. */
+  /** The view box, whole and centred in the drawing's box, of which the camera sees the window. */
   private fit() {
-    const w = this.canvas.clientWidth || 1
-    const h = this.canvas.clientHeight || 1
+    const { fullW, fullH, x, y, w, h } = this.win
     const { x0, y0, x1, y1 } = this.view
-    const s = Math.min(w / (x1 - x0), h / (y1 - y0))
-    const cx = (x0 + x1) / 2
-    const cy = (y0 + y1) / 2
-    Object.assign(this.camera, { left: cx - w / s / 2, right: cx + w / s / 2, top: cy + h / s / 2, bottom: cy - h / s / 2 })
+    const s = Math.min(fullW / (x1 - x0), fullH / (y1 - y0))
+    const left = (x0 + x1) / 2 - fullW / s / 2
+    const top = (y0 + y1) / 2 + fullH / s / 2
+    Object.assign(this.camera, { left: left + x / s, right: left + (x + w) / s, top: top - y / s, bottom: top - (y + h) / s })
     this.camera.updateProjectionMatrix()
   }
 
-  resize() {
-    const w = this.canvas.clientWidth
-    const h = this.canvas.clientHeight
-    if (!w || !h) return
-    this.renderer.setSize(w, h, false)
+  setWindow(win: Pane) {
+    const o = this.win
+    if (o.fullW === win.fullW && o.fullH === win.fullH && o.x === win.x && o.y === win.y && o.w === win.w && o.h === win.h && o.ratio === win.ratio) return
+    this.win = win
+    this.renderer.setPixelRatio(win.ratio)
+    this.renderer.setSize(Math.max(1, win.w), Math.max(1, win.h), false)
     this.fit()
     this.wake()
   }
@@ -475,7 +483,6 @@ export class Stage {
 
   dispose() {
     cancelAnimationFrame(this.raf)
-    this.resizeObs.disconnect()
     this.interObs.disconnect()
     document.removeEventListener('visibilitychange', this.wake)
     for (const m of this.meshes) m.geometry.dispose()

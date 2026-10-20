@@ -601,6 +601,46 @@
   let tip = $state<{ text: string; x: number; y: number } | null>(null);
   let pointer = $state(false);
 
+  /** The canvas covers the part of the drawing's box that is on screen. Unzoomed, that is all of it; when
+   * the page is pinch-zoomed (the visual viewport scaled), it is only the part the zoom shows, drawn with
+   * as many pixels as the zoom gives it, so the tree stays as sharp as the SVG it replaced. Ctrl+scroll
+   * zoom changes the device pixel ratio, which is read here too. */
+  function placeCanvas() {
+    if (!host || !canvas || !stage) return;
+    const r = host.getBoundingClientRect();
+    const fullW = host.clientWidth;
+    const fullH = host.clientHeight;
+    if (!fullW || !fullH) return;
+    let x = 0;
+    let y = 0;
+    let w = fullW;
+    let h = fullH;
+    let zoom = 1;
+    const vv = window.visualViewport;
+    if (vv && vv.scale > 1.01) {
+      zoom = vv.scale;
+      const left = Math.max(r.left, vv.offsetLeft);
+      const top = Math.max(r.top, vv.offsetTop);
+      const right = Math.min(r.right, vv.offsetLeft + vv.width);
+      const bottom = Math.min(r.bottom, vv.offsetTop + vv.height);
+      if (right - left < 1 || bottom - top < 1) {
+        canvas.style.visibility = "hidden";
+        return;
+      }
+      x = left - r.left;
+      y = top - r.top;
+      w = right - left;
+      h = bottom - top;
+    }
+    canvas.style.visibility = "";
+    canvas.style.left = `${x}px`;
+    canvas.style.top = `${y}px`;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    const ratio = Math.min((window.devicePixelRatio || 1) * zoom, 4096 / w, 4096 / h);
+    stage.setWindow({ fullW, fullH, x, y, w, h, ratio });
+  }
+
   onMount(() => {
     const family = getComputedStyle(host!).getPropertyValue("--font-mono").trim() || "monospace";
     try {
@@ -611,12 +651,31 @@
       return;
     }
     ready = true;
+    placeCanvas();
     // strings drawn before the font arrived are drawn again in it
     document.fonts?.ready.then(() => {
       stage?.refont(family);
       fontGen++;
     });
+    let raf = 0;
+    const place = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(placeCanvas);
+    };
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", place);
+    vv?.addEventListener("scroll", place);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, { passive: true });
+    const ro = new ResizeObserver(place);
+    ro.observe(host!);
     return () => {
+      cancelAnimationFrame(raf);
+      vv?.removeEventListener("resize", place);
+      vv?.removeEventListener("scroll", place);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place);
+      ro.disconnect();
       stage?.dispose();
       stage = null;
     };
@@ -704,7 +763,8 @@
   .ground,
   canvas {
     position: absolute;
-    inset: 0;
+    left: 0;
+    top: 0;
     width: 100%;
     height: 100%;
     display: block;
