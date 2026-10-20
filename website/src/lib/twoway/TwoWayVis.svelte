@@ -2,7 +2,7 @@
   // Two-way programs on the site's tree-calculus instrument (TreeVis), one local move at a time. Two
   // actions: ▸ fires (a round of moves, every node that can move when parallel is on; ▶ keeps firing),
   // and ⇆ flips (every dot turned around, nothing computed, so firing runs it back). Clicking a live dot
-  // fires it, a ring or bead plays the part under it until that part has run (as TreeVis plays what a
+  // fires it, a ring or a waiting bud plays the part under it until that part has run (as TreeVis plays what a
   // clicked application waits on), and a dot that has run flips. ◂ takes the last action back. The
   // engine is machine.ts over core.ts.
   import { onDestroy } from "svelte";

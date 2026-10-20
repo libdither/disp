@@ -33,23 +33,22 @@
   <p>
     Each <strong>dot</strong> is a program on a value: the purple tree on its left, the value on its
     right. A live dot (the dashed ring) wears the move it will make. When a combinator starts, it takes
-    the value apart and hands the parts to new dots, and the parts of its program travel up into them:
-    <code>map</code> and <code>tri</code> hold on to the node they opened, which stays where the dot
-    was inside a blue (map) or amber (tri) ring, and the others leave a small <strong>bead</strong>:
-    <code>;</code> for a sequence, <code>μ</code> for <code>fix</code>, <code>↩</code> for
-    <code>self</code>, <code>▷</code> for <code>eval</code>, and <code>?</code> for a <code>tri</code>
-    whose left part is a fork, which it opens by rotating rather than holding. A <code>;</code> bead
-    keeps the sequence's other part folded beside it: the part still to run, dashed, until its turn,
-    and then the part that has run, faded, kept to run back when the run is flipped. When every dot under
-    a ring or bead has run, it closes, putting back what it held. A dot that has run has its program
+    the value apart and hands the parts to new dots, and the parts of its program that run travel up
+    into them, each leaving a dotted <strong>slot</strong> in the program, which stays open where it
+    was. <code>map</code> and <code>tri</code> hold on to the node they opened, which stays where the dot
+    was inside a blue (map) or amber (tri) ring; the other combinators stay a dashed bud, the way the
+    tree-calculus visualizer draws an application waiting on the ones inside it. A part that has run
+    comes back into its slot, and when every dot above a ring or bud has run, it closes, putting back
+    what it held, with its program whole again. A dot that has run has its program
     <strong>held</strong>: a lid, a fork with △△ on its left, sits on top of the program, and the ring
     turns solid.
   </p>
   <p>
     <kbd>▸</kbd> fires every move that can be made right now (one round), or just the next one with
     parallel off; <kbd>▶</kbd> keeps firing, and <kbd>◂</kbd> takes the last action back.
-    <kbd>⇆</kbd> flips the whole run. Clicking a live dot fires it, clicking a ring or bead plays the
-    part under it until that part has run, and clicking a dot that has run flips just that dot. A program with a † on top
+    <kbd>⇆</kbd> flips the whole run. Clicking a live dot fires it, clicking a ring or a waiting bud
+    plays the part under it until that part has run, and clicking a dot that has run flips just that
+    dot. A program with a † on top
     runs backward, and its dot is drawn blue. The moves and big named parts inside a program are pods,
     which open when they reach a dot of their own; click any part to fold it, and a pod to open it.
   </p>
