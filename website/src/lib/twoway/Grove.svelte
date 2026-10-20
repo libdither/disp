@@ -7,8 +7,12 @@
   // a combinator that holds no node is a bud, as TreeVis draws an application waiting on the ones above
   // it. Every frame keeps its program open beside it: the parts it has started travel up into their dots,
   // leaving a slot, and come back into it once they have run, so a frame that closes holds its program
-  // whole again. Every node is keyed by what it is, so a move's nodes glide to where it puts them.
-  import { fade, scale } from "svelte/transition";
+  // whole again. Every node is keyed by what it is, so a move's nodes glide to where it puts them. It is
+  // drawn with WebGL on the stage ($lib/stage), which moves every node in its shaders.
+  import { onMount } from "svelte";
+  import { Stage, type Drawing, type GlyphSpec, type LabelSpec, type NodeSpec, type RGBA, type StrokeSpec } from "$lib/stage/stage";
+  import { F, SHAPE } from "$lib/stage/shaders";
+  import { theme } from "$lib/theme.svelte";
   import { asBit, asNat, form, kids as vkids, registersOf, show, size, type V } from "./core";
   import { nameOf, progDef, progLabel, type Reads } from "./text";
   import { done, fire, glyph, read, say, type Node, type Wait } from "./machine";
@@ -372,212 +376,344 @@
   const g = $derived(laid.glyph);
   const height = $derived(laid.height);
 
-  // one tween for every node, with TreeVis's ease (a small overshoot): a node on screen glides from where
-  // it was, and a new one starts at its nearest drawn ancestor's old place
-  let view = $state<Laid[]>([]);
-  let fresh = $state(new Map<string, number>());
-  let cur = new Map<string, { x: number; y: number }>();
-  let raf = 0;
-  const ease = (t: number) => {
-    const c = 0.9;
-    const u = t - 1;
-    return 1 + (c + 1) * u * u * u + c * u * u;
-  };
   const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  $effect(() => {
-    const target = laid.nodes;
-    cancelAnimationFrame(raf);
-    const animate = motion && !reduced && cur.size > 0;
-    const born = target.filter((n) => !cur.has(n.key));
-    const top = Math.min(...born.map((n) => n.depth));
-    fresh = new Map(born.map((n) => [n.key, Math.min(240, (n.depth - top) * 40)]));
-    if (!animate) {
-      view = target;
-      cur = new Map(target.map((n) => [n.key, { x: n.x, y: n.y }]));
-      return;
-    }
-    const byTarget = new Map(target.map((n) => [n.key, n]));
-    const from = new Map<string, { x: number; y: number }>();
-    const ancestorAt = (n: Laid): { x: number; y: number } | undefined => {
-      for (let p = n.parent; p != null; p = byTarget.get(p)?.parent ?? null) {
-        const c = cur.get(p);
-        if (c) return c;
-      }
-      return undefined;
-    };
-    for (const n of target) from.set(n.key, cur.get(n.key) ?? ancestorAt(n) ?? { x: n.x, y: n.y });
-    const t0 = performance.now();
-    const frame = (now: number) => {
-      const k = Math.min(1, (now - t0) / 480);
-      const e = ease(k);
-      const nextPos = new Map<string, { x: number; y: number }>();
-      view = target.map((n) => {
-        const f = from.get(n.key)!;
-        const p = { x: f.x + (n.x - f.x) * e, y: f.y + (n.y - f.y) * e };
-        nextPos.set(n.key, p);
-        return { ...n, ...p };
-      });
-      cur = nextPos;
-      if (k < 1) raf = requestAnimationFrame(frame);
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  });
-
-  /** Before the first frame (and on the server) the tree is drawn where it was laid out. */
-  const shown = $derived(view.length ? view : laid.nodes);
-  const byKey = $derived(new Map(shown.map((n) => [n.key, n])));
-  const rootNode = $derived(shown.find((n) => n.parent == null));
-  const edgeD = (a: Laid, b: Laid) => `M ${a.x} ${a.y} Q ${a.x + (b.x - a.x) * 0.5} ${a.y + (b.y - a.y) * 0.62} ${b.x} ${b.y}`;
   const isCode = (n: Laid) => n.kind === "pod" || n.kind === "code" || n.kind === "codeleaf" || n.kind === "slot";
   const clickable = (n: Laid) => n.site != null || !!n.open;
-  const dur = (ms: number) => (motion && !reduced ? ms : 0);
 
-  function click(n: Laid, e: MouseEvent) {
-    e.stopPropagation();
+  function click(n: Laid) {
     if (n.kind === "pod" || n.kind === "dpod") toggle(n.key, true);
     else if (n.kind === "code" || (n.open && n.site == null && n.kind !== "codeleaf")) toggle(n.key, false);
     else if (n.site != null) onSite(n.site);
   }
+
+  // ---- the stage: every laid node becomes a node of the WebGL stage, with the shapes, words and branch
+  // it draws, and the stage moves them all. Colours come from the page's, read again when the theme
+  // changes ----
+  const PALETTE = {
+    g2: "var(--g2)",
+    g4: "var(--g4)",
+    bark: "var(--bark)",
+    blossom: "var(--blossom)",
+    bgElev: "var(--bg-elev)",
+    err: "var(--err)",
+    fgFaint: "var(--fg-faint)",
+    blue: "#6c9bd2",
+    white: "#ffffff",
+    budFill: "color-mix(in oklab, var(--g4) 8%, var(--bg-elev))",
+    fireFill: "color-mix(in oklab, var(--g4) 22%, var(--bg-elev))",
+    fireFillBack: "color-mix(in oklab, #6c9bd2 20%, var(--bg-elev))",
+    fireLetter: "color-mix(in oklab, #8a6414 72%, var(--fg))",
+    fireLetterBack: "color-mix(in oklab, #2f5f95 72%, var(--fg))",
+    doneFill: "color-mix(in oklab, var(--blossom) 10%, var(--bg-elev))",
+    doneCore: "color-mix(in oklab, var(--blossom) 70%, var(--bark))",
+    backFill: "color-mix(in oklab, #6c9bd2 22%, var(--bg-elev))",
+    mapStroke: "#5a90cf",
+    mapFill: "color-mix(in oklab, #5a90cf 9%, transparent)",
+    mapName: "color-mix(in oklab, #3f73b0 75%, var(--fg))",
+    triStroke: "#c98e2b",
+    triFill: "color-mix(in oklab, #c98e2b 9%, transparent)",
+    triName: "color-mix(in oklab, #a06d16 75%, var(--fg))",
+    codeKnot: "#8a6bd1",
+    codeEdge: "#9a7ad6",
+    codeBadge: "#7a5cc4",
+    pod: "#a58ad8",
+    podStroke: "color-mix(in oklab, #4b2f8a 60%, transparent)",
+    dpod: "#79ae74",
+    dpodStroke: "color-mix(in oklab, #2e5e33 60%, transparent)",
+    vname: "#2c1c52",
+    vnameAbove: "color-mix(in oklab, #7a5cc4 85%, var(--fg))",
+    leafStroke: "color-mix(in oklab, var(--fg) 18%, transparent)"
+  };
+  type Palette = Record<keyof typeof PALETTE, RGBA> & { leaf: RGBA[]; code: RGBA[]; bg: [number, number, number] };
+
+  /** A CSS colour as the stage takes it: sRGB and alpha, 0 to 1, read back from a pixel painted with it. */
+  function colorReader(el: HTMLElement) {
+    const probe = document.createElement("span");
+    probe.style.display = "none";
+    el.appendChild(probe);
+    const px = document.createElement("canvas");
+    px.width = px.height = 1;
+    const x = px.getContext("2d", { willReadFrequently: true })!;
+    return {
+      read(css: string): RGBA {
+        probe.style.color = "";
+        probe.style.color = css;
+        x.clearRect(0, 0, 1, 1);
+        x.fillStyle = getComputedStyle(probe).color;
+        x.fillRect(0, 0, 1, 1);
+        const d = x.getImageData(0, 0, 1, 1).data;
+        return [d[0] / 255, d[1] / 255, d[2] / 255, d[3] / 255];
+      },
+      done: () => probe.remove()
+    };
+  }
+  function readPalette(el: HTMLElement): Palette {
+    const r = colorReader(el);
+    const out = Object.fromEntries(Object.entries(PALETTE).map(([k, css]) => [k, r.read(css)])) as unknown as Palette;
+    out.leaf = LEAF_TINTS.map(r.read);
+    out.code = CODE_TINTS.map(r.read);
+    // what the branches are drawn over: the first background up the page
+    let bg: RGBA = [1, 1, 1, 1];
+    for (let e: HTMLElement | null = el; e; e = e.parentElement) {
+      const c = r.read(getComputedStyle(e).backgroundColor);
+      if (c[3] > 0.5) {
+        bg = c;
+        break;
+      }
+    }
+    out.bg = [bg[0], bg[1], bg[2]];
+    r.done();
+    return out;
+  }
+
+  const HIT: Record<Kind, number> = { bud: 14, done: 14, bead: 14, hold: 13, pod: 10, dpod: 10, code: 7, codeleaf: 7, leaf: 9, knot: 6, fork: 6, slot: 7 };
+  const alpha = (c: RGBA, a: number): RGBA => [c[0], c[1], c[2], c[3] * a];
+  const deg = (d: number) => (d * Math.PI) / 180;
+
+  let seen = new Set<string>();
+  let marked = new Set<string>();
+  let byKey = new Map<string, Laid>();
+
+  /** The stage's drawing of a laid-out run. Offsets are in the run's drawing units, y down, times the
+   * glyph scale, as the SVG drew them; the stage's y runs up. */
+  function drawing(L: { nodes: Laid[]; glyph: number; height: number }, P: Palette, nextSite: number | null, moving: boolean): Drawing {
+    const g = L.glyph;
+    const nodes: NodeSpec[] = [{ key: "ground", x: W / 2, y: -(L.height - GROUND + 12) }];
+    const glyphs: GlyphSpec[] = [];
+    const words: LabelSpec[] = [];
+    const strokes: StrokeSpec[] = [];
+    const born = L.nodes.filter((n) => !seen.has(n.key));
+    const top = Math.min(...born.map((n) => n.depth));
+    const nowMarked = new Set<string>();
+    const at = (dx: number, dy: number) => ({ dx: dx * g, dy: -dy * g });
+    for (const n of L.nodes) {
+      const node = n.key;
+      const pick = clickable(n) || !!n.tip;
+      nodes.push({
+        key: node,
+        x: n.x,
+        y: -n.y,
+        parent: n.parent ?? "ground",
+        delay: seen.has(node) ? 0 : Math.min(240, (n.depth - top) * 40) / 1000,
+        hit: pick ? HIT[n.kind] * g : 0
+      });
+      const shape = (s: Omit<GlyphSpec, "node">) => glyphs.push({ node, ...s });
+      const word = (w: Omit<LabelSpec, "node">) => words.push({ node, ...w });
+      const grow = clickable(n) ? F.hoverGrow : 0;
+      const isNext = n.site != null && n.site === nextSite;
+      /** The move a node will make, in a ring on it (or beside it, small). */
+      const mark = (r: number, letter: number, dx = 0, dy = 0) => {
+        if (!n.glyph) return;
+        nowMarked.add(node);
+        const flags = (moving && !marked.has(node) ? F.markIn : 0) | (isNext ? F.pulse : 0);
+        shape({ r: r * g, ...at(dx, dy), fill: n.back ? P.fireFillBack : P.fireFill, stroke: n.back ? P.blue : P.g4, sw: 1.2 * g, flags });
+        const one = n.glyph.length === 1;
+        word({ text: n.glyph, size: (one ? letter : letter * 0.78) * g, weight: 700, color: n.back ? P.fireLetterBack : P.fireLetter, ...at(dx, dy + 0.5), baseline: "middle", flags });
+      };
+      const blossom = () => {
+        if (!isNext) return;
+        for (const a of [36, 108, 180, 252, 324])
+          shape({ r: 2.6 * g, ...at(9.5 * Math.cos(deg(a)), 9.5 * Math.sin(deg(a))), fill: alpha(P.blossom, 0.85), stroke: P.white, sw: 0.5 * g });
+      };
+      switch (n.kind) {
+        case "bud":
+        case "bead": {
+          const ring = n.stuck ? P.err : n.back ? P.blue : P.g4;
+          shape({ r: 8.5 * g, fill: P.budFill, stroke: ring, sw: 1.5 * g, dashes: n.stuck ? 0 : 9, flags: grow });
+          shape({ r: 3 * g, fill: n.back ? P.blue : P.g4 });
+          mark(7.5, 11);
+          blossom();
+          if (n.kind === "bead" && n.name) word({ text: n.name, size: 7.5 * g, color: P.fgFaint, anchor: "end", ...at(-12, 3) });
+          break;
+        }
+        case "done":
+          shape({ r: 8.5 * g, fill: P.doneFill, stroke: P.doneCore, sw: 1.5 * g, flags: grow });
+          shape({ r: 3.4 * g, fill: P.doneCore });
+          shape({ r: 5.6 * g, ...at(9, -9), fill: P.backFill, stroke: P.blue, sw: g, flags: F.hoverOnly });
+          word({ text: "⇆", size: 7.5 * g, weight: 700, color: P.fireLetterBack, ...at(9, -8.5), baseline: "middle", flags: F.hoverOnly });
+          break;
+        case "hold": {
+          const map = n.ring === "map";
+          shape({ r: 9.5 * g, fill: map ? P.mapFill : P.triFill, stroke: map ? P.mapStroke : P.triStroke, sw: 1.6 * g, dashes: n.back ? 15 : 0, flags: grow });
+          shape({ r: (n.shape === "fork" ? 4.2 : 3.2) * g, fill: P.bark });
+          if (n.label) word({ text: n.label, size: 7 * g, color: map ? P.mapName : P.triName, anchor: "end", ...at(-12, 3) });
+          mark(5.8, 8.5, 8.5, -8.5);
+          break;
+        }
+        case "pod":
+        case "dpod": {
+          const data = n.kind === "dpod";
+          const name = n.name ?? "";
+          shape({ r: 9 * g, fill: data ? P.dpod : P.pod, stroke: data ? P.dpodStroke : P.podStroke, sw: 0.9 * g, flags: F.hoverBright | (name.length > 4 ? F.seam : 0) });
+          if (name.length <= 4) word({ text: name, size: [10, 10, 8, 7, 6][name.length] * g, weight: 700, color: P.vname, ...at(0, 0.5), baseline: "middle" });
+          else word({ text: name, size: 9 * g, weight: 600, color: data ? P.g2 : P.vnameAbove, ...at(0, -13), baseline: "middle" });
+          break;
+        }
+        case "code":
+          shape({ r: 3.4 * g, fill: P.codeKnot });
+          break;
+        case "codeleaf":
+          shape({ shape: SHAPE.leaf, r: 7 * g, fill: P.code[hash(node) % P.code.length], stroke: P.leafStroke, sw: 0.5 * g, rot: deg((hash(node) % 70) - 35) });
+          break;
+        case "leaf":
+          shape({ shape: SHAPE.leaf, r: 9 * g, fill: P.leaf[hash(node) % P.leaf.length], stroke: P.leafStroke, sw: 0.5 * g, rot: deg((hash(node) % 70) - 35), flags: F.vein });
+          break;
+        case "slot":
+          shape({ r: 3.4 * g, fill: P.bgElev, stroke: P.codeKnot, sw: 1.2 * g, dashes: 6 });
+          break;
+        default:
+          shape({ r: (n.kind === "fork" ? 4.2 : 3.2) * g, fill: P.bark });
+      }
+      if (n.label && (n.kind === "code" || n.kind === "codeleaf" || n.kind === "leaf" || n.kind === "knot" || n.kind === "fork")) {
+        const side = n.kind === "knot" || n.kind === "fork";
+        const code = n.kind === "code" || n.kind === "codeleaf";
+        word({
+          text: n.label,
+          size: (code ? 8.5 : 9.5) * g,
+          color: code ? P.codeBadge : P.g2,
+          anchor: side ? "start" : "middle",
+          ...at(side ? 7 : 0, n.kind === "leaf" || n.kind === "codeleaf" ? -12 : n.kind === "code" ? -8 : 3.2)
+        });
+      }
+      if (n.parent != null)
+        strokes.push({
+          a: n.parent,
+          b: node,
+          width: Math.max(1.3, (isCode(n) ? 2.6 : 5 - n.depth * 0.45) * g),
+          color: isCode(n) ? alpha(P.codeEdge, 0.55) : alpha(P.bark, 0.8),
+          dash: n.kind === "slot" ? [5, 2] : undefined
+        });
+      else strokes.push({ a: "ground", b: node, width: 5, color: alpha(P.bark, 0.8), bend: [0, -12 / (-n.y + L.height - GROUND + 12)] });
+    }
+    seen = new Set(L.nodes.map((n) => n.key));
+    marked = nowMarked;
+    byKey = new Map(L.nodes.map((n) => [n.key, n]));
+    return { nodes, glyphs, labels: words, strokes, view: { x0: 0, y0: -L.height, x1: W, y1: 0 } };
+  }
+
+  let host: HTMLDivElement | undefined = $state();
+  let canvas: HTMLCanvasElement | undefined = $state();
+  let stage: Stage | null = null;
+  let ready = $state(false);
+  let failed = $state(false);
+  let palette = $state<Palette | null>(null);
+  let fontGen = $state(0);
+  let tip = $state<{ text: string; x: number; y: number } | null>(null);
+  let pointer = $state(false);
+
+  onMount(() => {
+    const family = getComputedStyle(host!).getPropertyValue("--font-mono").trim() || "monospace";
+    try {
+      stage = new Stage(canvas!, family);
+    } catch (e) {
+      console.error("two-way: no WebGL", e);
+      failed = true;
+      return;
+    }
+    ready = true;
+    // strings drawn before the font arrived are drawn again in it
+    document.fonts?.ready.then(() => {
+      stage?.refont(family);
+      fontGen++;
+    });
+    return () => {
+      stage?.dispose();
+      stage = null;
+    };
+  });
+  // the theme's colours, read once the page has taken them
+  $effect(() => {
+    void theme.mix;
+    void theme.style;
+    if (!ready || !host) return;
+    const raf = requestAnimationFrame(() => (palette = readPalette(host!)));
+    return () => cancelAnimationFrame(raf);
+  });
+  $effect(() => {
+    void fontGen;
+    const st = stage;
+    if (!ready || !st || !palette) return;
+    const moving = motion && !reduced;
+    st.setBackground(palette.bg);
+    st.swayAt = [W / 2, -laid.height];
+    st.sway = moving ? (t) => -deg(0.6) * Math.cos((Math.PI * t) / 9) : null;
+    st.pulsing = next != null;
+    st.show(drawing(laid, palette, next, moving), moving ? { move: 0.48, grow: 0.42, shrink: 0.36 } : { move: 0, grow: 0, shrink: 0 });
+  });
+
+  function hovered(e: PointerEvent): Laid | null {
+    const key = stage?.pick(e.clientX, e.clientY);
+    return (key && byKey.get(key)) || null;
+  }
+  function onMove(e: PointerEvent) {
+    const n = hovered(e);
+    stage?.setHover(n?.key ?? null);
+    pointer = !!n && clickable(n);
+    const r = host!.getBoundingClientRect();
+    tip = n?.tip ? { text: n.tip, x: e.clientX - r.left, y: e.clientY - r.top } : null;
+  }
+  function onLeave() {
+    stage?.setHover(null);
+    pointer = false;
+    tip = null;
+  }
+  let down: { x: number; y: number } | null = null;
+  function onUp(e: PointerEvent) {
+    const d = down;
+    down = null;
+    if (!d || Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 5) return;
+    const n = hovered(e);
+    if (n && clickable(n)) {
+      click(n);
+      tip = null;
+    }
+  }
 </script>
 
-<svg viewBox="0 0 {W} {height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="the run, as a tree">
-  <ellipse cx={W / 2} cy={height - 22} rx={W * 0.36} ry="16" class="hill back" />
-  <ellipse cx={W / 2 - 30} cy={height - 16} rx={W * 0.3} ry="13" class="hill front" />
-  <g class="grass">
-    <path d="M {W / 2 - 118} {height - 24} q 2 -12 7 -16 M {W / 2 - 112} {height - 24} q 3 -8 9 -10" />
-    <path d="M {W / 2 + 104} {height - 20} q 2 -12 7 -16 M {W / 2 + 111} {height - 20} q 3 -8 9 -10" />
-    <path d="M {W / 2 - 40} {height - 12} q 2 -10 6 -13 M {W / 2 - 34} {height - 12} q 3 -7 8 -9" />
-  </g>
-  <circle cx={W / 2 - 128} cy={height - 30} r="2.3" class="daisy" />
-  <circle cx={W / 2 + 122} cy={height - 26} r="2.3" class="daisy alt" />
-
-  <g class="tree" class:swaying={motion && !reduced}>
-    {#if rootNode}
-      <path class="branch trunk" d="M {W / 2} {height - GROUND + 12} Q {W / 2} {height - GROUND} {rootNode.x} {rootNode.y}" />
-    {/if}
-    {#each shown as n (n.key)}
-      {#if n.parent != null && byKey.get(n.parent)}
-        <path
-          class="branch"
-          class:code={isCode(n)}
-          class:slot={n.kind === "slot"}
-          d={edgeD(byKey.get(n.parent)!, n)}
-          style="stroke-width:{Math.max(1.3, (isCode(n) ? 2.6 : 5 - n.depth * 0.45) * g)}px"
-          in:fade={{ duration: dur(260), delay: dur(fresh.get(n.key) ?? 0) }}
-          out:fade={{ duration: dur(300) }}
-        />
-      {/if}
-    {/each}
-
-    {#each shown as n (n.key)}
-      <g class="node" style="transform: translate({n.x}px, {n.y}px)">
-        <g in:scale={{ duration: dur(420), start: 0, delay: dur(fresh.get(n.key) ?? 0) }} out:scale={{ duration: dur(360), start: 0 }}>
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <g class="inner" class:clickable={clickable(n)} onclick={(e) => click(n, e)} style="transform: scale({g})">
-            {#if n.kind === "bud"}
-              <circle r="14" class="hitzone" />
-              <circle r="8.5" class="bud-ring" class:stuck={n.stuck} class:back={n.back} />
-              <circle r="3" class="bud-core" class:back={n.back} />
-              {#if n.glyph}
-                <g class="firemark" class:next={n.site === next} class:eased={motion}>
-                  <circle r="7.5" class="fire-ring" class:back={n.back} />
-                  <text class="fire-letter" class:one={n.glyph.length === 1} y="0.5">{n.glyph}</text>
-                </g>
-              {/if}
-              {#if n.site === next}
-                <g class="blossom">
-                  {#each [36, 108, 180, 252, 324] as a}
-                    <circle r="2.6" cx={9.5 * Math.cos((a * Math.PI) / 180)} cy={9.5 * Math.sin((a * Math.PI) / 180)} />
-                  {/each}
-                </g>
-              {/if}
-            {:else if n.kind === "done"}
-              <circle r="14" class="hitzone" />
-              <circle r="8.5" class="donering" />
-              <circle r="3.4" class="done-core" />
-              <g class="backmark">
-                <circle r="5.6" cx="9" cy="-9" />
-                <text x="9" y="-8.5">⇆</text>
-              </g>
-            {:else if n.kind === "bead"}
-              <!-- a frame waiting on the dots above it: a bud, as TreeVis draws an application waiting on
-                   the ones inside it; it wears its move once they have all run -->
-              <circle r="14" class="hitzone" />
-              <circle r="8.5" class="bud-ring" class:back={n.back} />
-              <circle r="3" class="bud-core" class:back={n.back} />
-              {#if n.glyph}
-                <g class="firemark" class:next={n.site === next} class:eased={motion}>
-                  <circle r="7.5" class="fire-ring" class:back={n.back} />
-                  <text class="fire-letter" class:one={n.glyph.length === 1} y="0.5">{n.glyph}</text>
-                </g>
-              {/if}
-              {#if n.name}<text class="bead-name" x="-12" y="3">{n.name}</text>{/if}
-            {:else if n.kind === "slot"}
-              <circle r="7" class="hitzone" />
-              <circle r="3.4" class="slotring" />
-            {:else if n.kind === "hold"}
-              <circle r="13" class="hitzone" />
-              <circle r="9.5" class="halo {n.ring}" class:back={n.back} />
-              <circle r={n.shape === "fork" ? 4.2 : 3.2} class="knot" />
-              <text class="halo-name {n.ring}" x="-12" y="3">{n.label}</text>
-            {:else if n.kind === "pod" || n.kind === "dpod"}
-              <circle r="9" class="podbody" class:data={n.kind === "dpod"} />
-              {#if (n.name ?? "").length <= 4}
-                <text class="vname" y="0.5" style="font-size:{[10, 10, 8, 7, 6][(n.name ?? '').length]}px">{n.name}</text>
-              {:else}
-                <path class="podseam" d="M0,-5.8 Q2.6,0 0,5.8" />
-                <text class="vname above" class:data={n.kind === "dpod"} y="-13">{n.name}</text>
-              {/if}
-            {:else if n.kind === "code"}
-              <circle r="7" class="hitzone" />
-              <circle r="3.4" class="codeknot" />
-            {:else if n.kind === "codeleaf"}
-              <path
-                class="leafshape"
-                d="M0,-7 C4.5,-4 4.5,2.5 0,7 C-4.5,2.5 -4.5,-4 0,-7 Z"
-                style="fill:{CODE_TINTS[hash(n.key) % CODE_TINTS.length]}; transform: rotate({(hash(n.key) % 70) - 35}deg)"
-              />
-            {:else if n.kind === "leaf"}
-              <path
-                class="leafshape"
-                d="M0,-9 C5.8,-5.5 5.8,3 0,9 C-5.8,3 -5.8,-5.5 0,-9 Z"
-                style="fill:{LEAF_TINTS[hash(n.key) % LEAF_TINTS.length]}; transform: rotate({(hash(n.key) % 70) - 35}deg)"
-              />
-              <path class="vein" d="M0,-6 L0,6" style="transform: rotate({(hash(n.key) % 70) - 35}deg)" />
-            {:else}
-              <circle r={n.kind === "fork" ? 4.2 : 3.2} class="knot" />
-            {/if}
-            {#if n.kind === "hold" && n.glyph}
-              <g class="firemark small" class:next={n.site === next} class:eased={motion} transform="translate(8.5, -8.5)">
-                <circle r="5.8" class="fire-ring" class:back={n.back} />
-                <text class="fire-letter" class:one={n.glyph.length === 1} y="0.5">{n.glyph}</text>
-              </g>
-            {/if}
-            {#if n.label && (n.kind === "code" || n.kind === "codeleaf" || n.kind === "leaf" || n.kind === "knot" || n.kind === "fork")}
-              <text
-                class="badge"
-                class:codebadge={n.kind === "code" || n.kind === "codeleaf"}
-                class:side={n.kind === "knot" || n.kind === "fork"}
-                x={n.kind === "knot" || n.kind === "fork" ? 7 : 0}
-                y={n.kind === "leaf" || n.kind === "codeleaf" ? -12 : n.kind === "code" ? -8 : 3.2}>{n.label}</text
-              >
-            {/if}
-            {#if n.tip}<title>{n.tip}</title>{/if}
-          </g>
-        </g>
-      </g>
-    {/each}
-  </g>
-</svg>
+<div class="stage" bind:this={host} style="aspect-ratio: {W} / {height}">
+  <svg class="ground" viewBox="0 0 {W} {height}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <ellipse cx={W / 2} cy={height - 22} rx={W * 0.36} ry="16" class="hill back" />
+    <ellipse cx={W / 2 - 30} cy={height - 16} rx={W * 0.3} ry="13" class="hill front" />
+    <g class="grass">
+      <path d="M {W / 2 - 118} {height - 24} q 2 -12 7 -16 M {W / 2 - 112} {height - 24} q 3 -8 9 -10" />
+      <path d="M {W / 2 + 104} {height - 20} q 2 -12 7 -16 M {W / 2 + 111} {height - 20} q 3 -8 9 -10" />
+      <path d="M {W / 2 - 40} {height - 12} q 2 -10 6 -13 M {W / 2 - 34} {height - 12} q 3 -7 8 -9" />
+    </g>
+    <circle cx={W / 2 - 128} cy={height - 30} r="2.3" class="daisy" />
+    <circle cx={W / 2 + 122} cy={height - 26} r="2.3" class="daisy alt" />
+  </svg>
+  <canvas
+    bind:this={canvas}
+    class:pointer
+    aria-label="the run, as a tree"
+    onpointermove={onMove}
+    onpointerleave={onLeave}
+    onpointerdown={(e) => (down = { x: e.clientX, y: e.clientY })}
+    onpointerup={onUp}
+  ></canvas>
+  {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px">{tip.text}</div>{/if}
+  {#if failed}<p class="nogl">This browser gives no WebGL, so the run cannot be drawn here.</p>{/if}
+</div>
 
 <style>
-  svg {
+  .stage {
+    position: relative;
     width: 100%;
-    height: auto;
     max-height: min(74vh, 720px);
+  }
+  .ground,
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     display: block;
-    overflow: visible;
+  }
+  canvas {
+    touch-action: manipulation;
+  }
+  canvas.pointer {
+    cursor: pointer;
   }
   .hill.back {
     fill: color-mix(in oklab, var(--g1) 16%, var(--bg-elev));
@@ -598,246 +734,27 @@
     fill: var(--g4);
     opacity: 0.8;
   }
-  .tree {
-    transform-origin: 50% 100%;
-  }
-  .tree.swaying {
-    animation: sway 9s ease-in-out infinite alternate;
-  }
-  @keyframes sway {
-    from {
-      transform: rotate(-0.6deg);
-    }
-    to {
-      transform: rotate(0.6deg);
-    }
-  }
-  .branch {
-    stroke: var(--bark);
-    fill: none;
-    stroke-linecap: round;
-    opacity: 0.8;
-  }
-  .branch.code {
-    stroke: #9a7ad6;
-    opacity: 0.55;
-  }
-  .branch.slot {
-    stroke-dasharray: 2 3;
-  }
-  .slotring {
-    fill: var(--bg-elev);
-    stroke: #8a6bd1;
-    stroke-width: 1.2;
-    stroke-dasharray: 2 1.6;
-  }
-  .trunk {
-    stroke-width: 5;
-  }
-  .leafshape {
-    stroke: color-mix(in oklab, var(--fg) 18%, transparent);
-    stroke-width: 0.5;
-  }
-  .vein {
-    stroke: rgba(255, 255, 255, 0.55);
-    stroke-width: 0.8;
-    fill: none;
-  }
-  .knot {
-    fill: var(--bark);
-  }
-  .codeknot {
-    fill: #8a6bd1;
-  }
-  .bud-ring {
-    fill: color-mix(in oklab, var(--g4) 8%, var(--bg-elev));
-    stroke: var(--g4);
-    stroke-width: 1.5;
-    stroke-dasharray: 3 3;
-  }
-  .bud-ring.back {
-    stroke: #6c9bd2;
-  }
-  .bud-ring.stuck {
-    stroke: var(--err);
-    stroke-dasharray: none;
-  }
-  .bud-core {
-    fill: var(--g4);
-  }
-  .bud-core.back {
-    fill: #6c9bd2;
-  }
-  .done-core {
-    fill: color-mix(in oklab, var(--blossom) 70%, var(--bark));
-  }
-  .donering {
-    fill: color-mix(in oklab, var(--blossom) 10%, var(--bg-elev));
-    stroke: color-mix(in oklab, var(--blossom) 70%, var(--bark));
-    stroke-width: 1.5;
-  }
-  .backmark {
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-  .backmark.shown,
-  .inner.clickable:hover .backmark {
-    opacity: 1;
-  }
-  .backmark circle {
-    fill: color-mix(in oklab, #6c9bd2 22%, var(--bg-elev));
-    stroke: #6c9bd2;
-    stroke-width: 1;
-  }
-  .backmark text {
-    font-size: 7.5px;
-    text-anchor: middle;
-    dominant-baseline: middle;
-    fill: color-mix(in oklab, #2f5f95 72%, var(--fg));
-    font-weight: 700;
-  }
-  .bead-name {
+  .tip {
+    position: absolute;
+    transform: translate(14px, 14px);
+    max-width: 22rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elev);
+    color: var(--fg);
     font-family: var(--font-mono);
-    font-size: 7.5px;
-    fill: var(--fg-faint);
-    text-anchor: end;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    pointer-events: none;
+    z-index: 2;
+    box-shadow: 0 2px 10px color-mix(in oklab, var(--fg) 12%, transparent);
   }
-  .halo {
-    fill: none;
-    stroke-width: 1.6;
-  }
-  .halo.map {
-    stroke: #5a90cf;
-    fill: color-mix(in oklab, #5a90cf 9%, transparent);
-  }
-  .halo.tri {
-    stroke: #c98e2b;
-    fill: color-mix(in oklab, #c98e2b 9%, transparent);
-  }
-  .halo.back {
-    stroke-dasharray: 2 2;
-  }
-  .halo-name {
-    font-family: var(--font-mono);
-    font-size: 7px;
-    text-anchor: end;
-  }
-  .halo-name.map {
-    fill: color-mix(in oklab, #3f73b0 75%, var(--fg));
-  }
-  .halo-name.tri {
-    fill: color-mix(in oklab, #a06d16 75%, var(--fg));
-  }
-  .fire-ring {
-    fill: color-mix(in oklab, var(--g4) 22%, var(--bg-elev));
-    stroke: var(--g4);
-    stroke-width: 1.2;
-  }
-  .fire-ring.back {
-    fill: color-mix(in oklab, #6c9bd2 20%, var(--bg-elev));
-    stroke: #6c9bd2;
-  }
-  .fire-letter {
-    font-family: var(--font-mono);
-    font-size: 8.5px;
-    font-weight: 700;
-    fill: color-mix(in oklab, #8a6414 72%, var(--fg));
-    text-anchor: middle;
-    dominant-baseline: middle;
-  }
-  .fire-letter.one {
-    font-size: 11px;
-  }
-  .firemark.small .fire-letter {
-    font-size: 7px;
-  }
-  .firemark.small .fire-letter.one {
-    font-size: 8.5px;
-  }
-  .fire-ring.back + .fire-letter {
-    fill: color-mix(in oklab, #2f5f95 72%, var(--fg));
-  }
-  /* a newly ready mark waits for its node to land, then grows in on it */
-  .firemark.eased {
-    animation: markin 0.24s ease-out 0.3s backwards;
-    transform-origin: 0 0;
-    transform-box: fill-box;
-  }
-  .firemark.next {
-    animation: firepulse 1s ease-in-out infinite;
-  }
-  @keyframes markin {
-    from {
-      opacity: 0;
-    }
-  }
-  @keyframes firepulse {
-    50% {
-      opacity: 0.55;
-    }
-  }
-  .blossom circle {
-    fill: var(--blossom);
-    opacity: 0.85;
-    stroke: #fff;
-    stroke-width: 0.5;
-  }
-  .podbody {
-    fill: #a58ad8;
-    stroke: color-mix(in oklab, #4b2f8a 60%, transparent);
-    stroke-width: 0.9;
-  }
-  .podbody.data {
-    fill: #79ae74;
-    stroke: color-mix(in oklab, #2e5e33 60%, transparent);
-  }
-  .inner.clickable:hover .podbody {
-    filter: brightness(1.08);
-  }
-  .podseam {
-    stroke: rgba(255, 255, 255, 0.55);
-    stroke-width: 1.1;
-    fill: none;
-    stroke-linecap: round;
-  }
-  .vname {
-    fill: #2c1c52;
-    font-size: 8px;
-    font-weight: 700;
-    text-anchor: middle;
-    dominant-baseline: middle;
-    font-family: var(--font-mono);
-  }
-  .vname.above {
-    fill: color-mix(in oklab, #7a5cc4 85%, var(--fg));
-    font-size: 9px;
-    font-weight: 600;
-  }
-  .vname.above.data {
-    fill: var(--g2);
-  }
-  .badge {
-    fill: var(--g2);
-    font-size: 9.5px;
-    text-anchor: middle;
-    font-family: var(--font-mono);
-  }
-  .badge.side {
-    text-anchor: start;
-  }
-  .badge.codebadge {
-    fill: #7a5cc4;
-    font-size: 8.5px;
-  }
-  .inner.clickable {
-    cursor: pointer;
-  }
-  .hitzone {
-    fill: transparent;
-  }
-  .inner.clickable:hover .bud-ring,
-  .inner.clickable:hover .halo,
-  .inner.clickable:hover .donering {
-    stroke-width: 2.4;
+  .nogl {
+    position: absolute;
+    inset: 40% 0 auto;
+    text-align: center;
+    color: var(--fg-faint);
+    font-size: 0.85rem;
   }
 </style>

@@ -473,7 +473,7 @@
     overflow-x: auto;
     overflow-y: hidden;
   }
-  .scroller > :global(svg) {
+  .scroller > :global(.stage) {
     min-width: 540px;
   }
   .rline.sub {
