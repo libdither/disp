@@ -39,7 +39,8 @@
     <code>;</code> for a sequence, <code>μ</code> for <code>fix</code>, <code>↩</code> for
     <code>self</code>, <code>▷</code> for <code>eval</code>, and <code>?</code> for a <code>tri</code>
     whose left part is a fork, which it opens by rotating rather than holding. A <code>;</code> bead
-    keeps the part of the sequence still to run beside it, dashed, until its turn. When every dot under
+    keeps the sequence's other part folded beside it: the part still to run, dashed, until its turn,
+    and then the part that has run, faded, kept to run back when the run is flipped. When every dot under
     a ring or bead has run, it closes, putting back what it held. A dot that has run has its program
     <strong>held</strong>: a lid, a fork with △△ on its left, sits on top of the program, and the ring
     turns solid.
@@ -47,8 +48,8 @@
   <p>
     <kbd>▸</kbd> fires every move that can be made right now (one round), or just the next one with
     parallel off; <kbd>▶</kbd> keeps firing, and <kbd>◂</kbd> takes the last action back.
-    <kbd>⇆</kbd> flips the whole run. Clicking a live dot fires it, clicking a ring or bead fires what
-    is ready inside it, and clicking a dot that has run flips just that dot. A program with a † on top
+    <kbd>⇆</kbd> flips the whole run. Clicking a live dot fires it, clicking a ring or bead plays the
+    part under it until that part has run, and clicking a dot that has run flips just that dot. A program with a † on top
     runs backward, and its dot is drawn blue. The moves and big named parts inside a program are pods,
     which open when they reach a dot of their own; click any part to fold it, and a pod to open it.
   </p>

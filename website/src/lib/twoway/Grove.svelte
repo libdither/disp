@@ -4,12 +4,13 @@
   // right. A live dot (dashed ring) wears the move it will make; a dot whose program is held (it has
   // run) is a solid ring, and clicking it flips it. When a combinator starts, the node it takes apart is
   // kept where the dot was, ringed (map's in blue, tri's in amber), with the dots of its parts above it,
-  // and the parts of its program travel up into them; a combinator that holds no node is a bead. Every
-  // node is keyed by what it is, so a move's nodes glide to where it puts them.
+  // and the parts of its program travel up into them; a combinator that holds no node is a bead, and a
+  // sequence's bead keeps its other part folded beside it: the part still to run, or the part that has
+  // run. Every node is keyed by what it is, so a move's nodes glide to where it puts them.
   import { fade, scale } from "svelte/transition";
   import { asBit, asNat, form, kids as vkids, registersOf, show, size, type V } from "./core";
   import { nameOf, progDef, progLabel, type Reads } from "./text";
-  import { done, glyph, read, say, type Node, type Wait } from "./machine";
+  import { done, fire, glyph, read, say, type Node, type Wait } from "./machine";
 
   interface Props {
     root: Node;
@@ -42,6 +43,7 @@
 
   /** Frames that hold no node of the value: drawn as beads on the way down. */
   const BEAD: Partial<Record<Wait, string>> = { self: "↩", seq1: ";", seq2: ";", fix: "μ", eval: "▷", triF: "?" };
+  const PLAYS = "click to play this part until it has run";
   const BEAD_SAYS: Partial<Record<Wait, string>> = {
     self: "self: the fix's body running again",
     seq1: "a ; b, with a running",
@@ -115,20 +117,21 @@
     name: string | null;
     tip: string | null;
     open?: { v: V; site: string };
-    /** A program part still to run. */
+    /** A program part still to run, or one that has run and waits to run back. */
     pending?: boolean;
+    spent?: boolean;
   }
   /** Where a node sits in a word, for reading bits: the top of a value, a part of a word, the inside of
    * a word's leaf (a bit or a tuple of bits), or below a bit. △△ is T as a bit, but a one-bit word
    * holding F as a word, so a label needs to know which. */
   type Ctx = "top" | "word" | "leaf" | "bit";
   /** A program part: `site` names the run it belongs to (a run whose program is a part of its parent's
-   * keeps the parent's), `root` is that run's whole program, and `pending` is the part of a sequence
-   * still to run, which starts folded. */
+   * keeps the parent's), `root` is that run's whole program, and `pending` and `spent` are the parts of
+   * a sequence still to run and already run, which start folded. */
   type Item =
     | { t: "node"; n: Node; ctx: Ctx; site?: string }
     | { t: "data"; v: V; underStem: boolean; ctx: Ctx; whole?: boolean }
-    | { t: "prog"; v: V; site: string; root: V; pending?: V; whole?: boolean };
+    | { t: "prog"; v: V; site: string; root: V; pending?: V; spent?: V; whole?: boolean };
   /** Frames whose runs run parts of the frame's own program: those runs keep its site. */
   const OWN_PARTS = new Set<Wait>(["seq1", "seq2", "fix", "mapS", "mapF", "triL", "triS", "triF"]);
   const below = (ctx: Ctx, stem: boolean): Ctx =>
@@ -207,14 +210,20 @@
             back,
             label: BEAD[n.w]!,
             name: named,
-            tip: `${BEAD_SAYS[n.w]}${named ? ` (${named})` : ""} — click to run what is ready inside`
+            tip: `${BEAD_SAYS[n.w]}${named ? ` (${named})` : ""} — ${fire(n) ? "click to make this move" : PLAYS}`
           };
           kids = n.kids.map((k) => ({ t: "node", n: k, ctx: it.ctx, site: kidSite }));
-          if (n.w === "seq1") {
-            // the part still to run waits beside its bead, and moves into the run when its turn comes
+          if (n.w === "seq1" || n.w === "seq2") {
+            // the other part waits beside the bead: the part still to run, which trades places with the run
+            // when its turn comes, then the part that has run, kept to run back; a flip swaps the two roles
             const { f, fwd } = read(n.p);
-            const rest = fwd ? (f as { b: V }).b : (f as { a: V }).a;
-            kids.unshift({ t: "prog", v: rest, site: sk, root: n.p, pending: rest });
+            const s = f as { a: V; b: V };
+            const other = (n.w === "seq1") === fwd ? s.b : s.a;
+            kids.unshift(
+              n.w === "seq1"
+                ? { t: "prog", v: other, site: sk, root: n.p, pending: other }
+                : { t: "prog", v: other, site: sk, root: n.p, spent: other }
+            );
           }
           step = 0.62;
         } else {
@@ -229,7 +238,7 @@
             shape: n.w === "mapS" || n.w === "triS" ? "knot" : "fork",
             ring,
             label: ring,
-            tip: `${HOLD_SAYS[n.w]} — click to run what is ready inside`
+            tip: `${HOLD_SAYS[n.w]} — ${fire(n) ? "click to close it" : PLAYS}`
           };
           const ctx = below(it.ctx, n.w === "mapS" || n.w === "triS");
           kids =
@@ -262,7 +271,7 @@
         const key = `${it.site}:${v.id}`;
         const isRoot = v === it.root;
         const role = rolesOf(it.root).get(v) ?? null;
-        const base = { ...blank, key, open: { v, site: it.site }, pending: !!it.pending };
+        const base = { ...blank, key, open: { v, site: it.site }, pending: !!it.pending, spent: !!it.spent };
         const count = used.get(it.site) ?? 0;
         // a tree opened by a click, or a run's own program, opens whole when it is small; inside a bigger
         // one the moves and named parts stay pods
@@ -274,17 +283,18 @@
           whole = size(v) <= WHOLE;
         } else
           pod =
-            isRoot || v === it.pending || (!whole && ((role !== null && (atomic(v) || bigName(v))) || count >= BUDGET));
+            isRoot || v === it.pending || v === it.spent || (!whole && ((role !== null && (atomic(v) || bigName(v))) || count >= BUDGET));
         if (pod) {
-          const name = isRoot || atomic(v) || v === it.pending ? progLabel(v) : (role ?? "…");
-          node = { ...base, kind: "pod", name, tip: `${progDef(v)} — click to open` };
+          const name = isRoot || atomic(v) || v === it.pending || v === it.spent ? progLabel(v) : (role ?? "…");
+          const when = v === it.spent ? " — has run, and is kept to run back" : v === it.pending ? " — still to run" : "";
+          node = { ...base, kind: "pod", name, tip: `${progDef(v)}${when} — click to open` };
         } else {
           used.set(it.site, count + 1);
           if (v.tag === "leaf") node = { ...base, kind: "codeleaf", label: role, tip: role === "id" ? "id: does nothing" : "△" };
           else {
             const what = role ? `${role}: ${short(progLabel(v), 60)}` : short(show(v), 60);
             node = { ...base, kind: "code", label: role, tip: `${what} — click to fold` };
-            kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root, pending: it.pending, whole }));
+            kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root, pending: it.pending, spent: it.spent, whole }));
           }
         }
         step = 0.8;
@@ -439,6 +449,7 @@
           class="branch"
           class:code={isCode(n)}
           class:pending={n.pending}
+          class:spent={n.spent}
           d={edgeD(byKey.get(n.parent)!, n)}
           style="stroke-width:{Math.max(1.3, (isCode(n) ? 2.6 : 5 - n.depth * 0.45) * g)}px"
           in:fade={{ duration: dur(260), delay: dur(fresh.get(n.key) ?? 0) }}
@@ -451,7 +462,7 @@
       <g class="node" style="transform: translate({n.x}px, {n.y}px)">
         <g in:scale={{ duration: dur(420), start: 0, delay: dur(fresh.get(n.key) ?? 0) }} out:scale={{ duration: dur(360), start: 0 }}>
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <g class="inner" class:clickable={clickable(n)} class:pending={n.pending} onclick={(e) => click(n, e)} style="transform: scale({g})">
+          <g class="inner" class:clickable={clickable(n)} class:pending={n.pending} class:spent={n.spent} onclick={(e) => click(n, e)} style="transform: scale({g})">
             {#if n.kind === "bud"}
               <circle r="14" class="hitzone" />
               <circle r="8.5" class="bud-ring" class:stuck={n.stuck} class:back={n.back} />
@@ -594,6 +605,13 @@
   }
   .inner.pending {
     opacity: 0.55;
+  }
+  .branch.spent {
+    opacity: 0.32;
+  }
+  .inner.spent {
+    opacity: 0.6;
+    filter: saturate(0.35);
   }
   .trunk {
     stroke-width: 5;

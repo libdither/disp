@@ -2,8 +2,9 @@
   // Two-way programs on the site's tree-calculus instrument (TreeVis), one local move at a time. Two
   // actions: ▸ fires (a round of moves, every node that can move when parallel is on; ▶ keeps firing),
   // and ⇆ flips (every dot turned around, nothing computed, so firing runs it back). Clicking a live dot
-  // fires it, a ring or bead fires what is ready inside it, and a dot that has run flips. ◂ takes the
-  // last action back. The engine is machine.ts over core.ts.
+  // fires it, a ring or bead plays the part under it until that part has run (as TreeVis plays what a
+  // clicked application waits on), and a dot that has run flips. ◂ takes the last action back. The
+  // engine is machine.ts over core.ts.
   import { onDestroy } from "svelte";
   import Grove from "./Grove.svelte";
   import { flipProg, show, size, type V } from "./core";
@@ -20,6 +21,8 @@
   let labels = $state(true);
   let programs = $state(true);
   let running = $state(false);
+  /** While playing: the node whose part plays, or null for the whole run. */
+  let focus: number | null = null;
   let ruleMsg = $state("");
   let steps = $state(0);
   let moves = $state(0);
@@ -66,8 +69,10 @@
     inputSrc = PRESETS[i].input;
     reads = PRESETS[i].reads;
   }
+  /** The example before or after this one, stopping at the ends as TreeVis does. */
   function cyclePreset(d: 1 | -1) {
-    pick(((((preset < 0 ? 0 : preset) + d) % PRESETS.length) + PRESETS.length) % PRESETS.length);
+    const i = preset < 0 ? (d === 1 ? 0 : PRESETS.length - 1) : preset + d;
+    if (i >= 0 && i < PRESETS.length) pick(i);
   }
 
   // ---- moving the tree ----
@@ -129,20 +134,41 @@
   }
   function stopRun() {
     running = false;
+    focus = null;
     clearTimeout(timer);
   }
+  /** The part being played, while it has not run yet: null when it has, or when the whole run plays. */
+  const playing = (): Node | null => {
+    const n = focus === null || !m ? null : find(m, focus);
+    return n && !done(n) ? n : null;
+  };
   function schedule() {
     clearTimeout(timer);
+    // a part plays at least this fast: it is usually a small piece of a long run
     timer = setTimeout(() => {
       if (!running) return;
       let moved = false;
-      for (let i = 0; i < perTick && stepIn(null); i++) moved = true;
-      if (moved) schedule();
-      else {
-        running = false;
-        ruleMsg = endMsg();
+      for (let i = 0; i < perTick; i++) {
+        if (focus !== null && !playing()) break;
+        if (!stepIn(playing())) break;
+        moved = true;
       }
-    }, stepMs);
+      if (moved && (focus === null || playing())) schedule();
+      else {
+        const part = focus !== null && m ? find(m, focus) : null;
+        running = false;
+        focus = null;
+        ruleMsg = part && done(part) ? `that part has run: ${valText(part.x, reads)}, and its program is held — ▶ plays the rest` : endMsg();
+      }
+    }, focus === null ? stepMs : Math.min(stepMs, 260));
+  }
+  /** Play the part under a frame until it has run, the rest of the tree waiting. */
+  function playPart(id: number) {
+    stopRun();
+    focus = id;
+    running = true;
+    if (stepIn(playing())) schedule();
+    else stopRun();
   }
   function toggleRun() {
     if (running) return stopRun();
@@ -168,7 +194,7 @@
       else if (fire(n)) fireSet([n]);
       else ruleMsg = `stuck: ${say(n)}`;
     } else if (fire(n)) fireSet([n]);
-    else stepIn(n);
+    else playPart(id);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -261,6 +287,7 @@
       type="text"
       bind:value={progSrc}
       oninput={() => (preset = -1)}
+      onfocus={stopRun}
       spellcheck="false"
       autocomplete="off"
       aria-label="program"
@@ -272,6 +299,7 @@
       type="text"
       bind:value={inputSrc}
       oninput={() => (preset = -1)}
+      onfocus={stopRun}
       spellcheck="false"
       autocomplete="off"
       aria-label="input"
