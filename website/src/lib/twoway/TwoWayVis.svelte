@@ -1,22 +1,21 @@
 <script lang="ts">
-  // Two-way programs on the site's tree-calculus instrument (TreeVis), one local move at a time. ▸ makes
-  // a round of moves (every node that can move, when parallel is on), ◂ takes the last one back, ▶ runs,
-  // and the direction switch runs everything backward instead: by the moves' inverses, not a replay.
-  // Clicking a bud makes its move, a ring or bead runs what is ready inside it, a finished run steps
-  // back. The engine is machine.ts over core.ts.
+  // Two-way programs on the site's tree-calculus instrument (TreeVis), one local move at a time. Two
+  // actions: ▸ fires (a round of moves, every node that can move when parallel is on; ▶ keeps firing),
+  // and ⇆ flips (every dot turned around, nothing computed, so firing runs it back). Clicking a live dot
+  // fires it, a ring or bead fires what is ready inside it, and a dot that has run flips. ◂ takes the
+  // last action back. The engine is machine.ts over core.ts.
   import { onDestroy } from "svelte";
   import Grove from "./Grove.svelte";
-  import { show, size, type V } from "./core";
+  import { flipProg, show, size, type V } from "./core";
   import { parseProg, parseVal, progLabel, progText, valText, type Reads } from "./text";
   import { PRESETS } from "./library";
-  import { find, fire, measure, movable, moveAll, say, start, tag, unfire, type Node } from "./machine";
+  import { done, find, fire, fireAll, flip, measure, movable, say, start, tag, update, type Node } from "./machine";
 
   let preset = $state(0);
   let progSrc = $state(PRESETS[0].prog);
   let inputSrc = $state(PRESETS[0].input);
   let reads = $state<Reads>(PRESETS[0].reads);
   let parallel = $state(true);
-  let fwd = $state(true);
   let motion = $state(true);
   let labels = $state(true);
   let programs = $state(true);
@@ -66,7 +65,6 @@
     progSrc = PRESETS[i].prog;
     inputSrc = PRESETS[i].input;
     reads = PRESETS[i].reads;
-    fwd = true;
   }
   function cyclePreset(d: 1 | -1) {
     pick(((((preset < 0 ? 0 : preset) + d) % PRESETS.length) + PRESETS.length) % PRESETS.length);
@@ -74,51 +72,50 @@
 
   // ---- moving the tree ----
 
-  function describe(ns: Node[], dir: boolean): string {
-    if (ns.length === 1) return dir ? say(ns[0]) : `↶ undone — ${say(unfire(ns[0])!)}`;
+  function describe(ns: Node[]): string {
+    if (ns.length === 1) return say(ns[0]);
     const count = new Map<string, number>();
-    for (const n of ns) {
-      const t = tag(dir ? n : unfire(n)!);
-      count.set(t, (count.get(t) ?? 0) + 1);
-    }
+    for (const n of ns) count.set(tag(n), (count.get(tag(n)) ?? 0) + 1);
     const list = [...count].map(([k, v]) => (v > 1 ? `${k} ×${v}` : k)).join(", ");
-    return `${ns.length} moves at once${dir ? "" : ", backward"}: ${list}`;
+    return `${ns.length} moves at once: ${list}`;
   }
-  function moveSet(ns: Node[], dir: boolean): boolean {
-    if (!m || !ns.length) return false;
+  /** One action on the tree, remembered so ◂ can take it back. */
+  function act(next: Node, msg: string, fired: number) {
+    if (!m) return;
     history.push({ m, msg: ruleMsg, steps, moves });
     if (history.length > 4000) history.shift();
     historyLen = history.length;
-    ruleMsg = describe(ns, dir);
-    m = moveAll(m, new Set(ns.map((n) => n.id)), dir);
-    moves += dir ? ns.length : -ns.length;
-    steps = moves === 0 ? 0 : Math.max(1, steps + (dir ? 1 : -1));
+    ruleMsg = msg;
+    m = next;
+    steps++;
+    moves += fired;
+  }
+  function fireSet(ns: Node[]): boolean {
+    if (!m || !ns.length) return false;
+    act(fireAll(m, new Set(ns.map((n) => n.id))), describe(ns), ns.length);
     return true;
   }
-  /** The next step in a part of the tree, or the whole of it: every node there that can move. */
-  function stepIn(scope: Node | null, dir: boolean): boolean {
+  /** The next round in a part of the tree, or the whole of it: every node there that can fire. */
+  function stepIn(scope: Node | null): boolean {
     if (!m) return false;
-    if (weightOf(m) > TOO_BIG && dir) {
+    if (weightOf(m) > TOO_BIG) {
       ruleMsg = "the tree has grown too big to draw (it may never stop)";
       return false;
     }
-    const ms = movable(scope ?? m, dir);
-    return moveSet(parallel ? ms : ms.slice(0, 1), dir);
+    const ms = movable(scope ?? m);
+    return fireSet(parallel ? ms : ms.slice(0, 1));
   }
-  const weightOf = (n: Node): number =>
-    n.k === "run" ? 1 + size(n.x) : n.k === "done" ? 1 + size(n.y) : 1 + n.kids.reduce((s, k) => s + weightOf(k), 0);
+  const weightOf = (n: Node): number => (n.k === "dot" ? 1 + size(n.x) : 1 + n.kids.reduce((s, k) => s + weightOf(k), 0));
 
-  const finished = $derived(!!m && m.k === "done");
-  const atStart = $derived(!!m && m.k === "run");
+  const finished = $derived(!!m && done(m));
   function endMsg(): string {
     if (!m) return "";
-    if (!fwd) return atStart ? "back at the start: every move undone by its own inverse" : "nothing here can step back";
-    if (m.k === "done") return `done: ${valText(m.y, reads)}${m.fwd ? "" : ""} — switch the direction (⇆) to run it back`;
+    if (done(m)) return `done: ${valText(m.x, reads)}, and the program is held — ⇆ flips it, and ▸ runs it back`;
     return "stuck: a move that does not fit what it was given";
   }
   function step() {
     stopRun();
-    if (!stepIn(null, fwd)) ruleMsg = endMsg();
+    if (!stepIn(null)) ruleMsg = endMsg();
   }
   function back() {
     const h = history.pop();
@@ -139,7 +136,7 @@
     timer = setTimeout(() => {
       if (!running) return;
       let moved = false;
-      for (let i = 0; i < perTick && stepIn(null, fwd); i++) moved = true;
+      for (let i = 0; i < perTick && stepIn(null); i++) moved = true;
       if (moved) schedule();
       else {
         running = false;
@@ -149,18 +146,16 @@
   }
   function toggleRun() {
     if (running) return stopRun();
-    if (!m || (fwd && finished) || (!fwd && atStart) || movable(m, fwd).length === 0) {
-      if (fwd) load();
-      else return void (ruleMsg = endMsg());
-    }
+    if (!m || movable(m).length === 0) load();
     running = true;
-    if (stepIn(null, fwd)) schedule();
+    if (stepIn(null)) schedule();
     else running = false;
   }
-  function flip() {
+  /** Flip the whole tree: every dot turned around, every frame with it; nothing is computed. */
+  function flipAll() {
     stopRun();
-    fwd = !fwd;
-    ruleMsg = fwd ? "running forward" : "running backward: each move undone by its inverse, in parallel";
+    if (!m) return;
+    act(flip(m), "flipped: every dot turned around and nothing computed, so ▸ now runs it the other way", 0);
   }
   onDestroy(stopRun);
 
@@ -168,12 +163,12 @@
     stopRun();
     const n = m && find(m, id);
     if (!n) return;
-    if (n.k === "run") {
-      if (fire(n)) moveSet([n], true);
+    if (n.k === "dot") {
+      if (done(n)) act(update(m!, new Set([id]), flip), `flipped: ${progLabel(n.p)} became ${progLabel(flipProg(n.p))}, so firing runs it back`, 0);
+      else if (fire(n)) fireSet([n]);
       else ruleMsg = `stuck: ${say(n)}`;
-    } else if (n.k === "done") moveSet([n], false);
-    else if (fwd ? fire(n) : unfire(n)) moveSet([n], fwd);
-    else stepIn(n, fwd);
+    } else if (fire(n)) fireSet([n]);
+    else stepIn(n);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -190,28 +185,22 @@
     } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "r" || e.key === "R")) {
       e.preventDefault();
       load();
-    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "d" || e.key === "D")) {
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "f" || e.key === "F")) {
       e.preventDefault();
-      flip();
+      flipAll();
     }
   }
 
-  const next = $derived(!parallel && m ? (movable(m, fwd)[0]?.id ?? null) : null);
+  const next = $derived(!parallel && m ? (movable(m)[0]?.id ?? null) : null);
 
   const count = (n: number, what: string) => `${n.toLocaleString("en")} ${what}${n === 1 ? "" : "s"}`;
   const exprText = $derived(compiled.err === null ? `${progLabel(compiled.prog)} · ${inputSrc}` : progSrc);
-  const nowText = $derived.by(() => {
-    if (compiled.err !== null || !m) return "";
-    const x = valText(compiled.x, reads);
-    if (m.k === "run") return x;
-    return `${x} → ${m.k === "done" ? valText(m.y, reads) : "…"}`;
-  });
+  const nowText = $derived(!m ? "" : m.k === "dot" ? valText(m.x, reads) + (done(m) ? " (held)" : "") : "…");
 </script>
 
 {#snippet icoPrev()}<svg class="ico" viewBox="0 0 24 24"><rect x="6" y="6" width="2.2" height="12" rx="0.6" /><path d="M18 6 L10 12 L18 18 Z" /></svg>{/snippet}
 {#snippet icoBack()}<svg class="ico" viewBox="0 0 24 24"><path d="M15.5 6 L8 12 L15.5 18 Z" /></svg>{/snippet}
 {#snippet icoPlay()}<svg class="ico" viewBox="0 0 24 24"><path d="M8 5.5 L18.5 12 L8 18.5 Z" /></svg>{/snippet}
-{#snippet icoPlayBack()}<svg class="ico" viewBox="0 0 24 24"><path d="M16 5.5 L5.5 12 L16 18.5 Z" /></svg>{/snippet}
 {#snippet icoPause()}<svg class="ico" viewBox="0 0 24 24"><rect x="7.5" y="5.5" width="3.2" height="13" rx="0.8" /><rect x="13.3" y="5.5" width="3.2" height="13" rx="0.8" /></svg>{/snippet}
 {#snippet icoFwd()}<svg class="ico" viewBox="0 0 24 24"><path d="M8.5 6 L16 12 L8.5 18 Z" /></svg>{/snippet}
 {#snippet icoNext()}<svg class="ico" viewBox="0 0 24 24"><path d="M6 6 L14 12 L6 18 Z" /><rect x="15.8" y="6" width="2.2" height="12" rx="0.6" /></svg>{/snippet}
@@ -225,10 +214,9 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
   class="vis lab"
-  class:backward={!fwd}
   tabindex="0"
   role="application"
-  aria-label="two-way program visualizer — space runs or pauses, arrow keys step back and forward, shift+arrows change example, d flips the direction, r resets"
+  aria-label="two-way program visualizer — space runs or pauses, arrow keys step back and forward, shift+arrows change example, f flips, r resets"
   onkeydown={onKey}
   onmousedown={(e) => {
     if ((e.target as HTMLElement).closest("button")) e.preventDefault();
@@ -244,12 +232,12 @@
     <p class="err">{compiled.err}</p>
   {:else if m}
     <div class="scroller">
-      <Grove root={m} {reads} {labels} {programs} motion={smooth} {fwd} {next} epoch={compiled} {onSite} />
+      <Grove root={m} {reads} {labels} {programs} motion={smooth} {next} epoch={compiled} {onSite} />
     </div>
     <div class="readout">
       <div class="rline">
         <span class="expr">{exprText}</span>
-        <span class="rule" class:nf={finished && fwd}>{ruleMsg || "press ▸ (or →) for the next round of moves, or click a bud"}</span>
+        <span class="rule" class:nf={finished}>{ruleMsg || "press ▸ (or →) for the next round of moves, or click a bud"}</span>
       </div>
       <div class="rline sub">
         <span class="now"><span class="flabel">value</span>{nowText}</span>
@@ -298,11 +286,12 @@
     <span class="info">
       <button type="button" class="info-btn" aria-label="what can I type here?">i</button>
       <span class="info-pop" role="tooltip">
-        Edits parse as you type; <kbd>space</kbd> runs, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>d</kbd> flips the
-        direction, <kbd>shift</kbd>+arrows change example, <kbd>r</kbd> resets. A program:
-        <code>not</code> <code>swap</code> <code>rot</code> <code>stem</code> <code>unit</code> <code>eval</code>
+        Edits parse as you type; <kbd>space</kbd> plays, <kbd>→</kbd> fires, <kbd>←</kbd> takes it back,
+        <kbd>f</kbd> flips, <kbd>shift</kbd>+arrows change example, <kbd>r</kbd> resets. A program:
+        <code>swap</code> <code>rot</code> <code>stem</code> <code>unit</code> <code>eval</code>
         <code>id</code>, <code>a ; b</code>, <code>a†</code>, <code>tri(a, b, c)</code>, <code>map(a, b, c)</code>,
-        <code>fix(b)</code> with <code>self</code> inside, the shorthands <code>first(f)</code>
+        <code>fix(b)</code> with <code>self</code> inside, <code>held(p)</code> for a program that has run, the
+        shorthands <code>first(f)</code>
         <code>second(f)</code> <code>par(f, g)</code> <code>when(f)</code>, the library's names, or any tree as
         <code>{"{"}△△△{"}"}</code>. A value: <code>△</code> <code>△v</code> <code>(u, v)</code> <code>T</code>
         <code>F</code>, numbers, a word <code>0b1011</code>, registers <code>&lt;0b10, 0b01&gt;</code>, or a program
@@ -318,11 +307,14 @@
       <button class="tbtn" onclick={() => cyclePreset(-1)} aria-label="previous example">{@render icoPrev()}</button>
       <button class="tbtn" onclick={back} disabled={historyLen === 0} aria-label="undo the last step">{@render icoBack()}</button>
     </div>
-    <button class="tbtn play" class:rev={!fwd} onclick={toggleRun} aria-label={running ? "pause" : fwd ? "play" : "play backward"}
-      >{#if running}{@render icoPause()}{:else if fwd}{@render icoPlay()}{:else}{@render icoPlayBack()}{/if}</button
+    <button class="tbtn play" onclick={toggleRun} aria-label={running ? "pause" : "play"}
+      >{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button
     >
     <div class="tside tright">
-      <button class="tbtn" onclick={step} aria-label="next step">{@render icoFwd()}</button>
+      <button class="tbtn" onclick={step} aria-label="fire: the next round of moves">{@render icoFwd()}</button>
+      <button class="tbtn flipbtn" onclick={flipAll} aria-label="flip: turn every dot around" title="flip: turn every dot around (f)"
+        >{@render icoDirection()}</button
+      >
       <button class="tbtn" onclick={() => cyclePreset(1)} aria-label="next example">{@render icoNext()}</button>
       <button class="tbtn" onclick={load} aria-label="reset">{@render icoReset()}</button>
     </div>
@@ -334,14 +326,6 @@
         data-tip="parallel — every node that can move moves in one step"
         aria-label="parallel"
         onclick={() => (parallel = !parallel)}>{@render icoParallel()}</button
-      >
-      <button
-        class="mpi sel dir"
-        class:on={!fwd}
-        aria-pressed={!fwd}
-        data-tip="direction — run backward: every move undone by its inverse"
-        aria-label="run backward"
-        onclick={flip}>{@render icoDirection()}</button
       >
       <button
         class="mpi sel"
@@ -476,16 +460,8 @@
   .now .flabel {
     margin-right: 0.5em;
   }
-  .vis.backward {
-    border-color: color-mix(in oklab, #6c9bd2 55%, var(--border));
-  }
-  .tbtn.play.rev {
+  .tbtn.flipbtn {
     color: #4a7fc0;
-  }
-  .mpi.sel.dir.on {
-    border-color: #6c9bd2;
-    color: #4a7fc0;
-    background: color-mix(in oklab, #6c9bd2 14%, var(--bg-elev));
   }
   .count {
     font-family: var(--font-mono);

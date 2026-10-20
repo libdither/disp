@@ -1,10 +1,11 @@
 // Checks the two-way programs engine (src/lib/twoway): the step machine agrees with the whole-run
-// interpreter, every move it makes is undone by its inverse, runs go back to their start, text reads
-// back to the same tree, and the library does what it says. `npm run twoway-check [-- quick]`.
-import { L, S, F, eq, show, size, run, regs, registersOf, nat, asNat, TooLong, type V } from '../src/lib/twoway/core.ts'
+// interpreter, every move it makes is undone by flip, fire, flip, flip is its own inverse, a finished run
+// flipped and run again comes back to exactly its start, text reads back to the same tree, and the
+// library does what it says. `npm run twoway-check [-- quick]`.
+import { L, S, F, eq, show, run, regs, registersOf, nat, flipProg, TooLong, type V } from '../src/lib/twoway/core.ts'
 import { parseProg, parseVal, progText, valText } from '../src/lib/twoway/text.ts'
 import { LIBRARY, PRESETS, libTree } from '../src/lib/twoway/library.ts'
-import { start, fire, unfire, movable, moveAll, same, measure, type Node } from '../src/lib/twoway/machine.ts'
+import { start, fire, flip, unfire, movable, fireAll, same, done, measure, type Node, type Dot } from '../src/lib/twoway/machine.ts'
 
 const quick = process.argv[2] === 'quick'
 let failures = 0
@@ -34,36 +35,34 @@ let seed = 12345
 const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff)
 const bits = (n: number) => Array.from({ length: n }, () => (rand() < 0.5 ? '1' : '0')).join('')
 
-/** Runs the machine forward a round at a time, checking each moving node's inverse, then back to the
- * start the same way. Returns the result, or null where it got stuck. */
+/** Runs the machine a round at a time, checking at each node that fires that flip, fire, flip undoes the
+ * move and that flip is its own inverse; then flips the finished run, runs it again, and flips it back,
+ * which must give exactly the start. Returns the result, or null where it got stuck. */
 function roundTrip(p: V, x: V, maxRounds = 20_000): { y: V | null; rounds: number; long?: boolean } {
   const s0 = start(p, x)
-  let n: Node = s0
-  let rounds = 0
-  while (n.k !== 'done') {
-    const ms = movable(n, true)
-    if (!ms.length) return { y: null, rounds }
-    for (const m of ms) {
-      const g = fire(m)!
-      const b = unfire(g)
-      if (!b || !same(b, m)) fail(`unfire(fire) at ${show(p)} on ${show(x)}`)
+  const forward = (from: Node): { t: Node | null; r: number; long: boolean } => {
+    let t = from
+    let r = 0
+    while (!done(t)) {
+      if (r > maxRounds) return { t: null, r, long: true }
+      const ms = movable(t)
+      if (!ms.length) return { t: null, r, long: false }
+      for (const m of ms) {
+        const b = unfire(fire(m)!)
+        if (!b || !same(b, m)) fail(`flip, fire, flip does not undo a move at ${show(p)} on ${show(x)}`)
+        if (!same(flip(flip(m)), m)) fail(`flip is not its own inverse at ${show(p)} on ${show(x)}`)
+      }
+      t = fireAll(t, new Set(ms.map((m) => m.id)))
+      r++
     }
-    n = moveAll(n, new Set(ms.map((m) => m.id)), true)
-    if (++rounds > maxRounds) return { y: null, rounds, long: true }
+    return { t, r, long: false }
   }
-  const y = n.y
-  for (let i = 0; i <= rounds * 2 + 2; i++) {
-    const ms = movable(n, false)
-    if (!ms.length) break
-    for (const m of ms) {
-      const b = unfire(m)!
-      const g = fire(b)
-      if (!g || !same(g, m)) fail(`fire(unfire) at ${show(p)} on ${show(x)}`)
-    }
-    n = moveAll(n, new Set(ms.map((m) => m.id)), false)
-  }
-  if (!same(n, s0)) fail(`back rounds from the end do not reach the start: ${show(p)} on ${show(x)}`)
-  return { y, rounds }
+  const a = forward(s0)
+  if (!a.t) return { y: null, rounds: a.r, long: a.long }
+  if (done(s0)) return { y: (a.t as Dot).x, rounds: 0 } // a held program has already run
+  const b = forward(flip(a.t))
+  if (!b.t || !same(flip(b.t), s0)) fail(`flipped and run again, ${show(p)} on ${show(x)} does not come back to its start`)
+  return { y: (a.t as Dot).x, rounds: a.r }
 }
 
 function agree(p: V, x: V, what: string) {
@@ -112,6 +111,15 @@ timed('text reads back to the same tree', () => {
     if (!eq(parseVal(t), v)) fail(`value ${s} → ${t}`)
   }
   return `${n} trees as programs`
+})
+
+timed('flip is its own inverse on every tree', () => {
+  let n = 0
+  for (const t of upTo(quick ? 9 : 11)) {
+    n++
+    if (!eq(flipProg(flipProg(t)), t)) fail(`flip twice changes ${show(t)}`)
+  }
+  return `${n} trees`
 })
 
 timed('every tree as a program, on small trees', () => {
@@ -168,6 +176,7 @@ const want = (name: string, x: V, y: V) => {
   if (!got || !eq(got, y)) fail(`${name} ${show(x)} gave ${got ? show(got) : 'stuck'}, not ${show(y)}`)
 }
 timed('what the library says it does', () => {
+  for (const a of [0, 1]) want('not', B(a), B(1 - a))
   for (const a of [0, 1]) for (const b of [0, 1]) want('cnot', F(B(a), B(b)), F(B(a), B(a ^ b)))
   for (const a of [0, 1]) for (const b of [0, 1]) for (const c of [0, 1]) want('toffoli', F(F(B(a), B(b)), B(c)), F(F(B(a), B(b)), B(c ^ (a & b))))
   for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) want('add', F(nat(a), nat(b)), F(nat(a), nat(a + b)))

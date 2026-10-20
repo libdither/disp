@@ -1,23 +1,21 @@
 <script lang="ts">
   // A run drawn the way the site's tree-calculus visualizer (TreeVis) draws a tree: on a hill, data as
-  // leaves and knots, programs in purple. A bud (dashed ring) is a program about to run, its program
-  // drawn open on the left and its value on the right; it wears the move it will make. When a
-  // combinator starts, the node it takes apart is kept where the bud was, ringed (map's in blue, tri's
-  // in amber), with the runs of its parts above it, and the parts of its program travel up into them; a
-  // combinator that holds no node is a bead. A finished run is a solid ring that keeps its program.
-  // Every node is keyed by what it is, so a move's nodes glide to where it puts them.
+  // leaves and knots, programs in purple. A dot is a program, drawn open on the left, on the value to its
+  // right. A live dot (dashed ring) wears the move it will make; a dot whose program is held (it has
+  // run) is a solid ring, and clicking it flips it. When a combinator starts, the node it takes apart is
+  // kept where the dot was, ringed (map's in blue, tri's in amber), with the dots of its parts above it,
+  // and the parts of its program travel up into them; a combinator that holds no node is a bead. Every
+  // node is keyed by what it is, so a move's nodes glide to where it puts them.
   import { fade, scale } from "svelte/transition";
   import { asBit, asNat, form, kids as vkids, registersOf, show, size, type V } from "./core";
   import { nameOf, progDef, progLabel, type Reads } from "./text";
-  import { glyph, say, type Node, type Wait } from "./machine";
+  import { done, glyph, read, say, type Node, type Wait } from "./machine";
 
   interface Props {
     root: Node;
     reads: Reads;
     labels?: boolean;
     motion?: boolean;
-    /** Which way the marks point: the moves each node can make forward, or back. */
-    fwd?: boolean;
     /** The node that moves next when stepping one move at a time; it pulses. */
     next?: number | null;
     /** A new run: the height starts over (it otherwise keeps to the tallest the run has been). */
@@ -26,7 +24,7 @@
     programs?: boolean;
     onSite: (id: number) => void;
   }
-  let { root, reads, labels = true, motion = true, fwd = true, next = null, epoch = null, programs = true, onSite }: Props =
+  let { root, reads, labels = true, motion = true, next = null, epoch = null, programs = true, onSite }: Props =
     $props();
 
   const W = 680;
@@ -43,10 +41,9 @@
   const short = (s: string, n = 16) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
   /** Frames that hold no node of the value: drawn as beads on the way down. */
-  const BEAD: Partial<Record<Wait, string>> = { self: "↩", dag: "†", seq1: ";", seq2: ";", fix: "μ", eval: "▷", triF: "?" };
+  const BEAD: Partial<Record<Wait, string>> = { self: "↩", seq1: ";", seq2: ";", fix: "μ", eval: "▷", triF: "?" };
   const BEAD_SAYS: Partial<Record<Wait, string>> = {
     self: "self: the fix's body running again",
-    dag: "†: the part inside running the other way",
     seq1: "a ; b, with a running",
     seq2: "a ; b, with b running on what a gave",
     fix: "fix: self stands for this program inside",
@@ -90,7 +87,7 @@
       const named = nameOf(t);
       const own = f.k === "atom" ? f.n : f.k === "none" ? "not a program" : f.k === "dag" ? "†" : f.k === "seq" ? ";" : f.k;
       m!.set(t, named && t !== p ? named : own);
-      if (f.k === "dag" || f.k === "fix") walk(f.b);
+      if (f.k === "dag" || f.k === "fix" || f.k === "held") walk(f.b);
       if (f.k === "seq") (walk(f.a), walk(f.b));
       if (f.k === "tri" || f.k === "map") (walk(f.a), walk(f.b), walk(f.c));
     };
@@ -133,7 +130,7 @@
     | { t: "data"; v: V; underStem: boolean; ctx: Ctx; whole?: boolean }
     | { t: "prog"; v: V; site: string; root: V; pending?: V; whole?: boolean };
   /** Frames whose runs run parts of the frame's own program: those runs keep its site. */
-  const OWN_PARTS = new Set<Wait>(["dag", "seq1", "seq2", "fix", "mapS", "mapF", "triL", "triS", "triF"]);
+  const OWN_PARTS = new Set<Wait>(["seq1", "seq2", "fix", "mapS", "mapF", "triL", "triS", "triF"]);
   const below = (ctx: Ctx, stem: boolean): Ctx =>
     ctx === "top" || ctx === "word" ? (stem ? "leaf" : "word") : ctx === "leaf" && !stem ? "leaf" : "bit";
 
@@ -173,30 +170,31 @@
       let step = 1;
       if (it.t === "node") {
         const n = it.n;
-        const g = glyph(n, fwd);
+        const g = glyph(n);
+        const back = !read(n.p).fwd;
         const sk = it.site ?? `s${n.id}`;
         const kidSite = n.k === "frame" && OWN_PARTS.has(n.w) ? sk : undefined;
-        if (n.k === "run" || n.k === "done") {
-          const run = n.k === "run";
-          const stuck = run && !glyph(n, true);
+        if (n.k === "dot") {
+          const live = !done(n);
+          const stuck = live && !g;
           node = {
             ...blank,
             key: `n${n.id}`,
-            kind: run ? "bud" : "done",
+            kind: live ? "bud" : "done",
             site: n.id,
-            glyph: run || !fwd ? g : null,
+            glyph: g,
             stuck,
-            back: !n.fwd,
+            back,
             name: progLabel(n.p),
-            tip: run
+            tip: live
               ? stuck
                 ? `stuck: ${say(n)}`
-                : `${say(n)}${n.fwd ? "" : " (running backward)"} — click to make this move`
-              : `${progLabel(n.p)} finished — click to step it back`
+                : `${say(n)} — click to make this move`
+              : `${progLabel(n.p)}: it has run — click to flip it, letting it go turned around`
           };
           kids = [
             { t: "prog", v: n.p, site: sk, root: n.p },
-            { t: "data", v: run ? n.x : n.y, underStem: false, ctx: it.ctx }
+            { t: "data", v: n.x, underStem: false, ctx: it.ctx }
           ];
         } else if (BEAD[n.w]) {
           const named = n.w === "fix" || n.w === "seq1" || n.w === "seq2" ? nameOf(n.p) : null;
@@ -206,7 +204,7 @@
             kind: "bead",
             site: n.id,
             glyph: g,
-            back: !n.fwd,
+            back,
             label: BEAD[n.w]!,
             name: named,
             tip: `${BEAD_SAYS[n.w]}${named ? ` (${named})` : ""} — click to run what is ready inside`
@@ -214,8 +212,8 @@
           kids = n.kids.map((k) => ({ t: "node", n: k, ctx: it.ctx, site: kidSite }));
           if (n.w === "seq1") {
             // the part still to run waits beside its bead, and moves into the run when its turn comes
-            const f = form(n.p) as { a: V; b: V };
-            const rest = n.fwd ? f.b : f.a;
+            const { f, fwd } = read(n.p);
+            const rest = fwd ? (f as { b: V }).b : (f as { a: V }).a;
             kids.unshift({ t: "prog", v: rest, site: sk, root: n.p, pending: rest });
           }
           step = 0.62;
@@ -227,7 +225,7 @@
             kind: "hold",
             site: n.id,
             glyph: g,
-            back: !n.fwd,
+            back,
             shape: n.w === "mapS" || n.w === "triS" ? "knot" : "fork",
             ring,
             label: ring,
@@ -460,7 +458,7 @@
               <circle r="3" class="bud-core" class:back={n.back} />
               {#if n.glyph}
                 <g class="firemark" class:next={n.site === next} class:eased={motion}>
-                  <circle r="7.5" class="fire-ring" class:back={!fwd} />
+                  <circle r="7.5" class="fire-ring" class:back={n.back} />
                   <text class="fire-letter" class:one={n.glyph.length === 1} y="0.5">{n.glyph}</text>
                 </g>
               {/if}
@@ -475,9 +473,9 @@
               <circle r="14" class="hitzone" />
               <circle r="8.5" class="donering" />
               <circle r="3.4" class="done-core" />
-              <g class="backmark" class:shown={!fwd && n.glyph}>
+              <g class="backmark">
                 <circle r="5.6" cx="9" cy="-9" />
-                <text x="9" y="-8.5">↶</text>
+                <text x="9" y="-8.5">⇆</text>
               </g>
             {:else if n.kind === "bead"}
               <circle r="11" class="hitzone" />
@@ -518,7 +516,7 @@
             {/if}
             {#if (n.kind === "bead" || n.kind === "hold") && n.glyph}
               <g class="firemark small" class:next={n.site === next} class:eased={motion} transform="translate(8.5, -8.5)">
-                <circle r="5.8" class="fire-ring" class:back={!fwd} />
+                <circle r="5.8" class="fire-ring" class:back={n.back} />
                 <text class="fire-letter" class:one={n.glyph.length === 1} y="0.5">{n.glyph}</text>
               </g>
             {/if}

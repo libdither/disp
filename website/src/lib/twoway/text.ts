@@ -1,7 +1,7 @@
-// Programs and values as text. A program is the moves (not, swap, rot, stem, unit, eval) and id, put
-// together with `a ; b`, `a†`, tri(a, b, c), map(a, b, c) and fix(b), with self inside a fix; first(f),
-// second(f), par(f, g) and when(f) are shorthands for maps and a tri, and {tree} is any tree read as a
-// program. A value is △, △v, (u, v), T, F, a number, a word 0b1011, registers <0b10, 0b01>, or a
+// Programs and values as text. A program is the moves (swap, rot, stem, unit, eval) and id, put
+// together with `a ; b`, `a†`, tri(a, b, c), map(a, b, c) and fix(b), with self inside a fix, and
+// held(p) for a program that has run; first(f), second(f), par(f, g) and when(f) are shorthands for maps
+// and a tri, and {tree} is any tree read as a program. A value is △, △v, (u, v), T, F, a number, a word 0b1011, registers <0b10, 0b01>, or a
 // program as the tree it is, [p].
 
 import { F, L, S, ATOMS, asBit, asNat, copy, form, key, nat, prog, regs, registersOf, size, type Atom, type V } from './core'
@@ -49,7 +49,7 @@ export function nameOf(p: V): string | null {
   return null
 }
 
-const ARITY: Record<string, number> = { tri: 3, map: 3, fix: 1, first: 1, second: 1, par: 2, when: 1 }
+const ARITY: Record<string, number> = { tri: 3, map: 3, fix: 1, held: 1, first: 1, second: 1, par: 2, when: 1 }
 
 class Reader {
   i = 0
@@ -110,6 +110,8 @@ class Reader {
           return prog.map(a, b, c)
         case 'fix':
           return prog.fix(a)
+        case 'held':
+          return prog.held(a)
         case 'first':
           return prog.map(L(), a, L())
         case 'second':
@@ -223,6 +225,8 @@ export function progText(p: V, names = true, expand = false): string {
         return `par(${go(f.b, false)}, ${go(f.c, false)})`
       case 'fix':
         return `fix(${go(f.b, false)})`
+      case 'held':
+        return `held(${go(f.b, false)})`
     }
   }
   return go(p, expand)

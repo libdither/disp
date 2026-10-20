@@ -16,6 +16,12 @@ export interface Def {
 }
 
 export const LIBRARY: Def[] = [
+  {
+    group: 'bits',
+    name: 'not',
+    src: 'unit ; swap ; tri(stem, id, id) ; swap ; tri(stem, id, id)† ; swap ; unit†',
+    doc: 'F ⇄ T: an empty slot is set where the bit is F, the bit is cleared where the slot stayed F, and dropped'
+  },
   { group: 'bits', name: 'cnot', src: 'when(not)', doc: '(T, t) → (T, not t): when the left is T, not runs on the right' },
   { group: 'bits', name: 'toffoli', src: 'tri(id, id, when(cnot))', doc: '((T, T), t) → ((T, T), not t)' },
   { group: 'trees', name: 'xch', src: 'rot† ; first(swap) ; rot', doc: '(u, (v, w)) ⇄ (v, (u, w))' },
@@ -113,8 +119,14 @@ export interface Preset {
 }
 
 export const PRESETS: Preset[] = [
-  { name: 'not', prog: 'not', input: 'T', reads: 'bool', tip: 'The smallest move: not takes the stem off △△ (T), leaving △ (F), and puts it back on △.' },
-  { name: 'rot', prog: 'rot', input: '((T, F), T)', reads: 'bool', tip: 'rot moves a fork from the left to the right: ((u, v), w) becomes (u, (v, w)). Every node is kept; only the links change.' },
+  { name: 'rot', prog: 'rot', input: '((T, F), T)', reads: 'bool', tip: 'One move: rot moves a fork from the left to the right, ((u, v), w) becomes (u, (v, w)). Every node is kept; only the links change. Flip it (⇆) and fire again to move it back.' },
+  {
+    name: 'not',
+    prog: 'not',
+    input: 'T',
+    reads: 'bool',
+    tip: 'not is built from moves: an empty slot beside the bit is set where the bit is F, the bit is cleared where the slot stayed F, and the cleared bit is dropped.'
+  },
   {
     name: 'cnot',
     prog: 'cnot',
