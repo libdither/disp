@@ -11,6 +11,7 @@
     "snapshot": "tsx scripts/build-kernel-snapshot.mts",
     "validate:examples": "tsx scripts/validate-examples.mts",
     "vfs-check": "tsx scripts/vfs-check.mts",
+    "twoway-check": "tsx scripts/twoway-check.mts",
     "dono-stats": "tsx scripts/build-dono-stats.mts",
     "pages": "tsx scripts/link-pages.mts"
   },
