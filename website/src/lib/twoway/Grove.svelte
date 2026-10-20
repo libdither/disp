@@ -31,7 +31,8 @@
 
   const W = 680;
   const GROUND = 46;
-  const BUDGET = 40; // program nodes drawn open per run; past it, parts stay pods until clicked
+  const WHOLE = 30; // a tree this small opens whole; a bigger one keeps its named parts folded
+  const BUDGET = 300; // past this many open program nodes in one run, the rest stay pods until clicked
   const LEAF_TINTS = ["#6dbd7e", "#4aa96c", "#8fce9d", "#3d9b74", "#5cb787"];
   const CODE_TINTS = ["#a990d8", "#9a7ad6", "#b8a3e0"];
   const hash = (s: string) => {
@@ -129,8 +130,8 @@
    * still to run, which starts folded. */
   type Item =
     | { t: "node"; n: Node; ctx: Ctx; site?: string }
-    | { t: "data"; v: V; underStem: boolean; ctx: Ctx }
-    | { t: "prog"; v: V; site: string; root: V; pending?: V };
+    | { t: "data"; v: V; underStem: boolean; ctx: Ctx; whole?: boolean }
+    | { t: "prog"; v: V; site: string; root: V; pending?: V; whole?: boolean };
   /** Frames whose runs run parts of the frame's own program: those runs keep its site. */
   const OWN_PARTS = new Set<Wait>(["dag", "seq1", "seq2", "fix", "mapS", "mapF", "triL", "triS", "triF"]);
   const below = (ctx: Ctx, stem: boolean): Ctx =>
@@ -242,7 +243,8 @@
         const v = it.v;
         const key = `v${v.id}`;
         const prog = size(v) >= 6 ? nameOf(v) : null;
-        if (prog && !prog.endsWith("†") && !opened.has(key)) {
+        const whole = it.whole || (opened.has(key) && size(v) <= WHOLE);
+        if (prog && !prog.endsWith("†") && !opened.has(key) && !it.whole) {
           node = { ...blank, key, kind: "dpod", name: prog, tip: `${prog}, a program held as data (click to open)`, open: { v, site: "v" } };
         } else {
           const label = dataLabel(v, it.underStem, it.ctx);
@@ -255,7 +257,7 @@
             open: prog ? { v, site: "v" } : undefined
           };
           const ctx = label && v.tag === "stem" && it.ctx !== "leaf" ? "bit" : below(it.ctx, v.tag === "stem");
-          kids = vkids(v).map((c) => ({ t: "data", v: c, underStem: v.tag === "stem", ctx }));
+          kids = vkids(v).map((c) => ({ t: "data", v: c, underStem: v.tag === "stem", ctx, whole }));
         }
       } else {
         const v = it.v;
@@ -263,16 +265,18 @@
         const isRoot = v === it.root;
         const role = rolesOf(it.root).get(v) ?? null;
         const base = { ...blank, key, open: { v, site: it.site }, pending: !!it.pending };
-        const rootKey = `${it.site}:${it.root.id}`;
         const count = used.get(it.site) ?? 0;
-        const pod = closed.has(key)
-          ? true
-          : opened.has(key)
-            ? false
-            : (!programs && !opened.has(rootKey)) ||
-              (!isRoot && role !== null && (atomic(v) || bigName(v))) ||
-              v === it.pending ||
-              count >= BUDGET;
+        // a tree opened by a click, or a run's own program, opens whole when it is small; inside a bigger
+        // one the moves and named parts stay pods
+        let whole = !!it.whole;
+        let pod: boolean;
+        if (closed.has(key)) pod = true;
+        else if (opened.has(key) || (isRoot && programs)) {
+          pod = false;
+          whole = size(v) <= WHOLE;
+        } else
+          pod =
+            isRoot || v === it.pending || (!whole && ((role !== null && (atomic(v) || bigName(v))) || count >= BUDGET));
         if (pod) {
           const name = isRoot || atomic(v) || v === it.pending ? progLabel(v) : (role ?? "…");
           node = { ...base, kind: "pod", name, tip: `${progDef(v)} — click to open` };
@@ -282,7 +286,7 @@
           else {
             const what = role ? `${role}: ${short(progLabel(v), 60)}` : short(show(v), 60);
             node = { ...base, kind: "code", label: role, tip: `${what} — click to fold` };
-            kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root, pending: it.pending }));
+            kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root, pending: it.pending, whole }));
           }
         }
         step = 0.8;

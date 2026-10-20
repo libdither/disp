@@ -353,7 +353,7 @@
   // svelte-ignore state_referenced_locally
   const podMode = !!(defs || resolveDef);
   const AUTOFOLD_MIN = 9; // unseen non-apply data this big folds shut
-  const UNFOLD_BUDGET = 16; // nodes revealed per pod click
+  const WHOLE_MAX = 30; // a pod this small opens whole; a bigger one keeps its named parts folded
   let folded = new Map<T, string | null>(); // root -> label (null = anonymous)
   let seen = new WeakSet<T>(); // every node that has ever been drawn
   const sizeMemo = new WeakMap<T, number>();
@@ -376,35 +376,41 @@
     }
     return null;
   }
-  // reveal one budgeted level from a pod root: children beyond the budget
-  // re-fold — but ONLY when they have a recognized name (a numeral, a
-  // string, a dictionary match). An unnameable subtree is not a pod: hiding
-  // structure behind an ellipsis reads as noise, so it draws instead.
-  function reveal(root: T, budget: number) {
-    let left = budget;
+  // open a pod: a small one (WHOLE_MAX nodes or fewer) opens whole, pods
+  // inside it too; a bigger one opens all but its named parts (a numeral, a
+  // string, a dictionary match), which stay pods to open in turn. An
+  // unnameable subtree is not a pod: hiding structure behind an ellipsis
+  // reads as noise, so it draws instead. A subtree the user folded stays so,
+  // and one drawn open before opens again as it was.
+  function reveal(root: T) {
+    const whole = sizeOf(root) <= WHOLE_MAX;
     const visit = (t: T) => {
       seen.add(t);
-      left--;
       for (const c of childrenOf(t)) {
-        if (seen.has(c) || folded.has(c)) continue;
-        if (left > 0 || sizeOf(c) <= 3) {
-          visit(c);
-          continue;
+        if (userFolded.has(c)) continue;
+        if (whole) folded.delete(c);
+        else if (folded.has(c)) continue;
+        else if (!seen.has(c) && sizeOf(c) > 3) {
+          const name = autoName(c);
+          if (name !== null) {
+            folded.set(c, name);
+            continue;
+          }
         }
-        const name = autoName(c);
-        if (name !== null) folded.set(c, name);
-        else visit(c);
+        visit(c);
       }
     };
     visit(root);
   }
+  const userFolded = new WeakSet<T>(); // subtrees the user closed, which only a click opens
   function openPod(t: T) {
     // before any step, a labeled pod is a host atom — the host may prefer to
     // unfold its own value (and re-seed this panel) instead of a local reveal
     const label = folded.get(t);
     if (onPodOpen && stepCount === 0 && label && onPodOpen(label)) return;
     if (!folded.delete(t) || !cur) return;
-    reveal(t, UNFOLD_BUDGET);
+    userFolded.delete(t);
+    reveal(t);
     show(cur);
   }
   // the reverse of openPod: any subtree of the data folds into a pod on
@@ -415,6 +421,7 @@
   function closePod(t: T) {
     if (!cur || t === cur || t.tag === "apply" || folded.has(t) || sizeOf(t) < 2) return;
     folded.set(t, autoName(t));
+    userFolded.add(t);
     show(cur, { allShrink: true });
   }
   // after a step: fold big DATA the rewrite newly exposed — but only when it
