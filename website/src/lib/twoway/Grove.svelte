@@ -7,7 +7,7 @@
   // combinator that holds no node is a bead. A finished run is a solid ring that keeps its program.
   // Every node is keyed by what it is, so a move's nodes glide to where it puts them.
   import { fade, scale } from "svelte/transition";
-  import { asBit, asNat, form, kids as vkids, registersOf, size, type V } from "./core";
+  import { asBit, asNat, form, kids as vkids, registersOf, show, size, type V } from "./core";
   import { nameOf, progDef, progLabel, type Reads } from "./text";
   import { glyph, say, type Node, type Wait } from "./machine";
 
@@ -59,7 +59,8 @@
     triS: "tri holds this stem, taken off the left, while the second part runs"
   };
 
-  // ---- folding: a run's program is drawn open, with its moves and big named parts as pods. A click on an
+  // ---- folding: a run's program is drawn open, with the moves and big named parts inside it as pods (a
+  // move that is a run's whole program opens, so a pod opens as it reaches its run). A click on an
   // open part folds it, a click on a pod opens it. Program nodes are keyed by the run whose program they
   // belong to and by node, so a fold stays put while that part travels down into the runs of its parts ----
   let closed = $state(new Set<string>());
@@ -269,8 +270,7 @@
           : opened.has(key)
             ? false
             : (!programs && !opened.has(rootKey)) ||
-              atomic(v) ||
-              (!isRoot && bigName(v)) ||
+              (!isRoot && role !== null && (atomic(v) || bigName(v))) ||
               v === it.pending ||
               count >= BUDGET;
         if (pod) {
@@ -280,7 +280,8 @@
           used.set(it.site, count + 1);
           if (v.tag === "leaf") node = { ...base, kind: "codeleaf", label: role, tip: role === "id" ? "id: does nothing" : "△" };
           else {
-            node = { ...base, kind: "code", label: role, tip: `${role ? role + ": " : ""}${short(progLabel(v), 60)} — click to fold` };
+            const what = role ? `${role}: ${short(progLabel(v), 60)}` : short(show(v), 60);
+            node = { ...base, kind: "code", label: role, tip: `${what} — click to fold` };
             kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root, pending: it.pending }));
           }
         }

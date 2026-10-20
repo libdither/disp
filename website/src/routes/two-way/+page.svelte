@@ -32,8 +32,9 @@
   <h2>How to read the tree</h2>
   <p>
     A run starts as one <strong>bud</strong> (the dashed ring): a program about to run on the value to
-    its right. Its program is the purple tree on its left, with each move and each big named part as a
-    pod; click any part to fold it, and a pod to open it again. The mark on a bud is the move it will
+    its right. Its program is the purple tree on its left, with the moves and big named parts inside it
+    as pods, which open when they reach a run of their own; click any part to fold it, and a pod to open
+    it again. The mark on a bud is the move it will
     make. When a combinator starts, it takes its value apart and hands the parts to new buds, and the
     parts of its program travel up into them: <code>map</code> and <code>tri</code> hold on to the node they opened,
     which stays where the bud was inside a blue (map) or amber (tri) ring, and the others leave a small
