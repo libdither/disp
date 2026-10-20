@@ -132,7 +132,7 @@ timed('every tree as a program, on small trees', () => {
 
 /** A random program from the forms, with self only inside a fix. */
 function randomProg(depth: number, inFix: boolean): V {
-  const atoms = ['not', 'swap', 'rot', 'stem', 'unit', 'eval', ...(inFix ? ['self', 'self'] : [])]
+  const atoms = ['not', 'swap', 'cross', 'sink', 'rot', 'stem', 'unit', 'eval', ...(inFix ? ['self', 'self'] : [])]
   const r = rand()
   if (depth <= 0 || r < 0.3) return r < 0.05 ? L() : parseProg(atoms[Math.floor(rand() * atoms.length)])
   const sub = (fix = inFix) => randomProg(depth - 1, fix)

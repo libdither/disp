@@ -1,4 +1,4 @@
-// Programs and values as text. A program is the moves (swap, rot, stem, unit, eval) and id, put
+// Programs and values as text. A program is the moves (swap, cross, sink, stem, unit, eval) and id, put
 // together with `a ; b`, `a†`, tri(a, b, c), map(a, b, c) and fix(b), with self inside a fix, and
 // held(p) for a program that has run; first(f), second(f), par(f, g) and when(f) are shorthands for maps
 // and a tri, and {tree} is any tree read as a program. A value is △, △v, (u, v), T, F, a number, a word 0b1011, registers <0b10, 0b01>, or a

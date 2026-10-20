@@ -239,12 +239,13 @@ export function glyph(n: Node): string | null {
   if (n.k === 'frame') return n.w === 'seq1' ? '→' : '✓'
   const { f, fwd } = read(n.p)
   if (f.k !== 'atom') return { id: '=', held: '=', dag: '', seq: ';', tri: '?', map: '∥', fix: 'μ', none: '' }[f.k]
-  return { self: '↩', swap: '⇄', rot: fwd ? '↻' : '↺', stem: fwd ? '+' : '−', unit: fwd ? '⊕' : '⊖', eval: '▷' }[f.n]
+  return { self: '↩', swap: '⇄', cross: '×', sink: '⇅', stem: fwd ? '+' : '−', unit: fwd ? '⊕' : '⊖', eval: '▷' }[f.n]
 }
 
 const MOVE_SAYS: Record<string, [string, string]> = {
   swap: ['swap: (u, v) becomes (v, u)', 'swap: (u, v) becomes (v, u)'],
-  rot: ['rot: ((u, v), w) becomes (u, (v, w))', 'rot†: (u, (v, w)) becomes ((u, v), w)'],
+  cross: ['cross: ((u, v), w) becomes ((u, w), v)', 'cross: ((u, v), w) becomes ((u, w), v)'],
+  sink: ['sink: △(u, v) becomes (△u, v), and (△u, v) becomes △(u, v)', 'sink: △(u, v) becomes (△u, v), and (△u, v) becomes △(u, v)'],
   stem: ['stem: x becomes △x', 'stem†: △x becomes x'],
   unit: ['unit: x becomes (△, x)', 'unit†: (△, x) becomes x']
 }
@@ -308,6 +309,6 @@ export function say(n: Node): string {
 export function tag(n: Node): string {
   if (n.k === 'frame') return { seq1: ';', seq2: ';', self: 'self', fix: 'fix', eval: 'eval', mapS: 'map', mapF: 'map', triL: 'tri', triS: 'tri', triF: 'tri' }[n.w]
   const { f, fwd } = read(n.p)
-  if (f.k === 'atom') return fwd || f.n === 'swap' || f.n === 'self' || f.n === 'eval' ? f.n : f.n + '†'
+  if (f.k === 'atom') return fwd || (f.n !== 'stem' && f.n !== 'unit') ? f.n : f.n + '†'
   return { id: 'id', held: 'id', dag: '†', seq: ';', tri: 'tri', map: 'map', fix: 'fix', none: '?' }[f.k]
 }

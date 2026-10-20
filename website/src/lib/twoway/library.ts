@@ -24,9 +24,9 @@ export const LIBRARY: Def[] = [
   },
   { group: 'bits', name: 'cnot', src: 'when(not)', doc: '(T, t) → (T, not t): when the left is T, not runs on the right' },
   { group: 'bits', name: 'toffoli', src: 'tri(id, id, when(cnot))', doc: '((T, T), t) → ((T, T), not t)' },
+  { group: 'trees', name: 'rot', src: 'first(swap) ; cross ; swap', doc: '((u, v), w) ⇄ (u, (v, w)): three moves, each its own inverse' },
   { group: 'trees', name: 'xch', src: 'rot† ; first(swap) ; rot', doc: '(u, (v, w)) ⇄ (v, (u, w))' },
   { group: 'trees', name: 'transpose', src: 'rot ; second(xch) ; rot†', doc: '((a, b), (c, d)) ⇄ ((a, c), (b, d))' },
-  { group: 'trees', name: 'cross', src: 'rot ; second(swap) ; rot†', doc: '((u, v), w) ⇄ ((u, w), v)' },
   { group: 'trees', name: 'add', src: 'fix(tri(id, self ; second(stem), id))', doc: '(a, b) → (a, a + b), numbers counted in stems' },
   {
     group: 'trees',
@@ -119,7 +119,27 @@ export interface Preset {
 }
 
 export const PRESETS: Preset[] = [
-  { name: 'rot', prog: 'rot', input: '((T, F), T)', reads: 'bool', tip: 'One move: rot moves a fork from the left to the right, ((u, v), w) becomes (u, (v, w)). Every node is kept; only the links change. Flip it (⇆) and fire again to move it back.' },
+  {
+    name: 'cross',
+    prog: 'cross',
+    input: '((T, F), T)',
+    reads: 'bool',
+    tip: 'One move: cross trades the right parts of a fork and its left half, ((u, v), w) becomes ((u, w), v). Every node is kept; only the links change. Done twice it is undone, so it is its own inverse.'
+  },
+  {
+    name: 'sink',
+    prog: 'sink',
+    input: '△(T, F)',
+    reads: 'tree',
+    tip: 'One move: sink moves a stem between a fork and its left half, △(u, v) becomes (△u, v), and the other way round. It too is its own inverse.'
+  },
+  {
+    name: 'rot',
+    prog: 'rot',
+    input: '((T, F), T)',
+    reads: 'bool',
+    tip: 'rot, ((u, v), w) becomes (u, (v, w)), is three moves: swap the left half, cross, swap. Each is its own inverse, so rot† is the same three in the other order. Flip it (⇆) and fire again to move it back.'
+  },
   {
     name: 'not',
     prog: 'not',

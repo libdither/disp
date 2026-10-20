@@ -1,6 +1,6 @@
 // Two-way programs: a reversible calculus on trees. A program is a tree, read by its top shape the way
-// tree calculus reads one, and built from four moves that rearrange a tree (swap, rot, stem, unit) and a
-// few ways to put programs together: a then b, b run backward, a branch on the shape of a value's left
+// tree calculus reads one, and built from five moves that rearrange a tree (swap, cross, sink, stem, unit;
+// the first three are their own inverse) and a few ways to put programs together: a then b, b run backward, a branch on the shape of a value's left
 // part that puts that shape back (tri), the same on the value's own shape with its parts at once (map),
 // and recursion (fix, self). Programs being trees, a program can make, take apart and run programs
 // (eval). A program that has run is held: it does nothing until it is flipped, which turns it around.
@@ -102,7 +102,7 @@ export function registersOf(v: V): string[] | null {
 
 // ---- programs -------------------------------------------------------------------------------------
 
-export const ATOMS = ['self', 'swap', 'rot', 'stem', 'unit', 'eval'] as const
+export const ATOMS = ['self', 'swap', 'cross', 'sink', 'stem', 'unit', 'eval'] as const
 export type Atom = (typeof ATOMS)[number]
 /** What a tree does as a program. A tree of no form here is no program, and running it is stuck. */
 export type Form =
@@ -163,15 +163,18 @@ export const prog = {
   atom: (n: Atom): V => nat(ATOMS.indexOf(n) + 1)
 }
 
-/** One of the four moves on x, forward or backward, keeping every node it does not make or take away:
- * null where it has nothing to undo (rot needs a fork on the left, stem† a stem, unit† a (△, x)). */
+/** One of the five moves on x, forward or backward, keeping every node it does not make or take away:
+ * null where it has nothing to undo (stem† needs a stem, unit† a (△, x)). swap, cross and sink leave a
+ * tree they do not fit as it is, so each is its own inverse. */
 export function move(n: Atom, x: V, fwd: boolean): V | null {
   switch (n) {
     case 'swap':
       return x.tag === 'fork' ? F(x.r, x.l, x.id) : x
-    case 'rot':
-      if (fwd) return x.tag === 'fork' && x.l.tag === 'fork' ? F(x.l.l, F(x.l.r, x.r, x.l.id), x.id) : null
-      return x.tag === 'fork' && x.r.tag === 'fork' ? F(F(x.l, x.r.l, x.r.id), x.r.r, x.id) : null
+    case 'cross':
+      return x.tag === 'fork' && x.l.tag === 'fork' ? F(F(x.l.l, x.r, x.l.id), x.l.r, x.id) : x
+    case 'sink':
+      if (x.tag === 'stem' && x.c.tag === 'fork') return F(S(x.c.l, x.id), x.c.r, x.c.id)
+      return x.tag === 'fork' && x.l.tag === 'stem' ? S(F(x.l.c, x.r, x.id), x.l.id) : x
     case 'stem':
       if (fwd) return S(x)
       return x.tag === 'stem' ? x.c : null

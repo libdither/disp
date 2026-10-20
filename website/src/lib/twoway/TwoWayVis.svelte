@@ -288,7 +288,7 @@
       <span class="info-pop" role="tooltip">
         Edits parse as you type; <kbd>space</kbd> plays, <kbd>→</kbd> fires, <kbd>←</kbd> takes it back,
         <kbd>f</kbd> flips, <kbd>shift</kbd>+arrows change example, <kbd>r</kbd> resets. A program:
-        <code>swap</code> <code>rot</code> <code>stem</code> <code>unit</code> <code>eval</code>
+        <code>swap</code> <code>cross</code> <code>sink</code> <code>stem</code> <code>unit</code> <code>eval</code>
         <code>id</code>, <code>a ; b</code>, <code>a†</code>, <code>tri(a, b, c)</code>, <code>map(a, b, c)</code>,
         <code>fix(b)</code> with <code>self</code> inside, <code>held(p)</code> for a program that has run, the
         shorthands <code>first(f)</code>

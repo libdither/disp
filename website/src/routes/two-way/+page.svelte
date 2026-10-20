@@ -14,14 +14,14 @@
   <title>Two-way programs · disp</title>
   <meta
     name="description"
-    content="A reversible calculus on trees: programs are trees put together from four moves; a run is fired one small local move at a time, and flipped to run it back."
+    content="A reversible calculus on trees: programs are trees put together from five moves; a run is fired one small local move at a time, and flipped to run it back."
   />
 </svelte:head>
 
 <div class="container page">
   <h1>Two-way programs, <span class="grad-text">step by step</span></h1>
   <p class="lede">
-    A program here is a tree, put together from four moves that rearrange a tree and a few ways to
+    A program here is a tree, put together from five moves that rearrange a tree and a few ways to
     combine programs. A run is a tree of dots, each a program on a value, and there are two things you
     can do to it: fire makes one small move at one dot, and flip turns a dot around without computing
     anything, so that firing runs it back. Dots that do not wait on each other fire at once.
@@ -81,16 +81,19 @@
       <tr><td><code>△(△, b)</code></td><td><code>fix(b)</code></td><td>b, where <code>self</code> runs b again</td></tr>
       <tr><td><code>△△</code></td><td><code>self</code></td><td>the innermost fix's b, again</td></tr>
       <tr><td><code>△△△</code></td><td><code>swap</code></td><td>(u, v) becomes (v, u)</td></tr>
-      <tr><td><code>△△△△</code></td><td><code>rot</code></td><td>((u, v), w) becomes (u, (v, w))</td></tr>
-      <tr><td><code>△△△△△</code></td><td><code>stem</code></td><td>x becomes △x</td></tr>
-      <tr><td><code>△△△△△△</code></td><td><code>unit</code></td><td>x becomes (△, x)</td></tr>
-      <tr><td><code>△△△△△△△</code></td><td><code>eval</code></td><td>(q, z) becomes (q, q z): the left part run as a program</td></tr>
+      <tr><td><code>△△△△</code></td><td><code>cross</code></td><td>((u, v), w) becomes ((u, w), v)</td></tr>
+      <tr><td><code>△△△△△</code></td><td><code>sink</code></td><td>△(u, v) becomes (△u, v), and (△u, v) becomes △(u, v)</td></tr>
+      <tr><td><code>△△△△△△</code></td><td><code>stem</code></td><td>x becomes △x</td></tr>
+      <tr><td><code>△△△△△△△</code></td><td><code>unit</code></td><td>x becomes (△, x)</td></tr>
+      <tr><td><code>△△△△△△△△</code></td><td><code>eval</code></td><td>(q, z) becomes (q, q z): the left part run as a program</td></tr>
     </tbody>
   </table>
   <p>
-    Any other tree is not a program, and running it gets stuck. So does a move with nothing to undo:
-    <code>rot</code> needs a fork on the left, and backward, <code>stem</code> needs a stem and
-    <code>unit</code> a (△, x). A held part is never started, since it stands for a run that has already
+    <code>swap</code>, <code>cross</code> and <code>sink</code> leave a tree they do not fit as it is,
+    so each is its own inverse, and the others build on them: <code>rot</code>, which makes
+    ((u, v), w) into (u, (v, w)), is <code>first(swap) ; cross ; swap</code>. Any other tree is not a
+    program, and running it gets stuck. So does a move with nothing to undo: backward,
+    <code>stem</code> needs a stem and <code>unit</code> a (△, x). A held part is never started, since it stands for a run that has already
     happened, so a program that would start one is stuck there too. <code>first(f)</code>,
     <code>second(f)</code> and <code>par(f, g)</code> are short for <code>map(id, f, id)</code>,
     <code>map(id, id, f)</code> and <code>map(id, f, g)</code>, and <code>when(f)</code> for
@@ -107,13 +110,13 @@
   <h2>Fire and flip</h2>
   <p>
     Fire rewrites one node of the run and looks no further than the nodes just under it. There are
-    twenty-seven kinds: a live dot starts (<code>id</code> does nothing, one of the four moves
+    twenty-eight kinds: a live dot starts (<code>id</code> does nothing, one of the five moves
     rearranges its value, a combinator becomes a frame over dots for its parts), a frame whose dots have
     all run closes, or a sequence goes on to its second part. A dot that has run gets its program held.
     The same rules run a program backward: they read through the †s on top of a program, a move runs
-    as its inverse (<code>rot</code> as <code>rot†</code>, <code>stem</code> as <code>stem†</code>,
-    <code>unit</code> as <code>unit†</code>), and each part is turned around as it starts. No move
-    copies or drops a tree: the four moves only relink, add or take away the nodes they name, and a
+    as its inverse (<code>stem</code> as <code>stem†</code>, <code>unit</code> as <code>unit†</code>,
+    and the other three as themselves), and each part is turned around as it starts. No move
+    copies or drops a tree: the five moves only relink, add or take away the nodes they name, and a
     frame keeps every node it takes apart until it puts it back. Copying is a program like any other
     (<code>copy</code> below), and it walks the tree it copies a node at a time.
   </p>
@@ -145,7 +148,7 @@
     one), the carries come down it, every b becomes its bit of the sum, and then the carries are taken
     back out, which works because the carries of <code>a + not(a + b)</code> are the carries of
     <code>a + b</code>. It is a long program in small moves, and how long depends a little on the
-    bits: 1,400 to 2,000 rounds at 4 bits, 2,100 to 2,600 at 8, and about 4,000 at 64. Its rounds,
+    bits: 2,300 to 2,700 rounds at 4 bits, 2,900 to 3,600 at 8, and about 5,700 at 64. Its rounds,
     too, grow with the depth of the tree and not its width.
   </p>
 
