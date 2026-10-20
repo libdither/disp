@@ -32,14 +32,16 @@
   <h2>How to read the tree</h2>
   <p>
     A run starts as one <strong>bud</strong> (the dashed ring): a program about to run on the value to
-    its right. Its program is the purple pod on its left; click the pod to open it into its tree. The
-    mark on a bud is the move it will make. When a combinator starts, it takes its value apart and
-    hands the parts to new buds: <code>map</code> and <code>tri</code> hold on to the node they opened,
+    its right. Its program is the purple tree on its left, with each move and each big named part as a
+    pod; click any part to fold it, and a pod to open it again. The mark on a bud is the move it will
+    make. When a combinator starts, it takes its value apart and hands the parts to new buds, and the
+    parts of its program travel up into them: <code>map</code> and <code>tri</code> hold on to the node they opened,
     which stays where the bud was inside a blue (map) or amber (tri) ring, and the others leave a small
     <strong>bead</strong> on the way down: <code>;</code> for a sequence, <code>†</code>,
     <code>μ</code> for <code>fix</code>, <code>↩</code> for <code>self</code>,
     <code>▷</code> for <code>eval</code>, and <code>?</code> for a <code>tri</code> whose left part is
-    a fork, which it opens by rotating rather than holding. When every part under a ring or bead is done, it closes,
+    a fork, which it opens by rotating rather than holding. A <code>;</code> bead keeps the part of the
+    sequence still to run beside it, dashed, until its turn. When every part under a ring or bead is done, it closes,
     putting back what it held. A solid ring is a finished run, which keeps its program.
   </p>
   <p>

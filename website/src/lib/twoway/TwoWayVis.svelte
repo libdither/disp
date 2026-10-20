@@ -19,6 +19,7 @@
   let fwd = $state(true);
   let motion = $state(true);
   let labels = $state(true);
+  let programs = $state(true);
   let running = $state(false);
   let ruleMsg = $state("");
   let steps = $state(0);
@@ -218,6 +219,7 @@
 {#snippet icoParallel()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 8.5 h9" /><path d="M10.5 5.5 L13.5 8.5 L10.5 11.5" /><path d="M4 15.5 h9" /><path d="M10.5 12.5 L13.5 15.5 L10.5 18.5" /></svg>{/snippet}
 {#snippet icoDirection()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 8 h15" /><path d="M16 5 L19 8 L16 11" /><path d="M20 16 h-15" /><path d="M8 13 L5 16 L8 19" /></svg>{/snippet}
 {#snippet icoMotion()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M9.6 4.6 A2 2 0 1 1 11 8 H2.5 M12.6 19.4 A2 2 0 1 0 14 16 H2.5 M17.7 7.7 A2.5 2.5 0 1 1 19.5 12 H2.5" /></svg>{/snippet}
+{#snippet icoPrograms()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M8 5 L3 12 L8 19" /><path d="M16 5 L21 12 L16 19" /><path d="M13.5 4 L10.5 20" /></svg>{/snippet}
 {#snippet icoLabels()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M20.4 13.4 l-7 7 a2 2 0 0 1 -2.8 0 L2.5 12 V2.5 h9.5 l8.4 8.4 a2 2 0 0 1 0 2.5 Z" /><circle cx="7.3" cy="7.3" r="1.15" fill="currentColor" stroke="none" /></svg>{/snippet}
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -242,7 +244,7 @@
     <p class="err">{compiled.err}</p>
   {:else if m}
     <div class="scroller">
-      <Grove root={m} {reads} {labels} motion={smooth} {fwd} {next} epoch={compiled} {onSite} />
+      <Grove root={m} {reads} {labels} {programs} motion={smooth} {fwd} {next} epoch={compiled} {onSite} />
     </div>
     <div class="readout">
       <div class="rline">
@@ -348,6 +350,14 @@
         data-tip="motion — glide, grow and shrink vs instant"
         aria-label="motion"
         onclick={() => (motion = !motion)}>{@render icoMotion()}</button
+      >
+      <button
+        class="mpi sel"
+        class:on={programs}
+        aria-pressed={programs}
+        data-tip="programs — each run's program drawn open, or folded into one pod"
+        aria-label="programs"
+        onclick={() => (programs = !programs)}>{@render icoPrograms()}</button
       >
       <button
         class="mpi sel"

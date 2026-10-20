@@ -407,15 +407,14 @@
     reveal(t, UNFOLD_BUDGET);
     show(cur);
   }
-  // the reverse of openPod: a recognized subtree (a numeral, a string, a
-  // dictionary match) folds back into a pod on demand — click its badge, or
-  // shift-click its root when badges are off. Never the root or an apply (the
-  // machinery always draws). The hidden children dissolve: nothing was discarded.
+  // the reverse of openPod: any subtree of the data folds into a pod on
+  // demand — click it (or its badge) — wearing its name if it has one, "…"
+  // if not; clicking the pod opens it again as it was. Never the root, an
+  // apply (the machinery always draws) or a lone leaf. The hidden children
+  // dissolve: nothing was discarded.
   function closePod(t: T) {
-    if (!cur || t === cur || t.tag === "apply" || folded.has(t)) return;
-    const name = autoName(t);
-    if (name === null) return;
-    folded.set(t, name);
+    if (!cur || t === cur || t.tag === "apply" || folded.has(t) || sizeOf(t) < 2) return;
+    folded.set(t, autoName(t));
     show(cur, { allShrink: true });
   }
   // after a step: fold big DATA the rewrite newly exposed — but only when it
@@ -494,6 +493,7 @@
     vname: string | null; // a named leaf's name — always shown
     pod: string | null; // a folded defs splice: real structure, drawn shut
     canFire: boolean; // an apply the user can fire by clicking (ready, or an engine-able spine head)
+    canFold: boolean; // data the user can fold shut by clicking
     fresh?: boolean; // no prior position: genuinely new growth
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
@@ -633,6 +633,7 @@
         vname: n.tree.tag === "var" ? n.tree.name : null,
         pod,
         canFire,
+        canFold: !canFire && !pod && n.path !== "r" && sizeOf(n.tree) >= 2,
       };
     });
     const byPath = new Map(out.map((n) => [n.path, n]));
@@ -1509,10 +1510,12 @@
               class="inner"
               class:growing={motion && styled && n.fresh !== false}
               class:fireable={n.canFire}
+              class:foldable={n.canFold}
               style="--gd: {n.depth * 55}ms"
               onclick={(e) =>
-                e.shiftKey ? closePod(n.tree) : n.canFire && clickApply(n)}
+                n.canFire && !e.shiftKey ? clickApply(n) : closePod(n.tree)}
             >
+              {#if n.canFold}<title>click to fold this subtree (click the pod to open it again)</title>{/if}
               {#if n.pod != null}
                 <!-- a seed pod: a real subtree folded shut. Reduction computes
                      THROUGH it (results re-fold on arrival); a click reveals
@@ -1527,7 +1530,7 @@
                     openPod(n.tree);
                   }}
                 >
-                  <title>unfold one level</title>
+                  <title>click to open</title>
                   {#if styled}<path
                       class="fstalk"
                       d="M0,-9 Q1,-13 3.5,-14.5"
@@ -2466,7 +2469,8 @@
   }
 
   /* clickable redexes: the pointer says "fire me"; hovering thickens the ring */
-  .inner.fireable {
+  .inner.fireable,
+  .inner.foldable {
     cursor: pointer;
   }
   .hitzone {

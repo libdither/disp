@@ -1,10 +1,11 @@
 <script lang="ts">
   // A run drawn the way the site's tree-calculus visualizer (TreeVis) draws a tree: on a hill, data as
-  // leaves and knots, programs in purple. A bud (dashed ring) is a program about to run, its program on
-  // the left and its value on the right; it wears the move it will make. When a combinator starts, the
-  // node it takes apart is kept where the bud was, ringed (map's in blue, tri's in amber), with the runs
-  // of its parts hanging under it; a combinator that holds no node is a bead. A finished run is a solid
-  // ring that keeps its program. Nodes are keyed by id, so a move's nodes glide to where it puts them.
+  // leaves and knots, programs in purple. A bud (dashed ring) is a program about to run, its program
+  // drawn open on the left and its value on the right; it wears the move it will make. When a
+  // combinator starts, the node it takes apart is kept where the bud was, ringed (map's in blue, tri's
+  // in amber), with the runs of its parts above it, and the parts of its program travel up into them; a
+  // combinator that holds no node is a bead. A finished run is a solid ring that keeps its program.
+  // Every node is keyed by what it is, so a move's nodes glide to where it puts them.
   import { fade, scale } from "svelte/transition";
   import { asBit, asNat, form, kids as vkids, registersOf, size, type V } from "./core";
   import { nameOf, progDef, progLabel, type Reads } from "./text";
@@ -21,13 +22,16 @@
     next?: number | null;
     /** A new run: the height starts over (it otherwise keeps to the tallest the run has been). */
     epoch?: unknown;
+    /** Draw each run's program open (its moves and named parts as pods), or folded into one pod. */
+    programs?: boolean;
     onSite: (id: number) => void;
   }
-  let { root, reads, labels = true, motion = true, fwd = true, next = null, epoch = null, onSite }: Props = $props();
+  let { root, reads, labels = true, motion = true, fwd = true, next = null, epoch = null, programs = true, onSite }: Props =
+    $props();
 
   const W = 680;
   const GROUND = 46;
-  const UNFOLD_BUDGET = 18;
+  const BUDGET = 40; // program nodes drawn open per run; past it, parts stay pods until clicked
   const LEAF_TINTS = ["#6dbd7e", "#4aa96c", "#8fce9d", "#3d9b74", "#5cb787"];
   const CODE_TINTS = ["#a990d8", "#9a7ad6", "#b8a3e0"];
   const hash = (s: string) => {
@@ -55,26 +59,20 @@
     triS: "tri holds this stem, taken off the left, while the second part runs"
   };
 
-  // ---- folding: programs start as pods; a click reveals some of the tree, a click on it folds it ----
+  // ---- folding: a run's program is drawn open, with its moves and big named parts as pods. A click on an
+  // open part folds it, a click on a pod opens it. Program nodes are keyed by the run whose program they
+  // belong to and by node, so a fold stays put while that part travels down into the runs of its parts ----
+  let closed = $state(new Set<string>());
   let opened = $state(new Set<string>());
-  function reveal(key: string, v: V, site: string) {
+  const atomic = (v: V) => v.tag === "stem" && form(v).k === "atom";
+  const bigName = (v: V) => size(v) >= 6 && !!nameOf(v);
+  function toggle(key: string, isPod: boolean) {
+    const c = new Set(closed);
     const o = new Set(opened);
-    let left = UNFOLD_BUDGET;
-    const visit = (k: string, u: V) => {
-      o.add(k);
-      left--;
-      for (const ch of vkids(u)) {
-        const ck = `${site}:${ch.id}`;
-        const big = !!nameOf(ch) && size(ch) >= 6;
-        if (!big || left > 0) visit(ck, ch);
-      }
-    };
-    visit(key, v);
-    opened = o;
-  }
-  function fold(key: string) {
-    const o = new Set(opened);
-    o.delete(key);
+    if (isPod) {
+      if (!c.delete(key)) o.add(key);
+    } else if (!o.delete(key)) c.add(key);
+    closed = c;
     opened = o;
   }
 
@@ -118,15 +116,22 @@
     name: string | null;
     tip: string | null;
     open?: { v: V; site: string };
+    /** A program part still to run. */
+    pending?: boolean;
   }
   /** Where a node sits in a word, for reading bits: the top of a value, a part of a word, the inside of
    * a word's leaf (a bit or a tuple of bits), or below a bit. △△ is T as a bit, but a one-bit word
    * holding F as a word, so a label needs to know which. */
   type Ctx = "top" | "word" | "leaf" | "bit";
+  /** A program part: `site` names the run it belongs to (a run whose program is a part of its parent's
+   * keeps the parent's), `root` is that run's whole program, and `pending` is the part of a sequence
+   * still to run, which starts folded. */
   type Item =
-    | { t: "node"; n: Node; ctx: Ctx }
+    | { t: "node"; n: Node; ctx: Ctx; site?: string }
     | { t: "data"; v: V; underStem: boolean; ctx: Ctx }
-    | { t: "prog"; v: V; site: string; root: V };
+    | { t: "prog"; v: V; site: string; root: V; pending?: V };
+  /** Frames whose runs run parts of the frame's own program: those runs keep its site. */
+  const OWN_PARTS = new Set<Wait>(["dag", "seq1", "seq2", "fix", "mapS", "mapF", "triL", "triS", "triF"]);
   const below = (ctx: Ctx, stem: boolean): Ctx =>
     ctx === "top" || ctx === "word" ? (stem ? "leaf" : "word") : ctx === "leaf" && !stem ? "leaf" : "bit";
 
@@ -158,6 +163,7 @@
   function scene(t: Node): { nodes: Laid[]; glyph: number; height: number } {
     const out: Omit<Laid, "y">[] = [];
     const blank = { site: null, glyph: null, stuck: false, back: false, label: null, name: null, tip: null };
+    const used = new Map<string, number>();
 
     function go(it: Item, depth: number, parent: string | null): { rootX: number; w: number } {
       let node: Omit<Laid, "x" | "y" | "depth" | "parent">;
@@ -166,6 +172,8 @@
       if (it.t === "node") {
         const n = it.n;
         const g = glyph(n, fwd);
+        const sk = it.site ?? `s${n.id}`;
+        const kidSite = n.k === "frame" && OWN_PARTS.has(n.w) ? sk : undefined;
         if (n.k === "run" || n.k === "done") {
           const run = n.k === "run";
           const stuck = run && !glyph(n, true);
@@ -185,7 +193,7 @@
               : `${progLabel(n.p)} finished — click to step it back`
           };
           kids = [
-            { t: "prog", v: n.p, site: `p${n.id}`, root: n.p },
+            { t: "prog", v: n.p, site: sk, root: n.p },
             { t: "data", v: run ? n.x : n.y, underStem: false, ctx: it.ctx }
           ];
         } else if (BEAD[n.w]) {
@@ -201,7 +209,13 @@
             name: named,
             tip: `${BEAD_SAYS[n.w]}${named ? ` (${named})` : ""} — click to run what is ready inside`
           };
-          kids = n.kids.map((k) => ({ t: "node", n: k, ctx: it.ctx }));
+          kids = n.kids.map((k) => ({ t: "node", n: k, ctx: it.ctx, site: kidSite }));
+          if (n.w === "seq1") {
+            // the part still to run waits beside its bead, and moves into the run when its turn comes
+            const f = form(n.p) as { a: V; b: V };
+            const rest = n.fwd ? f.b : f.a;
+            kids.unshift({ t: "prog", v: rest, site: sk, root: n.p, pending: rest });
+          }
           step = 0.62;
         } else {
           const ring = n.w === "mapS" || n.w === "mapF" ? "map" : "tri";
@@ -220,8 +234,8 @@
           const ctx = below(it.ctx, n.w === "mapS" || n.w === "triS");
           kids =
             n.w === "triL"
-              ? [{ t: "data", v: n.kept!, underStem: false, ctx }, { t: "node", n: n.kids[0], ctx }]
-              : n.kids.map((k) => ({ t: "node", n: k, ctx }));
+              ? [{ t: "data", v: n.kept!, underStem: false, ctx }, { t: "node", n: n.kids[0], ctx, site: kidSite }]
+              : n.kids.map((k) => ({ t: "node", n: k, ctx, site: kidSite }));
         }
       } else if (it.t === "data") {
         const v = it.v;
@@ -244,19 +258,33 @@
         }
       } else {
         const v = it.v;
+        const key = `${it.site}:${v.id}`;
         const isRoot = v === it.root;
-        const key = isRoot ? it.site : `${it.site}:${v.id}`;
         const role = rolesOf(it.root).get(v) ?? null;
-        const base = { ...blank, key, open: { v, site: it.site } };
-        if (!opened.has(key)) {
-          const name = isRoot ? progLabel(v) : (role ?? "");
-          node = { ...base, kind: "pod", name, tip: `${progDef(v)} — click to open the tree` };
-        } else if (v.tag === "leaf") {
-          node = { ...base, kind: "codeleaf", label: role, tip: role === "id" ? "id" : "△" };
+        const base = { ...blank, key, open: { v, site: it.site }, pending: !!it.pending };
+        const rootKey = `${it.site}:${it.root.id}`;
+        const count = used.get(it.site) ?? 0;
+        const pod = closed.has(key)
+          ? true
+          : opened.has(key)
+            ? false
+            : (!programs && !opened.has(rootKey)) ||
+              atomic(v) ||
+              (!isRoot && bigName(v)) ||
+              v === it.pending ||
+              count >= BUDGET;
+        if (pod) {
+          const name = isRoot || atomic(v) || v === it.pending ? progLabel(v) : (role ?? "…");
+          node = { ...base, kind: "pod", name, tip: `${progDef(v)} — click to open` };
         } else {
-          node = { ...base, kind: "code", label: role, tip: `${role ? role + ": " : ""}${short(progLabel(v), 60)} — click to fold` };
-          kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root }));
+          used.set(it.site, count + 1);
+          if (v.tag === "leaf") node = { ...base, kind: "codeleaf", label: role, tip: role === "id" ? "id: does nothing" : "△" };
+          else {
+            node = { ...base, kind: "code", label: role, tip: `${role ? role + ": " : ""}${short(progLabel(v), 60)} — click to fold` };
+            kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root, pending: it.pending }));
+          }
         }
+        step = 0.8;
       }
       if (!kids.length) {
         out.push({ ...node, parent, depth, x: 0 });
@@ -381,9 +409,8 @@
 
   function click(n: Laid, e: MouseEvent) {
     e.stopPropagation();
-    if (n.kind === "pod" && n.open) reveal(n.key, n.open.v, n.open.site);
-    else if (n.kind === "dpod") opened = new Set([...opened, n.key]);
-    else if (n.kind === "code" || (n.open && n.site == null && n.kind !== "codeleaf")) fold(n.key);
+    if (n.kind === "pod" || n.kind === "dpod") toggle(n.key, true);
+    else if (n.kind === "code" || (n.open && n.site == null && n.kind !== "codeleaf")) toggle(n.key, false);
     else if (n.site != null) onSite(n.site);
   }
 </script>
@@ -408,6 +435,7 @@
         <path
           class="branch"
           class:code={isCode(n)}
+          class:pending={n.pending}
           d={edgeD(byKey.get(n.parent)!, n)}
           style="stroke-width:{Math.max(1.3, (isCode(n) ? 2.6 : 5 - n.depth * 0.45) * g)}px"
           in:fade={{ duration: dur(260), delay: dur(fresh.get(n.key) ?? 0) }}
@@ -420,7 +448,7 @@
       <g class="node" style="transform: translate({n.x}px, {n.y}px)">
         <g in:scale={{ duration: dur(420), start: 0, delay: dur(fresh.get(n.key) ?? 0) }} out:scale={{ duration: dur(360), start: 0 }}>
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <g class="inner" class:clickable={clickable(n)} onclick={(e) => click(n, e)} style="transform: scale({g})">
+          <g class="inner" class:clickable={clickable(n)} class:pending={n.pending} onclick={(e) => click(n, e)} style="transform: scale({g})">
             {#if n.kind === "bud"}
               <circle r="14" class="hitzone" />
               <circle r="8.5" class="bud-ring" class:stuck={n.stuck} class:back={n.back} />
@@ -458,10 +486,10 @@
               <text class="halo-name {n.ring}" x="-12" y="3">{n.label}</text>
             {:else if n.kind === "pod" || n.kind === "dpod"}
               <circle r="9" class="podbody" class:data={n.kind === "dpod"} />
-              <path class="podseam" d="M0,-5.8 Q2.6,0 0,5.8" />
-              {#if (n.name ?? "").length <= 2}
-                <text class="vname" y="0.5" style="font-size:{(n.name ?? '').length <= 1 ? 10 : 8}px">{n.name}</text>
+              {#if (n.name ?? "").length <= 4}
+                <text class="vname" y="0.5" style="font-size:{[10, 10, 8, 7, 6][(n.name ?? '').length]}px">{n.name}</text>
               {:else}
+                <path class="podseam" d="M0,-5.8 Q2.6,0 0,5.8" />
                 <text class="vname above" class:data={n.kind === "dpod"} y="-13">{n.name}</text>
               {/if}
             {:else if n.kind === "code"}
@@ -555,6 +583,13 @@
   }
   .branch.code {
     stroke: #9a7ad6;
+    opacity: 0.55;
+  }
+  .branch.pending {
+    stroke-dasharray: 3 3;
+    opacity: 0.35;
+  }
+  .inner.pending {
     opacity: 0.55;
   }
   .trunk {
