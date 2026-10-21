@@ -6,7 +6,8 @@ should be over interaction nets rather than over functions on pairs of trees, la
 and places it in the repo's thermodynamic picture: a reversible rule layer on a partly reversible
 physical substrate, so that a program's run can trade time, space, heat and errors against each other
 by choice. Counts marked *(measured)* come from research/combinator-search (`cargo run --release --
-4`, under a minute; §4); nothing else here is built yet.
+count 4` and `-- stage1 4`, under a minute each; §4, §5). Stage 1 is done, and it changed the target
+(§5, "Stage 1, as run"); the later stages are not built yet.
 
 ## 1. The premise, made exact
 
@@ -100,8 +101,10 @@ and pass through each other (commutation, four new agents) otherwise; ε erases.
   ["are disconnected"](https://arxiv.org/pdf/1806.07275#page=4); commutation is connected.
 - He leaves open whether ["there exists a reversible equivalent of interaction combinators"](https://arxiv.org/pdf/1806.07275#page=6).
 
-**Our target relaxes that question:** the smallest universal interaction system in which every rule
-is connected and clash-free *except the eraser's*. All forgetting then sits in one agent kind.
+**Our target relaxed that question:** the smallest universal interaction system in which every rule
+is connected and clash-free *except the eraser's*, so that all forgetting sits in one agent kind.
+Stage 1 showed that this is empty in the space searched, and why (§5, "Stage 1, as run"); the search
+goes on with the fallback found there, undo with a footprint, which keeps the points below.
 - **Heat becomes a decision.** Every erased bit is an eraser interaction, which a runtime can delay,
   batch, aim at copies (free), or avoid by running back (§6).
 - **The ledger is exact.** In the smallest space (two binary kinds), a connected right side needs at
@@ -166,6 +169,39 @@ B, or by permuting the auxiliary ports of a kind.
 **Stage 1: static filters.** Symmetric same-kind rules; reversibility (connected, rigid, clash-free)
 for every rule but the eraser's. The eraser's rules are fixed: E meeting an agent puts an E on each of
 its auxiliary ports, and E meeting E leaves nothing.
+
+**Stage 1, as run** (`cargo run --release -- stage1 4`, 52 s; survivors written to `out/`).
+- **No rule here can be reversible, and no system.** Two different rules whose agents have the same
+  number of auxiliary ports in total always clash: Salikhmetov proves it (his Proposition 7), and A A,
+  B B and A B all have four. The same gluing argument makes a rule clash with itself. Glue a copy of
+  its right side into its left side's ports through a renaming σ of the ports, and again through σ⁻¹.
+  The two active pairs differ, yet both reduce to the same net: two copies of the right side glued
+  through σ. Whenever σ is not its own inverse and no symmetry of the right side undoes it, that is a
+  clash; with three or more auxiliary ports such a σ exists unless the right side is unusually
+  symmetric. Checked, not just argued: of the 499,584 connected right sides (as A A, B B and A B rules), every one that leaves no
+  active pair inside clashes this way, with the two reducts confirmed to be the same net. The only
+  exceptions are 5 rules that just turn the pair into another pair, such as A⋈B → A⋈A. Lafont's
+  commutation is among those that clash.
+- **What it means.** In an interaction net, a step cannot be undone from the net alone: something
+  must say where the step happened, which agents are the right side it made. That is the two-way
+  calculus's lesson again (its frames and marks said where the run was), and it is what the strand
+  lattice's records do (evaluators/rust-ic-strands/README.md, "Records", line 1498).
+- **The fallback: undo with a footprint.** Each step leaves a footprint: a record of which rule fired,
+  on one of the agents it made. A rule then needs to be connected, so the footprint on one agent finds
+  the whole right side, and rigid (apart from a same-kind rule's own swap), so the footprint need not
+  say how the ports were assigned. Two rules may share a right side, since the footprint names the
+  rule. Undoing a step reads its footprint and removes it; the only lasting irreversibility is
+  forgetting footprints, and the eraser. It is Bennett's history at its smallest: one mark a step,
+  heat when forgotten, cleared by running back.
+
+| space (up to renaming) | systems | undoable given a footprint |
+|---|---|---|
+| right sides of up to 2 agents | 1,069,266 | 26,408 |
+| up to 2 agents, quiet | 539,176 | 10,816 |
+| 4 agents, outward | 2,145,959 | 83,384 |
+| up to 4 agents, quiet | 1.31 × 10¹¹ | 4.88 × 10⁹ |
+
+*(measured)* The 2-agent and outward rows, about 110,000 systems, are what Stage 2 runs.
 
 **Stage 2: behaviour on random nets.** Build random closed nets of 10–100 agents (A, B and a few E,
 wired at random), reduce each to normal form under a step cap, and record per system:
@@ -287,8 +323,9 @@ is its missing middle layer.
 
 ## 7. Open questions and risks
 
-- **The relaxed target may have no small solution.** A proof that none exists up to 4 agents would
-  still say which forgetting is unavoidable.
+- **The relaxed target has no solution here** (§5, Stage 1): forgetting where a step happened is
+  unavoidable in interaction nets. What stays open is how cheap the footprint can be, and how many
+  footprints a program can drop for free (un-copying) rather than for heat.
 - **Clash is only half checked so far.** Comparing right sides under every renaming of free ports
   rejects every system that certainly clashes, but lets through some that clash once terms sit in
   the ports. Stage 1 must close that gap before Stage 2's numbers are trusted.

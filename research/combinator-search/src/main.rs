@@ -4,13 +4,19 @@
 //! ports, x1 x2 of the first agent and y1 y2 of the second. A system is a rule for A A, one for B B and
 //! one for A B; the eraser's rules are fixed.
 //!
-//! `cargo run --release -- K` counts right sides of up to K agents (the eraser only in right sides of up
-//! to 2), the systems they make, and the systems that can run backward except through the eraser:
-//! every other rule connected, and no two active pairs reducing to the same net (Salikhmetov's
-//! conditions, checked here on the right sides alone, a necessary condition). Systems are also counted up
-//! to renaming: swapping A and B, and swapping a kind's two auxiliary ports.
+//! `cargo run --release -- count K` counts right sides of up to K agents (the eraser only in right sides
+//! of up to 2), the systems they make, and the systems that pass the check on right sides alone: every
+//! rule but the eraser's connected, and no two right sides the same net (a necessary condition for
+//! Salikhmetov's reversibility). Systems are also counted up to renaming: swapping A and B, and swapping
+//! a kind's two auxiliary ports.
+//!
+//! `cargo run --release -- stage1 K` is Stage 1 of the plan: the clash check with terms in the ports
+//! (clash.rs), which only rules that turn the pair into another pair pass, and the systems that survive
+//! the plan's fallback, undo with a footprint, written to out/.
 
 use std::collections::{HashMap, HashSet};
+
+mod clash;
 
 const A: u8 = 0;
 const B: u8 = 1;
@@ -285,8 +291,31 @@ struct Info {
     outward: bool,
 }
 
+/// Lafont's commutation, with A for γ and B for δ: γ's auxiliary ports get δ(x1, x2) and δ(y1, y2), δ's
+/// get γ(x1, y1) and γ(x2, y2).
+fn lafont_commutation() -> Net {
+    let mut partner = vec![0u8; 16];
+    for (a, b) in [(0usize, 4usize), (1, 7), (2, 10), (3, 13), (5, 11), (6, 14), (8, 12), (9, 15)] {
+        partner[a] = b as u8;
+        partner[b] = a as u8;
+    }
+    Net { kinds: vec![B, B, A, A], partner }
+}
+
+fn text(net: &Net) -> String {
+    let kinds: String = net.kinds.iter().map(|&k| ['A', 'B', 'E'][k as usize]).collect();
+    let wires: Vec<String> = net.partner.iter().map(|p| p.to_string()).collect();
+    format!("{kinds} {}", wires.join(","))
+}
+
 fn main() {
-    let max: usize = std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(2);
+    let args: Vec<String> = std::env::args().collect();
+    let (cmd, k) = match args.get(1).map(String::as_str) {
+        Some("stage1") => ("stage1", args.get(2)),
+        Some("count") => ("count", args.get(2)),
+        _ => ("count", args.get(1)),
+    };
+    let max: usize = k.and_then(|a| a.parse().ok()).unwrap_or(2);
     let t0 = std::time::Instant::now();
     let nets = right_sides(max);
     let perms = perms4();
@@ -315,7 +344,9 @@ fn main() {
     println!("right sides of up to {max} agents: {} ({} by agent count), connected: {}, quiet: {}", infos.len(),
         by_agents.iter().enumerate().map(|(k, n)| format!("{k}: {n}")).collect::<Vec<_>>().join(", "),
         infos.iter().filter(|i| i.connected).count(), infos.iter().filter(|i| i.quiet).count());
-    let report = |label: &str, keep: &dyn Fn(&Info) -> bool| {
+    // `apart`: the right sides of a system must also differ under every renaming of free ports (the check
+    // on right sides alone); without it, the systems that can be undone given a footprint (Stage 1)
+    let report = |label: &str, keep: &dyn Fn(&Info) -> bool, apart: bool| {
         // a rule for A A or B B must read the same with its two agents traded; to run backward, nothing else
         // may leave it as it is. A rule for A B must be left as it is by no renaming of its free ports.
         let same: Vec<usize> = (0..infos.len()).filter(|&i| keep(&infos[i]) && infos[i].symmetric).collect();
@@ -329,7 +360,7 @@ fn main() {
                 *oa.entry(&infos[i].orbit).or_default() += 1;
             }
             let same_orbit: u128 = b.iter().map(|&i| oa.get(infos[i].orbit.as_slice()).copied().unwrap_or(0)).sum();
-            a.len() as u128 * b.len() as u128 - same_orbit
+            a.len() as u128 * b.len() as u128 - if apart { same_orbit } else { 0 }
         };
 
         println!("{label}");
@@ -337,7 +368,8 @@ fn main() {
         println!("rules for A B: {}, reversible-shaped: {}", cross.len(), rev_cross.len());
         let all = (same.len() as u128).pow(2) * cross.len() as u128;
         let rev = pairs_apart(&rev_same, &rev_same) * rev_cross.len() as u128;
-        println!("systems: {all}; reversible except the eraser: {rev}");
+        let what = if apart { "reversible except the eraser" } else { "undoable given a footprint" };
+        println!("systems: {all}; {what}: {rev}");
 
         // up to renaming (Burnside: the average number of systems each renaming leaves as they are)
         let index_of = |n: &Net| index[canon(n).unwrap().as_slice()];
@@ -367,7 +399,7 @@ fn main() {
                     }
                     n_all += 1;
                     let j = index_of(&once);
-                    if rev_same_set.contains(&i) && rev_same_set.contains(&j) && infos[i].orbit != infos[j].orbit {
+                    if rev_same_set.contains(&i) && rev_same_set.contains(&j) && (!apart || infos[i].orbit != infos[j].orbit) {
                         n_rev += 1;
                     }
                 }
@@ -376,10 +408,75 @@ fn main() {
             }
         }
         assert!(sum_all % 8 == 0 && sum_rev % 8 == 0, "Burnside sums must divide by the group's 8 renamings");
-        println!("up to renaming: systems {}; reversible except the eraser {}", sum_all / 8, sum_rev / 8);
+        println!("up to renaming: systems {}; {what}: {}", sum_all / 8, sum_rev / 8);
     };
-    report("\nall right sides:", &|_| true);
-    report("\nquiet right sides only (no active pair left inside):", &|i| i.quiet);
-    report("\noutward right sides only (every free port on a new agent's principal port):", &|i| i.outward && i.quiet);
+    let spaces: [(&str, &dyn Fn(&Info) -> bool); 3] = [
+        ("all right sides", &|_| true),
+        ("quiet right sides only (no active pair left inside)", &|i| i.quiet),
+        ("outward right sides only (every free port on a new agent's principal port)", &|i| i.outward && i.quiet),
+    ];
+    if cmd == "count" {
+        for (label, keep) in spaces {
+            report(&format!("\n{label}:"), keep, true);
+        }
+        println!("({:.1} s)", t0.elapsed().as_secs_f64());
+        return;
+    }
+
+    // ---- Stage 1: the clash check with terms in the ports ----
+    let lafont = lafont_commutation();
+    match clash::self_clash(&lafont, A, B, &perms) {
+        Some(s) => println!("\nLafont's commutation clashes with itself: ports glued through {s:?} and its inverse (reducts agree: {})",
+            clash::reducts_agree(&lafont, s)),
+        None => println!("\nLafont's commutation does not clash with itself through any renaming"),
+    }
+    let mut tested = [0usize; 3];
+    let mut clashing = [0usize; 3];
+    let mut disagree = 0usize;
+    let mut spared: Vec<String> = vec![];
+    for (i, info) in infos.iter().enumerate() {
+        if !info.connected {
+            continue;
+        }
+        let slots: Vec<(usize, u8, u8)> =
+            if info.symmetric { vec![(0, A, A), (1, B, B), (2, A, B)] } else { vec![(2, A, B)] };
+        for (slot, x, y) in slots {
+            tested[slot] += 1;
+            match clash::self_clash(&nets[i], x, y, &perms) {
+                Some(s) => {
+                    clashing[slot] += 1;
+                    if !clash::reducts_agree(&nets[i], s) {
+                        disagree += 1;
+                    }
+                }
+                None => spared.push(format!("{} as {}{} ({} renamings keep it){}", text(&nets[i]), ['A', 'B'][x as usize],
+                    ['A', 'B'][y as usize], info.autos, if info.quiet { ", quiet" } else { "" })),
+            }
+        }
+    }
+    println!("connected rules that clash with themselves, by left side: A A {} of {}, B B {} of {}, A B {} of {}",
+        clashing[0], tested[0], clashing[1], tested[1], clashing[2], tested[2]);
+    println!("witnesses whose two reducts were not the same net (must be 0): {disagree}");
+    println!("connected rules that clash with no copy of themselves: {} (quiet ones: {})", spared.len(),
+        spared.iter().filter(|t| t.ends_with("quiet")).count());
+    for s in spared.iter().take(10) {
+        println!("  {s}");
+    }
+    println!("and any two rules with the same number of auxiliary ports clash (Salikhmetov's Proposition 7):\n\
+        A A, B B and A B all have four, so no system here is reversible in his sense.");
+
+    // the fallback: undo with a footprint (a record of which rule fired, on one agent it made)
+    for (label, keep) in spaces {
+        report(&format!("\n{label}, undo with a footprint (connected, and rigid but for a same-kind rule's own swap):"), keep, false);
+    }
+    let dir = std::path::Path::new("out");
+    std::fs::create_dir_all(dir).unwrap();
+    let write = |name: &str, pick: &dyn Fn(&Info) -> bool| {
+        let lines: Vec<String> = (0..infos.len()).filter(|&i| pick(&infos[i])).map(|i| text(&nets[i])).collect();
+        std::fs::write(dir.join(name), lines.join("\n") + "\n").unwrap();
+        println!("wrote out/{name}: {} rules", lines.len());
+    };
+    write(&format!("stage1-{max}-same.txt"), &|i| i.connected && i.symmetric && i.autos == 2);
+    write(&format!("stage1-{max}-cross.txt"), &|i| i.connected && i.autos == 1);
     println!("({:.1} s)", t0.elapsed().as_secs_f64());
 }
