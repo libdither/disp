@@ -13,10 +13,20 @@
 //! `cargo run --release -- stage1 K` is Stage 1 of the plan: the clash check with terms in the ports
 //! (clash.rs), which only rules that turn the pair into another pair pass, and the systems that survive
 //! the plan's fallback, undo with a footprint, written to out/.
+//!
+//! `cargo run --release -- search S G K N [wires]` is the search with strict reversibility dropped
+//! (search.rs): signature S (A, AU, AB, AUV, ABU, or `all`), right sides of up to K agents or outward,
+//! gadgets of up to G agents, at most N systems (sampled past that); with `wires`, pairs of the same kind
+//! only get right sides of wires alone.
 
 use std::collections::{HashMap, HashSet};
 
+mod behave;
 mod clash;
+mod ic;
+mod live;
+mod search;
+mod space;
 
 const A: u8 = 0;
 const B: u8 = 1;
@@ -310,6 +320,12 @@ fn text(net: &Net) -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("search") {
+        let num = |i: usize, d: u64| args.get(i).and_then(|a| a.parse().ok()).unwrap_or(d);
+        let which = args.get(2).map_or("all", String::as_str);
+        search::run(which, num(3, 3) as usize, num(4, 2) as usize, num(5, 2_000_000), args.get(6).map(String::as_str) == Some("wires"));
+        return;
+    }
     let (cmd, k) = match args.get(1).map(String::as_str) {
         Some("stage1") => ("stage1", args.get(2)),
         Some("count") => ("count", args.get(2)),

@@ -6,8 +6,9 @@ should be over interaction nets rather than over functions on pairs of trees, la
 and places it in the repo's thermodynamic picture: a reversible rule layer on a partly reversible
 physical substrate, so that a program's run can trade time, space, heat and errors against each other
 by choice. Counts marked *(measured)* come from research/combinator-search (`cargo run --release --
-count 4` and `-- stage1 4`, under a minute each; §4, §5). Stage 1 is done, and it changed the target
-(§5, "Stage 1, as run"); the later stages are not built yet.
+count 4`, `-- stage1 4` and `-- search`; §4, §5). Stage 1 is done, and it changed the target (§5,
+"Stage 1, as run"). The search after it, with footprints as a cost, a varying signature and the
+gadget test, is done for small signatures (§5, "After Stage 1"); Stages 4 and 5 are not built.
 
 ## 1. The premise, made exact
 
@@ -188,11 +189,16 @@ its auxiliary ports, and E meeting E leaves nothing.
   lattice's records do (evaluators/rust-ic-strands/README.md, "Records", line 1498).
 - **The fallback: undo with a footprint.** Each step leaves a footprint: a record of which rule fired,
   on one of the agents it made. A rule then needs to be connected, so the footprint on one agent finds
-  the whole right side, and rigid (apart from a same-kind rule's own swap), so the footprint need not
-  say how the ports were assigned. Two rules may share a right side, since the footprint names the
-  rule. Undoing a step reads its footprint and removes it; the only lasting irreversibility is
-  forgetting footprints, and the eraser. It is Bennett's history at its smallest: one mark a step,
-  heat when forgotten, cleared by running back.
+  the whole right side. Two rules may share a right side, since the footprint names the rule. Undoing
+  a step reads its footprint and removes it; the only lasting irreversibility is forgetting
+  footprints, and the eraser. It is Bennett's history at its smallest: one mark a step, heat when
+  forgotten, cleared by running back.
+- **Correction, found while pricing footprints:** the table below also asked for *rigid* rules (no
+  renaming of the free ports gives back the same right side), so that the footprint need not say how
+  the ports were assigned. That is not needed. If a rule always leaves its footprint on the same agent
+  of its right side, the walk from that agent along numbered ports finds every agent and every wire
+  out, so it fixes which outside wire was which port. The counts below are therefore an undercount of
+  the systems that can be undone given a footprint.
 
 | space (up to renaming) | systems | undoable given a footprint |
 |---|---|---|
@@ -201,7 +207,110 @@ its auxiliary ports, and E meeting E leaves nothing.
 | 4 agents, outward | 2,145,959 | 83,384 |
 | up to 4 agents, quiet | 1.31 × 10¹¹ | 4.88 × 10⁹ |
 
-*(measured)* The 2-agent and outward rows, about 110,000 systems, are what Stage 2 runs.
+*(measured, with the rigidity condition that the correction above drops)*
+
+**After Stage 1: footprints as a cost** (`cargo run --release -- search S G K N [wires]`;
+research/combinator-search/src/search.rs, with the reducer in live.rs, signatures in space.rs, gadgets
+in ic.rs and random nets in behave.rs). Stage 1 left the strict target empty, so the search changed
+what it looks for rather than which rules it allows:
+- **Footprints are a cost, not a filter.** A step leaves one mark for each part of its right side
+  (a part with no agent, a bare wire, is marked on the wire). The mark names the rule, in log₂ of the
+  number of rules bits.
+- **The signature varies:** one binary kind (A), a binary and a unary kind (A U), two binary kinds
+  (A B), and a binary and two unary kinds (A U V), each with the eraser E and its fixed rules. A pair
+  of kinds gets any quiet right side of up to K agents, or any outward one.
+- **Adequate means running the combinators through gadgets.** Small nets of the system's agents stand
+  for γ and δ, E stands for ε, and each of the six combinator rules, both sides built from gadgets,
+  must hold: the left side reduces to the right side. Annihilation may wire its ports straight (first
+  to first) or crossed. A gadget's principal port must sit on an agent's principal port, its two
+  auxiliary ports on auxiliary ports, with no active pair inside.
+- **How this reaches tree calculus.** Not through an existing compiler: evaluators/tree-net is its own
+  interaction system of 14 core kinds (leaf, stem, fork, apply, triage, pair, duplicator, eraser and
+  so on, tree-net/crate/src/rules.rs), not built from γ, δ and ε. It reaches the combinators through
+  Lafont's theorem that every interaction system translates into them. Gadgets for tree-net's own
+  kinds would be the direct test, but they are not built: 14 kinds and their rules make a far larger
+  gadget search than γ and δ.
+
+**The footprint law.** Write Φ for the sum over a net's agents of (auxiliary ports − 1): +1 for a
+binary agent, 0 for a unary one, −1 for an eraser. For a closed connected net, Φ is twice the
+number of independent loops, less 2.
+- **A step can lower Φ only by splitting.** If its right side has c parts, Φ falls by at most 2(c − 1).
+  Proof: count the right side's k agents and f free ports as nodes. In c parts they need at least
+  k + f − c wires. The wires have f + k + (auxiliary ports) ends in all, two each, so the auxiliary
+  ports number at least k + f − 2c, which makes the right side's Φ at least f − 2c. The pair's Φ is
+  f − 2.
+- **Over a run, the marks beyond one a step are at least half of what Φ fell.** In other words,
+  footprint ≥ steps + half the shrinkage. Checked on every right side searched: 5,385 across the four
+  signatures, the eraser's included, of which 990 meet it with equality.
+- **Any gadget for γ or δ has Φ = 1 + 2w** (w the wires joining two auxiliary ports inside it), so
+  Φ ≥ 1. Annihilation (two gadgets → two wires) and erasure (ε and a gadget → two erasers) both lower
+  Φ. So every system that runs the combinators has right sides in several parts, and so steps that
+  cannot be undone locally. The fewest marks a simulated combinator rule can cost, if it takes one
+  step (each further step adds at least one): annihilation 1 + Φ(gadget), commutation 1, erasure
+  1 + (Φ(gadget) + 1)/2.
+- **Lafont's combinators meet that bound on every rule:** 2 marks for γγ, δδ, γε and δε, 1 for γδ.
+  No system can run them with fewer marks.
+
+**What the search found** *(measured; 16 threads)*:
+
+| signature | rules | systems | searched | gadgets (up to) | adequate | up to renaming | time |
+|---|---|---|---|---|---|---|---|
+| A, E | 3 | 59 | all | 202 (3) | 0 | 0 | 0 s |
+| A U, E | 6 | 119,280 | all | 236 (3) | 0 | 0 | 6 s |
+| A U, E, same-kind pairs only wires | 6 | 426 | all | 29,942 (5) | 0 | 0 | 600 s |
+| A B, E | 6 | 105,658,344 | all | 4 (1) | 4 | 3 | 51 s |
+| A B, E | 6 | 105,658,344 | 200,000 sampled | 1,476 (3) | 0 | 0 | 98 s |
+| A B, E, same-kind pairs only wires | 6 | 36,234 | all | 1,476 (3) | 43 | 16 | 237 s |
+| A U V, E | 10 | 6.4 × 10¹⁰ | 200,000 sampled | 318 (3) | 0 | 0 | 19 s |
+| A U V, E, same-kind pairs only wires | 10 | 13,797,444 | 1,000,000 sampled | 318 (3) | 0 | 0 | 539 s |
+
+- **With one-agent gadgets, the only systems are the combinators:** Lafont's commutation for A B,
+  with each annihilation straight or crossed (3 up to renaming). This is the plan's validation check,
+  passed: the search finds the known point.
+- **With gadgets of up to three agents, 39 more turn up** (13 more up to renaming), all with a
+  commutation-shaped A B rule: four new agents in a square, but wired or labelled differently. For
+  example, A ⋈ B putting A agents on A's side and B agents on B's side. They need gadgets of 4 to 6
+  agents per γ, δ pair (for instance γ = two A and an eraser, δ = B). Every one is beaten by the
+  combinators on all three counts at once:
+
+| gadgets γ + δ | agents | interactions | marks | floor (law above) |
+|---|---|---|---|---|
+| A + B (the combinators) | 2 | 5 | 9 | 9 |
+| A A E + B | 4 | 11 | 18 | 15 |
+| A A A + B | 4 | 13 | 22 | 20 |
+| A B E + A B E | 6 | 21 | 33 | 25 |
+| A A A + B B E | 6 | 25 | 40 | 32 |
+| A A B + A B B | 6 | 29 | 47 | 39 |
+
+  (Interactions and marks are summed over γγ, δδ, γδ, γε and δε. The floor is interactions plus the
+  law's extra marks.)
+- **One binary kind fails, as it must here:** its single rule would have to both shrink (for
+  annihilation) and grow (for commutation), and no right side in the space does both.
+- **A binary kind with one or two unary kinds: nothing.** A U was searched in full with gadgets of up
+  to three agents, and of up to five when same-kind pairs only make wires; A U V was sampled.
+
+**Stage 2, as run** (random closed nets of 30 agents, one in ten an eraser, 60 nets a system, capped
+at 200 interactions and 50 agents per loaded agent):
+
+| systems | halt | blow up | interactions an agent | peak | left at the end | eraser share | marks an interaction |
+|---|---|---|---|---|---|---|---|
+| the 43 adequate ones | 63% | 28% | 1.0 | 1.12× | 0.64× | 57% | 1.61 |
+| 200 random, same-kind pairs only wires | 87% | 4% | 0.8 | 1.05× | 0.54× | 57% | 1.78 |
+| 200 random, A B | 50% | 43% | 2.7 | 1.95× | 1.17× | 58% | 1.66 |
+
+Random nets say little about adequacy: the adequate systems sit between the two random samples, and
+mostly do short work before halting or growing without end. Stage 2 as a filter would not have found
+the combinators; the gadget test did.
+
+**What it means.**
+- **The footprint is set by the computation, not by the rules.** One mark a step says where; beyond
+  that, a run pays at least half of what it shrinks Φ. Rules can only add waste (bigger gadgets, more
+  steps, more splitting than the shrinkage needs). The combinators add none, and nothing small beats
+  them.
+- **What is left to choose is time and place, not marks.** The steps that split, annihilation and
+  erasure, are the ones whose marks end up apart, so undoing them is not local. Where those marks sit,
+  and how far apart, is a question about the substrate's layout and schedule (the strand lattice's
+  records; the spatial search in §7), not about the rule set.
 
 **Stage 2: behaviour on random nets.** Build random closed nets of 10–100 agents (A, B and a few E,
 wired at random), reduce each to normal form under a step cap, and record per system:
@@ -247,9 +356,9 @@ them.
 - Systems with one binary kind must fail Stage 3.
 - The reducer must agree with the strand lattice's on interaction combinators.
 
-**Order of work.** Stages 0–1 are research/combinator-search (counting done; it does not yet write
-the survivors out, or check clashes on small terms). Stage 2's reducer goes in the same crate. Stage
-3's gadget search is the expensive part, run only on Stage 2's survivors.
+**Order of work.** Stages 0–3 are research/combinator-search, run as described under "Stage 1, as
+run" and "After Stage 1". Stage 2 turned out not to predict Stage 3, so the gadget test runs on whole
+spaces where they are small enough, and on samples or the same-kind-wires subspace where not.
 
 ## 6. Why it matters: a reversible layer on a thermodynamic substrate
 
@@ -299,8 +408,7 @@ measurements place each candidate in it.
 **What the repo already says about this, and where:**
 - research/NATURE_OF_AGENTS.md: the resource table (space as fuel, time as rounds, entropy, heat as
   commit), lines 58–66, and "Regularizers are prices", lines 148–170, which prices erasure among other
-  resources and sets an exchange rate between them. Its line references into REVERSIBLE_CORE.md point
-  at a file that is no longer in the tree.
+  resources and sets an exchange rate between them.
 - research/REVERSIBLE_CORE.md, archived (read it with `git show d7e3b96:research/REVERSIBLE_CORE.md`):
   "What copying and erasing cost" (§2), and "History as a resource" (§3.6): a clean run, an inverse
   that erases the input, undo anywhere, measuring the true loss, and "Forget for heat".
@@ -324,13 +432,22 @@ is its missing middle layer.
 ## 7. Open questions and risks
 
 - **The relaxed target has no solution here** (§5, Stage 1): forgetting where a step happened is
-  unavoidable in interaction nets. What stays open is how cheap the footprint can be, and how many
-  footprints a program can drop for free (un-copying) rather than for heat.
-- **Clash is only half checked so far.** Comparing right sides under every renaming of free ports
-  rejects every system that certainly clashes, but lets through some that clash once terms sit in
-  the ports. Stage 1 must close that gap before Stage 2's numbers are trusted.
+  unavoidable in interaction nets. How cheap the footprint can be is now bounded (§5, "The footprint
+  law"): at least a mark a step plus half of what the run shrinks Φ, which the combinators meet. What
+  stays open is how many footprints a program can drop for free (un-copying) rather than for heat,
+  and how far apart the marks of a splitting step end up.
+- **Next: a spatial search.** A net cannot get below a mark a step, because nothing in it says where
+  a step happened. A lattice with a fixed schedule can: if each clock applies one rule to disjoint
+  blocks of cells, on a partition that alternates between clocks, the clock can be undone exactly
+  when the rule is a bijection on a block, and "where" is the schedule's job, with no marks. The
+  search there is over block rules that carry the strand lattice's agents and wires.
 - **Gadget translation is sufficient for universality, not necessary.** A universal system with no
-  small gadgets for γ and δ would be missed; the tree-calculus gadgets are the second chance.
+  small gadgets for γ and δ would be missed; gadgets for tree-net's own kinds would be the second
+  chance, and are not built. The A B space with three-agent gadgets is only sampled outside the
+  same-kind-wires subspace (200,000 of 10⁸ systems).
+- **The right sides tried are narrow:** quiet ones of up to two agents, and outward ones. A rule that
+  grows and leaves a bare wire at once (three or more agents, not outward) is outside the space, which
+  is why one binary kind fails by construction.
 - **Erasing propagates.** The eraser's own rules are the disconnected ones; whether erasure can be
   confined to copies (un-copy, free) or must also take originals (heat) is a property of the programs,
   measured in Stage 4.
