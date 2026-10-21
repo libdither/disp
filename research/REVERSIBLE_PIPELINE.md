@@ -33,8 +33,10 @@ far is the strand lattice from running that way, and what would it take?
   merge a copy back into its duplicator ("uncopy") and keep the rare original as residue; (3) moves
   that are a bijection of the lattice's state: the schedule is already deterministic (its dice are a
   hash of site and clock), but Metropolis acceptance and "try a move, else do nothing" map two states
-  to one; a local energy bank per site (a demon) and moves that are their own inverse fix that;
-  (4) collection and cooling become an explicit, separate act of forgetting.
+  to one. The thermal run (`thermo=1`) now has a local energy bank per site (a demon) and proposes
+  every move as often as its reverse (evaluators/rust-ic-strands/README.md:1562-1580); what is left is
+  a schedule under which each clock is a bijection, and undos that are the exact reverse of their
+  rewrites (README.md:1668); (4) collection and cooling become an explicit, separate act of forgetting.
 - **Bijective programs can leave no residue at all**, by computing, copying the answer, and running
   backward to clean up, given the inverse program (Bennett's case of
   ["many calculations in which the output uniquely determines the input"](https://mathweb.ucsd.edu/~sbuss/CourseWeb/Math268_2013W/Bennett_Reversibiity.pdf#page=5));
@@ -239,7 +241,10 @@ apart and stop at leaves, and it needs no ghosts, since an un-copy's record keep
    along.
 4. **The lattice, physically reversible**: moves as their own inverses on a block, energy from and to
    a demon per site rather than Metropolis acceptance, so each clock is a bijection on block states;
-   collection and cooling as a separate forgetting phase. The block schedule is Margolus's, made for
+   collection and cooling as a separate forgetting phase. Partly done: `thermo=1` has the per-site
+   demons and proposes every move as often as its reverse (README.md:1562-1580), but its events are
+   random rather than a block schedule, and an undo is not yet the exact reverse of its rewrite
+   (README.md:1668). The block schedule is Margolus's, made for
    this: ["Since each distinct initial state of a block is mapped onto a distinct final state, this rule is reversible"](https://fab.cba.mit.edu/classes/862.16/notes/computation/Margolus-1984.pdf#page=6),
    and ["the global dynamics is invertible if f is invertible"](https://people.csail.mit.edu/nhm/ica.pdf#page=16).
    Creutz's demons replace the temperature: a per-site energy bank whose dynamics, on a partitioned
