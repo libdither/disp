@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run pages && vite dev",
+    "dev:tailscale": "npm run pages && vite dev --host \"$(tailscale ip -4 | head -1)\" --port 5174",
     "build": "npm run snapshot && npm run pages && vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
@@ -12,6 +13,7 @@
     "validate:examples": "tsx scripts/validate-examples.mts",
     "vfs-check": "tsx scripts/vfs-check.mts",
     "twoway-check": "tsx scripts/twoway-check.mts",
+    "twoway-inet-check": "tsx scripts/twoway-inet-check.mts",
     "dono-stats": "tsx scripts/build-dono-stats.mts",
     "pages": "tsx scripts/link-pages.mts"
   },
