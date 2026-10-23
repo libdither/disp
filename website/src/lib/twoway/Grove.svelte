@@ -1,21 +1,22 @@
 <script lang="ts">
   // A run drawn the way the site's tree-calculus visualizer (TreeVis) draws a tree: on a hill, data as
   // leaves and knots, programs in purple. A dot is a program, drawn open on the left, on the value to its
-  // right. A live dot (dashed ring) wears the move it will make; a dot whose program is held (it has
-  // run) is a solid ring, and clicking it flips it. When a combinator starts, the node it takes apart is
-  // kept where the dot was, ringed (map's in blue, tri's in amber), with the dots of its parts above it;
-  // a combinator that holds no node is a bud, as TreeVis draws an application waiting on the ones above
-  // it. Every frame keeps its program open beside it: the parts it has started travel up into their dots,
-  // leaving a slot, and come back into it once they have run, so a frame that closes holds its program
-  // whole again. Every node is keyed by what it is, so a move's nodes glide to where it puts them. It is
-  // drawn with WebGL on the stage ($lib/stage), which moves every node in its shaders.
+  // right. Its count shows in the program: the parts the value has been through fade, and the part it is
+  // at wears a ring. A live dot (dashed ring) wears the move it will make; a dot whose count is at the
+  // end (it has run) is a solid ring, and clicking it flips it. When a combinator starts, the node it
+  // takes apart is kept where the dot was, ringed (map's in blue, tri's in amber), with the dots of its
+  // parts above it; a call that holds no node is a bud, as TreeVis draws an application waiting on the
+  // ones above it. The parts a combinator starts travel up out of the program into their dots, leaving a
+  // slot, and come back into it once they have run. Every node is keyed by what it is, so a move's nodes
+  // glide to where it puts them. It is drawn with WebGL on the stage ($lib/stage), which moves every node
+  // in its shaders.
   import { onMount } from "svelte";
   import { Stage, type Drawing, type GlyphSpec, type LabelSpec, type NodeSpec, type RGBA, type StrokeSpec } from "$lib/stage/stage";
   import { F, SHAPE } from "$lib/stage/shaders";
   import { theme } from "$lib/theme.svelte";
   import { asBit, asNat, form, kids as vkids, registersOf, show, size, type V } from "./core";
   import { nameOf, progDef, progLabel, type Reads } from "./text";
-  import { done, fire, glyph, read, say, type Node, type Wait } from "./machine";
+  import { backward, cursor, done, fire, glyph, partOf, say, spine, type Node, type Wait } from "./machine";
 
   interface Props {
     root: Node;
@@ -46,13 +47,11 @@
   };
   const short = (s: string, n = 16) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
-  /** Frames that hold no node of the value: drawn as beads on the way down. */
-  const BEAD: Partial<Record<Wait, string>> = { self: "↩", seq1: ";", seq2: ";", fix: "μ", eval: "▷", triF: "?" };
+  /** Parts in flight that hold no node of the value: drawn as beads on the way down. */
+  const BEAD: Partial<Record<Wait, string>> = { self: "↩", fix: "μ", eval: "▷", triF: "?" };
   const PLAYS = "click to play this part until it has run";
   const BEAD_SAYS: Partial<Record<Wait, string>> = {
     self: "self: the fix's body running again",
-    seq1: "a ; b, with a running",
-    seq2: "a ; b, with b running on what a gave",
     fix: "fix: self stands for this program inside",
     eval: "eval: a program from the value running",
     triF: "tri: the left fork opened, the third part running"
@@ -94,7 +93,7 @@
       const named = nameOf(t);
       const own = f.k === "atom" ? f.n : f.k === "none" ? "not a program" : f.k === "dag" ? "†" : f.k === "seq" ? ";" : f.k;
       m!.set(t, named && t !== p ? named : own);
-      if (f.k === "dag" || f.k === "fix" || f.k === "held") walk(f.b);
+      if (f.k === "dag" || f.k === "fix") walk(f.b);
       if (f.k === "seq") (walk(f.a), walk(f.b));
       if (f.k === "tri" || f.k === "map") (walk(f.a), walk(f.b), walk(f.c));
     };
@@ -122,20 +121,35 @@
     name: string | null;
     tip: string | null;
     open?: { v: V; site: string };
+    /** A program part the value has been through, and the part its dot is at. */
+    spent?: boolean;
+    here?: boolean;
   }
   /** Where a node sits in a word, for reading bits: the top of a value, a part of a word, the inside of
    * a word's leaf (a bit or a tuple of bits), or below a bit. △△ is T as a bit, but a one-bit word
    * holding F as a word, so a label needs to know which. */
   type Ctx = "top" | "word" | "leaf" | "bit";
   /** A program part: `site` names the run it belongs to (a run whose program is a part of its parent's
-   * keeps the parent's), `root` is that run's whole program, `lent` the parts of a frame's program that
-   * are running in dots of their own (each leaves a slot), and `note` what to say of a part. */
-  type Item =
-    | { t: "node"; n: Node; ctx: Ctx; site?: string }
-    | { t: "data"; v: V; underStem: boolean; ctx: Ctx; whole?: boolean }
-    | { t: "prog"; v: V; site: string; root: V; lent?: V[]; note?: Map<V, string>; whole?: boolean };
-  /** Frames whose runs run parts of the frame's own program: those runs keep its site. */
-  const OWN_PARTS = new Set<Wait>(["seq1", "seq2", "fix", "mapS", "mapF", "triL", "triS", "triF"]);
+   * keeps the parent's), `root` is that run's whole program, `lent` the parts of a part in flight that
+   * are running in dots of their own (each leaves a slot), `note` what to say of a part, `ran` the parts
+   * the value has been through, `here` the part the dot is at, and `back` whether that part runs
+   * backward. */
+  type Prog = {
+    t: "prog";
+    v: V;
+    site: string;
+    root: V;
+    lent?: V[];
+    note?: Map<V, string>;
+    ran?: Set<V>;
+    here?: V;
+    back?: boolean;
+    spent?: boolean;
+    whole?: boolean;
+  };
+  type Item = { t: "node"; n: Node; ctx: Ctx; site?: string } | { t: "data"; v: V; underStem: boolean; ctx: Ctx; whole?: boolean } | Prog;
+  /** Parts in flight whose dots run parts of the dot's own program: those dots keep its site. */
+  const OWN_PARTS = new Set<Wait>(["fix", "mapS", "mapF", "triL", "triS", "triF"]);
   const below = (ctx: Ctx, stem: boolean): Ctx =>
     ctx === "top" || ctx === "word" ? (stem ? "leaf" : "word") : ctx === "leaf" && !stem ? "leaf" : "bit";
 
@@ -162,24 +176,29 @@
     return null;
   }
 
-  /** A frame's program, open beside it, with the parts it has started lent to their dots. A sequence says
-   * which of its parts is still to run and which has run (a flip swaps the two). */
-  function frameProg(n: Node & { k: "frame" }, site: string): Item {
-    const { f, fwd } = read(n.p);
-    const p = f as { a: V; b: V; c: V };
-    const lent =
-      n.w === "seq1" ? [fwd ? p.a : p.b]
-      : n.w === "seq2" ? [fwd ? p.b : p.a]
-      : n.w === "fix" ? [p.b]
-      : n.w === "mapS" || n.w === "triL" ? [p.a]
-      : n.w === "mapF" ? [p.b, p.c]
-      : n.w === "triS" ? [p.b]
-      : n.w === "triF" ? [p.c]
-      : [];
+  /** A dot's program, open beside it, with its count: the parts before the count (in the order they run
+   * forward) are the ones the value has been through, and a part in flight lends its own parts to their
+   * dots. A flip leaves which parts those are as it is, and turns only the way the count goes. */
+  function progOf(n: Node, site: string): Prog {
+    const parts = spine(n.p);
+    const c = cursor(n);
+    const ran = new Set(parts.slice(0, c).map(([q]) => q));
     const note = new Map<V, string>();
-    if (n.w === "seq1") note.set(fwd ? p.b : p.a, " — still to run");
-    if (n.w === "seq2") note.set(fwd ? p.a : p.b, " — has run, and is kept to run back");
-    return { t: "prog", v: n.p, site, root: n.p, lent, note };
+    parts.forEach(([q], i) => note.set(q, i < c ? (n.fwd ? " — has run" : " — to run back") : n.fwd ? " — to run" : " — has run back"));
+    const at = partOf(n);
+    let lent: V[] = [];
+    if (at && n.kids.length) {
+      const p = at.f as { a: V; b: V; c: V };
+      lent =
+        n.w === "fix" ? [p.b]
+        : n.w === "mapS" || n.w === "triL" ? [p.a]
+        : n.w === "mapF" ? [p.b, p.c]
+        : n.w === "triS" ? [p.b]
+        : n.w === "triF" ? [p.c]
+        : [];
+      note.set(at.q, " — running now");
+    } else if (at) note.set(at.q, " — runs next");
+    return { t: "prog", v: n.p, site, root: n.p, lent, note, ran, here: at?.q, back: at ? !at.dir : false };
   }
 
   let tallest = 0;
@@ -196,10 +215,11 @@
       if (it.t === "node") {
         const n = it.n;
         const g = glyph(n);
-        const back = !read(n.p).fwd;
+        const back = backward(n);
         const sk = it.site ?? `s${n.id}`;
-        const kidSite = n.k === "frame" && OWN_PARTS.has(n.w) ? sk : undefined;
-        if (n.k === "dot") {
+        const w = n.w;
+        const kidSite = w && OWN_PARTS.has(w) ? sk : undefined;
+        if (!w) {
           const live = !done(n);
           const stuck = live && !g;
           node = {
@@ -215,14 +235,11 @@
               ? stuck
                 ? `stuck: ${say(n)}`
                 : `${say(n)} — click to make this move`
-              : `${progLabel(n.p)}: it has run — click to flip it, letting it go turned around`
+              : `${progLabel(n.p)}: it has run — click to flip it, so that firing runs it back`
           };
-          kids = [
-            { t: "prog", v: n.p, site: sk, root: n.p },
-            { t: "data", v: n.x, underStem: false, ctx: it.ctx }
-          ];
-        } else if (BEAD[n.w]) {
-          const named = n.w === "fix" || n.w === "seq1" || n.w === "seq2" ? nameOf(n.p) : null;
+          kids = [progOf(n, sk), { t: "data", v: n.x!, underStem: false, ctx: it.ctx }];
+        } else if (BEAD[w]) {
+          const named = w === "fix" ? nameOf(partOf(n)!.base) : null;
           node = {
             ...blank,
             key: `n${n.id}`,
@@ -230,14 +247,14 @@
             site: n.id,
             glyph: g,
             back,
-            label: BEAD[n.w]!,
+            label: BEAD[w]!,
             name: named,
-            tip: `${BEAD_SAYS[n.w]}${named ? ` (${named})` : ""} — ${fire(n) ? "click to make this move" : PLAYS}`
+            tip: `${BEAD_SAYS[w]}${named ? ` (${named})` : ""} — ${fire(n) ? "click to make this move" : PLAYS}`
           };
-          kids = [frameProg(n, sk), ...n.kids.map((k): Item => ({ t: "node", n: k, ctx: it.ctx, site: kidSite }))];
+          kids = [progOf(n, sk), ...n.kids.map((k): Item => ({ t: "node", n: k, ctx: it.ctx, site: kidSite }))];
           step = 0.62;
         } else {
-          const ring = n.w === "mapS" || n.w === "mapF" ? "map" : "tri";
+          const ring = w === "mapS" || w === "mapF" ? "map" : "tri";
           node = {
             ...blank,
             key: `v${n.at}`,
@@ -245,15 +262,15 @@
             site: n.id,
             glyph: g,
             back,
-            shape: n.w === "mapS" || n.w === "triS" ? "knot" : "fork",
+            shape: w === "mapS" || w === "triS" ? "knot" : "fork",
             ring,
             label: ring,
-            tip: `${HOLD_SAYS[n.w]} — ${fire(n) ? "click to close it" : PLAYS}`
+            tip: `${HOLD_SAYS[w]} — ${fire(n) ? "click to close it" : PLAYS}`
           };
-          const ctx = below(it.ctx, n.w === "mapS" || n.w === "triS");
+          const ctx = below(it.ctx, w === "mapS" || w === "triS");
           kids = [
-            frameProg(n, sk),
-            ...(n.w === "triL"
+            progOf(n, sk),
+            ...(w === "triL"
               ? [{ t: "data", v: n.kept!, underStem: false, ctx } as Item, { t: "node", n: n.kids[0], ctx, site: kidSite } as Item]
               : n.kids.map((k): Item => ({ t: "node", n: k, ctx, site: kidSite })))
           ];
@@ -283,7 +300,8 @@
         const key = `${it.site}:${v.id}`;
         const isRoot = v === it.root;
         const role = rolesOf(it.root).get(v) ?? null;
-        const base = { ...blank, key, open: { v, site: it.site } };
+        const spent = !!it.spent || !!it.ran?.has(v);
+        const base = { ...blank, key, open: { v, site: it.site }, spent, here: it.here === v, back: !!it.back };
         const count = used.get(it.site) ?? 0;
         const note = it.note?.get(v) ?? "";
         // a tree opened by a click, or a run's own program, opens whole when it is small; inside a bigger
@@ -311,7 +329,7 @@
           else {
             const what = role ? `${role}: ${short(progLabel(v), 60)}` : short(show(v), 60);
             node = { ...base, kind: "code", label: role, tip: `${what}${note} — click to fold` };
-            kids = vkids(v).map((c) => ({ t: "prog", v: c, site: it.site, root: it.root, lent: it.lent, note: it.note, whole }));
+            kids = vkids(v).map((c): Item => ({ ...it, v: c, spent, whole }));
           }
         }
         step = 0.8;
@@ -510,6 +528,9 @@
         const one = n.glyph.length === 1;
         word({ text: n.glyph, size: (one ? letter : letter * 0.78) * g, weight: 700, color: n.back ? P.fireLetterBack : P.fireLetter, ...at(dx, dy + 0.5), baseline: "middle", flags });
       };
+      /** A program part the value has been through is drawn faint. */
+      const fade = (c: RGBA) => (n.spent ? alpha(c, 0.32) : c);
+      if (n.here) shape({ r: (n.kind === "pod" ? 12.5 : 7) * g, fill: alpha(P.bgElev, 0), stroke: n.back ? P.blue : P.g4, sw: 1.6 * g });
       const blossom = () => {
         if (!isNext) return;
         for (const a of [36, 108, 180, 252, 324])
@@ -544,16 +565,16 @@
         case "dpod": {
           const data = n.kind === "dpod";
           const name = n.name ?? "";
-          shape({ r: 9 * g, fill: data ? P.dpod : P.pod, stroke: data ? P.dpodStroke : P.podStroke, sw: 0.9 * g, flags: F.hoverBright | (name.length > 4 ? F.seam : 0) });
-          if (name.length <= 4) word({ text: name, size: [10, 10, 8, 7, 6][name.length] * g, weight: 700, color: P.vname, ...at(0, 0.5), baseline: "middle" });
-          else word({ text: name, size: 9 * g, weight: 600, color: data ? P.g2 : P.vnameAbove, ...at(0, -13), baseline: "middle" });
+          shape({ r: 9 * g, fill: fade(data ? P.dpod : P.pod), stroke: fade(data ? P.dpodStroke : P.podStroke), sw: 0.9 * g, flags: F.hoverBright | (name.length > 4 ? F.seam : 0) });
+          if (name.length <= 4) word({ text: name, size: [10, 10, 8, 7, 6][name.length] * g, weight: 700, color: fade(P.vname), ...at(0, 0.5), baseline: "middle" });
+          else word({ text: name, size: 9 * g, weight: 600, color: fade(data ? P.g2 : P.vnameAbove), ...at(0, -13), baseline: "middle" });
           break;
         }
         case "code":
-          shape({ r: 3.4 * g, fill: P.codeKnot });
+          shape({ r: 3.4 * g, fill: fade(P.codeKnot) });
           break;
         case "codeleaf":
-          shape({ shape: SHAPE.leaf, r: 7 * g, fill: P.code[hash(node) % P.code.length], stroke: P.leafStroke, sw: 0.5 * g, rot: deg((hash(node) % 70) - 35) });
+          shape({ shape: SHAPE.leaf, r: 7 * g, fill: fade(P.code[hash(node) % P.code.length]), stroke: fade(P.leafStroke), sw: 0.5 * g, rot: deg((hash(node) % 70) - 35) });
           break;
         case "leaf":
           shape({ shape: SHAPE.leaf, r: 9 * g, fill: P.leaf[hash(node) % P.leaf.length], stroke: P.leafStroke, sw: 0.5 * g, rot: deg((hash(node) % 70) - 35), flags: F.vein });
@@ -570,7 +591,7 @@
         word({
           text: n.label,
           size: (code ? 8.5 : 9.5) * g,
-          color: code ? P.codeBadge : P.g2,
+          color: code ? fade(P.codeBadge) : P.g2,
           anchor: side ? "start" : "middle",
           ...at(side ? 7 : 0, n.kind === "leaf" || n.kind === "codeleaf" ? -12 : n.kind === "code" ? -8 : 3.2)
         });
@@ -580,7 +601,7 @@
           a: n.parent,
           b: node,
           width: Math.max(1.3, (isCode(n) ? 2.6 : 5 - n.depth * 0.45) * g),
-          color: isCode(n) ? alpha(P.codeEdge, 0.55) : alpha(P.bark, 0.8),
+          color: isCode(n) ? alpha(P.codeEdge, n.spent ? 0.2 : 0.55) : alpha(P.bark, 0.8),
           dash: n.kind === "slot" ? [5, 2] : undefined
         });
       else strokes.push({ a: "ground", b: node, width: 5, color: alpha(P.bark, 0.8), bend: [0, -12 / (-n.y + L.height - GROUND + 12)] });

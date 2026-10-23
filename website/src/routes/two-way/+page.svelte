@@ -32,16 +32,17 @@
   <h2>How to read the tree</h2>
   <p>
     Each <strong>dot</strong> is a program on a value: the purple tree on its left, the value on its
-    right. A live dot (the dashed ring) wears the move it will make. When a combinator starts, it takes
-    the value apart and hands the parts to new dots, and the parts of its program that run travel up
-    into them, each leaving a dotted <strong>slot</strong> in the program, which stays open where it
-    was. <code>map</code> and <code>tri</code> hold on to the node they opened, which stays where the dot
-    was inside a blue (map) or amber (tri) ring; the other combinators stay a dashed bud, the way the
-    tree-calculus visualizer draws an application waiting on the ones inside it. A part that has run
-    comes back into its slot, and when every dot above a ring or bud has run, it closes, putting back
-    what it held, with its program whole again. A dot that has run has its program
-    <strong>held</strong>: a lid, a fork with △△ on its left, sits on top of the program, and the ring
-    turns solid.
+    right. A dot runs the parts of its program's sequence one after another, and its
+    <strong>count</strong> of how many have run shows in the program: the parts the value has been
+    through fade, and the part the dot is at wears a ring. A live dot (the dashed ring) wears the move it
+    will make, and a move fires in place. When a combinator or a call starts, it takes the value apart
+    and hands the parts to new dots, and the parts of its program that run travel up into them, each
+    leaving a dotted <strong>slot</strong> in the program. <code>map</code> and <code>tri</code> hold
+    on to the node they opened, which stays where the dot was inside a blue (map) or amber (tri) ring;
+    the others stay a dashed bud, the way the tree-calculus visualizer draws an application waiting on
+    the ones inside it. A part that has run comes back into its slot, and when every dot above a ring or
+    bud has run, it closes, putting back what it held, and the count goes on. A dot whose count is at
+    the end has run, and its ring turns solid.
   </p>
   <p>
     <kbd>▸</kbd> fires every move that can be made right now (one round), or just the next one with
@@ -65,7 +66,6 @@
     <tbody>
       <tr><td><code>△</code></td><td><code>id</code></td><td>x as it is</td></tr>
       <tr><td><code>(△, b)</code></td><td><code>b†</code></td><td>b run backward</td></tr>
-      <tr><td><code>(△△, b)</code></td><td><code>held(b)</code></td><td>nothing: b has run, and is held until it is flipped</td></tr>
       <tr><td><code>(△a, b)</code></td><td><code>a ; b</code></td><td>a, then b on what a gave</td></tr>
       <tr>
         <td><code>((a, b), c)</code></td><td><code>tri(a, b, c)</code></td><td
@@ -93,8 +93,7 @@
     so each is its own inverse, and the others build on them: <code>rot</code>, which makes
     ((u, v), w) into (u, (v, w)), is <code>first(swap) ; cross ; swap</code>. Any other tree is not a
     program, and running it gets stuck. So does a move with nothing to undo: backward,
-    <code>stem</code> needs a stem and <code>unit</code> a (△, x). A held part is never started, since it stands for a run that has already
-    happened, so a program that would start one is stuck there too. <code>first(f)</code>,
+    <code>stem</code> needs a stem and <code>unit</code> a (△, x). <code>first(f)</code>,
     <code>second(f)</code> and <code>par(f, g)</code> are short for <code>map(id, f, id)</code>,
     <code>map(id, id, f)</code> and <code>map(id, f, g)</code>, and <code>when(f)</code> for
     <code>tri(id, tri(f, id, id), id)</code>: when the left part is T, f runs on the right.
@@ -109,36 +108,38 @@
 
   <h2>Fire and flip</h2>
   <p>
-    Fire rewrites one node of the run and looks no further than the nodes just under it. There are
-    twenty-eight kinds: a live dot starts (<code>id</code> does nothing, one of the five moves
-    rearranges its value, a combinator becomes a frame over dots for its parts), a frame whose dots have
-    all run closes, or a sequence goes on to its second part. A dot that has run gets its program held.
-    The same rules run a program backward: they read through the †s on top of a program, a move runs
-    as its inverse (<code>stem</code> as <code>stem†</code>, <code>unit</code> as <code>unit†</code>,
-    and the other three as themselves), and each part is turned around as it starts. No move
-    copies or drops a tree: the five moves only relink, add or take away the nodes they name, and a
-    frame keeps every node it takes apart until it puts it back. Copying is a program like any other
+    A dot reads its program as a sequence of parts, with every sequence inside opened up and a † on a
+    sequence reversing the order of its parts and turning each one around. Its program is never written
+    to while it runs: where the dot is in it is one number, the count. Fire rewrites one dot and looks
+    no further than the dots just under it: one of the five moves rearranges its value and the count
+    goes up one; a combinator or a call opens dots for its parts (a <code>map</code> or
+    <code>tri</code> whose parts are single moves does them in the same step); or, once those dots have
+    all run, it closes and the count goes up. The same rules run a program backward: a move runs as its
+    inverse (<code>stem</code> as <code>stem†</code>, <code>unit</code> as <code>unit†</code>, and the
+    other three as themselves), and the parts run in the other order. No move copies or drops a tree:
+    the five moves only relink, add or take away the nodes they name, and a dot with a part in flight
+    keeps every node it takes apart until it puts it back. Copying is a program like any other
     (<code>copy</code> below), and it walks the tree it copies a node at a time.
   </p>
   <p>
-    Flip computes nothing. On a dot, it takes the lid off and turns the program around, or turns it
-    around and puts a lid on: <code>held(p)</code> becomes <code>p†</code>, and <code>p</code> becomes
-    <code>held(p†)</code>. On a frame, it flips every dot under it. Two lids or two †s cancel, so flip
-    is its own inverse on every tree. Undoing a move is flip, fire, flip, which is why there is no table
+    Flip computes nothing. On a dot, it turns the way the dot goes and counts from the other end: two
+    parts into a seven-part sequence, flipped, is five parts into it run backward. A dot with a part in
+    flight flips the dots under it too. Flip is its own inverse. Undoing a move is flip, fire, flip,
+    which is why there is no table
     of inverse rules, and why going back needs no record of the run: as in
     <a href="https://mathweb.ucsd.edu/~sbuss/CourseWeb/Math268_2013W/Bennett_Reversibiity.pdf#page=2"
       >Bennett's reversible machines</a
-    >, nothing was thrown away. Firing <code>add</code> on (3, 2) ends with (3, 5) and
-    <code>held(add)</code>. Flipped, that is <code>add†</code> on (3, 5); firing it ends with (3, 2) and
-    <code>held(add†)</code>, and flipped again it is <code>add</code> on (3, 2), where it started.
+    >, nothing was thrown away. Firing <code>add</code> on (3, 2) ends with (3, 5), its count at the
+    end. Flipped, it is <code>add</code> run backward from (3, 5), its count at the start; firing it
+    ends with (3, 2), and flipped again it is <code>add</code> on (3, 2), where it started.
   </p>
 
   <h2>What runs in parallel</h2>
   <p>
     <code>map</code> starts both halves of a fork at once, and nothing else waits on them until they
     are done. A word is a balanced tree of bits, each in a stem, so <code>notw</code> reaches all of
-    its bits together: 8 bits take 45 rounds and 64 bits take 57, four more each time the word doubles,
-    and most of the 45 is <code>not</code> itself. The work grows with the number of bits; the rounds
+    its bits together: 8 bits take 23 rounds and 64 bits take 35, four more each time the word
+    doubles. The work grows with the number of bits; the rounds
     grow with the depth of the tree.
   </p>
   <p>
@@ -148,7 +149,7 @@
     one), the carries come down it, every b becomes its bit of the sum, and then the carries are taken
     back out, which works because the carries of <code>a + not(a + b)</code> are the carries of
     <code>a + b</code>. It is a long program in small moves, and how long depends a little on the
-    bits: 2,300 to 2,700 rounds at 4 bits, 2,900 to 3,600 at 8, and about 5,700 at 64. Its rounds,
+    bits: 730 to 940 rounds at 4 bits, 990 to 1,230 at 8, and 1,850 to 2,060 at 64. Its rounds,
     too, grow with the depth of the tree and not its width.
   </p>
 
@@ -157,8 +158,7 @@
     A program is a tree, so a program can be a value. <code>unit</code> puts (△, ·) on top of a tree,
     which turns a program into its dagger, the program that runs it backward, and <code>eval</code>
     runs the left part of a fork on the right part and keeps it. So <code>first(unit) ; eval</code>,
-    given <code>([add], (2, 7))</code>, subtracts. Whether a run has happened is part of the tree too:
-    the lid. Tree calculus reads a program the same way, by its top shape. Its triage, which picks by
+    given <code>([add], (2, 7))</code>, subtracts. Tree calculus reads a program the same way, by its top shape. Its triage, which picks by
     the shape of a value and forgets it, comes back here as <code>tri</code> and <code>map</code>, which
     put the shape back. Its K and S, which drop and copy their argument, have no counterpart: nothing is
     dropped, and copying is a program.

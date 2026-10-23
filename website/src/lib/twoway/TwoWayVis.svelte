@@ -9,10 +9,10 @@
   import { fade } from "svelte/transition";
   import { backOut } from "svelte/easing";
   import Grove from "./Grove.svelte";
-  import { flipProg, show, size, type V } from "./core";
+  import { show, size, type V } from "./core";
   import { parseProg, parseVal, progLabel, progText, valText, type Reads } from "./text";
   import { PRESETS } from "./library";
-  import { done, find, fire, fireAll, flip, measure, movable, say, start, tag, update, type Node } from "./machine";
+  import { done, find, fire, fireAll, flip, measure, movable, say, start, tag, update, weight, type Node } from "./machine";
 
   let preset = $state(0);
   let progSrc = $state(PRESETS[0].prog);
@@ -140,19 +140,18 @@
   /** The next round in a part of the tree, or the whole of it: every node there that can fire. */
   function stepIn(scope: Node | null): boolean {
     if (!m) return false;
-    if (weightOf(m) > TOO_BIG) {
+    if (weight(m) > TOO_BIG) {
       ruleMsg = "the tree has grown too big to draw (it may never stop)";
       return false;
     }
     const ms = movable(scope ?? m);
     return fireSet(parallel ? ms : ms.slice(0, 1));
   }
-  const weightOf = (n: Node): number => (n.k === "dot" ? 1 + size(n.x) : 1 + n.kids.reduce((s, k) => s + weightOf(k), 0));
 
   const finished = $derived(!!m && done(m));
   function endMsg(): string {
     if (!m) return "";
-    if (done(m)) return `done: ${valText(m.x, reads)}, and the program is held — ⇆ flips it, and ▸ runs it back`;
+    if (done(m)) return `done: ${valText(m.x!, reads)}, and the count is at the end — ⇆ flips it, and ▸ runs it back`;
     return "stuck: a move that does not fit what it was given";
   }
   function step() {
@@ -195,11 +194,11 @@
         const part = focus !== null && m ? find(m, focus) : null;
         running = false;
         focus = null;
-        ruleMsg = part && done(part) ? `that part has run: ${valText(part.x, reads)}, and its program is held — ▶ plays the rest` : endMsg();
+        ruleMsg = part && done(part) ? `that part has run: ${valText(part.x!, reads)} — ▶ plays the rest` : endMsg();
       }
     }, focus === null ? stepMs : Math.min(stepMs, 260));
   }
-  /** Play the part under a frame until it has run, the rest of the tree waiting. */
+  /** Play the part in flight under a dot until it has run, the rest of the tree waiting. */
   function playPart(id: number) {
     stopRun();
     focus = id;
@@ -214,7 +213,7 @@
     if (stepIn(null)) schedule();
     else running = false;
   }
-  /** Flip the whole tree: every dot turned around, every frame with it; nothing is computed. */
+  /** Flip the whole tree: every dot turned around; nothing is computed. */
   function flipAll() {
     stopRun();
     if (!m) return;
@@ -226,12 +225,10 @@
     stopRun();
     const n = m && find(m, id);
     if (!n) return;
-    if (n.k === "dot") {
-      if (done(n)) act(update(m!, new Set([id]), flip), `flipped: ${progLabel(n.p)} became ${progLabel(flipProg(n.p))}, so firing runs it back`, 0);
-      else if (fire(n)) fireSet([n]);
-      else ruleMsg = `stuck: ${say(n)}`;
-    } else if (fire(n)) fireSet([n]);
-    else playPart(id);
+    if (done(n)) act(update(m!, new Set([id]), flip), `flipped: ${progLabel(n.p)} turned around and counts from the other end, so firing runs it back`, 0);
+    else if (fire(n)) fireSet([n]);
+    else if (n.kids.length) playPart(id);
+    else ruleMsg = `stuck: ${say(n)}`;
   }
 
   function onKey(e: KeyboardEvent) {
@@ -258,7 +255,7 @@
 
   const count = (n: number, what: string) => `${n.toLocaleString("en")} ${what}${n === 1 ? "" : "s"}`;
   const exprText = $derived(compiled.err === null ? `${progLabel(compiled.prog)} · ${inputSrc}` : progSrc);
-  const nowText = $derived(!m ? "" : m.k === "dot" ? valText(m.x, reads) + (done(m) ? " (held)" : "") : "…");
+  const nowText = $derived(!m ? "" : m.x ? valText(m.x, reads) + (done(m) ? " (done)" : "") : "…");
 </script>
 
 {#snippet icoPrev()}<svg class="ico" viewBox="0 0 24 24"><rect x="6" y="6" width="2.2" height="12" rx="0.6" /><path d="M18 6 L10 12 L18 18 Z" /></svg>{/snippet}
@@ -355,8 +352,7 @@
         <kbd>f</kbd> flips, <kbd>shift</kbd>+arrows change example, <kbd>r</kbd> resets. A program:
         <code>swap</code> <code>cross</code> <code>sink</code> <code>stem</code> <code>unit</code> <code>eval</code>
         <code>id</code>, <code>a ; b</code>, <code>a†</code>, <code>tri(a, b, c)</code>, <code>map(a, b, c)</code>,
-        <code>fix(b)</code> with <code>self</code> inside, <code>held(p)</code> for a program that has run, the
-        shorthands <code>first(f)</code>
+        <code>fix(b)</code> with <code>self</code> inside, the shorthands <code>first(f)</code>
         <code>second(f)</code> <code>par(f, g)</code> <code>when(f)</code>, the library's names, or any tree as
         <code>{"{"}△△△{"}"}</code>. A value: <code>△</code> <code>△v</code> <code>(u, v)</code> <code>T</code>
         <code>F</code>, numbers, a word <code>0b1011</code>, registers <code>&lt;0b10, 0b01&gt;</code>, or a program

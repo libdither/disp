@@ -3,8 +3,7 @@
 // the first three are their own inverse) and a few ways to put programs together: a then b, b run backward, a branch on the shape of a value's left
 // part that puts that shape back (tri), the same on the value's own shape with its parts at once (map),
 // and recursion (fix, self). Programs being trees, a program can make, take apart and run programs
-// (eval). A program that has run is held: it does nothing until it is flipped, which turns it around.
-// machine.ts runs one a local move at a time; `run` here is the same thing all at once.
+// (eval). machine.ts runs one a local move at a time; `run` here is the same thing all at once.
 
 export type V =
   | { tag: 'leaf'; id: number }
@@ -107,7 +106,6 @@ export type Atom = (typeof ATOMS)[number]
 /** What a tree does as a program. A tree of no form here is no program, and running it is stuck. */
 export type Form =
   | { k: 'id' }
-  | { k: 'held'; b: V }
   | { k: 'dag'; b: V }
   | { k: 'seq'; a: V; b: V }
   | { k: 'tri'; a: V; b: V; c: V }
@@ -118,7 +116,7 @@ export type Form =
 
 const FORMS = new WeakMap<V, Form>()
 /** The form of a program: a leaf is id; a fork (l, r) reads l the way tree calculus does, (△, b) b†,
- * (△△, b) b held (it has run, and does nothing), (△a, b) a ; b for any other a, ((a, b), c)
+ * (△a, b) a ; b, ((a, b), c)
  * tri(a, b, c); a stem on a fork is △(△, b) fix(b) or △((a, b), c) map(a, b, c); and k stems on a
  * leaf are the moves, △△ self, △△△ swap, … up to eval. */
 export function form(p: V): Form {
@@ -131,9 +129,7 @@ export function form(p: V): Form {
       h.tag === 'leaf'
         ? { k: 'dag', b: p.r }
         : h.tag === 'stem'
-          ? h.c.tag === 'leaf'
-            ? { k: 'held', b: p.r }
-            : { k: 'seq', a: h.c, b: p.r }
+          ? { k: 'seq', a: h.c, b: p.r }
           : { k: 'tri', a: h.l, b: h.r, c: p.r }
   } else if (p.c.tag === 'fork') {
     const h = p.c.l
@@ -154,9 +150,7 @@ export function form(p: V): Form {
 export const prog = {
   id: (): V => L(),
   dag: (b: V): V => F(L(), b),
-  held: (b: V): V => F(S(L()), b),
-  /** a ; b. A sequence never starts with id (that shape is held), and id ; b is b. */
-  seq: (a: V, b: V): V => (a.tag === 'leaf' ? b : F(S(a), b)),
+  seq: (a: V, b: V): V => F(S(a), b),
   tri: (a: V, b: V, c: V): V => F(F(a, b), c),
   map: (a: V, b: V, c: V): V => S(F(F(a, b), c)),
   fix: (b: V): V => S(F(L(), b)),
@@ -189,59 +183,6 @@ export function move(n: Atom, x: V, fwd: boolean): V | null {
 /** The body a `self` runs: self stands for the innermost fix around it, fix(b), and runs b again. */
 export const bodyOf = (me: V): V => (me as { c: { r: V } }).c.r
 
-// ---- turning a program around ----
-// A program's top can carry marks: † (a fork with a leaf on its left) runs what is under it the other
-// way, and a lid (a fork with △△ on its left) holds what is under it. Two of either cancel, so a mark is
-// added or taken off by the parity of its run of marks, which makes each toggle its own inverse.
-
-type Mark = { lid: boolean; fork: number; leaf: number; stem: number }
-function marksOf(p: V): { ms: Mark[]; base: V } {
-  const ms: Mark[] = []
-  let t = p
-  while (t.tag === 'fork' && (t.l.tag === 'leaf' || (t.l.tag === 'stem' && t.l.c.tag === 'leaf'))) {
-    const lid = t.l.tag === 'stem'
-    ms.push({ lid, fork: t.id, leaf: lid ? (t.l as { c: V }).c.id : t.l.id, stem: lid ? t.l.id : freshId() })
-    t = t.r
-  }
-  return { ms, base: t }
-}
-/** The marks rebuilt over base, each keeping the ids of the mark that stood in its place, so a lid that
- * turns into a † keeps its fork and leaf and loses only its stem. */
-function withMarks(ms: boolean[], old: Mark[], base: V): V {
-  let t = base
-  for (let i = ms.length - 1; i >= 0; i--) {
-    const o = old[i]
-    const leaf = L(o ? o.leaf : freshId())
-    t = F(ms[i] ? S(leaf, o?.lid ? o.stem : freshId()) : leaf, t, o ? o.fork : freshId())
-  }
-  return t
-}
-const runAt = (ms: boolean[], from: number, step: number, lid: boolean) => {
-  let n = 0
-  for (let i = from; i >= 0 && i < ms.length && ms[i] === lid; i += step) n++
-  return n
-}
-/** p run the other way: a † toggled on the innermost run of marks, next to the program itself. */
-export function turn(p: V): V {
-  const { ms, base } = marksOf(p)
-  const ls = ms.map((m) => m.lid)
-  const n = runAt(ls, ls.length - 1, -1, false)
-  return withMarks(n % 2 ? ls.slice(0, -1) : [...ls, false], ms, base)
-}
-/** A program that has run, held: a lid on top. */
-export const isHeld = (p: V): boolean => p.tag === 'fork' && p.l.tag === 'stem' && p.l.c.tag === 'leaf'
-export const hold = (p: V): V => F(S(L()), p)
-/** Flip: a held program is let go, turned around, and a live one is held, turned around. Its own
- * inverse on every tree: the outermost run of lids and the innermost run of †s each toggle by parity. */
-export function flipProg(p: V): V {
-  const { ms, base } = marksOf(p)
-  let ls = ms.map((m) => m.lid)
-  ls = runAt(ls, 0, 1, true) % 2 ? ls.slice(1) : [true, ...ls]
-  const n = runAt(ls, ls.length - 1, -1, false)
-  ls = n % 2 ? ls.slice(0, -1) : [...ls, false]
-  return withMarks(ls, ms, base)
-}
-
 export class Stuck extends Error {}
 export class TooLong extends Error {}
 
@@ -253,12 +194,7 @@ export class Runner {
     this.limit = limit
   }
   depth = 0
-  /** p run on x as a part of a program: a held part cannot be started (it is a run that has happened). */
   run(p: V, x: V, fwd: boolean, me: V | null): V {
-    if (isHeld(fwd ? p : turn(p))) throw new Stuck()
-    return this.go(p, x, fwd, me)
-  }
-  private go(p: V, x: V, fwd: boolean, me: V | null): V {
     if (++this.moves > this.limit || this.depth > 1500) throw new TooLong()
     this.depth++
     try {
@@ -271,7 +207,6 @@ export class Runner {
     const f = form(p)
     switch (f.k) {
       case 'id':
-      case 'held':
         return x
       case 'none':
         throw new Stuck()
@@ -286,7 +221,7 @@ export class Runner {
         return y
       }
       case 'dag':
-        return this.go(f.b, x, !fwd, me)
+        return this.run(f.b, x, !fwd, me)
       case 'seq':
         return fwd ? this.run(f.b, this.run(f.a, x, fwd, me), fwd, me) : this.run(f.a, this.run(f.b, x, fwd, me), fwd, me)
       case 'fix':
@@ -312,10 +247,8 @@ export class Runner {
   }
 }
 
-/** p run on x, or null where it gets stuck; throws TooLong past the limit. A held program has run already,
- * and leaves x as it is. */
+/** p run on x, or null where it gets stuck; throws TooLong past the limit. */
 export function run(p: V, x: V, fwd = true, limit?: number): V | null {
-  if (isHeld(p)) return x
   try {
     return new Runner(limit).run(p, x, fwd, null)
   } catch (e) {

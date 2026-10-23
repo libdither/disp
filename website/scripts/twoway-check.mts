@@ -1,8 +1,8 @@
 // Checks the two-way programs engine (src/lib/twoway): the step machine agrees with the whole-run
-// interpreter, every move it makes is undone by flip, fire, flip, flip is its own inverse, a finished run
+// interpreter, every move it makes is undone by flip, fire, flip, flip is its own inverse on every state, a finished run
 // flipped and run again comes back to exactly its start, text reads back to the same tree, and the
 // library does what it says. `npm run twoway-check [-- quick]`.
-import { L, S, F, eq, show, run, regs, registersOf, nat, flipProg, TooLong, type V } from '../src/lib/twoway/core.ts'
+import { L, S, F, eq, show, run, regs, registersOf, nat, TooLong, type V } from '../src/lib/twoway/core.ts'
 import { parseProg, parseVal, progText, valText } from '../src/lib/twoway/text.ts'
 import { LIBRARY, PRESETS, libTree } from '../src/lib/twoway/library.ts'
 import { start, fire, flip, unfire, movable, fireAll, same, done, measure, type Node, type Dot } from '../src/lib/twoway/machine.ts'
@@ -59,7 +59,6 @@ function roundTrip(p: V, x: V, maxRounds = 20_000): { y: V | null; rounds: numbe
   }
   const a = forward(s0)
   if (!a.t) return { y: null, rounds: a.r, long: a.long }
-  if (done(s0)) return { y: (a.t as Dot).x, rounds: 0 } // a held program has already run
   const b = forward(flip(a.t))
   if (!b.t || !same(flip(b.t), s0)) fail(`flipped and run again, ${show(p)} on ${show(x)} does not come back to its start`)
   return { y: (a.t as Dot).x, rounds: a.r }
@@ -111,15 +110,6 @@ timed('text reads back to the same tree', () => {
     if (!eq(parseVal(t), v)) fail(`value ${s} → ${t}`)
   }
   return `${n} trees as programs`
-})
-
-timed('flip is its own inverse on every tree', () => {
-  let n = 0
-  for (const t of upTo(quick ? 9 : 11)) {
-    n++
-    if (!eq(flipProg(flipProg(t)), t)) fail(`flip twice changes ${show(t)}`)
-  }
-  return `${n} trees`
 })
 
 timed('every tree as a program, on small trees', () => {
