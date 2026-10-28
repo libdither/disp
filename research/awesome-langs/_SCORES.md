@@ -1,8 +1,8 @@
 # Scores
 
-Every score, in one place (2026-09-30). Each axis's maximum is disp's own requirement, split into
+Every score, in one place (2026-10-26). Each axis's maximum is disp's own requirement, split into
 three or four clauses in [`_AXES.md`](_AXES.md#grading-the-maximum-and-the-clauses); every clause
-scores 0, ½ or 1 and the axis percentage is their mean. The write-ups' scorecard notes are the
+scores 0, ½ or 1 and the axis percentage is their weighted mean. The write-ups' scorecard notes are the
 evidence. `†` marks a value taken from general knowledge beyond the write-up; `?` marks a clause the
 write-up does not settle (scored 0, percentage provisional); `—` marks a clause that does not apply
 (left out of the mean). Rows follow the master table, disp first. This file is the source:
@@ -11,7 +11,7 @@ write-ups, the master table and disp's own table.
 
 ## G1 Substrate
 
-(a) programs can inspect other programs · (b) one representation is both run and inspected, no quotation layer · (c) the checker is callable from programs as an ordinary function (½ from metaprograms only)
+(a) programs can inspect other programs (½ a restricted part only: types, environments, runtime graphs, rewrite patterns) · (b) one representation is both run and inspected, no quotation layer (½ one direction only: inspected but never run back, or staged but never data) · (c) the checker is callable from programs as an ordinary function (½ from metaprograms only)
 
 Weights: 1 · 1 · 1
 
@@ -46,7 +46,7 @@ Weights: 1 · 1 · 1
 | Salt | 0 | 0 | 0 | 0 | none |
 | Telomare (Stand-In Language) | ½(env only) | 0 | 0 | 17 | a closure's environment is a pair you can project; its code is an opaque `Defer`; every analysis is Haskell |
 | Stellogen | 1 | ½(no eval back) | 1 | 83 | code is a first-order term that shape checkers unify against; no eval back to code; types are library constellations |
-| Nock / Hoon | 1 | 1 | ½(unused vases) | 83 | formulas are nouns and opcode 2 is eval; vases let programs typecheck programs, but nothing checks Nock with it |
+| Nock / Hoon | 1 | 1 | 1 | 100 | formulas are nouns and opcode 2 is eval; `mint` and `nest` are ordinary Hoon gates a program can call on a vase |
 | Thermite | 0 | 0 | 0 | 0 | no reflection; Forge is an external tool and programs are never data |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | contracts + SMT on a host; no reflection anywhere in the genre |
 
@@ -58,7 +58,7 @@ Weights: 30 · 20 · 20 · 30
 
 | Project | a | b | c | d | % | Why |
 |---|:-:|:-:|:-:|:-:|--:|---|
-| disp | 1 | ½(small library) | 0 | ½(witness slices) | 55 | Pi, telescopes, coproducts and proofs that run, over a small library; cost as a grade is designed; equality is intensional with witness-licensed slices and the decidable fragment open (Q1) |
+| disp | 1 | ½(small library) | 0 | ½(propositional) | 55 | Pi, telescopes, coproducts and proofs that run, over a small library; cost as a grade is designed; `Eq` compares canonical forms, intensional, and the decidable fragment that would license rewrites is open (Q1) |
 | HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | 0 | untyped; the typed language became Bend 2, which does not run on this runtime |
 | Bend 2 / BendTT / BendRT | 1 | ½(small library) | ½(usage grade) | ½(propositional) | 65 | affine dependent types with Type : Type, laws proven by defs over a small Base; quantities &0/&1/&2 are a usage grade; intensional J with a written motive, no extensionality |
 | Metamath Zero | 0 | 1 | 0 | 0 | 20 | a HOL subset with explicit proof objects and a modest library; no dependent types, no resource types, equality not addressed |
@@ -99,23 +99,23 @@ Weights: 30 · 30 · 15 · 25
 
 | Project | a | b | c | d | % | Why |
 |---|:-:|:-:|:-:|:-:|--:|---|
-| disp | 1 | 1 | ½(one core) | ½(one slice) | 80 | a two-op core mints hypotheses; elaborator and library untrusted; five evaluators agree but nothing independent re-checks the kernel's verdicts; `.opt.disp` overlays replace definitions under a license, one slice landed |
+| disp | 1 | 1 | ½(one core) | 0 | 68 | `lib/kernel/` mints hypotheses with provenance; elaborator and library untrusted; five evaluators agree but nothing independent re-checks the kernel's verdicts; the licensed `.opt.disp` slice went with the retired kernel and nothing replaces definitions today |
 | HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | 0 | trust is `hvm.c` |
 | Bend 2 / BendTT / BendRT | ½(one-file kernel) | ½(proof defs) | 0 | 0 | 30 | bend.ts is "the trusted kernel", one human-written file, checking in one pass; proofs are defs the kernel checks, no certificate minted; nothing re-checks, and the Lean model admittedly lags the checker |
 | Metamath Zero | 1 | 1 | 1 | ½(compile only) | 88 | a C verifier small enough to formalize; MMB proof objects; MM1 untrusted; independent verifiers in Rust and Kotlin; MMC's verified compilation is the one licensed rewrite |
 | Verus | 0 | 0 | 0 | 0 | 0 | TCB = Verus + Z3 + rustc |
 | F* / Low* / Pulse | 0 | ½(large checker) | 0 | 0 | 15 | typechecker, Z3 and KaRaMeL are all trusted; proof terms exist, SMT verdicts have none |
-| Lean 4 | ½(mid-size kernel) | 1 | 1 | 0 | 60 | a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check |
+| Lean 4 | ½(mid-size kernel) | 1 | 1 | 1† | 85 | a small kernel, larger than MM0's; proof terms; elaborator and tactics untrusted; lean4lean and lean4export re-check; `@[csimp]` swaps a definition for one the kernel proved equal (`implemented_by` is the unchecked escape hatch) |
 | Nova | 1 | 1 | ? | — | 80? | a small kernel with its own spec re-checks certificate-carrying artifacts; no independent checker is mentioned |
 | Blight | 1 | 1 | 1 | — | 100 | a microscopic kernel is the only thing that can mint a `Proof`; the tower is untrusted; a second independently written re-checker |
 | Soma | 0 | 0 | 0 | 0 | 0 | trust the compiler |
 | fiat-crypto + CryptOpt + Jasmin | ½(mid-size kernel) | 1 | 1† | 1 | 85 | Rocq's kernel; CryptOpt's equivalence checker is verified in Rocq; coqchk re-checks; CryptOpt's output is installed only on that verified check |
 | Velvet / Loom / WybeCoder | ½(mid-size kernel) | 1 | 1 | — | 80 | Lean's kernel; Loom verifiers are foundational, no trusted VC generator |
-| Agda / Cubical | 0 | ½(large checker) | 0 | — | 20 | the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
+| Agda / Cubical | 0 | ½(large checker) | 0 | ½(asserted)† | 28 | the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them; `COMPILE` pragmas swap a definition for unchecked Haskell |
 | Narya | 0 | ½(large checker) | 0 | — | 20 | tens of thousands of OCaml lines are the trust base; NbE unproven |
 | Dedukti / Lambdapi | ½(mid-size kernel) | 1 | 1 | ½(type-preservation only) | 72 | a 4,389-line kernel; proof terms; Lambdapi and Kontroli re-check the same calculus, and re-checking other provers is the purpose; a rewrite rule is accepted on type preservation, confluence and termination assumed |
 | Andromeda 2 | ½(mid-size nucleus) | 1 | ½(one core) | — | 70 | a 4,189-line nucleus is the only maker of judgements; the equality checker and AML are untrusted; no second checker |
-| Idris 2 / QTT | 0 | ½(large checker) | 0 | 0 | 15 | the typechecker is the TCB |
+| Idris 2 / QTT | 0 | ½(large checker) | 0 | ½(asserted)† | 28 | the typechecker is the TCB; `%transform` swaps a definition at codegen, unchecked |
 | CakeML + Pancake | 1 | 1 | 1† | ½(fixed passes) | 88 | HOL4's LCF kernel; theorems are the evidence; independent HOL checkers exist (OpenTheory, Candle); the compiler's proved passes are the only licensed rewrites, fixed rather than user-defined |
 | ATS3 / Xanadu | 0 | ½(large checker)† | 0 | 0 | 15 | the typechecker is the TCB; proof terms exist |
 | Vow | 0 | 0 | 0 | 0 | 0 | TCB = vowc + ESBMC |
@@ -127,8 +127,8 @@ Weights: 30 · 30 · 15 · 25
 | Acorn | 0 | ? | 0 | — | 0? | has its own checker; the write-up does not characterize its TCB or proof objects |
 | Salt | 0 | 0 | 0 | 0 | 0 | TCB = saltc + Z3 + MLIR (claimed) |
 | Telomare (Stand-In Language) | 0 | 0 | 0 | — | 0 | the whole compiler is trusted; `--certificate` is a report nothing re-checks |
-| Stellogen | 1 | 0 | ½(paper theorems) | — | 50 | ~3,200 lines with a normative spec and two trusted observations; checkers are user space; trust rests on paper theorems, no evidence objects |
-| Nock / Hoon | 1 | 0 | ½(conformance suite) | ½(asserted) | 50 | a page of spec, a conformance suite, independent interpreters; jets are asserted equivalences dispatched on intensional identity, an unbounded trusted surface with no evidence and no production differential check |
+| Stellogen | 1 | 0 | 0 | — | 40 | ~3,200 lines with a normative spec and two trusted observations; checkers are user space; trust rests on paper theorems, no evidence objects to re-check |
+| Nock / Hoon | 1 | 0 | 0 | ½(asserted) | 42 | a page of spec, a conformance suite, independent interpreters, but no evidence for any of them to re-check; jets are asserted equivalences dispatched on intensional identity, an unbounded trusted surface with no evidence and no production differential check |
 | Thermite | ½(L4 via Lean) | ½(fragment evidence) | ½(audit replay) | 0 | 38 | L3 trusts Verus+Z3+rustc while L4 replays certificates through axiom-probed Lean; the manifest is a report, the Lean proofs are evidence for a fragment; audit re-derives the chain with independent replay but SMT verdicts carry nothing |
 | Indie AI-first cluster | 0 | 0 | 0 | 0 | 0 | contracts + SMT; Verity (Lean, zero axioms) is the exception |
 
@@ -150,7 +150,7 @@ Weights: 40 · 30 · 30
 | Nova | 0 | 0 | 0 | 0 | a research-scale Idris 2 program |
 | Blight | 0 | 0 | 0 | 0 | no native backend, no cost model |
 | Soma | 1 | 0 | 0 | 40 | LLVM native, GC-free flat types at C cost; LLVM trusted |
-| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 0 | 70 | beats GCC/Clang; Jasmin and bedrock2 compile under verified compilers; cost is measured on the CPU inside the search rather than modelled |
+| fiat-crypto + CryptOpt + Jasmin | 1 | 1 | ½(measured outside model) | 85 | beats GCC/Clang; Jasmin and bedrock2 compile under verified compilers; cost is measured on the CPU inside the search rather than modelled |
 | Velvet / Loom / WybeCoder | 0 | 0 | 0 | 0 | programs are extracted for testing only |
 | Agda / Cubical | 0 | 0 | 0 | 0 | research-grade GHC/JS backends |
 | Narya | 0 | 0 | 0 | 0 | correctness-first, no performance story |
@@ -169,7 +169,7 @@ Weights: 40 · 30 · 30
 | Salt | ½(claimed) | 0 | 0 | 20 | MLIR→LLVM with claimed `-O3` parity, unverified |
 | Telomare (Stand-In Language) | 0 | 0 | 1 | 30 | a Haskell tree-walker; `--meter` counts steps and nodes deterministically; the static bound is graded under Specification |
 | Stellogen | 0 | 0 | 0 | 0 | execution has "a horrible complexity" |
-| Nock / Hoon | ½(jetted interpreter) | ½(modelled VM) | ½(timing hints) | 50 | C and Rust interpreters with jets; a page of frozen spec with a conformance suite is a modelled VM; `%bout` timing hints, cost as a value forbidden |
+| Nock / Hoon | ½(jetted interpreter) | 0 | ½(timing hints) | 35 | C and Rust interpreters with jets; the frozen spec models Nock itself, not the machine, and no checker reasons about it; `%bout` timing hints, cost as a value forbidden |
 | Thermite | 1 | ½(validated fragment) | 0 | 55 | native via rustc; translation-validated lowering for a fragment; no cost model |
 | Indie AI-first cluster | ½(per member) | ½(one member) | 0 | 35 | LSTS compiles to C and CLR rides on Zig; Verity is a verified compiler to EVM bytecode |
 
@@ -185,14 +185,14 @@ Weights: 40 · 40 · 20
 | HVM4 / Interaction Calculus | ½(value enumeration) | ½(tests only) | 0 | 40 | the primer solves X + 2 = 4 by collapsing an infinite superposition of naturals; the program-hole filler (SupGen, NeoGen) was never published; equations rather than a checker, no cost objective |
 | Bend 2 / BendTT / BendRT | ½(external LLM loop) | ½(checker only) | 0 | 40 | the shipped loop is a human LAWS.bend, an AI-written PROOF.bend and the checker as the gate (Bender wraps Anthropic/OpenAI models); the checker scores, cost never does; no search of its own |
 | Metamath Zero | 0 | 0 | 0 | 0 | MM1 tactics are human-written |
-| Verus | 1 | 1 | 0 | 80 | IDS synthesizes code and proofs with benchmarks inside the loop (7/7 KV-store specs); the proposer is an external LLM |
+| Verus | ½(external LLM loop) | 1 | 0 | 60 | IDS synthesizes code and proofs with benchmarks inside the loop (7/7 KV-store specs); the proposer is an external LLM |
 | F* / Low* / Pulse | 0 | 0 | 0 | 0 | humans write the code and the proofs |
 | Lean 4 | ½(external agents) | ½(checker only) | 0 | 40 | the richest external ecosystem of proof-search agents; nothing built in; no cost |
 | Nova | 0 | 0 | 0 | 0 | none |
 | Blight | 0 | 0 | 0 | 0 | tactics are human-written |
 | Soma | 0 | 0 | 0 | 0 | none |
 | fiat-crypto + CryptOpt + Jasmin | 1 | 1 | 0 | 80 | randomized search over assembly with measured cost and a verified equivalence check; straight-line only; unmaintained since 2024 |
-| Velvet / Loom / WybeCoder | 1 | ½(checker only) | 0 | 60 | WybeCoder's agentic loop proves 74% of Verina; correctness only, no cost |
+| Velvet / Loom / WybeCoder | ½(external LLM loop) | ½(checker only) | 0 | 40 | WybeCoder's agentic loop proves 74% of Verina; correctness only, no cost |
 | Agda / Cubical | 0 | 0 | 0 | 0 | `auto` is trivial |
 | Narya | 0 | 0 | 0 | 0 | no tactics even |
 | Dedukti / Lambdapi | ½(ATP proof export) | ½(checker only) | 0 | 40 | Zenon Modulo, LEO-III and SMT solvers via Carcara emit proofs the kernel checks; the `why3` tactic admits its goal as an axiom; no cost |
@@ -202,7 +202,7 @@ Weights: 40 · 40 · 20
 | ATS3 / Xanadu | 0 | 0 | 0 | 0 | none |
 | Vow | ½(LLM loop) | ½(checker only) | 0 | 40 | CEGIS with an external LLM; no cost objective |
 | Dafny | ½(external LLMs) | ½(checker only) | 0 | 40 | LLMs write it best (82–96% on benchmarks) but the search lives in external tools; correctness only |
-| NanoLang | 0 | ½(tests only) | 0 | 20 | designed as an LLM target with mandatory tests; no engine of its own |
+| NanoLang | 0 | 0 | 0 | 0 | designed as an LLM target with mandatory tests; no loop of its own for them to score in |
 | Rust cluster | ½(harness gen) | ½(checker only) | 0 | 40 | Kani's autoharness; otherwise human-driven with AI assistance |
 | Mojo | ½(sweeps) | ½(cost only) | 0 | 40 | offline parameter sweeps, cost only, correctness assumed |
 | LogosLang | 0 | 0 | 0 | 0 | none |

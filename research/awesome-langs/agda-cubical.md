@@ -59,7 +59,7 @@ what Agda gets for free.
 |---|---|---|---|
 | G1 Substrate | ◐ 50% (quotation) | Full reflection API, quotation-based. The best non-intensional G1. | 1 · 0 · ½(metaprograms)† — `quoteTerm`/`unquote`; the TC monad can infer and check types |
 | G2 Specification | ✅ 80% (HoTT) | Full dependent types + HITs + univalence. Strictly stronger than disp's current type theory. Equality: Cubical: computational univalence. The answer disp cites and has not integrated. | 1 · 1 · 0 · 1 — dependent types, HITs, univalence with the standard and cubical libraries; cubical equality computes |
-| G3 Trust | ✗ 20% (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. | 0 · ½(large checker) · 0 · — — the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them |
+| G3 Trust | ◐ 28% (big checker) | No LCF kernel; the typechecker is the TCB and it is large. Weaker than disp's design here. `COMPILE` pragmas swap in unchecked Haskell. | 0 · ½(large checker) · 0 · ½(asserted)† — the large typechecker is the TCB; proof terms exist, nothing smaller re-checks them; `COMPILE` pragmas swap a definition for unchecked Haskell |
 | G4 Execution | ✗ 0% (GHC/JS) | GHC/JS backends, research-grade. No systems performance, no cost model. | 0 · 0 · 0 — research-grade GHC/JS backends |
 | G5 Search | ✗ 0% (none) | Auto/agda-mode search is trivial. No synthesis. | 0 · 0 · 0 — `auto` is trivial |
 
