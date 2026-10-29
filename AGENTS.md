@@ -25,6 +25,7 @@ Misc notes:
  - Python is `python`, not `python3`. Node works too for scripted file edits.
  - Every code example shown in a response or written into a doc must be correct disp code. You don't need to run it, just make sure all the references concepts are existing concepts in disp standard library.
  - When being asked to research, make sure you link to primary sources via inline markdown (ideally fragment) links. Fetch-verify every link with `scripts/verify-source.sh -q '<quote>' <url|doi|arxiv-id>`, which also mints the `#page=N` / `#anchor` fragment; publisher pages (ACM, Elsevier, Wiley, Springer) usually block fetches, so prefer arXiv or author-hosted copies. 
+ - Anything I should be able to open later (pages, demos, the website) goes on the always-on dev servers, never a background-task server (those die at a time limit): `scripts/dev-server.sh` prints their URLs — the repo's files, untracked ones too, on port 5180, and the website on 5174. They serve the main checkout, so a worktree's pages show once merged.
 
 ## Writing Style
 
