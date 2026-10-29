@@ -10,7 +10,7 @@ units="$HOME/.config/systemd/user"
 name=$(tailscale status --json | python -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
 url() { echo "http://$name:$1/"; }
 
-unit() { # name, description, memory cap, working dir, pre-start command, command
+unit() { # name, description, memory cap, working dir, pre-start command, command, environment
   cat >"$units/$1.service" <<EOF
 [Unit]
 Description=$2
@@ -19,6 +19,7 @@ After=network-online.target
 [Service]
 Environment=PATH=%h/.nix-profile/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin:/run/wrappers/bin
 WorkingDirectory=$4
+${7:+Environment=$7}
 ${5:+ExecStartPre=$5}
 ExecStart=$6
 Restart=always
@@ -36,7 +37,7 @@ case "${1:-}" in
     mkdir -p "$units"
     unit disp-files "disp repo files (tailnet)" 256M "$root" "" "$(command -v python) $root/scripts/serve.py $host 5180 $root"
     unit disp-site "disp website dev server (tailnet)" 2G "$root/website" "$(command -v npm) run pages" \
-      "$root/website/node_modules/.bin/vite dev --host $host --port 5174 --strictPort"
+      "$root/website/node_modules/.bin/vite dev --host $host --port 5174 --strictPort" "DISP_DEV_HOSTS=$(hostname),$name"
     systemctl --user daemon-reload
     systemctl --user enable disp-files disp-site
     systemctl --user restart disp-files disp-site

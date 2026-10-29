@@ -38,7 +38,8 @@ function dispCompilerBridge(): Plugin {
 
 export default defineConfig({
   plugins: [dispCompilerBridge(), awesomeLangs(), sveltekit()],
-  server: { fs: { allow: ['..'] } },
+  // DISP_DEV_HOSTS: extra hostnames the dev server answers to (scripts/dev-server.sh sets the tailnet ones)
+  server: { fs: { allow: ['..'] }, allowedHosts: process.env.DISP_DEV_HOSTS?.split(',') },
   worker: {
     format: 'es',
     plugins: () => [dispCompilerBridge()]
