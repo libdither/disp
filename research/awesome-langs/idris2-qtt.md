@@ -48,11 +48,11 @@ one axis is.
 
 | Axis | Idris 2 | Note | Clauses |
 |---|---|---|---|
-| G1 Substrate | ◐ 50% (quotation) | Elaborator reflection, quotation-based. | 1 · 0 · ½(metaprograms) — elaborator reflection, quotation-based |
-| G2 Specification | ◐ 75% (dependent+QTT) | Full dependent types + QTT. Equality: Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. | 1 · 1 · ½(erasure) · ½(propositional) — dependent types + QTT with a working standard library; quantities give erasure; intensional propositional equality |
-| G3 Trust | ◐ 28% (trusted checker) | No LCF kernel; typechecker is the TCB. `%transform` swaps definitions unchecked. | 0 · ½(large checker) · 0 · ½(asserted)† — the typechecker is the TCB; `%transform` swaps a definition at codegen, unchecked |
-| G4 Execution | ✗ 20% (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. | ½(not systems) · 0 · 0 — Chez backend; erasure is graded under Specification |
-| G5 Search | ✗ 0% (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. | 0 · 0 · 0 — `auto` is basic |
+| G1 Substrate | ✅ 83% (quotation) | Elaborator reflection, quotation-based. | 1 · 1† · ½(metaprograms) — elaborator reflection; Idris 2 is written in Idris 2 |
+| G2 Specification | ✅ 90% (dependent+QTT) | Full dependent types + QTT. Equality: Intensional MLTT; no extensional story. Same wall as Lean, without mathlib's social solution. | 1 · 1 · ½(propositional) — dependent types + QTT with a working standard library; quantities give erasure; intensional propositional equality |
+| G3 Trust | ✗ 20% (trusted checker) | No LCF kernel; typechecker is the TCB. `%transform` swaps definitions unchecked. | 0 · ½(large checker) · 0 — the typechecker is the TCB; `%transform` swaps a definition at codegen, unchecked |
+| G4 Execution | ◐ 35% (Chez + erasure) | Chez backend is respectable but not C/Rust-class. **Erasure-by-quantity is genuinely relevant** to making specs free. No cost model. | ½(not systems) · 0 · ½(FFI)† — Chez backend; erasure is graded under Specification |
+| G5 Search | ✗ 0% (basic auto) | Proof search (`auto`) is basic. No synthesis, no optimizer. | 0 · 0 · 0 · 0 — `auto` is basic |
 
 ## What disp could steal
 

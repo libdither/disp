@@ -1,29 +1,30 @@
 # The comparison axes
 
-Every file in this directory scores a project against the same five axes, which are
-lifted straight out of disp's `GOALS.md` and `FOUNDATIONS.md`. They are the things
-disp actually needs; they are *not* a general "is this a good language" scale. A
-project can be excellent and score near-zero here.
+Every file in this directory scores a project against the same five axes, lifted out of
+`GOALS.md`, which says what disp must achieve. How disp chose to build it (`FOUNDATIONS.md`)
+is not graded: those bets sit in an unscored table in [`_SCORES.md`](_SCORES.md#approach-unscored)
+and in the how-tags, so a project built nothing like disp can still score full marks. A project
+can also be excellent and score near-zero: these are the things this goal needs, not a general
+"is this a good language" scale.
 
-The five follow the loop disp is built around: what programs are made of, what you
-can say about them, why a verdict can be believed, how fast and how accountably they
-run, and how an implementation gets found. The first and last close the loop, since
-self-application needs the substrate.
+The five follow the loop in `GOALS.md`: a language whose programs are data, specs a checker can
+judge, a verdict the search can't game, programs that run fast with their cost coming back, and a
+search that finds them.
 
-| # | Axis | What disp requires | Where it comes from |
+| # | Axis | What the goal requires | Where it comes from |
 |---|------|--------------------|---------------------|
-| **G1** | **Substrate** | Programs can take other programs apart and run them directly — no encoding step, no separate quote/eval layer — so the type checker is just an ordinary program in the language | GOALS "programs are data"; FOUNDATIONS §1 (tree calculus) |
-| **G2** | **Specification** | A spec can say everything that matters: types that mention values (dependent types or stronger), proofs you can run, resource and cost budgets, and a workable answer to when two different programs count as the same — with the whole type system built as library code, not baked into the core | GOALS "dependently typed or strictly more powerful"; FOUNDATIONS §2 (types as predicates), §6, §7 (equality), §9 (graded coeffects) |
-| **G3** | **Trust** | A verdict is only as believable as the code you must audit to accept it, so that code is kept tiny: every clever layer — elaborator, solver, search — is untrusted and must hand a small core replayable evidence for its claims, and only what the core re-checks counts (the tradition LCF started); a fast path installed in place of a slow definition carries evidence of the same kind | FOUNDATIONS §4 (a kernel that mints evidence), §12 (licensed rewrites) |
-| **G4** | **Execution** | Runs at C/Rust speed, with a model of the target the checker can reason about and a cost account that is exact and replayable rather than a benchmark | GOALS bullet 2 and the hardware bullet; FOUNDATIONS §11 (cost), Part V |
-| **G5** | **Search** | From spec to implementation automatically: a search over candidate programs scored by the checker (pass/fail) times measured cost — and eventually that optimizer aimed at its own code | GOALS "external optimizer"; FOUNDATIONS §12–15 |
+| **G1** | **Substrate** | Programs are data, and the type checker is written in the language as a function that returns a verdict; quotation is fine | GOALS "programs are data", "a type system written in the host calculus", "turn type checker into a function" |
+| **G2** | **Specification** | A spec can say what matters: types that mention values (dependent types or stronger), proofs, and an equality for specs like "behaves like f" | GOALS "dependently typed or strictly more powerful" |
+| **G3** | **Trust** | A search that maximizes the checker's verdict will find and exploit any bug in it, so the code that verdict rests on is kept small and every clever layer hands it evidence to re-check | GOALS "formally correct", as a consequence of searching against the checker; no clause of GOALS names a kernel |
+| **G4** | **Execution** | The programs found run fast, by any route; the checker can reason about the target through axioms or a model; and a primitive hands work to an external faster language and returns outputs plus time and memory | GOALS bullet 2 and the hardware bullet |
+| **G5** | **Search** | From spec to implementation automatically: a search over candidate programs scored by the checker times measured cost, which writes its own score functions to practice on, and is eventually aimed at its own code | GOALS "external optimizer", "self-play", the bootstrap bullets |
 
 ## Rating key
 
-A cell reads `◐ 50% (quotation)`: the percentage of disp's requirement met (three or four
+A cell reads `◐ 50% (quotation)`: the percentage of the goal's requirement met (three or four
 clauses, see the grading section below), the symbol it derives, and a how-tag.
 
-- ✅ — 80% or more: does this at the strength disp wants
+- ✅ — 80% or more: does this at the strength the goal wants
 - ◐ — 25 to 79%: a weaker or narrower version
 - ✗ — under 25%: does not do this, or actively went the other way (a design counts as 0)
 - **bold** — in the master table: a higher percentage than disp's, so *ahead of disp* on this axis
@@ -31,49 +32,44 @@ clauses, see the grading section below), the symbol it derives, and a how-tag.
 
 ## The one-sentence version of disp
 
-Write a specification as a dependent type, turn the checker into a 0/1 score,
-multiply by a hardware-faithful cost score, and search a reflective low-level
-calculus for a program that is both provably correct and fast — then turn that
+Write a specification as a dependent type, turn the checker into a 0/1 score, multiply by
+measured cost, and search for a program that is both provably correct and fast, then turn that
 search on itself.
 
-The substrate (G1) is built; the trust story (G3) is half built, since the kernel mints evidence but its licensed fast paths went with the retired kernel. The endgame (G5) is
-not. Per FOUNDATIONS Part V the spine is equality: disp picked an **intensional**
-substrate (`tree_eq` = O(1) pointer identity) for speed, but the optimizer's whole
-job is **extensional** (swap a program for a different, faster, equivalent one). In
-this grading that is Specification's equality clause and Trust's evidence-carrying
-fast-paths clause, and nearly every comparison in this directory ends up being about how the
-other project handles that same gap.
+disp's checker runs and its search does not (G5). disp also bets on a route: no quotation layer,
+so nothing has to be trusted to connect the code the optimizer reads with the code that runs. That
+bet is why disp is built on tree calculus, and it hasn't been tested yet, so it isn't scored.
 
 ## Where disp stands
 
 The same scale applied to disp itself, so the website's comparison can draw
-disp on its own axes. Update it when the status changes; the site rebuilds
+disp beside the others. Update it when the status changes; the site rebuilds
 from this table.
 
 | Axis | disp | Note | Clauses |
 |---|:--:|---|---|
-| G1 Substrate | ✅ 100% (native) | Native intensionality with no quotation layer: `shape_of` triages any program, and the checker is an ordinary tree. | 1 · 1 · 1 — `shape_of` triages any program; the checker is an ordinary tree you apply |
-| G2 Specification | ◐ 55% (dependent, library) | Dependent types as library code over the kernel (Pi, telescopes, coproducts, a universe that checks itself); proofs run but the library is small; cost as a grade is designed. Equality: the substrate is intensional (`tree_eq` is pointer identity), `Eq` compares canonical forms, the one witness-licensed rewrite slice went with the retired kernel, and whether a decidable fragment licenses enough rewrites is open question Q1. | 1 · ½(small library) · 0 · ½(propositional) — Pi, telescopes, coproducts and proofs that run, over a small library; cost as a grade is designed; `Eq` compares canonical forms, intensional, and the decidable fragment that would license rewrites is open (Q1) |
-| G3 Trust | ◐ 68% (minting kernel) | `lib/kernel/` mints hypotheses and keeps legitimacy in provenance. The licensed `.opt.disp` overlays (one slice, map fusion) lived in the retired kernel (`archive/live-kernel/`), so no definition is replaced under a license today. MM0's core is smaller and externally verified. | 1 · 1 · ½(one core) · 0 — `lib/kernel/` mints hypotheses with provenance; elaborator and library untrusted; five evaluators agree but nothing independent re-checks the kernel's verdicts; the licensed `.opt.disp` slice went with the retired kernel and nothing replaces definitions today |
-| G4 Execution | ◐ 30% (interpreted) | Interpreted tree-walkers (the TypeScript oracle, Rust eager at about 2×, the ic-net at a measured 4,000–67,000× penalty); `--stats` steps and `cold_equiv` are a deterministic, replayable cost model; no hardware model. | 0 · 0 · 1 — interpreted tree-walkers; `--stats` steps and `cold_equiv` are a deterministic, replayable cost model; no hardware model |
-| G5 Search | ✗ 0% (designed) | The optimizer is designed (`research/OPTIMIZER.typ`) and unbuilt; the licensing machinery it needs was prototyped in the retired kernel and is not in `lib/kernel/`. | 0 · 0 · 0 — the optimizer is designed (`research/OPTIMIZER.typ`), not built; no search exists yet |
+| G1 Substrate | ✅ 100% (native) | A program is a tree that `shape_of` takes apart, and the checker is a disp program you apply. Lean, Rocq, Nock and Stellogen also score full marks, some through quotation. | 1 · 1 · 1 — a program is a tree that `shape_of` takes apart; the kernel is written in disp and is a tree you apply |
+| G2 Specification | ◐ 72% (dependent, library) | Dependent types as library code over the kernel (Pi, telescopes, coproducts, a universe that checks itself); proofs run but the library is small. Equality: `Eq` compares canonical forms, and the one witness-licensed rewrite slice went with the retired kernel. | 1 · ½(small library) · ½(propositional) — Pi, telescopes, coproducts and proofs that run, over a small library; cost as a grade is designed; `Eq` compares canonical forms, intensional, and the decidable fragment that would license rewrites is open (Q1) |
+| G3 Trust | ✅ 90% (minting kernel) | `lib/kernel/` mints hypotheses and keeps legitimacy in provenance, and the elaborator is untrusted. Nothing independent re-checks its verdicts. MM0's core is smaller and externally verified. | 1 · 1 · ½(one core) — `lib/kernel/` mints hypotheses with provenance; elaborator and library untrusted; five evaluators agree but nothing independent re-checks the kernel's verdicts; the licensed `.opt.disp` slice went with the retired kernel and nothing replaces definitions today |
+| G4 Execution | ✗ 15% (interpreted) | Interpreted tree-walkers, with no compiled output and no model of a target. Nothing hands work to an external language yet (`research/OPTIMIZER.typ` designs it as the single impure driver); `--stats` reports a run's cost beside it, not as a value. | 0 · 0 · ½(cost report) — interpreted tree-walkers; `--stats` steps and `cold_equiv` are a deterministic, replayable cost model; no hardware model; `--stats` reports a run's cost beside it, and nothing hands work to an external language yet |
+| G5 Search | ✗ 0% (designed) | The optimizer is designed (`research/OPTIMIZER.typ`) and unbuilt; the licensing machinery it needs was prototyped in the retired kernel and is not in `lib/kernel/`. | 0 · 0 · 0 · 0 — the optimizer is designed (`research/OPTIMIZER.typ`), not built; no search exists yet |
 
 ## Grading: the maximum and the clauses
 
-The three symbols are coarse. [`_SCORES.md`](_SCORES.md) grades every cell as a percentage
-of disp's own requirement: the "What disp requires" column above, split into three or four
-clauses. Each clause scores 0, ½ or 1 and the axis is their weighted mean: the weights sit on a `Weights:` line under each axis in `_SCORES.md` and beside each clause below, relative within an axis; a — clause (does not apply) drops out and the rest renormalize. The maximum is what disp
-needs, not the best project in the survey, so a project can be excellent and score low. The
-"library code over a tiny kernel" half of G2 is an architecture property the how-tag carries
-(`library types`, `dependent, library`) rather than a graded clause.
+The three symbols are coarse. [`_SCORES.md`](_SCORES.md) grades every cell as a percentage of the
+goal's requirement: the "What the goal requires" column above, split into three or four clauses.
+Each clause scores 0, ½ or 1 and the axis is their weighted mean: the weights sit on a `Weights:`
+line under each axis in `_SCORES.md` and beside each clause below, relative within an axis; a —
+clause (does not apply) drops out and the rest renormalize. The maximum is what `GOALS.md` asks for,
+not the best project in the survey, so a project can be excellent and score low.
 
 | Axis | Clauses |
 |---|---|
-| **G1** | (a) **program inspection** — programs can inspect other programs (½ a restricted part only: types, environments, runtime graphs, rewrite patterns) · weight 1 | (b) **one representation** — the same form is both run and inspected, no quotation layer (½ one direction only: inspected but never run back, or staged but never data) · weight 1 | (c) **checker as a function** — the checker is callable from programs as an ordinary function (½ from metaprograms only) · weight 1 |
-| **G2** | (a) **dependent types** — specifications mention values (½ contracts or refinements over runtime values) · weight 30 | (b) **first-class proofs** — propositions and proofs are objects in the language, with a library in use (½ solver-discharged obligations, or proofs without a library) · weight 20 | (c) **cost in types** — resources and cost as types (½ a usage grade, erasure by quantity, or a static bound that is not a type) · weight 20 | (d) **equality theory** — an equality you can state and check: extensional, cubical, observational (½ propositional or SMT-fragment equality, tactic-driven or a decidable fragment) · weight 30 |
-| **G3** | (a) **auditable core** — a trusted core small enough to audit · weight 30 | (b) **evidence objects** — it mints unforgeable evidence: theorems, proof objects, certificates (½ proof objects checked only by a large checker) · weight 30 | (c) **independent re-checking** — the clever layers are untrusted and re-checked by the core, and an independent checker exists (½ re-checked by the one core only) · weight 15 | (d) **evidence-carrying fast paths** — a definition replaced by a faster equivalent carries a license the core checks (½ asserted, like jets or unverified compiler passes, or a fixed set of proved passes; — when there is no native path to install) · weight 25 |
-| **G4** | (a) **native speed** — C/Rust-class execution (½ compiled but not systems class) · weight 40 | (b) **model of the target** — a model of the external target the checker can reason about: a verified lowering or a hardware model in the logic (½ a verified backend for a fragment, a modelled VM, or axiomatic equivalence assertions) · weight 30 | (c) **deterministic cost** — the runtime accounts for its own cost: steps, interaction counts, a replayable model (½ timing hints or a report outside the model) · weight 30 |
-| **G5** | (a) **spec → implementation** — implementations found automatically (½ an external LLM loop, harness generation, basic proof search) · weight 40 | (b) **checker × cost** — candidates scored by the checker and by measured cost, both in the loop (½ one of the two) · weight 40 | (c) **self-application** — the search is aimed at itself (½ a flywheel started) · weight 20 |
+| **G1** | (a) **programs as data** — programs can take programs apart, quotation counts (½ a restricted part only: types, environments, runtime graphs, rewrite patterns) · weight 1 | (b) **checker in the language** — the checker is written in the language (½ type theories as library files over an outside checker, the verifier only stated in the language, or a self-hosted compiler whose verdicts come from a solver) · weight 1 | (c) **checker as a function** — the checker is callable from programs as an ordinary function (½ from metaprograms only) · weight 1 |
+| **G2** | (a) **dependent types** — specifications mention values (½ contracts or refinements over runtime values) · weight 45 | (b) **first-class proofs** — propositions and proofs are objects in the language, with a library in use (½ solver-discharged obligations, or proofs without a library) · weight 35 | (c) **equality theory** — an equality you can state and check, for specs like "behaves like f": extensional, cubical, observational (½ propositional or SMT-fragment equality, tactic-driven or a decidable fragment) · weight 20 |
+| **G3** | (a) **auditable core** — a trusted core small enough to audit · weight 40 | (b) **evidence objects** — it mints unforgeable evidence: theorems, proof objects, certificates (½ proof objects checked only by a large checker) · weight 40 | (c) **independent re-checking** — the clever layers are untrusted and re-checked by the core, and an independent checker exists (½ re-checked by the one core only) · weight 20 |
+| **G4** | (a) **fast programs** — the programs it produces run at C/Rust class by any route, handing work to an external language included (½ compiled but not systems class) · weight 40 | (b) **target in the logic** — the checker can reason about the target through a model or axioms of equivalence, counted equally (½ a fragment, a modelled VM, or assumed specs for part of the target) · weight 30 | (c) **handoff primitive** — a primitive runs work in an external faster language and returns outputs plus time and memory as values (½ a foreign call with outputs only, or a cost report beside the run) · weight 30 |
+| **G5** | (a) **spec → implementation** — implementations found automatically (½ an external LLM loop, harness generation, basic proof search) · weight 35 | (b) **checker × cost** — candidates scored by the checker and by measured cost, both in the loop (½ one of the two) · weight 35 | (c) **self-play** — the search writes its own score functions to then satisfy (½ it generates adversaries or tests) · weight 15 | (d) **self-application** — the search is aimed at itself (½ a flywheel started) · weight 15 |
 
 Rules: a design gets no credit, the how-tag carries it. A ½ must name its route in the
 cell — `½(contracts)`, `½(metaprograms)` — the specific half-credit condition it takes,

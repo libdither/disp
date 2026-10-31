@@ -74,11 +74,11 @@ steal item wants.
 
 | Axis | Andromeda 2 | Note | Clauses |
 |---|---|---|---|
-| G1 Substrate | ◐ 33% (meta-language) | AML programs match on and build object-theory judgements and call the nucleus; AML code itself is never data. | ½(object judgements) · 0 · ½(metaprograms) — AML programs match on and build object-theory judgements by calling the nucleus; AML code itself is never data |
-| G2 Specification | ◐ 70% (user theories) | Any finitary dependent type theory, the rules written by the user; only example theories, no library. Equality: reflection as a one-rule theory, with a sound user-extensible checker. | 1 · ½(no library) · 0 · 1 — user-defined dependent theories with example theories only; equality reflection is a one-rule theory and a sound extensible checker handles user equality rules |
-| G3 Trust | ◐ 70% (LCF nucleus) | A 4,189-line nucleus is the only maker of judgements; the equality checker and everything else is untrusted. No second checker. | ½(mid-size nucleus) · 1 · ½(one core) · — — a 4,189-line nucleus is the only maker of judgements; the equality checker and AML are untrusted; no second checker |
+| G1 Substrate | ◐ 50% (meta-language) | AML programs match on and build object-theory judgements and call the nucleus; AML code itself is never data. | ½(object judgements) · ½(theories as files) · ½(metaprograms) — AML matches object judgements and calls the nucleus; theories are user files over an OCaml nucleus |
+| G2 Specification | ✅ 82% (user theories) | Any finitary dependent type theory, the rules written by the user; only example theories, no library. Equality: reflection as a one-rule theory, with a sound user-extensible checker. | 1 · ½(no library) · 1 — user-defined dependent theories with example theories only; equality reflection is a one-rule theory and a sound extensible checker handles user equality rules |
+| G3 Trust | ◐ 70% (LCF nucleus) | A 4,189-line nucleus is the only maker of judgements; the equality checker and everything else is untrusted. No second checker. | ½(mid-size nucleus) · 1 · ½(one core) — a 4,189-line nucleus is the only maker of judgements; the equality checker and AML are untrusted; no second checker |
 | G4 Execution | ✗ 0% (none) | An interpreter for a proof checker. | 0 · 0 · 0 — an interpreter for a proof checker |
-| G5 Search | ✗ 0% (none) | Handlers direct hand-written proof procedures; no synthesis. | 0 · 0 · 0 — handlers direct hand-written proof procedures; no synthesis |
+| G5 Search | ✗ 0% (none) | Handlers direct hand-written proof procedures; no synthesis. | 0 · 0 · 0 · 0 — handlers direct hand-written proof procedures; no synthesis |
 
 ## What disp could steal
 

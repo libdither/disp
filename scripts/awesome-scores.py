@@ -53,8 +53,11 @@ def scores():
     lines = (D / '_SCORES.md').read_text().split('\n')
     out, ax = {}, None
     for i, line in enumerate(lines):
-        m = re.match(r'^## (G[1-5]) ', line)
-        if m: ax = m.group(1); out[ax] = []; continue
+        m = re.match(r'^## (G[1-5] )?', line)
+        if m and line.startswith('## '):
+            ax = m.group(1).strip() if m.group(1) else None
+            if ax: out[ax] = []
+            continue
         w = re.match(r'^Weights?:\s*(.+?)\s*$', line)
         if ax and w: WEIGHTS[ax] = [float(x) for x in re.split(r'\s*[·,]\s*|\s+', w.group(1)) if x]; continue
         if ax and line.startswith('| ') and not line.startswith('| Project') and not line.startswith('|---'):
