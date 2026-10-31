@@ -36,23 +36,25 @@ Write a specification as a dependent type, turn the checker into a 0/1 score, mu
 measured cost, and search for a program that is both provably correct and fast, then turn that
 search on itself.
 
-disp's checker runs and its search does not (G5). disp also bets on a route: no quotation layer,
+disp's checkers run and its search is small (`cegis` over a listed pool). disp also bets on a route: no quotation layer,
 so nothing has to be trusted to connect the code the optimizer reads with the code that runs. That
 bet is why disp is built on tree calculus, and it hasn't been tested yet, so it isn't scored.
 
 ## Where disp stands
 
-The same scale applied to disp itself, so the website's comparison can draw
-disp beside the others. Update it when the status changes; the site rebuilds
+disp's row is graded differently from everyone else's: at what the claim kernel (`lib/claim.disp`,
+`research/CLAIMS_OVER_TREES.md` §9) could reach once the move off `lib/kernel/` finishes, as a best guess,
+with today's level in each note. Every other project is graded on what ships, so "ahead of disp"
+means ahead of disp's limit, a high bar. Update it when the status changes; the site rebuilds
 from this table.
 
 | Axis | disp | Note | Clauses |
 |---|:--:|---|---|
-| G1 Substrate | ✅ 100% (native) | A program is a tree that `shape_of` takes apart, and the checker is a disp program you apply. Lean, Rocq, Nock and Stellogen also score full marks, some through quotation. | 1 · 1 · 1 — a program is a tree that `shape_of` takes apart; the kernel is written in disp and is a tree you apply |
-| G2 Specification | ◐ 72% (dependent, library) | Dependent types as library code over the kernel (Pi, telescopes, coproducts, a universe that checks itself); proofs run but the library is small. Equality: `Eq` compares canonical forms, and the one witness-licensed rewrite slice went with the retired kernel. | 1 · ½(small library) · ½(propositional) — Pi, telescopes, coproducts and proofs that run, over a small library; cost as a grade is designed; `Eq` compares canonical forms, intensional, and the decidable fragment that would license rewrites is open (Q1) |
-| G3 Trust | ✅ 90% (minting kernel) | `lib/kernel/` mints hypotheses and keeps legitimacy in provenance, and the elaborator is untrusted. Nothing independent re-checks its verdicts. MM0's core is smaller and externally verified. | 1 · 1 · ½(one core) — `lib/kernel/` mints hypotheses with provenance; elaborator and library untrusted; five evaluators agree but nothing independent re-checks the kernel's verdicts; the licensed `.opt.disp` slice went with the retired kernel and nothing replaces definitions today |
-| G4 Execution | ✗ 15% (interpreted) | Interpreted tree-walkers, with no compiled output and no model of a target. Nothing hands work to an external language yet (`research/OPTIMIZER.typ` designs it as the single impure driver); `--stats` reports a run's cost beside it, not as a value. | 0 · 0 · ½(cost report) — interpreted tree-walkers; `--stats` steps and `cold_equiv` are a deterministic, replayable cost model; no hardware model; `--stats` reports a run's cost beside it, and nothing hands work to an external language yet |
-| G5 Search | ✗ 0% (designed) | The optimizer is designed (`research/OPTIMIZER.typ`) and unbuilt; the licensing machinery it needs was prototyped in the retired kernel and is not in `lib/kernel/`. | 0 · 0 · 0 · 0 — the optimizer is designed (`research/OPTIMIZER.typ`), not built; no search exists yet |
+| G1 Substrate | ✅ 100% (native) | A program is a tree that `shape_of` takes apart, and the checker is a disp program you apply. Today: 100%, the same as the limit. Lean, Rocq, Nock and Stellogen also score full marks, some through quotation. | 1 · 1 · 1 — a program is a tree that `shape_of` takes apart; `honest` and `certify` are disp programs you apply |
+| G2 Specification | ✅ 100% (claims, library) | A claim is a test on bounded runs, under quantifiers over all trees, so dependent types, proofs (lenses) and equality at a type are all claims. Limit on it: a true claim with no computable witness stays open forever, and transport along an equality only works for claims that never inspect the swapped tree. Today: about 72%, the library is small and equality is pinned on a few examples. | 1 · 1 · 1 — at the claim kernel's limit: a claim tests bounded runs, so a dependent type is a claim; a proof is a lens built from the rule lenses; equality is agreement at a type, certified by induction (`id` and `shift`). A claim with no computable witness stays open |
+| G3 Trust | ✅ 100% (claim kernel) | Trust stops at five hand-proved rule lenses over a small machine, and everything else re-runs. Today: about 50%, `lib/kernel/` is still the live checker, the rules sit inside a 919-line test root, and a verdict's `"Proved"` is a bare string rather than a checked certificate. | 1 · 1 · 1 — at the claim kernel's limit: trust stops at five hand-proved rules over a small machine; a certificate is a tree re-checked by running it, and a refutation re-runs concretely; the enumerating `honest` check is independent of `certify` but can only refute, and a second certificate checker is small to write |
+| G4 Execution | ◐ 65% (modelled, interpreted) | Target models are ordinary programs a claim can test, so the logic reaches the machine. The claim kernel can't make anything run fast: that needs the handoff to an external language (`research/OPTIMIZER.typ`'s single impure driver), which is outside it. Today: 15%, interpreted tree-walkers and no target model. | ½(certified, not run) · 1 · ½(cost report) — at the claim kernel's limit: a machine model is one more program, so a claim can test bounded runs of a target and certify assembly; running it fast needs the handoff, which a pure claim can't perform; `--stats` reports cost beside the run |
+| G5 Search | ✅ 85% (cegis, limit) | `cegis` is a real search over candidates against a claim, and cost bounds are claims too, so the kernel carries the whole score. Two limits: nothing writes new claims yet, and Löb's theorem means a successor's soundness can't be proved from inside (`research/LOB_AND_CURRY.md`). This says what the design allows, not that search scales. Today: about 42%, `cegis` over a listed pool, checker only. | 1 · 1 · ½(counterexample pool) · ½(Löbian ceiling) — at the claim kernel's limit: `cegis` searches candidates against a claim, and cost bounds are claims too; kept counterexamples are adversaries, but nothing writes new claims; a successor's soundness can't be proved from inside, so self-application steps down a level each time |
 
 ## Grading: the maximum and the clauses
 
@@ -71,7 +73,7 @@ not the best project in the survey, so a project can be excellent and score low.
 | **G4** | (a) **fast programs** — the programs it produces run at C/Rust class by any route, handing work to an external language included (½ compiled but not systems class) · weight 40 | (b) **target in the logic** — the checker can reason about the target through a model or axioms of equivalence, counted equally (½ a fragment, a modelled VM, or assumed specs for part of the target) · weight 30 | (c) **handoff primitive** — a primitive runs work in an external faster language and returns outputs plus time and memory as values (½ a foreign call with outputs only, or a cost report beside the run) · weight 30 |
 | **G5** | (a) **spec → implementation** — implementations found automatically (½ an external LLM loop, harness generation, basic proof search) · weight 35 | (b) **checker × cost** — candidates scored by the checker and by measured cost, both in the loop (½ one of the two) · weight 35 | (c) **self-play** — the search writes its own score functions to then satisfy (½ it generates adversaries or tests) · weight 15 | (d) **self-application** — the search is aimed at itself (½ a flywheel started) · weight 15 |
 
-Rules: a design gets no credit, the how-tag carries it. A ½ must name its route in the
+Rules: a design gets no credit, the how-tag carries it; disp's own row is the one exception (see above). A ½ must name its route in the
 cell — `½(contracts)`, `½(metaprograms)` — the specific half-credit condition it takes,
 so no half score exists without a stated reason; the script rejects a bare ½. 1 and 0
 stay bare. The symbol is derived: ✗ below 25,
