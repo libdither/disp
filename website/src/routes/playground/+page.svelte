@@ -1530,6 +1530,56 @@
     .fb {
       width: 11rem;
     }
+    /* phones: the page scrolls (layout), the editor grows to its content, and
+       the toolbar + tab bar stick to the top once the site header is gone */
+    .pg {
+      flex: none;
+    }
+    .stage {
+      flex: none;
+    }
+    .viz-panel {
+      max-height: 70dvh;
+    }
+    /* phones: one scrollable toolbar row instead of three wrapped ones */
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      gap: 0.4rem;
+      padding: 0.4rem 0.6rem;
+    }
+    .toolbar > :global(*) {
+      flex: none;
+    }
+    .tb {
+      font-size: 0.82rem;
+    }
+    .ex-select {
+      max-width: 52vw;
+    }
+    .spacer,
+    .mem-wrap {
+      display: none;
+    }
+    /* the scrolling toolbar would clip an absolute popover: pin it to the screen */
+    .info-pop {
+      position: fixed;
+      top: 50%;
+      left: 0.5rem;
+      right: 0.5rem;
+      width: auto;
+      transform: translateY(-50%);
+      z-index: 200; /* above the sticky site nav (100) */
+      padding-top: 0;
+    }
+    .info-card {
+      max-height: 75dvh;
+      overflow-y: auto;
+    }
   }
 
   /* ---- stage: the buffer (+ the on-demand visualizer panel) + overlays ---- */
