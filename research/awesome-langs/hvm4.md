@@ -79,7 +79,7 @@ attributable per candidate (provenance-preserving credit assignment for the
 reverse-mode optimizer). HVM4 keeps optimal sharing and pays for it with no cost
 attribution — it can tell you *an* answer, not *which candidate cost what*. These
 are opposite choices on the same tradeoff, and disp has *measured* its side
-(4,000–67,000× work inflation, 600× raw speed loss). HVM4 has the faster substrate;
+(heavy work inflation, 600× raw speed loss; the 4,000–67,000× on record has no benchmark in the repo). HVM4 has the faster substrate;
 disp has the one that can score candidates.
 
 The deeper difference: HVM4 has no types, so its search is filtered by equations,

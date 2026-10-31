@@ -88,7 +88,8 @@ commits: `llvm-hhefesto` (2020, "jit works, but without proper garbage collectio
 deleted "the commented-out HVM/LLVM/Chez backends." `Telomare.Levels` records why the net
 backend died: `whoWon.board` in tic-tac-toe is used two recursion levels below where it is
 bound, "which is the binding that made an interaction-net backend for this language
-intractable." That is disp's measured no-memo finding — 4,000–67,000× work inflation, the
+intractable." That is disp's no-memo finding — heavy work inflation (the 4,000–67,000× on record has no benchmark
+in the repo), the
 distributes-over-duplication conjecture holding only for affine code — reached independently,
 on a *total* language, without types in the way. The live thread is the `affine` branch
 ("switch to 0cfa affine tagging", committed 2026-08-26), the continuation of what PR #146

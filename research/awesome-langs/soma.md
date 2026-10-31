@@ -30,7 +30,7 @@ central question:
 disp made the *other* opposite call (drop hash-consing to keep cost attributable),
 and HVM4 made the third (keep optimal sharing, lose attribution). Three projects,
 three different points on the same tradeoff, and **disp has measured its own**:
-dropping memoization inflates work 4,000–67,000× (600× raw speed loss).
+dropping memoization inflates work heavily (600× raw speed loss; the 4,000–67,000× on record has no benchmark in the repo).
 
 Bend 2 (Taelin's own product, September 2026) then made Soma's call — native code,
 unique ownership, no optimal sharing — and dropped its cost counter with it, leaving
@@ -65,7 +65,7 @@ engine. That is a genuinely different way to cash in the same theory.
 - **The flat/heap tiering.** disp's ic-net pays the no-memo tax uniformly. Soma's
   observation — that most values are flat and duplication of flats is *free* — is a
   cheap way to recover a large constant factor without touching the sharing
-  semantics for the cases that matter. disp's measured 4,000–67,000× inflation is
+  semantics for the cases that matter. disp's no-memo work inflation is
   exactly the kind of number a tier split attacks.
 - **SUP/ERA annihilation as the memory story.** disp currently frames interaction
   nets as the *search* substrate (superposition = candidate exploration). Soma

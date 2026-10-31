@@ -39,7 +39,7 @@ This is a genuinely useful data point for disp, because it measures the exact
 tradeoff disp lives on: **a fully reflectable graph walk costs ~300× native**, and
 a JIT call to Cranelift recovers to within 3× of vectorized C. disp's interpreted
 tree-walking is in the same architectural class, and disp's own numbers (2× generic
-walker tax, 8 GB test heaps, ic-net's 4,000–67,000× inflation) suggest it is
+walker tax, 8 GB test heaps, ic-net's no-memo work inflation) suggest it is
 currently paying more than Logos does.
 
 The author's framing is also the right one: *"interpreted Logos sits in CPython's
