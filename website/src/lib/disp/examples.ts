@@ -42,6 +42,7 @@ export const manifest = [
     label: 'Walkthrough — presentation script (comments only)',
     kernel: false
   },
+  { id: 'lenses', file: 'lenses.disp', label: 'Lenses — claims, checkers, and Löb (no kernel)', kernel: false },
   { id: 'welcome', file: 'welcome.disp', label: 'Welcome tour', kernel: true },
   { id: 'trees', file: 'trees.disp', label: 'Raw tree calculus (no kernel — instant)', kernel: false, landing: true },
   { id: 'typesystem', file: 'typesystem.disp', label: 'Build a type system from scratch', kernel: false },

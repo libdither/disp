@@ -10,6 +10,7 @@
   import { closeBrackets } from '@codemirror/autocomplete'
   import { Decoration, WidgetType, type DecorationSet } from '@codemirror/view'
   import { dispLanguageExtensions } from '$lib/editor/disp-language'
+  import { docHover, docHoverTheme, docTap } from '$lib/editor/doc-hover'
 
   export interface LineMark {
     line: number
@@ -299,6 +300,31 @@
 
   let host: HTMLDivElement
   let view: EditorView | undefined
+
+  // Touch screens open in READ mode: the buffer isn't editable, so a tap shows
+  // a name's docs instead of popping the keyboard. Edit / Done flips it.
+  const coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
+  let reading = $state(coarse)
+  const editableComp = new Compartment()
+  function setReading(r: boolean) {
+    reading = r
+    if (!view) return
+    view.dispatch({ effects: editableComp.reconfigure(EditorView.editable.of(!r)) })
+    if (r) view.contentDOM.blur()
+    else {
+      view.focus()
+      view.dispatch({ scrollIntoView: true })
+    }
+  }
+  // On-screen keyboards shrink the visual viewport without resizing the layout
+  // (iOS); expose the overlap so the app shell can shrink, then keep the cursor visible.
+  function onViewportResize() {
+    const vv = window.visualViewport
+    if (!vv) return
+    const inset = Math.max(0, Math.round(window.innerHeight - vv.height))
+    document.documentElement.style.setProperty('--kb-inset', `${inset}px`)
+    if (view?.hasFocus) requestAnimationFrame(() => view?.dispatch({ scrollIntoView: true }))
+  }
   // marks describe a completed run; edits make them stale (dimmed) until the
   // next setMarks delivers fresh results
   let stale = $state(false)
@@ -579,6 +605,10 @@
             }
           }),
           ...dispLanguageExtensions,
+          docHover,
+          docTap,
+          docHoverTheme,
+          editableComp.of(EditorView.editable.of(!reading)),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {
               stale = true
@@ -629,7 +659,10 @@
     window.addEventListener('keydown', onModKey)
     window.addEventListener('keyup', onModKey)
     window.addEventListener('blur', onWinBlur)
+    window.visualViewport?.addEventListener('resize', onViewportResize)
     return () => {
+      window.visualViewport?.removeEventListener('resize', onViewportResize)
+      document.documentElement.style.removeProperty('--kb-inset')
       window.removeEventListener('keydown', onModKey)
       window.removeEventListener('keyup', onModKey)
       window.removeEventListener('blur', onWinBlur)
@@ -639,7 +672,18 @@
   onDestroy(() => view?.destroy())
 </script>
 
-<div class="editor-host" class:marks-stale={stale} bind:this={host}>
+<div class="editor-host" class:marks-stale={stale} class:coarse bind:this={host}>
+  {#if coarse}
+    <button
+      class="mode-btn"
+      class:editing={!reading}
+      onpointerdown={(e) => e.preventDefault()}
+      onclick={() => setReading(!reading)}
+      aria-label={reading ? 'edit the buffer' : 'done editing'}
+    >
+      {reading ? '✎ Edit' : 'Done'}
+    </button>
+  {/if}
   {#if selBtn && selectionAction}
     <button
       class="sel-action"
@@ -692,8 +736,55 @@
   .editor-host :global(.cm-editor) {
     height: 100%;
   }
+  /* 16px keeps iOS from zooming the page when the buffer takes focus */
+  .editor-host.coarse :global(.cm-content) {
+    font-size: 16px;
+  }
+  .editor-host.coarse :global(.cm-gutters) {
+    font-size: 12px;
+  }
+  /* phones: no inner scroller — the editor is as tall as its text and the page
+     scrolls it (CodeMirror then tracks the window for what to render) */
+  @media (max-width: 720px) {
+    .editor-host {
+      height: auto;
+      overflow: visible;
+    }
+    .editor-host :global(.cm-editor) {
+      height: auto;
+    }
+  }
+  .mode-btn {
+    position: absolute;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    z-index: 7;
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--bg-elev);
+    color: var(--fg);
+    font-size: 0.95rem;
+    box-shadow: var(--shadow-lift);
+  }
+  @media (max-width: 720px) {
+    .mode-btn {
+      position: fixed;
+      bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    }
+  }
+  .mode-btn.editing {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+  }
   .editor-host :global(.cm-scroller) {
     overflow: auto;
+  }
+  @media (max-width: 720px) {
+    .editor-host :global(.cm-scroller) {
+      overflow: visible;
+    }
   }
   /* stale results (buffer edited since the run): dim, don't clear — layout
      stays put and the next setMarks lifts the veil */

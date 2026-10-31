@@ -643,11 +643,24 @@
   /* app pages (playground): the shell IS the viewport — content flexes to
      the space under the nav, nothing scrolls at the page level */
   .shell.app {
-    height: 100dvh;
+    /* --kb-inset: on-screen keyboard overlap where the browser doesn't resize the layout (iOS) */
+    height: calc(100dvh - var(--kb-inset, 0px));
     overflow: hidden;
   }
   .shell.app .content {
     min-height: 0;
+  }
+  /* phones: the PAGE scrolls instead, so the site header scrolls away and the
+     browser's own toolbars (Firefox's dynamic toolbar) can hide */
+  @media (max-width: 720px) {
+    .shell.app {
+      height: auto;
+      min-height: 100dvh;
+      overflow: visible;
+    }
+    .shell.app .nav {
+      position: static;
+    }
   }
 
   .footer {
