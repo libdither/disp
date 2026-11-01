@@ -1,7 +1,7 @@
 // Build the precompiled-kernel snapshot the site ships (static/kernel.snap).
 // Runs under plain tsx against the real repo (see snapshot-build.ts for why
 // not Vite SSR); the vfs handed to the hash is the same file set the browser
-// bundle globs (lib/**/*.disp + archive/live-kernel/**/*.disp, keyed
+// bundle globs (lib/**/*.disp + IDEAS.disp + archive/live-kernel/**/*.disp, keyed
 // '/lib/...' / '/archive/...'). Always rebuilds — the snapshot depends on the
 // compiler as well as the library, so there is deliberately no content-hash
 // skip; the cost is the kernels genuinely self-verifying once per build
@@ -27,6 +27,7 @@ const walk = (dir: string): void => {
 }
 walk(join(repoRoot, 'lib'))
 walk(join(repoRoot, 'archive', 'live-kernel'))
+vfs.set('/IDEAS.disp', readFileSync(join(repoRoot, 'IDEAS.disp'), 'utf-8'))
 console.log(`building kernel snapshot over ${vfs.size} library files (the kernels self-verify once, ~a minute)…`)
 
 const wasm = readFileSync(new URL('../static/rust_eager.wasm', import.meta.url))

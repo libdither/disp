@@ -17,205 +17,116 @@ A language where all you write is the constraints, as detailed and rigorous as y
 
 For disp in its current state, AI is heavily used for development. AI is mostly good for writing code and idea generation / reflection but still needs a lot of oversight for design decisions, especially for the field of PL design where good design is rather rare. AI use should be rather obvious based on how it writes, but as of 7/7/26 nearly all of the TypeScript host, type system kernel, standard library, tests, evaluator backends and documentation were written using Claude Opus 4.8 and Fable 5.
 
-The [Documentation](#documentation) section below details important docs and source files, whether they are human or AI-written, and how important they might be to read for understanding. A full pedagogy of disp is coming soon!
+The [Documentation](#documentation) section below details important docs and source files, whether they are human or AI-written, and how important they might be to read for understanding. The website's Why page (`website/src/routes/why/`) explains what disp is trying to do and how, for a general technical reader.
 
 ## Disp by example 🤖
 
-This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked. Code blocks are tagged `rust` only to borrow GitHub's syntax highlighting; the code is disp.
+This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked. Code blocks are tagged `rust` only to borrow GitHub's syntax highlighting; the code is disp. The website's Why page (`website/src/routes/why/`) walks through the same ideas with pictures.
 
 <!-- Literate-code invariant: the blocks below concatenate to one .disp file that must pass.
      After editing them, re-verify with:
        awk '/^```rust$/{f=1;next} /^```$/{f=0;next} f' README.md > lib/tests/readme_check_tmp.disp
        npm run disp -- lib/tests/readme_check_tmp.disp && rm lib/tests/readme_check_tmp.disp -->
 
-> The example below teaches the previous ("live") kernel, now retired to
-> `archive/live-kernel/` after the provenance-based kernel took over `lib/kernel/`
-> (see Status). Its machinery still loads and passes from the archive; a rewrite of
-> this section against the new kernel's surface is pending.
-
 ```rust
-open use "../../archive/live-kernel/kernel/prelude.disp" // common operations
-open use "../../archive/live-kernel/std/nat.disp" // `double`
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../claim.disp" {}
+open use raw "fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "confirmer.test.disp" {}
 ```
 
 ### Everything is a tree
 
 ```rust
-// Disp compiles to the tree calculus: five rewrite rules over binary trees
-// grown from a single leaf `t`. Numbers, lambdas, types, proofs, and the type
-// checker itself are all such trees. Some of them are small:
+// Disp compiles to the tree calculus: five rewrite rules over binary trees grown
+// from a single leaf `t`. Numbers, functions and tests are all such trees.
 
-// from the prelude:  true : Bool := t  (booleans are raw shapes)
 test true = t                                     // the leaf itself
-test false = t t                                  // the stem: one branch up
+test false = t t                                  // a stem: one branch up
 test tree_eq 3 (succ (succ (succ zero))) = true   // 3 is sugar, and the trees are identical
 
-// Three of the five rules dispatch on the shape of a tree (leaf, stem, or
-// fork), so case analysis over arbitrary data is a rewrite rule, not library
-// code. This is the self-reflection everything else builds on:
+// Three of the five rules dispatch on the shape of a tree (leaf, stem or fork),
+// so any program can take any other apart, with no quoting and no reflection API:
 
 let shape_of := t (t "leaf" ({u} => "stem")) ({u, v} => "fork")
 test shape_of t = "leaf"
 test shape_of (t t) = "stem"
 test shape_of (t t t) = "fork"
-
-// Elaboration is deterministic, so equal programs are literally the same tree
-// (the checker backends hash-cons this down to a pointer comparison). Trees
-// are data, so programs can take programs apart, exactly as shape_of just
-// did. The rest of the language is built on that power, and the kernel
-// exists to police it.
+test shape_of not = "fork"
 ```
 
-### Syntax is sugar
+### A claim is a test, asked of every tree
 
 ```rust
-// Surface constructs expand to library calls. Expansions are trees, so pin them:
+// A claim is a program from a witness and a challenge to a Bool. This one says a
+// function takes numbers to numbers. It says nothing about trees that are not numbers.
 
-test tree_eq ({r} => r.x) ({r} => r (acc "x")) = true   // projection is application
+nat_fn := {g, x} => if (NatR x) { NatR (g x) } else { true }
 
-let Point := { x : Nat, y : Nat }
-let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} => t (proj_cell "y" Nat) ({_y} => t)))
-test tree_eq Point PointCells = true                    // the literal is exactly the library call
+// `Trees` is every tree there is, smallest first. The honest check searches it for
+// a challenge the witness fails, up to a budget.
 
-// Telescope is the one former behind functions, pairs, records, and unit;
-// sums are its dual; recursion is one more cell kind. A new type former is
-// library code, not kernel surgery (archive/live-kernel/NEGATIVE_TYPES.md).
+by_search := honest (Trees.as_items)
+test by_search nat_fn ({n} => pair n n) 60 = refuted 1
+
+// A failure is final, but running out of budget proves nothing. Open only means
+// "no failure so far". This program is wrong on 3, the 65th tree:
+
+sneaky := {n} => if (n == 3) { t t } else { n }
+test by_search nat_fn sneaky 64 = "Open"
+test by_search nat_fn sneaky 65 = refuted 3
+test by_search nat_fn succ 150 = "Open"
 ```
 
-### Checking is running
+### Proved needs a shortcut
 
 ```rust
-// A type is a predicate. To check data, apply the type. Raw application,
-// no checker in sight:
+// The stream of trees never ends, so search can never say Proved. A finite list
+// of challenges can, when every tree is covered by something on the list:
 
-test Nat 3 = Ok true
-test Nat "hi" = Ok false
+bool_fn := {v, x} => if (Bool x) { Bool (v x) } else { true }
+test over bool_fn not [true, false] = "Proved"
 
-// Structure runs too: b's recipe is evaluated during the check.
+// The cover is a lens: it carries witnesses forward and challenges back. Its
+// promise is that a witness passing the pulled-back challenge passes the original.
+// That promise is itself a claim, so search can catch a bad shortcut. This one
+// sends every tree to `true`, and misses a program that fails only on `false`:
 
-let TDs := { a : Nat, b := double a }
-test TDs { a := 2; b := 4 } = Ok true
-test TDs { a := 2; b := 5 } = Ok false   // ran double 2, compared, rejected
+half_bad := {x} => if (x) { true } else { pair x x }
+bool_cover := lens ({w} => w) ({_w, x} => if (Bool x) { x } else { true })
+bad_cover := lens ({w} => w) ({_w, _x} => true)
+test by_search (lens_holds bool_fn bool_fn bool_cover) half_bad 60 = "Open"
+test by_search (lens_holds bool_fn bool_fn bad_cover) half_bad 60 = refuted false
 ```
 
-### Functions need a promise
+### Different programs, proved the same
 
 ```rust
-// This annotation claims something about infinitely many inputs:
+// This is what an optimizer needs: two different programs, known to do the same
+// thing. Comparing trees is instant, and too strict. These are different programs:
 
-quadruple : Nat -> Nat := {n} => double (double n)
-test quadruple 3 = 12
+dbl_add := {d2, n} => if (is_zero n) { zero } else { add 2 (d2 (nat_pred n)) }
+test tree_eq dbl_step dbl_add = false
 
-// No amount of running visits them all, and raw application, which worked
-// for data above, yields no verdict:
+// Two cases cover every number, zero and one more than some number, and each
+// program's recursive call on the smaller number is named by one token. Both cases
+// match, so the programs agree on every number:
 
-let NatToNat := Pi Nat ({_} => Nat)                // the annotation above, desugared
-test tree_eq (NatToNat quadruple) (Ok true) = false    // raw: no verdict comes back
-test param_apply NatToNat quadruple = Ok true       // the dispatcher: yes
-test param_apply NatToNat ({n} => "hi") = Ok false     // wrong codomain: no
+test eq_by_induction dbl_step dbl_add = "Proved"
 
-// The difference: checking a function requires minting a hypothesis, a fresh
-// opaque tree carrying a type and nothing else: a promise that a Nat will be
-// here. A type that could forge promises could forge evidence, so minting is
-// kernel operation #1 (bind_hyp), and kernel operations fire only under the
-// kernel's dispatcher, param_apply. Raw application never reaches the kernel:
-// no mint, no verdict. Under the dispatcher, Pi mints the promise, applies
-// the body to it, and watches what comes out.
-```
+// A wrong step disagrees on a case, and the checker returns a number to run:
 
-### What a promise can do
+wrong_step := {d2, n} => if (is_zero n) { zero } else { succ (d2 (nat_pred n)) }
+test eq_by_induction dbl_step wrong_step = refuted 1
 
-```rust
-// So quadruple's body ran double on a value with no digits, and double got
-// stuck. That stuckness is the mechanism. The only legal move on a promise is
-// an observation (apply it, project it, eliminate it), and every observation
-// routes through kernel operation #2, hyp_reduce: read the promise's stored
-// type, forward the observation to that type's `respond`. A respond has
-// exactly two moves, and you can watch both:
-
-let hN := make_hyp Nat 0                           // mint one by hand (the 0 is a fresh id)
-test param_apply Nat hN = Ok true                   // a promise of a Nat counts as a Nat
-
-let hPi := make_hyp (Pi Nat ({_} => Bool)) 0
-test neutral_type (param_apply hPi zero) = Bool   // Extend: stuck, at the codomain type
-
-let Pt := { a : Nat, b := succ a }
-let hPt := make_hyp Pt 0
-test neutral_type (param_apply hPt (acc "a")) = Nat                               // Extend: opaque field
-test tree_eq (param_apply hPt (acc "b")) (succ (param_apply hPt (acc "a"))) = true  // Reduce: derived field
-                                                                                  // computes through it
-
-// And this is what double did: its recursor parked on the promise as a stuck
-// elimination, typed by the motive. quadruple's body finished as a stuck tree
-// of type Nat, the codomain matched, and the definition was accepted. This
-// technique is called neutral evaluation.
-
-test is_neutral (nat_rec ({_} => Bool) true ({n, rec} => false) hN) = true
-
-// Reading the promise's raw shape is missing from that list on purpose. The
-// walker refuses the question instead of answering it, since either answer
-// would leak information the promise does not contain:
-
-test param_apply (Pi Nat ({_} => Bool)) ({x} => is_fork x) = Err   // illegal question
-
-// Everything above hangs on promises staying unforgeable and uninspectable.
-// bind_hyp, hyp_reduce, and the dispatcher enforce that, and they are the
-// entire trusted core of this kernel (archive/live-kernel/kernel/engine.disp).
-// Pi, records, Nat, and equality are library code consuming them.
-```
-
-### Proving is running
-
-```rust
-// Propositions are types too. An equality type has exactly one proof value,
-// and it is the leaf itself:
-
-test refl = t
-
-// Whether refl proves an equation is decided by running both sides. Raw
-// application is back, because proofs are data:
-
-test (Eq Nat (double 2) 4) refl = Ok true   // double 2 and 4 meet at the same tree
-test (Eq Nat 3 4) refl = Ok false
-
-// A statement about every Nat is a Pi into a proposition, so checking it
-// takes one promise. Here is a theorem in surface form, the kernel's verdict
-// on it, and a false statement refl cannot prove (the stuck ends differ):
-
-n_eq_n : {n : Nat} -> Eq Nat n n := {n} => refl
-test param_apply (Pi Nat ({n} => Eq Nat n n)) n_eq_n = Ok true
-test param_apply (Pi Nat ({n} => Eq Nat n (succ n))) ({n} => refl) = Ok false
-```
-
-### Who checks the types?
-
-```rust
-// A respond answers every observation under every binder, so a wrong respond
-// breaks every check downstream. Responds get checked in two ways. Types are
-// values with a recognizable shape, so the universe is a predicate like any
-// other, and it accepts itself:
-
-test param_apply Type Nat = Ok true
-test param_apply Type zero = Ok false   // not a type
-test param_apply Type Type = Ok true   // the universe passes its own checker
-
-// The deeper check is behavioral. GoodRespond aims the promise machinery at
-// the type itself: its probes mint hypotheses and fire observations through
-// hyp_reduce at a candidate respond, comparing answers against the type's
-// constructors. A respond can lie in two directions, and both are caught:
-
-let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]   // a home-made Nat: zero and successor
-test param_apply Type MyNat = Ok true
-
-// read a type's respond out of its metadata:
-let resp_of := {T} => (type_meta T).respond (type_meta T).recognizer_params
-test verify_good MyNat (resp_of MyNat) = Ok true                    // its real respond: honest
-test verify_good MyNat (inductive_respond unit_witness) = Ok false   // waves junk through
-test verify_good MyNat (inert_respond unit_witness) = Ok false       // refuses everything
-
-// So the checker checks the checkers, using the same two kernel operations
-// it uses on everything else. This loop is the "self-verified" in the first
-// sentence of this README.
+// Whether this reaches the rewrites that matter is the project's biggest open
+// question (FOUNDATIONS.md, Q1). Map fusion and strength reduction are not yet
+// attempted here. The rules for building shortcuts are the trusted part, and they
+// have not themselves been proved sound.
 ```
 
 The TypeScript and Rust hosts only accelerate these in-language definitions and are validated against them. Five evaluator backends sit behind one ABI and must agree byte for byte, so no single evaluator has to be trusted ([`EVALUATOR.md`](EVALUATOR.md)). Each decision above is argued against its historical precedents in [`FOUNDATIONS.md`](FOUNDATIONS.md).
@@ -226,7 +137,7 @@ Working today:
 
 - The full pipeline: parser, elaborator, and tree-calculus evaluation (`src/`), with the surface grammar specified in [`SYNTAX.typ`](SYNTAX.typ).
 - The kernel (`lib/kernel/`): a self-contained checker where hypotheses are ordinary trees and legitimacy comes from provenance (a session ledger plus history replay), with three interchangeable checking tiers (static certification, a value-level walk simulator, extensional trials) behind one table interface, quotients, a typed equation ledger, and machine-checked induction proofs. Roughly 1,300 pins across `lib/kernel/*.test.disp` and `lib/tests/`.
-- The previous kernel and its world, retired intact to `archive/live-kernel/` (`kernel/` two-op trusted core, `std/`, and its ~1,200-pin test corpus): still loadable from the archive, no longer part of the maintained surface. The example section above teaches it pending a rewrite.
+- The previous kernel and its world, retired intact to `archive/live-kernel/` (`kernel/` two-op trusted core, `std/`, and its ~1,200-pin test corpus): still loadable from the archive, no longer part of the maintained surface.
 - Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, about twice as fast as the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests. Beside them, `rust-ic-strands` runs the net on a lattice where wires are physical (CPU, GPU, a browser player, a chip design), on the rules in `tree-net`.
 - A first end-to-end slice of the optimizer: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (archived at `archive/live-kernel/tests/opt_q1_*.test.disp`).
 
@@ -280,7 +191,7 @@ The kernel is source code written to be read: the type system is a library, so t
 | [`lib/kernel/prelude.disp`](lib/kernel/prelude.disp) | The barrel: raw pass, then the checked re-open of the kernel surface. | 🤖 | 7/10 |
 | [`lib/claim.disp`](lib/claim.disp) | Claims and lenses: the honest search, the finite check, the lens law, implication between claims, counterexample-guided search. | 🤖 | 7/10 |
 
-The previous kernel's fragments (`cut`, `engine`, `cells`, `base`, `positive`, `generic`, `universe` — the two-op trusted core the example section teaches) live intact under [`archive/live-kernel/kernel/`](archive/live-kernel/kernel/).
+The previous kernel's fragments (`cut`, `engine`, `cells`, `base`, `positive`, `generic`, `universe` — the two-op trusted core) live intact under [`archive/live-kernel/kernel/`](archive/live-kernel/kernel/).
 
 `.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`archive/live-kernel/TYPE_THEORY.pdf`, `SYNTAX.pdf`) sit alongside them.
 

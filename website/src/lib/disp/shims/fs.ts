@@ -1,6 +1,6 @@
 // node:fs shim for the in-browser disp compiler: a read-only virtual
-// filesystem preloaded with the entire disp library (lib/**/*.disp) plus the
-// archived live kernel (archive/live-kernel/**/*.disp — the site's examples
+// filesystem preloaded with the entire disp library (lib/**/*.disp), IDEAS.disp
+// (the stream of all trees, which the claim tests use), and the archived live kernel (archive/live-kernel/**/*.disp — the site's examples
 // and learn-page snippets still teach it), bundled as raw strings at build
 // time. The elaborator's module loader (modscan.ts) only ever calls
 // readFileSync on `use`d module paths, which resolve to '/lib/...' or
@@ -20,7 +20,7 @@
 let modules: Record<string, string> = {}
 try {
   modules = import.meta.glob(
-    ['../../../../../lib/**/*.disp', '../../../../../archive/live-kernel/**/*.disp', '!**/__site_example_*'],
+    ['../../../../../lib/**/*.disp', '../../../../../IDEAS.disp', '../../../../../archive/live-kernel/**/*.disp', '!**/__site_example_*'],
     {
       query: '?raw',
       import: 'default',
