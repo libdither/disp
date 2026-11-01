@@ -427,7 +427,7 @@ Consequences, each pinned in the test root:
   generic run (the confirmer's `run`, sound by the run lemma), induction (`step_with_ih`:
   the back map also returns the predecessor, and the law `ind_holds` assumes the claim
   there) and composition (`lens_then`). `id` and `shift` are certified equal at
-  Nat -> Nat, two spellings of doubling are certified equal by induction, and both
+  Nat -> Nat, two different doubling programs (`dbl_step`, `dbl_step_add`) are certified equal by induction, and both
   verdicts agree with the confirmer's search. A wrong pair is refuted at the ground case;
   a pair that needs induction, or two non-total functions, leave the certificate
   unsettled and the claim open.

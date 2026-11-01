@@ -613,13 +613,15 @@ respects_by_induction :: {step_fn : Tree, gen : Val -> Val} -> Verdict :=> {
 }
 
 // ---------------------------------------------------------------- subjects
-dbl_step_pairs := {d2, n} => if (is_zero n) { zero } else { pair t (pair t (d2 (nat_pred n))) }
 dbl_step_add := {d2, n} => if (is_zero n) { zero } else { add 2 (d2 (nat_pred n)) }
 // never descends: fix bad_step (succ zero) loops forever
 bad_step := {bad2, n} => if (is_zero n) { zero } else { succ (bad2 n) }
 two_base_step := {f, n} => if (is_zero n) { zero } else if (is_zero (nat_pred n)) { succ zero } else { succ (f (nat_pred n)) }
 test dbl 3 = 6
 test tree_eq dbl (fix dbl_step) = true
+// `pair t x` is how `succ x` compiles, so this spelling is the same tree, and only a different tree tests anything
+test tree_eq dbl_step ({d2, n} => if (is_zero n) { zero } else { pair t (pair t (d2 (nat_pred n))) }) = true
+test tree_eq dbl_step dbl_step_add = false
 test add 2 3 = 5
 
 // ================================================================ CHECK2's tests, unchanged
@@ -650,7 +652,6 @@ test check_by_induction two_base_step = "Proved"
 test eq_by_symbol id shift = "Proved"
 test eq_by_symbol id ({n} => succ n) = refuted 0
 test eq_by_symbol dbl (fix dbl_step) = "Open"
-test eq_by_induction dbl_step dbl_step_pairs = "Proved"
 test eq_by_induction dbl_step dbl_step_add = "Proved"
 test eq_by_induction dbl_step ({d2, n} => if (is_zero n) { zero } else { succ (d2 (nat_pred n)) }) = refuted 1
 same_on :: {Dom : Code, fuel : Nat, fn : Tree, gn : Tree} -> Bool :=>
@@ -665,7 +666,6 @@ test agrees (check_by_induction two_base_step) (Arrow NatR NatR 40 (fix two_base
 test agrees (check_by_induction ({_d, n} => pair n n)) (Arrow NatR NatR 40 (fix ({_d, n} => pair n n))) = true
 test agrees (eq_by_symbol id shift) (same_on_nats 40 id shift) = true
 test agrees (eq_by_symbol id ({n} => succ n)) (same_on_nats 40 id ({n} => succ n)) = true
-test agrees (eq_by_induction dbl_step dbl_step_pairs) (same_on_nats 40 (fix dbl_step) (fix dbl_step_pairs)) = true
 test agrees (eq_by_induction dbl_step dbl_step_add) (same_on_nats 40 (fix dbl_step) (fix dbl_step_add)) = true
 sweep := candidates.map({fn} => pair (check_by_structure fn) (Arrow NatR NatR 40 fn))
 test sweep.all({p} => agrees p.fst p.snd) = true

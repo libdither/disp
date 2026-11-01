@@ -375,7 +375,7 @@ test after the fact into a property of what the induction lens can ask for.
 
 A shortcut is sound and incomplete. The test root shows both sides.
 `certify (sym_eq id shift) nat_cases` is Proved. `certify (sym_eq (fix dbl_step)
-(fix dbl_step_pairs)) nat_cases` is Open, because one symbolic run does not settle a pair
+(fix dbl_step_add)) nat_cases` is Open, because one symbolic run does not settle a pair
 that needs induction, and it becomes Proved only under `ind_eq`. A true claim with no
 certificate in the current rule set stays Open. That gap between "has a certificate" and
 "is true" is Gödel's first theorem in a checker short enough to read.
