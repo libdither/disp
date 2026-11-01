@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { base } from '$app/paths'
   import { toc } from '$lib/learn/toc'
   import Ch1Motivation from '$lib/learn/chapters/Ch1Motivation.svelte'
   import Ch2Trees from '$lib/learn/chapters/Ch2Trees.svelte'
@@ -102,7 +103,8 @@
         real compiler, in your tab.
       </p>
       <p class="provenance">
-        Updated for the current two-operation kernel. This walkthrough is pedagogical commentary;
+        This walkthrough teaches the previous kernel, now retired to <code>archive/live-kernel/</code>. It still runs,
+        but the current work is the claim layer, explained on <a href="{base}/why/">Why disp</a>. For what is here,
         <a href="https://github.com/libdither/disp/blob/main/archive/live-kernel/TYPE_THEORY.typ">TYPE_THEORY.typ</a>
         and the <code>archive/live-kernel/kernel/*.disp</code> sources are the ground truth.
       </p>
