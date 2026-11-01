@@ -1,0 +1,23 @@
+polymer: 244 reactions, shapes 244, cell states 357826560, fields [13, 4, 4, 2, 40, 2, 3, 128, 2, 2, 7]
+ rule laws: {'fits_fields': True, 'linear': True, 'undoes_itself': True, 'void_stays': True} 
+ matter: lays/compact fails 0 []; worst cells/node for size<=8: 2.00
+ rung swaps  OK   runs 36, ticks max 1990 sum 10554, 0.2s 
+ rung maps   OK   runs 63, ticks max 2974 sum 52958, 0.6s 
+ rung grow   OK   runs 204, ticks max 19810 sum 677256, 5.3s 
+ clean: one output on every run
+ reached: grow
+ graded: {'refuses': '18/18', 'undo_exact': '45/45', 'mirror_trace': '43/45', 'matter_counted': '225/244', 'symmetric': 'n/a'}
+  map(swap,swap,swap) on full k=1..4         [674, 1146, 2570, 7818]
+  swap at depth k=1,2,4,8 of a list          [570, 1004, 2208, 5960]
+  stem^k on a leaf k=1,4,16                  [128, 1262, 10118]
+  stem on a full k=1,2,3 tree                [176, 272, 464]
+  first(stem) on a full k=1,2,3 tree         [686, 894, 1422]
+  deep swap on full k=1,2,3                  [156, 188, 252]
+  NOT on a bit                               x
+  ADDB 1+1 in 2 bits                         x
+ total 7.6s
+
+Reactions by mechanism: shared hop 1, scan 14, swap 68, seq and op dispatch 36, map 60, stem and unit 33, dag 2, start/end/tail mark 27, refusal exit 3.
+Not implemented: sink, cross, rot, tri, fix, add. Programs using them bounce and are refused, so these rows are vacuous:
+undo_exact on SINK/CROSS programs, mirror_trace on those, and "deep swap on full" (fix is refused; a full tree is its own mirror).
+Cell states is the product of field ranges, an upper bound; the fields are unpacked.

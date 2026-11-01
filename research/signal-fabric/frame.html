@@ -1,0 +1,99 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>frame — a design on the lattice, as Bend runs it, beside the laws it must keep</title>
+<style>
+  :root { --bg:#0b0e14; --bg-elev:#121a26; --fg:#c8d3e0; --fg-muted:#8595ad; --fg-faint:#5b6a80; --accent:#56c8ff;
+    --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; --border:#1b2436; --border-strong:#2a3a52;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --body:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 var(--mono); overflow:hidden; }
+  #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  button, select, input { background:var(--bg-elev); color:var(--fg); border:1px solid var(--border-strong); border-radius:6px; padding:3px 8px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  .g { color:var(--ok); } .bad { color:var(--warn); }
+  #hud { position:absolute; z-index:4; top:6px; left:8px; right:378px; padding:4px 6px 6px; border-radius:10px; background:rgba(11,14,20,.88); pointer-events:none; }
+  #hud > * { pointer-events:auto; }
+  #title { font-size:16px; color:var(--hot); } #title span { color:var(--fg-faint); font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px; }
+  #prog { width:22rem; } #tree { width:16rem; } #preset { max-width:16rem; }
+  #verdict { margin-top:6px; font-size:12px; } #verdict.ok { color:var(--ok); } #verdict.bad { color:var(--warn); }
+  #verdict b, #now b, #stats b { color:var(--fg); font-weight:normal; }
+  #verdict.ok b, #verdict.bad b { color:inherit; }
+  .line { font-size:11.5px; color:var(--fg-muted); }
+  #verdict, .line { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #err { color:var(--warn); font-size:12px; }
+  #side { position:absolute; z-index:4; top:8px; right:8px; bottom:8px; width:360px; overflow-y:auto; padding:8px 10px 10px; box-sizing:border-box;
+    border:1px solid var(--border); border-radius:10px; background:rgba(11,14,20,.92); font:11.5px/1.45 var(--body); color:var(--fg-muted); }
+  #side .hd { font:600 13px var(--body); color:var(--fg); } #side .hd span { font-weight:normal; color:var(--fg-faint); font-size:11px; }
+  #side .sec { margin:12px 0 3px; font:600 11px var(--body); color:var(--fg); text-transform:uppercase; letter-spacing:.06em; }
+  #side .sec span { text-transform:none; letter-spacing:0; font-weight:normal; color:var(--fg-faint); }
+  #side p { margin:4px 0; } #side .note { color:var(--fg-faint); font-style:italic; }
+  #side pre { margin:3px 0 0; font:10.5px/1.4 var(--mono); color:var(--fg); white-space:pre-wrap; }
+  #side pre.err { color:var(--warn); }
+  .law { border:1px solid var(--border); border-radius:7px; padding:4px 8px 5px; margin:5px 0; }
+  .law.ok { border-color:rgba(63,191,127,.35); } .law.fail { border-color:var(--warn); background:rgba(255,107,107,.07); }
+  .law .top { display:flex; gap:6px; align-items:center; } .law .top b { font:600 11.5px var(--mono); color:var(--fg); }
+  .law .tag { font-size:10px; color:var(--fg-faint); border:1px solid var(--border-strong); border-radius:4px; padding:0 4px; }
+  .law .mark { margin-left:auto; font-size:13px; } .law.ok .mark { color:var(--ok); } .law.fail .mark { color:var(--warn); }
+  .key { display:grid; grid-template-columns:22px 1fr; gap:3px 6px; align-items:center; }
+  .key i { display:inline-block; justify-self:center; }
+  #built { color:var(--fg-faint); transition:color .3s; } #built.new { color:var(--hot); }
+  #dock { position:absolute; z-index:5; left:0; right:376px; bottom:0; padding:18px 12px 10px; display:flex; gap:8px; align-items:center; justify-content:center;
+    background:linear-gradient(to top, rgba(11,14,20,.96) 70%, rgba(11,14,20,0)); }
+  #time { width:min(520px, 50vw); } #tick { min-width:9em; color:var(--fg-muted); font-size:12px; }
+  #tip { position:absolute; z-index:8; pointer-events:none; padding:5px 8px; border-radius:7px; border:1px solid var(--border-strong);
+    background:rgba(18,26,38,.96); font:11px/1.5 var(--mono); color:var(--fg); display:none; max-width:520px; }
+</style></head><body>
+<canvas id="cv"></canvas>
+<div id="hud">
+  <div id="title">frame <span>· the design (frame/loopnet.bend) on the lattice, run by the code Bend builds from it</span></div>
+  <div class="row">
+    <input id="prog" spellcheck="false" title="the program (swap, map, ;, † and the library's names for them; addb, binary add on a list; addt, on a tree)">
+    <span class="line">on</span>
+    <input id="tree" spellcheck="false" title="the tree: △ a leaf, △x a stem, (a, b) a fork; bits(a, b, n), addb's two numbers; words(a, b, n), addt's">
+    <button id="run">run</button>
+    <select id="preset"><option disabled selected>examples…</option></select>
+  </div>
+  <div id="verdict"></div>
+  <div id="stats" class="line"></div>
+  <div id="packets" class="line"></div>
+  <div id="doc" class="line"></div>
+  <div id="now" class="line"></div>
+  <div id="err"></div>
+</div>
+<div id="side">
+  <div id="laws"><div class="hd">Laws</div><p>loading…</p></div>
+  <div class="sec">Reading the grid</div>
+  <div class="key">
+    <i style="width:16px;height:3px;background:#3a4a63"></i><span>a wire cell, pointing where it passes symbols on</span>
+    <i style="width:12px;height:12px;border-radius:50%;background:#e2e8f0"></i><span>fork, its <b style="color:#7aa2f7">left</b> and <b style="color:#ffb454">right</b> wires (they trade places on a swap)</span>
+    <i style="width:12px;height:12px;border-radius:50%;background:#a9b6c8"></i><span>stem, and its part's wire</span>
+    <i style="width:8px;height:8px;border-radius:50%;background:#3fdc8f"></i><span>leaf</span>
+    <i style="width:10px;height:10px;border-radius:50%;border:2px solid #3fdc8f"></i><span>latch passing a packet on (red: eating it)</span>
+    <i style="width:16px;height:10px;border-radius:3px;background:#ffd866"></i><span>a symbol: <b style="color:#ffd866">X</b> swap here, <b style="color:#a9b6c8">M0</b> into a stem's part, <b style="color:#7aa2f7">M1</b> left, <b style="color:#ffb454">M2</b> right</span>
+    <i style="width:16px;height:10px;border-radius:3px;background:#3fdc8f"></i><span><b style="color:#3fdc8f">S+</b> makes a stem out of the first plain wire it reaches, <b style="color:#ff6b6b">S−</b> turns a stem back into wire</span>
+    <i style="width:16px;height:10px;border-radius:3px;background:#b39cff"></i><span><b style="color:#b39cff">T</b> starts a loop at the node it reaches, <b style="color:#b39cff">W</b> walks down its left part</span>
+    <i style="width:10px;height:10px;border-radius:50%;border:2px solid #b39cff"></i><span>a stem the loop holds (lowered): it passes everything through</span>
+    <i style="width:12px;height:9px;border:2px solid #56c8ff;border-radius:2px"></i><span>going up the second lane: a burst for the loop's node, then <b style="color:#56c8ff">N</b>; the node answers <b style="color:#56c8ff">R</b> down; <b style="color:#56c8ff">H</b>, <b style="color:#56c8ff">E</b>: the stem below is held, let go</span>
+    <i style="width:16px;height:10px;border-radius:3px;background:#ff9ee6"></i><span><b style="color:#ff9ee6">∀</b> a recursion (fix(map(…self…))) that each fork copies down both wires at once; <b style="color:#ff9ee6">μ</b> any other fix, which the fork it reaches runs, sending itself on down where the program says self</span>
+    <i style="width:16px;height:10px;border-radius:3px;background:#ff9e64"></i><span><b style="color:#ff9e64">¬</b> not on a bit (0 △, 1 △△): the wire over a leaf becomes its stem, or a stem becomes wire and sends <b style="color:#ff9e64">?</b> down to check a leaf is next</span>
+    <i style="width:10px;height:10px;border-radius:50%;border:2px solid #b39cff"></i><span>a fork whose loop is out: what comes from above waits in its queue (the yellow count) until the loop's E comes back</span>
+    <i style="width:12px;height:12px;color:#ff6b6b;font-style:normal;text-align:center;line-height:12px">✕</i><span>a jam: S+ found no slack and no room to grow, or S− no stem (stuck)</span>
+    <i style="width:8px;height:8px;border-radius:50%;background:#3fdc8f;box-shadow:0 4px 0 #1b2436"></i><span>a chain packs itself: slack sinks past still stems to its foot, and its leaf grows into empty cells when S+ finds none</span>
+    <i style="width:12px;height:12px;background:rgba(255,216,102,.25)"></i><span>a cell that changed this tick</span>
+    <i style="font-style:normal;font-weight:bold;color:#7dcfff">a₀</i><span>binary add's bits, lowest first: position i down the list is the carry slot <b style="color:#8595ad">cᵢ</b>, then <b style="color:#7dcfff">aᵢ</b>, then <b style="color:#e0af68">bᵢ</b>; a stem over a leaf is 1, a leaf 0</span>
+    <i style="font-style:normal">↘</i><span>in the packets line: ↙ ↘ a step left, right (↓ into a stem's part); T(…) runs … when the left part is 1, T*(…) a loop, μ(…) a fix the fork runs</span>
+  </div>
+  <p>Hover a cell for its Bend value; drag to pan, wheel to zoom, double-click to fit; space plays, arrows step.</p>
+  <div class="sec">The loop</div>
+  <p>Edit <code>frame/LAWS.bend</code> (proofs in <code>PROOF.bend</code>) and the design, run <code>research/signal-fabric/frame/check.sh</code>, and this page reloads itself. <code>check.sh view</code> rebuilds only the design, in about a second. <span id="built"></span></p>
+</div>
+<div id="dock">
+  <button id="start" title="first tick">⏮</button><button id="back" title="tick back (←)">◀</button>
+  <button id="play" title="play (space)">▶</button><button id="fwd" title="tick on (→)">▶︎|</button><button id="end" title="last tick">⏭</button>
+  <input id="time" type="range" min="0" max="0" value="0">
+  <span id="tick"></span>
+  <select id="speed" title="ticks a second"><option value="2">2/s</option><option value="5">5/s</option><option value="10" selected>10/s</option><option value="30">30/s</option><option value="120">120/s</option></select>
+</div>
+<div id="tip"></div>
+<script type="module" src="frame.js"></script>
+</body></html>

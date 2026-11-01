@@ -1,0 +1,39 @@
+<!doctype html><meta charset=utf-8><title>Block design viewer</title>
+<style>
+body{margin:0;background:#0b0e14;color:#c8d3e0;font:14px/1.4 system-ui,sans-serif}
+#top{padding:10px 14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid #1d2636}
+select,button{background:#151c28;color:#c8d3e0;border:1px solid #2a3a52;border-radius:5px;padding:4px 9px;font:inherit}
+input[type=range]{width:260px}#info{padding:8px 14px;font:13px ui-monospace,monospace;white-space:pre-wrap}
+#c{display:block;margin:0 14px}.k i{display:inline-block;margin:0 5px 0 12px;vertical-align:middle}
+#tip{padding:2px 14px;font:12px ui-monospace,monospace;color:#7d8ba0;height:18px}
+</style>
+<div id=top><select id=pick></select><button id=play>Play</button><button id=back>← tick</button><button id=fwd>tick →</button>
+<button id=next>Next change to the tree</button><label>speed <input id=speed type=range min=0 max=12 value=4></label><input id=scrub type=range min=0 value=0></div>
+<div id=info></div><canvas id=c></canvas><div id=tip></div>
+<div class=k style="padding:8px 14px"><i style="width:10px;height:10px;border-radius:50%;background:#e2e8f0"></i>fork<i style="width:9px;height:9px;border-radius:50%;background:#a9b6c8"></i>stem<i style="width:7px;height:7px;border-radius:50%;background:#3fdc8f"></i>leaf<i style="width:8px;height:8px;background:#5b6a80"></i>mirror (elbow)<i style="width:9px;height:9px;border-radius:50%;background:#ffd866"></i>the head<i style="width:18px;height:2px;background:#7aa2f7"></i>left part<i style="width:18px;height:2px;background:#ffb454"></i>right part</div>
+<script>
+const $=i=>document.getElementById(i),ctx=$('c').getContext('2d');let V,C,grid,t=0,playing=false,keys=[],z=12,box
+const key=(x,y)=>x+','+y
+function load(i){C=V.cases[i];keys=[];grid=new Map;for(const[x,y,g]of C.first)grid.set(key(x,y),g);t=0;$('scrub').max=C.ticks.length;
+ let xs=[0],ys=[0],m=new Map(grid);const see=(x,y)=>{xs.push(x);ys.push(y)};for(const[x,y]of C.first)see(x,y);for(const d of C.ticks)for(let i=0;i<d.length;i+=3)see(d[i],d[i+1]);
+ box={x0:Math.min(...xs.slice(0,5000),0)-1,y0:-2,x1:Math.max(...xs)+2,y1:Math.max(...ys)+2};z=Math.max(5,Math.min(26,Math.floor(Math.min((innerWidth-40)/(box.x1-box.x0),(innerHeight-210)/(box.y1-box.y0)))));
+ $('c').width=(box.x1-box.x0)*z;$('c').height=(box.y1-box.y0)*z;draw()}
+function apply(d){for(let i=0;i<d.length;i+=3){if(d[i+2]<0)grid.delete(key(d[i],d[i+1]));else grid.set(key(d[i],d[i+1]),d[i+2])}}
+function goTo(n){n=Math.max(0,Math.min(C.ticks.length,n));if(n<t){let best=null;for(const k of keys)if(k.t<=n&&(!best||k.t>best.t))best=k;if(best){grid=new Map(best.g);t=best.t}else{grid=new Map;for(const[x,y,g]of C.first)grid.set(key(x,y),g);t=0}}
+ while(t<n){apply(C.ticks[t]);t++;if(t%2000==0&&!keys.some(k=>k.t==t))keys.push({t,g:new Map(grid)})}draw()}
+const last=(a)=>{let r=a[0];for(const e of a)if(e[0]<=t)r=e;else break;return r}
+function px(x,y){return[(x-box.x0+.5)*z,(y-box.y0+.5)*z]}
+function draw(){const w=$('c').width,h=$('c').height;ctx.fillStyle='#0b0e14';ctx.fillRect(0,0,w,h);
+ ctx.lineWidth=Math.max(1.5,z*.13);const col=['#3a4a63','#7aa2f7','#ffb454'];for(const[a,b,c,d,s]of last(C.links)[1]){const[p,q]=px(a,b),[r,u]=px(c,d);ctx.strokeStyle=col[s];ctx.beginPath();ctx.moveTo(p,q);ctx.lineTo(r,u);ctx.stroke()}
+ for(const[k,g]of grid){const[x,y]=k.split(',').map(Number),G=V.glyphs[g],[p,q]=px(x,y);let c=null,r=.25;
+  if(G.k=='fork'){c='#e2e8f0';r=.42}else if(G.k=='stem'){c='#a9b6c8';r=.34}else if(G.k=='leaf'){c='#3fdc8f';r=.28}else if(G.k=='ball'){c='#ffd866';r=.32}
+  else{ctx.fillStyle=G.k=='elbow'?'#5b6a80':'#b39cff';const s=z*.5;ctx.fillRect(p-s/2,q-s/2,s,s)}
+  if(c){ctx.fillStyle=c;ctx.beginPath();ctx.arc(p,q,z*r,0,7);ctx.fill()}
+  if(G.on){ctx.strokeStyle='#ffd866';ctx.lineWidth=Math.max(2,z*.14);ctx.beginPath();ctx.arc(p,q,z*.55,0,7);ctx.stroke();ctx.lineWidth=Math.max(1.5,z*.13)}}
+ $('scrub').value=t;$('info').textContent=`${V.design}, ${V.reactions} reactions. ${C.name}${C.ok?'':'  (WRONG)'}\nprogram ${C.prog}\ninput   ${C.data}\nwant    ${C.want}\ntick ${t} / ${C.ticks.length}   the data reads ${last(C.reads)[1]}`}
+function loop(){if(playing){const n=2**(+$('speed').value)/4;acc+=n;const k=Math.floor(acc);acc-=k;if(k){if(t>=C.ticks.length){playing=false;$('play').textContent='Play'}else goTo(t+k)}}requestAnimationFrame(loop)}let acc=0
+fetch('out/view.json?'+Date.now()).then(r=>r.json()).then(j=>{V=j;j.cases.forEach((c,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${c.name} (${c.ticks.length} ticks)`;$('pick').append(o)});load(0);loop()})
+$('pick').onchange=e=>{playing=false;$('play').textContent='Play';load(+e.target.value)};$('play').onclick=()=>{playing=!playing;$('play').textContent=playing?'Pause':'Play'};$('fwd').onclick=()=>goTo(t+1);$('back').onclick=()=>goTo(t-1);$('scrub').oninput=e=>goTo(+e.target.value)
+$('next').onclick=()=>{const r=C.reads.find(e=>e[0]>t);goTo(r?r[0]:C.ticks.length)}
+$('c').onmousemove=e=>{const r=$('c').getBoundingClientRect(),x=Math.floor((e.clientX-r.left)/z)+box.x0,y=Math.floor((e.clientY-r.top)/z)+box.y0,g=grid.get(key(x,y));$('tip').textContent=g==null?`(${x}, ${y}) empty`:`(${x}, ${y}) ${V.glyphs[g].k}, fields ${V.glyphs[g].d}`}
+</script>

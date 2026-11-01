@@ -1,0 +1,114 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>signal tree — the program travels as signals and rewrites by rules, learning its own, priced honestly</title>
+<style>
+  :root { --bg:#0b0e14; --bg-elev:#121a26; --fg:#c8d3e0; --fg-muted:#8595ad; --fg-faint:#5b6a80; --accent:#56c8ff;
+    --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; --own:#ffb454; --learned:#3fdc8f; --border:#1b2436; --border-strong:#2a3a52;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --body:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 var(--mono); overflow:hidden; }
+  #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  button, select, input { background:var(--bg-elev); color:var(--fg); border:1px solid var(--border-strong); border-radius:6px; padding:3px 8px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); } button.on { border-color:#b39cff; color:#b39cff; }
+  button.pulse { animation:pulse 1.2s ease-in-out infinite; border-color:var(--learned); color:var(--learned); }
+  @keyframes pulse { 50% { box-shadow:0 0 0 4px rgba(63,220,143,.25); } }
+  .o { color:var(--own); } .g { color:var(--learned); } .y { color:var(--hot); } .b { color:#7aa2f7; }
+  #hud { position:absolute; z-index:4; top:10px; left:14px; right:372px; pointer-events:none; }
+  #title { font-size:17px; color:var(--hot); word-break:break-word; } #title .dim { color:var(--fg-faint); }
+  #verdict { font-size:12px; min-height:17px; } #verdict.ok { color:var(--ok); } #verdict.bad { color:var(--warn); }
+  .line { font-size:11.5px; color:var(--fg-muted); } .line b { color:var(--fg); font-weight:normal; }
+  #runs { margin-top:6px; pointer-events:auto; display:inline-block; }
+  #runs .run { font-size:11.5px; color:var(--fg-muted); cursor:pointer; padding:1px 6px 1px 0; border-radius:4px; }
+  #runs .run:hover { color:var(--fg); } #runs .run.cur { color:var(--fg); } #runs .run.cur b { color:var(--hot); }
+  #runs .bar { display:inline-block; height:7px; margin-right:7px; border-radius:2px; background:#3a4a63; vertical-align:middle; }
+  #runs .run.cur .bar { background:var(--accent); } #runs .bad { color:var(--warn); }
+  #rules { position:absolute; z-index:4; top:8px; right:8px; bottom:8px; width:340px; overflow-y:auto; padding:8px 10px 10px; box-sizing:border-box;
+    border:1px solid var(--border); border-radius:10px; background:rgba(11,14,20,.9); font:11px/1.45 var(--body); color:var(--fg-muted); }
+  #rules .hd { font:600 13px var(--body); color:var(--fg); }
+  #rules .sec { margin:10px 0 3px; font:600 11px var(--body); color:var(--fg); text-transform:uppercase; letter-spacing:.06em; }
+  #rules .sec span { text-transform:none; letter-spacing:0; font-weight:normal; color:var(--fg-muted); }
+  #rules p { margin:3px 0 5px; }
+  #ownrows { display:grid; grid-template-columns:1fr 1fr; gap:0 5px; } #ownrows .rule .txt { font-size:10px; line-height:1.25; color:var(--fg-faint); } #ownrows .rule { padding:2px 6px 3px; margin:2px 0; }
+  .rule.sig { padding:2px 7px; margin:2px 0; } .rule.sig .txt { flex:1; min-width:0; font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rule { border:1px solid var(--border); border-radius:7px; padding:3px 7px 4px; margin:4px 0; transition:background .25s, border-color .25s; cursor:pointer; }
+  .rule .top { display:flex; align-items:center; gap:6px; } .rule .top b { color:var(--fg); font-weight:600; font-family:var(--mono); font-size:11px; }
+  .rule .n { margin-left:auto; font:11px var(--mono); color:var(--fg-muted); }
+  .rule .body { display:flex; gap:8px; align-items:center; } .rule .pic { flex:none; margin:2px 0 1px; } .rule .txt { font-size:10.5px; }
+  .rule svg line { stroke:#4a5d78; stroke-width:1.2; } .rule svg text { font:bold 7px var(--mono); fill:#0b0e14; text-anchor:middle; }
+  .rule svg text.ar { font:12px var(--body); fill:var(--fg-muted); }
+  .rule.own.lit { border-color:var(--own); background:rgba(255,180,84,.13); }
+  .rule.learned.lit { border-color:var(--learned); background:rgba(63,220,143,.13); }
+  .rule.learned.new { border-color:var(--hot); box-shadow:0 0 0 1px rgba(255,216,102,.35) inset; }
+  .rule.sig { cursor:default; } .rule.sig.lit { border-color:#3a4a63; background:rgba(122,162,247,.08); }
+  .rule .dot { width:9px; height:9px; border-radius:50%; flex:none; }
+  .more { color:var(--accent); cursor:pointer; margin-top:4px; }
+  #rules details summary { cursor:pointer; color:var(--accent); margin-top:8px; }
+  #dock { position:absolute; z-index:5; left:0; right:356px; bottom:0; padding:22px 12px 8px; pointer-events:none;
+    background:linear-gradient(to top, rgba(11,14,20,.96) 70%, rgba(11,14,20,0)); }
+  #dock > * { pointer-events:auto; width:min(860px, 100%); margin:0 auto; box-sizing:border-box; }
+  #story { min-height:17px; text-align:center; color:var(--fg-muted); font:11.5px var(--body); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #story b { font-family:var(--mono); font-weight:600; }
+  .row { display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap; margin-top:5px; }
+  #prog { width:15rem; text-align:center; } #inp { width:20rem; text-align:center; }
+  #time { width:min(600px, 64vw); }
+  #tl { display:block; width:min(680px, 100%); height:36px; margin:6px auto 0; cursor:crosshair; }
+  #tlnote { text-align:center; font:10.5px var(--body); color:var(--fg-faint); }
+  .knobs { font:11.5px var(--body); color:var(--fg-muted); } .knobs input[type=range] { width:100px; }
+  #err { color:var(--warn); font-size:12px; text-align:center; }
+  #tip { position:absolute; z-index:8; pointer-events:none; padding:6px 9px; border-radius:8px; border:1px solid var(--border-strong);
+    background:rgba(18,26,38,.96); font:11px/1.5 var(--mono); color:var(--fg-muted); white-space:pre; display:none; }
+</style></head><body>
+<canvas id="cv"></canvas>
+<div id="hud">
+  <div id="title"></div>
+  <div id="verdict"></div>
+  <div class="line" id="now"></div>
+  <div id="runs"></div>
+</div>
+<div id="rules">
+  <div class="hd">The rules</div>
+  <p>Every change to the tree is a rule: a little tree whose loose ends (<b style="color:#ff7eb6">a</b>, <b style="color:#4dd0e1">b</b>, <b style="color:#b5e853">c</b>) are parts passed along unread, rewired; gold rings a new node. Rules light up as they fire; on the lattice the parts they moved get the same letters.</p>
+  <div class="sec">How the program moves</div>
+  <div id="sigrows"></div>
+  <div class="sec">The machine's own rules <span>(both ways)</span></div>
+  <div id="ownrows"></div>
+  <div class="sec">Learned <span id="lcount"></span></div>
+  <p>A piece of the program that read and made at most <span id="cap"></span> nodes, kept as one rule: what it read → what it left. Next time, if a rule fits where the piece runs, one rewrite instead of the moves. Latest first; click one to see where it fires.</p>
+  <div id="learnrows"></div>
+  <details><summary>what is this?</summary>
+    <p>The value is a tree laid out on the lattice: each node sits in a cell (△ a leaf, a triangle with one hole a stem, with two a fork) and each edge is a wire, a path of cells. The program is not laid out anywhere: it comes in at the root as a signal and moves a cell a tick.</p>
+    <p>Where a piece of the program reaches a node, it rewrites there by rules. The first run of a piece goes by the machine's own rules, the moves, and is then kept as one rule. In a later run, on the same bits or other ones, the pieces whose rules fit fire in 1 tick: the circuit that the program amounts to builds itself from the bits up, and what is left is mostly signals travelling.</p>
+    <p><b>matter moves</b>: each tick a node may step to a free cell where its wires are shorter, and a small value that is read climbs toward what reads it.</p>
+    <p><b>layout</b>: rows lays the value out as a tidy tree; packed gives each part its own share of a square, halves side by side and their halves one above the other (an H-tree), so a signal from the root reaches any bit in about √n cells instead of n.</p>
+    <p><b>physics</b>: what the machine pays for. <i>Honest</i>: a signal takes its wire's length plus its size in symbols, one at a time on a wire; a rewrite waits until its writes reach the farthest node it changes; wires are paths of cells, a node that steps drags its end of each wire a cell, a rewrite splices wires along the old ones, and kinks straighten a cell at a time. Learned rules ride down with the program's signals (a wire carries each once, the node at its end keeps it) or stay in the cell they were learned in. <i>Cheap</i> takes every shortcut the first version took: one rule book every node reads at once, free sizes and writes, wires drawn fresh from their ends. A library name is one symbol: every cell holds the library.</p>
+    <p><b>flip</b> runs the program backward on the answer, with its own rules, giving the input back.</p>
+  </details>
+</div>
+<div id="tip"></div>
+<div id="dock">
+  <div id="story"></div>
+  <div id="err"></div>
+  <canvas id="tl" title="click or drag to go to a tick"></canvas>
+  <div id="tlnote"></div>
+  <div class="row">
+    <button id="play" title="play or pause (space)">▶</button>
+    <input id="time" type="range" min="0" max="1" step="1" value="0" title="the tick shown">
+    <button id="flip" title="run the program backward on the answer (F)">⇄ flip</button>
+  </div>
+  <div class="row">
+    <select id="ex"></select>
+    <input id="prog" spellcheck="false" title="the two-way program">
+    <input id="inp" spellcheck="false" title="its input, core.ts syntax: registers <0b…, 0b…> or a tree like ((△, △△), △)">
+  </div>
+  <div class="row knobs">
+    <button id="other" title="run again on other bits of the same shape, with the rules learned so far (N)">▶▶ other bits</button>
+    <button id="again" title="run again on the same bits">↻ same bits</button>
+    <button id="forget" title="forget the learned rules and start over">forget rules</button>
+    <button id="learn" class="on" title="learn rules from the pieces that touch few nodes, and use them">learn rules ✓</button>
+    <button id="climb" class="on" title="nodes step to free cells where their wires are shorter, while the program runs">matter moves ✓</button>
+    <select id="phys" title="what the machine pays for: honest charges for signal sizes, writes, wires of cells, and where learned rules live; cheap is the first version, with every shortcut"></select>
+    <button id="layout" title="rows: a tidy tree, each node under its parent; packed: each part in its own share of a square (an H-tree), so the root is about √n cells from any bit">layout: rows</button>
+    <label>speed <input id="speed" type="range" min="0.5" max="3.5" step="0.05" value="1.6"> <span id="speedv"></span></label>
+  </div>
+</div>
+<script src="tree.js"></script>
+</body></html>

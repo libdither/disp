@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal fabrics: speed, energy and error</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1: var(--background, #fcfcfb); --surface-2: var(--card, #f3f2ef); --text-primary: var(--foreground, #0b0b0b); --text-secondary: var(--muted-foreground, #52514e); --text-muted: var(--muted-foreground, #7a7974);
+  --grid: color-mix(in oklab, var(--border, #e6e5e1) 70%, transparent); --axis: var(--border, #b9b8b2);
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4; --series-6: #008300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: var(--background, #1a1a19); --surface-2: var(--card, #232321); --text-primary: var(--foreground, #f0efec); --text-secondary: var(--muted-foreground, #c3c2b7); --text-muted: var(--muted-foreground, #8e8d86);
+    --grid: color-mix(in oklab, var(--border, #2e2e2b) 70%, transparent); --axis: var(--border, #4a4a46);
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181; --series-6: #008300;
+  }
+}
+body { margin: 0; }
+.viz-root { color: var(--text-primary); font: 14px/1.5 var(--font-sans, system-ui, sans-serif); padding: 4px 0 32px; max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 26px 0 6px; } h2:first-of-type { margin-top: 18px; }
+p, li { color: var(--text-secondary); max-width: 78ch; }
+.lede { color: var(--text-primary); }
+.grid2 { display: grid; grid-template-columns: 1fr; gap: 18px; }
+.card { background: var(--surface-2); border-radius: var(--radius, 10px); padding: 16px; }
+.card h3 { font-size: 14px; margin: 0 0 2px; } .card .sub { font-size: 12px; color: var(--text-muted); margin: 0 0 6px; }
+svg text { fill: var(--text-secondary); font-size: 11px; }
+.axis line, .axis path { stroke: var(--axis); } .gridline { stroke: var(--grid); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+.tip { position: fixed; pointer-events: none; background: var(--surface-1); border: 1px solid var(--axis); border-radius: 6px; padding: 6px 9px; font-size: 12px; color: var(--text-secondary); box-shadow: 0 2px 10px rgba(0,0,0,.12); display: none; z-index: 10; max-width: 320px; }
+.tip b { color: var(--text-primary); }
+.controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 18px; margin: 8px 0 10px; }
+.controls label { font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; }
+.controls output { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+select, input[type=range] { width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th { text-align: left; color: var(--text-muted); font-weight: 500; border-bottom: 1px solid var(--axis); padding: 4px 8px 4px 0; }
+td { border-bottom: 1px solid var(--grid); padding: 4px 8px 4px 0; color: var(--text-primary); }
+td.no { color: var(--text-muted); }
+.key { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 6px; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<p class="lede">Ways a self-configuring fabric could carry a program's signals, costed from one device model (a 45–28 nm-like process at room temperature): the energy one run takes, how long it takes, and how often it comes out wrong. Every design must give a wrong output at most once in 10<sup>12</sup> runs and be buildable: a fixed chip must yield (no faulty gate site among 10<sup>7</sup>); a self-configuring array tests its cells and routes around the faulty ones, at the cost the routing simulation measured.</p>
+
+<h2>The frontier: energy against time, each design at its best settings</h2>
+<div class="controls" style="grid-template-columns: 260px"><label>workload <select id="wl"></select></label></div>
+<div class="card"><h3 id="frontTitle"></h3><p class="sub">Each line is a design's best trade-off: no setting of its knobs is both faster and cheaper. Lower-left is better. Log scales.</p><div id="front"></div><div class="legend" id="frontLegend"></div>
+<details><summary>table view</summary><div id="frontTable"></div></details></div>
+
+<h2>Move the knobs</h2>
+<p>The same model, live. Supply and device size set speed, energy and how many cells come out faulty; the ramp time is the adiabatic power clock's; swing and hops per restore are low-swing transport's; trimming spends configuration bits to cancel amplifier offsets.</p>
+<div class="controls">
+  <label>workload <select id="kwl"></select></label>
+  <label>supply <output id="vddO"></output><input id="vdd" type="range" min="0.16" max="1" step="0.01" value="0.45"></label>
+  <label>device size (switched capacitance) <output id="cO"></output><input id="c" type="range" min="-0.7" max="0.6" step="0.05" value="-0.3"></label>
+  <label>adiabatic ramp time <output id="rampO"></output><input id="ramp" type="range" min="-10.7" max="-6.7" step="0.1" value="-9"></label>
+  <label>low-swing swing <output id="swingO"></output><input id="swing" type="range" min="0.03" max="0.3" step="0.01" value="0.15"></label>
+  <label>hops between restores <output id="kO"></output><input id="k" type="range" min="1" max="32" step="1" value="8"></label>
+  <label>timing errors allowed per run <output id="teO"></output><input id="te" type="range" min="-15" max="-2" step="1" value="-12"></label>
+  <label>trim amplifier offsets <select id="cal"><option value="0">no</option><option value="1" selected>yes</option></select></label>
+</div>
+<div class="card"><table id="live"></table><p class="sub" id="liveNote"></p></div>
+
+<h2>Carrying numbers as values: a multiply-accumulate against precision</h2>
+<div class="grid2">
+<div class="card"><h3>Energy per multiply-accumulate</h3><p class="sub">Analog cost grows about fourfold per bit (noise must fall by half); stochastic streams fourfold too; digital gently. Log scale.</p><div id="mac"></div><div class="legend" id="macLegend"></div><details><summary>table view</summary><div id="macTable"></div></details></div>
+<div class="card"><h3>Set-up shared by runs (32-bit add)</h3><p class="sub">Energy per run once configuring is spread over that many runs: the array writes its own configuration; an FPGA reads a bitstream from off chip. Log scales.</p><div id="amort"></div><div class="legend" id="amortLegend"></div><details><summary>table view</summary><div id="amortTable"></div></details></div>
+</div>
+
+<h2>Faulty cells: what routing around them costs</h2>
+<div class="card"><table id="repairTable"></table><p class="sub">A 400-gate pipeline placed on good cells of a 48 × 48 array, every net routed through good cells by shortest path (sim.mjs). A fixed circuit of the same 400 gates works only if none is faulty.</p></div>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+/*MODEL*/
+const RESULTS = /*RESULTS*/null;
+const NAMES = { asic: 'fixed chip (standard cells)', fpga: 'FPGA', cells: 'self-configuring cell array', lowSwing: 'array, low-swing transport', adiabatic: 'array, adiabatic (reversible)', strands: 'strand lattice (today)',
+  digital: 'digital', analogTrimmed: 'analog, trimmed', analogUntrimmed: 'analog, untrimmed', stochastic: 'stochastic bitstreams', fpgaA: 'FPGA bitstream' };
+const ORDER = ['asic', 'fpga', 'cells', 'lowSwing', 'adiabatic', 'strands'];
+const col = (i) => `var(--series-${i + 1})`;
+const fmtE = (e) => e == null ? '–' : e < 1e-15 ? `${(e * 1e18).toFixed(0)} aJ` : e < 1e-12 ? `${(e * 1e15).toFixed(1)} fJ` : e < 1e-9 ? `${(e * 1e12).toFixed(2)} pJ` : `${(e * 1e9).toFixed(2)} nJ`;
+const fmtT = (t) => t == null ? '–' : t < 1e-9 ? `${(t * 1e12).toFixed(0)} ps` : t < 1e-6 ? `${(t * 1e9).toFixed(2)} ns` : `${(t * 1e6).toFixed(2)} µs`;
+const tip = document.getElementById('tip');
+function showTip(ev, rows) { tip.replaceChildren(...rows.map(r => { const d = document.createElement('div'); if (r[1]) { const b = document.createElement('b'); b.textContent = r[0]; d.append(b, ' ' + r[1]); } else d.textContent = r[0]; return d })); tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX + 14, innerWidth - 330) + 'px'; tip.style.top = (ev.clientY + 14) + 'px'; }
+const hideTip = () => (tip.style.display = 'none');
+const NS = 'http://www.w3.org/2000/svg';
+const el = (t, a = {}, parent) => { const e = document.createElementNS(NS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); parent?.append(e); return e; };
+
+/** A log–log (or log-y) line chart with dots, direct end labels and per-dot tooltips. */
+function chart(host, series, { xlog = true, xfmt, yfmt, xlabel, ylabel, w = 700, h = 340 } = {}) {
+  host.replaceChildren();
+  const svg = el('svg', { viewBox: `0 0 ${w} ${h}`, width: '100%', role: 'img' }, host);
+  const m = { l: 78, r: 150, t: 12, b: 40 };
+  const pts = series.flatMap(s => s.points);
+  const lx = (v) => (xlog ? Math.log10(v) : v), ly = (v) => Math.log10(v);
+  let [x0, x1] = [Math.min(...pts.map(p => lx(p.x))), Math.max(...pts.map(p => lx(p.x)))];
+  let [y0, y1] = [Math.floor(Math.min(...pts.map(p => ly(p.y)))), Math.ceil(Math.max(...pts.map(p => ly(p.y))))];
+  if (xlog) { x0 = Math.floor(x0); x1 = Math.ceil(x1); } else { const pad = (x1 - x0) * 0.03; x0 -= pad; x1 += pad; }
+  const X = (v) => m.l + ((lx(v) - x0) / (x1 - x0)) * (w - m.l - m.r), Y = (v) => h - m.b - ((ly(v) - y0) / (y1 - y0)) * (h - m.t - m.b);
+  for (let d = y0; d <= y1; d++) { el('line', { x1: m.l, x2: w - m.r, y1: Y(10 ** d), y2: Y(10 ** d), class: 'gridline' }, svg); el('text', { x: m.l - 6, y: Y(10 ** d) + 4, 'text-anchor': 'end' }, svg).textContent = yfmt(10 ** d); }
+  const xt = xlog ? Array.from({ length: x1 - x0 + 1 }, (_, i) => 10 ** (x0 + i)) : [...new Set(pts.map(p => p.x))];
+  for (const v of xt) { el('line', { x1: X(v), x2: X(v), y1: m.t, y2: h - m.b, class: 'gridline' }, svg); el('text', { x: X(v), y: h - m.b + 16, 'text-anchor': 'middle' }, svg).textContent = xfmt(v); }
+  el('text', { x: (m.l + w - m.r) / 2, y: h - 6, 'text-anchor': 'middle' }, svg).textContent = xlabel;
+  el('text', { x: 14, y: (m.t + h - m.b) / 2, 'text-anchor': 'middle', transform: `rotate(-90 14 ${(m.t + h - m.b) / 2})` }, svg).textContent = ylabel;
+  const labels = [];
+  series.forEach((s) => {
+    if (!s.points.length) return;
+    const ps = s.points.slice().sort((a, b) => a.x - b.x);
+    el('path', { d: ps.map((p, j) => `${j ? 'L' : 'M'}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join(''), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+    for (const p of ps) {
+      el('circle', { cx: X(p.x), cy: Y(p.y), r: 4, fill: s.color, stroke: 'var(--surface-2)', 'stroke-width': 2 }, svg);
+      const hit = el('circle', { cx: X(p.x), cy: Y(p.y), r: 12, fill: 'transparent', tabindex: 0 }, svg);
+      const rows = p.tip(s);
+      hit.addEventListener('pointermove', (ev) => showTip(ev, rows)); hit.addEventListener('pointerleave', hideTip);
+      hit.addEventListener('focus', () => { const r = hit.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.bottom }, rows); }); hit.addEventListener('blur', hideTip);
+    }
+    const last = ps[ps.length - 1]; labels.push({ y: Y(last.y), x: X(last.x), text: s.label });
+  });
+  labels.sort((a, b) => a.y - b.y); for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 13);
+  for (const l of labels) el('text', { x: w - m.r + 8, y: l.y + 4 }, svg).textContent = l.text;
+}
+function legend(host, items) { host.replaceChildren(...items.map(([label, color]) => { const s = document.createElement('span'); const i = document.createElement('i'); i.style.background = color; s.append(i, label); return s; })); }
+function table(host, head, rows) { const t = document.createElement('table'); const tr = t.insertRow(); for (const h of head) { const th = document.createElement('th'); th.textContent = h; tr.append(th); } for (const r of rows) { const row = t.insertRow(); for (const c of r) row.insertCell().textContent = c; } host.replaceChildren(t); }
+
+// ---- the frontier ----
+const wlSel = document.getElementById('wl'), kwl = document.getElementById('kwl');
+for (const [k, w] of Object.entries(RESULTS.workloads)) { wlSel.add(new Option(w.name, k)); kwl.add(new Option(w.name, k)); }
+wlSel.value = 'addw'; kwl.value = 'addw';
+function drawFront() {
+  const r = RESULTS.workloads[wlSel.value];
+  document.getElementById('frontTitle').textContent = r.name;
+  const series = ORDER.map((d, i) => ({ label: NAMES[d], color: col(i), points: r.designs[d].map(p => ({ x: p.time, y: p.energy, tip: () => [[fmtE(p.energy), `in ${fmtT(p.time)}`], [NAMES[d]], [`${p.vdd.toFixed(2)} V, ${(p.c * 1e15).toFixed(1)} fF${p.ramp ? `, ramp ${fmtT(p.ramp)}` : ''}${p.swing ? `, ${(p.swing * 1e3).toFixed(0)} mV swing, restore every ${p.k}` : ''}${p.clocksPerRewrite ? `, ${p.clocksPerRewrite} clocks a rewrite` : ''}`], [`errors: ${p.fix}`]] })) }));
+  chart(document.getElementById('front'), series, { xfmt: fmtT, yfmt: fmtE, xlabel: 'time per run', ylabel: 'energy per run' });
+  legend(document.getElementById('frontLegend'), ORDER.map((d, i) => [NAMES[d], col(i)]));
+  table(document.getElementById('frontTable'), ['design', 'least energy', 'its time', 'fastest', 'its energy', 'supply at least energy'], ORDER.map(d => { const f = r.designs[d]; if (!f.length) return [NAMES[d], 'cannot meet the target', '', '', '', '']; const lo = f.reduce((a, b) => b.energy < a.energy ? b : a); return [NAMES[d], fmtE(lo.energy), fmtT(lo.time), fmtT(f[0].time), fmtE(f[0].energy), `${lo.vdd.toFixed(2)} V`]; }));
+}
+wlSel.onchange = drawFront; drawFront();
+
+// ---- live knobs ----
+const ids = ['vdd', 'c', 'ramp', 'swing', 'k', 'te', 'cal'];
+function live() {
+  const g = (id) => document.getElementById(id);
+  const p = { ...P, vdd: +g('vdd').value, c: 1e-15 * 10 ** +g('c').value, ramp: 10 ** +g('ramp').value, swing: Math.min(+g('swing').value, +g('vdd').value), k: +g('k').value, timingErr: 10 ** +g('te').value, calibrated: g('cal').value === '1' };
+  g('vddO').textContent = `${p.vdd.toFixed(2)} V`; g('cO').textContent = `${(p.c * 1e15).toFixed(2)} fF`; g('rampO').textContent = fmtT(p.ramp);
+  g('swingO').textContent = `${(p.swing * 1e3).toFixed(0)} mV`; g('kO').textContent = `${p.k}`; g('teO').textContent = `1e${g('te').value}`;
+  const w = WORKLOADS[kwl.value];
+  const rows = ORDER.map((d, i) => { const r = DESIGNS[d](w, p); const pfCell = 1 - (1 - r.faultPerSite) ** p.cellGates; return { d, i, r, pfCell }; });
+  const t = g('live'); t.replaceChildren();
+  const hr = t.insertRow(); for (const h of ['design', 'energy per run', 'time per run', 'chance a run is wrong', 'faulty sites', 'set-up energy', 'buildable?']) { const th = document.createElement('th'); th.textContent = h; hr.append(th); }
+  for (const { d, i, r, pfCell } of rows) {
+    const fabric = ['cells', 'lowSwing', 'adiabatic', 'strands'].includes(d);
+    const ok = fabric ? pfCell <= 0.15 : (1 - r.faultPerSite) ** 1e7 >= 0.9;
+    const row = t.insertRow();
+    const c0 = row.insertCell(); const k = document.createElement('span'); k.className = 'key'; k.style.background = col(i); c0.append(k, NAMES[d]);
+    for (const v of [fmtE(r.energy), fmtT(r.time), r.err.toExponential(1), (fabric ? pfCell : r.faultPerSite).toExponential(1), fmtE(r.setup.energy)]) row.insertCell().textContent = v;
+    const c = row.insertCell(); c.textContent = ok ? 'yes' : fabric ? 'no: too many faulty cells to route around' : 'no: a 10⁷-site chip would not yield'; if (!ok) c.className = 'no';
+  }
+  g('liveNote').textContent = `gate delay ${fmtT(gateDelay(p.vdd, p.c, p))}, noise margin ${(margin(p.vdd, p) * 1e3).toFixed(0)} mV, thermal noise ${(thermal(p.c, p) * 1e3).toFixed(1)} mV, threshold mismatch ${(mismatch(p.c, p) * 1e3).toFixed(0)} mV, timing guardband ×${guard(p.vdd, p).toFixed(2)}. Error fixes (voting, replaying late signals, running a two-way program back) are applied in the sweep above, not here.`;
+}
+for (const id of ids) document.getElementById(id).addEventListener('input', live); kwl.onchange = live; live();
+
+// ---- numbers as values, set-up, repair ----
+const macKeys = ['digital', 'analogTrimmed', 'analogUntrimmed', 'stochastic'];
+chart(document.getElementById('mac'), macKeys.map((k, i) => ({ label: NAMES[k], color: col(i), points: Object.entries(RESULTS.macs).filter(([, r]) => r[k]).map(([b, r]) => ({ x: +b, y: r[k].energy, tip: () => [[fmtE(r[k].energy), `at ${b} bits`], [NAMES[k]]] })) })),
+  { xlog: false, xfmt: (v) => `${v}`, yfmt: fmtE, xlabel: 'bits of precision', ylabel: 'energy per multiply-accumulate', w: 700, h: 320 });
+legend(document.getElementById('macLegend'), macKeys.map((k, i) => [NAMES[k], col(i)]));
+table(document.getElementById('macTable'), ['bits', ...macKeys.map(k => NAMES[k])], Object.entries(RESULTS.macs).map(([b, r]) => [b, ...macKeys.map(k => fmtE(r[k]?.energy))]));
+const am = RESULTS.amortize.addw, amKeys = [['asic', 'fixed chip'], ['cells', 'self-configuring array'], ['fpga', 'FPGA']];
+chart(document.getElementById('amort'), amKeys.map(([k, n], i) => ({ label: n, color: col([0, 2, 1][i]), points: am.map(r => ({ x: r.uses, y: r[k], tip: () => [[fmtE(r[k]), `a run, over ${r.uses} runs`], [n]] })) })),
+  { xfmt: (v) => v >= 1e3 ? `${v / 1e3}k`.replace('000k', 'M') : `${v}`, yfmt: fmtE, xlabel: 'runs sharing one set-up', ylabel: 'energy per run', w: 700, h: 320 });
+legend(document.getElementById('amortLegend'), amKeys.map(([k, n], i) => [n, col([0, 2, 1][i])]));
+table(document.getElementById('amortTable'), ['runs', ...amKeys.map(a => a[1])], am.map(r => [String(r.uses), ...amKeys.map(([k]) => fmtE(r[k]))]));
+table(document.getElementById('repairTable'), ['faulty share of cells', 'routed', 'hops per net (1 = no detour)', 'cells per gate', 'a fixed 400-gate circuit works'], RESULTS.repair.map(r => [String(r.pf), `${Math.round(r.ok * 100)}%`, r.ok ? r.hops.toFixed(2) : '–', r.ok ? r.cells.toFixed(2) : '–', ((1 - r.pf) ** 400).toExponential(1)]));
+</script>
+</body>
+</html>

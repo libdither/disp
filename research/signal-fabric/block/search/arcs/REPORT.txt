@@ -1,0 +1,41 @@
+arcs: 146 reactions, shapes see TAGS: each reaction is its own shape, sites fix the placement, cell states 63170150400, fields [8, 5, 2, 3, 2, 2, 3, 3, 7, 2, 2, 64, 17, 2, 2, 2, 3, 5, 2]
+ rule laws: {'fits_fields': True, 'linear': True, 'undoes_itself': True, 'void_stays': True} 
+ matter: lays/compact fails 0 []; worst cells/node for size<=8: 4.14
+ rung swaps  OK   runs 36, ticks max 160 sum 2718, 0.0s 
+ rung maps   OK   runs 63, ticks max 1962 sum 30994, 0.3s 
+ rung grow   OK   runs 204, ticks max 22960 sum 697096, 14.6s 
+ clean: one output on every run
+ reached: grow
+ graded: {'refuses': '18/18', 'undo_exact': '45/45', 'mirror_trace': '43/45', 'matter_counted': '46/146', 'symmetric': 'n/a'}
+  map(swap,swap,swap) on full k=1..4         [476, 536, 632, 800]
+  swap at depth k=1,2,4,8 of a list          [412, 1142, 3682, 13082]
+  stem^k on a leaf k=1,4,16                  [66, 772, 8260]
+  stem on a full k=1,2,3 tree                [126, 262, 550]
+  first(stem) on a full k=1,2,3 tree         [528, 716, 1092]
+  deep swap on full k=1,2,3                  [16, 16, 16]
+  NOT on a bit                               x
+  ADDB 1+1 in 2 bits                         x
+ total 16.5s
+arcs: 186 reactions, shapes see TAGS: each reaction is its own shape, sites fix the placement, cell states 64157184000, fields [8, 5, 2, 3, 2, 2, 3, 3, 7, 2, 2, 65, 17, 2, 2, 2, 3, 5, 2]
+ rule laws: {'fits_fields': True, 'linear': True, 'undoes_itself': True, 'void_stays': True} 
+ matter: lays/compact fails 0 []; worst cells/node for size<=8: 4.14
+ rung swaps  OK   runs 36, ticks max 160 sum 2718, 0.0s 
+ rung maps   OK   runs 63, ticks max 1962 sum 30994, 0.3s 
+ rung grow   OK   runs 204, ticks max 22960 sum 697096, 14.5s 
+ rung moves  FAIL runs 152, ticks max 848 sum 37168, 0.5s [('(△△△△△,(△△△△,△△△△))', '(△,(△,△))', ['answer (△,(△,△)) want ((△,△),△)'])]
+ clean: 2 different outputs, e.g. [((2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 1, 0, 0, 0, 0, 0),), ((2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 1, 1, 0, 0, 0, 0),)]
+ reached: grow
+ graded: {'refuses': '18/18', 'undo_exact': '45/45', 'mirror_trace': '45/45', 'matter_counted': '61/186', 'symmetric': 'n/a'}
+  map(swap,swap,swap) on full k=1..4         [476, 536, 632, 800]
+  swap at depth k=1,2,4,8 of a list          [412, 1142, 3682, 13082]
+  stem^k on a leaf k=1,4,16                  [66, 772, 8260]
+  stem on a full k=1,2,3 tree                [126, 262, 550]
+  first(stem) on a full k=1,2,3 tree         [528, 716, 1092]
+  deep swap on full k=1,2,3                  [16, 16, 16]
+  NOT on a bit                               x
+  ADDB 1+1 in 2 bits                         x
+ total 17.0s
+186 {'flight': 4, 'arc transit': 8, 'hubs': 7, 'route': 8, 'count, peek': 14, 'seq, dag': 12, 'map': 13, 'data side': 17, 'conveyor': 3, 'row sweep': 25, 'stem': 3, 'unit': 32, 'peek': 4, 'sink': 18, 'cross': 18}
+cross;cross                still True reads True moves True end ((△△,△),(△,△)) want ((△△,△),(△,△)) out [6]
+first(swap);cross          still True reads True moves True end ((△△,△),(△,△)) want ((△,(△,△)),△△) out [6]
+swap;cross on left fork    still True reads True moves True end (△,(△,△)) want ((△,△),△) out [6]

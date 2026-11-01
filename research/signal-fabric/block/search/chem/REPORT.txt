@@ -1,0 +1,63 @@
+== laws.py chem/design.py --quick (the piece runs one program, so swaps must fail)
+chem-map-piece: 28 reactions, shapes carry 2 (x4 places); node step 10; in-place 6; switch 1; link 3, cell states 4320, fields [5, 2, 2, 2, 2, 3, 18]
+ rule laws: {'fits_fields': True, 'linear': True, 'undoes_itself': True, 'void_stays': True} 
+ matter: lays/compact fails 0 []; worst cells/node for size<=8: 3.57
+ rung swaps  FAIL runs 8, ticks max 200000 sum 1600000, 7.9s [('△', '△', ['never still (t=200000)']), ('△', '△△', ['never still (t=200000)']), ('△', '△△△', ['never still (t=200000)'])]
+ clean: one output on every run
+ reached: None
+ total 7.9s
+
+== chem/map_check.py
+chem-map-piece 28 reactions; carry 2 (x4 places); node step 10; in-place 6; switch 1; link 3
+rule laws {'fits_fields': True, 'linear': True, 'undoes_itself': True, 'void_stays': True} []
+matter fails 0 [] worst cells/node 3.57
+first x (△,△) first p △((△,△),△)
+t 124 still True reads True moves True never_moves True sealed True
+x_end (△,△) p_end △((△,△),△) want (△,△) outs [(121, 0, -1, (0, 0, 0, 0, 0, 2, 17))]
+reactions used in the run: 28 of 28
+unused: []
+
+== chem/proto_join.py
+ring: split and join in opposite-phase blocks. H = D-1
+DA  DB  outcome  ticks   lcm(HA,HB)+1  laws reactions
+16  16  joins    16      16            True 35
+20  16  joins    286     286           True 39
+24  16  joins    346     346           True 43
+22  18  joins    358     358           True 43
+26  18  joins    426     426           True 47
+28  20  joins    514     514           True 51
+
+nested: arm A holds a ring. Each level multiplies
+inner DA DB | inner joins | arm B | outer outcome, ticks
+16  16      | 20          | 30    | joins 30  laws True, 77 reactions
+20  16      | 290         | 30    | joins 8672  laws True, 81 reactions
+20  16      | 290         | 34    | joins 3334  laws True, 89 reactions
+24  16      | 350         | 34    | joins 364  laws True, 93 reactions
+24  16      | 350         | 38    | joins 13580  laws True, 101 reactions
+
+tree: each child comes back to its own fork, as tree layouts force. H even
+cells on arm A, B | 2-adic | outcome, ticks
+2   6             | 1 1    | joins done 13  laws True
+4   8             | 2 3    | undoes itself, leaves 36  laws True
+2   8             | 1 3    | undoes itself, leaves 36  laws True
+2   10            | 1 1    | joins done 21  laws True
+4   10            | 2 1    | undoes itself, leaves 84  laws True
+2   12            | 1 2    | undoes itself, leaves 52  laws True
+4   12            | 2 2    | joins done 25  laws True
+6   14            | 1 1    | joins done 85  laws True
+4   16            | 2 4    | undoes itself, leaves 68  laws True
+6   16            | 1 4    | undoes itself, leaves 196  laws True
+8   20            | 3 2    | undoes itself, leaves 164  laws True
+3   9             | 0 0    | joins done 19  laws True
+3   11            | 0 0    | joins done 67  laws True
+5   13            | 0 0    | joins done 131  laws True
+
+== chem/proto_planar.py
+leaves  same hand (the law)  mirrored (not allowed)  matter cells at 6 per node, both trees
+2       1                    0                       36
+4       6                    0                       84
+8       28                   0                       180
+16      120                  0                       372
+32      496                  0                       756
+64      2016                 0                       1524
+128     8128                 0                       3060

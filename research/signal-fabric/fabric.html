@@ -1,0 +1,91 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>signal fabric — a two-way program as a circuit on a self-repairing cell array</title>
+<style>
+  :root { --bg:#0b0e14; --bg-elev:#121a26; --fg:#c8d3e0; --fg-muted:#8595ad; --fg-faint:#5b6a80; --accent:#56c8ff;
+    --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; --cold:#4f86c6; --clock:#b39cff; --noise:#ff5fd2; --heat:#ff9e64; --border:#1b2436; --border-strong:#2a3a52;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --body:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 var(--mono); overflow:hidden; }
+  #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  #cv.drag { cursor:grabbing; }
+  button, select, input { background:var(--bg-elev); color:var(--fg); border:1px solid var(--border-strong); border-radius:6px; padding:3px 8px; font:inherit; }
+  button { cursor:pointer; } button:hover:not(:disabled) { border-color:var(--accent); } button:disabled { opacity:.4; cursor:default; }
+  #hud { position:absolute; z-index:4; top:10px; left:14px; max-width:min(64%, 820px); pointer-events:none; }
+  #title { font-size:17px; color:var(--hot); word-break:break-word; } #title .arrow { color:var(--fg-faint); }
+  #verdict { font-size:12px; } #verdict.ok { color:var(--ok); } #verdict.bad { color:var(--warn); }
+  .line { font-size:11.5px; color:var(--fg-muted); } .line b { color:var(--fg); font-weight:normal; } .line i { color:var(--heat); font-style:normal; } .line u { color:var(--clock); text-decoration:none; }
+  #legend { position:absolute; z-index:4; top:10px; right:12px; width:250px; padding:8px 10px; border:1px solid var(--border); border-radius:10px;
+    background:rgba(11,14,20,.86); font:11px/1.55 var(--body); color:var(--fg-muted); }
+  #legend .lg { display:flex; gap:7px; align-items:center; } #legend .sw { flex:none; width:22px; height:9px; border-radius:3px; }
+  #legend details summary { cursor:pointer; color:var(--accent); font-size:11px; margin-top:4px; }
+  #legend p { margin:5px 0; }
+  #dock { position:absolute; z-index:5; left:0; right:0; bottom:0; padding:26px 12px 8px; pointer-events:none;
+    background:linear-gradient(to top, rgba(11,14,20,.95) 65%, rgba(11,14,20,0)); }
+  #dock > * { pointer-events:auto; width:min(900px, 100%); margin:0 auto; box-sizing:border-box; }
+  #story { min-height:16px; text-align:center; color:var(--fg-faint); font:italic 11.5px var(--body); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row { display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap; margin-top:5px; }
+  #prog, #inp { min-width:0; text-align:center; } #prog { width:16rem; } #inp { width:22rem; }
+  .knobs { font:11.5px var(--body); color:var(--fg-muted); gap:12px; }
+  .knobs label { display:inline-flex; gap:5px; align-items:center; } .knobs input[type=range] { width:92px; padding:0; }
+  .knobs .val { font:11px var(--mono); color:var(--fg); min-width:4.2em; }
+  button.tog.on { border-color:var(--clock); color:var(--clock); }
+  #err { color:var(--warn); font-size:12px; text-align:center; min-height:0; }
+  #tip { position:absolute; z-index:8; pointer-events:none; padding:6px 9px; border-radius:8px; border:1px solid var(--border-strong);
+    background:rgba(18,26,38,.96); font:11px/1.5 var(--mono); color:var(--fg-muted); white-space:pre; display:none; }
+</style></head><body>
+<canvas id="cv"></canvas>
+<div id="hud">
+  <div id="title"></div>
+  <div id="verdict"></div>
+  <div class="line" id="circ"></div>
+  <div class="line" id="chipline"></div>
+  <div class="line" id="runline"></div>
+  <div class="line" id="setupline"></div>
+</div>
+<div id="legend">
+  <div class="lg"><span class="sw" style="background:var(--hot)"></span>a wire at 1</div>
+  <div class="lg"><span class="sw" style="background:var(--cold)"></span>a wire at 0</div>
+  <div class="lg"><span class="sw" style="background:#253246"></span>not driven yet (or ramped down)</div>
+  <div class="lg"><span class="sw" style="background:var(--warn)"></span>wrong: out of a faulty cell</div>
+  <div class="lg"><span class="sw" style="background:var(--noise)"></span>flipped by noise (⚡)</div>
+  <div class="lg"><span class="sw" style="background:#4a1820;border:1px solid var(--warn)"></span>faulty cell, found by the self-test</div>
+  <div class="lg"><span class="sw" style="border:1px dashed var(--warn)"></span>faulty cell the chip doesn't know of</div>
+  <div class="lg"><span class="sw" style="background:rgba(86,200,255,.45)"></span>configuration wave</div>
+  <div class="lg"><span class="sw" style="background:rgba(179,156,255,.35)"></span>power clock: the level ramping now</div>
+  <div class="lg"><span class="sw" style="background:radial-gradient(var(--heat), transparent)"></span>heat: a node switched hard</div>
+  <details><summary>what is this?</summary>
+    <p>A grid of identical cells. Each cell has one wire to and one wire from each neighbour, and a few dozen configuration bits that make it a gate or a little switch box. Several wires can cross one cell on different links.</p>
+    <p>The program is compiled once: run with its bits unknown, it becomes a fixed circuit (each gate reads one input bit and the one or two gates under it). That circuit is placed level by level, left to right, and routed.</p>
+    <p><b>Load</b>: every cell tests itself, then the configuration spreads cell to cell from the left edge. Cells that failed the test are left out and the wires go around them. Lower the supply to see more fail.</p>
+    <p><b>Run</b>, static clock: each node switches as soon as its inputs arrive, paying ½CV² as heat. Adiabatic clock: the power supply itself ramps up one level at a time, slowly, so little is lost.</p>
+    <p><b>Flip</b>, adiabatic: the levels ramp back down, last first, and the charge goes back to the supply. Each node is compared with its driver on the way down, which catches noise flips (⚡). Static: the nodes just drain, and their charge is heat.</p>
+    <p>Not a field: data rides on wires. What spreads like a field is set-up (the test and configuration wave) and the power clock's phase.</p>
+  </details>
+</div>
+<div id="tip"></div>
+<div id="dock">
+  <div id="story"></div>
+  <div id="err"></div>
+  <div class="row">
+    <select id="ex"></select>
+    <input id="prog" spellcheck="false" title="the two-way program">
+    <input id="inp" spellcheck="false" title="its input: registers <0b…, 0b…> or a tree of T/F; click the pads on the left to change bits">
+  </div>
+  <div class="row">
+    <button id="load" title="self-test the cells and send the configuration wave (L)">⟳ load</button>
+    <button id="run" title="run the input through (space)">▶ run</button>
+    <button id="flip" title="flip: ramp the levels back down (adiabatic) or drain them (static) (F)">⇄ flip</button>
+    <button id="zap" title="run again with one cell's output flipped by noise (Z)">⚡ zap</button>
+    <span class="knobs"><label>speed <input id="speed" type="range" min="-2" max="2" step="0.25" value="0"></label></span>
+  </div>
+  <div class="row knobs">
+    <label>supply <input id="vdd" type="range" min="0.2" max="1" step="0.01" value="0.28"><span class="val" id="vddv"></span></label>
+    <label>cell size <input id="cap" type="range" min="-1.3" max="0.6" step="0.05" value="0"><span class="val" id="capv"></span></label>
+    <button id="mode" class="tog" title="static or adiabatic clocking">static</button>
+    <label>ramp <input id="ramp" type="range" min="-10.7" max="-6.7" step="0.1" value="-9.3"><span class="val" id="rampv"></span></label>
+    <button id="test" class="tog on" title="self-test at set-up and route around faulty cells">self-test ✓</button>
+    <button id="chip" title="another chip: new random device offsets">new chip</button>
+  </div>
+</div>
+<script src="fabric.js"></script>
+</body></html>

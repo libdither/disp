@@ -1,0 +1,60 @@
+splitjoin family: can map run its parts at once?
+Reproduce, from this directory, each under a memory cap and timeout:
+  laws: (from ..) python laws.py splitjoin/design.py
+  speed: python speed.py 7
+  wave: SPLITJOIN=wave SPLITJOIN_LAY=equal python wave_bench.py 8 200000 (or SPLITJOIN_LAY=free)
+  recurrence: SPLITJOIN=wave SPLITJOIN_LAY=free python checks.py
+
+Counts: walker 130 reactions; any-fix-is-deep-swap trigger 12 (not a real fix, wrong on every other fix); sweep 12; wave 8 in place of sweep.
+
+No-go. The rule is an involution per phase, so a token that turns back undoes the reaction it just left, then the one before.
+A region a token can't leave is a closed finite bijection: its orbit is a cycle through the moment of entry. So an echo can't park:
+it un-runs its whole part until the other echo happens to arrive. Measured, wave with same-tick join, free-fall layout:
+  full 1 back at the exact start grid after 74 ticks; full 2 after 198; full 3 after 1498; F(L,F(L,L)) after 82, its swap made and unmade.
+Merging two tokens into one anywhere but a same-tick join loses who came first; the image of a merge on a wire equals the image of a token
+passing that site, so the block rule is not one-to-one, and a finite mark can't absorb a new bit per run.
+
+Tagging is a second problem behind this one and was not built: trains or round-robin solve addressing, not the join.
+
+== laws.py, best design (walker + sweep)
+splitjoin-walker: 154 reactions, shapes see REPORT.txt, cell states 386496, fields [11, 12, 2, 3, 4, 61, 2]
+ rule laws: {'fits_fields': True, 'linear': True, 'undoes_itself': True, 'void_stays': True} 
+ matter: lays/compact fails 0 []; worst cells/node for size<=8: 3.57
+ rung swaps  OK   runs 36, ticks max 124 sum 2268, 0.0s 
+ rung maps   OK   runs 63, ticks max 784 sum 17808, 0.2s 
+ rung grow   FAIL runs 8, ticks max 200000 sum 1600000, 8.6s [('△△△△△△', '△', ['never still (t=200000)']), ('△△△△△△', '△△', ['never still (t=200000)']), ('△△△△△△', '△△△', ['never still (t=200000)'])]
+ clean: 2 different outputs, e.g. [(), ((9, 0, 0, 0, 0, 0, 0),)]
+ reached: maps
+ graded: {'refuses': '0/18', 'undo_exact': '37/45', 'mirror_trace': '20/45', 'matter_counted': '153/154', 'symmetric': 'n/a'}
+  map(swap,swap,swap) on full k=1..4         [300, 312, 336, 384]
+  swap at depth k=1,2,4,8 of a list          [240, 556, 1548, 4972]
+  stem^k on a leaf k=1,4,16                  ['x', 'x', 'x']
+  stem on a full k=1,2,3 tree                ['x', 'x', 'x']
+  first(stem) on a full k=1,2,3 tree         ['x', 'x', 'x']
+  deep swap on full k=1,2,3                  [72, 100, 164]
+  NOT on a bit                               x
+  ADDB 1+1 in 2 bits                         x
+ total 225.3s
+
+== sweep, free-fall layout
+reactions 154 of which the deep-swap sweep or wave 12
+k                      [1, 2, 3, 4, 5, 6, 7]
+leaves                 [2, 4, 8, 16, 32, 64, 128]
+frontier(k) on full k  [44, 312, 1336, 5128, 19272, 72968, 280328]
+every(k) on full k     [44, 464, 2180, 8684, 33116, 125948, 484028]
+deep_swap on full k    [72, 100, 164, 308, 628, 1332, 2868]
+== wave, equal-arm layout
+reactions 150 wave part 8
+full 1       ended=True t=76 right=True outs=1
+full 2       ended=True t=88 right=True outs=1
+full 3       ended=True t=108 right=True outs=1
+full 4       ended=True t=144 right=True outs=1
+full 5       ended=True t=212 right=True outs=1
+full 6       ended=True t=344 right=True outs=1
+full 7       ended=True t=604 right=True outs=1
+full 8       ended=True t=1120 right=True outs=1
+F(F(L,L),L)  ended=True t=128 right=True outs=1
+F(L,F(L,L))  ended=False t=200000 right=False outs=0
+spine 3      ended=False t=200000 right=False outs=0
+== equal-arm layout, matter law
+lays/compact fails [] worst cells/node 5.285714285714286

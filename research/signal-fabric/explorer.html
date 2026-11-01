@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal fabrics: speed, energy and error</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1: var(--background, #fcfcfb); --surface-2: var(--card, #f3f2ef); --text-primary: var(--foreground, #0b0b0b); --text-secondary: var(--muted-foreground, #52514e); --text-muted: var(--muted-foreground, #7a7974);
+  --grid: color-mix(in oklab, var(--border, #e6e5e1) 70%, transparent); --axis: var(--border, #b9b8b2);
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4; --series-6: #008300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: var(--background, #1a1a19); --surface-2: var(--card, #232321); --text-primary: var(--foreground, #f0efec); --text-secondary: var(--muted-foreground, #c3c2b7); --text-muted: var(--muted-foreground, #8e8d86);
+    --grid: color-mix(in oklab, var(--border, #2e2e2b) 70%, transparent); --axis: var(--border, #4a4a46);
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181; --series-6: #008300;
+  }
+}
+body { margin: 0; }
+.viz-root { color: var(--text-primary); font: 14px/1.5 var(--font-sans, system-ui, sans-serif); padding: 4px 0 32px; max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 26px 0 6px; } h2:first-of-type { margin-top: 18px; }
+p, li { color: var(--text-secondary); max-width: 78ch; }
+.lede { color: var(--text-primary); }
+.grid2 { display: grid; grid-template-columns: 1fr; gap: 18px; }
+.card { background: var(--surface-2); border-radius: var(--radius, 10px); padding: 16px; }
+.card h3 { font-size: 14px; margin: 0 0 2px; } .card .sub { font-size: 12px; color: var(--text-muted); margin: 0 0 6px; }
+svg text { fill: var(--text-secondary); font-size: 11px; }
+.axis line, .axis path { stroke: var(--axis); } .gridline { stroke: var(--grid); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+.tip { position: fixed; pointer-events: none; background: var(--surface-1); border: 1px solid var(--axis); border-radius: 6px; padding: 6px 9px; font-size: 12px; color: var(--text-secondary); box-shadow: 0 2px 10px rgba(0,0,0,.12); display: none; z-index: 10; max-width: 320px; }
+.tip b { color: var(--text-primary); }
+.controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 18px; margin: 8px 0 10px; }
+.controls label { font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; }
+.controls output { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+select, input[type=range] { width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th { text-align: left; color: var(--text-muted); font-weight: 500; border-bottom: 1px solid var(--axis); padding: 4px 8px 4px 0; }
+td { border-bottom: 1px solid var(--grid); padding: 4px 8px 4px 0; color: var(--text-primary); }
+td.no { color: var(--text-muted); }
+.key { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 6px; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<p class="lede">Ways a self-configuring fabric could carry a program's signals, costed from one device model (a 45–28 nm-like process at room temperature): the energy one run takes, how long it takes, and how often it comes out wrong. Every design must give a wrong output at most once in 10<sup>12</sup> runs and be buildable: a fixed chip must yield (no faulty gate site among 10<sup>7</sup>); a self-configuring array tests its cells and routes around the faulty ones, at the cost the routing simulation measured.</p>
+
+<h2>The frontier: energy against time, each design at its best settings</h2>
+<div class="controls" style="grid-template-columns: 260px"><label>workload <select id="wl"></select></label></div>
+<div class="card"><h3 id="frontTitle"></h3><p class="sub">Each line is a design's best trade-off: no setting of its knobs is both faster and cheaper. Lower-left is better. Log scales.</p><div id="front"></div><div class="legend" id="frontLegend"></div>
+<details><summary>table view</summary><div id="frontTable"></div></details></div>
+
+<h2>Move the knobs</h2>
+<p>The same model, live. Supply and device size set speed, energy and how many cells come out faulty; the ramp time is the adiabatic power clock's; swing and hops per restore are low-swing transport's; trimming spends configuration bits to cancel amplifier offsets.</p>
+<div class="controls">
+  <label>workload <select id="kwl"></select></label>
+  <label>supply <output id="vddO"></output><input id="vdd" type="range" min="0.16" max="1" step="0.01" value="0.45"></label>
+  <label>device size (switched capacitance) <output id="cO"></output><input id="c" type="range" min="-0.7" max="0.6" step="0.05" value="-0.3"></label>
+  <label>adiabatic ramp time <output id="rampO"></output><input id="ramp" type="range" min="-10.7" max="-6.7" step="0.1" value="-9"></label>
+  <label>low-swing swing <output id="swingO"></output><input id="swing" type="range" min="0.03" max="0.3" step="0.01" value="0.15"></label>
+  <label>hops between restores <output id="kO"></output><input id="k" type="range" min="1" max="32" step="1" value="8"></label>
+  <label>timing errors allowed per run <output id="teO"></output><input id="te" type="range" min="-15" max="-2" step="1" value="-12"></label>
+  <label>trim amplifier offsets <select id="cal"><option value="0">no</option><option value="1" selected>yes</option></select></label>
+</div>
+<div class="card"><table id="live"></table><p class="sub" id="liveNote"></p></div>
+
+<h2>Carrying numbers as values: a multiply-accumulate against precision</h2>
+<div class="grid2">
+<div class="card"><h3>Energy per multiply-accumulate</h3><p class="sub">Analog cost grows about fourfold per bit (noise must fall by half); stochastic streams fourfold too; digital gently. Log scale.</p><div id="mac"></div><div class="legend" id="macLegend"></div><details><summary>table view</summary><div id="macTable"></div></details></div>
+<div class="card"><h3>Set-up shared by runs (32-bit add)</h3><p class="sub">Energy per run once configuring is spread over that many runs: the array writes its own configuration; an FPGA reads a bitstream from off chip. Log scales.</p><div id="amort"></div><div class="legend" id="amortLegend"></div><details><summary>table view</summary><div id="amortTable"></div></details></div>
+</div>
+
+<h2>Faulty cells: what routing around them costs</h2>
+<div class="card"><table id="repairTable"></table><p class="sub">A 400-gate pipeline placed on good cells of a 48 × 48 array, every net routed through good cells by shortest path (sim.mjs). A fixed circuit of the same 400 gates works only if none is faulty.</p></div>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+
+const K_B = 1.380649e-23
+const P = {
+  T: 300, // kelvin
+  vdd: 0.8, // supply (V)
+  vt: 0.35, // threshold (V)
+  n: 1.4, // subthreshold slope factor
+  dibl: 0.08, // threshold lowered per volt of drain bias
+  c: 1e-15, // switched capacitance of one gate output, its wire and fan-in (F)
+  tNom: 15e-12, // one gate delay at 1 V with c = 1 fF (s): sets the drive current
+  activity: 0.5, // fraction of outputs that switch per operation
+  sigmaVt: 0.025, // threshold mismatch of a 1 fF device (V); scales as 1/√(c)
+  kappa: 2, // a gate's noise margin is V/2 less kappa·n·φt (gain runs out near φt)
+  cellGates: 3, // a cell's logic (a 4-input LUT and its muxes) in gate equivalents of energy
+  cellDelay: 2, // ... and of delay
+  hopC: 0.5e-15, // one hop to a neighbouring cell: wire and the next cell's input (F)
+  cfgBits: 32, // configuration bits a cell holds (LUT 16 + routing 16)
+  cfgWriteC: 2e-15, // capacitance flipped writing one configuration bit (F)
+  swing: 0.1, // V
+  k: 8,
+  senseC: 4e-15, // the sense amplifier's switched capacitance (F)
+  senseOffset: 0.01, // its input offset before calibration (V)
+  calibrated: false, // trimmed by configuration bits written at set-up: offset left `senseResidual`
+  senseResidual: 0.001,
+  ramp: 200e-12, // the power clock's ramp time T (s)
+  clockLoss: 0.05, // fraction of C·V² the resonant power clock fails to recover per cycle
+  bits: 8, // precision wanted
+  analogOverhead: 30, // analog energy over its kT floor (bias, drivers, nonlinearity)
+  adcFom: 10e-15, // ADC energy per conversion step (J/step): converting a b-bit result costs fom·2^b
+  fpgaEnergy: 14,
+  fpgaDelay: 3.5,
+  fpgaArea: 35,
+  ioBitEnergy: 10e-12, // reading a configuration bit from off-chip memory (J)
+  target: 1e-12, // acceptable chance a run's output is wrong
+  supplyNoise: 0.015, // supply droop and ripple, as a share of the supply (1σ, correlated along a path)
+  timingErr: 1e-15 // chance a run misses its clock: sets the timing guardband (see `guard`)
+}
+const kT = (p = P) => K_B * p.T
+const phiT = (p = P) => kT(p) / 1.602176634e-19
+const softplus = (x) => (x > 30 ? x : Math.log1p(Math.exp(x)))
+function drive(vg, vd, p = P) {
+  const f = (v, d) => softplus((v - p.vt + p.dibl * d) / (2 * p.n * phiT(p))) ** 2
+  const scale = (1e-15 * 1) / p.tNom / f(1, 1)
+  return scale * f(vg, vd)
+}
+const gateDelay = (v, c, p = P) => (c * v) / drive(v, v, p)
+const leak = (v, p = P) => drive(0, v, p)
+function Q(x) {
+  if (x < 0) return 1 - Q(-x)
+  if (x > 8) return Math.exp((-x * x) / 2) / (x * Math.sqrt(2 * Math.PI)) * (1 - 1 / (x * x))
+  const z = x / Math.SQRT2
+  const t = 1 / (1 + 0.3275911 * z)
+  const erfc = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.exp(-z * z)
+  return erfc / 2
+}
+const margin = (v, p = P) => Math.max(0, v / 2 - p.kappa * p.n * phiT(p))
+const thermal = (c, p = P) => Math.sqrt(kT(p) / c)
+const mismatch = (c, p = P) => p.sigmaVt * Math.sqrt(1e-15 / c)
+function Qinv(p) {
+  let lo = -40, hi = 40
+  for (let i = 0; i < 100; i++) { const mid = (lo + hi) / 2; if (Q(mid) > p) lo = mid; else hi = mid }
+  return (lo + hi) / 2
+}
+function guard(v, p = P, allowed = p.timingErr) {
+  const dv = 1e-3
+  const slope = Math.abs(Math.log(gateDelay(v + dv, p.c, p) / gateDelay(v - dv, p.c, p)) / (2 * dv))
+  return Math.exp(Math.max(0, Qinv(allowed)) * slope * p.supplyNoise * v)
+}
+const gateErr = (v, c, p = P) => Q(margin(v, p) / thermal(c, p))
+const gateFault = (v, c, p = P) => 2 * Q(margin(v, p) / mismatch(c, p))
+const WORKLOADS = {
+  notw: { name: 'notw, 64 bits', gates: 64, depth: 1, hops: 128, outBits: 64, reversible: true },
+  addw: { name: 'add, 32 bits (ripple)', gates: 32 * 5, depth: 64, hops: 32 * 8, outBits: 32, reversible: true },
+  mul: { name: 'multiply, 16 × 16 bits', gates: 16 * 16 * 6, depth: 2 * 16 + 4, hops: 16 * 16 * 10, outBits: 32, reversible: false },
+  dot: { name: 'dot product, 64 × 8-bit', gates: 64 * 8 * 8 * 6 + 64 * 16 * 5, depth: 16 + 6 * 16, hops: 64 * 8 * 8 * 10, outBits: 22, reversible: false, macs: 64 }
+}
+function asic(w, p = P) {
+  const v = p.vdd
+  const td = gateDelay(v, p.c, p)
+  const time = w.depth * td * guard(v, p)
+  const dyn = p.activity * (w.gates + w.hops / 4) * p.c * v * v
+  const leakE = w.gates * leak(v, p) * v * time
+  const logic = 1 - (1 - gateErr(v, p.c, p)) ** (w.gates)
+  return { energy: dyn + leakE, time, err: logic + p.timingErr, errTiming: p.timingErr, area: w.gates, setup: { energy: 0, time: 0 }, faultPerSite: gateFault(v, p.c, p) }
+}
+function fpga(w, p = P) {
+  const a = asic(w, p)
+  const bits = a.area * p.fpgaArea * 4 // configuration bits per gate site
+  return {
+    energy: a.energy * p.fpgaEnergy,
+    time: a.time * p.fpgaDelay,
+    err: a.err,
+    area: a.area * p.fpgaArea,
+    setup: { energy: bits * p.ioBitEnergy, time: bits / 1e9 },
+    faultPerSite: a.faultPerSite
+  }
+}
+function cells(w, p = P) {
+  const v = p.vdd
+  const td = gateDelay(v, p.c, p)
+  const hopTd = gateDelay(v, p.hopC + p.c / 2, p)
+  const hopsPerLevel = w.hops / Math.max(1, w.gates) // average wiring hops per gate on the critical path
+  const time = w.depth * (p.cellDelay * td + hopsPerLevel * hopTd) * guard(v, p)
+  const area = w.gates + w.hops / 2 // routing-only cells
+  const dyn = p.activity * (w.gates * p.cellGates * p.c + w.hops * (p.hopC + p.c / 2)) * v * v
+  const leakE = area * p.cellGates * leak(v, p) * v * time
+  const perOp = gateErr(v, p.c, p)
+  const err = 1 - (1 - perOp) ** (w.gates + w.hops) + p.timingErr
+  const cfgE = area * p.cfgBits * (p.cfgWriteC * v * v + Math.sqrt(area) * (p.hopC * v * v) / 4)
+  const cfgT = Math.sqrt(area) * p.cfgBits * hopTd // the wave crosses the region, a bit per hop-time
+  return { energy: dyn + leakE, time, err, errTiming: p.timingErr, area, setup: { energy: cfgE, time: cfgT }, faultPerSite: gateFault(v, p.c, p) }
+}
+function lowSwing(w, p = P) {
+  const base = cells(w, p)
+  const v = p.vdd
+  const segments = w.hops / p.k
+  const hopE = p.hopC * p.swing * v // charge drawn from the supply to swing the hop by `swing`
+  const senseE = p.senseC * v * v
+  const offset = p.calibrated ? p.senseResidual : p.senseOffset
+  const noise = Math.sqrt(p.k * thermal(p.hopC, p) ** 2 + offset ** 2)
+  const decision = Q(p.swing / 2 / noise)
+  const td = gateDelay(v, p.c, p)
+  const hopT = gateDelay(v, p.hopC, p) * (p.swing / v) * 4 // a small swing settles sooner, slower edges
+  const time = (w.depth * (p.cellDelay * td + (w.hops / Math.max(1, w.gates)) * hopT) + w.depth * 2 * td / p.k) * guard(v, p)
+  const logicE = p.activity * w.gates * p.cellGates * p.c * v * v
+  const energy = logicE + p.activity * (w.hops * hopE + segments * senseE) + base.area * p.cellGates * leak(v, p) * v * time
+  const err = 1 - (1 - gateErr(v, p.c, p)) ** w.gates * (1 - decision) ** segments + p.timingErr
+  const trim = p.calibrated ? segments * 6 * (p.cfgWriteC * v * v) * 20 : 0 // a few trim bits, found by a short search
+  return { energy, time, err, errTiming: p.timingErr, area: base.area, setup: { energy: base.setup.energy + trim, time: base.setup.time }, faultPerSite: base.faultPerSite }
+}
+function adiabatic(w, p = P) {
+  const v = p.vdd
+  const td = gateDelay(v, p.c, p)
+  const T = Math.max(p.ramp, 2 * td * guard(v, p))
+  const perSwitch = p.c * v * v * Math.max((2 * td) / T, p.clockLoss) // resistive loss ~ (RC/T)·C·V², floored by the clock
+  const stages = w.depth
+  const time = stages * T * 4 // four phases a stage
+  const switched = p.activity * (w.gates * p.cellGates + w.hops / 2)
+  const erase = w.reversible ? 0 : w.gates * 0.5 * p.c * v * v * 0.5
+  const leakE = (w.gates + w.hops / 2) * p.cellGates * leak(v, p) * v * time
+  const err = 1 - (1 - gateErr(v, p.c, p)) ** (w.gates + w.hops) + p.timingErr
+  const base = cells(w, p)
+  return { energy: switched * perSwitch + erase + leakE, time, err, errTiming: p.timingErr, area: base.area * 1.5, setup: base.setup, faultPerSite: base.faultPerSite }
+}
+function analogBits(c, swing, p = P) {
+  const sigma = Math.sqrt(thermal(c, p) ** 2 + (p.calibrated ? 0 : mismatch(c, p) * 0.2) ** 2)
+  return Math.log2(swing / (6 * sigma))
+}
+function analogMac(w, p = P) {
+  const macs = w.macs ?? 1
+  const swing = p.vdd / 2
+  const cTh = kT(p) * (6 * 2 ** p.bits / swing) ** 2
+  const cMis = p.calibrated ? 0 : 1e-15 * (p.sigmaVt * 0.2 * 6 * 2 ** p.bits / swing) ** 2
+  const cNeed = Math.max(cTh, cMis, 1e-17)
+  const macE = p.analogOverhead * cNeed * swing * p.vdd
+  const adc = p.adcFom * 2 ** (p.bits + Math.log2(macs) / 2)
+  const td = gateDelay(p.vdd, Math.min(cNeed, 1e-12), p)
+  const time = 10 * td + (p.bits + 2) * gateDelay(p.vdd, p.c, p) * 4
+  const err = Q(3) * 0 + 2 ** -p.bits // a result off by more than one step: set by the 6σ choice
+  const trim = p.calibrated ? macs * 8 * p.cfgWriteC * p.vdd ** 2 * 50 : 0
+  return { energy: macs * macE + adc, time, err, area: macs * 4, setup: { energy: trim, time: p.calibrated ? macs * 1e-9 : 0 }, faultPerSite: 0, cPerMac: cNeed }
+}
+function stochastic(w, p = P) {
+  const macs = w.macs ?? 1
+  const N = 4 ** p.bits
+  const v = p.vdd
+  const gateE = p.activity * p.c * v * v
+  const perBit = macs * (1 + 2 * (p.bits + 2)) * gateE + 2 * macs * p.bits * gateE / 4
+  const td = gateDelay(v, p.c, p)
+  const err = 2 ** -p.bits
+  return { energy: N * perBit, time: N * 3 * td, err, area: macs * (2 + 2 * p.bits), setup: { energy: 0, time: 0 }, faultPerSite: gateFault(v, p.c, p) }
+}
+const digitalMac = (w, p = P) => cells(w, p)
+function race(w, p = P) {
+  const v = p.vdd
+  const td = gateDelay(v, p.c, p)
+  const jitter = (thermal(p.c, p) / v) * td * Math.sqrt(w.depth) // timing noise from voltage noise on each edge
+  const step = Math.max(6 * jitter, td)
+  const time = 2 ** p.bits * step * Math.max(1, w.depth / 8)
+  const energy = (w.gates + w.hops / 4) * p.c * v * v
+  return { energy, time, err: 2 ** -p.bits, area: w.gates, setup: { energy: 0, time: 0 }, faultPerSite: gateFault(v, p.c, p) }
+}
+function strands(w, p = P, clocksPerRewrite = 10) {
+  const v = p.vdd
+  const td = gateDelay(v, p.c, p)
+  const moves = w.gates
+  const rewrites = moves * 2.5
+  const clocks = (rewrites * clocksPerRewrite) / Math.max(1, Math.min(w.gates, 8)) // parallel runs
+  const time = clocks * 30 * td
+  const energy = rewrites * clocksPerRewrite * 10 * 200 * p.activity * p.c * v * v
+  return { energy, time, err: 1 - (1 - gateErr(v, p.c, p)) ** (rewrites * 200), area: w.gates * 40, setup: { energy: 0, time: 0 }, faultPerSite: gateFault(v, p.c, p) }
+}
+const DESIGNS = { asic, fpga, cells, lowSwing, adiabatic, strands }
+const NUMERIC = { digitalMac, analogMac, stochastic }
+function tmr(r, outBits) {
+  const pb = 1 - (1 - r.err) ** (1 / Math.max(1, outBits)) // per output bit
+  const voted = 3 * pb * pb - 2 * pb ** 3
+  return { ...r, energy: r.energy * 3.1, area: r.area * 3.2, err: 1 - (1 - voted) ** outBits }
+}
+function replay(r, depth) {
+  const t = r.errTiming ?? 0
+  return { ...r, energy: r.energy * 1.1, time: r.time * (1 + t * Math.max(4, depth)), err: r.err - t + t * 1e-6 }
+}
+function checked(r) {
+  const retry = 1 / Math.max(1e-9, 1 - r.err)
+  const undetected = r.err * r.err // both the run and its check wrong in a way that cancels: bounded by both failing
+  return { ...r, energy: r.energy * 2 * retry, time: r.time * 2 * retry, err: undetected }
+}
+const amortized = (r, uses) => r.energy + r.setup.energy / uses
+
+const RESULTS = {"target":1e-12,"repair":[{"pf":0,"ok":1,"hops":1,"cells":1},{"pf":0.001,"ok":1,"hops":1,"cells":1},{"pf":0.01,"ok":1,"hops":1.03,"cells":1.01},{"pf":0.03,"ok":1,"hops":1.09,"cells":1.03},{"pf":0.06,"ok":0.917,"hops":1.2,"cells":1.08},{"pf":0.1,"ok":1,"hops":1.32,"cells":1.17},{"pf":0.15,"ok":0.75,"hops":1.6,"cells":1.12}],"workloads":{"notw":{"name":"notw, 64 bits","designs":{"asic":[{"energy":9.6e-15,"time":3.69e-12,"fix":"none","vdd":1,"c":2e-16},{"energy":9.22e-15,"time":3.85e-12,"fix":"none","vdd":0.98,"c":2e-16},{"energy":8.48e-15,"time":4.22e-12,"fix":"none","vdd":0.94,"c":2e-16},{"energy":8.13e-15,"time":4.43e-12,"fix":"none","vdd":0.92,"c":2e-16},{"energy":7.78e-15,"time":4.65e-12,"fix":"none","vdd":0.9,"c":2e-16},{"energy":7.43e-15,"time":4.9e-12,"fix":"none","vdd":0.88,"c":2e-16},{"energy":7.1e-15,"time":5.18e-12,"fix":"none","vdd":0.86,"c":2e-16},{"energy":6.77e-15,"time":5.49e-12,"fix":"none","vdd":0.84,"c":2e-16},{"energy":6.46e-15,"time":5.83e-12,"fix":"none","vdd":0.82,"c":2e-16},{"energy":6.14e-15,"time":6.21e-12,"fix":"none","vdd":0.8,"c":2e-16}],"fpga":[{"energy":1.34e-13,"time":1.29e-11,"fix":"none","vdd":1,"c":2e-16},{"energy":1.29e-13,"time":1.35e-11,"fix":"none","vdd":0.98,"c":2e-16},{"energy":1.19e-13,"time":1.48e-11,"fix":"none","vdd":0.94,"c":2e-16},{"energy":1.14e-13,"time":1.55e-11,"fix":"none","vdd":0.92,"c":2e-16},{"energy":1.09e-13,"time":1.63e-11,"fix":"none","vdd":0.9,"c":2e-16},{"energy":1.04e-13,"time":1.72e-11,"fix":"none","vdd":0.88,"c":2e-16},{"energy":9.94e-14,"time":1.81e-11,"fix":"none","vdd":0.86,"c":2e-16},{"energy":9.48e-14,"time":1.92e-11,"fix":"none","vdd":0.84,"c":2e-16},{"energy":9.04e-14,"time":2.04e-11,"fix":"none","vdd":0.82,"c":2e-16},{"energy":8.6e-14,"time":2.17e-11,"fix":"none","vdd":0.8,"c":2e-16}],"cells":[{"energy":5.76e-14,"time":2.95e-11,"fix":"none","vdd":1,"c":2e-16},{"energy":4.06e-14,"time":4.39e-11,"fix":"none","vdd":0.84,"c":2e-16},{"energy":2.99e-14,"time":6.64e-11,"fix":"none","vdd":0.72,"c":2e-16},{"energy":2.44e-14,"time":9.65e-11,"fix":"replay late","vdd":0.62,"c":2e-16},{"energy":1.99e-14,"time":1.4e-10,"fix":"replay late","vdd":0.56,"c":2e-16},{"energy":1.59e-14,"time":2.27e-10,"fix":"replay late","vdd":0.5,"c":2e-16},{"energy":1.37e-14,"time":3.44e-10,"fix":"replay late","vdd":0.46,"c":2e-16},{"energy":1.27e-14,"time":4.4e-10,"fix":"replay late","vdd":0.44,"c":2e-16},{"energy":1.13e-14,"time":7.98e-10,"fix":"replay late","vdd":0.4,"c":2e-16},{"energy":1.07e-14,"time":1.13e-9,"fix":"replay late","vdd":0.38,"c":2e-16}],"lowSwing":[{"energy":4.61e-13,"time":1.38e-11,"fix":"vote","vdd":1,"c":2e-16,"swing":0.05,"k":2,"calibrated":true},{"energy":3.8e-14,"time":2.43e-11,"fix":"none","vdd":0.96,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":2.7e-14,"time":4.2e-11,"fix":"none","vdd":0.86,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":1.99e-14,"time":7.75e-11,"fix":"none","vdd":0.72,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":1.54e-14,"time":1.42e-10,"fix":"none","vdd":0.62,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":1.35e-14,"time":2.46e-10,"fix":"replay late","vdd":0.54,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":1.12e-14,"time":4.69e-10,"fix":"replay late","vdd":0.48,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":1e-14,"time":8.09e-10,"fix":"replay late","vdd":0.44,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":9.24e-15,"time":1.61e-9,"fix":"replay late","vdd":0.4,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":8.99e-15,"time":2.39e-9,"fix":"replay late","vdd":0.38,"c":2e-16,"swing":0.25,"k":32,"calibrated":true}],"adiabatic":[{"energy":7.69e-15,"time":8e-11,"fix":"none","vdd":1,"c":2e-16,"ramp":2e-11},{"energy":5.25e-15,"time":1.17e-10,"fix":"none","vdd":1,"c":2e-16,"ramp":2.94e-11},{"energy":2.46e-15,"time":2.53e-10,"fix":"none","vdd":0.98,"c":2e-16,"ramp":6.32e-11},{"energy":1.7e-15,"time":3.71e-10,"fix":"none","vdd":0.92,"c":2e-16,"ramp":9.28e-11},{"energy":1.19e-15,"time":5.45e-10,"fix":"none","vdd":0.92,"c":2e-16,"ramp":1.36e-10},{"energy":6.48e-16,"time":1.17e-9,"fix":"none","vdd":0.68,"c":2e-16,"ramp":2.94e-10},{"energy":5.22e-16,"time":1.72e-9,"fix":"none","vdd":0.6,"c":2e-16,"ramp":4.31e-10},{"energy":4.44e-16,"time":2.53e-9,"fix":"none","vdd":0.54,"c":2e-16,"ramp":6.32e-10},{"energy":3.87e-16,"time":5.56e-9,"fix":"none","vdd":0.46,"c":2e-16,"ramp":1.36e-9},{"energy":3.82e-16,"time":8.51e-9,"fix":"none","vdd":0.42,"c":2e-16,"ramp":2e-9}],"strands":[{"energy":9.6e-11,"time":5.4e-9,"fix":"none","vdd":1,"c":2e-16,"clocksPerRewrite":3},{"energy":6.77e-11,"time":7.78e-9,"fix":"none","vdd":0.84,"c":2e-16,"clocksPerRewrite":3},{"energy":4.98e-11,"time":1.13e-8,"fix":"none","vdd":0.72,"c":2e-16,"clocksPerRewrite":3},{"energy":3.69e-11,"time":1.74e-8,"fix":"none","vdd":0.62,"c":2e-16,"clocksPerRewrite":3},{"energy":3.01e-11,"time":2.44e-8,"fix":"none","vdd":0.56,"c":2e-16,"clocksPerRewrite":3},{"energy":2.41e-11,"time":3.8e-8,"fix":"none","vdd":0.5,"c":2e-16,"clocksPerRewrite":3},{"energy":2.07e-11,"time":5.57e-8,"fix":"none","vdd":0.46,"c":2e-16,"clocksPerRewrite":3},{"energy":1.92e-11,"time":6.98e-8,"fix":"none","vdd":0.44,"c":2e-16,"clocksPerRewrite":3},{"energy":1.7e-11,"time":1.22e-7,"fix":"none","vdd":0.4,"c":2e-16,"clocksPerRewrite":3},{"energy":1.62e-11,"time":1.71e-7,"fix":"none","vdd":0.38,"c":2e-16,"clocksPerRewrite":3}]}},"addw":{"name":"add, 32 bits (ripple)","designs":{"asic":[{"energy":2.24e-14,"time":2.36e-10,"fix":"none","vdd":1,"c":2e-16},{"energy":2.15e-14,"time":2.46e-10,"fix":"none","vdd":0.98,"c":2e-16},{"energy":1.98e-14,"time":2.7e-10,"fix":"none","vdd":0.94,"c":2e-16},{"energy":1.9e-14,"time":2.83e-10,"fix":"none","vdd":0.92,"c":2e-16},{"energy":1.82e-14,"time":2.98e-10,"fix":"none","vdd":0.9,"c":2e-16},{"energy":1.74e-14,"time":3.14e-10,"fix":"none","vdd":0.88,"c":2e-16},{"energy":1.66e-14,"time":3.32e-10,"fix":"none","vdd":0.86,"c":2e-16},{"energy":1.58e-14,"time":3.51e-10,"fix":"none","vdd":0.84,"c":2e-16},{"energy":1.51e-14,"time":3.73e-10,"fix":"none","vdd":0.82,"c":2e-16},{"energy":1.43e-14,"time":3.97e-10,"fix":"none","vdd":0.8,"c":2e-16}],"fpga":[{"energy":3.14e-13,"time":8.26e-10,"fix":"none","vdd":1,"c":2e-16},{"energy":3.01e-13,"time":8.63e-10,"fix":"none","vdd":0.98,"c":2e-16},{"energy":2.77e-13,"time":9.45e-10,"fix":"none","vdd":0.94,"c":2e-16},{"energy":2.66e-13,"time":9.91e-10,"fix":"none","vdd":0.92,"c":2e-16},{"energy":2.54e-13,"time":1.04e-9,"fix":"none","vdd":0.9,"c":2e-16},{"energy":2.43e-13,"time":1.1e-9,"fix":"none","vdd":0.88,"c":2e-16},{"energy":2.32e-13,"time":1.16e-9,"fix":"none","vdd":0.86,"c":2e-16},{"energy":2.21e-13,"time":1.23e-9,"fix":"none","vdd":0.84,"c":2e-16},{"energy":2.11e-13,"time":1.31e-9,"fix":"none","vdd":0.82,"c":2e-16},{"energy":2.01e-13,"time":1.39e-9,"fix":"none","vdd":0.8,"c":2e-16}],"cells":[{"energy":1.25e-13,"time":1.61e-9,"fix":"none","vdd":1,"c":2e-16},{"energy":8.85e-14,"time":2.39e-9,"fix":"none","vdd":0.84,"c":2e-16},{"energy":6.51e-14,"time":3.61e-9,"fix":"none","vdd":0.72,"c":2e-16},{"energy":5.33e-14,"time":5.25e-9,"fix":"replay late","vdd":0.62,"c":2e-16},{"energy":4.36e-14,"time":7.62e-9,"fix":"replay late","vdd":0.56,"c":2e-16},{"energy":3.52e-14,"time":1.24e-8,"fix":"replay late","vdd":0.5,"c":2e-16},{"energy":3.06e-14,"time":1.87e-8,"fix":"replay late","vdd":0.46,"c":2e-16},{"energy":2.86e-14,"time":2.39e-8,"fix":"replay late","vdd":0.44,"c":2e-16},{"energy":2.6e-14,"time":4.34e-8,"fix":"replay late","vdd":0.4,"c":2e-16},{"energy":2.53e-14,"time":6.16e-8,"fix":"replay late","vdd":0.38,"c":2e-16}],"lowSwing":[{"energy":5.62e-13,"time":8.35e-10,"fix":"vote","vdd":1,"c":2e-16,"swing":0.08,"k":4,"calibrated":true},{"energy":8.52e-14,"time":1.36e-9,"fix":"none","vdd":0.96,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":6.41e-14,"time":2.14e-9,"fix":"none","vdd":0.88,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":4.96e-14,"time":3.45e-9,"fix":"none","vdd":0.76,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":4.06e-14,"time":5.31e-9,"fix":"none","vdd":0.64,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":3.47e-14,"time":9.35e-9,"fix":"replay late","vdd":0.58,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":2.94e-14,"time":1.55e-8,"fix":"replay late","vdd":0.5,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":2.62e-14,"time":2.52e-8,"fix":"replay late","vdd":0.46,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":2.49e-14,"time":3.34e-8,"fix":"replay late","vdd":0.44,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":2.35e-14,"time":5.93e-8,"fix":"replay late","vdd":0.42,"c":2e-16,"swing":0.25,"k":32,"calibrated":true}],"adiabatic":[{"energy":1.95e-14,"time":5.12e-9,"fix":"none","vdd":0.9,"c":2e-16,"ramp":2e-11},{"energy":1.87e-14,"time":6.16e-9,"fix":"none","vdd":0.64,"c":2e-16,"ramp":2e-11},{"energy":1.74e-14,"time":6.88e-9,"fix":"none","vdd":0.62,"c":2e-16,"ramp":2e-11},{"energy":1.41e-14,"time":7.52e-9,"fix":"none","vdd":0.84,"c":2e-16,"ramp":2.94e-11},{"energy":1.38e-14,"time":1.01e-8,"fix":"none","vdd":0.56,"c":2e-16,"ramp":2e-11},{"energy":1.05e-14,"time":1.1e-8,"fix":"none","vdd":0.76,"c":2e-16,"ramp":4.31e-11},{"energy":8.26e-15,"time":1.62e-8,"fix":"none","vdd":0.7,"c":2e-16,"ramp":6.32e-11},{"energy":6.9e-15,"time":2.38e-8,"fix":"none","vdd":0.64,"c":2e-16,"ramp":9.28e-11},{"energy":6.17e-15,"time":3.49e-8,"fix":"none","vdd":0.58,"c":2e-16,"ramp":1.36e-10},{"energy":5.93e-15,"time":5.13e-8,"fix":"none","vdd":0.52,"c":2e-16,"ramp":2e-10}],"strands":[{"energy":2.4e-10,"time":1.35e-8,"fix":"none","vdd":1,"c":2e-16,"clocksPerRewrite":3},{"energy":1.69e-10,"time":1.95e-8,"fix":"none","vdd":0.84,"c":2e-16,"clocksPerRewrite":3},{"energy":1.24e-10,"time":2.83e-8,"fix":"none","vdd":0.72,"c":2e-16,"clocksPerRewrite":3},{"energy":9.23e-11,"time":4.34e-8,"fix":"none","vdd":0.62,"c":2e-16,"clocksPerRewrite":3},{"energy":7.53e-11,"time":6.11e-8,"fix":"none","vdd":0.56,"c":2e-16,"clocksPerRewrite":3},{"energy":6.03e-11,"time":9.51e-8,"fix":"none","vdd":0.5,"c":2e-16,"clocksPerRewrite":3},{"energy":5.18e-11,"time":1.39e-7,"fix":"none","vdd":0.46,"c":2e-16,"clocksPerRewrite":3},{"energy":4.81e-11,"time":1.75e-7,"fix":"none","vdd":0.44,"c":2e-16,"clocksPerRewrite":3},{"energy":4.26e-11,"time":3.05e-7,"fix":"none","vdd":0.4,"c":2e-16,"clocksPerRewrite":3},{"energy":4.05e-11,"time":4.27e-7,"fix":"none","vdd":0.38,"c":2e-16,"clocksPerRewrite":3}]}},"mul":{"name":"multiply, 16 × 16 bits","designs":{"asic":[{"energy":2.18e-13,"time":1.33e-10,"fix":"none","vdd":1,"c":2e-16},{"energy":2.09e-13,"time":1.39e-10,"fix":"none","vdd":0.98,"c":2e-16},{"energy":1.92e-13,"time":1.52e-10,"fix":"none","vdd":0.94,"c":2e-16},{"energy":1.84e-13,"time":1.59e-10,"fix":"none","vdd":0.92,"c":2e-16},{"energy":1.76e-13,"time":1.68e-10,"fix":"none","vdd":0.9,"c":2e-16},{"energy":1.69e-13,"time":1.77e-10,"fix":"none","vdd":0.88,"c":2e-16},{"energy":1.61e-13,"time":1.87e-10,"fix":"none","vdd":0.86,"c":2e-16},{"energy":1.54e-13,"time":1.98e-10,"fix":"none","vdd":0.84,"c":2e-16},{"energy":1.46e-13,"time":2.1e-10,"fix":"none","vdd":0.82,"c":2e-16},{"energy":1.39e-13,"time":2.23e-10,"fix":"none","vdd":0.8,"c":2e-16}],"fpga":[{"energy":3.05e-12,"time":4.65e-10,"fix":"none","vdd":1,"c":2e-16},{"energy":2.93e-12,"time":4.85e-10,"fix":"none","vdd":0.98,"c":2e-16},{"energy":2.69e-12,"time":5.31e-10,"fix":"none","vdd":0.94,"c":2e-16},{"energy":2.58e-12,"time":5.58e-10,"fix":"none","vdd":0.92,"c":2e-16},{"energy":2.47e-12,"time":5.86e-10,"fix":"none","vdd":0.9,"c":2e-16},{"energy":2.36e-12,"time":6.18e-10,"fix":"none","vdd":0.88,"c":2e-16},{"energy":2.25e-12,"time":6.53e-10,"fix":"none","vdd":0.86,"c":2e-16},{"energy":2.15e-12,"time":6.91e-10,"fix":"none","vdd":0.84,"c":2e-16},{"energy":2.05e-12,"time":7.34e-10,"fix":"none","vdd":0.82,"c":2e-16},{"energy":1.95e-12,"time":7.82e-10,"fix":"none","vdd":0.8,"c":2e-16}],"cells":[{"energy":1.23e-12,"time":9.3e-10,"fix":"none","vdd":1,"c":2e-16},{"energy":8.7e-13,"time":1.38e-9,"fix":"none","vdd":0.84,"c":2e-16},{"energy":6.4e-13,"time":2.09e-9,"fix":"none","vdd":0.72,"c":2e-16},{"energy":5.22e-13,"time":3.04e-9,"fix":"replay late","vdd":0.62,"c":2e-16},{"energy":4.27e-13,"time":4.41e-9,"fix":"replay late","vdd":0.56,"c":2e-16},{"energy":3.44e-13,"time":7.16e-9,"fix":"replay late","vdd":0.5,"c":2e-16},{"energy":2.97e-13,"time":1.08e-8,"fix":"replay late","vdd":0.46,"c":2e-16},{"energy":2.77e-13,"time":1.39e-8,"fix":"replay late","vdd":0.44,"c":2e-16},{"energy":2.49e-13,"time":2.51e-8,"fix":"replay late","vdd":0.4,"c":2e-16},{"energy":2.4e-13,"time":3.57e-8,"fix":"replay late","vdd":0.38,"c":2e-16}],"lowSwing":[{"energy":5.56e-12,"time":4.76e-10,"fix":"vote","vdd":1,"c":2e-16,"swing":0.08,"k":4,"calibrated":true},{"energy":8.32e-13,"time":7.82e-10,"fix":"none","vdd":0.96,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":5.99e-13,"time":1.33e-9,"fix":"none","vdd":0.86,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":4.61e-13,"time":2.2e-9,"fix":"none","vdd":0.74,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":3.6e-13,"time":3.87e-9,"fix":"none","vdd":0.64,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":3.18e-13,"time":6.4e-9,"fix":"replay late","vdd":0.56,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":2.67e-13,"time":1.13e-8,"fix":"replay late","vdd":0.48,"c":2e-16,"swing":0.18,"k":16,"calibrated":true},{"energy":2.39e-13,"time":1.88e-8,"fix":"replay late","vdd":0.46,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":2.21e-13,"time":3.45e-8,"fix":"replay late","vdd":0.42,"c":2e-16,"swing":0.25,"k":32,"calibrated":true},{"energy":2.17e-13,"time":4.95e-8,"fix":"replay late","vdd":0.4,"c":2e-16,"swing":0.25,"k":32,"calibrated":true}],"adiabatic":[{"energy":2.35e-13,"time":2.88e-9,"fix":"none","vdd":0.76,"c":2e-16,"ramp":2e-11},{"energy":1.95e-13,"time":3.87e-9,"fix":"none","vdd":0.62,"c":2e-16,"ramp":2e-11},{"energy":1.68e-13,"time":4.95e-9,"fix":"none","vdd":0.58,"c":2e-16,"ramp":2e-11},{"energy":1.31e-13,"time":7.85e-9,"fix":"none","vdd":0.52,"c":2e-16,"ramp":2e-11},{"energy":1.06e-13,"time":9.11e-9,"fix":"none","vdd":0.62,"c":2e-16,"ramp":6.32e-11},{"energy":8.67e-14,"time":1.34e-8,"fix":"none","vdd":0.58,"c":2e-16,"ramp":9.28e-11},{"energy":7.36e-14,"time":1.96e-8,"fix":"none","vdd":0.54,"c":2e-16,"ramp":1.36e-10},{"energy":6.55e-14,"time":2.9e-8,"fix":"none","vdd":0.5,"c":2e-16,"ramp":2e-10},{"energy":6.17e-14,"time":4.27e-8,"fix":"none","vdd":0.48,"c":2e-16,"ramp":2.94e-10}],"strands":[{"energy":2.3e-9,"time":1.3e-7,"fix":"none","vdd":1,"c":2e-16,"clocksPerRewrite":3},{"energy":1.63e-9,"time":1.87e-7,"fix":"none","vdd":0.84,"c":2e-16,"clocksPerRewrite":3},{"energy":1.19e-9,"time":2.72e-7,"fix":"none","vdd":0.72,"c":2e-16,"clocksPerRewrite":3},{"energy":8.86e-10,"time":4.17e-7,"fix":"none","vdd":0.62,"c":2e-16,"clocksPerRewrite":3},{"energy":7.23e-10,"time":5.86e-7,"fix":"none","vdd":0.56,"c":2e-16,"clocksPerRewrite":3},{"energy":5.79e-10,"time":9.13e-7,"fix":"none","vdd":0.5,"c":2e-16,"clocksPerRewrite":3},{"energy":4.97e-10,"time":0.00000134,"fix":"none","vdd":0.46,"c":2e-16,"clocksPerRewrite":3},{"energy":4.62e-10,"time":0.00000168,"fix":"none","vdd":0.44,"c":2e-16,"clocksPerRewrite":3},{"energy":4.09e-10,"time":0.00000293,"fix":"none","vdd":0.4,"c":2e-16,"clocksPerRewrite":3},{"energy":3.89e-10,"time":0.0000041,"fix":"none","vdd":0.38,"c":2e-16,"clocksPerRewrite":3}]}},"dot":{"name":"dot product, 64 × 8-bit","designs":{"asic":[{"energy":4e-12,"time":4.13e-10,"fix":"none","vdd":1,"c":2e-16},{"energy":3.84e-12,"time":4.31e-10,"fix":"none","vdd":0.98,"c":2e-16},{"energy":3.53e-12,"time":4.72e-10,"fix":"none","vdd":0.94,"c":2e-16},{"energy":3.38e-12,"time":4.96e-10,"fix":"none","vdd":0.92,"c":2e-16},{"energy":3.24e-12,"time":5.21e-10,"fix":"none","vdd":0.9,"c":2e-16},{"energy":3.1e-12,"time":5.49e-10,"fix":"none","vdd":0.88,"c":2e-16},{"energy":2.96e-12,"time":5.8e-10,"fix":"none","vdd":0.86,"c":2e-16},{"energy":2.82e-12,"time":6.15e-10,"fix":"none","vdd":0.84,"c":2e-16},{"energy":2.69e-12,"time":6.53e-10,"fix":"none","vdd":0.82,"c":2e-16},{"energy":2.56e-12,"time":6.95e-10,"fix":"none","vdd":0.8,"c":2e-16}],"fpga":[{"energy":5.6e-11,"time":1.45e-9,"fix":"none","vdd":1,"c":2e-16},{"energy":5.38e-11,"time":1.51e-9,"fix":"none","vdd":0.98,"c":2e-16},{"energy":4.95e-11,"time":1.65e-9,"fix":"none","vdd":0.94,"c":2e-16},{"energy":4.74e-11,"time":1.73e-9,"fix":"none","vdd":0.92,"c":2e-16},{"energy":4.53e-11,"time":1.82e-9,"fix":"none","vdd":0.9,"c":2e-16},{"energy":4.34e-11,"time":1.92e-9,"fix":"none","vdd":0.88,"c":2e-16},{"energy":4.14e-11,"time":2.03e-9,"fix":"none","vdd":0.86,"c":2e-16},{"energy":3.95e-11,"time":2.15e-9,"fix":"none","vdd":0.84,"c":2e-16},{"energy":3.76e-11,"time":2.28e-9,"fix":"none","vdd":0.82,"c":2e-16},{"energy":3.58e-11,"time":2.43e-9,"fix":"none","vdd":0.8,"c":2e-16}],"cells":[{"energy":2.13e-11,"time":2.54e-9,"fix":"none","vdd":1,"c":2e-16},{"energy":1.51e-11,"time":3.77e-9,"fix":"none","vdd":0.84,"c":2e-16},{"energy":1.11e-11,"time":5.7e-9,"fix":"none","vdd":0.72,"c":2e-16},{"energy":9.1e-12,"time":8.29e-9,"fix":"replay late","vdd":0.62,"c":2e-16},{"energy":7.47e-12,"time":1.2e-8,"fix":"replay late","vdd":0.56,"c":2e-16},{"energy":6.06e-12,"time":1.95e-8,"fix":"replay late","vdd":0.5,"c":2e-16},{"energy":5.29e-12,"time":2.96e-8,"fix":"replay late","vdd":0.46,"c":2e-16},{"energy":4.97e-12,"time":3.78e-8,"fix":"replay late","vdd":0.44,"c":2e-16},{"energy":4.59e-12,"time":6.85e-8,"fix":"replay late","vdd":0.4,"c":2e-16},{"energy":4.51e-12,"time":9.73e-8,"fix":"replay late","vdd":0.38,"c":2e-16}],"lowSwing":[{"energy":9.39e-11,"time":1.39e-9,"fix":"vote","vdd":1,"c":2e-16,"swing":0.08,"k":4,"calibrated":true},{"energy":1.95e-11,"time":2.18e-9,"fix":"none","vdd":0.96,"c":2e-16,"swing":0.18,"k":8,"calibrated":true},{"energy":1.27e-11,"time":3.56e-9,"fix":"none","vdd":0.86,"c":2e-16,"swing":0.25,"k":16,"calibrated":true},{"energy":1.02e-11,"time":5.31e-9,"fix":"none","vdd":0.76,"c":2e-16,"swing":0.25,"k":16,"calibrated":true},{"energy":8.38e-12,"time":8.26e-9,"fix":"none","vdd":0.68,"c":2e-16,"swing":0.25,"k":16},{"energy":7.02e-12,"time":1.38e-8,"fix":"replay late","vdd":0.58,"c":2e-16,"swing":0.25,"k":16,"calibrated":true},{"energy":5.91e-12,"time":2.34e-8,"fix":"replay late","vdd":0.52,"c":2e-16,"swing":0.25,"k":16,"calibrated":true},{"energy":5.3e-12,"time":3.61e-8,"fix":"replay late","vdd":0.48,"c":2e-16,"swing":0.25,"k":16,"calibrated":true},{"energy":5.05e-12,"time":4.64e-8,"fix":"replay late","vdd":0.46,"c":2e-16,"swing":0.25,"k":16,"calibrated":true},{"energy":4.76e-12,"time":8.41e-8,"fix":"replay late","vdd":0.42,"c":2e-16,"swing":0.25,"k":16,"calibrated":true}],"adiabatic":[{"energy":4.54e-12,"time":8.96e-9,"fix":"none","vdd":0.74,"c":2e-16,"ramp":2e-11},{"energy":3.78e-12,"time":1.2e-8,"fix":"none","vdd":0.62,"c":2e-16,"ramp":2e-11},{"energy":3.27e-12,"time":1.54e-8,"fix":"none","vdd":0.58,"c":2e-16,"ramp":2e-11},{"energy":2.74e-12,"time":1.93e-8,"fix":"none","vdd":0.64,"c":2e-16,"ramp":4.31e-11},{"energy":2.61e-12,"time":2.44e-8,"fix":"none","vdd":0.52,"c":2e-16,"ramp":2e-11},{"energy":2.26e-12,"time":3.6e-8,"fix":"none","vdd":0.48,"c":2e-16,"ramp":2e-11},{"energy":1.96e-12,"time":4.16e-8,"fix":"none","vdd":0.54,"c":2e-16,"ramp":9.28e-11},{"energy":1.79e-12,"time":6.14e-8,"fix":"none","vdd":0.5,"c":2e-16,"ramp":1.36e-10},{"energy":1.75e-12,"time":9.14e-8,"fix":"none","vdd":0.46,"c":2e-16,"ramp":2e-10}],"strands":[{"energy":4.45e-8,"time":0.00000251,"fix":"none","vdd":1,"c":2e-16,"clocksPerRewrite":3},{"energy":3.14e-8,"time":0.00000361,"fix":"none","vdd":0.84,"c":2e-16,"clocksPerRewrite":3},{"energy":2.31e-8,"time":0.00000525,"fix":"none","vdd":0.72,"c":2e-16,"clocksPerRewrite":3},{"energy":1.71e-8,"time":0.00000806,"fix":"none","vdd":0.62,"c":2e-16,"clocksPerRewrite":3},{"energy":1.4e-8,"time":0.0000113,"fix":"none","vdd":0.56,"c":2e-16,"clocksPerRewrite":3},{"energy":1.12e-8,"time":0.0000176,"fix":"none","vdd":0.5,"c":2e-16,"clocksPerRewrite":3},{"energy":9.61e-9,"time":0.0000258,"fix":"none","vdd":0.46,"c":2e-16,"clocksPerRewrite":3},{"energy":8.93e-9,"time":0.0000324,"fix":"none","vdd":0.44,"c":2e-16,"clocksPerRewrite":3},{"energy":7.9e-9,"time":0.0000567,"fix":"none","vdd":0.4,"c":2e-16,"clocksPerRewrite":3},{"energy":7.52e-9,"time":0.0000792,"fix":"none","vdd":0.38,"c":2e-16,"clocksPerRewrite":3}]}}},"macs":{"2":{"digital":{"energy":4.76e-15},"analogTrimmed":{"energy":5.14e-15},"analogUntrimmed":{"energy":5.86e-15},"stochastic":{"energy":4.1e-16}},"3":{"digital":{"energy":9.91e-15},"analogTrimmed":{"energy":1.06e-14},"analogUntrimmed":{"energy":1.35e-14},"stochastic":{"energy":2.05e-15}},"4":{"digital":{"energy":1.7e-14},"analogTrimmed":{"energy":2.23e-14},"analogUntrimmed":{"energy":3.38e-14},"stochastic":{"energy":9.83e-15}},"5":{"digital":{"energy":2.59e-14},"analogTrimmed":{"energy":4.92e-14},"analogUntrimmed":{"energy":9.53e-14},"stochastic":{"energy":4.59e-14}},"6":{"digital":{"energy":3.69e-14},"analogTrimmed":{"energy":1.17e-13},"analogUntrimmed":{"energy":3.01e-13},"stochastic":{"energy":2.1e-13}},"7":{"digital":{"energy":4.98e-14},"analogTrimmed":{"energy":3.07e-13},"analogUntrimmed":{"energy":1.04e-12},"stochastic":{"energy":9.44e-13}},"8":{"digital":{"energy":6.47e-14},"analogTrimmed":{"energy":9.06e-13},"analogUntrimmed":{"energy":3.86e-12},"stochastic":{"energy":4.19e-12}},"9":{"digital":{"energy":8.17e-14},"analogTrimmed":{"energy":2.99e-12},"analogUntrimmed":{"energy":1.48e-11},"stochastic":{"energy":1.85e-11}},"10":{"digital":{"energy":1.01e-13},"analogTrimmed":{"energy":1.07e-11},"analogUntrimmed":{"energy":5.79e-11},"stochastic":{"energy":8.05e-11}},"11":{"digital":{"energy":1.22e-13},"analogTrimmed":{"energy":4.01e-11},"analogUntrimmed":{"energy":2.29e-10},"stochastic":{"energy":3.49e-10}},"12":{"digital":{"energy":1.45e-13},"analogTrimmed":{"energy":1.55e-10},"analogUntrimmed":{"energy":9.11e-10},"stochastic":{"energy":1.5e-9}},"13":{"digital":{"energy":1.71e-13},"analogTrimmed":{"energy":6.11e-10},"analogUntrimmed":{"energy":3.63e-9},"stochastic":null},"14":{"digital":{"energy":1.98e-13},"analogTrimmed":{"energy":2.42e-9},"analogUntrimmed":{"energy":1.45e-8},"stochastic":null}},"amortize":{"addw":[{"uses":1,"cells":1.06e-11,"fpga":2.24e-7,"asic":4.44e-14},{"uses":3,"cells":3.57e-12,"fpga":7.47e-8,"asic":4.44e-14},{"uses":10,"cells":1.12e-12,"fpga":2.24e-8,"asic":4.44e-14},{"uses":30,"cells":4.19e-13,"fpga":7.47e-9,"asic":4.44e-14},{"uses":100,"cells":1.74e-13,"fpga":2.24e-9,"asic":4.44e-14},{"uses":1000,"cells":7.92e-14,"fpga":2.25e-10,"asic":4.44e-14},{"uses":10000,"cells":6.97e-14,"fpga":2.34e-11,"asic":4.44e-14},{"uses":100000,"cells":6.88e-14,"fpga":3.24e-12,"asic":4.44e-14},{"uses":1000000,"cells":6.87e-14,"fpga":1.23e-12,"asic":4.44e-14}]}};
+const NAMES = { asic: 'fixed chip (standard cells)', fpga: 'FPGA', cells: 'self-configuring cell array', lowSwing: 'array, low-swing transport', adiabatic: 'array, adiabatic (reversible)', strands: 'strand lattice (today)',
+  digital: 'digital', analogTrimmed: 'analog, trimmed', analogUntrimmed: 'analog, untrimmed', stochastic: 'stochastic bitstreams', fpgaA: 'FPGA bitstream' };
+const ORDER = ['asic', 'fpga', 'cells', 'lowSwing', 'adiabatic', 'strands'];
+const col = (i) => `var(--series-${i + 1})`;
+const fmtE = (e) => e == null ? '–' : e < 1e-15 ? `${(e * 1e18).toFixed(0)} aJ` : e < 1e-12 ? `${(e * 1e15).toFixed(1)} fJ` : e < 1e-9 ? `${(e * 1e12).toFixed(2)} pJ` : `${(e * 1e9).toFixed(2)} nJ`;
+const fmtT = (t) => t == null ? '–' : t < 1e-9 ? `${(t * 1e12).toFixed(0)} ps` : t < 1e-6 ? `${(t * 1e9).toFixed(2)} ns` : `${(t * 1e6).toFixed(2)} µs`;
+const tip = document.getElementById('tip');
+function showTip(ev, rows) { tip.replaceChildren(...rows.map(r => { const d = document.createElement('div'); if (r[1]) { const b = document.createElement('b'); b.textContent = r[0]; d.append(b, ' ' + r[1]); } else d.textContent = r[0]; return d })); tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX + 14, innerWidth - 330) + 'px'; tip.style.top = (ev.clientY + 14) + 'px'; }
+const hideTip = () => (tip.style.display = 'none');
+const NS = 'http://www.w3.org/2000/svg';
+const el = (t, a = {}, parent) => { const e = document.createElementNS(NS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); parent?.append(e); return e; };
+
+/** A log–log (or log-y) line chart with dots, direct end labels and per-dot tooltips. */
+function chart(host, series, { xlog = true, xfmt, yfmt, xlabel, ylabel, w = 700, h = 340 } = {}) {
+  host.replaceChildren();
+  const svg = el('svg', { viewBox: `0 0 ${w} ${h}`, width: '100%', role: 'img' }, host);
+  const m = { l: 78, r: 150, t: 12, b: 40 };
+  const pts = series.flatMap(s => s.points);
+  const lx = (v) => (xlog ? Math.log10(v) : v), ly = (v) => Math.log10(v);
+  let [x0, x1] = [Math.min(...pts.map(p => lx(p.x))), Math.max(...pts.map(p => lx(p.x)))];
+  let [y0, y1] = [Math.floor(Math.min(...pts.map(p => ly(p.y)))), Math.ceil(Math.max(...pts.map(p => ly(p.y))))];
+  if (xlog) { x0 = Math.floor(x0); x1 = Math.ceil(x1); } else { const pad = (x1 - x0) * 0.03; x0 -= pad; x1 += pad; }
+  const X = (v) => m.l + ((lx(v) - x0) / (x1 - x0)) * (w - m.l - m.r), Y = (v) => h - m.b - ((ly(v) - y0) / (y1 - y0)) * (h - m.t - m.b);
+  for (let d = y0; d <= y1; d++) { el('line', { x1: m.l, x2: w - m.r, y1: Y(10 ** d), y2: Y(10 ** d), class: 'gridline' }, svg); el('text', { x: m.l - 6, y: Y(10 ** d) + 4, 'text-anchor': 'end' }, svg).textContent = yfmt(10 ** d); }
+  const xt = xlog ? Array.from({ length: x1 - x0 + 1 }, (_, i) => 10 ** (x0 + i)) : [...new Set(pts.map(p => p.x))];
+  for (const v of xt) { el('line', { x1: X(v), x2: X(v), y1: m.t, y2: h - m.b, class: 'gridline' }, svg); el('text', { x: X(v), y: h - m.b + 16, 'text-anchor': 'middle' }, svg).textContent = xfmt(v); }
+  el('text', { x: (m.l + w - m.r) / 2, y: h - 6, 'text-anchor': 'middle' }, svg).textContent = xlabel;
+  el('text', { x: 14, y: (m.t + h - m.b) / 2, 'text-anchor': 'middle', transform: `rotate(-90 14 ${(m.t + h - m.b) / 2})` }, svg).textContent = ylabel;
+  const labels = [];
+  series.forEach((s) => {
+    if (!s.points.length) return;
+    const ps = s.points.slice().sort((a, b) => a.x - b.x);
+    el('path', { d: ps.map((p, j) => `${j ? 'L' : 'M'}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join(''), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+    for (const p of ps) {
+      el('circle', { cx: X(p.x), cy: Y(p.y), r: 4, fill: s.color, stroke: 'var(--surface-2)', 'stroke-width': 2 }, svg);
+      const hit = el('circle', { cx: X(p.x), cy: Y(p.y), r: 12, fill: 'transparent', tabindex: 0 }, svg);
+      const rows = p.tip(s);
+      hit.addEventListener('pointermove', (ev) => showTip(ev, rows)); hit.addEventListener('pointerleave', hideTip);
+      hit.addEventListener('focus', () => { const r = hit.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.bottom }, rows); }); hit.addEventListener('blur', hideTip);
+    }
+    const last = ps[ps.length - 1]; labels.push({ y: Y(last.y), x: X(last.x), text: s.label });
+  });
+  labels.sort((a, b) => a.y - b.y); for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 13);
+  for (const l of labels) el('text', { x: w - m.r + 8, y: l.y + 4 }, svg).textContent = l.text;
+}
+function legend(host, items) { host.replaceChildren(...items.map(([label, color]) => { const s = document.createElement('span'); const i = document.createElement('i'); i.style.background = color; s.append(i, label); return s; })); }
+function table(host, head, rows) { const t = document.createElement('table'); const tr = t.insertRow(); for (const h of head) { const th = document.createElement('th'); th.textContent = h; tr.append(th); } for (const r of rows) { const row = t.insertRow(); for (const c of r) row.insertCell().textContent = c; } host.replaceChildren(t); }
+
+// ---- the frontier ----
+const wlSel = document.getElementById('wl'), kwl = document.getElementById('kwl');
+for (const [k, w] of Object.entries(RESULTS.workloads)) { wlSel.add(new Option(w.name, k)); kwl.add(new Option(w.name, k)); }
+wlSel.value = 'addw'; kwl.value = 'addw';
+function drawFront() {
+  const r = RESULTS.workloads[wlSel.value];
+  document.getElementById('frontTitle').textContent = r.name;
+  const series = ORDER.map((d, i) => ({ label: NAMES[d], color: col(i), points: r.designs[d].map(p => ({ x: p.time, y: p.energy, tip: () => [[fmtE(p.energy), `in ${fmtT(p.time)}`], [NAMES[d]], [`${p.vdd.toFixed(2)} V, ${(p.c * 1e15).toFixed(1)} fF${p.ramp ? `, ramp ${fmtT(p.ramp)}` : ''}${p.swing ? `, ${(p.swing * 1e3).toFixed(0)} mV swing, restore every ${p.k}` : ''}${p.clocksPerRewrite ? `, ${p.clocksPerRewrite} clocks a rewrite` : ''}`], [`errors: ${p.fix}`]] })) }));
+  chart(document.getElementById('front'), series, { xfmt: fmtT, yfmt: fmtE, xlabel: 'time per run', ylabel: 'energy per run' });
+  legend(document.getElementById('frontLegend'), ORDER.map((d, i) => [NAMES[d], col(i)]));
+  table(document.getElementById('frontTable'), ['design', 'least energy', 'its time', 'fastest', 'its energy', 'supply at least energy'], ORDER.map(d => { const f = r.designs[d]; if (!f.length) return [NAMES[d], 'cannot meet the target', '', '', '', '']; const lo = f.reduce((a, b) => b.energy < a.energy ? b : a); return [NAMES[d], fmtE(lo.energy), fmtT(lo.time), fmtT(f[0].time), fmtE(f[0].energy), `${lo.vdd.toFixed(2)} V`]; }));
+}
+wlSel.onchange = drawFront; drawFront();
+
+// ---- live knobs ----
+const ids = ['vdd', 'c', 'ramp', 'swing', 'k', 'te', 'cal'];
+function live() {
+  const g = (id) => document.getElementById(id);
+  const p = { ...P, vdd: +g('vdd').value, c: 1e-15 * 10 ** +g('c').value, ramp: 10 ** +g('ramp').value, swing: Math.min(+g('swing').value, +g('vdd').value), k: +g('k').value, timingErr: 10 ** +g('te').value, calibrated: g('cal').value === '1' };
+  g('vddO').textContent = `${p.vdd.toFixed(2)} V`; g('cO').textContent = `${(p.c * 1e15).toFixed(2)} fF`; g('rampO').textContent = fmtT(p.ramp);
+  g('swingO').textContent = `${(p.swing * 1e3).toFixed(0)} mV`; g('kO').textContent = `${p.k}`; g('teO').textContent = `1e${g('te').value}`;
+  const w = WORKLOADS[kwl.value];
+  const rows = ORDER.map((d, i) => { const r = DESIGNS[d](w, p); const pfCell = 1 - (1 - r.faultPerSite) ** p.cellGates; return { d, i, r, pfCell }; });
+  const t = g('live'); t.replaceChildren();
+  const hr = t.insertRow(); for (const h of ['design', 'energy per run', 'time per run', 'chance a run is wrong', 'faulty sites', 'set-up energy', 'buildable?']) { const th = document.createElement('th'); th.textContent = h; hr.append(th); }
+  for (const { d, i, r, pfCell } of rows) {
+    const fabric = ['cells', 'lowSwing', 'adiabatic', 'strands'].includes(d);
+    const ok = fabric ? pfCell <= 0.15 : (1 - r.faultPerSite) ** 1e7 >= 0.9;
+    const row = t.insertRow();
+    const c0 = row.insertCell(); const k = document.createElement('span'); k.className = 'key'; k.style.background = col(i); c0.append(k, NAMES[d]);
+    for (const v of [fmtE(r.energy), fmtT(r.time), r.err.toExponential(1), (fabric ? pfCell : r.faultPerSite).toExponential(1), fmtE(r.setup.energy)]) row.insertCell().textContent = v;
+    const c = row.insertCell(); c.textContent = ok ? 'yes' : fabric ? 'no: too many faulty cells to route around' : 'no: a 10⁷-site chip would not yield'; if (!ok) c.className = 'no';
+  }
+  g('liveNote').textContent = `gate delay ${fmtT(gateDelay(p.vdd, p.c, p))}, noise margin ${(margin(p.vdd, p) * 1e3).toFixed(0)} mV, thermal noise ${(thermal(p.c, p) * 1e3).toFixed(1)} mV, threshold mismatch ${(mismatch(p.c, p) * 1e3).toFixed(0)} mV, timing guardband ×${guard(p.vdd, p).toFixed(2)}. Error fixes (voting, replaying late signals, running a two-way program back) are applied in the sweep above, not here.`;
+}
+for (const id of ids) document.getElementById(id).addEventListener('input', live); kwl.onchange = live; live();
+
+// ---- numbers as values, set-up, repair ----
+const macKeys = ['digital', 'analogTrimmed', 'analogUntrimmed', 'stochastic'];
+chart(document.getElementById('mac'), macKeys.map((k, i) => ({ label: NAMES[k], color: col(i), points: Object.entries(RESULTS.macs).filter(([, r]) => r[k]).map(([b, r]) => ({ x: +b, y: r[k].energy, tip: () => [[fmtE(r[k].energy), `at ${b} bits`], [NAMES[k]]] })) })),
+  { xlog: false, xfmt: (v) => `${v}`, yfmt: fmtE, xlabel: 'bits of precision', ylabel: 'energy per multiply-accumulate', w: 700, h: 320 });
+legend(document.getElementById('macLegend'), macKeys.map((k, i) => [NAMES[k], col(i)]));
+table(document.getElementById('macTable'), ['bits', ...macKeys.map(k => NAMES[k])], Object.entries(RESULTS.macs).map(([b, r]) => [b, ...macKeys.map(k => fmtE(r[k]?.energy))]));
+const am = RESULTS.amortize.addw, amKeys = [['asic', 'fixed chip'], ['cells', 'self-configuring array'], ['fpga', 'FPGA']];
+chart(document.getElementById('amort'), amKeys.map(([k, n], i) => ({ label: n, color: col([0, 2, 1][i]), points: am.map(r => ({ x: r.uses, y: r[k], tip: () => [[fmtE(r[k]), `a run, over ${r.uses} runs`], [n]] })) })),
+  { xfmt: (v) => v >= 1e3 ? `${v / 1e3}k`.replace('000k', 'M') : `${v}`, yfmt: fmtE, xlabel: 'runs sharing one set-up', ylabel: 'energy per run', w: 700, h: 320 });
+legend(document.getElementById('amortLegend'), amKeys.map(([k, n], i) => [n, col([0, 2, 1][i])]));
+table(document.getElementById('amortTable'), ['runs', ...amKeys.map(a => a[1])], am.map(r => [String(r.uses), ...amKeys.map(([k]) => fmtE(r[k]))]));
+table(document.getElementById('repairTable'), ['faulty share of cells', 'routed', 'hops per net (1 = no detour)', 'cells per gate', 'a fixed 400-gate circuit works'], RESULTS.repair.map(r => [String(r.pf), `${Math.round(r.ok * 100)}%`, r.ok ? r.hops.toFixed(2) : '–', r.ok ? r.cells.toFixed(2) : '–', ((1 - r.pf) ** 400).toExponential(1)]));
+</script>
+</body>
+</html>
