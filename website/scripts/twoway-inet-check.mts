@@ -1,12 +1,12 @@
-// Checks the two-way programs' interaction net (src/lib/twoway-inet): it gives what the whole-run
+// Checks the two-way programs' interaction net (src/lib/evaluators/twoway-inet): it gives what the whole-run
 // interpreter gives (or gets stuck where it does), every step of the walk is undone by flip, fire, flip, a
 // finished run flipped and run again comes back to its start, and undoing the history brings back the
 // net exactly as loaded. `npx tsx scripts/twoway-inet-check.mts [quick]`.
-import { L, S, F, eq, show, run, regs, registersOf, TooLong, type V } from '../src/lib/twoway/core.ts'
-import { parseProg, parseVal, progText } from '../src/lib/twoway/text.ts'
-import { LIBRARY, PRESETS, libTree } from '../src/lib/twoway/library.ts'
-import { measure } from '../src/lib/twoway/machine.ts'
-import { Net, load, runAll, finished, idOf, portOf, R, type Agent } from '../src/lib/twoway-inet/net.ts'
+import { L, S, F, eq, show, run, regs, registersOf, TooLong, type V } from '../src/lib/evaluators/twoway/core.ts'
+import { parseProg, parseVal, progText } from '../src/lib/evaluators/twoway/text.ts'
+import { LIBRARY, PRESETS, libTree } from '../src/lib/evaluators/twoway/library.ts'
+import { measure } from '../src/lib/evaluators/twoway/machine.ts'
+import { Net, load, runAll, finished, idOf, portOf, R, type Agent } from '../src/lib/evaluators/twoway-inet/net.ts'
 
 const quick = process.argv[2] === 'quick'
 let failures = 0

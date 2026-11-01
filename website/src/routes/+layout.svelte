@@ -95,6 +95,7 @@
   const links = [
     { label: "Learn", href: `${base}/learn/` },
     { label: "Playground", href: `${base}/playground/` },
+    { label: "Evaluators", href: `${base}/evaluators/` },
     { label: "Compare", href: `${base}/compare/` },
     { label: "Git", href: REPO, external: true },
     { label: "Funding", href: `${base}/funding/` },
@@ -310,6 +311,7 @@
         <h4>Explore</h4>
         <a href="{base}/learn/">Learn</a>
         <a href="{base}/playground/">Playground</a>
+        <a href="{base}/evaluators/">Evaluators</a>
         <a href="{base}/compare/">Compare</a>
       </div>
       <div class="footcol">

@@ -5,9 +5,9 @@
   // way. A walker is a run: the program nodes it has come down through point back up to it (its way back,
   // drawn thick), so where it is in the tree is where the run is. ⇆ turns every walker around.
   import { onMount } from "svelte";
-  import { parseProg, parseVal, valText, type Reads } from "$lib/twoway/text";
-  import { PRESETS } from "$lib/twoway/library";
-  import type { V } from "$lib/twoway/core";
+  import { parseProg, parseVal, valText, type Reads } from "$lib/evaluators/twoway/text";
+  import { PRESETS } from "$lib/evaluators/twoway/library";
+  import type { V } from "$lib/evaluators/twoway/core";
   import { Net, load, finished, idOf, portOf, ROLE, ROLE_NAMES, ATOM_NAMES, PS_, PFL_, PFR_, type Agent, type Tag } from "./net";
 
   const EXAMPLES = PRESETS.filter((p) => p.name !== "addw");

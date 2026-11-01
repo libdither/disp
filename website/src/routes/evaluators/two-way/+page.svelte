@@ -1,6 +1,6 @@
 <script lang="ts">
-  import TwoWayVis from "$lib/twoway/TwoWayVis.svelte";
-  import { LIBRARY } from "$lib/twoway/library";
+  import TwoWayVis from "$lib/evaluators/twoway/TwoWayVis.svelte";
+  import { LIBRARY } from "$lib/evaluators/twoway/library";
 
   const GROUPS: { key: (typeof LIBRARY)[number]["group"]; title: string }[] = [
     { key: "bits", title: "Bits" },

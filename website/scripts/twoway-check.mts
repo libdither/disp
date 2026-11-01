@@ -1,11 +1,11 @@
-// Checks the two-way programs engine (src/lib/twoway): the step machine agrees with the whole-run
+// Checks the two-way programs engine (src/lib/evaluators/twoway): the step machine agrees with the whole-run
 // interpreter, every move it makes is undone by flip, fire, flip, flip is its own inverse on every state, a finished run
 // flipped and run again comes back to exactly its start, text reads back to the same tree, and the
 // library does what it says. `npm run twoway-check [-- quick]`.
-import { L, S, F, eq, show, run, regs, registersOf, nat, TooLong, type V } from '../src/lib/twoway/core.ts'
-import { parseProg, parseVal, progText, valText } from '../src/lib/twoway/text.ts'
-import { LIBRARY, PRESETS, libTree } from '../src/lib/twoway/library.ts'
-import { start, fire, flip, unfire, movable, fireAll, same, done, measure, type Node, type Dot } from '../src/lib/twoway/machine.ts'
+import { L, S, F, eq, show, run, regs, registersOf, nat, TooLong, type V } from '../src/lib/evaluators/twoway/core.ts'
+import { parseProg, parseVal, progText, valText } from '../src/lib/evaluators/twoway/text.ts'
+import { LIBRARY, PRESETS, libTree } from '../src/lib/evaluators/twoway/library.ts'
+import { start, fire, flip, unfire, movable, fireAll, same, done, measure, type Node, type Dot } from '../src/lib/evaluators/twoway/machine.ts'
 
 const quick = process.argv[2] === 'quick'
 let failures = 0

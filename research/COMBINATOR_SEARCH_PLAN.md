@@ -15,7 +15,7 @@ gadget test, is done for small signatures (§5, "After Stage 1"); Stages 4 and 5
 - **State:** one structure, in which program and data are the same kind of matter.
 - **Reorganizing rules:** local rewrites that can be undone. They move, swap and rewire; they do not
   create or lose information. The two-way calculus's `swap`, `cross` and `sink`
-  (website/src/lib/twoway/core.ts) are examples.
+  (website/src/lib/evaluators/twoway/core.ts) are examples.
 - **Forgetting:** at least one rule that maps many states to one.
 - **Consistent:** the answer does not depend on the order rules fire in (confluence).
 

@@ -15,7 +15,8 @@
     "twoway-check": "tsx scripts/twoway-check.mts",
     "twoway-inet-check": "tsx scripts/twoway-inet-check.mts",
     "dono-stats": "tsx scripts/build-dono-stats.mts",
-    "pages": "tsx scripts/link-pages.mts"
+    "pages": "tsx scripts/link-pages.mts",
+    "twoway-compiled-check": "tsx scripts/twoway-compiled-check.mts"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.8",

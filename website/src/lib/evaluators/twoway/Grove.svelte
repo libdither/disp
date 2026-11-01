@@ -8,11 +8,11 @@
   // parts above it; a call that holds no node is a bud, as TreeVis draws an application waiting on the
   // ones above it. The parts a combinator starts travel up out of the program into their dots, leaving a
   // slot, and come back into it once they have run. Every node is keyed by what it is, so a move's nodes
-  // glide to where it puts them. It is drawn with WebGL on the stage ($lib/stage), which moves every node
+  // glide to where it puts them. It is drawn with WebGL on the stage ($lib/evaluators/stage), which moves every node
   // in its shaders.
   import { onMount } from "svelte";
-  import { Stage, type Drawing, type GlyphSpec, type LabelSpec, type NodeSpec, type RGBA, type StrokeSpec } from "$lib/stage/stage";
-  import { F, SHAPE } from "$lib/stage/shaders";
+  import { Stage, type Drawing, type GlyphSpec, type LabelSpec, type NodeSpec, type RGBA, type StrokeSpec } from "$lib/evaluators/stage/stage";
+  import { F, SHAPE } from "$lib/evaluators/stage/shaders";
   import { theme } from "$lib/theme.svelte";
   import { asBit, asNat, form, kids as vkids, registersOf, show, size, type V } from "./core";
   import { nameOf, progDef, progLabel, type Reads } from "./text";

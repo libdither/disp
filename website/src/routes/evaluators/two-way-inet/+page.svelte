@@ -1,5 +1,5 @@
 <script lang="ts">
-  import NetVis from "$lib/twoway-inet/NetVis.svelte";
+  import NetVis from "$lib/evaluators/twoway-inet/NetVis.svelte";
 </script>
 
 <svelte:head>
