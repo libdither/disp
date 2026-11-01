@@ -1,0 +1,12 @@
+[package]
+name = "tree-net"
+version = "0.0.0"
+edition = "2021"
+description = "disp's tree calculus as an interaction net: the rules, the abstract net, the reference reducer, superpositions, terms"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib"]
+
+[profile.release]
+opt-level = 3

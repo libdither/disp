@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>gpu check</title></head>
+<body style="background:#0b0e14;color:#c8d3e0;font:13px ui-monospace,monospace"><pre id="out"></pre>
+<!-- gpu-check.js in a browser, opened by hand (dawn.sh and firefox.sh run it headless): the hash is its settings,
+     with bench=1 for speeds instead of the check. The title ends as "DONE ok ..." or "DONE FAIL ...". -->
+<script src="engine.js"></script>
+<script src="gpu.js"></script>
+<script src="gpu-check.js"></script>
+<script>
+const out = document.getElementById("out"), say = s => { out.textContent += s + "\n"; console.log(s); };
+const hash = location.hash.slice(1);
+StrandsCheck[/(^|&)bench=1/.test(hash) ? "bench" : "check"](hash, say)
+  .catch(e => "FAIL " + (e.stack || e))
+  .then(v => { say(v); document.title = "DONE " + v; });
+</script></body></html>
