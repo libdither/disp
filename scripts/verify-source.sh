@@ -5,24 +5,28 @@
 # Publisher pages (ACM, Elsevier, Wiley, Springer's cookie hop) usually 403 a plain
 # fetch and PDFs come back as binary, so a naive fetch loop burns many rounds. This does
 # the whole loop once:
-#   1. resolve the argument — a URL, a DOI (`10.1057/jors.2013.71`), or an arXiv id
-#      (`2301.05217`, `cs/0206022`) — pulling metadata from Semantic Scholar (Crossref as
-#      the fallback; ScienceDirect article ids resolve to DOIs through it), and falling
-#      back to an open-access PDF when the publisher blocks;
-#   2. fetch with a browser user agent, redirects, compression, a cookie jar, a plain-agent
-#      retry on 403/429 (some hosts block browser agents and accept curl's), and a
-#      TLS-insecure retry (a few author sites have self-signed certs; both are reported).
+#   1. resolve the argument — a URL, a DOI (`10.1057/jors.2013.71`, `doi:` optional), or an
+#      arXiv id (`2301.05217`, `cs/0206022`, `arXiv:` optional) — pulling metadata from Semantic
+#      Scholar (Crossref as the fallback; ScienceDirect article ids resolve to DOIs through it;
+#      arXiv's own API for arXiv titles), and falling back to an open-access PDF when the
+#      publisher blocks (through a repository landing page's `citation_pdf_url`);
+#   2. fetch with a browser user agent, redirects (meta-refresh ones too), compression, a cookie
+#      jar, a plain-agent retry on 403/429 or an Anubis bot check (some hosts block browser
+#      agents and accept curl's), and a TLS-insecure retry (a few author sites have self-signed
+#      certs; both are reported).
 #      LessWrong / Alignment Forum rate-limit HTML and are read through their GraphQL API;
 #      GitHub repo URLs read the raw README and mint heading slugs;
 #   3. classify: OK | BLOCKED (403/429) | NOT-FOUND | ERROR, plus the content type; a dead
 #      link (NOT-FOUND, ERROR, or a BLOCKED plain URL) falls back to the Wayback Machine's
 #      latest good capture, printed as `ARCHIVE: <url>` so a doc can link that instead;
 #   4. extract text (pdftotext for PDFs, tesseract OCR for pages without a text layer,
-#      tag-stripping for HTML/markdown) and print the title;
+#      tag-stripping for HTML/markdown; pages decoded by the charset their meta tag, XML
+#      declaration, or HTTP header declares) and print the title, from the metadata when any;
 #   5. with -q, find the quote (case- and whitespace-insensitive, `...` matches a gap; both
-#      sides fold ligatures, curly quotes, dashes, soft hyphens, and words hyphenated across
-#      lines) and print the fragment link: `<pdf-url>#page=N` for PDFs,
-#      `<url>#<nearest-preceding-id>` for HTML, `<repo-url>#<heading-slug>` for READMEs.
+#      sides fold ligatures, curly quotes, dashes, soft hyphens, words hyphenated across lines,
+#      and Japanese/Chinese lines wrapped mid-sentence) and print the fragment link:
+#      `<pdf-url>#page=N` for PDFs, `<url>#<nearest-preceding-id>` for HTML,
+#      `<repo-url>#<heading-slug>` for READMEs.
 # Downloads, extracted text, and OCR pages are cached under ~/.cache/verify-source/, so
 # repeated lookups on one source do not refetch; -g searches that cached text to find the
 # exact wording when a quote misses. Set S2_API_KEY to lift Semantic Scholar's rate limit.
@@ -53,9 +57,12 @@ if [ -n "$BATCH" ]; then
     case "$q" in ''|'#'*) continue ;; esac
     out="$("$0" -q "$q" "$src" 2>&1)"
     if frag="$(grep -m1 '^MATCH:' <<< "$out")"; then
-      printf 'ok    %s  %s\n' "${frag#*fragment: }" "$q"
+      case "$frag" in *'fragment: '*) frag="${frag#*fragment: }" ;; *) frag="$src (no anchor precedes it)" ;; esac
+      printf 'ok    %s  %s\n' "$frag" "$q"
     else
-      miss=1; printf 'MISS  %s  %s  (%s)\n' "$src" "$q" "$(grep -m1 -E '^(STATUS|NO MATCH|HINT)' <<< "$out" | cut -c1-100)"
+      # the last failure line says why; an earlier `STATUS: OK` only says the fetch worked
+      why="$(grep -E '^(NO MATCH|STATUS: [^O]|HINT|FALLBACK FAILED|ARCHIVE: the|ERROR|usage)' <<< "$out" | tail -n1)"
+      miss=1; printf 'MISS  %s  %s  (%s)\n' "$src" "$q" "$(printf '%s' "${why:-$(tail -n1 <<< "$out")}" | cut -c1-100)"
     fi
   done < "$BATCH"
   exit $miss
@@ -71,9 +78,9 @@ S2FIELDS='title,authors,year,venue,externalIds,openAccessPdf,url'
 # --- 1. resolve -------------------------------------------------------------------
 DOI="" ARXIV="" URL=""
 case "$ARG" in
-  doi:*)   DOI="${ARG#doi:}" ;;
-  10.*/*)  DOI="$ARG" ;;
-  arxiv:*) ARXIV="${ARG#arxiv:}" ;;
+  [dD][oO][iI]:*)           DOI="${ARG#*:}" ;;
+  10.*/*)                   DOI="$ARG" ;;
+  [aA][rR][xX][iI][vV]:*)   ARXIV="${ARG#*:}" ;;
   http://*|https://*)
     URL="$ARG"
     case "$URL" in
@@ -90,34 +97,52 @@ case "$ARG" in
     fi ;;
 esac
 
-s2get() { # $1 = S2 API path — unauthenticated S2 rate-limits bursts, so back off on 429
+s2get() { # $1 = S2 API path — unauthenticated S2 rate-limits bursts, so back off on 429; returns 2 if it never lets up
   local json try
   for try in 1 2 3 4; do
     json="$(curl -sS --max-time 30 -A "$UA" ${S2_API_KEY:+-H "x-api-key: $S2_API_KEY"} "$S2/$1" 2>/dev/null)" || return 1
     printf '%s' "$json" | grep -q '"code": *"429"' || { printf '%s' "$json"; return 0; }
     sleep $((try * 2))
   done
-  return 1
+  return 2
 }
-s2() { # $1 = S2 paper id (DOI:... or ARXIV:...) — prints one metadata line, sets OAPDF
+s2busy() { echo "S2: rate-limited; set S2_API_KEY to lift the limit"; return 2; }
+enc() { printf '%s' "$1" | jq -sRr @uri | sed 's#%2F#/#g'; } # old Wiley DOIs carry <>;# and S2 400s on them raw
+s2() { # $1 = S2 paper id (DOI:... or ARXIV:...) — prints one metadata line, sets OAPDF S2ARXIV METATITLE
   local json
-  json="$(s2get "$1?fields=$S2FIELDS")" || return 1
+  json="$(s2get "$1?fields=$S2FIELDS")" || { [ $? = 2 ] && s2busy; return; }
   printf '%s' "$json" | jq -e '.title' >/dev/null 2>&1 || return 1
   printf '%s' "$json" | jq -r '"S2: " + (.title // "?") + " | " + ([.authors[]?.name] | join(", ")) + " | " + ((.year // "?") | tostring) + " | " + (.venue // "?") + (if .externalIds.ArXiv then " | arXiv:" + .externalIds.ArXiv else "" end) + (if .externalIds.DOI then " | doi:" + .externalIds.DOI else "" end)'
   OAPDF="$(printf '%s' "$json" | jq -r '.openAccessPdf.url // empty')"
   S2ARXIV="$(printf '%s' "$json" | jq -r '.externalIds.ArXiv // empty')"
+  METATITLE="$(printf '%s' "$json" | jq -r '.title')"
 }
-crossref() { # $1 = DOI — prints one metadata line, sets XTITLE
+crossref() { # $1 = DOI — prints one metadata line, sets XTITLE METATITLE
   local json
-  json="$(curl -sS --max-time 30 -A "$UA" "https://api.crossref.org/works/$1" 2>/dev/null)" || return 1
+  json="$(curl -sS --max-time 30 -A "$UA" "https://api.crossref.org/works/$(enc "$1")" 2>/dev/null)" || return 1
   printf '%s' "$json" | jq -e '.message.title[0]' >/dev/null 2>&1 || return 1
-  XTITLE="$(printf '%s' "$json" | jq -r '.message.title[0]')"
+  XTITLE="$(printf '%s' "$json" | jq -r '.message.title[0]')"; METATITLE="$XTITLE"
   printf '%s' "$json" | jq -r '"CROSSREF: " + .message.title[0] + " | " + ([.message.author[]? | (.given // "") + " " + (.family // "")] | join(", ")) + " | " + ((.message.issued."date-parts"[0][0] // "?") | tostring) + " | " + (.message."container-title"[0] // "?")'
+}
+arxiv() { # $1 = arXiv id — sets METATITLE from arXiv's own record (S2 recases titles); with $2, prints its line
+  local xml out
+  xml="$(curl -sS --max-time 30 -A "$UA" "https://export.arxiv.org/api/query?id_list=$1" 2>/dev/null)" || return 1
+  out="$(python -I -c '
+import sys, xml.etree.ElementTree as E
+A = "{http://www.w3.org/2005/Atom}"
+try: e = E.fromstring(sys.argv[1]).find(A + "entry")
+except E.ParseError: sys.exit(1)
+if e is None or "/abs/" not in (e.findtext(A + "id") or ""): sys.exit(1)
+t = " ".join(e.findtext(A + "title", "?").split())
+au = ", ".join(a.findtext(A + "name", "") for a in e.findall(A + "author"))
+print(t); print("ARXIV:", t, "|", au, "|", e.findtext(A + "published", "?")[:4])' "$xml")" || return 1
+  METATITLE="${out%%$'\n'*}"
+  [ -z "${2:-}" ] || printf '%s\n' "${out#*$'\n'}"
 }
 s2_by_title() { # $1 = title — if the top search hit matches, prints its line and sets OAPDF/S2ARXIV
   local json q
   q="$(printf '%s' "$1" | jq -sRr @uri)"
-  json="$(s2get "search?query=$q&limit=1&fields=$S2FIELDS")" || return 1
+  json="$(s2get "search?query=$q&limit=1&fields=$S2FIELDS")" || { [ $? = 2 ] && s2busy; return; }
   local hit; hit="$(printf '%s' "$json" | jq -r '.data[0].title // empty' | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9 ')"
   local want; want="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9 ')"
   [ -n "$hit" ] && [ "${hit:0:40}" = "${want:0:40}" ] || return 1
@@ -133,36 +158,72 @@ case "$URL" in
     [ -n "$D" ] && { DOI="$D"; echo "PII: $PII resolves to doi:$DOI"; } ;;
 esac
 # -g reruns skip resolution and read what an earlier run fetched for the same argument
-REC="$CACHE/$(printf '%s %s' "$ARG" "$ABS" | sha1sum | cut -c1-16).src" RECBASE=""
+REC="$CACHE/$(printf '%s %s' "$ARG" "$ABS" | sha1sum | cut -c1-16).src" RECBASE="" METATITLE=""
 if [ -n "$GREP" ] && [ -s "$REC" ]; then
-  { read -r URL; read -r RECBASE; } < "$REC"; DOI="" ARXIV=""
+  { read -r URL; read -r RECBASE; read -r METATITLE; } < "$REC"; DOI="" ARXIV=""
   echo "CACHED: searching the text fetched earlier from $URL"
 fi
 OAPDF="" S2ARXIV="" XTITLE=""
 if [ -n "$DOI" ]; then
-  if ! s2 "DOI:$DOI"; then
-    if crossref "$DOI"; then s2_by_title "$XTITLE" || echo "S2: no matching record for that title"
-    else echo "S2/CROSSREF: no record for doi:$DOI"; fi
+  s2 "DOI:$(enc "$DOI")"; rc=$?
+  if [ $rc != 0 ]; then
+    if crossref "$DOI"; then [ $rc = 2 ] || s2_by_title "$XTITLE" || [ $? = 2 ] || echo "S2: no matching record for that title"
+    else echo "$([ $rc = 2 ] || printf S2/)CROSSREF: no record for doi:$DOI"; fi
   fi
   [ -z "$ARXIV" ] && ARXIV="$S2ARXIV"
   [ -z "$URL" ] && URL="https://doi.org/$DOI"
 elif [ -n "$ARXIV" ]; then
-  s2 "ARXIV:${ARXIV%v[0-9]*}" || echo "S2: no record for arXiv:$ARXIV"
+  s2 "ARXIV:${ARXIV%v[0-9]*}"; rc=$?
+  [ $rc = 1 ] && echo "S2: no record for arXiv:$ARXIV"
+  arxiv "$ARXIV" $([ $rc = 0 ] || echo print) || [ $rc = 0 ] || echo "ARXIV: no record for $ARXIV"
 fi
 if [ -n "$ARXIV" ] && { [ -z "$URL" ] || [ -n "$DOI" ]; }; then
   if [ "$ABS" = 1 ]; then URL="https://arxiv.org/abs/$ARXIV"; else URL="https://arxiv.org/pdf/$ARXIV"; fi
 fi
 
 # --- 2. fetch ---------------------------------------------------------------------
-fetch() { # $1 = url; sets CODE CTYPE FINAL FILE INSECURE
+page_link() { # $1 = refresh|pdf, $2 = html file, $3 = its url — the page's <meta http-equiv=refresh> target or citation_pdf_url
+  python -I - "$@" <<'PY'
+import re, sys
+from html.parser import HTMLParser
+from urllib.parse import urljoin
+what, path, base = sys.argv[1:4]
+class P(HTMLParser):
+    found = ''; noscript = 0
+    def handle_starttag(self, tag, attrs):
+        a = {k: v or '' for k, v in attrs}
+        if tag == 'noscript': self.noscript += 1
+        if tag != 'meta' or self.noscript or self.found: return
+        if what == 'refresh' and a.get('http-equiv', '').lower() == 'refresh':
+            m = re.search(r'url\s*=\s*[\'"]?([^\'"]+)', a.get('content', ''), re.I)
+            self.found = m.group(1).strip() if m else ''
+        elif what == 'pdf' and a.get('name', '').lower() == 'citation_pdf_url':
+            self.found = a.get('content', '').strip()
+    def handle_endtag(self, tag):
+        if tag == 'noscript' and self.noscript: self.noscript -= 1
+p = P(); p.feed(open(path, 'rb').read(262144).decode('utf-8', 'replace'))
+url = urljoin(base, p.found) if p.found else ''
+if not url.startswith(('http://', 'https://')) or url.split('#')[0] == base.split('#')[0]: sys.exit(1)
+print(url)
+PY
+}
+fetch() { # $1 = url; sets CODE CTYPE CHARSET FINAL FILE INSECURE, following meta-refresh hops (Elsevier's linking hub)
+  local hops=0 next
+  fetch1 "$1" || return 1
+  while [ "$CODE" = 200 ] && [ "$CTYPE" = text/html ] && [ $hops -lt 3 ] && next="$(page_link refresh "$FILE" "$FINAL")"; do
+    hops=$((hops + 1)); fetch1 "$next" || return 1
+  done
+}
+fetch1() {
   local key; key="$(printf '%s' "$1" | sha1sum | cut -c1-16)"
   FILE="$CACHE/$key.body"; local meta="$CACHE/$key.meta"
-  INSECURE=0
+  INSECURE=0 CHARSET=""
   if [ -s "$FILE" ] && [ -s "$meta" ]; then
-    read -r CODE CTYPE FINAL < "$meta"; return 0
+    read -r CODE CTYPE FINAL CHARSET < "$meta"; return 0
   fi
   local jar="$CACHE/$key.jar" out W
-  W='%{http_code}\t%{content_type}\t%{url_effective}'
+  # \x1f, not a tab: read collapses repeated tabs, so an empty content type would swallow the URL
+  W=$'%{http_code}\x1f%{content_type}\x1f%{url_effective}'
   out="$(curl -sSL --compressed --connect-timeout 20 --max-time 90 --retry 1 -A "$UA" -c "$jar" -b "$jar" \
         -H 'Accept: text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8' \
         -o "$FILE" -w "$W" "$1" 2>/dev/null)"
@@ -172,15 +233,17 @@ fetch() { # $1 = url; sets CODE CTYPE FINAL FILE INSECURE
     out="$(curl -sSLk --connect-timeout 20 --max-time 90 -A "$UA" -c "$jar" -b "$jar" -o "$FILE" -w "$W" "$1" 2>/dev/null)"; rc=$?
   fi
   [ $rc -eq 0 ] || { CODE="000"; CTYPE="curl-exit-$rc"; FINAL="$1"; return 1; }
-  IFS=$'\t' read -r CODE CTYPE FINAL <<< "$out"
-  # some hosts block the browser agent and accept a plain one (WAF heuristics differ)
-  if [ "$CODE" = 403 ] || [ "$CODE" = 429 ]; then
-    out="$(curl -sSL --compressed --connect-timeout 20 --max-time 90 -A 'curl/8.0' -o "$FILE" -w "$W" "$1" 2>/dev/null)" && IFS=$'\t' read -r CODE CTYPE FINAL <<< "$out"
+  IFS=$'\x1f' read -r CODE CTYPE FINAL <<< "$out"
+  # some hosts block the browser agent and accept a plain one (WAF heuristics differ); an Anubis bot check
+  # (HAL and other repositories) answers browser agents 200 with a challenge page and lets plain ones through
+  if [ "$CODE" = 403 ] || [ "$CODE" = 429 ] || head -c 32768 "$FILE" 2>/dev/null | grep -q '/\.within\.website/'; then
+    out="$(curl -sSL --compressed --connect-timeout 20 --max-time 90 -A 'curl/8.0' -o "$FILE" -w "$W" "$1" 2>/dev/null)" && IFS=$'\x1f' read -r CODE CTYPE FINAL <<< "$out"
   fi
-  CTYPE="${CTYPE%%;*}"
+  CHARSET="$(printf '%s' "$CTYPE" | sed -nE 's/.*charset *= *"?([^";[:space:]]+).*/\1/ip')"
+  CTYPE="${CTYPE%%[; ]*}"; CTYPE="${CTYPE:--}"
   # content-type lies are common; sniff PDFs
   if head -c 5 "$FILE" 2>/dev/null | grep -q '^%PDF'; then CTYPE="application/pdf"; fi
-  case "$CODE" in 2??) CODE=200; printf '%s %s %s\n' "$CODE" "$CTYPE" "$FINAL" > "$meta" ;; esac
+  case "$CODE" in 2??) CODE=200; printf '%s %s %s %s\n' "$CODE" "$CTYPE" "$FINAL" "$CHARSET" > "$meta" ;; esac
   return 0
 }
 
@@ -206,11 +269,13 @@ fetch_forum() { # LessWrong / Alignment Forum reject HTML fetches (429) but answ
       key='.data.tags.results[0] | {title: .name, htmlBody: .description.html}' ;;
     *) return 1 ;;
   esac
-  json="$(curl -sS --max-time 60 -A 'curl/8.0' -H 'Content-Type: application/json' "https://$host/graphql" --data "$q" 2>/dev/null)" || return 1
-  printf '%s' "$json" | jq -e "$key | .htmlBody" >/dev/null 2>&1 || return 1
-  FILE="$CACHE/$(printf '%s' "$1" | sha1sum | cut -c1-16).body"
-  printf '%s' "$json" | jq -r "$key | \"<html><head><title>\" + .title + \"</title></head><body>\" + .htmlBody + \"</body></html>\"" > "$FILE"
-  CODE=200; CTYPE=text/html; FINAL="$1"; INSECURE=0
+  FILE="$CACHE/$(printf '%s' "$1" | sha1sum | cut -c1-16).forum"
+  if [ ! -s "$FILE" ]; then
+    json="$(curl -sS --max-time 60 -A 'curl/8.0' -H 'Content-Type: application/json' "https://$host/graphql" --data "$q" 2>/dev/null)" || return 1
+    printf '%s' "$json" | jq -e "$key | .htmlBody" >/dev/null 2>&1 || return 1
+    printf '%s' "$json" | jq -r "$key | \"<html><head><title>\" + .title + \"</title></head><body>\" + .htmlBody + \"</body></html>\"" > "$FILE"
+  fi
+  CODE=200; CTYPE=text/html; FINAL="$1"; INSECURE=0 CHARSET=""
   echo "ROUTE: $host GraphQL (HTML fetches are rate-limited)"
 }
 
@@ -220,7 +285,11 @@ wayback() { # $1 = dead url — fetch the Wayback Machine's latest capture that 
   ts="$(cat "$saved" 2>/dev/null)"
   # the availability API is quick but misses many captures; the CDX index is slow but complete
   [ -n "$ts" ] || ts="$(curl -sS --max-time 30 "https://archive.org/wayback/available?url=$u" 2>/dev/null | jq -r '.archived_snapshots.closest | select(.status == "200") | .timestamp' 2>/dev/null)"
-  [ -n "$ts" ] || ts="$(curl -sS --max-time 60 "https://web.archive.org/cdx/search/cdx?url=$u&filter=statuscode:200&fl=timestamp&limit=-1&fastLatest=true" 2>/dev/null | tail -n1)"
+  if [ -z "$ts" ]; then
+    ts="$(curl -sSf --max-time 60 "https://web.archive.org/cdx/search/cdx?url=$u&filter=statuscode:200&fl=timestamp&limit=-1&fastLatest=true" 2>/dev/null)" ||
+      { echo "ARCHIVE: the Wayback Machine did not answer (it rate-limits and has outages); try again later"; return 1; }
+    ts="$(tail -n1 <<< "$ts")"
+  fi
   case "$ts" in [12][0-9][0-9][0-9]*) ;; *) echo "ARCHIVE: the Wayback Machine has no good capture of $1"; return 1 ;; esac
   printf '%s\n' "$ts" > "$saved"
   URL="https://web.archive.org/web/${ts}id_/$1"; fetch "$URL"
@@ -244,12 +313,18 @@ case "$CODE" in
     if [ -n "$OAPDF" ]; then
       echo "FALLBACK: Semantic Scholar open-access PDF $OAPDF"
       URL="$OAPDF"; fetch "$URL"
+      # repository links often land on a record page whose citation_pdf_url names the file
+      if [ "$CODE" = 200 ] && [ "$CTYPE" = text/html ] && PDF="$(page_link pdf "$FILE" "$FINAL")"; then
+        echo "FALLBACK: that is a landing page; its PDF is $PDF"; fetch "$PDF"
+        if [ "$CODE" = 200 ]; then URL="$PDF"
+        else echo "FALLBACK: the PDF did not load ($CODE); reading the landing page instead"; fetch "$URL"; fi
+      fi
       case "$FINAL" in *linkinghub.elsevier.com*|*sciencedirect.com*|*onlinelibrary.wiley.com*|*dl.acm.org*)
-        CODE=403; echo "FALLBACK FAILED: publisher redirect; the metadata above is the verification" ;; esac
-      [ "$CODE" = "200" ] && echo "STATUS: OK ($CODE, $CTYPE) $FINAL"
+        CODE=403; echo "FALLBACK FAILED: publisher redirect; the metadata above is the verification" ;;
+      *) [ "$CODE" = "200" ] && echo "STATUS: OK ($CODE, $CTYPE) $FINAL" || echo "FALLBACK FAILED: ($CODE $CTYPE) $FINAL" ;; esac
     elif [ -n "$ARXIV" ]; then
       URL="https://arxiv.org/pdf/$ARXIV"; echo "FALLBACK: $URL"; fetch "$URL"
-      [ "$CODE" = "200" ] && echo "STATUS: OK ($CODE, $CTYPE) $FINAL"
+      [ "$CODE" = "200" ] && echo "STATUS: OK ($CODE, $CTYPE) $FINAL" || echo "FALLBACK FAILED: ($CODE $CTYPE) $FINAL"
     elif [ -n "$DOI" ]; then
       echo "HINT: no open-access copy known; cite an author-hosted PDF or arXiv version, or the metadata above"
     else
@@ -319,18 +394,21 @@ fi
 # a raw `id_` capture keeps a PDF's #page=N working; an HTML capture reads better in the Wayback viewer
 [ -n "$ARCHIVED" ] && [ "$KIND" != pdf ] && FRAGBASE="$ARCHIVED"
 [ -n "$RECBASE" ] && FRAGBASE="$RECBASE"
-printf '%s\n%s\n' "$URL" "$FRAGBASE" > "$REC"
+printf '%s\n%s\n%s\n' "$URL" "$FRAGBASE" "$METATITLE" > "$REC"
 
-python -I - "$KIND" "$FILE" "$TEXT" "$FRAGBASE" "$PREVIEW" "$QUOTE" "$PDFTITLE" "$GREP" <<'PY'
+python -I - "$KIND" "$FILE" "$TEXT" "$FRAGBASE" "$PREVIEW" "$QUOTE" "$PDFTITLE" "$GREP" "$METATITLE" "$CHARSET" <<'PY'
 import re, sys
 from html.parser import HTMLParser
-kind, body, textfile, url, preview, quote, pdftitle, grep = sys.argv[1:9]
+kind, body, textfile, url, preview, quote, pdftitle, grep, metatitle, charset = sys.argv[1:11]
 preview = int(preview)
 
 LIG = {'\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl', '\ufb03': 'ffi', '\ufb04': 'ffl', '\ufb05': 'st', '\ufb06': 'st'}
 TYPO = str.maketrans({**dict.fromkeys('\u2018\u2019\u201a\u201b\u2032', "'"), **dict.fromkeys('\u201c\u201d\u201e\u201f\u2033', '"'), **dict.fromkeys('\u2010\u2011\u2012\u2013\u2014\u2015\u2212', '-')})
-# a dash ending a line inside a word (OCR often reads hyphens as dashes), a soft hyphen, or a zero-width space is cut
-TOK = re.compile(r'(?P<cut>(?<=\w)[-\u2010-\u2015\u00ad][ \t]*\n\s*(?=\w)|[\u00ad\u200b])|(?P<space>\s+)|(?P<lig>[\ufb00-\ufb06])'
+# a dash ending a line inside a word (OCR often reads hyphens as dashes), a soft hyphen, a zero-width space, or a
+# line break inside Japanese or Chinese text (no spaces between words, so a wrapped source line splits one) is cut
+CJK = '\u3000-\u30ff\u3400-\u9fff\uff00-\uffef'
+TOK = re.compile(rf'(?P<cut>(?<=\w)[-\u2010-\u2015\u00ad][ \t]*\n\s*(?=\w)|[\u00ad\u200b]|(?<=[{CJK}])[ \t]*\n\s*(?=[{CJK}]))'
+                 r'|(?P<space>\s+)|(?P<lig>[\ufb00-\ufb06])'
                  r'|[^\s\u00ad\u200b\u2010-\u2015\ufb00-\ufb06-]+|.', re.S)
 
 def normalize(s, at=None): # fold typography to plain text; `at` collects each output char's source offset
@@ -345,10 +423,11 @@ def normalize(s, at=None): # fold typography to plain text; `at` collects each o
 def norm(s):
     return normalize(s).strip()
 
-def read_text(path): # a page's text, decoded by the charset it declares (Shift_JIS, EUC-JP, …), else UTF-8
+def read_text(path): # a page's text, decoded by the charset it declares (meta tag, XML declaration, HTTP header), else UTF-8
     raw = open(path, 'rb').read()
-    m = re.search(rb'<meta[^>]+charset=["\']?([\w-]+)', raw[:8192], re.I)
-    for enc in ([m.group(1).decode('ascii', 'replace')] if m else []) + ['utf-8']:
+    m = re.search(rb'<meta[^>]+charset=["\']?([\w-]+)|<\?xml[^>]+encoding=["\']([\w-]+)', raw[:8192], re.I)
+    declared = [g.decode('ascii', 'replace') for g in (m.groups() if m else ()) if g]
+    for enc in declared + ([charset] if charset else []) + ['utf-8']:
         try: return raw.decode(enc)
         except (LookupError, UnicodeDecodeError): pass
     return raw.decode('utf-8', 'replace')
@@ -361,45 +440,62 @@ if kind == 'pdf':
     src = open(textfile, encoding='utf-8', errors='replace').read()
     pages = [normalize(pg) for pg in src.split('\f')]
     lines = [l for l in src.splitlines() if l.strip() and not l.lstrip().startswith('arXiv:')]
-    print('TITLE:', norm(pdftitle) or (norm(' '.join(lines[:2]))[:160] if lines else '?'))
+    title = norm(pdftitle) or (norm(' '.join(lines[:2]))[:160] if lines else '?')
 elif kind == 'md':
     src = read_text(body)
-    heads = [(m.start(), slug(m.group(2))) for m in re.finditer(r'^(#{1,6})\s+(.+?)\s*#*$', src, re.M)]
-    first = next((m.group(1) for m in re.finditer(r'^#{1,6}\s+(.+?)\s*#*$', src, re.M)), '?')
-    print('TITLE:', norm(first)[:160])
+    # a fenced block's `# comment` is not a heading; blank fences (keeping offsets) before finding `#` and underlined headings
+    prose = re.sub(r'(?ms)^(```|~~~).*?^\1[^\n]*', lambda m: re.sub(r'\S', ' ', m.group()), src)
+    heads = [(m.start(), m.group(1) or m.group(2)) for m in
+             re.finditer(r'^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$|^([^\s#>|*+-][^\n]*)\n(?:=+|-+)[ \t]*$', prose, re.M)]
+    title = norm(heads[0][1])[:160] if heads else '?'
+    seen = {}
+    def unique(s): # GitHub suffixes a repeated heading's slug with -1, -2, …
+        n = seen.get(s, 0); seen[s] = n + 1
+        return f'{s}-{n}' if n else s
     class _P: pass
-    p = _P(); p.ids = heads
-    # emphasis and code markers hide phrases like `_best-first_`; blank them, keeping offsets
-    full = re.sub(r'[_*`]', ' ', src)
+    p = _P(); p.ids = [(o, unique(slug(h))) for o, h in heads]
+    # link, emphasis and code markup hide phrases like `[Interaction Nets](…)` or `_best-first_`; blank it, keeping offsets
+    full = re.sub(r'\[([^\]]*)\](\([^)]*\)|\[[^\]]*\])', lambda m: ' ' + m.group(1) + ' ' * (len(m.group(2)) + 1), src)
+    full = re.sub(r'[_*`]', ' ', full)
 else:
+    BLOCK = {'p', 'div', 'br', 'li', 'dt', 'dd', 'td', 'th', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+             'section', 'article', 'blockquote', 'pre', 'figcaption', 'caption'}
     class P(HTMLParser):
         def __init__(self):
             super().__init__(convert_charrefs=True)
-            self.text = []; self.pos = 0; self.ids = []; self.skip = 0
+            self.text = []; self.pos = 0; self.ids = []; self.skip = 0; self.ruby = False
             self.title = ''; self.in_title = False
         def handle_starttag(self, tag, attrs):
             a = dict(attrs)
             if tag in ('script', 'style', 'noscript'): self.skip += 1
+            # ruby readings (Japanese furigana) sit beside the text, not in it; their end tags are optional
+            if tag in ('rt', 'rp'): self.ruby = True
             if tag == 'title': self.in_title = True
-            for k in ('id', 'name'):
-                if a.get(k) and tag != 'meta' and tag != 'input':
-                    self.ids.append((self.pos, a[k])); break
-            if tag in ('p','div','br','li','h1','h2','h3','h4','h5','h6','tr','section','article'):
-                self.text.append('\n'); self.pos += 1
+            # any element's id is a fragment target, but a name only on <a>
+            i = a.get('id') or (a.get('name') if tag == 'a' else None)
+            if i and tag not in ('meta', 'input'): self.ids.append((self.pos, i))
+            if tag in BLOCK: self.text.append('\n'); self.pos += 1
         def handle_endtag(self, tag):
             if tag in ('script', 'style', 'noscript') and self.skip: self.skip -= 1
+            if tag in ('rt', 'rp', 'ruby'): self.ruby = False
             if tag == 'title': self.in_title = False
+            if tag in BLOCK: self.text.append('\n'); self.pos += 1
         def handle_data(self, d):
             if self.in_title: self.title += d
-            if self.skip: return
+            if self.skip or self.ruby: return
             self.text.append(d); self.pos += len(d)
     p = P(); p.feed(read_text(body))
     full = src = ''.join(p.text)
-    print('TITLE:', norm(p.title)[:160] or '?')
+    title = norm(p.title)[:160] or '?'
+# a DOI's or arXiv id's own record names the work; a PDF's first lines are often a license or a running header
+# (the document's casing wins when the two agree, since S2 recases titles)
+meta = norm(metatitle)[:160]
+print('TITLE:', title if title.lower() == meta.lower() else meta or title)
 if kind != 'pdf':
     at = []; full = normalize(full, at)
 
-GENERATED = re.compile(r'\d{4,}|[0-9a-f]{8,}|^ref-link|-d\d+e\d+')
+# Wikipedia's renderer (Parsoid) numbers every element `mwAQ`, `mw5A`, …, renumbered on each edit
+GENERATED = re.compile(r'\d{4,}|[0-9a-f]{8,}|^ref-link|-d\d+e\d+|^mw\w[\w-]{1,4}$')
 def anchor(s): # nearest id at or before normalized offset s; one that looks generated only if no stable one precedes it
     o = at[min(s, len(at) - 1)] if at else 0
     a = stable = None
@@ -434,9 +530,9 @@ if grep:
 if not quote:
     shown = 0
     for l in src.splitlines():
+        if shown >= preview: break
         if l.strip():
             print('  ', norm(l)[:200]); shown += 1
-            if shown >= preview: break
     sys.exit(0)
 
 rx = quote_re(quote)

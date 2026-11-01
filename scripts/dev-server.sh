@@ -37,7 +37,7 @@ case "${1:-}" in
     mkdir -p "$units"
     unit disp-files "disp repo files (tailnet)" 256M "$root" "" "$(command -v python) $root/scripts/serve.py $host 5180 $root"
     unit disp-site "disp website dev server (tailnet)" 2G "$root/website" "$(command -v npm) run pages" \
-      "$root/website/node_modules/.bin/vite dev --host $host --port 5174 --strictPort" "DISP_DEV_HOSTS=$(hostname),$name"
+      "$root/website/node_modules/.bin/vite dev --host $host --port 5174 --strictPort" "DISP_DEV_HOSTS=$(hostname),$name,disp.tn.zyancraft.net"
     systemctl --user daemon-reload
     systemctl --user enable disp-files disp-site
     systemctl --user restart disp-files disp-site
