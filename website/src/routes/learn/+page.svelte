@@ -104,7 +104,7 @@
       </p>
       <p class="provenance">
         This walkthrough teaches the previous kernel, now retired to <code>archive/live-kernel/</code>. It still runs,
-        but the current work is the claim layer, explained on <a href="{base}/why/">Why disp</a>. For what is here,
+        but the current work is the claim layer. For what is here,
         <a href="https://github.com/libdither/disp/blob/main/archive/live-kernel/TYPE_THEORY.typ">TYPE_THEORY.typ</a>
         and the <code>archive/live-kernel/kernel/*.disp</code> sources are the ground truth.
       </p>

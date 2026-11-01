@@ -1,0 +1,75 @@
+/* Shared by the /why/ page's scenes. */
+.why-widget {
+  margin: 1.2rem 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+}
+.why-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.6rem;
+}
+.why-chip {
+  font: inherit;
+  font-size: 0.86rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.why-chip:hover,
+.why-chip:focus-visible {
+  color: var(--fg);
+  background: var(--bg-panel-hover);
+  outline: none;
+}
+.why-chip[aria-pressed='true'] {
+  color: var(--fg);
+  border-color: var(--g2);
+  background: color-mix(in oklab, var(--g1) 14%, transparent);
+}
+.why-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.why-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+.why-label {
+  font-size: 0.78rem;
+  color: var(--fg-faint);
+}
+.why-stamp {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border: 1.5px solid currentColor;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.why-stamp.proved {
+  color: var(--ok);
+}
+.why-stamp.refuted {
+  color: var(--err);
+}
+.why-stamp.open {
+  color: var(--fg-muted);
+  border-style: dashed;
+}
+.why-bar {
+  height: 0.8rem;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--g2);
+}
