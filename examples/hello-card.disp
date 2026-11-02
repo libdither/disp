@@ -2,13 +2,13 @@
 open use "../../archive/live-kernel/kernel/prelude.disp"
 open use "../../archive/live-kernel/std/nat.disp"
 
-quadruple : Nat -> Nat := {n} => double (double n)
+quadruple : Nat -> Nat := {n} => double(double(n))
 
-test quadruple 3 = 12
-test double (quadruple 2) = 16
+test quadruple(3) = 12
+test double(quadruple(2)) = 16
 
 // Types are predicates — apply one to check data:
-test Nat 5 = Ok true
+test Nat(5) = Ok(true)
 
 // Proofs run too: an equation's only inhabitant is the leaf.
-test (Eq Nat (double 2) 4) refl = Ok true
+test Eq(Nat, double(2), 4)(refl) = Ok(true)

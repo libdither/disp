@@ -32,13 +32,13 @@ Randomness (§8) turns out to be one of the payments, and like agency it is rela
 **A self-judging program.** disp programs are trees, so a program can hand its own code to a judge with no quoting step:
 
 ```disp
-liar_at := {r} => fix ({self, oracle} => not (oracle self r))
-teller_at := {r} => fix ({self, oracle} => oracle self r)
-test liar_at (pair 1 2) ({_m, _r} => true) = false
-test liar_at (pair 1 2) ({_m, _r} => false) = true
-test liar_at (pair 1 2) ({m, r} => tree_eq m (liar_at r)) = false
-test teller_at (pair 1 2) ({_m, _r} => true) = true
-test teller_at (pair 1 2) ({_m, _r} => false) = false
+liar_at := {r} => fix({self, oracle} => not(oracle(self, r)))
+teller_at := {r} => fix({self, oracle} => oracle(self, r))
+test liar_at(pair(1, 2), {_m, _r} => true) = false
+test liar_at(pair(1, 2), {_m, _r} => false) = true
+test liar_at(pair(1, 2), {m, r} => tree_eq(m, liar_at(r))) = false
+test teller_at(pair(1, 2), {_m, _r} => true) = true
+test teller_at(pair(1, 2), {_m, _r} => false) = false
 ```
 
 `oracle m r` answers "does `m` return true with probability above r?" The liar does the opposite of the answer, the truth-teller does what it is told. Both fixed oracles are wrong about the liar (tests 1–2) and right about the truth-teller (tests 4–5). Test 3 shows the `self` handed over is the program's own code.
@@ -67,19 +67,19 @@ test teller_at (pair 1 2) ({_m, _r} => false) = false
 The time row, written out: the liar run against a judge that answers from the tally so far.
 
 ```disp
-add := fix ({self, n, m} => if (is_leaf n) { m } else { succ (self (pair_snd n) m) })
-mul := fix ({self, n, m} => if (is_leaf n) { zero } else { add m (self (pair_snd n) m) })
-frac_le := {a, b} => nat_le (mul (pair_fst a) (pair_snd b)) (mul (pair_fst b) (pair_snd a))
-frac_lt := {a, b} => not (frac_le b a)
+add := fix({self, n, m} => if (is_leaf(n)) { m } else { succ(self(pair_snd(n), m)) })
+mul := fix({self, n, m} => if (is_leaf(n)) { zero } else { add(m, self(pair_snd(n), m)) })
+frac_le := {a, b} => nat_le(mul(pair_fst(a), pair_snd(b)), mul(pair_fst(b), pair_snd(a)))
+frac_lt := {a, b} => not(frac_le(b, a))
 /// Run the liar n times; the oracle answers "above r?" from the tally (trues, runs) so far.
-dither := fix ({self, r, n} => if (is_leaf n) { pair 0 0 } else {
-  let tally := self r (pair_snd n)
-  let out := liar_at r ({_m, q} => frac_lt q tally)
-  pair (if out { succ (pair_fst tally) } else { pair_fst tally }) (succ (pair_snd tally))
+dither := fix({self, r, n} => if (is_leaf(n)) { pair(0, 0) } else {
+  let tally := self(r, pair_snd(n))
+  let out := liar_at(r, {_m, q} => frac_lt(q, tally))
+  pair(if out { succ(pair_fst(tally)) } else { pair_fst(tally) }, succ(pair_snd(tally)))
 })
-test dither (pair 1 3) 6 = pair 2 6
-test dither (pair 2 3) 9 = pair 6 9
-test dither (pair 1 2) 4 = pair 2 4
+test dither(pair(1, 3), 6) = pair(2, 6)
+test dither(pair(2, 3), 9) = pair(6, 9)
+test dither(pair(1, 2), 4) = pair(2, 4)
 ```
 
 No random bits and no heat: from the start, the tally at step n is fixed by n, so the run is a clock. That is special to a closed loop. With inputs, many histories reach the same tally, and forgetting which one happened costs heat.

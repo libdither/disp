@@ -10,128 +10,128 @@ open use "../std/build.disp"
 
 // entry builders: a telescope cell is now a wait-form (`proj_cell name ty` /
 // `derive_cell name recipe`) — the same trees the surface recType desugar emits.
-let ent := {name, ty} => proj_cell name ty
-let dent := {name, e} => derive_cell name e
+let ent := {name, ty} => proj_cell(name, ty)
+let dent := {name, e} => derive_cell(name, e)
 
 // ---- empty telescope = ⊤ (the empty meet of obligations = Top, = Tree). Guard-free:
 // a non-empty record telescope still rejects non-records via the proj cell's lookup_field,
 // but the EMPTY telescope imposes no obligations, so everything inhabits it. ----
-test typecheck (Telescope t) {} = Ok true             // a record inhabits {}
-test param_apply (Telescope t) zero = Ok true         // ...and so does a non-record (⊤, not "any record")
-test param_apply (Telescope t) ({x} => x) = Ok true   // ...and a function
-test tree_eq (param_apply (Telescope t) zero) (param_apply Tree zero) = true  // {} agrees with Tree
+test typecheck(Telescope(t), {}) = Ok(true)             // a record inhabits {}
+test param_apply(Telescope(t), zero) = Ok(true)         // ...and so does a non-record (⊤, not "any record")
+test param_apply(Telescope(t), {x} => x) = Ok(true)   // ...and a function
+test tree_eq(param_apply(Telescope(t), zero), param_apply(Tree, zero)) = true  // {} agrees with Tree
 
 // ---- non-dependent 2-entry telescope ----
-let T2 := Telescope (t (ent "a" Nat) ({_a} => t (ent "b" Bool) ({_b} => t)))
-test typecheck T2 { a := 2; b := true } = Ok true
-test param_apply T2 { a := 2; b := 2 } = Ok false // b not a Bool
-test param_apply T2 { b := true } = Ok false // missing field
-test param_apply T2 zero = Ok false
-test typecheck T2 { a := 2; b := true; c := 9 } = Ok true // width subtyping: extra fields ignored
+let T2 := Telescope(t(ent("a", Nat), {_a} => t(ent("b", Bool), {_b} => t)))
+test typecheck(T2, { a := 2; b := true }) = Ok(true)
+test param_apply(T2, { a := 2; b := 2 }) = Ok(false) // b not a Bool
+test param_apply(T2, { b := true }) = Ok(false) // missing field
+test param_apply(T2, zero) = Ok(false)
+test typecheck(T2, { a := 2; b := true; c := 9 }) = Ok(true) // width subtyping: extra fields ignored
 
 // ---- presence is required, even for PERMISSIVE field types. A missing field
 // used to be coerced to junk `t t`, which a top-like type (Tree/String) accepts;
 // the `at` walk observes a proj cell with the honest `lookup_field` (Ok value | Err),
 // not the total `field`, so absent fields are rejected regardless of the field's type
 // (the soundness fix the wait-form unification preserves). ----
-let TTop := Telescope (t (ent "a" Tree) ({_a} => t (ent "b" Bool) ({_b} => t)))
-test param_apply TTop { b := true } = Ok false          // missing a:Tree -> rejected (was Ok true)
-test typecheck TTop { a := zero; b := true } = Ok true // present -> accepted
-test lookup_field { a := zero; b := true } "a" = Ok zero
-test lookup_field { a := zero; b := true } "zzz" = Err // absent name -> Err
+let TTop := Telescope(t(ent("a", Tree), {_a} => t(ent("b", Bool), {_b} => t)))
+test param_apply(TTop, { b := true }) = Ok(false)          // missing a:Tree -> rejected (was Ok true)
+test typecheck(TTop, { a := zero; b := true }) = Ok(true) // present -> accepted
+test lookup_field({ a := zero; b := true }, "a") = Ok(zero)
+test lookup_field({ a := zero; b := true }, "zzz") = Err // absent name -> Err
 // the kernel's own structural records require all their fields too:
-test param_apply NeutralMeta { stored_type := Nat } = Ok false // missing payload:Spine
-test param_apply NeutralMeta { stored_type := Nat; payload := (inj "Mint" zero) } = Ok true
+test param_apply(NeutralMeta, { stored_type := Nat }) = Ok(false) // missing payload:Spine
+test param_apply(NeutralMeta, { stored_type := Nat; payload := (inj("Mint", zero)) }) = Ok(true)
 
 // ---- the H-rule: a Telescope-typed neutral inhabits its own type ----
-test param_apply T2 (make_hyp T2 0) = Ok true
+test param_apply(T2, make_hyp(T2, 0)) = Ok(true)
 
 // ---- Telescope is a Type (wait-form with MetaShape meta) ----
-test typecheck Type T2 = Ok true
+test typecheck(Type, T2) = Ok(true)
 
 // ---- dependent: { T : Type, x : T } (n-ary Sigma) ----
-let TDep := Telescope (t (ent "T" Type) ({T} => t (ent "x" T) ({_x} => t)))
-test typecheck TDep { T := Nat; x := 3 } = Ok true
-test typecheck TDep { T := Bool; x := false } = Ok true
-test param_apply TDep { T := Nat; x := false } = Ok false // x not a Nat
+let TDep := Telescope(t(ent("T", Type), {T} => t(ent("x", T), {_x} => t)))
+test typecheck(TDep, { T := Nat; x := 3 }) = Ok(true)
+test typecheck(TDep, { T := Bool; x := false }) = Ok(true)
+test param_apply(TDep, { T := Nat; x := false }) = Ok(false) // x not a Nat
 
 // ---- derived field: { a : Nat, b := double a } ----
-let TD := Telescope (t (ent "a" Nat) ({a} => t (dent "b" (double a)) ({_b} => t)))
-test typecheck TD { a := 2; b := 4 } = Ok true
-test param_apply TD { a := 2; b := 5 } = Ok false // lying derived field rejected (tree_eq pin)
-test param_apply TD { a := 3; b := 6 } = Ok true
+let TD := Telescope(t(ent("a", Nat), {a} => t(dent("b", double(a)), {_b} => t)))
+test typecheck(TD, { a := 2; b := 4 }) = Ok(true)
+test param_apply(TD, { a := 2; b := 5 }) = Ok(false) // lying derived field rejected (tree_eq pin)
+test param_apply(TD, { a := 3; b := 6 }) = Ok(true)
 
 // later OPAQUE type over a derived prior: { a : Nat, b := succ a, c : Eq Nat b (succ a) }
-let TDC := Telescope (t (ent "a" Nat) ({a} =>
-  t (dent "b" (succ a)) ({b} =>
-  t (ent "c" (Eq Nat b (succ a))) ({_c} => t))))
-test typecheck TDC { a := 1; b := 2; c := refl } = Ok true
-test param_apply TDC { a := 1; b := 3; c := refl } = Ok false // b pinned
+let TDC := Telescope(t(ent("a", Nat), {a} =>
+  t(dent("b", succ(a)), {b} =>
+  t(ent("c", Eq(Nat, b, succ(a))), {_c} => t))))
+test typecheck(TDC, { a := 1; b := 2; c := refl }) = Ok(true)
+test param_apply(TDC, { a := 1; b := 3; c := refl }) = Ok(false) // b pinned
 
 // ---- projection typing on a record-HYP (the respond) ----
-let hT2 := make_hyp T2 0
-let pa := param_apply hT2 (acc "a")
-test is_neutral pa = true
-test neutral_type pa = Nat
-test neutral_type (param_apply hT2 (acc "b")) = Bool
-test neutral_type (param_apply hT2 (acc "zzz")) = InvalidType // unknown field -> dead state
+let hT2 := make_hyp(T2, 0)
+let pa := param_apply(hT2, acc("a"))
+test is_neutral(pa) = true
+test neutral_type(pa) = Nat
+test neutral_type(param_apply(hT2, acc("b"))) = Bool
+test neutral_type(param_apply(hT2, acc("zzz"))) = InvalidType // unknown field -> dead state
 
 // dependent projection: x's type IS the T-projection neutral
-let hDep := make_hyp TDep 0
-let hT := param_apply hDep (acc "T")
-test neutral_type hT = Type
-test tree_eq (neutral_type (param_apply hDep (acc "x"))) hT = true
+let hDep := make_hyp(TDep, 0)
+let hT := param_apply(hDep, acc("T"))
+test neutral_type(hT) = Type
+test tree_eq(neutral_type(param_apply(hDep, acc("x"))), hT) = true
 
 // ---- derived projection on a hyp: δ-transparency (Reduce, not Extend) ----
 // constructor-only recipe (succ) is walker-safe: r.b unfolds to succ <a-neutral>
-let TS := Telescope (t (ent "a" Nat) ({a} => t (dent "b" (succ a)) ({_b} => t)))
-let hTS := make_hyp TS 0
-let vsa := param_apply hTS (acc "a")
-test tree_eq (param_apply hTS (acc "b")) (succ vsa) = true
+let TS := Telescope(t(ent("a", Nat), {a} => t(dent("b", succ(a)), {_b} => t)))
+let hTS := make_hyp(TS, 0)
+let vsa := param_apply(hTS, acc("a"))
+test tree_eq(param_apply(hTS, acc("b")), succ(vsa)) = true
 // the unfolded value is NOT itself a neutral (it's succ applied to one)
-test is_neutral (param_apply hTS (acc "b")) = false
+test is_neutral(param_apply(hTS, acc("b"))) = false
 
 // an ELIM-ROUTED recipe (double = add via nat_rec) δ-unfolds to a STUCK Nat
 // elimination over the a-projection — transparency composes with elim (§A).
-let hTD := make_hyp TD 0
-let pdb := param_apply hTD (acc "b")
-test is_neutral pdb = true
-test neutral_type pdb = Nat
+let hTD := make_hyp(TD, 0)
+let pdb := param_apply(hTD, acc("b"))
+test is_neutral(pdb) = true
+test neutral_type(pdb) = Nat
 
 // a RAW-TRIAGING recipe (pair_snd is unsanctioned) is policed into the dead
 // state when fed a neutral prior: same GAP-2 regime as a triaging Pi codomain.
-let TR := Telescope (t (ent "a" Nat) ({a} => t (dent "b" (pair_snd a)) ({_b} => t)))
-test neutral_type (param_apply (make_hyp TR 0) (acc "b")) = InvalidType
+let TR := Telescope(t(ent("a", Nat), {a} => t(dent("b", pair_snd(a)), {_b} => t)))
+test neutral_type(param_apply(make_hyp(TR, 0), acc("b"))) = InvalidType
 
 // an opaque entry whose TYPE raw-triages the prior-neutral: policed the same way
-let TBad := Telescope (t (ent "a" Nat) ({a} => t (ent "b" (pair_snd a)) ({_b} => t)))
-test neutral_type (param_apply (make_hyp TBad 0) (acc "b")) = InvalidType
+let TBad := Telescope(t(ent("a", Nat), {a} => t(ent("b", pair_snd(a)), {_b} => t)))
+test neutral_type(param_apply(make_hyp(TBad, 0), acc("b"))) = InvalidType
 // while a computed type over a CONCRETE record works fine
-let TIf := Telescope (t (ent "a" Nat) ({a} =>
-  t (ent "b" (if (is_zero a) then Nat else Bool)) ({_b} => t)))
-test typecheck TIf { a := 0; b := 3 } = Ok true
+let TIf := Telescope(t(ent("a", Nat), {a} =>
+  t(ent("b", if (is_zero(a)) then Nat else Bool), {_b} => t)))
+test typecheck(TIf, { a := 0; b := 3 }) = Ok(true)
 
 // ---- build: fill derived fields from the recipe, take opaque ones from `given` ----
-test build TD { a := 2 } = { a := 2; b := 4 }
-test typecheck TD (build TD { a := 2 }) = Ok true
-test build TDC { a := 1; c := refl } = { a := 1; b := 2; c := refl }
-test typecheck TDC (build TDC { a := 1; c := refl }) = Ok true
+test build(TD, { a := 2 }) = { a := 2; b := 4 }
+test typecheck(TD, build(TD, { a := 2 })) = Ok(true)
+test build(TDC, { a := 1; c := refl }) = { a := 1; b := 2; c := refl }
+test typecheck(TDC, build(TDC, { a := 1; c := refl })) = Ok(true)
 // build on an opaque-only telescope is the identity reshape
-test build T2 { a := 1; b := false } = { a := 1; b := false }
+test build(T2, { a := 1; b := false }) = { a := 1; b := false }
 
 // ---- a function over a telescope record: Pi (Telescope ...) — named args ----
-f : Arrow T2 Nat := {r} => succ (r.a)
+f : Arrow(T2, Nat) := {r} => succ(r.a)
 test f { a := 2; b := true } = 3
 // dependent domain end-to-end
-g : Arrow TDep Nat := {_r} => 0
+g : Arrow(TDep, Nat) := {_r} => 0
 test g { T := Bool; x := true } = 0
 
 // ==== surface syntax: a recType literal IS a telescope type ====
 
 // non-dependent literal = the same tree as the hand-built telescope
 let T2s := { a : Nat, b : Bool }
-test tree_eq T2s T2 = true
-test typecheck T2s { a := 2; b := true } = Ok true
+test tree_eq(T2s, T2) = true
+test typecheck(T2s, { a := 2; b := true }) = Ok(true)
 
 // dependent literal. NOTE: a dependent tail is a closure, so identity holds
 // per SPELLING (deterministic elaboration), not across different constructions
@@ -140,25 +140,25 @@ test typecheck T2s { a := 2; b := true } = Ok true
 // equal) tree; the literal is the canonical spelling.
 let TDeps := { T : Type, x : T }
 let TDeps2 := { T : Type, x : T }
-test tree_eq TDeps TDeps2 = true // same spelling -> same tree (hash-cons identity)
-test typecheck TDeps { T := Nat; x := 3 } = Ok true
+test tree_eq(TDeps, TDeps2) = true // same spelling -> same tree (hash-cons identity)
+test typecheck(TDeps, { T := Nat; x := 3 }) = Ok(true)
 
 // mixed literal with a DERIVED member (`name := recipe` inside a record type)
-let TDs := { a : Nat, b := double a }
-test typecheck TDs { a := 2; b := 4 } = Ok true
-test param_apply TDs { a := 2; b := 5 } = Ok false
-test build TDs { a := 3 } = { a := 3; b := 6 }
+let TDs := { a : Nat, b := double(a) }
+test typecheck(TDs, { a := 2; b := 4 }) = Ok(true)
+test param_apply(TDs, { a := 2; b := 5 }) = Ok(false)
+test build(TDs, { a := 3 }) = { a := 3; b := 6 }
 
 // typed derived member + later field over it
-let TDCs := { a : Nat, b : Nat := succ a, c : Eq Nat b (succ a) }
-test typecheck TDCs (build TDCs { a := 1; c := refl }) = Ok true
+let TDCs := { a : Nat, b : Nat := succ(a), c : Eq(Nat, b, succ(a)) }
+test typecheck(TDCs, build(TDCs, { a := 1; c := refl })) = Ok(true)
 
 // the headline: named-argument calls over a dependent record domain
-add_fields : Arrow { a : Nat, b : Nat } Nat := {r} => add r.a r.b
+add_fields : Arrow({ a : Nat, b : Nat }, Nat) := {r} => add(r.a, r.b)
 test add_fields { a := 1; b := 2 } = 3
 // with a derived field filled by build
-scale : Arrow { n : Nat, twice := double n } Nat := {r} => r.twice
-test scale (build { n : Nat, twice := double n } { n := 5 }) = 10
+scale : Arrow({ n : Nat, twice := double(n) }, Nat) := {r} => r.twice
+test scale(build({ n : Nat, twice := double(n) }, { n := 5 })) = 10
 
 // binder-param recType annotation gives projections AND the real type
 let getb := {r : { a : Nat, b : Bool }} => r.b

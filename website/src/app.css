@@ -167,6 +167,8 @@
   --bg-l: calc(var(--bgl-l) + (var(--bgl-d) - var(--bgl-l)) * var(--mix-w));
   --mix-r: calc((var(--bg-l) - 0.5) / (var(--bgl-l) - 0.5));
   --mix-rd: calc((0.5 - var(--bg-l)) / (0.5 - var(--bgl-d)));
+  /* the dark inks below write 1 - r + l * r, not 1 - (1 - l) * r: at exactly r = 1,
+     Chromium 148 resolves the shorter form to black */
   /* the inks cross polarity over a band around the middle, eased, so a
      blend never jumps; inside the band contrast dips, to nothing at 0.5 */
   --mix-k0: clamp(0, calc((var(--mix) - 0.36) / 0.28), 1);
@@ -182,91 +184,91 @@
   --border-strong: color-mix(in oklab, var(--l-border-strong) calc(100% - var(--mix-w) * 100%), var(--d-border-strong));
   --fg: color-mix(in oklab,
     oklch(from var(--l-fg) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-fg) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+    oklch(from var(--d-fg) clamp(0, calc(1 - (var(--mix-rd)) + l * (var(--mix-rd))), 1) c h));
   --fg-muted: color-mix(in oklab,
     oklch(from var(--l-fg-muted) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-fg-muted) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+    oklch(from var(--d-fg-muted) clamp(0, calc(1 - (var(--mix-rd)) + l * (var(--mix-rd))), 1) c h));
   --fg-faint: color-mix(in oklab,
     oklch(from var(--l-fg-faint) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-fg-faint) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+    oklch(from var(--d-fg-faint) clamp(0, calc(1 - (var(--mix-rd)) + l * (var(--mix-rd))), 1) c h));
   --g1: color-mix(in oklab,
     oklch(from var(--l-g1) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-g1) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-g1) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --g2: color-mix(in oklab,
     oklch(from var(--l-g2) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-g2) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-g2) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --g3: color-mix(in oklab,
     oklch(from var(--l-g3) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-g3) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-g3) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --g4: color-mix(in oklab,
     oklch(from var(--l-g4) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-g4) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-g4) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --accent: color-mix(in oklab,
     oklch(from var(--l-accent) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-accent) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-accent) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --accent-2: color-mix(in oklab,
     oklch(from var(--l-accent-2) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-accent-2) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-accent-2) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --ok: color-mix(in oklab,
     oklch(from var(--l-ok) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-ok) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-ok) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --err: color-mix(in oklab,
     oklch(from var(--l-err) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-err) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-err) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --warn: color-mix(in oklab,
     oklch(from var(--l-warn) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-warn) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-warn) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --bark: color-mix(in oklab,
     oklch(from var(--l-bark) clamp(0, calc(l * (0.35 + 0.65 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-bark) clamp(0, calc(1 - (1 - l) * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-bark) clamp(0, calc(1 - (0.35 + 0.65 * var(--mix-rd)) + l * (0.35 + 0.65 * var(--mix-rd))), 1) c h));
   --blossom: color-mix(in oklab,
     oklch(from var(--l-blossom) clamp(0, calc(l * (0.5 + 0.5 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-blossom) clamp(0, calc(1 - (1 - l) * (0.5 + 0.5 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-blossom) clamp(0, calc(1 - (0.5 + 0.5 * var(--mix-rd)) + l * (0.5 + 0.5 * var(--mix-rd))), 1) c h));
   --bg-hi: color-mix(in oklab, var(--l-bg-hi) calc(100% - var(--mix-w) * 100%), var(--d-bg-hi));
   --hl-comment: color-mix(in oklab,
     oklch(from var(--l-hl-comment) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-comment) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-comment) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-string: color-mix(in oklab,
     oklch(from var(--l-hl-string) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-string) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-string) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-number: color-mix(in oklab,
     oklch(from var(--l-hl-number) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-number) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-number) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-kw: color-mix(in oklab,
     oklch(from var(--l-hl-kw) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-kw) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-kw) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-op: color-mix(in oklab,
     oklch(from var(--l-hl-op) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-op) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-op) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-punct: color-mix(in oklab,
     oklch(from var(--l-hl-punct) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-punct) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-punct) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-atom: color-mix(in oklab,
     oklch(from var(--l-hl-atom) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-atom) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-atom) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-type: color-mix(in oklab,
     oklch(from var(--l-hl-type) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-type) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-type) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-fn: color-mix(in oklab,
     oklch(from var(--l-hl-fn) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-fn) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-fn) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --hl-var: color-mix(in oklab,
     oklch(from var(--l-hl-var) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-hl-var) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-hl-var) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --ed-gutter: color-mix(in oklab,
     oklch(from var(--l-ed-gutter) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-ed-gutter) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+    oklch(from var(--d-ed-gutter) clamp(0, calc(1 - (var(--mix-rd)) + l * (var(--mix-rd))), 1) c h));
   --ed-line: color-mix(in oklab, var(--l-ed-line) calc(100% - var(--mix-w) * 100%), var(--d-ed-line));
   --ed-line-gutter: color-mix(in oklab, var(--l-ed-line-gutter) calc(100% - var(--mix-w) * 100%), var(--d-ed-line-gutter));
   --ed-sel: color-mix(in oklab, var(--l-ed-sel) calc(100% - var(--mix-w) * 100%), var(--d-ed-sel));
   --ed-out-fg: color-mix(in oklab,
     oklch(from var(--l-ed-out-fg) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-ed-out-fg) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+    oklch(from var(--d-ed-out-fg) clamp(0, calc(1 - (var(--mix-rd)) + l * (var(--mix-rd))), 1) c h));
   --ed-out-bg: color-mix(in oklab, var(--l-ed-out-bg) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-bg));
   --ed-out-rule: color-mix(in oklab, var(--l-ed-out-rule) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-rule));
   --ed-out-fail-fg: color-mix(in oklab,
     oklch(from var(--l-ed-out-fail-fg) clamp(0, calc(l * (0.25 + 0.75 * var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-ed-out-fail-fg) clamp(0, calc(1 - (1 - l) * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
+    oklch(from var(--d-ed-out-fail-fg) clamp(0, calc(1 - (0.25 + 0.75 * var(--mix-rd)) + l * (0.25 + 0.75 * var(--mix-rd))), 1) c h));
   --ed-out-fail-bg: color-mix(in oklab, var(--l-ed-out-fail-bg) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-fail-bg));
   --ed-out-fail-rule: color-mix(in oklab, var(--l-ed-out-fail-rule) calc(100% - var(--mix-w) * 100%), var(--d-ed-out-fail-rule));
   --ed-chip: color-mix(in oklab, var(--l-ed-chip) calc(100% - var(--mix-w) * 100%), var(--d-ed-chip));
@@ -470,7 +472,7 @@ pre {
   --mix-gamma: 0.7212;
   --link-visited: color-mix(in oklab,
     oklch(from var(--l-link-visited) clamp(0, calc(l * (var(--mix-r))), 1) c h) calc(100% - var(--mix-k) * 100%),
-    oklch(from var(--d-link-visited) clamp(0, calc(1 - (1 - l) * (var(--mix-rd))), 1) c h));
+    oklch(from var(--d-link-visited) clamp(0, calc(1 - (var(--mix-rd)) + l * (var(--mix-rd))), 1) c h));
 }
 
 

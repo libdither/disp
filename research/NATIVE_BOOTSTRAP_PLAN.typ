@@ -161,7 +161,7 @@ honestly typed.
 The native boundary should therefore use an explicit type such as:
 
 ```text
-SourceText := List Nat
+SourceText := List(Nat)
 SourceChunk := { id : ChunkId, text : SourceText, digest : Digest }
 ```
 

@@ -13,16 +13,16 @@ import { parseProgram } from "../src/compile.js"
 const src = `open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
 open use raw "../machine.disp" {}
-rec add :: {a : Nat, b : Nat} -> Nat :=> if (is_zero a) { b } else { succ (add (nat_pred a) b) }
-rec NatR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else if (is_fork v) { if (is_leaf v.fst) { NatR v.snd } else { false } } else { false }
-rec LoopR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { LoopR v }
-discard := {x} => ({_y} => 1) (LoopR x)
-add2 := add 2
+rec add :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { b } else { succ(add(nat_pred(a), b)) }
+rec NatR :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatR(v.snd) } else { false } } else { false }
+rec LoopR :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else { LoopR(v) }
+discard := {x} => ({_y} => 1)(LoopR(x))
+add2 := add(2)
 n0 := 0
 n1 := 1
 n2 := 2
 n3 := 3
-stem1 := t (t t)
+stem1 := t(t(t))
 // the root's decls carry only its own definitions, so name what the test reads
 h_succ := succ
 h_m_start := m_start

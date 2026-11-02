@@ -17,10 +17,10 @@ open use raw "../list.disp" {}
 
 // Is this tree a Nat? A data type is a recognizer you can just run.
 rec NatR :: {v : Tree} -> Bool :=>
-	if (is_zero v) { true }
-	else { (v == succ (nat_pred v)) && NatR (nat_pred v) }
-test NatR 3 = true
-test NatR false = false
+	if (is_zero(v)) { true }
+	else { (v == succ(nat_pred(v))) && NatR(nat_pred(v)) }
+test NatR(3) = true
+test NatR(false) = false
 // But "g maps Nat to Nat" means "for EVERY n, g n is a Nat". No run ever finishes that.
 
 // ---- 2. Claims: pull the "for every" out into a challenge
@@ -30,28 +30,28 @@ test NatR false = false
 
 // "g : Nat -> Nat", tested at one input x. Non-Nat inputs pass trivially.
 nat_fn :: {g : Tree, x : Tree} -> Bool :=>
-	if (NatR x) { NatR (g x) }
+	if (NatR(x)) { NatR(g(x)) }
 	else { true }
 // "w : Nat". Data needs no challenge, so it is ignored.
-is_nat :: {w : Tree, _c : Tree} -> Bool :=> NatR w
-test nat_fn succ 7 = true
-test nat_fn ({_n} => false) 7 = false
+is_nat :: {w : Tree, _c : Tree} -> Bool :=> NatR(w)
+test nat_fn(succ, 7) = true
+test nat_fn({_n} => false, 7) = false
 
 // ---- 3. Checking a claim against a list of challenges
 // The honest move is to hunt for a failing challenge. Finding one is a real refutation
 // (it re-runs). Running out of a FINITE list proves only that list.
 
 // The verdict for a challenge that failed.
-refuted :: {c : Tree} -> Verdict :=> pair "Refuted" c
+refuted :: {c : Tree} -> Verdict :=> pair("Refuted", c)
 // Try w against each listed challenge: the first failure refutes, running out says "Proved".
-rec check_on :: {claim : Claim, w : Wit claim, cs : List (Chal claim)} -> Verdict :=>
-	if (is_nil cs) { "Proved" }
-	else if (claim w cs.head) { check_on claim w cs.tail }
-	else { refuted cs.head }
+rec check_on :: {claim : Claim, w : Wit(claim), cs : List(Chal(claim))} -> Verdict :=>
+	if (is_nil(cs)) { "Proved" }
+	else if (claim(w, cs.head)) { check_on(claim, w, cs.tail) }
+	else { refuted(cs.head) }
 // A few small trees and numbers to test against.
-samples :: List Tree := [t, t t, t t t, t (t t), 0, 1, 2, 3, 4, 5, 9]
-test check_on nat_fn succ samples = "Proved"
-test check_on nat_fn ({n} => if (n == 3) { false } else { n }) samples = refuted 3
+samples :: List(Tree) := [t, t(t), t(t, t), t(t(t)), 0, 1, 2, 3, 4, 5, 9]
+test check_on(nat_fn, succ, samples) = "Proved"
+test check_on(nat_fn, {n} => if (n == 3) { false } else { n }, samples) = refuted(3)
 // "Proved" on samples is NOT a proof for all trees. The rest of this file is about
 // when a finite list is enough.
 
@@ -60,41 +60,41 @@ test check_on nat_fn ({n} => if (n == 3) { false } else { n }) samples = refuted
 // lenses chain (section 7), so in general they are just a source A and a target B.
 
 // A lens from claim A to claim B carries A's witnesses forward and B's challenges BACK.
-lens :: {fwd : Wit A -> Wit B, back : Wit A -> Chal B -> Chal A} -> Lens A B :=> pair fwd back
+lens :: {fwd : Wit(A) -> Wit(B), back : Wit(A) -> Chal(B) -> Chal(A)} -> Lens(A, B) :=> pair(fwd, back)
 // Forward map: a witness of A becomes a witness of B.
-fwd :: {l : Lens A B} -> Wit A -> Wit B :=> l.fst
+fwd :: {l : Lens(A, B)} -> Wit(A) -> Wit(B) :=> l.fst
 // Backward map: given A's witness, a challenge to B becomes a challenge to A.
-back :: {l : Lens A B} -> Wit A -> Chal B -> Chal A :=> l.snd
+back :: {l : Lens(A, B)} -> Wit(A) -> Chal(B) -> Chal(A) :=> l.snd
 // The lens law, itself a claim: if A passes the pulled-back challenge, B passes the
 // original. Read backwards: every counterexample to B pulls back to one for A.
 // Dot notation puts the lens first: `l.holds A B` is `holds l A B`, `l.fwd w` is `fwd l w`.
-holds :: {l : Lens A B, A : Claim, B : Claim} -> {w : Wit A, d : Chal B} -> Bool :=>
-	if (A w (l.back w d)) { B (l.fwd w) d }
+holds :: {l : Lens(A, B), A : Claim, B : Claim} -> {w : Wit(A), d : Chal(B)} -> Bool :=>
+	if (A(w, l.back(w, d))) { B(l.fwd(w), d) }
 	else { true }
 
 // Is this tree a Bool? true is the leaf t, false is t t; nothing else is a Bool.
-Bool :: {x : Tree} -> Bool :=> triage true is_leaf ({_l, _r} => false) x
+Bool :: {x : Tree} -> Bool :=> triage(true, is_leaf, {_l, _r} => false, x)
 // "v : Bool -> Bool", tested at one input x.
 bool_fn :: {v : Tree, x : Tree} -> Bool :=>
-	if (Bool x) { Bool (v x) }
+	if (Bool(x)) { Bool(v(x)) }
 	else { true }
 // Every tree goes to a listed challenge (true or false) that fails whenever it does:
 // a Bool maps to itself, and a non-Bool can't fail, so it maps anywhere.
-cover :: Lens bool_fn bool_fn := lens
-	({w} => w)
-	({_w, x} => if (Bool x) { x } else { true })
-test check_on (cover.holds bool_fn bool_fn) not samples = "Proved"
+cover :: Lens(bool_fn, bool_fn) := lens(
+	{w} => w,
+	{_w, x} => if (Bool(x)) { x } else { true })
+test check_on(cover.holds(bool_fn, bool_fn), not, samples) = "Proved"
 // A cover that sends everything to `true` is wrong, and the law catches it.
-bad_cover :: Lens bool_fn bool_fn := lens ({w} => w) ({_w, _x} => true)
+bad_cover :: Lens(bool_fn, bool_fn) := lens({w} => w, {_w, _x} => true)
 // Bool -> Bool except at false, where it returns a non-Bool.
 half :: {x : Tree} -> Tree :=>
 	if (x) { true }
-	else { pair x x }
-test check_on (bad_cover.holds bool_fn bool_fn) half samples = refuted false
+	else { pair(x, x) }
+test check_on(bad_cover.holds(bool_fn, bool_fn), half, samples) = refuted(false)
 
 // ---- 5. A certificate = a finite list + a lens whose law you trust
 // Check the two listed challenges; IF cover's law holds, `not` passes every tree.
-test check_on bool_fn not [true, false] = "Proved"
+test check_on(bool_fn, not, [true, false]) = "Proved"
 // The catch: cover's law is a claim over all trees too. Checking it on samples
 // only ever refutes or says "fine so far". Trust has to come from a proof of the law.
 // For cover that proof is two lines: a Bool challenge maps to itself; a non-Bool
@@ -106,73 +106,73 @@ test check_on bool_fn not [true, false] = "Proved"
 
 // The claim for A -> B. Witness: a lens (f, F) from A to B. Challenge: (u, y), a witness
 // of A and a challenge of B. Check: if u passes A at F u y, then f u must pass B at y.
-implies :: {A : Claim, B : Claim} -> {fF : Lens A B, uy : Pair (Wit A) (Chal B)} -> Bool :=> {
+implies :: {A : Claim, B : Claim} -> {fF : Lens(A, B), uy : Pair(Wit(A), Chal(B))} -> Bool :=> {
 	let u := uy.fst
 	let y := uy.snd
-	if (A u (fF.back u y)) { B (fF.fwd u) y }
+	if (A(u, fF.back(u, y))) { B(fF.fwd(u), y) }
 	else { true }
 }
 // The claim for (Nat -> Nat) -> Nat.
-NF :: {fF : Lens nat_fn is_nat, uy : Pair Tree Tree} -> Bool := implies nat_fn is_nat
+NF :: {fF : Lens(nat_fn, is_nat), uy : Pair(Tree, Tree)} -> Bool := implies(nat_fn, is_nat)
 // Test functions g, each paired with the (unused) Nat challenge t.
-gs :: List (Chal NF) := [
+gs :: List(Chal(NF)) := [
 	succ,
 	({n} => n),
 	({n} => if (n == 0) { 5 } else { false }),
 	({_n} => false)
-].map({g} => pair g t)
+].map({g} => pair(g, t))
 // "apply g at 3", and F says honestly that only 3 mattered.
-test check_on NF (lens ({g} => g 3) ({_g, _y} => 3)) gs = "Proved"
+test check_on(NF, lens({g} => g(3), {_g, _y} => 3), gs) = "Proved"
 
 // Apply g twice: the result depends on g at two points.
-twice :: {g : Tree} -> Tree :=> g (g 0)
+twice :: {g : Tree} -> Tree :=> g(g(0))
 // One challenge isn't enough...
-test check_on NF (lens twice ({_g, _y} => 0)) gs = refuted (pair ({n} => if (n == 0) { 5 } else { false }) t)
+test check_on(NF, lens(twice, {_g, _y} => 0), gs) = refuted(pair({n} => if (n == 0) { 5 } else { false }, t))
 // ...so F runs a check and sends back the point that would fail. Copying costs a decision.
-test check_on NF (lens twice ({g, _y} => if (NatR (g 0)) { g 0 } else { 0 })) gs = "Proved"
+test check_on(NF, lens(twice, {g, _y} => if (NatR(g(0))) { g(0) } else { 0 }), gs) = "Proved"
 
 // ---- 7. Typing rules are lenses too
 
 // Paired product A x B: one challenge for each side, checked together.
-prod :: {A : Claim, B : Claim} -> {ab : Pair (Wit A) (Wit B), de : Pair (Chal A) (Chal B)} -> Bool :=>
-	(A ab.fst de.fst) && (B ab.snd de.snd)
+prod :: {A : Claim, B : Claim} -> {ab : Pair(Wit(A), Wit(B)), de : Pair(Chal(A), Chal(B))} -> Bool :=>
+	(A(ab.fst, de.fst)) && (B(ab.snd, de.snd))
 // Application, from ((f, F), a) to f a. A result challenge y pulls back to
 // the function's challenge (a, y) and the argument's challenge F a y.
-app :: Lens (prod NF nat_fn) is_nat := lens
-	({w} => w.fst.fwd w.snd)
-	({w, y} => pair (pair w.snd y) (w.fst.back w.snd y))
+app :: Lens(prod(NF, nat_fn), is_nat) := lens(
+	{w} => w.fst.fwd(w.snd),
+	{w, y} => pair(pair(w.snd, y), w.fst.back(w.snd, y)))
 // app's law, between the claims for ((Nat -> Nat) -> Nat) x (Nat -> Nat) and Nat.
-app_law :: {w : Wit (prod NF nat_fn), d : Chal is_nat} -> Bool := app.holds (prod NF nat_fn) is_nat
+app_law :: {w : Wit(prod(NF, nat_fn)), d : Chal(is_nat)} -> Bool := app.holds(prod(NF, nat_fn), is_nat)
 // A witness of (Nat -> Nat) -> Nat that applies g at 3 and says so.
-at3 :: Lens nat_fn is_nat := lens ({g} => g 3) ({_g, _y} => 3)
+at3 :: Lens(nat_fn, is_nat) := lens({g} => g(3), {_g, _y} => 3)
 // A bad witness: applies g at 3 but claims it used 4.
-liar :: Lens nat_fn is_nat := lens ({g} => g 3) ({_g, _y} => 4)
+liar :: Lens(nat_fn, is_nat) := lens({g} => g(3), {_g, _y} => 4)
 // Nat -> Nat everywhere except 3.
 a_bad :: {n : Tree} -> Tree :=>
 	if (n == 3) { false }
 	else { n }
 // Witnesses for app: (function witness, argument) pairs.
-apps :: List (Wit (prod NF nat_fn)) := [pair at3 succ, pair at3 a_bad, pair liar succ, pair liar a_bad]
+apps :: List(Wit(prod(NF, nat_fn))) := [pair(at3, succ), pair(at3, a_bad), pair(liar, succ), pair(liar, a_bad)]
 // Check a law at each listed witness (the law's own challenge here is the dummy t).
-law_on :: {law : Claim, wys : List (Wit law)} -> Verdict :=>
-	check_on ({_w, wy} => law wy.fst wy.snd) t (wys.map({w} => pair w t))
-test law_on app_law apps = "Proved" // the law is about the rule, so even the liar can't break it
+law_on :: {law : Claim, wys : List(Wit(law))} -> Verdict :=>
+	check_on({_w, wy} => law(wy.fst, wy.snd), t, wys.map({w} => pair(w, t)))
+test law_on(app_law, apps) = "Proved" // the law is about the rule, so even the liar can't break it
 // A broken rule that sends back challenge 4 instead of F a y.
-app_bad :: Lens (prod NF nat_fn) is_nat := lens
-	({w} => w.fst.fwd w.snd)
-	({w, y} => pair (pair w.snd y) 4)
-test law_on (app_bad.holds (prod NF nat_fn) is_nat) apps = refuted (pair (pair at3 a_bad) t)
+app_bad :: Lens(prod(NF, nat_fn), is_nat) := lens(
+	{w} => w.fst.fwd(w.snd),
+	{w, y} => pair(pair(w.snd, y), 4))
+test law_on(app_bad.holds(prod(NF, nat_fn), is_nat), apps) = refuted(pair(pair(at3, a_bad), t))
 // By hand, app's law is a tautology: (if P then Q else true) and P  implies  Q.
 // That hand proof is where the trust comes from, not the samples.
 
 // Composition: run l then m forward; pull a challenge back through m, then l.
 // Its law follows from theirs (derived, nothing new trusted).
-chain :: {l : Lens A B, m : Lens B C} -> Lens A C :=> lens
-	({w} => m.fwd (l.fwd w))
-	({w, e} => l.back w (m.back (l.fwd w) e))
+chain :: {l : Lens(A, B), m : Lens(B, C)} -> Lens(A, C) :=> lens(
+	{w} => m.fwd(l.fwd(w)),
+	{w, e} => l.back(w, m.back(l.fwd(w), e)))
 // Bool -> Bool to Bool -> Bool: post-compose with `not`; a challenge comes back unchanged.
-not_after :: Lens bool_fn bool_fn := lens ({v} => {x} => not (v x)) ({_v, x} => x)
-test check_on ((cover.chain not_after).holds bool_fn bool_fn) not samples = "Proved"
+not_after :: Lens(bool_fn, bool_fn) := lens({v} => {x} => not(v(x)), {_v, x} => x)
+test check_on((cover.chain(not_after)).holds(bool_fn, bool_fn), not, samples) = "Proved"
 
 // ---- 8. Verdicts that say what they trusted
 // A certificate is a finite check plus the lens laws it leans on. Instead of a bare
@@ -182,12 +182,12 @@ test check_on ((cover.chain not_after).holds bool_fn bool_fn) not samples = "Pro
 // Justified outside disp: a hand proof, or a stronger system.
 by_hand :: Basis := "hand"
 // Checked on a finite list of (witness, challenge) cases: no counterexample, no proof.
-sampled :: {cases : List (Pair (Wit law) (Chal law))} -> Basis :=> pair "sampled" cases
+sampled :: {cases : List(Pair(Wit(law), Chal(law)))} -> Basis :=> pair("sampled", cases)
 // Justified by another certificate, which brings its own assumptions along.
-by_cert :: {uses : List Assumption} -> Basis :=> pair "cert" uses
+by_cert :: {uses : List(Assumption)} -> Basis :=> pair("cert", uses)
 
 // An assumed law: a name, the law itself (a claim), and how it is justified.
-assume :: {name : String, law : Claim, basis : Basis} -> Assumption :=> pair name (pair law basis)
+assume :: {name : String, law : Claim, basis : Basis} -> Assumption :=> pair(name, pair(law, basis))
 name :: {a : Assumption} -> String :=> a.fst
 law :: {a : Assumption} -> Claim :=> a.snd.fst
 basis :: {a : Assumption} -> Basis :=> a.snd.snd
@@ -201,47 +201,47 @@ weaker :: {s : Standing, r : Standing} -> Standing :=>
 	else { "hand" }
 // What an assumption is worth. `seen` holds the names already being justified on the
 // way here: meeting one again means a law is propping itself up.
-rec standing :: {seen : List String, a : Assumption} -> Standing :=>
+rec standing :: {seen : List(String), a : Assumption} -> Standing :=>
 	if (seen.member(a.name)) { "circular" }
 	else if (a.basis == "hand") { "hand" }
 	else if (a.basis.fst == "sampled") {
-		let v := check_on ({_w, wd} => a.law wd.fst wd.snd) t a.basis.snd
+		let v := check_on({_w, wd} => a.law(wd.fst, wd.snd), t, a.basis.snd)
 		if (v == "Proved") { "sampled" } else { v }
 	}
-	else { reduce weaker "hand" (a.basis.snd.map(standing (cons a.name seen))) }
+	else { reduce(weaker, "hand", a.basis.snd.map(standing(cons(a.name, seen)))) }
 // Every law an assumption rests on, its own name first.
-rec trusted :: {a : Assumption} -> List String :=>
-	if (a.basis.fst == "cert") { cons a.name (a.basis.snd.map(trusted).concat) }
+rec trusted :: {a : Assumption} -> List(String) :=>
+	if (a.basis.fst == "cert") { cons(a.name, a.basis.snd.map(trusted).concat) }
 	else { [a.name] }
 
 // The verdict: the finite check first, then the weakest assumption, naming every law used.
-certify :: {check : Verdict, uses : List Assumption} -> Verdict :=> {
-	let s := reduce weaker "hand" (uses.map(standing []))
+certify :: {check : Verdict, uses : List(Assumption)} -> Verdict :=> {
+	let s := reduce(weaker, "hand", uses.map(standing([])))
 	let names := (uses.map(trusted).concat).dedup
-	if (not (check == "Proved")) { check }
-	else if (s.fst == "Refuted") { pair "law broken" s.snd }
-	else if (s == "circular") { pair "Open: circular" names }
-	else if (s == "sampled") { pair "Plausible given" names }
-	else { pair "Proved given" names }
+	if (not(check == "Proved")) { check }
+	else if (s.fst == "Refuted") { pair("law broken", s.snd) }
+	else if (s == "circular") { pair("Open: circular", names) }
+	else if (s == "sampled") { pair("Plausible given", names) }
+	else { pair("Proved given", names) }
 }
 
 // Section 5's certificate for `not`, with cover's law proved by hand.
-cover_law :: {w : Tree, d : Tree} -> Bool := cover.holds bool_fn bool_fn
-cover_hand :: Assumption := assume "cover" cover_law by_hand
-test certify (check_on bool_fn not [true, false]) [cover_hand] = pair "Proved given" ["cover"]
+cover_law :: {w : Tree, d : Tree} -> Bool := cover.holds(bool_fn, bool_fn)
+cover_hand :: Assumption := assume("cover", cover_law, by_hand)
+test certify(check_on(bool_fn, not, [true, false]), [cover_hand]) = pair("Proved given", ["cover"])
 // The same law only sampled: no counterexample among the cases, so merely plausible.
-law_cases :: List (Pair Tree Tree) := cross [not, half, ({x} => x)] samples pair
-test certify (check_on bool_fn not [true, false]) [assume "cover" cover_law (sampled law_cases)] = pair "Plausible given" ["cover"]
+law_cases :: List(Pair(Tree, Tree)) := cross([not, half, ({x} => x)], samples, pair)
+test certify(check_on(bool_fn, not, [true, false]), [assume("cover", cover_law, sampled(law_cases))]) = pair("Plausible given", ["cover"])
 // Sampling the WRONG cover finds the counterexample to its law, and the certificate falls.
-test certify (check_on bool_fn not [true, false]) [assume "bad_cover" (bad_cover.holds bool_fn bool_fn) (sampled law_cases)] = pair "law broken" (pair half false)
+test certify(check_on(bool_fn, not, [true, false]), [assume("bad_cover", bad_cover.holds(bool_fn, bool_fn), sampled(law_cases))]) = pair("law broken", pair(half, false))
 // A chained lens's law, justified by a certificate built from its parts' laws.
 // Its verdict lists the parts too: deriving adds no trust, but hides none either.
-not_after_hand :: Assumption := assume "not_after" (not_after.holds bool_fn bool_fn) by_hand
-chained :: Assumption := assume "chained" ((cover.chain not_after).holds bool_fn bool_fn) (by_cert [cover_hand, not_after_hand])
-test certify (check_on bool_fn not [true, false]) [chained] = pair "Proved given" ["chained", "cover", "not_after"]
+not_after_hand :: Assumption := assume("not_after", not_after.holds(bool_fn, bool_fn), by_hand)
+chained :: Assumption := assume("chained", (cover.chain(not_after)).holds(bool_fn, bool_fn), by_cert([cover_hand, not_after_hand]))
+test certify(check_on(bool_fn, not, [true, false]), [chained]) = pair("Proved given", ["chained", "cover", "not_after"])
 // Cover's law justified by a certificate that itself assumes cover's law: Löb's trap, caught.
-cover_by_self :: Assumption := assume "cover" cover_law (by_cert [cover_hand])
-test certify (check_on bool_fn not [true, false]) [cover_by_self] = pair "Open: circular" ["cover"]
+cover_by_self :: Assumption := assume("cover", cover_law, by_cert([cover_hand]))
+test certify(check_on(bool_fn, not, [true, false]), [cover_by_self]) = pair("Open: circular", ["cover"])
 
 // ---- 9. Why the rules can't vouch for themselves (Löb)
 // Every law above was checked here only on samples: search can refute a law, never prove it.

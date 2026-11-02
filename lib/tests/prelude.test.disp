@@ -1,32 +1,32 @@
 open use raw "../prelude.disp" {}
 
 // select (eager if-then-else)
-test select (t t) (t (t t) t) true = t t
-test select (t t) (t (t t) t) false = t (t t) t
+test select(t(t), t(t(t), t), true) = t(t)
+test select(t(t), t(t(t), t), false) = t(t(t), t)
 
 // pair accessors
-test pair_fst (t (t t) t) = t t
-test pair_snd (t (t t) t) = t
+test pair_fst(t(t(t), t)) = t(t)
+test pair_snd(t(t(t), t)) = t
 
 // wait + fix
-test wait ({x, y} => x) t (t t) = t
+test wait({x, y} => x, t, t(t)) = t
 
-let countdown := fix ({self, n} => triage t ({c} => self c) ({l, r} => self r) n)
-test countdown t = t
-test countdown (t t t) = t
-test countdown (t t (t t t)) = t
+let countdown := fix({self, n} => triage(t, {c} => self(c), {l, r} => self(r), n))
+test countdown(t) = t
+test countdown(t(t, t)) = t
+test countdown(t(t, t(t, t))) = t
 
 // is_fork
-test is_fork t = false
-test is_fork (t t) = false
-test is_fork (t t t) = true
+test is_fork(t) = false
+test is_fork(t(t)) = false
+test is_fork(t(t, t)) = true
 
 // nat_le / nat_lt
-test nat_le 0 0 = true
-test nat_le 0 3 = true
-test nat_le 1 0 = false
-test nat_le 2 3 = true
-test nat_le 2 1 = false
-test nat_lt 0 1 = true
-test nat_lt 0 0 = false
-test nat_lt 1 2 = true
+test nat_le(0, 0) = true
+test nat_le(0, 3) = true
+test nat_le(1, 0) = false
+test nat_le(2, 3) = true
+test nat_le(2, 1) = false
+test nat_lt(0, 1) = true
+test nat_lt(0, 0) = false
+test nat_lt(1, 2) = true

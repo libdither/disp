@@ -61,7 +61,7 @@ const shardSpec = process.env.DISP_TEST_SHARD
 const shardMatch = shardSpec?.match(/^(\d+)\/(\d+)$/)
 if (shardSpec && !shardMatch) throw new Error(`DISP_TEST_SHARD must be i/n (got '${shardSpec}')`)
 const [shardIdx, shardCount] = shardMatch ? [Number(shardMatch[1]), Number(shardMatch[2])] : [1, 1]
-if (shardIdx < 1 || shardIdx > shardCount) throw new Error(`DISP_TEST_SHARD out of range: ${shardSpec}`)
+if (shardIdx < 1 || shardIdx > shardCount) throw new Error(`DISP_TEST_SHARD(out, of) range: ${shardSpec}`)
 const testFiles = findTestFiles(testsDir).sort().filter((_, i) => i % shardCount === shardIdx - 1)
 
 // --- Persistent reduction cache (rust-eager-native snapshots). ---

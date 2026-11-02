@@ -160,9 +160,9 @@ describe("apply (tree calculus execution)", () => {
 describe("prettyTree", () => {
   it("prints trees", () => {
     expect(prettyTree(LEAF)).toBe("△")
-    expect(prettyTree(stem(LEAF))).toBe("(△ △)")
-    expect(prettyTree(fork(LEAF, LEAF))).toBe("(△ △ △)")
-    expect(prettyTree(fork(stem(LEAF), fork(LEAF, LEAF)))).toBe("(△ (△ △) (△ △ △))")
+    expect(prettyTree(stem(LEAF))).toBe("△(△)")
+    expect(prettyTree(fork(LEAF, LEAF))).toBe("△(△, △)")
+    expect(prettyTree(fork(stem(LEAF), fork(LEAF, LEAF)))).toBe("△(△(△), △(△, △))")
   })
 
   it("greedily substitutes names top-down, descending only unnamed structure", () => {
@@ -175,9 +175,9 @@ describe("prettyTree", () => {
     // largest match wins: the whole tree is named, no descent
     expect(prettyTree(two, names)).toBe("two")
     // unnamed parent descends; named children (the leaves) substitute
-    expect(prettyTree(stem(zero), names)).toBe("(△ zero)")
+    expect(prettyTree(stem(zero), names)).toBe("△(zero)")
     // no map → raw representation (back-compat)
-    expect(prettyTree(two)).toBe("(△ △ (△ △ △))")
+    expect(prettyTree(two)).toBe("△(△, △(△, △))")
   })
 })
 

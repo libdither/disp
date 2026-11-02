@@ -79,10 +79,9 @@ export function tokenize(src: string): Tok[] {
     // A '[' glued to an identifier/close-delimiter is postfix INDEXING, not an
     // array literal ('xs[2]' vs 'f [1, 2]' — whitespace decides).
     if (c === "[" && i > 0 && /[A-Za-z0-9_')\]"]/.test(src[i - 1])) { push({ t: "punct", v: "idx[" }); i++; continue }
-    // A '(' glued to an identifier/close-delimiter is a CALL argument list
-    // ('x.f(a, b)' — the args apply to the postfix chain, enabling '.'-chaining;
-    // 'f (a)' with a space stays ordinary application of a parenthesized atom).
-    if (c === "(" && i > 0 && /[A-Za-z0-9_')\]"]/.test(src[i - 1])) { push({ t: "punct", v: "call(" }); i++; continue }
+    // A '(' glued to an expression is a CALL argument list ('f(a, b)', 'x.f(a)').
+    // Application has no other spelling: 'f (a)' with a space is a parse error.
+    if (c === "(" && i > 0 && /[A-Za-z0-9_')\]}"△]/.test(src[i - 1])) { push({ t: "punct", v: "call(" }); i++; continue }
     const p = PUNCT.find(p => src.startsWith(p, i))
     if (p) { push({ t: "punct", v: p }); i += p.length; continue }
     if (IDENT_HEAD.test(c)) {
@@ -501,11 +500,29 @@ const atom: P<Expr> = withProj((ts, i) => {
   return simple(ts, i)
 })
 
-// app = atom atom*
-const app: P<Expr> = map(
-  seq(atom, many(atom)),
-  ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
-)
+// Application is written `f(a, b)` (a postfix on the atom, see withProj) or, for
+// named arguments, `f { a := 1 }`. A second atom after the first is a mistake.
+const startsAtom = (t: Tok): boolean =>
+  t.t === "id" || t.t === "num" || t.t === "str" || t.t === "leaf" ||
+  (t.t === "punct" && (t.v === "(" || t.v === "["))
+
+// app = atom bracedCall?   bracedCall = a record literal on the same line
+const makeApp = (atomP: P<Expr>, allowBrace = true): P<Expr> => (ts, i) => {
+  const head = atomP(ts, i)
+  if (!head.ok) return head
+  let result = head.v
+  let pos = head.pos
+  if (allowBrace && ts[pos].t === "punct" && (ts[pos] as { v?: string }).v === "{") {
+    const arg = atomP(ts, pos)
+    if (arg.ok && arg.v.tag === "recValue") {
+      result = { tag: "app", f: result, x: arg.v }
+      pos = arg.pos
+    }
+  }
+  if (startsAtom(ts[pos])) return err(`line ${tokLine(ts, pos)}: application is written f(x), not f x`, pos)
+  return ok(result, pos)
+}
+const app: P<Expr> = makeApp(atom)
 
 // --- Line-mode parsers (for block-let bodies) ---
 // In line mode, newlines terminate expressions. Braces still group freely.
@@ -518,20 +535,10 @@ const lineAtom: P<Expr> = withProj((ts, i) => {
   return lineSimple(ts, i)
 })
 
-// lineApp: first atom may skip newlines; subsequent atoms must stay on line.
+// lineApp: the atom may skip leading newlines.
 const lineApp: P<Expr> = (ts, i) => {
   while (ts[i].t === "nl") i++
-  const head = withProj(lineSimple)(ts, i)
-  if (!head.ok) return head
-  let result: Expr = head.v
-  let pos = head.pos
-  for (;;) {
-    const arg = lineAtom(ts, pos)
-    if (!arg.ok) break
-    result = { tag: "app", f: result, x: arg.v }
-    pos = arg.pos
-  }
-  return ok(result, pos)
+  return makeApp(withProj(lineSimple))(ts, i)
 }
 
 // ── Infix tier: a fixed, CLOSED set (==, &&, ||), non-associative, binding
@@ -599,10 +606,7 @@ const matchAtom: P<Expr> = withProj((ts, i) => {
 
 // matchApp / matchExpr: full multi-line expression parser for match arm bodies.
 // Spans newlines freely but stops before the next arm pattern (`Ctor … =>`).
-const matchApp: P<Expr> = map(
-  seq(matchAtom, many(matchAtom)),
-  ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
-)
+const matchApp: P<Expr> = makeApp(matchAtom)
 const matchExpr: P<Expr> = makeExpr(matchApp)
 
 // binderParam = (IDENT | "_") (":" expr)? (":=" expr)?
@@ -772,23 +776,10 @@ const stopBraceAtom = (p: P<Expr>): P<Expr> => (ts, i) => {
     return err("brace ends if-cond", i)
   return p(ts, i)
 }
-const condApp: P<Expr> = map(
-  seq(stopBraceAtom(atom), many(stopBraceAtom(atom))),
-  ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
-)
+const condApp: P<Expr> = makeApp(stopBraceAtom(atom), false)
 const lineCondApp: P<Expr> = (ts, i) => {
   while (ts[i].t === "nl") i++
-  const head = stopBraceAtom(withProj(lineSimple))(ts, i)
-  if (!head.ok) return head
-  let result: Expr = head.v
-  let pos = head.pos
-  for (;;) {
-    const arg = stopBraceAtom(lineAtom)(ts, pos)
-    if (!arg.ok) break
-    result = { tag: "app", f: result, x: arg.v }
-    pos = arg.pos
-  }
-  return ok(result, pos)
+  return makeApp(stopBraceAtom(withProj(lineSimple)), false)(ts, i)
 }
 const makeIf = (condP: () => P<Expr>, condStopP: () => P<Expr>, bodyP: () => P<Expr>, selfP: () => P<Expr>): P<Expr> => (ts, i) => {
   const headB = seq(kwP("if"), skipNl, lazy(condStopP))(ts, i)
@@ -1065,7 +1056,7 @@ function equationLhsError(lhs: Expr): string | null {
 // The braced equation member: `lhs = rhs` (conventionally `test lhs = rhs`; the
 // `test` prefix is the prelude identity, an ordinary value in the lhs).
 const bracedEquationP: P<RecMember> = (ts, i) => {
-  const lhsR = lineExpr(ts, i)
+  const lhsR = testMarked(lineExpr)(ts, i)
   if (!lhsR.ok) return lhsR
   const eqR = nl(punctP("="))(ts, lhsR.pos)
   if (!eqR.ok) return eqR
@@ -1482,13 +1473,25 @@ const expr: P<Expr> = makeExpr(app)
 
 // --- Items ---
 
+// `test lhs`: the one place an atom follows a name with a space. The marker is the
+// prelude identity, kept in the lhs for peelTestMarker.
+const testMarked = (lhsP: P<Expr>): P<Expr> => (ts, i) => {
+  let s = i
+  while (ts[s].t === "nl") s++
+  const hd = ts[s]
+  if (!(hd.t === "id" && hd.v === "test" && startsAtom(ts[s + 1]))) return lhsP(ts, i)
+  const r = lhsP(ts, s + 1)
+  if (!r.ok) return r
+  return ok({ tag: "app", f: { tag: "var", name: "test" }, x: r.v }, r.pos)
+}
+
 // The equation item: `lhs = rhs` asserts both sides evaluate to equal trees (the
 // test form). Conventionally written `test lhs = rhs` — `test` is the prelude
 // identity, so the marker is an ordinary library value in the lhs, not syntax.
 // The `=` may sit on the lhs's line or the next; the rhs may continue onto
 // following lines (it stops before the next item via the atom lookahead).
 const equationItem: P<RecMember> = (ts, i) => {
-  const lhsR = expr(ts, i)
+  const lhsR = testMarked(expr)(ts, i)
   if (!lhsR.ok) return lhsR
   const eqR = nl(punctP("="))(ts, lhsR.pos)
   if (!eqR.ok) return eqR
@@ -1551,7 +1554,7 @@ const openGivenItem: P<RecMember[]> = (ts, i) => {
 // so the spine cannot swallow the next item. A head with only an annotation is an
 // interface entry (value = null); a bare spine with neither `:` nor `:=` is not an
 // item. Tried after topFieldP, so plain `NAME := v` fields are unaffected.
-const headFieldP: P<RecMember> = (ts, i) => {
+const headFieldP: P<RecMember | RecMember[]> = (ts, i) => {
   const atoms: Expr[] = []
   let pos = i
   for (;;) {
@@ -1561,6 +1564,7 @@ const headFieldP: P<RecMember> = (ts, i) => {
     pos = r.pos
   }
   if (atoms.length < 2) return err(`decorated declaration`, i)
+  if (atoms[0].tag === "var" && atoms[0].name === "test") return err(`line ${tokLine(ts, i)}: application is written f(x), not f x`, pos)
   // A `rec` head atom immediately before the declared name is RECURSION sugar,
   // consumed here (never a request
   // decorator): the value becomes `fix ({NAME} => body)`, so the body may refer
@@ -1572,12 +1576,19 @@ const headFieldP: P<RecMember> = (ts, i) => {
   const isRec = recAt >= 0 && atoms[recAt].tag === "var" && (atoms[recAt] as { name: string }).name === "rec"
   if (isRec) atoms.splice(recAt, 1)
   const last = atoms[atoms.length - 1]
-  if (last.tag !== "var") return err(`decorated declaration: the declared name must be a plain identifier`, pos)
-  const head = atoms.length >= 2 ? atoms.slice(0, -1).reduce((f, x) => ({ tag: "app" as const, f, x })) : undefined
+  if (last.tag !== "var") return err(`line ${tokLine(ts, i)}: application is written f(x), not f x (a declared name must be a plain identifier)`, pos)
+  if (atoms.length > 2) return err(`a declaration takes one decorator: write guard(g) NAME`, pos)
+  const isRecord = atoms.length === 2 && atoms[0].tag === "var" && atoms[0].name === "record"
+  const head = atoms.length === 2 && !isRecord ? atoms[0] : undefined
   let type: Expr | null = null
   let docType: Expr | undefined
   const ann = optional(annP)(ts, pos)
   if (ann.ok && ann.v) { if (ann.v.doc) docType = ann.v.ty; else type = ann.v.ty; pos = ann.pos }
+  if (isRecord) {
+    if (isRec) throw new Error(`parse: line ${tokLine(ts, i)}: 'record' and 'rec' don't combine`)
+    if (asnP(ts, pos).ok) throw new Error(`parse: line ${tokLine(ts, i)}: record '${last.name}' builds its own value, so it takes no ':='`)
+    return ok(recordItems(last.name, type ?? docType, type === null, tokLine(ts, i), endTokLine(ts, pos)), pos)
+  }
   let value: Expr | null = null
   let bound = false
   const asn = optional(seq(asnP, skipNl, lazy(() => expr)))(ts, pos)
@@ -1587,7 +1598,9 @@ const headFieldP: P<RecMember> = (ts, i) => {
     value = bound ? bindWrap(src, asn.v[2], isRec ? last.name : null) : asn.v[2]
     pos = asn.pos
   }
-  if (type === null && value === null) return err(`decorated declaration: expected ':' or ':='`, pos)
+  if (type === null && value === null && atoms[0].tag === "var" && atoms[0].name === "let")
+    return err("'let NAME = value' is no longer a binding — write 'let NAME := value'", pos)
+  if (type === null && value === null) return err(`line ${tokLine(ts, i)}: application is written f(x), not f x (or a declaration is missing ':' or ':=')`, pos)
   if (isRec && !bound) {
     // plain `rec NAME := body`: the fixpoint of the whole value (full arity).
     // The partial shape needs the annotation's binder groups, i.e. ':=>'.
@@ -1595,6 +1608,36 @@ const headFieldP: P<RecMember> = (ts, i) => {
     value = { tag: "app", f: { tag: "var", name: "fix" }, x: { tag: "binder", fat: true, params: [{ name: last.name, type: null }], body: value } }
   }
   return ok({ tag: "field" as const, name: last.name, type, docType, value, head, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
+}
+
+// `record NAME :: {f1 : T1, …, fn : Tn} -> R` — a positional record: the
+// constructor NAME := {f1, …, fn} => pair(f1, pair(f2, … fn)) plus one accessor
+// per field (`fk := {r} => r.snd….fst`), so `r.fk` reads it through UFCS. The
+// field names live only in scope, never in the tree: the trees are exactly the
+// hand-written ones. One field is the value itself. Accessors carry the doc
+// annotation `R -> Tk`; the constructor keeps the declaration's annotation.
+const recordItems = (name: string, ann: Expr | null | undefined, doc: boolean, line: number | undefined, endLine: number | undefined): RecMember[] => {
+  const where = `parse: line ${line}: record '${name}'`
+  if (!ann || ann.tag !== "binder" || ann.fat)
+    throw new Error(`${where} needs an annotation listing its fields ({f : T, …} -> R)`)
+  const fields = ann.params
+  if (fields.some(p => p.name === null)) throw new Error(`${where}: every field needs a name`)
+  const names = fields.map(p => p.name as string)
+  const v = (n: string): Expr => ({ tag: "var", name: n })
+  const app2 = (f: string, a: Expr, b: Expr): Expr => ({ tag: "app", f: { tag: "app", f: v(f), x: a }, x: b })
+  const body = names.slice(0, -1).reduceRight((rest, n) => app2("pair", v(n), rest), v(names[names.length - 1]))
+  const ctor: RecMember = {
+    tag: "field", name, type: doc ? null : ann, docType: doc ? ann : undefined,
+    value: { tag: "binder", fat: true, params: names.map(n => ({ name: n, type: null })), body }, line, endLine,
+  }
+  const accessor = (k: number): RecMember => {
+    let read: Expr = v("r")
+    for (let j = 0; j < k; j++) read = { tag: "proj", target: read, field: "snd" }
+    if (k < names.length - 1) read = { tag: "proj", target: read, field: "fst" }
+    const docType: Expr = { tag: "binder", fat: false, params: [{ name: null, type: ann.body }], body: fields[k].type ?? v("Tree") }
+    return { tag: "field", name: names[k], type: null, docType, value: { tag: "binder", fat: true, params: [{ name: "r", type: null }], body: read }, line, endLine }
+  }
+  return [ctor, ...names.map((_, k) => accessor(k))]
 }
 
 const itemP: P<RecMember | RecMember[]> = nl(alt<RecMember | RecMember[]>(openGivenItem, openItem, topFieldP, headFieldP, equationItem))

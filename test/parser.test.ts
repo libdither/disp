@@ -184,11 +184,11 @@ describe("parse: expressions", () => {
   })
 
   it("application is left-associative", () => {
-    expect(parseExpr("f x y z")).toEqual(ap(ap(ap(v("f"), v("x")), v("y")), v("z")))
+    expect(parseExpr("f(x, y, z)")).toEqual(ap(ap(ap(v("f"), v("x")), v("y")), v("z")))
   })
 
   it("parenthesized regroups", () => {
-    expect(parseExpr("f (x y) z")).toEqual(ap(ap(v("f"), ap(v("x"), v("y"))), v("z")))
+    expect(parseExpr("f(x(y), z)")).toEqual(ap(ap(v("f"), ap(v("x"), v("y"))), v("z")))
   })
 
   it("ascription in parens", () => {
@@ -233,13 +233,13 @@ describe("parse: expressions", () => {
 
   it("binder body extends as far as possible", () => {
     // {x} -> f x y  parses as  {x} -> ((f x) y)
-    expect(parseExpr("{x} -> f x y")).toEqual(
+    expect(parseExpr("{x} -> f(x, y)")).toEqual(
       binder([{ name: "x", type: null }], ap(ap(v("f"), v("x")), v("y"))),
     )
   })
 
   it("binder at head of application needs parens", () => {
-    expect(parseExpr("({x} -> x) y")).toEqual(
+    expect(parseExpr("({x} -> x)(y)")).toEqual(
       ap(binder([{ name: "x", type: null }], v("x")), v("y")),
     )
   })
@@ -254,7 +254,7 @@ describe("parse: expressions", () => {
 
   it("projection binds tighter than application", () => {
     // f.a b  parses as  (f.a) b
-    expect(parseExpr("f.a b")).toEqual(ap(proj(v("f"), "a"), v("b")))
+    expect(parseExpr("f.a(b)")).toEqual(ap(proj(v("f"), "a"), v("b")))
   })
 
   it("recType", () => {
@@ -319,7 +319,7 @@ describe("parse: expressions", () => {
   })
 
   it("recValue multi-field semicolon separated", () => {
-    expect(parseExpr("{ x := t; y := t t }")).toEqual(
+    expect(parseExpr("{ x := t; y := t(t) }")).toEqual(
       recValue([
         { name: "x", type: null, value: leaf },
         { name: "y", type: null, value: ap(leaf, leaf) },
@@ -370,7 +370,7 @@ describe("parse: named-argument syntax", () => {
   })
 
   it("recValue fields may be comma-separated (named-call spelling)", () => {
-    expect(parseExpr("{ x := t, y := t t }")).toEqual(
+    expect(parseExpr("{ x := t, y := t(t) }")).toEqual(
       recValue([
         { name: "x", type: null, value: leaf },
         { name: "y", type: null, value: ap(leaf, leaf) },
@@ -379,7 +379,7 @@ describe("parse: named-argument syntax", () => {
   })
 
   it("comma- and semicolon-separated recValues agree", () => {
-    expect(parseExpr("{ a := t, b := t t }")).toEqual(parseExpr("{ a := t; b := t t }"))
+    expect(parseExpr("{ a := t, b := t(t) }")).toEqual(parseExpr("{ a := t; b := t(t) }"))
   })
 })
 
@@ -408,7 +408,7 @@ describe("parse: items", () => {
   })
 
   it("doc annotation (::) parses but is not a checked type", () => {
-    const items = parseItems("foo :: Bar Baz := t")
+    const items = parseItems("foo :: Bar(Baz) := t")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.type).toBeNull()
@@ -426,7 +426,7 @@ describe("parse: items", () => {
   })
 
   it(":=> binds the annotation's named params around the body", () => {
-    const items = parseItems("addx : {n : Nat} -> {m : Nat} -> Nat :=> f n m")
+    const items = parseItems("addx : {n : Nat} -> {m : Nat} -> Nat :=> f(n, m)")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.value).toEqual(lam([{ name: "n", type: null }, { name: "m", type: null }],
@@ -434,7 +434,7 @@ describe("parse: items", () => {
   })
 
   it(":=> from a doc annotation, stopping at the first unnamed arrow", () => {
-    const items = parseItems("member :: {x : A} -> List A -> Bool :=> any (eq x)")
+    const items = parseItems("member :: {x : A} -> List(A) -> Bool :=> any(eq(x))")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.type).toBeNull()
@@ -447,7 +447,7 @@ describe("parse: items", () => {
   })
 
   it("rec wraps the value in fix with the definition's own name bound", () => {
-    const items = parseItems("rec f := g f")
+    const items = parseItems("rec f := g(f)")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.head).toBeUndefined()
@@ -455,7 +455,7 @@ describe("parse: items", () => {
   })
 
   it("rec composes with a decorator head and with :=>", () => {
-    const items = parseItems("let rec go :: {n : Nat} -> Nat :=> go n")
+    const items = parseItems("let rec go :: {n : Nat} -> Nat :=> go(n)")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.head).toEqual(v("let"))
@@ -465,7 +465,7 @@ describe("parse: items", () => {
   })
 
   it("rec with grouped binders takes the partial fixpoint at the last group", () => {
-    const items = parseItems("rec red :: {s : F, b : C} -> {xs : L} -> C :=> s (red xs)")
+    const items = parseItems("rec red :: {s : F, b : C} -> {xs : L} -> C :=> s(red(xs))")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.value).toEqual(lam([{ name: "s", type: null }, { name: "b", type: null }],
@@ -482,6 +482,26 @@ describe("parse: items", () => {
     expect(() => parseItems("rec f : T")).toThrow(/requires a value/)
   })
 
+  it("record expands to a positional constructor plus one accessor per field", () => {
+    const items = parseItems("record pt :: {x : N, y : N, z : N} -> P")
+    expect(items.map(d => d.tag === "field" ? d.name : "?")).toEqual(["pt", "x", "y", "z"])
+    const [ctor, x, y, z] = items
+    if (ctor.tag !== "field" || x.tag !== "field" || y.tag !== "field" || z.tag !== "field") throw new Error("shape")
+    const ps = ["x", "y", "z"].map(name => ({ name, type: null }))
+    expect(ctor.value).toEqual(lam(ps, ap(ap(v("pair"), v("x")), ap(ap(v("pair"), v("y")), v("z")))))
+    const r = [{ name: "r", type: null }]
+    expect(x.value).toEqual(lam(r, proj(v("r"), "fst")))
+    expect(y.value).toEqual(lam(r, proj(proj(v("r"), "snd"), "fst")))
+    expect(z.value).toEqual(lam(r, proj(proj(v("r"), "snd"), "snd")))
+    const [one, inner] = parseItems("record w :: {inner : T} -> W")
+    if (one.tag !== "field" || inner.tag !== "field") throw new Error("shape")
+    expect(one.value).toEqual(lam([{ name: "inner", type: null }], v("inner")))
+    expect(inner.value).toEqual(lam(r, v("r")))
+    expect(() => parseItems("record pt :: {x : N} -> P := 5")).toThrow(/takes no ':='/)
+    expect(() => parseItems("record pt :: N -> P")).toThrow(/every field needs a name/)
+    expect(() => parseItems("record pt :: P")).toThrow(/needs an annotation/)
+  })
+
   it("glued call parens feed the postfix chain; spaced parens stay application", () => {
     const d = parseItems("x := s.f(a, b).g(c)")[0]
     if (d.tag !== "field") throw new Error("shape")
@@ -493,13 +513,13 @@ describe("parse: items", () => {
     const empty = parseItems("x := s.f()")[0]
     if (empty.tag !== "field") throw new Error("shape")
     expect(empty.value).toEqual(proj(v("s"), "f"))
-    const spaced = parseItems("x := f (a)")[0]
+    const spaced = parseItems("x := f(a)")[0]
     if (spaced.tag !== "field") throw new Error("shape")
     expect(spaced.value).toEqual(ap(v("f"), v("a")))
   })
 
   it("infix ==/&&/|| desugar; application binds tighter", () => {
-    const eq = parseItems("x := f a == g b")[0]
+    const eq = parseItems("x := f(a) == g(b)")[0]
     if (eq.tag !== "field") throw new Error("shape")
     expect(eq.value).toEqual(ap(ap(v("tree_eq"), ap(v("f"), v("a"))), ap(v("g"), v("b"))))
     const and = parseItems("x := a && b")[0]
@@ -516,7 +536,7 @@ describe("parse: items", () => {
   })
 
   it("infix in an equation lhs coexists with the bare = item separator", () => {
-    const items = parseItems("test a == b = true")
+    const items = parseItems("test(a) == b = true")
     const eq = items[0]
     if (eq.tag !== "test") throw new Error("shape")
     expect(eq.lhs).toEqual(ap(ap(v("tree_eq"), ap(v("test"), v("a"))), v("b")))
@@ -526,7 +546,7 @@ describe("parse: items", () => {
   it("arrow-bearing doc annotation still starts a new item after an expression", () => {
     // regression: isDeclStart must accept `::` before it sees the `->`,
     // else the previous item's expression swallows the line.
-    const items = parseItems("zed := f a\nfoo :: A -> B := t")
+    const items = parseItems("zed := f(a)\nfoo :: A -> B := t")
     expect(items.map(i => (i.tag === "field" ? i.name : i.tag))).toEqual(["zed", "foo"])
   })
 
@@ -598,7 +618,7 @@ describe("parseProgram (compile + driver)", () => {
   })
 
   it("test equality uses hash-cons identity", () => {
-    const decls = parseProgram("test ({x} -> x) t = t")
+    const decls = parseProgram("test ({x} -> x)(t) = t")
     expect(decls).toHaveLength(1)
     const t = decls[0]
     if (t.kind !== "Test") throw new Error("test")
@@ -638,7 +658,7 @@ describe("parseProgram (compile + driver)", () => {
   })
 
   it("numeric literals compile through in-scope zero/succ", () => {
-    const decls = parseProgram("let zero := t\nlet succ := {n} -> t t n\ntest 2 = succ (succ zero)")
+    const decls = parseProgram("let zero := t\nlet succ := {n} -> t(t, n)\ntest 2 = succ(succ(zero))")
     const test = decls.find(d => d.kind === "Test")
     if (!test || test.kind !== "Test") throw new Error("test")
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
@@ -649,9 +669,9 @@ describe("parseProgram (compile + driver)", () => {
   })
 
   it("`use` inlines another file's defs via projection", () => {
-    const dep = tmpFile("dep.disp", "y := t t\n")
+    const dep = tmpFile("dep.disp", "y := t(t)\n")
     const decls = parseProgram(
-      `let lib := use "${dep}"\ntest lib.y = t t`,
+      `let lib := use "${dep}"\ntest lib.y = t(t)`,
       process.cwd() + "/anon.disp",
     )
     const test = decls.find(d => d.kind === "Test")
@@ -695,7 +715,7 @@ describe("parseProgram (compile + driver)", () => {
   // scope), so end-to-end field access is covered in the lib suite
   // (lib/tests/record.test.disp). Here we assert the parse/AST shape.
   it("record value { := } parses to a recValue", () => {
-    expect(parseExpr("{ x := t; y := t t }")).toEqual(
+    expect(parseExpr("{ x := t; y := t(t) }")).toEqual(
       recValue([{ name: "x", type: null, value: leaf }, { name: "y", type: null, value: ap(leaf, leaf) }]),
     )
   })
@@ -706,6 +726,26 @@ describe("parseProgram (compile + driver)", () => {
 })
 
 // ─────────────────────────── parse errors ───────────────────────────────
+
+describe("application syntax", () => {
+  it("rejects spaced application everywhere", () => {
+    for (const src of ["x := f y", "x := f (y)", "x := f [y]", "x := f 1", "x := t t", "test f x = 1", "x := if c then f y else z"])
+      expect(() => parseItems(src), src).toThrow(/application is written f\(x\)/)
+  })
+  it("rejects it in block lines too", () => {
+    expect(() => parseItems("x := { let y := f z; y }")).toThrow()
+  })
+  it("a call and curried calls are the same tree", () => {
+    expect(parseExpr("f(a, b)")).toEqual(parseExpr("f(a)(b)"))
+    expect(parseExpr("f(a, b)")).toEqual(ap(ap(v("f"), v("a")), v("b")))
+    expect(parseExpr("△(t)")).toEqual(ap(leaf, leaf))
+  })
+  it("a brace call takes a record literal only, and not as an if condition", () => {
+    expect(parseExpr("f { a := 1 }").tag).toBe("app")
+    expect(parseExpr("if f { a } else { b }").tag).toBe("if")
+    expect(() => parseItems("x := f {y} z")).toThrow()
+  })
+})
 
 describe("parse errors", () => {
   it("{} is empty recValue, not an empty binder", () => {
@@ -754,14 +794,14 @@ describe("parse errors", () => {
   it("rejects duplicate exported fields", () => {
     // Top-level redefinition is now legal SYNTAX (a guard-mediated rebind request);
     // the UNGUARDED-duplicate accident check moved to the driver, which still throws.
-    expect(parseItems("x := t\nx := t t").length).toBe(2)
-    expect(() => parseProgram("x := t\nx := t t")).toThrow(/duplicate exported field 'x'/)
+    expect(parseItems("x := t\nx := t(t)").length).toBe(2)
+    expect(() => parseProgram("x := t\nx := t(t)")).toThrow(/duplicate exported field 'x'/)
     // Braced records are not declarations: still a parse error.
-    expect(() => parseExpr("{ x := t; x := t t }")).toThrow(/duplicate exported field 'x'/)
+    expect(() => parseExpr("{ x := t; x := t(t) }")).toThrow(/duplicate exported field 'x'/)
   })
 
   it("parses decorated declarations (head spines)", () => {
-    const items = parseItems("guard g X : T := v")
+    const items = parseItems("guard(g) X : T := v")
     expect(items.length).toBe(1)
     const f = items[0] as Extract<ReturnType<typeof parseItems>[number], { tag: "field" }>
     expect(f.tag).toBe("field")
@@ -769,7 +809,7 @@ describe("parse errors", () => {
     expect(f.head).toBeTruthy()
     expect(f.value).toBeTruthy()
     // interface entry: head + annotation, no value
-    const iface = parseItems("guard g X : T")[0] as typeof f
+    const iface = parseItems("guard(g) X : T")[0] as typeof f
     expect(iface.name).toBe("X")
     expect(iface.value).toBeNull()
     // `let x := t` is itself a decorated declaration (head = the identifier `let`)
@@ -800,7 +840,7 @@ describe("block expressions", () => {
 
   it("two let bindings", () => {
     // { let x := t; let y := t t; y } → App(Binder([x], App(Binder([y], Var(y)), App(Leaf, Leaf))), Leaf)
-    expect(parseExpr("{ let x := t; let y := t t; y }")).toEqual(
+    expect(parseExpr("{ let x := t; let y := t(t); y }")).toEqual(
       ap(
         lam([{ name: "x", type: null }],
           ap(lam([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
@@ -820,7 +860,7 @@ describe("block expressions", () => {
 
   it("trailing expression uses binding", () => {
     // { let f := {x} -> x; f t } → App(Binder([f], App(Var(f), Leaf)), Binder([x], Var(x)))
-    expect(parseExpr("{ let f := {x} -> x; f t }")).toEqual(
+    expect(parseExpr("{ let f := {x} -> x; f(t) }")).toEqual(
       ap(
         lam([{ name: "f", type: null }], ap(v("f"), leaf)),
         binder([{ name: "x", type: null }], v("x")),
@@ -832,7 +872,7 @@ describe("block expressions", () => {
     // Newlines work as separators between let bindings and before trailing expr.
     const src = `{
       let x := t
-      let y := t t
+      let y := t(t)
       y
     }`
     expect(parseExpr(src)).toEqual(
@@ -862,7 +902,7 @@ describe("block expressions", () => {
     // past the newline into the trailing expression.
     const src = `{x} -> {
       let f := {z} -> z
-      f x
+      f(x)
     }`
     expect(parseExpr(src)).toEqual(
       binder([{ name: "x", type: null }],
@@ -878,7 +918,7 @@ describe("block expressions", () => {
         let w := z
         w
       }
-      y x
+      y(x)
     }`
     expect(parseExpr(src)).toEqual(
       binder([{ name: "x", type: null }],
@@ -890,9 +930,9 @@ describe("block expressions", () => {
   })
 
   it("multi-arg application in block-let body stays on line", () => {
-    // let z := x y should parse as App(x, y), not consume the trailing expr
+    // let z := x(y) should parse as App(x, y), not consume the trailing expr
     const src = `{x, y} -> {
-      let z := x y
+      let z := x(y)
       z
     }`
     expect(parseExpr(src)).toEqual(
@@ -920,11 +960,11 @@ describe("if expression", () => {
   })
 
   it("cond can be an application", () => {
-    expect(parseExpr(`if (f x) then a else b`)).toEqual(mkIf(ap(v("f"), v("x")), v("a"), v("b")))
+    expect(parseExpr(`if (f(x)) then a else b`)).toEqual(mkIf(ap(v("f"), v("x")), v("a"), v("b")))
   })
 
   it("branch bodies can be applications", () => {
-    expect(parseExpr(`if c then f x else g y`))
+    expect(parseExpr(`if c then f(x) else g(y)`))
       .toEqual(mkIf(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
   })
 
@@ -948,9 +988,9 @@ describe("if expression", () => {
     // enclosing boundary (here, EOF).
     const src = `if c
       then a
-      else triage
-        (arg1)
-        (arg2)`
+      else triage(
+        arg1,
+        arg2)`
     expect(parseExpr(src)).toEqual(
       mkIf(v("c"), v("a"), ap(ap(v("triage"), v("arg1")), v("arg2"))))
   })
@@ -1003,13 +1043,13 @@ describe("keyword-first braced bodies", () => {
     expect(parseExpr(`{x} => { if x then a else b }`)).toEqual(lam([x], mkIf(v("x"), v("a"), v("b"))))
     // Multi-line, as written in library code (the reported failure).
     const src = `{st} => {
-      if (is_leaf st) { done }
-      else { skip t }
+      if (is_leaf(st)) { done }
+      else { skip(t) }
     }`
     expect(parseExpr(src)).toEqual(
       lam([{ name: "st", type: null }], mkIf(ap(v("is_leaf"), v("st")), v("done"), ap(v("skip"), leaf))))
     // The same shape at item level.
-    expect(parseItems(`f := {x} => { if (is_leaf x) { t } else { t t } }`).length).toBe(1)
+    expect(parseItems(`f := {x} => { if (is_leaf(x)) { t } else { t(t) } }`).length).toBe(1)
   })
 
   it("lambda body starting with `match` is a block", () => {
@@ -1024,7 +1064,7 @@ describe("keyword-first braced bodies", () => {
   })
 
   it("match-arm body starting with `if` is a block", () => {
-    const e = parseExpr(`match m { A => { if (is_leaf t) { t } else { t t } }; B => t }`)
+    const e = parseExpr(`match m { A => { if (is_leaf(t)) { t } else { t(t) } }; B => t }`)
     expect((e as any).arms[0].body).toEqual(mkIf(ap(v("is_leaf"), leaf), leaf, ap(leaf, leaf)))
   })
 

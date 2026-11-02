@@ -148,6 +148,9 @@ function peelBinderParams(e: Expr): Param[] {
   return out
 }
 
+/// Leading binder parameters of `e` (a value lambda or a Pi-binder annotation).
+export function binderArity(e: Expr): number { return peelBinderParams(e).length }
+
 // Build a binding's named-argument signature from its value lambda (authoritative
 // for NAMES — bracket abstraction binds exactly those) and, secondarily, its type
 // annotation (a `{x:A} -> {y:B := d} -> R` Pi-binder, for doc-style defaults). A

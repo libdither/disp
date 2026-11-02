@@ -13,29 +13,29 @@ open use "../kernel/prelude.disp" // record values { := } compile to the §2.6 c
 // but the inline test still emits a Decl into the driver.
 
 let probe := {
-  let one := succ zero
-  test one = succ zero
-  test succ one = succ (succ zero)
+  let one := succ(zero)
+  test one = succ(zero)
+  test succ(one) = succ(succ(zero))
   one
 }
 
 // The block returns `one`, which we test conventionally.
-test probe = succ zero
+test probe = succ(zero)
 
 // ================================================================
 // Inline tests in a recValue (exported fields)
 // ================================================================
 
 let r := {
-  let n := succ (succ zero)
-  test n = succ (succ zero)
-  test pair_fst (t n t) = n
+  let n := succ(succ(zero))
+  test n = succ(succ(zero))
+  test pair_fst(t(n, t)) = n
   x := n
-  y := succ n
+  y := succ(n)
 }
 
-test r.x = succ (succ zero)
-test r.y = succ (succ (succ zero))
+test r.x = succ(succ(zero))
+test r.y = succ(succ(succ(zero)))
 
 // ================================================================
 // Inline `open` inside a block: opened names visible to subsequent
@@ -44,9 +44,9 @@ test r.y = succ (succ (succ zero))
 
 let r2 := {
   open use raw "../../../lib/prelude.disp" {}
-  let x := succ zero
-  test pair_fst (t x t) = x
+  let x := succ(zero)
+  test pair_fst(t(x, t)) = x
   x
 }
 
-test r2 = succ zero
+test r2 = succ(zero)

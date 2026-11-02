@@ -50,52 +50,52 @@ pair-shaped trees.
 ```
 // "for all" over tagged intervals: the upper end is the meet of everything seen; the lower end
 // is the meet of the final intervals, and it only counts once the stream ran out
-for_all :: {items : Bounded (Items (Pair Bool (Pair P P))), meet : P -> P -> P, top : P, bottom : P} -> Pair P P :=> c_fold ({recurse, step, acc} =>
-	if (step.is_finished) { if (step.finished_result.is_spent) { pair bottom acc.snd } else { acc } }
-	else if (not step.step_draw.is_yield) { recurse step.step_rest acc }
+for_all :: {items : Bounded(Items(Pair(Bool, Pair(P, P)))), meet : P -> P -> P, top : P, bottom : P} -> Pair(P, P) :=> c_fold({recurse, step, acc} =>
+	if (step.is_finished) { if (step.finished_result.is_spent) { pair(bottom, acc.snd) } else { acc } }
+	else if (not(step.step_draw.is_yield)) { recurse(step.step_rest, acc) }
 	else {
 		let item := step.step_draw.yielded_item
-		let upper := meet acc.snd item.snd.snd
-		let lower := if (item.fst) { meet acc.fst item.snd.fst } else { acc.fst }
-		if (upper == bottom) { pair bottom bottom } else { recurse step.step_rest (pair lower upper) }
+		let upper := meet(acc.snd, item.snd.snd)
+		let lower := if (item.fst) { meet(acc.fst, item.snd.fst) } else { acc.fst }
+		if (upper == bottom) { pair(bottom, bottom) } else { recurse(step.step_rest, pair(lower, upper)) }
 	}
-) items (pair top top)
-exactly := {b} => pair b b
+, items, pair(top, top))
+exactly := {b} => pair(b, b)
 
 // budgets 4, 8, 16, ...: enough, since a budget that exposes a failure keeps exposing it; every
 // tree's budgets advance together, so tree k meets budget j after about (k + j)^2 / 2 tests
-budgets := (stream_new ({n} => emit n (add n n)) 4).as_items
-everything := s_merge_with (Trees.as_items.s_map({x} => budgets.s_map({n} => pair x n))) advance_all
+budgets := (stream_new({n} => emit(n, add(n, n)), 4)).as_items
+everything := s_merge_with(Trees.as_items.s_map({x} => budgets.s_map({n} => pair(x, n))), advance_all)
 // for every tree and budget the test passes: a counterexample refutes it, and nothing ever proves it
-every := {test, budget} => for_all ((everything.s_map({p} => pair true (exactly (test p.fst p.snd)))).bounded(budget)) and true false
+every := {test, budget} => for_all((everything.s_map({p} => pair(true, exactly(test(p.fst, p.snd))))).bounded(budget), and, true, false)
 
 // tests only look at bounded runs, so every test finishes
-within := {f, x, n} => m_advance (m_start f x) n
-accepts := {A, x, n} => { let m := within A x n; (m_finished m) && (m_result m == true) }
-rec NatS :: {v : Tree} -> Bool :=> if (is_zero v) { true } else if (is_fork v) { if (is_leaf v.fst) { NatS v.snd } else { false } } else { false }
+within := {f, x, n} => m_advance(m_start(f, x), n)
+accepts := {A, x, n} => { let m := within(A, x, n); (m_finished(m)) && (m_result(m) == true) }
+rec NatS :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatS(v.snd) } else { false } } else { false }
 // v : A -> B, partially: if A accepted x within n and v finished within n, the result is in B
-pi_partial := {A, B, v} => {x, n} => if (accepts A x n) { let m := within v x n; if (m_finished m) { B (m_result m) } else { true } } else { true }
+pi_partial := {A, B, v} => {x, n} => if (accepts(A, x, n)) { let m := within(v, x, n); if (m_finished(m)) { B(m_result(m)) } else { true } } else { true }
 // v : A -> B, totally, given a step bound: if A accepted x, v finishes within the bound, in B
-pi_bounded := {A, B, v, bound} => {x, n} => if (accepts A x n) { let m := within v x (bound x); (m_finished m) && (B (m_result m)) } else { true }
+pi_bounded := {A, B, v, bound} => {x, n} => if (accepts(A, x, n)) { let m := within(v, x, bound(x)); (m_finished(m)) && (B(m_result(m))) } else { true }
 // a claim about pairs is a claim about pair-shaped trees
 respects := {related, v} => {z, n} =>
-	if ((is_fork z) && (accepts related z n)) {
-		let ma := within v z.fst n
-		let mb := within v z.snd n
-		if ((m_finished ma) && (m_finished mb)) { m_result ma == m_result mb } else { true }
+	if ((is_fork(z)) && (accepts(related, z, n))) {
+		let ma := within(v, z.fst, n)
+		let mb := within(v, z.snd, n)
+		if ((m_finished(ma)) && (m_finished(mb))) { m_result(ma) == m_result(mb) } else { true }
 	} else { true }
-parity_related := {z} => ((NatS z.fst) && (NatS z.snd)) && (parity z.fst == parity z.snd)
-rec mul :: {a : Nat, b : Nat} -> Nat :=> if (is_zero a) { zero } else { add b (mul (nat_pred a) b) }
-bad := fix ({self, n} => if (is_zero n) { zero } else { succ (self n) })
+parity_related := {z} => ((NatS(z.fst)) && (NatS(z.snd))) && (parity(z.fst) == parity(z.snd))
+rec mul :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { zero } else { add(b, mul(nat_pred(a), b)) }
+bad := fix({self, n} => if (is_zero(n)) { zero } else { succ(self(n)) })
 
-test every (pi_partial NatS NatS ({n} => pair n n)) 100 = pair false false
-test every (pi_partial NatS NatS succ) 45 = pair false true
-test every (pi_partial LoopR NatS ({_n} => t t)) 45 = pair false false
-test every (pi_partial NatS NatS bad) 45 = pair false true
-test every (pi_bounded NatS NatS bad ({_x} => 400)) 100 = pair false false
-test every (pi_bounded NatS NatS dbl ({_x} => 10)) 45 = pair false false
-test every (pi_bounded NatS NatS dbl ({x} => mul 64 (succ x))) 45 = pair false true
-test every (respects parity_related is_even) 150 = pair false true
+test every(pi_partial(NatS, NatS, {n} => pair(n, n)), 100) = pair(false, false)
+test every(pi_partial(NatS, NatS, succ), 45) = pair(false, true)
+test every(pi_partial(LoopR, NatS, {_n} => t(t)), 45) = pair(false, false)
+test every(pi_partial(NatS, NatS, bad), 45) = pair(false, true)
+test every(pi_bounded(NatS, NatS, bad, {_x} => 400), 100) = pair(false, false)
+test every(pi_bounded(NatS, NatS, dbl, {_x} => 10), 45) = pair(false, false)
+test every(pi_bounded(NatS, NatS, dbl, {x} => mul(64, succ(x))), 45) = pair(false, true)
+test every(respects(parity_related, is_even), 150) = pair(false, true)
 ```
 
 Reading the pins:
@@ -120,13 +120,13 @@ Reading the pins:
 ```
 // "exists" is "not for all not": negating swaps the ends of the interval
 some := {test, budget} => {
-	let none_pass := for_all ((everything.s_map({p} => pair true (exactly (not (test p.fst p.snd))))).bounded(budget)) and true false
-	pair (not none_pass.snd) (not none_pass.fst)
+	let none_pass := for_all((everything.s_map({p} => pair(true, exactly(not(test(p.fst, p.snd)))))).bounded(budget), and, true, false)
+	pair(not(none_pass.snd), not(none_pass.fst))
 }
 // some Nat has successor 2; some Nat has successor 0
-returns := {v, x, n, r} => { let m := within v x n; (m_finished m) && (m_result m == r) }
-test some ({x, n} => (accepts NatS x n) && (returns succ x n 2)) 100 = pair true true
-test some ({x, n} => (accepts NatS x n) && (returns succ x n 0)) 60 = pair false true
+returns := {v, x, n, r} => { let m := within(v, x, n); (m_finished(m)) && (m_result(m) == r) }
+test some({x, n} => (accepts(NatS, x, n)) && (returns(succ, x, n, 2)), 100) = pair(true, true)
+test some({x, n} => (accepts(NatS, x, n)) && (returns(succ, x, n, 0)), 60) = pair(false, true)
 ```
 
 - **For all trees, exists a budget (Π2).** "Every input finishes": total correctness
@@ -184,11 +184,11 @@ budget" there are two equivalent ways:
 
 ```
 // the same claims with each tree's test run once, resumed, instead of restarted at every budget
-every_task := {test, quantum, budget} => verdict ((s_merge_with (Trees.as_items.s_map({x} => (task test x quantum).answers.s_map({ok} => pair x ok))) advance_all).s_filter({p} => not p.snd).s_map(pair_fst).bounded(budget))
-respects_check := {related, v} => {z} => if (is_fork z) { if (related z) { v z.fst == v z.snd } else { true } } else { true }
-test every_task ({x} => if (NatS x) { NatS (pair x x) } else { true }) 64 100 = refuted 1
-test every_task (respects_check parity_related id) 64 400 = refuted 3
-test every_task (respects_check parity_related is_even) 64 300 = "Open"
+every_task := {test, quantum, budget} => verdict((s_merge_with(Trees.as_items.s_map({x} => (task(test, x, quantum)).answers.s_map({ok} => pair(x, ok))), advance_all)).s_filter({p} => not(p.snd)).s_map(pair_fst).bounded(budget))
+respects_check := {related, v} => {z} => if (is_fork(z)) { if (related(z)) { v(z.fst) == v(z.snd) } else { true } } else { true }
+test every_task({x} => if (NatS(x)) { NatS(pair(x, x)) } else { true }, 64, 100) = refuted(1)
+test every_task(respects_check(parity_related, id), 64, 400) = refuted(3)
+test every_task(respects_check(parity_related, is_even), 64, 300) = "Open"
 ```
 
 Scheduling changes when an answer arrives, never what it is. Round-robin was the trap:
@@ -219,131 +219,131 @@ that it is a faithful one: with the names erased, every state equals `lib/machin
 
 ```
 // a machine value: a plain tree, a watched tree (an input with a name), or a node built around one
-plain := {tr} => pair "Plain" tr
-watched := {name, tr} => pair "Watch" (pair name tr)
+plain := {tr} => pair("Plain", tr)
+watched := {name, tr} => pair("Watch", pair(name, tr))
 is_plain := {v} => v.fst == "Plain"
 is_watched := {v} => v.fst == "Watch"
 watch_name := {v} => v.snd.fst
 watch_tree := {v} => v.snd.snd
-vstem := {a} => if (is_plain a) { plain (t a.snd) } else { pair "Stem" a }
-vfork := {a, b} => if ((is_plain a) && (is_plain b)) { plain (t a.snd b.snd) } else { pair "Fork" (pair a b) }
+vstem := {a} => if (is_plain(a)) { plain(t(a.snd)) } else { pair("Stem", a) }
+vfork := {a, b} => if ((is_plain(a)) && (is_plain(b))) { plain(t(a.snd, b.snd)) } else { pair("Fork", pair(a, b)) }
 // the tree a value stands for, names forgotten
 rec erase :: {v : Tree} -> Tree :=>
-	if (is_plain v) { v.snd } else if (is_watched v) { watch_tree v }
-	else if (v.fst == "Stem") { t (erase v.snd) } else { t (erase v.snd.fst) (erase v.snd.snd) }
+	if (is_plain(v)) { v.snd } else if (is_watched(v)) { watch_tree(v) }
+	else if (v.fst == "Stem") { t(erase(v.snd)) } else { t(erase(v.snd.fst), erase(v.snd.snd)) }
 // one layer of a value's shape; a watched tree opens into watched pieces named after it
 shape_of := {v} =>
-	if (is_plain v) { triage (pair "Leaf" t) ({c} => pair "Stem" (plain c)) ({l, r} => pair "Fork" (pair (plain l) (plain r))) v.snd }
-	else if (is_watched v) { triage (pair "Leaf" t) ({c} => pair "Stem" (watched (pair (watch_name v) "child") c)) ({l, r} => pair "Fork" (pair (watched (pair (watch_name v) "left") l) (watched (pair (watch_name v) "right") r))) (watch_tree v) }
+	if (is_plain(v)) { triage(pair("Leaf", t), {c} => pair("Stem", plain(c)), {l, r} => pair("Fork", pair(plain(l), plain(r))), v.snd) }
+	else if (is_watched(v)) { triage(pair("Leaf", t), {c} => pair("Stem", watched(pair(watch_name(v), "child"), c)), {l, r} => pair("Fork", pair(watched(pair(watch_name(v), "left"), l), watched(pair(watch_name(v), "right"), r))), watch_tree(v)) }
 	else { v }
 // the log: names whose shape decided a step (newest first), and the step count
-note := {log, v} => if (is_watched v) { pair (cons (watch_name v) log.fst) log.snd } else { log }
-tick := {log} => pair log.fst (succ log.snd)
+note := {log, v} => if (is_watched(v)) { pair(cons(watch_name(v), log.fst), log.snd) } else { log }
+tick := {log} => pair(log.fst, succ(log.snd))
 // the discard shortcuts peek at shapes without deciding anything the program can see
-k_shaped_v := {v} => { let s := shape_of v; (s.fst == "Fork") && ((shape_of s.snd.fst).fst == "Leaf") }
-k_payload := {v} => (shape_of v).snd.snd
+k_shaped_v := {v} => { let s := shape_of(v); (s.fst == "Fork") && ((shape_of(s.snd.fst)).fst == "Leaf") }
+k_payload := {v} => (shape_of(v)).snd.snd
 
-mm_run := {f, x, stack, log} => pair "Run" (pair (pair f x) (pair stack log))
-mm_done := {v, log} => pair "Done" (pair v log)
+mm_run := {f, x, stack, log} => pair("Run", pair(pair(f, x), pair(stack, log)))
+mm_done := {v, log} => pair("Done", pair(v, log))
 mm_is_done := {m} => m.fst == "Done"
-mm_log := {m} => if (mm_is_done m) { m.snd.snd } else { m.snd.snd.snd }
+mm_log := {m} => if (mm_is_done(m)) { m.snd.snd } else { m.snd.snd.snd }
 rec mm_deliver :: {v : Tree, stack : Tree, log : Tree} -> Tree :=>
-	if (stack.is_nil) { mm_done v log }
+	if (stack.is_nil) { mm_done(v, log) }
 	else {
 		let fr := stack.head
 		let rest := stack.tail
-		if (fr.fst == "To") { mm_run v fr.snd rest log }
-		else if (fr.fst == "Res") { mm_run fr.snd v rest log }
+		if (fr.fst == "To") { mm_run(v, fr.snd, rest, log) }
+		else if (fr.fst == "Res") { mm_run(fr.snd, v, rest, log) }
 		else {
 			let b := fr.snd.fst
 			let x := fr.snd.snd
-			if (k_shaped_v v) { mm_deliver (k_payload v) rest log }
-			else if (k_shaped_v b) { mm_run v (k_payload b) rest log }
-			else { mm_run b x (cons (fr_res v) rest) log }
+			if (k_shaped_v(v)) { mm_deliver(k_payload(v), rest, log) }
+			else if (k_shaped_v(b)) { mm_run(v, k_payload(b), rest, log) }
+			else { mm_run(b, x, cons(fr_res(v), rest), log) }
 		}
 	}
 rec mm_settle :: {m : Tree} -> Tree :=>
-	if (mm_is_done m) { m }
+	if (mm_is_done(m)) { m }
 	else {
 		let f := m.snd.fst.fst
 		let x := m.snd.fst.snd
 		let stack := m.snd.snd.fst
 		let log := m.snd.snd.snd
-		let s := shape_of f
-		if (s.fst == "Leaf") { mm_settle (mm_deliver (vstem x) stack (note log f)) }
-		else if (s.fst == "Stem") { mm_settle (mm_deliver (vfork s.snd x) stack (note log f)) }
+		let s := shape_of(f)
+		if (s.fst == "Leaf") { mm_settle(mm_deliver(vstem(x), stack, note(log, f))) }
+		else if (s.fst == "Stem") { mm_settle(mm_deliver(vfork(s.snd, x), stack, note(log, f))) }
 		else { m }
 	}
 mm_step := {m} => {
-	let s0 := mm_settle m
-	if (mm_is_done s0) { s0 }
+	let s0 := mm_settle(m)
+	if (mm_is_done(s0)) { s0 }
 	else {
 		let f := s0.snd.fst.fst
 		let x := s0.snd.fst.snd
 		let stack := s0.snd.snd.fst
-		let log := tick (note s0.snd.snd.snd f)
-		let fs := shape_of f
+		let log := tick(note(s0.snd.snd.snd, f))
+		let fs := shape_of(f)
 		let b := fs.snd.snd
-		let as := shape_of fs.snd.fst
-		if (as.fst == "Leaf") { mm_deliver b stack log }
+		let as := shape_of(fs.snd.fst)
+		if (as.fst == "Leaf") { mm_deliver(b, stack, log) }
 		else if (as.fst == "Stem") {
 			let c := as.snd
-			if (k_shaped_v c) {
-				let v := k_payload c
-				if (k_shaped_v v) { mm_deliver (k_payload v) stack log }
-				else if (k_shaped_v b) { mm_run v (k_payload b) stack log }
-				else { mm_run b x (cons (fr_res v) stack) log }
+			if (k_shaped_v(c)) {
+				let v := k_payload(c)
+				if (k_shaped_v(v)) { mm_deliver(k_payload(v), stack, log) }
+				else if (k_shaped_v(b)) { mm_run(v, k_payload(b), stack, log) }
+				else { mm_run(b, x, cons(fr_res(v), stack), log) }
 			}
-			else { mm_run c x (cons (fr_s b x) stack) log }
+			else { mm_run(c, x, cons(fr_s(b, x), stack), log) }
 		}
 		else {
-			let xs := shape_of x
-			let seen := note log x
-			if (xs.fst == "Leaf") { mm_deliver as.snd.fst stack seen }
-			else if (xs.fst == "Stem") { mm_run as.snd.snd xs.snd stack seen }
-			else { mm_run b xs.snd.fst (cons (fr_to xs.snd.snd) stack) seen }
+			let xs := shape_of(x)
+			let seen := note(log, x)
+			if (xs.fst == "Leaf") { mm_deliver(as.snd.fst, stack, seen) }
+			else if (xs.fst == "Stem") { mm_run(as.snd.snd, xs.snd, stack, seen) }
+			else { mm_run(b, xs.snd.fst, cons(fr_to(xs.snd.snd), stack), seen) }
 		}
 	}
 }
 rec mm_advance :: {m : Tree, steps : Nat} -> Tree :=>
-	if (is_zero steps) { m } else if (mm_is_done m) { m } else { mm_advance (mm_step m) (nat_pred steps) }
+	if (is_zero(steps)) { m } else if (mm_is_done(m)) { m } else { mm_advance(mm_step(m), nat_pred(steps)) }
 // run f on its arguments, each watched under its position
 mm_start := {f, args} => {
-	let named := (fix ({go, xs, i} => if (xs.is_nil) { [] } else { cons (watched i xs.head) (go xs.tail (succ i)) })) args zero
-	mm_run (plain f) named.head (named.tail.map(fr_to)) (pair [] zero)
+	let named := fix({go, xs, i} => if (xs.is_nil) { [] } else { cons(watched(i, xs.head), go(xs.tail, succ(i))) })(args, zero)
+	mm_run(plain(f), named.head, named.tail.map(fr_to), pair([], zero))
 }
 rec count_watch :: {name : Tree, v : Tree} -> Nat :=>
-	if (is_plain v) { zero } else if (is_watched v) { if (watch_name v == name) { 1 } else { zero } }
-	else if (v.fst == "Stem") { count_watch name v.snd } else { add (count_watch name v.snd.fst) (count_watch name v.snd.snd) }
+	if (is_plain(v)) { zero } else if (is_watched(v)) { if (watch_name(v) == name) { 1 } else { zero } }
+	else if (v.fst == "Stem") { count_watch(name, v.snd) } else { add(count_watch(name, v.snd.fst), count_watch(name, v.snd.snd)) }
 // uses of an input: steps its shape decided, plus copies of it in the result
 uses_of := {name, m} => {
-	let decided := (mm_log m).fst.filter({n} => n == name).length
-	if (mm_is_done m) { add decided (count_watch name m.snd.fst) } else { decided }
+	let decided := (mm_log(m)).fst.filter({n} => n == name).length
+	if (mm_is_done(m)) { add(decided, count_watch(name, m.snd.fst)) } else { decided }
 }
-finish := {f, args} => mm_advance (mm_start f args) 3000
-result_of_run := {m} => erase m.snd.fst
+finish := {f, args} => mm_advance(mm_start(f, args), 3000)
+result_of_run := {m} => erase(m.snd.fst)
 ```
 
 ```
-test uses_of zero (finish ({x} => x) [5]) = 1
-test uses_of zero (finish ({x} => t) [5]) = 0
-test uses_of zero (finish ({x} => pair x x) [5]) = 2
-test uses_of zero (finish ({x} => ({_y} => t) (pair x x)) [5]) = 0
-test uses_of zero (finish is_leaf [5]) = 1
-test uses_of zero (finish ({x} => pair (is_leaf x) x) [5]) = 2
-test uses_of zero (finish ({n} => (t (t zero succ) id) n) [5]) = 1
-test uses_of zero (finish ({f} => pair (f 1) (f 2)) [succ]) = 2
+test uses_of(zero, finish({x} => x, [5])) = 1
+test uses_of(zero, finish({x} => t, [5])) = 0
+test uses_of(zero, finish({x} => pair(x, x), [5])) = 2
+test uses_of(zero, finish({x} => ({_y} => t)(pair(x, x)), [5])) = 0
+test uses_of(zero, finish(is_leaf, [5])) = 1
+test uses_of(zero, finish({x} => pair(is_leaf(x), x), [5])) = 2
+test uses_of(zero, finish({n} => t(t(zero, succ), id)(n), [5])) = 1
+test uses_of(zero, finish({f} => pair(f(1), f(2)), [succ])) = 2
 // the observer changes nothing: with names erased, every state is the plain machine's
-erase_frame := {fr} => if (fr.fst == "To") { fr_to (erase fr.snd) } else if (fr.fst == "Res") { fr_res (erase fr.snd) } else { fr_s (erase fr.snd.fst) (erase fr.snd.snd) }
-plain_state := {m} => if (mm_is_done m) { machine_done (erase m.snd.fst) } else { machine_run (erase m.snd.fst.fst) (erase m.snd.fst.snd) (m.snd.snd.fst.map(erase_frame)) }
-rec upto :: {n : Nat} -> List Nat :=> if (is_zero n) { [0] } else { (upto (nat_pred n)).append([n]) }
-in_lockstep := {f, x, k} => (upto k).all({i} => plain_state (mm_advance (mm_start f [x]) i) == m_advance (m_start f x) i)
-test in_lockstep dbl 3 40 = true
-test in_lockstep ({x} => pair (is_leaf x) x) 5 20 = true
+erase_frame := {fr} => if (fr.fst == "To") { fr_to(erase(fr.snd)) } else if (fr.fst == "Res") { fr_res(erase(fr.snd)) } else { fr_s(erase(fr.snd.fst), erase(fr.snd.snd)) }
+plain_state := {m} => if (mm_is_done(m)) { machine_done(erase(m.snd.fst)) } else { machine_run(erase(m.snd.fst.fst), erase(m.snd.fst.snd), m.snd.snd.fst.map(erase_frame)) }
+rec upto :: {n : Nat} -> List(Nat) :=> if (is_zero(n)) { [0] } else { (upto(nat_pred(n))).append([n]) }
+in_lockstep := {f, x, k} => (upto(k)).all({i} => plain_state(mm_advance(mm_start(f, [x]), i)) == m_advance(m_start(f, x), i))
+test in_lockstep(dbl, 3, 40) = true
+test in_lockstep({x} => pair(is_leaf(x), x), 5, 20) = true
 // "at most one use" is one more test on bounded runs
-at_most_once := {A, v} => {x, n} => if (accepts A x n) { nat_le (uses_of zero (mm_advance (mm_start v [x]) n)) 1 } else { true }
-test every (at_most_once NatS ({x} => pair x x)) 45 = pair false false
-test every (at_most_once NatS id) 45 = pair false true
+at_most_once := {A, v} => {x, n} => if (accepts(A, x, n)) { nat_le(uses_of(zero, mm_advance(mm_start(v, [x]), n)), 1) } else { true }
+test every(at_most_once(NatS, {x} => pair(x, x)), 45) = pair(false, false)
+test every(at_most_once(NatS, id), 45) = pair(false, true)
 ```
 
 Three consequences:

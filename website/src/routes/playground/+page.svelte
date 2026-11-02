@@ -1,109 +1,119 @@
 <script lang="ts">
-  // The playground is a notebook, not an IDE: one full-width buffer whose
-  // results render INLINE — every definition shows its reduced value under
-  // its line, every test its verdict, errors their message — and, once the
-  // kernel is warm, edits re-check live on a debounce. No output sidebar;
-  // the remaining chrome is a toolbar, a run-progress overlay, and toasts
-  // for engine messages.
+  // The playground: the real toolchain in a tab. Code on the left with results
+  // inline; an inspector on the right that follows the cursor and shows the
+  // tree under it, or runs it step by step. A palette (ctrl-K) reaches the rest.
   import { onMount } from 'svelte'
+  import type { EditorState } from '@codemirror/state'
+  import type { EditorView } from '@codemirror/view'
   import { disp } from '$lib/disp/client.svelte'
-  import type { RunOutcome, ItemEvent, ValueNode, RawTree } from '$lib/disp/protocol'
-  import { parseTree, type T } from '$lib/treecalc/treecalc'
+  import type { RunOutcome, ItemEvent, ScopeItem } from '$lib/disp/protocol'
   import { examples, EXAMPLE_STORAGE_KEY } from '$lib/disp/examples'
   import { encodeShared, decodeShared, isSharedHash } from '$lib/disp/share'
   import DispEditor, { type EditorApi, type LineMark } from '$lib/components/DispEditor.svelte'
-  import TreeValue, { type TreeValueCtl } from '$lib/components/TreeValue.svelte'
-  import TreeVis from '$lib/components/TreeVis.svelte'
+  import Inspector from '$lib/playground/Inspector.svelte'
+  import Sidebar, { type OutlineRow } from '$lib/playground/Sidebar.svelte'
+  import Palette, { type PaletteItem } from '$lib/playground/Palette.svelte'
+  import type { Subject } from '$lib/playground/subject'
+  import {
+    indexBuffer,
+    playgroundExtensions,
+    renameChanges,
+    relPath,
+    setCosts,
+    setGlowName,
+    setSubjectLines,
+    type BufferIndex,
+    type PlaygroundLink
+  } from '$lib/playground/editor-ext'
 
-  // approximate item count of a cold kernel elaboration (measured; only used
-  // to shape the progress bar)
-  const KERNEL_ITEMS = 762
+  const SCRATCH_PATH = '/lib/tests/playground.disp'
+  const LS_DOC = 'disp-playground-doc'
+  const LS_LIVE = 'disp-playground-live'
+  const LS_WELCOME = 'disp-playground-welcomed'
+  const LS_TABS = 'disp-playground-tabs'
+  const LS_USER = 'disp-playground-userfiles'
+  const LS_LAYOUT = 'disp-playground-layout'
 
+  // svelte-ignore non_reactive_update
   let editorApi: EditorApi | undefined
   let currentDoc = $state('')
   let exampleId = $state('walkthrough')
+  let initialDoc = examples[0].source
 
   // ---- tabs -----------------------------------------------------------------
-  // The scratch buffer (persistent, examples/share land here) plus any library
-  // files opened from the Files list or by ctrl-clicking a "….disp" import.
-  // Each tab runs with ITS OWN path, so a library file's relative opens
-  // resolve exactly as they do for the elaborator; edits to file tabs are
-  // local to the tab (the library the checker reads is untouched).
-  const SCRATCH_PATH = '/lib/tests/playground.disp'
-  // `preview` is the VS Code convention: a single-click open lands in ONE
-  // reusable slot (italic title) so browsing doesn't spam tabs; editing the
-  // file or double-clicking (tab or list entry) makes it permanent.
+  // The scratch buffer plus opened library files. Each tab runs at its own path
+  // and keeps its own editor state (undo, folds, cursor). A single-click open
+  // lands in one reusable preview slot, like VS Code.
   type Tab = { id: string; title: string; path: string; doc: string; kind: 'scratch' | 'file'; dirty?: boolean; preview?: boolean }
-  let tabs = $state<Tab[]>([
-    { id: 'scratch', title: 'playground.disp', path: SCRATCH_PATH, doc: '', kind: 'scratch' }
-  ])
+  let tabs = $state<Tab[]>([{ id: 'scratch', title: 'playground.disp', path: SCRATCH_PATH, doc: '', kind: 'scratch' }])
   let activeTabId = $state('scratch')
   const activeTab = () => tabs.find((t) => t.id === activeTabId) ?? tabs[0]
+  const tabStates = new Map<string, { state: EditorState; scroll: ReturnType<EditorView['scrollSnapshot']> }>()
 
-  function switchTab(id: string) {
-    if (id === activeTabId) return
-    const cur = activeTab()
-    cur.doc = editorApi?.getDoc() ?? cur.doc
+  function activate(id: string) {
+    const prev = activeTab()
+    const view = editorApi?.view()
+    const scroll = view?.scrollSnapshot()
     activeTabId = id
     const next = activeTab()
+    prev.doc = view?.state.doc.toString() ?? prev.doc
+    const saved = tabStates.get(id)
+    const old = editorApi?.swapState(saved?.state ?? null, next.doc)
+    if (old && scroll) tabStates.set(prev.id, { state: old, scroll })
+    if (saved) view?.dispatch({ effects: saved.scroll })
     currentDoc = next.doc
-    editorApi?.setDoc(next.doc)
-    summary = null
-    stripError = null
+    outcome = null
+    subject = null
     persistTabs()
+    void refreshScope()
+    if (live && canAutoRun(next.doc)) void execute(next.doc, 'checking')
   }
 
   function closeTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id)
     if (idx < 0 || tabs[idx].kind === 'scratch') return
-    const wasActive = id === activeTabId
-    tabs.splice(idx, 1)
-    if (wasActive) {
-      const next = tabs[Math.max(0, idx - 1)]
-      activeTabId = next.id
-      currentDoc = next.doc
-      editorApi?.setDoc(next.doc)
-      summary = null
-      stripError = null
-    }
+    if (id === activeTabId) activate(tabs[Math.max(0, idx - 1)].id)
+    tabs.splice(tabs.findIndex((t) => t.id === id), 1)
+    tabStates.delete(id)
     persistTabs()
   }
 
-  async function openFile(path: string, opts?: { permanent?: boolean }) {
+  async function openFile(path: string, opts?: { permanent?: boolean; line?: number }) {
     const existing = tabs.find((t) => t.path === path)
     if (existing) {
       if (opts?.permanent) existing.preview = false
-      return switchTab(existing.id)
+      if (existing.id !== activeTabId) activate(existing.id)
+    } else {
+      const text = await disp.read(path)
+      if (text == null) {
+        toast(`No such file in the library: ${path}`, 'warn')
+        return
+      }
+      const title = path.split('/').pop() ?? path
+      const pv = tabs.find((t) => t.preview)
+      if (!opts?.permanent && pv && pv.id !== activeTabId) {
+        tabStates.delete(pv.id)
+        pv.id = path
+        pv.path = path
+        pv.title = title
+        pv.doc = text
+        pv.dirty = false
+        activate(path)
+      } else if (!opts?.permanent && pv) {
+        tabStates.delete(pv.id)
+        const fresh: Tab = { id: path, title, path, doc: text, kind: 'file', preview: true }
+        const at = tabs.indexOf(pv)
+        tabs.splice(at + 1, 0, fresh)
+        activate(path)
+        tabs.splice(tabs.indexOf(pv), 1)
+      } else {
+        tabs.push({ id: path, title, path, doc: text, kind: 'file', preview: !opts?.permanent })
+        activate(path)
+      }
     }
-    const text = await disp.read(path)
-    if (text == null) {
-      toast(`no such file in the bundled library: ${path}`, 'warn')
-      return
-    }
-    const title = path.split('/').pop() ?? path
-    const pv = tabs.find((t) => t.preview)
-    if (!opts?.permanent && pv) {
-      // reuse the preview slot in place
-      const cur = activeTab()
-      if (cur.id !== pv.id) cur.doc = editorApi?.getDoc() ?? cur.doc
-      pv.id = path
-      pv.path = path
-      pv.title = title
-      pv.doc = text
-      pv.dirty = false
-      activeTabId = path
-      currentDoc = text
-      editorApi?.setDoc(text)
-      summary = null
-      stripError = null
-      persistTabs()
-      return
-    }
-    tabs.push({ id: path, title, path, doc: text, kind: 'file', preview: !opts?.permanent })
-    switchTab(path)
+    if (opts?.line) editorApi?.gotoLine(opts.line)
   }
 
-  // "../kernel/prelude.disp" relative to the ACTIVE tab's path
   function resolvePath(rel: string, fromPath: string): string {
     if (rel.startsWith('/')) return rel
     const parts = fromPath.split('/').slice(0, -1)
@@ -113,371 +123,202 @@
     }
     return parts.join('/')
   }
-  const onOpenPath = (rel: string) => void openFile(resolvePath(rel, activeTab().path))
 
-  // jump-to-definition: the worker BFS-parses the buffer's open graph
+  // ---- navigation -----------------------------------------------------------
+  const navStack: { tab: string; line: number }[] = []
+  function pushNav() {
+    const v = editorApi?.view()
+    if (v) navStack.push({ tab: activeTabId, line: v.state.doc.lineAt(v.state.selection.main.head).number })
+    if (navStack.length > 50) navStack.shift()
+  }
+  function navBack() {
+    const to = navStack.pop()
+    if (!to) return
+    if (to.tab !== activeTabId && tabs.some((t) => t.id === to.tab)) activate(to.tab)
+    editorApi?.gotoLine(to.line)
+  }
   async function jumpDef(name: string) {
+    pushNav()
     const site = await disp.def(name, activeTab().path, editorApi?.getDoc() ?? currentDoc)
     if (!site) {
-      toast(`no definition found for '${name}'`, 'warn')
+      navStack.pop()
+      toast(`No definition found for ${name}`, 'warn')
       return
     }
-    if (site.path !== activeTab().path) await openFile(site.path)
-    editorApi?.gotoLine(site.line)
+    await openFile(site.path, { line: site.line })
+    if (site.path === activeTab().path) editorApi?.gotoLine(site.line)
   }
-  const resolveIdent = (name: string) =>
-    disp.def(name, activeTab().path, editorApi?.getDoc() ?? currentDoc).then((s) => s !== null)
+  const goto = (line: number) => editorApi?.gotoLine(line)
 
-  // ---- the file browser (the worker's library) -----------------------------
-  // USER FILES are real library entries: created/edited files write through
-  // to the worker's vfs (so `use "./name.disp"` works from any buffer) and
-  // persist in localStorage, replayed into the vfs on every boot. The
-  // bundled files can be edited too (session-only — the originals return
-  // with a fresh worker); stale module-cache entries drop on every write.
-  let browserOpen = $state(false)
+  // ---- the library ------------------------------------------------------------
   let filePaths = $state<string[] | null>(null)
   let userFiles = $state<Record<string, string>>({})
-  let newFileOpen = $state(false)
-  let newFileName = $state('')
-
   async function refreshFiles() {
     filePaths = await disp.ls()
   }
-  function toggleBrowser() {
-    browserOpen = !browserOpen
-    try {
-      localStorage.setItem(LS_BROWSER, browserOpen ? '1' : '0')
-    } catch {}
-    if (browserOpen && filePaths == null) void refreshFiles()
-  }
-  // hierarchical view: nested collapsible folders (tests starts folded —
-  // it's long and mostly regression pins)
-  type DirNode = { name: string; path: string; dirs: DirNode[]; files: { path: string; name: string }[] }
-  const fileTree = $derived.by(() => {
-    const root: DirNode = { name: 'lib', path: 'lib', dirs: [], files: [] }
-    const byPath = new Map<string, DirNode>([['lib', root]])
-    for (const p of filePaths ?? []) {
-      const segs = p.replace(/^\/lib\//, '').split('/')
-      let node = root
-      for (let i = 0; i < segs.length - 1; i++) {
-        const dpath = `${node.path}/${segs[i]}`
-        let child = byPath.get(dpath)
-        if (!child) {
-          child = { name: segs[i], path: dpath, dirs: [], files: [] }
-          byPath.set(dpath, child)
-          node.dirs.push(child)
-        }
-        node = child
-      }
-      node.files.push({ path: p, name: segs[segs.length - 1] })
-    }
-    return root
-  })
-  let collapsedDirs = $state(new Set(['lib/tests']))
-  function toggleDir(path: string) {
-    const next = new Set(collapsedDirs)
-    if (next.has(path)) next.delete(path)
-    else next.add(path)
-    collapsedDirs = next
-  }
-
   function persistUserFiles() {
     try {
       localStorage.setItem(LS_USER, JSON.stringify(userFiles))
     } catch {}
   }
-  // replay user files into the (fresh) worker vfs — boot and post-interrupt
   async function restoreUserFiles() {
     for (const [p, text] of Object.entries(userFiles)) await disp.write(p, text)
   }
-
   async function createFile(name: string) {
     let n = name.trim()
     if (!n) return
     if (!n.endsWith('.disp')) n += '.disp'
     const path = n.startsWith('/') ? n : `/lib/tests/${n}`
-    newFileOpen = false
-    newFileName = ''
     if ((await disp.read(path)) != null) {
-      void openFile(path) // exists — just open it
+      void openFile(path)
       return
     }
     const base = path.split('/').pop()
-    const text = `// ${base} — use "./${base}" reaches this file from the scratch buffer\n\nopen use raw "../prelude.disp" {}\n`
+    const text = `// ${base}: reach this file from the scratch buffer with use "./${base}"\n\nopen use raw "../prelude.disp" {}\n`
     userFiles[path] = text
     persistUserFiles()
     await disp.write(path, text)
     await refreshFiles()
-    void openFile(path)
+    void openFile(path, { permanent: true })
   }
-
   async function deleteFile(path: string) {
-    if (!(path in userFiles)) return // only user-created files delete
+    if (!(path in userFiles)) return
     const open = tabs.find((t) => t.path === path)
     if (open) closeTab(open.id)
     delete userFiles[path]
     persistUserFiles()
     await disp.rm(path)
     await refreshFiles()
-    toast(`deleted ${path.split('/').pop()}`)
+    toast(`Deleted ${path.split('/').pop()}`)
   }
-  let busy = $state(false)
-  let live = $state(true)
-  let summary = $state<{ defs: number; pass: number; total: number; ms: number; errorLine?: number; error?: string } | null>(null)
-  // line-less errors (no source attribution) fall back to a strip over the
-  // editor bottom; attributed errors render inline at their line
-  let stripError = $state<string | null>(null)
-  let progress = $state<{ label: string; count: number; current: string } | null>(null)
-  let showWelcome = $state(false)
 
-  // ---- repl ----
-
-  // subtree re-render for every interactive value (blocks + eval strip):
-  // raw for recognized atoms, deeper for budget cuts
-  const expandValue = (handle: number, rawRoot: boolean) => disp.render(handle, 80, rawRoot)
-
-  // ---- reduction-visualizer pop-out -----------------------------------------
-  // A value's CURRENT fold state serializes into the pedagogical visualizer's
-  // expression syntax: concrete structure goes in as trees; each folded atom
-  // (name, string, big nat, … cut) becomes an identifier whose REAL structure
-  // is pre-fetched into the panel's defs dictionary — so it enters as a green
-  // POD: folded in the drawing, but genuine structure that computes when a
-  // reduction consumes it (or when clicked open). Atoms too big to ship
-  // (> POD_MAX_NODES) get no dictionary entry and stay symbolic fruit.
-  // `atoms` (ident -> handle) is the sync bridge: a pod click in the panel
-  // maps back to the buffer subtree it stands for. `vizCtl` is the source
-  // TreeValue's controller — null in expression mode (eval pop-outs), where
-  // the strip's VALUE doesn't correspond to the input expression's parts.
-  let viz = $state<{ expr: string; defs: Record<string, T>; atoms: Map<string, number> } | null>(null)
-  let vizCtl: TreeValueCtl | null = null
-  let vizApi: { setProgram: (expr: string, newDefs?: Record<string, T>) => void } | null = null
-  // the panel is sized to FIT (no scrollbar): the drawing gets whatever the
-  // body height leaves after the instrument's own chrome (edit box +
-  // transport ≈ 115px — minimal mode shows no readout text)
-  let vizBodyH = $state(0)
-
-  // seed the panel: in place when it's already open (the tree animates from
-  // its current drawing — no remount flash), fresh mount otherwise
-  function applySeed(expr: string, defs: Record<string, T>, atoms: Map<string, number>) {
-    if (viz && vizApi) {
-      viz = { expr, defs, atoms }
-      vizApi.setProgram(expr, defs)
-    } else {
-      viz = { expr, defs, atoms }
+  // ---- what the editor knows, kept instant --------------------------------------
+  let cachedIndexDoc: unknown = null
+  let cachedIndex: BufferIndex = { defs: [], tests: [] }
+  function bufferIndex(): BufferIndex {
+    const v = editorApi?.view()
+    if (!v) return cachedIndex
+    if (v.state.doc !== cachedIndexDoc) {
+      cachedIndexDoc = v.state.doc
+      cachedIndex = indexBuffer(v.state.doc)
     }
+    return cachedIndex
   }
-  // strings are unary codepoint chains ("leaf" alone is ~830 nodes), so the
-  // ceiling must be generous; a pod only draws its nodes once opened anyway
-  const POD_MAX_NODES = 3000
+  let index = $state.raw<BufferIndex>({ defs: [], tests: [] })
+  let scopeItems: ScopeItem[] = []
+  let scopeKey = ''
+  async function refreshScope() {
+    const doc = editorApi?.getDoc() ?? currentDoc
+    const path = activeTab().path
+    const key = path + '\0' + (doc.match(/\bopen\s+use\s+(?:raw\s+)?"[^"]+"/g) ?? []).join('\0')
+    if (key === scopeKey) return
+    scopeKey = key
+    scopeItems = await disp.scope(path, doc)
+  }
 
-  const rawToT = (r: RawTree): T =>
-    r === 0
-      ? { tag: 'leaf' }
-      : r.length === 1
-        ? { tag: 'stem', c: rawToT(r[0]) }
-        : { tag: 'fork', l: rawToT(r[0]), r: rawToT(r[1]) }
+  const shortPath = (p: string) => p.replace(/^\/lib\//, '')
+  const link: PlaygroundLink = {
+    index: bufferIndex,
+    scope: () => scopeItems,
+    paths: () => filePaths ?? [],
+    currentPath: () => activeTab().path,
+    moduleItems: (rel) => disp.scope(activeTab().path, `open use raw "${rel}"`),
+    shortPath,
+    jumpDef: (name) => void jumpDef(name),
+    back: navBack,
+    rename: startRename,
+    nextProblem
+  }
+  const extensions = playgroundExtensions(link)
 
-  function serializeForViz(node: ValueNode): { expr: string; atoms: Map<string, number> } {
-    const atoms = new Map<string, number>()
-    let cuts = 0
-    const mangle = (s: string) => {
-      let m = s.replace(/[^A-Za-z0-9_]/g, '_')
-      if (!/^[A-Za-z_]/.test(m)) m = '_' + m
-      if (m === 't') m = '_t' // the leaf token
-      return m
-    }
-    // same ident, different tree (two strings mangling alike): suffix apart
-    const claim = (want: string, h: number): string => {
-      let m = want
-      let i = 2
-      while (atoms.has(m) && atoms.get(m) !== h) m = `${want}_${i++}`
-      atoms.set(m, h)
-      return m
-    }
-    const go = (n: ValueNode, atom: boolean): string => {
-      switch (n.k) {
-        case 'leaf':
-          return 't'
-        case 'nat':
-          // small nats go in concrete (the encodings agree); big ones pod
-          return n.n <= 24 ? String(n.n) : claim(mangle(`n_${n.n}`), n.h)
-        case 'str':
-          return claim(mangle(n.s), n.h)
-        case 'name':
-          return claim(mangle(n.name), n.h)
-        case 'more':
-          return claim(`_${++cuts}`, n.h)
-        case 'stem': {
-          const s = `t ${go(n.c[0], true)}`
-          return atom ? `(${s})` : s
+  // ---- rename, problems -----------------------------------------------------
+  let paletteOpen = $state(false)
+  let paletteQuery = $state('')
+  let palettePrompt = $state<{ title: string; submit: (t: string) => void } | null>(null)
+  function startRename() {
+    const v = editorApi?.view()
+    if (!v) return
+    const w = v.state.wordAt(v.state.selection.main.head)
+    if (!w) return
+    const from = v.state.sliceDoc(w.from, w.to)
+    if (!/^[A-Za-z_][\w']*$/.test(from) || from === 't') return
+    paletteQuery = from
+    palettePrompt = {
+      title: `Rename ${from} in this file to`,
+      submit: (to) => {
+        const name = to.trim()
+        if (!name || name === from) return
+        if (!/^[A-Za-z_][\w']*$/.test(name)) {
+          toast(`${name} isn't a valid name`, 'warn')
+          return
         }
-        case 'fork': {
-          const s = `t ${go(n.c[0], true)} ${go(n.c[1], true)}`
-          return atom ? `(${s})` : s
-        }
+        const changes = renameChanges(v.state.doc, from, name)
+        v.dispatch({ changes })
+        v.focus()
+        toast(`Renamed ${changes.length} use${changes.length === 1 ? '' : 's'}`)
       }
     }
-    const expr = go(node, false)
-    return { expr, atoms }
+    paletteOpen = true
+  }
+  function closePalette() {
+    paletteOpen = false
+    palettePrompt = null
+    editorApi?.view().focus()
+  }
+  let paletteFilesFirst = false
+  function openPalette(q: string, filesFirst = false) {
+    palettePrompt = null
+    paletteFilesFirst = filesFirst
+    paletteQuery = q
+    paletteOpen = true
   }
 
-  async function seedViz(tree: ValueNode) {
-    const { expr, atoms } = serializeForViz(tree)
-    const defs: Record<string, T> = {}
-    await Promise.all(
-      [...atoms].map(async ([ident, handle]) => {
-        const rt = await disp.raw({ handle }, POD_MAX_NODES)
-        if (rt !== null) defs[ident] = rawToT(rt)
-      })
-    )
-    applySeed(expr, defs, atoms)
+  const problems = $derived.by(() => {
+    const out: { line: number; kind: 'fail' | 'error' }[] = []
+    if (outcome?.errorLine) out.push({ line: outcome.errorLine, kind: 'error' })
+    for (const t of outcome?.tests ?? []) if (!t.pass && t.line) out.push({ line: t.line, kind: 'fail' })
+    return out.sort((a, b) => a.line - b.line)
+  })
+  function nextProblem() {
+    if (problems.length === 0) return
+    const v = editorApi?.view()
+    const cur = v ? v.state.doc.lineAt(v.state.selection.main.head).number : 0
+    goto((problems.find((p) => p.line > cur) ?? problems[0]).line)
   }
 
-  // value pop-out (def blocks, got/want rows): synced with its TreeValue
-  const onVisualizeValue = (tree: ValueNode, ctl: TreeValueCtl) => {
-    vizCtl = ctl
-    void seedViz(tree)
-  }
-
-  // two-way sync, buffer -> panel: any fold change in the SOURCE value
-  // re-seeds the panel at its new fold state (a fresh step-0 tree)
-  const onValueFoldChange = (tree: ValueNode, ctl: TreeValueCtl) => {
-    if (viz && vizCtl === ctl && ctl.alive) void seedViz(tree)
-  }
-
-  // two-way sync, panel -> buffer: before any step, clicking a pod unfolds
-  // the corresponding subtree in the buffer instead — the fold-change above
-  // then re-seeds the panel. A dead controller (the buffer re-ran) falls
-  // back to the panel's local reveal.
-  const onPodOpen = (label: string): boolean => {
-    const handle = viz?.atoms.get(label)
-    if (handle == null || !vizCtl?.alive) return false
-    void vizCtl.unfoldByHandle(handle)
-    return true
-  }
-
-  // names TYPED into the panel's edit box resolve against the live playground
-  // scope — the panel computes with the same definitions the buffer does
-  const resolveScopeDef = async (name: string): Promise<T | null> => {
-    const rt = await disp.raw({ name }, POD_MAX_NODES)
-    return rt === null ? null : rawToT(rt)
-  }
-
-  const VIZ_HINT =
-    "Green pods are real structure, folded — reduction computes through them; clicking one before stepping unfolds it in the buffer too (the buffer's ↺ folds both). Names resolve against the playground's scope; ones too large to ship stay orange fruit, and stepping hands their applications to the real evaluator. Binders compile away: {x} => body is notation for a tree (bracket abstraction, the same translation the elaborator performs)."
-
-  // highlight an expression in the buffer → a floating tree button appears
-  // when it fits the visualizer's grammar; pressing it seeds the panel with
-  // the SELECTION. Free names resolve against the FILE's definitions at seed
-  // time (the last run's defs + everything its opens brought into scope), so
-  // they enter as green pods — real structure, folded. Numbers and string
-  // literals parse concrete (no definition needed); names too large to ship
-  // or not (yet) bound stay orange fruit and engine-step as before.
-  const selectionAction = {
-    validate: (text: string) => {
-      if (text.length > 300) return false
-      try {
-        parseTree(text, {})
-        return true
-      } catch {
-        return false
-      }
-    },
-    run: (text: string) => {
-      vizCtl = null
-      void seedSelection(text)
-    },
-    title: 'visualize the reduction of this expression'
-  }
-
-  // free names of a treecalc term, first-appearance order (binder params are
-  // already compiled away by parse-time bracket abstraction)
-  function collectVarNames(t: T, out: string[] = [], seen = new Set<string>()): string[] {
-    if (t.tag === 'var') {
-      if (!seen.has(t.name)) {
-        seen.add(t.name)
-        out.push(t.name)
-      }
-    } else if (t.tag === 'stem') collectVarNames(t.c, out, seen)
-    else if (t.tag === 'fork') {
-      collectVarNames(t.l, out, seen)
-      collectVarNames(t.r, out, seen)
-    } else if (t.tag === 'apply') {
-      collectVarNames(t.f, out, seen)
-      collectVarNames(t.x, out, seen)
-    }
-    return out
-  }
-
-  async function seedSelection(text: string) {
-    let names: string[] = []
-    try {
-      names = collectVarNames(parseTree(text, {}))
-    } catch {
-      /* validate() vetted the text — a race just seeds without defs */
-    }
-    const defs: Record<string, T> = {}
-    await Promise.all(
-      names.map(async (name) => {
-        const rt = await disp.raw({ name }, POD_MAX_NODES)
-        if (rt !== null) defs[name] = rawToT(rt)
-      })
-    )
-    applySeed(text, defs, new Map())
-  }
-
-  // engine macro-step: the panel is stuck on a name whose definition never
-  // shipped (kernel-tier values explode as trees) — perform the application
-  // on the real evaluator and hand back the (usually small) result. Fruit
-  // born from the pop-out's own atoms carries its handle in the atoms table;
-  // typed names resolve by name against the current scope.
-  const tToRaw = (t: T): RawTree => {
-    if (t.tag === 'leaf') return 0
-    if (t.tag === 'stem') return [tToRaw(t.c)]
-    if (t.tag === 'fork') return [tToRaw(t.l), tToRaw(t.r)]
-    throw new Error('non-concrete argument') // stuckSpine guarantees concreteness
-  }
-  const engineStep = async (name: string, args: T[]): Promise<T | null> => {
-    try {
-      const handle = viz?.atoms.get(name)
-      const rt = await disp.applySpine(
-        handle != null ? { handle } : { name },
-        args.map(tToRaw),
-        POD_MAX_NODES
-      )
-      return rt === null ? null : rawToT(rt)
-    } catch {
-      return null
-    }
-  }
-
-  // ---- toasts (engine messages: kernel loaded, reset, interrupted…) ----
+  // ---- toasts ---------------------------------------------------------------
   let toasts = $state<{ id: number; text: string; kind: 'info' | 'warn' }[]>([])
   let toastId = 0
   function toast(text: string, kind: 'info' | 'warn' = 'info') {
     const id = ++toastId
     toasts.push({ id, text, kind })
-    setTimeout(() => (toasts = toasts.filter((t) => t.id !== id)), 6500)
+    setTimeout(() => (toasts = toasts.filter((t) => t.id !== id)), 5000)
   }
+
+  // ---- running --------------------------------------------------------------
+  let busy = $state(false)
+  let live = $state(true)
+  let outcome = $state.raw<RunOutcome | null>(null)
+  let runVersion = $state(0)
+  let progress = $state<{ label: string; count: number; current: string } | null>(null)
+  let lastRunMs = 0
 
   disp.onItem = (e: ItemEvent) => {
     if (e.depth > 0 && progress) {
       progress.count++
-      progress.current = `${shortPath(e.sourcePath)}${e.name ? ' · ' + e.name : ''}`
+      progress.current = `${shortPath(e.sourcePath ?? '')}${e.name ? ' · ' + e.name : ''}`
     }
   }
-  const shortPath = (p?: string) => (p ? p.replace(/^.*\/lib\//, 'lib/') : '')
 
-  // ---- inline results -----------------------------------------------------
+  const expandValue = (handle: number, rawRoot: boolean) => disp.render(handle, 80, rawRoot)
 
-  // Notebook marks: value blocks anchor at a def's LAST line (a multi-line
-  // def's output belongs after its body), test verdicts likewise. Values are
-  // structured (interactive unfold); plain text stays the fallback.
   function marksFromOutcome(out: RunOutcome): LineMark[] {
     const marks: LineMark[] = []
     for (const d of out.defs) {
       const line = d.endLine ?? d.line
       if (!line) continue
+      // a function's raw tree says nothing on its line; the tree view plays it instead
+      if (paramsOf(d.name)?.length) continue
       if (d.value) marks.push({ line, focusFrom: d.line, kind: 'value', values: [{ node: d.value }] })
       else if (d.pretty) marks.push({ line, focusFrom: d.line, kind: 'value', block: d.pretty })
     }
@@ -502,80 +343,63 @@
     return marks
   }
 
-  function applyOutcome(out: RunOutcome, opts?: { coldLoad?: boolean }) {
+  function applyOutcome(out: RunOutcome, coldLoad: boolean) {
+    outcome = out
+    lastRunMs = out.elapsedMs
+    runVersion++
     editorApi?.setMarks(marksFromOutcome(out))
-    summary = {
-      defs: out.defs.length,
-      pass: out.tests.filter((t) => t.pass).length,
-      total: out.tests.length,
-      ms: out.elapsedMs,
-      error: out.error,
-      errorLine: out.errorLine
+    const v = editorApi?.view()
+    if (v) {
+      let max = 1
+      for (const c of out.costs ?? []) if (c.steps > max) max = c.steps
+      const m = new Map<number, { frac: number; steps: number }>()
+      for (const c of out.costs ?? [])
+        if (c.steps > 0) m.set(c.line, { frac: Math.log1p(c.steps) / Math.log1p(max), steps: c.steps })
+      v.dispatch({ effects: setCosts.of(m) })
     }
-    stripError = out.error && !out.errorLine ? out.error : null
-    // a heavy buffer shouldn't re-run on every keystroke — pause live mode.
-    // A run that just paid the one-time kernel elaboration is exempt: its
-    // slowness says nothing about the buffer.
-    if (live && !opts?.coldLoad && out.elapsedMs > 2500) {
-      setLive(false, { persist: false })
-      toast(`live re-check paused — the last run took ${fmtMs(out.elapsedMs)}. Re-enable it in the toolbar.`)
+    refreshSubject(out)
+    updateSubject()
+    if (live && !coldLoad && out.elapsedMs > 2500) {
+      setLive(false, false)
+      toast(`Live checking paused: the last run took ${fmtMs(out.elapsedMs)}. Ctrl+Enter still runs.`)
     }
   }
-
-  // ---- actions --------------------------------------------------------------
 
   async function execute(source: string, label: string) {
     if (busy) return
     busy = true
-    stripError = null
-    progress = {
-      label: disp.kernelLoaded ? label : `${label} — the first run checks the kernel too`,
-      count: 0,
-      current: ''
-    }
+    const forTab = activeTabId
+    progress = { label: disp.kernelLoaded ? label : `${label}: the first run checks the kernel too`, count: 0, current: '' }
     try {
-      // each tab runs at its own path — library files resolve their opens
-      // exactly as the elaborator would
       const out = await disp.run(source, { wantDefPretty: true, path: activeTab().path })
-      // >100 module-depth items streamed = this run elaborated the kernel
-      applyOutcome(out, { coldLoad: (progress?.count ?? 0) > 100 })
+      if (forTab === activeTabId) applyOutcome(out, (progress?.count ?? 0) > 100)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      if (msg !== 'interrupted') toast(`⚠ ${msg}`, 'warn') // stop() already announced
+      if (msg !== 'interrupted') toast(msg, 'warn')
     } finally {
       progress = null
       busy = false
     }
   }
 
-  const runFile = () => {
-    const doc = editorApi?.getDoc() ?? currentDoc
-    void execute(doc, 'run file')
-  }
+  const runFile = () => void execute(editorApi?.getDoc() ?? currentDoc, 'running')
   const runToCursor = () => {
     const prefix = editorApi?.getDocToCursor()
-    if (!prefix?.trim()) return
-    const lines = prefix.trimEnd().split('\n').length
-    void execute(prefix, `run to line ${lines}`)
+    if (prefix?.trim()) void execute(prefix, 'running to the cursor')
   }
 
-  // live re-check: rerun as soon as typing pauses. Gated so a cold session
-  // never starts the minute-long kernel load uninvited: fires once the kernel
-  // is warm, OR when the buffer opens nothing but raw modules (`use raw` —
-  // instant, no kernel involved). Warm reruns cost single-digit milliseconds;
-  // an in-flight run re-arms the debounce.
+  // a cold session never starts the kernel load uninvited; raw buffers are instant
   const canAutoRun = (doc: string) => disp.kernelLoaded || !/\buse\s+(?!raw\b)/.test(doc)
   let editTimer: ReturnType<typeof setTimeout> | undefined
+  let indexTimer: ReturnType<typeof setTimeout> | undefined
   function onEdit(doc: string) {
     currentDoc = doc
     const tab = activeTab()
     if (doc !== tab.doc) {
       tab.doc = doc
       if (tab.kind === 'file') {
-        // write-through: the session library sees the edit immediately (its
-        // module cache invalidates), so dependents re-elaborate on next use
         tab.dirty = true
-        tab.preview = false // an edited preview earns its keep
+        tab.preview = false
         void disp.write(tab.path, doc)
         if (tab.path in userFiles) {
           userFiles[tab.path] = doc
@@ -584,64 +408,64 @@
       }
     }
     if (tab.kind === 'scratch') persist()
+    clearTimeout(indexTimer)
+    indexTimer = setTimeout(() => {
+      index = bufferIndex()
+      void refreshScope()
+    }, 90)
     if (!live) return
     clearTimeout(editTimer)
-    editTimer = setTimeout(() => {
-      if (!live || disp.status === 'dead' || !canAutoRun(currentDoc)) return
-      if (busy) return onEdit(currentDoc)
-      void execute(currentDoc, 'live re-check')
-    }, 350)
+    // re-check as soon as typing pauses, later when runs are slow
+    editTimer = setTimeout(
+      () => {
+        if (!live || disp.status === 'dead' || !canAutoRun(currentDoc)) return
+        if (busy) return onEdit(currentDoc)
+        void execute(currentDoc, 'checking')
+      },
+      Math.min(450, Math.max(90, lastRunMs * 1.5))
+    )
   }
 
-  // `persist: false` = the auto-pause path: session-only, so a slow buffer
-  // today doesn't leave live mode silently off for every future visit
-  function setLive(v: boolean, opts?: { persist?: boolean }) {
+  function setLive(v: boolean, save = true) {
     live = v
-    if (opts?.persist !== false)
+    if (save)
       try {
         localStorage.setItem(LS_LIVE, v ? '1' : '0')
       } catch {}
     if (!v) clearTimeout(editTimer)
     else {
       const doc = editorApi?.getDoc() ?? currentDoc
-      if (canAutoRun(doc) && !busy) void execute(doc, 'live re-check')
+      if (canAutoRun(doc) && !busy) void execute(doc, 'checking')
     }
   }
 
   async function preloadKernel() {
     if (busy || disp.kernelLoaded) return
     busy = true
-    progress = { label: 'elaborating + self-verifying the kernel', count: 0, current: '' }
+    progress = { label: 'elaborating and self-verifying the kernel', count: 0, current: '' }
     try {
       const out = await disp.loadKernel()
-      toast(
-        out.ok
-          ? `kernel loaded + verified · ${(out.elapsedMs / 1000).toFixed(1)}s · ${fmtSteps(out.steps)} steps — later runs reuse it`
-          : `kernel load failed: ${out.error}`,
-        out.ok ? 'info' : 'warn'
-      )
+      toast(out.ok ? `Kernel checked in ${(out.elapsedMs / 1000).toFixed(1)}s. Later runs reuse it.` : `Kernel load failed: ${out.error}`, out.ok ? 'info' : 'warn')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      if (msg !== 'interrupted') toast(`⚠ ${msg}`, 'warn') // stop() already announced
+      if (msg !== 'interrupted') toast(msg, 'warn')
     } finally {
       progress = null
       busy = false
     }
-    // the kernel is warm now — greet with inline results
-    if (live && disp.kernelLoaded) void execute(editorApi?.getDoc() ?? currentDoc, 'checking the buffer')
+    if (live && disp.kernelLoaded) void execute(editorApi?.getDoc() ?? currentDoc, 'checking')
   }
 
-  // The don't-trust-the-snapshot path: drop the precompiled kernel and watch
-  // the type system genuinely re-check itself from source.
+  /// Drop the precompiled kernel and watch the type system really re-check itself.
   async function verifyKernel() {
     if (busy) return
     busy = true
     try {
       await disp.reset({ fromSource: true })
-      // the reset swapped arenas — inline values hold dead handles
       editorApi?.setMarks([])
-      summary = null
-      toast('precompiled kernel dropped — re-elaborating from source')
+      outcome = null
+      subject = null
+      toast('Precompiled kernel dropped. Re-checking from source.')
     } finally {
       busy = false
     }
@@ -652,91 +476,383 @@
     disp.interrupt()
     progress = null
     busy = false
-    // handles inside the inline values died with the arena — drop them
     editorApi?.setMarks([])
-    summary = null
-    // the fresh worker's vfs reverts to the bundle — replay user files
+    outcome = null
+    subject = null
     void restoreUserFiles()
-    toast('interrupted — engine reset, kernel cache cleared', 'warn')
+    toast('Stopped. The engine was reset.', 'warn')
   }
 
   async function resetSession() {
     if (busy) return
     await disp.reset()
-    summary = null
-    stripError = null
-    editorApi?.setMarks([]) // inline values hold handles from the old arena
-    toast(
-      disp.kernelLoaded
-        ? 'session reset — fresh arena, precompiled kernel re-installed'
-        : 'session reset — fresh arena, kernel cache cleared'
-    )
+    outcome = null
+    subject = null
+    editorApi?.setMarks([])
+    toast(disp.kernelLoaded ? 'Fresh session, with the precompiled kernel.' : 'Fresh session. The kernel cache is empty.')
   }
 
   function loadExample(id: string) {
     const ex = examples.find((x) => x.id === id)
     if (!ex) return
     exampleId = id
-    switchTab('scratch') // examples always land in the scratch buffer
+    if (activeTabId !== 'scratch') activate('scratch')
     editorApi?.setDoc(ex.source)
     currentDoc = ex.source
-    summary = null
-    stripError = null
+    outcome = null
+    subject = null
+    index = bufferIndex()
+    void refreshScope()
     persist()
     if (live && canAutoRun(ex.source) && !busy) void execute(ex.source, 'checking the example')
   }
-
-  // ---- share (the buffer travels in the URL hash) --------------------------
 
   async function share() {
     const doc = editorApi?.getDoc() ?? currentDoc
     history.replaceState(null, '', `#${await encodeShared(doc)}`)
     try {
       await navigator.clipboard.writeText(location.href)
-      toast('link copied — the buffer travels in the URL')
+      toast('Link copied. The code travels in the URL.')
     } catch {
-      toast('link ready in the address bar')
+      toast('Link ready in the address bar.')
     }
   }
 
-  // ---- persistence ----------------------------------------------------------
+  // ---- the inspector's subject ----------------------------------------------
+  let subject = $state.raw<Subject | null>(null)
+  let pinned = $state(false)
+  let glow = $state<string | null>(null)
+  let cursorLine = $state(1)
+  let cursorCol = $state(1)
+  let cursorTimer: ReturnType<typeof setTimeout> | undefined
 
-  const LS_DOC = 'disp-playground-doc'
-  const LS_LIVE = 'disp-playground-live'
-  const LS_WELCOME = 'disp-playground-welcomed'
-  const LS_TABS = 'disp-playground-tabs'
-  const LS_USER = 'disp-playground-userfiles'
-  const LS_BROWSER = 'disp-playground-browser'
+  function onCursor(v: EditorView) {
+    const head = v.state.selection.main.head
+    const line = v.state.doc.lineAt(head)
+    cursorLine = line.number
+    cursorCol = head - line.from + 1
+    clearTimeout(cursorTimer)
+    cursorTimer = setTimeout(updateSubject, 70)
+  }
+
+  function balanced(text: string): boolean {
+    const stack: string[] = []
+    const closes: Record<string, string> = { ')': '(', '}': '{', ']': '[' }
+    for (const c of text.replace(/"[^"]*"/g, '')) {
+      if (c === '(' || c === '{' || c === '[') stack.push(c)
+      else if (closes[c] && stack.pop() !== closes[c]) return false
+    }
+    return stack.length === 0
+  }
+
+  function exprSubject(expr: string): Subject {
+    return { key: `expr:${expr}`, kind: 'expr', title: expr, term: { expr } }
+  }
+
+  function updateSubject() {
+    const v = editorApi?.view()
+    if (!v) return
+    const sel = v.state.selection.main
+    const w = v.state.wordAt(sel.head)
+    glow = w && sel.empty ? v.state.sliceDoc(w.from, w.to) : null
+    if (pinned) return
+    if (!sel.empty) {
+      const text = v.state.sliceDoc(sel.from, sel.to).trim()
+      // an expression, not a run of items or prose in a comment
+      if (text && text.length < 500 && balanced(text) && !/^\/\//.test(text) && !/(^|\n)\s*[\w']+\s*:=/.test(text) && !/^\s*test\b/.test(text)) {
+        const s = exprSubject(text)
+        if (s.key !== subject?.key) setSubject(s)
+      }
+      return
+    }
+    const out = outcome
+    if (!out) return
+    const n = cursorLine
+    const inRange = (a?: number, b?: number) => a != null && n >= a && n <= (b ?? a)
+    const test = out.tests.find((t) => inRange(t.line, t.endLine))
+    if (test) {
+      const src = v.state.doc.line(Math.min(test.line!, v.state.doc.lines)).text.replace(/\s*\/\/.*$/, '')
+      setSubject({
+        key: `test:${test.line}:${test.lhsH}:${test.rhsH}`,
+        kind: 'test',
+        title: src,
+        line: test.line,
+        endLine: test.endLine,
+        lhsH: test.lhsH,
+        rhsH: test.rhsH,
+        pass: test.pass,
+        term: { path: activeTab().path, text: v.state.doc.toString(), line: test.line, side: 'lhs', value: test.lhsH }
+      })
+      return
+    }
+    const def = out.defs.find((d) => inRange(d.line, d.endLine))
+    if (def && def.h != null) {
+      setSubject({
+        key: `def:${def.name}:${def.line}:${def.h}`,
+        kind: 'def',
+        title: def.name,
+        line: def.line,
+        endLine: def.endLine,
+        h: def.h,
+        term: { path: activeTab().path, text: v.state.doc.toString(), line: def.line, value: def.h }
+      })
+    }
+  }
+
+  /// A run may have renamed, changed or removed what's being inspected.
+  function refreshSubject(out: RunOutcome) {
+    const s = subject
+    if (!s || pinned || s.kind === 'expr') return
+    const v = editorApi?.view()
+    if (!v) return
+    if (s.kind === 'def') {
+      const d = out.defs.find((x) => x.name === s.title)
+      if (d?.h == null) {
+        subject = null
+        v.dispatch({ effects: setSubjectLines.of(null) })
+      } else
+        setSubject({ ...s, key: `def:${d.name}:${d.line}:${d.h}`, line: d.line, endLine: d.endLine, h: d.h, term: { ...s.term, text: v.state.doc.toString(), line: d.line, value: d.h } })
+    } else if (!out.tests.some((t) => t.line === s.line)) {
+      subject = null
+      v.dispatch({ effects: setSubjectLines.of(null) })
+    }
+  }
+
+  function setSubject(s: Subject) {
+    if (s.key === subject?.key) return
+    subject = s
+    editorApi?.view().dispatch({ effects: setSubjectLines.of(s.line ? { from: s.line, to: s.endLine ?? s.line } : null) })
+  }
+
+  const paramsOf = (name: string): string[] | undefined =>
+    bufferIndex().defs.findLast((d) => d.name === name)?.params ?? scopeItems.find((s) => s.name === name)?.params
+
+  /// The first test that calls this definition shows it working.
+  function suggestRun(s: Subject): string | null {
+    if (s.kind !== 'def') return null
+    const re = new RegExp(`^test\\s+(${s.title.replace(/'/g, "\\'")}\\([^=]*?)\\s*=(?!>)`)
+    for (const t of bufferIndex().tests) {
+      const m = re.exec(t.text)
+      if (m) return m[1]
+    }
+    return null
+  }
+
+  function togglePin() {
+    pinned = !pinned
+    if (!pinned) updateSubject()
+  }
+  function inspectExpr(expr: string) {
+    pinned = true
+    setSubject(exprSubject(expr))
+  }
+  function onTreeGlow(name: string | null) {
+    editorApi?.view().dispatch({ effects: setGlowName.of(name) })
+  }
+
+  // ---- the outline ----------------------------------------------------------
+  const outline = $derived.by<OutlineRow[]>(() => {
+    const rows: OutlineRow[] = []
+    const costs = new Map((outcome?.costs ?? []).map((c) => [c.line, c.steps]))
+    let max = 1
+    for (const c of costs.values()) if (c > max) max = c
+    const frac = (c: number) => (c > 0 ? Math.log1p(c) / Math.log1p(max) : 0)
+    const byLine = new Map((outcome?.defs ?? []).map((d) => [d.line, d]))
+    for (const d of index.defs) {
+      const run = byLine.get(d.line)
+      const c = costs.get(d.line) ?? 0
+      const pretty = run?.pretty
+      rows.push({
+        line: d.line,
+        endLine: d.endLine,
+        kind: d.decor === 'let' ? 'let' : 'def',
+        name: d.name,
+        value: pretty && pretty.length < 40 && !d.params?.length ? pretty : undefined,
+        cost: c,
+        costFrac: frac(c),
+        params: d.params
+      })
+    }
+    const testByLine = new Map((outcome?.tests ?? []).map((t) => [t.line, t]))
+    for (const t of index.tests) {
+      const run = testByLine.get(t.line)
+      const c = costs.get(t.line) ?? 0
+      rows.push({
+        line: t.line,
+        endLine: t.endLine,
+        kind: 'test',
+        name: t.text.replace(/^test\s+/, ''),
+        pass: run?.pass,
+        cost: c,
+        costFrac: frac(c)
+      })
+    }
+    return rows.sort((a, b) => a.line - b.line)
+  })
+  const openTabPaths = $derived(new Set(tabs.map((t) => t.path)))
+
+  // ---- layout ---------------------------------------------------------------
+  let sideOpen = $state(true)
+  let sideTab = $state<'outline' | 'files' | 'examples'>('outline')
+  let inspOpen = $state(true)
+  let sideW = $state(232)
+  let inspW = $state(0.42)
+  // narrow screens show one pane at a time
+  let pane = $state<'code' | 'tree' | 'side'>('code')
+  let shellW = $state(1200)
+
+  function persistLayout() {
+    try {
+      localStorage.setItem(LS_LAYOUT, JSON.stringify({ sideOpen, sideW, inspOpen, inspW, sideTab }))
+    } catch {}
+  }
+  let shell = $state<HTMLDivElement>()
+  function drag(which: 'side' | 'insp', e: PointerEvent) {
+    e.preventDefault()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => {
+      const r = shell!.getBoundingClientRect()
+      if (which === 'side') sideW = Math.max(150, Math.min(460, ev.clientX - r.left))
+      else inspW = Math.max(0.2, Math.min(0.75, (r.right - ev.clientX) / r.width))
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      persistLayout()
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+  }
+
+  // ---- the palette's contents -----------------------------------------------
+  const mod = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+'
+  function commands(): PaletteItem[] {
+    return [
+      { id: 'run', title: 'Run file', hint: `${mod}Enter`, run: runFile },
+      { id: 'cursor', title: 'Run to cursor', hint: 'Shift+Enter', run: runToCursor },
+      { id: 'live', title: live ? 'Turn off live checking' : 'Turn on live checking', run: () => setLive(!live) },
+      { id: 'share', title: 'Copy a share link', detail: 'the code travels in the URL', run: () => void share() },
+      { id: 'side', title: sideOpen ? 'Hide the sidebar' : 'Show the sidebar', hint: `${mod}B`, run: () => toggleSide() },
+      { id: 'insp', title: inspOpen ? 'Hide the tree view' : 'Show the tree view', hint: `${mod}J`, run: () => toggleInsp() },
+      { id: 'pin', title: pinned ? 'Tree view: follow the cursor' : 'Tree view: stay on this one', run: togglePin },
+      { id: 'rename', title: 'Rename the name under the cursor', hint: 'F2', run: startRename },
+      { id: 'def', title: 'Go to definition', hint: 'F12', run: () => {
+        const v = editorApi?.view()
+        const w = v?.state.wordAt(v.state.selection.main.head)
+        if (v && w) void jumpDef(v.state.sliceDoc(w.from, w.to))
+      } },
+      { id: 'back', title: 'Go back', hint: 'Alt+←', run: navBack },
+      { id: 'problem', title: 'Next problem', hint: 'F8', run: nextProblem },
+      { id: 'reset', title: 'Reset the session', detail: 'a fresh arena', run: () => void resetSession() },
+      { id: 'kernel', title: 'Verify the kernel from source', detail: 'about a minute of the type system checking itself', run: () => void verifyKernel() },
+      { id: 'about', title: 'About this playground', run: () => (aboutOpen = true) }
+    ]
+  }
+  function fuzzy(q: string, s: string): number {
+    if (!q) return 1
+    const t = s.toLowerCase()
+    const i = t.indexOf(q)
+    if (i >= 0) return 1000 - i - t.length * 0.01
+    let at = 0
+    let score = 0
+    for (const ch of q) {
+      const f = t.indexOf(ch, at)
+      if (f < 0) return 0
+      score += f === at ? 3 : 1
+      at = f + 1
+    }
+    return score
+  }
+  function rank(q: string, items: PaletteItem[]): PaletteItem[] {
+    return items
+      .map((it) => ({ it, s: fuzzy(q, it.title) + 0.3 * fuzzy(q, it.detail ?? '') }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .map((x) => x.it)
+  }
+  function paletteSearch(raw: string): PaletteItem[] {
+    if (raw.startsWith('@')) {
+      const q = raw.slice(1).trim().toLowerCase()
+      const own = bufferIndex().defs.map((d) => ({ id: `d${d.line}`, title: d.name, detail: `line ${d.line}`, run: () => goto(d.line) }))
+      const ext = scopeItems.map((s) => ({ id: `s${s.path}:${s.name}`, title: s.name, detail: shortPath(s.path), run: () => void openFile(s.path, { line: s.line }) }))
+      return rank(q, [...own, ...ext])
+    }
+    const q = raw.trim().toLowerCase()
+    const files = (filePaths ?? []).map((p) => ({ id: p, title: p.split('/').pop() ?? p, detail: shortPath(p), run: () => void openFile(p) }))
+    const exs = examples.map((x) => ({ id: `ex:${x.id}`, title: x.label, detail: 'example', run: () => loadExample(x.id) }))
+    return rank(q, paletteFilesFirst ? [...files, ...exs, ...commands()] : [...commands(), ...exs, ...files])
+  }
+  function toggleSide() {
+    sideOpen = !sideOpen
+    persistLayout()
+  }
+  function toggleInsp() {
+    inspOpen = !inspOpen
+    persistLayout()
+  }
+
+  function onWindowKey(e: KeyboardEvent) {
+    const m = e.ctrlKey || e.metaKey
+    if (m && !e.altKey) {
+      const k = e.key.toLowerCase()
+      if (k === 'k' || (k === 'p' && e.shiftKey)) {
+        e.preventDefault()
+        openPalette('')
+      } else if (k === 'p') {
+        e.preventDefault()
+        openPalette('', true)
+      } else if (k === 'o' && e.shiftKey) {
+        e.preventDefault()
+        openPalette('@')
+      } else if (k === 'b') {
+        e.preventDefault()
+        toggleSide()
+      } else if (k === 'j') {
+        e.preventDefault()
+        toggleInsp()
+      }
+    }
+    if ((e.key === 'w' || e.key === 'W') && !e.shiftKey && (e.ctrlKey || e.metaKey || e.altKey)) {
+      e.preventDefault()
+      const t = activeTab()
+      if (t.kind === 'file') closeTab(t.id)
+    }
+  }
+
+  // ---- persistence and boot -------------------------------------------------
   function persist() {
     try {
       localStorage.setItem(LS_DOC, currentDoc)
       localStorage.setItem(EXAMPLE_STORAGE_KEY, exampleId)
     } catch {}
   }
-  // open file tabs persist as paths (content re-reads from the bundled
-  // library — local edits to file tabs are session-only by design)
   function persistTabs() {
     try {
       localStorage.setItem(LS_TABS, JSON.stringify(tabs.filter((t) => t.kind === 'file').map((t) => t.path)))
     } catch {}
   }
-  function dismissWelcome() {
-    showWelcome = false
+  let aboutOpen = $state(false)
+  function dismissAbout() {
+    aboutOpen = false
     try {
       localStorage.setItem(LS_WELCOME, '1')
     } catch {}
   }
 
-  let initialDoc = examples[0].source
   onMount(() => {
     void (async () => {
       try {
         live = localStorage.getItem(LS_LIVE) !== '0'
-        showWelcome = !localStorage.getItem(LS_WELCOME)
+        aboutOpen = !localStorage.getItem(LS_WELCOME)
         userFiles = JSON.parse(localStorage.getItem(LS_USER) ?? '{}') as Record<string, string>
-        browserOpen = localStorage.getItem(LS_BROWSER) === '1'
+        const l = JSON.parse(localStorage.getItem(LS_LAYOUT) ?? '{}')
+        sideOpen = l.sideOpen ?? true
+        sideW = l.sideW ?? 232
+        inspOpen = l.inspOpen ?? true
+        inspW = l.inspW ?? 0.42
+        sideTab = l.sideTab ?? 'outline'
       } catch {}
-      // doc precedence: #shared-code > ?example=<id> deep link > saved buffer
       const hash = location.hash.slice(1)
       let loaded = false
       if (isSharedHash(hash)) {
@@ -760,22 +876,20 @@
           if (saved) {
             currentDoc = saved
             editorApi?.setDoc(saved)
-          } else {
-            currentDoc = initialDoc
-          }
+          } else currentDoc = initialDoc
         } catch {
           currentDoc = initialDoc
         }
       }
+      index = bufferIndex()
       try {
         await disp.init()
       } catch {
-        return // status chip already says 'dead'
+        return
       }
-      // user files enter the session library before anything reads them
       await restoreUserFiles()
-      if (browserOpen) void refreshFiles()
-      // reopen last session's file tabs (scratch stays active)
+      void refreshFiles()
+      void refreshScope()
       try {
         const saved = JSON.parse(localStorage.getItem(LS_TABS) ?? '[]') as string[]
         for (const p of saved) {
@@ -784,560 +898,303 @@
           if (text != null) tabs.push({ id: p, title: p.split('/').pop() ?? p, path: p, doc: text, kind: 'file' })
         }
       } catch {}
-      // greet with inline results when the precompiled kernel restored (or
-      // the buffer is kernel-free) — never spend a visitor's minute uninvited
       const doc = editorApi?.getDoc() ?? currentDoc
-      if (live && canAutoRun(doc) && !busy) void execute(doc, 'checking the buffer')
+      if (live && canAutoRun(doc) && !busy) void execute(doc, 'checking')
     })()
-    return () => clearTimeout(editTimer)
+    return () => {
+      clearTimeout(editTimer)
+      clearTimeout(indexTimer)
+      clearTimeout(cursorTimer)
+    }
   })
 
   // ---- formatting -----------------------------------------------------------
-
-  const fmtSteps = (n: number) =>
-    n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n)
   const fmtMs = (ms: number) => (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms.toFixed(0) + 'ms')
+  const fmtSteps = (n: number) => (n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n))
+  const passCount = $derived(outcome?.tests.filter((t) => t.pass).length ?? 0)
+  const failCount = $derived(outcome?.tests.filter((t) => !t.pass).length ?? 0)
   const memPct = $derived(Math.min(100, (disp.memBytes / (4096 * 1024 * 1024)) * 100))
-
-  const statusLabel = $derived(
-    disp.status === 'cold'
-      ? 'engine cold'
-      : disp.status === 'booting'
-        ? 'booting…'
-        : disp.status === 'dead'
-          ? 'engine crashed, hit reset'
-          : busy
-            ? 'running…'
-            : summary?.error
-              ? `⚠ error${summary.errorLine ? ` · line ${summary.errorLine}` : ''}`
-              : summary
-                ? `${summary.defs} def${summary.defs === 1 ? '' : 's'} · ${summary.pass}/${summary.total} ✓ · ${fmtMs(summary.ms)}`
-                : disp.kernelLoaded
-                  ? 'kernel ✓'
-                  : 'ready · kernel not loaded'
-  )
-  const statusBad = $derived(!!summary?.error || (summary != null && summary.pass < summary.total))
+  const narrow = $derived(shellW < 820)
 </script>
 
 <svelte:head>
   <title>Playground · disp</title>
 </svelte:head>
 
-<!-- the first-visit info panel stays pinned until the visitor starts doing
-     something else (any pointer-down outside it) or dismisses it directly -->
 <svelte:window
+  onkeydown={onWindowKey}
   onpointerdown={(e) => {
-    if (showWelcome && !(e.target as HTMLElement).closest('.info-wrap')) dismissWelcome()
-  }}
-  onkeydown={(e) => {
-    // close the active file tab: ctrl/cmd-w where the platform lets a page
-    // claim it (installed app / fullscreen); alt-w works everywhere
-    if ((e.key === 'w' || e.key === 'W') && !e.shiftKey && (e.ctrlKey || e.metaKey || e.altKey)) {
-      e.preventDefault()
-      const t = activeTab()
-      if (t.kind === 'file') closeTab(t.id)
-    }
+    if (aboutOpen && !(e.target as HTMLElement).closest('.about')) dismissAbout()
   }}
 />
 
-{#snippet dirNode(node: DirNode, depth: number)}
-  {#each node.dirs as d (d.path)}
-    <button
-      class="fdir-row"
-      style="padding-left: {0.35 + depth * 0.75}rem"
-      onclick={() => toggleDir(d.path)}
-      aria-expanded={!collapsedDirs.has(d.path)}
-    >
-      <span class="chev" class:closed={collapsedDirs.has(d.path)}>▾</span>
-      {d.name}
+<div class="pg" bind:this={shell} bind:clientWidth={shellW} class:narrow data-pane={pane}>
+  <div class="bar">
+    <button class="ibtn" class:on={sideOpen} onclick={toggleSide} title="Sidebar ({mod}B)" aria-label="toggle sidebar" aria-pressed={sideOpen}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M6 3v10" stroke="currentColor" stroke-width="1.3" /></svg>
     </button>
-    {#if !collapsedDirs.has(d.path)}
-      {@render dirNode(d, depth + 1)}
-    {/if}
-  {/each}
-  {#each node.files as f (f.path)}
-    <div
-      class="fitem-row"
-      class:opened={tabs.some((t) => t.path === f.path)}
-      style="padding-left: {0.55 + depth * 0.75}rem"
-    >
-      <button
-        class="fitem"
-        onclick={() => void openFile(f.path)}
-        ondblclick={() => void openFile(f.path, { permanent: true })}
-        title={f.path}
-      >
-        {f.name}
-      </button>
-      {#if f.path in userFiles}
-        <button class="f-del" onclick={() => void deleteFile(f.path)} title="delete (yours)" aria-label="delete {f.name}">×</button>
-      {/if}
-    </div>
-  {/each}
-{/snippet}
-
-<div class="pg">
-  <div class="toolbar">
-    <button class="btn primary tb" onclick={runFile} disabled={busy} title="Ctrl/⌘-Enter">
-      ▶ Run
-    </button>
-    <button class="btn tb" onclick={runToCursor} disabled={busy} title="Shift-Enter">
-      ⇣ To cursor
-    </button>
-    {#if busy}
-      <button class="btn tb stop" onclick={stop}>■ Stop</button>
-    {/if}
-    <select
-      class="ex-select"
-      value={exampleId}
-      onchange={(e) => loadExample((e.target as HTMLSelectElement).value)}
-    >
-      {#each examples as ex}
-        <option value={ex.id}>{ex.label}</option>
+    <div class="tabs" role="tablist">
+      {#each tabs as tb (tb.id)}
+        <div
+          class="tab"
+          class:active={tb.id === activeTabId}
+          class:preview={tb.preview}
+          role="tab"
+          aria-selected={tb.id === activeTabId}
+          tabindex="0"
+          title={tb.path}
+          onclick={() => tb.id !== activeTabId && activate(tb.id)}
+          ondblclick={() => (tb.preview = false)}
+          onkeydown={(e) => e.key === 'Enter' && tb.id !== activeTabId && activate(tb.id)}
+        >
+          <span>{tb.title}</span>
+          {#if tb.dirty}<span class="dirty" title="Edited for this session only">●</span>{/if}
+          {#if tb.kind === 'file'}
+            <button class="x" onclick={(e) => { e.stopPropagation(); closeTab(tb.id) }} aria-label="close {tb.title}">×</button>
+          {/if}
+        </div>
       {/each}
-    </select>
-    <button
-      class="btn tb toggle"
-      class:on={live}
-      onclick={() => setLive(!live)}
-      title="re-check the buffer as you type (once the kernel is warm)"
-      aria-pressed={live}
-    >
-      <span class="tdot"></span> live
-    </button>
-    <button class="btn tb subtle" onclick={() => void share()} title="copy a link that carries this buffer">
-      ↗ Share
-    </button>
-    <div class="spacer"></div>
-    <div class="status" class:live={busy} class:dead={disp.status === 'dead'} class:bad={statusBad}>
-      <span class="dot"></span>
-      {#if busy && progress}
-        <!-- the run-progress indicator lives right here in the toolbar: a
-             small bar + the item currently elaborating (full label in the
-             tooltip). The fade-in delay keeps millisecond reruns flicker-free. -->
-        <div class="mini-prog" title={progress.label}>
-          <div class="mp-bar">
-            <div class="mp-fill" style="width:{Math.min(99, (progress.count / KERNEL_ITEMS) * 100)}%"></div>
-          </div>
-          <span class="mp-txt">
-            {progress.count > 0 ? `${progress.count} · ${progress.current}` : progress.label}
-          </span>
-        </div>
-      {:else}
-        {statusLabel}
-        {#if !disp.kernelLoaded && !busy && disp.status !== 'dead'}
-          <button class="linkbtn" onclick={preloadKernel}>load kernel</button>
-        {:else if disp.kernelLoaded && !busy && disp.status !== 'dead'}
-          <button
-            class="linkbtn"
-            onclick={verifyKernel}
-            title="drop the precompiled kernel and re-elaborate + self-verify it from source (~a minute)"
-          >
-            verify from source
-          </button>
-        {/if}
-      {/if}
     </div>
-    {#if disp.memBytes > 0}
-      <div class="mem-wrap" title="WASM memory arena: {(disp.memBytes / 1e9).toFixed(2)}GB of the 4GB ceiling">
-        <svg class="mem-ico" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="1.5" y="4.5" width="13" height="7" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3" />
-          <path d="M4 11.5v2M8 11.5v2M12 11.5v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-          <rect x="4" y="6.5" width="3" height="3" rx="0.6" fill="currentColor" />
-          <rect x="9" y="6.5" width="3" height="3" rx="0.6" fill="currentColor" />
-        </svg>
-        <div class="mem">
-          <div class="mem-fill" class:hot={memPct > 85} style="width:{memPct}%"></div>
-        </div>
-      </div>
-    {/if}
-    <div class="info-wrap" class:pinned={showWelcome}>
-      <button
-        class="btn tb subtle icon"
-        onclick={() => (showWelcome ? dismissWelcome() : (showWelcome = true))}
-        aria-label="about this playground"
-      >
-        ⓘ
+    <div class="actions">
+      <button class="btn-run" onclick={runFile} disabled={busy} title="Run ({mod}Enter)">▶ Run</button>
+      <button class="ibtn word" onclick={() => void share()} title="Copy a link with this code in it">Share</button>
+      <button class="ibtn word kbdish" onclick={() => openPalette('')} title="Everything else">{mod}K</button>
+      <button class="ibtn" class:on={inspOpen} onclick={toggleInsp} title="Tree view ({mod}J)" aria-label="toggle tree view" aria-pressed={inspOpen}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.4" r="1.7" fill="currentColor" /><circle cx="4" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><path d="M8 4 4 12M8 4l4 8" stroke="currentColor" stroke-width="1.3" /></svg>
       </button>
-      <div class="info-pop" role="note">
-        <div class="info-card">
-          {#if showWelcome}
-            <button class="x" onclick={dismissWelcome} aria-label="dismiss">×</button>
-          {/if}
-          <p class="w-title">The <span class="grad-text">real toolchain</span>, in your tab.</p>
-          <p>
-            This playground runs disp's actual elaborator and its Rust evaluator (compiled to
-            WebAssembly) — the same code that checks the test suite. Nothing is sent to a server.
-          </p>
-          <p>
-            Results live in the buffer, notebook-style: every definition shows its reduced value,
-            every test its verdict, and edits re-check live once the kernel is warm. Values are
-            explorable — click a number, string, or name to unfold the tree it stands for, click
-            <em>…</em> to render deeper, <em>−</em> to fold a subterm back, and the tree button to
-            pop the value into the reduction visualizer (folded names ride along as symbolic
-            fruit).
-          </p>
-          <p>
-            The kernel arrives <em>precompiled</em> — a small snapshot of the checked module cache —
-            so typed runs start in seconds. Don't trust it?
-            <button class="linkbtn" onclick={() => { dismissWelcome(); void verifyKernel() }}>Verify from source</button>:
-            about a minute of the type system genuinely re-checking itself, right here.
-          </p>
-          <p class="hint-row">
-            <kbd>⌘⏎</kbd> run file · <kbd>⇧⏎</kbd> run to cursor · <kbd>⌥W</kbd> close tab
-            (<kbd>⌃W</kbd> too, where the browser allows)
-          </p>
-        </div>
-      </div>
     </div>
-    <button class="btn tb subtle" onclick={resetSession} disabled={busy} title="Fresh session: clears the arena and the kernel cache">
-      Reset
-    </button>
   </div>
 
-  <div class="tabbar">
-    <button
-      class="fb-toggle"
-      class:on={browserOpen}
-      onclick={toggleBrowser}
-      aria-expanded={browserOpen}
-      title="file browser — every library file, plus your own (ctrl-click an import string jumps too)"
-    >
-      ❦
-    </button>
-    {#each tabs as tb (tb.id)}
-      <div
-        class="tab"
-        class:active={tb.id === activeTabId}
-        role="button"
-        tabindex="0"
-        class:preview={tb.preview}
-        title={tb.path}
-        onclick={() => switchTab(tb.id)}
-        ondblclick={() => (tb.preview = false)}
-        onkeydown={(e) => e.key === 'Enter' && switchTab(tb.id)}
-      >
-        <span class="tab-title">{tb.title}</span>
-        {#if tb.dirty}<span class="tab-dirty" title="local edits — the library the checker reads is untouched">●</span>{/if}
-        {#if tb.kind === 'file'}
-          <button
-            class="tab-x"
-            onclick={(e) => {
-              e.stopPropagation()
-              closeTab(tb.id)
-            }}
-            aria-label="close {tb.title}"
-          >
-            ×
-          </button>
-        {/if}
+  <div class="main">
+    {#if sideOpen || (narrow && pane === 'side')}
+      <div class="sidepane" style="width:{narrow ? '100%' : sideW + 'px'}">
+        <Sidebar
+          tab={sideTab}
+          rows={outline}
+          activeLine={cursorLine}
+          {filePaths}
+          openPaths={openTabPaths}
+          {userFiles}
+          activePath={activeTab().path}
+          {examples}
+          {exampleId}
+          onTab={(t) => {
+            sideTab = t
+            persistLayout()
+            if (t === 'files' && filePaths == null) void refreshFiles()
+          }}
+          onGoto={(l) => {
+            pane = 'code'
+            goto(l)
+          }}
+          onOpenFile={(p, permanent) => {
+            pane = 'code'
+            void openFile(p, { permanent })
+          }}
+          onNewFile={(n) => void createFile(n)}
+          onDeleteFile={(p) => void deleteFile(p)}
+          onExample={(id) => {
+            pane = 'code'
+            loadExample(id)
+          }}
+        />
       </div>
-    {/each}
-    <div class="tab-spacer"></div>
-  </div>
-
-  <div class="stage">
-    {#if browserOpen}
-      <aside class="fb">
-        <div class="fb-head">
-          <span class="fb-title">library</span>
-          <button
-            class="fb-new"
-            onclick={() => {
-              newFileOpen = !newFileOpen
-              if (filePaths == null) void refreshFiles()
-            }}
-            title="new file (lands in lib/tests/ — reach it with use &quot;./name.disp&quot;)"
-            aria-label="new file"
-          >
-            ＋
-          </button>
-        </div>
-        {#if newFileOpen}
-          <form
-            class="fb-newform"
-            onsubmit={(e) => {
-              e.preventDefault()
-              void createFile(newFileName)
-            }}
-          >
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              bind:value={newFileName}
-              placeholder="name.disp"
-              spellcheck="false"
-              autocomplete="off"
-              autofocus
-              onkeydown={(e) => e.key === 'Escape' && ((newFileOpen = false), (newFileName = ''))}
-            />
-          </form>
-        {/if}
-        <div class="fb-list">
-          {#if filePaths == null}
-            <div class="files-loading">listing…</div>
-          {:else}
-            {@render dirNode(fileTree, 0)}
-          {/if}
-        </div>
-      </aside>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="grip" onpointerdown={(e) => drag('side', e)}></div>
     {/if}
-    <div class="ed-wrap">
+    <div class="codepane">
       <DispEditor
         doc={currentDoc || initialDoc}
         onDocChange={onEdit}
         onRunFile={runFile}
         onRunToCursor={runToCursor}
         {expandValue}
-        {onVisualizeValue}
-        {onValueFoldChange}
-        {onOpenPath}
-        {selectionAction}
+        onOpenPath={(rel) => void openFile(resolvePath(rel, activeTab().path))}
         onJumpDef={(n) => void jumpDef(n)}
-        onResolveIdent={resolveIdent}
+        onResolveIdent={(n) => disp.def(n, activeTab().path, editorApi?.getDoc() ?? currentDoc).then((s) => s !== null)}
+        {extensions}
+        ownHover
+        {onCursor}
         api={(a) => (editorApi = a)}
       />
-    </div>
-
-    {#if viz}
-      <aside class="viz-panel">
-        <button class="viz-x" onclick={() => { viz = null; vizApi = null }} aria-label="close visualizer">×</button>
-        <div class="viz-body" bind:clientHeight={vizBodyH}>
-          {#if vizBodyH > 0}
-            <TreeVis
-              variant="lab"
-              exprs={[viz.expr]}
-              height={Math.max(200, vizBodyH - 120)}
-              defs={viz.defs}
-              resolveDef={resolveScopeDef}
-              minimal
-              lazyParse
-              {onPodOpen}
-              {engineStep}
-              api={(a) => (vizApi = a)}
-              namesHint={VIZ_HINT}
-            />
-          {/if}
+      {#if problems.length > 0 && editorApi}
+        <div class="ruler" aria-hidden="true">
+          {#each problems as p (`${p.kind}${p.line}`)}
+            <button class="tick {p.kind}" tabindex="-1" style="top:{((p.line - 1) / Math.max(1, editorApi.view().state.doc.lines)) * 100}%" onclick={() => goto(p.line)} title="line {p.line}" aria-label="go to line {p.line}"></button>
+          {/each}
         </div>
-      </aside>
-    {/if}
-
-    {#if stripError}
-      <div class="errstrip" title={stripError}>⚠ {stripError}</div>
-    {/if}
-
-    <div class="toasts">
-      {#each toasts as t (t.id)}
-        <div class="toast" class:warn={t.kind === 'warn'}>{t.text}</div>
-      {/each}
+      {/if}
+      {#if outcome?.error && !outcome.errorLine}
+        <div class="errstrip" title={outcome.error}>⚠ {outcome.error}</div>
+      {/if}
+      <div class="toasts">
+        {#each toasts as t (t.id)}
+          <div class="toast" class:warn={t.kind === 'warn'}>{t.text}</div>
+        {/each}
+      </div>
     </div>
+    {#if inspOpen || (narrow && pane === 'tree')}
+      {#if !narrow}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="grip" onpointerdown={(e) => drag('insp', e)}></div>
+      {/if}
+      <div class="insppane" style="width:{narrow ? '100%' : inspW * 100 + '%'}">
+        <Inspector
+          {subject}
+          {runVersion}
+          {pinned}
+          {glow}
+          suggest={suggestRun}
+          paramsOf={paramsOf}
+          notRun={!outcome && !busy && disp.status === 'ready'}
+          onPinToggle={togglePin}
+          onExpr={inspectExpr}
+          onGlow={onTreeGlow}
+          onGoto={goto}
+        />
+      </div>
+    {/if}
   </div>
 
+  <footer class="status">
+    <span class="state" class:busy class:dead={disp.status === 'dead'} class:bad={!!outcome?.error || failCount > 0}><i></i></span>
+    {#if busy && progress && progress.count > 0}
+      <span class="prog" title={progress.label}>{progress.count} items · {progress.current}</span>
+      <button class="stlink" onclick={stop}>Stop</button>
+    {:else if busy}
+      <span class="dim">{progress?.label ?? 'running'}…</span>
+    {:else if disp.status === 'dead'}
+      <span class="bad">Engine crashed.</span>
+      <button class="stlink" onclick={() => void resetSession()}>Reset</button>
+    {:else if disp.status === 'cold' || disp.status === 'booting' || disp.status === 'restoring-kernel'}
+      <span class="dim">Starting the engine…</span>
+    {:else if outcome?.error}
+      <button class="stlink bad" onclick={nextProblem} title={outcome.error}>{outcome.errorLine ? `Error on line ${outcome.errorLine}` : 'Error'}</button>
+    {:else if outcome}
+      <span class="dim">Checked in {fmtMs(outcome.elapsedMs)}</span>
+    {:else}
+      <span class="dim">Ready</span>
+    {/if}
+    {#if outcome}
+      <span class="sep">·</span><span class="dim">{outcome.defs.length} defs</span>
+      {#if outcome.tests.length > 0}
+        <span class="sep">·</span>
+        <button class="stlink" class:quiet={failCount === 0} onclick={nextProblem} title="Next problem (F8)">
+          <span class="good">✓ {passCount}</span>{#if failCount > 0}&nbsp;<span class="bad">✗ {failCount}</span>{/if}
+        </button>
+      {/if}
+      {#if outcome.steps > 0}<span class="sep">·</span><span class="dim" title="Evaluator steps this run">{fmtSteps(outcome.steps)} steps</span>{/if}
+    {/if}
+    <span class="grow"></span>
+    {#if !disp.kernelLoaded && !busy && disp.status === 'ready'}
+      <button class="stlink" onclick={() => void preloadKernel()}>Load kernel</button>
+    {/if}
+    <button class="stlink" class:quiet={live} onclick={() => setLive(!live)} title="Re-check as you type" aria-pressed={live}>
+      <i class="livedot" class:on={live}></i>Live
+    </button>
+    {#if disp.memBytes > 0}
+      <span class="memw" title="WASM memory: {(disp.memBytes / 1e9).toFixed(2)}GB of 4GB"><span class="memf" class:hot={memPct > 85} style="width:{memPct}%"></span></span>
+    {/if}
+    <span class="dim pos">Ln {cursorLine}, Col {cursorCol}</span>
+    <button class="stlink quiet" onclick={() => (aboutOpen = true)} aria-label="about this playground">?</button>
+  </footer>
+
+  {#if narrow}
+    <nav class="panes" aria-label="panes">
+      <button class:on={pane === 'side'} onclick={() => (pane = 'side')}>Outline</button>
+      <button class:on={pane === 'code'} onclick={() => (pane = 'code')}>Code</button>
+      <button class:on={pane === 'tree'} onclick={() => (pane = 'tree')}>Tree</button>
+    </nav>
+  {/if}
+
+  <Palette open={paletteOpen} bind:query={paletteQuery} prompt={palettePrompt} search={paletteSearch} onClose={closePalette} />
+
+  {#if aboutOpen}
+    <div class="about" role="dialog" aria-label="about this playground">
+      <button class="aboutx" onclick={dismissAbout} aria-label="dismiss">×</button>
+      <h2>The real toolchain, in your tab</h2>
+      <p>This runs disp's actual elaborator and evaluator, compiled to WebAssembly. Nothing goes to a server.</p>
+      <p>Each definition shows its value on its line and each test its verdict, and everything re-checks as you type. The panel on the right plays whatever is under your cursor as trees: first the compiler turning each binder into S, K and I, which are themselves small trees, then the tree reducing one rule at a time. Select any expression to see just that part.</p>
+      <p>The kernel arrives precompiled so typed code starts fast. Don't trust it? <button class="stlink" onclick={() => { dismissAbout(); void verifyKernel() }}>Verify it from source</button>: about a minute of the type system checking itself.</p>
+      <p class="keys"><kbd>{mod}K</kbd> commands <kbd>{mod}P</kbd> files <kbd>{mod}Enter</kbd> run <kbd>F12</kbd> definition <kbd>F2</kbd> rename <kbd>F8</kbd> next problem <kbd>←</kbd><kbd>→</kbd> step through the tree</p>
+    </div>
+  {/if}
 </div>
 
 <style>
   .pg {
     display: flex;
     flex-direction: column;
-    /* the layout's app mode gives .content the exact space under the nav —
-       fill it (robust to the nav wrapping taller on narrow screens) */
     flex: 1;
     min-height: 0;
+    background: var(--bg-code);
   }
-
-  /* ---- toolbar ---- */
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    padding: 0.55rem clamp(0.6rem, 2vw, 1.2rem);
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-elev);
-    flex-wrap: wrap;
-  }
-  .tb { padding: 0.38em 0.9em; font-size: 0.88rem; }
-  .tb.stop { border-color: color-mix(in oklab, var(--err) 50%, transparent); color: var(--err); }
-  .tb.subtle { opacity: 0.8; }
-  .tb.icon { padding: 0.38em 0.55em; }
-  .tb.toggle { display: inline-flex; align-items: center; gap: 0.4em; }
-  .tb.toggle .tdot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--fg-faint);
-    transition: background 0.15s ease, box-shadow 0.15s ease;
-  }
-  .tb.toggle.on { border-color: color-mix(in oklab, var(--ok) 45%, transparent); }
-  .tb.toggle.on .tdot {
-    background: var(--ok);
-    box-shadow: 0 0 6px color-mix(in oklab, var(--ok) 60%, transparent);
-  }
-  .ex-select {
-    background: var(--bg-panel);
-    color: var(--fg);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    padding: 0.42em 0.6em;
-    font-family: var(--font-body);
-    font-size: 0.86rem;
-    max-width: 40vw;
-  }
-  .ex-select option { background: var(--bg-elev); }
-  .spacer { flex: 1; }
-  .status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45em;
-    font-size: 0.82rem;
-    color: var(--fg-muted);
-    white-space: nowrap;
-  }
-  .status .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--ok);
-    box-shadow: 0 0 6px color-mix(in oklab, var(--ok) 60%, transparent);
-  }
-  .status.live .dot { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
-  .status.dead .dot, .status.bad .dot { background: var(--err); }
-  @keyframes pulse { 50% { opacity: 0.35; } }
-  .linkbtn {
-    background: none;
-    border: none;
-    color: var(--accent);
-    cursor: pointer;
-    font: inherit;
-    padding: 0;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-  /* run progress, inline in the status chip: small bar + current item */
-  .mini-prog {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5em;
-    min-width: 0;
-    animation: mp-in 0.15s ease 0.25s backwards; /* millisecond reruns never flash it */
-  }
-  @keyframes mp-in { from { opacity: 0; } }
-  .mp-bar {
-    width: 74px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-panel-hover);
-    overflow: hidden;
+  .bar {
     flex: none;
-  }
-  .mp-fill {
-    height: 100%;
-    background: var(--grad-brand);
-    transition: width 0.25s ease;
-  }
-  .mp-txt {
-    font-family: var(--font-mono);
-    font-size: 0.74rem;
-    color: var(--fg-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: min(340px, 30vw);
-  }
-
-  .mem-wrap {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35em;
-    color: var(--fg-faint);
-  }
-  .mem-ico { width: 15px; height: 15px; flex: none; }
-  .mem {
-    width: 68px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-panel-hover);
-    overflow: hidden;
-  }
-  .mem-fill { height: 100%; background: var(--grad-brand); transition: width 0.3s ease; }
-  .mem-fill.hot { background: var(--err); }
-
-  /* ---- the ⓘ popover: hover/focus opens it, first visit pins it ---- */
-  .info-wrap { position: relative; }
-  .info-pop {
-    display: none;
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 30;
-    width: min(38rem, 92vw);
-    padding-top: 0.5rem; /* hover bridge between button and card */
-  }
-  .info-wrap:hover .info-pop,
-  .info-wrap:focus-within .info-pop,
-  .info-wrap.pinned .info-pop {
-    display: block;
-  }
-  .info-card {
-    position: relative;
-    color: var(--fg-muted);
-    font-size: 0.92rem;
-    padding: 1.1rem 1.3rem;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: color-mix(in oklab, var(--bg-elev) 97%, transparent);
-    backdrop-filter: blur(8px);
-    box-shadow: var(--shadow-lift);
-  }
-  .info-card .w-title {
-    font-size: 1.2rem;
-    font-family: var(--font-display);
-    color: var(--fg);
-    margin: 0 0 0.5rem;
-  }
-  .info-card p { margin: 0 0 0.55rem; }
-  .info-card .hint-row { margin-bottom: 0; }
-  .info-card .x {
-    position: absolute;
-    top: 0.4rem;
-    right: 0.6rem;
-    background: none;
-    border: none;
-    color: var(--fg-faint);
-    font-size: 1.1rem;
-    cursor: pointer;
-    padding: 0.2rem;
-  }
-  .info-card .x:hover { color: var(--fg); }
-  kbd {
-    background: var(--bg-panel-hover);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 0.05em 0.4em;
-    font-size: 0.82em;
-  }
-
-  /* ---- tabs: scratch + opened library files ---- */
-  .tabbar {
     display: flex;
     align-items: stretch;
-    gap: 2px;
-    padding: 0.25rem 0.6rem 0;
-    border-bottom: 1px solid var(--border);
+    gap: 0.35rem;
+    padding: 0.22rem 0.45rem 0;
     background: var(--bg-elev);
+    border-bottom: 1px solid var(--border);
+  }
+  .ibtn {
+    flex: none;
+    display: grid;
+    place-items: center;
+    align-self: center;
+    min-width: 1.7rem;
+    height: 1.7rem;
+    padding: 0;
+    margin-bottom: 0.2rem;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--fg-faint);
+    cursor: pointer;
+  }
+  .ibtn svg {
+    width: 1rem;
+    height: 1rem;
+  }
+  .ibtn:hover {
+    color: var(--fg);
+    background: var(--bg-panel-hover);
+  }
+  .ibtn.on {
+    color: var(--accent);
+  }
+  .ibtn.word {
+    padding: 0 0.5rem;
+    font-size: 0.76rem;
+    color: var(--fg-muted);
+  }
+  .kbdish {
+    font-family: var(--font-mono);
+    border: 1px solid var(--border) !important;
+    height: 1.45rem !important;
+    font-size: 0.68rem !important;
+  }
+  .tabs {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
     overflow-x: auto;
-    scrollbar-width: thin;
+    scrollbar-width: none;
   }
   .tab {
     display: inline-flex;
     align-items: center;
     gap: 0.35em;
-    padding: 0.3em 0.7em;
+    padding: 0.28rem 0.7rem;
     font-family: var(--font-mono);
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     color: var(--fg-muted);
-    background: transparent;
     border: 1px solid transparent;
     border-bottom: none;
-    border-radius: 8px 8px 0 0;
+    border-radius: 7px 7px 0 0;
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
@@ -1349,348 +1206,365 @@
     background: var(--bg-code);
     border-color: var(--border);
     color: var(--fg);
-    margin-bottom: -1px; /* merge into the editor surface */
+    margin-bottom: -1px;
+    padding-bottom: calc(0.28rem + 1px);
   }
-  .tab.preview .tab-title {
-    font-style: italic; /* a browsing stop, not a kept tab (VS Code style) */
+  .tab.preview > span:first-child {
+    font-style: italic;
   }
-  .tab-dirty {
-    color: var(--warn, #a8770f);
-    font-size: 0.6rem;
+  .dirty {
+    color: var(--warn);
+    font-size: 0.55rem;
   }
-  .tab-x {
+  .x {
     background: none;
     border: none;
-    color: var(--fg-faint);
-    font-size: 0.95rem;
-    cursor: pointer;
     padding: 0 0.1em;
-    border-radius: 4px;
+    color: var(--fg-faint);
+    font-size: 0.92rem;
     line-height: 1;
-  }
-  .tab-x:hover {
-    color: var(--err);
-    background: var(--bg-panel-hover);
-  }
-  .tab-spacer {
-    flex: 1;
-  }
-  .fb-toggle {
-    background: none;
-    border: none;
-    color: var(--fg-faint);
-    font-size: 0.95rem;
     cursor: pointer;
-    padding: 0 0.5em;
-    border-radius: 6px;
-    align-self: center;
-  }
-  .fb-toggle:hover {
-    color: var(--fg);
-    background: var(--bg-panel-hover);
-  }
-  .fb-toggle.on {
-    color: var(--accent);
-  }
-
-  /* ---- the file browser drawer (left of the buffer) ---- */
-  .fb {
-    width: 13.5rem;
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    border-right: 1px solid var(--border);
-    background: var(--bg-elev);
-  }
-  .fb-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.45rem 0.5rem 0.35rem 0.8rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .fb-title {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
-    color: var(--fg-faint);
-  }
-  .fb-new {
-    background: none;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    color: var(--fg-muted);
-    font-size: 0.85rem;
-    line-height: 1.2;
-    cursor: pointer;
-    padding: 0 0.35em;
-  }
-  .fb-new:hover {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .fb-newform {
-    padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .fb-newform input {
-    width: 100%;
-    background: var(--bg-panel);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    padding: 0.25em 0.5em;
-    outline: none;
-  }
-  .fb-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.4rem 0.35rem;
-    scrollbar-width: thin;
-  }
-  .files-loading {
-    color: var(--fg-faint);
-    font-size: 0.8rem;
-    padding: 0.3rem 0.6rem;
-  }
-  .fdir-row {
-    display: flex;
-    align-items: center;
-    gap: 0.3em;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: none;
-    color: var(--fg-muted);
-    font-size: 0.76rem;
-    font-weight: 600;
-    padding-top: 0.18rem;
-    padding-bottom: 0.14rem;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-  .fdir-row:hover {
-    color: var(--fg);
-    background: var(--bg-panel-hover);
-  }
-  .chev {
-    display: inline-block;
-    font-size: 0.65rem;
-    color: var(--fg-faint);
-    transition: transform 0.15s ease;
-  }
-  .chev.closed {
-    transform: rotate(-90deg);
-  }
-  .fitem-row {
-    display: flex;
-    align-items: center;
-  }
-  .fitem-row.opened .fitem {
-    color: var(--fg);
-    font-weight: 550;
-  }
-  .fitem {
-    flex: 1;
-    min-width: 0;
-    text-align: left;
-    background: none;
-    border: none;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    padding: 0.16rem 0.4rem 0.16rem 0.85em; /* left inset past the chevron column */
-    border-radius: 6px;
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .fitem:hover {
-    color: var(--fg);
-    background: var(--bg-panel-hover);
-  }
-  .f-del {
-    background: none;
-    border: none;
-    color: var(--fg-faint);
-    font-size: 0.85rem;
-    cursor: pointer;
-    padding: 0 0.35em;
     border-radius: 4px;
-    flex: none;
   }
-  .f-del:hover {
+  .x:hover {
     color: var(--err);
   }
-  @media (max-width: 720px) {
-    .fb {
-      width: 11rem;
-    }
-    /* phones: the page scrolls (layout), the editor grows to its content, and
-       the toolbar + tab bar stick to the top once the site header is gone */
-    .pg {
-      flex: none;
-    }
-    .stage {
-      flex: none;
-    }
-    .viz-panel {
-      max-height: 70dvh;
-    }
-    /* phones: one scrollable toolbar row instead of three wrapped ones */
-    .toolbar {
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none;
-      gap: 0.4rem;
-      padding: 0.4rem 0.6rem;
-    }
-    .toolbar > :global(*) {
-      flex: none;
-    }
-    .tb {
-      font-size: 0.82rem;
-    }
-    .ex-select {
-      max-width: 52vw;
-    }
-    .spacer,
-    .mem-wrap {
-      display: none;
-    }
-    /* the scrolling toolbar would clip an absolute popover: pin it to the screen */
-    .info-pop {
-      position: fixed;
-      top: 50%;
-      left: 0.5rem;
-      right: 0.5rem;
-      width: auto;
-      transform: translateY(-50%);
-      z-index: 200; /* above the sticky site nav (100) */
-      padding-top: 0;
-    }
-    .info-card {
-      max-height: 75dvh;
-      overflow-y: auto;
-    }
-  }
-
-  /* ---- stage: the buffer (+ the on-demand visualizer panel) + overlays ---- */
-  .stage {
-    flex: 1;
-    position: relative;
+  .actions {
+    flex: none;
     display: flex;
-    min-height: 0;
-    background: var(--bg-code);
+    align-items: center;
+    gap: 0.25rem;
   }
-  .ed-wrap {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-  }
-
-  /* ---- the reduction-visualizer pop-out ---- */
-  /* no header, no scrollbar: the drawing is sized to what the body leaves
-     after the instrument's own chrome; the close button floats. The panel
-     explanation lives in the instrument's ⓘ (namesHint). */
-  .viz-panel {
-    position: relative;
-    width: clamp(24rem, 42%, 46rem);
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    border-left: 1px solid var(--border);
-    background: var(--bg);
-    overflow: hidden;
-  }
-  .viz-x {
-    position: absolute;
-    top: 0.35rem;
-    right: 0.5rem;
-    z-index: 5;
-    background: none;
+  .btn-run {
+    align-self: center;
+    margin-bottom: 0.2rem;
+    padding: 0.18rem 0.65rem;
+    background: var(--accent);
+    color: var(--bg);
     border: none;
-    color: var(--fg-faint);
-    font-size: 1.2rem;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
     cursor: pointer;
-    padding: 0.1rem 0.3rem;
   }
-  .viz-x:hover {
-    color: var(--fg);
+  .btn-run:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
-  .viz-body {
+  .main {
     flex: 1;
     min-height: 0;
-    padding: 0.4rem 0.6rem;
+    display: flex;
+    position: relative;
   }
-  /* the instrument's lab frame brings page margins the panel doesn't want */
-  .viz-body :global(.vis.lab) {
-    margin: 0;
+  .sidepane {
+    flex: none;
+    min-height: 0;
   }
-  @media (max-width: 900px) {
-    .stage {
-      flex-direction: column;
-    }
-    .viz-panel {
-      width: 100%;
-      max-height: 55%;
-      border-left: none;
-      border-top: 1px solid var(--border);
-    }
+  .codepane {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
   }
-
+  .insppane {
+    flex: none;
+    min-width: 0;
+    min-height: 0;
+  }
+  .grip {
+    flex: none;
+    width: 5px;
+    margin: 0 -2px;
+    z-index: 4;
+    cursor: col-resize;
+    position: relative;
+    touch-action: none;
+  }
+  .grip::after {
+    content: '';
+    position: absolute;
+    inset: 0 2px;
+    background: var(--border);
+    transition: background 0.1s;
+  }
+  .grip:hover::after {
+    background: var(--accent);
+  }
+  .ruler {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 7px;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .tick {
+    position: absolute;
+    right: 0;
+    width: 7px;
+    height: 4px;
+    padding: 0;
+    border: none;
+    border-radius: 1px;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .tick.fail,
+  .tick.error {
+    background: var(--err);
+  }
   .errstrip {
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
     z-index: 5;
-    padding: 0.45rem 0.9rem;
+    padding: 0.4rem 0.8rem;
     font-family: var(--font-mono);
-    font-size: 0.76rem;
+    font-size: 0.75rem;
     color: var(--err);
-    background: color-mix(in oklab, var(--err) 7%, var(--bg-elev));
+    background: color-mix(in oklab, var(--err) 8%, var(--bg-elev));
     border-top: 1px solid var(--border);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
-  /* ---- toasts ---- */
   .toasts {
     position: absolute;
-    top: 0.6rem;
-    right: 0.8rem;
+    top: 0.5rem;
+    right: 0.9rem;
     z-index: 8;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 0.4rem;
+    gap: 0.35rem;
     pointer-events: none;
     max-width: min(26rem, calc(100% - 2rem));
   }
   .toast {
-    padding: 0.45rem 0.75rem;
+    padding: 0.4rem 0.7rem;
     border: 1px solid var(--border-strong);
-    border-radius: 9px;
-    background: color-mix(in oklab, var(--bg-elev) 95%, transparent);
-    backdrop-filter: blur(6px);
+    border-radius: 8px;
+    background: var(--bg-elev);
     box-shadow: var(--shadow-soft);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     color: var(--fg-muted);
-    animation: toast-in 0.2s ease;
   }
   .toast.warn {
     border-color: color-mix(in oklab, var(--err) 40%, transparent);
     color: var(--err);
   }
-  @keyframes toast-in { from { opacity: 0; transform: translateY(-4px); } }
+  .status {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 1.5rem;
+    padding: 0 0.6rem;
+    background: var(--bg-elev);
+    border-top: 1px solid var(--border);
+    font-size: 0.72rem;
+    color: var(--fg-muted);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .state i {
+    display: block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+  }
+  .state.bad i,
+  .state.dead i {
+    background: var(--err);
+  }
+  .state.busy i {
+    background: var(--accent);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.3;
+    }
+  }
+  .dim {
+    color: var(--fg-faint);
+  }
+  .sep {
+    color: var(--fg-faint);
+  }
+  .good {
+    color: var(--ok);
+  }
+  .bad {
+    color: var(--err);
+  }
+  .grow {
+    flex: 1;
+  }
+  .prog {
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40vw;
+  }
+  .stlink {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .stlink.quiet {
+    color: var(--fg-muted);
+  }
+  .stlink.bad {
+    color: var(--err);
+  }
+  .livedot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 0.3em;
+    border-radius: 50%;
+    background: var(--fg-faint);
+    vertical-align: 0.05em;
+  }
+  .livedot.on {
+    background: var(--ok);
+  }
+  .memw {
+    display: inline-block;
+    width: 44px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-panel-hover);
+    overflow: hidden;
+  }
+  .memf {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+  .memf.hot {
+    background: var(--err);
+  }
+  .about {
+    position: absolute;
+    right: 1rem;
+    bottom: 2.2rem;
+    z-index: 40;
+    width: min(30rem, calc(100vw - 2rem));
+    padding: 0.9rem 1.1rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lift);
+    font-size: 0.86rem;
+    color: var(--fg-muted);
+  }
+  .about h2 {
+    margin: 0 0 0.4rem;
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    color: var(--fg);
+  }
+  .about p {
+    margin: 0 0 0.5rem;
+  }
+  .about p:last-child {
+    margin-bottom: 0;
+  }
+  .about b {
+    color: var(--fg);
+  }
+  .aboutx {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.55rem;
+    background: none;
+    border: none;
+    color: var(--fg-faint);
+    font-size: 1.1rem;
+    cursor: pointer;
+  }
+  .keys {
+    font-size: 0.75rem;
+  }
+  kbd {
+    background: var(--bg-panel-hover);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 0.35em;
+    font-size: 0.72rem;
+    margin: 0 0.1em 0 0.5em;
+  }
+  .panes {
+    display: none;
+  }
 
+  /* one pane at a time on small screens, with a switcher along the bottom */
+  .pg.narrow .sidepane,
+  .pg.narrow .insppane,
+  .pg.narrow .codepane {
+    display: none;
+    width: 100%;
+  }
+  .pg.narrow .grip {
+    display: none;
+  }
+  .pg.narrow[data-pane='side'] .sidepane,
+  .pg.narrow[data-pane='tree'] .insppane,
+  .pg.narrow[data-pane='code'] .codepane {
+    display: block;
+  }
+  .pg.narrow .panes {
+    flex: none;
+    display: flex;
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    background: var(--bg-elev);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .panes button {
+    flex: 1;
+    background: none;
+    border: none;
+    padding: 0.55rem 0;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+  }
+  .panes button.on {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .pg.narrow .pos,
+  .pg.narrow .memw,
+  .pg.narrow .kbdish {
+    display: none;
+  }
+  @media (max-width: 720px) {
+    .pg {
+      flex: none;
+      min-height: calc(100dvh - var(--nav-h));
+    }
+    .bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .main {
+      flex: 1 0 auto;
+    }
+    .pg.narrow[data-pane='side'] .sidepane,
+    .pg.narrow[data-pane='tree'] .insppane {
+      height: calc(100dvh - 7rem);
+    }
+  }
 </style>

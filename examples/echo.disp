@@ -5,7 +5,7 @@ open use "../archive/live-kernel/kernel/prelude.disp"
 open use "../archive/live-kernel/std/effect.disp"
 open use "../archive/live-kernel/std/io.disp"
 
-main : Eff io_row Unit := {
+main : Eff(io_row, Unit) := {
   line <- read_line
-  print line
+  print(line)
 }

@@ -1,7 +1,6 @@
 // CodeMirror 6 language support for disp: a StreamLanguage tokenizer that
-// mirrors editors/vscode-disp's rust-style call-site coloring — the head of an
-// application spine (an identifier that starts an expression and is applied to
-// at least one atom) gets the "function" color.
+// mirrors editors/vscode-disp's rust-style call-site coloring: an identifier being
+// called gets the "function" color.
 
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
@@ -17,8 +16,8 @@ interface S {
 }
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_']*/
-// after the ident: whitespace then an atom => the ident is an application head
-const HEAD_LOOKAHEAD = /^[ \t]+[A-Za-z0-9_("△{[]/
+// a glued paren or a record literal after the ident => the ident is being called
+const HEAD_LOOKAHEAD = /^(?:\(|[ \t]*\{[^}]*:=)/
 
 export const dispStream = StreamLanguage.define<S>({
   name: 'disp',
@@ -101,7 +100,7 @@ export const dispStream = StreamLanguage.define<S>({
         state.exprStart = false
         return 'typeName'
       }
-      const isHead = state.exprStart && HEAD_LOOKAHEAD.test(stream.string.slice(stream.pos))
+      const isHead = HEAD_LOOKAHEAD.test(stream.string.slice(stream.pos))
       state.exprStart = false
       return isHead ? 'variableName.function' : 'variableName'
     }
@@ -284,7 +283,7 @@ export const dispEditorTheme = EditorView.theme(
     '.disp-ival-viz:hover': { color: 'var(--accent)' },
     '.disp-ival-viz svg': { width: '1.05em', height: '1.05em' },
     '.disp-ival.away': {
-      opacity: '0.4',
+      opacity: '0.6',
       maxWidth: '16ch'
     },
     '.disp-ival.away:hover': {
@@ -299,6 +298,11 @@ export const dispEditorTheme = EditorView.theme(
     },
     '.disp-out.away:hover': {
       opacity: '0.85'
+    },
+    // a failure is never quiet
+    '.disp-out-fail.away, .disp-out-error.away': {
+      opacity: '1',
+      fontSize: '0.86em'
     }
   },
   { dark: false }

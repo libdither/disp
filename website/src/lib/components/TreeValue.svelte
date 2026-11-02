@@ -131,14 +131,13 @@
   const eat = (e: Event) => e.stopPropagation()
 </script>
 
-{#snippet render(n: ValueNode, path: number[], atom: boolean)}
+{#snippet render(n: ValueNode, path: number[])}
   {#if prevOf(n)}<button
       type="button"
       class="tv-fold"
       onmousedown={eat}
       onclick={(e) => refold(e, path)}
-      title="re-fold this subterm">↺</button>{/if}
-  {#if n.k === 'leaf'}<span class="tv-leaf">t</span>
+      title="re-fold this subterm">↺</button>{/if}{#if n.k === 'leaf'}<span class="tv-leaf">t</span>
   {:else if n.k === 'nat'}<button
       type="button"
       class="tv-atom tv-nat"
@@ -167,13 +166,13 @@
       onmousedown={eat}
       onclick={(e) => unfold(e, path, n.h, false)}
       title="render deeper">…</button>
-  {:else if n.k === 'stem'}{#if atom}({/if}<span class="tv-leaf">t</span>{' '}{@render render(n.c[0], [...path, 0], true)}{#if atom}){/if}
-  {:else}{#if atom}({/if}<span class="tv-leaf">t</span>{' '}{@render render(n.c[0], [...path, 0], true)}{' '}{@render render(n.c[1], [...path, 1], true)}{#if atom}){/if}
+  {:else if n.k === 'stem'}<span class="tv-leaf">t</span>({@render render(n.c[0], [...path, 0])})
+  {:else}<span class="tv-leaf">t</span>({@render render(n.c[0], [...path, 0])},{' '}{@render render(n.c[1], [...path, 1])})
   {/if}
 {/snippet}
 
 <span class="tv">
-  {@render render(tree, [], false)}{#if onVisualize}{' '}<button
+  {@render render(tree, [])}{#if onVisualize}{' '}<button
       type="button"
       class="tv-viz"
       onmousedown={eat}

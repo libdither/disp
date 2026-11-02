@@ -13,10 +13,10 @@ let m := use "typed_mod.disp"
 // `param_apply` (= how `verify` actually checks a module): the strict universe's recognize
 // face is `v : Arrow Tree CheckerResult`, which mints a hyp, so it must run under the walker
 // (raw `m.typ m.record` would fail fast on the mint — the lean universe didn't mint).
-test param_apply m.typ m.record = Ok true
+test param_apply(m.typ, m.record) = Ok(true)
 
 // Non-vacuous: applying the SAME typ to a record whose `foo` isn't a type fails.
-test param_apply m.typ (make_record ["foo", "bar", "baz"] [list_const zero, list_const Nat, list_const Bool]) = Ok false
+test param_apply(m.typ, make_record(["foo", "bar", "baz"], [list_const(zero), list_const(Nat), list_const(Bool)])) = Ok(false)
 
 // The value record projects by name through the cut.
 test m.record.foo = Bool
@@ -24,10 +24,10 @@ test m.record.bar = Nat
 
 // Gradual: the unannotated `helper` isn't in `typ`, so it's simply skipped —
 // verification still succeeds, and the value is still present in `record`.
-test m.record.helper zero = zero
+test m.record.helper(zero) = zero
 
 // `open use` is unaffected — it splices the values (not the tuple) into scope.
 open use "typed_mod.disp"
 test foo = Bool
 test bar = Nat
-test helper (succ zero) = succ zero
+test helper(succ(zero)) = succ(zero)

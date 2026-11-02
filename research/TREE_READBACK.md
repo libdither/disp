@@ -95,7 +95,7 @@ Samples (drawer now → prototype; λ notation, not disp syntax):
 The source it reads back to, `programs.disp`:
 
 ```
-fib := fix ({self, n} => if (is_leaf n) then 0 else (if (is_leaf (nat_pred n)) then 1 else (add (self (nat_pred n)) (self (nat_pred (nat_pred n))))))
+fib := fix({self, n} => if (is_leaf(n)) then 0 else (if (is_leaf(nat_pred(n))) then 1 else (add(self(nat_pred(n)), self(nat_pred(nat_pred(n)))))))
 ```
 
 What did not work, or only partly:

@@ -4,14 +4,18 @@
 // per-item progress).
 
 import { parseProgram, type Decl, type ParseItemStats } from '../../../../src/compile.ts'
-import { parseItems, type RecMember, type Expr } from '../../../../src/parse.ts'
-import { moduleCacheBySession, verifiedModules, verifiedFilledBySession } from '../../../../src/elab/state.ts'
+import { parseItems, parseExpr, type RecMember, type Expr } from '../../../../src/parse.ts'
+import { moduleCacheBySession, verifiedModules, verifiedFilledBySession, elab, type ScopeEntry } from '../../../../src/elab/state.ts'
+import { exprToCir } from '../../../../src/elab/expr.ts'
+import { eliminateLams, cirToTree, type Cir } from '../../../../src/elab/cir.ts'
 import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
 import { restoreSnapshot, vfsHash, type RestoreStats } from './snapshot.ts'
 import { vfs } from './shims/fs.ts'
-import type { ItemEvent, RunOutcome, ValueNode, RawTree } from './protocol.ts'
+import { bracketReplay } from './bracket.ts'
+import { G_LEAF, G_STEM, G_FORK, G_APP, G_VAR, G_CUT, G_LAM, G_HELD_K } from './protocol.ts'
+import type { ItemEvent, RunOutcome, ValueNode, RawTree, Graph, TermDump, BracketDump, ScopeItem } from './protocol.ts'
 
 const PLAYGROUND_PATH = '/lib/tests/playground.disp'
 const PRETTY_DEPTH = 14
@@ -36,6 +40,93 @@ function guessErrorLine(error: string, source: string): number | undefined {
     if (re.test(code)) return i + 1
   }
   return undefined
+}
+
+const resolveRel = (rel: string, from: string): string => {
+  if (rel.startsWith('/')) return rel
+  const parts = from.split('/').slice(0, -1)
+  for (const seg of rel.split('/')) {
+    if (seg === '..') parts.pop()
+    else if (seg !== '.') parts.push(seg)
+  }
+  return parts.join('/')
+}
+
+function openPaths(text: string, from: string): string[] {
+  const out: string[] = []
+  const re = /\bopen\s+use\s+(?:raw\s+)?"([^"]+\.disp)"/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) out.push(resolveRel(m[1], from))
+  return out.reverse() // a later open shadows an earlier one
+}
+
+/// The binder names of a def's value: `{a, b} => …`, and past the `self` of `fix ({self, a} => …)`.
+function paramsOf(value: Expr | null | undefined): string[] | undefined {
+  if (!value) return undefined
+  let drop = 0
+  let b = value
+  if (b.tag === 'app' && b.f.tag === 'var' && b.f.name === 'fix') {
+    b = b.x
+    drop = 1
+  }
+  const out: string[] = []
+  while (b.tag === 'binder') {
+    for (const p of b.params) out.push(p.name ?? '_')
+    b = b.body
+  }
+  return out.length > drop ? out.slice(drop) : undefined
+}
+
+function indexFile(path: string, text: string): ScopeItem[] {
+  let members: RecMember[]
+  try {
+    members = parseItems(text)
+  } catch {
+    return []
+  }
+  const lines = text.split('\n')
+  const items: ScopeItem[] = []
+  for (const it of members) {
+    if (it.tag !== 'field' || !it.line) continue
+    const headName = it.head?.tag === 'var' ? it.head.name : null
+    if (headName === 'let' || headName === 'given') continue
+    const src = lines[it.line - 1] ?? ''
+    const sig = src.match(/^\s*(?:\S+\s+)*?[\w']+\s*:(?!=)\s*(.*?)\s*(?::=>?|$)/)?.[1]
+    const doc: string[] = []
+    for (let k = it.line - 2; k >= 0; k--) {
+      const c = (lines[k] ?? '').trim()
+      if (!c.startsWith('//') || /^\/\/\s*[-=─]{3,}/.test(c)) break
+      doc.unshift(c.replace(/^\/\/\/?\s?/, ''))
+      if (doc.length >= 6) break
+    }
+    items.push({ name: it.name, path, line: it.line, sig: sig || undefined, params: paramsOf(it.value), doc: doc.join('\n') || undefined })
+    let b = it.value
+    while (b?.tag === 'binder') b = b.body
+    if (b?.tag === 'sumType')
+      for (const v of b.variants) items.push({ name: v.name, path, line: it.line, doc: `a case of ${it.name}` })
+  }
+  return items
+}
+
+/// `test f x` parses as ((test f) x); the marker is the identity, so drop it from the spine.
+function stripTestMarker(e: Expr): Expr {
+  if (e.tag !== 'app') return e
+  if (e.f.tag === 'var' && e.f.name === 'test') return e.x
+  const f = stripTestMarker(e.f)
+  return f === e.f ? e : { ...e, f }
+}
+
+/// The expression a line's member stands for: a def's value, or one side of a test.
+function memberAt(text: string, line: number, side: 'lhs' | 'rhs'): Expr | null {
+  for (const it of parseItems(text)) {
+    if (!('line' in it) || !it.line) continue
+    if (line < it.line || line > (it.endLine ?? it.line)) continue
+    if (it.tag === 'field') return it.value
+    if (it.tag === 'test') {
+      return stripTestMarker(it[side])
+    }
+  }
+  return null
 }
 
 export class DispRunner {
@@ -194,6 +285,8 @@ export class DispRunner {
     // keeps one entry. Captured incrementally, so a mid-file error still
     // reports every binding elaborated before it.
     const rootDefs = new Map<string, { handle: number; line?: number; endLine?: number }>()
+    const costs: { line: number; steps: number }[] = []
+    let lastSteps = steps0
     let decls: Decl[] = []
     try {
       decls = parseProgram(source, path ?? PLAYGROUND_PATH, {
@@ -201,6 +294,10 @@ export class DispRunner {
         onItem: (item: ParseItemStats) => {
           if (item.depth === 0 && (item.kind === 'field' || item.kind === 'let') && item.name && item.tree != null)
             rootDefs.set(item.name, { handle: item.tree as unknown as number, line: item.line, endLine: item.endLine })
+          if (item.depth === 0) {
+            if (item.line) costs.push({ line: item.line, steps: item.stats.steps - lastSteps })
+            lastSteps = item.stats.steps
+          }
           onItem({
             type: 'item',
             kind: item.kind,
@@ -219,6 +316,7 @@ export class DispRunner {
       const m = outcome.error.match(/line (\d+)/)
       if (m) outcome.errorLine = Number(m[1])
       else outcome.errorLine = guessErrorLine(outcome.error, source)
+      outcome.error = outcome.error.replace(/^cirToTree: unresolved free variable (\S+)/, "`$1` isn't defined here")
     }
     // Names before pretty (the printer is name-aware); `__`-prefixed
     // scaffolding (the REPL's __it) stays out of the name table. Root defs
@@ -238,6 +336,7 @@ export class DispRunner {
         name,
         line: d.line,
         endLine: d.endLine,
+        h: d.handle,
         pretty: wantDefPretty ? this.pretty(d.handle, name) : undefined,
         value: wantDefPretty ? this.renderValue(d.handle, VALUE_BUDGET, false, name) : undefined
       })
@@ -253,6 +352,8 @@ export class DispRunner {
         line: d.line,
         endLine: d.endLine,
         pass,
+        lhsH: lhs,
+        rhsH: rhs,
         lhs: pass ? undefined : this.pretty(lhs),
         rhs: pass ? undefined : this.pretty(rhs),
         lhsNode: pass ? undefined : this.renderValue(lhs, FAIL_BUDGET),
@@ -260,6 +361,7 @@ export class DispRunner {
       })
     }
     if (!outcome.error) outcome.ok = outcome.tests.every((t) => t.pass)
+    outcome.costs = costs
     outcome.elapsedMs = performance.now() - t0
     outcome.steps = this.#session.stats().steps - steps0
     // Drop re-derivable caches (apply memo, susp WHNF memo) so the arena's
@@ -455,13 +557,318 @@ export class DispRunner {
     return this.#session.apply(this.#session.apply(leaf, this.#internRaw(r[0])), this.#internRaw(r[1]))
   }
 
-  // Applicative-style pretty printer (t x (t y) …), name-aware, capped.
+  // ---- the inspector's feed ------------------------------------------------
+
+  // Top-level names reachable through `open use`, nearest file first and each
+  // name once, for autocomplete and hover. Syntactic like findDef, cached per
+  // file, so it needs no elaboration and works on a buffer mid-edit.
+  #fileIndex = new Map<string, { text: string; items: ScopeItem[]; opens: string[] }>()
+  scopeItems(fromPath: string, fromText: string): ScopeItem[] {
+    const start = fromPath.startsWith('/') ? fromPath : '/' + fromPath
+    const out: ScopeItem[] = []
+    const names = new Set<string>()
+    const seen = new Set([start])
+    const queue = openPaths(fromText, start)
+    while (queue.length > 0) {
+      const path = queue.shift()!
+      if (seen.has(path)) continue
+      seen.add(path)
+      const text = vfs.get(path)
+      if (text == null) continue
+      let idx = this.#fileIndex.get(path)
+      if (!idx || idx.text !== text) {
+        idx = { text, items: indexFile(path, text), opens: openPaths(text, path) }
+        this.#fileIndex.set(path, idx)
+      }
+      for (const it of idx.items) {
+        if (names.has(it.name)) continue
+        names.add(it.name)
+        out.push(it)
+      }
+      queue.push(...idx.opens)
+    }
+    return out
+  }
+
+  // Handle -> name in the CURRENT scope: nameless tiny trees stay structural
+  // (see #registerScopeNames) and stale names from earlier edits don't leak in.
+  #labelOf(h: number): string | undefined {
+    const name = this.#names.get(h)
+    return name && this.#byName.get(name) === h && this.#hasAtLeastNodes(h, 4) ? name : undefined
+  }
+
+  #dumper(maxNodes: number) {
+    const tags: number[] = []
+    const as: number[] = []
+    const bs: number[] = []
+    const strs: string[] = []
+    const labels: [number, string][] = []
+    const byHandle = new Map<number, number>()
+    const byShape = new Map<string, number>()
+    const emit = (tag: number, a: number, b: number): number => {
+      const key = `${tag},${a},${b}`
+      const hit = byShape.get(key)
+      if (hit !== undefined) return hit
+      tags.push(tag)
+      as.push(a)
+      bs.push(b)
+      byShape.set(key, tags.length - 1)
+      return tags.length - 1
+    }
+    const session = this.#session
+    const add = (root: number): number => {
+      const stack = [root]
+      while (stack.length > 0) {
+        const h = stack[stack.length - 1]
+        if (byHandle.has(h)) {
+          stack.pop()
+          continue
+        }
+        let idx: number
+        const c = session.classify(h)
+        if (c.tag === 'leaf') idx = emit(G_LEAF, 0, 0)
+        else if (tags.length >= maxNodes) idx = emit(G_CUT, h, 0)
+        else if (c.tag === 'stem') {
+          const k = byHandle.get(c.child)
+          if (k === undefined) {
+            stack.push(c.child)
+            continue
+          }
+          idx = emit(G_STEM, k, 0)
+        } else {
+          const l = byHandle.get(c.left)
+          const r = byHandle.get(c.right)
+          if (l === undefined || r === undefined) {
+            if (r === undefined) stack.push(c.right)
+            if (l === undefined) stack.push(c.left)
+            continue
+          }
+          idx = emit(G_FORK, l, r)
+        }
+        byHandle.set(h, idx)
+        const label = this.#labelOf(h)
+        if (label) labels.push([idx, label])
+        stack.pop()
+      }
+      return byHandle.get(root)!
+    }
+    return {
+      add,
+      emit,
+      str: (s: string) => {
+        const i = strs.indexOf(s)
+        return i >= 0 ? i : strs.push(s) - 1
+      },
+      finish: (roots: number[]): Graph => {
+        const nodes = new Int32Array(tags.length * 3)
+        for (let i = 0; i < tags.length; i++) {
+          nodes[i * 3] = tags[i]
+          nodes[i * 3 + 1] = as[i]
+          nodes[i * 3 + 2] = bs[i]
+        }
+        return { nodes, strs, labels, roots }
+      }
+    }
+  }
+
+  graph(handles: number[], names: string[], maxNodes: number): Graph {
+    const d = this.#dumper(maxNodes)
+    const roots = handles.map((h) => d.add(h))
+    for (const n of names) {
+      const h = this.#byName.get(n)
+      roots.push(h === undefined ? -1 : d.add(h))
+    }
+    return d.finish(roots)
+  }
+
+  // Compile an expression exactly as the elaborator does (same desugaring,
+  // same bracket abstraction, same compile-time shortcuts as cirToTree) but
+  // leave every application it would have evaluated HELD, so the inspector can
+  // run it step by step. The real value comes along to check the result against.
+  term(spec: { expr?: string; path?: string; text?: string; line?: number; side?: 'lhs' | 'rhs'; value?: number; maxNodes: number }): TermDump {
+    const d = this.#dumper(spec.maxNodes)
+    const fail = (error: string, source = spec.expr ?? ''): TermDump => ({
+      graph: d.finish([]),
+      source,
+      error
+    })
+    let expr: Expr | null = null
+    try {
+      expr = spec.expr != null ? parseExpr(spec.expr) : memberAt(spec.text ?? '', spec.line ?? 0, spec.side ?? 'lhs')
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
+    if (!expr) return fail('nothing to compile on this line')
+    const prev = elab.cs
+    const session = this.#session as unknown as Session<Tree>
+    elab.cs = session
+    try {
+      const lookup = (name: string): ScopeEntry | undefined => {
+        const h = this.#byName.get(name)
+        return h === undefined ? undefined : { tree: h as unknown as Tree }
+      }
+      const cir = exprToCir(
+        expr,
+        lookup,
+        () => {
+          throw new Error('`use` inside an inspected expression is not supported')
+        }
+      )
+      const comb = eliminateLams(cir)
+      const held = this.#heldCir(comb, d)
+      const roots = [held]
+      let closed = true
+      const scan = (c: Cir): void => {
+        if (c.tag === 'var') closed = false
+        else if (c.tag === 'app') {
+          scan(c.f)
+          scan(c.x)
+        } else if (c.tag === 'lam') scan(c.body)
+      }
+      scan(comb)
+      // a def or test already has its value from the run; only free text needs computing
+      if (spec.value != null) roots.push(d.add(spec.value))
+      else if (closed) roots.push(d.add(cirToTree(comb) as unknown as number))
+      return { graph: d.finish(roots), source: spec.expr ?? '' }
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    } finally {
+      elab.cs = prev
+    }
+  }
+
+  /// The bracket lens's food: every intermediate term, binders still in place.
+  bracket(spec: { expr?: string; path?: string; text?: string; line?: number; side?: 'lhs' | 'rhs'; maxNodes: number }): BracketDump {
+    const d = this.#dumper(spec.maxNodes)
+    const fail = (error: string): BracketDump => ({ graph: d.finish([]), steps: [], skipped: 0, mismatch: false, params: [], error })
+    let expr: Expr | null = null
+    try {
+      expr = spec.expr != null ? parseExpr(spec.expr) : memberAt(spec.text ?? '', spec.line ?? 0, spec.side ?? 'lhs')
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
+    if (!expr) return fail('nothing to compile on this line')
+    const prev = elab.cs
+    elab.cs = this.#session as unknown as Session<Tree>
+    try {
+      const lookup = (name: string): ScopeEntry | undefined => {
+        const h = this.#byName.get(name)
+        return h === undefined ? undefined : { tree: h as unknown as Tree }
+      }
+      const cir = exprToCir(expr, lookup, () => {
+        throw new Error('`use` inside an inspected expression is not supported')
+      })
+      const replay = bracketReplay(cir)
+      const memo = new Map<Cir, number>()
+      const clip = (s: string) => (s.length > 160 ? s.slice(0, 160) + '…' : s)
+      const roots = replay.frames.map((f) => this.#heldCir(f.term, d, memo))
+      const steps = replay.frames.map((f) => ({
+        rule: f.rule,
+        name: f.name,
+        at: f.at,
+        before: f.before ? clip(this.#cirText(f.before)) : '',
+        after: f.after ? clip(this.#cirText(f.after)) : ''
+      }))
+      const params: string[] = []
+      for (let e = cir; e.tag === 'lam'; e = e.body) params.push(e.x)
+      return { graph: d.finish(roots), steps, skipped: replay.skipped, mismatch: replay.mismatch, params }
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    } finally {
+      elab.cs = prev
+    }
+  }
+
+  // with `memo`, also draws what a replay frame can hold: binders, and K(x) kept visibly K
+  #heldCir(root: Cir, d: { add: (h: number) => number; emit: (t: number, a: number, b: number) => number; str: (s: string) => number }, memo?: Map<Cir, number>): number {
+    const leaf = () => d.emit(G_LEAF, 0, 0)
+    const stem = (c: number) => d.emit(G_STEM, c, 0)
+    const fork = (l: number, r: number) => d.emit(G_FORK, l, r)
+    const go = (e: Cir): number => {
+      if (!memo) return build(e)
+      let id = memo.get(e)
+      if (id === undefined) memo.set(e, (id = build(e)))
+      return id
+    }
+    const build = (e: Cir): number => {
+      switch (e.tag) {
+        case 'lit':
+          return d.add(e.t as unknown as number)
+        case 'var':
+          return d.emit(G_VAR, d.str(e.name), 0)
+        case 'I':
+          return fork(fork(leaf(), leaf()), leaf())
+        case 'K':
+          return stem(leaf())
+        case 'S':
+          return fork(stem(fork(leaf(), leaf())), leaf())
+        case 'lam':
+          if (!memo) throw new Error(`unexpected lambda for ${e.x}`)
+          return d.emit(G_LAM, d.str(e.x), go(e.body))
+        case 'app':
+          if (e.f.tag === 'app' && e.f.f.tag === 'S') return fork(stem(go(e.f.x)), go(e.x))
+          if (e.f.tag === 'app' && e.f.f.tag === 'K') return go(e.f.x)
+          if (e.f.tag === 'K') return memo ? d.emit(G_HELD_K, go(e.x), 0) : fork(leaf(), go(e.x))
+          if (e.f.tag === 'I') return go(e.x)
+          if (e.f.tag === 'S') return stem(stem(go(e.x)))
+          return d.emit(G_APP, go(e.f), go(e.x))
+      }
+    }
+    return go(root)
+  }
+
+  #cirText(root: Cir): string {
+    const atomText = (t: number): string => {
+      const c = this.#session.classify(t)
+      if (c.tag === 'leaf') return 't'
+      const n = this.decodeNat(t)
+      if (n !== null && n > 0) return String(n)
+      const s = this.decodeString(t)
+      if (s !== null) return JSON.stringify(s)
+      return this.#labelOf(t) ?? this.#render(t, 2)
+    }
+    const go = (e: Cir, atom: boolean): string => {
+      switch (e.tag) {
+        case 'lit':
+          return atomText(e.t as unknown as number)
+        case 'var':
+          return e.name
+        case 'S':
+        case 'K':
+        case 'I':
+          return e.tag
+        case 'app': {
+          const args = [e.x]
+          let f = e.f
+          while (f.tag === 'app') {
+            args.unshift(f.x)
+            f = f.f
+          }
+          return `${go(f, true)}(${args.map((a) => go(a, false)).join(', ')})`
+        }
+        case 'lam': {
+          const params = [e.x]
+          let b = e.body
+          while (b.tag === 'lam') {
+            params.push(b.x)
+            b = b.body
+          }
+          const s = `{${params.join(', ')}} => ${go(b, false)}`
+          return atom ? `(${s})` : s
+        }
+      }
+    }
+    const out = go(root, false)
+    return out.length > 1800 ? out.slice(0, 1800) + '…' : out
+  }
+
+  // Call-style pretty printer (t(x, t(y)) …), name-aware, capped.
   pretty(h: number, selfName?: string): string {
-    const out = this.#render(h, PRETTY_DEPTH, false, selfName)
+    const out = this.#render(h, PRETTY_DEPTH, selfName)
     return out.length > PRETTY_LEN ? out.slice(0, PRETTY_LEN) + '…' : out
   }
 
-  #render(h: number, depth: number, atom: boolean, selfName?: string): string {
+  #render(h: number, depth: number, selfName?: string): string {
     // Display priority: the leaf is always 't' (the atom everyone knows);
     // then numeral/string decodings (many REPL names alias small trees —
     // `succ zero` and a compiled `{n} => refl` are literally the same
@@ -477,11 +884,7 @@ export class DispRunner {
     if (name && name !== selfName) return name
     if (depth <= 0) return '…'
     const c = cls
-    if (c.tag === 'stem') {
-      const inner = `t ${this.#render(c.child, depth - 1, true)}`
-      return atom ? `(${inner})` : inner
-    }
-    const inner = `t ${this.#render(c.left, depth - 1, true)} ${this.#render(c.right, depth - 1, true)}`
-    return atom ? `(${inner})` : inner
+    if (c.tag === 'stem') return `t(${this.#render(c.child, depth - 1)})`
+    return `t(${this.#render(c.left, depth - 1)}, ${this.#render(c.right, depth - 1)})`
   }
 }

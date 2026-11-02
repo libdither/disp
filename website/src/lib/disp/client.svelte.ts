@@ -3,7 +3,7 @@
 // examples and the Playground share it.
 
 import { base } from '$app/paths'
-import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome, ValueNode, RawTree } from './protocol.ts'
+import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome, ValueNode, RawTree, Graph, TermDump, BracketDump, ScopeItem } from './protocol.ts'
 
 export type DispStatus =
   | 'cold'
@@ -25,7 +25,7 @@ type Pending = {
   reject: (e: Error) => void
 }
 
-// The site's examples and learn snippets still teach the archived live
+// The playground's examples still teach the archived live
 // kernel, so that is the barrel the UI warms; the promoted kernel
 // (../kernel/prelude.disp) is also in the shipped snapshot and warm.
 const KERNEL_PRELUDE = 'open use "../../archive/live-kernel/kernel/prelude.disp"\n'
@@ -75,6 +75,10 @@ class DispClient {
       else if (msg.type === 'ls') p.resolve(msg.paths)
       else if (msg.type === 'read') p.resolve(msg.text)
       else if (msg.type === 'def') p.resolve(msg.site)
+      else if (msg.type === 'scope') p.resolve(msg.items)
+      else if (msg.type === 'graph') p.resolve(msg.graph)
+      else if (msg.type === 'term') p.resolve(msg.dump)
+      else if (msg.type === 'bracket') p.resolve(msg.dump)
       else p.resolve({ ok: true, defs: [], tests: [], elapsedMs: 0, steps: 0, memBytes: 0 })
     }
     w.onerror = (e) => {
@@ -224,6 +228,60 @@ class DispClient {
   async def(name: string, fromPath: string, fromText: string): Promise<{ path: string; line: number } | null> {
     await this.init()
     return this.#request<{ path: string; line: number } | null>({ type: 'def', name, fromPath, fromText })
+  }
+
+  /** The top-level names the opens of fromText bring into scope. */
+  async scope(fromPath: string, fromText: string): Promise<ScopeItem[]> {
+    await this.init()
+    return this.#request<ScopeItem[]>({ type: 'scope', fromPath, fromText })
+  }
+
+  /** Hash-consed structure of trees by handle or in-scope name. null once the session is gone. */
+  async graph(spec: { handles?: number[]; names?: string[] }, maxNodes: number): Promise<Graph | null> {
+    const gen = this.#gen
+    if (!this.#worker) return null
+    try {
+      const g = await this.#request<Graph>({ type: 'graph', handles: spec.handles ?? [], names: spec.names, maxNodes })
+      return gen === this.#gen ? g : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Compile an expression (free text, or the member at a line) for stepping. */
+  async term(
+    spec: { expr?: string; path?: string; text?: string; line?: number; side?: 'lhs' | 'rhs'; value?: number },
+    maxNodes: number
+  ): Promise<TermDump | null> {
+    const gen = this.#gen
+    if (!this.#worker) return null
+    try {
+      const d = await this.#request<TermDump>({ type: 'term', ...spec, maxNodes })
+      return gen === this.#gen ? d : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Replay bracket abstraction on the same kinds of term, one rewrite per frame. */
+  async bracket(
+    spec: { expr?: string; path?: string; text?: string; line?: number; side?: 'lhs' | 'rhs' },
+    maxNodes: number
+  ): Promise<BracketDump | null> {
+    const gen = this.#gen
+    if (!this.#worker) return null
+    try {
+      const { expr, path, text, line, side } = spec
+      const d = await this.#request<BracketDump>({ type: 'bracket', expr, path, text, line, side, maxNodes })
+      return gen === this.#gen ? d : null
+    } catch {
+      return null
+    }
+  }
+
+  /** The session generation: tree handles from an older one are dead. */
+  get generation(): number {
+    return this.#gen
   }
 
   /**

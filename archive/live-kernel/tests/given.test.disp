@@ -7,36 +7,36 @@ open use "../std/nat.disp"   // add
 
 // ── explicit fill; the default covers `start` ──
 m := use "given_mod.disp" { add := add }
-test m.record.double 3 = 6
-test m.record.from_start 5 = 5
+test m.record.double(3) = 6
+test m.record.from_start(5) = 5
 
 // ── opening an instantiation splices its exports ──
 open use "given_mod.disp" { add := add }
-test double 4 = 8
+test double(4) = 8
 
 // ── overriding the default is a DIFFERENT instantiation ──
 m2 := use "given_mod.disp" { add := add, start := 10 }
-test m2.record.from_start 5 = 15
+test m2.record.from_start(5) = 15
 
 // ── same fills = the same instantiation (cache identity) ──
 m3 := use "given_mod.disp" { add := add }
-test tree_eq m.record m3.record = true
+test tree_eq(m.record, m3.record) = true
 
 // ── different fills differ exactly where the fill matters: from_start sees
 // start, double does not (hash-cons sharing across instantiations) ──
-test tree_eq m.record.from_start m2.record.from_start = false
-test tree_eq m.record.double m2.record.double = true
+test tree_eq(m.record.from_start, m2.record.from_start) = false
+test tree_eq(m.record.double, m2.record.double) = true
 
 // ── linking semantics: a different (well-typed) fill changes the exports ──
 m4 := use "given_mod.disp" { add := ({x} => {y} => x) }
-test m4.record.double 3 = 3
+test m4.record.double(3) = 3
 
 // ── a RECORD-typed given is one telescope-typed dependency; `open` splices its
 // fields inside the module (given_rec_mod.disp), and the fill is any record
 // inhabiting the type ──
 mr := use "given_rec_mod.disp" { ctx := { add := add, start := 3 } }
-test mr.record.double 3 = 6
-test mr.record.from_start 5 = 8
+test mr.record.double(3) = 6
+test mr.record.from_start(5) = 8
 
 // ── THE FUNCTOR FACE (MODULES.md slice 2): a bare use of a given-bearing module
 // denotes the module as a FUNCTION of its dependencies — `record` the readback
@@ -47,19 +47,19 @@ fm := use "given_mod.disp"
 // hyp; exports land by the H-rule. This covers from_start's PARTIAL application
 // `add start` (readback rebuilds the extension neutral as the application that
 // created it, so the walk re-extends against its own mints).
-test verify fm = Ok true
+test verify(fm) = Ok(true)
 
 // Instantiation is application, and it RECONVERGES: the readback lambda applied
 // to fills is tree-identical to template instantiation with those fills.
-test tree_eq (fm.record add 0) m.record = true
-test tree_eq (fm.record add 10) m2.record = true
+test tree_eq(fm.record(add, 0), m.record) = true
+test tree_eq(fm.record(add, 10), m2.record) = true
 
 // Applied functor exports compute like the instantiation's.
-test (fm.record add 0) (acc "double") 3 = 6
-test (fm.record add 10) (acc "from_start") 5 = 15
+test fm.record(add, 0)(acc("double"), 3) = 6
+test fm.record(add, 10)(acc("from_start"), 5) = 15
 
 // The record-typed given's face: `open ctx` inside the module splices ABSTRACT
 // projections of the ctx hyp; replay against a concrete record re-projects.
 fmr := use "given_rec_mod.disp"
-test verify fmr = Ok true
-test tree_eq (fmr.record { add := add, start := 3 }) mr.record = true
+test verify(fmr) = Ok(true)
+test tree_eq(fmr.record { add := add, start := 3 }, mr.record) = true

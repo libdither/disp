@@ -594,9 +594,9 @@ and `make_recognizer` wraps every type's body in it:
 
 ```disp
 // engine.disp: the recognizer shim. `self` is the type being applied.
-if (is_neutral v)
-  then (Ok (tree_eq self (neutral_type v)))   // init: h : A proves h : A
-  else (body self meta v)                     // concrete: read the derivation
+if (is_neutral(v))
+  then (Ok(tree_eq(self, neutral_type(v))))   // init: h : A proves h : A
+  else (body(self, meta, v))                     // concrete: read the derivation
 ```
 
 `is_neutral` is one signature comparison and `tree_eq` one pointer comparison, so
@@ -832,11 +832,11 @@ The engine that grows spines is one function, and each type's `respond`
 meta-field is its left-rule table:
 
 ```disp
-hyp_reduce := fix ({self, meta, frame} -> {
-  let tmeta := type_meta meta.stored_type
-  let this  := wait self meta
-  match (tmeta.respond tmeta.recognizer_params this frame) {
-    Extend new_type => wait self (extend_neutral_meta this new_type frame)
+hyp_reduce := fix({self, meta, frame} -> {
+  let tmeta := type_meta(meta.stored_type)
+  let this  := wait(self, meta)
+  match (tmeta.respond(tmeta.recognizer_params, this, frame)) {
+    Extend new_type => wait(self, extend_neutral_meta(this, new_type, frame))
     Reduce v        => v
   }
 })

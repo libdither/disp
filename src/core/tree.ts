@@ -950,8 +950,8 @@ export function prettyTree(tree: Tree, names?: Map<number, string>): string {
   if (named !== undefined) return named
   switch (tree.tag) {
     case "leaf": return "△"
-    case "stem": return `(△ ${prettyTree(tree.child, names)})`
-    case "fork": return `(△ ${prettyTree(tree.left, names)} ${prettyTree(tree.right, names)})`
+    case "stem": return `△(${prettyTree(tree.child, names)})`
+    case "fork": return `△(${prettyTree(tree.left, names)}, ${prettyTree(tree.right, names)})`
     case "susp": return prettyTree(force(tree), names)   // unnamed: print the genuine reduct (transparent)
   }
 }

@@ -45,7 +45,7 @@ Three placements:
 
 - **On a test line.** The test's left-hand side is the piece's expression.
   ```
-  test double 2 = 4 // viz$2 \times$: double, two applications of add
+  test double(2) = 4 // viz$2 \times$: double, two applications of add
   ```
 - **On its own line, with a code span.** For pieces that cannot be tests, such as
   symbolic reductions over free names. The first backtick span is the expression;
@@ -91,7 +91,7 @@ the way the toy dictionary does, so the tour stays as small as it is now:
 ```
 open use raw "../prelude.disp" {}
 
-K := t t
+K := t(t)
 
 // viz$\triangle$: `t x` a leaf applied builds a stem
 // viz$s$: `t x y` a stem applied builds a fork
@@ -99,8 +99,8 @@ K := t t
 // viz$F_t$: `t (t a b) c t` the argument is a leaf → the first branch (a)
 // viz$F_s$: `t (t a b) c (t u)` the argument is a stem → second branch on its child (b u)
 // viz$F_f$: `t (t a b) c (t u v)` the argument is a fork → third branch on its children (c u v)
-test not true = false // viz$\neg$: negation, one F rule on the argument's shape
-test and false true = false // viz$\wedge$: conjunction
+test not(true) = false // viz$\neg$: negation, one F rule on the argument's shape
+test and(false, true) = false // viz$\wedge$: conjunction
 ```
 
 `not`, `and`, `true` and `false` are the raw prelude's (`lib/prelude.disp:57-109`);

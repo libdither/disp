@@ -106,6 +106,29 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'def', id: msg.id, site: runner.findDef(msg.name, msg.fromPath, msg.fromText) })
         break
       }
+      case 'scope': {
+        if (!runner) throw new Error('worker not initialized')
+        post({ type: 'scope', id: msg.id, items: runner.scopeItems(msg.fromPath, msg.fromText) })
+        break
+      }
+      case 'graph': {
+        if (!runner) throw new Error('worker not initialized')
+        const graph = runner.graph(msg.handles, msg.names ?? [], msg.maxNodes)
+        ;(self as unknown as Worker).postMessage({ type: 'graph', id: msg.id, graph } satisfies WorkerResponse, [graph.nodes.buffer])
+        break
+      }
+      case 'term': {
+        if (!runner) throw new Error('worker not initialized')
+        const dump = runner.term(msg)
+        ;(self as unknown as Worker).postMessage({ type: 'term', id: msg.id, dump } satisfies WorkerResponse, [dump.graph.nodes.buffer])
+        break
+      }
+      case 'bracket': {
+        if (!runner) throw new Error('worker not initialized')
+        const dump = runner.bracket(msg)
+        ;(self as unknown as Worker).postMessage({ type: 'bracket', id: msg.id, dump } satisfies WorkerResponse, [dump.graph.nodes.buffer])
+        break
+      }
       case 'reset': {
         runner?.reset()
         post({ type: 'ready', id: msg.id })

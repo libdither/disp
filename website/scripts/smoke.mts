@@ -20,10 +20,10 @@ const t0 = Date.now()
 const out1 = runner.run(
   `open use "../../archive/live-kernel/kernel/prelude.disp"
 open use "../../archive/live-kernel/std/nat.disp"
-quadruple : Nat -> Nat := {n} => double (double n)
-let dozen := double 6
-test quadruple 3 = 12
-test param_apply Type Nat = Ok true
+quadruple : Nat -> Nat := {n} => double(double(n))
+let dozen := double(6)
+test quadruple(3) = 12
+test param_apply(Type, Nat) = Ok(true)
 `,
   PLAYGROUND,
   true,
@@ -69,8 +69,8 @@ console.log('--- run 2: warm rerun (module cache) ---')
 const t1 = Date.now()
 const out2 = runner.run(
   `open use "../../archive/live-kernel/kernel/prelude.disp"
-n_eq_n : {n : Nat} -> Eq Nat n n := {n} => refl
-test param_apply (Pi Nat ({n} => Eq Nat n n)) n_eq_n = Ok true
+n_eq_n : {n : Nat} -> Eq(Nat, n, n) := {n} => refl
+test param_apply(Pi(Nat, {n} => Eq(Nat, n, n)), n_eq_n) = Ok(true)
 `,
   PLAYGROUND,
   false,
@@ -110,7 +110,7 @@ if (JSON.stringify(runner.rawTree({ name: 'succ' }, 100)) !== '[0]') {
 
 console.log('--- run 4: failing test pretty ---')
 const out4 = runner.run(
-  `open use "../../archive/live-kernel/kernel/prelude.disp"\ntest succ zero = zero\n`,
+  `open use "../../archive/live-kernel/kernel/prelude.disp"\ntest succ(zero) = zero\n`,
   PLAYGROUND,
   false,
   onItem

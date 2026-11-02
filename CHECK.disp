@@ -10,14 +10,14 @@ open use raw "lib/list.disp" {}
 // must give a valid concrete run — but it STORES only T, the stream's name,
 // because every licensed rule needs only the name (and the name is the key
 // back to the stream if an optimization falls back to enumerating).
-known :: {v : Tree} -> Val :=> pair "Known" v
-member_of :: {T : Recognizer} -> Val :=> pair "Member" T
+known :: {v : Tree} -> Val :=> pair("Known", v)
+member_of :: {T : Recognizer} -> Val :=> pair("Member", T)
 // the induction token: a call we may ASSUME returns a member of C
-assumed_fn :: {C : Recognizer} -> Val :=> pair "AssumedFn" C
-half_stem :: {a : Val} -> Val :=> pair "HalfStem" a
-half_fork :: {a : Val, b : Val} -> Val :=> pair "HalfFork" (pair a b)
+assumed_fn :: {C : Recognizer} -> Val :=> pair("AssumedFn", C)
+half_stem :: {a : Val} -> Val :=> pair("HalfStem", a)
+half_fork :: {a : Val, b : Val} -> Val :=> pair("HalfFork", pair(a, b))
 
-answered :: {v : Val} -> Res :=> t v
+answered :: {v : Val} -> Res :=> t(v)
 // stuck = the run needed to look inside a symbol without a license; never a verdict
 stuck :: Res := t
 is_answered :: Res -> Bool := is_stem
@@ -27,94 +27,94 @@ answer :: Res -> Val := stem_child
 // inspects its argument, so its Member case is the ONLY place a symbol can
 // get stuck — that line is the abstraction wall.
 rec sapply :: {f : Val, x : Val, fuel : Nat} -> Res :=> {
-	let go := {a, b} => sapply a b (nat_pred fuel)
+	let go := {a, b} => sapply(a, b, nat_pred(fuel))
 	let rule_s := {w, y, z} => {
-		let wz := go w z
-		if (not wz.is_answered) { stuck }
+		let wz := go(w, z)
+		if (not(wz.is_answered)) { stuck }
 		else {
-			let yz := go y z
-			if (not yz.is_answered) { stuck } else { go wz.answer yz.answer }
+			let yz := go(y, z)
+			if (not(yz.is_answered)) { stuck } else { go(wz.answer, yz.answer) }
 		}
 	}
 	let rule_triage := {on_leaf, on_stem, on_fork, z} =>
 		if (z.fst == "Member") { stuck }
 		else if (z.fst == "AssumedFn") { stuck }
-		else if (z.fst == "HalfStem") { go on_stem z.snd }
+		else if (z.fst == "HalfStem") { go(on_stem, z.snd) }
 		else if (z.fst == "HalfFork") {
-			let r1 := go on_fork z.snd.fst
-			if (not r1.is_answered) { stuck } else { go r1.answer z.snd.snd }
+			let r1 := go(on_fork, z.snd.fst)
+			if (not(r1.is_answered)) { stuck } else { go(r1.answer, z.snd.snd) }
 		}
 		else {
 			let zt := z.snd
-			if (is_leaf zt) { answered on_leaf }
-			else if (is_stem zt) { go on_stem (known (stem_child zt)) }
+			if (is_leaf(zt)) { answered(on_leaf) }
+			else if (is_stem(zt)) { go(on_stem, known(stem_child(zt))) }
 			else {
-				let r1 := go on_fork (known zt.fst)
-				if (not r1.is_answered) { stuck } else { go r1.answer (known zt.snd) }
+				let r1 := go(on_fork, known(zt.fst))
+				if (not(r1.is_answered)) { stuck } else { go(r1.answer, known(zt.snd)) }
 			}
 		}
 	let pick_rule := {left, right} =>
 		if (left.fst == "Member") { stuck }
 		else if (left.fst == "AssumedFn") { stuck }
-		else if (left.fst == "HalfStem") { rule_s left.snd right x }
-		else if (left.fst == "HalfFork") { rule_triage left.snd.fst left.snd.snd right x }
+		else if (left.fst == "HalfStem") { rule_s(left.snd, right, x) }
+		else if (left.fst == "HalfFork") { rule_triage(left.snd.fst, left.snd.snd, right, x) }
 		else {
 			let lt := left.snd
-			if (is_leaf lt) { answered right }
-			else if (is_stem lt) { rule_s (known (stem_child lt)) right x }
-			else { rule_triage (known lt.fst) (known lt.snd) right x }
+			if (is_leaf(lt)) { answered(right) }
+			else if (is_stem(lt)) { rule_s(known(stem_child(lt)), right, x) }
+			else { rule_triage(known(lt.fst), known(lt.snd), right, x) }
 		}
-	if (is_zero fuel) { stuck }
-	else if ((f.fst == "Known") && (x.fst == "Known")) { answered (known (f.snd x.snd)) }
-	else if ((f.fst == "Known") && (tree_eq f.snd pair_fst)) {
-		if (x.fst == "HalfFork") { answered x.snd.fst } else { stuck }
+	if (is_zero(fuel)) { stuck }
+	else if ((f.fst == "Known") && (x.fst == "Known")) { answered(known(f.snd(x.snd))) }
+	else if ((f.fst == "Known") && (tree_eq(f.snd, pair_fst))) {
+		if (x.fst == "HalfFork") { answered(x.snd.fst) } else { stuck }
 	}
-	else if ((f.fst == "Known") && (tree_eq f.snd pair_snd)) {
-		if (x.fst == "HalfFork") { answered x.snd.snd } else { stuck }
+	else if ((f.fst == "Known") && (tree_eq(f.snd, pair_snd))) {
+		if (x.fst == "HalfFork") { answered(x.snd.snd) } else { stuck }
 	}
-	else if ((f.fst == "Known") && (tree_eq f.snd is_leaf)) {
-		if ((x.fst == "HalfFork") || (x.fst == "HalfStem")) { answered (known false) } else { stuck }
+	else if ((f.fst == "Known") && (tree_eq(f.snd, is_leaf))) {
+		if ((x.fst == "HalfFork") || (x.fst == "HalfStem")) { answered(known(false)) } else { stuck }
 	}
-	else if ((f.fst == "Known") && (tree_eq f.snd is_fork)) {
-		if (x.fst == "HalfFork") { answered (known true) }
-		else if (x.fst == "HalfStem") { answered (known false) } else { stuck }
+	else if ((f.fst == "Known") && (tree_eq(f.snd, is_fork))) {
+		if (x.fst == "HalfFork") { answered(known(true)) }
+		else if (x.fst == "HalfStem") { answered(known(false)) } else { stuck }
 	}
-	else if (f.fst == "AssumedFn") { answered (member_of f.snd) }
+	else if (f.fst == "AssumedFn") { answered(member_of(f.snd)) }
 	else if (f.fst == "Member") { stuck }
-	else if (f.fst == "HalfStem") { answered (half_fork f.snd x) }
+	else if (f.fst == "HalfStem") { answered(half_fork(f.snd, x)) }
 	else if (f.fst == "Known") {
 		let ft := f.snd
-		if (is_leaf ft) { answered (half_stem x) }
-		else if (is_stem ft) { answered (half_fork (known (stem_child ft)) x) }
-		else { pick_rule (known ft.fst) (known ft.snd) }
+		if (is_leaf(ft)) { answered(half_stem(x)) }
+		else if (is_stem(ft)) { answered(half_fork(known(stem_child(ft)), x)) }
+		else { pick_rule(known(ft.fst), known(ft.snd)) }
 	}
-	else { pick_rule f.snd.fst f.snd.snd }
+	else { pick_rule(f.snd.fst, f.snd.snd) }
 }
 
-rec NatR :: {v : Tree} -> Bool :=> if (is_zero v) { true } else { (v == succ (nat_pred v)) && NatR (nat_pred v) }
+rec NatR :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else { (v == succ(nat_pred(v))) && NatR(nat_pred(v)) }
 // judge a partly-known value AS a Nat by Nat's shape certificate (leaf, or
 // fork(leaf, Nat)) — never by running NatR's own recursion on a symbol
 rec judge_nat :: {val : Val} -> Tree :=>
-	if (val.fst == "Known") { if (NatR val.snd) { "Yes" } else { "No" } }
-	else if (val.fst == "Member") { if (tree_eq val.snd NatR) { "Yes" } else { "Stuck" } }
+	if (val.fst == "Known") { if (NatR(val.snd)) { "Yes" } else { "No" } }
+	else if (val.fst == "Member") { if (tree_eq(val.snd, NatR)) { "Yes" } else { "Stuck" } }
 	else if (val.fst == "HalfStem") { "No" }
 	else if (val.fst == "AssumedFn") { "Stuck" }
 	else {
 		let left := val.snd.fst
-		if (left == known t) { judge_nat val.snd.snd } else { "Stuck" }
+		if (left == known(t)) { judge_nat(val.snd.snd) } else { "Stuck" }
 	}
 
-rec dbl :: {n : Tree} -> Tree :=> if (is_zero n) { zero } else { succ (succ (dbl (nat_pred n))) }
-dbl_step := {dbl2, n} => if (is_zero n) { zero } else { succ (succ (dbl2 (nat_pred n))) }
-test dbl 3 = 6
-test tree_eq dbl (fix dbl_step) = true
+rec dbl :: {n : Tree} -> Tree :=> if (is_zero(n)) { zero } else { succ(succ(dbl(nat_pred(n)))) }
+dbl_step := {dbl2, n} => if (is_zero(n)) { zero } else { succ(succ(dbl2(nat_pred(n)))) }
+test dbl(3) = 6
+test tree_eq(dbl, fix(dbl_step)) = true
 
 // one symbolic run replaces the whole map: works for construction-only fns
 check_by_structure :: {fn : Tree} -> Tree :=> {
-	let run := sapply (known fn) (member_of NatR) 200
-	if (not run.is_answered) { "Open" }
+	let run := sapply(known(fn), member_of(NatR), 200)
+	if (not(run.is_answered)) { "Open" }
 	else {
-		let j := judge_nat run.answer
+		let j := judge_nat(run.answer)
 		if (j == "Yes") { "Proved" } else if (j == "No") { "Refuted" } else { "Open" }
 	}
 }
@@ -124,25 +124,25 @@ check_by_structure :: {fn : Tree} -> Tree :=> {
 // recursion bound to assumed_fn. Missing certificate: nothing checks the
 // recursive call happens on something SMALLER (the decreasing-measure debt).
 check_by_induction :: {step_fn : Tree} -> Tree :=> {
-	let base_output := (fix step_fn) zero
-	if (not (NatR base_output)) { "Refuted" }
+	let base_output := fix(step_fn)(zero)
+	if (not(NatR(base_output))) { "Refuted" }
 	else {
-		let with_ih := sapply (known step_fn) (assumed_fn NatR) 400
-		if (not with_ih.is_answered) { "Open" }
+		let with_ih := sapply(known(step_fn), assumed_fn(NatR), 400)
+		if (not(with_ih.is_answered)) { "Open" }
 		else {
-			let step_output := sapply with_ih.answer (half_fork (known t) (member_of NatR)) 400
-			if (not step_output.is_answered) { "Open" }
+			let step_output := sapply(with_ih.answer, half_fork(known(t), member_of(NatR)), 400)
+			if (not(step_output.is_answered)) { "Open" }
 			else {
-				let j := judge_nat step_output.answer
+				let j := judge_nat(step_output.answer)
 				if (j == "Yes") { "Proved" } else if (j == "No") { "Refuted" } else { "Open" }
 			}
 		}
 	}
 }
 
-test check_by_structure succ = "Proved"
-test check_by_structure ({_n} => pair 5 5) = "Refuted"
-test check_by_structure dbl = "Open"
-test check_by_induction dbl_step = "Proved"
-test check_by_induction ({_dbl2, _n} => pair 5 5) = "Refuted"
-test check_by_induction ({_dbl2, n} => pair n n) = "Open"
+test check_by_structure(succ) = "Proved"
+test check_by_structure({_n} => pair(5, 5)) = "Refuted"
+test check_by_structure(dbl) = "Open"
+test check_by_induction(dbl_step) = "Proved"
+test check_by_induction({_dbl2, _n} => pair(5, 5)) = "Refuted"
+test check_by_induction({_dbl2, n} => pair(n, n)) = "Open"

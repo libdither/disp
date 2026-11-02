@@ -5,8 +5,9 @@
 // shortcut whose contract is agreement with the honest stream (TYPES.html §9).
 open use raw "prelude.disp" {}
 
-refuted :: {witness : Tree} -> Verdict :=> pair "Refuted" witness
-open_on :: {reason : Tree} -> Verdict :=> pair "Open" reason
+refuted :: {witness : Tree} -> Verdict :=> pair("Refuted", witness)
+counterexample := {v} => v.snd
+open_on :: {reason : Tree} -> Verdict :=> pair("Open", reason)
 is_proved :: Verdict -> Bool := {v} => v == "Proved"
 is_refuted :: Verdict -> Bool := {v} => v.fst == "Refuted"
 is_open :: Verdict -> Bool := {v} => (v == "Open") || (v.fst == "Open")
@@ -15,7 +16,7 @@ flat :: Verdict -> Verdict := {v} => if (v.is_open) { "Open" } else { v }
 // a shortcut against an enumerated run: Proved needs the run to pass, Refuted
 // needs it to fail, Open is consistent with either
 agrees :: {verdict : Verdict, enumerated : Bool} -> Bool :=>
-	if (verdict.is_proved) { enumerated } else if (verdict.is_open) { true } else { not enumerated }
+	if (verdict.is_proved) { enumerated } else if (verdict.is_open) { true } else { not(enumerated) }
 // two verdicts agree unless one proves what the other refutes
 agree :: {a : Verdict, b : Verdict} -> Bool :=>
 	if (a.is_open) { true } else if (b.is_open) { true } else { a.is_proved == b.is_proved }

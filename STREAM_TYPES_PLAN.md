@@ -131,7 +131,7 @@ instead of trees gives the same evaluator as a paused state: the same three fram
 operands by their shape, and a fourth terminal state:
 
 ```
-sm_need :: {s : Val, f : Val, x : Val, stack : List MFrame} -> SMachine :=> pair "Need" (pair s (pair (pair f x) stack))
+sm_need :: {s : Val, f : Val, x : Val, stack : List(MFrame)} -> SMachine :=> pair("Need", pair(s, pair(pair(f, x), stack)))
 ```
 
 Resuming under an alternative substitutes it for the needed symbol in the registers and
@@ -155,9 +155,9 @@ argument):
 
 ```
 // the two machines as streams of states, related by subst: one step each, forever
-sm_states :: {m : SMachine, quantum : Nat} -> Stream SMachine :=> stream_new ({st} => emit st (m_advance st quantum)) m
+sm_states :: {m : SMachine, quantum : Nat} -> Stream(SMachine) :=> stream_new({st} => emit(st, m_advance(st, quantum)), m)
 lockstep :: {sm : SMachine, s : Val, a : Tree} -> Tree -> Tree -> Bool :=>
-	{x, y} => (subst s (known a) x) == y
+	{x, y} => (subst(s, known(a), x)) == y
 ```
 
 Two claims replace the end-to-end differential, and together they are the proof the

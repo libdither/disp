@@ -3,7 +3,7 @@
   import TreeValue, { type TreeValueCtl } from './TreeValue.svelte'
   import type { ValueNode } from '$lib/disp/protocol'
   import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view'
-  import { EditorState, StateEffect, StateField, Compartment } from '@codemirror/state'
+  import { EditorState, StateEffect, StateField, Compartment, type Extension } from '@codemirror/state'
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
   import { searchKeymap } from '@codemirror/search'
   import { bracketMatching } from '@codemirror/language'
@@ -92,17 +92,19 @@
         if (cursorLine < this.lines.from || cursorLine > this.lines.to) s.classList.add('away')
       }
       let ctl: TreeValueCtl | null = null
-      const btn = document.createElement('button')
-      btn.className = 'disp-ival-viz'
-      btn.title = 'visualize reduction (folded names stay symbolic)'
-      btn.setAttribute('aria-label', 'visualize reduction')
-      btn.innerHTML =
-        '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5 4.8 10.5M8 4.5l3.2 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><circle cx="8" cy="3.4" r="1.6" fill="currentColor"/><circle cx="4.8" cy="11.6" r="1.6" fill="currentColor"/><circle cx="11.2" cy="11.6" r="1.6" fill="currentColor"/></svg>'
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation()
-        if (ctl) this.onVisualize?.(ctl.snapshot(), ctl)
-      })
-      s.appendChild(btn)
+      if (this.onVisualize) {
+        const btn = document.createElement('button')
+        btn.className = 'disp-ival-viz'
+        btn.title = 'visualize reduction (folded names stay symbolic)'
+        btn.setAttribute('aria-label', 'visualize reduction')
+        btn.innerHTML =
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5 4.8 10.5M8 4.5l3.2 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><circle cx="8" cy="3.4" r="1.6" fill="currentColor"/><circle cx="4.8" cy="11.6" r="1.6" fill="currentColor"/><circle cx="11.2" cy="11.6" r="1.6" fill="currentColor"/></svg>'
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          if (ctl) this.onVisualize?.(ctl.snapshot(), ctl)
+        })
+        s.appendChild(btn)
+      }
       const arrow = document.createElement('span')
       arrow.className = 'disp-ival-arrow'
       arrow.textContent = '→'
@@ -285,6 +287,11 @@
       run: (text: string) => void
       title?: string
     }
+    // host-supplied editor features; replaces the built-in doc hover when `ownHover`
+    extensions?: Extension[]
+    ownHover?: boolean
+    // the cursor's line moved or the selection changed
+    onCursor?: (v: EditorView) => void
     api?: (a: EditorApi) => void
   }
 
@@ -294,9 +301,12 @@
     setDoc(d: string): void
     setMarks(marks: LineMark[]): void
     gotoLine(line: number): void
+    view(): EditorView
+    // swap the whole editor state, so each tab keeps its own undo, folds and cursor
+    swapState(next: EditorState | null, doc: string): EditorState
   }
 
-  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, onOpenPath, onJumpDef, onResolveIdent, selectionAction, api }: Props = $props()
+  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, onOpenPath, onJumpDef, onResolveIdent, selectionAction, extensions = [], ownHover = false, onCursor, api }: Props = $props()
 
   let host: HTMLDivElement
   let view: EditorView | undefined
@@ -538,12 +548,11 @@
     provide: (f) => EditorView.decorations.from(f)
   })
 
-  onMount(() => {
-    view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc,
+  function createState(text: string): EditorState {
+    return EditorState.create({
+        doc: text,
         extensions: [
+          ...extensions,
           lineNumbers(),
           history(),
           drawSelection(),
@@ -605,9 +614,7 @@
             }
           }),
           ...dispLanguageExtensions,
-          docHover,
-          docTap,
-          docHoverTheme,
+          ...(ownHover ? [] : [docHover, docTap, docHoverTheme]),
           editableComp.of(EditorView.editable.of(!reading)),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {
@@ -618,11 +625,17 @@
             if (u.selectionSet || u.docChanged) {
               updateBlockFocus()
               updateSelectionAction()
+              onCursor?.(u.view)
             }
           })
         ]
-      })
     })
+  }
+
+  onMount(() => {
+    view = new EditorView({ parent: host, state: createState(doc) })
+    // value blocks animate their size; re-measure when they land so the gutter stays aligned
+    host.addEventListener('transitionend', () => view?.requestMeasure())
 
     api?.({
       getDoc: () => view!.state.doc.toString(),
@@ -649,6 +662,14 @@
         const l = view!.state.doc.line(n)
         view!.dispatch({ selection: { anchor: l.from }, scrollIntoView: true })
         view!.focus()
+      },
+      view: () => view!,
+      swapState: (next, d) => {
+        const prev = view!.state
+        view!.setState(next ?? createState(d))
+        stale = false
+        updateBlockFocus()
+        return prev
       }
     })
   })

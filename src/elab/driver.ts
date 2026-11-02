@@ -9,7 +9,7 @@ import { parseItems, sumCtorExpr, type Expr, type RecMember } from "../parse.js"
 import { elab, B, verifiedModules, moduleCacheBySession, registerVocab, isPristineVocab, VOCAB_NAMES, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
 import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modscan.js"
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
-import { extractSignature } from "./sugar.js"
+import { binderArity, extractSignature } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { sugarTree } from "./vocab.js"
 import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree, equationLhs } from "./expr.js"
@@ -207,6 +207,8 @@ export type ParseItemStats = {
   line?: number
   endLine?: number
   tree?: Tree
+  /// Leading parameters of a binding's value (its named-argument signature), when known.
+  arity?: number
   stats: EvalStats
 }
 
@@ -534,7 +536,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     kind: "let" | "test" | "open" | "field" | "given",
     name?: string,
     testIndex?: number,
-    extra?: { line?: number; endLine?: number; tree?: Tree },
+    extra?: { line?: number; endLine?: number; tree?: Tree; arity?: number },
   ): void {
     options.onItem?.({
       kind,
@@ -545,6 +547,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       line: extra?.line,
       endLine: extra?.endLine,
       tree: extra?.tree,
+      arity: extra?.arity,
       stats: elab.cs.stats!(),
     })
   }
@@ -910,7 +913,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // a session can hold several kernels, so each one's definition is pristine
         // and only a ROOT-file binding of these names counts as a shadow.
         if (!ctx.isRoot && r.tree != null && VOCAB_NAMES.has(it.name)) registerVocab(elab.cs, it.name, r.tree)
-        recordItem(isLetHead(it.head) ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined })
+        const ann = it.type ?? it.docType
+        const arity = lookupEntry(it.name)?.params?.length ?? (ann != null ? binderArity(ann) : undefined)
+        recordItem(isLetHead(it.head) ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined, arity })
         // Constructor auto-declaration (SYNTAX.typ § sum types): a declaration whose
         // value is a sum-type literal — possibly under a binder chain, the
         // parameterized case (`{A} -> < some : A, none >`; constructors don't mention

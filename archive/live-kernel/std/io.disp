@@ -8,8 +8,8 @@
 open use "../kernel/prelude.disp"
 open use "effect.disp"
 
-io_row := row1 "IO"
+io_row := row1("IO")
 // print s: write the string s and a newline to stdout; answers unit.
-print := mk_op "IO" "print" String Unit
+print := mk_op("IO", "print", String, Unit)
 // read_line: read one line from stdin (the empty string at end of input).
-read_line := (mk_op "IO" "read_line" Unit String) unit_val
+read_line := mk_op("IO", "read_line", Unit, String)(unit_val)

@@ -3,45 +3,45 @@ open use "../std/nat.disp"
 open use "../std/result.disp"
 
 // Constructors distinguishable
-test is_ok_result (ok 7) = true
-test is_err_result (ok 7) = false
-test is_ok_result (err 9) = false
-test is_err_result (err 9) = true
+test is_ok_result(ok(7)) = true
+test is_err_result(ok(7)) = false
+test is_ok_result(err(9)) = false
+test is_err_result(err(9)) = true
 
 // Result Bool Nat: error is Bool, success is Nat
-test Result Bool Nat (ok 0) = Ok true
-test Result Bool Nat (err false) = Ok true
+test Result(Bool, Nat, ok(0)) = Ok(true)
+test Result(Bool, Nat, err(false)) = Ok(true)
 
 // Type mismatches
-test Result Bool Nat (ok false) = Ok false // ok payload must be Nat; false = △ △ is none (true = △ = zero would pass)
-test Result Bool Nat (err 3) = Ok false
+test Result(Bool, Nat, ok(false)) = Ok(false) // ok payload must be Nat; false = △ △ is none (true = △ = zero would pass)
+test Result(Bool, Nat, err(3)) = Ok(false)
 
 // Bad shapes / unknown tags
-test Result Nat Nat t = Ok false
-test Result Nat Nat (inj "huh" 5) = Ok false
+test Result(Nat, Nat, t) = Ok(false)
+test Result(Nat, Nat, inj("huh", 5)) = Ok(false)
 
 // result_rec dispatches by branch
-test result_rec ({_} => Nat) ({v} => succ v) ({e} => 0) (ok 4) = 5
-test result_rec ({_} => Nat) ({v} => succ v) ({e} => 0) (err true) = 0
+test result_rec({_} => Nat, {v} => succ(v), {e} => 0, ok(4)) = 5
+test result_rec({_} => Nat, {v} => succ(v), {e} => 0, err(true)) = 0
 
 // result_map / result_map_err
-test result_map succ (ok 4) = ok 5
-test result_map succ (err 9) = err 9
-test result_map_err succ (ok 4) = ok 4
-test result_map_err succ (err 9) = err 10
+test result_map(succ, ok(4)) = ok(5)
+test result_map(succ, err(9)) = err(9)
+test result_map_err(succ, ok(4)) = ok(4)
+test result_map_err(succ, err(9)) = err(10)
 
 // result_and_then
-let succ_ok := {n} => ok (succ n)
-test result_and_then (ok 5) succ_ok = ok 6
-test result_and_then (err false) succ_ok = err false
+let succ_ok := {n} => ok(succ(n))
+test result_and_then(ok(5), succ_ok) = ok(6)
+test result_and_then(err(false), succ_ok) = err(false)
 
 // result_unwrap_or
-test result_unwrap_or 99 (ok 5) = 5
-test result_unwrap_or 99 (err true) = 99
+test result_unwrap_or(99, ok(5)) = 5
+test result_unwrap_or(99, err(true)) = 99
 
 // Under a Pi binder — the PARAMETRIC eliminator result_rec routes a neutral
 // Result through the coproduct respond, so this typed binding VERIFIES.
-let or_zero : Result Bool Nat -> Nat := {r} => result_rec ({_} => Nat) ({v} => v) ({_} => 0) r
-test param_apply (Arrow (Result Bool Nat) Nat) ({r} => result_rec ({_} => Nat) ({v} => v) ({_} => 0) r) = Ok true
-test or_zero (ok 8) = 8
-test or_zero (err true) = 0
+let or_zero : Result(Bool, Nat) -> Nat := {r} => result_rec({_} => Nat, {v} => v, {_} => 0, r)
+test param_apply(Arrow(Result(Bool, Nat), Nat), {r} => result_rec({_} => Nat, {v} => v, {_} => 0, r)) = Ok(true)
+test or_zero(ok(8)) = 8
+test or_zero(err(true)) = 0

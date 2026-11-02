@@ -61,6 +61,16 @@ export type WorkerRequest =
   // jump-to-definition: where is `name` defined, as seen from fromPath?
   // fromText is the (possibly unsaved) buffer content of fromPath.
   | { id: number; type: 'def'; name: string; fromPath: string; fromText: string }
+  // Autocomplete and hover: every top-level name the opened files bring into
+  // scope (the origin buffer's own names are indexed on the main thread).
+  | { id: number; type: 'scope'; fromPath: string; fromText: string }
+  // The inspector's food. 'graph' dumps trees by handle or name; 'term' compiles
+  // an expression (a member at a line, or free text) with the real elaborator,
+  // keeping every application held so the inspector can step through it.
+  | { id: number; type: 'graph'; handles: number[]; names?: string[]; maxNodes: number }
+  | { id: number; type: 'term'; expr?: string; path?: string; text?: string; line?: number; side?: 'lhs' | 'rhs'; value?: number; maxNodes: number }
+  // Replays bracket abstraction for the same kinds of term, one rewrite per frame.
+  | { id: number; type: 'bracket'; expr?: string; path?: string; text?: string; line?: number; side?: 'lhs' | 'rhs'; maxNodes: number }
   | { id: number; type: 'reset' }
 
 // Streaming progress: one per elaborated item (defs, tests, opens — including
@@ -77,11 +87,71 @@ export interface ItemEvent {
   steps: number
 }
 
+// A hash-consed dump of tree handles: node i's children have smaller indices.
+// Three ints per node (tag, a, b); labels name the indices the session knows.
+export const G_LEAF = 0
+export const G_STEM = 1
+export const G_FORK = 2
+export const G_APP = 3
+export const G_VAR = 4 // a = index into strs
+export const G_CUT = 5 // over budget: a = the session handle, expandable on demand
+export const G_LAM = 6 // a binder not yet abstracted away: a = the name's string index, b = its body
+export const G_HELD_K = 7 // K(a) kept visibly K, so K(2) doesn't read as the numeral 3
+
+export interface Graph {
+  nodes: Int32Array
+  strs: string[]
+  labels: [number, string][]
+  roots: number[]
+}
+
+export type BracketRule = 'start' | 'split' | 'const' | 'id' | 'eta' | 'eta-after' | 'k-comp' | 'lam' | 'skip'
+
+/// One rewrite of bracket abstraction. Its frame is the whole term after the rewrite.
+export interface BracketStep {
+  rule: BracketRule
+  name: string
+  /// child-index path to the rewritten spot
+  at: number[]
+  before: string
+  after: string
+}
+
+export interface BracketDump {
+  graph: Graph // roots[i] = the term after steps[i]
+  steps: BracketStep[]
+  /// rewrites left out of a very long replay
+  skipped: number
+  /// the replay failed to land on the compiler's own output, which is a bug in this view
+  mismatch: boolean
+  /// the leading binders' names: what a run can call this with
+  params: string[]
+  error?: string
+}
+
+export interface TermDump {
+  graph: Graph // roots[0] = the held term, roots[1] = the real evaluator's value (when it closed)
+  source: string
+  error?: string
+}
+
+/// A top-level name reachable through the buffer's opens.
+export interface ScopeItem {
+  name: string
+  path: string
+  line: number
+  sig?: string
+  params?: string[]
+  doc?: string
+}
+
 export interface TestResult {
   index: number
   line?: number
   endLine?: number
   pass: boolean
+  lhsH?: number
+  rhsH?: number
   lhs?: string
   rhs?: string
   // structured got/want for failing tests (interactive unfold in the UI)
@@ -97,8 +167,10 @@ export interface RunOutcome {
   // in definition order, with its source extent and (when requested) the
   // pretty-printed value. Survives a mid-file error: bindings elaborated
   // before the failure are still reported.
-  defs: { name: string; pretty?: string; value?: ValueNode; line?: number; endLine?: number }[]
+  defs: { name: string; pretty?: string; value?: ValueNode; line?: number; endLine?: number; h?: number }[]
   tests: TestResult[]
+  // evaluator steps each root item spent, for the cost display
+  costs?: { line: number; steps: number }[]
   // eval mode: the pretty-printed value of the requested expression
   value?: string
   // structured form of the eval value (interactive unfold in the UI)
@@ -119,4 +191,8 @@ export type WorkerResponse =
   | { type: 'ls'; id: number; paths: string[] }
   | { type: 'read'; id: number; text: string | null }
   | { type: 'def'; id: number; site: { path: string; line: number } | null }
+  | { type: 'scope'; id: number; items: ScopeItem[] }
+  | { type: 'graph'; id: number; graph: Graph }
+  | { type: 'term'; id: number; dump: TermDump }
+  | { type: 'bracket'; id: number; dump: BracketDump }
   | { type: 'fatal'; id: number; error: string }

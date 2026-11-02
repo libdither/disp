@@ -16,16 +16,16 @@ test (if false then 1 else 0) = 0
 // ================================================================
 
 // Single free var
-test ({x} => if x then 1 else 0) true = 1
-test ({x} => if x then 1 else 0) false = 0
+test ({x} => if x then 1 else 0)(true) = 1
+test ({x} => if x then 1 else 0)(false) = 0
 
 // Multiple free vars; both branches use them
-test ({x, a, b} => if x then a else b) true 5 7 = 5
-test ({x, a, b} => if x then a else b) false 5 7 = 7
+test ({x, a, b} => if x then a else b)(true, 5, 7) = 5
+test ({x, a, b} => if x then a else b)(false, 5, 7) = 7
 
 // Asymmetric: only one branch uses the free var
-test ({x, a} => if x then a else 0) true 9 = 9
-test ({x, a} => if x then a else 0) false 9 = 0
+test ({x, a} => if x then a else 0)(true, 9) = 9
+test ({x, a} => if x then a else 0)(false, 9) = 0
 
 // ================================================================
 // Nested if
@@ -37,20 +37,20 @@ test (if false then 1 else (if true then 4 else 5)) = 4
 // Nested with shared free vars across both levels (multi-line bodies)
 test ({x, y} => if x
   then (if y then 1 else 2)
-  else (if y then 3 else 4)) true false = 2
+  else (if y then 3 else 4))(true, false) = 2
 
 test ({x, y} => if x
   then (if y then 1 else 2)
-  else (if y then 3 else 4)) false true = 3
+  else (if y then 3 else 4))(false, true) = 3
 
 // else-if chain (right-associative; the trailing else needs no parens)
 let bucket := {n} =>
-  if (tree_eq n 0) then 100
-  else if (tree_eq n 1) then 200
+  if (tree_eq(n, 0)) then 100
+  else if (tree_eq(n, 1)) then 200
   else 300
-test bucket 0 = 100
-test bucket 1 = 200
-test bucket 2 = 300
+test bucket(0) = 100
+test bucket(1) = 200
+test bucket(2) = 300
 
 // ================================================================
 // Short-circuit: unselected branch never runs
@@ -61,12 +61,12 @@ test bucket 2 = 300
 // If it were broken (eager thunks), bracket abstraction over `y` would
 // eagerly evaluate `loops y` and the test would hit budget.
 
-let loops := fix ({self, x} => self x)
+let loops := fix({self, x} => self(x))
 
-test ({x, y} => if x then y else loops y) true 5 = 5
+test ({x, y} => if x then y else loops(y))(true, 5) = 5
 
 // Symmetric case: false selected, the then-branch has the divergent body
-test ({x, y} => if x then loops y else y) false 5 = 5
+test ({x, y} => if x then loops(y) else y)(false, 5) = 5
 
 // ================================================================
 // `if` composes with other constructs
@@ -77,15 +77,15 @@ test ({x, y} => if x then loops y else y) false 5 = 5
 test ({x} => {
   let r := if x then 10 else 20
   r
-}) true = 10
+})(true) = 10
 
 // As the body of a binder
-test (({x} => if x then 1 else 0) true) = 1
+test ({x} => if x then 1 else 0)(true) = 1
 
 // Scrutinee is an application
-let is_zero := {n} => tree_eq n 0
-test (if (is_zero 0) then 1 else 0) = 1
-test (if (is_zero 1) then 1 else 0) = 0
+let is_zero := {n} => tree_eq(n, 0)
+test (if (is_zero(0)) then 1 else 0) = 1
+test (if (is_zero(1)) then 1 else 0) = 0
 
 // ================================================================
 // CPS-style chain (mirrors soundness plan's must_ok_* pattern)
@@ -96,14 +96,14 @@ test (if (is_zero 1) then 1 else 0) = 0
 // "Err short-circuit" property is broken.
 
 let succ_only := {c, k, x} =>
-  if c then k x else loops x
+  if c then k(x) else loops(x)
 
 // When c=true, k is invoked with x.
-test succ_only true ({y} => y) 7 = 7
+test succ_only(true, {y} => y, 7) = 7
 
 // When c=false, the else branch runs `loops x` which diverges. So the test
 // budget would blow up if we ever reached the else branch via c=true.
-test succ_only true ({y} => succ y) 4 = 5
+test succ_only(true, {y} => succ(y), 4) = 5
 
 // ================================================================
 // S2 regression: select_lazy + self-recursion compiles via auto-rewrite
@@ -114,52 +114,52 @@ test succ_only true ({y} => succ y) 4 = 5
 // rewrites `select_lazy ({_} -> A) ({_} -> B) cond` to
 // `if cond then A else B`, side-stepping the eager reduction.
 
-let count_down := fix ({self, n} =>
-  select_lazy
-    ({_} => 0)
-    ({_} => succ (self (pair_snd n)))
-    (tree_eq n t))
+let count_down := fix({self, n} =>
+  select_lazy(
+    {_} => 0,
+    {_} => succ(self(pair_snd(n))),
+    tree_eq(n, t)))
 
-test count_down 0 = 0
-test count_down 3 = 3
+test count_down(0) = 0
+test count_down(3) = 3
 
 // Nested select_lazy with self-recursion under both arms.
-let count_down2 := fix ({self, n} =>
-  select_lazy
-    ({_} => 0)
-    ({_} =>
-      select_lazy
-        ({_} => 1)
-        ({_} => succ (self (pair_snd n)))
-        (tree_eq (pair_snd n) t))
-    (tree_eq n t))
+let count_down2 := fix({self, n} =>
+  select_lazy(
+    {_} => 0,
+    {_} =>
+      select_lazy(
+        {_} => 1,
+        {_} => succ(self(pair_snd(n))),
+        tree_eq(pair_snd(n), t)),
+    tree_eq(n, t)))
 
-test count_down2 0 = 0
-test count_down2 1 = 1
-test count_down2 3 = 3
+test count_down2(0) = 0
+test count_down2(1) = 1
+test count_down2(3) = 3
 
 // ================================================================
 // Coproduct match: string-tag arms, wildcard, multi-binder destructuring
 // ================================================================
 
 // Arm constructor names are TAGS BY SPELLING (strings) — no tag in scope needed.
-let classify := {c} => match c { inc n => succ n; id x => x; _ => zero }
-test classify (inj "inc" zero) = succ zero
-test classify (inj "id" (succ zero)) = succ zero
-test classify (inj "other" true) = zero // wildcard: unmatched tag -> default
+let classify := {c} => match c { inc n => succ(n); id x => x; _ => zero }
+test classify(inj("inc", zero)) = succ(zero)
+test classify(inj("id", succ(zero))) = succ(zero)
+test classify(inj("other", true)) = zero // wildcard: unmatched tag -> default
 
 // Nullary arm ignores the (unit) payload.
 let opt := {c} => match c { none => zero; some x => x }
-test opt (inj "none" t) = zero
-test opt (inj "some" (succ zero)) = succ zero
+test opt(inj("none", t)) = zero
+test opt(inj("some", succ(zero))) = succ(zero)
 
 // Multi-binder arm destructures a right-nested-pair payload (Σ-chain layout):
 //   pt a b c   ≡   inj "pt" (pair a (pair b c))
-let p3 := inj "pt" (pair zero (pair (succ zero) (succ (succ zero))))
+let p3 := inj("pt", pair(zero, pair(succ(zero), succ(succ(zero)))))
 test (match p3 { pt x y z => x }) = zero // x = fst
-test (match p3 { pt x y z => y }) = succ zero // y = fst snd
-test (match p3 { pt x y z => z }) = succ (succ zero) // z = snd snd
-test (match p3 { pt x y z => t x (t y z) }) = t zero (t (succ zero) (succ (succ zero)))
+test (match p3 { pt x y z => y }) = succ(zero) // y = fst snd
+test (match p3 { pt x y z => z }) = succ(succ(zero)) // z = snd snd
+test (match p3 { pt x y z => t(x, t(y, z)) }) = t(zero, t(succ(zero), succ(succ(zero))))
 
 // Wildcard with no named arms is a total default.
-test (match (inj "anything" true) { _ => zero }) = zero
+test (match (inj("anything", true)) { _ => zero }) = zero

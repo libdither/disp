@@ -23,22 +23,22 @@ const run = (src: string) => parseProgram(src, HERE, { session })
 
 describe("guard layer rejections", () => {
   it("freeze refuses rebinds", () => {
-    expect(() => run(K + `guard freeze V : Nat := 3\nV : Nat := 4\n`))
+    expect(() => run(K + `guard(freeze) V : Nat := 3\nV : Nat := 4\n`))
       .toThrow(/rejected by its guard/)
   }, 300000)
 
   it("a licensed name refuses a plain (credential-less) rebind", () => {
-    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) n : Nat := 3\nn : Nat := 4\n`))
+    expect(() => run(K + `guard(license_guard((eq_relation(Nat)).rel)) n : Nat := 3\nn : Nat := 4\n`))
       .toThrow(/rejected by its guard/)
   }, 120000)
 
   it("a lying proof is rejected", () => {
-    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) m : Nat := 3\nm : Nat := { new := 4; proof := refl }\n`))
+    expect(() => run(K + `guard(license_guard((eq_relation(Nat)).rel)) m : Nat := 3\nm : Nat := { new := 4; proof := refl }\n`))
       .toThrow(/rejected by its guard/)
   }, 120000)
 
   it("an honest payload rebind passes", () => {
-    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) k : Nat := 3\nk : Nat := { new := 3; proof := refl }\ntest k = 3\n`))
+    expect(() => run(K + `guard(license_guard((eq_relation(Nat)).rel)) k : Nat := 3\nk : Nat := { new := 3; proof := refl }\ntest k = 3\n`))
       .not.toThrow()
   }, 120000)
 
@@ -46,8 +46,8 @@ describe("guard layer rejections", () => {
     // The rule relates id to succ; the rebind proposes succ∘succ, so check_deriv
     // computes false (tree_eq at the rule instance's rhs) and the load fails.
     expect(() => run(K + `open use "../../archive/live-kernel/std/deriv.disp"
-guard (license_guard_deriv (cons ({_} => pair ({n} => n) ({n} => succ n)) nil) nil) g : Arrow Nat Nat := ({n} => n)
-g := { new := ({n} => succ (succ n)) ; deriv := (d_rule 0 t) }
+guard(license_guard_deriv(cons({_} => pair({n} => n, {n} => succ(n)), nil), nil)) g : Arrow(Nat, Nat) := ({n} => n)
+g := { new := ({n} => succ(succ(n))) ; deriv := (d_rule(0, t)) }
 `)).toThrow(/rejected by its guard/)
   }, 120000)
 
@@ -55,14 +55,14 @@ g := { new := ({n} => succ (succ n)) ; deriv := (d_rule 0 t) }
     // The zero obligation demands Eq Nat 0 (succ 0); refl cannot close it, so the
     // rebind fails the load (the shift-shaped attack that the pointwise license
     // accepts — probe_license_sr — dies here at the concrete face).
-    expect(() => run(K + `let NatRB := {u, v} => Eq Nat u v
-guard (two_face_guard (PositiveFnCoverage Nat NatRB)) f : Arrow Nat Nat := ({n} => n)
-f := { fast := ({n} => succ n) ; proof := { zero := refl; succ := ({k} => {_ih} => refl) } }
+    expect(() => run(K + `let NatRB := {u, v} => Eq(Nat, u, v)
+guard(two_face_guard(PositiveFnCoverage(Nat, NatRB))) f : Arrow(Nat, Nat) := ({n} => n)
+f := { fast := ({n} => succ(n)) ; proof := { zero := refl; succ := ({k} => {_ih} => refl) } }
 `)).toThrow(/rejected by its guard/)
   }, 120000)
 
   it("ownership is not surrendered (guard proposals refused)", () => {
-    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) p : Nat := 3\nguard freeze p : Nat := { new := 3; proof := refl }\n`))
+    expect(() => run(K + `guard(license_guard((eq_relation(Nat)).rel)) p : Nat := 3\nguard(freeze) p : Nat := { new := 3; proof := refl }\n`))
       .toThrow(/rejected by its guard/)
   }, 120000)
 
@@ -92,11 +92,11 @@ f := { fast := ({n} => succ n) ; proof := { zero := refl; succ := ({k} => {_ih} 
       if (!t || t.kind !== "Test") throw new Error("missing test")
       return t
     }
-    // Pristine marker: `test zero = succ zero` peels to zero vs succ zero — unequal.
-    const pristine = testOf(`test zero = succ zero\n`)
+    // Pristine marker: `test zero = succ(zero)` peels to zero vs succ zero — unequal.
+    const pristine = testOf(`test zero = succ(zero)\n`)
     expect(session.equal!(pristine.lhs, pristine.rhs)).toBe(false)
     // Shadowed marker RUNS (no peel): lhs = succ zero — equal.
-    const shadowed = testOf(`test := succ\ntest zero = succ zero\n`)
+    const shadowed = testOf(`test := succ\ntest zero = succ(zero)\n`)
     expect(session.equal!(shadowed.lhs, shadowed.rhs)).toBe(true)
   }, 120000)
 })

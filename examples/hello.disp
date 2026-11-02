@@ -6,4 +6,4 @@ open use "../archive/live-kernel/kernel/prelude.disp"
 open use "../archive/live-kernel/std/effect.disp"
 open use "../archive/live-kernel/std/io.disp"
 
-main : Eff io_row Unit := print "Hello, world!"
+main : Eff(io_row, Unit) := print("Hello, world!")

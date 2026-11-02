@@ -33,11 +33,8 @@ rather than lexical.
   the live `:=`/`:=>`. Binder NAMES inside them stay live-colored (with `:=>`
   they really bind), only the types dim. See § Doc annotations to also keep
   type/operator differences inside the dim.
-- Application heads get call coloring (`entity.name.function`): in disp,
-  application is juxtaposition, so an identifier that starts an expression
-  (line start, after an opening bracket, separator, `:=`/`:`/`=`, an arrow, or
-  `if`/`then`/`else`) and is applied to at least one atom is a call site,
-  like Rust's `foo(...)`. So `nat_rec ({_} -> Nat) m step n` colors `nat_rec`
+- Called names get call coloring (`entity.name.function`): an identifier
+  glued to `(` or followed by a named-argument record, like Rust's `foo(...)`. So `nat_rec ({_} -> Nat) m step n` colors `nat_rec`
   yellow under common themes.
 - Lambda binder params `{n, m} ->` get `variable.parameter`; all other
   lowercase identifiers get `variable.other`. Under default themes both render

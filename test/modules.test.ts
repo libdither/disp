@@ -90,7 +90,7 @@ describe("module dependencies (given) rejections", () => {
   it("raw binds NOTHING for an unfilled given: values referencing it error as unbound", () => {
     // Nothing implicit flows under `use raw {}` — an unfilled, undefaulted given
     // is simply absent from the module's scope.
-    const p = tmpModule("rawval.disp", `given f : Nat -> Nat\napplied := f zero\n`)
+    const p = tmpModule("rawval.disp", `given f : Nat -> Nat\napplied := f(zero)\n`)
     expect(() => run(K + `open use raw "${p}" {}\n`))
       .toThrow(/unresolved free variable f/)
     // annotation-only givens load fine raw (annotations drop — the kernel bootstrap)
@@ -107,7 +107,7 @@ describe("module dependencies (given) rejections", () => {
   }, 120000)
 
   it("hermetic: policy shadowing is file-local (a shadowed `let` does not leak into used modules)", () => {
-    const p = tmpModule("polmod.disp", `let hidden := t\nvisible := t t\n`)
+    const p = tmpModule("polmod.disp", `let hidden := t\nvisible := t(t)\n`)
     const shadow = `let := {req} => { value := req.value; ty := req.ty; guard := req.guard; private := false; param := false }\n`
     // The module elaborates under its OWN pristine `let`: hidden stays private
     // even though the use site shadowed `let` into an exporting decorator.
@@ -140,9 +140,9 @@ describe("module dependencies (given) rejections", () => {
       .createSession() as unknown as Session<Tree>
     const runFresh = (src: string) => parseProgram(src, HERE, { session: fresh })
     expect(() => runFresh(
-      `open use raw "${LIB}/prelude.disp" {}\nopen use "${LIB}/kernel/prelude.disp"\ncheck := Nat 2\n`))
+      `open use raw "${LIB}/prelude.disp" {}\nopen use "${LIB}/kernel/prelude.disp"\ncheck := Nat(2)\n`))
       .not.toThrow()
-    expect(() => runFresh(K + `check := succ zero\n`)).not.toThrow()
+    expect(() => runFresh(K + `check := succ(zero)\n`)).not.toThrow()
   }, 180000)
 })
 
@@ -152,14 +152,14 @@ describe("checked block-let annotations", () => {
   // (under enclosing binders) stay documentation-only, and raw loads drop
   // annotations as always.
   it("a well-typed block-let annotation loads; an ill-typed one fails the module batch", () => {
-    const good = tmpModule("letann_good.disp", `x := { let two : Nat := 2\n succ two }\n`)
+    const good = tmpModule("letann_good.disp", `x := { let two : Nat := 2\n succ(two) }\n`)
     expect(() => run(K + `m := use "${good}"\n`)).not.toThrow()
-    const bad = tmpModule("letann_bad.disp", `x := { let two : Bool := 2\n succ two }\n`)
+    const bad = tmpModule("letann_bad.disp", `x := { let two : Bool := 2\n succ(two) }\n`)
     expect(() => run(K + `m := use "${bad}"\n`)).toThrow(/does not inhabit/)
   }, 300000)
 
   it("an open block-let annotation (under enclosing binders) stays unchecked", () => {
-    const p = tmpModule("letann_open.disp", `f := {n} => { let bad : Bool := succ n\n succ bad }\n`)
+    const p = tmpModule("letann_open.disp", `f := {n} => { let bad : Bool := succ(n)\n succ(bad) }\n`)
     expect(() => run(K + `m := use "${p}"\n`)).not.toThrow()
   }, 120000)
 })

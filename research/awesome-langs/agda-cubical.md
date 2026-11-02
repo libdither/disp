@@ -38,8 +38,8 @@ monad, and unquoting is a separate, partial operation. In disp, `shape_of` appli
 directly to any program because programs *are* trees:
 
 ```
-let shape_of := t (t "leaf" ({u} -> "stem")) ({u, v} -> "fork")
-test shape_of (t t t) = "fork"
+let shape_of := t(t("leaf", {u} -> "stem"), {u, v} -> "fork")
+test shape_of(t(t, t)) = "fork"
 ```
 
 No quote, no monad, no representation layer. That is the concrete payoff of Jay's

@@ -21,13 +21,13 @@ The [Documentation](#documentation) section below details important docs and sou
 
 ## Disp by example 🤖
 
-This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked. Code blocks are tagged `rust` only to borrow GitHub's syntax highlighting; the code is disp. The website's Why page (`website/src/routes/why/`) walks through the same ideas with pictures.
+This section is one file, top to bottom ([`lib/tests/by_example.test.disp`](lib/tests/by_example.test.disp)), and the test suite runs it. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked. Code blocks are tagged `rust` only to borrow GitHub's syntax highlighting; the code is disp. The website's Learn page (`website/src/lib/learn/`) runs the same examples in the browser and explains them at length.
 
-<!-- Literate-code invariant: the blocks below concatenate to one .disp file that must pass.
-     After editing them, re-verify with:
-       awk '/^```rust$/{f=1;next} /^```$/{f=0;next} f' README.md > lib/tests/readme_check_tmp.disp
-       npm run disp -- lib/tests/readme_check_tmp.disp && rm lib/tests/readme_check_tmp.disp -->
+<!-- The blocks below are copied from lib/tests/by_example.test.disp, which the test
+     suite runs; the website's Learn page shows the same file. Edit that file, then run
+       python scripts/sync-examples.py -->
 
+<!-- example: imports -->
 ```rust
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
@@ -41,87 +41,91 @@ open use raw "confirmer.test.disp" {}
 
 ### Everything is a tree
 
+<!-- example: trees -->
 ```rust
 // Disp compiles to the tree calculus: five rewrite rules over binary trees grown
 // from a single leaf `t`. Numbers, functions and tests are all such trees.
 
 test true = t                                     // the leaf itself
-test false = t t                                  // a stem: one branch up
-test tree_eq 3 (succ (succ (succ zero))) = true   // 3 is sugar, and the trees are identical
+test false = t(t)                                 // a stem: one branch up
+test tree_eq(3, succ(succ(succ(zero)))) = true    // 3 is sugar, and the trees are identical
 
 // Three of the five rules dispatch on the shape of a tree (leaf, stem or fork),
 // so any program can take any other apart, with no quoting and no reflection API:
 
-let shape_of := t (t "leaf" ({u} => "stem")) ({u, v} => "fork")
-test shape_of t = "leaf"
-test shape_of (t t) = "stem"
-test shape_of (t t t) = "fork"
-test shape_of not = "fork"
+let shape_of := t(t("leaf", {u} => "stem"), {u, v} => "fork")
+test shape_of(t) = "leaf"
+test shape_of(t(t)) = "stem"
+test shape_of(t(t, t)) = "fork"
+test shape_of(not) = "fork"
 ```
 
 ### A claim is a test, asked of every tree
 
+<!-- example: claim -->
 ```rust
 // A claim is a program from a witness and a challenge to a Bool. This one says a
 // function takes numbers to numbers. It says nothing about trees that are not numbers.
 
-nat_fn := {g, x} => if (NatR x) { NatR (g x) } else { true }
+nat_fn := {g, x} => if (NatR(x)) { NatR(g(x)) } else { true }
 
 // `Trees` is every tree there is, smallest first. The honest check searches it for
 // a challenge the witness fails, up to a budget.
 
-by_search := honest (Trees.as_items)
-test by_search nat_fn ({n} => pair n n) 60 = refuted 1
+by_search := honest(Trees.as_items)
+test by_search(nat_fn, {n} => pair(n, n), 60) = refuted(1)
 
 // A failure is final, but running out of budget proves nothing. Open only means
 // "no failure so far". This program is wrong on 3, the 65th tree:
 
-sneaky := {n} => if (n == 3) { t t } else { n }
-test by_search nat_fn sneaky 64 = "Open"
-test by_search nat_fn sneaky 65 = refuted 3
-test by_search nat_fn succ 150 = "Open"
+sneaky := {n} => if (n == 3) { t(t) } else { n }
+test by_search(nat_fn, sneaky, 64) = "Open"
+test by_search(nat_fn, sneaky, 65) = refuted(3)
+test by_search(nat_fn, succ, 150) = "Open"
 ```
 
 ### Proved needs a shortcut
 
+<!-- example: proved -->
 ```rust
 // The stream of trees never ends, so search can never say Proved. A finite list
 // of challenges can, when every tree is covered by something on the list:
 
-bool_fn := {v, x} => if (Bool x) { Bool (v x) } else { true }
-test over bool_fn not [true, false] = "Proved"
+bool_fn := {v, x} => if (Bool(x)) { Bool(v(x)) } else { true }
+test over(bool_fn, not, [true, false]) = "Proved"
 
 // The cover is a lens: it carries witnesses forward and challenges back. Its
 // promise is that a witness passing the pulled-back challenge passes the original.
 // That promise is itself a claim, so search can catch a bad shortcut. This one
 // sends every tree to `true`, and misses a program that fails only on `false`:
 
-half_bad := {x} => if (x) { true } else { pair x x }
-bool_cover := lens ({w} => w) ({_w, x} => if (Bool x) { x } else { true })
-bad_cover := lens ({w} => w) ({_w, _x} => true)
-test by_search (lens_holds bool_fn bool_fn bool_cover) half_bad 60 = "Open"
-test by_search (lens_holds bool_fn bool_fn bad_cover) half_bad 60 = refuted false
+half_bad := {x} => if (x) { true } else { pair(x, x) }
+bool_cover := lens({w} => w, {_w, x} => if (Bool(x)) { x } else { true })
+bad_cover := lens({w} => w, {_w, _x} => true)
+test by_search(lens_holds(bool_fn, bool_fn, bool_cover), half_bad, 60) = "Open"
+test by_search(lens_holds(bool_fn, bool_fn, bad_cover), half_bad, 60) = refuted(false)
 ```
 
 ### Different programs, proved the same
 
+<!-- example: same -->
 ```rust
 // This is what an optimizer needs: two different programs, known to do the same
 // thing. Comparing trees is instant, and too strict. These are different programs:
 
-dbl_add := {d2, n} => if (is_zero n) { zero } else { add 2 (d2 (nat_pred n)) }
-test tree_eq dbl_step dbl_add = false
+dbl_add := {d2, n} => if (is_zero(n)) { zero } else { add(2, d2(nat_pred(n))) }
+test tree_eq(dbl_step, dbl_add) = false
 
 // Two cases cover every number, zero and one more than some number, and each
 // program's recursive call on the smaller number is named by one token. Both cases
 // match, so the programs agree on every number:
 
-test eq_by_induction dbl_step dbl_add = "Proved"
+test eq_by_induction(dbl_step, dbl_add) = "Proved"
 
 // A wrong step disagrees on a case, and the checker returns a number to run:
 
-wrong_step := {d2, n} => if (is_zero n) { zero } else { succ (d2 (nat_pred n)) }
-test eq_by_induction dbl_step wrong_step = refuted 1
+wrong_step := {d2, n} => if (is_zero(n)) { zero } else { succ(d2(nat_pred(n))) }
+test eq_by_induction(dbl_step, wrong_step) = refuted(1)
 
 // Whether this reaches the rewrites that matter is the project's biggest open
 // question (FOUNDATIONS.md, Q1). Map fusion and strength reduction are not yet
@@ -209,7 +213,9 @@ lib/                        -- the language, written in itself
   prelude.disp              --   the raw substrate: booleans, pairs, wait/fix, triage, tree_eq
   list.disp, machine.disp   --   lists; the evaluator's loop as a resumable value
   stream.disp, verdict.disp --   coalgebra streams, budgets and endings; Proved / Refuted / Open
+  growth.disp               --   step counts on the machine, fitted exactly to polynomials, as checkable step bounds
   claim.disp                --   claims (witness vs. challenge), the honest search, lenses between claims
+  theories/                 --   a ladder of type theories as terminating checkers, each a lens into a claim
   kernel/                   --   the type system: checker + library types + barrel, and its test pins
   tests/                    --   substrate-level tests, the refuter and confirmer, the certified rewrites (claim.test.disp)
 

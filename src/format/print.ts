@@ -2,7 +2,7 @@
 // JS trees and native handles alike). Display priority per node: leaf → `t`,
 // nat chain → the number, codepoint cons-chain → "string", whole-subtree name
 // match → the bound name, record shape → { f := v, … }, else structural
-// t(…)(…) under a printed-node budget (elided as …). Mirrors the playground
+// t(…, …) under a printed-node budget (elided as …). Mirrors the playground
 // worker's decoding (website/src/lib/disp/runner.ts) for the CLI.
 
 import type { Session } from "../eval/types.js"
@@ -113,7 +113,7 @@ export function printValue<H>(session: Session<H>, root: H, opts: PrintValueOpti
     if (rec !== null)
       return `{ ${rec.names.map((f, i) => `${f} := ${go(rec.vals[i], true)}`).join(", ")} }`
     if (c.tag === "stem") return `t(${go(c.child, false)})`
-    return `t(${go(c.left, false)})(${go(c.right, false)})`
+    return `t(${go(c.left, false)}, ${go(c.right, false)})`
   }
   return go(root, true)
 }

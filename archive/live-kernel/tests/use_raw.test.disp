@@ -19,8 +19,8 @@ open use "../kernel/generic.disp" { Type := Type }
 open use "../kernel/universe.disp" { Type := Type, RespondShape }
 
 // kernel names are in scope and usable
-test param_apply Type Nat = Ok true
-test typecheck Type (Pi Nat ({_} => Bool)) = Ok true
+test param_apply(Type, Nat) = Ok(true)
+test typecheck(Type, Pi(Nat, {_} => Bool)) = Ok(true)
 
 // Deferred self-check: with the raw layer in scope, a fragment's CHECKED module tuple
 // { record, typ } carries its annotated exports, resolved against the raw snapshot.
@@ -34,5 +34,5 @@ test typecheck Type (Pi Nat ({_} => Bool)) = Ok true
 // discrimination — the 2026-07-08 audit trimmed them).
 let cut_mod := use "../kernel/cut.disp" { Type := Type, Tree, Pi, Action, MetaShape, GuardAction, Request }
 let universe_mod := use "../kernel/universe.disp" { Type := Type, RespondShape }
-test verify cut_mod = Ok true
-test verify universe_mod = Ok true
+test verify(cut_mod) = Ok(true)
+test verify(universe_mod) = Ok(true)

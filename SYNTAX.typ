@@ -119,7 +119,7 @@ dependency header).
   "program  ::= recBody",
   "open use \"lib/prelude.disp\"
 id := {A} => {x} => x
-test id t = t",
+test id(t) = t",
   note: [A file body is a `recBody`. When loaded via `use`, the file's exported fields become the record's fields. `let`-headed declarations are private; equations and `open` are side-effects.],
 )
 
@@ -127,9 +127,9 @@ test id t = t",
   "recBody",
   "recBody  ::= (recMember SEMI)* recMember? SEMI?
 recMember ::= field | let | equation | \"open\" expr | givenBlock   // givenBlock: file level only",
-  "let helper := {x} => x x    // private (a `let`-decorated declaration)
+  "let helper := {x} => x(x)    // private (a `let`-decorated declaration)
 add := fix ({self, n, m} => ...) // exported
-test add 2 3 = 5              // equation (the `test` marker is the prelude identity)
+test add(2, 3) = 5              // equation (the `test` marker is the prelude identity)
 open use \"prelude.disp\"     // import",
   note: [Shared by file bodies and inline `{ ... }` record values. Members are processed in order; later members can reference earlier ones.],
 )
@@ -141,13 +141,13 @@ head     ::= expr        // top-level only; one decorator expression",
   "true := t
 id : {A : Type} -> A -> A
    := {A} => {x} => x
-guard (license_guard SortRelation.rel) sort : T := impl // explicit relation contract
-guard (license_guard FastRelation.rel) fast : T := impl // another owned name
-guard g iface : T                                // interface entry (no value)
-reduce :: (A -> C -> C) -> C -> List A -> C := impl // doc annotation (unchecked)
-member :: {x : A} -> List A -> Bool :=> any (eq x)  // ':=>' binds x from the annotation
+guard(license_guard(SortRelation.rel)) sort : T := impl // explicit relation contract
+guard(license_guard(FastRelation.rel)) fast : T := impl // another owned name
+guard(g) iface : T                                // interface entry (no value)
+reduce :: (A -> C -> C) -> C -> List(A) -> C := impl // doc annotation (unchecked)
+member :: {x : A} -> List(A) -> Bool :=> any(eq(x))  // ':=>' binds x from the annotation
 rec zip :: {xs : List A, ys : List B} -> List (Pair A B) :=> … (zip (tail xs) (tail ys)) … // self-reference via fix",
-  note: [Exported record member — a *declaration request* (this note is normative; the protocol vocabulary --- `base`, `let`, `sig`, `guard`, `given`, `default_guard` --- lives in `lib/kernel/kernel.disp`, and `MODULES.md` describes the idioms). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. A `::` annotation is a *doc annotation*: parsed as an expression (structure only), stored on the item as `docType`, and never resolved, compiled, or verified — a comprehension-grade signature, so raw modules may use type vocabulary that is not in scope (`lib/list.disp`, `lib/stream.disp`). A declaration carries `:` or `::`, not both. `:=>` assigns THROUGH the annotation: the leading run of *named* thin-binder parameters (stopping at the first unnamed arrow) is bound around the body as fat lambdas at parse time, so the value tree is identical to the hand-written `{x, …} => body` and an unnamed-arrow remainder stays point-free; works with either annotation flavor (doc-annotation params need no types), and only the `:` flavor is then checker-verified. `:=>` without an annotation, or without leading named binders, is a parse error. A `rec` head atom immediately before the declared name is RECURSION sugar consumed by the parser (never a request decorator): the value becomes `fix ({NAME} => body)`, so the body refers to the definition by its own name; right-associative binder desugaring makes the tree identical to a hand-written `fix ({self, args…} => …)`. With `:=>`, the annotation's binder GROUPING carries the fixpoint boundary: the LAST named group loops inside the fix and earlier groups become plain outer lambdas (`rec reduce :: {step : …, base : C} -> {xs : List A} -> C :=>` gives `{step, base} => fix ({reduce, xs} => …)` — the partial fixpoint whose recursive calls do not re-pass the invariant params; recursion in the body is then partial application, `reduce (tail xs)`). Group spelling is meaning-free for the checked type (groups desugar to the same nested Pis), so grouping has semantic weight only under `rec`. One group = the full-arity fixpoint. Composes with decorator heads (`let rec …`). Without `rec`, the defined name inside a body keeps its usual meaning (the previous binding, per the rebind protocol) — recursion is declared, never inferred. `rec` requires a value. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:`, `::`, or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
+  note: [Exported record member — a *declaration request* (this note is normative; the protocol vocabulary --- `base`, `let`, `sig`, `guard`, `given`, `default_guard` --- lives in `lib/kernel/kernel.disp`, and `MODULES.md` describes the idioms). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. A `::` annotation is a *doc annotation*: parsed as an expression (structure only), stored on the item as `docType`, and never resolved, compiled, or verified — a comprehension-grade signature, so raw modules may use type vocabulary that is not in scope (`lib/list.disp`, `lib/stream.disp`). A declaration carries `:` or `::`, not both. `:=>` assigns THROUGH the annotation: the leading run of *named* thin-binder parameters (stopping at the first unnamed arrow) is bound around the body as fat lambdas at parse time, so the value tree is identical to the hand-written `{x, …} => body` and an unnamed-arrow remainder stays point-free; works with either annotation flavor (doc-annotation params need no types), and only the `:` flavor is then checker-verified. `:=>` without an annotation, or without leading named binders, is a parse error. A `rec` head atom immediately before the declared name is RECURSION sugar consumed by the parser (never a request decorator): the value becomes `fix ({NAME} => body)`, so the body refers to the definition by its own name; right-associative binder desugaring makes the tree identical to a hand-written `fix ({self, args…} => …)`. With `:=>`, the annotation's binder GROUPING carries the fixpoint boundary: the LAST named group loops inside the fix and earlier groups become plain outer lambdas (`rec reduce :: {step : …, base : C} -> {xs : List A} -> C :=>` gives `{step, base} => fix ({reduce, xs} => …)` — the partial fixpoint whose recursive calls do not re-pass the invariant params; recursion in the body is then partial application, `reduce (tail xs)`). Group spelling is meaning-free for the checked type (groups desugar to the same nested Pis), so grouping has semantic weight only under `rec`. One group = the full-arity fixpoint. Composes with decorator heads (`let rec …`). A `record` head atom is parser sugar too: `record NAME :: {f1 : T1, …, fn : Tn} -> R` (no value) declares the constructor `NAME := {f1, …, fn} => pair(f1, pair(…, fn))` and one accessor per field (`fk := {r} => r.snd….fst`, the last field without the `.fst`; one field is the value itself), read as `r.fk` through the method-call fallback. The field names live only in scope, never in the tree, so the trees are exactly the hand-written ones (`lib/tests/record.test.disp`). Accessors are module-scope names, so a field may not share a name with another binding in scope. Without `rec`, the defined name inside a body keeps its usual meaning (the previous binding, per the rebind protocol) — recursion is declared, never inferred. `rec` requires a value. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:`, `::`, or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
 )
 
 #rule(
@@ -162,8 +162,8 @@ let id : {A : Type} -> A -> A
 #rule(
   "equation (tests)",
   "equation ::= expr \"=\" expr",
-  "test ({x} => x) t = t
-test pred two = one",
+  "test ({x} => x)(t) = t
+test pred(two) = one",
   note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees. There is no `test` keyword — the conventional `test` prefix is the *prelude identity* (`test : Tree -> Tree := {x} => x`), so `test lhs` ≡ `lhs` and the marker is style, not syntax. While `test` is unbound or pristine the elaborator peels the marker before compiling (identical semantics, and it restores the true application head so named-argument calls in the lhs resolve); a scope that shadows `test` has its marker-written equations preprocessed by the shadowing value. The lhs must be a *compound* expression (application, projection, …): a bare-name lhs like `x = 5` is rejected as an almost-certain `:=` typo, which in practice keeps every equation marker-led. The `=` must be reachable on the lhs's opening line for the next-item lookahead (`isEquationStart`) — bracketed sub-expressions may span lines freely; keyword-led lhs (`if`/`match` at depth 0) must be parenthesized.],
 )
 
@@ -185,7 +185,7 @@ givenEntry ::= IDENT \":\" lineExpr (\":=\" lineExpr)?",
   "expr     ::= binder | app (ARROW expr)?",
   "{x : A} -> B
 A -> B
-f x",
+f(x)",
   note: [An `app` followed by `ARROW` is sugar for a single-param `binder` with an anonymous param: `A -> B` parses to `Binder([{name: null, type: A}], B)`.],
 )
 
@@ -196,21 +196,21 @@ binderParam ::= (IDENT | \"_\") (\":\" expr)? (\":=\" expr)?",
   "{x} => x                       // value lambda
 {A : Type, x : A} => x         // multi-param sugar (right-assoc)
 {x : Nat, t : Nat := 30} => x  // named-arg default on `t`
-{x : Nat} -> Vec x             // Pi type: thin arrow, annotated params
+{x : Nat} -> Vec(x)             // Pi type: thin arrow, annotated params
 {_ : Nat} -> B                 // anonymous domain (same as Nat -> B)",
   note: [The arrow decides the reading. A fat `=>` binder is a *value lambda*. A thin `->` binder is a *Pi type* wherever it appears: it desugars to an application of the library `Pi` former (`{x : A} -> B` compiles to the same tree as `Pi A ({x} => B)`), so every parameter needs its `: T` — a missing annotation is an elaboration error pointing at `=>`. Scopes where no `Pi` former is bound (bootstrap files before the kernel) keep the legacy lambda reading of thin binders. A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn}` desugars right-associatively to `{p1} => ... => {pn} => body` (same for `->`). Example: `{A : Type, x : A} => x` means `{A : Type} => ({x : A} => x)`, not `({A : Type, x : A}) => x` — each additional param wraps the remainder on the right. A param's optional `:= expr` is a *named-argument default* (see § Calling convention): pure caller-side metadata, dropped from the binder itself (`{y := d} => b` compiles as `{y} => b`). Because `:=` otherwise classifies a brace as a recValue, a brace whose params carry defaults is recognised as a binder by its trailing arrow (`{ y : B := d } => body`).],
 )
 
 #rule(
   "app",
-  "app      ::= atom atom*",
-  "f x y                          // ((f x) y) -- left-associative
-F A B
-f { x := a, y := b }           // named call (any order; == f a b)
+  "app      ::= atom bracedCall?\nbracedCall ::= recValue          // on the same line as the atom",
+  "f(x, y)                          // f(x)(y): the same tree
+F(A, B)
+f { x := a, y := b }           // named call (any order; == f(a, b))
 f { x := a }                   // omitted args default / partial-apply",
-  note: [Left-associative juxtaposition; no separator between function and argument. After crossing a newline, `IDENT \":=\"` is _not_ consumed as an atom (it starts a field definition).
+  note: [Application is written with a call, `f(a, b)`, a postfix on the atom (see `atom`). `f(a, b)` and `f(a)(b)` are the same tree, and a function given too few arguments is a partial application. A space between a function and its argument is a parse error, so `f x`, `f (x)` and `f [x]` are all rejected. The only spaced forms left are not application: a declaration's decorator (`guard(g) NAME := v`), the test marker (`test f(x) = y`), and the fixed keywords.
 
-  *Calling convention (named / default / reorderable arguments).* A juxtaposition `f r` where `r` is a `recValue` is a *named call* when `f` has a tracked parameter signature (it is bound to a leading lambda — the rewrite lives in `src/elab/sugar.ts`) AND every field of `r` names one of `f`'s parameters. Then `r`'s fields are matched to parameters *by name* (any order), omitted parameters fall back to their `:= default`, and a missing-without-default parameter makes the call a *partial application* (the result is a function awaiting it). The whole thing rewrites at elaboration time to the canonical positional call, so `f { x := a, y := b }`, `f { y := b, x := a }` and `f a b` are the *same tree* (conversion is O(1) hash-cons identity). Otherwise — `f`'s untracked, or `r`'s field names are not all parameters (e.g. a record-domain function `{r} => r.x` applied to `{ x := … }`) — `f r` is *ordinary* application with `r` passed as a record value.],
+  *Calling convention (named / default / reorderable arguments).* A brace call `f r`, where `r` is a `recValue`, is a *named call* when `f` has a tracked parameter signature (it is bound to a leading lambda — the rewrite lives in `src/elab/sugar.ts`) AND every field of `r` names one of `f`'s parameters. Then `r`'s fields are matched to parameters *by name* (any order), omitted parameters fall back to their `:= default`, and a missing-without-default parameter makes the call a *partial application* (the result is a function awaiting it). The whole thing rewrites at elaboration time to the canonical positional call, so `f { x := a, y := b }`, `f { y := b, x := a }` and `f(a, b)` are the *same tree* (conversion is O(1) hash-cons identity). Otherwise — `f`'s untracked, or `r`'s field names are not all parameters (e.g. a record-domain function `{r} => r.x` applied to `{ x := … }`) — `f r` is *ordinary* application with `r` passed as a record value.],
 )
 
 #rule(
@@ -254,17 +254,17 @@ slotList   ::= \"[\" (expr (COMMA expr)* COMMA?)? \"]\"
 typedField ::= IDENT (\":\" expr)? (\":=\" expr)?
 stmt       ::= let | bind | equation | \"open\" expr
 bind       ::= IDENT \"<-\" expr",
-  "(f x : Nat)                    // parenthesized ascription
-{ x := t; y := t t }           // recValue (2 exported fields)
+  "(f(x) : Nat)                    // parenthesized ascription
+{ x := t; y := t(t) }           // recValue (2 exported fields)
 { let h := t; x := h }         // recValue (1 exported field, 1 private let)
 { x : A, y : B }               // recType
-{ let a := t; f a }            // block (no fields, trailing expr)
+{ let a := t; f(a) }            // block (no fields, trailing expr)
 [1, 2, 3]                      // array: a list ending in the leaf
 xs[1]                          // index (glued bracket)
 < dot, line : Nat, box : [Nat, Nat] >   // coproductType: 0, 1 and 2 slots
 use \"../prelude.disp\"        // loads file, yields the module tuple { record, typ }
 point.x.fst                    // chained projection",
-  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. A `(` GLUED to the chain (no space, like `idx[`) is a CALL argument list: `x.f(a, b)` applies a then b to `x.f` and stays postfix-chainable (`Trees.as_items.bounded(50).s_filter(Bool).s_take(5).s_items`); `x.f()` adds no arguments; a spaced `f (a)` remains ordinary application of a parenthesized atom. Projection resolves in order (src/elab/expr.ts): `.fst`/`.snd` are pair projections (the `elab_settings` target, else the prelude's raw `pair_fst`/`pair_snd` — so they work in raw scopes); a statically-known record field collapses at compile time; a scope binding `dot` owns projection (`r.x` ⇒ `dot "x" r`, the kernel's field reader); otherwise a field naming a MODULE-SCOPE binding is a method call (UFCS) — `x.f args` ⇒ `f x args`, resolved through module scope only, never local binder params — and the final fallback is the §2.6 cut `x (acc f)`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` loads and elaborates the referenced file and yields a *module tuple* `{ record, typ }`: `record` is the §2.6 product of the file's exported values (keyed by name), and `typ` is `Record [(name, declaredType)…]` over the *annotated* exports — so a file is verified by ordinary application, `(use f).typ (use f).record = Ok true` (gradual: unannotated exports are absent from `typ`). `open use f` splices the *values* into scope (the export metadata), independent of this value. (When the cut/`Record` formers aren't in scope, `use` falls back to the bare value record.) `if c then a else b` is the boolean conditional: it desugars to the prelude `cond` (`cond c a b`, a triage-driven select-then-apply — the case table applied to the raw-shape bool, TYPE_THEORY §2.7), with each branch closed over the free vars the two share so only the taken branch is forced (and recursive bodies dodge the eager compile-time K-reduction). `then`/`else` (keywords) bound the first two parts; the else body's tail is mode-sensitive (multi-line `matchExpr` vs newline-terminated). `else if …` chains right-associatively. `match` is now exclusively the *coproduct* cut: arms `Ctor binder* => body` where the constructor name is the tag *by spelling* (a string), desugaring to the §2.6 cut `(prod (pair [\"Ctor\"…] [handlers…])) c` (needs `prod` in scope). (The old boolean `match { true/false }` surface was removed.) A `_` constructor is the wildcard/default arm (its handler is appended past the names, so an unmatched tag falls to it). Multiple binders destructure a right-nested-pair payload (`Ctor a b c` ⇔ `inj \"Ctor\" (pair a (pair b c))`). Each arm body is `matchExpr`, which can span multiple lines — it stops before the next arm pattern. The annotated form `match c : M { arms }` hands the arms to the matcher `M` as a named record, `(M arms) c`, in place of the `prod` cut; `case_of T B` is the kernel's typed matcher. Branches of an `if` may be braced, `if c { a } else { b }`, with `else if` chaining; a braced branch is a block. `if let Tag b1 … bn = e` tests a variant and binds its payload: it desugars to `if (tree_eq (pair_fst e) "Tag")`, with the binders destructuring `pair_snd e` exactly as a `match` arm does, and takes either branch form. A `[` glued to the chain is an *index*: with a literal index, `xs[2]` unrolls to the projection chain `pair_fst (pair_snd (pair_snd xs))`; a computed index `xs[k]` applies the scope's `idx`. `use raw STRING` loads a file's values only: its annotations and `given`s are neither compiled nor verified, which is how files are opened where the kernel is not in scope (the raw prelude, the stream layer).],
+  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a(b)` is `(f.a)(b)`. A `(` GLUED to the chain (no space, like `idx[`) is a CALL argument list: `x.f(a, b)` applies a then b to `x.f` and stays postfix-chainable (`Trees.as_items.bounded(50).s_filter(Bool).s_take(5).s_items`); `x.f()` adds no arguments; a spaced `f (a)` is a parse error. Projection resolves in order (src/elab/expr.ts): `.fst`/`.snd` are pair projections (the `elab_settings` target, else the prelude's raw `pair_fst`/`pair_snd` — so they work in raw scopes); a statically-known record field collapses at compile time; a scope binding `dot` owns projection (`r.x` ⇒ `dot "x" r`, the kernel's field reader); otherwise a field naming a MODULE-SCOPE binding is a method call (UFCS) — `x.f args` ⇒ `f x args`, resolved through module scope only, never local binder params — and the final fallback is the §2.6 cut `x (acc f)`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` loads and elaborates the referenced file and yields a *module tuple* `{ record, typ }`: `record` is the §2.6 product of the file's exported values (keyed by name), and `typ` is `Record [(name, declaredType)…]` over the *annotated* exports — so a file is verified by ordinary application, `(use f).typ (use f).record = Ok true` (gradual: unannotated exports are absent from `typ`). `open use f` splices the *values* into scope (the export metadata), independent of this value. (When the cut/`Record` formers aren't in scope, `use` falls back to the bare value record.) `if c then a else b` is the boolean conditional: it desugars to the prelude `cond` (`cond c a b`, a triage-driven select-then-apply — the case table applied to the raw-shape bool, TYPE_THEORY §2.7), with each branch closed over the free vars the two share so only the taken branch is forced (and recursive bodies dodge the eager compile-time K-reduction). `then`/`else` (keywords) bound the first two parts; the else body's tail is mode-sensitive (multi-line `matchExpr` vs newline-terminated). `else if …` chains right-associatively. `match` is now exclusively the *coproduct* cut: arms `Ctor binder* => body` where the constructor name is the tag *by spelling* (a string), desugaring to the §2.6 cut `(prod (pair [\"Ctor\"…] [handlers…])) c` (needs `prod` in scope). (The old boolean `match { true/false }` surface was removed.) A `_` constructor is the wildcard/default arm (its handler is appended past the names, so an unmatched tag falls to it). Multiple binders destructure a right-nested-pair payload (`Ctor a b c` ⇔ `inj \"Ctor\" (pair a (pair b c))`). Each arm body is `matchExpr`, which can span multiple lines — it stops before the next arm pattern. The annotated form `match c : M { arms }` hands the arms to the matcher `M` as a named record, `(M arms) c`, in place of the `prod` cut; `case_of T B` is the kernel's typed matcher. Branches of an `if` may be braced, `if c { a } else { b }`, with `else if` chaining; a braced branch is a block. `if let Tag b1 … bn = e` tests a variant and binds its payload: it desugars to `if (tree_eq (pair_fst e) "Tag")`, with the binders destructuring `pair_snd e` exactly as a `match` arm does, and takes either branch form. A `[` glued to the chain is an *index*: with a literal index, `xs[2]` unrolls to the projection chain `pair_fst (pair_snd (pair_snd xs))`; a computed index `xs[k]` applies the scope's `idx`. `use raw STRING` loads a file's values only: its annotations and `given`s are neither compiled nor verified, which is how files are opened where the kernel is not in scope (the raw prelude, the stream layer).],
 )
 
 The `braced` alternatives are distinguished by member shape. A braced
@@ -351,7 +351,7 @@ in the *outer* scope (a field's value always compiles before its own
 name binds). A pun needs at least one sibling `:=` field — a field-less
 `{ x }` stays a bare recType / block trailing expression. (2) *Sequential
 field scope*: later recValue fields see earlier ones by name
-(`{ a := 2; b := double a }`), with the telescope discipline — a field's
+(`{ a := 2; b := double(a) }`), with the telescope discipline — a field's
 own RHS resolves outward, so `respond := respond` refers to the enclosing
 binding. (3) *recType = telescope type*: a recType in expression position
 compiles to `Telescope ⟦entries⟧` (the dependent n-ary record former);
@@ -418,7 +418,7 @@ parser accepts today.
 == Associativity and precedence
 
 - `atom` projection `.`: highest, left-associative.
-- `app`: left-associative juxtaposition, looser than `.`.
+- `app`: an atom with an optional brace call; calls `f(a)` are postfix, tight as `.`.
 - Infix tier (`==`, `&&`, `||`): looser than `app`, tighter than the `->`
   suffix, NON-associative — chaining is a parse error, parenthesize. A fixed,
   closed set of pure sugar: `a == b` desugars to the application `tree_eq a b`

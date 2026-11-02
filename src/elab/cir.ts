@@ -61,7 +61,10 @@ export function collectFreeVars(e: Cir, bound: Set<string>, out: string[], seen:
 //   S (K p) I              → p          (η, after recursing)
 //   S (K p) (K q)          → K (p q)    (K-composition — evaluates at compile time)
 // The lam case is nested abstraction, innermost binder first.
-function abstractName(name: string, body: Cir): Cir {
+export type Abstract = (name: string, body: Cir) => Cir
+
+/// `rec` is the recursive call, so a viewer can watch the recursion; the rewrites stay here.
+export function abstractName(name: string, body: Cir, rec: Abstract = abstractName): Cir {
   if (!containsFree(body, name)) return cap(K, body)
   switch (body.tag) {
     case "var": return I_CIR
@@ -70,8 +73,8 @@ function abstractName(name: string, body: Cir): Cir {
       if (body.x.tag === "var" && body.x.name === name && !containsFree(body.f, name))
         return body.f
 
-      const af = abstractName(name, body.f)
-      const ax = abstractName(name, body.x)
+      const af = rec(name, body.f)
+      const ax = rec(name, body.x)
 
       // S (K p) I → p  (η-reduction)
       if (af.tag === "app" && af.f.tag === "K" && ax.tag === "I") return af.x
@@ -82,7 +85,7 @@ function abstractName(name: string, body: Cir): Cir {
 
       return cap(cap(S, af), ax)
     }
-    case "lam": return abstractName(name, abstractName(body.x, body.body))
+    case "lam": return rec(name, rec(body.x, body.body))
     case "lit": case "S": case "K": case "I":
       throw new Error("abstract: unreachable (containsFree returned false)")
   }

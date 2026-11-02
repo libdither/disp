@@ -24,16 +24,16 @@ open use "relation.disp"
 // new the SAME public argument at each binder; the result relation may depend on
 // that argument. NatRecRelation therefore ends in Eq (P n), without inspecting
 // the recursor type's metadata or needing a special rule for the neutral type P n.
-NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
+NatRecT : Type := {P : Nat -> Type} -> P(zero) -> ({n : Nat} -> P(n) -> P(succ(n))) -> {n : Nat} -> P(n)
 NatRecRelation :=
-  pointwise (Pi Nat ({_} => Type)) ({P} =>
-    pointwise (P zero) ({_z} =>
-      pointwise (Pi Nat ({n} => Pi (P n) ({_} => P (succ n)))) ({_step} =>
-        pointwise Nat ({n} => eq_relation (P n)))))
+  pointwise(Pi(Nat, {_} => Type), {P} =>
+    pointwise(P(zero), {_z} =>
+      pointwise(Pi(Nat, {n} => Pi(P(n), {_} => P(succ(n)))), {_step} =>
+        pointwise(Nat, {n} => eq_relation(P(n))))))
 
 // Own the kernel recursor at its honest dependent type. The overlay's rebind
 // inherits this Def type, while the guard checks NatRecRelation.rel old new.
-guard (license_guard NatRecRelation.rel) nat_rec : NatRecT := nat_rec
+guard(license_guard(NatRecRelation.rel)) nat_rec : NatRecT := nat_rec
 
 // add: Nat addition via nat_rec (kernel-routed eliminator) — the SPEC body.
 //   zero + m = m
@@ -42,11 +42,11 @@ guard (license_guard NatRecRelation.rel) nat_rec : NatRecT := nat_rec
 // `succ ih` is `succ (add pred m)`. The explicit contract says that old and new
 // return Eq Nat results at the same n and m.
 AddRelation :=
-  pointwise Nat ({_n} =>
-    pointwise Nat ({_m} => eq_relation Nat))
+  pointwise(Nat, {_n} =>
+    pointwise(Nat, {_m} => eq_relation(Nat)))
 
-guard (license_guard AddRelation.rel) add : Nat -> Nat -> Nat :=
-  {n, m} => nat_rec ({_} => Nat) m ({pred, ih} => succ ih) n
+guard(license_guard(AddRelation.rel)) add : Nat -> Nat -> Nat :=
+  {n, m} => nat_rec({_} => Nat, m, {pred, ih} => succ(ih), n)
 
 // ── derived ops ──
 // pred is a ONE-LEVEL branch, so it rides case_value, not nat_rec: same
@@ -55,30 +55,30 @@ guard (license_guard AddRelation.rel) add : Nat -> Nat -> Nat :=
 // recursor's O(n). Arms are CASE-shaped: raw args only, no phantom-IH binder.
 // (is_zero is the raw prelude's: the shape test is_leaf, the same function.)
 pred : Nat -> Nat :=
-  {n} => case_value Nat ({_} => Nat) { zero := 0; succ := {k} => k } n
+  {n} => case_value(Nat, {_} => Nat, { zero := 0; succ := {k} => k }, n)
 
 double : Nat -> Nat :=
-  {n} => add n n
+  {n} => add(n, n)
 
 // ── proof terms ──
-add_zero_l : {n : Nat} -> Eq Nat (add 0 n) n :=
+add_zero_l : {n : Nat} -> Eq(Nat, add(0, n), n) :=
   {n} => refl
 
-add_zero_r : {n : Nat} -> Eq Nat (add n 0) n :=
+add_zero_r : {n : Nat} -> Eq(Nat, add(n, 0), n) :=
   {n} =>
-    nat_rec
-      ({k} => Eq Nat (add k 0) k)
-      refl
-      ({k, ih} => eq_cong Nat Nat succ (add k 0) k ih)
-      n
+    nat_rec(
+      {k} => Eq(Nat, add(k, 0), k),
+      refl,
+      {k, ih} => eq_cong(Nat, Nat, succ, add(k, 0), k, ih),
+      n)
 
-add_succ_r : {n : Nat} -> Eq Nat (add n 1) (succ n) :=
+add_succ_r : {n : Nat} -> Eq(Nat, add(n, 1), succ(n)) :=
   {n} =>
-    nat_rec
-      ({k} => Eq Nat (add k 1) (succ k))
-      refl
-      ({k, ih} => eq_cong Nat Nat succ (add k 1) (succ k) ih) // succ both sides of ih
-      n
+    nat_rec(
+      {k} => Eq(Nat, add(k, 1), succ(k)),
+      refl,
+      {k, ih} => eq_cong(Nat, Nat, succ, add(k, 1), succ(k), ih), // succ both sides of ih
+      n)
 
 // add_comm is intentionally omitted: a `{m} -> refl` base would claim
 // Eq Nat (add 0 m) (add m 0), but `add m 0` does not reduce to `m` for a
