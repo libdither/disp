@@ -1,0 +1,143 @@
+// The examples the README's "Disp by example" and the website's Learn page show,
+// in one file that must pass. A line `//@ name` starts the region called name;
+// scripts/sync-examples.py copies regions into the README, and the Learn page
+// runs a region with everything above it as hidden context.
+//@ imports
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../claim.disp" {}
+open use raw "fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "confirmer.test.disp" {}
+
+//@ trees
+// Disp compiles to the tree calculus: five rewrite rules over binary trees grown
+// from a single leaf `t`. Numbers, functions and tests are all such trees.
+
+test true = t                                     // the leaf itself
+test false = t(t)                                 // a stem: one branch up
+test tree_eq(3, succ(succ(succ(zero)))) = true    // 3 is sugar, and the trees are identical
+
+// Three of the five rules dispatch on the shape of a tree (leaf, stem or fork),
+// so any program can take any other apart, with no quoting and no reflection API:
+
+let shape_of := t(t("leaf", {u} => "stem"), {u, v} => "fork")
+test shape_of(t) = "leaf"
+test shape_of(t(t)) = "stem"
+test shape_of(t(t, t)) = "fork"
+test shape_of(not) = "fork"
+
+//@ declarations
+// a definition names a tree; a test reduces both sides and demands the
+// identical tree, or the file fails to load
+i := {x} => x
+k := {x, y} => x
+test i(t) = t
+test k(t, t(t)) = t
+
+// `::` is a signature for the reader, never checked; `:=>` binds the named
+// parameters, and `rec` lets the body call itself
+rec count_down :: {n : Nat} -> List(Nat) :=> if (is_zero(n)) { [] } else { cons(n, count_down(nat_pred(n))) }
+test count_down(3) = [3, 2, 1]
+
+// a glued `.name(...)` calls a function with the value in front as its first argument
+test [1, 2, 3].map(succ) = [2, 3, 4]
+
+//@ bool-shapes
+// the two booleans are the two smallest distinguishable trees
+test tree_eq(true, t) = true
+test tree_eq(false, t(t)) = true
+
+// elimination is a triage: the F rule reads the shape
+shape_not := t(t(false, t(t, true)), t(t, t(t, true)))
+test shape_not(true) = false
+test shape_not(false) = true
+
+//@ claim
+// A claim is a program from a witness and a challenge to a Bool. This one says a
+// function takes numbers to numbers. It says nothing about trees that are not numbers.
+
+nat_fn := {g, x} => if (NatR(x)) { NatR(g(x)) } else { true }
+
+// `Trees` is every tree there is, smallest first. The honest check searches it for
+// a challenge the witness fails, up to a budget.
+
+by_search := honest(Trees.as_items)
+test by_search(nat_fn, {n} => pair(n, n), 60) = refuted(1)
+
+// A failure is final, but running out of budget proves nothing. Open only means
+// "no failure so far". This program is wrong on 3, the 65th tree:
+
+sneaky := {n} => if (n == 3) { t(t) } else { n }
+test by_search(nat_fn, sneaky, 64) = "Open"
+test by_search(nat_fn, sneaky, 65) = refuted(3)
+test by_search(nat_fn, succ, 150) = "Open"
+
+//@ proved
+// The stream of trees never ends, so search can never say Proved. A finite list
+// of challenges can, when every tree is covered by something on the list:
+
+bool_fn := {v, x} => if (Bool(x)) { Bool(v(x)) } else { true }
+test over(bool_fn, not, [true, false]) = "Proved"
+
+// The cover is a lens: it carries witnesses forward and challenges back. Its
+// promise is that a witness passing the pulled-back challenge passes the original.
+// That promise is itself a claim, so search can catch a bad shortcut. This one
+// sends every tree to `true`, and misses a program that fails only on `false`:
+
+half_bad := {x} => if (x) { true } else { pair(x, x) }
+bool_cover := lens({w} => w, {_w, x} => if (Bool(x)) { x } else { true })
+bad_cover := lens({w} => w, {_w, _x} => true)
+test by_search(lens_holds(bool_fn, bool_fn, bool_cover), half_bad, 60) = "Open"
+test by_search(lens_holds(bool_fn, bool_fn, bad_cover), half_bad, 60) = refuted(false)
+
+//@ function-type
+// A member of a function type is a lens too: the program, and a back map naming
+// the point of its argument it relied on. `implies(A, B)` challenges it with an
+// argument and a challenge for the result, so a claim about functions of
+// functions is tested at one point and search can refute it.
+
+is_nat := {w, _c} => NatR(w)
+offered := Trees.as_items.s_map({g} => pair(g, t))
+
+// "apply the argument to 3" is a fine Nat-valued function of a Nat function,
+// as long as it admits it looked at 3:
+test honest(offered, implies(nat_fn, is_nat), lens({g} => g(3), {_g, _y} => 3), 40) = "Open"
+
+// returning the function itself is not a Nat; the counterexample is the
+// function `t(t)` together with the challenge it was called with
+test honest(offered, implies(nat_fn, is_nat), lens({g} => g, {_g, _y} => 3), 40) = refuted(pair(t(t), t))
+
+//@ same
+// This is what an optimizer needs: two different programs, known to do the same
+// thing. Comparing trees is instant, and too strict. These are different programs:
+
+dbl_add := {d2, n} => if (is_zero(n)) { zero } else { add(2, d2(nat_pred(n))) }
+test tree_eq(dbl_step, dbl_add) = false
+
+// Two cases cover every number, zero and one more than some number, and each
+// program's recursive call on the smaller number is named by one token. Both cases
+// match, so the programs agree on every number:
+
+test eq_by_induction(dbl_step, dbl_add) = "Proved"
+
+// A wrong step disagrees on a case, and the checker returns a number to run:
+
+wrong_step := {d2, n} => if (is_zero(n)) { zero } else { succ(d2(nat_pred(n))) }
+test eq_by_induction(dbl_step, wrong_step) = refuted(1)
+
+// Whether this reaches the rewrites that matter is the project's biggest open
+// question (FOUNDATIONS.md, Q1). Map fusion and strength reduction are not yet
+// attempted here. The rules for building shortcuts are the trusted part, and they
+// have not themselves been proved sound.
+
+//@ search
+// Search for a program: `cegis` tries candidates in order, and keeps every
+// challenge that refuted one to try first on the next. Here the claim is "acts
+// as the identity on booleans", the candidates are the first 40 trees, and the
+// answer comes back with the two booleans it learned to test.
+
+bool_id := {v, x} => if (Bool(x)) { v(x) == x } else { true }
+test cegis(Trees.as_items, bool_id, candidates, [], 30) = pair(idfns.head, [false, true])

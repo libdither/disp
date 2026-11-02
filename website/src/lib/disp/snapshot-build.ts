@@ -32,13 +32,14 @@ import {
 // accumulates). The two kernel barrels are the self-verification cost; the
 // rest cache-hit their way through in seconds. The main kernel is
 // lib/kernel/ (warm so playground users get it instantly); the archived live
-// kernel plus its std/nat stay warm because the site's examples and learn
-// snippets still teach that surface.
+// kernel plus its std/nat stay warm because the playground's examples still
+// teach that surface; the claim layer the Learn page runs is warmed last.
 const WARMUP = [
   'open use "../kernel/prelude.disp"\n',
   'open use "../../archive/live-kernel/kernel/prelude.disp"\n',
   'open use "../../archive/live-kernel/std/nat.disp"\n',
-  'open use raw "../prelude.disp" {}\n'
+  'open use raw "../prelude.disp" {}\n',
+  'open use raw "../claim.disp" {}\nopen use raw "fixtures.disp" {}\nopen use raw "../../IDEAS.disp" {}\nopen use raw "confirmer.test.disp" {}\n'
 ]
 
 const asTree = (s: RustEagerBrowserSession): Session<Tree> => s as unknown as Session<Tree>
@@ -52,7 +53,7 @@ export async function buildSnapshot(
   vfs: Map<string, string>
 ): Promise<Uint8Array> {
   const rootPath = `${repoRoot}/lib/tests/playground.disp`
-  const virtualRoots = ['/lib/', '/archive/live-kernel/']
+  const virtualRoots = ['/lib/', '/archive/live-kernel/', '/IDEAS.disp']
   const toVirtual = (key: string): string => {
     const [abs, ...rest] = key.split('\0')
     if (!abs.startsWith(repoRoot + '/')) throw new Error(`snapshot: cache key outside the repo: ${abs}`)

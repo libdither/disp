@@ -1,6 +1,6 @@
 <script lang="ts">
   // Progressive-disclosure trace: reveal one frame at a time (the original
-  // walkthrough's widget 2, re-derived for the two-op kernel by the caller).
+  // walkthrough's widget 2; the caller supplies the frames).
   export interface Frame {
     title: string
     html: string

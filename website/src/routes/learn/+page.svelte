@@ -5,9 +5,9 @@
   import Ch1Motivation from '$lib/learn/chapters/Ch1Motivation.svelte'
   import Ch2Trees from '$lib/learn/chapters/Ch2Trees.svelte'
   import Ch3Source from '$lib/learn/chapters/Ch3Source.svelte'
-  import Ch4Predicates from '$lib/learn/chapters/Ch4Predicates.svelte'
-  import Ch5Kernel from '$lib/learn/chapters/Ch5Kernel.svelte'
-  import Ch6Library from '$lib/learn/chapters/Ch6Library.svelte'
+  import Ch4Claims from '$lib/learn/chapters/Ch4Claims.svelte'
+  import Ch5Lenses from '$lib/learn/chapters/Ch5Lenses.svelte'
+  import Ch6Saying from '$lib/learn/chapters/Ch6Saying.svelte'
   import Ch7Future from '$lib/learn/chapters/Ch7Future.svelte'
   import Ch8References from '$lib/learn/chapters/Ch8References.svelte'
   import Ch9Glossary from '$lib/learn/chapters/Ch9Glossary.svelte'
@@ -40,7 +40,7 @@
   <title>Learn · disp</title>
   <meta
     name="description"
-    content="A first-principles walkthrough of disp: from five rewrite rules over binary trees to a dependently-typed language whose universe passes its own checker."
+    content="A first-principles walkthrough of disp: from five rewrite rules over binary trees to claims, checkers as lenses, and programs proved equal."
   />
 </svelte:head>
 
@@ -98,24 +98,22 @@
     <header class="art-head">
       <h1>disp, <span class="grad-text">from first principles</span></h1>
       <p class="subtitle">
-        From five rewrite rules over binary trees to a dependently-typed language whose universe
-        passes its own checker. Code blocks marked <span class="runmark">▶</span> run against the
+        From five rewrite rules over binary trees to claims, checkers that are lenses, and
+        programs proved equal. Code blocks marked <span class="runmark">▶</span> run against the
         real compiler, in your tab.
       </p>
       <p class="provenance">
-        This walkthrough teaches the previous kernel, now retired to <code>archive/live-kernel/</code>. It still runs,
-        but the current work is the claim layer. For what is here,
-        <a href="https://github.com/libdither/disp/blob/main/archive/live-kernel/TYPE_THEORY.typ">TYPE_THEORY.typ</a>
-        and the <code>archive/live-kernel/kernel/*.disp</code> sources are the ground truth.
+        Every example is a region of <code>lib/tests/by_example.test.disp</code>, which the test
+        suite runs; the README shows the same file.
       </p>
     </header>
 
     <Ch1Motivation />
     <Ch2Trees />
     <Ch3Source />
-    <Ch4Predicates />
-    <Ch5Kernel />
-    <Ch6Library />
+    <Ch4Claims />
+    <Ch5Lenses />
+    <Ch6Saying />
     <Ch7Future />
     <Ch8References />
     <Ch9Glossary />

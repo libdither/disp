@@ -1,29 +1,18 @@
 <script lang="ts">
   const entries: [string, string][] = [
     ['Tree calculus', 'An abstract rewriting system on values built from one nullary constructor (the leaf t), with binary application. The K, S, and triage rules make it Turing complete and structurally complete: every program can decide the shape of every value by reduction alone.'],
-    ['Triage', 'The F rule: a function of shape t (t c d) b dispatches on the shape of its argument (leaf, stem, or fork). The primitive reflection mechanism.'],
-    ['Hash-consing', 'Storing each distinct tree exactly once and identifying trees by integer ID. Makes structural equality — and therefore conversion checking — an O(1) identity check.'],
+    ['Triage', 'The F rule: a function of shape t(t(c, d), b) dispatches on the shape of its argument (leaf, stem, or fork). The primitive reflection mechanism.'],
+    ['Hash-consing', 'Storing each distinct tree exactly once and identifying trees by integer ID. Makes structural equality an O(1) identity check.'],
     ['Bracket abstraction', 'The algorithm [x].M that removes a free variable, leaving a closed combinator expression in I, K, S. Bridges the surface λ-syntax to tree calculus.'],
-    ['Types-as-predicates', 'The design principle: a type is a tree program run on candidate values, and v : T iff T v = Ok true. In full, types are executable, reflective predicates. Executable: the predicate is applied, not handed to a solver (contrast refinement types). Reflective: it runs on trees whose shape it can read (contrast NuPRL, whose predicates observe only behavior).'],
-    ['CheckerResult', 'The verdict coproduct Ok | Err. Failure is a value, not an exception in a meta-language.'],
-    ['Hypothesis / neutral', 'A kernel-minted tree of shape wait (hyp_reduce) (meta), standing for "an unknown value of stored type T". How disp checks under binders. Unforgeable and uninspectable by construction.'],
-    ['Signature', 'The identity of the function at a tree’s head, read by the sanctioned pair_fst projection. The kernel’s routing key.'],
-    ['Σ (the routing table)', 'The fixed map from pinned signatures to registered handlers. param_apply routes a pinned signature to the REGISTERED handler, ignoring anything embedded in the value — so carrying a kernel signature grants no privilege.'],
-    ['param_apply / the walker', 'The dispatcher and its policed reduction mode: the five rules minus reflective moves on hypotheses (no triage on a neutral, no forging kernel-signed forks), with reader carve-outs pair_fst, neutral_type, I, tree_eq.'],
-    ['bind_hyp', 'Kernel operation #1: mint a fresh hypothesis, run the body under the walker, then escape-check that the hypothesis does not leak out of the result.'],
-    ['hyp_reduce', 'Kernel operation #2: the single gateway for observing a hypothesis — reads the stored type and forwards the observation to that type’s respond.'],
-    ['respond', 'The metadata field through which a type answers observations on its hypotheses. Constitutive: every type carries one, and the universe checks it behaviorally.'],
-    ['Action', 'The two-armed answer of a respond: Extend type (stuck, at that type) or Reduce value (computes through). The canonical normalization-by-evaluation dichotomy.'],
-    ['Spine', 'A neutral’s payload: Mint id, or Ext parent frame — the log of observations so far. Typed, so the kernel can reason about it; still unreadable by user code.'],
-    ['H-rule', 'If the candidate is a hypothesis, compare its stored type against the required type by hash-cons identity instead of running the recognizer.'],
-    ['Escape check', 'bind_hyp’s final gate: if the minted hypothesis is reachable in the result via an extractable path, the binder rejects. Prevents hypothetical values from leaking into closed proofs.'],
-    ['Telescope', 'The one negative former: a dependent chain of cells. Pi, Sigma, records, and the trivial type are instances differing only in cell kind.'],
-    ['Cell', 'One obligation in a telescope — itself a wait-form (inspectable AND runnable). Kinds include mint (bind a ∀-hypothesis), proj (a named field), apply (a codomain check), derive (a computed field), and Rec (a recursive position).'],
-    ['Coproduct', 'The positive former: a tagged sum of per-variant telescopes. Bool, Nat, and Ord are instances (over raw shape encodings, via a view isomorphism).'],
-    ['Coherence gate', 'The η-readback check (coh_check) every inductive respond runs on its case record before issuing a stuck elimination — the respond cannot wave junk through.'],
-    ['Neutral evaluation', 'Running a program on a promise: eliminators park as stuck eliminations typed by their motives, and checking proceeds on the types of stuck things.'],
-    ['Path (cubical, proposed)', 'A function from the interval into a type; equality with computational content. Univalence becomes a theorem via Glue.'],
-    ['Verdict / verify_good', 'The behavioral universe check: probe a type’s respond with minted hypotheses and compare answers against its constructors. Catches responds that lie in either direction.']
+    ['Claim', 'A program {witness, challenge} => Bool. It holds when some witness passes every challenge. Types, specifications, typing rules and equations between programs are all claims.'],
+    ['Witness / challenge', 'The two arguments of a claim: what is offered as evidence, and what it is tested on. A witness may be a function, which is how "for every x some y" becomes one witness.'],
+    ['Honest check', 'honest: search a stream of challenges for one the witness fails, up to a budget. It can refute, or report Open; it can never prove.'],
+    ['Refuted / Open / Proved', 'The three verdicts. Refuted carries the failing challenge and is final. Open means no failure was found, and proves nothing. Proved needs a finite cover or a certificate.'],
+    ['Lens', 'A map between claims: witnesses go forward, challenges come back. Checkers, typing rules and optimizations are lenses. Its law, lens_holds, is itself a claim the honest check can refute.'],
+    ['Rule lenses', 'The five lenses whose laws are argued by hand: finite cover, case split, generic run, induction and composition. They are the trusted base.'],
+    ['Certificate', 'A finite tree built from the rule lenses that certify checks by running it. A bad certificate fails to check; nothing that produces certificates has to be trusted.'],
+    ['cegis', 'Counterexample-guided synthesis: try candidates against a claim, keeping every refuting challenge to try first on the next candidate.'],
+    ['Löb ceiling', 'A checker cannot prove its own soundness, so the rule lenses are argued outside disp, and a successor checker is trusted one level less than the one that admitted it.']
   ]
 </script>
 
@@ -36,11 +25,12 @@
     {/each}
   </dl>
   <p class="foot">
-    This walkthrough is pedagogical commentary. The repository's
-    <a href="https://github.com/libdither/disp/blob/main/archive/live-kernel/TYPE_THEORY.typ">TYPE_THEORY.typ</a>,
-    <a href="https://github.com/libdither/disp/blob/main/SYNTAX.typ">SYNTAX.typ</a>, and the
-    <code>archive/live-kernel/kernel/*.disp</code> sources are the ground truth — and unlike most language
-    documentation, the kernel sources are the theory.
+    This walkthrough is commentary. The ground truth is the code it runs:
+    <code>lib/claim.disp</code>, <code>lib/tests/claim.test.disp</code> and
+    <code>lib/tests/by_example.test.disp</code>, with the reasoning in
+    <a href="https://github.com/libdither/disp/blob/main/research/CLAIMS_OVER_TREES.md">CLAIMS_OVER_TREES.md</a>
+    and the syntax in
+    <a href="https://github.com/libdither/disp/blob/main/SYNTAX.typ">SYNTAX.typ</a>.
   </p>
 </section>
 

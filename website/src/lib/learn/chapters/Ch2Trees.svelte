@@ -152,9 +152,8 @@
   <p>
     Why does this matter so much? Because <em>conversion checking</em> in a dependent type
     system is structural equality of normal forms — the hot loop of every proof assistant.
-    Making conversion O(1) keeps type-checking cheap. It also makes the kernel's H-rule (§5)
-    tractable: "the stored type of this hypothesis equals the required type" is decided by
-    hashed identity, because deterministic elaboration produces identical trees for identical
-    types.
+    Making conversion O(1) keeps checking cheap. It also makes every <code>test</code> and every
+    claim that compares two results (<code>fn(x) == gn(x)</code>) a single identity check,
+    because deterministic elaboration produces identical trees for identical programs.
   </p>
 </section>

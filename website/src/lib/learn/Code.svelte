@@ -46,7 +46,7 @@
     <div class="runbar">
       <button class="runbtn" onclick={run} disabled={running}>
         {#if running}
-          <span class="spin"></span> {kernelNote ? 'verifying the kernel first (≈1 min, once per session)…' : 'running…'}
+          <span class="spin"></span> {kernelNote ? 'loading the library first (once per session)…' : 'running…'}
         {:else}
           ▶ run this block
         {/if}

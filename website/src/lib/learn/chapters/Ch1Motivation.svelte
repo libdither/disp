@@ -9,31 +9,26 @@
   <h3 id="what-is-disp">1.1 · What is disp?</h3>
   <p>
     Disp is a dependently typed programming language based on the computational model of the
-    <em>tree calculus</em>, rather than the λ-calculus. Its types are programs you can run:
-    apply a type to a value, and it computes the verdict of its own type-check. Type-checking
-    is one equation:
+    <em>tree calculus</em>, rather than the λ-calculus. Its types are programs you can run. A
+    type is a <strong>claim</strong>: a program that takes a witness and a challenge and answers
+    true or false.
   </p>
-  <p class="math-block">T (v) = Ok true &nbsp;⟺&nbsp; v : T</p>
+  <p class="math-block">v : T &nbsp;⟺&nbsp; T(v, c) = true for every challenge c</p>
   <p>
-    In words: the type <code>T</code>, applied to the value <code>v</code>, reduces to the
-    verdict <code>Ok true</code> if and only if <code>v</code> inhabits <code>T</code>.
-    Traditional type theory maintains a separate judgment <span class="math">Γ ⊢ v : T</span>,
-    derived by inference rules that live outside the language. Disp has no such separate
-    machinery. Types are themselves tree-calculus programs: predicates that, run against a
-    candidate tree, return a verdict (§4 gives this principle its traditional name,
-    <em>types as predicates</em>, and places it in the family tree). Type-checking is, then,
-    just function application on those predicates. (The verdict is a <code>CheckerResult</code> — <code>Ok</code> or
-    <code>Err</code> — so failure is an ordinary value too, not an exception in some
-    meta-language.)
+    Traditional type theory keeps a separate judgment <span class="math">Γ ⊢ v : T</span>,
+    derived by inference rules that live outside the language. Disp has no such machinery.
+    Checking a value against a type is applying the type, and the verdicts are ordinary values
+    too: Refuted with the challenge that failed, Open when nothing has failed yet, and Proved
+    when a checker covers every challenge at once. §4 places this in the family tree of
+    <em>types as predicates</em>, and §5 is how a checker earns the right to say Proved.
   </p>
   <Aside title="From the README.">
     <p>
       Tree calculus is natively
       <Gloss tip="programs can inspect the structure of other programs by reduction — no metaprogramming layer, no AST traversal">reflective</Gloss>
       — terms <em>are</em> data, so the type checker, the optimizer, and the programs it produces
-      all inhabit the same universe. Disp's goal is a fully self-hosting dependent type system
-      whose checker lives as an inhabitant of the object language, not just as a host-language
-      function.
+      all inhabit the same universe. Disp's goal is a checker that lives in the object language as
+      an ordinary program, not just as a host-language function.
     </p>
   </Aside>
 

@@ -38,42 +38,42 @@ export const toc: TocEntry[] = [
     ]
   },
   {
-    id: 'predicates',
-    title: 'Types as predicates',
+    id: 'claims',
+    title: 'Claims: a type is a test',
     children: [
       { id: 'traditions', title: 'Four traditions' },
       { id: 'booleans', title: 'Booleans are shapes' },
-      { id: 'central-equation', title: 'The central equation, running' }
+      { id: 'honest', title: 'Asking every tree' }
     ]
   },
   {
-    id: 'kernel',
-    title: 'The two-operation kernel',
+    id: 'lenses',
+    title: 'Checkers are lenses',
     children: [
-      { id: 'hypothesis-problem', title: 'The hypothesis problem' },
-      { id: 'dispatcher', title: 'The dispatcher & the walker' },
-      { id: 'sigma-ops', title: 'bind_hyp and hyp_reduce' },
-      { id: 'spines', title: 'Spines' },
-      { id: 'who-checks', title: 'Three layers of soundness' }
+      { id: 'finite', title: 'Proved needs a finite list' },
+      { id: 'lens', title: 'Lenses and their law' },
+      { id: 'rules', title: 'The five rules you trust' },
+      { id: 'floor', title: "Why the floor can't go lower" },
+      { id: 'today', title: 'What runs today' }
     ]
   },
   {
-    id: 'library',
-    title: 'Library types',
+    id: 'saying',
+    title: 'What claims can say',
     children: [
-      { id: 'telescope', title: 'The telescope' },
-      { id: 'coproduct', title: 'Sums & recursion' },
-      { id: 'equality', title: 'Propositional equality' },
-      { id: 'universe', title: 'The universe checks itself' }
+      { id: 'function-types', title: 'Function types' },
+      { id: 'equality', title: 'Equality' },
+      { id: 'induction', title: 'Induction' },
+      { id: 'search', title: 'Search' }
     ]
   },
   {
     id: 'future',
-    title: 'Future directions',
+    title: 'Where it is going',
     children: [
-      { id: 'landed', title: 'What has landed' },
-      { id: 'cubical', title: 'Cubical type theory' },
-      { id: 'long-arc', title: 'The long arc' }
+      { id: 'pinned', title: 'What runs' },
+      { id: 'designed', title: 'What is designed' },
+      { id: 'open', title: 'What has no argument yet' }
     ]
   },
   { id: 'references', title: 'References' },

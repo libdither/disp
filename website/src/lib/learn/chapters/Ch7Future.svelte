@@ -3,49 +3,10 @@
 </script>
 
 <section>
-  <h2 id="future"><span class="secnum">Section 7</span>Future directions</h2>
-
-  <h3 id="landed">7.1 · What has landed</h3>
+  <h2 id="future"><span class="secnum">Section 7</span>Where it is going</h2>
   <p>
-    The original version of this walkthrough (mid-2026) closed with a roadmap; an unusual amount
-    of it has since shipped. The seven-primitive kernel became the two-operation kernel of §5.
-    Telescopes and cells unified the negative formers; the coproduct + coherence-gate story
-    covered the positives. The universe grew its behavioral layer
-    (<code>Type := BehavioralType</code>) — the §6.4 self-check is landed code, not a plan.
-    Modules became hermetic functors with explicit givens; declarations became guard-mediated
-    requests (a name can be owned by a policy, and rebinding it demands a machine-checked
-    license — the seed of verified optimization). Five evaluator backends sit behind one
-    session ABI and must agree byte-for-byte, including the Rust engine this website runs in
-    your tab. And the first end-to-end optimizer slice exists: equality witnesses licensing real
-    rewrites (map fusion among them) past syntactic equality, with zero kernel changes.
-    Effects landed too: a free-monad library (<code>std/effect.disp</code>) whose computations
-    are pure values, monadic bind syntax (<code>x &lt;- e</code>) in blocks, and one impure
-    driver at the program boundary interpreting the IO vocabulary.
+    The goal is in <code>GOALS.md</code>:
   </p>
-  <p>Still design-stage: scoped and higher-order effect operations (TYPE_THEORY.typ §15),
-    cost as a typing-level resource, and the items below.</p>
-
-  <h3 id="cubical">7.2 · Cubical type theory</h3>
-  <p>
-    Path-based equality — the source of computational univalence — appears implementable as
-    library code over the existing kernel (TYPE_THEORY.typ §13). The interval
-    <span class="math">I</span> is a library type; a path is a function from it; and the
-    walker's parametricity is exactly the discipline paths require (one cannot triage on an
-    abstract <span class="math">i : I</span>):
-  </p>
-  <pre>{`Path A x y  :=  Pi I ({_} => A)
-
-refl   := {A, x, i} => x
-sym    := {A, p, i} => p (I_inv i)
-funext := {A, B, h, i, a} => h a i`}</pre>
-  <p>
-    Function extensionality, an axiom in intensional MLTT, drops out as a one-line definition.
-    Transport dispatches through each type's <code>functor</code> metadata field — the same
-    dispatch pattern the kernel already uses everywhere — and <code>Glue</code> would make
-    univalence a <em>theorem</em>: equivalent types compute as equal.
-  </p>
-
-  <h3 id="long-arc">7.3 · The long arc</h3>
   <blockquote>
     I want to synthesize the best possible programs given a specification… turn the type
     checker into a function that takes a program and returns 1 or 0, combine that with
@@ -54,21 +15,57 @@ funext := {A, B, h, i, a} => h a i`}</pre>
     <span class="cite">— GOALS.md</span>
   </blockquote>
   <p>
-    The pieces now in place: a reflective substrate (§2), a kernel small enough to trust (§5), a
-    universe that can check its own citizens (§6.4), and licensing machinery that can say
-    "these two programs are interchangeable, and here is the certificate". What remains is the
-    optimizer itself — <a href="https://github.com/libdither/disp/blob/main/research/OPTIMIZER.typ">OPTIMIZER.typ</a>
-    designs it as verified gradient descent on a graded cost over a materialized reduction
-    net — and the neural proposer that searches where brute force cannot. An external generator
-    proposes candidate trees; the type checker, itself a tree, scores them; and the loop
-    refines itself.
+    The <a href="../compare/">comparison page</a> splits that goal into five requirements and
+    grades disp twice: on what runs today, and on what the design could reach by the arguments
+    written down so far. This section is the short version of the second grade.
+  </p>
+
+  <h3 id="pinned">7.1 · What runs</h3>
+  <p>
+    Everything in Sections 2 to 6: programs are trees any program can take apart; claims, the
+    honest search, lenses and their laws; certificates from the five rules; equality by case
+    split and by induction; and a small <code>cegis</code> search. The tests in
+    <code>lib/tests/</code> run all of it, and the examples on this page are one of those files.
+  </p>
+
+  <h3 id="designed">7.2 · What is designed</h3>
+  <ul>
+    <li>
+      <strong>Cost in the score.</strong> A search scores each candidate by the checker's verdict
+      times its cost, and a cost bound is one more claim
+      (<code>research/OPTIMIZER.typ</code> §2).
+    </li>
+    <li>
+      <strong>A model of the machine.</strong> A hardware model is an ordinary program that runs
+      assembly and returns its output and cycle count, so "this assembly does what the spec says"
+      is a claim over it (§9 of the same note).
+    </li>
+    <li>
+      <strong>Handing work to a faster language.</strong> Effects are data, and one impure driver
+      at the edge of the program performs them. That driver is where work goes to a faster
+      language and comes back with its outputs, time and memory (<code>FOUNDATIONS.md</code> §8).
+    </li>
+    <li>
+      <strong>Wider search.</strong> A claim can generate its own candidates instead of filtering
+      every tree (<code>research/CLAIMS_OVER_TREES.md</code> §4). Whether search over a space worth
+      searching is affordable is the project's main open question.
+    </li>
+  </ul>
+
+  <h3 id="open">7.3 · What has no argument yet</h3>
+  <p>
+    Two things the goal asks for have no design behind them. Nothing writes <em>new</em> claims
+    for the search to satisfy; it only keeps the counterexamples it finds. And no second,
+    independent checker confirms certificates; the honest search is independent, but it can only
+    refute. Self-application, an optimizer improving itself, is possible in principle, but by
+    Löb's theorem (§5.4) each new version is trusted one level less than the one that admitted it.
   </p>
   <Aside title="Why the self-hosting discipline pays here.">
     <p>
       A synthesized program is only as trustworthy as the checker that admitted it. Because
-      disp's checker is an object-language citizen, the optimizer can be pointed at the checker
-      too — and every improvement it proposes for itself passes through the same verification
-      it applies to everything else.
+      disp's checkers are ordinary programs, the optimizer can be pointed at them too, and every
+      improvement it proposes for itself passes through the same checks it applies to everything
+      else.
     </p>
   </Aside>
 </section>
