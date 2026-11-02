@@ -1,0 +1,51 @@
+// Growth curves: how many machine steps a program takes as its input grows. On
+// numbers the step count of a loop-free recursion is a polynomial in n, so finite
+// differences at sizes 1, 2, 3, ... fit it exactly, and the fit is a step bound a
+// claim can check on sizes it was never fitted on. A fit is evidence, not a proof:
+// search refutes it the first time a larger input takes more steps.
+open use raw "prelude.disp" {}
+open use raw "list.disp" {}
+open use raw "machine.disp" {}
+
+rec add2 :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { b } else { succ(add2(nat_pred(a), b)) }
+// the steps to finish, or "Out" past `cap`: one machine step at a time, counted
+rec count_steps :: {m : Machine, n : Nat, cap : Nat} -> Tree :=>
+	if (m_finished(m)) { n } else if (is_zero(cap)) { "Out" } else { count_steps(m_advance(m, 1), succ(n), nat_pred(cap)) }
+steps_of :: {f : Tree, x : Tree, cap : Nat} -> Tree :=> count_steps(m_start(f, x), zero, cap)
+// the step counts at sizes 1 .. k: a recursion's base case usually costs its own constant, so size 0 is left out of the fit
+rec sizes_upto :: {k : Nat} -> List(Nat) :=> if (is_zero(k)) { [] } else { sizes_upto(nat_pred(k)).append([k]) }
+curve :: {f : Tree, k : Nat, cap : Nat} -> List(Tree) :=> sizes_upto(k).map({n} => steps_of(f, n, cap))
+
+// differences of neighbours, or "Negative" when a curve dips (no fit with these tools)
+rec minus :: {a : Nat, b : Nat} -> Tree :=> if (is_zero(b)) { a } else if (is_zero(a)) { "Negative" } else { minus(nat_pred(a), nat_pred(b)) }
+rec diffs :: {xs : List(Tree)} -> Tree :=>
+	if (xs.is_nil || xs.tail.is_nil) { [] }
+	else {
+		let d := minus(xs.tail.head, xs.head)
+		let rest := diffs(xs.tail)
+		if ((d == "Negative") || (rest == "Negative")) { "Negative" } else { cons(d, rest) }
+	}
+all_zero := {xs} => xs.all(is_zero)
+// Newton coefficients (each difference row's first entry) until a row is all zero; "None" when the samples run out first or a value is "Out"
+rec newton :: {xs : Tree} -> Tree :=>
+	if (xs == "Negative") { "None" }
+	else if (xs.is_nil) { "None" }
+	else if (xs.any({x} => x == "Out")) { "None" }
+	else if (all_zero(xs)) { [] }
+	else if (xs.tail.is_nil) { "None" }
+	else {
+		let rest := newton(diffs(xs))
+		if (rest == "None") { "None" } else { cons(xs.head, rest) }
+	}
+// the fitted polynomial's degree: one less than its coefficient count
+degree :: {coeffs : List(Nat)} -> Nat :=> nat_pred(coeffs.length)
+// the polynomial at n, by stepping the difference table forward n times
+rec newton_step :: {row : List(Nat)} -> List(Nat) :=> if (row.is_nil || row.tail.is_nil) { row } else { cons(add2(row.head, row.tail.head), newton_step(row.tail)) }
+rec newton_at :: {row : List(Nat), n : Nat} -> Nat :=> if (is_zero(n)) { if (row.is_nil) { zero } else { row.head } } else { newton_at(newton_step(row), nat_pred(n)) }
+fit :: {f : Tree, k : Nat, cap : Nat} -> Tree :=> newton(curve(f, k, cap))
+// the step bound a fit claims at a number input; the fit starts at 1, and size 0 takes the bound at 1
+bound_of :: {coeffs : List(Nat)} -> Nat -> Nat :=> {n} => newton_at(coeffs, nat_pred(n))
+// which of two fits grows slower: lower degree, then the smaller value at a size past both fits
+rec cheaper :: {a : List(Nat), b : List(Nat)} -> Bool :=>
+	if (not(a.length == b.length)) { nat_lt(a.length, b.length) }
+	else { nat_le(newton_at(a, 64), newton_at(b, 64)) }

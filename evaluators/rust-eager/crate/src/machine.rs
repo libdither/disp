@@ -9,7 +9,7 @@
 //! `Run = pair "Run" (pair (pair f x) stack)`, frames `pair "To" arg` / `pair "Res" func` /
 //! `pair "S" (pair b x)`, a list nil = leaf / cons = fork, a string a list of char-code Nats.
 
-use crate::arena::{Arena, Exhausted, Node, LEAF_ID};
+use crate::arena::{Arena, Halt, Node, LEAF_ID};
 
 enum Frame {
     To(u32),
@@ -71,7 +71,7 @@ impl Arena {
     }
 
     /// `k_shaped v` on an already-WHNF `v`: a fork whose left child triages to the leaf.
-    fn k_shaped(&mut self, v: u32, budget: &mut i64) -> Result<bool, Exhausted> {
+    fn k_shaped(&mut self, v: u32, budget: &mut i64) -> Result<bool, Halt> {
         if let Node::Fork(l, _) = self.node(v) {
             let ls = self.whnf(l, budget)?;
             return Ok(matches!(self.node(ls), Node::Leaf));
@@ -80,7 +80,7 @@ impl Arena {
     }
 
     /// m_deliver: pop frames until an application is pending; the S tail keeps the discard.
-    fn m_deliver(&mut self, r: &mut Regs, mut v: u32, budget: &mut i64) -> Result<(), Exhausted> {
+    fn m_deliver(&mut self, r: &mut Regs, mut v: u32, budget: &mut i64) -> Result<(), Halt> {
         loop {
             match r.frames.pop() {
                 None => {
@@ -119,7 +119,7 @@ impl Arena {
     }
 
     /// m_settle: leaf and stem heads only build, for free, until a fork head or Done.
-    fn m_settle(&mut self, r: &mut Regs, budget: &mut i64) -> Result<(), Exhausted> {
+    fn m_settle(&mut self, r: &mut Regs, budget: &mut i64) -> Result<(), Halt> {
         while r.done.is_none() {
             let fs = self.whnf(r.f, budget)?;
             match self.node(fs) {
@@ -138,7 +138,7 @@ impl Arena {
     }
 
     /// m_step: one K, S or triage dispatch on a fork head, then its delivery.
-    fn m_step(&mut self, r: &mut Regs, budget: &mut i64) -> Result<(), Exhausted> {
+    fn m_step(&mut self, r: &mut Regs, budget: &mut i64) -> Result<(), Halt> {
         self.m_settle(r, budget)?;
         if r.done.is_some() {
             return Ok(());
@@ -199,7 +199,7 @@ impl Arena {
     /// `m_advance state k`: `Some(handle)` of the resulting machine, or `None` when `state`
     /// is not a state the machine built (the caller forces the partial and runs the
     /// definition, so the intercept stays transparent).
-    pub(crate) fn step_machine(&mut self, state: u32, k: u32, budget: &mut i64) -> Result<Option<u32>, Exhausted> {
+    pub(crate) fn step_machine(&mut self, state: u32, k: u32, budget: &mut i64) -> Result<Option<u32>, Halt> {
         let tags = self.machine_tags();
         let mut kk = self.whnf(k, budget)?; // is_zero steps
         if matches!(self.node(kk), Node::Leaf) {

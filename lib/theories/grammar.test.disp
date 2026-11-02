@@ -1,0 +1,141 @@
+// Grammar types: a type is a tree grammar (each name lists at most one alternative per shape), and membership runs down the tree it is given, so it always finishes. Inclusion between types is also decided, and answers with a tree when it fails. Programs are trees, so a grammar can also say something about what a program does: every member of `Const` returns at once.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+a_leaf := "Leaf"
+a_stem := {c} => pair("Stem", c)
+a_fork := {l, r} => pair("Fork", pair(l, r))
+alts_of := {g, name} => {
+	let found := g.filter({r} => r.fst == name)
+	if (found.is_nil) { [] } else { found.head.snd }
+}
+rec is_in :: {g : Tree, name : Tree, x : Tree} -> Bool :=>
+	(alts_of(g, name)).any({alt} =>
+		if (alt == a_leaf) { is_leaf(x) }
+		else if (alt.fst == "Stem") { if (is_stem(x)) { is_in(g, alt.snd, stem_child(x)) } else { false } }
+		else { if (is_fork(x)) { if (is_in(g, alt.snd.fst, x.fst)) { is_in(g, alt.snd.snd, x.snd) } else { false } } else { false } })
+find_stem := {alts} => alts.filter({a} => (not(a == a_leaf)) && (a.fst == "Stem"))
+find_fork := {alts} => alts.filter({a} => (not(a == a_leaf)) && (a.fst == "Fork"))
+// a smallest member of a name, or "Empty"; the seen list only grows, over finitely many names
+rec inhabit :: {g : Tree, name : Tree, seen : List(Tree)} -> Tree :=> {
+	if (seen.member(name)) { "Empty" }
+	else {
+		let alts := alts_of(g, name)
+		let seen2 := cons(name, seen)
+		if (alts.member(a_leaf)) { t }
+		else {
+			let stems := find_stem(alts)
+			let via_stem := if (stems.is_nil) { "Empty" } else { inhabit(g, stems.head.snd, seen2) }
+			if (not(via_stem == "Empty")) { t(via_stem) }
+			else {
+				let forks := find_fork(alts)
+				if (forks.is_nil) { "Empty" }
+				else {
+					let l := inhabit(g, forks.head.snd.fst, seen2)
+					let r := inhabit(g, forks.head.snd.snd, seen2)
+					if ((l == "Empty") || (r == "Empty")) { "Empty" } else { t(l, r) }
+				}
+			}
+		}
+	}
+}
+// a tree in `a` and not in `b`, or "None". A repeated pair adds nothing new, so the seen list ends the walk
+rec counter :: {g : Tree, a : Tree, b : Tree, seen : List(Tree)} -> Tree :=> {
+	let here := pair(a, b)
+	if (seen.member(here)) { "None" }
+	else {
+		let seen2 := cons(here, seen)
+		let as := alts_of(g, a)
+		let bs := alts_of(g, b)
+		let leaf_gap := if ((as.member(a_leaf)) && (not(bs.member(a_leaf)))) { t } else { "None" }
+		if (not(leaf_gap == "None")) { leaf_gap }
+		else {
+			let sa := find_stem(as)
+			let sb := find_stem(bs)
+			let stem_gap := if (sa.is_nil) { "None" }
+				else if (sb.is_nil) { let w := inhabit(g, sa.head.snd, []); if (w == "Empty") { "None" } else { t(w) } }
+				else { let w := counter(g, sa.head.snd, sb.head.snd, seen2); if (w == "None") { "None" } else { t(w) } }
+			if (not(stem_gap == "None")) { stem_gap }
+			else {
+				let fa := find_fork(as)
+				let fb := find_fork(bs)
+				if (fa.is_nil) { "None" }
+				else {
+					let l := inhabit(g, fa.head.snd.fst, [])
+					let r := inhabit(g, fa.head.snd.snd, [])
+					if ((l == "Empty") || (r == "Empty")) { "None" }
+					else if (fb.is_nil) { t(l, r) }
+					else {
+						let left_gap := counter(g, fa.head.snd.fst, fb.head.snd.fst, seen2)
+						if (not(left_gap == "None")) { t(left_gap, r) }
+						else {
+							let right_gap := counter(g, fa.head.snd.snd, fb.head.snd.snd, seen2)
+							if (right_gap == "None") { "None" } else { t(l, right_gap) }
+						}
+					}
+				}
+			}
+		}
+	}
+}
+included :: {g : Tree, a : Tree, b : Tree} -> Verdict :=> {
+	let w := counter(g, a, b, [])
+	if (w == "None") { "Proved" } else { refuted(w) }
+}
+
+g := [
+	pair("Tree", [a_leaf, a_stem("Tree"), a_fork("Tree", "Tree")]),
+	pair("Bool", [a_leaf, a_stem("Unit")]),
+	pair("Unit", [a_leaf]),
+	pair("Nat", [a_leaf, a_fork("Unit", "Nat")]),
+	pair("NatList", [a_leaf, a_fork("Nat", "NatList")]),
+	pair("Const", [a_fork("Unit", "Tree")]),
+	pair("Never", [a_fork("Never", "Never")])
+]
+at := {name} => is_in(g, name)
+test at("Nat", 3) = true
+test at("Nat", t(t)) = false
+test at("Bool", false) = true
+test at("Bool", t(t(t))) = false
+test at("NatList", [1, 2, 3]) = true
+test at("NatList", [t(t)]) = false
+test at("Never", t(t, t)) = false
+// agreement with the recognizers in the repo, on the first trees
+same_as := {name, recognizer} => Trees.as_items.bounded(60).s_all({x} => at(name, x) == recognizer(x))
+test same_as("Nat", NatR) = true
+test same_as("Bool", Bool) = true
+
+test included(g, "Unit", "Bool") = "Proved"
+// a number is a list of zeros: each pair's left is the leaf, which is itself a number
+test included(g, "Nat", "NatList") = "Proved"
+test included(g, "NatList", "Nat") = refuted([1])
+test included(g, "Bool", "Nat") = refuted(false)
+test included(g, "Nat", "Tree") = "Proved"
+test included(g, "Tree", "Nat") = refuted(t(t))
+test included(g, "Never", "Unit") = "Proved"
+
+// the lens into the claim over all trees, and a rule that says yes too often is refuted
+subset_claim := {names, x} => if (at(names.fst, x)) { at(names.snd, x) } else { true }
+by_included := {names, _c} => included(g, names.fst, names.snd) == "Proved"
+sound := lens_holds(by_included, subset_claim, lens({n} => n, {_n, c} => c))
+test honest(Trees.as_items, sound, pair("Nat", "Tree"), 60) = "Open"
+test honest(Trees.as_items, sound, pair("Tree", "Nat"), 60) = "Open"
+trust_all := lens_holds({_names, _c} => true, subset_claim, lens({n} => n, {_n, c} => c))
+test honest(Trees.as_items, trust_all, pair("Tree", "Nat"), 60) = refuted(t(t))
+
+// a grammar for programs: the shape alone promises the behaviour, checked on the machine
+returns_at_once := {w, x} => if (at("Const", w)) {
+	let m := m_advance(m_start(w, x), 1)
+	(m_finished(m)) && (m_result(m) == w.snd)
+} else { true }
+test Trees.as_items.bounded(30).s_all({w} => [t, 3, not].all(returns_at_once(w))) = true
+test at("Const", {_x} => 5) = true
+test at("Const", {x} => x) = false

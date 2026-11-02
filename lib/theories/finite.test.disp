@@ -1,0 +1,65 @@
+// Finite types: the behavioural types of types.disp whose samples are all of their members, so a function type's challenges cover its whole domain and every claim is decided by running it. A function type here lists every lookup table as a sample, which is what makes higher-order types finite too.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+f_base := {members} => ty({w, _c} => members.member(w), [t], members.map(plain_sample))
+f_prod := {a, b} => sigma_t(a, {_x} => b)
+rec table_get :: {entries : List(Pair(Tree, Tree)), x : Tree} -> Tree :=>
+	if (entries.is_nil) { t } else if (entries.head.fst == x) { entries.head.snd } else { table_get(entries.tail, x) }
+// every assignment of one output per input
+rec assignments :: {dom : List(Tree), cod : List(Tree)} -> List(List(Pair(Tree, Tree))) :=>
+	if (dom.is_nil) { [[]] }
+	else { cod.cross(assignments(dom.tail, cod), {y, rest} => cons(pair(dom.head, y), rest)) }
+elements := {a} => a.samples.map(runtime)
+// the plain function type, with every table as a sample
+f_arrow := {a, b} => {
+	let plain := arrow_t(a, b)
+	ty(plain.claim, plain.challenges, assignments(elements(a), elements(b)).map({entries} => plain_sample(table_get(entries))))
+}
+is_member := holds
+check_arrow := {a, b, w} => judge(f_arrow(a, b), w)
+same_at := {a, f, g} => elements(a).all({x} => {
+	let ma := returns(f, x)
+	let mb := returns(g, x)
+	(m_finished(ma)) && ((m_finished(mb)) && (m_result(ma) == m_result(mb)))
+})
+
+bb := f_base([true, false])
+bb2 := f_arrow(bb, bb)
+spin := fix({self, x} => self(x))
+test elements(bb).length = 2
+test elements(bb2).length = 4
+test elements(f_arrow(bb2, bb)).length = 16
+test elements(f_prod(bb, bb)).length = 4
+test elements(bb2).all(is_member(bb2)) = true
+test check_arrow(bb, bb, not) = "Proved"
+test check_arrow(bb, bb, {x} => pair(x, x)).is_refuted = true
+test check_arrow(bb, bb, spin) = refuted(call_with(plain_sample(true), t))
+test is_member(bb2, not) = true
+test is_member(bb2, spin) = false
+// higher order: a program on every Bool -> Bool table
+at_true := {f} => f(true)
+test is_member(f_arrow(bb2, bb), at_true) = true
+test is_member(f_arrow(bb2, bb), {f} => f) = false
+// equal behaviour at a type is decided, though the trees differ
+twice_not := {x} => not(not(x))
+test tree_eq(twice_not, {x} => x) = false
+test same_at(bb, twice_not, {x} => x) = true
+test same_at(bb, not, {x} => x) = false
+test same_at(bb2, at_true, {f} => f(not(false))) = true
+
+// the cover as a lens into the claim over all trees: outside Bool nothing is asked; a cover that skips a member is refuted
+bool_claim := {w, x} => if (Bool(x)) { bb2.claim(w, call_with(plain_sample(x), t)) } else { true }
+cover := lens({w} => w, {_w, x} => if (Bool(x)) { x } else { true })
+bad_cover := lens({w} => w, {_w, _x} => true)
+half_bad := {x} => if (x) { true } else { pair(x, x) }
+test honest(Trees.as_items, lens_holds(bool_claim, bool_claim, cover), half_bad, 30) = "Open"
+test honest(Trees.as_items, lens_holds(bool_claim, bool_claim, bad_cover), half_bad, 30) = refuted(false)

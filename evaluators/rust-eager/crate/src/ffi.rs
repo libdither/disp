@@ -2,7 +2,7 @@
 //! per term (EVALUATOR.md). Handles are `u32` arena indices, opaque to the host;
 //! budget exhaustion returns a sentinel, never traps (`panic = "abort"`).
 
-use crate::arena::{Arena, Node, LEAF_ID};
+use crate::arena::{Arena, Halt, Node, LEAF_ID};
 use crate::with;
 
 #[inline]
@@ -47,10 +47,15 @@ pub extern "C" fn tc_fork(left: u32, right: u32) -> u32 {
 /// **EAGER (M0)** — fully normalize `apply(f, x)`. The elaboration-conformance mode:
 /// disp's elaborator is eager-normative, so the full-
 /// `lib/tests` gate needs eager reduction (a lazy `tc_apply` defers redexes the
-/// elaborator's host-side observations assume are reduced). `u32::MAX` on exhaustion.
+/// elaborator's host-side observations assume are reduced). `u32::MAX` on exhaustion,
+/// `u32::MAX - 1` when an application re-entered itself (a certain loop).
 #[no_mangle]
 pub extern "C" fn tc_apply(f: u32, x: u32, budget: u32) -> u32 {
-    with_budget(budget, |a, b| a.reduce(f, x, b).unwrap_or(u32::MAX))
+    with_budget(budget, |a, b| match a.reduce(f, x, b) {
+        Ok(h) => h,
+        Err(Halt::Budget) => u32::MAX,
+        Err(Halt::Loop) => u32::MAX - 1,
+    })
 }
 
 /// M1 lazy apply: `apply f x = Susp(f, x)`, reduced on demand by the forcing

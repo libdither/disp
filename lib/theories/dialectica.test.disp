@@ -1,0 +1,81 @@
+// Claims as a logic of their own, with no terms: each connective builds a claim from claims (Goedel's Dialectica form), a proof is a witness, and a rule is a lens. Excluded middle has no computable witness in the direct form, and has one in the form where the challenger's strategy is an input (Kreisel's no-counterexample form).
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+d_atom := {holds} => {_w, _c} => holds
+d_and := {a, b} => {w, c} => (a(w.fst, c.fst)) && (b(w.snd, c.snd))
+d_or := {a, b} => {w, c} => if (w.fst) { a(w.snd, c.fst) } else { b(w.snd, c.snd) }
+d_forall := {a} => {f, c} => a(c.arg, f(c.arg), c.on_result)
+d_exists := {a} => {w, c} => a(w.fst, w.snd, c)
+d_for_nat := {a} => d_forall({x} => if (NatR(x)) { a(x) } else { d_atom(true) })
+
+// for every number some number is its double
+has_double := d_for_nat({x} => d_exists({y} => d_atom(y == add(x, x))))
+doubler := {x} => pair(add(x, x), t)
+at_tree := {x} => pair(x, t)
+test honest(Trees.as_items.s_map(at_tree), has_double, doubler, 40) = "Open"
+test honest(Trees.as_items.s_map(at_tree), has_double, {x} => pair(x, t), 60) = refuted(at_tree(1))
+
+// and and or carry their witnesses and their challenges in pairs
+test d_and(d_atom(true), d_atom(false), pair(t, t), pair(t, t)) = false
+test d_or(d_atom(true), d_atom(false), pair(true, t), pair(t, t)) = true
+test d_or(d_atom(true), d_atom(false), pair(false, t), pair(t, t)) = false
+
+// a rule is a lens: from a program on numbers to the program after a successor
+nat_fn := {g, x} => if (NatR(x)) { NatR(g(x)) } else { true }
+post_succ := lens({g} => {x} => succ(g(x)), {_g, x} => x)
+test honest(Trees.as_items, lens_holds(nat_fn, nat_fn, post_succ), id, 60) = "Open"
+pre_pair := lens({g} => {x} => pair(g(x), g(x)), {_g, x} => x)
+test honest(Trees.as_items, lens_holds(nat_fn, nat_fn, pre_pair), id, 60) = refuted(1)
+// rules compose: forward in order, backward in reverse
+test honest(Trees.as_items, lens_holds(nat_fn, nat_fn, lens_then(post_succ, post_succ)), id, 60) = "Open"
+
+// contraction: one witness used twice answers a pair of challenges with the one it fails, which needs a test that decides
+contract_lens := {a} => lens({w} => pair(w, w), {w, c} => if (a(w, c.fst)) { c.snd } else { c.fst })
+pairs := Trees.as_items.s_map({x} => pair(x, succ(x)))
+half_nat := {g, x} => if (NatR(x)) { if (is_zero(x)) { NatR(g(x)) } else { true } } else { true }
+test honest(pairs, lens_holds(nat_fn, d_and(nat_fn, nat_fn), contract_lens(nat_fn)), {n} => n, 30) = "Open"
+partly_bad := {x} => if (x == 1) { t(t) } else { x }
+test honest(pairs, lens_holds(nat_fn, d_and(nat_fn, nat_fn), contract_lens(nat_fn)), partly_bad, 60) = "Open"
+// always asking the first challenge misses a failure at the second
+first_only := lens({w} => pair(w, w), {_w, c} => c.fst)
+test honest(pairs, lens_holds(nat_fn, d_and(nat_fn, nat_fn), first_only), partly_bad, 200).is_refuted = true
+
+// excluded middle for halting. The direct form: a witness names, per program, "halts at n" or "never"; passing every challenge would decide halting
+stopped := {p, n} => m_finished(m_advance(m_start(p, t), n))
+halts_or_not := {w, c} => {
+	let a := w(c.fst)
+	if (a.fst) { stopped(c.fst, a.snd) } else { not(stopped(c.fst, c.snd)) }
+}
+says_never := {_p} => pair(false, t)
+says_quick := {_p} => pair(true, 0)
+test honest(Trees.as_items, halts_or_not, says_never, 200).is_refuted = true
+spin := fix({self, x} => self(x))
+test halts_or_not(says_quick, pair(spin, t)) = false
+
+// the no-counterexample form: the challenge also carries the challenger's strategy f (an answer goes in, a claimed step count comes out), and the witness may ask f first. This is the same claim shape, the same search, and the witness below is total and passes every challenge
+no_counterexample := {w, c} => {
+	let p := c.fst
+	let f := c.snd
+	let a := w(p, f)
+	if (a.fst) { stopped(p, a.snd) } else { not(stopped(p, f(a))) }
+}
+ask_first := {p, f} => {
+	let m := f(pair(false, t))
+	if (stopped(p, m)) { pair(true, m) } else { pair(false, t) }
+}
+strategies := [{_a} => 0, {_a} => 50, {a} => if (a.fst) { 0 } else { 200 }]
+programs := [id, succ, spin, {x} => pair(x, x), fix({self, x} => self(pair(x, x)))]
+grid := programs.cross(strategies, pair)
+test over(no_counterexample, ask_first, grid) = "Proved"
+// a witness that does not ask loses to a strategy that waits long enough
+never_asks := {_p, _f} => pair(false, t)
+test over(no_counterexample, never_asks, grid).is_refuted = true

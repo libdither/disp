@@ -30,6 +30,7 @@ mod snapshot;
 mod ffi;
 mod machine;
 mod memo;
+mod profile;
 mod reduce;
 // The in-process native N-API Session backend (host RAM, no wasm32 4 GiB ceiling; -O3 with
 // no wasm sandbox tax on the reduce loop). Native target + `napi` feature only — the wasm

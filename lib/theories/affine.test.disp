@@ -1,0 +1,50 @@
+// Affine types: simple types where each variable is used at most once. Copying is what makes reduction expensive, so a member's run is bounded by the number of its lambdas, a much stronger promise than termination.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+theory := spec({s} => if (s == "*") { "[]" } else { "None" }, {a, b} => if ((a == "*") && (b == "*")) { "*" } else { "None" }, "*", core, 200)
+all_once := every_node({n} => if (n.op == lam_f) { nat_le(uses(0, n.k1), 1) } else { true })
+affine_ok := {a, term} => (accepted(theory, a, term)) && (all_once(term))
+lams := count_nodes(lam_f)
+// the claim: applied to a challenge, the whole run takes at most as many steps as it has lambdas
+cheap := {term, arg} => {
+	let whole := if (arg == "None") { term } else { app(term, arg) }
+	let n := steps_to_normal(whole, 200)
+	if (n == "Out") { false } else { nat_le(n, lams(whole)) }
+}
+aa := atom("A")
+endo := arrow(aa, aa)
+id_a := lam(aa, tv(0))
+drop := lam(aa, lam(aa, tv(0)))
+two_a := lam(endo, lam(aa, app(tv(1), app(tv(1), tv(0)))))
+two_endo := lam(arrow(endo, endo), lam(endo, app(tv(1), app(tv(1), tv(0)))))
+apply_once := lam(endo, lam(aa, app(tv(1), tv(0))))
+dup_run := app(two_endo, two_a)
+omega_like := app(lam(aa, app(tv(0), tv(0))), lam(aa, app(tv(0), tv(0))))
+
+test affine_ok(endo, id_a) = true
+test affine_ok(arrow(aa, endo), drop) = true
+test affine_ok(arrow(endo, endo), apply_once) = true
+// well typed, not affine: the second use is what is refused
+test accepted(theory, arrow(endo, endo), two_a) = true
+test affine_ok(arrow(endo, endo), two_a) = false
+test accepted(theory, arrow(endo, endo), dup_run) = true
+test affine_ok(arrow(endo, endo), dup_run) = false
+
+// the lens into the claim, and two checkers tried on it
+law := {check} => lens_holds(checker_claim(check), cheap, lens({term} => term, {_term, c} => c))
+args := ["None", id_a]
+test over(law(affine_ok(arrow(endo, endo))), apply_once, args) = "Proved"
+test over(law(affine_ok(endo)), id_a, args) = "Proved"
+// plain simple types do not make this promise: copying costs more steps than there are lambdas
+test over(law(accepted(theory, arrow(endo, endo))), dup_run, ["None"]) = refuted("None")
+// and a checker that accepts anything is refuted by a term that never finishes
+test over(law({_term} => true), omega_like, ["None"]) = refuted("None")

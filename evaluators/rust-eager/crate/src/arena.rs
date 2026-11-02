@@ -10,6 +10,7 @@
 use hashbrown::HashTable;
 use rustc_hash::{FxHashMap, FxHasher};
 use crate::memo::Memo;
+use crate::profile::Profile;
 use crate::snapshot::{self, FrozenBase};
 use std::hash::{Hash, Hasher};
 
@@ -29,10 +30,14 @@ pub(crate) enum Node {
 /// "unresolved free variable". Reserving 0 makes every real handle ≥ 1 (truthy).
 pub(crate) const LEAF_ID: u32 = 1;
 
-/// Budget exhaustion, threaded as `Err` through the reducers so the FFI boundary can
-/// return the `u32::MAX` sentinel instead of trapping.
-pub(crate) struct Exhausted;
-pub(crate) type R = Result<u32, Exhausted>;
+/// Why a reduction stopped early, threaded as `Err` through the reducers so the FFI
+/// boundary can return a sentinel instead of trapping: the budget ran out, or an eager
+/// application re-entered itself while still open (it can never finish; see `reduce`).
+pub(crate) enum Halt {
+    Budget,
+    Loop,
+}
+pub(crate) type R = Result<u32, Halt>;
 
 // Packed node layout: each node is ONE u64, not a 12-byte enum — `[tag:2][child0:31]
 // [child1:31]`. Tree calculus has only 0/1/2-child nodes, so 31-bit child ids (2.1B nodes,
@@ -140,6 +145,8 @@ pub(crate) struct Arena {
     /// memoized computation, innermost last. A fact's parent is `open_memo.last()` at the
     /// moment its own frame is popped (see reduce.rs). Cleared at each top-level `reduce`.
     pub(crate) open_memo: Vec<(u32, u32)>,
+    /// Cost centres, on once the host labels a definition (`--stats-defs`; see profile.rs).
+    pub(crate) profile: Option<Box<Profile>>,
 }
 
 /// `save_snapshot` outcome: written, or skipped because the run added nothing durable.
@@ -169,6 +176,7 @@ impl Arena {
             first_hits: 0,
             hit_cost: 0,
             open_memo: Vec::new(),
+            profile: None,
         };
         // index 0: reserved null sentinel (never interned, never returned) so no valid
         // handle is JS-falsy — see LEAF_ID.
@@ -345,6 +353,15 @@ impl Arena {
         self.intern.retain(|id| live(*id));
         self.memo.retain(|id| live(id)); // drop only entries touching freed nodes
         self.forced.retain(|&k, v| live(k) && live(*v));
+        if let Some(p) = self.profile.as_mut() {
+            p.retain(live);
+        }
+    }
+
+    /// Label `handle` as definition `centre` taking `arity` arguments (turns profiling on).
+    pub(crate) fn profile_label(&mut self, handle: u32, centre: u32, arity: u32) {
+        let now = self.interactions;
+        self.profile.get_or_insert_with(|| Box::new(Profile::new(now))).label(handle, centre, arity);
     }
 
     // ── persistent reduction cache (snapshot load/save) ──

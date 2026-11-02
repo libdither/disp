@@ -1,0 +1,22 @@
+// Type operators without polymorphism: types compute, so checking a term runs a program on types first.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+open use raw "cube.disp" {}
+
+theory := corner([oper])
+test power(theory) = [true, false, true, false, false, false, false, false]
+endo_base := app(twice_op, base)
+test accepts(theory, srt("*"), endo_base) = "Proved"
+// the annotation only matches after running the operator
+test accepts(theory, arrow(endo_base, id_base_ty), lam(endo_base, tv(0))) = "Proved"
+test accepts(theory, id_base_ty, lam(base, tv(0))) = "Proved"
+// an operator applied to a term has the wrong kind
+test accepts(theory, srt("*"), app(twice_op, id_base)).is_refuted = true

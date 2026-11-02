@@ -31,7 +31,7 @@ interface EagerSessionNative {
   leaf(): number
   stem(child: number): number
   fork(left: number, right: number): number
-  apply(f: number, x: number, budget: number): number       // u32::MAX (4294967295) ⇒ exhausted
+  apply(f: number, x: number, budget: number): number       // u32::MAX ⇒ exhausted, u32::MAX - 1 ⇒ loop
   applyLazy(f: number, x: number): number
   loadTernary(s: string): number
   dumpTernary(h: number, budget: number): string | null     // null ⇒ exhausted
@@ -54,6 +54,8 @@ interface EagerSessionNative {
   firstHits(): number
   hitCost(): number
   predictedColdAdd(): number
+  profileLabel?(handle: number, centre: number, arity: number): void  // absent in older addons
+  profileReport?(): number[]
 }
 interface RustEagerNativeAddon {
   EagerSession: new () => EagerSessionNative
@@ -63,6 +65,8 @@ const DEFAULT_BUDGET = 5_000_000_000
 // napi returns the apply sentinel as an UNSIGNED u32 (u32::MAX), not the wasm path's
 // signed -1 (which is how a WASM i32 u32::MAX reads in JS).
 const EXHAUSTED = 0xffff_ffff
+// An application re-entered itself while still open: the run can never finish.
+const LOOPED = 0xffff_fffe
 const U32_MAX = 0xffff_ffff
 const clampBudget = (n: number): number => (n > U32_MAX ? U32_MAX : n)
 const RUST_EAGER_MIN_BUDGET = 4_000_000_000
@@ -110,6 +114,9 @@ class RustEagerNativeSession implements Session<number> {
   // (maximal-hit accounting — one on-demand walk over the parent forest; see arena.rs).
   coldEquiv(): number { return this.#s.interactions() + this.#s.predictedColdAdd() }
 
+  profileLabel(handle: number, centre: number, arity: number): void { this.#s.profileLabel?.(handle, centre, arity) }
+  profileReport(): number[] { return this.#s.profileReport?.() ?? [] }
+
   leaf(): number { return this.#s.leaf() }
   stem(child: number): number { return this.#s.stem(child) }
   fork(left: number, right: number): number { return this.#s.fork(left, right) }
@@ -124,6 +131,7 @@ class RustEagerNativeSession implements Session<number> {
   apply(f: number, x: number, budget?: Budget): number {
     const h = this.#s.apply(f, x, this.#bud(budget))
     if (h === EXHAUSTED) throw new Error("rust-eager-native: evaluation budget exhausted")
+    if (h === LOOPED) throw new Error("rust-eager-native: loop detected: an application re-entered itself")
     return h
   }
 

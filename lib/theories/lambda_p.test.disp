@@ -1,0 +1,20 @@
+// Dependent types (the LF corner): a type may mention a term. Proof checking lives here, with no polymorphism.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+open use raw "cube.disp" {}
+
+theory := corner([depd])
+test power(theory) = [true, false, false, true, false, false, false, false]
+// the family runs while checking: family(x) is `other`, so this term fits both ways of writing its type
+same_fam := lam(base, lam(app(family, tv(0)), tv(0)))
+test accepts(theory, pi(base, arrow(app(family, tv(0)), app(family, tv(0)))), same_fam) = "Proved"
+test accepts(theory, pi(base, arrow(other, other)), same_fam) = "Proved"
+test accepts(theory, pi(base, arrow(other, base)), same_fam).is_refuted = true

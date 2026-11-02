@@ -47,6 +47,7 @@ interface RustEagerExports {
 
 const DEFAULT_BUDGET = 5_000_000_000
 const EXHAUSTED = -1 // tc_* return u32::MAX on budget exhaustion; WASM i32→JS Number is signed ⇒ -1
+const LOOPED = -2 // tc_apply's u32::MAX - 1: an application re-entered itself while still open
 // The FFI budget is a single u32 (interactions). Clamp so a >u32 default (5e9)
 // passes as the full u32::MAX rather than silently truncating mod 2³².
 const U32_MAX = 0xffff_ffff
@@ -98,6 +99,7 @@ class RustEagerSession implements Session<number> {
   apply(f: number, x: number, budget?: Budget): number {
     const h = this.#x.tc_apply(f, x, this.#bud(budget))
     if (h === EXHAUSTED) throw new Error("rust-eager: evaluation budget exhausted")
+    if (h === LOOPED) throw new Error("rust-eager: loop detected: an application re-entered itself")
     return h
   }
 

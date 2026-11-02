@@ -132,6 +132,13 @@ export interface Session<H = unknown> {
   coldEquiv?(): number
   firstHits?(): number
 
+  // OPTIONAL cost centres (rust-eager-native, run.ts --stats-defs). profileLabel names
+  // `handle` as definition `centre` (≥ 1) taking `arity` arguments and turns profiling on;
+  // profileReport returns [inclusive, self, memo hits, memo misses] per centre, flattened,
+  // centre 0 holding the steps under no labelled call (evaluators/rust-eager/crate/src/profile.rs).
+  profileLabel?(handle: H, centre: number, arity: number): void
+  profileReport?(): number[]
+
   // True iff handles are canonical (a === b implies equal(a,b)). The engine may
   // use this ONLY as an optimization gate (e.g. the run.ts name registry).
   readonly canonicalHandles: boolean

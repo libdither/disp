@@ -1,0 +1,47 @@
+// The eight corners of Barendregt's lambda cube: one engine, and each corner is the
+// set of function spaces it allows on top of terms depending on terms. Term-on-type
+// is polymorphism, type-on-type is type operators, type-on-term is dependent types.
+// A corner's file pins what it adds. This file holds the shared examples and the
+// `power` table: which examples a corner accepts, each decided by a terminating run.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "pts.disp" {}
+
+star := srt("*")
+box := srt("[]")
+cube_axiom := {s} => if (s == "*") { "[]" } else { "None" }
+corner := {extra} => spec(cube_axiom, {a, b} =>
+	if ((a == "*") && (b == "*")) { "*" } else if (extra.member(pair(a, b))) { b } else { "None" }, "*", core, 200)
+poly := pair("[]", "*")
+oper := pair("[]", "[]")
+depd := pair("*", "[]")
+
+base := atom("A")
+other := atom("B")
+// the identity on one type: every corner has it
+id_base := lam(base, tv(0))
+id_base_ty := arrow(base, base)
+// the identity at every type: polymorphism
+poly_id := lam(star, lam(tv(0), tv(0)))
+poly_id_ty := pi(star, pi(tv(0), tv(1)))
+// a type built from a type: an operator
+twice_op := lam(star, pi(tv(0), tv(1)))
+twice_op_ty := arrow(star, star)
+// a type built from a term: a family indexed by `base`
+family := lam(base, other)
+family_ty := arrow(base, star)
+// polymorphism over operators: the identity at every F(X)
+poly_op := lam(arrow(star, star), lam(star, lam(app(tv(1), tv(0)), tv(0))))
+poly_op_ty := pi(arrow(star, star), pi(star, pi(app(tv(1), tv(0)), app(tv(2), tv(1)))))
+// polymorphism over families: for any family P on `base`, P x to P x
+poly_family := lam(arrow(base, star), lam(base, lam(app(tv(1), tv(0)), tv(0))))
+poly_family_ty := pi(arrow(base, star), pi(base, pi(app(tv(1), tv(0)), app(tv(2), tv(1)))))
+// an operator on families: the kind of a family is an argument
+family_op := lam(arrow(base, star), lam(base, app(tv(1), tv(0))))
+family_op_ty := pi(arrow(base, star), arrow(base, star))
+// Leibniz equality: x = y when every family holding at x holds at y; needs all three
+leibniz := lam(star, lam(tv(0), lam(tv(1), pi(arrow(tv(2), star), arrow(app(tv(0), tv(2)), app(tv(0), tv(1)))))))
+leibniz_ty := pi(star, arrow(tv(0), arrow(tv(0), star)))
+examples := [pair(id_base_ty, id_base), pair(poly_id_ty, poly_id), pair(twice_op_ty, twice_op), pair(family_ty, family), pair(poly_op_ty, poly_op), pair(poly_family_ty, poly_family), pair(family_op_ty, family_op), pair(leibniz_ty, leibniz)]
+power := {sp} => examples.map({e} => accepts(sp, e.fst, e.snd).is_proved)

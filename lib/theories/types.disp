@@ -1,0 +1,49 @@
+// Types by behaviour, with no names: a type is a claim, its own finite list of
+// challenges, and a few samples of its members to challenge functions with. A
+// sample has two faces, what a program receives and what a dependent type receives;
+// they differ only for types, which programs receive as the leaf. One function
+// former covers plain functions, polymorphism and dependent types: they differ only
+// in what the argument ranges over.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+
+record ty :: {claim : Claim, challenges : List(Tree), samples : List(Sample)} -> Type
+record sample :: {runtime : Tree, static : Tree} -> Sample
+plain_sample := {v} => sample(v, v)
+// decided against its own challenges: Proved means every listed challenge passed
+judge :: {a : Type, w : Tree} -> Verdict :=> over(a.claim, w, a.challenges)
+holds :: {a : Type, w : Tree} -> Bool :=> judge(a, w) == "Proved"
+
+run_budget := 4000
+returns := {f, x} => m_advance(m_start(f, x), run_budget)
+
+// a dependent function: a challenge is an argument sample with a challenge of the result; a run that does not finish in budget fails
+pi_t :: {a : Type, fam : Tree -> Type} -> Type :=> ty(
+	{f, c} => { let m := returns(f, c.arg.runtime); (m_finished(m)) && (fam(c.arg.static).claim(m_result(m), c.on_result)) },
+	a.samples.map({s} => fam(s.static).challenges.map({cb} => call_with(s, cb))).concat,
+	if (a.samples.is_nil) { [] } else { fam(a.samples.head.static).samples.map({y} => sample({_x} => y.runtime, {_x} => y.static)) })
+arrow_t :: {a : Type, b : Type} -> Type :=> pi_t(a, {_x} => b)
+// a dependent pair: the first half against one of the first type's challenges, or the second half against the type its first half picks
+record pair_challenge :: {on_first : Bool, inner : Tree} -> PairChallenge
+check_first := pair_challenge(true)
+check_second := pair_challenge(false, t)
+sigma_t :: {a : Type, fam : Tree -> Type} -> Type :=> ty(
+	{p, c} => if (not(is_fork(p))) { false } else if (c.on_first) { a.claim(p.fst, c.inner) } else { holds(fam(p.fst), p.snd) },
+	cons(check_second, a.challenges.map(check_first)),
+	a.samples.map({s} => fam(s.static).samples.map({y} => plain_sample(pair(s.runtime, y.runtime)))).concat)
+nat_t :: Type := ty({w, _c} => NatR(w), [t], [0, 1, 2].map(plain_sample))
+bool_t :: Type := ty({w, _c} => Bool(w), [t], [true, false].map(plain_sample))
+// an abstract type: its one member is a token no program can make up, which is what makes polymorphism checkable
+abstract_t :: {token : Tree} -> Type :=> ty({w, _c} => w == token, [t], [plain_sample(token)])
+// two values are equal: the witness is irrelevant
+eq_t :: {x : Tree, y : Tree} -> Type :=> ty({_w, _c} => x == y, [t], [plain_sample(t)])
+anything_t :: Type := ty({_w, _c} => true, [t], [plain_sample(t)])
+// a universe: programs receive the leaf for a type, dependent types receive the type
+universe_t :: {members : List(Type)} -> Type :=> ty({_w, _c} => true, [t], members.map({m} => sample(t, m)))
+small_types := [abstract_t("A"), bool_t, nat_t]
+forall_t :: {fam : Type -> Type} -> Type :=> pi_t(universe_t(small_types), fam)

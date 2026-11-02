@@ -8,7 +8,7 @@
 //!   visited `Susp` (`δⁿ` at-most-once, Theorem 6). Off the production Session path
 //!   (which wires eager `tc_apply`); kept + validated so M2 inherits a live M1 core.
 
-use crate::arena::{Arena, Exhausted, Node, R};
+use crate::arena::{Arena, Halt, Node, R};
 
 /// Continuation frame for the iterative eager reducer — the reduction spine lives on
 /// this explicit `Vec` rather than the native stack.
@@ -31,13 +31,23 @@ impl Arena {
     // ── M0 — eager: `reduce(f, a)` fully normalizes `apply(f, a)`. In pure tree
     // calculus every Leaf/Stem/Fork is already a value, so this maps (NF, NF) → NF.
     pub(crate) fn reduce(&mut self, f0: u32, x0: u32, budget: &mut i64) -> R {
+        let r = self.reduce_spine(f0, x0, budget);
+        if r.is_err() {
+            if let Some(p) = self.profile.as_mut() {
+                p.unwind(self.interactions);
+            }
+        }
+        r
+    }
+
+    fn reduce_spine(&mut self, f0: u32, x0: u32, budget: &mut i64) -> R {
         self.open_memo.clear();
         let mut stack: Vec<Cont> = Vec::new();
         let mut cur_f = f0;
         let mut cur_x = x0;
         'outer: loop {
             if *budget <= 0 {
-                return Err(Exhausted);
+                return Err(Halt::Budget);
             }
             // Produce a `result` value, or `continue 'outer` after re-aiming cur_f/cur_x.
             let result: u32;
@@ -81,6 +91,9 @@ impl Arena {
                 }
                 Node::Fork(a, b) => {
                     if let Some(r) = self.memo_lookup(cur_f, cur_x) {
+                        if let Some(p) = self.profile.as_mut() {
+                            p.hit(cur_f, r);
+                        }
                         r
                     } else if let Node::Susp(sf, sa) = self.node(a) {
                         let av = self.force(sf, sa, a, budget)?;
@@ -95,16 +108,16 @@ impl Arena {
                             Node::Leaf => b,
                             // S: △ (△ c) b x → (c x)(b x). Compute c x first.
                             Node::Stem(c) => {
+                                self.open_frame(cur_f, cur_x)?;
                                 stack.push(Cont::Memo(cur_f, cur_x, self.interactions - 1, self.hit_cost));
-                                self.open_memo.push((cur_f, cur_x));
                                 stack.push(Cont::SAfterCx(b, cur_x));
                                 cur_f = c; // cur_x unchanged
                                 continue 'outer;
                             }
                             // triage: △ (△ w u) b x → dispatch on x (w=a.left, u=a.right)
                             Node::Fork(w, u) => {
+                                self.open_frame(cur_f, cur_x)?;
                                 stack.push(Cont::Memo(cur_f, cur_x, self.interactions - 1, self.hit_cost));
-                                self.open_memo.push((cur_f, cur_x));
                                 if let Node::Susp(sf, sa) = self.node(cur_x) {
                                     cur_x = self.force(sf, sa, cur_x, budget)?;
                                 }
@@ -153,6 +166,9 @@ impl Arena {
                         // whose fresh computation this one ran inside (0/0 = a root).
                         let cost = ((self.interactions - start) + (self.hit_cost - charged_at)).min(u32::MAX as u64) as u32;
                         self.open_memo.pop();
+                        if let Some(p) = self.profile.as_mut() {
+                            p.leave(self.open_memo.len() as u32, res, self.interactions);
+                        }
                         let (pf, px) = self.open_memo.last().copied().unwrap_or((0, 0));
                         self.memo.insert(sf, sx, res, cost, pf, px); // capacity/eviction handled by the backend (memo.rs)
                         // keep popping
@@ -177,6 +193,27 @@ impl Arena {
         }
     }
 
+    /// Open the memo frame for `apply(f, x)`, or stop with `Halt::Loop` when `(f, x)` is
+    /// already open on the spine. Sound because this machine is deterministic and each open
+    /// frame's result feeds the one beneath it, while memo hits only skip FINISHED work: a
+    /// re-entry means `apply(f, x)` contains itself and can never return. The lazy `force`
+    /// path, the native `tree_eq`/`m_advance` intercepts and the K/S discards open no frames,
+    /// so they stay outside the check. A looping spine repeats with some period p past some
+    /// depth μ, so comparing against one checkpoint, the frame at the largest power of two
+    /// below (Brent's cycle finding), catches it by depth ~2·max(μ, p) + p at O(1) per frame.
+    #[inline]
+    fn open_frame(&mut self, f: u32, x: u32) -> Result<(), Halt> {
+        let i = self.open_memo.len();
+        if i > 0 && self.open_memo[(1usize << i.ilog2()) - 1] == (f, x) {
+            return Err(Halt::Loop);
+        }
+        self.open_memo.push((f, x));
+        if let Some(p) = self.profile.as_mut() {
+            p.enter(f, i as u32, self.interactions - 1);
+        }
+        Ok(())
+    }
+
     // ── M1 — lazy call-by-need. `tc_apply` returns `Susp(f,a)`; `force` drives WHNF
     // on demand and memoizes every visited Susp (δⁿ at-most-once, Theorem 6).
 
@@ -194,7 +231,7 @@ impl Arena {
             // `h` is a not-yet-forced Susp(f, a). Take one WHNF step of apply(f,a).
             chain.push(h);
             if *budget <= 0 {
-                return Err(Exhausted);
+                return Err(Halt::Budget);
             }
             *budget -= 1;
             self.interactions += 1;
@@ -306,7 +343,7 @@ impl Arena {
     /// hash-cons id shortcut and short-circuit on first difference (decision 1).
     /// Iterative (work-stack of pairs) so it costs O(1) native stack regardless of tree
     /// depth — lets the wasm shadow stack stay small (see .cargo/config.toml).
-    pub(crate) fn equal(&mut self, a0: u32, b0: u32, budget: &mut i64) -> Result<bool, Exhausted> {
+    pub(crate) fn equal(&mut self, a0: u32, b0: u32, budget: &mut i64) -> Result<bool, Halt> {
         let mut stack: Vec<(u32, u32)> = vec![(a0, b0)];
         while let Some((a, b)) = stack.pop() {
             if a == b {

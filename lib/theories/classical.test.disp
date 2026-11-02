@@ -1,0 +1,83 @@
+// Non-constructive proofs as programs: simple types plus one more former, call/cc, whose type is Peirce's law, a classical principle no term of simple types proves. A continuation-passing translation (the double-negation translation of logic) sends each classical term to a pure term that simple types accept. The effect becomes an ordinary terminating program, and the lens is that translation.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+pure := spec({s} => if (s == "*") { "[]" } else { "None" }, {a, b} => if ((a == "*") && (b == "*")) { "*" } else { "None" }, "*", core.append(numbers), 800)
+imp := {a, b} => pi(a, b)
+peirce := {a, b} => imp(imp(imp(a, b), a), a)
+// call/cc at A and B, with type ((A -> B) -> A) -> A: a former only this theory has
+cc_f := former("Plain", no_contract,
+	{go, sp, ctx, term} => then_ok(sort_r(sp, go(sp, ctx, term.k0)), {_a} => then_ok(sort_r(sp, go(sp, ctx, term.k1)), {_b} => ok(peirce(term.k0, term.k1)))),
+	types_only, no_meaning)
+cc := {a, b} => node(cc_f, [a, b])
+classical := spec(pure.axiom, pure.rule, "*", cons(cc_f, pure.formers), 800)
+cl_type := {ctx, term} => infer(classical, ctx, term).snd
+
+// the answer type: what a whole classical run finally returns
+answer := nat_ty
+neg := {a} => imp(a, answer)
+dneg := {a} => neg(neg(a))
+rec plain :: {ty : Term} -> Term :=> if (ty.op == pi_f) { imp(dneg(plain(ty.k0)), dneg(plain(ty.k1))) } else { ty }
+lifted := {ty} => dneg(plain(ty))
+cc_pure := {a, b} => {
+	let hyp := imp(imp(a, b), a)
+	let esc := lam(neg(plain(imp(a, b))), app(tv(0), lam(lifted(a), lam(neg(plain(b)), app(tv(1), tv(4))))))
+	lam(neg(plain(peirce(a, b))), app(tv(0), lam(lifted(hyp), lam(neg(plain(a)), app(tv(1), lam(plain(hyp), app(app(tv(0), esc), tv(1))))))))
+}
+// each term becomes a function of its continuation (de Bruijn index 0 of the new lambda)
+rec cps :: {ctx : List(Term), term : Term} -> Term :=> {
+	let f := term.op
+	let wrap := {body} => lam(neg(plain(cl_type(ctx, term))), body)
+	if (f == var_f) { wrap(app(tv(succ(term.payload)), tv(0))) }
+	else if (f == lam_f) { wrap(app(tv(0), lam(lifted(term.k0), tm_up_at(1, 1, cps(cons(term.k0, ctx), term.k1))))) }
+	else if (f == app_f) {
+		let fn_ty := cl_type(ctx, term.k0)
+		wrap(app(tm_up(1, cps(ctx, term.k0)), lam(plain(fn_ty), app(app(tv(0), tm_up(2, cps(ctx, term.k1))), tv(1)))))
+	}
+	else if (f == zero_f) { wrap(app(tv(0), zr)) }
+	else if (f == succ_f) { wrap(app(tm_up(1, cps(ctx, term.k0)), lam(nat_ty, app(tv(1), sc(tv(0)))))) }
+	else { cc_pure(term.k0, term.k1) }
+}
+translate := {term} => cps([], term)
+// a closed classical number: run its translation with the identity as the final continuation
+run_classical := {term} => normal(app(translate(term), lam(answer, tv(0))), 800)
+
+aa := atom("A")
+bb := atom("B")
+two := sc(sc(zr))
+three := sc(two)
+// Peirce's law: refused as a pure term, yet its translation is an ordinary simply typed term
+test accepts(pure, peirce(aa, bb), cc(aa, bb)).is_refuted = true
+test accepts(classical, peirce(aa, bb), cc(aa, bb)) = "Proved"
+test accepts(pure, lifted(peirce(aa, bb)), translate(cc(aa, bb))) = "Proved"
+
+// the escape is a real effect: succ(k(2)) throws away the pending succ
+escape := app(cc(nat_ty, nat_ty), lam(imp(nat_ty, nat_ty), sc(app(tv(0), two))))
+no_escape := app(cc(nat_ty, nat_ty), lam(imp(nat_ty, nat_ty), three))
+test cl_type([], escape) = nat_ty
+test accepts(pure, lifted(nat_ty), translate(escape)) = "Proved"
+test run_classical(escape) = two
+test run_classical(no_escape) = three
+test run_classical(sc(escape)) = three
+// a pure term keeps its meaning through the translation
+test run_classical(app(lam(nat_ty, sc(tv(0))), two)) = three
+// and the result is a tree program too
+test erase(translate(escape), {n} => n) = 2
+
+// the lens: a classical term is carried forward by translation, into the pure theory's claim
+classical_claim := {a} => {term, _c} => accepted(classical, a, term)
+into_pure := lens(translate, {_term, c} => c)
+pure_claim := {ty} => {term, _c} => accepted(pure, lifted(ty), term)
+terms_at_nat := [escape, no_escape, sc(escape), two]
+test terms_at_nat.all({w} => over(lens_holds(classical_claim(nat_ty), pure_claim(nat_ty), into_pure), w, [t]) == "Proved") = true
+// a translation that drops the continuation is refuted by the same law
+lazy_into_pure := lens({term} => term, {_term, c} => c)
+test over(lens_holds(classical_claim(nat_ty), pure_claim(nat_ty), lazy_into_pure), escape, [t]) = refuted(t)

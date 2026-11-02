@@ -1,0 +1,69 @@
+// Martin-Loef type theory: a tower of universes, dependent functions and pairs, numbers with induction, and equality. A proof of a for-all equation is a certificate that two different programs agree, and a proof of a for-all-exists is a program.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+theory := spec(succ, {a, b} => if (nat_le(a, b)) { b } else { a }, zero, core.append(numbers).append([nrec_f]).append(pairs).append(equality), 600)
+nn := arrow(nat_ty, nat_ty)
+plus_t := lam(nat_ty, lam(nat_ty, nrec(lam(nat_ty, nat_ty), tv(0), lam(nat_ty, lam(nat_ty, sc(tv(0)))), tv(1))))
+plus_of := {a, b} => app(app(plus_t, a), b)
+eq_nat := {a, b} => eq_ty(nat_ty, a, b)
+
+// universes: each lives in the next, never in itself, which is what keeps normalization total
+test accepts(theory, srt(1), srt(0)) = "Proved"
+test accepts(theory, srt(0), srt(0)).is_refuted = true
+test accepts(theory, srt(1), pi(srt(0), arrow(tv(0), tv(0)))) = "Proved"
+test accepts(theory, srt(0), pi(srt(0), arrow(tv(0), tv(0)))).is_refuted = true
+
+// n + 0 = n is not true by running: it needs induction
+plus_zero_ty := pi(nat_ty, eq_nat(plus_of(tv(0), zr), tv(0)))
+plus_zero := lam(nat_ty, nrec(lam(nat_ty, eq_nat(plus_of(tv(0), zr), tv(0))), refl(zr),
+	lam(nat_ty, lam(eq_nat(plus_of(tv(0), zr), tv(0)),
+		transport(lam(nat_ty, eq_nat(sc(plus_of(tv(2), zr)), sc(tv(0)))), tv(0), refl(sc(plus_of(tv(1), zr)))))), tv(0)))
+test accepts(theory, plus_zero_ty, plus_zero) = "Proved"
+test accepts(theory, plus_zero_ty, lam(nat_ty, refl(tv(0)))).is_refuted = true
+// while 0 + n = n is true by running, so reflexivity proves it
+test accepts(theory, pi(nat_ty, eq_nat(plus_of(zr, tv(0)), tv(0))), lam(nat_ty, refl(tv(0)))) = "Proved"
+
+// induction's motive must be a family over numbers: one over a universe is refused, even when it would compute
+count_up := {motive} => lam(nat_ty, nrec(motive, zr, lam(nat_ty, lam(nat_ty, sc(tv(0)))), tv(0)))
+test accepts(theory, nn, count_up(lam(nat_ty, nat_ty))) = "Proved"
+test accepts(theory, nn, count_up(lam(srt(0), nat_ty))).is_refuted = true
+
+// false statements have no proof, and a checker that believes one is refuted with a number
+false_ty := pi(nat_ty, eq_nat(plus_of(tv(0), tv(0)), tv(0)))
+fake := lam(nat_ty, refl(tv(0)))
+one := sc(zr)
+test accepts(theory, false_ty, fake).is_refuted = true
+test over(sound_at(theory, accepted(theory), false_ty), fake, challenges_at(theory, false_ty)) = "Proved"
+test over(sound_at(theory, {_a, _term} => true, false_ty), fake, challenges_at(theory, false_ty)).is_refuted = true
+test over(sound_at(theory, accepted(theory), plus_zero_ty), plus_zero, challenges_at(theory, plus_zero_ty)) = "Proved"
+// what the statement means is checked on numbers, with no proof in sight
+test holds(meaning(theory, plus_zero_ty), t) = true
+test holds(meaning(theory, false_ty), t) = false
+
+// the rewrite the optimizer wants: the proof licenses swapping n + 0 for n, on every tree search tries
+plus_right_zero := erase(lam(nat_ty, plus_of(tv(0), zr)))
+test tree_eq(plus_right_zero, id) = false
+agree_on_nats := {fg, x} => if (NatR(x)) { fg.fst(x) == fg.snd(x) } else { true }
+rewrite_lens := lens({_proof} => pair(plus_right_zero, id), {_proof, x} => x)
+license := lens_holds(checker_claim(accepted(theory, plus_zero_ty)), agree_on_nats, rewrite_lens)
+test honest(Trees.as_items, license, plus_zero, 40) = "Open"
+// the same lens built on a proof the checker rejects licenses nothing, so it passes vacuously rather than vouching
+test honest(Trees.as_items, license, fake, 5) = "Open"
+
+// a proof of a for-all-exists is a program: asked for a double of n, it answers with one, and with its evidence
+double_spec := pi(nat_ty, sig(nat_ty, eq_nat(tv(0), plus_of(tv(1), tv(1)))))
+double_proof := lam(nat_ty, mkp(sig(nat_ty, eq_nat(tv(0), plus_of(tv(1), tv(1)))), plus_of(tv(0), tv(0)), refl(plus_of(tv(0), tv(0)))))
+test accepts(theory, double_spec, double_proof) = "Proved"
+test erase(double_proof, 3).fst = 6
+test erase(pfst(app(double_proof, sc(sc(zr))))) = 4
+test holds(meaning(theory, double_spec), erase(double_proof)) = true
+test holds(meaning(theory, double_spec), {n} => pair(n, t)) = false

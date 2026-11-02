@@ -1,0 +1,80 @@
+// Graded types: a function's type records how much it can magnify a distance between inputs, counted by how often it uses them. Claims here are scored, one Bool claim per threshold, and the lens law carries the count (Reed and Pierce's Fuzz).
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+g_var := "X"
+g_lit := {n} => pair("Lit", n)
+g_add := {a, b} => pair("Add", pair(a, b))
+g_compose := {outer, inner} => pair("Compose", pair(outer, inner))
+g_mul := {a, b} => pair("Mul", pair(a, b))
+rec times :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { zero } else { add(b, times(nat_pred(a), b)) }
+rec eval_g :: {e : Tree, x : Nat} -> Nat :=>
+	if (e == g_var) { x }
+	else if (e.fst == "Lit") { e.snd }
+	else if (e.fst == "Add") { add(eval_g(e.snd.fst, x), eval_g(e.snd.snd, x)) }
+	else if (e.fst == "Compose") { eval_g(e.snd.fst, eval_g(e.snd.snd, x)) }
+	else { times(eval_g(e.snd.fst, x), eval_g(e.snd.snd, x)) }
+// the grade, or "None" when no count bounds the term: multiplying two uses of the input has no grade
+rec grade :: {e : Tree} -> Tree :=>
+	if (e == g_var) { 1 }
+	else if (e.fst == "Lit") { 0 }
+	else if ((e.fst == "Add") || (e.fst == "Compose")) {
+		let a := grade(e.snd.fst)
+		let b := grade(e.snd.snd)
+		if ((a == "None") || (b == "None")) { "None" }
+		else if (e.fst == "Add") { add(a, b) } else { times(a, b) }
+	}
+	else {
+		let a := grade(e.snd.fst)
+		let b := grade(e.snd.snd)
+		if ((a == 0) && (b == 0)) { 0 } else { "None" }
+	}
+check_grade := {r, e} => { let g := grade(e); if (g == "None") { false } else { nat_le(g, r) } }
+
+rec dist :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { b } else if (is_zero(b)) { a } else { dist(nat_pred(a), nat_pred(b)) }
+// the scored claim, read at a threshold: output distance within r times input distance
+sensitive := {r} => {e, c} => nat_le(dist(eval_g(e, c.fst), eval_g(e, c.snd)), times(r, dist(c.fst, c.snd)))
+at_grade := {r} => lens_holds(checker_claim(check_grade(r)), sensitive(r), lens({e} => e, {_e, c} => c))
+
+nums := [0, 1, 2, 3]
+grid := nums.cross(nums, pair)
+double_x := g_add(g_var, g_var)
+quad := g_compose(double_x, double_x)
+square := g_mul(g_var, g_var)
+shifted := g_add(g_var, g_lit(3))
+test grade(double_x) = 2
+test grade(quad) = 4
+test grade(shifted) = 1
+test grade(square) = "None"
+test eval_g(quad, 3) = 12
+test over(at_grade(4), quad, grid) = "Proved"
+test over(at_grade(1), shifted, grid) = "Proved"
+// the grade is exact on these: one less is refuted, by the claim itself
+test over(sensitive(3), quad, grid).is_refuted = true
+test over(sensitive(1), double_x, grid).is_refuted = true
+// no grade is offered for a square, and search refutes every small candidate
+test check_grade(100, square) = false
+test over(sensitive(2), square, grid).is_refuted = true
+// a checker that undercounts is refuted by its own law
+undercount := lens_holds(checker_claim({_e} => true), sensitive(1), lens({e} => e, {_e, c} => c))
+test over(undercount, double_x, grid).is_refuted = true
+
+// why the count is forced: a lens that sends one challenge back cannot pay for two uses, unless its law is scaled
+err := {u, x} => if (NatR(x)) { dist(u(x), x) } else { zero }
+worst_of_two := {u, y} => if (nat_le(err(u, u(y)), err(u, y))) { y } else { u(y) }
+twice := lens({u} => {y} => u(u(y)), worst_of_two)
+scaled_holds := {scale, from, to, l} => {w, d} => nat_le(to(l.fwd(w), d), scale(from(w, l.back(w, d))))
+by_search := honest(Trees.as_items)
+test by_search(scaled_holds({n} => n, err, err, twice), succ, 60) = refuted(zero)
+test by_search(scaled_holds({n} => add(n, n), err, err, twice), succ, 60) = "Open"
+// read at threshold zero the law is the Bool one, which needs no count
+exact := {u, x} => err(u, x) == zero
+test by_search(lens_holds(exact, exact, twice), succ, 60) = "Open"

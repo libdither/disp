@@ -15,7 +15,7 @@
 //! the eager-apply exhaustion sentinel is `u32::MAX` = JS `4294967295` (NOT the wasm path's
 //! signed `-1`, since napi returns `u32` unsigned).
 
-use crate::arena::{Arena, Node, SaveOutcome, LEAF_ID};
+use crate::arena::{Arena, Halt, Node, SaveOutcome, LEAF_ID};
 use napi_derive::napi;
 
 /// One session = one owned hash-consed arena (the per-instance analogue of the wasm
@@ -49,11 +49,16 @@ impl EagerSession {
 
     // ── computation (Session.apply) ──
     /// EAGER apply — fully normalize `apply(f, x)`. Returns `u32::MAX` (JS 4294967295) on
-    /// budget exhaustion (the host treats it as the sentinel, like the wasm `-1`).
+    /// budget exhaustion (the host treats it as the sentinel, like the wasm `-1`) and
+    /// `u32::MAX - 1` when an application re-entered itself (a certain loop).
     #[napi]
     pub fn apply(&mut self, f: u32, x: u32, budget: u32) -> u32 {
         let mut b = budget as i64;
-        self.arena.reduce(f, x, &mut b).unwrap_or(u32::MAX)
+        match self.arena.reduce(f, x, &mut b) {
+            Ok(h) => h,
+            Err(Halt::Budget) => u32::MAX,
+            Err(Halt::Loop) => u32::MAX - 1,
+        }
     }
     /// M1 lazy apply: build `Susp(f, x)` in O(1), forced on demand by the next observation.
     #[napi]
@@ -70,6 +75,20 @@ impl EagerSession {
     #[napi]
     pub fn recognize_machine(&mut self, handle: u32) {
         self.arena.recognize_machine(handle);
+    }
+
+    // ── cost centres (run.ts --stats-defs; see profile.rs) ──
+    /// Label a definition's handle as centre `centre` (≥ 1) taking `arity` arguments.
+    #[napi]
+    pub fn profile_label(&mut self, handle: u32, centre: u32, arity: u32) {
+        self.arena.profile_label(handle, centre, arity);
+    }
+    /// `[inclusive, self, memo hits, memo misses]` per centre, flattened; centre 0 is the
+    /// steps under no label. Empty when nothing was labelled.
+    #[napi]
+    pub fn profile_report(&mut self) -> Vec<f64> {
+        let now = self.arena.interactions;
+        self.arena.profile.as_mut().map_or_else(Vec::new, |p| p.report(now))
     }
 
     // ── memory knobs ──

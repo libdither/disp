@@ -1,7 +1,7 @@
 //! Worked-example reduction tests (tc-net.typ §Worked Example) — exercise the eager
 //! reducer, the M1 lazy core, the ternary codec, and eager↔lazy confluence.
 
-use crate::arena::{Arena, LEAF_ID};
+use crate::arena::{Arena, Halt, LEAF_ID};
 
 // false = △ = L;  true = △△ = S(L)
 // not = △ (△ (△△) (△△△)) △ = F(F(S(L), F(L,L)), L)
@@ -245,4 +245,19 @@ fn machine_not_false_is_done_true() {
     assert_eq!(r, expected, "not false = true, as a Done state");
     assert_eq!(a.step_machine(r, k10, &mut budget).ok().unwrap(), Some(r), "a Done state is returned as is");
     assert_eq!(a.step_machine(LEAF_ID, k10, &mut budget).ok().unwrap(), None, "not a machine state: declined");
+}
+
+// ω ω = (S I I)(S I I) → (S I I)(S I I): the application re-enters itself, so eager reduce
+// reports a loop at once instead of running the budget (or memory) out.
+#[test]
+fn eager_self_application_reports_loop() {
+    let mut a = Arena::new();
+    let l = LEAF_ID;
+    let kl = a.fork(l, l);
+    let i = a.fork(kl, l); // I = △ (△ △ △) △
+    let si = a.stem(i);
+    let w = a.fork(si, i); // S I I
+    let mut budget = 1_000_000i64;
+    assert!(matches!(a.reduce(w, w, &mut budget), Err(Halt::Loop)));
+    assert!(budget > 999_000, "caught within a few steps");
 }

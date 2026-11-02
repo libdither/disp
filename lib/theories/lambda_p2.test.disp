@@ -1,0 +1,26 @@
+// Dependent types with polymorphism: propositions over a fixed type can quantify over all predicates, so equality is definable and has proofs.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+open use raw "cube.disp" {}
+
+theory := corner([poly, depd])
+test power(theory) = [true, true, false, true, false, true, false, false]
+eq_base := lam(base, lam(base, pi(arrow(base, star), arrow(app(tv(0), tv(2)), app(tv(0), tv(1))))))
+test accepts(theory, arrow(base, arrow(base, star)), eq_base) = "Proved"
+eq_at := {x, y} => app(app(eq_base, x), y)
+refl_base := lam(base, lam(arrow(base, star), lam(app(tv(0), tv(1)), tv(0))))
+test accepts(theory, pi(base, eq_at(tv(0), tv(0))), refl_base) = "Proved"
+// the identity is no proof that any two members are equal
+wrong_refl := lam(base, lam(base, lam(arrow(base, star), lam(app(tv(0), tv(2)), tv(0)))))
+test accepts(theory, pi(base, pi(base, eq_at(tv(1), tv(0)))), wrong_refl).is_refuted = true
+trans_base := lam(base, lam(base, lam(base, lam(eq_at(tv(2), tv(1)), lam(eq_at(tv(2), tv(1)), lam(arrow(base, star), lam(app(tv(0), tv(5)), app(app(tv(2), tv(1)), app(app(tv(3), tv(1)), tv(0))))))))))
+trans_ty := pi(base, pi(base, pi(base, arrow(eq_at(tv(2), tv(1)), arrow(eq_at(tv(1), tv(0)), eq_at(tv(2), tv(0)))))))
+test accepts(theory, trans_ty, trans_base) = "Proved"

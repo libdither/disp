@@ -66,6 +66,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   const showStats = args.includes("--stats")
   const showStatsDetail = args.includes("--stats-detail")
   const showStatsAll = args.includes("--stats-all")
+  const showStatsDefs = args.includes("--stats-defs")
   const valOf = (name: string): string | undefined => {
     const f = args.find(a => a === `--${name}` || a.startsWith(`--${name}=`))
     return f && f.includes("=") ? f.split("=")[1] : undefined
@@ -79,7 +80,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   // Conformance: run the standard natives (tree_eq, m_advance) in-language.
   const noNativeIntercept = args.includes("--no-native-intercept")
   const file = args.find((arg: string) => !arg.startsWith("--"))
-  if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--print=<name,glob*,Def__local>] [--locals] [--no-native-intercept] [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
+  if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--print=<name,glob*,Def__local>] [--locals] [--no-native-intercept] [--stats] [--stats-detail] [--stats-all] [--stats-defs] <file.disp>"); process.exit(1) }
   try {
     const session = getBackend(backendName).createSession({ noNativeIntercept }) as unknown as Session<Tree>
     // Warm start from the test harness's persistent reduction cache when present
@@ -150,8 +151,24 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       process.exit(missing ? 1 : 0)
     }
     const itemStats: ParseItemStats[] = []
+    // --stats-defs: label every binding's handle as it is declared (first name wins).
+    const centres: string[] = ["(no definition)"]
+    const labelled = new Set<unknown>()
+    if (showStatsDefs && !session.profileLabel) console.error(`--stats-defs: the ${backendName} backend has no cost centres`)
+    const labelItem = (item: ParseItemStats) => {
+      if ((item.kind !== "let" && item.kind !== "field") || !item.name || item.tree === undefined || labelled.has(item.tree)) return
+      // wait's partials are fix's recursion knots: unlabelled, an anonymous loop is charged to the definition around it
+      if (item.name === "wait") return
+      labelled.add(item.tree)
+      const where = item.sourcePath ? item.sourcePath.slice(item.sourcePath.lastIndexOf("/") + 1) : "?"
+      session.profileLabel!(item.tree, centres.length, item.arity ?? 1)
+      centres.push(`${item.name} (${where})`)
+    }
+    const onParseItem = showStatsDetail || (showStatsDefs && session.profileLabel)
+      ? (item: ParseItemStats) => { if (showStatsDetail) itemStats.push(item); if (showStatsDefs && session.profileLabel) labelItem(item) }
+      : undefined
     let decls: Decl[] = []
-    const r = runFile(file, { session, exposeLocals, onDecls: ds => { decls = ds }, onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
+    const r = runFile(file, { session, exposeLocals, onDecls: ds => { decls = ds }, onParseItem })
     console.log(`defs: ${r.defs}, tests: ${r.tests}, passed: ${r.passed}, failed: ${r.failed.length} [${backendName}]`)
     if (showStats) {
       const s = (session.stats?.() ?? { steps: 0 }) as EvalStats
@@ -202,6 +219,21 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
         }).slice(0, 20)
       console.log(showStatsAll ? "items:" : "top-items:")
       for (const line of selected) console.log(line)
+    }
+    if (showStatsDefs && session.profileReport) {
+      const flat = session.profileReport()
+      const rows = centres.map((name, c) => ({ name, incl: flat[4 * c] ?? 0, self: flat[4 * c + 1] ?? 0, hits: flat[4 * c + 2] ?? 0, misses: flat[4 * c + 3] ?? 0 }))
+      const total = (session.stats?.() ?? { steps: 0 }).steps
+      if (session.frozenHits?.()) console.log("defs: warm run, cache hits hide their steps (DISP_MEMO_CACHE=0 for cold counts)")
+      const pct = (n: number) => total > 0 ? `${(100 * n / total).toFixed(1).padStart(5)}%` : ""
+      const show = (title: string, key: "incl" | "self") => {
+        console.log(`${title} (of ${total} steps):`)
+        console.log(`  ${"inclusive".padStart(12)} ${"".padStart(6)} ${"self".padStart(12)} ${"".padStart(6)} ${"hits".padStart(9)} ${"misses".padStart(9)}  definition`)
+        for (const d of rows.filter(d => d[key] > 0).sort((a, b) => b[key] - a[key]).slice(0, 20))
+          console.log(`  ${String(d.incl).padStart(12)} ${pct(d.incl)} ${String(d.self).padStart(12)} ${pct(d.self)} ${String(d.hits).padStart(9)} ${String(d.misses).padStart(9)}  ${d.name}`)
+      }
+      show("defs by inclusive steps", "incl")
+      show("defs by self steps", "self")
     }
     for (const f of r.failed) console.error(`  [${f.line != null ? `${file}:${f.line}` : `test ${f.i}`}] ${f.msg}`)
     // The impure driver: a file exporting `main : Eff io_row X` runs after

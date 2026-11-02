@@ -1,0 +1,41 @@
+// The behavioural types on their own, with no syntax: one function former, used over values, over types and over numbers.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+unit_t := ty({w, _c} => w == t, [t], [plain_sample(t)])
+// plain functions
+test holds(arrow_t(bool_t, bool_t), not) = true
+test holds(arrow_t(bool_t, bool_t), {x} => pair(x, x)) = false
+test holds(arrow_t(arrow_t(bool_t, bool_t), bool_t), {f} => f(true)) = true
+// a counterexample names the sample that failed
+test judge(arrow_t(nat_t, nat_t), {n} => pair(n, n)) = refuted(call_with(plain_sample(1), t))
+// polymorphism: the same former over a universe; the abstract token catches a made-up answer
+poly_id := {_a, x} => x
+test holds(forall_t({a} => arrow_t(a, a)), poly_id) = true
+test holds(forall_t({a} => arrow_t(a, a)), {_a, x} => not(x)) = false
+test holds(forall_t({a} => arrow_t(a, a)), {_a, _x} => true) = false
+// dependent functions and pairs: the same former over numbers
+fam := {n} => if (is_zero(n)) { unit_t } else { nat_t }
+test holds(pi_t(nat_t, fam), {n} => if (is_zero(n)) { t } else { n }) = true
+test holds(pi_t(nat_t, fam), {n} => succ(n)) = false
+test holds(sigma_t(nat_t, fam), pair(2, 5)) = true
+test holds(sigma_t(nat_t, fam), pair(0, 5)) = false
+// a type operator is a function from types to types
+test holds(arrow_t(universe_t(small_types), universe_t(small_types)), {a} => arrow_t(a, a)) = true
+// equality of values: the witness does not matter
+test holds(eq_t(add(2, 2), 4), t) = true
+test holds(eq_t(add(2, 2), 5), t) = false
+// a run must finish within its budget
+test holds(arrow_t(nat_t, nat_t), fix({self, n} => self(n))) = false
+
+// an open term's value: variable 0 is the head of the list
+test eval_in([3, 5], tv(1)) = 5
+test eval_in([3, 5], sc(tv(0))) = 4
+test eval_in([3, 5], app(lam(nat_ty, tv(0)), tv(1))) = 5

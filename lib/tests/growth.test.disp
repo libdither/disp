@@ -1,0 +1,52 @@
+// Growth curves on real definitions: exact polynomial fits, the fit as a checked step bound, and which of two definitions is cheaper.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../growth.disp" {}
+open use raw "fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+
+cap := 20000
+// the identity is one triage that rebuilds its argument, then the delivery
+test steps_of(id, 3, cap) = 2
+test steps_of(fix({self, n} => self(n)), 1, 200) = "Out"
+// the count is the machine's: advancing exactly that many steps finishes, one fewer does not
+test m_finished(m_advance(m_start(dbl, 4), steps_of(dbl, 4, cap))) = true
+test m_finished(m_advance(m_start(dbl, 4), nat_pred(steps_of(dbl, 4, cap)))) = false
+test diffs([1, 4, 9, 16]) = [3, 5, 7]
+test newton([1, 4, 9, 16, 25]) = [1, 3, 2]
+test newton_at([1, 3, 2], 6) = 49
+
+dbl_fit := fit(dbl, 6, cap)
+test degree(dbl_fit) = 1
+test bound_of(dbl_fit, 1) = steps_of(dbl, 1, cap)
+// the base case is cheaper than the line through the rest, so the bound at 0 holds with room
+test nat_le(steps_of(dbl, 0, cap), bound_of(dbl_fit, 0)) = true
+times_self := fix({self, a, b} => if (is_zero(a)) { zero } else { add(b, self(nat_pred(a), b)) })
+sq := {n} => times_self(n, n)
+sq_fit := fit(sq, 6, cap)
+test degree(sq_fit) = 2
+// exponential growth has no polynomial fit on six points
+rec fib :: {n : Nat} -> Nat :=> if (nat_lt(n, 2)) { n } else { add(fib(nat_pred(n)), fib(nat_pred(nat_pred(n)))) }
+test fit(fib, 6, cap) = "None"
+
+// the fit is a claim: on sizes past the six it was fitted on, the program finishes within it, exactly
+within_fit := {coeffs} => {f, n} => if (NatR(n)) { m_finished(m_advance(m_start(f, n), bound_of(coeffs, n))) } else { true }
+exactly_fit := {coeffs} => {f, n} => if (NatR(n)) { steps_of(f, n, cap) == bound_of(coeffs, n) } else { true }
+test over(within_fit(dbl_fit), dbl, [7, 10, 20]) = "Proved"
+test over(exactly_fit(dbl_fit), dbl, [7, 10, 20]) = "Proved"
+test over(exactly_fit(sq_fit), sq, [7, 9]) = "Proved"
+// a fit taken on too few points is refuted on a larger size
+short_fit := fit(sq, 2, cap)
+test over(within_fit(short_fit), sq, [3, 4, 5]).is_refuted = true
+
+// evidence for an .opt.disp override: two definitions of doubling, the cheaper one and its growth
+dbl_add := {n} => add(n, n)
+dbl_add_fit := fit(dbl_add, 6, cap)
+test degree(dbl_add_fit) = 1
+test cheaper(dbl_fit, dbl_add_fit) = true
+test cheaper(dbl_fit, sq_fit) = true
+test cheaper(sq_fit, dbl_fit) = false

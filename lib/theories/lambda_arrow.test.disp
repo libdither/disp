@@ -1,0 +1,25 @@
+// Simple types: functions from terms to terms, nothing else. Every member terminates, and the checker refuses self-application.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+open use raw "cube.disp" {}
+
+theory := corner([])
+test power(theory) = [true, false, false, false, false, false, false, false]
+omega_term := lam(arrow(base, base), app(tv(0), tv(0)))
+test accepts(theory, arrow(arrow(base, base), base), omega_term).is_refuted = true
+compose := lam(arrow(other, base), lam(arrow(base, other), lam(base, app(tv(2), app(tv(1), tv(0))))))
+compose_ty := arrow(arrow(other, base), arrow(arrow(base, other), arrow(base, base)))
+test accepts(theory, compose_ty, compose) = "Proved"
+test erase(compose, succ, succ, 1) = 3
+// annotations are checked: swapping the two function types does not fit
+test accepts(theory, arrow(arrow(base, other), arrow(arrow(other, base), arrow(base, base))), compose).is_refuted = true
+// a free variable is refused, whatever its type
+test accepts(theory, base, tv(0)).is_refuted = true

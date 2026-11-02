@@ -12,8 +12,10 @@
 import { describe, it, expect } from "vitest"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { eagerBackend } from "../src/eval/eager.js"
+import { parseProgram } from "../src/compile.js"
+import type { Session } from "../src/eval/types.js"
 import { sessionBatchRunner } from "../src/eval/batch.js"
 import { rustEagerNativeBackend, rustEagerNativeAvailable } from "../src/eval/rust-eager-native.js"
 
@@ -96,6 +98,72 @@ describe.skipIf(!rustEagerNativeAvailable())("disp-eager ↔ rust-eager-native d
       compared++
     }
     expect(compared, "randomized differential compared no cases — guard too strict").toBeGreaterThan(15)
+  })
+
+  // A run that re-enters an open application can never finish: the reducer says so at
+  // once instead of growing its spine until the memory cap kills it.
+  it("reports a definite loop quickly", () => {
+    const omega = "212200022000" // S I I, so omega omega → omega omega
+    expect(() => nativeFold([omega, omega])).toThrow(/loop detected/)
+    const s = rustEagerNativeBackend.createSession() as unknown as Session<number>
+    try {
+      const d = parseProgram(`open use raw "../prelude.disp" {}\nspin := fix({self, x} => self(x))\n`,
+        resolve("lib/tests/_loop_host.disp"), { session: s as never }) as unknown as { kind: string; name: string; tree: number }[]
+      const spin = d.find(x => x.kind === "Def" && x.name === "spin")!.tree
+      const t0 = Date.now()
+      expect(() => s.apply(spin, s.leaf())).toThrow(/loop detected/)
+      expect(Date.now() - t0).toBeLessThan(2000)
+    } finally {
+      s.dispose()
+    }
+  })
+
+  // Cost centres: every step lands in exactly one centre's self count, a partial
+  // application keeps its definition's label, and recursion is not double-counted.
+  it("attributes steps to definitions", () => {
+    const s = rustEagerNativeBackend.createSession() as unknown as Session<number>
+    try {
+      const names = ["(none)"]
+      const d = parseProgram(`open use raw "../prelude.disp" {}
+rec add :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { b } else { succ(add(nat_pred(a), b)) }
+double := {n} => add(n, n)
+n6 := 6
+n12 := 12
+`, resolve("lib/tests/_profile_host.disp"), {
+        session: s as never,
+        onItem: it => {
+          if ((it.kind !== "let" && it.kind !== "field") || !it.name || it.tree === undefined || it.name === "wait") return
+          s.profileLabel!(it.tree as unknown as number, names.length, it.arity ?? 1)
+          names.push(it.name)
+        },
+      }) as unknown as { kind: string; name: string; tree: number }[]
+      const h = (name: string) => d.find(x => x.kind === "Def" && x.name === name)!.tree
+      const at = (flat: number[], name: string) => {
+        const c = names.lastIndexOf(name)
+        return { incl: flat[4 * c], self: flat[4 * c + 1] }
+      }
+      const delta = (a: number[], b: number[], name: string) => {
+        const x = at(a, name), y = at(b, name)
+        return { incl: y.incl - x.incl, self: y.self - x.self }
+      }
+      const sumSelf = (flat: number[]) => flat.reduce((acc, v, i) => (i % 4 === 1 ? acc + v : acc), 0)
+      const r0 = s.profileReport!(), t0 = s.stats!().steps
+      expect(s.dumpTernary(s.apply(h("double"), h("n6")))).toBe(s.dumpTernary(h("n12")))
+      const r1 = s.profileReport!(), t1 = s.stats!().steps
+      expect(sumSelf(r1) - sumSelf(r0)).toBe(t1 - t0)
+      expect(delta(r0, r1, "double").incl).toBe(t1 - t0)
+      expect(delta(r0, r1, "add").incl).toBeGreaterThan(0)
+      expect(delta(r0, r1, "add").incl).toBeLessThanOrEqual(t1 - t0)
+      expect(delta(r0, r1, "add").self).toBeGreaterThan(delta(r0, r1, "double").self)
+      const partial = s.apply(h("add"), h("n6"))
+      const r2 = s.profileReport!(), t2 = s.stats!().steps
+      s.apply(partial, h("n12"))
+      const r3 = s.profileReport!(), t3 = s.stats!().steps
+      expect(t3).toBeGreaterThan(t2)
+      expect(delta(r2, r3, "add").incl).toBe(t3 - t2)
+    } finally {
+      s.dispose()
+    }
   })
 
   it("reports non-canonical handles", () => {

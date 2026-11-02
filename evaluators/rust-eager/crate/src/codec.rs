@@ -1,7 +1,7 @@
 //! Ternary interchange codec (preorder arity: leaf `"0"`, stem `"1"`+child, fork
 //! `"2"`+l+r). This is the one string copy per term across the FFI (EVALUATOR.md).
 
-use crate::arena::{Arena, Exhausted, Node, LEAF_ID};
+use crate::arena::{Arena, Halt, Node, LEAF_ID};
 
 impl Arena {
     /// Parse one preorder ternary term. Iterative (explicit frame stack) so a deep input
@@ -65,7 +65,7 @@ impl Arena {
     /// (a big result streams to `out` instead of being built as nodes; iterative, so deep
     /// results don't recurse). For eager handles `whnf` is the identity, so this is an
     /// iterative encode; lazy handles force as they descend.
-    pub(crate) fn dump_emit(&mut self, h: u32, out: &mut Vec<u8>, budget: &mut i64) -> Result<(), Exhausted> {
+    pub(crate) fn dump_emit(&mut self, h: u32, out: &mut Vec<u8>, budget: &mut i64) -> Result<(), Halt> {
         let mut stack: Vec<u32> = vec![h];
         while let Some(n) = stack.pop() {
             let w = self.whnf(n, budget)?;

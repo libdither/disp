@@ -1,0 +1,14 @@
+open use raw "../prelude.disp" {}
+
+record point :: {x : Nat, y : Nat, z : Nat} -> Point
+record wrap :: {inner : Tree} -> Wrapped
+
+test point(1, 2, 3).x = 1
+test point(1, 2, 3).y = 2
+test point(1, 2, 3).z = 3
+test point(1, 2, 3) = pair(1, pair(2, 3))
+test point{z := 3, x := 1, y := 2} = point(1, 2, 3)
+test tree_eq(y, {r} => r.snd.fst) = true
+test tree_eq(z, {r} => r.snd.snd) = true
+test wrap(5) = 5
+test wrap(5).inner = 5

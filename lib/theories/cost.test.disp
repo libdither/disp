@@ -1,0 +1,61 @@
+// Cost types: a member of a function type names a step bound, which turns "finishes on every input" (never refutable) into a test on one bounded run (refutable, and always a finite computation). The real tree programs are run on the machine, so a looping program cannot hang the checker.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+open use raw "../growth.disp" {}
+
+within := {f, x, n} => m_advance(m_start(f, x), n)
+// the bounded member test: on a number, the program finishes inside its bound, with a number
+total_at := {w, x} => {
+	if (NatR(x)) {
+		let m := within(w.fst, x, w.snd(x))
+		(m_finished(m)) && (NatR(m_result(m)))
+	} else { true }
+}
+// the weaker claim, with no bound: if it finishes in n steps its result is a number
+partial_at := {f, c} => {
+	if (NatR(c.fst)) {
+		let m := within(f, c.fst, c.snd)
+		if (m_finished(m)) { NatR(m_result(m)) } else { true }
+	} else { true }
+}
+by_search := honest(Trees.as_items)
+rec times :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { zero } else { add(b, times(nat_pred(a), b)) }
+spin_nat := fix({self, n} => if (is_zero(n)) { zero } else { succ(self(n)) })
+linear := {x} => times(64, succ(x))
+flat := {_x} => 400
+small := {_x} => 10
+
+test by_search(total_at, pair(succ, flat), 60) = "Open"
+test by_search(total_at, pair(dbl, linear), 45) = "Open"
+// a bound that is too small is refuted, with the first number that exceeds it
+test by_search(total_at, pair(dbl, small), 45).is_refuted = true
+// a loop is refuted against any stated bound, and the test still finishes
+test by_search(total_at, pair(spin_nat, flat), 80) = refuted(1)
+// with no bound the same loop is never refuted: it never returns a wrong value
+test partial_at(spin_nat, pair(1, 500)) = true
+test partial_at({n} => pair(n, n), pair(1, 500)) = false
+
+// the lens: forget the bound; a counterexample to the weaker claim pulls back to one of the stronger
+forget := lens({w} => w.fst, {w, c} => c.fst)
+test honest(Trees.as_items.s_map({x} => pair(x, 2000)), lens_holds(total_at, partial_at, forget), pair(dbl, linear), 30) = "Open"
+// the other way there is no lens: a bound cannot be read off a program, so this one guesses, and is refuted
+guess_bound := lens({f} => pair(f, flat), {_f, x} => pair(x, 2000))
+test by_search(lens_holds(partial_at, total_at, guess_bound), spin_nat, 80) = refuted(1)
+
+// the certificate's cost is a claim too: the bound is checked by the machine, not trusted
+test (total_at(pair(dbl, linear), 3)) && (total_at(pair(succ, flat), 3)) = true
+test total_at(pair(dbl, small), 3) = false
+
+// a bound need not be guessed: fit it on sizes 0 to 5 (lib/growth.disp), then search checks it on every number
+fitted := fit(dbl, 6, 20000)
+test by_search(total_at, pair(dbl, bound_of(fitted)), 45) = "Open"
+one_short := {n} => nat_pred(bound_of(fitted, n))
+test by_search(total_at, pair(dbl, one_short), 45).is_refuted = true

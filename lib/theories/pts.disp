@@ -1,0 +1,309 @@
+// The shared engine of the lambda-term theories, with no list of term kinds: a term
+// node is a former and its kids, and the former carries everything the engine needs
+// (how its kids bind, its reduction, its typing rule, its compilation, its meaning
+// as a behavioural type from types.disp). A theory is a set of sort rules and the
+// formers it allows, so adding a type is adding a former. `accepts` is a terminating
+// program on terms, structural on the term with every normalization fueled; `erase`
+// compiles a term to a real tree program; and the lens from `accepts` into the
+// meaning is what search can try to refute.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "types.disp" {}
+
+// a former: its kind ("Var", "Payload", "Binder" when the second kid is under a binder, or "Plain"), then its behaviours
+record former :: {kind : Tree, contract : Term -> Tree, typing : Tree, code : Tree, denote : Tree} -> Former
+record node :: {op : Former, kids : List(Term)} -> Term
+/// a Var or Payload node keeps its datum where the kids go
+payload := kids
+kind_of := {term} => term.op.kind
+k0 := {term} => term.kids.head
+k1 := {term} => term.kids.tail.head
+k2 := {term} => term.kids.tail.tail.head
+k3 := {term} => term.kids.tail.tail.tail.head
+rec nth :: {xs : List(A), i : Nat} -> A :=> if (is_zero(i)) { xs.head } else { nth(xs.tail, nat_pred(i)) }
+no_contract := {_term} => "Normal"
+
+// the one traversal: every kid in order, the second kid of a binder one level deeper
+rec walk :: {on_var : Nat -> Nat -> Term, cut : Nat, term : Term} -> Term :=> {
+	let kind := kind_of(term)
+	if (kind == "Var") { on_var(cut, term) }
+	else if (kind == "Payload") { term }
+	else if (kind == "Binder") { node(term.op, [walk(on_var, cut, term.k0), walk(on_var, succ(cut), term.k1)]) }
+	else { node(term.op, term.kids.map({kid} => walk(on_var, cut, kid))) }
+}
+// variables keep their former, so these never name one
+re_index := {v, i} => node(v.op, i)
+tm_up :: {d : Nat, term : Term} -> Term :=> walk({cut, v} => if (nat_lt(v.payload, cut)) { v } else { re_index(v, add(d, v.payload)) }, zero, term)
+tm_up_at :: {from : Nat, d : Nat, term : Term} -> Term :=> walk({cut, v} => if (nat_lt(v.payload, cut)) { v } else { re_index(v, add(d, v.payload)) }, from, term)
+tm_sub :: {val : Term, term : Term} -> Term :=> walk({cut, v} =>
+	if (nat_lt(v.payload, cut)) { v } else if (v.payload == cut) { tm_up(cut, val) } else { re_index(v, nat_pred(v.payload)) }, zero, term)
+// how often variable i occurs, and whether every node passes a test
+rec uses :: {i : Nat, term : Term} -> Nat :=> {
+	let kind := kind_of(term)
+	if (kind == "Var") { if (term.payload == i) { 1 } else { 0 } }
+	else if (kind == "Payload") { 0 }
+	else if (kind == "Binder") { add(uses(i, term.k0), uses(succ(i), term.k1)) }
+	else { reduce({kid, n} => add(uses(i, kid), n), 0, term.kids) }
+}
+rec every_node :: {test_node : Term -> Bool, term : Term} -> Bool :=>
+	if (not(test_node(term))) { false }
+	else if ((kind_of(term) == "Var") || (kind_of(term) == "Payload")) { true }
+	else { term.kids.all({kid} => every_node(test_node, kid)) }
+rec count_nodes :: {f : Former, term : Term} -> Nat :=> {
+	let here := if (term.op == f) { 1 } else { 0 }
+	if ((kind_of(term) == "Var") || (kind_of(term) == "Payload")) { here }
+	else { reduce({kid, n} => add(count_nodes(f, kid), n), here, term.kids) }
+}
+
+// one leftmost contraction, or "Normal": the node's own rule first, then its kids in order
+rec step_kids :: {step : Term -> Tree, kids : List(Term)} -> Tree :=>
+	if (kids.is_nil) { "Normal" }
+	else {
+		let first := step(kids.head)
+		if (not(first == "Normal")) { cons(first, kids.tail) }
+		else {
+			let others := step_kids(step, kids.tail)
+			if (others == "Normal") { "Normal" } else { cons(kids.head, others) }
+		}
+	}
+rec step :: {term : Term} -> Tree :=>
+	if ((kind_of(term) == "Var") || (kind_of(term) == "Payload")) { "Normal" }
+	else {
+		let here := term.op.contract(term)
+		if (not(here == "Normal")) { here }
+		else {
+			let inside := step_kids(step, term.kids)
+			if (inside == "Normal") { "Normal" } else { node(term.op, inside) }
+		}
+	}
+// the normal form within `fuel` contractions, or "Out"
+rec normal :: {term : Term, fuel : Nat} -> Tree :=>
+	if (is_zero(fuel)) { "Out" }
+	else {
+		let next := step(term)
+		if (next == "Normal") { term } else { normal(next, nat_pred(fuel)) }
+	}
+rec steps_to_normal :: {term : Term, fuel : Nat} -> Tree :=>
+	if (is_zero(fuel)) { "Out" }
+	else {
+		let next := step(term)
+		if (next == "Normal") { zero }
+		else {
+			let rest := steps_to_normal(next, nat_pred(fuel))
+			if (rest == "Out") { "Out" } else { succ(rest) }
+		}
+	}
+
+// compiling to a tree program by bracket abstraction; open code is a value, a variable or an application
+k_tree := {x, _y} => x
+s_tree := {x, y, z} => x(z, y(z))
+i_tree := {x} => x
+rec_nat_tree := {zv, sv} => fix({self, k} => if (is_zero(k)) { zv } else { sv(nat_pred(k), self(nat_pred(k))) })
+c_val := {v} => pair("Val", v)
+c_var := {i} => pair("Var", i)
+c_app := {f, a} => pair("App", pair(f, a))
+c_call := {go, v, kid} => c_app(c_val(v), go(kid))
+rec mentions_zero :: {code : Tree} -> Bool :=>
+	if (code.fst == "Var") { is_zero(code.snd) }
+	else if (code.fst == "App") { (mentions_zero(code.snd.fst)) || (mentions_zero(code.snd.snd)) }
+	else { false }
+rec lower :: {code : Tree} -> Tree :=>
+	if (code.fst == "Var") { c_var(nat_pred(code.snd)) }
+	else if (code.fst == "App") { c_app(lower(code.snd.fst), lower(code.snd.snd)) }
+	else { code }
+rec bind_zero :: {code : Tree} -> Tree :=>
+	if (not(mentions_zero(code))) { c_app(c_val(k_tree), lower(code)) }
+	else if (code.fst == "Var") { c_val(i_tree) }
+	else { c_app(c_app(c_val(s_tree), bind_zero(code.snd.fst)), bind_zero(code.snd.snd)) }
+rec code_of :: {term : Term} -> Tree :=> term.op.code(code_of, term)
+rec closed_tree :: {code : Tree} -> Tree :=>
+	if (code.fst == "Val") { code.snd }
+	else if (code.fst == "App") { closed_tree(code.snd.fst, closed_tree(code.snd.snd)) }
+	else { t }
+erase :: {term : Term} -> Tree :=> closed_tree(code_of(term))
+// the value of an open term once its variables are given: variable 0 is the head of env
+rec bind_all :: {n : Nat, code : Tree} -> Tree :=> if (is_zero(n)) { code } else { bind_all(nat_pred(n), bind_zero(code)) }
+eval_in :: {env : List(Tree), term : Term} -> Tree :=> reduce({v, f} => f(v), closed_tree(bind_all(env.length, code_of(term))), env)
+types_only := {_go, _term} => c_val(t)
+no_meaning := {_go, _sp, _env, _term} => anything_t
+
+// a spec: the sort of a sort, the sort of a function space ("None" when forbidden), the base sort, the formers allowed
+record spec :: {axiom : Tree -> Tree, rule : Tree -> Tree -> Tree, base_sort : Tree, formers : List(Former), fuel : Nat} -> Spec
+
+ok := {a} => pair("Ok", a)
+bad := {why} => pair("Bad", why)
+out_of_fuel_r := pair("Out", t)
+then_ok := {r, next} => if (r.fst == "Ok") { next(r.snd) } else { r }
+nf_r := {sp, term} => {
+	let n := normal(term, sp.fuel)
+	if (n == "Out") { out_of_fuel_r } else { ok(n) }
+}
+// two terms mean the same when their normal forms are the same tree
+same_r := {sp, a, b, answer} =>
+	if (a == b) { ok(answer) }
+	else {
+		then_ok(nf_r(sp, a), {na} => then_ok(nf_r(sp, b), {nb} =>
+			if (na == nb) { ok(answer) } else { bad(pair("mismatch", pair(na, nb))) }))
+	}
+
+// the type of a term: the theory must allow its former, and the former's rule decides
+rec infer :: {sp : Spec, ctx : List(Term), term : Term} -> Tree :=>
+	if (not(sp.formers.member(term.op))) { bad(pair("former not in this theory", term)) }
+	else { term.op.typing(infer, sp, ctx, term) }
+
+// ---- the core formers: variables, sorts, atoms, dependent functions
+var_f := former("Var", no_contract,
+	{_go, _sp, ctx, term} => if (nat_lt(term.payload, ctx.length)) { ok(tm_up(succ(term.payload), nth(ctx, term.payload))) } else { bad(pair("free variable", term.payload)) },
+	{_go, term} => c_var(term.payload),
+	{_go, _sp, env, term} => nth(env, term.payload))
+tv :: {i : Nat} -> Term :=> node(var_f, i)
+sort_f := former("Payload", no_contract,
+	{_go, sp, _ctx, term} => { let s := sp.axiom(term.payload); if (s == "None") { bad(pair("sort has no type", term.payload)) } else { ok(node(term.op, s)) } },
+	types_only,
+	{_go, _sp, _env, _term} => universe_t(small_types))
+srt :: {s : Tree} -> Term :=> node(sort_f, s)
+atom_f := former("Payload", no_contract, {_go, sp, _ctx, _term} => ok(srt(sp.base_sort)), types_only, {_go, _sp, _env, term} => abstract_t(term.payload))
+atom :: {name : Tree} -> Term :=> node(atom_f, name)
+// the sort of a term's type, and whether a function space between two sorts is allowed
+sort_r := {sp, r} => then_ok(r, {a} => then_ok(nf_r(sp, a), {n} => if (n.op == sort_f) { ok(n.payload) } else { bad(pair("not a type", n)) }))
+space_r := {sp, s1, s2} => { let s3 := sp.rule(s1, s2); if (s3 == "None") { bad(pair("forbidden function space", pair(s1, s2))) } else { ok(srt(s3)) } }
+binder_rule := {go, sp, ctx, term} =>
+	then_ok(sort_r(sp, go(sp, ctx, term.k0)), {s1} => then_ok(sort_r(sp, go(sp, cons(term.k0, ctx), term.k1)), {s2} => space_r(sp, s1, s2)))
+pi_f := former("Binder", no_contract, binder_rule, types_only,
+	{go, sp, env, term} => pi_t(go(sp, env, term.k0), {s} => go(sp, cons(s, env), term.k1)))
+pi :: {a : Term, b : Term} -> Term :=> node(pi_f, [a, b])
+arrow :: {a : Term, b : Term} -> Term :=> pi(a, tm_up(1, b))
+lam_f := former("Binder", no_contract,
+	{go, sp, ctx, term} => then_ok(sort_r(sp, go(sp, ctx, term.k0)), {_s} => then_ok(go(sp, cons(term.k0, ctx), term.k1), {body} => {
+		let fn_ty := pi(term.k0, body)
+		then_ok(sort_r(sp, go(sp, ctx, fn_ty)), {_s2} => ok(fn_ty))
+	})),
+	{go, term} => bind_zero(go(term.k1)),
+	no_meaning)
+lam :: {a : Term, b : Term} -> Term :=> node(lam_f, [a, b])
+app_f := former("Plain",
+	{term} => if (term.k0.op == lam_f) { tm_sub(term.k1, term.k0.k1) } else { "Normal" },
+	{go, sp, ctx, term} => then_ok(go(sp, ctx, term.k0), {fn_ty} => then_ok(nf_r(sp, fn_ty), {fn_nf} =>
+		if (not(fn_nf.op == pi_f)) { bad(pair("not a function", fn_nf)) }
+		else { then_ok(go(sp, ctx, term.k1), {arg} => same_r(sp, arg, fn_nf.k0, tm_sub(term.k1, fn_nf.k1))) })),
+	{go, term} => c_app(go(term.k0), go(term.k1)),
+	// a type stuck on a variable: the variable's static face is a function to types
+	{_go, _sp, env, term} => eval_in(env, term))
+app :: {f : Term, a : Term} -> Term :=> node(app_f, [f, a])
+core := [var_f, sort_f, atom_f, pi_f, lam_f, app_f]
+
+// ---- numbers: the type, its two constructors, and two recursors (plain, and with a motive that may depend on the number)
+nat_f := former("Plain", no_contract, {_go, sp, _ctx, _term} => ok(srt(sp.base_sort)), types_only, {_go, _sp, _env, _term} => nat_t)
+nat_ty :: Term := node(nat_f, [])
+zero_f := former("Plain", no_contract, {_go, _sp, _ctx, _term} => ok(nat_ty), {_go, _term} => c_val(zero), no_meaning)
+zr :: Term := node(zero_f, [])
+succ_f := former("Plain", no_contract,
+	{go, sp, ctx, term} => then_ok(go(sp, ctx, term.k0), {n} => same_r(sp, n, nat_ty, nat_ty)),
+	{go, term} => c_call(go, succ, term.k0), no_meaning)
+sc :: {n : Term} -> Term :=> node(succ_f, [n])
+// both recursors: kids are a motive, a base, a step and the number, and unfold on a numeral
+unfold_rec := {term} =>
+	if (term.k3.op == zero_f) { term.k1 }
+	else if (term.k3.op == succ_f) { app(app(term.k2, term.k3.k0), node(term.op, [term.k0, term.k1, term.k2, term.k3.k0])) }
+	else { "Normal" }
+rec_code := {go, term} => c_app(c_app(c_call(go, rec_nat_tree, term.k1), go(term.k2)), go(term.k3))
+// plain recursion (System T): the motive is one type
+iter_f := former("Plain", unfold_rec,
+	{go, sp, ctx, term} => {
+		let a := term.k0
+		then_ok(sort_r(sp, go(sp, ctx, a)), {_s} =>
+			then_ok(go(sp, ctx, term.k3), {n} => then_ok(same_r(sp, n, nat_ty, t), {_a} =>
+				then_ok(go(sp, ctx, term.k1), {z} => then_ok(same_r(sp, z, a, t), {_b} =>
+					then_ok(go(sp, ctx, term.k2), {s} => same_r(sp, s, arrow(nat_ty, arrow(a, a)), a)))))))
+	},
+	rec_code, no_meaning)
+iter :: {a : Term, z : Term, s : Term, n : Term} -> Term :=> node(iter_f, [a, z, s, n])
+// induction: the motive is a family over numbers
+nrec_f := former("Plain", unfold_rec,
+	{go, sp, ctx, term} => {
+		let p := term.k0
+		let up := tm_up(1, p)
+		then_ok(go(sp, ctx, p), {p_ty} => then_ok(nf_r(sp, p_ty), {p_nf} =>
+			if (not((p_nf.op == pi_f) && (p_nf.k0 == nat_ty))) { bad("motive is not a family over numbers") }
+			else {
+				then_ok(go(sp, ctx, term.k3), {n} => then_ok(same_r(sp, n, nat_ty, t), {_a} =>
+					then_ok(go(sp, ctx, term.k1), {z} => then_ok(same_r(sp, z, app(p, zr), t), {_b} =>
+						then_ok(go(sp, ctx, term.k2), {s} =>
+							then_ok(same_r(sp, s, pi(nat_ty, arrow(app(up, tv(0)), app(up, sc(tv(0))))), t), {_c} => nf_r(sp, app(p, term.k3))))))))
+			}))
+	},
+	rec_code, no_meaning)
+nrec :: {p : Term, z : Term, s : Term, n : Term} -> Term :=> node(nrec_f, [p, z, s, n])
+numbers := [nat_f, zero_f, succ_f]
+
+// ---- dependent pairs
+sig_f := former("Binder", no_contract, binder_rule, types_only,
+	{go, sp, env, term} => sigma_t(go(sp, env, term.k0), {v} => go(sp, cons(v, env), term.k1)))
+sig :: {a : Term, b : Term} -> Term :=> node(sig_f, [a, b])
+mkp_f := former("Plain", no_contract,
+	{go, sp, ctx, term} => then_ok(nf_r(sp, term.k0), {pair_ty} =>
+		if (not(pair_ty.op == sig_f)) { bad("pair annotated with a non-pair type") }
+		else {
+			then_ok(sort_r(sp, go(sp, ctx, pair_ty)), {_s} =>
+				then_ok(go(sp, ctx, term.k1), {a} => then_ok(same_r(sp, a, pair_ty.k0, t), {_a} =>
+					then_ok(go(sp, ctx, term.k2), {b} => same_r(sp, b, tm_sub(term.k1, pair_ty.k1), pair_ty)))))
+		}),
+	{go, term} => c_app(c_call(go, pair, term.k1), go(term.k2)), no_meaning)
+mkp :: {a_ty : Term, a : Term, b : Term} -> Term :=> node(mkp_f, [a_ty, a, b])
+proj_rule := {first} => {go, sp, ctx, term} => then_ok(go(sp, ctx, term.k0), {p_ty} => then_ok(nf_r(sp, p_ty), {n} =>
+	if (not(n.op == sig_f)) { bad("projection of a non-pair") } else if (first) { ok(n.k0) } else { ok(tm_sub(node(term.op, [term.k0]), n.k1)) }))
+fst_f := former("Plain", {term} => if (term.k0.op == mkp_f) { term.k0.k1 } else { "Normal" }, proj_rule(true), {go, term} => c_call(go, pair_fst, term.k0), no_meaning)
+pfst :: {p : Term} -> Term :=> node(fst_f, [p])
+snd_f := former("Plain", {term} => if (term.k0.op == mkp_f) { term.k0.k2 } else { "Normal" },
+	{go, sp, ctx, term} => then_ok(go(sp, ctx, term.k0), {p_ty} => then_ok(nf_r(sp, p_ty), {n} =>
+		if (not(n.op == sig_f)) { bad("projection of a non-pair") } else { ok(tm_sub(pfst(term.k0), n.k1)) })),
+	{go, term} => c_call(go, pair_snd, term.k0), no_meaning)
+psnd :: {p : Term} -> Term :=> node(snd_f, [p])
+pairs := [sig_f, mkp_f, fst_f, snd_f]
+
+// ---- equality, its proof, and transport along it
+eq_f := former("Plain", no_contract,
+	{go, sp, ctx, term} => then_ok(sort_r(sp, go(sp, ctx, term.k0)), {s} =>
+		then_ok(go(sp, ctx, term.k1), {x} => then_ok(same_r(sp, x, term.k0, t), {_a} =>
+			then_ok(go(sp, ctx, term.k2), {y} => same_r(sp, y, term.k0, srt(s)))))),
+	types_only,
+	{_go, _sp, env, term} => eq_t(eval_in(env, term.k1), eval_in(env, term.k2)))
+eq_ty :: {a : Term, x : Term, y : Term} -> Term :=> node(eq_f, [a, x, y])
+refl_f := former("Plain", no_contract, {go, sp, ctx, term} => then_ok(go(sp, ctx, term.k0), {a} => ok(eq_ty(a, term.k0, term.k0))), types_only, no_meaning)
+refl :: {x : Term} -> Term :=> node(refl_f, [x])
+transport_f := former("Plain",
+	{term} => if (term.k1.op == refl_f) { term.k2 } else { "Normal" },
+	{go, sp, ctx, term} => then_ok(go(sp, ctx, term.k1), {e_ty} => then_ok(nf_r(sp, e_ty), {e} =>
+		if (not(e.op == eq_f)) { bad("transport along a non-equality") }
+		else {
+			then_ok(go(sp, ctx, term.k0), {p_ty} => then_ok(nf_r(sp, p_ty), {p_nf} =>
+				if (not((p_nf.op == pi_f) && (p_nf.k0 == e.k0))) { bad("motive is not a family over the equal things") }
+				else { then_ok(go(sp, ctx, term.k2), {d} => then_ok(same_r(sp, d, app(term.k0, e.k1), t), {_a} => nf_r(sp, app(term.k0, e.k2)))) }))
+		})),
+	{go, term} => go(term.k2), no_meaning)
+transport :: {p : Term, e : Term, d : Term} -> Term :=> node(transport_f, [p, e, d])
+equality := [eq_f, refl_f, transport_f]
+
+// ---- checking, meaning, and the lens between them
+// the terminating program on terms: Proved, Refuted (with the term and the reason), or Open when fuel ran out
+accepts :: {sp : Spec, a : Term, term : Term} -> Verdict :=> {
+	let r := then_ok(infer(sp, [], term), {found} => same_r(sp, found, a, t))
+	if (r.fst == "Ok") { "Proved" } else if (r.fst == "Bad") { refuted(pair(term, r.snd)) } else { open_on("out of fuel") }
+}
+accepted :: {sp : Spec, a : Term, term : Term} -> Bool :=> is_proved(accepts(sp, a, term))
+checker_claim :: {check : Term -> Bool} -> Claim :=> {term, _c} => check(term)
+// what a syntactic type means: each former says, after normalizing
+rec interp :: {sp : Spec, env : List(Tree), a : Term} -> Type :=> {
+	let n := normal(a, sp.fuel)
+	if (n == "Out") { anything_t } else { n.op.denote(interp, sp, env, n) }
+}
+meaning :: {sp : Spec, a : Term} -> Type :=> interp(sp, [], a)
+challenges_at :: {sp : Spec, a : Term} -> List(Tree) :=> meaning(sp, a).challenges
+// from "the checker says yes" to "the program passes its meaning": erase forward, the challenge unchanged
+erase_lens :: Lens := lens(erase, {_term, c} => c)
+sound_at :: {sp : Spec, check : Term -> Term -> Bool, a : Term} -> Claim :=>
+	lens_holds(checker_claim(check(a)), meaning(sp, a).claim, erase_lens)

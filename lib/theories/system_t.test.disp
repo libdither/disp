@@ -1,0 +1,43 @@
+// Goedel's System T: simple types plus numbers and recursion on them. Every member terminates, yet it computes every function arithmetic can prove total, Ackermann included.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../machine.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../stream.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../../IDEAS.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+
+theory := spec({s} => if (s == "*") { "[]" } else { "None" }, {a, b} => if ((a == "*") && (b == "*")) { "*" } else { "None" }, "*", core.append(numbers).append([iter_f]), 400)
+nn := arrow(nat_ty, nat_ty)
+nnn := arrow(nat_ty, nn)
+plus_t := lam(nat_ty, lam(nat_ty, iter(nat_ty, tv(0), lam(nat_ty, lam(nat_ty, sc(tv(0)))), tv(1))))
+times_t := lam(nat_ty, lam(nat_ty, iter(nat_ty, zr, lam(nat_ty, lam(nat_ty, app(app(plus_t, tv(2)), tv(0)))), tv(1))))
+ack_t := lam(nat_ty, iter(nn, lam(nat_ty, sc(tv(0))),
+	lam(nat_ty, lam(nn, lam(nat_ty, iter(nat_ty, app(tv(1), sc(zr)), lam(nat_ty, lam(nat_ty, app(tv(3), tv(0)))), tv(0))))), tv(0)))
+test accepts(theory, nnn, plus_t) = "Proved"
+test accepts(theory, nnn, times_t) = "Proved"
+test accepts(theory, nnn, ack_t) = "Proved"
+test erase(plus_t, 2, 3) = 5
+test erase(times_t, 3, 3) = 9
+test erase(ack_t, 2, 2) = 7
+// the same answer two ways: the normalizer on terms, the real program on trees
+test normal(app(app(times_t, sc(sc(zr))), sc(sc(sc(zr)))), 400) = sc(sc(sc(sc(sc(sc(zr))))))
+
+// no recursion but this one: self-application, and induction (a motive that depends on the number), are refused
+test accepts(theory, nn, lam(nat_ty, app(tv(0), tv(0)))).is_refuted = true
+test accepts(theory, nn, lam(nat_ty, nrec(lam(nat_ty, eq_ty(nat_ty, tv(0), tv(0))), zr, zr, tv(0)))).is_refuted = true
+
+// the lens into what the type means: accepted, erased, and run on the type's own challenges
+test over(sound_at(theory, accepted(theory), nnn), plus_t, challenges_at(theory, nnn)) = "Proved"
+test over(sound_at(theory, accepted(theory), nnn), ack_t, challenges_at(theory, nnn)) = "Proved"
+test challenges_at(theory, nnn).length = 9
+// a function returned where a number was promised
+lie := lam(nat_ty, lam(nat_ty, tv(0)))
+test over(sound_at(theory, accepted(theory), nn), lie, challenges_at(theory, nn)) = "Proved"
+test over(sound_at(theory, {_a, _term} => true, nn), lie, challenges_at(theory, nn)).is_refuted = true
+// total: the machine finishes every accepted program it is handed here
+test m_finished(returns(erase(times_t, 2), 3)) = true
+test m_finished(returns(erase(ack_t, 1), 2)) = true
