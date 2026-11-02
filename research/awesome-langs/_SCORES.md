@@ -5,7 +5,7 @@ three or four clauses in [`_AXES.md`](_AXES.md#grading-the-maximum-and-the-claus
 scores 0, ½ or 1 and the axis percentage is their weighted mean. The write-ups' scorecard notes are the
 evidence. `†` marks a value taken from general knowledge beyond the write-up; `?` marks a clause the
 write-up does not settle (scored 0, percentage provisional); `—` marks a clause that does not apply
-(left out of the mean). Rows follow the master table, disp first. disp's row is graded at what the claim kernel (`lib/claim.disp`, `research/CLAIMS_OVER_TREES.md` §9) could reach, a best guess; every other row is graded on what ships. This file is the source:
+(left out of the mean). Rows follow the master table, disp first. disp has two rows. **disp (theoretical)** is not what disp has: each clause scores what an existing argument says the design could reach, pinned by a test or written in a design note, and a clause with no argument scores what the argument stops at. The arguments are in [`_AXES.md`](_AXES.md#the-arguments). **disp (today)** is what the repo has, checked as of commit `a5e051f49b1b` (2026-11-02); bump the commit when you re-check it. Every other row is graded on what ships, and "ahead of disp" means ahead of the theoretical row. This file is the source:
 `scripts/awesome-scores.py --write` recomputes the percentages and copies every cell into the
 write-ups, the master table and disp's own table.
 
@@ -17,7 +17,8 @@ Weights: 1 · 1 · 1
 
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
-| disp | 1 | 1 | 1 | 100 | a program is a tree that `shape_of` takes apart; `honest` and `certify` are disp programs you apply |
+| disp (theoretical) | 1 | 1 | 1 | 100 | pinned by tests: a program is a tree that `shape_of` takes apart; `honest` and `certify` are disp programs you apply |
+| disp (today) | 1 | 1 | 1 | 100 | same as in theory: `shape_of` takes a program apart, and `honest` and `certify` are disp programs you apply |
 | HVM4 / Interaction Calculus | ½(runtime graphs) | 0 | 0 | 17 | terms are runtime graph nodes with no in-language inspection; untyped, no checker |
 | Bend 2 / BendTT / BendRT | 0 | 0 | 0 | 0 | no reflection; templates re-parse closed source text at compile time; the checker is TypeScript |
 | Metamath Zero | 1 | ½(verifier stated in MM0) | ? | 50? | MM1 metaprograms manipulate terms; `verifier.mm0` states the verifier in MM0 while the running one is C; whether metaprograms can call it is not in the write-up |
@@ -58,7 +59,8 @@ Weights: 45 · 35 · 20
 
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
-| disp | 1 | 1 | 1 | 100 | at the claim kernel's limit: a claim tests bounded runs, so a dependent type is a claim; a proof is a lens built from the rule lenses; equality is agreement at a type, certified by induction (`id` and `shift`). A claim with no computable witness stays open |
+| disp (theoretical) | 1 | 1 | 1 | 100 | a member of a function type is a lens (`implies`, pinned); proofs are lenses composed from the five rule lenses, so the library is work, not theory; equality at a type is agreement at every challenge, certified by induction (pinned for `id`/`shift` and the two doublings) |
+| disp (today) | 1 | ½(no library) | ½(a few instances) | 72 | claims over bounded runs and lenses work, but the rule lenses and `certify` live in `lib/tests/claim.test.disp` with little library around them; equality is certified for `id` and `shift` only |
 | HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | untyped; the typed language became Bend 2, which does not run on this runtime |
 | Bend 2 / BendTT / BendRT | 1 | ½(small library) | ½(propositional) | 72 | affine dependent types with Type : Type, laws proven by defs over a small Base; quantities &0/&1/&2 are a usage grade; intensional J with a written motive, no extensionality |
 | Metamath Zero | 0 | 1 | 0 | 35 | a HOL subset with explicit proof objects and a modest library; no dependent types, no resource types, equality not addressed |
@@ -99,7 +101,8 @@ Weights: 40 · 40 · 20
 
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
-| disp | 1 | 1 | 1 | 100 | at the claim kernel's limit: trust stops at five hand-proved rules over a small machine; a certificate is a tree re-checked by running it, and a refutation re-runs concretely; the enumerating `honest` check is independent of `certify` but can only refute, and a second certificate checker is small to write |
+| disp (theoretical) | 1 | 1 | ½(one core) | 90 | trust stops at five hand-proved rule lenses over a small machine; a certificate is a tree `certify` re-runs; `honest` re-checks independently but only refutes, and no second certificate checker is designed |
+| disp (today) | ½(two checkers mid-move) | ½(certificates in tests only) | ½(one core) | 50 | `lib/kernel/` is still the checker in use beside the claim kernel; a verdict's `"Proved"` (`lib/verdict.disp`) is a bare string, and certificates exist only inside the test file; `honest` re-checks by enumeration but only refutes |
 | HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | trust is `hvm.c` |
 | Bend 2 / BendTT / BendRT | ½(one-file kernel) | ½(proof defs) | 0 | 40 | bend.ts is "the trusted kernel", one human-written file, checking in one pass; proofs are defs the kernel checks, no certificate minted; nothing re-checks, and the Lean model admittedly lags the checker |
 | Metamath Zero | 1 | 1 | 1 | 100 | a C verifier small enough to formalize; MMB proof objects; MM1 untrusted; independent verifiers in Rust and Kotlin; MMC's verified compilation is the one licensed rewrite |
@@ -140,7 +143,8 @@ Weights: 40 · 30 · 30
 
 | Project | a | b | c | % | Why |
 |---|:-:|:-:|:-:|--:|---|
-| disp | ½(certified, not run) | 1 | ½(cost report) | 65 | at the claim kernel's limit: a machine model is one more program, so a claim can test bounded runs of a target and certify assembly; running it fast needs the handoff, which a pure claim can't perform; `--stats` reports cost beside the run |
+| disp (theoretical) | 1 | 1 | 1 | 100 | designed, not built: a hardware model is a tree program whose cost is its output (`research/OPTIMIZER.typ` §9), so claims certify code for it; the one impure driver at the program's boundary runs work in a faster language and returns outputs plus cost (`FOUNDATIONS.md` §8) |
+| disp (today) | 0 | 0 | ½(cost report) | 15 | interpreted tree-walkers, no target model, no handoff; `--stats` reports steps beside the run |
 | HVM4 / Interaction Calculus | 1 | 0 | ½(cost report)† | 55 | native C with GPU lineage; the runtime reports interaction counts; no verified path |
 | Bend 2 / BendTT / BendRT | 1 | 0 | ? | 40? | 0.8–1.5× hand-written C sequential, 9–12× on 16 threads, up to 67× on the GPU, self-reported; clang, Metal and CUDA trusted and the C runtime unverified; the pre-release interaction counter was dropped ("bend has no --stats"); whether it can call out is not in the write-up |
 | Metamath Zero | ½(not general) | 1 | 0 | 50 | MMC compiles to a formal x86 model with the correctness proved; not a general systems language; no cost model |
@@ -181,7 +185,8 @@ Weights: 35 · 35 · 15 · 15
 
 | Project | a | b | c | d | % | Why |
 |---|:-:|:-:|:-:|:-:|--:|---|
-| disp | 1 | 1 | ½(counterexample pool) | ½(Löbian ceiling) | 85 | at the claim kernel's limit: `cegis` searches candidates against a claim, and cost bounds are claims too; kept counterexamples are adversaries, but nothing writes new claims; a successor's soundness can't be proved from inside, so self-application steps down a level each time |
+| disp (theoretical) | 1 | 1 | ½(counterexamples kept) | ½(Löbian ceiling) | 85 | `cegis` is pinned; generators derived from claims widen its pool (`research/CLAIMS_OVER_TREES.md` §4); score = verdict × cost (`research/OPTIMIZER.typ` §2); nothing designed writes new claims; a successor's soundness can't be proved from inside (`research/LOB_AND_CURRY.md` §1) |
+| disp (today) | ½(basic search) | ½(checker only) | ½(counterexamples kept) | 0 | 42 | `cegis` walks a listed pool of candidates against a claim and keeps the counterexamples it finds; cost isn't in the loop, and nothing searches over disp itself |
 | HVM4 / Interaction Calculus | ½(value enumeration) | ½(tests only) | 0 | 0 | 35 | the primer solves X + 2 = 4 by collapsing an infinite superposition of naturals; the program-hole filler (SupGen, NeoGen) was never published; equations rather than a checker, no cost objective |
 | Bend 2 / BendTT / BendRT | ½(external LLM loop) | ½(checker only) | 0 | 0 | 35 | the shipped loop is a human LAWS.bend, an AI-written PROOF.bend and the checker as the gate (Bender wraps Anthropic/OpenAI models); the checker scores, cost never does; no search of its own |
 | Metamath Zero | 0 | 0 | 0 | 0 | 0 | MM1 tactics are human-written |

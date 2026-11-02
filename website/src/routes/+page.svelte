@@ -423,7 +423,8 @@
   </p>
   <ol class="axes">
     {#each summary.axes as ax (ax.id)}
-      {@const s = summary.disp[ax.id]}
+      {@const s = summary.dispToday[ax.id]}
+      {@const theory = summary.disp[ax.id]}
       <li>
         <span class="ax-id">{ax.id}</span>
         <div class="ax-body">
@@ -433,11 +434,11 @@
         <span
           class="ax-pip lv{s.level ?? 'n'}"
           style:--fill={s.pct ?? 0}
-          title="disp today: {s.pct != null
+          title="disp today (as of {summary.dispCommit}): {s.pct != null
             ? `${s.pct}% of the requirement, `
             : ''}{s.raw} {s.level == null
             ? 'not scored'
-            : LEVEL_WORD[s.level]}{s.tag ? ` (${s.tag})` : ''}"
+            : LEVEL_WORD[s.level]}{s.tag ? ` (${s.tag})` : ''}; in theory: {theory.pct}%"
         >
           {#if s.clauses}
             <ClauseDots clauses={s.clauses} labels={ax.clauses} size={10} />
@@ -455,18 +456,19 @@
     {/each}
   </ol>
   <p class="axes-key">
-    The figure on each row is where disp stands today, one dot per clause of the
+    The figure on each row is where disp stands today (as of commit
+    <code>{summary.dispCommit}</code>), one dot per clause of the
     requirement: filled = met, half-filled = halfway, empty = not met, dashed =
     still open. The percent is their weighted mean, the word is how it's reached, and
-    hovering a dot names its clause. Text and scores come from
+    hovering a dot names its clause; hovering the row shows what disp's design
+    could reach in theory. Text and scores come from
     <a href={AXES_URL} target="_blank" rel="noopener">_AXES.md</a>.
   </p>
   <div class="teaser card">
     <p>
       {summary.count} neighbouring projects are scored on the same five axes. None
-      of them combines native reflection with search, the pair disp is built around,
-      and disp is last on equality, where several small projects already have answers.
-      Per axis, these score higher than disp:
+      of them combines native reflection with search, the pair disp is built around.
+      Per axis, these score higher than disp could in theory:
     </p>
     <ul class="ahead-list">
       {#each summary.axes as ax (ax.id)}

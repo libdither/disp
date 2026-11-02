@@ -30,6 +30,7 @@
   const average = (scores: Record<AxisId, Score>) =>
     Math.round(AXIS_IDS.reduce((sum, id) => sum + (value(scores[id]) ?? 0), 0) / AXIS_IDS.length)
   const dispAverage = $derived(average(data.disp))
+  const dispTodayAverage = $derived(average(data.dispToday))
 
   // ---- Pareto dominance among the surveyed languages (disp is a reference, not a member).
   // Layer 0 is the frontier: nobody matches-or-beats it on every axis at once. Peeling
@@ -104,9 +105,17 @@
   const series = $derived<RadarSeries[]>([
     {
       key: 'disp',
-      name: 'disp',
+      name: 'disp in theory',
       color: 'var(--cmp-0)',
       values: AXIS_IDS.map((id) => value(data.disp[id])),
+      ahead: AXIS_IDS.map(() => false),
+      dashed: true
+    },
+    {
+      key: 'disp-today',
+      name: 'disp today',
+      color: 'var(--cmp-0)',
+      values: AXIS_IDS.map((id) => value(data.dispToday[id])),
       ahead: AXIS_IDS.map(() => false)
     },
     ...picks.flatMap((p) => {
@@ -175,7 +184,7 @@
       return
     }
     const id = AXIS_IDS[hit.axis]
-    const s = hit.series.key === 'disp' ? data.disp[id] : langOf(hit.series.key)?.scores[id]
+    const s = hit.series.key === 'disp' ? data.disp[id] : hit.series.key === 'disp-today' ? data.dispToday[id] : langOf(hit.series.key)?.scores[id]
     if (s) showTip(ev, hit.series.name, id, s)
   }
 
@@ -218,21 +227,23 @@
             </tr>
           </thead>
           <tbody>
-            <tr class="disp-row">
-              <th scope="row">
-                <span class="namecell">
-                  <span class="rowname"><i class="sw" aria-hidden="true"></i>disp <small class="self">self-assessed</small></span>
-                  <span class="avg" title="average of the five">{dispAverage}%</span>
-                </span>
-              </th>
-              {#each data.axes as ax (ax.id)}
-                {@const s = data.disp[ax.id]}
-                <td class="cell {lv(s.level)}" style:--fill={value(s) ?? 0} onmouseenter={(e) => showTip(e, 'disp', ax.id, s)} onmouseleave={hideTip}>
-                  <span class="score">{#if s.clauses}<ClauseDots clauses={s.clauses} size={8} titles={false} />{:else}{s.raw}{/if}<span class="pct">{pctText(s)}</span></span>
-                  {#if s.tag}<small class="how">{s.tag}</small>{/if}
-                </td>
-              {/each}
-            </tr>
+            {#each [{ name: 'disp in theory', note: 'not built: what the design could reach', scores: data.disp, avg: dispAverage, theory: true }, { name: 'disp today', note: `as of ${data.dispCommit}`, scores: data.dispToday, avg: dispTodayAverage, theory: false }] as row (row.name)}
+              <tr class="disp-row" class:theory={row.theory}>
+                <th scope="row">
+                  <span class="namecell">
+                    <span class="rowname"><i class="sw" aria-hidden="true"></i>{row.name} <small class="self">{row.note}</small></span>
+                    <span class="avg" title="average of the five">{row.avg}%</span>
+                  </span>
+                </th>
+                {#each data.axes as ax (ax.id)}
+                  {@const s = row.scores[ax.id]}
+                  <td class="cell {lv(s.level)}" style:--fill={value(s) ?? 0} onmouseenter={(e) => showTip(e, row.name, ax.id, s)} onmouseleave={hideTip}>
+                    <span class="score">{#if s.clauses}<ClauseDots clauses={s.clauses} size={8} titles={false} />{:else}{s.raw}{/if}<span class="pct">{pctText(s)}</span></span>
+                    {#if s.tag}<small class="how">{s.tag}</small>{/if}
+                  </td>
+                {/each}
+              </tr>
+            {/each}
             {#each rows as lang (lang.slug)}
               {@const pick = pickOf(lang.slug)}
               <tr class:picked={!!pick} style:--row-color={pick ? SLOT_COLORS[pick.slot] : null}>
@@ -533,10 +544,18 @@
   .disp-row {
     --row-color: var(--cmp-0);
   }
+  .disp-row:not(.theory) th,
+  .disp-row:not(.theory) td {
+    border-bottom: 2px solid var(--border-strong);
+  }
   .disp-row th,
   .disp-row td {
-    border-bottom: 2px solid var(--border-strong);
     font-weight: 600;
+  }
+  .disp-row.theory th,
+  .disp-row.theory td {
+    font-style: italic;
+    opacity: 0.75;
   }
   .disp-row th {
     box-shadow: inset 3px 0 0 var(--row-color);

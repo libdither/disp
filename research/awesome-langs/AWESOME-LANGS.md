@@ -21,32 +21,34 @@ correct and fast — then turn that search on itself.
 
 ## The master table
 
-Cells are `symbol percent`: the share of what `GOALS.md` asks for, per [`_AXES.md`](_AXES.md) clauses; ✅ from 80%, ◐ from 25%, ✗ below · **bold = ahead of disp's claim-kernel limit on that axis** · the write-ups carry the how-tags and clause values
+Cells are `symbol percent`: the share of what `GOALS.md` asks for, per [`_AXES.md`](_AXES.md) clauses; ✅ from 80%, ◐ from 25%, ✗ below · **bold = ahead of disp's theoretical row on that axis** · the two disp rows are what its design could reach, by the arguments written down so far (not something disp has), and what it has today, as of the commit named in [`_AXES.md`](_AXES.md#where-disp-is-today) · the write-ups carry the how-tags and clause values
 
 | Project | G1 | G2 | G3 | G4 | G5 | Closest to disp on |
 |---|:--:|:--:|:--:|:--:|:--:|---|
+| *disp theoretical* | ✅ 100% | ✅ 100% | ✅ 90% | ✅ 100% | ✅ 85% | not built: [what the design's arguments reach](_AXES.md#where-disp-could-get-in-theory) |
+| *disp today* | ✅ 100% | ◐ 72% | ◐ 50% | ✗ 15% | ◐ 42% | [what the repo has](_AXES.md#where-disp-is-today) as of `a5e051f49b1b` |
 | [**HVM4 / Interaction Calculus**](hvm4.md) | ✗ 17% | ✗ 0% | ✗ 0% | ◐ 55% | ◐ 35% | the *search substrate*: label-coordinated duplication and superposition, shipped but dormant |
 | [**Bend 2 / BendTT / BendRT**](bend2.md) | ✗ 0% | ◐ 72% | ◐ 40% | ◐ 40%? | ◐ 35% | the shipped *law / proof / gate* loop, and consistency from affinity instead of universes |
-| [**Metamath Zero**](metamath-zero.md) | ◐ 50%? | ◐ 35% | ✅ 100% | ◐ 50% | ✗ 0% | the *kernel* + hardware model + self-verification |
-| [**Verus**](verus.md) | ✗ 0% | ◐ 50% | ✗ 0% | **◐ 70%** | ◐ 52% | *delivered outcomes* — verified fast systems code from specs |
-| [**F\* / Low\* / Pulse**](fstar-lowstar-pulse.md) | ◐ 67% | ✅ 90% | ✗ 20% | **✅ 85%** | ✗ 0% | the *shipping baseline*: dependent spec → verified fast C |
+| [**Metamath Zero**](metamath-zero.md) | ◐ 50%? | ◐ 35% | **✅ 100%** | ◐ 50% | ✗ 0% | the *kernel* + hardware model + self-verification |
+| [**Verus**](verus.md) | ✗ 0% | ◐ 50% | ✗ 0% | ◐ 70% | ◐ 52% | *delivered outcomes* — verified fast systems code from specs |
+| [**F\* / Low\* / Pulse**](fstar-lowstar-pulse.md) | ◐ 67% | ✅ 90% | ✗ 20% | ✅ 85% | ✗ 0% | the *shipping baseline*: dependent spec → verified fast C |
 | [**Lean 4**](lean4.md) | ✅ 100% | ✅ 90% | ✅ 80% | ◐ 35% | ◐ 35% | *spec power* + where the AI provers live |
 | [**Nova**](nova.md) | ✗ 0% | ✅ 82% | ✅ 80%? | ✗ 0% | ✗ 0% | the *equality* answer + certificate/kernel split |
-| [**Blight**](blight.md) | ✗ 0%? | ✅ 82% | ✅ 100% | ✗ 0% | ✗ 0% | the *kernel architecture*, independently reinvented |
+| [**Blight**](blight.md) | ✗ 0%? | ✅ 82% | **✅ 100%** | ✗ 0% | ✗ 0% | the *kernel architecture*, independently reinvented |
 | [**Soma**](soma.md) | ✗ 0% | ◐ 45% | ✗ 0% | ◐ 40%? | ✗ 0% | same four ingredients, assembled for speed |
-| [**fiat-crypto + CryptOpt + Jasmin**](fiat-crypto-cryptopt-jasmin.md) | ✅ 100% | ✅ 90% | ✅ 80% | **✅ 85%** | ◐ 70% | the *whole endgame*, at 1/1000th scope |
+| [**fiat-crypto + CryptOpt + Jasmin**](fiat-crypto-cryptopt-jasmin.md) | ✅ 100% | ✅ 90% | ✅ 80% | ✅ 85% | ◐ 70% | the *whole endgame*, at 1/1000th scope |
 | [**Velvet / Loom / WybeCoder**](velvet-loom-wybecoder.md) | ✅ 100% | ✅ 90% | ✅ 80% | ✗ 0% | ◐ 35% | the *agentic proof loop*, with numbers |
 | [**Agda / Cubical**](agda-cubical.md) | ◐ 50% | ✅ 100% | ✗ 20% | ✗ 15% | ✗ 0% | cubical equality; reflection-by-quotation contrast |
 | [**Narya**](narya.md) | ✗ 0% | ◐ 72% | ✗ 20% | ✗ 0% | ✗ 0% | the *interval-free* equality answer, shaped like disp's per-type metadata |
 | [**Dedukti / Lambdapi**](dedukti-lambdapi.md) | ◐ 33% | ✅ 90% | ✅ 80% | ✗ 0% | ◐ 35% | *types as library files* over one small checker, and rewrite rules as overlays without a license |
 | [**Andromeda 2**](andromeda.md) | ◐ 50% | ✅ 82% | ◐ 70% | ✗ 0% | ✗ 0% | the *LCF nucleus* for dependent theories, and an equality checker built from user rules |
 | [**Idris 2 / QTT**](idris2-qtt.md) | ✅ 83% | ✅ 90% | ✗ 20% | ◐ 35% | ✗ 0% | the *grading* formalism disp's cost ledger uses |
-| [**CakeML + Pancake**](cakeml-pancake.md) | ✗ 0% | ◐ 50% | ✅ 100% | **✅ 85%** | ✗ 0% | verified *all the way to the binary* |
+| [**CakeML + Pancake**](cakeml-pancake.md) | ✗ 0% | ◐ 50% | **✅ 100%** | ✅ 85% | ✗ 0% | verified *all the way to the binary* |
 | [**ATS3 / Xanadu**](ats-xanadu.md) | ◐ 33% | ✅ 80% | ✗ 20% | ◐ 55% | ✗ 0% | the 25-year prior attempt at G2+G4 |
 | [**Vow**](vow.md) | ✗ 17% | ◐ 40% | ✗ 0% | ◐ 40%? | ◐ 35% | the *agent-facing interface* |
 | [**Dafny**](dafny.md) | ✗ 0% | ◐ 50% | ✗ 0% | ✗ 15% | ◐ 35% | calibration: what AI writes best |
-| [**NanoLang**](nanolang.md) | ✗ 0% | ✗ 0% | ✗ 20% | **◐ 70%** | ✗ 0% | mechanized metatheory, solo |
-| [**Rust cluster**](rust-verification-cluster.md) | ✗ 0% | ✅ 90% | ◐ 50% | **◐ 70%** | ◐ 35% | the competition, and the fallback |
+| [**NanoLang**](nanolang.md) | ✗ 0% | ✗ 0% | ✗ 20% | ◐ 70% | ✗ 0% | mechanized metatheory, solo |
+| [**Rust cluster**](rust-verification-cluster.md) | ✗ 0% | ✅ 90% | ◐ 50% | ◐ 70% | ◐ 35% | the competition, and the fallback |
 | [**Mojo**](mojo.md) | ✗ 17% | ✗ 22% | ✗ 0% | ◐ 55% | ◐ 35%ᶠ | one language at every stage, at industrial scale |
 | [**LogosLang**](logoslang.md) | ✗ 17% | ✗ 0%ᵈ | ✗ 0% | ◐ 55% | ✗ 0% | nearest indie statement of disp's thesis |
 | [**Acorn**](acorn.md) | ✗ 0% | ◐ 35% | ✗ 0%? | ✗ 0% | ◐ 42% | *local* neural proposer in the loop |
@@ -54,7 +56,7 @@ Cells are `symbol percent`: the share of what `GOALS.md` asks for, per [`_AXES.m
 | [**Telomare** (Stand-In Language)](telomare.md) | ✗ 17% | ✗ 22% | ✗ 0% | ✗ 15%ᵗ | ✗ 0% | the *static cost bound*: totality by inferred iteration counts, `--certificate`/`--meter` |
 | [**Stellogen**](stellogen.md) | ✅ 100% | ✗ 22% | ◐ 40% | ✗ 0% | ✗ 0% | *types as user-space test suites*; the usine/usage split `CHECK.disp` re-derives, with the same function-type gap |
 | [**Nock / Hoon**](nock-hoon.md) | ✅ 100% | ✗ 0% | ◐ 40% | ◐ 35% | ✗ 0% | the *substrate*: a frozen reflective combinator VM whose jets are `.opt.disp` overlays without licenses |
-| [**Thermite**](thermite.md) | ✗ 0% | ◐ 50% | ◐ 50% | **◐ 70%** | ◐ 42% | the *enumerated trust ledger* and the CI-budgeted generated skill — two of this survey's steal items, shipped |
+| [**Thermite**](thermite.md) | ✗ 0% | ◐ 50% | ◐ 50% | ◐ 70% | ◐ 42% | the *enumerated trust ledger* and the CI-budgeted generated skill — two of this survey's steal items, shipped |
 | [**Indie AI-first cluster**](indie-ai-first-cluster.md) | ✗ 17% | ◐ 40% | ✗ 0% | ◐ 50% | ◐ 42% | LSTS shares the library-not-kernel thesis |
 | [**Graveyard**](graveyard.md) | — | — | — | — | — | what happens when this is attempted |
 
@@ -69,8 +71,9 @@ assembly that beats compilers, and a search scored by that checker and measured 
 straight-line code only. Nobody has the handoff primitive `GOALS.md` asks for, nobody's search
 writes its own score functions, and nobody has aimed a search at itself.
 
-disp's row is not comparable as-is: it shows what the claim kernel could reach, a best guess, while
-the others show what ships. Today disp has checkers that run, a small `cegis` search and no fast path.
+disp's theoretical row is not comparable to the others: it is what the design's arguments say
+disp could reach, while the others show what ships. Compare them with the *disp today* row instead: checkers
+that run, a small `cegis` search and no fast path.
 
 disp's bet is about the route: a substrate with no quotation layer, so the optimizer reads the same
 thing that runs, with nothing trusted to connect the two. Lean and Rocq meet the goal's substrate
@@ -87,14 +90,16 @@ untested, and the [unscored approach table](_SCORES.md#approach-unscored) tracks
   Nova (extensional), Agda and Blight (cubical) and Narya (observational) have answers where disp
   has certified equality at a type, pinned on a few examples. Dedukti and Andromeda let the user add equality rules: Dedukti assumes
   they are confluent and terminating, Andromeda admits only the shapes its checker can use soundly.
-- **G3 (trust):** MM0, Blight and CakeML lead with an independent second checker; Nova, Lean and
+- **G3 (trust):** MM0, Blight and CakeML lead with an independent second checker, which disp's
+  design doesn't have even in theory; Nova, Lean and
   Rocq match the architecture. Dedukti has independent checkers and exists to re-check other
   provers. disp's claim kernel would stop trust at five hand-proved rules, but today the checker
   in use is still `lib/kernel/`.
 - **G4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ Bend 2 on raw speed; CakeML, MM0 and the
   Jasmin/bedrock2 line have the verified path to the machine, and Low* a model of C. Nobody returns
   time and memory from an external run as values; CryptOpt's measuring lives in its tool, and disp,
-  HVM4 and Telomare only report cost beside the run.
+  HVM4 and Telomare only report cost beside the run. disp's design has such a driver, but it is
+  written down, not built.
 - **G5 (search):** CryptOpt (randomized, certified) and Verus+IDS (neural, with cost in the loop)
   lead; HVM4's superposition enumeration ships for values only and is dormant, and Bend 2's search is
   a commercial LLM outside the language. disp has `cegis` over a listed pool; the rest is designed.

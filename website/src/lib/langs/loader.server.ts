@@ -88,7 +88,7 @@ function sections(text: string): Map<string, string> {
   return out
 }
 
-function parseAxes(text: string): { axes: Axis[]; disp: Record<AxisId, Score> } {
+function parseAxes(text: string): { axes: Axis[]; disp: Record<AxisId, Score>; dispToday: Record<AxisId, Score>; dispCommit: string } {
   const axes: Axis[] = []
   // two tables start their rows with `| **G1** |`: the axes (bold name, four
   // columns) and the grading clauses (three plain columns)
@@ -106,10 +106,15 @@ function parseAxes(text: string): { axes: Axis[]; disp: Record<AxisId, Score> } 
       if (ax) ax.clauses = row.filter(Boolean)
     }
   }
-  const stands = sections(text).get('Where disp stands') ?? ''
-  const disp = parseScorecard(stands) as Record<AxisId, Score>
-  for (const id of AXIS_IDS) if (!disp[id]) throw new Error(`_AXES.md: "Where disp stands" lacks ${id}`)
-  return { axes, disp }
+  const secs = sections(text)
+  const table = (title: string) => {
+    const t = parseScorecard(secs.get(title) ?? '') as Record<AxisId, Score>
+    for (const id of AXIS_IDS) if (!t[id]) throw new Error(`_AXES.md: "${title}" lacks ${id}`)
+    return t
+  }
+  const dispCommit = secs.get('Where disp is today')?.match(/commit `([0-9a-f]+)`/)?.[1]
+  if (!dispCommit) throw new Error('_AXES.md: "Where disp is today" names no commit')
+  return { axes, disp: table('Where disp could get, in theory'), dispToday: table('Where disp is today'), dispCommit }
 }
 
 function parseLangFile(file: string): Pick<Lang, 'name' | 'author' | 'repoUrl' | 'differsHtml' | 'verdictHtml'> & {
@@ -133,7 +138,7 @@ function parseLangFile(file: string): Pick<Lang, 'name' | 'author' | 'repoUrl' |
 
 export function loadLangs(): LangsData {
   const master = read('AWESOME-LANGS.md')
-  const { axes, disp } = parseAxes(read('_AXES.md'))
+  const { axes, disp, dispToday, dispCommit } = parseAxes(read('_AXES.md'))
   const langs: Lang[] = []
   const footnotes: Record<string, string> = {}
   for (const line of master.split('\n')) {
@@ -183,6 +188,8 @@ export function loadLangs(): LangsData {
     surveyed: master.match(/goals, ([^.]+)\./)?.[1] ?? '',
     axes,
     disp,
+    dispToday,
+    dispCommit,
     langs,
     footnotes,
     surveyUrl: GH + 'AWESOME-LANGS.md'
@@ -198,6 +205,8 @@ export function summarize(d: LangsData): LangsSummary {
     surveyed: d.surveyed,
     axes: d.axes,
     disp: d.disp,
+    dispToday: d.dispToday,
+    dispCommit: d.dispCommit,
     ahead,
     count: d.langs.filter((l) => AXIS_IDS.every((id) => l.scores[id].level != null)).length,
     surveyUrl: d.surveyUrl

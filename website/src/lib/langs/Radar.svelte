@@ -12,6 +12,7 @@
     color: string
     values: (number | null)[] // 0–100
     ahead: boolean[]
+    dashed?: boolean // an outline only: a design rather than something shipped
   }
   interface Props {
     axes: Axis[]
@@ -61,7 +62,7 @@
       </text>
     {/each}
     {#each series as s (s.key)}
-      <polygon class="area" points={poly(s)} style:fill={s.color} style:stroke={s.color} />
+      <polygon class="area" class:dashed={s.dashed} points={poly(s)} style:fill={s.color} style:stroke={s.color} />
     {/each}
     {#each series as s (s.key)}
       {#each axes as ax, i (ax.id)}
@@ -128,6 +129,10 @@
     fill-opacity: 0.16;
     stroke-width: 2;
     stroke-linejoin: round;
+  }
+  .area.dashed {
+    fill-opacity: 0;
+    stroke-dasharray: 5 4;
   }
   .dot {
     stroke: var(--bg-elev);

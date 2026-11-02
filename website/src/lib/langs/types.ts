@@ -45,7 +45,9 @@ export interface Lang {
 export interface LangsData {
   surveyed: string // "August 2026"
   axes: Axis[]
-  disp: Record<AxisId, Score> // the self-assessment table in _AXES.md
+  disp: Record<AxisId, Score> // what the design could reach: "Where disp could get, in theory" in _AXES.md
+  dispToday: Record<AxisId, Score> // what the repo has: "Where disp is today"
+  dispCommit: string // the commit dispToday was checked at
   langs: Lang[] // master-table order
   footnotes: Record<string, string> // superscript letter → meaning
   surveyUrl: string
@@ -57,6 +59,8 @@ export interface LangsSummary {
   surveyed: string
   axes: Axis[]
   disp: Record<AxisId, Score>
+  dispToday: Record<AxisId, Score>
+  dispCommit: string
   ahead: Record<AxisId, { slug: string; name: string }[]> // master-table order
   count: number // projects with every axis scored
   surveyUrl: string

@@ -10,7 +10,11 @@ A clause is 0, ½ or 1 (suffix † = from general knowledge, ? = open, scored 0;
 left out of the mean); an axis is the weighted mean of its three or four clauses, the weights read from
 a `Weights: 40 · 30 · 30` line under the axis header (relative; a — clause drops out and the rest
 renormalize; equal weights if the line is missing); the symbol is ✗ below 25, ◐ to 79, ✅ from 80;
-bold in the master table means a higher percentage than disp's.
+bold in the master table means a higher percentage than disp's theoretical row.
+
+disp has two rows per axis: `disp (theoretical)` (what the design's arguments reach) and `disp (today)` (what the repo has as
+of the commit named in _SCORES.md); they go to the "Where disp could get, in theory" and "Where disp is today" tables in
+_AXES.md.
 """
 import re, sys, pathlib
 
@@ -20,6 +24,8 @@ VAL = {'1': 1.0, '½': 0.5, '0': 0.0, '?': 0.0, '—': None}
 SUP = 'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ'
 ROW = re.compile(r'^\| (G[1-5]) [^|]*\|')
 WEIGHTS = {}  # axis -> relative clause weights, filled by scores()
+GOAL, TODAY = 'disp (theoretical)', 'disp (today)'
+DISP_SECTION = {GOAL: 'Where disp could get, in theory', TODAY: 'Where disp is today'}
 
 def symbol(pct):
     return '✗' if pct < 25 else '◐' if pct < 80 else '✅'
@@ -41,9 +47,17 @@ def master():
         out[clean(m.group(1) + m.group(2))] = (m.group(3), row, i)
     return out, lines
 
+def section_span(lines, title):
+    """(start, end) line indices of `## title`, the whole file when title is None."""
+    if title is None: return 0, len(lines)
+    start = next(i for i, l in enumerate(lines) if l.strip() == f'## {title}')
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('## ')), len(lines))
+    return start, end
+
 def disp_symbols():
-    out = {}
-    for line in (D / '_AXES.md').read_text().split('\n'):
+    out, lines = {}, (D / '_AXES.md').read_text().split('\n')
+    start, end = section_span(lines, DISP_SECTION[GOAL])
+    for line in lines[start:end]:
         m = ROW.match(line)
         if m: out[m.group(1)] = (next(ch for ch in line.split('|')[2] if ch in '✅◐✗'), False)
     return out
@@ -82,11 +96,13 @@ def scores():
 def pct_text(r):
     return f"{r['pct']}%{'?' if r['prov'] else ''}"
 
-def rewrite_scorecard(path, by_axis):
+def rewrite_scorecard(path, by_axis, section=None):
     """Score cell ← `sym pct (tag)`, a Clauses column ← `a · b · c — why`; header and rule grow a column."""
     lines = path.read_text().split('\n')
     first = None
-    for i, line in enumerate(lines):
+    start, end = section_span(lines, section)
+    for i in range(start, end):
+        line = lines[i]
         m = ROW.match(line)
         if not m or m.group(1) not in by_axis: continue
         first = i if first is None else first
@@ -108,7 +124,7 @@ def rewrite_scorecard(path, by_axis):
 def main():
     sc, lines = scores()
     ms, mlines = master()
-    disp_pct = {ax: next(r['pct'] for r in rows if r['name'] == 'disp') for ax, rows in sc.items()}
+    disp_pct = {ax: next(r['pct'] for r in rows if r['name'] == GOAL) for ax, rows in sc.items()}
     if '--write' in sys.argv:
         # 1. the % column of _SCORES.md
         for rows in sc.values():
@@ -123,8 +139,9 @@ def main():
             for r in rows: by_name.setdefault(r['name'], {})[ax] = r
         touched = []
         for name, by_axis in by_name.items():
-            path = D / '_AXES.md' if name == 'disp' else D / ms[name][0] if name in ms else None
-            if path and rewrite_scorecard(path, by_axis): touched.append(path.name)
+            if name in DISP_SECTION:
+                if rewrite_scorecard(D / '_AXES.md', by_axis, DISP_SECTION[name]): touched.append(f'_AXES.md ({name})')
+            elif name in ms and rewrite_scorecard(D / ms[name][0], by_axis): touched.append(ms[name][0])
         # 3. master table cells: symbol, percent, bold when ahead; superscripts kept
         for name, (file, row, i) in ms.items():
             if name not in by_name: continue
@@ -136,20 +153,33 @@ def main():
                 text = f"{symbol(r['pct'])} {pct_text(r)}"
                 cells[2 + k] = f" {'**' + text + '**' if r['pct'] > disp_pct[ax] else text}{sup} "
             mlines[i] = '|'.join(cells)
+        # disp's two rows in the master table: `| *disp theoretical* |` and `| *disp today* |`
+        for i, line in enumerate(mlines):
+            m = re.match(r'^\| \*disp (theoretical|today)\* \|', line)
+            if not m: continue
+            row, cells = by_name[GOAL if m.group(1) == 'theoretical' else TODAY], line.split('|')
+            for k, ax in enumerate(AXES): cells[2 + k] = f" {symbol(row[ax]['pct'])} {pct_text(row[ax])} "
+            mlines[i] = '|'.join(cells)
+        # the commit disp's today row was checked at: _SCORES.md names it, the other two copy it
+        sha = re.search(r'as of commit `([0-9a-f]+)`', '\n'.join(lines)).group(1)
+        mlines = re.sub(r'(as of `)[0-9a-f]+(`)', rf'\g<1>{sha}\2', '\n'.join(mlines)).split('\n')
+        axes = D / '_AXES.md'
+        axes.write_text(re.sub(r'(as of commit `)[0-9a-f]+(`)', rf'\g<1>{sha}\2', axes.read_text()))
         (D / 'AWESOME-LANGS.md').write_text('\n'.join(mlines))
         print(f"written: _SCORES.md, AWESOME-LANGS.md, {len(touched)} scorecards ({', '.join(touched)})")
         ms, _ = master()
     old = {n: row for n, (f, row, i) in ms.items()}
-    old['disp'] = disp_symbols()
+    old[GOAL] = disp_symbols()
     flips, ahead_changes, open_cells, knowledge = [], [], [], []
     for ax, rows in sc.items():
-        print(f"\n== {ax}  (disp {disp_pct[ax]}; weights {' · '.join(str(int(w)) for w in WEIGHTS.get(ax, []))})")
+        today = next(r['pct'] for r in rows if r['name'] == TODAY)
+        print(f"\n== {ax}  (disp theoretical {disp_pct[ax]}, today {today}; weights {' · '.join(str(int(w)) for w in WEIGHTS.get(ax, []))})")
         for r in sorted(rows, key=lambda r: -r['pct']):
             m = old.get(clean(r['name']), {}).get(ax, (None, False))
             sym, ahead = symbol(r['pct']), r['pct'] > disp_pct[ax]
             flag = ''
             if m[0] and m[0] != sym: flag += f'  flip {m[0]}→{sym}'; flips.append((ax, r['name'], m[0], sym, r['pct']))
-            if r['name'] != 'disp' and ahead != m[1]:
+            if r['name'] not in DISP_SECTION and ahead != m[1]:
                 flag += '  ahead' if ahead else '  no longer ahead'; ahead_changes.append((ax, r['name'], ahead))
             if r['prov']: flag += '  ?'; open_cells.append((ax, r['name']))
             if r['knowledge']: flag += '  †'; knowledge.append((ax, r['name']))
