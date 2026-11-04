@@ -11,6 +11,7 @@ import {
   GutterMarker,
   keymap,
   showTooltip,
+  hoverTooltip,
   rectangularSelection,
   crosshairCursor,
   dropCursor,
@@ -308,15 +309,15 @@ function completionSource(link: PlaygroundLink) {
     }
     for (let i = idx.defs.length - 1; i >= 0; i--) {
       const d = idx.defs[i]
-      if (seen.has(d.name) || (d.line === cursorLine && word && d.name === word.text)) continue
+      // a name is only in scope below its definition
+      if (seen.has(d.name) || d.line >= cursorLine) continue
       seen.add(d.name)
-      const above = d.line < cursorLine
       options.push({
         label: d.name,
         type: iconType(d.params),
-        detail: d.sig ?? (d.params ? `{${d.params.join(', ')}}` : above ? '' : 'defined below'),
+        detail: d.sig ?? (d.params ? `{${d.params.join(', ')}}` : ''),
         info: d.doc,
-        boost: above ? 30 : -10
+        boost: 30
       })
     }
     for (const it of link.scope()) {
@@ -429,6 +430,52 @@ function signatureField(link: PlaygroundLink) {
     create: compute,
     update: (v, tr) => (tr.docChanged || tr.selection ? (tr.docChanged || v ? compute(tr.state) : null) : v),
     provide: (f) => showTooltip.from(f)
+  })
+}
+
+/// Hovering a name: its parameters, type, where it lives and its doc comment.
+function nameHover(link: PlaygroundLink) {
+  return hoverTooltip((view, pos) => {
+    const line = view.state.doc.lineAt(pos)
+    const cmt = line.text.indexOf('//')
+    if (cmt >= 0 && pos - line.from > cmt) return null
+    const word = view.state.wordAt(pos)
+    if (!word) return null
+    const name = view.state.sliceDoc(word.from, word.to)
+    if (!/^[A-Za-z_][\w']*$/.test(name) || IGNORE_DEF.has(name)) return null
+    const own = link.index().defs.findLast((d) => d.name === name)
+    const item = own ?? link.scope().find((x) => x.name === name)
+    if (!item) return null
+    const where = own ? `line ${own.line}` : `${link.shortPath((item as ScopeItem).path)}:${item.line}`
+    return {
+      pos: word.from,
+      end: word.to,
+      above: true,
+      create() {
+        const dom = document.createElement('div')
+        dom.className = 'disp-name-hover'
+        const head = document.createElement('div')
+        head.className = 'disp-sig-help'
+        const h = document.createElement('span')
+        h.className = 'disp-sig-head'
+        h.textContent = name
+        head.appendChild(h)
+        if (item.params?.length) head.appendChild(document.createTextNode(`(${item.params.join(', ')})`))
+        if (item.sig) head.appendChild(document.createTextNode(` : ${item.sig}`))
+        const at = document.createElement('span')
+        at.className = 'disp-hover-where'
+        at.textContent = where
+        head.appendChild(at)
+        dom.appendChild(head)
+        if (item.doc) {
+          const body = document.createElement('div')
+          body.className = 'disp-hover-doc'
+          body.textContent = item.doc
+          dom.appendChild(body)
+        }
+        return { dom }
+      }
+    }
   })
 }
 
@@ -680,6 +727,9 @@ const theme = EditorView.theme({
   },
   '.disp-sig-help': { fontFamily: 'var(--font-mono)', fontSize: '12px', padding: '3px 8px', color: 'var(--fg-muted)' },
   '.disp-sig-head': { color: 'var(--hl-fn)' },
+  '.disp-name-hover': { maxWidth: '62ch' },
+  '.disp-hover-where': { marginLeft: '1.2em', color: 'var(--fg-faint)', fontSize: '11px' },
+  '.disp-hover-doc': { padding: '0 8px 5px', fontSize: '12px', color: 'var(--fg-muted)', whiteSpace: 'pre-wrap' },
   '.disp-sig-on': { color: 'var(--fg)', fontWeight: '700', textDecoration: 'underline', textUnderlineOffset: '3px' },
   '.cm-tooltip': {
     background: 'var(--bg-elev)',
@@ -731,6 +781,7 @@ export function playgroundExtensions(link: PlaygroundLink): Extension[] {
       tooltipClass: () => 'disp-complete'
     }),
     signatureField(link),
+    nameHover(link),
     hintPlugin(link),
     theme,
     Prec.high(

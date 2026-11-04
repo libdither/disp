@@ -199,9 +199,15 @@ export const dispEditorTheme = EditorView.theme(
     // into a horizontal scroll — the text clips to the editor instead.
     '.disp-out': {
       contain: 'inline-size',
-      margin: '2px 14px 8px 2.2em',
-      padding: '4px 12px',
-      borderLeft: '2px solid var(--ed-out-rule)',
+      // CodeMirror measures a block widget without its margins, so the gaps above and below are
+      // transparent borders; a vertical margin here drifts the line numbers below it
+      margin: '0 14px 0 2.2em',
+      borderTop: '2px solid transparent',
+      borderBottom: '8px solid transparent',
+      backgroundClip: 'padding-box',
+      // the rule on the left is an inset shadow, so it stops where the background does
+      padding: '4px 12px 4px 14px',
+      boxShadow: 'inset 2px 0 var(--ed-out-rule)',
       borderRadius: '0 8px 8px 0',
       background: 'var(--ed-out-bg)',
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
@@ -247,14 +253,14 @@ export const dispEditorTheme = EditorView.theme(
       userSelect: 'none'
     },
     '.disp-out-fail': {
-      borderLeftColor: 'var(--ed-out-fail-rule)',
+      boxShadow: 'inset 2px 0 var(--ed-out-fail-rule)',
       background: 'var(--ed-out-fail-bg)',
       color: 'var(--ed-out-fail-fg)'
     },
     '.disp-out-fail:not(:has(.disp-out-row))::before': { content: "'✗ '" },
     '.disp-out-error:not(:has(.disp-out-row))::before': { content: "'⚠ '" },
     '.disp-out-error': {
-      borderLeftColor: 'var(--ed-out-fail-rule)',
+      boxShadow: 'inset 2px 0 var(--ed-out-fail-rule)',
       background: 'var(--ed-out-fail-bg)',
       color: 'var(--ed-out-fail-fg)'
     },
@@ -304,7 +310,7 @@ export const dispEditorTheme = EditorView.theme(
     '.disp-out.away': {
       opacity: '0.4',
       fontSize: '0.72em',
-      padding: '1px 12px'
+      padding: '1px 12px 1px 14px'
     },
     '.disp-out.away:hover': {
       opacity: '0.85'

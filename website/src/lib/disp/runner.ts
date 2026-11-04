@@ -289,7 +289,7 @@ export class DispRunner {
     // private `let`s (which never become Decls) — keyed by name so a rebind
     // keeps one entry. Captured incrementally, so a mid-file error still
     // reports every binding elaborated before it.
-    const rootDefs = new Map<string, { handle: number; line?: number; endLine?: number }>()
+    const rootDefs = new Map<string, { handle: number; line?: number; endLine?: number; local?: boolean }>()
     const costs: { line: number; steps: number }[] = []
     let lastSteps = steps0
     let decls: Decl[] = []
@@ -298,7 +298,7 @@ export class DispRunner {
         session,
         onItem: (item: ParseItemStats) => {
           if (item.depth === 0 && (item.kind === 'field' || item.kind === 'let') && item.name && item.tree != null)
-            rootDefs.set(item.name, { handle: item.tree as unknown as number, line: item.line, endLine: item.endLine })
+            rootDefs.set(item.name, { handle: item.tree as unknown as number, line: item.line, endLine: item.endLine, local: item.kind === 'let' })
           if (item.depth === 0) {
             if (item.line) costs.push({ line: item.line, steps: item.stats.steps - lastSteps })
             lastSteps = item.stats.steps
@@ -319,8 +319,13 @@ export class DispRunner {
       outcome.ok = false
       outcome.error = e instanceof Error ? e.message : String(e)
       const m = outcome.error.match(/line (\d+)/)
+      const off = outcome.error.match(/ at offset (\d+)/)
       if (m) outcome.errorLine = Number(m[1])
-      else outcome.errorLine = guessErrorLine(outcome.error, source)
+      else if (off) {
+        // the tokenizer counts characters; people count lines
+        outcome.errorLine = source.slice(0, Number(off[1])).split('\n').length
+        outcome.error = outcome.error.replace(off[0], ` on line ${outcome.errorLine}`)
+      } else outcome.errorLine = guessErrorLine(outcome.error, source)
       outcome.error = outcome.error.replace(/^cirToTree: unresolved free variable (\S+)/, "`$1` isn't defined here")
     }
     // Names before pretty (the printer is name-aware); `__`-prefixed
@@ -331,10 +336,13 @@ export class DispRunner {
     this.#byName = new Map()
     for (const [name, d] of rootDefs) {
       if (name.startsWith('__')) continue
-      if (!this.#names.has(d.handle)) this.#names.set(d.handle, name)
+      if (!d.local && !this.#names.has(d.handle)) this.#names.set(d.handle, name)
       if (!this.#byName.has(name)) this.#byName.set(name, d.handle)
     }
     this.#registerScopeNames()
+    // a `let` alias (`let hyp_type := pair_snd`) names its tree only when nothing else does
+    for (const [name, d] of rootDefs)
+      if (d.local && !name.startsWith('__') && !this.#names.has(d.handle) && this.#hasAtLeastNodes(d.handle, 4)) this.#names.set(d.handle, name)
     this.#lastDefs = new Map([...rootDefs].map(([n, d]) => [n, d.handle]))
     for (const [name, d] of rootDefs)
       outcome.defs.push({

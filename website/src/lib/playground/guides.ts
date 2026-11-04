@@ -2,7 +2,7 @@
 // instead of jumping: the binder copied down both sides of an S, a binder and
 // its variable meeting where I takes their place, the argument K drops.
 
-import { R_K, type Store } from './store.ts'
+import { R_K, R_F, type Store } from './store.ts'
 import type { Trace } from './trace.ts'
 import type { Guide } from './layout.ts'
 
@@ -31,9 +31,16 @@ export function stepGuide(store: Store, trace: Trace, frame: number): Guide | un
         guide.origin.set(key, [key, key + '0'])
         guide.sinks.push([key, key])
         break
+      case 'eta':
+        // the function rises out of the body when it is a new node (an S, K or I) rather than a kept subtree
+        guide.origin.set(key, [key + '00'])
+        // the binder and its variable fade early, so the function rises alone
+        guide.sinks.push([key, 'fade'])
+        break
       case null:
         if (store.rule[site] === R_K) guide.sinks.push([key + '1', 'drop'])
-        guide.sinks.push([key, key])
+        // triage keeps one branch where it is; the branches it didn't pick fade where they stand
+        guide.sinks.push([key, store.rule[site] === R_F ? 'fade' : key])
         break
       default:
         guide.sinks.push([key, key])

@@ -10,7 +10,7 @@
   import type { TermDump, BracketDump, BracketRule } from '$lib/disp/protocol'
   import TreeCanvas, { type CanvasApi, type TreeLook } from './TreeCanvas.svelte'
   import Timeline from './Timeline.svelte'
-  import { Store, APP, CUT, LEAF, STEM, FORK, VAR, LAM, R_K, R_S, R_F, R_LEAF, R_STEM, R_BIND, RULE_GLYPH, type Id } from './store.ts'
+  import { Store, APP, CUT, LEAF, STEM, FORK, VAR, LAM, HELD_K, ATOM, SPLIT, R_K, R_S, R_F, R_LEAF, R_STEM, R_BIND, RULE_GLYPH, type Id } from './store.ts'
   import { stepGuide } from './guides.ts'
   import { Trace, type Mode, type Call, type TraceEnd } from './trace.ts'
   import { layoutScene, diffTrees, keyPath, K_POD, K_APP, K_LAM, K_VAR, type Scene, type VNode } from './layout.ts'
@@ -67,11 +67,15 @@
     suggest?: (subject: Subject) => string | null
     /// the buffer hasn't run yet, so there is nothing to show
     notRun?: boolean
+    /// why it hasn't, when pressing Run wouldn't help
+    notRunWhy?: string
+    /// the file doesn't check, so no definition has a tree
+    fileError?: { line?: number } | null
     /// a function's parameter names, to label the arguments of its calls
     paramsOf?: (name: string) => string[] | undefined
     tour?: (a: ViewerApi) => void
   }
-  let { paramsOf, notRun = false, subject, runVersion, pinned, glow = null, onPinToggle, onExpr, onGlow, onGoto, suggest, tour }: Props = $props()
+  let { paramsOf, notRun = false, notRunWhy, fileError = null, subject, runVersion, pinned, glow = null, onPinToggle, onExpr, onGlow, onGoto, suggest, tour }: Props = $props()
 
   // svelte-ignore non_reactive_update
   let store = new Store()
@@ -130,6 +134,14 @@
   const inBinders = $derived.by(() => {
     void version
     return unified ? !!trace && store.isBinder(trace.frames[frame] ?? trace.frames[0]) : at < lead
+  })
+  /// the Binders and Run buttons' counts; a parallel step can fire binders and applications together
+  const phase = $derived.by(() => {
+    void version
+    if (!unified || !trace) return { bind: Math.min(at, bindEnd), binds: bindEnd, run: Math.max(0, at - bindEnd), runs: lastAt - bindEnd }
+    const f = Math.min(frame, trace.last)
+    const e = Math.min(bindEnd, trace.last)
+    return { bind: trace.bound[f], binds: trace.bound[e], run: trace.fired[f] - trace.bound[f], runs: trace.fired[trace.last] - trace.bound[trace.last] }
   })
   const bindSteps = $derived.by(() => {
     void version
@@ -284,6 +296,7 @@
 
   /// the frame drawn last, so a single step forward can be drawn with its guide
   let drawnAt = -1
+  let lastNearOpen = new Set<Id>()
   function draw(ms: number) {
     animMs = ms
     const was = drawnAt
@@ -307,7 +320,9 @@
       return
     }
     const root = trace.frames[frame]
-    const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), labels, sk: readsSk(), foldData: labels ? 40 : undefined })
+    const keepOpen = ms > 0 && at > was && at - was <= 4 ? lastNearOpen : undefined
+    const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), alsoNext: mode === 'parallel' ? trace.readyPaths(root) : undefined, labels, sk: readsSk(), foldData: labels ? 40 : undefined, keepOpen })
+    lastNearOpen = next.nearOpen
     if (ms > 0 && was >= lead && at > was && at - was <= 4) next.guide = stepGuide(store, trace, was - lead)
     show(next)
   }
@@ -348,6 +363,13 @@
     draw(ms)
   }
   const goto = (f: number, ms = 0) => seek(lead + f, ms)
+  /// With building skipped, a scrub lands on the real step a build step leads up to.
+  function snap(i: number): number {
+    if (!hideBuild || !trace || i < lead) return i
+    let f = i - lead
+    while (f < trace.last && lead + f !== bindEnd && isBuild(trace.rules[f + 1])) f++
+    return lead + f
+  }
   /// With building skipped, a step also takes in the stems and forks right after it, so the next one highlighted is real work.
   function stepForward(ms = 320) {
     if (at < lead) {
@@ -357,10 +379,12 @@
     if (!trace) return false
     let f = frame + 1
     if (f > trace.last) return false
-    if (hideBuild) while (f < trace.last && isBuild(trace.rules[f + 1])) f++
+    // never past the frame where the last binder came off, so that frame is always shown
+    if (hideBuild) while (f < trace.last && lead + f !== bindEnd && isBuild(trace.rules[f + 1])) f++
     if (stopAt !== null && playing) f = Math.min(f, stopAt - lead)
-    // a binder rewrite moves more than a rule firing, so it gets longer to show it
-    goto(f, ms > 0 && trace.rules[frame + 1] === R_BIND ? Math.max(ms, 520) : ms)
+    // a binder rewrite moves more than a rule firing, and a K drop, an S copy or a triage pick needs a beat to see
+    const r = trace.rules[frame + 1]
+    goto(f, ms > 0 && r === R_BIND ? Math.max(ms, 520) : ms > 0 && !playing && (r === R_K || r === R_S || r === R_F) ? Math.max(ms, 440) : ms)
     return true
   }
   function stepBack() {
@@ -370,7 +394,7 @@
       return
     }
     let f = frame - 1
-    if (hideBuild) while (f > 0 && isBuild(trace.rules[f + 1])) f--
+    if (hideBuild) while (f > 0 && lead + f !== bindEnd && isBuild(trace.rules[f + 1])) f--
     goto(f, 260)
   }
   /// Jump to where the next (or previous) binder starts being removed.
@@ -606,14 +630,61 @@
       case R_S:
         return `S hands ${x} to both sides.`
       case R_F:
-        return f === store.i || store.a[f] === store.i ? `I gives back ${x}.` : `Looks at the shape of ${x} to pick a branch.`
+        if (f === store.i || store.a[f] === store.i) return `I gives back ${x}.`
+        switch (store.tt(store.b[site])) {
+          case LEAF:
+            return `${x} is a leaf, so it takes the first branch.`
+          case STEM:
+            return `${x} is a stem, so the second branch gets what it holds.`
+          case FORK:
+            return `${x} is a fork, so the third branch gets both its halves.`
+          default:
+            return `Looks at the shape of ${x} to pick a branch.`
+        }
       default:
         return 'This only builds a tree node, nothing else happens.'
     }
   }
 
+  const BIND_NAMES: Record<string, string> = { split: 'S split', const: 'K wrap', id: 'I', eta: 'eta', 'eta-after': 'eta', 'k-comp': 'K shortcut' }
+  /// Names in the tree that are neither parameters nor defined anywhere: they stay symbols.
+  const unknown = $derived.by(() => {
+    void version
+    if (!trace) return []
+    const out = new Set<string>()
+    const seen = new Set<Id>()
+    const stack = [trace.frames[0]]
+    while (stack.length && seen.size < 5000) {
+      const id = stack.pop()!
+      if (seen.has(id)) continue
+      seen.add(id)
+      const t = store.tag[id]
+      if (t === VAR) {
+        const name = store.strs[store.a[id]]
+        if (!symbols.includes(name)) out.add(name)
+      } else if (t === LAM) stack.push(store.b[id])
+      else if (t === STEM || t === HELD_K || t === ATOM) stack.push(store.a[id])
+      else if (t === FORK || t === APP || t === SPLIT) stack.push(store.a[id], store.b[id])
+    }
+    return [...out]
+  })
+  /// What a parallel step fires, by kind: "Fires 3 steps at once: 2 K, 1 binder."
+  function parallelWords(root: Id): string {
+    const paths = trace!.readyPaths(root)
+    const by = new Map<string, number>()
+    for (const p of paths) {
+      const site = trace!.subterm(root, p)
+      const r = store.rule[site]
+      const bind = r === R_BIND ? store.bindKind(site) : null
+      const kind = bind ? BIND_NAMES[bind] : r === R_K ? 'K' : r === R_S ? 'S' : r === R_F ? 'triage' : 'build'
+      by.set(kind, (by.get(kind) ?? 0) + 1)
+    }
+    if (paths.length === 1) return `Fires the one ready step (${[...by.keys()][0]}).`
+    return `Fires ${paths.length} steps at once: ${[...by].map(([k, n]) => `${n} ${k}`).join(', ')}.`
+  }
+
   /// The step about to happen, which the tree's highlight points at. Words only once there's nothing next.
-  const caption = $derived.by<{ from: string; to: string; why: string }>(() => {
+  const caption = $derived.by<{ from: string; to: string; why: string; full?: string }>(() => {
     void version
     if (peek) return { from: '', to: '', why: peek.note }
     if (at < lead) {
@@ -627,11 +698,15 @@
     if (!path) return { from: store.pretty(root, 90, readsSk()), to: '', why: '' }
     const binderless = unified && frame > 0 && frame === bindEnd ? 'All binders are gone. ' : ''
     const start = frame === 0 ? (lead > 0 && symbols.length === 0 ? 'All binders are gone. ' : symbols.length > 0 ? `Called with ${symbols.join(', ')}. ` : '') : binderless
-    if (mode === 'parallel') return { from: store.pretty(root, 60, sk), to: '', why: `${start}Fires every ready step at once${unified && inBinders ? ', binders included' : ''}.` }
+    if (mode === 'parallel') return { from: store.pretty(root, 60, sk), to: '', why: `${start}${parallelWords(root)}` }
     const site = trace.subterm(root, path)
     const bind = store.bindKind(site)
     if (bind) return { from: store.pretty(site, 60, sk), to: store.pretty(trace.fireNode(site), 60, sk), why: start + ruleWords(bind, store.tag[site] === LAM ? store.strs[store.a[site]] : '') }
-    return { from: store.pretty(site, 24, sk), to: store.pretty(trace.fireNode(site), 24, sk), why: start + fireWords(site) }
+    const from = store.pretty(site, 24, sk, 3)
+    const to = store.pretty(trace.fireNode(site), 24, sk, 3)
+    // read as S, K and I, a step that only adds a branch can look like nothing at all
+    if (from === to) return { from, to: '', why: start + 'The next step only adds a branch inside this; read as S, K and I nothing changes.', full: store.pretty(site, 200, sk) }
+    return { from, to, why: start + fireWords(site), full: store.pretty(site, 200, sk) }
   })
 
   /// Split code into runs, marking the names the tree is drawing in colour.
@@ -841,13 +916,13 @@
       />
     </form>
     <div class="tools">
-      {#if onPinToggle}<button class="ic" class:on={pinned} onclick={onPinToggle} title={pinned ? 'Pinned. Click to follow the cursor again' : 'Pin: stop following the cursor'} aria-pressed={pinned}>
+      {#if onPinToggle}<button class="ic" class:on={pinned} onclick={onPinToggle} title={pinned ? 'Pinned. Click to follow the cursor again' : 'Pin: stop following the cursor'} aria-label="pin this tree" aria-pressed={pinned}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.8 1.8 14.2 6.2 12.9 6.6 10.3 9.2 10 12.4 8.8 13.6 6 10.8 2.6 14.2 1.8 13.4 5.2 10 2.4 7.2 3.6 6 6.8 5.7 9.4 3.1Z" fill="currentColor" /></svg>
       </button>{/if}
       <button class="ic" onclick={() => canvas?.fit()} title="Fit to view (f)" aria-label="fit to view">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
       </button>
-      <button class="ic" class:on={!labels} onclick={() => { labels = !labels; draw(260) }} title={labels ? 'Named parts and big data are folded. Click to draw everything open' : 'Everything is drawn open. Click to fold named parts and big data'} aria-pressed={!labels}>
+      <button class="ic" class:on={!labels} aria-label="fold named parts" onclick={() => { labels = !labels; draw(260) }} title={labels ? 'Named parts and big data are folded. Click to draw everything open' : 'Everything is drawn open. Click to fold named parts and big data'} aria-pressed={!labels}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.4" r="1.7" fill="currentColor" /><circle cx="4" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><path d="M8 4 4 12M8 4l4 8" stroke="currentColor" stroke-width="1.3" /></svg>
       </button>
       <div class="lookpick">
@@ -856,7 +931,7 @@
         </button>
         <div class="lookmenu" role="menu">
           {#each LOOKS as l (l)}
-            <button role="menuitemradio" aria-checked={look === l} class:on={look === l} onclick={() => setLook(l)} title={LOOK_TEXT[l]}><i class="sw sw-{l}"></i>{l}</button>
+            <button role="menuitemradio" tabindex="-1" aria-checked={look === l} class:on={look === l} onclick={() => setLook(l)} title={LOOK_TEXT[l]}><i class="sw sw-{l}"></i>{l}</button>
           {/each}
         </div>
       </div>
@@ -869,22 +944,28 @@
 
   <div class="stagewrap" data-tour="tree">
     {#if subject && !error}
-      <TreeCanvas {scene} {animMs} {glow} {varColor} {look} falling={!peek} onHover={handleHover} onClick={(n) => void handleClick(n)} api={(a) => (canvas = a)} />
+      <TreeCanvas {scene} {animMs} {glow} {varColor} {look} steady={playing} falling={!peek} onHover={handleHover} onClick={(n) => void handleClick(n)} api={(a) => (canvas = a)} />
       <div class="hoverbar" class:show={!!hoverText}>{hoverText}</div>
     {/if}
     {#if !subject}
       <div class="empty">
+        {#if fileError}<p class="big">The file has an error{fileError.line ? ` on line ${fileError.line}` : ''}, so there are no trees until it's fixed.</p>
+        {:else if notRun && notRunWhy}<p class="big">{notRunWhy}</p>
+        {:else}
         {#if notRun}<p class="waiting">This file hasn't run yet. Press Run to see its trees.</p>{/if}
         <p class="big">Put your cursor on a definition or test.</p>
-        <p>You'll watch the compiler remove its binders, then the tree reduce step by step. Select any expression to see just that part.</p>
+        <p>You'll watch its binders come off and the tree reduce, one step at a time. Select any expression to see just that part.</p>
         <dl class="key">
           <div><dt><i class="k-var"></i></dt><dd>a variable, in one colour wherever it goes</dd></div>
           <div><dt><i class="k-leaf"></i></dt><dd>leaf: <code>t</code>, the only atom</dd></div>
           <div><dt><i class="k-stem"></i></dt><dd>stem: a leaf applied to one thing</dd></div>
           <div><dt><i class="k-fork"></i></dt><dd>fork: a leaf applied to two things</dd></div>
           <div><dt><i class="k-app"></i></dt><dd>an application still waiting to run</dd></div>
-          <div><dt><i class="k-comb">S</i></dt><dd>a tinted part that runs the S rule once it's called (K and I likewise)</dd></div>
+          <div><dt><i class="k-ready">K</i></dt><dd>one that can run now, lettered with its rule (K, S, or F for triage); petals mark the one that runs next</dd></div>
+          <div><dt><i class="k-ready">△</i></dt><dd>△ or f: a step that only adds a branch</dd></div>
+          <div><dt><i class="k-comb">S</i></dt><dd>{look === 'bold' ? 'a tinted part' : 'a branch labelled S'} that runs the S rule once it's called (K and I likewise)</dd></div>
         </dl>
+        {/if}
       </div>
     {:else if error}
       <div class="empty errbox"><p class="big">Can't show this.</p><p><code>{error}</code></p></div>
@@ -897,7 +978,7 @@
       {@const idea = suggest?.(subject)}
       <div class="runbar still">
         <p>
-          {#if curSize?.reads}<b class="reads">{curSize.reads}</b> · {/if}{#if store.tag[trace.frames[0]] === APP}Nothing can fire here yet.{:else}Already a finished tree, so there's nothing to run.{/if}
+          {#if curSize?.reads}<b class="reads">{curSize.reads}</b> · {/if}{#if store.tag[trace.frames[0]] === APP}{#if unknown.length}{unknown.join(', ')} {unknown.length === 1 ? "isn't" : "aren't"} defined, so {unknown.length === 1 ? 'it is' : 'they are'} drawn as a symbol and nothing can fire.{:else}Nothing can fire here yet.{/if}{:else}Already a finished tree, so there's nothing to run.{/if}
           {#if curSize}<span class="dim"> {fmt(curSize.size)} node{curSize.size === 1 ? '' : 's'}, depth {curSize.depth}</span>{/if}
         </p>
         {#if idea}<button class="idea" onclick={() => onExpr(idea)}>Run <code>{idea}</code></button>{/if}
@@ -906,7 +987,7 @@
       <div class="runbar">
         <div class="now" class:binder={inBinders} data-tour="caption">
           {#if caption.from}
-            <code class="rewrite">
+            <code class="rewrite" title={caption.full}>
               {#each tokens(caption.from) as p}{#if p.color}<b style="color:{p.color}">{p.text}</b>{:else}{p.text}{/if}{/each}
               {#if caption.to}<span class="arrow">&nbsp;→&nbsp;</span>{#each tokens(caption.to) as p}{#if p.color}<b style="color:{p.color}">{p.text}</b>{:else}{p.text}{/if}{/each}{/if}
             </code>
@@ -926,7 +1007,7 @@
           {/if}
           {#if bracket?.mismatch}<span class="verdict err">This replay didn't land on the compiler's output, which is a bug in this view.</span>{/if}
         </div>
-        <Timeline {trace} {at} {lead} {version} onScrub={(i) => { playing = false; seek(i) }} />
+        <Timeline {trace} {at} {lead} {version} onScrub={(i) => { playing = false; seek(snap(i)) }} />
         <div class="transport">
           <button class="tb" onclick={() => seek(0)} title="Start (Home)" aria-label="start" data-tour="start">⏮</button>
           <button class="tb" onclick={() => { playing = false; stepBack() }} title="Step back (←)" aria-label="step back" data-tour="back">◀</button>
@@ -934,16 +1015,16 @@
           <button class="tb" onclick={() => { playing = false; stepForward() }} title="Step (→)" aria-label="step" data-tour="step">▶|</button>
           <button class="tb" onclick={() => { playing = false; seek(lastAt) }} title="End (End)" aria-label="end" data-tour="end">⏭</button>
           {#if bindEnd > 0}
-            <button class="phase" class:on={inBinders} data-tour="binders" onclick={() => { playing = false; seek(0) }} title={unified ? 'Binders coming off, each a step like any other. Shift + arrows jump between binders' : 'The compiler removing binders. Shift + arrows jump between binders'}>Binders <span>{Math.min(at, bindEnd)}/{bindEnd}</span></button>
+            <button class="phase" class:on={inBinders} data-tour="binders" onclick={() => { playing = false; seek(0) }} title={unified ? 'Binders coming off, each a step like any other. Shift + arrows jump between binders' : 'The compiler removing binders. Shift + arrows jump between binders'}>Binders <span>{phase.bind}/{phase.binds}</span></button>
           {/if}
-          <button class="phase" class:on={!inBinders} data-tour="run" onclick={() => { playing = false; seek(bindEnd) }} title="The tree reducing, one rule at a time">Run <span>{Math.max(0, at - bindEnd)}/{lastAt - bindEnd}{runEnded ? '' : '…'}</span></button>
+          <button class="phase" class:on={!inBinders} data-tour="run" onclick={() => { playing = false; seek(bindEnd) }} title="The tree reducing, one rule at a time">Run <span>{phase.run}/{phase.runs}{runEnded ? '' : '…'}</span></button>
           <span class="size">{#if curSize}{fmt(curSize.size)} node{curSize.size === 1 ? '' : 's'}{/if}</span>
           {#if showSteps && !inBinders && mode === 'eager'}
             <button class="tb word" onclick={() => { playing = false; stepIn() }} title="Jump to the next call (↓)">in</button>
             <button class="tb word" onclick={() => { playing = false; stepOver() }} title="Skip the next call (shift →)">over</button>
             <button class="tb word" onclick={() => { playing = false; stepOut() }} title="Finish this call (alt →)">out</button>
           {/if}
-          <button class="tb" class:on={showSteps} data-tour="steps" onclick={() => (showSteps = !showSteps)} title={inBinders ? 'Every rewrite' : 'Every call'} aria-pressed={showSteps}>≣</button>
+          <button class="tb" class:on={showSteps} data-tour="steps" onclick={() => (showSteps = !showSteps)} title={inBinders ? 'Every rewrite' : 'Every call'} aria-label={inBinders ? 'every rewrite' : 'every call'} aria-pressed={showSteps}>≣</button>
           <button class="tb optbtn" class:on={showOptions} onclick={() => (showOptions = !showOptions)} title="Options and key" aria-label="options" aria-expanded={showOptions}>⋯</button>
         </div>
         {#if showOptions}
@@ -956,7 +1037,7 @@
             <div class="legend">
               <span><i class="k-var"></i>variable</span><span><i class="k-leaf"></i>leaf</span><span><i class="k-stem"></i>stem</span><span><i class="k-fork"></i>fork</span><span><i class="k-app"></i>waiting</span><span><i class="k-comb">S</i>runs S when called</span>
             </div>
-            <div class="encode"><b>S(f, g)</b> = t(t(f), g) · <b>K(x)</b> = t(t, x) · <b>I</b> = t(t(t, t), t). The tinted band is the S, K or I itself; what hangs below it is f, g or x.</div>
+            <div class="encode"><b>S(f, g)</b> = t(t(f), g) · <b>K(x)</b> = t(t, x) · <b>I</b> = t(t(t, t), t). {look === 'bold' ? 'The tinted band' : 'The labelled branch'} is the S, K or I itself; what hangs below it is f, g or x.</div>
           </div>
         {/if}
       </div>
@@ -1017,6 +1098,9 @@
     font-size: 0.82rem;
     color: var(--fg-muted);
   }
+  .insp:focus-visible {
+    box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent) 60%, transparent);
+  }
   .head {
     display: flex;
     flex-wrap: wrap;
@@ -1027,8 +1111,17 @@
     background: var(--bg-elev);
   }
   .exprform {
-    flex: 1 1 9rem;
+    flex: 1 1 6rem;
     min-width: 0;
+  }
+  /* on a desktop the title and expression box give up width before the icons wrap */
+  @media (min-width: 821px) {
+    .head {
+      flex-wrap: nowrap;
+    }
+    .exprform {
+      min-width: 4.5rem;
+    }
   }
   .exprform input {
     width: 100%;
@@ -1043,6 +1136,10 @@
   }
   .exprform input:focus {
     border-color: var(--accent);
+  }
+  .exprform input:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--accent) 45%, transparent);
+    outline-offset: 1px;
   }
   .tools {
     display: flex;
@@ -1065,6 +1162,10 @@
     font: 500 0.7rem var(--font-body);
     cursor: pointer;
     white-space: nowrap;
+  }
+  /* one width for every style's name, so switching doesn't reflow the header */
+  .lookchip {
+    min-width: 4.5rem;
   }
   .lookchip:hover {
     color: var(--fg);
@@ -1227,6 +1328,16 @@
   .k-app {
     border: 1.5px solid var(--hl-kw);
   }
+  .k-ready {
+    border: 1.5px solid #c99a2e;
+    background: #f6e3b0;
+    color: #6b4e12;
+    width: 0.85rem !important;
+    height: 0.85rem !important;
+    font: 700 0.55rem/0.8rem var(--font-mono);
+    font-style: normal;
+    text-align: center;
+  }
   .k-comb {
     background: var(--hl-kw);
     color: #fff;
@@ -1311,12 +1422,17 @@
   }
   .key div {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.55rem;
   }
   .key dt,
   .key dd {
     margin: 0;
+  }
+  .key dt {
+    flex: none;
+    width: 1rem;
+    padding-top: 0.2em;
   }
   .errbox code {
     color: var(--err);
@@ -1395,6 +1511,21 @@
     font-size: 0.72rem;
     cursor: pointer;
   }
+  @media (pointer: coarse) {
+    .ic {
+      width: 2.4rem;
+      height: 2.4rem;
+    }
+    .phase,
+    .lookchip {
+      min-height: 2.2rem;
+    }
+    .tb {
+      min-width: 2.5rem;
+      height: 2.4rem;
+      font-size: 0.85rem;
+    }
+  }
   .tb:hover {
     background: var(--bg-panel-hover);
     color: var(--fg);
@@ -1422,7 +1553,8 @@
     gap: 0.15rem 0.6rem;
     margin: 0.15rem 0 0.3rem;
     font-size: 0.76rem;
-    min-height: 2.5em;
+    /* room held for a three-line caption, so a shorter one doesn't nudge the tree */
+    min-height: 5em;
   }
   .rewrite {
     flex: 1 1 100%;
@@ -1489,6 +1621,9 @@
   }
   .size {
     margin-left: auto;
+    min-width: 6.5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
     padding-right: 0.3rem;
     font-size: 0.7rem;
     color: var(--fg-faint);
@@ -1573,9 +1708,8 @@
     transform: rotate(-90deg);
   }
   .allcalls {
-    position: absolute;
-    right: 0.5rem;
-    top: 0.22rem;
+    align-self: flex-end;
+    padding: 0.15rem 0.5rem 0;
     display: inline-flex;
     align-items: center;
     gap: 0.25em;

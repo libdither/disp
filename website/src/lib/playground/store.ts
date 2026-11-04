@@ -430,7 +430,8 @@ export class Store {
       else if (t === G_HELD_K) map[i] = this.heldK(map[a])
       else map[i] = this.cut(a)
     }
-    for (const [i, name] of g.labels) this.names.set(map[i], name)
+    // aliases share a tree; the first definition names it (a later `let x := pair_snd` shouldn't rename nat_pred)
+    for (const [i, name] of g.labels) if (!this.names.has(map[i])) this.names.set(map[i], name)
     return g.roots.map((r) => (r < 0 ? -1 : map[r]))
   }
 
@@ -454,9 +455,10 @@ export class Store {
   }
 
   /// A short term rendering: `t(a, b)` for trees, `f(x)` for held applications, cut off past `budget` nodes.
-  pretty(root: Id, budget = 80, sk = false): string {
+  /// `depth` cuts anything nested deeper to `…`, so a caption stays a glance
+  pretty(root: Id, budget = 80, sk = false, depth = Infinity): string {
     let left = budget
-    const go = (id: Id, top: boolean, head = false): string => {
+    const go = (id: Id, top: boolean, head = false, d = 0): string => {
       const t = this.tag[id]
       if (t === LEAF) return 't'
       if (t === VAR) return this.strs[this.a[id]]
@@ -464,23 +466,23 @@ export class Store {
       const l = this.label(id)
       // something being called is code, even when its shape spells a number
       if (l && !(sk && head && l.kind === 'nat')) return l.text
-      if (t === LAM) return `{${this.strs[this.a[id]]}} => ${go(this.b[id], false)}`
+      if (t === LAM) return `{${this.strs[this.a[id]]}} => ${go(this.b[id], false, false, d + 1)}`
       if (sk || t === HELD_K || t === ATOM || t === SPLIT) {
         const c = this.readComb(id)
-        if (c) return c.kids.length === 0 ? c.op : --left < 0 ? '…' : `${c.op}(${c.kids.map(([k]) => go(k, false)).join(', ')})`
+        if (c) return c.kids.length === 0 ? c.op : d > depth || --left < 0 ? '…' : `${c.op}(${c.kids.map(([k]) => go(k, false, false, d + 1)).join(', ')})`
       }
       // finished data with no name would only be noise: give its size instead
       if (!top && t !== APP && !this.hasApp(id) && this.size[id] > 9) return `…${this.size[id]}`
-      if (--left < 0) return '…'
-      if (t === STEM) return `t(${go(this.a[id], false)})`
-      if (t === FORK) return `t(${go(this.a[id], false)}, ${go(this.b[id], false)})`
+      if (d > depth || --left < 0) return '…'
+      if (t === STEM) return `t(${go(this.a[id], false, false, d + 1)})`
+      if (t === FORK) return `t(${go(this.a[id], false, false, d + 1)}, ${go(this.b[id], false, false, d + 1)})`
       const args = [this.b[id]]
       let f = this.a[id]
       while (this.tag[f] === APP) {
         args.unshift(this.b[f])
         f = this.a[f]
       }
-      return `${go(f, false, true)}(${args.map((x) => go(x, false)).join(', ')})`
+      return `${go(f, false, true, d)}(${args.map((x) => go(x, false, false, d + 1)).join(', ')})`
     }
     return go(root, true)
   }

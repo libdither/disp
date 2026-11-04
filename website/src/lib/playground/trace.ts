@@ -35,6 +35,8 @@ export class Trace {
   rules: number[] = [R_NONE]
   /// how many redexes fired to reach this frame (parallel mode fires many)
   fired: number[] = [0]
+  /// how many of those were binder rewrites
+  bound: number[] = [0]
   sizes: number[]
   calls: Call[] = []
   end: TraceEnd = null
@@ -184,10 +186,11 @@ export class Trace {
     }
   }
 
-  #push(root: Id, rule: number, fired: number) {
+  #push(root: Id, rule: number, fired: number, bound: number) {
     this.frames.push(root)
     this.rules.push(rule)
     this.fired.push(this.fired[this.fired.length - 1] + fired)
+    this.bound.push(this.bound[this.bound.length - 1] + bound)
     this.sizes.push(this.store.size[root])
   }
 
@@ -204,13 +207,13 @@ export class Trace {
     if (this.mode === 'parallel') {
       const out = this.#parallel(root)
       next = out.id
-      this.#push(next, out.rule, out.fired)
+      this.#push(next, out.rule, out.fired, out.bound)
     } else {
       const path = this.nextPath(root)!
       this.#noteCall(root, path, this.last)
       const site = this.subterm(root, path)
       next = this.#replaceAt(root, path, this.fireNode(site))
-      this.#push(next, s.rule[site], 1)
+      this.#push(next, s.rule[site], 1, s.rule[site] === R_BIND ? 1 : 0)
       this.#closeCalls(next, this.last)
     }
     if (!s.hasRedex(next)) {
@@ -222,9 +225,10 @@ export class Trace {
 
   // Fire every innermost-ready redex in one pass: an application fires only
   // once nothing below it can.
-  #parallel(root: Id): { id: Id; rule: number; fired: number } {
+  #parallel(root: Id): { id: Id; rule: number; fired: number; bound: number } {
     const s = this.store
     let fired = 0
+    let bound = 0
     let rule = R_NONE
     const memos = [new Map<Id, Id>(), new Map<Id, Id>()]
     // inside an unfinished binder only binder rewrites happen
@@ -236,6 +240,7 @@ export class Trace {
       let out: Id
       if (s.rule[id] === R_BIND || (t === APP && !inside && !s.hasRedex(s.a[id]) && !s.hasRedex(s.b[id]))) {
         fired++
+        if (s.rule[id] === R_BIND) bound++
         rule = s.rule[id]
         out = this.fireNode(id)
       } else if (t === LAM) out = s.withKid(id, 0, go(s.b[id], 1))
@@ -248,7 +253,7 @@ export class Trace {
       return out
     }
     const id = go(root, 0)
-    return { id, rule, fired }
+    return { id, rule, fired, bound }
   }
 
   /// Compute frames for at most `ms`; true while more remain.
@@ -266,6 +271,7 @@ export class Trace {
     this.frames.length = frame + 1
     this.rules.length = frame + 1
     this.fired.length = frame + 1
+    this.bound.length = frame + 1
     this.sizes.length = frame + 1
     this.calls = this.calls.filter((c) => c.start < frame)
     this.#stack = []
@@ -286,7 +292,7 @@ export class Trace {
       const target = this.subterm(root, full)
       const rule = s.rule[target]
       const next = this.#replaceAt(root, full, this.fireNode(target))
-      this.#push(next, rule, 1)
+      this.#push(next, rule, 1, rule === R_BIND ? 1 : 0)
       if (inner.length === 0) break
     }
     const cur = this.frames[this.last]

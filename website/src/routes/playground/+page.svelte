@@ -62,6 +62,7 @@
     if (old && scroll) tabStates.set(prev.id, { state: old, scroll })
     if (saved) view?.dispatch({ effects: saved.scroll })
     currentDoc = next.doc
+    index = bufferIndex()
     outcome = null
     subject = null
     persistTabs()
@@ -343,7 +344,11 @@
     return marks
   }
 
+  /// the line last typed on: where an error with no position most likely is
+  let editLine = 0
   function applyOutcome(out: RunOutcome, coldLoad: boolean) {
+    if (out.error && !out.errorLine && editLine)
+      out = { ...out, errorLine: editLine, error: `${out.error} (no position given; line ${editLine} is where you last typed)` }
     outcome = out
     lastRunMs = out.elapsedMs
     runVersion++
@@ -389,11 +394,17 @@
   }
 
   // a cold session never starts the kernel load uninvited; raw buffers are instant
-  const canAutoRun = (doc: string) => disp.kernelLoaded || !/\buse\s+(?!raw\b)/.test(doc)
+  // a typed `use` needs the kernel; the word in a comment doesn't count
+  const code = (doc: string) => doc.replace(/\/\/.*$/gm, '')
+  /// a module that declares `given` dependencies only runs through a file that opens it
+  const isDependent = (doc: string) => /^\s*(?:open\s+)?given\b/m.test(code(doc))
+  const canAutoRun = (doc: string) => !isDependent(doc) && (disp.kernelLoaded || !/\buse\s+(?!raw\b)/.test(code(doc)))
   let editTimer: ReturnType<typeof setTimeout> | undefined
   let indexTimer: ReturnType<typeof setTimeout> | undefined
   function onEdit(doc: string) {
     currentDoc = doc
+    const v = editorApi?.view()
+    if (v) editLine = v.state.doc.lineAt(v.state.selection.main.head).number
     const tab = activeTab()
     if (doc !== tab.doc) {
       tab.doc = doc
@@ -784,11 +795,14 @@
     const exs = examples.map((x) => ({ id: `ex:${x.id}`, title: x.label, detail: 'example', run: () => loadExample(x.id) }))
     return rank(q, paletteFilesFirst ? [...files, ...exs, ...commands()] : [...commands(), ...exs, ...files])
   }
+  // on a narrow screen these switch the one pane shown instead
   function toggleSide() {
+    if (narrow) return void (pane = pane === 'side' ? 'code' : 'side')
     sideOpen = !sideOpen
     persistLayout()
   }
   function toggleInsp() {
+    if (narrow) return void (pane = pane === 'tree' ? 'code' : 'tree')
     inspOpen = !inspOpen
     persistLayout()
   }
@@ -931,7 +945,7 @@
 
 <div class="pg" bind:this={shell} bind:clientWidth={shellW} class:narrow data-pane={pane}>
   <div class="bar">
-    <button class="ibtn" class:on={sideOpen} onclick={toggleSide} title="Sidebar ({mod}B)" aria-label="toggle sidebar" aria-pressed={sideOpen}>
+    <button class="ibtn" class:on={narrow ? pane === 'side' : sideOpen} onclick={toggleSide} title="Sidebar ({mod}B)" aria-label="toggle sidebar" aria-pressed={sideOpen}>
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M6 3v10" stroke="currentColor" stroke-width="1.3" /></svg>
     </button>
     <div class="tabs" role="tablist">
@@ -960,7 +974,7 @@
       <button class="btn-run" onclick={runFile} disabled={busy} title="Run ({mod}Enter)">▶ Run</button>
       <button class="ibtn word" onclick={() => void share()} title="Copy a link with this code in it">Share</button>
       <button class="ibtn word kbdish" onclick={() => openPalette('')} title="Everything else">{mod}K</button>
-      <button class="ibtn" class:on={inspOpen} onclick={toggleInsp} title="Tree view ({mod}J)" aria-label="toggle tree view" aria-pressed={inspOpen}>
+      <button class="ibtn" class:on={narrow ? pane === 'tree' : inspOpen} onclick={toggleInsp} title="Tree view ({mod}J)" aria-label="toggle tree view" aria-pressed={inspOpen}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.4" r="1.7" fill="currentColor" /><circle cx="4" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><path d="M8 4 4 12M8 4l4 8" stroke="currentColor" stroke-width="1.3" /></svg>
       </button>
     </div>
@@ -1048,6 +1062,8 @@
           suggest={suggestRun}
           paramsOf={paramsOf}
           notRun={!outcome && !busy && disp.status === 'ready'}
+          notRunWhy={isDependent(currentDoc) ? "This file declares what it's given, so it only runs through a file that opens it, like playground.disp." : undefined}
+          fileError={outcome?.error ? { line: outcome.errorLine } : null}
           onPinToggle={togglePin}
           onExpr={inspectExpr}
           onGlow={onTreeGlow}
@@ -1084,7 +1100,7 @@
           <span class="good">✓ {passCount}</span>{#if failCount > 0}&nbsp;<span class="bad">✗ {failCount}</span>{/if}
         </button>
       {/if}
-      {#if outcome.steps > 0}<span class="sep">·</span><span class="dim" title="Evaluator steps this run">{fmtSteps(outcome.steps)} steps</span>{/if}
+      {#if outcome.steps > 0}<span class="sep">·</span><span class="dim" title="Evaluator steps this run">{fmtSteps(outcome.steps)} {outcome.steps === 1 ? 'step' : 'steps'}</span>{/if}
     {/if}
     <span class="grow"></span>
     {#if !disp.kernelLoaded && !busy && disp.status === 'ready'}
@@ -1115,7 +1131,7 @@
       <button class="aboutx" onclick={dismissAbout} aria-label="dismiss">×</button>
       <h2>The real toolchain, in your tab</h2>
       <p>This runs disp's actual elaborator and evaluator, compiled to WebAssembly. Nothing goes to a server.</p>
-      <p>Each definition shows its value on its line and each test its verdict, and everything re-checks as you type. The panel on the right plays whatever is under your cursor as trees: first the compiler turning each binder into S, K and I, which are themselves small trees, then the tree reducing one rule at a time. Select any expression to see just that part.</p>
+      <p>Each definition shows its value on its line and each test its verdict, and everything re-checks as you type. The panel on the right plays whatever is under your cursor as trees (the Tree tab on a phone), one step at a time: each binder turning into S, K and I (themselves small trees), and the tree reducing by its rules. Select any expression to see just that part.</p>
       <p>The kernel arrives precompiled so typed code starts fast. Don't trust it? <button class="stlink" onclick={() => { dismissAbout(); void verifyKernel() }}>Verify it from source</button>: about a minute of the type system checking itself.</p>
       <p class="keys"><kbd>{mod}K</kbd> commands <kbd>{mod}P</kbd> files <kbd>{mod}Enter</kbd> run <kbd>F12</kbd> definition <kbd>F2</kbd> rename <kbd>F8</kbd> next problem <kbd>←</kbd><kbd>→</kbd> step through the tree</p>
     </div>
@@ -1456,7 +1472,7 @@
   }
   .about {
     position: absolute;
-    right: 1rem;
+    left: 1rem;
     bottom: 2.2rem;
     z-index: 40;
     width: min(30rem, calc(100vw - 2rem));
@@ -1544,6 +1560,19 @@
   .panes button.on {
     color: var(--accent);
     font-weight: 600;
+  }
+  /* the editor's floating Edit button sits above the pane switcher */
+  .pg.narrow :global(.mode-btn) {
+    bottom: calc(3.4rem + env(safe-area-inset-bottom, 0px));
+  }
+  @media (pointer: coarse) {
+    .btn-run {
+      min-height: 2.2rem;
+    }
+    .stlink.quiet {
+      min-width: 2rem;
+      min-height: 2rem;
+    }
   }
   .pg.narrow .pos,
   .pg.narrow .memw,

@@ -2,9 +2,10 @@
   // The reel at a glance: one tick per binder rewrite, then the run's tree size
   // over every step (a log scale, so a storm and a calm both read) over a strip
   // coloured by which rule fired. Drag to scrub.
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { theme } from '$lib/theme.svelte'
-  import { R_K, R_S, R_F, R_LEAF, R_STEM } from './store.ts'
+  import { followTheme } from './theme-follow.ts'
+  import { R_K, R_S, R_F, R_LEAF, R_STEM, R_BIND } from './store.ts'
   import type { Trace } from './trace.ts'
 
   interface Props {
@@ -33,6 +34,8 @@
 
   function readColors() {
     const probe = document.createElement('span')
+    // reduced motion gives every element a tiny transition, which would hand back the old colour
+    probe.style.transition = 'none'
     host.appendChild(probe)
     const get = (v: string) => {
       probe.style.color = `var(${v})`
@@ -63,13 +66,13 @@
       const from = Math.floor((c / count) * n)
       const to = Math.max(from + 1, Math.floor(((c + 1) / count) * n))
       let hi = 0
-      const hist = [0, 0, 0, 0, 0, 0]
+      const hist = [0, 0, 0, 0, 0, 0, 0]
       for (let i = from; i < to && i < n; i++) {
         if (trace.sizes[i] > hi) hi = trace.sizes[i]
         hist[trace.rules[i]]++
       }
       let rule = 0
-      for (let r = 3; r <= 5; r++) if (hist[r] > 0 && hist[r] >= hist[rule]) rule = r
+      for (let r = 3; r <= 6; r++) if (hist[r] > 0 && hist[r] >= hist[rule]) rule = r
       if (rule === 0 && (hist[R_LEAF] || hist[R_STEM])) rule = R_LEAF
       const lg = Math.log1p(hi)
       if (lg > maxLog) maxLog = lg
@@ -108,7 +111,7 @@
       ctx.fill()
       ctx.globalAlpha = 1
       cols.forEach((c, i) => {
-        ctx.fillStyle = c.rule === R_K ? C.warn : c.rule === R_S ? C.kw : c.rule === R_F ? C.err : c.rule === R_LEAF ? C.build : C.track
+        ctx.fillStyle = c.rule === R_BIND ? C.binder : c.rule === R_K ? C.warn : c.rule === R_S ? C.kw : c.rule === R_F ? C.err : c.rule === R_LEAF ? C.build : C.track
         ctx.fillRect(x0 + i, H - strip, 1, strip)
       })
     }
@@ -152,13 +155,8 @@
     draw()
   })
   $effect(() => {
-    void theme.resolved
-    if (host) {
-      queueMicrotask(() => {
-        readColors()
-        draw()
-      })
-    }
+    void theme.mix
+    if (host) return untrack(() => followTheme(() => (readColors(), draw())))
   })
 </script>
 

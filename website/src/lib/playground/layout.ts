@@ -38,8 +38,9 @@ export interface VNode {
 export interface Guide {
   /// a new node starts where these old nodes were (between them)
   origin: Map<string, string[]>
-  /// old nodes under a key that are gone: they glide to a new key as they fade, stay put, or drop away
-  sinks: [string, string | 'stay' | 'drop'][]
+  /// old nodes under a key that are gone: they glide to a new key as they fade, stay put, drop away,
+  /// or fade quickly where they are so what replaces them has the stage
+  sinks: [string, string | 'stay' | 'drop' | 'fade'][]
 }
 
 export interface Scene {
@@ -51,6 +52,8 @@ export interface Scene {
   titles: { x: number; text: string; bad?: boolean }[]
   /// visible apart from what the budget had to cut
   cut: number
+  /// big data left open because the next step is right at it
+  nearOpen: Set<Id>
 }
 
 export interface FoldState {
@@ -61,6 +64,8 @@ export interface FoldState {
 export interface LayoutOptions {
   maxVisible?: number
   nextPath?: number[] | null
+  /// in parallel mode, every other site that fires along with it
+  alsoNext?: number[][]
   same?: Set<Id>
   diff?: Set<string>
   titles?: (string | undefined)[]
@@ -71,6 +76,8 @@ export interface LayoutOptions {
   diffInside?: Set<string>
   /// finished data bigger than this folds, except right at the next redex
   foldData?: number
+  /// big data the previous frame left open, kept open one more step so it doesn't fold and unfold in turn
+  keepOpen?: Set<Id>
   /// mark the subtrees that read as S, K, I and F
   sk?: boolean
   /// draw numerals as the trees they are
@@ -87,8 +94,10 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
   const kidsOf: number[][] = []
   const width: number[] = []
   let cut = 0
+  const nearOpen = new Set<Id>()
   const titles: Scene['titles'] = []
   const nextKey = opts.nextPath ? 'r0' + opts.nextPath.join('') : null
+  const alsoKeys = new Set(opts.alsoNext?.map((p) => 'r0' + p.join('')))
   const res = (id: Id) => {
     let cur = id
     for (let r = store.resolved.get(cur); r !== undefined; r = store.resolved.get(cur)) cur = r
@@ -127,7 +136,7 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
         width[i] = pillWidth(n.text)
         continue
       }
-      if (n.key === nextKey) n.next = true
+      if (n.key === nextKey || alsoKeys.has(n.key)) n.next = true
       const isRoot = n.parent < 0
       const inside = n.group >= 0
       const label = inside ? null : store.label(id)
@@ -140,7 +149,8 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
       else if (label && t !== APP && opts.labels !== false && !(label.kind === 'nat' && (opts.plainNats || isHead(n)))) pod = true
       if (!pod && !inside && opts.foldData && t !== APP && !store.hasApp(id) && store.size[id] > opts.foldData) {
         const nearNext = nextKey !== null && n.key.startsWith(nextKey) && n.key.length <= nextKey.length + 2
-        if (!nearNext && !folds.open.has(id)) pod = true
+        if (nearNext) nearOpen.add(id)
+        else if (!folds.open.has(id) && !opts.keepOpen?.has(id)) pod = true
       }
       if (!pod && nodes.length >= maxVisible) {
         pod = true
@@ -244,7 +254,7 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
     const t = opts.titles?.[ri]
     if (t) titles.push({ x: nodes[rootStart[ri]].x, text: t, bad: opts.badTitles?.[ri] })
   })
-  return { nodes, minX, maxX, maxY, titles, cut }
+  return { nodes, minX, maxX, maxY, titles, cut, nearOpen }
 }
 
 /// Where two trees differ: everything they share folds away, and the keys of the mismatched positions light up.

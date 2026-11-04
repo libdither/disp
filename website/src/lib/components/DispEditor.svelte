@@ -352,6 +352,8 @@
         const to = Number(el.dataset.to)
         el.classList.toggle('away', cursorLine < from || cursorLine > to)
       })
+      // the blocks changed height behind CodeMirror's back
+      view?.requestMeasure()
     })
   }
 
@@ -660,7 +662,8 @@
       gotoLine: (n: number) => {
         if (n < 1 || n > view!.state.doc.lines) return
         const l = view!.state.doc.line(n)
-        view!.dispatch({ selection: { anchor: l.from }, scrollIntoView: true })
+        // a jump lands mid-screen, not on the bottom edge
+        view!.dispatch({ selection: { anchor: l.from }, effects: EditorView.scrollIntoView(l.from, { y: 'center' }) })
         view!.focus()
       },
       view: () => view!,

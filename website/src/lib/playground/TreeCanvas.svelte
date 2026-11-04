@@ -5,6 +5,7 @@
   // to where the step sends it.
   import { onMount, untrack } from 'svelte'
   import { theme } from '$lib/theme.svelte'
+  import { followTheme } from './theme-follow.ts'
   import { K_LEAF, K_STEM, K_FORK, K_APP, K_VAR, K_POD, K_LAM, type Scene, type VNode } from './layout.ts'
   import { R_K, R_S, R_F, RULE_GLYPH, type Id } from './store.ts'
 
@@ -28,11 +29,13 @@
     /// the colour a variable or its binder is drawn in
     varColor?: (name: string) => string
     look?: TreeLook
+    /// while playing: the view only zooms out, so a tree that grows and shrinks doesn't pump; it refits once this goes false
+    steady?: boolean
     onHover?: (n: VNode | null) => void
     onClick?: (n: VNode, e: MouseEvent) => void
     api?: (a: CanvasApi) => void
   }
-  let { scene, animMs = 0, glow = null, falling = false, varColor = () => '#1971c2', look = 'bold', onHover, onClick, api }: Props = $props()
+  let { scene, animMs = 0, glow = null, falling = false, varColor = () => '#1971c2', look = 'bold', steady = false, onHover, onClick, api }: Props = $props()
 
   let host: HTMLDivElement
   let cv: HTMLCanvasElement
@@ -44,6 +47,8 @@
   // camera: screen = world * k + (x, y)
   const cam = { x: 0, y: 0, k: 1 }
   const target = { x: 0, y: 0, k: 1 }
+  /// the most a steady view may zoom in to
+  let kCap = Infinity
   let follow = true
 
   let shown: Scene | null = null
@@ -58,10 +63,14 @@
   let hoverId: Id = -1
 
   /// a node the last step removed, fading on its way to `to` (a new node's index), in place, or dropping
-  type Ghost = { n: VNode; x: number; y: number; to: number; drop: boolean; parent: number }
+  type Ghost = { n: VNode; x: number; y: number; to: number; drop: boolean; quick: boolean; parent: number }
   let ghosts: Ghost[] = []
   /// every alpha below is scaled by this, so a ghost or a new node can be drawn faded with the usual helpers
   let fade = 1
+  /// how far the next step's marks have come in: they wait for the current step's motion to land
+  let bloom = 1
+  const isNext = (n: VNode) => n.next && bloom > 0
+  const reduced = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null
   let raf = 0
   let lastFrame = 0
 
@@ -82,6 +91,8 @@
   let C: Record<string, string> = {}
   function readColors() {
     const probe = document.createElement('span')
+    // reduced motion gives every element a tiny transition, which would hand back the old colour
+    probe.style.transition = 'none'
     host.appendChild(probe)
     const get = (v: string) => {
       probe.style.color = v.startsWith('--') ? `var(${v})` : v
@@ -163,7 +174,6 @@
     ctx.font = `${look === 'moss' ? 500 : 700} ${12 * s}px 'JetBrains Mono Variable', monospace`
     const pw = Math.max(22 * s, ctx.measureText(shown).width + 14 * s)
     const tint = look === 'quiet' || look === 'moss' || (planty && !lit)
-    if (look === 'moss' && !lit) col = garden().ink
     ctx.beginPath()
     ctx.roundRect(x - pw / 2, y - 11 * s, pw, 22 * s, 11 * s)
     if (tint) {
@@ -202,20 +212,24 @@
     }
   }
 
-  function fitTarget(s: Scene) {
+  function fitTarget(s: Scene, minX = s.minX, maxX = s.maxX, maxY = s.maxY) {
     const pad = 34
-    const sw = Math.max(1, s.maxX - s.minX)
-    const sh = Math.max(1, s.maxY)
-    const k = Math.min(1.5, (w - pad * 2) / sw, (h - pad * 2 - (s.titles.length ? 18 : 0)) / sh)
+    // the hover bar along the bottom gets its own strip, so it never covers the lowest nodes
+    const bar = 26
+    const sw = Math.max(1, maxX - minX)
+    const sh = Math.max(1, maxY)
+    const k = Math.min(1.5, kCap, (w - pad * 2) / sw, (h - pad * 2 - bar - (s.titles.length ? 18 : 0)) / sh)
     target.k = Math.max(0.02, k)
-    target.x = w / 2 - ((s.minX + s.maxX) / 2) * target.k
+    target.x = w / 2 - ((minX + maxX) / 2) * target.k
     const contentH = sh * target.k
-    target.y = Math.max(pad + (s.titles.length ? 18 : 0), (h - contentH) / 2 - 8)
+    target.y = Math.max(pad + (s.titles.length ? 18 : 0), (h - bar - contentH) / 2 - 8)
   }
 
   function setScene(next: Scene | null) {
     const prev = shown
     shown = next
+    // what was under the pointer may be gone; its hover text goes with it
+    if (hover) onHover?.(null)
     hover = null
     hoverId = -1
     if (!next) {
@@ -223,7 +237,7 @@
       return
     }
     const n = next.nodes.length
-    const tween = animMs > 0 && prev && n < 2500 && prev.nodes.length < 2500
+    const tween = animMs > 0 && !reduced?.matches && prev && n < 2500 && prev.nodes.length < 2500
     const nx = new Float64Array(n)
     const ny = new Float64Array(n)
     fresh = new Uint8Array(n)
@@ -295,12 +309,12 @@
           if (used[j] || ghosts.length >= 400) return
           const sink = sinks.find(([pre]) => p.key.startsWith(pre))?.[1] ?? 'stay'
           let to = -1
-          if (sink !== 'stay' && sink !== 'drop') {
+          if (sink !== 'stay' && sink !== 'drop' && sink !== 'fade') {
             // the spot it was sent to may have folded away: the nearest one above it
             for (let key = sink; key.length >= 2 && to < 0; key = key.slice(0, -1)) to = nextKey.get(key) ?? -1
           }
           ghostOf.set(j, ghosts.length)
-          ghosts.push({ n: p, x: curX[j], y: curY[j], to, drop: sink === 'drop', parent: ghostOf.get(p.parent) ?? -1 })
+          ghosts.push({ n: p, x: curX[j], y: curY[j], to, drop: sink === 'drop', quick: sink === 'fade', parent: ghostOf.get(p.parent) ?? -1 })
         })
       }
       fromX = nx
@@ -318,6 +332,7 @@
     }
     curX = Float64Array.from(nx)
     curY = Float64Array.from(ny)
+    kCap = steady && tween ? cam.k : Infinity
     if (follow) {
       fitTarget(next)
       if (!tween) Object.assign(cam, target)
@@ -345,10 +360,31 @@
           curX[i] = fromX[i] + (nodes[i].x - fromX[i]) * k
           curY[i] = fromY[i] + (nodes[i].y - fromY[i]) * k
         }
+        if (follow) {
+          // the view fits where the nodes are right now, so nothing leaves it and it lands when they do;
+          // the scene's bounds sit a little outside its nodes' centres, and that margin carries over
+          let lo = Infinity
+          let hi = -Infinity
+          let bottom = 0
+          let lo1 = Infinity
+          let hi1 = -Infinity
+          let bottom1 = 0
+          for (let i = 0; i < nodes.length; i++) {
+            lo = Math.min(lo, curX[i])
+            hi = Math.max(hi, curX[i])
+            bottom = Math.max(bottom, curY[i])
+            lo1 = Math.min(lo1, nodes[i].x)
+            hi1 = Math.max(hi1, nodes[i].x)
+            bottom1 = Math.max(bottom1, nodes[i].y)
+          }
+          fitTarget(shown, lo - (lo1 - shown.minX), hi + (shown.maxX - hi1), bottom + (shown.maxY - bottom1))
+          Object.assign(cam, target)
+          if (t >= 1) fitTarget(shown)
+        }
         if (t < 1) again = true
         else dur = 0
-      }
-      if (follow) {
+      } else if (follow && reduced?.matches) Object.assign(cam, target)
+      else if (follow) {
         const d = Math.abs(cam.k - target.k) / target.k + Math.abs(cam.x - target.x) / 400 + Math.abs(cam.y - target.y) / 400
         if (d > 0.002) {
           const f = 1 - Math.pow(0.002, dt)
@@ -468,7 +504,7 @@
   /// gold petals around whatever is about to change; `wide` stretches the ring to fit a name
   function petals(x: number, y: number, dist: number, rx: number, ry: number, wide = 0) {
     ctx.fillStyle = flower().petal
-    ctx.globalAlpha = fade * (0.85)
+    ctx.globalAlpha = fade * 0.85 * bloom
     const count = wide > 0 ? 8 : 5
     for (let p = 0; p < count; p++) {
       const a = (p / count) * Math.PI * 2 - Math.PI / 2
@@ -482,24 +518,24 @@
   }
 
   function drawApp(x: number, y: number, n: VNode, showText: boolean) {
-    const col = look === 'ink' ? (n.next ? INK_RED : C.fg) : n.rule ? ruleColor(n.rule) : C.kw
+    const col = look === 'ink' ? (isNext(n) ? INK_RED : C.fg) : n.rule ? ruleColor(n.rule) : C.kw
     if (look === 'moss') {
       // as in the original tree view: a gold bud while it waits, a gold ring with the rule's
       // letter once it can fire, and petals around the one that fires next
       const fl = flower()
-      if (n.next) petals(x, y, 13, 7.5, 5)
-      if (n.rule || n.next) {
-        const r = n.next ? 10 : 7.5
+      if (isNext(n)) petals(x, y, 13, 7.5, 5)
+      if (n.rule || isNext(n)) {
+        const r = isNext(n) ? 10 : 7.5
         ctx.fillStyle = fl.heart
         ctx.strokeStyle = fl.deep
-        ctx.lineWidth = n.next ? 2.2 : 1.2
+        ctx.lineWidth = isNext(n) ? 2.2 : 1.2
         ctx.beginPath()
         ctx.arc(x, y, r, 0, Math.PI * 2)
         ctx.fill()
         ctx.stroke()
         if (showText) {
           ctx.fillStyle = fl.letter
-          ctx.font = `600 ${n.next ? 11 : 8.5}px 'JetBrains Mono Variable', monospace`
+          ctx.font = `600 ${isNext(n) ? 11 : 8.5}px 'JetBrains Mono Variable', monospace`
           ctx.fillText(RULE_GLYPH[n.rule] || '@', x, y + 0.5)
         }
       } else {
@@ -517,7 +553,7 @@
       }
       return
     }
-    if (n.next) {
+    if (isNext(n)) {
       if (planty) {
         // the next step blossoms
         ctx.fillStyle = col
@@ -547,7 +583,8 @@
       ctx.stroke()
       if (showText) {
         ctx.fillStyle = col
-        ctx.font = look === 'ink' ? "italic 700 13px Georgia, serif" : "700 12px 'JetBrains Mono Variable', monospace"
+        // upright, so a rule's letter never reads as an (italic) variable
+        ctx.font = look === 'ink' ? "700 11px Georgia, serif" : "700 12px 'JetBrains Mono Variable', monospace"
         ctx.fillText(RULE_GLYPH[n.rule] || '@', x, y + 0.5)
       }
       return
@@ -708,6 +745,7 @@
     const k = cam.k
     ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * cam.x, dpr * cam.y)
     const nodes = shown.nodes
+    bloom = dur > 0 ? Math.max(0, Math.min(1, ((performance.now() - t0) / dur - 0.55) / 0.45)) : 1
     const minWX = (-40 - cam.x) / k
     const maxWX = (w + 40 - cam.x) / k
     const minWY = (-40 - cam.y) / k
@@ -720,7 +758,7 @@
     const { bark, vine } = garden()
     if (inStep.length !== nodes.length) inStep = new Uint8Array(nodes.length)
     // breadth-first order: a parent always comes before its children
-    for (let i = 0; i < nodes.length; i++) inStep[i] = nodes[i].next || (nodes[i].parent >= 0 && inStep[nodes[i].parent]) ? 1 : 0
+    for (let i = 0; i < nodes.length; i++) inStep[i] = isNext(nodes[i]) || (nodes[i].parent >= 0 && inStep[nodes[i].parent]) ? 1 : 0
     const pen = look === 'ink' ? C.fg : C.edge
     const wobble = look === 'ink' ? 5 : 0
     /// one edge, as the same gentle curve everywhere (ink wobbles it a little, steadily per node)
@@ -737,7 +775,7 @@
     const branchW = (p: number) => (look === 'moss' ? Math.max(lw, 2.4) : Math.max(lw, 6.5 * Math.pow(0.8, curY[p] / 54)))
     const calledComb = (g: number) => {
       const p = nodes[g].parent
-      return p >= 0 && nodes[p].next && nodes[p].kind === K_APP && nodes[g].side === 0
+      return p >= 0 && isNext(nodes[p]) && nodes[p].kind === K_APP && nodes[g].side === 0
     }
     /// inside a combinator: the edge from its own node p to its own node i
     const inComb = (p: number, i: number) => nodes[i].group >= 0 && nodes[i].group === nodes[p].group
@@ -822,7 +860,7 @@
     ctx.globalAlpha = fade
     for (let i = 0; i < nodes.length; i++) {
       const p = nodes[i].parent
-      if (p < 0 || !nodes[p].next || nodes[p].kind !== K_APP) continue
+      if (p < 0 || !isNext(nodes[p]) || nodes[p].kind !== K_APP) continue
       ctx.strokeStyle = look === 'ink' ? INK_RED : ruleColor(nodes[p].rule)
       ctx.lineWidth = lw * 2
       ctx.beginPath()
@@ -842,7 +880,7 @@
         gy[j] = g.y + (ty - g.y) * e
       })
       // what merges into a new node stays visible until it gets there; the rest just fades
-      const alphaOf = (g: Ghost) => (g.to >= 0 ? (p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5) : g.drop ? 1 - p * p : 1 - e) * 0.9
+      const alphaOf = (g: Ghost) => (g.quick ? Math.max(0, 1 - p / 0.4) : g.to >= 0 ? (p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5) : g.drop ? 1 - p * p : 1 - e) * 0.9
       ctx.strokeStyle = planty ? bark : pen
       ctx.lineWidth = planty ? 2.4 : lw
       ghosts.forEach((g, j) => {
@@ -871,11 +909,15 @@
         else if (n.kind === K_STEM || n.kind === K_FORK) drawJoint(0, 0, n.kind === K_FORK)
         else if (n.kind === K_APP) drawApp(0, 0, { ...n, next: false }, false)
         else if (n.kind === K_POD) {
+          const text = n.text ?? ''
           ctx.strokeStyle = C.muted
           ctx.lineWidth = 1.2
           ctx.beginPath()
-          ctx.roundRect(-podWidth(n.text ?? '') / 2, -10, podWidth(n.text ?? ''), 20, 9)
+          ctx.roundRect(-podWidth(text) / 2, -10, podWidth(text), 20, 9)
           ctx.stroke()
+          ctx.fillStyle = C.muted
+          ctx.font = "11px 'JetBrains Mono Variable', monospace"
+          ctx.fillText(text.length > 28 ? text.slice(0, 27) + '…' : text, 0, 0.5)
         }
         ctx.restore()
         fade = 1
@@ -917,13 +959,13 @@
         ctx.fill()
         ctx.globalAlpha = fade
       }
-      if (n.next && n.kind !== K_APP && look === 'moss') {
+      if (isNext(n) && n.kind !== K_APP && look === 'moss') {
         const named = n.kind === K_LAM || n.kind === K_VAR
         const text = n.kind === K_LAM ? `{${n.text ?? ''}}` : (n.text ?? '')
         if (named) petals(x, y, 17, 6, 4, Math.max(0, (podWidth(text) * pillScale(k)) / 2 - 10))
         else petals(x, y, 13, 8, 5.5)
       }
-      else if (n.next && n.kind !== K_APP) {
+      else if (isNext(n) && n.kind !== K_APP) {
         ctx.fillStyle = C.accent
         ctx.globalAlpha = fade * (0.22)
         ctx.beginPath()
@@ -934,7 +976,7 @@
       if (n.comb) drawComb(x, y, n.comb, calledComb(i), showText, calledComb(i) || inStep[i] === 1)
       else switch (n.kind) {
         case K_LAM: {
-          if (n.rule && !n.next && look !== 'ink') {
+          if (n.rule && !isNext(n) && look !== 'ink') {
             // a binder ready to come off is a reduction point like any other: a gold ring
             const s = pillScale(k)
             const pw = Math.max(22 * s, podWidth(`{${n.text ?? ''}}`) * s + 2)
@@ -1155,6 +1197,8 @@
       fitTarget(shown)
       Object.assign(cam, target)
     }
+    // resizing clears the canvas; drawing now (not next frame) avoids a blank frame
+    draw()
     requestDraw()
   }
 
@@ -1198,14 +1242,24 @@
     void glow
     requestDraw()
   })
-  // the page flips data-theme; colours follow on the next tick
+  // the page eases its palette over --mix's transition; the canvas follows it frame by frame
   $effect(() => {
-    void theme.resolved
-    if (ctx) queueMicrotask(readColors)
+    void theme.mix
+    if (ctx) return untrack(() => followTheme(readColors))
   })
   $effect(() => {
     void look
     untrack(requestDraw)
+  })
+  $effect(() => {
+    if (steady) return
+    untrack(() => {
+      kCap = Infinity
+      if (follow && shown && ctx) {
+        fitTarget(shown)
+        requestDraw()
+      }
+    })
   })
 </script>
 
