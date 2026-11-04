@@ -3,8 +3,13 @@
 // application, the same order the real eager evaluator uses, so the calls it
 // finds are the calls the program makes. Frames share structure through the
 // store, so a long trace costs one id per frame.
+//
+// A binder coming off is one more kind of step. Nothing runs inside a binder
+// until it is gone (that keeps the result the compiler's), and an application
+// waits until what it looks at has no binders; everything else can happen at
+// once, so the end is the same tree as removing every binder first.
 
-import { Store, APP, FORK, STEM, LEAF, VAR, R_LEAF, R_STEM, R_K, R_S, R_F, R_NONE, type Id } from './store.ts'
+import { Store, APP, FORK, LEAF, STEM, VAR, LAM, SPLIT, HELD_K, R_LEAF, R_STEM, R_K, R_S, R_F, R_NONE, R_BIND, type Id } from './store.ts'
 
 export interface Call {
   /// the frame whose rule firing starts this call
@@ -55,45 +60,69 @@ export class Trace {
     if (!s.hasRedex(from)) return null
     const path: number[] = []
     let id = from
+    let inside = false
     for (;;) {
       const t = s.tag[id]
-      if (t === STEM) {
-        path.push(0)
-        id = s.a[id]
-      } else {
-        const a = s.a[id]
-        if (s.hasRedex(a)) {
-          path.push(0)
-          id = a
-        } else if (s.hasRedex(s.b[id])) {
-          path.push(1)
-          id = s.b[id]
-        } else return path
+      if (t === LAM || t === SPLIT) {
+        if (s.rule[id] === R_BIND) return path
+        inside = true
       }
+      const live = inside ? s.bindReady : s.hasRedex
+      let went = false
+      for (const i of childIndexes(t)) {
+        const c = s.kid(id, i)
+        if (live(c)) {
+          path.push(i)
+          id = c
+          went = true
+          break
+        }
+      }
+      if (!went) return path
     }
   }
 
-  /// One rule firing at the application `site`.
+  /// Every redex a parallel step fires, as paths (at most `cap`).
+  readyPaths(from: Id, cap = 300): number[][] {
+    const s = this.store
+    const out: number[][] = []
+    const go = (id: Id, path: number[], inside: boolean) => {
+      if (out.length >= cap || !(inside ? s.bindReady(id) : s.hasRedex(id))) return
+      const t = s.tag[id]
+      if (t === LAM || t === SPLIT) {
+        if (s.rule[id] === R_BIND) return void out.push(path)
+        inside = true
+      }
+      const ks = childIndexes(t)
+      if (t === APP && !inside && !ks.some((i) => s.hasRedex(s.kid(id, i)))) return void out.push(path)
+      for (const i of ks) go(s.kid(id, i), [...path, i], inside)
+    }
+    go(from, [], false)
+    return out
+  }
+
+  /// One rule firing at the application `site`, or one binder rewrite.
   fireNode(site: Id): Id {
     const s = this.store
+    if (s.rule[site] === R_BIND) return s.bindStep(site)
     const f = s.a[site]
     const x = s.b[site]
     switch (s.rule[site]) {
       case R_LEAF:
         return s.stem(x)
       case R_STEM:
-        return s.fork(s.a[f], x)
+        return s.fork(s.ta(f), x)
       case R_K:
-        return s.b[f]
+        return s.tb(f)
       case R_S:
-        return s.app(s.app(s.a[s.a[f]], x), s.app(s.b[f], x))
+        return s.app(s.app(s.ta(s.ta(f)), x), s.app(s.tb(f), x))
       case R_F: {
-        const tri = s.a[f]
-        const xt = s.tag[x]
+        const tri = s.ta(f)
+        const xt = s.tt(x)
         if (xt === VAR || xt === APP) return x
-        if (xt === LEAF) return s.a[tri]
-        if (xt === STEM) return s.app(s.b[tri], s.a[x])
-        return s.app(s.app(s.b[f], s.a[x]), s.b[x])
+        if (xt === LEAF) return s.ta(tri)
+        if (xt === STEM) return s.app(s.tb(tri), s.ta(x))
+        return s.app(s.app(s.tb(f), s.ta(x)), s.tb(x))
       }
     }
     return site
@@ -105,23 +134,16 @@ export class Trace {
     let id = root
     for (const i of path) {
       spine.push(id)
-      id = s.tag[id] === STEM || i === 0 ? s.a[id] : s.b[id]
+      id = s.kid(id, i)
     }
     let cur = fresh
-    for (let k = path.length - 1; k >= 0; k--) {
-      const p = spine[k]
-      const t = s.tag[p]
-      if (t === STEM) cur = s.stem(cur)
-      else if (t === FORK) cur = path[k] === 0 ? s.fork(cur, s.b[p]) : s.fork(s.a[p], cur)
-      else cur = path[k] === 0 ? s.app(cur, s.b[p]) : s.app(s.a[p], cur)
-    }
+    for (let k = path.length - 1; k >= 0; k--) cur = s.withKid(spine[k], path[k], cur)
     return cur
   }
 
   subterm(root: Id, path: number[]): Id {
-    const s = this.store
     let id = root
-    for (const i of path) id = s.tag[id] === STEM || i === 0 ? s.a[id] : s.b[id]
+    for (const i of path) id = this.store.kid(id, i)
     return id
   }
 
@@ -129,6 +151,7 @@ export class Trace {
   #noteCall(root: Id, path: number[], frame: number) {
     const s = this.store
     const site = this.subterm(root, path)
+    if (s.tag[site] !== APP) return
     const name = s.names.get(s.a[site])
     if (!name) return
     // climb the application spine: `add 2 3` fires `add 2` first
@@ -137,7 +160,7 @@ export class Trace {
     let id = root
     for (const i of path) {
       ancestors.push(id)
-      id = s.tag[id] === STEM || i === 0 ? s.a[id] : s.b[id]
+      id = s.kid(id, i)
     }
     let top = path.length
     while (top > 0 && path[top - 1] === 0 && s.tag[ancestors[top - 1]] === APP) {
@@ -203,27 +226,28 @@ export class Trace {
     const s = this.store
     let fired = 0
     let rule = R_NONE
-    const memo = new Map<Id, Id>()
-    const go = (id: Id): Id => {
-      if (!s.hasRedex(id)) return id
-      const hit = memo.get(id)
-      if (hit !== undefined) {
-        return hit
-      }
+    const memos = [new Map<Id, Id>(), new Map<Id, Id>()]
+    // inside an unfinished binder only binder rewrites happen
+    const go = (id: Id, inside: number): Id => {
+      if (!(inside ? s.bindReady(id) : s.hasRedex(id))) return id
+      const hit = memos[inside].get(id)
+      if (hit !== undefined) return hit
       const t = s.tag[id]
       let out: Id
-      if (t === STEM) out = s.stem(go(s.a[id]))
-      else if (t === FORK) out = s.fork(go(s.a[id]), go(s.b[id]))
-      else if (s.hasRedex(s.a[id]) || s.hasRedex(s.b[id])) out = s.app(go(s.a[id]), go(s.b[id]))
-      else {
+      if (s.rule[id] === R_BIND || (t === APP && !inside && !s.hasRedex(s.a[id]) && !s.hasRedex(s.b[id]))) {
         fired++
         rule = s.rule[id]
         out = this.fireNode(id)
-      }
-      memo.set(id, out)
+      } else if (t === LAM) out = s.withKid(id, 0, go(s.b[id], 1))
+      else if (t === SPLIT) out = s.split(go(s.a[id], 1), go(s.b[id], 1))
+      else if (t === STEM) out = s.stem(go(s.a[id], inside))
+      else if (t === HELD_K) out = s.heldK(go(s.a[id], inside))
+      else if (t === APP) out = s.app(go(s.a[id], inside), go(s.b[id], inside))
+      else out = s.fork(go(s.a[id], inside), go(s.b[id], inside))
+      memos[inside].set(id, out)
       return out
     }
-    const id = go(root)
+    const id = go(root, 0)
     return { id, rule, fired }
   }
 
@@ -255,7 +279,7 @@ export class Trace {
     for (let i = 0; i < 4000; i++) {
       const root = this.frames[this.last]
       const site = this.subterm(root, path)
-      if (s.tag[site] !== APP) break
+      if (s.tag[site] !== APP && s.rule[site] !== R_BIND) break
       const inner = this.nextPath(site)
       if (!inner) break
       const full = [...path, ...inner]
@@ -279,4 +303,12 @@ export class Trace {
     }
     return best
   }
+}
+
+/// Which children a node of this tag has, in evaluation order (paths as the drawing keys them).
+export function childIndexes(t: number): number[] {
+  if (t === STEM || t === LAM) return [0]
+  if (t === HELD_K) return [1]
+  if (t === APP || t === SPLIT || t === FORK) return [0, 1]
+  return []
 }

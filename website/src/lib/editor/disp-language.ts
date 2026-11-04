@@ -7,11 +7,13 @@ import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 
 const KEYWORDS = new Set(['use', 'open', 'match', 'if', 'then', 'else', 'raw', 'given'])
-const DECORATORS = new Set(['let', 'test', 'guard', 'freeze', 'license_guard', 'sig', 'base'])
+const DECORATORS = new Set(['let', 'test', 'guard', 'freeze', 'license_guard', 'sig', 'base', 'rec', 'record'])
 const CONSTANTS = new Set(['true', 'false', 't'])
 
 interface S {
   exprStart: boolean
+  /// just past a `.`: the next name is a field or a method
+  afterDot: boolean
   inBlockComment: boolean
 }
 
@@ -21,7 +23,7 @@ const HEAD_LOOKAHEAD = /^(?:\(|[ \t]*\{[^}]*:=)/
 
 export const dispStream = StreamLanguage.define<S>({
   name: 'disp',
-  startState: () => ({ exprStart: true, inBlockComment: false }),
+  startState: () => ({ exprStart: true, afterDot: false, inBlockComment: false }),
   token(stream, state) {
     // a fresh line is (almost always) a fresh declaration/expression head
     if (stream.sol()) state.exprStart = true
@@ -40,6 +42,8 @@ export const dispStream = StreamLanguage.define<S>({
       if (state.inBlockComment) stream.skipToEnd()
       return 'comment'
     }
+    const dotted = state.afterDot
+    state.afterDot = false
     if (stream.match(/^"(?:[^"\\]|\\.)*"?/)) {
       state.exprStart = false
       return 'string'
@@ -66,6 +70,7 @@ export const dispStream = StreamLanguage.define<S>({
     }
     if (stream.match(/^\./)) {
       state.exprStart = false
+      state.afterDot = true
       return 'operator'
     }
     if (stream.match('△')) {
@@ -73,6 +78,10 @@ export const dispStream = StreamLanguage.define<S>({
       return 'atom'
     }
     const id = stream.match(IDENT) as RegExpMatchArray | null
+    if (id && dotted) {
+      state.exprStart = false
+      return HEAD_LOOKAHEAD.test(stream.string.slice(stream.pos)) ? 'variableName.function' : 'propertyName'
+    }
     if (id) {
       const word = id[0]
       if (KEYWORDS.has(word)) {
@@ -125,7 +134,8 @@ export const dispHighlight = HighlightStyle.define([
   { tag: t.atom, color: 'var(--hl-atom)' },
   { tag: t.typeName, color: 'var(--hl-type)' },
   { tag: [t.function(t.variableName)], color: 'var(--hl-fn)' },
-  { tag: t.variableName, color: 'var(--hl-var)' }
+  { tag: t.variableName, color: 'var(--hl-var)' },
+  { tag: t.propertyName, color: 'var(--hl-fn)', fontStyle: 'italic' }
 ])
 
 export const dispEditorTheme = EditorView.theme(

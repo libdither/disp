@@ -1,7 +1,7 @@
 // Turns a term into a drawable scene: decide what's folded (a breadth-first
 // budget keeps a huge tree cheap), then a tidy layout, root on top.
 
-import { Store, LEAF, STEM, FORK, APP, VAR, CUT, LAM, HELD_K, type Id, type LabelKind } from './store.ts'
+import { Store, LEAF, STEM, FORK, APP, VAR, CUT, LAM, HELD_K, SPLIT, ATOM, type Id, type LabelKind } from './store.ts'
 
 export const K_LEAF = 0
 export const K_STEM = 1
@@ -34,8 +34,17 @@ export interface VNode {
   group: number
 }
 
+/// Where a step sends things, so the drawing can show it instead of jumping.
+export interface Guide {
+  /// a new node starts where these old nodes were (between them)
+  origin: Map<string, string[]>
+  /// old nodes under a key that are gone: they glide to a new key as they fade, stay put, or drop away
+  sinks: [string, string | 'stay' | 'drop'][]
+}
+
 export interface Scene {
   nodes: VNode[]
+  guide?: Guide
   minX: number
   maxX: number
   maxY: number
@@ -83,12 +92,14 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
   const res = (id: Id) => {
     let cur = id
     for (let r = store.resolved.get(cur); r !== undefined; r = store.resolved.get(cur)) cur = r
-    return cur
+    return store.tag[cur] === ATOM ? store.a[cur] : cur
   }
 
   // something being called is code, even when its shape spells a number
   const isHead = (n: VNode) => !!opts.sk && n.side === 0 && n.parent >= 0 && nodes[n.parent].kind === K_APP
   const operands = new Map<number, string[]>()
+  /// inside a binder that hasn't come off: no application there can fire yet
+  const held: boolean[] = []
   const rootStart: number[] = []
   roots.forEach((raw, ri) => {
     rootStart.push(nodes.length)
@@ -96,6 +107,7 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
       const g = parent >= 0 ? nodes[parent].group : -1
       const group = g >= 0 && !operands.get(g)!.includes(key) ? g : -1
       nodes.push({ key, id, x: 0, y: 0, parent, side, kind: K_LEAF, text: null, podKind: null, rule: 0, next: false, diff: false, comb: null, group })
+      held.push(parent >= 0 && (held[parent] || store.tag[nodes[parent].id] === LAM || store.tag[nodes[parent].id] === SPLIT))
       kidsOf.push([])
       width.push(1)
     }
@@ -168,18 +180,21 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
       }
       if (t === LAM) {
         n.kind = K_LAM
+        n.rule = store.rule[id]
         n.text = store.strs[store.a[id]]
         kidsOf[i].push(nodes.length)
         push(res(store.b[id]), i, n.key + '0', 0)
         continue
       }
       if (t === STEM) n.kind = K_STEM
-      else if (t === FORK) n.kind = K_FORK
-      else {
+      else if (t === FORK || t === SPLIT) {
+        n.kind = K_FORK
+        n.rule = t === SPLIT ? store.rule[id] : 0
+      } else {
         n.kind = K_APP
-        n.rule = store.rule[id]
+        n.rule = held[i] ? 0 : store.rule[id]
       }
-      const childIds = t === STEM ? [store.a[id]] : [store.a[id], store.b[id]]
+      const childIds = t === STEM ? [store.a[id]] : t === SPLIT ? [store.stem(store.a[id]), store.b[id]] : [store.a[id], store.b[id]]
       childIds.forEach((c, side) => {
         kidsOf[i].push(nodes.length)
         push(res(c), i, n.key + side, side)

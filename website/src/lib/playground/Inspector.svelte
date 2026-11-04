@@ -1,17 +1,50 @@
 <script lang="ts">
-  // One view of whatever the cursor is on, as a single reel: the compiler removing
-  // binders one rewrite at a time, then the result reducing one rule firing at a
-  // time. Every frame is compiled by the real elaborator; a function reduces on
-  // symbols, one per parameter, so it has something to do.
+  // One view of whatever the cursor is on, as a single reel: binders coming off
+  // one rewrite at a time, as one more kind of step beside the tree's own rule
+  // firings. Every frame is compiled by the real elaborator; a function reduces
+  // on symbols, one per parameter, so it has something to do. Should the
+  // store's binder rewrites ever disagree with the compiler's replay, the reel
+  // falls back to the replay first and the run after.
   import { untrack } from 'svelte'
   import { disp } from '$lib/disp/client.svelte'
   import type { TermDump, BracketDump, BracketRule } from '$lib/disp/protocol'
-  import TreeCanvas, { type CanvasApi } from './TreeCanvas.svelte'
+  import TreeCanvas, { type CanvasApi, type TreeLook } from './TreeCanvas.svelte'
   import Timeline from './Timeline.svelte'
-  import { Store, APP, CUT, LEAF, STEM, FORK, VAR, R_K, R_S, R_F, R_LEAF, R_STEM, type Id } from './store.ts'
-  import { Trace, type Mode, type Call } from './trace.ts'
+  import { Store, APP, CUT, LEAF, STEM, FORK, VAR, LAM, R_K, R_S, R_F, R_LEAF, R_STEM, R_BIND, RULE_GLYPH, type Id } from './store.ts'
+  import { stepGuide } from './guides.ts'
+  import { Trace, type Mode, type Call, type TraceEnd } from './trace.ts'
   import { layoutScene, diffTrees, keyPath, K_POD, K_APP, K_LAM, K_VAR, type Scene, type VNode } from './layout.ts'
   import type { Subject } from './subject.ts'
+
+  /// What the viewer is showing. The Learn walkthrough drives the viewer through this and checks its text against it.
+  export interface ViewerState {
+    subject: string | null
+    ready: boolean
+    error: string
+    phase: 'binders' | 'run'
+    at: number
+    lead: number
+    frame: number
+    /// binder rewrites the compiler made
+    rewrites: number
+    runSteps: number
+    end: TraceEnd
+    caption: { from: string; to: string; why: string }
+    /// the S, K, I and F readings drawn on the tree
+    combs: string[]
+    /// the rule the marked application fires next: K, S or F, '' when none
+    next: string
+    sk: boolean
+    symbols: string[]
+    verdict: string | null
+  }
+  export interface ViewerApi {
+    state: () => ViewerState
+    seek: (at: number) => void
+    setSk: (on: boolean) => void
+    /// holds the controls, each named by a data-tour attribute
+    root: HTMLElement
+  }
 
   const MAX_DUMP = 60000
   /// a binder rewrite needs reading, however fast the run plays
@@ -25,7 +58,8 @@
     runVersion: number
     pinned: boolean
     glow?: string | null
-    onPinToggle: () => void
+    /// no pin button without it
+    onPinToggle?: () => void
     onExpr: (expr: string) => void
     onGlow?: (name: string | null) => void
     onGoto?: (line: number) => void
@@ -35,8 +69,9 @@
     notRun?: boolean
     /// a function's parameter names, to label the arguments of its calls
     paramsOf?: (name: string) => string[] | undefined
+    tour?: (a: ViewerApi) => void
   }
-  let { paramsOf, notRun = false, subject, runVersion, pinned, glow = null, onPinToggle, onExpr, onGlow, onGoto, suggest }: Props = $props()
+  let { paramsOf, notRun = false, subject, runVersion, pinned, glow = null, onPinToggle, onExpr, onGlow, onGoto, suggest, tour }: Props = $props()
 
   // svelte-ignore non_reactive_update
   let store = new Store()
@@ -46,6 +81,20 @@
   let labels = $state(true)
   /// read forks and stems as the S, K, I and F they encode
   let sk = $state(true)
+  const LOOK_KEY = 'disp-tree-style'
+  const LOOKS: TreeLook[] = ['moss', 'garden', 'quiet', 'ink', 'bold']
+  const LOOK_TEXT: Record<TreeLook, string> = {
+    moss: 'green, with gold where the next steps are',
+    garden: 'bark and leaves, coloured only at the next step',
+    quiet: 'grey, thin lines',
+    ink: 'drawn in pen, like a textbook',
+    bold: 'full colour everywhere'
+  }
+  let look = $state<TreeLook>((LOOKS as string[]).includes(globalThis.localStorage?.getItem(LOOK_KEY) ?? '') ? (localStorage.getItem(LOOK_KEY) as TreeLook) : 'moss')
+  function setLook(l: TreeLook) {
+    look = l
+    localStorage.setItem(LOOK_KEY, l)
+  }
   let scene = $state.raw<Scene | null>(null)
   let animMs = $state(0)
   let canvas: CanvasApi | undefined
@@ -64,11 +113,34 @@
   let at = $state(0)
   let version = $state(0)
   const frame = $derived(Math.max(0, at - lead))
-  const inBinders = $derived(at < lead)
+  /// binders are steps of the run itself (lead stays 0); false while showing the replay first
+  let unified = $state(false)
+  // the first frame with no binder left, found as the trace fills in
+  let bindScan = 0
+  let bindEndAt = -1
+  const bindEnd = $derived.by(() => {
+    void version
+    if (!unified || !trace) return lead
+    while (bindEndAt < 0 && bindScan <= trace.last) {
+      if (!store.isBinder(trace.frames[bindScan])) bindEndAt = bindScan
+      bindScan++
+    }
+    return bindEndAt >= 0 ? bindEndAt : trace.last
+  })
+  const inBinders = $derived.by(() => {
+    void version
+    return unified ? !!trace && store.isBinder(trace.frames[frame] ?? trace.frames[0]) : at < lead
+  })
+  const bindSteps = $derived.by(() => {
+    void version
+    return unified ? (trace?.rules.filter((r) => r === R_BIND).length ?? 0) : Math.max(0, (bracket?.steps.length ?? 1) - 1)
+  })
 
   let realValue = -1
   let playing = $state(false)
   let speed = $state(4) // steps per second
+  /// a clicked application that has to wait on what's below it: play up to where it fires, then stop
+  let stopAt: number | null = null
   let mode = $state<Mode>('eager')
   let hideBuild = $state(true)
   let dump: TermDump | null = null
@@ -152,9 +224,22 @@
       realValue = -1
     }
     symbols = params
+    // binders come off as steps of the run when the store's rewrites land where the compiler's replay does
+    unified = false
+    if (bFrames.length > 1) {
+      try {
+        unified = store.encode(store.folded(store.removeBinders(bFrames[0]))) === store.encode(bFrames[bFrames.length - 1])
+      } catch {
+        unified = false
+      }
+    }
+    if (unified) {
+      root = bFrames[0]
+      for (const p of params) root = store.app(root, store.variable(p))
+    }
     // when nothing is applied, the replay's last frame is the run's first
     const shared = params.length === 0 && store.encode(bFrames[bFrames.length - 1]) === compiled
-    lead = shared ? bFrames.length - 1 : bFrames.length
+    lead = unified ? 0 : shared ? bFrames.length - 1 : bFrames.length
     // an edit elsewhere in the file leaves this term alone: keep your place
     if (trace?.store === store && trace.mode === mode && trace.frames[0] === root) {
       at = Math.min(at, lead + trace.last)
@@ -168,6 +253,8 @@
   }
 
   function startTrace(root: Id) {
+    bindScan = 0
+    bindEndAt = -1
     trace = new Trace(store, root, mode)
     collapsed = new Set()
     playing = false
@@ -195,8 +282,12 @@
     return trace.last === 0 && lead > 0
   }
 
+  /// the frame drawn last, so a single step forward can be drawn with its guide
+  let drawnAt = -1
   function draw(ms: number) {
     animMs = ms
+    const was = drawnAt
+    drawnAt = peek ? -1 : at
     if (peek) {
       const [a, b] = peek.roots
       if (peek.roots.length === 2 && a !== b) {
@@ -216,7 +307,9 @@
       return
     }
     const root = trace.frames[frame]
-    show(layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), labels, sk: readsSk(), foldData: labels ? 40 : undefined }))
+    const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), labels, sk: readsSk(), foldData: labels ? 40 : undefined })
+    if (ms > 0 && was >= lead && at > was && at - was <= 4) next.guide = stepGuide(store, trace, was - lead)
+    show(next)
   }
 
   $effect(() => {
@@ -265,7 +358,9 @@
     let f = frame + 1
     if (f > trace.last) return false
     if (hideBuild) while (f < trace.last && isBuild(trace.rules[f + 1])) f++
-    goto(f, ms)
+    if (stopAt !== null && playing) f = Math.min(f, stopAt - lead)
+    // a binder rewrite moves more than a rule firing, so it gets longer to show it
+    goto(f, ms > 0 && trace.rules[frame + 1] === R_BIND ? Math.max(ms, 520) : ms)
     return true
   }
   function stepBack() {
@@ -314,14 +409,23 @@
     void version
     return !!trace?.end
   })
+  $effect(() => {
+    if (!playing) stopAt = null
+  })
   let playTimer: ReturnType<typeof setTimeout> | undefined
   $effect(() => {
     if (!playing) return
     const runMs = 1000 / speed
     const run = () => {
       if (!playing) return
-      const tickMs = at < lead ? Math.max(BINDER_TICK_MS, runMs) : runMs
-      if (!stepForward(tickMs >= 70 ? Math.min(380, tickMs * 0.85) : 0)) {
+      if (stopAt !== null && at >= stopAt) {
+        playing = false
+        stopAt = null
+        return
+      }
+      const binderNext = at < lead || (unified && trace?.rules[frame + 1] === R_BIND)
+      const tickMs = binderNext ? Math.max(BINDER_TICK_MS, runMs) : stopAt !== null ? Math.min(runMs, 380) : runMs
+      if (!stepForward(tickMs >= 70 ? Math.min(binderNext ? 560 : 380, tickMs * 0.85) : 0)) {
         if (trace?.end) playing = false
         else playTimer = setTimeout(run, 60)
         return
@@ -333,6 +437,7 @@
   })
   function togglePlay() {
     if (!trace) return
+    stopAt = null
     if (!playing && at >= lastAt && trace.end) seek(0)
     playing = !playing
   }
@@ -398,10 +503,11 @@
       if (symbols.includes(name)) return `${name}: a symbol standing in for an argument`
       return inBinders ? `${name}: a use of its binder, which will be removed` : `${name}: a free name, not bound in this scope`
     }
-    if (n.kind === K_LAM) return `binder ${n.text}, still to be removed`
+    if (n.kind === K_LAM) return n.rule ? `binder ${n.text}, ready to come off` : `binder ${n.text}, comes off once the binders inside it have`
     if (t === STEM) return 'stem'
     if (t === FORK) return 'fork'
     if (t === CUT) return 'too big to send; click to fetch'
+    if (store.rule[n.id] && !n.rule) return 'application, waiting for the binder around it to come off'
     return store.rule[n.id] ? 'application, ready to fire' : 'application, waiting on its parts'
   }
 
@@ -414,7 +520,7 @@
     const size = store.size[n.id]
     const copies = scene ? scene.nodes.filter((m) => m.id === n.id).length : 1
     const head = n.kind === K_POD ? (n.text ?? '') : kindWord(n)
-    const fires = n.kind === K_APP && !inBinders && !peek
+    const fires = !peek && (unified ? n.kind === K_APP || n.kind === K_LAM : n.kind === K_APP && !inBinders)
     const hint = n.kind === K_POD ? 'click to open' : fires ? 'click to fire' : n.kind !== K_APP && size > 1 ? 'click to fold' : ''
     hoverText = [head, size > 1 ? `${fmt(size)} nodes` : '', copies > 1 ? `${copies} copies here, all one shared tree` : '', hint].filter(Boolean).join(' · ')
     onGlow?.(store.names.get(n.id) ?? (n.kind === K_POD ? n.text : null))
@@ -432,14 +538,24 @@
         if (r !== n.id) store.resolved.set(n.id, r)
       }
       open.add(n.id)
-    } else if (n.kind === K_APP) {
-      if (!trace || inBinders || peek) return
+    } else if (n.kind === K_APP || (unified && n.kind === K_LAM)) {
+      if (!trace || (inBinders && !unified) || peek) return
       playing = false
       const was = trace
-      at = lead + was.fireAt(frame, keyPath(n.key))
+      const from = frame
+      const end = was.fireAt(from, keyPath(n.key))
       version++
       compute(was)
-      draw(320)
+      if (end - from <= 1) {
+        stopAt = null
+        at = lead + end
+        draw(320)
+      } else {
+        // what it waits on fires first, one step at a time, then it does
+        stopAt = lead + end
+        seek(lead + from + 1, 320)
+        playing = true
+      }
       return
     } else if (store.size[n.id] > 1) {
       closed.add(n.id)
@@ -490,7 +606,7 @@
       case R_S:
         return `S hands ${x} to both sides.`
       case R_F:
-        return f === store.i ? `I gives back ${x}.` : `Looks at the shape of ${x} to pick a branch.`
+        return f === store.i || store.a[f] === store.i ? `I gives back ${x}.` : `Looks at the shape of ${x} to pick a branch.`
       default:
         return 'This only builds a tree node, nothing else happens.'
     }
@@ -509,9 +625,12 @@
     const root = trace.frames[frame] ?? trace.frames[0]
     const path = trace.nextPath(root)
     if (!path) return { from: store.pretty(root, 90, readsSk()), to: '', why: '' }
-    const start = frame === 0 ? (lead > 0 && symbols.length === 0 ? 'All binders are gone. ' : symbols.length > 0 ? `Called with ${symbols.join(', ')}. ` : '') : ''
-    if (mode === 'parallel') return { from: store.pretty(root, 60, sk), to: '', why: `${start}Fires every ready application at once.` }
+    const binderless = unified && frame > 0 && frame === bindEnd ? 'All binders are gone. ' : ''
+    const start = frame === 0 ? (lead > 0 && symbols.length === 0 ? 'All binders are gone. ' : symbols.length > 0 ? `Called with ${symbols.join(', ')}. ` : '') : binderless
+    if (mode === 'parallel') return { from: store.pretty(root, 60, sk), to: '', why: `${start}Fires every ready step at once${unified && inBinders ? ', binders included' : ''}.` }
     const site = trace.subterm(root, path)
+    const bind = store.bindKind(site)
+    if (bind) return { from: store.pretty(site, 60, sk), to: store.pretty(trace.fireNode(site), 60, sk), why: start + ruleWords(bind, store.tag[site] === LAM ? store.strs[store.a[site]] : '') }
     return { from: store.pretty(site, 24, sk), to: store.pretty(trace.fireNode(site), 24, sk), why: start + fireWords(site) }
   })
 
@@ -530,7 +649,7 @@
       if (r === R_K) c.K++
       else if (r === R_S) c.S++
       else if (r === R_F) c.F++
-      else c.build++
+      else if (r !== R_BIND) c.build++
     }
     return c
   })
@@ -649,6 +768,41 @@
     show(on)
     return { update: show }
   }
+
+  let rootEl: HTMLElement
+  $effect(() => {
+    if (!tour) return
+    untrack(() =>
+      tour({
+        state: () => ({
+          subject: subject?.key ?? null,
+          ready: !!subject && !loading && !!trace?.end,
+          error,
+          phase: inBinders ? 'binders' : 'run',
+          at,
+          lead: bindEnd,
+          frame,
+          rewrites: bindSteps,
+          runSteps: lastAt - bindEnd,
+          end: trace?.end ?? null,
+          caption,
+          combs: scene?.nodes.flatMap((n) => (n.comb ? [n.comb] : [])) ?? [],
+          next: RULE_GLYPH[scene?.nodes.find((n) => n.next)?.rule ?? 0] ?? '',
+          sk,
+          symbols,
+          verdict: verdict?.text ?? null
+        }),
+        seek: (i) => {
+          playing = false
+          seek(i, 320)
+        },
+        setSk: (on) => {
+          if (sk !== on) toggleSk()
+        },
+        root: rootEl
+      })
+    )
+  })
 </script>
 
 <svelte:window
@@ -658,7 +812,7 @@
 />
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-<section class="insp" tabindex="0" onkeydown={onKey} aria-label="tree view">
+<section class="insp" tabindex="0" onkeydown={onKey} aria-label="tree view" bind:this={rootEl}>
   <header class="head">
     {#if subject}
       {#if subject.line && onGoto}
@@ -683,28 +837,39 @@
         spellcheck="false"
         autocomplete="off"
         aria-label="expression to inspect"
+        data-tour="expr"
       />
     </form>
     <div class="tools">
-      <button class="ic" class:on={pinned} onclick={onPinToggle} title={pinned ? 'Pinned. Click to follow the cursor again' : 'Pin: stop following the cursor'} aria-pressed={pinned}>
+      {#if onPinToggle}<button class="ic" class:on={pinned} onclick={onPinToggle} title={pinned ? 'Pinned. Click to follow the cursor again' : 'Pin: stop following the cursor'} aria-pressed={pinned}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.8 1.8 14.2 6.2 12.9 6.6 10.3 9.2 10 12.4 8.8 13.6 6 10.8 2.6 14.2 1.8 13.4 5.2 10 2.4 7.2 3.6 6 6.8 5.7 9.4 3.1Z" fill="currentColor" /></svg>
-      </button>
+      </button>{/if}
       <button class="ic" onclick={() => canvas?.fit()} title="Fit to view (f)" aria-label="fit to view">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
       </button>
       <button class="ic" class:on={!labels} onclick={() => { labels = !labels; draw(260) }} title={labels ? 'Named parts and big data are folded. Click to draw everything open' : 'Everything is drawn open. Click to fold named parts and big data'} aria-pressed={!labels}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.4" r="1.7" fill="currentColor" /><circle cx="4" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><path d="M8 4 4 12M8 4l4 8" stroke="currentColor" stroke-width="1.3" /></svg>
       </button>
-      <button class="ic sk" class:on={sk} onclick={toggleSk} title={sk ? 'Reading the tree as S, K and I. Click for the plain tree' : 'Showing the plain tree. Click to read it as S, K and I'} aria-pressed={sk}>SK</button>
+      <div class="lookpick">
+        <button class="lookchip" onclick={() => setLook(LOOKS[(LOOKS.indexOf(look) + 1) % LOOKS.length])} title="Tree style: {look}, {LOOK_TEXT[look]}. Click for the next style, hover to pick" aria-label="tree style {look}">
+          <i class="sw sw-{look}"></i>{look}
+        </button>
+        <div class="lookmenu" role="menu">
+          {#each LOOKS as l (l)}
+            <button role="menuitemradio" aria-checked={look === l} class:on={look === l} onclick={() => setLook(l)} title={LOOK_TEXT[l]}><i class="sw sw-{l}"></i>{l}</button>
+          {/each}
+        </div>
+      </div>
+      <button class="ic sk" class:on={sk} onclick={toggleSk} data-tour="sk" title={sk ? 'Reading the tree as S, K and I. Click for the plain tree' : 'Showing the plain tree. Click to read it as S, K and I'} aria-pressed={sk}>SK</button>
       <button class="ic" onclick={resetFolds} title="Reset what you've opened and folded" aria-label="reset folds">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3v4h4M3.4 7A5 5 0 1 1 3 9.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
       </button>
     </div>
   </header>
 
-  <div class="stagewrap">
+  <div class="stagewrap" data-tour="tree">
     {#if subject && !error}
-      <TreeCanvas {scene} {animMs} {glow} {varColor} falling={!peek} onHover={handleHover} onClick={(n) => void handleClick(n)} api={(a) => (canvas = a)} />
+      <TreeCanvas {scene} {animMs} {glow} {varColor} {look} falling={!peek} onHover={handleHover} onClick={(n) => void handleClick(n)} api={(a) => (canvas = a)} />
       <div class="hoverbar" class:show={!!hoverText}>{hoverText}</div>
     {/if}
     {#if !subject}
@@ -739,7 +904,7 @@
       </div>
     {:else}
       <div class="runbar">
-        <div class="now" class:binder={inBinders}>
+        <div class="now" class:binder={inBinders} data-tour="caption">
           {#if caption.from}
             <code class="rewrite">
               {#each tokens(caption.from) as p}{#if p.color}<b style="color:{p.color}">{p.text}</b>{:else}{p.text}{/if}{/each}
@@ -763,22 +928,22 @@
         </div>
         <Timeline {trace} {at} {lead} {version} onScrub={(i) => { playing = false; seek(i) }} />
         <div class="transport">
-          <button class="tb" onclick={() => seek(0)} title="Start (Home)" aria-label="start">⏮</button>
-          <button class="tb" onclick={() => { playing = false; stepBack() }} title="Step back (←)" aria-label="step back">◀</button>
-          <button class="tb play" onclick={togglePlay} title="Play or pause (space)" aria-label={playing ? 'pause' : 'play'}>{playing ? '❚❚' : '▶'}</button>
-          <button class="tb" onclick={() => { playing = false; stepForward() }} title="Step (→)" aria-label="step">▶|</button>
-          <button class="tb" onclick={() => { playing = false; seek(lastAt) }} title="End (End)" aria-label="end">⏭</button>
-          {#if lead > 0}
-            <button class="phase" class:on={inBinders} onclick={() => { playing = false; seek(0) }} title="The compiler removing binders. Shift + arrows jump between binders">Binders <span>{Math.min(at, lead)}/{lead}</span></button>
+          <button class="tb" onclick={() => seek(0)} title="Start (Home)" aria-label="start" data-tour="start">⏮</button>
+          <button class="tb" onclick={() => { playing = false; stepBack() }} title="Step back (←)" aria-label="step back" data-tour="back">◀</button>
+          <button class="tb play" onclick={togglePlay} data-tour="play" title="Play or pause (space)" aria-label={playing ? 'pause' : 'play'}>{playing ? '❚❚' : '▶'}</button>
+          <button class="tb" onclick={() => { playing = false; stepForward() }} title="Step (→)" aria-label="step" data-tour="step">▶|</button>
+          <button class="tb" onclick={() => { playing = false; seek(lastAt) }} title="End (End)" aria-label="end" data-tour="end">⏭</button>
+          {#if bindEnd > 0}
+            <button class="phase" class:on={inBinders} data-tour="binders" onclick={() => { playing = false; seek(0) }} title={unified ? 'Binders coming off, each a step like any other. Shift + arrows jump between binders' : 'The compiler removing binders. Shift + arrows jump between binders'}>Binders <span>{Math.min(at, bindEnd)}/{bindEnd}</span></button>
           {/if}
-          <button class="phase" class:on={!inBinders} onclick={() => { playing = false; goto(0) }} title="The tree reducing, one rule at a time">Run <span>{frame}/{lastAt - lead}{runEnded ? '' : '…'}</span></button>
+          <button class="phase" class:on={!inBinders} data-tour="run" onclick={() => { playing = false; seek(bindEnd) }} title="The tree reducing, one rule at a time">Run <span>{Math.max(0, at - bindEnd)}/{lastAt - bindEnd}{runEnded ? '' : '…'}</span></button>
           <span class="size">{#if curSize}{fmt(curSize.size)} node{curSize.size === 1 ? '' : 's'}{/if}</span>
           {#if showSteps && !inBinders && mode === 'eager'}
             <button class="tb word" onclick={() => { playing = false; stepIn() }} title="Jump to the next call (↓)">in</button>
             <button class="tb word" onclick={() => { playing = false; stepOver() }} title="Skip the next call (shift →)">over</button>
             <button class="tb word" onclick={() => { playing = false; stepOut() }} title="Finish this call (alt →)">out</button>
           {/if}
-          <button class="tb" class:on={showSteps} onclick={() => (showSteps = !showSteps)} title={inBinders ? 'Every rewrite' : 'Every call'} aria-pressed={showSteps}>≣</button>
+          <button class="tb" class:on={showSteps} data-tour="steps" onclick={() => (showSteps = !showSteps)} title={inBinders ? 'Every rewrite' : 'Every call'} aria-pressed={showSteps}>≣</button>
           <button class="tb optbtn" class:on={showOptions} onclick={() => (showOptions = !showOptions)} title="Options and key" aria-label="options" aria-expanded={showOptions}>⋯</button>
         </div>
         {#if showOptions}
@@ -883,6 +1048,73 @@
     display: flex;
     gap: 1px;
     flex: none;
+  }
+  .lookpick {
+    position: relative;
+  }
+  .lookchip,
+  .lookmenu button {
+    display: flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.12rem 0.5rem 0.12rem 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-elev);
+    color: var(--fg-muted);
+    font: 500 0.7rem var(--font-body);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .lookchip:hover {
+    color: var(--fg);
+    border-color: var(--border-strong);
+  }
+  /* the other styles hang under the chip on hover, like the theme menu */
+  .lookmenu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 30;
+    display: none;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.35rem 0 0;
+  }
+  .lookpick:hover .lookmenu,
+  .lookpick:focus-within .lookmenu {
+    display: flex;
+  }
+  .lookmenu button {
+    box-shadow: var(--shadow-lift);
+  }
+  .lookmenu button.on {
+    color: var(--fg);
+    border-color: var(--accent);
+  }
+  .sw {
+    display: inline-block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    flex: none;
+  }
+  .sw-moss {
+    background: radial-gradient(circle at 50% 50%, var(--g4) 0 32%, #8fb38a 34%);
+  }
+  .sw-garden {
+    background: linear-gradient(135deg, #8b6f4e 0 50%, #6dbd7e 50%);
+  }
+  .sw-quiet {
+    background: var(--bg-code);
+    border: 1.5px solid var(--fg-faint);
+  }
+  .sw-ink {
+    background: var(--bg-code);
+    border: 1.5px solid var(--fg);
+  }
+  .sw-bold {
+    background: conic-gradient(var(--hl-kw) 0 33%, var(--warn) 0 66%, #1971c2 0);
   }
   .ic {
     display: grid;

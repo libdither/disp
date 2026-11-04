@@ -111,6 +111,14 @@
           }
         },
         {
+          "comment": "record NAME :: {f : T, …} -> R — a parser keyword: it declares the constructor NAME and one accessor per field",
+          "match": "^\\s*(record)(?![A-Za-z0-9_'])\\s+([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:)",
+          "captures": {
+            "1": { "name": "storage.type.declaration.disp" },
+            "2": { "name": "entity.name.type.disp" }
+          }
+        },
+        {
           "comment": "let / sig / base / given NAME — the top-level decorators and the braced lexical `let`",
           "match": "(^|(?<=[{,;]))\\s*(let|sig|base|given)(?![A-Za-z0-9_'])\\s+([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
           "captures": {

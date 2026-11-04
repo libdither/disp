@@ -91,7 +91,12 @@ function indexFile(path: string, text: string): ScopeItem[] {
     const headName = it.head?.tag === 'var' ? it.head.name : null
     if (headName === 'let' || headName === 'given') continue
     const src = lines[it.line - 1] ?? ''
-    const sig = src.match(/^\s*(?:\S+\s+)*?[\w']+\s*:(?!=)\s*(.*?)\s*(?::=>?|$)/)?.[1]
+    const record = /^record\s+([A-Za-z_][\w']*)/.exec(src)?.[1]
+    if (record && it.name !== record) {
+      items.push({ name: it.name, path, line: it.line, params: ['r'], doc: `The ${it.name.split('.').pop()} field of a ${record}` })
+      continue
+    }
+    const sig = src.match(/^\s*(?:\S+\s+)*?[\w']+\s*::?(?!=)\s*(.*?)\s*(?::=>?|$)/)?.[1]
     const doc: string[] = []
     for (let k = it.line - 2; k >= 0; k--) {
       const c = (lines[k] ?? '').trim()

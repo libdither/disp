@@ -15,6 +15,10 @@ export const CUT = 5
 export const LAM = 6
 /// K(a) that stays visibly K in a bracket replay; `encode` turns it into its real fork
 export const HELD_K = 7
+/// S(a, b) made by removing a binder, while a or b is still being removed, or about to shorten
+export const SPLIT = 8
+/// the S, K or I bracket abstraction made, kept apart from a literal tree of the same shape: a = that tree, b = 0, 1 or 2
+export const ATOM = 9
 
 export type Id = number
 
@@ -25,20 +29,29 @@ export const R_STEM = 2
 export const R_K = 3
 export const R_S = 4
 export const R_F = 5
+/// a binder ready to come off (its body has none left), or an S about to shorten
+export const R_BIND = 6
 
-export const RULE_GLYPH = ['', '△', 'f', 'K', 'S', 'F']
+export const RULE_GLYPH = ['', '△', 'f', 'K', 'S', 'F', 'λ']
 export const RULE_TEXT = [
   '',
   'build a stem: t(x)',
   'build a fork: t(a, x)',
   'K: t(t, b, x) = b',
   'S: t(t(c), b, x) = c(x, b(x))',
-  'F: t(t(c, d), b) looks at the shape of x'
+  'F: t(t(c, d), b) looks at the shape of x',
+  'a binder comes off'
 ]
+
+/// One binder rewrite, named as the compiler's replay names them.
+export type BindKind = 'const' | 'id' | 'eta' | 'split' | 'eta-after' | 'k-comp'
 
 const F_APP = 1 // an application somewhere inside
 const F_REDEX = 2 // an application that can fire somewhere inside
 const F_STR = 4 // a non-empty cons list of printable codepoints
+const F_BIND = 8 // a binder (or an S still being built from one) somewhere inside
+const F_BREADY = 16 // a binder rewrite that can happen somewhere inside
+const ATOMS = 'SKI'
 
 export type LabelKind = 'nat' | 'str' | 'name'
 
@@ -113,16 +126,24 @@ export class Store {
     this.natOf[id] = -1
     let flags = 0
     let rule = R_NONE
+    const KEEP = F_APP | F_REDEX | F_BIND | F_BREADY
     if (tag === STEM || tag === HELD_K) {
-      flags = this.flags[a] & (F_APP | F_REDEX)
+      flags = this.flags[a] & KEEP
       this.size[id] = 1 + this.size[a]
       this.depth[id] = 1 + this.depth[a]
-    } else if (tag === LAM) {
-      flags = this.flags[b] & (F_APP | F_REDEX)
-      this.size[id] = 1 + this.size[b]
-      this.depth[id] = 1 + this.depth[b]
+    } else if (tag === LAM || tag === SPLIT) {
+      // nothing inside an unfinished binder runs: only its own rewrites count
+      const inner = tag === LAM ? this.flags[b] : this.flags[a] | this.flags[b]
+      const ready = tag === LAM ? !(inner & F_BIND) : !(inner & F_BIND) && this.#shortens(a, b)
+      if (ready) rule = R_BIND
+      flags = F_BIND | (inner & F_APP) | (ready || inner & F_BREADY ? F_BREADY | F_REDEX : 0)
+      this.size[id] = tag === LAM ? 1 + this.size[b] : 2 + this.size[a] + this.size[b]
+      this.depth[id] = tag === LAM ? 1 + this.depth[b] : 1 + Math.max(1 + this.depth[a], this.depth[b])
+    } else if (tag === ATOM) {
+      this.size[id] = this.size[a]
+      this.depth[id] = this.depth[a]
     } else if (tag === FORK || tag === APP) {
-      flags = (this.flags[a] | this.flags[b]) & (F_APP | F_REDEX)
+      flags = (this.flags[a] | this.flags[b]) & KEEP
       this.size[id] = 1 + this.size[a] + this.size[b]
       this.depth[id] = 1 + Math.max(this.depth[a], this.depth[b])
       if (tag === APP) {
@@ -142,20 +163,32 @@ export class Store {
     return id
   }
 
+  // the tree rules see a held K or an atom as the tree it stands for
+  /// tag as a tree
+  tt = (id: Id): number => (this.tag[id] === HELD_K ? FORK : this.tag[id] === ATOM ? this.tag[this.a[id]] : this.tag[id])
+  /// first child as a tree
+  ta = (id: Id): Id => (this.tag[id] === HELD_K ? this.leaf : this.tag[id] === ATOM ? this.a[this.a[id]] : this.a[id])
+  /// second child as a tree
+  tb = (id: Id): Id => (this.tag[id] === HELD_K ? this.a[id] : this.tag[id] === ATOM ? this.b[this.a[id]] : this.b[id])
+
   #ruleOf(f: Id, x: Id): number {
-    const ft = this.tag[f]
+    const ft = this.tt(f)
     if (ft === LEAF) return R_LEAF
     if (ft === STEM) return R_STEM
     if (ft !== FORK) return R_NONE
-    const l = this.a[f]
-    const lt = this.tag[l]
+    const lt = this.tt(this.ta(f))
     if (lt === LEAF) return R_K
     if (lt === STEM) return R_S
     if (lt !== FORK) return R_NONE
-    const xt = this.tag[x]
+    const xt = this.tt(x)
     // I gives back all three shapes, so it can pass a symbol or a stuck application on unseen
-    if (f === this.i && (xt === VAR || (xt === APP && !this.hasRedex(x)))) return R_F
+    if ((f === this.i || (this.tag[f] === ATOM && this.a[f] === this.i)) && (xt === VAR || (xt === APP && !this.hasRedex(x)))) return R_F
     return xt === LEAF || xt === STEM || xt === FORK ? R_F : R_NONE
+  }
+
+  /// S(K(p), I) and S(K(p), K(q)) shorten once both sides are done, as the compiler does
+  #shortens(l: Id, r: Id): boolean {
+    return this.tag[l] === HELD_K && ((this.tag[r] === ATOM && this.b[r] === 2) || this.tag[r] === HELD_K)
   }
 
   stem = (c: Id): Id => this.#make(STEM, c, 0)
@@ -173,6 +206,168 @@ export class Store {
     return this.#make(LAM, i, body)
   }
   heldK = (x: Id): Id => this.#make(HELD_K, x, 0)
+  atom(op: 'S' | 'K' | 'I'): Id {
+    const tree = op === 'I' ? this.i : op === 'K' ? this.stem(this.leaf) : this.fork(this.stem(this.fork(this.leaf, this.leaf)), this.leaf)
+    return this.#make(ATOM, tree, ATOMS.indexOf(op))
+  }
+  /// S(l, r) from a binder: plain S once both sides are done, unless it shortens, which is a step of its own
+  split(l: Id, r: Id): Id {
+    if (!((this.flags[l] | this.flags[r]) & F_BIND) && !this.#shortens(l, r)) return this.fork(this.stem(l), r)
+    return this.#make(SPLIT, l, r)
+  }
+  isBinder = (id: Id): boolean => (this.flags[id] & F_BIND) !== 0
+  bindReady = (id: Id): boolean => (this.flags[id] & F_BREADY) !== 0
+
+  /// The i-th child, with the paths the drawing uses: a held K and an S from a binder draw as the forks they are.
+  kid(id: Id, i: number): Id {
+    const t = this.tag[id]
+    if (t === STEM) return this.a[id]
+    if (t === LAM) return this.b[id]
+    if (t === HELD_K) return i === 1 ? this.a[id] : this.leaf
+    if (t === SPLIT) return i === 0 ? this.stem(this.a[id]) : this.b[id]
+    return i === 0 ? this.a[id] : this.b[id]
+  }
+  withKid(id: Id, i: number, c: Id): Id {
+    const t = this.tag[id]
+    if (t === STEM) return this.stem(c)
+    if (t === LAM) return this.#make(LAM, this.a[id], c)
+    if (t === HELD_K) return i === 1 ? this.heldK(c) : id
+    if (t === SPLIT) return i === 0 ? this.split(this.a[c], this.b[id]) : this.split(this.a[id], c)
+    if (t === FORK) return i === 0 ? this.fork(c, this.b[id]) : this.fork(this.a[id], c)
+    return i === 0 ? this.app(c, this.b[id]) : this.app(this.a[id], c)
+  }
+
+  // ---- bracket abstraction, one rewrite at a time --------------------------
+  // The compiler's abstractName, as local rewrites on a binder whose body has
+  // no binders left. The body is read back as the compiler's own terms:
+  // K(b) is a held K, S(f, g) a fork of a stem, S(f) a stem of a stem.
+
+  #freeMemo = new Map<number, Map<Id, boolean>>()
+  /// whether the variable with string index x occurs in a binder-free term
+  #free(id: Id, x: number): boolean {
+    let memo = this.#freeMemo.get(x)
+    if (!memo) this.#freeMemo.set(x, (memo = new Map()))
+    const go = (n: Id): boolean => {
+      const t = this.tag[n]
+      if (t === VAR) return this.a[n] === x
+      if (t !== STEM && t !== FORK && t !== APP && t !== HELD_K) return false
+      const hit = memo.get(n)
+      if (hit !== undefined) return hit
+      const out = go(this.a[n]) || ((t === FORK || t === APP) && go(this.b[n]))
+      memo.set(n, out)
+      return out
+    }
+    return go(id)
+  }
+
+  /// A body that uses the variable, read as the compiler's application f(a).
+  #asApp(id: Id): [Id, Id] | null {
+    const t = this.tag[id]
+    if (t === APP) return [this.a[id], this.b[id]]
+    if (t === HELD_K) return [this.atom('K'), this.a[id]]
+    if (t === FORK && this.tag[this.a[id]] === STEM) return [this.stem(this.a[id]), this.b[id]]
+    if (t === STEM && this.tag[this.a[id]] === STEM) return [this.atom('S'), this.a[this.a[id]]]
+    return null
+  }
+
+  #hasVar(id: Id): boolean {
+    const t = this.tag[id]
+    if (t === VAR) return true
+    if (t === STEM || t === HELD_K) return this.#hasVar(this.a[id])
+    if (t === FORK || t === APP) return this.#hasVar(this.a[id]) || this.#hasVar(this.b[id])
+    return false
+  }
+
+  /// The compiler's p(q), drawn the way the replay draws it.
+  #capply(p: Id, q: Id): Id {
+    const t = this.tag[p]
+    if (t === ATOM) return this.b[p] === 2 ? q : this.b[p] === 1 ? this.heldK(q) : this.stem(this.stem(q))
+    if (t === HELD_K) return this.a[p]
+    if (t === STEM && this.tag[this.a[p]] === STEM && this.#hasVar(p)) return this.fork(this.a[p], q)
+    return this.app(p, q)
+  }
+
+  /// Which rewrite a ready binder (or shortening S) makes; null for anything else.
+  bindKind(id: Id): BindKind | null {
+    if (this.rule[id] !== R_BIND) return null
+    if (this.tag[id] === SPLIT) return this.tag[this.b[id]] === ATOM ? 'eta-after' : 'k-comp'
+    const x = this.a[id]
+    const body = this.b[id]
+    if (!this.#free(body, x)) return 'const'
+    if (this.tag[body] === VAR) return 'id'
+    const fa = this.#asApp(body)
+    if (fa && this.tag[fa[1]] === VAR && this.a[fa[1]] === x && !this.#free(fa[0], x)) return 'eta'
+    return 'split'
+  }
+
+  /// One binder rewrite at a ready binder, or the shortening of a finished S.
+  bindStep(id: Id): Id {
+    const kind = this.bindKind(id)
+    const a = this.a[id]
+    const b = this.b[id]
+    switch (kind) {
+      case 'eta-after':
+        return this.a[a]
+      case 'k-comp':
+        return this.heldK(this.#capply(this.a[a], this.a[b]))
+      case 'const':
+        return this.heldK(b)
+      case 'id':
+        return this.atom('I')
+      case 'eta':
+        return this.#asApp(b)![0]
+      case 'split': {
+        const fa = this.#asApp(b)
+        if (!fa) throw new Error('a binder body this view cannot read')
+        return this.split(this.#make(LAM, a, fa[0]), this.#make(LAM, a, fa[1]))
+      }
+    }
+    return id
+  }
+
+  /// What the replay's drawing applies on the spot, applied: I(x) is x, K(a, b) is a, S(f, g) is the fork it builds.
+  folded(root: Id, memo = new Map<Id, Id>()): Id {
+    const hit = memo.get(root)
+    if (hit !== undefined) return hit
+    const t = this.tag[root]
+    let out = root
+    if (t === APP) {
+      // by the compiler's own shape of the call, as the replay reads it
+      const f = this.a[root]
+      const x = this.folded(this.b[root], memo)
+      const ft = this.tag[f]
+      const g = ft === APP && this.tag[this.a[f]] === ATOM ? this.b[this.a[f]] : -1
+      if (ft === ATOM) out = this.b[f] === 2 ? x : this.b[f] === 1 ? this.heldK(x) : this.stem(this.stem(x))
+      else if (ft === HELD_K || g === 1) out = this.folded(ft === HELD_K ? this.a[f] : this.b[f], memo)
+      else if (g === 0) out = this.fork(this.stem(this.folded(this.b[f], memo)), x)
+      else if (ft === STEM && this.tag[this.a[f]] === STEM) out = this.fork(this.stem(this.folded(this.a[this.a[f]], memo)), x)
+      else out = this.app(this.folded(f, memo), x)
+    } else if (t === STEM) out = this.stem(this.folded(this.a[root], memo))
+    else if (t === HELD_K) out = this.heldK(this.folded(this.a[root], memo))
+    else if (t === FORK) out = this.fork(this.folded(this.a[root], memo), this.folded(this.b[root], memo))
+    else if (t === LAM) out = this.#make(LAM, this.a[root], this.folded(this.b[root], memo))
+    else if (t === ATOM) out = this.a[root]
+    memo.set(root, out)
+    return out
+  }
+
+  /// Every binder removed, nothing run: the compiler's bracket abstraction of the whole term.
+  removeBinders(root: Id, memo = new Map<Id, Id>()): Id {
+    const hit = memo.get(root)
+    if (hit !== undefined) return hit
+    const t = this.tag[root]
+    let out = root
+    if (t === LAM) out = this.removeBinders(this.bindStep(this.#make(LAM, this.a[root], this.removeBinders(this.b[root], memo))), memo)
+    else if (t === SPLIT) {
+      const s = this.split(this.removeBinders(this.a[root], memo), this.removeBinders(this.b[root], memo))
+      out = this.tag[s] === SPLIT ? this.bindStep(s) : s
+    } else if (t === STEM) out = this.stem(this.removeBinders(this.a[root], memo))
+    else if (t === HELD_K) out = this.heldK(this.removeBinders(this.a[root], memo))
+    else if (t === FORK) out = this.fork(this.removeBinders(this.a[root], memo), this.removeBinders(this.b[root], memo))
+    else if (t === APP) out = this.app(this.removeBinders(this.a[root], memo), this.removeBinders(this.b[root], memo))
+    memo.set(root, out)
+    return out
+  }
 
   /// The same term with every held K written as the fork it really is.
   encode(root: Id, memo = new Map<Id, Id>()): Id {
@@ -183,6 +378,8 @@ export class Store {
     const b = this.b[root]
     let out = root
     if (t === HELD_K) out = this.fork(this.leaf, this.encode(a, memo))
+    else if (t === ATOM) out = a
+    else if (t === SPLIT) out = this.fork(this.stem(this.encode(a, memo)), this.encode(b, memo))
     else if (t === LAM) out = this.#make(LAM, a, this.encode(b, memo))
     else if (t === STEM) out = this.stem(this.encode(a, memo))
     else if (t === FORK) out = this.fork(this.encode(a, memo), this.encode(b, memo))
@@ -197,6 +394,8 @@ export class Store {
     const a = this.a[id]
     const b = this.b[id]
     if (t === HELD_K) return { op: 'K', kids: [[a, '1']] }
+    if (t === ATOM) return { op: ATOMS[b] as 'S' | 'K' | 'I', kids: [] }
+    if (t === SPLIT) return { op: 'S', kids: [[a, '00'], [b, '1']] }
     if (t === STEM) {
       if (a === this.leaf) return { op: 'K', kids: [] }
       return this.tag[a] === STEM ? { op: 'S', kids: [[this.a[a], '00']] } : null
@@ -266,7 +465,7 @@ export class Store {
       // something being called is code, even when its shape spells a number
       if (l && !(sk && head && l.kind === 'nat')) return l.text
       if (t === LAM) return `{${this.strs[this.a[id]]}} => ${go(this.b[id], false)}`
-      if (sk || t === HELD_K) {
+      if (sk || t === HELD_K || t === ATOM || t === SPLIT) {
         const c = this.readComb(id)
         if (c) return c.kids.length === 0 ? c.op : --left < 0 ? '…' : `${c.op}(${c.kids.map(([k]) => go(k, false)).join(', ')})`
       }
@@ -295,9 +494,9 @@ export class Store {
       if (seen.has(id)) continue
       seen.add(id)
       const t = this.tag[id]
-      if (t === STEM || t === HELD_K) stack.push(this.a[id])
+      if (t === STEM || t === HELD_K || t === ATOM) stack.push(this.a[id])
       else if (t === LAM) stack.push(this.b[id])
-      else if (t === FORK || t === APP) stack.push(this.a[id], this.b[id])
+      else if (t === FORK || t === APP || t === SPLIT) stack.push(this.a[id], this.b[id])
     }
     return seen.size
   }
@@ -319,6 +518,7 @@ export function kids(s: Store, id: Id): Id[] {
   const t = s.tag[id]
   if (t === STEM || t === HELD_K) return [s.a[id]]
   if (t === LAM) return [s.b[id]]
+  if (t === SPLIT) return [s.stem(s.a[id]), s.b[id]]
   if (t === FORK || t === APP) return [s.a[id], s.b[id]]
   return []
 }

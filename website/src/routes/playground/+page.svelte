@@ -318,7 +318,7 @@
       const line = d.endLine ?? d.line
       if (!line) continue
       // a function's raw tree says nothing on its line; the tree view plays it instead
-      if (paramsOf(d.name)?.length) continue
+      if (paramsOf(d.name)?.length || paramsOf(d.name.slice(d.name.lastIndexOf('.') + 1))?.length) continue
       if (d.value) marks.push({ line, focusFrom: d.line, kind: 'value', values: [{ node: d.value }] })
       else if (d.pretty) marks.push({ line, focusFrom: d.line, kind: 'value', block: d.pretty })
     }
@@ -659,6 +659,7 @@
     const frac = (c: number) => (c > 0 ? Math.log1p(c) / Math.log1p(max) : 0)
     const byLine = new Map((outcome?.defs ?? []).map((d) => [d.line, d]))
     for (const d of index.defs) {
+      if (d.of) continue
       const run = byLine.get(d.line)
       const c = costs.get(d.line) ?? 0
       const pretty = run?.pretty

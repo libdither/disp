@@ -6,6 +6,7 @@ import {
   EditorView,
   ViewPlugin,
   Decoration,
+  WidgetType,
   gutter,
   GutterMarker,
   keymap,
@@ -40,6 +41,8 @@ export interface BufferDef {
   params?: string[]
   doc?: string
   decor?: string
+  /// the record this accessor reads a field of
+  of?: string
 }
 export interface BufferTest {
   line: number
@@ -71,11 +74,66 @@ function paramsFrom(rest: string): string[] | undefined {
   return out.length ? out : undefined
 }
 
+/// Split at the commas that aren't nested in brackets.
+function splitTop(s: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let from = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '(' || c === '{' || c === '[') depth++
+    else if (c === ')' || c === '}' || c === ']') depth--
+    else if (c === ',' && depth === 0) {
+      out.push(s.slice(from, i))
+      from = i + 1
+    }
+  }
+  out.push(s.slice(from))
+  return out.map((x) => x.trim()).filter(Boolean)
+}
+
+/// `record NAME :: {f : T, …} -> R` declares a constructor and one accessor per field; the annotation may run over several lines.
+function recordDefs(doc: Text, n: number): BufferDef[] | null {
+  const head = /^record\s+([A-Za-z_][\w']*)\s*::?\s*/.exec(doc.line(n).text)
+  if (!head) return null
+  let text = doc.line(n).text.slice(head[0].length)
+  for (let k = n + 1; k <= doc.lines && k < n + 40; k++) {
+    let depth = 0
+    for (const c of text.replace(/\/\/.*$/gm, '')) depth += c === '{' ? 1 : c === '}' ? -1 : 0
+    if (depth <= 0) break
+    text += ' ' + doc.line(k).text.trim()
+  }
+  const m = /^\{(.*)\}\s*(?:->|→)\s*(.*?)\s*(?:\/\/.*)?$/.exec(text.replace(/\s+/g, ' ').trim())
+  if (!m) return null
+  // `f`, `f : T`, or with a default, `f : T := d`
+  const fields = splitTop(m[1]).map((f) => {
+    const p = /^([^:]*?)\s*(?::(?!=)\s*(.*?))?\s*(?::=\s*(.*))?$/.exec(f)!
+    return { name: p[1], type: p[2] || 'Tree', dflt: p[3] as string | undefined }
+  })
+  if (fields.length === 0 || fields.some((f) => !/^[A-Za-z_][\w']*$/.test(f.name))) return null
+  const name = head[1]
+  // accessors are named after the record's type (`Knob.level`), so that's what `Knob.` completes
+  const owner = /^[A-Za-z_][\w']*$/.test(m[2]) ? m[2] : name
+  const ctor: BufferDef = { name, line: n, endLine: n, sig: `{${m[1].trim()}} -> ${m[2]}`, params: fields.map((f) => f.name), decor: 'record' }
+  return [
+    ctor,
+    ...fields.map((f) => ({
+      name: f.name,
+      line: n,
+      endLine: n,
+      sig: `${m[2]} -> ${f.type}`,
+      params: ['r'],
+      doc: `The ${f.name} field of a ${owner}${f.dflt ? ` (${f.dflt} unless given)` : ''}; read it as x.${f.name}`,
+      of: owner
+    }))
+  ]
+}
+
 /// A line scan of the buffer's top-level items: names, tests, the comment above each. Works on code that doesn't parse.
 export function indexBuffer(doc: Text): BufferIndex {
   const defs: BufferDef[] = []
   const tests: BufferTest[] = []
-  const starts: { line: number; def?: BufferDef; test?: BufferTest }[] = []
+  const starts: { line: number; def?: BufferDef; test?: BufferTest; also?: BufferDef[] }[] = []
   let inBlock = false
   for (let n = 1; n <= doc.lines; n++) {
     const text = doc.line(n).text
@@ -93,6 +151,12 @@ export function indexBuffer(doc: Text): BufferIndex {
       const t = { line: n, endLine: n, text: text.replace(/\s*\/\/.*$/, '') }
       tests.push(t)
       starts.push({ line: n, test: t })
+      continue
+    }
+    const rec = recordDefs(doc, n)
+    if (rec) {
+      defs.push(...rec)
+      starts.push({ line: n, def: rec[0], also: rec.slice(1) })
       continue
     }
     const m = DEF_RE.exec(text.replace(/\s*\/\/.*$/, ''))
@@ -128,6 +192,7 @@ export function indexBuffer(doc: Text): BufferIndex {
       else break
     }
     if (starts[i].def) starts[i].def!.endLine = end
+    for (const d of starts[i].also ?? []) d.endLine = end
     if (starts[i].test) starts[i].test!.endLine = end
   }
   return { defs, tests }
@@ -194,18 +259,34 @@ function completionSource(link: PlaygroundLink) {
     }
     if (/"[^"]*$/.test(before.replace(/"[^"]*"/g, ''))) return null
 
-    // alias.: the module's exports
-    const dotM = before.match(/([A-Za-z_][\w']*)\.([\w']*)$/)
+    // alias.: the module's exports; Record.: its fields; anything else.: a field, or any function, called with it first
+    const dotM = before.match(/([A-Za-z_][\w')\]}]*)\.([\w']*)$/)
     if (dotM) {
       const re = new RegExp(`^(?:let\\s+)?${dotM[1].replace(/'/g, "\\'")}\\s*:=\\s*use\\s+(?:raw\\s+)?"([^"]+)"`, 'm')
-      const m = re.exec(ctx.state.doc.toString())
-      if (!m) return null
-      const items = await link.moduleItems(m[1])
-      return {
-        from: ctx.pos - dotM[2].length,
-        validFor: /^[\w']*$/,
-        options: items.map((it) => optionFor(it, link))
-      }
+      const m = /^[A-Za-z_][\w']*$/.test(dotM[1]) ? re.exec(ctx.state.doc.toString()) : null
+      const from = ctx.pos - dotM[2].length
+      if (m) return { from, validFor: /^[\w']*$/, options: (await link.moduleItems(m[1])).map((it) => optionFor(it, link)) }
+      const fields = recordFields(link)
+      const own = fields.filter((f) => f.of === dotM[1])
+      if (own.length > 0) return { from, validFor: /^[\w']*$/, options: own.map((f) => fieldOption(f)) }
+      const seen = new Set<string>()
+      const options: Completion[] = []
+      for (const f of fields)
+        if (!seen.has(f.name)) {
+          seen.add(f.name)
+          options.push(fieldOption(f))
+        }
+      for (const d of [...link.index().defs].reverse())
+        if (d.params && !d.of && !seen.has(d.name)) {
+          seen.add(d.name)
+          options.push({ label: d.name, type: 'function', detail: `{${d.params.join(', ')}}`, info: d.doc, boost: -20 })
+        }
+      for (const it of link.scope())
+        if (it.params && !it.name.includes('.') && !seen.has(it.name)) {
+          seen.add(it.name)
+          options.push({ ...optionFor(it, link), boost: -30 })
+        }
+      return { from, validFor: /^[\w']*$/, options }
     }
 
     const word = ctx.matchBefore(/[A-Za-z_][\w']*/)
@@ -243,12 +324,29 @@ function completionSource(link: PlaygroundLink) {
       seen.add(it.name)
       options.push(optionFor(it, link))
     }
+    for (const f of recordFields(link)) {
+      if (seen.has(f.name)) continue
+      seen.add(f.name)
+      options.push({ ...fieldOption(f), boost: 0 })
+    }
     options.push(LEAF_OPTION)
     if (inFirstLineHead) options.push(...SNIPPETS)
     else options.push(SNIPPETS[1], SNIPPETS[2], SNIPPETS[3])
     return { from, options, validFor: /^[A-Za-z_][\w']*$/ }
   }
 }
+
+/// Every record field in reach: the buffer's own records, then the opened files' `Record.field` accessors.
+function recordFields(link: PlaygroundLink): { name: string; of: string; sig?: string }[] {
+  const out: { name: string; of: string; sig?: string }[] = []
+  for (const d of link.index().defs) if (d.of) out.push({ name: d.name, of: d.of, sig: d.sig })
+  for (const it of link.scope()) {
+    const dot = it.name.lastIndexOf('.')
+    if (dot > 0) out.push({ name: it.name.slice(dot + 1), of: it.name.slice(0, dot), sig: it.sig })
+  }
+  return out
+}
+const fieldOption = (f: { name: string; of: string; sig?: string }): Completion => ({ label: f.name, type: 'property', detail: `field of ${f.of}`, info: f.sig, boost: 20 })
 
 function optionFor(it: ScopeItem, link: PlaygroundLink): Completion {
   return {
@@ -332,6 +430,109 @@ function signatureField(link: PlaygroundLink) {
     update: (v, tr) => (tr.docChanged || tr.selection ? (tr.docChanged || v ? compute(tr.state) : null) : v),
     provide: (f) => showTooltip.from(f)
   })
+}
+
+// ---- parameter hints -------------------------------------------------------
+
+class ParamHint extends WidgetType {
+  constructor(readonly name: string) {
+    super()
+  }
+  override eq(o: ParamHint) {
+    return o.name === this.name
+  }
+  override toDOM() {
+    const s = document.createElement('span')
+    s.className = 'disp-param-hint'
+    s.setAttribute('aria-hidden', 'true')
+    s.textContent = this.name + ':'
+    return s
+  }
+}
+
+/// Where each argument of every glued call starts, with the parameter it fills. Strings and comments are blanked first.
+export function paramHints(text: string, paramsOf: (name: string, recv: string | undefined) => string[] | undefined): { pos: number; name: string }[] {
+  // a string still starts an argument, so it blanks to a placeholder; a comment blanks to space
+  const code = text.replace(/\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"?/g, (m) => (m[0] === '/' ? ' ' : '#').repeat(m.length))
+  const out: { pos: number; name: string }[] = []
+  const head = /([A-Za-z_][\w']*)(?=\(|\{[^{}]*:=)/g
+  let m: RegExpExecArray | null
+  while ((m = head.exec(code))) {
+    const at = m.index
+    if (at > 0 && /[\w']/.test(code[at - 1])) continue
+    const recv = code[at - 1] === '.' ? /([\w')\]]+)\.$/.exec(code.slice(Math.max(0, at - 80), at))?.[1] : undefined
+    const params = paramsOf(m[1], recv)
+    if (!params) continue
+    // what's still unfilled: f(a) fills from the front, f{b := 1} fills b, and the chain goes on after either
+    let left = [...params]
+    let i = at + m[1].length
+    while ((code[i] === '(' || code[i] === '{') && left.length > 0) {
+      const brace = code[i] === '{'
+      const named: string[] = []
+      let depth = 1
+      let expect = true
+      let j = i + 1
+      for (; j < code.length && depth > 0; j++) {
+        const c = code[j]
+        if (expect && depth === 1 && c !== ')' && c !== '}' && !/\s/.test(c)) {
+          expect = false
+          if (brace) {
+            const n = /^([A-Za-z_][\w']*)\s*:=/.exec(code.slice(j, j + 60))?.[1]
+            if (n) named.push(n)
+          } else {
+            const name = left.shift()
+            const arg = /^[A-Za-z_][\w']*/.exec(code.slice(j, j + 40))?.[0]
+            if (name && name.length > 1 && name !== arg && name !== '_') out.push({ pos: j, name })
+          }
+        }
+        if (c === '(' || c === '{' || c === '[') depth++
+        else if (c === ')' || c === '}' || c === ']') depth--
+        else if (c === ',' && depth === 1) expect = true
+      }
+      if (depth > 0) break
+      if (brace) left = left.filter((p) => !named.includes(p))
+      i = j
+    }
+  }
+  // an outer call's later arguments are found before the calls nested in its earlier ones
+  return out.sort((a, b) => a.pos - b.pos)
+}
+
+function hintPlugin(link: PlaygroundLink) {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet = Decoration.none
+      constructor(view: EditorView) {
+        this.build(view)
+      }
+      update(u: ViewUpdate) {
+        if (u.docChanged || u.viewportChanged || u.transactions.some((t) => t.effects.length > 0)) this.build(u.view)
+      }
+      build(view: EditorView) {
+        const doc = view.state.doc
+        // a call that starts above the viewport can still have arguments in it
+        const from = doc.lineAt(Math.max(0, view.viewport.from - 3000)).from
+        const to = doc.lineAt(Math.min(doc.length, view.viewport.to + 300)).to
+        const text = doc.sliceString(from, to)
+        const aliases = new Set<string>()
+        for (const a of doc.toString().matchAll(/^(?:let\s+)?([A-Za-z_][\w']*)\s*:=\s*use\b/gm)) aliases.add(a[1])
+        const params = new Map<string, string[] | undefined>()
+        for (const it of link.scope()) if (!params.has(it.name)) params.set(it.name, it.params)
+        for (const d of link.index().defs) params.set(d.name, d.params)
+        const b = new RangeSetBuilder<Decoration>()
+        const hints = paramHints(text, (name, recv) => {
+          // alias.f is the module's f, which this index doesn't know
+          if (recv && aliases.has(recv)) return undefined
+          const ps = (recv && params.get(`${recv}.${name}`)) || params.get(name)
+          // x.f(a) is f(x, a); Record.f(a) is just f
+          return recv && !/^[A-Z]/.test(recv) ? ps?.slice(1) : ps
+        })
+        for (const h of hints) b.add(from + h.pos, from + h.pos, Decoration.widget({ widget: new ParamHint(h.name), side: -1 }))
+        this.decorations = b.finish()
+      }
+    },
+    { decorations: (v) => v.decorations }
+  )
 }
 
 // ---- folding ----------------------------------------------------------------
@@ -466,6 +667,17 @@ const theme = EditorView.theme({
   },
   '.cm-line.disp-subject': { boxShadow: 'inset 2px 0 0 var(--accent)' },
   '.disp-glow': { background: 'color-mix(in oklab, var(--accent) 26%, transparent)', borderRadius: '3px' },
+  '.disp-param-hint': {
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.82em',
+    color: 'var(--fg-faint)',
+    background: 'color-mix(in oklab, var(--fg-faint) 12%, transparent)',
+    borderRadius: '3px',
+    padding: '0 3px',
+    marginRight: '3px',
+    userSelect: 'none',
+    pointerEvents: 'none'
+  },
   '.disp-sig-help': { fontFamily: 'var(--font-mono)', fontSize: '12px', padding: '3px 8px', color: 'var(--fg-muted)' },
   '.disp-sig-head': { color: 'var(--hl-fn)' },
   '.disp-sig-on': { color: 'var(--fg)', fontWeight: '700', textDecoration: 'underline', textUnderlineOffset: '3px' },
@@ -519,6 +731,7 @@ export function playgroundExtensions(link: PlaygroundLink): Extension[] {
       tooltipClass: () => 'disp-complete'
     }),
     signatureField(link),
+    hintPlugin(link),
     theme,
     Prec.high(
       keymap.of([
