@@ -16,3 +16,4 @@ bench/e1/*.json
 research/interaction-combinator/lattice_frontier.js
 research/memes
 research/barry-jay/**
+target/
