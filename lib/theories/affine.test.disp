@@ -1,12 +1,5 @@
 // Affine types: simple types where each variable is used at most once. Copying is what makes reduction expensive, so a member's run is bounded by the number of its lambdas, a much stronger promise than termination.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 

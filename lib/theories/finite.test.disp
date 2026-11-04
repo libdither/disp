@@ -1,36 +1,37 @@
-// Finite types: the behavioural types of types.disp whose samples are all of their members, so a function type's challenges cover its whole domain and every claim is decided by running it. A function type here lists every lookup table as a sample, which is what makes higher-order types finite too.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+// Finite types: types whose cases are all known, so splitting a symbol of one lists its members and every claim about them is decided by running. A function type between finite types is finite too, with its lookup tables as its cases, which is what makes higher-order types decided. Each is one behaviour record: the type formers need nothing from the judge but their cases.
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
-f_base := {members} => ty({w, _c} => members.member(w), [t], members.map(plain_sample))
-f_prod := {a, b} => sigma_t(a, {_x} => b)
+// a partly-known value could still be this tree: its shape agrees with it wherever it has no hole
+rec could_be :: {v : Val, x : Tree} -> Bool :=>
+	if (is_hole(v)) { true }
+	else if (is_leaf(v)) { is_leaf(x) }
+	else if (is_stem(v)) { if (is_stem(x)) { could_be(stem_child(v), stem_child(x)) } else { false } }
+	else if (is_fork(x)) { if (could_be(v.fst, x.fst)) { could_be(v.snd, x.snd) } else { false } }
+	else { false }
+// a finite type: its members are its cases; a value no member could be is out, and otherwise a symbol in it is split
+f_base := {members} => of_type(behaviour{
+	admits := {_self, v} =>
+		if (v.is_known) { if (members.member(v)) { "Yes" } else { "No" } }
+		else if (not(members.any(could_be(v)))) { "No" }
+		else if ((v.is_sym) || (v.is_app)) { inspect(v) }
+		else { inspect(in_syms(v).head) },
+	cases := some({_self, _child} => members)})
+elements := cases_of
+f_prod := {a, b} => f_base(elements(a).cross(elements(b), pair))
 rec table_get :: {entries : List(Pair(Tree, Tree)), x : Tree} -> Tree :=>
 	if (entries.is_nil) { t } else if (entries.head.fst == x) { entries.head.snd } else { table_get(entries.tail, x) }
 // every assignment of one output per input
 rec assignments :: {dom : List(Tree), cod : List(Tree)} -> List(List(Pair(Tree, Tree))) :=>
 	if (dom.is_nil) { [[]] }
 	else { cod.cross(assignments(dom.tail, cod), {y, rest} => cons(pair(dom.head, y), rest)) }
-elements := {a} => a.samples.map(runtime)
-// the plain function type, with every table as a sample
-f_arrow := {a, b} => {
-	let plain := arrow_t(a, b)
-	ty(plain.claim, plain.challenges, assignments(elements(a), elements(b)).map({entries} => plain_sample(table_get(entries))))
-}
-is_member := holds
-check_arrow := {a, b, w} => judge(f_arrow(a, b), w)
-same_at := {a, f, g} => elements(a).all({x} => {
-	let ma := returns(f, x)
-	let mb := returns(g, x)
-	(m_finished(ma)) && ((m_finished(mb)) && (m_result(ma) == m_result(mb)))
-})
+all_yes := {results} => reduce({r, rest} => and_yes(r, {_y} => rest), "Yes", results)
+// the function type between finite types: a member answers in the codomain on every member, and its cases are every table
+f_arrow := {a, b} => of_type(behaviour{
+	admits := {_self, v} => if (v.is_known) { all_yes(elements(a).map({x} => and_then(sapply(v, x, run_fuel), judge_as(b)))) } else { inspect(v) },
+	applied := some(pair(a, {_x} => b)),
+	cases := some({_self, _child} => assignments(elements(a), elements(b)).map(table_get))})
 
 bb := f_base([true, false])
 bb2 := f_arrow(bb, bb)
@@ -39,25 +40,26 @@ test elements(bb).length = 2
 test elements(bb2).length = 4
 test elements(f_arrow(bb2, bb)).length = 16
 test elements(f_prod(bb, bb)).length = 4
-test elements(bb2).all(is_member(bb2)) = true
-test check_arrow(bb, bb, not) = "Proved"
-test check_arrow(bb, bb, {x} => pair(x, x)).is_refuted = true
-test check_arrow(bb, bb, spin) = refuted(call_with(plain_sample(true), t))
-test is_member(bb2, not) = true
-test is_member(bb2, spin) = false
-// higher order: a program on every Bool -> Bool table
+test elements(bb2).all(holds(bb2)) = true
+test judge(bb2, not) = "Proved"
+test judge(bb2, {x} => pair(x, x)) = refuted([true])
+// a run that does not finish is never a verdict: Open, not refuted
+test judge(bb2, spin).is_open = true
+test holds(bb2, spin) = false
+// higher order: the function argument splits into its four tables, so even a program that looks at what it returns is decided
 at_true := {f} => f(true)
-test is_member(f_arrow(bb2, bb), at_true) = true
-test is_member(f_arrow(bb2, bb), {f} => f) = false
+test judge(f_arrow(bb2, bb), at_true) = "Proved"
+test judge(f_arrow(bb2, bb), {f} => not(f(true))) = "Proved"
+test judge(f_arrow(bb2, bb), {f} => f).is_refuted = true
 // equal behaviour at a type is decided, though the trees differ
 twice_not := {x} => not(not(x))
 test tree_eq(twice_not, {x} => x) = false
-test same_at(bb, twice_not, {x} => x) = true
-test same_at(bb, not, {x} => x) = false
-test same_at(bb2, at_true, {f} => f(not(false))) = true
+test eq_arrow(bb, twice_not, {x} => x) = "Proved"
+test eq_arrow(bb, not, {x} => x).is_refuted = true
+test eq_arrow_at(bb2, bb, at_true, {f} => f(not(false))) = "Proved"
 
 // the cover as a lens into the claim over all trees: outside Bool nothing is asked; a cover that skips a member is refuted
-bool_claim := {w, x} => if (Bool(x)) { bb2.claim(w, call_with(plain_sample(x), t)) } else { true }
+bool_claim := {w, x} => if (Bool(x)) { Bool(w(x)) } else { true }
 cover := lens({w} => w, {_w, x} => if (Bool(x)) { x } else { true })
 bad_cover := lens({w} => w, {_w, _x} => true)
 half_bad := {x} => if (x) { true } else { pair(x, x) }

@@ -9,6 +9,28 @@ test point(1, 2, 3).z = 3
 test point(1, 2, 3) = pair(1, pair(2, 3))
 test point{z := 3, x := 1, y := 2} = point(1, 2, 3)
 test tree_eq(y, {r} => r.snd.fst) = true
-test tree_eq(z, {r} => r.snd.snd) = true
+test tree_eq(Point.z, {r} => r.snd.snd) = true
 test wrap(5) = 5
 test wrap(5).inner = 5
+
+// two records share the field x: the receiver's annotated type picks one
+record pixel :: {color : Nat, x : Nat} -> Pixel
+record line :: {from : Point, to : Point} -> Line
+pixel_x :: {p : Pixel} -> Nat :=> p.x
+point_x :: {p : Point} -> Nat :=> p.x
+end_x :: {l : Line} -> Nat :=> l.to.x
+test pixel_x(pixel(7, 9)) = 9
+test point_x(point(1, 2, 3)) = 1
+test end_x(line(point(1, 2, 3), point(4, 5, 6))) = 4
+test Pixel.x(pixel(7, 9)) = 9
+test Point.x(point(1, 2, 3)) = 1
+// a lambda's own annotation counts, and a field only one record has needs none
+test ({q : Pixel} => q.x)(pixel(7, 9)) = 9
+test ({q} => q.color)(pixel(7, 9)) = 7
+// a field with a default can be left out of a named call
+record knob :: {level : Nat, step : Nat := 1} -> Knob
+test knob{level := 4} = knob(4, 1)
+test knob{step := 2, level := 4} = knob(4, 2)
+// a brace call is as tight as `.` and `(…)`, so the chain continues after it
+test knob{level := 4}.step = 1
+test knob{step := 2, level := 4}.level = 4

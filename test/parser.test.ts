@@ -9,7 +9,7 @@ import { join } from "node:path"
 
 import {
   tokenize, parseItems, parseExpr,
-  type Tok, type Expr,
+  type Tok, type Expr, type Param,
 } from "../src/parse.js"
 import { parseProgram } from "../src/compile.js"
 import {
@@ -25,7 +25,7 @@ const ap  = (f: Expr, x: Expr): Expr => ({ tag: "app", f, x })
 const binder = (params: { name: string | null; type: Expr | null }[], body: Expr): Expr =>
   ({ tag: "binder", params, body })
 // A desugar-emitted value lambda (block lets, eff binds): fat by construction.
-const lam = (params: { name: string | null; type: Expr | null }[], body: Expr): Expr =>
+const lam = (params: Param[], body: Expr): Expr =>
   ({ tag: "binder", fat: true, params, body })
 const ann = (expr: Expr, type: Expr): Expr => ({ tag: "ann", expr, type })
 const proj = (target: Expr, field: string): Expr => ({ tag: "proj", target, field })
@@ -429,7 +429,7 @@ describe("parse: items", () => {
     const items = parseItems("addx : {n : Nat} -> {m : Nat} -> Nat :=> f(n, m)")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
-    expect(d.value).toEqual(lam([{ name: "n", type: null }, { name: "m", type: null }],
+    expect(d.value).toEqual(lam([{ name: "n", type: null, doc: v("Nat") }, { name: "m", type: null, doc: v("Nat") }],
       ap(ap(v("f"), v("n")), v("m"))))
   })
 
@@ -438,7 +438,7 @@ describe("parse: items", () => {
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
     expect(d.type).toBeNull()
-    expect(d.value).toEqual(lam([{ name: "x", type: null }], ap(v("any"), ap(v("eq"), v("x")))))
+    expect(d.value).toEqual(lam([{ name: "x", type: null, doc: v("A") }], ap(v("any"), ap(v("eq"), v("x")))))
   })
 
   it(":=> without an annotation, or without named binders, is an error", () => {
@@ -460,7 +460,7 @@ describe("parse: items", () => {
     if (d.tag !== "field") throw new Error("shape")
     expect(d.head).toEqual(v("let"))
     // one binder node {go, n}: same compiled tree as nested {go} => {n} =>
-    expect(d.value).toEqual(ap(v("fix"), lam([{ name: "go", type: null }, { name: "n", type: null }],
+    expect(d.value).toEqual(ap(v("fix"), lam([{ name: "go", type: null }, { name: "n", type: null, doc: v("Nat") }],
       ap(v("go"), v("n")))))
   })
 
@@ -468,8 +468,8 @@ describe("parse: items", () => {
     const items = parseItems("rec red :: {s : F, b : C} -> {xs : L} -> C :=> s(red(xs))")
     const d = items[0]
     if (d.tag !== "field") throw new Error("shape")
-    expect(d.value).toEqual(lam([{ name: "s", type: null }, { name: "b", type: null }],
-      ap(v("fix"), lam([{ name: "red", type: null }, { name: "xs", type: null }],
+    expect(d.value).toEqual(lam([{ name: "s", type: null, doc: v("F") }, { name: "b", type: null, doc: v("C") }],
+      ap(v("fix"), lam([{ name: "red", type: null }, { name: "xs", type: null, doc: v("L") }],
         ap(v("s"), ap(v("red"), v("xs")))))))
   })
 
@@ -482,9 +482,24 @@ describe("parse: items", () => {
     expect(() => parseItems("rec f : T")).toThrow(/requires a value/)
   })
 
+  it("a brace call is a link in the postfix chain", () => {
+    const d = parseItems("x := f{a := 1}.y(b){c := 2}.z")[0]
+    if (d.tag !== "field" || d.value == null) throw new Error("shape")
+    const outer = d.value
+    expect(outer.tag === "proj" && outer.field).toBe("z")
+    const call2 = outer.tag === "proj" ? outer.target : outer
+    expect(call2.tag === "app" && call2.x.tag).toBe("recValue")
+    const applied = call2.tag === "app" ? call2.f : call2
+    expect(applied.tag === "app" && applied.x).toEqual(v("b"))
+    const first = applied.tag === "app" ? applied.f : applied
+    expect(first.tag === "proj" && first.field).toBe("y")
+    expect(first.tag === "proj" && first.target.tag === "app" && first.target.x.tag).toBe("recValue")
+  })
+
   it("record expands to a positional constructor plus one accessor per field", () => {
     const items = parseItems("record pt :: {x : N, y : N, z : N} -> P")
-    expect(items.map(d => d.tag === "field" ? d.name : "?")).toEqual(["pt", "x", "y", "z"])
+    expect(items.map(d => d.tag === "field" ? d.name : "?")).toEqual(["pt", "P.x", "P.y", "P.z"])
+    expect(items[1].tag === "field" && items[1].recordField).toEqual({ type: "P", field: "x", fieldType: v("N") })
     const [ctor, x, y, z] = items
     if (ctor.tag !== "field" || x.tag !== "field" || y.tag !== "field" || z.tag !== "field") throw new Error("shape")
     const ps = ["x", "y", "z"].map(name => ({ name, type: null }))
@@ -498,6 +513,7 @@ describe("parse: items", () => {
     expect(one.value).toEqual(lam([{ name: "inner", type: null }], v("inner")))
     expect(inner.value).toEqual(lam(r, v("r")))
     expect(() => parseItems("record pt :: {x : N} -> P := 5")).toThrow(/takes no ':='/)
+    expect(() => parseItems("record pt :: {x : N} -> List(P)")).toThrow(/plain name/)
     expect(() => parseItems("record pt :: N -> P")).toThrow(/every field needs a name/)
     expect(() => parseItems("record pt :: P")).toThrow(/needs an annotation/)
   })
@@ -686,6 +702,15 @@ describe("parseProgram (compile + driver)", () => {
     const decls = parseProgram(`m := use "${mainPath}"`, process.cwd() + "/anon.disp")
     // Should not throw (the nested use resolves correctly)
     expect(decls.length).toBeGreaterThan(0)
+  })
+
+  it("record fields shared by two records need the receiver's type", () => {
+    const prelude = join(process.cwd(), "lib/prelude.disp")
+    const head = `open use raw "${prelude}" {}\nrecord pt :: {x : Tree, y : Tree} -> P\nrecord px :: {c : Tree, x : Tree} -> X\n`
+    expect(() => parseProgram(head + "f := {q} => q.x\n", process.cwd() + "/anon.disp")).toThrow(/'\.x' is ambiguous/)
+    expect(() => parseProgram(head + "f := x\n", process.cwd() + "/anon.disp")).toThrow(/write P\.x or X\.x/)
+    expect(() => parseProgram(head + "f := {q : Tree} => q.x\n", process.cwd() + "/anon.disp")).toThrow(/Tree has no field 'x'/)
+    expect(parseProgram(head + "f := {q : X} => q.x\ntest f(px(1, 2)) = 2\n", process.cwd() + "/anon.disp").length).toBeGreaterThan(0)
   })
 
   it("`open use` brings names into scope but does not re-export them", () => {

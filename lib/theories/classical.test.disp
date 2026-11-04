@@ -1,12 +1,5 @@
 // Non-constructive proofs as programs: simple types plus one more former, call/cc, whose type is Peirce's law, a classical principle no term of simple types proves. A continuation-passing translation (the double-negation translation of logic) sends each classical term to a pure term that simple types accept. The effect becomes an ordinary terminating program, and the lens is that translation.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
@@ -14,9 +7,11 @@ pure := spec({s} => if (s == "*") { "[]" } else { "None" }, {a, b} => if ((a == 
 imp := {a, b} => pi(a, b)
 peirce := {a, b} => imp(imp(imp(a, b), a), a)
 // call/cc at A and B, with type ((A -> B) -> A) -> A: a former only this theory has
-cc_f := former("Plain", no_contract,
-	{go, sp, ctx, term} => then_ok(sort_r(sp, go(sp, ctx, term.k0)), {_a} => then_ok(sort_r(sp, go(sp, ctx, term.k1)), {_b} => ok(peirce(term.k0, term.k1)))),
-	types_only, no_meaning)
+cc_f := former("Plain", {sp, ctx, term} => {
+	_ <- sort_of(sp, ctx, term.k0)
+	_ <- sort_of(sp, ctx, term.k1)
+	ok(peirce(term.k0, term.k1))
+}, no_contract, types_only, no_meaning)
 cc := {a, b} => node(cc_f, [a, b])
 classical := spec(pure.axiom, pure.rule, "*", cons(cc_f, pure.formers), 800)
 cl_type := {ctx, term} => infer(classical, ctx, term).snd

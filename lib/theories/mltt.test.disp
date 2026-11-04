@@ -1,16 +1,14 @@
-// Martin-Loef type theory: a tower of universes, dependent functions and pairs, numbers with induction, and equality. A proof of a for-all equation is a certificate that two different programs agree, and a proof of a for-all-exists is a program.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+// Martin-Loef type theory: a tower of universes, dependent functions and pairs, data types, numbers with induction, and equality. A proof of a for-all equation is a certificate that two different programs agree, and a proof of a for-all-exists is a program.
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
-theory := spec(succ, {a, b} => if (nat_le(a, b)) { b } else { a }, zero, core.append(numbers).append([nrec_f]).append(pairs).append(equality), 600)
+// data types beyond numbers: booleans, lists of numbers, and binary trees
+bool_d := [[], []]
+list_d := [[], [nat_ty, "Rec"]]
+tree_d := [[], ["Rec", "Rec"]]
+datatypes := data_formers(bool_d).append(data_formers(list_d)).append(data_formers(tree_d))
+theory := spec(succ, {a, b} => if (nat_le(a, b)) { b } else { a }, zero, core.append(numbers).append([nrec_f]).append(pairs).append(equality).append(datatypes), 600)
 nn := arrow(nat_ty, nat_ty)
 plus_t := lam(nat_ty, lam(nat_ty, nrec(lam(nat_ty, nat_ty), tv(0), lam(nat_ty, lam(nat_ty, sc(tv(0)))), tv(1))))
 plus_of := {a, b} => app(app(plus_t, a), b)
@@ -42,12 +40,14 @@ false_ty := pi(nat_ty, eq_nat(plus_of(tv(0), tv(0)), tv(0)))
 fake := lam(nat_ty, refl(tv(0)))
 one := sc(zr)
 test accepts(theory, false_ty, fake).is_refuted = true
-test over(sound_at(theory, accepted(theory), false_ty), fake, challenges_at(theory, false_ty)) = "Proved"
-test over(sound_at(theory, {_a, _term} => true, false_ty), fake, challenges_at(theory, false_ty)).is_refuted = true
-test over(sound_at(theory, accepted(theory), plus_zero_ty), plus_zero, challenges_at(theory, plus_zero_ty)) = "Proved"
-// what the statement means is checked on numbers, with no proof in sight
-test holds(meaning(theory, plus_zero_ty), t) = true
-test holds(meaning(theory, false_ty), t) = false
+test sound_at(theory, accepted(theory), false_ty)(fake, t) = true
+test sound_at(theory, {_a, _term} => true, false_ty)(fake, t) = false
+test sound_at(theory, accepted(theory), plus_zero_ty)(plus_zero, t) = true
+// what the statement means is judged on symbols, with no proof in sight: n + n = n is refuted by
+// splitting n down to one; n + 0 = n needs induction through plus's own recursion, a fixpoint inside
+// the program that the judge has no lemma for, so it stays Open rather than Proved on a few numbers
+test judge(meaning(theory, false_ty), t) = refuted([1])
+test judge(meaning(theory, plus_zero_ty), t).is_open = true
 
 // the rewrite the optimizer wants: the proof licenses swapping n + 0 for n, on every tree search tries
 plus_right_zero := erase(lam(nat_ty, plus_of(tv(0), zr)))
@@ -63,7 +63,68 @@ test honest(Trees.as_items, license, fake, 5) = "Open"
 double_spec := pi(nat_ty, sig(nat_ty, eq_nat(tv(0), plus_of(tv(1), tv(1)))))
 double_proof := lam(nat_ty, mkp(sig(nat_ty, eq_nat(tv(0), plus_of(tv(1), tv(1)))), plus_of(tv(0), tv(0)), refl(plus_of(tv(0), tv(0)))))
 test accepts(theory, double_spec, double_proof) = "Proved"
+// the evidence must be about the first half: reflexivity at n is no proof that n + n is a double
+test accepts(theory, double_spec, lam(nat_ty, mkp(sig(nat_ty, eq_nat(tv(0), plus_of(tv(1), tv(1)))), plus_of(tv(0), tv(0)), refl(tv(0))))).is_refuted = true
 test erase(double_proof, 3).fst = 6
 test erase(pfst(app(double_proof, sc(sc(zr))))) = 4
-test holds(meaning(theory, double_spec), erase(double_proof)) = true
-test holds(meaning(theory, double_spec), {n} => pair(n, t)) = false
+// the second half is the evidence, at a type that mentions the first half
+two := sc(sc(zr))
+test accepts(theory, eq_nat(sc(sc(sc(sc(zr)))), plus_of(two, two)), psnd(app(double_proof, two))) = "Proved"
+test accepts(theory, eq_nat(two, plus_of(two, two)), psnd(app(double_proof, two))).is_refuted = true
+
+// ---- data types: a constructor checks its arguments, and elimination is a recursor whose cases see each recursive argument's result
+bool_ty := data_ty(bool_d)
+yes := con(bool_d, 0, [])
+no := con(bool_d, 1, [])
+flip := lam(bool_ty, elim(bool_d, lam(bool_ty, bool_ty), tv(0), [no, yes]))
+test accepts(theory, srt(0), bool_ty) = "Proved"
+test accepts(theory, arrow(bool_ty, bool_ty), flip) = "Proved"
+// flipping twice is the identity, by cases: each case is true by running
+flip_twice := pi(bool_ty, eq_ty(bool_ty, app(flip, app(flip, tv(0))), tv(0)))
+test accepts(theory, flip_twice, lam(bool_ty, elim(bool_d, lam(bool_ty, eq_ty(bool_ty, app(flip, app(flip, tv(0))), tv(0))), tv(0), [refl(yes), refl(no)]))) = "Proved"
+test accepts(theory, flip_twice, lam(bool_ty, elim(bool_d, lam(bool_ty, eq_ty(bool_ty, app(flip, app(flip, tv(0))), tv(0))), tv(0), [refl(no), refl(yes)]))).is_refuted = true
+// one case per constructor, and a motive over this type
+test accepts(theory, arrow(bool_ty, bool_ty), lam(bool_ty, elim(bool_d, lam(bool_ty, bool_ty), tv(0), [no]))).is_refuted = true
+test accepts(theory, arrow(bool_ty, bool_ty), lam(bool_ty, elim(bool_d, lam(nat_ty, bool_ty), tv(0), [no, yes]))).is_refuted = true
+
+list_ty := data_ty(list_d)
+empty := con(list_d, 0, [])
+push := {h, rest} => con(list_d, 1, [h, rest])
+pair_list := push(zr, push(two, empty))
+len := lam(list_ty, elim(list_d, lam(list_ty, nat_ty), tv(0), [zr, lam(nat_ty, lam(list_ty, lam(nat_ty, sc(tv(0)))))]))
+test accepts(theory, list_ty, pair_list) = "Proved"
+test accepts(theory, list_ty, push(empty, empty)).is_refuted = true
+test accepts(theory, list_ty, con(list_d, 1, [zr])).is_refuted = true
+test accepts(theory, arrow(list_ty, nat_ty), len) = "Proved"
+// the checker runs the recursor while comparing types, and the erased program runs on real pairs
+test accepts(theory, eq_nat(app(len, pair_list), two), refl(two)) = "Proved"
+test erase(len, erase(pair_list)) = 2
+test erase(pair_list) = pair(1, [0, pair(1, [2, pair(0, [])])])
+// induction where each case uses its hypothesis: appending the empty list changes nothing
+append := lam(list_ty, lam(list_ty, elim(list_d, lam(list_ty, list_ty), tv(1), [tv(0), lam(nat_ty, lam(list_ty, lam(list_ty, push(tv(2), tv(0)))))])))
+append_of := {a, b} => app(app(append, a), b)
+append_empty_ty := pi(list_ty, eq_ty(list_ty, append_of(tv(0), empty), tv(0)))
+append_empty := lam(list_ty, elim(list_d, lam(list_ty, eq_ty(list_ty, append_of(tv(0), empty), tv(0))), tv(0), [
+	refl(empty),
+	lam(nat_ty, lam(list_ty, lam(eq_ty(list_ty, append_of(tv(0), empty), tv(0)),
+		transport(lam(list_ty, eq_ty(list_ty, push(tv(3), append_of(tv(2), empty)), push(tv(3), tv(0)))), tv(0), refl(push(tv(2), append_of(tv(1), empty)))))))]))
+test accepts(theory, append_empty_ty, append_empty) = "Proved"
+test accepts(theory, append_empty_ty, lam(list_ty, refl(tv(0)))).is_refuted = true
+
+tree_ty := data_ty(tree_d)
+tip := con(tree_d, 0, [])
+fork := {l, r} => con(tree_d, 1, [l, r])
+size := lam(tree_ty, elim(tree_d, lam(tree_ty, nat_ty), tv(0), [sc(zr), lam(tree_ty, lam(tree_ty, lam(nat_ty, lam(nat_ty, sc(plus_of(tv(1), tv(0)))))))]))
+test accepts(theory, arrow(tree_ty, nat_ty), size) = "Proved"
+test erase(size, erase(fork(tip, fork(tip, tip)))) = 5
+
+// what a data type means is checked on runs: members are well-formed constructor values
+test judge(meaning(theory, list_ty), erase(pair_list)) = "Proved"
+test judge(meaning(theory, list_ty), pair(1, [empty, t])).is_refuted = true
+test judge(meaning(theory, list_ty), pair(5, [])).is_refuted = true
+test sound_at(theory, accepted(theory), arrow(list_ty, nat_ty))(len, t) = true
+test sound_at(theory, {_a, _term} => true, arrow(list_ty, nat_ty))(lam(list_ty, tv(0)), t) = false
+// a program with no recursion on its input is certified outright: flipping covers both booleans
+test certified(theory, arrow(bool_ty, bool_ty), flip) = "Proved"
+test certified(theory, flip_twice, lam(bool_ty, elim(bool_d, lam(bool_ty, eq_ty(bool_ty, app(flip, app(flip, tv(0))), tv(0))), tv(0), [refl(yes), refl(no)]))) = "Proved"
+test judge(meaning(theory, double_spec), {n} => pair(n, t)).is_refuted = true

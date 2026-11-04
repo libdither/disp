@@ -1,11 +1,9 @@
 // The eight corners of Barendregt's lambda cube: one engine, and each corner is the
 // set of function spaces it allows on top of terms depending on terms. Term-on-type
 // is polymorphism, type-on-type is type operators, type-on-term is dependent types.
-// A corner's file pins what it adds. This file holds the shared examples and the
-// `power` table: which examples a corner accepts, each decided by a terminating run.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
+// This file holds the shared examples and the `power` table (which examples a corner
+// accepts, each decided by a terminating run); cube.test.disp pins each corner.
+open use raw "base.disp" {}
 open use raw "pts.disp" {}
 
 star := srt("*")

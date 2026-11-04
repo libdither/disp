@@ -36,7 +36,7 @@ open use raw "../stream.disp" {}
 open use raw "../claim.disp" {}
 open use raw "fixtures.disp" {}
 open use raw "../../IDEAS.disp" {}
-open use raw "confirmer.test.disp" {}
+open use raw "../confirm.disp" {}
 ```
 
 ### Everything is a tree

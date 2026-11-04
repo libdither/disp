@@ -1,12 +1,5 @@
 // Claims as a logic of their own, with no terms: each connective builds a claim from claims (Goedel's Dialectica form), a proof is a witness, and a rule is a lens. Excluded middle has no computable witness in the direct form, and has one in the form where the challenger's strategy is an input (Kreisel's no-counterexample form).
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
@@ -41,7 +34,6 @@ test honest(Trees.as_items, lens_holds(nat_fn, nat_fn, lens_then(post_succ, post
 // contraction: one witness used twice answers a pair of challenges with the one it fails, which needs a test that decides
 contract_lens := {a} => lens({w} => pair(w, w), {w, c} => if (a(w, c.fst)) { c.snd } else { c.fst })
 pairs := Trees.as_items.s_map({x} => pair(x, succ(x)))
-half_nat := {g, x} => if (NatR(x)) { if (is_zero(x)) { NatR(g(x)) } else { true } } else { true }
 test honest(pairs, lens_holds(nat_fn, d_and(nat_fn, nat_fn), contract_lens(nat_fn)), {n} => n, 30) = "Open"
 partly_bad := {x} => if (x == 1) { t(t) } else { x }
 test honest(pairs, lens_holds(nat_fn, d_and(nat_fn, nat_fn), contract_lens(nat_fn)), partly_bad, 60) = "Open"

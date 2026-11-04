@@ -116,6 +116,7 @@ export interface ScopeEntry {
   fieldTypes?: (Tree | null)[]  // per-field types for open
   fieldGuards?: (Tree | null)[] // per-field guards for open (owned names travel with their owner)
   fieldCerts?: (LicenseCert | null)[] // per-field license stamps for open (travel like guards)
+  fieldParams?: (SigParam[] | undefined)[] // per-field named-argument signatures, so named calls work on opened names
   params?: SigParam[]   // named-argument signature (leading binder params + defaults)
   guard?: Tree          // the name's guard (its rebind policy); undefined = default-governed
   cert?: LicenseCert    // driver-stamped license: this binding replaced `old` via a

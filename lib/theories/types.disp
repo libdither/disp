@@ -1,49 +1,98 @@
-// Types by behaviour, with no names: a type is a claim, its own finite list of
-// challenges, and a few samples of its members to challenge functions with. A
-// sample has two faces, what a program receives and what a dependent type receives;
-// they differ only for types, which programs receive as the leaf. One function
-// former covers plain functions, polymorphism and dependent types: they differ only
-// in what the argument ranges over.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+// Types for the theories, each a behaviour record (lib/confirm.disp): how to admit a
+// partly-known value, how a symbol of it splits, what a member does when applied. Judging
+// a value at one is `judge` (lib/rules.disp), the confirmer's search, so Proved is sound by
+// the five rule lenses. A type has two faces as an argument: programs receive the leaf for
+// a type, dependent types receive the type itself.
+open use raw "base.disp" {}
 
-record ty :: {claim : Claim, challenges : List(Tree), samples : List(Sample)} -> Type
-record sample :: {runtime : Tree, static : Tree} -> Sample
-plain_sample := {v} => sample(v, v)
-// decided against its own challenges: Proved means every listed challenge passed
-judge :: {a : Type, w : Tree} -> Verdict :=> over(a.claim, w, a.challenges)
-holds :: {a : Type, w : Tree} -> Bool :=> judge(a, w) == "Proved"
+rec nth :: {xs : List(A), i : Nat} -> A :=> if (is_zero(i)) { xs.head } else { nth(xs.tail, nat_pred(i)) }
+rec positions_from :: {i : Nat, xs : List(A)} -> List(Nat) :=> if (xs.is_nil) { [] } else { cons(i, positions_from(succ(i), xs.tail)) }
+positions :: {xs : List(A)} -> List(Nat) :=> positions_from(zero, xs)
 
+nat_t := NatR
+bool_t := Bool
+tree_t := TreeR
+empty_t := FalseR
+anything_t := of_type(behaviour{admits := {_self, _v} => "Yes"})
+// a known value is in or out; anything else is a symbol to split, or opaque
+known_or := {v, answer} => if (v.is_known) { answer(v) } else { inspect(v) }
+// a value whose shape is settled and wrong is out; a symbol or a neutral term is not yet known
+not_pair := {v} => if ((v.is_sym) || (v.is_app)) { inspect(v) } else { "No" }
+
+// a value no program can make up, the one member of the abstract type with this name
+abstract_t :: {name : Tree} -> Code :=> {
+	let token := pair("Abstract", name)
+	of_type(behaviour{
+		admits := {_self, v} => known_or(v, {x} => if (x == token) { "Yes" } else { "No" }),
+		generic := some({_self, _i} => token)})
+}
+// A universe: programs receive the leaf for a type. As an argument it is a symbol (a program
+// that looks at it cannot be settled), and dependent types see a fresh abstract type named by
+// it, so a stuck application carrying the symbol still knows its type.
+universe_t :: Code := of_type(behaviour{
+	admits := {_self, v} => if (is_leaf(v)) { "Yes" } else { not_pair(v) },
+	static := some({_self, v} => if (v.is_sym) { abstract_t(v.sym_name) } else { anything_t }),
+	types := true})
+
+// A dependent function type: the family takes the argument's faces. One former serves plain
+// functions, polymorphism (over a universe) and dependent types. A family of types is itself
+// a type-level argument: dependent types see it as a function giving a fresh abstract type
+// for each argument, named by the stuck application.
+pi_t :: {a : Code, fam : Tree} -> Code :=> {
+	let level := is_types(fam(faces_of(a, generic_of(a, "probe"))))
+	of_type(behaviour{
+		admits := {_self, v} => stuck_on(pair("a function inside a value", v)),
+		applied := some(pair(a, fam)),
+		static := if (level) { some({_self, f} => {xs} => static_of(fam(pair(xs, xs)), app_val(f, xs))) } else { none },
+		types := level})
+}
+arrow_t :: {a : Code, b : Code} -> Code :=> pi_t(a, {_x} => b)
+forall_t :: {fam : Tree} -> Code :=> pi_t(universe_t, fam)
+
+// a dependent pair: the first half at the first type, the second at the type it picks
+sigma_t :: {a : Code, fam : Tree} -> Code :=> of_type(behaviour{admits := {_self, v} =>
+	if (not(v.is_fork_shaped)) { not_pair(v) }
+	else { and_yes(judge_as(a, v.fst), {_y} => judge_as(fam(pair(v.fst, v.fst)), v.snd)) }})
+
+// equality of two values computed on symbols; the witness does not matter
+eq_t :: {x : Res, y : Res} -> Code :=> of_type(behaviour{admits := {_self, _v} => and_then(x, {a} => and_then(y, {b} => same_val(a, b)))})
+eq_of :: {x : Tree, y : Tree} -> Code :=> eq_t(answered(x), answered(y))
+// a family that looks at its argument runs on it like any program: it picks a type when it can,
+// and otherwise the type waits, asking for the symbol it needed to be split
+by_value :: {face : Pair(Val, Tree), pick : Tree -> Code} -> Code :=> {
+	let r := sapply(pick, face.snd, run_fuel)
+	if ((r.is_answered) && (r.answer.is_known)) { r.answer }
+	else { of_type(behaviour{admits := {_self, _v} => if (r.is_answered) { stuck_on(pair("family answered no type", r.answer)) } else { r }}) }
+}
+
+// a data type: a member is a constructor's index paired with its arguments' list; "Rec" stands for the type itself
+kind_code := {self, k} => if (k == "Rec") { self } else { k }
+rec args_fit :: {self : Code, kinds : List(Tree), v : Val} -> Res :=>
+	if (kinds.is_nil) { if (is_leaf(v)) { "Yes" } else { not_pair(v) } }
+	else if (not(v.is_fork_shaped)) { not_pair(v) }
+	else { and_yes(judge_as(kind_code(self, kinds.head), v.fst), {_y} => args_fit(self, kinds.tail, v.snd)) }
+retype := {s, code} => sym(code, s.sym_name)
+rec arg_shapes :: {self : Code, child : Tree -> Val, j : Nat, kinds : List(Tree), p : Nat} -> Val :=>
+	if (kinds.is_nil) { t }
+	else { pair(retype(child(pair(j, p)), kind_code(self, kinds.head)), arg_shapes(self, child, j, kinds.tail, succ(p))) }
+data_t :: {shapes : List(List(Tree))} -> Code :=> of_type(behaviour{
+	admits := {self, v} =>
+		if (not(v.is_fork_shaped)) { not_pair(v) }
+		else {
+			let tag := v.fst
+			if (not(tag.is_known)) { inspect(tag) }
+			else if (not((NatR(tag)) && (nat_lt(tag, shapes.length)))) { "No" }
+			else { args_fit(self, nth(shapes, tag), v.snd) }
+		},
+	cases := some({self, child} => positions(shapes).map({j} => pair(j, arg_shapes(self, child, j, nth(shapes, j), 0))))})
+// lists as lib/list.disp builds them: the leaf, or a pair of an item and a list
+list_t :: {a : Code} -> Code :=> of_type(behaviour{
+	admits := {self, v} =>
+		if (is_leaf(v)) { "Yes" }
+		else if (not(v.is_fork_shaped)) { not_pair(v) }
+		else { and_yes(judge_as(a, v.fst), {_y} => judge_as(self, v.snd)) },
+	cases := some({_self, child} => [t, pair(retype(child("head"), a), child("tail"))])})
+
+// a run on the step-counting machine, for theories that count steps
 run_budget := 4000
 returns := {f, x} => m_advance(m_start(f, x), run_budget)
-
-// a dependent function: a challenge is an argument sample with a challenge of the result; a run that does not finish in budget fails
-pi_t :: {a : Type, fam : Tree -> Type} -> Type :=> ty(
-	{f, c} => { let m := returns(f, c.arg.runtime); (m_finished(m)) && (fam(c.arg.static).claim(m_result(m), c.on_result)) },
-	a.samples.map({s} => fam(s.static).challenges.map({cb} => call_with(s, cb))).concat,
-	if (a.samples.is_nil) { [] } else { fam(a.samples.head.static).samples.map({y} => sample({_x} => y.runtime, {_x} => y.static)) })
-arrow_t :: {a : Type, b : Type} -> Type :=> pi_t(a, {_x} => b)
-// a dependent pair: the first half against one of the first type's challenges, or the second half against the type its first half picks
-record pair_challenge :: {on_first : Bool, inner : Tree} -> PairChallenge
-check_first := pair_challenge(true)
-check_second := pair_challenge(false, t)
-sigma_t :: {a : Type, fam : Tree -> Type} -> Type :=> ty(
-	{p, c} => if (not(is_fork(p))) { false } else if (c.on_first) { a.claim(p.fst, c.inner) } else { holds(fam(p.fst), p.snd) },
-	cons(check_second, a.challenges.map(check_first)),
-	a.samples.map({s} => fam(s.static).samples.map({y} => plain_sample(pair(s.runtime, y.runtime)))).concat)
-nat_t :: Type := ty({w, _c} => NatR(w), [t], [0, 1, 2].map(plain_sample))
-bool_t :: Type := ty({w, _c} => Bool(w), [t], [true, false].map(plain_sample))
-// an abstract type: its one member is a token no program can make up, which is what makes polymorphism checkable
-abstract_t :: {token : Tree} -> Type :=> ty({w, _c} => w == token, [t], [plain_sample(token)])
-// two values are equal: the witness is irrelevant
-eq_t :: {x : Tree, y : Tree} -> Type :=> ty({_w, _c} => x == y, [t], [plain_sample(t)])
-anything_t :: Type := ty({_w, _c} => true, [t], [plain_sample(t)])
-// a universe: programs receive the leaf for a type, dependent types receive the type
-universe_t :: {members : List(Type)} -> Type :=> ty({_w, _c} => true, [t], members.map({m} => sample(t, m)))
-small_types := [abstract_t("A"), bool_t, nat_t]
-forall_t :: {fam : Type -> Type} -> Type :=> pi_t(universe_t(small_types), fam)

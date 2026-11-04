@@ -1,41 +1,73 @@
-// The behavioural types on their own, with no syntax: one function former, used over values, over types and over numbers.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+// The types on their own, with no syntax: one function former over values, types and numbers, judged on symbols. A Proved here covers every argument, by the rule lenses alone.
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
-unit_t := ty({w, _c} => w == t, [t], [plain_sample(t)])
-// plain functions
-test holds(arrow_t(bool_t, bool_t), not) = true
-test holds(arrow_t(bool_t, bool_t), {x} => pair(x, x)) = false
-test holds(arrow_t(arrow_t(bool_t, bool_t), bool_t), {f} => f(true)) = true
-// a counterexample names the sample that failed
-test judge(arrow_t(nat_t, nat_t), {n} => pair(n, n)) = refuted(call_with(plain_sample(1), t))
-// polymorphism: the same former over a universe; the abstract token catches a made-up answer
-poly_id := {_a, x} => x
-test holds(forall_t({a} => arrow_t(a, a)), poly_id) = true
-test holds(forall_t({a} => arrow_t(a, a)), {_a, x} => not(x)) = false
-test holds(forall_t({a} => arrow_t(a, a)), {_a, _x} => true) = false
-// dependent functions and pairs: the same former over numbers
-fam := {n} => if (is_zero(n)) { unit_t } else { nat_t }
-test holds(pi_t(nat_t, fam), {n} => if (is_zero(n)) { t } else { n }) = true
-test holds(pi_t(nat_t, fam), {n} => succ(n)) = false
-test holds(sigma_t(nat_t, fam), pair(2, 5)) = true
-test holds(sigma_t(nat_t, fam), pair(0, 5)) = false
-// a type operator is a function from types to types
-test holds(arrow_t(universe_t(small_types), universe_t(small_types)), {a} => arrow_t(a, a)) = true
-// equality of values: the witness does not matter
-test holds(eq_t(add(2, 2), 4), t) = true
-test holds(eq_t(add(2, 2), 5), t) = false
-// a run must finish within its budget
+unit_t := of_type(behaviour{admits := {_self, v} => known_or(v, {x} => if (x == t) { "Yes" } else { "No" })})
+// plain functions: each argument is a symbol, split only where the program looks
+test judge(arrow_t(bool_t, bool_t), not) = "Proved"
+test judge(arrow_t(nat_t, nat_t), succ) = "Proved"
+test judge(arrow_t(arrow_t(bool_t, bool_t), bool_t), {f} => f(true)) = "Proved"
+// a counterexample is the argument that breaks it, found by splitting down to a known one
+test judge(arrow_t(nat_t, nat_t), {n} => pair(n, n)).is_refuted = true
+test judge(arrow_t(bool_t, bool_t), {x} => pair(x, x)) = refuted([true])
+// a program that inspects a function it was given cannot be settled on symbols
+test judge(arrow_t(arrow_t(bool_t, bool_t), bool_t), {f} => not(f(true))) = open_on(pair("opaque value", app_val(arg_sym(arrow_t(bool_t, bool_t), 0), true)))
+
+// recursion: a `rec` definition is fix(step), and the step runs with the hypothesis at strictly smaller pieces
+test judge(arrow_t(nat_t, nat_t), dbl) = "Proved"
+test judge(arrow_t(nat_t, arrow_t(nat_t, nat_t)), add) = "Proved"
+test judge(arrow_t(list_t(nat_t), nat_t), length) = "Proved"
+// reverse's step appends to its hypothesis: without append's own type as a lemma, that call stays opaque
+test judge(arrow_t(list_t(nat_t), list_t(nat_t)), reverse).is_open = true
+// a call that does not descend is never assumed: it runs out and stays Open
+test judge(arrow_t(nat_t, nat_t), fix({self, n} => self(n))).is_open = true
 test holds(arrow_t(nat_t, nat_t), fix({self, n} => self(n))) = false
+
+// polymorphism: an argument of a universe is the leaf for the program and a fresh abstract type for the type
+poly_id := {_a, x} => x
+test judge(forall_t({a} => arrow_t(a.snd, a.snd)), poly_id) = "Proved"
+test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, x} => not(x)).is_refuted = true
+test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, _x} => true).is_refuted = true
+// Church numerals: the function argument stays a symbol, and what it builds is typed by its codomain
+church_nat := forall_t({a} => arrow_t(arrow_t(a.snd, a.snd), arrow_t(a.snd, a.snd)))
+test judge(church_nat, {_a, f, x} => f(f(x))) = "Proved"
+test judge(church_nat, {_a, _f, x} => x) = "Proved"
+// applying the function argument outside its domain leaves its result unconstrained: Open
+test judge(church_nat, {_a, f, _x} => f(t)).is_open = true
+// a type operator is a function from types to types, and programs see each type as the leaf
+test judge(arrow_t(universe_t, universe_t), {_a} => t) = "Proved"
+test judge(arrow_t(universe_t, universe_t), {a} => pair(a, a)).is_refuted = true
+
+// dependent functions and pairs: a family that looks at its argument asks for it to be split
+fam := {face} => by_value(face, {n} => if (is_zero(n)) { unit_t } else { nat_t })
+test judge(pi_t(nat_t, fam), {n} => if (is_zero(n)) { t } else { n }) = "Proved"
+test judge(pi_t(nat_t, fam), {n} => succ(n)).is_refuted = true
+test judge(sigma_t(nat_t, fam), pair(2, 5)) = "Proved"
+test judge(sigma_t(nat_t, fam), pair(0, 5)).is_refuted = true
+// a family whose answer is built around the unknown number itself gives no type to judge at: Open
+test judge(pi_t(nat_t, {face} => by_value(face, {n} => eq_of(n, n))), {_n} => t).is_open = true
+// equality of values: the witness does not matter
+test judge(eq_of(add(2, 2), 4), t) = "Proved"
+test judge(eq_of(add(2, 2), 5), t).is_refuted = true
+
+// a data type's cases are its constructors, so a function on it is checked one constructor at a time
+shape := data_t([[], [nat_t, "Rec"]])
+test cases_of(shape).length = 2
+test judge(shape, pair(1, [3, pair(0, [])])) = "Proved"
+test judge(shape, pair(1, [3])).is_refuted = true
+test judge(arrow_t(shape, bool_t), {v} => is_zero(v.fst)) = "Proved"
+
+// each type with cases owes the cover law; search finds no member its cases miss
+test by_search(cover_law(shape), t, 120) = "Open"
+test by_search(cover_law(list_t(nat_t)), t, 120) = "Open"
+test by_search(cover_law(list_t(bool_t)), t, 120) = "Open"
+// a cover that forgets a constructor is refuted with a member it misses
+lossy := of_type(behaviour{admits := {_self, v} => judge_as(list_t(nat_t), v), cases := some({_self, _child} => [t])})
+test by_search(cover_law(lossy), t, 120).is_refuted = true
 
 // an open term's value: variable 0 is the head of the list
 test eval_in([3, 5], tv(1)) = 5
 test eval_in([3, 5], sc(tv(0))) = 4
 test eval_in([3, 5], app(lam(nat_ty, tv(0)), tv(1))) = 5
+test eval_sym([pair(3, 3)], sc(tv(0))) = answered(4)

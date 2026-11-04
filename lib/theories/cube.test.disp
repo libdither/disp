@@ -1,0 +1,126 @@
+// The eight corners of Barendregt's lambda cube, checked by one engine. Each corner adds
+// function spaces to terms-on-terms: polymorphism (terms on types), type operators
+// (types on types) and dependent types (types on terms). The cube is a lattice: allowing
+// more function spaces never loses a term, and each corner accepts a different set of
+// the examples in cube.disp.
+open use raw "base.disp" {}
+open use raw "types.disp" {}
+open use raw "pts.disp" {}
+open use raw "cube.disp" {}
+
+corners := [[], [poly], [oper], [depd], [poly, oper], [poly, depd], [depd, oper], [poly, oper, depd]]
+test corners.map({extra} => power(corner(extra))) = [
+	[true, false, false, false, false, false, false, false],
+	[true, true, false, false, false, false, false, false],
+	[true, false, true, false, false, false, false, false],
+	[true, false, false, true, false, false, false, false],
+	[true, true, true, false, true, false, false, false],
+	[true, true, false, true, false, true, false, false],
+	[true, false, true, true, false, false, true, false],
+	[true, true, true, true, true, true, true, true]]
+// every example the full calculus accepts is certified: its program, judged on symbols at the type's meaning, is Proved by the rule lenses alone
+test examples.all({e} => certified(corner([poly, oper, depd]), e.fst, e.snd) == "Proved") = true
+// every corner with a subset of another's rules accepts a subset of its examples
+at_most_as := {a, b} => a.zip(b).all({p} => if (p.fst) { p.snd } else { true })
+subset_of := {a, b} => a.all(b.member)
+test corners.cross(corners, pair).all({p} => if (subset_of(p.fst, p.snd)) { at_most_as(power(corner(p.fst)), power(corner(p.snd))) } else { true }) = true
+
+// Simple types: functions from terms to terms, nothing else. Every member terminates, and the checker refuses self-application.
+arrow_theory := corner([])
+omega_term := lam(arrow(base, base), app(tv(0), tv(0)))
+test accepts(arrow_theory, arrow(arrow(base, base), base), omega_term).is_refuted = true
+compose := lam(arrow(other, base), lam(arrow(base, other), lam(base, app(tv(2), app(tv(1), tv(0))))))
+compose_ty := arrow(arrow(other, base), arrow(arrow(base, other), arrow(base, base)))
+test accepts(arrow_theory, compose_ty, compose) = "Proved"
+test erase(compose, succ, succ, 1) = 3
+// annotations are checked: swapping the two function types does not fit
+test accepts(arrow_theory, arrow(arrow(base, other), arrow(arrow(other, base), arrow(base, base))), compose).is_refuted = true
+// a free variable is refused, whatever its type
+test accepts(arrow_theory, base, tv(0)).is_refuted = true
+
+// System F: functions from types to terms, so one identity serves every type, and numbers and booleans become programs (Church encodings). Every member still terminates.
+f_theory := corner([poly])
+church_nat := pi(star, arrow(arrow(tv(0), tv(0)), arrow(tv(0), tv(0))))
+church_two := lam(star, lam(arrow(tv(0), tv(0)), lam(tv(1), app(tv(1), app(tv(1), tv(0))))))
+church_plus := lam(church_nat, lam(church_nat, lam(star, lam(arrow(tv(0), tv(0)), lam(tv(1), app(app(app(tv(4), tv(2)), tv(1)), app(app(app(tv(3), tv(2)), tv(1)), tv(0))))))))
+test accepts(f_theory, church_nat, church_two) = "Proved"
+test accepts(f_theory, arrow(church_nat, arrow(church_nat, church_nat)), church_plus) = "Proved"
+test erase(church_plus, erase(church_two), erase(church_two), t, succ, zero) = 4
+// what a Church boolean means: at every type it answers one of the two it was given. Judged on
+// symbols: the type is a fresh abstract type whose one member is a token, which catches a
+// program that answers with something it made up
+church_bool := pi(star, arrow(tv(0), arrow(tv(0), tv(0))))
+yes_term := lam(star, lam(tv(0), lam(tv(1), tv(1))))
+stray := lam(star, lam(tv(0), lam(tv(1), other)))
+test certified(f_theory, church_bool, yes_term) = "Proved"
+test judge(meaning(f_theory, church_bool), erase(stray)).is_refuted = true
+// the checker refuses the stray program, so the soundness law holds there; a checker that accepts everything is refuted by it
+test sound_at(f_theory, accepted(f_theory), church_bool)(stray, t) = true
+test sound_at(f_theory, {_a, _term} => true, church_bool)(stray, t) = false
+// a Church numeral gets a function argument, which stays a symbol: what it builds is typed by its codomain
+test certified(f_theory, church_nat, church_two) = "Proved"
+test certified(f_theory, arrow(church_nat, arrow(church_nat, church_nat)), church_plus) = "Proved"
+
+// Type operators without polymorphism: types compute, so checking a term runs a program on types first.
+oper_theory := corner([oper])
+endo_base := app(twice_op, base)
+test accepts(oper_theory, srt("*"), endo_base) = "Proved"
+// the annotation only matches after running the operator
+test accepts(oper_theory, arrow(endo_base, id_base_ty), lam(endo_base, tv(0))) = "Proved"
+test accepts(oper_theory, id_base_ty, lam(base, tv(0))) = "Proved"
+// an operator applied to a term has the wrong kind
+test accepts(oper_theory, srt("*"), app(twice_op, id_base)).is_refuted = true
+
+// Dependent types (the LF corner): a type may mention a term. Proof checking lives here, with no polymorphism.
+lf_theory := corner([depd])
+// the family runs while checking: family(x) is `other`, so this term fits both ways of writing its type
+same_fam := lam(base, lam(app(family, tv(0)), tv(0)))
+test accepts(lf_theory, pi(base, arrow(app(family, tv(0)), app(family, tv(0)))), same_fam) = "Proved"
+test accepts(lf_theory, pi(base, arrow(other, other)), same_fam) = "Proved"
+test accepts(lf_theory, pi(base, arrow(other, base)), same_fam).is_refuted = true
+
+// System F-omega: polymorphism and type operators, so data types can be defined inside the theory. A pair type as an operator, with its constructor run as a real program.
+fomega_theory := corner([poly, oper])
+pair_op := lam(star, lam(star, pi(star, arrow(arrow(tv(2), arrow(tv(1), tv(0))), tv(0)))))
+test accepts(fomega_theory, arrow(star, arrow(star, star)), pair_op) = "Proved"
+mk_pair := lam(star, lam(star, lam(tv(1), lam(tv(1), lam(star, lam(arrow(tv(4), arrow(tv(3), tv(0))), app(app(tv(0), tv(3)), tv(2))))))))
+mk_pair_ty := pi(star, pi(star, pi(tv(1), pi(tv(1), app(app(pair_op, tv(3)), tv(2))))))
+test accepts(fomega_theory, mk_pair_ty, mk_pair) = "Proved"
+test erase(mk_pair, t, t, 3, 4, t, {a, _b} => a) = 3
+test erase(mk_pair, t, t, 3, 4, t, {_a, b} => b) = 4
+
+// Dependent types with polymorphism: propositions over a fixed type can quantify over all predicates, so equality is definable and has proofs.
+p2_theory := corner([poly, depd])
+eq_base := lam(base, lam(base, pi(arrow(base, star), arrow(app(tv(0), tv(2)), app(tv(0), tv(1))))))
+test accepts(p2_theory, arrow(base, arrow(base, star)), eq_base) = "Proved"
+eq_at := {x, y} => app(app(eq_base, x), y)
+refl_base := lam(base, lam(arrow(base, star), lam(app(tv(0), tv(1)), tv(0))))
+test accepts(p2_theory, pi(base, eq_at(tv(0), tv(0))), refl_base) = "Proved"
+// the identity is no proof that any two members are equal
+wrong_refl := lam(base, lam(base, lam(arrow(base, star), lam(app(tv(0), tv(2)), tv(0)))))
+test accepts(p2_theory, pi(base, pi(base, eq_at(tv(1), tv(0)))), wrong_refl).is_refuted = true
+trans_base := lam(base, lam(base, lam(base, lam(eq_at(tv(2), tv(1)), lam(eq_at(tv(2), tv(1)), lam(arrow(base, star), lam(app(tv(0), tv(5)), app(app(tv(2), tv(1)), app(app(tv(3), tv(1)), tv(0))))))))))
+trans_ty := pi(base, pi(base, pi(base, arrow(eq_at(tv(2), tv(1)), arrow(eq_at(tv(1), tv(0)), eq_at(tv(2), tv(0)))))))
+test accepts(p2_theory, trans_ty, trans_base) = "Proved"
+
+// Dependent types with operators, no polymorphism: programs that build predicates from predicates.
+p_oper_theory := corner([depd, oper])
+imp_self := lam(arrow(base, star), lam(base, arrow(app(tv(1), tv(0)), app(tv(1), tv(0)))))
+test accepts(p_oper_theory, pi(arrow(base, star), arrow(base, star)), imp_self) = "Proved"
+// the built predicate computes while checking: at any x it is other -> other
+built := lam(base, app(app(imp_self, family), tv(0)))
+test accepts(p_oper_theory, arrow(base, star), built) = "Proved"
+use_built := lam(base, lam(app(app(imp_self, family), tv(0)), tv(0)))
+test accepts(p_oper_theory, pi(base, arrow(arrow(other, other), arrow(other, other))), use_built) = "Proved"
+test accepts(p_oper_theory, pi(base, arrow(arrow(other, base), arrow(other, base))), use_built).is_refuted = true
+
+// The Calculus of Constructions: all three together. Equality over every type is a definition, and its symmetry is a checked term.
+coc_theory := corner([poly, oper, depd])
+eq_of := {a, x, y} => app(app(app(leibniz, a), x), y)
+refl_any := lam(star, lam(tv(0), lam(arrow(tv(1), star), lam(app(tv(0), tv(1)), tv(0)))))
+test accepts(coc_theory, pi(star, pi(tv(0), eq_of(tv(1), tv(0), tv(0)))), refl_any) = "Proved"
+sym_any := lam(star, lam(tv(0), lam(tv(1), lam(eq_of(tv(2), tv(1), tv(0)),
+	app(app(tv(0), lam(tv(3), eq_of(tv(4), tv(0), tv(3)))), app(app(refl_any, tv(3)), tv(2)))))))
+test accepts(coc_theory, pi(star, pi(tv(0), pi(tv(1), arrow(eq_of(tv(2), tv(1), tv(0)), eq_of(tv(2), tv(0), tv(1)))))), sym_any) = "Proved"
+// the converse direction is the same term at a type it does not have
+test accepts(coc_theory, pi(star, pi(tv(0), pi(tv(1), arrow(eq_of(tv(2), tv(1), tv(0)), eq_of(tv(2), tv(1), tv(1)))))), sym_any).is_refuted = true

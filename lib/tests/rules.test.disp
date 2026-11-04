@@ -1,0 +1,52 @@
+// The five rule lenses (lib/rules.disp). Each law survives search, which can never prove it; a
+// rule broken on purpose is refuted with a concrete tree. Then `judge`, which uses nothing else.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../claim.disp" {}
+open use raw "../trees.disp" {}
+open use raw "fixtures.disp" {}
+open use raw "../confirm.disp" {}
+open use raw "../rules.disp" {}
+
+nn := ArrowC(NatR, NatR)
+// case split: every member is covered by exactly the case its shape picks
+test cases_of(NatR).length = 2
+test case_of(NatR, 0) = t
+test case_of(NatR, 3) = succ(in_sym(NatR, ["pred"]))
+test case_of(NatR, t(t)) = none
+// shaped like a successor, but its predecessor is no number: no case covers it
+test case_of(NatR, pair(t, t(t))) = none
+test case_of(Bool, false) = false
+
+test by_search(cover_law(NatR), t, 120) = "Open"
+test by_search(cover_law(TreeR), t, 120) = "Open"
+
+// generic run: a check that answers Yes on a case answers Yes on every tree it covers
+doubles := {_w, v} => and_then(run(dbl, v), judge_nat)
+test certify(symbolic(doubles), cases_of(NatR)).is_open = true
+test by_search(run_law(NatR, doubles), t, 60) = "Open"
+// a "symbolic" check that lies about cases is caught by the law at a concrete member
+liar := {_w, v} => if (v.is_known) { and_then(run({n} => pair(n, n), v), judge_nat) } else { "Yes" }
+test by_search(run_law(NatR, liar), t, 60).is_refuted = true
+
+// induction: from the case and the strictly smaller pieces to the member
+test pieces(NatR, case_of(NatR, 3), 3) = [2]
+test pieces(TreeR, case_of(TreeR, t(1, 2)), t(1, 2)) = [1, 2]
+total := {w, x} => NatR(w(x))
+step_ok := {w, c} => (and_then(step_with_ih(dbl_step, c), judge_nat)) == "Yes"
+test by_search(ind_holds(NatR, step_ok, total), fix(dbl_step), 60) = "Open"
+// the law leans on its premise: a step claim that says yes to everything is refuted (at 1: pair(0, 0) is the tree of 1, a number)
+test by_search(ind_holds(NatR, {_w, _c} => true, total), {n} => pair(n, n), 60) = refuted(1)
+
+// judge: Proved covers every argument, by the rules alone
+test judge(nn, succ) = "Proved"
+test judge(nn, dbl) = "Proved"
+test judge(ArrowC(NatR, ArrowC(NatR, NatR)), add) = "Proved"
+test judge(ArrowC(NatR, Bool), is_even) = "Proved"
+test judge(nn, {n} => pair(n, n)) = refuted([1])
+test judge(nn, fix({self, n} => self(n))).is_open = true
+test judge(NatR, 3) = "Proved"
+test judge(NatR, t(t)) = refuted(t(t))
+// the law judge stands on, at one type: search finds no argument a Proved program fails on
+test by_search(judge_claim(nn), dbl, 20) = "Open"

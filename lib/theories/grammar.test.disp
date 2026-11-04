@@ -1,12 +1,5 @@
 // Grammar types: a type is a tree grammar (each name lists at most one alternative per shape), and membership runs down the tree it is given, so it always finishes. Inclusion between types is also decided, and answers with a tree when it fails. Programs are trees, so a grammar can also say something about what a program does: every member of `Const` returns at once.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 

@@ -1,0 +1,25 @@
+// Every tree, smallest first, as a stream (a search source), and the Bool
+// recognizer. IDEAS.disp builds the same two while explaining them; this copy
+// carries no tests, so opening it costs nothing.
+open use raw "prelude.disp" {}
+open use raw "list.disp" {}
+open use raw "stream.disp" {}
+
+next_level :: {levels : List(List(Tree))} -> List(Tree) :=> {
+  let stems := levels.head.map({v} => t(v))
+  let splits := levels.reverse.zip(levels.tail)
+  let forks := splits.map({p} => p.fst.cross(p.snd, pair)).concat
+  stems.append(forks)
+}
+trees_step :: {state : Pair(List(List(Tree)), List(Tree))} -> Emit(Tree, Pair(List(List(Tree)), List(Tree))) :=> {
+  let levels := state.fst
+  let pending := state.snd
+  if (pending.is_nil) {
+    let grown := next_level(levels)
+    emit(grown.head, pair(cons(grown, levels), grown.tail))
+  } else {
+    emit(pending.head, pair(levels, pending.tail))
+  }
+}
+Trees :: Stream(Tree) := stream_new(trees_step, pair([[t]], [t]))
+Bool :: {tree : Tree} -> Bool :=> triage(true, is_leaf, {_l, _r} => false, tree)

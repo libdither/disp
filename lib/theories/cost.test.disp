@@ -1,12 +1,5 @@
 // Cost types: a member of a function type names a step bound, which turns "finishes on every input" (never refutable) into a test on one bounded run (refutable, and always a finite computation). The real tree programs are run on the machine, so a looping program cannot hang the checker.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 open use raw "../growth.disp" {}
@@ -26,7 +19,6 @@ partial_at := {f, c} => {
 		if (m_finished(m)) { NatR(m_result(m)) } else { true }
 	} else { true }
 }
-by_search := honest(Trees.as_items)
 rec times :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { zero } else { add(b, times(nat_pred(a), b)) }
 spin_nat := fix({self, n} => if (is_zero(n)) { zero } else { succ(self(n)) })
 linear := {x} => times(64, succ(x))

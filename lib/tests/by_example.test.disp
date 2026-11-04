@@ -10,7 +10,7 @@ open use raw "../stream.disp" {}
 open use raw "../claim.disp" {}
 open use raw "fixtures.disp" {}
 open use raw "../../IDEAS.disp" {}
-open use raw "confirmer.test.disp" {}
+open use raw "../confirm.disp" {}
 
 //@ trees
 // Disp compiles to the tree calculus: five rewrite rules over binary trees grown

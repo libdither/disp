@@ -5,11 +5,12 @@
 
 import type { Tree } from "../eval/eager.js"
 import type { Expr } from "../parse.js"
-import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
+import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type LicenseCert, type SigParam } from "./state.js"
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { sugarTree, sugarVarName, pairAccessor, SUGAR_PREFIX, type SugarName } from "./vocab.js"
+import { qualified, pickOwner, typeOf, typeName, withLocals, isLocal } from "./fields.js"
 
 // moduleTupleCir: a resolved file's module tuple { record, typ } (§2.6 records):
 //   record = a product of the file's exported values, keyed by name;
@@ -93,7 +94,13 @@ export function exprToCir(
         return target ? { tag: "lit", t: target } : { tag: "var", name: bare }
       }
       const entry = lookupEntry(e.name)
-      return entry?.tree ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
+      if (entry?.tree) return { tag: "lit", t: entry.tree }
+      // a bare record field: the one record in scope that has it (fields.ts)
+      if (entry === undefined && !isLocal(e.name)) {
+        const owner = pickOwner(null, e.name, lookupEntry, true, true)
+        if (owner) return { tag: "lit", t: lookupEntry(qualified(owner, e.name))!.tree! }
+      }
+      return { tag: "var", name: e.name }
     }
     case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
     case "app": {
@@ -116,8 +123,12 @@ export function exprToCir(
       // canonical positional/partial call (see § named-arg resolution).
       const named = tryNamedCall(e, lookupEntry)
       if (named !== null) return exprToCir(named, lookupEntry, resolveUse, sinks)
+      // a block `let` is a one-parameter lambda applied to its value: the binder takes the value's type
+      const f = e.f.tag === "binder" && e.f.fat && e.f.params.length === 1 && e.f.params[0].type == null && e.f.params[0].doc == null
+        ? { ...e.f, params: [{ ...e.f.params[0], doc: typeOf(e.x, lookupEntry) }] }
+        : e.f
       return { tag: "app",
-        f: exprToCir(e.f, lookupEntry, resolveUse, sinks),
+        f: exprToCir(f, lookupEntry, resolveUse, sinks),
         x: exprToCir(e.x, lookupEntry, resolveUse, sinks),
       }
     }
@@ -159,7 +170,8 @@ export function exprToCir(
         return lookupEntry(name)
       }
 
-      let body = exprToCir(e.body, shadowedLookup, resolveUse, sinks)
+      const locals = new Map(e.params.map((p, i) => [p.name ?? `_anon${i}`, p.doc ?? p.type ?? null]))
+      let body = withLocals(locals, () => exprToCir(e.body, shadowedLookup, resolveUse, sinks))
       for (let i = e.params.length - 1; i >= 0; i--) {
         const name = e.params[i].name ?? `_anon${i}`
         body = { tag: "lam", x: name, body }
@@ -380,6 +392,14 @@ export function exprToCir(
         const acc = pairAccessor(lookupEntry, e.field)
         if (acc) return cap({ tag: "lit", t: acc }, exprToCir(e.target, lookupEntry, resolveUse, sinks))
       }
+      // `Type.field` names a record accessor itself; `x.field` picks the record by x's type (fields.ts)
+      if (e.target.tag === "var" && !isLocal(e.target.name) && lookupEntry(e.target.name) === undefined) {
+        const accessor = lookupEntry(qualified(e.target.name, e.field))
+        if (accessor?.tree) return { tag: "lit", t: accessor.tree }
+      }
+      const owner = pickOwner(typeName(typeOf(e.target, lookupEntry)), e.field, lookupEntry)
+      if (owner)
+        return cap({ tag: "lit", t: lookupEntry(qualified(owner, e.field))!.tree! }, exprToCir(e.target, lookupEntry, resolveUse, sinks))
       // r.x is the §2.6 cut `r (acc x)`. When the target is a statically-known
       // record with the field, keep the compile-time collapse (return the field
       // tree); otherwise emit the runtime cut, so projection works on any product
@@ -585,24 +605,24 @@ export function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[]; fieldCerts?: (LicenseCert | null)[] } | undefined {
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[]; fieldCerts?: (LicenseCert | null)[]; fieldParams?: (SigParam[] | undefined)[] } | undefined {
   // fieldGuards/fieldCerts ride along so `open` can propagate a module export's
   // installed guard and license stamps (dropping them here silently un-guarded
   // opened names).
   if (e.tag === "var") {
     const entry = lookupEntry(e.name)
-    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts } : undefined
+    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
   }
   if (e.tag === "use") {
     const entry = resolveUse(e.path, e.raw)
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts } : undefined
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
   }
   // A filled instantiation `use "f" { … }` resolves like a plain use — this is what
   // lets `open use "f" { … }` and module-metadata propagation see the instantiated
   // export list.
   if (e.tag === "app" && e.f.tag === "use" && e.x.tag === "recValue") {
     const entry = resolveUse(e.f.path, e.f.raw, compileFills(e.x, lookupEntry, resolveUse))
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts } : undefined
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts, fieldParams: entry.fieldParams } : undefined
   }
   return undefined
 }

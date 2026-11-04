@@ -1,12 +1,5 @@
 // Goedel's System T: simple types plus numbers and recursion on them. Every member terminates, yet it computes every function arithmetic can prove total, Ackermann included.
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
@@ -30,14 +23,16 @@ test normal(app(app(times_t, sc(sc(zr))), sc(sc(sc(zr)))), 400) = sc(sc(sc(sc(sc
 test accepts(theory, nn, lam(nat_ty, app(tv(0), tv(0)))).is_refuted = true
 test accepts(theory, nn, lam(nat_ty, nrec(lam(nat_ty, eq_ty(nat_ty, tv(0), tv(0))), zr, zr, tv(0)))).is_refuted = true
 
-// the lens into what the type means: accepted, erased, and run on the type's own challenges
-test over(sound_at(theory, accepted(theory), nnn), plus_t, challenges_at(theory, nnn)) = "Proved"
-test over(sound_at(theory, accepted(theory), nnn), ack_t, challenges_at(theory, nnn)) = "Proved"
-test challenges_at(theory, nnn).length = 9
+// the lens into what the type means: accepted, erased, and judged on symbols
+test sound_at(theory, accepted(theory), nnn)(plus_t, t) = true
+test sound_at(theory, accepted(theory), nnn)(ack_t, t) = true
+// the recursion is a fixpoint inside the program, applied to a symbol, not a `rec` value the judge is handed:
+// with no lemma for it, it unfolds until the split depth runs out, so it is Open, never Proved
+test certified(theory, nnn, plus_t).is_open = true
 // a function returned where a number was promised
 lie := lam(nat_ty, lam(nat_ty, tv(0)))
-test over(sound_at(theory, accepted(theory), nn), lie, challenges_at(theory, nn)) = "Proved"
-test over(sound_at(theory, {_a, _term} => true, nn), lie, challenges_at(theory, nn)).is_refuted = true
+test sound_at(theory, accepted(theory), nn)(lie, t) = true
+test sound_at(theory, {_a, _term} => true, nn)(lie, t) = false
 // total: the machine finishes every accepted program it is handed here
 test m_finished(returns(erase(times_t, 2), 3)) = true
 test m_finished(returns(erase(ack_t, 1), 2)) = true

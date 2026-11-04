@@ -39,7 +39,7 @@ const WARMUP = [
   'open use "../../archive/live-kernel/kernel/prelude.disp"\n',
   'open use "../../archive/live-kernel/std/nat.disp"\n',
   'open use raw "../prelude.disp" {}\n',
-  'open use raw "../claim.disp" {}\nopen use raw "fixtures.disp" {}\nopen use raw "../../IDEAS.disp" {}\nopen use raw "confirmer.test.disp" {}\n'
+  'open use raw "../claim.disp" {}\nopen use raw "fixtures.disp" {}\nopen use raw "../../IDEAS.disp" {}\nopen use raw "../confirm.disp" {}\nopen use raw "confirmer.test.disp" {}\n'
 ]
 
 const asTree = (s: RustEagerBrowserSession): Session<Tree> => s as unknown as Session<Tree>

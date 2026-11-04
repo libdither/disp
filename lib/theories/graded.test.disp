@@ -1,12 +1,5 @@
 // Graded types: a function's type records how much it can magnify a distance between inputs, counted by how often it uses them. Claims here are scored, one Bool claim per threshold, and the lens law carries the count (Reed and Pierce's Fuzz).
-open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
-open use raw "../verdict.disp" {}
-open use raw "../machine.disp" {}
-open use raw "../claim.disp" {}
-open use raw "../stream.disp" {}
-open use raw "../tests/fixtures.disp" {}
-open use raw "../../IDEAS.disp" {}
+open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 

@@ -1,9 +1,10 @@
 // Shared fixtures for the roots under lib/tests: the recognizers, quotient
-// normalizers and subject programs every checker is tried on, spelled once so
+// normalizers, subject programs and streams every checker is tried on, spelled once so
 // the cross-root agreement tests are about the same objects. (GRADUAL.disp keeps
 // its own shape-based NatR on purpose: it explains why.)
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
+open use raw "../stream.disp" {}
 
 rec NatR :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else { (v == succ(nat_pred(v))) && NatR(nat_pred(v)) }
 // accepts 0 and loops on everything else: membership there is never a verdict
@@ -25,3 +26,17 @@ rec add :: {a : Tree, b : Tree} -> Tree :=> if (is_zero(a)) { b } else { succ(ad
 add_step := {self, a, b} => if (is_zero(a)) { b } else { succ(self(nat_pred(a), b)) }
 is_even_step := {ie, n} => if (is_zero(n)) { true } else if (is_zero(nat_pred(n))) { false } else { ie(nat_pred(nat_pred(n))) }
 is_even := fix(is_even_step)
+dbl_step_add := {d2, n} => if (is_zero(n)) { zero } else { add(2, d2(nat_pred(n))) }
+// never descends: fix bad_step (succ zero) loops forever
+bad_step := {bad2, n} => if (is_zero(n)) { zero } else { succ(bad2(n)) }
+// two non-total steps: each wraps the hypothesis in a loop
+loop := fix({self, x} => self(x))
+loop_f_step := {self, n} => if (is_zero(n)) { zero } else { loop(self(nat_pred(n))) }
+loop_g_step := {self, n} => if (is_zero(n)) { zero } else { loop(id(self(nat_pred(n)))) }
+// looks at its function argument: true only on id
+sniff := {f} => tree_eq(f, id)
+
+// streams: the naturals three ways
+naturals := nats.as_items
+nats_add := s_new({n} => running(emit(yield(n), add(1, n))), zero)
+by_two := s_new({n} => running(emit(yield(n), succ(succ(n)))), zero)

@@ -1,0 +1,141 @@
+// The floor: the five rule lenses every certified verdict stands on. A symbolic claim
+// answers on cases (partly-known values, lib/confirm.disp), an honest claim on trees, and
+// each rule is a lens from the first into the second. A rule's law is a claim over every
+// tree: search can refute a wrong one but never prove a right one, so each is proved by
+// hand once (research/LOB_AND_CURRY.md §5.4), and a verdict built only from these rules
+// is sound by composition.
+//   finite cover   `over` (lib/claim.disp): a claim checked on every listed challenge
+//   case split     a tree goes back to the case of its type that covers it
+//   generic run    a run on a case answers for every tree the case covers
+//   induction      the hypothesis is asked only at the strictly smaller pieces of a member
+//   composition    `lens_then` (lib/claim.disp)
+// `judge` decides a value at a type with these alone.
+open use raw "prelude.disp" {}
+open use raw "list.disp" {}
+open use raw "verdict.disp" {}
+open use raw "stream.disp" {}
+open use raw "claim.disp" {}
+open use raw "trees.disp" {}
+open use raw "tests/fixtures.disp" {}
+open use raw "confirm.disp" {}
+
+// search every tree, smallest first: the honest claim's challenges
+by_search := honest(Trees.as_items)
+
+// ---- case split
+// a case covers a tree when its shape is the tree's and each symbol's type admits the subtree there
+rec covers :: {case : Val, x : Tree} -> Bool :=>
+	if (case == x) { true }
+	else if (case.is_sym) { judge_as(case.sym_type, x) == "Yes" }
+	else if ((is_hole(case)) || (is_leaf(case))) { false }
+	else if (is_stem(case)) { if (is_stem(x)) { covers(stem_child(case), stem_child(x)) } else { false } }
+	else if (is_fork(x)) { if (covers(case.fst, x.fst)) { covers(case.snd, x.snd) } else { false } }
+	else { false }
+// a type's cases, each symbol named by the step that reaches it
+cases_of :: {T : Code} -> List(Val) :=> table(T, {step} => in_sym(T, [step])).snd
+// a member goes back to its case; a non-member to none, and nothing is asked of it
+case_of :: {T : Code, x : Tree} -> Val :=> {
+	let found := cases_of(T).filter({c} => covers(c, x))
+	if (found.is_nil) { none } else { found.head }
+}
+split_lens :: {T : Code} -> Lens :=> lens({w} => w, {_w, x} => case_of(T, x))
+// each type with cases owes this law: its cases cover every member
+cover_law :: {T : Code} -> Claim :=> {_w, x} => if (judge_as(T, escape(x)) == "Yes") { not(case_of(T, escape(x)) == none) } else { true }
+
+// ---- generic run
+// a check answers on partly-known values; its symbolic claim reads a case, its honest claim a member of the type
+symbolic :: {check : Tree -> Val -> Res} -> Claim :=> {w, c} => check(w, c) == "Yes"
+honest_at :: {T : Code, check : Tree -> Val -> Res} -> Claim :=> {w, x} => if (judge_as(T, escape(x)) == "Yes") { check(w, escape(x)) == "Yes" } else { true }
+// the generic-run law for a check at a type: a Yes on a member's case is a Yes on the member
+run_law :: {T : Code, check : Tree -> Val -> Res} -> Claim :=> lens_holds(symbolic(check), honest_at(T, check), split_lens(T))
+
+// ---- induction
+// a member's strictly smaller pieces: its subtrees where its case has a symbol of the same type
+rec pieces :: {T : Code, case : Val, x : Tree} -> List(Tree) :=>
+	if ((case.is_sym) && (case.sym_type == T)) { [x] }
+	else if ((is_hole(case)) || (is_leaf(case))) { [] }
+	else if (is_stem(case)) { pieces(T, stem_child(case), stem_child(x)) }
+	else { pieces(T, case.fst, x.fst).append(pieces(T, case.snd, x.snd)) }
+// the induction law: `to` holds at a member when `from` holds at its case and `to` at every piece; nothing else can be asked
+ind_holds :: {T : Code, from : Claim, to : Claim} -> Claim :=> {w, x} => {
+	let c := case_of(T, x)
+	if (c == none) { true }
+	else if ((from(w, c)) && (pieces(T, c, x).all({p} => to(w, p)))) { to(w, x) }
+	else { true }
+}
+
+// ---- finite cover, as a verdict
+// a claim checked on a type's cases: a known case that fails is a counterexample, a symbolic one leaves the claim open
+certify :: {claim : Claim, cases : List(Val)} -> Verdict :=> {
+	let v := over(claim, t, cases)
+	if (not(v.is_refuted)) { v }
+	else if (v.snd.is_known) { refuted(v.snd) }
+	else { open_on(pair("case not settled", v.snd)) }
+}
+
+// ---- judging a value at a type, by the rules alone
+// A function type's arguments, curried, are generic: a symbol of the domain (its faces, for
+// types whose arguments are not symbols), each named by its position. The search splits them
+// on demand (case split), runs the value on them (generic run), and for a recursive value,
+// fix(step), runs the step with the hypothesis in place of itself (induction).
+max_args := 8
+is_types :: Code -> Bool := {c} => (is_type_code(c)) && (c.snd.types)
+arg_sym :: {T : Code, i : Nat} -> Val :=> in_sym(T, [pair("arg", i)])
+generic_of :: {T : Code, i : Nat} -> Val :=> if ((is_type_code(T)) && (not(is_none(T.snd.generic)))) { T.snd.generic.snd(T, i) } else { arg_sym(T, i) }
+rec generic_args :: {T : Code, i : Nat} -> Val :=> {
+	let view := fn_view(T)
+	if ((is_none(view)) || (nat_le(max_args, i))) { t }
+	else {
+		let v := generic_of(view.snd.fst, i)
+		pair(v, generic_args(view.snd.snd(faces_of(view.snd.fst, v)), succ(i)))
+	}
+}
+// fix(step) as a pattern: matching a value against it recovers the step of a `rec` definition
+fix_shape := (sapply(fix, var_sym("step"), run_fuel)).answer
+step_of :: {f : Val} -> Tree :=> {
+	let m := match_val(fix_shape, f, [])
+	if ((m.is_answered) && (not(m.answer.is_nil))) { m.answer.head.snd } else { none }
+}
+// the value to apply at argument i: a recursive value meeting an unsplit or split symbol is its step with the hypothesis
+induct :: {f : Val, arg : Val, dom : Code, rest : Tree, i : Nat} -> Res :=> {
+	let step := step_of(f)
+	if ((step == none) || ((arg.is_known) || (not(is_positive(dom))))) { answered(f) }
+	else { sapply(step, assumed_fn(dom, family_code(rest), [pair("arg", i)], same), run_fuel) }
+}
+rec run_at :: {T : Code, f : Val, args : Val, i : Nat} -> Res :=>
+	if (is_leaf(args)) { judge_as(T, f) }
+	else {
+		let view := fn_view(T)
+		let dom := view.snd.fst
+		let face := faces_of(dom, args.fst)
+		and_then(induct(f, face.fst, dom, view.snd.snd, i), {g} =>
+			and_then(sapply(g, face.fst, run_fuel), {out} => run_at(view.snd.snd(face), out, args.snd, succ(i))))
+	}
+// what a program really receives for an argument whose members are types: types erase to the leaf
+rec erased_of :: {T : Code} -> Tree :=> {
+	let view := fn_view(T)
+	if (is_none(view)) { t } else { {_x} => erased_of(view.snd.snd(faces_of(view.snd.fst, generic_of(view.snd.fst, "probe")))) }
+}
+// Arguments are ground once only symbols of types of types remain: a program that looked at
+// one would have been stuck, so the run is the run on what it really receives (the generic-run
+// law), and the counterexample names those values.
+rec ground_args :: {v : Val} -> Option(Tree) :=>
+	if ((v.is_in_sym) && (is_types(v.sym_type))) { some(erased_of(v.sym_type)) }
+	else if (is_hole(v)) { none }
+	else if (is_leaf(v)) { some(t) }
+	else if (is_stem(v)) { let a := ground_args(stem_child(v)); if (is_none(a)) { none } else { some(t(a.snd)) } }
+	else {
+		let a := ground_args(v.fst)
+		let b := ground_args(v.snd)
+		if ((is_none(a)) || (is_none(b))) { none } else { some(t(a.snd, b.snd)) }
+	}
+// Proved: every argument is covered and every run answers Yes; Refuted with the arguments that break it; else Open with the reason
+judge :: {T : Code, w : Tree} -> Verdict :=>
+	if (is_fn_code(T)) { search_g({args} => run_at(T, escape(w), args, 0), ground_args, generic_args(T, 0), split_depth) }
+	else {
+		let r := judge_as(T, escape(w))
+		if (r == "Yes") { "Proved" } else if (r == "No") { refuted(w) } else { open_on(explain(r)) }
+	}
+holds :: {T : Code, w : Tree} -> Bool :=> judge(T, w) == "Proved"
+// the law judge stands on, at one type: a Proved run answers for every argument tuple
+judge_claim :: {T : Code} -> Claim :=> {w, _c} => not(judge(T, w).is_refuted)

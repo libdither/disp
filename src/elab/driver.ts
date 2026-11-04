@@ -6,16 +6,17 @@ import { dirname, resolve as pathResolve } from "node:path"
 import { type Tree, defaultSession } from "../eval/eager.js"
 import type { Session, EvalStats } from "../eval/types.js"
 import { parseItems, sumCtorExpr, type Expr, type RecMember } from "../parse.js"
-import { elab, B, verifiedModules, moduleCacheBySession, registerVocab, isPristineVocab, VOCAB_NAMES, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
+import { elab, B, verifiedModules, moduleCacheBySession, registerVocab, isPristineVocab, VOCAB_NAMES, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert, type SigParam } from "./state.js"
 import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modscan.js"
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
 import { binderArity, extractSignature } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { sugarTree } from "./vocab.js"
 import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree, equationLhs } from "./expr.js"
+import { registerField } from "./fields.js"
 
 export type Decl =
-  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null; cert?: LicenseCert | null }
+  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null; cert?: LicenseCert | null; params?: SigParam[] }
   // `line`/`endLine` are the equation's 1-based source extent (absent for tests
   // emitted by inline recValue blocks, which have no surface line of their own).
   | { kind: "Test"; lhs: Tree; rhs: Tree; line?: number; endLine?: number }
@@ -432,8 +433,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const fieldTypes: (Tree | null)[] = []
     const fieldGuards: (Tree | null)[] = []
     const fieldCerts: (LicenseCert | null)[] = []
+    const fieldParams: (SigParam[] | undefined)[] = []
     for (const d of fileDecls) {
       if (d.kind === "Def") {
+        fieldParams.push(d.params)
         fieldNames.push(d.name)
         fieldTrees.push(d.tree)
         fieldTypes.push(d.type ?? null)
@@ -527,7 +530,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldGuards, fieldCerts }
+    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldGuards, fieldCerts, fieldParams }
     modCache.set(cacheKey, record)
     return record
   }
@@ -630,9 +633,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     body: Expr,
     sinks?: CompileSinks,
     raw = false,
+    docType?: Expr,
   ): { tree: Tree; type?: Tree | null } {
     const r = compileParts(name, type, body, sinks, raw)
-    finishDefine(name, r.tree, r.type, body, type, lookupEntry(name)?.guard)
+    finishDefine(name, r.tree, r.type, body, type ?? docType, lookupEntry(name)?.guard)
     return r
   }
 
@@ -692,6 +696,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     headE: Expr | undefined,
     sinks: CompileSinks,
     raw: boolean,
+    docE?: Expr,
   ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean; priv?: boolean; cert?: LicenseCert } {
     const S = elab.cs
     const existing = lookupEntry(name)
@@ -707,7 +712,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     if ((raw || ((!headE || letPristine) && !existing?.guard && !ambientShadowed)) && valueE != null) {
       // Fast path. (The parser guarantees headless declarations carry a value;
       // a valueless decorated declaration always consults, below.)
-      const r = compileBinding(name, typeE, valueE, sinks, raw)
+      const r = compileBinding(name, typeE, valueE, sinks, raw, docE)
       return { pushDef: true, tree: r.tree, type: r.type, guard: existing?.guard, viaFast: true, priv: letHeaded || undefined }
     }
     // Slow path: compile the pieces.
@@ -891,13 +896,13 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         }
         // `let x := e` arrives here as a decorated declaration (head = `let`);
         // the tag "let" member only survives inside braces (the lexical form).
-        const r = declareBinding(it.name, it.type, it.value, it.head, sinks, raw)
+        const r = declareBinding(it.name, it.type, it.value, it.head, sinks, raw, it.docType)
         if (r.pushDef && !r.priv) {
           // Redefinition of an exported field is guard-mediated (a rebind): the final
           // binding wins. An UNGUARDED (fast-path) duplicate is still the old accident
           // error, relocated here from the parser (the parser can't see guards).
           const idx = target.findIndex(d => d.kind === "Def" && d.name === it.name)
-          const decl: Decl = { kind: "Def", name: it.name, tree: r.tree!, type: r.type, guard: r.guard ?? null, cert: r.cert ?? null }
+          const decl: Decl = { kind: "Def", name: it.name, tree: r.tree!, type: r.type, guard: r.guard ?? null, cert: r.cert ?? null, params: lookupEntry(it.name)?.params }
           if (idx >= 0) {
             if (r.viaFast) throw new Error(`duplicate exported field '${it.name}'`)
             // A rebind without its own annotation keeps the name's contract: the
@@ -913,6 +918,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // a session can hold several kernels, so each one's definition is pristine
         // and only a ROOT-file binding of these names counts as a shadow.
         if (!ctx.isRoot && r.tree != null && VOCAB_NAMES.has(it.name)) registerVocab(elab.cs, it.name, r.tree)
+        if (it.recordField) registerField(it.recordField.type, it.recordField.field, it.recordField.fieldType)
         const ann = it.type ?? it.docType
         const arity = lookupEntry(it.name)?.params?.length ?? (ann != null ? binderArity(ann) : undefined)
         recordItem(isLetHead(it.head) ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined, arity })
@@ -1004,6 +1010,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           const fieldType = record.fieldTypes?.[i] ?? null
           const inGuard = record.fieldGuards?.[i] ?? undefined
           const inCert = record.fieldCerts?.[i] ?? undefined
+          const inParams = record.fieldParams?.[i]
           // Licensed-collision resolution. Certs are DRIVER-STAMPED: written only by
           // this driver on a successful guard consult in this session, never read from
           // module-declared data — so rules (2)/(3) are the driver consulting its own
@@ -1067,11 +1074,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             if (!collide(outer)) throw new Error(`open: '${name}' is guarded; rebind it explicitly through its guard`)
             continue
           }
-          define(name, { tree: fieldTree, type: fieldType, guard: inGuard, cert: inCert })
+          define(name, { tree: fieldTree, type: fieldType, guard: inGuard, cert: inCert, params: inParams })
           if (isExport) {
             // Barrel re-export: guard and cert ride along, so an owned/licensed
             // name keeps its policy and its stamps through the re-export.
-            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, guard: inGuard ?? null, cert: inCert ?? null })
+            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, guard: inGuard ?? null, cert: inCert ?? null, params: inParams })
           }
         }
         recordItem("open")

@@ -56,7 +56,7 @@ rec LoopR :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else { LoopR(v) }
 //   fork (fork w v) b x:  x leaf -> w,  x stem u -> v u,  x fork u u' -> b u u'
 // Q: which rule is the only one that looks INSIDE x?
 // A: the last one, triage. Keep it: it is why a placeholder can stand for every
-// input in CHECK.disp, and why fuel is the only thing this interpreter adds.
+// input in lib/confirm.disp, and why fuel is the only thing this interpreter adds.
 answered :: {v : Tree} -> Res :=> pair("Answered", v)
 stuck :: Res := "Stuck"
 is_answered :: Res -> Bool := {r} => r.fst == "Answered"
@@ -208,7 +208,7 @@ test verdict((witnesses_over(bools, Bool, bool_cod, {b} => pair(b, b), advance_h
 test verdict((witnesses(NatR, nat_cod, succ, advance_head, 64)).bounded(50)) = "Open"
 // Q: why is Proved reachable only through a finite source here?
 // A: because finishing exhausted needs the source exhausted, and over Trees
-// that never happens. Every checker in CHECK.disp and lib/tests/confirmer.test.disp is a
+// that never happens. Every checker in lib/confirm.disp is a
 // way to say Proved WITHOUT reaching done: one run on a placeholder, a case
 // split, an induction licence. Each is sound exactly when it agrees with this
 // stream on every candidate the stream would ever draw. That is the contract.
@@ -257,8 +257,8 @@ test s_fold_absorb(fails, add, 0, "Open", "None", {_w} => 1) = 3
 //   the verdict algebra is a parameter: Bool, counts, costs, three values (8)
 // Q: where would a faster checker plug in?
 // A: as a claim about this stream, "the witness stream is empty forever", backed
-// by an argument instead of a run. CHECK.disp makes that argument with one run
-// on a placeholder; the confirmer adds case splits and an induction licence.
+// by an argument instead of a run. lib/confirm.disp makes that argument with one run
+// on a placeholder, case splits and an induction licence.
 // They are shortcuts, and their contract is agreement with steps 6 and 7 on
 // every candidate. Nothing above them is ever more than a shortcut.
 // Still missing, most valuable first: a native stepper for the machine

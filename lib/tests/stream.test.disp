@@ -6,7 +6,6 @@ open use raw "../stream.disp" {}
 open use raw "fixtures.disp" {}
 
 spin := fix({self, v} => self(v))
-naturals := nats.as_items
 
 test (c_out(nats)).emitted = 0
 test (c_out((c_out(nats)).emit_next)).emitted = 1

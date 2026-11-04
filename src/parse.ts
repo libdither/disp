@@ -144,7 +144,9 @@ export type Expr =
 // `f { x := a }`, the omitted `y` falls back to `d`. The default is metadata for
 // callers only — a plain (positional) compilation of the binder ignores it
 // (the lambda is `{x} -> {y} -> …`); see compile.ts § named-argument resolution.
-export type Param = { name: string | null; type: Expr | null; default?: Expr | null }
+// `doc`: the parameter's type from a `::` annotation bound through `:=>`. It never
+// compiles; field resolution reads it to pick between same-named record fields.
+export type Param = { name: string | null; type: Expr | null; default?: Expr | null; doc?: Expr | null }
 export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
 // A coproduct variant: `Tag : T` (single-arg, `type` set) or `Tag` (nullary, null).
 // `Tag : T` is one payload slot; `Tag : [A, B]` is a POSITIONAL slot list (types
@@ -156,7 +158,7 @@ export type NamedField = { name: string; type: Expr | null; value: Expr; faced?:
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
 export type RecMember =
-  | { tag: "field"; name: string; type: Expr | null; docType?: Expr; value: Expr | null; pun?: boolean; head?: Expr; line?: number; endLine?: number }
+  | { tag: "field"; name: string; type: Expr | null; docType?: Expr; value: Expr | null; pun?: boolean; head?: Expr; line?: number; endLine?: number; recordField?: { type: string; field: string; fieldType: Expr | null } }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "bind"; name: string; expr: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr; line?: number; endLine?: number }
@@ -342,7 +344,12 @@ const holeP: P<Expr> = (ts, i) => {
 const withProj = (base: P<Expr>): P<Expr> => (ts, i) => {
   const r = base(ts, i)
   if (!r.ok) return r
-  let result = r.v, pos = r.pos
+  return postfix(ts, r.v, r.pos)
+}
+// The postfix chain after an atom: `.field`, a glued call `(…)`, a glued index `[…]`,
+// all equally tight and applied left to right (makeApp adds brace calls to it).
+const postfix = (ts: Tok[], start: Expr, from: Pos): Res<Expr> => {
+  let result = start, pos = from
   while (ts[pos].t === "punct" && ((ts[pos] as any).v === "." || (ts[pos] as any).v === "idx[" || (ts[pos] as any).v === "call(")) {
     if ((ts[pos] as any).v === "call(") {
       // x.f(a, b): comma-separated args applied to the chain so far; x.f() adds none.
@@ -506,18 +513,21 @@ const startsAtom = (t: Tok): boolean =>
   t.t === "id" || t.t === "num" || t.t === "str" || t.t === "leaf" ||
   (t.t === "punct" && (t.v === "(" || t.v === "["))
 
-// app = atom bracedCall?   bracedCall = a record literal on the same line
+// app = atom (bracedCall postfix)*   bracedCall = a record literal on the same line.
+// A brace call is one more link in the postfix chain, as tight as `.` and `(…)`:
+// `f{a := 1}.x` is `(f{a := 1}).x`, and `f{a := 1}(b)` applies b to the call.
 const makeApp = (atomP: P<Expr>, allowBrace = true): P<Expr> => (ts, i) => {
   const head = atomP(ts, i)
   if (!head.ok) return head
   let result = head.v
   let pos = head.pos
-  if (allowBrace && ts[pos].t === "punct" && (ts[pos] as { v?: string }).v === "{") {
-    const arg = atomP(ts, pos)
-    if (arg.ok && arg.v.tag === "recValue") {
-      result = { tag: "app", f: result, x: arg.v }
-      pos = arg.pos
-    }
+  while (allowBrace && ts[pos].t === "punct" && (ts[pos] as { v?: string }).v === "{") {
+    const arg = lazy(() => braced)(ts, pos)
+    if (!(arg.ok && arg.v.tag === "recValue")) break
+    const more = postfix(ts, { tag: "app", f: result, x: arg.v }, arg.pos)
+    if (!more.ok) return more
+    result = more.v
+    pos = more.pos
   }
   if (startsAtom(ts[pos])) return err(`line ${tokLine(ts, pos)}: application is written f(x), not f x`, pos)
   return ok(result, pos)
@@ -979,7 +989,7 @@ const bindWrap = (ann: { ty: Expr } | null | undefined, value: Expr, recName: st
     const g: Param[] = []
     for (const p of ty.params) {
       if (p.name === null) { if (g.length > 0) groups.push(g); break outer }
-      g.push({ name: p.name, type: null })
+      g.push({ name: p.name, type: null, doc: p.type })
     }
     groups.push(g)
     ty = ty.body
@@ -1612,10 +1622,11 @@ const headFieldP: P<RecMember | RecMember[]> = (ts, i) => {
 
 // `record NAME :: {f1 : T1, …, fn : Tn} -> R` — a positional record: the
 // constructor NAME := {f1, …, fn} => pair(f1, pair(f2, … fn)) plus one accessor
-// per field (`fk := {r} => r.snd….fst`), so `r.fk` reads it through UFCS. The
-// field names live only in scope, never in the tree: the trees are exactly the
-// hand-written ones. One field is the value itself. Accessors carry the doc
-// annotation `R -> Tk`; the constructor keeps the declaration's annotation.
+// per field, bound under its qualified name `R.fk := {r} => r.snd….fst`. `x.fk`
+// and a bare `fk` find it by x's type or as the only `fk` in scope
+// (src/elab/fields.ts), so records may share field names. The names live only in
+// scope, never in the tree: the trees are exactly the hand-written ones. One field
+// is the value itself. The constructor keeps the declaration's annotation.
 const recordItems = (name: string, ann: Expr | null | undefined, doc: boolean, line: number | undefined, endLine: number | undefined): RecMember[] => {
   const where = `parse: line ${line}: record '${name}'`
   if (!ann || ann.tag !== "binder" || ann.fat)
@@ -1623,6 +1634,8 @@ const recordItems = (name: string, ann: Expr | null | undefined, doc: boolean, l
   const fields = ann.params
   if (fields.some(p => p.name === null)) throw new Error(`${where}: every field needs a name`)
   const names = fields.map(p => p.name as string)
+  if (ann.body.tag !== "var") throw new Error(`${where}: the record's type must be a plain name (-> R)`)
+  const typeName = ann.body.name
   const v = (n: string): Expr => ({ tag: "var", name: n })
   const app2 = (f: string, a: Expr, b: Expr): Expr => ({ tag: "app", f: { tag: "app", f: v(f), x: a }, x: b })
   const body = names.slice(0, -1).reduceRight((rest, n) => app2("pair", v(n), rest), v(names[names.length - 1]))
@@ -1635,7 +1648,9 @@ const recordItems = (name: string, ann: Expr | null | undefined, doc: boolean, l
     for (let j = 0; j < k; j++) read = { tag: "proj", target: read, field: "snd" }
     if (k < names.length - 1) read = { tag: "proj", target: read, field: "fst" }
     const docType: Expr = { tag: "binder", fat: false, params: [{ name: null, type: ann.body }], body: fields[k].type ?? v("Tree") }
-    return { tag: "field", name: names[k], type: null, docType, value: { tag: "binder", fat: true, params: [{ name: "r", type: null }], body: read }, line, endLine }
+    return { tag: "field", name: `${typeName}.${names[k]}`, type: null, docType, line, endLine,
+      value: { tag: "binder", fat: true, params: [{ name: "r", type: null }], body: read },
+      recordField: { type: typeName, field: names[k], fieldType: fields[k].type } }
   }
   return [ctor, ...names.map((_, k) => accessor(k))]
 }
