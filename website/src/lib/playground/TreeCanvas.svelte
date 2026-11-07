@@ -8,9 +8,10 @@
   import { followTheme } from './theme-follow.ts'
   import { K_LEAF, K_STEM, K_FORK, K_APP, K_VAR, K_POD, K_LAM, type Scene, type VNode } from './layout.ts'
   import { R_K, R_S, R_F, RULE_GLYPH, type Id } from './store.ts'
+  import type { Roles, RoleHit } from './roles.ts'
 
   /// how the tree is drawn: bold is the original, the rest are calmer
-  export type TreeLook = 'bold' | 'quiet' | 'garden' | 'moss' | 'ink'
+  export type TreeLook = 'tree' | 'bold' | 'quiet' | 'garden' | 'moss' | 'ink'
 
   export interface CanvasApi {
     fit: () => void
@@ -31,11 +32,18 @@
     look?: TreeLook
     /// while playing: the view only zooms out, so a tree that grows and shrinks doesn't pump; it refits once this goes false
     steady?: boolean
-    onHover?: (n: VNode | null) => void
-    onClick?: (n: VNode, e: MouseEvent) => void
+    /// `onTag`: the pointer is on the node's name tag, not the node
+    onHover?: (n: VNode | null, onTag?: boolean) => void
+    onClick?: (n: VNode, e: MouseEvent, onTag?: boolean) => void
+    /// what each part of a finished function does to which input, drawn over it
+    roles?: Roles | null
+    /// the one input whose roles stand out
+    roleFocus?: string | null
+    onRoleHover?: (r: RoleHit | null) => void
+    onRoleClick?: (r: RoleHit) => void
     api?: (a: CanvasApi) => void
   }
-  let { scene, animMs = 0, glow = null, falling = false, varColor = () => '#1971c2', look = 'bold', steady = false, onHover, onClick, api }: Props = $props()
+  let { scene, animMs = 0, glow = null, falling = false, varColor = () => '#1971c2', look = 'bold', steady = false, onHover, onClick, roles = null, roleFocus = null, onRoleHover, onRoleClick, api }: Props = $props()
 
   let host: HTMLDivElement
   let cv: HTMLCanvasElement
@@ -47,8 +55,6 @@
   // camera: screen = world * k + (x, y)
   const cam = { x: 0, y: 0, k: 1 }
   const target = { x: 0, y: 0, k: 1 }
-  /// the most a steady view may zoom in to
-  let kCap = Infinity
   let follow = true
 
   let shown: Scene | null = null
@@ -61,6 +67,10 @@
   let dur = 0
   let hover: VNode | null = null
   let hoverId: Id = -1
+  /// the hovered node's name tag is under the pointer, rather than the node
+  let hoverTag = false
+  /// where each name tag was drawn last, in world coordinates, for the pointer
+  let tagBoxes: { i: number; x: number; y: number; w: number; h: number }[] = []
 
   /// a node the last step removed, fading on its way to `to` (a new node's index), in place, or dropping
   type Ghost = { n: VNode; x: number; y: number; to: number; drop: boolean; quick: boolean; parent: number }
@@ -119,7 +129,12 @@
       bark: get('--bark'),
       g2: get('--g2'),
       g4: get('--g4'),
-      g4soft: get('color-mix(in oklab, var(--g4) 22%, var(--bg-code))')
+      g4soft: get('color-mix(in oklab, var(--g4) 22%, var(--bg-code))'),
+      g1: get('--g1'),
+      blossom: get('--blossom'),
+      hillBack: get('color-mix(in oklab, var(--g1) 16%, var(--bg-elev))'),
+      hillFront: get('color-mix(in oklab, var(--g2) 13%, var(--bg-elev))'),
+      grass: get('color-mix(in oklab, var(--g2) 55%, transparent)')
     }
     probe.remove()
     requestDraw()
@@ -129,6 +144,11 @@
   const ruleColor = (r: number) => (look === 'moss' ? flower().deep : r === R_K ? C.warn : r === R_S ? C.kw : r === R_F ? C.err : C.accent)
   /// garden and its all-green twin
   const planty = $derived(look === 'garden' || look === 'moss')
+  /// the home page's tree view: it grows up out of a hill
+  const up = $derived(look === 'tree')
+  /// the scene's height, root at 0: down from it, or up from it with the hill below
+  const yRange = (s: Scene): [number, number] => (up ? [-s.maxY - 24, s.titles.length ? 76 : 56] : [0, s.maxY])
+  const FRUIT = '#e79a3f'
   const combColor = (op: string | null) => (look === 'moss' ? garden().step : op === 'S' ? C.kw : op === 'K' ? C.warn : op === 'I' ? C.ok : C.err)
   const podColor = (k: VNode['podKind']) =>
     k === 'nat' ? C.num : k === 'str' ? C.str : k === 'name' ? C.name : k === 'same' ? C.edge : C.muted
@@ -171,9 +191,10 @@
       }
       return
     }
+    if (up && !binder) return drawFruit(x, y, text, k, col)
     ctx.font = `${look === 'moss' ? 500 : 700} ${12 * s}px 'JetBrains Mono Variable', monospace`
     const pw = Math.max(22 * s, ctx.measureText(shown).width + 14 * s)
-    const tint = look === 'quiet' || look === 'moss' || (planty && !lit)
+    const tint = look === 'quiet' || look === 'moss' || up || (planty && !lit)
     ctx.beginPath()
     ctx.roundRect(x - pw / 2, y - 11 * s, pw, 22 * s, 11 * s)
     if (tint) {
@@ -207,25 +228,55 @@
       }
     }
     if (k * s > 0.2) {
-      ctx.fillStyle = tint ? col : '#fff'
+      ctx.fillStyle = up ? inkOf(col) : tint ? col : '#fff'
       ctx.fillText(shown, x, y + 0.5)
     }
   }
 
-  function fitTarget(s: Scene, minX = s.minX, maxX = s.maxX, maxY = s.maxY) {
+  function fitTarget(s: Scene, minX = s.minX, maxX = s.maxX, top = yRange(s)[0], bottom = yRange(s)[1]) {
     const pad = 34
     // the hover bar along the bottom gets its own strip, so it never covers the lowest nodes
     const bar = 26
+    const titled = s.titles.length && !up ? 18 : 0
     const sw = Math.max(1, maxX - minX)
-    const sh = Math.max(1, maxY)
-    const k = Math.min(1.5, kCap, (w - pad * 2) / sw, (h - pad * 2 - bar - (s.titles.length ? 18 : 0)) / sh)
+    const sh = Math.max(1, bottom - top)
+    const k = Math.min(1.5, (w - pad * 2) / sw, (h - pad * 2 - bar - titled) / sh)
     target.k = Math.max(0.02, k)
     target.x = w / 2 - ((minX + maxX) / 2) * target.k
     const contentH = sh * target.k
-    target.y = Math.max(pad + (s.titles.length ? 18 : 0), (h - bar - contentH) / 2 - 8)
+    target.y = Math.max(pad + titled, (h - bar - contentH) / 2 - 8) - top * target.k
+  }
+
+  /// While playing, the view holds still: it moves only when the tree leaves it or shrinks well inside it, and
+  /// then leaves room to spare. A tree too big to read whole is followed at a readable zoom instead, panning only
+  /// when the next step nears an edge.
+  function steadyTarget(s: Scene) {
+    const pad = 34
+    const floor = 0.45
+    const slack = (s.maxX - s.minX) * 0.12
+    fitTarget(s)
+    const sx = (x: number) => cam.x + x * cam.k
+    const sy = (y: number) => cam.y + y * cam.k
+    if (target.k >= Math.min(floor, cam.k)) {
+      const [top, bottom] = yRange(s)
+      const fits = target.k >= cam.k * 0.999 && sx(s.minX) >= pad && sx(s.maxX) <= w - pad && sy(top) >= pad && sy(bottom) <= h - pad - 26
+      const extra = (bottom - top) * 0.12
+      if (fits && target.k < cam.k * 1.6) Object.assign(target, cam)
+      else fitTarget(s, s.minX - slack, s.maxX + slack, up ? top - extra : top, up ? bottom : bottom + extra)
+      return
+    }
+    target.k = Math.min(cam.k, floor)
+    const site = s.nodes.filter((n) => n.next)
+    const cx = site.length ? site.reduce((a, n) => a + n.x, 0) / site.length : (s.minX + s.maxX) / 2
+    const cy = site.length ? site.reduce((a, n) => a + n.y, 0) / site.length : 0
+    const px = cam.x + cx * target.k
+    const py = cam.y + cy * target.k
+    target.x = px > w * 0.25 && px < w * 0.75 && target.k === cam.k ? cam.x : w / 2 - cx * target.k
+    target.y = py > h * 0.2 && py < h * 0.75 && target.k === cam.k ? cam.y : up ? h * 0.55 - cy * target.k : Math.min(pad, h * 0.45 - cy * target.k)
   }
 
   function setScene(next: Scene | null) {
+    if (next && up) next = { ...next, nodes: next.nodes.map((n) => ({ ...n, y: -n.y })) }
     const prev = shown
     shown = next
     // what was under the pointer may be gone; its hover text goes with it
@@ -253,13 +304,17 @@
       })
       const guide = next.guide
       const sites = guide?.sinks.map(([key]) => key)
+      const dropped = guide?.sinks.flatMap(([key, to]) => (to === 'drop' ? [key] : [])) ?? []
       // an old node carries on when something takes its place or its subtree; anything else is a ghost
       const used = new Uint8Array(prev.nodes.length)
       const src = new Int32Array(n).fill(-1)
+      /// where a node may have come from: under its own key, or under the top of the new part it sits in
+      const scope: string[] = []
       for (let i = 0; i < n; i++) {
         const v = next.nodes[i]
         const k = byKey.get(v.key)
         const par = v.parent
+        scope.push(par >= 0 && fresh[par] ? scope[par] : v.key)
         let from = -1
         // a node of a subtree that moved comes along with it
         if (par >= 0 && src[par] >= 0) {
@@ -279,9 +334,12 @@
             fresh[i] = 1
             continue
           }
-          // a kept subtree that moved: the same tree from where the step happened
-          const cands = (byId.get(v.id) ?? []).filter((j) => !sites || sites.some((key) => prev.nodes[j].key.startsWith(key)))
-          from = cands.find((j) => !used[j]) ?? cands[0] ?? -1
+          // a kept subtree that moved: the same tree from where the step happened, never one the step threw away
+          const cands = (byId.get(v.id) ?? []).filter((j) => {
+            const key = prev.nodes[j].key
+            return !dropped.some((d) => key.startsWith(d)) && (key.startsWith(scope[i]) || sites?.some((s) => key.startsWith(s)))
+          })
+          from = cands.find((j) => !used[j] && prev.nodes[j].key.startsWith(scope[i])) ?? cands.find((j) => !used[j]) ?? cands[0] ?? -1
         }
         if (from >= 0) {
           src[i] = from
@@ -290,14 +348,17 @@
           ny[i] = curY[from] ?? v.y
           continue
         }
-        // something new grows out of its parent
+        // something new takes over the spot of what was there (the spine a step rebuilds), or grows out of its parent
         fresh[i] = 1
-        if (par >= 0) {
+        if (k !== undefined && (!used[k] || par < 0)) {
+          nx[i] = curX[k] ?? v.x
+          ny[i] = curY[k] ?? v.y
+        } else if (par >= 0) {
           nx[i] = nx[par]
           ny[i] = ny[par]
         } else {
-          nx[i] = k !== undefined ? (curX[k] ?? v.x) : v.x
-          ny[i] = k !== undefined ? (curY[k] ?? v.y) : v.y
+          nx[i] = v.x
+          ny[i] = v.y
         }
       }
       if (falling && prev.nodes.length < 1500) {
@@ -332,15 +393,29 @@
     }
     curX = Float64Array.from(nx)
     curY = Float64Array.from(ny)
-    kCap = steady && tween ? cam.k : Infinity
     if (follow) {
-      fitTarget(next)
+      if (steady && tween) steadyTarget(next)
+      else fitTarget(next)
       if (!tween) Object.assign(cam, target)
     }
     requestDraw()
   }
 
   const ease = (t: number) => 1 - (1 - t) * (1 - t) * (1 - t)
+
+  /// eases the view toward its target; true while it is still moving
+  function glide(dt: number) {
+    const d = Math.abs(cam.k - target.k) / target.k + Math.abs(cam.x - target.x) / 400 + Math.abs(cam.y - target.y) / 400
+    if (d <= 0.002) {
+      Object.assign(cam, target)
+      return false
+    }
+    const f = 1 - Math.pow(0.002, dt)
+    cam.k += (target.k - cam.k) * f
+    cam.x += (target.x - cam.x) * f
+    cam.y += (target.y - cam.y) * f
+    return true
+  }
 
   function requestDraw() {
     if (!raf && ctx) raf = requestAnimationFrame(frame)
@@ -360,44 +435,242 @@
           curX[i] = fromX[i] + (nodes[i].x - fromX[i]) * k
           curY[i] = fromY[i] + (nodes[i].y - fromY[i]) * k
         }
-        if (follow) {
+        if (follow && steady) again = glide(dt) || again
+        else if (follow) {
           // the view fits where the nodes are right now, so nothing leaves it and it lands when they do;
           // the scene's bounds sit a little outside its nodes' centres, and that margin carries over
           let lo = Infinity
           let hi = -Infinity
+          let top = 0
           let bottom = 0
           let lo1 = Infinity
           let hi1 = -Infinity
+          let top1 = 0
           let bottom1 = 0
           for (let i = 0; i < nodes.length; i++) {
             lo = Math.min(lo, curX[i])
             hi = Math.max(hi, curX[i])
+            top = Math.min(top, curY[i])
             bottom = Math.max(bottom, curY[i])
             lo1 = Math.min(lo1, nodes[i].x)
             hi1 = Math.max(hi1, nodes[i].x)
+            top1 = Math.min(top1, nodes[i].y)
             bottom1 = Math.max(bottom1, nodes[i].y)
           }
-          fitTarget(shown, lo - (lo1 - shown.minX), hi + (shown.maxX - hi1), bottom + (shown.maxY - bottom1))
+          const [yt, yb] = yRange(shown)
+          fitTarget(shown, lo - (lo1 - shown.minX), hi + (shown.maxX - hi1), top + (yt - top1), bottom + (yb - bottom1))
           Object.assign(cam, target)
           if (t >= 1) fitTarget(shown)
         }
         if (t < 1) again = true
         else dur = 0
       } else if (follow && reduced?.matches) Object.assign(cam, target)
-      else if (follow) {
-        const d = Math.abs(cam.k - target.k) / target.k + Math.abs(cam.x - target.x) / 400 + Math.abs(cam.y - target.y) / 400
-        if (d > 0.002) {
-          const f = 1 - Math.pow(0.002, dt)
-          cam.k += (target.k - cam.k) * f
-          cam.x += (target.x - cam.x) * f
-          cam.y += (target.y - cam.y) * f
-          again = true
-        } else Object.assign(cam, target)
-      }
+      else if (follow) again = glide(dt) || again
     }
     if (ghosts.length > 0 && dur === 0) ghosts = []
     draw()
     if (again) raf = requestAnimationFrame(frame)
+  }
+
+  /// a colour mixed toward the background's opposite, for writing in it
+  function inkOf(hex: string, f = 0.42): string {
+    const m = /^#([0-9a-f]{6})$/i.exec(hex)
+    if (!m) return hex
+    const v = parseInt(m[1], 16)
+    const to = theme.resolved === 'dark' ? 255 : 0
+    const g = (sh: number) => Math.round(((v >> sh) & 255) * (1 - f) + to * f)
+    return `rgb(${g(16)}, ${g(8)}, ${g(0)})`
+  }
+
+  /// a name as fruit, in its own colour: its name on the skin when short, above it when not
+  function drawFruit(x: number, y: number, text: string, k: number, col = FRUIT) {
+    ctx.strokeStyle = C.bark
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(x, y - 9)
+    ctx.quadraticCurveTo(x + 1, y - 13, x + 3.5, y - 14.5)
+    ctx.stroke()
+    ctx.fillStyle = col
+    ctx.strokeStyle = 'rgba(60, 30, 10, 0.4)'
+    ctx.lineWidth = 0.8
+    ctx.beginPath()
+    ctx.arc(x, y, 10, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.42)'
+    ctx.beginPath()
+    ctx.ellipse(x - 3.4, y - 3.8, 2.9, 1.8, 0, 0, Math.PI * 2)
+    ctx.fill()
+    if (k < 0.3) return
+    const short = text.length <= 3
+    ctx.font = `700 ${short ? [10, 10, 8.5, 7][text.length] : 10 * pillScale(k)}px 'JetBrains Mono Variable', monospace`
+    ctx.fillStyle = short ? '#fff' : inkOf(col, 0.25)
+    ctx.fillText(short ? text : text.length > 16 ? text.slice(0, 15) + '…' : text, x, short ? y + 0.5 : y - 21)
+  }
+
+  /// what a fork does to an input: a split for a copy, an arrow to the one side it sends it, a cross for a drop, a question for a look at its shape.
+  /// Filled when it happens in the step about to fire, an outline while it is still to come.
+  function drawRoleMark(x: number, y: number, kind: string, col: string, hot: boolean, now: boolean) {
+    ctx.beginPath()
+    ctx.arc(x, y, now ? 10 : 9, 0, Math.PI * 2)
+    ctx.fillStyle = now ? col : C.bg
+    ctx.fill()
+    ctx.strokeStyle = col
+    ctx.lineWidth = hot ? 2.6 : 1.8
+    ctx.stroke()
+    if (now) ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 1.9
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    if (kind === 'copy') {
+      ctx.moveTo(x, y + 5)
+      ctx.lineTo(x, y + 1.5)
+      ctx.lineTo(x - 4, y - 2.5)
+      ctx.moveTo(x, y + 1.5)
+      ctx.lineTo(x + 4, y - 2.5)
+      ctx.stroke()
+    } else if (kind === 'left' || kind === 'right') {
+      // toward that child: up the tree in the tree look, down it otherwise
+      const dx = kind === 'left' ? -1 : 1
+      const dy = up ? -1 : 1
+      ctx.moveTo(x - dx * 3.5, y - dy * 3.5)
+      ctx.lineTo(x + dx * 3.5, y + dy * 3.5)
+      ctx.moveTo(x + dx * 3.5 - dx * 4.5, y + dy * 3.5)
+      ctx.lineTo(x + dx * 3.5, y + dy * 3.5)
+      ctx.lineTo(x + dx * 3.5, y + dy * 3.5 - dy * 4.5)
+      ctx.stroke()
+    } else if (kind === 'drop') {
+      ctx.moveTo(x - 3.5, y - 3.5)
+      ctx.lineTo(x + 3.5, y + 3.5)
+      ctx.moveTo(x + 3.5, y - 3.5)
+      ctx.lineTo(x - 3.5, y + 3.5)
+      ctx.stroke()
+    } else {
+      ctx.fillStyle = now ? '#fff' : col
+      ctx.font = "700 11px 'Inter Variable', sans-serif"
+      ctx.fillText('?', x, y + 0.5)
+    }
+  }
+  /// the fruit an input will be where it lands, as an outline on a dashed stalk from the node it lands on
+  function drawHeld(nx: number, ny: number, x: number, y: number, col: string, hot: boolean) {
+    ctx.strokeStyle = col
+    ctx.setLineDash([2, 2.5])
+    ctx.lineWidth = 1.3
+    ctx.beginPath()
+    ctx.moveTo(nx, ny)
+    ctx.lineTo(x, y)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.beginPath()
+    ctx.arc(x, y, 7.5, 0, Math.PI * 2)
+    ctx.fillStyle = C.bg
+    ctx.fill()
+    ctx.lineWidth = hot ? 2.6 : 1.8
+    ctx.stroke()
+  }
+
+  /// a folded subtree as its name on a green pill, as a binder wears its name on a gold one
+  function drawNamePod(x: number, y: number, text: string, showText: boolean, lit = false) {
+    const pw = podWidth(text) + 6
+    ctx.beginPath()
+    ctx.roundRect(x - pw / 2, y - 11, pw, 22, 11)
+    ctx.fillStyle = C.bg
+    ctx.fill()
+    ctx.globalAlpha = fade * (lit ? 0.3 : 0.16)
+    ctx.fillStyle = C.g2
+    ctx.fill()
+    ctx.globalAlpha = fade
+    ctx.strokeStyle = C.g2
+    ctx.lineWidth = lit ? 2.4 : 1.3
+    ctx.stroke()
+    if (!showText) return
+    ctx.fillStyle = C.g2
+    ctx.font = "700 11px 'JetBrains Mono Variable', monospace"
+    ctx.fillText(text.length > 28 ? text.slice(0, 27) + '…' : text, x, y + 0.5)
+  }
+
+  /// a named subtree drawn open wears its name on a small tag up and to its left; clicking the tag folds it
+  function drawTag(i: number, x: number, y: number, text: string, hot: boolean) {
+    ctx.font = "600 10px 'JetBrains Mono Variable', monospace"
+    const shown = text.length > 20 ? text.slice(0, 19) + '…' : text
+    const w = ctx.measureText(shown).width + 10
+    const h = 15
+    const bx = x - 10 - w
+    const by = y - 26
+    const col = up ? C.g2 : C.name
+    ctx.strokeStyle = col
+    ctx.lineWidth = 1
+    ctx.globalAlpha = fade * 0.6
+    ctx.beginPath()
+    ctx.moveTo(bx + w, by + h)
+    ctx.lineTo(x - 4, y - 4)
+    ctx.stroke()
+    ctx.globalAlpha = fade
+    ctx.beginPath()
+    ctx.roundRect(bx, by, w, h, 7)
+    ctx.fillStyle = C.bg
+    ctx.fill()
+    ctx.globalAlpha = fade * (hot ? 0.3 : 0.14)
+    ctx.fillStyle = col
+    ctx.fill()
+    ctx.globalAlpha = fade
+    ctx.lineWidth = hot ? 2 : 1
+    ctx.stroke()
+    ctx.fillStyle = col
+    ctx.fillText(shown, bx + w / 2, by + h / 2 + 0.5)
+    tagBoxes.push({ i, x: bx, y: by, w, h })
+  }
+
+  /// the hill the tree stands on, its trunk, and a little grass
+  function drawGround(s: Scene) {
+    const cx = (s.minX + s.maxX) / 2
+    const rx = Math.max(120, (s.maxX - s.minX) / 2 + 30)
+    ctx.fillStyle = C.hillBack
+    ctx.beginPath()
+    ctx.ellipse(cx, 30, rx, 16, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = C.hillFront
+    ctx.beginPath()
+    ctx.ellipse(cx - rx * 0.08, 36, rx * 0.83, 13, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = C.grass
+    ctx.lineWidth = 1.5
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    for (const [f, dy] of [[-0.9, 28], [0.8, 32], [-0.3, 40]]) {
+      const gx = cx + rx * f
+      const gy = dy
+      ctx.moveTo(gx, gy)
+      ctx.quadraticCurveTo(gx + 2, gy - 12, gx + 7, gy - 16)
+      ctx.moveTo(gx + 6, gy)
+      ctx.quadraticCurveTo(gx + 9, gy - 8, gx + 15, gy - 10)
+    }
+    ctx.stroke()
+    ctx.fillStyle = C.blossom
+    ctx.beginPath()
+    ctx.arc(cx - rx * 0.98, 24, 2.3, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = C.g4
+    ctx.globalAlpha = fade * 0.8
+    ctx.beginPath()
+    ctx.arc(cx + rx * 0.92, 28, 2.3, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = fade
+    // each root grows out of the ground
+    ctx.strokeStyle = C.bark
+    ctx.globalAlpha = fade * 0.8
+    ctx.lineWidth = 5
+    for (let i = 0; i < s.nodes.length; i++) {
+      if (s.nodes[i].parent >= 0) continue
+      const x = curX[i]
+      const y = curY[i]
+      ctx.beginPath()
+      ctx.moveTo(x - 16, 34)
+      ctx.quadraticCurveTo(x - 16, y + 14, x, y)
+      ctx.stroke()
+    }
+    ctx.globalAlpha = fade
   }
 
   function drawLeaf(x: number, y: number, tilt: number, color: string, k: number) {
@@ -428,11 +701,11 @@
   }
   /// moss takes the site's own tree colours, which already have matching light and dark versions
   const garden = () => {
-    if (look === 'moss') return { bark: C.bark, knot: C.bark, vine: C.bark, bud: C.g4soft, paper: C.bg, ink: C.bark, step: C.g2, leaves: LEAF_TINTS }
+    if (look === 'moss' || look === 'tree') return { bark: C.bark, knot: C.bark, vine: C.bark, bud: C.g4soft, paper: C.bg, ink: C.bark, step: C.g2, leaves: LEAF_TINTS }
     return GARDEN[theme.resolved === 'dark' ? 'dark' : 'light']
   }
   /// moss's reduction points are flowers, so they're the warm colour on a green tree
-  /// the original tree view's gold: a ring around a soft core, petals when it's next
+  /// the original tree view's gold: a ring around a soft core
   const flower = () => ({ petal: C.g4, deep: C.g4, heart: C.g4soft, letter: theme.resolved === 'dark' ? C.g4 : '#8a6414' })
   /// nodes inside the next step (the application about to fire, and what it's applied to)
   let inStep = new Uint8Array(0)
@@ -456,6 +729,15 @@
       ctx.scale(0.75, 0.75)
       drawLeaf(0, 0, tilt, LEAF_TINTS[1], k)
       ctx.restore()
+    } else if (up) {
+      drawLeaf(x, y, tilt, color, k)
+      if (k < 0.45) return
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+      ctx.lineWidth = 0.8
+      ctx.beginPath()
+      ctx.moveTo(x + Math.sin(tilt) * 6, y - Math.cos(tilt) * 6)
+      ctx.lineTo(x - Math.sin(tilt) * 6, y + Math.cos(tilt) * 6)
+      ctx.stroke()
     } else if (planty) {
       const g = garden()
       ctx.save()
@@ -476,6 +758,13 @@
 
   /// a stem (one child) or a fork (two)
   function drawJoint(x: number, y: number, fork: boolean) {
+    if (up) {
+      ctx.fillStyle = C.bark
+      ctx.beginPath()
+      ctx.arc(x, y, 4, 0, Math.PI * 2)
+      ctx.fill()
+      return
+    }
     if (planty) {
       ctx.fillStyle = fork ? garden().knot : garden().bark
       ctx.beginPath()
@@ -501,29 +790,57 @@
     ctx.globalAlpha = fade
   }
 
-  /// gold petals around whatever is about to change; `wide` stretches the ring to fit a name
-  function petals(x: number, y: number, dist: number, rx: number, ry: number, wide = 0) {
-    ctx.fillStyle = flower().petal
-    ctx.globalAlpha = fade * 0.85 * bloom
-    const count = wide > 0 ? 8 : 5
-    for (let p = 0; p < count; p++) {
-      const a = (p / count) * Math.PI * 2 - Math.PI / 2
-      const ex = Math.cos(a) * (dist + wide)
-      const ey = Math.sin(a) * dist
-      ctx.beginPath()
-      ctx.ellipse(x + ex, y + ey, rx, ry, Math.atan2(ey, ex), 0, Math.PI * 2)
-      ctx.fill()
-    }
-    ctx.globalAlpha = fade
-  }
-
   function drawApp(x: number, y: number, n: VNode, showText: boolean) {
+    if (n.held) {
+      // inside a binder still in place: a grey bud, like an application still waiting, since it can't run until the binder is gone
+      ctx.strokeStyle = C.muted
+      ctx.fillStyle = C.muted
+      ctx.globalAlpha = fade * 0.55
+      ctx.lineWidth = 1.3
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      ctx.arc(x, y, up ? 8.5 : 6.5, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.beginPath()
+      ctx.arc(x, y, up ? 3 : 2.2, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = fade
+      return
+    }
+    if (up) {
+      // as on the home page: a dashed bud round a gold core, and once it can fire, a badge with its rule's letter
+      ctx.strokeStyle = C.g4
+      ctx.fillStyle = C.g4
+      ctx.lineWidth = n === hover && n.rule ? 2.6 : 1.5
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      ctx.arc(x, y, 8.5, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.beginPath()
+      ctx.arc(x, y, 3, 0, Math.PI * 2)
+      ctx.fill()
+      if (!n.rule && !isNext(n)) return
+      const r = 7.5 * (isNext(n) ? 1 + 0.15 * bloom : 1)
+      ctx.fillStyle = C.g4soft
+      ctx.lineWidth = isNext(n) ? 2 : 1.2
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+      if (showText) {
+        ctx.fillStyle = flower().letter
+        ctx.font = `700 ${8.5 * (r / 7.5)}px 'JetBrains Mono Variable', monospace`
+        ctx.fillText(RULE_GLYPH[n.rule] || '@', x, y + 0.5)
+      }
+      return
+    }
     const col = look === 'ink' ? (isNext(n) ? INK_RED : C.fg) : n.rule ? ruleColor(n.rule) : C.kw
     if (look === 'moss') {
       // as in the original tree view: a gold bud while it waits, a gold ring with the rule's
-      // letter once it can fire, and petals around the one that fires next
+      // letter once it can fire, and a bigger, bolder ring on the one that fires next
       const fl = flower()
-      if (isNext(n)) petals(x, y, 13, 7.5, 5)
       if (n.rule || isNext(n)) {
         const r = isNext(n) ? 10 : 7.5
         ctx.fillStyle = fl.heart
@@ -554,18 +871,7 @@
       return
     }
     if (isNext(n)) {
-      if (planty) {
-        // the next step blossoms
-        ctx.fillStyle = col
-        for (let p = 0; p < 5; p++) {
-          const a = (p / 5) * Math.PI * 2 - Math.PI / 2
-          ctx.globalAlpha = fade * (0.55)
-          ctx.beginPath()
-          ctx.ellipse(x + Math.cos(a) * 15, y + Math.sin(a) * 15, 7.5, 5, a, 0, Math.PI * 2)
-          ctx.fill()
-        }
-        ctx.globalAlpha = fade
-      } else if (look === 'bold') {
+      if (look === 'bold') {
         ctx.fillStyle = col
         ctx.globalAlpha = fade * (0.22)
         ctx.beginPath()
@@ -627,6 +933,19 @@
         ctx.fillStyle = '#fff'
         ctx.font = "700 12px 'JetBrains Mono Variable', monospace"
         ctx.fillText(op, x, y + 0.5)
+      }
+      return
+    }
+    if (up) {
+      // a knot wearing its name, as the home page labels a named subtree
+      ctx.fillStyle = C.bark
+      ctx.beginPath()
+      ctx.arc(x, y, 4, 0, Math.PI * 2)
+      ctx.fill()
+      if (showText) {
+        ctx.fillStyle = called ? C.g4 : C.g2
+        ctx.font = `${called ? 700 : 400} 10px 'JetBrains Mono Variable', monospace`
+        ctx.fillText(op, x, y - 14)
       }
       return
     }
@@ -802,7 +1121,51 @@
     // edges: the tree's own, then the applications' (function side solid, argument dotted)
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    if (planty) {
+    // an edge to a new node comes in late, once its ends are nearly in place, so it never cuts across the old picture
+    const late = dur > 0 ? Math.max(0, (ease(Math.min(1, (performance.now() - t0) / dur)) - 0.4) / 0.6) : 1
+    const edgeA = (p: number, i: number) => (fresh[i] || fresh[p] ? late : 1)
+    const keyAt = new Map<string, number>()
+    if (roles) for (let i = 0; i < nodes.length; i++) keyAt.set(nodes[i].key, i)
+    /// the drawn node for a key; a part folded to its name keeps what happens inside it to itself
+    const nodeOf = (key: string) => keyAt.get(key) ?? -1
+    const roleA = (input: string) => (roleFocus && roleFocus !== input ? 0.15 : 1)
+    if (up) drawGround(shown)
+    if (roles) {
+      // the branches of the input in focus, the one being routed now unless another is picked, in its colour under the bark
+      const shade = roleFocus ?? roles.active
+      for (const [key, input] of roles.tint) {
+        const i = keyAt.get(key)
+        if (i === undefined || input !== shade) continue
+        const p = nodes[i].parent
+        ctx.strokeStyle = varColor(input)
+        ctx.globalAlpha = fade * 0.32
+        ctx.lineWidth = (up ? Math.max(lw, 1.6, 5.4 - (key.length - 2) * 0.85) : lw) + 8
+        ctx.beginPath()
+        if (p >= 0) curve(p, i)
+        else {
+          ctx.moveTo(curX[i], curY[i])
+          if (up) ctx.quadraticCurveTo(curX[i] - 16, curY[i] + 14, curX[i] - 16, 30)
+          else ctx.lineTo(curX[i], curY[i] - 26)
+        }
+        ctx.stroke()
+      }
+      ctx.globalAlpha = fade
+    }
+    if (up) {
+      // every edge is a branch, thinning as it climbs
+      ctx.strokeStyle = C.bark
+      for (let i = 0; i < nodes.length; i++) {
+        const p = nodes[i].parent
+        if (p < 0) continue
+        if (!vis(curX[p], curY[p]) && !vis(curX[i], curY[i])) continue
+        ctx.lineWidth = Math.max(lw, 1.6, 5.4 - (nodes[i].key.length - 2) * 0.85)
+        ctx.globalAlpha = fade * 0.8 * edgeA(p, i)
+        ctx.beginPath()
+        curve(p, i)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = fade
+    } else if (planty) {
       // branches taper with depth, so the eye reads the trunk first
       for (let i = 0; i < nodes.length; i++) {
         const p = nodes[i].parent
@@ -810,6 +1173,7 @@
         if (!vis(curX[p], curY[p]) && !vis(curX[i], curY[i])) continue
         ctx.strokeStyle = bark
         ctx.lineWidth = branchW(p)
+        ctx.globalAlpha = fade * edgeA(p, i)
         ctx.beginPath()
         curve(p, i)
         ctx.stroke()
@@ -817,55 +1181,62 @@
     } else {
       ctx.lineWidth = look === 'ink' ? 1.2 * lw : lw
       ctx.strokeStyle = pen
-      ctx.globalAlpha = fade * (look === 'ink' ? 0.8 : look === 'quiet' ? 0.75 : 1)
-      ctx.beginPath()
-      for (let i = 0; i < nodes.length; i++) {
-        const p = nodes[i].parent
-        if (p < 0 || nodes[p].kind === K_APP) continue
-        if (!vis(curX[p], curY[p]) && !vis(curX[i], curY[i])) continue
-        curve(p, i)
+      const a = fade * (look === 'ink' ? 0.8 : look === 'quiet' ? 0.75 : 1)
+      for (const fresher of [false, true]) {
+        ctx.globalAlpha = fresher ? a * late : a
+        ctx.beginPath()
+        for (let i = 0; i < nodes.length; i++) {
+          const p = nodes[i].parent
+          if (p < 0 || nodes[p].kind === K_APP || (edgeA(p, i) < 1) !== fresher) continue
+          if (!vis(curX[p], curY[p]) && !vis(curX[i], curY[i])) continue
+          curve(p, i)
+        }
+        ctx.stroke()
       }
-      ctx.stroke()
     }
-    ctx.strokeStyle = look === 'bold' ? C.kw : planty ? vine : look === 'ink' ? C.fg : C.muted
-    ctx.globalAlpha = fade * (look === 'bold' ? 0.55 : look === 'quiet' ? 0.4 : look === 'moss' ? 0.55 : 0.7)
-    ctx.lineWidth = planty ? lw * 1.3 : lw
-    for (const side of [0, 1]) {
-      ctx.setLineDash(side === 1 ? (planty ? [1, 4] : look === 'ink' ? [5, 3] : [3, 3]) : [])
-      ctx.beginPath()
+    if (!up) {
+      ctx.strokeStyle = look === 'bold' ? C.kw : planty ? vine : look === 'ink' ? C.fg : C.muted
+      const appA = fade * (look === 'bold' ? 0.55 : look === 'quiet' ? 0.4 : look === 'moss' ? 0.55 : 0.7)
+      ctx.lineWidth = planty ? lw * 1.3 : lw
+      for (const side of [0, 1])
+        for (const fresher of [false, true]) {
+          ctx.setLineDash(side === 1 ? (planty ? [1, 4] : look === 'ink' ? [5, 3] : [3, 3]) : [])
+          ctx.globalAlpha = fresher ? appA * late : appA
+          ctx.beginPath()
+          for (let i = 0; i < nodes.length; i++) {
+            const p = nodes[i].parent
+            if (p < 0 || nodes[p].kind !== K_APP || nodes[i].side !== side || (edgeA(p, i) < 1) !== fresher) continue
+            if (!vis(curX[p], curY[p]) && !vis(curX[i], curY[i])) continue
+            curve(p, i)
+          }
+          ctx.stroke()
+        }
+      ctx.setLineDash([])
+      ctx.globalAlpha = fade
+      // the calmer looks mark a combinator by colouring its own edges instead of a band
+      if (look !== 'bold')
+        for (let i = 0; i < nodes.length; i++) {
+          const p = nodes[i].parent
+          if (p < 0 || !inComb(p, i)) continue
+          const g = nodes[i].group
+          if (planty && !calledComb(g) && !inStep[g]) continue
+          ctx.strokeStyle = combColor(nodes[g].comb)
+          ctx.globalAlpha = fade * edgeA(p, i) * (calledComb(g) ? 1 : planty ? 0.6 : 0.75)
+          ctx.lineWidth = planty ? branchW(p) : lw * (calledComb(g) ? 3 : 2.2)
+          ctx.beginPath()
+          curve(p, i)
+          ctx.stroke()
+        }
+      ctx.globalAlpha = fade
       for (let i = 0; i < nodes.length; i++) {
         const p = nodes[i].parent
-        if (p < 0 || nodes[p].kind !== K_APP || nodes[i].side !== side) continue
-        if (!vis(curX[p], curY[p]) && !vis(curX[i], curY[i])) continue
-        curve(p, i)
-      }
-      ctx.stroke()
-    }
-    ctx.setLineDash([])
-    ctx.globalAlpha = fade
-    // the calmer looks mark a combinator by colouring its own edges instead of a band
-    if (look !== 'bold')
-      for (let i = 0; i < nodes.length; i++) {
-        const p = nodes[i].parent
-        if (p < 0 || !inComb(p, i)) continue
-        const g = nodes[i].group
-        if (planty && !calledComb(g) && !inStep[g]) continue
-        ctx.strokeStyle = combColor(nodes[g].comb)
-        ctx.globalAlpha = fade * (calledComb(g) ? 1 : planty ? 0.6 : 0.75)
-        ctx.lineWidth = planty ? branchW(p) : lw * (calledComb(g) ? 3 : 2.2)
+        if (p < 0 || !isNext(nodes[p]) || nodes[p].kind !== K_APP) continue
+        ctx.strokeStyle = look === 'ink' ? INK_RED : ruleColor(nodes[p].rule)
+        ctx.lineWidth = lw * 2
         ctx.beginPath()
         curve(p, i)
         ctx.stroke()
       }
-    ctx.globalAlpha = fade
-    for (let i = 0; i < nodes.length; i++) {
-      const p = nodes[i].parent
-      if (p < 0 || !isNext(nodes[p]) || nodes[p].kind !== K_APP) continue
-      ctx.strokeStyle = look === 'ink' ? INK_RED : ruleColor(nodes[p].rule)
-      ctx.lineWidth = lw * 2
-      ctx.beginPath()
-      curve(p, i)
-      ctx.stroke()
     }
 
     if (ghosts.length > 0 && dur > 0) {
@@ -881,11 +1252,14 @@
       })
       // what merges into a new node stays visible until it gets there; the rest just fades
       const alphaOf = (g: Ghost) => (g.quick ? Math.max(0, 1 - p / 0.4) : g.to >= 0 ? (p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5) : g.drop ? 1 - p * p : 1 - e) * 0.9
-      ctx.strokeStyle = planty ? bark : pen
-      ctx.lineWidth = planty ? 2.4 : lw
+      ctx.strokeStyle = planty || up ? bark : pen
+      ctx.lineWidth = planty || up ? 2.4 : lw
       ghosts.forEach((g, j) => {
         if (g.parent < 0) return
-        ctx.globalAlpha = fade * (alphaOf(g) * 0.7)
+        // what falls away lets go of its parent at once, so no line trails after it
+        // an edge goes as soon as either end does
+        const a = Math.min(alphaOf(g), alphaOf(ghosts[g.parent]))
+        ctx.globalAlpha = fade * (g.drop && !ghosts[g.parent].drop ? Math.min(a, Math.max(0, 1 - p / 0.25)) : a) * 0.7
         ctx.beginPath()
         ctx.moveTo(gx[g.parent], gy[g.parent])
         ctx.lineTo(gx[j], gy[j])
@@ -908,6 +1282,7 @@
         else if (n.kind === K_LEAF) drawLeafAs(0, 0, tiltOf(n.key), LEAF_TINTS[1], k)
         else if (n.kind === K_STEM || n.kind === K_FORK) drawJoint(0, 0, n.kind === K_FORK)
         else if (n.kind === K_APP) drawApp(0, 0, { ...n, next: false }, false)
+        else if (n.kind === K_POD && up) drawNamePod(0, 0, n.text ?? '', true)
         else if (n.kind === K_POD) {
           const text = n.text ?? ''
           ctx.strokeStyle = C.muted
@@ -926,7 +1301,7 @@
     }
 
     const hi = hover ? nodes.indexOf(hover) : -1
-    const flow = hi >= 0 ? argFlow(nodes, hi) : null
+    const flow = hi >= 0 && !hoverTag ? argFlow(nodes, hi) : null
     const flowCol = look === 'ink' ? INK_RED : planty ? flower().deep : C.accent
     if (flow) {
       ctx.strokeStyle = flowCol
@@ -959,11 +1334,18 @@
         ctx.fill()
         ctx.globalAlpha = fade
       }
-      if (isNext(n) && n.kind !== K_APP && look === 'moss') {
+      if (isNext(n) && n.kind !== K_APP && (look === 'moss' || up)) {
+        // the same gold ring the next application gets, stretched round a name
         const named = n.kind === K_LAM || n.kind === K_VAR
         const text = n.kind === K_LAM ? `{${n.text ?? ''}}` : (n.text ?? '')
-        if (named) petals(x, y, 17, 6, 4, Math.max(0, (podWidth(text) * pillScale(k)) / 2 - 10))
-        else petals(x, y, 13, 8, 5.5)
+        const half = named ? (podWidth(text) * pillScale(k)) / 2 + 5 : 11
+        ctx.strokeStyle = flower().deep
+        ctx.lineWidth = up ? 2 : 2.2
+        ctx.globalAlpha = fade * bloom
+        ctx.beginPath()
+        ctx.roundRect(x - half, y - 14, half * 2, 28, 14)
+        ctx.stroke()
+        ctx.globalAlpha = fade
       }
       else if (isNext(n) && n.kind !== K_APP) {
         ctx.fillStyle = C.accent
@@ -980,8 +1362,8 @@
             // a binder ready to come off is a reduction point like any other: a gold ring
             const s = pillScale(k)
             const pw = Math.max(22 * s, podWidth(`{${n.text ?? ''}}`) * s + 2)
-            ctx.strokeStyle = look === 'moss' ? flower().deep : C.accent
-            ctx.lineWidth = 1.6
+            ctx.strokeStyle = look === 'moss' || up ? flower().deep : C.accent
+            ctx.lineWidth = up ? 1 : 1.6
             ctx.beginPath()
             ctx.roundRect(x - pw / 2 - 3, y - 11 * s - 3, pw + 6, 22 * s + 6, 13 * s)
             ctx.stroke()
@@ -1008,6 +1390,10 @@
           break
         case K_POD: {
           const text = n.text ?? ''
+          if (up) {
+            drawNamePod(x, y, text, showText, !!glow && glow === text)
+            break
+          }
           const pw = podWidth(text)
           const col = look === 'ink' ? C.fg : planty && !inStep[i] ? garden().ink : podColor(n.podKind)
           ctx.fillStyle = C.bg
@@ -1033,7 +1419,8 @@
         ctx.strokeStyle = C.accent
         ctx.lineWidth = n === hover ? 2.2 : 1.2
         ctx.beginPath()
-        if (n.kind === K_POD) {
+        if (up && n.kind === K_VAR) ctx.arc(x, y, 13, 0, Math.PI * 2)
+        else if (n.kind === K_POD) {
           const pw = podWidth(n.text ?? '')
           ctx.roundRect(x - pw / 2 - 3, y - 13, pw + 6, 26, 12)
         } else if (n.kind === K_VAR || n.kind === K_LAM) {
@@ -1046,6 +1433,37 @@
     }
     fade = 1
     ctx.globalAlpha = 1
+    roleBoxes = []
+    if (roles) {
+      const per = new Map<number, number>()
+      for (const m of roles.marks) {
+        const i = nodeOf(m.key)
+        if (i < 0) continue
+        const j = per.get(i) ?? 0
+        per.set(i, j + 1)
+        const x = curX[i] + 15 + j * 21
+        const y = curY[i] + 7
+        if (!vis(x, y)) continue
+        ctx.globalAlpha = roleA(m.input)
+        drawRoleMark(x, y, m.kind, varColor(m.input), hoverRole?.mark === m, !!m.now)
+        roleBoxes.push({ x, y, r: 10, hit: { mark: m } })
+      }
+      for (const [key, all] of roles.holds) {
+        const i = nodeOf(key)
+        if (i < 0) continue
+        // an input already hanging there has landed
+        const inputs = all.filter((input) => !nodes.some((n) => n.parent === i && n.kind === K_VAR && n.text === input))
+        if (inputs.length === 0) continue
+        inputs.forEach((input, j) => {
+          const x = curX[i] + 16 + j * 17
+          const y = curY[i] - 22 - j * 4
+          ctx.globalAlpha = roleA(input)
+          drawHeld(curX[i], curY[i], x, y, varColor(input), hoverRole?.hold?.key === key)
+        })
+        roleBoxes.push({ x: curX[i] + 16 + ((inputs.length - 1) * 17) / 2, y: curY[i] - 22, r: 9 + inputs.length * 8, hit: { hold: { key, inputs } } })
+      }
+      ctx.globalAlpha = 1
+    }
     if (flow)
       for (const [i, how] of flow.land) {
         const x = curX[i]
@@ -1077,14 +1495,34 @@
         ctx.fillStyle = '#fff'
         ctx.fillText(tag, x + 10 + tw / 2, y - 18)
       }
+    tagBoxes = []
+    if (showText) {
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i]
+        if (!n.tag || !vis(curX[i], curY[i])) continue
+        fade = fresh[i] && dur > 0 ? Math.max(0.15, ease(Math.min(1, (performance.now() - t0) / dur))) : 1
+        drawTag(i, curX[i], curY[i], n.tag, n === hover && hoverTag)
+      }
+      fade = 1
+    }
     for (const t of shown.titles) {
       ctx.fillStyle = t.bad ? C.err : C.muted
       ctx.font = "600 12px 'Inter Variable', sans-serif"
-      ctx.fillText(t.text, t.x, -28)
+      ctx.fillText(t.text, t.x, up ? 62 : -28)
     }
   }
 
   // ---- input ----------------------------------------------------------------
+  /// the last hit test landed on a name tag
+  let tagHit = false
+  let roleBoxes: { x: number; y: number; r: number; hit: RoleHit }[] = []
+  let hoverRole: RoleHit | null = null
+  function roleAt(sx: number, sy: number): RoleHit | null {
+    const wx = (sx - cam.x) / cam.k
+    const wy = (sy - cam.y) / cam.k
+    for (const b of roleBoxes) if (Math.hypot(wx - b.x, wy - b.y) <= b.r + 2 / cam.k) return b.hit
+    return null
+  }
   function hitTest(sx: number, sy: number): VNode | null {
     if (!shown) return null
     const wx = (sx - cam.x) / cam.k
@@ -1093,6 +1531,13 @@
     let best: VNode | null = null
     let bestD = Infinity
     const nodes = shown.nodes
+    tagHit = false
+    for (const b of tagBoxes) {
+      if (wx >= b.x - 2 && wx <= b.x + b.w + 2 && wy >= b.y - 2 && wy <= b.y + b.h + 2 && nodes[b.i]) {
+        tagHit = true
+        return nodes[b.i]
+      }
+    }
     for (let i = 0; i < nodes.length; i++) {
       const dx = wx - curX[i]
       const dy = wy - curY[i]
@@ -1127,12 +1572,28 @@
     const p = localXY(e)
     const prev = pointers.get(e.pointerId)
     if (!prev) {
+      const r = roleAt(p.x, p.y)
+      if (r !== hoverRole && (r?.mark !== hoverRole?.mark || r?.hold?.key !== hoverRole?.hold?.key)) {
+        hoverRole = r
+        onRoleHover?.(r)
+        requestDraw()
+      }
+      if (r) {
+        cv.style.cursor = r.mark ? 'pointer' : 'default'
+        if (hover) {
+          hover = null
+          hoverId = -1
+          onHover?.(null)
+        }
+        return
+      }
       const n = hitTest(p.x, p.y)
-      if (n !== hover) {
+      if (n !== hover || tagHit !== hoverTag) {
         hover = n
+        hoverTag = tagHit
         hoverId = n?.id ?? -1
-        cv.style.cursor = n ? 'pointer' : 'grab'
-        onHover?.(n)
+        cv.style.cursor = n && (tagHit || !n.held) ? 'pointer' : n ? 'default' : 'grab'
+        onHover?.(n, tagHit)
         requestDraw()
       }
       return
@@ -1160,8 +1621,10 @@
     pointers.delete(e.pointerId)
     if (wasClick) {
       const p = localXY(e)
+      const r = roleAt(p.x, p.y)
+      if (r) return void onRoleClick?.(r)
       const n = hitTest(p.x, p.y)
-      if (n) onClick?.(n, e)
+      if (n) onClick?.(n, e, tagHit)
     }
   }
   function zoomAt(sx: number, sy: number, f: number) {
@@ -1240,6 +1703,8 @@
   })
   $effect(() => {
     void glow
+    void roles
+    void roleFocus
     requestDraw()
   })
   // the page eases its palette over --mix's transition; the canvas follows it frame by frame
@@ -1247,14 +1712,22 @@
     void theme.mix
     if (ctx) return untrack(() => followTheme(readColors))
   })
+  // turning to or from the home page's look flips the tree over, so it comes in fresh
+  let wasUp = false
   $effect(() => {
-    void look
-    untrack(requestDraw)
+    const flip = up !== wasUp
+    wasUp = up
+    untrack(() => {
+      if (flip && ctx) {
+        shown = null
+        follow = true
+        setScene(scene)
+      } else requestDraw()
+    })
   })
   $effect(() => {
     if (steady) return
     untrack(() => {
-      kCap = Infinity
       if (follow && shown && ctx) {
         fitTarget(shown)
         requestDraw()
@@ -1271,6 +1744,11 @@
     onpointerup={onUp}
     onpointercancel={onUp}
     onpointerleave={() => {
+      if (hoverRole) {
+        hoverRole = null
+        onRoleHover?.(null)
+        requestDraw()
+      }
       if (hover) {
         hover = null
         hoverId = -1

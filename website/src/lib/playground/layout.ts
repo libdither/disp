@@ -32,6 +32,10 @@ export interface VNode {
   comb: string | null
   /// the top node of the combinator this node is part of; its operands start their own
   group: number
+  /// an application inside a binder still in place: it can't run until the binder is gone
+  held?: boolean
+  /// a named subtree drawn open: its name, on a tag that folds it back when clicked
+  tag?: string
 }
 
 /// Where a step sends things, so the drawing can show it instead of jumping.
@@ -174,6 +178,7 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
         width[i] = Math.max(1, Math.min(n.text.length, 28) * 0.28 + 0.5)
         continue
       }
+      if (!isRoot && !inside && ((label?.kind === 'name' && t !== APP) || folds.open.has(id))) n.tag = label?.text ?? '…' + fmtCount(store.size[id])
       const comb = !inside && (opts.sk || t === HELD_K) ? store.readComb(id) : null
       if (comb) {
         n.comb = comb.op
@@ -203,6 +208,7 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
       } else {
         n.kind = K_APP
         n.rule = held[i] ? 0 : store.rule[id]
+        n.held = held[i]
       }
       const childIds = t === STEM ? [store.a[id]] : t === SPLIT ? [store.stem(store.a[id]), store.b[id]] : [store.a[id], store.b[id]]
       childIds.forEach((c, side) => {

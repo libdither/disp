@@ -1,6 +1,7 @@
 // Filmstrip of the playground's tree viewer: for each step, shots taken during its animation,
 // tiled one row per step. Runs against the dev server (scripts/dev-server.sh).
-// usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times ms, comma] [program file] [parallel|dark]
+// usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times ms, comma] [program file] [parallel|dark|play]
+// play: presses Play and takes <steps> shots, one every <first time> ms, tiled into one grid
 // env: FILM_OUT (default /tmp/playground-film), PLAYGROUND_URL, CHROMIUM (headless shell binary)
 import { chromium } from 'playwright-core'
 import { readFileSync, mkdirSync, readdirSync } from 'node:fs'
@@ -8,7 +9,7 @@ import { execFileSync } from 'node:child_process'
 
 const [name, lineRe, stepsArg, timesArg, progFile, mode] = process.argv.slice(2)
 if (!name || !lineRe) {
-  console.error('usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times] [program] [parallel|dark]')
+  console.error('usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times] [program] [parallel|dark|play]')
   process.exit(1)
 }
 const out = process.env.FILM_OUT ?? '/tmp/playground-film'
@@ -40,7 +41,15 @@ await page.locator('.cm-content').click()
 await page.keyboard.press('Control+A')
 await page.keyboard.insertText(prog)
 await page.waitForTimeout(1800)
-await page.locator('.cm-line', { hasText: new RegExp(lineRe) }).first().click()
+// the editor only draws the lines on screen, so walk the cursor down to the line instead of clicking it
+const lineNo = prog.split('\n').findIndex((l) => new RegExp(lineRe).test(l))
+if (lineNo < 0) throw new Error(`no line matches ${lineRe}`)
+await page.evaluate((n) => {
+  const view = document.querySelector('.cm-content').cmTile.root.view
+  const line = view.state.doc.line(n + 1)
+  view.focus()
+  view.dispatch({ selection: { anchor: line.to }, scrollIntoView: true })
+}, lineNo)
 await page.waitForTimeout(1800)
 if (mode === 'parallel') {
   await page.locator('.optbtn').click()
@@ -49,6 +58,20 @@ if (mode === 'parallel') {
   await page.locator('.optbtn').click()
 }
 const stage = page.locator('.stagewrap')
+if (mode === 'play') {
+  await page.locator('.tb.play').click()
+  const shots = []
+  for (let i = 0; i < steps; i++) {
+    await page.waitForTimeout(times[0] || 400)
+    shots.push(`${out}/${name}-play-${i}.png`)
+    await stage.screenshot({ path: shots[i] })
+  }
+  execFileSync('montage', [...shots, '-tile', '8x', '-geometry', '300x+3+3', '-background', '#888', `${out}/${name}-play.png`])
+  console.log(`grid: ${out}/${name}-play.png`)
+  console.log('errors', errors)
+  await browser.close()
+  process.exit(0)
+}
 await page.locator('.insp').focus()
 const caption = async () => (await page.locator('.now').first().innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 150)
 const rows = [`0: ${await caption()}`]

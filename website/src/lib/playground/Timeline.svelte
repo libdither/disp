@@ -1,7 +1,7 @@
 <script lang="ts">
-  // The reel at a glance: one tick per binder rewrite, then the run's tree size
-  // over every step (a log scale, so a storm and a calm both read) over a strip
-  // coloured by which rule fired. Drag to scrub.
+  // The reel at a glance. A short reel is one cell per step you can stop on, coloured by its rule, with the
+  // tree's size after it above; a long one is the tree size over every step (a log scale, so a storm and a
+  // calm both read) over a strip coloured by which rule fired. Drag to scrub.
   import { onMount, untrack } from 'svelte'
   import { theme } from '$lib/theme.svelte'
   import { followTheme } from './theme-follow.ts'
@@ -16,9 +16,13 @@
     lead: number
     /// bumped as more frames arrive
     version: number
+    /// the frames the reel can stop on, while there are few enough for a cell each
+    stops?: number[] | null
+    /// a cell's own colour, by the frame it starts at: in Try it, the input that step acts on
+    stepColor?: (frame: number) => string | null
     onScrub: (at: number) => void
   }
-  let { trace, at, lead, version, onScrub }: Props = $props()
+  let { trace, at, lead, version, stops = null, stepColor, onScrub }: Props = $props()
 
   let cv: HTMLCanvasElement
   let host: HTMLDivElement
@@ -41,7 +45,7 @@
       probe.style.color = `var(${v})`
       return getComputedStyle(probe).color
     }
-    C = { binder: get('--hl-kw'), fill: get('--accent'), track: get('--bg-panel-hover'), mark: get('--fg'), warn: get('--warn'), kw: get('--hl-kw'), err: get('--err'), build: get('--fg-faint') }
+    C = { binder: get('--hl-type'), fill: get('--accent'), track: get('--bg-panel-hover'), mark: get('--fg'), warn: get('--warn'), kw: get('--hl-kw'), err: get('--err'), build: get('--fg-faint') }
     probe.remove()
   }
 
@@ -80,8 +84,56 @@
     }
   }
 
+  /// one cell per step when they are at least this wide
+  const CELL = 5
+  const cellCount = () => (stops && lead === 0 && stops.length > 1 && w / (stops.length - 1) >= CELL ? stops.length - 1 : 0)
+  const ruleFill = (r: number) => (r === R_BIND ? C.binder : r === R_K ? C.warn : r === R_S ? C.kw : r === R_F ? C.err : r === R_LEAF || r === R_STEM ? C.build : C.track)
+
+  function drawCells(ctx: CanvasRenderingContext2D, n: number) {
+    if (!trace || !stops) return
+    const cw = w / n
+    const gap = cw >= 8 ? 2 : cw >= 6 ? 1 : 0
+    const strip = 6
+    const plot = H - strip - 3
+    let top = 1
+    for (let i = 1; i <= n; i++) top = Math.max(top, Math.log1p(trace.sizes[stops[i]] ?? 0))
+    // the step the reel rests before: the cells left of it are done, it is next, the rest are still to come
+    const f = at - lead
+    let cur = 0
+    while (cur < n && stops[cur + 1] <= f) cur++
+    for (let i = 0; i < n; i++) {
+      const x = i * cw
+      const done = i < cur
+      ctx.globalAlpha = done ? 0.45 : i === cur ? 0.3 : 0.16
+      ctx.fillStyle = C.fill
+      const bh = (Math.log1p(trace.sizes[stops[i + 1]] ?? 0) / top) * (plot - 2)
+      ctx.fillRect(x, plot - bh, Math.max(1, cw - gap), bh)
+      ctx.globalAlpha = done || i === cur ? 1 : 0.35
+      // in Try it colour means an input, so the strip shows which one each step acts on instead of its rule
+      ctx.fillStyle = stepColor ? (stepColor(stops[i]) ?? C.track) : ruleFill(trace.rules[stops[i] + 1])
+      ctx.fillRect(x, H - strip, Math.max(1, cw - gap), strip)
+    }
+    ctx.globalAlpha = 1
+    if (cur < n && cw >= 6) {
+      ctx.strokeStyle = C.mark
+      ctx.lineWidth = 1
+      ctx.strokeRect(cur * cw + 0.5, H - strip - 0.5, Math.max(1, cw - gap) - 1, strip)
+    }
+    ctx.fillStyle = C.mark
+    ctx.fillRect(Math.round(Math.min(w - 2, cur * cw)) - 1, 0, 2, H)
+  }
+
   function draw() {
     if (!cv || !trace || !w) return
+    const cells = cellCount()
+    if (cells) {
+      const dpr = window.devicePixelRatio || 1
+      const ctx = cv.getContext('2d')!
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, w, H)
+      drawCells(ctx, cells)
+      return
+    }
     const bw = binderWidth()
     const x0 = bw === 0 ? 0 : Math.min(w, bw + GAP)
     const rw = w - x0
@@ -111,7 +163,7 @@
       ctx.fill()
       ctx.globalAlpha = 1
       cols.forEach((c, i) => {
-        ctx.fillStyle = c.rule === R_BIND ? C.binder : c.rule === R_K ? C.warn : c.rule === R_S ? C.kw : c.rule === R_F ? C.err : c.rule === R_LEAF ? C.build : C.track
+        ctx.fillStyle = stepColor ? C.track : ruleFill(c.rule)
         ctx.fillRect(x0 + i, H - strip, 1, strip)
       })
     }
@@ -125,6 +177,11 @@
     if (!trace) return
     const r = cv.getBoundingClientRect()
     const px = Math.max(0, Math.min(w, ((e.clientX - r.left) / r.width) * w))
+    const cells = cellCount()
+    if (cells && stops) {
+      onScrub(stops[Math.max(0, Math.min(cells, Math.round(px / (w / cells))))])
+      return
+    }
     const bw = binderWidth()
     const x0 = bw === 0 ? 0 : Math.min(w, bw + GAP)
     if (px < x0 && bw > 0) onScrub(Math.min(lead, Math.round((px / bw) * lead)))
@@ -152,6 +209,8 @@
     void at
     void lead
     void version
+    void stops
+    void stepColor
     draw()
   })
   $effect(() => {

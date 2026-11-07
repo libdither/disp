@@ -69,6 +69,8 @@ export class Store {
   #mask = (1 << 13) - 1
   strs: string[] = []
   names = new Map<Id, string>()
+  /// the definition on show, named by its own name even when an earlier definition shares its tree
+  own: { id: Id; name: string } | null = null
   /// a cut node, once its structure has been fetched
   resolved = new Map<Id, Id>()
   readonly leaf: Id
@@ -440,7 +442,7 @@ export class Store {
     const nat = this.natOf[id]
     if (nat > 0) return { kind: 'nat', text: String(nat) }
     if (this.flags[id] & F_STR) return { kind: 'str', text: JSON.stringify(this.stringOf(id)) }
-    const name = this.names.get(id)
+    const name = this.own?.id === id ? this.own.name : this.names.get(id)
     return name ? { kind: 'name', text: name } : null
   }
 

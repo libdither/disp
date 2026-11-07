@@ -32,10 +32,10 @@ export function stepGuide(store: Store, trace: Trace, frame: number): Guide | un
         guide.sinks.push([key, key])
         break
       case 'eta':
-        // the function rises out of the body when it is a new node (an S, K or I) rather than a kept subtree
+        // the function rises into the binder's place (from the body, when it is a new node rather than a kept subtree);
+        // the binder and the variable it was handed meet it there and cancel out, the application fades first
         guide.origin.set(key, [key + '00'])
-        // the binder and its variable fade early, so the function rises alone
-        guide.sinks.push([key, 'fade'])
+        guide.sinks.push([key + '01', key], [key + '0', 'fade'], [key, key])
         break
       case null:
         if (store.rule[site] === R_K) guide.sinks.push([key + '1', 'drop'])

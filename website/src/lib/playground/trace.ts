@@ -4,10 +4,11 @@
 // finds are the calls the program makes. Frames share structure through the
 // store, so a long trace costs one id per frame.
 //
-// A binder coming off is one more kind of step. Nothing runs inside a binder
-// until it is gone (that keeps the result the compiler's), and an application
-// waits until what it looks at has no binders; everything else can happen at
-// once, so the end is the same tree as removing every binder first.
+// A binder coming off is one more kind of step, and by default every binder
+// comes off before anything runs. Nothing runs inside a binder until it is gone
+// (that keeps the result the compiler's), and an application waits until what it
+// looks at has no binders; anything else may be clicked to run early, and the
+// end is still the same tree as removing every binder first.
 
 import { Store, APP, FORK, LEAF, STEM, VAR, LAM, SPLIT, HELD_K, R_LEAF, R_STEM, R_K, R_S, R_F, R_NONE, R_BIND, type Id } from './store.ts'
 
@@ -45,7 +46,7 @@ export class Trace {
   constructor(
     readonly store: Store,
     root: Id,
-    readonly mode: Mode = 'eager'
+    public mode: Mode = 'eager'
   ) {
     this.frames = [root]
     this.sizes = [store.size[root]]
@@ -57,12 +58,13 @@ export class Trace {
   }
 
   /// The next redex under `from` in evaluation order, as a child-index path; null when there is none.
+  /// While a binder is left to come off, that comes first.
   nextPath(from: Id): number[] | null {
     const s = this.store
     if (!s.hasRedex(from)) return null
     const path: number[] = []
     let id = from
-    let inside = false
+    let inside = s.bindReady(from)
     for (;;) {
       const t = s.tag[id]
       if (t === LAM || t === SPLIT) {
@@ -99,7 +101,7 @@ export class Trace {
       if (t === APP && !inside && !ks.some((i) => s.hasRedex(s.kid(id, i)))) return void out.push(path)
       for (const i of ks) go(s.kid(id, i), [...path, i], inside)
     }
-    go(from, [], false)
+    go(from, [], s.bindReady(from))
     return out
   }
 
@@ -241,7 +243,8 @@ export class Trace {
       if (s.rule[id] === R_BIND || (t === APP && !inside && !s.hasRedex(s.a[id]) && !s.hasRedex(s.b[id]))) {
         fired++
         if (s.rule[id] === R_BIND) bound++
-        rule = s.rule[id]
+        // the frame is labelled by a real rule when one fired, so it isn't skipped as only building data
+        if (rule <= R_STEM) rule = s.rule[id]
         out = this.fireNode(id)
       } else if (t === LAM) out = s.withKid(id, 0, go(s.b[id], 1))
       else if (t === SPLIT) out = s.split(go(s.a[id], 1), go(s.b[id], 1))
@@ -252,7 +255,7 @@ export class Trace {
       memos[inside].set(id, out)
       return out
     }
-    const id = go(root, 0)
+    const id = go(root, s.bindReady(root) ? 1 : 0)
     return { id, rule, fired, bound }
   }
 
@@ -266,8 +269,7 @@ export class Trace {
     return false
   }
 
-  /// Fire the application at `path` in frame `frame`, reducing inside it first if it isn't ready, dropping any later frames. Returns the frame reached.
-  fireAt(frame: number, path: number[]): number {
+  #cut(frame: number) {
     this.frames.length = frame + 1
     this.rules.length = frame + 1
     this.fired.length = frame + 1
@@ -281,12 +283,26 @@ export class Trace {
         this.#stack.push(c)
       }
     this.end = null
+  }
+
+  /// Fire the application or binder at `path` in frame `frame`, reducing inside it first if it isn't ready, dropping any later frames. Returns the frame reached.
+  /// An application inside a binder still in place can't fire before that binder is gone, so nothing happens.
+  fireAt(frame: number, path: number[]): number {
     const s = this.store
+    let id = this.frames[frame]
+    let held = false
+    for (const i of path) {
+      if (s.tag[id] === LAM || s.tag[id] === SPLIT) held = true
+      id = s.kid(id, i)
+    }
+    if (held && s.tag[id] === APP) return frame
+    this.#cut(frame)
     for (let i = 0; i < 4000; i++) {
       const root = this.frames[this.last]
       const site = this.subterm(root, path)
-      if (s.tag[site] !== APP && s.rule[site] !== R_BIND) break
-      const inner = this.nextPath(site)
+      if (s.tag[site] !== APP && s.tag[site] !== LAM && s.tag[site] !== SPLIT) break
+      // a ready application fires as clicked, whatever is ready inside it
+      const inner = s.tag[site] === APP && s.rule[site] ? [] : this.nextPath(site)
       if (!inner) break
       const full = [...path, ...inner]
       const target = this.subterm(root, full)

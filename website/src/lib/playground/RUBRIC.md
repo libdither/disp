@@ -8,15 +8,16 @@ scores can be compared.
 ## Setup
 
 - The page: http://functor.ts.zyancraft.net:5174/playground/ (dev server, serves the main checkout; `scripts/dev-server.sh` starts it).
-- Filmstrips of the tree viewer: `npm run film -- <name> <line-regex> [steps] [times ms] [program file] [parallel|dark]`
+- Filmstrips of the tree viewer: `npm run film -- <name> <line-regex> [steps] [times ms] [program file] [parallel|dark|play]`
   from `website/`. Every step gets one row of shots taken during its animation (default 0, 120, 240, 380, 620 ms),
   written to `$FILM_OUT` (default `/tmp/playground-film`). It also prints each step's caption and any console errors.
-  With no program file it loads `swap := {f, x, y} => f(y, x)`.
+  With no program file it loads `swap := {f, x, y} => f(y, x)`. The line can be anywhere in the program.
+  `play` presses Play instead and tiles `<steps>` shots taken every `<first time>` ms.
 - For anything the film script doesn't cover (hover, play, scrubbing, phone, first visit), drive the page with
   `playwright-core` the way the film script does; it is a dev dependency of `website/`.
 - The code: `website/src/routes/playground/+page.svelte` and `website/src/lib/playground/`
   (`Inspector.svelte` runs the step reel, `TreeCanvas.svelte` draws and animates it, `guides.ts` says where things go during a step,
-  `trace.ts` and `store.ts` choose and perform the steps).
+  `trace.ts` and `store.ts` choose and perform the steps, `roles.ts` works out what each part of a finished function does to each input).
 - Reviews are read-only: put captures in `/tmp/council-<you>/`, never edit the repo.
 
 ## Scenarios
@@ -32,7 +33,7 @@ Run all of them every round. Light theme at 1500×1000 unless stated otherwise.
 | E | A long run | The test `add(2, 3) = 5`. Use Play, change the speed, drag the timeline, jump between the binder and run phases. |
 | F | Held applications | The test `wait(and, true, false) = false`. |
 | G | Interruptions | Press → five times fast, press ← halfway through an animation, click a ringed node, and move the cursor to another definition while playing. |
-| H | Styles and themes | Pause in the middle of E and switch through every tree style (moss, garden, quiet, ink, bold) in light and dark. |
+| H | Styles and themes | Pause in the middle of E and switch through every tree style (tree, moss, garden, quiet, ink, bold) in light and dark. |
 | I | Phone | 420×860: the Outline / Code / Tree tabs, and stepping a tree. |
 | J | Expressions | Type `add(1, 2)` into "Try an expression", then pin it. |
 | K | Editing | Break a definition, fix it, use autocomplete, hover, the inlay parameter hints, F12 and the outline. |
@@ -56,8 +57,8 @@ The tree viewer exists to show *where things go* in a rewrite. Score the motion 
 - **Identity is kept.** After a step, can you point at each node and say which node it was before? Parts that don't
   take part in the step stay still, unless the layout has to move them, and then they glide rather than jump. The view
   doesn't jump around or rescale for no reason.
-- **One focal point.** The eye goes to the site before or as the motion starts. Nothing else competes (other rings,
-  flowers or fades).
+- **One focal point.** The eye goes to the site before or as the motion starts. Nothing else competes (other rings
+  or fades).
 - **Timing.** A single step reads at the default speed without feeling slow (roughly 300–600 ms). Easing feels
   physical. Nothing pops in or out: new parts fade or grow in, and removed parts fade out toward where they went. Play
   mode keeps a rhythm you can follow, and parallel mode is still readable with several sites firing at once.
