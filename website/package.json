@@ -13,6 +13,7 @@
     "validate:examples": "tsx scripts/validate-examples.mts",
     "film": "node scripts/playground-film.mjs",
     "vfs-check": "tsx scripts/vfs-check.mts",
+    "motion-check": "tsx scripts/motion-check.mts",
     "twoway-check": "tsx scripts/twoway-check.mts",
     "twoway-inet-check": "tsx scripts/twoway-inet-check.mts",
     "dono-stats": "tsx scripts/build-dono-stats.mts",

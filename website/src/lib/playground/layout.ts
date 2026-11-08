@@ -45,6 +45,12 @@ export interface Guide {
   /// old nodes under a key that are gone: they glide to a new key as they fade, stay put, drop away,
   /// or fade quickly where they are so what replaces them has the stage
   sinks: [string, string | 'stay' | 'drop' | 'fade'][]
+  /// a new node that is an old one moved, by key (several may be the same one, copied): it keeps being drawn rather than fading in
+  moves?: Map<string, string>
+  /// keys of the parts a binder step changes: they move first, and the rest of the tree settles after
+  stage?: string[]
+  /// a binder and the variable it cancels with: the binder flies into it and knocks it off the tree
+  knock?: [string, string][]
 }
 
 export interface Scene {
@@ -58,6 +64,8 @@ export interface Scene {
   cut: number
   /// big data left open because the next step is right at it
   nearOpen: Set<Id>
+  /// how far every frame of the run reaches from its root, left, right and up: the view sized for the biggest holds still the whole run
+  reach?: { left: number; right: number; depth: number }
 }
 
 export interface FoldState {

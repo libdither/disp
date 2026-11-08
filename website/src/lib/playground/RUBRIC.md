@@ -13,10 +13,16 @@ scores can be compared.
   written to `$FILM_OUT` (default `/tmp/playground-film`). It also prints each step's caption and any console errors.
   With no program file it loads `swap := {f, x, y} => f(y, x)`. The line can be anywhere in the program.
   `play` presses Play instead and tiles `<steps>` shots taken every `<first time>` ms.
+- The film script's `slow` option makes every animation 10 times slower so its shots land where the times say, and `try` films
+  Try it. `npm run motion-check` steps real reels through `motion.ts` without a browser and checks that no node turns back, the
+  trunk and zoom hold still, nothing leaves the view and a knocked-off variable falls under gravity, never below the
+  ground, and comes to rest on it near the trunk; `-- --svg <reel> <step>`
+  draws that step's paths.
 - For anything the film script doesn't cover (hover, play, scrubbing, phone, first visit), drive the page with
   `playwright-core` the way the film script does; it is a dev dependency of `website/`.
 - The code: `website/src/routes/playground/+page.svelte` and `website/src/lib/playground/`
-  (`Inspector.svelte` runs the step reel, `TreeCanvas.svelte` draws and animates it, `guides.ts` says where things go during a step,
+  (`Inspector.svelte` runs the step reel, `TreeCanvas.svelte` draws it, `motion.ts` works out where everything is at each moment of a step
+  and where the camera is, `guides.ts` says where things go during a step,
   `trace.ts` and `store.ts` choose and perform the steps, `roles.ts` works out what each part of a finished function does to each input).
 - Reviews are read-only: put captures in `/tmp/council-<you>/`, never edit the repo.
 

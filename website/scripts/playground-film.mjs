@@ -1,15 +1,19 @@
 // Filmstrip of the playground's tree viewer: for each step, shots taken during its animation,
 // tiled one row per step. Runs against the dev server (scripts/dev-server.sh).
-// usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times ms, comma] [program file] [parallel|dark|play]
-// play: presses Play and takes <steps> shots, one every <first time> ms, tiled into one grid
+// usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times ms, comma] [program file] [options, comma]
+// options: try (film Try it rather than Build), parallel, dark, slow (every animation 10 times slower, so the
+// shots land where the times say: the times stay in animation ms), play (presses Play and takes <steps> shots,
+// one every <first time> ms, tiled into one grid)
 // env: FILM_OUT (default /tmp/playground-film), PLAYGROUND_URL, CHROMIUM (headless shell binary)
 import { chromium } from 'playwright-core'
 import { readFileSync, mkdirSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
-const [name, lineRe, stepsArg, timesArg, progFile, mode] = process.argv.slice(2)
+const [name, lineRe, stepsArg, timesArg, progFile, modeArg] = process.argv.slice(2)
+const modes = new Set((modeArg ?? '').split(',').filter(Boolean))
+const slow = modes.has('slow') ? 10 : 1
 if (!name || !lineRe) {
-  console.error('usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times] [program] [parallel|dark|play]')
+  console.error('usage: node scripts/playground-film.mjs <name> <line-regex> [steps] [times] [program] [try,parallel,dark,slow,play]')
   process.exit(1)
 }
 const out = process.env.FILM_OUT ?? '/tmp/playground-film'
@@ -25,7 +29,7 @@ const shell = process.env.CHROMIUM ?? (() => {
   return `${shells}/${dir}/chrome-headless-shell-linux64/chrome-headless-shell`
 })()
 const browser = await chromium.launch({ executablePath: shell, args: ['--no-sandbox'] })
-const theme = mode === 'dark' ? 'dark' : 'light'
+const theme = modes.has('dark') ? 'dark' : 'light'
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, colorScheme: theme })
 await ctx.addInitScript((t) => {
   localStorage.setItem('disp-playground-welcomed', '1')
@@ -51,14 +55,19 @@ await page.evaluate((n) => {
   view.dispatch({ selection: { anchor: line.to }, scrollIntoView: true })
 }, lineNo)
 await page.waitForTimeout(1800)
-if (mode === 'parallel') {
+if (modes.has('try')) {
+  await page.getByRole('tab', { name: 'Try it' }).first().click()
+  await page.waitForTimeout(1500)
+}
+if (slow > 1) await page.evaluate((k) => { globalThis.__dispAnimScale = k }, slow)
+if (modes.has('parallel')) {
   await page.locator('.optbtn').click()
   await page.locator('label', { hasText: 'Fire all at once' }).locator('input').check()
   await page.waitForTimeout(1200)
   await page.locator('.optbtn').click()
 }
 const stage = page.locator('.stagewrap')
-if (mode === 'play') {
+if (modes.has('play')) {
   await page.locator('.tb.play').click()
   const shots = []
   for (let i = 0; i < steps; i++) {
@@ -82,7 +91,7 @@ for (let s = 1; s <= steps; s++) {
   const t0 = Date.now()
   const row = []
   for (const t of times) {
-    const wait = t - (Date.now() - t0)
+    const wait = t * slow - (Date.now() - t0)
     if (wait > 0) await page.waitForTimeout(wait)
     const f = `${out}/${name}-${s}-${t}.png`
     await stage.screenshot({ path: f })
@@ -90,7 +99,7 @@ for (let s = 1; s <= steps; s++) {
   }
   files.push(row)
   rows.push(`${s}: ${await caption()}`)
-  await page.waitForTimeout(250)
+  await page.waitForTimeout(250 * slow)
 }
 for (const [i, row] of files.entries())
   execFileSync('montage', [...row, '-tile', `${row.length}x1`, '-geometry', '420x+4+4', '-background', '#888', `${out}/${name}-row${i + 1}.png`])

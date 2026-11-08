@@ -1,6 +1,6 @@
 // Where each kind of step sends things, so the drawing can show the move
-// instead of jumping: the binder copied down both sides of an S, a binder and
-// its variable meeting where I takes their place, the argument K drops.
+// instead of jumping: the binder copied down both sides of an S, a binder
+// knocking its variable off the tree, the argument K drops.
 
 import { R_K, R_F, type Store } from './store.ts'
 import type { Trace } from './trace.ts'
@@ -18,24 +18,30 @@ export function stepGuide(store: Store, trace: Trace, frame: number): Guide | un
     const site = trace.subterm(root, path)
     switch (store.bindKind(site)) {
       case 'split':
-        // the binder goes down both sides
-        guide.origin.set(key + '00', [key])
-        guide.origin.set(key + '1', [key])
+        // the binder goes down both sides: both copies are it, starting as one and coming apart
+        guide.moves = new Map([...(guide.moves ?? []), [key + '00', key], [key + '1', key]])
         guide.sinks.push([key, 'stay'])
+        ;(guide.stage ??= []).push(key)
         break
       case 'const':
-        guide.sinks.push([key, 'stay'])
+        // the binder shrinks into the leaf of the K that takes its place
+        guide.sinks.push([key, key + '0'])
+        ;(guide.stage ??= []).push(key)
         break
       case 'id':
-        // the binder comes down and its variable up; I appears where they meet
-        guide.origin.set(key, [key, key + '0'])
-        guide.sinks.push([key, key])
+        // the binder knocks its variable off the tree, and I grows where the binder was
+        guide.origin.set(key, [key])
+        guide.sinks.push([key + '0', 'stay'], [key, 'stay'])
+        ;(guide.knock ??= []).push([key, key + '0'])
+        ;(guide.stage ??= []).push(key)
         break
       case 'eta':
-        // the function rises into the binder's place (from the body, when it is a new node rather than a kept subtree);
-        // the binder and the variable it was handed meet it there and cancel out, the application fades first
-        guide.origin.set(key, [key + '00'])
-        guide.sinks.push([key + '01', key], [key + '0', 'fade'], [key, key])
+        // the binder knocks the variable it was handed off the tree, the application holding them fades,
+        // and the function moves into the binder's place, staying itself on the way
+        guide.moves = new Map([...(guide.moves ?? []), [key, key + '00']])
+        guide.sinks.push([key + '01', 'stay'], [key + '0', 'fade'], [key, 'stay'])
+        ;(guide.knock ??= []).push([key, key + '01'])
+        ;(guide.stage ??= []).push(key)
         break
       case null:
         if (store.rule[site] === R_K) guide.sinks.push([key + '1', 'drop'])

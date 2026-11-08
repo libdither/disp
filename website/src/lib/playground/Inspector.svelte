@@ -14,6 +14,7 @@
   import { stepGuide } from './guides.ts'
   import { RoleRun, newestInput, type Roles, type RoleHit } from './roles.ts'
   import { Trace, type Mode, type Call, type TraceEnd } from './trace.ts'
+  import { reachOf } from './motion.ts'
   import { layoutScene, diffTrees, keyPath, K_POD, K_APP, K_LAM, K_VAR, type Scene, type VNode } from './layout.ts'
   import type { Subject } from './subject.ts'
 
@@ -49,7 +50,7 @@
 
   const MAX_DUMP = 60000
   /// a binder rewrite needs reading, however fast the run plays
-  const BINDER_TICK_MS = 650
+  const BINDER_TICK_MS = 420
   /// one per name, the same in a binder, its uses, and the symbols it turns into
   const VAR_COLORS = ['#1971c2', '#e03131', '#9c36b5', '#2b8a3e', '#c2255c', '#0b7285', '#b35c00', '#5f3dc4']
 
@@ -307,6 +308,8 @@
       const more = tr.advance(6)
       version++
       if (more) requestAnimationFrame(tick)
+      // the run is known in full: the view can settle on the one zoom it keeps, before the first step rather than during it
+      else if (!playing && runReach()) draw(260)
     }
     requestAnimationFrame(tick)
   }
@@ -404,6 +407,27 @@
   /// the frame drawn last, so a single step forward can be drawn with its guide
   let drawnAt = -1
   let lastNearOpen = new Set<Id>()
+  /// how far the frames of a short finished run reach from their root, so the view can hold one zoom for all of them
+  let reachKey = ''
+  let reach: Scene['reach'] = undefined
+  function runReach(): Scene['reach'] {
+    if (!trace?.end || trace.last > 400 || peek) return undefined
+    const key = `${trace.frames[0]}:${trace.last}:${trace.mode}:${open.size}:${closed.size}:${sk}:${labels}:${tab}`
+    if (key === reachKey) return reach
+    reachKey = key
+    reach = undefined
+    let nodes = 0
+    function* scenes() {
+      for (const f of trace!.frames) {
+        const sc = layoutScene(store, [f], { open: new Set(open), closed: new Set(closed) }, { labels, sk, foldData: labels ? 40 : undefined, plainNats: tab === 'try' && symbols.length > 0 && !tour })
+        if ((nodes += sc.nodes.length) > 150_000) return
+        yield sc
+      }
+    }
+    const out = reachOf(scenes())
+    return (reach = nodes > 150_000 ? undefined : out)
+  }
+
   function draw(ms: number) {
     animMs = ms
     const was = drawnAt
@@ -431,6 +455,7 @@
     const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), alsoNext: mode === 'parallel' ? trace.readyPaths(root) : undefined, labels, sk: readsSk(), foldData: labels ? 40 : undefined, keepOpen, plainNats: tab === 'try' && symbols.length > 0 && !tour })
     lastNearOpen = next.nearOpen
     if (ms > 0 && was >= lead && at > was && at - was <= 4) next.guide = stepGuide(store, trace, was - lead)
+    next.reach = runReach()
     show(next)
   }
 
@@ -464,6 +489,8 @@
 
   // ---- transport -------------------------------------------------------------
   const isBuild = (r: number) => r === R_LEAF || r === R_STEM
+  /// with building skipped, the step from frame f is folded into the one before (see Trace.folds)
+  const absorbed = (f: number) => !!trace && trace.folds(f)
   function seek(i: number, ms = 0) {
     peek = null
     at = Math.max(0, Math.min(lead + (trace?.last ?? 0), i))
@@ -474,7 +501,7 @@
   function snap(i: number): number {
     if (!hideBuild || !trace || i < lead) return i
     let f = i - lead
-    while (f < trace.last && lead + f !== bindEnd && isBuild(trace.rules[f + 1])) f++
+    while (f < trace.last && lead + f !== bindEnd && absorbed(f)) f++
     return lead + f
   }
   /// The frames stepping stops on, one per timeline cell; null once there are too many to draw that way.
@@ -484,14 +511,14 @@
     const out = [0]
     for (let f = 0; f < trace.last; ) {
       f++
-      if (hideBuild) while (f < trace.last && f !== bindEnd && isBuild(trace.rules[f + 1])) f++
+      if (hideBuild) while (f < trace.last && f !== bindEnd && absorbed(f)) f++
       out.push(f)
       if (out.length > 400) return null
     }
     return out
   })
   /// With building skipped, a step also takes in the stems and forks right after it, so the next one highlighted is real work.
-  function stepForward(ms = 320) {
+  function stepForward(ms = 210) {
     if (at < lead) {
       seek(at + 1, ms)
       return true
@@ -500,11 +527,14 @@
     let f = frame + 1
     if (f > trace.last) return false
     // never past the frame where the last binder came off, so that frame is always shown
-    if (hideBuild) while (f < trace.last && lead + f !== bindEnd && isBuild(trace.rules[f + 1])) f++
+    if (hideBuild) while (f < trace.last && lead + f !== bindEnd && absorbed(f)) f++
     if (stopAt !== null && playing) f = Math.min(f, stopAt - lead)
     // a binder rewrite moves more than a rule firing, and a K drop, an S copy or a triage pick needs a beat to see
     const r = trace.rules[frame + 1]
-    goto(f, ms > 0 && r === R_BIND ? Math.max(ms, 520) : ms > 0 && !playing && (r === R_K || r === R_S || r === R_F) ? Math.max(ms, 440) : ms)
+    // a binder that knocks its variable off has further to fly
+    const path = r === R_BIND ? trace.nextPath(trace.frames[frame]) : null
+    const knocks = path ? ['id', 'eta'].includes(store.bindKind(trace.subterm(trace.frames[frame], path)) ?? '') : false
+    goto(f, ms > 0 && knocks ? Math.max(ms, 460) : ms > 0 && r === R_BIND ? Math.max(ms, 340) : ms > 0 && !playing && (r === R_K || r === R_S || r === R_F) ? Math.max(ms, 280) : ms)
     return true
   }
   function stepBack() {
@@ -514,7 +544,7 @@
       return
     }
     let f = frame - 1
-    if (hideBuild) while (f > 0 && lead + f !== bindEnd && isBuild(trace.rules[f + 1])) f--
+    if (hideBuild) while (f > 0 && lead + f !== bindEnd && absorbed(f)) f--
     goto(f, 260)
   }
   /// Jump to where the next (or previous) binder starts being removed.
@@ -569,7 +599,7 @@
       }
       const binderNext = at < lead || (unified && trace?.rules[frame + 1] === R_BIND)
       const tickMs = binderNext ? Math.max(BINDER_TICK_MS, runMs) : stopAt !== null ? Math.min(runMs, 380) : runMs
-      if (!stepForward(tickMs >= 70 ? Math.min(binderNext ? 560 : 380, tickMs * 0.85) : 0)) {
+      if (!stepForward(tickMs >= 70 ? Math.min(binderNext ? 360 : 260, tickMs * 0.85) : 0)) {
         if (trace?.end) playing = false
         else playTimer = setTimeout(run, 60)
         return
@@ -1818,8 +1848,8 @@
     gap: 0.15rem 0.6rem;
     margin: 0.15rem 0 0.3rem;
     font-size: 0.76rem;
-    /* room held for a three-line caption, so a shorter one doesn't nudge the tree */
-    min-height: 5em;
+    /* room held for the code and two lines of words, so a shorter caption doesn't nudge the tree */
+    min-height: 5.6em;
   }
   .rewrite {
     flex: 1 1 100%;

@@ -9,6 +9,7 @@
   import { K_LEAF, K_STEM, K_FORK, K_APP, K_VAR, K_POD, K_LAM, type Scene, type VNode } from './layout.ts'
   import { R_K, R_S, R_F, RULE_GLYPH, type Id } from './store.ts'
   import type { Roles, RoleHit } from './roles.ts'
+  import { planTween, stillTween, nodesAt, ghostAt, fitCam, reachCam, trunkCam, pinAt, camAt, ease, actT, orient, yRange as yRangeOf, knockedOff, knockTime, fallAt, fallAlpha, fallLife, type Fall, type Ghost, type Tween, type Pin, type View } from './motion.ts'
 
   /// how the tree is drawn: bold is the original, the rest are calmer
   export type TreeLook = 'tree' | 'bold' | 'quiet' | 'garden' | 'moss' | 'ink'
@@ -58,13 +59,21 @@
   let follow = true
 
   let shown: Scene | null = null
-  let fromX = new Float64Array(0)
-  let fromY = new Float64Array(0)
   let curX = new Float64Array(0)
   let curY = new Float64Array(0)
-  let fresh = new Uint8Array(0)
+  /// the step being drawn: where each node starts, and what fades out (see motion.ts)
+  let tw: Tween = { fromX: curX, fromY: curY, fresh: new Uint8Array(0), ghosts: [], acts: null, anchor: new Int32Array(0), root: -1 }
+  let fresh = tw.fresh
+  let ghosts: Ghost[] = []
+  /// knocked-off variables lying on the ground after their step, fading
+  let falls: { n: VNode; f: Fall; t: number; scale: number; parent: number; turns: boolean }[] = []
+  /// how far the fruit being drawn has rolled, in radians
+  let spin = 0
+  /// films slow every animation down by this, to look at it frame by frame
+  const animScale = () => (globalThis as { __dispAnimScale?: number }).__dispAnimScale ?? 1
   let t0 = 0
   let dur = 0
+  let pin: Pin | null = null
   let hover: VNode | null = null
   let hoverId: Id = -1
   /// the hovered node's name tag is under the pointer, rather than the node
@@ -72,9 +81,6 @@
   /// where each name tag was drawn last, in world coordinates, for the pointer
   let tagBoxes: { i: number; x: number; y: number; w: number; h: number }[] = []
 
-  /// a node the last step removed, fading on its way to `to` (a new node's index), in place, or dropping
-  type Ghost = { n: VNode; x: number; y: number; to: number; drop: boolean; quick: boolean; parent: number }
-  let ghosts: Ghost[] = []
   /// every alpha below is scaled by this, so a ghost or a new node can be drawn faded with the usual helpers
   let fade = 1
   /// how far the next step's marks have come in: they wait for the current step's motion to land
@@ -147,7 +153,7 @@
   /// the home page's tree view: it grows up out of a hill
   const up = $derived(look === 'tree')
   /// the scene's height, root at 0: down from it, or up from it with the hill below
-  const yRange = (s: Scene): [number, number] => (up ? [-s.maxY - 24, s.titles.length ? 76 : 56] : [0, s.maxY])
+  const yRange = (s: Scene) => yRangeOf(s, up)
   const FRUIT = '#e79a3f'
   const combColor = (op: string | null) => (look === 'moss' ? garden().step : op === 'S' ? C.kw : op === 'K' ? C.warn : op === 'I' ? C.ok : C.err)
   const podColor = (k: VNode['podKind']) =>
@@ -167,6 +173,23 @@
 
   /// A variable stays readable when the view zooms out: it grows as everything else shrinks.
   const pillScale = (k: number) => Math.max(1, Math.min(1.4, 0.55 / k))
+
+  /// the width of the pill drawPill draws for `text`
+  function pillWidth(text: string, k: number): number {
+    const s = pillScale(k)
+    ctx.font = `${look === 'moss' ? 500 : 700} ${12 * s}px 'JetBrains Mono Variable', monospace`
+    return Math.max(22 * s, ctx.measureText(text.length > 16 ? text.slice(0, 15) + '…' : text).width + 14 * s)
+  }
+  /// a ring round a binder's pill, touching its edge
+  function pillRing(x: number, y: number, text: string, k: number, lw: number) {
+    const s = pillScale(k)
+    const pw = pillWidth(text, k) + lw
+    const ph = 22 * s + lw
+    ctx.lineWidth = lw
+    ctx.beginPath()
+    ctx.roundRect(x - pw / 2, y - ph / 2, pw, ph, ph / 2)
+    ctx.stroke()
+  }
 
   function drawPill(x: number, y: number, text: string, col: string, k: number, binder = false, lit = true) {
     const s = pillScale(k)
@@ -233,19 +256,12 @@
     }
   }
 
+  const view = (): View => ({ w, h, up })
   function fitTarget(s: Scene, minX = s.minX, maxX = s.maxX, top = yRange(s)[0], bottom = yRange(s)[1]) {
-    const pad = 34
-    // the hover bar along the bottom gets its own strip, so it never covers the lowest nodes
-    const bar = 26
-    const titled = s.titles.length && !up ? 18 : 0
-    const sw = Math.max(1, maxX - minX)
-    const sh = Math.max(1, bottom - top)
-    const k = Math.min(1.5, (w - pad * 2) / sw, (h - pad * 2 - bar - titled) / sh)
-    target.k = Math.max(0.02, k)
-    target.x = w / 2 - ((minX + maxX) / 2) * target.k
-    const contentH = sh * target.k
-    target.y = Math.max(pad + titled, (h - bar - contentH) / 2 - 8) - top * target.k
+    Object.assign(target, fitCam(view(), s, minX, maxX, top, bottom))
   }
+  /// fit the view to the run's box when it has one, else to this frame
+  const refit = (sc: Scene) => Object.assign(target, reachCam(view(), sc) ?? fitCam(view(), sc))
 
   /// While playing, the view holds still: it moves only when the tree leaves it or shrinks well inside it, and
   /// then leaves room to spare. A tree too big to read whole is followed at a readable zoom instead, panning only
@@ -276,7 +292,7 @@
   }
 
   function setScene(next: Scene | null) {
-    if (next && up) next = { ...next, nodes: next.nodes.map((n) => ({ ...n, y: -n.y })) }
+    if (next) next = orient(next, up)
     const prev = shown
     shown = next
     // what was under the pointer may be gone; its hover text goes with it
@@ -288,120 +304,50 @@
       return
     }
     const n = next.nodes.length
-    const tween = animMs > 0 && !reduced?.matches && prev && n < 2500 && prev.nodes.length < 2500
-    const nx = new Float64Array(n)
-    const ny = new Float64Array(n)
-    fresh = new Uint8Array(n)
+    const tween = !!(animMs > 0 && !reduced?.matches && prev && n < 2500 && prev.nodes.length < 2500)
+    // a variable still falling when the next step starts lands where it was going
+    launch()
     ghosts = []
-    if (tween && prev) {
-      const byKey = new Map<string, number>()
-      const byId = new Map<Id, number[]>()
-      prev.nodes.forEach((p, i) => {
-        byKey.set(p.key, i)
-        const list = byId.get(p.id)
-        if (!list) byId.set(p.id, [i])
-        else if (list.length < 64) list.push(i)
-      })
-      const guide = next.guide
-      const sites = guide?.sinks.map(([key]) => key)
-      const dropped = guide?.sinks.flatMap(([key, to]) => (to === 'drop' ? [key] : [])) ?? []
-      // an old node carries on when something takes its place or its subtree; anything else is a ghost
-      const used = new Uint8Array(prev.nodes.length)
-      const src = new Int32Array(n).fill(-1)
-      /// where a node may have come from: under its own key, or under the top of the new part it sits in
-      const scope: string[] = []
-      for (let i = 0; i < n; i++) {
-        const v = next.nodes[i]
-        const k = byKey.get(v.key)
-        const par = v.parent
-        scope.push(par >= 0 && fresh[par] ? scope[par] : v.key)
-        let from = -1
-        // a node of a subtree that moved comes along with it
-        if (par >= 0 && src[par] >= 0) {
-          const c = byKey.get(prev.nodes[src[par]].key + v.key.slice(next.nodes[par].key.length))
-          if (c !== undefined && prev.nodes[c].id === v.id) from = c
-        }
-        // the same spot holding the same thing (the spine above a step changes ids, not looks)
-        if (from < 0 && k !== undefined) {
-          const p = prev.nodes[k]
-          if (p.id === v.id || (p.kind === v.kind && p.text === v.text && p.comb === v.comb)) from = k
-        }
-        if (from < 0) {
-          const o = guide?.origin.get(v.key)?.flatMap((key) => byKey.get(key) ?? [])
-          if (o?.length) {
-            nx[i] = o.reduce((a, j) => a + curX[j], 0) / o.length
-            ny[i] = o.reduce((a, j) => a + curY[j], 0) / o.length
-            fresh[i] = 1
-            continue
-          }
-          // a kept subtree that moved: the same tree from where the step happened, never one the step threw away
-          const cands = (byId.get(v.id) ?? []).filter((j) => {
-            const key = prev.nodes[j].key
-            return !dropped.some((d) => key.startsWith(d)) && (key.startsWith(scope[i]) || sites?.some((s) => key.startsWith(s)))
-          })
-          from = cands.find((j) => !used[j] && prev.nodes[j].key.startsWith(scope[i])) ?? cands.find((j) => !used[j]) ?? cands[0] ?? -1
-        }
-        if (from >= 0) {
-          src[i] = from
-          used[from] = 1
-          nx[i] = curX[from] ?? v.x
-          ny[i] = curY[from] ?? v.y
-          continue
-        }
-        // something new takes over the spot of what was there (the spine a step rebuilds), or grows out of its parent
-        fresh[i] = 1
-        if (k !== undefined && (!used[k] || par < 0)) {
-          nx[i] = curX[k] ?? v.x
-          ny[i] = curY[k] ?? v.y
-        } else if (par >= 0) {
-          nx[i] = nx[par]
-          ny[i] = ny[par]
-        } else {
-          nx[i] = v.x
-          ny[i] = v.y
-        }
-      }
-      if (falling && prev.nodes.length < 1500) {
-        const nextKey = new Map<string, number>()
-        next.nodes.forEach((v, i) => nextKey.set(v.key, i))
-        const sinks = [...(guide?.sinks ?? [])].sort((a, b) => b[0].length - a[0].length)
-        const ghostOf = new Map<number, number>()
-        prev.nodes.forEach((p, j) => {
-          if (used[j] || ghosts.length >= 400) return
-          const sink = sinks.find(([pre]) => p.key.startsWith(pre))?.[1] ?? 'stay'
-          let to = -1
-          if (sink !== 'stay' && sink !== 'drop' && sink !== 'fade') {
-            // the spot it was sent to may have folded away: the nearest one above it
-            for (let key = sink; key.length >= 2 && to < 0; key = key.slice(0, -1)) to = nextKey.get(key) ?? -1
-          }
-          ghostOf.set(j, ghosts.length)
-          ghosts.push({ n: p, x: curX[j], y: curY[j], to, drop: sink === 'drop', quick: sink === 'fade', parent: ghostOf.get(p.parent) ?? -1 })
-        })
-      }
-      fromX = nx
-      fromY = ny
-      dur = animMs
-      t0 = performance.now()
-    } else {
-      for (let i = 0; i < n; i++) {
-        nx[i] = next.nodes[i].x
-        ny[i] = next.nodes[i].y
-      }
-      fromX = nx
-      fromY = ny
-      dur = 0
-    }
-    curX = Float64Array.from(nx)
-    curY = Float64Array.from(ny)
+    if (!tween) falls = []
+    tw = tween && prev ? planTween(prev, next, curX, curY, falling) : stillTween(next)
+    fresh = tw.fresh
+    ghosts = tw.ghosts
+    dur = tween ? animMs * animScale() : 0
+    t0 = performance.now()
+    curX = Float64Array.from(tw.fromX)
+    curY = Float64Array.from(tw.fromY)
+    pin = null
     if (follow) {
-      if (steady && tween) steadyTarget(next)
+      const v = view()
+      // one zoom for the whole run, with the trunk where it always is; else the trunk held where it was while it can be
+      const whole = reachCam(v, next)
+      const held = whole ? null : tween && prev && !steady ? trunkCam(v, target, prev, next) : null
+      if (whole || held) {
+        Object.assign(target, whole ?? held)
+        if (tween && prev) pin = pinAt(target, cam, next)
+      } else if (steady && tween) steadyTarget(next)
       else fitTarget(next)
       if (!tween) Object.assign(cam, target)
     }
     requestDraw()
   }
 
-  const ease = (t: number) => 1 - (1 - t) * (1 - t) * (1 - t)
+  /// Hand what a binder knocks off to its fall, on its own clock from here on: at the knock, or at once when the step
+  /// is cut short.
+  function launch() {
+    if (!ghosts.some((g) => g.hit >= 0 && !g.launched)) return
+    const now = performance.now()
+    const knocked = knockedOff(tw, curX, curY, up)
+    const of = new Map<number, number>()
+    for (const { ghost, fall } of knocked) {
+      const g = ghosts[ghost]
+      if (g.launched) continue
+      g.launched = true
+      of.set(ghost, falls.length)
+      // a lone variable rolls as it goes; a bigger tree keeps its shape
+      falls.push({ n: g.n, f: fall, t: now, scale: animScale(), parent: of.get(g.parent) ?? -1, turns: knocked.length === 1 })
+    }
+  }
 
   /// eases the view toward its target; true while it is still moving
   function glide(dt: number) {
@@ -421,7 +367,9 @@
     if (!raf && ctx) raf = requestAnimationFrame(frame)
   }
 
-  function frame(now: number) {
+  function frame() {
+    // the same clock the step's start was read from, so a test's fake clock drives both
+    const now = performance.now()
     raf = 0
     const dt = Math.min(0.05, (now - lastFrame) / 1000)
     lastFrame = now
@@ -430,12 +378,11 @@
       const nodes = shown.nodes
       if (dur > 0) {
         const t = Math.min(1, (now - t0) / dur)
-        const k = ease(t)
-        for (let i = 0; i < nodes.length; i++) {
-          curX[i] = fromX[i] + (nodes[i].x - fromX[i]) * k
-          curY[i] = fromY[i] + (nodes[i].y - fromY[i]) * k
-        }
-        if (follow && steady) again = glide(dt) || again
+        nodesAt(tw, shown, t, curX, curY)
+        if (t >= knockTime(tw)) launch()
+        if (follow && pin) {
+          Object.assign(cam, camAt(pin, t, curX, curY))
+        } else if (follow && steady) again = glide(dt) || again
         else if (follow) {
           // the view fits where the nodes are right now, so nothing leaves it and it lands when they do;
           // the scene's bounds sit a little outside its nodes' centres, and that margin carries over
@@ -467,7 +414,14 @@
       } else if (follow && reduced?.matches) Object.assign(cam, target)
       else if (follow) again = glide(dt) || again
     }
-    if (ghosts.length > 0 && dur === 0) ghosts = []
+    if (ghosts.length > 0 && dur === 0) {
+      launch()
+      ghosts = []
+    }
+    if (falls.length) {
+      falls = falls.filter((b) => (now - b.t) / 1000 / b.scale < fallLife(b.f))
+      if (falls.length) again = true
+    }
     draw()
     if (again) raf = requestAnimationFrame(frame)
   }
@@ -484,11 +438,15 @@
 
   /// a name as fruit, in its own colour: its name on the skin when short, above it when not
   function drawFruit(x: number, y: number, text: string, k: number, col = FRUIT) {
+    // a rolling fruit turns its stalk; the shine stays where the light is, and the name stays upright
+    const c = Math.cos(spin)
+    const sn = Math.sin(spin)
+    const at = (u: number, v: number): [number, number] => [x + u * c - v * sn, y + u * sn + v * c]
     ctx.strokeStyle = C.bark
     ctx.lineWidth = 1.5
     ctx.beginPath()
-    ctx.moveTo(x, y - 9)
-    ctx.quadraticCurveTo(x + 1, y - 13, x + 3.5, y - 14.5)
+    ctx.moveTo(...at(0, -9))
+    ctx.quadraticCurveTo(...at(1, -13), ...at(3.5, -14.5))
     ctx.stroke()
     ctx.fillStyle = col
     ctx.strokeStyle = 'rgba(60, 30, 10, 0.4)'
@@ -624,8 +582,22 @@
 
   /// the hill the tree stands on, its trunk, and a little grass
   function drawGround(s: Scene) {
-    const cx = (s.minX + s.maxX) / 2
-    const rx = Math.max(120, (s.maxX - s.minX) / 2 + 30)
+    // under the trunk wherever it is mid-step, as wide as the tree is right now, so the two never drift apart
+    let lo = Infinity
+    let hi = -Infinity
+    let root = -1
+    let roots = 0
+    for (let i = 0; i < s.nodes.length; i++) {
+      lo = Math.min(lo, curX[i])
+      hi = Math.max(hi, curX[i])
+      if (s.nodes[i].parent < 0) {
+        root = i
+        roots++
+      }
+    }
+    if (!(hi >= lo)) return
+    const cx = roots === 1 ? curX[root] - 8 : (lo + hi) / 2
+    const rx = Math.max(120, (hi - lo) / 2 + 40)
     ctx.fillStyle = C.hillBack
     ctx.beginPath()
     ctx.ellipse(cx, 30, rx, 16, 0, 0, Math.PI * 2)
@@ -1239,61 +1211,90 @@
       }
     }
 
+    /// a ghost or a falling variable, drawn at the origin
+    const shape = (n: VNode) => {
+      if (n.comb) drawComb(0, 0, n.comb, false, true, false)
+      else if (n.kind === K_LAM) drawPill(0, 0, look === 'ink' ? `λ${n.text ?? ''}` : `{${n.text ?? ''}}`, varColor(n.text ?? ''), k, true)
+      else if (n.kind === K_VAR) drawPill(0, 0, n.text ?? '', varColor(n.text ?? ''), k)
+      else if (n.kind === K_LEAF) drawLeafAs(0, 0, tiltOf(n.key), LEAF_TINTS[1], k)
+      else if (n.kind === K_STEM || n.kind === K_FORK) drawJoint(0, 0, n.kind === K_FORK)
+      else if (n.kind === K_APP) drawApp(0, 0, { ...n, next: false }, false)
+      else if (n.kind === K_POD && up) drawNamePod(0, 0, n.text ?? '', true)
+      else if (n.kind === K_POD) {
+        const text = n.text ?? ''
+        ctx.strokeStyle = C.muted
+        ctx.lineWidth = 1.2
+        ctx.beginPath()
+        ctx.roundRect(-podWidth(text) / 2, -10, podWidth(text), 20, 9)
+        ctx.stroke()
+        ctx.fillStyle = C.muted
+        ctx.font = "11px 'JetBrains Mono Variable', monospace"
+        ctx.fillText(text.length > 28 ? text.slice(0, 27) + '…' : text, 0, 0.5)
+      }
+    }
     if (ghosts.length > 0 && dur > 0) {
-      const p = Math.min(1, (performance.now() - t0) / dur)
-      const e = ease(p)
-      const gx = new Float64Array(ghosts.length)
-      const gy = new Float64Array(ghosts.length)
-      ghosts.forEach((g, j) => {
-        const tx = g.to >= 0 ? curX[g.to] : g.x
-        const ty = g.to >= 0 ? curY[g.to] : g.y + (g.drop ? 46 : 0)
-        gx[j] = g.x + (tx - g.x) * e
-        gy[j] = g.y + (ty - g.y) * e
-      })
-      // what merges into a new node stays visible until it gets there; the rest just fades
-      const alphaOf = (g: Ghost) => (g.quick ? Math.max(0, 1 - p / 0.4) : g.to >= 0 ? (p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5) : g.drop ? 1 - p * p : 1 - e) * 0.9
+      const all = Math.min(1, (performance.now() - t0) / dur)
+      const p = tw.acts ? actT(all) : all
+      const at = ghosts.map((_, j) => ghostAt(tw, j, all, curX, curY, up))
       ctx.strokeStyle = planty || up ? bark : pen
       ctx.lineWidth = planty || up ? 2.4 : lw
       ghosts.forEach((g, j) => {
         if (g.parent < 0) return
         // what falls away lets go of its parent at once, so no line trails after it
         // an edge goes as soon as either end does
-        const a = Math.min(alphaOf(g), alphaOf(ghosts[g.parent]))
+        if (g.hit >= 0 && (g.launched || ghosts[g.parent].hit < 0)) return
+        const a = Math.min(at[j].a, at[g.parent].a)
         ctx.globalAlpha = fade * (g.drop && !ghosts[g.parent].drop ? Math.min(a, Math.max(0, 1 - p / 0.25)) : a) * 0.7
         ctx.beginPath()
-        ctx.moveTo(gx[g.parent], gy[g.parent])
-        ctx.lineTo(gx[j], gy[j])
+        ctx.moveTo(at[g.parent].x, at[g.parent].y)
+        ctx.lineTo(at[j].x, at[j].y)
         ctx.stroke()
       })
       ghosts.forEach((g, j) => {
-        const x = gx[j]
-        const y = gy[j]
-        if (!vis(x, y)) return
-        const n = g.n
+        const { x, y, a, scale } = at[j]
+        if (g.launched || !vis(x, y)) return
         ctx.save()
-        fade = alphaOf(g)
+        fade = a
         ctx.globalAlpha = fade
-        const sc = g.to >= 0 ? 1 - 0.3 * e : 1
         ctx.translate(x, y)
-        ctx.scale(sc, sc)
-        if (n.comb) drawComb(0, 0, n.comb, false, true, false)
-        else if (n.kind === K_LAM) drawPill(0, 0, look === 'ink' ? `λ${n.text ?? ''}` : `{${n.text ?? ''}}`, varColor(n.text ?? ''), k, true)
-        else if (n.kind === K_VAR) drawPill(0, 0, n.text ?? '', varColor(n.text ?? ''), k)
-        else if (n.kind === K_LEAF) drawLeafAs(0, 0, tiltOf(n.key), LEAF_TINTS[1], k)
-        else if (n.kind === K_STEM || n.kind === K_FORK) drawJoint(0, 0, n.kind === K_FORK)
-        else if (n.kind === K_APP) drawApp(0, 0, { ...n, next: false }, false)
-        else if (n.kind === K_POD && up) drawNamePod(0, 0, n.text ?? '', true)
-        else if (n.kind === K_POD) {
-          const text = n.text ?? ''
-          ctx.strokeStyle = C.muted
-          ctx.lineWidth = 1.2
-          ctx.beginPath()
-          ctx.roundRect(-podWidth(text) / 2, -10, podWidth(text), 20, 9)
-          ctx.stroke()
-          ctx.fillStyle = C.muted
-          ctx.font = "11px 'JetBrains Mono Variable', monospace"
-          ctx.fillText(text.length > 28 ? text.slice(0, 27) + '…' : text, 0, 0.5)
-        }
+        ctx.scale(scale, scale)
+        shape(g.n)
+        ctx.restore()
+        fade = 1
+      })
+      ctx.globalAlpha = 1
+    }
+    if (falls.length) {
+      const now = performance.now()
+      const secs = falls.map((b) => (now - b.t) / 1000 / b.scale)
+      // falls are measured from the trunk, which the view holds still
+      const root = nodes.findIndex((n) => n.parent < 0)
+      const ox = root >= 0 ? curX[root] : 0
+      const oy = root >= 0 ? curY[root] : 0
+      const at = falls.map((b, j) => {
+        const p = fallAt(b.f, secs[j])
+        return { ...p, x: p.x + ox, y: p.y + oy }
+      })
+      ctx.strokeStyle = planty || up ? bark : pen
+      ctx.lineWidth = planty || up ? 2.4 : lw
+      falls.forEach((b, j) => {
+        if (b.parent < 0) return
+        ctx.globalAlpha = fallAlpha(b.f, secs[j]) * 0.7
+        ctx.beginPath()
+        ctx.moveTo(at[b.parent].x, at[b.parent].y)
+        ctx.lineTo(at[j].x, at[j].y)
+        ctx.stroke()
+      })
+      falls.forEach((b, j) => {
+        const p = at[j]
+        if (!vis(p.x, p.y)) return
+        ctx.save()
+        fade = fallAlpha(b.f, secs[j])
+        ctx.globalAlpha = fade
+        ctx.translate(p.x, p.y)
+        spin = b.turns ? p.angle : 0
+        shape(b.n)
+        spin = 0
         ctx.restore()
         fade = 1
       })
@@ -1338,13 +1339,16 @@
         // the same gold ring the next application gets, stretched round a name
         const named = n.kind === K_LAM || n.kind === K_VAR
         const text = n.kind === K_LAM ? `{${n.text ?? ''}}` : (n.text ?? '')
-        const half = named ? (podWidth(text) * pillScale(k)) / 2 + 5 : 11
         ctx.strokeStyle = flower().deep
-        ctx.lineWidth = up ? 2 : 2.2
         ctx.globalAlpha = fade * bloom
-        ctx.beginPath()
-        ctx.roundRect(x - half, y - 14, half * 2, 28, 14)
-        ctx.stroke()
+        if (n.kind === K_LAM) pillRing(x, y, text, k, up ? 2.4 : 2.6)
+        else {
+          const half = named ? (podWidth(text) * pillScale(k)) / 2 + 5 : 11
+          ctx.lineWidth = up ? 2 : 2.2
+          ctx.beginPath()
+          ctx.roundRect(x - half, y - 14, half * 2, 28, 14)
+          ctx.stroke()
+        }
         ctx.globalAlpha = fade
       }
       else if (isNext(n) && n.kind !== K_APP) {
@@ -1360,13 +1364,8 @@
         case K_LAM: {
           if (n.rule && !isNext(n) && look !== 'ink') {
             // a binder ready to come off is a reduction point like any other: a gold ring
-            const s = pillScale(k)
-            const pw = Math.max(22 * s, podWidth(`{${n.text ?? ''}}`) * s + 2)
             ctx.strokeStyle = look === 'moss' || up ? flower().deep : C.accent
-            ctx.lineWidth = up ? 1 : 1.6
-            ctx.beginPath()
-            ctx.roundRect(x - pw / 2 - 3, y - 11 * s - 3, pw + 6, 22 * s + 6, 13 * s)
-            ctx.stroke()
+            pillRing(x, y, `{${n.text ?? ''}}`, k, up ? 1.4 : 1.8)
           }
           drawPill(x, y, look === 'ink' ? `λ${n.text ?? ''}` : `{${n.text ?? ''}}`, varColor(n.text ?? ''), k, true, inStep[i] === 1)
           break
@@ -1657,8 +1656,10 @@
     cv.width = Math.round(w * dpr)
     cv.height = Math.round(h * dpr)
     if (shown && follow) {
-      fitTarget(shown)
+      refit(shown)
       Object.assign(cam, target)
+      // a step under way keeps the trunk where the new view puts it, rather than finishing on the old view's zoom
+      if (pin) pin = pinAt(target, target, shown)
     }
     // resizing clears the canvas; drawing now (not next frame) avoids a blank frame
     draw()
@@ -1674,7 +1675,7 @@
     api?.({
       fit: () => {
         follow = true
-        if (shown) fitTarget(shown)
+        if (shown) refit(shown)
         requestDraw()
       },
       zoom: (f) => zoomAt(w / 2, h / 2, f),
@@ -1729,7 +1730,7 @@
     if (steady) return
     untrack(() => {
       if (follow && shown && ctx) {
-        fitTarget(shown)
+        refit(shown)
         requestDraw()
       }
     })

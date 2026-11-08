@@ -53,6 +53,24 @@ export class Trace {
     if (!store.hasRedex(root)) this.end = store.hasApp(root) ? 'stuck' : 'normal'
   }
 
+  #paths = new Map<number, string>()
+  /// where the step from frame f happens, as a key path
+  sitePath(f: number): string {
+    let p = this.#paths.get(f)
+    if (p === undefined) this.#paths.set(f, (p = this.nextPath(this.frames[f])?.join('') ?? ''))
+    return p
+  }
+  /// With building skipped, the step from frame f is folded into the step before when it only builds, on the same line
+  /// of the tree (inside what that step made, or above it); a build elsewhere is a step of its own, so one step never
+  /// fires in two places.
+  folds(f: number): boolean {
+    const r = this.rules[f + 1]
+    if (f === 0 || (r !== R_LEAF && r !== R_STEM)) return false
+    const here = this.sitePath(f)
+    const before = this.sitePath(f - 1)
+    return here.startsWith(before) || before.startsWith(here)
+  }
+
   get last(): number {
     return this.frames.length - 1
   }
@@ -270,6 +288,7 @@ export class Trace {
   }
 
   #cut(frame: number) {
+    this.#paths.clear()
     this.frames.length = frame + 1
     this.rules.length = frame + 1
     this.fired.length = frame + 1
