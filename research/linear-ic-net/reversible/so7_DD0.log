@@ -1,0 +1,18 @@
+  size 1: 1 trees, 0 found, 0.0s
+  size 2: 1 trees, 0 found, 0.0s
+  size 3: 2 trees, 0 found, 0.0s
+  size 4: 4 trees, 0 found, 0.0s
+  size 5: 9 trees, 0 found, 0.0s
+  size 6: 21 trees, 0 found, 0.0s
+  size 7: 51 trees, 0 found, 0.0s
+  size 8: 127 trees, 0 found, 0.0s
+  size 9: 323 trees, 0 found, 0.0s
+  size 10: 835 trees, 0 found, 0.0s
+  size 11: 2188 trees, 0 found, 0.0s
+  size 12: 5798 trees, 0 found, 0.0s
+    found size 13 steps 4: (△ (△ (△ (△ △ (△ (△ (△ (△ △ △)) △) △)))))
+    found size 13 steps 4: (△ (△ (△ (△ (△ (△ (△ △ (△ △ △)) △)) △))))
+    found size 13 steps 4: (△ (△ (△ (△ △ (△ △ △)) (△ (△ (△ △)) △))))
+    found size 13 steps 4: (△ (△ (△ (△ △ (△ (△ (△ (△ △)) △) △)) △)))
+    found size 13 steps 4: (△ (△ (△ (△ (△ (△ (△ △ (△ △ △)))) △) △)))
+  size 13: 15511 trees, 5 found, 0.0s

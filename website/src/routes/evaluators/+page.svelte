@@ -44,6 +44,14 @@
       reload: true
     },
     {
+      name: 'Linear tree calculus',
+      kicker: 'One rule drops, one copies',
+      blurb: 'Tree calculus in nine rules, where only K drops and only W copies. Binders come off one step at a time, then the tree runs.',
+      image: shot('linear'),
+      alt: 'A tree with combinator bands and a reel of coloured steps under it',
+      href: `${base}/evaluators/linear/`
+    },
+    {
       name: 'Two-way programs',
       kicker: 'Every step undoable',
       blurb: 'Programs are trees built from five moves. Flip a run at any point, and firing runs it back.',

@@ -1,0 +1,16 @@
+  size 1: 1 trees, 0 found, 0.0s
+  size 2: 1 trees, 0 found, 0.0s
+  size 3: 3 trees, 0 found, 0.0s
+  size 4: 7 trees, 0 found, 0.0s
+  size 5: 19 trees, 0 found, 0.0s
+  size 6: 51 trees, 0 found, 0.0s
+  size 7: 141 trees, 0 found, 0.0s
+  size 8: 393 trees, 0 found, 0.0s
+  size 9: 1107 trees, 0 found, 0.0s
+  size 10: 3139 trees, 0 found, 0.0s
+  size 11: 8953 trees, 0 found, 0.0s
+  size 12: 25653 trees, 0 found, 0.1s
+  size 13: 73789 trees, 0 found, 0.1s
+  size 14: 212941 trees, 0 found, 0.4s
+    found size 15 (real 14 + K) steps 4: (△ (△ (△ (△ (△ △)) (△ (△ (△ (△ (△ (△ K))) △))))) △)
+  size 15: 616227 trees, 1 found, 1.1s

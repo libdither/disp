@@ -1,0 +1,11 @@
+  size 1: 1 trees, 0 found, 0.0s
+  size 2: 1 trees, 0 found, 0.0s
+  size 3: 3 trees, 0 found, 0.0s
+  size 4: 7 trees, 0 found, 0.0s
+  size 5: 19 trees, 0 found, 0.0s
+  size 6: 51 trees, 0 found, 0.0s
+  size 7: 141 trees, 0 found, 0.0s
+  size 8: 393 trees, 0 found, 0.0s
+  size 9: 1107 trees, 0 found, 0.0s
+    found size 10 (real 9 + K) steps 2: (△ (△ (△ (△ (△ (△ K))) △)) (△ △))
+  size 10: 3139 trees, 1 found, 0.0s

@@ -1,0 +1,7 @@
+name = "linear-ic-net"
+defaultTargets = ["LinearIcNet"]
+
+[[lean_lib]]
+name = "LinearIcNet"
+precompileModules = true
+roots = ["Basic", "Tables", "Size", "Net", "Search", "Runs", "Moves", "Check", "Runner", "Programs", "Checked"]
