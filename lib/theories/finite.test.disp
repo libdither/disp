@@ -1,23 +1,13 @@
-// Finite types: types whose cases are all known, so splitting a symbol of one lists its members and every claim about them is decided by running. A function type between finite types is finite too, with its lookup tables as its cases, which is what makes higher-order types decided. Each is one behaviour record: the type formers need nothing from the judge but their cases.
+// Finite types: types whose cases are all known, so splitting a symbol of one lists its members and every claim about them is decided by running. A function type between finite types is finite too, with its lookup tables as its cases, which is what makes higher-order types decided. A finite type is a recognizer, its members derived as its cases; the function type is the one behaviour record, its cases written as tables.
 open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
-// a partly-known value could still be this tree: its shape agrees with it wherever it has no hole
-rec could_be :: {v : Val, x : Tree} -> Bool :=>
-	if (is_hole(v)) { true }
-	else if (is_leaf(v)) { is_leaf(x) }
-	else if (is_stem(v)) { if (is_stem(x)) { could_be(stem_child(v), stem_child(x)) } else { false } }
-	else if (is_fork(x)) { if (could_be(v.fst, x.fst)) { could_be(v.snd, x.snd) } else { false } }
-	else { false }
-// a finite type: its members are its cases; a value no member could be is out, and otherwise a symbol in it is split
-f_base := {members} => of_type(behaviour{
-	admits := {_self, v} =>
-		if (v.is_known) { if (members.member(v)) { "Yes" } else { "No" } }
-		else if (not(members.any(could_be(v)))) { "No" }
-		else if ((v.is_sym) || (v.is_app)) { inspect(v) }
-		else { inspect(in_syms(v).head) },
-	cases := some({_self, _child} => members)})
+// a finite type: a recognizer for its member list, built once as a chain of comparisons, so its
+// cases are derived, and they are the members
+rec one_of :: {members : List(Tree)} -> Tree :=>
+	if (members.is_nil) { {_v} => false } else { let m := members.head; let rest := one_of(members.tail); {v} => if (v == m) { true } else { rest(v) } }
+f_base := one_of
 elements := cases_of
 f_prod := {a, b} => f_base(elements(a).cross(elements(b), pair))
 rec table_get :: {entries : List(Pair(Tree, Tree)), x : Tree} -> Tree :=>

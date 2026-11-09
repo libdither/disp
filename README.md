@@ -215,9 +215,12 @@ lib/                        -- the language, written in itself
   stream.disp, verdict.disp --   coalgebra streams, budgets and endings; Proved / Refuted / Open
   growth.disp               --   step counts on the machine, fitted exactly to polynomials, as checkable step bounds
   claim.disp                --   claims (witness vs. challenge), the honest search, lenses between claims
+  confirm.disp              --   the symbolic confirmer: runs programs on unknown pieces, splits them by cases it derives from a type's recognizer, induction on smaller pieces
+  rules.disp                --   the rule lenses the floor stands on (three atoms, two combinators), and `judge`, which decides a value at a type with them alone
+  trees.disp                --   every tree as a stream (a search source), and the Bool recognizer
   theories/                 --   a ladder of type theories as terminating checkers, each a lens into a claim
   kernel/                   --   the type system: checker + library types + barrel, and its test pins
-  tests/                    --   substrate-level tests, the refuter and confirmer, the certified rewrites (claim.test.disp)
+  tests/                    --   substrate-level tests, the refuter, the confirmer's tests, the certified rewrites (claim.test.disp)
 
 evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers), and the strand lattice (rust-ic-strands, on tree-net)
 test/                       -- vitest harness + host unit tests

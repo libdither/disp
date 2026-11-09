@@ -61,6 +61,6 @@ test agrees(check_by_structure(succ), Arrow(NatR, NatR, 40, succ)) = true
 runtime_triage := {n} => t(t(zero, succ), id)(n)
 runtime_id := {n} => t(t(zero, {_} => zero), {_l, r} => succ(r))(n)
 test runtime_triage(1) = t(t)
-test run(runtime_triage, in_sym(NatR, [])) = need(in_sym(NatR, []))
+test run(runtime_triage, piece(NatR, [])) = need(piece(NatR, []))
 test check_by_structure(runtime_triage) = refuted(1)
 test check_by_structure(runtime_id) = "Proved"

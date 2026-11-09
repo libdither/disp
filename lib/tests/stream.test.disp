@@ -96,6 +96,12 @@ test verdict((s_from_list([])).bounded(9)) = "Proved"
 test verdict(naturals.s_filter({_n} => false).bounded(9)) = "Open"
 test verdict((s_merge_with(one_spent, advance_head)).s_filter({_n} => false).bounded(40)) = "Open"
 test verdict((s_merge_with(three, advance_head)).s_filter({_n} => false).bounded(40)) = "Proved"
+// a work list: 0 passes, 1 is a counterexample, 2 splits into 0 and 1, anything else stays open
+settle_n := {n} => if (n == 0) { skip } else if (n == 1) { yield(n) } else if (n == 2) { split_into([0, 1]) } else { noted(n) }
+test verdict(s_worklist(settle_n, [0, 0])) = "Proved"
+test verdict(s_worklist(settle_n, [0, 2])) = refuted(1)
+test verdict(s_worklist(settle_n, [3, 0, 4])) = open_on(3)
+test verdict(s_worklist(settle_n, [3, 1])) = refuted(1)
 test agrees("Proved", true) = true
 test agrees("Proved", false) = false
 test agrees(refuted(1), false) = true

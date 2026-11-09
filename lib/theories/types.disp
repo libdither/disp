@@ -1,11 +1,11 @@
-// Types for the theories, each a behaviour record (lib/confirm.disp): how to admit a
-// partly-known value, how a symbol of it splits, what a member does when applied. Judging
-// a value at one is `judge` (lib/rules.disp), the confirmer's search, so Proved is sound by
-// the five rule lenses. A type has two faces as an argument: programs receive the leaf for
-// a type, dependent types receive the type itself.
+// Types for the theories. A first-order type (numbers, data, lists, anything a program can
+// test) is a recognizer, and its cases are derived by running it, so it adds no trusted
+// code. The formers that are not first-order are behaviour records (lib/confirm.disp), each
+// proved by hand once: the universe and its abstract types, functions, dependent pairs and
+// equality. Judging a value at a type is `judge` (lib/rules.disp). A type has two faces as
+// an argument: programs receive the leaf for a type, dependent types receive the type itself.
 open use raw "base.disp" {}
 
-rec nth :: {xs : List(A), i : Nat} -> A :=> if (is_zero(i)) { xs.head } else { nth(xs.tail, nat_pred(i)) }
 rec positions_from :: {i : Nat, xs : List(A)} -> List(Nat) :=> if (xs.is_nil) { [] } else { cons(i, positions_from(succ(i), xs.tail)) }
 positions :: {xs : List(A)} -> List(Nat) :=> positions_from(zero, xs)
 
@@ -14,25 +14,29 @@ bool_t := Bool
 tree_t := TreeR
 empty_t := FalseR
 anything_t := of_type(behaviour{admits := {_self, _v} => "Yes"})
-// a known value is in or out; anything else is a symbol to split, or opaque
+// a known value is in or out; anything else is a piece to split, or opaque
 known_or := {v, answer} => if (v.is_known) { answer(v) } else { inspect(v) }
-// a value whose shape is settled and wrong is out; a symbol or a neutral term is not yet known
-not_pair := {v} => if ((v.is_sym) || (v.is_app)) { inspect(v) } else { "No" }
+// a value whose shape is settled and wrong is out; a piece or a neutral term is not yet known
+not_pair := {v} => if ((v.is_piece) || (v.is_app)) { inspect(v) } else { "No" }
 
-// a value no program can make up, the one member of the abstract type with this name
-abstract_t :: {name : Tree} -> Code :=> {
-	let token := pair("Abstract", name)
-	of_type(behaviour{
-		admits := {_self, v} => known_or(v, {x} => if (x == token) { "Yes" } else { "No" }),
-		generic := some({_self, _i} => token)})
-}
-// A universe: programs receive the leaf for a type. As an argument it is a symbol (a program
-// that looks at it cannot be settled), and dependent types see a fresh abstract type named by
-// it, so a stuck application carrying the symbol still knows its type.
+// the abstract type with this name: its members are pieces no program can make up or look
+// inside, so a program that answers at it with a value of its own is caught. Re-run on real
+// values, a member stands in as one fixed tree.
+abstract_t :: {name : Tree} -> Code :=> of_type(behaviour{
+	admits := {_self, v} => known_or(v, {_x} => "No"),
+	sample := some({_self, _p, k} => nth(stand_ins, k))})
+// the type whose one member is c: a recognizer, so its case is derived
+singleton_t :: {c : Tree} -> Code :=> {y} => y == c
+// A universe: its lens sends a type to two faces. A program receives the leaf; dependent types
+// receive the type. A piece of it is a type argument: a program that looks at it cannot be
+// settled, and dependent types see a fresh abstract type named by it, so a stuck application
+// carrying it still knows its type. Re-run on real values, it stands in as a type of one member.
 universe_t :: Code := of_type(behaviour{
 	admits := {_self, v} => if (is_leaf(v)) { "Yes" } else { not_pair(v) },
-	static := some({_self, v} => if (v.is_sym) { abstract_t(v.sym_name) } else { anything_t }),
-	types := true})
+	static := some({_self, v} => if (v.is_piece) { abstract_t(v.piece_name) } else if (is_leaf(v)) { anything_t } else { v }),
+	program := some({_self, v} => if (v.is_piece) { v } else { t }),
+	types := true,
+	sample := some({_self, _p, k} => singleton_t(nth(stand_ins, k)))})
 
 // A dependent function type: the family takes the argument's faces. One former serves plain
 // functions, polymorphism (over a universe) and dependent types. A family of types is itself
@@ -54,44 +58,47 @@ sigma_t :: {a : Code, fam : Tree} -> Code :=> of_type(behaviour{admits := {_self
 	if (not(v.is_fork_shaped)) { not_pair(v) }
 	else { and_yes(judge_as(a, v.fst), {_y} => judge_as(fam(pair(v.fst, v.fst)), v.snd)) }})
 
-// equality of two values computed on symbols; the witness does not matter
+// equality of two values computed on pieces; the witness does not matter
 eq_t :: {x : Res, y : Res} -> Code :=> of_type(behaviour{admits := {_self, _v} => and_then(x, {a} => and_then(y, {b} => same_val(a, b)))})
 eq_of :: {x : Tree, y : Tree} -> Code :=> eq_t(answered(x), answered(y))
 // a family that looks at its argument runs on it like any program: it picks a type when it can,
-// and otherwise the type waits, asking for the symbol it needed to be split
+// and otherwise the type waits, asking for the piece it needed to be split
 by_value :: {face : Pair(Val, Tree), pick : Tree -> Code} -> Code :=> {
 	let r := sapply(pick, face.snd, run_fuel)
 	if ((r.is_answered) && (r.answer.is_known)) { r.answer }
 	else { of_type(behaviour{admits := {_self, _v} => if (r.is_answered) { stuck_on(pair("family answered no type", r.answer)) } else { r }}) }
 }
 
-// a data type: a member is a constructor's index paired with its arguments' list; "Rec" stands for the type itself
-kind_code := {self, k} => if (k == "Rec") { self } else { k }
-rec args_fit :: {self : Code, kinds : List(Tree), v : Val} -> Res :=>
-	if (kinds.is_nil) { if (is_leaf(v)) { "Yes" } else { not_pair(v) } }
-	else if (not(v.is_fork_shaped)) { not_pair(v) }
-	else { and_yes(judge_as(kind_code(self, kinds.head), v.fst), {_y} => args_fit(self, kinds.tail, v.snd)) }
-retype := {s, code} => sym(code, s.sym_name)
-rec arg_shapes :: {self : Code, child : Tree -> Val, j : Nat, kinds : List(Tree), p : Nat} -> Val :=>
-	if (kinds.is_nil) { t }
-	else { pair(retype(child(pair(j, p)), kind_code(self, kinds.head)), arg_shapes(self, child, j, kinds.tail, succ(p))) }
-data_t :: {shapes : List(List(Tree))} -> Code :=> of_type(behaviour{
-	admits := {self, v} =>
-		if (not(v.is_fork_shaped)) { not_pair(v) }
-		else {
-			let tag := v.fst
-			if (not(tag.is_known)) { inspect(tag) }
-			else if (not((NatR(tag)) && (nat_lt(tag, shapes.length)))) { "No" }
-			else { args_fit(self, nth(shapes, tag), v.snd) }
-		},
-	cases := some({self, child} => positions(shapes).map({j} => pair(j, arg_shapes(self, child, j, nth(shapes, j), 0))))})
+// Data are first-order: a data type is a recognizer, written as a program, and its cases
+// are derived from it like any recognizer's. A type whose members are not first-order cannot
+// be one, and is opaque: nothing is judged a member.
+first_order :: Code -> Bool := {c} => (c == TreeR) || (is_recognizer(c))
+opaque_t := of_type(behaviour{admits := {_self, v} => stuck_on(pair("a type that is not first-order inside data", v))})
+// a data type: a member is a constructor's index paired with its arguments' list; "Rec" stands
+// for the type itself. The recognizer is built once from the description, a test per argument
+// and per constructor, so running it walks no description.
+rec args_test :: {kinds : List(Tree)} -> Tree :=>
+	if (kinds.is_nil) { {_self, v} => is_leaf(v) }
+	else {
+		let here := if (kinds.head == "Rec") { {self} => self } else { {_self} => is_a(kinds.head) }
+		let rest := args_test(kinds.tail)
+		{self, v} => if (is_fork(v)) { if (here(self)(v.fst)) { rest(self, v.snd) } else { false } } else { false }
+	}
+// the tag is a number below the constructor count, read off as the tests are walked
+rec ctor_test :: {shapes : List(List(Tree))} -> Tree :=>
+	if (shapes.is_nil) { {_self, _tag, _args} => false }
+	else {
+		let here := args_test(shapes.head)
+		let rest := ctor_test(shapes.tail)
+		{self, tag, args} => if (is_leaf(tag)) { here(self, args) } else if (is_fork(tag)) { if (is_leaf(tag.fst)) { rest(self, tag.snd, args) } else { false } } else { false }
+	}
+data_t :: {shapes : List(List(Tree))} -> Code :=>
+	if (not(shapes.all({kinds} => kinds.all({k} => (k == "Rec") || (first_order(k)))))) { opaque_t }
+	else { let test := ctor_test(shapes); fix({self, v} => if (is_fork(v)) { test(self, v.fst, v.snd) } else { false }) }
 // lists as lib/list.disp builds them: the leaf, or a pair of an item and a list
-list_t :: {a : Code} -> Code :=> of_type(behaviour{
-	admits := {self, v} =>
-		if (is_leaf(v)) { "Yes" }
-		else if (not(v.is_fork_shaped)) { not_pair(v) }
-		else { and_yes(judge_as(a, v.fst), {_y} => judge_as(self, v.snd)) },
-	cases := some({_self, child} => [t, pair(retype(child("head"), a), child("tail"))])})
+list_t :: {a : Code} -> Code :=>
+	if (not(first_order(a))) { opaque_t }
+	else { fix({self, v} => if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_a(a)(v.fst)) { self(v.snd) } else { false } } else { false }) }
 
 // a run on the step-counting machine, for theories that count steps
 run_budget := 4000

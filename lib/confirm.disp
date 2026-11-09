@@ -1,8 +1,8 @@
 // The confirmer behind TYPES.html: a symbolic checker for claims about functions,
 // quotients and streams. A partly-known value is a tree with holes, each a named
-// symbol ("some member, unnamed") or an application nobody can run; a symbolic
+// piece of the challenge ("some member, unnamed") or an application nobody can run; a symbolic
 // evaluator over them reports answered / need / stuck; a search splits a needed
-// symbol along its type's constructor table; induction is
+// piece along its type's cases, derived for a recognizer by running it; induction is
 // licensed only on a strictly smaller input-derived piece; equality compares
 // normal forms at the codomain after judging membership; streams are compared by
 // one bisimulation step. Verdicts are "Proved", `refuted w` (w re-run
@@ -10,20 +10,22 @@
 // lib/tests/confirmer.test.disp against the enumeration refuter (IDEAS.disp's Arrow). The successor of
 // the v1 confirmer (CHECK.disp, deleted after fe53c8a), whose known gaps it closes:
 //   A  split tables are Option: no table => the search does NOT split (Open);
-//      `some []` only for a declared empty grammar (False: vacuous Proved).
-//      The search splits only a NEED of a positive input symbol.
+//      `some []` only for a type with no members (False: vacuous Proved). A
+//      recognizer's table is derived by running it, never declared by hand.
+//      The search splits only a NEED of an input piece.
 //   B  a GRADE: a judge at an identity-fine position (Tree) refuses a value
-//      with a free symbol of a coarser (arrow/quotient) code; the driver then
+//      with a free piece of a coarser (arrow/quotient) code; the driver then
 //      grounds it on a stored related-but-distinct pair and refutes concretely.
-//   C  induction licenses only "In" symbols (never Out/Rec) strictly below the
-//      root; a codomain-split symbol would be an Out symbol and is rejected.
+//   C  the induction hypothesis is a piece of a function type whose domain is the
+//      strictly smaller pieces of the input: a piece of another input, or the
+//      hypothesis's own answer, is outside it, so it never descends.
 //   D  quotient respect uses the NORMALIZER: f a ~ f (nf a); `nf k` on a
-//      sub-symbol is a neutral term App nf [k] that the hypothesis' partner
+//      smaller piece is a neutral term App nf [k] that the hypothesis's partner
 //      clause consumes. The generator form is kept only as the reproduction.
 //   E  equality judges BOTH outputs at the codomain before comparing terms.
-//   F  an undeclared recognizer is judged by RUNNING it (fueled): a looping
-//      recognizer makes membership Open there, never Proved or Refuted.
-//   G  symbols carry a root id: a curried claim's two arguments are distinct.
+//   F  a recognizer whose cases cannot be derived is judged by RUNNING it
+//      (fueled): a looping one makes membership Open there, never a verdict.
+//   G  pieces carry a root id: a curried claim's two arguments are distinct.
 //   H  fuel bounds DISPATCHES (state-passed), not depth.
 //   I  a marker-shaped tree a program builds is escaped as an opaque Forged hole.
 open use raw "prelude.disp" {}
@@ -35,15 +37,22 @@ open use raw "trees.disp" {}
 open use raw "tests/fixtures.disp" {}
 
 // ---------------------------------------------------------------- codes
-// A code is a positive recognizer (a declared grammar: Nat, Tree, Bool, False)
-// or a negative former (arrow, quotient). Only positive codes split, and only
-// positive codes are identity-fine (their relation is tree_eq).
+// A code is a recognizer (any program saying true to its members: Nat, Bool, False;
+// Tree is the atom), a negative former (arrow, quotient), or a type given by its
+// behaviour. Recognizers split and are identity-fine (their relation is tree_eq).
 TreeR :: {v : Tree} -> Bool :=> true
 FalseR :: {v : Tree} -> Bool :=> false
 // (NatR, LoopR and the quotient normalizers come from fixtures.disp; Bool, the
 // recognizer {t, t t}, from trees.disp)
 ArrowC :: {Dom : Code, Cod : Code} -> Code :=> pair("Arrow", pair(Dom, Cod))
 QuotC :: {Base : Code, nf : Tree} -> Code :=> pair("Quot", pair(Base, nf))
+// the strictly smaller pieces of the input `root` of type Dom, and a partner of one (the
+// induction hypothesis's domain)
+below_c :: {Dom : Code, root : List(Tree), partner : Tree} -> Code :=> pair("Below", pair(Dom, pair(root, partner)))
+is_below_code :: Code -> Bool := {c} => c.fst == "Below"
+// a codomain may depend on the argument: `family_code(fam)` is the type fam(the argument's faces)
+family_code :: {fam : Tree} -> Code :=> pair("Family", fam)
+cod_at :: {Cod : Code, c : Tree} -> Code :=> if (Cod.fst == "Family") { Cod.snd(pair(c, c)) } else { Cod }
 is_arrow_code :: Code -> Bool := {c} => c.fst == "Arrow"
 is_quot_code :: Code -> Bool := {c} => c.fst == "Quot"
 arrow_dom :: Code -> Code := {c} => c.snd.fst
@@ -62,41 +71,40 @@ is_none :: Option(Tree) -> Bool := {o} => o == none
 // A code may also be a type given by its behaviour: the one extension point, so a new
 // type former is a record and nothing below changes for it. Each behaviour receives the
 // type's own code first, so a recursive type refers to itself without building itself.
-// `admits` judges a partly-known value (a symbol of the type itself, a neutral term and
-// an induction token are handled before it is asked); `cases` gives the shapes a member
-// can take, for a type whose symbols may be split; `applied` makes it a function type, with
+// `admits` judges a partly-known value (a piece of the type itself and a neutral term
+// of it are handled before it is asked); `cases` gives the shapes a member
+// can take, for a type whose pieces may be split; `applied` makes it a function type, with
 // the codomain a family over the argument's faces (what a program receives, and what a
 // dependent type sees); `generic` is the argument a function over it receives at a
-// position (a symbol of it, unless given); `static` is what a dependent type sees of a
-// value (the value itself, unless given); `types` says its members are types.
-record behaviour :: {admits : Code -> Val -> Res, cases : Option(Tree) := none, applied : Option(Pair(Code, Tree)) := none, generic : Option(Tree) := none, static : Option(Tree) := none, types : Bool := false} -> Behaviour
+// position (a piece of it, unless given); `static` is what a dependent type sees of a
+// value (the value itself, unless given); `program` is what a program receives of a value
+// (the value itself, unless given); `types` says its members are types; `sample` is a
+// concrete stand-in for a piece of it (the k-th of two), to re-run a claim on real values.
+record behaviour :: {admits : Code -> Val -> Res, cases : Option(Tree) := none, applied : Option(Pair(Code, Tree)) := none, generic : Option(Tree) := none, static : Option(Tree) := none, program : Option(Tree) := none, types : Bool := false, sample : Option(Tree) := none} -> Behaviour
 of_type :: {b : Behaviour} -> Code :=> pair("Type", b)
 is_type_code :: Code -> Bool := {c} => c.fst == "Type"
 // a code as a function type: some(pair(domain, family)), the family taking the argument's faces
 fn_view :: Code -> Option(Pair(Code, Tree)) := {c} =>
-	if (is_arrow_code(c)) { some(pair(arrow_dom(c), {_x} => arrow_cod(c))) }
+	if (is_arrow_code(c)) { some(pair(arrow_dom(c), {face} => cod_at(arrow_cod(c), face.fst))) }
 	else if (is_type_code(c)) { c.snd.applied }
 	else { none }
 is_fn_code :: Code -> Bool := {c} => not(is_none(fn_view(c)))
 static_of :: {T : Code, v : Val} -> Tree :=> if ((is_type_code(T)) && (not(is_none(T.snd.static)))) { T.snd.static.snd(T, v) } else { v }
-// an argument's two faces: the value a program receives, and what dependent types see of it
-faces_of :: {T : Code, v : Val} -> Pair(Val, Tree) :=> pair(v, static_of(T, v))
+program_of :: {T : Code, v : Val} -> Val :=> if ((is_type_code(T)) && (not(is_none(T.snd.program)))) { T.snd.program.snd(T, v) } else { v }
 
 // ---------------------------------------------------------------- values
 // A partly-known value is a plain tree with holes in it: a fully known value is itself,
 // and equal values are equal trees. A hole is `wait(hole_marker, what)` (built like the
 // kernel's hypotheses, lib/kernel/kernel.disp), and applying one natively gives the hole
-// for that application. What a hole stands for:
-//   Sym T name    an unknown member of T, named, so two occurrences of one unknown are one
-//                 tree. Names are kind, root id, path: `In root path` is the argument `root`
-//                 reached by `path` (destructor steps, newest first); `Rec root path` is the
-//                 recursive call's value on that input; `Out` would be minted from a
-//                 function's OUTPUT (a codomain split) and never licenses induction; `Var`
-//                 is a pattern variable.
-//   App head arg  an application nobody can run (a neutral term)
-//   AssumedFn     the induction hypothesis: the recursive function, applicable ONLY below
-//                 `root` (or to the `partner` of something below it: the quotient's hypothesis)
-//   Forged        a marker-shaped tree a program built (below)
+// for that application. A hole is one of three things:
+//   Piece T root path  a piece of the challenge: the argument `root` reached by `path`
+//                 (destructor steps, newest first), unknown but for being a member of T.
+//                 The lenses make every unknown one: the case split's cases have pieces, the
+//                 induction hypothesis is a piece of a function type, a pattern's variables
+//                 are pieces of the pattern. Two occurrences of one piece are one tree.
+//   App head arg  an application nobody can run yet: of a function piece, or of a function
+//                 whose answer waits on a piece (tree_eq, is_a)
+//   Forged v      a marker-shaped tree a program built (below)
 hole_marker := fix({self, what, arg} => wait(self, pair("App", pair(wait(self, what), arg))))
 hole :: {what : Tree} -> Val :=> wait(hole_marker, what)
 hole_sig := (hole(t)).fst
@@ -122,55 +130,57 @@ rec escape :: {v : Tree} -> Val :=>
 	else { t(escape(v.fst), escape(v.snd)) }
 mk_fork :: {a : Val, b : Val} -> Val :=> if (a == hole_sig) { forged(t(a, b)) } else { t(a, b) }
 
-sym :: {T : Code, name : Tree} -> Val :=> hole(pair("Sym", pair(T, name)))
-in_sym_at :: {T : Code, root : Nat, path : List(Tree)} -> Val :=> sym(T, pair("In", pair(root, path)))
-in_sym :: {T : Code, path : List(Tree)} -> Val :=> in_sym_at(T, 0, path)
-rec_sym :: {T : Code, path : List(Tree)} -> Val :=> sym(T, pair("Rec", pair(0, path)))
-out_sym :: {T : Code, path : List(Tree)} -> Val :=> sym(T, pair("Out", pair(0, path)))
-var_sym :: {name : Tree} -> Val :=> sym(t, pair("Var", pair(0, name)))
+piece_named :: {T : Code, name : Pair(Tree, List(Tree))} -> Val :=> hole(pair("Piece", pair(T, name)))
+piece_at :: {T : Code, root : Tree, path : List(Tree)} -> Val :=> piece_named(T, pair(root, path))
+piece :: {T : Code, path : List(Tree)} -> Val :=> piece_at(T, 0, path)
+// a variable of a pattern, which matching binds
+pattern_piece :: {name : Tree} -> Val :=> piece_at(TreeR, "pattern", [name])
 app_val :: {head : Val, arg : Val} -> Val :=> hole(pair("App", pair(head, arg)))
-assumed_fn :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val} -> Val :=> hole(pair("AssumedFn", pair(Dom, pair(Cod, pair(root, partner)))))
-
+// The induction hypothesis: a piece of the function type from the strictly smaller pieces of
+// the input `root` (or the `partner` of one: a quotient's hypothesis) to the codomain. Its
+// license is the arrow rule: an argument must be in its domain.
+hypothesis :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val} -> Val :=>
+	piece_at(ArrowC(below_c(Dom, root, partner), Cod), "hypothesis", root)
 is_hole_of :: {kind : Tree, v : Val} -> Bool :=> if (is_hole(v)) { v.hole_what.fst == kind } else { false }
-is_sym :: Val -> Bool := is_hole_of("Sym")
+is_piece :: Val -> Bool := is_hole_of("Piece")
 is_app :: Val -> Bool := is_hole_of("App")
-is_token :: Val -> Bool := is_hole_of("AssumedFn")
-sym_type :: Val -> Code := {s} => s.hole_what.snd.fst
-sym_name :: Val -> Tree := {s} => s.hole_what.snd.snd
-sym_kind :: Val -> Tree := {s} => s.sym_name.fst
-sym_root :: Val -> Nat := {s} => s.sym_name.snd.fst
-sym_path :: Val -> List(Tree) := {s} => s.sym_name.snd.snd
-is_in_sym :: Val -> Bool := {v} => if (v.is_sym) { v.sym_kind == "In" } else { false }
-is_var :: Val -> Bool := {v} => if (v.is_sym) { v.sym_kind == "Var" } else { false }
+piece_type :: Val -> Code := {s} => s.hole_what.snd.fst
+piece_name :: Val -> Tree := {s} => s.hole_what.snd.snd
+piece_root :: Val -> Tree := {s} => s.piece_name.fst
+piece_path :: Val -> List(Tree) := {s} => s.piece_name.snd
+is_var :: Val -> Bool := {v} => if (v.is_piece) { v.piece_root == "pattern" } else { false }
 app_head :: Val -> Val := {a} => a.hole_what.snd.fst
 app_arg :: Val -> Val := {a} => a.hole_what.snd.snd
-token_dom := {tok} => tok.hole_what.snd.fst
-token_cod := {tok} => tok.hole_what.snd.snd.fst
-token_root := {tok} => tok.hole_what.snd.snd.snd.fst
-token_partner := {tok} => tok.hole_what.snd.snd.snd.snd
+// an argument's two faces: what a program receives, and what dependent types see of it
+faces_of :: {T : Code, v : Val} -> Pair(Val, Tree) :=> pair(program_of(T, v), static_of(T, v))
 
-// the split table of a code: `none` for codes without a declaration (arrows,
-// quotients, unknown recognizers), `some []` only for a declared empty grammar
-table :: {R : Code, child : Tree -> Val} -> Option(List(Val)) :=>
-	if (R == NatR) { some([t, t(t, child("pred"))]) }
-	else if (R == TreeR) { some([t, t(child("child")), t(child("left"), child("right"))]) }
-	else if (R == Bool) { some([t, t(t)]) }
-	else if (R == FalseR) { some([]) }
-	else if ((is_type_code(R)) && (not(is_none(R.snd.cases)))) { some(R.snd.cases.snd(R, child)) }
-	else { none }
-is_positive :: Code -> Bool := {R} => not(is_none(table(R, {_} => t)))
-// identity-fine (the relation is tree_eq): exactly the declared grammars
-is_fine :: Code -> Bool := is_positive
-// the search may split exactly the INPUT symbols of a positive code
-is_splittable :: Val -> Bool := {v} => if (v.is_in_sym) { is_positive(v.sym_type) } else { false }
+// Membership as a program: is_a(T)(x) runs T's recognizer on x. The evaluator reads it as
+// the question "x : T": a piece of T is a member, and while T's own cases or another
+// recognizer's are derived, a piece not yet given a type makes the question open.
+member_marker := {T, x} => T(x)
+is_a :: {T : Code} -> Tree :=> wait(member_marker, T)
+is_a_sig := (is_a(t)).fst
+is_member_q :: Val -> Bool := {f} => if (is_fork(f)) { f.fst == is_a_sig } else { false }
+// the trees a recognizer says no to, as a recognizer
+not_a :: {T : Code} -> Code :=> {y} => not(is_a(T)(y))
+
+// A recognizer is a type: its members are the trees it says true to. Tree is the one atom.
+is_recognizer :: Code -> Bool := {R} =>
+	if ((R == TreeR) || (is_type_code(R))) { false } else if ((is_arrow_code(R)) || (is_quot_code(R))) { false } else { not((R.fst == "Family") || (is_below_code(R))) }
+// a code whose pieces may split: Tree, a recognizer (its cases are derived, below), a type with cases.
+// These are also the identity-fine codes: their relation is tree_eq
+has_cases :: Code -> Bool := {R} => if ((R == TreeR) || (is_recognizer(R))) { true } else if (is_type_code(R)) { not(is_none(R.snd.cases)) } else { false }
+is_fine :: Code -> Bool := has_cases
+// the search may split exactly the INPUT pieces of such a code
+is_splittable :: Val -> Bool := {v} => if (v.is_piece) { has_cases(v.piece_type) } else { false }
 
 // ---------------------------------------------------------------- outcomes
-// A run either answers, NEEDS the shape of a splittable symbol (a case split
+// A run either answers, NEEDS the shape of a splittable piece (a case split
 // can resolve it), or is stuck: bare `stuck` for fuel or a missing license,
 // `stuck_on (pair why value)` when an opaque value was inspected or judged —
 // stuck is never a verdict and never split. Judgements reuse the vocabulary
 // plus Yes/No and `coarse s`: the value is fine-shaped but carries the free
-// symbol s of a coarser code (the grade rule). "No" is reserved for a GENUINE
+// piece s of a coarser code (the grade rule). "No" is reserved for a GENUINE
 // counterexample (on a ground input it refutes).
 answered :: {v : Val} -> Res :=> pair("Answered", v)
 need :: {s : Val} -> Res :=> pair("Need", s)
@@ -183,21 +193,21 @@ is_stuck :: Res -> Bool := {r} => (r == stuck) || (r.fst == "Stuck")
 answer :: Res -> Val := pair_snd
 and_then :: {r : Res, continue : Val -> Res} -> Res :=> if (r.is_answered) { continue(r.answer) } else { r }
 and_yes :: {r : Res, continue : Tree -> Res} -> Res :=> if (r == "Yes") { continue(t) } else { r }
-// inspecting a value: a splittable symbol is a Need; an input symbol without
+// inspecting a value: a splittable piece is a Need; an input piece without
 // a table, a hypothesis value or a neutral term is opaque — Stuck with a reason
 // the function at the bottom of a neutral term
 rec spine_head :: {v : Val} -> Val :=> if (v.is_app) { spine_head(v.app_head) } else { v }
 inspect :: Val -> Res := {v} =>
 	if (v.is_splittable) { need(v) }
-	else if (v.is_in_sym) { stuck_on(pair("no split table", v)) }
-	// an application of a function symbol that can be split (a finite function type) waits on that split
+	else if (v.is_piece) { stuck_on(pair("no split table", v)) }
+	// an application of a function piece that can be split (a finite function type) waits on that split
 	else if ((v.is_app) && (spine_head(v).is_splittable)) { need(spine_head(v)) }
 	else { stuck_on(pair("opaque value", v)) }
 
 // ---------------------------------------------------------------- matching
-// First-order matching of a pattern (a value whose Var symbols bind) against a
+// First-order matching of a pattern (a value whose pattern pieces bind) against a
 // term: variables bind consistently, equal trees match, shapes match child by
-// child, neutral terms match head by tree_eq then argument, a splittable symbol
+// child, neutral terms match head by tree_eq then argument, a splittable piece
 // where the pattern has a shape is a Need. Answers the environment (a list of
 // pair var value).
 rec match_val :: {pattern : Val, term : Val, env : List(Pair(Val, Val))} -> Res :=>
@@ -220,14 +230,15 @@ rec match_val :: {pattern : Val, term : Val, env : List(Pair(Val, Val))} -> Res 
 	else { "Unrelated" }
 
 // ---------------------------------------------------------------- the licenses
-// succ^k (in_sym q) IS the symbol q lost its last k "pred" steps to (it only
-// exists in the branch where that symbol split as a succ) — fold it back so
-// the induction license sees the symbol itself
-rec canon :: {v : Val} -> Val :=>
+// succ^k (piece q) IS the piece q lost its last k steps to, when succ of the
+// child is one of the cases q split into (it only exists in that branch) — fold
+// it back so the induction license sees the piece itself. `tbl` is `table`.
+rec canon_with :: {tbl : Tree, v : Val} -> Val :=>
 	if ((v.is_fork_shaped) && (is_leaf(v.fst))) {
-		let inner := canon(v.snd)
-		if (((inner.is_in_sym) && (not(inner.sym_path.is_nil))) && (inner.sym_path.head == "pred")) {
-			in_sym_at(inner.sym_type, inner.sym_root, inner.sym_path.tail)
+		let inner := canon_with(tbl, v.snd)
+		if ((inner.is_piece) && (not(inner.piece_path.is_nil))) {
+			let cases := tbl(inner.piece_type, {step} => piece_at(inner.piece_type, inner.piece_root, cons(step, inner.piece_path.tail)))
+			if ((not(is_none(cases))) && (cases.snd.member(t(t, inner)))) { piece_at(inner.piece_type, inner.piece_root, inner.piece_path.tail) } else { v }
 		} else { v }
 	} else { v }
 
@@ -238,27 +249,114 @@ rec is_strict_ext :: {longer : List(Tree), shorter : List(Tree)} -> Bool :=>
 	else if (longer.tail == shorter) { true }
 	else { is_strict_ext(longer.tail, shorter) }
 
-// the induction hypothesis may be assumed on a strict structural descendant of
-// the root input — an INPUT symbol (never an Out or Rec one) of the domain
-// code, of the induction root (root id 0), on a path strictly below the root's
-// — or on that descendant's `partner` (for a quotient, the hypothesis says the
-// two calls on a related pair below root AGREE, so both get the same name)
-// a codomain may depend on the argument: `family_code(fam)` gives the hypothesis at c the type fam(c's faces)
-family_code :: {fam : Tree} -> Code :=> pair("Family", fam)
-cod_at :: {Cod : Code, c : Val} -> Code :=> if (Cod.fst == "Family") { Cod.snd(pair(c, c)) } else { Cod }
-apply_ih_at :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> {
-	let license := {c} =>
-		if (((c.is_in_sym) && (c.sym_type == Dom)) && ((c.sym_root == 0) && (is_strict_ext(c.sym_path, root)))) { answered(rec_sym(cod_at(Cod, c), c.sym_path)) }
-		else { stuck }
-	let direct := license(canon(x))
-	if (direct.is_answered) { direct }
+// the piece an argument of the hypothesis stands for, or "None": a strict descendant of the
+// root input, an input piece of the domain (after folding succ^k back), or the partner of one
+licensed_with :: {tbl : Tree, B : Code, x : Val} -> Val :=> {
+	let Dom := B.snd.fst
+	let root := B.snd.snd.fst
+	let partner := B.snd.snd.snd
+	let ok := {c} => if (c.is_piece) { ((c.piece_type == Dom) && (c.piece_root == 0)) && (is_strict_ext(c.piece_path, root)) } else { false }
+	let direct := canon_with(tbl, x)
+	if (ok(direct)) { direct }
 	else {
-		let peeled := match_val(partner(var_sym("a")), x, [])
-		if ((peeled.is_answered) && (not(peeled.answer.is_nil))) { license(canon(peeled.answer.head.snd)) } else { stuck }
+		let peeled := match_val(partner(pattern_piece("a")), x, [])
+		let found := if ((peeled.is_answered) && (not(peeled.answer.is_nil))) { canon_with(tbl, peeled.answer.head.snd) } else { none }
+		if (ok(found)) { found } else { "None" }
 	}
 }
-apply_ih :: {C : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> apply_ih_at(C, C, root, partner, x)
 same :: Val -> Val := {a} => a
+
+// ---------------------------------------------------------------- derived cases
+// A recognizer's cases come from running it once on an unknown tree: where it looks,
+// the tree splits into its pieces' cases (Tree's three shapes at first), and a branch
+// that answers true is a case. Asking whether a strictly smaller piece is a member
+// (its own recursion, or another type's is_a) opens a question; a branch whose answer
+// is the question is the case with the piece typed, and a branch that looks at the
+// answer splits in two. Nothing about a type is written by hand: Tree's shapes, the
+// generic run and induction on smaller pieces are all it takes. `run` is `sapply`.
+rec subst :: {target : Val, by : Val, v : Val} -> Val :=>
+	if (v == target) { by }
+	else if (v.is_app) { app_val(subst(target, by, v.app_head), subst(target, by, v.app_arg)) }
+	else if ((is_hole(v)) || (is_leaf(v))) { v }
+	else if (is_stem(v)) { t(subst(target, by, stem_child(v))) }
+	else { t(subst(target, by, v.fst), subst(target, by, v.snd)) }
+retype :: {s : Val, code : Code} -> Val :=> piece_named(code, s.piece_name)
+tree_cases :: {child : Tree -> Val} -> List(Val) :=> [t, t(child("child")), t(child("left"), child("right"))]
+fix_shape := fix(pattern_piece("step"))
+step_of :: {f : Val} -> Tree :=> {
+	let m := match_val(fix_shape, f, [])
+	if ((m.is_answered) && (not(m.answer.is_nil))) { m.answer.head.snd } else { none }
+}
+rec all_some :: {xs : List(Option(List(Val)))} -> Option(List(Val)) :=>
+	if (xs.is_nil) { some([]) }
+	else if (is_none(xs.head)) { none }
+	else { let rest := all_some(xs.tail); if (is_none(rest)) { none } else { some(xs.head.snd.append(rest.snd)) } }
+derive_depth := 16
+// a branch of one layer that runs longer than this gives no cases (recursion that is not
+// on a smaller piece stops at once, so the budget only bounds the layer's own work)
+derive_fuel := 300000
+// the root id of the tree being derived, which no search uses
+derive_root := 7
+// a piece of that tree not yet given a type: asking whether it is a member opens a question
+is_open_piece :: Val -> Bool := {x} => if (x.is_piece) { ((x.piece_type == TreeR) && (x.piece_root == derive_root)) && (not(x.piece_path.is_nil)) } else { false }
+// a value built around such pieces: asking about it is recursion that is not on a smaller piece
+rec has_open_piece :: {x : Val} -> Bool :=>
+	if (is_open_piece(x)) { true }
+	else if (x.is_app) { (has_open_piece(x.app_head)) || (has_open_piece(x.app_arg)) }
+	else if ((is_hole(x)) || (is_leaf(x))) { false }
+	else if (is_stem(x)) { has_open_piece(stem_child(x)) }
+	else if (has_open_piece(x.fst)) { true }
+	else { has_open_piece(x.snd) }
+rec explore :: {run : Tree, tbl : Tree, R : Code, v : Val, depth : Nat} -> Option(List(Val)) :=> {
+	let step := step_of(R)
+	let r := if (step == none) { run(R, v) } else { and_then(run(step, is_a(R)), {layer} => run(layer, v)) }
+	let typed := {q, T} => subst(q.app_arg, retype(q.app_arg, T), v)
+	let asks := {q} => if (q.is_app) { q.app_head.is_member_q } else { false }
+	let question := if (r.is_answered) { r.answer } else if (r.fst == "Stuck") { r.snd.snd } else { t }
+	if (r == answered(true)) { some([v]) }
+	else if (r == answered(false)) { some([]) }
+	// the answer is the question itself: a case exactly when the piece is a member
+	else if (if (r.is_answered) { asks(question) } else { false }) { some([typed(question, question.app_head.snd.snd)]) }
+	else if (is_zero(depth)) { none }
+	// the run looked at the question's answer: one branch where the piece is a member, one where it is not
+	else if (asks(question)) {
+		all_some([explore(run, tbl, R, typed(question, question.app_head.snd.snd), nat_pred(depth)), explore(run, tbl, R, typed(question, not_a(question.app_head.snd.snd)), nat_pred(depth))])
+	}
+	// the run looked at a piece: split it by its type's cases
+	else if (if (r.is_need) { if (r.snd.is_piece) { r.snd.piece_root == derive_root } else { false } } else { false }) {
+		let s := r.snd
+		let child := {step} => piece_at(s.piece_type, derive_root, cons(step, s.piece_path))
+		let alts := tbl(s.piece_type, child)
+		if (is_none(alts)) { none } else { all_some(alts.snd.map({alt} => explore(run, tbl, R, subst(s, alt, v), nat_pred(depth)))) }
+	}
+	else { none }
+}
+// a derived case names its pieces by their path in the tree; a one-step path by the step
+rec name_pieces :: {child : Tree -> Val, v : Val} -> Val :=>
+	if (v.is_piece) { retype(child(if (v.piece_path.is_nil) { "tree" } else if (v.piece_path.tail.is_nil) { v.piece_path.head } else { v.piece_path }), v.piece_type) }
+	else if ((is_hole(v)) || (is_leaf(v))) { v }
+	else if (is_stem(v)) { t(name_pieces(child, stem_child(v))) }
+	else { t(name_pieces(child, v.fst), name_pieces(child, v.snd)) }
+// The split table of a code: Tree's shapes, a recognizer's derived cases, a type's own;
+// `none` for arrows, quotients, and a recognizer whose cases could not be derived.
+// An empty list is a type with no members: a claim over it holds vacuously.
+rec table_via :: {run : Tree, R : Code, child : Tree -> Val} -> Option(List(Val)) :=>
+	if (R == TreeR) { some(tree_cases(child)) }
+	else if (is_type_code(R)) { if (is_none(R.snd.cases)) { none } else { some(R.snd.cases.snd(R, child)) } }
+	else if (not(is_recognizer(R))) { none }
+	else {
+		let found := explore(run, {T, c} => table_via(run, T, c), R, piece_at(TreeR, derive_root, []), derive_depth)
+		if (is_none(found)) { none } else { some(found.snd.map({c} => name_pieces(child, c))) }
+	}
+// tree_eq on partly-known values: identical values are equal in every instance, shapes
+// that differ where both are known are unequal, and otherwise the first hole decides
+rec eq_val :: {a : Val, b : Val} -> Res :=>
+	if (a == b) { answered(true) }
+	else if (is_hole(a)) { inspect(a) }
+	else if (is_hole(b)) { inspect(b) }
+	else if (is_stem(a)) { if (is_stem(b)) { eq_val(stem_child(a), stem_child(b)) } else { answered(false) } }
+	else if (if (is_fork(a)) { is_fork(b) } else { false }) { and_then(eq_val(a.fst, b.fst), {same_l} => if (same_l == true) { eq_val(a.snd, b.snd) } else { answered(false) }) }
+	else { answered(false) }
 
 // ---------------------------------------------------------------- the evaluator
 // The substrate's three rules over partly-known values. Fuel is a STEP budget
@@ -266,10 +364,11 @@ same :: Val -> Val := {a} => a
 // sub-computation runs out of fuel instead of out of time; a fully known one runs
 // on the native machine against the same budget. Only the triage
 // rule and the function position inspect a value, so those are the only places
-// a symbol can be needed — everything else copies symbols by name. A negative
-// symbol or neutral term in function position makes a neutral term; a declared
-// normalizer applied to a sub-symbol it would need makes one too (the quotient
+// a piece can be needed — everything else copies pieces by name. A negative
+// piece or neutral term in function position makes a neutral term; a declared
+// normalizer applied to a smaller piece it would need makes one too (the quotient
 // hypothesis consumes it).
+run_fuel := 4000
 rec nat_drop :: {k : Nat, n : Nat} -> Nat :=> if (is_zero(k)) { n } else { nat_drop(nat_pred(k), nat_pred(n)) }
 /// a fully known run on the native machine, in chunks that double, each continuing where the last paused: at most twice its steps are charged
 rec run_native :: {m : Machine, chunk : Nat, fuel : Nat} -> Pair(Res, Nat) :=>
@@ -287,7 +386,7 @@ rec sapply_s :: {f : Val, x : Val, fuel : Nat} -> Pair(Res, Nat) :=> {
 	let rule_s := {w, y} => bind(go(w, x, left0), {wx, l1} => bind(go(y, x, l1), {yx, l2} => go(wx, yx, l2)))
 	let rule_triage := {on_leaf, on_stem, on_fork} =>
 		// the identity compiles to the triage that REBUILDS its argument (t, t, t):
-		// that is x for every tree, so a symbol may pass through unseen
+		// that is x for every tree, so a piece may pass through unseen
 		if (((is_leaf(on_leaf)) && (is_leaf(on_stem))) && (is_leaf(on_fork))) { stop(answered(x), left0) }
 		else if (is_leaf(x)) { stop(answered(on_leaf), left0) }
 		else if (is_stem(x)) { go(on_stem, stem_child(x), left0) }
@@ -300,33 +399,56 @@ rec sapply_s :: {f : Val, x : Val, fuel : Nat} -> Pair(Res, Nat) :=> {
 		else if (left.is_fork_shaped) { rule_triage(left.fst, left.snd, right) }
 		else { stop(inspect(left), left0) }
 	if (is_zero(fuel)) { stop(stuck, 0) }
-	else if (if (is_known(f)) { is_known(x) } else { false }) { run_native(m_start(f, x), 1, fuel) }
+	else if (f == tree_eq) { stop(answered(app_val(tree_eq, x)), left0) }
+	else if (if (is_known(x)) { is_known(f) } else { false }) { run_native(m_start(f, x), 1, fuel) }
+	// is_a(T)(x): the question "x : T" (above); otherwise one layer of T runs
+	else if (f.is_member_q) {
+		let T := f.snd.snd
+		let step := step_of(T)
+		if (if (x.is_piece) { x.piece_type == T } else { false }) { stop(answered(true), left0) }
+		else if (if (x.is_piece) { x.piece_type == not_a(T) } else { false }) { stop(answered(false), left0) }
+		else if (is_open_piece(x)) { stop(answered(app_val(f, x)), left0) }
+		else if (has_open_piece(x)) { stop(stuck_on(pair("membership asked of a value that is not a smaller piece", x)), left0) }
+		else if (step == none) { go(T, x, left0) }
+		else { bind(go(step, f, left0), {sf, l1} => go(sf, x, l1)) }
+	}
 	else if (is_leaf(f)) { stop(answered(t(x)), left0) }
 	else if (is_stem(f)) { stop(answered(mk_fork(stem_child(f), x)), left0) }
 	else if (f.is_fork_shaped) {
 		let ran := by_left(f.fst, f.snd)
-		// a declared normalizer on a sub-symbol it needs: the neutral term `nf k`
-		if (((x.is_in_sym) && (not(x.sym_path.is_nil))) && (((ran.fst == need(x)) || (ran.fst.is_stuck)) && (normalizers.member(f)))) { stop(answered(app_val(f, x)), ran.snd) }
+		// a declared normalizer on a smaller piece it needs: the neutral term `nf k`
+		if (((x.is_piece) && (not(x.piece_path.is_nil))) && (((ran.fst == need(x)) || (ran.fst.is_stuck)) && (normalizers.member(f)))) { stop(answered(app_val(f, x)), ran.snd) }
 		else { ran }
 	}
-	else if (f.is_token) { stop(apply_ih_at(f.token_dom, f.token_cod, f.token_root, f.token_partner, x), left0) }
+	// tree_eq's answer waits on a hole: the first hole decides (eq_val)
+	else if (if (f.is_app) { f.app_head == tree_eq } else { false }) { stop(eq_val(f.app_arg, x), left0) }
+	// the induction hypothesis applies only to what its domain licenses, the piece named canonically
+	else if (if (f.is_piece) { if (is_arrow_code(f.piece_type)) { is_below_code(arrow_dom(f.piece_type)) } else { false } } else { false }) {
+		let tbl := {R, child} => table_via({g, y} => (sapply_s(g, y, derive_fuel)).fst, R, child)
+		let c := licensed_with(tbl, arrow_dom(f.piece_type), x)
+		if (c == "None") { stop(stuck, left0) } else { stop(answered(app_val(f, c)), left0) }
+	}
 	// a hole applied is the hole for that application
-	else if (((f.is_sym) && (is_fn_code(f.sym_type))) || (f.is_app)) { stop(answered(f(x)), left0) }
+	else if ((if (f.is_piece) { is_fn_code(f.piece_type) } else { false }) || (f.is_app)) { stop(answered(f(x)), left0) }
 	else { stop(inspect(f), left0) }
 }
 sapply :: {f : Val, x : Val, fuel : Nat} -> Res :=> (sapply_s(f, x, fuel)).fst
-run_fuel := 4000
+table :: {R : Code, child : Tree -> Val} -> Option(List(Val)) :=> table_via({f, x} => sapply(f, x, derive_fuel), R, child)
+is_positive :: Code -> Bool := {R} => not(is_none(table(R, {_} => t)))
+canon :: Val -> Val := canon_with(table)
+apply_ih_at :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> sapply(hypothesis(Dom, Cod, root, partner), x, run_fuel)
+apply_ih :: {C : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> apply_ih_at(C, C, root, partner, x)
 split_depth := 3
 
 // ---------------------------------------------------------------- judging
-// judge a partly-known value AT a code. A symbol of the code itself is a Yes;
-// a splittable symbol of another code is a Need (a split tells); any other
-// symbol is opaque. Neutral terms are judged by the ARROW rule: App h [x] at
+// judge a partly-known value AT a code. A piece of the code itself is a Yes;
+// a splittable piece of another code is a Need (a split tells); any other
+// piece is opaque. Neutral terms are judged by the ARROW rule: App h [x] at
 // C when h's code is D -> C and x is judged at D. Data codes have hand-written
 // shape judges; an undeclared recognizer is judged by RUNNING it, fueled.
-// a neutral term's type: its head symbol's, through the codomain at each argument
+// a neutral term's type: its head piece's, through the codomain at each argument
 rec neutral_type :: {v : Val} -> Option(Code) :=>
-	if (v.is_sym) { some(v.sym_type) }
+	if (v.is_piece) { some(v.piece_type) }
 	else if (not(v.is_app)) { none }
 	else {
 		let head := neutral_type(v.app_head)
@@ -337,9 +459,25 @@ rec neutral_type :: {v : Val} -> Option(Code) :=>
 rec spine_args :: {at : Tree, v : Val} -> Res :=>
 	if (not(v.is_app)) { "Yes" }
 	else { and_yes(spine_args(at, v.app_head), {_y} => at(fn_view(neutral_type(v.app_head).snd).snd.fst, v.app_arg)) }
+// a value fits a case when its known shape is the case's and each piece of the case
+// takes the subtree there as a member of the piece's type (`at` judges)
+rec fits_with :: {at : Tree, c : Val, v : Val} -> Res :=>
+	if (c.is_piece) { at(c.piece_type, v) }
+	else if (c == v) { "Yes" }
+	else if (is_hole(v)) { inspect(v) }
+	else if (is_stem(c)) { if (is_stem(v)) { fits_with(at, stem_child(c), stem_child(v)) } else { "No" } }
+	else if (if (c.is_fork_shaped) { v.is_fork_shaped } else { false }) { and_yes(fits_with(at, c.fst, v.fst), {_} => fits_with(at, c.snd, v.snd)) }
+	else { "No" }
+// one Yes is a Yes, all No is a No, otherwise the first that is neither
+rec any_fit :: {rs : List(Res)} -> Res :=>
+	if (rs.is_nil) { "No" }
+	else if (rs.head == "Yes") { "Yes" }
+	else {
+		let rest := any_fit(rs.tail)
+		if (rest == "Yes") { "Yes" } else if (rs.head == "No") { rest } else { rs.head }
+	}
 rec judge_as :: {R : Code, val : Val} -> Res :=> {
 	let at := {R2, v} => judge_as(R2, v)
-	let sym_rule := {v} => if (v.sym_type == R) { "Yes" } else { inspect(v) }
 	// a neutral term is in R when its type is R and every argument along it is in its domain;
 	// outside a domain the head's behaviour is unconstrained, so that is blamed on the head
 	let app_rule := {v} =>
@@ -349,65 +487,43 @@ rec judge_as :: {R : Code, val : Val} -> Res :=> {
 		}
 		else { stuck_on(pair("opaque value", v)) }
 	let opaque := {v} => stuck_on(pair("opaque value", v))
-	let leaf := {v} =>
-		if (is_leaf(v)) { "Yes" }
-		else if (v.is_sym) { inspect(v) }
-		else if (is_hole(v)) { opaque(v) }
-		else { "No" }
-	// Nat's shape certificate: leaf, or fork(leaf, Nat). A Nat-symbol on the left
-	// may be zero = leaf, so only a split can tell: that is a Need, never a No.
-	let nat := {v} =>
-		if (v.is_known) { if (NatR(v)) { "Yes" } else { "No" } }
-		else if (v.is_sym) { sym_rule(v) }
-		else if (v.is_app) { app_rule(v) }
-		else if (is_hole(v)) { opaque(v) }
-		else if (is_stem(v)) { "No" }
-		else if (is_leaf(v.fst)) { at(NatR, v.snd) }
-		else if (v.fst.is_sym) { inspect(v.fst) }
-		else if (is_hole(v.fst)) { opaque(v.fst) }
-		else { "No" }
-	// a Bool is the leaf or the stem of the leaf
-	let bool := {v} =>
-		if (v.is_known) { if (Bool(v)) { "Yes" } else { "No" } }
-		else if (v.is_sym) { sym_rule(v) }
-		else if (v.is_app) { app_rule(v) }
-		else if (is_hole(v)) { opaque(v) }
-		else if (is_stem(v)) { leaf(stem_child(v)) }
-		else { "No" }
-	// the GRADE rule: at Tree (relation tree_eq) a free symbol of a coarser code
+	// the GRADE rule: at Tree (relation tree_eq) a free piece of a coarser code
 	// is refused — it may map related inputs to unrelated trees. A neutral term
 	// is judged at its codomain (f 0 at Nat -> Nat is a Nat whatever f is), so
 	// the argument must be in the domain; any other neutral term is opaque.
 	let tree := {v} =>
 		if (v.is_known) { "Yes" }
-		else if (v.is_sym) { if (is_fine(v.sym_type)) { "Yes" } else { coarse(v) } }
+		else if (v.is_piece) { if (is_fine(v.piece_type)) { "Yes" } else { coarse(v) } }
 		else if (v.is_app) {
 			let head := v.app_head
 			let ty := neutral_type(v)
 			if ((not(is_none(ty))) && (is_fine(ty.snd))) { at(ty.snd, v) }
-			else if (head.is_sym) { coarse(head) }
+			else if (head.is_piece) { coarse(head) }
 			else { opaque(v) }
 		}
 		else if (is_hole(v)) { opaque(v) }
 		else if (is_stem(v)) { at(TreeR, stem_child(v)) }
 		else { and_yes(at(TreeR, v.fst), {_} => at(TreeR, v.snd)) }
-	// nothing is a False; a symbol OF False ranges over nothing (vacuous Yes)
-	let false_ := {v} => if (v.is_sym) { sym_rule(v) } else if (is_hole(v)) { opaque(v) } else { "No" }
-	let by_running := {v} => and_then(sapply(R, v, run_fuel), {b} =>
+	// A recognizer: a value must fit one of its derived cases, each piece a member of its type.
+	// Deriving the cases showed the recognizer stops on every tree, so a known tree runs it
+	// directly. Without cases it runs on the value, fueled.
+	let ran := {v} => and_then(sapply(R, v, run_fuel), {b} =>
 		if (b == true) { "Yes" } else if (b == false) { "No" } else { stuck_on(pair("recognizer answered no Bool", b)) })
-	if (val.is_token) { stuck }
-	else if (R == NatR) { nat(val) }
-	else if (R == Bool) { bool(val) }
-	else if (R == TreeR) { tree(val) }
-	else if (R == FalseR) { false_(val) }
-	else if (is_type_code(R)) {
-		if ((val.is_sym) && (val.sym_type == R)) { "Yes" }
-		else if ((val.is_app) && (app_rule(val) == "Yes")) { "Yes" }
-		else { R.snd.admits(R, val) }
+	let recognized := {v} => {
+		let cases := table(R, {step} => piece(TreeR, [step]))
+		if (v.is_app) { app_rule(v) }
+		else if (is_none(cases)) { and_yes(tree(v), {_} => ran(v)) }
+		else if (v.is_known) { if (R(v) == true) { "Yes" } else { "No" } }
+		else { any_fit(cases.snd.map({c} => fits_with(at, c, v))) }
 	}
+	if (if (val.is_piece) { val.piece_type == R } else { false }) { "Yes" }
+	else if (if (val.is_app) { app_rule(val) == "Yes" } else { false }) { "Yes" }
+	else if (R == TreeR) { tree(val) }
+	else if (is_type_code(R)) { R.snd.admits(R, val) }
 	else if (is_arrow_code(R)) { stuck_on(pair("arrow codomain: a curried claim (check_arrow2)", val)) }
 	else if (is_quot_code(R)) { at(quot_base(R), val) }
-	else { by_running(val) }
+	else if (is_below_code(R)) { if (licensed_with(table, R, val) == "None") { "No" } else { "Yes" } }
+	else { recognized(val) }
 }
 judge_nat :: Val -> Res := judge_as(NatR)
 judge_bool :: Val -> Res := judge_as(Bool)
@@ -419,28 +535,22 @@ member_same :: {Cod : Code, a : Val, b : Val} -> Res :=>
 	and_yes(judge_as(Cod, a), {_} => and_yes(judge_as(Cod, b), {_} => same_val(a, b)))
 
 // ---------------------------------------------------------------- the search
-// Case analysis on demand: check the input; a Yes covers every instance of its
-// symbols; on a ground input a No is its own confirmed witness; otherwise the
-// symbol the run NEEDED (or, after a symbolic No — "the terms differ" — the
-// first splittable symbol in the input) is split by its constructor table,
-// substituting each alternative. Any refuted branch refutes; all branches
-// Proved proves; else Open, carrying the reason the run stopped. A stuck run,
-// a need of a symbol without a table, and a coarse symbol never split.
-rec subst :: {target : Val, by : Val, v : Val} -> Val :=>
-	if (v == target) { by }
-	else if (v.is_app) { app_val(subst(target, by, v.app_head), subst(target, by, v.app_arg)) }
-	else if ((is_hole(v)) || (is_leaf(v))) { v }
-	else if (is_stem(v)) { t(subst(target, by, stem_child(v))) }
-	else { t(subst(target, by, v.fst), subst(target, by, v.snd)) }
-rec in_syms :: {v : Val} -> List(Val) :=>
-	if (v.is_in_sym) { [v] }
-	else if (v.is_app) { (in_syms(v.app_head)).append(in_syms(v.app_arg)) }
+// Case analysis on demand, as a work list of inputs: check the input; a Yes covers
+// every instance of its pieces; on a ground input a No is its own confirmed witness;
+// otherwise the piece the run NEEDED (or, after a symbolic No — "the terms differ" —
+// the first splittable piece in the input) is split by its constructor table,
+// substituting each alternative. A refuted input refutes; every input Yes proves;
+// else Open, carrying the first reason a run stopped. A stuck run, a need of a piece
+// without a table, and a coarse piece never split.
+rec pieces_in :: {v : Val} -> List(Val) :=>
+	if (v.is_piece) { [v] }
+	else if (v.is_app) { (pieces_in(v.app_head)).append(pieces_in(v.app_arg)) }
 	else if ((is_hole(v)) || (is_leaf(v))) { [] }
-	else if (is_stem(v)) { in_syms(stem_child(v)) }
-	else { (in_syms(v.fst)).append(in_syms(v.snd)) }
+	else if (is_stem(v)) { pieces_in(stem_child(v)) }
+	else { (pieces_in(v.fst)).append(pieces_in(v.snd)) }
 split_target :: {r : Res, input : Val} -> Val :=>
 	if ((r.is_need) && (r.snd.is_splittable)) { r.snd }
-	else if (r == "No") { let found := (in_syms(input)).filter(is_splittable); if (found.is_nil) { "None" } else { found.head } }
+	else if (r == "No") { let found := (pieces_in(input)).filter(is_splittable); if (found.is_nil) { "None" } else { found.head } }
 	else { "None" }
 // what stopped a run: the reason an Open reports
 explain :: Res -> Tree := {r} =>
@@ -450,48 +560,52 @@ explain :: Res -> Tree := {r} =>
 	else { r }
 
 why :: Verdict -> Tree := {v} => if (v.fst == "Open") { v.snd } else { "not open" }
-combine :: {verdicts : List(Verdict)} -> Verdict :=> {
-	let refutations := verdicts.filter(is_refuted)
-	if (not(refutations.is_nil)) { refutations.head }
-	else if (verdicts.all({v} => v == "Proved")) { "Proved" }
-	else { verdicts.filter(is_open).head }
-}
-// `ground` reads an input as a concrete counterexample: some(tree), or none while unknowns that matter remain
-rec search_g :: {check : Val -> Res, ground : Val -> Option(Tree), input : Val, depth : Nat} -> Verdict :=> {
+// `ground` reads an input as a concrete counterexample: some(tree), or none while unknowns
+// that matter remain. When that does not settle it, `instances` are fully concrete inputs the
+// input stands for, re-run for a counterexample. An item is an input and the splits left for it.
+search_step :: {check : Val -> Res, ground : Val -> Option(Tree), instances : Val -> List(Val), item : Pair(Val, Nat)} -> Outcome(Tree, Pair(Val, Nat)) :=> {
+	let input := item.fst
+	let depth := item.snd
 	let r := check(input)
-	if (r == "Yes") { "Proved" }
+	if (r == "Yes") { skip }
 	else {
 		let g := ground(input)
-		if (not(is_none(g))) { if (r == "No") { refuted(g.snd) } else { open_on(explain(r)) } }
-		else if (is_zero(depth)) { open_on("split depth exhausted") }
+		let bad := if (if (is_none(g)) { true } else { not(r == "No") }) { instances(input).filter({i} => check(i) == "No") } else { [] }
+		if (if (is_none(g)) { false } else { r == "No" }) { yield(g.snd) }
+		else if (not(bad.is_nil)) { yield(ground(bad.head).snd) }
+		else if (not(is_none(g))) { noted(explain(r)) }
+		else if (is_zero(depth)) { noted("split depth exhausted") }
 		else {
 			let target := split_target(r, input)
-			if (target == "None") { open_on(explain(r)) }
+			if (target == "None") { noted(explain(r)) }
 			else {
-				let alts := table(target.sym_type, {step} => in_sym_at(target.sym_type, target.sym_root, cons(step, target.sym_path)))
-				combine(alts.snd.map({alt} => search_g(check, ground, subst(target, alt, input), nat_pred(depth))))
+				let alts := table(target.piece_type, {step} => piece_at(target.piece_type, target.piece_root, cons(step, target.piece_path)))
+				if (is_none(alts)) { noted(pair("no split table", target)) }
+				else { split_into(alts.snd.map({alt} => pair(subst(target, alt, input), nat_pred(depth)))) }
 			}
 		}
 	}
 }
-search_r :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> search_g(check, {v} => if (v.is_known) { some(v) } else { none }, input, depth)
+search_g :: {check : Val -> Res, ground : Val -> Option(Tree), instances : Val -> List(Val), input : Val, depth : Nat} -> Verdict :=>
+	verdict(s_worklist(search_step(check, ground, instances), [pair(input, depth)]))
+search_r :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> search_g(check, {v} => if (v.is_known) { some(v) } else { none }, {_} => [], input, depth)
 search :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> flat(search_r(check, input, depth))
 
 run :: {fn : Tree, input : Val} -> Res :=> sapply(escape(fn), input, run_fuel)
-// the Nat input at level k of the split: succ^k of the symbol at pred^k (tests)
+// the Nat input at level k of the split: succ^k of the piece k predecessor steps down (tests)
 rec sym_at :: {k : Nat, path : List(Tree)} -> Val :=>
-	if (is_zero(k)) { in_sym(NatR, path) } else { t(t, sym_at(nat_pred(k), cons("pred", path))) }
+	if (is_zero(k)) { piece(NatR, path) } else { t(t, sym_at(nat_pred(k), cons("right", path))) }
 
 // ---------------------------------------------------------------- the store
 // Certified pairs: related at a negative code, both members, distinct as
 // trees. (id, shift) at Nat -> Nat is certified below by eq_arrow_at itself.
 store_pairs := [pair(ArrowC(NatR, NatR), pair(id, shift))]
 pairs_at :: Code -> List(Pair(Tree, Tree)) := {code} => store_pairs.filter({e} => e.fst == code).map(pair_snd)
-// the negative input symbol an Open reason names, if any (every reason is
+// the negative input piece an Open reason names, if any (every reason is
 // pair tag value; grounding is sound whatever the tag)
 reason_sym :: Tree -> Val := {reason} =>
-	if ((reason.snd.is_in_sym) && (not(is_positive(reason.snd.sym_type)))) { reason.snd } else { "None" }
-// GROUNDING: an Open blamed on a negative symbol is tried on every stored pair
+	if ((reason.snd.is_piece) && (not(is_positive(reason.snd.piece_type)))) { reason.snd } else { "None" }
+// GROUNDING: an Open blamed on a negative piece is tried on every stored pair
 // at its code, concretely: a non-member output refutes with that member; two
 // outputs unrelated at a fine codomain refute with the pair; else it stays Open
 ground :: {Cod : Code, left : Tree -> Res, right : Tree -> Res, verdict : Verdict} -> Verdict :=> {
@@ -505,19 +619,20 @@ ground :: {Cod : Code, left : Tree -> Res, right : Tree -> Res, verdict : Verdic
 		else if ((is_fine(Cod)) && (not(la.answer == rb.answer))) { refuted(p) }
 		else { verdict }
 	}
-	if (s == "None") { verdict } else { combine(cons(verdict, (pairs_at(s.sym_type)).map(try))) }
+	let refutations := if (s == "None") { [] } else { (pairs_at(s.piece_type)).map(try).filter(is_refuted) }
+	if (refutations.is_nil) { verdict } else { refutations.head }
 }
 
 // ---------------------------------------------------------------- (C) quotient respect
 // Membership at Quotient Nat nf is RESPECT: for every a, f a ~_Cod f (nf a),
-// by induction on a. The hypothesis at a proper sub-symbol k names f k and
-// f (nf k) by ONE symbol: running nf on k answers the neutral term App nf [k]
-// (the evaluator's normalizer rule), and the token's partner clause peels it.
+// by induction on a. The hypothesis at a strictly smaller piece k names f k and
+// f (nf k) by ONE application: running nf on k answers the neutral term App nf [k]
+// (the evaluator's normalizer rule), and the hypothesis's partner peels it.
 // The fixpoint on a neutral term is judged by the hypothesis alone (unrolling
 // the step would inspect the neutral); on anything else one layer of the step
 // runs. The witness pairs the class representative with the member: (nf a, a).
 respects_nf :: {step_fn : Tree, nf : Tree, Cod : Code} -> Verdict :=> {
-	let ih := assumed_fn(NatR, Cod, [], {a} => app_val(nf, a))
+	let ih := hypothesis(NatR, Cod, [], {a} => app_val(nf, a))
 	let fix_apply := {with_ih, a} => if (a.is_app) { sapply(ih, a, run_fuel) } else { sapply(with_ih, a, run_fuel) }
 	let both := {with_ih, a} =>
 		and_then(fix_apply(with_ih, a), {r1} =>
@@ -526,56 +641,56 @@ respects_nf :: {step_fn : Tree, nf : Tree, Cod : Code} -> Verdict :=> {
 	let verdict := search({a} =>
 		if (a.is_known) { both(escape(fix(step_fn)), a) }
 		else { and_then(run(step_fn, ih), {with_ih} => both(with_ih, a)) }
-	, in_sym(NatR, []), split_depth)
+	, piece(NatR, []), split_depth)
 	if (verdict.is_refuted) { refuted(pair(nf(verdict.snd), verdict.snd)) } else { verdict }
 }
 
 // ---------------------------------------------------------------- the checks
 check_arrow_r :: {Dom : Code, Cod : Code, fn : Tree} -> Verdict :=>
 	ground(Cod, {a} => run(fn, a), {b} => run(fn, b),
-		search_r({input} => and_then(run(fn, input), judge_as(Cod)), in_sym(Dom, []), split_depth))
+		search_r({input} => and_then(run(fn, input), judge_as(Cod)), piece(Dom, []), split_depth))
 // membership at a quotient domain IS respect (of the normalizer)
 check_arrow :: {Dom : Code, Cod : Code, fn : Tree} -> Verdict :=>
 	if (is_quot_code(Dom)) { respects_nf({_self, x} => fn(x), quot_nf(Dom), Cod) } else { flat(check_arrow_r(Dom, Cod, fn)) }
 check_by_structure :: {fn : Tree} -> Verdict :=> check_arrow(NatR, NatR, fn)
 
 // base = the ground inputs (the real fixpoint); step = ONE layer of the step
-// function with its recursion bound to the induction token
-plain_ih := assumed_fn(NatR, NatR, [], same)
+// function with its recursion bound to the induction hypothesis
+plain_ih := hypothesis(NatR, NatR, [], same)
 step_with_ih :: {step_fn : Tree, input : Val} -> Res :=>
 	and_then(run(step_fn, plain_ih), {with_ih} => sapply(with_ih, input, run_fuel))
 check_by_induction :: {step_fn : Tree} -> Verdict :=>
 	search({input} =>
 		if (input.is_known) { and_then(run(fix(step_fn), input), judge_nat) }
 		else { and_then(step_with_ih(step_fn, input), judge_nat) }
-	, in_sym(NatR, []), split_depth)
+	, piece(NatR, []), split_depth)
 
-// equality by symbolic normal form: both run on the SAME named symbol, both
+// equality by symbolic normal form: both run on the SAME named piece, both
 // outputs are judged at the codomain, and the result terms are compared;
-// syntactically equal terms over symbols agree on every instantiation
+// syntactically equal terms over pieces agree on every instantiation
 eq_arrow_at :: {Dom : Code, Cod : Code, fn : Tree, gn : Tree} -> Verdict :=>
 	flat(ground(Cod, {a} => run(fn, a), {b} => run(gn, b),
-		search_r({input} => and_then(run(fn, input), {a} => and_then(run(gn, input), {b} => member_same(Cod, a, b))), in_sym(Dom, []), split_depth)))
+		search_r({input} => and_then(run(fn, input), {a} => and_then(run(gn, input), {b} => member_same(Cod, a, b))), piece(Dom, []), split_depth)))
 eq_arrow :: {Dom : Code, fn : Tree, gn : Tree} -> Verdict :=> eq_arrow_at(Dom, Dom, fn, gn)
 eq_by_symbol :: {fn : Tree, gn : Tree} -> Verdict :=> eq_arrow(NatR, fn, gn)
-// the shared token names both recursive calls rec_sym: that IS the hypothesis
-// "the recursive calls agree on the strict sub-symbol"
+// the shared hypothesis names both recursive calls by one application: that IS the claim
+// "the recursive calls agree on the strict smaller piece"
 eq_by_induction :: {step_f : Tree, step_g : Tree} -> Verdict :=>
 	search({input} =>
 		if (input.is_known) { and_then(run(fix(step_f), input), {a} => and_then(run(fix(step_g), input), {b} => member_same(NatR, a, b))) }
 		else { and_then(step_with_ih(step_f, input), {a} => and_then(step_with_ih(step_g, input), {b} => member_same(NatR, a, b))) }
-	, in_sym(NatR, []), split_depth)
+	, piece(NatR, []), split_depth)
 
 // (G) a curried claim f : A -> B -> C: two roots (ids 0 and 1), the input is
 // their pair — distinct names, so a split of one leaves the other alone
-two_roots :: {A : Code, B : Code} -> Val :=> pair(in_sym_at(A, 0, []), in_sym_at(B, 1, []))
+two_roots :: {A : Code, B : Code} -> Val :=> pair(piece_at(A, 0, []), piece_at(B, 1, []))
 run2 :: {fn : Tree, input : Val} -> Res :=> and_then(run(fn, input.fst), {fa} => sapply(fa, input.snd, run_fuel))
 check_arrow2 :: {A : Code, B : Code, Cod : Code, fn : Tree} -> Verdict :=>
 	search({input} => and_then(run2(fn, input), judge_as(Cod)), two_roots(A, B), split_depth)
 // induction on the FIRST root of a curried fix: the hypothesis at k below
 // root 0 is the FUNCTION f k : B -> C; applied to the second root it is the
 // neutral term App (f k) [b], judged at C by the arrow rule
-curried_ih :: {B : Code, Cod : Code} -> Val :=> assumed_fn(NatR, ArrowC(B, Cod), [], same)
+curried_ih :: {B : Code, Cod : Code} -> Val :=> hypothesis(NatR, ArrowC(B, Cod), [], same)
 check_by_induction2 :: {B : Code, Cod : Code, step_fn : Tree} -> Verdict :=>
 	search({input} =>
 		if (input.is_known) { and_then(run2(fix(step_fn), input), judge_as(Cod)) }
@@ -591,9 +706,9 @@ check_by_induction2 :: {B : Code, Cod : Code, step_fn : Tree} -> Verdict :=>
 // same_states. Strong: a skip is a step and must meet a skip. The coinductive
 // hypothesis is `related` on the NEXT states — usable only after both sides
 // took one step — and it is discharged by matching, never assumed on the
-// current states beyond what sharing the symbol x gives.
+// current states beyond what sharing the piece x gives.
 related :: {rel : Val -> Pair(Val, Val), a : Val, b : Val} -> Res :=> {
-	let pat := rel(var_sym("x"))
+	let pat := rel(pattern_piece("x"))
 	and_then(match_val(pat.fst, a, []), {env} => and_then(match_val(pat.snd, b, env), {_env} => "Yes"))
 }
 same_states := {x} => pair(x, x)
@@ -649,6 +764,6 @@ stream_eq :: {St : Code, rel : Val -> Pair(Val, Val), s1 : Tree, s2 : Tree} -> V
 		search({x} => {
 			let states := rel(x)
 			and_then(run(s1.c_stepper, states.fst), {st1} => and_then(run(s2.c_stepper, states.snd), {st2} => bisim_step(rel, st1, st2)))
-		}, in_sym(St, []), split_depth)
+		}, piece(St, []), split_depth)
 	}
 }

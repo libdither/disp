@@ -51,7 +51,9 @@ option_filter :: {keep : V -> Bool, option : Option(V)} -> Option(V) :=>
 exhausted :: Ending := "Exhausted"
 spent :: Ending := "Spent"
 is_exhausted :: Ending -> Bool := {ending} => ending == exhausted
-is_spent :: Ending -> Bool := {ending} => ending == spent
+// spent, saying why
+spent_on :: {reason : Tree} -> Ending :=> pair("Spent", reason)
+is_spent :: Ending -> Bool := {ending} => (ending == spent) || (ending.fst == "Spent")
 item_map :: {transform : X -> Y} -> Step(Ending, Emit(Option(V), X)) -> Step(Ending, Emit(Option(V), Y)) :=> halt_map(emit_map(transform))
 step_draw :: Step(Ending, Emit(Option(V), X)) -> Option(V) := {step} => step.running_next.emitted
 step_rest :: Step(Ending, Emit(Option(V), X)) -> X := {step} => step.running_next.emit_next
@@ -186,8 +188,28 @@ s_merge_with :: {source : Items(Items(V)), policy : List(Items(V)) -> Round(V)} 
 	}
 }, merge_state(source, [], [], false, keep_going)), merge_ending)
 
+// A work list: settling an item skips it, yields it, notes why it stays open, or splits it
+// into items worked first. The stream ends exhausted when the list runs out with nothing
+// noted, else spent on the first note.
+noted :: {reason : Tree} -> Outcome(V, I) :=> pair("Noted", reason)
+split_into :: {items : List(I)} -> Outcome(V, I) :=> pair("Split", items)
+s_worklist :: {settle : I -> Outcome(V, I), start : List(I)} -> Items(V) :=> s_new({st} => {
+	let todo := st.fst
+	let notes := st.snd
+	if (todo.is_nil) { finished(if (notes.is_nil) { exhausted } else { spent_on(notes.head) }) }
+	else {
+		let out := settle(todo.head)
+		if (out.fst == "Split") { running(emit(skip, pair(out.snd.append(todo.tail), notes))) }
+		else if (out.fst == "Noted") { running(emit(skip, pair(todo.tail, if (notes.is_nil) { [out.snd] } else { notes }))) }
+		else { running(emit(out, pair(todo.tail, notes))) }
+	}
+}, pair(start, []))
+
+// a stream of counterexamples decides a claim by how it goes: one appears (Refuted), the
+// source runs out (Proved), or the budget does (Open, with the reason when there is one)
+ending_verdict :: Ending -> Verdict := {e} => if (e.is_exhausted) { "Proved" } else if (e == spent) { "Open" } else { open_on(e.snd) }
 verdict :: {witnesses : Bounded(Items(Tree))} -> Verdict :=> c_fold({recurse, step} =>
-	if (step.is_finished) { if (step.finished_result.is_spent) { "Open" } else { "Proved" } }
+	if (step.is_finished) { ending_verdict(step.finished_result) }
 	else if (step.step_draw.is_yield) { refuted(step.step_draw.yielded_item) }
 	else { recurse(step.step_rest) }
 , witnesses)

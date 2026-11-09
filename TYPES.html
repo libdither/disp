@@ -91,7 +91,7 @@
 <body>
 <main>
 <h1>Types as tests that would take forever</h1>
-<p class="lede">The design of disp's type system, explained from the bottom up. A type is a program that answers one question about two trees. Checking a claim honestly means running that program over every tree there is, which never finishes. Every checker disp ships is a shortcut, and every shortcut comes with a reason it agrees with the honest run. Every code block on this page is a definition from the library or a test line that <code>npm test</code> runs. The shortcuts live in <code>lib/confirm.disp</code>; the tests are <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 187 tests) and <code>lib/tests/types_doc.test.disp</code> (this page's own snippets, 31 tests). The one block that is not a program is marked as such.</p>
+<p class="lede">The design of disp's type system, explained from the bottom up. A type is a program that answers one question about two trees. Checking a claim honestly means running that program over every tree there is, which never finishes. Every checker disp ships is a shortcut, and every shortcut comes with a reason it agrees with the honest run. Every code block on this page is a definition from the library or a test line that <code>npm test</code> runs. The shortcuts live in <code>lib/confirm.disp</code>; the tests are <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 188 tests) and <code>lib/tests/types_doc.test.disp</code> (this page's own snippets, 31 tests). The one block that is not a program is marked as such.</p>
 
 <div class="card small">
 <b>Reading order.</b> Sections 1 to 4 define what a type is. Section 5 is the honest but useless checker. Sections 6 to 8 are the shortcuts. Sections 9 to 11 are the contract that keeps the shortcuts honest, what the optimizer gets, and what stays open on purpose. Section 12 is a glossary.
@@ -207,76 +207,89 @@ test refute(bool_pairs, BoolRel, not, zero) = "Proved"</code></pre>
 <p>Two limits are permanent. It cannot refute divergence: an input on which the function never answers exhausts its per-run budget and is Open, not a witness. And at a function-typed domain there is no exact list of members at all, so the refuter there can only draw on functions already certified, and can never Prove by exhaustion.</p>
 <p>The refuter also has a second job: whenever a shortcut believes it has found a counterexample symbolically, the refuter re-runs it concretely before anything is reported. A symbolic "these differ" is only ever a suggestion.</p>
 <h2>6. The shortcut: one run on a placeholder</h2>
-<p>Instead of running <code>succ</code> on every number, run it once on a <em>symbol</em>, a placeholder that means "some Nat, I will not say which". If the run finishes without ever needing the symbol's shape, it is a template: substitute any real number and you get that number's real run. One run stands for all of them.</p>
-<p>The checker's values make this concrete. A partly known value is a plain tree with holes in it, and a fully known value is just itself. A hole is a tree carrying a fixed marker, and it says what it stands for: a symbol, a stuck application (a neutral term nobody can run), or the induction hypothesis. Applying a hole gives the hole for that application, which is how the marker is written:</p>
+<p>Instead of running <code>succ</code> on every number, run it once on a <em>piece</em>, a placeholder that means "some Nat, I will not say which". If the run finishes without ever needing the piece's shape, it is a template: substitute any real number and you get that number's real run. One run stands for all of them.</p>
+<p>The checker's values make this concrete. A partly known value is a plain tree with holes in it, and a fully known value is just itself. A hole is a tree carrying a fixed marker, and it is one of two things: a <em>piece</em> of the challenge, or an application nobody can run yet (a neutral term). Applying a hole gives the hole for that application, which is how the marker is written:</p>
 <pre><code>hole_marker := fix({self, what, arg} =&gt; wait(self, pair("App", pair(wait(self, what), arg))))
 hole :: {what : Tree} -&gt; Val :=&gt; wait(hole_marker, what)
-sym :: {T : Code, name : Tree} -&gt; Val :=&gt; hole(pair("Sym", pair(T, name)))
-in_sym_at :: {T : Code, root : Nat, path : List(Tree)} -&gt; Val :=&gt; sym(T, pair("In", pair(root, path)))
+piece_named :: {T : Code, name : Pair(Tree, List(Tree))} -&gt; Val :=&gt; hole(pair("Piece", pair(T, name)))
+piece_at :: {T : Code, root : Tree, path : List(Tree)} -&gt; Val :=&gt; piece_named(T, pair(root, path))
+piece :: {T : Code, path : List(Tree)} -&gt; Val :=&gt; piece_at(T, 0, path)
 app_val :: {head : Val, arg : Val} -&gt; Val :=&gt; hole(pair("App", pair(head, arg)))
-test run(succ, in_sym(NatR, [])) = answered(succ(in_sym(NatR, [])))</code></pre>
-<p>Two details of the symbol carry most of the design. It has a <em>name</em>, a root and a path of destructor steps, so two occurrences of the same unknown compare equal and different unknowns do not; that is what makes <code>pair n n</code> refutable and what makes "f n equals g n" expressible at all. And it has a <em>sort</em>: a symbol that came from splitting an input is an <code>In</code> symbol, and only those may ever be used to justify recursion.</p>
-<p>A hole is a plain tree, so a program under check could build one and pass it off as a symbol. Wherever a program's tree enters the checker (the program itself, the answer of a native run, a fork the evaluator builds), any marker-shaped part is wrapped whole as a <code>Forged</code> hole, which every judge treats as opaque. A program that forges a symbol gets <span class="verdict v-Open">Open</span>, never Proved.</p>
-<p>The evaluator interprets the substrate's rules over these values. An application whose function and argument are both fully known skips the interpretation and runs on the native machine, against the same step budget. Only one rule looks inside its argument, and that is the only place a symbol can be needed. A run therefore ends in one of three ways:</p>
+test run(succ, piece(NatR, [])) = answered(succ(piece(NatR, [])))</code></pre>
+<p>A piece has a <em>name</em>, a root and a path of destructor steps, so two occurrences of the same unknown compare equal and different unknowns do not; that is what makes <code>pair(n, n)</code> refutable and what makes "f n equals g n" expressible at all. And it has a <em>type</em>, which is all that says what may be done with it: split it when the type has cases, apply it when the type is a function type. Every unknown the checker needs is one of these, because every lens it uses makes one: the case split's cases have pieces, the induction hypothesis is a piece of a function type (below), and asking a recognizer or <code>tree_eq</code> about a piece is an application.</p>
+<p>A hole is a plain tree, so a program under check could build one and pass it off as a piece. Wherever a program's tree enters the checker (the program itself, the answer of a native run, a fork the evaluator builds), any marker-shaped part is wrapped whole as a <code>Forged</code> hole, which every judge treats as opaque. A program that forges a piece gets <span class="verdict v-Open">Open</span>, never Proved.</p>
+<p>The evaluator interprets the substrate's rules over these values. An application whose function and argument are both fully known skips the interpretation and runs on the native machine, against the same step budget. Only one rule looks inside its argument, and that is the only place a piece can be needed. A run therefore ends in one of three ways:</p>
 <pre><code>answered :: {v : Val} -&gt; Res :=&gt; pair("Answered", v)
 need :: {s : Val} -&gt; Res :=&gt; pair("Need", s)
 stuck :: Res := "Stuck"
 stuck_on :: {reason : Tree} -&gt; Res :=&gt; pair("Stuck", reason)</code></pre>
-<p><code>Need</code> means a case split can resolve it: the run wanted to know whether the symbol is zero or a successor. <code>Stuck</code> means nothing can, and it carries a reason: fuel, a symbol of a type with no cases, a missing licence. This distinction is the difference between an Open the user can act on and an Open they cannot.</p>
+<p><code>Need</code> means a case split can resolve it: the run wanted to know whether the piece is zero or a successor. <code>Stuck</code> means nothing can, and it carries a reason: fuel, a piece of a type with no cases, a missing licence. This distinction is the difference between an Open the user can act on and an Open they cannot.</p>
 
 <h3>Splitting on demand</h3>
-<p>When the run needs a symbol's shape, the search substitutes each constructor case with fresh sub-symbols and runs each case. The cases come from the type's declaration, and the table is <em>optional</em>:</p>
-<pre><code>table :: {R : Code, child : Tree -&gt; Val} -&gt; Option(List(Val)) :=&gt;
-	if (R == NatR) { some([t, t(t, child("pred"))]) }
-	else if (R == TreeR) { some([t, t(child("child")), t(child("left"), child("right"))]) }
-	else if (R == Bool) { some([t, t(t)]) }
-	else if (R == FalseR) { some([]) }
-	else if ((is_type_code(R)) &amp;&amp; (not(is_none(R.snd.cases)))) { some(R.snd.cases.snd(R, child)) }
-	else { none }</code></pre>
-<p>The difference between <code>some []</code> and <code>none</code> is not pedantry. An empty case list means a declared empty type, and a claim over an empty domain is vacuously Proved. No case list at all, which is what a function type or an undeclared recognizer has, means the search must not split and the verdict is Open with a reason. A first probe conflated the two and Proved <code>{&#x27;{&#x27;}f{&#x27;}&#x27;} =&gt; tree_eq f id</code> at a function-typed domain, which is precisely the transport paradox this whole design exists to refuse.</p>
-<pre><code>// `ground` reads an input as a concrete counterexample: some(tree), or none while unknowns that matter remain
-rec search_g :: {check : Val -&gt; Res, ground : Val -&gt; Option(Tree), input : Val, depth : Nat} -&gt; Verdict :=&gt; {
+<p>When the run needs a piece's shape, the search substitutes each case of its type with fresh smaller pieces and runs each case. Nobody writes the cases down. A type that a program can test is a recognizer, and its cases are <em>derived</em> by running it once on an unknown tree: where it looks, the tree splits into leaf, stem and fork, and a branch that answers true is a case. When it asks about a strictly smaller piece (its own recursion, or another type through <code>is_a</code>), that piece becomes a member of the type asked about. Nat's cases come out as zero and the successor of a Nat, Bool's as its two values, and a data type's as its constructors. Tree is the one type given by hand: every tree is a leaf, a stem or a fork. The table is <em>optional</em>:</p>
+<pre><code>test table(StemR, {s} =&gt; piece(StemR, [s])) = some([t(piece(TreeR, ["child"]))])
+test table(FalseR, id) = some([])
+test table(LoopR, id) = none
+test cases_of(Bool) = [t, t(t)]</code></pre>
+<p>The difference between <code>some []</code> and <code>none</code> is not pedantry. An empty case list means a type with no members, and a claim over an empty domain is vacuously Proved. No case list at all, which is what a function type or a recognizer that loops has, means the search must not split and the verdict is Open with a reason. A first probe conflated the two and Proved <code>{f} =&gt; tree_eq(f, id)</code> at a function-typed domain, which is precisely the transport paradox this whole design exists to refuse.</p>
+<pre><code>// `ground` reads an input as a concrete counterexample: some(tree), or none while unknowns
+// that matter remain. When that does not settle it, `instances` are fully concrete inputs the
+// input stands for, re-run for a counterexample. An item is an input and the splits left for it.
+search_step :: {check : Val -&gt; Res, ground : Val -&gt; Option(Tree), instances : Val -&gt; List(Val), item : Pair(Val, Nat)} -&gt; Outcome(Tree, Pair(Val, Nat)) :=&gt; {
+	let input := item.fst
+	let depth := item.snd
 	let r := check(input)
-	if (r == "Yes") { "Proved" }
+	if (r == "Yes") { skip }
 	else {
 		let g := ground(input)
-		if (not(is_none(g))) { if (r == "No") { refuted(g.snd) } else { open_on(explain(r)) } }
-		else if (is_zero(depth)) { open_on("split depth exhausted") }
+		let bad := if (if (is_none(g)) { true } else { not(r == "No") }) { instances(input).filter({i} =&gt; check(i) == "No") } else { [] }
+		if (if (is_none(g)) { false } else { r == "No" }) { yield(g.snd) }
+		else if (not(bad.is_nil)) { yield(ground(bad.head).snd) }
+		else if (not(is_none(g))) { noted(explain(r)) }
+		else if (is_zero(depth)) { noted("split depth exhausted") }
 		else {
 			let target := split_target(r, input)
-			if (target == "None") { open_on(explain(r)) }
+			if (target == "None") { noted(explain(r)) }
 			else {
-				let alts := table(target.sym_type, {step} =&gt; in_sym_at(target.sym_type, target.sym_root, cons(step, target.sym_path)))
-				combine(alts.snd.map({alt} =&gt; search_g(check, ground, subst(target, alt, input), nat_pred(depth))))
+				let alts := table(target.piece_type, {step} =&gt; piece_at(target.piece_type, target.piece_root, cons(step, target.piece_path)))
+				if (is_none(alts)) { noted(pair("no split table", target)) }
+				else { split_into(alts.snd.map({alt} =&gt; pair(subst(target, alt, input), nat_pred(depth)))) }
 			}
 		}
 	}
 }
-search_r :: {check : Val -&gt; Res, input : Val, depth : Nat} -&gt; Verdict :=&gt; search_g(check, {v} =&gt; if (v.is_known) { some(v) } else { none }, input, depth)</code></pre>
-<p>Read it top down. A Yes on a symbolic input covers every instance of its symbols. A No on a <em>known</em> input is its own witness. Otherwise split the symbol the run needed, and combine: any refuted case refutes, all Proved cases prove, anything else is Open with the first reason.</p>
+search_g :: {check : Val -&gt; Res, ground : Val -&gt; Option(Tree), instances : Val -&gt; List(Val), input : Val, depth : Nat} -&gt; Verdict :=&gt;
+	verdict(s_worklist(search_step(check, ground, instances), [pair(input, depth)]))</code></pre>
+<p>Read <code>search_step</code> top down; it settles one input. A Yes on a symbolic input covers every instance of its pieces, so the input is skipped. A No on a <em>known</em> input is its own witness, and is yielded. An input left with only type arguments, their abstract values and functions is re-run on two concrete stand-ins: each type a type of one member, and each function one of the stored pair of members of its type (<code>id</code> and <code>shift</code> at Nat -&gt; Nat). So a program that looks inside an abstract value is still caught, and one that fails on a real function is refuted with that function. Otherwise the piece the run needed is split, and its cases go to the front of the work list. <code>search_g</code> runs that list as a stream of counterexamples (<code>s_worklist</code> in lib/stream.disp) and reads the verdict off the stream the same way the refuter of section 5 does: the first counterexample refutes, a list that runs out with nothing noted proves, and anything else is Open with the first reason noted.</p>
 
 <h3>Recursion: the call may assume the claim, on a smaller piece</h3>
-<p>When the program calls itself, the symbolic run reaches a call it cannot unfold forever. The checker lets that call answer "whatever the claim promises", but only when the argument is a strict sub-symbol of the input it started from. Recursion on a strictly smaller piece must bottom out, and that is the only termination argument the checker knows.</p>
-<pre><code>apply_ih_at :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -&gt; Val, x : Val} -&gt; Res :=&gt; {
-	let license := {c} =&gt;
-		if (((c.is_in_sym) &amp;&amp; (c.sym_type == Dom)) &amp;&amp; ((c.sym_root == 0) &amp;&amp; (is_strict_ext(c.sym_path, root)))) { answered(rec_sym(cod_at(Cod, c), c.sym_path)) }
-		else { stuck }
-	let direct := license(canon(x))
-	if (direct.is_answered) { direct }
+<p>When the program calls itself, the symbolic run reaches a call it cannot unfold forever. The checker replaces the recursive call with the <em>induction hypothesis</em>: a piece of the function type from the strictly smaller pieces of the input to the codomain. Calling it is an ordinary application, and the licence is the arrow rule itself: the argument must be in the domain, and the domain is "strictly smaller". Recursion on a strictly smaller piece must bottom out, and that is the only termination argument the checker knows.</p>
+<pre><code>hypothesis :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -&gt; Val} -&gt; Val :=&gt;
+	piece_at(ArrowC(below_c(Dom, root, partner), Cod), "hypothesis", root)
+// the piece an argument of the hypothesis stands for, or "None": a strict descendant of the
+// root input, an input piece of the domain (after folding succ^k back), or the partner of one
+licensed_with :: {tbl : Tree, B : Code, x : Val} -&gt; Val :=&gt; {
+	let Dom := B.snd.fst
+	let root := B.snd.snd.fst
+	let partner := B.snd.snd.snd
+	let ok := {c} =&gt; if (c.is_piece) { ((c.piece_type == Dom) &amp;&amp; (c.piece_root == 0)) &amp;&amp; (is_strict_ext(c.piece_path, root)) } else { false }
+	let direct := canon_with(tbl, x)
+	if (ok(direct)) { direct }
 	else {
-		let peeled := match_val(partner(var_sym("a")), x, [])
-		if ((peeled.is_answered) &amp;&amp; (not(peeled.answer.is_nil))) { license(canon(peeled.answer.head.snd)) } else { stuck }
+		let peeled := match_val(partner(pattern_piece("a")), x, [])
+		let found := if ((peeled.is_answered) &amp;&amp; (not(peeled.answer.is_nil))) { canon_with(tbl, peeled.answer.head.snd) } else { none }
+		if (ok(found)) { found } else { "None" }
 	}
 }</code></pre>
-<p>Four checks in that licence, each closing a real hole: the argument must be an input-derived symbol, of the domain's type, from the root being inducted on, and strictly below it in the destructor order. Miss the last one and a step function whose recursion never descends is Proved; miss the first and a symbol minted from a function's <em>output</em> counts as smaller than the input. Both were live bugs in earlier probes.</p>
+<p>Three checks in the domain, each closing a real hole: the argument must be a piece of the input being inducted on (root 0), of the domain's type, and strictly below it in the destructor order. Miss the last one and a step function whose recursion never descends is Proved; miss the first and a piece of another input, or the hypothesis's own answer, counts as smaller than the input. Both were live bugs in earlier probes. A call outside the domain stops the run at once, even if its answer is thrown away, since the real call would never return.</p>
 <pre><code>dbl_step := {dbl2, n} =&gt; if (is_zero(n)) { zero } else { succ(succ(dbl2(nat_pred(n)))) }
 bad_step := {bad2, n} =&gt; if (is_zero(n)) { zero } else { succ(bad2(n)) }   // fix(bad_step)(1) loops forever
 test check_by_structure(succ) = "Proved"
 test check_by_structure({n} =&gt; pair(n, n)) = refuted(1)
 test check_by_induction(dbl_step) = "Proved"
 test check_by_induction(bad_step) = "Open"
-test check_by_induction(two_base_step) = "Proved"   // course-of-values: the licence folds succ(sub-symbol) back to the symbol</code></pre>
-<p>So the short argument behind a <span class="verdict v-Proved">Proved</span> is always one of three: the run never looked at the symbol; the run looked, the cases were split, and every case closed; the program recursed, and every recursive call was on a strictly smaller input-derived piece. The certificate names which.</p>
+test check_by_induction(two_base_step) = "Proved"   // course-of-values: the licence folds succ(smaller piece) back to the piece</code></pre>
+<p>So the short argument behind a <span class="verdict v-Proved">Proved</span> is always one of three: the run never looked at the piece; the run looked, the cases were split, and every case closed; the program recursed, and every recursive call was on a strictly smaller input-derived piece. The certificate names which.</p>
 
 <h3>Which part is the specification</h3>
 <p>The symbolic evaluator in <code>lib/confirm.disp</code> is the <em>reference</em>: a readable disp program whose behaviour is the meaning of every verdict on this page. Fully known work already runs on the native machine, in chunks that double, so the budget is still respected. What remains slow is interpreting the rules on values with holes. The intended fast path for that is a native mode of the host evaluator that treats a hole as a node it refuses to open, validated against the reference by differential testing, or a rewrite of the reference in an <code>.opt.disp</code> overlay.</p>
@@ -286,10 +299,10 @@ test check_by_induction(two_base_step) = "Proved"   // course-of-values: the lic
 <pre><code>runtime_triage := {n} =&gt; t(t(zero, succ), id)(n)
 runtime_id := {n} =&gt; t(t(zero, {_} =&gt; zero), {_l, r} =&gt; succ(r))(n)
 test runtime_triage(1) = t(t)
-test run(runtime_triage, in_sym(NatR, [])) = need(in_sym(NatR, []))
+test run(runtime_triage, piece(NatR, [])) = need(piece(NatR, []))
 test check_by_structure(runtime_triage) = refuted(1)
 test check_by_structure(runtime_id) = "Proved"</code></pre>
-<p>The run reports that it needed the symbol's shape, because the built triage is applied to the symbol and the triage <em>rule</em> is where the evaluator looks. The first function then turns out not to be a member at all: it sends the number one to the stem <code>t t</code>, and the search finds that by splitting and re-running the case concretely. The second, a Nat identity written the same way, is Proved after the split. The first confirmer could not split, and gave both <span class="verdict v-Open">Open</span>: never Proved, never a false verdict.</p>
+<p>The run reports that it needed the piece's shape, because the built triage is applied to the piece and the triage <em>rule</em> is where the evaluator looks. The first function then turns out not to be a member at all: it sends the number one to the stem <code>t t</code>, and the search finds that by splitting and re-running the case concretely. The second, a Nat identity written the same way, is Proved after the split. The first confirmer could not split, and gave both <span class="verdict v-Open">Open</span>: never Proved, never a false verdict.</p>
 <h2>7. Streams: the same trick facing the other way</h2>
 <p>A stream is a stepper and a state; a step finishes with an ending, or runs on with an item (a yield) or without one (a skip). Two streams are the same when every item and every step agree, forever. The honest check is prefix comparison and never ends; the shortcut is one symbolic step. Run each stepper on a symbolic state, compare the items, and check that the next states are again a pair the relation covers. The assumption "these states are related" may only be used on the <em>next</em> states, after both sides have taken a step; using it on the current states would prove any two streams equal.</p>
 <pre><code>naturals := nats.as_items
@@ -309,13 +322,13 @@ test stream_eq(NatR, pair_states, naturals, nats_pair) = "Proved"</code></pre>
 <p>At <code>Tree</code> sameness is bit for bit and every tree belongs, so inspecting functions are perfectly good members there:</p>
 <pre><code>test check_arrow(TreeR, Bool, is_leaf) = "Proved"
 test check_arrow(TreeR, Bool, {x} =&gt; tree_eq(x, t)) = "Proved"</code></pre>
-<p>At <code>Nat -&gt; Nat</code> sameness is extensional, so a symbol of that type is a value the checker will not let anyone look inside, and will not let anyone <em>embed</em> at a position whose sameness is finer than its own. That second half is the subtle one. It is not enough to refuse the function that compares <code>f</code> with the identity. Wrapping <code>f</code> in a stem, pairing it with zero, or returning it unchanged at type <code>Tree</code> would let bit-for-bit sameness leak back in through the codomain, and an earlier probe accepted all three. The rule that closes every spelling: a value carrying a symbol of a coarser type is never "the same as itself" at a finer position. Where a certified pair of same-but-different functions is stored, the checker grounds the symbol on it and refutes concretely.</p>
+<p>At <code>Nat -&gt; Nat</code> sameness is extensional, so a piece of that type is a value the checker will not let anyone look inside, and will not let anyone <em>embed</em> at a position whose sameness is finer than its own. That second half is the subtle one. It is not enough to refuse the function that compares <code>f</code> with the identity. Wrapping <code>f</code> in a stem, pairing it with zero, or returning it unchanged at type <code>Tree</code> would let bit-for-bit sameness leak back in through the codomain, and an earlier probe accepted all three. The rule that closes every spelling: a value carrying a piece of a coarser type is never "the same as itself" at a finer position. Where a certified pair of same-but-different functions is stored, the checker grounds the piece on it and refutes concretely.</p>
 <pre><code>NatFn := ArrowC(NatR, NatR)
 sniff := {f} =&gt; tree_eq(f, id)
 wrap := {f} =&gt; t(f)
 test check_arrow(NatFn, Bool, sniff) = refuted(pair(id, shift))
 test check_arrow(NatFn, TreeR, wrap) = refuted(pair(id, shift))
-test check_arrow(NatFn, NatR, {f} =&gt; f(0)) = "Proved"              // applying a function symbol is fine
+test check_arrow(NatFn, NatR, {f} =&gt; f(0)) = "Proved"              // applying a function piece is fine
 test check_arrow(NatFn, TreeR, {f} =&gt; f(id)) = refuted(pair(id, shift))   // applying it outside its domain is not</code></pre>
 <p>This is why function extensionality at <code>Nat -&gt; Nat</code> is consistent with bit-for-bit comparison at <code>Tree</code>. The two never meet, because there is no member of <code>(Nat -&gt; Nat) -&gt; Tree</code> other than the constant functions and the ones that go through an application first. The old kernel tried to police this with an unforgeable hypothesis token and a provenance ledger, and it leaked through a reader that could tell a hypothesis from a value. Here a program never sees a hole: a run with a hole in it goes through the evaluator, which stops at any rule that would look inside one, and only hole-free runs go native. A program that builds the marker itself has its tree escaped as a forgery (section 6).</p>
 <h2>9. The contract: every shortcut agrees with the honest run</h2>
@@ -324,15 +337,15 @@ test check_arrow(NatFn, TreeR, {f} =&gt; f(id)) = refuted(pair(id, shift))   // 
 <tr><th>rung</th><th>what it does</th><th>why it agrees</th><th>status</th></tr>
 <tr><td>identity</td><td>two identical trees are the same at any type they belong to</td><td>every relation is reflexive on members</td><td>theorem</td></tr>
 <tr><td>exhaustion</td><td>run every member of a finite type</td><td>the generator is the type</td><td>theorem</td></tr>
-<tr><td>one symbolic run</td><td>section 6</td><td>a run that never inspects the symbol instantiates to the real run for every member</td><td>theorem (sketch below), property-tested as well</td></tr>
-<tr><td>split</td><td>cases from the declaration</td><td>the cases cover the generator exactly</td><td>theorem given the compiler</td></tr>
+<tr><td>one symbolic run</td><td>section 6</td><td>a run that never inspects the piece instantiates to the real run for every member</td><td>theorem (sketch below), property-tested as well</td></tr>
+<tr><td>split</td><td>cases derived by running the recognizer</td><td>the cases cover the members exactly: every tree is a leaf, a stem or a fork, plus the run lemma and induction</td><td>theorem; search attacks both directions (<code>cover_law</code>, <code>exact_law</code>)</td></tr>
 <tr><td>induction</td><td>the licence of section 6</td><td>strong induction on the size of the input piece</td><td>theorem for structural descent</td></tr>
-<tr><td>equality</td><td>both sides on one symbol, judged at the codomain</td><td>every case pair related under every instantiation; one side a member</td><td>bisimulation up-to techniques, plus the run lemma</td></tr>
+<tr><td>equality</td><td>both sides on one piece, judged at the codomain</td><td>every case pair related under every instantiation; one side a member</td><td>bisimulation up-to techniques, plus the run lemma</td></tr>
 <tr><td>rewrite licence</td><td>swap programs inside a context</td><td>the context must itself belong to the arrow between the two types</td><td>immediate from the definition</td></tr>
 </table>
 <h3>Why one run stands for all</h3>
-<p>Call a value partly known when some of its leaves are symbols, and call an instantiation the tree you get by substituting a member for every symbol. The evaluator fires the substrate's rules on partly known values, and each rule examines a fixed part of its operands: applying a leaf or a stem reads nothing; applying a fork reads the shape of its left branch to choose between the constant rule, the sharing rule, and the case rule; and only the case rule reads the shape of the argument. Whenever the part a rule needs is known, the same rule fires with the same result for every instantiation, because substitution reaches under a known node without changing its shape; that is one line per rule. Whenever the part is a symbol, nothing fires: the evaluator answers Need or Stuck. Two more one-line cases: the case-analysis whose three arms are all leaves rebuilds any argument, so it may pass a symbol through, and a fully known application runs natively, which is the real run itself. By induction on the sequence of firings, if the symbolic run answers a value, then for every instantiation the real run reaches that value's instantiation. The real run may take more steps, and it is at least as willing to finish, since the host discards an unused argument the symbolic evaluator would have evaluated.</p>
-<p>Two things sit outside this sketch. A symbol or a neutral term in function position makes a neutral term rather than firing; instantiating one means applying the instantiated head, and the lemma extends exactly when that application terminates, which is what the head's stored membership certifies. And the induction licence is a separate argument, ordinary strong induction on the size of the input piece, whose one genuinely open claim is that a single symbol per input establishes respect when the domain's sameness is coarser than identity. That is the fundamental lemma of logical relations for the judge, and it is tested rather than proved.</p>
+<p>Call a value partly known when some of its leaves are pieces, and call an instantiation the tree you get by substituting a member for every piece. The evaluator fires the substrate's rules on partly known values, and each rule examines a fixed part of its operands: applying a leaf or a stem reads nothing; applying a fork reads the shape of its left branch to choose between the constant rule, the sharing rule, and the case rule; and only the case rule reads the shape of the argument. Whenever the part a rule needs is known, the same rule fires with the same result for every instantiation, because substitution reaches under a known node without changing its shape; that is one line per rule. Whenever the part is a piece, nothing fires: the evaluator answers Need or Stuck. Two more one-line cases: the case-analysis whose three arms are all leaves rebuilds any argument, so it may pass a piece through, and a fully known application runs natively, which is the real run itself. By induction on the sequence of firings, if the symbolic run answers a value, then for every instantiation the real run reaches that value's instantiation. The real run may take more steps, and it is at least as willing to finish, since the host discards an unused argument the symbolic evaluator would have evaluated.</p>
+<p>Two things sit outside this sketch. A piece or a neutral term in function position makes a neutral term rather than firing; instantiating one means applying the instantiated head, and the lemma extends exactly when that application terminates, which is what the head's stored membership certifies. And the induction licence is a separate argument, ordinary strong induction on the size of the input piece, whose one genuinely open claim is that a single piece per input establishes respect when the domain's sameness is coarser than identity. That is the fundamental lemma of logical relations for the judge, and it is tested rather than proved.</p>
 <p>The contract is not just stated; it runs. Every probe file ends with the honest checker running against its own verdicts:</p>
 <pre><code>agrees :: {verdict : Verdict, enumerated : Bool} -&gt; Bool :=&gt;
 	if (verdict.is_proved) { enumerated } else if (verdict.is_open) { true } else { not(enumerated) }
@@ -344,7 +357,7 @@ test sweep.all({p} =&gt; agrees(p.fst, p.snd)) = true      // 40 candidate trees
 test check_arrow(LoopR, NatR, id) = "Open"</code></pre>
 <h2>10. What the optimizer gets</h2>
 <p>The optimizer's job is to replace a program by a different, faster one that is the same at the type the specification names. Under this design that is one certificate of section 6's equality rung, plus one membership check: the surrounding context must belong to the arrow from the type where the two programs are the same to the type of the whole. A context that inspects its hole does not belong to that arrow, so the rewrite is refused there, and a context that only applies its hole does.</p>
-<p>Every verdict is stored as replayable data: which symbol, which cases, which recursive calls were licensed, and for a refutation the concrete pair. Replay never searches; it re-runs the named steps and checks the licences. Refuted witnesses are kept as a regression battery every later candidate must pass. Cost is judged by measured native steps, not by the symbolic run's step count, because the two are not proportional; the symbolic count only gives the asymptotic direction. Correctness gates, cost ranks. The stream case shows the two channels apart: removing a skip is not an equality at <code>Items(V)</code>, it is an equality at the weak quotient and an improvement at the strong type, and the rewrite fires only inside contexts that belong to the arrow out of the weak type.</p>
+<p>Every verdict is stored as replayable data: which piece, which cases, which recursive calls were licensed, and for a refutation the concrete pair. Replay never searches; it re-runs the named steps and checks the licences. Refuted witnesses are kept as a regression battery every later candidate must pass. Cost is judged by measured native steps, not by the symbolic run's step count, because the two are not proportional; the symbolic count only gives the asymptotic direction. Correctness gates, cost ranks. The stream case shows the two channels apart: removing a skip is not an equality at <code>Items(V)</code>, it is an equality at the weak quotient and an improvement at the strong type, and the rewrite fires only inside contexts that belong to the arrow out of the weak type.</p>
 <h2>11. What stays Open on purpose, and how to read an Open</h2>
 <p>Membership at <code>Nat -&gt; Nat</code> is undecidable, so some true claims stay Open forever. The design does not hide this; it names the budget or the rule that stopped the run.</p>
 <table>
@@ -352,11 +365,11 @@ test check_arrow(LoopR, NatR, id) = "Open"</code></pre>
 <tr><td>fuel</td><td>the symbolic run spent its dispatch budget</td><td>raise it, or check that the program terminates on the case shown</td></tr>
 <tr><td>split depth</td><td>the search split as deep as allowed</td><td>raise it; the claim needed more cases than the depth</td></tr>
 <tr><td>no descent</td><td>a recursive call was not on a strictly smaller input piece</td><td>restructure the recursion, or supply a measure (a later rung)</td></tr>
-<tr><td>no split table</td><td>the run inspected a symbol of a type with no cases, such as a function</td><td>the program looks inside a function; it belongs at a <code>Tree</code>-typed domain instead</td></tr>
+<tr><td>no split table</td><td>the run inspected a piece of a type with no cases, such as a function</td><td>the program looks inside a function; it belongs at a <code>Tree</code>-typed domain instead</td></tr>
 <tr><td>coarse at a fine position</td><td>a function-typed value was placed where bit-for-bit sameness is required</td><td>apply it first, or change the codomain</td></tr>
 <tr><td>no certificate</td><td>a called function has no stored membership yet</td><td>check the callee first</td></tr>
 </table>
-<p>Two things are conjectures rather than theorems, stated as such and tested: that one symbol per binder suffices, meaning membership judged at the codomain implies respect for the domain's relation; and that the enumeration lists every tree exactly once. The run lemma of section 9 is a theorem, and it is property-tested anyway: instantiate the symbols of a symbolic answer at random and compare with the real run. Each conjecture has a one-line falsifier of the same shape.</p>
+<p>Two things are conjectures rather than theorems, stated as such and tested: that one piece per binder suffices, meaning membership judged at the codomain implies respect for the domain's relation; and that the enumeration lists every tree exactly once. The run lemma of section 9 is a theorem, and it is property-tested anyway: instantiate the pieces of a symbolic answer at random and compare with the real run. Each conjecture has a one-line falsifier of the same shape.</p>
 <p>Two ceilings are stated rather than hidden. Equality of types is structural on their codes: two types with the same members but different declarations are different types, and moving a program between representations is a pair of certified translations, never a type equation. And laws quantified over all types are neither Proved nor Refuted, because a function that cases on its type argument is a legitimate member of the polymorphic type, so the usual free theorems do not hold outside a sub-universe of certified non-inspecting code.</p>
 <h2>12. Glossary</h2>
 <table>
@@ -364,16 +377,16 @@ test check_arrow(LoopR, NatR, id) = "Open"</code></pre>
 <tr><td>relation of a type</td><td>the two-argument program that says whether two trees count as the same at that type; symmetric and transitive, reflexive only on members</td></tr>
 <tr><td>member</td><td>a tree the type's relation says is the same as itself</td></tr>
 <tr><td>recognizer</td><td>the one-argument program that decides membership for a data type; the relation's diagonal</td></tr>
-<tr><td>generator</td><td>the stream of a type's members, smallest first; for data types it is derived from the same declaration as the recognizer</td></tr>
+<tr><td>generator</td><td>the stream of a type's members, smallest first; for a recognizer it is its derived cases, unfolded</td></tr>
 <tr><td>refuter</td><td>the type's relation run over the generator; the honest check</td></tr>
-<tr><td>symbol</td><td>a placeholder for "some member, unnamed", with a root, a path, and a sort</td></tr>
-<tr><td>Need, Stuck</td><td>a run that wants a symbol's shape (a split can help) versus one that cannot proceed (with a reason)</td></tr>
+<tr><td>piece</td><td>a placeholder for "some member, unnamed": a piece of the challenge, with a type, a root and a path</td></tr>
+<tr><td>Need, Stuck</td><td>a run that wants a piece's shape (a split can help) versus one that cannot proceed (with a reason)</td></tr>
 <tr><td>licence</td><td>the check that a recursive call is on a strictly smaller, input-derived piece</td></tr>
 <tr><td>neutral term</td><td>an application nobody can run, kept as a term so it can be compared and judged at its codomain</td></tr>
 <tr><td>certificate</td><td>the replayable record behind a Proved: which trick, which cases, which licences</td></tr>
 <tr><td>the code type</td><td><code>Tree</code>: every tree belongs, sameness is bit for bit, inspection is legal</td></tr>
 </table>
-<p class="muted small">Companion files, all run by <code>npm test</code>: <code>lib/confirm.disp</code> (the confirmer), <code>lib/rules.disp</code> (the rules a certified verdict stands on, as lenses), <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 187 tests), <code>lib/tests/types_doc.test.disp</code> (this page's snippets, 31 tests).</p>
+<p class="muted small">Companion files, all run by <code>npm test</code>: <code>lib/confirm.disp</code> (the confirmer), <code>lib/rules.disp</code> (the rules a certified verdict stands on, as lenses), <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 188 tests), <code>lib/tests/types_doc.test.disp</code> (this page's snippets, 31 tests).</p>
 </main>
 </body>
 </html>

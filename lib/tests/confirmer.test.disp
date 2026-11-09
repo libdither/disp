@@ -17,12 +17,12 @@ gen_parity := {a} => succ(succ(a))
 with_partner :: {gen : Val -> Val, verdict : Verdict} -> Verdict :=>
 	if (verdict.is_refuted) { refuted(pair(verdict.snd, gen(verdict.snd))) } else { verdict }
 respects_by_induction :: {step_fn : Tree, gen : Val -> Val} -> Verdict :=> {
-	let ih := assumed_fn(NatR, NatR, [], gen)
+	let ih := hypothesis(NatR, NatR, [], gen)
 	let both := {fn_val, a} => and_then(sapply(fn_val, a, run_fuel), {r1} => and_then(sapply(fn_val, gen(a), run_fuel), {r2} => same_val(r1, r2)))
 	with_partner(gen, search({a} =>
 		if (a.is_known) { both(fix(step_fn), a) }
 		else { and_then(run(step_fn, ih), {with_ih} => both(with_ih, a)) }
-	, in_sym(NatR, []), split_depth))
+	, piece(NatR, []), split_depth))
 }
 
 // ---------------------------------------------------------------- subjects
@@ -36,20 +36,21 @@ test add(2, 3) = 5
 
 // ================================================================ CHECK2's tests, unchanged
 test run(dbl, 3) = answered(6)
-test run({n} => pair(n, n), in_sym(NatR, [])) = answered(pair(in_sym(NatR, []), in_sym(NatR, [])))
-test run(succ, in_sym(NatR, [])) = answered(succ(in_sym(NatR, [])))
-test run(id, in_sym(NatR, [])) = answered(in_sym(NatR, []))
-test run(is_zero, in_sym(NatR, [])) = need(in_sym(NatR, []))
+test run({n} => pair(n, n), piece(NatR, [])) = answered(pair(piece(NatR, []), piece(NatR, [])))
+test run(succ, piece(NatR, [])) = answered(succ(piece(NatR, [])))
+test run(id, piece(NatR, [])) = answered(piece(NatR, []))
+test run(is_zero, piece(NatR, [])) = need(piece(NatR, []))
 test run(is_zero, sym_at(1, [])) = answered(false)
-test canon(sym_at(2, [])) = in_sym(NatR, [])
-test canon(succ(in_sym(NatR, ["pred", "pred"]))) = in_sym(NatR, ["pred"])
+test canon(sym_at(2, [])) = piece(NatR, [])
+test canon(succ(piece(NatR, ["right", "right"]))) = piece(NatR, ["right"])
 test apply_ih(NatR, [], same, sym_at(1, [])) = stuck
-test apply_ih(NatR, [], same, in_sym(NatR, ["pred"])) = answered(rec_sym(NatR, ["pred"]))
-test apply_ih(NatR, [], same, succ(in_sym(NatR, ["pred", "pred"]))) = answered(rec_sym(NatR, ["pred"]))
-test run(dbl, sym_at(1, [])) = need(in_sym(NatR, ["pred"]))
+// the hypothesis applied to a smaller piece is an application, the argument named canonically
+test apply_ih(NatR, [], same, piece(NatR, ["right"])) = answered(app_val(plain_ih, piece(NatR, ["right"])))
+test apply_ih(NatR, [], same, succ(piece(NatR, ["right", "right"]))) = answered(app_val(plain_ih, piece(NatR, ["right"])))
+test run(dbl, sym_at(1, [])) = need(piece(NatR, ["right"]))
 test run(fix(bad_step), 1) = stuck
 test step_with_ih(bad_step, sym_at(1, [])) = stuck
-test step_with_ih(dbl_step, sym_at(1, [])) = answered(succ(succ(rec_sym(NatR, ["pred"]))))
+test step_with_ih(dbl_step, sym_at(1, [])) = answered(succ(succ(app_val(plain_ih, piece(NatR, ["right"])))))
 test check_by_structure(succ) = "Proved"
 test check_by_structure({_n} => pair(5, 5)) = refuted(0)
 test check_by_structure({n} => pair(n, n)) = refuted(1)
@@ -143,8 +144,8 @@ test agrees(stream_eq(NatR, pair_states, naturals, slow), prefix_eq(6, naturals,
 is_even_not_step := {ie, n} => if (is_zero(n)) { true } else { not(ie(nat_pred(n))) }
 test is_even(4) = true
 test is_even(5) = false
-test apply_ih(NatR, [], gen_parity, gen_parity(in_sym(NatR, ["pred"]))) = answered(rec_sym(NatR, ["pred"]))
-test apply_ih(NatR, [], gen_parity, gen_parity(in_sym(NatR, []))) = stuck
+test apply_ih(NatR, [], gen_parity, gen_parity(piece(NatR, ["right"]))) = answered(app_val(hypothesis(NatR, NatR, [], gen_parity), piece(NatR, ["right"])))
+test apply_ih(NatR, [], gen_parity, gen_parity(piece(NatR, []))) = stuck
 test respects_by_induction(is_even_step, gen_parity) = "Proved"
 test respects_by_induction(id_step, gen_parity) = refuted(pair(0, 2))
 // `not` inspects the hypothesis symbol (it triages its argument), so this
@@ -165,19 +166,23 @@ NatFn := ArrowC(NatR, NatR)
 //         check_arrow NatFn NatR ({f} => f) = "Proved" — no table => [] => combine [] = Proved
 StemR := {v} => is_stem(v)
 test table(NatFn, id) = none
-test table(StemR, id) = none
+// a recognizer's cases are derived by running it: a stem of any tree, and nothing at all for False
+test table(StemR, {s} => piece(StemR, [s])) = some([t(piece(TreeR, ["child"]))])
 test table(FalseR, id) = some([])
+// one that never stops off zero has none, so its symbols never split
+test table(LoopR, id) = none
 test is_positive(NatR) = true
 test is_positive(NatFn) = false
-test is_splittable(in_sym(NatFn, [])) = false
+test is_splittable(piece(NatFn, [])) = false
 // inspecting a negative symbol is stuck with a reason, never a need
-test run(sniff, in_sym(NatFn, [])) = stuck_on(pair("no split table", in_sym(NatFn, [])))
+test run(sniff, piece(NatFn, [])) = stuck_on(pair("no split table", piece(NatFn, [])))
 // the search does not split it: Open with the reason; the driver then grounds
 // the symbol on the stored pair (id, shift): sniff id = true, sniff shift = false
-test search({input} => and_then(run(sniff, input), judge_bool), in_sym(NatFn, []), split_depth) = "Open"
+test search({input} => and_then(run(sniff, input), judge_bool), piece(NatFn, []), split_depth) = "Open"
 test check_arrow(NatFn, Bool, sniff) = refuted(pair(id, shift))
-test check_arrow_r(StemR, NatR, id) = open_on(pair("no split table", in_sym(StemR, [])))
-test check_arrow(StemR, NatR, id) = "Open"
+// with StemR's cases derived, the stem of the leaf is a member that id does not make a Nat
+test check_arrow_r(StemR, NatR, id) = refuted(t(t))
+test check_arrow(StemR, NatR, id) = refuted(t(t))
 // {f} => f at (Nat -> Nat) -> Nat: grounded on the member id, which is no Nat
 test check_arrow(NatFn, NatR, {f} => f) = refuted(id)
 // a declared EMPTY grammar is the one place a vacuous Proved is right
@@ -188,10 +193,10 @@ test check_arrow(FalseR, TreeR, {x} => pair(x, x)) = "Proved"
 // the v1 confirmer: check_arrow NatFn TreeR wrap = "Proved" (and pair f zero, and {f} => f):
 //         judge_tree said Yes to anything
 wrap := {f} => t(f)
-test judge_tree(t(in_sym(NatFn, []))) = coarse(in_sym(NatFn, []))
-test judge_tree(succ(in_sym(NatR, []))) = "Yes"
-test judge_tree(app_val(in_sym(NatFn, []), 0)) = "Yes"
-test judge_tree(app_val(in_sym(NatFn, []), id)) = stuck_on(pair("argument outside the domain", in_sym(NatFn, [])))
+test judge_tree(t(piece(NatFn, []))) = coarse(piece(NatFn, []))
+test judge_tree(succ(piece(NatR, []))) = "Yes"
+test judge_tree(app_val(piece(NatFn, []), 0)) = "Yes"
+test judge_tree(app_val(piece(NatFn, []), id)) = stuck_on(pair("argument outside the domain", piece(NatFn, [])))
 test check_arrow_r(NatFn, TreeR, {f} => f(1)) = "Proved"
 test check_arrow(NatFn, TreeR, wrap) = refuted(pair(id, shift))
 test check_arrow(NatFn, TreeR, {f} => pair(f, zero)) = refuted(pair(id, shift))
@@ -203,26 +208,26 @@ test tree_eq(id, shift) = false
 // {f} => f 0 IS a member at (Nat -> Nat) -> Nat: the neutral term App f [0] is
 // judged at Nat by the arrow rule (f : Nat -> Nat, 0 : Nat) — Proved, and at
 // Tree the same term is shielded (its codomain Nat is fine) — Proved
-test run({f} => f(0), in_sym(NatFn, [])) = answered(app_val(in_sym(NatFn, []), 0))
+test run({f} => f(0), piece(NatFn, [])) = answered(app_val(piece(NatFn, []), 0))
 test check_arrow(NatFn, NatR, {f} => f(0)) = "Proved"
 test check_arrow(NatFn, TreeR, {f} => f(0)) = "Proved"
 // f applied OUTSIDE its domain is unconstrained: id id and shift id differ
 test check_arrow(NatFn, TreeR, {f} => f(id)) = refuted(pair(id, shift))
 // inspecting a neutral term is opaque (no codomain split, see C): Open, honestly
-test check_arrow_r(NatFn, Bool, {f} => is_zero(f(0))) = open_on(pair("opaque value", app_val(in_sym(NatFn, []), 0)))
+test check_arrow_r(NatFn, Bool, {f} => is_zero(f(0))) = open_on(pair("opaque value", app_val(piece(NatFn, []), 0)))
 
 // ---- C. forged descent through a codomain split (serious)
 // the v1 confirmer (and this file) never split a stuck application by its codomain: `dbl s`
 // on a symbol NEEDS s, the search splits s, and the depth runs out — Open.
-// Any future codomain-split rule must mint OUT symbols for the pieces of the
-// image; the license below accepts only In symbols, so they never descend.
+// The license accepts only pieces of the input being inducted on: a piece of another input,
+// or an application (the hypothesis's own answer), never descends.
 spin_step := {self, n} => if (is_zero(n)) { zero } else { self(nat_pred(dbl(nat_pred(n)))) }
 test run(fix(spin_step), 2) = answered(0)
 test run(fix(spin_step), 3) = stuck
 test check_by_induction(spin_step) = "Open"
-test apply_ih(NatR, [], same, out_sym(NatR, ["pred"])) = stuck
-test apply_ih(NatR, [], same, succ(out_sym(NatR, ["pred", "pred"]))) = stuck
-test apply_ih(NatR, [], same, rec_sym(NatR, ["pred"])) = stuck
+test apply_ih(NatR, [], same, piece_at(NatR, 1, ["right"])) = stuck
+test apply_ih(NatR, [], same, succ(piece_at(NatR, 1, ["right", "right"]))) = stuck
+test apply_ih(NatR, [], same, app_val(plain_ih, piece(NatR, ["right"]))) = stuck
 
 // ---- D. quotient respect must use the NORMALIZER (serious)
 // the v1 confirmer: respects_by_induction id_step ({a} => a) = "Proved" (the identity
@@ -233,11 +238,12 @@ test respects_by_induction(id_step, {a} => a) = "Proved"
 test parity(5) = 1
 test parity(4) = 0
 // the normalizer on a sub-symbol is a neutral term; on the root it is a need
-test run(parity, in_sym(NatR, ["pred"])) = answered(app_val(parity, in_sym(NatR, ["pred"])))
-test run(parity, in_sym(NatR, [])) = need(in_sym(NatR, []))
-test run(parity, sym_at(2, [])) = answered(app_val(parity, in_sym(NatR, ["pred", "pred"])))
-test apply_ih_at(NatR, Bool, [], {a} => app_val(parity, a), app_val(parity, in_sym(NatR, ["pred"]))) = answered(rec_sym(Bool, ["pred"]))
-test apply_ih_at(NatR, Bool, [], {a} => app_val(parity, a), app_val(parity, in_sym(NatR, []))) = stuck
+test run(parity, piece(NatR, ["right"])) = answered(app_val(parity, piece(NatR, ["right"])))
+test run(parity, piece(NatR, [])) = need(piece(NatR, []))
+test run(parity, sym_at(2, [])) = answered(app_val(parity, piece(NatR, ["right", "right"])))
+// the quotient's hypothesis takes nf k for k, so f (nf k) and f k are one application
+test apply_ih_at(NatR, Bool, [], {a} => app_val(parity, a), app_val(parity, piece(NatR, ["right"]))) = answered(app_val(hypothesis(NatR, Bool, [], {a} => app_val(parity, a)), piece(NatR, ["right"])))
+test apply_ih_at(NatR, Bool, [], {a} => app_val(parity, a), app_val(parity, piece(NatR, []))) = stuck
 test respects_nf(is_even_step, parity, Bool) = "Proved"
 test respects_nf(id_step, parity, NatR) = refuted(pair(0, 2))
 test respects_nf(is_even_step, always_zero, Bool) = refuted(pair(0, 1))
@@ -266,7 +272,8 @@ test eq_by_induction(dbl_step, {_d, n} => pair(n, n)) = refuted(0)
 // beta-equal spellings at a coarse domain and a fine codomain: neither is a
 // member, and the stored pair shows it (f id = id, g shift = shift)
 test eq_arrow_at(NatFn, TreeR, {h} => h, {h} => id(h)) = refuted(pair(id, shift))
-test eq_arrow_at(NatFn, NatFn, {h} => h, {h} => id(h)) = "Open"
+// at a coarse codomain the symbol is a member of its own type, so the two are equal
+test eq_arrow_at(NatFn, NatFn, {h} => h, {h} => id(h)) = "Proved"
 // two non-total functions are never equal at a total type: `loop` on the
 // hypothesis unrolls until the fuel is gone — Open, never Proved
 test eq_by_induction(loop_f_step, loop_g_step) = "Open"
@@ -277,25 +284,25 @@ test check_by_induction(loop_f_step) = "Open"
 test check_arrow(LoopR, NatR, id) = "Open"
 test judge_as(LoopR, 0) = "Yes"
 test judge_as(LoopR, 1) = stuck
-test judge_as(LoopR, in_sym(NatR, [])) = need(in_sym(NatR, []))
+test judge_as(LoopR, piece(NatR, [])) = need(piece(NatR, []))
 test check_arrow(NatR, LoopR, id) = "Open"
 test check_arrow(NatR, LoopR, succ) = "Open"
 test check_arrow(NatR, LoopR, {_} => zero) = "Proved"
 // (the enumeration refuter cannot be consulted for LoopR: it would hang)
 
 // ---- G. curried claims need distinct roots (serious)
-// the v1 confirmer: with path-only names both arguments were `in_sym NatR []`, one
+// the v1 confirmer: with path-only names both arguments were `piece NatR []`, one
 //         symbol, and the check was of f n n: check_arrow2 NatR NatR NatR f2 = "Proved"
 f2 := {a, b} => if (is_zero(a)) { if (is_zero(b)) { zero } else { false } } else { zero }
 test f2(0, 1) = false
 test NatR(f2(0, 1)) = false
-test tree_eq(in_sym_at(NatR, 0, []), in_sym_at(NatR, 1, [])) = false
+test tree_eq(piece_at(NatR, 0, []), piece_at(NatR, 1, [])) = false
 test check_arrow2(NatR, NatR, NatR, f2) = refuted(pair(0, 1))
 test check_arrow2(NatR, NatR, NatR, {a, b} => pair(a, b)) = refuted(pair(1, 0))
 test check_arrow2(NatR, NatR, NatR, {a, _b} => a) = "Proved"
 test fix(add_step, 2, 3) = 5
 // the second root is never a descendant of the first: no license on it
-test apply_ih(NatR, [], same, in_sym_at(NatR, 1, [])) = stuck
+test apply_ih(NatR, [], same, piece_at(NatR, 1, [])) = stuck
 test check_by_induction2(NatR, NatR, add_step) = "Proved"
 test check_by_induction2(NatR, NatR, {self, a, b} => if (is_zero(a)) { b } else { succ(self(a, b)) }) = "Open"
 test check_by_induction2(NatR, NatR, {_self, a, b} => if (is_zero(a)) { pair(b, b) } else { zero }) = refuted(pair(0, 1))
@@ -324,8 +331,8 @@ test run({n} => n, 0) = answered(0)
 // ---- I. a program that builds the hole marker (fatal)
 // a hole is a plain tree, so a program can build one: before the escape these were all
 // Proved (a fork is no Nat). Forged trees are opaque, so the verdict is Open.
-forge := {_n} => in_sym(NatR, [])
-forge_late := {n} => if (is_zero(n)) { zero } else { in_sym(NatR, []) }
+forge := {_n} => piece(NatR, [])
+forge_late := {n} => if (is_zero(n)) { zero } else { piece(NatR, []) }
 test check_by_structure(forge) = "Open"
 test check_arrow(TreeR, NatR, forge_late) = "Open"
 // built at run time: natively, and by the stem rule on a partly-known argument

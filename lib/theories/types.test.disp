@@ -3,7 +3,7 @@ open use raw "base.disp" {}
 open use raw "types.disp" {}
 open use raw "pts.disp" {}
 
-unit_t := of_type(behaviour{admits := {_self, v} => known_or(v, {x} => if (x == t) { "Yes" } else { "No" })})
+unit_t := {v} => is_leaf(v)
 // plain functions: each argument is a symbol, split only where the program looks
 test judge(arrow_t(bool_t, bool_t), not) = "Proved"
 test judge(arrow_t(nat_t, nat_t), succ) = "Proved"
@@ -29,6 +29,10 @@ poly_id := {_a, x} => x
 test judge(forall_t({a} => arrow_t(a.snd, a.snd)), poly_id) = "Proved"
 test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, x} => not(x)).is_refuted = true
 test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, _x} => true).is_refuted = true
+// the member of an abstract type is a hole, so a program cannot answer with a guess of it
+test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, _x} => pair("Abstract", pair("In", pair(0, [pair("arg", 0)])))).is_refuted = true
+// nor with either stand-in a re-run puts in its place: one of the two runs catches it
+test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, _x} => stand_ins.head).is_refuted = true
 // Church numerals: the function argument stays a symbol, and what it builds is typed by its codomain
 church_nat := forall_t({a} => arrow_t(arrow_t(a.snd, a.snd), arrow_t(a.snd, a.snd)))
 test judge(church_nat, {_a, f, x} => f(f(x))) = "Proved"
@@ -45,8 +49,8 @@ test judge(pi_t(nat_t, fam), {n} => if (is_zero(n)) { t } else { n }) = "Proved"
 test judge(pi_t(nat_t, fam), {n} => succ(n)).is_refuted = true
 test judge(sigma_t(nat_t, fam), pair(2, 5)) = "Proved"
 test judge(sigma_t(nat_t, fam), pair(0, 5)).is_refuted = true
-// a family whose answer is built around the unknown number itself gives no type to judge at: Open
-test judge(pi_t(nat_t, {face} => by_value(face, {n} => eq_of(n, n))), {_n} => t).is_open = true
+// a family built around the unknown number itself: n = n holds whatever n is, since equal values are equal without a split
+test judge(pi_t(nat_t, {face} => by_value(face, {n} => eq_of(n, n))), {_n} => t) = "Proved"
 // equality of values: the witness does not matter
 test judge(eq_of(add(2, 2), 4), t) = "Proved"
 test judge(eq_of(add(2, 2), 5), t).is_refuted = true
@@ -62,6 +66,8 @@ test judge(arrow_t(shape, bool_t), {v} => is_zero(v.fst)) = "Proved"
 test by_search(cover_law(shape), t, 120) = "Open"
 test by_search(cover_law(list_t(nat_t)), t, 120) = "Open"
 test by_search(cover_law(list_t(bool_t)), t, 120) = "Open"
+test by_search(exact_law(shape), t, 120) = "Open"
+test by_search(exact_law(list_t(nat_t)), t, 120) = "Open"
 // a cover that forgets a constructor is refuted with a member it misses
 lossy := of_type(behaviour{admits := {_self, v} => judge_as(list_t(nat_t), v), cases := some({_self, _child} => [t])})
 test by_search(cover_law(lossy), t, 120).is_refuted = true
