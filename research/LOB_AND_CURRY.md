@@ -5,8 +5,9 @@ Research note, 2026-10-17. It writes up a conversation that started from BendTT'
 landed code. The four Bend programs in §4 were run against Bend 2.0.4 (`bend2/main.ts`
 in the bend2 checkout) and their output is quoted exactly. Everything about disp cites
 the files as they stand on this date: `research/CLAIMS_OVER_TREES.md` §7 and §9,
-`lib/claim.disp`, `lib/tests/claim.test.disp`, `lib/verdict.disp`, `GRADUAL.disp` and
-`CHECK.disp`.
+`lib/claim.disp`, `lib/tests/claim.test.disp`, `lib/verdict.disp` and `GRADUAL.disp`.
+Since then `certify` and `ind_holds` have moved to `lib/rules.disp`, and the old
+induction checker `CHECK.disp` has been deleted.
 
 Three existing notes state the conclusion without the mechanism:
 `FOUNDATIONS.md` [P3] "the Löbian ceiling", `research/THE_NATURE_OF_ABSTRACTION.typ`
@@ -316,7 +317,7 @@ From `lib/claim.disp`:
   passing the pulled-back challenge is carried to a witness passing the challenge. Read
   backwards: every counterexample to the honest claim pulls back to a counterexample to
   the symbolic one.
-- **`certify`** in `lib/tests/claim.test.disp` reads a finite symbolic claim as a
+- **`certify`** in `lib/rules.disp` reads a finite symbolic claim as a
   certificate of the honest one. It answers Proved when every symbolic case settles, a
   refutation when a ground case fails, and Open with the unsettled case otherwise.
 
@@ -356,17 +357,17 @@ properties of these lenses. This is an analogy, not a proved correspondence.
 | `□(A→B)` and `□A` give `□B` | `lens_then` composes certified lenses |
 | `□A` gives `□□A` | checking a certificate is a finite run, so it is itself certified by `over` |
 
-### 5.5 Induction, descent, and a Curry-shaped hole in the old checker
+### 5.5 Induction, descent, and a Curry-shaped hole
 
-`CHECK.disp`'s `check_by_induction` still carries this comment: "Missing certificate:
-nothing checks the recursive call happens on something SMALLER (the decreasing-measure
-debt)." Without that check the induction hypothesis may be applied at the root itself.
+An induction checker that never checks the recursive call happens on something smaller
+lets the induction hypothesis be applied at the root itself. disp's first induction
+checker had exactly this hole, and said so in a comment.
 That is the live Löb term of §4: a self-reference that the checker believes before it has
 any evidence. It is the same hole Bend's descent test closes.
 
-The claim layer closes it by construction. In `lib/tests/claim.test.disp`, the
-induction law `ind_holds` asks for the claim at `nat_pred x` and at the case of `x`, and
-for nothing else. The back map hands the hypothesis only the predecessor. There is no way
+The claim layer closes it by construction. In `lib/rules.disp`, the induction law
+`ind_holds` asks for the claim at the case of `x` and at its strictly smaller pieces
+(`pieces`), and for nothing else. The back map hands the hypothesis only those pieces. There is no way
 to state the hypothesis at the root, so no separate measure check is needed. This is
 Bend's rule, "the same constructor with a strictly smaller field", turned from a syntactic
 test after the fact into a property of what the induction lens can ask for.
@@ -413,8 +414,6 @@ These points restate known results in the vocabulary above. They are not new res
 - **The backward maps are hand-written.** `CLAIMS_OVER_TREES.md` §9 names deriving them
   from a run's origins (§6 of that note) as the next step. Until then each shortcut's
   lens is written by its author.
-- **`CHECK.disp`'s induction checker still has the hole of §5.5.** It is superseded by
-  the claim layer's `ind_holds`, but it is still in the repo and still answers Proved.
 
 ## Sources
 
