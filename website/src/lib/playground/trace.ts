@@ -10,7 +10,7 @@
 // looks at has no binders; anything else may be clicked to run early, and the
 // end is still the same tree as removing every binder first.
 
-import { Store, APP, FORK, LEAF, STEM, VAR, LAM, SPLIT, HELD_K, R_LEAF, R_STEM, R_K, R_S, R_F, R_NONE, R_BIND, type Id } from './store.ts'
+import { Store, APP, FORK, LEAF, STEM, VAR, LAM, SPLIT, HELD_K, ATOM, R_LEAF, R_STEM, R_K, R_S, R_F, R_NONE, R_BIND, type Id } from './store.ts'
 
 export interface Call {
   /// the frame whose rule firing starts this call
@@ -51,6 +51,30 @@ export class Trace {
     this.frames = [root]
     this.sizes = [store.size[root]]
     if (!store.hasRedex(root)) this.end = store.hasApp(root) ? 'stuck' : 'normal'
+  }
+
+  /// What the `n` steps from frame `from` look at: where each fires, the top of what fires (its shape picks the rule)
+  /// and, for triage, the top of what it looks at. These are drawn open, so a step never acts on something folded.
+  readsFrom(from: number, n: number): Set<Id> {
+    const s = this.store
+    const res = (id: Id) => {
+      let cur = id
+      for (let r = s.resolved.get(cur); r !== undefined; r = s.resolved.get(cur)) cur = r
+      return s.tag[cur] === ATOM ? s.a[cur] : cur
+    }
+    const out = new Set<Id>()
+    for (let f = from; f <= Math.min(this.last, from + n - 1); f++) {
+      const path = this.nextPath(this.frames[f])
+      if (!path) break
+      const site = res(this.subterm(this.frames[f], path))
+      out.add(site)
+      if (s.tag[site] !== APP) continue
+      const fn = res(s.a[site])
+      out.add(fn)
+      if (s.tag[fn] === FORK || s.tag[fn] === STEM) out.add(res(s.a[fn]))
+      if (s.rule[site] === R_F) out.add(res(s.b[site]))
+    }
+    return out
   }
 
   #paths = new Map<number, string>()

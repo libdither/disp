@@ -437,6 +437,32 @@ export class Store {
     return g.roots.map((r) => (r < 0 ? -1 : map[r]))
   }
 
+  #parts = new Map<Id, string>()
+  #partsFor = -1
+  /// The definition a subtree is a piece of (the smallest one holding it), to name a fold that has no name of its own.
+  partOf(id: Id): string | undefined {
+    if (this.#partsFor !== this.names.size) {
+      this.#partsFor = this.names.size
+      this.#parts = new Map()
+      const defs = [...this.names].sort((a, b) => this.size[a[0]] - this.size[b[0]])
+      let budget = 200_000
+      for (const [root, name] of defs) {
+        const stack = [root]
+        while (stack.length && budget-- > 0) {
+          const id = stack.pop()!
+          const t = this.tag[id]
+          const kids = t === FORK || t === APP ? [this.a[id], this.b[id]] : t === STEM || t === HELD_K ? [this.a[id]] : []
+          for (const c of kids)
+            if (!this.#parts.has(c) && !this.names.has(c) && this.size[c] > 1) {
+              this.#parts.set(c, name)
+              stack.push(c)
+            }
+        }
+      }
+    }
+    return this.#parts.get(id)
+  }
+
   /// The numeral / string / name this subtree displays as, if any.
   label(id: Id): { kind: LabelKind; text: string } | null {
     const nat = this.natOf[id]

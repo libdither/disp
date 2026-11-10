@@ -5,7 +5,7 @@
   // on symbols, one per parameter, so it has something to do. Should the
   // store's binder rewrites ever disagree with the compiler's replay, the reel
   // falls back to the replay first and the run after.
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { disp } from '$lib/disp/client.svelte'
   import type { TermDump, BracketDump, BracketRule } from '$lib/disp/protocol'
   import TreeCanvas, { type CanvasApi, type TreeLook } from './TreeCanvas.svelte'
@@ -51,6 +51,25 @@
   const MAX_DUMP = 60000
   /// a binder rewrite needs reading, however fast the run plays
   const BINDER_TICK_MS = 420
+  /// the drawing opens what the next few steps look at, so nothing is ever acted on while folded
+  const READS_AHEAD = 6
+  const reads = (f: number) => trace!.readsFrom(f, READS_AHEAD)
+  /// In a run whose biggest tree passes 120 nodes, a subtree of 24 or more shows open once, the copy nearest the next step,
+  /// and its other copies fold. Decided once for the whole run, so pictures near the line don't switch it on and off;
+  /// a small run is clear enough with every copy open.
+  const REPEATS = 24
+  let repeatsFor: Trace | null = null
+  let repeatsAt = -1
+  let repeatsOn = false
+  function repeats(): number | undefined {
+    if (!trace) return undefined
+    if (repeatsFor !== trace || repeatsAt !== trace.last) {
+      repeatsFor = trace
+      repeatsAt = trace.last
+      repeatsOn = trace.sizes.some((n) => n > 120)
+    }
+    return repeatsOn ? REPEATS : undefined
+  }
   /// one per name, the same in a binder, its uses, and the symbols it turns into
   const VAR_COLORS = ['#1971c2', '#e03131', '#9c36b5', '#2b8a3e', '#c2255c', '#0b7285', '#b35c00', '#5f3dc4']
 
@@ -418,8 +437,8 @@
     reach = undefined
     let nodes = 0
     function* scenes() {
-      for (const f of trace!.frames) {
-        const sc = layoutScene(store, [f], { open: new Set(open), closed: new Set(closed) }, { labels, sk, foldData: labels ? 40 : undefined, plainNats: tab === 'try' && symbols.length > 0 && !tour })
+      for (const [k, f] of trace!.frames.entries()) {
+        const sc = layoutScene(store, [f], { open: new Set(open), closed: new Set(closed) }, { labels, sk, foldData: labels ? 40 : undefined, plainNats: tab === 'try' && symbols.length > 0 && !tour, reads: reads(k), repeats: repeats() })
         if ((nodes += sc.nodes.length) > 150_000) return
         yield sc
       }
@@ -452,7 +471,7 @@
     }
     const root = trace.frames[frame]
     const keepOpen = ms > 0 && at > was && at - was <= 4 ? lastNearOpen : undefined
-    const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), alsoNext: mode === 'parallel' ? trace.readyPaths(root) : undefined, labels, sk: readsSk(), foldData: labels ? 40 : undefined, keepOpen, plainNats: tab === 'try' && symbols.length > 0 && !tour })
+    const next = layoutScene(store, [root], { open, closed }, { nextPath: trace.nextPath(root), alsoNext: mode === 'parallel' ? trace.readyPaths(root) : undefined, labels, sk: readsSk(), foldData: labels ? 40 : undefined, keepOpen, plainNats: tab === 'try' && symbols.length > 0 && !tour, reads: reads(frame), repeats: repeats() })
     lastNearOpen = next.nearOpen
     if (ms > 0 && was >= lead && at > was && at - was <= 4) next.guide = stepGuide(store, trace, was - lead)
     next.reach = runReach()
@@ -466,6 +485,7 @@
       const t = ++token
       freshStore()
       playing = false
+      waiting = []
       hoverText = ''
       if (!s) {
         scene = null
@@ -492,11 +512,60 @@
   /// with building skipped, the step from frame f is folded into the one before (see Trace.folds)
   const absorbed = (f: number) => !!trace && trace.folds(f)
   function seek(i: number, ms = 0) {
+    if (!pumping) waiting = []
+    // a step given less than one screen frame to move snaps instead: there would be no frame in between to show
+    const oneFrame = canvas?.frameMs() ?? 1000 / 60
+    if (ms > 0) ms = Math.min(ms, budget / (1 + hurry)) >= oneFrame ? Math.min(ms, budget / (1 + hurry)) : 0
     peek = null
     at = Math.max(0, Math.min(lead + (trace?.last ?? 0), i))
     draw(ms)
   }
   const goto = (f: number, ms = 0) => seek(lead + f, ms)
+  // Steps keep pace with the presses: each animates in the time since the press before, so pressing faster plays
+  // faster, down to a snap. A press while the tree still moves speeds that motion up to land first, so nothing is cut
+  // off midway, and a backlog shares out its time. A held key never queues more than one step, so letting go stops it.
+  let waiting: { run: () => void; held: boolean; budget: number }[] = []
+  let hurry = 0
+  let budget = Infinity
+  let pumping = false
+  let pumpTimer: ReturnType<typeof setTimeout> | undefined
+  let lastPress = -Infinity
+  function act(fn: () => void, held = false) {
+    playing = false
+    const now = performance.now()
+    const gap = now - lastPress
+    lastPress = now
+    if (held && waiting.length) return
+    // what is still moving lands in a quarter of the gap, and the new step moves in what is left of it
+    const landMs = (canvas?.left() ?? 0) > 0 ? Math.min(120, Math.max(canvas?.frameMs() ?? 1000 / 60, gap * 0.25)) : 0
+    if (landMs) canvas?.hurry(landMs)
+    waiting.push({ run: fn, held, budget: gap * 0.85 - landMs })
+    if (waiting.length === 1) pump()
+  }
+  function pump() {
+    clearTimeout(pumpTimer)
+    if (!waiting.length) return
+    const left = canvas?.left() ?? 0
+    if (left > 0) {
+      pumpTimer = setTimeout(pump, left)
+      return
+    }
+    pumping = true
+    hurry = waiting.length - 1
+    budget = waiting[0].budget
+    try {
+      waiting[0].run()
+    } finally {
+      pumping = false
+      hurry = 0
+      budget = Infinity
+    }
+    waiting.shift()
+    // the canvas takes the new scene once effects run, and only then knows how long it moves for
+    if (waiting.length) void tick().then(pump)
+  }
+  /// Letting go of a held key drops the step it had waiting.
+  const letGo = () => (waiting = waiting.filter((w) => !w.held))
   /// With building skipped, a scrub lands on the real step a build step leads up to.
   function snap(i: number): number {
     if (!hideBuild || !trace || i < lead) return i
@@ -587,27 +656,40 @@
     if (!playing) stopAt = null
   })
   let playTimer: ReturnType<typeof setTimeout> | undefined
+  let playGen = 0
   $effect(() => {
     if (!playing) return
     const runMs = 1000 / speed
+    const gen = ++playGen
     const run = () => {
-      if (!playing) return
+      if (!playing || gen !== playGen) return
       if (stopAt !== null && at >= stopAt) {
         playing = false
         stopAt = null
         return
       }
       const binderNext = at < lead || (unified && trace?.rules[frame + 1] === R_BIND)
-      const tickMs = binderNext ? Math.max(BINDER_TICK_MS, runMs) : stopAt !== null ? Math.min(runMs, 380) : runMs
-      if (!stepForward(tickMs >= 70 ? Math.min(binderNext ? 360 : 260, tickMs * 0.85) : 0)) {
+      // binder steps get a longer beat, which shrinks with the speed like any other
+      const tickMs = binderNext ? Math.max(runMs, Math.min(BINDER_TICK_MS, runMs * 1.7)) : stopAt !== null ? Math.min(runMs, 380) : runMs
+      // a step that likes to move longer (a binder knocking its variable off) still fits in its tick
+      budget = tickMs * 0.85
+      const stepped = stepForward(Math.min(binderNext ? 360 : 260, tickMs * 0.85))
+      budget = Infinity
+      if (!stepped) {
         if (trace?.end) playing = false
         else playTimer = setTimeout(run, 60)
         return
       }
-      playTimer = setTimeout(run, tickMs)
+      const started = performance.now()
+      void tick().then(() => {
+        if (playing && gen === playGen) playTimer = setTimeout(run, Math.max(tickMs - (performance.now() - started), canvas?.left() ?? 0))
+      })
     }
     untrack(run)
-    return () => clearTimeout(playTimer)
+    return () => {
+      playGen++
+      clearTimeout(playTimer)
+    }
   })
   function togglePlay() {
     if (!trace) return
@@ -634,17 +716,14 @@
     else if (e.key === '-') canvas?.zoom(0.8)
     else if (e.key === 'Escape') showOptions = false
     else if (trace) {
-      if (e.key === 'ArrowDown') stepIn()
-      else if (e.key === 'ArrowRight' && e.shiftKey) inBinders ? binderJump(1) : stepOver()
-      else if (e.key === 'ArrowLeft' && e.shiftKey && inBinders) binderJump(-1)
-      else if (e.key === 'ArrowRight' && e.altKey) stepOut()
-      else if (e.key === 'ArrowRight') {
-        playing = false
-        stepForward()
-      } else if (e.key === 'ArrowLeft') {
-        playing = false
-        stepBack()
-      } else if (e.key === ' ') togglePlay()
+      const held = e.repeat
+      if (e.key === 'ArrowDown') act(stepIn, held)
+      else if (e.key === 'ArrowRight' && e.shiftKey) act(() => (inBinders ? binderJump(1) : stepOver()), held)
+      else if (e.key === 'ArrowLeft' && e.shiftKey && inBinders) act(() => binderJump(-1), held)
+      else if (e.key === 'ArrowRight' && e.altKey) act(stepOut, held)
+      else if (e.key === 'ArrowRight') act(() => stepForward(), held)
+      else if (e.key === 'ArrowLeft') act(stepBack, held)
+      else if (e.key === ' ') togglePlay()
       else if (e.key === 'Home') seek(0)
       else if (e.key === 'End') seek(lastAt)
       else return
@@ -1069,7 +1148,7 @@
 />
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-<section class="insp" tabindex="0" onkeydown={onKey} aria-label="tree view" bind:this={rootEl}>
+<section class="insp" tabindex="0" onkeydown={onKey} onkeyup={letGo} aria-label="tree view" bind:this={rootEl}>
   <header class="head">
     {#if subject}
       {#if subject.line && onGoto}
@@ -1213,9 +1292,9 @@
         <Timeline {trace} {at} {lead} {version} {stops} {stepColor} onScrub={(i) => { playing = false; seek(snap(i)) }} />
         <div class="transport">
           <button class="tb" onclick={() => seek(0)} title="Start (Home)" aria-label="start" data-tour="start">⏮</button>
-          <button class="tb" onclick={() => { playing = false; stepBack() }} title="Step back (←)" aria-label="step back" data-tour="back">◀</button>
+          <button class="tb" onclick={() => act(stepBack)} title="Step back (←)" aria-label="step back" data-tour="back">◀</button>
           <button class="tb play" onclick={togglePlay} data-tour="play" title="Play or pause (space)" aria-label={playing ? 'pause' : 'play'}>{playing ? '❚❚' : '▶'}</button>
-          <button class="tb" onclick={() => { playing = false; stepForward() }} title="Step (→)" aria-label="step" data-tour="step">▶|</button>
+          <button class="tb" onclick={() => act(() => stepForward())} title="Step (→)" aria-label="step" data-tour="step">▶|</button>
           <button class="tb" onclick={() => { playing = false; seek(lastAt) }} title="End (End)" aria-label="end" data-tour="end">⏭</button>
           <button class="tb" class:on={mode === 'parallel'} onclick={() => setMode(mode === 'parallel' ? 'eager' : 'parallel')} title={mode === 'parallel' ? 'Stepping fires every ready application at once; click for one at a time' : 'Stepping fires one application at a time; click to fire every ready one at once'} aria-label="fire all at once" aria-pressed={mode === 'parallel'}>⇉</button>
           {#if bindEnd > 0}
@@ -1224,9 +1303,9 @@
           {#if !(bindEnd > 0 && phase.runs === 0 && runEnded)}<button class="phase" class:on={!inBinders} data-tour="run" onclick={() => { playing = false; seek(bindEnd) }} title="The tree reducing, one rule at a time">Run <span>{phase.run}/{phase.runs}{runEnded ? '' : '…'}</span></button>{/if}
           <span class="size">{#if curSize}{fmt(curSize.size)} node{curSize.size === 1 ? '' : 's'}{/if}</span>
           {#if showSteps && !inBinders && mode === 'eager'}
-            <button class="tb word" onclick={() => { playing = false; stepIn() }} title="Jump to the next call (↓)">in</button>
-            <button class="tb word" onclick={() => { playing = false; stepOver() }} title="Skip the next call (shift →)">over</button>
-            <button class="tb word" onclick={() => { playing = false; stepOut() }} title="Finish this call (alt →)">out</button>
+            <button class="tb word" onclick={() => act(stepIn)} title="Jump to the next call (↓)">in</button>
+            <button class="tb word" onclick={() => act(stepOver)} title="Skip the next call (shift →)">over</button>
+            <button class="tb word" onclick={() => act(stepOut)} title="Finish this call (alt →)">out</button>
           {/if}
           <button class="tb" class:on={showSteps} data-tour="steps" onclick={() => (showSteps = !showSteps)} title={inBinders ? 'Every rewrite' : 'Every call'} aria-label={inBinders ? 'every rewrite' : 'every call'} aria-pressed={showSteps}>≣</button>
           <button class="tb optbtn" class:on={showOptions} onclick={() => (showOptions = !showOptions)} title="Options and key" aria-label="options" aria-expanded={showOptions}>⋯</button>

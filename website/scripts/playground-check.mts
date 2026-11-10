@@ -2,7 +2,7 @@
 // reducer in treecalc.ts: both implement the five rules, so they must agree.
 import { Store, FORK } from '../src/lib/playground/store.ts'
 import { Trace } from '../src/lib/playground/trace.ts'
-import { layoutScene, diffTrees, keyPath, K_APP } from '../src/lib/playground/layout.ts'
+import { layoutScene, diffTrees, keyPath, K_APP, K_POD } from '../src/lib/playground/layout.ts'
 import { bracketReplay } from '../src/lib/disp/bracket.ts'
 import type { Cir } from '../../src/elab/cir.ts'
 import { Text } from '@codemirror/state'
@@ -205,6 +205,45 @@ for (let i = 0; i < 400; i++) huge = capp(huge, v('b'))
 const t1 = performance.now()
 const long = bracketReplay(lam('a', lam('b', huge)))
 check(`a very long replay stops recording but still finishes (${(performance.now() - t1).toFixed(0)}ms)`, long.skipped > 0 && !long.mismatch && long.frames.length <= 1202 && long.frames[long.frames.length - 1].rule === 'skip')
+
+// folding: the whole picture never folds, a small one folds no data, and a fold opened by hand opens far enough to see it
+{
+  let seed = 3
+  const rand = (n: number) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n
+  const blob = (size: number): number => (size <= 1 ? s.leaf : rand(4) === 0 ? s.stem(blob(size - 1)) : s.fork(blob(Math.ceil((size - 1) / 2)), blob(Math.floor((size - 1) / 2))))
+  const lay = (root: number, open = new Set<number>()) => layoutScene(s, [root], { open, closed: new Set() }, { sk: true, foldData: 40 })
+  const small = blob(60)
+  check('a picture of 200 nodes or fewer folds no data, not even its root', lay(small).nodes.every((n) => n.kind !== K_POD))
+  const a = blob(130)
+  const big = s.fork(s.fork(a, blob(131)), blob(129))
+  const before = lay(big)
+  const pod = before.nodes.find((n) => n.id === a)
+  check('in a bigger picture, big finished data folds', pod?.kind === K_POD)
+  const after = lay(big, new Set([a]))
+  const inside = after.nodes.filter((n) => n.key.startsWith(pod!.key))
+  check(`opening it by hand opens all of it, marked as opened (${inside.length} nodes, ${inside.filter((n) => n.kind === K_POD).length} still folded)`, inside.length > 100 && inside.every((n) => n.kind !== K_POD && n.opened))
+  check('...and leaves the rest folded as it was', after.nodes.filter((n) => n.kind === K_POD).length === before.nodes.filter((n) => n.kind === K_POD).length - 1)
+}
+
+// a copy folded as a repeat (an `=` pill) always has its open twin in the same picture, however eager the folding
+{
+  let pills = 0
+  let orphans = 0
+  const runs = [ap(add, load(nat(3)), load(nat(4))), ap(toStore(swap.final), add, load(nat(2)), load(nat(5))), ap(held(swapSrc), add, load(nat(1)), load(nat(2)))]
+  for (const root of runs) {
+    const tr = new Trace(s, root)
+    tr.advance(400)
+    for (let f = 0; f <= tr.last; f += 3) {
+      const sc = layoutScene(s, [tr.frames[f]], { open: new Set(), closed: new Set() }, { nextPath: tr.nextPath(tr.frames[f]), sk: true, foldData: 40, repeats: 6 })
+      for (const n of sc.nodes) {
+        if (n.podKind !== 'same') continue
+        pills++
+        if (!sc.nodes.some((m) => m.id === n.id && m.kind !== K_POD)) orphans++
+      }
+    }
+  }
+  check(`every repeat folded to an = pill has its open twin on screen (${orphans} of ${pills} don't)`, pills > 0 && orphans === 0)
+}
 
 // reading as S and K must keep every held application's real path, or clicking fires the wrong one
 {

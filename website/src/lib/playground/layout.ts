@@ -36,6 +36,8 @@ export interface VNode {
   held?: boolean
   /// a named subtree drawn open: its name, on a tag that folds it back when clicked
   tag?: string
+  /// inside a fold someone opened: drawn with a soft halo, so it shows what they uncovered
+  opened?: boolean
 }
 
 /// Where a step sends things, so the drawing can show it instead of jumping.
@@ -94,13 +96,59 @@ export interface LayoutOptions {
   sk?: boolean
   /// draw numerals as the trees they are
   plainNats?: boolean
+  /// what the next few steps look at: never folded
+  reads?: Set<Id>
+  /// a subtree of this many nodes or more drawn open more than once stays open only where it is nearest the next step;
+  /// its other copies fold to an `=` pill
+  repeats?: number
+  /// the copies of repeats that fold, by key (worked out by layoutScene itself)
+  foldKeys?: Set<string>
+  /// subtrees drawn open in the previous frame: they stay open rather than fold back while you look
+  stay?: Set<Id>
 }
 
 /// how many X_UNITs a name's pill needs
+/// in a fold opened by hand, finished data folds again only past this many nodes
+const OPENED_DATA = 200
 const pillWidth = (text: string) => Math.max(1, Math.min(text.length, 16) * 0.3 + 0.75)
 const fmtCount = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : String(n))
 
 export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: LayoutOptions = {}): Scene {
+  const plain = layoutOnce(store, roots, folds, { ...opts, foldKeys: undefined })
+  if (!opts.repeats) return plain
+  const foldKeys = repeatsIn(store, plain, opts.repeats, opts.nextPath, opts.reads)
+  return foldKeys.size ? layoutOnce(store, roots, folds, { ...opts, foldKeys }) : plain
+}
+
+/// Which drawn copies of big repeated subtrees fold: of the copies drawn open, the one sharing the most of its path with
+/// the next step stays open. Bigger subtrees go first, and a copy inside one that folds is gone, so it neither stays
+/// open nor counts; every `=` pill this makes has its open twin on screen.
+function repeatsIn(store: Store, scene: Scene, size: number, nextPath: number[] | null | undefined, reads: Set<Id> | undefined): Set<string> {
+  const nextKey = nextPath ? 'r0' + nextPath.join('') : ''
+  const near = (key: string) => {
+    let i = 0
+    while (i < key.length && key[i] === nextKey[i]) i++
+    return i
+  }
+  const copies = new Map<Id, string[]>()
+  scene.nodes.forEach((n, i) => {
+    // a node inside a combinator's band is drawn as part of it, so it can't fold on its own
+    const banded = n.group >= 0 && n.group !== i
+    if (n.parent < 0 || n.kind === K_POD || banded || store.size[n.id] < size || reads?.has(n.id)) return
+    copies.set(n.id, [...(copies.get(n.id) ?? []), n.key])
+  })
+  const fold = new Set<string>()
+  const gone = (key: string) => [...fold].some((f) => key.startsWith(f) && key !== f)
+  for (const [, keys] of [...copies].sort((a, b) => store.size[b[0]] - store.size[a[0]])) {
+    const live = keys.filter((k) => !gone(k) && !fold.has(k))
+    if (live.length < 2) continue
+    const keep = live.reduce((best, k) => (near(k) > near(best) ? k : best))
+    for (const k of live) if (k !== keep) fold.add(k)
+  }
+  return fold
+}
+
+function layoutOnce(store: Store, roots: Id[], folds: FoldState, opts: LayoutOptions): Scene {
   const maxVisible = opts.maxVisible ?? 1800
   const nodes: VNode[] = []
   const kidsOf: number[][] = []
@@ -121,6 +169,9 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
   const operands = new Map<number, string[]>()
   /// inside a binder that hasn't come off: no application there can fire yet
   const held: boolean[] = []
+  /// inside a subtree someone opened by hand: big data opens to a larger budget there, so one click shows enough
+  const opened: boolean[] = []
+  const whole = roots.reduce((n, r) => n + store.size[res(r)], 0)
   const rootStart: number[] = []
   roots.forEach((raw, ri) => {
     rootStart.push(nodes.length)
@@ -129,6 +180,8 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
       const group = g >= 0 && !operands.get(g)!.includes(key) ? g : -1
       nodes.push({ key, id, x: 0, y: 0, parent, side, kind: K_LEAF, text: null, podKind: null, rule: 0, next: false, diff: false, comb: null, group })
       held.push(parent >= 0 && (held[parent] || store.tag[nodes[parent].id] === LAM || store.tag[nodes[parent].id] === SPLIT))
+      opened.push(parent >= 0 && (opened[parent] || (folds.open.has(nodes[parent].id) && nodes[parent].parent >= 0)))
+      if (opened[opened.length - 1]) nodes[nodes.length - 1].opened = true
       kidsOf.push([])
       width.push(1)
     }
@@ -157,20 +210,30 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
       else if (inside) pod = false
       else if (opts.same?.has(id) && !(opts.diff?.has(n.key) ?? false)) pod = true
       else if (folds.closed.has(id)) pod = true
-      else if (folds.open.has(id) || isRoot) pod = false
+      else if (folds.open.has(id) || isRoot || opts.reads?.has(id) || opts.stay?.has(id)) pod = false
       else if (label && t !== APP && opts.labels !== false && !(label.kind === 'nat' && (opts.plainNats || isHead(n)))) pod = true
-      if (!pod && !inside && opts.foldData && t !== APP && !store.hasApp(id) && store.size[id] > opts.foldData) {
+      // the whole picture never folds into one pill, and a fold opened by hand opens far enough to answer what it is
+      // and a picture small enough to take in whole folds no data at all
+      const dataLimit = whole <= OPENED_DATA ? 0 : opened[i] ? Math.max(opts.foldData ?? 0, OPENED_DATA) : opts.foldData
+      if (!pod && !inside && !isRoot && dataLimit && t !== APP && !store.hasApp(id) && store.size[id] > dataLimit && !opts.reads?.has(id)) {
         const nearNext = nextKey !== null && n.key.startsWith(nextKey) && n.key.length <= nextKey.length + 2
         if (nearNext) nearOpen.add(id)
-        else if (!folds.open.has(id) && !opts.keepOpen?.has(id)) pod = true
+        else if (!folds.open.has(id) && !opts.keepOpen?.has(id) && !opts.stay?.has(id)) pod = true
       }
+      // a copy of a big subtree that is drawn open nearer the next step
+      const again = !pod && !!opts.foldKeys?.has(n.key)
+      if (again) pod = true
       if (!pod && nodes.length >= maxVisible) {
         pod = true
         cut++
       }
       if (pod) {
         n.kind = K_POD
-        if (opts.same?.has(id) && !(opts.diff?.has(n.key) ?? false)) {
+        const part = store.partOf(id)
+        if (again) {
+          n.podKind = 'same'
+          n.text = '= ' + (label?.text ?? (part ? part + '…' : '…' + fmtCount(store.size[id])))
+        } else if (opts.same?.has(id) && !(opts.diff?.has(n.key) ?? false)) {
           n.podKind = 'same'
           n.text = label?.text ?? `= ${fmtCount(store.size[id])}`
         } else if (label) {
@@ -181,12 +244,13 @@ export function layoutScene(store: Store, roots: Id[], folds: FoldState, opts: L
           n.text = store.names.get(id) ?? '…'
         } else {
           n.podKind = 'anon'
-          n.text = '…' + fmtCount(store.size[id])
+          n.text = part ? part + '…' : '…' + fmtCount(store.size[id])
         }
         width[i] = Math.max(1, Math.min(n.text.length, 28) * 0.28 + 0.5)
         continue
       }
-      if (!isRoot && !inside && ((label?.kind === 'name' && t !== APP) || folds.open.has(id))) n.tag = label?.text ?? '…' + fmtCount(store.size[id])
+      if (!isRoot && !inside && ((label?.kind === 'name' && t !== APP) || folds.open.has(id))) n.tag = label?.text ?? (store.partOf(id) ? store.partOf(id) + '…' : '…' + fmtCount(store.size[id]))
+      if (opened[i] || (!isRoot && folds.open.has(id))) n.opened = true
       const comb = !inside && (opts.sk || t === HELD_K) ? store.readComb(id) : null
       if (comb) {
         n.comb = comb.op

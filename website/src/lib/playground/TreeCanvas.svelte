@@ -18,6 +18,12 @@
     fit: () => void
     zoom: (factor: number) => void
     focus: (key: string) => void
+    /// ms until the step being drawn has finished moving; 0 when still
+    left: () => number
+    /// speed the step being drawn up so it lands within ms, carrying on from where it is
+    hurry: (ms: number) => void
+    /// how long one screen frame lasts, measured while drawing
+    frameMs: () => number
   }
 
   interface Props {
@@ -72,6 +78,7 @@
   /// films slow every animation down by this, to look at it frame by frame
   const animScale = () => (globalThis as { __dispAnimScale?: number }).__dispAnimScale ?? 1
   let t0 = 0
+  let frameMs = 1000 / 60
   let dur = 0
   let pin: Pin | null = null
   let hover: VNode | null = null
@@ -372,6 +379,8 @@
     const now = performance.now()
     raf = 0
     const dt = Math.min(0.05, (now - lastFrame) / 1000)
+    // back-to-back frames tell the screen's refresh rate
+    if (now - lastFrame < 50) frameMs += (now - lastFrame - frameMs) * 0.1
     lastFrame = now
     let again = false
     if (shown) {
@@ -1102,6 +1111,25 @@
     const nodeOf = (key: string) => keyAt.get(key) ?? -1
     const roleA = (input: string) => (roleFocus && roleFocus !== input ? 0.15 : 1)
     if (up) drawGround(shown)
+    // what someone opened by hand sits on a soft halo, so they can see what they uncovered (its tag folds it back)
+    if (nodes.some((n) => n.opened)) {
+      ctx.strokeStyle = C.g2
+      ctx.globalAlpha = fade * 0.16
+      ctx.lineWidth = (up ? 4 : lw) + 14
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      for (let i = 0; i < nodes.length; i++) {
+        const p = nodes[i].parent
+        if (nodes[i].opened && p >= 0 && nodes[p].opened) curve(p, i)
+        else if (nodes[i].opened) {
+          ctx.moveTo(curX[i], curY[i])
+          ctx.lineTo(curX[i], curY[i])
+        }
+      }
+      ctx.stroke()
+      ctx.globalAlpha = fade
+    }
     if (roles) {
       // the branches of the input in focus, the one being routed now unless another is picked, in its colour under the bark
       const shade = roleFocus ?? roles.active
@@ -1679,6 +1707,15 @@
         requestDraw()
       },
       zoom: (f) => zoomAt(w / 2, h / 2, f),
+      frameMs: () => frameMs,
+      left: () => (dur > 0 ? Math.max(0, t0 + dur - performance.now()) : 0),
+      hurry: (ms) => {
+        const now = performance.now()
+        const t = dur > 0 ? (now - t0) / dur : 1
+        if (t >= 1 || t0 + dur - now <= ms) return
+        dur = ms / (1 - t)
+        t0 = now - t * dur
+      },
       focus: (key) => {
         if (!shown) return
         const i = shown.nodes.findIndex((n) => n.key === key)
