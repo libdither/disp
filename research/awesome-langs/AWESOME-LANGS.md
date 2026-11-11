@@ -1,9 +1,9 @@
 # AWESOME-LANGS
 
-Languages and systems surveyed against **disp**'s goals, August 2026.
+Languages and systems surveyed against **disp**'s goals, November 2026.
 Scored on the five axes defined in [`_AXES.md`](_AXES.md); one file per project with
-the full argument. All activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14; HVM4 and Bend 2: 2026-09-17; Narya, Dedukti / Lambdapi and Andromeda 2: 2026-09-30).
+the full argument. The survey began in August 2026: activity dates verified via the GitHub API on 2026-08-03
+(Mojo: 2026-08-18, the day its compiler went open source; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14; HVM4 and Bend 2: 2026-09-17; Narya, Dedukti / Lambdapi and Andromeda 2: 2026-09-30; Vine: 2026-11-11).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by measured cost, search for a program that is both provably
@@ -29,6 +29,7 @@ Cells are `symbol percent`: the share of what `GOALS.md` asks for, per [`_AXES.m
 | *disp today* | ✅ 100% | ◐ 72% | ◐ 50% | ✗ 15% | ◐ 42% | [what the repo has](_AXES.md#where-disp-is-today) as of `a5e051f49b1b` |
 | [**HVM4 / Interaction Calculus**](hvm4.md) | ✗ 17% | ✗ 0% | ✗ 0% | ◐ 55% | ◐ 35% | the *search substrate*: label-coordinated duplication and superposition, shipped but dormant |
 | [**Bend 2 / BendTT / BendRT**](bend2.md) | ✗ 0% | ◐ 72% | ◐ 40% | ◐ 40%? | ◐ 35% | the shipped *law / proof / gate* loop, and consistency from affinity instead of universes |
+| [**Vine / Ivy / IVM**](vine.md) | ✗ 17% | ✗ 0% | ✗ 0% | ◐ 35% | ✗ 0% | the *net runtime* disp's Rust net evaluator was modelled on; copying done by code, so one copier is enough |
 | [**Metamath Zero**](metamath-zero.md) | ◐ 50%? | ◐ 35% | **✅ 100%** | ◐ 50% | ✗ 0% | the *kernel* + hardware model + self-verification |
 | [**Verus**](verus.md) | ✗ 0% | ◐ 50% | ✗ 0% | ◐ 70% | ◐ 52% | *delivered outcomes* — verified fast systems code from specs |
 | [**F\* / Low\* / Pulse**](fstar-lowstar-pulse.md) | ◐ 67% | ✅ 90% | ✗ 20% | ✅ 85% | ✗ 0% | the *shipping baseline*: dependent spec → verified fast C |
@@ -98,7 +99,7 @@ untested, and the [unscored approach table](_SCORES.md#approach-unscored) tracks
 - **G4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ Bend 2 on raw speed; CakeML, MM0 and the
   Jasmin/bedrock2 line have the verified path to the machine, and Low* a model of C. Nobody returns
   time and memory from an external run as values; CryptOpt's measuring lives in its tool, and disp,
-  HVM4 and Telomare only report cost beside the run. disp's design has such a driver, but it is
+  HVM4, Vine and Telomare only report cost beside the run. disp's design has such a driver, but it is
   written down, not built.
 - **G5 (search):** CryptOpt (randomized, certified) and Verus+IDS (neural, with cost in the loop)
   lead; HVM4's superposition enumeration ships for values only and is dormant, and Bend 2's search is
@@ -173,6 +174,10 @@ untested, and the [unscored approach table](_SCORES.md#approach-unscored) tracks
     agent-facing reference from the elaborator's own vocabulary and let a token budget
     veto surface growth ("any feature that doesn't fit doesn't ship"). Bend 2 caps
     every tracked file in the repo the same way. → `thermite.md`, `bend2.md`
+15. **Per-test cost snapshots in the repo.** Vine commits every test's step counts, heap
+    peak and parallel depth beside its expected output, so a change that makes any program
+    costlier shows up in the diff. disp measures cost per run and compares by hand.
+    → `vine.md`
 
 ---
 

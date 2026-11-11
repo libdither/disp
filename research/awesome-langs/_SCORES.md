@@ -1,6 +1,6 @@
 # Scores
 
-Every score, in one place (2026-10-31). Each axis's maximum is what `GOALS.md` asks for, split into
+Every score, in one place (2026-11-11). Each axis's maximum is what `GOALS.md` asks for, split into
 three or four clauses in [`_AXES.md`](_AXES.md#grading-the-maximum-and-the-clauses); every clause
 scores 0, ½ or 1 and the axis percentage is their weighted mean. The write-ups' scorecard notes are the
 evidence. `†` marks a value taken from general knowledge beyond the write-up; `?` marks a clause the
@@ -21,6 +21,7 @@ Weights: 1 · 1 · 1
 | disp (today) | 1 | 1 | 1 | 100 | same as in theory: `shape_of` takes a program apart, and `honest` and `certify` are disp programs you apply |
 | HVM4 / Interaction Calculus | ½(runtime graphs) | 0 | 0 | 17 | terms are runtime graph nodes with no in-language inspection; untyped, no checker |
 | Bend 2 / BendTT / BendRT | 0 | 0 | 0 | 0 | no reflection; templates re-parse closed source text at compile time; the checker is TypeScript |
+| Vine / Ivy / IVM | ½(types only) | 0 | 0 | 17 | built-in structure traits let library code take a type apart field by field (`Show`, `Eq`, `Fork` are derived that way), never code; the checker is Rust |
 | Metamath Zero | 1 | ½(verifier stated in MM0) | ? | 50? | MM1 metaprograms manipulate terms; `verifier.mm0` states the verifier in MM0 while the running one is C; whether metaprograms can call it is not in the write-up |
 | Verus | 0 | 0 | 0 | 0 | ghost code is erased; the checker is not a Verus program |
 | F* / Low* / Pulse | 1 | ½(solver verdict)† | ½(metaprograms)† | 67 | Meta-F* reflects syntax; F* is self-hosted but Z3 gives the verdicts; tactics can call the typechecker |
@@ -63,6 +64,7 @@ Weights: 45 · 35 · 20
 | disp (today) | 1 | ½(no library) | ½(a few instances) | 72 | claims over bounded runs and lenses work, but the rule lenses and `certify` live in `lib/tests/claim.test.disp` with little library around them; equality is certified for `id` and `shift` only |
 | HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | untyped; the typed language became Bend 2, which does not run on this runtime |
 | Bend 2 / BendTT / BendRT | 1 | ½(small library) | ½(propositional) | 72 | affine dependent types with Type : Type, laws proven by defs over a small Base; quantities &0/&1/&2 are a usage grade; intensional J with a written motive, no extensionality |
+| Vine / Ivy / IVM | 0 | 0 | 0 | 0 | structs, enums, traits and generics with a use count per type; nothing states a property of a value, no proofs; equality is the `Eq` trait |
 | Metamath Zero | 0 | 1 | 0 | 35 | a HOL subset with explicit proof objects and a modest library; no dependent types, no resource types, equality not addressed |
 | Verus | ½(contracts) | ½(solver-discharged) | ½(SMT-fragment) | 50 | first-order contracts with ghost state, Z3-discharged, over a large verified codebase; SMT-fragment equalities |
 | F* / Low* / Pulse | 1 | 1 | ½(SMT-fragment) | 90 | dependent types, refinements, effects, Pulse, with HACL* as the library; SMT-fragment equality |
@@ -105,6 +107,7 @@ Weights: 40 · 40 · 20
 | disp (today) | ½(two checkers mid-move) | ½(certificates in tests only) | ½(one core) | 50 | `lib/kernel/` is still the checker in use beside the claim kernel; a verdict's `"Proved"` (`lib/verdict.disp`) is a bare string, and certificates exist only inside the test file; `honest` re-checks by enumeration but only refutes |
 | HVM4 / Interaction Calculus | 0 | 0 | 0 | 0 | trust is `hvm.c` |
 | Bend 2 / BendTT / BendRT | ½(one-file kernel) | ½(proof defs) | 0 | 40 | bend.ts is "the trusted kernel", one human-written file, checking in one pass; proofs are defs the kernel checks, no certificate minted; nothing re-checks, and the Lean model admittedly lags the checker |
+| Vine / Ivy / IVM | 0 | 0 | 0 | 0 | trust is the Rust compiler, the net optimizer and IVM; `become` swaps a field-by-field copy for the raw copier on the author's `safe`, unchecked; snapshots are the only check |
 | Metamath Zero | 1 | 1 | 1 | 100 | a C verifier small enough to formalize; MMB proof objects; MM1 untrusted; independent verifiers in Rust and Kotlin; MMC's verified compilation is the one licensed rewrite |
 | Verus | 0 | 0 | 0 | 0 | TCB = Verus + Z3 + rustc |
 | F* / Low* / Pulse | 0 | ½(large checker) | 0 | 20 | typechecker, Z3 and KaRaMeL are all trusted; proof terms exist, SMT verdicts have none |
@@ -147,6 +150,7 @@ Weights: 40 · 30 · 30
 | disp (today) | 0 | 0 | ½(cost report) | 15 | interpreted tree-walkers, no target model, no handoff; `--stats` reports steps beside the run |
 | HVM4 / Interaction Calculus | 1 | 0 | ½(cost report)† | 55 | native C with GPU lineage; the runtime reports interaction counts; no verified path |
 | Bend 2 / BendTT / BendRT | 1 | 0 | ? | 40? | 0.8–1.5× hand-written C sequential, 9–12× on 16 threads, up to 67× on the GPU, self-reported; clang, Metal and CUDA trusted and the C runtime unverified; the pre-release interaction counter was dropped ("bend has no --stats"); whether it can call out is not in the write-up |
+| Vine / Ivy / IVM | ½(net VM) | 0 | ½(cost report) | 35 | nets run on a parallel Rust virtual machine with native numbers, 63M interactions a second on one thread and 569M on 16 in the docs' own sample; host functions return outputs only; the CLI prints interactions, heap and time beside the run |
 | Metamath Zero | ½(not general) | 1 | 0 | 50 | MMC compiles to a formal x86 model with the correctness proved; not a general systems language; no cost model |
 | Verus | 1 | ½(assumed specs)† | ½(FFI)† | 70 | it is Rust; rustc trusted, no cost model |
 | F* / Low* / Pulse | 1 | 1† | ½(FFI)† | 85 | Low*→C competitive with hand-optimized C; KaRaMeL and the C compiler are trusted |
@@ -189,6 +193,7 @@ Weights: 35 · 35 · 15 · 15
 | disp (today) | ½(basic search) | ½(checker only) | ½(counterexamples kept) | 0 | 42 | `cegis` walks a listed pool of candidates against a claim and keeps the counterexamples it finds; cost isn't in the loop, and nothing searches over disp itself |
 | HVM4 / Interaction Calculus | ½(value enumeration) | ½(tests only) | 0 | 0 | 35 | the primer solves X + 2 = 4 by collapsing an infinite superposition of naturals; the program-hole filler (SupGen, NeoGen) was never published; equations rather than a checker, no cost objective |
 | Bend 2 / BendTT / BendRT | ½(external LLM loop) | ½(checker only) | 0 | 0 | 35 | the shipped loop is a human LAWS.bend, an AI-written PROOF.bend and the checker as the gate (Bender wraps Anthropic/OpenAI models); the checker scores, cost never does; no search of its own |
+| Vine / Ivy / IVM | 0 | 0 | 0 | 0 | 0 | none; trait lookup finds an implementation by type, nothing searches programs |
 | Metamath Zero | 0 | 0 | 0 | 0 | 0 | MM1 tactics are human-written |
 | Verus | ½(external LLM loop) | 1 | 0 | 0 | 52 | IDS synthesizes code and proofs with benchmarks inside the loop (7/7 KV-store specs); the proposer is an external LLM |
 | F* / Low* / Pulse | 0 | 0 | 0 | 0 | 0 | humans write the code and the proofs |
@@ -228,6 +233,7 @@ How each project builds things disp's way: disp's bets from `FOUNDATIONS.md`, no
 | disp | 1 | 0 | 1 | 0 |
 | HVM4 / Interaction Calculus | ½(graphs only) | 0 | 1† | 0 |
 | Bend 2 / BendTT / BendRT | 0 | ½(usage grade) | 0 | 0 |
+| Vine / Ivy / IVM | 0 | ½(usage grade) | 1 | ½(asserted) |
 | Metamath Zero | 0 | 0 | 0 | ½(compile only) |
 | Verus | 0 | 0 | 0 | 0 |
 | F* / Low* / Pulse | 0 | 0 | 0 | 0 |
