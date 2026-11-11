@@ -102,6 +102,8 @@ test verdict(s_worklist(settle_n, [0, 0])) = "Proved"
 test verdict(s_worklist(settle_n, [0, 2])) = refuted(1)
 test verdict(s_worklist(settle_n, [3, 0, 4])) = open_on(3)
 test verdict(s_worklist(settle_n, [3, 1])) = refuted(1)
+// the list at work: every item with what settling it did
+test s_list(s_steps(settle_n, [2, 3])) = [pair(2, split_into([0, 1])), pair(0, skip), pair(1, yield(1)), pair(3, noted(3))]
 test agrees("Proved", true) = true
 test agrees("Proved", false) = false
 test agrees(refuted(1), false) = true

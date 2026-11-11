@@ -96,7 +96,7 @@ program_of :: {T : Code, v : Val} -> Val :=> if ((is_type_code(T)) && (not(is_no
 // A partly-known value is a plain tree with holes in it: a fully known value is itself,
 // and equal values are equal trees. A hole is `wait(hole_marker, what)` (built like the
 // kernel's hypotheses, lib/kernel/kernel.disp), and applying one natively gives the hole
-// for that application. A hole is one of three things:
+// for that application. A hole is one of four things:
 //   Piece T root path  a piece of the challenge: the argument `root` reached by `path`
 //                 (destructor steps, newest first), unknown but for being a member of T.
 //                 The lenses make every unknown one: the case split's cases have pieces, the
@@ -105,6 +105,7 @@ program_of :: {T : Code, v : Val} -> Val :=> if ((is_type_code(T)) && (not(is_no
 //   App head arg  an application nobody can run yet: of a function piece, or of a function
 //                 whose answer waits on a piece (tree_eq, is_a)
 //   Forged v      a marker-shaped tree a program built (below)
+//   Lemma f T     a definition already Proved at T, inside a program judged with lemmas
 hole_marker := fix({self, what, arg} => wait(self, pair("App", pair(wait(self, what), arg))))
 hole :: {what : Tree} -> Val :=> wait(hole_marker, what)
 hole_sig := (hole(t)).fst
@@ -128,7 +129,6 @@ rec escape :: {v : Tree} -> Val :=>
 	else if (is_hole(v)) { forged(v) }
 	else if (is_stem(v)) { t(escape(stem_child(v))) }
 	else { t(escape(v.fst), escape(v.snd)) }
-mk_fork :: {a : Val, b : Val} -> Val :=> if (a == hole_sig) { forged(t(a, b)) } else { t(a, b) }
 
 piece_named :: {T : Code, name : Pair(Tree, List(Tree))} -> Val :=> hole(pair("Piece", pair(T, name)))
 piece_at :: {T : Code, root : Tree, path : List(Tree)} -> Val :=> piece_named(T, pair(root, path))
@@ -144,6 +144,13 @@ hypothesis :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val} 
 is_hole_of :: {kind : Tree, v : Val} -> Bool :=> if (is_hole(v)) { v.hole_what.fst == kind } else { false }
 is_piece :: Val -> Bool := is_hole_of("Piece")
 is_app :: Val -> Bool := is_hole_of("App")
+// A lemma: a definition already Proved at T, standing for itself inside a program judged with
+// lemmas (lib/rules.disp). Applied, it runs as itself; where that run does not answer, it answers
+// as a piece of T applied to its arguments, which its own verdict licenses once each argument is
+// in its domain. A run that answers a function stays a lemma at the rest of the type.
+lemma_at :: {fn : Tree, T : Code, spine : Val} -> Val :=> hole(pair("Lemma", pair(fn, pair(T, spine))))
+lemma_val :: {fn : Tree, T : Code} -> Val :=> lemma_at(fn, T, piece_at(T, "lemma", [fn]))
+is_lemma :: Val -> Bool := is_hole_of("Lemma")
 piece_type :: Val -> Code := {s} => s.hole_what.snd.fst
 piece_name :: Val -> Tree := {s} => s.hole_what.snd.snd
 piece_root :: Val -> Tree := {s} => s.piece_name.fst
@@ -157,7 +164,7 @@ faces_of :: {T : Code, v : Val} -> Pair(Val, Tree) :=> pair(program_of(T, v), st
 // Membership as a program: is_a(T)(x) runs T's recognizer on x. The evaluator reads it as
 // the question "x : T": a piece of T is a member, and while T's own cases or another
 // recognizer's are derived, a piece not yet given a type makes the question open.
-member_marker := {T, x} => T(x)
+member_marker := {T, x} => if (is_type_code(T)) { T.snd.admits(T, x) == "Yes" } else { T(x) }
 is_a :: {T : Code} -> Tree :=> wait(member_marker, T)
 is_a_sig := (is_a(t)).fst
 is_member_q :: Val -> Bool := {f} => if (is_fork(f)) { f.fst == is_a_sig } else { false }
@@ -359,15 +366,17 @@ rec eq_val :: {a : Val, b : Val} -> Res :=>
 	else { answered(false) }
 
 // ---------------------------------------------------------------- the evaluator
-// The substrate's three rules over partly-known values. Fuel is a STEP budget
-// threaded through every sub-run (each dispatch spends one), so an exponential
-// sub-computation runs out of fuel instead of out of time; a fully known one runs
-// on the native machine against the same budget. Only the triage
-// rule and the function position inspect a value, so those are the only places
-// a piece can be needed — everything else copies pieces by name. A negative
-// piece or neutral term in function position makes a neutral term; a declared
-// normalizer applied to a smaller piece it would need makes one too (the quotient
-// hypothesis consumes it).
+// The machine of lib/machine.disp, run on partly-known values. Its rules copy pieces by
+// name, so a step that reads no hole is the same step on every tree the holes stand for.
+// A value's shape is read in two places only: the function position, and the argument of
+// a triage. An application that would read a hole there is held back from the rules and
+// answered here. So are the programs that read a value whole (tree_eq, a membership
+// question, a declared normalizer), a fork the stem rule would build in a hole's shape, and
+// a fully known application, which runs on the native machine. Fuel is a STEP budget: each
+// rule and each held application spends one, so an exponential sub-computation runs out of
+// fuel instead of out of time. A negative piece or neutral term in function position makes
+// a neutral term; a declared normalizer applied to a smaller piece it would need makes one
+// too (the quotient hypothesis consumes it).
 run_fuel := 4000
 rec nat_drop :: {k : Nat, n : Nat} -> Nat :=> if (is_zero(k)) { n } else { nat_drop(nat_pred(k), nat_pred(n)) }
 /// a fully known run on the native machine, in chunks that double, each continuing where the last paused: at most twice its steps are charged
@@ -378,60 +387,98 @@ rec run_native :: {m : Machine, chunk : Nat, fuel : Nat} -> Pair(Res, Nat) :=>
 		let k := if (nat_le(chunk, fuel)) { chunk } else { fuel }
 		run_native(m_advance(m, k), dbl(chunk), nat_drop(k, fuel))
 	}
-rec sapply_s :: {f : Val, x : Val, fuel : Nat} -> Pair(Res, Nat) :=> {
-	let go := {a, b, left} => sapply_s(a, b, left)
-	let bind := {rf, continue} => if (rf.fst.is_answered) { continue(rf.fst.answer, rf.snd) } else { rf }
-	let stop := {r, left} => pair(r, left)
-	let left0 := nat_pred(fuel)
-	let rule_s := {w, y} => bind(go(w, x, left0), {wx, l1} => bind(go(y, x, l1), {yx, l2} => go(wx, yx, l2)))
-	let rule_triage := {on_leaf, on_stem, on_fork} =>
-		// the identity compiles to the triage that REBUILDS its argument (t, t, t):
-		// that is x for every tree, so a piece may pass through unseen
-		if (((is_leaf(on_leaf)) && (is_leaf(on_stem))) && (is_leaf(on_fork))) { stop(answered(x), left0) }
-		else if (is_leaf(x)) { stop(answered(on_leaf), left0) }
-		else if (is_stem(x)) { go(on_stem, stem_child(x), left0) }
-		else if (x.is_fork_shaped) { bind(go(on_fork, x.fst, left0), {r, l1} => go(r, x.snd, l1)) }
-		else { stop(inspect(x), left0) }
-	// f = fork(left, right): left's shape picks the rule
-	let by_left := {left, right} =>
-		if (is_leaf(left)) { stop(answered(right), left0) }
-		else if (is_stem(left)) { rule_s(stem_child(left), right) }
-		else if (left.is_fork_shaped) { rule_triage(left.fst, left.snd, right) }
-		else { stop(inspect(left), left0) }
-	if (is_zero(fuel)) { stop(stuck, 0) }
-	else if (f == tree_eq) { stop(answered(app_val(tree_eq, x)), left0) }
-	else if (if (is_known(x)) { is_known(f) } else { false }) { run_native(m_start(f, x), 1, fuel) }
+// a membership answer as the evaluator's: Yes is true, No is false, anything else as it is
+answer_of :: Res -> Res := {r} => if (r == "Yes") { answered(true) } else if (r == "No") { answered(false) } else { r }
+// A lemma applied runs as itself; a run that does not answer (stuck, or asking for a split)
+// answers as its piece applied, and a function answer stays a lemma at the rest of the type.
+// `go` is the evaluator below.
+lemma_apply :: {go : Tree, f : Val, x : Val, left : Nat} -> Pair(Res, Nat) :=> {
+	let lem := f.hole_what.snd
+	let spine := app_val(lem.snd.snd, x)
+	let ran := go(lem.fst, x, left)
+	let view := fn_view(lem.snd.fst)
+	let rest := view.snd.snd(faces_of(view.snd.fst, x))
+	if (not(ran.fst.is_answered)) { pair(answered(spine), ran.snd) }
+	else if (if (ran.fst.is_answered) { (is_fn_code(rest)) && (not(is_hole(ran.fst.answer))) } else { false }) { pair(answered(lemma_at(ran.fst.answer, rest, spine)), ran.snd) }
+	else { ran }
+}
+// A hole in function position: tree_eq's answer waiting on a hole (the first hole decides,
+// eq_val); the induction hypothesis, which applies only to what its domain licenses, the
+// piece named canonically; any other function piece or application, which makes the hole for
+// that application; a lemma. Anything else is inspected. `go` runs an application.
+apply_hole :: {go : Tree, f : Val, x : Val, left : Nat} -> Pair(Res, Nat) :=>
+	if (if (f.is_app) { f.app_head == tree_eq } else { false }) { pair(eq_val(f.app_arg, x), left) }
+	else if (if (f.is_piece) { if (is_arrow_code(f.piece_type)) { is_below_code(arrow_dom(f.piece_type)) } else { false } } else { false }) {
+		let tbl := {R, child} => table_via({g, y} => (go(g, y, derive_fuel)).fst, R, child)
+		let c := licensed_with(tbl, arrow_dom(f.piece_type), x)
+		if (c == "None") { pair(stuck, left) } else { pair(answered(app_val(f, c)), left) }
+	}
+	else if ((if (f.is_piece) { is_fn_code(f.piece_type) } else { false }) || (f.is_app)) { pair(answered(f(x)), left) }
+	else if (f.is_lemma) { lemma_apply(go, f, x, left) }
+	else { pair(inspect(f), left) }
+// a triage reads its argument's shape: the one rule that does
+is_triage :: Val -> Bool := {f} => if (is_fork(f)) { is_fork(f.fst) } else { false }
+// the identity compiles to the triage that REBUILDS its argument (t, t, t): that is x for
+// every tree, so a piece may pass through unseen
+identity_triage := t(t(t, t), t)
+is_normalizer_call :: {f : Val, x : Val} -> Bool :=> if (x.is_piece) { if (x.piece_path.is_nil) { false } else { normalizers.member(f) } } else { false }
+// the applications the rules do not take as they are
+held :: {f : Val, x : Val} -> Bool :=>
+	if (f == tree_eq) { true }
+	else if (is_leaf(f)) { false }
+	else if (is_stem(f)) { stem_child(f) == hole_sig }
+	else if ((f.fst == hole_sig) || (f.fst == is_a_sig)) { true }
+	else if (if (is_fork(f.fst)) { (f.fst.fst == hole_sig) || (is_hole(x)) } else { false }) { true }
+	else if (is_normalizer_call(f, x)) { true }
+	else if (is_known(x)) { is_known(f) }
+	else { false }
+// the machine to go on with, where a held application is answered by running another
+go_on :: {m : Machine} -> Res :=> pair("Go", m)
+// What a held application answers. `from` runs a machine (the loop below).
+answer_held :: {from : Tree, f : Val, x : Val, stack : List(MFrame), left : Nat} -> Pair(Res, Nat) :=> {
+	let go := {a, b, fuel} => from(m_start(a, b), fuel)
+	let stop := {r} => pair(r, left)
+	if (f == tree_eq) { stop(answered(app_val(tree_eq, x))) }
+	else if (is_stem(f)) { stop(answered(forged(t(stem_child(f), x)))) }
+	else if (if (is_known(x)) { is_known(f) } else { false }) { run_native(m_start(f, x), 1, left) }
 	// is_a(T)(x): the question "x : T" (above); otherwise one layer of T runs
 	else if (f.is_member_q) {
 		let T := f.snd.snd
 		let step := step_of(T)
-		if (if (x.is_piece) { x.piece_type == T } else { false }) { stop(answered(true), left0) }
-		else if (if (x.is_piece) { x.piece_type == not_a(T) } else { false }) { stop(answered(false), left0) }
-		else if (is_open_piece(x)) { stop(answered(app_val(f, x)), left0) }
-		else if (has_open_piece(x)) { stop(stuck_on(pair("membership asked of a value that is not a smaller piece", x)), left0) }
-		else if (step == none) { go(T, x, left0) }
-		else { bind(go(step, f, left0), {sf, l1} => go(sf, x, l1)) }
+		if (if (x.is_piece) { x.piece_type == T } else { false }) { stop(answered(true)) }
+		else if (if (x.is_piece) { x.piece_type == not_a(T) } else { false }) { stop(answered(false)) }
+		else if (is_open_piece(x)) { stop(answered(app_val(f, x))) }
+		else if (has_open_piece(x)) { stop(stuck_on(pair("membership asked of a value that is not a smaller piece", x))) }
+		else if (is_type_code(T)) { stop(answer_of(T.snd.admits(T, x))) }
+		else if (step == none) { stop(go_on(machine_run(T, x, stack))) }
+		else { stop(go_on(machine_run(step, f, cons(fr_to(x), stack)))) }
 	}
-	else if (is_leaf(f)) { stop(answered(t(x)), left0) }
-	else if (is_stem(f)) { stop(answered(mk_fork(stem_child(f), x)), left0) }
-	else if (f.is_fork_shaped) {
-		let ran := by_left(f.fst, f.snd)
+	else if (is_hole(f)) { apply_hole(go, f, x, left) }
+	else if (is_hole(f.fst)) { stop(inspect(f.fst)) }
+	else {
+		// a triage whose argument is a hole needs the hole's shape, unless it is the identity
+		let ran := if (not((is_triage(f)) && (is_hole(x)))) { from(m_rule(machine_run(f, x, [])), left) }
+			else if (f == identity_triage) { stop(answered(x)) }
+			else { stop(inspect(x)) }
 		// a declared normalizer on a smaller piece it needs: the neutral term `nf k`
-		if (((x.is_piece) && (not(x.piece_path.is_nil))) && (((ran.fst == need(x)) || (ran.fst.is_stuck)) && (normalizers.member(f)))) { stop(answered(app_val(f, x)), ran.snd) }
+		if ((is_normalizer_call(f, x)) && ((ran.fst == need(x)) || (ran.fst.is_stuck))) { pair(answered(app_val(f, x)), ran.snd) }
 		else { ran }
 	}
-	// tree_eq's answer waits on a hole: the first hole decides (eq_val)
-	else if (if (f.is_app) { f.app_head == tree_eq } else { false }) { stop(eq_val(f.app_arg, x), left0) }
-	// the induction hypothesis applies only to what its domain licenses, the piece named canonically
-	else if (if (f.is_piece) { if (is_arrow_code(f.piece_type)) { is_below_code(arrow_dom(f.piece_type)) } else { false } } else { false }) {
-		let tbl := {R, child} => table_via({g, y} => (sapply_s(g, y, derive_fuel)).fst, R, child)
-		let c := licensed_with(tbl, arrow_dom(f.piece_type), x)
-		if (c == "None") { stop(stuck, left0) } else { stop(answered(app_val(f, c)), left0) }
-	}
-	// a hole applied is the hole for that application
-	else if ((if (f.is_piece) { is_fn_code(f.piece_type) } else { false }) || (f.is_app)) { stop(answered(f(x)), left0) }
-	else { stop(inspect(f), left0) }
 }
+// run a machine: the rules, and at each held application its answer
+rec sapply_from :: {m : Machine, fuel : Nat} -> Pair(Res, Nat) :=> {
+	let s := m_settle_by(held, m)
+	if (m_finished(s)) { pair(answered(m_result(s)), fuel) }
+	else if (is_zero(fuel)) { pair(stuck, 0) }
+	else if (not(m_held(s))) { sapply_from(m_rule(s), nat_pred(fuel)) }
+	else {
+		let out := answer_held({n, left} => sapply_from(n, left), s.m_fn, s.m_arg, s.m_stack, nat_pred(fuel))
+		if (out.fst.fst == "Go") { sapply_from(out.fst.snd, out.snd) }
+		else if (out.fst.is_answered) { sapply_from(m_deliver(out.fst.answer, s.m_stack), out.snd) }
+		else { out }
+	}
+}
+sapply_s :: {f : Val, x : Val, fuel : Nat} -> Pair(Res, Nat) :=> sapply_from(m_start(f, x), fuel)
 sapply :: {f : Val, x : Val, fuel : Nat} -> Res :=> (sapply_s(f, x, fuel)).fst
 table :: {R : Code, child : Tree -> Val} -> Option(List(Val)) :=> table_via({f, x} => sapply(f, x, derive_fuel), R, child)
 is_positive :: Code -> Bool := {R} => not(is_none(table(R, {_} => t)))
@@ -534,20 +581,40 @@ same_val :: {a : Val, b : Val} -> Res :=> if (a == b) { "Yes" } else { "No" }
 member_same :: {Cod : Code, a : Val, b : Val} -> Res :=>
 	and_yes(judge_as(Cod, a), {_} => and_yes(judge_as(Cod, b), {_} => same_val(a, b)))
 
-// ---------------------------------------------------------------- the search
-// Case analysis on demand, as a work list of inputs: check the input; a Yes covers
-// every instance of its pieces; on a ground input a No is its own confirmed witness;
-// otherwise the piece the run NEEDED (or, after a symbolic No — "the terms differ" —
-// the first splittable piece in the input) is split by its constructor table,
-// substituting each alternative. A refuted input refutes; every input Yes proves;
-// else Open, carrying the first reason a run stopped. A stuck run, a need of a piece
-// without a table, and a coarse piece never split.
+// ---------------------------------------------------------------- the loop
+// One loop settles every claim, case by case. A case is a partly-known input, and the work
+// list starts from cases that between them cover every input. Each case is settled by the
+// first of these that applies:
+//   generic run  the check answers Yes on the case: one run answers for every tree the case
+//                covers. The Yes says what it rests on besides the run: the hypothesis where
+//                the run applied it (induction), a lemma where it read a call by its type.
+//   refutation   a known case that fails is a counterexample; when unknowns remain,
+//                `instances` are fully concrete inputs the case stands for, re-run for one.
+//   lemmas       a later check answers Yes: the same run with more of the program read by its
+//                type. A later check never refutes, and where it needs a piece that is the
+//                piece to split.
+//   case split   the run needed a piece's shape (or, after a symbolic No, "the terms differ",
+//                the first splittable piece): the case splits along the piece's cases.
+// A case none settles is noted with the reason its run stopped, and the claim stays Open. A
+// stuck run, a need of a piece without a table, and a coarse piece never split.
 rec pieces_in :: {v : Val} -> List(Val) :=>
 	if (v.is_piece) { [v] }
 	else if (v.is_app) { (pieces_in(v.app_head)).append(pieces_in(v.app_arg)) }
+	else if (v.is_lemma) { pieces_in(v.hole_what.snd.snd.snd) }
 	else if ((is_hole(v)) || (is_leaf(v))) { [] }
 	else if (is_stem(v)) { pieces_in(stem_child(v)) }
 	else { (pieces_in(v.fst)).append(pieces_in(v.snd)) }
+// a Yes that says what it rests on
+yes_on :: {grounds : List(Tree)} -> Res :=> pair("Yes", grounds)
+is_yes :: Res -> Bool := {r} => (r == "Yes") || (r.fst == "Yes")
+grounds_of :: Res -> List(Tree) := {r} => if (r == "Yes") { [] } else { r.snd }
+// what an answer rests on besides the run: induction where it applies the hypothesis, a lemma where it applies one's type
+cited :: {out : Val} -> List(Tree) :=> {
+	let roots := pieces_in(out).map(piece_root)
+	[pair("hypothesis", "induction"), pair("lemma", "lemma")].filter({rule} => roots.member(rule.fst)).map(pair_snd)
+}
+// a case is done, resting on these
+settled_on :: {grounds : List(Tree)} -> Outcome(Tree, Pair(Val, Nat)) :=> pair("Skip", grounds)
 split_target :: {r : Res, input : Val} -> Val :=>
 	if ((r.is_need) && (r.snd.is_splittable)) { r.snd }
 	else if (r == "No") { let found := (pieces_in(input)).filter(is_splittable); if (found.is_nil) { "None" } else { found.head } }
@@ -558,37 +625,56 @@ explain :: Res -> Tree := {r} =>
 	else if (r.fst == "Stuck") { r.snd }
 	else if (r.fst == "Coarse") { pair("coarse symbol at fine position", r.snd) }
 	else { r }
-
 why :: Verdict -> Tree := {v} => if (v.fst == "Open") { v.snd } else { "not open" }
-// `ground` reads an input as a concrete counterexample: some(tree), or none while unknowns
-// that matter remain. When that does not settle it, `instances` are fully concrete inputs the
-// input stands for, re-run for a counterexample. An item is an input and the splits left for it.
-search_step :: {check : Val -> Res, ground : Val -> Option(Tree), instances : Val -> List(Val), item : Pair(Val, Nat)} -> Outcome(Tree, Pair(Val, Nat)) :=> {
+// a case split, as the cases it leaves: each alternative of the piece's type in the piece's place (none: no table)
+alternatives :: {case : Val, piece : Val} -> Option(List(Val)) :=> {
+	let alts := table(piece.piece_type, {step} => piece_at(piece.piece_type, piece.piece_root, cons(step, piece.piece_path)))
+	if (is_none(alts)) { none } else { some(alts.snd.map({alt} => subst(piece, alt, case))) }
+}
+// what the later checks add to the first run's answer: a Yes, or a better piece to split
+rec weigh :: {later : List(Val -> Res), input : Val, r : Res} -> Res :=>
+	if (later.is_nil) { r }
+	else {
+		let r2 := later.head(input)
+		if (is_yes(r2)) { r2 } else { weigh(later.tail, input, if (r2.is_need) { r2 } else { r }) }
+	}
+// `checks` are the exact check, then any that read more by type. `ground` reads a case as a
+// concrete counterexample: some(tree), or none while unknowns that matter remain. An item is
+// a case and the splits left for it; a Step is an item with what settled it.
+settle_case :: {checks : List(Val -> Res), ground : Val -> Option(Tree), instances : Val -> List(Val), item : Pair(Val, Nat)} -> Outcome(Tree, Pair(Val, Nat)) :=> {
 	let input := item.fst
-	let depth := item.snd
-	let r := check(input)
-	if (r == "Yes") { skip }
+	let exact := checks.head
+	let r := exact(input)
+	if (is_yes(r)) { settled_on(grounds_of(r)) }
 	else {
 		let g := ground(input)
-		let bad := if (if (is_none(g)) { true } else { not(r == "No") }) { instances(input).filter({i} => check(i) == "No") } else { [] }
+		let bad := if (if (is_none(g)) { true } else { not(r == "No") }) { instances(input).filter({i} => exact(i) == "No") } else { [] }
 		if (if (is_none(g)) { false } else { r == "No" }) { yield(g.snd) }
 		else if (not(bad.is_nil)) { yield(ground(bad.head).snd) }
-		else if (not(is_none(g))) { noted(explain(r)) }
-		else if (is_zero(depth)) { noted("split depth exhausted") }
 		else {
-			let target := split_target(r, input)
-			if (target == "None") { noted(explain(r)) }
+			let r2 := weigh(checks.tail, input, r)
+			let target := if (is_none(g)) { split_target(r2, input) } else { "None" }
+			if (is_yes(r2)) { settled_on(grounds_of(r2)) }
+			else if (target == "None") { noted(explain(r2)) }
+			else if (is_zero(item.snd)) { noted("split depth exhausted") }
 			else {
-				let alts := table(target.piece_type, {step} => piece_at(target.piece_type, target.piece_root, cons(step, target.piece_path)))
-				if (is_none(alts)) { noted(pair("no split table", target)) }
-				else { split_into(alts.snd.map({alt} => pair(subst(target, alt, input), nat_pred(depth)))) }
+				let cases := alternatives(input, target)
+				if (is_none(cases)) { noted(pair("no split table", target)) }
+				else { split_on(target, cases.snd.map({c} => pair(c, nat_pred(item.snd)))) }
 			}
 		}
 	}
 }
-search_g :: {check : Val -> Res, ground : Val -> Option(Tree), instances : Val -> List(Val), input : Val, depth : Nat} -> Verdict :=>
-	verdict(s_worklist(search_step(check, ground, instances), [pair(input, depth)]))
-search_r :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> search_g(check, {v} => if (v.is_known) { some(v) } else { none }, {_} => [], input, depth)
+// the work list of a claim: every case with what settled it
+search_steps :: {checks : List(Val -> Res), ground : Val -> Option(Tree), instances : Val -> List(Val), start : List(Pair(Val, Nat))} -> Items(Step) :=>
+	s_steps(settle_case(checks, ground, instances), start)
+// the verdict of a work list: the first counterexample refutes; every case settled proves; else Open on the first note
+steps_verdict :: {steps : Items(Step)} -> Verdict :=>
+	verdict(s_yielded(steps))
+search_g :: {checks : List(Val -> Res), ground : Val -> Option(Tree), instances : Val -> List(Val), input : Val, depth : Nat} -> Verdict :=>
+	steps_verdict(search_steps(checks, ground, instances, [pair(input, depth)]))
+known_ground :: Val -> Option(Tree) := {v} => if (v.is_known) { some(v) } else { none }
+search_r :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> search_g([check], known_ground, {_} => [], input, depth)
 search :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> flat(search_r(check, input, depth))
 
 run :: {fn : Tree, input : Val} -> Res :=> sapply(escape(fn), input, run_fuel)

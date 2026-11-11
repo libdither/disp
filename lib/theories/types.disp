@@ -41,14 +41,17 @@ universe_t :: Code := of_type(behaviour{
 // A dependent function type: the family takes the argument's faces. One former serves plain
 // functions, polymorphism (over a universe) and dependent types. A family of types is itself
 // a type-level argument: dependent types see it as a function giving a fresh abstract type
-// for each argument, named by the stuck application.
+// for each argument, named by the stuck application. A family that ignores its argument
+// compiles to K(B), a fork with a leaf on the left; with B not a family of types, that is the
+// plain arrow, one code however it was built, which is how stored pairs find it.
 pi_t :: {a : Code, fam : Tree} -> Code :=> {
 	let level := is_types(fam(faces_of(a, generic_of(a, "probe"))))
-	of_type(behaviour{
+	if (((is_fork(fam)) && (is_leaf(fam.fst))) && (not(level))) { ArrowC(a, fam.snd) }
+	else { of_type(behaviour{
 		admits := {_self, v} => stuck_on(pair("a function inside a value", v)),
 		applied := some(pair(a, fam)),
 		static := if (level) { some({_self, f} => {xs} => static_of(fam(pair(xs, xs)), app_val(f, xs))) } else { none },
-		types := level})
+		types := level}) }
 }
 arrow_t :: {a : Code, b : Code} -> Code :=> pi_t(a, {_x} => b)
 forall_t :: {fam : Tree} -> Code :=> pi_t(universe_t, fam)
@@ -70,9 +73,12 @@ by_value :: {face : Pair(Val, Tree), pick : Tree -> Code} -> Code :=> {
 }
 
 // Data are first-order: a data type is a recognizer, written as a program, and its cases
-// are derived from it like any recognizer's. A type whose members are not first-order cannot
-// be one, and is opaque: nothing is judged a member.
+// are derived from it like any recognizer's. Data may also hold a type whose members are
+// stood in for, an abstract type or the universe: no known tree is a member of an abstract
+// type, and a derived case holds a piece of it. Any other type inside data is opaque: nothing
+// is judged a member.
 first_order :: Code -> Bool := {c} => (c == TreeR) || (is_recognizer(c))
+holdable :: Code -> Bool := {c} => (first_order(c)) || (has_sample(c))
 opaque_t := of_type(behaviour{admits := {_self, v} => stuck_on(pair("a type that is not first-order inside data", v))})
 // a data type: a member is a constructor's index paired with its arguments' list; "Rec" stands
 // for the type itself. The recognizer is built once from the description, a test per argument
@@ -93,11 +99,11 @@ rec ctor_test :: {shapes : List(List(Tree))} -> Tree :=>
 		{self, tag, args} => if (is_leaf(tag)) { here(self, args) } else if (is_fork(tag)) { if (is_leaf(tag.fst)) { rest(self, tag.snd, args) } else { false } } else { false }
 	}
 data_t :: {shapes : List(List(Tree))} -> Code :=>
-	if (not(shapes.all({kinds} => kinds.all({k} => (k == "Rec") || (first_order(k)))))) { opaque_t }
+	if (not(shapes.all({kinds} => kinds.all({k} => (k == "Rec") || (holdable(k)))))) { opaque_t }
 	else { let test := ctor_test(shapes); fix({self, v} => if (is_fork(v)) { test(self, v.fst, v.snd) } else { false }) }
 // lists as lib/list.disp builds them: the leaf, or a pair of an item and a list
 list_t :: {a : Code} -> Code :=>
-	if (not(first_order(a))) { opaque_t }
+	if (not(holdable(a))) { opaque_t }
 	else { fix({self, v} => if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_a(a)(v.fst)) { self(v.snd) } else { false } } else { false }) }
 
 // a run on the step-counting machine, for theories that count steps

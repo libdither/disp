@@ -324,7 +324,9 @@ test Trees.as_items.bounded(40).s_filter(NatR).s_all({a} => Trees.as_items.bound
 blowup := fix({self, n, acc} => if (is_zero(n)) { acc } else { pair(self(nat_pred(n), t(acc)), self(nat_pred(n), t(t, acc))) })
 spend := {n} => if (is_leaf(blowup(add(20, n), t))) { n } else { n }
 test run(spend, 0) = stuck
-test nat_lt((sapply_s(succ, 0, 100)).snd, 100) = true
+// a rule spends fuel; a leaf or stem head only builds and is free, as on the machine (lib/machine.disp)
+test nat_lt((sapply_s(dbl, 1, 100)).snd, 100) = true
+test (sapply_s(succ, 0, 100)).snd = 100
 test check_by_structure(spend) = "Open"
 test run({n} => n, 0) = answered(0)
 

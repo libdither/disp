@@ -1,0 +1,24 @@
+// A module whose annotations checked.disp checks: it loads only if every one is Proved.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "checked.disp" {}
+
+next : Nat -> Nat := {n} => succ(n)
+rec twice : {n : Nat} -> Nat :=> if (is_zero(n)) { 0 } else { succ(succ(twice(nat_pred(n)))) }
+negate : Bool -> Bool := not
+ident : {A : Type} -> A -> A := {_a, x} => x
+pick : {n : Nat} -> if (is_zero(n)) { Unit } else { Nat } := {n} => if (is_zero(n)) { t } else { n }
+at_zero : (Nat -> Nat) -> Nat := {g} => g(0)
+size : List(Nat) -> Nat := length
+count : {A : Type} -> List(A) -> Nat := {_a, xs} => length(xs)
+four : Eq(twice(2), 4) := t
+Pred := Nat -> Nat
+step : Pred := succ
+// multiplying calls adding on the hypothesis's answer, which no run can see into. plus carries
+// no annotation: it is a recursive definition inside times, and the goal's own type fits it
+rec plus := {a, b} => if (is_zero(a)) { b } else { succ(plus(nat_pred(a), b)) }
+rec times : {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { 0 } else { plus(b, times(nat_pred(a), b)) }
+// reversing calls appending the same way, but cat's type is not among rev's own, so cat is
+// annotated: it is Proved first, and the call is judged by its type
+rec cat : {xs : List(Nat), ys : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }
+rec rev : {xs : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { [] } else { cat(rev(xs.snd), [xs.fst]) }

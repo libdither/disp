@@ -189,21 +189,36 @@ s_merge_with :: {source : Items(Items(V)), policy : List(Items(V)) -> Round(V)} 
 }, merge_state(source, [], [], false, keep_going)), merge_ending)
 
 // A work list: settling an item skips it, yields it, notes why it stays open, or splits it
-// into items worked first. The stream ends exhausted when the list runs out with nothing
-// noted, else spent on the first note.
+// into items worked first. `s_steps` is the list at work: each item with what settling it
+// did. It ends exhausted when the list runs out with nothing noted, else spent on the first
+// note. `s_worklist` keeps only what was yielded.
 noted :: {reason : Tree} -> Outcome(V, I) :=> pair("Noted", reason)
-split_into :: {items : List(I)} -> Outcome(V, I) :=> pair("Split", items)
-s_worklist :: {settle : I -> Outcome(V, I), start : List(I)} -> Items(V) :=> s_new({st} => {
+// split, saying on what
+split_on :: {what : Tree, items : List(I)} -> Outcome(V, I) :=> pair("Split", pair(what, items))
+split_into :: {items : List(I)} -> Outcome(V, I) :=> split_on(t, items)
+s_steps :: {settle : I -> Outcome(V, I), start : List(I)} -> Items(Pair(I, Outcome(V, I))) :=> s_new({st} => {
 	let todo := st.fst
 	let notes := st.snd
 	if (todo.is_nil) { finished(if (notes.is_nil) { exhausted } else { spent_on(notes.head) }) }
 	else {
 		let out := settle(todo.head)
-		if (out.fst == "Split") { running(emit(skip, pair(out.snd.append(todo.tail), notes))) }
-		else if (out.fst == "Noted") { running(emit(skip, pair(todo.tail, if (notes.is_nil) { [out.snd] } else { notes }))) }
-		else { running(emit(out, pair(todo.tail, notes))) }
+		let rest := if (out.fst == "Split") { pair(out.snd.snd.append(todo.tail), notes) }
+			else if ((out.fst == "Noted") && (notes.is_nil)) { pair(todo.tail, [out.snd]) }
+			else { pair(todo.tail, notes) }
+		running(emit(yield(pair(todo.head, out)), rest))
 	}
 }, pair(start, []))
+// what a work list yielded
+s_yielded :: {steps : Items(Pair(I, Outcome(V, I)))} -> Items(V) :=> steps.s_filter({step} => step.snd.is_yield).s_map({step} => step.snd.yielded_item)
+s_worklist :: {settle : I -> Outcome(V, I), start : List(I)} -> Items(V) :=> s_yielded(s_steps(settle, start))
+// the items of a stream that ends, up to the first that is `last`
+s_upto :: {items : Bounded(Items(V)), last : V -> Bool} -> List(V) :=> c_fold({recurse, step} =>
+	if (step.is_finished) { [] }
+	else if (not(step.step_draw.is_yield)) { recurse(step.step_rest) }
+	else if (last(step.step_draw.yielded_item)) { [step.step_draw.yielded_item] }
+	else { cons(step.step_draw.yielded_item, recurse(step.step_rest)) }
+, items)
+s_list :: {items : Bounded(Items(V))} -> List(V) :=> s_upto(items, {_} => false)
 
 // a stream of counterexamples decides a claim by how it goes: one appears (Refuted), the
 // source runs out (Proved), or the budget does (Open, with the reason when there is one)

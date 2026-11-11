@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside judge</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdad3; --card: #ffffff;
+    --accent: #2f6fd6; --cloud: #b8681a; --cloud-bg: #fff2e0;
+    --hyp: #7046c4; --hyp-bg: #f1eafc; --lem: #12806b; --lem-bg: #e3f5f0;
+    --ok: #1f8a4c; --bad: #c2352b; --open: #8a6d1f; --code-bg: #f1efe9; --faint: #eeece6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15161a; --fg: #e8e6df; --muted: #9c9b93; --line: #34363d; --card: #1d1f25;
+      --accent: #7aa7ee; --cloud: #f0a94f; --cloud-bg: #3a2d1a;
+      --hyp: #b99cf2; --hyp-bg: #2c2340; --lem: #5fd0b8; --lem-bg: #183530;
+      --ok: #5fcb84; --bad: #f07a6e; --open: #e0b64a; --code-bg: #23252c; --faint: #24262c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15161a; --fg: #e8e6df; --muted: #9c9b93; --line: #34363d; --card: #1d1f25;
+    --accent: #7aa7ee; --cloud: #f0a94f; --cloud-bg: #3a2d1a;
+    --hyp: #b99cf2; --hyp-bg: #2c2340; --lem: #5fd0b8; --lem-bg: #183530;
+    --ok: #5fcb84; --bad: #f07a6e; --open: #e0b64a; --code-bg: #23252c; --faint: #24262c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 80px; }
+  h1 { font-size: 1.8rem; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 1.3rem; margin: 44px 0 10px; padding-top: 16px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.02rem; margin: 18px 0 6px; }
+  p, li { max-width: 74ch; }
+  .lede { color: var(--muted); font-size: 1.05rem; }
+  .muted { color: var(--muted); }
+  .small { font-size: 0.86rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); padding: 10px 12px; border-radius: 8px; overflow-x: auto; line-height: 1.45; margin: 8px 0; }
+  pre code { background: none; padding: 0; }
+  a { color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 14px 0; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+
+  /* the three kinds of unknown */
+  .chip { display: inline-block; font-family: ui-monospace, Menlo, monospace; font-size: 0.86em; line-height: 1.35;
+          padding: 0 5px; border-radius: 6px; border: 1.4px dashed; white-space: nowrap; }
+  .chip.piece { color: var(--cloud); background: var(--cloud-bg); border-color: var(--cloud); }
+  .chip.hyp { color: var(--hyp); background: var(--hyp-bg); border-color: var(--hyp); border-style: solid; }
+  .chip.lem { color: var(--lem); background: var(--lem-bg); border-color: var(--lem); border-style: solid; }
+  .chip .chip { font-size: 1em; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 0.88em; }
+
+  .verdict { font-weight: 700; padding: 2px 8px; border-radius: 6px; display: inline-block; }
+  .v-Proved { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+  .v-Refuted { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+  .v-Open { color: var(--open); background: color-mix(in srgb, var(--open) 16%, transparent); }
+
+  button, select { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; }
+  button { cursor: pointer; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.seg { border-radius: 999px; padding: 3px 11px; font-size: 0.9rem; }
+  button.seg.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 4px 0 10px; }
+  .scenarios { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 4px; }
+  .scenarios .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .scenarios .glabel { font-size: 0.78rem; color: var(--muted); width: 100%; margin-top: 4px; }
+
+  /* rule cards */
+  .rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .rule { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); }
+  .rule.looks { border: 2px solid var(--accent); }
+  .rule h4 { margin: 0 0 2px; font-size: 0.92rem; }
+  .rule .eq { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; }
+  .rule .what { font-size: 0.82rem; color: var(--muted); }
+  .rule.looks .what { color: var(--accent); font-weight: 600; }
+  svg text { font-family: system-ui, sans-serif; font-size: 11px; fill: var(--fg); }
+  svg .node { fill: var(--fg); }
+  svg .edge { stroke: var(--fg); stroke-width: 1.5; }
+  svg .sub { fill: var(--faint); stroke: var(--muted); stroke-width: 1.2; }
+  svg .cl-piece { fill: var(--cloud-bg); stroke: var(--cloud); stroke-width: 1.4; stroke-dasharray: 3.5 2.5; }
+  svg .cl-hyp { fill: var(--hyp-bg); stroke: var(--hyp); stroke-width: 1.5; }
+  svg .cl-lem { fill: var(--lem-bg); stroke: var(--lem); stroke-width: 1.5; }
+  svg .t-piece { fill: var(--cloud); font-weight: 600; }
+  svg .t-hyp { fill: var(--hyp); font-weight: 600; }
+  svg .t-lem { fill: var(--lem); font-weight: 600; }
+  svg .wall { stroke: var(--bad); stroke-width: 2.5; stroke-dasharray: 5 3; }
+  svg .arrow { stroke: var(--muted); stroke-width: 1.3; fill: none; }
+
+  .zpick { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .zout { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .zout .txt { flex: 1 1 260px; }
+
+  /* the work list */
+  .wl { list-style: none; margin: 0; padding: 0; }
+  .wl ul { list-style: none; margin: 0 0 0 14px; padding: 0 0 0 10px; border-left: 1.5px solid var(--line); }
+  .case { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; margin: 6px 0; background: var(--card); transition: box-shadow .2s, border-color .2s; }
+  .case.current { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .case.queued { border-style: dashed; opacity: 0.75; }
+  .case .top { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+  .case .num { font-size: 0.75rem; color: var(--muted); font-weight: 600; }
+  .case .inp { font-size: 0.92rem; }
+  .case .shape { margin-top: 2px; }
+  .badge { font-size: 0.75rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+  .b-yes { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+  .b-split { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .b-open { color: var(--open); background: color-mix(in srgb, var(--open) 16%, transparent); }
+  .b-bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+  .b-q { color: var(--muted); background: var(--faint); }
+  .b-run { color: var(--accent); border: 1px solid var(--accent); }
+
+  .steps { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+  .steps li { position: relative; padding: 6px 8px 6px 30px; border-bottom: 1px solid var(--line); font-size: 0.93rem; max-width: none; }
+  .steps li::before { counter-increment: s; content: counter(s); position: absolute; left: 6px; top: 7px; width: 18px; height: 18px; border-radius: 50%;
+                      background: var(--faint); color: var(--muted); font-size: 0.72rem; text-align: center; line-height: 18px; }
+  .steps li.now { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  .steps li .ref { font-size: 0.74rem; color: var(--muted); margin-left: 4px; white-space: nowrap; }
+  .steps li .ref a { color: var(--muted); }
+  .steps li.settle { padding-left: 8px; }
+  .steps li.settle::before { content: none; }
+  .tagline { display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+  .tagline.stuck { color: var(--bad); }
+  .tagline.need { color: var(--cloud); }
+  .tagline.lem { color: var(--lem); }
+  .tagline.hyp { color: var(--hyp); }
+  .tagline.yes { color: var(--ok); }
+
+  /* brute force strip */
+  .strip { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { border: 1px solid var(--line); border-radius: 8px; padding: 4px 7px; min-width: 64px; background: var(--card); font-size: 0.8rem; }
+  .pill .in { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; white-space: nowrap; }
+  .pill .bf { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+  .pill .cov { margin-top: 3px; font-size: 0.7rem; font-weight: 700; padding: 0 5px; border-radius: 4px; display: inline-block; }
+  .pill.hot { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .pill .ih { margin-top: 3px; font-size: 0.74rem; color: var(--hyp); font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
+  .c-yes { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+  .c-open { color: var(--open); background: color-mix(in srgb, var(--open) 16%, transparent); }
+  .c-bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+  .c-q { color: var(--muted); background: var(--faint); }
+  .tally { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.88rem; margin: 6px 0 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.86rem; align-items: center; }
+  details summary { cursor: pointer; color: var(--muted); }
+  /* box-and-pointer: a two-slot box is a fork t(left, right) */
+  .bp { display: inline-flex; align-items: stretch; border: 1.5px solid var(--fg); border-radius: 4px; vertical-align: middle; margin: 1px 0; background: var(--card); }
+  .bp > .sl { padding: 2px 6px; display: inline-flex; align-items: center; gap: 4px; }
+  .bp > .sl + .sl { border-left: 1.5px solid var(--fg); }
+  .bp.hot { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .bpl { font-family: ui-monospace, Menlo, monospace; font-weight: 700; }
+  .bps { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; color: var(--muted); }
+  .bpf { font-family: ui-monospace, Menlo, monospace; font-size: 0.82em; padding: 0 5px; border-radius: 4px; background: var(--faint); color: var(--muted); }
+  .bpn { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; }
+  .chain { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 0; }
+  .chain .ar { color: var(--muted); padding: 0 3px; }
+  .srow { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 6px 0; }
+  .srow > .lbl { font-size: 0.8rem; color: var(--muted); min-width: 92px; }
+  .emitted { font-weight: 700; }
+  .e-skip { color: var(--muted); } .e-yield { color: var(--bad); } .e-end { color: var(--accent); }
+  .pill .tr { line-height: 0; margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+<h1>Inside <code>judge</code>: where a run needs a statement</h1>
+<p class="lede">A step-through of how <code>judge</code> (lib/rules.disp) proves a function type for ten small definitions, and of the two places it stops and needs a fact about some other function. Each case list below was recorded from the real checker; the steps inside each case are written out from the machine's rules in lib/machine.disp and the evaluator in lib/confirm.disp, with the line that does each one.</p>
+<div class="legend card">
+  <span><span class="chip piece">xs.tail</span> an <b>input piece</b>: one unknown argument (or a part of one), "some List(Nat), not saying which"</span>
+  <span><span class="chip hyp">rev(xs.tail)</span> the <b>hypothesis's answer</b>: what the recursive call returns, known only by its type</span>
+  <span><span class="chip lem">cat(…)</span> a <b>lemma's answer</b>: a call to an already-proved function, known only by that function's type</span>
+</div>
+
+<h2>1. Only one rule looks at its argument</h2>
+<p>The checker runs the program's tree on the machine in <a href="lib/machine.disp">lib/machine.disp</a>, the same step function that runs plain trees (<code>m_rule</code>, line 72). The evaluator in <a href="lib/confirm.disp">lib/confirm.disp</a> (<code>sapply_from</code>, line 469) adds one thing: an application that would read an unknown value's shape is held back from the rules and answered separately (<code>held</code>, line 426). Four of the five rules only build, drop or copy the argument. Only the triage rule asks for its shape, so every <code>is_leaf</code>, <code>is_zero</code>, <code>.fst</code> and <code>if</code> on data ends up there.</p>
+<div class="rules" id="rules"></div>
+<h3>What triage can be handed</h3>
+<p class="small muted">The rule is <code>t (t a b) c z</code>. Pick what <code>z</code> is:</p>
+<div class="zpick" id="zpick"></div>
+<div class="card zout" id="zout"></div>
+
+<h2>2. A stream is a tree</h2>
+<p>Both checkers below read a <em>stream</em>, and in disp a stream is an ordinary tree: a step function and a state, paired (<a href="lib/stream.disp">lib/stream.disp</a>). Nothing runs until something pulls it. A pull, <code>c_out</code>, runs the step function on the state once; what comes back says what the stream emitted and holds the next stream, which is the same pair with the new state.</p>
+<pre><code>c_new :: {fmap : (X -&gt; Y) -&gt; F(X) -&gt; F(Y), stepper : St -&gt; F(St), state : St} -&gt; Coalgebra(F) :=&gt; pair(fmap, pair(stepper, state))
+c_out :: {c : Coalgebra(F)} -&gt; F(Coalgebra(F)) :=&gt; c.c_fmap(c_with(c), c.c_stepper(c.c_state))
+s_new :: {stepper : St -&gt; Step(Ending, Emit(Option(V), St)), state : St} -&gt; Items(V) :=&gt; c_new(item_map, stepper, state)</code></pre>
+<div class="card" id="streamshape"></div>
+<p>A stream of possible counterexamples is decided by <code>verdict</code>: pull until something is yielded (Refuted, with it) or the stream ends (Exhausted: Proved; Spent: Open, with the reason). Two different streams feed it on this page.</p>
+<pre><code>verdict :: {witnesses : Bounded(Items(Tree))} -&gt; Verdict :=&gt; c_fold({recurse, step} =&gt;
+	if (step.is_finished) { ending_verdict(step.finished_result) }
+	else if (step.step_draw.is_yield) { refuted(step.step_draw.yielded_item) }
+	else { recurse(step.step_rest) }
+, witnesses)
+
+// brute force (lib/claim.disp): every tree, smallest first; keep the ones the program fails
+honest :: {source : Items(Tree), claim : Claim, w : Tree, budget : Nat} -&gt; Verdict :=&gt;
+	verdict(source.s_filter({c} =&gt; not(claim(w, c))).bounded(budget))
+
+// what judge runs (lib/confirm.disp): a work list of cases, read for its counterexamples
+search_steps :: {checks : List(Val -&gt; Res), ground : Val -&gt; Option(Tree), instances : Val -&gt; List(Val), start : List(Pair(Val, Nat))} -&gt; Items(Step) :=&gt;
+	s_steps(settle_case(checks, ground, instances), start)
+// (lib/stream.disp) what a work list yielded
+s_yielded :: {steps : Items(Pair(I, Outcome(V, I)))} -&gt; Items(V) :=&gt; steps.s_filter({step} =&gt; step.snd.is_yield).s_map({step} =&gt; step.snd.yielded_item)
+steps_verdict :: {steps : Items(Step)} -&gt; Verdict :=&gt;
+	verdict(s_yielded(steps))
+search_g :: {checks : List(Val -&gt; Res), ground : Val -&gt; Option(Tree), instances : Val -&gt; List(Val), input : Val, depth : Nat} -&gt; Verdict :=&gt;
+	steps_verdict(search_steps(checks, ground, instances, [pair(input, depth)]))</code></pre>
+<p><code>s_filter</code> and <code>bounded</code> do not run anything either: each builds a new stream whose step function calls the old one and rewrites what it emitted (a kept item becomes a skip; the last unit of fuel becomes the end). The work list is a stream whose state is a pair: the cases still to do, and the reasons noted so far.</p>
+<pre><code>s_steps :: {settle : I -&gt; Outcome(V, I), start : List(I)} -&gt; Items(Pair(I, Outcome(V, I))) :=&gt; s_new({st} =&gt; {
+	let todo := st.fst
+	let notes := st.snd
+	if (todo.is_nil) { finished(if (notes.is_nil) { exhausted } else { spent_on(notes.head) }) }
+	else {
+		let out := settle(todo.head)
+		let rest := if (out.fst == "Split") { pair(out.snd.snd.append(todo.tail), notes) }
+			else if ((out.fst == "Noted") &amp;&amp; (notes.is_nil)) { pair(todo.tail, [out.snd]) }
+			else { pair(todo.tail, notes) }
+		running(emit(yield(pair(todo.head, out)), rest))
+	}
+}, pair(start, []))</code></pre>
+<p>So the "work list" in the next section is not a separate structure: it is this state, and each case in the case tree is one pull. The stream yields every case with what settled it; <code>s_yielded</code> keeps only the counterexamples, so to <code>verdict</code> a settled case is a skip. The settle function is <code>settle_case</code>; an item is a pair of the case's arguments and the splits left. The same list read back as data is <code>derivation</code> (lib/rules.disp, line 279).</p>
+
+<h2>3. Step through a proof</h2>
+<p>Pick a definition. <b>Step</b> walks the run of the next case; the last step of each case is one pull of the work-list stream, which settles the case with <code>settle_case</code> (lib/confirm.disp:644). Every case is run exactly first. Where definitions already Proved are given as lemmas and that run does not settle the case, it is run again with them read by their types. A case a run answers Yes for is done for every input it stands for, and the Yes says what it rests on besides the run: the hypothesis (induction), a lemma; a case whose run needs an input piece's shape is split into that type's cases; a stuck run is noted and makes the verdict Open; a known input that fails is a counterexample and ends the search.</p>
+<div class="scenarios" id="scenarios"></div>
+<div class="card" id="scard"></div>
+<div class="controls">
+  <button id="b-reset" title="Back to the start (Home)">⏮ Start</button>
+  <button id="b-back" title="One step back (←)">◀ Back</button>
+  <button id="b-step" class="primary" title="One step (→)">Step ▶</button>
+  <button id="b-case" title="To the end of this case">Finish case ⏭</button>
+  <button id="b-play" title="Play (space)">Play</button>
+  <span class="small muted" id="pos"></span>
+</div>
+<div class="grid2">
+  <div class="card">
+    <h3 style="margin-top:0">The work list</h3>
+    <div id="wl"></div>
+    <div id="verdict" style="margin-top:10px"></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0" id="inside-title">Inside the case</h3>
+    <ol class="steps" id="steps"></ol>
+  </div>
+</div>
+<div class="card">
+  <h3 style="margin-top:0">The work-list stream, as a tree</h3>
+  <p class="small muted" style="margin-top:0">The stream <code>verdict</code> reads (the work list with its counterexamples kept): the real value after each pull, recorded with <code>c_out</code>. Each two-slot box is a fork <code>t(left, right)</code>; <b>t</b> alone is the leaf, which is also the empty list. The highlighted item is the one the next pull settles.</p>
+  <div id="sstate"></div>
+</div>
+<div class="card">
+  <h3 style="margin-top:0">The honest stream, for comparison</h3>
+  <p class="small muted" style="margin-top:0">The first 48 pulls of <code>honest(Trees.as_items, claim, w, 48)</code>, recorded: every tree, smallest first. A tree outside the domain passes the claim trivially and becomes a skip; a member is run, and kept (yielded) only if the output is not in the codomain. The tag on a member is the case of the work list that covers it, filled in as cases settle.</p>
+  <div class="tally" id="tally"></div>
+  <div class="strip" id="strip"></div>
+  <p class="small" id="striphint" style="margin-bottom:0"></p>
+</div>
+
+<h2>4. Where the optimization is</h2>
+<p>Nothing rewrites one stream into a faster one. The speed-up is the choice of source: <code>verdict</code> reads either stream the same way, and the work list is built so that it never disagrees with the honest one.</p>
+<div class="scroll"><table>
+<tr><th></th><th>honest stream</th><th>work-list stream</th></tr>
+<tr><td>one pull handles</td><td>one tree</td><td>one case: every input it matches</td></tr>
+<tr><td>most pulls are</td><td>skips of trees outside the domain</td><td>splits, or a case answered Yes</td></tr>
+<tr><td>can end Exhausted (Proved)</td><td>only over a finite listed source (<code>over</code>, lib/claim.disp)</td><td>yes, when the list runs out with nothing noted</td></tr>
+<tr><td>why its verdict is right</td><td>it is the definition</td><td>the rule atoms in lib/rules.disp (case split, generic run, induction), each a lens into the honest claim, proved by hand once</td></tr>
+<tr><td>the same thing as a lens</td><td></td><td><code>steps_lens</code> (lib/rules.disp): each split sends a tree to the case that covers it, and composed they send every argument to the case that settled it. Its law, <code>steps_law</code>, is attacked by search in lib/tests/rules.test.disp</td></tr>
+<tr><td>checked against the other</td><td></td><td>lib/tests/confirmer.test.disp cross-checks every Proved against the enumeration refuter (TYPES.html section 9)</td></tr>
+</table></div>
+<p id="optnums"></p>
+<p>A stream-to-stream optimizer is only sketched (TYPES.html section 10): dropping skips gives the same stream at the weak quotient and a faster one at the strong type. None is implemented.</p>
+
+<h2>5. Where the statement comes in</h2>
+<p>Run the ten definitions and the pattern is short.</p>
+<ul>
+  <li><b>Splitting loses nothing.</b> An input piece stands for exactly the members of its type, and its cases (one per shape the type allows) cover the same members. So splitting is brute force with the inputs grouped, and it works on raw programs. <a href="#" data-go="dup">dup</a> is refuted that way; <a href="#" data-go="next">next</a> never even splits.</li>
+  <li><b>The hypothesis forgets.</b> For a recursive definition the call on a smaller piece is answered by the hypothesis: some member of the result type, nothing more. That is fine while the program only wraps the answer (<a href="#" data-go="twice">twice</a> puts <code>succ</code> around it, <a href="#" data-go="cat">cat</a> puts <code>cons</code> around it). It is not an input, so it has no cases to split.</li>
+  <li><b>Need 1: someone looks at the hypothesis's answer.</b> In <a href="#" data-go="rev">rev</a>, <code>cat</code> runs <code>is_leaf</code> on <span class="chip hyp">rev(xs.tail)</span> at once. The strip shows why nothing could answer: across inputs, <code>rev(xs.tail)</code> is sometimes <code>[]</code> and sometimes not. The run is stuck, at any budget.</li>
+  <li><b>Need 2: a recursion with no hypothesis.</b> In <a href="#" data-go="wrap">wrap</a> nothing is forgotten, but <code>cat</code>'s recursion is not the function being judged, so it gets no hypothesis. Every split exposes another tail to split. The cases it closes are one list length each, which is brute force again, and the split budget runs out.</li>
+  <li><b>Both need the same thing:</b> a statement about <code>cat</code>, proved by <code>cat</code>'s own induction (the <a href="#" data-go="cat">cat</a> run), then used as a lemma: when a run of <code>cat</code> stops, the lemma answers "some List(Nat)" if the arguments are in <code>cat</code>'s domain. <a href="#" data-go="revL">rev</a> and <a href="#" data-go="wrapL">wrap</a> with the lemma are Proved.</li>
+  <li><b>A lemma hides nothing.</b> A lemma's answer forgets what <code>cat</code> computes, so every case is run exactly before any lemma is read by its type, and a check that reads by type never refutes. <a href="#" data-go="bug">bug</a> is refuted by the input <code>[]</code>, and <a href="#" data-go="bugL">with the lemma</a> it still is (lib/confirm.disp:644).</li>
+  <li><b>When the statement need not be written.</b> Before giving up, the checker tries each recursive definition inside the value at the function types the goal's own type is built from (lib/rules.disp:202). <code>times : Nat -&gt; Nat -&gt; Nat</code> calls an unannotated <code>plus</code> and is Proved that way (lib/theories/checked_example.disp). <a href="#" data-go="rev">rev</a> is not: <code>cat</code>'s type has two list arguments, and <code>List(Nat) -&gt; List(Nat)</code> is not built from it. That is the place the annotation is needed.</li>
+</ul>
+<p>Why not split the hypothesis's answer as if it were an input? Splitting it would be sound, since every list is <code>[]</code> or a <code>cons</code>. But <code>cat</code> would then recurse on the tail of that answer, with no hypothesis of its own: that is the <a href="#" data-go="wrap">wrap</a> situation. Either way the missing piece is an induction on <code>cat</code>, and its statement is what the annotation on <code>cat</code> supplies. (The checker does not try this; the paragraph is the reason it would not help.)</p>
+
+<h2>6. How these were recorded</h2>
+<p>Every case list and verdict above is the output of <code>derivation</code> and <code>judge_with</code> (lib/rules.disp) on the working tree, re-run on 2026-11-10 with the probe below. The work list reads itself back, so the probe no longer repeats the checker's logic.</p>
+<p>The stream states and the honest stream's 48 pulls were recorded on 2026-11-09 by a second probe that pulls the real streams with <code>c_out</code> and describes each state. The cases, their order and what settles each are the same now, so those states still hold. The text of each step is not recorded: it is the path the evaluator takes for that case, written out by hand, with the line responsible.</p>
+<details><summary>The probe</summary>
+<pre><code id="tracer"></code></pre>
+</details>
+<p class="small muted">Companion to <a href="TYPES.html">TYPES.html</a> (what the verdicts mean) and <a href="lib/theories/checked.disp">lib/theories/checked.disp</a> (the world that uses lemmas).</p>
+</main>
+
+<script>
+"use strict";
+const TRACES = {"r_1next":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":[["arg",0]]}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}}],"r_2dup":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"piece","root":0,"path":[["arg",0]]},"r":{"k":"piece","root":0,"path":[["arg",0]]}}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":[["arg",0]]}}}},{"id":1,"parent":0,"depth":2,"input":[{"k":"leaf"}],"rec":{"input":[{"k":"leaf"}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":2,"parent":0,"depth":2,"input":[{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"rec":{"input":[{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}},"r":{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}}},"judge":{"k":"No"},"action":{"k":"split","target":{"k":"piece","root":0,"path":["right",["arg",0]]}}}},{"id":3,"parent":2,"depth":1,"input":[{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}],"rec":{"input":[{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}},"r":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}}},"judge":{"k":"No"},"action":{"k":"yield","witness":{"k":"fork","l":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}},"r":{"k":"leaf"}}}}},{"id":4,"parent":2,"depth":1,"input":[{"k":"fork","l":{"k":"leaf"},"r":{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":["right","right",["arg",0]]}}}],"rec":null}],"r_3twice":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":[["arg",0]]}}}},{"id":1,"parent":0,"depth":2,"input":[{"k":"leaf"}],"rec":{"input":[{"k":"leaf"}],"out":{"k":"Answered","v":{"k":"leaf"}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":2,"parent":0,"depth":2,"input":[{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"rec":{"input":[{"k":"fork","l":{"k":"leaf"},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"leaf"},"r":{"k":"fork","l":{"k":"leaf"},"r":{"k":"app","f":{"k":"piece","root":"hypothesis","path":[["arg",0]]},"x":{"k":"piece","root":0,"path":["right",["arg",0]]}}}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}}],"r_4rev":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":[["arg",0]]}}}},{"id":1,"parent":0,"depth":2,"input":[{"k":"leaf"}],"rec":{"input":[{"k":"leaf"}],"out":{"k":"Answered","v":{"k":"leaf"}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":2,"parent":0,"depth":2,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"out":{"k":"Stuck","why":"opaque value","v":{"k":"app","f":{"k":"piece","root":"hypothesis","path":[["arg",0]]},"x":{"k":"piece","root":0,"path":["right",["arg",0]]}}},"judge":{"k":"Stuck","why":"opaque value","v":{"k":"app","f":{"k":"piece","root":"hypothesis","path":[["arg",0]]},"x":{"k":"piece","root":0,"path":["right",["arg",0]]}}},"action":{"k":"noted","why":"opaque value","v":{"k":"app","f":{"k":"piece","root":"hypothesis","path":[["arg",0]]},"x":{"k":"piece","root":0,"path":["right",["arg",0]]}}}}}],"r_5revL":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":[["arg",0]]}}}},{"id":1,"parent":0,"depth":2,"input":[{"k":"leaf"}],"rec":{"input":[{"k":"leaf"}],"out":{"k":"Answered","v":{"k":"leaf"}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":2,"parent":0,"depth":2,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"out":{"k":"Answered","v":{"k":"app","f":{"k":"app","f":{"k":"lemma"},"x":{"k":"app","f":{"k":"piece","root":"hypothesis","path":[["arg",0]]},"x":{"k":"piece","root":0,"path":["right",["arg",0]]}}},"x":{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"leaf"}}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}}],"r_6wrap":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":[["arg",0]]}}}},{"id":1,"parent":0,"depth":2,"input":[{"k":"leaf"}],"rec":{"input":[{"k":"leaf"}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":2,"parent":0,"depth":2,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":["right",["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":["right",["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":["right",["arg",0]]}}}},{"id":3,"parent":2,"depth":1,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"leaf"}}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"leaf"}}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":4,"parent":2,"depth":1,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right",["arg",0]]},"r":{"k":"piece","root":0,"path":["right","right",["arg",0]]}}}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right",["arg",0]]},"r":{"k":"piece","root":0,"path":["right","right",["arg",0]]}}}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":["right","right",["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":["right","right",["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":["right","right",["arg",0]]}}}},{"id":5,"parent":4,"depth":0,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right",["arg",0]]},"r":{"k":"leaf"}}}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right",["arg",0]]},"r":{"k":"leaf"}}}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right",["arg",0]]},"r":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":6,"parent":4,"depth":0,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right","right",["arg",0]]},"r":{"k":"piece","root":0,"path":["right","right","right",["arg",0]]}}}}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right",["arg",0]]},"r":{"k":"fork","l":{"k":"piece","root":0,"path":["left","right","right",["arg",0]]},"r":{"k":"piece","root":0,"path":["right","right","right",["arg",0]]}}}}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":["right","right","right",["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":["right","right","right",["arg",0]]}},"action":{"k":"noted","why":"split depth exhausted"}}}],"r_7wrapL":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Answered","v":{"k":"app","f":{"k":"app","f":{"k":"lemma"},"x":{"k":"piece","root":0,"path":[["arg",0]]}},"x":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}}],"r_8bug":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":[["arg",0]]}}}},{"id":1,"parent":0,"depth":2,"input":[{"k":"leaf"}],"rec":{"input":[{"k":"leaf"}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"stem","c":{"k":"leaf"}},"r":{"k":"leaf"}}},"judge":{"k":"No"},"action":{"k":"yield","witness":{"k":"fork","l":{"k":"leaf"},"r":{"k":"leaf"}}}}},{"id":2,"parent":0,"depth":2,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}}],"rec":null}],"r_cat":[{"id":0,"parent":null,"depth":3,"input":[{"k":"piece","root":0,"path":[["arg",0]]},{"k":"piece","root":0,"path":[["arg",1]]}],"rec":{"input":[{"k":"piece","root":0,"path":[["arg",0]]},{"k":"piece","root":0,"path":[["arg",1]]}],"out":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"judge":{"k":"Need","v":{"k":"piece","root":0,"path":[["arg",0]]}},"action":{"k":"split","target":{"k":"piece","root":0,"path":[["arg",0]]}}}},{"id":1,"parent":0,"depth":2,"input":[{"k":"leaf"},{"k":"piece","root":0,"path":[["arg",1]]}],"rec":{"input":[{"k":"leaf"},{"k":"piece","root":0,"path":[["arg",1]]}],"out":{"k":"Answered","v":{"k":"piece","root":0,"path":[["arg",1]]}},"judge":{"k":"Yes"},"action":{"k":"skip"}}},{"id":2,"parent":0,"depth":2,"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}},{"k":"piece","root":0,"path":[["arg",1]]}],"rec":{"input":[{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"piece","root":0,"path":["right",["arg",0]]}},{"k":"piece","root":0,"path":[["arg",1]]}],"out":{"k":"Answered","v":{"k":"fork","l":{"k":"piece","root":0,"path":["left",["arg",0]]},"r":{"k":"app","f":{"k":"app","f":{"k":"piece","root":"hypothesis","path":[["arg",0]]},"x":{"k":"piece","root":0,"path":["right",["arg",0]]}},"x":{"k":"piece","root":0,"path":[["arg",1]]}}}},"judge":{"k":"Yes"},"action":{"k":"skip"}}}]};
+const TRACER_SRC = "open use raw \"lib/prelude.disp\" {}\nopen use raw \"lib/list.disp\" {}\nopen use raw \"lib/verdict.disp\" {}\nopen use raw \"lib/stream.disp\" {}\nopen use raw \"lib/claim.disp\" {}\nopen use raw \"lib/trees.disp\" {}\nopen use raw \"lib/tests/fixtures.disp\" {}\nopen use raw \"lib/confirm.disp\" {}\nopen use raw \"lib/rules.disp\" {}\nopen use raw \"lib/theories/types.disp\" {}\n\nNN := arrow_t(nat_t, nat_t)\nL := list_t(nat_t)\nLL := arrow_t(L, L)\nLLL := arrow_t(L, arrow_t(L, L))\nnext := {n} => succ(n)\ndup := {n} => pair(n, n)\nrec twice := {n} => if (is_zero(n)) { 0 } else { succ(succ(twice(nat_pred(n)))) }\nrec cat := {xs, ys} => if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }\nrec rev := {xs} => if (is_leaf(xs)) { [] } else { cat(rev(xs.snd), [xs.fst]) }\nwrap := {xs} => cat(xs, [0])\nbug := {xs} => cat(xs, [false])\nwith_cat := judging([pair(cat, LLL)], split_depth, run_fuel, goal_types)\nr_01_next := derivation(plainly, NN, next)\nr_02_dup := derivation(plainly, NN, dup)\nr_03_twice := derivation(plainly, NN, twice)\nr_04_cat := derivation(plainly, LLL, cat)\nr_05_rev := derivation(plainly, LL, rev)\nr_06_wrap := derivation(plainly, LL, wrap)\nr_07_revL := derivation(with_cat, LL, rev)\nr_08_wrapL := derivation(with_cat, LL, wrap)\nr_09_bug := derivation(plainly, LL, bug)\nr_10_bugL := derivation(with_cat, LL, bug)\nv_01 := [judge(NN, next), judge(NN, dup), judge(NN, twice), judge(LLL, cat), judge(LL, rev), judge(LL, wrap), judge_with(with_cat, LL, rev), judge_with(with_cat, LL, wrap), judge(LL, bug), judge_with(with_cat, LL, bug)]\n";
+const STREAMS = {"worklist": {"s_1next": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": []}}, {"k": "Finished", "ending": {"k": "Exhausted"}}]}, "s_2dup": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "leaf"}], "depth": 2}, {"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}], "depth": 1}, {"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": []}}, {"k": "Running", "emit": {"k": "Yield", "v": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}]}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}], "depth": 0}, {"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", "right", "right", ["arg", 0]]}}}}], "depth": 0}], "notes": []}}, {"k": "Running", "emit": {"k": "Yield", "v": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}]}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", "right", "right", ["arg", 0]]}}}}], "depth": 0}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": [{"why": "split depth exhausted"}]}}, {"k": "Finished", "ending": {"k": "Spent", "reason": {"why": "split depth exhausted"}}}]}, "s_3twice": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "leaf"}], "depth": 2}, {"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": []}}, {"k": "Finished", "ending": {"k": "Exhausted"}}]}, "s_4rev": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "leaf"}], "depth": 2}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": [{"why": "opaque value", "v": {"k": "app", "f": {"k": "piece", "root": "hypothesis", "path": [["arg", 0]]}, "x": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}}]}}, {"k": "Finished", "ending": {"k": "Spent", "reason": {"why": "opaque value", "v": {"k": "app", "f": {"k": "piece", "root": "hypothesis", "path": [["arg", 0]]}, "x": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}}}}]}, "s_5revL": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "leaf"}], "depth": 2}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": []}}, {"k": "Finished", "ending": {"k": "Exhausted"}}]}, "s_6wrap": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "leaf"}], "depth": 2}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "leaf"}}], "depth": 1}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "leaf"}}}], "depth": 0}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", "right", ["arg", 0]]}}}}], "depth": 0}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", "right", ["arg", 0]]}}}}], "depth": 0}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": [{"why": "split depth exhausted"}]}}, {"k": "Finished", "ending": {"k": "Spent", "reason": {"why": "split depth exhausted"}}}]}, "s_7wrapL": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": []}}, {"k": "Finished", "ending": {"k": "Exhausted"}}]}, "s_8bug": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "leaf"}], "depth": 2}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Yield", "v": [{"k": "leaf"}]}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "leaf"}}], "depth": 1}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}], "depth": 0}, {"input": [{"k": "fork", "l": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", "left", ["arg", 0]]}}, "r": {"k": "leaf"}}], "depth": 0}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": []}}, {"k": "Running", "emit": {"k": "Yield", "v": [{"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}]}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "piece", "root": 0, "path": ["right", "left", ["arg", 0]]}}, "r": {"k": "leaf"}}], "depth": 0}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", ["arg", 0]]}}}], "depth": 1}], "notes": [{"why": "split depth exhausted"}]}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "leaf"}}}], "depth": 0}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", "right", ["arg", 0]]}}}}], "depth": 0}], "notes": [{"why": "split depth exhausted"}]}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", ["arg", 0]]}, "r": {"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", "right", "right", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", "right", "right", ["arg", 0]]}}}}], "depth": 0}], "notes": [{"why": "split depth exhausted"}]}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": [{"why": "split depth exhausted"}]}}, {"k": "Finished", "ending": {"k": "Spent", "reason": {"why": "split depth exhausted"}}}]}, "s_cat": {"init": {"todo": [{"input": [{"k": "piece", "root": 0, "path": [["arg", 0]]}, {"k": "piece", "root": 0, "path": [["arg", 1]]}], "depth": 3}], "notes": []}, "pulls": [{"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "leaf"}, {"k": "piece", "root": 0, "path": [["arg", 1]]}], "depth": 2}, {"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}, {"k": "piece", "root": 0, "path": [["arg", 1]]}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [{"input": [{"k": "fork", "l": {"k": "piece", "root": 0, "path": ["left", ["arg", 0]]}, "r": {"k": "piece", "root": 0, "path": ["right", ["arg", 0]]}}, {"k": "piece", "root": 0, "path": [["arg", 1]]}], "depth": 2}], "notes": []}}, {"k": "Running", "emit": {"k": "Skip"}, "state": {"todo": [], "notes": []}}, {"k": "Finished", "ending": {"k": "Exhausted"}}]}}, "honest": {"trees": [{"k": "leaf"}, {"k": "stem", "c": {"k": "leaf"}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "leaf"}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "stem", "c": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}, "r": {"k": "leaf"}}, {"k": "fork", "l": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}, "r": {"k": "leaf"}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "leaf"}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "stem", "c": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}, "r": {"k": "leaf"}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}, "r": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "leaf"}}}}, {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}, "r": {"k": "stem", "c": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}, "r": {"k": "stem", "c": {"k": "leaf"}}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}, "r": {"k": "leaf"}}, {"k": "fork", "l": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}, "r": {"k": "leaf"}}, {"k": "fork", "l": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "leaf"}}}, "r": {"k": "leaf"}}, {"k": "fork", "l": {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "leaf"}}, "r": {"k": "leaf"}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "leaf"}}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "leaf"}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "stem", "c": {"k": "leaf"}}, "r": {"k": "stem", "c": {"k": "leaf"}}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}, "r": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "stem", "c": {"k": "fork", "l": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}, "r": {"k": "leaf"}}}}, {"k": "stem", "c": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "stem", "c": {"k": "stem", "c": {"k": "stem", "c": {"k": "leaf"}}}}}}], "h_1next": [[true, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true]], "h_2dup": [[true, true], [false, true], [false, true], [true, false], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [true, false], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true]], "h_3twice": [[true, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true]], "h_rev": [[true, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [true, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true]], "h_wrap": [[true, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [true, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true]], "h_bug": [[true, false], [false, true], [false, true], [true, false], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [true, false], [false, true], [false, true], [true, false], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true]], "h_cat": [[false, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [true, true], [false, true], [false, true], [true, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true], [false, true]]}, "verdict": {"v_next": "Open", "v_dup": {"Refuted": {"k": "fork", "l": {"k": "leaf"}, "r": {"k": "leaf"}}}, "v_rev": "Open", "v_bug": {"Refuted": {"k": "leaf"}}, "v_cat": "Open"}};
+
+// ------------------------------------------------------------------ values
+const LEAF = { k: "leaf" };
+const fork = (l, r) => ({ k: "fork", l, r });
+const stem = (c) => ({ k: "stem", c });
+const isLeaf = (v) => v.k === "leaf";
+const isNat = (v) => isLeaf(v) || (v.k === "fork" && isLeaf(v.l) && isNat(v.r));
+const isList = (v) => isLeaf(v) || (v.k === "fork" && isNat(v.l) && isList(v.r));
+const isKnown = (v) => v.k === "leaf" || (v.k === "stem" && isKnown(v.c)) || (v.k === "fork" && isKnown(v.l) && isKnown(v.r));
+const natT = (n) => (n === 0 ? LEAF : fork(LEAF, natT(n - 1)));
+const listT = (xs) => xs.reduceRight((rest, x) => fork(natT(x), rest), LEAF);
+const natOf = (v) => { let n = 0; while (v.k === "fork" && isLeaf(v.l)) { n++; v = v.r; } return isLeaf(v) ? n : null; };
+const size = (v) => (v.k === "leaf" ? 1 : v.k === "stem" ? 1 + size(v.c) : 1 + size(v.l) + size(v.r));
+
+// the programs, on trees, exactly as their disp definitions
+const P = {
+  next: (n) => fork(LEAF, n),
+  dup: (n) => fork(n, n),
+  twice: (n) => (isLeaf(n) ? LEAF : fork(LEAF, fork(LEAF, P.twice(n.r)))),
+  cat: (xs, ys) => (isLeaf(xs) ? ys : fork(xs.l, P.cat(xs.r, ys))),
+  rev: (xs) => (isLeaf(xs) ? LEAF : P.cat(P.rev(xs.r), fork(xs.l, LEAF))),
+  wrap: (xs) => P.cat(xs, listT([0])),
+  bug: (xs) => P.cat(xs, fork(stem(LEAF), LEAF)),
+};
+
+// ------------------------------------------------------------------ rendering values
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const chip = (cls, html) => `<span class="chip ${cls}">${html}</span>`;
+const Pc = (s) => chip("piece", esc(s));
+const Hc = (s) => chip("hyp", s);
+const Lc = (s) => chip("lem", s);
+const C = (s) => `<code>${esc(s)}</code>`;
+
+// a piece's name: its argument, then its destructor steps oldest first
+function pieceName(p, sc) {
+  const steps = p.path.slice().reverse();
+  const arg = steps.shift();
+  const base = sc.args[arg[1]];
+  if (sc.dom === "Nat") { const k = steps.length; return k === 0 ? base : `${base}−${k}`; }
+  return base + steps.map((s) => (s === "left" ? ".head" : ".tail")).join("");
+}
+function pieceType(p, sc) { return sc.dom === "Nat" ? "Nat" : p.path[0] === "left" ? "Nat" : "List"; }
+
+// a neutral term: its head and arguments
+function spine(v) { const args = []; while (v.k === "app") { args.unshift(v.x); v = v.f; } return { head: v, args }; }
+
+function show(v, ty, sc) {
+  if (v.k === "piece") return Pc(pieceName(v, sc));
+  if (v.k === "app") {
+    const { head, args } = spine(v);
+    if (head.k === "piece" && head.root === "hypothesis") return Hc(`${sc.self}(${args.map((a, i) => show(a, sc.argTypes[i], sc)).join(", ")})`);
+    if (head.k === "lemma") return Lc(`cat(${args.map((a) => show(a, "List", sc)).join(", ")})`);
+    return `?app`;
+  }
+  if (ty === "Nat") {
+    if (isLeaf(v)) return "0";
+    const n = natOf(v); if (n !== null) return String(n);
+    if (v.k === "fork" && isLeaf(v.l)) return `succ(${show(v.r, "Nat", sc)})`;
+    if (v.k === "fork") return `pair(${show(v.l, "Nat", sc)}, ${show(v.r, "Nat", sc)})`;
+    return raw(v);
+  }
+  if (ty === "List") {
+    const items = []; let w = v;
+    while (w.k === "fork") { items.push(w.l); w = w.r; }
+    const el = (x) => (x.k === "stem" && isLeaf(x.c) ? "false" : show(x, "Nat", sc));
+    if (isLeaf(w)) return `[${items.map(el).join(", ")}]`;
+    let out = show(w, "List", sc);
+    for (let i = items.length - 1; i >= 0; i--) out = `cons(${el(items[i])}, ${out})`;
+    return out;
+  }
+  return raw(v);
+}
+const raw = (v) => (v.k === "leaf" ? "t" : v.k === "stem" ? `t(${raw(v.c)})` : v.k === "fork" ? `t(${raw(v.l)}, ${raw(v.r)})` : "?");
+const showArgs = (args, sc) => args.map((a, i) => show(a, sc.argTypes[i], sc)).join(", ");
+
+// ------------------------------------------------------------------ tiny tree drawings
+// spec: {n:'leaf'} | {n:'stem',c} | {n:'fork',l,r} | {n:'sub',label} | {n:'cloud',label,kind}
+const U = 20, DY = 24;
+function width(s) { if (s.n === "fork") return width(s.l) + width(s.r); if (s.n === "stem") return Math.max(1, width(s.c)); if (s.n === "cloud") return Math.max(1.6, s.label.length * 0.38 + 0.6); if (s.n === "sub") return 1.1; return 1; }
+function depth(s) { if (s.n === "fork") return 1 + Math.max(depth(s.l), depth(s.r)); if (s.n === "stem") return 1 + depth(s.c); return 0; }
+function drawAt(s, x0, y, out) {
+  const w = width(s) * U, cx = x0 + w / 2;
+  if (s.n === "leaf") { out.push(`<circle class="node" cx="${cx}" cy="${y}" r="3.6"/>`); return cx; }
+  if (s.n === "sub") { out.push(`<path class="sub" d="M${cx} ${y - 4} L${cx - 8} ${y + 11} L${cx + 8} ${y + 11} Z"/><text x="${cx}" y="${y + 9}" text-anchor="middle" style="font-size:10px">${esc(s.label)}</text>`); return cx; }
+  if (s.n === "cloud") { const cw = width(s) * U - 4; out.push(`<rect class="cl-${s.kind}" x="${cx - cw / 2}" y="${y - 8}" width="${cw}" height="17" rx="8"/><text class="t-${s.kind}" x="${cx}" y="${y + 4}" text-anchor="middle" style="font-size:10px">${esc(s.label)}</text>`); return cx; }
+  if (s.n === "stem") { const c = drawAt(s.c, x0 + (w - width(s.c) * U) / 2, y + DY, out); out.unshift(`<line class="edge" x1="${cx}" y1="${y}" x2="${c}" y2="${y + DY - 5}"/>`); out.push(`<circle class="node" cx="${cx}" cy="${y}" r="3.6"/>`); return cx; }
+  const l = drawAt(s.l, x0, y + DY, out), r = drawAt(s.r, x0 + width(s.l) * U, y + DY, out);
+  out.unshift(`<line class="edge" x1="${cx}" y1="${y}" x2="${l}" y2="${y + DY - 5}"/><line class="edge" x1="${cx}" y1="${y}" x2="${r}" y2="${y + DY - 5}"/>`);
+  out.push(`<circle class="node" cx="${cx}" cy="${y}" r="3.6"/>`);
+  return cx;
+}
+function svgTree(s, label, scale = 1) {
+  const out = []; drawAt(s, 2, 10, out);
+  const w = width(s) * U + 4, h = depth(s) * DY + 24;
+  return `<svg width="${w * scale}" height="${h * scale}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label || "tree")}">${out.join("")}</svg>`;
+}
+// a case's input as a drawing: pieces are clouds labelled with their type
+function specOf(v, sc) {
+  if (v.k === "leaf") return { n: "leaf" };
+  if (v.k === "stem") return { n: "stem", c: specOf(v.c, sc) };
+  if (v.k === "fork") return { n: "fork", l: specOf(v.l, sc), r: specOf(v.r, sc) };
+  if (v.k === "piece") return { n: "cloud", kind: "piece", label: pieceType(v, sc) === "Nat" ? "Nat" : "List" };
+  return { n: "cloud", kind: "hyp", label: "?" };
+}
+
+// ------------------------------------------------------------------ section 1: the rules
+const RULES = [
+  { h: "leaf", eq: "t z → t(z)", f: { n: "leaf" }, what: "builds a stem around z" },
+  { h: "stem", eq: "t a z → t(a, z)", f: { n: "stem", c: { n: "sub", label: "a" } }, what: "builds a fork with z on the right" },
+  { h: "K", eq: "t t y z → y", f: { n: "fork", l: { n: "leaf" }, r: { n: "sub", label: "y" } }, what: "drops z" },
+  { h: "S", eq: "t (t w) y z → w z (y z)", f: { n: "fork", l: { n: "stem", c: { n: "sub", label: "w" } }, r: { n: "sub", label: "y" } }, what: "copies z to both sides" },
+  { h: "triage", eq: "t (t a b) c z → by z's shape", f: { n: "fork", l: { n: "fork", l: { n: "sub", label: "a" }, r: { n: "sub", label: "b" } }, r: { n: "sub", label: "c" } }, what: "looks at z: t → a, t(u) → b u, t(u, v) → c u v", looks: true },
+];
+function renderRules() {
+  document.getElementById("rules").innerHTML = RULES.map((r) => `
+    <div class="rule${r.looks ? " looks" : ""}">
+      <h4>${r.h}</h4>
+      <div style="display:flex;align-items:center;gap:6px;min-height:84px">${svgTree(r.f, r.h, 1.45)}<span class="mono">· z</span></div>
+      <div class="eq">${esc(r.eq)}</div>
+      <div class="what">${esc(r.what)}</div>
+    </div>`).join("") + `
+    <div class="rule">
+      <h4>an unknown function</h4>
+      <div class="eq">f z, with f a hole</div>
+      <div class="what">the hypothesis answers if z is a piece strictly below the input; another unknown function makes the neutral term f(z); a lemma runs its real tree first (<code>apply_hole</code>, line 409)</div>
+    </div>`;
+}
+const ZKINDS = [
+  { key: "known", label: "a known tree", draw: () => svgTree({ n: "fork", l: { n: "leaf" }, r: { n: "leaf" } }, "t(t, t)"),
+    text: `A known tree has a shape, so triage takes its branch: here <code>t(t, t)</code> is a fork, so the result is <code>c t t</code>. Brute force only ever hands triage known trees.`, tag: ["yes", "branch"] },
+  { key: "piece", label: "an input piece", draw: () => `${svgTree({ n: "cloud", kind: "piece", label: "List" }, "piece")}<svg width="34" height="20"><path class="arrow" d="M4 10 H28 M23 5 L29 10 L23 15"/></svg>${svgTree({ n: "leaf" }, "case []")}<span class="mono">&nbsp;or&nbsp;</span>${svgTree({ n: "fork", l: { n: "cloud", kind: "piece", label: "Nat" }, r: { n: "cloud", kind: "piece", label: "List" } }, "case cons")}`,
+    text: `An input piece of a type with cases: the run stops with <b>Need</b> (<code>inspect</code>, line 207) and the search splits the piece into the type's cases, each with fresh smaller pieces, and runs each case. The cases cover exactly what the piece covered, so nothing is lost. The cases are derived by running the type's recognizer once on an unknown tree.`, tag: ["need", "Need → split"] },
+  { key: "hyp", label: "the hypothesis's answer", draw: () => `${svgTree({ n: "cloud", kind: "hyp", label: "rev(xs.tail)" }, "hypothesis answer")}<svg width="20" height="40"><line class="wall" x1="10" y1="2" x2="10" y2="38"/></svg>`,
+    text: `What a recursive call returned: an application of the hypothesis, a neutral term whose head is a function piece. Function types have no cases and it is not an input, so there is nothing to split: <b>Stuck</b>, reason "opaque value". The search notes it and the verdict is Open. More fuel or depth changes nothing.`, tag: ["stuck", "Stuck: opaque value"] },
+  { key: "lem", label: "…inside a lemma's run", draw: () => `${svgTree({ n: "cloud", kind: "hyp", label: "rev(xs.tail)" }, "hypothesis answer")}<svg width="34" height="20"><path class="arrow" d="M4 10 H28 M23 5 L29 10 L23 15"/></svg>${svgTree({ n: "cloud", kind: "lem", label: "cat(rev(xs.tail))" }, "lemma answer")}`,
+    text: `The same triage, reached while running a lemma's real tree (cat's, here). The run stops, and instead of passing the stop up, the lemma answers with its own type: an application of a piece of cat's type (<code>lemma_apply</code>, line 395). Later, judging checks each argument against cat's domain.`, tag: ["lem", "lemma answers"] },
+];
+function renderZ(key) {
+  document.getElementById("zpick").innerHTML = ZKINDS.map((z) => `<button class="seg${z.key === key ? " on" : ""}" data-z="${z.key}">${esc(z.label)}</button>`).join("");
+  const z = ZKINDS.find((q) => q.key === key);
+  document.getElementById("zout").innerHTML = `<div style="display:flex;align-items:center;flex-wrap:wrap">${z.draw()}</div><div class="txt"><span class="tagline ${z.tag[0]}">${esc(z.tag[1])}</span>${z.text}</div>`;
+}
+
+// ------------------------------------------------------------------ section 2: scenarios
+const S = (tag, html, ref) => ({ tag, html, ref });
+const R = { confirm: "lib/confirm.disp", rules: "lib/rules.disp", machine: "lib/machine.disp", checked: "lib/theories/checked.disp" };
+const ref = (file, line, name) => ({ file: R[file], line, name });
+const IND = (self, arg, cod) => S("hyp", `${C(self)} is <code>fix(step)</code> and ${Pc(arg)} is unknown, so the run uses <code>step</code> with the hypothesis in place of ${C(self)}: a function piece that only answers for pieces strictly below ${Pc(arg)}, with answers in ${esc(cod)}.`, ref("rules", 102, "induct"));
+const KNOWN = (what) => S("run", `The input is fully known and so is the program, so it runs on the native machine: ${what}`, ref("confirm", 383, "run_native"));
+const NEED = (code, piece) => S("need", `${C(code)} compiles to a triage on ${Pc(piece)}. Triage needs its shape, and ${Pc(piece)} is an input piece of a type with cases: <b>Need</b>.`, ref("confirm", 207, "inspect"));
+const FORKFALSE = (code) => S("run", `${C(code)}: triage sees a fork, so false. Known shapes never stop a run, even when their parts are unknown.`, ref("machine", 72, "m_rule"));
+const HYPCALL = (call, piece, ans) => S("hyp", `${C(call)} is the hypothesis applied to ${Pc(piece)}. Its licence checks ${Pc(piece)} is strictly below the input, and it is (it is a part of it). The answer is a neutral term: ${Hc(ans)}.`, ref("confirm", 409, "apply_hole → licensed_with"));
+const LEMSWAP = S("lem", `The exact run did not settle the case, so it is run a second time with ${C("cat")} read by its type: the tree of ${C("cat")} inside this value is swapped for a lemma hole, because ${C("cat")} is Proved at ${C("List(Nat) -> List(Nat) -> List(Nat)")} and its tree has 298 nodes (lemmas need at least 64).`, ref("rules", 193, "checks_of → lemmas_in"));
+
+const SCEN = [
+  { key: "next", group: "Closes without help", name: "next", trace: "r_1next", args: ["n"], argTypes: ["Nat"], dom: "Nat", cod: "Nat", self: "next",
+    code: `next : Nat -> Nat := {n} => succ(n)`,
+    note: `The run never looks at its argument, so one run on one piece covers every Nat.`,
+    verdict: { k: "Proved", text: "Proved after one run" },
+    steps: { 0: [
+      S("run", `The argument is a piece: ${Pc("n")}, some Nat.`, ref("rules", 93, "generic_args")),
+      S("run", `${C("succ(n)")} is ${C("t(t, n)")}: the leaf and stem rules build a fork around ${Pc("n")} without looking at it.`, ref("confirm", 469, "sapply_from")),
+      S("yes", `Judge the output at Nat. Nat's cases are ${C("0 = t")} and ${C("succ(m) = t(t, m)")}; the output has the succ shape with ${Pc("n")} where m goes, and ${Pc("n")} is a piece of Nat: <b>Yes</b>.`, ref("confirm", 526, "judge_as")),
+    ] },
+    concrete: { kind: "nat", run: (a) => P.next(a[0]) } },
+
+  { key: "dup", group: "Closes without help", name: "dup (wrong)", trace: "r_2dup", args: ["n"], argTypes: ["Nat"], dom: "Nat", cod: "Nat", self: "dup",
+    code: `dup : Nat -> Nat := {n} => pair(n, n)`,
+    note: `A wrong program. The run never looks at n, but judging the output does, so the search splits until it has a known counterexample.`,
+    verdict: { k: "Refuted", text: "Refuted: n = 1 gives pair(1, 1), which is not a Nat" },
+    steps: {
+      0: [
+        S("run", `${C("pair(n, n)")} is ${C("t(n, n)")}: built by the stem and fork rules, without looking at ${Pc("n")}.`, ref("confirm", 469, "sapply_from")),
+        S("need", `Judge ${C("t(n, n)")} at Nat. Only ${C("succ(m) = t(t, m)")} is fork-shaped, and it needs the left part to be ${C("t")}. Whether ${Pc("n")} is ${C("t")} depends on ${Pc("n")}: <b>Need</b>.`, ref("confirm", 511, "fits_with → inspect")),
+      ],
+      1: [
+        KNOWN(`${C("pair(0, 0)")} is ${C("t(t, t)")}, which is the tree for 1.`),
+        S("yes", `Judge at Nat: 1 is a Nat. <b>Yes</b>.`, ref("confirm", 526, "judge_as")),
+      ],
+      2: [
+        S("run", `${C("pair(succ(n−1), succ(n−1))")}: the left part is now a fork.`, ref("confirm", 469, "sapply_from")),
+        S("stuck", `Judge at Nat: no case fits a fork whose left part is a fork, whatever ${Pc("n−1")} is: <b>No</b>.`, ref("confirm", 526, "judge_as")),
+      ],
+      3: [
+        KNOWN(`the output is ${C("pair(1, 1)")}.`),
+        S("stuck", `Judge at Nat: <b>No</b>, on a fully known input.`, ref("confirm", 526, "judge_as")),
+      ],
+    },
+    settle: { 2: `A No while a piece is left is not a witness yet: a witness must re-run concretely. The search splits the first piece, ${Pc("n−1")}.` },
+    concrete: { kind: "nat", run: (a) => P.dup(a[0]) } },
+
+  { key: "twice", group: "Closes without help", name: "twice", trace: "r_3twice", args: ["n"], argTypes: ["Nat"], dom: "Nat", cod: "Nat", self: "twice",
+    code: `rec twice : {n : Nat} -> Nat :=> if (is_zero(n)) { 0 } else { succ(succ(twice(nat_pred(n)))) }`,
+    note: `Recursive. The recursive call is answered by the hypothesis, and the program only wraps that answer in succ.`,
+    verdict: { k: "Proved", text: "Proved after three runs" },
+    rests: { 2: ["induction"] },
+    hypItem: 2, hyp: (a) => P.twice(a[0].r), hypLabel: "twice(n−1)",
+    steps: {
+      0: [IND("twice", "n", "Nat"), NEED("is_zero(n)", "n")],
+      1: [KNOWN(`${C("twice(0)")} gives 0. A known argument gets no hypothesis.`), S("yes", `0 is a Nat: <b>Yes</b>.`, ref("confirm", 526, "judge_as"))],
+      2: [
+        IND("twice", "n", "Nat"),
+        FORKFALSE("is_zero(succ(n−1))"),
+        S("run", `${C("nat_pred(succ(n−1))")} is ${C("pair_snd")}: triage sees the fork and takes its right part, ${Pc("n−1")}.`, ref("machine", 72, "m_rule")),
+        HYPCALL("twice(n−1)", "n−1", "twice(n−1)"),
+        S("run", `${C("succ(succ(·))")} builds two forks around it. Nothing looks inside ${Hc("twice(n−1)")}.`, ref("confirm", 469, "sapply_from")),
+        S("yes", `Judge at Nat: succ fits, succ fits, then ${Hc("twice(n−1)")} at Nat by the arrow rule: the hypothesis's answers are Nats and its argument is in its domain. <b>Yes</b>.`, ref("confirm", 530, "judge_as app_rule")),
+      ],
+    },
+    concrete: { kind: "nat", run: (a) => P.twice(a[0]) } },
+
+  { key: "cat", group: "Closes without help", name: "cat", trace: "r_cat", args: ["xs", "ys"], argTypes: ["List", "List"], dom: "List", cod: "List", self: "cat",
+    code: `rec cat : {xs : List(Nat), ys : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }`,
+    note: `Where cat's statement comes from: cat's own induction. Like twice, it only wraps the hypothesis's answer (in cons).`,
+    verdict: { k: "Proved", text: "Proved after three runs" },
+    rests: { 2: ["induction"] },
+    hypItem: 2, hyp: (a) => P.cat(a[0].r, a[1]), hypLabel: "cat(xs.tail, ys)",
+    steps: {
+      0: [IND("cat", "xs", "List(Nat) -> List(Nat)"), NEED("is_leaf(xs)", "xs")],
+      1: [
+        S("run", `${C("xs = []")} is known, so ${C("cat")} runs as itself: ${C("is_leaf([])")} is true and the answer is the second argument, ${Pc("ys")}.`, ref("rules", 102, "induct (known argument: no hypothesis)")),
+        S("yes", `Judge at List(Nat): ${Pc("ys")} is a piece of List(Nat). <b>Yes</b>.`, ref("confirm", 526, "judge_as")),
+      ],
+      2: [
+        IND("cat", "xs", "List(Nat) -> List(Nat)"),
+        FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
+        HYPCALL("cat(xs.snd)", "xs.tail", "cat(xs.tail)"),
+        S("hyp", `Applied to ${Pc("ys")}: an unknown function's answer applied to anything is another neutral term, ${Hc("cat(xs.tail, ys)")}.`, ref("confirm", 409, "apply_hole")),
+        S("run", `${C("cons(xs.head, ·)")} builds a fork around it. Nothing looks inside.`, ref("confirm", 469, "sapply_from")),
+        S("yes", `Judge at List(Nat): the cons case fits, ${Pc("xs.head")} is a Nat, and ${Hc("cat(xs.tail, ys)")} is a List(Nat) by the arrow rule (both arguments are in the hypothesis's domain). <b>Yes</b>.`, ref("confirm", 506, "spine_args")),
+      ],
+    },
+    concrete: { kind: "pairs", run: (a) => P.cat(a[0], a[1]) } },
+
+  { key: "rev", group: "Needs a statement about cat", name: "rev", trace: "r_4rev", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "rev",
+    code: `rec cat := {xs, ys} => if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }\nrec rev : {xs : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { [] } else { cat(rev(xs.snd), [xs.fst]) }`,
+    note: `cat has no annotation, so it is just part of rev's tree. The hypothesis's answer is handed to cat, and cat looks at it.`,
+    verdict: { k: "Open", text: "Open: opaque value rev(xs.tail)" },
+    hypItem: 2, hyp: (a) => P.rev(a[0].r), hypLabel: "rev(xs.tail)", hypLeaf: true,
+    steps: {
+      0: [IND("rev", "xs", "List(Nat)"), NEED("is_leaf(xs)", "xs")],
+      1: [KNOWN(`${C("rev([])")} gives ${C("[]")}. A known argument gets no hypothesis.`), S("yes", `${C("[]")} is a List(Nat): <b>Yes</b>.`, ref("confirm", 526, "judge_as"))],
+      2: [
+        IND("rev", "xs", "List(Nat)"),
+        FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
+        HYPCALL("rev(xs.snd)", "xs.tail", "rev(xs.tail)"),
+        S("run", `${C("cat(rev(xs.tail), [xs.head])")}: ${C("cat")} is plain code inside rev's tree, not the function being judged, so it gets no hypothesis. It runs, and the first thing it does with its first argument is ${C("is_leaf")}.`, ref("confirm", 469, "sapply_from")),
+        S("stuck", `Triage on ${Hc("rev(xs.tail)")}. It is not an input piece; its head is the hypothesis, a function piece with no cases. <b>Stuck</b>: opaque value. Look at the strip below: for ${C("[0]")} the answer would be ${C("[]")}, for longer inputs a cons. The hypothesis kept only "some List(Nat)".`, ref("confirm", 438, "answer_held → inspect")),
+      ],
+    },
+    settle: { 2: `A stuck run is never split: there is nothing to split. The search notes the reason, carries on, and the note makes the verdict Open.` },
+    concrete: { kind: "lists", run: (a) => P.rev(a[0]) } },
+
+  { key: "wrap", group: "Needs a statement about cat", name: "wrap", trace: "r_6wrap", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "wrap",
+    code: `rec cat := {xs, ys} => if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }\nwrap : List(Nat) -> List(Nat) := {xs} => cat(xs, [0])`,
+    note: `No hypothesis anywhere: wrap is not recursive, and cat's recursion is not the function being judged. Nothing is forgotten, so nothing gets stuck; the splits just never end.`,
+    verdict: { k: "Open", text: "Open: split depth exhausted" },
+    steps: {
+      0: [S("run", `${C("wrap")} is not recursive, so there is no hypothesis. ${C("cat")}'s recursion runs for real.`, ref("rules", 102, "induct")), NEED("is_leaf(xs) (in cat)", "xs")],
+      1: [KNOWN(`${C("cat([], [0])")} gives ${C("[0]")}.`), S("yes", `<b>Yes</b>.`, ref("confirm", 526, "judge_as"))],
+      2: [
+        FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
+        S("run", `So ${C("cons(xs.head, cat(xs.tail, [0]))")}, and ${C("cat")} recurses on ${Pc("xs.tail")}.`, ref("confirm", 469, "sapply_from")),
+        NEED("is_leaf(xs.tail) (in cat)", "xs.tail"),
+      ],
+      3: [S("run", `${C("cat")} walks one cell and reaches ${C("[]")}: the output is ${C("[xs.head, 0]")}.`, ref("confirm", 469, "sapply_from")), S("yes", `${Pc("xs.head")} is a Nat: <b>Yes</b>. That closes lists of length 1.`, ref("confirm", 526, "judge_as"))],
+      4: [S("run", `${C("cat")} walks two cells, then recurses on ${Pc("xs.tail.tail")}.`, ref("confirm", 469, "sapply_from")), NEED("is_leaf(xs.tail.tail) (in cat)", "xs.tail.tail")],
+      5: [S("run", `Output ${C("[xs.head, xs.tail.head, 0]")}.`, ref("confirm", 469, "sapply_from")), S("yes", `<b>Yes</b>: lists of length 2.`, ref("confirm", 526, "judge_as"))],
+      6: [S("run", `${C("cat")} walks three cells and asks for ${Pc("xs.tail.tail.tail")}'s shape again.`, ref("confirm", 469, "sapply_from")), NEED("is_leaf(xs.tail.tail.tail) (in cat)", "xs.tail.tail.tail")],
+    },
+    settle: { 6: `This case has used all 3 splits (<code>split_depth</code>, line 488): noted, "split depth exhausted". Every case the search closed was one list length: brute force, grouped by length.` },
+    concrete: { kind: "lists", run: (a) => P.wrap(a[0]) } },
+
+  { key: "revL", group: "With cat's statement as a lemma", name: "rev + lemma", trace: "r_5revL", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "rev",
+    code: `rec cat : {xs : List(Nat), ys : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }\nrec rev : {xs : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { [] } else { cat(rev(xs.snd), [xs.fst]) }`,
+    note: `cat is annotated and Proved first, so it is a lemma for rev. Every case is run exactly first; a case that run does not settle is run again with cat read by its type. Recorded with judge_with(judging([pair(cat, …)], split_depth, run_fuel, goal_types), …).`,
+    verdict: { k: "Proved", text: "Proved: three cases, five runs" },
+    rests: { 2: ["induction", "lemma"] },
+    hypItem: 2, hyp: (a) => P.rev(a[0].r), hypLabel: "rev(xs.tail)", hypLeaf: true,
+    steps: {
+      0: [IND("rev", "xs", "List(Nat)"), NEED("is_leaf(xs)", "xs"), LEMSWAP, S("need", `The second run stops at the same triage on ${Pc("xs")}: <b>Need</b>. Neither run answered, and both ask for ${Pc("xs")}.`, ref("confirm", 635, "weigh"))],
+      1: [KNOWN(`${C("rev([])")} gives ${C("[]")}. The exact run settles this case, so the lemma is not consulted.`), S("yes", `${C("[]")} is a List(Nat): <b>Yes</b>.`, ref("confirm", 526, "judge_as"))],
+      2: [
+        IND("rev", "xs", "List(Nat)"),
+        FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
+        HYPCALL("rev(xs.snd)", "xs.tail", "rev(xs.tail)"),
+        S("stuck", `${C("cat")} runs as plain code and its first triage is on ${Hc("rev(xs.tail)")}: <b>Stuck</b>, opaque value, exactly as in rev without the lemma.`, ref("confirm", 438, "answer_held → inspect")),
+        LEMSWAP,
+        S("lem", `The second run goes the same way up to the call. The lemma is applied to ${Hc("rev(xs.tail)")}. It first runs ${C("cat")}'s real tree on it, and that run stops at the same triage: opaque value.`, ref("confirm", 395, "lemma_apply")),
+        S("lem", `The run did not answer, so the lemma answers instead: ${Lc(`cat(${Hc("rev(xs.tail)")})`)}, an application of a piece of cat's type.`, ref("confirm", 395, "lemma_apply")),
+        S("lem", `Applied to ${C("[xs.head]")}: an application in function position makes a longer neutral term, ${Lc(`cat(${Hc("rev(xs.tail)")}, [${Pc("xs.head")}])`)}.`, ref("confirm", 409, "apply_hole")),
+        S("yes", `Judge at List(Nat) by the arrow rule: cat's type ends in List(Nat), and each argument is in its domain: ${Hc("rev(xs.tail)")} is a List(Nat) (the hypothesis's codomain) and ${C("[xs.head]")} is one. <b>Yes</b>.`, ref("confirm", 506, "spine_args")),
+      ],
+    },
+    settle: { 2: `<span class="badge b-yes">✓ Yes</span> on the second run. Its answer cites the hypothesis and ${C("cat")}'s type, so the case rests on induction and on the lemma (<code>cited</code>, confirm.disp:612). Skip.` },
+    concrete: { kind: "lists", run: (a) => P.rev(a[0]) } },
+
+  { key: "wrapL", group: "With cat's statement as a lemma", name: "wrap + lemma", trace: "r_7wrapL", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "wrap",
+    code: `rec cat : {xs : List(Nat), ys : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }\nwrap : List(Nat) -> List(Nat) := {xs} => cat(xs, [0])`,
+    note: `The same for wrap. One case, two runs, no split.`,
+    verdict: { k: "Proved", text: "Proved: one case, two runs" },
+    rests: { 0: ["lemma"] },
+    settle: { 0: `<span class="badge b-yes">✓ Yes</span> on the second run: the case rests on the lemma. A Yes outranks the exact run's request for a split, so nothing is split. Skip.` },
+    steps: { 0: [
+      S("run", `${C("wrap")} is not recursive, so there is no hypothesis. The exact run comes first, and in it ${C("cat")}'s recursion runs for real.`, ref("rules", 102, "induct")),
+      NEED("is_leaf(xs) (in cat)", "xs"),
+      LEMSWAP,
+      S("lem", `The lemma is applied to ${Pc("xs")} and runs ${C("cat")}'s real tree, which asks for ${Pc("xs")}'s shape (Need).`, ref("confirm", 395, "lemma_apply")),
+      S("lem", `Any run that does not answer, a split request included, makes the lemma answer by its type: ${Lc(`cat(${Pc("xs")})`)}, then ${Lc(`cat(${Pc("xs")}, [0])`)} once applied to ${C("[0]")}.`, ref("confirm", 395, "lemma_apply")),
+      S("yes", `Judge by the arrow rule: ${Pc("xs")} and ${C("[0]")} are in cat's domain, and cat's answers are List(Nat). <b>Yes</b>, for every list at once.`, ref("confirm", 506, "spine_args")),
+    ] },
+    concrete: { kind: "lists", run: (a) => P.wrap(a[0]) } },
+
+  { key: "bug", group: "A lemma hides nothing", name: "bug", trace: "r_8bug", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "bug",
+    code: `rec cat := {xs, ys} => if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }\nbug : List(Nat) -> List(Nat) := {xs} => cat(xs, [false])`,
+    note: `A wrong program: it appends a Bool to a list of Nats. Judged plainly, the first case is a counterexample.`,
+    verdict: { k: "Refuted", text: "Refuted: xs = [] gives [false]" },
+    steps: {
+      0: [NEED("is_leaf(xs) (in cat)", "xs")],
+      1: [KNOWN(`${C("cat([], [false])")} gives ${C("[false]")}.`), S("stuck", `Judge at List(Nat): ${C("false")} is ${C("t(t)")}, not a Nat. <b>No</b>, on a known input.`, ref("confirm", 526, "judge_as"))],
+    },
+    concrete: { kind: "lists", run: (a) => P.bug(a[0]) } },
+
+  { key: "bugL", group: "A lemma hides nothing", name: "bug + lemma", trace: "r_8bug", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "bug",
+    code: `rec cat : {xs : List(Nat), ys : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }\nbug : List(Nat) -> List(Nat) := {xs} => cat(xs, [false])`,
+    note: `The same program judged with cat as a lemma. The lemma's type says nothing about this call, the exact run's split goes ahead, and the known case [] is the counterexample, as without the lemma.`,
+    verdict: { k: "Refuted", text: "Refuted: xs = [] gives [false]" },
+    steps: {
+      0: [
+        NEED("is_leaf(xs) (in cat)", "xs"),
+        LEMSWAP,
+        S("lem", `The lemma runs ${C("cat")} on ${Pc("xs")}, which asks for a split, so the lemma answers ${Lc(`cat(${Pc("xs")}, [false])`)}.`, ref("confirm", 395, "lemma_apply")),
+        S("stuck", `Judge by the arrow rule: ${C("[false]")} is not in cat's domain, so cat's type says nothing about this answer. <b>Stuck</b>: argument outside the domain. A run that reads by type never refutes, and this one named no piece, so the exact run's Need stands.`, ref("confirm", 530, "judge_as app_rule")),
+      ],
+      1: [KNOWN(`${C("cat([], [false])")} gives ${C("[false]")}. Every case is run exactly first, so the lemma cannot hide this one.`), S("stuck", `Judge at List(Nat): ${C("false")} is ${C("t(t)")}, not a Nat. <b>No</b>, on a known input.`, ref("confirm", 526, "judge_as"))],
+    },
+    concrete: { kind: "lists", run: (a) => P.bug(a[0]) } },
+];
+
+// ------------------------------------------------------------------ the timeline of one scenario
+function timeline(sc) {
+  const items = TRACES[sc.trace];
+  const ev = [];
+  for (const it of items) {
+    if (!it.rec) continue;
+    const st = (sc.steps[it.id] || []);
+    st.forEach((_, i) => ev.push({ item: it.id, kind: "step", i }));
+    ev.push({ item: it.id, kind: "settle" });
+  }
+  ev.push({ kind: "verdict" });
+  return ev;
+}
+// which items are visible / current / settled after event e
+function stateAt(sc, ev, e) {
+  const items = TRACES[sc.trace];
+  const byId = new Map(items.map((it) => [it.id, it]));
+  const visible = new Set([0]), settled = new Set();
+  let current = null, stepIdx = -1;
+  for (let j = 0; j <= e && j < ev.length; j++) {
+    const x = ev[j];
+    if (x.kind === "step") { current = x.item; stepIdx = x.i; }
+    if (x.kind === "settle") {
+      current = x.item; stepIdx = Infinity; settled.add(x.item);
+      const it = byId.get(x.item);
+      if (it.rec.action.k === "split") items.filter((c) => c.parent === x.item).forEach((c) => visible.add(c.id));
+    }
+    if (x.kind === "verdict") { current = null; }
+  }
+  const runs = [...settled].length + (current !== null && !settled.has(current) ? 1 : 0);
+  return { visible, settled, current, stepIdx, done: e >= ev.length - 1, runs };
+}
+
+// ------------------------------------------------------------------ concrete inputs, smallest first
+function listsBySize(n) {
+  const out = [];
+  const gen = (budget) => { // all lists of nats with at most `budget` total weight, as JS arrays
+    const res = [[]];
+    const grow = (prefix, left) => { for (let x = 0; 2 * x + 2 <= left; x++) { const l = prefix.concat([x]); res.push(l); grow(l, left - (2 * x + 2)); } };
+    grow([], budget); return res;
+  };
+  for (const xs of gen(14)) out.push(listT(xs));
+  out.sort((a, b) => size(a) - size(b) || raw(a).localeCompare(raw(b)));
+  return out.slice(0, n);
+}
+function concreteInputs(sc) {
+  if (sc.concrete.kind === "nat") return Array.from({ length: 12 }, (_, i) => [natT(i)]);
+  const ls = listsBySize(40);
+  if (sc.concrete.kind === "lists") return ls.slice(0, 14).map((x) => [x]);
+  const pairs = [];
+  for (const a of ls.slice(0, 8)) for (const b of ls.slice(0, 8)) pairs.push([a, b]);
+  pairs.sort((p, q) => size(p[0]) + size(p[1]) - size(q[0]) - size(q[1]));
+  return pairs.slice(0, 12);
+}
+// does a concrete input fall under a case's input pattern?
+function matches(pat, v, sc) {
+  if (pat.k === "piece") return pieceType(pat, sc) === "Nat" ? isNat(v) : isList(v);
+  if (pat.k === "leaf") return isLeaf(v);
+  if (pat.k === "stem") return v.k === "stem" && matches(pat.c, v.c, sc);
+  if (pat.k === "fork") return v.k === "fork" && matches(pat.l, v.l, sc) && matches(pat.r, v.r, sc);
+  return false;
+}
+function coveringItem(sc, args) {
+  const items = TRACES[sc.trace];
+  const leaves = items.filter((it) => !it.rec || it.rec.action.k !== "split");
+  const hits = leaves.filter((it) => it.input.every((p, i) => matches(p, args[i], sc)));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// ------------------------------------------------------------------ the recorded streams
+const wlKey = (sc) => sc.trace.replace(/^r_/, "s_");
+const HONEST = { next: "h_1next", dup: "h_2dup", twice: "h_3twice", cat: "h_cat", rev: "h_rev", revL: "h_rev", wrap: "h_wrap", wrapL: "h_wrap", bug: "h_bug", bugL: "h_bug" };
+const treeSpec = (v) => (v.k === "leaf" ? { n: "leaf" } : v.k === "stem" ? { n: "stem", c: treeSpec(v.c) } : { n: "fork", l: treeSpec(v.l), r: treeSpec(v.r) });
+// the honest stream's pulls: each tree, whether it is in the domain, and whether the claim holds
+function honestPulls(sc) {
+  const marks = STREAMS.honest[HONEST[sc.key]];
+  return STREAMS.honest.trees.map((tree, i) => ({ tree, member: marks[i][0], holds: marks[i][1], args: sc.concrete.kind === "pairs" ? (tree.k === "fork" ? [tree.l, tree.r] : null) : [tree] }));
+}
+function honestEnd(sc) {
+  const ps = honestPulls(sc);
+  const y = ps.findIndex((p) => p.member && !p.holds);
+  return y >= 0 ? { k: "Refuted", at: y + 1, members: ps.slice(0, y + 1).filter((p) => p.member).length }
+                : { k: "Open", at: ps.length, members: ps.filter((p) => p.member).length };
+}
+// the work-list stream's pulls up to where verdict stops reading
+function wlPulls(sc) {
+  const all = STREAMS.worklist[wlKey(sc)].pulls;
+  const y = all.findIndex((p) => p.k === "Running" && p.emit.k === "Yield");
+  return y >= 0 ? all.slice(0, y + 1) : all;
+}
+
+// ------------------------------------------------------------------ DOM
+if (typeof document !== "undefined") {
+  let sc = SCEN[0], ev = timeline(sc), e = -1, timer = null;
+  const $ = (id) => document.getElementById(id);
+  const outcome = (it) => {
+    const a = it.rec.action;
+    if (a.k === "skip") return `<span class="badge b-yes">✓ Yes${sc.rests && sc.rests[it.id] ? ` · rests on ${sc.rests[it.id].join(" + ")}` : ""}</span>`;
+    if (a.k === "split") return `<span class="badge b-split">split ${show(a.target, pieceType(a.target, sc), sc)}</span>`;
+    if (a.k === "noted") return `<span class="badge b-open">Open: ${esc(a.why)}</span>`;
+    if (a.k === "yield") return `<span class="badge b-bad">✗ counterexample</span>`;
+    return "";
+  };
+  const refHtml = (r) => r ? `<span class="ref"><a href="${r.file}">${esc(r.file.replace("lib/", ""))}:${r.line}</a> ${esc(r.name)}</span>` : "";
+
+  function renderScenarioPicker() {
+    const groups = [...new Set(SCEN.map((s) => s.group))];
+    $("scenarios").innerHTML = groups.map((g) => `<div class="group"><span class="glabel">${esc(g)}</span>${SCEN.filter((s) => s.group === g).map((s) => `<button class="seg${s === sc ? " on" : ""}" data-sc="${s.key}">${esc(s.name)}</button>`).join("")}</div>`).join("");
+  }
+  function renderCard() {
+    $("scard").innerHTML = `<pre><code>${esc(sc.code)}</code></pre><p class="small" style="margin:6px 0 0">${esc(sc.note)}</p>`;
+  }
+  function renderWL(st) {
+    const items = TRACES[sc.trace];
+    const node = (it) => {
+      if (!st.visible.has(it.id)) return "";
+      const kids = items.filter((c) => c.parent === it.id).map(node).join("");
+      const queued = !it.rec || (!st.settled.has(it.id) && st.current !== it.id);
+      const never = !it.rec && st.done;
+      let badge = "";
+      if (st.settled.has(it.id)) badge = outcome(it);
+      else if (st.current === it.id) badge = `<span class="badge b-run">running</span>`;
+      else badge = `<span class="badge b-q">${never ? "never run: the verdict was decided" : "queued"}</span>`;
+      const cls = ["case", st.current === it.id ? "current" : "", queued ? "queued" : ""].join(" ");
+      const shapes = it.input.map((a, i) => svgTree(specOf(a, sc), sc.args[i])).join(`<span class="mono" style="padding:0 6px">,</span>`);
+      return `<li><div class="${cls}"><div class="top"><span class="num">case ${it.id + 1}${st.settled.has(it.id) ? ` · pull ${items.filter((x) => x.rec).indexOf(it) + 1}` : ""}</span><span class="inp">${sc.args.map((n, i) => { const a = it.input[i]; return a.k === "piece" && a.path.length === 1 ? `${show(a, sc.argTypes[i], sc)} <span class="muted small">any ${sc.argTypes[i] === "List" ? "List(Nat)" : "Nat"}</span>` : `${esc(n)} = ${show(a, sc.argTypes[i], sc)}`; }).join(", ")}</span>${badge}</div><div class="shape" style="display:flex;align-items:flex-start">${shapes}</div></div>${kids ? `<ul>${kids}</ul>` : ""}</li>`;
+    };
+    $("wl").innerHTML = `<ul class="wl">${node(items[0])}</ul>`;
+    const v = sc.verdict;
+    $("verdict").innerHTML = st.done
+      ? `<span class="verdict v-${v.k}">${esc(v.k)}</span> <span class="small">${esc(v.text)}</span>`
+      : `<span class="small muted">Runs so far: ${st.runs}. ${st.visible.size - st.settled.size} case(s) still on the list.</span>`;
+  }
+  function renderInside(st) {
+    if (st.current === null) {
+      $("inside-title").textContent = st.done ? "Verdict" : "Inside the case";
+      $("steps").innerHTML = st.done ? `<li class="settle">${verdictExplain()}</li>` : `<li class="settle muted">Press Step to pull the first case: the arguments as pieces.</li>`;
+      return;
+    }
+    const it = TRACES[sc.trace].find((x) => x.id === st.current);
+    $("inside-title").textContent = `Inside case ${it.id + 1}`;
+    const steps = sc.steps[it.id] || [];
+    const shown = steps.slice(0, Math.min(steps.length, st.stepIdx + 1));
+    let html = shown.map((s, i) => `<li class="${i === st.stepIdx ? "now" : ""}"><span class="tagline ${s.tag}">${tagWord(s.tag)}</span>${s.html} ${refHtml(s.ref)}</li>`).join("");
+    if (st.stepIdx === Infinity) html += `<li class="settle now">${settleText(it)} <span class="ref"><a href="lib/confirm.disp">confirm.disp:644</a> settle_case</span></li>`;
+    $("steps").innerHTML = html;
+  }
+  const tagWord = (t) => ({ run: "run", need: "need", hyp: "hypothesis", stuck: "stops", lem: "lemma", yes: "judge" }[t] || t);
+  function settleText(it) {
+    if (sc.settle && sc.settle[it.id]) return sc.settle[it.id];
+    const a = it.rec.action;
+    if (a.k === "skip") return `<span class="badge b-yes">✓ Yes</span> on this case: it stands for every input it matches, and they are all done.${sc.rests && sc.rests[it.id] ? ` The answer cites the ${sc.rests[it.id].join(" and the ").replace("induction", "hypothesis")}, so the case rests on ${sc.rests[it.id].join(" and ")}.` : ""} Skip.`;
+    if (a.k === "split") return `<span class="badge b-split">split</span> ${show(a.target, pieceType(a.target, sc), sc)} into its type's cases, each with fresh smaller pieces; they go to the front of the list.`;
+    if (a.k === "noted") return `<span class="badge b-open">noted</span> "${esc(a.why)}". The search carries on with the rest; the verdict will be Open.`;
+    if (a.k === "yield") return `<span class="badge b-bad">✗ counterexample</span> ${sc.args.map((n, i) => `${esc(n)} = ${show(it.input[i], sc.argTypes[i], sc)}`).join(", ")}. The verdict is Refuted, and the search stops here.`;
+    return "";
+  }
+  function verdictExplain() {
+    const v = sc.verdict;
+    return `<span class="verdict v-${v.k}">${esc(v.k)}</span> ${esc(v.text)}. ${v.k === "Proved" ? "Every case was covered by a Yes, so every input is." : v.k === "Refuted" ? "A known input failed; re-running it concretely gives the same answer." : "A case was noted. Open is not a verdict about the program, only about this search."}`;
+  }
+  // ---- box-and-pointer
+  const bpT = `<span class="bpl">t</span>`;
+  const bpS = (x) => `<span class="bps">"${esc(x)}"</span>`;
+  const bpF = (x) => `<span class="bpf">${esc(x)}</span>`;
+  const bp = (a, b, hot) => `<span class="bp${hot ? " hot" : ""}"><span class="sl">${a}</span><span class="sl">${b}</span></span>`;
+  const chain = (xs, render, hot) => xs.length === 0 ? bpT
+    : `<span class="chain">${xs.map((x, i) => `${bp(render(x, i), "•", i === hot)}<span class="ar">→</span>`).join("")}${bpT}</span>`;
+  const reasonHtml = (r) => r.v ? `"${esc(r.why)}", ${show(r.v, sc.cod, sc)}` : `"${esc(r.why)}"`;
+  const itemHtml = (it) => bp(`<span class="bpn">[${showArgs(it.input, sc)}]</span>`, `<span class="bpn">${it.depth}</span>`);
+  const stateRows = (state, label) => `
+    <div class="srow"><span class="lbl">${label}</span>${bp("todo", "notes")}</div>
+    <div class="srow"><span class="lbl">todo</span>${chain(state.todo, itemHtml, 0)}</div>
+    <div class="srow"><span class="lbl">notes</span>${chain(state.notes, (r) => `<span class="bpn">${reasonHtml(r)}</span>`, -1)}</div>`;
+  const pullHtml = (p) => p.k === "Finished"
+    ? bp(bpS("Finished"), p.ending.k === "Spent" ? bp(bpS("Spent"), `<span class="bpn">${reasonHtml(p.ending.reason)}</span>`) : bpS(p.ending.k))
+    : bp(bpS("Running"), bp(p.emit.k === "Skip" ? bp(bpS("Skip"), bpT) : bp(bpS("Yield"), `<span class="bpn">[${p.emit.v.map((a, i) => show(a, sc.argTypes[i], sc)).join(", ")}]</span>`), "s′"));
+  const pullWord = (p) => p.k === "Finished"
+    ? `<span class="emitted e-end">finished: ${esc(p.ending.k)}</span>`
+    : p.emit.k === "Skip" ? `<span class="emitted e-skip">emitted a skip</span>` : `<span class="emitted e-yield">emitted a yield: a counterexample</span>`;
+  function renderStream(st) {
+    const W = STREAMS.worklist[wlKey(sc)], pulls = wlPulls(sc);
+    const n = st.settled.size + (st.done && pulls.length > st.settled.size ? 1 : 0);
+    let html = `<div class="srow"><span class="lbl">the stream</span>${bp(bpF("item_map"), bp(bpF("stepper: settle_case, yields kept"), "state"))}</div>`;
+    if (n === 0) {
+      html += `<p class="small" style="margin:4px 0">Before any pull. The state holds one item: the arguments as pieces, with ${W.init.todo[0].depth} splits allowed.</p>` + stateRows(W.init, "state");
+    } else {
+      const settledOrder = TRACES[sc.trace].filter((it) => it.rec);
+      const word = (k) => { const q = pulls[k]; if (q.k === "Finished") return `end: ${q.ending.k}`; const a = settledOrder[k].rec.action.k; return `${q.emit.k.toLowerCase()} (case ${settledOrder[k].id + 1}: ${a === "skip" ? "Yes" : a === "split" ? "split" : a === "noted" ? "noted" : "counterexample"})`; };
+      html += `<div class="srow"><span class="lbl">pulls so far</span><span class="small">${pulls.slice(0, n).map((_, k) => `<b>${k + 1}</b> ${esc(word(k))}`).join(" · ")}</span></div>`;
+      const p = pulls[n - 1];
+      html += `<div class="srow"><span class="lbl">pull ${n} gave</span>${pullHtml(p)} ${pullWord(p)}</div>`;
+      if (p.k === "Running") html += stateRows(p.state, "s′'s state");
+      if (st.done) {
+        const v = sc.verdict;
+        html += `<p class="small" style="margin:6px 0 0">${p.k === "Finished"
+          ? `<code>verdict</code> reads the end: ${p.ending.k === "Exhausted" ? "Exhausted, so Proved" : "Spent with the first note, so Open"}.`
+          : `<code>verdict</code> stops at the first yield: Refuted. The stream holds more items, but nothing ever pulls them, so they are never computed.`} ${n} pull${n === 1 ? "" : "s"} in all.</p>`;
+      }
+    }
+    $("sstate").innerHTML = html;
+  }
+  function renderStrip(st) {
+    const ps = honestPulls(sc), end = honestEnd(sc);
+    const dom = sc.dom === "Nat" ? "Nat" : sc.concrete.kind === "pairs" ? "pair of lists" : "List(Nat)";
+    let covered = 0, opened = 0;
+    const pills = ps.map((p, i) => {
+      const pulled = i < end.at;
+      let body, emitted, cov = "";
+      if (!p.member) { body = `<span class="muted">not a ${dom}</span>`; emitted = "claim holds: skip"; }
+      else {
+        const out = sc.concrete.run(p.args);
+        body = p.args.map((a, j) => show(a, sc.argTypes[j], sc)).join(", ");
+        emitted = `run: ${show(out, sc.cod, sc)} ${p.holds ? "✓ skip" : "✗ yield"}`;
+        const it = coveringItem(sc, p.args);
+        if (it && st.settled.has(it.id)) {
+          const a = it.rec.action;
+          if (a.k === "skip") { cov = `<span class="cov c-yes">✓ case ${it.id + 1}</span>`; covered++; }
+          else if (a.k === "noted") { cov = `<span class="cov c-open">Open in case ${it.id + 1}</span>`; opened++; }
+          else if (a.k === "yield") cov = `<span class="cov c-bad">✗ case ${it.id + 1}</span>`;
+        } else if (it && !it.rec && st.done) cov = `<span class="cov c-q">never reached</span>`;
+        else cov = `<span class="cov c-q">not covered yet</span>`;
+        const hot = it && st.current === it.id;
+        if (hot && sc.hypItem === it.id && st.stepIdx >= 0) {
+          const hv = sc.hyp(p.args);
+          cov += `<div class="ih">${esc(sc.hypLabel)} = ${show(hv, sc.cod, sc)}${sc.hypLeaf ? ` · is_leaf: ${isLeaf(hv)}` : ""}</div>`;
+        }
+      }
+      const hot = p.member && (() => { const it = coveringItem(sc, p.args); return it && st.current === it.id; })();
+      return `<div class="pill${hot ? " hot" : ""}" style="${pulled ? "" : "opacity:.35"}${p.member ? "" : ";background:var(--faint)"}" title="pull ${i + 1}"><div class="bf">pull ${i + 1}</div><div class="tr">${svgTree(treeSpec(p.tree), "tree", 0.55)}</div><div class="in">${body}</div><div class="bf">${pulled ? emitted : "never pulled"}</div>${cov}</div>`;
+    });
+    $("strip").innerHTML = pills.join("");
+    $("tally").innerHTML = `<span>honest: <b>${end.at}</b> pull${end.at === 1 ? "" : "s"}, <b>${end.members}</b> of them in the domain, then ${end.k === "Refuted" ? `a yield: <b>Refuted</b>` : `the budget ends it: Spent, so <b>Open</b>`}</span><span>work list: <b>${wlPulls(sc).length}</b> pulls in all, ending <b>${esc(sc.verdict.k)}</b></span>`;
+    const hint = sc.hypItem !== undefined && st.current === sc.hypItem
+      ? `The purple line is what the hypothesis stands for in each member: the real value of ${esc(sc.hypLabel)}. The run only gets "some ${sc.cod === "List" ? "List(Nat)" : "Nat"}".${sc.hypLeaf ? " The is_leaf answer changes from input to input, which is exactly what the run is asking for." : ""}`
+      : "";
+    $("striphint").innerHTML = hint;
+  }
+  function renderOpt() {
+    const end = honestEnd(sc), n = wlPulls(sc).length;
+    $("optnums").innerHTML = `For <b>${esc(sc.name)}</b>: the honest stream pulls ${end.at} trees and meets ${end.members} member${end.members === 1 ? "" : "s"} of the domain, then ${end.k === "Refuted" ? "yields a counterexample" : "runs out of budget (Open)"}. The work list takes ${n} pull${n === 1 ? "" : "s"} and ends <span class="verdict v-${sc.verdict.k}">${esc(sc.verdict.k)}</span>.`;
+  }
+  function renderShape() {
+    $("streamshape").innerHTML = `
+      <div class="srow"><span class="lbl">a stream</span>${bp(bpF("fmap"), bp(bpF("stepper"), "state"))}<span class="small muted">c_new, read with c_out</span></div>
+      <div class="srow"><span class="lbl">a pull gives</span>${bp(bpS("Running"), bp(bp(bpS("Yield"), "v"), "s′"))}<span class="small muted">running(emit(yield(v), s′))</span></div>
+      <div class="srow"><span class="lbl"></span>${bp(bpS("Running"), bp(bp(bpS("Skip"), bpT), "s′"))}<span class="small muted">running(emit(skip, s′))</span></div>
+      <div class="srow"><span class="lbl"></span>${bp(bpS("Finished"), bpS("Exhausted"))}<span class="small muted">or ${bp(bpS("Finished"), bp(bpS("Spent"), "reason"))}</span></div>
+      <div class="srow"><span class="lbl">a list</span>${chain(["a", "b"], (x) => x, -1)}<span class="small muted">[a, b] is t(a, t(b, t))</span></div>
+      <p class="small muted" style="margin:6px 0 0">s′ is the same pair with the new state. A string like "Running" is itself a tree (a list of characters); it is drawn as text.</p>`;
+  }
+  function render() {
+    const st = stateAt(sc, ev, e);
+    renderWL(st); renderInside(st); renderStream(st); renderStrip(st);
+    $("pos").textContent = e < 0 ? "start" : `step ${e + 1} of ${ev.length}`;
+    $("b-back").disabled = e < 0; $("b-reset").disabled = e < 0;
+    $("b-step").disabled = e >= ev.length - 1; $("b-case").disabled = e >= ev.length - 1;
+    try { history.replaceState(null, "", "#" + sc.key + (e >= 0 ? "/" + (e + 1) : "")); } catch (_) {}
+  }
+  function choose(key, at = -1) {
+    sc = SCEN.find((s) => s.key === key) || SCEN[0]; ev = timeline(sc); e = Math.max(-1, Math.min(ev.length - 1, at)); stop();
+    renderScenarioPicker(); renderCard(); renderOpt(); render();
+  }
+  function step(d) { e = Math.max(-1, Math.min(ev.length - 1, e + d)); render(); }
+  function finishCase() {
+    // to the settling of the case being run, or of the next case if this one is settled
+    const st = stateAt(sc, ev, e);
+    const want = st.current !== null && !st.settled.has(st.current) ? st.current : null;
+    let j = e + 1;
+    while (j < ev.length - 1 && !(ev[j].kind === "settle" && (want === null || ev[j].item === want))) j++;
+    e = Math.min(j, ev.length - 1); render();
+  }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } $("b-play").textContent = "Play"; }
+  function play() {
+    if (timer) return stop();
+    if (e >= ev.length - 1) e = -1;
+    $("b-play").textContent = "Pause";
+    timer = setInterval(() => { if (e >= ev.length - 1) return stop(); step(1); }, 1100);
+  }
+  $("b-step").onclick = () => { stop(); step(1); };
+  $("b-back").onclick = () => { stop(); step(-1); };
+  $("b-reset").onclick = () => { stop(); e = -1; render(); };
+  $("b-case").onclick = () => { stop(); finishCase(); };
+  $("b-play").onclick = play;
+  document.addEventListener("keydown", (k) => {
+    if (k.target && /^(INPUT|SELECT|TEXTAREA)$/.test(k.target.tagName)) return;
+    if (k.key === "ArrowRight") { stop(); step(1); k.preventDefault(); }
+    else if (k.key === "ArrowLeft") { stop(); step(-1); k.preventDefault(); }
+    else if (k.key === "Home") { stop(); e = -1; render(); }
+    else if (k.key === " " && k.target === document.body) { play(); k.preventDefault(); }
+  });
+  document.addEventListener("click", (c) => {
+    const b = c.target.closest("[data-sc]"); if (b) { choose(b.dataset.sc); return; }
+    const z = c.target.closest("[data-z]"); if (z) { renderZ(z.dataset.z); return; }
+    const g = c.target.closest("[data-go]"); if (g) { c.preventDefault(); choose(g.dataset.go); document.getElementById("scenarios").scrollIntoView({ behavior: "smooth", block: "start" }); }
+  });
+  renderRules(); renderZ("piece"); renderShape();
+  $("tracer").textContent = TRACER_SRC;
+  const [hk, hs] = (location.hash || "").slice(1).split("/");
+  choose(hk || "rev", hs ? Number(hs) - 1 : -1);
+}
+if (typeof module !== "undefined") module.exports = { SCEN, TRACES, STREAMS, timeline, stateAt, concreteInputs, coveringItem, show, P, isNat, isList, honestPulls, honestEnd, wlPulls, wlKey };
+</script>
+</body>
+</html>

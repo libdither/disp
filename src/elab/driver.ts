@@ -14,6 +14,7 @@ import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { sugarTree } from "./vocab.js"
 import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree, equationLhs } from "./expr.js"
 import { registerField } from "./fields.js"
+import { printValue } from "../format/print.js"
 
 export type Decl =
   | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null; cert?: LicenseCert | null; params?: SigParam[] }
@@ -228,6 +229,31 @@ export type ParseProgramOptions = {
 // The disp definitions a backend may answer for natively: tree_eq (lib/prelude.disp)
 // and m_advance (lib/machine.disp). Registered by name at their definition site.
 const NATIVE_NAMES = new Set(["tree_eq", "m_advance"])
+
+/// A world's check may answer a rejection with its own report, a list of (name, reason) pairs
+/// naming checked entries: show each reason. Null when the answer is not one.
+function worldReport(v: Tree, entries: { name: string }[]): string[] | null {
+  const cl = elab.cs.classify?.bind(elab.cs), eq = elab.cs.equal?.bind(elab.cs)
+  if (!cl || !eq) return null
+  const out: string[] = []
+  let cur = cl(v)
+  while (cur.tag === "fork") {
+    const item = cl(cur.left)
+    if (item.tag !== "fork") return null
+    const e = entries.find(e => eq(stringToTree(e.name), item.left))
+    if (!e) return null
+    out.push(`${e.name} (${printValue(elab.cs, item.right, { budget: 120 })})`)
+    cur = cl(cur.right)
+  }
+  return cur.tag === "leaf" && out.length > 0 ? out : null
+}
+
+/// A world's acceptance on assumptions: the pair ("Assumed", report), the report as worldReport reads it.
+function assumedReport(v: Tree, entries: { name: string }[]): string[] | null {
+  const c = elab.cs.classify?.(v)
+  if (!c || c.tag !== "fork" || !elab.cs.equal?.(c.left, stringToTree("Assumed"))) return null
+  return worldReport(c.right, entries)
+}
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
   // Default to the shared eager defaultSession so callers that don't manage
@@ -1098,12 +1124,17 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // verdicts out). `equal` forces each verdict to NF and compares to `Ok true` — a
   // closed force, so the result equals eager's.
   for (const p of pendingVerifications) {
-    if (!elab.cs.equal!(p.verdict, p.okTT)) {
+    // a world may accept on assumptions it names: the module loads, and the note says on what
+    const assumed = p.entries ? assumedReport(p.verdict, p.entries) : null
+    if (assumed) console.warn(`note: ${p.label} loads on assumptions: ${assumed.join(", ")}`)
+    else if (!elab.cs.equal!(p.verdict, p.okTT)) {
       // Name the failers: re-verify each typed export as its own single-entry
       // batch (same construction as the whole-record verdict, so the same judge
       // runs). Only reached on failure, so the cost is free on green loads.
       let detail = ""
-      if (p.entries && p.formers) {
+      const report = p.entries ? worldReport(p.verdict, p.entries) : null
+      if (report) detail = ` — failing entr${report.length === 1 ? "y" : "ies"}: ${report.join(", ")}`
+      else if (p.entries && p.formers) {
         const bad: string[] = []
         for (const e of p.entries) {
           const typ = elab.cs.fork(elab.cs.fork(stringToTree(e.name), e.ty), elab.cs.leaf())

@@ -11,6 +11,10 @@ test judge(arrow_t(arrow_t(bool_t, bool_t), bool_t), {f} => f(true)) = "Proved"
 // a counterexample is the argument that breaks it, found by splitting down to a known one
 test judge(arrow_t(nat_t, nat_t), {n} => pair(n, n)).is_refuted = true
 test judge(arrow_t(bool_t, bool_t), {x} => pair(x, x)) = refuted([true])
+// a plain arrow is one code however it is built, so the stored pair of Nat -> Nat functions
+// reaches it: a program that returns its function argument as a number is refuted with one
+test arrow_t(nat_t, nat_t) = ArrowC(NatR, NatR)
+test judge(arrow_t(arrow_t(nat_t, nat_t), nat_t), {g} => g) = refuted([id])
 // a program that inspects a function it was given cannot be settled on symbols
 test judge(arrow_t(arrow_t(bool_t, bool_t), bool_t), {f} => not(f(true))) = open_on(pair("opaque value", app_val(arg_sym(arrow_t(bool_t, bool_t), 0), true)))
 
@@ -20,6 +24,14 @@ test judge(arrow_t(nat_t, arrow_t(nat_t, nat_t)), add) = "Proved"
 test judge(arrow_t(list_t(nat_t), nat_t), length) = "Proved"
 // reverse's step appends to its hypothesis: without append's own type as a lemma, that call stays opaque
 test judge(arrow_t(list_t(nat_t), list_t(nat_t)), reverse).is_open = true
+// with append's type as a lemma, the stuck call is judged by that type
+nat_list := list_t(nat_t)
+append_known := judging([pair(append, arrow_t(nat_list, arrow_t(nat_list, nat_list)))], split_depth, run_fuel, goal_types)
+test judge_with(append_known, arrow_t(nat_list, nat_list), reverse) = "Proved"
+// a lemma vouches only for calls inside its domain: appending a non-number is not Proved by it.
+// Every case is run exactly before a lemma is read by its type, so the lemma hides no counterexample
+test judge_with(append_known, arrow_t(nat_list, nat_list), {xs} => append(xs, [false])) = refuted([[]])
+test judge(arrow_t(nat_list, nat_list), {xs} => append(xs, [false])) = refuted([[]])
 // a call that does not descend is never assumed: it runs out and stays Open
 test judge(arrow_t(nat_t, nat_t), fix({self, n} => self(n))).is_open = true
 test holds(arrow_t(nat_t, nat_t), fix({self, n} => self(n))) = false
@@ -33,6 +45,11 @@ test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, _x} => true).is_refuted 
 test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, _x} => pair("Abstract", pair("In", pair(0, [pair("arg", 0)])))).is_refuted = true
 // nor with either stand-in a re-run puts in its place: one of the two runs catches it
 test judge(forall_t({a} => arrow_t(a.snd, a.snd)), {_a, _x} => stand_ins.head).is_refuted = true
+// polymorphic data: a list of an abstract type holds pieces of it, and no known tree is a member
+test cases_of(list_t(abstract_t("A"))).length = 2
+test judge(forall_t({a} => arrow_t(list_t(a.snd), nat_t)), {_a, xs} => length(xs)) = "Proved"
+test judge(forall_t({a} => arrow_t(a.snd, list_t(a.snd))), {_a, x} => [x, x]) = "Proved"
+test judge(forall_t({a} => arrow_t(list_t(a.snd), list_t(a.snd))), {_a, xs} => cons(0, xs)).is_refuted = true
 // Church numerals: the function argument stays a symbol, and what it builds is typed by its codomain
 church_nat := forall_t({a} => arrow_t(arrow_t(a.snd, a.snd), arrow_t(a.snd, a.snd)))
 test judge(church_nat, {_a, f, x} => f(f(x))) = "Proved"

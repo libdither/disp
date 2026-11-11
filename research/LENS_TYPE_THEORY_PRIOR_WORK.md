@@ -31,8 +31,9 @@ the rest of this note refers to by number:
    applied. A program that inspects a function argument is refuted with a stored pair of
    extensionally equal but distinct functions (`id`, `shift`). For `A => B` claims the
    witness is itself a lens (Dialectica).
-7. **One verdict rule:** the symbolic search is a work-list stream (`s_worklist`), read by
-   the same verdict rule as the brute force in 3.
+7. **One verdict rule:** the symbolic search is a work-list stream (`s_steps`: every case
+   with what settled it), and its counterexamples are read by the same verdict rule as the
+   brute force in 3.
 
 
 ## 1. Short answer
@@ -78,7 +79,7 @@ Also relevant, each sharing one piece:
 
 1. **Lazily drawn function tables (feature 6, and the refuter in 3).** Dybjer, Target and Lazy SmallCheck 2 all build a function input only when the run applies it. Each new argument gets its output drawn from the codomain's generator, and the answer is remembered. Listing these partial tables smallest-first would give the brute-force refuter a real stream at function-typed domains. TYPES.html §5 says it can currently only draw on functions already certified. A failing table becomes a concrete tree (a case program) and is re-run, so the rule that a symbolic "No" is only a suggestion still holds.
 2. **Compute the backward maps instead of writing them (5).** [Kerjean & Pédrot](https://wollic2022.github.io/mariekerjean.pdf#page=1) show "the Dialectica translation is in fact a reverse differentiation algorithm". So the F in `implies A B` could be a reverse pass over the run's record of where it applied its argument. That is the "origins" step CLAIMS_OVER_TREES §9 names as next. ACL2s is a working example: each proof step records what it eliminated, so counterexamples translate back.
-3. **Fair interleaving in the work-list (7).** [LogicT](https://okmij.org/ftp/papers/LogicT.pdf#page=1) shows fair search is easy when backtracking is built on streams. `s_worklist` currently puts the cases of each split at the front, so it searches depth-first with a depth cap. Interleaving fairly would reach every counterexample eventually. "Split depth exhausted" would then become an ordinary budget Open.
+3. **Fair interleaving in the work-list (7).** [LogicT](https://okmij.org/ftp/papers/LogicT.pdf#page=1) shows fair search is easy when backtracking is built on streams. `s_steps` currently puts the cases of each split at the front, so it searches depth-first with a depth cap. Interleaving fairly would reach every counterexample eventually. "Split depth exhausted" would then become an ordinary budget Open.
 4. **State verdict soundness in DART's three-clause form (3, 7).** (a) Refuted means a real input exists. (b) Running out means no counterexample, with every case covered. (c) Otherwise the search runs forever. Clark adds the caveat that disp already has: proof by exhaustion holds only when the source is the type's own generator.
 5. **One derivation, three products, proved once (2, 4, 5).** QuickChick derives a checker (with fuel), an enumerator and a generator from one relation, and proves the derivation scheme sound in Coq. disp could get case tables, generator and checker from one recognizer, with one hand-proved law per scheme rather than per type.
 6. **Related pairs by variation (2).** For sameness relations with no normal-form function (function types, weak streams), `quot_pairs` has nothing to pair each value with. The noninterference recipe fills the gap: generate one state, vary it, and keep every related pair reachable.

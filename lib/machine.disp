@@ -4,9 +4,12 @@
 // continued later. One step is one K, S or triage dispatch on a fork head; leaf and
 // stem heads only build and are free, so the count is the eager evaluator's `steps`
 // with the memo off (test/machine.test.ts pins that). Not done after k steps is
-// never a verdict. Tests live in lib/tests/refuter.test.disp: a raw open runs no
-// inline tests, and a given-bearing file cannot be a root. Names carry
-// m_/machine_: is_finished (stream.disp) and Frame (kernel.disp) are taken.
+// never a verdict. A handler may hold applications back from the rules: the machine
+// pauses on one and the handler answers it (lib/confirm.disp holds the applications
+// that would read an unknown value, and that is all its evaluator adds). Plain trees
+// hold none. Tests live in lib/tests/refuter.test.disp: a raw open runs no inline
+// tests, and a given-bearing file cannot be a root. Names carry m_/machine_:
+// is_finished (stream.disp) and Frame (kernel.disp) are taken.
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 // the state and its frames are plain trees; a checked consumer fills these
@@ -18,6 +21,13 @@ m_finished :: Machine -> Bool := {m} => m.fst == "Done"
 // read after m_finished: on a running machine it is the pending state
 m_result :: Machine -> Tree := pair_snd
 m_start :: {f : Tree, x : Tree} -> Machine :=> machine_run(f, x, [])
+// paused on an application a handler holds back; laid out as a running machine
+machine_held :: {f : Tree, x : Tree, stack : List(MFrame)} -> Machine :=> pair("Held", pair(pair(f, x), stack))
+m_held :: Machine -> Bool := {m} => m.fst == "Held"
+// the pending application of a machine that is not done, and the frames waiting on it
+m_fn :: Machine -> Tree := {m} => m.snd.fst.fst
+m_arg :: Machine -> Tree := {m} => m.snd.fst.snd
+m_stack :: Machine -> List(MFrame) := {m} => m.snd.snd
 // a value r meets: fr_to arg -> r arg; fr_res func -> func r; fr_s b x -> the S tail, cx = r
 fr_to :: {arg : Tree} -> MFrame :=> pair("To", arg)
 fr_res :: {func : Tree} -> MFrame :=> pair("Res", func)
@@ -42,46 +52,49 @@ rec m_deliver :: {v : Tree, stack : List(MFrame)} -> Machine :=>
 			else { machine_run(b, x, cons(fr_res(v), rest)) }
 		}
 	}
-// free work: leaf and stem heads only build; run them until a fork head or Done
-rec m_settle :: {m : Machine} -> Machine :=>
+// free work: leaf and stem heads only build; run them until a fork head, a held application or Done
+rec m_settle_by :: {held : Tree -> Tree -> Bool, m : Machine} -> Machine :=>
 	if (m_finished(m)) { m }
 	else {
-		let f := m.snd.fst.fst
-		let x := m.snd.fst.snd
-		let stack := m.snd.snd
-		if (is_leaf(f)) { m_settle(m_deliver(t(x), stack)) }
-		else if (is_stem(f)) { m_settle(m_deliver(t(stem_child(f), x), stack)) }
+		let f := m.m_fn
+		let x := m.m_arg
+		let stack := m.m_stack
+		if (held(f, x)) { machine_held(f, x, stack) }
+		else if (is_leaf(f)) { m_settle_by(held, m_deliver(t(x), stack)) }
+		else if (is_stem(f)) { m_settle_by(held, m_deliver(t(stem_child(f), x), stack)) }
 		else { m }
 	}
-// one counted step: one K, S or triage dispatch on a fork head, then its delivery.
-// S with c = K v resolves c x without an application and applies the tail's discard
-// before b x is scheduled, as the TypeScript loop does at its S rule.
+m_settle :: {m : Machine} -> Machine :=> m_settle_by({_f, _x} => false, m)
+// one counted step of a settled machine: one K, S or triage dispatch on its fork head, then
+// its delivery. S with c = K v resolves c x without an application and applies the tail's
+// discard before b x is scheduled, as the TypeScript loop does at its S rule. Only the
+// triage rule reads its argument's shape.
+m_rule :: {s : Machine} -> Machine :=> {
+	let f := s.m_fn
+	let x := s.m_arg
+	let stack := s.m_stack
+	let a := f.fst
+	let b := f.snd
+	if (is_leaf(a)) { m_deliver(b, stack) }
+	else if (is_stem(a)) {
+		let c := stem_child(a)
+		if (k_shaped(c)) {
+			let v := c.snd
+			if (k_shaped(v)) { m_deliver(v.snd, stack) }
+			else if (k_shaped(b)) { machine_run(v, b.snd, stack) }
+			else { machine_run(b, x, cons(fr_res(v), stack)) }
+		}
+		else { machine_run(c, x, cons(fr_s(b, x), stack)) }
+	}
+	else {
+		if (is_leaf(x)) { m_deliver(a.fst, stack) }
+		else if (is_stem(x)) { machine_run(a.snd, stem_child(x), stack) }
+		else { machine_run(b, x.fst, cons(fr_to(x.snd), stack)) }
+	}
+}
 m_step :: {m : Machine} -> Machine :=> {
 	let s := m_settle(m)
-	if (m_finished(s)) { s }
-	else {
-		let f := s.snd.fst.fst
-		let x := s.snd.fst.snd
-		let stack := s.snd.snd
-		let a := f.fst
-		let b := f.snd
-		if (is_leaf(a)) { m_deliver(b, stack) }
-		else if (is_stem(a)) {
-			let c := stem_child(a)
-			if (k_shaped(c)) {
-				let v := c.snd
-				if (k_shaped(v)) { m_deliver(v.snd, stack) }
-				else if (k_shaped(b)) { machine_run(v, b.snd, stack) }
-				else { machine_run(b, x, cons(fr_res(v), stack)) }
-			}
-			else { machine_run(c, x, cons(fr_s(b, x), stack)) }
-		}
-		else {
-			if (is_leaf(x)) { m_deliver(a.fst, stack) }
-			else if (is_stem(x)) { machine_run(a.snd, stem_child(x), stack) }
-			else { machine_run(b, x.fst, cons(fr_to(x.snd), stack)) }
-		}
-	}
+	if (m_finished(s)) { s } else { m_rule(s) }
 }
 rec m_advance :: {m : Machine, steps : Nat} -> Machine :=>
 	if (is_zero(steps)) { m } else if (m_finished(m)) { m } else { m_advance(m_step(m), nat_pred(steps)) }

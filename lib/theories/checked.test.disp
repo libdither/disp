@@ -1,0 +1,20 @@
+// Annotations checked by judge: checked_example.disp loads only if every annotation in it is
+// Proved. Its rejections are load errors, pinned from outside in test/checked.test.ts.
+open use raw "../prelude.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../tests/fixtures.disp" {}
+open use raw "../confirm.disp" {}
+open use raw "../rules.disp" {}
+open use raw "checked.disp" {}
+open use "checked_example.disp" {}
+
+test twice(3) = 6
+test pick(0) = t
+test step(4) = 5
+test times(2, 3) = 6
+// a plain arrow is spelled the one way the stored pairs know it
+test Pred = ArrowC(Nat, Nat)
+// what a rejected definition's load error prints
+test judge(Nat -> Nat, {n} => pair(n, n)) = refuted([1])
+test judge((Nat -> Nat) -> Nat, {g} => g) = refuted([id])
+test judge(Nat -> Nat, fix({self, n} => self(n))).is_open = true

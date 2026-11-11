@@ -1,16 +1,23 @@
-// The floor: the rule lenses every certified verdict stands on. A symbolic claim answers
-// on cases (partly-known values, lib/confirm.disp), an honest claim on trees, and each rule
-// is a lens from the first into the second. A rule's law is a claim over every tree: search
-// can refute a wrong one but never prove a right one, so the three atoms are proved by hand
-// once (research/LOB_AND_CURRY.md §5.4), and a verdict built from them is sound by composition.
+// The floor: the rule lenses every certified verdict stands on. The honest check of a claim
+// tries every tree. A run learns about its input only by reading shapes, and a run that
+// answers has read finitely many, so the trees a check must tell apart form a tree of cases
+// (partly-known values, lib/confirm.disp). A symbolic claim answers on cases, an honest claim
+// on trees, and each rule is a lens from the first into the second: a certified step that
+// makes the search smaller. A rule's law is a claim over every tree: search can refute a
+// wrong one but never prove a right one, so the three atoms are proved by hand once
+// (research/LOB_AND_CURRY.md §5.4), and a verdict built from them is sound by composition.
 //   case split     (atom) a tree is a leaf, a stem or a fork; a member goes back to its case
 //   generic run    (atom) a run on a case answers for every tree the case covers
 //   induction      (atom) the hypothesis is asked only at the strictly smaller pieces of a member
+//   lemma          a call is read by a type its callee is already Proved at
 //   finite cover   `over` (lib/claim.disp): a claim checked on every listed challenge
 //   composition    `lens_then` (lib/claim.disp)
+// One loop applies them (lib/confirm.disp): a case is run, the run citing the hypothesis or
+// a lemma where it cannot look, and a case no run settles is split. The work list it leaves
+// is the composed lens, readable as data (`derivation`), with a law of its own (`steps_law`).
 // A first-order type is a recognizer, and is itself such a lens: its cases are derived by
-// running it (lib/confirm.disp), so its laws follow from the atoms and no type adds trusted
-// code. `judge` decides a value at a type with these alone.
+// running it, so its laws follow from the atoms and no type adds trusted code. `judge`
+// decides a value at a type with these alone. research/CASE_TREE_SEARCH.md has the frame.
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 open use raw "verdict.disp" {}
@@ -68,9 +75,11 @@ ind_holds :: {T : Code, from : Claim, to : Claim} -> Claim :=> {w, x} => {
 }
 
 // ---- finite cover, as a verdict
-// a claim checked on a type's cases: a known case that fails is a counterexample, a symbolic one leaves the claim open
-certify :: {claim : Claim, cases : List(Val)} -> Verdict :=> verdict(s_worklist({c} =>
-	if (claim(t, c)) { skip } else if (c.is_known) { yield(c) } else { noted(pair("case not settled", c)) }, cases))
+// a claim checked on listed cases is the loop (lib/confirm.disp) with no case split: a known
+// case that fails is a counterexample, a symbolic one leaves the claim open
+certify :: {claim : Claim, cases : List(Val)} -> Verdict :=> steps_verdict(search_steps(
+	[{c} => if (claim(t, c)) { "Yes" } else if (c.is_known) { "No" } else { stuck_on(pair("case not settled", c)) }],
+	known_ground, {_} => [], cases.map({c} => pair(c, 0))))
 
 // ---- judging a value at a type, by the rules alone
 // A function type's arguments, curried, are generic: a piece of the domain (its faces, for
@@ -90,19 +99,20 @@ rec generic_args :: {T : Code, i : Nat} -> Val :=> {
 	}
 }
 // the value to apply at argument i: a recursive value meeting an unsplit or split piece is its step with the hypothesis
-induct :: {f : Val, arg : Val, dom : Code, rest : Tree, i : Nat} -> Res :=> {
+induct :: {f : Val, arg : Val, dom : Code, rest : Tree, i : Nat, fuel : Nat} -> Res :=> {
 	let step := step_of(f)
 	if ((step == none) || ((arg.is_known) || (not(is_positive(dom))))) { answered(f) }
-	else { sapply(step, hypothesis(dom, family_code(rest), [pair("arg", i)], same), run_fuel) }
+	else { sapply(step, hypothesis(dom, family_code(rest), [pair("arg", i)], same), fuel) }
 }
-rec run_at :: {T : Code, f : Val, args : Val, i : Nat} -> Res :=>
-	if (is_leaf(args)) { judge_as(T, f) }
+// the run along the arguments, judged at the end; its Yes says what the answer rests on
+rec run_at :: {T : Code, f : Val, args : Val, i : Nat, fuel : Nat} -> Res :=>
+	if (is_leaf(args)) { let r := judge_as(T, f); if (r == "Yes") { yes_on(cited(f)) } else { r } }
 	else {
 		let view := fn_view(T)
 		let dom := view.snd.fst
 		let face := faces_of(dom, args.fst)
-		and_then(induct(f, face.fst, dom, view.snd.snd, i), {g} =>
-			and_then(sapply(g, face.fst, run_fuel), {out} => run_at(view.snd.snd(face), out, args.snd, succ(i))))
+		and_then(induct(f, face.fst, dom, view.snd.snd, i, fuel), {g} =>
+			and_then(sapply(g, face.fst, fuel), {out} => run_at(view.snd.snd(face), out, args.snd, succ(i), fuel)))
 	}
 // what a program really receives for an argument whose members are types: types erase to the leaf
 rec erased_of :: {T : Code} -> Tree :=> {
@@ -151,13 +161,135 @@ instances :: {v : Val} -> List(Val) :=> {
 	else if (not(ps.all({p} => ((has_sample(p.piece_type)) || (is_stored(p.piece_type))) && (stood(p))))) { [] }
 	else { [0, 1].map({k} => stand_in(k, v)) }
 }
+// Lemmas: definitions already Proved, each a pair of its tree and its type. Where a lemma's
+// tree occurs in a value it becomes a lemma hole (lib/confirm.disp), so a call whose run is
+// stuck is judged by the lemma's type. A definition the size of a combinator is no lemma: it
+// runs through exactly anyway, and its tree could be part of the compiled code around a call.
+lemma_min_size := 64
+// what is left of a budget of n after counting v's nodes, at least zero
+rec nodes_left :: {n : Nat, v : Tree} -> Nat :=>
+	if (is_zero(n)) { 0 }
+	else if (is_leaf(v)) { nat_pred(n) }
+	else if (is_stem(v)) { nodes_left(nat_pred(n), stem_child(v)) }
+	else { nodes_left(nodes_left(nat_pred(n), v.fst), v.snd) }
+rec lemmas_in :: {lemmas : List(Pair(Tree, Code)), v : Val} -> Val :=> {
+	let hit := lemmas.filter({l} => l.fst == v)
+	if (not(hit.is_nil)) { lemma_val(hit.head.fst, hit.head.snd) }
+	else if ((is_hole(v)) || (is_leaf(v))) { v }
+	else if (is_stem(v)) { t(lemmas_in(lemmas, stem_child(v))) }
+	else { t(lemmas_in(lemmas, v.fst), lemmas_in(lemmas, v.snd)) }
+}
+with_lemmas :: {lemmas : List(Pair(Tree, Code)), v : Val} -> Val :=> {
+	let big := lemmas.filter({l} => is_zero(nodes_left(lemma_min_size, l.fst)))
+	if (big.is_nil) { v } else { lemmas_in(big, v) }
+}
+// How a value is judged: definitions to use as lemmas where a run is stuck, how deep the search
+// splits, each run's step budget, and the types its sub-programs are tried at when it is left
+// Open (below). None of them can turn a wrong verdict right: a deeper search or a longer run
+// only settles more, and a lemma is a verdict already had.
+record judging :: {lemmas : List(Pair(Tree, Code)), splits : Nat, steps : Nat, guesses : Code -> List(Code)} -> Judging
+// the checks of a function at its type: the exact run along its arguments, then the same run
+// with the lemmas that occur in it read by their types
+checks_of :: {how : Judging, T : Code, w : Tree} -> List(Val -> Res) :=> {
+	let f := escape(w)
+	let cut := with_lemmas(how.lemmas, f)
+	let along := {g, args} => run_at(T, g, args, 0, how.steps)
+	if (cut == f) { [along(f)] } else { [along(f), along(cut)] }
+}
+// the work list of a function at its type, from the one case that covers every argument
+judge_steps :: {how : Judging, T : Code, w : Tree} -> Items(Step) :=>
+	search_steps(checks_of(how, T, w), ground_args, instances, [pair(generic_args(T, 0), how.splits)])
+// Guessed lemmas. A stuck call needs its callee's type, and where none was given the type can
+// be looked for: a sub-program is a recursive definition inside the value, big enough to be a
+// lemma, and it is tried at each function type the goal's own type is built from. Those are
+// finitely many guesses, and a sub-program Proved at one is a lemma like any other. They are
+// tried innermost first, each with the ones before it as lemmas. A call whose type is not
+// among the goal's own is where an annotation is needed.
+rec fixes_in :: {v : Tree} -> List(Tree) :=> {
+	let inner := if (is_leaf(v)) { [] } else if (is_stem(v)) { fixes_in(stem_child(v)) } else { fixes_in(v.fst).append(fixes_in(v.snd)) }
+	if (if (step_of(v) == none) { false } else { is_zero(nodes_left(lemma_min_size, v)) }) { inner.append([v]) } else { inner }
+}
+sub_programs :: {w : Tree} -> List(Tree) :=> fixes_in(w).filter({s} => not(s == w)).dedup
+// the function types a type is built from: itself, its domain's, and its codomain's at a generic argument
+rec fn_parts :: {T : Code, i : Nat} -> List(Code) :=> {
+	let view := fn_view(T)
+	if ((is_none(view)) || (nat_le(max_args, i))) { [] }
+	else { cons(T, fn_parts(view.snd.fst, succ(i)).append(fn_parts(view.snd.snd(faces_of(view.snd.fst, generic_of(view.snd.fst, i))), succ(i)))) }
+}
+goal_types :: {T : Code} -> List(Code) :=> fn_parts(T, 0).dedup
+no_guesses :: {_T : Code} -> List(Code) :=> []
+plainly := judging([], split_depth, run_fuel, goal_types)
+with_more :: {how : Judging, lemmas : List(Pair(Tree, Code))} -> Judging :=> judging(lemmas, how.splits, how.steps, how.guesses)
+rec first_proved :: {how : Judging, types : List(Code), s : Tree} -> Option(Code) :=>
+	if (types.is_nil) { none }
+	else if (steps_verdict(judge_steps(how, types.head, s)) == "Proved") { some(types.head) }
+	else { first_proved(how, types.tail, s) }
+// the lemmas given, and each sub-program Proved at a guess
+rec guessed :: {how : Judging, types : List(Code), subs : List(Tree)} -> List(Pair(Tree, Code)) :=>
+	if (subs.is_nil) { how.lemmas }
+	else {
+		let at := if (how.lemmas.any({l} => l.fst == subs.head)) { none } else { first_proved(how, types, subs.head) }
+		guessed(if (is_none(at)) { how } else { with_more(how, cons(pair(subs.head, at.snd), how.lemmas)) }, types, subs.tail)
+	}
+// a function judged: how it was finally judged, and its verdict. Where the lemmas given leave
+// it Open, its sub-programs Proved at a guess are lemmas too.
+judged :: {how : Judging, T : Code, w : Tree} -> Pair(Judging, Verdict) :=> {
+	let v := steps_verdict(judge_steps(how, T, w))
+	let more := if (v.is_open) { guessed(how, how.guesses(T), sub_programs(w)) } else { how.lemmas }
+	if (more == how.lemmas) { pair(how, v) } else { pair(with_more(how, more), steps_verdict(judge_steps(with_more(how, more), T, w))) }
+}
 // Proved: every argument is covered and every run answers Yes; Refuted with the arguments that break it; else Open with the reason
-judge :: {T : Code, w : Tree} -> Verdict :=>
-	if (is_fn_code(T)) { search_g({args} => run_at(T, escape(w), args, 0), ground_args, instances, generic_args(T, 0), split_depth) }
+judge_with :: {how : Judging, T : Code, w : Tree} -> Verdict :=>
+	if (is_fn_code(T)) { judged(how, T, w).snd }
 	else {
 		let r := judge_as(T, escape(w))
 		if (r == "Yes") { "Proved" } else if (r == "No") { refuted(w) } else { open_on(explain(r)) }
 	}
+judge :: {T : Code, w : Tree} -> Verdict :=> judge_with(plainly, T, w)
 holds :: {T : Code, w : Tree} -> Bool :=> judge(T, w) == "Proved"
 // the law judge stands on, at one type: a Proved run answers for every argument tuple
 judge_claim :: {T : Code} -> Claim :=> {w, _c} => not(judge(T, w).is_refuted)
+
+// ---- the work list, read back
+// a partly-known value made readable: each piece by its name, each neutral term by its head and argument
+rec describe :: {v : Val} -> Tree :=>
+	if (v.is_known) { v }
+	else if (v.is_piece) { if (v.piece_root == "lemma") { "lemma" } else { pair("Piece", v.piece_name) } }
+	else if (v.is_app) { pair("App", pair(describe(v.app_head), describe(v.app_arg))) }
+	else if (is_hole(v)) { pair("Hole", v.hole_what.fst) }
+	else if (is_stem(v)) { t(describe(stem_child(v))) }
+	else { t(describe(v.fst), describe(v.snd)) }
+// a step of a work list, read: its case, with what settled it. pair("run", grounds) is the
+// generic run, resting on "induction" or "lemma" where the answer cites one; pair("split",
+// piece) is a case split; pair("refuted", witness) and pair("open", reason) end a case otherwise.
+step_case :: Step -> Val := {step} => step.fst.fst
+is_split :: Step -> Bool := {step} => step.snd.fst == "Split"
+split_cases :: Step -> List(Val) := {step} => step.snd.snd.snd.map(pair_fst)
+step_read :: Step -> Pair(Tree, Tree) := {step} => {
+	let out := step.snd
+	pair(describe(step.step_case),
+		if (out.fst == "Skip") { pair("run", out.snd) }
+		else if (step.is_split) { pair("split", describe(out.snd.fst)) }
+		else if (out.is_yield) { pair("refuted", out.yielded_item) }
+		else { pair("open", describe(out.snd)) })
+}
+// the work list a function's verdict came from, up to its counterexample if it has one
+judged_steps :: {how : Judging, T : Code, w : Tree} -> List(Step) :=>
+	s_upto(judge_steps(judged(how, T, w).fst, T, w), {step} => step.snd.is_yield)
+derivation :: {how : Judging, T : Code, w : Tree} -> List(Pair(Tree, Tree)) :=> judged_steps(how, T, w).map(step_read)
+
+// ---- the work list as a lens
+// A case split is a lens: a tree under the case goes back to the alternative that covers it.
+// Composed along a work list, the splits send every argument to the case that settled it, so
+// a work list is one lens, from the check on its settled cases into the check on every
+// argument, and its law is the generic-run law at those cases. A challenge here is a case
+// with an argument under it.
+split_under :: {case : Val, cases : List(Val)} -> Lens :=> lens({w} => w, {_w, d} =>
+	if (d.fst == case) { let found := cases.filter({c} => covers(c, d.snd)); pair(if (found.is_nil) { none } else { found.head }, d.snd) } else { d })
+steps_lens :: {steps : List(Step)} -> Lens :=>
+	reduce({step, later} => lens_then(later, split_under(step.step_case, step.split_cases)), lens({w} => w, {_w, d} => d), steps.filter(is_split))
+// the claims it runs between: the check on the challenge's case, and on its argument; an argument no case covers is asked nothing of the first
+on_case :: {check : Tree -> Val -> Res} -> Claim :=> {w, d} => if (d.fst == none) { true } else { is_yes(check(w, d.fst)) }
+on_tree :: {check : Tree -> Val -> Res} -> Claim :=> {w, d} => if (covers(d.fst, d.snd)) { is_yes(check(w, escape(d.snd))) } else { true }
+steps_law :: {check : Tree -> Val -> Res, steps : List(Step)} -> Claim :=>
+	lens_holds(on_case(check), on_tree(check), steps_lens(steps))

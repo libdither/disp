@@ -1,0 +1,62 @@
+// Open this and `:` annotations are checked by `judge` (lib/rules.disp): the binder sugar
+// builds types from the formers of types.disp, and when the module is used, every annotated
+// definition must be Proved, with the ones before it as lemmas. A refuted or open definition
+// is a load error that prints its verdict. A type alias is written without an annotation
+// (`Pred := Nat -> Nat`): at the universe a program sees each type as the leaf, so `: Type`
+// would ask for the leaf.
+open use raw "../prelude.disp" {}
+open use raw "../list.disp" {}
+open use raw "../verdict.disp" {}
+open use raw "../confirm.disp" {}
+open use raw "../rules.disp" {}
+open use raw "types.disp" {}
+
+Nat := nat_t
+Bool := bool_t
+Tree := tree_t
+Unit := singleton_t(t)
+Empty := empty_t
+Type := universe_t
+List := list_t
+Eq := eq_of
+// `{x : A} -> B` is Pi(A, {x} => B). A family that ignores its argument goes to pi_t as it is,
+// which makes the plain arrow of it; otherwise a type argument goes in as its type, and a value
+// the family looks at is split on demand.
+Pi := {a, fam} =>
+	if ((is_fork(fam)) && (is_leaf(fam.fst))) { pi_t(a, fam) }
+	else { pi_t(a, {face} => if (is_types(a)) { fam(face.snd) } else { by_value(face, fam) }) }
+
+// a record here is its names paired with its values, and the module's record holds every field
+make_record := {names, vals} => pair(names, vals)
+list_const := {x} => x
+rec value_of := {name, names, vals} => if (names.fst == name) { vals.fst } else { value_of(name, names.snd, vals.snd) }
+// The module check, in file order: a Proved function becomes a lemma for the definitions after
+// it. It gives the failures and the definitions loaded on an assumption, each as its name and
+// verdict. With `on_open := "assume"`, an Open definition loads, is reported, and stands as a
+// lemma; a later one Proved only with lemmas while any assumption stands is reported as
+// resting on them.
+rec check_from := {on_open, how, assumed, typs, record} => if (is_leaf(typs)) { pair([], []) } else {
+	let name := typs.fst.fst
+	let T := typs.fst.snd
+	let w := value_of(name, record.fst, record.snd)
+	let v := judge_with(how, T, w)
+	let assume := (v.is_open) && (on_open == "assume")
+	let lemmas := if (((v == "Proved") || assume) && (is_fn_code(T))) { cons(pair(w, T), how.lemmas) } else { how.lemmas }
+	let rest := check_from(on_open, with_more(how, lemmas), if (assume) { cons(name, assumed) } else { assumed }, typs.snd, record)
+	// Proved while an assumption stands: it rests on them unless it is Proved with no lemma given
+	let leans := if ((v == "Proved") && (not(assumed.is_nil))) { not(judge_with(with_more(how, []), T, w) == "Proved") } else { false }
+	if (v == "Proved") { if (leans) { pair(rest.fst, cons(pair(name, pair("resting on", assumed)), rest.snd)) } else { rest } }
+	else if (assume) { pair(rest.fst, cons(pair(name, v), rest.snd)) }
+	else { pair(cons(pair(name, v), rest.fst), rest.snd) }
+}
+// How a module is checked: `check_module := check_with{ on_open := "assume" }` overrides the
+// default. It answers true when every definition is Proved, the failures when any fails, and
+// otherwise the definitions loaded on an assumption, tagged "Assumed". A default is filled in
+// where the call is, so the budgets' defaults are names this module gives.
+search_depth := split_depth
+run_steps := run_fuel
+check_with :: {on_open : Tree := "reject", depth : Nat := search_depth, fuel : Nat := run_steps} -> Tree :=> {typs, record} => {
+	let r := check_from(on_open, judging([], depth, fuel, goal_types), [], typs, record)
+	if (not(r.fst.is_nil)) { r.fst } else if (r.snd.is_nil) { true } else { pair("Assumed", r.snd) }
+}
+check_module := check_with("reject", search_depth, run_steps)

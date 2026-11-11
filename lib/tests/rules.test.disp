@@ -1,8 +1,10 @@
-// The five rule lenses (lib/rules.disp). Each law survives search, which can never prove it; a
-// rule broken on purpose is refuted with a concrete tree. Then `judge`, which uses nothing else.
+// The rule lenses (lib/rules.disp). Each law survives search, which can never prove it; a
+// rule broken on purpose is refuted with a concrete tree. Then `judge`, which uses nothing
+// else, and the work list it leaves: readable as data, and a lens with a law of its own.
 open use raw "../prelude.disp" {}
 open use raw "../list.disp" {}
 open use raw "../verdict.disp" {}
+open use raw "../stream.disp" {}
 open use raw "../claim.disp" {}
 open use raw "../trees.disp" {}
 open use raw "fixtures.disp" {}
@@ -59,3 +61,61 @@ test judge(ArrowC(nn, NatR), {g} => g) = refuted([id])
 test judge(ArrowC(nn, NatR), {g} => if (tree_eq(g, id)) { 0 } else { false }) = refuted([shift])
 // the law judge stands on, at one type: search finds no argument a Proved program fails on
 test by_search(judge_claim(nn), dbl, 20) = "Open"
+
+// ---- the work list, read back: each case with what settled it
+n := pair("Piece", pair(0, [pair("arg", 0)]))
+m := pair("Piece", pair(0, [pair("arg", 1)]))
+below_n := pair("Piece", pair(0, ["right", pair("arg", 0)]))
+// doubling is the textbook induction: split the number, run the zero case, run the successor case on the hypothesis
+test derivation(plainly, nn, dbl) = [
+	pair([n], pair("split", n)),
+	pair([0], pair("run", [])),
+	pair([succ(below_n)], pair("run", ["induction"]))]
+// a refuted claim's work list ends at its counterexample
+test derivation(plainly, nn, {n} => pair(n, n)) = [
+	pair([n], pair("split", n)),
+	pair([0], pair("run", [])),
+	pair([succ(below_n)], pair("split", below_n)),
+	pair([1], pair("refuted", [1]))]
+// certify is the same loop with no case split
+test certify(symbolic(doubles), [3, 4]) = "Proved"
+
+// ---- lemmas, given and guessed
+nnn := ArrowC(NatR, ArrowC(NatR, NatR))
+rec times :: {a : Tree, b : Tree} -> Tree :=> if (is_zero(a)) { zero } else { add(b, times(nat_pred(a), b)) }
+rec power :: {b : Tree, a : Tree} -> Tree :=> if (is_zero(b)) { 1 } else { times(a, power(nat_pred(b), a)) }
+unaided := judging([], split_depth, run_fuel, no_guesses)
+// multiplying calls adding on the hypothesis's answer: no run can look inside that call, so it stays Open
+test judge_with(unaided, nnn, times) = open_on("split depth exhausted")
+// with adding's type as a lemma the call is read by that type, and the successor case rests on both
+test judge_with(judging([pair(add, nnn)], split_depth, run_fuel, no_guesses), nnn, times) = "Proved"
+// the lemma need not be given: adding is a recursive definition inside multiplying, and the goal's own type fits it
+test goal_types(nnn) = [nnn, ArrowC(NatR, NatR)]
+test sub_programs(times) = [add]
+test judge(nnn, times) = "Proved"
+test derivation(plainly, nnn, times) = [
+	pair([n, m], pair("split", n)),
+	pair([0, m], pair("run", [])),
+	pair([succ(below_n), m], pair("run", ["induction", "lemma"]))]
+// guesses go innermost first: adding, then multiplying with it, then the power that calls multiplying
+test sub_programs(power) = [add, times]
+test judge(nnn, power) = "Proved"
+// a callee whose type is not among the goal's own is not guessed: that is where an annotation is needed
+square := {k} => times(k, k)
+test goal_types(nn) = [nn]
+test judge(nn, square) = open_on("split depth exhausted")
+test judge_with(judging([pair(times, nnn)], split_depth, run_fuel, no_guesses), nn, square) = "Proved"
+
+// ---- the work list as a lens: its splits, composed, send each argument to the case that settled it
+dbl_steps := judged_steps(plainly, nn, dbl)
+run_nn := {w, args} => run_at(nn, escape(w), args, 0, run_fuel)
+arguments := Trees.as_items.s_map({x} => pair(generic_args(nn, 0), [x]))
+test steps_lens(dbl_steps).back(t, pair(generic_args(nn, 0), [0])).fst = [0]
+test describe(steps_lens(dbl_steps).back(t, pair(generic_args(nn, 0), [3])).fst) = [succ(below_n)]
+// its law is the generic-run law at the cases it settled, and search finds no argument against it
+test honest(arguments, steps_law(run_nn, dbl_steps), dbl, 60) = "Open"
+test honest(arguments, steps_law(run_nn, dbl_steps), {n} => pair(n, n), 60) = "Open"
+// a work list that lost its successor case is refuted where a program is wrong there
+lost := cons(pair(dbl_steps.head.fst, split_on(dbl_steps.head.snd.snd.fst, [dbl_steps.head.snd.snd.snd.head])), dbl_steps.tail)
+test honest(arguments, steps_law(run_nn, lost), {n} => pair(n, n), 60) = refuted(pair(generic_args(nn, 0), [1]))
+
