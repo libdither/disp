@@ -63,6 +63,25 @@ describe("checked.disp rejections", () => {
     const unchecked = `rec cat := {xs, ys} => if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }`
     expect(load(`${unchecked}\n${rev}`)).toThrow(/failing entry: rev \(t\("Open"/)
   }, 120000)
+
+  it("a type comes with its eliminator, and an equation proved with it loads", () => {
+    const sum = `down := eliminator(Nat)\nsum : Nat -> Nat -> Nat := {a, b} => down(a, b, {_k, r} => succ(r))`
+    expect(load(`${sum}\nsquare : Nat -> Nat := {k} => down(k, 0, {_j, r} => sum(k, r))`)).not.toThrow()
+    // a step that does not answer in the result type is not what the type's rule asks
+    expect(load(`${sum}\nbad : Nat -> Nat -> Nat := {a, b} => down(a, b, {_k, r} => pair(r, r))`))
+      .toThrow(/failing entry: bad \(/)
+    // n + 0 = n by eliminating n: equal successors are equal numbers, so the step's hypothesis is its proof
+    const proof = `{n} => down(n, t, {_k, ih} => ih)`
+    expect(load(`${sum}\nsum_zero : {n : Nat} -> Eq(sum(n, 0), n) := ${proof}`)).not.toThrow()
+    // the same proof of a false equation is refuted with a number
+    expect(load(`${sum}\nsum_one : {n : Nat} -> Eq(sum(n, 1), n) := ${proof}`))
+      .toThrow(/failing entry: sum_one \(t\("Refuted"/)
+    // an equation already Proved is used through equality's own eliminator: here it is turned around
+    expect(load(`${sum}\nsum_zero : {n : Nat} -> Eq(sum(n, 0), n) := ${proof}\nzero_sum : {n : Nat} -> Eq(n, sum(n, 0)) := {n} => cast(sum_zero(n), t)`)).not.toThrow()
+    // and a proof that eliminates nothing does no induction
+    expect(load(`${sum}\nidle : {n : Nat} -> Eq(sum(n, 0), n) := {_n} => t`))
+      .toThrow(/failing entry: idle \(t\("Open"/)
+  }, 120000)
 })
 
 describe("checked.disp settings", () => {

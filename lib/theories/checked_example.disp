@@ -18,6 +18,21 @@ step : Pred := succ
 // no annotation: it is a recursive definition inside times, and the goal's own type fits it
 rec plus := {a, b} => if (is_zero(a)) { b } else { succ(plus(nat_pred(a), b)) }
 rec times : {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { 0 } else { plus(b, times(nat_pred(a), b)) }
+// A type comes with its eliminator, derived from its cases. The definitions written with it have
+// no recursion of their own, so each is one run, the stuck elimination judged by the type's own
+// rule at the result type expected there: none needs a statement or a guess.
+count_down := eliminator(Nat)
+sum : Nat -> Nat -> Nat := {a, b} => count_down(a, b, {_k, r} => succ(r))
+product : Nat -> Nat -> Nat := {a, b} => count_down(a, 0, {_k, r} => sum(b, r))
+square : Nat -> Nat := {k} => product(k, k)
+ackermann : Nat -> Nat -> Nat := {m} => count_down(m, succ, {_k, f, n} => count_down(n, f(1), {_j, r} => f(r)))
+// That result type may depend on what is eliminated, and an equation computes by shape: equal
+// successors are equal numbers. So n + 0 = n is proved by eliminating n, and the step's
+// hypothesis is already its proof.
+sum_zero : {n : Nat} -> Eq(sum(n, 0), n) := {n} => count_down(n, t, {_k, ih} => ih)
+// An equation already Proved is used through equality's own eliminator: `cast(e, d)` is d, at the
+// type with e's two sides put one for the other. Here that turns the equation around.
+zero_sum : {n : Nat} -> Eq(n, sum(n, 0)) := {n} => cast(sum_zero(n), t)
 // reversing calls appending the same way, but cat's type is not among rev's own, so cat is
 // annotated: it is Proved first, and the call is judged by its type
 rec cat : {xs : List(Nat), ys : List(Nat)} -> List(Nat) :=> if (is_leaf(xs)) { ys } else { cons(xs.fst, cat(xs.snd, ys)) }

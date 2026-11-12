@@ -44,12 +44,13 @@ universe_t :: Code := of_type(behaviour{
 // for each argument, named by the stuck application. A family that ignores its argument
 // compiles to K(B), a fork with a leaf on the left; with B not a family of types, that is the
 // plain arrow, one code however it was built, which is how stored pairs find it.
-pi_t :: {a : Code, fam : Tree} -> Code :=> {
+rec pi_t :: {a : Code, fam : Tree} -> Code :=> {
 	let level := is_types(fam(faces_of(a, generic_of(a, "probe"))))
 	if (((is_fork(fam)) && (is_leaf(fam.fst))) && (not(level))) { ArrowC(a, fam.snd) }
 	else { of_type(behaviour{
-		admits := {_self, v} => stuck_on(pair("a function inside a value", v)),
+		admits := {self, v} => judge_fn(self, v),
 		applied := some(pair(a, fam)),
+		put := some({_self, x, y} => pi_t(type_subst(x, y, a), {face} => type_subst(x, y, fam(face)))),
 		static := if (level) { some({_self, f} => {xs} => static_of(fam(pair(xs, xs)), app_val(f, xs))) } else { none },
 		types := level}) }
 }
@@ -57,19 +58,99 @@ arrow_t :: {a : Code, b : Code} -> Code :=> pi_t(a, {_x} => b)
 forall_t :: {fam : Tree} -> Code :=> pi_t(universe_t, fam)
 
 // a dependent pair: the first half at the first type, the second at the type it picks
-sigma_t :: {a : Code, fam : Tree} -> Code :=> of_type(behaviour{admits := {_self, v} =>
-	if (not(v.is_fork_shaped)) { not_pair(v) }
-	else { and_yes(judge_as(a, v.fst), {_y} => judge_as(fam(pair(v.fst, v.fst)), v.snd)) }})
+rec sigma_t :: {a : Code, fam : Tree} -> Code :=> of_type(behaviour{
+	put := some({_self, x, y} => sigma_t(type_subst(x, y, a), {face} => type_subst(x, y, fam(face)))),
+	admits := {_self, v} =>
+		if (not(v.is_fork_shaped)) { not_pair(v) }
+		else { and_yes(judge_as(a, v.fst), {_y} => judge_as(fam(pair(v.fst, v.fst)), v.snd)) }})
 
-// equality of two values computed on pieces; the witness does not matter
-eq_t :: {x : Res, y : Res} -> Code :=> of_type(behaviour{admits := {_self, _v} => and_then(x, {a} => and_then(y, {b} => same_val(a, b)))})
-eq_of :: {x : Tree, y : Tree} -> Code :=> eq_t(answered(x), answered(y))
-// a family that looks at its argument runs on it like any program: it picks a type when it can,
-// and otherwise the type waits, asking for the piece it needed to be split
-by_value :: {face : Pair(Val, Tree), pick : Tree -> Code} -> Code :=> {
+// ---- equality
+// Two values are equal when they are the same tree, so an equation computes by shape. Where
+// both sides are known they must agree. What is left is the places where a side is unknown,
+// each a pair of subtrees that must be equal: none left is true, a clash is false, and
+// otherwise the equation is stuck on those places, and its only members are the pieces of an
+// equation stuck on the same places (a hypothesis). So equal successors are equal numbers by
+// computing, with no rule about numbers. The witness does not matter. An equation holds its
+// two sides as programs of the variables they mention, and runs them when it is asked.
+rec places :: {a : Val, b : Val} -> Option(List(Pair(Val, Val))) :=>
+	if (a == b) { some([]) }
+	else if ((is_hole(a)) || (is_hole(b))) { some([pair(a, b)]) }
+	else if (is_leaf(a)) { none }
+	else if (is_stem(a)) { if (is_stem(b)) { places(stem_child(a), stem_child(b)) } else { none } }
+	else if (is_fork(b)) {
+		let l := places(a.fst, b.fst)
+		let r := places(a.snd, b.snd)
+		if ((is_none(l)) || (is_none(r))) { none } else { some(l.snd.append(r.snd)) }
+	}
+	else { none }
+// a value applied to its variables, the outermost first
+run_on :: {env : List(Pair(Val, Tree)), f : Val} -> Res :=> reduce({face, r} => and_then(r, {g} => sapply(g, face.fst, run_fuel)), answered(f), env)
+// An equation's eliminator: `cast(e, d)` is d, used at a type where the equation e has been
+// applied. With e known it runs. With e unknown (a hypothesis, or a call read by its type) it
+// is stuck, and the rule is equality's own: d is a member of R when it is a member of R
+// rewritten by e, the second side of each place of e put for the first. Where R is an equation
+// that is done on its places, and an equation with no place left is true; the other direction
+// is tried only for that.
+cast := fold_with(t, {_me, _e, d} => d)
+stuck_waits := {self, _v} => {
+	let waits := self.snd.given.map({p} => inspect(if (is_hole(p.fst)) { p.fst } else { p.snd }))
+	if (waits.filter(is_need).is_nil) { waits.head } else { waits.filter(is_need).head }
+}
+places_of :: {T : Code} -> Option(List(Pair(Val, Val))) :=> if ((is_type_code(T)) && (T.snd.admits == stuck_waits)) { some(T.snd.given) } else { none }
+// the places left of some, each with the second side of `by` put for the first and its sides compared again (none: a clash)
+rec all_places :: {found : List(Option(List(Pair(Val, Val))))} -> Option(List(Pair(Val, Val))) :=>
+	if (found.is_nil) { some([]) }
+	else if (is_none(found.head)) { none }
+	else { let rest := all_places(found.tail); if (is_none(rest)) { none } else { some(found.head.snd.append(rest.snd)) } }
+rewritten :: {by : List(Pair(Val, Val)), ps : List(Pair(Val, Val))} -> Option(List(Pair(Val, Val))) :=> {
+	let once := {v} => reduce({p, w} => subst(p.fst, p.snd, w), v, by)
+	all_places(ps.map({q} => places(once(q.fst), once(q.snd))))
+}
+rec stuck_eq :: {ps : List(Pair(Val, Val))} -> Code :=> of_type(behaviour{given := ps, admits := stuck_waits, elim := some(pair(cast, {at, S, R, args} => {
+	let have := places_of(S)
+	let want := places_of(normal_of(R))
+	let left := if ((is_none(have)) || (is_none(want))) { none } else { rewritten(have.snd, want.snd) }
+	let back := if ((is_none(have)) || (is_none(want))) { none } else { rewritten(have.snd.map({p} => pair(p.snd, p.fst)), want.snd) }
+	let put_in := {p, T} => if (p.snd.is_piece) { type_subst(p.snd, p.fst, T) } else if (p.fst.is_piece) { type_subst(p.fst, p.snd, T) } else { T }
+	if (not(args.length == 1)) { "None" }
+	// a false hypothesis proves anything, and a true one changes nothing
+	else if (S == empty_t) { "Yes" }
+	else if (is_none(have)) { at(R, args.head) }
+	else if (is_none(want)) { at(reduce(put_in, R, have.snd), args.head) }
+	else if (back == some([])) { "Yes" }
+	else if (is_none(left)) { at(empty_t, args.head) }
+	else if (left.snd.is_nil) { "Yes" }
+	else { at(stuck_eq(left.snd), args.head) }
+}))})
+eq_rule := stuck_eq([]).snd.elim.snd.snd
+eq_sides :: {self : Code} -> Res :=> {
+	let g := self.snd.given
+	and_then(run_on(g.fst, g.snd.fst), {a} => and_then(run_on(g.fst, g.snd.snd), {b} => answered(pair(a, b))))
+}
+eq_normal :: {self : Code} -> Code :=> {
+	let s := eq_sides(self)
+	let ps := if (s.is_answered) { places(s.answer.fst, s.answer.snd) } else { none }
+	if (not(s.is_answered)) { self } else if (is_none(ps)) { empty_t } else if (ps.snd.is_nil) { anything_t } else { stuck_eq(ps.snd) }
+}
+rec eq_t :: {env : List(Pair(Val, Tree)), left : Val, right : Val} -> Code :=> of_type(behaviour{given := pair(env, pair(left, right)), normal := some(eq_normal),
+	put := some({self, x, y} => { let g := self.snd.given; eq_t(subst(x, y, g.fst), subst(x, y, g.snd.fst), subst(x, y, g.snd.snd)) }),
+	elim := some(pair(cast, eq_rule)),
+	admits := {self, v} => { let s := eq_sides(self); if (s.is_answered) { judge_as(eq_normal(self), v) } else { s } }})
+eq_of :: {x : Val, y : Val} -> Code :=> eq_t([], x, y)
+// A family that looks at its argument runs on it like any program. A type it picks without
+// looking is that type. Otherwise the type holds the argument and picks when it is asked, and
+// where it cannot pick it waits, asking for the piece it needed to be split.
+picked :: {self : Code} -> Res :=> sapply(self.snd.given.snd, self.snd.given.fst.snd, run_fuel)
+rec by_value :: {face : Pair(Val, Tree), pick : Tree -> Code} -> Code :=> {
 	let r := sapply(pick, face.snd, run_fuel)
 	if ((r.is_answered) && (r.answer.is_known)) { r.answer }
-	else { of_type(behaviour{admits := {_self, _v} => if (r.is_answered) { stuck_on(pair("family answered no type", r.answer)) } else { r }}) }
+	else { of_type(behaviour{given := pair(face, pick),
+		put := some({self, x, y} => by_value(subst(x, y, self.snd.given.fst), self.snd.given.snd)),
+		normal := some({self} => { let now := picked(self); if ((now.is_answered) && (not(is_hole(now.answer)))) { normal_of(now.answer) } else { self } }),
+		admits := {self, v} => {
+			let now := picked(self)
+			if (not(now.is_answered)) { now } else if (is_hole(now.answer)) { stuck_on(pair("family answered no type", now.answer)) } else { judge_as(now.answer, v) }
+		}}) }
 }
 
 // Data are first-order: a data type is a recognizer, written as a program, and its cases
@@ -105,6 +186,17 @@ data_t :: {shapes : List(List(Tree))} -> Code :=>
 list_t :: {a : Code} -> Code :=>
 	if (not(holdable(a))) { opaque_t }
 	else { fix({self, v} => if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_a(a)(v.fst)) { self(v.snd) } else { false } } else { false }) }
+
+// ---- eliminators
+// A type with cases comes with its eliminator, `fold_of(T)` (lib/confirm.disp): it is derived
+// from the type's cases, so nothing is given beside the type, and `judge` reads a use of it by
+// the type's own rule, at a result type that may depend on what is eliminated. That rule is the
+// statement below, for every family of types over T. The same layer run as an ordinary
+// recursive program is Proved at it by case split and induction alone (types.test.disp), which
+// is the check that the rule says no more than those two steps do.
+nat_fold := fold_of(nat_t)
+plain_fold :: {T : Code} -> Tree :=> fix(fold_layer(T).snd)
+fold_statement :: {T : Code} -> Code :=> pi_t(arrow_t(T, universe_t), {p} => pi_t(T, {x} => reduce(arrow_t, p.snd(x.snd), handlers_of(T, p.snd))))
 
 // a run on the step-counting machine, for theories that count steps
 run_budget := 4000

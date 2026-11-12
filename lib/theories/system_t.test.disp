@@ -26,11 +26,27 @@ test accepts(theory, nn, lam(nat_ty, nrec(lam(nat_ty, eq_ty(nat_ty, tv(0), tv(0)
 // the lens into what the type means: accepted, erased, and judged on symbols
 test sound_at(theory, accepted(theory), nnn)(plus_t, t) = true
 test sound_at(theory, accepted(theory), nnn)(ack_t, t) = true
-// the recursion is a fixpoint inside the program, applied to a symbol, not a `rec` value the judge is handed:
-// with no lemma for it, it unfolds until the split depth runs out, so it is Open, never Proved
-test certified(theory, nnn, plus_t).is_open = true
 // a function returned where a number was promised
 lie := lam(nat_ty, lam(nat_ty, tv(0)))
+// The same terms put to `judge`, with no typing rule and nothing beside the type. `iter` runs as
+// the eliminator of the numbers, and a stuck use of it is judged by the numbers' own rule at the
+// type expected there: a number or, in Ackermann's outer recursion, a function.
+test judges(theory, nnn, plus_t) = "Proved"
+test judges(theory, nnn, times_t) = "Proved"
+test judges(theory, nnn, ack_t) = "Proved"
+test certified(theory, nnn, ack_t) = "Proved"
+// `judges` adds only the check that every former is the theory's: the verdict is `judge`'s at the meaning
+test judge(meaning(theory, nnn), erase(plus_t)) = "Proved"
+// what the rules refuse for what a term does, `judge` refutes
+test judges(theory, nn, lie).is_refuted = true
+test judges(theory, nn, lam(nat_ty, app(tv(0), tv(0)))).is_refuted = true
+// a former the theory lacks is refused before any run
+test judges(theory, nn, lam(nat_ty, nrec(lam(nat_ty, eq_ty(nat_ty, tv(0), tv(0))), zr, zr, tv(0)))).is_refuted = true
+// what the rules refuse for how a term is built, `judge` does not see: System T has no function over types, and the identity over them behaves
+poly_ty := pi(srt("*"), arrow(tv(0), tv(0)))
+poly_id := lam(srt("*"), lam(tv(0), tv(0)))
+test accepts(theory, poly_ty, poly_id).is_refuted = true
+test judges(theory, poly_ty, poly_id) = "Proved"
 test sound_at(theory, accepted(theory), nn)(lie, t) = true
 test sound_at(theory, {_a, _term} => true, nn)(lie, t) = false
 // total: the machine finishes every accepted program it is handed here

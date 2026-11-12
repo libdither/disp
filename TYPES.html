@@ -91,7 +91,7 @@
 <body>
 <main>
 <h1>Types as tests that would take forever</h1>
-<p class="lede">The design of disp's type system, explained from the bottom up. A type is a program that answers one question about two trees. Checking a claim honestly means running that program over every tree there is, which never finishes. Every checker disp ships is a shortcut, and every shortcut comes with a reason it agrees with the honest run. Every code block on this page is a definition from the library or a test line that <code>npm test</code> runs. The shortcuts live in <code>lib/confirm.disp</code>; the tests are <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 188 tests) and <code>lib/tests/types_doc.test.disp</code> (this page's own snippets, 31 tests). The one block that is not a program is marked as such.</p>
+<p class="lede">The design of disp's type system, explained from the bottom up. A type is a program that answers one question about two trees. Checking a claim honestly means running that program over every tree there is, which never finishes. Every checker disp ships is a shortcut, and every shortcut comes with a reason it agrees with the honest run. Every code block on this page is a definition from the library or a test line that <code>npm test</code> runs. The shortcuts live in <code>lib/confirm.disp</code>; the tests are <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 189 tests) and <code>lib/tests/types_doc.test.disp</code> (this page's own snippets, 31 tests). The one block that is not a program is marked as such.</p>
 
 <div class="card small">
 <b>Reading order.</b> Sections 1 to 4 define what a type is. Section 5 is the honest but useless checker. Sections 6 to 8 are the shortcuts. Sections 9 to 11 are the contract that keeps the shortcuts honest, what the optimizer gets, and what stays open on purpose. Section 12 is how a program writes types down and gets them checked. Section 13 is a glossary.
@@ -398,6 +398,18 @@ rec rev : {xs : List(Nat)} -&gt; List(Nat) :=&gt; if (is_leaf(xs)) { [] } else {
 <pre><code>rec plus := {a, b} =&gt; if (is_zero(a)) { b } else { succ(plus(nat_pred(a), b)) }
 rec times : {a : Nat, b : Nat} -&gt; Nat :=&gt; if (is_zero(a)) { 0 } else { plus(b, times(nat_pred(a), b)) }</code></pre>
 <p><code>cat</code> above is annotated because its type has two list arguments and <code>List(Nat) -&gt; List(Nat)</code>, the type of <code>rev</code>, is not built from it. A callee whose type is not among the goal's own is where an annotation is needed.</p>
+<h3>Eliminators and equations</h3>
+<p>A type with cases comes with its <em>eliminator</em>, the one program that holds the recursion for the type. It is derived from the type's cases, as the cases were derived from the type, so nothing is given beside the type. It takes a member and a handler per case. Definitions written with it have no recursion of their own, and each is a single run:</p>
+<pre><code>count_down := eliminator(Nat)
+sum : Nat -&gt; Nat -&gt; Nat := {a, b} =&gt; count_down(a, b, {_k, r} =&gt; succ(r))
+product : Nat -&gt; Nat -&gt; Nat := {a, b} =&gt; count_down(a, 0, {_k, r} =&gt; sum(b, r))
+square : Nat -&gt; Nat := {k} =&gt; product(k, k)
+ackermann : Nat -&gt; Nat -&gt; Nat := {m} =&gt; count_down(m, succ, {_k, f, n} =&gt; count_down(n, f(1), {_j, r} =&gt; f(r)))</code></pre>
+<p>Compare <code>times</code> above, which needed a guess for <code>plus</code>, and squaring it, which needs an annotation. On an unknown number the eliminator cannot run, so the run keeps that use as a stuck term, and the check judges it by the type's own rule: what is eliminated is a member, and each handler takes its case's pieces, and the answer below each piece of the type, into the result type. That rule is case split and induction, applied to a part of the program. A handler such as <code>{_k, r} =&gt; succ(r)</code> is judged as a function: it is run on a fresh piece of its domain and split where it looks. The result type is the one expected where the use stands, a number in <code>sum</code> and a function in the outer use in <code>ackermann</code>.</p>
+<p>The result type may depend on what is eliminated, which is what a proof by induction needs. And an equation computes by shape: where both sides are known they must agree, so <code>succ(a) = succ(b)</code> is <code>a = b</code>. Together these prove <code>n + 0 = n</code>, with the step's hypothesis as its own proof:</p>
+<pre><code>sum_zero : {n : Nat} -&gt; Eq(sum(n, 0), n) := {n} =&gt; count_down(n, t, {_k, ih} =&gt; ih)
+zero_sum : {n : Nat} -&gt; Eq(n, sum(n, 0)) := {n} =&gt; cast(sum_zero(n), t)</code></pre>
+<p>At zero both sides run to zero. At a successor the goal runs to the hypothesis's own equation. The second line uses an equation already Proved: <code>cast(e, d)</code> is <code>d</code>, at the type with the two sides of <code>e</code> put one for the other. It is equality's own eliminator, and its rule is part of the equality type (<code>lib/theories/types.disp</code>). The same proof of a false equation is refuted with a number, and a proof that eliminates nothing stays Open. Adding is commutative by the same means, in <code>lib/theories/types.test.disp</code>.</p>
 <h3>Settings, and what Open means at load</h3>
 <p>A module picks how it is checked by binding <code>check_module</code> itself:</p>
 <pre><code>check_module := check_with{ on_open := "assume" }</code></pre>
@@ -414,10 +426,11 @@ rec times : {a : Nat, b : Nat} -&gt; Nat :=&gt; if (is_zero(a)) { 0 } else { plu
 <tr><td>Need, Stuck</td><td>a run that wants a piece's shape (a split can help) versus one that cannot proceed (with a reason)</td></tr>
 <tr><td>licence</td><td>the check that a recursive call is on a strictly smaller, input-derived piece</td></tr>
 <tr><td>neutral term</td><td>an application nobody can run, kept as a term so it can be compared and judged at its codomain</td></tr>
+<tr><td>eliminator</td><td>the one program that holds a type's recursion, derived from the type's cases; a use of it that cannot run is judged by the type's own rule</td></tr>
 <tr><td>certificate</td><td>the replayable record behind a Proved: which trick, which cases, which licences</td></tr>
 <tr><td>the code type</td><td><code>Tree</code>: every tree belongs, sameness is bit for bit, inspection is legal</td></tr>
 </table>
-<p class="muted small">Companion files, all run by <code>npm test</code>: <code>lib/confirm.disp</code> (the confirmer), <code>lib/rules.disp</code> (the rules a certified verdict stands on, as lenses), <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 188 tests), <code>lib/tests/types_doc.test.disp</code> (this page's snippets, 31 tests), <code>lib/theories/checked.test.disp</code> with <code>checked_example.disp</code> (section 12's module), <code>test/checked.test.ts</code> (its rejections and settings).</p>
+<p class="muted small">Companion files, all run by <code>npm test</code>: <code>lib/confirm.disp</code> (the confirmer), <code>lib/rules.disp</code> (the rules a certified verdict stands on, as lenses), <code>lib/tests/refuter.test.disp</code> (the honest checker, 22 tests), <code>lib/tests/confirmer.test.disp</code> (the shortcuts, 189 tests), <code>lib/tests/types_doc.test.disp</code> (this page's snippets, 31 tests), <code>lib/theories/checked.test.disp</code> with <code>checked_example.disp</code> (section 12's module), <code>test/checked.test.ts</code> (its rejections and settings).</p>
 <p class="muted small">Step-through: <a href="JUDGE.html">JUDGE.html</a> runs <code>judge</code> case by case on ten small definitions, from recorded traces, and shows the two places a run needs a lemma.</p>
 </main>
 </body>

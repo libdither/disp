@@ -181,8 +181,69 @@ refute.
    recursive sub-programs are tried at when it is left Open. The default, `goal_types`, is
    the function types the goal's own type is built from.
 
+5. **Functions as arguments (2026-11-11).** A program given where a function is expected
+   is judged as one: `fn_member` in `lib/confirm.disp` runs it on a fresh piece of the
+   domain and splits where it looks, which is the loop's generic run and case split,
+   nested. Before, a lemma's function argument had to be an unknown piece.
+6. **Eliminators come with the type (2026-11-11).** A type with cases has an eliminator,
+   derived from its cases as the cases were derived from the type: `fold_of(T)` in
+   `lib/confirm.disp`. Nothing is given beside the type. Programs written with it have no
+   recursion of their own:
+
+   ```
+   plus_e := {a, b} => nat_fold(a, b, {_k, r} => succ(r))
+   times_e := {a, b} => nat_fold(a, 0, {_k, r} => plus_e(b, r))
+   square_e := {k} => times_e(k, k)
+   ```
+
+   The eliminator's tree says what it is, so on a hole the run keeps the use as a neutral
+   term, and `judge_as` judges it by the type's own rule: what is eliminated is a member,
+   and each handler takes its case's pieces, and the answer below each piece of the type,
+   into the result type. The rule is case split and induction on a part of the program.
+   It is not a lemma: no statement is looked up, and `judge` takes no list. Each of the
+   three is Proved in one case resting on "elimination" (`lib/theories/types.test.disp`).
+   The rule is the eliminator's statement for every family of types, and the same layer
+   run as a plain recursive program is Proved at that statement by the three older steps,
+   which is the check on the rule. A tree that only says it is an eliminator is compared
+   with the derived one, and runs as the program it is.
+7. **Result types that depend, and equations that compute (2026-11-11).** The result type
+   of a stuck elimination may depend on what is eliminated: it is the type expected, with
+   a value put for what is eliminated. A type that depends on values holds them apart
+   (`given`) and says how one is put for another (`put`), so that step is exact and walks
+   no code. An equation computes by shape (`places` in `lib/theories/types.disp`): where
+   both sides are known they must agree, and what is left is the places where a side is
+   unknown. So `succ(a) = succ(b)` is `a = b`, and the step of a proof by induction is its
+   own hypothesis:
+
+   ```
+   plus_zero_t := pi_t(nat_t, {n} => eq_t([n], {m} => plus_e(m, 0), {m} => m))
+   test judge(plus_zero_t, {n} => nat_fold(n, t, {_k, ih} => ih)) = "Proved"
+   ```
+
+   Equality has an eliminator too, `cast(e, d)`, which is d. Its rule is part of the
+   equality type (`elim` on the behaviour record): d is judged at the type expected,
+   rewritten by e. With it an equation already Proved is used in a later proof, and
+   adding is commutative from `n + 0 = n` and `n + succ(m) = succ(n + m)`. That use is the
+   one lemma left: the two equations are read by their types where they are called.
+8. **A theory checked with no typing rule (2026-11-11).** `judges` in
+   `lib/theories/pts.disp` puts a term's erased program to `judge` at its type's meaning,
+   with nothing else. A theory is the types its formers mean, so the one `judge` is the
+   judge of each theory. System T's addition, multiplication and Ackermann are Proved that
+   way, and MLTT's list and tree programs, and its proofs of `n + 0 = n` and of appending
+   the empty list, where `transport` runs as `cast`. A proof whose step is just its
+   hypothesis is Proved too, though MLTT's written rules refuse it: they compare
+   `S(k + 0) = S k` and `k + 0 = k` as written. What stays with the written rules is
+   refusals about how a term is built (System T has no function over types; `judge`
+   proves the identity over them).
+
 ## 7. Open
 
+- **Equations, further.** Rewriting with an equation puts one side for the other as
+  written and does not run the result again, so a use that needs a second step of
+  computation after rewriting stays Open. An equation between functions is only "the same
+  tree"; the type's own relation (the same answers on every argument) is not used. And
+  `:` annotations cannot state an equation over two arguments: the type under the second
+  binder is built inside a symbolic run, which cannot make pieces.
 - **Wider guesses.** `square` above stays Open. Arrows over the goal's first-order types,
   up to two arguments, would find `times`. It is one function passed as `guesses`; the
   cost is one failed search per wrong guess.

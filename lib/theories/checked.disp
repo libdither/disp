@@ -19,6 +19,9 @@ Empty := empty_t
 Type := universe_t
 List := list_t
 Eq := eq_of
+// a type's eliminator, derived from its cases, and equality's own
+eliminator := fold_of
+cast := cast
 // `{x : A} -> B` is Pi(A, {x} => B). A family that ignores its argument goes to pi_t as it is,
 // which makes the plain arrow of it; otherwise a type argument goes in as its type, and a value
 // the family looks at is split on demand.

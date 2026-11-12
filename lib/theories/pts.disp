@@ -5,7 +5,9 @@
 // formers it allows, so adding a type is adding a former. `accepts` is a terminating
 // program on terms, structural on the term with every normalization fueled; `erase`
 // compiles a term to a real tree program; and the lens from `accepts` into the
-// meaning is what search can try to refute.
+// meaning is what search can try to refute. `judges` asks the same of the erased
+// program with no typing rule: `judge` proves it at the meaning, where each type brings
+// its own eliminator and an equation computes.
 open use raw "base.disp" {}
 open use raw "types.disp" {}
 
@@ -18,7 +20,7 @@ c_list := {codes} => reduce({c, rest} => c_app(c_app(c_val(cons), c), rest), c_v
 no_contract := {_term} => "Normal"
 types_only := {_term} => c_val(t)
 no_meaning := {_sp, _env, _term} => anything_t
-// a former: how its kids bind ("Var", "Payload" when the kids slot holds a datum, "Binder" when the second kid is under a binder, or "Plain"), its typing rule, its one-step reduction, its compilation, and its meaning
+// a former: how its kids bind ("Var", "Payload" when the kids slot holds a datum, "Binder" when the second kid is under a binder, or "Plain"), its typing rule, its one-step reduction, its compilation, its meaning
 record former :: {kind : Tree, infer : Tree, contract : Term -> Tree := no_contract, code : Tree := types_only, meaning : Tree := no_meaning} -> Former
 record node :: {op : Former, kids : List(Term)} -> Term
 /// a Var or Payload node keeps its datum where the kids go
@@ -120,6 +122,7 @@ rec bind_zero :: {code : Tree} -> Tree :=>
 	else { c_app(c_app(c_val(s_tree), bind_zero(code.snd.fst)), bind_zero(code.snd.snd)) }
 rec code_of :: {term : Term} -> Tree :=> term.op.code(term)
 c_call := {v, kid} => c_app(c_val(v), code_of(kid))
+rec c_apps :: {f : Tree, kids : List(Term)} -> Tree :=> if (kids.is_nil) { f } else { c_apps(c_app(f, code_of(kids.head)), kids.tail) }
 rec closed_tree :: {code : Tree} -> Tree :=>
 	if (code.fst == "Val") { code.snd }
 	else if (code.fst == "App") { closed_tree(code.snd.fst, closed_tree(code.snd.snd)) }
@@ -128,6 +131,8 @@ erase :: {term : Term} -> Tree :=> closed_tree(code_of(term))
 // the value of an open term once its variables are given: variable 0 is the head of env
 rec bind_all :: {n : Nat, code : Tree} -> Tree :=> if (is_zero(n)) { code } else { bind_all(nat_pred(n), bind_zero(code)) }
 eval_in :: {env : List(Tree), term : Term} -> Tree :=> reduce({v, f} => f(v), closed_tree(bind_all(env.length, code_of(term))), env)
+// an open term as a program of its variables, the outermost first
+open_program :: {env : List(Pair(Val, Tree)), term : Term} -> Val :=> escape(closed_tree(bind_all(env.length, code_of(term))))
 // the same on symbols: each variable is the runtime face of its entry, and the run may need a symbol split
 eval_sym :: {env : List(Pair(Val, Tree)), term : Term} -> Res :=>
 	reduce({face, r} => and_then(r, {f} => sapply(f, face.fst, run_fuel)), answered(escape(closed_tree(bind_all(env.length, code_of(term))))), env)
@@ -256,8 +261,8 @@ unfold_rec := {term} =>
 	if (term.k3.op == zero_f) { term.k1 }
 	else if (term.k3.op == succ_f) { app(app(term.k2, term.k3.k0), node(term.op, [term.k0, term.k1, term.k2, term.k3.k0])) }
 	else { "Normal" }
-rec_nat_tree := {zv, sv} => fix({self, k} => if (is_zero(k)) { zv } else { sv(nat_pred(k), self(nat_pred(k))) })
-rec_code := {term} => c_app(c_app(c_call(rec_nat_tree, term.k1), code_of(term.k2)), code_of(term.k3))
+// both run as the eliminator of the numbers (types.disp), the number first; the motive is erased
+rec_code := {term} => c_app(c_app(c_call(nat_fold, term.k3), code_of(term.k1)), code_of(term.k2))
 // plain recursion (System T): the motive is one type
 iter_f := former{kind := "Plain", contract := unfold_rec, code := rec_code,
 	infer := {sp, ctx, term} => {
@@ -332,7 +337,7 @@ eq_f := former{kind := "Plain",
 		_ <- has_type(sp, ctx, term.k2, term.k0)
 		ok(srt(s))
 	},
-	meaning := {_sp, env, term} => eq_t(eval_sym(env, term.k1), eval_sym(env, term.k2))}
+	meaning := {_sp, env, term} => eq_t(env, open_program(env, term.k1), open_program(env, term.k2))}
 eq_ty :: {a : Term, x : Term, y : Term} -> Term :=> node(eq_f, [a, x, y])
 refl_f := former{kind := "Plain",
 	infer := {sp, ctx, term} => {
@@ -352,7 +357,8 @@ transport_f := former{kind := "Plain",
 		nf_r(sp, app(term.k0, e.k2))
 	},
 	contract := {term} => if (term.k1.op == refl_f) { term.k2 } else { "Normal" },
-	code := {term} => code_of(term.k2)}
+	// it runs as equality's eliminator (types.disp): the proof, then what is carried; the motive is erased
+	code := {term} => c_app(c_call(cast, term.k1), code_of(term.k2))}
 transport :: {p : Term, e : Term, d : Term} -> Term :=> node(transport_f, [p, e, d])
 equality := [eq_f, refl_f, transport_f]
 
@@ -364,12 +370,15 @@ rec all_have_types :: {sp : Spec, tys : List(Term)} -> Tree :=>
 		_ <- sort_of(sp, [], tys.head)
 		all_have_types(sp, tys.tail)
 	}
+// an argument type of a description is closed, so it means the same in every theory
+closed_types := spec({_s} => "None", {_a, _b} => "None", zero, [], 600)
+shapes_of := {desc} => desc.map({ctor} => ctor.map({a} => if (a == "Rec") { "Rec" } else { interp(closed_types, [], a) }))
 data_f := {desc} => former{kind := "Plain",
 	infer := {sp, _ctx, _term} => {
 		_ <- all_have_types(sp, desc.concat.filter({a} => not(a == "Rec")))
 		ok(srt(sp.base))
 	},
-	meaning := {sp, _env, _term} => data_t(desc.map({ctor} => ctor.map({a} => if (a == "Rec") { "Rec" } else { interp(sp, [], a) })))}
+	meaning := {_sp, _env, _term} => data_t(shapes_of(desc))}
 data_ty :: {desc : List(List(Tree))} -> Term :=> node(data_f(desc), [])
 arg_type := {desc, a} => if (a == "Rec") { data_ty(desc) } else { a }
 rec args_have :: {sp : Spec, ctx : List(Term), args : List(Term), tys : List(Term)} -> Tree :=>
@@ -413,11 +422,8 @@ rec cases_have :: {sp : Spec, ctx : List(Term), desc : List(List(Tree)), p : Ter
 		_ <- has_type(sp, ctx, cases.head, case_type(desc, p, j))
 		cases_have(sp, ctx, desc, p, cases.tail, succ(j))
 	}
-rec apply_all :: {f : Tree, xs : List(Tree)} -> Tree :=> if (xs.is_nil) { f } else { apply_all(f(xs.head), xs.tail) }
-// at run time each constructor's arguments are marked true where recursive, so nothing compares types
-rec run_elim :: {marks : List(List(Bool)), cases : List(Tree)} -> {v : Tree} -> Tree :=>
-	apply_all(nth(cases, v.fst), v.snd.append(v.snd.zip(nth(marks, v.fst)).filter(pair_snd).map({p} => run_elim(p.fst))))
-// elimination: kids are a motive over the type, the target, and one case per constructor
+// elimination: kids are a motive over the type, the target, and one case per constructor. It runs as
+// the data type's eliminator (types.disp): the target, then the cases
 elim_f := {desc} => former{kind := "Plain",
 	infer := {sp, ctx, term} => {
 		let d := data_ty(desc)
@@ -437,7 +443,7 @@ elim_f := {desc} => former{kind := "Plain",
 			apps(nth(term.kids.tail.tail, j), args.append(hyps))
 		}
 	},
-	code := {term} => c_app(c_app(c_val(run_elim(desc.map({ctor} => ctor.map({a} => a == "Rec")))), c_list(term.kids.tail.tail.map(code_of))), code_of(term.k1))}
+	code := {term} => c_apps(c_call(fold_of(data_t(shapes_of(desc))), term.k1), term.kids.tail.tail)}
 elim :: {desc : List(List(Tree)), p : Term, target : Term, cases : List(Term)} -> Term :=> node(elim_f(desc), cons(p, cons(target, cases)))
 data_formers :: {desc : List(List(Tree))} -> List(Former) :=> cons(data_f(desc), cons(elim_f(desc), positions(desc).map(con_f(desc))))
 
@@ -454,8 +460,16 @@ meaning :: {sp : Spec, a : Term} -> Code :=> interp(sp, [], a)
 erase_lens :: Lens := lens(erase, {_term, c} => c)
 sound_at :: {sp : Spec, check : Term -> Term -> Bool, a : Term} -> Claim :=>
 	lens_holds(checker_claim(check(a)), judge_claim(meaning(sp, a)), erase_lens)
-// an accepted term whose program the floor alone proves at the type's meaning
+// The same question put to `judge`, with no typing rule and nothing beside the type: every
+// former is the theory's, and the erased program is Proved at the type's meaning. A theory is
+// the types its formers mean, so one `judge` is the judge of each theory. What a theory refuses
+// for how a term is built (its sort rules) is not refused here.
+allowed :: {sp : Spec, term : Term} -> Bool :=> every_node({n} => sp.formers.member(n.op), term)
+judges :: {sp : Spec, a : Term, term : Term} -> Verdict :=>
+	if (not(allowed(sp, term))) { refuted(pair(term, "former not in this theory")) }
+	else { judge(meaning(sp, a), erase(term)) }
+// an accepted term whose program is Proved that way too
 certified :: {sp : Spec, a : Term, term : Term} -> Verdict :=> {
 	let v := accepts(sp, a, term)
-	if (v == "Proved") { judge(meaning(sp, a), erase(term)) } else { v }
+	if (v == "Proved") { judges(sp, a, term) } else { v }
 }

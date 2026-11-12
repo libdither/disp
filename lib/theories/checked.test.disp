@@ -12,6 +12,9 @@ test twice(3) = 6
 test pick(0) = t
 test step(4) = 5
 test times(2, 3) = 6
+test product(3, 3) = 9
+test square(4) = 16
+test ackermann(2, 2) = 7
 // a plain arrow is spelled the one way the stored pairs know it
 test Pred = ArrowC(Nat, Nat)
 // what a rejected definition's load error prints
