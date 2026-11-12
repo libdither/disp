@@ -246,16 +246,16 @@ theorem start_covers (t : Tm) : Covers (start t) := by
 /-- Runs of a compiled program: fire pairs and remove forwarders other than the root, in any order. -/
 abbrev ProgRuns (t : Tm) := Moves sig gtable (· = (loadB t).2)
 
-/-- **When the spec runner finishes a program**, (compiled to a net passing `Build.ok`): no order
-of steps runs longer than it did, every order can still finish, and every finished run ends in
-the very net it ended in. -/
-theorem runner_decides {t : Tm} {n : Nat} {st : Run} (hok : (loadB t).1.ok = true)
-    (h : runFor gtable n (start t) = (st, true)) :
+/-- **One finished run decides every run.** If some run of a compiled program (one whose net passes
+`Build.ok`) reaches a net with nothing left to do, then no order of steps runs longer than that
+run, every order can still finish there, and every finished run ends in that very net. So to show
+that every order gives the right answer, it is enough to show it for one order. -/
+theorem one_run_decides {t : Tm} {F : Net K} (hok : (loadB t).1.ok = true)
+    (hrun : ProgRuns t (start t).net F) (hfin : Finished sig gtable (· = (loadB t).2) F) :
     (∃ k, ∀ m M, Path (Move sig gtable (· = (loadB t).2)) m (start t).net M → m ≤ k) ∧
-    (∀ M, ProgRuns t (start t).net M → ProgRuns t M st.net) ∧
-    (∀ M, ProgRuns t (start t).net M → Finished sig gtable (· = (loadB t).2) M → M = st.net) := by
+    (∀ M, ProgRuns t (start t).net M → ProgRuns t M F) ∧
+    (∀ M, ProgRuns t (start t).net M → Finished sig gtable (· = (loadB t).2) M → M = F) := by
   have hg : (start t).net.Good sig := Build.ok_good hok
-  obtain ⟨hrun, hfin, _⟩ := runFor_finished n h (start_covers t)
   have pres : ∀ a b, Net.Good sig a → Move sig gtable (· = (loadB t).2) a b → Net.Good sig b :=
     fun _ _ hg hm => rln_runOk.move_good hg hm
   obtain ⟨k, hk⟩ := hrun.path
@@ -265,6 +265,17 @@ theorem runner_decides {t : Tm} {n : Nat} {st : Run} (hok : (loadB t).1.ok = tru
     exact (Path.bound pres rln_runOk.move_diamond hm hg hk hfin).2.star
   · intro M hM fM
     exact rln_runOk.finished_unique hg hM hrun fM hfin
+
+/-- **When the spec runner finishes a program**, (compiled to a net passing `Build.ok`): no order
+of steps runs longer than it did, every order can still finish, and every finished run ends in
+the very net it ended in. -/
+theorem runner_decides {t : Tm} {n : Nat} {st : Run} (hok : (loadB t).1.ok = true)
+    (h : runFor gtable n (start t) = (st, true)) :
+    (∃ k, ∀ m M, Path (Move sig gtable (· = (loadB t).2)) m (start t).net M → m ≤ k) ∧
+    (∀ M, ProgRuns t (start t).net M → ProgRuns t M st.net) ∧
+    (∀ M, ProgRuns t (start t).net M → Finished sig gtable (· = (loadB t).2) M → M = st.net) := by
+  obtain ⟨hrun, hfin, _⟩ := runFor_finished n h (start_covers t)
+  exact one_run_decides hok hrun hfin
 
 /-- **Every order of steps reads back the reference's answer**, for a program the spec-runner
 check passes (and whose compiled net passes `Build.ok`): no order runs forever, and every
@@ -289,3 +300,25 @@ theorem every_order_answers {t : Tm} {fuel : Nat} {v : Tm} (hok : (loadB t).1.ok
     rw [huniq M hM fM]
     rw [hroot] at hans
     exact hans
+
+/-! ## What is left for all programs at once -/
+
+/-- Simulation for one program: whenever the reference gives it a value, some run of its net
+finishes holding that value. One run, in one order of our choosing. -/
+def Simulated (t : Tm) : Prop :=
+  ∀ fuel v, eval fuel t = .value v →
+    ∃ F, ProgRuns t (start t).net F ∧ Finished sig gtable (· = (loadB t).2) F ∧
+      ∃ n, (F.mate ((loadB t).2, 0)).bind (readback n F []) = some v
+
+/-- **One order is enough.** If a program is simulated by some run, then every order of steps
+gives the reference's answer: no order runs forever, and every finished run holds the value. So
+the copier never has to be reasoned about while two copies are under way at once: it is enough to
+follow the one order, call by value, in which each copy finishes before anything else moves. -/
+theorem every_order_of_one {t : Tm} {fuel : Nat} {v : Tm} (hok : (loadB t).1.ok = true)
+    (hs : Simulated t) (he : eval fuel t = .value v) :
+    (∃ k, ∀ m M, Path (Move sig gtable (· = (loadB t).2)) m (start t).net M → m ≤ k) ∧
+    (∃ n, ∀ M, ProgRuns t (start t).net M → Finished sig gtable (· = (loadB t).2) M →
+      (M.mate ((loadB t).2, 0)).bind (readback n M []) = some v) := by
+  obtain ⟨F, hrun, hfin, n, hans⟩ := hs fuel v he
+  obtain ⟨hbound, _, huniq⟩ := one_run_decides hok hrun hfin
+  exact ⟨hbound, n, fun M hM fM => by rw [huniq M hM fM]; exact hans⟩

@@ -1,0 +1,206 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reflective nets, reducing</title>
+<!-- The agent view of evaluators/rust-ic-strands/player (rev.html, graph.js), rebuilt for the reflective
+     linear nets of ../nets/DESIGN.md: engine.js runs the rule table, icons.js says how agents are drawn,
+     and player.js lays the net out and plays it. -->
+<style>
+  :root { --bg:#0b0e14; --bg-elev:#121a26; --panel:#0d131d; --fg:#c8d3e0; --fg-muted:#8595ad; --fg-faint:#5b6a80; --accent:#56c8ff;
+    --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; --border:#1b2436; --border-strong:#2a3a52;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --body:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 var(--mono); }
+  #wrap { display:flex; height:100vh; }
+  #stage { position:relative; flex:1; min-width:0; overflow:hidden; }
+  [hidden] { display:none !important; }
+  #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  button, select, input { background:var(--bg-elev); color:var(--fg); border:1px solid var(--border-strong); border-radius:6px; padding:3px 8px; font:inherit; }
+  button { cursor:pointer; min-width:34px; } button:hover { border-color:var(--accent); } button.on { border-color:var(--accent); color:var(--accent); }
+  #hud { position:absolute; top:10px; left:14px; max-width:70%; pointer-events:none; }
+  #answer { font-size:18px; color:var(--hot); word-break:break-word; }
+  #status { font-size:11.5px; color:var(--fg-muted); } #status.ok { color:var(--ok); } #status.bad { color:var(--warn); }
+  #rule { font-size:11.5px; color:var(--fg); min-height:1.4em; }
+  #dock { position:absolute; left:0; right:0; bottom:0; padding:24px 12px 8px; background:linear-gradient(to top, rgba(11,14,20,.95) 70%, rgba(11,14,20,0)); }
+  #dock > * { width:min(820px, 100%); margin:0 auto 6px; box-sizing:border-box; display:flex; gap:6px; align-items:center; justify-content:center; flex-wrap:wrap; }
+  #src { flex:1; min-width:12rem; text-align:center; } #src.bad { border-color:var(--warn); }
+  #examples { max-width:11rem; }
+  #strip { display:block; width:min(820px, 100%); height:44px; margin:0 auto 6px; cursor:crosshair; border-bottom:1px solid var(--border-strong); }
+  label { color:var(--fg-muted); font-size:11.5px; display:inline-flex; gap:4px; align-items:center; white-space:nowrap; }
+  #side { width:340px; flex:none; overflow:auto; border-left:1px solid var(--border); background:var(--panel); padding:4px 16px 16px;
+    font:12.5px/1.55 var(--body); color:var(--fg-muted); box-sizing:border-box; }
+  #side h1 { font-size:15px; color:var(--fg); margin:12px 0 6px; } #side h2 { font-size:12px; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; margin:14px 0 4px; }
+  #side b { color:var(--fg); font-weight:600; } #side p { margin:0 0 8px; } #side a { color:var(--accent); }
+  #side code, #side pre { font:11.5px/1.5 var(--mono); color:var(--fg); }
+  #side pre { white-space:pre-wrap; margin:4px 0 8px; padding:6px 8px; background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; }
+  #side summary { cursor:pointer; color:var(--fg); }
+  #counts div { display:flex; justify-content:space-between; font:12px var(--mono); } #counts span:last-child { color:var(--fg); }
+  #detail { min-height:5em; font-size:12px; color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:6px 8px; background:var(--bg-elev); }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  svg.kind { vertical-align:-3px; margin-right:4px; }
+  .legend span { display:inline-block; margin:0 10px 2px 0; white-space:nowrap; font-size:11.5px; }
+  #portLegend span { display:block; white-space:normal; margin:0 0 4px; }
+  #ruleBox { min-height:4em; font-size:12px; color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:6px 8px; background:var(--bg-elev); }
+  #ruleBox svg { display:block; width:100%; height:auto; margin:6px 0 2px; }
+  .term { font:11.5px/1.5 var(--mono); color:var(--fg); background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:4px 6px; margin:3px 0 6px;
+    white-space:pre-wrap; overflow-wrap:anywhere; max-height:11.5em; overflow:auto; }
+  #whole { min-height:2.6em; }
+  #detail a, #ruleBox a, #rule { cursor:pointer; } #detail a.act { color:var(--hot); font-weight:600; }
+  #rule { pointer-events:auto; } #rule:hover { color:var(--accent); }
+  .pm { display:inline-block; width:2.1em; color:var(--fg); font-family:var(--mono); }
+  .dim { color:var(--fg-muted); }
+  #adds h3 { font-size:12px; color:var(--fg); margin:10px 0 3px; font-weight:600; }
+  #adds a { overflow-wrap:anywhere; text-decoration:none; } #adds a:hover code { color:var(--accent); }
+  .kind { display:inline-block; font:10.5px var(--mono); padding:0 5px; border-radius:8px; border:1px solid currentColor; margin-right:2px; }
+  .kind.linear { color:var(--ok); } .kind.ordinary { color:var(--hot); } .kind.reversible { color:var(--accent); }
+  @media (max-width: 760px) { #wrap { flex-direction:column; height:auto; } #stage { height:78vh; flex:none; } #side { width:auto; border-left:0; border-top:1px solid var(--border); } }
+</style></head><body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"><div id="answer"></div><div id="status">loading…</div><div id="rule"></div></div>
+    <div id="dock">
+      <div><input id="src" spellcheck="false" aria-label="program">
+        <select id="examples" aria-label="examples"></select></div>
+      <canvas id="strip"></canvas>
+      <div>
+        <button id="toStart" title="back to the beginning (Home)">⏮</button>
+        <button id="playBack" title="run backward (Shift+Space)">◀◀</button>
+        <button id="stepBack" title="one step back (←)">◀</button>
+        <button id="stepFwd" title="one step forward (→)">▶</button>
+        <button id="playFwd" title="run forward (Space)">▶▶</button>
+        <button id="toEnd" title="run to the end (End)">⏭</button>
+        <label title="steps a frame, from one every few frames to a thousand"><input id="speed" type="range" min="0" max="100" value="22" style="width:90px"><span id="speedLabel"></span></label>
+        <label title="▶ and ◀ step a whole round: every pair waiting at a round's start fires at once, and what a round makes waits for the next. Unticked: one rewrite at a time (R)"><input id="byRound" type="checkbox" checked> a round at a time</label>
+      </div>
+      <div>
+        <label title="which waiting pair fires first, when not run the physical way. The answer and the number of rewrites are the same in every order.">order
+          <select id="order"><option value="rounds">all at once, in rounds</option><option value="newest">newest pair first</option><option value="random">random</option></select></label>
+        <label title="the wires from a binder to the uses of its variable (V)"><input id="binds" type="checkbox" checked> variable wires</label>
+        <label title="a named part that nothing is acting on is drawn as its name; click one to open it (L)"><input id="fold" type="checkbox" checked> fold named parts</label>
+        <label title="light up the whole subnet under the agent you point at, and dim the rest: the same as holding Shift (S)"><input id="subnets" type="checkbox"> subnets</label>
+        <label title="the physical way: while playing, the two agents of every pair that can fire are drawn together, and the pair rewrites when its main pins touch, so what is close goes first (P)"><input id="physical" type="checkbox"> physical</label>
+        <label title="show each rewrite as it happens: the pair shrinks away and what it made grows out"><input id="motion" type="checkbox" checked> motion</label>
+        <label title="the view follows the net as it grows and shrinks (F)"><input id="follow" type="checkbox" checked> follow</label>
+      </div>
+    </div>
+  </div>
+  <aside id="side">
+    <h1>Reflective nets, reducing</h1>
+    <p style="color:var(--fg)"><b>Click a bright wire</b>, or either agent on it, to fire that pair. ▶ steps in the order chosen
+      under the bar. Drag the bar to scrub through the run, either way. <b>Hold Shift</b> to light up the
+      whole subnet under the pointer.</p>
+    <h2>Pointed at</h2>
+    <div id="detail">point at an agent</div>
+    <h2>The net as a term, now</h2>
+    <div id="whole" class="term"></div>
+    <h2>The rule</h2>
+    <div id="ruleBox">point at a bright wire, or follow a link above</div>
+    <h2>Now</h2>
+    <div id="counts"></div>
+    <h2>Try</h2>
+    <div id="tour"></div>
+    <h2>The adds</h2>
+    <p>Every add in the prelude, named for the kind of program it is, the shape of its numbers and the way
+      it adds. Click one to play it.</p>
+    <p><span class="kind linear">linear</span> uses every variable, so no eraser ever appears, and copies
+      only where a variable is used twice. <span class="kind ordinary">ordinary</span> is the usual way: a
+      fixpoint or a test, and what is not picked is erased. <span class="kind reversible">reversible</span>
+      is linear and also hands the first number back, so a subtract can undo the add: an add alone
+      forgets, since 1 + 2 and 2 + 1 give one sum.</p>
+    <div id="adds"></div>
+    <h2>What you are looking at</h2>
+    <p>A λ-calculus run as an interaction net. Each shape is an <b>agent</b>, each line a wire. Two agents
+      joined by their main ports (a <b>bright</b> wire, in the colour of what the rewrite will do) are about
+      to rewrite; nothing else can happen. The program hangs from the root (the ring at the top), and its
+      answer ends up there.</p>
+    <p><b>Structures.</b> Code that hangs together sits on one faint band: one value, or one stretch of
+      code. Bands keep apart, and what is running, copying or erasing stands between them. A band's label
+      is the name of the definition it comes from, or else the start of its term. A <b>number</b> carries
+      a green tag that says which number it is, wherever it is and however it was built; its bits are
+      the parts named <code>b0</code> and <code>b1</code>.</p>
+    <p><b>Terms.</b> Point at an agent to read the subnet under it as a term, and see the whole net as one
+      above. A name stands for a definition that is whole. In a term, <code>▸c</code> is a thaw on code c,
+      <code>f @ a</code> an application that is running, <code>‹v›</code> a value a variable holds,
+      <code>⧉n⟨v⟩</code> a side of copy n that has still to pass through v, and <code>ρ⟨v⟩</code> a read
+      under way.</p>
+    <p><b>Physical.</b> Tick it and play: the two agents of every pair that can fire are drawn together,
+      and the pair rewrites when its main pins touch. What is close goes first, and what must cross the
+      net goes later. The answer and the number of rewrites are the same as in any other order.</p>
+    <p><b>Ports.</b> Every port is a pin on its own side of the icon, and wires join pin tips. The main
+      port's pin ends in a white dot. Only main ports meet: a rewrite happens where two main ports
+      are wired together, and it rewires what was on the side ports. An icon turns, and flips left
+      for right, to face its pins toward what they are wired to; its letter stays upright.</p>
+    <p><b>Named parts.</b> The code of a definition (<code>suc</code>, <code>size</code>, …) that nothing is acting on is
+      drawn as its name on a pill. Click a pill to open it, and the tag of an opened part to fold it
+      again. A part opens by itself when a thaw, a copier or an eraser reaches it, and its copies fold
+      when they are whole.</p>
+    <p><b>Drag an agent</b> to move it; the layout gives way around it and settles again when you let go.
+      Drag empty space to move the view, and scroll to zoom.</p>
+    <p><b>Code is frozen.</b> The grey shapes are code: functions (λ on a tile), applications (small disks) and
+      uses of variables (dots). Code does nothing by itself. A <b>thaw</b> (green arrow) walks down it and
+      turns each application into a running one (pink @). A thaw stops at a function: the body stays
+      frozen until the function is called, so nothing inside a body ever moves early.</p>
+    <p><b>A call</b> is a running application meeting a function. The argument is wired to the uses of the
+      variable (the thin violet wires), and a thaw starts on the body.</p>
+    <p><b>Copying</b> happens only where a variable is used twice: a split (thin violet Y) sits on its wire.
+      When a value arrives, copiers (thick Y, one colour per copy) walk through it one agent at a
+      time, and cancel where the two ends of one copy meet. Two copies under way at once keep their
+      own colours: watch that a cancel always joins one colour.</p>
+    <p><b>Erasing</b> happens only where a variable is not used: an eraser (red ×) walks through the value.</p>
+    <p><b>Reading</b>: <code>ρ v</code> makes a reader (ρ on a cyan disk). It builds a function of five arms and
+      hands the value's parts to the arm for its kind: function, opened function, application, captured
+      value, or ρ. Reading a function <b>opens</b> it (Λ on an open tile): applied, an opened function hands
+      back its body as code instead of running it. Reading it again closes it.</p>
+    <p>The shapes named here are the suggested icons; <a href="icons.html">others can be chosen</a>.</p>
+    <p><b>Linear programs</b> (<code>linear_unary_add</code>, <code>linear_list_add</code>) use every variable,
+      so no eraser ever appears, and the only copies are the ones the program asks for: a number is its own
+      loop, each successor copies the step once, and zero hands the last copy back. Try
+      <code>linear_unary_add 40u 2u</code> or <code>linear_list_add 1000 2000</code>, with numbers of any size: the
+      answer holds the sum first, then what is handed back.</p>
+    <p><b>Numbers as trees.</b> <code>1014t</code> is a tree of bits: pairs of pairs with a bit at each leaf,
+      the low half on the left, and beside it the depth as a loop. <code>linear_tree_add 1014t 2413t</code>
+      adds two of them with nothing erased, and hands back a tree: the adder for a tree is two adders for
+      its halves, and the depth says how often to halve. <code>ordinary_tree_add</code> adds the same trees
+      the usual way, testing each bit and dropping the arm not taken. <code>linear_tree_add_parallel</code>
+      adds them in parallel and still erases nothing: every part of a tree works out its carry out for
+      both carries in at once, and the carry then goes down. Played a round at a time, it takes 85 more
+      rounds for each doubling of the trees, where <code>linear_tree_add</code> takes twice the rounds. A
+      number that is folded opens when you click it; <code>&amp;open=1</code> in the link starts with the
+      numbers open.</p>
+    <p><b>Reversible.</b> A linear add erases nothing and still forgets: many pairs of numbers give one
+      sum. <code>reversible_tree_add a b</code> hands back <code>a</code> and the sum, and
+      <code>reversible_tree_sub a s</code> hands back <code>a</code> and <code>s − a</code>, so each undoes the
+      other: <code>reversible_tree_add 1014t 2413t reversible_tree_sub</code> ends with 1014 and 2413 again.
+      Only the answers can be had back this way. A rewrite of the net cannot be undone: the ◀ buttons go
+      back to moments the page kept.</p>
+    <p><b>Order does not matter.</b> Fire pairs in any order you like, or pick another order under the bar:
+      the answer is the same, and so is the number of rewrites. A pair you fire replaces what was
+      planned from that moment; the rest of the run is planned again, and its length does not change.</p>
+    <h2>Rewrites</h2>
+    <div class="legend" id="families"></div>
+    <h2>Agents</h2>
+    <div class="legend" id="legend"></div>
+    <p style="margin-top:6px"><a href="icons.html">Choose other icons</a>: four ways to draw each agent, and what each agent really does.</p>
+    <h2>Writing programs</h2>
+    <p><code>\x y. body</code> is a function, <code>^x. body</code> an opened one (so <code>(^d. p) u</code> is the code
+      of <code>p</code>), <code>f a</code> applies, <code>ρ</code> reads. Every name must be bound by a function or
+      defined: <code>name := term; …</code> defines names first. A number is written with its form after its digits. The linear ones:
+      <code>5u</code> is unary, <code>5</code> a list of bits and <code>5t</code> a tree of bits. The ordinary
+      ones: <code>5s</code> is unary and <code>5c</code> a list of bits. For the add whose two numbers have
+      different shapes, <code>5a</code> is a number whose cells pick an arm and <code>5p</code> a chain of
+      pairs. Every list of bits in a program gets one bit more than the largest needs, so a sum of two
+      fits, and every tree number the fewest levels that hold as much. A value that is such a number is
+      shown as one, and a tree of bits with no depth beside it as <code>{n|leaves}</code>. These are defined
+      already:</p>
+    <details><summary>zero, suc, add, true, false, Z, kindOf, size, no, err, close, open, interp, and the adds:
+      linear_unary_add, ordinary_unary_add, linear_list_add, linear_list_add_two_shapes, ordinary_list_add,
+      linear_tree_add, ordinary_tree_add, linear_tree_add_parallel, ordinary_tree_add_parallel,
+      reversible_tree_add, reversible_tree_sub, reversible_tree_add_parallel, reversible_tree_sub_parallel,
+      with their parts</summary><pre id="prelude"></pre></details>
+    <p style="margin-top:12px">The design: <a href="../nets/DESIGN.md">DESIGN.md</a>; its theorems: <a href="../lean/PATHWAY.md">PATHWAY.md</a>.
+      The engine here is <code>engine.js</code>, held to the Python nets by <code>check.mjs</code>.</p>
+  </aside>
+</div>
+<script src="engine.js"></script>
+<script src="icons.js"></script>
+<script src="player.js"></script>
+</body></html>

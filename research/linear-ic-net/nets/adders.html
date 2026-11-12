@@ -1,0 +1,230 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The adds, compared</title>
+<!-- Drawn from the numbers adders.py writes into the data block below: python adders.py -->
+<style>
+  .viz-root { color-scheme: light;
+    --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781; --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; }
+  @media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .viz-root { color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; } }
+  :root[data-theme="dark"] .viz-root { color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; }
+  html, body { margin:0; }
+  body { background:var(--page); color:var(--ink); font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:1120px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:22px 0 6px; }
+  p { margin:0 0 12px; color:var(--ink-2); max-width:78ch; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 18px; margin:14px 0 10px; color:var(--ink-2); font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+  .legend svg, .tip svg { width:26px; height:8px; flex:none; overflow:visible; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap:14px; }
+  figure { margin:0; background:var(--surface); border:1px solid var(--ring); border-radius:10px; padding:12px 12px 6px; position:relative; }
+  figcaption { font-size:13px; color:var(--ink-2); margin-bottom:2px; }
+  figcaption b { color:var(--ink); font-weight:600; display:block; font-size:14px; }
+  figure > div > svg { display:block; width:100%; height:auto; overflow:visible; outline:none; }
+  svg text { font:11.5px system-ui, -apple-system, "Segoe UI", sans-serif; fill:var(--muted); font-variant-numeric:tabular-nums; }
+  svg text.name { fill:var(--ink-2); }
+  figure > div > svg:focus-visible { outline:2px solid var(--s1); outline-offset:4px; border-radius:6px; }
+  .tip { position:absolute; pointer-events:none; background:var(--surface); border:1px solid var(--ring); border-radius:8px; padding:6px 9px;
+    box-shadow:0 4px 14px rgba(0,0,0,.14); font-size:12px; color:var(--ink-2); min-width:150px; z-index:2; }
+  .tip div { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .tip b { color:var(--ink); font-weight:600; min-width:4.6em; text-align:right; font-variant-numeric:tabular-nums; }
+  .tip .at { color:var(--ink); font-weight:600; margin-bottom:2px; }
+  details { margin-top:16px; }
+  summary { cursor:pointer; color:var(--ink); font-weight:600; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; margin:10px 0 14px; font-size:12.5px; font-variant-numeric:tabular-nums; }
+  caption { text-align:left; color:var(--ink); font-weight:600; padding-bottom:4px; }
+  th, td { padding:3px 8px; text-align:right; border-bottom:1px solid var(--grid); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; color:var(--ink-2); font-weight:400; }
+  thead th { color:var(--muted); font-weight:500; }
+  td code { font:12px ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--ink); }
+  td a { color:var(--s1); }
+  #which td, #which th { text-align:left; }
+</style></head>
+<body class="viz-root">
+<main>
+  <h1>The adds, compared</h1>
+  <p>Every add written for the nets so far, on two numbers of 2 to 1,024 bits. Each is named for the kind
+    of program it is, the shape of its numbers and the way it adds. A <b>linear</b> program uses every
+    variable, so it erases nothing. An <b>ordinary</b> one tests bits and drops what it does not pick. A
+    <b>reversible</b> one is linear and hands the first number back beside the sum, so a subtract can undo
+    it. The numbers are lists of bits or trees of bits, and a tree is added one bit after another or in
+    parallel.</p>
+  <div id="which"></div>
+  <p>In the charts, colour is the shape of the numbers and the way they are added. A solid line is a
+    linear program, a dashed one an ordinary program, and the dotted one the linear list add whose two
+    numbers have different shapes. The reversible adds and subtracts are left out of the charts: each
+    runs a little above the linear add it is built on. They are in the tables.</p>
+  <div class="legend" id="legend"></div>
+  <div class="grid">
+    <figure><figcaption><b>Time, with nothing held back</b>rounds, when every pair that waits fires at once</figcaption><div id="rounds"></div></figure>
+    <figure><figcaption><b>Time, with a limit</b>rounds for 256-bit numbers, when at most so many pairs fire in a round</figcaption><div id="limited"></div></figure>
+    <figure><figcaption><b>Work</b>rewrites for each bit</figcaption><div id="work"></div></figure>
+    <figure><figcaption><b>Room</b>the most agents there are at once, for each bit</figcaption><div id="room"></div></figure>
+  </div>
+  <p style="margin-top:14px">A round fires every pair that is waiting when it starts. With no limit on how many
+    that is, the rounds are the least time a run can take, and the work is what it costs whatever the order.
+    An add that goes one bit after another takes rounds in step with the bits. The parallel adds take a
+    fixed number of rounds more each time the numbers double, and pay for it in work and in room.</p>
+  <div id="tables"></div>
+</main>
+<script id="data" type="application/json">{"sizes": [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024], "parts": ["copy", "cancel", "erase", "call", "thaw"], "widths": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 0], "width_bits": 256, "binary": [{"key": "linear_list_add", "name": "linear list", "shape": "list", "kind": "linear", "way": "ripple", "rewrites": [635.0, 1209.0, 2357.0, 4653.0, 9245.0, 18429.0, 36797.0, 73533.0, 147005.0, 293949.0], "rounds": [202.0, 364.0, 688.0, 1336.0, 2632.0, 5224.0, 10408.0, 20776.0, 41512.0, 82984.0], "widest": [20.0, 28.0, 35.0, 35.0, 35.0, 37.0, 37.0, 37.0, 37.0, 37.0], "peak": [302.0, 487.0, 849.0, 1588.0, 3053.0, 5990.0, 11872.0, 23614.0, 47117.0, 94124.0], "start": [216.0, 288.0, 432.0, 720.0, 1296.0, 2448.0, 4752.0, 9360.0, 18576.0, 37008.0], "copies_started": [10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0, 1280.0, 2560.0, 5120.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [206.0, 412.0, 824.0, 1648.0, 3296.0, 6592.0, 13184.0, 26368.0, 52736.0, 105472.0], "cancel": [72.0, 144.0, 288.0, 576.0, 1152.0, 2304.0, 4608.0, 9216.0, 18432.0, 36864.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [89.0, 163.0, 311.0, 607.0, 1199.0, 2383.0, 4751.0, 9487.0, 18959.0, 37903.0], "thaw": [268.0, 490.0, 934.0, 1822.0, 3598.0, 7150.0, 14254.0, 28462.0, 56878.0, 113710.0], "spread": {"rewrites": [[635, 635], [1209, 1209], [2357, 2357], [4653, 4653], [9245, 9245], [18429, 18429], [36797, 36797], [73533, 73533], [147005, 147005], [293949, 293949]], "rounds": [[202, 202], [364, 364], [688, 688], [1336, 1336], [2632, 2632], [5224, 5224], [10408, 10408], [20776, 20776], [41512, 41512], [82984, 82984]], "peak": [[302, 302], [487, 487], [849, 849], [1588, 1588], [3053, 3053], [5990, 5990], [11872, 11872], [23614, 23614], [47117, 47117], [94124, 94124]]}}, {"key": "linear_list_add_two_shapes", "name": "linear list, two shapes", "shape": "list", "kind": "linear", "way": "ripple", "rewrites": [473.0, 885.0, 1709.0, 3357.0, 6653.0, 13245.0, 26429.0, 52797.0, 105533.0, 211005.0], "rounds": [151.0, 259.0, 475.0, 907.0, 1771.0, 3499.0, 6955.0, 13867.0, 27691.0, 55339.0], "widest": [14.666666666666666, 16.666666666666668, 18.333333333333332, 19.0, 19.333333333333332, 20.0, 21.333333333333332, 21.333333333333332, 22.0, 22.0], "peak": [341.6666666666667, 488.3333333333333, 783.6666666666666, 1373.0, 2546.6666666666665, 4899.0, 9598.666666666666, 19003.0, 37806.666666666664, 75419.0], "start": [261.0, 309.0, 405.0, 597.0, 981.0, 1749.0, 3285.0, 6357.0, 12501.0, 24789.0], "copies_started": [4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [158.0, 316.0, 632.0, 1264.0, 2528.0, 5056.0, 10112.0, 20224.0, 40448.0, 80896.0], "cancel": [54.0, 108.0, 216.0, 432.0, 864.0, 1728.0, 3456.0, 6912.0, 13824.0, 27648.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [65.0, 115.0, 215.0, 415.0, 815.0, 1615.0, 3215.0, 6415.0, 12815.0, 25615.0], "thaw": [196.0, 346.0, 646.0, 1246.0, 2446.0, 4846.0, 9646.0, 19246.0, 38446.0, 76846.0], "spread": {"rewrites": [[473, 473], [885, 885], [1709, 1709], [3357, 3357], [6653, 6653], [13245, 13245], [26429, 26429], [52797, 52797], [105533, 105533], [211005, 211005]], "rounds": [[151, 151], [259, 259], [475, 475], [907, 907], [1771, 1771], [3499, 3499], [6955, 6955], [13867, 13867], [27691, 27691], [55339, 55339]], "peak": [[341, 343], [485, 490], [781, 785], [1373, 1373], [2544, 2548], [4899, 4899], [9596, 9600], [19003, 19003], [37804, 37808], [75419, 75419]]}}, {"key": "ordinary_list_add", "name": "ordinary list", "shape": "list", "kind": "ordinary", "way": "ripple", "rewrites": [1614.0, 2394.0, 3954.0, 7074.0, 13314.0, 25794.0, 50754.0, 100674.0, 200514.0, 400194.0], "rounds": [159.0, 245.0, 417.0, 761.0, 1449.0, 2825.0, 5577.0, 11081.0, 22089.0, 44105.0], "widest": [30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0], "peak": [417.0, 457.0, 537.0, 697.0, 1017.0, 1657.0, 2937.0, 5497.0, 10617.0, 20857.0], "start": [202.0, 242.0, 322.0, 482.0, 802.0, 1442.0, 2722.0, 5282.0, 10402.0, 20642.0], "copies_started": [19.0, 35.0, 67.0, 131.0, 259.0, 515.0, 1027.0, 2051.0, 4099.0, 8195.0], "erasers": [20.0, 28.0, 44.0, 76.0, 140.0, 268.0, 524.0, 1036.0, 2060.0, 4108.0], "copy": [503.0, 779.0, 1331.0, 2435.0, 4643.0, 9059.0, 17891.0, 35555.0, 70883.0, 141539.0], "cancel": [156.0, 242.0, 414.0, 758.0, 1446.0, 2822.0, 5574.0, 11078.0, 22086.0, 44102.0], "erase": [618.0, 740.0, 984.0, 1472.0, 2448.0, 4400.0, 8304.0, 16112.0, 31728.0, 62960.0], "call": [84.0, 158.0, 306.0, 602.0, 1194.0, 2378.0, 4746.0, 9482.0, 18954.0, 37898.0], "thaw": [253.0, 475.0, 919.0, 1807.0, 3583.0, 7135.0, 14239.0, 28447.0, 56863.0, 113695.0], "spread": {"rewrites": [[1614, 1614], [2394, 2394], [3954, 3954], [7074, 7074], [13314, 13314], [25794, 25794], [50754, 50754], [100674, 100674], [200514, 200514], [400194, 400194]], "rounds": [[159, 159], [245, 245], [417, 417], [761, 761], [1449, 1449], [2825, 2825], [5577, 5577], [11081, 11081], [22089, 22089], [44105, 44105]], "peak": [[417, 417], [457, 457], [537, 537], [697, 697], [1017, 1017], [1657, 1657], [2937, 2937], [5497, 5497], [10617, 10617], [20857, 20857]]}}, {"key": "linear_tree_add", "name": "linear tree", "shape": "tree", "kind": "linear", "way": "ripple", "rewrites": [426.0, 1032.0, 2236.0, 4636.0, 9428.0, 19004.0, 38148.0, 76428.0, 152980.0, 306076.0], "rounds": [222.0, 438.0, 870.0, 1734.0, 3462.0, 6918.0, 13830.0, 27654.0, 55302.0, 110598.0], "widest": [6.0, 14.0, 21.0, 41.0, 76.0, 146.0, 281.0, 556.0, 1083.0, 2149.0], "peak": [202.0, 406.0, 839.0, 1714.0, 3477.0, 7007.0, 14094.0, 28238.0, 56532.0, 113144.0], "start": [201.0, 255.0, 357.0, 555.0, 945.0, 1719.0, 3261.0, 6339.0, 12489.0, 24783.0], "copies_started": [7.0, 15.0, 29.0, 55.0, 105.0, 203.0, 397.0, 783.0, 1553.0, 3091.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [86.0, 308.0, 750.0, 1632.0, 3394.0, 6916.0, 13958.0, 28040.0, 56202.0, 112524.0], "cancel": [31.0, 107.0, 257.0, 555.0, 1149.0, 2335.0, 4705.0, 9443.0, 18917.0, 37863.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [77.0, 154.0, 307.0, 612.0, 1221.0, 2438.0, 4871.0, 9736.0, 19465.0, 38922.0], "thaw": [232.0, 463.0, 922.0, 1837.0, 3664.0, 7315.0, 14614.0, 29209.0, 58396.0, 116767.0], "spread": {"rewrites": [[426, 426], [1032, 1032], [2236, 2236], [4636, 4636], [9428, 9428], [19004, 19004], [38148, 38148], [76428, 76428], [152980, 152980], [306076, 306076]], "rounds": [[222, 222], [438, 438], [870, 870], [1734, 1734], [3462, 3462], [6918, 6918], [13830, 13830], [27654, 27654], [55302, 55302], [110598, 110598]], "peak": [[202, 202], [406, 406], [839, 839], [1714, 1714], [3477, 3477], [7007, 7007], [14094, 14094], [28238, 28238], [56532, 56532], [113144, 113144]]}}, {"key": "ordinary_tree_add", "name": "ordinary tree", "shape": "tree", "kind": "ordinary", "way": "ripple", "rewrites": [1292.0, 3008.0, 6424.0, 13240.0, 26856.0, 54072.0, 108488.0, 217304.0, 434920.0, 870136.0], "rounds": [148.66666666666666, 266.3333333333333, 528.0, 1056.0, 2112.0, 4224.0, 8448.0, 16896.0, 33792.0, 67584.0], "widest": [33.0, 53.0, 93.0, 178.0, 334.0, 635.0, 1222.0, 2343.0, 4617.0, 8945.0], "peak": [573.0, 1138.0, 2295.0, 4614.0, 9264.0, 18569.0, 37132.0, 74242.0, 148558.0, 296961.0], "start": [382.0, 436.0, 538.0, 736.0, 1126.0, 1900.0, 3442.0, 6520.0, 12670.0, 24964.0], "copies_started": [16.0, 32.0, 62.0, 120.0, 234.0, 460.0, 910.0, 1808.0, 3602.0, 7188.0], "erasers": [8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0], "copy": [321.0, 954.0, 2215.0, 4732.0, 9761.0, 19814.0, 39915.0, 80112.0, 160501.0, 321274.0], "cancel": [110.0, 321.0, 740.0, 1575.0, 3242.0, 6573.0, 13232.0, 26547.0, 53174.0, 106425.0], "erase": [168.0, 340.0, 680.0, 1356.0, 2704.0, 5396.0, 10776.0, 21532.0, 43040.0, 86052.0], "call": [173.0, 348.0, 697.0, 1394.0, 2787.0, 5572.0, 11141.0, 22278.0, 44551.0, 89096.0], "thaw": [520.0, 1045.0, 2092.0, 4183.0, 8362.0, 16717.0, 33424.0, 66835.0, 133654.0, 267289.0], "spread": {"rewrites": [[1292, 1292], [3008, 3008], [6424, 6424], [13240, 13240], [26856, 26856], [54072, 54072], [108488, 108488], [217304, 217304], [434920, 434920], [870136, 870136]], "rounds": [[148, 149], [266, 267], [528, 528], [1056, 1056], [2112, 2112], [4224, 4224], [8448, 8448], [16896, 16896], [33792, 33792], [67584, 67584]], "peak": [[573, 573], [1138, 1138], [2295, 2295], [4614, 4614], [9264, 9264], [18569, 18569], [37132, 37132], [74242, 74242], [148558, 148558], [296961, 296961]]}}, {"key": "linear_tree_add_parallel", "name": "linear tree, parallel", "shape": "tree", "kind": "linear", "way": "parallel", "rewrites": [849.0, 2397.0, 5485.0, 11653.0, 23981.0, 48629.0, 97917.0, 196485.0, 393613.0, 787861.0], "rounds": [215.0, 285.0, 355.0, 436.0, 521.0, 606.0, 691.0, 776.0, 861.0, 946.0], "widest": [11.0, 48.0, 92.0, 129.0, 244.0, 487.0, 939.0, 1881.0, 3683.0, 7348.0], "peak": [399.0, 873.0, 1872.0, 3840.0, 7858.0, 15848.0, 31992.0, 64170.0, 128886.0, 258010.0], "start": [363.0, 417.0, 519.0, 717.0, 1107.0, 1881.0, 3423.0, 6501.0, 12651.0, 24945.0], "copies_started": [12.0, 30.0, 64.0, 130.0, 260.0, 518.0, 1032.0, 2058.0, 4108.0, 8206.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [168.0, 752.0, 1918.0, 4248.0, 8906.0, 18220.0, 36846.0, 74096.0, 148594.0, 297588.0], "cancel": [60.0, 260.0, 658.0, 1452.0, 3038.0, 6208.0, 12546.0, 25220.0, 50566.0, 101256.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [155.0, 346.0, 727.0, 1488.0, 3009.0, 6050.0, 12131.0, 24292.0, 48613.0, 97254.0], "thaw": [466.0, 1039.0, 2182.0, 4465.0, 9028.0, 18151.0, 36394.0, 72877.0, 145840.0, 291763.0], "spread": {"rewrites": [[849, 849], [2397, 2397], [5485, 5485], [11653, 11653], [23981, 23981], [48629, 48629], [97917, 97917], [196485, 196485], [393613, 393613], [787861, 787861]], "rounds": [[215, 215], [285, 285], [355, 355], [436, 436], [521, 521], [606, 606], [691, 691], [776, 776], [861, 861], [946, 946]], "peak": [[399, 399], [873, 873], [1872, 1872], [3840, 3840], [7858, 7858], [15848, 15848], [31992, 31992], [64170, 64170], [128886, 128886], [258010, 258010]]}}, {"key": "ordinary_tree_add_parallel", "name": "ordinary tree, parallel", "shape": "tree", "kind": "ordinary", "way": "parallel", "rewrites": [1333.0, 3397.0, 7509.0, 15717.0, 32117.0, 64901.0, 130453.0, 261541.0, 523701.0, 1048005.0], "rounds": [169.66666666666666, 223.33333333333334, 283.6666666666667, 345.6666666666667, 407.6666666666667, 469.3333333333333, 532.0, 594.0, 655.3333333333334, 718.0], "widest": [26.0, 53.0, 102.0, 208.0, 399.0, 800.0, 1565.0, 3103.0, 6150.0, 12142.0], "peak": [573.0, 1204.0, 2524.0, 5122.0, 10407.0, 20911.0, 42089.0, 84268.0, 169007.0, 337911.0], "start": [421.0, 475.0, 577.0, 775.0, 1165.0, 1939.0, 3481.0, 6559.0, 12709.0, 25003.0], "copies_started": [19.0, 43.0, 89.0, 179.0, 357.0, 711.0, 1417.0, 2827.0, 5645.0, 11279.0], "erasers": [11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0], "copy": [320.0, 1087.0, 2616.0, 5669.0, 11770.0, 23967.0, 48356.0, 97129.0, 194670.0, 389747.0], "cancel": [111.0, 368.0, 879.0, 1898.0, 3933.0, 8000.0, 16131.0, 32390.0, 64905.0, 129932.0], "erase": [189.0, 409.0, 845.0, 1713.0, 3445.0, 6905.0, 13821.0, 27649.0, 55301.0, 110601.0], "call": [178.0, 383.0, 792.0, 1609.0, 3242.0, 6507.0, 13036.0, 26093.0, 52206.0, 104431.0], "thaw": [535.0, 1150.0, 2377.0, 4828.0, 9727.0, 19522.0, 39109.0, 78280.0, 156619.0, 313294.0], "spread": {"rewrites": [[1333, 1333], [3397, 3397], [7509, 7509], [15717, 15717], [32117, 32117], [64901, 64901], [130453, 130453], [261541, 261541], [523701, 523701], [1048005, 1048005]], "rounds": [[169, 170], [223, 224], [283, 284], [345, 346], [407, 408], [469, 470], [531, 532], [593, 594], [655, 656], [717, 718]], "peak": [[573, 573], [1204, 1204], [2524, 2524], [5122, 5122], [10407, 10407], [20911, 20911], [42089, 42089], [84268, 84268], [169007, 169007], [337911, 337911]]}}, {"key": "reversible_tree_add", "name": "reversible tree", "shape": "tree", "kind": "reversible", "way": "ripple", "rewrites": [501.0, 1143.0, 2415.0, 4947.0, 9999.0, 20091.0, 40263.0, 80595.0, 161247.0, 322539.0], "rounds": [239.0, 455.0, 887.0, 1751.0, 3479.0, 6935.0, 13847.0, 27671.0, 55319.0, 110615.0], "widest": [7.0, 14.0, 21.0, 41.0, 76.0, 146.0, 281.0, 556.0, 1083.0, 2149.0], "peak": [248.0, 482.0, 966.0, 1940.0, 3898.0, 7815.0, 15673.0, 31356.0, 62725.0, 125484.0], "start": [222.0, 276.0, 378.0, 576.0, 966.0, 1740.0, 3282.0, 6360.0, 12510.0, 24804.0], "copies_started": [8.0, 16.0, 30.0, 56.0, 106.0, 204.0, 398.0, 784.0, 1554.0, 3092.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [115.0, 364.0, 857.0, 1838.0, 3795.0, 7704.0, 15517.0, 31138.0, 62375.0, 124844.0], "cancel": [41.0, 126.0, 293.0, 624.0, 1283.0, 2598.0, 5225.0, 10476.0, 20975.0, 41970.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [86.0, 163.0, 316.0, 621.0, 1230.0, 2447.0, 4880.0, 9745.0, 19474.0, 38931.0], "thaw": [259.0, 490.0, 949.0, 1864.0, 3691.0, 7342.0, 14641.0, 29236.0, 58423.0, 116794.0], "spread": {"rewrites": [[501, 501], [1143, 1143], [2415, 2415], [4947, 4947], [9999, 9999], [20091, 20091], [40263, 40263], [80595, 80595], [161247, 161247], [322539, 322539]], "rounds": [[239, 239], [455, 455], [887, 887], [1751, 1751], [3479, 3479], [6935, 6935], [13847, 13847], [27671, 27671], [55319, 55319], [110615, 110615]], "peak": [[248, 248], [482, 482], [966, 966], [1940, 1940], [3898, 3898], [7815, 7815], [15673, 15673], [31356, 31356], [62725, 62725], [125484, 125484]]}}, {"key": "reversible_tree_sub", "name": "reversible tree, subtract", "shape": "tree", "kind": "reversible", "way": "ripple", "rewrites": [547.0, 1263.0, 2683.0, 5511.0, 11155.0, 22431.0, 44971.0, 90039.0, 180163.0, 360399.0], "rounds": [269.0, 515.0, 1007.0, 1991.0, 3959.0, 7895.0, 15767.0, 31511.0, 62999.0, 125975.0], "widest": [10.0, 18.0, 30.0, 54.0, 105.0, 198.0, 387.0, 754.0, 1469.0, 2914.0], "peak": [287.0, 563.0, 1131.0, 2273.0, 4570.0, 9160.0, 18356.0, 36730.0, 73485.0, 147000.0], "start": [243.0, 297.0, 399.0, 597.0, 987.0, 1761.0, 3303.0, 6381.0, 12531.0, 24825.0], "copies_started": [6.0, 12.0, 22.0, 40.0, 74.0, 140.0, 270.0, 528.0, 1042.0, 2068.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [120.0, 395.0, 940.0, 2025.0, 4190.0, 8515.0, 17160.0, 34445.0, 69010.0, 138135.0], "cancel": [42.0, 135.0, 318.0, 681.0, 1404.0, 2847.0, 5730.0, 11493.0, 23016.0, 46059.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [96.0, 183.0, 356.0, 701.0, 1390.0, 2767.0, 5520.0, 11025.0, 22034.0, 44051.0], "thaw": [289.0, 550.0, 1069.0, 2104.0, 4171.0, 8302.0, 16561.0, 33076.0, 66103.0, 132154.0], "spread": {"rewrites": [[547, 547], [1263, 1263], [2683, 2683], [5511, 5511], [11155, 11155], [22431, 22431], [44971, 44971], [90039, 90039], [180163, 180163], [360399, 360399]], "rounds": [[269, 269], [515, 515], [1007, 1007], [1991, 1991], [3959, 3959], [7895, 7895], [15767, 15767], [31511, 31511], [62999, 62999], [125975, 125975]], "peak": [[287, 287], [563, 563], [1131, 1131], [2273, 2273], [4570, 4570], [9160, 9160], [18356, 18356], [36730, 36730], [73485, 73485], [147000, 147000]]}}, {"key": "reversible_tree_add_parallel", "name": "reversible tree, parallel", "shape": "tree", "kind": "reversible", "way": "parallel", "rewrites": [924.0, 2508.0, 5664.0, 11964.0, 24552.0, 49716.0, 100032.0, 200652.0, 401880.0, 804324.0], "rounds": [215.0, 285.0, 355.0, 436.0, 521.0, 606.0, 691.0, 776.0, 861.0, 946.0], "widest": [11.0, 48.0, 92.0, 129.0, 244.0, 487.0, 939.0, 1881.0, 3683.0, 7348.0], "peak": [448.0, 949.0, 1999.0, 4066.0, 8279.0, 16656.0, 33571.0, 67288.0, 135079.0, 270350.0], "start": [384.0, 438.0, 540.0, 738.0, 1128.0, 1902.0, 3444.0, 6522.0, 12672.0, 24966.0], "copies_started": [13.0, 31.0, 65.0, 131.0, 261.0, 519.0, 1033.0, 2059.0, 4109.0, 8207.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [197.0, 808.0, 2025.0, 4454.0, 9307.0, 19008.0, 38405.0, 77194.0, 154767.0, 309908.0], "cancel": [70.0, 279.0, 694.0, 1521.0, 3172.0, 6471.0, 13066.0, 26253.0, 52624.0, 105363.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [164.0, 355.0, 736.0, 1497.0, 3018.0, 6059.0, 12140.0, 24301.0, 48622.0, 97263.0], "thaw": [493.0, 1066.0, 2209.0, 4492.0, 9055.0, 18178.0, 36421.0, 72904.0, 145867.0, 291790.0], "spread": {"rewrites": [[924, 924], [2508, 2508], [5664, 5664], [11964, 11964], [24552, 24552], [49716, 49716], [100032, 100032], [200652, 200652], [401880, 401880], [804324, 804324]], "rounds": [[215, 215], [285, 285], [355, 355], [436, 436], [521, 521], [606, 606], [691, 691], [776, 776], [861, 861], [946, 946]], "peak": [[448, 448], [949, 949], [1999, 1999], [4066, 4066], [8279, 8279], [16656, 16656], [33571, 33571], [67288, 67288], [135079, 135079], [270350, 270350]]}}, {"key": "reversible_tree_sub_parallel", "name": "reversible tree, parallel, subtract", "shape": "tree", "kind": "reversible", "way": "parallel", "rewrites": [970.0, 2628.0, 5932.0, 12528.0, 25708.0, 52056.0, 104740.0, 210096.0, 420796.0, 842184.0], "rounds": [230.0, 300.0, 370.0, 450.0, 535.0, 620.0, 705.0, 790.0, 875.0, 960.0], "widest": [11.0, 45.0, 86.0, 152.0, 293.0, 575.0, 1140.0, 2231.0, 4460.0, 8803.0], "peak": [475.0, 1030.0, 2140.0, 4389.0, 8885.0, 17949.0, 36091.0, 72469.0, 145309.0, 291116.0], "start": [405.0, 459.0, 561.0, 759.0, 1149.0, 1923.0, 3465.0, 6543.0, 12693.0, 24987.0], "copies_started": [11.0, 27.0, 57.0, 115.0, 229.0, 455.0, 905.0, 1803.0, 3597.0, 7183.0], "erasers": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "copy": [202.0, 839.0, 2108.0, 4641.0, 9702.0, 19819.0, 40048.0, 80501.0, 161402.0, 323199.0], "cancel": [71.0, 288.0, 719.0, 1578.0, 3293.0, 6720.0, 13571.0, 27270.0, 54665.0, 109452.0], "erase": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "call": [174.0, 375.0, 776.0, 1577.0, 3178.0, 6379.0, 12780.0, 25581.0, 51182.0, 102383.0], "thaw": [523.0, 1126.0, 2329.0, 4732.0, 9535.0, 19138.0, 38341.0, 76744.0, 153547.0, 307150.0], "spread": {"rewrites": [[970, 970], [2628, 2628], [5932, 5932], [12528, 12528], [25708, 25708], [52056, 52056], [104740, 104740], [210096, 210096], [420796, 420796], [842184, 842184]], "rounds": [[230, 230], [300, 300], [370, 370], [450, 450], [535, 535], [620, 620], [705, 705], [790, 790], [875, 875], [960, 960]], "peak": [[475, 475], [1030, 1030], [2140, 2140], [4389, 4389], [8885, 8885], [17949, 17949], [36091, 36091], [72469, 72469], [145309, 145309], [291116, 291116]]}}], "unary": [{"key": "linear_unary_add", "name": "linear unary", "kind": "linear", "rewrites": [68, 154, 326, 670, 1358, 2734, 5486, 10990, 21998, 44014], "rounds": [26, 40, 68, 124, 236, 460, 908, 1804, 3596, 7180], "widest": [6, 9, 9, 9, 9, 9, 9, 9, 9, 9], "peak": [64, 105, 181, 333, 637, 1245, 2461, 4893, 9757, 19485], "start": [63, 99, 171, 315, 603, 1179, 2331, 4635, 9243, 18459], "copy": [17, 51, 119, 255, 527, 1071, 2159, 4335, 8687, 17391], "cancel": [6, 18, 42, 90, 186, 378, 762, 1530, 3066, 6138], "erase": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "call": [11, 21, 41, 81, 161, 321, 641, 1281, 2561, 5121], "thaw": [34, 64, 124, 244, 484, 964, 1924, 3844, 7684, 15364]}, {"key": "ordinary_unary_add", "name": "ordinary unary", "kind": "ordinary", "rewrites": [263, 409, 701, 1285, 2453, 4789, 9461, 18805, 37493, 74869], "rounds": [66, 114, 210, 402, 786, 1554, 3090, 6162, 12306, 24594], "widest": [8, 8, 8, 8, 8, 8, 8, 8, 8, 8], "peak": [101, 123, 167, 255, 431, 783, 1487, 2895, 5711, 11343], "start": [64, 84, 124, 204, 364, 684, 1324, 2604, 5164, 10284], "copy": [74, 130, 242, 466, 914, 1810, 3602, 7186, 14354, 28690], "cancel": [24, 42, 78, 150, 294, 582, 1158, 2310, 4614, 9222], "erase": [104, 112, 128, 160, 224, 352, 608, 1120, 2144, 4192], "call": [15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191], "thaw": [46, 94, 190, 382, 766, 1534, 3070, 6142, 12286, 24574]}], "limited": {"linear_list_add": [73533, 42127, 29459, 24098, 21541, 20779, 20776, 20776, 20776, 20776, 20776, 20776], "linear_list_add_two_shapes": [52797, 29345, 19404, 15360, 13917, 13867, 13867, 13867, 13867, 13867, 13867, 13867], "ordinary_list_add": [100674, 50341, 25819, 14577, 11088, 11081, 11081, 11081, 11081, 11081, 11081, 11081], "linear_tree_add": [76428, 45204, 35075, 31164, 29337, 28429, 27983, 27775, 27683, 27654, 27654, 27654], "ordinary_tree_add": [217304, 110488, 58850, 33661, 22949, 19535, 18151, 17470, 17141, 16985, 16918, 16896], "linear_tree_add_parallel": [196485, 98252, 49142, 24588, 12319, 6220, 3216, 1762, 1099, 858, 790, 776], "ordinary_tree_add_parallel": [261541, 130778, 65402, 32720, 16393, 8253, 4212, 2227, 1271, 834, 653, 593], "reversible_tree_add": [80595, 47285, 36107, 31675, 29590, 28554, 28047, 27809, 27704, 27671, 27671, 27671], "reversible_tree_sub": [90039, 54182, 41730, 36405, 33874, 32614, 31995, 31700, 31567, 31516, 31511, 31511], "reversible_tree_add_parallel": [200652, 100327, 50167, 25088, 12558, 6330, 3264, 1779, 1103, 858, 790, 776], "reversible_tree_sub_parallel": [210096, 105049, 52528, 26269, 13148, 6623, 3408, 1850, 1136, 880, 809, 790]}}</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("data").textContent);
+/// How each add is drawn, wherever it is drawn: the colour of its kind, dashed for the usual way, dotted for
+/// the one whose two numbers have different shapes.
+const STYLE = {
+  linear_list_add: ["var(--s1)", "", "list"], linear_list_add_two_shapes: ["var(--s1)", "1 5", "list, two shapes"], ordinary_list_add: ["var(--s1)", "7 5", "list, ordinary"],
+  linear_tree_add: ["var(--s2)", "", "tree"], ordinary_tree_add: ["var(--s2)", "7 5", "tree, ordinary"],
+  linear_tree_add_parallel: ["var(--s3)", "", "parallel"], ordinary_tree_add_parallel: ["var(--s3)", "7 5", "parallel, ordinary"],
+};
+const el = (tag, attrs = {}, text) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const fmt = v => v >= 1e6 ? `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M` : v >= 10000 ? `${(v / 1000).toFixed(v >= 100000 ? 0 : 1)}K` : v >= 100 ? Math.round(v).toLocaleString("en") : v.toFixed(1);
+const nice = max => { const p = 10 ** Math.floor(Math.log10(max)), m = max / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; };
+/// A short piece of an add's line, for a legend or a tooltip.
+const key = k => { const s = el("svg", { viewBox: "0 0 26 8" }); s.append(el("line", { x1: 1, x2: 25, y1: 4, y2: 4, stroke: STYLE[k][0], "stroke-width": 2, "stroke-dasharray": STYLE[k][1], "stroke-linecap": "round" })); return s; };
+
+/// One line chart: `rows` are { key, name, values }, one value for each of `xs`, which are spread evenly
+/// and labelled by `tick`. `log` puts the values on a scale of tens; `title` goes under the axis and
+/// `at` heads the tooltip.
+function chart(host, { xs, tick, title, at, rows, log = false, height = 300 }) {
+  const W = +(host.dataset.w ?? 540), H = height, m = { l: 46, r: 132, t: 10, b: 32 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const all = rows.flatMap(r => r.values), most = Math.max(...all), least = Math.min(...all);
+  // a scale of tens runs from the 1, 2 or 5 below the least value to the one above the most
+  const round125 = (v, up) => { const p = 10 ** Math.floor(Math.log10(v)), s = [1, 2, 5, 10].map(k => k * p); return up ? s.find(c => c >= v) : s.reverse().find(c => c <= v); };
+  const lo = log ? Math.log10(round125(least, false)) : 0, hi = log ? Math.log10(round125(most, true)) : 0;
+  const step = log ? 0 : nice(most / 4), top = log ? 0 : Math.ceil(most * 1.02 / step) * step;
+  const x = i => m.l + pw * i / (xs.length - 1);
+  const y = v => m.t + ph * (1 - (log ? (Math.log10(v) - lo) / (hi - lo) : v / top));
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, tabindex: 0, role: "img",
+    "aria-label": rows.map(r => `${r.name}: ${fmt(r.values.at(-1))} at ${tick(xs.at(-1))}`).join("; ") });
+  const tens = []; for (let k = Math.ceil(lo - 1e-9); k <= hi + 1e-9; k++) tens.push(10 ** k);
+  const lines = log ? [...new Set([Math.round(10 ** lo), ...tens])] : Array.from({ length: Math.round(top / step) + 1 }, (_, k) => k * step);
+  lines.forEach((v, k) => {
+    svg.append(el("line", { x1: m.l, x2: m.l + pw, y1: y(v), y2: y(v), stroke: k ? "var(--grid)" : "var(--axis)", "stroke-width": 1 }));
+    svg.append(el("text", { x: m.l - 6, y: y(v) + 4, "text-anchor": "end" }, v >= 1e6 ? `${v / 1e6}M` : v >= 10000 ? `${v / 1000}K` : v.toLocaleString("en")));
+  });
+  xs.forEach((s, i) => svg.append(el("text", { x: x(i), y: H - m.b + 16, "text-anchor": "middle" }, tick(s))));
+  svg.append(el("text", { x: m.l + pw / 2, y: H - 2, "text-anchor": "middle" }, title));
+  const cross = el("line", { y1: m.t, y2: m.t + ph, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" });
+  svg.append(cross);
+  for (const r of rows) svg.append(el("path", { d: r.values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(""),
+    fill: "none", stroke: STYLE[r.key][0], "stroke-width": 2, "stroke-dasharray": STYLE[r.key][1], "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  // each line's name where it ends, moved apart where two would sit on each other, each with a short leader
+  const ends = rows.map(r => ({ r, at: y(r.values.at(-1)) })).sort((a, b) => a.at - b.at);
+  ends.forEach((e, i) => { e.label = i ? Math.max(e.at, ends[i - 1].label + 14) : e.at; });
+  for (let i = ends.length - 1; i >= 0; i--) { const cap = i === ends.length - 1 ? m.t + ph + 4 : ends[i + 1].label - 14; if (ends[i].label > cap) ends[i].label = cap; }
+  for (const e of ends) {
+    const ex = x(xs.length - 1);
+    svg.append(el("line", { x1: ex + 5, y1: e.at, x2: ex + 12, y2: e.label, stroke: "var(--axis)", "stroke-width": 1 }));
+    svg.append(el("circle", { cx: ex, cy: e.at, r: 4, fill: STYLE[e.r.key][0], stroke: "var(--surface)", "stroke-width": 2 }));
+    svg.append(el("text", { x: ex + 15, y: e.label + 4, class: "name" }, STYLE[e.r.key][2]));
+  }
+  const dots = rows.map(r => { const d = el("circle", { r: 4, fill: STYLE[r.key][0], stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }); svg.append(d); return d; });
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true;
+  const showAt = i => {
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    rows.forEach((r, k) => { dots[k].setAttribute("cx", x(i)); dots[k].setAttribute("cy", y(r.values[i])); dots[k].setAttribute("visibility", "visible"); });
+    tip.replaceChildren();
+    const head = document.createElement("div"); head.className = "at"; head.textContent = at(xs[i]); tip.append(head);
+    for (const r of [...rows].sort((a, b) => b.values[i] - a.values[i])) {
+      const row = document.createElement("div"), val = document.createElement("b"), name = document.createElement("span");
+      val.textContent = fmt(r.values[i]); name.textContent = r.name;
+      row.append(key(r.key), val, name); tip.append(row);
+    }
+    tip.hidden = false;
+    const box = svg.getBoundingClientRect(), px = box.width * x(i) / W, left = px > box.width * 0.45;
+    tip.style.left = left ? "" : `${px + 26}px`; tip.style.right = left ? `${box.width - px + 26}px` : ""; tip.style.top = "44px";
+    svg.dataset.at = i;
+  };
+  const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); tip.hidden = true; delete svg.dataset.at; };
+  svg.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect(), px = (ev.clientX - box.left) * W / box.width;
+    let best = 0; xs.forEach((_, i) => { if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i; });
+    showAt(best);
+  });
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("focus", () => showAt(xs.length - 1));
+  svg.addEventListener("blur", hide);
+  svg.addEventListener("keydown", ev => {
+    const move = ev.key === "ArrowLeft" ? -1 : ev.key === "ArrowRight" ? 1 : 0;
+    if (move) { showAt(Math.max(0, Math.min(xs.length - 1, +(svg.dataset.at ?? xs.length - 1) + move))); ev.preventDefault(); }
+  });
+  host.replaceChildren(svg, tip);
+}
+
+const ALL = DATA.binary, A = ALL.filter(a => a.kind !== "reversible"), sizes = DATA.sizes, FROM = sizes.indexOf(8);   // each bit's share starts at 8 bits: below, the cost of starting an add hides the rest
+const bitsTick = n => n.toLocaleString("en"), bitsAt = n => `${n.toLocaleString("en")} bits`;
+document.getElementById("legend").append(...A.map(a => { const s = document.createElement("span"); s.append(key(a.key), a.name); return s; }));
+chart(document.getElementById("rounds"), { xs: sizes, tick: bitsTick, title: "bits in each number", at: bitsAt, log: true,
+  rows: A.map(a => ({ key: a.key, name: a.name, values: a.rounds })) });
+chart(document.getElementById("limited"), { xs: DATA.widths, tick: w => w ? w.toLocaleString("en") : "any", title: "pairs that may fire in one round", log: true,
+  at: w => w ? `at most ${w.toLocaleString("en")} a round` : "any number a round",
+  rows: A.map(a => ({ key: a.key, name: a.name, values: DATA.limited[a.key] })) });
+const share = k => A.map(a => ({ key: a.key, name: a.name, values: a[k].slice(FROM).map((v, i) => v / sizes[FROM + i]) }));
+chart(document.getElementById("work"), { xs: sizes.slice(FROM), tick: bitsTick, title: "bits in each number", at: bitsAt, rows: share("rewrites") });
+chart(document.getElementById("room"), { xs: sizes.slice(FROM), tick: bitsTick, title: "bits in each number", at: bitsAt, rows: share("peak") });
+
+// the numbers, as tables
+const num = v => Math.round(v).toLocaleString("en");
+const table = (caption, head, rows) => {
+  const t = document.createElement("table"), cap = t.createCaption(); cap.textContent = caption;
+  const hr = t.createTHead().insertRow(); for (const h of head) { const th = document.createElement("th"); th.textContent = h; hr.append(th); }
+  const body = t.createTBody(); for (const r of rows) { const tr = body.insertRow(); for (const c of r) tr.insertCell().append(c); }
+  const wrap = document.createElement("div"); wrap.className = "scroll"; wrap.append(t); return wrap;
+};
+const at = n => sizes.indexOf(n), last = sizes.length - 1, per = (a, k) => (a[k][last] - a[k][last - 1]) / (sizes[last] - sizes[last - 1]);
+const host = document.getElementById("tables");
+const h2 = text => { const h = document.createElement("h2"); h.textContent = text; return h; };
+host.append(h2("The numbers"),
+  table("a + b on 64-bit numbers (for a subtract, b − a)", ["", "rewrites", "rounds", "rewrites a round", "widest round", "most agents", "agents at the start", "copies started", "erases"],
+    ALL.map(a => [a.name, num(a.rewrites[at(64)]), num(a.rounds[at(64)]), (a.rewrites[at(64)] / a.rounds[at(64)]).toFixed(1), num(a.widest[at(64)]), num(a.peak[at(64)]),
+      num(a.start[at(64)]), num(a.copies_started[at(64)]), num(a.erase[at(64)])])),
+  table(`For each bit more, from ${sizes[last - 1]} to ${sizes[last].toLocaleString("en")} bits`, ["", "rewrites", "copies and cancels", "erases", "calls", "thaws", "rounds", "agents at the most", "rounds that doubling adds"],
+    ALL.map(a => [a.name, per(a, "rewrites").toFixed(1), (per(a, "copy") + per(a, "cancel")).toFixed(1), per(a, "erase").toFixed(1), per(a, "call").toFixed(1),
+      per(a, "thaw").toFixed(1), per(a, "rounds").toFixed(2), per(a, "peak").toFixed(1), num(a.rounds[last] - a.rounds[last - 1])])),
+  table("Rounds, by the bits in each number", ["", ...sizes.map(bitsTick)], ALL.map(a => [a.name, ...a.rounds.map(num)])),
+  table("Rewrites, by the bits in each number", ["", ...sizes.map(bitsTick)], ALL.map(a => [a.name, ...a.rewrites.map(num)])),
+  table("The most agents at once, by the bits in each number", ["", ...sizes.map(bitsTick)], ALL.map(a => [a.name, ...a.peak.map(num)])),
+  table(`Rounds for ${DATA.width_bits}-bit numbers, by how many pairs may fire in a round`, ["", ...DATA.widths.map(w => w ? w.toLocaleString("en") : "any")],
+    ALL.map(a => [a.name, ...DATA.limited[a.key].map(num)])),
+  table("Unary, m + m, by the bits in m (the cost goes with m itself)", ["", ...DATA.unary[0].rewrites.map((_, k) => `${k + 1}`)],
+    DATA.unary.flatMap(u => [[`${u.name}: rewrites`, ...u.rewrites.map(num)], [`${u.name}: rounds`, ...u.rounds.map(num)], [`${u.name}: most agents`, ...u.peak.map(num)]])));
+
+// which add is which: the program, what it runs on, what it hands back, and a link that plays it on small numbers
+const WATCH = {
+  linear_unary_add: ["linear_unary_add 40u 2u", "40 + 2", "the sum, and its step"],
+  ordinary_unary_add: ["ordinary_unary_add 40s 2s", "40 + 2", "the sum"],
+  linear_list_add: ["linear_list_add 1014 2413", "1014 + 2413", "the sum, the carry, the end of b and its step"],
+  linear_list_add_two_shapes: ["linear_list_add_two_shapes 1014a 2413p", "1014 + 2413", "a, the sum as a chain, the carry, its two steps"],
+  ordinary_list_add: ["ordinary_list_add 1014c 2413c", "1014 + 2413", "the sum"],
+  linear_tree_add: ["linear_tree_add 1014t 2413t", "1014 + 2413", "the sum and the carry"],
+  ordinary_tree_add: ["ordinary_tree_add 1014t 2413t", "1014 + 2413", "the sum and the carry"],
+  linear_tree_add_parallel: ["linear_tree_add_parallel 1014t 2413t", "1014 + 2413", "the sum and the carry"],
+  ordinary_tree_add_parallel: ["ordinary_tree_add_parallel 1014t 2413t", "1014 + 2413", "the sum and the carry"],
+  reversible_tree_add: ["reversible_tree_add 1014t 2413t", "1014 + 2413", "a and the sum"],
+  reversible_tree_sub: ["reversible_tree_sub 1014t 3427t", "3427 − 1014", "a and b − a"],
+  reversible_tree_add_parallel: ["reversible_tree_add_parallel 1014t 2413t", "1014 + 2413", "a and the sum"],
+  reversible_tree_sub_parallel: ["reversible_tree_sub_parallel 1014t 3427t", "3427 − 1014", "a and b − a"],
+};
+document.getElementById("which").append(table("Which add is which", ["program", "kind", "numbers", "goes", "hands back", "erases", "watch it"],
+  [...DATA.unary, ...ALL].map(a => {
+    const [src, text, back] = WATCH[a.key];
+    const name = document.createElement("code"); name.textContent = a.key;
+    const link = document.createElement("a"); link.href = `../player/index.html#src=${encodeURIComponent(src)}&play=1&speed=70`; link.textContent = text;
+    return [name, a.kind, a.shape ? `a ${a.shape} of bits` : "unary", !a.shape ? "one by one" : a.way === "parallel" ? "in parallel" : "bit by bit",
+      back, a.kind === "ordinary" ? "what is not picked" : "nothing", link];
+  })));
+</script>
+</body></html>

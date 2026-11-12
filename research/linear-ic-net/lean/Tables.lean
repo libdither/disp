@@ -95,18 +95,20 @@ def thawVar : Rule := ⟨T, var, [], [(left 1, right 1)]⟩
 def thawValue (k : K) : Rule :=
   ⟨T, k, [k], (new 0 0, left 1) :: (List.range k.arity).map fun n => (new 0 (n + 1), right (n + 1))⟩
 
-/-- A view: λk1 k2 k3 k4. k_arm (the other k's) (the parts), built as code. `parts` are the ends the
-splices lead to; `extra` are agents made besides the view (the opened function). -/
-def view (b : K) (arm : Nat) (others : List Nat) (parts : List End) (extra : List K)
-    (extraWires : List (End × End)) : Rule :=
-  let items := arm :: others          -- bound uses, by binder number 1..4
+/-- How many arms a view takes: one per kind of value. -/
+def arms : Nat := 5
+
+/-- A view: λk1 … k5. k_arm (the other k's) (the parts), built as code. `parts` are the ends the
+splices lead to; `extra` are agents made besides the view (the function handed back). -/
+def view (b : K) (arm : Nat) (parts : List End) (extra : List K) (extraWires : List (End × End)) : Rule :=
+  let items := arm :: ((List.range arms).map (· + 1)).filter (· != arm)   -- bound uses, by binder number
   let m := items.length + parts.length
   let nApps := m - 1
-  let appAt := fun k => 4 + k         -- the k-th application of the spine
-  let varAt := fun k => 4 + nApps + k -- the k-th spine item's var
-  let made := [lam, lam, lam, lam] ++ List.replicate nApps app ++ List.replicate m var ++ extra
-  let lams := [(new 0 0, left 1), (new 0 2, new 1 0), (new 1 2, new 2 0), (new 2 2, new 3 0),
-               (new 3 2, if nApps = 0 then new (varAt 0) 0 else new (appAt (nApps - 1)) 0)]
+  let appAt := fun k => arms + k          -- the k-th application of the spine
+  let varAt := fun k => arms + nApps + k  -- the k-th spine item's var
+  let made := List.replicate arms lam ++ List.replicate nApps app ++ List.replicate m var ++ extra
+  let lams := (new 0 0, left 1) :: (List.range (arms - 1)).map (fun j => (new j 2, new (j + 1) 0)) ++
+               [(new (arms - 1) 2, if nApps = 0 then new (varAt 0) 0 else new (appAt (nApps - 1)) 0)]
   let spine := (List.range nApps).flatMap fun k =>
     [(new (appAt k) 1, if k = 0 then new (varAt 0) 0 else new (appAt (k - 1)) 0),
      (new (appAt k) 2, new (varAt (k + 1)) 0)]
@@ -114,12 +116,19 @@ def view (b : K) (arm : Nat) (others : List Nat) (parts : List End) (extra : Lis
   let splices := parts.zipIdx.map fun (e, idx) => (new (varAt (items.length + idx)) 1, e)
   ⟨R, b, made, lams ++ spine ++ bound ++ splices ++ extraWires⟩
 
-/-- R ⋈ lam / Lam: hands the function back opened (as a Lam), to the first arm. -/
-def viewFun (b : K) : Rule :=
-  view b 1 [2, 3, 4] [new 13 0] [Lam] [(new 13 1, right 1), (new 13 2, right 2)]
-def viewApp : Rule := view app 2 [1, 3, 4] [right 1, right 2] [] []
-def viewVar : Rule := view var 3 [1, 2, 4] [right 1] [] []
-def viewPrim : Rule := view rho 4 [1, 2, 3] [] [] []
+/-- Where a view with one part puts its extra agent: after the binders, applications and uses. -/
+def extraAt : Nat := arms + arms + (arms + 1)
+
+/-- R ⋈ lam: hands the function back opened (as a Lam), to the first arm. -/
+def viewFun : Rule :=
+  view lam 1 [new extraAt 0] [Lam] [(new extraAt 1, right 1), (new extraAt 2, right 2)]
+/-- R ⋈ Lam: hands the opened function back closed (as a lam), to the second arm. Reading a
+function twice gives it back unchanged. -/
+def viewOpened : Rule :=
+  view Lam 2 [new extraAt 0] [lam] [(new extraAt 1, right 1), (new extraAt 2, right 2)]
+def viewApp : Rule := view app 3 [right 1, right 2] [] []
+def viewVar : Rule := view var 4 [right 1] [] []
+def viewPrim : Rule := view rho 5 [] [] []
 
 /-- c ⋈ x: two copies of x; each auxiliary port of x gets a copy in flight facing the same way. -/
 def copyRule (c x : K) : Rule :=
@@ -140,14 +149,16 @@ def codeKinds : List K := [lam, Lam, app, var, rho]
 
 def table : List Rule :=
   [run, openR, reflectStart, thawApp, thawVar] ++ [lam, Lam, rho].map thawValue ++
-  [viewFun lam, viewFun Lam, viewApp, viewVar, viewPrim] ++
+  [viewFun, viewOpened, viewApp, viewVar, viewPrim] ++
   codeKinds.map (copyRule sig) ++ codeKinds.map (copyRule dupI) ++ [copyRule dupO sig, annihilate] ++
-  (codeKinds ++ [dupO]).map (eraseRule eraI) ++ [sig, dupI, eraI].map (eraseRule eraO)
+  (codeKinds ++ [dupO]).map (eraseRule eraI) ++ [sig, eraI].map (eraseRule eraO)
 
-/-- Pairs that meet with opposite polarities but have no rule, on purpose: applying code is an
-error, and running agents never face an out-facing copier or eraser (tested, not proven). -/
+/-- Pairs that meet with opposite polarities but have no rule, on purpose. Applying code is an
+error. The others never form (tested, not proven): running agents never face an out-facing copier
+or eraser, and an out-facing eraser, which follows an erased binder's variable to its uses, never
+meets a copier coming up from a use, since a body is only copied through its binder. -/
 def stuck : List (K × K) :=
-  [(O, app), (O, var)] ++ [O, T, R].flatMap fun k => [(k, dupO), (k, eraO)]
+  [(O, app), (O, var)] ++ ([O, T, R].flatMap fun k => [(k, dupO), (k, eraO)]) ++ [(dupI, eraO)]
 
 def hasRule (x y : K) : Bool := table.any fun r => (r.a == x && r.b == y) || (r.a == y && r.b == x)
 
@@ -180,6 +191,37 @@ theorem only_copying_copies : ∀ r ∈ table, (r.made.any fun k => k.isCopier |
 /-- Every value and every piece of code can be read. -/
 theorem readable : ∀ k ∈ codeKinds, hasRule R k = true := by decide
 
+/-! ## Reading tells the kinds of value apart -/
+
+namespace Rule
+/-- The end a rule wires to e. -/
+def other (r : Rule) (e : End) : Option End :=
+  r.wires.findSome? fun w => if w.1 == e then some w.2 else if w.2 == e then some w.1 else none
+
+/-- Walk a made term from its top: through binders into their bodies, down the function side of
+applications, to the head variable; the answer is which binder (first, second, …) it belongs to. -/
+def armFrom (r : Rule) : Nat → List Nat → End → Option Nat
+  | 0, _, _ => none
+  | n + 1, binders, .new j 0 =>
+    match r.made.getD j .eraI with
+    | .lam => (r.other (.new j 2)).bind (armFrom r n (binders ++ [j]))
+    | .app => (r.other (.new j 1)).bind (armFrom r n binders)
+    | .var => match r.other (.new j 1) with
+      | some (.new i 1) => (binders.findIdx? (· == i)).map (· + 1)
+      | _ => none
+    | _ => none
+  | _, _, _ => none
+
+/-- The arm a reflection rule runs: read off the view it builds at the reader's output. -/
+def arm (r : Rule) : Option Nat := (r.other (.left 1)).bind (armFrom r 30 [])
+end Rule
+
+def readers (T : List Rule) : List Rule := T.filter (·.a == R)
+
+/-- Every kind of value has its own arm, so a program can always tell which kind it holds. -/
+theorem views_tell_kinds_apart :
+    (readers table).map Rule.arm = [some 1, some 2, some 3, some 4, some 5] := by decide
+
 /-! ## The theorems have teeth: they reject broken rules and flawed designs -/
 
 /-- A rule that forgets a port is not well formed; one that joins two in ports is not polarized. -/
@@ -202,6 +244,16 @@ def copyRuleOneWay (c x : K) : Rule :=
   { copyRule c x with made := (copyRule c x).made.map fun k => if k = dupO then dupI else k }
 theorem one_way_copier_breaks_polarity : (copyRuleOneWay sig lam).polarized = false := by decide
 
+/-- Design flaw 3: an opened function that reads exactly like a closed one (the first design). The
+two behave differently when applied, one runs its body and the other hands it back as code, so an
+interpreter written in the calculus cannot tell which it must do (`../nets/selfinterp.py`: 6 of
+14 test programs go wrong). Every other table theorem passes this design; this one rejects it. -/
+def conflatedTable : List Rule :=
+  table.map fun r => if r.a == R && r.b == Lam then { viewFun with b := Lam } else r
+theorem conflated_readers_share_an_arm :
+    ((readers conflatedTable).map Rule.arm).Nodup = false ∧
+    (∀ r ∈ conflatedTable, r.wellFormed = true ∧ r.polarized = true) := by decide
+
 /-! ## The resource rules are forced -/
 
 /-- Every way to choose, port by port, which way a copier or eraser faces. -/
@@ -222,4 +274,4 @@ theorem copy_forced : ∀ c ∈ [sig, dupI], ∀ x ∈ codeKinds, ∀ ch ∈ cho
 theorem erase_forced : ∀ x ∈ codeKinds ++ [dupO], ∀ ch ∈ choices x.arity,
     (eraseWith eraI x ch).polarized = true ↔ (eraseWith eraI x ch).made = (eraseRule eraI x).made := by decide
 
-example : table.length = 34 ∧ stuck.length = 8 ∧ K.all.length = 13 := by decide
+example : table.length = 33 ∧ stuck.length = 9 ∧ K.all.length = 13 := by decide

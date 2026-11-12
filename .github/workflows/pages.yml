@@ -17,6 +17,7 @@ on:
       # (website/scripts/link-pages.mts): players, visualizers, the atlas
       - '**.html'
       - 'evaluators/*/player/**'
+      - 'research/linear-ic-net/player/**'
       - 'research/interaction-combinator/*.js'
       - 'research/STREAM_TYPES_ONTOLOGY.md'
       - '.github/workflows/pages.yml'

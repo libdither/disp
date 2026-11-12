@@ -30,7 +30,7 @@ for _ in range(3000):
     tally['right' if ok else status if status != 'done' else 'wrong'] += 1
     if not ok and (example is None or len(str(t)) < len(str(example[0]))): example = (t, status, got, want)
 print(dict(tally))
-t = check.parse('(\\f. f (f u)) (\\x. x x)')
+t = check.parse('(\\f. f (f (\\y. y))) (\\x. x x)')
 try:
     got = check.run_net(t)[:2]
 except ValueError as e:

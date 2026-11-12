@@ -52,4 +52,4 @@ def main():
             avg = F.Stats()
             for k in avg.__slots__: setattr(avg, k, round(getattr(s, k) / n))
             print(row(f'ordinary add w={w} {calc} (avg of {n})', avg, f'{avg.steps / w:.1f} steps/bit'))
-big_stack(main)
+if __name__ == "__main__": big_stack(main)

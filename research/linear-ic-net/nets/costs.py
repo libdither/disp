@@ -22,9 +22,8 @@ for n in (2, 4, 8, 16, 32):
     for fam, t in families(n):
         if fam == 'nested': continue
         nt = Net()
-        args = [f'a{i}' for i in range(n)]
         app = t
-        for a in args: app = (app, a)
+        for _ in range(n): app = (app, 'ρ')
         root = nt.load(app)
         assert nt.run() == 'done'
         st = nt.stats

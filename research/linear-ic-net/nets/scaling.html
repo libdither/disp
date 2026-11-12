@@ -1,0 +1,173 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the adds scale</title>
+<!-- Drawn from the numbers scaling.py writes into the data block below: python scaling.py -->
+<style>
+  .viz-root { color-scheme: light;
+    --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781; --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; }
+  @media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .viz-root { color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; } }
+  :root[data-theme="dark"] .viz-root { color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; }
+  html, body { margin:0; }
+  body { background:var(--page); color:var(--ink); font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p { margin:0 0 12px; color:var(--ink-2); max-width:76ch; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 18px; margin:14px 0 10px; color:var(--ink-2); font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+  .key { display:inline-block; width:16px; height:0; border-top:2px solid; border-radius:1px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap:14px; }
+  figure { margin:0; background:var(--surface); border:1px solid var(--ring); border-radius:10px; padding:12px 12px 6px; position:relative; }
+  figcaption { font-size:13px; color:var(--ink-2); margin-bottom:2px; }
+  figcaption b { color:var(--ink); font-weight:600; display:block; font-size:14px; }
+  svg { display:block; width:100%; height:auto; overflow:visible; outline:none; }
+  svg text { font:11.5px system-ui, -apple-system, "Segoe UI", sans-serif; fill:var(--muted); font-variant-numeric:tabular-nums; }
+  svg text.value { fill:var(--ink); font-size:12px; }
+  svg:focus-visible { outline:2px solid var(--s1); outline-offset:4px; border-radius:6px; }
+  .tip { position:absolute; pointer-events:none; background:var(--surface); border:1px solid var(--ring); border-radius:8px; padding:6px 9px;
+    box-shadow:0 4px 14px rgba(0,0,0,.14); font-size:12px; color:var(--ink-2); min-width:150px; z-index:2; }
+  .tip div { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .tip b { color:var(--ink); font-weight:600; min-width:4.2em; text-align:right; font-variant-numeric:tabular-nums; }
+  .tip .at { color:var(--ink); font-weight:600; margin-bottom:2px; }
+  details { margin-top:16px; }
+  summary { cursor:pointer; color:var(--ink); font-weight:600; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; margin:10px 0 14px; font-size:12px; font-variant-numeric:tabular-nums; }
+  caption { text-align:left; color:var(--ink); font-weight:600; padding-bottom:4px; }
+  th, td { padding:3px 6px; text-align:right; border-bottom:1px solid var(--grid); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; color:var(--ink-2); font-weight:400; }
+  thead th { color:var(--muted); font-weight:500; }
+</style></head>
+<body class="viz-root">
+<main>
+  <h1>How the adds scale</h1>
+  <p>What an add costs as its numbers grow: for each successor of m in unary, and for each bit in binary.
+    The nets are counted in rewrites and the tree calculi in steps. Every line settles flat, so every one
+    of these adds is linear in the size of its input; what differs is the height of the line.</p>
+  <div class="legend" id="legend"></div>
+  <div class="grid">
+    <figure><figcaption><b>Unary, m + m</b>rewrites or steps for each successor of m</figcaption><div id="unary"></div></figure>
+    <figure><figcaption><b>Binary, a + b</b>rewrites or steps for each bit</figcaption><div id="binary"></div></figure>
+    <figure><figcaption><b>Tree calculus with nothing shared, unary</b>nodes copied for each successor of m</figcaption><div id="unary-copied"></div></figure>
+    <figure><figcaption><b>Tree calculus with nothing shared, binary</b>nodes copied for each bit</figcaption><div id="binary-copied"></div></figure>
+  </div>
+  <p style="margin-top:14px">A net rewrite replaces one pair of agents, and its copies are among the rewrites counted above. A tree
+    calculus step rewrites one redex, but it can duplicate a whole argument: with trees shared that is free,
+    and with trees copied for real the two lower charts show what it costs. There the work for each
+    successor or bit keeps growing with the numbers, so the whole add is no longer linear.</p>
+  <details><summary>The numbers</summary><div id="tables"></div></details>
+</main>
+<script id="data" type="application/json">{"unary": {"sizes": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024], "rows": [{"name": "nets, linear", "unit": "rewrites", "cost": [68, 111, 197, 369, 713, 1401, 2777, 5529, 11033, 22041, 44057]}, {"name": "nets, ordinary", "unit": "rewrites", "cost": [263, 336, 482, 774, 1358, 2526, 4862, 9534, 18878, 37566, 74942]}, {"name": "tree calculus", "unit": "steps", "cost": [85, 143, 259, 491, 955, 1883, 3739, 7451, 14875, 29723, 59419]}, {"name": "linear tree calculus", "unit": "steps", "cost": [34, 55, 97, 181, 349, 685, 1357, 2701, 5389, 10765, 21517]}, {"name": "linear tree calculus, reversible", "unit": "steps", "cost": [89, 137, 233, 425, 809, 1577, 3113, 6185, 12329, 24617, 49193]}, {"name": "tree calculus, nodes copied", "unit": "nodes", "cost": [3210, 5256, 9405, 17931, 35895, 75471, 169215, 415071, 1140255, 3524511, 12028575]}]}, "binary": {"sizes": [1, 2, 4, 8, 16, 32, 64, 128, 256], "rows": [{"name": "nets, linear", "unit": "rewrites", "cost": [348.0, 635.0, 1209.0, 2357.0, 4653.0, 9245.0, 18429.0, 36797.0, 73533.0]}, {"name": "nets, ordinary", "unit": "rewrites", "cost": [1224.0, 1614.0, 2394.0, 3954.0, 7074.0, 13314.0, 25794.0, 50754.0, 100674.0]}, {"name": "tree calculus", "unit": "steps", "cost": [222.5, 406.75, 770.5, 1496.25, 2960.5, 5879.5, 11720.0, 23393.25, 46745.0]}, {"name": "linear tree calculus", "unit": "steps", "cost": [82.5, 150.75, 282.5, 544.25, 1080.5, 2143.5, 4272.0, 8521.25, 17025.0]}, {"name": "linear tree calculus, reversible", "unit": "steps", "cost": [95.5, 169.75, 237.25, 376.75, 755.75, 1553.5, 2892.75, 5826.0, 11479.0]}, {"name": "tree calculus, nodes copied", "unit": "nodes", "cost": [25524.5, 43961.5, 80987.0, 155908.5, 309892.0, 632973.5, 1338562.5, 2996491.0, 7297466.0]}, {"name": "nets, linear, two shapes", "unit": "rewrites", "cost": [267.0, 473.0, 885.0, 1709.0, 3357.0, 6653.0, 13245.0, 26429.0, 52797.0]}]}}</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("data").textContent);
+/// The five adds the two upper charts compare, each with its colour wherever it is drawn.
+const SERIES = ["nets, linear", "nets, ordinary", "tree calculus", "linear tree calculus", "linear tree calculus, reversible"];
+const COLOR = name => `var(--s${SERIES.indexOf(name) + 1})`;
+const COPIED = "tree calculus, nodes copied";
+const FROM = 4;   // the charts start here: below it the fixed cost of starting an add hides the rest
+const el = (tag, attrs = {}, text) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const fmt = v => v >= 10000 ? `${(v / 1000).toFixed(v >= 100000 ? 0 : 1)}K` : v >= 100 ? Math.round(v).toLocaleString("en") : v.toFixed(1);
+const nice = max => { const p = 10 ** Math.floor(Math.log10(max)), m = max / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; };
+
+/// One line chart of cost per unit against size: `rows` are { name, color, values }, one value per size.
+function chart(host, sizes, rows, unitName, height) {
+  const W = +(host.dataset.w ?? 520), H = height, m = { l: 44, r: 46, t: 10, b: 30 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const most = Math.max(...rows.flatMap(r => r.values)), tick = nice(most / 4), top = Math.ceil(most * 1.02 / tick) * tick;
+  const x = i => m.l + pw * (Math.log2(sizes[i]) - Math.log2(sizes[0])) / (Math.log2(sizes.at(-1)) - Math.log2(sizes[0]));
+  const y = v => m.t + ph * (1 - v / top);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, tabindex: 0, role: "img",
+    "aria-label": rows.map(r => `${r.name}: ${fmt(r.values.at(-1))} for each ${unitName} at ${sizes.at(-1)}`).join("; ") });
+  for (let v = 0; v <= top; v += tick) {
+    svg.append(el("line", { x1: m.l, x2: m.l + pw, y1: y(v), y2: y(v), stroke: v ? "var(--grid)" : "var(--axis)", "stroke-width": 1 }));
+    svg.append(el("text", { x: m.l - 6, y: y(v) + 4, "text-anchor": "end" }, top >= 10000 && v ? `${v / 1000}K` : v.toLocaleString("en")));
+  }
+  sizes.forEach((s, i) => svg.append(el("text", { x: x(i), y: H - m.b + 16, "text-anchor": "middle" }, s.toLocaleString("en"))));
+  svg.append(el("text", { x: m.l + pw / 2, y: H - 1, "text-anchor": "middle" }, unitName === "bit" ? "bits in each number" : "m"));
+  const cross = el("line", { y1: m.t, y2: m.t + ph, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" });
+  svg.append(cross);
+  for (const r of rows) svg.append(el("path", { d: r.values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(""),
+    fill: "none", stroke: r.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  // the value each line ends at, spread apart where two would sit on each other, each with a short leader
+  const ends = rows.map(r => ({ r, at: y(r.values.at(-1)) })).sort((a, b) => a.at - b.at);
+  ends.forEach((e, i) => { e.label = i ? Math.max(e.at, ends[i - 1].label + 13) : e.at; });
+  for (let i = ends.length - 1; i >= 0; i--) { const cap = i === ends.length - 1 ? m.t + ph : ends[i + 1].label - 13; if (ends[i].label > cap) ends[i].label = cap; }
+  for (const e of ends) {
+    const ex = x(sizes.length - 1);
+    if (Math.abs(e.label - e.at) > 1) svg.append(el("line", { x1: ex + 5, y1: e.at, x2: ex + 10, y2: e.label, stroke: "var(--axis)", "stroke-width": 1 }));
+    svg.append(el("circle", { cx: ex, cy: e.at, r: 4, fill: e.r.color, stroke: "var(--surface)", "stroke-width": 2 }));
+    svg.append(el("text", { x: ex + 12, y: e.label + 4, class: "value" }, fmt(e.r.values.at(-1))));
+  }
+  const dots = rows.map(r => { const d = el("circle", { r: 4, fill: r.color, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }); svg.append(d); return d; });
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true;
+  const showAt = i => {
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    rows.forEach((r, k) => { dots[k].setAttribute("cx", x(i)); dots[k].setAttribute("cy", y(r.values[i])); dots[k].setAttribute("visibility", "visible"); });
+    tip.replaceChildren();
+    const at = document.createElement("div"); at.className = "at";
+    at.textContent = unitName === "bit" ? `${sizes[i]} bits` : `m = ${sizes[i].toLocaleString("en")}`;
+    tip.append(at);
+    for (const r of [...rows].sort((a, b) => b.values[i] - a.values[i])) {
+      const row = document.createElement("div"), key = document.createElement("span"), val = document.createElement("b"), name = document.createElement("span");
+      key.className = "key"; key.style.borderColor = r.color; val.textContent = fmt(r.values[i]); name.textContent = r.name;
+      row.append(key, val, name); tip.append(row);
+    }
+    tip.hidden = false;
+    const box = svg.getBoundingClientRect(), px = box.width * x(i) / W, left = px > box.width / 2;
+    tip.style.left = left ? "" : `${px + 26}px`; tip.style.right = left ? `${box.width - px + 26}px` : ""; tip.style.top = "44px";
+    svg.dataset.at = i;
+  };
+  const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); tip.hidden = true; delete svg.dataset.at; };
+  svg.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect(), px = (ev.clientX - box.left) * W / box.width;
+    let best = 0; sizes.forEach((_, i) => { if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i; });
+    showAt(best);
+  });
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("focus", () => showAt(sizes.length - 1));
+  svg.addEventListener("blur", hide);
+  svg.addEventListener("keydown", ev => {
+    const step = ev.key === "ArrowLeft" ? -1 : ev.key === "ArrowRight" ? 1 : 0;
+    if (step) { showAt(Math.max(0, Math.min(sizes.length - 1, +(svg.dataset.at ?? sizes.length - 1) + step))); ev.preventDefault(); }
+  });
+  host.append(svg, tip);
+}
+
+function draw(kind, unitName) {
+  const { sizes, rows } = DATA[kind], from = sizes.findIndex(s => s >= FROM), shown = sizes.slice(from);
+  const each = r => r.cost.slice(from).map((c, i) => c / shown[i]);
+  chart(document.getElementById(kind), shown, SERIES.map(name => ({ name, color: COLOR(name), values: each(rows.find(r => r.name === name)) })), unitName, 290);
+  chart(document.getElementById(`${kind}-copied`), shown, [{ name: "nodes copied", color: COLOR("tree calculus"), values: each(rows.find(r => r.name === COPIED)) }], unitName, 190);
+  // the table view: every number, whole adds and not shares of them
+  const table = document.createElement("table"), cap = document.createElement("caption"), head = document.createElement("tr");
+  cap.textContent = kind === "unary" ? "Unary, m + m: the whole add, by m" : "Binary, a + b: the whole add, by the bits in each number (the mean of four random pairs)";
+  table.append(cap);
+  for (const h of ["", ...sizes.map(s => s.toLocaleString("en")), "for each more"]) { const th = document.createElement("th"); th.textContent = h; head.append(th); }
+  const thead = document.createElement("thead"); thead.append(head); table.append(thead);
+  for (const r of rows) {
+    const tr = document.createElement("tr"), more = (r.cost.at(-1) - r.cost.at(-2)) / (sizes.at(-1) - sizes.at(-2));
+    for (const c of [`${r.name} (${r.unit})`, ...r.cost.map(c => Math.round(c).toLocaleString("en")), more >= 1000 ? Math.round(more).toLocaleString("en") : more.toFixed(1)]) { const td = document.createElement("td"); td.textContent = c; tr.append(td); }
+    table.append(tr);
+  }
+  const wrap = document.createElement("div"); wrap.className = "scroll"; wrap.append(table);
+  document.getElementById("tables").append(wrap);
+}
+
+for (const name of SERIES) {
+  const item = document.createElement("span"), key = document.createElement("span");
+  key.className = "key"; key.style.borderColor = COLOR(name);
+  item.append(key, document.createTextNode(name)); document.getElementById("legend").append(item);
+}
+draw("unary", "successor");
+draw("binary", "bit");
+</script>
+</body></html>

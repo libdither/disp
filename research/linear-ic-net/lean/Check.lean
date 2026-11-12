@@ -27,10 +27,10 @@ def subst (v : Tm) : Tm → Nat → Tm
   | Lam b, k => Lam (subst v b (k + 1))
   | t, _ => t
 
-/-- A view: λk1 k2 k3 k4. (the arm for this kind) (the other arms) (the parts). -/
-def view4 (arm : Nat) (others : List Nat) (parts : List Tm) : Tm :=
-  let spine := (others.foldl (fun t k => app t (var (4 - k))) (var (4 - arm)))
-  lam (lam (lam (lam (parts.foldl (fun t p => app t (splice p)) spine))))
+/-- A view: λk1 … k5. (the arm for this kind) (the other arms) (the parts). -/
+def view5 (arm : Nat) (parts : List Tm) : Tm :=
+  let spine := (([1, 2, 3, 4, 5].filter (· != arm)).foldl (fun t k => app t (var (5 - k))) (var (5 - arm)))
+  lam (lam (lam (lam (lam (parts.foldl (fun t p => app t (splice p)) spine)))))
 end Tm
 
 inductive Outcome
@@ -60,10 +60,11 @@ def eval : Nat → Tm → Outcome
           | Lam b => .value (subst av b 0)
           | rho =>
             match av with
-            | lam b | Lam b => .value (view4 1 [2, 3, 4] [Lam b])
-            | app c1 c2 => .value (view4 2 [1, 3, 4] [c1, c2])
-            | splice w => .value (view4 3 [1, 2, 4] [w])
-            | rho => .value (view4 4 [1, 2, 3] [])
+            | lam b => .value (view5 1 [Lam b])
+            | Lam b => .value (view5 2 [lam b])
+            | app c1 c2 => .value (view5 3 [c1, c2])
+            | splice w => .value (view5 4 [w])
+            | rho => .value (view5 5 [])
             | var _ => .stuck
           | _ => .stuck
         | o => o
@@ -287,6 +288,24 @@ partial def terms (size depth : Nat) : List Tm :=
 
 def upTo (n : Nat) : List Tm := (List.range n).flatMap fun s => terms (s + 1) 0
 
+/-- The same, with opened functions written out as well (applying one hands back its body as
+code, so a written-out opened function is a quote). -/
+partial def termsO (size depth : Nat) : List Tm :=
+  if size = 0 then [] else
+  if size = 1 then .rho :: (List.range depth).map .var else
+  (termsO (size - 1) (depth + 1)).flatMap (fun b => [.lam b, .Lam b]) ++
+  (List.range (size - 2)).flatMap fun k =>
+    (termsO (k + 1) depth).flatMap fun f => (termsO (size - 2 - k) depth).map fun a => .app f a
+
+def Tm.hasOpened : Tm → Bool
+  | .Lam _ => true
+  | .lam b => b.hasOpened
+  | .app f a => f.hasOpened || a.hasOpened
+  | _ => false
+
+/-- Every closed program up to a size that writes out at least one opened function. -/
+def upToO (n : Nat) : List Tm := ((List.range n).flatMap fun s => termsO (s + 1) 0).filter Tm.hasOpened
+
 
 /-! ## A faster runner for long programs
 
@@ -393,23 +412,33 @@ structure QRun where
 def touched (N : Net K) (xs : List Ident) : List Ident :=
   (xs.flatMap (portsOf N)).filterMap fun p => (N.mate p).map (·.1)
 
-def QRun.step (T : List (GRule K)) (q : QRun) : Option QRun :=
-  let st := q.run
-  let N := st.net.toNet
-  match q.fwds with
+/-- One step, and whether there was one to take. The state is handed back either way, and taken
+apart before anything is read from it, so the caller never holds a second reference and the maps are
+updated in place instead of copied: everything a step needs from the net is read before the maps
+change. `run.ids` is left alone (`QRun.final` rebuilds it). -/
+def QRun.step (T : List (GRule K)) (q : QRun) : QRun × Bool :=
+  match q with
+  | ⟨⟨⟨kinds, mates⟩, ids, root, ops, nextOp, crossed, steps⟩, todo, fwds, fresh⟩ =>
+  match fwds with
   | x :: rest =>
-    if x != st.root && (match N.kind x with | some (.fwd _) => true | _ => false) then
+    if x != root && (match kinds[x]? with | some (.fwd _) => true | _ => false) then
+      let N : Net K := ⟨fun x => kinds[x]?, fun p => mates[p]?⟩
+      let gone := portsOf N x
+      let nbrs := (gone.filterMap N.mate).filter fun p => p.1 != x
+      let M := _root_.unfwd x N
+      let ups := nbrs.map fun p => (p, M.mate p)
       let near := touched N [x]
-      some { run := { st with net := st.net.unfwd x, ids := st.ids.filter (· != x) },
-             todo := near ++ q.todo, fwds := rest, fresh := q.fresh }
-    else some { q with fwds := rest }
+      let mates := gone.foldl (fun m p => m.erase p) mates
+      let mates := ups.foldl (fun m (p, u) => match u with | some v => m.insert p v | none => m.erase p) mates
+      (⟨⟨⟨kinds.erase x, mates⟩, ids, root, ops, nextOp, crossed, steps⟩, near ++ todo, rest, fresh⟩, true)
+    else (⟨⟨⟨kinds, mates⟩, ids, root, ops, nextOp, crossed, steps⟩, todo, rest, fresh⟩, true)
   | [] =>
-    match q.todo with
-    | [] => none
+    match todo with
+    | [] => (⟨⟨⟨kinds, mates⟩, ids, root, ops, nextOp, crossed, steps⟩, [], [], fresh⟩, false)
     | x :: rest =>
-      let pair := match N.kind x, N.mate (x, 0) with
+      let pair := match kinds[x]?, mates[(x, 0)]? with
         | some (.base kx), some (y, 0) =>
-          match N.kind y with
+          match kinds[y]? with
           | some (.base ky) =>
             match ruleFor T kx ky, ruleFor T ky kx with
             | some r, _ => some (x, y, r)
@@ -418,49 +447,51 @@ def QRun.step (T : List (GRule K)) (q : QRun) : Option QRun :=
           | _ => none
         | _, _ => none
       match pair with
-      | none => some { q with todo := rest }
+      | none => (⟨⟨⟨kinds, mates⟩, ids, root, ops, nextOp, crossed, steps⟩, rest, [], fresh⟩, true)
       | some (a, b, r) =>
+        let N : Net K := ⟨fun x => kinds[x]?, fun p => mates[p]?⟩
         let near := (touched N [a, b]).filter fun z => z != a && z != b
         let made := (List.range (r.made.length + r.wires.length)).filterMap fun k =>
           (madeKind sig r k).map fun g => (k, g)
-        let short := fun (k : Nat) => Ident.root (q.fresh + k)
+        let short := fun (k : Nat) => Ident.root (fresh + k)
         let ren : Port → Port := fun p => match madeIdx a b p.1 with
           | some k => (short k, p.2)
           | none => p
         let M := _root_.fire sig r a b N
         let gone := portsOf N a ++ portsOf N b
-        let mates := gone.foldl (fun m p => m.erase p) st.net.mates
-        let mates := near.foldl (fun m z => (portsOf N z).foldl (fun m p =>
-            match N.mate p with
-            | some t => if t.1 == a || t.1 == b then
-                (match M.mate p with | some u => m.insert p (ren u) | none => m.erase p) else m
-            | none => m) m) mates
-        let mates := made.foldl (fun m (k, g) => (List.range (g.arity + 1)).foldl (fun m i =>
-            match M.mate (Ident.made a b k, i) with
-            | some u => m.insert (short k, i) (ren u)
-            | none => m) m) mates
-        let kinds := made.foldl (fun m (k, g) => m.insert (short k) g) ((st.net.kinds.erase a).erase b)
-        let opA := st.ops.getD a 0
-        let crossed := st.crossed || (r.a == .dupI && r.b == .dupO && opA != st.ops.getD b 0)
-        let (op, nextOp) := if r.a == .sig then (st.nextOp, st.nextOp + 1) else (opA, st.nextOp)
-        let ops := (st.ops.erase a).erase b
+        let upsNear : List (Port × Option Port) := near.flatMap fun z => (portsOf N z).filterMap fun p =>
+          match N.mate p with
+          | some t => if t.1 == a || t.1 == b then some (p, (M.mate p).map ren) else none
+          | none => none
+        let upsMade : List (Port × Port) := made.flatMap fun (k, g) =>
+          (List.range (g.arity + 1)).filterMap fun i =>
+            (M.mate (Ident.made a b k, i)).map fun u => ((short k, i), ren u)
+        let mates := gone.foldl (fun m p => m.erase p) mates
+        let mates := upsNear.foldl (fun m (p, u) => match u with | some v => m.insert p v | none => m.erase p) mates
+        let mates := upsMade.foldl (fun m (p, v) => m.insert p v) mates
+        let kinds := made.foldl (fun m (k, g) => m.insert (short k) g) ((kinds.erase a).erase b)
+        let opA := ops.getD a 0
+        let crossed := crossed || (r.a == .dupI && r.b == .dupO && opA != ops.getD b 0)
+        let (op, nextOp) := if r.a == .sig then (nextOp, nextOp + 1) else (opA, nextOp)
+        let ops := (ops.erase a).erase b
         let ops := if isCopy r then
             made.foldl (fun m (k, g) => match g with
               | .base .dupI | .base .dupO => m.insert (short k) op
               | _ => m) ops
           else ops
         let newIds := made.map fun (k, _) => short k
-        let st' := { st with net := ⟨kinds, mates⟩, ids := st.ids.filter (fun z => z != a && z != b) ++ newIds,
-                             ops, nextOp, crossed, steps := st.steps + 1 }
         let fw := made.filterMap fun (k, g) => match g with | .fwd _ => some (short k) | _ => none
-        some { run := st', todo := newIds ++ near ++ rest, fwds := fw,
-               fresh := q.fresh + r.made.length + r.wires.length }
+        (⟨⟨⟨kinds, mates⟩, ids, root, ops, nextOp, crossed, steps + 1⟩, newIds ++ near ++ rest, fw,
+              fresh + r.made.length + r.wires.length⟩, true)
+
+/-- The run's state with the list of live agents rebuilt from the net. -/
+def QRun.final (q : QRun) : FRun := { q.run with ids := q.run.net.kinds.keys }
 
 def QRun.runFor (T : List (GRule K)) : Nat → QRun → QRun × Bool
   | 0, q => (q, false)
   | n + 1, q => match q.step T with
-    | some q' => QRun.runFor T n q'
-    | none => (q, true)
+    | (q', true) => QRun.runFor T n q'
+    | (q', false) => (q', true)
 
 def qstart (t : Tm) : QRun :=
   let st := fstart t
@@ -473,10 +504,10 @@ def fastCheckWith (T : List (GRule K)) (fuel : Nat) (t : Tm) : Bool :=
   | .fuel => true
   | .stuck =>
     let (q, _) := QRun.runFor T (200 * fuel) (qstart t)
-    stuckPair T q.run.spec && !q.run.crossed
+    stuckPair T q.final.spec && !q.run.crossed
   | .value v =>
     let (q, fin) := QRun.runFor T (200 * fuel) (qstart t)
-    let st := q.run
+    let st := q.final
     let N := st.net.toNet
     let ans := (N.mate (st.root, 0)).bind (readback 1000000 N [])
     let seen := reachable N 10000000 [st.root] []

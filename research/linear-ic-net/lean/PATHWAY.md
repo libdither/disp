@@ -9,12 +9,17 @@ prove about every order of steps). Core Lean 4.34 with no Mathlib, built as a La
 project: `~/.elan/toolchains/leanprover--lean4---v4.34.0/bin/lake build` in this folder (about 20
 seconds; no errors means everything is proven). Modules are compiled to native code, which the run checks need.
 
+Two more targets are kept out of the default build: `lake build Long` (`Long.lean`: the long
+interpreter runs, about a minute) and `lake exe forced` (`Forced.lean`: every rewiring of every rule
+against the test programs, about a minute and a half on 16 cores). The second needs `Readers.lean`,
+which `python gen_programs.py` writes (about 40 seconds; it isn't checked in).
+
 ## Tier 1: theorems about the rule table (finite, proven by `decide`)
 
 The table is data: each agent kind has ports with a polarity (a value flows in or out), and each rule
 says which agents it makes and how it wires them to what was plugged into the two old agents. For
 reflective linear nets (13 agent kinds once copiers and erasers are split by the way they face,
-34 rules, 8 deliberate stuck pairs), all of these are proven:
+33 rules, 9 deliberate stuck pairs), all of these are proven:
 
 | theorem | says | rules out |
 |---|---|---|
@@ -25,6 +30,7 @@ reflective linear nets (13 agent kinds once copiers and erasers are split by the
 | `code_faces_up` | every code agent's principal port points at its user | code reacting with code, inside a function body |
 | `only_erasing_drops`, `only_copying_copies` | only erase rules make erasers; only copy rules make copiers or splits | hidden drops or copies |
 | `readable` | every value and every kind of code has a reflection rule | values a program can't inspect |
+| `views_tell_kinds_apart` | every kind of value has its own arm: read off each reflection rule's wiring, the arms are 1 to 5 | two kinds of value a program can't tell apart |
 | `copy_forced`, `erase_forced` | of all ways to orient the copiers (erasers) a rule leaves, exactly one is polarized, and it's the table's | any freedom in the resource rules |
 
 And the same theorems reject flawed designs:
@@ -33,6 +39,7 @@ And the same theorems reject flawed designs:
 |---|---|---|
 | the variable split is the same agent as a copy in flight | `merged_sharer_conflicts`: one pair would need both "cancel" and "copy" | yes: of 2,924 random programs, 4 wrong answers, 52 runs that never end, 56 broken nets (`../nets/merge_probe.py`) |
 | one copier that always faces in | `one_way_copier_breaks_polarity` | (the tests use unoriented copiers, so not directly) |
+| an opened function reads exactly like a closed one (the first design) | `conflated_readers_share_an_arm`: two readers run the same arm, while every other table theorem passes | yes: an interpreter written in the calculus gets 6 of 14 test programs wrong (`../nets/selfinterp.py`) |
 
 The polarity theorems also told me something I had missed: copiers and erasers come in two
 orientations. Copying a function puts a copier on its binder's port, which hands values out, so
@@ -48,7 +55,7 @@ It works as a design linter.
 |---|---|---|
 | `Tm.agents_le_twice` | a λ-term compiles to at most 2 agents per node | proven (`Size.lean`, about 60 lines) |
 | compiled nets satisfy tier 1's invariants (polarized, well formed) | the compiler only emits legal nets | not yet: needs nets as data |
-| reflection views are injective | different code gives different views | not yet: term level, should be easy |
+| reflection views are injective | different code gives different views | the kinds are told apart (`views_tell_kinds_apart`, tier 1); for code within a kind, not yet: term level, should be easy |
 | the term-level evaluator is deterministic, and views round-trip | the reference semantics is sound | not yet |
 
 Cost: moderate; structural induction plus `omega`.
@@ -80,25 +87,33 @@ separate step (`unfwd`) removes forwarders.
 | `step_move`, `stop_finished`, `runFor_finished` (`Runner.lean`) | each step of the checks' spec runner is one of the theorems' steps, and when it stops nothing is left to fire or remove | proven |
 | `Build.ok_good` | a compiled net that passes a finite check of its agent and wire lists is a good starting net | proven |
 | `every_order_answers` | for a program the spec-runner check passes: no order of steps runs forever, and every finished run reads back the reference's value | proven |
+| `one_run_decides`, `every_order_of_one` | if some run of a compiled program finishes, no order runs longer and every finished run ends in that net; so if one run holds the reference's value, every order does | proven |
 
 `Check.lean`, `Programs.lean` and `Checked.lean` run the per-design checks inside Lean, on the same
 `fire` and `unfwd` the theorems are about: compile a program, run it, read the answer back, compare with
 a reference interpreter, check every cancel joins the two ends of one copy (each copier carries the id
 of its copy) and that a finished run leaves no garbage. `candidateOk` bundles the table checks and the
 run checks into one Boolean a design search can call, and `candidateOk_sound` gives every table it
-accepts the run theorems. Proven by `native_decide` (trusting Lean's compiler): the reflective-nets
-table passes; every closed program up to size 9 (9,419) and the 16 reflective programs from
-`../nets/check.py` (`size size` among them) check; a program that applies a piece of code gets stuck
-where the reference does; the fast runner matches the spec runner step by step on all 648 programs up to
-size 7; and two broken tables (a crossed cancel, a missing copy rule) are rejected. Size 10 (38,438
-programs) also passes but isn't in the build, to keep it fast.
+accepts the run theorems. Proven by `native_decide` (trusting Lean's compiler):
+
+- the reflective-nets table passes;
+- every closed program up to size 9 checks (9,419), and so does every closed program up to size 8 that
+  writes out an opened function (26,258; 57 of them get stuck, in the reference and in the net);
+- the 44 shorter hand-written programs from `../nets/check.py` check, `size size`, five runs of the
+  self-interpreter and twenty adds among them (linear, ordinary and reversible ones, on unary numbers,
+  lists of bits and trees of bits, five of them parallel), and none is skipped for fuel. They are the
+  same closed programs the Python tests run. `lake build Long` adds the three long ones:
+  the interpreter on `size suc`, and the interpreter interpreting itself, twice (up to 7.2 million steps);
+- a program that applies a piece of code gets stuck where the reference does;
+- the fast runner matches the spec runner step by step on all 648 programs up to size 7;
+- two broken tables (a crossed cancel, a missing copy rule) are rejected.
 
 `rln_every_order` combines the two halves: for every closed program up to size 9 that the reference
 evaluates to a value (9,418 of the 9,419; one runs out of the reference's fuel), no order of steps runs forever and every finished run, in whatever order it fired
 pairs and removed forwarders, holds the reference's value at the root. The theorems give "every order
 ends in the same net"; the spec runner's check (by `native_decide`, on the compiled net and the run)
-gives "and that net reads back right". The spec runner is slow on long runs (`size size` didn't finish
-in 25 minutes), so the reflective programs are checked by the fast runner only.
+gives "and that net reads back right". The spec runner is slow on long runs, so the hand-written
+programs are checked by the fast runner only.
 
 One finding from running it: names made from the two agents a step replaced grow exponentially with
 the number of generations, so hashing or comparing them does too. The fast runner renames each step's
@@ -107,8 +122,40 @@ new agents to short root names (the step only uses names to tell agents apart).
 The tier-3 theorems depend only on Lean's three standard axioms (`propext`, `Quot.sound`,
 `Classical.choice`; see `#print axioms`): no `sorry`, no `native_decide`. The ones in `Checked.lean` add `native_decide`'s trust in the compiler.
 
-Still open: simulation as a theorem (every program's finished net reads back the reference's value,
-proven rather than checked per program); it needs the compiler and readback modelled as proofs.
+Still open: simulation as a theorem, for all programs at once. `every_order_of_one` cuts it down to
+one order: it is enough that the call-by-value run of each program ends holding the reference's value
+(`Simulated` in `Runner.lean` is the exact statement). In that order every copy finishes before
+anything else moves, so the proof never meets two copies under way at once, which is where sharing
+designs classically go wrong. Two pieces are left: that run, by induction on the reference's
+evaluation, and that the compiler only emits good nets (`Build.ok` for every program, now a
+per-program check).
+
+## Is the design forced? (`Forced.lean`)
+
+For each rule, `lake exe forced` lists every other way to wire the same agents that is well formed and
+polarized, and runs each against 8,460 programs: all closed programs up to size 8, those up to size 7
+that write out an opened function, 45 of the hand-written programs, and 895 generated ones (random
+programs that read values, more of those picked because they use the rules few programs use, and 160
+that copy a piece of quoted code). A wiring counts as the rule's own when
+it differs only by renaming the agents the rule makes, or by swapping the two outputs of a split,
+which hand equal copies to two uses of one variable.
+
+| rules | wirings tried | result |
+|---|---|---|
+| 27 of the 28 | from 1 to 40,320 each | only the table's own passes: each other wiring fails some program |
+| a split meets an application (`sig ⋈ app`) | 40,320 | one spare: it pairs the two copies of the function part with the two copies of the argument part the other way round. Nothing ties those copies together, so it should be the same rule; not proven |
+
+So given which agents each rule makes, the wiring is pinned down. What this doesn't cover: rules that
+make different agents, and the five reflection rules, whose view is a λ-term and not a free wiring
+(which arm goes with which kind is a naming choice).
+
+Two things it turned up. Thawing an opened function never happened in any earlier test, so all six
+wirings of that rule passed: nothing wrote an opened function out as code. Opened functions can now be
+written (`^x. body`, a quote), and the rule is forced. And a 29th rule, an out-facing eraser meeting
+an in-facing copier (`eraO ⋈ dupI`), never fired on any program: it would mean a binder is erased while
+a copy of one of its uses is on its way up from inside the body, which frozen bodies rule out, like the
+six stuck pairs of running agents. That rule is gone now, and its pair is on the stuck list with them.
+Every rule left fires on at least 28 of the test programs.
 
 ## Tier 4: limits on any design
 
@@ -123,7 +170,8 @@ proven rather than checked per program); it needs the compiler and readback mode
 1. Keep tier 1 as a gate: no rule table lands without passing it. Encode the tree-net's table
    (`evaluators/tree-net/crate/src/rules.rs`) in the same framework; that mechanizes the polarity
    lemma the repo proves by hand.
-2. Add tier-2 theorems for each compiler as it's written.
-3. Write tier-3 statements down now and test them in the prototypes (as `check.py` does), then
-   prove polarity preservation and strong confluence once, generically.
+2. Prove `Simulated` for every program: the call-by-value run, and the compiler's nets. With
+   `every_order_of_one` that finishes correctness.
+3. Run `lake exe forced` on any changed table: a rule with a spare wiring means a missing test or a
+   real choice.
 4. Use tier 1 for design search: enumerate small tables and keep the ones that pass.

@@ -5,3 +5,18 @@ defaultTargets = ["LinearIcNet"]
 name = "LinearIcNet"
 precompileModules = true
 roots = ["Basic", "Tables", "Size", "Net", "Search", "Runs", "Moves", "Check", "Runner", "Programs", "Checked"]
+
+# Not in the default build: the long interpreter runs, and the forcing check (`lake exe forced`).
+[[lean_lib]]
+name = "Long"
+precompileModules = true
+roots = ["Long"]
+
+[[lean_lib]]
+name = "Readers"
+precompileModules = true
+roots = ["Readers"]
+
+[[lean_exe]]
+name = "forced"
+root = "Forced"

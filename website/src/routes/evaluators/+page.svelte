@@ -52,6 +52,15 @@
       href: `${base}/evaluators/linear/`
     },
     {
+      name: 'Reflective nets',
+      kicker: 'Programs that read code',
+      blurb: 'A λ-calculus as a net where a function body stays frozen until it is called. Click any pair to fire it, follow copies in their own colours, and see each rule as a picture.',
+      image: shot('reflective-nets'),
+      alt: 'A net of agents hanging from its root with copiers in colour, a history bar, and a rule drawn before and after',
+      href: repoPage('research/linear-ic-net/player/index.html'),
+      reload: true
+    },
+    {
       name: 'Two-way programs',
       kicker: 'Every step undoable',
       blurb: 'Programs are trees built from five moves. Flip a run at any point, and firing runs it back.',
