@@ -93,7 +93,7 @@ test by_search(cover_law(list_t(bool_t)), t, 120) = "Open"
 test by_search(exact_law(shape), t, 120) = "Open"
 test by_search(exact_law(list_t(nat_t)), t, 120) = "Open"
 // a cover that forgets a constructor is refuted with a member it misses
-lossy := of_type(behaviour{admits := {_self, v} => judge_as(list_t(nat_t), v), cases := some({_self, _child} => [t])})
+lossy := of_type(behaviour{admits := {at, _self, v} => at(list_t(nat_t), v), cases := some({_self, _child} => [t])})
 test by_search(cover_law(lossy), t, 120).is_refuted = true
 
 // ---- eliminators: a type with cases comes with its eliminator, derived from the cases, and a use of it is judged by the type's own rule, with nothing given beside the type
@@ -184,6 +184,44 @@ test holds(pi_t(nat_t, {n} => arrow_t(eq_t([n], {m} => m, {m} => 0), empty_t)), 
 append_nil_t := pi_t(shape, {xs} => eq_t([xs], {l} => app_l(l, nil_l), {l} => l))
 test judge(append_nil_t, {xs} => fold_l(xs, t, {_a, _tl, ih} => ih)) = "Proved"
 test judge(append_nil_t, {_xs} => t).is_open = true
+// A rewritten goal runs again. Here the hypothesis says k = 0, and the goal's side is stuck on
+// k: with 0 put for k it runs to 0, and the equation is done.
+runs_again_t := pi_t(nat_t, {k} => arrow_t(eq_t([k], {a} => a, {_a} => 0), eq_t([k], {a} => plus_e(a, 0), {_a} => 0)))
+test judge(runs_again_t, {_k, e} => cast(e, t)) = "Proved"
+test judge(runs_again_t, {_k, _e} => t).is_open = true
+
+// An equation is at a type, and the type says what equal means. Two functions are equal when
+// they are equal on every argument, so the equation is a function type and a proof by
+// induction is a proof of it. As trees the two programs differ.
+nat_to_nat := arrow_t(nat_t, nat_t)
+test judge(eq_at(nat_to_nat, [], {m} => plus_e(m, 0), {m} => m), {n} => nat_fold(n, t, {_k, ih} => ih)) = "Proved"
+test judge(eq_at(nat_to_nat, [], {m} => plus_e(m, 0), {m} => m), {_n} => t).is_open = true
+test judge(eq_at(nat_to_nat, [], {m} => plus_e(m, 1), {m} => m), {n} => nat_fold(n, t, {_k, ih} => ih)) = refuted([0])
+test holds(eq_t([], {m} => plus_e(m, 0), {m} => m), t) = false
+// two programs that run to the same answer on an unknown argument need no induction
+test judge(eq_at(nat_to_nat, [], {m} => succ(succ(m)), {m} => plus_e(2, m)), {_n} => t) = "Proved"
+// functions of two arguments: commutativity as one equation between two programs
+test judge_with(with_equations, eq_at(arrow_t(nat_t, nat_to_nat), [], {a, b} => plus_e(b, a), {a, b} => plus_e(a, b)), {n, m} => nat_fold(n, cast(plus_zero(m), t), {k, ih} => cast(plus_succ(m, k), cast(ih, t)))) = "Proved"
+// At a quotient two members are equal when their normal forms are: 2 and 0 at Parity, not as trees.
+test judge(eq_at(Parity, [], 2, 0), t) = "Proved"
+test holds(eq_at(Parity, [], 1, 0), t) = false
+test holds(eq_t([], 2, 0), t) = false
+test judge(pi_t(nat_t, {n} => eq_at(Parity, [n], {m} => succ(succ(m)), {m} => m)), {_n} => t) = "Proved"
+test judge(pi_t(nat_t, {n} => eq_at(Parity, [n], {m} => succ(m), {m} => m)), {_n} => t).is_refuted = true
+
+// Brute force agrees. A claim about every argument is asked at one known argument: the type
+// there, of the witness there. Each equation Proved above passes on every listed number, and
+// the one Refuted fails on the number it was refuted with.
+at_arg :: {T : Code} -> Claim :=> {w, c} => holds(fn_view(T).snd.snd(faces_of(fn_view(T).snd.fst, c)), w(c))
+at_two :: {T : Code} -> Claim :=> {w, c} => at_arg(fn_view(T).snd.snd(faces_of(fn_view(T).snd.fst, c.fst)), w(c.fst), c.snd)
+some_nats := [0, 1, 2, 3, 4, 5, 6]
+some_lists := [nil_l, cons_l(1, nil_l), cons_l(2, cons_l(0, nil_l))]
+test over(at_arg(plus_zero_t), {n} => nat_fold(n, t, {_k, ih} => ih), some_nats) = "Proved"
+test over(at_arg(plus_one_t), {n} => nat_fold(n, t, {_k, ih} => ih), some_nats) = refuted(0)
+test over(at_two(plus_succ_t), plus_succ, some_nats.cross(some_nats, pair)) = "Proved"
+test over(at_two(plus_swap_t), {n, m} => nat_fold(n, cast(plus_zero(m), t), {k, ih} => cast(plus_succ(m, k), cast(ih, t))), some_nats.cross(some_nats, pair)) = "Proved"
+test over(at_arg(append_nil_t), {xs} => fold_l(xs, t, {_a, _tl, ih} => ih), some_lists) = "Proved"
+test over(at_arg(eq_at(nat_to_nat, [], {m} => plus_e(m, 0), {m} => m)), {n} => nat_fold(n, t, {_k, ih} => ih), some_nats) = "Proved"
 
 // an open term's value: variable 0 is the head of the list
 test eval_in([3, 5], tv(1)) = 5

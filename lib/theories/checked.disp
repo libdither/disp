@@ -19,6 +19,8 @@ Empty := empty_t
 Type := universe_t
 List := list_t
 Eq := eq_of
+// an equation at a type: at a function type, the two are equal on every argument
+EqAt := {A, x, y} => eq_at(A, [], x, y)
 // a type's eliminator, derived from its cases, and equality's own
 eliminator := fold_of
 cast := cast

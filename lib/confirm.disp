@@ -7,27 +7,7 @@
 // normal forms at the codomain after judging membership; streams are compared by
 // one bisimulation step. Verdicts are "Proved", `refuted w` (w re-run
 // concretely), or "Open" with a reason. Every Proved is cross-checked in
-// lib/tests/confirmer.test.disp against the enumeration refuter (IDEAS.disp's Arrow). The successor of
-// the v1 confirmer (CHECK.disp, deleted after fe53c8a), whose known gaps it closes:
-//   A  split tables are Option: no table => the search does NOT split (Open);
-//      `some []` only for a type with no members (False: vacuous Proved). A
-//      recognizer's table is derived by running it, never declared by hand.
-//      The search splits only a NEED of an input piece.
-//   B  a GRADE: a judge at an identity-fine position (Tree) refuses a value
-//      with a free piece of a coarser (arrow/quotient) code; the driver then
-//      grounds it on a stored related-but-distinct pair and refutes concretely.
-//   C  the induction hypothesis is a piece of a function type whose domain is the
-//      strictly smaller pieces of the input: a piece of another input, or the
-//      hypothesis's own answer, is outside it, so it never descends.
-//   D  quotient respect uses the NORMALIZER: f a ~ f (nf a); `nf k` on a
-//      smaller piece is a neutral term App nf [k] that the hypothesis's partner
-//      clause consumes. The generator form is kept only as the reproduction.
-//   E  equality judges BOTH outputs at the codomain before comparing terms.
-//   F  a recognizer whose cases cannot be derived is judged by RUNNING it
-//      (fueled): a looping one makes membership Open there, never a verdict.
-//   G  pieces carry a root id: a curried claim's two arguments are distinct.
-//   H  fuel bounds DISPATCHES (state-passed), not depth.
-//   I  a marker-shaped tree a program builds is escaped as an opaque Forged hole.
+// lib/tests/confirmer.test.disp against the enumeration refuter (IDEAS.disp's Arrow).
 open use raw "prelude.disp" {}
 open use raw "list.disp" {}
 open use raw "verdict.disp" {}
@@ -37,42 +17,23 @@ open use raw "trees.disp" {}
 open use raw "tests/fixtures.disp" {}
 
 // ---------------------------------------------------------------- codes
-// A code is a recognizer (any program saying true to its members: Nat, Bool, False;
-// Tree is the atom), a negative former (arrow, quotient), or a type given by its
-// behaviour. Recognizers split and are identity-fine (their relation is tree_eq).
+// A code is Tree (the atom), a recognizer (any program saying true to its members: Nat,
+// Bool, False), or a type given by its behaviour: functions, quotients and every other
+// former. Recognizers split and are identity-fine (their relation is tree_eq).
 TreeR :: {v : Tree} -> Bool :=> true
 FalseR :: {v : Tree} -> Bool :=> false
 // (NatR, LoopR and the quotient normalizers come from fixtures.disp; Bool, the
 // recognizer {t, t t}, from trees.disp)
-ArrowC :: {Dom : Code, Cod : Code} -> Code :=> pair("Arrow", pair(Dom, Cod))
-QuotC :: {Base : Code, nf : Tree} -> Code :=> pair("Quot", pair(Base, nf))
-// the strictly smaller pieces of the input `root` of type Dom, and a partner of one (the
-// induction hypothesis's domain)
-below_c :: {Dom : Code, root : List(Tree), partner : Tree} -> Code :=> pair("Below", pair(Dom, pair(root, partner)))
-is_below_code :: Code -> Bool := {c} => c.fst == "Below"
-// a codomain may depend on the argument: `family_code(fam)` is the type fam(the argument's faces)
-family_code :: {fam : Tree} -> Code :=> pair("Family", fam)
-cod_at :: {Cod : Code, c : Tree} -> Code :=> if (Cod.fst == "Family") { Cod.snd(pair(c, c)) } else { Cod }
-is_arrow_code :: Code -> Bool := {c} => c.fst == "Arrow"
-is_quot_code :: Code -> Bool := {c} => c.fst == "Quot"
-arrow_dom :: Code -> Code := {c} => c.snd.fst
-arrow_cod :: Code -> Code := {c} => c.snd.snd
-quot_base :: Code -> Code := {c} => c.snd.fst
-quot_nf :: Code -> Tree := {c} => c.snd.snd
-// the declared quotients: Parity (mod 2) and All (every Nat identified)
-Parity := QuotC(NatR, parity)
-All := QuotC(NatR, always_zero)
-normalizers := [Parity, All].map(quot_nf)
 
 some :: {x : Tree} -> Option(Tree) :=> pair("Some", x)
 none :: Option(Tree) := "None"
 is_none :: Option(Tree) -> Bool := {o} => o == none
 
-// A code may also be a type given by its behaviour: the one extension point, so a new
-// type former is a record and nothing below changes for it. Each behaviour receives the
-// type's own code first, so a recursive type refers to itself without building itself.
-// `admits` judges a partly-known value (a piece of the type itself and a neutral term
-// of it are handled before it is asked); `cases` gives the shapes a member
+// A type given by its behaviour: the one extension point, so a new type former is a record
+// and nothing below changes for it. `admits` judges a partly-known value (a piece of the type
+// itself and a neutral term of it are handled before it is asked); it receives the judge, then
+// the type's own code, so a type needs nothing but what it is handed and a recursive type
+// refers to itself without building itself. `cases` gives the shapes a member
 // can take, for a type whose pieces may be split; `applied` makes it a function type, with
 // the codomain a family over the argument's faces (what a program receives, and what a
 // dependent type sees); `generic` is the argument a function over it receives at a
@@ -80,25 +41,39 @@ is_none :: Option(Tree) -> Bool := {o} => o == none
 // value (the value itself, unless given); `program` is what a program receives of a value
 // (the value itself, unless given); `types` says its members are types; `sample` is a
 // concrete stand-in for a piece of it (the k-th of two), to re-run a claim on real values.
-// A type that depends on values holds them in `given` and computes from them when it is asked;
-// `put` is the type with one value in place of another, which is then exact; `normal` is what
-// it computes to, and two types are the same type when their normal forms are one tree.
-// `elim` is the type's eliminator with the rule for a stuck use of it (judge_as): a type with
-// cases needs none, since both are derived from the cases.
-record behaviour :: {admits : Code -> Val -> Res, cases : Option(Tree) := none, applied : Option(Pair(Code, Tree)) := none, generic : Option(Tree) := none, static : Option(Tree) := none, program : Option(Tree) := none, types : Bool := false, sample : Option(Tree) := none, given : Tree := t, put : Option(Tree) := none, normal : Option(Tree) := none, elim : Option(Pair(Tree, Tree)) := none} -> Behaviour
+// A type built from values, types or families of types lists them as its `parts`, each
+// tagged "Value", "Type" or "Family" (anything else is left alone), with `remake`, which
+// builds the type from parts: putting one value for another goes through the parts
+// (type_subst), so no type writes its own substitution. `normal` is what a type computes
+// to, and two types are the same type when their normal forms are one tree. `elim` is an
+// eliminator the type brings, with what its other arguments must be (elim_type): a type
+// with cases needs none, since both are derived from the cases.
+record behaviour :: {admits : (Code -> Val -> Res) -> Code -> Val -> Res, cases : Option(Tree) := none, applied : Option(Pair(Code, Tree)) := none, generic : Option(Tree) := none, static : Option(Tree) := none, program : Option(Tree) := none, types : Bool := false, sample : Option(Tree) := none, parts : List(Pair(Tree, Tree)) := [], remake : Tree := t, normal : Option(Tree) := none, elim : Option(Pair(Tree, Tree)) := none} -> Behaviour
 of_type :: {b : Behaviour} -> Code :=> pair("Type", b)
 is_type_code :: Code -> Bool := {c} => c.fst == "Type"
 // a code as a function type: some(pair(domain, family)), the family taking the argument's faces
-fn_view :: Code -> Option(Pair(Code, Tree)) := {c} =>
-	if (is_arrow_code(c)) { some(pair(arrow_dom(c), {face} => cod_at(arrow_cod(c), face.fst))) }
-	else if (is_type_code(c)) { c.snd.applied }
-	else { none }
+fn_view :: Code -> Option(Pair(Code, Tree)) := {c} => if (is_type_code(c)) { c.snd.applied } else { none }
 is_fn_code :: Code -> Bool := {c} => not(is_none(fn_view(c)))
 static_of :: {T : Code, v : Val} -> Tree :=> if ((is_type_code(T)) && (not(is_none(T.snd.static)))) { T.snd.static.snd(T, v) } else { v }
 program_of :: {T : Code, v : Val} -> Val :=> if ((is_type_code(T)) && (not(is_none(T.snd.program)))) { T.snd.program.snd(T, v) } else { v }
 is_types :: Code -> Bool := {c} => (is_type_code(c)) && (c.snd.types)
 normal_of :: {T : Code} -> Code :=> if ((is_type_code(T)) && (not(is_none(T.snd.normal)))) { T.snd.normal.snd(T) } else { T }
 same_type :: {A : Code, B : Code} -> Bool :=> if (A == B) { true } else { normal_of(A) == normal_of(B) }
+// what a type is built from: a function type's domain and family, then the parts it lists
+parts_of :: {T : Code} -> List(Pair(Tree, Tree)) :=>
+	if (is_none(T.snd.applied)) { T.snd.parts } else { cons(pair("Type", T.snd.applied.snd.fst), cons(pair("Family", T.snd.applied.snd.snd), T.snd.parts)) }
+// a type nothing is known to be in, with the reason
+no_type :: {why : Tree} -> Code :=> of_type(behaviour{admits := {_at, _self, _v} => pair("Stuck", why)})
+// A quotient: the members of its base, with a coarser sameness, given by a normalizer.
+quot_admits := {at, self, v} => at(self.snd.parts.head.snd, v)
+QuotC :: {Base : Code, nf : Tree} -> Code :=> of_type(behaviour{admits := quot_admits, parts := [pair("Type", Base), pair("Datum", nf)]})
+is_quot_code :: Code -> Bool := {c} => if (is_type_code(c)) { c.snd.admits == quot_admits } else { false }
+quot_base :: Code -> Code := {c} => c.snd.parts.head.snd
+quot_nf :: Code -> Tree := {c} => c.snd.parts.tail.head.snd
+// the declared quotients: Parity (mod 2) and All (every Nat identified)
+Parity := QuotC(NatR, parity)
+All := QuotC(NatR, always_zero)
+normalizers := [Parity, All].map(quot_nf)
 
 // ---------------------------------------------------------------- values
 // A partly-known value is a plain tree with holes in it: a fully known value is itself,
@@ -109,12 +84,12 @@ same_type :: {A : Code, B : Code} -> Bool :=> if (A == B) { true } else { normal
 //                 (destructor steps, newest first), unknown but for being a member of T.
 //                 The lenses make every unknown one: the case split's cases have pieces, the
 //                 induction hypothesis is a piece of a function type, a pattern's variables
-//                 are pieces of the pattern. Two occurrences of one piece are one tree.
+//                 are pieces of the pattern, and a type's eliminator where it cannot run is a
+//                 piece too (below). Two occurrences of one piece are one tree.
 //   App head arg  an application nobody can run yet: of a function piece, or of a function
-//                 whose answer waits on a piece (tree_eq, is_a)
+//                 whose answer waits on a piece (tree_eq, is_a, a type's eliminator)
 //   Forged v      a marker-shaped tree a program built (below)
 //   Lemma f T     a definition already Proved at T, inside a program judged with lemmas
-//   Elim f        a type's eliminator f where it met a hole it cannot run on (below)
 hole_marker := fix({self, what, arg} => wait(self, pair("App", pair(wait(self, what), arg))))
 hole :: {what : Tree} -> Val :=> wait(hole_marker, what)
 hole_sig := (hole(t)).fst
@@ -145,11 +120,6 @@ piece :: {T : Code, path : List(Tree)} -> Val :=> piece_at(T, 0, path)
 // a variable of a pattern, which matching binds
 pattern_piece :: {name : Tree} -> Val :=> piece_at(TreeR, "pattern", [name])
 app_val :: {head : Val, arg : Val} -> Val :=> hole(pair("App", pair(head, arg)))
-// The induction hypothesis: a piece of the function type from the strictly smaller pieces of
-// the input `root` (or the `partner` of one: a quotient's hypothesis) to the codomain. Its
-// license is the arrow rule: an argument must be in its domain.
-hypothesis :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val} -> Val :=>
-	piece_at(ArrowC(below_c(Dom, root, partner), Cod), "hypothesis", root)
 is_hole_of :: {kind : Tree, v : Val} -> Bool :=> if (is_hole(v)) { v.hole_what.fst == kind } else { false }
 is_piece :: Val -> Bool := is_hole_of("Piece")
 is_app :: Val -> Bool := is_hole_of("App")
@@ -163,29 +133,36 @@ lemma_val :: {fn : Tree, T : Code} -> Val :=> lemma_at(fn, T, piece_at(T, "lemma
 is_lemma :: Val -> Bool := is_hole_of("Lemma")
 // A type's eliminator is a program made from the type (`fold_of`, below), and its tree says so:
 // `fold_with(T, layer)` runs one layer of it, with itself for the answers below. On a hole it
-// cannot run, so that application is a neutral term, an Elim hole applied to what is eliminated
-// and then to the handlers, which the type's own rule judges (judge_as).
+// cannot run, so that application is a neutral term: a piece standing for the eliminator,
+// applied to what is eliminated and then to the handlers. Its type is read off the goal it is
+// judged at (elim_type), so until then nothing is known to be in it.
 fold_marker := fix({self, w, x} => w.snd(wait(self, w), x))
 fold_with :: {T : Code, layer : Tree} -> Tree :=> wait(fold_marker, pair(T, layer))
 fold_sig := (fold_with(t, t)).fst
 is_fold :: Val -> Bool := {f} => if (is_fork(f)) { f.fst == fold_sig } else { false }
 fold_type :: Val -> Code := {f} => f.snd.snd.fst
-elim_val :: {f : Tree} -> Val :=> hole(pair("Elim", f))
-is_elim :: Val -> Bool := is_hole_of("Elim")
 piece_type :: Val -> Code := {s} => s.hole_what.snd.fst
 piece_name :: Val -> Tree := {s} => s.hole_what.snd.snd
 piece_root :: Val -> Tree := {s} => s.piece_name.fst
 piece_path :: Val -> List(Tree) := {s} => s.piece_name.snd
 is_var :: Val -> Bool := {v} => if (v.is_piece) { v.piece_root == "pattern" } else { false }
+elim_piece :: {f : Tree} -> Val :=> piece_at(no_type("an eliminator with no goal to read"), "elim", [f])
+is_elim :: Val -> Bool := {v} => if (v.is_piece) { v.piece_root == "elim" } else { false }
+elim_fold :: Val -> Tree := {v} => v.piece_path.head
 app_head :: Val -> Val := {a} => a.hole_what.snd.fst
 app_arg :: Val -> Val := {a} => a.hole_what.snd.snd
 // an argument's two faces: what a program receives, and what dependent types see of it
 faces_of :: {T : Code, v : Val} -> Pair(Val, Tree) :=> pair(program_of(T, v), static_of(T, v))
+// the argument a function over T receives at position i: a piece of T, unless the type gives its own
+arg_sym :: {T : Code, i : Nat} -> Val :=> piece(T, [pair("arg", i)])
+generic_of :: {T : Code, i : Nat} -> Val :=> if ((is_type_code(T)) && (not(is_none(T.snd.generic)))) { T.snd.generic.snd(T, i) } else { arg_sym(T, i) }
 
 // Membership as a program: is_a(T)(x) runs T's recognizer on x. The evaluator reads it as
 // the question "x : T": a piece of T is a member, and while T's own cases or another
 // recognizer's are derived, a piece not yet given a type makes the question open.
-member_marker := {T, x} => if (is_type_code(T)) { T.snd.admits(T, x) == "Yes" } else { T(x) }
+// (a fully known value is judged by membership alone: a recognizer is run, a type given by its behaviour is asked)
+rec member_judge :: {R : Code, v : Tree} -> Res :=> if (is_type_code(R)) { R.snd.admits(member_judge, R, v) } else if (R(v) == true) { "Yes" } else { "No" }
+member_marker := {T, x} => member_judge(T, x) == "Yes"
 is_a :: {T : Code} -> Tree :=> wait(member_marker, T)
 is_a_sig := (is_a(t)).fst
 is_member_q :: Val -> Bool := {f} => if (is_fork(f)) { f.fst == is_a_sig } else { false }
@@ -193,8 +170,7 @@ is_member_q :: Val -> Bool := {f} => if (is_fork(f)) { f.fst == is_a_sig } else 
 not_a :: {T : Code} -> Code :=> {y} => not(is_a(T)(y))
 
 // A recognizer is a type: its members are the trees it says true to. Tree is the one atom.
-is_recognizer :: Code -> Bool := {R} =>
-	if ((R == TreeR) || (is_type_code(R))) { false } else if ((is_arrow_code(R)) || (is_quot_code(R))) { false } else { not((R.fst == "Family") || (is_below_code(R))) }
+is_recognizer :: Code -> Bool := {R} => not((R == TreeR) || (is_type_code(R)))
 // a code whose pieces may split: Tree, a recognizer (its cases are derived, below), a type with cases.
 // These are also the identity-fine codes: their relation is tree_eq
 has_cases :: Code -> Bool := {R} => if ((R == TreeR) || (is_recognizer(R))) { true } else if (is_type_code(R)) { not(is_none(R.snd.cases)) } else { false }
@@ -284,9 +260,9 @@ rec is_strict_ext :: {longer : List(Tree), shorter : List(Tree)} -> Bool :=>
 // the piece an argument of the hypothesis stands for, or "None": a strict descendant of the
 // root input, an input piece of the domain (after folding succ^k back), or the partner of one
 licensed_with :: {tbl : Tree, B : Code, x : Val} -> Val :=> {
-	let Dom := B.snd.fst
-	let root := B.snd.snd.fst
-	let partner := B.snd.snd.snd
+	let Dom := B.snd.parts.head.snd
+	let root := B.snd.parts.tail.head.snd
+	let partner := B.snd.parts.tail.tail.head.snd
 	let ok := {c} => if (c.is_piece) { ((c.piece_type == Dom) && (c.piece_root == 0)) && (is_strict_ext(c.piece_path, root)) } else { false }
 	let direct := canon_with(tbl, x)
 	if (ok(direct)) { direct }
@@ -371,7 +347,7 @@ rec name_pieces :: {child : Tree -> Val, v : Val} -> Val :=>
 	else if (is_stem(v)) { t(name_pieces(child, stem_child(v))) }
 	else { t(name_pieces(child, v.fst), name_pieces(child, v.snd)) }
 // The split table of a code: Tree's shapes, a recognizer's derived cases, a type's own;
-// `none` for arrows, quotients, and a recognizer whose cases could not be derived.
+// `none` for a type that gives none (functions, quotients), and a recognizer whose cases could not be derived.
 // An empty list is a type with no members: a claim over it holds vacuously.
 rec table_via :: {run : Tree, R : Code, child : Tree -> Val} -> Option(List(Val)) :=>
 	if (R == TreeR) { some(tree_cases(child)) }
@@ -488,6 +464,11 @@ rec run_native :: {m : Machine, chunk : Nat, fuel : Nat} -> Pair(Res, Nat) :=>
 	}
 // a membership answer as the evaluator's: Yes is true, No is false, anything else as it is
 answer_of :: Res -> Res := {r} => if (r == "Yes") { answered(true) } else if (r == "No") { answered(false) } else { r }
+// A type given by its behaviour, asked about a partly-known value inside a run: it is handed a
+// judge made of membership questions, each run by `go`.
+rec ask_with :: {go : Tree, R : Code, v : Val} -> Res :=>
+	if (is_type_code(R)) { R.snd.admits({R2, v2} => ask_with(go, R2, v2), R, v) }
+	else { let r := go(is_a(R), v); if (r == answered(true)) { "Yes" } else if (r == answered(false)) { "No" } else { r } }
 // A lemma applied runs as itself; a run that does not answer (stuck, or asking for a split)
 // answers as its piece applied, and a function answer stays a lemma at the rest of the type.
 // `go` is the evaluator below.
@@ -508,9 +489,9 @@ lemma_apply :: {go : Tree, f : Val, x : Val, left : Nat} -> Pair(Res, Nat) :=> {
 // that application; a lemma. Anything else is inspected. `go` runs an application.
 apply_hole :: {go : Tree, f : Val, x : Val, left : Nat} -> Pair(Res, Nat) :=>
 	if (if (f.is_app) { f.app_head == tree_eq } else { false }) { pair(eq_val(f.app_arg, x), left) }
-	else if (if (f.is_piece) { if (is_arrow_code(f.piece_type)) { is_below_code(arrow_dom(f.piece_type)) } else { false } } else { false }) {
+	else if (if (f.is_piece) { f.piece_root == "hypothesis" } else { false }) {
 		let tbl := {R, child} => table_via({g, y} => (go(g, y, derive_fuel)).fst, R, child)
-		let c := licensed_with(tbl, arrow_dom(f.piece_type), x)
+		let c := licensed_with(tbl, fn_view(f.piece_type).snd.fst, x)
 		if (c == "None") { pair(stuck, left) } else { pair(answered(app_val(f, c)), left) }
 	}
 	else if ((if (f.is_piece) { is_fn_code(f.piece_type) } else { false }) || (f.is_app)) { pair(answered(f(x)), left) }
@@ -545,7 +526,7 @@ answer_held :: {from : Tree, f : Val, x : Val, stack : List(MFrame), left : Nat}
 	else if (is_stem(f)) { stop(answered(forged(t(stem_child(f), x)))) }
 	else if (if (is_known(x)) { is_known(f) } else { false }) { run_native(m_start(f, x), 1, left) }
 	// a type's eliminator on a hole: the stuck elimination. A tree that only says it is one runs as the program it is
-	else if (if ((is_fold(f)) && (is_hole(x))) { genuine(f) } else { false }) { stop(answered(app_val(elim_val(f), x))) }
+	else if (if ((is_fold(f)) && (is_hole(x))) { genuine(f) } else { false }) { stop(answered(app_val(elim_piece(f), x))) }
 	// is_a(T)(x): the question "x : T" (above); otherwise one layer of T runs
 	else if (f.is_member_q) {
 		let T := f.snd.snd
@@ -554,7 +535,7 @@ answer_held :: {from : Tree, f : Val, x : Val, stack : List(MFrame), left : Nat}
 		else if (if (x.is_piece) { x.piece_type == not_a(T) } else { false }) { stop(answered(false)) }
 		else if (is_open_piece(x)) { stop(answered(app_val(f, x))) }
 		else if (has_open_piece(x)) { stop(stuck_on(pair("membership asked of a value that is not a smaller piece", x))) }
-		else if (is_type_code(T)) { stop(answer_of(T.snd.admits(T, x))) }
+		else if (is_type_code(T)) { stop(answer_of(ask_with({a, b} => (go(a, b, left)).fst, T, x))) }
 		else if (step == none) { stop(go_on(machine_run(T, x, stack))) }
 		else { stop(go_on(machine_run(step, f, cons(fr_to(x), stack)))) }
 	}
@@ -588,8 +569,6 @@ sapply :: {f : Val, x : Val, fuel : Nat} -> Res :=> (sapply_s(f, x, fuel)).fst
 table :: {R : Code, child : Tree -> Val} -> Option(List(Val)) :=> table_via({f, x} => sapply(f, x, derive_fuel), R, child)
 is_positive :: Code -> Bool := {R} => not(is_none(table(R, {_} => t)))
 canon :: Val -> Val := canon_with(table)
-apply_ih_at :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> sapply(hypothesis(Dom, Cod, root, partner), x, run_fuel)
-apply_ih :: {C : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> apply_ih_at(C, C, root, partner, x)
 split_depth := 3
 
 // the pieces a value holds
@@ -601,68 +580,7 @@ rec pieces_in :: {v : Val} -> List(Val) :=>
 	else if (is_stem(v)) { pieces_in(stem_child(v)) }
 	else { (pieces_in(v.fst)).append(pieces_in(v.snd)) }
 
-// ---------------------------------------------------------------- a type's eliminator, used
-// `fold_of(T)` is the eliminator of a type with cases. A neutral term with an Elim hole at its
-// bottom is a stuck use of an eliminator, and it is judged by the rule of the type it eliminates
-// (judge_as): for a type with cases the rule is derived from the cases, like the eliminator.
-rec nth :: {xs : List(A), i : Nat} -> A :=> if (is_zero(i)) { xs.head } else { nth(xs.tail, nat_pred(i)) }
-fold_table :: {T : Code} -> Option(List(Val)) :=> fold_table_via(table, T)
-fold_layer :: {T : Code} -> Option(Tree) :=> fold_layer_via(table, T)
-fold_of :: {T : Code} -> Tree :=> fold_with(T, fold_layer(T).snd)
-// what a neutral term is applied to, first first
-rec spine_of :: {v : Val} -> List(Val) :=> if (v.is_app) { spine_of(v.app_head).append([v.app_arg]) } else { [] }
-// a stuck use of the eliminator derived from a type with cases
-is_elimination :: Val -> Bool := {v} => if ((v.is_app) && (spine_head(v).is_elim)) {
-		let f := spine_head(v).hole_what.snd
-		if (is_leaf(fold_type(f))) { false } else { fold_layer(fold_type(f)) == some(f.snd.snd.snd) }
-	} else { false }
-// A type with one value in place of another: a type stuck on values is those values, a function
-// type's two sides are done in turn (the codomain once its argument is in), and a type given by
-// its behaviour says for itself. A type that holds no values is left as it is.
-rec type_subst :: {x : Val, y : Val, T : Code} -> Code :=>
-	if (is_hole(T)) { subst(x, y, T) }
-	else if (is_arrow_code(T)) {
-		ArrowC(type_subst(x, y, arrow_dom(T)),
-			if (arrow_cod(T).fst == "Family") { family_code({face} => type_subst(x, y, arrow_cod(T).snd(face))) } else { type_subst(x, y, arrow_cod(T)) })
-	}
-	else if (if (is_type_code(T)) { is_none(T.snd.put) } else { true }) { T }
-	else { T.snd.put.snd(T, x, y) }
-// What a handler must be, for a case and the result type as a function of what is eliminated:
-// a function of the case's pieces, then of one answer per piece of the type itself, each at the
-// result type there, into the result type at the case.
-rec answers_type :: {P : Val -> Code, below : List(Val), whole : Val} -> Code :=>
-	if (below.is_nil) { P(whole) } else { ArrowC(P(below.head), answers_type(P, below.tail, whole)) }
-rec handler_type :: {T : Code, P : Val -> Code, whole : Val, todo : List(Val), below : List(Val)} -> Code :=>
-	if (todo.is_nil) { answers_type(P, below, whole) }
-	else { ArrowC(todo.head.piece_type, family_code({face} =>
-		handler_type(T, P, subst(todo.head, face.fst, whole), todo.tail, if (todo.head.piece_type == T) { below.append([face.fst]) } else { below }))) }
-handlers_of :: {T : Code, P : Val -> Code} -> List(Code) :=> fold_table(T).snd.map({c} => handler_type(T, P, c, pieces_in(c), []))
-
-// ---------------------------------------------------------------- judging
-// judge a partly-known value AT a code. A piece of the code itself is a Yes;
-// a splittable piece of another code is a Need (a split tells); any other
-// piece is opaque. Neutral terms are judged by the ARROW rule: App h [x] at
-// C when h's code is D -> C and x is judged at D. A program at a function type
-// is run on a fresh piece of the domain. Data codes have hand-written
-// shape judges; an undeclared recognizer is judged by RUNNING it, fueled.
-// What a dependent type sees of an argument along a neutral term. A type argument is erased:
-// a program passes the leaf whatever the type, so a function over types applied to the leaf is
-// a member at every type. The leaf is read as `inst`, the type the reader wants (none: as any type).
-arg_faces :: {inst : Option(Code), dom : Code, x : Val} -> Pair(Val, Tree) :=>
-	if (((is_leaf(x)) && (not(is_none(inst)))) && ((is_types(dom)) && (not(is_fn_code(dom))))) { pair(x, inst.snd) } else { faces_of(dom, x) }
-// a neutral term's type: its head piece's, through the codomain at each argument
-rec neutral_type :: {inst : Option(Code), v : Val} -> Option(Code) :=>
-	if (v.is_piece) { some(v.piece_type) }
-	else if (not(v.is_app)) { none }
-	else {
-		let head := neutral_type(inst, v.app_head)
-		let view := if (is_none(head)) { none } else { fn_view(head.snd) }
-		if (is_none(view)) { none } else { some(view.snd.snd(arg_faces(inst, view.snd.fst, v.app_arg))) }
-	}
-// every argument along a neutral term's spine is in its domain; `at` judges
-rec spine_args :: {inst : Option(Code), at : Tree, v : Val} -> Res :=>
-	if (not(v.is_app)) { "Yes" }
-	else { and_yes(spine_args(inst, at, v.app_head), {_y} => at(fn_view(neutral_type(inst, v.app_head).snd).snd.fst, v.app_arg)) }
+// ---------------------------------------------------------------- function types
 // a value fits a case when its known shape is the case's and each piece of the case
 // takes the subtree there as a member of the piece's type (`at` judges)
 rec fits_with :: {at : Tree, c : Val, v : Val} -> Res :=>
@@ -706,49 +624,149 @@ rec fn_member :: {at : Tree, R : Code, f : Val, x : Val, depth : Nat} -> Res :=>
 	else if (is_none(cases)) { stuck_on(pair("a function not settled", f)) }
 	else { all_yes(cases.snd.map({c} => fn_member(at, R, f, c, nat_pred(depth)))) }
 }
+// One former serves plain functions, polymorphism (over a type of types) and dependent types:
+// the family takes the argument's faces. A family of types is itself a type-level argument:
+// dependent types see it as a function giving a fresh abstract type for each argument, named
+// by the stuck application. A family that ignores its argument compiles to K(B), so a plain
+// arrow is one code however it was built, which is how stored pairs find it.
+fn_admits := {at, self, v} => fn_member(at, self, v, inner_piece(self.snd.applied.snd.fst, v), split_depth)
+rec fn_c :: {Dom : Code, fam : Tree} -> Code :=> {
+	let level := is_types(fam(faces_of(Dom, generic_of(Dom, "probe"))))
+	of_type(behaviour{
+		admits := fn_admits,
+		applied := some(pair(Dom, fam)),
+		remake := {ps} => fn_c(ps.head, ps.tail.head),
+		static := if (level) { some({_self, f} => {xs} => static_of(fam(pair(xs, xs)), app_val(f, xs))) } else { none },
+		types := level})
+}
+ArrowC :: {Dom : Code, Cod : Code} -> Code :=> fn_c(Dom, {_face} => Cod)
+// The strictly smaller pieces of the input `root` of type Dom, and a partner of one: the
+// induction hypothesis's domain.
+below_c :: {Dom : Code, root : List(Tree), partner : Tree} -> Code :=> of_type(behaviour{
+	parts := [pair("Type", Dom), pair("Datum", root), pair("Datum", partner)],
+	admits := {_at, self, v} => if (licensed_with(table, self, v) == "None") { "No" } else { "Yes" }})
+// The induction hypothesis: a piece of the function type from the strictly smaller pieces of
+// the input `root` (or the `partner` of one: a quotient's hypothesis) to the codomain, which
+// may depend on the argument. Its license is the function rule: an argument must be in its domain.
+hypothesis_over :: {Dom : Code, fam : Tree, root : List(Tree), partner : Val -> Val} -> Val :=>
+	piece_at(fn_c(below_c(Dom, root, partner), fam), "hypothesis", root)
+hypothesis :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val} -> Val :=> hypothesis_over(Dom, {_face} => Cod, root, partner)
+apply_ih_at :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> sapply(hypothesis(Dom, Cod, root, partner), x, run_fuel)
+apply_ih :: {C : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> apply_ih_at(C, C, root, partner, x)
+
+// ---------------------------------------------------------------- a type's eliminator, used
+// `fold_of(T)` is the eliminator of a type with cases. Where it cannot run it is a neutral term
+// like any call nobody can run, and it is read by its type like one: the type is the
+// eliminator's own statement, with the result type read off the goal.
+rec nth :: {xs : List(A), i : Nat} -> A :=> if (is_zero(i)) { xs.head } else { nth(xs.tail, nat_pred(i)) }
+fold_table :: {T : Code} -> Option(List(Val)) :=> fold_table_via(table, T)
+fold_layer :: {T : Code} -> Option(Tree) :=> fold_layer_via(table, T)
+fold_of :: {T : Code} -> Tree :=> fold_with(T, fold_layer(T).snd)
+// A type with one value in place of another. A type stuck on values is those values. A type
+// built from parts is rebuilt from them: each value with the one in place of the other, each
+// type likewise, each family once its argument is in. A type that lists no parts holds no values.
+rec type_subst :: {x : Val, y : Val, T : Code} -> Code :=>
+	if (is_hole(T)) { subst(x, y, T) }
+	else if (if (is_type_code(T)) { is_leaf(T.snd.remake) } else { true }) { T }
+	else { T.snd.remake(parts_of(T).map({p} =>
+		if (p.fst == "Value") { subst(x, y, p.snd) }
+		else if (p.fst == "Type") { type_subst(x, y, p.snd) }
+		else if (p.fst == "Family") { let fam := p.snd; {face} => type_subst(x, y, fam(face)) }
+		else { p.snd })) }
+// A value run again, after one of its holes was given a shape: each application nobody could
+// run is tried once more, and stays as it was where it still cannot run.
+rec rerun :: {v : Val} -> Val :=>
+	if (v.is_known) { v }
+	else if (v.is_app) {
+		let f := rerun(v.app_head)
+		let x := rerun(v.app_arg)
+		let r := sapply(if (f.is_elim) { f.elim_fold } else { f }, x, run_fuel)
+		if (r.is_answered) { r.answer } else { app_val(f, x) }
+	}
+	else if ((is_hole(v)) || (is_leaf(v))) { v }
+	else if (is_stem(v)) { t(rerun(stem_child(v))) }
+	else { t(rerun(v.fst), rerun(v.snd)) }
+// What a handler must be, for a case and the result type as a function of what is eliminated:
+// a function of the case's pieces, then of one answer per piece of the type itself, each at the
+// result type there, into the result type at the case.
+rec answers_type :: {P : Val -> Code, below : List(Val), whole : Val} -> Code :=>
+	if (below.is_nil) { P(whole) } else { ArrowC(P(below.head), answers_type(P, below.tail, whole)) }
+rec handler_type :: {T : Code, P : Val -> Code, whole : Val, todo : List(Val), below : List(Val)} -> Code :=>
+	if (todo.is_nil) { answers_type(P, below, whole) }
+	else { fn_c(todo.head.piece_type, {face} =>
+		handler_type(T, P, subst(todo.head, face.fst, whole), todo.tail, if (todo.head.piece_type == T) { below.append([face.fst]) } else { below })) }
+handlers_of :: {T : Code, P : Val -> Code} -> List(Code) :=> fold_table(T).snd.map({c} => handler_type(T, P, c, pieces_in(c), []))
+// the rest of an eliminator's type after what is eliminated: one handler per case, then the result
+fold_rest :: {T : Code, P : Val -> Code, result : Code} -> Code :=> reduce({h, rest} => ArrowC(h, rest), result, handlers_of(T, P))
+// The type an eliminator is read at, for the goal R. One derived from a type T with cases takes a
+// member x of T, and then what its statement says (fold_statement, lib/theories/types.disp), with
+// the result type at a value being R with that value in place of x: so R may depend on x. One a
+// type brings itself (an equation's) takes a value whose own type, which the claim gave, brings
+// it, and then what that type says. `typed` gives a neutral term's type.
+bringer :: {typed : Val -> Option(Code), f : Tree, e : Val} -> Option(Code) :=> {
+	let had := if (e.is_piece) { some(e.piece_type) } else { typed(e) }
+	let brings := {T} => if (is_type_code(T)) { if (is_none(T.snd.elim)) { false } else { T.snd.elim.snd.fst == f } } else { false }
+	// the type as it stands, or what it computes to
+	if (is_none(had)) { none } else if (brings(had.snd)) { had } else if (brings(normal_of(had.snd))) { some(normal_of(had.snd)) } else { none }
+}
+elim_type :: {typed : Val -> Option(Code), f : Tree, R : Code} -> Code :=>
+	if (is_leaf(fold_type(f))) {
+		let own := of_type(behaviour{admits := {at, _self, v} =>
+			if (is_none(bringer(typed, f, v))) { stuck_on(pair("nothing brings this eliminator", v)) }
+			else { at(if (v.is_piece) { v.piece_type } else { typed(v).snd }, v) }})
+		fn_c(own, {face} => {
+			let S := bringer(typed, f, face.fst)
+			if (is_none(S)) { no_type(pair("nothing brings this eliminator", face.fst)) } else { S.snd.snd.elim.snd.snd(normal_of(S.snd), R) }
+		})
+	}
+	else { let T := fold_type(f); fn_c(T, {face} => fold_rest(T, {y} => type_subst(face.fst, y, R), R)) }
+
+// ---------------------------------------------------------------- judging
+// Judging a partly-known value at a code. A piece of the code itself is a member. A neutral
+// term is a member by the function rule: its head's type leads to the code, and each argument
+// is a member of its domain. Tree asks only that nothing coarse is in a fine position. A type
+// given by its behaviour is asked. A recognizer takes a value that fits one of its derived
+// cases, or is run on it.
+// What a dependent type sees of an argument along a neutral term. A type argument is erased:
+// a program passes the leaf whatever the type, so a function over types applied to the leaf is
+// a member at every type. The leaf is read as `inst`, the type the reader wants (none: as any type).
+arg_faces :: {inst : Option(Code), dom : Code, x : Val} -> Pair(Val, Tree) :=>
+	if (((is_leaf(x)) && (not(is_none(inst)))) && ((is_types(dom)) && (not(is_fn_code(dom))))) { pair(x, inst.snd) } else { faces_of(dom, x) }
+// a neutral term's type: its head piece's, through the codomain at each argument. An eliminator's
+// is read off the goal `inst`, so without one it has none.
+rec neutral_type :: {inst : Option(Code), v : Val} -> Option(Code) :=>
+	if (v.is_elim) { if (is_none(inst)) { none } else { some(elim_type({e} => neutral_type(none, e), v.elim_fold, inst.snd)) } }
+	else if (v.is_piece) { some(v.piece_type) }
+	else if (not(v.is_app)) { none }
+	else {
+		let head := neutral_type(inst, v.app_head)
+		let view := if (is_none(head)) { none } else { fn_view(head.snd) }
+		if (is_none(view)) { none } else { some(view.snd.snd(arg_faces(inst, view.snd.fst, v.app_arg))) }
+	}
+// every argument along a neutral term's spine is in its domain; `at` judges
+rec spine_args :: {inst : Option(Code), at : Tree, v : Val} -> Res :=>
+	if (not(v.is_app)) { "Yes" }
+	else { and_yes(spine_args(inst, at, v.app_head), {_y} => at(fn_view(neutral_type(inst, v.app_head).snd).snd.fst, v.app_arg)) }
 rec judge_as :: {R : Code, val : Val} -> Res :=> {
 	let at := {R2, v} => judge_as(R2, v)
-	// a neutral term is in R when its type is R and every argument along it is in its domain;
+	// A neutral term is in R when its type is R and every argument along it is in its domain;
 	// outside a domain the head's behaviour is unconstrained, so that is blamed on the head.
-	// Where its type is R only with R for an erased type argument, it is read so.
+	// Where its type is R only with R for an erased type argument, or for an eliminator's
+	// result, it is read so. "None": its type is not R. A stuck elimination that is not a
+	// member this way waits on what it eliminates: split, the elimination runs one layer on each case.
 	let is_R := {ty} => if (is_none(ty)) { false } else { same_type(ty.snd, R) }
 	let app_rule := {v} => {
 		let inst := if (is_R(neutral_type(none, v))) { none } else { some(R) }
-		if (is_R(neutral_type(inst, v))) {
+		if (not(is_R(neutral_type(inst, v)))) { "None" }
+		else {
 			let args := spine_args(inst, at, v)
-			if (args == "No") { stuck_on(pair("argument outside the domain", v.app_head)) } else { args }
+			if ((args == "Yes") || (args.is_need)) { args }
+			else if (if (spine_head(v).is_elim) { waits_on(v).is_splittable } else { false }) { need(waits_on(v)) }
+			else if (args == "No") { stuck_on(pair("argument outside the domain", v.app_head)) }
+			else { args }
 		}
-		else { stuck_on(pair("opaque value", v)) }
 	}
-	// A stuck elimination is in R by the type's own rule: what is eliminated is a member of the
-	// type, and each handler is what its case asks (handler_type), with R at a value being R with
-	// that value in place of what is eliminated, so R may depend on it. That is case split and
-	// induction on a part of the program. Where the rule does not say yes, what is eliminated is
-	// the piece to split: the elimination then runs one layer on each case.
-	let elim_rule := {v} => {
-		let args := spine_of(v)
-		let T := fold_type(spine_head(v).hole_what.snd)
-		let r := and_yes(at(T, args.head), {_y} => all_yes(handlers_of(T, {y} => type_subst(args.head, y, R)).zip(args.tail).map({h} => at(h.fst, h.snd))))
-		if ((r == "Yes") || (r.is_need)) { r } else if (waits_on(v).is_splittable) { need(waits_on(v)) } else if (r == "No") { stuck_on(pair("a handler outside its case", v)) } else { r }
-	}
-	let all_handlers := {v} => spine_of(v).tail.length == fold_table(fold_type(spine_head(v).hole_what.snd)).snd.length
-	// A type given by its behaviour brings its eliminator and the rule for a stuck use of it. The
-	// type is the one of what is eliminated, which the claim gave, never one the program names.
-	let own_rule := {v} => {
-		let args := spine_of(v)
-		let had := if (args.head.is_piece) { some(args.head.piece_type) } else { neutral_type(none, args.head) }
-		let brings := {T} => if (is_type_code(T)) { not(is_none(T.snd.elim)) } else { false }
-		// the type as it stands, or what it computes to
-		let S := if (is_none(had)) { t } else if (brings(had.snd)) { had.snd } else { normal_of(had.snd) }
-		if (not(brings(S))) { "None" }
-		else if (not(S.snd.elim.snd.fst == spine_head(v).hole_what.snd)) { "None" }
-		else { and_yes(at(had.snd, args.head), {_y} => S.snd.elim.snd.snd(at, normal_of(S), R, args.tail)) }
-	}
-	// a stuck elimination by its type's rule ("None": no rule is its own)
-	let eliminated := {v} =>
-		if (not(if (v.is_app) { spine_head(v).is_elim } else { false })) { "None" }
-		else if (is_elimination(v)) { if (all_handlers(v)) { elim_rule(v) } else { "None" } }
-		else { own_rule(v) }
+	let neutral := if (val.is_app) { app_rule(val) } else { "None" }
 	let opaque := {v} => stuck_on(pair("opaque value", v))
 	// the GRADE rule: at Tree (relation tree_eq) a free piece of a coarser code
 	// is refused — it may map related inputs to unrelated trees. A neutral term
@@ -774,23 +792,18 @@ rec judge_as :: {R : Code, val : Val} -> Res :=> {
 		if (b == true) { "Yes" } else if (b == false) { "No" } else { stuck_on(pair("recognizer answered no Bool", b)) })
 	let recognized := {v} => {
 		let cases := table(R, {step} => piece(TreeR, [step]))
-		if (v.is_app) { app_rule(v) }
+		if (v.is_app) { if (neutral == "None") { opaque(v) } else { neutral } }
 		else if (is_none(cases)) { and_yes(tree(v), {_} => ran(v)) }
 		else if (v.is_known) { if (R(v) == true) { "Yes" } else { "No" } }
 		else { any_fit(cases.snd.map({c} => fits_with(at, c, v))) }
 	}
 	if (if (val.is_piece) { same_type(val.piece_type, R) } else { false }) { "Yes" }
-	else if (not(eliminated(val) == "None")) { eliminated(val) }
-	else if (if (val.is_app) { app_rule(val) == "Yes" } else { false }) { "Yes" }
+	else if (neutral == "Yes") { "Yes" }
+	else if (if (neutral == "None") { false } else { spine_head(val).is_elim }) { neutral }
 	else if (R == TreeR) { tree(val) }
-	else if (is_type_code(R)) { R.snd.admits(R, val) }
-	else if (is_arrow_code(R)) { fn_member(at, R, val, inner_piece(arrow_dom(R), val), split_depth) }
-	else if (is_quot_code(R)) { at(quot_base(R), val) }
-	else if (is_below_code(R)) { if (licensed_with(table, R, val) == "None") { "No" } else { "Yes" } }
+	else if (is_type_code(R)) { R.snd.admits(at, R, val) }
 	else { recognized(val) }
 }
-// a value that is no piece or neutral term of a function type, judged as a function (above)
-judge_fn :: {R : Code, f : Val} -> Res :=> fn_member(judge_as, R, f, inner_piece(fn_view(R).snd.fst, f), split_depth)
 judge_nat :: Val -> Res := judge_as(NatR)
 judge_bool :: Val -> Res := judge_as(Bool)
 judge_tree :: Val -> Res := judge_as(TreeR)
@@ -820,10 +833,10 @@ member_same :: {Cod : Code, a : Val, b : Val} -> Res :=>
 yes_on :: {grounds : List(Tree)} -> Res :=> pair("Yes", grounds)
 is_yes :: Res -> Bool := {r} => (r == "Yes") || (r.fst == "Yes")
 grounds_of :: Res -> List(Tree) := {r} => if (r == "Yes") { [] } else { r.snd }
-// what an answer rests on besides the run: induction where it applies the hypothesis, a lemma where it applies one's type, a type's rule where it is a stuck elimination
+// what an answer rests on besides the run: induction where it applies the hypothesis, a lemma where it applies one's type, elimination where it applies an eliminator's
 cited :: {out : Val} -> List(Tree) :=> {
 	let roots := pieces_in(out).map(piece_root)
-	[pair("hypothesis", "induction"), pair("lemma", "lemma")].filter({rule} => roots.member(rule.fst)).map(pair_snd).append(if (spine_head(out).is_elim) { ["elimination"] } else { [] })
+	[pair("hypothesis", "induction"), pair("lemma", "lemma"), pair("elim", "elimination")].filter({rule} => roots.member(rule.fst)).map(pair_snd)
 }
 // a case is done, resting on these
 settled_on :: {grounds : List(Tree)} -> Outcome(Tree, Pair(Val, Nat)) :=> pair("Skip", grounds)
@@ -916,7 +929,7 @@ ground :: {Cod : Code, left : Tree -> Res, right : Tree -> Res, verdict : Verdic
 	if (refutations.is_nil) { verdict } else { refutations.head }
 }
 
-// ---------------------------------------------------------------- (C) quotient respect
+// ---------------------------------------------------------------- quotient respect
 // Membership at Quotient Nat nf is RESPECT: for every a, f a ~_Cod f (nf a),
 // by induction on a. The hypothesis at a strictly smaller piece k names f k and
 // f (nf k) by ONE application: running nf on k answers the neutral term App nf [k]
@@ -974,7 +987,7 @@ eq_by_induction :: {step_f : Tree, step_g : Tree} -> Verdict :=>
 		else { and_then(step_with_ih(step_f, input), {a} => and_then(step_with_ih(step_g, input), {b} => member_same(NatR, a, b))) }
 	, piece(NatR, []), split_depth)
 
-// (G) a curried claim f : A -> B -> C: two roots (ids 0 and 1), the input is
+// a curried claim f : A -> B -> C: two roots (ids 0 and 1), the input is
 // their pair — distinct names, so a split of one leaves the other alone
 two_roots :: {A : Code, B : Code} -> Val :=> pair(piece_at(A, 0, []), piece_at(B, 1, []))
 run2 :: {fn : Tree, input : Val} -> Res :=> and_then(run(fn, input.fst), {fa} => sapply(fa, input.snd, run_fuel))
@@ -990,7 +1003,7 @@ check_by_induction2 :: {B : Code, Cod : Code, step_fn : Tree} -> Verdict :=>
 		else { and_then(run(step_fn, curried_ih(B, Cod)), {w} => and_then(sapply(w, input.fst, run_fuel), {wa} => and_then(sapply(wa, input.snd, run_fuel), judge_as(Cod)))) }
 	, two_roots(NatR, B), split_depth)
 
-// ---------------------------------------------------------------- (B) streams
+// ---------------------------------------------------------------- streams
 // An item stream is a coalgebra (lib/stream.disp) whose stepper answers
 // finished ending | running (emit drawn next), where drawn is `yield item` or
 // `skip`. Bisimulation up to a user-supplied relation between

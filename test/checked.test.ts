@@ -78,6 +78,14 @@ describe("checked.disp rejections", () => {
       .toThrow(/failing entry: sum_one \(t\("Refuted"/)
     // an equation already Proved is used through equality's own eliminator: here it is turned around
     expect(load(`${sum}\nsum_zero : {n : Nat} -> Eq(sum(n, 0), n) := ${proof}\nzero_sum : {n : Nat} -> Eq(n, sum(n, 0)) := {n} => cast(sum_zero(n), t)`)).not.toThrow()
+    // an equation at a function type is one between two programs: an equation over two arguments, and commutativity from two of them
+    const zero = `sum_zero : {n : Nat} -> Eq(sum(n, 0), n) := ${proof}`
+    const succ = `sum_succ : EqAt(Nat -> Nat -> Nat, {a, b} => sum(a, succ(b)), {a, b} => succ(sum(a, b))) := {n, _m} => down(n, t, {_k, ih} => ih)`
+    const swap = `sum_swap : EqAt(Nat -> Nat -> Nat, {a, b} => sum(a, b), {a, b} => sum(b, a)) := {n, m} => down(n, cast(sum_zero(m), t), {k, ih} => cast(sum_succ(m, k), cast(ih, t)))`
+    expect(load(`${sum}\n${zero}\n${succ}\n${swap}`)).not.toThrow()
+    // without the successor equation the step has nothing to rewrite with
+    expect(load(`${sum}\n${zero}\n${swap.replace("cast(sum_succ(m, k), cast(ih, t))", "cast(ih, t)")}`))
+      .toThrow(/failing entry: sum_swap \(t\("Open"/)
     // and a proof that eliminates nothing does no induction
     expect(load(`${sum}\nidle : {n : Nat} -> Eq(sum(n, 0), n) := {_n} => t`))
       .toThrow(/failing entry: idle \(t\("Open"/)

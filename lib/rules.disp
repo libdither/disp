@@ -10,8 +10,8 @@
 //   generic run    (atom) a run on a case answers for every tree the case covers
 //   induction      (atom) the hypothesis is asked only at the strictly smaller pieces of a member
 //   lemma          a call is read by a type its callee is already Proved at
-//   elimination    a stuck use of a type's eliminator is judged by the type's own rule, which
-//                  for a type with cases is case split and induction on a part of the program
+//   elimination    the same for a call of a type's eliminator, whose type is its own statement
+//                  (case split and induction on a part of the program) read off the goal
 //   finite cover   `over` (lib/claim.disp): a claim checked on every listed challenge
 //   composition    `lens_then` (lib/claim.disp)
 // One loop applies them (lib/confirm.disp): a case is run, the run citing the hypothesis or
@@ -89,8 +89,6 @@ certify :: {claim : Claim, cases : List(Val)} -> Verdict :=> steps_verdict(searc
 // on demand (case split), runs the value on them (generic run), and for a recursive value,
 // fix(step), runs the step with the hypothesis in place of itself (induction).
 max_args := 8
-arg_sym :: {T : Code, i : Nat} -> Val :=> piece(T, [pair("arg", i)])
-generic_of :: {T : Code, i : Nat} -> Val :=> if ((is_type_code(T)) && (not(is_none(T.snd.generic)))) { T.snd.generic.snd(T, i) } else { arg_sym(T, i) }
 rec generic_args :: {T : Code, i : Nat} -> Val :=> {
 	let view := fn_view(T)
 	if ((is_none(view)) || (nat_le(max_args, i))) { t }
@@ -103,7 +101,7 @@ rec generic_args :: {T : Code, i : Nat} -> Val :=> {
 induct :: {f : Val, arg : Val, dom : Code, rest : Tree, i : Nat, fuel : Nat} -> Res :=> {
 	let step := step_of(f)
 	if ((step == none) || ((arg.is_known) || (not(is_positive(dom))))) { answered(f) }
-	else { sapply(step, hypothesis(dom, family_code(rest), [pair("arg", i)], same), fuel) }
+	else { sapply(step, hypothesis_over(dom, rest, [pair("arg", i)], same), fuel) }
 }
 // the run along the arguments, judged at the end; its Yes says what the answer rests on
 // A neutral answer is judged where it stands, at the rest of the type: where a type argument

@@ -18,7 +18,7 @@ rec assignments :: {dom : List(Tree), cod : List(Tree)} -> List(List(Pair(Tree, 
 	else { cod.cross(assignments(dom.tail, cod), {y, rest} => cons(pair(dom.head, y), rest)) }
 // the function type between finite types: a member answers in the codomain on every member, and its cases are every table
 f_arrow := {a, b} => of_type(behaviour{
-	admits := {_self, v} => if (v.is_known) { all_yes(elements(a).map({x} => and_then(sapply(v, x, run_fuel), judge_as(b)))) } else { inspect(v) },
+	admits := {at, _self, v} => if (v.is_known) { all_yes(elements(a).map({x} => and_then(sapply(v, x, run_fuel), at(b)))) } else { inspect(v) },
 	applied := some(pair(a, {_x} => b)),
 	cases := some({_self, _child} => assignments(elements(a), elements(b)).map(table_get))})
 

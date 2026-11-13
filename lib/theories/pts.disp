@@ -337,7 +337,7 @@ eq_f := former{kind := "Plain",
 		_ <- has_type(sp, ctx, term.k2, term.k0)
 		ok(srt(s))
 	},
-	meaning := {_sp, env, term} => eq_t(env, open_program(env, term.k1), open_program(env, term.k2))}
+	meaning := {sp, env, term} => eq_at(interp(sp, env, term.k0), env, open_program(env, term.k1), open_program(env, term.k2))}
 eq_ty :: {a : Term, x : Term, y : Term} -> Term :=> node(eq_f, [a, x, y])
 refl_f := former{kind := "Plain",
 	infer := {sp, ctx, term} => {

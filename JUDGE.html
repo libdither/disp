@@ -176,7 +176,7 @@
 </div>
 
 <h2>1. Only one rule looks at its argument</h2>
-<p>The checker runs the program's tree on the machine in <a href="lib/machine.disp">lib/machine.disp</a>, the same step function that runs plain trees (<code>m_rule</code>, line 72). The evaluator in <a href="lib/confirm.disp">lib/confirm.disp</a> (<code>sapply_from</code>, line 574) adds one thing: an application that would read an unknown value's shape is held back from the rules and answered separately (<code>held</code>, line 526). Four of the five rules only build, drop or copy the argument. Only the triage rule asks for its shape, so every <code>is_leaf</code>, <code>is_zero</code>, <code>.fst</code> and <code>if</code> on data ends up there.</p>
+<p>The checker runs the program's tree on the machine in <a href="lib/machine.disp">lib/machine.disp</a>, the same step function that runs plain trees (<code>m_rule</code>, line 72). The evaluator in <a href="lib/confirm.disp">lib/confirm.disp</a> (<code>sapply_from</code>, line 555) adds one thing: an application that would read an unknown value's shape is held back from the rules and answered separately (<code>held</code>, line 507). Four of the five rules only build, drop or copy the argument. Only the triage rule asks for its shape, so every <code>is_leaf</code>, <code>is_zero</code>, <code>.fst</code> and <code>if</code> on data ends up there.</p>
 <div class="rules" id="rules"></div>
 <h3>What triage can be handed</h3>
 <p class="small muted">The rule is <code>t (t a b) c z</code>. Pick what <code>z</code> is:</p>
@@ -222,10 +222,10 @@ search_g :: {checks : List(Val -&gt; Res), ground : Val -&gt; Option(Tree), inst
 		running(emit(yield(pair(todo.head, out)), rest))
 	}
 }, pair(start, []))</code></pre>
-<p>So the "work list" in the next section is not a separate structure: it is this state, and each case in the case tree is one pull. The stream yields every case with what settled it; <code>s_yielded</code> keeps only the counterexamples, so to <code>verdict</code> a settled case is a skip. The settle function is <code>settle_case</code>; an item is a pair of the case's arguments and the splits left. The same list read back as data is <code>derivation</code> (lib/rules.disp, line 295).</p>
+<p>So the "work list" in the next section is not a separate structure: it is this state, and each case in the case tree is one pull. The stream yields every case with what settled it; <code>s_yielded</code> keeps only the counterexamples, so to <code>verdict</code> a settled case is a skip. The settle function is <code>settle_case</code>; an item is a pair of the case's arguments and the splits left. The same list read back as data is <code>derivation</code> (lib/rules.disp, line 293).</p>
 
 <h2>3. Step through a proof</h2>
-<p>Pick a definition. <b>Step</b> walks the run of the next case; the last step of each case is one pull of the work-list stream, which settles the case with <code>settle_case</code> (lib/confirm.disp:851). Every case is run exactly first. Where definitions already Proved are given as lemmas and that run does not settle the case, it is run again with them read by their types. A case a run answers Yes for is done for every input it stands for, and the Yes says what it rests on besides the run: the hypothesis (induction), a lemma; a case whose run needs an input piece's shape is split into that type's cases; a stuck run is noted and makes the verdict Open; a known input that fails is a counterexample and ends the search.</p>
+<p>Pick a definition. <b>Step</b> walks the run of the next case; the last step of each case is one pull of the work-list stream, which settles the case with <code>settle_case</code> (lib/confirm.disp:864). Every case is run exactly first. Where definitions already Proved are given as lemmas and that run does not settle the case, it is run again with them read by their types. A case a run answers Yes for is done for every input it stands for, and the Yes says what it rests on besides the run: the hypothesis (induction), a lemma; a case whose run needs an input piece's shape is split into that type's cases; a stuck run is noted and makes the verdict Open; a known input that fails is a counterexample and ends the search.</p>
 <div class="scenarios" id="scenarios"></div>
 <div class="card" id="scard"></div>
 <div class="controls">
@@ -282,8 +282,8 @@ search_g :: {checks : List(Val -&gt; Res), ground : Val -&gt; Option(Tree), inst
   <li><b>Need 1: someone looks at the hypothesis's answer.</b> In <a href="#" data-go="rev">rev</a>, <code>cat</code> runs <code>is_leaf</code> on <span class="chip hyp">rev(xs.tail)</span> at once. The strip shows why nothing could answer: across inputs, <code>rev(xs.tail)</code> is sometimes <code>[]</code> and sometimes not. The run is stuck, at any budget.</li>
   <li><b>Need 2: a recursion with no hypothesis.</b> In <a href="#" data-go="wrap">wrap</a> nothing is forgotten, but <code>cat</code>'s recursion is not the function being judged, so it gets no hypothesis. Every split exposes another tail to split. The cases it closes are one list length each, which is brute force again, and the split budget runs out.</li>
   <li><b>Both need the same thing:</b> a statement about <code>cat</code>, proved by <code>cat</code>'s own induction (the <a href="#" data-go="cat">cat</a> run), then used as a lemma: when a run of <code>cat</code> stops, the lemma answers "some List(Nat)" if the arguments are in <code>cat</code>'s domain. <a href="#" data-go="revL">rev</a> and <a href="#" data-go="wrapL">wrap</a> with the lemma are Proved.</li>
-  <li><b>A lemma hides nothing.</b> A lemma's answer forgets what <code>cat</code> computes, so every case is run exactly before any lemma is read by its type, and a check that reads by type never refutes. <a href="#" data-go="bug">bug</a> is refuted by the input <code>[]</code>, and <a href="#" data-go="bugL">with the lemma</a> it still is (lib/confirm.disp:851).</li>
-  <li><b>When the statement need not be written.</b> Before giving up, the checker tries each recursive definition inside the value at the function types the goal's own type is built from (lib/rules.disp:218). <code>times : Nat -&gt; Nat -&gt; Nat</code> calls an unannotated <code>plus</code> and is Proved that way (lib/theories/checked_example.disp). <a href="#" data-go="rev">rev</a> is not: <code>cat</code>'s type has two list arguments, and <code>List(Nat) -&gt; List(Nat)</code> is not built from it. That is the place the annotation is needed.</li>
+  <li><b>A lemma hides nothing.</b> A lemma's answer forgets what <code>cat</code> computes, so every case is run exactly before any lemma is read by its type, and a check that reads by type never refutes. <a href="#" data-go="bug">bug</a> is refuted by the input <code>[]</code>, and <a href="#" data-go="bugL">with the lemma</a> it still is (lib/confirm.disp:864).</li>
+  <li><b>When the statement need not be written.</b> Before giving up, the checker tries each recursive definition inside the value at the function types the goal's own type is built from (lib/rules.disp:216). <code>times : Nat -&gt; Nat -&gt; Nat</code> calls an unannotated <code>plus</code> and is Proved that way (lib/theories/checked_example.disp). <a href="#" data-go="rev">rev</a> is not: <code>cat</code>'s type has two list arguments, and <code>List(Nat) -&gt; List(Nat)</code> is not built from it. That is the place the annotation is needed.</li>
 </ul>
 <p>Why not split the hypothesis's answer as if it were an input? Splitting it would be sound, since every list is <code>[]</code> or a <code>cons</code>. But <code>cat</code> would then recurse on the tail of that answer, with no hypothesis of its own: that is the <a href="#" data-go="wrap">wrap</a> situation. Either way the missing piece is an induction on <code>cat</code>, and its statement is what the annotation on <code>cat</code> supplies. (The checker does not try this; the paragraph is the reason it would not help.)</p>
 
@@ -425,18 +425,18 @@ function renderRules() {
     <div class="rule">
       <h4>an unknown function</h4>
       <div class="eq">f z, with f a hole</div>
-      <div class="what">the hypothesis answers if z is a piece strictly below the input; another unknown function makes the neutral term f(z); a lemma runs its real tree first (<code>apply_hole</code>, line 509)</div>
+      <div class="what">the hypothesis answers if z is a piece strictly below the input; another unknown function makes the neutral term f(z); a lemma runs its real tree first (<code>apply_hole</code>, line 490)</div>
     </div>`;
 }
 const ZKINDS = [
   { key: "known", label: "a known tree", draw: () => svgTree({ n: "fork", l: { n: "leaf" }, r: { n: "leaf" } }, "t(t, t)"),
     text: `A known tree has a shape, so triage takes its branch: here <code>t(t, t)</code> is a fork, so the result is <code>c t t</code>. Brute force only ever hands triage known trees.`, tag: ["yes", "branch"] },
   { key: "piece", label: "an input piece", draw: () => `${svgTree({ n: "cloud", kind: "piece", label: "List" }, "piece")}<svg width="34" height="20"><path class="arrow" d="M4 10 H28 M23 5 L29 10 L23 15"/></svg>${svgTree({ n: "leaf" }, "case []")}<span class="mono">&nbsp;or&nbsp;</span>${svgTree({ n: "fork", l: { n: "cloud", kind: "piece", label: "Nat" }, r: { n: "cloud", kind: "piece", label: "List" } }, "case cons")}`,
-    text: `An input piece of a type with cases: the run stops with <b>Need</b> (<code>inspect</code>, line 233) and the search splits the piece into the type's cases, each with fresh smaller pieces, and runs each case. The cases cover exactly what the piece covered, so nothing is lost. The cases are derived by running the type's recognizer once on an unknown tree.`, tag: ["need", "Need → split"] },
+    text: `An input piece of a type with cases: the run stops with <b>Need</b> (<code>inspect</code>, line 209) and the search splits the piece into the type's cases, each with fresh smaller pieces, and runs each case. The cases cover exactly what the piece covered, so nothing is lost. The cases are derived by running the type's recognizer once on an unknown tree.`, tag: ["need", "Need → split"] },
   { key: "hyp", label: "the hypothesis's answer", draw: () => `${svgTree({ n: "cloud", kind: "hyp", label: "rev(xs.tail)" }, "hypothesis answer")}<svg width="20" height="40"><line class="wall" x1="10" y1="2" x2="10" y2="38"/></svg>`,
     text: `What a recursive call returned: an application of the hypothesis, a neutral term whose head is a function piece. Function types have no cases and it is not an input, so there is nothing to split: <b>Stuck</b>, reason "opaque value". The search notes it and the verdict is Open. More fuel or depth changes nothing.`, tag: ["stuck", "Stuck: opaque value"] },
   { key: "lem", label: "…inside a lemma's run", draw: () => `${svgTree({ n: "cloud", kind: "hyp", label: "rev(xs.tail)" }, "hypothesis answer")}<svg width="34" height="20"><path class="arrow" d="M4 10 H28 M23 5 L29 10 L23 15"/></svg>${svgTree({ n: "cloud", kind: "lem", label: "cat(rev(xs.tail))" }, "lemma answer")}`,
-    text: `The same triage, reached while running a lemma's real tree (cat's, here). The run stops, and instead of passing the stop up, the lemma answers with its own type: an application of a piece of cat's type (<code>lemma_apply</code>, line 494). Later, judging checks each argument against cat's domain.`, tag: ["lem", "lemma answers"] },
+    text: `The same triage, reached while running a lemma's real tree (cat's, here). The run stops, and instead of passing the stop up, the lemma answers with its own type: an application of a piece of cat's type (<code>lemma_apply</code>, line 475). Later, judging checks each argument against cat's domain.`, tag: ["lem", "lemma answers"] },
 ];
 function renderZ(key) {
   document.getElementById("zpick").innerHTML = ZKINDS.map((z) => `<button class="seg${z.key === key ? " on" : ""}" data-z="${z.key}">${esc(z.label)}</button>`).join("");
@@ -448,12 +448,12 @@ function renderZ(key) {
 const S = (tag, html, ref) => ({ tag, html, ref });
 const R = { confirm: "lib/confirm.disp", rules: "lib/rules.disp", machine: "lib/machine.disp", checked: "lib/theories/checked.disp" };
 const ref = (file, line, name) => ({ file: R[file], line, name });
-const IND = (self, arg, cod) => S("hyp", `${C(self)} is <code>fix(step)</code> and ${Pc(arg)} is unknown, so the run uses <code>step</code> with the hypothesis in place of ${C(self)}: a function piece that only answers for pieces strictly below ${Pc(arg)}, with answers in ${esc(cod)}.`, ref("rules", 103, "induct"));
-const KNOWN = (what) => S("run", `The input is fully known and so is the program, so it runs on the native machine: ${what}`, ref("confirm", 482, "run_native"));
-const NEED = (code, piece) => S("need", `${C(code)} compiles to a triage on ${Pc(piece)}. Triage needs its shape, and ${Pc(piece)} is an input piece of a type with cases: <b>Need</b>.`, ref("confirm", 233, "inspect"));
+const IND = (self, arg, cod) => S("hyp", `${C(self)} is <code>fix(step)</code> and ${Pc(arg)} is unknown, so the run uses <code>step</code> with the hypothesis in place of ${C(self)}: a function piece that only answers for pieces strictly below ${Pc(arg)}, with answers in ${esc(cod)}.`, ref("rules", 101, "induct"));
+const KNOWN = (what) => S("run", `The input is fully known and so is the program, so it runs on the native machine: ${what}`, ref("confirm", 458, "run_native"));
+const NEED = (code, piece) => S("need", `${C(code)} compiles to a triage on ${Pc(piece)}. Triage needs its shape, and ${Pc(piece)} is an input piece of a type with cases: <b>Need</b>.`, ref("confirm", 209, "inspect"));
 const FORKFALSE = (code) => S("run", `${C(code)}: triage sees a fork, so false. Known shapes never stop a run, even when their parts are unknown.`, ref("machine", 72, "m_rule"));
-const HYPCALL = (call, piece, ans) => S("hyp", `${C(call)} is the hypothesis applied to ${Pc(piece)}. Its licence checks ${Pc(piece)} is strictly below the input, and it is (it is a part of it). The answer is a neutral term: ${Hc(ans)}.`, ref("confirm", 509, "apply_hole → licensed_with"));
-const LEMSWAP = S("lem", `The exact run did not settle the case, so it is run a second time with ${C("cat")} read by its type: the tree of ${C("cat")} inside this value is swapped for a lemma hole, because ${C("cat")} is Proved at ${C("List(Nat) -> List(Nat) -> List(Nat)")} and its tree has 298 nodes (lemmas need at least 64).`, ref("rules", 209, "checks_of → lemmas_in"));
+const HYPCALL = (call, piece, ans) => S("hyp", `${C(call)} is the hypothesis applied to ${Pc(piece)}. Its licence checks ${Pc(piece)} is strictly below the input, and it is (it is a part of it). The answer is a neutral term: ${Hc(ans)}.`, ref("confirm", 490, "apply_hole → licensed_with"));
+const LEMSWAP = S("lem", `The exact run did not settle the case, so it is run a second time with ${C("cat")} read by its type: the tree of ${C("cat")} inside this value is swapped for a lemma hole, because ${C("cat")} is Proved at ${C("List(Nat) -> List(Nat) -> List(Nat)")} and its tree has 298 nodes (lemmas need at least 64).`, ref("rules", 207, "checks_of → lemmas_in"));
 
 const SCEN = [
   { key: "next", group: "Closes without help", name: "next", trace: "r_1next", args: ["n"], argTypes: ["Nat"], dom: "Nat", cod: "Nat", self: "next",
@@ -461,9 +461,9 @@ const SCEN = [
     note: `The run never looks at its argument, so one run on one piece covers every Nat.`,
     verdict: { k: "Proved", text: "Proved after one run" },
     steps: { 0: [
-      S("run", `The argument is a piece: ${Pc("n")}, some Nat.`, ref("rules", 94, "generic_args")),
-      S("run", `${C("succ(n)")} is ${C("t(t, n)")}: the leaf and stem rules build a fork around ${Pc("n")} without looking at it.`, ref("confirm", 574, "sapply_from")),
-      S("yes", `Judge the output at Nat. Nat's cases are ${C("0 = t")} and ${C("succ(m) = t(t, m)")}; the output has the succ shape with ${Pc("n")} where m goes, and ${Pc("n")} is a piece of Nat: <b>Yes</b>.`, ref("confirm", 709, "judge_as")),
+      S("run", `The argument is a piece: ${Pc("n")}, some Nat.`, ref("rules", 92, "generic_args")),
+      S("run", `${C("succ(n)")} is ${C("t(t, n)")}: the leaf and stem rules build a fork around ${Pc("n")} without looking at it.`, ref("confirm", 555, "sapply_from")),
+      S("yes", `Judge the output at Nat. Nat's cases are ${C("0 = t")} and ${C("succ(m) = t(t, m)")}; the output has the succ shape with ${Pc("n")} where m goes, and ${Pc("n")} is a piece of Nat: <b>Yes</b>.`, ref("confirm", 750, "judge_as")),
     ] },
     concrete: { kind: "nat", run: (a) => P.next(a[0]) } },
 
@@ -473,20 +473,20 @@ const SCEN = [
     verdict: { k: "Refuted", text: "Refuted: n = 1 gives pair(1, 1), which is not a Nat" },
     steps: {
       0: [
-        S("run", `${C("pair(n, n)")} is ${C("t(n, n)")}: built by the stem and fork rules, without looking at ${Pc("n")}.`, ref("confirm", 574, "sapply_from")),
-        S("need", `Judge ${C("t(n, n)")} at Nat. Only ${C("succ(m) = t(t, m)")} is fork-shaped, and it needs the left part to be ${C("t")}. Whether ${Pc("n")} is ${C("t")} depends on ${Pc("n")}: <b>Need</b>.`, ref("confirm", 668, "fits_with → inspect")),
+        S("run", `${C("pair(n, n)")} is ${C("t(n, n)")}: built by the stem and fork rules, without looking at ${Pc("n")}.`, ref("confirm", 555, "sapply_from")),
+        S("need", `Judge ${C("t(n, n)")} at Nat. Only ${C("succ(m) = t(t, m)")} is fork-shaped, and it needs the left part to be ${C("t")}. Whether ${Pc("n")} is ${C("t")} depends on ${Pc("n")}: <b>Need</b>.`, ref("confirm", 586, "fits_with → inspect")),
       ],
       1: [
         KNOWN(`${C("pair(0, 0)")} is ${C("t(t, t)")}, which is the tree for 1.`),
-        S("yes", `Judge at Nat: 1 is a Nat. <b>Yes</b>.`, ref("confirm", 709, "judge_as")),
+        S("yes", `Judge at Nat: 1 is a Nat. <b>Yes</b>.`, ref("confirm", 750, "judge_as")),
       ],
       2: [
-        S("run", `${C("pair(succ(n−1), succ(n−1))")}: the left part is now a fork.`, ref("confirm", 574, "sapply_from")),
-        S("stuck", `Judge at Nat: no case fits a fork whose left part is a fork, whatever ${Pc("n−1")} is: <b>No</b>.`, ref("confirm", 709, "judge_as")),
+        S("run", `${C("pair(succ(n−1), succ(n−1))")}: the left part is now a fork.`, ref("confirm", 555, "sapply_from")),
+        S("stuck", `Judge at Nat: no case fits a fork whose left part is a fork, whatever ${Pc("n−1")} is: <b>No</b>.`, ref("confirm", 750, "judge_as")),
       ],
       3: [
         KNOWN(`the output is ${C("pair(1, 1)")}.`),
-        S("stuck", `Judge at Nat: <b>No</b>, on a fully known input.`, ref("confirm", 709, "judge_as")),
+        S("stuck", `Judge at Nat: <b>No</b>, on a fully known input.`, ref("confirm", 750, "judge_as")),
       ],
     },
     settle: { 2: `A No while a piece is left is not a witness yet: a witness must re-run concretely. The search splits the first piece, ${Pc("n−1")}.` },
@@ -500,14 +500,14 @@ const SCEN = [
     hypItem: 2, hyp: (a) => P.twice(a[0].r), hypLabel: "twice(n−1)",
     steps: {
       0: [IND("twice", "n", "Nat"), NEED("is_zero(n)", "n")],
-      1: [KNOWN(`${C("twice(0)")} gives 0. A known argument gets no hypothesis.`), S("yes", `0 is a Nat: <b>Yes</b>.`, ref("confirm", 709, "judge_as"))],
+      1: [KNOWN(`${C("twice(0)")} gives 0. A known argument gets no hypothesis.`), S("yes", `0 is a Nat: <b>Yes</b>.`, ref("confirm", 750, "judge_as"))],
       2: [
         IND("twice", "n", "Nat"),
         FORKFALSE("is_zero(succ(n−1))"),
         S("run", `${C("nat_pred(succ(n−1))")} is ${C("pair_snd")}: triage sees the fork and takes its right part, ${Pc("n−1")}.`, ref("machine", 72, "m_rule")),
         HYPCALL("twice(n−1)", "n−1", "twice(n−1)"),
-        S("run", `${C("succ(succ(·))")} builds two forks around it. Nothing looks inside ${Hc("twice(n−1)")}.`, ref("confirm", 574, "sapply_from")),
-        S("yes", `Judge at Nat: succ fits, succ fits, then ${Hc("twice(n−1)")} at Nat by the arrow rule: the hypothesis's answers are Nats and its argument is in its domain. <b>Yes</b>.`, ref("confirm", 715, "judge_as app_rule")),
+        S("run", `${C("succ(succ(·))")} builds two forks around it. Nothing looks inside ${Hc("twice(n−1)")}.`, ref("confirm", 555, "sapply_from")),
+        S("yes", `Judge at Nat: succ fits, succ fits, then ${Hc("twice(n−1)")} at Nat by the arrow rule: the hypothesis's answers are Nats and its argument is in its domain. <b>Yes</b>.`, ref("confirm", 758, "judge_as app_rule")),
       ],
     },
     concrete: { kind: "nat", run: (a) => P.twice(a[0]) } },
@@ -521,16 +521,16 @@ const SCEN = [
     steps: {
       0: [IND("cat", "xs", "List(Nat) -> List(Nat)"), NEED("is_leaf(xs)", "xs")],
       1: [
-        S("run", `${C("xs = []")} is known, so ${C("cat")} runs as itself: ${C("is_leaf([])")} is true and the answer is the second argument, ${Pc("ys")}.`, ref("rules", 103, "induct (known argument: no hypothesis)")),
-        S("yes", `Judge at List(Nat): ${Pc("ys")} is a piece of List(Nat). <b>Yes</b>.`, ref("confirm", 709, "judge_as")),
+        S("run", `${C("xs = []")} is known, so ${C("cat")} runs as itself: ${C("is_leaf([])")} is true and the answer is the second argument, ${Pc("ys")}.`, ref("rules", 101, "induct (known argument: no hypothesis)")),
+        S("yes", `Judge at List(Nat): ${Pc("ys")} is a piece of List(Nat). <b>Yes</b>.`, ref("confirm", 750, "judge_as")),
       ],
       2: [
         IND("cat", "xs", "List(Nat) -> List(Nat)"),
         FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
         HYPCALL("cat(xs.snd)", "xs.tail", "cat(xs.tail)"),
-        S("hyp", `Applied to ${Pc("ys")}: an unknown function's answer applied to anything is another neutral term, ${Hc("cat(xs.tail, ys)")}.`, ref("confirm", 509, "apply_hole")),
-        S("run", `${C("cons(xs.head, ·)")} builds a fork around it. Nothing looks inside.`, ref("confirm", 574, "sapply_from")),
-        S("yes", `Judge at List(Nat): the cons case fits, ${Pc("xs.head")} is a Nat, and ${Hc("cat(xs.tail, ys)")} is a List(Nat) by the arrow rule (both arguments are in the hypothesis's domain). <b>Yes</b>.`, ref("confirm", 663, "spine_args")),
+        S("hyp", `Applied to ${Pc("ys")}: an unknown function's answer applied to anything is another neutral term, ${Hc("cat(xs.tail, ys)")}.`, ref("confirm", 490, "apply_hole")),
+        S("run", `${C("cons(xs.head, ·)")} builds a fork around it. Nothing looks inside.`, ref("confirm", 555, "sapply_from")),
+        S("yes", `Judge at List(Nat): the cons case fits, ${Pc("xs.head")} is a Nat, and ${Hc("cat(xs.tail, ys)")} is a List(Nat) by the arrow rule (both arguments are in the hypothesis's domain). <b>Yes</b>.`, ref("confirm", 747, "spine_args")),
       ],
     },
     concrete: { kind: "pairs", run: (a) => P.cat(a[0], a[1]) } },
@@ -542,13 +542,13 @@ const SCEN = [
     hypItem: 2, hyp: (a) => P.rev(a[0].r), hypLabel: "rev(xs.tail)", hypLeaf: true,
     steps: {
       0: [IND("rev", "xs", "List(Nat)"), NEED("is_leaf(xs)", "xs")],
-      1: [KNOWN(`${C("rev([])")} gives ${C("[]")}. A known argument gets no hypothesis.`), S("yes", `${C("[]")} is a List(Nat): <b>Yes</b>.`, ref("confirm", 709, "judge_as"))],
+      1: [KNOWN(`${C("rev([])")} gives ${C("[]")}. A known argument gets no hypothesis.`), S("yes", `${C("[]")} is a List(Nat): <b>Yes</b>.`, ref("confirm", 750, "judge_as"))],
       2: [
         IND("rev", "xs", "List(Nat)"),
         FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
         HYPCALL("rev(xs.snd)", "xs.tail", "rev(xs.tail)"),
-        S("run", `${C("cat(rev(xs.tail), [xs.head])")}: ${C("cat")} is plain code inside rev's tree, not the function being judged, so it gets no hypothesis. It runs, and the first thing it does with its first argument is ${C("is_leaf")}.`, ref("confirm", 574, "sapply_from")),
-        S("stuck", `Triage on ${Hc("rev(xs.tail)")}. It is not an input piece; its head is the hypothesis, a function piece with no cases. <b>Stuck</b>: opaque value. Look at the strip below: for ${C("[0]")} the answer would be ${C("[]")}, for longer inputs a cons. The hypothesis kept only "some List(Nat)".`, ref("confirm", 539, "answer_held → inspect")),
+        S("run", `${C("cat(rev(xs.tail), [xs.head])")}: ${C("cat")} is plain code inside rev's tree, not the function being judged, so it gets no hypothesis. It runs, and the first thing it does with its first argument is ${C("is_leaf")}.`, ref("confirm", 555, "sapply_from")),
+        S("stuck", `Triage on ${Hc("rev(xs.tail)")}. It is not an input piece; its head is the hypothesis, a function piece with no cases. <b>Stuck</b>: opaque value. Look at the strip below: for ${C("[0]")} the answer would be ${C("[]")}, for longer inputs a cons. The hypothesis kept only "some List(Nat)".`, ref("confirm", 520, "answer_held → inspect")),
       ],
     },
     settle: { 2: `A stuck run is never split: there is nothing to split. The search notes the reason, carries on, and the note makes the verdict Open.` },
@@ -559,19 +559,19 @@ const SCEN = [
     note: `No hypothesis anywhere: wrap is not recursive, and cat's recursion is not the function being judged. Nothing is forgotten, so nothing gets stuck; the splits just never end.`,
     verdict: { k: "Open", text: "Open: split depth exhausted" },
     steps: {
-      0: [S("run", `${C("wrap")} is not recursive, so there is no hypothesis. ${C("cat")}'s recursion runs for real.`, ref("rules", 103, "induct")), NEED("is_leaf(xs) (in cat)", "xs")],
-      1: [KNOWN(`${C("cat([], [0])")} gives ${C("[0]")}.`), S("yes", `<b>Yes</b>.`, ref("confirm", 709, "judge_as"))],
+      0: [S("run", `${C("wrap")} is not recursive, so there is no hypothesis. ${C("cat")}'s recursion runs for real.`, ref("rules", 101, "induct")), NEED("is_leaf(xs) (in cat)", "xs")],
+      1: [KNOWN(`${C("cat([], [0])")} gives ${C("[0]")}.`), S("yes", `<b>Yes</b>.`, ref("confirm", 750, "judge_as"))],
       2: [
         FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
-        S("run", `So ${C("cons(xs.head, cat(xs.tail, [0]))")}, and ${C("cat")} recurses on ${Pc("xs.tail")}.`, ref("confirm", 574, "sapply_from")),
+        S("run", `So ${C("cons(xs.head, cat(xs.tail, [0]))")}, and ${C("cat")} recurses on ${Pc("xs.tail")}.`, ref("confirm", 555, "sapply_from")),
         NEED("is_leaf(xs.tail) (in cat)", "xs.tail"),
       ],
-      3: [S("run", `${C("cat")} walks one cell and reaches ${C("[]")}: the output is ${C("[xs.head, 0]")}.`, ref("confirm", 574, "sapply_from")), S("yes", `${Pc("xs.head")} is a Nat: <b>Yes</b>. That closes lists of length 1.`, ref("confirm", 709, "judge_as"))],
-      4: [S("run", `${C("cat")} walks two cells, then recurses on ${Pc("xs.tail.tail")}.`, ref("confirm", 574, "sapply_from")), NEED("is_leaf(xs.tail.tail) (in cat)", "xs.tail.tail")],
-      5: [S("run", `Output ${C("[xs.head, xs.tail.head, 0]")}.`, ref("confirm", 574, "sapply_from")), S("yes", `<b>Yes</b>: lists of length 2.`, ref("confirm", 709, "judge_as"))],
-      6: [S("run", `${C("cat")} walks three cells and asks for ${Pc("xs.tail.tail.tail")}'s shape again.`, ref("confirm", 574, "sapply_from")), NEED("is_leaf(xs.tail.tail.tail) (in cat)", "xs.tail.tail.tail")],
+      3: [S("run", `${C("cat")} walks one cell and reaches ${C("[]")}: the output is ${C("[xs.head, 0]")}.`, ref("confirm", 555, "sapply_from")), S("yes", `${Pc("xs.head")} is a Nat: <b>Yes</b>. That closes lists of length 1.`, ref("confirm", 750, "judge_as"))],
+      4: [S("run", `${C("cat")} walks two cells, then recurses on ${Pc("xs.tail.tail")}.`, ref("confirm", 555, "sapply_from")), NEED("is_leaf(xs.tail.tail) (in cat)", "xs.tail.tail")],
+      5: [S("run", `Output ${C("[xs.head, xs.tail.head, 0]")}.`, ref("confirm", 555, "sapply_from")), S("yes", `<b>Yes</b>: lists of length 2.`, ref("confirm", 750, "judge_as"))],
+      6: [S("run", `${C("cat")} walks three cells and asks for ${Pc("xs.tail.tail.tail")}'s shape again.`, ref("confirm", 555, "sapply_from")), NEED("is_leaf(xs.tail.tail.tail) (in cat)", "xs.tail.tail.tail")],
     },
-    settle: { 6: `This case has used all 3 splits (<code>split_depth</code>, line 593): noted, "split depth exhausted". Every case the search closed was one list length: brute force, grouped by length.` },
+    settle: { 6: `This case has used all 3 splits (<code>split_depth</code>, line 572): noted, "split depth exhausted". Every case the search closed was one list length: brute force, grouped by length.` },
     concrete: { kind: "lists", run: (a) => P.wrap(a[0]) } },
 
   { key: "revL", group: "With cat's statement as a lemma", name: "rev + lemma", trace: "r_5revL", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "rev",
@@ -581,21 +581,21 @@ const SCEN = [
     rests: { 2: ["induction", "lemma"] },
     hypItem: 2, hyp: (a) => P.rev(a[0].r), hypLabel: "rev(xs.tail)", hypLeaf: true,
     steps: {
-      0: [IND("rev", "xs", "List(Nat)"), NEED("is_leaf(xs)", "xs"), LEMSWAP, S("need", `The second run stops at the same triage on ${Pc("xs")}: <b>Need</b>. Neither run answered, and both ask for ${Pc("xs")}.`, ref("confirm", 842, "weigh"))],
-      1: [KNOWN(`${C("rev([])")} gives ${C("[]")}. The exact run settles this case, so the lemma is not consulted.`), S("yes", `${C("[]")} is a List(Nat): <b>Yes</b>.`, ref("confirm", 709, "judge_as"))],
+      0: [IND("rev", "xs", "List(Nat)"), NEED("is_leaf(xs)", "xs"), LEMSWAP, S("need", `The second run stops at the same triage on ${Pc("xs")}: <b>Need</b>. Neither run answered, and both ask for ${Pc("xs")}.`, ref("confirm", 855, "weigh"))],
+      1: [KNOWN(`${C("rev([])")} gives ${C("[]")}. The exact run settles this case, so the lemma is not consulted.`), S("yes", `${C("[]")} is a List(Nat): <b>Yes</b>.`, ref("confirm", 750, "judge_as"))],
       2: [
         IND("rev", "xs", "List(Nat)"),
         FORKFALSE("is_leaf(cons(xs.head, xs.tail))"),
         HYPCALL("rev(xs.snd)", "xs.tail", "rev(xs.tail)"),
-        S("stuck", `${C("cat")} runs as plain code and its first triage is on ${Hc("rev(xs.tail)")}: <b>Stuck</b>, opaque value, exactly as in rev without the lemma.`, ref("confirm", 539, "answer_held → inspect")),
+        S("stuck", `${C("cat")} runs as plain code and its first triage is on ${Hc("rev(xs.tail)")}: <b>Stuck</b>, opaque value, exactly as in rev without the lemma.`, ref("confirm", 520, "answer_held → inspect")),
         LEMSWAP,
-        S("lem", `The second run goes the same way up to the call. The lemma is applied to ${Hc("rev(xs.tail)")}. It first runs ${C("cat")}'s real tree on it, and that run stops at the same triage: opaque value.`, ref("confirm", 494, "lemma_apply")),
-        S("lem", `The run did not answer, so the lemma answers instead: ${Lc(`cat(${Hc("rev(xs.tail)")})`)}, an application of a piece of cat's type.`, ref("confirm", 494, "lemma_apply")),
-        S("lem", `Applied to ${C("[xs.head]")}: an application in function position makes a longer neutral term, ${Lc(`cat(${Hc("rev(xs.tail)")}, [${Pc("xs.head")}])`)}.`, ref("confirm", 509, "apply_hole")),
-        S("yes", `Judge at List(Nat) by the arrow rule: cat's type ends in List(Nat), and each argument is in its domain: ${Hc("rev(xs.tail)")} is a List(Nat) (the hypothesis's codomain) and ${C("[xs.head]")} is one. <b>Yes</b>.`, ref("confirm", 663, "spine_args")),
+        S("lem", `The second run goes the same way up to the call. The lemma is applied to ${Hc("rev(xs.tail)")}. It first runs ${C("cat")}'s real tree on it, and that run stops at the same triage: opaque value.`, ref("confirm", 475, "lemma_apply")),
+        S("lem", `The run did not answer, so the lemma answers instead: ${Lc(`cat(${Hc("rev(xs.tail)")})`)}, an application of a piece of cat's type.`, ref("confirm", 475, "lemma_apply")),
+        S("lem", `Applied to ${C("[xs.head]")}: an application in function position makes a longer neutral term, ${Lc(`cat(${Hc("rev(xs.tail)")}, [${Pc("xs.head")}])`)}.`, ref("confirm", 490, "apply_hole")),
+        S("yes", `Judge at List(Nat) by the arrow rule: cat's type ends in List(Nat), and each argument is in its domain: ${Hc("rev(xs.tail)")} is a List(Nat) (the hypothesis's codomain) and ${C("[xs.head]")} is one. <b>Yes</b>.`, ref("confirm", 747, "spine_args")),
       ],
     },
-    settle: { 2: `<span class="badge b-yes">✓ Yes</span> on the second run. Its answer cites the hypothesis and ${C("cat")}'s type, so the case rests on induction and on the lemma (<code>cited</code>, confirm.disp:824). Skip.` },
+    settle: { 2: `<span class="badge b-yes">✓ Yes</span> on the second run. Its answer cites the hypothesis and ${C("cat")}'s type, so the case rests on induction and on the lemma (<code>cited</code>, confirm.disp:837). Skip.` },
     concrete: { kind: "lists", run: (a) => P.rev(a[0]) } },
 
   { key: "wrapL", group: "With cat's statement as a lemma", name: "wrap + lemma", trace: "r_7wrapL", args: ["xs"], argTypes: ["List"], dom: "List", cod: "List", self: "wrap",
@@ -605,12 +605,12 @@ const SCEN = [
     rests: { 0: ["lemma"] },
     settle: { 0: `<span class="badge b-yes">✓ Yes</span> on the second run: the case rests on the lemma. A Yes outranks the exact run's request for a split, so nothing is split. Skip.` },
     steps: { 0: [
-      S("run", `${C("wrap")} is not recursive, so there is no hypothesis. The exact run comes first, and in it ${C("cat")}'s recursion runs for real.`, ref("rules", 103, "induct")),
+      S("run", `${C("wrap")} is not recursive, so there is no hypothesis. The exact run comes first, and in it ${C("cat")}'s recursion runs for real.`, ref("rules", 101, "induct")),
       NEED("is_leaf(xs) (in cat)", "xs"),
       LEMSWAP,
-      S("lem", `The lemma is applied to ${Pc("xs")} and runs ${C("cat")}'s real tree, which asks for ${Pc("xs")}'s shape (Need).`, ref("confirm", 494, "lemma_apply")),
-      S("lem", `Any run that does not answer, a split request included, makes the lemma answer by its type: ${Lc(`cat(${Pc("xs")})`)}, then ${Lc(`cat(${Pc("xs")}, [0])`)} once applied to ${C("[0]")}.`, ref("confirm", 494, "lemma_apply")),
-      S("yes", `Judge by the arrow rule: ${Pc("xs")} and ${C("[0]")} are in cat's domain, and cat's answers are List(Nat). <b>Yes</b>, for every list at once.`, ref("confirm", 663, "spine_args")),
+      S("lem", `The lemma is applied to ${Pc("xs")} and runs ${C("cat")}'s real tree, which asks for ${Pc("xs")}'s shape (Need).`, ref("confirm", 475, "lemma_apply")),
+      S("lem", `Any run that does not answer, a split request included, makes the lemma answer by its type: ${Lc(`cat(${Pc("xs")})`)}, then ${Lc(`cat(${Pc("xs")}, [0])`)} once applied to ${C("[0]")}.`, ref("confirm", 475, "lemma_apply")),
+      S("yes", `Judge by the arrow rule: ${Pc("xs")} and ${C("[0]")} are in cat's domain, and cat's answers are List(Nat). <b>Yes</b>, for every list at once.`, ref("confirm", 747, "spine_args")),
     ] },
     concrete: { kind: "lists", run: (a) => P.wrap(a[0]) } },
 
@@ -620,7 +620,7 @@ const SCEN = [
     verdict: { k: "Refuted", text: "Refuted: xs = [] gives [false]" },
     steps: {
       0: [NEED("is_leaf(xs) (in cat)", "xs")],
-      1: [KNOWN(`${C("cat([], [false])")} gives ${C("[false]")}.`), S("stuck", `Judge at List(Nat): ${C("false")} is ${C("t(t)")}, not a Nat. <b>No</b>, on a known input.`, ref("confirm", 709, "judge_as"))],
+      1: [KNOWN(`${C("cat([], [false])")} gives ${C("[false]")}.`), S("stuck", `Judge at List(Nat): ${C("false")} is ${C("t(t)")}, not a Nat. <b>No</b>, on a known input.`, ref("confirm", 750, "judge_as"))],
     },
     concrete: { kind: "lists", run: (a) => P.bug(a[0]) } },
 
@@ -632,10 +632,10 @@ const SCEN = [
       0: [
         NEED("is_leaf(xs) (in cat)", "xs"),
         LEMSWAP,
-        S("lem", `The lemma runs ${C("cat")} on ${Pc("xs")}, which asks for a split, so the lemma answers ${Lc(`cat(${Pc("xs")}, [false])`)}.`, ref("confirm", 494, "lemma_apply")),
-        S("stuck", `Judge by the arrow rule: ${C("[false]")} is not in cat's domain, so cat's type says nothing about this answer. <b>Stuck</b>: argument outside the domain. A run that reads by type never refutes, and this one named no piece, so the exact run's Need stands.`, ref("confirm", 715, "judge_as app_rule")),
+        S("lem", `The lemma runs ${C("cat")} on ${Pc("xs")}, which asks for a split, so the lemma answers ${Lc(`cat(${Pc("xs")}, [false])`)}.`, ref("confirm", 475, "lemma_apply")),
+        S("stuck", `Judge by the arrow rule: ${C("[false]")} is not in cat's domain, so cat's type says nothing about this answer. <b>Stuck</b>: argument outside the domain. A run that reads by type never refutes, and this one named no piece, so the exact run's Need stands.`, ref("confirm", 758, "judge_as app_rule")),
       ],
-      1: [KNOWN(`${C("cat([], [false])")} gives ${C("[false]")}. Every case is run exactly first, so the lemma cannot hide this one.`), S("stuck", `Judge at List(Nat): ${C("false")} is ${C("t(t)")}, not a Nat. <b>No</b>, on a known input.`, ref("confirm", 709, "judge_as"))],
+      1: [KNOWN(`${C("cat([], [false])")} gives ${C("[false]")}. Every case is run exactly first, so the lemma cannot hide this one.`), S("stuck", `Judge at List(Nat): ${C("false")} is ${C("t(t)")}, not a Nat. <b>No</b>, on a known input.`, ref("confirm", 750, "judge_as"))],
     },
     concrete: { kind: "lists", run: (a) => P.bug(a[0]) } },
 ];
@@ -784,7 +784,7 @@ if (typeof document !== "undefined") {
     const steps = sc.steps[it.id] || [];
     const shown = steps.slice(0, Math.min(steps.length, st.stepIdx + 1));
     let html = shown.map((s, i) => `<li class="${i === st.stepIdx ? "now" : ""}"><span class="tagline ${s.tag}">${tagWord(s.tag)}</span>${s.html} ${refHtml(s.ref)}</li>`).join("");
-    if (st.stepIdx === Infinity) html += `<li class="settle now">${settleText(it)} <span class="ref"><a href="lib/confirm.disp">confirm.disp:851</a> settle_case</span></li>`;
+    if (st.stepIdx === Infinity) html += `<li class="settle now">${settleText(it)} <span class="ref"><a href="lib/confirm.disp">confirm.disp:864</a> settle_case</span></li>`;
     $("steps").innerHTML = html;
   }
   const tagWord = (t) => ({ run: "run", need: "need", hyp: "hypothesis", stuck: "stops", lem: "lemma", yes: "judge" }[t] || t);
