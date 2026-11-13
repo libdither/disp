@@ -180,6 +180,18 @@ test judge_with(with_equations, pi_t(nat_t, {n} => pi_t(nat_t, {m} => eq_t([m, n
 // a false hypothesis proves anything
 test judge(pi_t(nat_t, {n} => arrow_t(eq_t([n], {m} => succ(m), {m} => 0), empty_t)), {_n, e} => cast(e, t)) = "Proved"
 test holds(pi_t(nat_t, {n} => arrow_t(eq_t([n], {m} => m, {m} => 0), empty_t)), {_n, e} => cast(e, t)) = false
+
+// A later argument's type may hold an earlier argument: a hypothesis about it, or a type picked
+// by it. When the earlier one is split, the later one is typed for the case it lands in.
+same_bool_t := pi_t(bool_t, {x} => arrow_t(eq_t([x], {a} => a, {_a} => true), eq_t([x], {a} => a, {_a} => true)))
+test judge(same_bool_t, {x, h} => if (x) { h } else { h }) = "Proved"
+// no program is in this one: at true the hypothesis holds and the goal does not
+test judge(pi_t(bool_t, {x} => arrow_t(eq_t([x], {a} => a, {_a} => true), eq_t([x], {a} => a, {_a} => false))), {x, h} => if (x) { h } else { h }).is_open = true
+picked_t := pi_t(bool_t, {b} => arrow_t(by_value(b, {c} => if (c) { nat_t } else { bool_t }), nat_t))
+test judge(picked_t, {b, y} => if (b) { dbl(y) } else { if (y) { 0 } else { 1 } }) = "Proved"
+test judge(picked_t, {b, y} => if (b) { succ(y) } else { if (y) { 0 } else { false } }) = refuted([false, false])
+// a plain arrow is one code, with a value put in it or not
+test type_subst(true, false, arrow_t(bool_t, bool_t)) = arrow_t(bool_t, bool_t)
 // and data: appending the empty list changes nothing
 append_nil_t := pi_t(shape, {xs} => eq_t([xs], {l} => app_l(l, nil_l), {l} => l))
 test judge(append_nil_t, {xs} => fold_l(xs, t, {_a, _tl, ih} => ih)) = "Proved"

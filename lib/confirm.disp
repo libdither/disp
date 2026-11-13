@@ -282,14 +282,33 @@ same :: Val -> Val := {a} => a
 // is the question is the case with the piece typed, and a branch that looks at the
 // answer splits in two. Nothing about a type is written by hand: Tree's shapes, the
 // generic run and induction on smaller pieces are all it takes. `run` is `sapply`.
+retype :: {s : Val, code : Code} -> Val :=> piece_named(code, s.piece_name)
+// A type with every value it holds passed through `sub`. A type stuck on values is those values.
+// A type built from parts is rebuilt from them: each value through `sub`, each type likewise,
+// each family once its argument is in (one that ignores its argument stays one that does, so a
+// plain arrow stays one code). A type that lists no parts holds no values.
+rec type_with :: {sub : Val -> Val, T : Code} -> Code :=>
+	if (is_hole(T)) { sub(T) }
+	else if (if (is_type_code(T)) { is_leaf(T.snd.remake) } else { true }) { T }
+	else { T.snd.remake(parts_of(T).map({p} =>
+		if (p.fst == "Value") { sub(p.snd) }
+		else if (p.fst == "Type") { type_with(sub, p.snd) }
+		else if (p.fst == "Family") {
+			let fam := p.snd
+			if ((is_fork(fam)) && (is_leaf(fam.fst))) { let B := type_with(sub, fam.snd); {_face} => B } else { {face} => type_with(sub, fam(face)) }
+		}
+		else { p.snd })) }
+// A value with one value in place of another. A piece's type may hold the value too (a
+// hypothesis about an argument), so the piece is the same piece at its type with the one in place.
 rec subst :: {target : Val, by : Val, v : Val} -> Val :=>
 	if (v == target) { by }
 	else if (v.is_known) { v }
 	else if (v.is_app) { app_val(subst(target, by, v.app_head), subst(target, by, v.app_arg)) }
+	else if (v.is_piece) { retype(v, type_with({u} => subst(target, by, u), v.piece_type)) }
 	else if ((is_hole(v)) || (is_leaf(v))) { v }
 	else if (is_stem(v)) { t(subst(target, by, stem_child(v))) }
 	else { t(subst(target, by, v.fst), subst(target, by, v.snd)) }
-retype :: {s : Val, code : Code} -> Val :=> piece_named(code, s.piece_name)
+type_subst :: {x : Val, y : Val, T : Code} -> Code :=> type_with({v} => subst(x, y, v), T)
 tree_cases :: {child : Tree -> Val} -> List(Val) :=> [t, t(child("child")), t(child("left"), child("right"))]
 fix_shape := fix(pattern_piece("step"))
 step_of :: {f : Val} -> Tree :=> {
@@ -662,17 +681,6 @@ rec nth :: {xs : List(A), i : Nat} -> A :=> if (is_zero(i)) { xs.head } else { n
 fold_table :: {T : Code} -> Option(List(Val)) :=> fold_table_via(table, T)
 fold_layer :: {T : Code} -> Option(Tree) :=> fold_layer_via(table, T)
 fold_of :: {T : Code} -> Tree :=> fold_with(T, fold_layer(T).snd)
-// A type with one value in place of another. A type stuck on values is those values. A type
-// built from parts is rebuilt from them: each value with the one in place of the other, each
-// type likewise, each family once its argument is in. A type that lists no parts holds no values.
-rec type_subst :: {x : Val, y : Val, T : Code} -> Code :=>
-	if (is_hole(T)) { subst(x, y, T) }
-	else if (if (is_type_code(T)) { is_leaf(T.snd.remake) } else { true }) { T }
-	else { T.snd.remake(parts_of(T).map({p} =>
-		if (p.fst == "Value") { subst(x, y, p.snd) }
-		else if (p.fst == "Type") { type_subst(x, y, p.snd) }
-		else if (p.fst == "Family") { let fam := p.snd; {face} => type_subst(x, y, fam(face)) }
-		else { p.snd })) }
 // A value run again, after one of its holes was given a shape: each application nobody could
 // run is tried once more, and stays as it was where it still cannot run.
 rec rerun :: {v : Val} -> Val :=>
