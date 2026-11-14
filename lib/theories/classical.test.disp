@@ -7,11 +7,11 @@ pure := spec({s} => if (s == "*") { "[]" } else { "None" }, {a, b} => if ((a == 
 imp := {a, b} => pi(a, b)
 peirce := {a, b} => imp(imp(imp(a, b), a), a)
 // call/cc at A and B, with type ((A -> B) -> A) -> A: a former only this theory has
-cc_f := former("Plain", {sp, ctx, term} => {
+cc_f := former{kind := "Plain", infer := {sp, ctx, term} => {
 	_ <- sort_of(sp, ctx, term.k0)
 	_ <- sort_of(sp, ctx, term.k1)
 	ok(peirce(term.k0, term.k1))
-}, no_contract, types_only, no_meaning)
+}}
 cc := {a, b} => node(cc_f, [a, b])
 classical := spec(pure.axiom, pure.rule, "*", cons(cc_f, pure.formers), 800)
 cl_type := {ctx, term} => infer(classical, ctx, term).snd

@@ -56,6 +56,9 @@ test judge(church_nat, {_a, f, x} => f(f(x))) = "Proved"
 test judge(church_nat, {_a, _f, x} => x) = "Proved"
 // applying the function argument outside its domain leaves its result unconstrained: Open
 test judge(church_nat, {_a, f, _x} => f(t)).is_open = true
+// a polymorphic argument used at a type: the type argument is erased, so the type is read from what is expected of the call
+test judge(arrow_t(forall_t({b} => arrow_t(b.snd, b.snd)), arrow_t(nat_t, nat_t)), {id_all, n} => id_all(t, n)) = "Proved"
+test judge(arrow_t(forall_t({b} => arrow_t(b.snd, b.snd)), arrow_t(nat_t, bool_t)), {id_all, n} => id_all(t, n)).is_open = true
 // a type operator is a function from types to types, and programs see each type as the leaf
 test judge(arrow_t(universe_t, universe_t), {_a} => t) = "Proved"
 test judge(arrow_t(universe_t, universe_t), {a} => pair(a, a)).is_refuted = true
@@ -68,6 +71,10 @@ test judge(sigma_t(nat_t, fam), pair(2, 5)) = "Proved"
 test judge(sigma_t(nat_t, fam), pair(0, 5)).is_refuted = true
 // a family built around the unknown number itself: n = n holds whatever n is, since equal values are equal without a split
 test judge(pi_t(nat_t, {face} => by_value(face, {n} => eq_of(n, n))), {_n} => t) = "Proved"
+// a function inside a value is run on a fresh piece of its domain, split where it looks; a known one that fails on a known argument is a counterexample
+test judge(sigma_t(nat_t, {_n} => arrow_t(nat_t, nat_t)), pair(3, succ)) = "Proved"
+test judge(sigma_t(nat_t, {_n} => arrow_t(bool_t, bool_t)), pair(3, not)) = "Proved"
+test judge(sigma_t(nat_t, {_n} => arrow_t(bool_t, bool_t)), pair(3, {b} => pair(b, b))).is_refuted = true
 // equality of values: the witness does not matter
 test judge(eq_of(add(2, 2), 4), t) = "Proved"
 test judge(eq_of(add(2, 2), 5), t).is_refuted = true
@@ -86,8 +93,147 @@ test by_search(cover_law(list_t(bool_t)), t, 120) = "Open"
 test by_search(exact_law(shape), t, 120) = "Open"
 test by_search(exact_law(list_t(nat_t)), t, 120) = "Open"
 // a cover that forgets a constructor is refuted with a member it misses
-lossy := of_type(behaviour{admits := {_self, v} => judge_as(list_t(nat_t), v), cases := some({_self, _child} => [t])})
+lossy := of_type(behaviour{admits := {at, _self, v} => at(list_t(nat_t), v), cases := some({_self, _child} => [t])})
 test by_search(cover_law(lossy), t, 120).is_refuted = true
+
+// ---- eliminators: a type with cases comes with its eliminator, derived from the cases, and a use of it is judged by the type's own rule, with nothing given beside the type
+nnn := arrow_t(nat_t, arrow_t(nat_t, nat_t))
+test nat_fold(3, 10, {_k, r} => succ(r)) = 13
+// the rule is the eliminator's statement for every family of types. The same layer as an ordinary recursive program is Proved at it by case split and induction alone
+test judge(fold_statement(nat_t), {_p} => plain_fold(nat_t)) = "Proved"
+// adding, multiplying and squaring written with it have no recursion of their own: one run each, the stuck elimination judged by the rule
+plus_e := {a, b} => nat_fold(a, b, {_k, r} => succ(r))
+times_e := {a, b} => nat_fold(a, 0, {_k, r} => plus_e(b, r))
+square_e := {k} => times_e(k, k)
+test times_e(3, 3) = 9
+test judge(nnn, plus_e) = "Proved"
+test derivation(plainly, nnn, plus_e) = [pair([pair("Piece", pair(0, [pair("arg", 0)])), pair("Piece", pair(0, [pair("arg", 1)]))], pair("run", ["elimination"]))]
+test judge(nnn, times_e) = "Proved"
+test judge(arrow_t(nat_t, nat_t), square_e) = "Proved"
+// Ackermann eliminates at two result types, a number and a function
+ack_e := {m} => nat_fold(m, succ, {_k, f, n} => nat_fold(n, f(1), {_j, r} => f(r)))
+test ack_e(2, 2) = 7
+test judge(nnn, ack_e) = "Proved"
+// a wrong base is refuted by running, and a wrong step is never Proved
+test judge(nnn, {a, _b} => nat_fold(a, false, {_k, r} => succ(r))).is_refuted = true
+test holds(nnn, {a, b} => nat_fold(a, b, {_k, r} => pair(r, r))) = false
+// a tree that only says it is the eliminator of the numbers is not read by their rule: it runs as the program it is
+fake_fold := fold_with(nat_t, {_me, _v, _zv, sv} => sv(0, false))
+test judge(nnn, {a, b} => fake_fold(a, b, {_k, r} => r)).is_refuted = true
+// a described type: its cases are its constructors, so its eliminator takes one handler per constructor
+list_d := [[], [nat_t, "Rec"]]
+test data_t(list_d) = shape
+test judge(fold_statement(shape), {_p} => plain_fold(shape)) = "Proved"
+test judge(fold_statement(data_t([[], ["Rec", "Rec"]])), {_p} => plain_fold(data_t([[], ["Rec", "Rec"]]))) = "Proved"
+fold_l := fold_of(shape)
+nil_l := pair(0, [])
+cons_l := {a, xs} => pair(1, [a, xs])
+len_l := {xs} => fold_l(xs, 0, {_a, _tl, r} => succ(r))
+app_l := {xs, ys} => fold_l(xs, ys, {a, _tl, r} => cons_l(a, r))
+rev_l := {xs} => fold_l(xs, nil_l, {a, _tl, r} => app_l(r, cons_l(a, nil_l)))
+map_l := {f, xs} => fold_l(xs, nil_l, {a, _tl, r} => cons_l(f(a), r))
+test rev_l(cons_l(1, cons_l(2, nil_l))) = cons_l(2, cons_l(1, nil_l))
+// reversing needs no statement about appending (compare reverse above)
+test judge(arrow_t(shape, nat_t), len_l) = "Proved"
+test judge(arrow_t(shape, arrow_t(shape, shape)), app_l) = "Proved"
+test judge(arrow_t(shape, shape), rev_l) = "Proved"
+test judge(arrow_t(arrow_t(nat_t, nat_t), arrow_t(shape, shape)), map_l) = "Proved"
+// a type nobody described has one too: lists as lib/list.disp builds them
+fold_list := fold_of(list_t(nat_t))
+total := {xs} => fold_list(xs, 0, {x, _rest, r} => plus_e(x, r))
+test total([1, 2, 3]) = 6
+test judge(arrow_t(list_t(nat_t), nat_t), total) = "Proved"
+// an eliminator handed in as an argument: a function over any type that comes with a fold, the fold's result type read where it is called
+has_fold := {L} => forall_t({r} => arrow_t(L, arrow_t(r.snd, arrow_t(arrow_t(nat_t, arrow_t(L, arrow_t(r.snd, r.snd))), r.snd))))
+len_any_t := forall_t({l} => arrow_t(has_fold(l.snd), arrow_t(l.snd, nat_t)))
+test judge(len_any_t, {_l, fold, xs} => fold(t, xs, 0, {_a, _tl, r} => succ(r))) = "Proved"
+test judge(len_any_t, {_l, fold, xs} => fold(t, xs, false, {_a, _tl, r} => succ(r))).is_open = true
+
+// ---- equations: an equation computes by shape, so equal successors are equal numbers and a step's hypothesis is already its proof
+plus_zero_t := pi_t(nat_t, {n} => eq_t([n], {m} => plus_e(m, 0), {m} => m))
+test judge(plus_zero_t, {n} => nat_fold(n, t, {_k, ih} => ih)) = "Proved"
+test derivation(plainly, plus_zero_t, {n} => nat_fold(n, t, {_k, ih} => ih)) = [pair([pair("Piece", pair(0, [pair("arg", 0)]))], pair("run", ["elimination"]))]
+// zero on the left is true by running, with no elimination
+test judge(pi_t(nat_t, {n} => eq_t([n], {m} => plus_e(0, m), {m} => m)), {_n} => t) = "Proved"
+// with no elimination there is no induction, and a step that drops its hypothesis proves nothing
+test judge(plus_zero_t, {_n} => t) = open_on("split depth exhausted")
+test judge(plus_zero_t, {n} => nat_fold(n, t, {_k, _ih} => t)).is_open = true
+// equality's own eliminator carries a value along a hypothesis: the same proof written the way the rules of a type theory want it
+test cast(5, 7) = 7
+test judge(plus_zero_t, {n} => nat_fold(n, t, {_k, ih} => cast(ih, t))) = "Proved"
+// a false equation is refuted with a number, whatever the proof
+plus_one_t := pi_t(nat_t, {n} => eq_t([n], {m} => plus_e(m, 1), {m} => m))
+test judge(plus_one_t, {n} => nat_fold(n, t, {_k, ih} => ih)) = refuted([0])
+test judge(plus_one_t, {n} => nat_fold(n, t, {_k, ih} => cast(ih, t))) = refuted([0])
+// the result type may mention other arguments: n + succ(m) = succ(n + m), by eliminating n
+plus_succ_t := pi_t(nat_t, {n} => pi_t(nat_t, {m} => eq_t([m, n], {a, b} => plus_e(a, succ(b)), {a, b} => succ(plus_e(a, b)))))
+test judge(plus_succ_t, {n, _m} => nat_fold(n, t, {_k, ih} => ih)) = "Proved"
+// Equations already Proved are used through equality's eliminator, each read by its type where it is called: adding is commutative by the two above
+plus_swap_t := pi_t(nat_t, {n} => pi_t(nat_t, {m} => eq_t([m, n], {a, b} => plus_e(a, b), {a, b} => plus_e(b, a))))
+plus_zero := {n} => nat_fold(n, t, {_k, ih} => ih)
+plus_succ := {n, _m} => nat_fold(n, t, {_k, ih} => ih)
+with_equations := judging([pair(plus_zero, plus_zero_t), pair(plus_succ, plus_succ_t)], split_depth, run_fuel, no_guesses)
+test judge_with(with_equations, plus_swap_t, {n, m} => nat_fold(n, cast(plus_zero(m), t), {k, ih} => cast(plus_succ(m, k), cast(ih, t)))) = "Proved"
+// leave out the equation about successors and the step is not proved; and a false statement is refuted with numbers
+test judge_with(with_equations, plus_swap_t, {n, m} => nat_fold(n, cast(plus_zero(m), t), {_k, ih} => cast(ih, t))).is_open = true
+test judge_with(with_equations, pi_t(nat_t, {n} => pi_t(nat_t, {m} => eq_t([m, n], {a, b} => plus_e(a, b), {a, b} => succ(plus_e(b, a))))), {n, m} => nat_fold(n, cast(plus_zero(m), t), {k, ih} => cast(plus_succ(m, k), cast(ih, t)))) = refuted([0, 0])
+// a false hypothesis proves anything
+test judge(pi_t(nat_t, {n} => arrow_t(eq_t([n], {m} => succ(m), {m} => 0), empty_t)), {_n, e} => cast(e, t)) = "Proved"
+test holds(pi_t(nat_t, {n} => arrow_t(eq_t([n], {m} => m, {m} => 0), empty_t)), {_n, e} => cast(e, t)) = false
+
+// A later argument's type may hold an earlier argument: a hypothesis about it, or a type picked
+// by it. When the earlier one is split, the later one is typed for the case it lands in.
+same_bool_t := pi_t(bool_t, {x} => arrow_t(eq_t([x], {a} => a, {_a} => true), eq_t([x], {a} => a, {_a} => true)))
+test judge(same_bool_t, {x, h} => if (x) { h } else { h }) = "Proved"
+// no program is in this one: at true the hypothesis holds and the goal does not
+test judge(pi_t(bool_t, {x} => arrow_t(eq_t([x], {a} => a, {_a} => true), eq_t([x], {a} => a, {_a} => false))), {x, h} => if (x) { h } else { h }).is_open = true
+picked_t := pi_t(bool_t, {b} => arrow_t(by_value(b, {c} => if (c) { nat_t } else { bool_t }), nat_t))
+test judge(picked_t, {b, y} => if (b) { dbl(y) } else { if (y) { 0 } else { 1 } }) = "Proved"
+test judge(picked_t, {b, y} => if (b) { succ(y) } else { if (y) { 0 } else { false } }) = refuted([false, false])
+// a plain arrow is one code, with a value put in it or not
+test type_subst(true, false, arrow_t(bool_t, bool_t)) = arrow_t(bool_t, bool_t)
+// and data: appending the empty list changes nothing
+append_nil_t := pi_t(shape, {xs} => eq_t([xs], {l} => app_l(l, nil_l), {l} => l))
+test judge(append_nil_t, {xs} => fold_l(xs, t, {_a, _tl, ih} => ih)) = "Proved"
+test judge(append_nil_t, {_xs} => t).is_open = true
+// A rewritten goal runs again. Here the hypothesis says k = 0, and the goal's side is stuck on
+// k: with 0 put for k it runs to 0, and the equation is done.
+runs_again_t := pi_t(nat_t, {k} => arrow_t(eq_t([k], {a} => a, {_a} => 0), eq_t([k], {a} => plus_e(a, 0), {_a} => 0)))
+test judge(runs_again_t, {_k, e} => cast(e, t)) = "Proved"
+test judge(runs_again_t, {_k, _e} => t).is_open = true
+
+// An equation is at a type, and the type says what equal means. Two functions are equal when
+// they are equal on every argument, so the equation is a function type and a proof by
+// induction is a proof of it. As trees the two programs differ.
+nat_to_nat := arrow_t(nat_t, nat_t)
+test judge(eq_at(nat_to_nat, [], {m} => plus_e(m, 0), {m} => m), {n} => nat_fold(n, t, {_k, ih} => ih)) = "Proved"
+test judge(eq_at(nat_to_nat, [], {m} => plus_e(m, 0), {m} => m), {_n} => t).is_open = true
+test judge(eq_at(nat_to_nat, [], {m} => plus_e(m, 1), {m} => m), {n} => nat_fold(n, t, {_k, ih} => ih)) = refuted([0])
+test holds(eq_t([], {m} => plus_e(m, 0), {m} => m), t) = false
+// two programs that run to the same answer on an unknown argument need no induction
+test judge(eq_at(nat_to_nat, [], {m} => succ(succ(m)), {m} => plus_e(2, m)), {_n} => t) = "Proved"
+// functions of two arguments: commutativity as one equation between two programs
+test judge_with(with_equations, eq_at(arrow_t(nat_t, nat_to_nat), [], {a, b} => plus_e(b, a), {a, b} => plus_e(a, b)), {n, m} => nat_fold(n, cast(plus_zero(m), t), {k, ih} => cast(plus_succ(m, k), cast(ih, t)))) = "Proved"
+// At a quotient two members are equal when their normal forms are: 2 and 0 at Parity, not as trees.
+test judge(eq_at(Parity, [], 2, 0), t) = "Proved"
+test holds(eq_at(Parity, [], 1, 0), t) = false
+test holds(eq_t([], 2, 0), t) = false
+test judge(pi_t(nat_t, {n} => eq_at(Parity, [n], {m} => succ(succ(m)), {m} => m)), {_n} => t) = "Proved"
+test judge(pi_t(nat_t, {n} => eq_at(Parity, [n], {m} => succ(m), {m} => m)), {_n} => t).is_refuted = true
+
+// Brute force agrees. A claim about every argument is asked at one known argument: the type
+// there, of the witness there. Each equation Proved above passes on every listed number, and
+// the one Refuted fails on the number it was refuted with.
+at_arg :: {T : Code} -> Claim :=> {w, c} => holds(fn_view(T).snd.snd(faces_of(fn_view(T).snd.fst, c)), w(c))
+at_two :: {T : Code} -> Claim :=> {w, c} => at_arg(fn_view(T).snd.snd(faces_of(fn_view(T).snd.fst, c.fst)), w(c.fst), c.snd)
+some_nats := [0, 1, 2, 3, 4, 5, 6]
+some_lists := [nil_l, cons_l(1, nil_l), cons_l(2, cons_l(0, nil_l))]
+test over(at_arg(plus_zero_t), {n} => nat_fold(n, t, {_k, ih} => ih), some_nats) = "Proved"
+test over(at_arg(plus_one_t), {n} => nat_fold(n, t, {_k, ih} => ih), some_nats) = refuted(0)
+test over(at_two(plus_succ_t), plus_succ, some_nats.cross(some_nats, pair)) = "Proved"
+test over(at_two(plus_swap_t), {n, m} => nat_fold(n, cast(plus_zero(m), t), {k, ih} => cast(plus_succ(m, k), cast(ih, t))), some_nats.cross(some_nats, pair)) = "Proved"
+test over(at_arg(append_nil_t), {xs} => fold_l(xs, t, {_a, _tl, ih} => ih), some_lists) = "Proved"
+test over(at_arg(eq_at(nat_to_nat, [], {m} => plus_e(m, 0), {m} => m)), {n} => nat_fold(n, t, {_k, ih} => ih), some_nats) = "Proved"
 
 // an open term's value: variable 0 is the head of the list
 test eval_in([3, 5], tv(1)) = 5

@@ -44,8 +44,8 @@ test sound_at(theory, accepted(theory), false_ty)(fake, t) = true
 test sound_at(theory, {_a, _term} => true, false_ty)(fake, t) = false
 test sound_at(theory, accepted(theory), plus_zero_ty)(plus_zero, t) = true
 // what the statement means is judged on symbols, with no proof in sight: n + n = n is refuted by
-// splitting n down to one; n + 0 = n needs induction through plus's own recursion, a fixpoint inside
-// the program that the judge has no lemma for, so it stays Open rather than Proved on a few numbers
+// splitting n down to one; n + 0 = n needs induction, and a witness that eliminates nothing does
+// none, so it stays Open rather than Proved on a few numbers
 test judge(meaning(theory, false_ty), t) = refuted([1])
 test judge(meaning(theory, plus_zero_ty), t).is_open = true
 
@@ -124,6 +124,26 @@ test judge(meaning(theory, list_ty), pair(1, [empty, t])).is_refuted = true
 test judge(meaning(theory, list_ty), pair(5, [])).is_refuted = true
 test sound_at(theory, accepted(theory), arrow(list_ty, nat_ty))(len, t) = true
 test sound_at(theory, {_a, _term} => true, arrow(list_ty, nat_ty))(lam(list_ty, tv(0)), t) = false
+// The same terms put to `judge`, with no typing rule: an elimination runs as its data type's eliminator,
+// and a stuck use of it is judged by the type's own rule, so counting a list and the size of a tree are Proved
+test judges(theory, arrow(list_ty, nat_ty), len) = "Proved"
+test judges(theory, arrow(list_ty, arrow(list_ty, list_ty)), append) = "Proved"
+test judges(theory, arrow(tree_ty, nat_ty), size) = "Proved"
+// An equation proved by induction is Proved too. The result type of a stuck elimination may depend on what is
+// eliminated, an equation computes (equal successors are equal numbers), and transport runs as equality's own
+// eliminator, judged by equality's rule where its proof is a hypothesis
+test judges(theory, plus_zero_ty, plus_zero) = "Proved"
+test certified(theory, plus_zero_ty, plus_zero) = "Proved"
+test judges(theory, append_empty_ty, append_empty) = "Proved"
+// Since an equation computes, the step's hypothesis is already the proof, with no transport. The rules above
+// compare the two equations as written and refuse that term; its program is Proved
+plus_zero_direct := lam(nat_ty, nrec(lam(nat_ty, eq_nat(plus_of(tv(0), zr), tv(0))), refl(zr), lam(nat_ty, lam(eq_nat(plus_of(tv(0), zr), tv(0)), tv(0))), tv(0)))
+test accepts(theory, plus_zero_ty, plus_zero_direct).is_refuted = true
+test judges(theory, plus_zero_ty, plus_zero_direct) = "Proved"
+// a false statement is refuted with a number, whatever is offered as its proof
+plus_self_direct := lam(nat_ty, nrec(lam(nat_ty, eq_nat(plus_of(tv(0), tv(0)), tv(0))), refl(zr), lam(nat_ty, lam(eq_nat(plus_of(tv(0), tv(0)), tv(0)), tv(0))), tv(0)))
+test judges(theory, false_ty, plus_self_direct) = refuted([1])
+test judges(theory, false_ty, fake) = refuted([1])
 // a program with no recursion on its input is certified outright: flipping covers both booleans
 test certified(theory, arrow(bool_ty, bool_ty), flip) = "Proved"
 test certified(theory, flip_twice, lam(bool_ty, elim(bool_d, lam(bool_ty, eq_ty(bool_ty, app(flip, app(flip, tv(0))), tv(0))), tv(0), [refl(yes), refl(no)]))) = "Proved"

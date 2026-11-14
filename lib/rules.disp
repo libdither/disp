@@ -10,6 +10,8 @@
 //   generic run    (atom) a run on a case answers for every tree the case covers
 //   induction      (atom) the hypothesis is asked only at the strictly smaller pieces of a member
 //   lemma          a call is read by a type its callee is already Proved at
+//   elimination    the same for a call of a type's eliminator, whose type is its own statement
+//                  (case split and induction on a part of the program) read off the goal
 //   finite cover   `over` (lib/claim.disp): a claim checked on every listed challenge
 //   composition    `lens_then` (lib/claim.disp)
 // One loop applies them (lib/confirm.disp): a case is run, the run citing the hypothesis or
@@ -87,9 +89,6 @@ certify :: {claim : Claim, cases : List(Val)} -> Verdict :=> steps_verdict(searc
 // on demand (case split), runs the value on them (generic run), and for a recursive value,
 // fix(step), runs the step with the hypothesis in place of itself (induction).
 max_args := 8
-is_types :: Code -> Bool := {c} => (is_type_code(c)) && (c.snd.types)
-arg_sym :: {T : Code, i : Nat} -> Val :=> piece(T, [pair("arg", i)])
-generic_of :: {T : Code, i : Nat} -> Val :=> if ((is_type_code(T)) && (not(is_none(T.snd.generic)))) { T.snd.generic.snd(T, i) } else { arg_sym(T, i) }
 rec generic_args :: {T : Code, i : Nat} -> Val :=> {
 	let view := fn_view(T)
 	if ((is_none(view)) || (nat_le(max_args, i))) { t }
@@ -102,11 +101,15 @@ rec generic_args :: {T : Code, i : Nat} -> Val :=> {
 induct :: {f : Val, arg : Val, dom : Code, rest : Tree, i : Nat, fuel : Nat} -> Res :=> {
 	let step := step_of(f)
 	if ((step == none) || ((arg.is_known) || (not(is_positive(dom))))) { answered(f) }
-	else { sapply(step, hypothesis(dom, family_code(rest), [pair("arg", i)], same), fuel) }
+	else { sapply(step, hypothesis_over(dom, rest, [pair("arg", i)], same), fuel) }
 }
 // the run along the arguments, judged at the end; its Yes says what the answer rests on
-rec run_at :: {T : Code, f : Val, args : Val, i : Nat, fuel : Nat} -> Res :=>
-	if (is_leaf(args)) { let r := judge_as(T, f); if (r == "Yes") { yes_on(cited(f)) } else { r } }
+// A neutral answer is judged where it stands, at the rest of the type: where a type argument
+// was erased, its own type is known only from the type expected of it.
+rec run_at :: {T : Code, f : Val, args : Val, i : Nat, fuel : Nat} -> Res :=> {
+	let here := if ((is_leaf(args)) || (f.is_app)) { judge_as(T, f) } else { stuck }
+	if (here == "Yes") { yes_on(cited(f)) }
+	else if ((is_leaf(args)) || (here.is_need)) { here }
 	else {
 		let view := fn_view(T)
 		let dom := view.snd.fst
@@ -114,6 +117,7 @@ rec run_at :: {T : Code, f : Val, args : Val, i : Nat, fuel : Nat} -> Res :=>
 		and_then(induct(f, face.fst, dom, view.snd.snd, i, fuel), {g} =>
 			and_then(sapply(g, face.fst, fuel), {out} => run_at(view.snd.snd(face), out, args.snd, succ(i), fuel)))
 	}
+}
 // what a program really receives for an argument whose members are types: types erase to the leaf
 rec erased_of :: {T : Code} -> Tree :=> {
 	let view := fn_view(T)
@@ -137,7 +141,6 @@ rec ground_args :: {v : Val} -> Option(Tree) :=>
 // argument a type with one member, every value of it that member, and every function one of a
 // stored pair of members of its type. A constant cannot be both members, so any program that is
 // not parametric is caught; and a program that fails on a real function fails on a stored one.
-rec nth :: {xs : List(A), i : Nat} -> A :=> if (is_zero(i)) { xs.head } else { nth(xs.tail, nat_pred(i)) }
 stand_ins := [t(t(t), t), t(t(t), t(t))]
 has_sample :: Code -> Bool := {c} => if (is_type_code(c)) { not(is_none(c.snd.sample)) } else { false }
 is_stored :: Code -> Bool := {c} => not(pairs_at(c).is_nil)
@@ -172,15 +175,26 @@ rec nodes_left :: {n : Nat, v : Tree} -> Nat :=>
 	else if (is_leaf(v)) { nat_pred(n) }
 	else if (is_stem(v)) { nodes_left(nat_pred(n), stem_child(v)) }
 	else { nodes_left(nodes_left(nat_pred(n), v.fst), v.snd) }
-rec lemmas_in :: {lemmas : List(Pair(Tree, Code)), v : Val} -> Val :=> {
-	let hit := lemmas.filter({l} => l.fst == v)
-	if (not(hit.is_nil)) { lemma_val(hit.head.fst, hit.head.snd) }
+// The tree a lemma is found as, with the hole that takes its place: itself at its type, or, for a
+// lemma over a type, its application to the leaf at the rest of the type. Types are erased, so
+// that application is what a compiled call holds, and the type it is used at is read where the
+// call is judged (judge_as, lib/confirm.disp). The lemma unapplied ignores its type argument,
+// which makes it the tree of a constant in compiled code, so it is never looked for.
+lemma_hole :: {l : Pair(Tree, Code)} -> Pair(Tree, Val) :=> {
+	let view := fn_view(l.snd)
+	let over_type := if (is_none(view)) { false } else { (is_types(view.snd.fst)) && (not(is_fn_code(view.snd.fst))) }
+	if (not(over_type)) { pair(l.fst, lemma_val(l.fst, l.snd)) }
+	else { pair(l.fst(t), lemma_at(l.fst(t), view.snd.snd(faces_of(view.snd.fst, t)), app_val(piece_at(l.snd, "lemma", [l.fst]), t))) }
+}
+rec lemmas_in :: {holes : List(Pair(Tree, Val)), v : Val} -> Val :=> {
+	let hit := holes.filter({h} => h.fst == v)
+	if (not(hit.is_nil)) { hit.head.snd }
 	else if ((is_hole(v)) || (is_leaf(v))) { v }
-	else if (is_stem(v)) { t(lemmas_in(lemmas, stem_child(v))) }
-	else { t(lemmas_in(lemmas, v.fst), lemmas_in(lemmas, v.snd)) }
+	else if (is_stem(v)) { t(lemmas_in(holes, stem_child(v))) }
+	else { t(lemmas_in(holes, v.fst), lemmas_in(holes, v.snd)) }
 }
 with_lemmas :: {lemmas : List(Pair(Tree, Code)), v : Val} -> Val :=> {
-	let big := lemmas.filter({l} => is_zero(nodes_left(lemma_min_size, l.fst)))
+	let big := lemmas.map(lemma_hole).filter({h} => is_zero(nodes_left(lemma_min_size, h.fst)))
 	if (big.is_nil) { v } else { lemmas_in(big, v) }
 }
 // How a value is judged: definitions to use as lemmas where a run is stuck, how deep the search
@@ -206,7 +220,7 @@ judge_steps :: {how : Judging, T : Code, w : Tree} -> Items(Step) :=>
 // tried innermost first, each with the ones before it as lemmas. A call whose type is not
 // among the goal's own is where an annotation is needed.
 rec fixes_in :: {v : Tree} -> List(Tree) :=> {
-	let inner := if (is_leaf(v)) { [] } else if (is_stem(v)) { fixes_in(stem_child(v)) } else { fixes_in(v.fst).append(fixes_in(v.snd)) }
+	let inner := if ((is_leaf(v)) || (is_fold(v))) { [] } else if (is_stem(v)) { fixes_in(stem_child(v)) } else { fixes_in(v.fst).append(fixes_in(v.snd)) }
 	if (if (step_of(v) == none) { false } else { is_zero(nodes_left(lemma_min_size, v)) }) { inner.append([v]) } else { inner }
 }
 sub_programs :: {w : Tree} -> List(Tree) :=> fixes_in(w).filter({s} => not(s == w)).dedup
