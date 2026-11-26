@@ -4,7 +4,7 @@ defaultTargets = ["LinearIcNet"]
 [[lean_lib]]
 name = "LinearIcNet"
 precompileModules = true
-roots = ["Basic", "Tables", "Size", "Net", "Search", "Runs", "Moves", "Check", "Runner", "Programs", "Checked"]
+roots = ["Basic", "Tables", "Size", "Net", "Search", "Runs", "Moves", "Check", "Runner", "Programs", "Checked", "Statement", "RecordOld", "QuoteKit", "RecordQuote", "StatementSound", "RecordSerial"]
 
 # Not in the default build: the long interpreter runs, and the forcing check (`lake exe forced`).
 [[lean_lib]]

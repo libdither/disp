@@ -1,0 +1,179 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The quote-and-table net</title>
+<!-- The agent view of evaluators/rust-ic-strands/player (rev.html, graph.js), rebuilt for the quote-and-table
+     net of ../ideal/knet.py: engine.js runs the rule table, icons.js says how agents are drawn, and player.js
+     lays the net out and plays it. -->
+<style>
+  :root { --bg:#0b0e14; --bg-elev:#121a26; --panel:#0d131d; --fg:#c8d3e0; --fg-muted:#8595ad; --fg-faint:#5b6a80; --accent:#56c8ff;
+    --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; --border:#1b2436; --border-strong:#2a3a52;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --body:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.45 var(--mono); }
+  #wrap { display:flex; height:100vh; }
+  #stage { position:relative; flex:1; min-width:0; overflow:hidden; }
+  [hidden] { display:none !important; }
+  #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  button, select, input { background:var(--bg-elev); color:var(--fg); border:1px solid var(--border-strong); border-radius:6px; padding:3px 8px; font:inherit; }
+  button { cursor:pointer; min-width:34px; } button:hover { border-color:var(--accent); } button.on { border-color:var(--accent); color:var(--accent); }
+  #hud { position:absolute; top:10px; left:14px; max-width:70%; pointer-events:none; }
+  #answer { font-size:18px; color:var(--hot); word-break:break-word; }
+  #status { font-size:11.5px; color:var(--fg-muted); } #status.ok { color:var(--ok); } #status.bad { color:var(--warn); }
+  #rule { font-size:11.5px; color:var(--fg); min-height:1.4em; }
+  #dock { position:absolute; left:0; right:0; bottom:0; padding:24px 12px 8px; background:linear-gradient(to top, rgba(11,14,20,.95) 70%, rgba(11,14,20,0)); }
+  #dock > * { width:min(820px, 100%); margin:0 auto 6px; box-sizing:border-box; display:flex; gap:6px; align-items:center; justify-content:center; flex-wrap:wrap; }
+  #src { flex:1; min-width:12rem; text-align:center; } #src.bad { border-color:var(--warn); }
+  #examples { max-width:11rem; }
+  #strip { display:block; width:min(820px, 100%); height:44px; margin:0 auto 6px; cursor:crosshair; border-bottom:1px solid var(--border-strong); }
+  label { color:var(--fg-muted); font-size:11.5px; display:inline-flex; gap:4px; align-items:center; white-space:nowrap; }
+  #side { width:340px; flex:none; overflow:auto; border-left:1px solid var(--border); background:var(--panel); padding:4px 16px 16px;
+    font:12.5px/1.55 var(--body); color:var(--fg-muted); box-sizing:border-box; }
+  #side h1 { font-size:15px; color:var(--fg); margin:12px 0 6px; } #side h2 { font-size:12px; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; margin:14px 0 4px; }
+  #side b { color:var(--fg); font-weight:600; } #side p { margin:0 0 8px; } #side a { color:var(--accent); }
+  #side code, #side pre { font:11.5px/1.5 var(--mono); color:var(--fg); }
+  #side pre { white-space:pre-wrap; margin:4px 0 8px; padding:6px 8px; background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; }
+  #side summary { cursor:pointer; color:var(--fg); }
+  #counts div { display:flex; justify-content:space-between; font:12px var(--mono); } #counts span:last-child { color:var(--fg); }
+  #detail { min-height:5em; font-size:12px; color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:6px 8px; background:var(--bg-elev); }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  svg.kind { vertical-align:-3px; margin-right:4px; }
+  .legend span { display:inline-block; margin:0 10px 2px 0; white-space:nowrap; font-size:11.5px; }
+  #ruleBox { min-height:4em; font-size:12px; color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:6px 8px; background:var(--bg-elev); }
+  #ruleBox svg { display:block; width:100%; height:auto; margin:6px 0 2px; }
+  .term { font:11.5px/1.5 var(--mono); color:var(--fg); background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:4px 6px; margin:3px 0 6px;
+    white-space:pre-wrap; overflow-wrap:anywhere; max-height:11.5em; overflow:auto; }
+  #whole { min-height:2.6em; }
+  #detail a, #ruleBox a, #rule { cursor:pointer; } #detail a.act { color:var(--hot); font-weight:600; }
+  #rule { pointer-events:auto; } #rule:hover { color:var(--accent); }
+  .pm { display:inline-block; width:2.1em; color:var(--fg); font-family:var(--mono); }
+  .dim { color:var(--fg-muted); }
+  #programs h3 { font-size:12px; color:var(--fg); margin:10px 0 3px; font-weight:600; }
+  #programs a { overflow-wrap:anywhere; text-decoration:none; } #programs a:hover code { color:var(--accent); }
+  @media (max-width: 760px) { #wrap { flex-direction:column; height:auto; } #stage { height:78vh; flex:none; } #side { width:auto; border-left:0; border-top:1px solid var(--border); } }
+</style></head><body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"><div id="answer"></div><div id="status">loading…</div><div id="rule"></div></div>
+    <div id="dock">
+      <div><input id="src" spellcheck="false" aria-label="program">
+        <select id="examples" aria-label="examples"></select></div>
+      <canvas id="strip"></canvas>
+      <div>
+        <button id="toStart" title="back to the beginning (Home)">⏮</button>
+        <button id="playBack" title="run backward (Shift+Space)">◀◀</button>
+        <button id="stepBack" title="one step back (←)">◀</button>
+        <button id="stepFwd" title="one step forward (→)">▶</button>
+        <button id="playFwd" title="run forward (Space)">▶▶</button>
+        <button id="toEnd" title="run to the end (End)">⏭</button>
+        <label title="steps a frame, from one every few frames to a thousand"><input id="speed" type="range" min="0" max="100" value="22" style="width:90px"><span id="speedLabel"></span></label>
+        <label title="▶ and ◀ step a whole round: every pair waiting at a round's start fires at once, and what a round makes waits for the next. Unticked: one rewrite at a time (R)"><input id="byRound" type="checkbox" checked> a round at a time</label>
+      </div>
+      <div>
+        <label title="which waiting pair fires first, when not run the physical way. The answer and the number of rewrites are the same in every order.">order
+          <select id="order"><option value="rounds">all at once, in rounds</option><option value="newest">newest pair first</option><option value="random">random</option></select></label>
+        <label title="the thin wires on a variable's way from its function to its uses, through splits (V)"><input id="binds" type="checkbox" checked> variable wires</label>
+        <label title="a named part that nothing is acting on is drawn as its name; click one to open it (L)"><input id="fold" type="checkbox" checked> fold named parts</label>
+        <label title="light up the whole subnet under the agent you point at, and dim the rest: the same as holding Shift (S)"><input id="subnets" type="checkbox"> subnets</label>
+        <label title="the physical way: while playing, the two agents of every pair that can fire are drawn together, and the pair rewrites when its main pins touch, so what is close goes first (P)"><input id="physical" type="checkbox"> physical</label>
+        <label title="show each rewrite as it happens: the pair shrinks away and what it made grows out"><input id="motion" type="checkbox" checked> motion</label>
+        <label title="the view follows the net as it grows and shrinks (F)"><input id="follow" type="checkbox" checked> follow</label>
+      </div>
+    </div>
+  </div>
+  <aside id="side">
+    <h1>The quote-and-table net</h1>
+    <p>A λ-calculus that can read its own code, run as an interaction net. Code has four kinds of piece:
+      a <b>function</b> <code>\x. b</code>, an <b>application</b> <code>f a</code>, a <b>quote</b>
+      <code>'M</code> (the code M, handed over as a value without running it), and <b>the atom</b> <code>ρ</code>
+      (a value with no parts). A fifth piece, the <b>table</b> <code>[k1 | k2 | k3 | k4 | k5]</code>, reads
+      code: it has one slot for each kind of value (function, application, quote, atom, table).</p>
+    <p>Applying a table to a value runs the slot for the value's kind, handed the table itself and then the
+      value's parts. So a table is its own loop: a slot reads a part by applying the table it was handed.
+      Applying a <b>quote</b> of a function or a table <b>opens</b> it: the code it would run comes back
+      unrun. That is all the self-interpreter needs (<code>interp</code>, below). This is the candidate of
+      <a href="../../research_notes/Finding%20an%20ideal%20net/candidate_systems.md">candidate_systems.md</a>, §3.</p>
+    <p style="color:var(--fg)"><b>Click a bright wire</b>, or either agent on it, to fire that pair. ▶ steps in the order chosen
+      under the bar. Drag the bar to scrub through the run, either way. <b>Hold Shift</b> to light up the
+      whole subnet under the pointer.</p>
+    <h2>Pointed at</h2>
+    <div id="detail">point at an agent</div>
+    <h2>The rule</h2>
+    <div id="ruleBox">point at a bright wire, or follow a link above</div>
+    <h2>The net as a term, now</h2>
+    <div id="whole" class="term"></div>
+    <h2>Now</h2>
+    <div id="counts"></div>
+    <h2>Try</h2>
+    <div id="tour"></div>
+    <h2>What you are looking at</h2>
+    <p>Each shape is an <b>agent</b>, each line a wire. Two agents joined by their main ports (a
+      <b>bright</b> wire, in the colour of what the rewrite will do) are about to rewrite; nothing else can
+      happen. The program hangs from the root (the ring at the top), and its answer ends up there.</p>
+    <p><b>Code is frozen.</b> Grey shapes are code: functions (λ), applications (small disks), and
+      variables (dots). A <b>thaw</b> (green arrow) walks down code and turns each application into a
+      <b>running application</b> (pink @). It stops at a function: the body stays code until the function
+      is called. When a running application meets a function, the argument goes to the variable's uses
+      and a thaw starts on the body.</p>
+    <p><b>A quote is a variable.</b> One agent does both jobs: its lower pin leads either to its function
+      (a variable) or to a piece of code (a quote). A thaw meeting it hands on what is there, unrun. So a
+      variable gives its value, and a quote gives its code as a value. A running application that meets
+      a quote turns into an <b>application that opens</b> (violet): meeting a function, it wires the
+      argument in and hands the body back as code, running nothing.</p>
+    <p><b>Tables.</b> A table (teal) has five slot pins, each in its own colour: <span class="legend" id="slotKey"></span>
+      Applied to a value, it becomes a <b>table reading</b> (cyan), which looks at the value through its
+      left pin. When the value arrives, the slot for its kind is copied: one copy goes back into a rebuilt
+      table, and what is left is code, the other copy applied to the table and then to the value's parts,
+      each quoted. A plain application runs that code; an application that opens hands it back.</p>
+    <p><b>Copying</b> happens only where a value is used twice (a split, thin violet Y, sits on the
+      variable's wire), and where a table reads (the slot it takes). Copiers (thick Y, one colour per copy)
+      walk through a value one agent at a time and leave two of each. On a variable's way to its uses a
+      copier faces out, and where it meets the copier facing in of the same copy, the two <b>cancel</b>.
+      <b>Erasing</b> happens only where a variable is not used: an eraser (red ×) walks through the value.</p>
+    <p><b>Structures.</b> Code that hangs together sits on one faint band: one value, or one stretch of
+      code. A band's label is the name of the part it comes from, or else the start of its term.</p>
+    <p><b>Terms.</b> Point at an agent to read the subnet under it as a term, and see the whole net as one
+      above. In a term, <code>'M</code> is a quote, and also a variable that has its value M;
+      <code>[a | b | c | d | e]</code> is a table; <code>▸c</code> is a thaw on code c; <code>f @ a</code> an
+      application that is running, <code>f @' a</code> one that opens; <code>read⟨v⟩</code> a table reading v;
+      <code>⧉n⟨v⟩</code> a side of copy n that has still to pass through v. Where the answer is a boolean or
+      a Church numeral, its meaning follows it (<code>false</code> is also 0).</p>
+    <p><b>Named parts.</b> Named code (the table <code>size</code>, <code>interp</code>, …) that nothing is
+      acting on is drawn as its name on a pill. Click a pill to open it, and the tag of an opened part to
+      fold it again. A part opens by itself when something reaches it.</p>
+    <p><b>Ports.</b> Every port is a pin on its own side of the icon, and wires join pin tips. The main
+      port's pin ends in a white dot. Only main ports meet: a rewrite happens where two main ports are
+      wired together, and it rewires what was on the side ports. An icon turns, and flips left for right,
+      to face its pins toward what they are wired to; its letter stays upright.</p>
+    <p><b>Physical.</b> Tick it and play: the two agents of every pair that can fire are drawn together,
+      and the pair rewrites when its main pins touch. What is close goes first.</p>
+    <p><b>Order does not matter.</b> Fire pairs in any order you like, or pick another order under the bar:
+      the answer is the same, and so is the number of rewrites. A pair you fire replaces what was
+      planned from that moment; the rest of the run is planned again, and its length does not change.</p>
+    <p><b>Drag an agent</b> to move it; drag empty space to move the view, and scroll to zoom. The shapes
+      named here are the suggested icons; <a href="icons.html">others can be chosen</a>.</p>
+    <h2>Rewrites</h2>
+    <div class="legend" id="families"></div>
+    <h2>Agents</h2>
+    <div class="legend" id="legend"></div>
+    <p style="margin-top:6px"><a href="icons.html">Choose other icons</a>: four ways to draw each agent, and what each agent really does.</p>
+    <h2>Programs</h2>
+    <p>Every example, by group. Click one to play it. The rewrite counts are the Python reducer's, and the
+      page's are held to them.</p>
+    <div id="programs"></div>
+    <h2>Writing programs</h2>
+    <p><code>\x y. body</code> is a function, <code>f a</code> applies, <code>'M</code> quotes M,
+      <code>[a | b | c | d | e]</code> is a table and <code>ρ</code> the atom. Every name must be bound by a
+      function or defined: <code>name := term; …</code> defines names first. These are defined already:</p>
+    <details><summary>zero, suc, add, true, false, and, Z, err, stem, kindOf, size, sizeK, ap, interp, fresh, eqd,
+      equal, apT, interpT, pair, mirror</summary><pre id="prelude"></pre></details>
+    <p style="margin-top:12px">The rules: <a href="../ideal/knet.py">knet.py</a> (its first lines list the agents
+      and rules) and the same table as data in <a href="../ideal/ktable.py">ktable.py</a>; the calculus in
+      <a href="../ideal/kref.py">kref.py</a>. The engine here is <code>engine.js</code>, held to knet.py by
+      <code>check.mjs</code>. Earlier designs: <a href="../player/index.html">reflective nets</a>,
+      <a href="../table-player/index.html">with tables and one-agent functions</a>.</p>
+  </aside>
+</div>
+<script src="engine.js"></script>
+<script src="icons.js"></script>
+<script src="player.js"></script>
+</body></html>

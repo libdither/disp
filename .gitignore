@@ -17,3 +17,4 @@ research/interaction-combinator/lattice_frontier.js
 research/memes
 research/barry-jay/**
 target/
+__pycache__/
