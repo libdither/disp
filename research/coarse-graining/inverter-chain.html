@@ -1,0 +1,108 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coarse-graining a chain of gates: voltages to bits to clock cycles</title>
+<style>
+  :root { --bg:#0d0d0d; --surface:#1a1a19; --fg:#f0efec; --fg2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835;
+    --lo:#3987e5; --mid:#383835; --hi:#e66767; --bad:#fab219; --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --body:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  html,body { margin:0; background:var(--bg); color:var(--fg2); font:13px/1.5 var(--body); }
+  main { max-width:1280px; margin:0 auto; padding:14px 16px 40px; }
+  h1 { font-size:18px; color:var(--fg); margin:0 0 4px; font-weight:600; }
+  h2 { font-size:13px; color:var(--fg); margin:18px 0 6px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; }
+  p { margin:4px 0; max-width:900px; }
+  .sub { color:var(--muted); }
+  .panel { background:var(--surface); border-radius:10px; padding:10px 12px; }
+  .controls { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px 18px; }
+  .controls label { display:flex; flex-direction:column; font-size:12px; color:var(--muted); }
+  .controls label b { color:var(--fg); font-weight:normal; font-family:var(--mono); }
+  input[type=range] { width:100%; accent-color:var(--s1); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  button, select { background:#242423; color:var(--fg); border:1px solid #3a3a38; border-radius:6px; padding:4px 10px; font:12px var(--body); cursor:pointer; }
+  button:hover, select:hover { border-color:var(--s1); }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr)); gap:8px; margin-top:10px; }
+  .tile { background:var(--surface); border-radius:8px; padding:6px 10px; }
+  .tile .k { font-size:11px; color:var(--muted); }
+  .tile .v { font:15px var(--mono); color:var(--fg); }
+  .tile .n { font-size:11px; color:var(--muted); }
+  .tile.warn .v::before { content:"⚠ "; color:var(--bad); }
+  .st { display:flex; gap:10px; overflow-x:auto; align-items:flex-start; }
+  .st figure { margin:0; }
+  .st figcaption { font-size:12px; color:var(--fg); margin-bottom:4px; min-height:34px; }
+  .st figcaption span { display:block; color:var(--muted); font-size:11px; }
+  .st canvas { image-rendering:pixelated; display:block; background:var(--surface); border-radius:4px; }
+  .charts { display:grid; grid-template-columns:repeat(auto-fill,minmax(400px,1fr)); gap:10px; }
+  .charts figure { margin:0; background:var(--surface); border-radius:10px; padding:8px 10px; }
+  .charts figcaption { font-size:12px; color:var(--fg); }
+  .charts figcaption span { color:var(--muted); font-size:11px; display:block; }
+  .charts canvas { width:100%; height:220px; display:block; }
+  .legend { display:flex; gap:14px; font-size:11px; color:var(--fg2); margin-top:4px; flex-wrap:wrap; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; }
+  #tip { position:fixed; pointer-events:none; background:#242423; color:var(--fg); border:1px solid #3a3a38; border-radius:6px;
+    padding:4px 8px; font:11.5px/1.4 var(--mono); display:none; z-index:9; white-space:pre; }
+  table.map { border-collapse:collapse; font-size:12px; margin-top:6px; }
+  table.map td, table.map th { border-bottom:1px solid var(--grid); padding:4px 10px 4px 0; text-align:left; vertical-align:top; }
+  table.map th { color:var(--fg); font-weight:600; }
+  #busy { color:var(--muted); font-size:12px; }
+  code { font-family:var(--mono); color:var(--fg); }
+</style></head><body><main>
+<h1>Coarse-graining a chain of gates</h1>
+<p class="sub">A row of inverters simulated as real voltages with thermal noise (the fine level), read as bits (the lens), and predicted by a
+bit-and-delay model or a clock-cycle model (the coarse level). The coarse model is only as good as the place where the two agree.</p>
+
+<h2>Settings</h2>
+<div class="panel">
+  <div class="controls">
+    <label>Supply voltage <b id="vddL"></b><input id="vdd" type="range" min="0" max="1000" value="951"></label>
+    <label>Wire capacitance (sets how many electrons a bit is) <b id="capL"></b><input id="cap" type="range" min="0" max="1000" value="1000"></label>
+    <label>Bit period, in stage delays <b id="perL"></b><input id="per" type="range" min="12" max="200" value="60"></label>
+    <label>Coarse model <b id="modeL"></b><select id="mode"><option value="0">bits + delays, no clock</option><option value="1">clock cycles (a register every k stages)</option></select></label>
+    <label>k, stages per register <b id="kL"></b><input id="k" type="range" min="2" max="8" value="4"></label>
+    <label>Supply feed time, in stage delays (0 = ideal) <b id="feedL"></b><input id="feed" type="range" min="0" max="100" value="0"></label>
+    <label>Local storage per cell, × wire capacitance <b id="decL"></b><input id="dec" type="range" min="0" max="100" value="30"></label>
+  </div>
+  <div class="row">
+    <span class="sub">Presets:</span>
+    <button data-p="healthy">Healthy chip</button>
+    <button data-p="tiny">Tiny wires</button>
+    <button data-p="clocked">Tiny wires, clocked</button>
+    <button data-p="fast">Too fast</button>
+    <button data-p="low">Low supply</button>
+    <button data-p="droop">Weak supply</button>
+    <button data-p="droopc">Weak supply, clocked</button>
+    <button id="reseed">New random bits</button>
+    <span id="busy"></span>
+  </div>
+</div>
+<div class="tiles" id="tiles"></div>
+
+<h2>Space and time <span class="sub" style="text-transform:none;letter-spacing:0;font-weight:normal">— stage along →, time down ↓; every inverted wire is drawn flipped, so a bit keeps its colour as it travels</span></h2>
+<div class="st" id="st"></div>
+<div class="legend">
+  <span><i style="background:var(--lo)"></i>low / 0</span><span><i style="background:var(--mid)"></i>halfway</span>
+  <span><i style="background:var(--hi)"></i>high / 1</span><span><i style="background:#242423;border:1px dashed #555"></i>not in the coarse model</span>
+  <span><i style="background:var(--bad)"></i>⚠ lens and coarse model disagree</span>
+</div>
+
+<h2>What the coarse level costs and where it holds</h2>
+<div class="charts">
+  <figure><figcaption>Disagreement by stage<span>fraction of samples where the coarse model, run on its own, gets the bit wrong</span></figcaption><canvas id="cStage"></canvas><div class="legend" id="lStage"></div></figure>
+  <figure><figcaption>Where the voltages sit<span>every wire at every sample, log count; the shaded band is the region no clean bit may sit in</span></figcaption><canvas id="cHist"></canvas></figure>
+  <figure><figcaption>One inverter's transfer curve, and its mirror<span>where the slope is steeper than −1 the gate amplifies; that gain is what pushes nearby voltages back to the rails</span></figcaption><canvas id="cVtc"></canvas><div class="legend"><span><i style="background:var(--s1)"></i>out = f(in)</span><span><i style="background:var(--s2)"></i>mirror, in = f(out)</span></div></figure>
+  <figure><figcaption>Energy per stage per bit, over supply voltage<span>with the other settings fixed, on 16 stages; log scales; the dashed line is the current supply</span></figcaption><canvas id="cEnergy"></canvas></figure>
+  <figure><figcaption>Coarse-model error, over supply voltage<span>same sweep; below the cliff there is no bit level to predict</span></figcaption><canvas id="cErr"></canvas><div class="legend"><span><i style="background:var(--s1)"></i>coarse model run alone</span><span><i style="background:var(--s2)"></i>one coarse step from the read state</span></div></figure>
+</div>
+
+<h2>How it maps</h2>
+<table class="map">
+  <tr><th>Piece of a coarse-graining</th><th>Here</th></tr>
+  <tr><td>Fine level</td><td>One voltage per wire. Each inverter's two transistors pull it up or down (an EKV-style curve, calibrated like <code>research/SIGNAL_FABRIC.md</code>: 15 ps per gate at 1 V and 1 fF), plus shot noise from the same currents, which settles to the thermal √(kT/C).</td></tr>
+  <tr><td>Lens (forward map)</td><td>Read each wire as 1 if it is above half the supply.</td></tr>
+  <tr><td>Coarse step rule</td><td>No clock: stage i shows the input bit from <code>d₁ + (i−1)·d</code> ago, inverted when i is odd, to within a tenth of a delay. Clocked: each register holds what the register before it held one cycle earlier; the wires between registers are forgotten.</td></tr>
+  <tr><td>Price from below</td><td>The delay <code>d</code> is measured by running the fine model once, without noise, at the current supply and capacitance. That is what a chip's delay tables are.</td></tr>
+  <tr><td>Domain</td><td>Gain above 1 (else there are no bits at all), noise well inside the margin, bits longer than a few delays, and, for the clock, a cycle longer than the slowest path.</td></tr>
+  <tr><td>Error bound</td><td>The two disagreement numbers. "Run alone" is the coarse simulation from the input. "One step" is the commuting square: read the fine state, take one coarse step, compare with reading after the fine step.</td></tr>
+</table>
+<p class="sub" style="margin-top:8px">State commutes almost exactly here, time does not: noise moves every edge a little, and without a clock those shifts add up stage after stage. A register resets them, at the price of waiting a whole cycle.</p>
+<div id="tip"></div>
+
+<script src="inverter-chain.js"></script></main></body></html>
