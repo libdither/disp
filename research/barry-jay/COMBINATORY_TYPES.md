@@ -17,6 +17,10 @@ comparison and technical corrections revised 2026-09-19 against the paper and cu
   `lib/infer.ml` implements both inference and type application; `lib/types.ml` defines
   type representations and structural helpers; `lib/iota.dag` is an example program.
 
+- `typing-rules-as-programs/`, `typing-rules-become-programs.txt` — Jay's November 2026
+  sequel that moves this system into tree calculus; see
+  [TYPING_RULES_AS_PROGRAMS.md](TYPING_RULES_AS_PROGRAMS.md).
+
 Not downloaded (paywalled): Jay, "Typed Program Analysis without Encodings", PEPM'25,
 DOI 10.1145/3704253.3706138. Its Rocq formalization is public:
 github.com/barry-jay-personal/typed_tree_calculus. The Rocq proofs for the 2026 paper are at
