@@ -1,6 +1,6 @@
 # Scores
 
-Every score, in one place (2026-11-11). Each axis's maximum is what `GOALS.md` asks for, split into
+Every score, in one place (2026-11-25). Each axis's maximum is what `GOALS.md` asks for, split into
 three or four clauses in [`_AXES.md`](_AXES.md#grading-the-maximum-and-the-clauses); every clause
 scores 0, ½ or 1 and the axis percentage is their weighted mean. The write-ups' scorecard notes are the
 evidence. `†` marks a value taken from general knowledge beyond the write-up; `?` marks a clause the
@@ -43,6 +43,7 @@ Weights: 1 · 1 · 1
 | NanoLang | 0 | 0 | 0 | 0 | none |
 | Rust cluster | 0 | 0 | 0 | 0 | the checkers are separate tools over Rust |
 | Mojo | ½(types only) | 0 | 0 | 17 | `reflect[T]` reads type structure only; the checker is C++ |
+| Vx | 0 | 0 | 0 | 0 | no reflection on code or types; `comptime` runs Vx while compiling; the checker is Rust |
 | LogosLang | ½(walk only) | 0 | 0 | 17 | the Logic Graph is walkable today; self-rewriting and the proof layer are unbuilt |
 | Acorn | 0 | 0 | 0 | 0 | none |
 | Salt | 0 | 0 | 0 | 0 | none |
@@ -86,6 +87,7 @@ Weights: 45 · 35 · 20
 | NanoLang | 0 | 0 | 0 | 0 | no user-level spec language; the proofs are about the language |
 | Rust cluster | 1 | 1 | ½(per-tool translation) | 90 | from Flux refinements to RefinedRust's Iris and Aeneas's Lean, with libcrux and ACE-RISCV as the library; Aeneas's borrow translation is a machine-produced equivalence, per tool |
 | Mojo | ½(comptime values) | 0 | 0 | 22 | types indexed by compile-time values only; no propositions, no proofs, no equality |
+| Vx | ½(contracts) | ½(solver-discharged) | ½(SMT-fragment) | 50 | contracts and invariants over runtime values, z3-discharged on every build; shapes are compile-time values; dependent types are an unchecked roadmap item |
 | LogosLang | 0 | 0 | 0 | 0 | the proof layer and the rewriting engine are design documents |
 | Acorn | 0 | 1 | 0 | 35 | a theorem-proving language for mathematics with a growing library; no program specifications |
 | Salt | ½(contracts) | ½(solver-discharged) | 0 | 40 | Z3 contracts (claimed), no library, equality not addressed |
@@ -129,6 +131,7 @@ Weights: 40 · 40 · 20
 | NanoLang | ½(soundness proof) | 0 | 0 | 20 | no kernel, but the core semantics are proved sound in Coq, `Admitted`-free |
 | Rust cluster | ½(per tool) | ½(per tool) | ½(per tool) | 50 | Aeneas/hax/RefinedRust inherit Lean/F*/Rocq kernels; Kani/Creusot/Flux trust SMT |
 | Mojo | 0 | 0 | 0 | 0 | the whole MLIR/LLVM C++ stack; MLIR rewrites are asserted compiler transforms, unverified |
+| Vx | 0 | 0 | 0 | 0 | trust is `vxc`, MLIR/LLVM and z3; z3's `unsat` carries no certificate; the Lean proofs cover a model of the checker, not `vxc` |
 | LogosLang | 0 | 0 | 0 | 0 | no kernel discipline described; `.compile()` lowers a function without licensing a replacement |
 | Acorn | 0 | ? | 0 | 0? | has its own checker; the write-up does not characterize its TCB or proof objects |
 | Salt | 0 | 0 | 0 | 0 | TCB = saltc + Z3 + MLIR (claimed) |
@@ -172,6 +175,7 @@ Weights: 40 · 30 · 30
 | NanoLang | 1 | ½(modelled VM) | ½(FFI) | 70 | transpiles to C; NanoISA is a modelled VM whose semantics are proved, used to sandbox FFI |
 | Rust cluster | 1 | ½(assumed specs)† | ½(FFI)† | 70 | it is Rust |
 | Mojo | 1 | 0 | ½(FFI)† | 55 | MLIR codegen for CPU/GPU/accelerators |
+| Vx | 1 | ½(memory hierarchy) | ½(FFI) | 70 | native code through MLIR; GPU loops within 5% of llm.c's CUDA kernels on one A100, self-reported; the checker reads a declared model of memory and transfers, not of instructions; `extern "C"` returns outputs only |
 | LogosLang | 1 | 0 | ½(JIT call) | 55 | Cranelift JIT within 3× of vectorized C |
 | Acorn | 0 | 0 | 0 | 0 | not a systems language |
 | Salt | ½(claimed) | 0 | ? | 20? | MLIR→LLVM with claimed `-O3` parity, unverified; whether it can call out is not in the write-up |
@@ -215,6 +219,7 @@ Weights: 35 · 35 · 15 · 15
 | NanoLang | 0 | 0 | 0 | 0 | 0 | designed as an LLM target with mandatory tests; no loop of its own for them to score in |
 | Rust cluster | ½(harness gen) | ½(checker only) | 0 | 0 | 35 | Kani's autoharness; otherwise human-driven with AI assistance |
 | Mojo | ½(sweeps) | ½(cost only) | 0 | 0 | 35 | offline parameter sweeps, cost only, correctness assumed |
+| Vx | 0 | 0 | 0 | 0 | 0 | none; the compiler picks the cheapest transfer route, nothing searches programs |
 | LogosLang | 0 | 0 | 0 | 0 | 0 | none |
 | Acorn | ½(local model) | ½(checker only) | 0 | ½(data flywheel) | 42 | an embedded local model fills in proofs with the checker in the loop; the library becomes the next model's training data |
 | Salt | 0 | 0 | 0 | 0 | 0 | none |
@@ -255,6 +260,7 @@ How each project builds things disp's way: disp's bets from `FOUNDATIONS.md`, no
 | NanoLang | 0 | 0 | 0 | 0 |
 | Rust cluster | 0 | 0 | 0 | 0 |
 | Mojo | ½(staging) | 0 | 0 | ½(asserted) |
+| Vx | ½(staging) | ½(placement in types) | ½(modelled transfers) | ½(tested, not proved) |
 | LogosLang | 1 | 0 | 0 | 0 |
 | Acorn | 0 | 0 | 0 | — |
 | Salt | 0 | 0 | 0 | 0 |

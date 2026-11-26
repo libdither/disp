@@ -3,7 +3,7 @@
 Languages and systems surveyed against **disp**'s goals, November 2026.
 Scored on the five axes defined in [`_AXES.md`](_AXES.md); one file per project with
 the full argument. The survey began in August 2026: activity dates verified via the GitHub API on 2026-08-03
-(Mojo: 2026-08-18, the day its compiler went open source; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14; HVM4 and Bend 2: 2026-09-17; Narya, Dedukti / Lambdapi and Andromeda 2: 2026-09-30; Vine: 2026-11-11).
+(Mojo: 2026-08-18, the day its compiler went open source; Telomare: 2026-08-26; Stellogen: 2026-09-04; Nock/Hoon: 2026-09-12; Thermite: 2026-09-14; HVM4 and Bend 2: 2026-09-17; Narya, Dedukti / Lambdapi and Andromeda 2: 2026-09-30; Vine: 2026-11-11; Vx: 2026-11-25).
 
 **disp in one sentence:** write a spec as a dependent type, turn the checker into a
 0/1 score, multiply by measured cost, search for a program that is both provably
@@ -51,6 +51,7 @@ Cells are `symbol percent`: the share of what `GOALS.md` asks for, per [`_AXES.m
 | [**NanoLang**](nanolang.md) | ✗ 0% | ✗ 0% | ✗ 20% | ◐ 70% | ✗ 0% | mechanized metatheory, solo |
 | [**Rust cluster**](rust-verification-cluster.md) | ✗ 0% | ✅ 90% | ◐ 50% | ◐ 70% | ◐ 35% | the competition, and the fallback |
 | [**Mojo**](mojo.md) | ✗ 17% | ✗ 22% | ✗ 0% | ◐ 55% | ◐ 35%ᶠ | one language at every stage, at industrial scale |
+| [**Vx**](vx.md) | ✗ 0% | ◐ 50% | ✗ 0% | ◐ 70% | ✗ 0% | the *hardware model in the type system*, and a field report on how a solver-backed checker goes wrong |
 | [**LogosLang**](logoslang.md) | ✗ 17% | ✗ 0%ᵈ | ✗ 0% | ◐ 55% | ✗ 0% | nearest indie statement of disp's thesis |
 | [**Acorn**](acorn.md) | ✗ 0% | ◐ 35% | ✗ 0%? | ✗ 0% | ◐ 42% | *local* neural proposer in the loop |
 | [**Salt**](salt.md) | ✗ 0% | ◐ 40% | ✗ 0% | ✗ 20%?ᶜ | ✗ 0% | proof-coverage as a continuous signal |
@@ -96,8 +97,10 @@ untested, and the [unscored approach table](_SCORES.md#approach-unscored) tracks
   Rocq match the architecture. Dedukti has independent checkers and exists to re-check other
   provers. disp's claim kernel would stop trust at five hand-proved rules, but today the checker
   in use is still `lib/kernel/`.
-- **G4 (execution):** Verus/Rust ≈ Mojo ≈ ATS ≈ Soma ≈ Bend 2 on raw speed; CakeML, MM0 and the
-  Jasmin/bedrock2 line have the verified path to the machine, and Low* a model of C. Nobody returns
+- **G4 (execution):** Verus/Rust ≈ Mojo ≈ Vx ≈ ATS ≈ Soma ≈ Bend 2 on raw speed; CakeML, MM0 and the
+  Jasmin/bedrock2 line have the verified path to the machine, Low* a model of C, and Vx a declared
+  model of the memory hierarchy that its type checker reads and prices transfers with: a model of
+  the machine's resources, where the others model what its instructions do. Nobody returns
   time and memory from an external run as values; CryptOpt's measuring lives in its tool, and disp,
   HVM4, Vine and Telomare only report cost beside the run. disp's design has such a driver, but it is
   written down, not built.
@@ -178,6 +181,16 @@ untested, and the [unscored approach table](_SCORES.md#approach-unscored) tracks
     peak and parallel depth beside its expected output, so a change that makes any program
     costlier shows up in the diff. disp measures cost per run and compares by hand.
     → `vine.md`
+16. **Treat the checker's glue as the attack surface.** Vx's z3 post lists five months of a
+    solver-backed checker proving false things, every one in the glue rather than the solver: a
+    missing solver that answered "proved" for ten weeks, skipped facts, facts that outlived their
+    variable. Its rules: a proof that did not run is a failed proof, and each part of the prover is
+    broken on purpose to check a test fails (108 breaks of its borrow checker, 15 missed).
+    `lib/tests/rules.test.disp` does this for the rule lenses only. → `vx.md`
+17. **A machine file the checker reads.** Vx declares each part's memory spaces, capacities,
+    bandwidths and edges in a file, checks placements and prices transfers against it before code
+    exists, and states vendor figures as unverified rather than fitting them. A working format for
+    the resource side of the hardware bullet of `GOALS.md`. → `vx.md`
 
 ---
 
