@@ -3,6 +3,7 @@
   import Deep from '../Deep.svelte'
   import Gloss from '../Gloss.svelte'
   import TreeVis from '$lib/components/TreeVis.svelte'
+  import SkiTour from '../SkiTour.svelte'
 
   const labPresets = [
     { expr: 'not false', tip: 'Booleans are the two smallest trees (true = t, false = t t); not is one triage: the F rule reads the argument\'s shape and picks a branch.' },
@@ -31,15 +32,22 @@
   <table>
     <thead><tr><th>Combinator</th><th>Definition</th><th>Behaviour</th></tr></thead>
     <tbody>
-      <tr><td><code>I</code></td><td><span class="math">λx. x</span></td><td><code>I x = x</code></td></tr>
-      <tr><td><code>K</code></td><td><span class="math">λx. λy. x</span></td><td><code>K x y = x</code></td></tr>
-      <tr><td><code>S</code></td><td><span class="math">λx. λy. λz. (x z)(y z)</span></td><td><code>S x y z = (x z)(y z)</code></td></tr>
+      <tr><td><code>I</code></td><td><span class="math">λx. x</span></td><td><code>I(x) = x</code></td></tr>
+      <tr><td><code>K</code></td><td><span class="math">λx. λy. x</span></td><td><code>K(x, y) = x</code></td></tr>
+      <tr><td><code>S</code></td><td><span class="math">λx. λy. λz. (x z)(y z)</span></td><td><code>S(x, y, z) = x(z, y(z))</code></td></tr>
     </tbody>
   </table>
   <p>
-    SKI is combinatorially complete — every closed λ-term compiles to it. But SKI inherits the
-    same limitation from λ-calculus: there is no reducible operation that asks "is this an
-    <code>S</code> or a <code>K</code>?"
+    Disp's compiler does exactly this: it removes every binder and leaves S, K and I. The
+    playground's tree viewer shows it happening, one rewrite at a time, and then shows the
+    result running, one rule at a time. Here is that viewer, with a guide:
+  </p>
+  <SkiTour />
+  <p>
+    SKI is combinatorially complete: every closed λ-term compiles to it. But it inherits the
+    limitation of λ-calculus. The viewer can read a shape and tell you "this is S", but no SKI
+    program can: there is no reducible operation that asks "is this an <code>S</code> or a
+    <code>K</code>?"
   </p>
 
   <h3 id="tree-calculus">2.2 · Tree calculus</h3>

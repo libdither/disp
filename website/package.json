@@ -12,6 +12,7 @@
     "snapshot": "tsx scripts/build-kernel-snapshot.mts",
     "validate:examples": "tsx scripts/validate-examples.mts",
     "film": "node scripts/playground-film.mjs",
+    "tour-check": "tsx scripts/tour-check.mts",
     "vfs-check": "tsx scripts/vfs-check.mts",
     "motion-check": "tsx scripts/motion-check.mts",
     "twoway-check": "tsx scripts/twoway-check.mts",
