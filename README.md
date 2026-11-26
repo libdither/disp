@@ -225,7 +225,7 @@ lib/                        -- the language, written in itself
 evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers), and the strand lattice (rust-ic-strands, on tree-net)
 test/                       -- vitest harness + host unit tests
 bench/                      -- evaluator benchmarks
-research/                   -- research notes and unbuilt designs (OPTIMIZER.typ, CLAIMS_OVER_TREES.md, AC_IDEA.md, NATIVE_BOOTSTRAP_PLAN.typ)
+research/                   -- research notes and unbuilt designs (OPTIMIZER.typ, CLAIMS_OVER_TREES.md, NATIVE_BOOTSTRAP_PLAN.typ)
 archive/                    -- retired work kept loadable: live-kernel/ (the previous kernel, its std/, tests/ and TYPE_THEORY.typ), superseded proposals
 editors/                    -- editor support (vscode-disp)
 *.md, *.typ                 -- docs for what runs today: the kernel, the host pipeline, the evaluator (rated in the Documentation table above)
