@@ -13,7 +13,7 @@ To hold a design (a former, an optimization, a checker) against this, whoever pr
    - Each optimization must be sound on its own, so any mix of them is.
    - An unknown is never read as a tree or built by a program: an application touching one is answered by an optimization, or the check says no.
    - *Check:* for each application answered without running, which filling of a finishing run gives something the answer does not cover?
-4. **Types come only from formers.** A former builds a meaning and a checker together from its parts. A type is admitted when its parts are, and its former, given them again, builds the identical tree.
-   - *Check:* does an admitted former rebuild the type exactly, and can you name a pair it could build that fails 1 or 2?
+4. **A type is a self-contained program.** Applied to a program it answers by itself, with no table of types behind it. A former is an ordinary function from parts to a type, and uses a part in two ways only: it calls it, or it recognizes its tree as a former applied to parts and takes a shortcut. A part it does not recognize still works, by being called.
+   - *Check:* does the type answer when applied on its own, and does each shortcut give what calling the part would?
 5. **Meaning never moves.** A function type's meaning ranges over the inputs its domain's checker accepts. So a checker is a program like any other: one that accepts the same programs may replace it, and one that accepts more is a new type.
    - *Check:* does any existing type's refuter now stop, or its checker say yes, on a different set of programs?
