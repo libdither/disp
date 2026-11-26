@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Detail dial: mock</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="dial.css">
+</head>
+<body>
+<header>
+  <b>Detail dial</b> <span class="sub">mock for the playground's tree viewer</span>
+  <nav id="examples"></nav>
+  <span class="help">Hover a node, then <kbd>+</kbd> / <kbd>−</kbd>, a notch, or <kbd>Alt</kbd>+scroll: more or less of its code. <kbd>Shift</kbd>+<kbd>]</kbd> / <kbd>[</kbd>: every dial.</span>
+</header>
+<aside id="side"></aside>
+<main>
+  <svg id="stage" role="img" aria-label="the tree"></svg>
+  <div id="ring" hidden></div>
+  <div id="suggest" hidden></div>
+</main>
+<footer>
+  <div id="caption"></div>
+  <div class="bar">
+    <button id="back" title="Back one beat (←)">◀</button>
+    <button id="play" title="Play (space)">▶</button>
+    <button id="fwd" title="Forward one beat (→)">▶▏</button>
+    <div id="beats"></div>
+    <span id="count"></span>
+  </div>
+</footer>
+<script src="engine.js"></script>
+<script src="dial.js"></script>
+</body>
+</html>
