@@ -61,6 +61,15 @@
       reload: true
     },
     {
+      name: 'Reflective nets with tables',
+      kicker: 'A function is one agent',
+      blurb: 'The same nets with every function a single agent and one kind of reader: a table that picks a slot by what it reads. Reading code takes about 11 rewrites here, where the earlier design took about 2,070.',
+      image: shot('reflective-tables'),
+      alt: 'A table with six coloured slot pins being read, functions labelled by definition, a rule drawn before and after, and the list of definitions',
+      href: repoPage('research/linear-ic-net/table-player/index.html'),
+      reload: true
+    },
+    {
       name: 'Two-way programs',
       kicker: 'Every step undoable',
       blurb: 'Programs are trees built from five moves. Flip a run at any point, and firing runs it back.',

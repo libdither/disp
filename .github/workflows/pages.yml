@@ -18,6 +18,7 @@ on:
       - '**.html'
       - 'evaluators/*/player/**'
       - 'research/linear-ic-net/player/**'
+      - 'research/linear-ic-net/table-player/**'
       - 'research/interaction-combinator/*.js'
       - 'research/STREAM_TYPES_ONTOLOGY.md'
       - '.github/workflows/pages.yml'
