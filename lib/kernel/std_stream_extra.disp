@@ -1,0 +1,59 @@
+// Re-typechecked machine-coupled, worklist, and fair-merge stream combinators (`lib/stream.disp`).
+// Companion to `std_stream.disp` covering the 6 definitions that need `std_machine.disp` or
+// scoped monomorphic lemmas (`stopping_list`, `m_trace`, `task`, `s_steps`, `s_worklist`, `s_merge_with`).
+open use "prelude.disp"
+let MMod := use "std_machine.disp"
+let SMod := use raw "../stream.disp" {}
+
+let Machine := MMod.Machine
+let Step := {R, X} => Sigma(Tree, {tag} => if (tag == "Finished") { R } else { X })
+let Emit := {T, X} => Pair(T, X)
+let Option := {V} => Sigma(Tree, {tag} => if (tag == "Yield") { V } else { Unit })
+let Ending := Tree
+let ItemStep := {V, X} => Step(Ending, Emit(Option(V), X))
+let Outcome := {V, I} => Sigma(Tree, {tag} => if (tag == "Yield") { V } else if (tag == "Split") { Pair(Tree, List(I)) } else { Tree })
+
+let until_item_map := SMod.c_until(SMod.stream_new(test, t), test).fst
+let EmitCoalg := {St, T} => Pair(The(Tree, SMod.emit_map), Pair(St -> Emit(T, St), St))
+let TaskCoalg := {St, R} => Pair(The(Tree, SMod.halt_map), Pair(St -> Step(R, St), St))
+let ItemCoalg := {St, V} => Pair(The(Tree, SMod.item_map), Pair(St -> ItemStep(V, St), St))
+let UntilItemCoalg := {St, V} => Pair(The(Tree, until_item_map), Pair(St -> ItemStep(V, St), St))
+let RoundC := {St, V} => Pair(List(V), Pair(List(ItemCoalg(St, V)), Bool))
+let MergeStateC := {S1, S2, V} => Pair(ItemCoalg(S1, ItemCoalg(S2, V)), Pair(List(ItemCoalg(S2, V)), Pair(List(V), Pair(Bool, Step(Ending, Unit)))))
+
+let machine_lems := cert_pick(MMod.machine_cert, ["ck_m_start", "ck_m_finished", "ck_m_result", "ck_m_advance"])
+let length_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("length_t", pair(List(Tree) -> Nat, length))
+])
+let worklist_lems := certify(check_depth, check_fuel, "all", [], [
+	pair("append_t", pair(List(Tree) -> List(Tree) -> List(Tree), append)),
+	pair("s_yielded_t", pair(ItemCoalg(Pair(List(Tree), List(Tree)), Pair(Tree, Outcome(Tree, Tree))) -> ItemCoalg(Pair(List(Tree), List(Tree)), Tree), SMod.s_yielded))
+])
+let merge_lems := certify(check_depth, check_fuel, "all", [], [
+	pair("is_spent", pair(Ending -> Bool, SMod.is_spent)),
+	pair("append_it", pair(List(ItemCoalg(Tree, Tree)) -> List(ItemCoalg(Tree, Tree)) -> List(ItemCoalg(Tree, Tree)), append)),
+	pair("c_out_src", pair(ItemCoalg(Tree, ItemCoalg(Tree, Tree)) -> ItemStep(ItemCoalg(Tree, Tree), ItemCoalg(Tree, ItemCoalg(Tree, Tree))), SMod.c_out))
+])
+
+stopping_list_cert := certify(check_depth, check_fuel, "none", [length_cert], [
+	pair("ck_stopping_list", pair(List(Tree) -> Pair(List(Tree) -> Nat, UntilItemCoalg(List(Tree), Tree)), SMod.stopping_list))
+])
+worklist_cert := certify(check_depth, check_fuel, "all", [worklist_lems], [
+	pair("ck_s_steps", pair((Tree -> Outcome(Tree, Tree)) -> List(Tree) -> ItemCoalg(Pair(List(Tree), List(Tree)), Pair(Tree, Outcome(Tree, Tree))), SMod.s_steps)),
+	pair("ck_s_worklist", pair((Tree -> Outcome(Tree, Tree)) -> List(Tree) -> ItemCoalg(Pair(List(Tree), List(Tree)), Tree), SMod.s_worklist))
+])
+s_merge_with_cert := certify(check_depth, check_fuel, "none", [merge_lems], [
+	pair("ck_s_merge_with", pair(ItemCoalg(Tree, ItemCoalg(Tree, Tree)) -> (List(ItemCoalg(Tree, Tree)) -> RoundC(Tree, Tree)) -> UntilItemCoalg(MergeStateC(Tree, Tree, Tree), Tree), SMod.s_merge_with))
+])
+
+let check_module := check_with(check_depth, check_fuel, "none", [machine_lems])
+
+ck_m_trace : Machine -> Nat -> EmitCoalg(Machine, Machine) := SMod.m_trace
+ck_task : Tree -> Tree -> Nat -> TaskCoalg(Machine, Tree) := SMod.task
+ck_stopping_list := SMod.stopping_list
+ck_s_steps := SMod.s_steps
+ck_s_worklist := SMod.s_worklist
+ck_s_merge_with := SMod.s_merge_with
+ck_stopping_list_verified : The(Bool, true) := is_cert(stopping_list_cert)
+ck_worklist_verified : The(Bool, true) := is_cert(worklist_cert)
+ck_s_merge_with_verified : The(Bool, true) := is_cert(s_merge_with_cert)

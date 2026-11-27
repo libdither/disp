@@ -1,18 +1,27 @@
-// End-to-end auto-verification tests for the promoted core kernel & re-typechecked stdlib!
+// End-to-end auto-verification tests for core checked stdlib modules:
+// `std_prelude`, `std_list`, `std_verdict`, and `std_trees`.
 // Opening each module triggers `check_module` automatically through `src/elab/driver.ts`.
 open use "prelude.disp"
 open use "std_prelude.disp"
 open use "std_list.disp"
 open use "std_verdict.disp"
+let ST := use "std_trees.disp"
 
 test ck_and(true, false) = false
+test ck_select_lazy({_} => 1, {_} => 2, true) = 1
 test ck_nat_le(2, 3) = true
 test ck_tree_lt(0, 1) = true
 test ident(Nat, 42) = 42
 test pick(0) = t
 test pick(3) = 3
 test ack(2, 2) = 7
+test ck_head([10, 20]) = 10
+test ck_tail([10, 20]) = [20]
 test ck_length([1, 2, 3]) = 3
 test ck_zip([1, 2], [true, false]) = [pair(1, true), pair(2, false)]
 test ck_agree("Proved", "Open") = true
 test ck_agree("Proved", ck_refuted(0)) = false
+test ck_counterexample(ck_refuted(7)) = 7
+test ST.ck_trees_bool(true) = true
+test ST.ck_trees_bool(t(t, t)) = false
+test ST.ck_next_level([[t]]) = [t(t)]

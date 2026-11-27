@@ -257,6 +257,33 @@ bad_rec := fix({r, n} => if (is_zero(n)) { 0 } else { r(t(t)) })
 test accepts(NN, bad_rec) = false
 test why([pair(is_zero, fn_t(Nat, Bit))], quot_fn(Nat, parity, Bit), {q} => is_zero(q)) == yes = false
 
+// 9g. Right-to-left lexicographic termination, Scott-induction for `PartialFn` only, unforgeable certs, concrete `Nat` fast-path
+rtl_step := fix({r, x, k} => if (is_zero(k)) { x } else { r(succ(x), nat_pred(k)) })
+test accepts(fn_t(Nat, fn_t(Nat, Nat)), rtl_step) = true
+bad_osc_rtl := fix({r, a, b} => if (is_zero(a)) { 0 } else if (is_zero(b)) { 0 } else { r(succ(a), nat_pred(b)) })
+// `bad_osc_rtl` DOES decrease in RTL (`b` strictly decreases)! Contrast with true non-terminating swap-grow:
+bad_swap := fix({r, a, b} => if (is_zero(a)) { 0 } else if (is_zero(b)) { 0 } else { r(b, a) })
+test accepts(fn_t(Nat, fn_t(Nat, Nat)), bad_swap) = false
+bad_osc2 := fix({r, a, b} => if (is_zero(a)) { 0 } else if (is_zero(b)) { 0 } else if (is_zero(nat_pred(a))) { r(succ(a), nat_pred(b)) } else { r(nat_pred(a), succ(b)) })
+test accepts(fn_t(Nat, fn_t(Nat, Nat)), bad_osc2) = false
+
+// First-class recursive self-reference (`c_fold` pattern): accepted in `partial_fn`, rejected in total `fn_t`!
+ho_self := {alg} => fix({r, x} => alg(r, x))
+test accepts(partial_fn(fn_t(partial_fn(Nat, Nat), fn_t(Nat, Nat)), partial_fn(Nat, Nat)), ho_self) = true
+test accepts(fn_t(fn_t(fn_t(Nat, Nat), fn_t(Nat, Nat)), fn_t(Nat, Nat)), ho_self) = false
+
+// Unforgeable certificates (`certify`, `cert_pick`, `check_certified`)
+good_cert := certify(check_depth, check_fuel, "all", [], [pair("dbl", pair(NN, dbl_n))])
+test is_cert(good_cert) = true
+test is_cert(pair("Cert", [])) = false
+test check_certified(check_depth, check_fuel, "fix", [good_cert], [pair("quad", pair(NN, {n} => dbl_n(dbl_n(n))))]) = true
+test check_certified(check_depth, check_fuel, "fix", [pair("Cert", [pair("fake", pair(dup, NN))])], [pair("bad", pair(NN, dup))]) == true = false
+test is_cert(cert_pick(good_cert, ["dbl"])) = true
+test is_cert(cert_pick(pair("Cert", []), ["dbl"])) = false
+
+// Concrete `data_t` fast-path handles large concrete Peano numerals instantly
+test accepts(fn_t(Nat, Nat), {_n} => 64) = true
+
 // ---- 10. soundness sweep (refuter checks checker over small programs)
 BB := fn_t(Bit, Bit)
 test sound_refuter(NN)(accepts(NN), 16) = nothing

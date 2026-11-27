@@ -372,13 +372,14 @@ with_eq :: {a : Tree, b : Tree, E : Eval} -> Eval :=> {
 rec with_data :: {pred : Tree, u : Tree, E : Eval} -> Eval :=> {
 	let prev_step := E.step
 	let prev_lazy := E.lazy
-	let split_it := {self, fuel, next, cont} =>
-		if (is_zero(ev_depth(self))) { "Out of depth" }
+	let split_it := {self, fuel, next, cont} => {
+		let cs := self.kit.cases(pred, u)
+		if (not(is_found(cs))) { "Cannot derive cases" }
 		else {
-			let cs := self.kit.cases(pred, u)
-			if (not(is_found(cs))) { "Cannot derive cases" }
+			let is_rec_data := cs.snd.any({c} => not(c.snd.is_nil))
+			if (is_rec_data && (is_zero(ev_depth(self)))) { "Out of depth" }
 			else {
-				let E_d := ev_deeper(self)
+				let E_d := if (is_rec_data) { ev_deeper(self) } else { self }
 				each(cs.snd, fuel, {c, fl} => {
 					let shape := c.fst
 					let E1 := reduce({fp, acc} => with_data(fp.fst, fp.snd, acc), with_subst(u, shape, E_d), c.snd)
@@ -386,6 +387,7 @@ rec with_data :: {pred : Tree, u : Tree, E : Eval} -> Eval :=> {
 				})
 			}
 		}
+	}
 	ev(
 		{self, fuel, next, f, x, stack, k} => {
 			let rx := self.resolve(x)
@@ -592,28 +594,70 @@ rec with_lex_guard :: {h : Tree, rest_origs : List(Tree), E : Eval} -> Eval :=> 
 		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
 }
 
-with_rec :: {subj : Tree, T_thunk : Tree, orig0 : Tree, is_total : Bool, E : Eval} -> Eval :=> {
+rec lex_lt :: {xs : List(Tree), os : List(Tree)} -> Bool :=>
+	if ((xs.is_nil) || (os.is_nil)) { false }
+	else if (strict_subterm(xs.head, os.head)) { true }
+	else if (xs.head == os.head) { lex_lt(xs.tail, os.tail) }
+	else { false }
+
+/// Right-to-left lexicographic guard (for functions like `m_advance(m, steps)` / `newton_at(row, n)`)
+rec with_rtl_guard :: {h : Tree, origs : List(Tree), rev_got : List(Tree), rem : Nat, E : Eval} -> Eval :=> {
 	let prev_step := E.step
+	ev({self, fuel, next, f, x, stack, k} =>
+		if (self.resolve(f) == h) {
+			let rx := deep_resolve(self, x)
+			let next_got := cons(rx, rev_got)
+			if (is_zero(nat_pred(rem))) {
+				let res_origs := origs.reverse.map({o} => deep_resolve(self, o))
+				if (lex_lt(next_got, res_origs)) { prev_step(self, fuel, next, f, x, stack, k) }
+				else { "Non-decreasing recursive call" }
+			}
+			else {
+				prev_step(self, fuel, next, f, x, [], {E2, fl2, nx2, res_h} =>
+					deliver_ev(with_rtl_guard(res_h, origs, next_got, nat_pred(rem), E2), fl2, nx2, res_h, stack, k))
+			}
+		}
+		else { prev_step(self, fuel, next, f, x, stack, k) },
+		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+}
+
+with_rec :: {subj : Tree, T_thunk : Tree, orig0 : Tree, mode : Tree, E : Eval} -> Eval :=> {
+	let prev_step := E.step
+	let prev_tag := E.has_tag
 	let armed := ev({self, fuel, next, f, x, stack, k} =>
 		if ((not(ev_sure(self))) && (self.resolve(f) == subj)) {
 			let rx := deep_resolve(self, x)
 			let u_r := tok_unk(pair("rec", pair(subj, rx)))
 			let E1 := T_thunk(u_r).snd(u_r, "None", self)
-			if (not(is_total)) { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
+			if (mode == "Partial") { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
 			else {
 				let ctx := ev_rec_ctx(self)
 				let origs := if ((is_fork(ctx)) && (ctx.fst == subj)) { ctx.snd } else { [orig0] }
-				let ox := deep_resolve(self, origs.head)
-				if (strict_subterm(rx, ox)) { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
-				else if ((rx == ox) && (not(origs.tail.is_nil))) {
-					run_ev(E1, fuel, next, machine_run(u_r, x, []), {E2, fl2, nx2, res_h} =>
-						deliver_ev(with_lex_guard(res_h, origs.tail, E2), fl2, nx2, res_h, stack, k))
+				if (mode == "RTL") {
+					let rem := nat_pred(origs.length)
+					if (is_zero(rem)) { "Non-decreasing recursive call" }
+					else {
+						run_ev(E1, fuel, next, machine_run(u_r, x, []), {E2, fl2, nx2, res_h} =>
+							deliver_ev(with_rtl_guard(res_h, origs, [rx], rem, E2), fl2, nx2, res_h, stack, k))
+					}
 				}
-				else { "Non-decreasing recursive call" }
+				else {
+					let ox := deep_resolve(self, origs.head)
+					if (strict_subterm(rx, ox)) { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
+					else if ((rx == ox) && (not(origs.tail.is_nil))) {
+						run_ev(E1, fuel, next, machine_run(u_r, x, []), {E2, fl2, nx2, res_h} =>
+							deliver_ev(with_lex_guard(res_h, origs.tail, E2), fl2, nx2, res_h, stack, k))
+					}
+					else { "Non-decreasing recursive call" }
+				}
 			}
 		}
 		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+		E.lazy, E.resolve, E.eq,
+		{self, t0, v} =>
+			if ((self.resolve(v) == subj) && (if (mode == "Partial") { t0 == pair("PartialRec", T_thunk) } else { t0 == pair("TotalRecArmed", T_thunk) })) { true }
+			else { prev_tag(self, t0, v) },
+		E.kit, E.meta)
 	ev({self, fuel, next, f, x, stack, k} =>
 		if (self.resolve(f) == subj) {
 			let c := stem_child(f.fst)
@@ -628,7 +672,7 @@ with_rec :: {subj : Tree, T_thunk : Tree, orig0 : Tree, is_total : Bool, E : Eva
 with_lemma :: {lem_fn : Tree, T : Tree, E : Eval} -> Eval :=> {
 	let prev_step := E.step
 	ev({self, fuel, next, f, x, stack, k} =>
-		if ((not(ev_sure(self))) && ((self.resolve(f) == lem_fn) && (has_tok(deep_resolve(self, x))))) {
+		if ((not(ev_sure(self))) && ((self.resolve(f) == lem_fn) && ((has_tok(deep_resolve(self, x))) || ((is_fix_fn(lem_fn)) && (has_tok(deep_resolve(self, stack))))))) {
 			let u_l := tok_unk(pair("lem", lem_fn))
 			let E1 := T.snd(u_l, "None", self)
 			if (E1.step == self.step) { prev_step(self, fuel, next, f, x, stack, k) }
@@ -739,19 +783,27 @@ check_kit :: Kit := mk_kit{
 	quantify := {E, fuel, next, A, rec_T, f, body, k} => {
 		let u := tok_unk(pair("arg", next))
 		let E1 := ev_add_arg_ty(A.snd(u, "None", E), u, A)
-		let E2 :=
-			if ((is_fork(rec_T)) && ((rec_T.fst == "Rec") && (is_fix_fn(f)))) {
-				with_rec(f, rec_T.snd, u, true, ev_set_rec(E1, pair(f, [u])))
+		if ((is_fork(rec_T)) && ((rec_T.fst == "Rec") && (is_fix_fn(f)))) {
+			let E_ltr := with_rec(f, rec_T.snd, u, "LTR", ev_set_rec(E1, pair(f, [u])))
+			let r1 := body(E_ltr, fuel, succ(next), u, "None", k)
+			if (r1 == "Non-decreasing recursive call") {
+				let E_rtl := with_rec(f, rec_T.snd, u, "RTL", ev_set_rec(E1, pair(f, [u])))
+				body(E_rtl, fuel, succ(next), u, "None", k)
 			}
-			else if ((is_fork(rec_T)) && ((rec_T.fst == "PartialRec") && (is_fix_fn(f)))) {
-				with_rec(f, rec_T.snd, u, false, ev_set_rec(E1, "None"))
-			}
-			else if ((is_fork(rec_T)) && ((rec_T.fst == "Rec") && (is_fork(ev_rec_ctx(E1))))) {
-				let ctx := ev_rec_ctx(E1)
-				ev_set_rec(E1, pair(ctx.fst, ctx.snd.append([u])))
-			}
-			else { ev_set_rec(E1, "None") }
-		body(E2, fuel, succ(next), u, "None", k)
+			else { r1 }
+		}
+		else {
+			let E2 :=
+				if ((is_fork(rec_T)) && ((rec_T.fst == "PartialRec") && (is_fix_fn(f)))) {
+					with_rec(f, rec_T.snd, u, "Partial", ev_set_rec(E1, "None"))
+				}
+				else if ((is_fork(rec_T)) && ((rec_T.fst == "Rec") && (is_fork(ev_rec_ctx(E1))))) {
+					let ctx := ev_rec_ctx(E1)
+					ev_set_rec(E1, pair(ctx.fst, ctx.snd.append([u])))
+				}
+				else { ev_set_rec(E1, "None") }
+			body(E2, fuel, succ(next), u, "None", k)
+		}
 	},
 	fresh := mk_fresh,
 	deep_res := deep_resolve,
@@ -821,8 +873,15 @@ EmptyT :: Tree := pair(
 	{_u, _backing, E} => prune_ev(E))
 
 data_t :: {p : Tree} -> Tree :=> pair(
-	{E, fuel, next, v, k} => E.kit.run(E, fuel, next, m_start(p, v), {E1, fl, nx, ans} =>
-		if (ans == true) { k(E1, fl, nx, v) } else { pair("Fault", E1.kit.deep_res(E1, v)) }),
+	{E, fuel, next, v, k} => {
+		let rv := E.kit.deep_res(E, v)
+		let fast := if ((not(E.kit.has_tok(p))) && (not(E.kit.has_tok(rv)))) { try_call(p, rv, fuel) } else { nothing }
+		if ((is_found(fast)) && (fast.snd == true)) { k(E, fuel, next, v) }
+		else {
+			E.kit.run(E, fuel, next, m_start(p, v), {E1, fl, nx, ans} =>
+				if (ans == true) { k(E1, fl, nx, v) } else { pair("Fault", E1.kit.deep_res(E1, v)) })
+		}
+	},
 	{u, backing, E} =>
 		if (backing == "None") { with_data(p, u, E) }
 		else {
@@ -843,22 +902,29 @@ rec mk_pi :: {rec_tag : Tree, A : Tree, fam : Tree} -> Tree :=> {
 			if ((is_fork(ht)) && ((ht.fst == "C") && (is_fix_fn(ht.snd.fst)))) {
 				let a_opt := lookup(ev_arg_tys(E), ht.snd.snd)
 				if (is_found(a_opt)) {
-					mk_pi("Rec", a_opt.snd, {_x} => T).fst(ev_set_rec(E, "None"), fl, nx, ht.snd.fst, {_E4, fl4, nx4, _ok} => k(E, fl4, nx4, r))
+					mk_pi(rec_tag, a_opt.snd, {_x} => T).fst(ev_set_rec(E, "None"), fl, nx, ht.snd.fst, {_E4, fl4, nx4, _ok} => k(E, fl4, nx4, r))
 				}
 				else { ans }
 			}
 			else { ans }
 		}
 	}
+	let pi_tag := pair("Pi", pair(rec_tag, pair(A, fam)))
 	let mk := fix({T, _u} => pair(
 		{E, fuel, next, f, k} =>
-			E.kit.quantify(E, fuel, next, A, pair(rec_tag, T), f, {E1, fl0, nx0, arg, _b, k_in} =>
-				E1.kit.run(E1, fl0, nx0, m_start(f, arg), {E2, fl1, nx1, r} =>
-					E2.kit.run(E2, fl1, nx1, m_start(fam, arg), {E3, fl2, nx2, B} =>
-						check_tail(B, E3, fl2, nx2, r, k_in))), k),
+			if ((rec_tag == "PartialRec") && (E.has_tag(E, pair("PartialRec", T), f))) { k(E, fuel, next, f) }
+			else if ((rec_tag == "Rec") && (E.has_tag(E, pair("TotalRecArmed", T), f))) { "Non-decreasing recursive call" }
+			else if (E.has_tag(E, pi_tag, f)) { k(E, fuel, next, f) }
+			else {
+				E.kit.quantify(E, fuel, next, A, pair(rec_tag, T), f, {E1, fl0, nx0, arg, _b, k_in} =>
+					E1.kit.run(E1, fl0, nx0, m_start(f, arg), {E2, fl1, nx1, r} =>
+						E2.kit.run(E2, fl1, nx1, m_start(fam, arg), {E3, fl2, nx2, B} =>
+							check_tail(B, E3, fl2, nx2, r, k_in))), k)
+			},
 		{g, backing, E} => {
 			let prev_step := E.step
 			let prev_eq := E.eq
+			let prev_tag := E.has_tag
 			ev(
 				{self, fuel, next, f, x, stack, k} => {
 					let rf := self.resolve(f)
@@ -901,7 +967,10 @@ rec mk_pi :: {rec_tag : Tree, A : Tree, fam : Tree} -> Tree :=> {
 						}
 					}
 					else { prev_eq(self, a, b) },
-				E.has_tag, E.kit, E.meta)
+				{self, t0, v} =>
+					if ((backing == "None") && ((self.resolve(v) == g) && (t0 == pi_tag))) { true }
+					else { prev_tag(self, t0, v) },
+				E.kit, E.meta)
 		}))
 	mk(t)
 }
@@ -1137,8 +1206,8 @@ erased_forall :: {F : Tree} -> Tree :=> pair(
 // ================================================================ ENTRYPOINTS
 check_fuel := 15000
 
-/// Internal checker accepting already-verified `lemmas` (used by `check_module` for O(N) checking)
-why_trusted :: {depth : Nat, fuel : Nat, lemmas : List(Tree), T : Tree, v : Tree} -> Tree :=>
+/// Private checker accepting kernel-verified `lemmas` (never exported directly; go through `why` or `certify`/`check_certified`)
+let why_trusted := {depth, fuel, lemmas, T, v} =>
 	if (has_tok(v)) { "Contains a token" }
 	else {
 		let E_base := ev_set_meta(E_check_base, pair(depth, E_check_base.meta.snd))
@@ -1146,6 +1215,67 @@ why_trusted :: {depth : Nat, fuel : Nat, lemmas : List(Tree), T : Tree, v : Tree
 		let r := T.fst(E0, fuel, 0, v, {_E, fl, _nx, _res} => done(fl))
 		if (is_yes(r)) { yes } else { r }
 	}
+
+/// Unforgeable certified lemma bundles (minted only by `certify` inside `kernel.disp` via private `tok_sig`)
+let tok_cert := {named_lemmas} => pair(tok_sig, pair("Cert", named_lemmas))
+is_cert :: Tree -> Bool := {v} => (is_tok(v)) && (tok_kind(v) == "Cert")
+let rec unwrap_certs := {cs} =>
+	if (cs.is_nil) { found([]) }
+	else if (is_cert(cs.head)) {
+		let rest := unwrap_certs(cs.tail)
+		if (is_found(rest)) { found(tok_val(cs.head).map(pair_snd).append(rest.snd)) } else { nothing }
+	}
+	else { nothing }
+
+/// Narrow a certified lemma bundle to a subset of its verified names (keeps downstream `E.step` lean)
+cert_pick :: {cert : Tree, names : List(Tree)} -> Tree :=>
+	if (is_cert(cert)) { tok_cert(tok_val(cert).filter({e} => names.member(e.fst))) }
+	else { "Invalid certificate" }
+
+let is_core_prim := {v} =>
+	(v == tree_eq) || ((v == pair) || ((v == pair_fst) || ((v == pair_snd) || ((v == is_leaf) || ((v == is_stem) || ((v == is_fork) || ((v == stem_child) || ((v == and) || ((v == or) || (v == not))))))))))
+
+let rec check_entries_core := {depth, fuel, promote, lemmas, certified, entries} =>
+	if (entries.is_nil) { pair([], certified) }
+	else {
+		let name := entries.head.fst
+		let T := entries.head.snd.fst
+		let v := entries.head.snd.snd
+		let r := why_trusted(depth, fuel, lemmas, T, v)
+		if (r == yes) {
+			let should_add :=
+				if ((is_core_prim(v)) || (promote == "none")) { false }
+				else if (promote == "all") { is_fork(v) }
+				else { is_fix_fn(v) }
+			let next_lemmas := if (should_add) { cons(pair(v, T), lemmas) } else { lemmas }
+			let next_cert := if (should_add) { cons(pair(name, pair(v, T)), certified) } else { certified }
+			check_entries_core(depth, fuel, promote, next_lemmas, next_cert, entries.tail)
+		}
+		else {
+			let rest := check_entries_core(depth, fuel, promote, lemmas, certified, entries.tail)
+			pair(cons(pair(name, r), rest.fst), rest.snd)
+		}
+	}
+
+/// Verify a list of `pair(name, pair(T, v))` entries under `certs` and mint an unforgeable `Cert`
+certify :: {depth : Nat, fuel : Nat, promote : Tree, certs : List(Tree), entries : List(Tree)} -> Tree :=> {
+	let init := unwrap_certs(certs)
+	if (not(is_found(init))) { "Invalid certificate" }
+	else {
+		let res := check_entries_core(depth, fuel, promote, init.snd, [], entries)
+		if (res.fst.is_nil) { tok_cert(res.snd) } else { res.fst }
+	}
+}
+
+/// Verify module entries under `certs`: returns `true` iff every entry checks, else list of failures
+check_certified :: {depth : Nat, fuel : Nat, promote : Tree, certs : List(Tree), entries : List(Tree)} -> Tree :=> {
+	let init := unwrap_certs(certs)
+	if (not(is_found(init))) { "Invalid certificate" }
+	else {
+		let res := check_entries_core(depth, fuel, promote, init.snd, [], entries)
+		if (res.fst.is_nil) { true } else { res.fst }
+	}
+}
 
 why :: {lemmas : List(Tree), T : Tree, v : Tree} -> Tree :=>
 	if (has_tok(v)) { "Contains a token" }

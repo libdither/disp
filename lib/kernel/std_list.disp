@@ -5,6 +5,8 @@ open use "prelude.disp"
 ck_nil : Implicit({A} => List(A)) := nil
 ck_cons : Implicit({A} => A -> List(A) -> List(A)) := cons
 ck_is_nil : Implicit({A} => List(A) -> Bool) := is_nil
+ck_head : Implicit({A} => Pair(A, List(A)) -> A) := head
+ck_tail : Implicit({A} => Pair(A, List(A)) -> List(A)) := tail
 ck_reduce : Implicit({A} => Implicit({C} => (A -> C -> C) -> C -> List(A) -> C)) := reduce
 ck_map : Implicit({A} => Implicit({B} => List(A) -> (A -> B) -> List(B))) := map
 ck_append : Implicit({A} => List(A) -> List(A) -> List(A)) := append

@@ -1,0 +1,15 @@
+// End-to-end auto-verification tests for `std_claim.disp` (claims, lenses, honest/over, CEGIS).
+open use "prelude.disp"
+let SC := use "std_claim.disp"
+
+let eq_zero := {w, c} => is_zero(w) && is_zero(c)
+test SC.ck_over(eq_zero, 0, [0, 0]) = "Proved"
+test SC.ck_over(eq_zero, 1, [0]) = pair("Refuted", 0)
+let id_lens := SC.ck_lens({w} => w, {_w, d} => d)
+test SC.ck_fwd(id_lens, 3) = 3
+test SC.ck_back(id_lens, 3, 5) = 5
+test SC.ck_lens_holds(eq_zero, eq_zero, id_lens, 0, 0) = true
+test SC.ck_arg(SC.ck_call_with(1, 2)) = 1
+test SC.ck_on_result(SC.ck_call_with(1, 2)) = 2
+test is_cert(SC.honest_cert) = true
+test is_cert(SC.over_cert) = true

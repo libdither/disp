@@ -1,0 +1,18 @@
+// Re-typechecked tree enumeration stream (`lib/trees.disp`) verified by `lib/kernel/prelude.disp`.
+open use "prelude.disp"
+let TMod := use raw "../trees.disp" {}
+
+let check_module := check_with(check_depth, check_fuel, "all", [])
+
+// Verified list lemmas (ordered so `reverse` checks before monomorphic `append`!)
+ck_rev_ll : List(List(Tree)) -> List(List(Tree)) := reverse
+ck_zip_ll : List(List(Tree)) -> List(List(Tree)) -> List(Pair(List(Tree), List(Tree))) := zip
+ck_concat_t : List(List(Tree)) -> List(Tree) := concat
+ck_cross_t : List(Tree) -> List(Tree) -> (Tree -> Tree -> Tree) -> List(Tree) := cross
+ck_append_t : List(Tree) -> List(Tree) -> List(Tree) := append
+
+// `Bool` recognizer, level builder, stream stepper, and `Trees` coalgebra
+ck_trees_bool : Tree -> Bool := TMod.Bool
+ck_next_level : List(List(Tree)) -> List(Tree) := TMod.next_level
+ck_trees_step : Pair(List(List(Tree)), List(Tree)) -> Pair(Tree, Pair(List(List(Tree)), List(Tree))) := TMod.trees_step
+ck_Trees : Tree := TMod.Trees

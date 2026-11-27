@@ -1,0 +1,68 @@
+// Re-typechecked claims, lenses, and CEGIS library (`lib/claim.disp`).
+open use "prelude.disp"
+let VMod := use "std_verdict.disp"
+let SMod := use raw "../stream.disp" {}
+open use raw "../claim.disp" {}
+
+let Verdict := VMod.Verdict
+let Step := {R, X} => Sigma(Tree, {tag} => if (tag == "Finished") { R } else { X })
+let Emit := {T, X} => Pair(T, X)
+let Option := {V} => Sigma(Tree, {tag} => if (tag == "Yield") { V } else { Unit })
+let ItemStep := {V, X} => Step(Tree, Emit(Option(V), X))
+let Budget := {St} => Pair(Nat, St)
+let ItemCoalg := {St, V} => Pair(The(Tree, SMod.item_map), Pair(St -> ItemStep(V, St), St))
+let AnyItemCoalg := {St, V} => Pair(Tree, Pair(St -> ItemStep(V, St), St))
+let StoppingOf := {St, V} => Pair(St -> Nat, ItemCoalg(St, V))
+let AnyStoppingOf := {St, V} => Pair(St -> Nat, AnyItemCoalg(St, V))
+
+// Exact shapes for claims, lenses, and function-call challenges
+Claim := Tree -> Tree -> Bool
+Lens := Pair(Tree -> Tree, Tree -> Tree -> Tree)
+CallChallenge := Pair(Tree, Tree)
+
+// Certified stream & verdict lemmas (uses `promote = "fix"` so identical
+// record-projection trees `fwd`/`arg` and `back`/`on_result` never shadow each other)
+let length_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("length_t", pair(List(Tree) -> Nat, length))
+])
+let stream_honest_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("s_filter_t", pair(AnyItemCoalg(Tree, Tree) -> (Tree -> Bool) -> ItemCoalg(Tree, Tree), SMod.s_filter)),
+	pair("bounded_t", pair(ItemCoalg(Tree, Tree) -> Nat -> ItemCoalg(Budget(Tree), Tree), SMod.bounded)),
+	pair("verdict_bt", pair(PartialFn(ItemCoalg(Budget(Tree), Tree), Verdict), SMod.verdict))
+])
+let stream_over_cert := certify(check_depth, check_fuel, "all", [length_cert], [
+	pair("stopping_list_t", pair(List(Tree) -> AnyStoppingOf(List(Tree), Tree), SMod.stopping_list)),
+	pair("stopping_filter_lt", pair(AnyStoppingOf(List(Tree), Tree) -> (Tree -> Bool) -> StoppingOf(List(Tree), Tree), SMod.stopping_filter)),
+	pair("settle_lt", pair(StoppingOf(List(Tree), Tree) -> ItemCoalg(Budget(List(Tree)), Tree), SMod.settle)),
+	pair("verdict_blt", pair(PartialFn(ItemCoalg(Budget(List(Tree)), Tree), Verdict), SMod.verdict))
+])
+let verdict_lems := certify(check_depth, check_fuel, "all", [], [
+	pair("is_refuted", pair(Verdict -> Bool, VMod.ck_is_refuted))
+])
+honest_cert := certify(check_depth, check_fuel, "all", [stream_honest_cert], [
+	pair("ck_honest", pair(PartialFn(AnyItemCoalg(Tree, Tree), PartialFn(Claim, PartialFn(Tree, PartialFn(Nat, Verdict)))), honest))
+])
+over_cert := certify(check_depth, check_fuel, "all", [stream_over_cert], [
+	pair("ck_over", pair(PartialFn(Claim, PartialFn(Tree, PartialFn(List(Tree), Verdict))), over))
+])
+let check_module := check_with(check_depth, check_fuel, "fix", [stream_honest_cert, honest_cert, verdict_lems])
+
+// Record constructors, accessors, & lenses (all structurally total!)
+ck_lens : (Tree -> Tree) -> (Tree -> Tree -> Tree) -> Lens := lens
+ck_fwd : Lens -> Tree -> Tree := {l} => l.fwd
+ck_back : Lens -> Tree -> Tree -> Tree := {l} => l.back
+ck_lens_holds : Claim -> Claim -> Lens -> Claim := lens_holds
+ck_lens_then : Lens -> Lens -> Lens := lens_then
+ck_call_with : Tree -> Tree -> CallChallenge := call_with
+ck_arg : CallChallenge -> Tree := {c} => c.arg
+ck_on_result : CallChallenge -> Tree := {c} => c.on_result
+ck_implies : Claim -> Claim -> Lens -> CallChallenge -> Bool := implies
+
+// Bounded honest checking & finite-challenge checking (verified independently in `honest_cert` / `over_cert` with zero self-lemma)
+ck_honest := honest
+ck_over := over
+ck_honest_verified : The(Bool, true) := is_cert(honest_cert)
+ck_over_verified : The(Bool, true) := is_cert(over_cert)
+
+// CEGIS loop: structurally total in `pool : List(Tree)` (LTR lexicographic: `source`, `claim` stay equal, `pool` shrinks!)
+ck_cegis : AnyItemCoalg(Tree, Tree) -> Claim -> List(Tree) -> List(Tree) -> Nat -> Pair(Tree, List(Tree)) := cegis

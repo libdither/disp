@@ -14,6 +14,7 @@ ck_not : Bool -> Bool := not
 ck_and : Bool -> Bool -> Bool := and
 ck_or : Bool -> Bool -> Bool := or
 ck_select : Tree -> Tree -> Bool -> Tree := select
+ck_select_lazy : (Unit -> Tree) -> (Unit -> Tree) -> Bool -> Tree := select_lazy
 ck_cond : Bool -> Tree -> Tree -> Tree := cond
 
 // Tree shape inspectors and projections (previously untyped!)

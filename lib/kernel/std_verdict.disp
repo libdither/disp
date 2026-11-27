@@ -10,6 +10,7 @@ VerdictP := {v} =>
 Verdict := Refine(Tree, VerdictP)
 
 ck_refuted : Tree -> Verdict := refuted
+ck_counterexample : Verdict -> Tree := counterexample
 ck_open_on : Tree -> Verdict := open_on
 ck_is_proved : Verdict -> Bool := is_proved
 ck_is_refuted : Verdict -> Bool := is_refuted
