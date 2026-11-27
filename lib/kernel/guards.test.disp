@@ -1,0 +1,43 @@
+// Positive lifecycle tests for the promoted kernel's declaration guards & verified `.opt.disp` rewrites.
+open use "prelude.disp"
+open use raw "../growth.disp" {}
+
+// ---- 1. Declaration protocol primitives (`default_guard`, `base`, `guard`, `sig`, `freeze`)
+test default_guard(t, base(0)) = Ok(Bind(0))
+test default_guard(t, guard(freeze, base(0))) = Ok(Both(0, freeze))
+test default_guard(t, guard(freeze, sig(Nat))) = Ok(Install(freeze))
+test default_guard(t, sig(Nat)) = Err
+test freeze(t, base(0)) = Err
+
+// ---- 2. Local guarded value & function rebinds (`equiv_guard`, `fn_equiv_guard`)
+guard(equiv_guard) answer : Nat := 3
+answer := { new := succ(succ(succ(zero))); proof := t }
+test answer = 3
+
+guard(fn_equiv_guard(Bool)) my_not : Bool -> Bool := {b} => if (b) { false } else { true }
+my_not := { new := not; proof := {b} => if (b) { t } else { t } }
+test my_not(true) = false
+test my_not(false) = true
+
+// ---- 3. Parallel `.opt.disp` reconciliation (order 1: spec then opt)
+let Spec := use "verified_opt.disp"
+let Opt := use "verified_opt.opt.disp"
+
+// Verified fast implementations replace specs, agree on values, and cut runtime steps!
+test Opt.add_nat(4, 5) = Spec.add_nat(4, 5)
+test Opt.dbl(6) = Spec.dbl(6)
+test Opt.rev([1, 2, 3, 4, 5, 6, 7, 8]) = Spec.rev([1, 2, 3, 4, 5, 6, 7, 8])
+test (Opt.rev == Spec.rev) = false
+test (Opt.dbl == Spec.dbl) = false
+
+// Speedup pins via `steps_of`: O(n) rev_fast vs O(n^2) reverse (576 vs 2811 steps at len 8)
+let xs8 := [1, 2, 3, 4, 5, 6, 7, 8]
+test nat_lt(steps_of(Opt.rev, xs8, 20000), steps_of(Spec.rev, xs8, 20000)) = true
+test nat_lt(steps_of(Opt.dbl, 6, 5000), steps_of(Spec.dbl, 6, 5000)) = true
+
+// ---- 4. Top-level open-splice reconciliation (reverse open order is pinned in `test/guards.test.ts`)
+open use "verified_opt.disp"
+open use "verified_opt.opt.disp"
+test rev = Opt.rev
+test dbl = Opt.dbl
+test add_nat = Opt.add_nat

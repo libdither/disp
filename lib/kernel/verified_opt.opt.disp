@@ -1,0 +1,60 @@
+// Parallel verified-optimization overlay for `verified_opt.disp`.
+// Each rebind supplies `{ new; proof; certs }` checked by the incumbent guard at load time;
+// the driver stamps each approved rebind so consumers opening spec and .opt in any order get the fast version.
+open use "prelude.disp"
+open use "verified_opt.disp"
+
+// ---- Fast implementations
+let LT := List(Tree)
+let rec add_tail := {a, b} => if (is_zero(a)) { b } else { add_tail(nat_pred(a), succ(b)) }
+let rec dbl_fast := {n} => if (is_zero(n)) { zero } else { succ(succ(dbl_fast(nat_pred(n)))) }
+let rec rev_acc := {xs, acc} => if (xs.is_nil) { acc } else { rev_acc(xs.tail, cons(xs.head, acc)) }
+let rev_fast := {xs} => rev_acc(xs, [])
+let c_acc := certify(check_depth, check_fuel, "fix", [], [pair("rev_acc", pair(LT -> LT -> LT, rev_acc))])
+let check_module := check_with(check_depth, check_fuel, "fix", [c_acc])
+
+// ---- Certified arithmetic helper lemma: add_spec(a, succ(b)) == succ(add_spec(a, b))
+// Binding loop-invariant args outside `fix` keeps the induction 1-arg and ~5x faster;
+// `pair_snd(pair(x, body))` prevents K-folding so `with_lemma` intercepts calls to the lemma.
+let keep := {x, body} => pair_snd(pair(x, body))
+let pf_add_succ := {b} => keep(b, fix({go, a} => if (is_zero(a)) { t } else { go(nat_pred(a)) }))
+let T_add_succ := {b : Nat} -> {a : Nat} -> Eq(add_spec(a, succ(b)), succ(add_spec(a, b)))
+let c_add := certify(check_depth, check_fuel, "all", [], [pair("add_succ", pair(T_add_succ, pf_add_succ))])
+
+// Proof: add_tail(a, b) == add_spec(a, b)
+let rec pf_add_tail := {a, b} =>
+	if (is_zero(a)) { t }
+	else { seq(pf_add_tail(nat_pred(a), succ(b)), seq(pf_add_succ(b, nat_pred(a)), t)) }
+
+// Proof: dbl_fast(n) == add_spec(n, n)
+let rec pf_dbl := {n} =>
+	if (is_zero(n)) { t }
+	else { seq(pf_dbl(nat_pred(n)), seq(pf_add_succ(nat_pred(n), nat_pred(n)), t)) }
+
+// ---- Certified list helper lemmas: append right-identity, associativity, and accumulator invariant
+let rec pf_app_nil := {xs} => if (xs.is_nil) { t } else { pf_app_nil(xs.tail) }
+let T_app_nil := {xs : LT} -> Eq(append(xs, []), xs)
+
+let pf_app_assoc := {ys, zs} => keep(ys, keep(zs, fix({go, xs} => if (xs.is_nil) { t } else { go(xs.tail) })))
+let T_app_assoc := {ys : LT} -> {zs : LT} -> {xs : LT} -> Eq(append(append(xs, ys), zs), append(xs, append(ys, zs)))
+
+let rec pf_rev_acc := {xs, acc} =>
+	if (xs.is_nil) { t }
+	else { seq(pf_rev_acc(xs.tail, cons(xs.head, acc)), seq(pf_app_assoc([xs.head], acc, reverse(xs.tail)), t)) }
+let T_rev_acc := {xs : LT} -> {acc : LT} -> Eq(rev_acc(xs, acc), append(reverse(xs), acc))
+
+let c_app := certify(check_depth, check_fuel, "all", [], [
+	pair("app_nil", pair(T_app_nil, pf_app_nil)),
+	pair("app_assoc", pair(T_app_assoc, pf_app_assoc))
+])
+let c_rev := certify(check_depth, check_fuel, "fix", [c_app], [
+	pair("rev_acc", pair(T_rev_acc, pf_rev_acc))
+])
+
+// Proof: rev_fast(xs) == reverse(xs)
+let pf_rev_eq := {xs} => seq(pf_rev_acc(xs, []), seq(pf_app_nil(reverse(xs)), t))
+
+// ---- Verified in-place rebinds (checked by incumbent guards at load time)
+add_nat := { new := add_tail; proof := pf_add_tail; certs := [c_add] }
+dbl := { new := dbl_fast; proof := pf_dbl; certs := [c_add] }
+rev := { new := rev_fast; proof := pf_rev_eq; certs := [c_app, c_rev] }

@@ -1,0 +1,14 @@
+// Readable reference specifications guarded for verified in-place rewrites (`verified_opt.opt.disp`).
+open use "prelude.disp"
+
+let ck_append : List(Tree) -> List(Tree) -> List(Tree) := append
+
+/// Structural addition (readable spec; guarded for pointwise-equivalent rewrites)
+rec add_spec := {a, b} => if (is_zero(a)) { b } else { succ(add_spec(nat_pred(a), b)) }
+guard(fn2_equiv_guard(Nat, Nat)) add_nat : Nat -> Nat -> Nat := add_spec
+
+/// Naive doubling via addition (`add_spec(n, n)`)
+guard(fn_equiv_guard(Nat)) dbl : Nat -> Nat := {n} => add_spec(n, n)
+
+/// Naive O(n^2) list reversal (reuses `lib/list.disp`'s `reverse`)
+guard(fn_equiv_guard(List(Tree))) rev : List(Tree) -> List(Tree) := reverse

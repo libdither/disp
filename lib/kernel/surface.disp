@@ -26,11 +26,11 @@ Type := pair(data_t(is_fork).fst, {_u, _backing, E} => E)
 TypeFam := pair({E, fl, nx, v, k} => k(E, fl, nx, v), {_u, _backing, E} => if (is_leaf("TypeFam")) { E } else { E })
 
 // ---------------------------------------------------------------- composable type formers
-/// Surface binder target (`{x : A} -> B` / `A -> B`): routes `{A : Type} -> ...` to `forall_t`
-Pi := {A, fam} =>
-	if (A == Type) { forall_t(fam) }
-	else if (A == TypeFam) { forall_fam_t(fam) }
-	else { pi_t(A, fam) }
+/// Surface binder target (`{x : A} -> B` / `A -> B`): curried on `A` so `Pi(Nat)`/`Pi(Type)` folds at compile time
+Pi := {A} =>
+	if (A == Type) { forall_t }
+	else if (A == TypeFam) { forall_fam_t }
+	else { {fam} => pi_t(A, fam) }
 Fn := fn_t
 FnLazy := fn_lazy_t
 PartialPi := partial_pi
@@ -53,10 +53,23 @@ ForallK := forall_k
 Implicit := erased_forall
 Data := data_t
 
+// ---------------------------------------------------------------- proof sequencing
+/// Strict sequencing for proof/equality witnesses (prevents K-dropping unused `let _e := ...`)
+seq := {a, b} => if (is_leaf(a)) { b } else { b }
+
 // ---------------------------------------------------------------- module auto-verification hook
 make_record := {names, vals} => pair(names, vals)
 list_const := {x} => x
-rec value_of := {name, names, vals} => if (names.fst == name) { vals.fst } else { value_of(name, names.snd, vals.snd) }
+rec value_of := {name, names, vals} =>
+	if ((not(is_fork(names))) || (not(is_fork(vals)))) { t }
+	else if (names.fst == name) { vals.fst }
+	else { value_of(name, names.snd, vals.snd) }
+rec has_field := {name, names} =>
+	if (not(is_fork(names))) { false }
+	else if (names.fst == name) { true }
+	else { has_field(name, names.snd) }
+field := {r, name} => if (is_fork(r)) { value_of(name, r.fst, r.snd) } else { t }
+field_or := {r, name, dflt} => if ((is_fork(r)) && (has_field(name, r.fst))) { value_of(name, r.fst, r.snd) } else { dflt }
 
 rec pair_entries := {typs, rec_val} =>
 	if (is_leaf(typs)) { [] }
@@ -70,3 +83,67 @@ rec pair_entries := {typs, rec_val} =>
 check_with :: {depth : Nat := check_depth, fuel : Nat := check_fuel, promote : Tree := "fix", certs : List(Tree) := []} -> Tree :=> {typs, rec_val} =>
 	check_certified(depth, fuel, promote, certs, pair_entries(typs, rec_val))
 check_module := check_with(check_depth, check_fuel, "fix", [])
+
+// ---------------------------------------------------------------- declaration protocol & verified rewrite guards
+Ok := {a} => pair("Ok", a)
+Err := "Err"
+Bind := {v} => pair("Bind", v)
+Install := {g} => pair("Install", g)
+Both := {v, g} => pair("Both", pair(v, g))
+
+mk_req := {val, ty, g, priv, par} => make_record(["value", "ty", "guard", "private", "param"], [val, ty, g, priv, par])
+base := {v} => mk_req(t(v), t, t, false, false)
+let := {req} => mk_req(field(req, "value"), field(req, "ty"), field(req, "guard"), true, false)
+sig := {T} => mk_req(t, t(T), t, false, false)
+guard := {g} => {req} => mk_req(field(req, "value"), field(req, "ty"), t(g), field(req, "private"), field(req, "param"))
+given := {req} => mk_req(field(req, "value"), field(req, "ty"), field(req, "guard"), true, true)
+
+/// Ambient declaration policy for unguarded bindings (fast-pathed by driver while pristine)
+default_guard := {old, req} => {
+	let g := field(req, "guard")
+	let v := field(req, "value")
+	if (is_stem(g)) {
+		if (is_stem(v)) { Ok(Both(stem_child(v), stem_child(g))) }
+		else { Ok(Install(stem_child(g))) }
+	}
+	else if (is_stem(v)) { Ok(Bind(stem_child(v))) }
+	else { Err }
+}
+
+/// Immutable binding guard: refuses all rebinds
+freeze := {_old, _req} => Err
+
+/// Relation-generic verified rewrite guard: `rel(old, new)` is the required proof type.
+/// Rebind with `{ new := fast; proof := pf }` (optional `certs`, `depth`, `fuel`).
+rel_guard := {rel} => {old, req} =>
+	if (is_stem(field(req, "guard"))) { Err }
+	else if (is_leaf(old)) {
+		if (is_stem(field(req, "value"))) { Ok(Bind(stem_child(field(req, "value")))) }
+		else { Err }
+	}
+	else if (is_stem(field(req, "value"))) {
+		let u := stem_child(field(req, "value"))
+		if ((is_fork(u)) && ((has_field("new", u.fst)) && (has_field("proof", u.fst)))) {
+			let cand := field(u, "new")
+			if (has_tok(cand)) { Err }
+			else {
+				let pf := field(u, "proof")
+				let cs := field_or(u, "certs", [])
+				let d := field_or(u, "depth", check_depth)
+				let fl := field_or(u, "fuel", check_fuel)
+				if (check_certified(d, fl, "none", cs, [pair("rewrite", pair(rel(stem_child(old), cand), pf))]) == true) {
+					Ok(Bind(cand))
+				}
+				else { Err }
+			}
+		}
+		else { Err }
+	}
+	else { Err }
+
+/// Direct equality rewrite guard: requires `Eq(new, old)`
+equiv_guard := rel_guard({old, new} => Eq(new, old))
+/// 1-arg function rewrite guard: requires `{x : A} -> Eq(new(x), old(x))`
+fn_equiv_guard := {A} => rel_guard({old, new} => {x : A} -> Eq(new(x), old(x)))
+/// 2-arg function rewrite guard: requires `{x : A} -> {y : B} -> Eq(new(x, y), old(x, y))`
+fn2_equiv_guard := {A, B} => rel_guard({old, new} => {x : A} -> {y : B} -> Eq(new(x, y), old(x, y)))

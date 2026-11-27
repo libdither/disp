@@ -100,3 +100,90 @@ f := { fast := ({n} => succ(n)) ; proof := { zero := refl; succ := ({k} => {_ih}
     expect(session.equal!(shadowed.lhs, shadowed.rhs)).toBe(true)
   }, 120000)
 })
+
+const P = `open use "../kernel/prelude.disp"\n`
+
+describe("promoted kernel guard layer", () => {
+  it("freeze refuses rebinds", () => {
+    expect(() => run(P + `guard(freeze) V : Nat := 3\nV : Nat := 4\n`))
+      .toThrow(/rejected by its guard/)
+  }, 120000)
+
+  it("equiv_guard refuses a plain (credential-less) rebind", () => {
+    expect(() => run(P + `guard(equiv_guard) n : Nat := 3\nn : Nat := 4\n`))
+      .toThrow(/rejected by its guard/)
+  }, 120000)
+
+  it("equiv_guard refuses a lying value proof", () => {
+    expect(() => run(P + `guard(equiv_guard) m : Nat := 3\nm : Nat := { new := 4; proof := t }\n`))
+      .toThrow(/rejected by its guard/)
+  }, 120000)
+
+  it("equiv_guard accepts an honest value rebind", () => {
+    expect(() => run(P + `guard(equiv_guard) k : Nat := 3\nk : Nat := { new := succ(succ(succ(zero))); proof := t }\ntest k = 3\n`))
+      .not.toThrow()
+  }, 120000)
+
+  it("fn_equiv_guard rejects a bogus proof and the shift spoofing attack", () => {
+    const setup = P + `
+rec add_s := {a, b} => if (is_zero(a)) { b } else { succ(add_s(nat_pred(a), b)) }
+rec dbl_f := {n} => if (is_zero(n)) { zero } else { succ(succ(dbl_f(nat_pred(n)))) }
+guard(fn_equiv_guard(Nat)) dbl_g : Nat -> Nat := {n} => add_s(n, n)
+`
+    expect(() => run(setup + `dbl_g := { new := dbl_f; proof := {_n} => t }\n`))
+      .toThrow(/rejected by its guard/)
+    // Shift attack that previously fooled the archived live kernel's pointwise license_guard:
+    // the evaluator-map kernel splits symbolic Nat into concrete 0 / succ(k), catching 0 != 1.
+    expect(() => run(setup + `
+dbl_shift := {n} => if (is_zero(n)) { 1 } else { dbl_f(n) }
+dbl_g := { new := dbl_shift; proof := {n} => if (is_zero(n)) { t } else { t } }
+`)).toThrow(/rejected by its guard/)
+  }, 120000)
+
+  it("fn_equiv_guard rejects forged (uncertified) certs and buggy list rewrites", () => {
+    const setup = P + `guard(fn_equiv_guard(List(Tree))) my_rev : List(Tree) -> List(Tree) := reverse\n`
+    expect(() => run(setup + `my_rev := { new := {xs} => xs; proof := {_xs} => t }\n`))
+      .toThrow(/rejected by its guard/)
+    // Attempting to inject an uncertified lemma pair in `certs` is rejected by `unwrap_certs`.
+    expect(() => run(setup + `
+fake_cert := [pair("lie", pair({xs} => t, {xs : List(Tree)} -> Eq(xs, reverse(xs))))]
+my_rev := { new := {xs} => xs; proof := {_xs} => t; certs := fake_cert }
+`)).toThrow(/rejected by its guard/)
+  }, 120000)
+
+  it("ownership is not surrendered (guard proposals refused)", () => {
+    expect(() => run(P + `guard(equiv_guard) p : Nat := 3\nguard(freeze) p : Nat := { new := 3; proof := t }\n`))
+      .toThrow(/rejected by its guard/)
+  }, 120000)
+
+  it("shadowing default_guard changes the ambient policy for the scope", () => {
+    expect(() => run(P + `let default_guard := freeze\nx : Nat := 3\n`))
+      .toThrow(/rejected by its guard/)
+  }, 120000)
+
+  it("shadowing `let` makes subsequent lets export publicly", () => {
+    const decls = run(P
+      + `let := {req} => mk_req(field(req, "value"), field(req, "ty"), field(req, "guard"), false, false)\n`
+      + `let vis : Nat := 7\ntest vis = 7\n`)
+    expect(decls.some(d => d.kind === "Def" && d.name === "vis")).toBe(true)
+  }, 120000)
+
+  it("open-splice reconciles verified_opt.disp and verified_opt.opt.disp in BOTH orders", () => {
+    const getBinding = (src: string, name: string) => {
+      const d = run(src).find(x => x.kind === "Def" && x.name === name)
+      if (!d || d.kind !== "Def") throw new Error(`missing ${name}`)
+      return d.tree
+    }
+    const specRev = getBinding(`open use "../kernel/verified_opt.disp"\n`, "rev")
+    const optRev = getBinding(`open use "../kernel/verified_opt.opt.disp"\n`, "rev")
+    expect(session.equal!(specRev, optRev)).toBe(false)
+
+    // Order 1: spec then opt -> opt wins
+    const order1 = getBinding(`open use "../kernel/verified_opt.disp"\nopen use "../kernel/verified_opt.opt.disp"\n`, "rev")
+    expect(session.equal!(order1, optRev)).toBe(true)
+
+    // Order 2: opt then spec -> opt STILL wins (late-arriving spec does not overwrite licensed upgrade)
+    const order2 = getBinding(`open use "../kernel/verified_opt.opt.disp"\nopen use "../kernel/verified_opt.disp"\n`, "rev")
+    expect(session.equal!(order2, optRev)).toBe(true)
+  }, 180000)
+})

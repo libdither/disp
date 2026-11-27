@@ -757,7 +757,7 @@ base_step :: {self : Eval, fuel : Nat, next : Nat, f0 : Tree, x0 : Tree, stack :
 	else if (is_stem(f.fst)) {
 		let x := self.resolve(x0)
 		if (f == tree_eq) { deliver_ev(self, fuel, next, mk_teq(x), stack, k) }
-		else if ((is_fix_fn(f)) && ((is_tok(x)) && ((ev_cap(self) == "None") && ((is_unk(x)) || (is_found(lookup(ev_arg_tys(self), x))))))) { deliver_ev(self, fuel, next, tok_call(f, x), stack, k) }
+		else if ((is_fix_fn(f)) && ((is_tok(x)) && ((ev_cap(self) == "None") && ((is_unk(x)) || ((is_call(x)) || (is_found(lookup(ev_arg_tys(self), x)))))))) { deliver_ev(self, fuel, next, tok_call(f, x), stack, k) }
 		else {
 			let c := stem_child(f.fst)
 			if (k_shaped(c)) { deliver_ev(self, fuel, next, c.snd, cons(fr_s(f.snd, x0), stack), k) }
