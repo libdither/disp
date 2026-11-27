@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { runFile } from "../src/run.js"
 import { collectSessionRoots } from "../src/compile.js"
 import { getBackend, defaultBackendName } from "../src/eval/registry.js"
+import { rustEagerNativeArtifactPath } from "../src/eval/rust-eager-native.js"
 import type { Session } from "../src/eval/types.js"
 import type { Tree } from "../src/eval/eager.js"
 
@@ -77,9 +78,10 @@ const cacheDir = join(import.meta.dirname, "..", ".disp-test-cache")
 const memoPath = join(cacheDir, `memo-${shardIdx}of${shardCount}.bin`)
 const memoStamp = (() => {
   if (!MEMO_ON || !sharedSession?.loadSnapshot) return null
-  const artifact = join(import.meta.dirname, "..", "evaluators", "rust-eager", "artifacts", "rust_eager.node")
-  try { return `v3:${createHash("sha256").update(readFileSync(artifact)).digest("hex")}` } catch { return null }
+  try { return `v3:${createHash("sha256").update(readFileSync(rustEagerNativeArtifactPath())).digest("hex")}` } catch { return null }
 })()
+// This run will save a snapshot, which needs every memo entry's cost and parent.
+if (memoStamp) sharedSession!.recordCosts?.()
 if (memoStamp && existsSync(memoPath)) {
   const t0 = Date.now()
   const ok = sharedSession!.loadSnapshot!(memoPath, memoStamp)

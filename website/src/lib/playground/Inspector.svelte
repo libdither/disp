@@ -852,6 +852,8 @@
         return 'S(K(p), K(q)) ignores its argument on both sides, so it shortens to K(p(q)).'
       case 'lam':
         return `Removing ${x} from a binder still in place.`
+      case 'collect':
+        return 'A function of 7 or more parameters compiles whole: it packs its arguments into one tuple, and its body reads each one back from that tuple.'
       case 'skip':
         return `The rest of the replay, ${bracket?.skipped ?? 0} rewrites, is left out; next is the finished result.`
     }

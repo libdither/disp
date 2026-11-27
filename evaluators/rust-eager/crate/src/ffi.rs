@@ -81,8 +81,8 @@ pub extern "C" fn tc_recognize_machine(handle: u32) {
 }
 
 // ── memory knobs (run at smaller footprints) ────────────────────────────────
-/// Cap the eager apply memo at `n` entries (0 = unbounded); over the cap the memo is
-/// cleared. Pure cache → correctness-preserving (just re-reduces).
+/// Size the eager apply memo's cache to about `n` slots (0 = default; see memo.rs). Pure
+/// cache → correctness-preserving (just re-reduces).
 #[no_mangle]
 pub extern "C" fn tc_set_memo_limit(n: u32) {
     with(|a| a.memo.set_limit(n as usize));

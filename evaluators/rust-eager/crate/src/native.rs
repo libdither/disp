@@ -92,10 +92,16 @@ impl EagerSession {
     }
 
     // ── memory knobs ──
-    /// Cap the eager apply memo at `n` entries (0 = unbounded); over the cap it sheds.
+    /// Size the eager apply memo's cache to about `n` slots (0 = default; see memo.rs).
     #[napi]
     pub fn set_memo_limit(&mut self, n: u32) {
         self.arena.memo.set_limit(n as usize);
+    }
+    /// Keep each memo entry's cold cost and parent, which `save_snapshot` needs. Call it
+    /// before reducing anything; without it the memo stores results only.
+    #[napi]
+    pub fn record_costs(&mut self) {
+        self.arena.memo.record_costs();
     }
     /// Drop the re-derivable caches (apply memo + susp WHNF memo); live trees untouched.
     #[napi]
@@ -212,6 +218,17 @@ impl EagerSession {
     #[napi]
     pub fn interactions(&self) -> f64 {
         self.arena.interactions as f64
+    }
+    /// `--stats` counters, in order: calls, maxStack, leaf, stem, K, S, triage leaf/stem/fork,
+    /// treeEq, memo hits, memo misses, memo writes, live memo entries.
+    #[napi]
+    pub fn counters(&self) -> Vec<f64> {
+        let c = &self.arena.counters;
+        [c.calls, c.max_stack, c.leaf, c.stem, c.k, c.s, c.triage_leaf, c.triage_stem, c.triage_fork,
+         c.tree_eq, c.memo_hits, c.memo_misses, c.memo_writes, self.arena.memo.len() as u64]
+            .iter()
+            .map(|&n| n as f64)
+            .collect()
     }
     /// Live node high-water (for observing reclamation / memory pressure).
     #[napi]

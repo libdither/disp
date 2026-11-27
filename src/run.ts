@@ -9,6 +9,7 @@ import { parseProgram, type Decl, type ParseItemStats } from "./compile.js"
 import { prettyTree, type Tree } from "./eval/eager.js"
 import type { Session, EvalStats } from "./eval/types.js"
 import { getBackend, defaultBackendName } from "./eval/registry.js"
+import { rustEagerNativeArtifactPath } from "./eval/rust-eager-native.js"
 import { emitBlob } from "./format/export.js"
 import { printValue, nameKey } from "./format/print.js"
 import { driveMain, findMain } from "./driver.js"
@@ -90,7 +91,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
     if (process.env.DISP_MEMO_CACHE !== "0" && session.loadSnapshot) {
       const root = join(dirname(fileURLToPath(import.meta.url)), "..")
       const cacheDir = join(root, ".disp-test-cache")
-      const artifact = join(root, "evaluators", "rust-eager", "artifacts", "rust_eager.node")
+      const artifact = rustEagerNativeArtifactPath()
       const memoBin = existsSync(cacheDir)
         ? readdirSync(cacheDir).filter(f => /^memo-\d+of\d+\.bin$/.test(f))
             .map(f => join(cacheDir, f))
@@ -177,16 +178,19 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       // with no snapshot. Compare cold_equiv across kernel edits — warm steps drop as an edit
       // reuses more of the cache, so they are not comparable; cold_equiv is.
       const coldEquiv = session.coldEquiv?.() ?? s.steps
+      // A backend reports only the counters it keeps; the rest print as "-".
+      const n = (v: number | undefined) => v ?? "-"
+      const triage = s.triageLeafRules === undefined ? undefined : s.triageLeafRules + s.triageStemRules + s.triageForkRules
       console.log(
-        `stats: steps=${s.steps}, cold_equiv=${coldEquiv}, calls=${s.calls}, maxStack=${s.maxStack}, ` +
-        `uniqueNodes=${s.uniqueNodes}, memoEntries=${s.cacheEntries}`,
+        `stats: steps=${s.steps}, cold_equiv=${coldEquiv}, calls=${n(s.calls)}, maxStack=${n(s.maxStack)}, ` +
+        `uniqueNodes=${n(s.uniqueNodes)}, memoEntries=${n(s.cacheEntries)}`,
       )
       console.log(
-        `rules: K=${s.kRules}, S=${s.sRules}, triage=${s.triageLeafRules + s.triageStemRules + s.triageForkRules}, ` +
-        `treeEq=${s.treeEqRules}, leaf=${s.leafRules}, stem=${s.stemRules}`,
+        `rules: K=${n(s.kRules)}, S=${n(s.sRules)}, triage=${n(triage)}, ` +
+        `treeEq=${n(s.treeEqRules)}, leaf=${n(s.leafRules)}, stem=${n(s.stemRules)}`,
       )
-      console.log(`memo: hits=${s.memoHits}, misses=${s.memoMisses}, writes=${s.memoWrites}, ` +
-        `frozen_hits=${s.frozenHits}, first_hits=${s.firstHits}`)
+      console.log(`memo: hits=${n(s.memoHits)}, misses=${n(s.memoMisses)}, writes=${n(s.memoWrites)}, ` +
+        `frozen_hits=${n(s.frozenHits)}, first_hits=${n(s.firstHits)}`)
     }
     if (showStatsDetail) {
       let prev: EvalStats = {

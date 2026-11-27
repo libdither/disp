@@ -40,8 +40,18 @@ impl Arena {
         r
     }
 
+    /// `Some(v)` when `t` is `K v` = `△ △ v`.
+    #[inline]
+    fn k_value(&self, t: u32) -> Option<u32> {
+        match self.node(t) {
+            Node::Fork(l, v) if matches!(self.node(l), Node::Leaf) => Some(v),
+            _ => None,
+        }
+    }
+
     fn reduce_spine(&mut self, f0: u32, x0: u32, budget: &mut i64) -> R {
         self.open_memo.clear();
+        self.counters.calls += 1;
         let mut stack: Vec<Cont> = Vec::new();
         let mut cur_f = f0;
         let mut cur_x = x0;
@@ -61,12 +71,19 @@ impl Arena {
                 // reductions) — neither budget- nor interaction-charged, matching
                 // src/core/tree.ts (only fork dispatch counts). Charging them burns
                 // the host's per-call budget ~3× faster → spurious verify exhaustion.
-                Node::Leaf => self.stem(cur_x), // A ⊗ L: △ x
-                Node::Stem(a) => self.fork(a, cur_x), // A ⊗ S: △ a x
+                Node::Leaf => {
+                    self.counters.leaf += 1;
+                    self.stem(cur_x) // A ⊗ L: △ x
+                }
+                Node::Stem(a) => {
+                    self.counters.stem += 1;
+                    self.fork(a, cur_x) // A ⊗ S: △ a x
+                }
                 Node::Susp(sf, sa) => {
                     if self.tree_eq_id != 0 && sf == self.tree_eq_id {
                         // tree_eq fast-path stage 2: apply(susp(tree_eq, a), x) ⇒
                         // a == x ? TT : FF (O(1) hash-cons structural compare).
+                        self.counters.tree_eq += 1;
                         if self.equal(sa, cur_x, budget)? {
                             self.tt
                         } else {
@@ -89,8 +106,17 @@ impl Arena {
                         continue 'outer;
                     }
                 }
+                // K: △ △ b x → b  (x discarded, never reduced). Checked before the memo:
+                // K is never memoized (the result is constant in x), so a lookup can't hit.
+                Node::Fork(a, b) if matches!(self.node(a), Node::Leaf) => {
+                    *budget -= 1;
+                    self.interactions += 1;
+                    self.counters.k += 1;
+                    b
+                }
                 Node::Fork(a, b) => {
                     if let Some(r) = self.memo_lookup(cur_f, cur_x) {
+                        self.counters.memo_hits += 1;
                         if let Some(p) = self.profile.as_mut() {
                             p.hit(cur_f, r);
                         }
@@ -100,19 +126,34 @@ impl Arena {
                         cur_f = self.fork(av, b);
                         continue 'outer;
                     } else {
+                        self.counters.memo_misses += 1;
                         *budget -= 1;
                         self.interactions += 1;
                         match self.node(a) {
-                            // K: △ △ b x → b  (x discarded, never reduced). No memo
-                            // frame — the result is constant in x, caching pollutes.
-                            Node::Leaf => b,
-                            // S: △ (△ c) b x → (c x)(b x). Compute c x first.
+                            // S: △ (△ c) b x → (c x)(b x).
                             Node::Stem(c) => {
+                                self.counters.s += 1;
                                 self.open_frame(cur_f, cur_x)?;
                                 stack.push(Cont::Memo(cur_f, cur_x, self.interactions - 1, self.hit_cost));
-                                stack.push(Cont::SAfterCx(b, cur_x));
-                                cur_f = c; // cur_x unchanged
-                                continue 'outer;
+                                // c = K v: c x = v with no application (src/core/tree.ts).
+                                if let Some(v) = self.k_value(c) {
+                                    if let Some(w) = self.k_value(v) {
+                                        w // v = K w: the result is w; b x is never evaluated
+                                    } else if let Some(u) = self.k_value(b) {
+                                        cur_f = v; // b = K u: v u, no b x application
+                                        cur_x = u;
+                                        continue 'outer;
+                                    } else {
+                                        stack.push(Cont::ApplyResultTo(v));
+                                        cur_f = b; // cur_x unchanged
+                                        continue 'outer;
+                                    }
+                                } else {
+                                    // Compute c x first.
+                                    stack.push(Cont::SAfterCx(b, cur_x));
+                                    cur_f = c; // cur_x unchanged
+                                    continue 'outer;
+                                }
                             }
                             // triage: △ (△ w u) b x → dispatch on x (w=a.left, u=a.right)
                             Node::Fork(w, u) => {
@@ -122,14 +163,19 @@ impl Arena {
                                     cur_x = self.force(sf, sa, cur_x, budget)?;
                                 }
                                 match self.node(cur_x) {
-                                    Node::Leaf => w, // T₂ ⊗ L → w
+                                    Node::Leaf => {
+                                        self.counters.triage_leaf += 1;
+                                        w // T₂ ⊗ L → w
+                                    }
                                     Node::Stem(v) => {
+                                        self.counters.triage_stem += 1;
                                         cur_f = u; // T₂ ⊗ S → u v
                                         cur_x = v;
                                         continue 'outer;
                                     }
                                     Node::Fork(s, t) => {
                                         // T₂ ⊗ F → (b s) t
+                                        self.counters.triage_fork += 1;
                                         stack.push(Cont::ApplyTo(t));
                                         cur_f = b;
                                         cur_x = s;
@@ -138,13 +184,16 @@ impl Arena {
                                     Node::Susp(..) => unreachable!("forced above"),
                                 }
                             }
-                            Node::Susp(..) => unreachable!("handled above"),
+                            Node::Leaf | Node::Susp(..) => unreachable!("handled above"),
                         }
                     }
                 }
                 };
             }
             // deliver(result): pop continuations until one re-aims the reducer.
+            if stack.len() as u64 > self.counters.max_stack {
+                self.counters.max_stack = stack.len() as u64;
+            }
             let mut res = result;
             loop {
                 match stack.pop() {
@@ -170,17 +219,22 @@ impl Arena {
                             p.leave(self.open_memo.len() as u32, res, self.interactions);
                         }
                         let (pf, px) = self.open_memo.last().copied().unwrap_or((0, 0));
+                        self.counters.memo_writes += 1;
                         self.memo.insert(sf, sx, res, cost, pf, px); // capacity/eviction handled by the backend (memo.rs)
                         // keep popping
                     }
                     Some(Cont::SAfterCx(sb, sox)) => {
                         // res = c x. apply(res, b x): if res = K(cr) = △ △ cr, the
                         // result is cr without computing b x (lazy discard).
-                        if let Node::Fork(cl, cr) = self.node(res) {
-                            if matches!(self.node(cl), Node::Leaf) {
-                                res = cr;
-                                continue;
-                            }
+                        if let Some(cr) = self.k_value(res) {
+                            res = cr;
+                            continue;
+                        }
+                        // b = K u: b x = u with no application.
+                        if let Some(u) = self.k_value(sb) {
+                            cur_f = res;
+                            cur_x = u;
+                            continue 'outer;
                         }
                         // general: compute b x, then apply res to it.
                         stack.push(Cont::ApplyResultTo(res));

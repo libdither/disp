@@ -2,7 +2,8 @@
 // IR into a tree. Bracket abstraction defines which tree a binder becomes —
 // i.e. it is part of definitional equality — so changes here change every
 // compiled program (the deleted lib/elab/bracket.disp was the in-language
-// spec; recover via git when re-validating).
+// spec; recover via git when re-validating). A chain of COLLECT_MIN or more
+// binders compiles as an argument collector instead (see `collect`).
 
 import type { Tree } from "../eval/eager.js"
 import { type CoreExpr, copySpan, spanOf, formatSpan } from "../core/ir.js"
@@ -25,13 +26,29 @@ export const K: Cir = { tag: "K" }
 export const I_CIR: Cir = { tag: "I" }
 export const cap = (f: Cir, x: Cir): Cir => ({ tag: "app", f, x })
 
-export function containsFree(e: Cir, name: string): boolean {
+const NO_FREE: ReadonlySet<string> = new Set()
+/// Free variables of `e`, memoized per node: abstraction asks at every node, once per binder.
+const freeMemo = new WeakMap<Cir, ReadonlySet<string>>()
+function freeVars(e: Cir): ReadonlySet<string> {
   switch (e.tag) {
-    case "lit": case "S": case "K": case "I": return false
-    case "var": return e.name === name
-    case "app": return containsFree(e.f, name) || containsFree(e.x, name)
-    case "lam": return e.x === name ? false : containsFree(e.body, name)
+    case "lit": case "S": case "K": case "I": return NO_FREE
+    case "var": return new Set([e.name])
   }
+  let r = freeMemo.get(e)
+  if (r) return r
+  if (e.tag === "app") {
+    const a = freeVars(e.f), b = freeVars(e.x)
+    r = a.size === 0 ? b : b.size === 0 ? a : new Set([...a, ...b])
+  } else {
+    const inner = freeVars(e.body)
+    r = inner.has(e.x) ? new Set([...inner].filter(v => v !== e.x)) : inner
+  }
+  freeMemo.set(e, r)
+  return r
+}
+
+export function containsFree(e: Cir, name: string): boolean {
+  return freeVars(e).has(name)
 }
 
 // Collect free variable names in a Cir term (in stable insertion order),
@@ -96,12 +113,84 @@ export function abstractName(name: string, body: Cir, rec: Abstract = abstractNa
   }
 }
 
+// A chain of at least this many binders compiles as an argument collector (`collect`).
+export const COLLECT_MIN = 7
+
 export function eliminateLams(e: Cir): Cir {
   switch (e.tag) {
     case "lit": case "var": case "S": case "K": case "I": return e
     case "app": return copySpan(e, cap(eliminateLams(e.f), eliminateLams(e.x)))
-    case "lam": return copySpan(e, abstractName(e.x, eliminateLams(e.body)))
+    case "lam": {
+      const xs: string[] = [], at: Cir[] = []
+      let b: Cir = e
+      while (b.tag === "lam") { xs.push(b.x); at.push(b); b = b.body }
+      const body = eliminateLams(b)
+      return xs.length >= COLLECT_MIN ? collect(xs, body, at) : curry(xs, body, at)
+    }
   }
+}
+
+/// `at[i]` is the source lambda of binder `i`, whose span its abstraction keeps.
+const curry = (xs: string[], body: Cir, at: Cir[] = []): Cir =>
+  xs.reduceRight<Cir>((acc, x, i) => copySpan(at[i], abstractName(x, acc)), body)
+const lit = (t: Tree): Cir => ({ tag: "lit", t })
+
+// fst/snd by triage: △ (△ L L) b (△ s t) → b s t, with b = K (fst) or K I (snd).
+// snd must not be the 2-step `△(△(△ L))`: that is an S-rule `K t (s t)` whose `s t` only
+// the evaluators' K-discard skips; a strict in-language interpreter (the archived live
+// kernel's walker) evaluates `s t`, i.e. applies one env slot to the next.
+// Trees are session handles, so the projections are built once per session.
+const projBySession = new WeakMap<object, { fst: Tree; snd: Tree }>()
+function projections(): { fst: Tree; snd: Tree } {
+  let p = projBySession.get(elab.cs)
+  if (!p) {
+    const cs = elab.cs, tri = cs.fork(cs.leaf(), cs.leaf())
+    p = { fst: cs.fork(tri, cs.stem(cs.leaf())), snd: cs.fork(tri, cs.fork(cs.leaf(), cirToTree(I_CIR))) }
+    projBySession.set(cs, p)
+  }
+  return p
+}
+
+function substVars(e: Cir, m: Map<string, Cir>): Cir {
+  switch (e.tag) {
+    case "var": return m.get(e.name) ?? e
+    case "app": return cap(substVars(e.f, m), substVars(e.x, m))
+    case "lam": throw new Error("substVars: lambda left after elimination")
+    default: return e
+  }
+}
+
+let envCounter = 0
+
+/// `{x1 … xn} => body` as an argument collector. Curried, every partial application
+/// rebuilds the rest of the function with that argument substituted; here the curried
+/// wrapper only packs the used arguments into a balanced tuple, and the body is
+/// abstracted over that one tuple, reading each variable back by fst/snd.
+function collect(xs0: string[], body0: Cir, at: Cir[]): Cir {
+  const xs = [...xs0]
+  let body = body0
+  while (xs.length > 0) {
+    const x = xs[xs.length - 1]
+    if (body.tag === "app" && body.x.tag === "var" && body.x.name === x && !containsFree(body.f, x)) { body = body.f; xs.pop() }
+    else break
+  }
+  // last binder of each name wins (shadowing); keep only used ones
+  const used: string[] = []
+  for (let i = xs.length - 1; i >= 0; i--)
+    if (!used.includes(xs[i]) && containsFree(body, xs[i]) && xs.lastIndexOf(xs[i]) === i) used.unshift(xs[i])
+  if (used.length < 2) return curry(xs, body, at)
+  const { fst, snd } = projections()
+  const env = `__env${envCounter++}`
+  const read = new Map<string, Cir>()
+  const pack = (lo: number, hi: number, at: (c: Cir) => Cir): Cir => {
+    if (hi - lo === 1) { read.set(used[lo], at({ tag: "var", name: env })); return { tag: "var", name: used[lo] } }
+    const mid = (lo + hi) >> 1
+    const l = pack(lo, mid, c => cap(lit(fst), at(c)))
+    const r = pack(mid, hi, c => cap(lit(snd), at(c)))
+    return cap(cap(lit(elab.cs.leaf()), l), r)
+  }
+  const tuple = pack(0, used.length, c => c)
+  return curry(xs, cap(abstractName(env, substVars(body, read)), tuple), at)
 }
 
 export function cirToTree(e: Cir): Tree {

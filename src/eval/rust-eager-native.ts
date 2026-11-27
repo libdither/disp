@@ -20,7 +20,9 @@ import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classification } from "./types.js"
 
-const ARTIFACT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluators", "rust-eager", "artifacts", "rust_eager.node")
+/// RUST_EAGER_NATIVE_ARTIFACT points at another build (A/B runs without a second checkout).
+const ARTIFACT = process.env.RUST_EAGER_NATIVE_ARTIFACT
+  || join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluators", "rust-eager", "artifacts", "rust_eager.node")
 
 export function rustEagerNativeArtifactPath(): string { return ARTIFACT }
 export function rustEagerNativeAvailable(): boolean { return existsSync(ARTIFACT) }
@@ -40,6 +42,7 @@ interface EagerSessionNative {
   child1(h: number): number
   equal(a: number, b: number, budget: number): number       // 0=false 1=true 2=exhausted
   interactions(): number
+  counters?(): number[]                                     // absent in older addons
   nodeCount(): number
   freeCount(): number
   beginScope(): void
@@ -47,6 +50,7 @@ interface EagerSessionNative {
   recognizeTreeEq(handle: number): void
   recognizeMachine?(handle: number): void                  // absent in older addons
   setMemoLimit(n: number): void
+  recordCosts?(): void                                      // absent in older addons
   clearCaches(): void
   loadSnapshot(path: string, stamp: string): boolean
   saveSnapshot(path: string, stamp: string, minCost: number): number  // 1 saved, 0 unchanged, -1 error
@@ -90,9 +94,8 @@ class RustEagerNativeSession implements Session<number> {
     this.#s = new (loadAddon().EagerSession)()
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
     this.#noNativeIntercept = opts?.noNativeIntercept === true
-    // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
-    // (RUST_EAGER_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
-    // by dispose() anyway.
+    // Memory knob: the apply memo is a bounded cache (2^23 slots by default, see memo.rs);
+    // RUST_EAGER_MEMO_LIMIT=<slots> resizes it.
     const lim = Number(process.env.RUST_EAGER_MEMO_LIMIT ?? 0)
     if (Number.isFinite(lim) && lim > 0) this.#s.setMemoLimit(lim >>> 0)
   }
@@ -108,6 +111,9 @@ class RustEagerNativeSession implements Session<number> {
   // fork-dispatches, and returns 1 saved / 0 unchanged-skipped / -1 error.
   loadSnapshot(path: string, stamp: string): boolean { return this.#s.loadSnapshot(path, stamp) }
   saveSnapshot(path: string, stamp: string, minCost = 0): number { return this.#s.saveSnapshot(path, stamp, minCost) }
+  // A session that will saveSnapshot must call this before any reduction: by default the
+  // memo keeps only results, not the costs and parents a snapshot stores.
+  recordCosts(): void { this.#s.recordCosts?.() }
   // Frozen-memo hits this session — the snapshot's realized value.
   frozenHits(): number { return this.#s.frozenHits() }
   // Predicted-cold step count: warm steps + the EXACT cold cost of this run's frozen hits
@@ -162,16 +168,24 @@ class RustEagerNativeSession implements Session<number> {
     throw new Error("rust-eager-native: classify failed (budget exhausted?)")
   }
 
-  // Interaction count (the backend-declared unit, never compared to eager's steps).
+  // Interaction count: fork dispatches, the same rules and shortcuts as eager's `steps`
+  // (they agree to within a few steps; native intercepts account for the rest).
   // `nodes` exposes the live arena high-water (for observing scoped reclamation).
   // `coldEquiv` adds the cold cost charged for frozen-snapshot hits: the steps the run
   // would have spent with no snapshot (an upper bound; see types.ts).
   // Per-item/summary stats are O(1); the predicted-cold walk is deliberately NOT here (it is
   // whole-run) — call coldEquiv() for that. `steps` is this run's actual (warm) work.
   stats(): EvalStats {
+    const nodes = this.#s.nodeCount()
+    const [calls, maxStack, leafRules, stemRules, kRules, sRules, triageLeafRules, triageStemRules,
+      triageForkRules, treeEqRules, memoHits, memoMisses, memoWrites, cacheEntries] = this.#s.counters?.() ?? []
     return {
-      steps: this.#s.interactions(), nodes: this.#s.nodeCount(), free: this.#s.freeCount(),
+      steps: this.#s.interactions(), nodes, free: this.#s.freeCount(),
       frozenHits: this.#s.frozenHits(), firstHits: this.#s.firstHits(), hitCost: this.#s.hitCost(),
+      ...(calls === undefined ? {} : {
+        calls, maxStack, leafRules, stemRules, kRules, sRules, triageLeafRules, triageStemRules,
+        triageForkRules, treeEqRules, memoHits, memoMisses, memoWrites, cacheEntries, uniqueNodes: nodes,
+      }),
     }
   }
 

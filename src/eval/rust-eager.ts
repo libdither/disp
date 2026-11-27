@@ -68,9 +68,8 @@ class RustEagerSession implements Session<number> {
     this.#x = inst.exports as unknown as RustEagerExports
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
     this.#noNativeIntercept = opts?.noNativeIntercept === true
-    // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
-    // (RUST_EAGER_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
-    // by dispose() anyway; this is for constrained or long-running deployments.
+    // Memory knob: the apply memo is a bounded cache (2^20 slots in wasm by default, see
+    // memo.rs); RUST_EAGER_MEMO_LIMIT=<slots> resizes it.
     const lim = Number(process.env.RUST_EAGER_MEMO_LIMIT ?? 0)
     if (Number.isFinite(lim) && lim > 0) this.#x.tc_set_memo_limit(lim >>> 0)
   }

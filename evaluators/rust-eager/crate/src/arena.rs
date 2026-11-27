@@ -76,6 +76,31 @@ fn word_hash(w: u64) -> u64 {
     h.finish()
 }
 
+/// Rule and memo counters for `--stats` (the same fields src/core/tree.ts reports).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Counters {
+    pub(crate) calls: u64,
+    pub(crate) max_stack: u64,
+    pub(crate) leaf: u64,
+    pub(crate) stem: u64,
+    pub(crate) k: u64,
+    pub(crate) s: u64,
+    pub(crate) triage_leaf: u64,
+    pub(crate) triage_stem: u64,
+    pub(crate) triage_fork: u64,
+    pub(crate) tree_eq: u64,
+    pub(crate) memo_hits: u64,
+    pub(crate) memo_misses: u64,
+    pub(crate) memo_writes: u64,
+}
+
+/// Intern-table slot: the node's id in the low 32 bits and 32 bits of its hash in the high
+/// ones, so growing the table rehashes from the slot instead of re-reading every node.
+#[inline]
+fn slot_hash(slot: u64) -> u64 {
+    (slot >> 32).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 /// One session's arena. Handles are indices into `nodes`; the intern table makes
 /// structurally-identical nodes share one id (so `δˢ` copy is reference sharing and
 /// identical `Susp`s share one `forced` memo cell).
@@ -86,7 +111,7 @@ pub(crate) struct Arena {
     /// THROUGH `nodes`, so each interned node is stored once (in `nodes`), not twice — a
     /// `HashTable<Node>` would duplicate every Node as its key (~half the arena's
     /// overhead on a heavy file). hashbrown owns the probing/growth/control bytes.
-    intern: HashTable<u32>,
+    intern: HashTable<u64>,
     /// `Susp` WHNF memo (`δⁿ` at-most-once): susp id → its forced WHNF. SPARSE — only
     /// forced susps appear, so eager mode (which never forces) keeps it empty and `mk`
     /// does zero per-node bookkeeping. No size cap (unlike `memo`) — the production
@@ -101,6 +126,7 @@ pub(crate) struct Arena {
     /// reported via stats). Leaf/stem builds and the tree_eq fast-path are O(1) and
     /// uncounted, matching src/core/tree.ts.
     pub(crate) interactions: u64,
+    pub(crate) counters: Counters,
     /// The `tree_eq` definition's handle, registered via `recognizeNative` (0 = unset).
     /// When set, `apply(tree_eq, a) b` is intercepted as the O(1) hash-cons structural
     /// compare (the two-stage susp scheme), so conversion checking is cheap — without
@@ -163,6 +189,7 @@ impl Arena {
             forced: FxHashMap::default(),
             memo: Memo::new(),
             interactions: 0,
+            counters: Counters::default(),
             tree_eq_id: 0,
             machine_id: 0,
             tt: 0,
@@ -214,8 +241,10 @@ impl Arena {
         let word = |id: u32| -> u64 {
             if id < bl { base.as_ref().unwrap().nodes[id as usize] } else { nodes[(id - bl) as usize] }
         };
-        if let Some(&id) = intern.find(h, |&id| word(id) == w) {
-            return id;
+        let tag = (h ^ (h >> 32)) << 32; // fold: FxHash's halves aren't each well mixed
+        let h = slot_hash(tag);
+        if let Some(&slot) = intern.find(h, |&slot| slot & !0xffff_ffff == tag && word(slot as u32) == w) {
+            return slot as u32;
         }
         // Reuse a slot freed by `end_scope` before extending the arena (so a scoped
         // workload's peak — not its cumulative allocation — bounds `nodes.len()`).
@@ -228,11 +257,7 @@ impl Arena {
             nodes.push(w);
             id
         };
-        let Arena { nodes, intern, base, base_len, .. } = self;
-        let bl = *base_len;
-        intern.insert_unique(h, id, |&id| {
-            word_hash(if id < bl { base.as_ref().unwrap().nodes[id as usize] } else { nodes[(id - bl) as usize] })
-        });
+        intern.insert_unique(h, tag | id as u64, |&slot| slot_hash(slot));
         id
     }
 
@@ -350,7 +375,7 @@ impl Arena {
         self.nodes.truncate((new_top - self.base_len) as usize);
         // A node id survives iff it is below base (permanent) or a marked survivor.
         let live = |id: u32| id < base || (id < new_top && marked[(id - base) as usize]);
-        self.intern.retain(|id| live(*id));
+        self.intern.retain(|slot| live(*slot as u32));
         self.memo.retain(|id| live(id)); // drop only entries touching freed nodes
         self.forced.retain(|&k, v| live(k) && live(*v));
         if let Some(p) = self.profile.as_mut() {
@@ -469,6 +494,9 @@ impl Arena {
     /// snapshot at a quiet point (post-endScope). Skips writing when the run added
     /// nothing durable — the converged fixed point.
     pub(crate) fn save_snapshot(&mut self, path: &str, stamp: &[u8], min_cost: u32) -> Result<SaveOutcome, String> {
+        if !self.memo.records_costs() {
+            return Err("memo costs were not recorded (call record_costs before reducing)".into());
+        }
         let overlay_live = self.nodes.len() - self.free_list.len();
         let new_facts = self.memo.iter().filter(|&(_, _, _, c, _, _)| c >= min_cost).count();
         if self.base.is_some() && overlay_live == 0 && new_facts == 0 {
@@ -477,7 +505,7 @@ impl Arena {
         // Live ids, ascending (keeps the bootstrap prefix 0/1/2 fixed): the reserved
         // sentinel + frozen ∪ live intern. Frozen and overlay id ranges are disjoint.
         let mut interned: Vec<u32> = self.base.as_ref().map(|b| b.intern_iter().collect()).unwrap_or_default();
-        interned.extend(self.intern.iter().copied());
+        interned.extend(self.intern.iter().map(|&slot| slot as u32));
         interned.sort_unstable();
         let mut live: Vec<u32> = Vec::with_capacity(interned.len() + 1);
         live.push(0);
