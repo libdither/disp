@@ -5,13 +5,17 @@
 
 import type { Tree } from "../eval/eager.js"
 import type { Expr } from "../parse.js"
-import { copySpan, spanOf, formatSpan } from "../core/ir.js"
+import { type CoreExpr, coreApp, copySpan, spanOf, formatSpan } from "../core/ir.js"
 import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type LicenseCert, type SigParam } from "./state.js"
-import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
+import { cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { sugarTree, sugarVarName, pairAccessor, SUGAR_PREFIX, type SugarName } from "./vocab.js"
 import { qualified, pickOwner, typeOf, typeName, withLocals, isLocal } from "./fields.js"
+
+// Local aliases: exprToCir produces strictly S/K/I-free CoreExpr nodes.
+type Cir = CoreExpr
+const cap = coreApp
 
 // moduleTupleCir: a resolved file's module tuple { record, typ } (§2.6 records):
 //   record = a product of the file's exported values, keyed by name;
