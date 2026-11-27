@@ -105,7 +105,7 @@ export interface Graph {
   roots: number[]
 }
 
-export type BracketRule = 'start' | 'split' | 'const' | 'id' | 'eta' | 'eta-after' | 'k-comp' | 'lam' | 'skip'
+export type BracketRule = 'start' | 'split' | 'const' | 'id' | 'eta' | 'eta-after' | 'k-comp' | 'lam' | 'collect' | 'skip'
 
 /// One rewrite of bracket abstraction. Its frame is the whole term after the rewrite.
 export interface BracketStep {

@@ -109,7 +109,7 @@ export function abstractName(name: string, body: Cir, rec: Abstract = abstractNa
 }
 
 // A chain of at least this many binders compiles as an argument collector (`collect`).
-const COLLECT_MIN = 7
+export const COLLECT_MIN = 7
 
 export function eliminateLams(e: Cir): Cir {
   switch (e.tag) {

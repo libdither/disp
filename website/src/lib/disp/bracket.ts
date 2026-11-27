@@ -2,7 +2,7 @@
 // term. The rewrites themselves come from the compiler's own abstractName: this
 // only watches its recursion, and checks it lands on the compiler's output.
 
-import { abstractName, eliminateLams, containsFree, cap, S, type Cir } from '../../../../src/elab/cir.ts'
+import { abstractName, eliminateLams, containsFree, cap, S, COLLECT_MIN, type Cir } from '../../../../src/elab/cir.ts'
 import type { BracketRule } from './protocol.ts'
 
 export interface BracketFrame {
@@ -79,6 +79,14 @@ export function bracketReplay(cir: Cir): { frames: BracketFrame[]; skipped: numb
 
   function walk(e: Cir, hole: Hole): Cir {
     if (e.tag === 'lam') {
+      // a long binder chain compiles whole, as an argument collector
+      let arity = 0
+      for (let b: Cir = e; b.tag === 'lam'; b = b.body) arity++
+      if (arity >= COLLECT_MIN) {
+        const out = eliminateLams(e)
+        note('collect', e.x, hole, e.body, out, out)
+        return out
+      }
       const body = walk(e.body, { wrap: (c) => hole.wrap(lam(e.x, c)), at: [...hole.at, 0] })
       return abstract(e.x, body, hole)
     }
