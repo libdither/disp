@@ -4,9 +4,9 @@
 // pin DRIVER machinery against the archived live kernel's relation/license
 // library; the promoted kernel's guard protocol is pinned in lib/kernel/.
 
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest"
 import { join } from "node:path"
-import { parseProgram } from "../src/compile.js"
+import { parseProgram, collectSessionRoots } from "../src/compile.js"
 import { getBackend, defaultBackendName } from "../src/eval/registry.js"
 import type { Session } from "../src/eval/types.js"
 import type { Tree } from "../src/eval/eager.js"
@@ -15,13 +15,29 @@ const HERE = join(process.cwd(), "lib/tests/_guards_host.disp")
 const K = `open use "../../archive/live-kernel/kernel/prelude.disp"
 open use "../../archive/live-kernel/std/relation.disp"
 `
-// One shared native-backend session (the disp.test.ts pattern): the kernel is
-// elaborated once for all cases; the eager TS session would blow the worker heap.
-const session = getBackend(process.env.DISP_EVALUATOR ?? defaultBackendName)
-  .createSession() as unknown as Session<Tree>
-const run = (src: string) => parseProgram(src, HERE, { session })
+type ScopedSession = Session<Tree> & {
+  beginScope?(): void
+  endScope?(keep: Tree[]): void
+  clearCaches?(): void
+  dispose?(): void
+}
+const makeSession = () =>
+  getBackend(process.env.DISP_EVALUATOR ?? defaultBackendName)
+    .createSession() as unknown as ScopedSession
 
 describe("guard layer rejections", () => {
+  // One shared native-backend session per kernel block (the disp.test.ts pattern):
+  // the kernel is elaborated once, per-test scratch is reclaimed via beginScope/endScope,
+  // and the archived kernel's arena is disposed before the promoted-kernel block runs.
+  let session!: ScopedSession
+  const run = (src: string) => parseProgram(src, HERE, { session })
+  beforeAll(() => { session = makeSession() })
+  beforeEach(() => { session.beginScope?.() })
+  afterEach(() => {
+    if (session.endScope) session.endScope(collectSessionRoots(session))
+    else session.clearCaches?.()
+  })
+  afterAll(() => { session.dispose?.() })
   it("freeze refuses rebinds", () => {
     expect(() => run(K + `guard(freeze) V : Nat := 3\nV : Nat := 4\n`))
       .toThrow(/rejected by its guard/)
@@ -104,6 +120,15 @@ f := { fast := ({n} => succ(n)) ; proof := { zero := refl; succ := ({k} => {_ih}
 const P = `open use "../kernel/prelude.disp"\n`
 
 describe("promoted kernel guard layer", () => {
+  let session!: ScopedSession
+  const run = (src: string) => parseProgram(src, HERE, { session })
+  beforeAll(() => { session = makeSession() })
+  beforeEach(() => { session.beginScope?.() })
+  afterEach(() => {
+    if (session.endScope) session.endScope(collectSessionRoots(session))
+    else session.clearCaches?.()
+  })
+  afterAll(() => { session.dispose?.() })
   it("freeze refuses rebinds", () => {
     expect(() => run(P + `guard(freeze) V : Nat := 3\nV : Nat := 4\n`))
       .toThrow(/rejected by its guard/)
@@ -185,5 +210,48 @@ my_rev := { new := {xs} => xs; proof := {_xs} => t; certs := fake_cert }
     // Order 2: opt then spec -> opt STILL wins (late-arriving spec does not overwrite licensed upgrade)
     const order2 = getBinding(`open use "../kernel/verified_opt.opt.disp"\nopen use "../kernel/verified_opt.disp"\n`, "rev")
     expect(session.equal!(order2, optRev)).toBe(true)
+  }, 180000)
+
+  it("std_list.opt.disp reconciles in BOTH open orders and rejects buggy rebinds", () => {
+    const getBinding = (src: string, name: string) => {
+      const d = run(src).find(x => x.kind === "Def" && x.name === name)
+      if (!d || d.kind !== "Def") throw new Error(`missing ${name}`)
+      return d.tree
+    }
+    const specApp = getBinding(`open use "../kernel/std_list.disp"\n`, "ck_append")
+    const optApp = getBinding(`open use "../kernel/std_list.opt.disp"\n`, "ck_append")
+    expect(session.equal!(specApp, optApp)).toBe(false)
+
+    // Both open orders resolve to the verified fast implementation
+    const order1 = getBinding(`open use "../kernel/std_list.disp"\nopen use "../kernel/std_list.opt.disp"\n`, "ck_append")
+    const order2 = getBinding(`open use "../kernel/std_list.opt.disp"\nopen use "../kernel/std_list.disp"\n`, "ck_append")
+    expect(session.equal!(order1, optApp)).toBe(true)
+    expect(session.equal!(order2, optApp)).toBe(true)
+
+    // Negative pin: buggy `ck_all` (always true) and buggy `ck_length` (off-by-one) are rejected by incumbent guards
+    expect(() => run(P + `open use "../kernel/std_list.disp"\nck_all := { new := {_xs, _p} => true; proof := {_xs, _p} => t }\n`))
+      .toThrow(/rejected by its guard/)
+    expect(() => run(P + `open use "../kernel/std_list.disp"\nck_length := { new := {_xs} => 0; proof := {_xs} => t }\n`))
+      .toThrow(/rejected by its guard/)
+  }, 180000)
+
+  it("std_growth.opt.disp reconciles in BOTH open orders and rejects buggy sizes_upto", () => {
+    const getBinding = (src: string, name: string) => {
+      const d = run(src).find(x => x.kind === "Def" && x.name === name)
+      if (!d || d.kind !== "Def") throw new Error(`missing ${name}`)
+      return d.tree
+    }
+    const specSz = getBinding(`open use "../kernel/std_growth.disp"\n`, "ck_sizes_upto")
+    const optSz = getBinding(`open use "../kernel/std_growth.opt.disp"\n`, "ck_sizes_upto")
+    expect(session.equal!(specSz, optSz)).toBe(false)
+
+    const order1 = getBinding(`open use "../kernel/std_growth.disp"\nopen use "../kernel/std_growth.opt.disp"\n`, "ck_sizes_upto")
+    const order2 = getBinding(`open use "../kernel/std_growth.opt.disp"\nopen use "../kernel/std_growth.disp"\n`, "ck_sizes_upto")
+    expect(session.equal!(order1, optSz)).toBe(true)
+    expect(session.equal!(order2, optSz)).toBe(true)
+
+    // Negative pin: reversing the output of `sizes_upto` (descending instead of ascending) is rejected
+    expect(() => run(P + `open use "../kernel/std_growth.disp"\nlet rec bad_sz := {k} => if (is_zero(k)) { [] } else { cons(k, bad_sz(nat_pred(k))) }\nck_sizes_upto := { new := bad_sz; proof := {k} => if (is_zero(k)) { t } else { t } }\n`))
+      .toThrow(/rejected by its guard/)
   }, 180000)
 })

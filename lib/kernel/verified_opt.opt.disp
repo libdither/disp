@@ -4,11 +4,11 @@
 open use "prelude.disp"
 open use "verified_opt.disp"
 
-// ---- Fast implementations
+// ---- Fast single-triage implementations
 let LT := List(Tree)
-let rec add_tail := {a, b} => if (is_zero(a)) { b } else { add_tail(nat_pred(a), succ(b)) }
-let rec dbl_fast := {n} => if (is_zero(n)) { zero } else { succ(succ(dbl_fast(nat_pred(n)))) }
-let rec rev_acc := {xs, acc} => if (xs.is_nil) { acc } else { rev_acc(xs.tail, cons(xs.head, acc)) }
+let add_fast := {a, b} => fix({go, n} => triage(b, {_} => b, {_z, p} => succ(go(p)), n))(a)
+let dbl_fast := fix({go, n} => triage(zero, {_} => zero, {_z, p} => succ(succ(go(p))), n))
+let rec rev_acc := {xs, acc} => triage(acc, {_} => acc, {h, tl} => rev_acc(tl, cons(h, acc)), xs)
 let rev_fast := {xs} => rev_acc(xs, [])
 let c_acc := certify(check_depth, check_fuel, "fix", [], [pair("rev_acc", pair(LT -> LT -> LT, rev_acc))])
 let check_module := check_with(check_depth, check_fuel, "fix", [c_acc])
@@ -21,10 +21,8 @@ let pf_add_succ := {b} => keep(b, fix({go, a} => if (is_zero(a)) { t } else { go
 let T_add_succ := {b : Nat} -> {a : Nat} -> Eq(add_spec(a, succ(b)), succ(add_spec(a, b)))
 let c_add := certify(check_depth, check_fuel, "all", [], [pair("add_succ", pair(T_add_succ, pf_add_succ))])
 
-// Proof: add_tail(a, b) == add_spec(a, b)
-let rec pf_add_tail := {a, b} =>
-	if (is_zero(a)) { t }
-	else { seq(pf_add_tail(nat_pred(a), succ(b)), seq(pf_add_succ(b, nat_pred(a)), t)) }
+// Proof: add_fast(a, b) == add_spec(a, b) (direct 1-triage structural induction)
+let rec pf_add_fast := {a, b} => if (is_zero(a)) { t } else { pf_add_fast(nat_pred(a), b) }
 
 // Proof: dbl_fast(n) == add_spec(n, n)
 let rec pf_dbl := {n} =>
@@ -55,6 +53,6 @@ let c_rev := certify(check_depth, check_fuel, "fix", [c_app], [
 let pf_rev_eq := {xs} => seq(pf_rev_acc(xs, []), seq(pf_app_nil(reverse(xs)), t))
 
 // ---- Verified in-place rebinds (checked by incumbent guards at load time)
-add_nat := { new := add_tail; proof := pf_add_tail; certs := [c_add] }
+add_nat := { new := add_fast; proof := pf_add_fast }
 dbl := { new := dbl_fast; proof := pf_dbl; certs := [c_add] }
 rev := { new := rev_fast; proof := pf_rev_eq; certs := [c_app, c_rev] }

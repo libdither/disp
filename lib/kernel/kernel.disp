@@ -199,19 +199,30 @@ rec rename_d :: {u : Tree, v : Tree} -> Tree :=>
 	else { pair(rename_d(u, v.fst), rename_d(u, v.snd)) }
 
 // ================================================================ LAYERED EVALUATOR CORE
-// Minimal 7-field `Kit` (`run`, `quantify` differ between checking & refuting; the other 5
-// keep `tok_sig` private to the base evaluators so first-class types contain ZERO tokens).
+// Minimal `Kit` (`run`, `quantify` differ between checking & refuting; the rest keep `tok_sig`
+// and base dispatch fallbacks private to the base evaluators so first-class types contain ZERO tokens).
 record mk_kit :: {
 	run : Tree,        // (E, fuel, next, m, k) -> Res  (accepts `m_start`, `machine_run`, `m_ret`)
-	quantify : Tree,   // (E, fuel, next, A, rec_T, f, body, k) -> Res
-	fresh : Tree,      // (label) -> unk
+	res : Tree,        // (E, v) -> Tree (head-resolve tokens only)
+	base_s : Tree,     // fallback for `on_s`
+	base_k : Tree,     // fallback for `on_k`
+	base_tok : Tree,   // fallback for `on_tok`
+	base_tri : Tree,   // fallback for `on_tri`
+	base_tf : Tree,    // fallback for `on_tf`
 	deep_res : Tree,   // (E, v) -> Tree
 	head_tok : Tree,   // (v) -> "U" (unk) | "T" (other handle) | "N" (plain tree)
+	fresh : Tree,      // (label) -> unk
+	quantify : Tree,   // (E, fuel, next, A, rec_T, f, body, k) -> Res
 	has_tok : Tree,    // (v) -> Bool
 	cases : Tree       // (pred, u) -> Maybe(List(pair(shape, List(pair(sub_pred, sub_u)))))
 } -> Kit
 
-record ev :: {step : Tree, lazy : Tree, resolve : Tree, eq : Tree, has_tag : Tree, kit : Kit, meta : Tree} -> Eval
+// Flat `Eval` with hot fields (`on_s`, `on_k`, `resolve`, `meta`, `kit`) at depth 1-5
+record ev :: {
+	on_s : Tree, on_k : Tree, resolve : Tree, meta : Tree, kit : Kit,
+	on_tri : Tree, on_tok : Tree, on_tf : Tree,
+	lazy : Tree, eq : Tree, has_tag : Tree
+} -> Eval
 
 m_ret :: {v : Tree, stack : List(Tree)} -> Tree :=> pair("Deliver", pair(v, stack))
 
@@ -222,19 +233,43 @@ try_call :: {f : Tree, x : Tree, limit : Nat} -> Tree :=> {
 }
 refute_pred_fuel := 500
 
-ev_depth :: Eval -> Nat := {E} => E.meta.fst
-ev_sure :: Eval -> Bool := {E} => E.meta.snd.fst
-ev_cap :: Eval -> Tree := {E} => E.meta.snd.snd.fst
+// `meta = pair(cap, pair(depth, pair(sure, pair(unbox, pair(rec_ctx, arg_tys)))))`; `cap = t` means uncapped
+ev_cap :: Eval -> Tree := {E} => E.meta.fst
+ev_depth :: Eval -> Nat := {E} => E.meta.snd.fst
+ev_sure :: Eval -> Bool := {E} => E.meta.snd.snd.fst
 ev_unbox :: Eval -> Tree := {E} => E.meta.snd.snd.snd.fst
 ev_rec_ctx :: Eval -> Tree := {E} => E.meta.snd.snd.snd.snd.fst
 ev_arg_tys :: Eval -> Tree := {E} => E.meta.snd.snd.snd.snd.snd
-ev_set_meta :: {E : Eval, m : Tree} -> Eval :=> ev(E.step, E.lazy, E.resolve, E.eq, E.has_tag, E.kit, m)
-ev_deeper :: {E : Eval} -> Eval :=> ev_set_meta(E, pair(nat_pred(ev_depth(E)), E.meta.snd))
-ev_set_sure :: {E : Eval, s : Bool} -> Eval :=> ev_set_meta(E, pair(ev_depth(E), pair(s, E.meta.snd.snd)))
-ev_set_cap :: {E : Eval, c : Tree} -> Eval :=> ev_set_meta(E, pair(ev_depth(E), pair(ev_sure(E), pair(c, E.meta.snd.snd.snd))))
-ev_set_unbox :: {E : Eval, u : Tree} -> Eval :=> ev_set_meta(E, pair(ev_depth(E), pair(ev_sure(E), pair(ev_cap(E), pair(u, E.meta.snd.snd.snd.snd)))))
-ev_set_rec :: {E : Eval, rc : Tree} -> Eval :=> ev_set_meta(E, pair(ev_depth(E), pair(ev_sure(E), pair(ev_cap(E), pair(ev_unbox(E), pair(rc, ev_arg_tys(E)))))))
-ev_add_arg_ty :: {E : Eval, u : Tree, A : Tree} -> Eval :=> ev_set_meta(E, pair(ev_depth(E), pair(ev_sure(E), pair(ev_cap(E), pair(ev_unbox(E), pair(ev_rec_ctx(E), cons(pair(u, A), ev_arg_tys(E))))))))
+ev_set_meta :: {E : Eval, m : Tree} -> Eval :=>
+	ev(E.on_s, E.on_k, E.resolve, m, E.kit, E.on_tri, E.on_tok, E.on_tf, E.lazy, E.eq, E.has_tag)
+ev_set_cap :: {E : Eval, c : Tree} -> Eval :=> ev_set_meta(E, pair(c, E.meta.snd))
+ev_deeper :: {E : Eval} -> Eval :=> ev_set_meta(E, pair(ev_cap(E), pair(nat_pred(ev_depth(E)), E.meta.snd.snd)))
+ev_set_sure :: {E : Eval, s : Bool} -> Eval :=> ev_set_meta(E, pair(ev_cap(E), pair(ev_depth(E), pair(s, E.meta.snd.snd.snd))))
+ev_set_unbox :: {E : Eval, u : Tree} -> Eval :=> ev_set_meta(E, pair(ev_cap(E), pair(ev_depth(E), pair(ev_sure(E), pair(u, E.meta.snd.snd.snd.snd)))))
+ev_set_rec :: {E : Eval, rc : Tree} -> Eval :=> ev_set_meta(E, pair(ev_cap(E), pair(ev_depth(E), pair(ev_sure(E), pair(ev_unbox(E), pair(rc, ev_arg_tys(E)))))))
+ev_add_arg_ty :: {E : Eval, u : Tree, A : Tree} -> Eval :=> ev_set_meta(E, pair(ev_cap(E), pair(ev_depth(E), pair(ev_sure(E), pair(ev_unbox(E), pair(ev_rec_ctx(E), cons(pair(u, A), ev_arg_tys(E))))))))
+
+/// Head-resolve only when `E.resolve` is non-empty and `v` is a token
+res_tok :: {E : Eval, v : Tree} -> Tree :=>
+	if (is_leaf(E.resolve)) { v }
+	else if ((is_fork(v)) && (v.fst == tok_sig)) { E.resolve(v) }
+	else { v }
+
+/// Install a function-keyed step hook on the exact dispatch channel matching `target`'s head shape
+ev_add_fn :: {target : Tree, wrap : Tree, E : Eval} -> Eval :=>
+	if (is_leaf(target.fst)) {
+		let prev := if (is_leaf(E.on_k)) { E.kit.base_k } else { E.on_k }
+		ev(E.on_s, wrap(prev), E.resolve, E.meta, E.kit, E.on_tri, E.on_tok, E.on_tf, E.lazy, E.eq, E.has_tag)
+	}
+	else if (is_stem(target.fst)) {
+		let prev := if (is_leaf(E.on_s)) { E.kit.base_s } else { E.on_s }
+		ev(wrap(prev), E.on_k, E.resolve, E.meta, E.kit, E.on_tri, E.on_tok, E.on_tf, E.lazy, E.eq, E.has_tag)
+	}
+	else {
+		let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
+		let prev_tf := if (is_leaf(E.on_tf)) { E.kit.base_tf } else { E.on_tf }
+		ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit, wrap(prev_tri), E.on_tok, wrap(prev_tf), E.lazy, E.eq, E.has_tag)
+	}
 
 rec unbox_tree :: {ub : Tree, v : Tree} -> Tree :=> {
 	let r := ub(v)
@@ -253,7 +288,7 @@ rec deliver_m :: {E : Eval, v0 : Tree, stack : List(Tree)} -> Tree :=>
 		else if (fr.fst == "Res") { machine_run(fr.snd, v0, rest) }
 		else if (k_shaped(fr.snd.fst)) { machine_run(v0, fr.snd.fst.snd, rest) }
 		else {
-			let v := E.resolve(v0)
+			let v := res_tok(E, v0)
 			if (not(is_fork(v))) { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
 			else if (is_leaf(v.fst)) { deliver_m(E, v.snd, rest) }
 			else if (v.fst == tok_sig) { pair("Lazy", pair(v, stack)) }
@@ -262,16 +297,18 @@ rec deliver_m :: {E : Eval, v0 : Tree, stack : List(Tree)} -> Tree :=>
 	}
 rec settle_m :: {E : Eval, m : Tree} -> Tree :=>
 	if (m.fst == "Run") {
-		let f := m.m_fn
+		let f0 := m.m_fn
+		let f := res_tok(E, f0)
 		if (is_leaf(f)) { settle_m(E, deliver_m(E, t(m.m_arg), m.m_stack)) }
 		else if (is_stem(f)) {
 			if (stem_child(f) == tok_sig) { pair("Forge", t) }
 			else { settle_m(E, deliver_m(E, t(stem_child(f), m.m_arg), m.m_stack)) }
 		}
-		else { m }
+		else if (f == f0) { m }
+		else { machine_run(f, m.m_arg, m.m_stack) }
 	} else { m }
 
-/// Core loop: free builds, forge guard, step cap if active, delegate to `E.step` / `E.lazy`
+/// Core loop: free builds, forge guard, step cap if active, dispatch by head shape with zero per-step closures
 rec run_ev :: {E : Eval, fuel : Nat, next : Nat, m0 : Tree, k : Tree} -> Tree :=> {
 	let m := if (m0.fst == "Deliver") { settle_m(E, deliver_m(E, m0.snd.fst, m0.snd.snd)) } else { settle_m(E, m0) }
 	if (m_finished(m)) { k(E, fuel, next, m_result(m)) }
@@ -281,33 +318,68 @@ rec run_ev :: {E : Eval, fuel : Nat, next : Nat, m0 : Tree, k : Tree} -> Tree :=
 		let v := m.snd.fst
 		let stack := m.snd.snd
 		let fr := stack.head
-		E.lazy(E, nat_pred(fuel), next, v, fr.snd.fst, fr.snd.snd, stack.tail, k)
+		if (is_leaf(E.lazy)) { run_ev(E, nat_pred(fuel), next, machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), stack.tail)), k) }
+		else { E.lazy(E, nat_pred(fuel), next, v, fr.snd.fst, fr.snd.snd, stack.tail, k) }
 	}
 	else {
 		let cap := ev_cap(E)
-		if ((is_fork(cap)) && (cap.fst == "Cap")) {
-			if (is_zero(cap.snd)) { pair("Fault", "slow") }
+		if ((not(is_leaf(cap))) && (is_zero(cap.snd))) { pair("Fault", "slow") }
+		else {
+			let E1 := if (is_leaf(cap)) { E } else { ev_set_cap(E, pair("Cap", nat_pred(cap.snd))) }
+			let f := m.m_fn
+			let x0 := m.m_arg
+			let stack := m.m_stack
+			let fl1 := nat_pred(fuel)
+			if (is_leaf(f.fst)) {
+				if (is_leaf(E1.on_k)) { run_ev(E1, fl1, next, deliver_m(E1, f.snd, stack), k) }
+				else { E1.on_k(E1, fl1, next, f, res_tok(E1, x0), stack, k) }
+			}
+			else if (is_stem(f.fst)) {
+				let x := res_tok(E1, x0)
+				if (is_leaf(E1.on_s)) { E1.kit.base_s(E1, fl1, next, f, x, stack, k) }
+				else { E1.on_s(E1, fl1, next, f, x, stack, k) }
+			}
+			else if (f.fst == tok_sig) {
+				let x := res_tok(E1, x0)
+				if (is_leaf(E1.on_tok)) { E1.kit.base_tok(E1, fl1, next, f, x, stack, k) }
+				else { E1.on_tok(E1, fl1, next, f, x, stack, k) }
+			}
+			else if (f == shape_identity) {
+				let x := res_tok(E1, x0)
+				if (is_leaf(E1.on_tf)) { run_ev(E1, fl1, next, deliver_m(E1, x, stack), k) }
+				else { E1.on_tf(E1, fl1, next, f, x, stack, k) }
+			}
 			else {
-				let E1 := ev_set_cap(E, pair("Cap", nat_pred(cap.snd)))
-				E1.step(E1, nat_pred(fuel), next, m.m_fn, m.m_arg, m.m_stack, k)
+				let x := res_tok(E1, x0)
+				if ((is_fork(x)) && (x.fst == tok_sig)) {
+					if (is_leaf(E1.on_tri)) { E1.kit.base_tri(E1, fl1, next, f, x, stack, k) }
+					else { E1.on_tri(E1, fl1, next, f, x, stack, k) }
+				}
+				else if (is_leaf(E1.on_tf)) {
+					if (is_leaf(x)) { run_ev(E1, fl1, next, deliver_m(E1, f.fst.fst, stack), k) }
+					else if (is_stem(x)) { run_ev(E1, fl1, next, machine_run(f.fst.snd, stem_child(x), stack), k) }
+					else { run_ev(E1, fl1, next, machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)), k) }
+				}
+				else { E1.on_tf(E1, fl1, next, f, x, stack, k) }
 			}
 		}
-		else { E.step(E, nat_pred(fuel), next, m.m_fn, m.m_arg, m.m_stack, k) }
 	}
 }
 deliver_ev :: {E : Eval, fuel : Nat, next : Nat, v : Tree, stack : List(Tree), k : Tree} -> Tree :=>
 	run_ev(E, fuel, next, deliver_m(E, v, stack), k)
 
-rec deep_resolve :: {E : Eval, v0 : Tree} -> Tree :=> {
-	let v := E.resolve(v0)
-	if (is_leaf(v)) { v }
-	else if (is_stem(v)) { t(deep_resolve(E, stem_child(v))) }
-	else if (v.fst == tok_sig) {
-		if (tok_kind(v) == "C") { tok_call(deep_resolve(E, tok_val(v).fst), deep_resolve(E, tok_val(v).snd)) }
+rec deep_resolve_go :: {E : Eval, v0 : Tree} -> Tree :=>
+	if (is_leaf(v0)) { v0 }
+	else if (is_stem(v0)) { t(deep_resolve_go(E, stem_child(v0))) }
+	else if (v0.fst == tok_sig) {
+		let v := E.resolve(v0)
+		if (not(v == v0)) { deep_resolve_go(E, v) }
+		else if (tok_kind(v) == "C") { tok_call(deep_resolve_go(E, tok_val(v).fst), deep_resolve_go(E, tok_val(v).snd)) }
 		else { v }
 	}
-	else { pair(deep_resolve(E, v.fst), deep_resolve(E, v.snd)) }
-}
+	else { pair(deep_resolve_go(E, v0.fst), deep_resolve_go(E, v0.snd)) }
+deep_resolve :: {E : Eval, v0 : Tree} -> Tree :=>
+	if (is_leaf(E.resolve)) { v0 } else { deep_resolve_go(E, v0) }
 head_tok_of :: Tree -> Tree := {v} =>
 	if (is_tok(v)) {
 		if (tok_kind(v) == "U") { "U" }
@@ -327,51 +399,55 @@ rec occurs :: {u : Tree, v : Tree} -> Bool :=>
 	else if (is_stem(v)) { occurs(u, stem_child(v)) }
 	else { (occurs(u, v.fst)) || (occurs(u, v.snd)) }
 
-prune_ev :: {E : Eval} -> Eval :=>
-	ev({self, fl, _nx, _f, _x, _st, _kk} => if (ev_sure(self)) { "Family may not finish" } else { done(fl) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+prune_ev :: {E : Eval} -> Eval :=> {
+	let p := {self, fl, _nx, _f, _x, _st, _kk} => if (ev_sure(self)) { "Family may not finish" } else { done(fl) }
+	ev(p, p, E.resolve, E.meta, E.kit, p, p, p, E.lazy, E.eq, E.has_tag)
+}
 
 // ================================================================ EVALUATOR MAPS (Eval -> Eval)
 // Every map below is 100% token-free (never touches `tok_sig` directly; uses only `E.kit`).
 
 with_subst :: {u : Tree, val : Tree, E : Eval} -> Eval :=> {
 	let prev_res := E.resolve
-	ev(E.step, E.lazy, {v} => { let r := prev_res(v); if (r == u) { prev_res(val) } else { r } }, E.eq, E.has_tag, E.kit, E.meta)
+	let next_res :=
+		if (is_leaf(prev_res)) { {v} => if (v == u) { val } else { v } }
+		else { {v} => { let r := prev_res(v); if (r == u) { prev_res(val) } else { r } } }
+	ev(E.on_s, E.on_k, next_res, E.meta, E.kit, E.on_tri, E.on_tok, E.on_tf, E.lazy, E.eq, E.has_tag)
 }
 
-with_fact :: {cf : Tree, cx : Tree, ans : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	ev({self, fuel, next, f, x, stack, k} =>
-		if ((f == cf) && (self.resolve(x) == self.resolve(cx))) { self.kit.run(self, fuel, next, m_ret(ans, stack), k) }
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
-}
+with_fact :: {cf : Tree, cx : Tree, ans : Tree, E : Eval} -> Eval :=>
+	ev_add_fn(cf, {prev} => {self, fuel, next, f, x, stack, k} =>
+		if ((f == cf) && (x == self.kit.res(self, cx))) { self.kit.run(self, fuel, next, m_ret(ans, stack), k) }
+		else { prev(self, fuel, next, f, x, stack, k) }, E)
 
 /// Equality assumption map: `a == b` (symmetric + acyclic downward transitivity)
 with_eq :: {a : Tree, b : Tree, E : Eval} -> Eval :=> {
 	let prev_eq := E.eq
-	let E1 := ev(E.step, E.lazy, E.resolve, {self, x0, y0} => {
-		let rx := self.kit.deep_res(self, x0)
-		let ry := self.kit.deep_res(self, y0)
-		let ra := self.kit.deep_res(self, a)
-		let rb := self.kit.deep_res(self, b)
-		if (((rx == ra) && (ry == rb)) || ((rx == rb) && (ry == ra))) { "True" }
-		else if ((rx == ra) && (prev_eq(E, rb, ry) == "True")) { "True" }
-		else if ((rx == rb) && (prev_eq(E, ra, ry) == "True")) { "True" }
-		else if ((ry == ra) && (prev_eq(E, rx, rb) == "True")) { "True" }
-		else if ((ry == rb) && (prev_eq(E, rx, ra) == "True")) { "True" }
-		else { prev_eq(self, x0, y0) }
-	}, E.has_tag, E.kit, E.meta)
-	let ra := E.resolve(a)
-	let rb := E.resolve(b)
+	let E1 := ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit, E.on_tri, E.on_tok, E.on_tf, E.lazy, {self, x0, y0} =>
+		if (x0 == y0) { "True" }
+		else {
+			let rx := self.kit.deep_res(self, x0)
+			let ry := self.kit.deep_res(self, y0)
+			if (rx == ry) { "True" }
+			else {
+				let ra := self.kit.deep_res(self, a)
+				let rb := self.kit.deep_res(self, b)
+				if (((rx == ra) && (ry == rb)) || ((rx == rb) && (ry == ra))) { "True" }
+				else if ((rx == ra) && (prev_eq(E, rb, ry) == "True")) { "True" }
+				else if ((rx == rb) && (prev_eq(E, ra, ry) == "True")) { "True" }
+				else if ((ry == ra) && (prev_eq(E, rx, rb) == "True")) { "True" }
+				else if ((ry == rb) && (prev_eq(E, rx, ra) == "True")) { "True" }
+				else { prev_eq(self, x0, y0) }
+			}
+		}, E.has_tag)
+	let ra := E.kit.res(E, a)
+	let rb := E.kit.res(E, b)
 	if ((E.kit.head_tok(ra) == "U") && (not(occurs(ra, E1.kit.deep_res(E1, rb))))) { with_subst(ra, rb, E1) }
 	else if ((E.kit.head_tok(rb) == "U") && (not(occurs(rb, E1.kit.deep_res(E1, ra))))) { with_subst(rb, ra, E1) }
 	else { E1 }
 }
 
 rec with_data :: {pred : Tree, u : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	let prev_lazy := E.lazy
 	let split_it := {self, fuel, next, cont} => {
 		let cs := self.kit.cases(pred, u)
 		if (not(is_found(cs))) { "Cannot derive cases" }
@@ -382,134 +458,147 @@ rec with_data :: {pred : Tree, u : Tree, E : Eval} -> Eval :=> {
 				let E_d := if (is_rec_data) { ev_deeper(self) } else { self }
 				each(cs.snd, fuel, {c, fl} => {
 					let shape := c.fst
-					let E1 := reduce({fp, acc} => with_data(fp.fst, fp.snd, acc), with_subst(u, shape, E_d), c.snd)
+					let E1 := reduce({fp, acc} => ev_add_arg_ty(with_data(fp.fst, fp.snd, acc), fp.snd, pair(
+						{E0, fl0, nx0, v0, k0} => E0.kit.run(E0, fl0, nx0, m_start(fp.fst, v0), {E2, fl2, nx2, ans} =>
+							if (ans == true) { k0(E2, fl2, nx2, v0) } else { pair("Fault", E2.kit.deep_res(E2, v0)) }),
+						{u0, _b0, E0} => with_data(fp.fst, u0, E0))), with_subst(u, shape, E_d), c.snd)
 					cont(E1, fl, next, shape)
 				})
 			}
 		}
 	}
-	ev(
-		{self, fuel, next, f, x, stack, k} => {
-			let rx := self.resolve(x)
-			if ((f == pred) && (rx == u)) { self.kit.run(self, fuel, next, m_ret(true, stack), k) }
-			else if ((is_triage(f)) && ((not(f == shape_identity)) && ((self.kit.head_tok(f) == "N") && (rx == u)))) {
-				split_it(self, fuel, next, {E1, fl, nx, sh} => E1.kit.run(E1, fl, nx, machine_run(f, sh, stack), k))
+	let lz0 := E.lazy
+	let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
+	let E_tri := ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit,
+		{self, fuel, next, f, x, stack, k} =>
+			if (x == u) {
+				if (f == pred) { self.kit.run(self, fuel, next, m_ret(true, stack), k) }
+				else { split_it(self, fuel, next, {E1, fl, nx, sh} => E1.kit.run(E1, fl, nx, machine_run(f, sh, stack), k)) }
 			}
-			else { prev_step(self, fuel, next, f, x, stack, k) }
-		},
+			else { prev_tri(self, fuel, next, f, x, stack, k) },
+		E.on_tok, E.on_tf,
 		{self, fuel, next, v, b, x, rest, k} =>
-			if (self.resolve(v) == u) {
+			if (self.kit.res(self, v) == u) {
 				split_it(self, fuel, next, {E1, fl, nx, sh} => E1.kit.run(E1, fl, nx, m_ret(sh, cons(fr_s(b, x), rest)), k))
 			}
-			else { prev_lazy(self, fuel, next, v, b, x, rest, k) },
-		E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+			else if (is_leaf(lz0)) { self.kit.run(self, fuel, next, machine_run(b, x, cons(fr_res(v), rest)), k) }
+			else { lz0(self, fuel, next, v, b, x, rest, k) },
+		E.eq, E.has_tag)
+	if (is_triage(pred)) { E_tri }
+	else {
+		ev_add_fn(pred, {prev} => {self, fuel, next, f, x, stack, k} =>
+			if ((f == pred) && (x == u)) { self.kit.run(self, fuel, next, m_ret(true, stack), k) }
+			else { prev(self, fuel, next, f, x, stack, k) }, E_tri)
+	}
 }
 
 with_abstract :: {tag : Tree, u : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	let prev_tag := E.has_tag
+	let prev_tok := if (is_leaf(E.on_tok)) { E.kit.base_tok } else { E.on_tok }
+	let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
 	let prev_eq := E.eq
-	ev(
-		{self, fuel, next, f, x, stack, k} => {
-			let rf := self.resolve(f)
-			let rx := self.resolve(x)
-			if (rf == u) { pair("Fault", "Applies abstract value") }
-			else if ((is_triage(rf)) && ((not(rf == shape_identity)) && ((self.kit.head_tok(rf) == "N") && (rx == u)))) {
-				pair("Fault", "Inspects abstract value")
+	let prev_tag := E.has_tag
+	ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit,
+		{self, fuel, next, f, x, stack, k} =>
+			if (x == u) { pair("Fault", "Inspects abstract value") }
+			else { prev_tri(self, fuel, next, f, x, stack, k) },
+		{self, fuel, next, f, x, stack, k} =>
+			if (f == u) { pair("Fault", "Applies abstract value") }
+			else { prev_tok(self, fuel, next, f, x, stack, k) },
+		E.on_tf, E.lazy,
+		{self, a, b} =>
+			if (is_leaf(self.resolve)) {
+				if ((a == u) || (b == u)) { pair("Err", "Compares abstract value") } else { prev_eq(self, a, b) }
 			}
-			else { prev_step(self, fuel, next, f, x, stack, k) }
-		},
-		E.lazy, E.resolve,
-		{self, a, b} => if ((self.resolve(a) == u) || (self.resolve(b) == u)) { pair("Err", "Compares abstract value") } else { prev_eq(self, a, b) },
+			else if ((self.kit.res(self, a) == u) || (self.kit.res(self, b) == u)) { pair("Err", "Compares abstract value") }
+			else { prev_eq(self, a, b) },
 		{self, t0, v} =>
-			if ((self.resolve(v) == u) && (self.eq(self, t0, tag) == "True")) { true }
-			else { prev_tag(self, t0, v) },
-		E.kit, E.meta)
+			if ((self.kit.res(self, v) == u) && (self.eq(self, t0, tag) == "True")) { true }
+			else { prev_tag(self, t0, v) })
 }
 
 /// Abstract type parameter layer for `forall_k`: blocks inspecting/comparing `X` without false refutations
 with_abs_type :: {u : Tree, real : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
+	let prev_tok := if (is_leaf(E.on_tok)) { E.kit.base_tok } else { E.on_tok }
+	let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
 	let prev_eq := E.eq
 	let prev_ub := ev_unbox(E)
 	let E1 := ev_set_unbox(E, {v} => if (v == u) { real } else { prev_ub(v) })
-	ev(
-		{self, fuel, next, f, x, stack, k} => {
-			let rf := self.resolve(f)
-			let rx := self.resolve(x)
-			if (rf == u) { "Applies abstract type" }
-			else if ((is_triage(rf)) && ((not(rf == shape_identity)) && ((self.kit.head_tok(rf) == "N") && (rx == u)))) {
-				"Inspects abstract type"
+	ev(E1.on_s, E1.on_k, E1.resolve, E1.meta, E1.kit,
+		{self, fuel, next, f, x, stack, k} =>
+			if (x == u) { "Inspects abstract type" }
+			else { prev_tri(self, fuel, next, f, x, stack, k) },
+		{self, fuel, next, f, x, stack, k} =>
+			if (f == u) { "Applies abstract type" }
+			else { prev_tok(self, fuel, next, f, x, stack, k) },
+		E1.on_tf, E1.lazy,
+		{self, a, b} =>
+			if (is_leaf(self.resolve)) {
+				if ((a == u) || (b == u)) { pair("Refuse", "Compares abstract type") } else { prev_eq(self, a, b) }
 			}
-			else { prev_step(self, fuel, next, f, x, stack, k) }
-		},
-		E1.lazy, E1.resolve,
-		{self, a, b} => if ((self.resolve(a) == u) || (self.resolve(b) == u)) { pair("Refuse", "Compares abstract type") } else { prev_eq(self, a, b) },
-		E1.has_tag, E1.kit, E1.meta)
+			else if ((self.kit.res(self, a) == u) || (self.kit.res(self, b) == u)) { pair("Refuse", "Compares abstract type") }
+			else { prev_eq(self, a, b) },
+		E1.has_tag)
 }
 
 /// Custom approved eliminator layer: verifies `elim_fn : elim_ty` before approving `elim_fn(u)`
-with_elim :: {elim_fn : Tree, elim_ty : Tree, R : Tree, u : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	ev({self, fuel, next, f, x, stack, k} =>
-		if ((self.resolve(f) == elim_fn) && (self.resolve(x) == u)) {
-			and_then(elim_ty.fst(ev_set_rec(ev_set_cap(self, "None"), "None"), fuel, next, elim_fn, {_E0, fl0, _nx0, _ok} => done(fl0)), {fl1} => {
+with_elim :: {elim_fn : Tree, elim_ty : Tree, R : Tree, u : Tree, E : Eval} -> Eval :=>
+	ev_add_fn(elim_fn, {prev} => {self, fuel, next, f, x, stack, k} =>
+		if ((f == elim_fn) && (x == u)) {
+			and_then(elim_ty.fst(ev_set_rec(ev_set_cap(self, t), "None"), fuel, next, elim_fn, {_E0, fl0, _nx0, _ok} => done(fl0)), {fl1} => {
 				let r := self.kit.fresh(pair("elim", pair(elim_fn, u)))
 				let E1 := R.snd(r, "None", self)
 				E1.kit.run(E1, fl1, next, m_ret(r, stack), k)
 			})
 		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
-}
+		else { prev(self, fuel, next, f, x, stack, k) }, E)
 
 with_sigma_sym :: {A : Tree, fam : Tree, p : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
+	let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
 	let prev_tag := E.has_tag
-	ev({self, fuel, next, f, x, stack, k} =>
-		if ((is_triage(f)) && ((not(f == shape_identity)) && ((self.kit.head_tok(f) == "N") && (self.resolve(x) == p)))) {
-			let a := self.kit.fresh(pair("fst", next))
-			let b := self.kit.fresh(pair("snd", next))
-			let E1 := ev_add_arg_ty(A.snd(a, "None", with_subst(p, pair(a, b), self)), a, A)
-			E1.kit.run(ev_set_sure(E1, true), fuel, succ(next), m_start(fam, a), {E2, fl2, nx2, B} => {
-				let E3 := ev_add_arg_ty(B.snd(b, "None", ev_set_sure(E2, ev_sure(E1))), b, B)
-				E3.kit.run(E3, fl2, nx2, machine_run(f, pair(a, b), stack), k)
-			})
-		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq,
-		{self, t0, v} => if ((self.resolve(v) == p) && (t0 == pair("Sigma", pair(A, fam)))) { true } else { prev_tag(self, t0, v) },
-		E.kit, E.meta)
+	ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit,
+		{self, fuel, next, f, x, stack, k} =>
+			if (x == p) {
+				let a := self.kit.fresh(pair("fst", next))
+				let b := self.kit.fresh(pair("snd", next))
+				let E1 := ev_add_arg_ty(A.snd(a, "None", with_subst(p, pair(a, b), self)), a, A)
+				E1.kit.run(ev_set_sure(E1, true), fuel, succ(next), m_start(fam, a), {E2, fl2, nx2, B} => {
+					let E3 := ev_add_arg_ty(B.snd(b, "None", ev_set_sure(E2, ev_sure(E1))), b, B)
+					E3.kit.run(E3, fl2, nx2, machine_run(f, pair(a, b), stack), k)
+				})
+			}
+			else { prev_tri(self, fuel, next, f, x, stack, k) },
+		E.on_tok, E.on_tf, E.lazy, E.eq,
+		{self, t0, v} => if ((self.kit.res(self, v) == p) && (t0 == pair("Sigma", pair(A, fam)))) { true } else { prev_tag(self, t0, v) })
 }
 
 with_list_sym :: {A : Tree, L_thunk : Tree, xs : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
+	let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
 	let prev_tag := E.has_tag
-	ev({self, fuel, next, f, x, stack, k} =>
-		if ((is_triage(f)) && ((not(f == shape_identity)) && ((self.kit.head_tok(f) == "N") && (self.resolve(x) == xs)))) {
-			if (is_zero(ev_depth(self))) { "Out of depth" }
-			else {
-				let E_d := ev_deeper(self)
-				let E_nil := with_subst(xs, t, E_d)
-				and_then(E_nil.kit.run(E_nil, fuel, next, machine_run(f, t, stack), k), {f2} => {
-					let hd := self.kit.fresh(pair("hd", next))
-					let tl := self.kit.fresh(pair("tl", next))
-					let L_tl := L_thunk(tl)
-					let E_cons := ev_add_arg_ty(ev_add_arg_ty(L_tl.snd(tl, "None", A.snd(hd, "None", with_subst(xs, pair(hd, tl), E_d))), hd, A), tl, L_tl)
-					E_cons.kit.run(E_cons, f2, succ(next), machine_run(f, pair(hd, tl), stack), k)
-				})
+	ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit,
+		{self, fuel, next, f, x, stack, k} =>
+			if (x == xs) {
+				if (is_zero(ev_depth(self))) { "Out of depth" }
+				else {
+					let E_d := ev_deeper(self)
+					let E_nil := with_subst(xs, t, E_d)
+					and_then(E_nil.kit.run(E_nil, fuel, next, machine_run(f, t, stack), k), {f2} => {
+						let hd := self.kit.fresh(pair("hd", next))
+						let tl := self.kit.fresh(pair("tl", next))
+						let L_tl := L_thunk(tl)
+						let E_cons := ev_add_arg_ty(ev_add_arg_ty(L_tl.snd(tl, "None", A.snd(hd, "None", with_subst(xs, pair(hd, tl), E_d))), hd, A), tl, L_tl)
+						E_cons.kit.run(E_cons, f2, succ(next), machine_run(f, pair(hd, tl), stack), k)
+					})
+				}
 			}
-		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq,
-		{self, t0, v} => if ((self.resolve(v) == xs) && (t0 == pair("List", A))) { true } else { prev_tag(self, t0, v) },
-		E.kit, E.meta)
+			else { prev_tri(self, fuel, next, f, x, stack, k) },
+		E.on_tok, E.on_tf, E.lazy, E.eq,
+		{self, t0, v} => if ((self.kit.res(self, v) == xs) && (t0 == pair("List", A))) { true } else { prev_tag(self, t0, v) })
 }
 
 /// Direct 3-way tree split (`leaf | stem(c) | fork(l, r)`): avoids `derive_cases` for `TreeT`
 rec with_tree_sym :: {u : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	let prev_lazy := E.lazy
+	let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
+	let lz0 := E.lazy
 	let split_tree := {self, fuel, next, cont} =>
 		if (is_zero(ev_depth(self))) { "Out of depth" }
 		else {
@@ -526,39 +615,51 @@ rec with_tree_sym :: {u : Tree, E : Eval} -> Eval :=> {
 				})
 			})
 		}
-	ev(
+	ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit,
 		{self, fuel, next, f, x, stack, k} =>
-			if ((is_triage(f)) && ((not(f == shape_identity)) && ((self.kit.head_tok(f) == "N") && (self.resolve(x) == u)))) {
+			if (x == u) {
 				split_tree(self, fuel, next, {E1, fl, nx, sh} => E1.kit.run(E1, fl, nx, machine_run(f, sh, stack), k))
 			}
-			else { prev_step(self, fuel, next, f, x, stack, k) },
+			else { prev_tri(self, fuel, next, f, x, stack, k) },
+		E.on_tok, E.on_tf,
 		{self, fuel, next, v, b, x, rest, k} =>
-			if (self.resolve(v) == u) {
+			if (self.kit.res(self, v) == u) {
 				split_tree(self, fuel, next, {E1, fl, nx, sh} => E1.kit.run(E1, fl, nx, m_ret(sh, cons(fr_s(b, x), rest)), k))
 			}
-			else { prev_lazy(self, fuel, next, v, b, x, rest, k) },
-		E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+			else if (is_leaf(lz0)) { self.kit.run(self, fuel, next, machine_run(b, x, cons(fr_res(v), rest)), k) }
+			else { lz0(self, fuel, next, v, b, x, rest, k) },
+		E.eq, E.has_tag)
 }
 
 with_quot_sym :: {A : Tree, norm : Tree, q : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
+	let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
 	let prev_eq := E.eq
-	ev({self, fuel, next, f, x, stack, k} => {
-		let rf := self.resolve(f)
-		let rx := self.resolve(x)
-		if ((rf == norm) && (rx == q)) {
-			let r := self.kit.fresh(pair("qnorm", pair(norm, q)))
-			let E1 := A.snd(r, "None", self)
-			E1.kit.run(E1, fuel, next, m_ret(r, stack), k)
-		}
-		else if ((is_triage(rf)) && ((not(rf == shape_identity)) && ((self.kit.head_tok(rf) == "N") && (rx == q)))) {
-			pair("Fault", "Breaks quotient abstraction")
-		}
-		else { prev_step(self, fuel, next, f, x, stack, k) }
-	},
-	E.lazy, E.resolve,
-	{self, a, b} => if ((self.resolve(a) == q) || (self.resolve(b) == q)) { pair("Err", "Compares quotient directly") } else { prev_eq(self, a, b) },
-	E.has_tag, E.kit, E.meta)
+	let norm_hit := {self, fuel, next, stack, k} => {
+		let r := self.kit.fresh(pair("qnorm", pair(norm, q)))
+		let E1 := A.snd(r, "None", self)
+		E1.kit.run(E1, fuel, next, m_ret(r, stack), k)
+	}
+	let E_tri := ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit,
+		{self, fuel, next, f, x, stack, k} =>
+			if (x == q) {
+				if (f == norm) { norm_hit(self, fuel, next, stack, k) }
+				else { pair("Fault", "Breaks quotient abstraction") }
+			}
+			else { prev_tri(self, fuel, next, f, x, stack, k) },
+		E.on_tok, E.on_tf, E.lazy,
+		{self, a, b} =>
+			if (is_leaf(self.resolve)) {
+				if ((a == q) || (b == q)) { pair("Err", "Compares quotient directly") } else { prev_eq(self, a, b) }
+			}
+			else if ((self.kit.res(self, a) == q) || (self.kit.res(self, b) == q)) { pair("Err", "Compares quotient directly") }
+			else { prev_eq(self, a, b) },
+		E.has_tag)
+	if (is_triage(norm)) { E_tri }
+	else {
+		ev_add_fn(norm, {prev} => {self, fuel, next, f, x, stack, k} =>
+			if ((f == norm) && (x == q)) { norm_hit(self, fuel, next, stack, k) }
+			else { prev(self, fuel, next, f, x, stack, k) }, E_tri)
+	}
 }
 
 // ---------------------------------------------------------------- base evaluator (`E_base`)
@@ -578,20 +679,21 @@ strict_subterm :: {needle : Tree, hay : Tree} -> Bool :=>
 
 /// Guards a partially applied recursive call handle until a remaining lexicographic argument strictly decreases
 rec with_lex_guard :: {h : Tree, rest_origs : List(Tree), E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	ev({self, fuel, next, f, x, stack, k} =>
-		if (self.resolve(f) == h) {
-			let rx := deep_resolve(self, x)
-			let ox := deep_resolve(self, rest_origs.head)
-			if (strict_subterm(rx, ox)) { prev_step(self, fuel, next, f, x, stack, k) }
-			else if ((rx == ox) && (not(rest_origs.tail.is_nil))) {
-				prev_step(self, fuel, next, f, x, [], {E2, fl2, nx2, res_h} =>
-					deliver_ev(with_lex_guard(res_h, rest_origs.tail, E2), fl2, nx2, res_h, stack, k))
+	let prev_tok := if (is_leaf(E.on_tok)) { E.kit.base_tok } else { E.on_tok }
+	ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit, E.on_tri,
+		{self, fuel, next, f, x, stack, k} =>
+			if (f == h) {
+				let rx := deep_resolve(self, x)
+				let ox := deep_resolve(self, rest_origs.head)
+				if (strict_subterm(rx, ox)) { prev_tok(self, fuel, next, f, x, stack, k) }
+				else if ((rx == ox) && (not(rest_origs.tail.is_nil))) {
+					prev_tok(self, fuel, next, f, x, [], {E2, fl2, nx2, res_h} =>
+						deliver_ev(with_lex_guard(res_h, rest_origs.tail, E2), fl2, nx2, res_h, stack, k))
+				}
+				else { "Non-decreasing recursive call" }
 			}
-			else { "Non-decreasing recursive call" }
-		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+			else { prev_tok(self, fuel, next, f, x, stack, k) },
+		E.on_tf, E.lazy, E.eq, E.has_tag)
 }
 
 rec lex_lt :: {xs : List(Tree), os : List(Tree)} -> Bool :=>
@@ -602,184 +704,199 @@ rec lex_lt :: {xs : List(Tree), os : List(Tree)} -> Bool :=>
 
 /// Right-to-left lexicographic guard (for functions like `m_advance(m, steps)` / `newton_at(row, n)`)
 rec with_rtl_guard :: {h : Tree, origs : List(Tree), rev_got : List(Tree), rem : Nat, E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	ev({self, fuel, next, f, x, stack, k} =>
-		if (self.resolve(f) == h) {
-			let rx := deep_resolve(self, x)
-			let next_got := cons(rx, rev_got)
-			if (is_zero(nat_pred(rem))) {
-				let res_origs := origs.reverse.map({o} => deep_resolve(self, o))
-				if (lex_lt(next_got, res_origs)) { prev_step(self, fuel, next, f, x, stack, k) }
-				else { "Non-decreasing recursive call" }
+	let prev_tok := if (is_leaf(E.on_tok)) { E.kit.base_tok } else { E.on_tok }
+	ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit, E.on_tri,
+		{self, fuel, next, f, x, stack, k} =>
+			if (f == h) {
+				let rx := deep_resolve(self, x)
+				let next_got := cons(rx, rev_got)
+				if (is_zero(nat_pred(rem))) {
+					let res_origs := origs.reverse.map({o} => deep_resolve(self, o))
+					if (lex_lt(next_got, res_origs)) { prev_tok(self, fuel, next, f, x, stack, k) }
+					else { "Non-decreasing recursive call" }
+				}
+				else {
+					prev_tok(self, fuel, next, f, x, [], {E2, fl2, nx2, res_h} =>
+						deliver_ev(with_rtl_guard(res_h, origs, next_got, nat_pred(rem), E2), fl2, nx2, res_h, stack, k))
+				}
 			}
-			else {
-				prev_step(self, fuel, next, f, x, [], {E2, fl2, nx2, res_h} =>
-					deliver_ev(with_rtl_guard(res_h, origs, next_got, nat_pred(rem), E2), fl2, nx2, res_h, stack, k))
-			}
-		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+			else { prev_tok(self, fuel, next, f, x, stack, k) },
+		E.on_tf, E.lazy, E.eq, E.has_tag)
 }
 
 with_rec :: {subj : Tree, T_thunk : Tree, orig0 : Tree, mode : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
+	let prev_s := if (is_leaf(E.on_s)) { E.kit.base_s } else { E.on_s }
 	let prev_tag := E.has_tag
-	let armed := ev({self, fuel, next, f, x, stack, k} =>
-		if ((not(ev_sure(self))) && (self.resolve(f) == subj)) {
-			let rx := deep_resolve(self, x)
-			let u_r := tok_unk(pair("rec", pair(subj, rx)))
-			let E1 := T_thunk(u_r).snd(u_r, "None", self)
-			if (mode == "Partial") { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
-			else {
-				let ctx := ev_rec_ctx(self)
-				let origs := if ((is_fork(ctx)) && (ctx.fst == subj)) { ctx.snd } else { [orig0] }
-				if (mode == "RTL") {
-					let rem := nat_pred(origs.length)
-					if (is_zero(rem)) { "Non-decreasing recursive call" }
-					else {
-						run_ev(E1, fuel, next, machine_run(u_r, x, []), {E2, fl2, nx2, res_h} =>
-							deliver_ev(with_rtl_guard(res_h, origs, [rx], rem, E2), fl2, nx2, res_h, stack, k))
-					}
-				}
+	let armed := ev(
+		{self, fuel, next, f, x, stack, k} =>
+			if ((f == subj) && (not(ev_sure(self)))) {
+				let rx := deep_resolve(self, x)
+				let u_r := tok_unk(pair("rec", pair(subj, rx)))
+				let E1 := T_thunk(u_r).snd(u_r, "None", self)
+				if (mode == "Partial") { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
 				else {
-					let ox := deep_resolve(self, origs.head)
-					if (strict_subterm(rx, ox)) { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
-					else if ((rx == ox) && (not(origs.tail.is_nil))) {
-						run_ev(E1, fuel, next, machine_run(u_r, x, []), {E2, fl2, nx2, res_h} =>
-							deliver_ev(with_lex_guard(res_h, origs.tail, E2), fl2, nx2, res_h, stack, k))
+					let ctx := ev_rec_ctx(self)
+					let origs := if ((is_fork(ctx)) && (ctx.fst == subj)) { ctx.snd } else { [orig0] }
+					if (mode == "RTL") {
+						let rem := nat_pred(origs.length)
+						if (is_zero(rem)) { "Non-decreasing recursive call" }
+						else {
+							run_ev(E1, fuel, next, machine_run(u_r, x, []), {E2, fl2, nx2, res_h} =>
+								deliver_ev(with_rtl_guard(res_h, origs, [rx], rem, E2), fl2, nx2, res_h, stack, k))
+						}
 					}
-					else { "Non-decreasing recursive call" }
+					else {
+						let ox := deep_resolve(self, origs.head)
+						if (strict_subterm(rx, ox)) { run_ev(E1, fuel, next, machine_run(u_r, x, stack), k) }
+						else if ((rx == ox) && (not(origs.tail.is_nil))) {
+							run_ev(E1, fuel, next, machine_run(u_r, x, []), {E2, fl2, nx2, res_h} =>
+								deliver_ev(with_lex_guard(res_h, origs.tail, E2), fl2, nx2, res_h, stack, k))
+						}
+						else { "Non-decreasing recursive call" }
+					}
 				}
 			}
-		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq,
+			else { prev_s(self, fuel, next, f, x, stack, k) },
+		E.on_k, E.resolve, E.meta, E.kit, E.on_tri, E.on_tok, E.on_tf, E.lazy, E.eq,
 		{self, t0, v} =>
-			if ((self.resolve(v) == subj) && (if (mode == "Partial") { t0 == pair("PartialRec", T_thunk) } else { t0 == pair("TotalRecArmed", T_thunk) })) { true }
-			else { prev_tag(self, t0, v) },
-		E.kit, E.meta)
-	ev({self, fuel, next, f, x, stack, k} =>
-		if (self.resolve(f) == subj) {
-			let c := stem_child(f.fst)
-			let E_arm := ev_set_meta(armed, self.meta)
-			if (k_shaped(c)) { deliver_ev(E_arm, fuel, next, c.snd, cons(fr_s(f.snd, x), stack), k) }
-			else { run_ev(E_arm, fuel, next, machine_run(c, x, cons(fr_s(f.snd, x), stack)), k) }
-		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+			if ((res_tok(self, v) == subj) && (if (mode == "Partial") { t0 == pair("PartialRec", T_thunk) } else { t0 == pair("TotalRecArmed", T_thunk) })) { true }
+			else { prev_tag(self, t0, v) })
+	ev(
+		{self, fuel, next, f, x, stack, k} =>
+			if (f == subj) {
+				let c := stem_child(f.fst)
+				let E_arm := ev_set_meta(armed, self.meta)
+				if (k_shaped(c)) { deliver_ev(E_arm, fuel, next, c.snd, cons(fr_s(f.snd, x), stack), k) }
+				else { run_ev(E_arm, fuel, next, machine_run(c, x, cons(fr_s(f.snd, x), stack)), k) }
+			}
+			else { prev_s(self, fuel, next, f, x, stack, k) },
+		E.on_k, E.resolve, E.meta, E.kit, E.on_tri, E.on_tok, E.on_tf, E.lazy, E.eq, E.has_tag)
 }
 
-with_lemma :: {lem_fn : Tree, T : Tree, E : Eval} -> Eval :=> {
-	let prev_step := E.step
-	ev({self, fuel, next, f, x, stack, k} =>
-		if ((not(ev_sure(self))) && ((self.resolve(f) == lem_fn) && ((has_tok(deep_resolve(self, x))) || ((is_fix_fn(lem_fn)) && (has_tok(deep_resolve(self, stack))))))) {
+with_lemma :: {lem_fn : Tree, T : Tree, E : Eval} -> Eval :=>
+	ev_add_fn(lem_fn, {prev} => {self, fuel, next, f, x, stack, k} =>
+		if ((f == lem_fn) && ((not(ev_sure(self))) && ((has_tok(deep_resolve(self, x))) || ((is_fix_fn(lem_fn)) && (has_tok(deep_resolve(self, stack))))))) {
 			let u_l := tok_unk(pair("lem", lem_fn))
 			let E1 := T.snd(u_l, "None", self)
-			if (E1.step == self.step) { prev_step(self, fuel, next, f, x, stack, k) }
+			if (E1.on_tok == self.on_tok) { prev(self, fuel, next, f, x, stack, k) }
 			else { run_ev(E1, fuel, next, machine_run(u_l, x, stack), k) }
 		}
-		else { prev_step(self, fuel, next, f, x, stack, k) },
-		E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
-}
-base_eq :: {self : Eval, a0 : Tree, b0 : Tree} -> Tree :=> {
-	let a := self.resolve(a0)
-	let b := self.resolve(b0)
-	if (a == b) { "True" }
+		else { prev(self, fuel, next, f, x, stack, k) }, E)
+
+base_eq :: {self : Eval, a0 : Tree, b0 : Tree} -> Tree :=>
+	if (a0 == b0) { "True" }
 	else {
-		let ra := deep_resolve(self, a)
-		let rb := deep_resolve(self, b)
-		if (ra == rb) { "True" }
-		else if ((is_call(a)) && (is_call(b))) {
-			let fa := tok_val(a).fst
-			let fb := tok_val(b).fst
-			let lf := if (fa == fb) { "True" } else { self.eq(self, fa, fb) }
-			if (lf == "True") { self.eq(self, tok_val(a).snd, tok_val(b).snd) } else { "Stuck" }
+		let a := res_tok(self, a0)
+		let b := res_tok(self, b0)
+		if (a == b) { "True" }
+		else {
+			let ra := deep_resolve(self, a)
+			let rb := deep_resolve(self, b)
+			if (ra == rb) { "True" }
+			else if ((is_call(a)) && (is_call(b))) {
+				let fa := tok_val(a).fst
+				let fb := tok_val(b).fst
+				let lf := if (fa == fb) { "True" } else { self.eq(self, fa, fb) }
+				if (lf == "True") { self.eq(self, tok_val(a).snd, tok_val(b).snd) } else { "Stuck" }
+			}
+			else if ((is_tok(a)) || (is_tok(b))) { "Stuck" }
+			else if (is_leaf(a)) { if (is_leaf(b)) { "True" } else { "False" } }
+			else if (is_stem(a)) { if (is_stem(b)) { self.eq(self, stem_child(a), stem_child(b)) } else { "False" } }
+			else if (is_fork(b)) {
+				let l := self.eq(self, a.fst, b.fst)
+				if (l == "True") { self.eq(self, a.snd, b.snd) } else { l }
+			}
+			else { "False" }
 		}
-		else if ((is_tok(a)) || (is_tok(b))) { "Stuck" }
-		else if (is_leaf(a)) { if (is_leaf(b)) { "True" } else { "False" } }
-		else if (is_stem(a)) { if (is_stem(b)) { self.eq(self, stem_child(a), stem_child(b)) } else { "False" } }
-		else if (is_fork(b)) {
-			let l := self.eq(self, a.fst, b.fst)
-			if (l == "True") { self.eq(self, a.snd, b.snd) } else { l }
-		}
-		else { "False" }
 	}
+
+base_k_step :: {self : Eval, fuel : Nat, next : Nat, f : Tree, _x : Tree, stack : List(Tree), k : Tree} -> Tree :=>
+	deliver_ev(self, fuel, next, f.snd, stack, k)
+
+base_s_step :: {self : Eval, fuel : Nat, next : Nat, f : Tree, x : Tree, stack : List(Tree), k : Tree} -> Tree :=> {
+	let c := stem_child(f.fst)
+	if (k_shaped(c)) {
+		let b := f.snd
+		if (k_shaped(b)) { run_ev(self, fuel, next, machine_run(c.snd, b.snd, stack), k) }
+		else {
+			let v := res_tok(self, c.snd)
+			if (not(is_fork(v))) { run_ev(self, fuel, next, machine_run(b, x, cons(fr_res(v), stack)), k) }
+			else if (is_leaf(v.fst)) { deliver_ev(self, fuel, next, v.snd, stack, k) }
+			else if ((v.fst == tok_sig) && (not(is_leaf(self.lazy)))) {
+				run_ev(self, fuel, next, pair("Lazy", pair(v, cons(fr_s(b, x), stack))), k)
+			}
+			else { run_ev(self, fuel, next, machine_run(b, x, cons(fr_res(v), stack)), k) }
+		}
+	}
+	else if (f == tree_eq) { deliver_ev(self, fuel, next, mk_teq(x), stack, k) }
+	else if ((is_fix_fn(f)) && ((is_tok(x)) && ((is_leaf(ev_cap(self))) && ((tok_kind(x) == "U") || ((tok_kind(x) == "C") || (is_found(lookup(ev_arg_tys(self), x)))))))) {
+		deliver_ev(self, fuel, next, tok_call(f, x), stack, k)
+	}
+	else { run_ev(self, fuel, next, machine_run(c, x, cons(fr_s(f.snd, x), stack)), k) }
 }
 
-base_fork_step :: {self : Eval, fuel : Nat, next : Nat, f : Tree, x : Tree, stack : List(Tree), k : Tree} -> Tree :=>
-	if (f.fst == tok_sig) {
-		if (is_teq(f)) {
-			let r := self.eq(self, tok_val(f), x)
-			if (r == "True") { deliver_ev(self, fuel, next, true, stack, k) }
-			else if (r == "False") { deliver_ev(self, fuel, next, false, stack, k) }
-			else if ((is_fork(r)) && (r.fst == "Err")) { pair("Fault", r.snd) }
-			else if ((is_fork(r)) && (r.fst == "Refuse")) { r.snd }
-			else { deliver_ev(self, fuel, next, tok_call(pair("Eq", tok_val(f)), x), stack, k) }
-		}
-		else if (is_call(f)) {
-			let cf := tok_val(f).fst
-			if ((is_fix_fn(cf)) || (is_call(cf))) { deliver_ev(self, fuel, next, tok_call(f, x), stack, k) }
-			else { "Stuck applying unknown" }
-		}
+base_tok_step :: {self : Eval, fuel : Nat, next : Nat, f : Tree, x : Tree, stack : List(Tree), k : Tree} -> Tree :=>
+	if (is_teq(f)) {
+		let r := self.eq(self, tok_val(f), x)
+		if (r == "True") { deliver_ev(self, fuel, next, true, stack, k) }
+		else if (r == "False") { deliver_ev(self, fuel, next, false, stack, k) }
+		else if ((is_fork(r)) && (r.fst == "Err")) { pair("Fault", r.snd) }
+		else if ((is_fork(r)) && (r.fst == "Refuse")) { r.snd }
+		else { deliver_ev(self, fuel, next, tok_call(pair("Eq", tok_val(f)), x), stack, k) }
+	}
+	else if (is_call(f)) {
+		let cf := tok_val(f).fst
+		if ((is_fix_fn(cf)) || (is_call(cf))) { deliver_ev(self, fuel, next, tok_call(f, x), stack, k) }
 		else { "Stuck applying unknown" }
 	}
-	else if (f == shape_identity) { deliver_ev(self, fuel, next, x, stack, k) }
+	else { "Stuck applying unknown" }
+
+base_tri_tok_step :: {self : Eval, fuel : Nat, next : Nat, f : Tree, x : Tree, stack : List(Tree), k : Tree} -> Tree :=>
+	if (is_call(x)) {
+		let cf := tok_val(x).fst
+		let cx := tok_val(x).snd
+		if ((is_fork(cf)) && (cf.fst == "Eq")) {
+			let E_t := with_subst(x, true, with_eq(cf.snd, cx, self))
+			and_then(deliver_ev(E_t, fuel, next, f.fst.fst, stack, k), {f2} => {
+				let E_f := with_subst(x, false, with_fact(cf, cx, false, self))
+				run_ev(E_f, f2, next, machine_run(f.fst.snd, t, stack), k)
+			})
+		}
+		else if (is_if_triage(f)) {
+			let E_t := with_fact(cf, cx, true, self)
+			and_then(deliver_ev(E_t, fuel, next, f.fst.fst, stack, k), {f2} => {
+				let E_f := with_fact(cf, cx, false, self)
+				run_ev(E_f, f2, next, machine_run(f.fst.snd, t, stack), k)
+			})
+		}
+		else { "Stuck triaging call" }
+	}
+	else { "Cannot inspect abstract unknown" }
+
+base_tri_conc_step :: {self : Eval, fuel : Nat, next : Nat, f : Tree, x : Tree, stack : List(Tree), k : Tree} -> Tree :=>
+	if (f == shape_identity) { deliver_ev(self, fuel, next, x, stack, k) }
 	else if (is_leaf(x)) { deliver_ev(self, fuel, next, f.fst.fst, stack, k) }
 	else if (is_stem(x)) { run_ev(self, fuel, next, machine_run(f.fst.snd, stem_child(x), stack), k) }
-	else if (x.fst == tok_sig) {
-		if (is_call(x)) {
-			let cf := tok_val(x).fst
-			let cx := tok_val(x).snd
-			if ((is_fork(cf)) && (cf.fst == "Eq")) {
-				let E_t := with_subst(x, true, with_eq(cf.snd, cx, self))
-				and_then(deliver_ev(E_t, fuel, next, f.fst.fst, stack, k), {f2} => {
-					let E_f := with_subst(x, false, with_fact(cf, cx, false, self))
-					run_ev(E_f, f2, next, machine_run(f.fst.snd, t, stack), k)
-				})
-			}
-			else if (is_if_triage(f)) {
-				let E_t := with_fact(cf, cx, true, self)
-				and_then(deliver_ev(E_t, fuel, next, f.fst.fst, stack, k), {f2} => {
-					let E_f := with_fact(cf, cx, false, self)
-					run_ev(E_f, f2, next, machine_run(f.fst.snd, t, stack), k)
-				})
-			}
-			else { "Stuck triaging call" }
-		}
-		else { "Cannot inspect abstract unknown" }
-	}
 	else { run_ev(self, fuel, next, machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)), k) }
-
-base_step :: {self : Eval, fuel : Nat, next : Nat, f0 : Tree, x0 : Tree, stack : List(Tree), k : Tree} -> Tree :=> {
-	let f := self.resolve(f0)
-	if (not(f == f0)) { run_ev(self, succ(fuel), next, machine_run(f, x0, stack), k) }
-	else if (is_leaf(f.fst)) { deliver_ev(self, fuel, next, f.snd, stack, k) }
-	else if (is_stem(f.fst)) {
-		let x := self.resolve(x0)
-		if (f == tree_eq) { deliver_ev(self, fuel, next, mk_teq(x), stack, k) }
-		else if ((is_fix_fn(f)) && ((is_tok(x)) && ((ev_cap(self) == "None") && ((is_unk(x)) || ((is_call(x)) || (is_found(lookup(ev_arg_tys(self), x)))))))) { deliver_ev(self, fuel, next, tok_call(f, x), stack, k) }
-		else {
-			let c := stem_child(f.fst)
-			if (k_shaped(c)) { deliver_ev(self, fuel, next, c.snd, cons(fr_s(f.snd, x0), stack), k) }
-			else { run_ev(self, fuel, next, machine_run(c, x0, cons(fr_s(f.snd, x0), stack)), k) }
-		}
-	}
-	else { base_fork_step(self, fuel, next, f, self.resolve(x0), stack, k) }
-}
-
-base_lazy :: {self : Eval, fuel : Nat, next : Nat, v : Tree, b : Tree, x : Tree, rest : List(Tree), k : Tree} -> Tree :=>
-	run_ev(self, fuel, next, machine_run(b, x, cons(fr_res(v), rest)), k)
 
 // ---------------------------------------------------------------- checker & refuter kits
 // Only `run` and `quantify` differ between `check_kit` and `refute_kit`!
-// The other 5 fields (`fresh`, `deep_res`, `head_tok`, `has_tok`, `cases`) are identical
-// and exist purely to keep `tok_sig` private to the base evaluators.
+// The other fields are identical and keep `tok_sig` and base fallbacks private to the base evaluators.
 mk_fresh :: {label : Tree} -> Tree :=>
 	if ((is_fork(label)) && (label.fst == "Call")) { tok_call(label.snd.fst, label.snd.snd) }
 	else { tok_unk(label) }
 
 check_kit :: Kit := mk_kit{
 	run := run_ev,
+	res := res_tok,
+	base_s := base_s_step,
+	base_k := base_k_step,
+	base_tok := base_tok_step,
+	base_tri := base_tri_tok_step,
+	base_tf := base_tri_conc_step,
+	deep_res := deep_resolve,
+	head_tok := head_tok_of,
+	fresh := mk_fresh,
 	quantify := {E, fuel, next, A, rec_T, f, body, k} => {
 		let u := tok_unk(pair("arg", next))
 		let E1 := ev_add_arg_ty(A.snd(u, "None", E), u, A)
@@ -805,9 +922,6 @@ check_kit :: Kit := mk_kit{
 			body(E2, fuel, succ(next), u, "None", k)
 		}
 	},
-	fresh := mk_fresh,
-	deep_res := deep_resolve,
-	head_tok := head_tok_of,
 	has_tok := has_tok,
 	cases := derive_for
 }
@@ -819,7 +933,7 @@ refute_run :: {E : Eval, fuel : Nat, next : Nat, m0 : Tree, k : Tree} -> Tree :=
 		let rx := deep_resolve(E, m0.m_arg)
 		if ((not(has_tok(rf))) && (not(has_tok(rx)))) {
 			let cap := ev_cap(E)
-			if ((is_fork(cap)) && (cap.fst == "Cap")) {
+			if (not(is_leaf(cap))) {
 				let m_res := m_advance(m_start(rf, rx), cap.snd)
 				if (m_finished(m_res)) { k(E, fuel, next, m_result(m_res)) }
 				else { pair("Fault", "slow") }
@@ -836,6 +950,15 @@ refute_run :: {E : Eval, fuel : Nat, next : Nat, m0 : Tree, k : Tree} -> Tree :=
 
 refute_kit :: {n : Nat} -> Kit :=> mk_kit{
 	run := refute_run,
+	res := res_tok,
+	base_s := base_s_step,
+	base_k := base_k_step,
+	base_tok := base_tok_step,
+	base_tri := base_tri_tok_step,
+	base_tf := base_tri_conc_step,
+	deep_res := deep_resolve,
+	head_tok := head_tok_of,
+	fresh := mk_fresh,
 	quantify := {E, fuel, next, A, _rec_T, f, body, k} => {
 		let res := first_found(tried(n), {c} => {
 			let h := tok_unk(pair("in", next))
@@ -845,17 +968,14 @@ refute_kit :: {n : Nat} -> Kit :=> mk_kit{
 		})
 		if (is_found(res)) { pair("Fault", res.snd) } else { k(E, fuel, next, f) }
 	},
-	fresh := mk_fresh,
-	deep_res := deep_resolve,
-	head_tok := head_tok_of,
 	has_tok := has_tok,
 	cases := derive_for
 }
 
 check_depth := 4
-base_meta := pair(check_depth, pair(false, pair("None", pair({v} => v, pair("None", [])))))
-E_check_base :: Eval := ev(base_step, base_lazy, {v} => v, base_eq, {_s, _t, _v} => false, check_kit, base_meta)
-E_refute_base :: {n : Nat} -> Eval :=> ev(base_step, base_lazy, {v} => v, base_eq, {_s, _t, _v} => false, refute_kit(n), base_meta)
+base_meta := pair(t, pair(check_depth, pair(false, pair({v} => v, pair("None", [])))))
+E_check_base :: Eval := ev(t, t, t, base_meta, check_kit, t, t, t, t, base_eq, {_s, _t, _v} => false)
+E_refute_base :: {n : Nat} -> Eval :=> ev(t, t, t, base_meta, refute_kit(n), t, t, t, t, base_eq, {_s, _t, _v} => false)
 
 // ================================================================ COMPOSABLE TYPE FORMERS
 // Every type is `pair(check, assume)`. Zero `if (is_refute)` and zero `tok_sig` anywhere below!
@@ -922,27 +1042,32 @@ rec mk_pi :: {rec_tag : Tree, A : Tree, fam : Tree} -> Tree :=> {
 							check_tail(B, E3, fl2, nx2, r, k_in))), k)
 			},
 		{g, backing, E} => {
-			let prev_step := E.step
+			let prev_tok := if (is_leaf(E.on_tok)) { E.kit.base_tok } else { E.on_tok }
+			let prev_tri := if (is_leaf(E.on_tri)) { E.kit.base_tri } else { E.on_tri }
 			let prev_eq := E.eq
 			let prev_tag := E.has_tag
-			ev(
-				{self, fuel, next, f, x, stack, k} => {
-					let rf := self.resolve(f)
-					let rx := self.resolve(x)
-					if (rf == g) {
-						and_then(check_tail(A, ev_set_rec(ev_set_cap(self, "None"), "None"), fuel, next, rx, {_E0, fl0, _nx0, _ok} => done(fl0)), {fl1} =>
-							self.kit.run(ev_set_rec(ev_set_cap(ev_set_sure(self, true), "None"), "None"), fl1, next, m_start(fam, rx), {E2, fl2, nx2, B} => {
+			ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit,
+				{self, fuel, next, f, x, stack, k} =>
+					if (x == g) {
+						if (backing == "None") { pair("Fault", "Inspects callback") }
+						else { self.kit.run(self, fuel, next, machine_run(f, backing.snd, stack), k) }
+					}
+					else { prev_tri(self, fuel, next, f, x, stack, k) },
+				{self, fuel, next, f, x, stack, k} =>
+					if (f == g) {
+						and_then(check_tail(A, ev_set_rec(ev_set_cap(self, t), "None"), fuel, next, x, {_E0, fl0, _nx0, _ok} => done(fl0)), {fl1} =>
+							self.kit.run(ev_set_rec(ev_set_cap(ev_set_sure(self, true), t), "None"), fl1, next, m_start(fam, x), {E2, fl2, nx2, B} => {
 								let E_s := ev_set_meta(E2, self.meta)
 								if (backing == "None") {
-									let r := E_s.kit.fresh(pair("Call", pair(g, E_s.kit.deep_res(E_s, rx))))
+									let r := E_s.kit.fresh(pair("Call", pair(g, E_s.kit.deep_res(E_s, x))))
 									let E3 := ev_add_arg_ty(B.snd(r, "None", E_s), r, B)
 									E3.kit.run(E3, fl2, nx2, m_ret(r, stack), k)
 								}
 								else {
 									let c := backing.snd
 									let saved_cap := ev_cap(E_s)
-									let E_call := ev_set_cap(E_s, "None")
-									E_call.kit.run(E_call, fl2, nx2, m_start(c, rx), {E3, fl3, nx3, raw_r} => {
+									let E_call := ev_set_cap(E_s, t)
+									E_call.kit.run(E_call, fl2, nx2, m_start(c, x), {E3, fl3, nx3, raw_r} => {
 										let rh := E3.kit.fresh(pair("ret", nx3))
 										let E4 := B.snd(rh, pair("Some", raw_r), ev_set_cap(E3, saved_cap))
 										E4.kit.run(E4, fl3, succ(nx3), m_ret(rh, stack), k)
@@ -950,27 +1075,32 @@ rec mk_pi :: {rec_tag : Tree, A : Tree, fam : Tree} -> Tree :=> {
 								}
 							}))
 					}
-					else if ((is_triage(rf)) && ((not(rf == shape_identity)) && ((self.kit.head_tok(rf) == "N") && (rx == g)))) {
-						if (backing == "None") { pair("Fault", "Inspects callback") }
-						else { self.kit.run(self, fuel, next, machine_run(rf, backing.snd, stack), k) }
-					}
-					else { prev_step(self, fuel, next, f, x, stack, k) }
-				},
-				E.lazy, E.resolve,
+					else { prev_tok(self, fuel, next, f, x, stack, k) },
+				E.on_tf, E.lazy,
 				{self, a, b} =>
-					if ((self.resolve(a) == g) || (self.resolve(b) == g)) {
+					if (is_leaf(self.resolve)) {
+						if ((a == g) || (b == g)) {
+							if (backing == "None") { pair("Err", "Compares callback") }
+							else {
+								let ra := if (a == g) { backing.snd } else { a }
+								let rb := if (b == g) { backing.snd } else { b }
+								prev_eq(self, ra, rb)
+							}
+						}
+						else { prev_eq(self, a, b) }
+					}
+					else if ((self.kit.res(self, a) == g) || (self.kit.res(self, b) == g)) {
 						if (backing == "None") { pair("Err", "Compares callback") }
 						else {
-							let ra := if (self.resolve(a) == g) { backing.snd } else { a }
-							let rb := if (self.resolve(b) == g) { backing.snd } else { b }
+							let ra := if (self.kit.res(self, a) == g) { backing.snd } else { a }
+							let rb := if (self.kit.res(self, b) == g) { backing.snd } else { b }
 							prev_eq(self, ra, rb)
 						}
 					}
 					else { prev_eq(self, a, b) },
 				{self, t0, v} =>
-					if ((backing == "None") && ((self.resolve(v) == g) && (t0 == pi_tag))) { true }
-					else { prev_tag(self, t0, v) },
-				E.kit, E.meta)
+					if ((backing == "None") && ((self.kit.res(self, v) == g) && (t0 == pi_tag))) { true }
+					else { prev_tag(self, t0, v) })
 		}))
 	mk(t)
 }
@@ -1063,12 +1193,26 @@ ListT :: {A : Tree} -> Tree :=> {
 			if (E.has_tag(E, pair("List", A), xs)) { k(E, fuel, next, xs) }
 			else {
 				let ht := E.kit.head_tok(xs)
-				if ((is_fork(ht)) && ((ht.fst == "C") && (is_fix_fn(ht.snd.fst)))) {
-					let a_opt := lookup(ev_arg_tys(E), ht.snd.snd)
-					if (is_found(a_opt)) {
-						fn_t(a_opt.snd, L(xs)).fst(E, fuel, next, ht.snd.fst, {_E4, fl4, nx4, _ok} => k(E, fl4, nx4, xs))
+				if ((is_fork(ht)) && (ht.fst == "C")) {
+					if (is_fix_fn(ht.snd.fst)) {
+						let a_opt := lookup(ev_arg_tys(E), ht.snd.snd)
+						if (is_found(a_opt)) {
+							fn_t(a_opt.snd, L(xs)).fst(E, fuel, next, ht.snd.fst, {_E4, fl4, nx4, _ok} => k(E, fl4, nx4, xs))
+						}
+						else { "Stuck checking list call" }
 					}
-					else { "Stuck checking list call" }
+					else {
+						let ht1 := E.kit.head_tok(ht.snd.fst)
+						if ((is_fork(ht1)) && ((ht1.fst == "C") && (is_fix_fn(ht1.snd.fst)))) {
+							let a1_opt := lookup(ev_arg_tys(E), ht1.snd.snd)
+							if (is_found(a1_opt)) {
+								L(ht.snd.snd).fst(E, fuel, next, ht.snd.snd, {E3, fl3, nx3, _ok1} =>
+									fn_t(a1_opt.snd, fn_t(L(xs), L(xs))).fst(E3, fl3, nx3, ht1.snd.fst, {_E4, fl4, nx4, _ok2} => k(E, fl4, nx4, xs)))
+							}
+							else { "Stuck checking list call" }
+						}
+						else { "Stuck checking list call" }
+					}
 				}
 				else {
 					E.kit.run(E, fuel, next, m_start(is_leaf, xs), {E0, fl0, nx0, isl} =>
@@ -1119,16 +1263,17 @@ forall_k :: {arity : Nat, F : Tree} -> Tree :=> pair(
 			F(X_real).fst(E1, fl1, nx1, body, k))
 	},
 	{g, _backing, E} => {
-		let prev_step := E.step
-		ev({self, fuel, next, f, x, stack, k} =>
-			if (self.resolve(f) == g) {
-				let r := self.kit.fresh(pair("inst", pair(g, next)))
-				let ux := unbox_tree(ev_unbox(self), x)
-				let E1 := F(ux).snd(r, "None", self)
-				E1.kit.run(E1, fuel, succ(next), m_ret(r, stack), k)
-			}
-			else { prev_step(self, fuel, next, f, x, stack, k) },
-			E.lazy, E.resolve, E.eq, E.has_tag, E.kit, E.meta)
+		let prev_tok := if (is_leaf(E.on_tok)) { E.kit.base_tok } else { E.on_tok }
+		ev(E.on_s, E.on_k, E.resolve, E.meta, E.kit, E.on_tri,
+			{self, fuel, next, f, x, stack, k} =>
+				if (f == g) {
+					let r := self.kit.fresh(pair("inst", pair(g, next)))
+					let ux := unbox_tree(ev_unbox(self), x)
+					let E1 := F(ux).snd(r, "None", self)
+					E1.kit.run(E1, fuel, succ(next), m_ret(r, stack), k)
+				}
+				else { prev_tok(self, fuel, next, f, x, stack, k) },
+			E.on_tf, E.lazy, E.eq, E.has_tag)
 	})
 forall_t :: {F : Tree} -> Tree :=> forall_k(0, F)
 forall_fam_t :: {F : Tree} -> Tree :=> forall_k(1, F)
@@ -1210,7 +1355,7 @@ check_fuel := 15000
 let why_trusted := {depth, fuel, lemmas, T, v} =>
 	if (has_tok(v)) { "Contains a token" }
 	else {
-		let E_base := ev_set_meta(E_check_base, pair(depth, E_check_base.meta.snd))
+		let E_base := ev_set_meta(E_check_base, pair(ev_cap(E_check_base), pair(depth, E_check_base.meta.snd.snd)))
 		let E0 := reduce({l, acc} => with_lemma(l.fst, l.snd, acc), E_base, lemmas)
 		let r := T.fst(E0, fuel, 0, v, {_E, fl, _nx, _res} => done(fl))
 		if (is_yes(r)) { yes } else { r }

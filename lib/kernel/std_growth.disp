@@ -15,13 +15,14 @@ let helper_cert := certify(check_depth, check_fuel, "all", [], [
 let check_module := check_with(check_depth, check_fuel, "all", [machine_lems, helper_cert])
 
 // All 15 definitions of `lib/growth.disp`:
-// 13 structurally total (LTR or RTL lexicographic), 2 partial (`newton` recurses on `diffs(xs)`, `fit` calls `newton`)
-ck_add2 : Nat -> Nat -> Nat := add2
+// 13 structurally total (LTR or RTL lexicographic), 2 partial (`newton` recurses on `diffs(xs)`, `fit` calls `newton`);
+// hot arithmetic/list builders carry pointwise-equivalence guards for `std_growth.opt.disp`
+guard(fn2_equiv_guard(Nat, Nat)) ck_add2 : Nat -> Nat -> Nat := add2
 ck_minus : Tree -> Tree -> Tree := minus
 ck_diffs : List(Tree) -> List(Tree) := diffs
-ck_all_zero : List(Tree) -> Bool := all_zero
-ck_sizes_upto : Nat -> List(Nat) := sizes_upto
-ck_degree : List(Nat) -> Nat := degree
+guard(fn_equiv_guard(List(Tree))) ck_all_zero : List(Tree) -> Bool := all_zero
+guard(fn_equiv_guard(Nat)) ck_sizes_upto : Nat -> List(Nat) := sizes_upto
+guard(fn_equiv_guard(List(Nat))) ck_degree : List(Nat) -> Nat := degree
 ck_newton_step : List(Nat) -> List(Nat) := newton_step
 ck_newton_at : List(Nat) -> Nat -> Nat := newton_at
 ck_bound_of : List(Nat) -> Nat -> Nat := bound_of
