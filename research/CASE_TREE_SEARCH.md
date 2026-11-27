@@ -155,13 +155,13 @@ refute.
 
 ## 6. What was built from it (2026-11-10)
 
-1. **One loop.** `settle_case` in `lib/confirm.disp` settles a case by the first of:
+1. **One loop.** (Replaced by goals, item 11.) `settle_case` in `lib/confirm.disp` settled a case by the first of:
    the exact run answers Yes (and says whether the answer cites the hypothesis or a
    lemma); a known case fails (a counterexample); a later check, the same run with lemmas
    read by their types, answers Yes; the run needed a piece, which is split. `certify` is
    this loop with no splits. Every case is run exactly before a lemma is consulted, so a
    lemma no longer hides a counterexample.
-2. **The work list is data and a lens.** `s_steps` in `lib/stream.disp` yields every case
+2. **The work list is data and a lens.** (Item 11 reads it as goals, and checks each step instead of folding the splits into a lens.) `s_steps` in `lib/stream.disp` yields every case
    with what settled it; the verdict reads its counterexamples. `derivation` in
    `lib/rules.disp` reads the list back, for doubling:
 
@@ -181,10 +181,12 @@ refute.
    recursive sub-programs are tried at when it is left Open. The default, `goal_types`, is
    the function types the goal's own type is built from.
 
-5. **Functions as arguments (2026-11-11).** A program given where a function is expected
+5. **Functions as arguments (2026-11-11; item 11 makes it the function rule).** A program given where a function is expected
    is judged as one: `fn_member` in `lib/confirm.disp` runs it on a fresh piece of the
    domain and splits where it looks, which is the loop's generic run and case split,
-   nested. Before, a lemma's function argument had to be an unknown piece.
+   nested. Before, a lemma's function argument had to be an unknown piece. Since 2026-11-18
+   it is the loop itself (`search_g`) on that one case, with induction for a recursive value
+   (research/JUDGE_FROM_LENSES.md, section 6).
 6. **Eliminators come with the type (2026-11-11).** A type with cases has an eliminator,
    derived from its cases as the cases were derived from the type: `fold_of(T)` in
    `lib/confirm.disp`. Nothing is given beside the type. Programs written with it have no
@@ -255,6 +257,33 @@ refute.
    `S(k + 0) = S k` and `k + 0 = k` as written. What stays with the written rules is
    refusals about how a term is built (System T has no function over types; `judge`
    proves the identity over them).
+
+11. **Goals (2026-11-23).** The loop's items are goals, not cases. A goal says: this
+   value, applied to these arguments, is a member of this type, whatever its unknown pieces
+   are. A type is a rule that rewrites one goal into the goals it holds exactly when, and the
+   loop (`settle_goal` in `lib/confirm.disp`) keeps the goals still to do. The function type is
+   one line (`fn_rule`): the same goal with one more argument, an unknown member of the
+   domain. Every other type is its `judge_as` reading with each part it asks about made a goal
+   (`rule_as` with `later_at`), and `and_yes` keeps those goals. A call nobody can run is read
+   by its head's type, a rule that goes one way, so a failure under it is no counterexample.
+   A stuck elimination is the one "or": its spine is settled at once by the loop on it, else
+   it waits for a split. A lemma only proves the same way. `fn_member`, `run_at`,
+   `settle_case` and the lens over a work list are gone; a function type judged from inside
+   another judgement is the same loop on one goal. The naive check is the same rules with
+   every unknown split first (`naively` in `lib/rules.disp`), the naive type is `naive_claim`,
+   and each step of a work list is an equation the naive schedule checks (`step_holds`). For
+   doubling the work list is seven goals:
+
+   ```
+   test derivation(plainly, nn, dbl) = [
+   	pair([], pair("function", [])),
+   	pair([n], pair("split", n)),
+   	pair([0], pair("holds", [])),
+   	pair([succ(below_n)], pair("parts", [])),
+   	pair(succ(h_below), pair("parts", [])),
+   	pair(h_below, pair("call", ["induction"])),
+   	pair(below_n, pair("holds", []))]
+   ```
 
 ## 7. Open
 

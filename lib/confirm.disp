@@ -196,7 +196,15 @@ is_need :: Res -> Bool := {r} => r.fst == "Need"
 is_stuck :: Res -> Bool := {r} => (r == stuck) || (r.fst == "Stuck")
 answer :: Res -> Val := pair_snd
 and_then :: {r : Res, continue : Val -> Res} -> Res :=> if (r.is_answered) { continue(r.answer) } else { r }
-and_yes :: {r : Res, continue : Tree -> Res} -> Res :=> if (r == "Yes") { continue(t) } else { r }
+// A judgement may also answer with goals, which hold exactly when it does (the goal loop,
+// below): asked later, each part a judgement asks about becomes a goal of its own.
+into :: {goals : List(Tree)} -> Res :=> pair("Into", goals)
+is_into :: Res -> Bool := {r} => r.fst == "Into"
+// both hold: a Yes asks the rest, goals are kept until the rest has its say, and a No decides
+and_yes :: {r : Res, continue : Tree -> Res} -> Res :=>
+	if (r == "Yes") { continue(t) }
+	else if (not(is_into(r))) { r }
+	else { let k := continue(t); if (k == "Yes") { r } else if (is_into(k)) { into(r.snd.append(k.snd)) } else { k } }
 // inspecting a value: a splittable piece is a Need; an input piece without
 // a table, a hypothesis value or a neutral term is opaque — Stuck with a reason
 // the function at the bottom of a neutral term
@@ -617,38 +625,208 @@ rec any_fit :: {rs : List(Res)} -> Res :=>
 		let rest := any_fit(rs.tail)
 		if (rest == "Yes") { "Yes" } else if (rs.head == "No") { rest } else { rs.head }
 	}
-// a case split, as the cases it leaves: each alternative of the piece's type in the piece's place (none: no table)
-alternatives :: {case : Val, piece : Val} -> Option(List(Val)) :=> {
-	let alts := table(piece.piece_type, {step} => piece_at(piece.piece_type, piece.piece_root, cons(step, piece.piece_path)))
-	if (is_none(alts)) { none } else { some(alts.snd.map({alt} => subst(piece, alt, case))) }
-}
 // one that is not a Yes decides: the first of them
 all_yes :: {results : List(Res)} -> Res :=> reduce({r, rest} => and_yes(r, {_y} => rest), "Yes", results)
-// A program where a function is expected is a member when its run on a fresh piece of the
-// domain is a member of the codomain: the loop's generic run and case split, nested. A piece of
-// its own that the run needs is split. A need of any other piece is the caller's to split. A No
-// counts only with nothing unknown left; while a piece of its own is, that piece is split.
-inner_piece :: {dom : Code, f : Val} -> Val :=> piece_at(dom, pair("inner", f), [])
-rec fn_member :: {at : Tree, R : Code, f : Val, x : Val, depth : Nat} -> Res :=> {
+
+// ---------------------------------------------------------------- the induction hypothesis
+// The strictly smaller pieces of the input `root` of type Dom, and a partner of one: the
+// induction hypothesis's domain.
+below_c :: {Dom : Code, root : List(Tree), partner : Tree} -> Code :=> of_type(behaviour{
+	parts := [pair("Type", Dom), pair("Datum", root), pair("Datum", partner)],
+	admits := {_at, self, v} => if (licensed_with(table, self, v) == "None") { "No" } else { "Yes" }})
+// The induction hypothesis of a function type: a piece of that type from the strictly smaller
+// pieces of the input `root` (or the `partner` of one: a quotient's hypothesis). Its license
+// is the function rule: an argument must be in its domain.
+hypothesis_for :: {R : Code, root : List(Tree), partner : Val -> Val} -> Val :=> {
 	let view := fn_view(R).snd
-	let face := faces_of(view.fst, x)
-	let r := and_then(sapply(f, face.fst, run_fuel), {out} => at(view.snd(face), out))
-	let own := pieces_in(x)
-	let target := if (r.is_need) { if (own.member(r.snd)) { r.snd } else { "None" } }
-		else if (r == "No") { let found := own.filter(is_splittable); if (found.is_nil) { "None" } else { found.head } }
-		else { "None" }
-	let cases := if ((target == "None") || (is_zero(depth))) { none } else { alternatives(x, target) }
-	if ((r == "Yes") || ((r.is_need) && (target == "None"))) { r }
-	else if ((r == "No") && ((f.is_known) && (x.is_known))) { "No" }
-	else if (is_none(cases)) { stuck_on(pair("a function not settled", f)) }
-	else { all_yes(cases.snd.map({c} => fn_member(at, R, f, c, nat_pred(depth)))) }
+	piece_at(R.snd.remake([below_c(view.fst, root, partner), view.snd]), "hypothesis", root)
 }
+
+// ---------------------------------------------------------------- goals
+// A goal says: this value, applied to these arguments, is a member of what the type says is
+// left after them, whatever its unknown pieces turn out to be. A type is a rule that rewrites
+// a goal into the goals it holds exactly when: a function type, the same goal with one more
+// argument, an unknown member of the domain; a data type, the value has the shape of one of
+// its cases and each part at a piece of that case is a goal at the piece's type. A call
+// nobody can run is read by the type of the function at its head, a rule that goes one way
+// only. One loop keeps the goals still to do. It ends Proved when none is left, Refuted at a
+// goal that fails on concrete arguments, and Open at a goal no rule moves. Every rule keeps
+// the inputs that fail, so the order goals are worked in cannot change a verdict: the naive
+// check (`naively`, lib/rules.disp) is the same rules with every unknown split first.
+// `trail` is the arguments of the goals a goal came from, its unknowns too. `exact` is off
+// below a rule that goes one way: a failure there is no counterexample. `depth` is the splits left.
+record goal :: {val : Val, at : Code, args : List(Val), trail : List(Val), exact : Bool, depth : Nat} -> Goal
+unknowns :: Goal -> List(Val) := {g} => g.trail.append(g.args)
+// a goal about a part of another goal's value: the same unknowns
+sub_goal :: {g : Goal, exact : Bool, v : Val, T : Code} -> Goal :=> goal(v, T, [], unknowns(g), (g.exact) && exact, g.depth)
+// the judge that asks later: the part becomes a goal of its own
+later_at :: {g : Goal, exact : Bool, T : Code, v : Val} -> Res :=> into([sub_goal(g, exact, v, T)])
+// A FUNCTION TYPE: the same goal with one more argument, an unknown member of the domain.
+fn_rule :: {g : Goal, T : Code} -> Res :=>
+	into([goal(g.val, g.at, g.args.append([generic_of(fn_view(T).snd.fst, unknowns(g).length)]), g.trail, g.exact, g.depth)])
+// a Yes that says what it rests on
+yes_on :: {grounds : List(Tree)} -> Res :=> pair("Yes", grounds)
+is_yes :: Res -> Bool := {r} => (r == "Yes") || (r.fst == "Yes")
+grounds_of :: Res -> List(Tree) := {r} => if (r == "Yes") { [] } else { r.snd }
+// what an answer rests on besides the run: induction where it applies the hypothesis, a lemma where it applies one's type, elimination where it applies an eliminator's
+cited :: {out : Val} -> List(Tree) :=> {
+	let roots := pieces_in(out).map(piece_root)
+	[pair("hypothesis", "induction"), pair("lemma", "lemma"), pair("elim", "elimination")].filter({rule} => roots.member(rule.fst)).map(pair_snd)
+}
+// what a rewrite tells the loop: the rule's name, what it rests on, and the goals it leaves
+ruled :: {name : Tree, grounds : List(Tree), goals : List(Goal)} -> Res :=> pair("Ruled", pair(pair(name, grounds), goals))
+is_ruled :: Res -> Bool := {r} => r.fst == "Ruled"
+moves :: Res -> Bool := {r} => ((is_yes(r)) || (is_into(r))) || (is_ruled(r))
+
+// ---------------------------------------------------------------- one rewrite
+// induction: a recursive value on an unknown argument is its step, with the hypothesis for itself
+induct :: {T : Code, f : Val, arg : Val, i : Nat, fuel : Nat} -> Res :=> {
+	let step := step_of(f)
+	if ((step == none) || ((arg.is_known) || (not(is_positive(fn_view(T).snd.fst))))) { answered(f) }
+	else { sapply(step, hypothesis_for(T, [pair("arg", i)], same), fuel) }
+}
+// the value after its arguments, with the type left: one run per argument, argument i the i-th unknown
+rec along :: {T : Code, f : Val, args : List(Val), i : Nat, fuel : Nat} -> Res :=>
+	if (args.is_nil) { answered(pair(T, f)) }
+	else {
+		let view := fn_view(T).snd
+		let face := faces_of(view.fst, args.head)
+		and_then(induct(T, f, face.fst, i, fuel), {h} =>
+			and_then(sapply(h, face.fst, fuel), {out} => along(view.snd(face), out, args.tail, succ(i), fuel)))
+	}
+// the claim on concrete arguments: run, then ask the type left (`at` judges)
+rec concrete_with :: {at : Code -> Val -> Res, T : Code, f : Val, args : List(Val)} -> Res :=>
+	if (not(is_fn_code(T))) { at(T, f) }
+	else if (args.is_nil) { stuck }
+	else {
+		let view := fn_view(T).snd
+		let face := faces_of(view.fst, args.head)
+		and_then(sapply(f, face.fst, run_fuel), {out} => concrete_with(at, view.snd(face), out, args.tail))
+	}
+// How a loop reads its goals. `read` asks what a value that has run is at a type, at once
+// with a judge or later with goals, and may settle goals at once with `again` (the loop on
+// them). `refute` reads the unknowns of a goal that fails as a concrete counterexample, once
+// the claim fails on it. `cut` reads the lemmas in a value by their types. `eager` is the
+// naive schedule: every unknown is split before anything runs.
+record plan :: {read : (List(Goal) -> Verdict) -> Goal -> Code -> Val -> Res, refute : List(Val) -> Option(Tree), cut : Val -> Val := same, eager : Bool := false, budget : Nat := run_fuel} -> Plan
+// One rewrite: the value runs on its arguments, and the type left gives the rule. A function
+// type adds an argument. Any other type, and a call nobody can run, is asked by `read`; at a
+// function type a call its own type does not settle gets the function rule instead.
+rewrite_once :: {how : Plan, again : List(Goal) -> Verdict, g : Goal} -> Res :=> and_then(along(g.at, g.val, g.args, g.trail.length, how.budget), {end} => {
+	let T := end.fst
+	let v := end.snd
+	let named := {name, r} => if (is_into(r)) { ruled(name, if (name == "call") { cited(v) } else { [] }, r.snd) } else if (r == "Yes") { yes_on(cited(v)) } else { r }
+	if (if (v.is_piece) { same_type(v.piece_type, T) } else { false }) { named("piece", "Yes") }
+	else if (not(v.is_app)) { if (is_fn_code(T)) { named("function", fn_rule(g, T)) } else { named("parts", how.read(again, g, T, v)) } }
+	else {
+		let r := named("call", how.read(again, g, T, v))
+		if (((moves(r)) || (r.is_need)) || (not(is_fn_code(T)))) { r } else { named("function", fn_rule(g, T)) }
+	}
+})
+// Where a rewrite does not move, the same with lemmas read by their types. A lemma only
+// proves: the goals its reading leaves are settled at once (`again`), and if they do not
+// all hold the goal is worked as it was, so a lemma never hides a counterexample. Where the
+// reading needs a piece, that is the piece to split.
+rewrite :: {how : Plan, again : List(Goal) -> Verdict, g : Goal} -> Res :=> {
+	let r := rewrite_once(how, again, g)
+	if (moves(r)) { r }
+	else {
+		let cut := how.cut(g.val)
+		let r2 := if (cut == g.val) { r } else { rewrite_once(how, again, goal(cut, g.at, g.args, g.trail, g.exact, g.depth)) }
+		let goals := if (is_ruled(r2)) { r2.snd.snd } else if (is_into(r2)) { r2.snd } else { [] }
+		if (is_yes(r2)) { r2 }
+		else if (goals.is_nil) { if (r2.is_need) { r2 } else { r } }
+		else if (again(goals) == "Proved") { yes_on(if (is_ruled(r2)) { r2.snd.fst.snd } else { ["lemma"] }) }
+		else { r }
+	}
+}
+
+// ---------------------------------------------------------------- the loop
+// a goal is done, resting on these
+settled_on :: {grounds : List(Tree)} -> Outcome(Tree, Goal) :=> pair("Skip", grounds)
+// what stopped a rewrite: the reason an Open reports
+explain :: Res -> Tree := {r} =>
+	if (r.is_need) { pair("no split table", r.snd) }
+	else if (r.fst == "Stuck") { r.snd }
+	else if (r.fst == "Coarse") { pair("coarse symbol at fine position", r.snd) }
+	else { r }
+why :: Verdict -> Tree := {v} => if (v.fst == "Open") { v.snd } else { "not open" }
+// a case split: the goal once for each case of the piece's type, which follows the piece
+split :: {g : Goal, p : Val} -> Outcome(Tree, Goal) :=> {
+	let alts := table(p.piece_type, {step} => piece_at(p.piece_type, p.piece_root, cons(step, p.piece_path)))
+	let put := {alt, v} => subst(p, alt, v)
+	if (is_zero(g.depth)) { noted("split depth exhausted") }
+	else if (is_none(alts)) { noted(pair("no split table", p)) }
+	else { split_on(p, alts.snd.map({alt} => goal(put(alt, g.val), type_subst(p, alt, g.at), put(alt, g.args), put(alt, g.trail), g.exact, nat_pred(g.depth)))) }
+}
+// the verdict of a work list: the first counterexample refutes; every goal settled proves; else Open on the first note
+steps_verdict :: {steps : Items(Step)} -> Verdict :=>
+	verdict(s_yielded(steps))
+// A goal is settled by the first of these that applies: it holds (Yes); a rule rewrites it
+// into goals; it fails on concrete arguments (a counterexample); it needs one of its unknowns'
+// shape (a case split); it fails with unknowns left (the first that can be split is split).
+// A need of a piece that is not its own is an outer goal's to split, and is noted as such.
+rec settle_goal :: {g : Goal, how : Plan} -> Outcome(Tree, Goal) :=> {
+	let again := {goals} => steps_verdict(s_steps({x} => settle_goal(x, how), goals))
+	let us := unknowns(g)
+	let loose := pieces_in(us).filter(is_splittable)
+	let r := if ((how.eager) && (not(loose.is_nil))) { need(loose.head) } else { rewrite(how, again, g) }
+	let found := if ((g.exact) && (not(moves(r)))) { how.refute(us) } else { none }
+	if (is_yes(r)) { settled_on(grounds_of(r)) }
+	else if (is_ruled(r)) { split_on(r.snd.fst, r.snd.snd) }
+	else if (is_into(r)) { split_on(pair("rule", []), r.snd) }
+	else if (not(is_none(found))) { yield(found.snd) }
+	else if (r.is_need) { if (pieces_in(us).member(r.snd)) { split(g, r.snd) } else { noted(pair("outer need", r.snd)) } }
+	else if (not(r == "No")) { noted(explain(r)) }
+	else if (not(g.exact)) { noted(pair("fails below a rule that goes one way", g.val)) }
+	else if (not(loose.is_nil)) { split(g, loose.head) }
+	else { noted(pair("a failure with no concrete counterexample", us)) }
+}
+// the work list: every goal with what settled it
+goal_steps :: {how : Plan, goals : List(Goal)} -> Items(Step) :=> s_steps({g} => settle_goal(g, how), goals)
+decide :: {how : Plan, goals : List(Goal)} -> Verdict :=> steps_verdict(goal_steps(how, goals))
+
+// ---------------------------------------------------------------- claims checked on cases
+// A check on partly-known inputs is a goal too: the input is a member of the type the check
+// accepts. Its unknowns are the input's pieces, and an input fully known where the check
+// says No is the counterexample.
+checked_by :: {check : Val -> Res} -> Code :=> of_type(behaviour{admits := {_at, _self, v} => check(v)})
+by_check :: {check : Val -> Res} -> Plan :=> plan{
+	read := {_again, _g, _T, v} => check(v),
+	refute := {us} => if ((us.head.is_known) && (check(us.head) == "No")) { some(us.head) } else { none }}
+check_goal :: {check : Val -> Res, input : Val, depth : Nat} -> Goal :=> goal(input, checked_by(check), [], [input], true, depth)
+search_r :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> decide(by_check(check), [check_goal(check, input, depth)])
+search :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> flat(search_r(check, input, depth))
+
+// ---------------------------------------------------------------- the function check
+// A program where a function is expected, judged from inside another judgement: the same loop
+// on the one goal, reading everything else with the judge it is handed. Its arguments are named
+// past every argument the value already holds (the trail stands in for those), and a need of a
+// piece of the outer goal is handed up, as that goal's to split.
+rec blanks :: {n : Nat} -> List(Tree) :=> if (is_zero(n)) { [] } else { cons(t, blanks(nat_pred(n))) }
+rec drop_n :: {n : Nat, xs : List(Tree)} -> List(Tree) :=> if (is_zero(n)) { xs } else { drop_n(nat_pred(n), xs.tail) }
+// one past the largest argument index among a value's pieces
+args_past :: {v : Val} -> Nat :=> reduce({p, n} => {
+	let first := p.piece_path.reverse
+	if (first.is_nil) { n } else if (not(first.head.fst == "arg")) { n } else if (nat_lt(first.head.snd, n)) { n } else { succ(first.head.snd) }
+}, zero, pieces_in(v))
+fn_admits := {at, self, v} => {
+	let past := args_past(v)
+	let how := plan{
+		read := {_again, _g, T, u} => at(T, u),
+		refute := {us} => if ((v.is_known) && ((us.is_known) && (concrete_with(at, self, v, drop_n(past, us)) == "No"))) { some(us) } else { none }}
+	let found := decide(how, [goal(v, self, [], blanks(past), true, split_depth)])
+	if (found == "Proved") { "Yes" }
+	else if (found.is_refuted) { "No" }
+	else if (why(found).fst == "outer need") { need(why(found).snd) }
+	else { stuck_on(pair("a function not settled", v)) }
+}
+
 // One former serves plain functions, polymorphism (over a type of types) and dependent types:
 // the family takes the argument's faces. A family of types is itself a type-level argument:
 // dependent types see it as a function giving a fresh abstract type for each argument, named
 // by the stuck application. A family that ignores its argument compiles to K(B), so a plain
 // arrow is one code however it was built, which is how stored pairs find it.
-fn_admits := {at, self, v} => fn_member(at, self, v, inner_piece(self.snd.applied.snd.fst, v), split_depth)
 rec fn_c :: {Dom : Code, fam : Tree} -> Code :=> {
 	let level := is_types(fam(faces_of(Dom, generic_of(Dom, "probe"))))
 	of_type(behaviour{
@@ -659,16 +837,9 @@ rec fn_c :: {Dom : Code, fam : Tree} -> Code :=> {
 		types := level})
 }
 ArrowC :: {Dom : Code, Cod : Code} -> Code :=> fn_c(Dom, {_face} => Cod)
-// The strictly smaller pieces of the input `root` of type Dom, and a partner of one: the
-// induction hypothesis's domain.
-below_c :: {Dom : Code, root : List(Tree), partner : Tree} -> Code :=> of_type(behaviour{
-	parts := [pair("Type", Dom), pair("Datum", root), pair("Datum", partner)],
-	admits := {_at, self, v} => if (licensed_with(table, self, v) == "None") { "No" } else { "Yes" }})
-// The induction hypothesis: a piece of the function type from the strictly smaller pieces of
-// the input `root` (or the `partner` of one: a quotient's hypothesis) to the codomain, which
-// may depend on the argument. Its license is the function rule: an argument must be in its domain.
+// the hypothesis for functions from Dom to a codomain that may depend on the argument
 hypothesis_over :: {Dom : Code, fam : Tree, root : List(Tree), partner : Val -> Val} -> Val :=>
-	piece_at(fn_c(below_c(Dom, root, partner), fam), "hypothesis", root)
+	hypothesis_for(fn_c(Dom, fam), root, partner)
 hypothesis :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val} -> Val :=> hypothesis_over(Dom, {_face} => Cod, root, partner)
 apply_ih_at :: {Dom : Code, Cod : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> sapply(hypothesis(Dom, Cod, root, partner), x, run_fuel)
 apply_ih :: {C : Code, root : List(Tree), partner : Val -> Val, x : Val} -> Res :=> apply_ih_at(C, C, root, partner, x)
@@ -755,20 +926,24 @@ rec neutral_type :: {inst : Option(Code), v : Val} -> Option(Code) :=>
 rec spine_args :: {inst : Option(Code), at : Tree, v : Val} -> Res :=>
 	if (not(v.is_app)) { "Yes" }
 	else { and_yes(spine_args(inst, at, v.app_head), {_y} => at(fn_view(neutral_type(inst, v.app_head).snd).snd.fst, v.app_arg)) }
-rec judge_as :: {R : Code, val : Val} -> Res :=> {
-	let at := {R2, v} => judge_as(R2, v)
+// a neutral term's type leads to T: it is T, or computes to it
+leads :: {ty : Option(Code), T : Code} -> Bool :=> if (is_none(ty)) { false } else { same_type(ty.snd, T) }
+// One reading of a value at a code, asking about each part with `at` and about each argument
+// of a call nobody can run with `at_arg` (one way: an argument outside its domain says
+// nothing about the call). The judge asks them at once; the goal loop makes each one a goal.
+rule_as :: {at : Code -> Val -> Res, at_arg : Code -> Val -> Res, R : Code, val : Val} -> Res :=> {
 	// A neutral term is in R when its type is R and every argument along it is in its domain;
 	// outside a domain the head's behaviour is unconstrained, so that is blamed on the head.
 	// Where its type is R only with R for an erased type argument, or for an eliminator's
 	// result, it is read so. "None": its type is not R. A stuck elimination that is not a
 	// member this way waits on what it eliminates: split, the elimination runs one layer on each case.
-	let is_R := {ty} => if (is_none(ty)) { false } else { same_type(ty.snd, R) }
+	let is_R := {ty} => leads(ty, R)
 	let app_rule := {v} => {
 		let inst := if (is_R(neutral_type(none, v))) { none } else { some(R) }
 		if (not(is_R(neutral_type(inst, v)))) { "None" }
 		else {
-			let args := spine_args(inst, at, v)
-			if ((args == "Yes") || (args.is_need)) { args }
+			let args := spine_args(inst, at_arg, v)
+			if (((args == "Yes") || (args.is_need)) || (is_into(args))) { args }
 			else if (if (spine_head(v).is_elim) { waits_on(v).is_splittable } else { false }) { need(waits_on(v)) }
 			else if (args == "No") { stuck_on(pair("argument outside the domain", v.app_head)) }
 			else { args }
@@ -806,12 +981,36 @@ rec judge_as :: {R : Code, val : Val} -> Res :=> {
 		else { any_fit(cases.snd.map({c} => fits_with(at, c, v))) }
 	}
 	if (if (val.is_piece) { same_type(val.piece_type, R) } else { false }) { "Yes" }
-	else if (neutral == "Yes") { "Yes" }
+	else if ((neutral == "Yes") || (is_into(neutral))) { neutral }
 	else if (if (neutral == "None") { false } else { spine_head(val).is_elim }) { neutral }
 	else if (R == TreeR) { tree(val) }
 	else if (is_type_code(R)) { R.snd.admits(at, R, val) }
 	else { recognized(val) }
 }
+rec judge_as :: {R : Code, val : Val} -> Res :=> rule_as({R2, v} => judge_as(R2, v), {R2, v} => judge_as(R2, v), R, val)
+
+// ---------------------------------------------------------------- asking later
+// The goal loop's reading (`ask_later`): each part a rule asks about becomes a goal of its
+// own, and each argument of a call nobody can run a goal that goes one way. A stuck
+// elimination is the one choice: it is read by the eliminator's type when its spine settles
+// at once (the loop on it), and otherwise waits for what it eliminates to be split. At a
+// function type only a call is read here, since the function rule is the loop's own.
+reads_as :: {T : Code, v : Val} -> Option(Code) :=> if (leads(neutral_type(none, v), T)) { none } else { some(T) }
+rec spine_goals :: {g : Goal, inst : Option(Code), v : Val} -> List(Goal) :=>
+	if (not(v.is_app)) { [] }
+	else { spine_goals(g, inst, v.app_head).append([sub_goal(g, false, v.app_arg, fn_view(neutral_type(inst, v.app_head).snd).snd.fst)]) }
+ask_later :: {again : List(Goal) -> Verdict, g : Goal, T : Code, v : Val} -> Res :=> {
+	let inst := if (v.is_app) { reads_as(T, v) } else { none }
+	let typed := if (v.is_app) { leads(neutral_type(inst, v), T) } else { false }
+	if (if (v.is_app) { spine_head(v).is_elim } else { false }) {
+		if (if (typed) { again(spine_goals(g, inst, v)) == "Proved" } else { false }) { yes_on(["elimination"]) }
+		else if (waits_on(v).is_splittable) { need(waits_on(v)) }
+		else { stuck_on(pair("an elimination not settled", v)) }
+	}
+	else if (is_fn_code(T)) { if (typed) { into(spine_goals(g, inst, v)) } else { stuck_on(pair("a call not of this type", v)) } }
+	else { rule_as(later_at(g, true), later_at(g, false), T, v) }
+}
+
 judge_nat :: Val -> Res := judge_as(NatR)
 judge_bool :: Val -> Res := judge_as(Bool)
 judge_tree :: Val -> Res := judge_as(TreeR)
@@ -820,90 +1019,6 @@ same_val :: {a : Val, b : Val} -> Res :=> if (a == b) { "Yes" } else { "No" }
 // equal AT a code: both sides members first, then the same term
 member_same :: {Cod : Code, a : Val, b : Val} -> Res :=>
 	and_yes(judge_as(Cod, a), {_} => and_yes(judge_as(Cod, b), {_} => same_val(a, b)))
-
-// ---------------------------------------------------------------- the loop
-// One loop settles every claim, case by case. A case is a partly-known input, and the work
-// list starts from cases that between them cover every input. Each case is settled by the
-// first of these that applies:
-//   generic run  the check answers Yes on the case: one run answers for every tree the case
-//                covers. The Yes says what it rests on besides the run: the hypothesis where
-//                the run applied it (induction), a lemma where it read a call by its type.
-//   refutation   a known case that fails is a counterexample; when unknowns remain,
-//                `instances` are fully concrete inputs the case stands for, re-run for one.
-//   lemmas       a later check answers Yes: the same run with more of the program read by its
-//                type. A later check never refutes, and where it needs a piece that is the
-//                piece to split.
-//   case split   the run needed a piece's shape (or, after a symbolic No, "the terms differ",
-//                the first splittable piece): the case splits along the piece's cases.
-// A case none settles is noted with the reason its run stopped, and the claim stays Open. A
-// stuck run, a need of a piece without a table, and a coarse piece never split.
-// a Yes that says what it rests on
-yes_on :: {grounds : List(Tree)} -> Res :=> pair("Yes", grounds)
-is_yes :: Res -> Bool := {r} => (r == "Yes") || (r.fst == "Yes")
-grounds_of :: Res -> List(Tree) := {r} => if (r == "Yes") { [] } else { r.snd }
-// what an answer rests on besides the run: induction where it applies the hypothesis, a lemma where it applies one's type, elimination where it applies an eliminator's
-cited :: {out : Val} -> List(Tree) :=> {
-	let roots := pieces_in(out).map(piece_root)
-	[pair("hypothesis", "induction"), pair("lemma", "lemma"), pair("elim", "elimination")].filter({rule} => roots.member(rule.fst)).map(pair_snd)
-}
-// a case is done, resting on these
-settled_on :: {grounds : List(Tree)} -> Outcome(Tree, Pair(Val, Nat)) :=> pair("Skip", grounds)
-split_target :: {r : Res, input : Val} -> Val :=>
-	if ((r.is_need) && (r.snd.is_splittable)) { r.snd }
-	else if (r == "No") { let found := (pieces_in(input)).filter(is_splittable); if (found.is_nil) { "None" } else { found.head } }
-	else { "None" }
-// what stopped a run: the reason an Open reports
-explain :: Res -> Tree := {r} =>
-	if (r.is_need) { pair("no split table", r.snd) }
-	else if (r.fst == "Stuck") { r.snd }
-	else if (r.fst == "Coarse") { pair("coarse symbol at fine position", r.snd) }
-	else { r }
-why :: Verdict -> Tree := {v} => if (v.fst == "Open") { v.snd } else { "not open" }
-// what the later checks add to the first run's answer: a Yes, or a better piece to split
-rec weigh :: {later : List(Val -> Res), input : Val, r : Res} -> Res :=>
-	if (later.is_nil) { r }
-	else {
-		let r2 := later.head(input)
-		if (is_yes(r2)) { r2 } else { weigh(later.tail, input, if (r2.is_need) { r2 } else { r }) }
-	}
-// `checks` are the exact check, then any that read more by type. `ground` reads a case as a
-// concrete counterexample: some(tree), or none while unknowns that matter remain. An item is
-// a case and the splits left for it; a Step is an item with what settled it.
-settle_case :: {checks : List(Val -> Res), ground : Val -> Option(Tree), instances : Val -> List(Val), item : Pair(Val, Nat)} -> Outcome(Tree, Pair(Val, Nat)) :=> {
-	let input := item.fst
-	let exact := checks.head
-	let r := exact(input)
-	if (is_yes(r)) { settled_on(grounds_of(r)) }
-	else {
-		let g := ground(input)
-		let bad := if (if (is_none(g)) { true } else { not(r == "No") }) { instances(input).filter({i} => exact(i) == "No") } else { [] }
-		if (if (is_none(g)) { false } else { r == "No" }) { yield(g.snd) }
-		else if (not(bad.is_nil)) { yield(ground(bad.head).snd) }
-		else {
-			let r2 := weigh(checks.tail, input, r)
-			let target := if (is_none(g)) { split_target(r2, input) } else { "None" }
-			if (is_yes(r2)) { settled_on(grounds_of(r2)) }
-			else if (target == "None") { noted(explain(r2)) }
-			else if (is_zero(item.snd)) { noted("split depth exhausted") }
-			else {
-				let cases := alternatives(input, target)
-				if (is_none(cases)) { noted(pair("no split table", target)) }
-				else { split_on(target, cases.snd.map({c} => pair(c, nat_pred(item.snd)))) }
-			}
-		}
-	}
-}
-// the work list of a claim: every case with what settled it
-search_steps :: {checks : List(Val -> Res), ground : Val -> Option(Tree), instances : Val -> List(Val), start : List(Pair(Val, Nat))} -> Items(Step) :=>
-	s_steps(settle_case(checks, ground, instances), start)
-// the verdict of a work list: the first counterexample refutes; every case settled proves; else Open on the first note
-steps_verdict :: {steps : Items(Step)} -> Verdict :=>
-	verdict(s_yielded(steps))
-search_g :: {checks : List(Val -> Res), ground : Val -> Option(Tree), instances : Val -> List(Val), input : Val, depth : Nat} -> Verdict :=>
-	steps_verdict(search_steps(checks, ground, instances, [pair(input, depth)]))
-known_ground :: Val -> Option(Tree) := {v} => if (v.is_known) { some(v) } else { none }
-search_r :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> search_g([check], known_ground, {_} => [], input, depth)
-search :: {check : Val -> Res, input : Val, depth : Nat} -> Verdict :=> flat(search_r(check, input, depth))
 
 run :: {fn : Tree, input : Val} -> Res :=> sapply(escape(fn), input, run_fuel)
 // the Nat input at level k of the split: succ^k of the piece k predecessor steps down (tests)

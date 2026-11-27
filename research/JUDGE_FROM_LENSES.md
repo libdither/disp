@@ -1,12 +1,17 @@
 # Judge from lenses: proposed changes
 
+Superseded (2026-11-23): the loop now works on goals (research/CASE_TREE_SEARCH.md §6, item 11).
+`settle_case`, `run_at`, `fn_member`, `steps_lens` and `steps_law` below no longer exist, and
+the line numbers are stale. Kept for the reasoning.
+
 Status: a proposal, revised after an independent review (section 8). Change 1 is implemented
-(section 5); nothing else is. The table in section 3 shows the checker before change 1. Every
-probe ran in a throwaway module that was deleted.
+(section 5), and so is the function check on the work list, with induction (section 6);
+nothing else is. The table in section 3 shows the checker before change 1. Every probe ran in
+a throwaway module that was deleted.
 
 Words used here. `judge(T, w)` (lib/rules.disp:262) gives a verdict for a whole program `w` at a
 type `T`: Proved, Refuted with a counterexample, or Open with a reason. `judge_as(T, v)`
-(lib/confirm.disp:758) asks once whether a partly-known value is in a type. A claim is a
+(lib/confirm.disp:852) asks once whether a partly-known value is in a type. A claim is a
 program `{witness, challenge} => Bool`. A lens between two claims carries a witness forward and
 a challenge back (lib/claim.disp:19); its law says a witness that passes the pulled-back
 challenge is carried to one that passes the challenge (`lens_holds`). A piece is an unknown
@@ -24,12 +29,12 @@ Two wishes, from the design discussion:
 
 ## 2. Where the code stands
 
-- The loop does each shortcut by hand (`settle_case`, lib/confirm.disp:872). The lens is
+- The loop does each shortcut by hand (`settle_case`, lib/confirm.disp:676). The lens is
   written afterwards: `steps_lens` (lib/rules.disp:303) folds the case splits of a finished work
   list into one lens, and tests attack its law by search.
 - Only the case split is ever a lens value. Induction and lemmas are a hypothesis piece and a
   lemma hole inside the run (`induct`, lib/rules.disp:101; `with_lemmas`, lib/rules.disp:196).
-  What a Yes rests on is a list of strings (`cited`, lib/confirm.disp:845). Induction's law
+  What a Yes rests on is a list of strings (`cited`, lib/confirm.disp:649). Induction's law
   (`ind_holds`, lib/rules.disp:72) is used only by tests, and it is not of the `lens_holds` shape.
 - A Proved already rests on little of the loop: that each settled case's check said Yes, and
   that each split's cases came from `alternatives` (lib/confirm.disp:621). The search order
@@ -40,11 +45,12 @@ Two wishes, from the design discussion:
   only refute one. research/LOB_AND_CURRY.md §5.4 names five rules as taken on trust (finite
   cover, case split, generic run, induction, composition). The header of lib/rules.disp says
   three atoms "are proved by hand once" and points at that section, which holds no proofs.
-- There are three loops that split. `judge` makes every argument up front (`generic_args`,
-  lib/rules.disp:92; arguments past the eighth are left to the function type's check) and runs
-  the work list. A function type's own check (`fn_member`, lib/confirm.disp:632) makes one
-  argument, runs, and splits, nested per arrow. `explore` (lib/confirm.disp:338) derives a
-  recognizer's cases.
+- There are two loops that split, and the first is used two ways. `judge` makes every
+  argument up front (`generic_args`, lib/rules.disp:92; arguments past the eighth are left to
+  the function type's check) and runs the work list. A function type's own check (`fn_member`,
+  lib/confirm.disp:730) runs the same work list on one argument, nested per arrow (section 6;
+  it was a loop of its own before). `explore` (lib/confirm.disp:338) derives a recognizer's
+  cases.
 - A type's record (`behaviour`, lib/confirm.disp) has a required check (`admits`) and optional
   fields: `cases` (it can be split), `generic` (how to make an unknown member; no type in lib/
   sets it), `elim`, `normal`. A function type reads its domain's and its result type's fields
@@ -220,8 +226,48 @@ Proposed earlier: the function type's own check becomes the work-list stream, wi
 and lemmas inside it; `judge_as` is renamed to something like `member`; a No carries its
 counterexample. Change 1 no longer needs it. It stands on its own case: three loops that
 split, and `judge` answering Open where `judge_as` answers Yes (first two rows of the table).
-The open doubt is unchanged: a function checked inside another check sometimes needs a piece of
-the outer one split, and hands that need up.
+The doubt was a function checked inside another check, which sometimes needs a piece of the
+outer one split, and hands that need up.
+
+### Landed: the function check on the work list, with induction
+
+`fn_member` (lib/confirm.disp:730) is now one call of the loop every claim uses (`search_g`),
+on one case: a fresh piece of the domain. The loop's definitions sit above it, in their own
+section of lib/confirm.disp.
+
+- A need of a piece that is not the case's own is noted, which ends the inner list as Open,
+  and is handed up as a Need. The caller splits that piece and asks again.
+- A recursive value (`fix(step)`) on an unknown argument is run as its step on the induction
+  hypothesis (`hypothesis_for`): a piece of the same function type, licensed on the strictly
+  smaller pieces of the argument. The fresh argument is named as an input piece,
+  `piece_at(dom, 0, [pair("inner", f)])`, so that its smaller pieces count.
+- A No is a counterexample found by the list with nothing unknown left.
+
+What was measured, first in a scratch checkout and again on the landed code:
+
+1. Without induction every verdict is the same as the old check's. On the 60 `judge` tests
+   that are Proved, the own check answered 47 Yes and 13 Stuck, before and after. All 13 were
+   stuck for want of induction.
+2. With induction the own check says Yes on 58 of the 60. The two left (`times`, `power` in
+   lib/tests/rules.test.disp) need a lemma. On the 52 `judge` tests that are not Proved it
+   never says Yes (24 No, 28 Stuck). A recursive program that calls itself on the same or a
+   larger argument is Stuck. Cold cost against the old check: +1.0% on
+   lib/theories/types.test.disp (14,428,300 to 14,579,711 steps), +0.7% on
+   lib/theories/mltt.test.disp, none on lib/tests/confirmer.test.disp.
+3. The nested case holds. A function built inside a program, holding an outer argument, and
+   handed to an unknown function is Proved: with a Bool or a Nat outer argument, with the
+   inner domain picked by the outer argument, and two function checks deep. The inner check
+   hands the need up, the outer loop splits the outer piece, and the inner list runs again on
+   each case. Tests: lib/tests/rules.test.disp, after the `judge` tests.
+
+### Still open
+
+It is not one flat loop. The checks are one stream function, but they nest: an inner list
+runs again after each outer split, each has its own split depth, and the derivation shows
+only the outer splits. A wrong inner function under an unknown one is Open ("argument outside
+the domain"), as before. A No from the own check carries no counterexample, and lemmas are
+still only in `judge`. `judge` is still its own entry: it makes every argument up front and
+adds lemmas, where it could be the own check plus lemmas and a counterexample.
 
 ## 7. Order
 
@@ -231,7 +277,9 @@ the outer one split, and hands that need up.
 4. Reword the header of lib/rules.disp and research/LOB_AND_CURRY.md §5.4: what is taken on
    trust, and that composition is now checked.
 5. Change 2, option 2, as a probe first.
-6. The one-loop change, if still wanted. Changes 3 and 5 wait.
+6. The one-loop change. The function check is on the work list, with induction (section 6).
+   Left: `judge` as that check plus lemmas and a counterexample; one flat list. Changes 3 and
+   5 wait.
 
 ## 8. The review
 

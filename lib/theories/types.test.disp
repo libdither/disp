@@ -107,7 +107,9 @@ times_e := {a, b} => nat_fold(a, 0, {_k, r} => plus_e(b, r))
 square_e := {k} => times_e(k, k)
 test times_e(3, 3) = 9
 test judge(nnn, plus_e) = "Proved"
-test derivation(plainly, nnn, plus_e) = [pair([pair("Piece", pair(0, [pair("arg", 0)])), pair("Piece", pair(0, [pair("arg", 1)]))], pair("run", ["elimination"]))]
+a0 := pair("Piece", pair(0, [pair("arg", 0)]))
+a1 := pair("Piece", pair(0, [pair("arg", 1)]))
+test derivation(plainly, nnn, plus_e) = [pair([], pair("function", [])), pair([a0], pair("function", [])), pair([a0, a1], pair("holds", ["elimination"]))]
 test judge(nnn, times_e) = "Proved"
 test judge(arrow_t(nat_t, nat_t), square_e) = "Proved"
 // Ackermann eliminates at two result types, a number and a function
@@ -152,7 +154,7 @@ test judge(len_any_t, {_l, fold, xs} => fold(t, xs, false, {_a, _tl, r} => succ(
 // ---- equations: an equation computes by shape, so equal successors are equal numbers and a step's hypothesis is already its proof
 plus_zero_t := pi_t(nat_t, {n} => eq_t([n], {m} => plus_e(m, 0), {m} => m))
 test judge(plus_zero_t, {n} => nat_fold(n, t, {_k, ih} => ih)) = "Proved"
-test derivation(plainly, plus_zero_t, {n} => nat_fold(n, t, {_k, ih} => ih)) = [pair([pair("Piece", pair(0, [pair("arg", 0)]))], pair("run", ["elimination"]))]
+test derivation(plainly, plus_zero_t, {n} => nat_fold(n, t, {_k, ih} => ih)) = [pair([], pair("function", [])), pair([a0], pair("holds", ["elimination"]))]
 // zero on the left is true by running, with no elimination
 test judge(pi_t(nat_t, {n} => eq_t([n], {m} => plus_e(0, m), {m} => m)), {_n} => t) = "Proved"
 // with no elimination there is no induction, and a step that drops its hypothesis proves nothing
