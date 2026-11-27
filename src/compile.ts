@@ -12,3 +12,5 @@ export { parseProgram, type Decl, type ParseItemStats, type ParseProgramOptions 
 export { collectSessionRoots, type ScopeEntry, type SigParam, type CompileSinks, APPLY_BUDGET } from "./elab/state.js"
 export { stringToTree } from "./elab/literals.js"
 export { compileExpr, compileType, exprToCir } from "./elab/expr.js"
+export { type CoreExpr, type Span, attachSpan, spanOf, copySpan, formatSpan } from "./core/ir.js"
+export { coreToTree } from "./elab/cir.js"

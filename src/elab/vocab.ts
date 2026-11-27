@@ -15,6 +15,7 @@ export type SugarName =
   | "Pi"            // binder->Pi type desugar target + gate
   | "zero" | "succ" // numeric literals
   | "cond"          // if
+  | "tree_eq"       // `==` infix equality and `if let` tag comparison
   | "prod"          // match
   | "eff_bind"      // `x <- e` block bind
   | "dot"           // projection vocabulary hook
@@ -23,7 +24,7 @@ export type SugarName =
   | "Record"        // module tuple typ former
   | "Telescope" | "proj_cell" | "derive_cell" // record type literals
   | "Coproduct" | "pair" // sum type literals
-  | "pair_fst" | "pair_snd" // xs[k] constant-index unrolling
+  | "pair_fst" | "pair_snd" // xs[k] constant-index unrolling & variant destructuring
   | "idx"           // xs[i] computed-index runtime accessor
   | "fst" | "snd"   // .fst/.snd pair accessors (settings-scoped)
 

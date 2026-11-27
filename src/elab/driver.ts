@@ -666,7 +666,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     return r
   }
 
-  // buildBaseRequest: the base request record (`base v` in cut.disp) — public,
+  // buildBaseRequest: the base request record (`base v` in surface.disp) — public,
   // non-param. Shared by declareBinding (which may wrap it in a head decorator)
   // and the open splice's guard consult. Null when the kernel isn't in scope.
   function buildBaseRequest(valueTree: Tree | null, typeTree: Tree | null): Tree | null {
@@ -710,7 +710,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   }
 
   // declareBinding: the declaration pipeline (the declaration protocol; SYNTAX.typ
-  // § record members, vocabulary in cut.disp). Fast path = the pre-guard behavior, taken when there is no head (or
+  // § record members, vocabulary in surface.disp). Fast path = the pre-guard behavior, taken when there is no head (or
   // the head is the pristine/unbound `let` decorator), no installed guard on the
   // name, and the ambient default_guard is pristine (or the kernel isn't loaded
   // yet). Slow path builds the request record, applies the head decorator, consults
@@ -764,7 +764,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const tt = lookupEntry("true")?.tree
     const g = existing?.guard ?? dg
     // The base request is public and non-param (`private := false; param := false`),
-    // exactly `base v` in cut.disp; privacy and param are the head's job (the
+    // matching `base(v)` in surface.disp; privacy and param are the head's job (the
     // `let` and `given` decorators set them).
     const base = buildBaseRequest(valueTree, typeTree)
     if (!tt || !g || base == null)
@@ -1113,7 +1113,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     }
   }
 
-  const items = parseItems(src)
+  const items = parseItems(src, sourceStack[0])
   const hasFields = hasExportFields(items)
   const rc = rootCtx()
   for (const it of items) runItem(it, decls, !hasFields, rc)
