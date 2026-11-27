@@ -1,5 +1,5 @@
 open use raw "lib/prelude.disp" {}
-open use raw "lib/list.disp" {}
+open use raw "lib/core/list.disp" {}
 open use raw "lib/stream.disp" {}
 
 next_level :: {levels : List(List(Tree))} -> List(Tree) :=> {

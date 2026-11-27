@@ -927,6 +927,11 @@ function mkConsChain(elems: Expr[]): Expr {
   return acc
 }
 
+// Out-of-band marker for `[ ... ]` list literals (like `spanOf`, keeps AST structural equality unchanged).
+const listLiterals = new WeakSet<Expr>()
+export const isListLiteral = (e: Expr): boolean => listLiterals.has(e)
+const markListLiteral = (e: Expr): Expr => { listLiterals.add(e); return e }
+
 // Array literal: [ e1, e2, ... ] (comma- or newline-separated). Empty `[]` is nil.
 const arrayP: P<Expr> = (ts, i) => {
   const open = punctP("[")(ts, i)
@@ -934,14 +939,14 @@ const arrayP: P<Expr> = (ts, i) => {
   let pos = open.pos
   while (ts[pos].t === "nl") pos++
   if (ts[pos].t === "punct" && (ts[pos] as any).v === "]")
-    return ok({ tag: "leaf" }, pos + 1)
+    return ok(markListLiteral({ tag: "leaf" }), pos + 1)
   const elemsR = sepBy1(nl(lazy(() => expr)), commaP)(ts, pos)
   if (!elemsR.ok) return elemsR
   pos = elemsR.pos
   while (ts[pos].t === "nl") pos++
   const close = punctP("]")(ts, pos)
   if (!close.ok) return close
-  return ok(mkConsChain(elemsR.v), close.pos)
+  return ok(markListLiteral(mkConsChain(elemsR.v)), close.pos)
 }
 
 // sumVariant = IDENT (":" expr)? — `Tag : T` is a single-arg variant, `Tag` is
@@ -1056,15 +1061,24 @@ const bindWrap = (ann: { ty: Expr } | null | undefined, value: Expr, recName: st
   const outerParams = groups.slice(0, -1).flat()
   return outerParams.length === 0 ? loop : { tag: "binder", fat: true, params: outerParams, body: loop }
 }
-const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; docType?: Expr; value: Expr; faced?: boolean; keyExpr?: Expr; line?: number; endLine?: number }> =>
+const makeFieldP = (valParser: P<Expr>, allowQualified = false): P<{ tag: "field"; name: string; type: Expr | null; docType?: Expr; value: Expr; faced?: boolean; keyExpr?: Expr; recordField?: { type: string; field: string; fieldType: Expr | null }; line?: number; endLine?: number }> =>
   nl((ts, i) => {
     // `#name := v` marks the record's FACE field (compiled through the
     // scope-bound `faced` former; see the recValue case in expr.ts).
     // `(K) := v` keys the field by the expression's VALUE (a tree, typically a
     // type) instead of a name; such fields bind no name.
-    const keyP: P<{ name: string; keyExpr?: Expr }> = (ts2, j) => {
+    // Top-level `Type.method := v` binds a qualified type method (same dispatch
+    // table as `record` accessors, src/elab/fields.ts).
+    const keyP: P<{ name: string; keyExpr?: Expr; recordField?: { type: string; field: string; fieldType: Expr | null } }> = (ts2, j) => {
       const id = idP(ts2, j)
-      if (id.ok) return ok({ name: id.v }, id.pos)
+      if (id.ok) {
+        if (allowQualified && ts2[id.pos]?.t === "punct" && (ts2[id.pos] as any).v === ".") {
+          const fld = idP(ts2, id.pos + 1)
+          if (fld.ok)
+            return ok({ name: `${id.v}.${fld.v}`, recordField: { type: id.v, field: fld.v, fieldType: null } }, fld.pos)
+        }
+        return ok({ name: id.v }, id.pos)
+      }
       if (ts2[j].t === "punct" && (ts2[j] as any).v === "(") {
         const e = lazy(() => expr)(ts2, j + 1)
         if (!e.ok) return e
@@ -1083,11 +1097,12 @@ const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: E
       tag: "field" as const, name: key.name, keyExpr: key.keyExpr,
       type: ann && !ann.doc ? ann.ty : null, docType: ann && ann.doc ? ann.ty : undefined,
       value: asn.bind ? bindWrap(ann, value) : value, faced: hash != null ? true : undefined,
+      recordField: key.recordField,
       line: tokLine(ts, i), endLine: endTokLine(ts, r.pos),
     }, r.pos)
   })
-const bracedFieldP = makeFieldP(lineExpr)
-const topFieldP = makeFieldP(lazy(() => expr))
+const bracedFieldP = makeFieldP(lineExpr, false)
+const topFieldP = makeFieldP(lazy(() => expr), true)
 
 // --- Braced member combinators (let/test/open/field inside { ... }) ---
 // Each parses one member + trailing SEMI, returning a RecMember.
@@ -1640,7 +1655,16 @@ const headFieldP: P<RecMember | RecMember[]> = (ts, i) => {
   const isRec = recAt >= 0 && atoms[recAt].tag === "var" && (atoms[recAt] as { name: string }).name === "rec"
   if (isRec) atoms.splice(recAt, 1)
   const last = atoms[atoms.length - 1]
-  if (last.tag !== "var") return err(`line ${tokLine(ts, i)}: application is written f(x), not f x (a declared name must be a plain identifier)`, pos)
+  let declName: string
+  let recordField: { type: string; field: string; fieldType: Expr | null } | undefined
+  if (last.tag === "var") {
+    declName = last.name
+  } else if (last.tag === "proj" && last.target.tag === "var") {
+    declName = `${last.target.name}.${last.field}`
+    recordField = { type: last.target.name, field: last.field, fieldType: null }
+  } else {
+    return err(`line ${tokLine(ts, i)}: application is written f(x), not f x (a declared name must be a plain or Type.method identifier)`, pos)
+  }
   if (atoms.length > 2) return err(`a declaration takes one decorator: write guard(g) NAME`, pos)
   const isRecord = atoms.length === 2 && atoms[0].tag === "var" && atoms[0].name === "record"
   const head = atoms.length === 2 && !isRecord ? atoms[0] : undefined
@@ -1649,9 +1673,10 @@ const headFieldP: P<RecMember | RecMember[]> = (ts, i) => {
   const ann = optional(annP)(ts, pos)
   if (ann.ok && ann.v) { if (ann.v.doc) docType = ann.v.ty; else type = ann.v.ty; pos = ann.pos }
   if (isRecord) {
+    if (recordField) throw new Error(`parse: line ${tokLine(ts, i)}: record constructor '${declName}' must be a plain identifier`)
     if (isRec) throw new Error(`parse: line ${tokLine(ts, i)}: 'record' and 'rec' don't combine`)
-    if (asnP(ts, pos).ok) throw new Error(`parse: line ${tokLine(ts, i)}: record '${last.name}' builds its own value, so it takes no ':='`)
-    return ok(recordItems(last.name, type ?? docType, type === null, tokLine(ts, i), endTokLine(ts, pos)), pos)
+    if (asnP(ts, pos).ok) throw new Error(`parse: line ${tokLine(ts, i)}: record '${declName}' builds its own value, so it takes no ':='`)
+    return ok(recordItems(declName, type ?? docType, type === null, tokLine(ts, i), endTokLine(ts, pos)), pos)
   }
   let value: Expr | null = null
   let bound = false
@@ -1659,7 +1684,7 @@ const headFieldP: P<RecMember | RecMember[]> = (ts, i) => {
   if (asn.ok && asn.v) {
     const src = type != null ? { ty: type } : docType != null ? { ty: docType } : null
     bound = asn.v[0].bind
-    value = bound ? bindWrap(src, asn.v[2], isRec ? last.name : null) : asn.v[2]
+    value = bound ? bindWrap(src, asn.v[2], isRec ? declName : null) : asn.v[2]
     pos = asn.pos
   }
   if (type === null && value === null && atoms[0].tag === "var" && atoms[0].name === "let")
@@ -1669,9 +1694,9 @@ const headFieldP: P<RecMember | RecMember[]> = (ts, i) => {
     // plain `rec NAME := body`: the fixpoint of the whole value (full arity).
     // The partial shape needs the annotation's binder groups, i.e. ':=>'.
     if (value === null) throw new Error(`parse: 'rec' requires a value to take the fixpoint of`)
-    value = { tag: "app", f: { tag: "var", name: "fix" }, x: { tag: "binder", fat: true, params: [{ name: last.name, type: null }], body: value } }
+    value = { tag: "app", f: { tag: "var", name: "fix" }, x: { tag: "binder", fat: true, params: [{ name: declName, type: null }], body: value } }
   }
-  return ok({ tag: "field" as const, name: last.name, type, docType, value, head, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
+  return ok({ tag: "field" as const, name: declName, type, docType, value, head, recordField, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
 }
 
 // `record NAME :: {f1 : T1, …, fn : Tn} -> R` — a positional record: the

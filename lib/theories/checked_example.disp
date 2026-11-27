@@ -1,6 +1,6 @@
 // A module whose annotations checked.disp checks: it loads only if every one is Proved.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "checked.disp" {}
 
 next : Nat -> Nat := {n} => succ(n)

@@ -19,7 +19,7 @@ const session = getBackend(process.env.DISP_EVALUATOR ?? defaultBackendName)
 function load(body: string): () => unknown {
   const dir = mkdtempSync(join(tmpdir(), "disp-checked-"))
   const mod = join(dir, "mod.disp")
-  writeFileSync(mod, `open use raw "${LIB}/prelude.disp" {}\nopen use raw "${LIB}/list.disp" {}\nopen use raw "${LIB}/theories/checked.disp" {}\n${body}\n`)
+  writeFileSync(mod, `open use raw "${LIB}/prelude.disp" {}\nopen use raw "${LIB}/core/list.disp" {}\nopen use raw "${LIB}/theories/checked.disp" {}\n${body}\n`)
   return () => parseProgram(`open use "${mod}" {}\n`, join(dir, "root.disp"), { session })
 }
 

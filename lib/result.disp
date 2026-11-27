@@ -1,0 +1,44 @@
+// Standard fallible result type (`Result(T, E)` with `Ok` / `Err`) and receiver-first methods.
+open use "kernel/prelude.disp"
+open use "option.disp"
+
+Result : Type -> Type -> Type := {T, E} => Sigma(Tree, {tag} => if (tag == "Ok") { T } else { E })
+
+Ok : Implicit({T} => Implicit({E} => T -> Result(T, E))) := Ok
+Err : Implicit({T} => Implicit({E} => E -> Result(T, E))) := Err
+
+Result.is_ok : Implicit({T} => Implicit({E} => Result(T, E) -> Bool)) := {res} => res.fst == "Ok"
+Result.is_err : Implicit({T} => Implicit({E} => Result(T, E) -> Bool)) := {res} => not(res.fst == "Ok")
+
+guard(fn2_equiv_guard(Result(Tree, Tree), Tree -> Tree)) Result.map : Implicit({T} => Implicit({U} => Implicit({E} => Result(T, E) -> (T -> U) -> Result(U, E)))) := {res, f} =>
+	if (res.fst == "Ok") { Ok(f(res.snd)) } else { res }
+
+guard(fn2_equiv_guard(Result(Tree, Tree), Tree -> Tree)) Result.map_err : Implicit({T} => Implicit({E} => Implicit({F} => Result(T, E) -> (E -> F) -> Result(T, F)))) := {res, f} =>
+	if (res.fst == "Ok") { res } else { Err(f(res.snd)) }
+
+guard(fn2_equiv_guard(Result(Tree, Tree), Tree -> Result(Tree, Tree))) Result.and_then : Implicit({T} => Implicit({U} => Implicit({E} => Result(T, E) -> (T -> Result(U, E)) -> Result(U, E)))) := {res, f} =>
+	if (res.fst == "Ok") { f(res.snd) } else { res }
+
+Result.or : Implicit({T} => Implicit({E} => Implicit({F} => Result(T, E) -> Result(T, F) -> Result(T, F)))) := {res, alt} =>
+	if (res.fst == "Ok") { res } else { alt }
+
+Result.or_else : Implicit({T} => Implicit({E} => Implicit({F} => Result(T, E) -> (E -> Result(T, F)) -> Result(T, F)))) := {res, f} =>
+	if (res.fst == "Ok") { res } else { f(res.snd) }
+
+Result.unwrap_or : Implicit({T} => Implicit({E} => Result(T, E) -> T -> T)) := {res, dflt} =>
+	if (res.fst == "Ok") { res.snd } else { dflt }
+
+Result.unwrap_or_else : Implicit({T} => Implicit({E} => Result(T, E) -> (E -> T) -> T)) := {res, f} =>
+	if (res.fst == "Ok") { res.snd } else { f(res.snd) }
+
+Result.ok : Implicit({T} => Implicit({E} => Result(T, E) -> Option(T))) := {res} =>
+	if (res.fst == "Ok") { Some(res.snd) } else { None }
+
+Result.err : Implicit({T} => Implicit({E} => Result(T, E) -> Option(E))) := {res} =>
+	if (res.fst == "Ok") { None } else { Some(res.snd) }
+
+Option.ok_or : Implicit({T} => Implicit({E} => Option(T) -> E -> Result(T, E))) := {opt, err} =>
+	if (opt.fst == "Some") { Ok(opt.snd) } else { Err(err) }
+
+Option.ok_or_else : Implicit({T} => Implicit({E} => Option(T) -> (Unit -> E) -> Result(T, E))) := {opt, mk} =>
+	if (opt.fst == "Some") { Ok(opt.snd) } else { Err(mk(t)) }

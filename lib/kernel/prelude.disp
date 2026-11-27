@@ -1,5 +1,5 @@
 // Disp core kernel barrel: opens prelude, list, evaluator-map engine, and surface `:` vocabulary.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "kernel.disp" {}
 open use raw "surface.disp" {}

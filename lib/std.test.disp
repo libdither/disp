@@ -1,0 +1,163 @@
+// End-to-end tests for Disp's Rust-style standard library (`lib/std.disp`),
+// parametric trait modules (`Monad`, `Foldable`), lexical type-head dot dispatch,
+// and verified `.opt.disp` speedup overlays (`lib/nat.opt.disp`, `lib/list.opt.disp`).
+open use "std.disp"
+open use raw "growth.disp" {}
+
+// Capture spec bindings before applying verified `.opt.disp` overlays
+let nat_add_spec := Nat.add
+let nat_dbl_spec := Nat.dbl
+let nat_sat_sub_spec := Nat.saturating_sub
+let nat_chk_sub_spec := Nat.checked_sub
+let list_rev_spec := List.rev
+let list_len_spec := List.len
+let list_is_empty_spec := List.is_empty
+let list_map_spec := List.map
+let list_append_spec := List.append
+let list_filter_spec := List.filter
+let list_all_spec := List.all
+let list_any_spec := List.any
+
+open use "nat.opt.disp"
+open use "list.opt.disp"
+
+// ---- 1. Ordering & comparisons
+test Less.is_less = true
+test Equal.is_equal = true
+test Greater.is_greater = true
+test Less.reverse = Greater
+test Greater.reverse = Less
+test Equal.reverse = Equal
+test Equal.then_cmp(Less) = Less
+test Greater.then_cmp(Less) = Greater
+test tree_cmp(t, t) = Equal
+test tree_cmp(t, t(t)) = Less
+test tree_cmp(t(t, t), t(t)) = Greater
+
+// ---- 2. Option (including Monad-derived map/flatten/ap/sequence/traverse)
+test Some(3).is_some = true
+test Some(3).is_none = false
+test None.is_some = false
+test None.is_none = true
+test Some(3).map(succ) = Some(4)
+test None.map(succ) = None
+test Some(3).and_then({n} => n.checked_sub(1)) = Some(2)
+test Some(0).and_then({n} => n.checked_sub(1)) = None
+test Some(3).filter(is_succ) = Some(3)
+test Some(0).filter(is_succ) = None
+test Some(3).unwrap_or(0) = 3
+test None.unwrap_or(9) = 9
+test None.unwrap_or_else({_} => 42) = 42
+test Some(1).or(Some(2)) = Some(1)
+test None.or(Some(2)) = Some(2)
+test None.or_else({_} => Some(7)) = Some(7)
+test Some(1).zip(Some(2)) = Some(pair(1, 2))
+test Some(1).zip(None) = None
+test Option.flatten(Some(Some(5))) = Some(5)
+test Option.flatten(Some(None)) = None
+test Option.ap(Some(succ), Some(4)) = Some(5)
+test Option.sequence([Some(1), Some(2), Some(3)]) = Some([1, 2, 3])
+test Option.sequence([Some(1), None, Some(3)]) = None
+test Option.traverse([1, 2, 3], {n} => n.checked_sub(1)) = Some([0, 1, 2])
+test Option.traverse([1, 0, 3], {n} => n.checked_sub(1)) = None
+
+// ---- 3. Result & Option <-> Result conversions
+test Ok(5).is_ok = true
+test Ok(5).is_err = false
+test Err("e").is_ok = false
+test Err("e").is_err = true
+test Ok(3).map(succ).unwrap_or(0) = 4
+test Err("bad").map(succ).unwrap_or(9) = 9
+test Err(2).map_err(succ) = Err(3)
+test Ok(5).and_then({n} => n.checked_sub(2).ok_or("underflow")) = Ok(3)
+test Ok(1).and_then({n} => n.checked_sub(2).ok_or("underflow")) = Err("underflow")
+test Ok(7).ok = Some(7)
+test Err("x").ok = None
+test Err("x").err = Some("x")
+test Ok(7).err = None
+test Some(5).ok_or("missing") = Ok(5)
+test None.ok_or("missing") = Err("missing")
+
+// ---- 4. Nat arithmetic & verified `nat.opt.disp` speedups
+test (5).add(7) = 12
+test (5).checked_sub(3) = Some(2)
+test (3).checked_sub(5) = None
+test (3).saturating_sub(5) = 0
+test (5).saturating_sub(2) = 3
+test (4).mul(3) = 12
+test (6).dbl = 12
+test (2).pow(4) = 16
+test (3).min(7) = 3
+test (3).max(7) = 7
+test (3).cmp(5) = Less
+test (5).cmp(5) = Equal
+test (7).cmp(5) = Greater
+
+test nat_lt(steps_of(Nat.add(8), 8, 20000), steps_of(nat_add_spec(8), 8, 20000)) = true
+test nat_lt(steps_of(Nat.dbl, 8, 20000), steps_of(nat_dbl_spec, 8, 20000)) = true
+test nat_lt(steps_of(Nat.saturating_sub(8), 5, 20000), steps_of(nat_sat_sub_spec(8), 5, 20000)) = true
+test nat_lt(steps_of(Nat.checked_sub(8), 5, 20000), steps_of(nat_chk_sub_spec(8), 5, 20000)) = true
+
+// ---- 5. List methods, cross-type chains, & verified `list.opt.disp` speedups
+test [1, 2, 3].len = 3
+test [].is_empty = true
+test [1].is_empty = false
+test [1, 2, 3].first = Some(1)
+test [].first = None
+test [1, 2, 3].last = Some(3)
+test [].last = None
+test [10, 20, 30].get(1) = Some(20)
+test [10, 20].get(5) = None
+test [1, 2, 3].split_first = Some(pair(1, [2, 3]))
+test [].split_first = None
+test [2, 3].push_front(1) = [1, 2, 3]
+test [1, 2, 3].fold(0, Nat.add) = 6
+test [1, 2, 3].rfold([], cons) = [1, 2, 3]
+test [1, 2, 3].filter(is_succ).map(succ).rev = [4, 3, 2]
+test [1, 2].append([3, 4]) = [1, 2, 3, 4]
+test [[1, 2], [3], [4, 5]].flatten = [1, 2, 3, 4, 5]
+test [1, 2, 3].flat_map({n} => [n, n.dbl]) = [1, 2, 2, 4, 3, 6]
+test [1, 2, 3].filter_map({n} => n.checked_sub(2)) = [0, 1]
+test [1, 2, 3, 4].find({n} => (2).lt(n)) = Some(3)
+test [1, 2, 3].all(is_succ) = true
+test [0, 1, 2].all(is_succ) = false
+test [0, 0, 1].any(is_succ) = true
+test [0, 0].any(is_succ) = false
+test [1, 2, 3].contains(2) = true
+test [1, 2, 3].contains(9) = false
+test [1, 2, 3, 4].take(2) = [1, 2]
+test [1, 2, 3, 4].skip(2) = [3, 4]
+test [1, 2].zip([8, 9]) = [pair(1, 8), pair(2, 9)]
+test [10, 20].enumerate = [pair(0, 10), pair(1, 20)]
+test [1, 2, 1, 3, 2].dedup = [1, 3, 2]
+test List.sequence([[1, 2], [3, 4]]) = [[1, 3], [1, 4], [2, 3], [2, 4]]
+
+// Cross-type Rust-style dot chain: List -> Option -> Result -> Nat
+test [1, 2, 3].first.map(succ).ok_or("empty").map({n} => n.add(10)).unwrap_or(0) = 12
+test [].first.map(succ).ok_or("empty").map({n} => n.add(10)).unwrap_or(99) = 99
+
+// Speedup pins via `steps_of` (verified `.opt.disp` beats trait-derived specs)
+let xs8 := [1, 2, 3, 4, 5, 6, 7, 8]
+test nat_lt(steps_of(List.rev, xs8, 30000), steps_of(list_rev_spec, xs8, 30000)) = true
+test nat_lt(steps_of(List.len, xs8, 30000), steps_of(list_len_spec, xs8, 30000)) = true
+test nat_lt(steps_of(List.is_empty, xs8, 30000), steps_of(list_is_empty_spec, xs8, 30000)) = true
+test nat_lt(steps_of({xs} => List.map(xs, succ), xs8, 30000), steps_of({xs} => list_map_spec(xs, succ), xs8, 30000)) = true
+test nat_lt(steps_of({xs} => List.append(xs, [9]), xs8, 30000), steps_of({xs} => list_append_spec(xs, [9]), xs8, 30000)) = true
+test nat_lt(steps_of({xs} => List.filter(xs, is_succ), xs8, 30000), steps_of({xs} => list_filter_spec(xs, is_succ), xs8, 30000)) = true
+test nat_lt(steps_of({xs} => List.all(xs, is_succ), xs8, 30000), steps_of({xs} => list_all_spec(xs, is_succ), xs8, 30000)) = true
+test nat_lt(steps_of({xs} => List.any(xs, is_zero), xs8, 30000), steps_of({xs} => list_any_spec(xs, is_zero), xs8, 30000)) = true
+
+// ---- 6. Custom Monad instantiation with optimized `map_impl` + machine-checked `map_law`
+let opt_map_direct := {opt, f} => if (opt.fst == "Some") { Some(f(opt.snd)) } else { None }
+let pf_opt_map_law := {opt, _f} => if (opt.fst == "Some") { t } else { t }
+let FastOptMonad := use "traits/monad.disp" {
+	M := Option,
+	pure := Some,
+	flat_map := Option.and_then,
+	map_impl := opt_map_direct,
+	map_law := pf_opt_map_law
+}
+test FastOptMonad.map(Some(5), succ) = Some(6)
+test FastOptMonad.traverse([1, 2, 3], {n} => n.checked_sub(1)) = Some([0, 1, 2])
+test FastOptMonad.ap_verified = true
+test FastOptMonad.tr_verified = true

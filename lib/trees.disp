@@ -2,7 +2,7 @@
 // recognizer. IDEAS.disp builds the same two while explaining them; this copy
 // carries no tests, so opening it costs nothing.
 open use raw "prelude.disp" {}
-open use raw "list.disp" {}
+open use raw "core/list.disp" {}
 open use raw "stream.disp" {}
 
 next_level :: {levels : List(List(Tree))} -> List(Tree) :=> {

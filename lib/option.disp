@@ -1,0 +1,44 @@
+// Standard optional value type (`Option(A)` with `Some` / `None`) and receiver-first methods.
+// `Option.map`, `Option.flatten`, `Option.ap`, `Option.sequence`, and `Option.traverse` are
+// derived from the parametric `Monad` trait module (`lib/traits/monad.disp`).
+open use "kernel/prelude.disp"
+
+Option : Type -> Type := {A} => Sigma(Tree, {tag} => if (tag == "Some") { A } else { Unit })
+
+Some : Implicit({A} => A -> Option(A)) := {x} => pair("Some", x)
+None : Implicit({A} => Option(A)) := pair("None", t)
+
+Option.is_some : Implicit({A} => Option(A) -> Bool) := {opt} => opt.fst == "Some"
+Option.is_none : Implicit({A} => Option(A) -> Bool) := {opt} => not(opt.fst == "Some")
+
+let opt_and_then : Implicit({A} => Implicit({B} => Option(A) -> (A -> Option(B)) -> Option(B))) := {opt, f} =>
+	if (opt.fst == "Some") { f(opt.snd) } else { None }
+
+let OptMonad := use "traits/monad.disp" { M := Option, pure := Some, flat_map := opt_and_then }
+
+guard(fn2_equiv_guard(Option(Tree), Tree -> Option(Tree))) Option.and_then : Implicit({A} => Implicit({B} => Option(A) -> (A -> Option(B)) -> Option(B))) := opt_and_then
+guard(fn2_equiv_guard(Option(Tree), Tree -> Tree)) Option.map : Implicit({A} => Implicit({B} => Option(A) -> (A -> B) -> Option(B))) := OptMonad.map
+guard(fn_equiv_guard(Option(Option(Tree)))) Option.flatten : Implicit({A} => Option(Option(A)) -> Option(A)) := OptMonad.flatten
+guard(fn2_equiv_guard(Option(Tree -> Tree), Option(Tree))) Option.ap : Option(Tree -> Tree) -> Option(Tree) -> Option(Tree) := OptMonad.ap
+guard(fn2_equiv_guard(List(Tree), Tree -> Option(Tree))) Option.traverse : List(Tree) -> (Tree -> Option(Tree)) -> Option(List(Tree)) := OptMonad.traverse
+guard(fn_equiv_guard(List(Option(Tree)))) Option.sequence : List(Option(Tree)) -> Option(List(Tree)) := OptMonad.sequence
+
+Option.filter : Implicit({A} => Option(A) -> (A -> Bool) -> Option(A)) := {opt, pred} =>
+	if (opt.fst == "Some") { if (pred(opt.snd)) { opt } else { None } } else { None }
+
+Option.unwrap_or : Implicit({A} => Option(A) -> A -> A) := {opt, dflt} =>
+	if (opt.fst == "Some") { opt.snd } else { dflt }
+
+Option.unwrap_or_else : Implicit({A} => Option(A) -> (Unit -> A) -> A) := {opt, mk} =>
+	if (opt.fst == "Some") { opt.snd } else { mk(t) }
+
+Option.or : Implicit({A} => Option(A) -> Option(A) -> Option(A)) := {opt, alt} =>
+	if (opt.fst == "Some") { opt } else { alt }
+
+Option.or_else : Implicit({A} => Option(A) -> (Unit -> Option(A)) -> Option(A)) := {opt, mk} =>
+	if (opt.fst == "Some") { opt } else { mk(t) }
+
+Option.zip : Implicit({A} => Implicit({B} => Option(A) -> Option(B) -> Option(Pair(A, B)))) := {a, b} =>
+	if (a.fst == "Some") {
+		if (b.fst == "Some") { Some(pair(a.snd, b.snd)) } else { None }
+	} else { None }

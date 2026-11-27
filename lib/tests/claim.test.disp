@@ -6,7 +6,7 @@
 // used (finite cover, case split, generic run, induction and composition) are the
 // trusted part, and live in lib/rules.disp.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
 open use raw "../claim.disp" {}

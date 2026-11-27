@@ -3,7 +3,7 @@
 // transitivity & neutral-call congruence, binary forall_k(2), cross-module certificates,
 // Scott induction in PartialFn, and token-free first-class types.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "kernel.disp" {}
 
 rec NatP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatP(v.snd) } else { false } } else { false }

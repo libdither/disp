@@ -1,0 +1,54 @@
+// Parametric Monad trait module: derives `map`, `flatten`, `ap`, `sequence`, and `traverse`
+// from `M`, `pure`, and `flat_map`. Consumers may supply a custom `map_impl` alongside a
+// machine-checked `map_law` proof that it agrees pointwise with `flat_map` + `pure`, so all
+// derived combinators automatically run on the optimized `map_impl`.
+open use "../kernel/prelude.disp"
+
+open given {
+	M : Type -> Type
+	pure : Implicit({A} => A -> M(A))
+	flat_map : Implicit({A} => Implicit({B} => M(A) -> (A -> M(B)) -> M(B)))
+	map_impl : Implicit({A} => Implicit({B} => M(A) -> (A -> B) -> M(B))) := {mx, f} => flat_map(mx, {x} => pure(f(x)))
+	map_law : {mx : M(Tree)} -> {f : Tree -> Tree} -> Eq(map_impl(mx, f), flat_map(mx, {x} => pure(f(x)))) := {_mx, _f} => t
+}
+
+guard(fn2_equiv_guard(M(Tree), Tree -> Tree)) map : Implicit({A} => Implicit({B} => M(A) -> (A -> B) -> M(B))) := map_impl
+guard(fn_equiv_guard(M(M(Tree)))) flatten : Implicit({A} => M(M(A)) -> M(A)) := {mmx} => flat_map(mmx, {mx} => mx)
+
+// Derived `ap`, `traverse`, `sequence` are certified using independent monomorphic lemma
+// bundles for `flat_map` and `map_impl` (so they check for recursive monads like `List`
+// without interfering with `map_law` unfolding above).
+let ap_impl := {mf, mx} => flat_map(mf, {f} => map_impl(mx, f))
+let traverse_impl := {xs, f} =>
+	fix({go, l} =>
+		if (l.is_nil) { pure([]) }
+		else { flat_map(f(l.head), {y} => map_impl(go(l.tail), {ys} => cons(y, ys))) }
+	)(xs)
+let sequence_impl := {xs} => traverse_impl(xs, {mx} => mx)
+
+let c_fm_ap := certify(check_depth, check_fuel, "all", [], [
+	pair("fm_ap", pair(M(Tree -> Tree) -> ((Tree -> Tree) -> M(Tree)) -> M(Tree), flat_map))
+])
+let c_map_ap := certify(check_depth, check_fuel, "all", [], [
+	pair("map_ap", pair(M(Tree) -> (Tree -> Tree) -> M(Tree), map_impl))
+])
+let ap_cert := certify(check_depth, check_fuel, "fix", [c_fm_ap, c_map_ap], [
+	pair("ap", pair(M(Tree -> Tree) -> M(Tree) -> M(Tree), ap_impl))
+])
+
+let c_fm_tr := certify(check_depth, check_fuel, "all", [], [
+	pair("fm_tr", pair(M(Tree) -> (Tree -> M(List(Tree))) -> M(List(Tree)), flat_map))
+])
+let c_map_tr := certify(check_depth, check_fuel, "all", [], [
+	pair("map_tr", pair(M(List(Tree)) -> (List(Tree) -> List(Tree)) -> M(List(Tree)), map_impl))
+])
+let tr_cert := certify(check_depth, check_fuel, "fix", [c_fm_tr, c_map_tr], [
+	pair("traverse", pair(List(Tree) -> (Tree -> M(Tree)) -> M(List(Tree)), traverse_impl)),
+	pair("sequence", pair(List(M(Tree)) -> M(List(Tree)), sequence_impl))
+])
+
+guard(fn2_equiv_guard(M(Tree -> Tree), M(Tree))) ap :: M(Tree -> Tree) -> M(Tree) -> M(Tree) := ap_impl
+guard(fn2_equiv_guard(List(Tree), Tree -> M(Tree))) traverse :: List(Tree) -> (Tree -> M(Tree)) -> M(List(Tree)) := traverse_impl
+guard(fn_equiv_guard(List(M(Tree)))) sequence :: List(M(Tree)) -> M(List(Tree)) := sequence_impl
+ap_verified : The(Bool, true) := is_cert(ap_cert)
+tr_verified : The(Bool, true) := is_cert(tr_cert)

@@ -4,8 +4,8 @@
 // type when it is known, by the only accessor in scope when there is one, and
 // otherwise as an error asking for an annotation. Types come from annotations,
 // which are never checked, so a type only ever breaks a tie.
-import type { Expr } from "../parse.js"
-import type { ScopeEntry } from "./state.js"
+import { isListLiteral, type Expr } from "../parse.js"
+import { elab, type ScopeEntry } from "./state.js"
 
 /// field name → record type name → the field's declared type
 const owners = new Map<string, Map<string, Expr | null>>()
@@ -15,7 +15,7 @@ export const qualified = (type: string, field: string): string => `${type}.${fie
 export function registerField(type: string, field: string, fieldType: Expr | null): void {
   let byType = owners.get(field)
   if (!byType) owners.set(field, byType = new Map())
-  byType.set(type, fieldType)
+  if (!byType.has(type) || fieldType != null) byType.set(type, fieldType)
 }
 
 /// the declared type of a qualified accessor, when one is registered
@@ -47,23 +47,63 @@ export function localType(name: string): Expr | null | undefined {
 
 export const isLocal = (name: string): boolean => localType(name) !== undefined
 
-/// a type's name, when it is a plain identifier (`Former`, not `List(Former)`)
-export const typeName = (ty: Expr | null | undefined): string | null =>
-  ty != null && ty.tag === "var" ? ty.name : null
+/// Unwrap `Implicit({A} => ...)` / `Forall({A} => ...)` / `{A : Type} -> ...` quantification
+/// around a type expression so `typeName` and `typeOf` see the underlying return/function shape.
+export function unwrapTypeExpr(ty: Expr | null | undefined): Expr | null {
+  let cur = ty ?? null
+  while (cur != null) {
+    if (cur.tag === "app" && cur.f.tag === "var" && (cur.f.name === "Implicit" || cur.f.name === "Forall")
+        && cur.x.tag === "binder" && cur.x.fat) {
+      cur = cur.x.body
+      continue
+    }
+    if (cur.tag === "binder" && !cur.fat && cur.params.length > 0) {
+      const p0 = cur.params[0]
+      if (p0.type?.tag === "var" && (p0.type.name === "Type" || p0.type.name === "TypeFam")) {
+        cur = cur.params.length === 1 ? cur.body : { ...cur, params: cur.params.slice(1) }
+        continue
+      }
+    }
+    break
+  }
+  return cur
+}
 
-/// The `::` type of an expression, as far as annotations tell: a local's annotation,
-/// a field's declared type, an applied function type's result, or an ascription.
+/// Strip the leading receiver parameter from a method's declared type (`Option(A) -> (A -> B) -> Option(B)`
+/// → `(A -> B) -> Option(B)`), so chained dot calls (`x.map(f).unwrap_or(d)`) keep knowing the return type.
+export function peelReceiverType(ty: Expr | null | undefined): Expr | null {
+  const fn = unwrapTypeExpr(ty)
+  if (fn == null || fn.tag !== "binder" || fn.fat || fn.params.length === 0) return null
+  return fn.params.length === 1 ? fn.body : { ...fn, params: fn.params.slice(1) }
+}
+
+/// a type's head constructor name (`Former`, `List(Nat)` → `"List"`, `Option(A)` → `"Option"`)
+export const typeName = (ty: Expr | null | undefined): string | null => {
+  let cur = unwrapTypeExpr(ty)
+  while (cur != null && cur.tag === "app") cur = cur.f
+  return cur != null && cur.tag === "var" ? cur.name : null
+}
+
+/// The declared type of an expression, as far as annotations tell: a local or top-level
+/// annotation, a numeric literal (`Nat`), a field/method's declared type, an applied
+/// function type's result, or an ascription.
 export function typeOf(e: Expr, lookupEntry: (name: string) => ScopeEntry | undefined): Expr | null {
+  if (isListLiteral(e)) return { tag: "var", name: "List" }
   switch (e.tag) {
-    case "var": return localType(e.name) ?? null
+    case "var": return localType(e.name) ?? lookupEntry(e.name)?.typeExpr ?? null
+    case "num": return { tag: "var", name: "Nat" }
     case "ann": return e.type
     case "proj": {
+      if (e.target.tag === "var" && !isLocal(e.target.name) && lookupEntry(e.target.name)?.fields == null) {
+        const direct = lookupEntry(qualified(e.target.name, e.field))
+        if (direct?.typeExpr) return direct.typeExpr
+      }
       const type = typeName(typeOf(e.target, lookupEntry))
       const owner = pickOwner(type, e.field, lookupEntry, false)
       return owner ? fieldTypeOf(owner, e.field) : null
     }
     case "app": {
-      const fn = typeOf(e.f, lookupEntry)
+      const fn = unwrapTypeExpr(typeOf(e.f, lookupEntry))
       if (fn == null || fn.tag !== "binder" || fn.fat || fn.params.length === 0) return null
       return fn.params.length === 1 ? fn.body : { ...fn, params: fn.params.slice(1) }
     }
@@ -82,8 +122,9 @@ export function pickOwner(
   const found = ownersInScope(field, lookupEntry)
   if (found.length === 0) return null
   if (type != null && found.includes(type)) return type
-  const fn = lookupEntry(field)?.tree != null
-  if (found.length === 1 && !fn) return found[0]
+  const fnTree = lookupEntry(field)?.tree
+  const fn = fnTree != null
+  if (found.length === 1 && (!fn || elab.cs.equal!(lookupEntry(qualified(found[0], field))!.tree!, fnTree!))) return found[0]
   if (type != null && fn) return null
   if (!strict) return null
   const choices = found.map(t => `'${t}'`).join(", ")

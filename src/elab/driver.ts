@@ -16,6 +16,7 @@ import { elab, B, verifiedModules, moduleCacheBySession, registerVocab, isPristi
 import { type Cir, cap, cirToTree, eliminateLams, coreToTree } from "./cir.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { printValue } from "../format/print.js"
+import type { Expr } from "../parse.js"
 
 // Parsed-module cache keyed by (frontend name, absolute path). File content is
 // immutable per process, so each frontend parses a given file at most once.
@@ -34,7 +35,7 @@ const defaultResolveFrontend: FrontendResolver = (absPath, current) =>
   absPath.endsWith(".disp") ? dispFrontend : current
 
 export type Decl =
-  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null; cert?: LicenseCert | null; params?: SigParam[] }
+  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; typeExpr?: Expr | null; guard?: Tree | null; cert?: LicenseCert | null; params?: SigParam[] }
   // `line`/`endLine` are the equation's 1-based source extent (absent for tests
   // emitted by inline recValue blocks, which have no surface line of their own).
   | { kind: "Test"; lhs: Tree; rhs: Tree; line?: number; endLine?: number }
@@ -69,6 +70,7 @@ type FileCtx = {
   givenSeen: Set<string>
   abstract?: boolean
   givenHyps?: { name: string; type: Tree; hyp: Tree }[]
+  givenChecks?: { name: string; ty: Tree; val: Tree }[]
 }
 const rootCtx = (): FileCtx =>
   ({ isRoot: true, raw: false, fills: new Map(), givens: [], givenSeen: new Set() })
@@ -421,7 +423,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // exports only its fields. (The old legacy mode where top-level lets exported is
     // gone: `let` marks the write private everywhere.)
     const hasFields = mod.hasExports
-    const ctx: FileCtx = { isRoot: false, raw, abs, fills: supplied, givens, givenSeen: new Set(), abstract, givenHyps: abstract ? [] : undefined }
+    const ctx: FileCtx = { isRoot: false, raw, abs, fills: supplied, givens, givenSeen: new Set(), abstract, givenHyps: abstract ? [] : undefined, givenChecks: [] }
     // The module auto-verify hook, captured while the module's own scope is still on
     // the stack (popped in `finally`). ONE convention for every world: a scope that
     // binds `check_module` gets its annotated exports (and checked block-lets)
@@ -482,6 +484,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const fieldNames: string[] = []
     const fieldTrees: Tree[] = []
     const fieldTypes: (Tree | null)[] = []
+    const fieldTypeExprs: (Expr | null)[] = []
     const fieldGuards: (Tree | null)[] = []
     const fieldCerts: (LicenseCert | null)[] = []
     const fieldParams: (SigParam[] | undefined)[] = []
@@ -491,6 +494,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         fieldNames.push(d.name)
         fieldTrees.push(d.tree)
         fieldTypes.push(d.type ?? null)
+        fieldTypeExprs.push(d.typeExpr ?? null)
         fieldGuards.push(d.guard ?? null)
         fieldCerts.push(d.cert ?? null)
       }
@@ -533,20 +537,35 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     if (!raw && cmFormers && !verSet.has(verKey) && !scheduledForVerification.has(verKey)) {
       const typEntries: Tree[] = []
       const checkedEntries: { name: string; ty: Tree; val: Tree }[] = []
-      for (let i = 0; i < fieldNames.length; i++)
+      const batchNames: string[] = [], batchTrees: Tree[] = []
+      const usedBatch = new Set<string>()
+      // Prepend filled `given` checks (promoted kernel) so earlier givens verify in order
+      // and promote as certified lemmas for later givens, laws, and module exports.
+      for (const g of ctx.givenChecks ?? []) {
+        let gn = `given '${g.name}'`
+        for (let k = 2; usedBatch.has(gn); k++) gn = `given '${g.name}'__${k}`
+        usedBatch.add(gn)
+        batchNames.push(gn)
+        batchTrees.push(g.val)
+        typEntries.push(elab.cs.fork(stringToTree(gn), g.ty))
+        checkedEntries.push({ name: gn, ty: g.ty, val: g.val })
+      }
+      for (let i = 0; i < fieldNames.length; i++) {
+        usedBatch.add(fieldNames[i])
+        batchNames.push(fieldNames[i])
+        batchTrees.push(fieldTrees[i])
         if (fieldTypes[i]) {
           typEntries.push(elab.cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
           checkedEntries.push({ name: fieldNames[i], ty: fieldTypes[i]!, val: fieldTrees[i] })
         }
+      }
       // Checked block-let annotations join the same batch as pseudo-entries
       // (names uniquified against exports; the values are NOT exported).
-      const batchNames = fieldNames.slice(), batchTrees = fieldTrees.slice()
       if (letAnns.length > 0) {
-        const used = new Set(batchNames)
         for (const a of letAnns) {
           let n = a.name
-          for (let k = 2; used.has(n); k++) n = `${a.name}__${k}`
-          used.add(n)
+          for (let k = 2; usedBatch.has(n); k++) n = `${a.name}__${k}`
+          usedBatch.add(n)
           batchNames.push(n)
           batchTrees.push(a.val)
           typEntries.push(elab.cs.fork(stringToTree(n), a.ty))
@@ -581,7 +600,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldGuards, fieldCerts, fieldParams }
+    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldTypeExprs, fieldGuards, fieldCerts, fieldParams }
     modCache.set(cacheKey, record)
     return record
   }
@@ -668,7 +687,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // a record value is `open`-able and projects at compile time.
     const record = (body != null ? curFrontend.resolveRecord?.(body, makeEnv()) : undefined) ?? recordFieldsFromTree(tree, lookupEntry)
     const params = body != null ? curFrontend.extractParams?.(body, typeExpr ?? null) : undefined
-    define(name, { tree, type: typeTree, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes, params, guard })
+    define(name, { tree, type: typeTree, typeExpr: (typeExpr as Expr | null | undefined) ?? null, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes, fieldTypeExprs: record?.fieldTypeExprs, params, guard })
   }
 
   function compileBinding(
@@ -908,9 +927,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // The fill binds BEFORE the annotation compiles, so a given's type may reference
     // the given itself (the self-typed universe dependency `given Type : Type`
     // checks the fill against itself, which is R6) as well as earlier givens.
-    define(it.name, { tree: fill })
+    define(it.name, { tree: fill, typeExpr: (it.type as Expr | null | undefined) ?? null })
     const typeTree = !ctx.raw && it.type != null ? compileType(it.type) : null
-    if (typeTree != null) define(it.name, { tree: fill, type: typeTree })
+    if (typeTree != null) define(it.name, { tree: fill, type: typeTree, typeExpr: (it.type as Expr | null | undefined) ?? null })
     if (!ctx.raw && typeTree != null) {
       const pa = lookupEntry("param_apply")?.tree, ok = lookupEntry("Ok")?.tree, tt = lookupEntry("true")?.tree
       if (pa && ok && tt) {
@@ -919,6 +938,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           verdict: vApply(vApply(pa, typeTree), fill),
           okTT: elab.cs.apply(ok, tt, B()),
         })
+      } else if (lookupEntry("check_module")?.tree) {
+        ctx.givenChecks?.push({ name: it.name, ty: typeTree, val: fill })
       }
     }
   }
@@ -945,13 +966,14 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           // binding wins. An UNGUARDED (fast-path) duplicate is still the old accident
           // error, relocated here from the parser (the parser can't see guards).
           const idx = target.findIndex(d => d.kind === "Def" && d.name === it.name)
-          const decl: Decl = { kind: "Def", name: it.name, tree: r.tree!, type: r.type, guard: r.guard ?? null, cert: r.cert ?? null, params: lookupEntry(it.name)?.params }
+          const declTypeExpr = ((it.type ?? it.docType) as Expr | null | undefined) ?? null
+          const decl: Decl = { kind: "Def", name: it.name, tree: r.tree!, type: r.type, typeExpr: declTypeExpr, guard: r.guard ?? null, cert: r.cert ?? null, params: lookupEntry(it.name)?.params }
           if (idx >= 0) {
             if (r.viaFast) throw new Error(`duplicate exported field '${it.name}'`)
             // A rebind without its own annotation keeps the name's contract: the
             // original Def's type survives (and re-verifies against the new tree).
             const prev = target[idx] as Extract<Decl, { kind: "Def" }>
-            target[idx] = { ...decl, type: decl.type ?? prev.type }
+            target[idx] = { ...decl, type: decl.type ?? prev.type, typeExpr: decl.typeExpr ?? prev.typeExpr }
           } else target.push(decl)
         }
         // Register a standard native's canonical tree id with the runtime fast-path on
@@ -1019,6 +1041,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           const fieldTree = record.fieldTrees ? record.fieldTrees[i] : elab.cs.apply(tree!, accTree(record.fields[i]), B())
           const name = record.fields[i]
           const fieldType = record.fieldTypes?.[i] ?? null
+          const fieldTypeExpr = record.fieldTypeExprs?.[i] ?? null
           const inGuard = record.fieldGuards?.[i] ?? undefined
           const inCert = record.fieldCerts?.[i] ?? undefined
           const inParams = record.fieldParams?.[i]
@@ -1032,8 +1055,17 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             //     owner's policy travels with its export; the dedupe must not
             //     strip it, or open order would decide whether a name is owned).
             if (incumbent.tree && elab.cs.equal!(incumbent.tree, fieldTree)) {
-              if ((inGuard && !incumbent.guard) || (inCert && !incumbent.cert))
-                define(name, { ...incumbent, guard: incumbent.guard ?? inGuard, cert: incumbent.cert ?? inCert })
+              if ((inGuard && !incumbent.guard) || (inCert && !incumbent.cert) || (fieldTypeExpr && !incumbent.typeExpr)) {
+                const mergedGuard = incumbent.guard ?? inGuard
+                const mergedCert = incumbent.cert ?? inCert
+                const mergedTypeExpr = incumbent.typeExpr ?? fieldTypeExpr
+                define(name, { ...incumbent, guard: mergedGuard, cert: mergedCert, typeExpr: mergedTypeExpr })
+                const idx = target.findIndex(d => d.kind === "Def" && d.name === name)
+                if (idx >= 0) {
+                  const prev = target[idx] as Extract<Decl, { kind: "Def" }>
+                  target[idx] = { ...prev, guard: prev.guard ?? mergedGuard ?? null, cert: prev.cert ?? mergedCert ?? null, typeExpr: prev.typeExpr ?? mergedTypeExpr ?? null }
+                }
+              }
               return true
             }
             // (2) the incumbent was licensed over exactly this incoming tree (the
@@ -1044,11 +1076,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             //     upgrade replaces the original, stamps and guard riding along;
             //     an already-pushed re-export (a barrel's, or an own field) follows.
             if (incumbent.tree && inCert && elab.cs.equal!(inCert.old, incumbent.tree)) {
-              define(name, { tree: fieldTree, type: fieldType ?? incumbent.type, guard: inGuard, cert: inCert })
+              define(name, { tree: fieldTree, type: fieldType ?? incumbent.type, typeExpr: fieldTypeExpr ?? incumbent.typeExpr, guard: inGuard, cert: inCert })
               const idx = target.findIndex(d => d.kind === "Def" && d.name === name)
               if (idx >= 0) {
                 const prev = target[idx] as Extract<Decl, { kind: "Def" }>
-                target[idx] = { kind: "Def", name, tree: fieldTree, type: fieldType ?? prev.type, guard: inGuard ?? null, cert: inCert }
+                target[idx] = { kind: "Def", name, tree: fieldTree, type: fieldType ?? prev.type, typeExpr: fieldTypeExpr ?? prev.typeExpr, guard: inGuard ?? null, cert: inCert }
               }
               return true
             }
@@ -1066,7 +1098,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
                 const idx = target.findIndex(d => d.kind === "Def" && d.name === name)
                 if (idx >= 0) {
                   const prev = target[idx] as Extract<Decl, { kind: "Def" }>
-                  target[idx] = { kind: "Def", name, tree: r.tree, type: prev.type, guard: newGuard, cert: cert ?? null }
+                  target[idx] = { kind: "Def", name, tree: r.tree, type: prev.type, typeExpr: prev.typeExpr, guard: newGuard, cert: cert ?? null }
                 }
               } else define(name, { ...incumbent, guard: newGuard })
               return true
@@ -1085,11 +1117,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             if (!collide(outer)) throw new Error(`open: '${name}' is guarded; rebind it explicitly through its guard`)
             continue
           }
-          define(name, { tree: fieldTree, type: fieldType, guard: inGuard, cert: inCert, params: inParams })
+          define(name, { tree: fieldTree, type: fieldType, typeExpr: fieldTypeExpr, guard: inGuard, cert: inCert, params: inParams })
           if (isExport) {
             // Barrel re-export: guard and cert ride along, so an owned/licensed
             // name keeps its policy and its stamps through the re-export.
-            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, guard: inGuard ?? null, cert: inCert ?? null, params: inParams })
+            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, typeExpr: fieldTypeExpr, guard: inGuard ?? null, cert: inCert ?? null, params: inParams })
           }
         }
         recordItem("open")

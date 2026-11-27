@@ -1,7 +1,7 @@
 // Recreating lib/theories/{cube,system_t,mltt}.test.disp directly on lib/kernel/kernel.disp.
 // Every type former is a `(check, assume)` evaluator-map combinator; zero ASTs, zero custom ops.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "kernel.disp" {}
 
 rec NatP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatP(v.snd) } else { false } } else { false }

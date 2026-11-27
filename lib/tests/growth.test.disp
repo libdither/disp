@@ -1,6 +1,6 @@
 // Growth curves on real definitions: exact polynomial fits, the fit as a checked step bound, and which of two definitions is cheaper.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../machine.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}

@@ -1,6 +1,6 @@
 // Surface vocabulary and `check_module` hook for Disp's evaluator-map kernel.
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "kernel.disp" {}
 
 // ---------------------------------------------------------------- standard base types
@@ -86,7 +86,7 @@ check_module := check_with(check_depth, check_fuel, "fix", [])
 
 // ---------------------------------------------------------------- declaration protocol & verified rewrite guards
 Ok := {a} => pair("Ok", a)
-Err := "Err"
+Err := {e} => pair("Err", e)
 Bind := {v} => pair("Bind", v)
 Install := {g} => pair("Install", g)
 Both := {v, g} => pair("Both", pair(v, g))
@@ -107,25 +107,25 @@ default_guard := {old, req} => {
 		else { Ok(Install(stem_child(g))) }
 	}
 	else if (is_stem(v)) { Ok(Bind(stem_child(v))) }
-	else { Err }
+	else { Err("missing value") }
 }
 
 /// Immutable binding guard: refuses all rebinds
-freeze := {_old, _req} => Err
+freeze := {_old, _req} => Err("frozen")
 
 /// Relation-generic verified rewrite guard: `rel(old, new)` is the required proof type.
 /// Rebind with `{ new := fast; proof := pf }` (optional `certs`, `depth`, `fuel`).
 rel_guard := {rel} => {old, req} =>
-	if (is_stem(field(req, "guard"))) { Err }
+	if (is_stem(field(req, "guard"))) { Err("guard proposal refused") }
 	else if (is_leaf(old)) {
 		if (is_stem(field(req, "value"))) { Ok(Bind(stem_child(field(req, "value")))) }
-		else { Err }
+		else { Err("missing value") }
 	}
 	else if (is_stem(field(req, "value"))) {
 		let u := stem_child(field(req, "value"))
 		if ((is_fork(u)) && ((has_field("new", u.fst)) && (has_field("proof", u.fst)))) {
 			let cand := field(u, "new")
-			if (has_tok(cand)) { Err }
+			if (has_tok(cand)) { Err("forged token") }
 			else {
 				let pf := field(u, "proof")
 				let cs := field_or(u, "certs", [])
@@ -134,12 +134,12 @@ rel_guard := {rel} => {old, req} =>
 				if (check_certified(d, fl, "none", cs, [pair("rewrite", pair(rel(stem_child(old), cand), pf))]) == true) {
 					Ok(Bind(cand))
 				}
-				else { Err }
+				else { Err("proof rejected") }
 			}
 		}
-		else { Err }
+		else { Err("missing new/proof") }
 	}
-	else { Err }
+	else { Err("missing value") }
 
 /// Direct equality rewrite guard: requires `Eq(new, old)`
 equiv_guard := rel_guard({old, new} => Eq(new, old))

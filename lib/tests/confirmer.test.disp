@@ -2,7 +2,7 @@
 // code type, streams, quotients, and the attacks A-I its header lists. Every Proved
 // is cross-checked against the enumeration refuter (IDEAS.disp's Arrow).
 open use raw "../prelude.disp" {}
-open use raw "../list.disp" {}
+open use raw "../core/list.disp" {}
 open use raw "../verdict.disp" {}
 open use raw "../stream.disp" {}
 open use raw "fixtures.disp" {}
