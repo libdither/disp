@@ -20,14 +20,31 @@ export const K: Cir = { tag: "K" }
 export const I_CIR: Cir = { tag: "I" }
 export const cap = (f: Cir, x: Cir): Cir => ({ tag: "app", f, x })
 
-export function containsFree(e: Cir, name: string): boolean {
+const NO_FREE: ReadonlySet<string> = new Set()
+/// Free variables of `e`, memoized per node: abstraction asks at every node, once per binder.
+const freeMemo = new WeakMap<Cir, ReadonlySet<string>>()
+function freeVars(e: Cir): ReadonlySet<string> {
   switch (e.tag) {
-    case "lit": case "S": case "K": case "I": return false
-    case "var": return e.name === name
-    case "app": return containsFree(e.f, name) || containsFree(e.x, name)
-    case "lam": return e.x === name ? false : containsFree(e.body, name)
+    case "lit": case "S": case "K": case "I": return NO_FREE
+    case "var": return new Set([e.name])
   }
+  let r = freeMemo.get(e)
+  if (r) return r
+  if (e.tag === "app") {
+    const a = freeVars(e.f), b = freeVars(e.x)
+    r = a.size === 0 ? b : b.size === 0 ? a : new Set([...a, ...b])
+  } else {
+    const inner = freeVars(e.body)
+    r = inner.has(e.x) ? new Set([...inner].filter(v => v !== e.x)) : inner
+  }
+  freeMemo.set(e, r)
+  return r
 }
+
+export function containsFree(e: Cir, name: string): boolean {
+  return freeVars(e).has(name)
+}
+
 
 // Collect free variable names in a Cir term (in stable insertion order),
 // respecting lambda-bound shadowing. Names already resolved to closed `lit`
