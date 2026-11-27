@@ -30,10 +30,11 @@ test Opt.rev([1, 2, 3, 4, 5, 6, 7, 8]) = Spec.rev([1, 2, 3, 4, 5, 6, 7, 8])
 test (Opt.rev == Spec.rev) = false
 test (Opt.dbl == Spec.dbl) = false
 
-// Speedup pins via `steps_of`: O(n) rev_fast vs O(n^2) reverse (576 vs 2811 steps at len 8)
+// Speedup pins via `steps_of`: single-triage O(n) rev_fast (330 vs 2811), dbl_fast (103 vs 449), add_fast (102 vs 448)
 let xs8 := [1, 2, 3, 4, 5, 6, 7, 8]
 test nat_lt(steps_of(Opt.rev, xs8, 20000), steps_of(Spec.rev, xs8, 20000)) = true
 test nat_lt(steps_of(Opt.dbl, 6, 5000), steps_of(Spec.dbl, 6, 5000)) = true
+test nat_lt(steps_of({a} => Opt.add_nat(a, 6), 6, 5000), steps_of({a} => Spec.add_nat(a, 6), 6, 5000)) = true
 
 // ---- 4. Top-level open-splice reconciliation (reverse open order is pinned in `test/guards.test.ts`)
 open use "verified_opt.disp"

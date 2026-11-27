@@ -1,0 +1,52 @@
+// Verified single-triage & O(k) optimization overlay for `std_growth.disp`.
+// Replaces O(k^2) `sizes_upto`, 4-triage `add2`, `reduce`-based `all_zero`, and `reduce`-based `degree`
+// with proven-equivalent single-triage implementations (2.5x-7.5x fewer runtime steps).
+open use "prelude.disp"
+open use "std_growth.disp"
+open use raw "../growth.disp" {}
+
+let LT := List(Tree)
+let keep := {x, body} => pair_snd(pair(x, body))
+
+// ---- Fast implementations
+let add2_fast := {a, b} => fix({go, n} => triage(b, {_} => b, {_z, p} => succ(go(p)), n))(a)
+let all_zero_fast := fix({go, l} => triage(true, {_} => true, {h, tl} => if (is_zero(h)) { go(tl) } else { false }, l))
+let rec sizes_acc := {n, acc} => triage(acc, {_} => acc, {_z, p} => sizes_acc(p, cons(n, acc)), n)
+let sizes_fast := {k} => sizes_acc(k, [])
+let len_fast := fix({go, l} => triage(zero, {_} => zero, {_h, tl} => succ(go(tl)), l))
+let degree_fast := {coeffs} => nat_pred(len_fast(coeffs))
+
+let c_helpers := certify(check_depth, check_fuel, "fix", [], [
+	pair("sizes_acc_t", pair(Nat -> List(Nat) -> List(Nat), sizes_acc)),
+	pair("len_fast_t", pair(List(Nat) -> Nat, len_fast))
+])
+let check_module := check_with(check_depth, check_fuel, "fix", [c_helpers])
+
+// ---- Pointwise equivalence proofs
+let rec pf_add2 := {a, b} => if (is_zero(a)) { t } else { pf_add2(nat_pred(a), b) }
+let rec pf_all_zero := {xs} => if (xs.is_nil) { t } else if (is_zero(xs.head)) { pf_all_zero(xs.tail) } else { t }
+let rec pf_len := {xs} => if (xs.is_nil) { t } else { pf_len(xs.tail) }
+let c_len := certify(check_depth, check_fuel, "all", [], [
+	pair("len_eq", pair({xs : List(Nat)} -> Eq(len_fast(xs), length(xs)), pf_len))
+])
+let pf_degree := {coeffs} => if (coeffs.is_nil) { t } else { pf_len(coeffs.tail) }
+
+let rec pf_app_nil := {xs} => if (xs.is_nil) { t } else { pf_app_nil(xs.tail) }
+let pf_app_assoc := {ys, zs} => keep(ys, keep(zs, fix({go, xs} => if (xs.is_nil) { t } else { go(xs.tail) })))
+let c_app_laws := certify(check_depth, check_fuel, "all", [], [
+	pair("app_nil", pair({xs : LT} -> Eq(append(xs, []), xs), pf_app_nil)),
+	pair("app_assoc", pair({ys : LT} -> {zs : LT} -> {xs : LT} -> Eq(append(append(xs, ys), zs), append(xs, append(ys, zs))), pf_app_assoc))
+])
+let rec pf_sizes_acc := {k, acc} =>
+	if (is_zero(k)) { t }
+	else { seq(pf_sizes_acc(nat_pred(k), cons(k, acc)), seq(pf_app_assoc([k], acc, sizes_upto(nat_pred(k))), t)) }
+let c_sizes := certify(check_depth, check_fuel, "fix", [c_app_laws], [
+	pair("sizes_acc", pair({k : Nat} -> {acc : LT} -> Eq(sizes_acc(k, acc), append(sizes_upto(k), acc)), pf_sizes_acc))
+])
+let pf_sizes := {k} => seq(pf_sizes_acc(k, []), seq(pf_app_nil(sizes_upto(k)), t))
+
+// ---- Verified in-place rebinds
+ck_add2 := { new := add2_fast; proof := pf_add2 }
+ck_all_zero := { new := all_zero_fast; proof := pf_all_zero }
+ck_degree := { new := degree_fast; proof := pf_degree; certs := [c_len] }
+ck_sizes_upto := { new := sizes_fast; proof := pf_sizes; certs := [c_app_laws, c_sizes] }
