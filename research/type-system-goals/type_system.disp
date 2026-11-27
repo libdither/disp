@@ -1,0 +1,237 @@
+// A type system after TYPE_SYSTEM_GOALS.md. A type is a pair of programs on terms: an
+// unoptimized one (`refuter`, run with a growing budget, finds a counterexample exactly for
+// non-members) and an optimized one (`checker`, halts on every term with true or false, and
+// says true only of members). Types come only from formers; `admitted` rebuilds a type through
+// its former and so rejects a hand-made pair. The function checker is one loop over a paused
+// machine: it runs the claim on holes (evaluation under abstraction), splits a hole a triage
+// reads (case split), answers a recursive call on a strictly smaller hole by the claim itself
+// (induction), and answers a call of an already-checked function by its type (lemma).
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "../../lib/trees.disp" {}
+open use raw "../../lib/machine.disp" {}
+
+found :: {x : Tree} -> Tree :=> pair("Found", x)
+nothing := "Nothing"
+is_found :: Tree -> Bool := {o} => not(o == nothing)
+
+// ---------------------------------------------------------------- budgets and bounded runs
+rec twice :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else { succ(succ(twice(nat_pred(n)))) }
+rec halve :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else if (is_zero(nat_pred(n))) { zero } else { succ(halve(nat_pred(nat_pred(n)))) }
+rec log2 :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else if (is_zero(nat_pred(n))) { zero } else { succ(log2(halve(n))) }
+rec size_levels :: {k : Nat} -> List(List(Tree)) :=> if (is_zero(k)) { [[t]] } else { let ls := size_levels(nat_pred(k)); cons(next_level(ls), ls) }
+/// every tree of at most k + 1 nodes, smallest first
+small_trees :: {k : Nat} -> List(Tree) :=> size_levels(k).reverse.concat
+/// a budget n tries the trees of at most log2(n) / 2 + 1 nodes, each run for n steps
+tried :: {n : Nat} -> List(Tree) :=> small_trees(halve(log2(n)))
+within :: {f : Tree, x : Tree, n : Nat} -> Tree :=> m_advance(m_start(f, x), n)
+rec first_found :: {xs : List(Tree), try : Tree -> Tree} -> Tree :=>
+	if (xs.is_nil) { nothing } else { let r := try(xs.head); if (is_found(r)) { r } else { first_found(xs.tail, try) } }
+
+// ---------------------------------------------------------------- types
+record ty :: {kind : Tree, refuter : Tree, checker : Tree, info : Tree} -> Ty
+/// the unoptimized type as one program: it halts, with a counterexample, exactly on non-members
+rec search_from :: {T : Ty, m : Tree, n : Nat} -> Tree :=> { let r := T.refuter(m, n); if (is_found(r)) { r.snd } else { search_from(T, m, twice(n)) } }
+unoptimized :: {T : Ty} -> Tree :=> {m} => search_from(T, m, 1)
+
+// ---------------------------------------------------------------- inductive types
+// A constructor is a tree pattern: a leaf, a stem or fork of patterns, the type itself, or a
+// field of an admitted type. Only `self` may recur, and only as a field, so the type is
+// strictly positive by construction.
+// Encoded so one shape test tells them apart: leaf, stem(leaf), stem(stem(S)), fork(leaf, p),
+// fork(stem(p), q).
+p_leaf := t
+p_self := t(t)
+p_of :: {S : Ty} -> Tree :=> t(t(S))
+p_stem :: {p : Tree} -> Tree :=> t(t, p)
+p_fork :: {p : Tree, q : Tree} -> Tree :=> t(t(p), q)
+is_p_self :: Tree -> Bool := {p} => is_leaf(stem_child(p))
+p_field :: Tree -> Ty := {p} => stem_child(stem_child(p))
+is_p_stem :: Tree -> Bool := {p} => is_leaf(p.fst)
+rec fits :: {field : Tree, self : Tree, p : Tree, v : Tree} -> Bool :=>
+	if (is_leaf(p)) { is_leaf(v) }
+	else if (is_stem(p)) { if (is_p_self(p)) { self(v) } else { field(p_field(p), v) } }
+	else if (is_p_stem(p)) { if (is_stem(v)) { fits(field, self, p.snd, stem_child(v)) } else { false } }
+	else if (is_fork(v)) { (fits(field, self, stem_child(p.fst), v.fst)) && (fits(field, self, p.snd, v.snd)) }
+	else { false }
+ind_checker :: {ctors : List(Tree)} -> Tree :=> fix({self, v} => ctors.any({p} => fits({S, x} => S.checker(x), self, p, v)))
+ind_refuter :: {ctors : List(Tree)} -> Tree :=> fix({self, m, n} =>
+	if (ctors.any({p} => fits({S, x} => not(is_found(S.refuter(x, n))), {x} => not(is_found(self(x, n))), p, m))) { nothing } else { found(m) })
+ind :: {name : Tree, ctors : List(Tree)} -> Ty :=> ty("Ind", ind_refuter(ctors), ind_checker(ctors), pair(name, ctors))
+
+// ---------------------------------------------------------------- holes
+// A hole is a member of its type nobody knows. Its tag carries the type, where it came from
+// ("root" for the argument induction is on, "below" for a strict piece of it, "free"
+// otherwise) and an id. A checked program that mentions the hole marker is refused.
+hole_sig := "TypeSystemHole"
+hole :: {T : Ty, from : Tree, id : Nat} -> Tree :=> pair(hole_sig, pair(T, pair(from, id)))
+is_hole :: Tree -> Bool := {v} => if (is_fork(v)) { v.fst == hole_sig } else { false }
+hole_ty :: Tree -> Ty := {h} => h.snd.fst
+hole_from :: Tree -> Tree := {h} => h.snd.snd.fst
+rec mentions_hole :: {v : Tree} -> Bool :=>
+	if (v == hole_sig) { true } else if (is_leaf(v)) { false } else if (is_stem(v)) { mentions_hole(stem_child(v)) }
+	else { (mentions_hole(v.fst)) || (mentions_hole(v.snd)) }
+rec lookup :: {as : List(Tree), h : Tree} -> Tree :=> if (as.is_nil) { nothing } else if (as.head.fst == h) { found(as.head.snd) } else { lookup(as.tail, h) }
+rec resolve :: {as : List(Tree), v : Tree} -> Tree :=>
+	if (is_hole(v)) { let r := lookup(as, v); if (is_found(r)) { resolve(as, r.snd) } else { v } }
+	else if (is_leaf(v)) { v } else if (is_stem(v)) { t(resolve(as, stem_child(v))) } else { pair(resolve(as, v.fst), resolve(as, v.snd)) }
+rec is_known :: {v : Tree} -> Bool :=>
+	if (is_hole(v)) { false } else if (is_leaf(v)) { true } else if (is_stem(v)) { is_known(stem_child(v)) } else { (is_known(v.fst)) && (is_known(v.snd)) }
+// a constructor pattern with fresh holes in its fields: pair(term, next id)
+rec fill :: {T : Ty, from : Tree, p : Tree, next : Nat} -> Tree :=>
+	if (is_leaf(p)) { pair(t, next) }
+	else if (is_stem(p)) { if (is_p_self(p)) { pair(hole(T, from, next), succ(next)) } else { pair(hole(p_field(p), from, next), succ(next)) } }
+	else if (is_p_stem(p)) { let a := fill(T, from, p.snd, next); pair(t(a.fst), a.snd) }
+	else { let a := fill(T, from, stem_child(p.fst), next); let b := fill(T, from, p.snd, a.snd); pair(pair(a.fst, b.fst), b.snd) }
+
+// ---------------------------------------------------------------- the function checker
+// ctx: the function under check, induction's domain and the type of a recursive call's answer
+// (or "NoInduction"), and the lemmas (pairs of a checked function and its function type).
+record sym_ctx :: {subject : Tree, ih_dom : Tree, ih_rest : Tree, lemmas : List(Tree), natives : List(Tree)} -> SymCtx
+is_triage :: Tree -> Bool := {f} => if (is_fork(f)) { is_fork(f.fst) } else { false }
+/// the triage that rebuilds the shape it reads is the identity on every tree, so it reads nothing
+shape_identity := t(t(t, t), t)
+rec lemma_for :: {ls : List(Tree), f : Tree, x : Tree} -> Tree :=>
+	if (ls.is_nil) { nothing } else if ((ls.head.fst == f) && (hole_ty(x) == ls.head.snd.info.fst)) { found(ls.head.snd.info.snd) } else { lemma_for(ls.tail, f, x) }
+// what to do with a pending application f x, or "none" to let the machine take it. Only the stem
+// rule builds a fork, so a run that would build one headed by the hole marker is refused there.
+decide :: {c : SymCtx, as : List(Tree), f : Tree, x : Tree} -> Tree :=>
+	if ((is_stem(f)) && (stem_child(f) == hole_sig)) { "forge" }
+	else if (is_hole(f)) { if (is_found(lookup(as, f))) { "deref_f" } else if (hole_ty(f).kind == "Ind") { "split_f" } else { "apply_hole" } }
+	else if ((is_fork(f)) && (is_hole(f.fst))) { if (is_found(lookup(as, f.fst))) { "deref_head" } else if (hole_ty(f.fst).kind == "Ind") { "split_head" } else { "stuck" } }
+	else if ((c.natives.member(f)) && (is_known(resolve(as, x)))) { "native" }
+	else if (is_hole(x)) {
+		if (is_found(lookup(as, x))) { "deref_x" }
+		else if (((f == c.subject) && (hole_from(x) == "below")) && (hole_ty(x) == c.ih_dom)) { "induction" }
+		else if (is_found(lemma_for(c.lemmas, f, x))) { "lemma" }
+		else if (f == hole_ty(x).checker) { "member" }
+		else if (f == shape_identity) { "identity" }
+		else if (is_triage(f)) { if (hole_ty(x).kind == "Ind") { "split_x" } else { "stuck" } }
+		else { "none" }
+	}
+	else { "none" }
+// is x a member of A, without running anything symbolic: a hole of A, or a known member
+in_domain :: {as : List(Tree), A : Ty, x : Tree} -> Bool :=> {
+	let v := resolve(as, x)
+	if (is_hole(v)) { hole_ty(v) == A } else if (is_known(v)) { A.checker(v) } else { false }
+}
+// run the paused claim; "Yes" when every case answers true
+rec explore :: {c : SymCtx, mach : Tree, as : List(Tree), next : Nat, fuel : Nat, depth : Nat} -> Tree :=>
+	if (m_finished(mach)) { if (m_result(mach) == true) { "Yes" } else { pair("Answered", resolve(as, m_result(mach))) } }
+	else if (is_zero(fuel)) { "Out of fuel" }
+	else {
+		let s := m_settle_by({f, x} => not(decide(c, as, f, x) == "none"), mach)
+		if (m_finished(s)) { explore(c, s, as, next, fuel, depth) }
+		else if (not(m_held(s))) { explore(c, m_rule(s), as, next, nat_pred(fuel), depth) }
+		else {
+			let fuel2 := nat_pred(fuel)
+			let f := s.m_fn
+			let x := s.m_arg
+			let stack := s.m_stack
+			let a := decide(c, as, f, x)
+			let give := {v, n2} => explore(c, m_deliver(v, stack), as, n2, fuel2, depth)
+			let split := {h} =>
+				if (is_zero(depth)) { "Out of depth" }
+				else {
+					let from := if (hole_from(h) == "free") { "free" } else { "below" }
+					let rs := hole_ty(h).info.snd.map({p} => {
+						let filled := fill(hole_ty(h), from, p, next)
+						explore(c, machine_run(f, x, stack), cons(pair(h, filled.fst), as), filled.snd, fuel2, nat_pred(depth))
+					})
+					let bad := rs.filter({r} => not(r == "Yes"))
+					if (bad.is_nil) { "Yes" } else { bad.head }
+				}
+			if (a == "deref_f") { explore(c, machine_run(lookup(as, f).snd, x, stack), as, next, fuel2, depth) }
+			else if (a == "deref_head") { explore(c, machine_run(pair(lookup(as, f.fst).snd, f.snd), x, stack), as, next, fuel2, depth) }
+			else if (a == "deref_x") { explore(c, machine_run(f, lookup(as, x).snd, stack), as, next, fuel2, depth) }
+			else if (a == "split_f") { split(f) }
+			else if (a == "split_head") { split(f.fst) }
+			else if (a == "split_x") { split(x) }
+			else if (a == "member") { give(true, next) }
+			else if (a == "identity") { give(x, next) }
+			else if (a == "native") { let v := f(resolve(as, x)); if (mentions_hole(v)) { "Builds a hole-shaped tree" } else { give(v, next) } }
+			else if (a == "forge") { "Builds a hole-shaped tree" }
+			else if (a == "induction") { give(hole(c.ih_rest, "free", next), succ(next)) }
+			else if (a == "lemma") { give(hole(lemma_for(c.lemmas, f, x).snd, "free", next), succ(next)) }
+			else if (a == "apply_hole") {
+				let T := hole_ty(f)
+				if ((T.kind == "Arrow") && (in_domain(as, T.info.fst, x))) { give(hole(T.info.snd, "free", next), succ(next)) } else { pair("Not known in the domain", resolve(as, x)) }
+			}
+			else { pair("Stuck", a) }
+		}
+	}
+sym_fuel := 10000
+sym_depth := 4
+// the argument types of a curried function type, and what its last result must be
+rec spine_args :: {T : Ty} -> List(Ty) :=> if (T.kind == "Arrow") { cons(T.info.fst, spine_args(T.info.snd)) } else { [] }
+rec spine_end :: {T : Ty} -> Ty :=> if (T.kind == "Arrow") { spine_end(T.info.snd) } else { T }
+rec apply_all :: {f : Tree, xs : List(Tree)} -> Tree :=> if (xs.is_nil) { f } else { apply_all(f(xs.head), xs.tail) }
+rec root_holes :: {args : List(Ty), i : Nat} -> List(Tree) :=>
+	if (args.is_nil) { [] } else { cons(hole(args.head, if (is_zero(i)) { "root" } else { "free" }, i), root_holes(args.tail, succ(i))) }
+/// run `claim` on root holes for `args`, with induction on the first one: "Yes", or why not
+sym_run :: {lemmas : List(Tree), natives : List(Tree), args : List(Ty), rest : Tree, claim : Tree, m : Tree} -> Tree :=>
+	if (mentions_hole(m)) { "Mentions the hole marker" }
+	else if (lemmas.any({l} => (mentions_hole(l.fst)) || (not(l.snd.checker(l.fst))))) { "A lemma does not check" }
+	else {
+		let c := sym_ctx(m, args.head, rest, lemmas, natives)
+		let holes := root_holes(args, zero)
+		explore(c, m_start(claim, holes), [], holes.length, sym_fuel, sym_depth)
+	}
+sym_holds :: {lemmas : List(Tree), natives : List(Tree), args : List(Ty), rest : Tree, claim : Tree, m : Tree} -> Bool :=> sym_run(lemmas, natives, args, rest, claim, m) == "Yes"
+
+// ---------------------------------------------------------------- function types
+// Unoptimized A -> B: some tried a with A's checker saying yes, m a finishing within the budget,
+// and B refuting the result. A run that does not finish is never a counterexample.
+pi_refuter :: {A : Ty, fam : Tree} -> Tree :=> {m, n} => first_found(tried(n), {a} =>
+	if (A.checker(a)) {
+		let r := within(m, a, n)
+		if (m_finished(r)) { let c := (fam(a)).refuter(m_result(r), n); if (is_found(c)) { found(pair(a, c.snd)) } else { nothing } } else { nothing }
+	} else { nothing })
+/// why the arrow checker says what it says
+arrow_why :: {lemmas : List(Tree), A : Ty, B : Ty, m : Tree} -> Tree :=> {
+	let T := ty("Arrow", t, t, pair(A, B))
+	let E := spine_end(T)
+	sym_run(lemmas, [], spine_args(T), B, {xs} => E.checker(apply_all(m, xs)), m)
+}
+arrow_checker :: {lemmas : List(Tree), A : Ty, B : Ty} -> Tree :=> {m} => arrow_why(lemmas, A, B, m) == "Yes"
+arrow :: {A : Ty, B : Ty} -> Ty :=> ty("Arrow", pi_refuter(A, {_a} => B), arrow_checker([], A, B), pair(A, B))
+/// the same meaning with a checker that may use already-checked functions: a new optimized type
+using :: {lemmas : List(Tree), A : Ty, B : Ty} -> Ty :=> ty("Using", pi_refuter(A, {_a} => B), arrow_checker(lemmas, A, B), pair(pair(A, B), lemmas))
+
+// ---------------------------------------------------------------- admission
+// A type is admitted when its former, given its parts again, builds the same tree, and its
+// parts are admitted. This halts: it walks the parts, never the members.
+rec pattern_ok :: {adm : Tree, p : Tree} -> Bool :=>
+	if (is_leaf(p)) { true }
+	else if (is_stem(p)) { if (is_p_self(p)) { true } else if (is_stem(stem_child(p))) { adm(p_field(p)) } else { false } }
+	else if (is_p_stem(p)) { pattern_ok(adm, p.snd) }
+	else if (is_stem(p.fst)) { (pattern_ok(adm, stem_child(p.fst))) && (pattern_ok(adm, p.snd)) }
+	else { false }
+/// the formers that take no family: inductive types and function types
+rec admitted_plain :: {T : Ty} -> Bool :=>
+	if (T.kind == "Ind") { (T == ind(T.info.fst, T.info.snd)) && (T.info.snd.all(pattern_ok(admitted_plain))) }
+	else if (T.kind == "Arrow") { ((admitted_plain(T.info.fst)) && (admitted_plain(T.info.snd))) && (T == arrow(T.info.fst, T.info.snd)) }
+	else if (T.kind == "Using") {
+		let A := T.info.fst.fst
+		let B := T.info.fst.snd
+		((admitted_plain(A)) && (admitted_plain(B))) && ((T == using(T.info.snd, A, B)) && (T.info.snd.all({l} => admitted_plain(l.snd))))
+	}
+	else { false }
+
+// Dependent: the result's type is the family at the argument, and must be admitted there; no
+// induction, since a recursive call's answer type would be the family at a hole.
+pi :: {A : Ty, fam : Tree} -> Ty :=> ty("Pi", pi_refuter(A, fam), {m} => sym_holds([], [admitted_plain], [A], "NoInduction", {xs} => (admitted_plain(fam(xs.head))) && ((fam(xs.head)).checker(m(xs.head))), m), pair(A, fam))
+// Total correctness with a stated bound: m a must also finish within bound(a) steps. Its
+// checker accepts nothing yet, which is sound and useless.
+bounded :: {A : Ty, B : Ty, bound : Tree} -> Ty :=> ty("Bounded", {m, n} => {
+	let r := pi_refuter(A, {_a} => B)(m, n)
+	if (is_found(r)) { r } else { first_found(tried(n), {a} => if (A.checker(a)) { if (m_finished(within(m, a, bound(a)))) { nothing } else { found(pair(a, "slow")) } } else { nothing }) }
+}, {_m} => false, pair(pair(A, B), bound))
+admitted :: {T : Ty} -> Bool :=>
+	if (T.kind == "Pi") { (admitted_plain(T.info.fst)) && (T == pi(T.info.fst, T.info.snd)) }
+	else if (T.kind == "Bounded") { ((admitted_plain(T.info.fst.fst)) && (admitted_plain(T.info.fst.snd))) && (T == bounded(T.info.fst.fst, T.info.fst.snd, T.info.snd)) }
+	else { admitted_plain(T) }
+
+// ---------------------------------------------------------------- soundness as a type
+/// "checker O only accepts members of T" as an unoptimized type on O: a tried term O accepts that T refutes
+sound_refuter :: {T : Ty} -> Tree :=> {O, n} => first_found(tried(n), {m} => if (O(m)) { let c := T.refuter(m, n); if (is_found(c)) { found(pair(m, c.snd)) } else { nothing } } else { nothing })

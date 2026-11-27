@@ -1,0 +1,385 @@
+// A kit for building type systems, after TYPE_SYSTEM_GOALS.md (second attempt; see README.md).
+//
+// An unknown stands for any program that behaves as its type says. The evaluator runs a
+// program on unknowns; a rule answers an application that touches one without running it.
+// A type is a former applied to parts, and a former fills five slots:
+//   refute  the meaning: a counterexample, or nothing within the budget
+//   members the small members a function type's refuter tries as inputs
+//   intro   is this partly-known value a member, for every filling of its unknowns?
+//   elim    what an unknown of this type answers when a run touches it
+//   wf      are the parts well formed?
+// Each intro and each rule must be sound on its own, so any set of formers is sound together.
+// A yes certifies what the meaning asks and no more: results are right if the run finishes.
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "../../lib/trees.disp" {}
+open use raw "../../lib/machine.disp" {}
+
+// ---------------------------------------------------------------- answers and budgets
+// A check answers done(e), which is yes with the fuel left, or a reason why not. A rule or an
+// elim may also pass. Fuel is shared by everything one check does, so every check stops.
+yes := "Yes"
+pass := "Pass"
+is_yes :: Tree -> Bool := {r} => if (is_fork(r)) { r.fst == yes } else { false }
+found :: {x : Tree} -> Tree :=> pair("Found", x)
+nothing := "Nothing"
+is_found :: Tree -> Bool := {o} => not(o == nothing)
+rec twice :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else { succ(succ(twice(nat_pred(n)))) }
+rec halve :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else if (is_zero(nat_pred(n))) { zero } else { succ(halve(nat_pred(nat_pred(n)))) }
+rec log2 :: {n : Nat} -> Nat :=> if (is_zero(n)) { zero } else if (is_zero(nat_pred(n))) { zero } else { succ(log2(halve(n))) }
+rec size_levels :: {k : Nat} -> List(List(Tree)) :=> if (is_zero(k)) { [[t]] } else { let ls := size_levels(nat_pred(k)); cons(next_level(ls), ls) }
+/// a budget n tries the trees of at most log2(n) / 2 + 1 nodes, each run for n steps
+tried :: {n : Nat} -> List(Tree) :=> size_levels(halve(log2(n))).reverse.concat
+/// what f x gives within n steps of the plain machine: found(v), or nothing yet
+within :: {f : Tree, x : Tree, n : Nat} -> Tree :=> { let r := m_advance(m_start(f, x), n); if (m_finished(r)) { found(m_result(r)) } else { nothing } }
+rec first_found :: {xs : List(Tree), try : Tree -> Tree} -> Tree :=>
+	if (xs.is_nil) { nothing } else { let r := try(xs.head); if (is_found(r)) { r } else { first_found(xs.tail, try) } }
+rec lookup :: {table : List(Tree), key : Tree} -> Tree :=> if (table.is_nil) { nothing } else if (table.head.fst == key) { found(table.head.snd) } else { lookup(table.tail, key) }
+
+// ---------------------------------------------------------------- unknowns
+// An unknown carries its type and a name saying how it arose, so the same question asked
+// twice gets the same unknown. Only the kit makes them: a run that would build one is refused.
+unknown_sig := "TypeKitUnknown"
+unknown :: {T : Tree, name : Tree} -> Tree :=> pair(unknown_sig, pair(T, name))
+is_unknown :: Tree -> Bool := {v} => if (is_fork(v)) { v.fst == unknown_sig } else { false }
+type_of :: Tree -> Tree := {h} => h.snd.fst
+rec has_unknown :: {v : Tree} -> Bool :=>
+	if (is_leaf(v)) { false } else if (is_stem(v)) { has_unknown(stem_child(v)) }
+	else if (v.fst == unknown_sig) { true } else if (has_unknown(v.fst)) { true } else { has_unknown(v.snd) }
+
+// ---------------------------------------------------------------- what is known so far
+// known: unknowns a case split has filled. typed: programs known to have a type. eqs:
+// applications whose answer is known. here: the unknowns that exist whatever the run does
+// (arguments, not results of calls). strict: unknown functions known not to be constants.
+record ctx :: {thy : Tree, known : List(Tree), typed : List(Tree), eqs : List(Tree), fuel : Nat, depth : Nat, here : List(Tree), strict : List(Tree)} -> Ctx
+/// a theory: the formers whose types are admitted, the rules the evaluator runs under, and those
+/// of them that never assume a call finished
+record system :: {formers : List(Tree), rules : List(Tree), sure : List(Tree)} -> System
+record former :: {title : Tree, refute : Tree, members : Tree, intro : Tree, elim : Tree, wf : Tree} -> Former
+assign :: {e : Ctx, h : Tree, v : Tree} -> Ctx :=> ctx(e.thy, cons(pair(h, v), e.known), e.typed, e.eqs, e.fuel, e.depth, e.here, e.strict)
+assume :: {e : Ctx, f : Tree, T : Tree} -> Ctx :=> ctx(e.thy, e.known, cons(pair(f, T), e.typed), e.eqs, e.fuel, e.depth, e.here, e.strict)
+equate :: {e : Ctx, f : Tree, x : Tree, v : Tree} -> Ctx :=> ctx(e.thy, e.known, e.typed, cons(pair(pair(f, x), v), e.eqs), e.fuel, e.depth, e.here, e.strict)
+done :: {e : Ctx} -> Tree :=> pair(yes, e.fuel)
+refuel :: {e : Ctx, n : Nat} -> Ctx :=> ctx(e.thy, e.known, e.typed, e.eqs, n, e.depth, e.here, e.strict)
+/// go on, with the fuel that is left, only after a yes
+and_then :: {r : Tree, e : Ctx, next : Tree} -> Tree :=> if (is_yes(r)) { next(refuel(e, r.snd)) } else { r }
+/// every item gives yes, each starting with the fuel the last one left
+rec each :: {xs : List(Tree), e : Ctx, f : Tree} -> Tree :=> if (xs.is_nil) { done(e) } else { and_then(f(xs.head, e), e, {e2} => each(xs.tail, e2, f)) }
+/// some item gives yes
+rec some :: {xs : List(Tree), f : Tree} -> Tree :=> if (xs.is_nil) { "No case fits" } else { let r := f(xs.head); if (is_yes(r)) { r } else { some(xs.tail, f) } }
+tick :: {e : Ctx} -> Ctx :=> ctx(e.thy, e.known, e.typed, e.eqs, nat_pred(e.fuel), e.depth, e.here, e.strict)
+/// this run took a real step, so what it was to assume after one holds from here on
+stepped :: {e : Ctx, pend : List(Tree)} -> Ctx :=> if (pend.is_nil) { tick(e) } else { ctx(e.thy, e.known, pend.append(e.typed), e.eqs, nat_pred(e.fuel), e.depth, e.here, e.strict) }
+deeper :: {e : Ctx} -> Ctx :=> ctx(e.thy, e.known, e.typed, e.eqs, e.fuel, nat_pred(e.depth), e.here, e.strict)
+/// v exists whatever the run does
+exists :: {e : Ctx, v : Tree} -> Ctx :=> ctx(e.thy, e.known, e.typed, e.eqs, e.fuel, e.depth, cons(v, e.here), e.strict)
+retyped :: {e : Ctx, typed : List(Tree)} -> Ctx :=> ctx(e.thy, e.known, typed, e.eqs, e.fuel, e.depth, e.here, e.strict)
+/// only what holds whether or not any call finishes: the sure rules, no assumed types, no assumed answers
+surely :: {e : Ctx} -> Ctx :=> ctx(system(e.thy.formers, e.thy.sure, e.thy.sure), e.known, [], [], e.fuel, e.depth, e.here, e.strict)
+/// carry on in e with what e2 found out
+back :: {e2 : Ctx, e : Ctx} -> Ctx :=> ctx(e.thy, e2.known, e.typed, e.eqs, e2.fuel, e2.depth, e2.here, e2.strict)
+strictly :: {e : Ctx, h : Tree} -> Ctx :=> ctx(e.thy, e.known, e.typed, e.eqs, e.fuel, e.depth, e.here, cons(h, e.strict))
+rec value :: {e : Ctx, v : Tree} -> Tree :=> if (is_unknown(v)) { let r := lookup(e.known, v); if (is_found(r)) { value(e, r.snd) } else { v } } else { v }
+rec resolve :: {e : Ctx, v0 : Tree} -> Tree :=> {
+	let v := value(e, v0)
+	if (is_unknown(v)) { v } else if (is_leaf(v)) { v } else if (is_stem(v)) { t(resolve(e, stem_child(v))) } else { pair(resolve(e, v.fst), resolve(e, v.snd)) }
+}
+
+// ---------------------------------------------------------------- types
+// A type is pair(former, parts), or an unknown of a universe. It is admitted when its former
+// is one of the theory's and its parts are well formed, so a hand-made checker is no type.
+is_universe :: Tree -> Bool := {T} => if (is_fork(T)) { T.fst.title == "Type" } else { false }
+rec admitted :: {thy : System, T : Tree} -> Bool :=>
+	if (is_unknown(T)) { is_universe(type_of(T)) }
+	else if (is_fork(T)) { if (thy.formers.member(T.fst)) { T.fst.wf(admitted(thy), T.snd) } else { false } }
+	else { false }
+/// a run touches unknown h ("new", "call", "read", "lazy" or "as"): its type answers through k, or passes
+touch :: {e : Ctx, how : Tree, h : Tree, x : Tree, k : Tree} -> Tree :=> { let S := type_of(h); if (is_unknown(S)) { pass } else { S.fst.elim(e, S, how, h, x, k) } }
+/// hand a new unknown to k; its type may first say what it is or what is known of it
+fresh :: {e : Ctx, h : Tree, k : Tree} -> Tree :=> { let r := touch(e, "new", h, t, k); if (r == pass) { k(e, h) } else { r } }
+/// is v a member of T for every filling: yes, or why not. An intro may be handed an unknown of another type.
+check :: {e : Ctx, T : Tree, v0 : Tree} -> Tree :=> {
+	let v := value(e, v0)
+	if (is_unknown(v)) {
+		if (type_of(v) == T) { done(e) }
+		else { let r := touch(e, "as", v, T, {e2, _v} => done(e2)); if (not(r == pass)) { r } else if (is_unknown(T)) { "An unknown of another type" } else { T.fst.intro(e, T, v) } }
+	}
+	else if (e.typed.any({p} => (p.fst == v) && (p.snd == T))) { done(e) }
+	else if (is_unknown(T)) { "Not a member of the unknown type" }
+	else { T.fst.intro(e, T, v) }
+}
+
+// ---------------------------------------------------------------- rules
+// A rule sees a pending application f x. It answers through give, reruns it changed through
+// again, refuses with a reason, or passes. Each is sound alone; the list only sets priority.
+is_triage :: Tree -> Bool := {f} => if (is_fork(f)) { is_fork(f.fst) } else { false }
+head_unknown :: Tree -> Bool := {f} => if (is_fork(f)) { is_unknown(f.fst) } else { false }
+assigned :: {e : Ctx, v : Tree} -> Bool :=> if (is_unknown(v)) { is_found(lookup(e.known, v)) } else { false }
+/// only applying a stem builds a fork, so that is where a forged unknown is refused
+rule_forge := {e, f, x, give, again} => if (is_stem(f)) { if (stem_child(f) == unknown_sig) { "Builds an unknown" } else { pass } } else { pass }
+/// an unknown a case split has filled is its filling
+rule_known := {e, f, x, give, again} =>
+	if (assigned(e, f)) { again(e, value(e, f), x) }
+	else if (assigned(e, x)) { again(e, f, value(e, x)) }
+	else if (head_unknown(f)) { if (assigned(e, f.fst)) { again(e, pair(value(e, f.fst), f.snd), x) } else { pass } }
+	else { pass }
+/// an application whose answer is already known
+rule_equation := {e, f, x, give, again} => if (is_unknown(x)) { let r := lookup(e.eqs, pair(f, x)); if (is_found(r)) { give(e, r.snd) } else { pass } } else { pass }
+/// applying an unknown, or a program known to have a type to an unknown: the type answers
+rule_call := {e, f, x, give, again} =>
+	if (is_unknown(f)) { touch(e, "call", f, x, give) }
+	else if (is_unknown(x)) { let r := lookup(e.typed, f); if (is_found(r)) { r.snd.fst.elim(e, r.snd, "call", f, x, give) } else { pass } }
+	else { pass }
+/// the triage that rebuilds the shape it reads is the identity on every tree, so it reads nothing
+shape_identity := t(t(t, t), t)
+rule_identity := {e, f, x, give, again} => if (f == shape_identity) { if (is_unknown(x)) { give(e, x) } else { pass } } else { pass }
+/// a step that needs an unknown's shape: the unknown's type splits it, then the step reruns
+rule_read := {e, f, x, give, again} =>
+	if (is_unknown(f)) { pass }
+	else if (head_unknown(f)) { touch(e, "read", f.fst, t, {e2, _v} => again(e2, f, x)) }
+	else if (is_triage(f)) { if (is_unknown(x)) { touch(e, "read", x, t, {e2, _v} => again(e2, f, x)) } else { pass } }
+	else { pass }
+default_rules := [rule_forge, rule_known, rule_equation, rule_call, rule_identity, rule_read]
+/// the rules that hold whether or not a call finishes: an equation and a call's answer do not
+sure_rules := [rule_forge, rule_known, rule_identity, rule_read]
+rec first_rule :: {rs : List(Tree), e : Ctx, f : Tree, x : Tree, give : Tree, again : Tree} -> Tree :=>
+	if (rs.is_nil) { pass } else { let r := rs.head(e, f, x, give, again); if (r == pass) { first_rule(rs.tail, e, f, x, give, again) } else { r } }
+
+// ---------------------------------------------------------------- the evaluator on unknowns
+/// would the plain machine read an unknown as a tree, or build one, at this application
+unsafe :: {f : Tree, x : Tree} -> Bool :=>
+	if (is_unknown(f)) { true } else if (head_unknown(f)) { true }
+	else if (is_triage(f)) { is_unknown(x) }
+	else if (is_stem(f)) { stem_child(f) == unknown_sig } else { false }
+/// the applications the rules get to see
+watched :: {f : Tree, x : Tree} -> Bool :=>
+	if (is_unknown(f)) { true } else if (is_unknown(x)) { true } else if (head_unknown(f)) { true }
+	else if (is_stem(f)) { stem_child(f) == unknown_sig } else { false }
+// The machine reads a shape in two places. The triage rule reads its argument. The S rule runs
+// c x and then b x, but skips b x when c x is a constant (K-shaped), so what c x is has to be
+// known before b x may be run. Both reads go to the rules; nothing else here differs from
+// machine.disp's stepping.
+blocked :: {q : Tree, v : Tree, stack : List(Tree)} -> Tree :=> pair("Blocked", pair(q, pair(v, stack)))
+m_blocked :: Tree -> Bool := {m} => m.fst == "Blocked"
+/// is v a constant: "K", "strict", or pair(how, h) when unknown h decides it
+laziness :: {e : Ctx, v0 : Tree} -> Tree :=> {
+	let v := value(e, v0)
+	if (is_unknown(v)) { if (e.strict.member(v)) { "strict" } else { pair("lazy", v) } }
+	else if (is_fork(v)) { let a := value(e, v.fst); if (is_unknown(a)) { pair("read", a) } else if (is_leaf(a)) { "K" } else { "strict" } }
+	else { "strict" }
+}
+rec deliver :: {e : Ctx, v : Tree, stack : List(Tree)} -> Tree :=>
+	if (stack.is_nil) { machine_done(v) }
+	else {
+		let fr := stack.head
+		let rest := stack.tail
+		if (fr.fst == "To") { machine_run(v, fr.snd, rest) }
+		else if (fr.fst == "Res") { machine_run(fr.snd, v, rest) }
+		else if (k_shaped(fr.snd.fst)) { machine_run(v, fr.snd.fst.snd, rest) }
+		else {
+			let s := laziness(e, v)
+			if (s == "K") { deliver(e, value(e, v).snd, rest) }
+			else if (s == "strict") { machine_run(fr.snd.fst, fr.snd.snd, cons(fr_res(v), rest)) }
+			else { blocked(s, v, stack) }
+		}
+	}
+/// one step of the plain machine at f x
+step :: {e : Ctx, f : Tree, x : Tree, stack : List(Tree)} -> Tree :=>
+	if (is_leaf(f)) { deliver(e, t(x), stack) }
+	else if (is_stem(f)) { deliver(e, t(stem_child(f), x), stack) }
+	else if (is_leaf(f.fst)) { deliver(e, f.snd, stack) }
+	else if (is_stem(f.fst)) { machine_run(stem_child(f.fst), x, cons(fr_s(f.snd, x), stack)) }
+	else if (is_leaf(x)) { deliver(e, f.fst.fst, stack) }
+	else if (is_stem(x)) { machine_run(f.fst.snd, stem_child(x), stack) }
+	else { machine_run(f.snd, x.fst, cons(fr_to(x.snd), stack)) }
+// run the machine; k gets each branch's result, and every branch must give yes. pend is what
+// this run may assume once it has taken a real step of its own.
+rec go :: {e : Ctx, mach : Tree, k : Tree, pend : List(Tree)} -> Tree :=>
+	if (m_finished(mach)) { k(e, m_result(mach)) }
+	else if (is_zero(e.fuel)) { "Out of fuel" }
+	else if (m_blocked(mach)) {
+		let q := mach.snd.fst
+		let v := mach.snd.snd.fst
+		let stack := mach.snd.snd.snd
+		let r := touch(tick(e), q.fst, q.snd, t, {e2, _v} => go(e2, deliver(e2, v, stack), k, pend))
+		if (r == pass) { "Stuck: an unknown decides whether an argument is run" } else { r }
+	}
+	else {
+		let f := mach.m_fn
+		let x := mach.m_arg
+		let stack := mach.m_stack
+		let r := if (watched(f, x)) { first_rule(e.thy.rules, tick(e), f, x, {e2, v} => go(e2, deliver(e2, v, stack), k, pend), {e2, f2, x2} => go(e2, machine_run(f2, x2, stack), k, pend)) } else { pass }
+		if (not(r == pass)) { r }
+		else if (unsafe(f, x)) { "Stuck on an unknown" }
+		else if (is_fork(f)) { go(stepped(e, pend), step(e, f, x, stack), k, []) }
+		else { go(tick(e), step(e, f, x, stack), k, pend) }
+	}
+/// run f x on unknowns under the rules
+sym :: {e : Ctx, f : Tree, x : Tree, k : Tree} -> Tree :=> go(e, m_start(f, x), k, [])
+/// the same, assuming f has type T once the run has taken a step: a call inside it finishes sooner than it does
+sym_assuming :: {e : Ctx, f : Tree, T : Tree, x : Tree, k : Tree} -> Tree :=> go(e, m_start(f, x), k, [pair(f, T)])
+
+// ---------------------------------------------------------------- the universe, and closed questions
+// The type of types: its members are the admitted types, and its unknowns are type variables.
+// Its parts are sample types, which is where a function type's refuter looks for inputs.
+type_f := former("Type",
+	{thy, T, m, n} => if (admitted(thy, m)) { nothing } else { found(m) },
+	{thy, T, n} => T.snd,
+	{e, T, v} => if (admitted(e.thy, v)) { done(e) } else { "Not an admitted type" },
+	{e, T, how, h, x, k} => if (how == "as") { if (is_universe(x)) { k(e, t) } else { pass } } else { pass },
+	{adm, info} => info.all(adm))
+universe :: {samples : List(Tree)} -> Tree :=> pair(type_f, samples)
+Type := universe([])
+theory :: {formers : List(Tree)} -> System :=> system(cons(type_f, formers), default_rules, sure_rules)
+/// the same theory with more formers: every old type stays admitted and means what it meant
+extend :: {thy : System, formers : List(Tree)} -> System :=> system(formers.append(thy.formers), thy.rules, thy.sure)
+kit_fuel := 10000
+kit_depth := 4
+start :: {thy : System} -> Ctx :=> ctx(thy, [], [], [], kit_fuel, kit_depth, [], [])
+/// the checker with its reason: lemmas are pairs of a program and a type it must itself check at
+why :: {thy : System, lemmas : List(Tree), T : Tree, v : Tree} -> Tree :=>
+	if (has_unknown(v)) { "Contains an unknown" }
+	else if (has_unknown(T)) { "Contains an unknown" }
+	else if (has_unknown(lemmas)) { "Contains an unknown" }
+	else if (not(admitted(thy, T))) { "Not an admitted type" }
+	else if (not(lemmas.all({l} => if (admitted(thy, l.snd)) { is_yes(check(start(thy), l.snd, l.fst)) } else { false }))) { "A lemma does not check" }
+	else { let r := check(reduce({l, e} => assume(e, l.fst, l.snd), start(thy), lemmas), T, v); if (is_yes(r)) { yes } else { r } }
+/// the optimized type as a program: a checker
+accepts :: {thy : System, T : Tree, v : Tree} -> Bool :=> why(thy, [], T, v) == yes
+refute_at :: {thy : System, T : Tree, m : Tree, n : Nat} -> Tree :=> T.fst.refute(thy, T, m, n)
+members_at :: {thy : System, T : Tree, n : Nat} -> List(Tree) :=> T.fst.members(thy, T, n)
+by_filter := {thy, T, n} => tried(n).filter({a} => accepts(thy, T, a))
+/// a member of A that exists whatever the run does: an argument in scope, or a small closed member
+witness :: {e : Ctx, A : Tree, k : Tree} -> Tree :=> {
+	let near := e.here.filter({h} => if (is_unknown(h)) { type_of(h) == A } else { false })
+	if (not(near.is_nil)) { k(e, near.head) }
+	else if (is_unknown(A)) { "No member of the domain is known to exist" }
+	else { let far := members_at(e.thy, A, 16); if (far.is_nil) { "No member of the domain is known to exist" } else { k(e, far.head) } }
+}
+/// the unoptimized type as a program: it halts, with a counterexample, exactly on non-members
+rec search_from :: {thy : System, T : Tree, m : Tree, n : Nat} -> Tree :=> { let r := refute_at(thy, T, m, n); if (is_found(r)) { r.snd } else { search_from(thy, T, m, twice(n)) } }
+unoptimized :: {thy : System, T : Tree} -> Tree :=> {m} => search_from(thy, T, m, 1)
+/// "checker O only accepts members of T" as a meaning on O: a tried term O accepts that T refutes
+sound_refuter :: {thy : System, T : Tree} -> Tree :=> {O, n} => first_found(tried(n), {m} => if (O(m)) { let c := refute_at(thy, T, m, n); if (is_found(c)) { found(pair(m, c.snd)) } else { nothing } } else { nothing })
+
+// ================================================================ formers written with the kit
+
+// ---------------------------------------------------------------- inductive types
+// A constructor is a tree pattern: a leaf, a stem or fork of patterns, the type itself, or a
+// field of another type. Encoded leaf, stem(leaf), stem(stem(S)), fork(leaf, p), fork(stem(p), q).
+p_leaf := t
+p_self := t(t)
+p_of :: {S : Tree} -> Tree :=> t(t(S))
+p_stem :: {p : Tree} -> Tree :=> t(t, p)
+p_fork :: {p : Tree, q : Tree} -> Tree :=> t(t(p), q)
+is_p_self :: Tree -> Bool := {p} => is_leaf(stem_child(p))
+p_field :: Tree -> Tree := {p} => stem_child(stem_child(p))
+is_p_stem :: Tree -> Bool := {p} => is_leaf(p.fst)
+ind_ctors :: Tree -> List(Tree) := {T} => T.snd.snd
+// intro: the value has a constructor's shape, and its fields are members
+rec ind_fits :: {e : Ctx, T : Tree, p : Tree, v0 : Tree} -> Tree :=>
+	if (is_stem(p)) { check(e, if (is_p_self(p)) { T } else { p_field(p) }, v0) }
+	else {
+		let v := value(e, v0)
+		if (is_unknown(v)) { "An unknown where a shape is needed" }
+		else if (is_leaf(p)) { if (is_leaf(v)) { done(e) } else { "Wrong shape" } }
+		else if (is_p_stem(p)) { if (is_stem(v)) { ind_fits(e, T, p.snd, stem_child(v)) } else { "Wrong shape" } }
+		else if (is_fork(v)) { and_then(ind_fits(e, T, stem_child(p.fst), v.fst), e, {e2} => ind_fits(e2, T, p.snd, v.snd)) }
+		else { "Wrong shape" }
+	}
+// a constructor with new unknowns for its fields, named by where they sit in h
+rec ind_fill :: {e : Ctx, T : Tree, h : Tree, p : Tree, path : Tree, k : Tree} -> Tree :=>
+	if (is_leaf(p)) { k(e, t) }
+	else if (is_stem(p)) { fresh(e, unknown(if (is_p_self(p)) { T } else { p_field(p) }, pair(h, path)), k) }
+	else if (is_p_stem(p)) { ind_fill(e, T, h, p.snd, t(path), {e2, a} => k(e2, t(a))) }
+	else { ind_fill(e, T, h, stem_child(p.fst), pair(path, t), {e2, a} => ind_fill(e2, T, h, p.snd, pair(path, t(t)), {e3, b} => k(e3, pair(a, b)))) }
+// elim: a read splits the unknown into each constructor
+ind_elim := {e, T, how, h, x, k} =>
+	if ((how == "read") || (how == "lazy")) {
+		if (is_zero(e.depth)) { "Out of depth" }
+		else { each(ind_ctors(T), deeper(e), {p, e1} => ind_fill(e1, T, h, p, t, {e2, v} => k(assign(e2, h, v), t))) }
+	} else { pass }
+rec ind_holds :: {thy : System, T : Tree, n : Nat, p : Tree, v : Tree} -> Bool :=>
+	if (is_leaf(p)) { is_leaf(v) }
+	else if (is_stem(p)) { not(is_found(refute_at(thy, if (is_p_self(p)) { T } else { p_field(p) }, v, n))) }
+	else if (is_p_stem(p)) { if (is_stem(v)) { ind_holds(thy, T, n, p.snd, stem_child(v)) } else { false } }
+	else if (is_fork(v)) { if (ind_holds(thy, T, n, stem_child(p.fst), v.fst)) { ind_holds(thy, T, n, p.snd, v.snd) } else { false } }
+	else { false }
+rec pattern_ok :: {adm : Tree, p : Tree} -> Bool :=>
+	if (is_leaf(p)) { true }
+	else if (is_stem(p)) { if (is_p_self(p)) { true } else if (is_stem(stem_child(p))) { adm(p_field(p)) } else { false } }
+	else if (is_p_stem(p)) { pattern_ok(adm, p.snd) }
+	else if (is_stem(p.fst)) { if (pattern_ok(adm, stem_child(p.fst))) { pattern_ok(adm, p.snd) } else { false } }
+	else { false }
+ind_f := former("Ind",
+	{thy, T, m, n} => if (ind_ctors(T).any({p} => ind_holds(thy, T, n, p, m))) { nothing } else { found(m) },
+	by_filter,
+	{e, T, v} => some(ind_ctors(T), {p} => ind_fits(e, T, p, v)),
+	ind_elim,
+	{adm, info} => info.snd.all({p} => if (p == p_self) { false } else { pattern_ok(adm, p) }))
+ind :: {name : Tree, ctors : List(Tree)} -> Tree :=> pair(ind_f, pair(name, ctors))
+
+// ---------------------------------------------------------------- dependent functions
+// pi(A, fam): for every member a of A, m a is a member of fam(a), if it finishes.
+pi_dom :: Tree -> Tree := {T} => T.snd.fst
+// The family at x, run under the rules; its answer must be an admitted type. A check may run it
+// freely (`at`): if it never finishes, the meaning asks nothing there. But where an unknown is
+// used, the real run never runs the family, so it has to finish for certain (`at_sure`): no
+// call it makes may be assumed to return. Neither uses what is assumed of programs, since a
+// family may be the same tree as the program its type is checked on.
+is_type :: {e : Ctx, B0 : Tree, k : Tree} -> Tree :=> { let B := value(e, B0); if (admitted(e.thy, B)) { k(e, B) } else { "The family gives no admitted type" } }
+at :: {e : Ctx, T : Tree, x : Tree, k : Tree} -> Tree :=> sym(retyped(e, []), T.snd.snd, x, {e2, B} => is_type(retyped(e2, e.typed), B, k))
+at_sure :: {e : Ctx, T : Tree, x : Tree, k : Tree} -> Tree :=> sym(surely(e), T.snd.snd, x, {e2, B} => is_type(back(e2, e), B, k))
+// intro: run m on an unknown of A, assuming m has this type once the run has taken a step
+pi_intro := {e, T, m} => fresh(e, unknown(pi_dom(T), pair("arg", e.here.length)), {e1, a} =>
+	sym_assuming(exists(e1, a), m, T, a, {e2, r} => at(e2, T, a, {e3, B} => check(e3, B, r))))
+// elim: applied to a member of A, it answers an unknown of the family there, named by the call.
+// Asked whether it is a constant, it is split: K p, where p is what it gives a member of A that
+// exists, or not a constant.
+pi_elim := {e, T, how, g, x, k} =>
+	if (how == "call") { let c := check(e, pi_dom(T), x); if (is_yes(c)) { at_sure(refuel(e, c.snd), T, x, {e2, B} => fresh(e2, unknown(B, pair(g, x)), k)) } else { pass } }
+	else if (how == "lazy") {
+		each(["K", "strict"], e, {world, e1} =>
+			if (world == "strict") { k(strictly(e1, g), t) }
+			else { witness(e1, pi_dom(T), {e2, c} => at_sure(e2, T, c, {e3, B} => fresh(e3, unknown(B, pair(g, c)), {e4, p} => k(assign(exists(e4, p), g, pair(t, p)), t)))) })
+	}
+	else { pass }
+pi_refute := {thy, T, m, n} => first_found(members_at(thy, pi_dom(T), n), {a} => {
+	let r := within(m, a, n)
+	let B := within(T.snd.snd, a, n)
+	if (not(is_found(r))) { nothing } else if (not(is_found(B))) { nothing }
+	else if (admitted(thy, B.snd)) { let c := refute_at(thy, B.snd, r.snd, n); if (is_found(c)) { found(pair(a, c.snd)) } else { nothing } } else { nothing }
+})
+pi_f := former("Pi", pi_refute, by_filter, pi_intro, pi_elim, {adm, info} => adm(info.fst))
+pi :: {A : Tree, fam : Tree} -> Tree :=> pair(pi_f, pair(A, fam))
+arrow :: {A : Tree, B : Tree} -> Tree :=> pi(A, {_a} => B)
+
+// ---------------------------------------------------------------- the one value
+// the(A, v): the member of A equal to v. An unknown of it is v, so none is ever made.
+the_f := former("The",
+	{thy, T, m, n} => { let c := refute_at(thy, T.snd.fst, m, n); if (is_found(c)) { c } else if (m == T.snd.snd) { nothing } else { found(m) } },
+	{thy, T, n} => [T.snd.snd].filter({a} => accepts(thy, T.snd.fst, a)),
+	{e, T, x} => and_then(check(e, T.snd.fst, x), e, {e2} => if (resolve(e, x) == resolve(e, T.snd.snd)) { done(e2) } else { "Not the one value" }),
+	{e, T, how, h, x, k} => if (how == "new") { k(e, T.snd.snd) } else { pass },
+	{adm, info} => adm(info.fst))
+the :: {A : Tree, v : Tree} -> Tree :=> pair(the_f, pair(A, v))
+
+// ---------------------------------------------------------------- members with a property
+// refine(A, p): the members of A on which p does not answer anything but true.
+/// the type underneath answers for the unknown
+under :: {e : Ctx, A : Tree, how : Tree, h : Tree, x : Tree, k : Tree} -> Tree :=> if (is_unknown(A)) { pass } else { A.fst.elim(e, A, how, h, x, k) }
+refine_elim := {e, T, how, h, x, k} =>
+	if (how == "new") { let e1 := equate(e, T.snd.snd, h, true); let r := under(e1, T.snd.fst, how, h, x, k); if (r == pass) { k(e1, h) } else { r } }
+	else if ((how == "as") && (x == T.snd.fst)) { k(e, t) }
+	else { under(e, T.snd.fst, how, h, x, k) }
+refine_f := former("Refine",
+	{thy, T, m, n} => {
+		let c := refute_at(thy, T.snd.fst, m, n)
+		let r := within(T.snd.snd, m, n)
+		if (is_found(c)) { c } else if (is_found(r)) { if (r.snd == true) { nothing } else { found(m) } } else { nothing }
+	},
+	{thy, T, n} => members_at(thy, T.snd.fst, n).filter({a} => within(T.snd.snd, a, n) == found(true)),
+	{e, T, v} => and_then(check(e, T.snd.fst, v), e, {e1} => sym(e1, T.snd.snd, v, {e2, r} => if (value(e2, r) == true) { done(e2) } else { "The property is not known to hold" })),
+	refine_elim,
+	{adm, info} => adm(info.fst))
+refine :: {A : Tree, p : Tree} -> Tree :=> pair(refine_f, pair(A, p))

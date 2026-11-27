@@ -1,0 +1,201 @@
+// Companion to type_kit.disp and TYPE_SYSTEM_GOALS.md: one kit, several type theories.
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "type_kit.disp" {}
+
+thy := theory([ind_f, pi_f, the_f, refine_f])
+Nat := ind("Nat", [p_leaf, p_fork(p_leaf, p_self)])
+Bit := ind("Bit", [p_leaf, p_stem(p_leaf)])
+One := ind("One", [p_stem(p_leaf)])
+Empty := ind("Empty", [])
+NN := arrow(Nat, Nat)
+ListN := ind("ListNat", [p_leaf, p_fork(p_of(Nat), p_self)])
+ListNN := ind("ListNN", [p_leaf, p_fork(p_of(NN), p_self)])
+
+rec dbl_n :: {n : Tree} -> Tree :=> if (is_zero(n)) { zero } else { succ(succ(dbl_n(nat_pred(n)))) }
+rec add_n :: {a : Tree, b : Tree} -> Tree :=> if (is_zero(a)) { b } else { succ(add_n(nat_pred(a), b)) }
+rec len_n :: {xs : Tree} -> Tree :=> if (is_leaf(xs)) { zero } else { succ(len_n(xs.snd)) }
+rec map_n :: {xs : Tree, f : Tree} -> Tree :=> if (is_leaf(xs)) { [] } else { cons(f(xs.head), map_n(xs.tail, f)) }
+rec copy_n :: {n : Tree} -> Tree :=> if (is_zero(n)) { zero } else { succ(copy_n(nat_pred(n))) }
+rec is_even :: {n : Tree} -> Tree :=> if (is_zero(n)) { true } else { not(is_even(nat_pred(n))) }
+rec spin :: {n : Tree} -> Tree :=> spin(n)
+rec bad_base :: {n : Tree} -> Tree :=> if (is_zero(n)) { t(t) } else { bad_base(nat_pred(n)) }
+rec bad_later :: {n : Tree, k : Tree} -> Tree :=> if (is_zero(k)) { t(t) } else { bad_later(k, nat_pred(k)) }
+rec fold_n :: {xs : Tree, f : Tree, z : Tree} -> Tree :=> if (is_leaf(xs)) { z } else { f(xs.head, fold_n(xs.tail, f, z)) }
+rec bot :: {x : Tree} -> Tree :=> bot(x)
+rec fix_a :: {f : Tree} -> Tree :=> f(fix_a(f))
+dup := {n} => pair(n, n)
+quad := {n} => dbl_n(dbl_n(n))
+
+// ---- 1. a meaning refutes, a checker accepts
+test refute_at(thy, Nat, t(t), 1) = found(t(t))
+test refute_at(thy, Nat, 3, 4) = nothing
+test accepts(thy, Nat, 3) = true
+test accepts(thy, Nat, t(t)) = false
+// the unoptimized type as one program halts on a non-member with its counterexample
+test unoptimized(thy, NN)(dup) = pair(1, pair(1, 1))
+// a run that never finishes is never a counterexample, and the checker asks no more than the meaning
+test refute_at(thy, NN, spin, 64) = nothing
+test accepts(thy, NN, spin) = true
+
+// ---- 2. simple types: inductive types and functions
+test accepts(thy, NN, succ) = true
+test accepts(thy, NN, dbl_n) = true
+test accepts(thy, NN, dup) = false
+test accepts(thy, arrow(Nat, NN), add_n) = true
+test accepts(thy, arrow(ListN, Nat), len_n) = true
+test accepts(thy, arrow(ListN, arrow(NN, ListN)), map_n) = true
+test accepts(thy, ListNN, [succ, dbl_n]) = true
+test accepts(thy, ListNN, [succ, dup]) = false
+// a recursive call is answered by the type being checked, but only inside the run: a wrong base case still fails
+test accepts(thy, NN, bad_base) = false
+test accepts(thy, NN, is_zero) = false
+test accepts(thy, arrow(Nat, NN), bad_later) = false
+test accepts(thy, arrow(Nat, Bit), is_zero) = true
+// a lemma: a program already checked answers by its type
+test accepts(thy, NN, quad) = false
+test why(thy, [pair(dbl_n, NN)], NN, quad) = yes
+test why(thy, [pair(dup, NN)], NN, quad) = "A lemma does not check"
+
+// with no unknowns in play the kit's evaluator is the plain one, skipped arguments included
+run := {f, x} => sym(start(thy), f, x, {e, r} => found(r))
+test run(dbl_n, 5) = found(10)
+test run(add_n(3), 4) = found(7)
+test run(len_n, [1, 2, 3]) = found(3)
+test run(fix_a, pair(t, t)) = found(fix_a(pair(t, t)))
+test fix_a(pair(t, t)) = t
+
+// ---- 3. an unknown is never read as a tree, and never built by a program
+test accepts(thy, arrow(NN, Nat), {f} => f(2)) = true
+test accepts(thy, arrow(NN, Nat), {f} => if (f == succ) { zero } else { 1 }) = false
+forger := {n} => pair(append("TypeKitUnknow", if (is_zero(n)) { [110] } else { [110] }), pair(Nat, n))
+test why(thy, [], NN, forger) = "Builds an unknown"
+test accepts(thy, NN, {n} => unknown(Nat, 0)) = false
+
+// A constant function never runs its argument, so a call inside that argument may never happen.
+// bot never returns, and its "result" can be trusted only where the real run has to compute it.
+test accepts(thy, arrow(Nat, Empty), bot) = true
+skips := {n, g} => n(is_leaf(bot(g)))
+test why(thy, [pair(bot, arrow(Nat, Empty))], arrow(Nat, arrow(Nat, Bit)), skips) = "No case fits"
+test refute_at(thy, arrow(Nat, arrow(Nat, Bit)), skips, 256) = found(pair(2, pair(0, 1)))
+never := {n} => if (is_leaf(n)) { false } else { false }
+Nope := refine(Nat, never)
+Dom := pi(Nat, {n} => if (never(n)) { Nope } else { Bit })
+test accepts(thy, arrow(Dom, Nope), fix_a) = false
+test is_found(refute_at(thy, arrow(Dom, Nope), fix_a, 64)) = true
+// so an unknown function is split into "a constant" and "not one", and both must pass
+test accepts(thy, arrow(ListN, arrow(arrow(Nat, NN), NN)), fold_n) = true
+test accepts(thy, arrow(arrow(Empty, Nat), arrow(Nat, Nat)), {f, n} => f(bot(n))) = false
+
+// The checker also runs things the real run never does: the family, to learn what an unknown
+// function gives. Nothing may be concluded from a call inside that. Here every member of NE
+// loops on 0, so famE never finishes and Tg says nothing about what its members return.
+NE := arrow(Nat, Empty)
+famE := {f} => if (is_leaf(f(0))) { Bit } else { Bit }
+Tg := pi(NE, famE)
+app5 := {g, f} => if (is_leaf(g(f))) { 5 } else { 5 }
+test accepts(thy, Tg, t) = true
+test app5(t, bot) = 5
+test accepts(thy, arrow(Tg, arrow(NE, Bit)), app5) = false
+test accepts(thy, arrow(NE, Bit), {f} => t(f)) = false
+test why(thy, [pair(t, Tg)], arrow(NE, Bit), {f} => t(f)) = "Stuck on an unknown"
+test accepts(thy, ind("Loop", [p_self]), t) = false
+
+// ---- 4. dependent types: the result's type is a program of the argument
+fam := {n} => if (is_zero(n)) { Bit } else { Nat }
+test accepts(thy, pi(Nat, fam), {n} => if (is_zero(n)) { t(t) } else { n }) = true
+test accepts(thy, pi(Nat, fam), {n} => if (is_zero(n)) { 3 } else { n }) = false
+test refute_at(thy, pi(Nat, fam), {n} => if (is_zero(n)) { 3 } else { n }, 64) = found(pair(0, 3))
+// equality: the(Nat, n) has one member, so this type says "the identity on numbers", proved by induction
+Same := pi(Nat, {n} => the(Nat, n))
+test accepts(thy, Same, copy_n) = true
+test accepts(thy, Same, {n} => n) = true
+test accepts(thy, Same, dbl_n) = false
+test accepts(thy, pi(Nat, {n} => the(Nat, succ(n))), succ) = true
+test accepts(thy, pi(Nat, {n} => the(Nat, succ(n))), copy_n) = false
+test refute_at(thy, Same, dbl_n, 256) = found(pair(1, 2))
+
+// ---- 5. polymorphism: a function from the universe, whose unknowns are type variables
+IdT := pi(Type, {X} => arrow(X, X))
+Church := pi(Type, {X} => arrow(arrow(X, X), arrow(X, X)))
+test accepts(thy, IdT, {X, x} => x) = true
+test accepts(thy, IdT, {X, x} => zero) = false
+test accepts(thy, Church, {X, f, x} => f(f(x))) = true
+test accepts(thy, Church, {X, f, x} => f) = false
+test accepts(thy, pi(Type, {X} => arrow(X, Nat)), {X, x} => x) = false
+test accepts(thy, IdT, {X, x} => X) = false
+// a value of unknown type cannot be inspected, so accepted programs are parametric
+test accepts(thy, IdT, {X, x} => if (is_leaf(x)) { x } else { x }) = false
+test accepts(thy, arrow(IdT, Nat), {id} => id(Nat, 3)) = true
+// the meaning looks for a counterexample among the universe's sample types
+test refute_at(thy, pi(universe([Bit, One]), {X} => arrow(X, X)), {X, x} => zero, 64) = found(pair(One, pair(t(t), t)))
+
+// ---- 6. refinement: any program is a property
+Even := refine(Nat, is_even)
+test accepts(thy, Even, 4) = true
+test accepts(thy, Even, 3) = false
+test accepts(thy, arrow(Nat, Even), dbl_n) = true
+test accepts(thy, arrow(Nat, Even), succ) = false
+test why(thy, [], arrow(Even, Even), {n} => succ(succ(n))) = yes
+test accepts(thy, arrow(Even, Nat), {n} => n) = true
+test accepts(thy, arrow(Nat, Even), {n} => n) = false
+test refute_at(thy, arrow(Nat, Even), succ, 256) = found(pair(0, 1))
+
+// ---- 7. types come only from formers
+test accepts(thy, Type, NN) = true
+fake_f := former("Fake", {thy, T, m, n} => nothing, by_filter, {e, T, v} => done(e), {e, T, how, h, x, k} => pass, {adm, info} => true)
+Fake := pair(fake_f, t)
+test why(thy, [], Fake, 3) = "Not an admitted type"
+test accepts(thy, Type, Fake) = false
+test admitted(thy, arrow(Fake, Nat)) = false
+test admitted(thy, ind("Bad", [t(t(t(t)))])) = false
+test accepts(thy, pi(Nat, {n} => Fake), succ) = false
+// anyone can add a former: dependent pairs, written here with nothing but the kit
+sigma_f := former("Sigma",
+	{thy, T, m, n} => if (is_fork(m)) {
+		let c := refute_at(thy, T.snd.fst, m.fst, n)
+		let B := within(T.snd.snd, m.fst, n)
+		if (is_found(c)) { c } else if (not(is_found(B))) { nothing } else if (admitted(thy, B.snd)) { refute_at(thy, B.snd, m.snd, n) } else { nothing }
+	} else { found(m) },
+	by_filter,
+	{e, T, v} => if (is_unknown(v)) { "An unknown where a pair is needed" } else if (is_fork(v)) { and_then(check(e, T.snd.fst, v.fst), e, {e1} => at(e1, T, v.fst, {e2, B} => check(e2, B, v.snd))) } else { "Not a pair" },
+	{e, T, how, h, x, k} => if (how == "read") {
+		fresh(e, unknown(T.snd.fst, pair(h, "fst")), {e1, a} => at_sure(e1, T, a, {e2, B} => fresh(e2, unknown(B, pair(h, "snd")), {e3, b} => k(assign(e3, h, pair(a, b)), t))))
+	} else { pass },
+	{adm, info} => adm(info.fst))
+sigma :: {A : Tree, family : Tree} -> Tree :=> pair(sigma_f, pair(A, family))
+thy2 := extend(thy, [sigma_f])
+tag := {b} => if (is_leaf(b)) { Nat } else { Bit }
+Tagged := sigma(Bit, tag)
+test accepts(thy, Tagged, pair(t, 3)) = false
+test accepts(thy2, Tagged, pair(t, 3)) = true
+test accepts(thy2, Tagged, pair(t(t), 3)) = false
+test accepts(thy2, arrow(Bit, Tagged), {b} => pair(b, if (is_leaf(b)) { 2 } else { t(t) })) = true
+test accepts(thy2, arrow(Tagged, Bit), {p} => p.fst) = true
+test accepts(thy2, pi(Tagged, {p} => tag(p.fst)), {p} => p.snd) = true
+test accepts(thy2, arrow(Tagged, Nat), {p} => p.snd) = false
+test accepts(thy2, arrow(sigma(NE, famE), Bit), {p} => if (is_leaf(p)) { 5 } else { 5 }) = false
+// the old types mean what they meant
+test accepts(thy2, NN, dbl_n) = true
+
+// ---- 8. a rule is a value: the same theory without the identity rule can no longer see that x is returned unread
+bare := system(thy.formers, [rule_forge, rule_known, rule_equation, rule_call, rule_read], thy.sure)
+test accepts(bare, IdT, {X, x} => x) = false
+test accepts(bare, NN, succ) = true
+// the compiler writes an identity as a triage, so most programs need that rule
+test accepts(bare, NN, dbl_n) = false
+
+// ---- 9. soundness is itself a meaning: a wrong checker is refuted, a right one is not
+test sound_refuter(thy, NN)(accepts(thy, NN), 16) = nothing
+test is_found(sound_refuter(thy, NN)({_m} => true, 16)) = true
+test sound_refuter(thy, arrow(Nat, Bit))(accepts(thy, arrow(Nat, Bit)), 256) = nothing
+test sound_refuter(thy, Same)(accepts(thy, Same), 256) = nothing
+test sound_refuter(thy, arrow(Nat, Even))(accepts(thy, arrow(Nat, Even)), 256) = nothing
+test sound_refuter(thy, arrow(Bit, arrow(Bit, Bit)))(accepts(thy, arrow(Bit, arrow(Bit, Bit))), 256) = nothing
+// the same sweep where unknown functions are called: every small program, as argument and as subject
+BB := arrow(Bit, Bit)
+test sound_refuter(thy, arrow(BB, Bit))(accepts(thy, arrow(BB, Bit)), 1024) = nothing
+test sound_refuter(thy, arrow(BB, BB))(accepts(thy, arrow(BB, BB)), 1024) = nothing
+test sound_refuter(thy, arrow(arrow(Empty, Bit), Bit))(accepts(thy, arrow(arrow(Empty, Bit), Bit)), 1024) = nothing
+test sound_refuter(thy, pi(Bit, tag))(accepts(thy, pi(Bit, tag)), 1024) = nothing
+test sound_refuter(thy2, arrow(Tagged, Bit))(accepts(thy2, arrow(Tagged, Bit)), 1024) = nothing

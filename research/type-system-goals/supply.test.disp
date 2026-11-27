@@ -1,0 +1,39 @@
+// Third attempt: a type as two plain programs, a test (`rej`) and a supply (`src`). No checker:
+// this is only the meaning, run on the plain evaluator with type_kit.disp's search helpers.
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "type_kit.disp" {}
+
+rec hang :: {x : Tree} -> Tree :=> hang(x)
+rec NatP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatP(v.snd) } else { false } } else { false }
+record kind :: {rej : Tree, src : Tree} -> Kind
+/// a decidable predicate: the test runs it, the supply lets members through and hangs on the rest
+data :: {p : Tree} -> Kind :=> kind({v, n} => if (within(p, v, n) == found(false)) { found(v) } else { nothing }, {x} => if (p(x)) { x } else { hang(x) })
+/// functions: the test supplies inputs and tests outputs, the supply wraps any tree
+fn :: {A : Kind, B : Kind} -> Kind :=> kind(
+	{f, n} => first_found(tried(n), {x} => { let r := within({y} => f(A.src(y)), x, n); if (is_found(r)) { let c := B.rej(r.snd, n); if (is_found(c)) { found(pair(x, c.snd)) } else { nothing } } else { nothing } }),
+	{g} => {c} => B.src(g(A.src(c))))
+N := data(NatP)
+NN := fn(N, N)
+H := fn(NN, N)
+dup := {n} => pair(n, n)
+
+test N.rej(3, 64) = nothing
+test N.rej(t(t), 64) = found(t(t))
+test NN.rej(succ, 256) = nothing
+test NN.rej(dup, 256) = found(pair(1, pair(1, 1)))
+// second order, with no checker anywhere: inputs are wrapped trees
+test H.rej({g} => g(2), 256) = nothing
+test is_found(H.rej({g} => if (is_zero(g(0))) { t(t) } else { 0 }, 256)) = true
+test is_found(H.rej({g} => g, 256)) = true
+// a wrapped tree is never refuted at its own type, whatever the tree
+test NN.rej(NN.src(dup), 256) = nothing
+test NN.rej(NN.src(t), 256) = nothing
+test H.rej(H.src(dup), 256) = nothing
+// lax: handing a callback a bad argument hangs, so it is not refuted (wrapper.test.disp fixes this)
+test H.rej({g} => g(t(t)), 256) = nothing
+// an input is only ever seen wrapped, so comparing it to a raw program finds nothing
+test H.rej({g} => if (g == succ) { t(t) } else { 0 }, 256) = nothing
+// third order
+test fn(H, N).rej({h} => h(succ), 256) = nothing
+test is_found(fn(H, N).rej({h} => if (is_zero(h({g} => g(0)))) { t(t) } else { 0 }, 256)) = true

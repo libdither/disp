@@ -1,0 +1,82 @@
+// Companion to type_system.disp and TYPE_SYSTEM_GOALS.md.
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "type_system.disp" {}
+
+Nat := ind("Nat", [p_leaf, p_fork(p_leaf, p_self)])
+Bit := ind("Bit", [p_leaf, p_stem(p_leaf)])
+NN := arrow(Nat, Nat)
+NNN := arrow(Nat, NN)
+ListN := ind("ListNat", [p_leaf, p_fork(p_of(Nat), p_self)])
+ListNN := ind("ListNN", [p_leaf, p_fork(p_of(NN), p_self)])
+
+rec dbl_n :: {n : Tree} -> Tree :=> if (is_zero(n)) { zero } else { succ(succ(dbl_n(nat_pred(n)))) }
+rec add_n :: {a : Tree, b : Tree} -> Tree :=> if (is_zero(a)) { b } else { succ(add_n(nat_pred(a), b)) }
+rec len_n :: {xs : Tree} -> Tree :=> if (is_leaf(xs)) { zero } else { succ(len_n(xs.snd)) }
+rec map_n :: {xs : Tree, f : Tree} -> Tree :=> if (is_leaf(xs)) { [] } else { cons(f(xs.head), map_n(xs.tail, f)) }
+rec spin :: {n : Tree} -> Tree :=> spin(n)
+dup := {n} => pair(n, n)
+quad := {n} => dbl_n(dbl_n(n))
+
+// ---- 1. two kinds: the optimized checker decides, the unoptimized refuter finds counterexamples
+test Nat.checker(3) = true
+test Nat.checker(t(t)) = false
+test Nat.refuter(t(t), 1) = found(t(t))
+test Nat.refuter(3, 4) = nothing
+// the unoptimized type as one program halts on a non-member with its counterexample (1 doubles to a non-Nat)
+test unoptimized(NN)(dup) = pair(1, pair(1, 1))
+// a run that never finishes is never a counterexample: spin is a member of the unoptimized NN
+test NN.refuter(spin, 64) = nothing
+
+// ---- 2. the optimized function type, from case split, evaluation under abstraction and induction
+test NN.checker(succ) = true
+test NN.checker(dbl_n) = true
+test NN.checker(dup) = false
+test (arrow_why([], Nat, Nat, dup)).fst = "Answered"
+test NN.checker(spin) = false
+test NNN.checker(add_n) = true
+test arrow(ListN, Nat).checker(len_n) = true
+// induction on the list, the function an unknown argument applied to known members
+test arrow(ListN, arrow(NN, ListN)).checker(map_n) = true
+test arrow(ListN, arrow(NN, ListN)).checker({xs, f} => map_n(xs, dup)) = false
+
+// ---- 4. a lemma: quad needs dbl_n's type, which induction on quad cannot give
+test NN.checker(quad) = false
+test using([pair(dbl_n, NN)], Nat, Nat).checker(quad) = true
+test using([pair(dup, NN)], Nat, Nat).checker(quad) = false
+
+// ---- types of functions as fields: a list of functions is an inductive type like any other
+test ListNN.checker([succ, dbl_n]) = true
+test ListNN.checker([succ, dup]) = false
+test ListNN.refuter([succ, dup], 16) = found([succ, dup])
+
+// ---- 3. dependent and bounded function types
+fam := {n} => if (is_zero(n)) { Bit } else { Nat }
+test pi(Nat, fam).checker({n} => if (is_zero(n)) { t(t) } else { n }) = true
+test pi(Nat, fam).checker({n} => if (is_zero(n)) { 3 } else { n }) = false
+test pi(Nat, fam).refuter({n} => if (is_zero(n)) { 3 } else { n }, 64) = found(pair(0, 3))
+test bounded(Nat, Nat, {_a} => 50).refuter(spin, 4) = found(pair(0, "slow"))
+test bounded(Nat, Nat, {_a} => 50).refuter(succ, 16) = nothing
+
+// ---- 6. admission: only what formers build
+test admitted(Nat) = true
+test admitted(NNN) = true
+test admitted(ListNN) = true
+test admitted(pi(Nat, fam)) = true
+test admitted(using([pair(dbl_n, NN)], Nat, Nat)) = true
+test admitted(ty("Ind", Nat.refuter, {_v} => true, Nat.info)) = false
+test admitted(ty("Arrow", NN.refuter, {_m} => true, NN.info)) = false
+test admitted(ind("Bad", [t(t(t(t)))])) = false
+// a program that mentions the hole marker is refused, not trusted
+test NN.checker({n} => pair(hole_sig, n)) = false
+
+// ---- 5. soundness is itself an unoptimized type: a wrong checker is refuted, a right one is not
+test sound_refuter(NN)(NN.checker, 16) = nothing
+test is_found(sound_refuter(NN)({_m} => true, 16)) = true
+// evaluation under abstraction stops where a run reads a function argument's code
+test arrow(NN, Nat).checker({f} => if (f == succ) { zero } else { 1 }) = false
+test arrow(NN, Nat).checker({f} => f(2)) = true
+// a hole-shaped tree built at run time is refused, not trusted (the marker is never written in the program)
+forger := {n} => pair(append("TypeSystemHol", if (is_zero(n)) { [101] } else { [101] }), pair(Nat, pair("free", 0)))
+test NN.checker(forger) = false
+test is_found(NN.refuter(forger, 2048)) = true

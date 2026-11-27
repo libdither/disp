@@ -1,0 +1,41 @@
+// Fourth attempt: a type as ONE wrapper taking two failure handlers. No checker: this is only
+// the meaning, run on the plain machine, watched for the fault point.
+open use raw "../../lib/prelude.disp" {}
+open use raw "../../lib/list.disp" {}
+open use raw "../../lib/machine.disp" {}
+open use raw "type_kit.disp" {}
+
+rec hang :: {x : Tree} -> Tree :=> hang(x)
+/// the point a run must never reach; under the plain evaluator it just hangs
+fault := {x} => hang(pair("Fault", x))
+rec NatP :: {v : Tree} -> Bool :=> if (is_leaf(v)) { true } else if (is_fork(v)) { if (is_leaf(v.fst)) { NatP(v.snd) } else { false } } else { false }
+/// a type is a wrapper: given what to do when the value is at fault and when its user is, it lets members through
+data := {p} => {mine, yours} => {v} => if (p(v)) { v } else { mine(v) }
+/// the function type swaps the handlers for its input
+fn := {A, B} => {mine, yours} => {f} => {c} => B(mine, yours)(f(A(yours, mine)(c)))
+/// does the run reach the fault point within n steps: found(what it was applied to), or nothing
+rec watch :: {m0 : Tree, n : Nat} -> Tree :=> {
+	let m := m_settle(m0)
+	if (m_finished(m)) { nothing } else if (m.m_fn == fault) { found(m.m_arg) } else if (is_zero(n)) { nothing } else { watch(m_rule(m), nat_pred(n)) }
+}
+/// the meaning: an input on which the wrapped program reaches the fault point
+refuted :: {T : Tree, f : Tree, n : Nat} -> Tree :=> first_found(tried(n), {x} => watch(m_start(T(fault, hang)(f), x), twice(twice(twice(twice(n))))))
+N := data(NatP)
+NN := fn(N, N)
+H := fn(NN, N)
+dup := {n} => pair(n, n)
+
+test refuted(NN, succ, 256) = nothing
+test is_found(refuted(NN, dup, 256)) = true
+test refuted(H, {g} => g(2), 256) = nothing
+test is_found(refuted(H, {g} => if (is_zero(g(0))) { t(t) } else { 0 }, 256)) = true
+test is_found(refuted(H, {g} => g, 256)) = true
+// the same wrapper, handlers swapped, is the supply: a wrapped tree is never refuted at its own type
+test refuted(NN, NN(hang, fault)(dup), 256) = nothing
+test refuted(H, H(hang, fault)(dup), 256) = nothing
+// not lax: handing a callback a bad argument is the program's fault
+test is_found(refuted(H, {g} => g(t(t)), 256)) = true
+test refuted(H, {g} => if (g == succ) { t(t) } else { 0 }, 256) = nothing
+// third order
+test refuted(fn(H, N), {h} => h(succ), 256) = nothing
+test is_found(refuted(fn(H, N), {h} => if (is_zero(h({g} => g(0)))) { t(t) } else { 0 }, 256)) = true
