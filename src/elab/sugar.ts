@@ -3,6 +3,7 @@
 // binder->Pi desugar. Pure AST work — no session, no trees.
 
 import type { Expr, Param } from "../parse.js"
+import { copySpan } from "../core/ir.js"
 import { sugarVarName } from "./vocab.js"
 import type { ScopeEntry, SigParam } from "./state.js"
 
@@ -95,7 +96,7 @@ export function peelApp(e: Expr): { head: Expr; args: Expr[] } {
 // Rewrite `select_lazy ({_} -> A) ({_} -> B) cond` → `if cond then A else B`
 // when both thunks have form `{_} -> body` (or `{x} -> body` with x unused).
 // This avoids the cirToTree eager-K-body evaluation that fires on self-
-// referential select_lazy uses (CLAUDE.md "Compiler workarounds"). The `if`
+// referential select_lazy uses. The `if`
 // desugaring (see "if" case below) wraps each branch in a closure over its
 // free vars, side-stepping the K(body) construction whose body would
 // otherwise be reduced eagerly at compile time.
@@ -124,7 +125,7 @@ export function tryRewriteSelectLazy(
   for (let i = 3; i < args.length; i++) {
     rewritten = { tag: "app", f: rewritten, x: args[i] }
   }
-  return rewritten
+  return copySpan(e, rewritten)
 }
 
 // ───────────────── Named / default / reorderable arguments ──────────────────
@@ -273,7 +274,7 @@ export function tryNamedCall(e: Expr, lookupEntry: (name: string) => ScopeEntry 
   if (resolved === null) return null
   let out = resolved
   for (let i = 1; i < args.length; i++) out = { tag: "app", f: out, x: args[i] }
-  return out
+  return copySpan(e, out)
 }
 
 // binderToPi(e): desugar a type-position binder into explicit `Pi` applications.
@@ -298,5 +299,5 @@ export function binderToPi(e: Expr): Expr {
     ? { tag: "binder", params: e.params.slice(1), body: e.body }
     : e.body
   const cod: Expr = { tag: "binder", fat: true, params: [{ name: p.name, type: null }], body: binderToPi(rest) }
-  return { tag: "app", f: { tag: "app", f: { tag: "var", name: sugarVarName("Pi") }, x: dom }, x: cod }
+  return copySpan(e, { tag: "app", f: { tag: "app", f: { tag: "var", name: sugarVarName("Pi") }, x: dom }, x: cod })
 }

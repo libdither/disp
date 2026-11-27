@@ -12,7 +12,7 @@ const parsedItemsCache = new Map<string, RecMember[]>()
 export function parseFileItems(abs: string): RecMember[] {
   let items = parsedItemsCache.get(abs)
   if (!items) {
-    items = parseItems(readFileSync(abs, "utf-8"))
+    items = parseItems(readFileSync(abs, "utf-8"), abs)
     parsedItemsCache.set(abs, items)
   }
   return items

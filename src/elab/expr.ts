@@ -5,6 +5,7 @@
 
 import type { Tree } from "../eval/eager.js"
 import type { Expr } from "../parse.js"
+import { copySpan, spanOf, formatSpan } from "../core/ir.js"
 import { elab, B, isPristineVocab, type ScopeEntry, type CompileSinks, type LicenseCert, type SigParam } from "./state.js"
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
@@ -65,8 +66,22 @@ function compileFills(
   return fills
 }
 
+const atSpan = (e: Expr, msg: string): string => {
+  const s = spanOf(e)
+  return s ? `${msg} (at ${formatSpan(s)})` : msg
+}
+
 // Expr → Cir, with scope lookup and use-resolution.
 export function exprToCir(
+  e: Expr,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+  resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
+  sinks?: CompileSinks,
+): Cir {
+  return copySpan(e, exprToCirInner(e, lookupEntry, resolveUse, sinks))
+}
+
+function exprToCirInner(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
@@ -77,7 +92,7 @@ export function exprToCir(
     case "num": {
       const zero = sugarTree(lookupEntry, "zero")
       const succ = sugarTree(lookupEntry, "succ")
-      if (!zero || !succ) throw new Error(`numeric literal ${e.value}: zero and succ must be in scope`)
+      if (!zero || !succ) throw new Error(atSpan(e, `numeric literal ${e.value}: zero and succ must be in scope`))
       let result = zero
       for (let i = 0; i < e.value; i++) {
         result = elab.cs.apply(succ, result, B())
@@ -102,7 +117,7 @@ export function exprToCir(
       }
       return { tag: "var", name: e.name }
     }
-    case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
+    case "hole": throw new Error(atSpan(e, "hole '_' cannot appear in untyped compilation"))
     case "app": {
       // Module instantiation: `use "f" { fills }` — a record literal applied
       // directly to a use-atom supplies the file's declared givens (MODULES.md).
@@ -452,10 +467,10 @@ export function exprToCir(
       // that aren't already closed top-level lits). Wrapping each branch in a
       // closure over its free vars defers evaluation (only the taken branch is
       // forced) AND keeps recursive bodies out of cirToTree's eager K-body
-      // reduction (see tryRewriteSelectLazy / CLAUDE.md compiler workarounds).
+      // reduction (see tryRewriteSelectLazy).
       const condTree = sugarTree(lookupEntry, "cond")
       if (!condTree)
-        throw new Error("if: 'cond' must be in scope (import prelude)")
+        throw new Error(atSpan(e, "if: 'cond' must be in scope (import prelude)"))
 
       const condCir = exprToCir(e.cond, lookupEntry, resolveUse, sinks)
       const thenCir = exprToCir(e.thenBody, lookupEntry, resolveUse, sinks)
@@ -487,8 +502,7 @@ export function exprToCir(
       //     ⟶  (λfv1…fvn. prod (pair ["A",…] [{x} -> b1, …]) c) fv1 … fvn
       // Closing keeps recursive calls in arm bodies open under bracket
       // abstraction — `self name x` in an arm is no longer a closed redex for
-      // cirToTree's eager evaluation to unfold (the closed-prefix hazard;
-      // CLAUDE.md § Compiler workarounds). The fvs close around the cut, NOT
+      // cirToTree's eager evaluation to unfold (the closed-prefix hazard). The fvs close around the cut, NOT
       // as a row appended to the selected handler's result: kernel idioms rely
       // on a mis-tagged cut (e.g. a respond returning Err into hyp_reduce's
       // Extend/Reduce match) staying INERT — extra args applied to that junk
@@ -536,8 +550,8 @@ export function exprToCir(
           const b = a.binders[k]
           inner = { tag: "lam", x: b === "_" ? freshFor(`__m${k}`, a.bodyCir) : b, body: inner }
         }
-        const pairFst = exprToCir({ tag: "var", name: "pair_fst" }, lookupEntry, resolveUse, sinks)
-        const pairSnd = exprToCir({ tag: "var", name: "pair_snd" }, lookupEntry, resolveUse, sinks)
+        const pairFst = exprToCir({ tag: "var", name: sugarVarName("pair_fst") }, lookupEntry, resolveUse, sinks)
+        const pairSnd = exprToCir({ tag: "var", name: sugarVarName("pair_snd") }, lookupEntry, resolveUse, sinks)
         const pn = freshFor("__p", inner)
         let appd: Cir = inner
         for (let k = 0; k < n; k++) {

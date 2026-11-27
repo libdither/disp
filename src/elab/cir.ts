@@ -6,15 +6,20 @@
 // binders compiles as an argument collector instead (see `collect`).
 
 import type { Tree } from "../eval/eager.js"
+import { type CoreExpr, copySpan, spanOf, formatSpan } from "../core/ir.js"
 import { elab, B } from "./state.js"
 
-// CIR: intermediate representation with explicit S/K/I sentinels.
+// CIR: intermediate representation extending CoreExpr with explicit S/K/I
+// sentinels during bracket abstraction. Every CoreExpr is a valid Cir.
 export type Cir =
   | { tag: "lit"; t: Tree }
   | { tag: "var"; name: string }
   | { tag: "app"; f: Cir; x: Cir }
   | { tag: "lam"; x: string; body: Cir }
   | { tag: "S" } | { tag: "K" } | { tag: "I" }
+
+/// Lower a canonical CoreExpr directly to a Tree via bracket abstraction.
+export const coreToTree = (e: CoreExpr): Tree => cirToTree(eliminateLams(e))
 
 export const S: Cir = { tag: "S" }
 export const K: Cir = { tag: "K" }
@@ -114,18 +119,20 @@ export const COLLECT_MIN = 7
 export function eliminateLams(e: Cir): Cir {
   switch (e.tag) {
     case "lit": case "var": case "S": case "K": case "I": return e
-    case "app": return cap(eliminateLams(e.f), eliminateLams(e.x))
+    case "app": return copySpan(e, cap(eliminateLams(e.f), eliminateLams(e.x)))
     case "lam": {
-      const xs: string[] = []
+      const xs: string[] = [], at: Cir[] = []
       let b: Cir = e
-      while (b.tag === "lam") { xs.push(b.x); b = b.body }
+      while (b.tag === "lam") { xs.push(b.x); at.push(b); b = b.body }
       const body = eliminateLams(b)
-      return xs.length >= COLLECT_MIN ? collect(xs, body) : curry(xs, body)
+      return xs.length >= COLLECT_MIN ? collect(xs, body, at) : curry(xs, body, at)
     }
   }
 }
 
-const curry = (xs: string[], body: Cir): Cir => xs.reduceRight<Cir>((acc, x) => abstractName(x, acc), body)
+/// `at[i]` is the source lambda of binder `i`, whose span its abstraction keeps.
+const curry = (xs: string[], body: Cir, at: Cir[] = []): Cir =>
+  xs.reduceRight<Cir>((acc, x, i) => copySpan(at[i], abstractName(x, acc)), body)
 const lit = (t: Tree): Cir => ({ tag: "lit", t })
 
 // fst/snd by triage: △ (△ L L) b (△ s t) → b s t, with b = K (fst) or K I (snd).
@@ -159,7 +166,7 @@ let envCounter = 0
 /// rebuilds the rest of the function with that argument substituted; here the curried
 /// wrapper only packs the used arguments into a balanced tuple, and the body is
 /// abstracted over that one tuple, reading each variable back by fst/snd.
-function collect(xs0: string[], body0: Cir): Cir {
+function collect(xs0: string[], body0: Cir, at: Cir[]): Cir {
   const xs = [...xs0]
   let body = body0
   while (xs.length > 0) {
@@ -171,7 +178,7 @@ function collect(xs0: string[], body0: Cir): Cir {
   const used: string[] = []
   for (let i = xs.length - 1; i >= 0; i--)
     if (!used.includes(xs[i]) && containsFree(body, xs[i]) && xs.lastIndexOf(xs[i]) === i) used.unshift(xs[i])
-  if (used.length < 2) return curry(xs, body)
+  if (used.length < 2) return curry(xs, body, at)
   const { fst, snd } = projections()
   const env = `__env${envCounter++}`
   const read = new Map<string, Cir>()
@@ -183,13 +190,16 @@ function collect(xs0: string[], body0: Cir): Cir {
     return cap(cap(lit(elab.cs.leaf()), l), r)
   }
   const tuple = pack(0, used.length, c => c)
-  return curry(xs, cap(abstractName(env, substVars(body, read)), tuple))
+  return curry(xs, cap(abstractName(env, substVars(body, read)), tuple), at)
 }
 
 export function cirToTree(e: Cir): Tree {
   switch (e.tag) {
     case "lit": return e.t
-    case "var": throw new Error(`cirToTree: unresolved free variable ${e.name}`)
+    case "var": {
+      const s = spanOf(e)
+      throw new Error(`cirToTree: unresolved free variable ${e.name}${s ? ` at ${formatSpan(s)}` : ""}`)
+    }
     case "I":   return elab.cs.fork(elab.cs.fork(elab.cs.leaf(), elab.cs.leaf()), elab.cs.leaf())
     case "K":   return elab.cs.stem(elab.cs.leaf())
     case "S":   return elab.cs.fork(elab.cs.stem(elab.cs.fork(elab.cs.leaf(), elab.cs.leaf())), elab.cs.leaf())
