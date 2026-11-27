@@ -62,6 +62,10 @@ impl Memo {
         self.limit = if n == 0 { usize::MAX } else { n };
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.map.len()
+    }
+
     /// Iterate entries as (f, x, result, cost) — snapshot persistence.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (u32, u32, u32, u32, u32, u32)> + '_ {
         self.map.iter().map(|(&(f, x), &(r, c, pf, px))| (f, x, r, c, pf, px))

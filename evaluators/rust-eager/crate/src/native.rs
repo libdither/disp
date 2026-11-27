@@ -213,6 +213,17 @@ impl EagerSession {
     pub fn interactions(&self) -> f64 {
         self.arena.interactions as f64
     }
+    /// `--stats` counters, in order: calls, maxStack, leaf, stem, K, S, triage leaf/stem/fork,
+    /// treeEq, memo hits, memo misses, memo writes, live memo entries.
+    #[napi]
+    pub fn counters(&self) -> Vec<f64> {
+        let c = &self.arena.counters;
+        [c.calls, c.max_stack, c.leaf, c.stem, c.k, c.s, c.triage_leaf, c.triage_stem, c.triage_fork,
+         c.tree_eq, c.memo_hits, c.memo_misses, c.memo_writes, self.arena.memo.len() as u64]
+            .iter()
+            .map(|&n| n as f64)
+            .collect()
+    }
     /// Live node high-water (for observing reclamation / memory pressure).
     #[napi]
     pub fn node_count(&self) -> u32 {

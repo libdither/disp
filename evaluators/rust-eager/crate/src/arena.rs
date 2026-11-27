@@ -76,6 +76,24 @@ fn word_hash(w: u64) -> u64 {
     h.finish()
 }
 
+/// Rule and memo counters for `--stats` (the same fields src/core/tree.ts reports).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Counters {
+    pub(crate) calls: u64,
+    pub(crate) max_stack: u64,
+    pub(crate) leaf: u64,
+    pub(crate) stem: u64,
+    pub(crate) k: u64,
+    pub(crate) s: u64,
+    pub(crate) triage_leaf: u64,
+    pub(crate) triage_stem: u64,
+    pub(crate) triage_fork: u64,
+    pub(crate) tree_eq: u64,
+    pub(crate) memo_hits: u64,
+    pub(crate) memo_misses: u64,
+    pub(crate) memo_writes: u64,
+}
+
 /// One session's arena. Handles are indices into `nodes`; the intern table makes
 /// structurally-identical nodes share one id (so `δˢ` copy is reference sharing and
 /// identical `Susp`s share one `forced` memo cell).
@@ -101,6 +119,7 @@ pub(crate) struct Arena {
     /// reported via stats). Leaf/stem builds and the tree_eq fast-path are O(1) and
     /// uncounted, matching src/core/tree.ts.
     pub(crate) interactions: u64,
+    pub(crate) counters: Counters,
     /// The `tree_eq` definition's handle, registered via `recognizeNative` (0 = unset).
     /// When set, `apply(tree_eq, a) b` is intercepted as the O(1) hash-cons structural
     /// compare (the two-stage susp scheme), so conversion checking is cheap — without
@@ -163,6 +182,7 @@ impl Arena {
             forced: FxHashMap::default(),
             memo: Memo::new(),
             interactions: 0,
+            counters: Counters::default(),
             tree_eq_id: 0,
             machine_id: 0,
             tt: 0,
