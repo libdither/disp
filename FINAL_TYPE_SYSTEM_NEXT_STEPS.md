@@ -12,7 +12,7 @@ See [`TYPE_SYSTEM.typ`](TYPE_SYSTEM.typ) for the full specification. Below are t
 
 ## 1. Extensible `meta` state for resources, linearity, and effects
 
-**Why it matters:** Today `Eval` layers describe *what values are* (`step`, `lazy`, `resolve`, `eq`, `has_tag`), while changing per-run state lives in a fixed tuple `meta = (depth, sure, cap, unbox)`. Substructural type theories (linear, affine, graded/usage-counted, Rust-style ownership/borrowing) and algebraic effect / coeffect systems need *mutable-along-a-run* state (usage ledgers, borrow regions, effect logs) that updates on every step without discarding stacked assumption layers.
+**Why it matters:** Today `Eval` layers describe *what values are* (`step`, `lazy`, `resolve`, `eq`, `has_tag`), while changing per-run state lives in a fixed 6-tuple `meta = (depth, sure, cap, unbox, rec_ctx, arg_tys)`. Substructural type theories (linear, affine, graded/usage-counted, Rust-style ownership/borrowing) and algebraic effect / coeffect systems need *mutable-along-a-run* state (usage ledgers, borrow regions, effect logs) that updates on every step without discarding stacked assumption layers.
 
 **Design:**
 - Generalize `meta` from a fixed tuple into an extensible keyed state map (or slot list) threaded through `run_ev`, where each layer can read/update its own state key on step transitions and branch merges.
