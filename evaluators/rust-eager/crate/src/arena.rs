@@ -94,6 +94,13 @@ pub(crate) struct Counters {
     pub(crate) memo_writes: u64,
 }
 
+/// Intern-table slot: the node's id in the low 32 bits and 32 bits of its hash in the high
+/// ones, so growing the table rehashes from the slot instead of re-reading every node.
+#[inline]
+fn slot_hash(slot: u64) -> u64 {
+    (slot >> 32).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 /// One session's arena. Handles are indices into `nodes`; the intern table makes
 /// structurally-identical nodes share one id (so `δˢ` copy is reference sharing and
 /// identical `Susp`s share one `forced` memo cell).
@@ -104,7 +111,7 @@ pub(crate) struct Arena {
     /// THROUGH `nodes`, so each interned node is stored once (in `nodes`), not twice — a
     /// `HashTable<Node>` would duplicate every Node as its key (~half the arena's
     /// overhead on a heavy file). hashbrown owns the probing/growth/control bytes.
-    intern: HashTable<u32>,
+    intern: HashTable<u64>,
     /// `Susp` WHNF memo (`δⁿ` at-most-once): susp id → its forced WHNF. SPARSE — only
     /// forced susps appear, so eager mode (which never forces) keeps it empty and `mk`
     /// does zero per-node bookkeeping. No size cap (unlike `memo`) — the production
@@ -234,8 +241,10 @@ impl Arena {
         let word = |id: u32| -> u64 {
             if id < bl { base.as_ref().unwrap().nodes[id as usize] } else { nodes[(id - bl) as usize] }
         };
-        if let Some(&id) = intern.find(h, |&id| word(id) == w) {
-            return id;
+        let tag = (h ^ (h >> 32)) << 32; // fold: FxHash's halves aren't each well mixed
+        let h = slot_hash(tag);
+        if let Some(&slot) = intern.find(h, |&slot| slot & !0xffff_ffff == tag && word(slot as u32) == w) {
+            return slot as u32;
         }
         // Reuse a slot freed by `end_scope` before extending the arena (so a scoped
         // workload's peak — not its cumulative allocation — bounds `nodes.len()`).
@@ -248,11 +257,7 @@ impl Arena {
             nodes.push(w);
             id
         };
-        let Arena { nodes, intern, base, base_len, .. } = self;
-        let bl = *base_len;
-        intern.insert_unique(h, id, |&id| {
-            word_hash(if id < bl { base.as_ref().unwrap().nodes[id as usize] } else { nodes[(id - bl) as usize] })
-        });
+        intern.insert_unique(h, tag | id as u64, |&slot| slot_hash(slot));
         id
     }
 
@@ -370,7 +375,7 @@ impl Arena {
         self.nodes.truncate((new_top - self.base_len) as usize);
         // A node id survives iff it is below base (permanent) or a marked survivor.
         let live = |id: u32| id < base || (id < new_top && marked[(id - base) as usize]);
-        self.intern.retain(|id| live(*id));
+        self.intern.retain(|slot| live(*slot as u32));
         self.memo.retain(|id| live(id)); // drop only entries touching freed nodes
         self.forced.retain(|&k, v| live(k) && live(*v));
         if let Some(p) = self.profile.as_mut() {
@@ -500,7 +505,7 @@ impl Arena {
         // Live ids, ascending (keeps the bootstrap prefix 0/1/2 fixed): the reserved
         // sentinel + frozen ∪ live intern. Frozen and overlay id ranges are disjoint.
         let mut interned: Vec<u32> = self.base.as_ref().map(|b| b.intern_iter().collect()).unwrap_or_default();
-        interned.extend(self.intern.iter().copied());
+        interned.extend(self.intern.iter().map(|&slot| slot as u32));
         interned.sort_unstable();
         let mut live: Vec<u32> = Vec::with_capacity(interned.len() + 1);
         live.push(0);
