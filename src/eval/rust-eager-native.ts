@@ -94,9 +94,8 @@ class RustEagerNativeSession implements Session<number> {
     this.#s = new (loadAddon().EagerSession)()
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
     this.#noNativeIntercept = opts?.noNativeIntercept === true
-    // Memory knob: bound the apply memo for smaller-footprint / long-lived sessions
-    // (RUST_EAGER_MEMO_LIMIT=<entries>, kept as two generations of half that). Off by
-    // default — per-file sessions are bounded by dispose() anyway.
+    // Memory knob: the apply memo is a bounded cache (2^23 slots by default, see memo.rs);
+    // RUST_EAGER_MEMO_LIMIT=<slots> resizes it.
     const lim = Number(process.env.RUST_EAGER_MEMO_LIMIT ?? 0)
     if (Number.isFinite(lim) && lim > 0) this.#s.setMemoLimit(lim >>> 0)
   }

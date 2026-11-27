@@ -92,8 +92,7 @@ impl EagerSession {
     }
 
     // ── memory knobs ──
-    /// Bound the eager apply memo at about `n` entries (0 = unbounded), as two generations
-    /// (see memo.rs).
+    /// Size the eager apply memo's cache to about `n` slots (0 = default; see memo.rs).
     #[napi]
     pub fn set_memo_limit(&mut self, n: u32) {
         self.arena.memo.set_limit(n as usize);
