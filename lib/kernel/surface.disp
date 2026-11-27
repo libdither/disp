@@ -147,3 +147,5 @@ equiv_guard := rel_guard({old, new} => Eq(new, old))
 fn_equiv_guard := {A} => rel_guard({old, new} => {x : A} -> Eq(new(x), old(x)))
 /// 2-arg function rewrite guard: requires `{x : A} -> {y : B} -> Eq(new(x, y), old(x, y))`
 fn2_equiv_guard := {A, B} => rel_guard({old, new} => {x : A} -> {y : B} -> Eq(new(x, y), old(x, y)))
+/// 3-arg function rewrite guard: requires `{x : A} -> {y : B} -> {z : C} -> Eq(new(x, y, z), old(x, y, z))`
+fn3_equiv_guard := {A, B, C} => rel_guard({old, new} => {x : A} -> {y : B} -> {z : C} -> Eq(new(x, y, z), old(x, y, z)))

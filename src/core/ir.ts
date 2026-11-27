@@ -22,6 +22,11 @@ export type CoreExpr =
   | { tag: "app"; f: CoreExpr; x: CoreExpr }
   | { tag: "lam"; x: string; body: CoreExpr }
 
+export const coreLit = (t: Tree): CoreExpr => ({ tag: "lit", t })
+export const coreVar = (name: string): CoreExpr => ({ tag: "var", name })
+export const coreApp = (f: CoreExpr, x: CoreExpr): CoreExpr => ({ tag: "app", f, x })
+export const coreLam = (x: string, body: CoreExpr): CoreExpr => ({ tag: "lam", x, body })
+
 const spans = new WeakMap<object, Span>()
 
 /// Record a source span for a token, AST node, or IR node (returns the node).

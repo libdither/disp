@@ -1,20 +1,37 @@
-// The module driver: parseProgram — scope stack, `use`/`use raw` resolution with
-// the per-session module cache, deferred end-of-parse auto-verification of typed
-// exports through the kernel, and per-item stats reporting.
+// The syntax-agnostic module driver: parseProgram — scope stack, `use`/`use raw`
+// resolution with the per-session module cache, declaration/guard protocol,
+// deferred end-of-parse auto-verification of typed exports through the kernel,
+// and per-item stats reporting.
+//
+// Surface syntax (lexing, parsing, desugaring) lives behind `Frontend`
+// (`src/core/frontend.ts`), defaulting to `dispFrontend` (`src/frontend/disp.ts`).
 
+import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import { type Tree, defaultSession } from "../eval/eager.js"
 import type { Session, EvalStats } from "../eval/types.js"
-import { parseItems, sumCtorExpr, type Expr, type RecMember } from "../parse.js"
+import type { Frontend, FrontendModule, FrontendEnv, FrontendResolver, CoreItem, CoreGiven } from "../core/frontend.js"
+import { dispFrontend } from "../frontend/disp.js"
 import { elab, B, verifiedModules, moduleCacheBySession, registerVocab, isPristineVocab, VOCAB_NAMES, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert, type SigParam } from "./state.js"
-import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modscan.js"
-import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
-import { binderArity, extractSignature } from "./sugar.js"
+import { type Cir, cap, cirToTree, eliminateLams, coreToTree } from "./cir.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
-import { sugarTree } from "./vocab.js"
-import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree, equationLhs } from "./expr.js"
-import { registerField } from "./fields.js"
 import { printValue } from "../format/print.js"
+
+// Parsed-module cache keyed by (frontend name, absolute path). File content is
+// immutable per process, so each frontend parses a given file at most once.
+const parsedModuleCache = new Map<string, FrontendModule<any>>()
+function parseModuleFile(abs: string, fe: Frontend<any>): FrontendModule<any> {
+  const key = `${fe.name}\0${abs}`
+  let mod = parsedModuleCache.get(key)
+  if (!mod) {
+    mod = fe.parse(readFileSync(abs, "utf-8"), abs)
+    parsedModuleCache.set(key, mod)
+  }
+  return mod
+}
+
+const defaultResolveFrontend: FrontendResolver = (absPath, current) =>
+  absPath.endsWith(".disp") ? dispFrontend : current
 
 export type Decl =
   | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null; cert?: LicenseCert | null; params?: SigParam[] }
@@ -38,14 +55,6 @@ export type Decl =
 //     routes the slow path, where a request arriving with `param := true` is rejected
 //     (dynamic givens are unsupported — fills resolve against the syntactic pre-scan).
 
-// A `let x := e` declaration is an ordinary decorated declaration whose head is the
-// single identifier `let` (the private-write request decorator).
-const isLetHead = (head: Expr | undefined): boolean => head?.tag === "var" && head.name === "let"
-// Fields that EXPORT: every field except `let`-headed and `given`-headed ones
-// (private writes and dependency binders respectively).
-const hasExportFields = (items: RecMember[]): boolean =>
-  items.some(it => it.tag === "field" && !isLetHead(it.head) && !isGivenHead(it.head))
-
 // Per-file elaboration context: the module dependencies (givens) declared by the
 // file's pre-scan, the fills supplied at the use site, and bookkeeping.
 // `abstract` is the FUNCTOR FACE mode (MODULES.md slice 2): a bare `use "f"` on a
@@ -56,7 +65,7 @@ type FileCtx = {
   raw: boolean
   abs?: string
   fills: Map<string, Tree>
-  givens: GivenSpec[]
+  givens: CoreGiven<any>[]
   givenSeen: Set<string>
   abstract?: boolean
   givenHyps?: { name: string; type: Tree; hyp: Tree }[]
@@ -224,6 +233,10 @@ export type ParseProgramOptions = {
   // compiles standalone (its prefix lets re-wrapped) and binds as
   // `Parent__local` — printable and referenceable, CLI probing only.
   exposeLocals?: boolean
+  // Surface syntax frontend for the root source (defaults to `dispFrontend`).
+  frontend?: Frontend<any>
+  // Choose which frontend parses each `use`d file (defaults to `.disp` -> dispFrontend, else current).
+  resolveFrontend?: FrontendResolver
 }
 
 // The disp definitions a backend may answer for natively: tree_eq (lib/prelude.disp)
@@ -284,6 +297,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
   const sourceStack = [sourcePath ? pathResolve(sourcePath) : undefined]
   const loadedFiles = new Set<string>() // cycle detection
+  let curFrontend: Frontend<any> = options.frontend ?? dispFrontend
+  const resolveFrontend: FrontendResolver = options.resolveFrontend ?? defaultResolveFrontend
   let compiledTestIndex = 0
   // Deferred module verification: instead of forcing each module's `param_apply
   // typ record` verdict at its `use` site, build it LAZILY (a suspended computation,
@@ -332,15 +347,22 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     return undefined
   }
   const define = (name: string, entry: ScopeEntry) => stack[stack.length - 1].set(name, entry)
+  const makeEnv = (sinks?: CompileSinks): FrontendEnv => ({ lookup: lookupEntry, resolveUse, sinks })
+  const compileExpr = (e: unknown, sinks?: CompileSinks): Tree =>
+    coreToTree(curFrontend.lowerExpr(e, makeEnv(sinks)))
+  const compileType = (e: unknown): Tree =>
+    coreToTree((curFrontend.lowerType ?? curFrontend.lowerExpr)(e, makeEnv()))
 
   function resolveUse(path: string, raw = false, fills?: Map<string, Tree>): ScopeEntry {
     const abs = pathResolve(dirStack[dirStack.length - 1], path)
-    const items = parseFileItems(abs)
+    const childFrontend = resolveFrontend(abs, curFrontend)
+    const mod = parseModuleFile(abs, childFrontend)
+    const items = mod.items
     // Module dependencies (MODULES.md): validate the supplied fills against the
     // file's declared givens BEFORE elaborating. Fills are explicit; a missing
     // fill without a default is an error (raw binds nothing for a missing given —
     // the name is absent from scope; kernel givens are annotation-only and raw drops annotations).
-    const givens = scanGivens(items)
+    const givens = mod.givens
     // A given-bearing module used WITHOUT a context (MODULES.md slice 2): a bare
     // CHECKED `use "f"` denotes the FUNCTOR FACE — the file elaborated once with
     // each given bound to a fresh minted hyp, read back as the module lambda, with
@@ -376,7 +398,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // not yet cached, so it still trips the loadedFiles guard below).
     let modCache = moduleCacheBySession.get(elab.cs)
     if (!modCache) { modCache = new Map(); moduleCacheBySession.set(elab.cs, modCache) }
-    const cacheKey = `${abs}\0${raw ? "raw" : ""}\0${fillKey}`
+    const cacheKey = `${childFrontend.name}\0${abs}\0${raw ? "raw" : ""}\0${fillKey}`
     const hit = modCache.get(cacheKey)
     if (hit) return hit
     if (loadedFiles.has(abs)) throw new Error(`use: circular dependency on ${abs}`)
@@ -391,12 +413,14 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // capture into an unbound-variable error naming the file that forgot an
     // import.
     const savedFrames = stack.splice(0, stack.length, new Map())
+    const savedFrontend = curFrontend
+    curFrontend = childFrontend
     const fileDecls: Decl[] = []
     // A file that exports nothing of its own (no non-`let` fields — e.g. the kernel
     // barrel, which is pure `open`s) re-exports what it opens; a field-bearing file
     // exports only its fields. (The old legacy mode where top-level lets exported is
     // gone: `let` marks the write private everywhere.)
-    const hasFields = hasExportFields(items)
+    const hasFields = mod.hasExports
     const ctx: FileCtx = { isRoot: false, raw, abs, fills: supplied, givens, givenSeen: new Set(), abstract, givenHyps: abstract ? [] : undefined }
     // The module auto-verify hook, captured while the module's own scope is still on
     // the stack (popped in `finally`). ONE convention for every world: a scope that
@@ -423,7 +447,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           // import an unbound-variable error naming the file that forgot it).
           const msg = err instanceof Error ? err.message : String(err)
           if (msg.startsWith("in ")) throw err // already attributed by a nested use
-          const name = it.tag === "field" ? ` (at '${it.name}')` : it.tag === "open" ? " (at an open)" : ""
+          const name = it.tag === "declare" ? ` (at '${it.name}')` : it.tag === "open" ? " (at an open)" : ""
           throw new Error(`in ${abs}${name}: ${msg}`)
         }
       }
@@ -448,6 +472,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     } finally {
       letAnns = currentLetAnns ?? []
       currentLetAnns = savedLetAnns
+      curFrontend = savedFrontend
       stack.splice(0, stack.length, ...savedFrames)
       dirStack.pop()
       sourceStack.pop()
@@ -585,45 +610,42 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // The declaration pipeline (declareBinding) decides what actually gets bound — for
   // guarded names the bound tree may differ from the compiled value (the guard's Bind).
   function compileParts(
-    name: string,
-    type: Expr | null | undefined,
-    body: Expr,
+    _name: string,
+    type: unknown | null | undefined,
+    body: unknown,
     sinks?: CompileSinks,
     raw = false,
   ): { tree: Tree; type: Tree | null } {
     let tree: Tree, inferredType: Tree | null = null
     const Type = lookupEntry("Type")?.tree
+    const env = makeEnv(sinks)
 
     // `raw` (a `use raw "…"` import) drops annotation *verification*: the
     // declared type is discarded and the body compiled directly. This breaks
     // the bootstrap cycle — a file's own annotations can reference names the
     // file is still defining — at the cost of the module's `typ`.
-    // recType annotations participate once `Telescope` exists (they compile to
-    // telescope types); without it they keep the legacy fields-metadata-only role.
-    const isTypeAlias = type?.tag === "var" && type.name === "Type" && !!sugarTree(lookupEntry, "Pi")
-    if (!raw && type != null && (type.tag !== "recType" || sugarTree(lookupEntry, "Telescope")) && (Type || sugarTree(lookupEntry, "Pi"))) {
-      // Build the annotation's type tree (binder → Pi, else plain compile). If the
-      // annotation is the universe `Type`, the BODY itself denotes a type, so
-      // compile it the same way; otherwise the body is a value (plain bracket
-      // abstraction). Verifying the value inhabits the type is the in-language
-      // kernel's job (`param_apply T body`, via the module tuple at the use site),
-      // never the host's — there is no check/infer here.
-      const type_tree = compileType(type, lookupEntry, resolveUse)
-      tree = (Type && isUniverseTree(type_tree, Type))
-        ? compileType(body, lookupEntry, resolveUse)
-        : compileExpr(body, lookupEntry, resolveUse, sinks)
+    const isTypeAlias = type != null && (curFrontend.isTypeUniverseAnnotation?.(type, env) ?? false)
+    const canCompileType = type != null && (
+      curFrontend.shouldCompileTypeAnnotation
+        ? curFrontend.shouldCompileTypeAnnotation(type, env)
+        : Boolean(Type || lookupEntry("Pi")?.tree || lookupEntry("check_module")?.tree)
+    )
+    if (!raw && canCompileType) {
+      // Build the annotation's type tree; if the annotation is the universe `Type`,
+      // compile the body in type mode as well. Verifying the value inhabits the
+      // type is the in-language kernel's job, never the host's.
+      const type_tree = compileType(type)
+      tree = (Type && elab.cs.equal!(type_tree, Type))
+        ? compileType(body)
+        : compileExpr(body, sinks)
       inferredType = type_tree
     } else if (raw && isTypeAlias) {
-      // Raw load of a `: Type := …` alias: still run the type-mode desugar
-      // (binderToPi) on the body, so a `: Type := <arrow>` alias compiles to the
-      // same `Pi` tree raw OR checked (mode-independent). This is the SYNTACTIC
-      // `Type`-position decision only — pure desugar, no verification — so it
-      // does NOT reopen the bootstrap cycle, yet lets raw-loaded kernel files use
-      // `A -> B` for type aliases instead of the function-application `Arrow`.
-      tree = compileType(body, lookupEntry, resolveUse)
+      // Raw load of a `: Type := …` alias: still run type-mode lowering on the body,
+      // so a `: Type := <arrow>` alias compiles to the same tree raw or checked.
+      tree = compileType(body)
     } else {
       // Untyped, raw value, or no kernel — plain value compilation.
-      tree = compileExpr(body, lookupEntry, resolveUse, sinks)
+      tree = compileExpr(body, sinks)
     }
     return { tree, type: inferredType }
   }
@@ -636,30 +658,26 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     name: string,
     tree: Tree,
     typeTree: Tree | null,
-    body: Expr | null,
-    typeExpr: Expr | null | undefined,
+    body: unknown | null,
+    typeExpr: unknown | null | undefined,
     guard: Tree | undefined,
   ): void {
     // Module metadata propagation (`let m = use "f"`): `open m` and projection
     // on the module's Church-record fallback need the export list. Falls back to
     // reading the field header off the compiled tree, so a binding whose value is
-    // a §2.6 record (`E := Enum {…}`, any `make_record` result) is `open`-able and
-    // projects at compile time.
-    const record = (body ? resolveExprRecord(body, lookupEntry, resolveUse) : undefined) ?? recordFieldsFromTree(tree, lookupEntry)
-    // Track the named-argument signature (leading lambda params + defaults) so a
-    // later `name { … }` call resolves by field name. Pure metadata — the tree is
-    // unchanged. Skipped for raw imports (their bodies bypass annotations anyway).
-    const params = body ? extractSignature(body, typeExpr ?? null) : undefined
+    // a record value is `open`-able and projects at compile time.
+    const record = (body != null ? curFrontend.resolveRecord?.(body, makeEnv()) : undefined) ?? recordFieldsFromTree(tree, lookupEntry)
+    const params = body != null ? curFrontend.extractParams?.(body, typeExpr ?? null) : undefined
     define(name, { tree, type: typeTree, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes, params, guard })
   }
 
   function compileBinding(
     name: string,
-    type: Expr | null | undefined,
-    body: Expr,
+    type: unknown | null | undefined,
+    body: unknown,
     sinks?: CompileSinks,
     raw = false,
-    docType?: Expr,
+    docType?: unknown,
   ): { tree: Tree; type?: Tree | null } {
     const r = compileParts(name, type, body, sinks, raw)
     finishDefine(name, r.tree, r.type, body, type ?? docType, lookupEntry(name)?.guard)
@@ -717,16 +735,17 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // the incumbent guard, and applies its GuardAction.
   function declareBinding(
     name: string,
-    typeE: Expr | null | undefined,
-    valueE: Expr | null,
-    headE: Expr | undefined,
+    typeE: unknown | null | undefined,
+    valueE: unknown | null,
+    headE: unknown | undefined,
+    headName: string | undefined,
     sinks: CompileSinks,
     raw: boolean,
-    docE?: Expr,
+    docE?: unknown,
   ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean; priv?: boolean; cert?: LicenseCert } {
     const S = elab.cs
     const existing = lookupEntry(name)
-    const letHeaded = isLetHead(headE)
+    const letHeaded = headName === "let"
     const dg = lookupEntry("default_guard")?.tree
     const ambientShadowed = dg != null && !isPristineVocab(S, "default_guard", dg)
     // A `let` head fast-paths while it means a library decorator verbatim: unbound
@@ -749,7 +768,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       valueTree = p.tree
       typeTree = p.type
     } else if (typeE != null) {
-      typeTree = compileType(typeE, lookupEntry, resolveUse)
+      typeTree = compileType(typeE)
     }
     // Rebinds inherit the incumbent's contract: an un-annotated declaration on an
     // already-bound name carries the existing type in its request, and onto the new
@@ -770,8 +789,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     if (!tt || !g || base == null)
       throw new Error(`declaration of '${name}': guarded declarations need the kernel prelude in scope`)
     let request = base
-    if (headE) {
-      const headTree = compileExpr(headE, lookupEntry, resolveUse, sinks)
+    if (headE !== undefined) {
+      const headTree = compileExpr(headE, sinks)
       request = S.apply(headTree, request, B())
     }
     // Privacy is declarer intent, so it is read off the FINAL request (a head like
@@ -847,7 +866,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // beats default; raw binds nothing for a missing one), and schedule the well-typed-
   // linking check `param_apply T fill` into the deferred batch (skipped raw, and
   // gradual when the kernel is not in this module's scope, like annotations).
-  function handleGiven(it: Extract<RecMember, { tag: "field" }>, sinks: CompileSinks, ctx: FileCtx): void {
+  function handleGiven(it: Extract<CoreItem<any>, { tag: "declare" }>, sinks: CompileSinks, ctx: FileCtx): void {
     if (ctx.isRoot)
       throw new Error(`given '${it.name}': the root module cannot declare dependencies (givens are filled at a use site)`)
     if (ctx.givenSeen.has(it.name))
@@ -866,7 +885,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // face-build fallback error. Hyp id = pair(<abs path>, <ordinal string>) —
     // collision-proof against user smallint ids and walker mints.
     if (ctx.abstract) {
-      const typeTree = compileType(it.type!, lookupEntry, resolveUse)
+      const typeTree = compileType(it.type!)
       const makeHyp = lookupEntry("make_hyp")?.tree
       if (makeHyp == null)
         throw new Error(`given '${it.name}': 'make_hyp' is not in scope (open the kernel prelude before the givens)`)
@@ -878,7 +897,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     }
     let fill = ctx.fills.get(it.name)
     if (fill == null && it.value != null)
-      fill = compileExpr(it.value, lookupEntry, resolveUse, sinks) // the default, in module scope (raw included: defaults are values)
+      fill = compileExpr(it.value, sinks) // the default, in module scope (raw included: defaults are values)
     if (fill == null) {
       if (!ctx.raw) throw new Error(`given '${it.name}': unfilled`) // pre-checked in resolveUse; defensive
       // Raw, no fill, no default: bind NOTHING. The dependency is simply not in
@@ -890,7 +909,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // the given itself (the self-typed universe dependency `given Type : Type`
     // checks the fill against itself, which is R6) as well as earlier givens.
     define(it.name, { tree: fill })
-    const typeTree = !ctx.raw && it.type != null ? compileType(it.type, lookupEntry, resolveUse) : null
+    const typeTree = !ctx.raw && it.type != null ? compileType(it.type) : null
     if (typeTree != null) define(it.name, { tree: fill, type: typeTree })
     if (!ctx.raw && typeTree != null) {
       const pa = lookupEntry("param_apply")?.tree, ok = lookupEntry("Ok")?.tree, tt = lookupEntry("true")?.tree
@@ -904,15 +923,15 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     }
   }
 
-  function runItem(it: RecMember, target: Decl[], isExport: boolean, ctx: FileCtx): void {
+  function runItem(it: CoreItem<any>, target: Decl[], isExport: boolean, ctx: FileCtx): void {
     const sinks = makeSinks(target, ctx.raw)
     const raw = ctx.raw
     switch (it.tag) {
-      case "field": {
+      case "declare": {
         // A `given`-headed declaration is a module dependency, interpreted by the
         // driver while `given` is unbound or pristine; a shadowed `given` falls
         // through to the request machinery, where a param request is rejected.
-        if (isGivenHead(it.head)) {
+        if (it.headName === "given") {
           const g = lookupEntry("given")?.tree
           if (g == null || isPristineVocab(elab.cs, "given", g)) {
             handleGiven(it, sinks, ctx)
@@ -920,9 +939,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             return
           }
         }
-        // `let x := e` arrives here as a decorated declaration (head = `let`);
-        // the tag "let" member only survives inside braces (the lexical form).
-        const r = declareBinding(it.name, it.type, it.value, it.head, sinks, raw, it.docType)
+        const r = declareBinding(it.name, it.type, it.value, it.head, it.headName, sinks, raw, it.docType)
         if (r.pushDef && !r.priv) {
           // Redefinition of an exported field is guard-mediated (a rebind): the final
           // binding wins. An UNGUARDED (fast-path) duplicate is still the old accident
@@ -944,49 +961,18 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // a session can hold several kernels, so each one's definition is pristine
         // and only a ROOT-file binding of these names counts as a shadow.
         if (!ctx.isRoot && r.tree != null && VOCAB_NAMES.has(it.name)) registerVocab(elab.cs, it.name, r.tree)
-        if (it.recordField) registerField(it.recordField.type, it.recordField.field, it.recordField.fieldType)
-        const ann = it.type ?? it.docType
-        const arity = lookupEntry(it.name)?.params?.length ?? (ann != null ? binderArity(ann) : undefined)
-        recordItem(isLetHead(it.head) ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined, arity })
-        // Constructor auto-declaration (SYNTAX.typ § sum types): a declaration whose
-        // value is a sum-type literal — possibly under a binder chain, the
-        // parameterized case (`{A} -> < some : A, none >`; constructors don't mention
-        // the params) — also binds each variant's constructor over `inj`: nullary
-        // `Tag := inj "Tag" t`, single-arg `Tag := inj "Tag"` (the η-form of
-        // `{a} -> inj "Tag" a`). A variant name already in scope is SKIPPED — the
-        // kernel's `CheckerResult : Type := < Ok : Tree, Err >` types the engine's
-        // existing constructor values rather than rebinding them. Bound through the
-        // ordinary declaration path, so constructors export like any field.
-        if (options.exposeLocals && r.pushDef && it.value != null) {
-          const prefix: { name: string; val: Expr }[] = []
-          let cur: Expr = it.value
-          while (cur.tag === "app" && cur.f.tag === "binder" && cur.f.params.length === 1 && cur.f.params[0].name != null && prefix.length < 64) {
-            const step = { name: cur.f.params[0].name, val: cur.x }
-            let e: Expr = step.val
-            for (let i = prefix.length - 1; i >= 0; i--)
-              e = { tag: "app", f: { tag: "binder", fat: true, params: [{ name: prefix[i].name, type: null }], body: e }, x: prefix[i].val }
-            try {
-              const tree = compileExpr(e, lookupEntry, resolveUse, sinks)
-              const local = `${it.name}__${step.name}`
-              define(local, { tree, type: null })
-              target.push({ kind: "Def", name: local, tree, guard: null })
-            } catch { /* a local that doesn't compile standalone is skipped */ }
-            prefix.push(step)
-            cur = cur.f.body
-          }
-        }
-        if (r.pushDef && it.value != null) {
-          let body: Expr = it.value
-          while (body.tag === "binder") body = body.body
-          if (body.tag === "sumType" && body.variants.length > 0 && lookupEntry("inj")) {
-            for (const sv of body.variants) {
-              if (lookupEntry(sv.name)) continue
-              const cr = declareBinding(sv.name, null, sumCtorExpr(sv), undefined, sinks, raw)
-              if (cr.pushDef && !cr.priv) target.push({ kind: "Def", name: sv.name, tree: cr.tree!, type: cr.type, guard: cr.guard ?? null })
-              recordItem("field", sv.name, undefined, { tree: cr.tree ?? undefined })
-            }
-          }
-        }
+        const arity = lookupEntry(it.name)?.params?.length ?? curFrontend.declaredArity?.(it.value, it.type, it.docType)
+        recordItem(it.headName === "let" ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined, arity })
+        curFrontend.onDeclared?.(it, {
+          pushed: r.pushDef,
+          raw,
+          exposeLocals: !!options.exposeLocals,
+          env: makeEnv(sinks),
+          define,
+          declareValue: (name, value) => declareBinding(name, null, value, undefined, undefined, sinks, raw),
+          emitDef: (name, tree, type = null, guard = null) => target.push({ kind: "Def", name, tree, type, guard }),
+          recordFieldItem: (name, tree) => recordItem("field", name, undefined, { tree }),
+        })
         return
       }
       case "test": {
@@ -995,40 +981,39 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // saturated lhs would reduce symbolically at compile time for no value.
         if (ctx.abstract) return
         compiledTestIndex++
+        const lhsE = curFrontend.preprocessTestLhs ? curFrontend.preprocessTestLhs(it.lhs, makeEnv(sinks)) : it.lhs
         target.push({
           kind: "Test",
-          lhs: compileExpr(equationLhs(it.lhs, lookupEntry), lookupEntry, resolveUse, sinks),
-          rhs: compileExpr(it.rhs, lookupEntry, resolveUse, sinks),
+          lhs: compileExpr(lhsE, sinks),
+          rhs: compileExpr(it.rhs, sinks),
           line: it.line,
           endLine: it.endLine,
         })
         recordItem("test", undefined, compiledTestIndex, { line: it.line, endLine: it.endLine })
         return
       }
-      case "let": // the lexical (braced) form never reaches item level
-        throw new Error(`internal: lexical let member '${it.name}' at item level`)
       case "open": {
         // Abstract mode: `open <given>` on a RECORD-typed given splices the fields
         // as sanctioned projections of the hyp — `hyp (acc name)` runs hyp_reduce
         // through the record type's respond, yielding a field-typed extension
-        // neutral. Field names come off the given's recType ANNOTATION (there is
-        // no fill to read them from; MODULES.md slice 2).
-        if (ctx.abstract && it.expr.tag === "var") {
-          const openName = it.expr.name
-          const g = ctx.givenHyps?.find(h => h.name === openName)
-          const spec = ctx.givens.find(s => s.name === openName)
-          if (g && spec?.type?.tag === "recType") {
-            for (const f of spec.type.fields)
-              define(f.name, { tree: elab.cs.apply(g.hyp, accTree(f.name), B()) })
-            recordItem("open")
-            return
+        // neutral.
+        if (ctx.abstract) {
+          const absOpen = curFrontend.openAbstractGiven?.(it.expr, ctx.givens)
+          if (absOpen) {
+            const g = ctx.givenHyps?.find(h => h.name === absOpen.name)
+            if (g) {
+              for (const f of absOpen.fields)
+                define(f, { tree: elab.cs.apply(g.hyp, accTree(f), B()) })
+              recordItem("open")
+              return
+            }
           }
         }
-        const record = resolveExprRecord(it.expr, lookupEntry, resolveUse)
-          ?? recordFieldsFromTree(compileExpr(it.expr, lookupEntry, resolveUse, sinks), lookupEntry)
+        const record = curFrontend.resolveRecord?.(it.expr, makeEnv(sinks))
+          ?? recordFieldsFromTree(compileExpr(it.expr, sinks), lookupEntry)
         if (!record || record.fields.length === 0)
           throw new Error("open: expression has no known record fields")
-        const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse, sinks)
+        const tree = record.fieldTrees ? undefined : compileExpr(it.expr, sinks)
         const n = record.fields.length
         for (let i = 0; i < n; i++) {
           const fieldTree = record.fieldTrees ? record.fieldTrees[i] : elab.cs.apply(tree!, accTree(record.fields[i]), B())
@@ -1113,10 +1098,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     }
   }
 
-  const items = parseItems(src, sourceStack[0])
-  const hasFields = hasExportFields(items)
+  const rootMod = curFrontend.parse(src, sourceStack[0])
+  const hasFields = rootMod.hasExports
   const rc = rootCtx()
-  for (const it of items) runItem(it, decls, !hasFields, rc)
+  for (const it of rootMod.items) runItem(it, decls, !hasFields, rc)
   // Force ALL deferred verifications at once (module exports + given fills). On a
   // lazy backend this is where the kernel verification walks actually run — one
   // end-of-parse batch over a shared hash-consed arena, so identical sub-checks
