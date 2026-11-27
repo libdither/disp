@@ -1,36 +1,65 @@
-// A claim is a test of a witness against a challenge, and holds when some witness
-// passes every challenge (research/CLAIMS_OVER_TREES.md §9). The honest check
-// searches a source of challenges for one the witness fails; a listed source can
-// run out, which is the only way search proves anything. A lens between claims
-// carries witnesses forward and challenges back: a certified checker is a lens
-// into the honest claim, and its law — pass the pulled-back challenge, pass the
-// challenge — is itself a claim the honest check can refute. A claim is a program
-// {witness, challenge} => Bool.
-open use raw "prelude.disp" {}
-open use raw "core/list.disp" {}
-open use raw "verdict.disp" {}
-open use raw "stream.disp" {}
+// Checked claims, lenses, and CEGIS library (`Option`-typed CEGIS, clean `Lens.*` / `Claim.*` names).
+open use "std.disp"
+open use "verdict.disp"
+open use "stream.disp"
+let CMod := use raw "core/claim.disp" {}
 
-honest :: {source : Items(Tree), claim : Claim, w : Tree, budget : Nat} -> Verdict :=>
-	verdict(source.s_filter({c} => not(claim(w, c))).bounded(budget))
-over :: {claim : Claim, w : Tree, challenges : List(Tree)} -> Verdict :=>
-	verdict(settle(stopping_filter(stopping_list(challenges), {c} => not(claim(w, c)))))
+Claim : Type := Tree -> Tree -> Bool
+Lens : Type := Pair(Tree -> Tree, Tree -> Tree -> Tree)
+CallChallenge : Type := Pair(Tree, Tree)
 
-record lens :: {fwd : W -> V, back : W -> D -> C} -> Lens
-// the lens law at one point: a witness that passes the pulled-back challenge is carried to one that passes the challenge
-lens_holds :: {from : Claim, to : Claim, l : Lens} -> Claim :=> {w, d} => if (from(w, l.back(w, d))) { to(l.fwd(w), d) } else { true }
-// lenses compose: forward maps in order, backward maps in reverse
-lens_then :: {l : Lens, m : Lens} -> Lens :=> lens({w} => m.fwd(l.fwd(w)), {w, e} => l.back(w, m.back(l.fwd(w), e)))
-// a challenge to a function: an argument to call it on, and a challenge for what it returns
-record call_with :: {arg : Tree, on_result : Tree} -> CallChallenge
-// A => B between claims: a witness is a lens (f, F), a challenge calls it with a witness of A and challenges the result in B
-implies :: {A : Claim, B : Claim} -> Claim :=> {fF, c} => if (A(c.arg, fF.back(c.arg, c.on_result))) { B(fF.fwd(c.arg), c.on_result) } else { true }
+let length_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("length_t", pair(List(Tree) -> Nat, length))
+])
+let stream_honest_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("items_filter", pair(AnyItemCoalg(Tree, Tree) -> (Tree -> Bool) -> ItemCoalg(Tree, Tree), Items.filter)),
+	pair("items_bounded", pair(ItemCoalg(Tree, Tree) -> Nat -> ItemCoalg(Budget(Tree), Tree), Items.bounded)),
+	pair("items_verdict", pair(PartialFn(ItemCoalg(Budget(Tree), Tree), Verdict), Items.verdict))
+])
+let stream_over_cert := certify(check_depth, check_fuel, "all", [length_cert], [
+	pair("stopping_list", pair(List(Tree) -> AnyStoppingOf(List(Tree), Tree), Stopping.from_list)),
+	pair("stopping_filter", pair(AnyStoppingOf(List(Tree), Tree) -> (Tree -> Bool) -> StoppingOf(List(Tree), Tree), Stopping.filter)),
+	pair("stopping_settle", pair(StoppingOf(List(Tree), Tree) -> ItemCoalg(Budget(List(Tree)), Tree), Stopping.settle)),
+	pair("items_verdict_l", pair(PartialFn(ItemCoalg(Budget(List(Tree)), Tree), Verdict), Items.verdict))
+])
+let verdict_lems := certify(check_depth, check_fuel, "all", [], [
+	pair("is_refuted", pair(Verdict -> Bool, Verdict.is_refuted)),
+	pair("counterexample", pair(Verdict -> Option(Tree), Verdict.counterexample))
+])
+honest_cert := certify(check_depth, check_fuel, "all", [stream_honest_cert], [
+	pair("Claim.honest", pair(PartialFn(AnyItemCoalg(Tree, Tree), PartialFn(Claim, PartialFn(Tree, PartialFn(Nat, Verdict)))), CMod.honest))
+])
+over_cert := certify(check_depth, check_fuel, "all", [stream_over_cert], [
+	pair("Claim.over", pair(PartialFn(Claim, PartialFn(Tree, PartialFn(List(Tree), Verdict))), CMod.over))
+])
+let check_module := check_with(check_depth, check_fuel, "fix", [stream_honest_cert, honest_cert, verdict_lems])
 
-// counterexample-guided search: challenges that refuted earlier candidates are tried first on later ones
-rec cegis :: {source : Items(Tree), claim : Claim, pool : List(Tree), kept : List(Tree), budget : Nat} -> Pair(Tree, List(Tree)) :=>
-	if (pool.is_nil) { pair("None", kept) }
-	else if (not(kept.all({c} => claim(pool.head, c)))) { cegis(source, claim, pool.tail, kept, budget) }
+// Lenses & call challenges (all structurally total)
+Lens.new : (Tree -> Tree) -> (Tree -> Tree -> Tree) -> Lens := CMod.lens
+Lens.fwd : Lens -> Tree -> Tree := {l} => l.fst
+Lens.back : Lens -> Tree -> Tree -> Tree := {l} => l.snd
+Lens.holds : Claim -> Claim -> Lens -> Claim := CMod.lens_holds
+Lens.then_lens : Lens -> Lens -> Lens := CMod.lens_then
+
+CallChallenge.new : Tree -> Tree -> CallChallenge := CMod.call_with
+CallChallenge.arg : CallChallenge -> Tree := {c} => c.fst
+CallChallenge.on_result : CallChallenge -> Tree := {c} => c.snd
+
+Claim.implies : Claim -> Claim -> Lens -> CallChallenge -> Bool := CMod.implies
+
+// Bounded honest checking & finite-challenge checking (verified independently above)
+Claim.honest := CMod.honest
+Claim.over := CMod.over
+honest_verified : The(Bool, true) := is_cert(honest_cert)
+over_verified : The(Bool, true) := is_cert(over_cert)
+
+// Counterexample-guided search returning `Pair(Option(Tree), List(Tree))` (`Some(cand)` or `None`)
+rec Claim.cegis : AnyItemCoalg(Tree, Tree) -> Claim -> List(Tree) -> List(Tree) -> Nat -> Pair(Option(Tree), List(Tree)) := {source, claim, pool, kept, budget} =>
+	if (pool.is_nil) { pair(None, kept) }
+	else if (not(List.all(kept, {c} => claim(pool.head, c)))) { Claim.cegis(source, claim, pool.tail, kept, budget) }
 	else {
-		let v := honest(source, claim, pool.head, budget)
-		if (v.is_refuted) { cegis(source, claim, pool.tail, cons(v.counterexample, kept), budget) } else { pair(pool.head, kept) }
+		let v := CMod.honest(source, claim, pool.head, budget)
+		let ce := Verdict.counterexample(v)
+		if (ce.fst == "Some") { Claim.cegis(source, claim, pool.tail, cons(ce.snd, kept), budget) }
+		else { pair(Some(pool.head), kept) }
 	}

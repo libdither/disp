@@ -1,51 +1,91 @@
-// Growth curves: how many machine steps a program takes as its input grows. On
-// numbers the step count of a loop-free recursion is a polynomial in n, so finite
-// differences at sizes 1, 2, 3, ... fit it exactly, and the fit is a step bound a
-// claim can check on sizes it was never fitted on. A fit is evidence, not a proof:
-// search refutes it the first time a larger input takes more steps.
-open use raw "prelude.disp" {}
-open use raw "core/list.disp" {}
-open use raw "machine.disp" {}
+// Checked growth-curve / polynomial step-bound library (`Option`-typed, zero string sentinels).
+// Hot list/arithmetic helpers carry pointwise-equivalence guards for `lib/growth.opt.disp`.
+open use "std.disp"
+open use "machine.disp"
 
-rec add2 :: {a : Nat, b : Nat} -> Nat :=> if (is_zero(a)) { b } else { succ(add2(nat_pred(a), b)) }
-// the steps to finish, or "Out" past `cap`: one machine step at a time, counted
-rec count_steps :: {m : Machine, n : Nat, cap : Nat} -> Tree :=>
-	if (m_finished(m)) { n } else if (is_zero(cap)) { "Out" } else { count_steps(m_advance(m, 1), succ(n), nat_pred(cap)) }
-steps_of :: {f : Tree, x : Tree, cap : Nat} -> Tree :=> count_steps(m_start(f, x), zero, cap)
-// the step counts at sizes 1 .. k: a recursion's base case usually costs its own constant, so size 0 is left out of the fit
-rec sizes_upto :: {k : Nat} -> List(Nat) :=> if (is_zero(k)) { [] } else { sizes_upto(nat_pred(k)).append([k]) }
-curve :: {f : Tree, k : Nat, cap : Nat} -> List(Tree) :=> sizes_upto(k).map({n} => steps_of(f, n, cap))
+let machine_lems := cert_pick(machine_cert, ["Machine.start", "Machine.is_finished", "Machine.advance"])
+let rec all_some_nat := {xs} =>
+	if (xs.is_nil) { Some([]) }
+	else if (xs.head.fst == "Some") {
+		let rest := all_some_nat(xs.tail)
+		if (rest.fst == "Some") { Some(cons(xs.head.snd, rest.snd)) } else { None }
+	} else { None }
 
-// differences of neighbours, or "Negative" when a curve dips (no fit with these tools)
-rec minus :: {a : Nat, b : Nat} -> Tree :=> if (is_zero(b)) { a } else if (is_zero(a)) { "Negative" } else { minus(nat_pred(a), nat_pred(b)) }
-rec diffs :: {xs : List(Tree)} -> Tree :=>
-	if (xs.is_nil || xs.tail.is_nil) { [] }
+let helper_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("nat_le", pair(Nat -> Nat -> Bool, nat_le)),
+	pair("nat_lt", pair(Nat -> Nat -> Bool, nat_lt)),
+	pair("nat_add", pair(Nat -> Nat -> Nat, Nat.add)),
+	pair("nat_chk_sub", pair(Nat -> Nat -> Option(Nat), Nat.checked_sub)),
+	pair("append_n", pair(List(Nat) -> List(Nat) -> List(Nat), List.append)),
+	pair("length_n", pair(List(Nat) -> Nat, List.len)),
+	pair("all_n", pair(List(Nat) -> (Nat -> Bool) -> Bool, List.all)),
+	pair("all_some_nat", pair(List(Option(Nat)) -> Option(List(Nat)), all_some_nat))
+])
+let map_cert := certify(check_depth, check_fuel, "all", [], [
+	pair("map_n", pair(List(Nat) -> (Nat -> Option(Nat)) -> List(Option(Nat)), List.map))
+])
+let check_module := check_with(check_depth, check_fuel, "all", [machine_lems, helper_cert, map_cert])
+
+// Step counting returning `Option(Nat)` (`Some(n)` when finished within `cap`, `None` on timeout)
+rec count_steps : Machine -> Nat -> Nat -> Option(Nat) := {m, n, cap} =>
+	if (Machine.is_finished(m)) { Some(n) }
+	else if (is_zero(cap)) { None }
+	else { count_steps(Machine.advance(m, 1), succ(n), nat_pred(cap)) }
+
+steps_of : Tree -> Tree -> Nat -> Option(Nat) := {f, x, cap} =>
+	count_steps(Machine.start(f, x), zero, cap)
+
+// Sizes 1..k (readable O(k^2) spec, guarded for O(k) rewrite in `lib/growth.opt.disp`)
+let rec sizes_upto_spec := {k} =>
+	if (is_zero(k)) { [] } else { List.append(sizes_upto_spec(nat_pred(k)), [k]) }
+guard(fn_equiv_guard(Nat)) sizes_upto : Nat -> List(Nat) := sizes_upto_spec
+
+curve : Tree -> Nat -> Nat -> List(Option(Nat)) := {f, k, cap} =>
+	sizes_upto(k).map({n} => steps_of(f, n, cap))
+
+// Finite differences via `Nat.checked_sub`: returns `None` if the curve dips
+rec diffs : List(Nat) -> Option(List(Nat)) := {xs} =>
+	if (xs.is_nil || xs.tail.is_nil) { Some([]) }
 	else {
-		let d := minus(xs.tail.head, xs.head)
-		let rest := diffs(xs.tail)
-		if ((d == "Negative") || (rest == "Negative")) { "Negative" } else { cons(d, rest) }
+		let d := Nat.checked_sub(xs.tail.head, xs.head)
+		if (d.fst == "Some") {
+			let rest := diffs(xs.tail)
+			if (rest.fst == "Some") { Some(cons(d.snd, rest.snd)) } else { None }
+		} else { None }
 	}
-all_zero := {xs} => xs.all(is_zero)
-// Newton coefficients (each difference row's first entry) until a row is all zero; "None" when the samples run out first or a value is "Out"
-rec newton :: {xs : Tree} -> Tree :=>
-	if (xs == "Negative") { "None" }
-	else if (xs.is_nil) { "None" }
-	else if (xs.any({x} => x == "Out")) { "None" }
-	else if (all_zero(xs)) { [] }
-	else if (xs.tail.is_nil) { "None" }
+
+guard(fn_equiv_guard(List(Nat))) all_zero : List(Nat) -> Bool := {xs} => List.all(xs, is_zero)
+
+// Newton polynomial coefficients until a difference row is all zero (`Option(List(Nat))`)
+rec newton : PartialFn(List(Nat), Option(List(Nat))) := {xs} =>
+	if (xs.is_nil) { None }
+	else if (all_zero(xs)) { Some([]) }
+	else if (xs.tail.is_nil) { None }
 	else {
-		let rest := newton(diffs(xs))
-		if (rest == "None") { "None" } else { cons(xs.head, rest) }
+		let ds := diffs(xs)
+		if (ds.fst == "Some") {
+			let rest := newton(ds.snd)
+			if (rest.fst == "Some") { Some(cons(xs.head, rest.snd)) } else { None }
+		} else { None }
 	}
-// the fitted polynomial's degree: one less than its coefficient count
-degree :: {coeffs : List(Nat)} -> Nat :=> nat_pred(coeffs.length)
-// the polynomial at n, by stepping the difference table forward n times
-rec newton_step :: {row : List(Nat)} -> List(Nat) :=> if (row.is_nil || row.tail.is_nil) { row } else { cons(add2(row.head, row.tail.head), newton_step(row.tail)) }
-rec newton_at :: {row : List(Nat), n : Nat} -> Nat :=> if (is_zero(n)) { if (row.is_nil) { zero } else { row.head } } else { newton_at(newton_step(row), nat_pred(n)) }
-fit :: {f : Tree, k : Nat, cap : Nat} -> Tree :=> newton(curve(f, k, cap))
-// the step bound a fit claims at a number input; the fit starts at 1, and size 0 takes the bound at 1
-bound_of :: {coeffs : List(Nat)} -> Nat -> Nat :=> {n} => newton_at(coeffs, nat_pred(n))
-// which of two fits grows slower: lower degree, then the smaller value at a size past both fits
-rec cheaper :: {a : List(Nat), b : List(Nat)} -> Bool :=>
-	if (not(a.length == b.length)) { nat_lt(a.length, b.length) }
+
+guard(fn_equiv_guard(List(Nat))) degree : List(Nat) -> Nat := {coeffs} => nat_pred(List.len(coeffs))
+
+rec newton_step : List(Nat) -> List(Nat) := {row} =>
+	if (row.is_nil || row.tail.is_nil) { row }
+	else { cons(Nat.add(row.head, row.tail.head), newton_step(row.tail)) }
+
+rec newton_at : List(Nat) -> Nat -> Nat := {row, n} =>
+	if (is_zero(n)) { if (row.is_nil) { zero } else { row.head } }
+	else { newton_at(newton_step(row), nat_pred(n)) }
+
+fit : PartialFn(Tree, PartialFn(Nat, PartialFn(Nat, Option(List(Nat))))) := {f, k, cap} => {
+	let samples := all_some_nat(curve(f, k, cap))
+	if (samples.fst == "Some") { newton(samples.snd) } else { None }
+}
+
+bound_of : List(Nat) -> Nat -> Nat := {coeffs, n} => newton_at(coeffs, nat_pred(n))
+
+cheaper : List(Nat) -> List(Nat) -> Bool := {a, b} =>
+	if (not(List.len(a) == List.len(b))) { nat_lt(List.len(a), List.len(b)) }
 	else { nat_le(newton_at(a, 64), newton_at(b, 64)) }

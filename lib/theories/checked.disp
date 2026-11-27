@@ -6,7 +6,7 @@
 // would ask for the leaf.
 open use raw "../prelude.disp" {}
 open use raw "../core/list.disp" {}
-open use raw "../verdict.disp" {}
+open use raw "../core/verdict.disp" {}
 open use raw "../confirm.disp" {}
 open use raw "../rules.disp" {}
 open use raw "types.disp" {}

@@ -211,47 +211,4 @@ my_rev := { new := {xs} => xs; proof := {_xs} => t; certs := fake_cert }
     const order2 = getBinding(`open use "../kernel/verified_opt.opt.disp"\nopen use "../kernel/verified_opt.disp"\n`, "rev")
     expect(session.equal!(order2, optRev)).toBe(true)
   }, 180000)
-
-  it("std_list.opt.disp reconciles in BOTH open orders and rejects buggy rebinds", () => {
-    const getBinding = (src: string, name: string) => {
-      const d = run(src).find(x => x.kind === "Def" && x.name === name)
-      if (!d || d.kind !== "Def") throw new Error(`missing ${name}`)
-      return d.tree
-    }
-    const specApp = getBinding(`open use "../kernel/std_list.disp"\n`, "ck_append")
-    const optApp = getBinding(`open use "../kernel/std_list.opt.disp"\n`, "ck_append")
-    expect(session.equal!(specApp, optApp)).toBe(false)
-
-    // Both open orders resolve to the verified fast implementation
-    const order1 = getBinding(`open use "../kernel/std_list.disp"\nopen use "../kernel/std_list.opt.disp"\n`, "ck_append")
-    const order2 = getBinding(`open use "../kernel/std_list.opt.disp"\nopen use "../kernel/std_list.disp"\n`, "ck_append")
-    expect(session.equal!(order1, optApp)).toBe(true)
-    expect(session.equal!(order2, optApp)).toBe(true)
-
-    // Negative pin: buggy `ck_all` (always true) and buggy `ck_length` (off-by-one) are rejected by incumbent guards
-    expect(() => run(P + `open use "../kernel/std_list.disp"\nck_all := { new := {_xs, _p} => true; proof := {_xs, _p} => t }\n`))
-      .toThrow(/rejected by its guard/)
-    expect(() => run(P + `open use "../kernel/std_list.disp"\nck_length := { new := {_xs} => 0; proof := {_xs} => t }\n`))
-      .toThrow(/rejected by its guard/)
-  }, 180000)
-
-  it("std_growth.opt.disp reconciles in BOTH open orders and rejects buggy sizes_upto", () => {
-    const getBinding = (src: string, name: string) => {
-      const d = run(src).find(x => x.kind === "Def" && x.name === name)
-      if (!d || d.kind !== "Def") throw new Error(`missing ${name}`)
-      return d.tree
-    }
-    const specSz = getBinding(`open use "../kernel/std_growth.disp"\n`, "ck_sizes_upto")
-    const optSz = getBinding(`open use "../kernel/std_growth.opt.disp"\n`, "ck_sizes_upto")
-    expect(session.equal!(specSz, optSz)).toBe(false)
-
-    const order1 = getBinding(`open use "../kernel/std_growth.disp"\nopen use "../kernel/std_growth.opt.disp"\n`, "ck_sizes_upto")
-    const order2 = getBinding(`open use "../kernel/std_growth.opt.disp"\nopen use "../kernel/std_growth.disp"\n`, "ck_sizes_upto")
-    expect(session.equal!(order1, optSz)).toBe(true)
-    expect(session.equal!(order2, optSz)).toBe(true)
-
-    // Negative pin: reversing the output of `sizes_upto` (descending instead of ascending) is rejected
-    expect(() => run(P + `open use "../kernel/std_growth.disp"\nlet rec bad_sz := {k} => if (is_zero(k)) { [] } else { cons(k, bad_sz(nat_pred(k))) }\nck_sizes_upto := { new := bad_sz; proof := {k} => if (is_zero(k)) { t } else { t } }\n`))
-      .toThrow(/rejected by its guard/)
-  }, 180000)
 })

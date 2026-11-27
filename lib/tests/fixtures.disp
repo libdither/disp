@@ -4,7 +4,7 @@
 // its own shape-based NatR on purpose: it explains why.)
 open use raw "../prelude.disp" {}
 open use raw "../core/list.disp" {}
-open use raw "../stream.disp" {}
+open use raw "../core/stream.disp" {}
 
 rec NatR :: {v : Tree} -> Bool :=> if (is_zero(v)) { true } else { (v == succ(nat_pred(v))) && NatR(nat_pred(v)) }
 // accepts 0 and loops on everything else: membership there is never a verdict

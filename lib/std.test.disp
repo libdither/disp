@@ -2,7 +2,7 @@
 // parametric trait modules (`Monad`, `Foldable`), lexical type-head dot dispatch,
 // and verified `.opt.disp` speedup overlays (`lib/nat.opt.disp`, `lib/list.opt.disp`).
 open use "std.disp"
-open use raw "growth.disp" {}
+open use raw "core/growth.disp" {}
 
 // Capture spec bindings before applying verified `.opt.disp` overlays
 let nat_add_spec := Nat.add

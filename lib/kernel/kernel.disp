@@ -13,8 +13,8 @@
 //   - `E_check_base` and `E_refute_base(n)` are two base evaluators implementing the same `Kit`.
 open use raw "../prelude.disp" {}
 open use raw "../core/list.disp" {}
-open use raw "../trees.disp" {}
-open use raw "../machine.disp" {}
+open use raw "../core/trees.disp" {}
+open use raw "../core/machine.disp" {}
 
 // ---------------------------------------------------------------- answers & helpers
 yes := "Yes"
